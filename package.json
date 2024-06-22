@@ -1,0 +1,25 @@
+{
+  "name": "sundown",
+  "version": "1.0.0",
+  "description": "The Sundown WebGPU game engine.",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "dev": "vite",
+    "build": "vite build"
+  },
+  "keywords": [
+    "WebGPU",
+    "games",
+    "game",
+    "engine",
+    "simulation",
+    "renderer",
+    "rendering"
+  ],
+  "author": "Adrian Sanchez",
+  "license": "MIT",
+  "dependencies": {
+    "vite": "^5.3.1"
+  }
+}
