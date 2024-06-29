@@ -7,9 +7,7 @@ export class Scene extends SimulationLayer {
     }
 
     update(delta_time) {
-        console.profile('scene_update');
-
-        console.profileEnd('scene_update');
+        performance.mark('scene_update');
     }
 }
 

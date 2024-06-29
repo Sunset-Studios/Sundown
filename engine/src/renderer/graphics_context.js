@@ -1,6 +1,6 @@
 const MAX_BUFFERED_FRAMES = 2;
 
-export default class GraphicsContext {
+export class GraphicsContext {
     canvas = null;
     adapter = null;
     device = null;
@@ -8,9 +8,7 @@ export default class GraphicsContext {
     canvas_format = null;
     frame_number = 0;
 
-    constructor() { }
-
-    async setup(canvas) {
+    async init(canvas) {
         if (!navigator.gpu) {
             throw Error('WebGPU is not supported');
         }
@@ -31,13 +29,6 @@ export default class GraphicsContext {
         });
     }
 
-    cleanup() {
-        this.canvas = null;
-        this.adapter = null;
-        this.device = null;
-        this.context = null;
-    }
-
     advance_frame() {
         this.frame_number++;
     }
@@ -50,11 +41,17 @@ export default class GraphicsContext {
         return this.frame_number % MAX_BUFFERED_FRAMES;
     }
 
-    draw_pass(render_pass, triangles) {
-        render_pass.pass.draw(triangles);
+    draw_pass(render_pass, triangles, instance_count = 1) {
+        render_pass.pass.draw(triangles, instance_count);
     }
 
-    static create(canvas) {
-        return new GraphicsContext(canvas);
+    max_bind_groups() {
+        return this.adapter.limits.maxBindGroups;
+    }
+
+    static async create(canvas) {
+        let context = new GraphicsContext();
+        await context.init(canvas);
+        return context
     }
 }

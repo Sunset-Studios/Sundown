@@ -21,12 +21,17 @@ class Name {
         return hash;
     }
 
-    static get_string(hash) {
+    static string(hash) {
         return Name.hash_to_string.get(hash);
     }
 
-    static get_hash(str) {
+    static hash(str) {
         return Name.string_to_hash.get(str);
+    }
+
+    static from(str) {
+        const name = new Name(str);
+        return Name.hash(str);
     }
 }
 

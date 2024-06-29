@@ -5,8 +5,6 @@ class SimulationLayer {
 
     init() { }
 
-    cleanup() { }
-
     pre_update() { }
 
     update(delta_time) { }

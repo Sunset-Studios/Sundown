@@ -1,4 +1,4 @@
-export class SimulationCore {
+export default class SimulationCore {
     simulation_layers = [];
     current_time = 0;
     delta_time = 0;
@@ -29,7 +29,7 @@ export class SimulationCore {
     }
 
     update() {
-        console.profile('simulation_core_update');
+        performance.mark('simulation_core_update');
 
         this.current_time = performance.now();
         this.delta_time = Math.min((this.current_time - this.previous_time, 0) / 1000, 0.1);
@@ -40,17 +40,11 @@ export class SimulationCore {
         }
 
         for (const layer of this.simulation_layers) {
-            layer.update(delta_time);
+            layer.update(this.delta_time);
         }
 
         for (const layer of this.simulation_layers) {
             layer.post_update();
         }
-
-        console.profileEnd('simulation_core_update');
     }
 }
-
-const simcore = new SimulationCore();
-Object.freeze(simcore);
-export default simcore;
