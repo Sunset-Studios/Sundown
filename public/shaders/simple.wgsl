@@ -10,7 +10,7 @@ struct VertexOutput {
     @location(1) uv: vec2f,
 };
 
-@group(1) @binding(0) var<storage, read> vertices: array<Vertex>;
+@group(0) @binding(0) var<storage, read> vertices: array<Vertex>;
 
 @vertex fn vs(
     @builtin(vertex_index) vi : u32,

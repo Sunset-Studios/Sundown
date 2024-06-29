@@ -14,10 +14,12 @@ export class Buffer {
         const buffer_data = new Float32Array(this.data.length);
         buffer_data.set(this.data);
 
+        this.config.size = buffer_data.byteLength;
+
         this.buffer = context.device.createBuffer({
-            label: config.name,
-            size: buffer_data.byteLength,
-            usage: config.usage
+            label: this.config.name,
+            size: this.config.size,
+            usage: this.config.usage
         });
 
         this.write(context, buffer_data);

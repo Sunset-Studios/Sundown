@@ -70,7 +70,11 @@ import ExecutionQueue from "@/utility/execution_queue.js";
 import { FrameAllocator } from "@/memory/allocator.js";
 import { ResourceCache, CacheTypes } from "@/renderer/resource_cache.js";
 import { BindGroupType, BindGroup } from "@/renderer/bind_group.js";
-import { RenderPassType, RenderPass, RenderPassFlags } from "@/renderer/render_pass.js";
+import {
+  RenderPassType,
+  RenderPass,
+  RenderPassFlags,
+} from "@/renderer/render_pass.js";
 import { PipelineState } from "@/renderer/pipeline_state.js";
 import { CommandQueue } from "@/renderer/command_queue.js";
 import { Buffer } from "@/renderer/buffer.js";
@@ -95,7 +99,7 @@ function create_graph_resource_handle(index, type, version) {
  * @returns {number} The index of the graph resource.
  */
 function get_graph_resource_index(handle) {
-  return (handle >> 24) & 0x00FFFFFF;
+  return (handle >> 24) & 0x00ffffff;
 }
 
 /**
@@ -104,7 +108,7 @@ function get_graph_resource_index(handle) {
  * @returns {number} The type of the graph resource.
  */
 function get_graph_resource_type(handle) {
-  return (handle >> 16) & 0x000000FF;
+  return (handle >> 16) & 0x000000ff;
 }
 
 /**
@@ -429,18 +433,15 @@ export class RenderGraph {
       256,
       _.cloneDeep(RGResource)
     );
-    this.render_pass_allocator = new FrameAllocator(
-        128,
-        _.cloneDeep(RGPass)
-    );
+    this.render_pass_allocator = new FrameAllocator(128, _.cloneDeep(RGPass));
   }
 
   /**
    * Resets the render graph, clearing all resources and render passes.
    * This method should be called at the end of each frame to prepare for the next frame.
-   * 
+   *
    * @param {Object} context - The rendering context.
-   * 
+   *
    * @example
    * // At the end of each frame
    * const renderGraph = new RenderGraph();
@@ -456,10 +457,10 @@ export class RenderGraph {
   /**
    * Begins a new frame in the render graph.
    * This method resets the render graph state and prepares it for a new frame of rendering.
-   * 
+   *
    * @param {Object} context - The rendering context for the new frame.
    * @returns {void}
-   * 
+   *
    * @example
    * const renderGraph = new RenderGraph();
    * const context = getGraphicsContext();
@@ -473,7 +474,7 @@ export class RenderGraph {
 
   /**
    * Creates a new image resource in the render graph.
-   * 
+   *
    * @param {Object} config - The configuration object for the image resource.
    * @param {number} config.width - The width of the image.
    * @param {number} config.height - The height of the image.
@@ -481,7 +482,7 @@ export class RenderGraph {
    * @param {number} config.usage - The usage flags for the image.
    * @param {boolean} config.b_is_bindless - Whether the image is bindless.
    * @returns {number} The handle of the newly created image resource.
-   * 
+   *
    * @example
    * const imageConfig = {
    *   width: 1920,
@@ -519,12 +520,12 @@ export class RenderGraph {
   /**
    * Registers an existing image resource in the render graph.
    * This method creates a new resource handle for an existing image and sets up its metadata.
-   * 
+   *
    * @param {string|number} image - The identifier or hash of the image to register.
    * @returns {number} The handle of the newly registered image resource.
-   * 
+   *
    * @throws {Error} If the image is not found in the ResourceCache.
-   * 
+   *
    * @example
    * const imageHandle = renderGraph.register_image("myImage");
    */
@@ -561,13 +562,13 @@ export class RenderGraph {
   /**
    * Creates a new buffer resource in the render graph.
    * This method allocates a new buffer resource, sets up its configuration, and registers it in the graph.
-   * 
+   *
    * @param {Object} config - The configuration object for the buffer.
    * @param {number} config.size - The size of the buffer in bytes.
    * @param {number} config.usage - The usage flags for the buffer (e.g., GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST).
    * @param {boolean} [config.b_is_bindless=false] - Whether the buffer should be bindless.
    * @returns {number} The handle of the newly created buffer resource.
-   * 
+   *
    * @example
    * const bufferConfig = {
    *   size: 1024,
@@ -604,10 +605,10 @@ export class RenderGraph {
    * Registers an existing buffer in the render graph.
    * This method creates a new resource handle for an existing buffer, sets up its configuration,
    * and registers it in the graph as a persistent resource.
-   * 
+   *
    * @param {Object} buffer - The existing buffer object to register.
    * @returns {number} The handle of the newly registered buffer resource.
-   * 
+   *
    * @example
    * const existingBuffer = ...; // Assume this is an existing buffer object
    * const bufferHandle = renderGraph.register_buffer(existingBuffer);
@@ -647,13 +648,13 @@ export class RenderGraph {
 
   /**
    * Adds a new render pass to the render graph.
-   * 
+   *
    * @param {string} name - The name of the render pass.
    * @param {number} pass_type - The type of the render pass, using flags from RenderPassFlags.
    * @param {Object|null} params - The parameters for the render pass, including inputs and outputs.
    * @param {Function} execution_callback - The callback function to execute the render pass.
    * @returns {number} The index of the newly added render pass.
-   * 
+   *
    * @example
    * const passIndex = renderGraph.add_pass(
    *   "MyRenderPass",
@@ -688,7 +689,7 @@ export class RenderGraph {
 
   /**
    * Retrieves a physical render pass from the resource cache using its handle.
-   * 
+   *
    * @param {number} handle - The handle of the render pass to retrieve.
    * @returns {Object|null} The physical render pass object if found, or null if not found.
    */
@@ -698,10 +699,10 @@ export class RenderGraph {
 
   /**
    * Queues global buffer writes to be processed later in the render graph.
-   * 
+   *
    * @param {Array} buffer_writes - An array of buffer write operations to be queued.
    * @returns {void}
-   * 
+   *
    * @example
    * const bufferWrites = [
    *   { buffer: someBuffer, data: new Float32Array([1, 2, 3, 4]), offset: 0 },
@@ -709,16 +710,19 @@ export class RenderGraph {
    * ];
    * renderGraph.queue_global_buffer_write(bufferWrites);
    */
-  queue_global_buffer_write(buffer_writes) {
-    this.queued_buffer_global_writes = [...this.queued_buffer_global_writes, ...buffer_writes];
+  queue_global_buffer_writes(buffer_writes) {
+    this.queued_buffer_global_writes = [
+      ...this.queued_buffer_global_writes,
+      ...buffer_writes,
+    ];
   }
 
   /**
    * Queues global image writes to be processed later in the render graph.
-   * 
+   *
    * @param {Array} image_writes - An array of image write operations to be queued.
    * @returns {void}
-   * 
+   *
    * @example
    * const imageWrites = [
    *   { image: someImage, data: new Uint8Array([255, 0, 0, 255]), offset: { x: 0, y: 0 }, size: { width: 1, height: 1 } },
@@ -727,7 +731,10 @@ export class RenderGraph {
    * renderGraph.queue_image_global_writes(imageWrites);
    */
   queue_image_global_writes(image_writes) {
-    this.queued_image_global_writes = [...this.queued_image_global_writes, ...image_writes];
+    this.queued_image_global_writes = [
+      ...this.queued_image_global_writes,
+      ...image_writes,
+    ];
   }
 
   _update_reference_counts(pass) {
@@ -903,7 +910,7 @@ export class RenderGraph {
   /**
    * Resets the render graph, clearing all resources and render passes.
    * This method should be called at the end of each frame to prepare for the next frame.
-   * 
+   *
    * @param {Object} context - The rendering context.
    * @returns {void}
    */
@@ -1194,7 +1201,10 @@ export class RenderGraph {
         );
 
         const targets = pass.pass_config.attachments
-          .filter((attachment) => !attachment.format || !attachment.format.includes("depth"))
+          .filter(
+            (attachment) =>
+              !attachment.format || !attachment.format.includes("depth")
+          )
           .map((attachment) => ({
             format: attachment.format || "bgra8unorm",
             blend: shader_setup.attachment_blend || {
@@ -1208,10 +1218,13 @@ export class RenderGraph {
                 dstFactor: "zero",
                 operation: "add",
               },
-            }
+            },
           }));
 
-        const depth_stencil_target = pass.pass_config.attachments.find((attachment) => attachment.format && attachment.format.includes("depth"));
+        const depth_stencil_target = pass.pass_config.attachments.find(
+          (attachment) =>
+            attachment.format && attachment.format.includes("depth")
+        );
 
         const pipeline_descriptor = {
           label: pass.pass_config.name,
@@ -1233,13 +1246,13 @@ export class RenderGraph {
             cullMode: shader_setup.rasterizer_state?.cull_mode || "none",
           },
         };
-    
-        if (depth_stencil_target)    {
-            pipeline_descriptor.depthStencil = {
-                depthWriteEnabled: shader_setup.b_depth_write_enabled ?? false,
-                depthCompare: shader_setup.depth_stencil_compare_op || "less-equal",
-                format: shader_setup.depth_stencil_format || "depth24plus-stencil8",
-            }
+
+        if (depth_stencil_target) {
+          pipeline_descriptor.depthStencil = {
+            depthWriteEnabled: shader_setup.b_depth_write_enabled ?? false,
+            depthCompare: shader_setup.depth_stencil_compare_op || "less-equal",
+            format: shader_setup.depth_stencil_format || "depth24plus-stencil8",
+          };
         }
 
         pass.pipeline_state_id = Name.from(pass.pass_config.name);
@@ -1249,12 +1262,12 @@ export class RenderGraph {
           pipeline_descriptor
         );
       }
-      
+
       this.pass_cache.pipeline_states.set(
-          pass.pass_config.name,
-          pass.pipeline_state_id
-        );
-        
+        pass.pass_config.name,
+        pass.pipeline_state_id
+      );
+
       frame_data.pass_pipeline_state = pass.pipeline_state_id;
     }
   }
@@ -1267,7 +1280,9 @@ export class RenderGraph {
 
     const pass_binds = this.pass_cache.bind_groups.get(
       pass.pass_config.name
-    ) || { bind_groups: Array(frame_data.context.max_bind_groups()).fill(null) };
+    ) || {
+      bind_groups: Array(frame_data.context.max_bind_groups()).fill(null),
+    };
     this.pass_cache.bind_groups.set(pass.pass_config.name, pass_binds);
 
     this._setup_global_bind_group(pass, frame_data);
@@ -1306,15 +1321,17 @@ export class RenderGraph {
       }
     });
 
-    const pass_bind_group = BindGroup.create(
-      frame_data.context,
-      `${pass.pass_config.name}_bindgroup_${BindGroupType.Pass}`,
-      pipeline_state,
-      BindGroupType.Pass,
-      entries
-    );
+    if (entries.length > 0) {
+      const pass_bind_group = BindGroup.create(
+        frame_data.context,
+        `${pass.pass_config.name}_bindgroup_${BindGroupType.Pass}`,
+        pipeline_state,
+        BindGroupType.Pass,
+        entries
+      );
 
-    pass_binds.bind_groups[BindGroupType.Pass] = pass_bind_group;
+      pass_binds.bind_groups[BindGroupType.Pass] = pass_bind_group;
+    }
   }
 
   _setup_global_bind_group(pass, frame_data) {
@@ -1323,25 +1340,26 @@ export class RenderGraph {
     pass_binds.bind_groups[BindGroupType.Global] =
       this.pass_cache.global_bind_group;
 
-    if (pass_binds.bind_groups[BindGroupType.Global]) return;
+    if (pass_binds.bind_groups[BindGroupType.Global] && !this.queued_buffer_global_writes.length) return;
 
     const pipeline_state = ResourceCache.get().fetch(
       CacheTypes.PIPELINE_STATE,
       frame_data.pass_pipeline_state
     );
 
-
     let entries = [];
     this.queued_buffer_global_writes.forEach((buffer_desc, index) => {
       entries.push({
         binding: index,
         resource: {
-          buffer: buffer_desc.buffer,
+          buffer: buffer_desc.buffer.buffer,
           offset: buffer_desc.offset || 0,
           size: buffer_desc.size,
         },
       });
     });
+
+    this.queued_buffer_global_writes = [];
 
     // TODO: Figure out how to write these bindless resources into the global buffer and image arrays
     //   // Setup bindless resources on global bind group
@@ -1374,18 +1392,20 @@ export class RenderGraph {
     //     );
     //   }
 
-    const global_bind_group = BindGroup.create(
-      frame_data.context,
-      `${pass.pass_config.name}_bindgroup_${BindGroupType.Global}`,
-      pipeline_state,
-      BindGroupType.Global,
-      entries
-    );
+    if (entries.length > 0) {
+      const global_bind_group = BindGroup.create(
+        frame_data.context,
+        `${pass.pass_config.name}_bindgroup_${BindGroupType.Global}`,
+        pipeline_state,
+        BindGroupType.Global,
+        entries
+      );
 
-    this.pass_cache.global_bind_group = global_bind_group;
-    this.pass_cache.bind_groups.get(pass.pass_config.name).bind_groups[
-      BindGroupType.Global
-    ] = this.pass_cache.global_bind_group;
+      this.pass_cache.global_bind_group = global_bind_group;
+      this.pass_cache.bind_groups.get(pass.pass_config.name).bind_groups[
+        BindGroupType.Global
+      ] = this.pass_cache.global_bind_group;
+    }
   }
 
   _bind_pass_bind_groups(pass, frame_data) {

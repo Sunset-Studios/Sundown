@@ -6,6 +6,7 @@ export const CacheTypes = Object.freeze({
     BUFFER: 4,
     IMAGE: 5,
     SAMPLER: 6,
+    MESH: 7,
 });
 
 export class ResourceCache {
@@ -23,6 +24,7 @@ export class ResourceCache {
         this.cache.set(CacheTypes.BUFFER, new Map());
         this.cache.set(CacheTypes.IMAGE, new Map());
         this.cache.set(CacheTypes.SAMPLER, new Map());
+        this.cache.set(CacheTypes.MESH, new Map());
     }
 
     static get() {
