@@ -19,7 +19,7 @@ export default class Renderer {
 
     static get() {
         if (!Renderer.instance) {
-            Renderer.instance = new Renderer()
+            return new Renderer()
         }
         return Renderer.instance;
     }
@@ -30,8 +30,6 @@ export default class Renderer {
         this.render_graph = RenderGraph.create();
 
         this.render_strategy = new SimpleShadingStrategy();
-
-        this.render_strategy.setup(this.graphics_context, this.render_graph);
     }
 
     render() {

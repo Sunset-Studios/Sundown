@@ -7,6 +7,7 @@ export class GraphicsContext {
     context = null;
     canvas_format = null;
     frame_number = 0;
+    aspect_ratio = 1.0;
 
     async init(canvas) {
         if (!navigator.gpu) {
@@ -14,6 +15,9 @@ export class GraphicsContext {
         }
 
         this.canvas = canvas;
+        this.canvas.width = this.canvas.clientWidth;
+        this.canvas.height = this.canvas.clientHeight;
+
         this.adapter = await navigator.gpu.requestAdapter();
         if (!this.adapter) {
             throw Error('Unable to request WebGPU adapter');
@@ -27,6 +31,8 @@ export class GraphicsContext {
             format: this.canvas_format,
             alphaMode: 'premultiplied'
         });
+
+        this.aspect_ratio = this.canvas.width / this.canvas.height;
     }
 
     advance_frame() {

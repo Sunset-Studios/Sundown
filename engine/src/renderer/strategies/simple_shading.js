@@ -1,28 +1,37 @@
 import { Image } from "@/renderer/image.js";
 import { RenderPassFlags } from "@/renderer/render_pass.js";
-import { Buffer } from '@/renderer/buffer.js';
+import { SharedVertexBuffer } from '@/renderer/shared_data.js';
+import { SharedViewBuffer } from '@/renderer/shared_data.js';
+import { MeshTaskQueue } from "@/renderer/mesh_task_queue";
 
 export class SimpleShadingStrategy {
+    initialized = false;
+
     setup(context, render_graph) {
-        // Temp theses simple triangle vertices in for now
-        const vertices = [
-            { position: [0.0, 0.5, 0.0, 1.0], color: [1.0, 0.0, 0.0, 1.0], uv: [0.0, 0.0, 0.0, 0.0] },
-            { position: [-0.5, -0.5, 0.0, 1.0], color: [0.0, 1.0, 0.0, 1.0], uv: [0.0, 1.0, 0.0, 0.0] },
-            { position: [0.5, -0.5, 0.0, 1.0], color: [0.0, 0.0, 1.0, 1.0], uv: [1.0, 0.0, 0.0, 0.0] },
-        ];
-        const buffer = Buffer.create(context, {
-            name: 'vertex_buffer',
-            data: vertices.map(v => v.position.concat(v.color, v.uv)),
-            usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-        });
+        SharedVertexBuffer.get().build(context);
+        SharedViewBuffer.get().build(context);
+
         render_graph.queue_global_buffer_writes([{
-            buffer: buffer,
+            buffer: SharedVertexBuffer.get().buffer,
             offset: 0,
-            size: buffer.config.size,
+            size: SharedVertexBuffer.get().size,
+        }]);
+
+        render_graph.queue_global_buffer_writes([{
+            buffer: SharedViewBuffer.get().buffer,
+            offset: 0,
+            size: SharedViewBuffer.get().size,
         }]);
     }
 
     draw(context, render_graph) {
+        if (!this.initialized) {
+            this.setup(context, render_graph);
+            this.initialized = true;
+        }
+
+        MeshTaskQueue.get().sort();
+
         const swapchain_image = Image.create_from_image(context.context.getCurrentTexture(), 'swapchain');
         const rg_output_image = render_graph.register_image(swapchain_image.config.name);
 
@@ -43,7 +52,7 @@ export class SimpleShadingStrategy {
             { inputs: [], outputs: [rg_output_image], shader_setup },
             (graph, frame_data, encoder) => {
                 const pass = graph.get_physical_pass(frame_data.current_pass);
-                pass.pass.draw(3, 1);
+                MeshTaskQueue.get().submit_indexed_draws(pass);
             }
         );
 

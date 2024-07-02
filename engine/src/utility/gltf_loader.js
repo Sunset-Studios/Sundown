@@ -1022,8 +1022,6 @@ glTFLoader.prototype._postprocess = function () {
   // if there's no plan for progressive loading (streaming)
   // than simply everything should be placed here
 
-  // console.log('finish loading all assets, do a second pass postprocess');
-
   curLoader = this;
 
   var i, leni, j, lenj;

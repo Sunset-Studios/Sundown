@@ -18,9 +18,9 @@ export default class SimulationCore {
         return SimulationCore.instance;
     }
 
-    register_simulation_layer(layer) {
+    async register_simulation_layer(layer) {
         this.simulation_layers.push(layer);
-        layer.init();
+        await layer.init();
     }
 
     unregister_simulation_layer(layer) {
@@ -32,7 +32,7 @@ export default class SimulationCore {
         performance.mark('simulation_core_update');
 
         this.current_time = performance.now();
-        this.delta_time = Math.min((this.current_time - this.previous_time, 0) / 1000, 0.1);
+        this.delta_time = Math.min((this.current_time - this.previous_time) / 1000.0, 0.1);
         this.previous_time = this.current_time;
 
         for (const layer of this.simulation_layers) {

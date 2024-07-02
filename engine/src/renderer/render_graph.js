@@ -1358,7 +1358,7 @@ export class RenderGraph {
         },
       });
     });
-
+    
     this.queued_buffer_global_writes = [];
 
     // TODO: Figure out how to write these bindless resources into the global buffer and image arrays

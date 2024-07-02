@@ -10,7 +10,7 @@ async function init() {
   await Renderer.get().setup(canvas);
 
   const scene = new Scene("TestScene");
-  SimulationCore.get().register_simulation_layer(scene);
+  await SimulationCore.get().register_simulation_layer(scene);
 }
 
 function run() {
