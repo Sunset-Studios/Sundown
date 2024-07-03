@@ -176,8 +176,6 @@ export class SharedViewBuffer {
           );
       }
 
-      console.log(this.view_data[index])
-
       if (this.buffer) {
         const offset = index * this.type_size_bytes;
         this.buffer.write(

@@ -5,15 +5,22 @@ import { Mesh } from '@/renderer/mesh';
 import { SharedViewBuffer } from '@/renderer/shared_data';
 import { vec4, quat } from 'gl-matrix';
 import { radians } from '@/utility/math';
+import { InputProvider } from '@/input/input_provider';
+import { InputKey } from '@/input/input_types';
 
 export class Scene extends SimulationLayer {
+    name = ''
+    sphere_mesh = null
+
     constructor(name) {
         super();
+
         this.name = name;
-        this.sphere_mesh = null
     }
 
     async init() {
+        super.init();
+
         this.sphere_mesh = await Mesh.from_gltf(
             Renderer.get().graphics_context,
             'models/sphere/sphere.gltf',
@@ -22,6 +29,8 @@ export class Scene extends SimulationLayer {
     }
 
     update(delta_time) {
+        super.update(delta_time);
+
         performance.mark('scene_update');
 
         MeshTaskQueue.get().new_task(this.sphere_mesh);
@@ -39,5 +48,3 @@ export class Scene extends SimulationLayer {
         SharedViewBuffer.get().update_transforms(Renderer.get().graphics_context, this.view);
     }
 }
-
-export default Scene;

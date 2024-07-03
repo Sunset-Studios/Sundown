@@ -39,5 +39,5 @@ struct VertexOutput {
 }
 
 @fragment fn fs(v_out: VertexOutput) -> @location(0) vec4f {
-    return v_out.position;
+    return v_out.color;
 }
