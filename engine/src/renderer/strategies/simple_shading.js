@@ -38,10 +38,10 @@ export class SimpleShadingStrategy {
         const shader_setup = {
             pipeline_shaders: {
                 vertex: {
-                    path: '/simple.wgsl' 
+                    path: 'simple.wgsl' 
                 },
                 fragment: {
-                    path: '/simple.wgsl'
+                    path: 'simple.wgsl'
                 }
             }
         }

@@ -1,4 +1,4 @@
-class SimulationLayer {
+export class SimulationLayer {
     layers = []
     constructor() {
         this.name = "SimulationLayer";
@@ -47,5 +47,3 @@ class SimulationLayer {
         return this.layers.find(layer => layer.constructor.name === prototype.constructor.name);
     }
 }
-
-export default SimulationLayer;

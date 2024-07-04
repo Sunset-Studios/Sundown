@@ -7,5 +7,6 @@ export default defineConfig({
       '@': fileURLToPath(new URL('./engine/src', import.meta.url)),
       '#': fileURLToPath(new URL('./', import.meta.url))
     }
-  }
+  },
+  assetsInclude: ['engine/shaders/**']
 })

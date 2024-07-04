@@ -1,7 +1,7 @@
 import { InputContext } from '@/input/input_context.js';
 import { InputState, InputRange, InputType, InputKey } from '@/input/input_types.js';
 import { InputProcessor } from '@/input/input_processor.js';
-import SimulationLayer from '@/core/simulation_layer.js';
+import { SimulationLayer } from '@/core/simulation_layer.js';
 
 export class InputProvider extends SimulationLayer {
     static default_context_instance = null;

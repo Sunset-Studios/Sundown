@@ -1,7 +1,7 @@
 import Renderer from "@/renderer/renderer.js";
 import SimulationCore from "@/core/simulation_core.js";
 import { InputProvider } from "@/input/input_provider.js";
-import { Scene } from "@/core/layers/scene.js";
+import { Scene } from "@/core/scene.js";
 import application_state from "@/core/application_state.js";
 
 async function init() {

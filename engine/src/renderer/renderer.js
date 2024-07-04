@@ -1,7 +1,6 @@
 import { GraphicsContext } from '@/renderer/graphics_context.js';
 import { RenderGraph } from '@/renderer/render_graph.js';
 import { SimpleShadingStrategy } from '@/renderer/strategies/simple_shading.js';
-import { Mesh } from '@/renderer/mesh.js';
 
 export default class Renderer {
     graphics_context = null;
@@ -26,7 +25,7 @@ export default class Renderer {
 
     async setup(canvas) {
         this.graphics_context = await GraphicsContext.create(canvas);
-        
+
         this.render_graph = RenderGraph.create();
 
         this.render_strategy = new SimpleShadingStrategy();

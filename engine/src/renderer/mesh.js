@@ -136,6 +136,7 @@ export class Mesh {
         mesh._build_index_buffer(context);
 
         ResourceCache.get().store(CacheTypes.MESH, Name.from(gltf), mesh);
+        
         resolve(mesh);
       });
     });

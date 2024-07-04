@@ -99,6 +99,11 @@ export class SharedViewBuffer {
     return this.view_data.length - 1;
   }
 
+  get_view_data(index) {
+    console.assert(index < this.view_data.length && index >= 0, "View data index out of bounds");
+    return this.view_data[index];
+  }
+
   // Updates the view data at the given index. Can be called during setup or at runtime.
   set_view_data(context, index, view_data) {
     let dirty = false;
