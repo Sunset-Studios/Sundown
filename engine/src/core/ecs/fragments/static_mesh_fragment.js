@@ -5,7 +5,7 @@ export class StaticMeshFragment extends Fragment {
 
     static initialize() {
         this.data = {
-            mesh: new Uint32Array(1),
+            mesh: new BigInt64Array(1),
             material_slots: new Uint32Array(this.material_slot_stride)
         };
     }

@@ -70,16 +70,13 @@ import ExecutionQueue from "@/utility/execution_queue.js";
 import { FrameAllocator } from "@/memory/allocator.js";
 import { ResourceCache, CacheTypes } from "@/renderer/resource_cache.js";
 import { BindGroupType, BindGroup } from "@/renderer/bind_group.js";
-import {
-  RenderPassType,
-  RenderPass,
-  RenderPassFlags,
-} from "@/renderer/render_pass.js";
+import { RenderPass, RenderPassFlags } from "@/renderer/render_pass.js";
 import { PipelineState } from "@/renderer/pipeline_state.js";
 import { CommandQueue } from "@/renderer/command_queue.js";
-import { Buffer } from "@/renderer/buffer.js";
+import { Buffer, BufferFlags } from "@/renderer/buffer.js";
+import { Image, ImageFlags } from "@/renderer/image.js";
 import { Shader } from "@/renderer/shader.js";
-import Name from "@/utility/names.js";
+import { Name } from "@/utility/names.js";
 import _ from "lodash";
 
 /**
@@ -140,30 +137,6 @@ const ResourceType = Object.freeze({
   Image: 1,
   /** Buffer resource type */
   Buffer: 2,
-});
-
-/**
- * Flags for image resources in the render graph.
- * @enum {number}
- */
-const ImageFlags = Object.freeze({
-  /** No flags */
-  None: 0,
-  /** Indicates a transient image resource */
-  Transient: 1,
-  /** Indicates the image is loaded locally */
-  LocalLoad: 2,
-});
-
-/**
- * Flags for buffer resources in the render graph.
- * @enum {number}
- */
-const BufferFlags = Object.freeze({
-  /** No flags */
-  None: 0,
-  /** Indicates a transient buffer resource */
-  Transient: 1,
 });
 
 /**
@@ -422,8 +395,7 @@ export class RenderGraph {
     this.pass_cache = _.cloneDeep(PassCache);
     this.registry = _.cloneDeep(RGRegistry);
     this.non_culled_passes = [];
-    this.queued_buffer_global_writes = [];
-    this.queued_image_global_writes = [];
+    this.queued_global_bind_group_writes = [];
 
     this.image_resource_allocator = new FrameAllocator(
       256,
@@ -495,7 +467,7 @@ export class RenderGraph {
    */
   create_image(config) {
     const new_resource = this.image_resource_allocator.allocate();
-    new_resource.config = config;
+    new_resource.config = { ..._.cloneDeep(RGImageConfig), ...config };
     new_resource.config.flags |= ImageFlags.Transient;
 
     const index = this.registry.image_resources.length;
@@ -533,7 +505,10 @@ export class RenderGraph {
     const physical_id = Name.from(image);
     const image_obj = ResourceCache.get().fetch(CacheTypes.IMAGE, physical_id);
     const new_resource = this.image_resource_allocator.allocate();
-    new_resource.config = image_obj.config;
+    new_resource.config = {
+      ..._.cloneDeep(RGImageConfig),
+      ...image_obj.config,
+    };
 
     const index = this.registry.image_resources.length;
     this.registry.image_resources.push(new_resource);
@@ -579,7 +554,7 @@ export class RenderGraph {
    */
   create_buffer(config) {
     const new_resource = this.buffer_resource_allocator.allocate();
-    new_resource.config = config;
+    new_resource.config = { ..._.cloneDeep(RGBufferConfig), ...config };
     new_resource.config.flags |= BufferFlags.Transient;
 
     const index = this.registry.buffer_resources.length;
@@ -620,7 +595,10 @@ export class RenderGraph {
       physical_id
     );
     const new_resource = this.buffer_resource_allocator.allocate();
-    new_resource.config = buffer_obj.config;
+    new_resource.config = {
+      ..._.cloneDeep(RGBufferConfig),
+      ...buffer_obj.config,
+    };
 
     const index = this.registry.buffer_resources.length;
     this.registry.buffer_resources.push(new_resource);
@@ -698,43 +676,27 @@ export class RenderGraph {
   }
 
   /**
-   * Queues global buffer writes to be processed later in the render graph.
+   * Queues global bind group writes to be processed later in the render graph.
    *
-   * @param {Array} buffer_writes - An array of buffer write operations to be queued.
+   * @param {Array} writes - An array of write operations to be queued.
    * @returns {void}
    *
    * @example
-   * const bufferWrites = [
+   * const writes = [
    *   { buffer: someBuffer, data: new Float32Array([1, 2, 3, 4]), offset: 0 },
    *   { buffer: anotherBuffer, data: new Uint8Array([255, 128, 0]), offset: 16 }
    * ];
-   * renderGraph.queue_global_buffer_write(bufferWrites);
+   * renderGraph.queue_global_bind_group_write(writes);
    */
-  queue_global_buffer_writes(buffer_writes) {
-    this.queued_buffer_global_writes = [
-      ...this.queued_buffer_global_writes,
-      ...buffer_writes,
-    ];
-  }
-
-  /**
-   * Queues global image writes to be processed later in the render graph.
-   *
-   * @param {Array} image_writes - An array of image write operations to be queued.
-   * @returns {void}
-   *
-   * @example
-   * const imageWrites = [
-   *   { image: someImage, data: new Uint8Array([255, 0, 0, 255]), offset: { x: 0, y: 0 }, size: { width: 1, height: 1 } },
-   *   { image: anotherImage, data: new Float32Array([0.5, 0.7, 1.0, 1.0]), offset: { x: 10, y: 20 }, size: { width: 2, height: 2 } }
-   * ];
-   * renderGraph.queue_image_global_writes(imageWrites);
-   */
-  queue_image_global_writes(image_writes) {
-    this.queued_image_global_writes = [
-      ...this.queued_image_global_writes,
-      ...image_writes,
-    ];
+  queue_global_bind_group_write(writes, overwrite = false) {
+    if (overwrite) {
+      this.queued_global_bind_group_writes = writes;
+    } else {
+      this.queued_global_bind_group_writes = [
+        ...this.queued_global_bind_group_writes,
+        ...writes,
+      ];
+    }
   }
 
   _update_reference_counts(pass) {
@@ -1027,13 +989,10 @@ export class RenderGraph {
     );
 
     pass.physical_id = Name.from(pass.pass_config.name);
-    const physical_pass = RenderPass.create(
-      is_compute_pass ? RenderPassType.Compute : RenderPassType.Graphics,
-      pass.pass_config
-    );
+    const physical_pass = RenderPass.create(pass.pass_config);
 
-    this._setup_pass_pipeline_state(pass, frame_data);
     this._setup_pass_bind_groups(pass, frame_data);
+    this._setup_pass_pipeline_state(pass, frame_data);
   }
 
   _setup_physical_resource(
@@ -1121,12 +1080,26 @@ export class RenderGraph {
           pass.parameters.output_views.length > resource_params_index
             ? pass.parameters.output_views[resource_params_index]
             : 0;
-        pass.pass_config.attachments.push({
-          image: this.registry.resource_metadata.get(resource).physical_id,
-          image_view_index: image_view_index,
-          b_image_view_considers_layer_split:
-            image_resource.config.split_array_layer_views,
-        });
+
+        const image = ResourceCache.get().fetch(
+          CacheTypes.IMAGE,
+          this.registry.resource_metadata.get(resource).physical_id
+        );
+        if (image.config.type.includes("depth")) {
+          pass.pass_config.depth_stencil_attachment = {
+            image: this.registry.resource_metadata.get(resource).physical_id,
+            image_view_index: image_view_index,
+            b_image_view_considers_layer_split:
+              image_resource.config.split_array_layer_views,
+          };
+        } else {
+          pass.pass_config.attachments.push({
+            image: this.registry.resource_metadata.get(resource).physical_id,
+            image_view_index: image_view_index,
+            b_image_view_considers_layer_split:
+              image_resource.config.split_array_layer_views,
+          });
+        }
       }
     }
   }
@@ -1161,6 +1134,7 @@ export class RenderGraph {
       return;
     }
 
+    const pass_binds = this.pass_cache.bind_groups.get(pass.pass_config.name);
     const shader_setup = pass.parameters.shader_setup;
 
     if (shader_setup.pipeline_shaders) {
@@ -1176,7 +1150,9 @@ export class RenderGraph {
 
         const pipeline_descriptor = {
           label: pass.pass_config.name,
-          layout: "auto",
+          bind_layouts: pass_binds.bind_groups
+            .filter((bind_group) => bind_group !== null)
+            .map((bind_group) => bind_group.layout),
           compute: {
             module: compute_shader.module,
             entryPoint:
@@ -1201,34 +1177,45 @@ export class RenderGraph {
         );
 
         const targets = pass.pass_config.attachments
-          .filter(
-            (attachment) =>
-              !attachment.format || !attachment.format.includes("depth")
-          )
-          .map((attachment) => ({
-            format: attachment.format || "bgra8unorm",
-            blend: shader_setup.attachment_blend || {
-              color: {
-                srcFactor: "one",
-                dstFactor: "zero",
-                operation: "add",
-              },
-              alpha: {
-                srcFactor: "one",
-                dstFactor: "zero",
-                operation: "add",
-              },
-            },
-          }));
+          .filter((attachment) => {
+            const image = ResourceCache.get().fetch(
+              CacheTypes.IMAGE,
+              attachment.image
+            );
+            return !image.config.type.includes("depth");
+          })
+          .map((attachment) => {
+            const image = ResourceCache.get().fetch(
+              CacheTypes.IMAGE,
+              attachment.image
+            );
+            const attachment_desc = {
+              format: image.config.format || "bgra8unorm",
+            };
+            if (shader_setup.attachment_blend) {
+              attachment_desc.blend = shader_setup.attachment_blend;
+            }
+            return attachment_desc;
+          });
 
-        const depth_stencil_target = pass.pass_config.attachments.find(
-          (attachment) =>
-            attachment.format && attachment.format.includes("depth")
-        );
+        let depth_stencil_target = null;
+        if (pass.pass_config.depth_stencil_attachment) {
+          const image = ResourceCache.get().fetch(
+            CacheTypes.IMAGE,
+            pass.pass_config.depth_stencil_attachment.image
+          );
+          depth_stencil_target = {
+            depthWriteEnabled: shader_setup.b_depth_write_enabled ?? true,
+            depthCompare: shader_setup.depth_stencil_compare_op || "less",
+            format: image.config.format || "depth24plus",
+          };
+        }
 
         const pipeline_descriptor = {
           label: pass.pass_config.name,
-          layout: "auto",
+          bind_layouts: pass_binds.bind_groups
+            .filter((bind_group) => bind_group !== null)
+            .map((bind_group) => bind_group.layout),
           vertex: {
             module: vertex_shader.module,
             entryPoint:
@@ -1243,16 +1230,12 @@ export class RenderGraph {
           },
           primitive: {
             topology: shader_setup.primitive_topology_type || "triangle-list",
-            cullMode: shader_setup.rasterizer_state?.cull_mode || "none",
+            cullMode: shader_setup.rasterizer_state?.cull_mode || "back",
           },
         };
 
         if (depth_stencil_target) {
-          pipeline_descriptor.depthStencil = {
-            depthWriteEnabled: shader_setup.b_depth_write_enabled ?? false,
-            depthCompare: shader_setup.depth_stencil_compare_op || "less-equal",
-            format: shader_setup.depth_stencil_format || "depth24plus-stencil8",
-          };
+          pipeline_descriptor.depthStencil = depth_stencil_target;
         }
 
         pass.pipeline_state_id = Name.from(pass.pass_config.name);
@@ -1273,11 +1256,6 @@ export class RenderGraph {
   }
 
   async _setup_pass_bind_groups(pass, frame_data) {
-    const pipeline_state = ResourceCache.get().fetch(
-      CacheTypes.PIPELINE_STATE,
-      frame_data.pass_pipeline_state
-    );
-
     const pass_binds = this.pass_cache.bind_groups.get(
       pass.pass_config.name
     ) || {
@@ -1291,6 +1269,8 @@ export class RenderGraph {
 
     // Setup pass-specific bind group
     let entries = [];
+    let layouts = [];
+
     pass.parameters.pass_inputs.forEach((resource, index) => {
       const metadata = this.registry.resource_metadata.get(resource);
       if (metadata.b_is_persistent) {
@@ -1302,7 +1282,12 @@ export class RenderGraph {
           );
           entries.push({
             binding: index,
-            resource: image.create_view(),
+            resource: image.view,
+          });
+          layouts.push({
+            binding: index,
+            visibility: GPUShaderStage.FRAGMENT | GPUShaderStage.VERTEX,
+            texture: {},
           });
         } else {
           const buffer = ResourceCache.get().fetch(
@@ -1317,15 +1302,25 @@ export class RenderGraph {
               size: buffer.size,
             },
           });
+          layouts.push({
+            binding: index,
+            visibility: GPUShaderStage.FRAGMENT | GPUShaderStage.VERTEX,
+            buffer: {
+              type:
+                (buffer.config.usage & GPUBufferUsage.STORAGE) !== 0
+                  ? "read-only-storage"
+                  : "uniform",
+            },
+          });
         }
       }
     });
 
     if (entries.length > 0) {
-      const pass_bind_group = BindGroup.create(
+      const pass_bind_group = BindGroup.create_with_layout(
         frame_data.context,
         `${pass.pass_config.name}_bindgroup_${BindGroupType.Pass}`,
-        pipeline_state,
+        layouts,
         BindGroupType.Pass,
         entries
       );
@@ -1340,26 +1335,63 @@ export class RenderGraph {
     pass_binds.bind_groups[BindGroupType.Global] =
       this.pass_cache.global_bind_group;
 
-    if (pass_binds.bind_groups[BindGroupType.Global] && !this.queued_buffer_global_writes.length) return;
-
-    const pipeline_state = ResourceCache.get().fetch(
-      CacheTypes.PIPELINE_STATE,
-      frame_data.pass_pipeline_state
-    );
+    if (
+      pass_binds.bind_groups[BindGroupType.Global] &&
+      !this.queued_global_bind_group_writes.length
+    ) {
+      return;
+    }
 
     let entries = [];
-    this.queued_buffer_global_writes.forEach((buffer_desc, index) => {
-      entries.push({
-        binding: index,
-        resource: {
-          buffer: buffer_desc.buffer.buffer,
-          offset: buffer_desc.offset || 0,
-          size: buffer_desc.size,
-        },
-      });
+    let layouts = [];
+
+    this.queued_global_bind_group_writes.forEach((write, index) => {
+      if (write.buffer) {
+        entries.push({
+          binding: index,
+          resource: {
+            buffer: write.buffer.buffer,
+            offset: write.offset || 0,
+            size: write.size,
+          },
+        });
+        layouts.push({
+          binding: index,
+          visibility:
+            write.visibility || GPUShaderStage.FRAGMENT | GPUShaderStage.VERTEX,
+          buffer: {
+            type:
+              (write.buffer.config.usage & GPUBufferUsage.STORAGE) !== 0
+                ? "read-only-storage"
+                : "uniform",
+          },
+        });
+      } else if (write.sampler) {
+        entries.push({
+          binding: index,
+          resource: write.sampler,
+        });
+        layouts.push({
+          binding: index,
+          visibility:
+            write.visibility || GPUShaderStage.FRAGMENT | GPUShaderStage.VERTEX,
+          sampler: {},
+        });
+      } else if (write.texture_view) {
+        entries.push({
+          binding: index,
+          resource: write.texture_view,
+        });
+        layouts.push({
+          binding: index,
+          visibility:
+            write.visibility || GPUShaderStage.FRAGMENT | GPUShaderStage.VERTEX,
+          texture: {},
+        });
+      }
     });
-    
-    this.queued_buffer_global_writes = [];
+
+    this.queued_global_bind_group_writes = [];
 
     // TODO: Figure out how to write these bindless resources into the global buffer and image arrays
     //   // Setup bindless resources on global bind group
@@ -1393,18 +1425,18 @@ export class RenderGraph {
     //   }
 
     if (entries.length > 0) {
-      const global_bind_group = BindGroup.create(
+      const global_bind_group = BindGroup.create_with_layout(
         frame_data.context,
-        `${pass.pass_config.name}_bindgroup_${BindGroupType.Global}`,
-        pipeline_state,
+        `global_bindgroup_${BindGroupType.Global}`,
+        layouts,
         BindGroupType.Global,
-        entries
+        entries,
+        true /* force */
       );
 
       this.pass_cache.global_bind_group = global_bind_group;
-      this.pass_cache.bind_groups.get(pass.pass_config.name).bind_groups[
-        BindGroupType.Global
-      ] = this.pass_cache.global_bind_group;
+      pass_binds.bind_groups[BindGroupType.Global] =
+        this.pass_cache.global_bind_group;
     }
   }
 

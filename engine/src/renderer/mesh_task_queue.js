@@ -1,10 +1,130 @@
 import { ResourceCache, CacheTypes } from "@/renderer/resource_cache.js";
-import Name from "@/utility/names.js";
+import { Mesh } from "@/renderer/mesh.js";
+import { Buffer } from "@/renderer/buffer.js";
+import { Name } from "@/utility/names.js";
+
+class IndirectDrawBatch {
+    mesh_id = 0;
+    index_buffer_id = null;
+    instance_count = 0;
+    first_index = 0;
+    index_count = 0;
+    base_vertex = 0;
+    base_instance = 0;
+}
+
+class ObjectInstanceEntry {
+    constructor(batch_index, entity_index, material_index) {
+        this.batch_index = batch_index;
+        this.entity_index = entity_index;
+        this.material_index = material_index;
+    }
+}
+
+class IndirectDrawObject {
+    batches = [];
+    object_instances = [];
+    indirect_draw_buffer = null;
+    object_instance_buffer = null;
+
+    // We assume this gets called once per frame
+    update_buffers(context) {
+        if (!this.indirect_draw_buffer) {
+            const indirect_draw_data = new Uint32Array(Math.max(this.batches.length * 5, 5));
+            this.batches.forEach((batch, index) => {
+                const offset = index * 5;
+                indirect_draw_data[offset] = batch.index_count;
+                indirect_draw_data[offset + 1] = batch.instance_count;
+                indirect_draw_data[offset + 2] = batch.first_index;
+                indirect_draw_data[offset + 3] = batch.base_vertex;
+                indirect_draw_data[offset + 4] = batch.base_instance;
+            });
+
+            this.indirect_draw_buffer = Buffer.create(context, {
+                name: "indirect_draw_buffer",
+                raw_data: indirect_draw_data,
+                usage: GPUBufferUsage.INDIRECT | GPUBufferUsage.COPY_DST
+            });
+        }
+        if (!this.object_instance_buffer) {
+            const object_instance_data = new Uint32Array(Math.max(this.object_instances.length * 3, 3));
+            this.object_instances.forEach((instance, index) => {
+                const offset = index * 3;
+                object_instance_data[offset] = instance.batch_index;
+                object_instance_data[offset + 1] = instance.entity_index;
+                object_instance_data[offset + 2] = instance.material_index;
+            });
+            
+            this.object_instance_buffer = Buffer.create(context, {
+                name: "object_instance_buffer",
+                raw_data: object_instance_data,
+                usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST
+            });
+        }
+
+        // Resize indirect draw buffer if needed
+        const required_indirect_draw_size = this.batches.length * 5 * 4; // 5 uint32 per batch, 4 bytes per uint32
+        if (this.indirect_draw_buffer.size < required_indirect_draw_size) {
+            ResourceCache.get().remove(
+                CacheTypes.BUFFER,
+                this.indirect_draw_buffer.physical_id
+              );
+            this.indirect_draw_buffer = Buffer.create(context, {
+                name: "indirect_draw_buffer",
+                data: this.batches.map(batch => [batch.index_count, batch.instance_count, batch.first_index, batch.base_vertex, batch.base_instance]),
+                usage: GPUBufferUsage.INDIRECT | GPUBufferUsage.COPY_DST
+            });
+        }
+
+        // Resize object instance buffer if needed
+        const required_object_instance_size = this.object_instances.length * 3 * 4; // 3 uint32 per instance, 4 bytes per uint32
+        if (this.object_instance_buffer.size < required_object_instance_size) {
+            ResourceCache.get().remove(
+                CacheTypes.BUFFER,
+                this.object_instance_buffer.physical_id
+              );
+            this.object_instance_buffer = Buffer.create(context, {
+                name: "object_instance_buffer",
+                data: this.object_instances.map(instance => [instance.batch_index, instance.entity_index, instance.material_index]),
+                usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST
+            });
+        }
+
+        // Update indirect draw buffer
+        const indirect_draw_data = new Uint32Array(this.batches.length * 5);
+        this.batches.forEach((batch, index) => {
+            const offset = index * 5;
+            indirect_draw_data[offset] = batch.index_count;
+            indirect_draw_data[offset + 1] = batch.instance_count;
+            indirect_draw_data[offset + 2] = batch.first_index;
+            indirect_draw_data[offset + 3] = batch.base_vertex;
+            indirect_draw_data[offset + 4] = batch.base_instance;
+        });
+        this.indirect_draw_buffer.write(context, indirect_draw_data);
+
+        // Update object instance buffer
+        const object_instance_data = new Uint32Array(this.object_instances.length * 3);
+        this.object_instances.forEach((instance, index) => {
+            const offset = index * 3;
+            object_instance_data[offset] = instance.batch_index;
+            object_instance_data[offset + 1] = instance.entity_index;
+            object_instance_data[offset + 2] = instance.material_index;
+        });
+        this.object_instance_buffer.write(context, object_instance_data);
+    }
+}
 
 class MeshTask {
-    constructor(mesh_id) {
-        this.mesh_id = mesh_id;
-        this.instance_count = 1;
+    mesh_id = null;
+    entity = null;
+    material_id = null;
+
+    constructor(task_desc) {
+        this.mesh_id = Name.from(task_desc.mesh.name);
+        this.entity = task_desc.entity;
+        if (task_desc.material) {
+            this.material_id = Name.from(task_desc.material.name);
+        }
     }
 }
 
@@ -14,6 +134,7 @@ export class MeshTaskQueue {
             return MeshTaskQueue.instance;
         }
         this.tasks = [];
+        this.indirect_draw_object = new IndirectDrawObject();
         MeshTaskQueue.instance = this;
     }
 
@@ -24,35 +145,61 @@ export class MeshTaskQueue {
         return MeshTaskQueue.instance;
     }
 
-    new_task(mesh) {
-        const mesh_id = Name.from(mesh.name);
-        this.tasks.forEach(task => {
-            if (task.mesh_id === mesh_id) {
-                task.instance_count++;
-                return task;
-            }
-        });
-        const task = new MeshTask(mesh_id);
+    new_task(task_desc) {
+        const task = new MeshTask(task_desc);
         this.tasks.push(task);
         return task;
-    }
-
-    remove_single_task(mesh_id) {
-        this.tasks = this.tasks.forEach(task => {
-            if (task.mesh_id === mesh_id) {
-                task.instance_count--;
-            }
-        });
     }
 
     remove_all_tasks(mesh_id) {
         this.tasks = this.tasks.filter(task => task.mesh_id !== mesh_id);
     }
 
-    sort() {
+    sort_and_batch(context) {
         this.tasks.sort((a, b) => a.mesh_id < b.mesh_id);
-    }
+
+        this.indirect_draw_object.batches = [];
+        this.indirect_draw_object.object_instances = [];
+
+        this.tasks.forEach((task, task_index) => {
+            const last_batch = this.indirect_draw_object.batches[this.indirect_draw_object.batches.length - 1];
+            if (last_batch && last_batch.mesh_id === task.mesh_id) {
+                last_batch.instance_count += 1;
+            } else {
+                const mesh = ResourceCache.get().fetch(CacheTypes.MESH, task.mesh_id);
+
+                const batch = new IndirectDrawBatch();
+                batch.mesh_id = task.mesh_id;
+                batch.index_buffer_id = Name.from(mesh.index_buffer.config.name);
+                batch.instance_count = 1;
+                batch.first_index = 0;
+                batch.index_count = mesh.indices.length;
+                batch.base_vertex = mesh.vertex_buffer_offset;
+                batch.base_instance = task_index;
     
+                this.indirect_draw_object.batches.push(batch);
+            }
+        });
+
+        for (let i = 0; i < this.indirect_draw_object.batches.length; i++) {
+            const batch = this.indirect_draw_object.batches[i];
+            for (let j = 0; j < batch.instance_count; j++) {
+                const object_instance = new ObjectInstanceEntry(
+                    i,
+                    this.tasks[batch.base_instance + j].entity,
+                    this.tasks[batch.base_instance + j].material_id
+                );
+                this.indirect_draw_object.object_instances.push(object_instance);
+            }
+        }
+
+        this.indirect_draw_object.update_buffers(context);
+    }
+
+    get_object_instance_buffer() {
+        return this.indirect_draw_object.object_instance_buffer;
+    }
+
     submit_draws(render_pass) {
         this.tasks.forEach(task => {
             const mesh = ResourceCache.get().fetch(CacheTypes.MESH, task.mesh_id);   
@@ -68,5 +215,24 @@ export class MeshTaskQueue {
             render_pass.pass.drawIndexed(mesh.indices.length, task.instance_count, 0, mesh.vertex_buffer_offset);
         });
         this.tasks.length = 0;
+    }
+
+    submit_indexed_indirect_draws(render_pass) {
+        for (let i = 0; i < this.indirect_draw_object.batches.length; ++i) {
+            const batch = this.indirect_draw_object.batches[i];
+            const index_buffer = ResourceCache.get().fetch(CacheTypes.BUFFER, batch.index_buffer_id);
+            render_pass.pass.setIndexBuffer(index_buffer.buffer, index_buffer.config.element_type);
+            render_pass.pass.drawIndexedIndirect(
+                this.indirect_draw_object.indirect_draw_buffer.buffer,
+                i * 20 // 5 * 4 bytes per draw call
+            );
+        }
+        this.tasks.length = 0;
+    }
+
+    draw_quad(context, render_pass) {
+        const mesh = Mesh.quad(context);
+        render_pass.pass.setIndexBuffer(mesh.index_buffer.buffer, mesh.index_buffer.config.element_type);
+        render_pass.pass.drawIndexed(mesh.indices.length, 1, 0, mesh.vertex_buffer_offset);
     }
 }

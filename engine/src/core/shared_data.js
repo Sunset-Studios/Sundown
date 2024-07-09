@@ -1,4 +1,5 @@
 import { Buffer } from "@/renderer/buffer.js";
+import { Renderer } from "@/renderer/renderer.js";
 import { mat4, vec4, quat } from "gl-matrix";
 import { WORLD_UP, WORLD_FORWARD } from "@/core/minimal.js";
 import _ from "lodash";
@@ -22,29 +23,36 @@ export class SharedVertexBuffer {
     return SharedVertexBuffer.instance;
   }
 
-  add_vertex_data(data) {
+  add_vertex_data(context, data) {
     const offset = this.vertex_data.length;
     this.vertex_data.push(...data);
     this.size = this._get_byte_size();
+    this.build(context);
     return offset;
   }
 
   _get_byte_size() {
     return (
       this.vertex_data
-        .map((v) => v.position.concat(v.normal, v.color, v.uv))
+        .map((v) => v.position.concat(v.normal, v.color, v.uv, v.tangent, v.bitangent))
         .flat().length * 4
     );
   }
 
   build(context) {
+    if (this.buffer) {
+      this.buffer.destroy();
+    }
+
     this.buffer = Buffer.create(context, {
       name: "vertex_buffer",
       data: this.vertex_data.map((v) =>
-        v.position.concat(v.normal, v.color, v.uv)
+        v.position.concat(v.normal, v.color, v.uv, v.tangent, v.bitangent)
       ),
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
     });
+
+    Renderer.get().refresh_global_shader_bindings();
   }
 }
 
@@ -69,13 +77,13 @@ export class SharedViewBuffer {
   }
 
   // Adds a view data to the buffer and returns the index. Should be called during setup, before the simulation begins.
-  add_view_data(view_data = {}) {
+  add_view_data(context, view_data = {}) {
     this.view_data.push({
       position: view_data.position ?? vec4.create(), 
       rotation: view_data.rotation ?? quat.create(),
       fov: view_data.fov ?? 75,
       aspect_ratio: view_data.aspect_ratio ?? 1,
-      near: view_data.near ?? 0.1,
+      near: view_data.near ?? 0.01,
       far: view_data.far ?? 1000,
       view_forward: view_data.view_forward ?? vec4.create(),
       view_matrix: view_data.view_matrix ?? mat4.create(),
@@ -95,6 +103,8 @@ export class SharedViewBuffer {
     this.raw_data = new Float32Array(flattened_data.length);
     this.raw_data.set(flattened_data);
     this.size = this.type_size_bytes * this.view_data.length;
+
+    this.build(context);
 
     return this.view_data.length - 1;
   }
@@ -197,11 +207,17 @@ export class SharedViewBuffer {
 
   // Builds the GPU resident view buffer. Should be called during setup, before the simulation begins.
   build(context) {
+    if (this.buffer) {
+      this.buffer.destroy();
+    }
+
     this.buffer = Buffer.create(context, {
       name: "view_buffer",
       data: this.view_data.map(this._get_gpu_type_layout),
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
     });
+
+    Renderer.get().refresh_global_shader_bindings();
   }
 
   _get_gpu_type_layout(item) {

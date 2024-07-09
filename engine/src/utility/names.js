@@ -1,4 +1,4 @@
-class Name {
+export class Name {
     static string_to_hash = new Map();
     static hash_to_string = new Map();
 
@@ -34,5 +34,3 @@ class Name {
         return Name.hash(str);
     }
 }
-
-export default Name;

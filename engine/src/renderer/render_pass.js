@@ -1,10 +1,5 @@
-import Name from "@/utility/names.js";
+import { Name } from "@/utility/names.js";
 import { ResourceCache, CacheTypes } from "@/renderer/resource_cache.js";
-
-export const RenderPassType = Object.freeze({
-    Graphics: 0,
-    Compute: 1,
-});
 
 /**
  * Flags for render passes in the render graph.
@@ -13,82 +8,107 @@ export const RenderPassType = Object.freeze({
 export const RenderPassFlags = Object.freeze({
   /** No flags */
   None: 0,
+  /** Indicates a graphics pass */
+  Graphics: 1,
   /** Indicates a present pass */
-  Present: 1,
+  Present: 2,
   /** Indicates a compute pass */
-  Compute: 2,
+  Compute: 4,
   /** Indicates a graph-local pass */
-  GraphLocal: 4,
+  GraphLocal: 8,
 });
 
 export class RenderPass {
-    pass = null;
-    config = null;
-    type = null;
+  pass = null;
+  config = null;
 
-    init(type, config) {
-        this.type = type;
-        this.config = config;
+  init(config) {
+    this.config = config;
+  }
+
+  begin(encoder, pipeline) {
+    if (this.config.flags & RenderPassFlags.Graphics) {
+      const attachments = this.config.attachments
+        .map((attachment) => {
+          const image = ResourceCache.get().fetch(
+            CacheTypes.IMAGE,
+            attachment.image
+          );
+          return {
+            view: image.view,
+            clearValue: image.config.clear_value ?? { r: 0, g: 0, b: 0, a: 1 },
+            loadOp: image.config.load_op ?? 'clear',
+            storeOp: image.config.store_op ?? 'store',
+          };
+        });
+
+        const pass_desc = {
+          label: this.config.name,
+          colorAttachments: attachments,
+        };
+
+      if (this.config.depth_stencil_attachment) {
+        const depth_stencil_image = ResourceCache.get().fetch(
+          CacheTypes.IMAGE,
+          this.config.depth_stencil_attachment.image
+        );
+        pass_desc.depthStencilAttachment = {
+          view: depth_stencil_image.view,
+          depthClearValue: depth_stencil_image.config.clear_value ?? 0.0,
+          depthLoadOp: depth_stencil_image.config.load_op ?? "load",
+          depthStoreOp: depth_stencil_image.config.store_op ?? "store",
+        };
+      }
+
+      this.pass = encoder.beginRenderPass(pass_desc);
+    } else if (this.config.flags & RenderPassFlags.Compute) {
+      this.pass = encoder.beginComputePass({
+        label: this.config.name,
+      });
     }
 
-    begin(encoder, pipeline) {
-        if (this.type === RenderPassType.Graphics) {
-            const attachments = this.config.attachments.map((attachment) => {
-                const image = ResourceCache.get().fetch(CacheTypes.IMAGE, attachment.image);
-                return {
-                    view: image.image.createView(),
-                    clearValue: image.config.clear_value,
-                    loadOp: image.config.load_op,
-                    storeOp: image.config.store_op,
-                };
-            });
+    this.pass.setPipeline(pipeline.pipeline);
 
-            this.pass = encoder.beginRenderPass({
-                label: this.config.name,
-                colorAttachments: attachments,
-                depthStencilAttachment: this.config.depth_stencil_attachment,
-            });
-        } else if (this.type === RenderPassType.Compute) {
-            this.pass = encoder.beginComputePass({
-                label: this.config.name,
-            });
-        }
-
-        this.pass.setPipeline(pipeline.pipeline);
-
-        if (this.config.viewport) {
-            this.pass.setViewport(this.config.viewport);
-        }
-        if (this.config.scissor_rect) {
-            this.pass.setScissorRect(this.config.scissor_rect);
-        }
-        if (this.config.vertex_buffer) {
-            this.pass.setVertexBuffer(this.config.vertex_buffer);
-        }
-        if (this.config.index_buffer) {
-            this.pass.setIndexBuffer(this.config.index_buffer);
-        }
+    if (this.config.viewport) {
+      this.pass.setViewport(this.config.viewport);
     }
-
-    dispatch(x, y, z) {
-        if (this.type === RenderPassType.Compute) {
-            this.pass.dispatchWorkgroups(x, y, z);
-        }
+    if (this.config.scissor_rect) {
+      this.pass.setScissorRect(this.config.scissor_rect);
     }
-
-    end() {
-        if (this.pass) {
-            this.pass.end();
-        }
+    if (this.config.vertex_buffer) {
+      this.pass.setVertexBuffer(this.config.vertex_buffer);
     }
-
-    static create(type, config) {
-        let render_pass = ResourceCache.get().fetch(CacheTypes.PASS, Name.from(config.name));
-        if (!render_pass) {
-            render_pass = new RenderPass();
-            render_pass.init(type, config);
-            ResourceCache.get().store(CacheTypes.PASS, Name.from(config.name), render_pass);
-        }
-        return render_pass;
+    if (this.config.index_buffer) {
+      this.pass.setIndexBuffer(this.config.index_buffer);
     }
+  }
+
+  dispatch(x, y, z) {
+    if (this.config.flags & RenderPassFlags.Compute) {
+      this.pass.dispatchWorkgroups(x, y, z);
+    }
+  }
+
+  end() {
+    if (this.pass) {
+      this.pass.end();
+    }
+  }
+
+  static create(config) {
+    let render_pass = ResourceCache.get().fetch(
+      CacheTypes.PASS,
+      Name.from(config.name)
+    );
+    if (!render_pass) {
+      render_pass = new RenderPass();
+      render_pass.init(config);
+      ResourceCache.get().store(
+        CacheTypes.PASS,
+        Name.from(config.name),
+        render_pass
+      );
+    }
+    return render_pass;
+  }
 }

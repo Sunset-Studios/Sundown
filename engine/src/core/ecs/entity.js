@@ -46,13 +46,22 @@ export class EntityManager {
         this.update_queries();
     }
 
-    add_fragment(entity, FragmentType) {
+    add_fragment(entity, FragmentType, data) {
         if (!this.fragment_types.has(FragmentType)) {
             FragmentType.initialize();
             this.fragment_types.add(FragmentType);
         }
-        FragmentType.add_entity(entity);
+        FragmentType.add_entity(entity, data);
         this.entity_fragments.get(entity).add(FragmentType);
+        this.update_queries();
+    }
+
+    remove_fragment(entity, FragmentType) {
+        if (!this.entity_fragments.has(entity) || !this.entity_fragments.get(entity).has(FragmentType)) {
+            return;
+        }
+        FragmentType.remove_entity(entity);
+        this.entity_fragments.get(entity).delete(FragmentType);
         this.update_queries();
     }
 
@@ -116,5 +125,3 @@ export class EntityManager {
 
 // // Usage
 // update_positions(entity_manager, 0.16);
-
-// console.log(`Entities matching query: ${query.get_entities()}`); // Should output 1

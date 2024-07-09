@@ -9,11 +9,14 @@ export class Fragment {
 
     static to_gpu_data() { }
 
-    static add_entity(entity) {
+    static add_entity(entity, data) {
         this.entity_set.add(entity);
         if (entity >= this.size) {
             this.size = entity + 1;
             this.resize();
+        }
+        if (data) {
+            this.update_entity_data(entity, data);
         }
     }
 
@@ -26,13 +29,19 @@ export class Fragment {
     }
 
     static update_entity_data(entity, data) {
-        for (const [key, value] of Object.entries(data)) {
-            if (this.data[key] !== undefined) {
-                this.data[key][entity] = value;
-            } else {
-                throw new Error(`Invalid property ${key} for fragment ${this.constructor.name}`);
+        const update_nested_data = (target_data, source_data, entity_index) => {
+            for (const [key, value] of Object.entries(source_data)) {
+                if (target_data[key] === undefined) {
+                    throw new Error(`Invalid property ${key} for fragment ${this.constructor.name}`);
+                }
+                if (typeof value === 'object' && value !== null && !Array.isArray(value) && !ArrayBuffer.isView(value)) {
+                    update_nested_data(target_data[key], value, entity_index);
+                } else {
+                    target_data[key][entity_index] = value;
+                }
             }
-        }
+        };
+        update_nested_data(this.data, data, entity);
     }
 
     static get_entity_data(entity) {

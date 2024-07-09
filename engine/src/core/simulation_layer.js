@@ -1,26 +1,35 @@
+import { EntityManager } from "@/core/ecs/entity.js";
+
+export class LayerContext {
+    current_view = null;
+    entity_manager = EntityManager.get();
+}
+
 export class SimulationLayer {
     layers = []
+    context = new LayerContext();
+
     constructor() {
         this.name = "SimulationLayer";
     }
 
-    init() { }
+    init(parent_context) { }
 
-    pre_update() {
+    pre_update(parent_context) {
         for (const layer of this.layers) {
-            layer.pre_update();
+            layer.pre_update(this.context);
         }
     }
 
-    update(delta_time) {
+    update(delta_time, parent_context) {
         for (const layer of this.layers) {
-            layer.update(delta_time);
+            layer.update(delta_time, this.context);
         }
     }
 
-    post_update() {
+    post_update(parent_context) {
         for (const layer of this.layers) {
-            layer.post_update();
+            layer.post_update(this.context);
         }
     }
 
@@ -31,7 +40,7 @@ export class SimulationLayer {
         }
 
         const layer = new prototype();
-        layer.init();
+        layer.init(this.context);
         this.layers.push(layer);
         return layer;
     }

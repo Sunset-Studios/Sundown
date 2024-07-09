@@ -12,18 +12,17 @@ export class StaticMeshProcessor extends SimulationLayer {
         super();
     }
 
-    init() {
-        this.entity_query = EntityManager.get().create_query({ fragments_requirements: [StaticMeshFragment] });
+    init(parent_context) {
+        this.entity_query = EntityManager.get().create_query({ fragment_requirements: [StaticMeshFragment] });
     }
 
-    update(delta_time) {
+    update(delta_time, parent_context) {
         const static_meshes = EntityManager.get().get_fragment_array(StaticMeshFragment);
 
         for (const entity of this.entity_query) {
-            const mesh_id = static_meshes.mesh[entity];
-            const mesh = ResourceCache.get().fetch(CacheTypes.Mesh, mesh_id);
-
-            MeshTaskQueue.get().new_task(mesh);
+            const mesh_id = Number(static_meshes.mesh[entity]);
+            const mesh = ResourceCache.get().fetch(CacheTypes.MESH, mesh_id);
+            MeshTaskQueue.get().new_task({ mesh, entity });
         }
     }
 }

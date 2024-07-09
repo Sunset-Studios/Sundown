@@ -1,4 +1,4 @@
-import Name from "@/utility/names.js";
+import { Name } from "@/utility/names.js";
 import { ResourceCache, CacheTypes } from "@/renderer/resource_cache.js";
 
 export const BindlessGroupIndex = {
@@ -77,18 +77,47 @@ export class GroupBindingTable {
 }
 
 export class BindGroup {
-    bind_group = null;
     index = 0;
+    name = ''
+    bind_group = null;
+    layout = null;
     binding_table = null;
 
     init(context, name, pipeline, index, bindings) {
+        this.name = name;
         this.index = index;
+        this.layout = pipeline.pipeline.getBindGroupLayout(index);
         this.bind_group = context.device.createBindGroup({
             label: name,
-            layout: pipeline.pipeline.getBindGroupLayout(index),
+            layout: this.layout,
             entries: bindings,
         });
         this.binding_table = new GroupBindingTable();
+    }
+
+    init_with_layout(context, name, layout, index, bindings) {
+        this.name = name;
+        this.layout = context.device.createBindGroupLayout({
+            label: name,
+            entries: layout,
+        });
+        this.index = index;
+        this.bind_group = context.device.createBindGroup({
+            label: name,
+            layout: this.layout,
+            entries: bindings,
+        });
+        this.binding_table = new GroupBindingTable();
+    }
+
+    destroy() {
+        if (this.bind_group) {
+            ResourceCache.get().remove(CacheTypes.BIND_GROUP, Name.from(this.name));
+
+            this.bind_group = null;
+            this.layout = null;
+            this.binding_table = null;
+        }
     }
 
     bind(render_pass) {
@@ -102,6 +131,23 @@ export class BindGroup {
             bind_group.init(context, name, pipeline, index, bindings);
             ResourceCache.get().store(CacheTypes.BIND_GROUP, Name.from(name), bind_group);
         }
+        return bind_group;
+    }
+
+    static create_with_layout(context, name, layout, index, bindings, force = false) {
+        let bind_group = ResourceCache.get().fetch(CacheTypes.BIND_GROUP, Name.from(name));
+
+        if (bind_group && force) {
+            bind_group.destroy()
+            bind_group = null;
+        }
+
+        if (!bind_group) {
+            bind_group = new BindGroup();
+            bind_group.init_with_layout(context, name, layout, index, bindings);
+            ResourceCache.get().store(CacheTypes.BIND_GROUP, Name.from(name), bind_group);
+        }
+
         return bind_group;
     }
 }

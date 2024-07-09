@@ -1,5 +1,16 @@
-import Name from "@/utility/names.js";
+import { Name } from "@/utility/names.js";
 import { ResourceCache, CacheTypes } from "@/renderer/resource_cache.js";
+
+/**
+ * Flags for buffer resources in the render graph.
+ * @enum {number}
+ */
+export const BufferFlags = Object.freeze({
+  /** No flags */
+  None: 0,
+  /** Indicates a transient buffer resource */
+  Transient: 1,
+});
 
 export class Buffer {
     config = null;
@@ -30,6 +41,13 @@ export class Buffer {
         this.write(context, buffer_data);
     }
 
+    destroy(context) {
+        if (this.buffer) {
+            this.buffer = null;
+            ResourceCache.get().remove(CacheTypes.BUFFER, Name.from(this.config.name))
+        }
+    }
+
     write(context, data, offset = 0) {
         const is_array_buffer = ArrayBuffer.isView(data);
         const raw_data = is_array_buffer ? data : data.flat();
@@ -51,6 +69,10 @@ export class Buffer {
 
     bind_vertex(encoder, slot = 0) {
         encoder.setVertexBuffer(slot, this.buffer);
+    }
+
+    get physical_id() {
+        return Name.from(this.config.name);
     }
 
     static create(context, config) {

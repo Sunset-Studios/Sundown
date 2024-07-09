@@ -1,21 +1,30 @@
-import Name from "@/utility/names.js";
+import { Name } from "@/utility/names.js";
 import { ResourceCache, CacheTypes } from "@/renderer/resource_cache.js";
 
 export class PipelineState {
     pipeline = null;
+    layout = null;
     
     init_render_pipeline(context, name, config) {
+        this.layout = context.device.createPipelineLayout({
+            label: Name.string(name),
+            bindGroupLayouts: config.bind_layouts,
+        });
         this.pipeline = context.device.createRenderPipeline({
             label: Name.string(name),
-            layout: 'auto',
+            layout: this.layout,
             ...config
         });
     }
 
     init_compute_pipeline(context, name, config) {
+        this.layout = context.device.createPipelineLayout({
+            label: Name.string(name),
+            bindGroupLayouts: config.bind_layouts,
+        });
         this.pipeline = context.device.createComputePipeline({
             label: Name.string(name),
-            layout: 'auto',
+            layout: this.layout,
             ...config
         });
     }

@@ -47,6 +47,13 @@ export class GraphicsContext {
         return this.frame_number % MAX_BUFFERED_FRAMES;
     }
 
+    get_canvas_resolution() {
+        return {
+            width: this.canvas.width,
+            height: this.canvas.height
+        }
+    }
+
     draw_pass(render_pass, triangles, instance_count = 1) {
         render_pass.pass.draw(triangles, instance_count);
     }
