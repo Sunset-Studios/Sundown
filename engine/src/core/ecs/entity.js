@@ -1,4 +1,4 @@
-import { EntityQuery } from "@/core/ecs/query.js";
+import { EntityQuery } from "./query.js";
 
 export class EntityManager {
     next_entity_id = 0;

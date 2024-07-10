@@ -1,4 +1,4 @@
-import { EntityManager } from "@/core/ecs/entity.js";
+import { EntityManager } from "./ecs/entity.js";
 
 export class LayerContext {
     current_view = null;

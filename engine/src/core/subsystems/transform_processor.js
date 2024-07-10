@@ -1,6 +1,6 @@
-import { SimulationLayer } from "@/core/simulation_layer.js";
-import { EntityManager } from "@/core/ecs/entity.js";
-import { TransformFragment } from "@/core/ecs/fragments/transform_fragment.js";
+import { SimulationLayer } from "../simulation_layer.js";
+import { EntityManager } from "../ecs/entity.js";
+import { TransformFragment } from "../ecs/fragments/transform_fragment.js";
 import { mat4, quat, vec4 } from "gl-matrix";
 
 export class TransformProcessor extends SimulationLayer {

@@ -1,7 +1,7 @@
-import { ResourceCache, CacheTypes } from "@/renderer/resource_cache.js";
-import { Mesh } from "@/renderer/mesh.js";
-import { Buffer } from "@/renderer/buffer.js";
-import { Name } from "@/utility/names.js";
+import { ResourceCache, CacheTypes } from "./resource_cache.js";
+import { Mesh } from "./mesh.js";
+import { Buffer } from "./buffer.js";
+import { Name } from "../utility/names.js";
 
 class IndirectDrawBatch {
     mesh_id = 0;

@@ -1,12 +1,14 @@
-import { defineConfig } from 'vite'
-import { fileURLToPath, URL } from 'node:url'
+import { defineConfig } from "vite";
 
 export default defineConfig({
-  resolve: {
-    alias: {
-      '@': fileURLToPath(new URL('./engine/src', import.meta.url)),
-      '#': fileURLToPath(new URL('./', import.meta.url))
-    }
+  base: "./",
+  build: {
+    outDir: "dist",
+    rollupOptions: {
+      input: {
+        main: "index.html",
+      },
+    },
   },
-  assetsInclude: ['engine/shaders/**']
-})
+  publicDir: "assets",
+});

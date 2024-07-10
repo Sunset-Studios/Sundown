@@ -1,4 +1,4 @@
-import { Fragment } from '@/core/ecs/fragment';
+import { Fragment } from '../fragment.js';
 
 export class StaticMeshFragment extends Fragment {
     static material_slot_stride = 64;

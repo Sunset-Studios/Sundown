@@ -1,8 +1,8 @@
-import { SimulationLayer } from "@/core/simulation_layer.js";
-import { EntityManager } from "@/core/ecs/entity.js";
-import { StaticMeshFragment } from "@/core/ecs/fragments/static_mesh_fragment.js";
-import { MeshTaskQueue } from "@/renderer/mesh_task_queue.js";
-import { ResourceCache, CacheTypes } from "@/renderer/resource_cache.js";
+import { SimulationLayer } from "../simulation_layer.js";
+import { EntityManager } from "../ecs/entity.js";
+import { StaticMeshFragment } from "../ecs/fragments/static_mesh_fragment.js";
+import { MeshTaskQueue } from "../../renderer/mesh_task_queue.js";
+import { ResourceCache, CacheTypes } from "../../renderer/resource_cache.js";
 
 export class StaticMeshProcessor extends SimulationLayer {
     static_meshes = [];

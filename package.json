@@ -2,11 +2,32 @@
   "name": "sundown",
   "version": "1.0.0",
   "description": "The Sundown WebGPU game engine.",
-  "main": "index.js",
+  "main": "out/main/index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
     "dev": "vite",
-    "build": "vite build"
+    "build": "vite build",
+    "devtop": "vite build && electron-vite dev",
+    "buildtop": "vite build && electron-vite build"
+  },
+  "build": {
+    "appId": "com.sunsetstudios.sundown",
+    "mac": {
+      "category": "simulation"
+    },
+    "win": {
+      "target": [
+        "nsis",
+        "msi"
+      ]
+    },
+    "linux": {
+      "target": [
+        "deb",
+        "rpm",
+        "AppImage"
+      ]
+    }
   },
   "keywords": [
     "WebGPU",
@@ -20,8 +41,14 @@
   "author": "Adrian Sanchez",
   "license": "MIT",
   "dependencies": {
+    "concurrently": "^8.2.2",
     "gl-matrix": "^3.4.3",
     "lodash": "^4.17.21",
+    "module-alias": "^2.2.3",
     "vite": "^5.3.1"
+  },
+  "devDependencies": {
+    "electron": "^31.1.0",
+    "electron-vite": "^2.3.0"
   }
 }

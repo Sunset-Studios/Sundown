@@ -1,4 +1,4 @@
-import { ResourceCache, CacheTypes } from '@/renderer/resource_cache.js';
+import { ResourceCache, CacheTypes } from './resource_cache.js';
 
 export class Shader {
     static shader_paths = ['engine/shaders'];

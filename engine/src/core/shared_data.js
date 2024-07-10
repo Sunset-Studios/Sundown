@@ -1,7 +1,7 @@
-import { Buffer } from "@/renderer/buffer.js";
-import { Renderer } from "@/renderer/renderer.js";
+import { Buffer } from "../renderer/buffer.js";
+import { Renderer } from "../renderer/renderer.js";
 import { mat4, vec4, quat } from "gl-matrix";
-import { WORLD_UP, WORLD_FORWARD } from "@/core/minimal.js";
+import { WORLD_UP, WORLD_FORWARD } from "./minimal.js";
 import _ from "lodash";
 
 export class SharedVertexBuffer {

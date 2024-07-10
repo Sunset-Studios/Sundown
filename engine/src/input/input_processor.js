@@ -1,4 +1,4 @@
-import { InputKey, InputRange, InputType } from "@/input/input_types.js";
+import { InputKey, InputRange, InputType } from "./input_types.js";
 
 export class InputProcessor {
   static key_mapping = {

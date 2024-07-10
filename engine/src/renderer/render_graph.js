@@ -66,17 +66,17 @@
  * ```
  */
 
-import ExecutionQueue from "@/utility/execution_queue.js";
-import { FrameAllocator } from "@/memory/allocator.js";
-import { ResourceCache, CacheTypes } from "@/renderer/resource_cache.js";
-import { BindGroupType, BindGroup } from "@/renderer/bind_group.js";
-import { RenderPass, RenderPassFlags } from "@/renderer/render_pass.js";
-import { PipelineState } from "@/renderer/pipeline_state.js";
-import { CommandQueue } from "@/renderer/command_queue.js";
-import { Buffer, BufferFlags } from "@/renderer/buffer.js";
-import { Image, ImageFlags } from "@/renderer/image.js";
-import { Shader } from "@/renderer/shader.js";
-import { Name } from "@/utility/names.js";
+import ExecutionQueue from "../utility/execution_queue.js";
+import { FrameAllocator } from "../memory/allocator.js";
+import { ResourceCache, CacheTypes } from "./resource_cache.js";
+import { BindGroupType, BindGroup } from "./bind_group.js";
+import { RenderPass, RenderPassFlags } from "./render_pass.js";
+import { PipelineState } from "./pipeline_state.js";
+import { CommandQueue } from "./command_queue.js";
+import { Buffer, BufferFlags } from "./buffer.js";
+import { Image, ImageFlags } from "./image.js";
+import { Shader } from "./shader.js";
+import { Name } from "../utility/names.js";
 import _ from "lodash";
 
 /**

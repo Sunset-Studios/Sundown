@@ -1,13 +1,12 @@
-import { Renderer } from "@/renderer/renderer.js";
-import SimulationCore from "@/core/simulation_core.js";
-import { InputProvider } from "@/input/input_provider.js";
-import { Scene } from "@/core/scene.js";
-import application_state from "@/core/application_state.js";
-import { StaticMeshFragment } from "@/core/ecs/fragments/static_mesh_fragment.js";
-import { TransformFragment } from "@/core/ecs/fragments/transform_fragment.js";
-import { Mesh } from "@/renderer/mesh.js";
-import { Name } from "@/utility/names.js";
-import { vec3, quat } from "gl-matrix";
+import { Renderer } from "../engine/src/renderer/renderer.js";
+import SimulationCore from "../engine/src/core/simulation_core.js";
+import { InputProvider } from "../engine/src/input/input_provider.js";
+import { Scene } from "../engine/src/core/scene.js";
+import application_state from "../engine/src/core/application_state.js";
+import { StaticMeshFragment } from "../engine/src/core/ecs/fragments/static_mesh_fragment.js";
+import { TransformFragment } from "../engine/src/core/ecs/fragments/transform_fragment.js";
+import { Mesh } from "../engine/src/renderer/mesh.js";
+import { Name } from "../engine/src/utility/names.js";
 
 async function init() {
   application_state.is_running = true;
@@ -25,11 +24,11 @@ async function init() {
   
     const sphere_mesh = await Mesh.from_gltf(
       Renderer.get().graphics_context,
-      'models/sphere/sphere.gltf',
+      'engine/models/sphere/sphere.gltf',
     );
     const sphere_entity = scene.create_entity();
     scene.add_fragment(sphere_entity, StaticMeshFragment, {
-      mesh: BigInt(Name.from('models/sphere/sphere.gltf')),
+      mesh: BigInt(Name.from('engine/models/sphere/sphere.gltf')),
     });
     scene.add_fragment(sphere_entity, TransformFragment, {
       position: { x: 0, y: 0, z: 0 },
@@ -54,5 +53,7 @@ function run() {
   requestAnimationFrame(simulate);
 }
 
-await init();
-run();
+(async () => {
+  await init();
+  run();
+})();

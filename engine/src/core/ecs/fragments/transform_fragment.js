@@ -1,5 +1,5 @@
-import { Buffer } from '@/renderer/buffer';
-import { Fragment } from '@/core/ecs/fragment';
+import { Buffer } from '../../../renderer/buffer.js';
+import { Fragment } from '../fragment.js';
 
 export class TransformFragment extends Fragment {
     static initialize() {

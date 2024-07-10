@@ -1,9 +1,9 @@
-import { Renderer } from '@/renderer/renderer';
-import { SimulationLayer } from '@/core/simulation_layer';
-import { SharedViewBuffer } from '@/core/shared_data';
-import { InputProvider } from '@/input/input_provider';
-import { InputKey } from '@/input/input_types';
-import { radians } from '@/utility/math';
+import { Renderer } from '../../renderer/renderer.js';
+import { SimulationLayer } from '../simulation_layer';
+import { SharedViewBuffer } from '../shared_data';
+import { InputProvider } from '../../input/input_provider';
+import { InputKey } from '../../input/input_types';
+import { radians } from '../../utility/math';
 import { vec4, quat } from 'gl-matrix';
 
 export class FreeformViewControlProcessor extends SimulationLayer {

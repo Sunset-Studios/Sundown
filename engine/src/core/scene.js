@@ -1,9 +1,9 @@
-import { SimulationLayer } from "@/core/simulation_layer";
-import { FreeformViewControlProcessor } from "@/core/subsystems/freeform_view_control_processor";
-import { StaticMeshProcessor } from "@/core/subsystems/static_mesh_processor";
-import { TransformProcessor } from "@/core/subsystems/transform_processor";
-import { SharedViewBuffer } from "@/core/shared_data";
-import { Renderer } from "@/renderer/renderer";
+import { SimulationLayer } from "./simulation_layer.js";
+import { FreeformViewControlProcessor } from "./subsystems/freeform_view_control_processor.js";
+import { StaticMeshProcessor } from "./subsystems/static_mesh_processor.js";
+import { TransformProcessor } from "./subsystems/transform_processor.js";
+import { SharedViewBuffer } from "./shared_data.js";
+import { Renderer } from "../renderer/renderer.js";
 
 export class Scene extends SimulationLayer {
   name = "";

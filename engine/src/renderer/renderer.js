@@ -1,8 +1,8 @@
-import { GraphicsContext } from "@/renderer/graphics_context.js";
-import { RenderGraph } from "@/renderer/render_graph.js";
-import { DeferredShadingStrategy } from "@/renderer/strategies/deferred_shading.js";
-import { SharedVertexBuffer, SharedViewBuffer } from "@/core/shared_data.js";
-import { Image } from "@/renderer/image.js";
+import { GraphicsContext } from "./graphics_context.js";
+import { RenderGraph } from "./render_graph.js";
+import { DeferredShadingStrategy } from "./strategies/deferred_shading.js";
+import { Image } from "./image.js";
+import { SharedVertexBuffer, SharedViewBuffer } from "../core/shared_data.js";
 
 export class Renderer {
   graphics_context = null;

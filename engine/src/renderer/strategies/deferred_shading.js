@@ -1,7 +1,7 @@
-import { Image } from "@/renderer/image.js";
-import { RenderPassFlags } from "@/renderer/render_pass.js";
-import { MeshTaskQueue } from "@/renderer/mesh_task_queue";
-import { TransformFragment } from "@/core/ecs/fragments/transform_fragment.js";
+import { Image } from "../image.js";
+import { RenderPassFlags } from "../render_pass.js";
+import { MeshTaskQueue } from "../mesh_task_queue.js";
+import { TransformFragment } from "../../core/ecs/fragments/transform_fragment.js";
 
 export class DeferredShadingStrategy {
   initialized = false;

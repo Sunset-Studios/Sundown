@@ -1,5 +1,5 @@
-import { Name } from "@/utility/names.js";
-import { ResourceCache, CacheTypes } from "@/renderer/resource_cache.js";
+import { Name } from "../utility/names.js";
+import { ResourceCache, CacheTypes } from "./resource_cache.js";
 
 /**
  * Flags for render passes in the render graph.
