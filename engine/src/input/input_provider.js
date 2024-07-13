@@ -2,6 +2,7 @@ import { InputContext } from './input_context.js';
 import { InputState, InputRange, InputType, InputKey } from './input_types.js';
 import { InputProcessor } from './input_processor.js';
 import { SimulationLayer } from '../core/simulation_layer.js';
+import { Renderer } from '../renderer/renderer.js';
 
 export class InputProvider extends SimulationLayer {
     static default_context_instance = null;
@@ -60,7 +61,7 @@ export class InputProvider extends SimulationLayer {
         if (this.contexts.length > 0) {
             const context = this.contexts[this.contexts.length - 1];
 
-            this.processor.update(context, delta_time);
+            this.processor.update(context, delta_time, Renderer.get().graphics_context.canvas);
 
             this.current_dirty_states = [];
             context.visit_dirty_states((state) => {

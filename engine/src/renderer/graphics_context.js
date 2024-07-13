@@ -9,7 +9,7 @@ export class GraphicsContext {
     frame_number = 0;
     aspect_ratio = 1.0;
 
-    async init(canvas) {
+    async init(canvas, options = {}) {
         if (!navigator.gpu) {
             throw Error('WebGPU is not supported');
         }
@@ -33,6 +33,12 @@ export class GraphicsContext {
         });
 
         this.aspect_ratio = this.canvas.width / this.canvas.height;
+
+        if (options.pointer_lock) {
+            this.canvas.addEventListener('click', async () => {
+                await this.canvas.requestPointerLock();
+            });
+        }
     }
 
     advance_frame() {
@@ -62,9 +68,9 @@ export class GraphicsContext {
         return this.adapter.limits.maxBindGroups;
     }
 
-    static async create(canvas) {
+    static async create(canvas, options = {}) {
         let context = new GraphicsContext();
-        await context.init(canvas);
+        await context.init(canvas, options);
         return context
     }
 }

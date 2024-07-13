@@ -235,4 +235,10 @@ export class MeshTaskQueue {
         render_pass.pass.setIndexBuffer(mesh.index_buffer.buffer, mesh.index_buffer.config.element_type);
         render_pass.pass.drawIndexed(mesh.indices.length, 1, 0, mesh.vertex_buffer_offset);
     }
+
+    draw_cube(context, render_pass) {
+        const mesh = Mesh.cube(context);
+        render_pass.pass.setIndexBuffer(mesh.index_buffer.buffer, mesh.index_buffer.config.element_type);
+        render_pass.pass.drawIndexed(mesh.indices.length, 1, 0, mesh.vertex_buffer_offset);
+    }
 }

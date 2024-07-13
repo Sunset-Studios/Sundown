@@ -1,6 +1,7 @@
 import { Buffer } from "../renderer/buffer.js";
+import { Texture } from "../renderer/texture.js";
 import { Renderer } from "../renderer/renderer.js";
-import { mat4, vec4, quat } from "gl-matrix";
+import { mat4, vec4, quat, vec3 } from "gl-matrix";
 import { WORLD_UP, WORLD_FORWARD } from "./minimal.js";
 import _ from "lodash";
 
@@ -86,10 +87,13 @@ export class SharedViewBuffer {
       near: view_data.near ?? 0.01,
       far: view_data.far ?? 1000,
       view_forward: view_data.view_forward ?? vec4.create(),
+      view_right: view_data.view_right ?? vec4.create(),
       view_matrix: view_data.view_matrix ?? mat4.create(),
       projection_matrix: view_data.projection_matrix ?? mat4.create(),
       prev_view_matrix: view_data.prev_view_matrix ?? mat4.create(),
       prev_projection_matrix: view_data.prev_projection_matrix ?? mat4.create(),
+      view_projection_matrix: view_data.view_projection_matrix ?? mat4.create(),
+      inverse_view_projection_matrix: view_data.inverse_view_projection_matrix_direction_only ?? mat4.create(),
     });
 
     if (this.type_size_bytes === 0) {
@@ -121,14 +125,14 @@ export class SharedViewBuffer {
       view_data.position &&
       !vec4.equals(this.view_data[index].position, view_data.position)
     ) {
-      this.view_data[index].position = view_data.position;
+      this.view_data[index].position = vec4.clone(view_data.position);
       dirty = true;
     }
     if (
       view_data.rotation &&
       !quat.equals(this.view_data[index].rotation, view_data.rotation)
     ) {
-      this.view_data[index].rotation = view_data.rotation;
+      this.view_data[index].rotation = quat.clone(view_data.rotation);
       dirty = true;
     }
     if (view_data.fov && this.view_data[index].fov !== view_data.fov) {
@@ -166,10 +170,6 @@ export class SharedViewBuffer {
       }
 
       {
-          this.view_data[index].view_forward = vec4.create();
-          vec4.transformQuat(this.view_data[index].view_forward, WORLD_FORWARD, this.view_data[index].rotation);
-          vec4.normalize(this.view_data[index].view_forward, this.view_data[index].view_forward);
-    
           mat4.perspective(
             this.view_data[index].projection_matrix,
             this.view_data[index].fov,
@@ -180,6 +180,13 @@ export class SharedViewBuffer {
       }
 
       {
+          this.view_data[index].view_forward = vec4.transformQuat(vec4.create(), WORLD_FORWARD, this.view_data[index].rotation);
+          this.view_data[index].view_forward = vec4.normalize(vec4.create(), this.view_data[index].view_forward);
+
+          const right = vec3.cross(vec3.create(), this.view_data[index].view_forward, WORLD_UP);
+          this.view_data[index].view_right = vec4.fromValues(right[0], right[1], right[2], 0);
+          this.view_data[index].view_right = vec3.normalize(vec3.create(), this.view_data[index].view_right);
+
           const view_target = vec4.create();
           vec4.scaleAndAdd(view_target, this.view_data[index].position, this.view_data[index].view_forward, 1.0);
     
@@ -189,6 +196,11 @@ export class SharedViewBuffer {
             view_target,
             WORLD_UP
           );
+      }
+
+      {
+        mat4.mul(this.view_data[index].view_projection_matrix, this.view_data[index].projection_matrix, this.view_data[index].view_matrix);
+        mat4.invert(this.view_data[index].inverse_view_projection_matrix, this.view_data[index].view_projection_matrix);
       }
 
       if (this.buffer) {
@@ -225,7 +237,48 @@ export class SharedViewBuffer {
       ...item.view_matrix,
       ...item.prev_view_matrix,
       ...item.projection_matrix,
-      ...item.prev_projection_matrix
+      ...item.prev_projection_matrix,
+      ...item.view_projection_matrix,
+      ...item.inverse_view_projection_matrix,
     );
+  }
+}
+
+export class SharedEnvironmentMapData {
+  skybox = null;
+
+  constructor() {
+    if (SharedEnvironmentMapData.instance) {
+      return SharedEnvironmentMapData.instance;
+    }
+    SharedEnvironmentMapData.instance = this;
+  }
+
+  static get() {
+    if (!SharedEnvironmentMapData.instance) {
+      return new SharedEnvironmentMapData();
+    }
+    return SharedEnvironmentMapData.instance;
+  }
+
+  async add_skybox(context, name, texture_paths) {
+    const skybox = await Texture.load(context, texture_paths, {
+      name: name,
+      format: "rgba8unorm",
+      dimension: "cube",
+      usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT,
+    });
+
+    this.skybox = skybox;
+
+    return skybox;
+  }
+
+  remove_skybox() {
+    this.skybox = null;
+  }
+
+  get_skybox() {
+    return this.skybox;
   }
 }

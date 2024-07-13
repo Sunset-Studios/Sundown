@@ -74,7 +74,7 @@ import { RenderPass, RenderPassFlags } from "./render_pass.js";
 import { PipelineState } from "./pipeline_state.js";
 import { CommandQueue } from "./command_queue.js";
 import { Buffer, BufferFlags } from "./buffer.js";
-import { Image, ImageFlags } from "./image.js";
+import { Texture, ImageFlags } from "./texture.js";
 import { Shader } from "./shader.js";
 import { Name } from "../utility/names.js";
 import _ from "lodash";
@@ -262,8 +262,7 @@ const RGShaderDataSetup = Object.freeze({
  * @property {string} name - Name of the image.
  * @property {number} width - Width of the image.
  * @property {number} height - Height of the image.
- * @property {number} depth - Depth of the image (for 3D textures).
- * @property {number} array_layers - Number of array layers in the image.
+ * @property {number} depth - Depth of the image (for 3D textures) or number of layers (for array textures).
  * @property {number} mip_levels - Number of mip levels in the image.
  * @property {string} format - Format of the image (e.g., "rgba8unorm").
  * @property {number} usage - Usage flags for the image (e.g., GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.SAMPLED).
@@ -276,7 +275,6 @@ const RGImageConfig = Object.freeze({
   width: 0,
   height: 0,
   depth: 1,
-  array_layers: 1,
   mip_levels: 1,
   format: "",
   usage: 0,
@@ -1040,7 +1038,7 @@ export class RenderGraph {
         image_metadata.b_is_persistent |= is_persistent;
 
         image_metadata.physical_id = Name.from(image_resource.config.name);
-        const image = Image.create(context, image_resource.config);
+        const image = Texture.create(context, image_resource.config);
 
         if (!image_metadata.b_is_persistent) {
           this.registry.resource_deletion_queue.remove_execution(
@@ -1287,7 +1285,10 @@ export class RenderGraph {
           layouts.push({
             binding: index,
             visibility: GPUShaderStage.FRAGMENT | GPUShaderStage.VERTEX,
-            texture: {},
+            texture: {
+              viewDimension: image.config.dimension,
+              sampleType: image.config.type === "depth" ? "depth" : "float",
+            },
           });
         } else {
           const buffer = ResourceCache.get().fetch(

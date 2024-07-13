@@ -1,7 +1,7 @@
 import { GraphicsContext } from "./graphics_context.js";
 import { RenderGraph } from "./render_graph.js";
 import { DeferredShadingStrategy } from "./strategies/deferred_shading.js";
-import { Image } from "./image.js";
+import { Texture } from "./texture.js";
 import { SharedVertexBuffer, SharedViewBuffer } from "../core/shared_data.js";
 
 export class Renderer {
@@ -26,7 +26,7 @@ export class Renderer {
   }
 
   async setup(canvas) {
-    this.graphics_context = await GraphicsContext.create(canvas);
+    this.graphics_context = await GraphicsContext.create(canvas, { pointer_lock: true });
 
     this.render_graph = RenderGraph.create();
 
@@ -58,7 +58,7 @@ export class Renderer {
         size: SharedViewBuffer.get().size,
       },
       {
-        sampler: Image.get_default_sampler(this.graphics_context),
+        sampler: Texture.get_default_sampler(this.graphics_context),
       },
     ], true /* overwrite */);
   }

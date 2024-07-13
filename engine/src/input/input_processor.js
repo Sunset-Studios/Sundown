@@ -67,8 +67,6 @@ export class InputProcessor {
   ranges_array = new Array(InputRange.NumRanges).fill(0.0);
   mouse_x = 0;
   mouse_y = 0;
-  last_mouse_x = 0;
-  last_mouse_y = 0;
 
   constructor() {
     this.handle_key_down = this.handle_key_down.bind(this);
@@ -123,24 +121,18 @@ export class InputProcessor {
   }
 
   handle_mouse_move(event) {
-    this.mouse_x = event.clientX;
-    this.mouse_y = event.clientY;
+    this.mouse_x = event.movementX;
+    this.mouse_y = event.movementY;
   }
 
-  update(context, window) {
+  update(context, delta_time, canvas) {
     // Calculate mouse movement
-    const delta_x = this.mouse_x - this.last_mouse_x;
-    const delta_y = this.mouse_y - this.last_mouse_y;
-
-    this.ranges_array[InputRange.M_x] = delta_x / window.width;
-    this.ranges_array[InputRange.M_y] = delta_y / window.height;
+    this.ranges_array[InputRange.M_x] = this.mouse_x / canvas.width;
+    this.ranges_array[InputRange.M_y] = this.mouse_y / canvas.height;
 
     // Apply decay to mouse movement
-    this.ranges_array[InputRange.M_x] *= Math.exp(-0.5 * 0.5);
-    this.ranges_array[InputRange.M_y] *= Math.exp(-0.5 * 0.5);
-
-    this.last_mouse_x = this.mouse_x;
-    this.last_mouse_y = this.mouse_y;
+    this.mouse_x *= Math.exp(-0.5 * 0.5);
+    this.mouse_y *= Math.exp(-0.5 * 0.5);
 
     // Update the input context
     for (let i = 0; i < context.input_states.length; ++i) {

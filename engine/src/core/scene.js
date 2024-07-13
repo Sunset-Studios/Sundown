@@ -1,5 +1,5 @@
 import { SimulationLayer } from "./simulation_layer.js";
-import { FreeformViewControlProcessor } from "./subsystems/freeform_view_control_processor.js";
+import { FreeformArcballControlProcessor } from "./subsystems/freeform_arcball_control_processor.js";
 import { StaticMeshProcessor } from "./subsystems/static_mesh_processor.js";
 import { TransformProcessor } from "./subsystems/transform_processor.js";
 import { SharedViewBuffer } from "./shared_data.js";
@@ -31,7 +31,7 @@ export class Scene extends SimulationLayer {
   }
 
   setup_default_subsystems() {
-    this.add_layer(FreeformViewControlProcessor);
+    this.add_layer(FreeformArcballControlProcessor);
     this.add_layer(StaticMeshProcessor);
     this.add_layer(TransformProcessor);
   }

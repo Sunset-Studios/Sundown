@@ -19,8 +19,7 @@ export const ImageFlags = Object.freeze({
  * @property {string} name - Name of the image.
  * @property {number} width - Width of the image.
  * @property {number} height - Height of the image.
- * @property {number} depth - Depth of the image (for 3D textures).
- * @property {number} array_layers - Number of array layers in the image.
+ * @property {number} depth - Depth of the image (for 3D textures) or number of layers (for array textures).
  * @property {number} mip_levels - Number of mip levels in the image.
  * @property {string} format - Format of the image (e.g., "rgba8unorm").
  * @property {number} usage - Usage flags for the image (e.g., GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.SAMPLED).
@@ -31,12 +30,11 @@ export const ImageFlags = Object.freeze({
  * @property {string} store_op - Store operation for the image (e.g., "store" or "discard").
  * @property {string} load_op - Load operation for the image (e.g., "load" or "clear").
  */
-class ImageConfig {
+class TextureConfig {
   name = null;
   width = 0;
   height = 0;
   depth = 0;
-  array_layers = 1;
   mip_levels = 1;
   format = "rgba8unorm";
   usage = GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.SAMPLED;
@@ -49,8 +47,8 @@ class ImageConfig {
   store_op = "store";
 }
 
-export class Image {
-  config = new ImageConfig();
+export class Texture {
+  config = new TextureConfig();
   image = null;
   view = null;
 
@@ -76,9 +74,64 @@ export class Image {
       dimension: config.dimension,
       format: config.format,
       usage: config.usage,
-      loadOp: config.load_op ?? 'clear',
-      storeOp: config.store_op ?? 'store',
+      loadOp: config.load_op ?? "clear",
+      storeOp: config.store_op ?? "store",
       clearValue: config.clear_value ?? { r: 0, g: 0, b: 0, a: 1 },
+    });
+
+    this.view = this.create_view();
+  }
+
+  async load(context, paths, config) {
+    this.config = { ...this.config, ...config };
+    this.config.type = config.format.includes("depth") ? "depth" : "color";
+
+    if (this.config.type === "depth") {
+      this.config.clear_value = 1.0;
+      this.config.load_op = "clear";
+    }
+
+    async function load_image_bitmap(path) {
+      const resolved_img = await new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => resolve(img);
+        img.onerror = reject;
+        img.src = path;
+      });
+
+      return await createImageBitmap(resolved_img, {
+        colorSpaceConversion: "none",
+      });
+    }
+
+    const textures = await Promise.all(paths.map(load_image_bitmap));
+
+    this.config.width = textures[0].width;
+    this.config.height = textures[0].height;
+    this.config.depth = textures.length;
+
+    this.image = context.device.createTexture({
+      label: this.config.name,
+      size: {
+        width: this.config.width,
+        height: this.config.height,
+        depthOrArrayLayers: this.config.depth,
+      },
+      mipLevelCount: config.mip_levels,
+      sampleCount: config.sample_count,
+      format: config.format,
+      usage: config.usage,
+      loadOp: config.load_op ?? "clear",
+      storeOp: config.store_op ?? "store",
+      clearValue: config.clear_value ?? { r: 0, g: 0, b: 0, a: 1 },
+    });
+
+    textures.forEach((texture, layer) => {
+      context.device.queue.copyExternalImageToTexture(
+        { source: texture, flipY: true },
+        { texture: this.image, origin: { x: 0, y: 0, z: layer } },
+        [texture.width, texture.height]
+      );
     });
 
     this.view = this.create_view();
@@ -116,7 +169,7 @@ export class Image {
       baseMipLevel: view_config.baseMipLevel ?? 0,
       mipLevelCount: view_config.mipLevelCount ?? this.config.mip_levels,
       baseArrayLayer: view_config.baseArrayLayer ?? 0,
-      arrayLayerCount: view_config.arrayLayerCount ?? this.config.array_layers,
+      arrayLayerCount: view_config.arrayLayerCount ?? this.config.depth,
     });
   }
 
@@ -177,33 +230,57 @@ export class Image {
       CacheTypes.IMAGE,
       Name.from(config.name)
     );
-    if (!image) {
-      image = new Image();
-      image.init(context, config);
-      ResourceCache.get().store(
-        CacheTypes.IMAGE,
-        Name.from(config.name),
-        image
-      );
+
+    if (image) {
+      return image;
     }
+
+    image = new Texture();
+
+    image.init(context, config);
+
+    ResourceCache.get().store(CacheTypes.IMAGE, Name.from(config.name), image);
+
     return image;
   }
 
-  static create_from_image(raw_image, name) {
+  static create_from_texture(raw_image, name) {
     let cached_image = ResourceCache.get().fetch(
       CacheTypes.IMAGE,
       Name.from(name)
     );
-    if (!cached_image) {
-      cached_image = new Image();
-      cached_image.config = { name: name };
-      ResourceCache.get().store(
-        CacheTypes.IMAGE,
-        Name.from(name),
-        cached_image
-      );
+
+    if (cached_image) {
+      cached_image.set_image(raw_image);
+      return cached_image;
     }
+
+    cached_image = new Texture();
+
+    cached_image.config = { name: name };
+
+    ResourceCache.get().store(CacheTypes.IMAGE, Name.from(name), cached_image);
+
     cached_image.set_image(raw_image);
+
     return cached_image;
+  }
+
+  static async load(context, paths, config) {
+    let image = ResourceCache.get().fetch(
+      CacheTypes.IMAGE,
+      Name.from(config.name)
+    );
+
+    if (image) {
+      return image;
+    }
+
+    image = new Texture();
+    await image.load(context, paths, config);
+
+    ResourceCache.get().store(CacheTypes.IMAGE, Name.from(config.name), image);
+
+    return image;
   }
 }

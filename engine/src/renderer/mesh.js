@@ -94,7 +94,10 @@ export class Mesh {
   }
 
   static quad(context) {
-    let mesh = ResourceCache.get().fetch(CacheTypes.MESH, Name.from("engine_quad"));
+    let mesh = ResourceCache.get().fetch(
+      CacheTypes.MESH,
+      Name.from("engine_quad")
+    );
     if (mesh) {
       return mesh;
     }
@@ -135,7 +138,9 @@ export class Mesh {
         bitangent: [0, 1, 0, 0],
       },
     ];
+
     mesh.indices = new Uint16Array([0, 1, 2, 0, 2, 3]);
+
     mesh.vertex_buffer_offset = SharedVertexBuffer.get().add_vertex_data(
       context,
       mesh.vertices
@@ -144,6 +149,240 @@ export class Mesh {
     mesh._build_index_buffer(context);
 
     ResourceCache.get().store(CacheTypes.MESH, Name.from("engine_quad"), mesh);
+
+    return mesh;
+  }
+
+  static cube(context) {
+    let mesh = ResourceCache.get().fetch(
+      CacheTypes.MESH,
+      Name.from("engine_cube")
+    );
+    if (mesh) {
+      return mesh;
+    }
+
+    mesh = new Mesh();
+    mesh.name = "engine_cube";
+    mesh.vertices = [
+      // Front face
+      {
+        position: [-1, -1, 1, 1],
+        normal: [0, 0, 1, 0],
+        color: [1, 1, 1, 1],
+        uv: [0, 0, 0, 0],
+        tangent: [1, 0, 0, 0],
+        bitangent: [0, 1, 0, 0],
+      },
+      {
+        position: [1, -1, 1, 1],
+        normal: [0, 0, 1, 0],
+        color: [1, 1, 1, 1],
+        uv: [1, 0, 0, 0],
+        tangent: [1, 0, 0, 0],
+        bitangent: [0, 1, 0, 0],
+      },
+      {
+        position: [1, 1, 1, 1],
+        normal: [0, 0, 1, 0],
+        color: [1, 1, 1, 1],
+        uv: [1, 1, 0, 0],
+        tangent: [1, 0, 0, 0],
+        bitangent: [0, 1, 0, 0],
+      },
+      {
+        position: [-1, 1, 1, 1],
+        normal: [0, 0, 1, 0],
+        color: [1, 1, 1, 1],
+        uv: [0, 1, 0, 0],
+        tangent: [1, 0, 0, 0],
+        bitangent: [0, 1, 0, 0],
+      },
+
+      // Back face
+      {
+        position: [1, -1, -1, 1],
+        normal: [0, 0, -1, 0],
+        color: [1, 1, 1, 1],
+        uv: [0, 0, 0, 0],
+        tangent: [-1, 0, 0, 0],
+        bitangent: [0, 1, 0, 0],
+      },
+      {
+        position: [-1, -1, -1, 1],
+        normal: [0, 0, -1, 0],
+        color: [1, 1, 1, 1],
+        uv: [1, 0, 0, 0],
+        tangent: [-1, 0, 0, 0],
+        bitangent: [0, 1, 0, 0],
+      },
+      {
+        position: [-1, 1, -1, 1],
+        normal: [0, 0, -1, 0],
+        color: [1, 1, 1, 1],
+        uv: [1, 1, 0, 0],
+        tangent: [-1, 0, 0, 0],
+        bitangent: [0, 1, 0, 0],
+      },
+      {
+        position: [1, 1, -1, 1],
+        normal: [0, 0, -1, 0],
+        color: [1, 1, 1, 1],
+        uv: [0, 1, 0, 0],
+        tangent: [-1, 0, 0, 0],
+        bitangent: [0, 1, 0, 0],
+      },
+
+      // Top face
+      {
+        position: [-1, 1, 1, 1],
+        normal: [0, 1, 0, 0],
+        color: [1, 1, 1, 1],
+        uv: [0, 0, 0, 0],
+        tangent: [1, 0, 0, 0],
+        bitangent: [0, 0, -1, 0],
+      },
+      {
+        position: [1, 1, 1, 1],
+        normal: [0, 1, 0, 0],
+        color: [1, 1, 1, 1],
+        uv: [1, 0, 0, 0],
+        tangent: [1, 0, 0, 0],
+        bitangent: [0, 0, -1, 0],
+      },
+      {
+        position: [1, 1, -1, 1],
+        normal: [0, 1, 0, 0],
+        color: [1, 1, 1, 1],
+        uv: [1, 1, 0, 0],
+        tangent: [1, 0, 0, 0],
+        bitangent: [0, 0, -1, 0],
+      },
+      {
+        position: [-1, 1, -1, 1],
+        normal: [0, 1, 0, 0],
+        color: [1, 1, 1, 1],
+        uv: [0, 1, 0, 0],
+        tangent: [1, 0, 0, 0],
+        bitangent: [0, 0, -1, 0],
+      },
+
+      // Bottom face
+      {
+        position: [-1, -1, -1, 1],
+        normal: [0, -1, 0, 0],
+        color: [1, 1, 1, 1],
+        uv: [0, 0, 0, 0],
+        tangent: [1, 0, 0, 0],
+        bitangent: [0, 0, 1, 0],
+      },
+      {
+        position: [1, -1, -1, 1],
+        normal: [0, -1, 0, 0],
+        color: [1, 1, 1, 1],
+        uv: [1, 0, 0, 0],
+        tangent: [1, 0, 0, 0],
+        bitangent: [0, 0, 1, 0],
+      },
+      {
+        position: [1, -1, 1, 1],
+        normal: [0, -1, 0, 0],
+        color: [1, 1, 1, 1],
+        uv: [1, 1, 0, 0],
+        tangent: [1, 0, 0, 0],
+        bitangent: [0, 0, 1, 0],
+      },
+      {
+        position: [-1, -1, 1, 1],
+        normal: [0, -1, 0, 0],
+        color: [1, 1, 1, 1],
+        uv: [0, 1, 0, 0],
+        tangent: [1, 0, 0, 0],
+        bitangent: [0, 0, 1, 0],
+      },
+
+      // Right face
+      {
+        position: [1, -1, 1, 1],
+        normal: [1, 0, 0, 0],
+        color: [1, 1, 1, 1],
+        uv: [0, 0, 0, 0],
+        tangent: [0, 0, -1, 0],
+        bitangent: [0, 1, 0, 0],
+      },
+      {
+        position: [1, -1, -1, 1],
+        normal: [1, 0, 0, 0],
+        color: [1, 1, 1, 1],
+        uv: [1, 0, 0, 0],
+        tangent: [0, 0, -1, 0],
+        bitangent: [0, 1, 0, 0],
+      },
+      {
+        position: [1, 1, -1, 1],
+        normal: [1, 0, 0, 0],
+        color: [1, 1, 1, 1],
+        uv: [1, 1, 0, 0],
+        tangent: [0, 0, -1, 0],
+        bitangent: [0, 1, 0, 0],
+      },
+      {
+        position: [1, 1, 1, 1],
+        normal: [1, 0, 0, 0],
+        color: [1, 1, 1, 1],
+        uv: [0, 1, 0, 0],
+        tangent: [0, 0, -1, 0],
+        bitangent: [0, 1, 0, 0],
+      },
+
+      // Left face
+      {
+        position: [-1, -1, -1, 1],
+        normal: [-1, 0, 0, 0],
+        color: [1, 1, 1, 1],
+        uv: [0, 0, 0, 0],
+        tangent: [0, 0, 1, 0],
+        bitangent: [0, 1, 0, 0],
+      },
+      {
+        position: [-1, -1, 1, 1],
+        normal: [-1, 0, 0, 0],
+        color: [1, 1, 1, 1],
+        uv: [1, 0, 0, 0],
+        tangent: [0, 0, 1, 0],
+        bitangent: [0, 1, 0, 0],
+      },
+      {
+        position: [-1, 1, 1, 1],
+        normal: [-1, 0, 0, 0],
+        color: [1, 1, 1, 1],
+        uv: [1, 1, 0, 0],
+        tangent: [0, 0, 1, 0],
+        bitangent: [0, 1, 0, 0],
+      },
+      {
+        position: [-1, 1, -1, 1],
+        normal: [-1, 0, 0, 0],
+        color: [1, 1, 1, 1],
+        uv: [0, 1, 0, 0],
+        tangent: [0, 0, 1, 0],
+        bitangent: [0, 1, 0, 0],
+      },
+    ];
+
+    mesh.indices = new Uint16Array([
+      0, 1, 2, 2, 3, 0, 4, 5, 6, 6, 7, 4, 8, 9, 10, 10, 11, 8, 12, 13, 14, 14,
+      15, 12, 16, 17, 18, 18, 19, 16, 20, 21, 22, 22, 23, 20,
+    ]);
+
+    mesh.vertex_buffer_offset = SharedVertexBuffer.get().add_vertex_data(
+      context,
+      mesh.vertices
+    );
+
+    mesh._build_index_buffer(context);
+
+    ResourceCache.get().store(CacheTypes.MESH, Name.from("engine_cube"), mesh);
 
     return mesh;
   }
