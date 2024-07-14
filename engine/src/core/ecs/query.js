@@ -16,7 +16,7 @@ export class EntityQuery {
         }
     }
 
-    get_entities() {
+    get_entity_count() {
         return this.matching_entities.size;
     }
 

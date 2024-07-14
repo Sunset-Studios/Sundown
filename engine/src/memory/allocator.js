@@ -35,6 +35,23 @@ class FrameAllocator {
     reset() {
         this.offset = 0;
     }
+
+    /**
+     * Creates an iterator for the allocated objects in the buffer.
+     * @returns {Iterator} An iterator for the allocated objects.
+     */
+    [Symbol.iterator]() {
+        let index = 0;
+        return {
+            next: () => {
+                if (index < this.offset) {
+                    return { value: this.buffer[index++], done: false };
+                } else {
+                    return { done: true };
+                }
+            }
+        };
+    }
 }
 
 export { FrameAllocator };

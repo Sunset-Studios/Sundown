@@ -3,9 +3,9 @@ import { EntityManager } from "../ecs/entity.js";
 import { StaticMeshFragment } from "../ecs/fragments/static_mesh_fragment.js";
 import { MeshTaskQueue } from "../../renderer/mesh_task_queue.js";
 import { ResourceCache, CacheTypes } from "../../renderer/resource_cache.js";
+import { profile_scope } from "../../utility/performance.js";
 
 export class StaticMeshProcessor extends SimulationLayer {
-    static_meshes = [];
     entity_query = null;
 
     constructor() {
@@ -17,12 +17,26 @@ export class StaticMeshProcessor extends SimulationLayer {
     }
 
     update(delta_time, parent_context) {
-        const static_meshes = EntityManager.get().get_fragment_array(StaticMeshFragment);
+        profile_scope("static_mesh_processor_update", () => {
+          const static_meshes =
+            EntityManager.get().get_fragment_array(StaticMeshFragment);
 
-        for (const entity of this.entity_query) {
+          const resource_cache = ResourceCache.get();
+          const mesh_task_queue = MeshTaskQueue.get();
+
+          let last_mesh_id = null;
+          let mesh = null
+
+          mesh_task_queue.reserve(this.entity_query.get_entity_count());
+
+          for (const entity of this.entity_query) {
             const mesh_id = Number(static_meshes.mesh[entity]);
-            const mesh = ResourceCache.get().fetch(CacheTypes.MESH, mesh_id);
-            MeshTaskQueue.get().new_task({ mesh, entity });
-        }
+            if (mesh_id !== last_mesh_id) {
+                mesh = resource_cache.fetch(CacheTypes.MESH, mesh_id);
+                last_mesh_id = mesh_id;
+            }
+            mesh_task_queue.new_task(mesh_id, entity);
+          }
+        });
     }
 }

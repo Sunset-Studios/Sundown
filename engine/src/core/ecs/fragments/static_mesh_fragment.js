@@ -10,21 +10,23 @@ export class StaticMeshFragment extends Fragment {
         };
     }
 
-    static resize() {
-        const resize_array = (obj, key, stride) => {
+    static resize(new_size) {
+        super.resize(new_size);
+
+        const resize_array = (obj, key, stride, type) => {
             if (obj[key].length < this.size * stride) {
                 const prev = obj[key];
-                obj[key] = new Uint32Array(this.size * stride);
+                obj[key] = new type(this.size * stride);
                 obj[key].set(prev);
             }
         };
 
         ['mesh'].forEach(prop => {
-            resize_array(this.data, prop, 1);
+            resize_array(this.data, prop, 1, BigInt64Array);
         });
 
         ['material_slots'].forEach(prop => {
-            resize_array(this.data, prop, this.material_slot_stride);
+            resize_array(this.data, prop, this.material_slot_stride, Uint32Array);
         });
     }
 }

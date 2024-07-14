@@ -60,8 +60,7 @@ struct ObjectInstance {
 
 @fragment fn fs(v_out: VertexOutput) -> FragmentOutput {
     var output : FragmentOutput;
-    //output.albedo = v_out.color;
-    output.albedo = vec4(1.0, 0.0, 0.0, 1.0);
+    output.albedo = v_out.color;
     output.normal = v_out.normal;
     output.position = v_out.position;
     return output;

@@ -5,15 +5,16 @@ export class Fragment {
 
     static initialize() { }
 
-    static resize() { }
+    static resize(new_size) {
+        this.size = new_size;
+    }
 
     static to_gpu_data() { }
 
     static add_entity(entity, data) {
         this.entity_set.add(entity);
         if (entity >= this.size) {
-            this.size = entity + 1;
-            this.resize();
+            this.resize(entity * 2);
         }
         if (data) {
             this.update_entity_data(entity, data);
@@ -23,8 +24,7 @@ export class Fragment {
     static remove_entity(entity) {
         this.entity_set.delete(entity);
         if (entity === this.size - 1) {
-            this.size = Math.max(...this.entity_set) + 1;
-            this.resize();
+            this.resize(Math.max(...this.entity_set) * 2);
         }
     }
 

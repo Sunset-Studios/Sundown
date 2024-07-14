@@ -2,6 +2,8 @@ import { ResourceCache, CacheTypes } from "./resource_cache.js";
 import { Mesh } from "./mesh.js";
 import { Buffer } from "./buffer.js";
 import { Name } from "../utility/names.js";
+import { FrameAllocator } from "../memory/allocator.js";
+import { profile_scope } from "../utility/performance.js";
 
 class IndirectDrawBatch {
     mesh_id = 0;
@@ -119,12 +121,10 @@ class MeshTask {
     entity = null;
     material_id = null;
 
-    constructor(task_desc) {
-        this.mesh_id = Name.from(task_desc.mesh.name);
-        this.entity = task_desc.entity;
-        if (task_desc.material) {
-            this.material_id = Name.from(task_desc.material.name);
-        }
+    static init(task, mesh_id, entity, material_id = null) {
+        task.mesh_id = mesh_id;
+        task.entity = entity;
+        task.material_id = material_id;
     }
 }
 
@@ -133,8 +133,11 @@ export class MeshTaskQueue {
         if (MeshTaskQueue.instance) {
             return MeshTaskQueue.instance;
         }
+        const max_objects = 65536;
         this.tasks = [];
+        this.current_task_offset = 0;
         this.indirect_draw_object = new IndirectDrawObject();
+        this.tasks_allocator = new FrameAllocator(max_objects, new MeshTask());
         MeshTaskQueue.instance = this;
     }
 
@@ -145,14 +148,28 @@ export class MeshTaskQueue {
         return MeshTaskQueue.instance;
     }
 
-    new_task(task_desc) {
-        const task = new MeshTask(task_desc);
-        this.tasks.push(task);
-        return task;
+    reserve(num_tasks) {
+        this.tasks.length = num_tasks;
     }
 
-    remove_all_tasks(mesh_id) {
-        this.tasks = this.tasks.filter(task => task.mesh_id !== mesh_id);
+    reset() {
+        this.tasks.length = 0;
+        this.current_task_offset = 0;
+        this.tasks_allocator.reset();
+    }
+
+    new_task(mesh_id, entity) {
+        const task = this.tasks_allocator.allocate();
+
+        MeshTask.init(task, mesh_id, entity);
+
+        if(this.current_task_offset >= this.tasks.length) {
+            this.tasks.push(task);
+        } else {
+            this.tasks[this.current_task_offset++] = task;
+        }
+
+        return task;
     }
 
     sort_and_batch(context) {
@@ -200,24 +217,28 @@ export class MeshTaskQueue {
         return this.indirect_draw_object.object_instance_buffer;
     }
 
-    submit_draws(render_pass) {
+    submit_draws(render_pass, should_reset = false) {
         this.tasks.forEach(task => {
             const mesh = ResourceCache.get().fetch(CacheTypes.MESH, task.mesh_id);   
             render_pass.pass.draw(mesh.vertices.length, task.instance_count, mesh.vertex_buffer_offset);
         });
-        this.tasks.length = 0;
+        if (should_reset) {
+            this.reset();
+        }
     }
 
-    submit_indexed_draws(render_pass) {
+    submit_indexed_draws(render_pass, should_reset = false) {
         this.tasks.forEach(task => {
             const mesh = ResourceCache.get().fetch(CacheTypes.MESH, task.mesh_id);   
             render_pass.pass.setIndexBuffer(mesh.index_buffer.buffer, mesh.index_buffer.config.element_type);
             render_pass.pass.drawIndexed(mesh.indices.length, task.instance_count, 0, mesh.vertex_buffer_offset);
         });
-        this.tasks.length = 0;
+        if (should_reset) {
+            this.reset();
+        }
     }
 
-    submit_indexed_indirect_draws(render_pass) {
+    submit_indexed_indirect_draws(render_pass, should_reset = false) {
         for (let i = 0; i < this.indirect_draw_object.batches.length; ++i) {
             const batch = this.indirect_draw_object.batches[i];
             const index_buffer = ResourceCache.get().fetch(CacheTypes.BUFFER, batch.index_buffer_id);
@@ -227,7 +248,9 @@ export class MeshTaskQueue {
                 i * 20 // 5 * 4 bytes per draw call
             );
         }
-        this.tasks.length = 0;
+        if (should_reset) {
+            this.reset();
+        }
     }
 
     draw_quad(context, render_pass) {

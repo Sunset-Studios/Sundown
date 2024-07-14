@@ -2,6 +2,7 @@ import { Texture } from "../texture.js";
 import { RenderPassFlags } from "../render_pass.js";
 import { MeshTaskQueue } from "../mesh_task_queue.js";
 import { TransformFragment } from "../../core/ecs/fragments/transform_fragment.js";
+import { LightFragment } from "../../core/ecs/fragments/light_fragment.js";
 import { SharedEnvironmentMapData } from "../../core/shared_data.js";
 
 export class DeferredShadingStrategy {
@@ -17,9 +18,14 @@ export class DeferredShadingStrategy {
 
     MeshTaskQueue.get().sort_and_batch(context);
 
-    const gpu_data = TransformFragment.to_gpu_data(context);
+    const transform_gpu_data = TransformFragment.to_gpu_data(context);
     const entity_transforms = render_graph.register_buffer(
-      gpu_data.gpu_buffer.config.name
+      transform_gpu_data.gpu_buffer.config.name
+    );
+
+    const light_gpu_data = LightFragment.to_gpu_data(context);
+    const lights = render_graph.register_buffer(
+      light_gpu_data.gpu_buffer.config.name
     );
 
     const object_instance_buffer =
@@ -155,7 +161,7 @@ export class DeferredShadingStrategy {
         },
         (graph, frame_data, encoder) => {
           const pass = graph.get_physical_pass(frame_data.current_pass);
-          MeshTaskQueue.get().submit_indexed_indirect_draws(pass);
+          MeshTaskQueue.get().submit_indexed_indirect_draws(pass, true /* should_reset */);
         }
       );
     }
@@ -186,7 +192,7 @@ export class DeferredShadingStrategy {
         "lighting_pass",
         RenderPassFlags.Graphics,
         {
-          inputs: [skybox_image, main_albedo_image, main_smra_image, main_normal_image, main_position_image, main_depth_image],
+          inputs: [skybox_image, main_albedo_image, main_smra_image, main_normal_image, main_position_image, main_depth_image, lights],
           outputs: [post_lighting_image],
           shader_setup,
         },

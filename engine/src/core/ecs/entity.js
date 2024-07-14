@@ -28,6 +28,10 @@ export class EntityManager {
             this.deleted_entities.delete(entity);
         } else {
             entity = this.next_entity_id++;
+            // Resize all fragment data arrays to fit the new entity
+            for (const fragment_type of this.fragment_types) {
+                fragment_type.resize(entity);
+            }
         }
         this.entity_fragments.set(entity, new Set());
         this.update_queries();

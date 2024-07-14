@@ -2,6 +2,7 @@ import { SimulationLayer } from "../simulation_layer.js";
 import { EntityManager } from "../ecs/entity.js";
 import { TransformFragment } from "../ecs/fragments/transform_fragment.js";
 import { mat4, quat, vec4 } from "gl-matrix";
+import { profile_scope } from "../../utility/performance.js";
 
 export class TransformProcessor extends SimulationLayer {
   entity_query = null;
@@ -17,20 +18,21 @@ export class TransformProcessor extends SimulationLayer {
   }
 
   update(delta_time, parent_context) {
-    const transforms =
-      EntityManager.get().get_fragment_array(TransformFragment);
+    profile_scope("transform_processor_update", () => {
+      const transforms =
+        EntityManager.get().get_fragment_array(TransformFragment);
 
-    for (const entity of this.entity_query) {
-      transforms.prev_world_transform.set(
-        transforms.world_transform,
-        entity * 16
-      );
+      for (const entity of this.entity_query) {
+        transforms.prev_world_transform.set(
+          transforms.world_transform.subarray(entity * 16, entity * 16 + 16),
+          entity * 16
+        );
 
-      if (transforms.dirty[entity] === 0) {
-        continue;
-      }
+        if (transforms.dirty[entity] === 0) {
+          continue;
+        }
 
-      const transform = mat4.fromRotationTranslationScale(
+        const transform = mat4.fromRotationTranslationScale(
           mat4.create(),
           quat.fromEuler(
             quat.create(),
@@ -49,23 +51,18 @@ export class TransformProcessor extends SimulationLayer {
             transforms.scale.y[entity],
             transforms.scale.z[entity],
             0
-        )
-      );
+          )
+        );
 
-      transforms.world_transform.set(
-        transform,
-        entity * 16
-      );
+        transforms.world_transform.set(transform, entity * 16);
 
-      transforms.inverse_world_transform.set(
-        mat4.invert(
-          mat4.create(),
-          transform
-        ),
-        entity * 16
-      );
+        transforms.inverse_world_transform.set(
+          mat4.invert(mat4.create(), transform),
+          entity * 16
+        );
 
-      transforms.dirty[entity] = 0;
-    }
+        transforms.dirty[entity] = 0;
+      }
+    });
   }
 }

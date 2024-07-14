@@ -23,14 +23,17 @@ export class TransformFragment extends Fragment {
             world_transform: new Float32Array(16),
             inverse_world_transform: new Float32Array(16),
             dirty: new Uint8Array(1),
-            gpu_buffer: null
+            gpu_buffer: null,
+            gpu_data_dirty: true 
         };
     }
 
-    static resize() {
+    static resize(new_size) {
         if (!this.data) {
             this.initialize();
         }
+
+        super.resize(new_size);
 
         const resize_array = (obj, key, ArrayType = Float32Array, stride = 1) => {
             if (obj[key].length < this.size * stride) {
@@ -59,6 +62,7 @@ export class TransformFragment extends Fragment {
 
         super.update_entity_data(entity, data);
         this.data.dirty[entity] = 1;
+        this.data.gpu_data_dirty = true;
     }
 
     static to_gpu_data(context) {
@@ -66,14 +70,19 @@ export class TransformFragment extends Fragment {
             this.initialize();
         }
 
+        if (!this.data.gpu_data_dirty) {
+            return { gpu_buffer: this.data.gpu_buffer };
+        }
+
         const gpu_data = new Float32Array(Math.max(this.size * 32, 32));
         for (let i = 0; i < this.size; i++) {
-            const offset = i * 32;
+            const transform_data_offset = i * 16;
+            const gpu_data_offset = i * 32;
             for (let j = 0; j < 16; j++) {
-                gpu_data[offset + j] = this.data.world_transform[offset + j];
+                gpu_data[gpu_data_offset + j] = this.data.world_transform[transform_data_offset + j];
             }
             for (let j = 0; j < 16; j++) {
-                gpu_data[offset + 16 + j] = this.data.inverse_world_transform[offset + j];
+                gpu_data[gpu_data_offset + 16 + j] = this.data.inverse_world_transform[transform_data_offset + j];
             }
         }
 
@@ -93,6 +102,8 @@ export class TransformFragment extends Fragment {
             this.data.gpu_buffer.write(context, gpu_data);
         }
 
-        return { gpu_data, gpu_buffer: this.data.gpu_buffer };
+        this.data.gpu_data_dirty = false;
+
+        return { gpu_buffer: this.data.gpu_buffer };
     }
 }
