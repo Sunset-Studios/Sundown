@@ -21,7 +21,7 @@ export class EntityManager {
         return EntityManager.instance;
     }
 
-    create_entity() {
+    create_entity(refresh_entity_data = true) {
         let entity;
         if (this.deleted_entities.size > 0) {
             entity = this.deleted_entities.values().next().value;
@@ -29,16 +29,20 @@ export class EntityManager {
         } else {
             entity = this.next_entity_id++;
             // Resize all fragment data arrays to fit the new entity
-            for (const fragment_type of this.fragment_types) {
-                fragment_type.resize(entity);
+            if (refresh_entity_data) {
+                for (const fragment_type of this.fragment_types) {
+                    fragment_type.resize(entity);
+                }
             }
         }
         this.entity_fragments.set(entity, new Set());
-        this.update_queries();
+        if (refresh_entity_data) {
+            this.update_queries();
+        }
         return entity;
     }
 
-    delete_entity(entity) {
+    delete_entity(entity, refresh_entity_data = true) {
         if (!this.entity_fragments.has(entity)) {
             return;
         }
@@ -47,26 +51,32 @@ export class EntityManager {
         }
         this.entity_fragments.delete(entity);
         this.deleted_entities.add(entity);
-        this.update_queries();
+        if (refresh_entity_data) {
+            this.update_queries();
+        }
     }
 
-    add_fragment(entity, FragmentType, data) {
+    add_fragment(entity, FragmentType, data, refresh_entity_data = true) {
         if (!this.fragment_types.has(FragmentType)) {
             FragmentType.initialize();
             this.fragment_types.add(FragmentType);
         }
         FragmentType.add_entity(entity, data);
         this.entity_fragments.get(entity).add(FragmentType);
-        this.update_queries();
+        if (refresh_entity_data) {
+            this.update_queries();
+        }
     }
 
-    remove_fragment(entity, FragmentType) {
+    remove_fragment(entity, FragmentType, refresh_entity_data = true) {
         if (!this.entity_fragments.has(entity) || !this.entity_fragments.get(entity).has(FragmentType)) {
             return;
         }
         FragmentType.remove_entity(entity);
         this.entity_fragments.get(entity).delete(FragmentType);
-        this.update_queries();
+        if (refresh_entity_data) {
+            this.update_queries();
+        }
     }
 
     update_fragment(entity, FragmentType, data) {

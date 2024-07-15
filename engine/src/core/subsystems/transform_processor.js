@@ -23,14 +23,14 @@ export class TransformProcessor extends SimulationLayer {
         EntityManager.get().get_fragment_array(TransformFragment);
 
       for (const entity of this.entity_query) {
+        if (transforms.dirty[entity] === 0) {
+          continue;
+        }
+
         transforms.prev_world_transform.set(
           transforms.world_transform.subarray(entity * 16, entity * 16 + 16),
           entity * 16
         );
-
-        if (transforms.dirty[entity] === 0) {
-          continue;
-        }
 
         const transform = mat4.fromRotationTranslationScale(
           mat4.create(),

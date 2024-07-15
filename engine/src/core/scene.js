@@ -36,27 +36,31 @@ export class Scene extends SimulationLayer {
     this.add_layer(TransformProcessor);
   }
 
-  create_entity() {
-    return this.context.entity_manager.create_entity();
+  create_entity(refresh_entity_data = true) {
+    return this.context.entity_manager.create_entity(refresh_entity_data);
   }
 
-  delete_entity(entity) {
-    this.context.entity_manager.delete_entity(entity);
+  delete_entity(entity, refresh_entity_data = true) {
+    this.context.entity_manager.delete_entity(entity, refresh_entity_data);
   }
 
-  add_fragment(entity, FragmentType, data) {
-    this.context.entity_manager.add_fragment(entity, FragmentType, data);
+  add_fragment(entity, FragmentType, data, refresh_entity_data = true) {
+    this.context.entity_manager.add_fragment(entity, FragmentType, data, refresh_entity_data);
   }
 
-  remove_fragment(entity, FragmentType) {
-    this.context.entity_manager.remove_fragment(entity, FragmentType);
+  remove_fragment(entity, FragmentType, refresh_entity_data = true) {
+    this.context.entity_manager.remove_fragment(entity, FragmentType, refresh_entity_data);
   }
 
-  update_fragment(entity, FragmentType, data) {
-    this.context.entity_manager.update_fragment(entity, FragmentType, data);
+  update_fragment(entity, FragmentType, data, refresh_entity_data = true) {
+    this.context.entity_manager.update_fragment(entity, FragmentType, data, refresh_entity_data);
   }
 
   get_fragment(entity, FragmentType) {
     return this.context.entity_manager.get_fragment(entity, FragmentType);
+  }
+
+  refresh_entity_queries() {
+    this.context.entity_manager.update_queries();
   }
 }

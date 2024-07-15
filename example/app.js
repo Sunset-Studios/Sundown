@@ -60,18 +60,18 @@ async function init() {
     );
 
     // Create a grid of sphere entities
-    const grid_size = 25; // 5x5 grid
+    const grid_size = 100; // 5x5 grid
     const spacing = 2; // 2 units apart
 
     for (let x = 0; x < grid_size; x++) {
         for (let z = 0; z < grid_size; z++) {
             // Create a sphere entity and add it to the scene
-            const sphere_entity = scene.create_entity();
+            const sphere_entity = scene.create_entity(false /* refresh_entity_queries */);
 
             // Add a static mesh fragment to the sphere entity
             scene.add_fragment(sphere_entity, StaticMeshFragment, {
                 mesh: BigInt(Name.from("engine/models/sphere/sphere.gltf")),
-            });
+            }, false /* refresh_entity_queries */);
 
             // Add a transform fragment to the sphere entity
             scene.add_fragment(sphere_entity, TransformFragment, {
@@ -82,9 +82,11 @@ async function init() {
                 },
                 rotation: { x: 0, y: 0, z: 0 },
                 scale: { x: 1, y: 1, z: 1 },
-            });
+            }, false /* refresh_entity_queries */);
         }
     }
+
+    scene.refresh_entity_queries();
   }
 }
 
