@@ -282,3 +282,21 @@ export class SharedEnvironmentMapData {
     return this.skybox;
   }
 }
+
+export class SharedMaterialData {
+  materials = [];
+
+  constructor() {
+    if (SharedEnvironmentMapData.instance) {
+      return SharedEnvironmentMapData.instance;
+    }
+    SharedEnvironmentMapData.instance = this;
+  }
+
+  static get() {
+    if (!SharedEnvironmentMapData.instance) {
+      return new SharedEnvironmentMapData();
+    }
+    return SharedEnvironmentMapData.instance;
+  }
+}

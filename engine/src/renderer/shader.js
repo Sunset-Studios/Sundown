@@ -1,5 +1,18 @@
 import { ResourceCache, CacheTypes } from './resource_cache.js';
 
+export const ShaderResourceType = {
+  Uniform: 0,
+  Storage: 1,
+  Texture: 2,
+  Sampler: 3
+};
+
+export const ShaderResource = {
+    type: ShaderResourceType.Uniform,
+    name: '',
+    binding: 0
+}
+
 export class Shader {
     static shader_paths = ['engine/shaders'];
 

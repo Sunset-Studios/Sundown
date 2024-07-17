@@ -1,4 +1,5 @@
 import { Renderer } from "../engine/src/renderer/renderer.js";
+import { Material } from "../engine/src/renderer/material.js";
 import SimulationCore from "../engine/src/core/simulation_core.js";
 import { InputProvider } from "../engine/src/input/input_provider.js";
 import { Scene } from "../engine/src/core/scene.js";
@@ -57,6 +58,20 @@ async function init() {
     const sphere_mesh = await Mesh.from_gltf(
       Renderer.get().graphics_context,
       "engine/models/sphere/sphere.gltf"
+    );
+
+    // Create a default material
+    const default_material = await Material.create(
+      Renderer.get().graphics_context,
+      "default_material",
+      {
+        albedo: "engine/textures/default_albedo.png",
+        normal: "engine/textures/default_normal.png",
+        roughness: "engine/textures/default_roughness.png",
+        metallic: "engine/textures/default_metallic.png",
+        emissive: "engine/textures/default_emissive.png",
+        ao: "engine/textures/default_ao.png",
+      }
     );
 
     // Create a grid of sphere entities
