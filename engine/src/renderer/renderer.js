@@ -3,6 +3,7 @@ import { RenderGraph } from "./render_graph.js";
 import { DeferredShadingStrategy } from "./strategies/deferred_shading.js";
 import { Texture } from "./texture.js";
 import { SharedVertexBuffer, SharedViewBuffer } from "../core/shared_data.js";
+import { MaterialTemplate } from "./material.js";
 
 export class Renderer {
   graphics_context = null;
@@ -33,6 +34,7 @@ export class Renderer {
     this.render_strategy = new DeferredShadingStrategy();
 
     this.refresh_global_shader_bindings();
+    this.setup_builtin_material_template();
   }
 
   render() {
@@ -61,5 +63,22 @@ export class Renderer {
         sampler: Texture.get_default_sampler(this.graphics_context),
       },
     ], true /* overwrite */);
+  }
+
+  setup_builtin_material_template() {
+    // Create a material template for a standard material
+    const template = MaterialTemplate.create(
+      Renderer.get().graphics_context,
+      "StandardMaterial",
+      "standard_material.wgsl",
+      {
+        targets: [
+          { format: "bgra8unorm" },
+          { format: "bgra8unorm" },
+          { format: "rgba16float" },
+          { format: "rgba16float" },
+        ],
+      }
+    );
   }
 }

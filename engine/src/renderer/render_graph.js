@@ -176,6 +176,23 @@ const RGResourceMetadata = Object.freeze({
 });
 
 /**
+ * Represents the G-Buffer output data for deferred rendering pipelines in the render graph.
+ * @typedef {Object} RGGBufferData
+ * @property {Object|null} position - The position texture.
+ * @property {Object|null} normal - The normal texture.
+ * @property {Object|null} entity_id - The entity ID texture.
+ * @property {Object|null} depth - The depth texture.
+ */
+const RGGBufferData = Object.freeze({
+  albedo: null,
+  smra: null,
+  position: null,
+  normal: null,
+  entity_id: null,
+  depth: null,
+});
+
+/**
  * Frame-specific data for the render graph.
  * @typedef {Object} RGFrameData
  * @property {number} current_pass - Index of the current pass being processed.
@@ -191,9 +208,11 @@ const RGFrameData = Object.freeze({
   context: null,
   global_bind_group: null,
   pass_bind_group: null,
+  pass_bind_groups: Array(BindGroupType.Num).fill(null),
   pass_pipeline_state: 0,
   resource_deletion_queue: null,
   pass_bindless_resources: [],
+  g_buffer_data: null,
 });
 
 /**
@@ -245,7 +264,7 @@ const RGPassConfig = Object.freeze({
 const RGShaderDataSetup = Object.freeze({
   // This is auxiliary and only used for passes that only need to bind a single pipeline state to run. Graph passes that don't specify
   // pipeline shaders will have to handle pipeline state creation and/or binding internally within the pass callback.
-  pipeline_shaders: [],
+  pipeline_shaders: null,
   // Same note as above, this is entirely optional data within a graph pass definition
   push_constant_data: null,
   rasterizer_state: null,
@@ -466,7 +485,6 @@ export class RenderGraph {
   create_image(config) {
     const new_resource = this.image_resource_allocator.allocate();
     new_resource.config = { ..._.cloneDeep(RGImageConfig), ...config };
-    new_resource.config.flags |= ImageFlags.Transient;
 
     const index = this.registry.image_resources.length;
     this.registry.image_resources.push(new_resource);
@@ -483,6 +501,9 @@ export class RenderGraph {
     );
     this.registry.resource_metadata.get(new_resource.handle).b_is_bindless =
       config.b_is_bindless;
+    this.registry.resource_metadata.get(
+      new_resource.handle
+    ).b_is_persistent = (new_resource.config.flags & ImageFlags.Transient) === 0;
 
     return new_resource.handle;
   }
@@ -553,7 +574,6 @@ export class RenderGraph {
   create_buffer(config) {
     const new_resource = this.buffer_resource_allocator.allocate();
     new_resource.config = { ..._.cloneDeep(RGBufferConfig), ...config };
-    new_resource.config.flags |= BufferFlags.Transient;
 
     const index = this.registry.buffer_resources.length;
     this.registry.buffer_resources.push(new_resource);
@@ -570,6 +590,9 @@ export class RenderGraph {
     );
     this.registry.resource_metadata.get(new_resource.handle).b_is_bindless =
       config.b_is_bindless;
+    this.registry.resource_metadata.get(
+      new_resource.handle
+    ).b_is_persistent = (new_resource.config.flags & BufferFlags.Transient) === 0;
 
     return new_resource.handle;
   }
@@ -671,6 +694,32 @@ export class RenderGraph {
    */
   get_physical_pass(handle) {
     return ResourceCache.get().fetch(CacheTypes.PASS, handle);
+  }
+
+  /**
+   * Retrieves a physical image from the resource cache using its handle.
+   *
+   * @param {number} handle - The handle of the image to retrieve.
+   * @returns {Object|null} The physical image object if found, or null if not found.
+   */
+  get_physical_image(handle) {
+    return ResourceCache.get().fetch(
+      CacheTypes.IMAGE,
+      this.registry.resource_metadata.get(handle).physical_id
+    );
+  }
+
+  /**
+   * Retrieves a physical buffer from the resource cache using its handle.
+   *
+   * @param {number} handle - The handle of the buffer to retrieve.
+   * @returns {Object|null} The physical buffer object if found, or null if not found.
+   */
+  get_physical_buffer(handle) {
+    return ResourceCache.get().fetch(
+      CacheTypes.BUFFER,
+      this.registry.resource_metadata.get(handle).physical_id
+    );
   }
 
   /**
@@ -899,8 +948,6 @@ export class RenderGraph {
       (pass.pass_config.flags & RenderPassFlags.GraphLocal) !==
       RenderPassFlags.None
     ) {
-      this._setup_global_bind_group(pass, frame_data, pass.pipeline_state_id);
-      frame_data.global_bind_group = this.pass_cache.global_bind_group;
       pass.executor(this, frame_data, encoder);
     } else {
       this._setup_physical_pass_and_resources(pass, frame_data, encoder);
@@ -908,9 +955,7 @@ export class RenderGraph {
       const bind_group_list = this.pass_cache.bind_groups.get(
         pass.pass_config.name
       );
-      if (BindGroupType.Pass < bind_group_list.length) {
-        frame_data.pass_bind_group = bind_group_list[BindGroupType.Pass];
-      }
+
 
       if (
         (pass.pass_config.flags & RenderPassFlags.Compute) !==
@@ -1454,12 +1499,12 @@ export class RenderGraph {
       this.pass_cache.global_bind_group.bind(physical_pass);
       this.registry.b_global_set_bound = true;
 
-      if (BindGroupType.Pass < pass_bind_groups.bind_groups.length) {
-        const bind_group = pass_bind_groups.bind_groups[BindGroupType.Pass];
-        if (bind_group) {
-          bind_group.bind(physical_pass);
-        }
+      if (pass_bind_groups.bind_groups.length && pass_bind_groups.bind_groups[BindGroupType.Pass]) {
+        pass_bind_groups.bind_groups[BindGroupType.Pass].bind(physical_pass);
       }
+
+      frame_data.pass_bind_groups[BindGroupType.Global] = pass_bind_groups.bind_groups[BindGroupType.Global];
+      frame_data.pass_bind_groups[BindGroupType.Pass] = pass_bind_groups.bind_groups[BindGroupType.Pass];
     }
   }
 

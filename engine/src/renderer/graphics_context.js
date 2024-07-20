@@ -23,7 +23,16 @@ export class GraphicsContext {
             throw Error('Unable to request WebGPU adapter');
         }
         
-        this.device = await this.adapter.requestDevice();
+        try {
+            this.device = await this.adapter.requestDevice({
+                requiredLimits: { maxColorAttachmentBytesPerSample: 64 },
+            });
+        } catch (e) {
+            console.log(e);
+            console.log('Falling back to default limits');
+            this.device = await this.adapter.requestDevice();
+        }
+
         this.context = this.canvas.getContext('webgpu');
         this.canvas_format = navigator.gpu.getPreferredCanvasFormat();
         this.context.configure({

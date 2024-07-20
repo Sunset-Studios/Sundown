@@ -1,55 +1,224 @@
-import { Shader, ShaderResourceType, ShaderResource } from "./shader.js";
-import { BindGroup } from "./bind_group.js";
+import { Shader, ShaderResourceType } from "./shader.js";
+import { BindGroup, BindGroupType } from "./bind_group.js";
 import { PipelineState } from "./pipeline_state.js";
-import { Shader } from "./shader.js";
+import { ResourceCache, CacheTypes } from "./resource_cache.js";
+import { profile_scope } from "../utility/performance.js";
+import { hash_data, hash_value } from "../utility/hashing.js";
 import { Texture } from "./texture.js";
-import { Buffer } from "./buffer.js";
 
 export class MaterialTemplate {
   static templates = new Map();
 
-  constructor(context, name, shader, pipeline_state) {
+  constructor(context, name, shader, pipeline_state_config = {}, parent = null) {
     this.context = context;
     this.name = name;
     this.shader = shader;
-    this.pipeline_state = pipeline_state;
+    this.pipeline_state_config = pipeline_state_config;
     this.resources = [];
+    this.parent = parent;
+    this.reflection = shader ? shader.reflect() : null;
   }
 
   add_resource(resource) {
     this.resources.push(resource);
   }
 
-  static create(context, name, shader_path, pipeline_state_config) {
+  static create(context, name, shader_path, pipeline_state_config = {}, parent_name = null) {
     if (this.templates.has(name)) {
       return this.templates.get(name);
     }
-    const pipeline_state = PipelineState.create(
-      context,
-      name,
-      pipeline_state_config
-    );
-    const shader = Shader.create(context, shader_path);
-    const template = new MaterialTemplate(
-      context,
-      name,
-      shader,
-      pipeline_state
-    );
+
+    let parent = null;
+    let shader = null;
+
+    if (parent_name) {
+      parent = this.get_template(parent_name);
+      if (!parent) {
+        throw new Error(`Parent template '${parent_name}' not found`);
+      }
+      shader = parent.shader;
+    }
+
+    if (shader_path) {
+      shader = Shader.create(context, shader_path);
+    }
+
+    const template = new MaterialTemplate(context, name, shader, pipeline_state_config, parent);
+
+    if (parent) {
+      template.resources = [...parent.resources];
+    }
+
+    // Reflect on shader and add resources
+    const groups = template.reflection ? template.reflection.getBindGroups() : [];
+    if (BindGroupType.Material < groups.length) {
+      const material_group = groups[BindGroupType.Material];
+      for (let i = 0; i < material_group.length; i++) {
+        const binding = material_group[i];
+        const binding_type = Shader.resource_type_from_reflection_type(
+          binding.resourceType
+        );
+        this.add_resource({
+          type: binding_type,
+          name: binding.name,
+          binding: i,
+        });
+      }
+    }
 
     this.templates.set(name, template);
 
     return template;
   }
 
+  create_pipeline_state(context, bind_group_layouts) {
+    let all_bind_group_layouts = [...bind_group_layouts];
+
+    // Set material binding group inputs
+    const groups = this.reflection.getBindGroups();
+    if (BindGroupType.Material < groups.length) {
+      const material_group = groups[BindGroupType.Material];
+      
+      material_group.forEach((binding, i) => {
+        this.add_resource({
+          binding: i,
+          name: binding.name,
+          type: Shader.resource_type_from_reflection_type(binding.resourceType),
+        });
+      });
+
+      all_bind_group_layouts.push(
+        BindGroup.create_layout(
+          context,
+          this.name,
+          material_group.map((binding) => {
+            let binding_obj = {};
+            const binding_type = Shader.resource_type_from_reflection_type(
+              binding.resourceType
+            );
+            switch (binding_type) {
+              case ShaderResourceType.Uniform:
+                binding_obj = {
+                  buffer: {
+                    type: "uniform",
+                  },
+                };
+                break;
+              case ShaderResourceType.Storage:
+                binding_obj = {
+                  buffer: {
+                    type: "read-only-storage",
+                  },
+                };
+                break;
+              case ShaderResourceType.Texture:
+                binding_obj = {
+                  texture: {
+                    viewDimension: Texture.dimension_from_type_name(
+                      binding.type.name
+                    ),
+                    sampleType: binding.type.name.includes("depth")
+                      ? "depth"
+                      : "float",
+                  },
+                };
+                break;
+              case ShaderResourceType.Sampler:
+                binding_obj = {
+                  sampler: {},
+                };
+                break;
+            }
+
+            return {
+              type: binding.resourceType,
+              visibility: GPUShaderStage.FRAGMENT | GPUShaderStage.VERTEX,
+              ...binding_obj,
+            };
+          }),
+          true /* force */
+        )
+      );
+    }
+
+    // Set material shader fragment output targets
+    const targets = [];
+    const fragment_outputs = this.reflection.entry.fragment[0].outputs;
+
+    fragment_outputs.forEach((output, i) => {
+      const target = {
+        format: Shader.get_optimal_texture_format(output.type.name)
+      };
+
+      if (
+        this.pipeline_state_config.targets &&
+        i < this.pipeline_state_config.targets.length
+      ) {
+        if (this.pipeline_state_config.targets[i].format) {
+          target.format = this.pipeline_state_config.targets[i].format;
+        }
+        if (this.pipeline_state_config.targets[i].blend) {
+          target.blend = this.pipeline_state_config.targets[i].blend;
+        }
+      }
+
+      targets.push(target);
+    });
+
+    // Create pipeline state based on shader, pipeline state config and targets
+    let pipeline_descriptor = {
+      label: this.name,
+      bind_layouts: all_bind_group_layouts.filter((layout) => layout !== null),
+      vertex: {
+        module: this.shader.module,
+        entryPoint:
+          (this.pipeline_state_config.vertex &&
+            this.pipeline_state_config.vertex.entry_point) ||
+          "vs",
+        buffers: [],
+      },
+      fragment: {
+        module: this.shader.module,
+        entryPoint:
+          (this.pipeline_state_config.fragment &&
+            this.pipeline_state_config.fragment.entry_point) ||
+          "fs",
+        targets: targets,
+      },
+      primitive: {
+        topology:
+          this.pipeline_state_config.primitive_topology_type || "triangle-list",
+        cullMode: this.pipeline_state_config.rasterizer_state?.cull_mode || "back",
+      },
+    };
+
+    if (this.pipeline_state_config.depth_stencil_target) {
+      pipeline_descriptor.depthStencil =
+        this.pipeline_state_config.depth_stencil_target;
+    }
+
+    return PipelineState.create_render(context, this.name, pipeline_descriptor);
+  }
+
   static get_template(name) {
     return this.templates.get(name);
+  }
+
+  get_all_resources() {
+    if (this.parent) {
+      return [...this.parent.get_all_resources(), ...this.resources];
+    }
+    return this.resources;
   }
 }
 
 export class Material {
+  static materials = new Map();
+
   constructor(template) {
     this.template = template;
+    this.pipeline_state = null;
+    this.bind_group = null;
     this.uniform_data = new Map();
     this.storage_data = new Map();
     this.texture_data = new Map();
@@ -59,62 +228,24 @@ export class Material {
   }
 
   _update_state_hash() {
-    let hash = this._hash_value(this.template.name);
-    hash = this._hash_data(this.uniform_data, hash);
-    hash = this._hash_data(this.storage_data, hash);
-    hash = this._hash_data(this.texture_data, hash);
-    hash = this._hash_data(this.sampler_data, hash);
-    this.state_hash = hash;
+    profile_scope("Material._update_state_hash", () => {
+      Material.materials.delete(this.state_hash);
+      ResourceCache.get().remove(CacheTypes.MATERIAL, this.state_hash);
+
+      let hash = hash_value(this.template.name);
+      hash = hash_data(this.uniform_data, hash);
+      hash = hash_data(this.storage_data, hash);
+      hash = hash_data(this.texture_data, hash);
+      hash = hash_data(this.sampler_data, hash);
+      this.state_hash = hash;
+
+      ResourceCache.get().store(CacheTypes.MATERIAL, this.state_hash, this);
+      Material.materials.set(this.state_hash, this);
+    });
   }
 
-  _hash_data(data_map, initial_hash) {
-    let hash = initial_hash;
-    for (const [key, value] of data_map) {
-      hash = ((hash << 5) - hash) + this._hash_value(key);
-      hash = ((hash << 5) - hash) + this._hash_value(value);
-      hash |= 0; // Convert to 32-bit integer
-    }
-    return hash;
-  }
-
-  _hash_value(value) {
-    if (typeof value === 'number') {
-      return value;
-    } else if (typeof value === 'string') {
-      return value.split('').reduce((acc, char) => {
-        return ((acc << 5) - acc) + char.charCodeAt(0);
-      }, 0);
-    } else if (value instanceof Buffer || value instanceof Texture) {
-      return value.config.name.split('').reduce((acc, char) => {
-        return ((acc << 5) - acc) + char.charCodeAt(0);
-      }, 0);
-    } else {
-      return 0;
-    }
-  }
-
-  set_uniform_data(name, data) {
-    this.uniform_data.set(name, data);
-    this._update_state_hash();
-  }
-
-  set_storage_data(name, data) {
-    this.storage_data.set(name, data);
-    this._update_state_hash();
-  }
-
-  set_texture_data(name, texture) {
-    this.texture_data.set(name, texture);
-    this._update_state_hash();
-  }
-
-  set_sampler_data(name, sampler) {
-    this.sampler_data.set(name, sampler);
-    this._update_state_hash();
-  }
-
-  bind(render_pass, bind_group) {
-    const entries = this.template.resources.map((resource) => {
+  _refresh_bind_group() {
+    const entries = this.template.get_all_resources().map((resource) => {
       switch (resource.type) {
         case ShaderResourceType.Uniform:
           return {
@@ -139,17 +270,71 @@ export class Material {
       }
     });
 
-    const bind_group = BindGroup.create(
+    this.bind_group = BindGroup.create(
       this.template.context,
       this.template.name,
       this.template.pipeline_state,
-      bind_group,
-      entries
+      BindGroupType.Material,
+      entries,
+      true /* force */
     );
-    bind_group.bind(render_pass);
   }
 
-  create(template_name) {
+  update_pipeline_state(bind_groups) {
+    this.pipeline_state = this.template.create_pipeline_state(
+      this.template.context,
+      bind_groups.filter((bind_group) => bind_group !== null).map((bind_group) => bind_group.layout),
+    );
+  }
+
+  set_uniform_data(name, data) {
+    this.uniform_data.set(name, data);
+    this._update_state_hash();
+    this._refresh_bind_group();
+  }
+
+  set_storage_data(name, data) {
+    this.storage_data.set(name, data);
+    this._update_state_hash();
+    this._refresh_bind_group();
+  }
+
+  set_texture_data(name, texture) {
+    this.texture_data.set(name, texture);
+    this._update_state_hash();
+    this._refresh_bind_group();
+  }
+
+  set_sampler_data(name, sampler) {
+    this.sampler_data.set(name, sampler);
+    this._update_state_hash();
+    this._refresh_bind_group();
+  }
+
+  bind(render_pass, bind_groups = []) {
+    if (!this.pipeline_state && bind_groups.length > 0) {
+      this.update_pipeline_state(bind_groups);
+      bind_groups.forEach((bind_group) => {
+        if (bind_group) {
+          bind_group.bind(render_pass);
+        }
+      });
+    }
+
+    if (this.pipeline_state) {
+      render_pass.set_pipeline(this.pipeline_state);
+    }
+
+    if (this.bind_group) {
+      this.bind_group.bind(render_pass);
+    }
+  }
+
+  get_state_hash() {
+    return this.state_hash;
+  }
+
+  static create(template_name) {
     const template = MaterialTemplate.get_template(template_name);
     if (!template) {
       throw new Error(`Material template '${template_name}' not found`);
@@ -157,8 +342,8 @@ export class Material {
     return new Material(template);
   }
 
-  get_state_hash() {
-    return this.state_hash;
+  static get(material_id) {
+    return Material.materials.get(material_id);
   }
 }
 
@@ -167,14 +352,10 @@ export class Material {
 
 // // Create a material template
 // const shader_path = "standard.wgsl";
-// const pipeline_state_config = {
-//   /* ... */
-// };
 // const template = MaterialTemplate.create(
 //   context,
 //   "StandardMaterial",
-//   shader_path,
-//   pipeline_state_config
+//   shader_path
 // );
 
 // // Add resources to the template
@@ -205,6 +386,6 @@ export class Material {
 // // Use the material in rendering
 // function render(render_pass) {
 //   // ... other rendering setup ...
-//   material.bind(render_pass, 0);
+//   material.bind(render_pass);
 //   // ... draw calls ...
 // }

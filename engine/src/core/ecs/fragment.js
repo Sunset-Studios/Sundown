@@ -45,10 +45,24 @@ export class Fragment {
     }
 
     static get_entity_data(entity) {
-        const fragment_data = {};
-        for (const key in this.data) {
-            fragment_data[key] = this.data[key][entity];
+        const get_nested_data = (source_data, entity_index) => {
+            const result = {};
+            for (const [key, value] of Object.entries(source_data)) {
+                if (typeof value === 'object' && value !== null && !ArrayBuffer.isView(value)) {
+                    result[key] = get_nested_data(value, entity_index);
+                } else if (ArrayBuffer.isView(value)) {
+                    result[key] = value[entity_index];
+                } else {
+                    result[key] = value;
+                }
+            }
+            return result;
+        };
+
+        if (!this.entity_set.has(entity)) {
+            throw new Error(`Entity ${entity} does not exist in fragment ${this.constructor.name}`);
         }
-        return fragment_data;
+
+        return get_nested_data(this.data, entity);
     }
 }

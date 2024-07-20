@@ -8,7 +8,9 @@ export const BindlessGroupIndex = {
 
 export const BindGroupType = {
     Global: 0,
-    Pass: 1
+    Pass: 1,
+    Material: 2,
+    Num: 3
 };
 
 export class BindingTableEntry {
@@ -97,11 +99,8 @@ export class BindGroup {
 
     init_with_layout(context, name, layout, index, bindings) {
         this.name = name;
-        this.layout = context.device.createBindGroupLayout({
-            label: name,
-            entries: layout,
-        });
         this.index = index;
+        this.layout = BindGroup.create_layout(context, name, layout);
         this.bind_group = context.device.createBindGroup({
             label: name,
             layout: this.layout,
@@ -124,13 +123,20 @@ export class BindGroup {
         render_pass.pass.setBindGroup(this.index, this.bind_group);
     }
 
-    static create(context, name, pipeline, index, bindings) {
+    static create(context, name, pipeline, index, bindings, force = false) {
         let bind_group = ResourceCache.get().fetch(CacheTypes.BIND_GROUP, Name.from(name));
+
+        if (bind_group && force) {
+            bind_group.destroy();
+            bind_group = null;
+        }
+
         if (!bind_group) {
             bind_group = new BindGroup();
             bind_group.init(context, name, pipeline, index, bindings);
             ResourceCache.get().store(CacheTypes.BIND_GROUP, Name.from(name), bind_group);
         }
+
         return bind_group;
     }
 
@@ -149,5 +155,24 @@ export class BindGroup {
         }
 
         return bind_group;
+    }
+
+    static create_layout(context, name, bind_layouts, force = false) {
+        let layout = ResourceCache.get().fetch(CacheTypes.BIND_GROUP_LAYOUT, Name.from(name));
+
+        if (layout && force) {
+            layout.destroy();
+            layout = null;
+        }
+
+        if (!layout) {
+            layout = context.device.createBindGroupLayout({
+                label: name,
+                entries: bind_layouts,
+            });
+            ResourceCache.get().store(CacheTypes.BIND_GROUP_LAYOUT, Name.from(name), layout);
+        }
+
+        return layout;
     }
 }

@@ -4,11 +4,13 @@ import { MeshTaskQueue } from "../mesh_task_queue.js";
 import { TransformFragment } from "../../core/ecs/fragments/transform_fragment.js";
 import { LightFragment } from "../../core/ecs/fragments/light_fragment.js";
 import { SharedEnvironmentMapData } from "../../core/shared_data.js";
+import { ImageFlags } from "../texture.js";
+import { Material } from "../material.js";
 
 export class DeferredShadingStrategy {
   initialized = false;
 
-  setup(context, render_graph) { }
+  setup(context, render_graph) {}
 
   draw(context, render_graph) {
     if (!this.initialized) {
@@ -41,6 +43,7 @@ export class DeferredShadingStrategy {
     let main_cc_image = null;
     let main_normal_image = null;
     let main_position_image = null;
+    let main_entity_id_image = null;
     let post_lighting_image = null;
 
     const image_extent = context.get_canvas_resolution();
@@ -59,7 +62,7 @@ export class DeferredShadingStrategy {
         rasterizer_state: {
           cull_mode: "none",
         },
-        depth_write_enabled: false
+        depth_write_enabled: false,
       };
 
       const skybox = SharedEnvironmentMapData.get().get_skybox();
@@ -72,6 +75,7 @@ export class DeferredShadingStrategy {
         height: image_extent.height,
         usage:
           GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+        flags: ImageFlags.Transient,
       });
 
       render_graph.add_pass(
@@ -89,19 +93,61 @@ export class DeferredShadingStrategy {
       );
     }
 
-    // GBuffer Base Pass
+    // Entity Prepass
     {
       const shader_setup = {
         pipeline_shaders: {
           vertex: {
-            path: "gbuffer.wgsl",
+            path: "entity_prepass.wgsl",
           },
           fragment: {
-            path: "gbuffer.wgsl",
+            path: "entity_prepass.wgsl",
           },
         },
       };
 
+      main_entity_id_image = render_graph.create_image({
+        name: "main_entity_id",
+        format: "r32uint",
+        width: image_extent.width,
+        height: image_extent.height,
+        depth: 1,
+        usage:
+          GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+        flags: ImageFlags.Transient,
+      });
+
+      main_depth_image = render_graph.create_image({
+        name: "main_depth",
+        format: "depth32float",
+        width: image_extent.width,
+        height: image_extent.height,
+        usage:
+          GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+        flags: ImageFlags.Transient,
+      });
+
+      render_graph.add_pass(
+        "entity_prepass",
+        RenderPassFlags.Graphics,
+        {
+          inputs: [entity_transforms, object_instances],
+          outputs: [main_entity_id_image, main_depth_image],
+          shader_setup,
+        },
+        (graph, frame_data, encoder) => {
+          const pass = graph.get_physical_pass(frame_data.current_pass);
+          MeshTaskQueue.get().submit_indexed_indirect_draws(
+            pass,
+            frame_data,
+            false /* should_reset */
+          );
+        }
+      );
+    }
+
+    // GBuffer Base Pass
+    {
       main_albedo_image = render_graph.create_image({
         name: "main_albedo",
         format: "bgra8unorm",
@@ -109,6 +155,7 @@ export class DeferredShadingStrategy {
         height: image_extent.height,
         usage:
           GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+        flags: ImageFlags.Transient,
       });
       main_smra_image = render_graph.create_image({
         name: "main_smra",
@@ -117,6 +164,7 @@ export class DeferredShadingStrategy {
         height: image_extent.height,
         usage:
           GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+        flags: ImageFlags.Transient,
       });
       main_normal_image = render_graph.create_image({
         name: "main_normal",
@@ -126,6 +174,7 @@ export class DeferredShadingStrategy {
         depth: 1,
         usage:
           GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+        flags: ImageFlags.Transient,
       });
       main_position_image = render_graph.create_image({
         name: "main_position",
@@ -135,33 +184,68 @@ export class DeferredShadingStrategy {
         depth: 1,
         usage:
           GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
-      });
-      main_depth_image = render_graph.create_image({
-        name: "main_depth",
-        format: "depth32float",
-        width: image_extent.width,
-        height: image_extent.height,
-        usage:
-          GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+        flags: ImageFlags.Transient,
       });
 
+      const material_buckets = MeshTaskQueue.get().get_material_buckets();
+      for (const material_id of material_buckets) {
+        const material = Material.get(material_id);
+
+        render_graph.add_pass(
+          `g_buffer_${material.template.name}_${material_id}`,
+          RenderPassFlags.Graphics,
+          {
+            inputs: [entity_transforms, object_instances],
+            outputs: [
+              main_albedo_image,
+              main_smra_image,
+              main_position_image,
+              main_normal_image,
+            ],
+          },
+          (graph, frame_data, encoder) => {
+            const pass = graph.get_physical_pass(frame_data.current_pass);
+
+            if (!frame_data.g_buffer_data) {
+              frame_data.g_buffer_data = {
+                albedo: graph.get_physical_image(main_albedo_image),
+                smra: graph.get_physical_image(main_smra_image),
+                position: graph.get_physical_image(main_position_image),
+                normal: graph.get_physical_image(main_normal_image),
+                entity_id: graph.get_physical_image(main_entity_id_image),
+                depth: graph.get_physical_image(main_depth_image),
+              };
+
+              frame_data.g_buffer_data.albedo.config.load_op = "load";
+              frame_data.g_buffer_data.smra.config.load_op = "load";
+              frame_data.g_buffer_data.position.config.load_op = "load";
+              frame_data.g_buffer_data.normal.config.load_op = "load";
+            }
+
+            MeshTaskQueue.get().submit_material_indexed_indirect_draws(
+              pass,
+              frame_data,
+              material_id,
+              false /* should_reset */
+            );
+          }
+        );
+      }
+    }
+
+    // Reset mesh task queue
+    {
       render_graph.add_pass(
-        "gbuffer_base_pass",
-        RenderPassFlags.Graphics,
-        {
-          inputs: [entity_transforms, object_instances],
-          outputs: [
-            main_albedo_image,
-            main_smra_image,
-            main_normal_image,
-            main_position_image,
-            main_depth_image,
-          ],
-          shader_setup,
-        },
+        "reset_mesh_task_queue",
+        RenderPassFlags.GraphLocal,
+        {},
         (graph, frame_data, encoder) => {
-          const pass = graph.get_physical_pass(frame_data.current_pass);
-          MeshTaskQueue.get().submit_indexed_indirect_draws(pass, true /* should_reset */);
+          frame_data.g_buffer_data.albedo.config.load_op = "clear";
+          frame_data.g_buffer_data.smra.config.load_op = "clear";
+          frame_data.g_buffer_data.position.config.load_op = "clear";
+          frame_data.g_buffer_data.normal.config.load_op = "clear";
+
+          MeshTaskQueue.get().reset();
         }
       );
     }
@@ -186,13 +270,22 @@ export class DeferredShadingStrategy {
         height: image_extent.height,
         usage:
           GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+        flags: ImageFlags.Transient,
       });
 
       render_graph.add_pass(
         "lighting_pass",
         RenderPassFlags.Graphics,
         {
-          inputs: [skybox_image, main_albedo_image, main_smra_image, main_normal_image, main_position_image, main_depth_image, lights],
+          inputs: [
+            skybox_image,
+            main_albedo_image,
+            main_smra_image,
+            main_normal_image,
+            main_position_image,
+            main_depth_image,
+            lights,
+          ],
           outputs: [post_lighting_image],
           shader_setup,
         },

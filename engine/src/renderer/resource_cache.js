@@ -3,10 +3,12 @@ export const CacheTypes = Object.freeze({
     PIPELINE_STATE: 1,
     RENDER_PASS: 2,
     BIND_GROUP: 3,
-    BUFFER: 4,
-    IMAGE: 5,
-    SAMPLER: 6,
-    MESH: 7,
+    BIND_GROUP_LAYOUT: 4,
+    BUFFER: 5,
+    IMAGE: 6,
+    SAMPLER: 7,
+    MESH: 8,
+    MATERIAL: 9,
 });
 
 export class ResourceCache {
@@ -21,10 +23,12 @@ export class ResourceCache {
         this.cache.set(CacheTypes.PIPELINE_STATE, new Map());
         this.cache.set(CacheTypes.PASS, new Map());
         this.cache.set(CacheTypes.BIND_GROUP, new Map());
+        this.cache.set(CacheTypes.BIND_GROUP_LAYOUT, new Map());
         this.cache.set(CacheTypes.BUFFER, new Map());
         this.cache.set(CacheTypes.IMAGE, new Map());
         this.cache.set(CacheTypes.SAMPLER, new Map());
         this.cache.set(CacheTypes.MESH, new Map());
+        this.cache.set(CacheTypes.MATERIAL, new Map());
     }
 
     static get() {

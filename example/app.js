@@ -13,16 +13,16 @@ import { SharedEnvironmentMapData } from "../engine/src/core/shared_data.js";
 
 async function init() {
   application_state.is_running = true;
-
+  
   // Initialize input provider
   const input_provider = InputProvider.get();
   await SimulationCore.get().register_simulation_layer(input_provider);
   input_provider.push_context(InputProvider.default_context());
-
+  
   // Initialize renderer with document canvas
   const canvas = document.getElementById("gpu-canvas");
   await Renderer.get().setup(canvas);
-
+  
   // Initialize scene
   {
     // Create a test scene and register it with the simulation system
@@ -61,18 +61,8 @@ async function init() {
     );
 
     // Create a default material
-    const default_material = await Material.create(
-      Renderer.get().graphics_context,
-      "default_material",
-      {
-        albedo: "engine/textures/default_albedo.png",
-        normal: "engine/textures/default_normal.png",
-        roughness: "engine/textures/default_roughness.png",
-        metallic: "engine/textures/default_metallic.png",
-        emissive: "engine/textures/default_emissive.png",
-        ao: "engine/textures/default_ao.png",
-      }
-    );
+    const default_material = Material.create("StandardMaterial");
+    const default_material_id = default_material.get_state_hash();
 
     // Create a grid of sphere entities
     const grid_size = 100; // 5x5 grid
@@ -86,6 +76,7 @@ async function init() {
             // Add a static mesh fragment to the sphere entity
             scene.add_fragment(sphere_entity, StaticMeshFragment, {
                 mesh: BigInt(Name.from("engine/models/sphere/sphere.gltf")),
+                material_slots: [default_material_id]
             }, false /* refresh_entity_queries */);
 
             // Add a transform fragment to the sphere entity

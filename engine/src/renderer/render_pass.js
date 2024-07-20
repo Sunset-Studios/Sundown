@@ -66,9 +66,7 @@ export class RenderPass {
         label: this.config.name,
       });
     }
-
-    this.pass.setPipeline(pipeline.pipeline);
-
+    
     if (this.config.viewport) {
       this.pass.setViewport(this.config.viewport);
     }
@@ -81,6 +79,22 @@ export class RenderPass {
     if (this.config.index_buffer) {
       this.pass.setIndexBuffer(this.config.index_buffer);
     }
+
+    if (pipeline) {
+      this.set_pipeline(pipeline);
+    }
+  }
+
+  set_pipeline(pipeline) {
+    this.pass.setPipeline(pipeline.pipeline);
+  }
+
+  set_attachments(attachments) {
+    this.config.attachments = attachments;
+  }
+
+  set_depth_stencil_attachment(attachment) {
+    this.config.depth_stencil_attachment = attachment;
   }
 
   dispatch(x, y, z) {

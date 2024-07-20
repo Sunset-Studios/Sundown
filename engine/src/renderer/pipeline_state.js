@@ -6,25 +6,29 @@ export class PipelineState {
     layout = null;
     
     init_render_pipeline(context, name, config) {
-        this.layout = context.device.createPipelineLayout({
-            label: Name.string(name),
-            bindGroupLayouts: config.bind_layouts,
-        });
+        if (config.bind_layouts && config.bind_layouts.length) {
+            this.layout = context.device.createPipelineLayout({
+                label: Name.string(name),
+                bindGroupLayouts: config.bind_layouts,
+            });
+        }
         this.pipeline = context.device.createRenderPipeline({
             label: Name.string(name),
-            layout: this.layout,
+            layout: this.layout ?? 'auto',
             ...config
         });
     }
 
     init_compute_pipeline(context, name, config) {
-        this.layout = context.device.createPipelineLayout({
-            label: Name.string(name),
-            bindGroupLayouts: config.bind_layouts,
-        });
+        if (config.bind_layouts && config.bind_layouts.length) {
+            this.layout = context.device.createPipelineLayout({
+                label: Name.string(name),
+                bindGroupLayouts: config.bind_layouts,
+            });
+        }
         this.pipeline = context.device.createComputePipeline({
             label: Name.string(name),
-            layout: this.layout,
+            layout: this.layout ?? 'auto',
             ...config
         });
     }

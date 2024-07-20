@@ -1,6 +1,7 @@
-const { app, BrowserWindow } = require('electron');
+const { app, BrowserWindow, session } = require('electron');
+const path = require('path');
 
-function create_window() {
+async function create_window() {
   const win = new BrowserWindow({
     width: 1920,
     height: 1080,
@@ -11,15 +12,18 @@ function create_window() {
     }
   });
 
+  // Load webgpu extension in third-party directory
+  const extension_path = path.join(__dirname, '../../../electron/third_party/webgpu_inspector');
+  await session.defaultSession.loadExtension(extension_path, { allowFileAccess: true });
+
   win.loadFile('dist/index.html');
 }
 
-app.whenReady().then(() => {
-  create_window();
-
-  app.on('activate', () => {
+app.whenReady().then(async () => {
+  await create_window();
+  app.on('activate', async () => {
     if (BrowserWindow.getAllWindows().length === 0) {
-      create_window();
+      await create_window();
     }
   });
 });

@@ -74,9 +74,6 @@ export class Texture {
       dimension: config.dimension,
       format: config.format,
       usage: config.usage,
-      loadOp: config.load_op ?? "clear",
-      storeOp: config.store_op ?? "store",
-      clearValue: config.clear_value ?? { r: 0, g: 0, b: 0, a: 1 },
     });
 
     this.view = this.create_view();
@@ -121,9 +118,6 @@ export class Texture {
       sampleCount: config.sample_count,
       format: config.format,
       usage: config.usage,
-      loadOp: config.load_op ?? "clear",
-      storeOp: config.store_op ?? "store",
-      clearValue: config.clear_value ?? { r: 0, g: 0, b: 0, a: 1 },
     });
 
     textures.forEach((texture, layer) => {
@@ -282,5 +276,23 @@ export class Texture {
     ResourceCache.get().store(CacheTypes.IMAGE, Name.from(config.name), image);
 
     return image;
+  }
+
+  static dimension_from_type_name(type_name) {
+    switch (type_name) {
+      case "texture_2d":
+      case "texture_2d_depth":
+        return "2d";
+      case "texture_cube":
+        return "cube";
+      case "texture_3d":
+        return "3d";
+      case "texture_array":
+        return "2d_array";
+      case "texture_cube_array":
+        return "cube_array";
+      default:
+        return "2d";
+    }
   }
 }

@@ -3,6 +3,7 @@ import { defineConfig } from "vite";
 const all_config = {
   main: {
     build: {
+      outDir: "./dist/electron/main",
       rollupOptions: {
         input: {
           index: "./electron/main/main.js",
@@ -13,6 +14,7 @@ const all_config = {
   renderer: {
     root: "./dist",
     build: {
+      outDir: "./dist/electron/renderer",
       rollupOptions: {
         input: "./dist/index.html",
       },
@@ -20,6 +22,7 @@ const all_config = {
   },
   preload: {
     build: {
+      outDir: "./dist/electron/preload",
       rollupOptions: {
         input: {
           index: "./electron/preload/preload.js",

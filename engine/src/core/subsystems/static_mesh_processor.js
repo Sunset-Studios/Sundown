@@ -31,11 +31,12 @@ export class StaticMeshProcessor extends SimulationLayer {
 
           for (const entity of this.entity_query) {
             const mesh_id = Number(static_meshes.mesh[entity]);
+            const material_id = Number(static_meshes.material_slots[entity * StaticMeshFragment.material_slot_stride]);
             if (mesh_id !== last_mesh_id) {
                 mesh = resource_cache.fetch(CacheTypes.MESH, mesh_id);
                 last_mesh_id = mesh_id;
             }
-            mesh_task_queue.new_task(mesh_id, entity);
+            mesh_task_queue.new_task(mesh_id, entity, material_id);
           }
         });
     }
