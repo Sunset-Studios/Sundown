@@ -77,7 +77,11 @@ export class Renderer {
           { format: "bgra8unorm" },
           { format: "rgba16float" },
           { format: "rgba16float" },
+          { format: "depth32float" },
         ],
+        depth_stencil_target: {
+          depth_write_enabled: true,
+        },
       }
     );
   }

@@ -13,8 +13,8 @@ export class Fragment {
 
     static add_entity(entity, data) {
         this.entity_set.add(entity);
-        if (entity >= this.size) {
-            this.resize(entity * 2);
+        if (this.entity_set.size >= this.size) {
+            this.resize(this.entity_set.size * 2);
         }
         if (data) {
             this.update_entity_data(entity, data);

@@ -10,6 +10,7 @@ import { LightFragment, LightType } from "../engine/src/core/ecs/fragments/light
 import { Mesh } from "../engine/src/renderer/mesh.js";
 import { Name } from "../engine/src/utility/names.js";
 import { SharedEnvironmentMapData } from "../engine/src/core/shared_data.js";
+import { profile_scope } from "../engine/src/utility/performance.js";
 
 async function init() {
   application_state.is_running = true;
@@ -50,8 +51,8 @@ async function init() {
     scene.add_fragment(light_entity, LightFragment, {
       type: LightType.DIRECTIONAL,
       color: { r: 1, g: 1, b: 1 },
-      intensity: 1,
-      position: { x: 0, y: -1, z: 0 },
+      intensity: 10,
+      position: { x: 0, y: -10, z: 0 },
     });
 
     // Create a sphere mesh and add it to the scene
@@ -99,12 +100,10 @@ async function init() {
 function run() {
   function simulate() {
     if (application_state.is_running) {
-      performance.mark("frame_start");
-
-      SimulationCore.get().update();
-
-      Renderer.get().render();
-
+      profile_scope("frame_loop", () => {
+        SimulationCore.get().update();
+        Renderer.get().render();
+      });
       requestAnimationFrame(simulate);
     }
   }

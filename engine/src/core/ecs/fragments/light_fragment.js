@@ -124,12 +124,8 @@ export class LightFragment extends Fragment {
             gpu_data[offset + 13] = this.data.radius[i];
             gpu_data[offset + 14] = this.data.attenuation[i];
             gpu_data[offset + 15] = this.data.outer_angle[i];
-            gpu_data[offset + 16] = 0; // padding
-            gpu_data[offset + 17] = 0; // padding
-            gpu_data[offset + 18] = 0; // padding
-            gpu_data[offset + 19] = 0; // padding
 
-            offset += 20;
+            offset += 16;
         }
 
         // Resize the buffer if necessary

@@ -42,20 +42,18 @@ fn vertex(v_out: VertexOutput) -> VertexOutput {
     var model_matrix = entity_transforms[object_instances[ii].entity].model_matrix;
     var inverse_model_matrix = entity_transforms[object_instances[ii].entity].inverse_model_matrix;
     var mvp = view_buffer[0].projection_matrix * view_buffer[0].view_matrix * model_matrix;
-	var transpose_inverse_model_matrix = transpose(inverse_model_matrix);
 
-	var n = normalize(transpose_inverse_model_matrix * vertex_buffer[vi].normal);
-	var t = normalize(model_matrix * vertex_buffer[vi].tangent);
-	var b = normalize(model_matrix * vertex_buffer[vi].bitangent);
+	var transpose_inverse_model_matrix = transpose(inverse_model_matrix);
+    transpose_inverse_model_matrix[3] = vec4f(0.0, 0.0, 0.0, 1.0);
 
     var output : VertexOutput;
 
     output.position = mvp * vertex_buffer[vi].position;
     output.color = vertex_buffer[vi].color;
     output.uv = vertex_buffer[vi].uv;
-    output.normal = n;
-    output.tangent = t;
-    output.bitangent = b;
+    output.normal = normalize(model_matrix * vertex_buffer[vi].normal);
+    output.tangent = normalize(model_matrix * vertex_buffer[vi].tangent);
+    output.bitangent = normalize(model_matrix * vertex_buffer[vi].bitangent);
 
     return vertex(output);
 }

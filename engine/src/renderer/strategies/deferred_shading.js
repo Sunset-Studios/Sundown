@@ -125,6 +125,7 @@ export class DeferredShadingStrategy {
         usage:
           GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
         flags: ImageFlags.Transient,
+        load_op: "load",
       });
 
       render_graph.add_pass(
@@ -201,6 +202,7 @@ export class DeferredShadingStrategy {
               main_smra_image,
               main_position_image,
               main_normal_image,
+              main_depth_image
             ],
           },
           (graph, frame_data, encoder) => {
@@ -244,6 +246,7 @@ export class DeferredShadingStrategy {
           frame_data.g_buffer_data.smra.config.load_op = "clear";
           frame_data.g_buffer_data.position.config.load_op = "clear";
           frame_data.g_buffer_data.normal.config.load_op = "clear";
+          frame_data.g_buffer_data.depth.config.load_op = "clear";
 
           MeshTaskQueue.get().reset();
         }

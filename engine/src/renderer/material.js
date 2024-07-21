@@ -193,8 +193,11 @@ export class MaterialTemplate {
     };
 
     if (this.pipeline_state_config.depth_stencil_target) {
-      pipeline_descriptor.depthStencil =
-        this.pipeline_state_config.depth_stencil_target;
+      pipeline_descriptor.depthStencil = {
+        format: this.pipeline_state_config.depth_stencil_target.format ?? "depth32float",
+        depthWriteEnabled: this.pipeline_state_config.depth_stencil_target.depth_write_enabled ?? true,
+        depthCompare: this.pipeline_state_config.depth_stencil_target.depth_compare ?? "less",
+      };
     }
 
     return PipelineState.create_render(context, this.name, pipeline_descriptor);

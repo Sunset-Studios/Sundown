@@ -402,6 +402,7 @@ export class Mesh {
           for (const node of scene.nodes) {
             if (node.mesh) {
               for (const primitive of node.mesh.primitives) {
+                console.log(primitive);
                 if (primitive.indices) {
                   if (
                     primitive.indicesComponentType === 5122 ||

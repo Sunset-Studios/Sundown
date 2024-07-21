@@ -44,8 +44,8 @@ struct FragmentOutput {
 
     var tex_smra = textureSample(smra_texture, global_sampler, v_out.uv);
     var reflectance = tex_smra.r * 0.0009765625 /* 1.0f / 1024 */;
-    var roughness = tex_smra.g;
-    var metallic = tex_smra.b;
+    var metallic = tex_smra.g;
+    var roughness = tex_smra.b;
     var ao = tex_smra.a;
 
     var tex_position = textureSample(position_texture, global_sampler, v_out.uv);
