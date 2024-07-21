@@ -109,7 +109,7 @@ export class Mesh {
         position: [-1, 1, 0, 1],
         normal: [0, 0, -1, 0],
         color: [1, 1, 1, 1],
-        uv: [0, 1, 0, 0],
+        uv: [0, 0, 0, 0],
         tangent: [1, 0, 0, 0],
         bitangent: [0, 1, 0, 0],
       },
@@ -117,7 +117,7 @@ export class Mesh {
         position: [-1, -1, 0, 1],
         normal: [0, 0, -1, 0],
         color: [1, 1, 1, 1],
-        uv: [0, 0, 0, 0],
+        uv: [0, 1, 0, 0],
         tangent: [1, 0, 0, 0],
         bitangent: [0, 1, 0, 0],
       },
@@ -125,7 +125,7 @@ export class Mesh {
         position: [1, -1, 0, 1],
         normal: [0, 0, -1, 0],
         color: [1, 1, 1, 1],
-        uv: [1, 0, 0, 0],
+        uv: [1, 1, 0, 0],
         tangent: [1, 0, 0, 0],
         bitangent: [0, 1, 0, 0],
       },
@@ -133,7 +133,7 @@ export class Mesh {
         position: [1, 1, 0, 1],
         normal: [0, 0, -1, 0],
         color: [1, 1, 1, 1],
-        uv: [1, 1, 0, 0],
+        uv: [1, 0, 0, 0],
         tangent: [1, 0, 0, 0],
         bitangent: [0, 1, 0, 0],
       },
@@ -402,7 +402,6 @@ export class Mesh {
           for (const node of scene.nodes) {
             if (node.mesh) {
               for (const primitive of node.mesh.primitives) {
-                console.log(primitive);
                 if (primitive.indices) {
                   if (
                     primitive.indicesComponentType === 5122 ||

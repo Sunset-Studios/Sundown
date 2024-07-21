@@ -51,7 +51,7 @@ struct FragmentOutput {
     var tex_position = textureSample(position_texture, global_sampler, v_out.uv);
     var position = tex_position.xyz;
 
-    var view_dir = normalize(view_buffer[0].view_matrix[3].xyz - position);
+    var view_dir = normalize(-view_buffer[0].view_direction.xyz);
     var reflection = reflect(-view_dir, normalized_normal);
 
     let unlit = f32(normal_length <= 0.0);

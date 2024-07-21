@@ -51,8 +51,8 @@ async function init() {
     scene.add_fragment(light_entity, LightFragment, {
       type: LightType.DIRECTIONAL,
       color: { r: 1, g: 1, b: 1 },
-      intensity: 10,
-      position: { x: 0, y: -10, z: 0 },
+      intensity: 3,
+      position: { x: 50, y: 100, z: 50 },
     });
 
     // Create a sphere mesh and add it to the scene

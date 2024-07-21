@@ -2,11 +2,12 @@
 
 struct VertexOutput {
     @builtin(position) position: vec4f,
-    @location(0) color: vec4f,
-    @location(1) uv: vec2f,
-    @location(2) normal: vec4f,
-    @location(3) tangent: vec4f,
-    @location(4) bitangent: vec4f,
+    @location(0) world_position: vec4f,
+    @location(1) color: vec4f,
+    @location(2) uv: vec2f,
+    @location(3) normal: vec4f,
+    @location(4) tangent: vec4f,
+    @location(5) bitangent: vec4f,
 };
 
 struct FragmentOutput {
@@ -41,19 +42,20 @@ fn vertex(v_out: VertexOutput) -> VertexOutput {
 ) -> VertexOutput {
     var model_matrix = entity_transforms[object_instances[ii].entity].model_matrix;
     var inverse_model_matrix = entity_transforms[object_instances[ii].entity].inverse_model_matrix;
-    var mvp = view_buffer[0].projection_matrix * view_buffer[0].view_matrix * model_matrix;
+    var mvp = view_buffer[0].view_projection_matrix * model_matrix;
 
 	var transpose_inverse_model_matrix = transpose(inverse_model_matrix);
     transpose_inverse_model_matrix[3] = vec4f(0.0, 0.0, 0.0, 1.0);
 
     var output : VertexOutput;
 
+    output.world_position = model_matrix * vertex_buffer[vi].position;
     output.position = mvp * vertex_buffer[vi].position;
     output.color = vertex_buffer[vi].color;
     output.uv = vertex_buffer[vi].uv;
-    output.normal = normalize(model_matrix * vertex_buffer[vi].normal);
-    output.tangent = normalize(model_matrix * vertex_buffer[vi].tangent);
-    output.bitangent = normalize(model_matrix * vertex_buffer[vi].bitangent);
+    output.normal = transpose_inverse_model_matrix * vertex_buffer[vi].normal;
+    output.tangent = model_matrix * vertex_buffer[vi].tangent;
+    output.bitangent = model_matrix * vertex_buffer[vi].bitangent;
 
     return vertex(output);
 }
@@ -67,8 +69,8 @@ fn fragment(v_out: VertexOutput, f_out: FragmentOutput) -> FragmentOutput {
 @fragment fn fs(v_out: VertexOutput) -> FragmentOutput {
     var output : FragmentOutput;
 
-    output.position = v_out.position;
-    output.normal = v_out.normal;
+    output.position = v_out.world_position;
+    output.normal = normalize(vec4f(v_out.normal.xyz, 1.0));
 
     return fragment(v_out, output);
 }

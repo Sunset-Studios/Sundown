@@ -263,7 +263,7 @@ export class MeshTaskQueue {
       );
       if (material && material !== last_material) {
         // Material binds will rebind a pipeline state, so we need to rebind the bind groups here
-        material.bind(render_pass, 2);
+        material.bind(render_pass, rg_frame_data.pass_bind_groups, rg_frame_data.pass_attachments);
         if (rg_frame_data.pass_bind_groups[BindGroupType.Global]) {
           rg_frame_data.pass_bind_groups[BindGroupType.Global].bind(render_pass);
         }
@@ -295,7 +295,7 @@ export class MeshTaskQueue {
       );
       if (material && material !== last_material) {
         // Material binds will rebind a pipeline state, so we need to rebind the bind groups here
-        material.bind(render_pass, 2);
+        material.bind(render_pass, rg_frame_data.pass_bind_groups, rg_frame_data.pass_attachments);
         if (rg_frame_data.pass_bind_groups[BindGroupType.Global]) {
           rg_frame_data.pass_bind_groups[BindGroupType.Global].bind(render_pass);
         }
@@ -336,7 +336,7 @@ export class MeshTaskQueue {
       );
       if (!skip_material_bind && material && material !== last_material) {
         // Material binds will rebind a pipeline state, so we need to rebind the bind groups here
-        material.bind(render_pass, 2);
+        material.bind(render_pass, rg_frame_data.pass_bind_groups, rg_frame_data.pass_attachments);
         if (rg_frame_data.pass_bind_groups[BindGroupType.Global]) {
           rg_frame_data.pass_bind_groups[BindGroupType.Global].bind(render_pass);
         }
@@ -367,7 +367,7 @@ export class MeshTaskQueue {
     );
     if (material) {
       // Material binds will rebind a pipeline state, so we need to rebind the bind groups here
-      material.bind(render_pass, rg_frame_data.pass_bind_groups);
+      material.bind(render_pass, rg_frame_data.pass_bind_groups, rg_frame_data.pass_attachments);
       if (rg_frame_data.pass_bind_groups[BindGroupType.Global]) {
         rg_frame_data.pass_bind_groups[BindGroupType.Global].bind(render_pass);
       }

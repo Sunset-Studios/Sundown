@@ -14,6 +14,7 @@ struct View {
     prev_projection_matrix: mat4x4f,
     view_projection_matrix: mat4x4f,
     inverse_view_projection_matrix: mat4x4f,
+    view_direction: vec4f,
 };
 
 struct FrameInfo {

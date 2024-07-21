@@ -76,7 +76,7 @@ export class FreeformArcballControlProcessor extends SimulationLayer {
             const pivot_point = vec3.scaleAndAdd(vec3.create(), position, view_data.view_forward ?? WORLD_FORWARD, orbit_distance);
 
             // Calculate rotation quaternions for pitch and yaw
-            const pitch_rotation = quat.setAxisAngle(quat.create(), [1, 0, 0], -y * this.rotation_speed);
+            const pitch_rotation = quat.setAxisAngle(quat.create(), [1, 0, 0], y * this.rotation_speed);
             const yaw_rotation = quat.setAxisAngle(quat.create(), [0, 1, 0], x * this.rotation_speed);
 
             // Combine rotations

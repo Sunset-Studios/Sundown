@@ -9,7 +9,13 @@ import { Texture } from "./texture.js";
 export class MaterialTemplate {
   static templates = new Map();
 
-  constructor(context, name, shader, pipeline_state_config = {}, parent = null) {
+  constructor(
+    context,
+    name,
+    shader,
+    pipeline_state_config = {},
+    parent = null
+  ) {
     this.context = context;
     this.name = name;
     this.shader = shader;
@@ -23,7 +29,13 @@ export class MaterialTemplate {
     this.resources.push(resource);
   }
 
-  static create(context, name, shader_path, pipeline_state_config = {}, parent_name = null) {
+  static create(
+    context,
+    name,
+    shader_path,
+    pipeline_state_config = {},
+    parent_name = null
+  ) {
     if (this.templates.has(name)) {
       return this.templates.get(name);
     }
@@ -43,14 +55,22 @@ export class MaterialTemplate {
       shader = Shader.create(context, shader_path);
     }
 
-    const template = new MaterialTemplate(context, name, shader, pipeline_state_config, parent);
+    const template = new MaterialTemplate(
+      context,
+      name,
+      shader,
+      pipeline_state_config,
+      parent
+    );
 
     if (parent) {
       template.resources = [...parent.resources];
     }
 
     // Reflect on shader and add resources
-    const groups = template.reflection ? template.reflection.getBindGroups() : [];
+    const groups = template.reflection
+      ? template.reflection.getBindGroups()
+      : [];
     if (BindGroupType.Material < groups.length) {
       const material_group = groups[BindGroupType.Material];
       for (let i = 0; i < material_group.length; i++) {
@@ -71,14 +91,14 @@ export class MaterialTemplate {
     return template;
   }
 
-  create_pipeline_state(context, bind_group_layouts) {
+  create_pipeline_state(context, bind_group_layouts, output_targets = []) {
     let all_bind_group_layouts = [...bind_group_layouts];
 
     // Set material binding group inputs
     const groups = this.reflection.getBindGroups();
     if (BindGroupType.Material < groups.length) {
       const material_group = groups[BindGroupType.Material];
-      
+
       material_group.forEach((binding, i) => {
         this.add_resource({
           binding: i,
@@ -142,12 +162,21 @@ export class MaterialTemplate {
     }
 
     // Set material shader fragment output targets
-    const targets = [];
-    const fragment_outputs = this.reflection.entry.fragment[0].outputs;
+    const targets = output_targets
+      .filter((target) => target.config.type !== "depth")
+      .map((target) => ({
+        name: target.config.name,
+        format: target.config.format,
+      }));
 
+    const fragment_outputs = this.reflection.entry.fragment[0].outputs;
     fragment_outputs.forEach((output, i) => {
+      if (targets[i]) {
+        return;
+      }
+
       const target = {
-        format: Shader.get_optimal_texture_format(output.type.name)
+        format: Shader.get_optimal_texture_format(output.type.name),
       };
 
       if (
@@ -188,15 +217,29 @@ export class MaterialTemplate {
       primitive: {
         topology:
           this.pipeline_state_config.primitive_topology_type || "triangle-list",
-        cullMode: this.pipeline_state_config.rasterizer_state?.cull_mode || "back",
+        cullMode:
+          this.pipeline_state_config.rasterizer_state?.cull_mode || "back",
       },
     };
 
+    const depth_target = output_targets.find(target => target.config.type === "depth")
     if (this.pipeline_state_config.depth_stencil_target) {
       pipeline_descriptor.depthStencil = {
-        format: this.pipeline_state_config.depth_stencil_target.format ?? "depth32float",
-        depthWriteEnabled: this.pipeline_state_config.depth_stencil_target.depth_write_enabled ?? true,
-        depthCompare: this.pipeline_state_config.depth_stencil_target.depth_compare ?? "less",
+        format:
+          this.pipeline_state_config.depth_stencil_target.format ??
+          "depth32float",
+        depthWriteEnabled:
+          this.pipeline_state_config.depth_stencil_target.depth_write_enabled ??
+          true,
+        depthCompare:
+          this.pipeline_state_config.depth_stencil_target.depth_compare ??
+          "less",
+      };
+    } else if (depth_target) {
+      pipeline_descriptor.depthStencil = {
+        format: depth_target.config.format,
+        depthWriteEnabled: true,
+        depthCompare: "less",
       };
     }
 
@@ -283,10 +326,13 @@ export class Material {
     );
   }
 
-  update_pipeline_state(bind_groups) {
+  update_pipeline_state(bind_groups, output_targets = []) {
     this.pipeline_state = this.template.create_pipeline_state(
       this.template.context,
-      bind_groups.filter((bind_group) => bind_group !== null).map((bind_group) => bind_group.layout),
+      bind_groups
+        .filter((bind_group) => bind_group !== null)
+        .map((bind_group) => bind_group.layout),
+      output_targets
     );
   }
 
@@ -314,9 +360,13 @@ export class Material {
     this._refresh_bind_group();
   }
 
-  bind(render_pass, bind_groups = []) {
-    if (!this.pipeline_state && bind_groups.length > 0) {
-      this.update_pipeline_state(bind_groups);
+  bind(render_pass, bind_groups = [], output_targets = []) {
+    if (
+      !this.pipeline_state &&
+      bind_groups.length > 0 &&
+      output_targets.length > 0
+    ) {
+      this.update_pipeline_state(bind_groups, output_targets);
       bind_groups.forEach((bind_group) => {
         if (bind_group) {
           bind_group.bind(render_pass);

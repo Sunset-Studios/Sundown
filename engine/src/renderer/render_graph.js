@@ -212,6 +212,7 @@ const RGFrameData = Object.freeze({
   pass_pipeline_state: 0,
   resource_deletion_queue: null,
   pass_bindless_resources: [],
+  pass_attachments: [],
   g_buffer_data: null,
 });
 
@@ -944,6 +945,8 @@ export class RenderGraph {
       throw new Error("Cannot execute null pass");
     }
 
+    frame_data.pass_attachments.length = 0;
+
     if (
       (pass.pass_config.flags & RenderPassFlags.GraphLocal) !==
       RenderPassFlags.None
@@ -951,11 +954,6 @@ export class RenderGraph {
       pass.executor(this, frame_data, encoder);
     } else {
       this._setup_physical_pass_and_resources(pass, frame_data, encoder);
-
-      const bind_group_list = this.pass_cache.bind_groups.get(
-        pass.pass_config.name
-      );
-
 
       if (
         (pass.pass_config.flags & RenderPassFlags.Compute) !==
@@ -1011,7 +1009,8 @@ export class RenderGraph {
             resource,
             pass,
             resource_params_index,
-            is_input_resource
+            is_input_resource,
+            frame_data
           );
         }
         if (is_input_resource) {
@@ -1108,13 +1107,18 @@ export class RenderGraph {
     resource,
     pass,
     resource_params_index,
-    is_input_resource
+    is_input_resource,
+    frame_data
   ) {
     const resource_type = get_graph_resource_type(resource);
     const resource_index = get_graph_resource_index(resource);
 
     if (resource_type === ResourceType.Image) {
       const image_resource = this.registry.image_resources[resource_index];
+      const image = ResourceCache.get().fetch(
+        CacheTypes.IMAGE,
+        this.registry.resource_metadata.get(resource).physical_id
+      );
       const is_local_load =
         (image_resource.config.flags & ImageFlags.LocalLoad) !==
         ImageFlags.None;
@@ -1123,11 +1127,6 @@ export class RenderGraph {
           pass.parameters.output_views.length > resource_params_index
             ? pass.parameters.output_views[resource_params_index]
             : 0;
-
-        const image = ResourceCache.get().fetch(
-          CacheTypes.IMAGE,
-          this.registry.resource_metadata.get(resource).physical_id
-        );
         if (image.config.type.includes("depth")) {
           pass.pass_config.depth_stencil_attachment = {
             image: this.registry.resource_metadata.get(resource).physical_id,
@@ -1144,6 +1143,7 @@ export class RenderGraph {
           });
         }
       }
+      frame_data.pass_attachments.push(image);
     }
   }
 

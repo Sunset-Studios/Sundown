@@ -148,7 +148,7 @@ fn calculate_brdf(
     var attenuation = 1.0;
 
     if (light.light_type == 0u) { // Directional
-        light_dir = normalize(-light.position);
+        light_dir = normalize(light.position);
     } else if (light.light_type == 1u) { // Point
         let light_to_frag = light.position - fragment_pos;
         light_dir = normalize(light_to_frag);
@@ -170,7 +170,7 @@ fn calculate_brdf(
 
     attenuation = clamp(attenuation, 0.0, 255.0);
 
-    let halfway = normalize(light_dir + view_dir);
+    let halfway = normalize(view_dir + light_dir);
 
     let n_dot_v = clamp(dot(normal, view_dir), 0.0001, 1.0);
     let n_dot_l = clamp(dot(normal, light_dir), 0.0001, 1.0);

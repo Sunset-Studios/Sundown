@@ -240,6 +240,7 @@ export class SharedViewBuffer {
       ...item.prev_projection_matrix,
       ...item.view_projection_matrix,
       ...item.inverse_view_projection_matrix,
+      ...item.view_forward
     );
   }
 }

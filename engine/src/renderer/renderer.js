@@ -70,19 +70,7 @@ export class Renderer {
     const template = MaterialTemplate.create(
       Renderer.get().graphics_context,
       "StandardMaterial",
-      "standard_material.wgsl",
-      {
-        targets: [
-          { format: "bgra8unorm" },
-          { format: "bgra8unorm" },
-          { format: "rgba16float" },
-          { format: "rgba16float" },
-          { format: "depth32float" },
-        ],
-        depth_stencil_target: {
-          depth_write_enabled: true,
-        },
-      }
+      "standard_material.wgsl"
     );
   }
 }
