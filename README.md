@@ -1,8 +1,17 @@
-# Sundown Engine
+# Sundown Engine 🕹️
 
 
-An extendible WebGPU game and simulation engine for fun, games and research
+An extendible WebGPU game and simulation engine for fun, games and research. Some of the current (code) features include:
 
+* ⚡ WebGPU renderable abstractions
+* ⚡ Flexible render graph for crafting render and compute pipelines
+* ⚡ Simple, expressive material system for crafting custom shaders and materials
+* ⚡ Gameplay simulation layer system for adding layered, modular functionality
+* ⚡ ECS system for more efficient processing, using TypedArrays where possible
+* ⚡ Simple, context-based input system, allowing you to set up different input schemes and contexts
+* ⚡ Built-in PBR shaders
+* ⚡ Auto instancing and draw batching of meshes using a specialized mesh task queue
+* ⚡ Helpers for loading GTLFs, tracking performance scopes, named IDs and more.
 
 ### Installation
 
