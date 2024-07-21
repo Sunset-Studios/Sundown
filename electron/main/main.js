@@ -12,11 +12,16 @@ async function create_window() {
     }
   });
 
-  // Load webgpu extension in third-party directory
-  const extension_path = path.join(__dirname, '../../../electron/third_party/webgpu_inspector');
-  await session.defaultSession.loadExtension(extension_path, { allowFileAccess: true });
-
-  win.loadFile('dist/index.html');
+  if (!app.isPackaged) {
+    // Load webgpu extension in third-party directory
+    console.log(app.getAppPath())
+    const extension_path = path.join(app.getAppPath(), 'electron/third_party/webgpu_inspector');
+    await session.defaultSession.loadExtension(extension_path, { allowFileAccess: true });
+    win.loadFile(path.join(app.getAppPath(), 'dist/index.html'));
+  } else {
+    const indexPath = path.join('file://', app.getAppPath(), 'dist', 'index.html');
+    win.loadURL(indexPath);
+  }
 }
 
 app.whenReady().then(async () => {

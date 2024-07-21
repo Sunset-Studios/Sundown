@@ -8,7 +8,8 @@
     "dev": "vite",
     "build": "vite build",
     "devtop": "vite build && electron-vite dev",
-    "buildtop": "vite build && electron-vite build"
+    "buildtop": "vite build && electron-vite build",
+    "make": "vite build && electron-vite build && electron-forge make"
   },
   "build": {
     "appId": "com.sunsetstudios.sundown",
@@ -42,6 +43,7 @@
   "license": "MIT",
   "dependencies": {
     "concurrently": "^8.2.2",
+    "electron-squirrel-startup": "^1.0.1",
     "gl-matrix": "^3.4.3",
     "lodash": "^4.17.21",
     "module-alias": "^2.2.3",
@@ -49,7 +51,16 @@
     "wgsl_reflect": "^1.0.8"
   },
   "devDependencies": {
+    "@electron-forge/cli": "^7.4.0",
+    "@electron-forge/maker-deb": "^7.4.0",
+    "@electron-forge/maker-rpm": "^7.4.0",
+    "@electron-forge/maker-squirrel": "^7.4.0",
+    "@electron-forge/maker-zip": "^7.4.0",
+    "@electron-forge/plugin-auto-unpack-natives": "^7.4.0",
+    "@electron-forge/plugin-fuses": "^7.4.0",
+    "@electron/fuses": "^1.8.0",
     "electron": "^31.1.0",
     "electron-vite": "^2.3.0"
   }
 }
+
