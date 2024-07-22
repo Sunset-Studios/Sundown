@@ -14,7 +14,6 @@ async function create_window() {
 
   if (!app.isPackaged) {
     // Load webgpu extension in third-party directory
-    console.log(app.getAppPath())
     const extension_path = path.join(app.getAppPath(), 'electron/third_party/webgpu_inspector');
     await session.defaultSession.loadExtension(extension_path, { allowFileAccess: true });
     win.loadFile(path.join(app.getAppPath(), 'dist/index.html'));

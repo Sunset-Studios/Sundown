@@ -78,7 +78,7 @@ export class MaterialTemplate {
         const binding_type = Shader.resource_type_from_reflection_type(
           binding.resourceType
         );
-        this.add_resource({
+        template.add_resource({
           type: binding_type,
           name: binding.name,
           binding: i,
@@ -98,14 +98,6 @@ export class MaterialTemplate {
     const groups = this.reflection.getBindGroups();
     if (BindGroupType.Material < groups.length) {
       const material_group = groups[BindGroupType.Material];
-
-      material_group.forEach((binding, i) => {
-        this.add_resource({
-          binding: i,
-          name: binding.name,
-          type: Shader.resource_type_from_reflection_type(binding.resourceType),
-        });
-      });
 
       all_bind_group_layouts.push(
         BindGroup.create_layout(
@@ -151,7 +143,7 @@ export class MaterialTemplate {
             }
 
             return {
-              type: binding.resourceType,
+              binding: binding.binding,
               visibility: GPUShaderStage.FRAGMENT | GPUShaderStage.VERTEX,
               ...binding_obj,
             };
@@ -270,6 +262,7 @@ export class Material {
     this.texture_data = new Map();
     this.sampler_data = new Map();
     this.state_hash = 0;
+    this.needs_bind_group_update = false;
     this._update_state_hash();
   }
 
@@ -319,7 +312,7 @@ export class Material {
     this.bind_group = BindGroup.create(
       this.template.context,
       this.template.name,
-      this.template.pipeline_state,
+      this.pipeline_state,
       BindGroupType.Material,
       entries,
       true /* force */
@@ -339,25 +332,25 @@ export class Material {
   set_uniform_data(name, data) {
     this.uniform_data.set(name, data);
     this._update_state_hash();
-    this._refresh_bind_group();
+    this.needs_bind_group_update = true;
   }
 
   set_storage_data(name, data) {
     this.storage_data.set(name, data);
     this._update_state_hash();
-    this._refresh_bind_group();
+    this.needs_bind_group_update = true;
   }
 
   set_texture_data(name, texture) {
     this.texture_data.set(name, texture);
     this._update_state_hash();
-    this._refresh_bind_group();
+    this.needs_bind_group_update = true;
   }
 
   set_sampler_data(name, sampler) {
     this.sampler_data.set(name, sampler);
     this._update_state_hash();
-    this._refresh_bind_group();
+    this.needs_bind_group_update = true;
   }
 
   bind(render_pass, bind_groups = [], output_targets = []) {
@@ -372,6 +365,11 @@ export class Material {
           bind_group.bind(render_pass);
         }
       });
+    }
+
+    if (this.needs_bind_group_update) {
+      this._refresh_bind_group();
+      this.needs_bind_group_update = false;
     }
 
     if (this.pipeline_state) {

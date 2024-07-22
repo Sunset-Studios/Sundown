@@ -393,120 +393,140 @@ export class Mesh {
       return mesh;
     }
 
+    const parse_node_mesh = (gltf_obj, node) => {
+      for (const primitive of node.mesh.primitives) {
+        if (primitive.indices) {
+          if (
+            primitive.indicesComponentType === 5122 ||
+            primitive.indicesComponentType === 5123
+          ) {
+            mesh.indices = new Uint16Array(
+              gltf_obj.accessors[primitive.indices].bufferView.data
+            );
+          } else if (primitive.indicesComponentType === 5125) {
+            mesh.indices = new Uint32Array(
+              gltf_obj.accessors[primitive.indices].bufferView.data
+            );
+          }
+        }
+        let positions = [];
+        if (primitive.attributes.POSITION) {
+          positions = new Float32Array(
+            primitive.attributes.POSITION.bufferView.data
+          );
+        }
+        let normals = [];
+        if (primitive.attributes.NORMAL) {
+          normals = new Float32Array(
+            primitive.attributes.NORMAL.bufferView.data
+          );
+        }
+        let colors = [];
+        if (primitive.attributes.COLOR_0) {
+          colors = new Float32Array(
+            primitive.attributes.COLOR_0.bufferView.data
+          );
+        }
+        let uvs = [];
+        if (primitive.attributes.TEXCOORD_0) {
+          switch (primitive.attributes.TEXCOORD_0.componentType) {
+            case 5126: // FLOAT
+              uvs = new Float32Array(
+                primitive.attributes.TEXCOORD_0.bufferView.data
+              );
+              break;
+            case 5121: // UNSIGNED_BYTE
+              uvs = new Uint8Array(
+                primitive.attributes.TEXCOORD_0.bufferView.data
+              );
+              break;
+            case 5123: // UNSIGNED_SHORT
+              uvs = new Uint16Array(
+                primitive.attributes.TEXCOORD_0.bufferView.data
+              );
+              break;
+          }
+
+          if (primitive.attributes.TEXCOORD_0.normalized) {
+            uvs = uvs.map(
+              (v) =>
+                v /
+                ((1 <<
+                  (8 *
+                    primitive.attributes.TEXCOORD_0.componentType
+                      .BYTES_PER_ELEMENT)) -
+                  1)
+            );
+          }
+        }
+        let tangents = [];
+        if (primitive.attributes.TANGENT) {
+          tangents = new Float32Array(
+            primitive.attributes.TANGENT.bufferView.data
+          );
+        }
+        let bitangents = [];
+        if (primitive.attributes.BITANGENT) {
+          bitangents = new Float32Array(
+            primitive.attributes.BITANGENT.bufferView.data
+          );
+        }
+
+        // Generate tangents and bitangents if they're not provided
+        if (tangents.length === 0 || bitangents.length === 0) {
+          const { t, b } = mesh._get_tangents_and_bitangents(positions, uvs);
+          tangents = t;
+          bitangents = b;
+        }
+
+        let uv_index = 0;
+        for (let i = 0; i < positions.length; i += 3) {
+          mesh.vertices.push({
+            position: [
+              positions[i] ?? 0.0,
+              positions[i + 1] ?? 0.0,
+              positions[i + 2] ?? 0.0,
+              1.0,
+            ],
+            normal: [
+              normals[i] ?? 0.0,
+              normals[i + 1] ?? 0.0,
+              normals[i + 2] ?? 0.0,
+              0.0,
+            ],
+            color: [
+              colors[i] ?? 0.0,
+              colors[i + 1] ?? 0.0,
+              colors[i + 2] ?? 0.0,
+              colors[i + 3] ?? 1.0,
+            ],
+            uv: [uvs[uv_index] ?? 0.0, uvs[uv_index + 1] ?? 0.0, 0.0, 0.0],
+            tangent: [
+              tangents[i] ?? 0.0,
+              tangents[i + 1] ?? 0.0,
+              tangents[i + 2] ?? 0.0,
+              0.0,
+            ],
+            bitangent: [
+              bitangents[i] ?? 0.0,
+              bitangents[i + 1] ?? 0.0,
+              bitangents[i + 2] ?? 0.0,
+              0.0,
+            ],
+          });
+          uv_index += 2;
+        }
+      }
+    };
+
     return new Promise((resolve) => {
       const loader = new glTFLoader();
       loader.load(gltf, (gltf_obj) => {
         mesh = new Mesh();
 
-        for (const scene of gltf_obj.scenes) {
-          for (const node of scene.nodes) {
-            if (node.mesh) {
-              for (const primitive of node.mesh.primitives) {
-                if (primitive.indices) {
-                  if (
-                    primitive.indicesComponentType === 5122 ||
-                    primitive.indicesComponentType === 5123
-                  ) {
-                    mesh.indices = new Uint16Array(
-                      gltf_obj.accessors[primitive.indices].bufferView.data
-                    );
-                  } else if (primitive.indicesComponentType === 5125) {
-                    mesh.indices = new Uint32Array(
-                      gltf_obj.accessors[primitive.indices].bufferView.data
-                    );
-                  }
-                }
-                let positions = [];
-                if (primitive.attributes.POSITION) {
-                  positions = new Float32Array(
-                    primitive.attributes.POSITION.bufferView.data
-                  );
-                }
-                let normals = [];
-                if (primitive.attributes.NORMAL) {
-                  normals = new Float32Array(
-                    primitive.attributes.NORMAL.bufferView.data
-                  );
-                }
-                let colors = [];
-                if (primitive.attributes.COLOR_0) {
-                  colors = new Float32Array(
-                    primitive.attributes.COLOR_0.bufferView.data
-                  );
-                }
-                let uvs = [];
-                if (primitive.attributes.TEXCOORD_0) {
-                  uvs = new Float32Array(
-                    primitive.attributes.TEXCOORD_0.bufferView.data
-                  );
-                }
-                let tangents = [];
-                if (primitive.attributes.TANGENT) {
-                  tangents = new Float32Array(
-                    primitive.attributes.TANGENT.bufferView.data
-                  );
-                }
-                let bitangents = [];
-                if (primitive.attributes.BITANGENT) {
-                  bitangents = new Float32Array(
-                    primitive.attributes.BITANGENT.bufferView.data
-                  );
-                }
-
-                // Generate tangents and bitangents if they're not provided
-                if (tangents.length === 0 || bitangents.length === 0) {
-                  const { t, b } = mesh._get_tangents_and_bitangents(
-                    positions,
-                    uvs
-                  );
-                  tangents = t;
-                  bitangents = b;
-                }
-
-                let uv_index = 0;
-                for (let i = 0; i < positions.length; i += 3) {
-                  mesh.vertices.push({
-                    position: [
-                      positions[i] ?? 0.0,
-                      positions[i + 1] ?? 0.0,
-                      positions[i + 2] ?? 0.0,
-                      1.0,
-                    ],
-                    normal: [
-                      normals[i] ?? 0.0,
-                      normals[i + 1] ?? 0.0,
-                      normals[i + 2] ?? 0.0,
-                      0.0,
-                    ],
-                    color: [
-                      colors[i] ?? 0.0,
-                      colors[i + 1] ?? 0.0,
-                      colors[i + 2] ?? 0.0,
-                      colors[i + 3] ?? 1.0,
-                    ],
-                    uv: [
-                      uvs[uv_index] ?? 0.0,
-                      uvs[uv_index + 1] ?? 0.0,
-                      0.0,
-                      0.0,
-                    ],
-                    tangent: [
-                      tangents[i] ?? 0.0,
-                      tangents[i + 1] ?? 0.0,
-                      tangents[i + 2] ?? 0.0,
-                      0.0,
-                    ],
-                    bitangent: [
-                      bitangents[i] ?? 0.0,
-                      bitangents[i + 1] ?? 0.0,
-                      bitangents[i + 2] ?? 0.0,
-                      0.0,
-                    ],
-                  });
-                  uv_index += 2;
-                }
-              }
-            }
+        for (const node of gltf_obj.nodes) {
+          if (node.mesh) {
+            parse_node_mesh(gltf_obj, node);
           }
         }
 
@@ -515,6 +535,7 @@ export class Mesh {
           context,
           mesh.vertices
         );
+
         mesh._build_index_buffer(context);
 
         ResourceCache.get().store(CacheTypes.MESH, Name.from(gltf), mesh);
