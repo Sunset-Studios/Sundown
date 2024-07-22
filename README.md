@@ -13,6 +13,8 @@ An extendible WebGPU game and simulation engine for fun, games and research. Som
 * ⚡ Auto instancing and draw batching of meshes using a specialized mesh task queue
 * ⚡ Helpers for loading GTLFs, tracking performance scopes, named IDs and more.
 
+![Sundown Demo](./sundown_demo.gif)
+
 ### Installation
 
 
