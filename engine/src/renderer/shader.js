@@ -22,6 +22,7 @@ export class Shader {
   code = null;
   file_path = "";
   defines = {};
+  reflection = null;
 
   static register_shader_path(path) {
     Shader.shader_paths.push(path);
@@ -40,6 +41,7 @@ export class Shader {
         code: asset,
       });
       this.file_path = file_path;
+      this.reflection = this.reflect();
     } catch (error) {
       console.error(
         `WebGPU shader error: could not create shader module at ${file_path}`,

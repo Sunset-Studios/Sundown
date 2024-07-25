@@ -75,7 +75,7 @@ import { PipelineState } from "./pipeline_state.js";
 import { CommandQueue } from "./command_queue.js";
 import { Buffer, BufferFlags } from "./buffer.js";
 import { Texture, ImageFlags } from "./texture.js";
-import { Shader } from "./shader.js";
+import { Shader, ShaderResourceType } from "./shader.js";
 import { Name } from "../utility/names.js";
 import _ from "lodash";
 
@@ -324,6 +324,7 @@ const RGBufferConfig = Object.freeze({
  * @property {RGShaderDataSetup} shader_setup - Shader and pipeline setup for the pass.
  * @property {Array} inputs - Input resources/attachments for the pass.
  * @property {Array} outputs - Output resources that this pass writes to or produces.
+ * @property {Array} input_views - Array layers of corresponding input entries in the inputs vector (only for image inputs, default is 0 for each input).
  * @property {Array} output_views - Array layers of corresponding output entries in the outputs vector (only for image outputs, default is 0 for each output).
  * @property {Array} pass_inputs - Input resources that should be bound normally (auto-computed).
  * @property {Array} bindless_inputs - Input resources that are bindless and need special handling (auto-computed).
@@ -335,6 +336,7 @@ const RGPassParameters = Object.freeze({
   shader_setup: _.cloneDeep(RGShaderDataSetup),
   inputs: [],
   outputs: [],
+  input_views: [],
   output_views: [],
   pass_inputs: [],
   bindless_inputs: [],
@@ -350,6 +352,7 @@ const RGPassParameters = Object.freeze({
  * @property {Object} pass_config - Configuration for the pass.
  * @property {RGPassParameters} parameters - Parameters for the pass.
  * @property {Function} executor - Function to execute the pass.
+ * @property {Object} shaders - Shaders for the pass.
  * @property {number} physical_id - Physical identifier for the pass.
  * @property {number} pipeline_state_id - Identifier for the pipeline state.
  * @property {number} reference_count - Number of references to this pass.
@@ -359,6 +362,7 @@ const RGPass = Object.freeze({
   pass_config: null,
   parameters: null,
   executor: null,
+  shaders: {},
   physical_id: 0,
   pipeline_state_id: 0,
   reference_count: 0,
@@ -502,9 +506,8 @@ export class RenderGraph {
     );
     this.registry.resource_metadata.get(new_resource.handle).b_is_bindless =
       config.b_is_bindless;
-    this.registry.resource_metadata.get(
-      new_resource.handle
-    ).b_is_persistent = (new_resource.config.flags & ImageFlags.Transient) === 0;
+    this.registry.resource_metadata.get(new_resource.handle).b_is_persistent =
+      (new_resource.config.flags & ImageFlags.Transient) === 0;
 
     return new_resource.handle;
   }
@@ -591,9 +594,8 @@ export class RenderGraph {
     );
     this.registry.resource_metadata.get(new_resource.handle).b_is_bindless =
       config.b_is_bindless;
-    this.registry.resource_metadata.get(
-      new_resource.handle
-    ).b_is_persistent = (new_resource.config.flags & BufferFlags.Transient) === 0;
+    this.registry.resource_metadata.get(new_resource.handle).b_is_persistent =
+      (new_resource.config.flags & BufferFlags.Transient) === 0;
 
     return new_resource.handle;
   }
@@ -947,41 +949,34 @@ export class RenderGraph {
 
     frame_data.pass_attachments.length = 0;
 
+    this._setup_physical_pass_and_resources(pass, frame_data, encoder);
+
     if (
       (pass.pass_config.flags & RenderPassFlags.GraphLocal) !==
       RenderPassFlags.None
     ) {
       pass.executor(this, frame_data, encoder);
     } else {
-      this._setup_physical_pass_and_resources(pass, frame_data, encoder);
+      const physical_pass = ResourceCache.get().fetch(
+        CacheTypes.PASS,
+        pass.physical_id
+      );
 
-      if (
-        (pass.pass_config.flags & RenderPassFlags.Compute) !==
-        RenderPassFlags.None
-      ) {
-        pass.executor(this, frame_data, encoder);
-      } else {
-        const physical_pass = ResourceCache.get().fetch(
-          CacheTypes.PASS,
-          pass.physical_id
-        );
-
-        if (!physical_pass) {
-          throw new Error("Physical pass is null");
-        }
-
-        const pipeline = ResourceCache.get().fetch(
-          CacheTypes.PIPELINE_STATE,
-          pass.pipeline_state_id
-        );
-
-        frame_data.current_pass = pass.physical_id;
-
-        physical_pass.begin(encoder, pipeline);
-        this._bind_pass_bind_groups(pass, frame_data);
-        pass.executor(this, frame_data, encoder);
-        physical_pass.end();
+      if (!physical_pass) {
+        throw new Error("Physical pass is null");
       }
+
+      const pipeline = ResourceCache.get().fetch(
+        CacheTypes.PIPELINE_STATE,
+        pass.pipeline_state_id
+      );
+
+      frame_data.current_pass = pass.physical_id;
+
+      physical_pass.begin(encoder, pipeline);
+      this._bind_pass_bind_groups(pass, frame_data);
+      pass.executor(this, frame_data, encoder);
+      physical_pass.end();
 
       this._update_transient_resources(pass);
     }
@@ -990,6 +985,9 @@ export class RenderGraph {
   _setup_physical_pass_and_resources(pass, frame_data, encoder) {
     const is_compute_pass =
       (pass.pass_config.flags & RenderPassFlags.Compute) !==
+      RenderPassFlags.None;
+    const is_graph_local_pass =
+      (pass.pass_config.flags & RenderPassFlags.GraphLocal) !==
       RenderPassFlags.None;
 
     const setup_resource = (
@@ -1004,7 +1002,7 @@ export class RenderGraph {
           !is_compute_pass,
           is_input_resource
         );
-        if (!is_compute_pass) {
+        if (!is_compute_pass && !is_graph_local_pass) {
           this._tie_resource_to_pass_config_attachments(
             resource,
             pass,
@@ -1030,11 +1028,14 @@ export class RenderGraph {
       setup_resource(output_resource, i, false)
     );
 
-    pass.physical_id = Name.from(pass.pass_config.name);
-    const physical_pass = RenderPass.create(pass.pass_config);
+    if (!is_graph_local_pass) {
+      pass.physical_id = Name.from(pass.pass_config.name);
+      const physical_pass = RenderPass.create(pass.pass_config);
 
-    this._setup_pass_bind_groups(pass, frame_data);
-    this._setup_pass_pipeline_state(pass, frame_data);
+      this._setup_pass_shaders(pass, frame_data);
+      this._setup_pass_bind_groups(pass, frame_data);
+      this._setup_pass_pipeline_state(pass, frame_data);
+    }
   }
 
   _setup_physical_resource(
@@ -1130,16 +1131,12 @@ export class RenderGraph {
         if (image.config.type.includes("depth")) {
           pass.pass_config.depth_stencil_attachment = {
             image: this.registry.resource_metadata.get(resource).physical_id,
-            image_view_index: image_view_index,
-            b_image_view_considers_layer_split:
-              image_resource.config.split_array_layer_views,
+            view_index: image_view_index,
           };
         } else {
           pass.pass_config.attachments.push({
             image: this.registry.resource_metadata.get(resource).physical_id,
-            image_view_index: image_view_index,
-            b_image_view_considers_layer_split:
-              image_resource.config.split_array_layer_views,
+            view_index: image_view_index,
           });
         }
       }
@@ -1168,6 +1165,192 @@ export class RenderGraph {
     }
   }
 
+  _setup_pass_shaders(pass, frame_data) {
+    if (this.pass_cache.pipeline_states.get(pass.pass_config.name)) {
+      // We've already setup our shaders in this case
+      return;
+    }
+
+    const shader_setup = pass.parameters.shader_setup;
+    if (!shader_setup.pipeline_shaders) {
+      return;
+    }
+
+    const is_compute_pass =
+      (pass.pass_config.flags & RenderPassFlags.Compute) !==
+      RenderPassFlags.None;
+
+    if (is_compute_pass && shader_setup.pipeline_shaders.compute) {
+      pass.shaders.compute = Shader.create(
+        frame_data.context,
+        shader_setup.pipeline_shaders.compute.path
+      );
+    } else {
+      if (shader_setup.pipeline_shaders.vertex) {
+        pass.shaders.vertex = Shader.create(
+          frame_data.context,
+          shader_setup.pipeline_shaders.vertex.path
+        );
+      }
+      if (shader_setup.pipeline_shaders.fragment) {
+        pass.shaders.fragment = Shader.create(
+          frame_data.context,
+          shader_setup.pipeline_shaders.fragment.path
+        );
+      }
+    }
+  }
+
+  async _setup_pass_bind_groups(pass, frame_data) {
+    const is_compute_pass =
+      (pass.pass_config.flags & RenderPassFlags.Compute) !==
+      RenderPassFlags.None;
+
+    const pass_binds = this.pass_cache.bind_groups.get(
+      pass.pass_config.name
+    ) || {
+      bind_groups: Array(frame_data.context.max_bind_groups()).fill(null),
+    };
+    this.pass_cache.bind_groups.set(pass.pass_config.name, pass_binds);
+
+    this._setup_global_bind_group(pass, frame_data);
+
+    if (pass_binds.bind_groups[BindGroupType.Pass]) return;
+
+    // Setup pass-specific bind group
+    let layouts = [];
+    let reflection_groups = [];
+    if (is_compute_pass) {
+      reflection_groups = pass.shaders.compute.reflection.getBindGroups();
+    } else {
+      const fragment_group = pass.shaders.fragment.reflection.getBindGroups();
+      for (let i = 0; i < BindGroupType.Num; i++) {
+        if (fragment_group[i]) {
+          reflection_groups.push(fragment_group[i]);
+        }
+      }
+    }
+
+    if (BindGroupType.Pass < reflection_groups.length) {
+      const pass_group = reflection_groups[BindGroupType.Pass];
+      layouts = pass_group.map((binding) => {
+        let binding_obj = {
+          binding: binding.binding,
+          visibility: is_compute_pass
+            ? GPUShaderStage.COMPUTE
+            : GPUShaderStage.FRAGMENT | GPUShaderStage.VERTEX,
+        };
+
+        const binding_type = Shader.resource_type_from_reflection_type(
+          binding.resourceType
+        );
+
+        if (!pass.parameters.pass_inputs[binding.binding]) {
+          throw new Error(
+            `Pass ${pass.pass_config.name} input for shader binding ${binding.binding} is null or undefined. Please ensure all required pass inputs are provided.`
+          );
+        }
+
+        const resource = pass.parameters.pass_inputs[binding.binding];
+        const metadata = this.registry.resource_metadata.get(resource);
+        const resource_type = get_graph_resource_type(resource);
+        let resource_obj = null;
+
+        if (resource_type === ResourceType.Image) {
+          resource_obj = ResourceCache.get().fetch(
+            CacheTypes.IMAGE,
+            metadata.physical_id
+          );
+        } else {
+          resource_obj = ResourceCache.get().fetch(
+            CacheTypes.BUFFER,
+            metadata.physical_id
+          );
+        }
+
+        switch (binding_type) {
+          case ShaderResourceType.Uniform:
+            binding_obj.buffer = {
+              type: "uniform",
+            };
+            break;
+          case ShaderResourceType.Storage:
+            binding_obj.buffer = {
+              type: "read-only-storage",
+            };
+            break;
+          case ShaderResourceType.Texture:
+            binding_obj.texture = {
+              viewDimension: resource_obj.config.dimension,
+              sampleType:
+                resource_obj.config.type === "depth" ? "depth" : "float",
+            };
+            break;
+          case ShaderResourceType.StorageTexture:
+            binding_obj.storageTexture = {
+              viewDimension: resource_obj.config.dimension,
+              sampleType: "float",
+              format: resource_obj.config.format || "rgba8unorm",
+            };
+            break;
+          case ShaderResourceType.Sampler:
+            binding_obj.sampler = {};
+            break;
+        }
+
+        return {
+          binding: binding.binding,
+          visibility: GPUShaderStage.FRAGMENT | GPUShaderStage.VERTEX,
+          ...binding_obj,
+        };
+      });
+    }
+
+    let entries = [];
+    pass.parameters.pass_inputs.forEach((resource, index) => {
+      const metadata = this.registry.resource_metadata.get(resource);
+      if (metadata.b_is_persistent) {
+        const resource_type = get_graph_resource_type(resource);
+        if (resource_type === ResourceType.Image) {
+          const image = ResourceCache.get().fetch(
+            CacheTypes.IMAGE,
+            metadata.physical_id
+          );
+          entries.push({
+            binding: index,
+            resource:
+              image.get_view(pass.parameters.input_views[index]) || image.view,
+          });
+        } else {
+          const buffer = ResourceCache.get().fetch(
+            CacheTypes.BUFFER,
+            metadata.physical_id
+          );
+          entries.push({
+            binding: index,
+            resource: {
+              buffer: buffer.buffer,
+              offset: 0,
+              size: buffer.size,
+            },
+          });
+        }
+      }
+    });
+
+    if (entries.length > 0) {
+      const pass_bind_group = BindGroup.create_with_layout(
+        frame_data.context,
+        `${pass.pass_config.name}_bindgroup_${BindGroupType.Pass}`,
+        layouts,
+        BindGroupType.Pass,
+        entries
+      );
+
+      pass_binds.bind_groups[BindGroupType.Pass] = pass_bind_group;
+    }
+  }
+
   _setup_pass_pipeline_state(pass, frame_data) {
     if (this.pass_cache.pipeline_states.get(pass.pass_config.name)) {
       pass.pipeline_state_id = this.pass_cache.pipeline_states.get(
@@ -1186,18 +1369,13 @@ export class RenderGraph {
         RenderPassFlags.None;
 
       if (is_compute_pass) {
-        const compute_shader = Shader.create(
-          frame_data.context,
-          shader_setup.pipeline_shaders.compute.path
-        );
-
         const pipeline_descriptor = {
           label: pass.pass_config.name,
           bind_layouts: pass_binds.bind_groups
             .filter((bind_group) => bind_group !== null)
             .map((bind_group) => bind_group.layout),
           compute: {
-            module: compute_shader.module,
+            module: pass.shaders.compute.module,
             entryPoint:
               shader_setup.pipeline_shaders.compute.entry_point || "cs",
           },
@@ -1210,15 +1388,6 @@ export class RenderGraph {
           pipeline_descriptor
         );
       } else {
-        const vertex_shader = Shader.create(
-          frame_data.context,
-          shader_setup.pipeline_shaders.vertex.path
-        );
-        const fragment_shader = Shader.create(
-          frame_data.context,
-          shader_setup.pipeline_shaders.fragment.path
-        );
-
         const targets = pass.pass_config.attachments
           .filter((attachment) => {
             const image = ResourceCache.get().fetch(
@@ -1260,13 +1429,13 @@ export class RenderGraph {
             .filter((bind_group) => bind_group !== null)
             .map((bind_group) => bind_group.layout),
           vertex: {
-            module: vertex_shader.module,
+            module: pass.shaders.vertex.module,
             entryPoint:
               shader_setup.pipeline_shaders.vertex.entry_point || "vs",
             buffers: [], // Add vertex buffer layouts if needed
           },
           fragment: {
-            module: fragment_shader.module,
+            module: pass.shaders.fragment.module,
             entryPoint:
               shader_setup.pipeline_shaders.fragment.entry_point || "fs",
             targets: targets,
@@ -1295,83 +1464,6 @@ export class RenderGraph {
       );
 
       frame_data.pass_pipeline_state = pass.pipeline_state_id;
-    }
-  }
-
-  async _setup_pass_bind_groups(pass, frame_data) {
-    const pass_binds = this.pass_cache.bind_groups.get(
-      pass.pass_config.name
-    ) || {
-      bind_groups: Array(frame_data.context.max_bind_groups()).fill(null),
-    };
-    this.pass_cache.bind_groups.set(pass.pass_config.name, pass_binds);
-
-    this._setup_global_bind_group(pass, frame_data);
-
-    if (pass_binds.bind_groups[BindGroupType.Pass]) return;
-
-    // Setup pass-specific bind group
-    let entries = [];
-    let layouts = [];
-
-    pass.parameters.pass_inputs.forEach((resource, index) => {
-      const metadata = this.registry.resource_metadata.get(resource);
-      if (metadata.b_is_persistent) {
-        const resource_type = get_graph_resource_type(resource);
-        if (resource_type === ResourceType.Image) {
-          const image = ResourceCache.get().fetch(
-            CacheTypes.IMAGE,
-            metadata.physical_id
-          );
-          entries.push({
-            binding: index,
-            resource: image.view,
-          });
-          layouts.push({
-            binding: index,
-            visibility: GPUShaderStage.FRAGMENT | GPUShaderStage.VERTEX,
-            texture: {
-              viewDimension: image.config.dimension,
-              sampleType: image.config.type === "depth" ? "depth" : "float",
-            },
-          });
-        } else {
-          const buffer = ResourceCache.get().fetch(
-            CacheTypes.BUFFER,
-            metadata.physical_id
-          );
-          entries.push({
-            binding: index,
-            resource: {
-              buffer: buffer.buffer,
-              offset: 0,
-              size: buffer.size,
-            },
-          });
-          layouts.push({
-            binding: index,
-            visibility: GPUShaderStage.FRAGMENT | GPUShaderStage.VERTEX,
-            buffer: {
-              type:
-                (buffer.config.usage & GPUBufferUsage.STORAGE) !== 0
-                  ? "read-only-storage"
-                  : "uniform",
-            },
-          });
-        }
-      }
-    });
-
-    if (entries.length > 0) {
-      const pass_bind_group = BindGroup.create_with_layout(
-        frame_data.context,
-        `${pass.pass_config.name}_bindgroup_${BindGroupType.Pass}`,
-        layouts,
-        BindGroupType.Pass,
-        entries
-      );
-
-      pass_binds.bind_groups[BindGroupType.Pass] = pass_bind_group;
     }
   }
 
@@ -1404,7 +1496,10 @@ export class RenderGraph {
         layouts.push({
           binding: index,
           visibility:
-            write.visibility || GPUShaderStage.FRAGMENT | GPUShaderStage.VERTEX,
+            write.visibility ||
+            GPUShaderStage.FRAGMENT |
+              GPUShaderStage.VERTEX |
+              GPUShaderStage.COMPUTE,
           buffer: {
             type:
               (write.buffer.config.usage & GPUBufferUsage.STORAGE) !== 0
@@ -1420,7 +1515,10 @@ export class RenderGraph {
         layouts.push({
           binding: index,
           visibility:
-            write.visibility || GPUShaderStage.FRAGMENT | GPUShaderStage.VERTEX,
+            write.visibility ||
+            GPUShaderStage.FRAGMENT |
+              GPUShaderStage.VERTEX |
+              GPUShaderStage.COMPUTE,
           sampler: {},
         });
       } else if (write.texture_view) {
@@ -1431,7 +1529,10 @@ export class RenderGraph {
         layouts.push({
           binding: index,
           visibility:
-            write.visibility || GPUShaderStage.FRAGMENT | GPUShaderStage.VERTEX,
+            write.visibility ||
+            GPUShaderStage.FRAGMENT |
+              GPUShaderStage.VERTEX |
+              GPUShaderStage.COMPUTE,
           texture: {},
         });
       }
@@ -1499,12 +1600,17 @@ export class RenderGraph {
       this.pass_cache.global_bind_group.bind(physical_pass);
       this.registry.b_global_set_bound = true;
 
-      if (pass_bind_groups.bind_groups.length && pass_bind_groups.bind_groups[BindGroupType.Pass]) {
+      if (
+        pass_bind_groups.bind_groups.length &&
+        pass_bind_groups.bind_groups[BindGroupType.Pass]
+      ) {
         pass_bind_groups.bind_groups[BindGroupType.Pass].bind(physical_pass);
       }
 
-      frame_data.pass_bind_groups[BindGroupType.Global] = pass_bind_groups.bind_groups[BindGroupType.Global];
-      frame_data.pass_bind_groups[BindGroupType.Pass] = pass_bind_groups.bind_groups[BindGroupType.Pass];
+      frame_data.pass_bind_groups[BindGroupType.Global] =
+        pass_bind_groups.bind_groups[BindGroupType.Global];
+      frame_data.pass_bind_groups[BindGroupType.Pass] =
+        pass_bind_groups.bind_groups[BindGroupType.Pass];
     }
   }
 

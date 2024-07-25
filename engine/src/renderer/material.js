@@ -22,11 +22,14 @@ export class MaterialTemplate {
     this.pipeline_state_config = pipeline_state_config;
     this.resources = [];
     this.parent = parent;
-    this.reflection = shader ? shader.reflect() : null;
   }
 
   add_resource(resource) {
     this.resources.push(resource);
+  }
+
+  get reflection() {
+    return this.shader.reflection;
   }
 
   static create(
@@ -132,6 +135,17 @@ export class MaterialTemplate {
                     sampleType: binding.type.name.includes("depth")
                       ? "depth"
                       : "float",
+                  },
+                };
+                break;
+              case ShaderResourceType.StorageTexture:
+                binding_obj = {
+                  storageTexture: {
+                    viewDimension: Texture.dimension_from_type_name(
+                      binding.type.name
+                    ),
+                    sampleType: "float",
+                    format: Shader.get_optimal_texture_format(binding.type.name),
                   },
                 };
                 break;

@@ -35,7 +35,7 @@ export class RenderPass {
             attachment.image
           );
           return {
-            view: image.view,
+            view: image.get_view(attachment.view_index) || image.view,
             clearValue: image.config.clear_value ?? { r: 0, g: 0, b: 0, a: 1 },
             loadOp: image.config.load_op ?? 'clear',
             storeOp: image.config.store_op ?? 'store',
@@ -53,7 +53,7 @@ export class RenderPass {
           this.config.depth_stencil_attachment.image
         );
         pass_desc.depthStencilAttachment = {
-          view: depth_stencil_image.view,
+          view: depth_stencil_image.get_view(this.config.depth_stencil_attachment.view_index) || depth_stencil_image.view,
           depthClearValue: depth_stencil_image.config.clear_value ?? 0.0,
           depthLoadOp: depth_stencil_image.config.load_op ?? "load",
           depthStoreOp: depth_stencil_image.config.store_op ?? "store",

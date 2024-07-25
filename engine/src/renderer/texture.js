@@ -45,12 +45,15 @@ class TextureConfig {
   clear_value = { r: 0, g: 0, b: 0, a: 1 };
   load_op = "clear";
   store_op = "store";
+  b_one_view_per_mip = false;
+  b_one_view_per_layer = false;
 }
 
 export class Texture {
   config = new TextureConfig();
   image = null;
-  view = null;
+  views = [];
+  current_view = 0;
 
   // Create a GPU buffer to store the data
   init(context, config) {
@@ -76,7 +79,7 @@ export class Texture {
       usage: config.usage,
     });
 
-    this.view = this.create_view();
+    this._setup_views();
   }
 
   async load(context, paths, config) {
@@ -128,7 +131,7 @@ export class Texture {
       );
     });
 
-    this.view = this.create_view();
+    this._setup_views();
   }
 
   set_image(image) {
@@ -151,20 +154,33 @@ export class Texture {
       this.config.load_op = "clear";
     }
 
-    this.view = this.create_view();
+    this._setup_views();
   }
 
   create_view(view_config = {}) {
-    return this.image.createView({
-      label: this.config.name,
-      dimension: this.config.dimension,
+    const view_descriptor = {
+      label: view_config.label ?? this.config.name,
       format: this.config.format,
+      dimension: view_config.dimension ?? this.config.dimension,
       aspect: view_config.aspect ?? "all",
-      baseMipLevel: view_config.baseMipLevel ?? 0,
-      mipLevelCount: view_config.mipLevelCount ?? this.config.mip_levels,
-      baseArrayLayer: view_config.baseArrayLayer ?? 0,
-      arrayLayerCount: view_config.arrayLayerCount ?? this.config.depth,
-    });
+      baseMipLevel: view_config.base_mip_level ?? 0,
+      baseArrayLayer: view_config.base_array_layer ?? 0,
+      arrayLayerCount: view_config.array_layers ?? this.config.depth,
+    }
+
+    if (view_config.mip_levels) {
+      view_descriptor.mipLevelCount = view_config.mip_levels;
+    }
+
+    return this.image.createView(view_descriptor);
+  }
+
+  set_current_view(index) {
+    this.current_view = index;
+  }
+
+  get_view(index) {
+    return this.views[index];
   }
 
   copy_buffer(encoder, buffer) {
@@ -174,7 +190,7 @@ export class Texture {
       {
         width: this.config.width,
         height: this.config.height,
-        depthOrArrayLayers: 1,
+        depthOrArrayLayers: this.config.depth,
       }
     );
   }
@@ -184,15 +200,51 @@ export class Texture {
       { texture: texture.image },
       { texture: this.image },
       {
-        width: this.config.width,
-        height: this.config.height,
-        depthOrArrayLayers: 1,
+        width: texture.config.width,
+        height: texture.config.height,
+        depthOrArrayLayers: this.config.depth,
       }
     );
   }
 
   get physical_id() {
     return Name.from(this.config.name);
+  }
+
+  get view() {
+    return this.views[this.current_view];
+  }
+
+  _setup_views(view_config = {}) {
+    this.views = [];
+    this.current_view = 0;
+
+    if (!this.config.b_one_view_per_layer && !this.config.b_one_view_per_mip) {
+      this.views.push(this.create_view(view_config));
+    }
+
+    if (this.config.b_one_view_per_layer) {
+      for (let i = 0; i < this.config.depth; i++) {
+        const config = {
+          ...view_config,
+          label: `${this.config.name}_layer_${i}`,
+          base_array_layer: i,
+          array_layers: 1,
+        };
+        this.views.push(this.create_view(config));
+      }
+    }
+    if (this.config.b_one_view_per_mip) {
+      for (let i = 0; i < this.config.mip_levels; i++) {
+        const config = {
+          ...view_config,
+          label: `${this.config.name}_mip_${i}`,
+          base_mip_level: i,
+          mip_levels: 1,
+        };
+        this.views.push(this.create_view(config));
+      }
+    }
   }
 
   static get_default_sampler(context) {
