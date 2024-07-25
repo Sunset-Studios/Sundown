@@ -22,8 +22,10 @@ export class TransformProcessor extends SimulationLayer {
       const transforms =
         EntityManager.get().get_fragment_array(TransformFragment);
 
-      for (const entity of this.entity_query) {
-        if (transforms.dirty[entity] === 0) {
+      for (let i = 0; i < this.entity_query.matching_entities.length; ++i) {
+        const entity = this.entity_query.matching_entities[i];
+
+        if (!transforms.dirty[entity]) {
           continue;
         }
 

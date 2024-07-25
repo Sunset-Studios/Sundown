@@ -30,7 +30,7 @@ export class Buffer {
             buffer_data.set(data);
         }
 
-        this.config.size = buffer_data.byteLength;
+        this.config.size = this.config.size || buffer_data.byteLength;
 
         this.buffer = context.device.createBuffer({
             label: this.config.name,
@@ -48,16 +48,16 @@ export class Buffer {
         }
     }
 
-    write(context, data, offset = 0) {
+    write(context, data, offset = 0, size = null) {
         const is_array_buffer = ArrayBuffer.isView(data);
         const raw_data = is_array_buffer ? data : data.flat();
         const buffer_data = is_array_buffer ? raw_data : new Float32Array(raw_data.length);
         buffer_data.set(raw_data);
-        context.device.queue.writeBuffer(this.buffer, offset, buffer_data);
+        context.device.queue.writeBuffer(this.buffer, offset, buffer_data, 0, size ?? buffer_data.length);
     }
 
-    write_raw(context, data, offset = 0) {
-        context.device.queue.writeBuffer(this.buffer, offset, data);
+    write_raw(context, data, offset = 0, size = null) {
+        context.device.queue.writeBuffer(this.buffer, offset, data, 0, size ?? data.length);
     }
 
     read(context, data, data_length, offset = 0, data_offset = 0) {

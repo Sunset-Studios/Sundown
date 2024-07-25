@@ -6,7 +6,9 @@ export class StaticMeshFragment extends Fragment {
     static initialize() {
         this.data = {
             mesh: new BigInt64Array(1),
-            material_slots: new BigInt64Array(this.material_slot_stride)
+            material_slots: new BigInt64Array(this.material_slot_stride),
+            instance_count: new BigInt64Array(1),
+            dirty: new Uint8Array(1),
         };
     }
 
@@ -28,25 +30,29 @@ export class StaticMeshFragment extends Fragment {
         for (let i = 0; i < data.material_slots.length; i++) {
             this.data.material_slots[entity * this.material_slot_stride + i] = BigInt(data.material_slots[i]);
         }
+
+        this.data.dirty[entity] = 1;
     }
 
     static resize(new_size) {
         super.resize(new_size);
 
-        const resize_array = (obj, key, stride, type) => {
+        const resize_array = (obj, key, stride, type, wipe = false) => {
             if (obj[key].length < this.size * stride) {
                 const prev = obj[key];
                 obj[key] = new type(this.size * stride);
-                obj[key].set(prev);
+                if (wipe) {
+                    obj[key].fill(0);
+                } else {
+                    obj[key].set(prev);
+                }
             }
         };
 
-        ['mesh'].forEach(prop => {
+        ['mesh', 'instance_count'].forEach(prop => {
             resize_array(this.data, prop, 1, BigInt64Array);
         });
-
-        ['material_slots'].forEach(prop => {
-            resize_array(this.data, prop, this.material_slot_stride, BigInt64Array);
-        });
+        resize_array(this.data, 'material_slots', this.material_slot_stride, BigInt64Array);
+        resize_array(this.data, 'dirty', 1, Uint8Array, true);
     }
 }

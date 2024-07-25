@@ -8,6 +8,7 @@ struct VertexOutput {
     @location(3) normal: vec4f,
     @location(4) tangent: vec4f,
     @location(5) bitangent: vec4f,
+    @location(6) @interpolate(flat) instance_id: u32,
 };
 
 struct FragmentOutput {
@@ -56,6 +57,7 @@ fn vertex(v_out: VertexOutput) -> VertexOutput {
     output.normal = transpose_inverse_model_matrix * vertex_buffer[vi].normal;
     output.tangent = model_matrix * vertex_buffer[vi].tangent;
     output.bitangent = model_matrix * vertex_buffer[vi].bitangent;
+    output.instance_id = ii;
 
     return vertex(output);
 }

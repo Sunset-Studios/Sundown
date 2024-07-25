@@ -21,8 +21,6 @@ export class DeferredShadingStrategy {
         this.initialized = true;
       }
 
-      MeshTaskQueue.get().sort_and_batch(context);
-
       const transform_gpu_data = TransformFragment.to_gpu_data(context);
       const entity_transforms = render_graph.register_buffer(
         transform_gpu_data.gpu_buffer.config.name
@@ -240,7 +238,7 @@ export class DeferredShadingStrategy {
       // Reset mesh task queue
       {
         render_graph.add_pass(
-          "reset_mesh_task_queue",
+          "reset_g_buffer_targets",
           RenderPassFlags.GraphLocal,
           {},
           (graph, frame_data, encoder) => {
@@ -249,8 +247,6 @@ export class DeferredShadingStrategy {
             frame_data.g_buffer_data.position.config.load_op = "clear";
             frame_data.g_buffer_data.normal.config.load_op = "clear";
             frame_data.g_buffer_data.depth.config.load_op = "clear";
-
-            MeshTaskQueue.get().reset();
           }
         );
       }
