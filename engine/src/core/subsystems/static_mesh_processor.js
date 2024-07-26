@@ -66,8 +66,9 @@ export class StaticMeshProcessor extends SimulationLayer {
             mesh_id,
             entity,
             material_id,
-            running_instance_count
+            instance_count 
           );
+
           running_instance_count = 0;
           last_entity = entity;
         }

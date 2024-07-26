@@ -77,13 +77,24 @@ export class TransformFragment extends Fragment {
         const gpu_data = new Float32Array(Math.max(this.size * 32, 32));
         for (let i = 0; i < this.size; i++) {
             const transform_data_offset = i * 16;
-            const gpu_data_offset = i * 32;
+            const vector_data_offset = i * 4;
+            const gpu_data_offset = i * 40;
             for (let j = 0; j < 16; j++) {
                 gpu_data[gpu_data_offset + j] = this.data.world_transform[transform_data_offset + j];
             }
             for (let j = 0; j < 16; j++) {
                 gpu_data[gpu_data_offset + 16 + j] = this.data.inverse_world_transform[transform_data_offset + j];
             }
+
+            gpu_data[gpu_data_offset + 32] = this.data.position.x[vector_data_offset]; // TODO: bounds pos
+            gpu_data[gpu_data_offset + 33] = this.data.position.y[vector_data_offset]; // TODO: bounds pos
+            gpu_data[gpu_data_offset + 34] = this.data.position.z[vector_data_offset]; // TODO: bounds pos
+            gpu_data[gpu_data_offset + 35] = 1.0; // TODO: bounds radius
+
+            gpu_data[gpu_data_offset + 36] = this.data.rotation.x[vector_data_offset]; // TODO: bounds extent
+            gpu_data[gpu_data_offset + 37] = this.data.rotation.y[vector_data_offset]; // TODO: bounds extent
+            gpu_data[gpu_data_offset + 38] = this.data.rotation.z[vector_data_offset]; // TODO: bounds extent
+            gpu_data[gpu_data_offset + 39] = 0.0; // TODO: bounds custom scale
         }
 
         // Resize the buffer if necessary

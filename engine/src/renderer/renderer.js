@@ -1,7 +1,7 @@
 import { GraphicsContext } from "./graphics_context.js";
 import { RenderGraph } from "./render_graph.js";
 import { DeferredShadingStrategy } from "./strategies/deferred_shading.js";
-import { Texture } from "./texture.js";
+import { Texture, TextureSampler } from "./texture.js";
 import { SharedVertexBuffer, SharedViewBuffer } from "../core/shared_data.js";
 import { MaterialTemplate } from "./material.js";
 
@@ -37,7 +37,7 @@ export class Renderer {
     this.setup_builtin_material_template();
   }
 
-  render() {
+  render(delta_time) {
     performance.mark("frame_render");
 
     this.graphics_context.advance_frame();
@@ -61,6 +61,14 @@ export class Renderer {
       },
       {
         sampler: Texture.get_default_sampler(this.graphics_context),
+      },
+      {
+        sampler: TextureSampler.create(this.graphics_context, {
+          name: "non_filtering_sampler",
+          mag_filter: "nearest",
+          min_filter: "nearest",
+          mipmap_filter: "nearest",
+        }),
       },
     ], true /* overwrite */);
   }

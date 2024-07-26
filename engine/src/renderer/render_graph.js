@@ -329,7 +329,6 @@ const RGBufferConfig = Object.freeze({
  * @property {Array} pass_inputs - Input resources that should be bound normally (auto-computed).
  * @property {Array} bindless_inputs - Input resources that are bindless and need special handling (auto-computed).
  * @property {boolean} b_skip_auto_descriptor_setup - Whether to skip automatic pass descriptor setup for this pass (global descriptor setup will still run).
- * @property {boolean} b_split_input_image_mips - Whether to split mips from input images into separate descriptor writes (if false, uploads a single image with all mip levels to GPU).
  * @property {boolean} b_force_keep_pass - Whether to prevent this pass from being culled during render graph compilation.
  */
 const RGPassParameters = Object.freeze({
@@ -341,7 +340,6 @@ const RGPassParameters = Object.freeze({
   pass_inputs: [],
   bindless_inputs: [],
   b_skip_auto_descriptor_setup: false,
-  b_split_input_image_mips: false,
   b_force_keep_pass: false,
 });
 
@@ -1283,7 +1281,7 @@ export class RenderGraph {
             binding_obj.texture = {
               viewDimension: resource_obj.config.dimension,
               sampleType:
-                resource_obj.config.type === "depth" ? "depth" : "float",
+                resource_obj.config.type === "depth" ? "unfilterable-float" : "float",
             };
             break;
           case ShaderResourceType.StorageTexture:
@@ -1510,7 +1508,7 @@ export class RenderGraph {
       } else if (write.sampler) {
         entries.push({
           binding: index,
-          resource: write.sampler,
+          resource: write.sampler.sampler,
         });
         layouts.push({
           binding: index,
@@ -1519,7 +1517,9 @@ export class RenderGraph {
             GPUShaderStage.FRAGMENT |
               GPUShaderStage.VERTEX |
               GPUShaderStage.COMPUTE,
-          sampler: {},
+          sampler: {
+            type: write.sampler.config.mag_filter === "nearest" ? "non-filtering" : "filtering",
+          },
         });
       } else if (write.texture_view) {
         entries.push({

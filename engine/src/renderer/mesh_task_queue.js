@@ -82,7 +82,7 @@ class IndirectDrawObject {
             batch.base_vertex,
             batch.base_instance,
           ]),
-          usage: GPUBufferUsage.INDIRECT | GPUBufferUsage.COPY_DST,
+          usage: GPUBufferUsage.INDIRECT | GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
         });
       }
 

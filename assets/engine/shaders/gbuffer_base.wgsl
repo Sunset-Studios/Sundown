@@ -1,7 +1,7 @@
 #include "common.wgsl"
 
 struct VertexOutput {
-    @builtin(position) position: vec4f,
+    @builtin(position) @invariant position: vec4f,
     @location(0) world_position: vec4f,
     @location(1) color: vec4f,
     @location(2) uv: vec2f,
@@ -18,16 +18,6 @@ struct FragmentOutput {
     @location(3) normal: vec4f,
 }
 
-struct EntityTransform {
-    model_matrix: mat4x4f,
-    inverse_model_matrix: mat4x4f
-}
-
-struct ObjectInstance {
-    batch: u32,
-    entity: u32
-}
-
 @group(1) @binding(0) var<storage, read> entity_transforms: array<EntityTransform>;
 @group(1) @binding(1) var<storage, read> object_instances: array<ObjectInstance>;
 
@@ -41,22 +31,30 @@ fn vertex(v_out: VertexOutput) -> VertexOutput {
     @builtin(vertex_index) vi : u32,
     @builtin(instance_index) ii: u32
 ) -> VertexOutput {
-    var model_matrix = entity_transforms[object_instances[ii].entity].model_matrix;
-    var inverse_model_matrix = entity_transforms[object_instances[ii].entity].inverse_model_matrix;
-    var mvp = view_buffer[0].view_projection_matrix * model_matrix;
+    let entity = object_instances[ii].entity;
+    let entity_transform = entity_transforms[entity];
+    let instance_vertex = vertex_buffer[vi];
+
+    let model_matrix = entity_transform.transform;
+    let inverse_model_matrix = entity_transform.inverse_model_matrix;
+    let mvp = view_buffer[0].view_projection_matrix * model_matrix;
 
 	var transpose_inverse_model_matrix = transpose(inverse_model_matrix);
-    transpose_inverse_model_matrix[3] = vec4f(0.0, 0.0, 0.0, 1.0);
+    var normal_matrix = mat3x3f(
+        transpose_inverse_model_matrix[0].xyz,
+        transpose_inverse_model_matrix[1].xyz,
+        transpose_inverse_model_matrix[2].xyz
+    );
 
     var output : VertexOutput;
 
-    output.world_position = model_matrix * vertex_buffer[vi].position;
-    output.position = mvp * vertex_buffer[vi].position;
-    output.color = vertex_buffer[vi].color;
-    output.uv = vertex_buffer[vi].uv;
-    output.normal = transpose_inverse_model_matrix * vertex_buffer[vi].normal;
-    output.tangent = model_matrix * vertex_buffer[vi].tangent;
-    output.bitangent = model_matrix * vertex_buffer[vi].bitangent;
+    output.position = mvp * instance_vertex.position;
+    output.world_position = model_matrix * instance_vertex.position;
+    output.color = instance_vertex.color;
+    output.uv = instance_vertex.uv;
+    output.normal = normalize(vec4f(normal_matrix * instance_vertex.normal.rgb, 1.0));
+    output.tangent = model_matrix * instance_vertex.tangent;
+    output.bitangent = model_matrix * instance_vertex.bitangent;
     output.instance_id = ii;
 
     return vertex(output);
@@ -72,7 +70,7 @@ fn fragment(v_out: VertexOutput, f_out: FragmentOutput) -> FragmentOutput {
     var output : FragmentOutput;
 
     output.position = v_out.world_position;
-    output.normal = normalize(vec4f(v_out.normal.xyz, 1.0));
+    output.normal = v_out.normal;
 
     return fragment(v_out, output);
 }

@@ -21,10 +21,23 @@ struct FrameInfo {
     view_index: u32,
 };
 
+struct EntityTransform {
+    transform: mat4x4<f32>,
+    inverse_model_matrix: mat4x4<f32>,
+    bounds_pos_radius: vec4<f32>,
+    bounds_extent_and_custom_scale: vec4<f32>,
+};
+
+struct ObjectInstance {
+    batch: u32,
+    entity: u32
+};
+
 @group(0) @binding(0) var<storage, read> vertex_buffer: array<Vertex>;
 @group(0) @binding(1) var<storage, read> view_buffer: array<View>;
 @group(0) @binding(2) var global_sampler: sampler;
-@group(0) @binding(3) var<uniform> frame_info: FrameInfo;
+@group(0) @binding(3) var non_filtering_sampler: sampler;
+@group(0) @binding(4) var<uniform> frame_info: FrameInfo;
 
 fn cubemap_direction_to_uv(direction: vec3f) -> vec3f {
     let abs_dir = abs(direction);

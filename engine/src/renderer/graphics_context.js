@@ -25,7 +25,7 @@ export class GraphicsContext {
         
         try {
             this.device = await this.adapter.requestDevice({
-                requiredLimits: { maxColorAttachmentBytesPerSample: 64 },
+                requiredLimits: { maxColorAttachmentBytesPerSample: 64 }
             });
         } catch (e) {
             console.log(e);

@@ -11,8 +11,29 @@ import { profile_scope } from "../../utility/performance.js";
 
 export class DeferredShadingStrategy {
   initialized = false;
+  hzb_image = null;
 
-  setup(context, render_graph) {}
+  setup(context, render_graph) {
+    const image_extent = context.get_canvas_resolution();
+
+    const image_width_npot = npot(image_extent.width);
+    const image_height_npot = npot(image_extent.height);
+    const mip_levels = Math.max(
+      Math.log2(image_width_npot),
+      Math.log2(image_height_npot)
+    );
+
+    this.hzb_image = Texture.create(context, {
+      name: "hzb",
+      format: "r32float",
+      width: image_extent.width,
+      height: image_extent.height,
+      usage:
+        GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
+      mip_levels: mip_levels,
+      b_one_view_per_mip: true,
+    });
+  }
 
   draw(context, render_graph) {
     profile_scope("DeferredShadingStrategy.draw", () => {
@@ -77,7 +98,6 @@ export class DeferredShadingStrategy {
           height: image_extent.height,
           usage:
             GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
-          flags: ImageFlags.Transient,
         });
 
         render_graph.add_pass(
@@ -116,7 +136,6 @@ export class DeferredShadingStrategy {
           depth: 1,
           usage:
             GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
-          flags: ImageFlags.Transient,
         });
 
         main_depth_image = render_graph.create_image({
@@ -126,7 +145,6 @@ export class DeferredShadingStrategy {
           height: image_extent.height,
           usage:
             GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
-          flags: ImageFlags.Transient,
           load_op: "load",
         });
 
@@ -158,7 +176,6 @@ export class DeferredShadingStrategy {
           height: image_extent.height,
           usage:
             GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
-          flags: ImageFlags.Transient,
         });
         main_smra_image = render_graph.create_image({
           name: "main_smra",
@@ -167,7 +184,6 @@ export class DeferredShadingStrategy {
           height: image_extent.height,
           usage:
             GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
-          flags: ImageFlags.Transient,
         });
         main_normal_image = render_graph.create_image({
           name: "main_normal",
@@ -176,7 +192,6 @@ export class DeferredShadingStrategy {
           height: image_extent.height,
           usage:
             GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
-          flags: ImageFlags.Transient,
         });
         main_position_image = render_graph.create_image({
           name: "main_position",
@@ -185,7 +200,6 @@ export class DeferredShadingStrategy {
           height: image_extent.height,
           usage:
             GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
-          flags: ImageFlags.Transient,
         });
 
         const material_buckets = MeshTaskQueue.get().get_material_buckets();
@@ -235,6 +249,71 @@ export class DeferredShadingStrategy {
         }
       }
 
+      // HZB generation pass
+      {
+        const shader_setup = {
+          pipeline_shaders: {
+            compute: {
+              path: "hzb_reduce.wgsl",
+            },
+          },
+        };
+
+        // Needs to be persistent, so not initialized with the transient flag
+        const main_hzb_image = render_graph.register_image(this.hzb_image.config.name);
+
+        let hzb_params_chain = [];
+        for (let i = 0; i < this.hzb_image.config.mip_levels; i++) {
+          hzb_params_chain.push(
+            render_graph.create_buffer({
+              name: `hzb_params_${i}`,
+              data: [0.0, 0.0],
+              usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+            })
+          );
+        }
+
+        for (let i = 0; i < this.hzb_image.config.mip_levels; i++) {
+          const src_index = i === 0 ? 0 : i - 1;
+          const dst_index = i;
+
+          render_graph.add_pass(
+            `reduce_hzb_${i}`,
+            RenderPassFlags.Compute,
+            {
+              inputs: [
+                main_depth_image,
+                main_hzb_image,
+                hzb_params_chain[dst_index],
+              ],
+              outputs: [main_hzb_image],
+              input_views: [src_index, dst_index],
+              output_views: [dst_index],
+              shader_setup: shader_setup,
+              b_force_keep_pass: true,
+            },
+            (graph, frame_data, encoder) => {
+              const pass = graph.get_physical_pass(frame_data.current_pass);
+
+              const hzb = graph.get_physical_image(main_hzb_image);
+              const hzb_params = graph.get_physical_buffer(
+                hzb_params_chain[dst_index]
+              );
+
+              const mip_width = Math.max(1, hzb.config.width >> dst_index);
+              const mip_height = Math.max(1, hzb.config.height >> dst_index);
+
+              hzb_params.write(frame_data.context, [
+                mip_width,
+                mip_height,
+              ]);
+
+              pass.dispatch((mip_width + 15) / 16, (mip_height + 15) / 16, 1);
+            }
+          );
+        }
+      }
+
       // Reset mesh task queue
       {
         render_graph.add_pass(
@@ -271,7 +350,6 @@ export class DeferredShadingStrategy {
           height: image_extent.height,
           usage:
             GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
-          flags: ImageFlags.Transient,
         });
 
         render_graph.add_pass(
@@ -486,7 +564,10 @@ export class DeferredShadingStrategy {
 
             bloom_resolve_params.write(
               frame_data.context,
-              [1.5 /* final exposure */, 0.3 /* bloom intensity */, 0.001 /* bloom threshold */, 0.0 /* bloom knee */]
+              [
+                1.5 /* final exposure */, 0.3 /* bloom intensity */,
+                0.001 /* bloom threshold */, 0.0 /* bloom knee */,
+              ]
             );
 
             MeshTaskQueue.get().draw_quad(frame_data.context, pass);

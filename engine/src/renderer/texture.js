@@ -15,6 +15,58 @@ export const ImageFlags = Object.freeze({
 });
 
 /**
+ * Configuration for a texture sampler.
+ * @typedef {Object} TextureSamplerConfig
+ * @property {string|null} name - The name of the sampler.
+ * @property {string} mag_filter - The magnification filter. Default is "linear".
+ * @property {string} min_filter - The minification filter. Default is "linear".
+ * @property {string} mipmap_filter - The mipmap filter. Default is "linear".
+ */
+class TextureSamplerConfig {
+  name = null;
+  mag_filter = "linear";
+  min_filter = "linear";
+  mipmap_filter = "linear";
+}
+
+export class TextureSampler {
+  config = new TextureSamplerConfig();
+  sampler = null;
+
+  init(context, config) {
+    this.config = { ...this.config, ...config };
+
+    this.sampler = context.device.createSampler({
+      label: this.config.name,
+      magFilter: this.config.mag_filter,
+      minFilter: this.config.min_filter,
+      mipmapFilter: this.config.mipmap_filter,
+    });
+  }
+
+  static create(context, config) {
+    let sampler = ResourceCache.get().fetch(
+      CacheTypes.SAMPLER,
+      Name.from(config.name)
+    );
+    if (sampler) {
+      return sampler;
+    }
+
+    sampler = new TextureSampler();
+    sampler.init(context, config);
+
+    ResourceCache.get().store(
+      CacheTypes.SAMPLER,
+      Name.from(config.name),
+      sampler
+    );
+
+    return sampler;
+  }
+}
+
+/**
  * Configuration for a image resource.
  * @property {string} name - Name of the image.
  * @property {number} width - Width of the image.
@@ -34,7 +86,7 @@ class TextureConfig {
   name = null;
   width = 0;
   height = 0;
-  depth = 0;
+  depth = 1;
   mip_levels = 1;
   format = "rgba8unorm";
   usage = GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.SAMPLED;
@@ -248,27 +300,9 @@ export class Texture {
   }
 
   static get_default_sampler(context) {
-    let sampler = ResourceCache.get().fetch(
-      CacheTypes.SAMPLER,
-      Name.from("default_sampler")
-    );
-    if (sampler) {
-      return sampler;
-    }
-
-    sampler = context.device.createSampler({
-      magFilter: "linear",
-      minFilter: "linear",
-      mipmapFilter: "linear",
+    return TextureSampler.create(context, {
+      name: "default_sampler",
     });
-
-    ResourceCache.get().store(
-      CacheTypes.SAMPLER,
-      Name.from("default_sampler"),
-      sampler
-    );
-
-    return sampler;
   }
 
   static create(context, config) {

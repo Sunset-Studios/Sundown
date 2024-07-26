@@ -1,6 +1,5 @@
 import { Renderer } from "../engine/src/renderer/renderer.js";
-import { Material, MaterialTemplate } from "../engine/src/renderer/material.js";
-import { Texture } from "../engine/src/renderer/texture.js";
+import { Material } from "../engine/src/renderer/material.js";
 import SimulationCore from "../engine/src/core/simulation_core.js";
 import { InputProvider } from "../engine/src/input/input_provider.js";
 import { Scene } from "../engine/src/core/scene.js";
@@ -15,6 +14,7 @@ import { Mesh } from "../engine/src/renderer/mesh.js";
 import { Name } from "../engine/src/utility/names.js";
 import { SharedEnvironmentMapData } from "../engine/src/core/shared_data.js";
 import { profile_scope } from "../engine/src/utility/performance.js";
+import { frame_runner } from "../engine/src/utility/frame_runner.js";
 
 async function init() {
   application_state.is_running = true;
@@ -31,13 +31,13 @@ async function init() {
   // Initialize scene
   {
     // Create a test scene and register it with the simulation system
-    const scene = new Scene("TestScene");
+    const scene = new Scene("StartScene");
     await SimulationCore.get().register_simulation_layer(scene);
 
     // Set the skybox for this scene.
     await SharedEnvironmentMapData.get().add_skybox(
       Renderer.get().graphics_context,
-      "test_scene_skybox",
+      "default_scene_skybox",
       [
         "engine/textures/spacebox/px.png",
         "engine/textures/spacebox/nx.png",
@@ -55,57 +55,67 @@ async function init() {
     scene.add_fragment(light_entity, LightFragment, {
       type: LightType.DIRECTIONAL,
       color: { r: 1, g: 1, b: 1 },
-      intensity: 3,
+      intensity: 5,
       position: { x: 50, y: 100, z: 50 },
     });
 
     // Create a sphere mesh and add it to the scene
     const mesh = await Mesh.from_gltf(
       Renderer.get().graphics_context,
-      "engine/models/sphere/sphere.gltf"
+      "engine/models/cube/cube.gltf"
     );
 
     // Create a default material
     const default_material = Material.create("StandardMaterial");
     const default_material_id = default_material.get_state_hash();
 
-    // Create a grid of sphere entities
-    const grid_size = 100; // 5x5 grid
+    // Create a 3D grid of sphere entities
+    const grid_size = 50; // 50x50 grid
+    const grid_layers = 10;
     const spacing = 2; // 2 units apart
 
+    let mesh_entity = null;
     for (let x = 0; x < grid_size; x++) {
       for (let z = 0; z < grid_size; z++) {
-        // Create a sphere entity and add it to the scene
-        const sphere_entity = scene.create_entity(
-          false /* refresh_entity_queries */
-        );
+        for (let y = 0; y < grid_layers; y++) {
 
-        // Add a static mesh fragment to the sphere entity
-        scene.add_fragment(
-          sphere_entity,
-          StaticMeshFragment,
-          {
-            mesh: BigInt(Name.from(mesh.name)),
-            material_slots: [default_material_id],
-          },
-          false /* refresh_entity_queries */
-        );
+          let entity = null;
+          if (mesh_entity == null) {
+            mesh_entity = scene.create_entity(false /* refresh_entity_queries */);
+            // Add a static mesh fragment to the sphere entity
+            scene.add_fragment(
+              mesh_entity,
+              StaticMeshFragment,
+              {
+                mesh: BigInt(Name.from(mesh.name)),
+                material_slots: [default_material_id],
+                instance_count: BigInt(grid_size * grid_size * grid_layers),
+              },
+              false /* refresh_entity_queries */
+            );
+            entity = mesh_entity;
+          } else {
+            entity = scene.create_entity(
+              false /* refresh_entity_queries */
+            );
+          }
 
-        // Add a transform fragment to the sphere entity
-        scene.add_fragment(
-          sphere_entity,
-          TransformFragment,
-          {
-            position: {
-              x: (x - Math.floor(grid_size / 2)) * spacing,
-              y: 0,
-              z: (z - Math.floor(grid_size / 2)) * spacing,
+          // Add a transform fragment to the sphere entity
+          scene.add_fragment(
+            entity,
+            TransformFragment,
+            {
+              position: {
+                x: (x - Math.floor(grid_size / 2)) * spacing,
+                y: (y - Math.floor(grid_layers / 2)) * spacing,
+                z: (z - Math.floor(grid_size / 2)) * spacing,
+              },
+              rotation: { x: -90, y: 90, z: 0 },
+              scale: { x: 0.5, y: 0.5, z: 0.5 },
             },
-            rotation: { x: -90, y: 90, z: 0 },
-            scale: { x: 0.5, y: 0.5, z: 0.5 },
-          },
-          false /* refresh_entity_queries */
-        );
+            false /* refresh_entity_queries */
+          );
+        }
       }
     }
 
@@ -113,17 +123,17 @@ async function init() {
   }
 }
 
-function run() {
-  function simulate() {
-    if (application_state.is_running) {
-      profile_scope("frame_loop", () => {
-        SimulationCore.get().update();
-        Renderer.get().render();
-      });
-      requestAnimationFrame(simulate);
-    }
+function simulate(delta_time) {
+  if (application_state.is_running) {
+    profile_scope("frame_loop", () => {
+      SimulationCore.get().update(delta_time);
+      Renderer.get().render(delta_time);
+    });
   }
-  requestAnimationFrame(simulate);
+}
+
+function run() {
+  frame_runner(simulate, 60);
 }
 
 (async () => {
