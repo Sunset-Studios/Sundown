@@ -3,7 +3,6 @@ import { EntityManager } from "../ecs/entity.js";
 import { StaticMeshFragment } from "../ecs/fragments/static_mesh_fragment.js";
 import { MeshTaskQueue } from "../../renderer/mesh_task_queue.js";
 import { ResourceCache, CacheTypes } from "../../renderer/resource_cache.js";
-import { Renderer } from "../../renderer/renderer.js";
 import { profile_scope } from "../../utility/performance.js";
 
 export class StaticMeshProcessor extends SimulationLayer {
@@ -89,7 +88,7 @@ export class StaticMeshProcessor extends SimulationLayer {
       }
 
       if (needs_resort) {
-        mesh_task_queue.sort_and_batch(Renderer.get().graphics_context);
+        mesh_task_queue.mark_needs_sort();
       }
     });
   }

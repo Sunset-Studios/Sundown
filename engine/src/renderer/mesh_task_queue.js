@@ -40,7 +40,7 @@ class IndirectDrawObject {
         for (let i = 0; i < batches.length; i++) {
           const offset = i * 5;
           this.indirect_draw_data[offset] = batches[i].index_count;
-          this.indirect_draw_data[offset + 1] = batches[i].instance_count;
+          this.indirect_draw_data[offset + 1] = 0;
           this.indirect_draw_data[offset + 2] = batches[i].first_index;
           this.indirect_draw_data[offset + 3] = batches[i].base_vertex;
           this.indirect_draw_data[offset + 4] = batches[i].base_instance;
@@ -49,12 +49,12 @@ class IndirectDrawObject {
         this.indirect_draw_buffer = Buffer.create(context, {
           name: "indirect_draw_buffer",
           raw_data: this.indirect_draw_data,
-          usage: GPUBufferUsage.INDIRECT | GPUBufferUsage.COPY_DST,
+          usage: GPUBufferUsage.INDIRECT | GPUBufferUsage.COPY_DST | GPUBufferUsage.STORAGE,
         });
       }
       if (!this.object_instance_buffer) {
         for (let i = 0; i < object_instances.length; i++) {
-          const offset = i * 3;
+          const offset = i * 2;
           this.object_instance_data[offset] = object_instances[i].batch_index;
           this.object_instance_data[offset + 1] = object_instances[i].entity_index;
         }
@@ -77,7 +77,7 @@ class IndirectDrawObject {
           name: "indirect_draw_buffer",
           data: batches.map((batch) => [
             batch.index_count,
-            batch.instance_count,
+            0,
             batch.first_index,
             batch.base_vertex,
             batch.base_instance,
@@ -108,7 +108,7 @@ class IndirectDrawObject {
         for (let i = 0; i < batches.length; i++) {
           const offset = i * 5;
           this.indirect_draw_data[offset] = batches[i].index_count;
-          this.indirect_draw_data[offset + 1] = batches[i].instance_count;
+          this.indirect_draw_data[offset + 1] = 0;
           this.indirect_draw_data[offset + 2] = batches[i].first_index;
           this.indirect_draw_data[offset + 3] = batches[i].base_vertex;
           this.indirect_draw_data[offset + 4] = batches[i].base_instance;
@@ -119,7 +119,7 @@ class IndirectDrawObject {
       profile_scope("write_object_instance_buffer", () => {
         // Update object instance buffer
         for (let i = 0; i < object_instances.length; i++) {
-          const offset = i * 3;
+          const offset = i * 2;
           this.object_instance_data[offset] = object_instances[i].batch_index;
           this.object_instance_data[offset + 1] = object_instances[i].entity_index;
         }
@@ -153,6 +153,7 @@ export class MeshTaskQueue {
     this.object_instances = [];
     this.material_buckets = new Set();
     this.current_task_offset = 0;
+    this.needs_sort = false;
     this.indirect_draw_object = new IndirectDrawObject();
     this.tasks_allocator = new FrameAllocator(max_objects, new MeshTask());
     this.object_instance_allocator = new FrameAllocator(max_objects, new ObjectInstanceEntry());
@@ -164,6 +165,10 @@ export class MeshTaskQueue {
       MeshTaskQueue.instance = new MeshTaskQueue();
     }
     return MeshTaskQueue.instance;
+  }
+
+  mark_needs_sort() {
+    this.needs_sort = true;
   }
 
   reserve(num_tasks) {
@@ -188,13 +193,17 @@ export class MeshTaskQueue {
     }
 
     if (resort) {
-      this.sort_and_batch();
+      this.needs_sort = true;
     }
 
     return task;
   }
 
   sort_and_batch(context) {
+    if (!this.needs_sort) {
+      return;
+    }
+
     profile_scope("sort_and_batch", () => {
       this.tasks.sort(
         (a, b) => a.mesh_id - b.mesh_id - (a.material_id - b.material_id)
@@ -277,6 +286,10 @@ export class MeshTaskQueue {
 
   get_material_buckets() {
     return this.material_buckets;
+  }
+
+  get_total_draw_count() {
+    return this.object_instances.length;
   }
 
   submit_draws(render_pass, rg_frame_data, should_reset = false) {

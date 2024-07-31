@@ -15,6 +15,7 @@ struct View {
     view_projection_matrix: mat4x4f,
     inverse_view_projection_matrix: mat4x4f,
     view_direction: vec4f,
+    frustum: array<vec4f, 6>,
 };
 
 struct FrameInfo {
@@ -31,6 +32,10 @@ struct EntityTransform {
 struct ObjectInstance {
     batch: u32,
     entity: u32
+};
+
+struct CompactedObjectInstance {
+    entity: u32,
 };
 
 @group(0) @binding(0) var<storage, read> vertex_buffer: array<Vertex>;

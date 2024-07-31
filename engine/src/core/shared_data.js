@@ -35,7 +35,9 @@ export class SharedVertexBuffer {
   _get_byte_size() {
     return (
       this.vertex_data
-        .map((v) => v.position.concat(v.normal, v.color, v.uv, v.tangent, v.bitangent))
+        .map((v) =>
+          v.position.concat(v.normal, v.color, v.uv, v.tangent, v.bitangent)
+        )
         .flat().length * 4
     );
   }
@@ -80,25 +82,28 @@ export class SharedViewBuffer {
   // Adds a view data to the buffer and returns the index. Should be called during setup, before the simulation begins.
   add_view_data(context, view_data = {}) {
     this.view_data.push({
-      position: view_data.position ?? vec4.create(), 
+      position: view_data.position ?? vec4.create(),
       rotation: view_data.rotation ?? quat.create(),
       fov: view_data.fov ?? 75,
       aspect_ratio: view_data.aspect_ratio ?? 1,
-      near: view_data.near ?? 0.01,
+      near: view_data.near ?? 0.001,
       far: view_data.far ?? 1000,
       view_forward: view_data.view_forward ?? vec4.create(),
       view_right: view_data.view_right ?? vec4.create(),
       view_matrix: view_data.view_matrix ?? mat4.create(),
       projection_matrix: view_data.projection_matrix ?? mat4.create(),
+      frustum: view_data.frustum ?? Array(24).fill(0),
       prev_view_matrix: view_data.prev_view_matrix ?? mat4.create(),
       prev_projection_matrix: view_data.prev_projection_matrix ?? mat4.create(),
       view_projection_matrix: view_data.view_projection_matrix ?? mat4.create(),
-      inverse_view_projection_matrix: view_data.inverse_view_projection_matrix_direction_only ?? mat4.create(),
+      inverse_view_projection_matrix:
+        view_data.inverse_view_projection_matrix_direction_only ??
+        mat4.create(),
     });
 
     if (this.type_size_bytes === 0) {
       this.type_size_bytes =
-        this._get_gpu_type_layout(this.view_data[0]).length * 4;
+        this._get_gpu_type_layout(this.view_data[0]).flat().length * 4;
     }
 
     const flattened_data = this.view_data
@@ -114,7 +119,10 @@ export class SharedViewBuffer {
   }
 
   get_view_data(index) {
-    console.assert(index < this.view_data.length && index >= 0, "View data index out of bounds");
+    console.assert(
+      index < this.view_data.length && index >= 0,
+      "View data index out of bounds"
+    );
     return this.view_data[index];
   }
 
@@ -161,50 +169,133 @@ export class SharedViewBuffer {
   update_transforms(context, index) {
     if (this.view_data[index].dirty) {
       if (this.view_data[index].projection_matrix) {
-        this.view_data[index].prev_projection_matrix =
-          mat4.clone(this.view_data[index].projection_matrix);
+        this.view_data[index].prev_projection_matrix = mat4.clone(
+          this.view_data[index].projection_matrix
+        );
       }
       if (this.view_data[index].view_matrix) {
-        this.view_data[index].prev_view_matrix =
-          mat4.clone(this.view_data[index].view_matrix);
+        this.view_data[index].prev_view_matrix = mat4.clone(
+          this.view_data[index].view_matrix
+        );
       }
 
       {
-          mat4.perspective(
-            this.view_data[index].projection_matrix,
-            this.view_data[index].fov,
-            this.view_data[index].aspect_ratio,
-            this.view_data[index].near,
-            this.view_data[index].far
-          );
+        mat4.perspective(
+          this.view_data[index].projection_matrix,
+          this.view_data[index].fov,
+          this.view_data[index].aspect_ratio,
+          this.view_data[index].near,
+          this.view_data[index].far
+        );
       }
 
       {
-          this.view_data[index].view_forward = vec4.transformQuat(vec4.create(), WORLD_FORWARD, this.view_data[index].rotation);
-          this.view_data[index].view_forward = vec4.normalize(vec4.create(), this.view_data[index].view_forward);
+        this.view_data[index].view_forward = vec4.transformQuat(
+          vec4.create(),
+          WORLD_FORWARD,
+          this.view_data[index].rotation
+        );
+        this.view_data[index].view_forward = vec4.normalize(
+          vec4.create(),
+          this.view_data[index].view_forward
+        );
 
-          const right = vec3.cross(vec3.create(), this.view_data[index].view_forward, WORLD_UP);
-          this.view_data[index].view_right = vec4.fromValues(right[0], right[1], right[2], 0);
-          this.view_data[index].view_right = vec3.normalize(vec3.create(), this.view_data[index].view_right);
+        const right = vec3.cross(
+          vec3.create(),
+          this.view_data[index].view_forward,
+          WORLD_UP
+        );
+        this.view_data[index].view_right = vec4.fromValues(
+          right[0],
+          right[1],
+          right[2],
+          0
+        );
+        this.view_data[index].view_right = vec3.normalize(
+          vec3.create(),
+          this.view_data[index].view_right
+        );
 
-          const view_target = vec4.create();
-          vec4.scaleAndAdd(view_target, this.view_data[index].position, this.view_data[index].view_forward, 1.0);
-    
-          mat4.lookAt(
-            this.view_data[index].view_matrix,
-            this.view_data[index].position,
-            view_target,
-            WORLD_UP
-          );
+        const view_target = vec4.create();
+        vec4.scaleAndAdd(
+          view_target,
+          this.view_data[index].position,
+          this.view_data[index].view_forward,
+          1.0
+        );
+
+        mat4.lookAt(
+          this.view_data[index].view_matrix,
+          this.view_data[index].position,
+          view_target,
+          WORLD_UP
+        );
       }
 
       {
-        mat4.mul(this.view_data[index].view_projection_matrix, this.view_data[index].projection_matrix, this.view_data[index].view_matrix);
-        mat4.invert(this.view_data[index].inverse_view_projection_matrix, this.view_data[index].view_projection_matrix);
+        mat4.mul(
+          this.view_data[index].view_projection_matrix,
+          this.view_data[index].projection_matrix,
+          this.view_data[index].view_matrix
+        );
+        mat4.invert(
+          this.view_data[index].inverse_view_projection_matrix,
+          this.view_data[index].view_projection_matrix
+        );
+      }
+
+      {
+        const vp = this.view_data[index].view_projection_matrix;
+
+        // Left clipping plane
+        const frustum = Array(24).fill(0);
+        const tmp = vec3.create();
+        vec3.set(tmp, vp[3] + vp[0], vp[7] + vp[4], vp[11] + vp[8]);
+        let l = vec3.length(tmp);
+        frustum[0] = tmp[0] / l;
+        frustum[1] = tmp[1] / l;
+        frustum[2] = tmp[2] / l;
+        frustum[3] = (vp[15] + vp[12]) / l;
+        // Right clipping plane
+        vec3.set(tmp, vp[3] - vp[0], vp[7] - vp[4], vp[11] - vp[8]);
+        l = vec3.length(tmp);
+        frustum[4] = tmp[0] / l;
+        frustum[5] = tmp[1] / l;
+        frustum[6] = tmp[2] / l;
+        frustum[7] = (vp[15] - vp[12]) / l;
+        // Top clipping plane
+        vec3.set(tmp, vp[3] - vp[1], vp[7] - vp[5], vp[11] - vp[9]);
+        l = vec3.length(tmp);
+        frustum[8] = tmp[0] / l;
+        frustum[9] = tmp[1] / l;
+        frustum[10] = tmp[2] / l;
+        frustum[11] = (vp[15] - vp[13]) / l;
+        // Bottom clipping plane
+        vec3.set(tmp, vp[3] + vp[1], vp[7] + vp[5], vp[11] + vp[9]);
+        l = vec3.length(tmp);
+        frustum[12] = tmp[0] / l;
+        frustum[13] = tmp[1] / l;
+        frustum[14] = tmp[2] / l;
+        frustum[15] = (vp[15] + vp[13]) / l;
+        // Near clipping plane
+        vec3.set(tmp, vp[2], vp[6], vp[10]);
+        l = vec3.length(tmp);
+        frustum[16] = tmp[0] / l;
+        frustum[17] = tmp[1] / l;
+        frustum[18] = tmp[2] / l;
+        frustum[19] = vp[14] / l;
+        // Far clipping plane
+        vec3.set(tmp, vp[3] - vp[2], vp[7] - vp[6], vp[11] - vp[10]);
+        l = vec3.length(tmp);
+        frustum[20] = tmp[0] / l;
+        frustum[21] = tmp[1] / l;
+        frustum[22] = tmp[2] / l;
+        frustum[23] = (vp[15] - vp[14]) / l; 
+
+        this.view_data[index].frustum = frustum;
       }
 
       if (this.buffer) {
-        const offset = index * this.type_size_bytes;
         this.buffer.write(
           context,
           this.view_data.map(this._get_gpu_type_layout)
@@ -240,7 +331,8 @@ export class SharedViewBuffer {
       ...item.prev_projection_matrix,
       ...item.view_projection_matrix,
       ...item.inverse_view_projection_matrix,
-      ...item.view_forward
+      ...item.view_forward,
+      ...item.frustum,
     );
   }
 }
@@ -267,7 +359,10 @@ export class SharedEnvironmentMapData {
       name: name,
       format: "rgba8unorm",
       dimension: "cube",
-      usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT,
+      usage:
+        GPUTextureUsage.TEXTURE_BINDING |
+        GPUTextureUsage.COPY_DST |
+        GPUTextureUsage.RENDER_ATTACHMENT,
     });
 
     this.skybox = skybox;

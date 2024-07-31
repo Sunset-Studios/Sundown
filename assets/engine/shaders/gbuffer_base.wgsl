@@ -19,7 +19,7 @@ struct FragmentOutput {
 }
 
 @group(1) @binding(0) var<storage, read> entity_transforms: array<EntityTransform>;
-@group(1) @binding(1) var<storage, read> object_instances: array<ObjectInstance>;
+@group(1) @binding(1) var<storage, read> compacted_object_instances: array<CompactedObjectInstance>;
 
 #ifndef CUSTOM_VS
 fn vertex(v_out: VertexOutput) -> VertexOutput {
@@ -31,7 +31,7 @@ fn vertex(v_out: VertexOutput) -> VertexOutput {
     @builtin(vertex_index) vi : u32,
     @builtin(instance_index) ii: u32
 ) -> VertexOutput {
-    let entity = object_instances[ii].entity;
+    let entity = compacted_object_instances[ii].entity;
     let entity_transform = entity_transforms[entity];
     let instance_vertex = vertex_buffer[vi];
 
@@ -55,7 +55,7 @@ fn vertex(v_out: VertexOutput) -> VertexOutput {
     output.normal = normalize(vec4f(normal_matrix * instance_vertex.normal.rgb, 1.0));
     output.tangent = model_matrix * instance_vertex.tangent;
     output.bitangent = model_matrix * instance_vertex.bitangent;
-    output.instance_id = ii;
+    output.instance_id = entity;
 
     return vertex(output);
 }

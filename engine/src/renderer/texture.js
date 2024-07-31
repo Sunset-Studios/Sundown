@@ -218,7 +218,7 @@ export class Texture {
       baseMipLevel: view_config.base_mip_level ?? 0,
       baseArrayLayer: view_config.base_array_layer ?? 0,
       arrayLayerCount: view_config.array_layers ?? this.config.depth,
-    }
+    };
 
     if (view_config.mip_levels) {
       view_descriptor.mipLevelCount = view_config.mip_levels;
@@ -362,6 +362,56 @@ export class Texture {
     ResourceCache.get().store(CacheTypes.IMAGE, Name.from(config.name), image);
 
     return image;
+  }
+
+  static filter_type_from_format(format) {
+    const formatMap = {
+      "r8unorm": "float",
+      "r8snorm": "float",
+      "r8uint": "uint",
+      "r8sint": "sint",
+      "r16uint": "uint",
+      "r16sint": "sint",
+      "r16float": "float",
+      "rg8unorm": "float",
+      "rg8snorm": "float",
+      "rg8uint": "uint",
+      "rg8sint": "sint",
+      "r32uint": "uint",
+      "r32sint": "sint",
+      "r32float": "unfilterable-float",
+      "rg16uint": "uint",
+      "rg16sint": "sint",
+      "rg16float": "float",
+      "rgba8unorm": "float",
+      "rgba8unorm-srgb": "float",
+      "rgba8snorm": "float",
+      "rgba8uint": "uint",
+      "rgba8sint": "sint",
+      "bgra8unorm": "float",
+      "bgra8unorm-srgb": "float",
+      "rgb10a2unorm": "float",
+      "rg11b10ufloat": "float",
+      "rgb9e5ufloat": "float",
+      "rg32uint": "uint",
+      "rg32sint": "sint",
+      "rg32float": "unfilterable-float",
+      "rgba16uint": "uint",
+      "rgba16sint": "sint",
+      "rgba16float": "float",
+      "rgba32uint": "uint",
+      "rgba32sint": "sint",
+      "rgba32float": "unfilterable-float",
+      // Depth formats
+      "depth16unorm": "depth",
+      "depth24plus": "depth",
+      "depth24plus-stencil8": "depth",
+      "depth32float": "unfilterable-float",
+      "depth32float-stencil8": "unfilterable-float",
+      "stencil8": "uint"
+    };
+
+    return formatMap[format] || "float"; // Default to 'float' if format is not found
   }
 
   static dimension_from_type_name(type_name) {

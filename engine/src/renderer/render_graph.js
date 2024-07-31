@@ -1274,20 +1274,19 @@ export class RenderGraph {
             break;
           case ShaderResourceType.Storage:
             binding_obj.buffer = {
-              type: "read-only-storage",
+              type: binding.access === "read" ? "read-only-storage" : "storage",
             };
             break;
           case ShaderResourceType.Texture:
             binding_obj.texture = {
               viewDimension: resource_obj.config.dimension,
-              sampleType:
-                resource_obj.config.type === "depth" ? "unfilterable-float" : "float",
+              sampleType: Texture.filter_type_from_format(resource_obj.config.format),
             };
             break;
           case ShaderResourceType.StorageTexture:
             binding_obj.storageTexture = {
               viewDimension: resource_obj.config.dimension,
-              sampleType: "float",
+              sampleType: Texture.filter_type_from_format(resource_obj.config.format),
               format: resource_obj.config.format || "rgba8unorm",
             };
             break;

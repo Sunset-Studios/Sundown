@@ -10,13 +10,13 @@ struct FragmentOutput {
 }
 
 @group(1) @binding(0) var<storage, read> entity_transforms: array<EntityTransform>;
-@group(1) @binding(1) var<storage, read> object_instances: array<ObjectInstance>;
+@group(1) @binding(1) var<storage, read> compacted_object_instances: array<CompactedObjectInstance>;
 
 @vertex fn vs(
     @builtin(vertex_index) vi : u32,
     @builtin(instance_index) ii: u32
 ) -> VertexOutput {
-    let entity = object_instances[ii].entity;
+    let entity = compacted_object_instances[ii].entity;
     let model_matrix = entity_transforms[entity].transform;
     let mvp = view_buffer[0].view_projection_matrix * model_matrix;
 

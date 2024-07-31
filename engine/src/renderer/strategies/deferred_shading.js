@@ -3,8 +3,10 @@ import { RenderPassFlags } from "../render_pass.js";
 import { MeshTaskQueue } from "../mesh_task_queue.js";
 import { TransformFragment } from "../../core/ecs/fragments/transform_fragment.js";
 import { LightFragment } from "../../core/ecs/fragments/light_fragment.js";
-import { SharedEnvironmentMapData } from "../../core/shared_data.js";
-import { ImageFlags } from "../texture.js";
+import {
+  SharedViewBuffer,
+  SharedEnvironmentMapData,
+} from "../../core/shared_data.js";
 import { Material } from "../material.js";
 import { npot, clamp } from "../../utility/math.js";
 import { profile_scope } from "../../utility/performance.js";
@@ -18,6 +20,7 @@ export class DeferredShadingStrategy {
 
     const image_width_npot = npot(image_extent.width);
     const image_height_npot = npot(image_extent.height);
+
     const mip_levels = Math.max(
       Math.log2(image_width_npot),
       Math.log2(image_height_npot)
@@ -25,11 +28,10 @@ export class DeferredShadingStrategy {
 
     this.hzb_image = Texture.create(context, {
       name: "hzb",
-      format: "r32float",
-      width: image_extent.width,
-      height: image_extent.height,
-      usage:
-        GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
+      format: "rgba32float",
+      width: image_width_npot,
+      height: image_height_npot,
+      usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
       mip_levels: mip_levels,
       b_one_view_per_mip: true,
     });
@@ -41,6 +43,8 @@ export class DeferredShadingStrategy {
         this.setup(context, render_graph);
         this.initialized = true;
       }
+
+      MeshTaskQueue.get().sort_and_batch(context);
 
       const transform_gpu_data = TransformFragment.to_gpu_data(context);
       const entity_transforms = render_graph.register_buffer(
@@ -58,7 +62,20 @@ export class DeferredShadingStrategy {
         object_instance_buffer.config.name
       );
 
+      const compacted_object_instance_buffer = render_graph.create_buffer({
+        name: "compacted_object_instance_buffer",
+        raw_data: new Uint32Array(MeshTaskQueue.get().get_total_draw_count()),
+        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+      });
+
+      const indirect_draw_buffer =
+        MeshTaskQueue.get().get_indirect_draw_buffer();
+      const indirect_draws = render_graph.register_buffer(
+        indirect_draw_buffer.config.name
+      );
+
       let skybox_image = null;
+      let main_hzb_image = null;
       let main_albedo_image = null;
       let main_depth_image = null;
       let main_smra_image = null;
@@ -115,6 +132,69 @@ export class DeferredShadingStrategy {
         );
       }
 
+      // Mesh cull pass
+      {
+        // Compute cull pass
+        const shader_setup = {
+          pipeline_shaders: {
+            compute: {
+              path: "cull.wgsl",
+            },
+          },
+        };
+
+        // Needs to be persistent, so not initialized with the transient flag
+        main_hzb_image = render_graph.register_image(
+          this.hzb_image.config.name
+        );
+
+        const draw_cull_data = render_graph.create_buffer({
+          name: `draw_cull_data`,
+          data: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+          usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+        });
+
+        render_graph.add_pass(
+          "compute_cull",
+          RenderPassFlags.Compute,
+          {
+            shader_setup,
+            inputs: [
+              main_hzb_image,
+              entity_transforms,
+              object_instances,
+              compacted_object_instance_buffer,
+              indirect_draws,
+              draw_cull_data,
+            ],
+            outputs: [indirect_draws],
+          },
+          (graph, frame_data, encoder) => {
+            const pass = graph.get_physical_pass(frame_data.current_pass);
+
+            const hzb = graph.get_physical_image(main_hzb_image);
+            const draw_cull = graph.get_physical_buffer(draw_cull_data);
+            const draw_count = MeshTaskQueue.get().get_total_draw_count();
+            const view_data = SharedViewBuffer.get().get_view_data(0);
+
+            draw_cull.write(frame_data.context, [
+              draw_count,
+              1 /* culling_enabled */,
+              1 /* occlusion_enabled */,
+              1 /* distance_check */,
+              view_data.near,
+              view_data.far,
+              view_data.projection_matrix[0],
+              view_data.projection_matrix[5],
+              hzb.config.width,
+              hzb.config.height,
+            ]);
+
+            pass.dispatch((draw_count + 255) / 256, 1, 1);
+          }
+        );
+      }
+
       // Entity Prepass
       {
         const shader_setup = {
@@ -152,7 +232,7 @@ export class DeferredShadingStrategy {
           "entity_prepass",
           RenderPassFlags.Graphics,
           {
-            inputs: [entity_transforms, object_instances],
+            inputs: [entity_transforms, compacted_object_instance_buffer],
             outputs: [main_entity_id_image, main_depth_image],
             shader_setup,
           },
@@ -210,7 +290,7 @@ export class DeferredShadingStrategy {
             `g_buffer_${material.template.name}_${material_id}`,
             RenderPassFlags.Graphics,
             {
-              inputs: [entity_transforms, object_instances],
+              inputs: [entity_transforms, compacted_object_instance_buffer],
               outputs: [
                 main_albedo_image,
                 main_smra_image,
@@ -249,6 +329,22 @@ export class DeferredShadingStrategy {
         }
       }
 
+      // Reset GBuffer targets
+      {
+        render_graph.add_pass(
+          "reset_g_buffer_targets",
+          RenderPassFlags.GraphLocal,
+          {},
+          (graph, frame_data, encoder) => {
+            frame_data.g_buffer_data.albedo.config.load_op = "clear";
+            frame_data.g_buffer_data.smra.config.load_op = "clear";
+            frame_data.g_buffer_data.position.config.load_op = "clear";
+            frame_data.g_buffer_data.normal.config.load_op = "clear";
+            frame_data.g_buffer_data.depth.config.load_op = "clear";
+          }
+        );
+      }
+
       // HZB generation pass
       {
         const shader_setup = {
@@ -259,15 +355,12 @@ export class DeferredShadingStrategy {
           },
         };
 
-        // Needs to be persistent, so not initialized with the transient flag
-        const main_hzb_image = render_graph.register_image(this.hzb_image.config.name);
-
         let hzb_params_chain = [];
         for (let i = 0; i < this.hzb_image.config.mip_levels; i++) {
           hzb_params_chain.push(
             render_graph.create_buffer({
               name: `hzb_params_${i}`,
-              data: [0.0, 0.0],
+              data: [0.0, 0.0, 0.0, 0.0],
               usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
             })
           );
@@ -282,15 +375,13 @@ export class DeferredShadingStrategy {
             RenderPassFlags.Compute,
             {
               inputs: [
-                main_depth_image,
+                i === 0 ? main_depth_image : main_hzb_image,
                 main_hzb_image,
                 hzb_params_chain[dst_index],
               ],
               outputs: [main_hzb_image],
               input_views: [src_index, dst_index],
-              output_views: [dst_index],
               shader_setup: shader_setup,
-              b_force_keep_pass: true,
             },
             (graph, frame_data, encoder) => {
               const pass = graph.get_physical_pass(frame_data.current_pass);
@@ -300,34 +391,32 @@ export class DeferredShadingStrategy {
                 hzb_params_chain[dst_index]
               );
 
-              const mip_width = Math.max(1, hzb.config.width >> dst_index);
-              const mip_height = Math.max(1, hzb.config.height >> dst_index);
+              const src_mip_width = Math.max(1, hzb.config.width >> src_index);
+              const src_mip_height = Math.max(
+                1,
+                hzb.config.height >> src_index
+              );
+              const dst_mip_width = Math.max(1, hzb.config.width >> dst_index);
+              const dst_mip_height = Math.max(
+                1,
+                hzb.config.height >> dst_index
+              );
 
               hzb_params.write(frame_data.context, [
-                mip_width,
-                mip_height,
+                src_mip_width,
+                src_mip_height,
+                dst_mip_width,
+                dst_mip_height,
               ]);
 
-              pass.dispatch((mip_width + 15) / 16, (mip_height + 15) / 16, 1);
+              pass.dispatch(
+                (dst_mip_width + 15) / 16,
+                (dst_mip_height + 15) / 16,
+                1
+              );
             }
           );
         }
-      }
-
-      // Reset mesh task queue
-      {
-        render_graph.add_pass(
-          "reset_g_buffer_targets",
-          RenderPassFlags.GraphLocal,
-          {},
-          (graph, frame_data, encoder) => {
-            frame_data.g_buffer_data.albedo.config.load_op = "clear";
-            frame_data.g_buffer_data.smra.config.load_op = "clear";
-            frame_data.g_buffer_data.position.config.load_op = "clear";
-            frame_data.g_buffer_data.normal.config.load_op = "clear";
-            frame_data.g_buffer_data.depth.config.load_op = "clear";
-          }
-        );
       }
 
       // Lighting Pass
