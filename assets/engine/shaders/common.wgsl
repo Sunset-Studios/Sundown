@@ -25,6 +25,7 @@ struct FrameInfo {
 struct EntityTransform {
     transform: mat4x4<f32>,
     inverse_model_matrix: mat4x4<f32>,
+    transpose_inverse_model_matrix: mat4x4<f32>,
     bounds_pos_radius: vec4<f32>,
     bounds_extent_and_custom_scale: vec4<f32>,
 };

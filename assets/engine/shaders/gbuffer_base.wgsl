@@ -16,14 +16,15 @@ struct FragmentOutput {
     @location(1) smra: vec4f,
     @location(2) position: vec4f,
     @location(3) normal: vec4f,
+    @location(4) entity_id: u32,
 }
 
 @group(1) @binding(0) var<storage, read> entity_transforms: array<EntityTransform>;
 @group(1) @binding(1) var<storage, read> compacted_object_instances: array<CompactedObjectInstance>;
 
 #ifndef CUSTOM_VS
-fn vertex(v_out: VertexOutput) -> VertexOutput {
-    return v_out;
+fn vertex(v_out: ptr<function, VertexOutput>) -> VertexOutput {
+    return *v_out;
 }
 #endif
 
@@ -31,38 +32,25 @@ fn vertex(v_out: VertexOutput) -> VertexOutput {
     @builtin(vertex_index) vi : u32,
     @builtin(instance_index) ii: u32
 ) -> VertexOutput {
+    let instance_vertex = vertex_buffer[vi];
     let entity = compacted_object_instances[ii].entity;
     let entity_transform = entity_transforms[entity];
-    let instance_vertex = vertex_buffer[vi];
-
-    let model_matrix = entity_transform.transform;
-    let inverse_model_matrix = entity_transform.inverse_model_matrix;
-    let mvp = view_buffer[0].view_projection_matrix * model_matrix;
-
-	var transpose_inverse_model_matrix = transpose(inverse_model_matrix);
-    var normal_matrix = mat3x3f(
-        transpose_inverse_model_matrix[0].xyz,
-        transpose_inverse_model_matrix[1].xyz,
-        transpose_inverse_model_matrix[2].xyz
-    );
 
     var output : VertexOutput;
 
-    output.position = mvp * instance_vertex.position;
-    output.world_position = model_matrix * instance_vertex.position;
+    output.position = view_buffer[0].view_projection_matrix * entity_transform.transform * instance_vertex.position;
+    output.world_position = entity_transform.transform * instance_vertex.position;
     output.color = instance_vertex.color;
     output.uv = instance_vertex.uv;
-    output.normal = normalize(vec4f(normal_matrix * instance_vertex.normal.rgb, 1.0));
-    output.tangent = model_matrix * instance_vertex.tangent;
-    output.bitangent = model_matrix * instance_vertex.bitangent;
+    output.normal = normalize(vec4f((entity_transform.transpose_inverse_model_matrix * instance_vertex.normal).xyz, 1.0));
     output.instance_id = entity;
 
-    return vertex(output);
+    return vertex(&output);
 }
 
 #ifndef CUSTOM_FS
-fn fragment(v_out: VertexOutput, f_out: FragmentOutput) -> FragmentOutput {
-    return f_out;
+fn fragment(v_out: VertexOutput, f_out: ptr<function, FragmentOutput>) -> FragmentOutput {
+    return *f_out;
 }
 #endif
 
@@ -71,6 +59,7 @@ fn fragment(v_out: VertexOutput, f_out: FragmentOutput) -> FragmentOutput {
 
     output.position = v_out.world_position;
     output.normal = v_out.normal;
+    output.entity_id = v_out.instance_id;
 
-    return fragment(v_out, output);
+    return fragment(v_out, &output);
 }

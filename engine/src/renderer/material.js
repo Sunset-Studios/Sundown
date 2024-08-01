@@ -95,76 +95,80 @@ export class MaterialTemplate {
   }
 
   create_pipeline_state(context, bind_group_layouts, output_targets = []) {
-    let all_bind_group_layouts = [...bind_group_layouts];
+    let all_bind_group_layouts = [bind_group_layouts[0]];
 
     // Set material binding group inputs
     const groups = this.reflection.getBindGroups();
-    if (BindGroupType.Material < groups.length) {
-      const material_group = groups[BindGroupType.Material];
+    if (BindGroupType.Pass < groups.length) {
+      for (let i = BindGroupType.Pass; i < groups.length; i++) {
+        const bind_group = groups[i];
 
-      all_bind_group_layouts.push(
-        BindGroup.create_layout(
-          context,
-          this.name,
-          material_group.map((binding) => {
-            let binding_obj = {};
-            const binding_type = Shader.resource_type_from_reflection_type(
-              binding.resourceType
-            );
-            switch (binding_type) {
-              case ShaderResourceType.Uniform:
-                binding_obj = {
-                  buffer: {
-                    type: "uniform",
-                  },
-                };
-                break;
-              case ShaderResourceType.Storage:
-                binding_obj = {
-                  buffer: {
-                    type: "read-only-storage",
-                  },
-                };
-                break;
-              case ShaderResourceType.Texture:
-                binding_obj = {
-                  texture: {
-                    viewDimension: Texture.dimension_from_type_name(
-                      binding.type.name
-                    ),
-                    sampleType: binding.type.name.includes("depth")
-                      ? "depth"
-                      : "float",
-                  },
-                };
-                break;
-              case ShaderResourceType.StorageTexture:
-                binding_obj = {
-                  storageTexture: {
-                    viewDimension: Texture.dimension_from_type_name(
-                      binding.type.name
-                    ),
-                    sampleType: "float",
-                    format: Shader.get_optimal_texture_format(binding.type.name),
-                  },
-                };
-                break;
-              case ShaderResourceType.Sampler:
-                binding_obj = {
-                  sampler: {},
-                };
-                break;
-            }
+        all_bind_group_layouts.push(
+          BindGroup.create_layout(
+            context,
+            this.name,
+            bind_group.map((binding) => {
+              let binding_obj = {};
+              const binding_type = Shader.resource_type_from_reflection_type(
+                binding.resourceType
+              );
+              switch (binding_type) {
+                case ShaderResourceType.Uniform:
+                  binding_obj = {
+                    buffer: {
+                      type: "uniform",
+                    },
+                  };
+                  break;
+                case ShaderResourceType.Storage:
+                  binding_obj = {
+                    buffer: {
+                      type: "read-only-storage",
+                    },
+                  };
+                  break;
+                case ShaderResourceType.Texture:
+                  binding_obj = {
+                    texture: {
+                      viewDimension: Texture.dimension_from_type_name(
+                        binding.type.name
+                      ),
+                      sampleType: binding.type.name.includes("depth")
+                        ? "depth"
+                        : "float",
+                    },
+                  };
+                  break;
+                case ShaderResourceType.StorageTexture:
+                  binding_obj = {
+                    storageTexture: {
+                      viewDimension: Texture.dimension_from_type_name(
+                        binding.type.name
+                      ),
+                      sampleType: "float",
+                      format: Shader.get_optimal_texture_format(
+                        binding.type.name
+                      ),
+                    },
+                  };
+                  break;
+                case ShaderResourceType.Sampler:
+                  binding_obj = {
+                    sampler: {},
+                  };
+                  break;
+              }
 
-            return {
-              binding: binding.binding,
-              visibility: GPUShaderStage.FRAGMENT | GPUShaderStage.VERTEX,
-              ...binding_obj,
-            };
-          }),
-          true /* force */
-        )
-      );
+              return {
+                binding: binding.binding,
+                visibility: GPUShaderStage.FRAGMENT | GPUShaderStage.VERTEX,
+                ...binding_obj,
+              };
+            }),
+            true /* force */
+          )
+        );
+      }
     }
 
     // Set material shader fragment output targets
@@ -228,7 +232,9 @@ export class MaterialTemplate {
       },
     };
 
-    const depth_target = output_targets.find(target => target.config.type === "depth")
+    const depth_target = output_targets.find(
+      (target) => target.config.type === "depth"
+    );
     if (this.pipeline_state_config.depth_stencil_target) {
       pipeline_descriptor.depthStencil = {
         format:

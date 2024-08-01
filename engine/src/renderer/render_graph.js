@@ -328,7 +328,8 @@ const RGBufferConfig = Object.freeze({
  * @property {Array} output_views - Array layers of corresponding output entries in the outputs vector (only for image outputs, default is 0 for each output).
  * @property {Array} pass_inputs - Input resources that should be bound normally (auto-computed).
  * @property {Array} bindless_inputs - Input resources that are bindless and need special handling (auto-computed).
- * @property {boolean} b_skip_auto_descriptor_setup - Whether to skip automatic pass descriptor setup for this pass (global descriptor setup will still run).
+ * @property {boolean} b_skip_pass_bind_group_setup - Whether to skip automatic pass descriptor setup for this pass (global descriptor setup will still run).
+ * @property {boolean} b_skip_pass_pipeline_setup - Whether to skip automatic pass pipeline setup for this pass (global pipeline setup will still run).
  * @property {boolean} b_force_keep_pass - Whether to prevent this pass from being culled during render graph compilation.
  */
 const RGPassParameters = Object.freeze({
@@ -339,7 +340,8 @@ const RGPassParameters = Object.freeze({
   output_views: [],
   pass_inputs: [],
   bindless_inputs: [],
-  b_skip_auto_descriptor_setup: false,
+  b_skip_pass_bind_group_setup: false,
+  b_skip_pass_pipeline_setup: false,
   b_force_keep_pass: false,
 });
 
@@ -1213,7 +1215,7 @@ export class RenderGraph {
 
     this._setup_global_bind_group(pass, frame_data);
 
-    if (pass_binds.bind_groups[BindGroupType.Pass]) return;
+    if (pass_binds.bind_groups[BindGroupType.Pass] || pass.parameters.b_skip_pass_bind_group_setup) return;
 
     // Setup pass-specific bind group
     let layouts = [];
@@ -1354,6 +1356,10 @@ export class RenderGraph {
         pass.pass_config.name
       );
       frame_data.pass_pipeline_state = pass.pipeline_state_id;
+      return;
+    }
+
+    if (pass.parameters.b_skip_pass_pipeline_setup) {
       return;
     }
 

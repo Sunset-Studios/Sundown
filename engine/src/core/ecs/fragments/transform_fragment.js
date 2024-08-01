@@ -22,6 +22,7 @@ export class TransformFragment extends Fragment {
       prev_world_transform: new Float32Array(16),
       world_transform: new Float32Array(16),
       inverse_world_transform: new Float32Array(16),
+      transpose_inverse_model_transform: new Float32Array(16),
       dirty: new Uint8Array(1),
       gpu_buffer: null,
       gpu_data_dirty: true,
@@ -52,6 +53,7 @@ export class TransformFragment extends Fragment {
     resize_array(this.data, "prev_world_transform", Float32Array, 16);
     resize_array(this.data, "world_transform", Float32Array, 16);
     resize_array(this.data, "inverse_world_transform", Float32Array, 16);
+    resize_array(this.data, "transpose_inverse_model_transform", Float32Array, 16);
     resize_array(this.data, "dirty", Uint8Array);
   }
 
@@ -74,11 +76,11 @@ export class TransformFragment extends Fragment {
       return { gpu_buffer: this.data.gpu_buffer };
     }
 
-    const gpu_data = new Float32Array(Math.max(this.size * 32, 32));
+    const gpu_data = new Float32Array(Math.max(this.size * 56, 56));
     for (let i = 0; i < this.size; i++) {
+      const gpu_data_offset = i * 56;
       const transform_data_offset = i * 16;
       const vector_data_offset = i;
-      const gpu_data_offset = i * 40;
       for (let j = 0; j < 16; j++) {
         gpu_data[gpu_data_offset + j] =
           this.data.world_transform[transform_data_offset + j];
@@ -87,6 +89,10 @@ export class TransformFragment extends Fragment {
         gpu_data[gpu_data_offset + 16 + j] =
           this.data.inverse_world_transform[transform_data_offset + j];
       }
+      for (let j = 0; j < 16; j++) {
+        gpu_data[gpu_data_offset + 32 + j] =
+          this.data.transpose_inverse_model_transform[transform_data_offset + j];
+      }
 
       const scale = Math.sqrt(
         Math.pow(this.data.scale.x[vector_data_offset], 2.0) +
@@ -94,15 +100,15 @@ export class TransformFragment extends Fragment {
           Math.pow(this.data.scale.z[vector_data_offset], 2.0)
       );
 
-      gpu_data[gpu_data_offset + 32] = this.data.position.x[vector_data_offset];
-      gpu_data[gpu_data_offset + 33] = this.data.position.y[vector_data_offset];
-      gpu_data[gpu_data_offset + 34] = this.data.position.z[vector_data_offset];
-      gpu_data[gpu_data_offset + 35] = scale;
+      gpu_data[gpu_data_offset + 48] = this.data.position.x[vector_data_offset];
+      gpu_data[gpu_data_offset + 49] = this.data.position.y[vector_data_offset];
+      gpu_data[gpu_data_offset + 50] = this.data.position.z[vector_data_offset];
+      gpu_data[gpu_data_offset + 51] = scale;
 
-      gpu_data[gpu_data_offset + 36] = 1.0; // TODO: bounds extent
-      gpu_data[gpu_data_offset + 37] = 1.0; // TODO: bounds extent
-      gpu_data[gpu_data_offset + 38] = 1.0; // TODO: bounds extent
-      gpu_data[gpu_data_offset + 39] = 1.0; // TODO: bounds custom scale
+      gpu_data[gpu_data_offset + 52] = 1.0; // TODO: bounds extent
+      gpu_data[gpu_data_offset + 53] = 1.0; // TODO: bounds extent
+      gpu_data[gpu_data_offset + 54] = 1.0; // TODO: bounds extent
+      gpu_data[gpu_data_offset + 55] = 1.0; // TODO: bounds custom scale
     }
 
     // Resize the buffer if necessary

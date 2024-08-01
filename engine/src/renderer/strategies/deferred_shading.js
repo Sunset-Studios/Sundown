@@ -28,7 +28,7 @@ export class DeferredShadingStrategy {
 
     this.hzb_image = Texture.create(context, {
       name: "hzb",
-      format: "rgba32float",
+      format: "r32float",
       width: image_width_npot,
       height: image_height_npot,
       usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
@@ -195,60 +195,19 @@ export class DeferredShadingStrategy {
         );
       }
 
-      // Entity Prepass
+      // GBuffer Base Pass
       {
         const shader_setup = {
           pipeline_shaders: {
             vertex: {
-              path: "entity_prepass.wgsl",
+              path: "gbuffer_base.wgsl",
             },
             fragment: {
-              path: "entity_prepass.wgsl",
+              path: "gbuffer_base.wgsl",
             },
           },
         };
 
-        main_entity_id_image = render_graph.create_image({
-          name: "main_entity_id",
-          format: "r32uint",
-          width: image_extent.width,
-          height: image_extent.height,
-          depth: 1,
-          usage:
-            GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
-        });
-
-        main_depth_image = render_graph.create_image({
-          name: "main_depth",
-          format: "depth32float",
-          width: image_extent.width,
-          height: image_extent.height,
-          usage:
-            GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
-          load_op: "load",
-        });
-
-        render_graph.add_pass(
-          "entity_prepass",
-          RenderPassFlags.Graphics,
-          {
-            inputs: [entity_transforms, compacted_object_instance_buffer],
-            outputs: [main_entity_id_image, main_depth_image],
-            shader_setup,
-          },
-          (graph, frame_data, encoder) => {
-            const pass = graph.get_physical_pass(frame_data.current_pass);
-            MeshTaskQueue.get().submit_indexed_indirect_draws(
-              pass,
-              frame_data,
-              false /* should_reset */
-            );
-          }
-        );
-      }
-
-      // GBuffer Base Pass
-      {
         main_albedo_image = render_graph.create_image({
           name: "main_albedo",
           format: "rgba16float",
@@ -281,6 +240,23 @@ export class DeferredShadingStrategy {
           usage:
             GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
         });
+        main_entity_id_image = render_graph.create_image({
+          name: "main_entity_id",
+          format: "r32uint",
+          width: image_extent.width,
+          height: image_extent.height,
+          usage:
+            GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+        });
+        main_depth_image = render_graph.create_image({
+          name: "main_depth",
+          format: "depth32float",
+          width: image_extent.width,
+          height: image_extent.height,
+          usage:
+            GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+          load_op: "load",
+        });
 
         const material_buckets = MeshTaskQueue.get().get_material_buckets();
         for (const material_id of material_buckets) {
@@ -290,14 +266,20 @@ export class DeferredShadingStrategy {
             `g_buffer_${material.template.name}_${material_id}`,
             RenderPassFlags.Graphics,
             {
-              inputs: [entity_transforms, compacted_object_instance_buffer],
+              inputs: [
+                entity_transforms,
+                compacted_object_instance_buffer,
+              ],
               outputs: [
                 main_albedo_image,
                 main_smra_image,
                 main_position_image,
                 main_normal_image,
+                main_entity_id_image,
                 main_depth_image,
               ],
+              shader_setup,
+              b_skip_pass_pipeline_setup: true
             },
             (graph, frame_data, encoder) => {
               const pass = graph.get_physical_pass(frame_data.current_pass);
@@ -316,6 +298,7 @@ export class DeferredShadingStrategy {
                 frame_data.g_buffer_data.smra.config.load_op = "load";
                 frame_data.g_buffer_data.position.config.load_op = "load";
                 frame_data.g_buffer_data.normal.config.load_op = "load";
+                frame_data.g_buffer_data.entity_id.config.load_op = "load";
               }
 
               MeshTaskQueue.get().submit_material_indexed_indirect_draws(
@@ -340,6 +323,7 @@ export class DeferredShadingStrategy {
             frame_data.g_buffer_data.smra.config.load_op = "clear";
             frame_data.g_buffer_data.position.config.load_op = "clear";
             frame_data.g_buffer_data.normal.config.load_op = "clear";
+            frame_data.g_buffer_data.entity_id.config.load_op = "clear";
             frame_data.g_buffer_data.depth.config.load_op = "clear";
           }
         );
@@ -386,16 +370,19 @@ export class DeferredShadingStrategy {
             (graph, frame_data, encoder) => {
               const pass = graph.get_physical_pass(frame_data.current_pass);
 
+              const depth = graph.get_physical_image(main_depth_image);
               const hzb = graph.get_physical_image(main_hzb_image);
+
               const hzb_params = graph.get_physical_buffer(
                 hzb_params_chain[dst_index]
               );
 
-              const src_mip_width = Math.max(1, hzb.config.width >> src_index);
+              const src_mip_width = Math.max(1, i === 0 ? depth.config.width : hzb.config.width >> src_index);
               const src_mip_height = Math.max(
                 1,
-                hzb.config.height >> src_index
+                i === 0 ? depth.config.height : hzb.config.height >> src_index
               );
+
               const dst_mip_width = Math.max(1, hzb.config.width >> dst_index);
               const dst_mip_height = Math.max(
                 1,
@@ -465,7 +452,7 @@ export class DeferredShadingStrategy {
       }
 
       // Bloom pass
-      const num_iterations = 6;
+      const num_iterations = 4;
       if (num_iterations > 0) {
         const image_extent = context.get_canvas_resolution();
         const extent_x = npot(image_extent.width);

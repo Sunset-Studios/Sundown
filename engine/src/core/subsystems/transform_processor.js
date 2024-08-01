@@ -55,11 +55,17 @@ export class TransformProcessor extends SimulationLayer {
             0
           )
         );
+        const inverse_transform = mat4.invert(mat4.create(), transform);
 
         transforms.world_transform.set(transform, entity * 16);
 
         transforms.inverse_world_transform.set(
-          mat4.invert(mat4.create(), transform),
+          inverse_transform,
+          entity * 16
+        );
+
+        transforms.transpose_inverse_model_transform.set(
+          mat4.transpose(mat4.create(), inverse_transform),
           entity * 16
         );
 

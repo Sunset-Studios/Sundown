@@ -21,9 +21,7 @@ fn uint_to_float(x: u32) -> f32 {
     return f32(x) * one_over_float_max;
 }
 
-fn vertex(v_out: VertexOutput) -> VertexOutput {
-    var out : VertexOutput = v_out;
-
+fn vertex(v_out: ptr<function, VertexOutput>) -> VertexOutput {
     // Generate random color based on instance_id
     let h1 = hash(u32(v_out.instance_id));
     let h2 = hash(h1);
@@ -33,20 +31,18 @@ fn vertex(v_out: VertexOutput) -> VertexOutput {
     let g = uint_to_float(h2);
     let b = uint_to_float(h3);
 
-    out.color = vec4f(r, g, b, 1.0);
+    v_out.color = vec4f(r, g, b, 1.0);
 
-    return out;
+    return *v_out;
 }
 
-fn fragment(v_out: VertexOutput, f_out: FragmentOutput) -> FragmentOutput {
-    var out : FragmentOutput = f_out;
-    
-    out.albedo = vec4f(v_out.color.rgb, 0.3);
+fn fragment(v_out: VertexOutput, f_out: ptr<function, FragmentOutput>) -> FragmentOutput {
+    f_out.albedo = vec4f(v_out.color.rgb, 0.3);
 
-    out.smra.r = 0.9;
-    out.smra.g = 0.9;
-    out.smra.b = 0.1;
-    out.smra.a = 0.0;
+    f_out.smra.r = 0.9;
+    f_out.smra.g = 0.9;
+    f_out.smra.b = 0.1;
+    f_out.smra.a = 0.0;
 
-    return out;
+    return *f_out;
 }
