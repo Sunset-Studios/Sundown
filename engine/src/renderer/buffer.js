@@ -60,11 +60,23 @@ export class Buffer {
         context.device.queue.writeBuffer(this.buffer, offset, data, 0, size ?? data.length);
     }
 
-    read(context, data, data_length, offset = 0, data_offset = 0) {
-        // TODO: Support more than just Float32Array
-        const buffer_data = new Float32Array(this.buffer.getMappedRange());
+    async read(context, data, data_length, offset = 0, data_offset = 0, data_type = Float32Array) {
+        await this.buffer.mapAsync(GPUMapMode.READ);
+        const buffer_data = new data_type(this.buffer.getMappedRange());
         data.set(buffer_data.subarray(offset, offset + data_length), data_offset);
         this.buffer.unmap();
+    }
+
+    copy_texture(encoder, texture, bytes_per_row) {
+        encoder.copyTextureToBuffer(
+            { texture: texture.image },
+            { buffer: this.buffer, bytesPerRow: bytes_per_row },
+            { 
+                width: texture.config.width,
+                height: texture.config.height,
+                depthOrArrayLayers: texture.config.depth
+            }
+        );
     }
 
     bind_vertex(encoder, slot = 0) {

@@ -1,4 +1,5 @@
 import { Renderer } from "../engine/src/renderer/renderer.js";
+import { DeferredShadingStrategy } from "../engine/src/renderer/strategies/deferred_shading.js";
 import { Material } from "../engine/src/renderer/material.js";
 import SimulationCore from "../engine/src/core/simulation_core.js";
 import { InputProvider } from "../engine/src/input/input_provider.js";
@@ -6,6 +7,7 @@ import { Scene } from "../engine/src/core/scene.js";
 import application_state from "../engine/src/core/application_state.js";
 import { StaticMeshFragment } from "../engine/src/core/ecs/fragments/static_mesh_fragment.js";
 import { TransformFragment } from "../engine/src/core/ecs/fragments/transform_fragment.js";
+import { FreeformArcballControlProcessor } from "../engine/src/core/subsystems/freeform_arcball_control_processor.js";
 import {
   LightFragment,
   LightType,
@@ -26,13 +28,16 @@ async function init() {
 
   // Initialize renderer with document canvas
   const canvas = document.getElementById("gpu-canvas");
-  await Renderer.get().setup(canvas);
+  await Renderer.get().setup(canvas, DeferredShadingStrategy);
 
   // Initialize scene
   {
     // Create a test scene and register it with the simulation system
     const scene = new Scene("StartScene");
     await SimulationCore.get().register_simulation_layer(scene);
+
+    // Add the freeform arcball control processor to the scene
+    scene.add_layer(FreeformArcballControlProcessor); 
 
     // Set the skybox for this scene.
     await SharedEnvironmentMapData.get().add_skybox(
@@ -66,8 +71,7 @@ async function init() {
     );
 
     // Create a default material
-    const default_material = Material.create("StandardMaterial");
-    const default_material_id = default_material.get_state_hash();
+    const default_material_id = Material.create("MyMaterial", "StandardMaterial");
 
     // Create a 3D grid of sphere entities
     const grid_size = 50; // 50x50 grid

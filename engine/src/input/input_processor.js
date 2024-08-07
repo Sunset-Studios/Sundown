@@ -55,6 +55,8 @@ export class InputProcessor {
     KeyX: InputKey.K_x,
     KeyY: InputKey.K_y,
     KeyZ: InputKey.K_z,
+    ShiftLeft: InputKey.K_LShift,
+    ShiftRight: InputKey.K_RShift,
   };
 
   static button_mapping = {
@@ -67,6 +69,8 @@ export class InputProcessor {
   ranges_array = new Array(InputRange.NumRanges).fill(0.0);
   mouse_x = 0;
   mouse_y = 0;
+  abs_mouse_x = 0;
+  abs_mouse_y = 0;
 
   constructor() {
     this.handle_key_down = this.handle_key_down.bind(this);
@@ -123,9 +127,34 @@ export class InputProcessor {
   handle_mouse_move(event) {
     this.mouse_x = event.movementX;
     this.mouse_y = event.movementY;
+    this.abs_mouse_x = event.clientX;
+    this.abs_mouse_y = event.clientY;
   }
 
   update(context, delta_time, canvas) {
+    if (this.ranges_array[InputRange.M_xabs] == null) {
+      this.ranges_array[InputRange.M_xabs] = this.abs_mouse_x;
+    } else {
+      this.ranges_array[InputRange.M_xabs] = Math.max(
+        0,
+        Math.min(
+          canvas.width,
+          this.ranges_array[InputRange.M_xabs] + this.mouse_x
+        )
+      );
+    }
+    if (this.ranges_array[InputRange.M_yabs] == null) {
+      this.ranges_array[InputRange.M_yabs] = this.abs_mouse_y;
+    } else {
+      this.ranges_array[InputRange.M_yabs] = Math.max(
+        0,
+        Math.min(
+          canvas.height,
+          this.ranges_array[InputRange.M_yabs] + this.mouse_y
+        )
+      );
+    }
+
     // Calculate mouse movement
     this.ranges_array[InputRange.M_x] = this.mouse_x / canvas.width;
     this.ranges_array[InputRange.M_y] = this.mouse_y / canvas.height;

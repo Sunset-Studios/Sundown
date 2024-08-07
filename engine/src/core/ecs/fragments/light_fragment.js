@@ -45,33 +45,25 @@ export class LightFragment extends Fragment {
 
         super.resize(new_size);
 
-        const resize_array = (obj, key, ArrayType = Float32Array, stride = 1) => {
-            if (obj[key].length < this.size * stride) {
-                const prev = obj[key];
-                obj[key] = new ArrayType(this.size * stride);
-                obj[key].set(prev);
-            }
-        };
-
         ['position', 'direction'].forEach(prop => {
             ['x', 'y', 'z'].forEach(axis => {
-                resize_array(this.data[prop], axis);
+                Fragment.resize_array(this.data[prop], axis, new_size);
             });
         });
 
         ['color'].forEach(prop => {
             ['r', 'g', 'b'].forEach(axis => {
-                resize_array(this.data[prop], axis);
+                Fragment.resize_array(this.data[prop], axis, new_size);
             });
         });
 
-        resize_array(this.data, 'type', Uint8Array);
-        resize_array(this.data, 'intensity', Float32Array);
-        resize_array(this.data, 'radius', Float32Array);
-        resize_array(this.data, 'attenuation', Float32Array);
-        resize_array(this.data, 'outer_angle', Float32Array);
-        resize_array(this.data, 'dirty', Uint8Array);
-        resize_array(this.data, 'active', Uint8Array);
+        Fragment.resize_array(this.data, 'type', new_size, Uint8Array);
+        Fragment.resize_array(this.data, 'intensity', new_size, Float32Array);
+        Fragment.resize_array(this.data, 'radius', new_size, Float32Array);
+        Fragment.resize_array(this.data, 'attenuation', new_size, Float32Array);
+        Fragment.resize_array(this.data, 'outer_angle', new_size, Float32Array);
+        Fragment.resize_array(this.data, 'dirty', new_size, Uint8Array);
+        Fragment.resize_array(this.data, 'active', new_size, Uint8Array);
     }
 
     static update_entity_data(entity, data) {

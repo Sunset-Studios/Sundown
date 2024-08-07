@@ -1,5 +1,4 @@
 import { SimulationLayer } from "./simulation_layer.js";
-import { FreeformArcballControlProcessor } from "./subsystems/freeform_arcball_control_processor.js";
 import { StaticMeshProcessor } from "./subsystems/static_mesh_processor.js";
 import { TransformProcessor } from "./subsystems/transform_processor.js";
 import { SharedViewBuffer } from "./shared_data.js";
@@ -7,7 +6,7 @@ import { Renderer } from "../renderer/renderer.js";
 
 export class Scene extends SimulationLayer {
   name = "";
-  sphere_mesh = null;
+  ui_root = null;
 
   constructor(name) {
     super();
@@ -31,7 +30,6 @@ export class Scene extends SimulationLayer {
   }
 
   setup_default_subsystems() {
-    this.add_layer(FreeformArcballControlProcessor);
     this.add_layer(StaticMeshProcessor);
     this.add_layer(TransformProcessor);
   }
@@ -59,8 +57,18 @@ export class Scene extends SimulationLayer {
   get_fragment(entity, FragmentType) {
     return this.context.entity_manager.get_fragment(entity, FragmentType);
   }
+  
+  has_fragment(entity, FragmentType) {
+    return this.context.entity_manager.has_fragment(entity, FragmentType);
+  }
 
   refresh_entity_queries() {
     this.context.entity_manager.update_queries();
+  }
+
+  set_ui_root(ui_root) {
+    this.ui_root = ui_root;
+    const canvas = Renderer.get().graphics_context.canvas;
+    canvas.after(ui_root.dom);
   }
 }

@@ -36,25 +36,17 @@ export class TransformFragment extends Fragment {
 
     super.resize(new_size);
 
-    const resize_array = (obj, key, ArrayType = Float32Array, stride = 1) => {
-      if (obj[key].length < this.size * stride) {
-        const prev = obj[key];
-        obj[key] = new ArrayType(this.size * stride);
-        obj[key].set(prev);
-      }
-    };
-
     ["position", "rotation", "scale"].forEach((prop) => {
       ["x", "y", "z"].forEach((axis) => {
-        resize_array(this.data[prop], axis);
+        Fragment.resize_array(this.data[prop], axis, new_size);
       });
     });
 
-    resize_array(this.data, "prev_world_transform", Float32Array, 16);
-    resize_array(this.data, "world_transform", Float32Array, 16);
-    resize_array(this.data, "inverse_world_transform", Float32Array, 16);
-    resize_array(this.data, "transpose_inverse_model_transform", Float32Array, 16);
-    resize_array(this.data, "dirty", Uint8Array);
+    Fragment.resize_array(this.data, "prev_world_transform", new_size, Float32Array, 16);
+    Fragment.resize_array(this.data, "world_transform", new_size, Float32Array, 16);
+    Fragment.resize_array(this.data, "inverse_world_transform", new_size, Float32Array, 16);
+    Fragment.resize_array(this.data, "transpose_inverse_model_transform", new_size, Float32Array, 16);
+    Fragment.resize_array(this.data, "dirty", new_size, Uint8Array);
   }
 
   static update_entity_data(entity, data) {

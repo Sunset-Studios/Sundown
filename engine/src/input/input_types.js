@@ -72,8 +72,10 @@ export const InputKey = {
     K_x: 66,
     K_y: 67,
     K_z: 68,
-    B_mouse_left: 69,
-    B_mouse_right: 70,
+    K_LShift: 69,
+    K_RShift: 70,
+    B_mouse_left: 71,
+    B_mouse_right: 72,
     B_mouse_middle: 71,
     NumKeys: 72
 };
@@ -85,7 +87,9 @@ export const InputKey = {
 export const InputRange = {
     M_x: 0,
     M_y: 1,
-    NumRanges: 2
+    M_xabs: 2,
+    M_yabs: 3,
+    NumRanges: 4
 };
 
 /**

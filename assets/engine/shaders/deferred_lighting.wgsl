@@ -41,6 +41,7 @@ struct FragmentOutput {
     var normal = tex_normal.xyz;
 	var normal_length = length(normal);
 	var normalized_normal = normal / normal_length;
+    var deferred_standard_lighting = tex_normal.w;
 
     var tex_smra = textureSample(smra_texture, global_sampler, v_out.uv);
     var reflectance = tex_smra.r * 0.0009765625 /* 1.0f / 1024 */;
@@ -58,7 +59,7 @@ struct FragmentOutput {
 
     var color = unlit * tex_sky.rgb;
 
-    let num_lights = arrayLength(&lights_buffer);
+    let num_lights = arrayLength(&lights_buffer) * u32(deferred_standard_lighting);
     for (var i = 0u; i < num_lights; i++) {
         var light = lights_buffer[i];
         color += calculate_brdf(

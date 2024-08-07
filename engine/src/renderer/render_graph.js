@@ -418,6 +418,7 @@ export class RenderGraph {
     this.registry = _.cloneDeep(RGRegistry);
     this.non_culled_passes = [];
     this.queued_global_bind_group_writes = [];
+    this.queued_commands = [];
 
     this.image_resource_allocator = new FrameAllocator(
       256,
@@ -749,6 +750,35 @@ export class RenderGraph {
     }
   }
 
+  /**
+   * Queues a set of commands to be executed later in the render graph.
+   *
+   * @param {string} name - A descriptive name for the set of commands.
+   * @param {Function} commands_callback - A callback function that will be executed to perform the commands.
+   * @returns {void}
+   *
+   * @example
+   * renderGraph.queue_commands('Draw UI', (encoder) => {
+   *   // Draw UI elements
+   *   encoder.drawUI();
+   * });
+   */
+  queue_commands(name, commands_callback) {
+    this.queued_commands.push({ name, commands_callback });
+  }
+
+  _add_queued_commands() {
+    for (const command of this.queued_commands) {
+      this.add_pass(
+        command.name,
+        RenderPassFlags.GraphLocal,
+        {},
+        command.commands_callback
+      );
+    }
+    this.queued_commands.length = 0;
+  }
+
   _update_reference_counts(pass) {
     pass.reference_count += pass.parameters.outputs.length;
     for (const resource of pass.parameters.inputs) {
@@ -893,6 +923,8 @@ export class RenderGraph {
    * @throws {Error} If there's an error during pass execution or command submission.
    */
   submit(context) {
+    this._add_queued_commands();
+
     this._compile();
 
     if (this.non_culled_passes.length === 0) {
@@ -1215,7 +1247,11 @@ export class RenderGraph {
 
     this._setup_global_bind_group(pass, frame_data);
 
-    if (pass_binds.bind_groups[BindGroupType.Pass] || pass.parameters.b_skip_pass_bind_group_setup) return;
+    if (
+      pass_binds.bind_groups[BindGroupType.Pass] ||
+      pass.parameters.b_skip_pass_bind_group_setup
+    )
+      return;
 
     // Setup pass-specific bind group
     let layouts = [];
@@ -1282,13 +1318,17 @@ export class RenderGraph {
           case ShaderResourceType.Texture:
             binding_obj.texture = {
               viewDimension: resource_obj.config.dimension,
-              sampleType: Texture.filter_type_from_format(resource_obj.config.format),
+              sampleType: Texture.filter_type_from_format(
+                resource_obj.config.format
+              ),
             };
             break;
           case ShaderResourceType.StorageTexture:
             binding_obj.storageTexture = {
               viewDimension: resource_obj.config.dimension,
-              sampleType: Texture.filter_type_from_format(resource_obj.config.format),
+              sampleType: Texture.filter_type_from_format(
+                resource_obj.config.format
+              ),
               format: resource_obj.config.format || "rgba8unorm",
             };
             break;
@@ -1523,7 +1563,10 @@ export class RenderGraph {
               GPUShaderStage.VERTEX |
               GPUShaderStage.COMPUTE,
           sampler: {
-            type: write.sampler.config.mag_filter === "nearest" ? "non-filtering" : "filtering",
+            type:
+              write.sampler.config.mag_filter === "nearest"
+                ? "non-filtering"
+                : "filtering",
           },
         });
       } else if (write.texture_view) {

@@ -236,7 +236,7 @@ export class Texture {
   }
 
   copy_buffer(encoder, buffer) {
-    encoder.copyBufferToImage(
+    encoder.copyBufferToTexture(
       { buffer: buffer.buffer },
       { texture: this.image },
       {

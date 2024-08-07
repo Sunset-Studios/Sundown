@@ -1,6 +1,5 @@
 import { GraphicsContext } from "./graphics_context.js";
 import { RenderGraph } from "./render_graph.js";
-import { DeferredShadingStrategy } from "./strategies/deferred_shading.js";
 import { Texture, TextureSampler } from "./texture.js";
 import { SharedVertexBuffer, SharedViewBuffer } from "../core/shared_data.js";
 import { MaterialTemplate } from "./material.js";
@@ -11,6 +10,7 @@ export class Renderer {
   simple_shader = null;
   simple_vertex_buffer = null;
   render_graph = null;
+  post_render_callbacks = [];
 
   constructor() {
     if (Renderer.instance) {
@@ -26,14 +26,15 @@ export class Renderer {
     return Renderer.instance;
   }
 
-  async setup(canvas) {
+  async setup(canvas, render_strategy) {
     this.graphics_context = await GraphicsContext.create(canvas, { pointer_lock: true });
 
     this.render_graph = RenderGraph.create();
 
-    this.render_strategy = new DeferredShadingStrategy();
+    this.render_strategy = new render_strategy();
 
     this.refresh_global_shader_bindings();
+
     this.setup_builtin_material_template();
   }
 
@@ -45,6 +46,16 @@ export class Renderer {
     this.render_graph.begin(this.graphics_context);
 
     this.render_strategy.draw(this.graphics_context, this.render_graph);
+
+    this.execute_post_render_callbacks();
+  }
+
+  enqueue_commands(name, commands_callback) {
+    this.render_graph.queue_commands(name, commands_callback);
+  }
+
+  on_post_render(callback) {
+    this.post_render_callbacks.push(callback);
   }
 
   refresh_global_shader_bindings() {
@@ -80,5 +91,11 @@ export class Renderer {
       "StandardMaterial",
       "standard_material.wgsl"
     );
+  }
+
+  execute_post_render_callbacks() {
+    for (let i = 0; i < this.post_render_callbacks.length; i++) {
+      this.post_render_callbacks[i]();
+    }
   }
 }

@@ -4,6 +4,7 @@ import { PipelineState } from "./pipeline_state.js";
 import { ResourceCache, CacheTypes } from "./resource_cache.js";
 import { profile_scope } from "../utility/performance.js";
 import { hash_data, hash_value } from "../utility/hashing.js";
+import { Name } from "../utility/names.js";
 import { Texture } from "./texture.js";
 
 export class MaterialTemplate {
@@ -288,18 +289,12 @@ export class Material {
 
   _update_state_hash() {
     profile_scope("Material._update_state_hash", () => {
-      Material.materials.delete(this.state_hash);
-      ResourceCache.get().remove(CacheTypes.MATERIAL, this.state_hash);
-
       let hash = hash_value(this.template.name);
       hash = hash_data(this.uniform_data, hash);
       hash = hash_data(this.storage_data, hash);
       hash = hash_data(this.texture_data, hash);
       hash = hash_data(this.sampler_data, hash);
       this.state_hash = hash;
-
-      ResourceCache.get().store(CacheTypes.MATERIAL, this.state_hash, this);
-      Material.materials.set(this.state_hash, this);
     });
   }
 
@@ -405,12 +400,28 @@ export class Material {
     return this.state_hash;
   }
 
-  static create(template_name) {
+  static create(name, template_name, force_new = false) {
     const template = MaterialTemplate.get_template(template_name);
     if (!template) {
       throw new Error(`Material template '${template_name}' not found`);
     }
-    return new Material(template);
+
+    const material_id = Name.from(name);
+    let material = ResourceCache.get().fetch(CacheTypes.MATERIAL, material_id);
+
+    if (force_new && material) {
+      Material.materials.delete(material_id);
+      ResourceCache.get().remove(CacheTypes.MATERIAL, material_id);
+      material = null;
+    }
+
+    if (!material) {
+      material = new Material(template);
+      ResourceCache.get().store(CacheTypes.MATERIAL, material_id, material);
+      Material.materials.set(material_id, material);
+    }
+
+    return material_id;
   }
 
   static get(material_id) {
@@ -447,7 +458,8 @@ export class Material {
 // });
 
 // // Create a material instance
-// const material = Material.create("StandardMaterial");
+// const material_id = Material.create("MyMaterial","StandardMaterial");
+// const material = Material.get(material_id);
 
 // // Set material instance data
 // material.set_uniform_data("model_view_projection", new Buffer(/* ... */));

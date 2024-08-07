@@ -161,7 +161,6 @@ export class BindGroup {
         let layout = ResourceCache.get().fetch(CacheTypes.BIND_GROUP_LAYOUT, Name.from(name));
 
         if (layout && force) {
-            layout.destroy();
             layout = null;
         }
 

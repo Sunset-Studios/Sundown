@@ -37,22 +37,9 @@ export class StaticMeshFragment extends Fragment {
     static resize(new_size) {
         super.resize(new_size);
 
-        const resize_array = (obj, key, stride, type, wipe = false) => {
-            if (obj[key].length < this.size * stride) {
-                const prev = obj[key];
-                obj[key] = new type(this.size * stride);
-                if (wipe) {
-                    obj[key].fill(0);
-                } else {
-                    obj[key].set(prev);
-                }
-            }
-        };
-
-        ['mesh', 'instance_count'].forEach(prop => {
-            resize_array(this.data, prop, 1, BigInt64Array);
-        });
-        resize_array(this.data, 'material_slots', this.material_slot_stride, BigInt64Array);
-        resize_array(this.data, 'dirty', 1, Uint8Array, true);
+        Fragment.resize_array(this.data, 'mesh', new_size, BigInt64Array);
+        Fragment.resize_array(this.data, 'instance_count', new_size, BigInt64Array);
+        Fragment.resize_array(this.data, 'material_slots', new_size, BigInt64Array, this.material_slot_stride);
+        Fragment.resize_array(this.data, 'dirty', new_size, Uint8Array, 1, true);
     }
 }

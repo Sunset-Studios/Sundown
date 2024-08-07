@@ -60,15 +60,25 @@ export class Shader {
     for (const path of Shader.shader_paths) {
       try {
         const url = new URL(`${path}/${file_path}`, window.location.href);
-        const response = new XMLHttpRequest();
-        response.open("GET", url.href, false);
-        response.send(null);
-        if (response.status === 200) {
-          asset = response.responseText;
-          break;
+        
+        // Check if file exists
+        const check_xhr = new XMLHttpRequest();
+        check_xhr.open('HEAD', url.href, false);
+        check_xhr.send(null);
+        
+        if (check_xhr.status === 200) {
+          // File exists, now fetch its contents
+          const get_xhr = new XMLHttpRequest();
+          get_xhr.open('GET', url.href, false);
+          get_xhr.send(null);
+          
+          if (get_xhr.status === 200 && !get_xhr.responseText.includes("<!DOCTYPE html>")) {
+            asset = get_xhr.responseText;
+            break;
+          }
         }
       } catch (error) {
-        console.warn(`Failed to load shader from ${path}/${file_path}:`, error);
+        // Network error or other issues, continue to next path
       }
     }
 

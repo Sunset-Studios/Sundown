@@ -14,6 +14,8 @@ import { profile_scope } from "../../utility/performance.js";
 export class DeferredShadingStrategy {
   initialized = false;
   hzb_image = null;
+  entity_id_image = null;
+  entity_image_buffer = null;
 
   setup(context, render_graph) {
     const image_extent = context.get_canvas_resolution();
@@ -35,6 +37,16 @@ export class DeferredShadingStrategy {
       mip_levels: mip_levels,
       b_one_view_per_mip: true,
     });
+
+    this.entity_id_image = Texture.create(context, {
+      name: "entity_id",
+      format: "r32uint",
+      width: image_extent.width,
+      height: image_extent.height,
+      usage:
+        GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_SRC,
+    });
+
   }
 
   draw(context, render_graph) {
@@ -240,14 +252,6 @@ export class DeferredShadingStrategy {
           usage:
             GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
         });
-        main_entity_id_image = render_graph.create_image({
-          name: "main_entity_id",
-          format: "r32uint",
-          width: image_extent.width,
-          height: image_extent.height,
-          usage:
-            GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
-        });
         main_depth_image = render_graph.create_image({
           name: "main_depth",
           format: "depth32float",
@@ -257,6 +261,8 @@ export class DeferredShadingStrategy {
             GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
           load_op: "load",
         });
+
+        main_entity_id_image = render_graph.register_image(this.entity_id_image.config.name);
 
         const material_buckets = MeshTaskQueue.get().get_material_buckets();
         for (const material_id of material_buckets) {

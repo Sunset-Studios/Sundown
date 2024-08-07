@@ -12,8 +12,8 @@ export class FreeformArcballControlProcessor extends SimulationLayer {
         super();
 
         this.move_speed = 10.0;
-        this.rotation_speed = 1.0; // Adjusted for smoother rotation
-        this.orbit_distance = 10; // Fixed distance from pivot point
+        this.rotation_speed = 3.0; // Adjusted for smoother rotation
+        this.orbit_distance = 20; // Fixed distance from pivot point
     }
 
     init(parent_context) {
@@ -32,11 +32,11 @@ export class FreeformArcballControlProcessor extends SimulationLayer {
 
     update(delta_time, parent_context) {
         super.update(delta_time, parent_context);
-
+        
         const view_data = SharedViewBuffer.get().get_view_data(parent_context.current_view);
         let position = vec4.clone(view_data.position);
         let rotation = quat.clone(view_data.rotation);
-
+        
         let moved = false;
         if (InputProvider.get().get_state(InputKey.K_w)) {
             const forward = vec4.scale(vec4.create(), view_data.view_forward ?? WORLD_FORWARD, this.move_speed * delta_time);
@@ -68,20 +68,21 @@ export class FreeformArcballControlProcessor extends SimulationLayer {
             vec4.add(position, position, down);
             moved = true;
         }
-
+        
+        const shift_held = InputProvider.get().get_state(InputKey.K_LShift) || InputProvider.get().get_state(InputKey.K_RShift);
         const x = InputProvider.get().get_range(InputRange.M_x);
         const y = InputProvider.get().get_range(InputRange.M_y);
-        if (x || y) {
-            const orbit_distance = 10; // Fixed distance from pivot point
-            const pivot_point = vec3.scaleAndAdd(vec3.create(), position, view_data.view_forward ?? WORLD_FORWARD, orbit_distance);
 
-            // Calculate rotation quaternions for pitch and yaw
-            const pitch_rotation = quat.setAxisAngle(quat.create(), [1, 0, 0], y * this.rotation_speed);
-            const yaw_rotation = quat.setAxisAngle(quat.create(), [0, 1, 0], x * this.rotation_speed);
+        if ((x || y) && shift_held) {
+            const pivot_point = vec3.scaleAndAdd(vec3.create(), position, view_data.view_forward ?? WORLD_FORWARD, this.orbit_distance);
 
+            // Calculate rotation based on mouse movement
+            const rotationX = quat.setAxisAngle(quat.create(), WORLD_UP, x * this.rotation_speed);
+            const rotationY = quat.setAxisAngle(quat.create(), vec3.cross(vec3.create(), WORLD_UP, view_data.view_forward), -y * this.rotation_speed);
+            
             // Combine rotations
-            const delta_rotation = quat.multiply(quat.create(), yaw_rotation, pitch_rotation);
-
+            const delta_rotation = quat.multiply(quat.create(), rotationX, rotationY);
+            
             // Apply rotation to current rotation
             quat.multiply(rotation, delta_rotation, rotation);
 

@@ -79,11 +79,14 @@ export class EntityManager {
         }
     }
 
-    update_fragment(entity, FragmentType, data) {
+    update_fragment(entity, FragmentType, data, refresh_entity_data = true) {
         if (!this.entity_fragments.has(entity) || !this.entity_fragments.get(entity).has(FragmentType)) {
             throw new Error(`Entity ${entity} does not have fragment ${FragmentType.constructor.name}`);
         }
         FragmentType.update_entity_data(entity, data);
+        if (refresh_entity_data) {
+            this.update_queries();
+        }
     }
 
     get_fragment(entity, FragmentType) {
@@ -91,6 +94,10 @@ export class EntityManager {
             return null;
         }
         return FragmentType.get_entity_data(entity);
+    }
+
+    has_fragment(entity, FragmentType) {
+        return this.entity_fragments.has(entity) && this.entity_fragments.get(entity).has(FragmentType);
     }
 
     get_fragment_array(FragmentType) {
@@ -111,6 +118,14 @@ export class EntityManager {
         for (const query of this.queries) {
             query.update_matching_entities();
         }
+    }
+
+    get_entity_image_buffer() {
+        return Buffer.create(context, {
+            name: "entity_image_buffer",
+            raw_data: this.get_entity_count() * 4,
+            usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+        });
     }
 }
 
