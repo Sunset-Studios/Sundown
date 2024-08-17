@@ -43,6 +43,11 @@ export class Buffer {
 
     destroy(context) {
         if (this.buffer) {
+            context.execution_queue.push_execution(
+                this.buffer.destroy.bind(this.buffer),
+                `buffer_destroy_${this.config.name}`,
+                1
+            );
             this.buffer = null;
             ResourceCache.get().remove(CacheTypes.BUFFER, Name.from(this.config.name))
         }

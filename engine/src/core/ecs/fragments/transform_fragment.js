@@ -29,6 +29,15 @@ export class TransformFragment extends Fragment {
     };
   }
 
+  static remove_entity(entity) {
+    super.remove_entity(entity);
+    this.update_entity_data(entity, {
+      position: { x: 0, y: 0, z: 0 },
+      rotation: { x: 0, y: 0, z: 0 },
+      scale: { x: 0, y: 0, z: 0 },
+    });
+  }
+
   static resize(new_size) {
     if (!this.data) {
       this.initialize();
@@ -55,8 +64,8 @@ export class TransformFragment extends Fragment {
     }
 
     super.update_entity_data(entity, data);
+
     this.data.dirty[entity] = 1;
-    this.data.gpu_data_dirty = true;
   }
 
   static to_gpu_data(context) {

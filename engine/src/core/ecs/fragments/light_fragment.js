@@ -66,6 +66,34 @@ export class LightFragment extends Fragment {
         Fragment.resize_array(this.data, 'active', new_size, Uint8Array);
     }
 
+    static remove_entity(entity) {
+        super.remove_entity(entity);
+        this.update_entity_data(entity, {
+            position: {
+                x: 0.0,
+                y: 0.0,
+                z: 0.0
+            },
+            direction: {
+                x: 0.0,
+                y: 0.0,
+                z: 0.0
+            },
+            color: {
+                r: 0.0,
+                g: 0.0,
+                b: 0.0
+            },
+            type: 0,
+            intensity: 0.0,
+            radius: 0.0,
+            attenuation: 0.0,
+            outer_angle: 0.0,
+            dirty: 0,
+            active: 0,
+        });
+    }
+
     static update_entity_data(entity, data) {
         if (!this.data) {
             this.initialize();

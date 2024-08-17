@@ -4,8 +4,9 @@ export class EntityManager {
     next_entity_id = 0;
     entity_fragments = new Map();
     fragment_types = new Set();
-    queries = new Set();
     deleted_entities = new Set();
+    entities = [];
+    queries = [];
 
     constructor() {
         if (EntityManager.instance) {
@@ -31,13 +32,14 @@ export class EntityManager {
             // Resize all fragment data arrays to fit the new entity
             if (refresh_entity_data) {
                 for (const fragment_type of this.fragment_types) {
-                    fragment_type.resize(entity);
+                    fragment_type.resize?.(entity);
                 }
             }
         }
+        this.entities.push(entity);
         this.entity_fragments.set(entity, new Set());
         if (refresh_entity_data) {
-            this.update_queries();
+            this.update_queries({ entity });
         }
         return entity;
     }
@@ -47,12 +49,13 @@ export class EntityManager {
             return;
         }
         for (const FragmentType of this.entity_fragments.get(entity)) {
-            FragmentType.remove_entity(entity);
+            FragmentType.remove_entity?.(entity);
         }
         this.entity_fragments.delete(entity);
+        this.entities.splice(this.entities.indexOf(entity), 1);
         this.deleted_entities.add(entity);
         if (refresh_entity_data) {
-            this.update_queries();
+            this.update_queries({ entity });
         }
     }
 
@@ -64,7 +67,7 @@ export class EntityManager {
         FragmentType.add_entity(entity, data);
         this.entity_fragments.get(entity).add(FragmentType);
         if (refresh_entity_data) {
-            this.update_queries();
+            this.update_queries({ entity });
         }
     }
 
@@ -75,17 +78,37 @@ export class EntityManager {
         FragmentType.remove_entity(entity);
         this.entity_fragments.get(entity).delete(FragmentType);
         if (refresh_entity_data) {
-            this.update_queries();
+            this.update_queries({ entity });
+        }
+    }
+
+    add_tag(entity, Tag, refresh_entity_data = true) {
+        if (!this.fragment_types.has(Tag)) {
+            this.fragment_types.add(Tag);
+        }
+        this.entity_fragments.get(entity).add(Tag);
+        if (refresh_entity_data) {
+            this.update_queries({ entity });
+        }
+    }
+
+    remove_tag(entity, Tag, refresh_entity_data = true) {
+        if (!this.entity_fragments.has(entity) || !this.entity_fragments.get(entity).has(Tag)) {
+            return;
+        }
+        this.entity_fragments.get(entity).delete(Tag);
+        if (refresh_entity_data) {
+            this.update_queries({ entity });
         }
     }
 
     update_fragment(entity, FragmentType, data, refresh_entity_data = true) {
         if (!this.entity_fragments.has(entity) || !this.entity_fragments.get(entity).has(FragmentType)) {
-            throw new Error(`Entity ${entity} does not have fragment ${FragmentType.constructor.name}`);
+            return;
         }
         FragmentType.update_entity_data(entity, data);
         if (refresh_entity_data) {
-            this.update_queries();
+            this.update_queries({ entity });
         }
     }
 
@@ -105,18 +128,28 @@ export class EntityManager {
     }
 
     get_entity_count() {
-        return this.next_entity_id - this.deleted_entities.size;
+        return this.entities.length;
+    }
+
+    get_entities() {
+        return this.entities;
     }
 
     create_query({ fragment_requirements }) {
         const query = new EntityQuery(this, fragment_requirements);
-        this.queries.add(query);
+        this.queries.push(query);
         return query;
     }
 
-    update_queries() {
-        for (const query of this.queries) {
-            query.update_matching_entities();
+    update_queries(params = {}) {
+        for (let i = 0; i < this.queries.length; i++) {
+            this.queries[i].update_matching_entities(params);
+        }
+    }
+
+    process_query_changes() {
+        for (let i = 0; i < this.queries.length; i++) {
+            this.queries[i].process_entity_changes();
         }
     }
 

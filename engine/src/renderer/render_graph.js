@@ -289,6 +289,7 @@ const RGShaderDataSetup = Object.freeze({
  * @property {number} sample_count - Number of samples for multisampling.
  * @property {boolean} b_is_bindless - Whether the image is bindless.
  * @property {number} flags - Additional flags for the image (see ImageFlags enum).
+ * @property {number} max_frame_lifetime - Maximum frame lifetime of the image if the image is transient.
  */
 const RGImageConfig = Object.freeze({
   name: "",
@@ -301,6 +302,7 @@ const RGImageConfig = Object.freeze({
   sample_count: 1,
   b_is_bindless: false,
   flags: ImageFlags.None,
+  max_frame_lifetime: 2,
 });
 
 /**
@@ -310,12 +312,14 @@ const RGImageConfig = Object.freeze({
  * @property {number} usage - Usage flags for the buffer (e.g., GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST).
  * @property {boolean} b_is_bindless - Whether the buffer is bindless.
  * @property {number} flags - Additional flags for the buffer (see BufferFlags enum).
+ * @property {number} max_frame_lifetime - Maximum frame lifetime of the buffer if the buffer is transient.
  */
 const RGBufferConfig = Object.freeze({
   size: 0,
   usage: 0,
   b_is_bindless: false,
   flags: BufferFlags.None,
+  max_frame_lifetime: 2,
 });
 
 /**
@@ -509,6 +513,9 @@ export class RenderGraph {
       config.b_is_bindless;
     this.registry.resource_metadata.get(new_resource.handle).b_is_persistent =
       (new_resource.config.flags & ImageFlags.Transient) === 0;
+    this.registry.resource_metadata.get(
+      new_resource.handle
+    ).max_frame_lifetime = config.max_frame_lifetime;
 
     return new_resource.handle;
   }
@@ -597,6 +604,9 @@ export class RenderGraph {
       config.b_is_bindless;
     this.registry.resource_metadata.get(new_resource.handle).b_is_persistent =
       (new_resource.config.flags & BufferFlags.Transient) === 0;
+    this.registry.resource_metadata.get(
+      new_resource.handle
+    ).max_frame_lifetime = config.max_frame_lifetime;
 
     return new_resource.handle;
   }
@@ -751,7 +761,7 @@ export class RenderGraph {
   }
 
   /**
-   * Queues a set of commands to be executed later in the render graph.
+   * Queues a set of commands to be executed after all other passes in the render graph.
    *
    * @param {string} name - A descriptive name for the set of commands.
    * @param {Function} commands_callback - A callback function that will be executed to perform the commands.
@@ -764,10 +774,27 @@ export class RenderGraph {
    * });
    */
   queue_commands(name, commands_callback) {
+    this.add_pass(name, RenderPassFlags.GraphLocal, {}, commands_callback);
+  }
+
+  /**
+   * Queues a set of commands to be executed after all other passes in the render graph.
+   *
+   * @param {string} name - A descriptive name for the set of commands.
+   * @param {Function} commands_callback - A callback function that will be executed to perform the commands.
+   * @returns {void}
+   *
+   * @example
+   * renderGraph.queue_post_commands('Draw UI', (encoder) => {
+   *   // Draw UI elements
+   *   encoder.drawUI();
+   * });
+   */
+  queue_post_commands(name, commands_callback) {
     this.queued_commands.push({ name, commands_callback });
   }
 
-  _add_queued_commands() {
+  _add_queued_post_commands() {
     for (const command of this.queued_commands) {
       this.add_pass(
         command.name,
@@ -923,7 +950,7 @@ export class RenderGraph {
    * @throws {Error} If there's an error during pass execution or command submission.
    */
   submit(context) {
-    this._add_queued_commands();
+    this._add_queued_post_commands();
 
     this._compile();
 
@@ -1092,10 +1119,7 @@ export class RenderGraph {
           );
           this.registry.resource_deletion_queue.push_execution(
             () => {
-              ResourceCache.get().remove(
-                CacheTypes.BUFFER,
-                buffer_metadata.physical_id
-              );
+              buffer.destroy(context);
             },
             buffer_metadata.physical_id,
             buffer_metadata.max_frame_lifetime
@@ -1123,10 +1147,7 @@ export class RenderGraph {
           );
           this.registry.resource_deletion_queue.push_execution(
             () => {
-              ResourceCache.get().remove(
-                CacheTypes.IMAGE,
-                image_metadata.physical_id
-              );
+              image.destroy(context);
             },
             image_metadata.physical_id,
             image_metadata.max_frame_lifetime
@@ -1348,32 +1369,30 @@ export class RenderGraph {
     let entries = [];
     pass.parameters.pass_inputs.forEach((resource, index) => {
       const metadata = this.registry.resource_metadata.get(resource);
-      if (metadata.b_is_persistent) {
-        const resource_type = get_graph_resource_type(resource);
-        if (resource_type === ResourceType.Image) {
-          const image = ResourceCache.get().fetch(
-            CacheTypes.IMAGE,
-            metadata.physical_id
-          );
-          entries.push({
-            binding: index,
-            resource:
-              image.get_view(pass.parameters.input_views[index]) || image.view,
-          });
-        } else {
-          const buffer = ResourceCache.get().fetch(
-            CacheTypes.BUFFER,
-            metadata.physical_id
-          );
-          entries.push({
-            binding: index,
-            resource: {
-              buffer: buffer.buffer,
-              offset: 0,
-              size: buffer.size,
-            },
-          });
-        }
+      const resource_type = get_graph_resource_type(resource);
+      if (resource_type === ResourceType.Image) {
+        const image = ResourceCache.get().fetch(
+          CacheTypes.IMAGE,
+          metadata.physical_id
+        );
+        entries.push({
+          binding: index,
+          resource:
+            image.get_view(pass.parameters.input_views[index]) || image.view,
+        });
+      } else {
+        const buffer = ResourceCache.get().fetch(
+          CacheTypes.BUFFER,
+          metadata.physical_id
+        );
+        entries.push({
+          binding: index,
+          resource: {
+            buffer: buffer.buffer,
+            offset: 0,
+            size: buffer.size,
+          },
+        });
       }
     });
 

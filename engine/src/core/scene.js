@@ -13,8 +13,8 @@ export class Scene extends SimulationLayer {
     this.name = name;
   }
 
-  async init(parent_context) {
-    super.init(this.context);
+  async init() {
+    super.init();
 
     this.context.current_view = SharedViewBuffer.get().add_view_data(
       Renderer.get().graphics_context
@@ -23,10 +23,16 @@ export class Scene extends SimulationLayer {
     this.setup_default_subsystems();
   }
 
-  update(delta_time, parent_context) {
-    super.update(delta_time, this.context);
+  update(delta_time) {
+    super.update(delta_time);
 
     performance.mark("scene_update");
+
+    this.context.entity_manager.process_query_changes();
+
+    if (this.ui_root) {
+      this.ui_root.update(delta_time);
+    }
   }
 
   setup_default_subsystems() {
@@ -50,6 +56,14 @@ export class Scene extends SimulationLayer {
     this.context.entity_manager.remove_fragment(entity, FragmentType, refresh_entity_data);
   }
 
+  add_tag(entity, Tag, refresh_entity_data = true) {
+    this.context.entity_manager.add_tag(entity, Tag, refresh_entity_data);
+  }
+
+  remove_tag(entity, Tag, refresh_entity_data = true) {
+    this.context.entity_manager.remove_tag(entity, Tag, refresh_entity_data);
+  }
+
   update_fragment(entity, FragmentType, data, refresh_entity_data = true) {
     this.context.entity_manager.update_fragment(entity, FragmentType, data, refresh_entity_data);
   }
@@ -62,8 +76,8 @@ export class Scene extends SimulationLayer {
     return this.context.entity_manager.has_fragment(entity, FragmentType);
   }
 
-  refresh_entity_queries() {
-    this.context.entity_manager.update_queries();
+  refresh_entity_queries(params = {}) {
+    this.context.entity_manager.update_queries(params);
   }
 
   set_ui_root(ui_root) {

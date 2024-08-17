@@ -20,6 +20,7 @@ struct View {
 
 struct FrameInfo {
     view_index: u32,
+    time: f32,
 };
 
 struct EntityTransform {
@@ -75,4 +76,10 @@ fn cubemap_direction_to_uv(direction: vec3f) -> vec3f {
     texcoord = texcoord * 0.5 + 0.5;
 
     return vec3f(texcoord, layer);
+}
+
+fn random_seed(seed: u32) -> u32 {
+    let x = seed * 1103515245u + 12345u;
+    let y = x ^ (x >> 16u);
+    return y * 2654435769u;
 }

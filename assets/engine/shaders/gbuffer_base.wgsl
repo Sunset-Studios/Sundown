@@ -2,14 +2,15 @@
 
 struct VertexOutput {
     @builtin(position) @invariant position: vec4f,
-    @location(0) view_position: vec4f,
-    @location(1) world_position: vec4f,
-    @location(2) color: vec4f,
-    @location(3) uv: vec2f,
-    @location(4) normal: vec4f,
-    @location(5) tangent: vec4f,
-    @location(6) bitangent: vec4f,
-    @location(7) @interpolate(flat) instance_id: u32,
+    @location(0) local_position: vec4f,
+    @location(1) view_position: vec4f,
+    @location(2) world_position: vec4f,
+    @location(3) color: vec4f,
+    @location(4) uv: vec2f,
+    @location(5) normal: vec4f,
+    @location(6) tangent: vec4f,
+    @location(7) bitangent: vec4f,
+    @location(8) @interpolate(flat) instance_id: u32,
 };
 
 struct FragmentOutput {
@@ -39,15 +40,19 @@ fn vertex(v_out: ptr<function, VertexOutput>) -> VertexOutput {
 
     var output : VertexOutput;
 
-    output.position = view_buffer[0].view_projection_matrix * entity_transform.transform * instance_vertex.position;
-    output.view_position = view_buffer[0].view_matrix * entity_transform.transform * instance_vertex.position;
-    output.world_position = entity_transform.transform * instance_vertex.position;
+    output.local_position = instance_vertex.position;
+    output.world_position = entity_transform.transform * output.local_position;
     output.color = instance_vertex.color;
     output.uv = instance_vertex.uv;
     output.normal = normalize(vec4f((entity_transform.transpose_inverse_model_matrix * instance_vertex.normal).xyz, 1.0));
     output.instance_id = entity;
 
-    return vertex(&output);
+    output = vertex(&output);
+
+    output.view_position = view_buffer[0].view_matrix * output.world_position;
+    output.position = view_buffer[0].view_projection_matrix * output.world_position;
+
+    return output;
 }
 
 #ifndef CUSTOM_FS

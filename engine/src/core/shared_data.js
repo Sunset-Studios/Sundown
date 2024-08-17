@@ -44,7 +44,7 @@ export class SharedVertexBuffer {
 
   build(context) {
     if (this.buffer) {
-      this.buffer.destroy();
+      this.buffer.destroy(context);
     }
 
     this.buffer = Buffer.create(context, {
@@ -290,7 +290,7 @@ export class SharedViewBuffer {
         frustum[20] = tmp[0] / l;
         frustum[21] = tmp[1] / l;
         frustum[22] = tmp[2] / l;
-        frustum[23] = (vp[15] - vp[14]) / l; 
+        frustum[23] = (vp[15] - vp[14]) / l;
 
         this.view_data[index].frustum = frustum;
       }
@@ -311,7 +311,7 @@ export class SharedViewBuffer {
   // Builds the GPU resident view buffer. Should be called during setup, before the simulation begins.
   build(context) {
     if (this.buffer) {
-      this.buffer.destroy();
+      this.buffer.destroy(context);
     }
 
     this.buffer = Buffer.create(context, {
@@ -332,7 +332,7 @@ export class SharedViewBuffer {
       ...item.view_projection_matrix,
       ...item.inverse_view_projection_matrix,
       ...item.view_forward,
-      ...item.frustum,
+      ...item.frustum
     );
   }
 }
@@ -379,20 +379,72 @@ export class SharedEnvironmentMapData {
   }
 }
 
-export class SharedMaterialData {
-  materials = [];
+export class SharedFrameInfoBuffer {
+  frame_info = {
+    view_index: 0,
+    time: 0,
+  };
+  buffer = null;
 
   constructor() {
-    if (SharedEnvironmentMapData.instance) {
-      return SharedEnvironmentMapData.instance;
+    if (SharedFrameInfoBuffer.instance) {
+      return SharedFrameInfoBuffer.instance;
     }
-    SharedEnvironmentMapData.instance = this;
+    SharedFrameInfoBuffer.instance = this;
   }
 
   static get() {
-    if (!SharedEnvironmentMapData.instance) {
-      return new SharedEnvironmentMapData();
+    if (!SharedFrameInfoBuffer.instance) {
+      return new SharedFrameInfoBuffer();
     }
-    return SharedEnvironmentMapData.instance;
+    return SharedFrameInfoBuffer.instance;
+  }
+
+  get_view_index() {
+    return this.frame_info.view_index;
+  }
+
+  get_time() {
+    return this.frame_info.time;
+  }
+
+  set_view_index(context, index) {
+    const gpu_layout = this._get_gpu_type_layout(this.frame_info);
+    this.frame_info.view_index = index;
+    this.size = gpu_layout.length * 4;
+    if (!this.buffer) {
+      this.build(context);
+    } else {
+      this.buffer.write(context, gpu_layout);
+    }
+  }
+
+  set_time(context, time) {
+    const gpu_layout = this._get_gpu_type_layout(this.frame_info);
+    this.frame_info.time = time;
+    this.size = gpu_layout.length * 4;
+    if (!this.buffer) {
+      this.build(context);
+    } else {
+      this.buffer.write(context, gpu_layout);
+    }
+  }
+
+  build(context) {
+    if (this.buffer) {
+      this.buffer.destroy(context);
+    }
+
+    this.buffer = Buffer.create(context, {
+      name: "frame_info_buffer",
+      data: this._get_gpu_type_layout(this.frame_info),
+      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+    });
+
+    Renderer.get().refresh_global_shader_bindings();
+  }
+
+  _get_gpu_type_layout(item) {
+    return Array.of(item.view_index, item.time);
   }
 }

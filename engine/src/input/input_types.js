@@ -89,7 +89,8 @@ export const InputRange = {
     M_y: 1,
     M_xabs: 2,
     M_yabs: 3,
-    NumRanges: 4
+    M_wheel: 4,
+    NumRanges: 5
 };
 
 /**

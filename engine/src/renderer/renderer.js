@@ -1,7 +1,11 @@
 import { GraphicsContext } from "./graphics_context.js";
 import { RenderGraph } from "./render_graph.js";
 import { Texture, TextureSampler } from "./texture.js";
-import { SharedVertexBuffer, SharedViewBuffer } from "../core/shared_data.js";
+import {
+  SharedVertexBuffer,
+  SharedViewBuffer,
+  SharedFrameInfoBuffer,
+} from "../core/shared_data.js";
 import { MaterialTemplate } from "./material.js";
 
 export class Renderer {
@@ -27,7 +31,9 @@ export class Renderer {
   }
 
   async setup(canvas, render_strategy) {
-    this.graphics_context = await GraphicsContext.create(canvas, { pointer_lock: true });
+    this.graphics_context = await GraphicsContext.create(canvas, {
+      pointer_lock: true,
+    });
 
     this.render_graph = RenderGraph.create();
 
@@ -54,34 +60,46 @@ export class Renderer {
     this.render_graph.queue_commands(name, commands_callback);
   }
 
+  enqueue_post_commands(name, commands_callback) {
+    this.render_graph.queue_post_commands(name, commands_callback);
+  }
+
   on_post_render(callback) {
     this.post_render_callbacks.push(callback);
   }
 
   refresh_global_shader_bindings() {
-    this.render_graph.queue_global_bind_group_write([
-      {
-        buffer: SharedVertexBuffer.get().buffer,
-        offset: 0,
-        size: SharedVertexBuffer.get().size,
-      },
-      {
-        buffer: SharedViewBuffer.get().buffer,
-        offset: 0,
-        size: SharedViewBuffer.get().size,
-      },
-      {
-        sampler: Texture.get_default_sampler(this.graphics_context),
-      },
-      {
-        sampler: TextureSampler.create(this.graphics_context, {
-          name: "non_filtering_sampler",
-          mag_filter: "nearest",
-          min_filter: "nearest",
-          mipmap_filter: "nearest",
-        }),
-      },
-    ], true /* overwrite */);
+    this.render_graph.queue_global_bind_group_write(
+      [
+        {
+          buffer: SharedVertexBuffer.get().buffer,
+          offset: 0,
+          size: SharedVertexBuffer.get().size,
+        },
+        {
+          buffer: SharedViewBuffer.get().buffer,
+          offset: 0,
+          size: SharedViewBuffer.get().size,
+        },
+        {
+          sampler: Texture.get_default_sampler(this.graphics_context),
+        },
+        {
+          sampler: TextureSampler.create(this.graphics_context, {
+            name: "non_filtering_sampler",
+            mag_filter: "nearest",
+            min_filter: "nearest",
+            mipmap_filter: "nearest",
+          }),
+        },
+        {
+          buffer: SharedFrameInfoBuffer.get().buffer,
+          offset: 0,
+          size: SharedFrameInfoBuffer.get().size,
+        },
+      ],
+      true /* overwrite */
+    );
   }
 
   setup_builtin_material_template() {

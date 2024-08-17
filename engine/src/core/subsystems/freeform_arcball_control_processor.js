@@ -8,32 +8,15 @@ import { vec4, quat, vec3 } from 'gl-matrix';
 import { WORLD_FORWARD, WORLD_UP } from '../minimal.js';
 
 export class FreeformArcballControlProcessor extends SimulationLayer {
-    constructor() {
-        super();
+    move_speed = 10.0;
+    rotation_speed = 3.0; // Adjusted for smoother rotation
+    orbit_distance = 20; // Fixed distance from pivot point
+    scene = null;
 
-        this.move_speed = 10.0;
-        this.rotation_speed = 3.0; // Adjusted for smoother rotation
-        this.orbit_distance = 20; // Fixed distance from pivot point
-    }
-
-    init(parent_context) {
-        super.init(parent_context);
-
-        const camera_position = vec4.fromValues(0, 0, -2, 1);
-        const camera_rotation = quat.fromValues(0, 0, 0, 1);
-
-        SharedViewBuffer.get().set_view_data(Renderer.get().graphics_context, parent_context.current_view, {
-            position: camera_position,
-            rotation: camera_rotation,
-            aspect_ratio: Renderer.get().graphics_context.aspect_ratio,
-            fov: radians(75),
-        });
-    }
-
-    update(delta_time, parent_context) {
-        super.update(delta_time, parent_context);
+    pre_update(delta_time) {
+        super.pre_update(delta_time);
         
-        const view_data = SharedViewBuffer.get().get_view_data(parent_context.current_view);
+        const view_data = SharedViewBuffer.get().get_view_data(this.context.current_view);
         let position = vec4.clone(view_data.position);
         let rotation = quat.clone(view_data.rotation);
         
@@ -96,11 +79,26 @@ export class FreeformArcballControlProcessor extends SimulationLayer {
 
         const context = Renderer.get().graphics_context;
         if (moved) {
-            SharedViewBuffer.get().set_view_data(context, parent_context.current_view, {
+            SharedViewBuffer.get().set_view_data(context, this.context.current_view, {
                 position: position,
                 rotation: rotation,
             });
         }
-        SharedViewBuffer.get().update_transforms(context, parent_context.current_view);
+        SharedViewBuffer.get().update_transforms(context, this.context.current_view);
+    }
+
+    set_scene(scene) {
+        this.scene = scene;
+        this.context.current_view = scene.context.current_view;
+
+        const camera_position = vec4.fromValues(0, 0, -2, 1);
+        const camera_rotation = quat.fromValues(0, 0, 0, 1);
+
+        SharedViewBuffer.get().set_view_data(Renderer.get().graphics_context, this.scene.context.current_view, {
+            position: camera_position,
+            rotation: camera_rotation,
+            aspect_ratio: Renderer.get().graphics_context.aspect_ratio,
+            fov: radians(75),
+        });
     }
 }

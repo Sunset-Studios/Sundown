@@ -11,7 +11,7 @@ const max_objects = 1000000;
 class IndirectDrawBatch {
   mesh_id = 0;
   material_id = 0;
-  entity_id = 0;
+  entity_ids = [];
   index_buffer_id = null;
   instance_count = 0;
   first_index = 0;
@@ -30,6 +30,7 @@ class ObjectInstanceEntry {
 class IndirectDrawObject {
   indirect_draw_buffer = null;
   object_instance_buffer = null;
+  compacted_object_instance_buffer = null;
   indirect_draw_data = new Uint32Array(max_objects * 5);
   object_instance_data = new Uint32Array(max_objects * 2);
 
@@ -62,6 +63,13 @@ class IndirectDrawObject {
         this.object_instance_buffer = Buffer.create(context, {
           name: "object_instance_buffer",
           raw_data: this.object_instance_data,
+          usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+        });
+      }
+      if (!this.compacted_object_instance_buffer) {
+        this.compacted_object_instance_buffer = Buffer.create(context, {
+          name: "compacted_object_instance_buffer",
+          raw_data: new Uint32Array(max_objects),
           usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
         });
       }
@@ -152,7 +160,6 @@ export class MeshTaskQueue {
     this.batches = [];
     this.object_instances = [];
     this.material_buckets = new Set();
-    this.current_task_offset = 0;
     this.needs_sort = false;
     this.indirect_draw_object = new IndirectDrawObject();
     this.tasks_allocator = new FrameAllocator(max_objects, new MeshTask());
@@ -177,7 +184,6 @@ export class MeshTaskQueue {
 
   reset() {
     this.tasks.length = 0;
-    this.current_task_offset = 0;
     this.tasks_allocator.reset();
   }
 
@@ -186,11 +192,7 @@ export class MeshTaskQueue {
 
     MeshTask.init(task, mesh_id, entity, material_id, instance_count);
 
-    if (this.current_task_offset >= this.tasks.length) {
-      this.tasks.push(task);
-    } else {
-      this.tasks[this.current_task_offset++] = task;
-    }
+    this.tasks.push(task);
 
     if (resort) {
       this.needs_sort = true;
@@ -221,6 +223,7 @@ export class MeshTaskQueue {
           last_batch.material_id === task.material_id
         ) {
           last_batch.instance_count += 1;
+          last_batch.entity_ids.push(task.entity);
         } else {
           const mesh = ResourceCache.get().fetch(CacheTypes.MESH, task.mesh_id);
 
@@ -232,8 +235,8 @@ export class MeshTaskQueue {
           batch.first_index = 0;
           batch.index_count = mesh.indices.length;
           batch.base_vertex = mesh.vertex_buffer_offset;
-          batch.base_instance = task_index;
-          batch.entity_id = task.entity;
+          batch.base_instance = last_batch ? last_batch.base_instance + last_batch.instance_count : 0;
+          batch.entity_ids.push(task.entity);
 
           this.batches.push(batch);
         }
@@ -248,7 +251,7 @@ export class MeshTaskQueue {
         for (let j = 0; j < batch.instance_count; j++) {
           const object_instance = this.object_instance_allocator.allocate();
           object_instance.batch_index = index;
-          object_instance.entity_index = batch.entity_id + j;
+          object_instance.entity_index = batch.entity_ids[j];
           this.object_instances.push(object_instance);
         }
       });
@@ -265,9 +268,6 @@ export class MeshTaskQueue {
     // Filter out tasks associated with the given entity
     this.tasks = this.tasks.filter(task => task.entity !== entity);
     
-    // Update the current_task_offset
-    this.current_task_offset = this.tasks.length;
-
     // Reset the batches and object instances if there are no tasks left
     if (this.tasks.length == 0) {
       this.batches = [];
@@ -278,6 +278,10 @@ export class MeshTaskQueue {
 
   get_object_instance_buffer() {
     return this.indirect_draw_object.object_instance_buffer;
+  }
+
+  get_compacted_object_instance_buffer() {
+    return this.indirect_draw_object.compacted_object_instance_buffer;
   }
 
   get_indirect_draw_buffer() {
@@ -448,12 +452,11 @@ export class MeshTaskQueue {
       }
     }
 
-    const material_batches = this.batches.filter(
-      (batch) => batch.material_id === material_id
-    );
-
-    for (let i = 0; i < material_batches.length; ++i) {
-      const batch = material_batches[i];
+    for (let i = 0; i < this.batches.length; ++i) {
+      if (this.batches[i].material_id !== material_id) {
+        continue;
+      }
+      const batch = this.batches[i];
       const index_buffer = ResourceCache.get().fetch(
         CacheTypes.BUFFER,
         batch.index_buffer_id

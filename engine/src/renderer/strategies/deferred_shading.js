@@ -15,7 +15,6 @@ export class DeferredShadingStrategy {
   initialized = false;
   hzb_image = null;
   entity_id_image = null;
-  entity_image_buffer = null;
 
   setup(context, render_graph) {
     const image_extent = context.get_canvas_resolution();
@@ -44,9 +43,10 @@ export class DeferredShadingStrategy {
       width: image_extent.width,
       height: image_extent.height,
       usage:
-        GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_SRC,
+        GPUTextureUsage.RENDER_ATTACHMENT |
+        GPUTextureUsage.TEXTURE_BINDING |
+        GPUTextureUsage.COPY_SRC,
     });
-
   }
 
   draw(context, render_graph) {
@@ -74,16 +74,16 @@ export class DeferredShadingStrategy {
         object_instance_buffer.config.name
       );
 
-      const compacted_object_instance_buffer = render_graph.create_buffer({
-        name: "compacted_object_instance_buffer",
-        raw_data: new Uint32Array(MeshTaskQueue.get().get_total_draw_count()),
-        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-      });
-
       const indirect_draw_buffer =
         MeshTaskQueue.get().get_indirect_draw_buffer();
       const indirect_draws = render_graph.register_buffer(
         indirect_draw_buffer.config.name
+      );
+
+      const compacted_object_instances =
+        MeshTaskQueue.get().get_compacted_object_instance_buffer();
+      const compacted_object_instance_buffer = render_graph.register_buffer(
+        compacted_object_instances.config.name
       );
 
       let skybox_image = null;
@@ -259,10 +259,11 @@ export class DeferredShadingStrategy {
           height: image_extent.height,
           usage:
             GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
-          load_op: "load",
         });
 
-        main_entity_id_image = render_graph.register_image(this.entity_id_image.config.name);
+        main_entity_id_image = render_graph.register_image(
+          this.entity_id_image.config.name
+        );
 
         const material_buckets = MeshTaskQueue.get().get_material_buckets();
         for (const material_id of material_buckets) {
@@ -272,10 +273,7 @@ export class DeferredShadingStrategy {
             `g_buffer_${material.template.name}_${material_id}`,
             RenderPassFlags.Graphics,
             {
-              inputs: [
-                entity_transforms,
-                compacted_object_instance_buffer,
-              ],
+              inputs: [entity_transforms, compacted_object_instance_buffer],
               outputs: [
                 main_albedo_image,
                 main_smra_image,
@@ -285,7 +283,7 @@ export class DeferredShadingStrategy {
                 main_depth_image,
               ],
               shader_setup,
-              b_skip_pass_pipeline_setup: true
+              b_skip_pass_pipeline_setup: true,
             },
             (graph, frame_data, encoder) => {
               const pass = graph.get_physical_pass(frame_data.current_pass);
@@ -299,13 +297,14 @@ export class DeferredShadingStrategy {
                   entity_id: graph.get_physical_image(main_entity_id_image),
                   depth: graph.get_physical_image(main_depth_image),
                 };
-
-                frame_data.g_buffer_data.albedo.config.load_op = "load";
-                frame_data.g_buffer_data.smra.config.load_op = "load";
-                frame_data.g_buffer_data.position.config.load_op = "load";
-                frame_data.g_buffer_data.normal.config.load_op = "load";
-                frame_data.g_buffer_data.entity_id.config.load_op = "load";
               }
+
+              frame_data.g_buffer_data.albedo.config.load_op = "load";
+              frame_data.g_buffer_data.smra.config.load_op = "load";
+              frame_data.g_buffer_data.position.config.load_op = "load";
+              frame_data.g_buffer_data.normal.config.load_op = "load";
+              frame_data.g_buffer_data.entity_id.config.load_op = "load";
+              frame_data.g_buffer_data.depth.config.load_op = "load";
 
               MeshTaskQueue.get().submit_material_indexed_indirect_draws(
                 pass,
@@ -383,7 +382,10 @@ export class DeferredShadingStrategy {
                 hzb_params_chain[dst_index]
               );
 
-              const src_mip_width = Math.max(1, i === 0 ? depth.config.width : hzb.config.width >> src_index);
+              const src_mip_width = Math.max(
+                1,
+                i === 0 ? depth.config.width : hzb.config.width >> src_index
+              );
               const src_mip_height = Math.max(
                 1,
                 i === 0 ? depth.config.height : hzb.config.height >> src_index

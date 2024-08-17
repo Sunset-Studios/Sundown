@@ -1,3 +1,6 @@
+import { SharedFrameInfoBuffer } from "../core/shared_data.js";
+import { Renderer } from "../renderer/renderer.js";
+
 export default class SimulationCore {
     simulation_layers = [];
 
@@ -28,8 +31,11 @@ export default class SimulationCore {
     update(delta_time) {
         performance.mark('simulation_core_update');
 
+        const time = SharedFrameInfoBuffer.get().get_time();
+        SharedFrameInfoBuffer.get().set_time(Renderer.get().graphics_context, time + delta_time);
+
         for (const layer of this.simulation_layers) {
-            layer.pre_update();
+            layer.pre_update(delta_time);
         }
 
         for (const layer of this.simulation_layers) {
@@ -37,7 +43,7 @@ export default class SimulationCore {
         }
 
         for (const layer of this.simulation_layers) {
-            layer.post_update();
+            layer.post_update(delta_time);
         }
     }
 }

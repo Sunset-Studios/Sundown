@@ -67,6 +67,7 @@ export class InputProcessor {
 
   key_map = new Map();
   ranges_array = new Array(InputRange.NumRanges).fill(0.0);
+  mouse_wheel = 0;
   mouse_x = 0;
   mouse_y = 0;
   abs_mouse_x = 0;
@@ -78,6 +79,7 @@ export class InputProcessor {
     this.handle_mouse_down = this.handle_mouse_down.bind(this);
     this.handle_mouse_up = this.handle_mouse_up.bind(this);
     this.handle_mouse_move = this.handle_mouse_move.bind(this);
+    this.handle_mouse_wheel = this.handle_mouse_wheel.bind(this);
   }
 
   init() {
@@ -86,6 +88,7 @@ export class InputProcessor {
     window.addEventListener("mousedown", this.handle_mouse_down);
     window.addEventListener("mouseup", this.handle_mouse_up);
     window.addEventListener("mousemove", this.handle_mouse_move);
+    window.addEventListener("wheel", this.handle_mouse_wheel);
   }
 
   shutdown() {
@@ -94,6 +97,7 @@ export class InputProcessor {
     window.removeEventListener("mousedown", this.handle_mouse_down);
     window.removeEventListener("mouseup", this.handle_mouse_up);
     window.removeEventListener("mousemove", this.handle_mouse_move);
+    window.removeEventListener("wheel", this.handle_mouse_wheel);
   }
 
   handle_key_down(event) {
@@ -131,7 +135,16 @@ export class InputProcessor {
     this.abs_mouse_y = event.clientY;
   }
 
+  handle_mouse_wheel(event) {
+    this.mouse_wheel = event.deltaY;
+  }
+  
   update(context, delta_time, canvas) {
+    this.ranges_array[InputRange.M_wheel] = this.mouse_wheel;
+
+    // Apply exponential decay to mouse wheel motion
+    this.mouse_wheel *= Math.exp(-0.5 * 0.5);
+
     if (this.ranges_array[InputRange.M_xabs] == null) {
       this.ranges_array[InputRange.M_xabs] = this.abs_mouse_x;
     } else {

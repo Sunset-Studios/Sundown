@@ -1,11 +1,13 @@
 export default class ExecutionQueue {
     constructor() {
         this.executions = [];
+        this.execution_ids = [];
         this.execution_delays = [];
     }
 
-    push_execution(execution, execution_frame_delay = 0) {
+    push_execution(execution, execution_id, execution_frame_delay = 0) {
         this.executions.push(execution);
+        this.execution_ids.push(execution_id);
         this.execution_delays.push(execution_frame_delay);
     }
 
@@ -14,6 +16,7 @@ export default class ExecutionQueue {
         if (index !== -1) {
             this.executions.splice(index, 1);
             this.execution_delays.splice(index, 1);
+            this.execution_ids.splice(index, 1);
         }
     }
 
@@ -23,6 +26,7 @@ export default class ExecutionQueue {
                 this.executions[i]();
                 this.executions.splice(i, 1);
                 this.execution_delays.splice(i, 1);
+                this.execution_ids.splice(i, 1);
             }
         }
     }
@@ -33,5 +37,6 @@ export default class ExecutionQueue {
         }
         this.executions = [];
         this.execution_delays = [];
+        this.execution_ids = [];
     }
 }

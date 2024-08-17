@@ -1,8 +1,10 @@
 import { EntityManager } from "./ecs/entity.js";
+import { SharedViewBuffer } from "./shared_data.js";
+import { Renderer } from "../renderer/renderer.js";
 
 export class LayerContext {
     current_view = null;
-    entity_manager = EntityManager.get();
+    entity_manager = null;
 }
 
 export class SimulationLayer {
@@ -13,23 +15,25 @@ export class SimulationLayer {
         this.name = "SimulationLayer";
     }
 
-    init(parent_context) { }
+    init() {
+        this.context.entity_manager = EntityManager.get();
+    }
 
-    pre_update(parent_context) {
+    pre_update(delta_time) {
         for (const layer of this.layers) {
-            layer.pre_update(this.context);
+            layer.pre_update(delta_time);
         }
     }
 
-    update(delta_time, parent_context) {
+    update(delta_time) {
         for (const layer of this.layers) {
-            layer.update(delta_time, this.context);
+            layer.update(delta_time);
         }
     }
 
-    post_update(parent_context) {
+    post_update(delta_time) {
         for (const layer of this.layers) {
-            layer.post_update(this.context);
+            layer.post_update(delta_time);
         }
     }
 
@@ -40,7 +44,7 @@ export class SimulationLayer {
         }
 
         const layer = new prototype();
-        layer.init(this.context);
+        layer.init();
         this.layers.push(layer);
         return layer;
     }
@@ -53,6 +57,6 @@ export class SimulationLayer {
     }
 
     get_layer(prototype) {
-        return this.layers.find(layer => layer.constructor.name === prototype.constructor.name);
+        return this.layers.find(layer => layer.constructor.name === prototype.name);
     }
 }

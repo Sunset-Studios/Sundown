@@ -1,8 +1,8 @@
 import { SimulationLayer } from "../simulation_layer.js";
 import { EntityManager } from "../ecs/entity.js";
+import { EntityMasks } from "../ecs/query.js";
 import { StaticMeshFragment } from "../ecs/fragments/static_mesh_fragment.js";
 import { MeshTaskQueue } from "../../renderer/mesh_task_queue.js";
-import { ResourceCache, CacheTypes } from "../../renderer/resource_cache.js";
 import { profile_scope } from "../../utility/performance.js";
 
 export class StaticMeshProcessor extends SimulationLayer {
@@ -12,29 +12,29 @@ export class StaticMeshProcessor extends SimulationLayer {
     super();
   }
 
-  init(parent_context) {
+  init() {
     this.entity_query = EntityManager.get().create_query({
       fragment_requirements: [StaticMeshFragment],
     });
   }
 
-  update(delta_time, parent_context) {
+  update(delta_time) {
     profile_scope("static_mesh_processor_update", () => {
       const static_meshes =
         EntityManager.get().get_fragment_array(StaticMeshFragment);
 
-      const resource_cache = ResourceCache.get();
       const mesh_task_queue = MeshTaskQueue.get();
 
-      let last_mesh_id = null;
-      let last_material_id = null;
-      let last_entity = null;
-      let mesh = null;
-
-      let running_instance_count = 0;
       let needs_resort = false;
       for (let i = 0; i < this.entity_query.matching_entities.length; ++i) {
         const entity = this.entity_query.matching_entities[i];
+        const entity_state = this.entity_query.entity_states[i];
+
+        if (entity_state & EntityMasks.Removed) {
+          mesh_task_queue.remove(entity);
+          mesh_task_queue.mark_needs_sort();
+          continue;
+        }
 
         if (!static_meshes.dirty[entity]) {
           continue;
@@ -51,40 +51,16 @@ export class StaticMeshProcessor extends SimulationLayer {
         const instance_count =
           Number(static_meshes.instance_count[entity]) || 1;
 
-        if (!last_entity) {
-          last_entity = entity;
-        }
-
-        if (mesh_id == last_mesh_id && material_id == last_material_id) {
-          running_instance_count += instance_count;
-        } else {
-          if (mesh_id !== last_mesh_id) {
-            mesh = resource_cache.fetch(CacheTypes.MESH, mesh_id);
-          }
+        if (mesh_id && material_id && instance_count) {
           mesh_task_queue.new_task(
             mesh_id,
             entity,
             material_id,
             instance_count 
           );
-
-          running_instance_count = 0;
-          last_entity = entity;
-        }
-
-        last_mesh_id = mesh_id;
-        last_material_id = material_id;
+        }      
 
         static_meshes.dirty[entity] = 0;
-      }
-
-      if (running_instance_count > 0) {
-        mesh_task_queue.new_task(
-          last_mesh_id,
-          last_entity,
-          last_material_id,
-          running_instance_count
-        );
       }
 
       if (needs_resort) {

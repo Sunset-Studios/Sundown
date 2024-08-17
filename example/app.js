@@ -37,7 +37,10 @@ async function init() {
     await SimulationCore.get().register_simulation_layer(scene);
 
     // Add the freeform arcball control processor to the scene
-    scene.add_layer(FreeformArcballControlProcessor); 
+    const freeform_arcball_control_processor = scene.add_layer(
+      FreeformArcballControlProcessor
+    );
+    freeform_arcball_control_processor.set_scene(scene);
 
     // Set the skybox for this scene.
     await SharedEnvironmentMapData.get().add_skybox(
@@ -71,38 +74,32 @@ async function init() {
     );
 
     // Create a default material
-    const default_material_id = Material.create("MyMaterial", "StandardMaterial");
+    const default_material_id = Material.create(
+      "MyMaterial",
+      "StandardMaterial"
+    );
 
     // Create a 3D grid of sphere entities
     const grid_size = 50; // 50x50 grid
     const grid_layers = 10;
     const spacing = 2; // 2 units apart
 
-    let mesh_entity = null;
     for (let x = 0; x < grid_size; x++) {
       for (let z = 0; z < grid_size; z++) {
         for (let y = 0; y < grid_layers; y++) {
+          let entity = scene.create_entity(false /* refresh_entity_queries */);
 
-          let entity = null;
-          if (mesh_entity == null) {
-            mesh_entity = scene.create_entity(false /* refresh_entity_queries */);
-            // Add a static mesh fragment to the sphere entity
-            scene.add_fragment(
-              mesh_entity,
-              StaticMeshFragment,
-              {
-                mesh: BigInt(Name.from(mesh.name)),
-                material_slots: [default_material_id],
-                instance_count: BigInt(grid_size * grid_size * grid_layers),
-              },
-              false /* refresh_entity_queries */
-            );
-            entity = mesh_entity;
-          } else {
-            entity = scene.create_entity(
-              false /* refresh_entity_queries */
-            );
-          }
+          // Add a static mesh fragment to the sphere entity
+          scene.add_fragment(
+            entity,
+            StaticMeshFragment,
+            {
+              mesh: BigInt(Name.from(mesh.name)),
+              material_slots: [default_material_id],
+              instance_count: BigInt(1),
+            },
+            false /* refresh_entity_queries */
+          );
 
           // Add a transform fragment to the sphere entity
           scene.add_fragment(

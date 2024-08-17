@@ -1,3 +1,5 @@
+import ExecutionQueue from '../utility/execution_queue.js';
+
 const MAX_BUFFERED_FRAMES = 2;
 
 export class GraphicsContext {
@@ -8,6 +10,7 @@ export class GraphicsContext {
     canvas_format = null;
     frame_number = 0;
     aspect_ratio = 1.0;
+    execution_queue = new ExecutionQueue();
 
     async init(canvas, options = {}) {
         if (!navigator.gpu) {
@@ -25,6 +28,7 @@ export class GraphicsContext {
         
         try {
             this.device = await this.adapter.requestDevice({
+                requiredFeatures: ['indirect-first-instance'],
                 requiredLimits: { maxColorAttachmentBytesPerSample: 64 }
             });
         } catch (e) {
@@ -52,6 +56,7 @@ export class GraphicsContext {
 
     advance_frame() {
         this.frame_number++;
+        this.execution_queue.update();
     }
 
     get_frame_number() {

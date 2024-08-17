@@ -53,8 +53,8 @@ export class InputProvider extends SimulationLayer {
         }
     }
 
-    update(delta_time) {
-        super.update(delta_time);
+    pre_update(delta_time) {
+        super.pre_update(delta_time);
 
         performance.mark('input provider update');
 

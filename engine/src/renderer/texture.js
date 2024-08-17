@@ -134,6 +134,18 @@ export class Texture {
     this._setup_views();
   }
 
+  destroy(context) {
+    if (this.image) {
+      context.execution_queue.push_execution(
+        this.image.destroy.bind(this.image),
+        `texture_destroy_${this.config.name}`,
+        1
+      );
+      this.image = null;
+      ResourceCache.get().remove(CacheTypes.IMAGE, Name.from(this.config.name));
+    }
+  }
+
   async load(context, paths, config) {
     this.config = { ...this.config, ...config };
     this.config.type = config.format.includes("depth") ? "depth" : "color";
