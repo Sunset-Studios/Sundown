@@ -683,6 +683,10 @@ export class RenderGraph {
     pass.pass_config = { name: name, flags: pass_type, attachments: [] };
     pass.parameters = { ..._.cloneDeep(RGPassParameters), ...params };
     pass.executor = execution_callback;
+    pass.shaders = {};
+    pass.physical_id = 0;
+    pass.pipeline_state_id = 0;
+    pass.reference_count = 0;
 
     const index = this.registry.render_passes.length;
     this.registry.render_passes.push(pass);
@@ -1089,7 +1093,7 @@ export class RenderGraph {
 
     if (!is_graph_local_pass) {
       pass.physical_id = Name.from(pass.pass_config.name);
-      const physical_pass = RenderPass.create(pass.pass_config);
+      RenderPass.create(pass.pass_config);
 
       this._setup_pass_shaders(pass, frame_data);
       this._setup_pass_bind_groups(pass, frame_data);
@@ -1219,11 +1223,6 @@ export class RenderGraph {
   }
 
   _setup_pass_shaders(pass, frame_data) {
-    if (this.pass_cache.pipeline_states.get(pass.pass_config.name)) {
-      // We've already setup our shaders in this case
-      return;
-    }
-
     const shader_setup = pass.parameters.shader_setup;
     if (!shader_setup.pipeline_shaders) {
       return;
@@ -1402,7 +1401,8 @@ export class RenderGraph {
         `${pass.pass_config.name}_bindgroup_${BindGroupType.Pass}`,
         layouts,
         BindGroupType.Pass,
-        entries
+        entries,
+        true /* force */
       );
 
       pass_binds.bind_groups[BindGroupType.Pass] = pass_bind_group;
@@ -1528,6 +1528,17 @@ export class RenderGraph {
       frame_data.pass_pipeline_state = pass.pipeline_state_id;
     }
   }
+
+  reset_pass_cache_bind_groups(passes_only = true) {
+    if (passes_only) {
+      this.pass_cache.bind_groups.keys().forEach((key) => {
+        this.pass_cache.bind_groups.delete(key);
+      });
+    } else {
+      this.pass_cache.bind_groups = new Map();
+    }
+  }
+
 
   _setup_global_bind_group(pass, frame_data) {
     const pass_binds = this.pass_cache.bind_groups.get(pass.pass_config.name);

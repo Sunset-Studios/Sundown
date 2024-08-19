@@ -53,4 +53,13 @@ export class ResourceCache {
     size(type) {
         return this.cache.get(type).size;
     }
+
+    flush(context, type) {
+        const keys = this.cache.get(type).keys();   
+        for (const key of keys) {
+            const resource = this.cache.get(type).get(key);
+            resource.destroy?.(context);
+            this.cache.get(type).delete(key);
+        }
+    }
 }

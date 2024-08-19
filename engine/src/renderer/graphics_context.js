@@ -1,4 +1,5 @@
 import ExecutionQueue from '../utility/execution_queue.js';
+import { global_dispatcher } from '../core/dispatcher.js';
 
 const MAX_BUFFERED_FRAMES = 2;
 
@@ -56,7 +57,6 @@ export class GraphicsContext {
 
     advance_frame() {
         this.frame_number++;
-        this.execution_queue.update();
     }
 
     get_frame_number() {
@@ -80,6 +80,12 @@ export class GraphicsContext {
 
     max_bind_groups() {
         return this.adapter.limits.maxBindGroups;
+    }
+
+    on_resize() {
+        this.canvas.width = this.canvas.clientWidth;
+        this.canvas.height = this.canvas.clientHeight;
+        this.aspect_ratio = this.canvas.width / this.canvas.height;
     }
 
     static async create(canvas, options = {}) {

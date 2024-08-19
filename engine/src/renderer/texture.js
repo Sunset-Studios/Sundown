@@ -135,15 +135,8 @@ export class Texture {
   }
 
   destroy(context) {
-    if (this.image) {
-      context.execution_queue.push_execution(
-        this.image.destroy.bind(this.image),
-        `texture_destroy_${this.config.name}`,
-        1
-      );
-      this.image = null;
-      ResourceCache.get().remove(CacheTypes.IMAGE, Name.from(this.config.name));
-    }
+    ResourceCache.get().remove(CacheTypes.IMAGE, Name.from(this.config.name));
+    this.image = null;
   }
 
   async load(context, paths, config) {
@@ -323,35 +316,39 @@ export class Texture {
       Name.from(config.name)
     );
 
-    if (image) {
-      return image;
+    if (image && config.force) {
+      image.destroy(context);
+      image = null;
     }
 
-    image = new Texture();
-
-    image.init(context, config);
-
-    ResourceCache.get().store(CacheTypes.IMAGE, Name.from(config.name), image);
+    if (!image) {
+      image = new Texture();
+      image.init(context, config);
+      ResourceCache.get().store(CacheTypes.IMAGE, Name.from(config.name), image);
+    }
 
     return image;
   }
 
-  static create_from_texture(raw_image, name) {
+  static create_from_texture(raw_image, name, config) {
     let cached_image = ResourceCache.get().fetch(
       CacheTypes.IMAGE,
       Name.from(name)
     );
 
-    if (cached_image) {
+    if (cached_image && config && config.force) {
+      cached_image.destroy(context);
+      cached_image = null;
+    } else if (cached_image) {
       cached_image.set_image(raw_image);
       return cached_image;
     }
 
-    cached_image = new Texture();
-
-    cached_image.config = { name: name };
-
-    ResourceCache.get().store(CacheTypes.IMAGE, Name.from(name), cached_image);
+    if (!cached_image) {
+      cached_image = new Texture();
+      cached_image.config = { name: name };
+      ResourceCache.get().store(CacheTypes.IMAGE, Name.from(name), cached_image);
+    }
 
     cached_image.set_image(raw_image);
 
@@ -364,14 +361,16 @@ export class Texture {
       Name.from(config.name)
     );
 
-    if (image) {
-      return image;
+    if (image && config.force) {
+      image.destroy(context);
+      image = null;
     }
 
-    image = new Texture();
-    await image.load(context, paths, config);
-
-    ResourceCache.get().store(CacheTypes.IMAGE, Name.from(config.name), image);
+    if (!image) {
+      image = new Texture();
+      await image.load(context, paths, config);
+      ResourceCache.get().store(CacheTypes.IMAGE, Name.from(config.name), image);
+    }
 
     return image;
   }

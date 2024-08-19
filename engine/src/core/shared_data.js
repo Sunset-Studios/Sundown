@@ -1,7 +1,7 @@
 import { Buffer } from "../renderer/buffer.js";
 import { Texture } from "../renderer/texture.js";
 import { Renderer } from "../renderer/renderer.js";
-import { mat4, vec4, quat, vec3 } from "gl-matrix";
+import { mat4, vec4, quat, vec3, vec2 } from "gl-matrix";
 import { WORLD_UP, WORLD_FORWARD } from "./minimal.js";
 import _ from "lodash";
 
@@ -162,7 +162,7 @@ export class SharedViewBuffer {
       this.view_data[index].far = view_data.far;
       dirty = true;
     }
-    this.view_data[index].dirty = dirty;
+    this.view_data[index].dirty |= dirty;
   }
 
   // Updates the view transforms at the given index, given the view data previously set. Can be called during setup or at runtime.
@@ -383,6 +383,7 @@ export class SharedFrameInfoBuffer {
   frame_info = {
     view_index: 0,
     time: 0,
+    resolution: vec2.create(),
   };
   buffer = null;
 
@@ -409,24 +410,29 @@ export class SharedFrameInfoBuffer {
   }
 
   set_view_index(context, index) {
-    const gpu_layout = this._get_gpu_type_layout(this.frame_info);
     this.frame_info.view_index = index;
-    this.size = gpu_layout.length * 4;
     if (!this.buffer) {
       this.build(context);
     } else {
-      this.buffer.write(context, gpu_layout);
+      this.buffer.write(context, this._get_gpu_type_layout(this.frame_info));
     }
   }
 
   set_time(context, time) {
-    const gpu_layout = this._get_gpu_type_layout(this.frame_info);
     this.frame_info.time = time;
-    this.size = gpu_layout.length * 4;
     if (!this.buffer) {
       this.build(context);
     } else {
-      this.buffer.write(context, gpu_layout);
+      this.buffer.write(context, this._get_gpu_type_layout(this.frame_info));
+    }
+  }
+
+  set_resolution(context, resolution) {
+    this.frame_info.resolution = resolution;
+    if (!this.buffer) {
+      this.build(context);
+    } else {
+      this.buffer.write(context, this._get_gpu_type_layout(this.frame_info));
     }
   }
 
@@ -435,9 +441,13 @@ export class SharedFrameInfoBuffer {
       this.buffer.destroy(context);
     }
 
+    const gpu_layout = this._get_gpu_type_layout(this.frame_info);
+
+    this.size = gpu_layout.length * 4;
+
     this.buffer = Buffer.create(context, {
       name: "frame_info_buffer",
-      data: this._get_gpu_type_layout(this.frame_info),
+      data: gpu_layout,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
 
@@ -445,6 +455,6 @@ export class SharedFrameInfoBuffer {
   }
 
   _get_gpu_type_layout(item) {
-    return Array.of(item.view_index, item.time);
+    return Array.of(item.view_index, item.time, ...item.resolution);
   }
 }

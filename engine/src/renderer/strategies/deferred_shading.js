@@ -1,3 +1,4 @@
+import { Renderer } from "../renderer.js";
 import { Texture } from "../texture.js";
 import { RenderPassFlags } from "../render_pass.js";
 import { MeshTaskQueue } from "../mesh_task_queue.js";
@@ -10,45 +11,19 @@ import {
 import { Material } from "../material.js";
 import { npot, clamp } from "../../utility/math.js";
 import { profile_scope } from "../../utility/performance.js";
+import { global_dispatcher } from "../../core/dispatcher.js";
 
 export class DeferredShadingStrategy {
   initialized = false;
   hzb_image = null;
   entity_id_image = null;
+  force_recreate = false;
 
   setup(context, render_graph) {
-    const image_extent = context.get_canvas_resolution();
-
-    const image_width_npot = npot(image_extent.width);
-    const image_height_npot = npot(image_extent.height);
-
-    const mip_levels = Math.max(
-      Math.log2(image_width_npot),
-      Math.log2(image_height_npot)
-    );
-
-    this.hzb_image = Texture.create(context, {
-      name: "hzb",
-      format: "r32float",
-      width: image_width_npot,
-      height: image_height_npot,
-      usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
-      mip_levels: mip_levels,
-      b_one_view_per_mip: true,
-    });
-
-    this.entity_id_image = Texture.create(context, {
-      name: "entity_id",
-      format: "r32uint",
-      width: image_extent.width,
-      height: image_extent.height,
-      usage:
-        GPUTextureUsage.RENDER_ATTACHMENT |
-        GPUTextureUsage.TEXTURE_BINDING |
-        GPUTextureUsage.COPY_SRC,
-    });
+    global_dispatcher.on('resolution_change', this._recreate_persistent_resources.bind(this));
+    this._recreate_persistent_resources(render_graph);
   }
-
+  
   draw(context, render_graph) {
     profile_scope("DeferredShadingStrategy.draw", () => {
       if (!this.initialized) {
@@ -57,6 +32,10 @@ export class DeferredShadingStrategy {
       }
 
       MeshTaskQueue.get().sort_and_batch(context);
+
+      if (this.force_recreate) {
+        render_graph.reset_pass_cache_bind_groups(true /* pass_only */);
+      }
 
       const transform_gpu_data = TransformFragment.to_gpu_data(context);
       const entity_transforms = render_graph.register_buffer(
@@ -127,6 +106,7 @@ export class DeferredShadingStrategy {
           height: image_extent.height,
           usage:
             GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+          force: this.force_recreate,
         });
 
         render_graph.add_pass(
@@ -227,6 +207,7 @@ export class DeferredShadingStrategy {
           height: image_extent.height,
           usage:
             GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+          force: this.force_recreate,
         });
         main_smra_image = render_graph.create_image({
           name: "main_smra",
@@ -235,6 +216,7 @@ export class DeferredShadingStrategy {
           height: image_extent.height,
           usage:
             GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+          force: this.force_recreate,
         });
         main_normal_image = render_graph.create_image({
           name: "main_normal",
@@ -243,6 +225,7 @@ export class DeferredShadingStrategy {
           height: image_extent.height,
           usage:
             GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+          force: this.force_recreate,
         });
         main_position_image = render_graph.create_image({
           name: "main_position",
@@ -251,6 +234,7 @@ export class DeferredShadingStrategy {
           height: image_extent.height,
           usage:
             GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+          force: this.force_recreate,
         });
         main_depth_image = render_graph.create_image({
           name: "main_depth",
@@ -259,6 +243,7 @@ export class DeferredShadingStrategy {
           height: image_extent.height,
           usage:
             GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+          force: this.force_recreate,
         });
 
         main_entity_id_image = render_graph.register_image(
@@ -434,6 +419,7 @@ export class DeferredShadingStrategy {
           height: image_extent.height,
           usage:
             GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+          force: this.force_recreate,
         });
 
         render_graph.add_pass(
@@ -478,6 +464,7 @@ export class DeferredShadingStrategy {
               usage:
                 GPUTextureUsage.STORAGE_BINDING |
                 GPUTextureUsage.TEXTURE_BINDING,
+              force: this.force_recreate,
             })
           );
           bloom_blur_params_chain.push(
@@ -485,6 +472,7 @@ export class DeferredShadingStrategy {
               name: `bloom_blur_params_${i}`,
               data: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
               usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+              force: this.force_recreate,
             })
           );
         }
@@ -625,6 +613,7 @@ export class DeferredShadingStrategy {
           height: image_extent.height,
           usage:
             GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+          force: this.force_recreate,
         });
 
         render_graph.add_pass(
@@ -698,7 +687,47 @@ export class DeferredShadingStrategy {
         );
       }
 
+      this.force_recreate = false;
+
       render_graph.submit(context);
+    });
+  }
+
+  _recreate_persistent_resources(render_graph) {
+    const context = Renderer.get().graphics_context;
+    const image_extent = context.get_canvas_resolution();
+  
+    const image_width_npot = npot(image_extent.width);
+    const image_height_npot = npot(image_extent.height);
+  
+    const mip_levels = Math.max(
+      Math.log2(image_width_npot),
+      Math.log2(image_height_npot)
+    );
+
+    this.force_recreate = true;
+  
+    this.hzb_image = Texture.create(context, {
+      name: "hzb",
+      format: "r32float",
+      width: image_width_npot,
+      height: image_height_npot,
+      usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
+      mip_levels: mip_levels,
+      b_one_view_per_mip: true,
+      force: this.force_recreate,
+    });
+  
+    this.entity_id_image = Texture.create(context, {
+      name: "entity_id",
+      format: "r32uint",
+      width: image_extent.width,
+      height: image_extent.height,
+      usage:
+        GPUTextureUsage.RENDER_ATTACHMENT |
+        GPUTextureUsage.TEXTURE_BINDING |
+        GPUTextureUsage.COPY_SRC,
+      force: this.force_recreate,
     });
   }
 }

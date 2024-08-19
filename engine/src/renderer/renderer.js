@@ -7,6 +7,8 @@ import {
   SharedFrameInfoBuffer,
 } from "../core/shared_data.js";
 import { MaterialTemplate } from "./material.js";
+import { global_dispatcher } from "../core/dispatcher.js";
+import { vec2 } from "gl-matrix";
 
 export class Renderer {
   graphics_context = null;
@@ -42,6 +44,8 @@ export class Renderer {
     this.refresh_global_shader_bindings();
 
     this.setup_builtin_material_template();
+
+    this.setup_resize_observer();
   }
 
   render(delta_time) {
@@ -66,6 +70,13 @@ export class Renderer {
 
   on_post_render(callback) {
     this.post_render_callbacks.push(callback);
+  }
+
+  remove_post_render(callback) {
+    const index = this.post_render_callbacks.indexOf(callback);
+    if (index !== -1) {
+      this.post_render_callbacks.splice(index, 1);
+    }
   }
 
   refresh_global_shader_bindings() {
@@ -109,6 +120,27 @@ export class Renderer {
       "StandardMaterial",
       "standard_material.wgsl"
     );
+  }
+
+  set_shared_frame_resolution() {
+    SharedFrameInfoBuffer.get().set_resolution(
+      this.graphics_context,
+      vec2.fromValues(
+        this.graphics_context.canvas.width,
+        this.graphics_context.canvas.height
+      )
+    );
+  }
+
+  setup_resize_observer() {
+    const observer = new ResizeObserver((entries) => {
+      this.graphics_context.on_resize();
+      this.set_shared_frame_resolution();
+      global_dispatcher.dispatch("resolution_change", entries[0].contentRect);
+    });
+    observer.observe(this.graphics_context.canvas);
+
+    this.set_shared_frame_resolution();
   }
 
   execute_post_render_callbacks() {

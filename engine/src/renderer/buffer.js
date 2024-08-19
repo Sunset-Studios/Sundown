@@ -42,15 +42,8 @@ export class Buffer {
     }
 
     destroy(context) {
-        if (this.buffer) {
-            context.execution_queue.push_execution(
-                this.buffer.destroy.bind(this.buffer),
-                `buffer_destroy_${this.config.name}`,
-                1
-            );
-            this.buffer = null;
-            ResourceCache.get().remove(CacheTypes.BUFFER, Name.from(this.config.name))
-        }
+        ResourceCache.get().remove(CacheTypes.BUFFER, Name.from(this.config.name))
+        this.buffer = null;
     }
 
     write(context, data, offset = 0, size = null) {
@@ -67,9 +60,11 @@ export class Buffer {
 
     async read(context, data, data_length, offset = 0, data_offset = 0, data_type = Float32Array) {
         await this.buffer.mapAsync(GPUMapMode.READ);
-        const buffer_data = new data_type(this.buffer.getMappedRange());
-        data.set(buffer_data.subarray(offset, offset + data_length), data_offset);
-        this.buffer.unmap();
+        if (this.buffer) { // Buffer could have been destroyed while waiting for the map
+            const buffer_data = new data_type(this.buffer.getMappedRange());
+            data.set(buffer_data.subarray(offset, offset + data_length), data_offset);
+            this.buffer.unmap();
+        }
     }
 
     copy_texture(encoder, texture, bytes_per_row) {
@@ -94,13 +89,18 @@ export class Buffer {
 
     static create(context, config) {
         let buffer = ResourceCache.get().fetch(CacheTypes.BUFFER, Name.from(config.name));
+
+        if (buffer && config.force) {
+            buffer.destroy(context)
+            buffer = null;
+        }
+
         if (!buffer) {
             buffer = new Buffer();
             buffer.init(context, config);
             ResourceCache.get().store(CacheTypes.BUFFER, Name.from(config.name), buffer);
         }
+
         return buffer;
     }
 }
-
-

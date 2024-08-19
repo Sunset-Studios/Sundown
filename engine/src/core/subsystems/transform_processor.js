@@ -17,6 +17,9 @@ export class TransformProcessor extends SimulationLayer {
   update(delta_time) {
     profile_scope("transform_processor_update", () => {
       const transforms = EntityManager.get().get_fragment_array(TransformFragment);
+      if (!transforms) {
+        return;
+      }
 
       for (let i = 0; i < this.entity_query.matching_entities.length; ++i) {
         const entity = this.entity_query.matching_entities[i];

@@ -22,6 +22,9 @@ export class StaticMeshProcessor extends SimulationLayer {
     profile_scope("static_mesh_processor_update", () => {
       const static_meshes =
         EntityManager.get().get_fragment_array(StaticMeshFragment);
+      if (!static_meshes) {
+        return;
+      }
 
       const mesh_task_queue = MeshTaskQueue.get();
 
