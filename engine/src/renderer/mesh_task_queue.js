@@ -1,6 +1,7 @@
 import { ResourceCache, CacheTypes } from "./resource_cache.js";
 import { Mesh } from "./mesh.js";
 import { Buffer } from "./buffer.js";
+import { MaterialFamilyType } from "./material.js";
 import { Name } from "../utility/names.js";
 import { FrameAllocator } from "../memory/allocator.js";
 import { profile_scope } from "../utility/performance.js";
@@ -34,32 +35,19 @@ class IndirectDrawObject {
   indirect_draw_data = new Uint32Array(max_objects * 5);
   object_instance_data = new Uint32Array(max_objects * 2);
 
-  // We assume this gets called once per frame
-  update_buffers(context, batches, object_instances) {
-    profile_scope("update_indirect_buffers", () => {
+  init(context) {
+    profile_scope("init_indirect_draw_object", () => {
       if (!this.indirect_draw_buffer) {
-        for (let i = 0; i < batches.length; i++) {
-          const offset = i * 5;
-          this.indirect_draw_data[offset] = batches[i].index_count;
-          this.indirect_draw_data[offset + 1] = 0;
-          this.indirect_draw_data[offset + 2] = batches[i].first_index;
-          this.indirect_draw_data[offset + 3] = batches[i].base_vertex;
-          this.indirect_draw_data[offset + 4] = batches[i].base_instance;
-        }
-
         this.indirect_draw_buffer = Buffer.create(context, {
           name: "indirect_draw_buffer",
           raw_data: this.indirect_draw_data,
-          usage: GPUBufferUsage.INDIRECT | GPUBufferUsage.COPY_DST | GPUBufferUsage.STORAGE,
+          usage:
+            GPUBufferUsage.INDIRECT |
+            GPUBufferUsage.COPY_DST |
+            GPUBufferUsage.STORAGE,
         });
       }
       if (!this.object_instance_buffer) {
-        for (let i = 0; i < object_instances.length; i++) {
-          const offset = i * 2;
-          this.object_instance_data[offset] = object_instances[i].batch_index;
-          this.object_instance_data[offset + 1] = object_instances[i].entity_index;
-        }
-
         this.object_instance_buffer = Buffer.create(context, {
           name: "object_instance_buffer",
           raw_data: this.object_instance_data,
@@ -73,7 +61,12 @@ class IndirectDrawObject {
           usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
         });
       }
+    });
+  }
 
+  // We assume this gets called once per frame
+  update_buffers(context, batches, object_instances) {
+    profile_scope("update_indirect_buffers", () => {
       // Resize indirect draw buffer if needed
       const required_indirect_draw_size = batches.length * 5 * 4; // 5 uint32 per batch, 4 bytes per uint32
       if (this.indirect_draw_buffer.size < required_indirect_draw_size) {
@@ -90,7 +83,10 @@ class IndirectDrawObject {
             batch.base_vertex,
             batch.base_instance,
           ]),
-          usage: GPUBufferUsage.INDIRECT | GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+          usage:
+            GPUBufferUsage.INDIRECT |
+            GPUBufferUsage.STORAGE |
+            GPUBufferUsage.COPY_DST,
         });
       }
 
@@ -121,7 +117,12 @@ class IndirectDrawObject {
           this.indirect_draw_data[offset + 3] = batches[i].base_vertex;
           this.indirect_draw_data[offset + 4] = batches[i].base_instance;
         }
-        this.indirect_draw_buffer.write_raw(context, this.indirect_draw_data, 0, batches.length * 5);
+        this.indirect_draw_buffer.write_raw(
+          context,
+          this.indirect_draw_data,
+          0,
+          batches.length * 5
+        );
       });
 
       profile_scope("write_object_instance_buffer", () => {
@@ -129,9 +130,15 @@ class IndirectDrawObject {
         for (let i = 0; i < object_instances.length; i++) {
           const offset = i * 2;
           this.object_instance_data[offset] = object_instances[i].batch_index;
-          this.object_instance_data[offset + 1] = object_instances[i].entity_index;
+          this.object_instance_data[offset + 1] =
+            object_instances[i].entity_index;
         }
-        this.object_instance_buffer.write_raw(context, this.object_instance_data, 0, object_instances.length * 2);
+        this.object_instance_buffer.write_raw(
+          context,
+          this.object_instance_data,
+          0,
+          object_instances.length * 2
+        );
       });
     });
   }
@@ -159,11 +166,16 @@ export class MeshTaskQueue {
     this.tasks = [];
     this.batches = [];
     this.object_instances = [];
-    this.material_buckets = new Set();
-    this.needs_sort = false;
+    this.material_buckets = [];
     this.indirect_draw_object = new IndirectDrawObject();
     this.tasks_allocator = new FrameAllocator(max_objects, new MeshTask());
-    this.object_instance_allocator = new FrameAllocator(max_objects, new ObjectInstanceEntry());
+    this.object_instance_allocator = new FrameAllocator(
+      max_objects,
+      new ObjectInstanceEntry()
+    );
+    this.has_transparency = false;
+    this.needs_sort = false;
+    this.initialized = false;
     MeshTaskQueue.instance = this;
   }
 
@@ -187,7 +199,13 @@ export class MeshTaskQueue {
     this.tasks_allocator.reset();
   }
 
-  new_task(mesh_id, entity, material_id = null, instance_count = 1, resort = false) {
+  new_task(
+    mesh_id,
+    entity,
+    material_id = null,
+    instance_count = 1,
+    resort = false
+  ) {
     const task = this.tasks_allocator.allocate();
 
     MeshTask.init(task, mesh_id, entity, material_id, instance_count);
@@ -201,60 +219,96 @@ export class MeshTaskQueue {
     return task;
   }
 
+  add_material_bucket(material_id) {
+    if (!this.material_buckets.includes(material_id)) {
+      this.material_buckets.push(material_id);
+    }
+  }
+
   sort_and_batch(context) {
-    if (!this.needs_sort) {
-      return;
+    if (!this.initialized) {
+      this.initialized = true;
+      this.indirect_draw_object.init(context);
     }
 
-    profile_scope("sort_and_batch", () => {
+    if (this.needs_sort) {
       this.tasks.sort(
         (a, b) => a.mesh_id - b.mesh_id - (a.material_id - b.material_id)
       );
+    }
 
-      this.batches = [];
-      this.object_instances = [];
-      this.object_instance_allocator.reset();
+    profile_scope("sort_and_batch", () => {
+      if (this.needs_sort) {
+        this.batches.length = 0;
+        this.object_instances.length = 0;
+        this.material_buckets.length = 0;
+        this.object_instance_allocator.reset();
 
-      this.tasks.forEach((task, task_index) => {
-        const last_batch = this.batches[this.batches.length - 1];
-        if (
-          last_batch &&
-          last_batch.mesh_id === task.mesh_id &&
-          last_batch.material_id === task.material_id
-        ) {
-          last_batch.instance_count += 1;
-          last_batch.entity_ids.push(task.entity);
-        } else {
-          const mesh = ResourceCache.get().fetch(CacheTypes.MESH, task.mesh_id);
+        let last_batch = null;
+        for (let i = 0; i < this.tasks.length; i++) {
+          const task = this.tasks[i];
+          if (
+            last_batch &&
+            last_batch.mesh_id === task.mesh_id &&
+            last_batch.material_id === task.material_id
+          ) {
+            last_batch.instance_count += 1;
+            last_batch.entity_ids.push(task.entity);
+          } else {
+            const mesh = ResourceCache.get().fetch(
+              CacheTypes.MESH,
+              task.mesh_id
+            );
 
-          const batch = new IndirectDrawBatch();
-          batch.mesh_id = task.mesh_id;
-          batch.material_id = task.material_id;
-          batch.index_buffer_id = Name.from(mesh.index_buffer.config.name);
-          batch.instance_count = task.instance_count;
-          batch.first_index = 0;
-          batch.index_count = mesh.indices.length;
-          batch.base_vertex = mesh.vertex_buffer_offset;
-          batch.base_instance = last_batch ? last_batch.base_instance + last_batch.instance_count : 0;
-          batch.entity_ids.push(task.entity);
+            const batch = new IndirectDrawBatch();
+            batch.mesh_id = task.mesh_id;
+            batch.material_id = task.material_id;
+            batch.index_buffer_id = Name.from(mesh.index_buffer.config.name);
+            batch.instance_count = task.instance_count;
+            batch.first_index = 0;
+            batch.index_count = mesh.indices.length;
+            batch.base_vertex = mesh.vertex_buffer_offset;
+            batch.base_instance = last_batch
+              ? last_batch.base_instance + last_batch.instance_count
+              : 0;
+            batch.entity_ids.push(task.entity);
 
-          this.batches.push(batch);
+            last_batch = batch;
+
+            this.batches.push(batch);
+          }
         }
-      });
 
-      // Sort batches by material id
-      this.batches.sort((a, b) => a.material_id - b.material_id);
+        // Sort batches by material id
+        this.batches.sort((a, b) => a.material_id - b.material_id);
 
-      this.material_buckets.clear();
-      this.batches.forEach((batch, index) => {
-        this.material_buckets.add(batch.material_id);
-        for (let j = 0; j < batch.instance_count; j++) {
-          const object_instance = this.object_instance_allocator.allocate();
-          object_instance.batch_index = index;
-          object_instance.entity_index = batch.entity_ids[j];
-          this.object_instances.push(object_instance);
+        for (let j = 0; j < this.batches.length; j++) {
+          this.add_material_bucket(this.batches[j].material_id);
+          for (let k = 0; k < this.batches[j].instance_count; k++) {
+            const object_instance = this.object_instance_allocator.allocate();
+            object_instance.batch_index = j;
+            object_instance.entity_index = this.batches[j].entity_ids[k];
+            this.object_instances.push(object_instance);
+          }
         }
-      });
+
+        // This ensures that we render transparent materials after opaque materials
+        this.material_buckets.sort((a, b) => {
+          const a_material = ResourceCache.get().fetch(CacheTypes.MATERIAL, a);
+          const b_material = ResourceCache.get().fetch(CacheTypes.MATERIAL, b);
+          return a_material.family - b_material.family;
+        });
+
+        this.has_transparency = this.material_buckets.find((bucket) => {
+          const material = ResourceCache.get().fetch(
+            CacheTypes.MATERIAL,
+            bucket
+          );
+          return material.family === MaterialFamilyType.Transparent;
+        });
+      }
+
+      this.needs_sort = false;
 
       this.indirect_draw_object.update_buffers(
         context,
@@ -266,13 +320,13 @@ export class MeshTaskQueue {
 
   remove(entity) {
     // Filter out tasks associated with the given entity
-    this.tasks = this.tasks.filter(task => task.entity !== entity);
-    
+    this.tasks = this.tasks.filter((task) => task.entity !== entity);
+
     // Reset the batches and object instances if there are no tasks left
     if (this.tasks.length == 0) {
-      this.batches = [];
-      this.object_instances = [];
-      this.material_buckets.clear();
+      this.batches.length = 0;
+      this.object_instances.length = 0;
+      this.material_buckets.length = 0;
     }
   }
 

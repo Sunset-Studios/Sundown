@@ -37,7 +37,8 @@ fn vertex(v_out: ptr<function, VertexOutput>) -> VertexOutput {
 }
 
 fn fragment(v_out: VertexOutput, f_out: ptr<function, FragmentOutput>) -> FragmentOutput {
-    f_out.albedo = vec4f(v_out.color.rgb, 0.3);
+    f_out.albedo = vec4f(v_out.color.rgb, 0.5);
+    f_out.emissive = vec4f(0.7, 0.0, 0.0, 1.0);
 
     f_out.smra.r = 0.9;
     f_out.smra.g = 0.9;

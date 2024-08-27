@@ -3,11 +3,12 @@
 
 @group(1) @binding(0) var skybox_texture: texture_2d<f32>;
 @group(1) @binding(1) var albedo_texture: texture_2d<f32>;
-@group(1) @binding(2) var smra_texture: texture_2d<f32>;
-@group(1) @binding(3) var normal_texture: texture_2d<f32>;
-@group(1) @binding(4) var position_texture: texture_2d<f32>;
-@group(1) @binding(5) var depth_texture: texture_depth_2d;
-@group(1) @binding(6) var<storage, read> lights_buffer: array<Light>;
+@group(1) @binding(2) var emissive_texture: texture_2d<f32>;
+@group(1) @binding(3) var smra_texture: texture_2d<f32>;
+@group(1) @binding(4) var normal_texture: texture_2d<f32>;
+@group(1) @binding(5) var position_texture: texture_2d<f32>;
+@group(1) @binding(6) var depth_texture: texture_depth_2d;
+@group(1) @binding(7) var<storage, read> lights_buffer: array<Light>;
 
 struct VertexOutput {
     @builtin(position) position: vec4f,
@@ -34,8 +35,10 @@ struct FragmentOutput {
     var tex_sky = textureSample(skybox_texture, global_sampler, v_out.uv);
 
     var tex_albedo = textureSample(albedo_texture, global_sampler, v_out.uv);
-    var albedo = tex_albedo.xyz;
-    var emissive = tex_albedo.w;
+    var albedo = tex_albedo.rgb;
+
+    var tex_emissive = textureSample(emissive_texture, global_sampler, v_out.uv);
+    var emissive = tex_emissive.r;
     
 	var tex_normal = textureSample(normal_texture, global_sampler, v_out.uv);
     var normal = tex_normal.xyz;

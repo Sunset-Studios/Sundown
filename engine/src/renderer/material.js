@@ -7,6 +7,11 @@ import { hash_data, hash_value } from "../utility/hashing.js";
 import { Name } from "../utility/names.js";
 import { Texture } from "./texture.js";
 
+export const MaterialFamilyType = {
+  Opaque: 0,
+  Transparent: 1,
+};
+
 export class MaterialTemplate {
   static templates = new Map();
 
@@ -14,6 +19,7 @@ export class MaterialTemplate {
     context,
     name,
     shader,
+    family = MaterialFamilyType.Opaque,
     pipeline_state_config = {},
     parent = null
   ) {
@@ -23,6 +29,7 @@ export class MaterialTemplate {
     this.pipeline_state_config = pipeline_state_config;
     this.resources = [];
     this.parent = parent;
+    this.family = family;
   }
 
   add_resource(resource) {
@@ -37,6 +44,7 @@ export class MaterialTemplate {
     context,
     name,
     shader_path,
+    family = MaterialFamilyType.Opaque,
     pipeline_state_config = {},
     parent_name = null
   ) {
@@ -58,11 +66,15 @@ export class MaterialTemplate {
     if (shader_path) {
       shader = Shader.create(context, shader_path);
     }
+    if (shader.defines['TRANSPARENT']) {
+      family = MaterialFamilyType.Transparent;
+    }
 
     const template = new MaterialTemplate(
       context,
       name,
       shader,
+      family,
       pipeline_state_config,
       parent
     );
@@ -95,7 +107,7 @@ export class MaterialTemplate {
     return template;
   }
 
-  create_pipeline_state(context, bind_group_layouts, output_targets = []) {
+  create_pipeline_state(context, bind_group_layouts, output_targets = [], depth_stencil_options = {}) {
     let all_bind_group_layouts = [bind_group_layouts[0]];
 
     // Set material binding group inputs
@@ -175,10 +187,16 @@ export class MaterialTemplate {
     // Set material shader fragment output targets
     const targets = output_targets
       .filter((target) => target.config.type !== "depth")
-      .map((target) => ({
-        name: target.config.name,
-        format: target.config.format,
-      }));
+      .map((target) => {
+        let t = {
+          name: target.config.name,
+          format: target.config.format,
+        };
+        if (target.config.blend) {
+          t.blend = target.config.blend;
+        }
+        return t;
+      });
 
     const fragment_outputs = this.reflection.entry.fragment[0].outputs;
     fragment_outputs.forEach((output, i) => {
@@ -243,16 +261,16 @@ export class MaterialTemplate {
           "depth32float",
         depthWriteEnabled:
           this.pipeline_state_config.depth_stencil_target.depth_write_enabled ??
-          true,
+          (depth_stencil_options.depth_write_enabled ?? true),
         depthCompare:
           this.pipeline_state_config.depth_stencil_target.depth_compare ??
-          "less",
+          (depth_stencil_options.depth_compare ?? "less"),
       };
     } else if (depth_target) {
       pipeline_descriptor.depthStencil = {
         format: depth_target.config.format,
-        depthWriteEnabled: true,
-        depthCompare: "less",
+        depthWriteEnabled: depth_stencil_options.depth_write_enabled ?? true,
+        depthCompare: depth_stencil_options.depth_compare ?? "less",
       };
     }
 
@@ -284,6 +302,9 @@ export class Material {
     this.sampler_data = new Map();
     this.state_hash = 0;
     this.needs_bind_group_update = false;
+    // Depending on behaviors based on the family, it might be useful to have it exposed like this for derived materials.
+    // Otherwise, TODO so we only use the family from the template.
+    this.family = this.template.family;
     this._update_state_hash();
   }
 
@@ -340,7 +361,10 @@ export class Material {
       bind_groups
         .filter((bind_group) => bind_group !== null)
         .map((bind_group) => bind_group.layout),
-      output_targets
+      output_targets,
+      {
+        depth_write_enabled: this.family === MaterialFamilyType.Opaque,
+      }
     );
   }
 
@@ -400,7 +424,7 @@ export class Material {
     return this.state_hash;
   }
 
-  static create(name, template_name, force_new = false) {
+  static create(name, template_name, options = {}) {
     const template = MaterialTemplate.get_template(template_name);
     if (!template) {
       throw new Error(`Material template '${template_name}' not found`);
@@ -409,7 +433,7 @@ export class Material {
     const material_id = Name.from(name);
     let material = ResourceCache.get().fetch(CacheTypes.MATERIAL, material_id);
 
-    if (force_new && material) {
+    if (options.force_new && material) {
       Material.materials.delete(material_id);
       ResourceCache.get().remove(CacheTypes.MATERIAL, material_id);
       material = null;
@@ -417,6 +441,9 @@ export class Material {
 
     if (!material) {
       material = new Material(template);
+      if (options.family) {
+        material.family = options.family;
+      }
       ResourceCache.get().store(CacheTypes.MATERIAL, material_id, material);
       Material.materials.set(material_id, material);
     }

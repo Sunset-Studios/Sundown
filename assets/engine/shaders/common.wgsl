@@ -21,6 +21,7 @@ struct View {
 struct FrameInfo {
     view_index: u32,
     time: f32,
+    resolution: vec2f,
 };
 
 struct EntityTransform {
@@ -39,6 +40,16 @@ struct ObjectInstance {
 struct CompactedObjectInstance {
     entity: u32,
 };
+
+// 4x4 Bayer matrix for dithering
+const bayer_matrix = array<f32, 16>(
+    0.0 / 16.0, 8.0 / 16.0, 2.0 / 16.0, 10.0 / 16.0,
+    12.0 / 16.0, 4.0 / 16.0, 14.0 / 16.0, 6.0 / 16.0,
+    3.0 / 16.0, 11.0 / 16.0, 1.0 / 16.0, 9.0 / 16.0,
+    15.0 / 16.0, 7.0 / 16.0, 13.0 / 16.0, 5.0 / 16.0
+);
+
+const epsilon = 1e-5;
 
 @group(0) @binding(0) var<storage, read> vertex_buffer: array<Vertex>;
 @group(0) @binding(1) var<storage, read> view_buffer: array<View>;
@@ -82,4 +93,35 @@ fn random_seed(seed: u32) -> u32 {
     let x = seed * 1103515245u + 12345u;
     let y = x ^ (x >> 16u);
     return y * 2654435769u;
+}
+
+fn dither_mask(uv: vec2f, resolution: vec2f) -> f32 {
+    // Scale UV coordinates to the size of the screen
+    let scaled_uv = uv * resolution;
+
+    // Calculate the index in the Bayer matrix
+    let x = u32(scaled_uv.x) % 4u;
+    let y = u32(scaled_uv.y) % 4u;
+    let index = y * 4u + x;
+
+    // Return the dither value from the Bayer matrix
+    return bayer_matrix[index];
+}
+
+fn approx(a: f32, b: f32) -> bool {
+    return abs(a - b) <= select(abs(b), abs(a), abs(a) < abs(b)) * epsilon; 
+}
+
+// get the max value between three values
+fn max3(v: vec3f) -> f32 {
+    return max(max(v.x, v.y), v.z);
+}
+
+fn isinf(x: f32) -> bool {
+    return x == x && x != 0.0 && x * 2.0 == x;
+}
+
+// For vector types:
+fn isinf3(v: vec3<f32>) -> vec3<bool> {
+    return vec3<bool>(isinf(v.x), isinf(v.y), isinf(v.z));
 }

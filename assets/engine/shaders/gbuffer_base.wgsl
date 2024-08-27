@@ -15,10 +15,14 @@ struct VertexOutput {
 
 struct FragmentOutput {
     @location(0) albedo: vec4f,
-    @location(1) smra: vec4f,
-    @location(2) position: vec4f,
-    @location(3) normal: vec4f,
-    @location(4) entity_id: u32,
+    @location(1) emissive: vec4f,
+    @location(2) smra: vec4f,
+    @location(3) position: vec4f,
+    @location(4) normal: vec4f,
+    @location(5) entity_id: u32,
+#if TRANSPARENT
+    @location(6) transparency_reveal: f32,
+#endif
 }
 
 @group(1) @binding(0) var<storage, read> entity_transforms: array<EntityTransform>;
@@ -69,5 +73,15 @@ fn fragment(v_out: VertexOutput, f_out: ptr<function, FragmentOutput>) -> Fragme
     output.normal = vec4f(v_out.normal.xyz, 1.0);
     output.entity_id = v_out.instance_id;
 
-    return fragment(v_out, &output);
+    var post_material_output = fragment(v_out, &output);
+
+#if TRANSPARENT
+    let weight = clamp(pow(min(1.0, post_material_output.albedo.a * 10.0) + 0.01, 3.0) * 1e8 * pow(1.0 - v_out.position.z * 0.9, 3.0), 1e-2, 3e3); 
+    post_material_output.transparency_reveal = post_material_output.albedo.a;
+    post_material_output.albedo = vec4f(post_material_output.albedo.rgb * post_material_output.albedo.a, post_material_output.albedo.a) * weight;
+    post_material_output.normal.w = 0.0; // Disable deferred standard lighting for transparent objects
+    // TODO: Run forward transparent lighting instead for this pixel 
+#endif
+
+    return post_material_output;
 }

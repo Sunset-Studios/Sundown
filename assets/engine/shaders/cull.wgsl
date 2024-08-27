@@ -85,8 +85,9 @@ fn is_occluded(center: vec4<f32>, radius: f32) -> u32 {
     let sphere_depth = projected_front.z / projected_front.w;
 
     // if the depth of the sphere is in front of the depth pyramid value, then the object is visible
-    let bias = 0.001;
+    let bias = 0.01;
     let visible = u32(sphere_depth < depth + bias);
+
 
     return (1u - visible) * u32(draw_cull_constants.culling_enabled);
 }

@@ -77,7 +77,13 @@ import { Buffer, BufferFlags } from "./buffer.js";
 import { Texture, ImageFlags } from "./texture.js";
 import { Shader, ShaderResourceType } from "./shader.js";
 import { Name } from "../utility/names.js";
+import { StaticIntArray } from "../memory/container.js";
 import _ from "lodash";
+import { profile_scope } from "../utility/performance.js";
+
+const max_image_resources = 256;
+const max_buffer_resources = 256;
+const max_render_passes = 256;
 
 /**
  * Creates a unique handle for a graph resource.
@@ -377,8 +383,6 @@ const RGPass = Object.freeze({
  * For this reason the pass cache is the only thing we don't clear out per-frame. Any resource that need to survive multiple frames
  * should be allocated externally and registered to the render graph as external resources.
  * @typedef {Object} RGRegistry
- * @property {Array} image_resources - Array of image resources.
- * @property {Array} buffer_resources - Array of buffer resources.
  * @property {Array} render_passes - Array of render passes.
  * @property {Array} all_resource_handles - Array of all resource handles.
  * @property {Map} resource_metadata - Map of resource metadata.
@@ -387,10 +391,10 @@ const RGPass = Object.freeze({
  * @property {boolean} b_global_bind_group_bound - Whether the global bind group is bound.
  */
 const RGRegistry = Object.freeze({
-  image_resources: [],
-  buffer_resources: [],
   render_passes: [],
-  all_resource_handles: [],
+  all_resource_handles: new StaticIntArray(
+    max_image_resources + max_buffer_resources
+  ),
   resource_metadata: new Map(),
   all_bindless_resource_handles: [],
   resource_deletion_queue: new ExecutionQueue(),
@@ -425,14 +429,17 @@ export class RenderGraph {
     this.queued_commands = [];
 
     this.image_resource_allocator = new FrameAllocator(
-      256,
-      _.cloneDeep(RGResource)
+      max_image_resources,
+      _.clone(RGResource)
     );
     this.buffer_resource_allocator = new FrameAllocator(
-      256,
-      _.cloneDeep(RGResource)
+      max_buffer_resources,
+      _.clone(RGResource)
     );
-    this.render_pass_allocator = new FrameAllocator(128, _.cloneDeep(RGPass));
+    this.render_pass_allocator = new FrameAllocator(
+      max_render_passes,
+      _.cloneDeep(RGPass)
+    );
   }
 
   /**
@@ -493,29 +500,32 @@ export class RenderGraph {
    * const imageHandle = renderGraph.create_image(imageConfig);
    */
   create_image(config) {
-    const new_resource = this.image_resource_allocator.allocate();
-    new_resource.config = { ..._.cloneDeep(RGImageConfig), ...config };
+    let new_resource;
 
-    const index = this.registry.image_resources.length;
-    this.registry.image_resources.push(new_resource);
+    const index = this.image_resource_allocator.length;
+
+    new_resource = this.image_resource_allocator.allocate();
+    new_resource.config = { ...RGImageConfig, ...config };
+
     new_resource.handle = create_graph_resource_handle(
       index,
       ResourceType.Image,
       1
     );
 
-    this.registry.all_resource_handles.push(new_resource.handle);
+    this.registry.all_resource_handles.add(new_resource.handle);
     this.registry.resource_metadata.set(
       new_resource.handle,
       _.cloneDeep(RGResourceMetadata)
     );
-    this.registry.resource_metadata.get(new_resource.handle).b_is_bindless =
-      config.b_is_bindless;
-    this.registry.resource_metadata.get(new_resource.handle).b_is_persistent =
-      (new_resource.config.flags & ImageFlags.Transient) === 0;
-    this.registry.resource_metadata.get(
+
+    const resource_metadata = this.registry.resource_metadata.get(
       new_resource.handle
-    ).max_frame_lifetime = config.max_frame_lifetime;
+    );
+    resource_metadata.b_is_bindless = config.b_is_bindless;
+    resource_metadata.b_is_persistent =
+      (new_resource.config.flags & ImageFlags.Transient) === 0;
+    resource_metadata.max_frame_lifetime = config.max_frame_lifetime;
 
     return new_resource.handle;
   }
@@ -533,34 +543,37 @@ export class RenderGraph {
    * const imageHandle = renderGraph.register_image("myImage");
    */
   register_image(image) {
+    let new_resource;
+
     const physical_id = Name.from(image);
     const image_obj = ResourceCache.get().fetch(CacheTypes.IMAGE, physical_id);
-    const new_resource = this.image_resource_allocator.allocate();
+
+    const index = this.image_resource_allocator.length;
+
+    new_resource = this.image_resource_allocator.allocate();
     new_resource.config = {
-      ..._.cloneDeep(RGImageConfig),
+      ...RGImageConfig,
       ...image_obj.config,
     };
 
-    const index = this.registry.image_resources.length;
-    this.registry.image_resources.push(new_resource);
     new_resource.handle = create_graph_resource_handle(
       index,
       ResourceType.Image,
       1
     );
 
-    this.registry.all_resource_handles.push(new_resource.handle);
+    this.registry.all_resource_handles.add(new_resource.handle);
     this.registry.resource_metadata.set(
       new_resource.handle,
       _.cloneDeep(RGResourceMetadata)
     );
-    this.registry.resource_metadata.get(new_resource.handle).physical_id =
-      physical_id;
-    this.registry.resource_metadata.get(
+
+    const resource_metadata = this.registry.resource_metadata.get(
       new_resource.handle
-    ).b_is_persistent = true;
-    this.registry.resource_metadata.get(new_resource.handle).b_is_bindless =
-      new_resource.config.b_is_bindless;
+    );
+    resource_metadata.physical_id = physical_id;
+    resource_metadata.b_is_persistent = true;
+    resource_metadata.b_is_bindless = new_resource.config.b_is_bindless;
 
     return new_resource.handle;
   }
@@ -584,29 +597,32 @@ export class RenderGraph {
    * const bufferHandle = renderGraph.create_buffer(bufferConfig);
    */
   create_buffer(config) {
-    const new_resource = this.buffer_resource_allocator.allocate();
-    new_resource.config = { ..._.cloneDeep(RGBufferConfig), ...config };
+    let new_resource;
 
-    const index = this.registry.buffer_resources.length;
-    this.registry.buffer_resources.push(new_resource);
+    const index = this.buffer_resource_allocator.length;
+
+    new_resource = this.buffer_resource_allocator.allocate();
+    new_resource.config = { ...RGBufferConfig, ...config };
+
     new_resource.handle = create_graph_resource_handle(
       index,
       ResourceType.Buffer,
       1
     );
 
-    this.registry.all_resource_handles.push(new_resource.handle);
+    this.registry.all_resource_handles.add(new_resource.handle);
     this.registry.resource_metadata.set(
       new_resource.handle,
       _.cloneDeep(RGResourceMetadata)
     );
-    this.registry.resource_metadata.get(new_resource.handle).b_is_bindless =
-      config.b_is_bindless;
-    this.registry.resource_metadata.get(new_resource.handle).b_is_persistent =
-      (new_resource.config.flags & BufferFlags.Transient) === 0;
-    this.registry.resource_metadata.get(
+
+    const resource_metadata = this.registry.resource_metadata.get(
       new_resource.handle
-    ).max_frame_lifetime = config.max_frame_lifetime;
+    );
+    resource_metadata.b_is_bindless = config.b_is_bindless;
+    resource_metadata.b_is_persistent =
+      (new_resource.config.flags & BufferFlags.Transient) === 0;
+    resource_metadata.max_frame_lifetime = config.max_frame_lifetime;
 
     return new_resource.handle;
   }
@@ -624,37 +640,40 @@ export class RenderGraph {
    * const bufferHandle = renderGraph.register_buffer(existingBuffer);
    */
   register_buffer(buffer) {
+    let new_resource;
+
     const physical_id = Name.from(buffer);
     const buffer_obj = ResourceCache.get().fetch(
       CacheTypes.BUFFER,
       physical_id
     );
-    const new_resource = this.buffer_resource_allocator.allocate();
+
+    const index = this.buffer_resource_allocator.length;
+
+    new_resource = this.buffer_resource_allocator.allocate();
     new_resource.config = {
-      ..._.cloneDeep(RGBufferConfig),
+      ...RGBufferConfig,
       ...buffer_obj.config,
     };
 
-    const index = this.registry.buffer_resources.length;
-    this.registry.buffer_resources.push(new_resource);
     new_resource.handle = create_graph_resource_handle(
       index,
       ResourceType.Buffer,
       1
     );
 
-    this.registry.all_resource_handles.push(new_resource.handle);
+    this.registry.all_resource_handles.add(new_resource.handle);
     this.registry.resource_metadata.set(
       new_resource.handle,
       _.cloneDeep(RGResourceMetadata)
     );
-    this.registry.resource_metadata.get(new_resource.handle).physical_id =
-      physical_id;
-    this.registry.resource_metadata.get(
+
+    const resource_metadata = this.registry.resource_metadata.get(
       new_resource.handle
-    ).b_is_persistent = true;
-    this.registry.resource_metadata.get(new_resource.handle).b_is_bindless =
-      new_resource.config.b_is_bindless;
+    );
+    resource_metadata.physical_id = physical_id;
+    resource_metadata.b_is_persistent = true;
+    resource_metadata.b_is_bindless = new_resource.config.b_is_bindless;
 
     return new_resource.handle;
   }
@@ -679,6 +698,8 @@ export class RenderGraph {
    * );
    */
   add_pass(name, pass_type, params, execution_callback) {
+    let index;
+
     const pass = this.render_pass_allocator.allocate();
     pass.pass_config = { name: name, flags: pass_type, attachments: [] };
     pass.parameters = { ..._.cloneDeep(RGPassParameters), ...params };
@@ -688,10 +709,21 @@ export class RenderGraph {
     pass.pipeline_state_id = 0;
     pass.reference_count = 0;
 
-    const index = this.registry.render_passes.length;
+    index = this.registry.render_passes.length;
     this.registry.render_passes.push(pass);
     this.non_culled_passes.push(index);
     pass.handle = index;
+
+    if (pass.parameters.inputs) {
+      pass.parameters.inputs = pass.parameters.inputs.filter((input) => {
+        return input !== null;
+      });
+    }
+    if (pass.parameters.outputs) {
+      pass.parameters.outputs = pass.parameters.outputs.filter((output) => {
+        return output !== null;
+      });
+    }
 
     if (params) {
       this._update_reference_counts(pass);
@@ -812,7 +844,8 @@ export class RenderGraph {
 
   _update_reference_counts(pass) {
     pass.reference_count += pass.parameters.outputs.length;
-    for (const resource of pass.parameters.inputs) {
+    for (let i = 0; i < pass.parameters.inputs.size; i++) {
+      const resource = pass.parameters.inputs[i];
       if (this.registry.resource_metadata.has(resource)) {
         const metadata = this.registry.resource_metadata.get(resource);
         metadata.reference_count += 1;
@@ -821,13 +854,15 @@ export class RenderGraph {
   }
 
   _update_resource_param_producers_and_consumers(pass) {
-    for (const resource of pass.parameters.inputs) {
+    for (let i = 0; i < pass.parameters.inputs.size; i++) {
+      const resource = pass.parameters.inputs[i];
       if (this.registry.resource_metadata.has(resource)) {
         const metadata = this.registry.resource_metadata.get(resource);
         metadata.consumers.push(pass.handle);
       }
     }
-    for (const resource of pass.parameters.outputs) {
+    for (let i = 0; i < pass.parameters.outputs.size; i++) {
+      const resource = pass.parameters.outputs[i];
       if (this.registry.resource_metadata.has(resource)) {
         const metadata = this.registry.resource_metadata.get(resource);
         metadata.producers.push(pass.handle);
@@ -854,7 +889,9 @@ export class RenderGraph {
 
     // Lambda to cull a producer pass when it is no longer referenced and pop its inputs onto the unused stack
     const decrement_producer_and_subresource_ref_counts = (producers) => {
-      for (const pass_handle of producers) {
+      for (let i = 0; i < producers.size; i++) {
+        const pass_handle = producers[i];
+
         const producer_pass = this.registry.render_passes[pass_handle];
 
         if (producer_pass.parameters.b_force_keep_pass) {
@@ -882,7 +919,8 @@ export class RenderGraph {
     };
 
     // Go through all resources and push any resources that are not referenced onto the unused stack
-    for (const resource of this.registry.all_resource_handles) {
+    for (let i = 0; i < this.registry.all_resource_handles.length; i++) {
+      const resource = this.registry.all_resource_handles.get(i);
       if (this.registry.resource_metadata.has(resource)) {
         if (
           this.registry.resource_metadata.get(resource).reference_count === 0
@@ -914,7 +952,8 @@ export class RenderGraph {
   }
 
   _compute_resource_first_and_last_users() {
-    for (const resource of this.registry.all_resource_handles) {
+    for (let i = 0; i < this.registry.all_resource_handles.length; i++) {
+      const resource = this.registry.all_resource_handles.get(i);
       if (this.registry.resource_metadata.has(resource)) {
         const metadata = this.registry.resource_metadata.get(resource);
         if (metadata.reference_count === 0) {
@@ -923,7 +962,9 @@ export class RenderGraph {
 
         metadata.first_user = Number.MAX_SAFE_INTEGER;
         metadata.last_user = Number.MIN_SAFE_INTEGER;
-        for (const pass of metadata.producers) {
+        for (let i = 0; i < metadata.producers.size; i++) {
+          const pass = metadata.producers[i];
+
           if (pass < metadata.first_user) {
             metadata.first_user = pass;
           }
@@ -931,7 +972,9 @@ export class RenderGraph {
             metadata.last_user = pass;
           }
         }
-        for (const pass of metadata.consumers) {
+        for (let i = 0; i < metadata.consumers.size; i++) {
+          const pass = metadata.consumers[i];
+
           if (pass < metadata.first_user) {
             metadata.first_user = pass;
           }
@@ -954,32 +997,35 @@ export class RenderGraph {
    * @throws {Error} If there's an error during pass execution or command submission.
    */
   submit(context) {
-    this._add_queued_post_commands();
+    profile_scope("RenderGraph.submit", () => {
+      this._add_queued_post_commands();
 
-    this._compile();
+      this._compile();
 
-    if (this.non_culled_passes.length === 0) {
-      return;
-    }
+      if (this.non_culled_passes.length === 0) {
+        return;
+      }
 
-    const encoder = CommandQueue.create_encoder(
-      context,
-      "render_graph_encoder"
-    );
-
-    const frame_data = _.cloneDeep(RGFrameData);
-    frame_data.context = context;
-    frame_data.resource_deletion_queue = this.registry.resource_deletion_queue;
-
-    for (const pass_handle of this.non_culled_passes) {
-      this._execute_pass(
-        this.registry.render_passes[pass_handle],
-        frame_data,
-        encoder
+      const encoder = CommandQueue.create_encoder(
+        context,
+        "render_graph_encoder"
       );
-    }
 
-    CommandQueue.submit(context, encoder);
+      const frame_data = _.cloneDeep(RGFrameData);
+      frame_data.context = context;
+      frame_data.resource_deletion_queue =
+        this.registry.resource_deletion_queue;
+
+      for (const pass_handle of this.non_culled_passes) {
+        this._execute_pass(
+          this.registry.render_passes[pass_handle],
+          frame_data,
+          encoder
+        );
+      }
+
+      CommandQueue.submit(context, encoder);
+    });
   }
 
   /**
@@ -994,12 +1040,10 @@ export class RenderGraph {
 
     this.non_culled_passes.length = 0;
 
-    this.registry.all_resource_handles.length = 0;
-    this.registry.buffer_resources.length = 0;
-    this.registry.image_resources.length = 0;
     this.registry.render_passes.length = 0;
     this.registry.resource_metadata.clear();
 
+    this.registry.all_resource_handles.reset();
     this.image_resource_allocator.reset();
     this.buffer_resource_allocator.reset();
     this.render_pass_allocator.reset();
@@ -1111,7 +1155,8 @@ export class RenderGraph {
     const resource_index = get_graph_resource_index(resource);
 
     if (resource_type === ResourceType.Buffer) {
-      const buffer_resource = this.registry.buffer_resources[resource_index];
+      const buffer_resource =
+        this.buffer_resource_allocator.get(resource_index);
       const buffer_metadata = this.registry.resource_metadata.get(resource);
       if (buffer_metadata.physical_id === 0) {
         buffer_metadata.physical_id = Name.from(buffer_resource.config.name);
@@ -1131,7 +1176,7 @@ export class RenderGraph {
         }
       }
     } else if (resource_type === ResourceType.Image) {
-      const image_resource = this.registry.image_resources[resource_index];
+      const image_resource = this.image_resource_allocator.get(resource_index);
       const image_metadata = this.registry.resource_metadata.get(resource);
       const is_local_load =
         (image_resource.config.flags & ImageFlags.LocalLoad) !==
@@ -1172,7 +1217,7 @@ export class RenderGraph {
     const resource_index = get_graph_resource_index(resource);
 
     if (resource_type === ResourceType.Image) {
-      const image_resource = this.registry.image_resources[resource_index];
+      const image_resource = this.image_resource_allocator.get(resource_index);
       const image = ResourceCache.get().fetch(
         CacheTypes.IMAGE,
         this.registry.resource_metadata.get(resource).physical_id
@@ -1206,14 +1251,15 @@ export class RenderGraph {
     const resource_index = get_graph_resource_index(resource);
 
     if (resource_type === ResourceType.Image) {
-      const image_resource = this.registry.image_resources[resource_index];
+      const image_resource = this.image_resource_allocator.get(resource_index);
       if (image_resource.config.is_bindless) {
         pass.parameters.bindless_inputs.push(resource);
       } else {
         pass.parameters.pass_inputs.push(resource);
       }
     } else if (resource_type === ResourceType.Buffer) {
-      const buffer_resource = this.registry.buffer_resources[resource_index];
+      const buffer_resource =
+        this.buffer_resource_allocator.get(resource_index);
       if (buffer_resource.config.b_is_bindless) {
         pass.parameters.bindless_inputs.push(resource);
       } else {
@@ -1468,12 +1514,15 @@ export class RenderGraph {
             };
             if (shader_setup.attachment_blend) {
               attachment_desc.blend = shader_setup.attachment_blend;
+            } else if (image.config.blend) {
+              attachment_desc.blend = image.config.blend;
             }
             return attachment_desc;
           });
 
         let depth_stencil_target = null;
         if (pass.pass_config.depth_stencil_attachment) {
+          console.log(pass)
           const image = ResourceCache.get().fetch(
             CacheTypes.IMAGE,
             pass.pass_config.depth_stencil_attachment.image
@@ -1538,7 +1587,6 @@ export class RenderGraph {
       this.pass_cache.bind_groups = new Map();
     }
   }
-
 
   _setup_global_bind_group(pass, frame_data) {
     const pass_binds = this.pass_cache.bind_groups.get(pass.pass_config.name);

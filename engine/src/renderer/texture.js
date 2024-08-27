@@ -79,6 +79,7 @@ export class TextureSampler {
  * @property {boolean} b_is_bindless - Whether the image is bindless.
  * @property {number} flags - Additional flags for the image (see ImageFlags enum).
  * @property {Object} clear_value - Clear value for the image (e.g., { r: 0, g: 0, b: 0, a: 1 }).
+ * @property {Object} blend - Blend configuration for the image if used as a render target (e.g., { src_factor: "one", dst_factor: "zero" }).
  * @property {string} store_op - Store operation for the image (e.g., "store" or "discard").
  * @property {string} load_op - Load operation for the image (e.g., "load" or "clear").
  */
@@ -95,6 +96,7 @@ class TextureConfig {
   b_is_bindless = false;
   flags = ImageFlags.None;
   clear_value = { r: 0, g: 0, b: 0, a: 1 };
+  blend = null;
   load_op = "clear";
   store_op = "store";
   b_one_view_per_mip = false;

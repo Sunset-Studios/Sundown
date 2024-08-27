@@ -36,6 +36,10 @@ class FrameAllocator {
         this.offset = 0;
     }
 
+    get length() {
+        return this.offset;
+    }
+
     /**
      * Creates an iterator for the allocated objects in the buffer.
      * @returns {Iterator} An iterator for the allocated objects.

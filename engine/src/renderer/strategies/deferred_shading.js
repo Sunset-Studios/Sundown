@@ -8,7 +8,7 @@ import {
   SharedViewBuffer,
   SharedEnvironmentMapData,
 } from "../../core/shared_data.js";
-import { Material } from "../material.js";
+import { Material, MaterialFamilyType } from "../material.js";
 import { npot, clamp } from "../../utility/math.js";
 import { profile_scope } from "../../utility/performance.js";
 import { global_dispatcher } from "../../core/dispatcher.js";
@@ -20,10 +20,13 @@ export class DeferredShadingStrategy {
   force_recreate = false;
 
   setup(context, render_graph) {
-    global_dispatcher.on('resolution_change', this._recreate_persistent_resources.bind(this));
+    global_dispatcher.on(
+      "resolution_change",
+      this._recreate_persistent_resources.bind(this)
+    );
     this._recreate_persistent_resources(render_graph);
   }
-  
+
   draw(context, render_graph) {
     profile_scope("DeferredShadingStrategy.draw", () => {
       if (!this.initialized) {
@@ -47,37 +50,112 @@ export class DeferredShadingStrategy {
         light_gpu_data.gpu_buffer.config.name
       );
 
-      const object_instance_buffer =
-        MeshTaskQueue.get().get_object_instance_buffer();
-      const object_instances = render_graph.register_buffer(
-        object_instance_buffer.config.name
-      );
-
-      const indirect_draw_buffer =
-        MeshTaskQueue.get().get_indirect_draw_buffer();
-      const indirect_draws = render_graph.register_buffer(
-        indirect_draw_buffer.config.name
-      );
-
-      const compacted_object_instances =
-        MeshTaskQueue.get().get_compacted_object_instance_buffer();
-      const compacted_object_instance_buffer = render_graph.register_buffer(
-        compacted_object_instances.config.name
-      );
-
       let skybox_image = null;
-      let main_hzb_image = null;
-      let main_albedo_image = null;
-      let main_depth_image = null;
-      let main_smra_image = null;
-      let main_cc_image = null;
-      let main_normal_image = null;
-      let main_position_image = null;
-      let main_entity_id_image = null;
       let post_lighting_image_desc = null;
       let post_bloom_color_desc = null;
 
       const image_extent = context.get_canvas_resolution();
+
+      let main_hzb_image = render_graph.register_image(
+        this.hzb_image.config.name
+      );
+      let main_albedo_image = render_graph.create_image({
+        name: "main_albedo",
+        format: "rgba16float",
+        width: image_extent.width,
+        height: image_extent.height,
+        usage:
+          GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+        force: this.force_recreate,
+      });
+      let main_emissive_image = render_graph.create_image({
+        name: "main_emissive",
+        format: "rgba16float",
+        width: image_extent.width,
+        height: image_extent.height,
+        usage:
+          GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+        force: this.force_recreate,
+      });
+      let main_smra_image = render_graph.create_image({
+        name: "main_smra",
+        format: "rgba16float",
+        width: image_extent.width,
+        height: image_extent.height,
+        usage:
+          GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+        force: this.force_recreate,
+      });
+      let main_normal_image = render_graph.create_image({
+        name: "main_normal",
+        format: "rgba16float",
+        width: image_extent.width,
+        height: image_extent.height,
+        usage:
+          GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+        force: this.force_recreate,
+      });
+      let main_position_image = render_graph.create_image({
+        name: "main_position",
+        format: "rgba16float",
+        width: image_extent.width,
+        height: image_extent.height,
+        usage:
+          GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+        force: this.force_recreate,
+      });
+      let main_transparency_accum_image = render_graph.create_image({
+        name: "main_transparency_accum",
+        format: "rgba16float",
+        width: image_extent.width,
+        height: image_extent.height,
+        usage:
+          GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+        blend: {
+          color: {
+            srcFactor: "one",
+            dstFactor: "one",
+          },
+          alpha: {
+            srcFactor: "one",
+            dstFactor: "one",
+          },
+        },
+        force: this.force_recreate,
+      });
+      let main_transparency_reveal_image = render_graph.create_image({
+        name: "main_transparency_reveal",
+        format: "r8unorm",
+        width: image_extent.width,
+        height: image_extent.height,
+        usage:
+          GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+        clear_value: { r: 1.0, g: 1.0, b: 1.0, a: 1.0 },
+        blend: {
+          color: {
+            srcfactor: "zero",
+            dstfactor: "one-minus-src",
+          },
+          alpha: {
+            srcfactor: "zero",
+            dstfactor: "one-minus-src",
+          },
+        },
+        force: this.force_recreate,
+      });
+      let main_depth_image = render_graph.create_image({
+        name: "main_depth",
+        format: "depth32float",
+        width: image_extent.width,
+        height: image_extent.height,
+        usage:
+          GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+        force: this.force_recreate,
+      });
+
+      let main_entity_id_image = render_graph.register_image(
+        this.entity_id_image.config.name
+      );
 
       // Skybox Pass
       {
@@ -124,8 +202,26 @@ export class DeferredShadingStrategy {
         );
       }
 
+      const object_instance_buffer =
+        MeshTaskQueue.get().get_object_instance_buffer();
+      const object_instances = render_graph.register_buffer(
+        object_instance_buffer.config.name
+      );
+
+      const indirect_draw_buffer =
+        MeshTaskQueue.get().get_indirect_draw_buffer();
+      const indirect_draws = render_graph.register_buffer(
+        indirect_draw_buffer.config.name
+      );
+
+      const compacted_object_instances =
+        MeshTaskQueue.get().get_compacted_object_instance_buffer();
+      const compacted_object_instance_buffer = render_graph.register_buffer(
+        compacted_object_instances.config.name
+      );
+
       // Mesh cull pass
-      {
+      if (MeshTaskQueue.get().get_total_draw_count() > 0) {
         // Compute cull pass
         const shader_setup = {
           pipeline_shaders: {
@@ -134,11 +230,6 @@ export class DeferredShadingStrategy {
             },
           },
         };
-
-        // Needs to be persistent, so not initialized with the transient flag
-        main_hzb_image = render_graph.register_image(
-          this.hzb_image.config.name
-        );
 
         const draw_cull_data = render_graph.create_buffer({
           name: `draw_cull_data`,
@@ -199,59 +290,10 @@ export class DeferredShadingStrategy {
             },
           },
         };
-
-        main_albedo_image = render_graph.create_image({
-          name: "main_albedo",
-          format: "rgba16float",
-          width: image_extent.width,
-          height: image_extent.height,
-          usage:
-            GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
-          force: this.force_recreate,
-        });
-        main_smra_image = render_graph.create_image({
-          name: "main_smra",
-          format: "rgba16float",
-          width: image_extent.width,
-          height: image_extent.height,
-          usage:
-            GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
-          force: this.force_recreate,
-        });
-        main_normal_image = render_graph.create_image({
-          name: "main_normal",
-          format: "rgba16float",
-          width: image_extent.width,
-          height: image_extent.height,
-          usage:
-            GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
-          force: this.force_recreate,
-        });
-        main_position_image = render_graph.create_image({
-          name: "main_position",
-          format: "rgba16float",
-          width: image_extent.width,
-          height: image_extent.height,
-          usage:
-            GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
-          force: this.force_recreate,
-        });
-        main_depth_image = render_graph.create_image({
-          name: "main_depth",
-          format: "depth32float",
-          width: image_extent.width,
-          height: image_extent.height,
-          usage:
-            GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
-          force: this.force_recreate,
-        });
-
-        main_entity_id_image = render_graph.register_image(
-          this.entity_id_image.config.name
-        );
-
+        
         const material_buckets = MeshTaskQueue.get().get_material_buckets();
-        for (const material_id of material_buckets) {
+        for (let i = 0; i < material_buckets.length; i++) {
+          const material_id = material_buckets[i];
           const material = Material.get(material_id);
 
           render_graph.add_pass(
@@ -260,11 +302,13 @@ export class DeferredShadingStrategy {
             {
               inputs: [entity_transforms, compacted_object_instance_buffer],
               outputs: [
-                main_albedo_image,
+                material.family === MaterialFamilyType.Transparent ? main_transparency_accum_image : main_albedo_image,
+                main_emissive_image,
                 main_smra_image,
                 main_position_image,
                 main_normal_image,
                 main_entity_id_image,
+                material.family === MaterialFamilyType.Transparent ? main_transparency_reveal_image : null,
                 main_depth_image,
               ],
               shader_setup,
@@ -276,20 +320,50 @@ export class DeferredShadingStrategy {
               if (!frame_data.g_buffer_data) {
                 frame_data.g_buffer_data = {
                   albedo: graph.get_physical_image(main_albedo_image),
+                  emissive: graph.get_physical_image(main_emissive_image),
                   smra: graph.get_physical_image(main_smra_image),
                   position: graph.get_physical_image(main_position_image),
                   normal: graph.get_physical_image(main_normal_image),
                   entity_id: graph.get_physical_image(main_entity_id_image),
+                  transparency_accum: graph.get_physical_image(
+                    main_transparency_accum_image
+                  ),
+                  transparency_reveal: graph.get_physical_image(
+                    main_transparency_reveal_image
+                  ),
                   depth: graph.get_physical_image(main_depth_image),
                 };
               }
 
-              frame_data.g_buffer_data.albedo.config.load_op = "load";
-              frame_data.g_buffer_data.smra.config.load_op = "load";
-              frame_data.g_buffer_data.position.config.load_op = "load";
-              frame_data.g_buffer_data.normal.config.load_op = "load";
-              frame_data.g_buffer_data.entity_id.config.load_op = "load";
-              frame_data.g_buffer_data.depth.config.load_op = "load";
+              if (frame_data.g_buffer_data.albedo) {
+                frame_data.g_buffer_data.albedo.config.load_op = "load";
+              }
+              if (frame_data.g_buffer_data.emissive) {
+                frame_data.g_buffer_data.emissive.config.load_op = "load";
+              }
+              if (frame_data.g_buffer_data.smra) {
+                frame_data.g_buffer_data.smra.config.load_op = "load";
+              }
+              if (frame_data.g_buffer_data.position) {
+                frame_data.g_buffer_data.position.config.load_op = "load";
+              }
+              if (frame_data.g_buffer_data.normal) {
+                frame_data.g_buffer_data.normal.config.load_op = "load";
+              }
+              if (frame_data.g_buffer_data.entity_id) {
+                frame_data.g_buffer_data.entity_id.config.load_op = "load";
+              }
+              if (frame_data.g_buffer_data.transparency_accum) {
+                frame_data.g_buffer_data.transparency_accum.config.load_op =
+                  "load";
+              }
+              if (frame_data.g_buffer_data.transparency_reveal) {
+                frame_data.g_buffer_data.transparency_reveal.config.load_op =
+                  "load";
+              }
+              if (frame_data.g_buffer_data.depth) {
+                frame_data.g_buffer_data.depth.config.load_op = "load";
+              }
 
               MeshTaskQueue.get().submit_material_indexed_indirect_draws(
                 pass,
@@ -302,6 +376,48 @@ export class DeferredShadingStrategy {
         }
       }
 
+      // Transparency Composite Pass
+      if (MeshTaskQueue.get().has_transparency) {
+        const shader_setup = {
+          pipeline_shaders: {
+            vertex: {
+              path: "transparency_composite.wgsl",
+            },
+            fragment: {
+              path: "transparency_composite.wgsl",
+            },
+          },
+          attachment_blend: {
+            color: {
+              srcFactor: "src-alpha",
+              dstFactor: "one-minus-src-alpha",
+            },
+            alpha: {
+              srcFactor: "src-alpha",
+              dstFactor: "one-minus-src-alpha",
+            },
+          },
+        };
+
+        render_graph.add_pass(
+          "transparency_composite",
+          RenderPassFlags.Graphics,
+          {
+            inputs: [
+              main_transparency_accum_image,
+              main_transparency_reveal_image,
+            ],
+            outputs: [main_albedo_image],
+            shader_setup,
+          },
+          (graph, frame_data, encoder) => {
+            const pass = graph.get_physical_pass(frame_data.current_pass);
+
+            MeshTaskQueue.get().draw_quad(frame_data.context, pass);
+          }
+        );
+      }
+
       // Reset GBuffer targets
       {
         render_graph.add_pass(
@@ -309,12 +425,37 @@ export class DeferredShadingStrategy {
           RenderPassFlags.GraphLocal,
           {},
           (graph, frame_data, encoder) => {
-            frame_data.g_buffer_data.albedo.config.load_op = "clear";
-            frame_data.g_buffer_data.smra.config.load_op = "clear";
-            frame_data.g_buffer_data.position.config.load_op = "clear";
-            frame_data.g_buffer_data.normal.config.load_op = "clear";
-            frame_data.g_buffer_data.entity_id.config.load_op = "clear";
-            frame_data.g_buffer_data.depth.config.load_op = "clear";
+            if (frame_data.g_buffer_data) {
+              if (frame_data.g_buffer_data.albedo) {
+                frame_data.g_buffer_data.albedo.config.load_op = "clear";
+              }
+              if (frame_data.g_buffer_data.emissive) {
+                frame_data.g_buffer_data.emissive.config.load_op = "clear";
+              }
+              if (frame_data.g_buffer_data.smra) {
+                frame_data.g_buffer_data.smra.config.load_op = "clear";
+              }
+              if (frame_data.g_buffer_data.position) {
+                frame_data.g_buffer_data.position.config.load_op = "clear";
+              }
+              if (frame_data.g_buffer_data.normal) {
+                frame_data.g_buffer_data.normal.config.load_op = "clear";
+              }
+              if (frame_data.g_buffer_data.entity_id) {
+                frame_data.g_buffer_data.entity_id.config.load_op = "clear";
+              }
+              if (frame_data.g_buffer_data.transparency_accum) {
+                frame_data.g_buffer_data.transparency_accum.config.load_op =
+                  "clear";
+              }
+              if (frame_data.g_buffer_data.transparency_reveal) {
+                frame_data.g_buffer_data.transparency_reveal.config.load_op =
+                  "clear";
+              }
+              if (frame_data.g_buffer_data.depth) {
+                frame_data.g_buffer_data.depth.config.load_op = "clear";
+              }
+            }
           }
         );
       }
@@ -429,6 +570,7 @@ export class DeferredShadingStrategy {
             inputs: [
               skybox_image,
               main_albedo_image,
+              main_emissive_image,
               main_smra_image,
               main_normal_image,
               main_position_image,
@@ -696,17 +838,17 @@ export class DeferredShadingStrategy {
   _recreate_persistent_resources(render_graph) {
     const context = Renderer.get().graphics_context;
     const image_extent = context.get_canvas_resolution();
-  
+
     const image_width_npot = npot(image_extent.width);
     const image_height_npot = npot(image_extent.height);
-  
+
     const mip_levels = Math.max(
       Math.log2(image_width_npot),
       Math.log2(image_height_npot)
     );
 
     this.force_recreate = true;
-  
+
     this.hzb_image = Texture.create(context, {
       name: "hzb",
       format: "r32float",
@@ -717,7 +859,7 @@ export class DeferredShadingStrategy {
       b_one_view_per_mip: true,
       force: this.force_recreate,
     });
-  
+
     this.entity_id_image = Texture.create(context, {
       name: "entity_id",
       format: "r32uint",
