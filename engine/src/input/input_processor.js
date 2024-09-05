@@ -57,6 +57,10 @@ export class InputProcessor {
     KeyZ: InputKey.K_z,
     ShiftLeft: InputKey.K_LShift,
     ShiftRight: InputKey.K_RShift,
+    ControlLeft: InputKey.K_LControl,
+    ControlRight: InputKey.K_RControl,
+    AltLeft: InputKey.K_LAlt,
+    AltRight: InputKey.K_RAlt,
   };
 
   static button_mapping = {

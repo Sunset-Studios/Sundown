@@ -36,10 +36,6 @@ export class DeferredShadingStrategy {
 
       MeshTaskQueue.get().sort_and_batch(context);
 
-      if (this.force_recreate) {
-        render_graph.reset_pass_cache_bind_groups(true /* pass_only */);
-      }
-
       const transform_gpu_data = TransformFragment.to_gpu_data(context);
       const entity_transforms = render_graph.register_buffer(
         transform_gpu_data.gpu_buffer.config.name
@@ -156,6 +152,49 @@ export class DeferredShadingStrategy {
       let main_entity_id_image = render_graph.register_image(
         this.entity_id_image.config.name
       );
+
+      if (this.force_recreate) {
+        render_graph.mark_pass_cache_bind_groups_dirty(true /* pass_only */);
+      }
+
+      // Clear G-Buffer Pass
+      {
+        render_graph.add_pass(
+          "clear_g_buffer",
+          RenderPassFlags.Graphics,
+          {
+            outputs: [
+              main_albedo_image,
+              main_emissive_image,
+              main_smra_image,
+              main_position_image,
+              main_normal_image,
+              main_entity_id_image,
+              main_transparency_accum_image,
+              main_transparency_reveal_image,
+              main_depth_image
+            ],
+            b_skip_pass_pipeline_setup: true,
+            b_skip_pass_bind_group_setup: true,
+          },
+          (graph, frame_data, encoder) => {
+            const pass = graph.get_physical_pass(frame_data.current_pass);
+            
+            // Ensure all G-Buffer targets are set to clear on load
+            frame_data.g_buffer_data = {
+              albedo: graph.get_physical_image(main_albedo_image),
+              emissive: graph.get_physical_image(main_emissive_image),
+              smra: graph.get_physical_image(main_smra_image),
+              position: graph.get_physical_image(main_position_image),
+              normal: graph.get_physical_image(main_normal_image),
+              entity_id: graph.get_physical_image(main_entity_id_image),
+              transparency_accum: graph.get_physical_image(main_transparency_accum_image),
+              transparency_reveal: graph.get_physical_image(main_transparency_reveal_image),
+              depth: graph.get_physical_image(main_depth_image),
+            };
+          }
+        );
+      }
 
       // Skybox Pass
       {
@@ -316,24 +355,6 @@ export class DeferredShadingStrategy {
             },
             (graph, frame_data, encoder) => {
               const pass = graph.get_physical_pass(frame_data.current_pass);
-
-              if (!frame_data.g_buffer_data) {
-                frame_data.g_buffer_data = {
-                  albedo: graph.get_physical_image(main_albedo_image),
-                  emissive: graph.get_physical_image(main_emissive_image),
-                  smra: graph.get_physical_image(main_smra_image),
-                  position: graph.get_physical_image(main_position_image),
-                  normal: graph.get_physical_image(main_normal_image),
-                  entity_id: graph.get_physical_image(main_entity_id_image),
-                  transparency_accum: graph.get_physical_image(
-                    main_transparency_accum_image
-                  ),
-                  transparency_reveal: graph.get_physical_image(
-                    main_transparency_reveal_image
-                  ),
-                  depth: graph.get_physical_image(main_depth_image),
-                };
-              }
 
               if (frame_data.g_buffer_data.albedo) {
                 frame_data.g_buffer_data.albedo.config.load_op = "load";

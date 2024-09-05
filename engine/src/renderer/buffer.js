@@ -88,19 +88,22 @@ export class Buffer {
     }
 
     static create(context, config) {
-        let buffer = ResourceCache.get().fetch(CacheTypes.BUFFER, Name.from(config.name));
+        let existing_buffer = ResourceCache.get().fetch(CacheTypes.BUFFER, Name.from(config.name));
 
-        if (buffer && config.force) {
-            buffer.destroy(context)
-            buffer = null;
+        if (existing_buffer && config.force) {
+            existing_buffer.destroy(context)
+            existing_buffer = null;
+            config.force = false;
         }
 
-        if (!buffer) {
-            buffer = new Buffer();
-            buffer.init(context, config);
-            ResourceCache.get().store(CacheTypes.BUFFER, Name.from(config.name), buffer);
+        if (!existing_buffer) {
+            existing_buffer = new Buffer();
+            existing_buffer.init(context, config);
+            ResourceCache.get().store(CacheTypes.BUFFER, Name.from(config.name), existing_buffer);
         }
 
-        return buffer;
+        return existing_buffer;
     }
 }
+
+

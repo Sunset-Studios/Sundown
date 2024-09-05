@@ -1,3 +1,4 @@
+import { Renderer } from "../../../renderer/renderer.js";
 import { Buffer } from "../../../renderer/buffer.js";
 import { Fragment } from "../fragment.js";
 
@@ -13,6 +14,7 @@ export class TransformFragment extends Fragment {
         x: new Float32Array(1),
         y: new Float32Array(1),
         z: new Float32Array(1),
+        w: new Float32Array(1),
       },
       scale: {
         x: new Float32Array(1),
@@ -33,8 +35,8 @@ export class TransformFragment extends Fragment {
     super.remove_entity(entity);
     this.update_entity_data(entity, {
       position: { x: 0, y: 0, z: 0 },
-      rotation: { x: 0, y: 0, z: 0 },
-      scale: { x: 0, y: 0, z: 0 },
+      rotation: { x: 0, y: 0, z: 0, w: 1 },
+      scale: { x: 1, y: 1, z: 1 },
     });
   }
 
@@ -45,8 +47,13 @@ export class TransformFragment extends Fragment {
 
     super.resize(new_size);
 
-    ["position", "rotation", "scale"].forEach((prop) => {
+    ["position", "scale"].forEach((prop) => {
       ["x", "y", "z"].forEach((axis) => {
+        Fragment.resize_array(this.data[prop], axis, new_size);
+      });
+    });
+    ["rotation"].forEach((prop) => {
+      ["x", "y", "z", "w"].forEach((axis) => {
         Fragment.resize_array(this.data[prop], axis, new_size);
       });
     });
@@ -95,10 +102,10 @@ export class TransformFragment extends Fragment {
           this.data.transpose_inverse_model_transform[transform_data_offset + j];
       }
 
-      const scale = Math.sqrt(
-        Math.pow(this.data.scale.x[vector_data_offset], 2.0) +
-          Math.pow(this.data.scale.y[vector_data_offset], 2.0) +
-          Math.pow(this.data.scale.z[vector_data_offset], 2.0)
+      const scale = Math.max(
+        this.data.scale.x[vector_data_offset],
+        this.data.scale.y[vector_data_offset],
+        this.data.scale.z[vector_data_offset]
       );
 
       gpu_data[gpu_data_offset + 48] = this.data.position.x[vector_data_offset];
@@ -113,20 +120,14 @@ export class TransformFragment extends Fragment {
     }
 
     // Resize the buffer if necessary
-    if (
-      this.data.gpu_buffer &&
-      this.data.gpu_buffer.config.size < gpu_data.byteLength
-    ) {
-      this.data.gpu_buffer.destroy(context);
-      this.data.gpu_buffer = null;
-    }
-
-    if (!this.data.gpu_buffer) {
+    if (!this.data.gpu_buffer || this.data.gpu_buffer.config.size < gpu_data.byteLength) {
       this.data.gpu_buffer = Buffer.create(context, {
         name: "transform_fragment_buffer",
         usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
         raw_data: gpu_data,
+        force: true
       });
+      Renderer.get().mark_bind_groups_dirty(true);
     } else {
       this.data.gpu_buffer.write(context, gpu_data);
     }

@@ -70,10 +70,7 @@ class IndirectDrawObject {
       // Resize indirect draw buffer if needed
       const required_indirect_draw_size = batches.length * 5 * 4; // 5 uint32 per batch, 4 bytes per uint32
       if (this.indirect_draw_buffer.size < required_indirect_draw_size) {
-        ResourceCache.get().remove(
-          CacheTypes.BUFFER,
-          this.indirect_draw_buffer.physical_id
-        );
+        this.indirect_draw_buffer.destroy(context);
         this.indirect_draw_buffer = Buffer.create(context, {
           name: "indirect_draw_buffer",
           data: batches.map((batch) => [
@@ -93,10 +90,7 @@ class IndirectDrawObject {
       // Resize object instance buffer if needed
       const required_object_instance_size = object_instances.length * 2 * 4; // 3 uint32 per instance, 4 bytes per uint32
       if (this.object_instance_buffer.size < required_object_instance_size) {
-        ResourceCache.get().remove(
-          CacheTypes.BUFFER,
-          this.object_instance_buffer.physical_id
-        );
+        this.object_instance_buffer.destroy(context);
         this.object_instance_buffer = Buffer.create(context, {
           name: "object_instance_buffer",
           data: object_instances.map((instance) => [
@@ -109,35 +103,45 @@ class IndirectDrawObject {
 
       profile_scope("write_indirect_draw_buffer", () => {
         // Update indirect draw buffer
-        for (let i = 0; i < batches.length; i++) {
-          const offset = i * 5;
-          this.indirect_draw_data[offset] = batches[i].index_count;
-          this.indirect_draw_data[offset + 1] = 0;
-          this.indirect_draw_data[offset + 2] = batches[i].first_index;
-          this.indirect_draw_data[offset + 3] = batches[i].base_vertex;
-          this.indirect_draw_data[offset + 4] = batches[i].base_instance;
+        let write_length = 0;
+        if (batches.length > 0) {
+          for (let i = 0; i < batches.length; i++) {
+            const offset = i * 5;
+            this.indirect_draw_data[offset] = batches[i].index_count;
+            this.indirect_draw_data[offset + 1] = 0;
+            this.indirect_draw_data[offset + 2] = batches[i].first_index;
+            this.indirect_draw_data[offset + 3] = batches[i].base_vertex;
+            this.indirect_draw_data[offset + 4] = batches[i].base_instance;
+          }
+          write_length = batches.length * 5;
         }
+
         this.indirect_draw_buffer.write_raw(
           context,
           this.indirect_draw_data,
           0,
-          batches.length * 5
+          write_length
         );
       });
 
       profile_scope("write_object_instance_buffer", () => {
         // Update object instance buffer
-        for (let i = 0; i < object_instances.length; i++) {
-          const offset = i * 2;
-          this.object_instance_data[offset] = object_instances[i].batch_index;
-          this.object_instance_data[offset + 1] =
-            object_instances[i].entity_index;
+        let write_length = 0;
+        if (object_instances.length > 0) {
+          for (let i = 0; i < object_instances.length; i++) {
+            const offset = i * 2;
+            this.object_instance_data[offset] = object_instances[i].batch_index;
+            this.object_instance_data[offset + 1] =
+              object_instances[i].entity_index;
+          }
+          write_length = object_instances.length * 2;
         }
+
         this.object_instance_buffer.write_raw(
           context,
           this.object_instance_data,
           0,
-          object_instances.length * 2
+          write_length
         );
       });
     });
@@ -306,6 +310,13 @@ export class MeshTaskQueue {
           );
           return material.family === MaterialFamilyType.Transparent;
         });
+
+        if (this.batches.length <= 0 && this.indirect_draw_object.indirect_draw_data) {
+          this.indirect_draw_object.indirect_draw_data.fill(0);
+        }
+        if (this.object_instances.length <= 0 && this.indirect_draw_object.object_instance_data) {
+          this.indirect_draw_object.object_instance_data.fill(0);
+        }
       }
 
       this.needs_sort = false;

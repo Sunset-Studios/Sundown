@@ -987,6 +987,30 @@ export class RenderGraph {
   }
 
   /**
+   * Marks the pass cache bind groups as dirty, indicating that they need to be reset.
+   * This function is used to manage the state of bind groups in the render graph,
+   * ensuring that they are properly updated when necessary. (i.e. when the bind group resources are re-created)
+   *
+   * @param {boolean} [pass_only=true] - If true, only the pass-specific bind groups
+   * will be marked for reset. If false, all bind groups including the global ones
+   * will be marked for reset.
+   * 
+   * @example
+   * // Mark only pass-specific bind groups as dirty
+   * renderGraph.mark_pass_cache_bind_groups_dirty(true);
+   * 
+   * // Mark all bind groups (including global) as dirty
+   * renderGraph.mark_pass_cache_bind_groups_dirty();
+   */
+  mark_pass_cache_bind_groups_dirty(pass_only = false) {
+    if (pass_only) {
+      this.pass_cache_passes_needs_reset = true;
+    } else {
+      this.pass_cache_full_needs_reset = true;
+    }
+  }
+
+  /**
    * Submits the compiled render graph for execution.
    * This method compiles the render graph, creates a command encoder, and executes all non-culled passes.
    * It then submits the encoded commands to the GPU for rendering.
@@ -998,8 +1022,8 @@ export class RenderGraph {
    */
   submit(context) {
     profile_scope("RenderGraph.submit", () => {
+      this._reset_pass_cache_bind_groups();
       this._add_queued_post_commands();
-
       this._compile();
 
       if (this.non_culled_passes.length === 0) {
@@ -1522,7 +1546,6 @@ export class RenderGraph {
 
         let depth_stencil_target = null;
         if (pass.pass_config.depth_stencil_attachment) {
-          console.log(pass)
           const image = ResourceCache.get().fetch(
             CacheTypes.IMAGE,
             pass.pass_config.depth_stencil_attachment.image
@@ -1578,14 +1601,16 @@ export class RenderGraph {
     }
   }
 
-  reset_pass_cache_bind_groups(passes_only = true) {
-    if (passes_only) {
+  _reset_pass_cache_bind_groups() {
+    if (this.pass_cache_passes_needs_reset) {
       this.pass_cache.bind_groups.keys().forEach((key) => {
         this.pass_cache.bind_groups.delete(key);
       });
-    } else {
+    } else if (this.pass_cache_full_needs_reset) {
       this.pass_cache.bind_groups = new Map();
     }
+    this.pass_cache_passes_needs_reset = false;
+    this.pass_cache_full_needs_reset = false;
   }
 
   _setup_global_bind_group(pass, frame_data) {

@@ -74,10 +74,14 @@ export const InputKey = {
     K_z: 68,
     K_LShift: 69,
     K_RShift: 70,
-    B_mouse_left: 71,
-    B_mouse_right: 72,
-    B_mouse_middle: 71,
-    NumKeys: 72
+    K_LControl: 71,
+    K_RControl: 72,
+    K_LAlt: 73,
+    K_RAlt: 74,
+    B_mouse_left: 75,
+    B_mouse_right: 76,
+    B_mouse_middle: 77,
+    NumKeys: 78
 };
 
 /**

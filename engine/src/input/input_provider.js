@@ -88,6 +88,20 @@ export class InputProvider extends SimulationLayer {
         );
     }
 
+    consume_state(name) {
+        let index = this.current_dirty_states.findIndex(state => 
+            (typeof name === 'number' ? state.raw_input === name : state.mapped_name === name) && 
+            state.input_type === InputType.State
+        );
+        while (index !== -1) {
+            this.current_dirty_states.splice(index, 1);
+            index = this.current_dirty_states.findIndex(state => 
+                (typeof name === 'number' ? state.raw_input === name : state.mapped_name === name) && 
+                state.input_type === InputType.State
+            );
+        }
+    }
+
     get_action(name) {
         return this.current_dirty_states.some(state => 
             (typeof name === 'number' ? state.raw_input === name : state.mapped_name === name) && 
@@ -95,11 +109,26 @@ export class InputProvider extends SimulationLayer {
         );
     }
 
+    consume_action(name) {
+        let index = this.current_dirty_states.findIndex(state => 
+            (typeof name === 'number' ? state.raw_input === name : state.mapped_name === name) && 
+            state.input_type === InputType.Action
+        );
+        while (index !== -1) {
+            this.current_dirty_states.splice(index, 1);
+            index = this.current_dirty_states.findIndex(state => 
+                (typeof name === 'number' ? state.raw_input === name : state.mapped_name === name) && 
+                state.input_type === InputType.Action
+            );
+        }
+    }
+
     get_range(name) {
-        const state = this.current_dirty_states.find(state => 
+        const index = this.current_dirty_states.findIndex(state => 
             (typeof name === 'number' ? state.raw_range === name : state.mapped_name === name) && 
             state.input_type === InputType.Range
         );
-        return state ? state.range_value : 0.0;
+        return index !== -1 ? this.current_dirty_states[index].range_value : 0.0;
+
     }
 }

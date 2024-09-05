@@ -43,9 +43,9 @@ export class Renderer {
 
     this.refresh_global_shader_bindings();
 
-    this.setup_builtin_material_template();
+    this._setup_builtin_material_template();
 
-    this.setup_resize_observer();
+    this._setup_resize_observer();
   }
 
   render(delta_time) {
@@ -57,7 +57,7 @@ export class Renderer {
 
     this.render_strategy.draw(this.graphics_context, this.render_graph);
 
-    this.execute_post_render_callbacks();
+    this._execute_post_render_callbacks();
   }
 
   enqueue_commands(name, commands_callback) {
@@ -77,6 +77,10 @@ export class Renderer {
     if (index !== -1) {
       this.post_render_callbacks.splice(index, 1);
     }
+  }
+
+  mark_bind_groups_dirty(passes_only = false) {
+    this.render_graph.mark_pass_cache_bind_groups_dirty(passes_only);
   }
 
   refresh_global_shader_bindings() {
@@ -113,7 +117,7 @@ export class Renderer {
     );
   }
 
-  setup_builtin_material_template() {
+  _setup_builtin_material_template() {
     // Create a material template for a standard material
     const template = MaterialTemplate.create(
       Renderer.get().graphics_context,
@@ -122,7 +126,24 @@ export class Renderer {
     );
   }
 
-  set_shared_frame_resolution() {
+  _setup_resize_observer() {
+    const observer = new ResizeObserver((entries) => {
+      this.graphics_context.on_resize();
+      this._set_shared_frame_resolution();
+      global_dispatcher.dispatch("resolution_change", entries[0].contentRect);
+    });
+    observer.observe(this.graphics_context.canvas);
+
+    this._set_shared_frame_resolution();
+  }
+
+  _execute_post_render_callbacks() {
+    for (let i = 0; i < this.post_render_callbacks.length; i++) {
+      this.post_render_callbacks[i]();
+    }
+  }
+
+  _set_shared_frame_resolution() {
     SharedFrameInfoBuffer.get().set_resolution(
       this.graphics_context,
       vec2.fromValues(
@@ -130,22 +151,5 @@ export class Renderer {
         this.graphics_context.canvas.height
       )
     );
-  }
-
-  setup_resize_observer() {
-    const observer = new ResizeObserver((entries) => {
-      this.graphics_context.on_resize();
-      this.set_shared_frame_resolution();
-      global_dispatcher.dispatch("resolution_change", entries[0].contentRect);
-    });
-    observer.observe(this.graphics_context.canvas);
-
-    this.set_shared_frame_resolution();
-  }
-
-  execute_post_render_callbacks() {
-    for (let i = 0; i < this.post_render_callbacks.length; i++) {
-      this.post_render_callbacks[i]();
-    }
   }
 }

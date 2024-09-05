@@ -5,6 +5,8 @@ export class Button extends Element {
 
     init(context, name, config, children = []) {
         super.init(context, name, config, children, 'button')
+        
+        this.config.allows_cursor_events = true;
 
         if (this.config.icon) {
             const url = new URL(`${this.config.icon}`, window.location.href);

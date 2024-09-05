@@ -38,11 +38,11 @@ export class TransformProcessor extends SimulationLayer {
 
         const transform = mat4.fromRotationTranslationScale(
           mat4.create(),
-          quat.fromEuler(
-            quat.create(),
+          quat.fromValues(
             transforms.rotation.x[entity],
             transforms.rotation.y[entity],
-            transforms.rotation.z[entity]
+            transforms.rotation.z[entity],
+            transforms.rotation.w[entity]
           ),
           vec4.fromValues(
             transforms.position.x[entity],

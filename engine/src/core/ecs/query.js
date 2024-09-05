@@ -85,8 +85,4 @@ export class EntityQuery {
       this.entities_to_filter.length = 0;
     });
   }
-
-  get_entity_count() {
-    return this.#matching_count;
-  }
 }

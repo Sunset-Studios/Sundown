@@ -11,7 +11,7 @@ export class Cursor extends Element {
     super.init(context, name, config, children, "cursor");
 
     this.context = context;
-    this.allows_cursor_events = false;
+    this.config.allows_cursor_events = false;
 
     if (this.config.icon) {
       this.set_icon(this.config.icon);

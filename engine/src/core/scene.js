@@ -1,12 +1,13 @@
 import { SimulationLayer } from "./simulation_layer.js";
 import { StaticMeshProcessor } from "./subsystems/static_mesh_processor.js";
 import { TransformProcessor } from "./subsystems/transform_processor.js";
+import { UIProcessor } from "./subsystems/ui_processor.js";
 import { SharedViewBuffer } from "./shared_data.js";
 import { Renderer } from "../renderer/renderer.js";
+import { profile_scope } from "../utility/performance.js";
 
 export class Scene extends SimulationLayer {
   name = "";
-  ui_root = null;
 
   constructor(name) {
     super();
@@ -26,16 +27,13 @@ export class Scene extends SimulationLayer {
   update(delta_time) {
     super.update(delta_time);
 
-    performance.mark("scene_update");
-
-    this.context.entity_manager.process_query_changes();
-
-    if (this.ui_root) {
-      this.ui_root.update(delta_time);
-    }
+    profile_scope("Scene.update", () => {
+      this.context.entity_manager.process_query_changes();
+    });
   }
 
   setup_default_subsystems() {
+    this.add_layer(UIProcessor);
     this.add_layer(StaticMeshProcessor);
     this.add_layer(TransformProcessor);
   }
@@ -81,7 +79,7 @@ export class Scene extends SimulationLayer {
   }
 
   set_ui_root(ui_root) {
-    this.ui_root = ui_root;
+    this.get_layer(UIProcessor).set_ui_root(ui_root);
     const canvas = Renderer.get().graphics_context.canvas;
     canvas.after(ui_root.dom);
   }

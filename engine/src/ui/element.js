@@ -1,5 +1,6 @@
 import { InputProvider } from "../input/input_provider.js";
 import { InputRange, InputKey } from "../input/input_types.js";
+import { profile_scope } from "../utility/performance.js";
 
 export function element_type_to_dom_type(element_type) {
   switch (element_type) {
@@ -7,6 +8,10 @@ export function element_type_to_dom_type(element_type) {
       return "div";
     case "button":
       return "button";
+    case "label":
+      return "label";
+    case "input":
+      return "input";
     default:
       return "div";
   }
@@ -15,10 +20,10 @@ export function element_type_to_dom_type(element_type) {
 export class Element {
   name = "";
   children = [];
+  events = {};
   config = {};
   dom = null;
 
-  allows_cursor_events = true;
   was_cursor_inside = false;
   is_cursor_inside = false;
   was_clicked = false;
@@ -46,44 +51,58 @@ export class Element {
   }
 
   update(delta_time) {
-    const x = InputProvider.get().get_range(InputRange.M_xabs);
-    const y = InputProvider.get().get_range(InputRange.M_yabs);
-
-    const rect = this.dom.getBoundingClientRect();
-
-    if (this.allows_cursor_events) {
-      this.was_cursor_inside = this.is_cursor_inside;
-      this.is_cursor_inside =
-        x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
-
-      this.was_clicked = this.is_clicked;
-      this.is_clicked =
-        this.is_cursor_inside &&
-        InputProvider.get().get_action(InputKey.B_mouse_left);
-
-      this.was_pressed = this.is_pressed;
-      this.is_pressed =
-        this.is_cursor_inside &&
-        InputProvider.get().get_state(InputKey.B_mouse_left);
-
-      if (
-        !this.was_cursor_inside &&
-        this.is_cursor_inside &&
-        this.config.hover_style
-      ) {
-        this.apply_style(this.config.hover_style);
+    profile_scope("Element.update", () => {
+      for (let i = 0; i < this.children.length; i++) {
+        this.children[i].update(delta_time);
       }
-      if (
-        this.was_cursor_inside &&
-        !this.is_cursor_inside &&
-        this.config.style
-      ) {
-        this.apply_style(this.config.style, true);
-      }
-    }
 
-    this.children.forEach((child) => {
-      child.update(delta_time);
+      const x = InputProvider.get().get_range(InputRange.M_xabs);
+      const y = InputProvider.get().get_range(InputRange.M_yabs);
+
+      const current_rect = this.rect;
+
+      if (this.config.allows_cursor_events) {
+        this.was_cursor_inside = this.is_cursor_inside;
+        this.is_cursor_inside =
+          x >= current_rect.left &&
+          x <= current_rect.right &&
+          y >= current_rect.top &&
+          y <= current_rect.bottom;
+
+        this.was_clicked = this.is_clicked;
+        this.is_clicked =
+          this.is_cursor_inside &&
+          InputProvider.get().get_action(InputKey.B_mouse_left);
+
+        this.was_pressed = this.is_pressed;
+        this.is_pressed =
+          this.is_cursor_inside &&
+          InputProvider.get().get_state(InputKey.B_mouse_left);
+
+        if (
+          !this.was_cursor_inside &&
+          this.is_cursor_inside &&
+          this.config.hover_style
+        ) {
+          this.apply_style(this.config.hover_style);
+        }
+        if (
+          this.was_cursor_inside &&
+          !this.is_cursor_inside &&
+          this.config.style
+        ) {
+          this.apply_style(this.config.style, true);
+        }
+
+        if (this.is_clicked) {
+          this.trigger("selected");
+          InputProvider.get().consume_action(InputKey.B_mouse_left);
+        }
+        if (this.is_pressed) {
+          this.trigger("pressed");
+          InputProvider.get().consume_action(InputKey.B_mouse_left);
+        }
+      }
     });
   }
 
@@ -99,7 +118,14 @@ export class Element {
     return this.is_pressed;
   }
 
+  get rect() {
+    return this.dom.getBoundingClientRect();
+  }
+
   apply_style(style, reset = false) {
+    if (!style) {
+      style = this.config.style;
+    }
     if (reset) {
       this.dom.style = {};
     }
@@ -114,5 +140,22 @@ export class Element {
   remove_child(child) {
     this.children = this.children.filter((c) => c !== child);
     this.dom.removeChild(child.dom);
+  }
+
+  on(event, callback) {
+    if (!this.events[event]) {
+      this.events[event] = [];
+    }
+    if (!this.events[event].includes(callback)) {
+      this.events[event].push(callback);
+    }
+  }
+
+  trigger(event, ...args) {
+    if (this.events[event]) {
+      for (let i = 0; i < this.events[event].length; i++) {
+        this.events[event][i](...args);
+      }
+    }
   }
 }
