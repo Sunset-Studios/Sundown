@@ -17,6 +17,7 @@ import { Name } from "../engine/src/utility/names.js";
 import { SharedEnvironmentMapData } from "../engine/src/core/shared_data.js";
 import { profile_scope } from "../engine/src/utility/performance.js";
 import { frame_runner } from "../engine/src/utility/frame_runner.js";
+import { quat } from "gl-matrix";
 
 async function init() {
   application_state.is_running = true;
@@ -101,6 +102,8 @@ async function init() {
             false /* refresh_entity_queries */
           );
 
+          const rotation = quat.fromValues(0, 0, 0, 1);
+
           // Add a transform fragment to the sphere entity
           scene.add_fragment(
             entity,
@@ -111,7 +114,7 @@ async function init() {
                 y: (y - Math.floor(grid_layers / 2)) * spacing,
                 z: (z - Math.floor(grid_size / 2)) * spacing,
               },
-              rotation: { x: -90, y: 90, z: 0 },
+              rotation: { x: rotation[0], y: rotation[1], z: rotation[2], w: rotation[3] },
               scale: { x: 0.5, y: 0.5, z: 0.5 },
             },
             false /* refresh_entity_queries */
