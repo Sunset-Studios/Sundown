@@ -37,8 +37,6 @@ export class EntityQuery {
       for (let i = 0; i < entities.length; i++) {
         const entity = entities[i];
 
-        new_matching_entities[this.#matching_count] = entity;
-
         const passes_requirements =
           this._check_entity_fragment_requirements(entity);
         const in_seen_entities = this.#seen_entities.has(entity);
@@ -46,13 +44,18 @@ export class EntityQuery {
         if (passes_requirements && !in_seen_entities) {
           this.#seen_entities.add(entity);
           new_entity_states[this.#matching_count] = EntityMasks.Added;
+          new_matching_entities[this.#matching_count] = entity;
+          this.#matching_count++;
         } else if (!passes_requirements && in_seen_entities) {
           this.#seen_entities.delete(entity);
           new_entity_states[this.#matching_count] = EntityMasks.Removed;
+          new_matching_entities[this.#matching_count] = entity;
           this.entities_to_filter.push(entity);
+          this.#matching_count++;
+        } else if (passes_requirements) {
+          new_matching_entities[this.#matching_count] = entity;
+          this.#matching_count++;
         }
-
-        this.#matching_count++;
       }
 
       this.matching_entities = new_matching_entities.slice(

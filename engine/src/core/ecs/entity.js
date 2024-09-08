@@ -59,6 +59,19 @@ export class EntityManager {
         }
     }
 
+    duplicate_entity(entity, refresh_entity_data = true) {
+        const new_entity = this.create_entity(refresh_entity_data);
+        for (const FragmentType of this.entity_fragments.get(entity)) {
+            if (FragmentType.data) {
+                const data = FragmentType.duplicate_entity_data?.(entity);
+                this.add_fragment(new_entity, FragmentType, data, refresh_entity_data);
+            } else {
+                this.add_tag(new_entity, FragmentType, refresh_entity_data);
+            }
+        }
+        return new_entity;
+    }
+
     add_fragment(entity, FragmentType, data, refresh_entity_data = true) {
         if (!this.fragment_types.has(FragmentType)) {
             FragmentType.initialize();

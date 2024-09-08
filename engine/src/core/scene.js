@@ -46,6 +46,10 @@ export class Scene extends SimulationLayer {
     this.context.entity_manager.delete_entity(entity, refresh_entity_data);
   }
 
+  duplicate_entity(entity, refresh_entity_data = true) {
+    return this.context.entity_manager.duplicate_entity(entity, refresh_entity_data);
+  }
+
   add_fragment(entity, FragmentType, data, refresh_entity_data = true) {
     this.context.entity_manager.add_fragment(entity, FragmentType, data, refresh_entity_data);
   }

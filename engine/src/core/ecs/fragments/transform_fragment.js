@@ -40,6 +40,15 @@ export class TransformFragment extends Fragment {
     });
   }
 
+  static duplicate_entity_data(entity) {
+    const data = this.get_entity_data(entity);
+    return {
+      position: data.position,
+      rotation: data.rotation,
+      scale: data.scale,
+    };
+  }
+
   static resize(new_size) {
     if (!this.data) {
       this.initialize();

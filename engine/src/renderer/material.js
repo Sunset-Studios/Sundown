@@ -6,6 +6,7 @@ import { profile_scope } from "../utility/performance.js";
 import { hash_data, hash_value } from "../utility/hashing.js";
 import { Name } from "../utility/names.js";
 import { Texture } from "./texture.js";
+import { global_dispatcher } from "../core/dispatcher.js";
 
 export const MaterialFamilyType = {
   Opaque: 0,
@@ -300,11 +301,16 @@ export class Material {
     this.storage_data = new Map();
     this.texture_data = new Map();
     this.sampler_data = new Map();
+    this.data_listeners = new Set();
     this.state_hash = 0;
     this.needs_bind_group_update = false;
     // Depending on behaviors based on the family, it might be useful to have it exposed like this for derived materials.
     // Otherwise, TODO so we only use the family from the template.
     this.family = this.template.family;
+    this.set_uniform_data.bind(this);
+    this.set_storage_data.bind(this);
+    this.set_texture_data.bind(this);
+    this.set_sampler_data.bind(this);
     this._update_state_hash();
   }
 
@@ -374,10 +380,32 @@ export class Material {
     this.needs_bind_group_update = true;
   }
 
+  listen_for_uniform_data(name) {
+    if (!this.data_listeners.has(name)) {
+      this.data_listeners.add(name);
+      global_dispatcher.on(name, (data) => {
+        if (data) {
+          this.set_uniform_data(name, data);
+        }
+      });
+    }
+  }
+
   set_storage_data(name, data) {
     this.storage_data.set(name, data);
     this._update_state_hash();
     this.needs_bind_group_update = true;
+  }
+
+  listen_for_storage_data(name) {
+    if (!this.data_listeners.has(name)) {
+      this.data_listeners.add(name);
+      global_dispatcher.on(name, (data) => {
+        if (data) {
+          this.set_storage_data(name, data);
+        }
+      });
+    }
   }
 
   set_texture_data(name, texture) {
@@ -386,10 +414,32 @@ export class Material {
     this.needs_bind_group_update = true;
   }
 
+  listen_for_texture_data(name) {
+    if (!this.data_listeners.has(name)) {
+      this.data_listeners.add(name);
+      global_dispatcher.on(name, (data) => {
+        if (data) {
+          this.set_texture_data(name, data);
+        }
+      });
+    }
+  }
+
   set_sampler_data(name, sampler) {
     this.sampler_data.set(name, sampler);
     this._update_state_hash();
     this.needs_bind_group_update = true;
+  }
+
+  listen_for_sampler_data(name) {
+    if (!this.data_listeners.has(name)) {
+      this.data_listeners.add(name);
+      global_dispatcher.on(name, (data) => {
+        if (data) {
+          this.set_sampler_data(name, data);
+        }
+      });
+    }
   }
 
   bind(render_pass, bind_groups = [], output_targets = []) {

@@ -23,6 +23,7 @@ export class Element {
   events = {};
   config = {};
   dom = null;
+  client_rect = null;
 
   was_cursor_inside = false;
   is_cursor_inside = false;
@@ -48,10 +49,14 @@ export class Element {
         this.add_child(child);
       });
     }
+
+    this.recalculate_client_rect();
   }
 
   update(delta_time) {
     profile_scope("Element.update", () => {
+      this.recalculate_client_rect();
+
       for (let i = 0; i < this.children.length; i++) {
         this.children[i].update(delta_time);
       }
@@ -106,6 +111,10 @@ export class Element {
     });
   }
 
+  destroy() {
+    this.dom.remove();
+  }
+
   get is_hovered() {
     return this.is_cursor_inside;
   }
@@ -119,7 +128,11 @@ export class Element {
   }
 
   get rect() {
-    return this.dom.getBoundingClientRect();
+    return this.client_rect;
+  }
+
+  recalculate_client_rect() {
+    this.client_rect = this.dom.getBoundingClientRect();
   }
 
   apply_style(style, reset = false) {

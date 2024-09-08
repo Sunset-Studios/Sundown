@@ -21,6 +21,21 @@ export class StaticMeshFragment extends Fragment {
     });
   }
 
+  static duplicate_entity_data(entity) {
+    const data = this.get_entity_data(entity);
+
+    const material_slots = Array(this.material_slot_stride).fill(0n);
+    for (let i = 0; i < this.material_slot_stride; i++) {
+      material_slots[i] = this.data.material_slots[entity * this.material_slot_stride + i];
+    }
+
+    return {
+      mesh: data.mesh,
+      material_slots: material_slots,
+      instance_count: data.instance_count,
+    };
+  }
+
   static update_entity_data(entity, data) {
     if (!this.data) {
       this.initialize();

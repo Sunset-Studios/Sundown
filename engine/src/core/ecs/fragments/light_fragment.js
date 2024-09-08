@@ -95,6 +95,20 @@ export class LightFragment extends Fragment {
     });
   }
 
+  static duplicate_entity_data(entity) {
+    const data = this.get_entity_data(entity);
+    return {
+      position: data.position,
+      direction: data.direction,
+      color: data.color,
+      type: data.type,
+      intensity: data.intensity,
+      radius: data.radius,
+      attenuation: data.attenuation,
+      outer_angle: data.outer_angle,
+    };
+  }
+
   static update_entity_data(entity, data) {
     if (!this.data) {
       this.initialize();

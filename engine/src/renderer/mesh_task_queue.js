@@ -8,6 +8,7 @@ import { profile_scope } from "../utility/performance.js";
 import { BindGroupType } from "./bind_group.js";
 
 const max_objects = 1000000;
+const max_frame_buffer_writes = 500;
 
 class IndirectDrawBatch {
   mesh_id = 0;
@@ -34,6 +35,8 @@ class IndirectDrawObject {
   compacted_object_instance_buffer = null;
   indirect_draw_data = new Uint32Array(max_objects * 5);
   object_instance_data = new Uint32Array(max_objects * 2);
+  current_indirect_draw_write_offset = 0;
+  current_object_instance_write_offset = 0;
 
   init(context) {
     profile_scope("init_indirect_draw_object", () => {
@@ -104,7 +107,9 @@ class IndirectDrawObject {
       profile_scope("write_indirect_draw_buffer", () => {
         // Update indirect draw buffer
         let write_length = 0;
-        if (batches.length > 0) {
+        let max_length = batches.length * 5;
+
+        if (max_length > 0) {
           for (let i = 0; i < batches.length; i++) {
             const offset = i * 5;
             this.indirect_draw_data[offset] = batches[i].index_count;
@@ -113,36 +118,52 @@ class IndirectDrawObject {
             this.indirect_draw_data[offset + 3] = batches[i].base_vertex;
             this.indirect_draw_data[offset + 4] = batches[i].base_instance;
           }
-          write_length = batches.length * 5;
+          write_length = Math.min(max_length, max_frame_buffer_writes * 5);
+          write_length = Math.min(write_length, max_length - this.current_indirect_draw_write_offset);
         }
 
         this.indirect_draw_buffer.write_raw(
           context,
           this.indirect_draw_data,
-          0,
-          write_length
+          this.current_indirect_draw_write_offset * 4,
+          write_length,
+          this.current_indirect_draw_write_offset
         );
+
+        this.current_indirect_draw_write_offset += write_length;
+        if (this.current_indirect_draw_write_offset >= max_length) {
+          this.current_indirect_draw_write_offset = 0;
+        }
       });
 
       profile_scope("write_object_instance_buffer", () => {
         // Update object instance buffer
         let write_length = 0;
-        if (object_instances.length > 0) {
+        let max_length = object_instances.length * 2;
+
+        if (max_length > 0) {
           for (let i = 0; i < object_instances.length; i++) {
             const offset = i * 2;
             this.object_instance_data[offset] = object_instances[i].batch_index;
             this.object_instance_data[offset + 1] =
               object_instances[i].entity_index;
           }
-          write_length = object_instances.length * 2;
+          write_length = Math.min(max_length, max_frame_buffer_writes * 2);
+          write_length = Math.min(write_length, max_length - this.current_object_instance_write_offset);
         }
 
         this.object_instance_buffer.write_raw(
           context,
           this.object_instance_data,
-          0,
-          write_length
+          this.current_object_instance_write_offset * 4,
+          write_length,
+          this.current_object_instance_write_offset
         );
+
+        this.current_object_instance_write_offset += write_length;
+        if (this.current_object_instance_write_offset >= max_length) {
+          this.current_object_instance_write_offset = 0;
+        }
       });
     });
   }
@@ -311,10 +332,16 @@ export class MeshTaskQueue {
           return material.family === MaterialFamilyType.Transparent;
         });
 
-        if (this.batches.length <= 0 && this.indirect_draw_object.indirect_draw_data) {
+        if (
+          this.batches.length <= 0 &&
+          this.indirect_draw_object.indirect_draw_data
+        ) {
           this.indirect_draw_object.indirect_draw_data.fill(0);
         }
-        if (this.object_instances.length <= 0 && this.indirect_draw_object.object_instance_data) {
+        if (
+          this.object_instances.length <= 0 &&
+          this.indirect_draw_object.object_instance_data
+        ) {
           this.indirect_draw_object.object_instance_data.fill(0);
         }
       }
