@@ -38,6 +38,10 @@ export class Scene extends SimulationLayer {
     this.add_layer(TransformProcessor);
   }
 
+  get_entity_count() {
+    return this.context.entity_manager.get_entity_count();
+  }
+
   create_entity(refresh_entity_data = true) {
     return this.context.entity_manager.create_entity(refresh_entity_data);
   }

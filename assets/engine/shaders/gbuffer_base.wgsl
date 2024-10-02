@@ -10,8 +10,15 @@ struct VertexOutput {
     @location(5) normal: vec4f,
     @location(6) tangent: vec4f,
     @location(7) bitangent: vec4f,
-    @location(8) @interpolate(flat) instance_id: u32,
+    @location(8) @interpolate(flat) instance_index: u32,
+    @location(9) @interpolate(flat) instance_id: u32,
 };
+
+#ifndef SKIP_ENTITY_WRITES
+const transparency_reveal_location = 6;
+#else
+const transparency_reveal_location = 5;
+#endif
 
 struct FragmentOutput {
     @location(0) albedo: vec4f,
@@ -19,14 +26,18 @@ struct FragmentOutput {
     @location(2) smra: vec4f,
     @location(3) position: vec4f,
     @location(4) normal: vec4f,
+#ifndef SKIP_ENTITY_WRITES
     @location(5) entity_id: u32,
+#endif
 #if TRANSPARENT
-    @location(6) transparency_reveal: f32,
+    @location(transparency_reveal_location) transparency_reveal: f32,
 #endif
 }
 
 @group(1) @binding(0) var<storage, read> entity_transforms: array<EntityTransform>;
-@group(1) @binding(1) var<storage, read> compacted_object_instances: array<CompactedObjectInstance>;
+@group(1) @binding(1) var<storage, read> entity_inverse_transforms: array<EntityInverseTransform>;
+@group(1) @binding(2) var<storage, read> entity_bounds_data: array<EntityBoundsData>;
+@group(1) @binding(3) var<storage, read> compacted_object_instances: array<CompactedObjectInstance>;
 
 #ifndef CUSTOM_VS
 fn vertex(v_out: ptr<function, VertexOutput>) -> VertexOutput {
@@ -41,6 +52,8 @@ fn vertex(v_out: ptr<function, VertexOutput>) -> VertexOutput {
     let instance_vertex = vertex_buffer[vi];
     let entity = compacted_object_instances[ii].entity;
     let entity_transform = entity_transforms[entity];
+    let view_mat = view_buffer[0].view_matrix;
+    let view_proj_mat = view_buffer[0].view_projection_matrix;
 
     var output : VertexOutput;
 
@@ -48,13 +61,16 @@ fn vertex(v_out: ptr<function, VertexOutput>) -> VertexOutput {
     output.world_position = entity_transform.transform * output.local_position;
     output.color = instance_vertex.color;
     output.uv = instance_vertex.uv;
-    output.normal = normalize(vec4f((entity_transform.transpose_inverse_model_matrix * instance_vertex.normal).xyz, 1.0));
+    output.normal = normalize(vec4f((entity_inverse_transforms[entity].transpose_inverse_model_matrix * instance_vertex.normal).xyz, 1.0));
+    output.instance_index = ii;
     output.instance_id = entity;
 
     output = vertex(&output);
 
-    output.view_position = view_buffer[0].view_matrix * output.world_position;
-    output.position = view_buffer[0].view_projection_matrix * output.world_position;
+#ifndef FINAL_POSITION_WRITE
+    output.view_position = view_mat * output.world_position;
+    output.position = view_proj_mat * output.world_position;
+#endif
 
     return output;
 }
@@ -71,7 +87,10 @@ fn fragment(v_out: VertexOutput, f_out: ptr<function, FragmentOutput>) -> Fragme
     output.position = v_out.world_position;
     // Last component of normal is deferred standard lighting factor. Set to 0 if custom lighting is used when using custom FS / VS.
     output.normal = vec4f(v_out.normal.xyz, 1.0);
+
+#ifndef SKIP_ENTITY_WRITES
     output.entity_id = v_out.instance_id;
+#endif
 
     var post_material_output = fragment(v_out, &output);
 

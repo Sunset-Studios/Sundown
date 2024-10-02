@@ -22,7 +22,7 @@ struct DrawCullConstants {
 }
 
 @group(1) @binding(0) var input_texture: texture_2d<f32>;
-@group(1) @binding(1) var<storage, read> entity_transforms: array<EntityTransform>;
+@group(1) @binding(1) var<storage, read> entity_bounds_data: array<EntityBoundsData>;
 @group(1) @binding(2) var<storage, read> object_instances: array<ObjectInstance>;
 @group(1) @binding(3) var<storage, read_write> compacted_object_instances: array<CompactedObjectInstance>;
 @group(1) @binding(4) var<storage, read_write> draw_indirect_buffer: array<DrawCommand>;
@@ -112,20 +112,22 @@ fn cs(@builtin(global_invocation_id) global_id: vec3<u32>) {
     if (g_id < u32(draw_cull_constants.draw_count)) {
         let entity_id = object_instances[g_id].entity;
 
-        let sphere_bounds = entity_transforms[entity_id].bounds_pos_radius;
+        let sphere_bounds = entity_bounds_data[entity_id].bounds_pos_radius;
         let center = vec4<f32>(sphere_bounds.xyz, 1.0);
 
         // artificially inflate bounds to be more conservative with culling and to prevent
         // "z-fighting" style cull between bounds and written depth values
-        let radius = sphere_bounds.w * entity_transforms[entity_id].bounds_extent_and_custom_scale.w;
+        let radius = sphere_bounds.w * entity_bounds_data[entity_id].bounds_extent_and_custom_scale.w;
 
         let in_frustum = is_in_frustum(center, radius);
         let occluded = is_occluded(center, radius);
         if ((in_frustum * (1u - occluded)) > 0u) {
             let batch_index = object_instances[g_id].batch;
+            let first_instance = draw_indirect_buffer[batch_index].first_instance;
             let count_index = atomicAdd(&draw_indirect_buffer[batch_index].instance_count, 1u);
-            let instance_index = draw_indirect_buffer[batch_index].first_instance + count_index;
+            let instance_index = first_instance + count_index;
             compacted_object_instances[instance_index].entity = entity_id;
+            compacted_object_instances[instance_index].base_instance = first_instance;
         }
     }
 }

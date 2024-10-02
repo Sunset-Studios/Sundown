@@ -46,16 +46,23 @@ export class Buffer {
         this.buffer = null;
     }
 
-    write(context, data, offset = 0, size = null, data_offset = 0) {
+    write(context, data, offset = 0, size = null, data_offset = 0, data_type = Float32Array) {
         const is_array_buffer = ArrayBuffer.isView(data);
         const raw_data = is_array_buffer ? data : data.flat();
-        const buffer_data = is_array_buffer ? raw_data : new Float32Array(raw_data.length);
-        buffer_data.set(raw_data);
+        const buffer_data = is_array_buffer ? raw_data : new data_type(raw_data);
         context.device.queue.writeBuffer(this.buffer, offset, buffer_data, data_offset, size ?? buffer_data.length);
     }
 
     write_raw(context, data, offset = 0, size = null, data_offset = 0) {
         context.device.queue.writeBuffer(this.buffer, offset, data, data_offset, size ?? data.length);
+    }
+
+    write_large(context, data, offset = 0) {
+        this.buffer.mapAsync(GPUMapMode.WRITE).then(() => {
+            const buffer_data = new Float32Array(this.buffer.getMappedRange());
+            buffer_data.set(data, offset);
+            this.buffer.unmap();
+        });
     }
 
     async read(context, data, data_length, offset = 0, data_offset = 0, data_type = Float32Array) {
@@ -79,6 +86,15 @@ export class Buffer {
         );
     }
 
+    copy_buffer(encoder, offset, buffer, buffer_offset = 0, size = null) {
+        encoder.copyBufferToBuffer(
+            this.buffer,
+            offset,
+            buffer.buffer,
+            buffer_offset,
+            size ?? this.config.size
+        );
+    }
     bind_vertex(encoder, slot = 0) {
         encoder.setVertexBuffer(slot, this.buffer);
     }

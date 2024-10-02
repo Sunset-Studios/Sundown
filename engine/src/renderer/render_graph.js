@@ -440,6 +440,10 @@ export class RenderGraph {
       max_render_passes,
       _.cloneDeep(RGPass)
     );
+    this.resource_metadata_allocator = new FrameAllocator(
+      max_image_resources + max_buffer_resources,
+      _.cloneDeep(RGResourceMetadata)
+    );
   }
 
   /**
@@ -516,7 +520,7 @@ export class RenderGraph {
     this.registry.all_resource_handles.add(new_resource.handle);
     this.registry.resource_metadata.set(
       new_resource.handle,
-      _.cloneDeep(RGResourceMetadata)
+      this.resource_metadata_allocator.allocate()
     );
 
     const resource_metadata = this.registry.resource_metadata.get(
@@ -525,7 +529,13 @@ export class RenderGraph {
     resource_metadata.b_is_bindless = config.b_is_bindless;
     resource_metadata.b_is_persistent =
       (new_resource.config.flags & ImageFlags.Transient) === 0;
-    resource_metadata.max_frame_lifetime = config.max_frame_lifetime;
+    resource_metadata.max_frame_lifetime = config.max_frame_lifetime || 0;
+    resource_metadata.reference_count = 0;
+    resource_metadata.physical_id = 0;
+    resource_metadata.first_user = 0;
+    resource_metadata.last_user = 0;
+    resource_metadata.producers.length = 0;
+    resource_metadata.consumers.length = 0;
 
     return new_resource.handle;
   }
@@ -565,7 +575,7 @@ export class RenderGraph {
     this.registry.all_resource_handles.add(new_resource.handle);
     this.registry.resource_metadata.set(
       new_resource.handle,
-      _.cloneDeep(RGResourceMetadata)
+      this.resource_metadata_allocator.allocate()
     );
 
     const resource_metadata = this.registry.resource_metadata.get(
@@ -574,6 +584,11 @@ export class RenderGraph {
     resource_metadata.physical_id = physical_id;
     resource_metadata.b_is_persistent = true;
     resource_metadata.b_is_bindless = new_resource.config.b_is_bindless;
+    resource_metadata.reference_count = 0;
+    resource_metadata.first_user = 0;
+    resource_metadata.last_user = 0;
+    resource_metadata.producers.length = 0;
+    resource_metadata.consumers.length = 0;
 
     return new_resource.handle;
   }
@@ -613,7 +628,7 @@ export class RenderGraph {
     this.registry.all_resource_handles.add(new_resource.handle);
     this.registry.resource_metadata.set(
       new_resource.handle,
-      _.cloneDeep(RGResourceMetadata)
+      this.resource_metadata_allocator.allocate()
     );
 
     const resource_metadata = this.registry.resource_metadata.get(
@@ -623,6 +638,12 @@ export class RenderGraph {
     resource_metadata.b_is_persistent =
       (new_resource.config.flags & BufferFlags.Transient) === 0;
     resource_metadata.max_frame_lifetime = config.max_frame_lifetime;
+    resource_metadata.reference_count = 0;
+    resource_metadata.physical_id = 0;
+    resource_metadata.first_user = 0;
+    resource_metadata.last_user = 0;
+    resource_metadata.producers.length = 0;
+    resource_metadata.consumers.length = 0;
 
     return new_resource.handle;
   }
@@ -665,7 +686,7 @@ export class RenderGraph {
     this.registry.all_resource_handles.add(new_resource.handle);
     this.registry.resource_metadata.set(
       new_resource.handle,
-      _.cloneDeep(RGResourceMetadata)
+      this.resource_metadata_allocator.allocate()
     );
 
     const resource_metadata = this.registry.resource_metadata.get(
@@ -674,6 +695,11 @@ export class RenderGraph {
     resource_metadata.physical_id = physical_id;
     resource_metadata.b_is_persistent = true;
     resource_metadata.b_is_bindless = new_resource.config.b_is_bindless;
+    resource_metadata.reference_count = 0;
+    resource_metadata.first_user = 0;
+    resource_metadata.last_user = 0;
+    resource_metadata.producers.length = 0;
+    resource_metadata.consumers.length = 0;
 
     return new_resource.handle;
   }
@@ -797,7 +823,7 @@ export class RenderGraph {
   }
 
   /**
-   * Queues a set of commands to be executed after all other passes in the render graph.
+   * Queues a set of commands to be executed before all other passes in the render graph.
    *
    * @param {string} name - A descriptive name for the set of commands.
    * @param {Function} commands_callback - A callback function that will be executed to perform the commands.
@@ -1071,6 +1097,7 @@ export class RenderGraph {
     this.image_resource_allocator.reset();
     this.buffer_resource_allocator.reset();
     this.render_pass_allocator.reset();
+    this.resource_metadata_allocator.reset();
   }
 
   _execute_pass(pass, frame_data, encoder) {
@@ -1104,10 +1131,12 @@ export class RenderGraph {
 
       frame_data.current_pass = pass.physical_id;
 
+      encoder.pushDebugGroup(pass.pass_config.name);
       physical_pass.begin(encoder, pipeline);
       this._bind_pass_bind_groups(pass, frame_data);
       pass.executor(this, frame_data, encoder);
       physical_pass.end();
+      encoder.popDebugGroup();
 
       this._update_transient_resources(pass);
     }

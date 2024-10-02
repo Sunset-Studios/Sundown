@@ -104,10 +104,17 @@ export class InputProcessor {
     window.removeEventListener("wheel", this.handle_mouse_wheel);
   }
 
+  shouldPreventDefaultKeyCombo(event) {
+    return (event.ctrlKey || event.metaKey) && (event.key === 'w' || event.key === 'a');
+  }
+
   handle_key_down(event) {
     const key = this.browser_key_to_input_key(event.code);
     if (key !== undefined) {
       this.key_map.set(key, true);
+    }
+    if (this.shouldPreventDefaultKeyCombo(event)) {
+      event.preventDefault();
     }
   }
 
@@ -115,6 +122,9 @@ export class InputProcessor {
     const key = this.browser_key_to_input_key(event.code);
     if (key !== undefined) {
       this.key_map.set(key, false);
+    }
+    if (this.shouldPreventDefaultKeyCombo(event)) {
+      event.preventDefault();
     }
   }
 
@@ -142,7 +152,7 @@ export class InputProcessor {
   handle_mouse_wheel(event) {
     this.mouse_wheel = event.deltaY;
   }
-  
+
   update(context, delta_time, canvas) {
     this.ranges_array[InputRange.M_wheel] = this.mouse_wheel;
 

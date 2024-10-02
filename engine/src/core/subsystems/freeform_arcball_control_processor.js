@@ -21,6 +21,11 @@ export class FreeformArcballControlProcessor extends SimulationLayer {
 
     pre_update(delta_time) {
         super.pre_update(delta_time);
+
+        const ctrl_held = InputProvider.get().get_state(InputKey.K_LControl) || InputProvider.get().get_state(InputKey.K_RControl);
+        if (ctrl_held) {
+            return;
+        }
         
         const view_data = SharedViewBuffer.get().get_view_data(this.context.current_view);
         let position = vec4.clone(view_data.position);

@@ -2,6 +2,7 @@ import { Renderer } from "../renderer.js";
 import { Texture } from "../texture.js";
 import { RenderPassFlags } from "../render_pass.js";
 import { MeshTaskQueue } from "../mesh_task_queue.js";
+import { ComputeTaskQueue } from "../compute_task_queue.js";
 import { TransformFragment } from "../../core/ecs/fragments/transform_fragment.js";
 import { LightFragment } from "../../core/ecs/fragments/light_fragment.js";
 import {
@@ -35,10 +36,17 @@ export class DeferredShadingStrategy {
       }
 
       MeshTaskQueue.get().sort_and_batch(context);
+      ComputeTaskQueue.get().compile_rg_passes(render_graph);
 
       const transform_gpu_data = TransformFragment.to_gpu_data(context);
       const entity_transforms = render_graph.register_buffer(
-        transform_gpu_data.gpu_buffer.config.name
+        transform_gpu_data.transforms_buffer.config.name
+      );
+      const entity_bounds_data = render_graph.register_buffer(
+        transform_gpu_data.bounds_data_buffer.config.name
+      );
+      const entity_inverse_transforms = render_graph.register_buffer(
+        transform_gpu_data.inverse_transforms_buffer.config.name
       );
 
       const light_gpu_data = LightFragment.to_gpu_data(context);
@@ -172,14 +180,14 @@ export class DeferredShadingStrategy {
               main_entity_id_image,
               main_transparency_accum_image,
               main_transparency_reveal_image,
-              main_depth_image
+              main_depth_image,
             ],
             b_skip_pass_pipeline_setup: true,
             b_skip_pass_bind_group_setup: true,
           },
           (graph, frame_data, encoder) => {
             const pass = graph.get_physical_pass(frame_data.current_pass);
-            
+
             // Ensure all G-Buffer targets are set to clear on load
             frame_data.g_buffer_data = {
               albedo: graph.get_physical_image(main_albedo_image),
@@ -188,8 +196,12 @@ export class DeferredShadingStrategy {
               position: graph.get_physical_image(main_position_image),
               normal: graph.get_physical_image(main_normal_image),
               entity_id: graph.get_physical_image(main_entity_id_image),
-              transparency_accum: graph.get_physical_image(main_transparency_accum_image),
-              transparency_reveal: graph.get_physical_image(main_transparency_reveal_image),
+              transparency_accum: graph.get_physical_image(
+                main_transparency_accum_image
+              ),
+              transparency_reveal: graph.get_physical_image(
+                main_transparency_reveal_image
+              ),
               depth: graph.get_physical_image(main_depth_image),
             };
           }
@@ -283,7 +295,7 @@ export class DeferredShadingStrategy {
             shader_setup,
             inputs: [
               main_hzb_image,
-              entity_transforms,
+              entity_bounds_data,
               object_instances,
               compacted_object_instance_buffer,
               indirect_draws,
@@ -329,7 +341,7 @@ export class DeferredShadingStrategy {
             },
           },
         };
-        
+
         const material_buckets = MeshTaskQueue.get().get_material_buckets();
         for (let i = 0; i < material_buckets.length; i++) {
           const material_id = material_buckets[i];
@@ -339,15 +351,24 @@ export class DeferredShadingStrategy {
             `g_buffer_${material.template.name}_${material_id}`,
             RenderPassFlags.Graphics,
             {
-              inputs: [entity_transforms, compacted_object_instance_buffer],
+              inputs: [
+                entity_transforms,
+                entity_inverse_transforms,
+                entity_bounds_data,
+                compacted_object_instance_buffer,
+              ],
               outputs: [
-                material.family === MaterialFamilyType.Transparent ? main_transparency_accum_image : main_albedo_image,
+                material.family === MaterialFamilyType.Transparent
+                  ? main_transparency_accum_image
+                  : main_albedo_image,
                 main_emissive_image,
                 main_smra_image,
                 main_position_image,
                 main_normal_image,
-                main_entity_id_image,
-                material.family === MaterialFamilyType.Transparent ? main_transparency_reveal_image : null,
+                material.writes_entity_id ? main_entity_id_image : null,
+                material.family === MaterialFamilyType.Transparent
+                  ? main_transparency_reveal_image
+                  : null,
                 main_depth_image,
               ],
               shader_setup,
@@ -851,6 +872,8 @@ export class DeferredShadingStrategy {
       }
 
       this.force_recreate = false;
+
+      ComputeTaskQueue.get().reset();
 
       render_graph.submit(context);
     });

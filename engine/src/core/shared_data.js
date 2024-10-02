@@ -331,6 +331,7 @@ export class SharedViewBuffer {
       ...item.prev_projection_matrix,
       ...item.view_projection_matrix,
       ...item.inverse_view_projection_matrix,
+      ...item.position,
       ...item.view_forward,
       ...item.frustum
     );
@@ -384,6 +385,7 @@ export class SharedFrameInfoBuffer {
     view_index: 0,
     time: 0,
     resolution: vec2.create(),
+    cursor_world_position: vec4.create(),
   };
   buffer = null;
 
@@ -427,6 +429,15 @@ export class SharedFrameInfoBuffer {
     }
   }
 
+  set_cursor_world_position(context, cursor_world_position) {
+    this.frame_info.cursor_world_position = cursor_world_position;
+    if (!this.buffer) {
+      this.build(context);
+    } else {
+      this.buffer.write(context, this._get_gpu_type_layout(this.frame_info));
+    }
+  }
+
   set_resolution(context, resolution) {
     this.frame_info.resolution = resolution;
     if (!this.buffer) {
@@ -455,6 +466,11 @@ export class SharedFrameInfoBuffer {
   }
 
   _get_gpu_type_layout(item) {
-    return Array.of(item.view_index, item.time, ...item.resolution);
+    return Array.of(
+      item.view_index,
+      item.time,
+      ...item.resolution,
+      ...item.cursor_world_position
+    );
   }
 }

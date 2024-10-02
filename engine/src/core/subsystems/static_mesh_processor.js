@@ -35,7 +35,7 @@ export class StaticMeshProcessor extends SimulationLayer {
 
         if (entity_state & EntityMasks.Removed) {
           mesh_task_queue.remove(entity);
-          mesh_task_queue.mark_needs_sort();
+          needs_resort = true;
           continue;
         }
 

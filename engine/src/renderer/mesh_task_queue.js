@@ -7,8 +7,8 @@ import { FrameAllocator } from "../memory/allocator.js";
 import { profile_scope } from "../utility/performance.js";
 import { BindGroupType } from "./bind_group.js";
 
-const max_objects = 1000000;
-const max_frame_buffer_writes = 500;
+const max_objects = 5000000;
+const max_frame_buffer_writes = 1000;
 
 class IndirectDrawBatch {
   mesh_id = 0;
@@ -60,7 +60,7 @@ class IndirectDrawObject {
       if (!this.compacted_object_instance_buffer) {
         this.compacted_object_instance_buffer = Buffer.create(context, {
           name: "compacted_object_instance_buffer",
-          raw_data: new Uint32Array(max_objects),
+          raw_data: new Uint32Array(max_objects * 2),
           usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
         });
       }
@@ -119,7 +119,10 @@ class IndirectDrawObject {
             this.indirect_draw_data[offset + 4] = batches[i].base_instance;
           }
           write_length = Math.min(max_length, max_frame_buffer_writes * 5);
-          write_length = Math.min(write_length, max_length - this.current_indirect_draw_write_offset);
+          write_length = Math.min(
+            write_length,
+            max_length - this.current_indirect_draw_write_offset
+          );
         }
 
         this.indirect_draw_buffer.write_raw(
@@ -149,7 +152,10 @@ class IndirectDrawObject {
               object_instances[i].entity_index;
           }
           write_length = Math.min(max_length, max_frame_buffer_writes * 2);
-          write_length = Math.min(write_length, max_length - this.current_object_instance_write_offset);
+          write_length = Math.min(
+            write_length,
+            max_length - this.current_object_instance_write_offset
+          );
         }
 
         this.object_instance_buffer.write_raw(
@@ -277,8 +283,13 @@ export class MeshTaskQueue {
             last_batch.mesh_id === task.mesh_id &&
             last_batch.material_id === task.material_id
           ) {
-            last_batch.instance_count += 1;
-            last_batch.entity_ids.push(task.entity);
+            last_batch.instance_count += task.instance_count;
+            last_batch.entity_ids.length += task.instance_count;
+            const start_index =
+              last_batch.entity_ids.length - task.instance_count;
+            for (let j = 0; j < task.instance_count; j++) {
+              last_batch.entity_ids[start_index + j] = task.entity;
+            }
           } else {
             const mesh = ResourceCache.get().fetch(
               CacheTypes.MESH,
@@ -296,7 +307,9 @@ export class MeshTaskQueue {
             batch.base_instance = last_batch
               ? last_batch.base_instance + last_batch.instance_count
               : 0;
-            batch.entity_ids.push(task.entity);
+
+            batch.entity_ids.length = task.instance_count;
+            batch.entity_ids.fill(task.entity);
 
             last_batch = batch;
 
@@ -357,8 +370,21 @@ export class MeshTaskQueue {
   }
 
   remove(entity) {
-    // Filter out tasks associated with the given entity
-    this.tasks = this.tasks.filter((task) => task.entity !== entity);
+    // Use a single-pass, in-place removal algorithm
+    let write_index = 0;
+    for (let read_index = 0; read_index < this.tasks.length; read_index++) {
+      if (this.tasks[read_index].entity !== entity) {
+        if (write_index !== read_index) {
+          this.tasks[write_index] = this.tasks[read_index];
+        }
+        write_index++;
+      }
+    }
+
+    // Trim the array to the new size
+    if (write_index < this.tasks.length) {
+      this.tasks.length = write_index;
+    }
 
     // Reset the batches and object instances if there are no tasks left
     if (this.tasks.length == 0) {

@@ -163,12 +163,20 @@ export class Shader {
           ? this.defines[condition] === (value || true)
           : !this.defines[condition];
 
-      if (should_include) {
-        const block_content = code
-          .slice(start_index, end_index)
-          .replace(full_match, "")
-          .trim();
-        result += block_content;
+      const else_index = code.indexOf("#else", start_index);
+      if (else_index !== -1 && else_index < end_index) {
+        if (should_include) {
+          result += code.slice(start_index + full_match.length, else_index).trim();
+        } else {
+          result += code.slice(else_index + "#else".length, end_index).trim();
+        }
+      } else {
+        if (should_include) {
+          const block_content = code
+            .slice(start_index + full_match.length, end_index)
+            .trim();
+          result += block_content;
+        }
       }
 
       last_index = end_index + "#endif".length;

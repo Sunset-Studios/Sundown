@@ -14,6 +14,7 @@ struct View {
     prev_projection_matrix: mat4x4f,
     view_projection_matrix: mat4x4f,
     inverse_view_projection_matrix: mat4x4f,
+    view_position: vec4f,
     view_direction: vec4f,
     frustum: array<vec4f, 6>,
 };
@@ -22,14 +23,22 @@ struct FrameInfo {
     view_index: u32,
     time: f32,
     resolution: vec2f,
+    cursor_world_position: vec4f,
 };
 
 struct EntityTransform {
-    transform: mat4x4<f32>,
-    inverse_model_matrix: mat4x4<f32>,
-    transpose_inverse_model_matrix: mat4x4<f32>,
-    bounds_pos_radius: vec4<f32>,
-    bounds_extent_and_custom_scale: vec4<f32>,
+    transform: mat4x4f,
+    prev_transform: mat4x4f,
+};
+
+struct EntityInverseTransform {
+    inverse_model_matrix: mat4x4f,
+    transpose_inverse_model_matrix: mat4x4f,
+};
+
+struct EntityBoundsData {
+    bounds_pos_radius: vec4f,
+    bounds_extent_and_custom_scale: vec4f,
 };
 
 struct ObjectInstance {
@@ -39,6 +48,7 @@ struct ObjectInstance {
 
 struct CompactedObjectInstance {
     entity: u32,
+    base_instance: u32,
 };
 
 // 4x4 Bayer matrix for dithering
@@ -50,6 +60,7 @@ const bayer_matrix = array<f32, 16>(
 );
 
 const epsilon = 1e-5;
+const world_up = vec3f(0.0, 1.0, 0.0);
 
 @group(0) @binding(0) var<storage, read> vertex_buffer: array<Vertex>;
 @group(0) @binding(1) var<storage, read> view_buffer: array<View>;

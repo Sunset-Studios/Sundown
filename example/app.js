@@ -3,8 +3,10 @@ import { DeferredShadingStrategy } from "../engine/src/renderer/strategies/defer
 import { Material } from "../engine/src/renderer/material.js";
 import SimulationCore from "../engine/src/core/simulation_core.js";
 import { InputProvider } from "../engine/src/input/input_provider.js";
+import { EntityManager } from "../engine/src/core/ecs/entity.js";
 import { Scene } from "../engine/src/core/scene.js";
 import application_state from "../engine/src/core/application_state.js";
+import { ComputeTaskQueue } from "../engine/src/renderer/compute_task_queue.js";
 import { StaticMeshFragment } from "../engine/src/core/ecs/fragments/static_mesh_fragment.js";
 import { TransformFragment } from "../engine/src/core/ecs/fragments/transform_fragment.js";
 import { FreeformArcballControlProcessor } from "../engine/src/core/subsystems/freeform_arcball_control_processor.js";
@@ -19,49 +21,35 @@ import { profile_scope } from "../engine/src/utility/performance.js";
 import { frame_runner } from "../engine/src/utility/frame_runner.js";
 import { quat } from "gl-matrix";
 
-async function init() {
-  application_state.is_running = true;
-
-  // Initialize input provider
-  const input_provider = InputProvider.get();
-  await SimulationCore.get().register_simulation_layer(input_provider);
-  input_provider.push_context(InputProvider.default_context());
-
-  // Initialize renderer with document canvas
-  const canvas = document.getElementById("gpu-canvas");
-  await Renderer.get().setup(canvas, DeferredShadingStrategy);
-
-  // Initialize scene
-  {
-    // Create a test scene and register it with the simulation system
-    const scene = new Scene("StartScene");
-    await SimulationCore.get().register_simulation_layer(scene);
+export class TestScene extends Scene {
+  async init(parent_context) {
+    await super.init(parent_context);
 
     // Add the freeform arcball control processor to the scene
-    const freeform_arcball_control_processor = scene.add_layer(
+    const freeform_arcball_control_processor = this.add_layer(
       FreeformArcballControlProcessor
     );
-    freeform_arcball_control_processor.set_scene(scene);
+    freeform_arcball_control_processor.set_scene(this);
 
     // Set the skybox for this scene.
     await SharedEnvironmentMapData.get().add_skybox(
       Renderer.get().graphics_context,
       "default_scene_skybox",
       [
-        "engine/textures/spacebox/px.png",
-        "engine/textures/spacebox/nx.png",
-        "engine/textures/spacebox/ny.png",
-        "engine/textures/spacebox/py.png",
-        "engine/textures/spacebox/pz.png",
-        "engine/textures/spacebox/nz.png",
+        "engine/textures/gradientbox/px.png",
+        "engine/textures/gradientbox/nx.png",
+        "engine/textures/gradientbox/ny.png",
+        "engine/textures/gradientbox/py.png",
+        "engine/textures/gradientbox/pz.png",
+        "engine/textures/gradientbox/nz.png",
       ]
     );
 
     // Create a light and add it to the scene
-    const light_entity = scene.create_entity();
+    const light_entity = this.create_entity();
 
     // Add a light fragment to the light entity
-    scene.add_fragment(light_entity, LightFragment, {
+    this.add_fragment(light_entity, LightFragment, {
       type: LightType.DIRECTIONAL,
       color: { r: 1, g: 1, b: 1 },
       intensity: 5,
@@ -81,17 +69,17 @@ async function init() {
     );
 
     // Create a 3D grid of sphere entities
-    const grid_size = 50; // 50x50 grid
+    const grid_size = 100; // 100x100x10 grid
     const grid_layers = 10;
     const spacing = 2; // 2 units apart
 
     for (let x = 0; x < grid_size; x++) {
       for (let z = 0; z < grid_size; z++) {
         for (let y = 0; y < grid_layers; y++) {
-          let entity = scene.create_entity(false /* refresh_entity_queries */);
+          let entity = this.create_entity(false /* refresh_entity_queries */);
 
           // Add a static mesh fragment to the sphere entity
-          scene.add_fragment(
+          this.add_fragment(
             entity,
             StaticMeshFragment,
             {
@@ -105,7 +93,7 @@ async function init() {
           const rotation = quat.fromValues(0, 0, 0, 1);
 
           // Add a transform fragment to the sphere entity
-          scene.add_fragment(
+          this.add_fragment(
             entity,
             TransformFragment,
             {
@@ -123,8 +111,39 @@ async function init() {
       }
     }
 
-    scene.refresh_entity_queries();
+    this.refresh_entity_queries();
   }
+
+  update(delta_time) {
+    super.update(delta_time);
+
+    const transforms = EntityManager.get().get_fragment_array(TransformFragment);
+
+    ComputeTaskQueue.get().new_task(
+      "ripples",
+      "effects/transform_ripples.wgsl",
+      [transforms.position_buffer, transforms.dirty_flags_buffer],
+      [transforms.position_buffer, transforms.dirty_flags_buffer],
+      Math.ceil(transforms.dirty.length / 256)
+    );
+  }
+}
+
+async function init() {
+  application_state.is_running = true;
+
+  // Initialize input provider
+  const input_provider = InputProvider.get();
+  await SimulationCore.get().register_simulation_layer(input_provider);
+  input_provider.push_context(InputProvider.default_context());
+
+  // Initialize renderer with document canvas
+  const canvas = document.getElementById("gpu-canvas");
+  await Renderer.get().setup(canvas, DeferredShadingStrategy);
+
+  // Create a test scene and register it with the simulation system
+  const scene = new TestScene("TestScene");
+  await SimulationCore.get().register_simulation_layer(scene);
 }
 
 function simulate(delta_time) {
