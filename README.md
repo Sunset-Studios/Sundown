@@ -11,7 +11,8 @@ An extendible WebGPU game and simulation engine for fun, games and research. Som
 * ⚡ Simple, context-based input system, allowing you to set up different input schemes and contexts
 * ⚡ Built-in PBR shaders
 * ⚡ Auto instancing and draw batching of meshes using a specialized mesh task queue
-* ⚡ Helpers for loading GTLFs, tracking performance scopes, named IDs and more.
+* ⚡ Compute task queue for easily submitting compute shader work
+* ⚡ Helpers for loading GTLFs, tracking performance scopes, named IDs, running frames and more.
 
 ![Sundown Demo](./sundown_demo.gif)
 
