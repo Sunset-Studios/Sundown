@@ -54,7 +54,11 @@ export class Buffer {
     }
 
     write_raw(context, data, offset = 0, size = null, data_offset = 0) {
-        context.device.queue.writeBuffer(this.buffer, offset, data, data_offset, size ?? data.length);
+        try {
+            context.device.queue.writeBuffer(this.buffer, offset, data, data_offset, size ?? data.length);
+        } catch (e) {
+            console.error('Error writing buffer with offset ', offset, ' and size ', size, ': ', e);
+        }
     }
 
     write_large(context, data, offset = 0) {

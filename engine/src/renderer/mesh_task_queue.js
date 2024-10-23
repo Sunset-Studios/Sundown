@@ -151,11 +151,11 @@ class IndirectDrawObject {
             this.object_instance_data[offset + 1] =
               object_instances[i].entity_index;
           }
-          write_length = Math.min(max_length, max_frame_buffer_writes * 2);
           write_length = Math.min(
             write_length,
             max_length - this.current_object_instance_write_offset
           );
+          write_length = Math.min(max_length, max_frame_buffer_writes * 2);
         }
 
         this.object_instance_buffer.write_raw(

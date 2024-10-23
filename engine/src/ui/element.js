@@ -94,7 +94,8 @@ export class Element {
         if (
           this.was_cursor_inside &&
           !this.is_cursor_inside &&
-          this.config.style
+          this.config.style &&
+          this.config.hover_style
         ) {
           this.apply_style(this.config.style, true);
         }
