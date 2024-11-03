@@ -3,12 +3,18 @@
   "version": "1.0.0",
   "description": "The Sundown WebGPU game engine.",
   "main": "dist/electron/main/index.js",
+  "type": "module",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
+    "predev": "node tools/fragment_preprocessor.js",
     "dev": "vite",
+    "prebuild": "node tools/fragment_preprocessor.js",
     "build": "vite build",
+    "predevtop": "node tools/fragment_preprocessor.js",
     "devtop": "vite build && electron-vite dev",
+    "prebuildtop": "node tools/fragment_preprocessor.js",
     "buildtop": "vite build && electron-vite build",
+    "premake": "node tools/fragment_preprocessor.js",
     "make": "vite build && electron-vite build && electron-forge make"
   },
   "build": {
@@ -60,7 +66,8 @@
     "@electron-forge/plugin-fuses": "^7.4.0",
     "@electron/fuses": "^1.8.0",
     "electron": "^31.1.0",
-    "electron-vite": "^2.3.0"
+    "electron-vite": "^2.3.0",
+    "prettier": "^3.3.3"
   }
 }
 

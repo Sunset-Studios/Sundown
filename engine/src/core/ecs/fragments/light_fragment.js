@@ -163,20 +163,12 @@ export class LightFragment extends Fragment {
       offset += 16;
     }
 
-    // Resize the buffer if necessary
-    if (
-      this.data.gpu_buffer &&
-      this.data.gpu_buffer.config.size < gpu_data.byteLength
-    ) {
-      this.data.gpu_buffer.destroy(context);
-      this.data.gpu_buffer = null;
-    }
-
-    if (!this.data.gpu_buffer) {
+    if (!this.data.gpu_buffer || this.data.gpu_buffer.config.size < gpu_data.byteLength) {
       this.data.gpu_buffer = Buffer.create(context, {
         name: "light_fragment_buffer",
         usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
         raw_data: gpu_data,
+        force: true,
       });
       Renderer.get().mark_bind_groups_dirty(true);
     } else {

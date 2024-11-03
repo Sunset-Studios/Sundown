@@ -1,8 +1,8 @@
 import { Element } from "./element.js";
-import { InputProvider } from "../input/input_provider.js";
-import { InputRange } from "../input/input_types.js";
-import { SharedViewBuffer, SharedFrameInfoBuffer } from "../core/shared_data.js";
-import { screen_pos_to_world_pos } from "../utility/camera.js";
+import { InputProvider } from "../../input/input_provider.js";
+import { InputRange } from "../../input/input_types.js";
+import { SharedViewBuffer, SharedFrameInfoBuffer } from "../../core/shared_data.js";
+import { screen_pos_to_world_pos } from "../../utility/camera.js";
 import { vec3 } from "gl-matrix";
 
 export class Cursor extends Element {

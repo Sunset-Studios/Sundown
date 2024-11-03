@@ -1,5 +1,6 @@
 import { ResourceCache, CacheTypes } from "./resource_cache.js";
 import { WgslReflect, ResourceType } from "wgsl_reflect/wgsl_reflect.node.js";
+import { read_file } from "../utility/file_system.js";
 
 export const ShaderResourceType = {
   Uniform: 0,
@@ -58,27 +59,10 @@ export class Shader {
   _load_shader_text(file_path, load_recursion_step = 0) {
     let asset = null;
     for (const path of Shader.shader_paths) {
-      try {
-        const url = new URL(`${path}/${file_path}`, window.location.href);
-        
-        // Check if file exists
-        const check_xhr = new XMLHttpRequest();
-        check_xhr.open('HEAD', url.href, false);
-        check_xhr.send(null);
-        
-        if (check_xhr.status === 200) {
-          // File exists, now fetch its contents
-          const get_xhr = new XMLHttpRequest();
-          get_xhr.open('GET', url.href, false);
-          get_xhr.send(null);
-          
-          if (get_xhr.status === 200 && !get_xhr.responseText.includes("<!DOCTYPE html>")) {
-            asset = get_xhr.responseText;
-            break;
-          }
-        }
-      } catch (error) {
-        // Network error or other issues, continue to next path
+      const full_path = `${path}/${file_path}`;
+      asset = read_file(full_path);
+      if (asset) {
+        break;
       }
     }
 

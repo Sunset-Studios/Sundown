@@ -1,6 +1,6 @@
-import { InputProvider } from "../input/input_provider.js";
-import { InputRange, InputKey } from "../input/input_types.js";
-import { profile_scope } from "../utility/performance.js";
+import { InputProvider } from "../../input/input_provider.js";
+import { InputRange, InputKey } from "../../input/input_types.js";
+import { profile_scope } from "../../utility/performance.js";
 
 export function element_type_to_dom_type(element_type) {
   switch (element_type) {
