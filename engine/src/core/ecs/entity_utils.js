@@ -83,7 +83,7 @@ export class EntityLinearDataContainer {
       from_index
     );
 
-    if (from_index + adjusted_shift_amount > this.linear_data.length) {
+    if (from_index + adjusted_shift_amount >= this.linear_data.length) {
       this.resize(Math.max(this.linear_data.length * 2, from_index + adjusted_shift_amount));
     }
 

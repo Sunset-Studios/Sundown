@@ -1,13 +1,8 @@
+import { EntityLinearDataContainer } from "../entity_utils.js";
+import { Fragment } from "../fragment.js";
 import { Renderer } from "../../../renderer/renderer.js";
 import { Buffer } from "../../../renderer/buffer.js";
-import { Fragment } from "../fragment.js";
-
-export const LightType = {
-  DIRECTIONAL: 0,
-  POINT: 1,
-  SPOT: 2,
-  AREA: 3,
-};
+import { global_dispatcher } from "../../../core/dispatcher.js";
 
 export class LightFragment extends Fragment {
   static initialize() {
@@ -32,81 +27,100 @@ export class LightFragment extends Fragment {
       radius: new Float32Array(1),
       attenuation: new Float32Array(1),
       outer_angle: new Float32Array(1),
-      dirty: new Uint8Array(1),
       active: new Uint8Array(1),
-      gpu_buffer: null,
+      dirty: new Uint8Array(1),
+      light_fragment_buffer: null,
       gpu_data_dirty: true,
     };
+
+    this.rebuild_buffers(Renderer.get().graphics_context);
   }
 
   static resize(new_size) {
-    if (!this.data) {
-      this.initialize();
-    }
-
+    if (!this.data) this.initialize();
     super.resize(new_size);
 
-    ["position", "direction"].forEach((prop) => {
-      ["x", "y", "z"].forEach((axis) => {
-        Fragment.resize_array(this.data[prop], axis, new_size);
-      });
+    Object.keys(this.data.position).forEach((axis) => {
+      Fragment.resize_array(this.data.position, axis, new_size, Float32Array);
     });
-
-    ["color"].forEach((prop) => {
-      ["r", "g", "b"].forEach((axis) => {
-        Fragment.resize_array(this.data[prop], axis, new_size);
-      });
+    Object.keys(this.data.direction).forEach((axis) => {
+      Fragment.resize_array(this.data.direction, axis, new_size, Float32Array);
     });
+    Object.keys(this.data.color).forEach((axis) => {
+      Fragment.resize_array(this.data.color, axis, new_size, Float32Array);
+    });
+    Fragment.resize_array(this.data, "type", new_size, Uint8Array, 1);
+    Fragment.resize_array(this.data, "intensity", new_size, Float32Array, 1);
+    Fragment.resize_array(this.data, "radius", new_size, Float32Array, 1);
+    Fragment.resize_array(this.data, "attenuation", new_size, Float32Array, 1);
+    Fragment.resize_array(this.data, "outer_angle", new_size, Float32Array, 1);
+    Fragment.resize_array(this.data, "active", new_size, Uint8Array, 1);
+    Fragment.resize_array(this.data, "dirty", new_size, Uint8Array, 1);
 
-    Fragment.resize_array(this.data, "type", new_size, Uint8Array);
-    Fragment.resize_array(this.data, "intensity", new_size, Float32Array);
-    Fragment.resize_array(this.data, "radius", new_size, Float32Array);
-    Fragment.resize_array(this.data, "attenuation", new_size, Float32Array);
-    Fragment.resize_array(this.data, "outer_angle", new_size, Float32Array);
-    Fragment.resize_array(this.data, "dirty", new_size, Uint8Array);
-    Fragment.resize_array(this.data, "active", new_size, Uint8Array);
+    this.rebuild_buffers(Renderer.get().graphics_context);
+  }
+
+  static add_entity(entity, data) {
+    super.add_entity(entity, data);
   }
 
   static remove_entity(entity) {
     super.remove_entity(entity);
     this.update_entity_data(entity, {
       position: {
-        x: 0.0,
-        y: 0.0,
-        z: 0.0,
+        x: 0,
+        y: 0,
+        z: 0,
       },
       direction: {
-        x: 0.0,
-        y: 0.0,
-        z: 0.0,
+        x: 0,
+        y: 0,
+        z: 0,
       },
       color: {
-        r: 0.0,
-        g: 0.0,
-        b: 0.0,
+        r: 0,
+        g: 0,
+        b: 0,
       },
       type: 0,
-      intensity: 0.0,
-      radius: 0.0,
-      attenuation: 0.0,
-      outer_angle: 0.0,
-      dirty: 0,
+      intensity: 0,
+      radius: 0,
+      attenuation: 0,
+      outer_angle: 0,
       active: 0,
+      dirty: 0,
     });
   }
 
+  static get_entity_data(entity) {
+    return super.get_entity_data(entity);
+  }
+
   static duplicate_entity_data(entity) {
-    const data = this.get_entity_data(entity);
-    return {
-      position: data.position,
-      direction: data.direction,
-      color: data.color,
-      type: data.type,
-      intensity: data.intensity,
-      radius: data.radius,
-      attenuation: data.attenuation,
-      outer_angle: data.outer_angle,
+    const data = {};
+    data.position = {
+      x: this.data.position.x[entity],
+      y: this.data.position.y[entity],
+      z: this.data.position.z[entity],
     };
+    data.direction = {
+      x: this.data.direction.x[entity],
+      y: this.data.direction.y[entity],
+      z: this.data.direction.z[entity],
+    };
+    data.color = {
+      r: this.data.color.r[entity],
+      g: this.data.color.g[entity],
+      b: this.data.color.b[entity],
+    };
+    data.type = this.data.type[entity];
+    data.intensity = this.data.intensity[entity];
+    data.radius = this.data.radius[entity];
+    data.attenuation = this.data.attenuation[entity];
+    data.outer_angle = this.data.outer_angle[entity];
+    data.active = this.data.active[entity];
+    data.dirty = this.data.dirty[entity];
+    return data;
   }
 
   static update_entity_data(entity, data) {
@@ -115,68 +129,91 @@ export class LightFragment extends Fragment {
     }
 
     super.update_entity_data(entity, data);
-    this.data.dirty[entity] = 1;
-    this.data.active[entity] = 1;
+
+    if (this.data.dirty) {
+      this.data.dirty[entity] = 1;
+    }
     this.data.gpu_data_dirty = true;
+
+    this.data.active[entity] = 1;
   }
 
   static to_gpu_data(context) {
-    if (!this.data) {
-      this.initialize();
-    }
+    if (!this.data) this.initialize();
 
     if (!this.data.gpu_data_dirty) {
-      return { gpu_buffer: this.data.gpu_buffer };
+      return {
+        light_fragment_buffer: this.data.light_fragment_buffer,
+      };
     }
 
-    let total_active = 0;
-    for (let i = 0; i < this.size; i++) {
-      if (this.data.active[i]) {
-        total_active++;
+    this.rebuild_buffers(context);
+
+    return {
+      light_fragment_buffer: this.data.light_fragment_buffer,
+    };
+  }
+
+  static rebuild_buffers(context) {
+    {
+      let total_active = 0;
+      for (let i = 0; i < this.size; i++) {
+        if (this.data.active[i]) {
+          total_active++;
+        }
       }
-    }
 
-    const gpu_data = new Float32Array(Math.max(total_active * 16, 16));
-    let offset = 0;
-    for (let i = 0; i < this.size; i++) {
-      if (!this.data.active[i]) {
-        continue;
+      const gpu_data = new Float32Array(Math.max(total_active * 16, 16));
+      let offset = 0;
+      for (let i = 0; i < this.size; i++) {
+        if (!this.data.active[i]) {
+          continue;
+        }
+
+        gpu_data[offset] = this.data.position.x[i];
+        gpu_data[offset + 1] = this.data.position.y[i];
+        gpu_data[offset + 2] = this.data.position.z[i];
+        gpu_data[offset + 3] = 0; // padding
+        gpu_data[offset + 4] = this.data.direction.x[i];
+        gpu_data[offset + 5] = this.data.direction.y[i];
+        gpu_data[offset + 6] = this.data.direction.z[i];
+        gpu_data[offset + 7] = 0; // padding
+        gpu_data[offset + 8] = this.data.color.r[i];
+        gpu_data[offset + 9] = this.data.color.g[i];
+        gpu_data[offset + 10] = this.data.color.b[i];
+        gpu_data[offset + 11] = this.data.type[i];
+        gpu_data[offset + 12] = this.data.intensity[i];
+        gpu_data[offset + 13] = this.data.radius[i];
+        gpu_data[offset + 14] = this.data.attenuation[i];
+        gpu_data[offset + 15] = this.data.outer_angle[i];
+
+        offset += 16;
       }
 
-      gpu_data[offset] = this.data.position.x[i];
-      gpu_data[offset + 1] = this.data.position.y[i];
-      gpu_data[offset + 2] = this.data.position.z[i];
-      gpu_data[offset + 3] = 0; // padding
-      gpu_data[offset + 4] = this.data.direction.x[i];
-      gpu_data[offset + 5] = this.data.direction.y[i];
-      gpu_data[offset + 6] = this.data.direction.z[i];
-      gpu_data[offset + 7] = 0; // padding
-      gpu_data[offset + 8] = this.data.color.r[i];
-      gpu_data[offset + 9] = this.data.color.g[i];
-      gpu_data[offset + 10] = this.data.color.b[i];
-      gpu_data[offset + 11] = this.data.type[i];
-      gpu_data[offset + 12] = this.data.intensity[i];
-      gpu_data[offset + 13] = this.data.radius[i];
-      gpu_data[offset + 14] = this.data.attenuation[i];
-      gpu_data[offset + 15] = this.data.outer_angle[i];
+      if (
+        !this.data.light_fragment_buffer ||
+        this.data.light_fragment_buffer.config.size < gpu_data.byteLength
+      ) {
+        this.data.light_fragment_buffer = Buffer.create(context, {
+          name: "light_fragment_buffer",
+          usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+          raw_data: gpu_data,
+          force: true,
+        });
 
-      offset += 16;
-    }
+        Renderer.get().mark_bind_groups_dirty(true);
+      } else {
+        this.data.light_fragment_buffer.write(context, gpu_data);
+      }
 
-    if (!this.data.gpu_buffer || this.data.gpu_buffer.config.size < gpu_data.byteLength) {
-      this.data.gpu_buffer = Buffer.create(context, {
-        name: "light_fragment_buffer",
-        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-        raw_data: gpu_data,
-        force: true,
-      });
-      Renderer.get().mark_bind_groups_dirty(true);
-    } else {
-      this.data.gpu_buffer.write(context, gpu_data);
+      global_dispatcher.dispatch(
+        "light_fragment",
+        this.data.light_fragment_buffer,
+      );
     }
 
     this.data.gpu_data_dirty = false;
-
-    return { gpu_buffer: this.data.gpu_buffer };
   }
+
+  static async sync_buffers(context) {}
 }

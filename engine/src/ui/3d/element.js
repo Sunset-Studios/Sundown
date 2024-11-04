@@ -3,7 +3,6 @@ import { InputRange, InputKey } from "../../input/input_types.js";
 import { profile_scope } from "../../utility/performance.js";
 
 export class Element3D {
-  name = "";
   parent = null;
   children = [];
   config = {};
@@ -16,8 +15,7 @@ export class Element3D {
   was_pressed = false;
   is_pressed = false;
 
-  init(context, name, config, parent = null, children = []) {
-    this.name = name;
+  init(context, config, parent = null, children = []) {
     this.parent = parent;
     this.config = config;
 

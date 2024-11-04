@@ -51,7 +51,7 @@ export class DeferredShadingStrategy {
 
       const light_gpu_data = LightFragment.to_gpu_data(context);
       const lights = render_graph.register_buffer(
-        light_gpu_data.gpu_buffer.config.name
+        light_gpu_data.light_fragment_buffer.config.name
       );
 
       let skybox_image = null;

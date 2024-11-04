@@ -1,4 +1,8 @@
+import { EntityLinearDataContainer } from "../entity_utils.js";
 import { Fragment } from "../fragment.js";
+import { Renderer } from "../../../renderer/renderer.js";
+import { Buffer } from "../../../renderer/buffer.js";
+import { global_dispatcher } from "../../../core/dispatcher.js";
 
 export class StaticMeshFragment extends Fragment {
   static material_slot_stride = 64;
@@ -6,10 +10,37 @@ export class StaticMeshFragment extends Fragment {
   static initialize() {
     this.data = {
       mesh: new BigInt64Array(1),
-      material_slots: new BigInt64Array(this.material_slot_stride),
+      material_slots: new BigInt64Array(64),
       instance_count: new BigInt64Array(1),
       dirty: new Uint8Array(1),
+      gpu_data_dirty: true,
     };
+  }
+
+  static resize(new_size) {
+    if (!this.data) this.initialize();
+    super.resize(new_size);
+
+    Fragment.resize_array(this.data, "mesh", new_size, BigInt64Array, 1);
+    Fragment.resize_array(
+      this.data,
+      "material_slots",
+      new_size,
+      BigInt64Array,
+      64,
+    );
+    Fragment.resize_array(
+      this.data,
+      "instance_count",
+      new_size,
+      BigInt64Array,
+      1,
+    );
+    Fragment.resize_array(this.data, "dirty", new_size, Uint8Array, 1);
+  }
+
+  static add_entity(entity, data) {
+    super.add_entity(entity, data);
   }
 
   static remove_entity(entity) {
@@ -21,19 +52,20 @@ export class StaticMeshFragment extends Fragment {
     });
   }
 
+  static get_entity_data(entity) {
+    return super.get_entity_data(entity);
+  }
+
   static duplicate_entity_data(entity) {
-    const data = this.get_entity_data(entity);
-
-    const material_slots = Array(this.material_slot_stride).fill(0n);
-    for (let i = 0; i < this.material_slot_stride; i++) {
-      material_slots[i] = this.data.material_slots[entity * this.material_slot_stride + i];
+    const data = {};
+    data.mesh = this.data.mesh[entity];
+    data.material_slots = Array(64).fill(0);
+    for (let i = 0; i < 64; i++) {
+      data.material_slots[i] = this.data.material_slots[entity * 64 + i];
     }
-
-    return {
-      mesh: data.mesh,
-      material_slots: material_slots,
-      instance_count: data.instance_count,
-    };
+    data.instance_count = this.data.instance_count[entity];
+    data.dirty = this.data.dirty[entity];
+    return data;
   }
 
   static update_entity_data(entity, data) {
@@ -55,20 +87,5 @@ export class StaticMeshFragment extends Fragment {
     }
 
     this.data.dirty[entity] = 1;
-  }
-
-  static resize(new_size) {
-    super.resize(new_size);
-
-    Fragment.resize_array(this.data, "mesh", new_size, BigInt64Array);
-    Fragment.resize_array(this.data, "instance_count", new_size, BigInt64Array);
-    Fragment.resize_array(
-      this.data,
-      "material_slots",
-      new_size,
-      BigInt64Array,
-      this.material_slot_stride
-    );
-    Fragment.resize_array(this.data, "dirty", new_size, Uint8Array);
   }
 }

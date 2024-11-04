@@ -9,6 +9,9 @@ import { fileURLToPath, pathToFileURL } from "url";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+// Base directory for engine imports
+const ENGINE_BASE = `${__dirname}/../engine/src/core/ecs/fragments`;
+
 
 async function writeFormattedFile(path, content) {
     const prettierConfig = await prettier.resolveConfig(process.cwd());
@@ -46,11 +49,14 @@ export function find_all_fragment_definition_files() {
 }
 
 async function generate_fragments_from_definitions(file_path, output_path) {
+  const config_dir = path.dirname(file_path);
+  const relative_path = path.relative(config_dir, ENGINE_BASE);
+
   const definitions_path = pathToFileURL(path.resolve(__dirname, file_path));
   const { definitions } = await import(definitions_path);
   if (definitions && definitions.length > 0) {
     for (const definition of definitions) {
-      const fragment = FragmentGenerator.generate(definition);
+      const fragment = FragmentGenerator.generate(definition, relative_path);
       const snake_case_name = definition.name.replace(/([A-Z])/g, '_$1').toLowerCase().substring(1);
       await writeFormattedFile(`${output_path}/${snake_case_name}_fragment.js`, fragment);
     }
