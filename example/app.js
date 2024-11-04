@@ -12,8 +12,8 @@ import { TransformFragment } from "../engine/src/core/ecs/fragments/transform_fr
 import { FreeformArcballControlProcessor } from "../engine/src/core/subsystems/freeform_arcball_control_processor.js";
 import {
   LightFragment,
-  LightType,
 } from "../engine/src/core/ecs/fragments/light_fragment.js";
+import { LightType } from "../engine/src/core/minimal.js";
 import { Mesh } from "../engine/src/renderer/mesh.js";
 import { Name } from "../engine/src/utility/names.js";
 import { SharedEnvironmentMapData } from "../engine/src/core/shared_data.js";
