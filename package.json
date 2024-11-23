@@ -1,24 +1,25 @@
 {
-  "name": "sundown",
+  "name": "brainfold",
   "version": "1.0.0",
-  "description": "The Sundown WebGPU game engine.",
+  "description": "A simulated AI crafting sandbox for all mankind.",
   "main": "dist/electron/main/index.js",
   "type": "module",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "predev": "node tools/fragment_preprocessor.js",
+    "cook": "node tools/fragment_preprocessor.js && node tools/msdf_font_generator.js",
+    "predev": "npm run cook",
     "dev": "vite",
-    "prebuild": "node tools/fragment_preprocessor.js",
+    "prebuild": "npm run cook",
     "build": "vite build",
-    "predevtop": "node tools/fragment_preprocessor.js",
+    "predevtop": "npm run cook",
     "devtop": "vite build && electron-vite dev",
-    "prebuildtop": "node tools/fragment_preprocessor.js",
+    "prebuildtop": "npm run cook",
     "buildtop": "vite build && electron-vite build",
-    "premake": "node tools/fragment_preprocessor.js",
+    "premake": "npm run cook",
     "make": "vite build && electron-vite build && electron-forge make"
   },
   "build": {
-    "appId": "com.sunsetstudios.sundown",
+    "appId": "com.sunsetstudios.brainfold",
     "mac": {
       "category": "simulation"
     },
@@ -43,12 +44,14 @@
     "engine",
     "simulation",
     "renderer",
-    "rendering"
+    "rendering",
+    "ai",
+    "ai-crafting",
+    "ai-sandbox"
   ],
   "author": "Adrian Sanchez",
   "license": "MIT",
   "dependencies": {
-    "concurrently": "^8.2.2",
     "electron-squirrel-startup": "^1.0.1",
     "gl-matrix": "^3.4.3",
     "lodash": "^4.17.21",
@@ -67,7 +70,7 @@
     "@electron/fuses": "^1.8.0",
     "electron": "^31.1.0",
     "electron-vite": "^2.3.0",
+    "msdf-bmfont-xml": "^2.5.4",
     "prettier": "^3.3.3"
   }
 }
-

@@ -20,20 +20,20 @@ export class SimulationLayer {
     }
 
     pre_update(delta_time) {
-        for (const layer of this.layers) {
-            layer.pre_update(delta_time);
+        for (let i = 0; i < this.layers.length; i++) {
+            this.layers[i].pre_update(delta_time);
         }
     }
 
     update(delta_time) {
-        for (const layer of this.layers) {
-            layer.update(delta_time);
+        for (let i = 0; i < this.layers.length; i++) {
+            this.layers[i].update(delta_time);
         }
     }
 
     post_update(delta_time) {
-        for (const layer of this.layers) {
-            layer.post_update(delta_time);
+        for (let i = 0; i < this.layers.length; i++) {
+            this.layers[i].post_update(delta_time);
         }
     }
 

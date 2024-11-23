@@ -1,137 +1,207 @@
-import { InputProvider } from "../../input/input_provider.js";
-import { InputRange, InputKey } from "../../input/input_types.js";
-import { profile_scope } from "../../utility/performance.js";
+import { Renderer } from "../../renderer/renderer.js";
+import { Mesh } from "../../renderer/mesh.js";
+import { Material } from "../../renderer/material.js";
+import { StaticMeshFragment } from "../../core/ecs/fragments/static_mesh_fragment.js";
+import { SceneGraphFragment } from "../../core/ecs/fragments/scene_graph_fragment.js";
+import { TransformFragment } from "../../core/ecs/fragments/transform_fragment.js";
+import { VisibilityFragment } from "../../core/ecs/fragments/visibility_fragment.js";
+import { UserInterfaceFragment } from "../../core/ecs/fragments/user_interface_fragment.js";
+import { spawn_mesh_entity } from "../../core/ecs/entity_utils.js";
 
 export class Element3D {
-  parent = null;
-  children = [];
-  config = {};
   events = {};
 
-  was_cursor_inside = false;
-  is_cursor_inside = false;
-  was_clicked = false;
-  is_clicked = false;
-  was_pressed = false;
-  is_pressed = false;
+  static create(scene, config, material = null, parent = null, children = []) {
+    const context = Renderer.get().graphics_context;
 
-  init(context, config, parent = null, children = []) {
-    this.parent = parent;
-    this.config = config;
+    const entity = spawn_mesh_entity(
+      scene,
+      { x: 0, y: 0, z: 0 },
+      { x: 0, y: 0, z: 0, w: 1 },
+      { x: 1, y: 1, z: 1 },
+      Mesh.quad(context),
+      material ?? Material.default_material(context),
+      parent,
+      children,
+      false /* refresh_entity_queries */
+    );
 
-    if (children.length > 0) {
-      children.forEach((child) => {
-        this.add_child(child);
-      });
-    }
-
-    this.recalculate_transform();
-  }
-
-  update(delta_time) {
-    profile_scope("Element.update", () => {
-      this.recalculate_transform();
-
-      for (let i = 0; i < this.children.length; i++) {
-        this.children[i].update(delta_time);
-      }
-
-      const x = InputProvider.get().get_range(InputRange.M_xabs);
-      const y = InputProvider.get().get_range(InputRange.M_yabs);
-
-      const current_rect = this.rect;
-
-      if (this.config.allows_cursor_events) {
-        this.was_cursor_inside = this.is_cursor_inside;
-        this.is_cursor_inside =
-          x >= current_rect.left &&
-          x <= current_rect.right &&
-          y >= current_rect.top &&
-          y <= current_rect.bottom;
-
-        this.was_clicked = this.is_clicked;
-        this.is_clicked =
-          this.is_cursor_inside &&
-          InputProvider.get().get_action(InputKey.B_mouse_left);
-
-        this.was_pressed = this.is_pressed;
-        this.is_pressed =
-          this.is_cursor_inside &&
-          InputProvider.get().get_state(InputKey.B_mouse_left);
-
-        if (
-          !this.was_cursor_inside &&
-          this.is_cursor_inside &&
-          this.config.hover_style
-        ) {
-          this.apply_style(this.config.hover_style);
-        }
-        if (
-          this.was_cursor_inside &&
-          !this.is_cursor_inside &&
-          this.config.style &&
-          this.config.hover_style
-        ) {
-          this.apply_style(this.config.style, true);
-        }
-
-        if (this.is_clicked) {
-          this.trigger("selected");
-          InputProvider.get().consume_action(InputKey.B_mouse_left);
-        }
-        if (this.is_pressed) {
-          this.trigger("pressed");
-          InputProvider.get().consume_action(InputKey.B_mouse_left);
-        }
-      }
+    scene.add_fragment(entity, UserInterfaceFragment, {
+      allows_cursor_events: false,
+      was_cursor_inside: false,
+      is_cursor_inside: false,
+      was_clicked: false,
+      is_clicked: false,
     });
+
+    this.set_config(config);
+
+    return entity;
   }
 
-  destroy() {
-    // TODO: Implement
+  static destroy(scene, entity) {
+    scene.delete_entity(entity);
   }
 
-  get is_hovered() {
-    return this.is_cursor_inside;
-  }
-
-  get is_clicked() {
-    return this.is_clicked;
-  }
-
-  get is_pressed() {
-    return this.is_pressed;
-  }
-
-  get rect() {
-    return this.client_rect;
-  }
-
-  recalculate_transform() {
-    // TODO: Implement
-  }
-
-  add_child(child) {
-    this.children.push(child);
-  }
-
-  remove_child(child) {
-    this.children = this.children.filter((c) => c !== child);
-  }
-
-  on(event, callback) {
-    if (!this.events[event]) {
-      this.events[event] = [];
-    }
-    if (!this.events[event].includes(callback)) {
-      this.events[event].push(callback);
+  static add_child(scene, entity, child) {
+    let this_scene_graph_data = scene.get_fragment(entity, SceneGraphFragment);
+    let child_scene_graph_data = scene.get_fragment(child.entity, SceneGraphFragment);
+    if (this_scene_graph_data && child_scene_graph_data) {
+      this_scene_graph_data.children.push(child.entity);
+      child_scene_graph_data.parent = entity;
+      scene.update_fragment(child.entity, SceneGraphFragment, child_scene_graph_data);
+      scene.update_fragment(entity, SceneGraphFragment, this_scene_graph_data);
     }
   }
 
-  trigger(event, ...args) {
-    if (this.events[event]) {
-      for (let i = 0; i < this.events[event].length; i++) {
-        this.events[event][i](...args);
+  static remove_child(scene, entity, child) {
+    let this_scene_graph_data = scene.get_fragment(entity, SceneGraphFragment);
+    let child_scene_graph_data = scene.get_fragment(child.entity, SceneGraphFragment);
+    if (this_scene_graph_data && child_scene_graph_data) {
+      this_scene_graph_data.children = this_scene_graph_data.children.filter(
+        (c) => c !== child.entity
+      );
+      child_scene_graph_data.parent = null;
+      scene.update_fragment(child.entity, SceneGraphFragment, child_scene_graph_data);
+      scene.update_fragment(entity, SceneGraphFragment, this_scene_graph_data);
+    }
+  }
+
+  static set_config(scene, entity, config) {
+    if (!config) return;
+
+    const { position, rotation, scale, allows_cursor_events } = config;
+
+    if (position) {
+      this.set_position(scene, entity, position);
+    }
+    if (rotation) {
+      this.set_rotation(scene, entity, rotation);
+    }
+    if (scale) {
+      this.set_scale(scene, entity, scale);
+    }
+
+    if (allows_cursor_events !== undefined) {
+      this.set_allows_cursor_events(scene, entity, allows_cursor_events);
+    }
+  }
+
+  static set_material(scene, entity, material) {
+    let mesh_data = scene.get_fragment(entity, StaticMeshFragment);
+    mesh_data.material_slots = [material];
+    scene.update_fragment(entity, StaticMeshFragment, mesh_data);
+  }
+
+  static set_parent(scene, entity, parent) {
+    let this_scene_graph_data = scene.get_fragment(entity, SceneGraphFragment);
+    if (!this_scene_graph_data) {
+      return;
+    }
+
+    let parent_scene_graph_data = scene.get_fragment(parent.entity, SceneGraphFragment);
+    if (parent_scene_graph_data) {
+      this_scene_graph_data.parent = parent.entity;
+      parent_scene_graph_data.children.push(entity);
+      scene.update_fragment(
+        parent.entity,
+        SceneGraphFragment,
+        parent_scene_graph_data
+      );
+    } else {
+      this_scene_graph_data.parent = null;
+    }
+
+    scene.update_fragment(entity, SceneGraphFragment, this_scene_graph_data);
+  }
+
+  static set_children(scene, entity, children) {
+    let this_scene_graph_data = scene.get_fragment(entity, SceneGraphFragment);
+    if (!this_scene_graph_data) {
+      return;
+    }
+
+    for (let i = 0; i < this_scene_graph_data.children.length; i++) {
+      let child_scene_graph_data = scene.get_fragment(
+        this_scene_graph_data.children[i],
+        SceneGraphFragment
+      );
+      if (child_scene_graph_data) {
+        child_scene_graph_data.parent = null;
+        scene.update_fragment(
+          this_scene_graph_data.children[i],
+          SceneGraphFragment,
+          child_scene_graph_data
+        );
+      }
+    }
+
+    this_scene_graph_data.children = children.map((c) => c.entity);
+
+    for (let i = 0; i < children.length; i++) {
+      let child = children[i];
+      let child_scene_graph_data = scene.get_fragment(child.entity, SceneGraphFragment);
+      if (child_scene_graph_data) {
+        child_scene_graph_data.parent = entity;
+        scene.update_fragment(child.entity, SceneGraphFragment, child_scene_graph_data);
+      }
+    }
+
+    scene.update_fragment(entity, SceneGraphFragment, this_scene_graph_data);
+  }
+
+  static set_position(scene, entity, position) {
+    let transform_data = scene.get_fragment(entity, TransformFragment);
+    transform_data.position = position;
+    scene.update_fragment(entity, TransformFragment, transform_data);
+  }
+
+  static set_rotation(scene, entity, rotation) {
+    let transform_data = scene.get_fragment(entity, TransformFragment);
+    transform_data.rotation = rotation;
+    scene.update_fragment(entity, TransformFragment, transform_data);
+  }
+
+  static set_scale(scene, entity, scale) {
+    let transform_data = scene.get_fragment(entity, TransformFragment);
+    transform_data.scale = scale;
+    scene.update_fragment(entity, TransformFragment, transform_data);
+  }
+
+  static set_allows_cursor_events(scene, entity, allows_cursor_events) {
+    let user_interface_data = scene.get_fragment(entity, UserInterfaceFragment);
+    user_interface_data.allows_cursor_events = allows_cursor_events;
+    scene.update_fragment(entity, UserInterfaceFragment, user_interface_data);
+  }
+
+  static set_visible(scene, entity, visible) {
+    let visibility_data = scene.get_fragment(entity, VisibilityFragment);
+    visibility_data.visible = visible;
+    scene.update_fragment(entity, VisibilityFragment, visibility_data);
+  }
+
+  static set_auto_size(scene, entity, auto_size) {
+    let user_interface_data = scene.get_fragment(entity, UserInterfaceFragment);
+    user_interface_data.auto_size = auto_size;
+    scene.update_fragment(entity, UserInterfaceFragment, user_interface_data);
+  }
+
+  static on(entity, event, callback) {
+    if (!this.events[entity]) {
+      this.events[entity] = {};
+    }
+    if (!this.events[entity][event]) {
+      this.events[entity][event] = [];
+    }
+    if (!this.events[entity][event].includes(callback)) {
+      this.events[entity][event].push(callback);
+    }
+  }
+
+  static trigger(entity, event, ...args) {
+    if (this.events[entity] && this.events[entity][event]) {
+      for (let i = 0; i < this.events[entity][event].length; i++) {
+        this.events[entity][event][i](...args);
       }
     }
   }

@@ -1,5 +1,10 @@
 #include "common.wgsl"
 
+struct SceneGraphLayerData {
+    count: u32,
+    offset: u32
+};
+
 @group(1) @binding(0) var<storage, read> entity_positions: array<vec4f>;
 @group(1) @binding(1) var<storage, read> entity_rotations: array<vec4f>;
 @group(1) @binding(2) var<storage, read> entity_scales: array<vec4f>;
@@ -7,10 +12,17 @@
 @group(1) @binding(4) var<storage, read_write> entity_transforms: array<EntityTransform>;
 @group(1) @binding(5) var<storage, read_write> entity_inverse_transforms: array<EntityInverseTransform>;
 @group(1) @binding(6) var<storage, read_write> entity_bounds_data: array<EntityBoundsData>;
+@group(1) @binding(7) var<storage, read> scene_graph: array<vec2<i32>>;
+@group(1) @binding(8) var<uniform> scene_graph_layer_data: SceneGraphLayerData;
 
 @compute @workgroup_size(256)
 fn cs(@builtin(global_invocation_id) global_id: vec3<u32>) {
-    let entity_id = global_id.x;
+    if (global_id.x >= scene_graph_layer_data.count) {
+        return;
+    }
+
+    let entity_id_offset = scene_graph_layer_data.offset + global_id.x;
+    let entity_id = u32(scene_graph[entity_id_offset].x);
     if (entity_id >= arrayLength(&entity_dirty_flags)) {
         return;
     }
@@ -24,13 +36,19 @@ fn cs(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let rotation = entity_rotations[entity_id];
     let scale = entity_scales[entity_id];
 
+    let parent_id = scene_graph[entity_id_offset].y;
+    var parent_transform = identity_matrix;
+    if (parent_id >= 0) {
+        parent_transform = entity_transforms[parent_id].transform;
+    }
+
     let max_scale = max(
         max(scale.x, scale.y),
         scale.z
     );
 
     // Calculate world transform matrix
-    let transform = mat4x4f(
+    let transform = parent_transform * mat4x4f(
         (1.0 - 2.0 * (rotation.y * rotation.y + rotation.z * rotation.z)) * scale.x,
         (2.0 * (rotation.x * rotation.y + rotation.w * rotation.z)) * scale.x,
         (2.0 * (rotation.x * rotation.z - rotation.w * rotation.y)) * scale.x,

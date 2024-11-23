@@ -4,6 +4,41 @@ import { Renderer } from "../../../renderer/renderer.js";
 import { Buffer } from "../../../renderer/buffer.js";
 import { global_dispatcher } from "../../../core/dispatcher.js";
 
+const position_buffer_name = "position_buffer";
+const position_cpu_buffer_name = "position_cpu_buffer";
+const position_event = "position";
+const position_update_event = "position_update";
+
+const rotation_buffer_name = "rotation_buffer";
+const rotation_cpu_buffer_name = "rotation_cpu_buffer";
+const rotation_event = "rotation";
+const rotation_update_event = "rotation_update";
+
+const scale_buffer_name = "scale_buffer";
+const scale_cpu_buffer_name = "scale_cpu_buffer";
+const scale_event = "scale";
+const scale_update_event = "scale_update";
+
+const dirty_flags_buffer_name = "dirty_flags_buffer";
+const dirty_flags_cpu_buffer_name = "dirty_flags_cpu_buffer";
+const dirty_flags_event = "dirty_flags";
+const dirty_flags_update_event = "dirty_flags_update";
+
+const transforms_buffer_name = "transforms_buffer";
+const transforms_cpu_buffer_name = "transforms_cpu_buffer";
+const transforms_event = "transforms";
+const transforms_update_event = "transforms_update";
+
+const inverse_transforms_buffer_name = "inverse_transforms_buffer";
+const inverse_transforms_cpu_buffer_name = "inverse_transforms_cpu_buffer";
+const inverse_transforms_event = "inverse_transforms";
+const inverse_transforms_update_event = "inverse_transforms_update";
+
+const bounds_data_buffer_name = "bounds_data_buffer";
+const bounds_data_cpu_buffer_name = "bounds_data_cpu_buffer";
+const bounds_data_event = "bounds_data";
+const bounds_data_update_event = "bounds_data_update";
+
 export class TransformFragment extends Fragment {
   static initialize() {
     this.data = {
@@ -162,7 +197,7 @@ export class TransformFragment extends Fragment {
         this.data.position_buffer.config.size < gpu_data.byteLength
       ) {
         this.data.position_buffer = Buffer.create(context, {
-          name: "position_buffer",
+          name: position_buffer_name,
           usage:
             GPUBufferUsage.STORAGE |
             GPUBufferUsage.COPY_DST |
@@ -172,17 +207,18 @@ export class TransformFragment extends Fragment {
         });
 
         this.data.position_cpu_buffer = Buffer.create(context, {
-          name: "position_cpu_buffer",
+          name: position_cpu_buffer_name,
           usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
           raw_data: gpu_data,
           force: true,
         });
         Renderer.get().mark_bind_groups_dirty(true);
+        global_dispatcher.dispatch(position_event, this.data.position_buffer);
       } else {
         this.data.position_buffer.write(context, gpu_data);
       }
 
-      global_dispatcher.dispatch("position", this.data.position_buffer);
+      global_dispatcher.dispatch(position_update_event);
     }
 
     {
@@ -194,7 +230,7 @@ export class TransformFragment extends Fragment {
         this.data.rotation_buffer.config.size < gpu_data.byteLength
       ) {
         this.data.rotation_buffer = Buffer.create(context, {
-          name: "rotation_buffer",
+          name: rotation_buffer_name,
           usage:
             GPUBufferUsage.STORAGE |
             GPUBufferUsage.COPY_DST |
@@ -204,17 +240,18 @@ export class TransformFragment extends Fragment {
         });
 
         this.data.rotation_cpu_buffer = Buffer.create(context, {
-          name: "rotation_cpu_buffer",
+          name: rotation_cpu_buffer_name,
           usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
           raw_data: gpu_data,
           force: true,
         });
         Renderer.get().mark_bind_groups_dirty(true);
+        global_dispatcher.dispatch(rotation_event, this.data.rotation_buffer);
       } else {
         this.data.rotation_buffer.write(context, gpu_data);
       }
 
-      global_dispatcher.dispatch("rotation", this.data.rotation_buffer);
+      global_dispatcher.dispatch(rotation_update_event);
     }
 
     {
@@ -226,7 +263,7 @@ export class TransformFragment extends Fragment {
         this.data.scale_buffer.config.size < gpu_data.byteLength
       ) {
         this.data.scale_buffer = Buffer.create(context, {
-          name: "scale_buffer",
+          name: scale_buffer_name,
           usage:
             GPUBufferUsage.STORAGE |
             GPUBufferUsage.COPY_DST |
@@ -236,17 +273,18 @@ export class TransformFragment extends Fragment {
         });
 
         this.data.scale_cpu_buffer = Buffer.create(context, {
-          name: "scale_cpu_buffer",
+          name: scale_cpu_buffer_name,
           usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
           raw_data: gpu_data,
           force: true,
         });
         Renderer.get().mark_bind_groups_dirty(true);
+        global_dispatcher.dispatch(scale_event, this.data.scale_buffer);
       } else {
         this.data.scale_buffer.write(context, gpu_data);
       }
 
-      global_dispatcher.dispatch("scale", this.data.scale_buffer);
+      global_dispatcher.dispatch(scale_update_event);
     }
 
     {
@@ -257,7 +295,7 @@ export class TransformFragment extends Fragment {
         this.data.dirty_flags_buffer.config.size < gpu_data.byteLength
       ) {
         this.data.dirty_flags_buffer = Buffer.create(context, {
-          name: "dirty_flags_buffer",
+          name: dirty_flags_buffer_name,
           usage:
             GPUBufferUsage.STORAGE |
             GPUBufferUsage.COPY_DST |
@@ -267,11 +305,15 @@ export class TransformFragment extends Fragment {
         });
 
         Renderer.get().mark_bind_groups_dirty(true);
+        global_dispatcher.dispatch(
+          dirty_flags_event,
+          this.data.dirty_flags_buffer,
+        );
       } else {
         this.data.dirty_flags_buffer.write(context, gpu_data);
       }
 
-      global_dispatcher.dispatch("dirty_flags", this.data.dirty_flags_buffer);
+      global_dispatcher.dispatch(dirty_flags_update_event);
     }
 
     {
@@ -283,18 +325,22 @@ export class TransformFragment extends Fragment {
         this.data.transforms_buffer.config.size < gpu_data.byteLength
       ) {
         this.data.transforms_buffer = Buffer.create(context, {
-          name: "transforms_buffer",
+          name: transforms_buffer_name,
           usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
           raw_data: gpu_data,
           force: true,
         });
 
         Renderer.get().mark_bind_groups_dirty(true);
+        global_dispatcher.dispatch(
+          transforms_event,
+          this.data.transforms_buffer,
+        );
       } else {
         this.data.transforms_buffer.write(context, gpu_data);
       }
 
-      global_dispatcher.dispatch("transforms", this.data.transforms_buffer);
+      global_dispatcher.dispatch(transforms_update_event);
     }
 
     {
@@ -306,21 +352,22 @@ export class TransformFragment extends Fragment {
         this.data.inverse_transforms_buffer.config.size < gpu_data.byteLength
       ) {
         this.data.inverse_transforms_buffer = Buffer.create(context, {
-          name: "inverse_transforms_buffer",
+          name: inverse_transforms_buffer_name,
           usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
           raw_data: gpu_data,
           force: true,
         });
 
         Renderer.get().mark_bind_groups_dirty(true);
+        global_dispatcher.dispatch(
+          inverse_transforms_event,
+          this.data.inverse_transforms_buffer,
+        );
       } else {
         this.data.inverse_transforms_buffer.write(context, gpu_data);
       }
 
-      global_dispatcher.dispatch(
-        "inverse_transforms",
-        this.data.inverse_transforms_buffer,
-      );
+      global_dispatcher.dispatch(inverse_transforms_update_event);
     }
 
     {
@@ -332,18 +379,22 @@ export class TransformFragment extends Fragment {
         this.data.bounds_data_buffer.config.size < gpu_data.byteLength
       ) {
         this.data.bounds_data_buffer = Buffer.create(context, {
-          name: "bounds_data_buffer",
+          name: bounds_data_buffer_name,
           usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
           raw_data: gpu_data,
           force: true,
         });
 
         Renderer.get().mark_bind_groups_dirty(true);
+        global_dispatcher.dispatch(
+          bounds_data_event,
+          this.data.bounds_data_buffer,
+        );
       } else {
         this.data.bounds_data_buffer.write(context, gpu_data);
       }
 
-      global_dispatcher.dispatch("bounds_data", this.data.bounds_data_buffer);
+      global_dispatcher.dispatch(bounds_data_update_event);
     }
 
     this.data.gpu_data_dirty = false;

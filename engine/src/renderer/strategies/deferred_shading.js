@@ -4,6 +4,7 @@ import { RenderPassFlags } from "../render_pass.js";
 import { MeshTaskQueue } from "../mesh_task_queue.js";
 import { ComputeTaskQueue } from "../compute_task_queue.js";
 import { TransformFragment } from "../../core/ecs/fragments/transform_fragment.js";
+import { SceneGraphFragment } from "../../core/ecs/fragments/scene_graph_fragment.js";
 import { LightFragment } from "../../core/ecs/fragments/light_fragment.js";
 import {
   SharedViewBuffer,
@@ -48,6 +49,8 @@ export class DeferredShadingStrategy {
       const entity_inverse_transforms = render_graph.register_buffer(
         transform_gpu_data.inverse_transforms_buffer.config.name
       );
+
+      const scene_graph_gpu_data = SceneGraphFragment.to_gpu_data(context);
 
       const light_gpu_data = LightFragment.to_gpu_data(context);
       const lights = render_graph.register_buffer(

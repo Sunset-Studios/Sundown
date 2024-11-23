@@ -415,4 +415,193 @@ const TransformFragment = {
   },
 };
 
-export const definitions = [LightFragment, StaticMeshFragment, TransformFragment];
+const SceneGraphFragment = {
+  name: "SceneGraph",
+  imports: {
+    Tree: "../../../memory/container.js",
+  },
+  fields: {
+    parent: {
+      type: DataType.INT32,
+      stride: 1,
+    },
+  },
+  members: {
+    scene_graph: 'new Tree()',
+    scene_graph_layer_counts: '[]',
+    scene_graph_uniforms: '[]',
+  },
+  buffers: {
+    scene_graph: {
+      type: DataType.INT32,
+      usage: BufferType.STORAGE,
+      stride: 2,
+      gpu_data: `
+      const { result, layer_counts } = this.data.scene_graph.flatten(Int32Array);
+      this.data.scene_graph_layer_counts = layer_counts;
+
+      const num_elements = result?.length ?? 0;
+      const gpu_data = new Int32Array(Math.max(num_elements * 2, 2));
+      for (let i = 0; i < num_elements; ++i) {
+        gpu_data[i * 2] = result[i];
+        gpu_data[i * 2 + 1] = this.data.parent[result[i]];
+      }
+
+      this.data.scene_graph_uniforms = new Array(layer_counts.length);
+      let layer_offset = 0;
+      for (let i = 0; i < layer_counts.length; ++i) {
+        this.data.scene_graph_uniforms[i] = Buffer.create(context, {
+          name: "scene_graph_uniforms_" + i,
+          usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+          raw_data: new Uint32Array([layer_counts[i], layer_offset]),
+          force: true,
+        });
+        layer_offset += layer_counts[i];
+      }
+      `,
+    },
+  },
+  overrides: {
+    add_entity: {
+      skip_default: true,
+      post: `
+      super.add_entity(entity, null);
+
+      if (data) {
+        this.data.parent[entity] = data.parent || -1;
+      }
+
+      this.data.scene_graph.add(data?.parent ?? null, entity);
+      if (Array.isArray(data.children)) {
+        this.data.scene_graph.add_multiple(entity, data.children);
+      }
+
+      this.data.gpu_data_dirty = true;
+      `,
+    },
+    remove_entity: {
+      skip_default: true,
+      post: `
+      super.remove_entity(entity);
+      this.data.parent[entity] = -1;
+      this.data.scene_graph.remove(entity);
+      this.data.gpu_data_dirty = true;
+      `,
+    },
+    get_entity_data: {
+      skip_default: true,
+      pre: `
+      const node = this.data.scene_graph.find_node(entity);
+      return {
+        parent: node?.parent ?? null,
+        children: node?.children ?? [],
+      };
+      `,
+    },
+    duplicate_entity_data: {
+      skip_default: true,
+      pre: `
+      return this.get_entity_data(entity);
+      `,
+    },
+    update_entity_data: {
+      skip_default: true,
+      post: `
+      if (!this.data) {
+        this.initialize();
+      }
+
+      const { children, ...rest } = data;
+
+      super.update_entity_data(entity, rest);
+
+      if (children) {
+        this.data.scene_graph.add_multiple(entity, children, true /* replace_children */);
+      }
+
+      if (this.data.dirty) {
+        this.data.dirty[entity] = 1;
+      }
+      this.data.gpu_data_dirty = true;
+      `,
+    },
+  },
+};
+
+const VisibilityFragment = {
+  name: "Visibility",
+  fields: {
+    visible: {
+      type: DataType.UINT8,
+      stride: 4,
+    },
+  },
+  buffers: {
+    visible: {
+      type: DataType.UINT8,
+      usage: BufferType.STORAGE,
+      stride: 4,
+    },
+  },
+};
+
+const UserInterfaceFragment = {
+  name: "UserInterface",
+  fields: {
+    allows_cursor_events: {
+      type: DataType.UINT8,
+      stride: 1,
+    },
+    auto_size: {
+      type: DataType.UINT8,
+      stride: 1,
+    },
+    was_cursor_inside: {
+      type: DataType.UINT8,
+      stride: 1,
+    },
+    is_cursor_inside: {
+      type: DataType.UINT8,
+      stride: 1,
+    },
+    was_clicked: {
+      type: DataType.UINT8,
+      stride: 1,
+    },
+    is_clicked: {
+      type: DataType.UINT8,
+      stride: 1,
+    },
+    is_pressed: {
+      type: DataType.UINT8,
+      stride: 1,
+    },
+    was_pressed: {
+      type: DataType.UINT8,
+      stride: 1,
+    },
+    dirty: {
+      type: DataType.UINT8,
+      stride: 1,
+    },
+  },
+  overrides: {
+    get_entity_data: {
+      skip_default: true,
+      pre: `
+      return {
+        allows_cursor_events: this.data.allows_cursor_events[entity],
+        auto_size: this.data.auto_size[entity],
+        was_cursor_inside: this.data.was_cursor_inside[entity],
+        is_cursor_inside: this.data.is_cursor_inside[entity],
+        was_clicked: this.data.was_clicked[entity],
+        is_clicked: this.data.is_clicked[entity],
+        is_pressed: this.data.is_pressed[entity],
+        was_pressed: this.data.was_pressed[entity],
+      };
+      `,
+    },
+  },
+};
+
+export const definitions = [LightFragment, StaticMeshFragment, TransformFragment, SceneGraphFragment, VisibilityFragment, UserInterfaceFragment];

@@ -1,6 +1,7 @@
 import { SimulationLayer } from "./simulation_layer.js";
 import { StaticMeshProcessor } from "./subsystems/static_mesh_processor.js";
 import { TransformProcessor } from "./subsystems/transform_processor.js";
+import { UI3DProcessor } from "./subsystems/ui_3d_processor.js";
 import { UIProcessor } from "./subsystems/ui_processor.js";
 import { SharedViewBuffer } from "./shared_data.js";
 import { Renderer } from "../renderer/renderer.js";
@@ -36,6 +37,9 @@ export class Scene extends SimulationLayer {
     this.add_layer(UIProcessor);
     this.add_layer(StaticMeshProcessor);
     this.add_layer(TransformProcessor);
+
+    const ui_3d_processor = this.add_layer(UI3DProcessor);
+    ui_3d_processor.set_scene(this);
   }
 
   get_entity_count() {

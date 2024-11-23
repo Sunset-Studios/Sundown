@@ -67,7 +67,7 @@ export class MaterialTemplate {
     if (shader_path) {
       shader = Shader.create(context, shader_path);
     }
-    if (shader.defines['TRANSPARENT']) {
+    if (shader.defines["TRANSPARENT"]) {
       family = MaterialFamilyType.Transparent;
     }
 
@@ -85,16 +85,12 @@ export class MaterialTemplate {
     }
 
     // Reflect on shader and add resources
-    const groups = template.reflection
-      ? template.reflection.getBindGroups()
-      : [];
+    const groups = template.reflection ? template.reflection.getBindGroups() : [];
     if (BindGroupType.Material < groups.length) {
       const material_group = groups[BindGroupType.Material];
       for (let i = 0; i < material_group.length; i++) {
         const binding = material_group[i];
-        const binding_type = Shader.resource_type_from_reflection_type(
-          binding.resourceType
-        );
+        const binding_type = Shader.resource_type_from_reflection_type(binding.resourceType);
         template.add_resource({
           type: binding_type,
           name: binding.name,
@@ -108,7 +104,12 @@ export class MaterialTemplate {
     return template;
   }
 
-  create_pipeline_state(context, bind_group_layouts, output_targets = [], depth_stencil_options = {}) {
+  create_pipeline_state(
+    context,
+    bind_group_layouts,
+    output_targets = [],
+    depth_stencil_options = {}
+  ) {
     let all_bind_group_layouts = [bind_group_layouts[0]];
 
     // Set material binding group inputs
@@ -123,9 +124,7 @@ export class MaterialTemplate {
             this.name,
             bind_group.map((binding) => {
               let binding_obj = {};
-              const binding_type = Shader.resource_type_from_reflection_type(
-                binding.resourceType
-              );
+              const binding_type = Shader.resource_type_from_reflection_type(binding.resourceType);
               switch (binding_type) {
                 case ShaderResourceType.Uniform:
                   binding_obj = {
@@ -144,25 +143,17 @@ export class MaterialTemplate {
                 case ShaderResourceType.Texture:
                   binding_obj = {
                     texture: {
-                      viewDimension: Texture.dimension_from_type_name(
-                        binding.type.name
-                      ),
-                      sampleType: binding.type.name.includes("depth")
-                        ? "depth"
-                        : "float",
+                      viewDimension: Texture.dimension_from_type_name(binding.type.name),
+                      sampleType: binding.type.name.includes("depth") ? "depth" : "float",
                     },
                   };
                   break;
                 case ShaderResourceType.StorageTexture:
                   binding_obj = {
                     storageTexture: {
-                      viewDimension: Texture.dimension_from_type_name(
-                        binding.type.name
-                      ),
+                      viewDimension: Texture.dimension_from_type_name(binding.type.name),
                       sampleType: "float",
-                      format: Shader.get_optimal_texture_format(
-                        binding.type.name
-                      ),
+                      format: Shader.get_optimal_texture_format(binding.type.name),
                     },
                   };
                   break;
@@ -209,10 +200,7 @@ export class MaterialTemplate {
         format: Shader.get_optimal_texture_format(output.type.name),
       };
 
-      if (
-        this.pipeline_state_config.targets &&
-        i < this.pipeline_state_config.targets.length
-      ) {
+      if (this.pipeline_state_config.targets && i < this.pipeline_state_config.targets.length) {
         if (this.pipeline_state_config.targets[i].format) {
           target.format = this.pipeline_state_config.targets[i].format;
         }
@@ -231,8 +219,7 @@ export class MaterialTemplate {
       vertex: {
         module: this.shader.module,
         entryPoint:
-          (this.pipeline_state_config.vertex &&
-            this.pipeline_state_config.vertex.entry_point) ||
+          (this.pipeline_state_config.vertex && this.pipeline_state_config.vertex.entry_point) ||
           "vs",
         buffers: [],
       },
@@ -245,27 +232,23 @@ export class MaterialTemplate {
         targets: targets,
       },
       primitive: {
-        topology:
-          this.pipeline_state_config.primitive_topology_type || "triangle-list",
-        cullMode:
-          this.pipeline_state_config.rasterizer_state?.cull_mode || "back",
+        topology: this.pipeline_state_config.primitive_topology_type || "triangle-list",
+        cullMode: this.pipeline_state_config.rasterizer_state?.cull_mode || "back",
       },
     };
 
-    const depth_target = output_targets.find(
-      (target) => target.config.type === "depth"
-    );
+    const depth_target = output_targets.find((target) => target.config.type === "depth");
     if (this.pipeline_state_config.depth_stencil_target) {
       pipeline_descriptor.depthStencil = {
-        format:
-          this.pipeline_state_config.depth_stencil_target.format ??
-          "depth32float",
+        format: this.pipeline_state_config.depth_stencil_target.format ?? "depth32float",
         depthWriteEnabled:
           this.pipeline_state_config.depth_stencil_target.depth_write_enabled ??
-          (depth_stencil_options.depth_write_enabled ?? true),
+          depth_stencil_options.depth_write_enabled ??
+          true,
         depthCompare:
           this.pipeline_state_config.depth_stencil_target.depth_compare ??
-          (depth_stencil_options.depth_compare ?? "less"),
+          depth_stencil_options.depth_compare ??
+          "less",
       };
     } else if (depth_target) {
       pipeline_descriptor.depthStencil = {
@@ -444,11 +427,7 @@ export class Material {
   }
 
   bind(render_pass, bind_groups = [], output_targets = []) {
-    if (
-      !this.pipeline_state &&
-      bind_groups.length > 0 &&
-      output_targets.length > 0
-    ) {
+    if (!this.pipeline_state && bind_groups.length > 0 && output_targets.length > 0) {
       this.update_pipeline_state(bind_groups, output_targets);
       bind_groups.forEach((bind_group) => {
         if (bind_group) {
@@ -503,6 +482,18 @@ export class Material {
     }
 
     return material_id;
+  }
+
+  static #default_material = null;
+  static default_material(context) {
+    if (!this.#default_material) {
+      MaterialTemplate.create(context, "DefaultMaterial", "standard_material.wgsl");
+      this.#default_material = Material.create("DefaultMaterial", "DefaultMaterial", {
+        family: MaterialFamilyType.Opaque,
+      });
+    }
+
+    return this.#default_material;
   }
 
   static get(material_id) {

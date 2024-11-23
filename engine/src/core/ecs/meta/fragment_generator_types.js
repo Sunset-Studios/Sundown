@@ -3,6 +3,9 @@ export const DataType = {
   UINT8: { array: Uint8Array, default: 0, byte_size: 1 },
   UINT16: { array: Uint16Array, default: 0, byte_size: 2 },
   UINT32: { array: Uint32Array, default: 0, byte_size: 4 },
+  INT8: { array: Int8Array, default: 0, byte_size: 1 },
+  INT16: { array: Int16Array, default: 0, byte_size: 2 },
+  INT32: { array: Int32Array, default: 0, byte_size: 4 },
   BIGINT64: { array: BigInt64Array, default: 0n, byte_size: 8 },
 };
 

@@ -139,6 +139,15 @@ export class FragmentGenerator {
     return `
 ${import_statements}
 
+${Object.entries(buffers)
+      .map(([key, value]) => `
+        const ${key}_buffer_name = "${key}_buffer";
+        const ${key}_cpu_buffer_name = "${key}_cpu_buffer";
+        const ${key}_event = "${key}";
+        const ${key}_update_event = "${key}_update";
+      `)
+      .join("\n")}
+
 export class ${name}Fragment extends Fragment {
     ${Object.entries(constants)
       .map(([key, value]) => `static ${key} = ${value};`)
@@ -456,7 +465,7 @@ export class ${name}Fragment extends Fragment {
             }
             if (!this.data.${key}_buffer || this.data.${key}_buffer.config.size < gpu_data.byteLength) {
                 this.data.${key}_buffer = Buffer.create(context, {
-                name: "${key}_buffer",
+                name: ${key}_buffer_name,
                 usage: ${buffer.usage},
                 raw_data: gpu_data,
                 force: true
@@ -465,7 +474,7 @@ export class ${name}Fragment extends Fragment {
               buffer.cpu_buffer
                 ? `
                 this.data.${key}_cpu_buffer = Buffer.create(context, {
-                    name: "${key}_cpu_buffer",
+                    name: ${key}_cpu_buffer_name,
                     usage: ${BufferType.CPU_READ},
                     raw_data: gpu_data,
                     force: true
@@ -473,11 +482,12 @@ export class ${name}Fragment extends Fragment {
                 : ""
             }
             Renderer.get().mark_bind_groups_dirty(true);
+            ${buffer.no_dispatch ? "" : `global_dispatcher.dispatch(${key}_event, this.data.${key}_buffer);`}
           } else {
             this.data.${key}_buffer.write(context, gpu_data);
           }
 
-          ${buffer.no_dispatch ? "" : `global_dispatcher.dispatch("${key}", this.data.${key}_buffer);`}
+          ${buffer.no_dispatch ? "" : `global_dispatcher.dispatch(${key}_update_event);`}
         }
         `
           )

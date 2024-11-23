@@ -1,5 +1,7 @@
 import { TransformFragment } from "./fragments/transform_fragment.js";
 import { StaticMeshFragment } from "./fragments/static_mesh_fragment.js";
+import { SceneGraphFragment } from "./fragments/scene_graph_fragment.js";
+import { VisibilityFragment } from "./fragments/visibility_fragment.js";
 import { Name } from "../../utility/names.js";
 
 export class EntityLinearDataContainer {
@@ -84,7 +86,7 @@ export class EntityLinearDataContainer {
     );
 
     if (from_index + adjusted_shift_amount >= this.linear_data.length) {
-      this.resize(Math.max(this.linear_data.length * 2, from_index + adjusted_shift_amount));
+      this.resize(Math.max(this.linear_data.length * 2, this.linear_data.length + adjusted_shift_amount));
     }
 
     for (const [entity, data] of this.entity_indices.entries()) {
@@ -146,6 +148,8 @@ export function spawn_mesh_entity(
   scale,
   mesh,
   material,
+  parent = null,
+  children = [],
   refresh_entity_queries = false
 ) {
   if (!scene) {
@@ -167,12 +171,29 @@ export function spawn_mesh_entity(
 
   scene.add_fragment(
     entity,
+    SceneGraphFragment,
+    {
+      parent: parent,
+      children: children,
+    },
+    false /* refresh_entity_queries */
+  );
+
+  scene.add_fragment(
+    entity,
     StaticMeshFragment,
     {
       mesh: BigInt(Name.from(mesh.name)),
       material_slots: [material],
       instance_count: BigInt(1),
     },
+    false /* refresh_entity_queries */
+  );
+
+  scene.add_fragment(
+    entity,
+    VisibilityFragment,
+    { visible: 1 },
     false /* refresh_entity_queries */
   );
 

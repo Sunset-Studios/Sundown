@@ -59,6 +59,13 @@ const bayer_matrix = array<f32, 16>(
     15.0 / 16.0, 7.0 / 16.0, 13.0 / 16.0, 5.0 / 16.0
 );
 
+const identity_matrix = mat4x4f(
+    1.0, 0.0, 0.0, 0.0,
+    0.0, 1.0, 0.0, 0.0,
+    0.0, 0.0, 1.0, 0.0,
+    0.0, 0.0, 0.0, 1.0
+);
+
 const epsilon = 1e-5;
 const world_up = vec3f(0.0, 1.0, 0.0);
 

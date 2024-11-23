@@ -4,6 +4,11 @@ import { Renderer } from "../../../renderer/renderer.js";
 import { Buffer } from "../../../renderer/buffer.js";
 import { global_dispatcher } from "../../../core/dispatcher.js";
 
+const light_fragment_buffer_name = "light_fragment_buffer";
+const light_fragment_cpu_buffer_name = "light_fragment_cpu_buffer";
+const light_fragment_event = "light_fragment";
+const light_fragment_update_event = "light_fragment_update";
+
 export class LightFragment extends Fragment {
   static initialize() {
     this.data = {
@@ -195,21 +200,22 @@ export class LightFragment extends Fragment {
         this.data.light_fragment_buffer.config.size < gpu_data.byteLength
       ) {
         this.data.light_fragment_buffer = Buffer.create(context, {
-          name: "light_fragment_buffer",
+          name: light_fragment_buffer_name,
           usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
           raw_data: gpu_data,
           force: true,
         });
 
         Renderer.get().mark_bind_groups_dirty(true);
+        global_dispatcher.dispatch(
+          light_fragment_event,
+          this.data.light_fragment_buffer,
+        );
       } else {
         this.data.light_fragment_buffer.write(context, gpu_data);
       }
 
-      global_dispatcher.dispatch(
-        "light_fragment",
-        this.data.light_fragment_buffer,
-      );
+      global_dispatcher.dispatch(light_fragment_update_event);
     }
 
     this.data.gpu_data_dirty = false;

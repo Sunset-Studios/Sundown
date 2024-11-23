@@ -9,10 +9,10 @@ import application_state from "../engine/src/core/application_state.js";
 import { ComputeTaskQueue } from "../engine/src/renderer/compute_task_queue.js";
 import { StaticMeshFragment } from "../engine/src/core/ecs/fragments/static_mesh_fragment.js";
 import { TransformFragment } from "../engine/src/core/ecs/fragments/transform_fragment.js";
+import { VisibilityFragment } from "../engine/src/core/ecs/fragments/visibility_fragment.js";
+import { SceneGraphFragment } from "../engine/src/core/ecs/fragments/scene_graph_fragment.js";
 import { FreeformArcballControlProcessor } from "../engine/src/core/subsystems/freeform_arcball_control_processor.js";
-import {
-  LightFragment,
-} from "../engine/src/core/ecs/fragments/light_fragment.js";
+import { LightFragment } from "../engine/src/core/ecs/fragments/light_fragment.js";
 import { LightType } from "../engine/src/core/minimal.js";
 import { Mesh } from "../engine/src/renderer/mesh.js";
 import { Name } from "../engine/src/utility/names.js";
@@ -26,9 +26,7 @@ export class TestScene extends Scene {
     await super.init(parent_context);
 
     // Add the freeform arcball control processor to the scene
-    const freeform_arcball_control_processor = this.add_layer(
-      FreeformArcballControlProcessor
-    );
+    const freeform_arcball_control_processor = this.add_layer(FreeformArcballControlProcessor);
     freeform_arcball_control_processor.set_scene(this);
 
     // Set the skybox for this scene.
@@ -63,10 +61,7 @@ export class TestScene extends Scene {
     );
 
     // Create a default material
-    const default_material_id = Material.create(
-      "MyMaterial",
-      "StandardMaterial"
-    );
+    const default_material_id = Material.create("MyMaterial", "StandardMaterial");
 
     // Create a 3D grid of sphere entities
     const grid_size = 100; // 100x100x10 grid
@@ -105,6 +100,22 @@ export class TestScene extends Scene {
               rotation: { x: rotation[0], y: rotation[1], z: rotation[2], w: rotation[3] },
               scale: { x: 0.5, y: 0.5, z: 0.5 },
             },
+            false /* refresh_entity_queries */
+          );
+
+          // Add a visibility fragment to the sphere entity
+          this.add_fragment(
+            entity,
+            VisibilityFragment,
+            { visible: 1 },
+            false /* refresh_entity_queries */
+          );
+
+          // Add a scene graph fragment to the sphere entity
+          this.add_fragment(
+            entity,
+            SceneGraphFragment,
+            { parent: null, children: [] },
             false /* refresh_entity_queries */
           );
         }
