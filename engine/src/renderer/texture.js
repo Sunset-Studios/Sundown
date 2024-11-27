@@ -370,7 +370,7 @@ export class Texture {
 
     if (!image) {
       image = new Texture();
-      await image.load(context, paths, config);
+      image.load(context, paths, config);
       ResourceCache.get().store(CacheTypes.IMAGE, Name.from(config.name), image);
     }
 

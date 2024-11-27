@@ -3,13 +3,40 @@ import { Fragment } from "../fragment.js";
 import { Renderer } from "../../../renderer/renderer.js";
 import { Buffer } from "../../../renderer/buffer.js";
 import { global_dispatcher } from "../../../core/dispatcher.js";
+import { RingBufferAllocator } from "../../../memory/allocator.js";
 
 const visible_buffer_name = "visible_buffer";
 const visible_cpu_buffer_name = "visible_cpu_buffer";
 const visible_event = "visible";
 const visible_update_event = "visible_update";
 
+class VisibilityDataView {
+  current_entity = -1;
+
+  constructor() {}
+
+  get visible() {
+    return VisibilityFragment.data.visible[this.current_entity];
+  }
+
+  set visible(value) {
+    VisibilityFragment.data.visible[this.current_entity] = value;
+    if (VisibilityFragment.data.dirty) {
+      VisibilityFragment.data.dirty[this.current_entity] = 1;
+    }
+    VisibilityFragment.data.gpu_data_dirty = true;
+  }
+
+  view_entity(entity) {
+    this.current_entity = entity;
+
+    return this;
+  }
+}
+
 export class VisibilityFragment extends Fragment {
+  static data_view_allocator = new RingBufferAllocator(256, VisibilityDataView);
+
   static initialize() {
     this.data = {
       visible: new Uint8Array(4),
@@ -29,19 +56,21 @@ export class VisibilityFragment extends Fragment {
     this.rebuild_buffers(Renderer.get().graphics_context);
   }
 
-  static add_entity(entity, data) {
-    super.add_entity(entity, data);
+  static add_entity(entity) {
+    super.add_entity(entity);
+    return this.get_entity_data(entity);
   }
 
   static remove_entity(entity) {
     super.remove_entity(entity);
-    this.update_entity_data(entity, {
-      visible: Array(4).fill(0),
-    });
+    this.data.visible[entity] = Array(4).fill(0);
   }
 
   static get_entity_data(entity) {
-    return super.get_entity_data(entity);
+    const data_view = this.data_view_allocator.allocate();
+    data_view.fragment = this;
+    data_view.view_entity(entity);
+    return data_view;
   }
 
   static duplicate_entity_data(entity) {
@@ -51,19 +80,6 @@ export class VisibilityFragment extends Fragment {
       data.visible[i] = this.data.visible[entity * 4 + i];
     }
     return data;
-  }
-
-  static update_entity_data(entity, data) {
-    if (!this.data) {
-      this.initialize();
-    }
-
-    super.update_entity_data(entity, data);
-
-    if (this.data.dirty) {
-      this.data.dirty[entity] = 1;
-    }
-    this.data.gpu_data_dirty = true;
   }
 
   static to_gpu_data(context) {

@@ -23,7 +23,7 @@ import { quat } from "gl-matrix";
 
 export class TestScene extends Scene {
   async init(parent_context) {
-    await super.init(parent_context);
+    super.init(parent_context);
 
     // Add the freeform arcball control processor to the scene
     const freeform_arcball_control_processor = this.add_layer(FreeformArcballControlProcessor);
@@ -47,12 +47,16 @@ export class TestScene extends Scene {
     const light_entity = this.create_entity();
 
     // Add a light fragment to the light entity
-    this.add_fragment(light_entity, LightFragment, {
-      type: LightType.DIRECTIONAL,
-      color: { r: 1, g: 1, b: 1 },
-      intensity: 5,
-      position: { x: 50, y: 100, z: 50 },
-    });
+    const light_fragment_view = this.add_fragment(light_entity, LightFragment, false);
+    light_fragment_view.type = LightType.DIRECTIONAL;
+    light_fragment_view.color.r = 1;
+    light_fragment_view.color.g = 1;
+    light_fragment_view.color.b = 1;
+    light_fragment_view.intensity = 5;
+    light_fragment_view.position.x = 50;
+    light_fragment_view.position.y = 100;
+    light_fragment_view.position.z = 50;
+    
 
     // Create a sphere mesh and add it to the scene
     const mesh = await Mesh.from_gltf(
@@ -74,50 +78,42 @@ export class TestScene extends Scene {
           let entity = this.create_entity(false /* refresh_entity_queries */);
 
           // Add a static mesh fragment to the sphere entity
-          this.add_fragment(
+          const static_mesh_fragment_view = this.add_fragment(
             entity,
             StaticMeshFragment,
-            {
-              mesh: BigInt(Name.from(mesh.name)),
-              material_slots: [default_material_id],
-              instance_count: BigInt(1),
-            },
-            false /* refresh_entity_queries */
+            false,
           );
+          static_mesh_fragment_view.mesh = BigInt(Name.from(mesh.name));
+          static_mesh_fragment_view.material_slots = [default_material_id];
+          static_mesh_fragment_view.instance_count = BigInt(1);
 
           const rotation = quat.fromValues(0, 0, 0, 1);
 
           // Add a transform fragment to the sphere entity
-          this.add_fragment(
+          const transform_fragment_view = this.add_fragment(
             entity,
             TransformFragment,
-            {
-              position: {
-                x: (x - Math.floor(grid_size / 2)) * spacing,
-                y: (y - Math.floor(grid_layers / 2)) * spacing,
-                z: (z - Math.floor(grid_size / 2)) * spacing,
-              },
-              rotation: { x: rotation[0], y: rotation[1], z: rotation[2], w: rotation[3] },
-              scale: { x: 0.5, y: 0.5, z: 0.5 },
-            },
-            false /* refresh_entity_queries */
+            false,
           );
+          transform_fragment_view.position = [(x - Math.floor(grid_size / 2)) * spacing, (y - Math.floor(grid_layers / 2)) * spacing, (z - Math.floor(grid_size / 2)) * spacing];
+          transform_fragment_view.rotation = rotation;
+          transform_fragment_view.scale = [0.5, 0.5, 0.5];
 
           // Add a visibility fragment to the sphere entity
-          this.add_fragment(
+          const visibility_fragment_view = this.add_fragment(
             entity,
             VisibilityFragment,
-            { visible: 1 },
-            false /* refresh_entity_queries */
+            false,
           );
+          visibility_fragment_view.visible = 1;
 
           // Add a scene graph fragment to the sphere entity
-          this.add_fragment(
+          const scene_graph_fragment_view = this.add_fragment(
             entity,
             SceneGraphFragment,
-            { parent: null, children: [] },
-            false /* refresh_entity_queries */
+            false,
           );
+          scene_graph_fragment_view.parent = null;
         }
       }
     }
@@ -147,7 +143,7 @@ async function init() {
   const input_provider = InputProvider.get();
   await SimulationCore.get().register_simulation_layer(input_provider);
   input_provider.push_context(InputProvider.default_context());
-
+  
   // Initialize renderer with document canvas
   const canvas = document.getElementById("gpu-canvas");
   await Renderer.get().setup(canvas, DeferredShadingStrategy);

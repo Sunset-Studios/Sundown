@@ -3,13 +3,261 @@ import { Fragment } from "../fragment.js";
 import { Renderer } from "../../../renderer/renderer.js";
 import { Buffer } from "../../../renderer/buffer.js";
 import { global_dispatcher } from "../../../core/dispatcher.js";
+import { RingBufferAllocator } from "../../../memory/allocator.js";
 
 const light_fragment_buffer_name = "light_fragment_buffer";
 const light_fragment_cpu_buffer_name = "light_fragment_cpu_buffer";
 const light_fragment_event = "light_fragment";
 const light_fragment_update_event = "light_fragment_update";
 
+class PositionDataView {
+  constructor() {
+    this.current_entity = -1;
+  }
+
+  get x() {
+    return LightFragment.data.position.x[this.current_entity];
+  }
+
+  set x(value) {
+    LightFragment.data.position.x[this.current_entity] = value;
+    if (LightFragment.data.dirty) {
+      LightFragment.data.dirty[this.current_entity] = 1;
+    }
+    LightFragment.data.gpu_data_dirty = true;
+  }
+
+  get y() {
+    return LightFragment.data.position.y[this.current_entity];
+  }
+
+  set y(value) {
+    LightFragment.data.position.y[this.current_entity] = value;
+    if (LightFragment.data.dirty) {
+      LightFragment.data.dirty[this.current_entity] = 1;
+    }
+    LightFragment.data.gpu_data_dirty = true;
+  }
+
+  get z() {
+    return LightFragment.data.position.z[this.current_entity];
+  }
+
+  set z(value) {
+    LightFragment.data.position.z[this.current_entity] = value;
+    if (LightFragment.data.dirty) {
+      LightFragment.data.dirty[this.current_entity] = 1;
+    }
+    LightFragment.data.gpu_data_dirty = true;
+  }
+
+  view_entity(entity) {
+    this.current_entity = entity;
+    return this;
+  }
+}
+
+class DirectionDataView {
+  constructor() {
+    this.current_entity = -1;
+  }
+
+  get x() {
+    return LightFragment.data.direction.x[this.current_entity];
+  }
+
+  set x(value) {
+    LightFragment.data.direction.x[this.current_entity] = value;
+    if (LightFragment.data.dirty) {
+      LightFragment.data.dirty[this.current_entity] = 1;
+    }
+    LightFragment.data.gpu_data_dirty = true;
+  }
+
+  get y() {
+    return LightFragment.data.direction.y[this.current_entity];
+  }
+
+  set y(value) {
+    LightFragment.data.direction.y[this.current_entity] = value;
+    if (LightFragment.data.dirty) {
+      LightFragment.data.dirty[this.current_entity] = 1;
+    }
+    LightFragment.data.gpu_data_dirty = true;
+  }
+
+  get z() {
+    return LightFragment.data.direction.z[this.current_entity];
+  }
+
+  set z(value) {
+    LightFragment.data.direction.z[this.current_entity] = value;
+    if (LightFragment.data.dirty) {
+      LightFragment.data.dirty[this.current_entity] = 1;
+    }
+    LightFragment.data.gpu_data_dirty = true;
+  }
+
+  view_entity(entity) {
+    this.current_entity = entity;
+    return this;
+  }
+}
+
+class ColorDataView {
+  constructor() {
+    this.current_entity = -1;
+  }
+
+  get r() {
+    return LightFragment.data.color.r[this.current_entity];
+  }
+
+  set r(value) {
+    LightFragment.data.color.r[this.current_entity] = value;
+    if (LightFragment.data.dirty) {
+      LightFragment.data.dirty[this.current_entity] = 1;
+    }
+    LightFragment.data.gpu_data_dirty = true;
+  }
+
+  get g() {
+    return LightFragment.data.color.g[this.current_entity];
+  }
+
+  set g(value) {
+    LightFragment.data.color.g[this.current_entity] = value;
+    if (LightFragment.data.dirty) {
+      LightFragment.data.dirty[this.current_entity] = 1;
+    }
+    LightFragment.data.gpu_data_dirty = true;
+  }
+
+  get b() {
+    return LightFragment.data.color.b[this.current_entity];
+  }
+
+  set b(value) {
+    LightFragment.data.color.b[this.current_entity] = value;
+    if (LightFragment.data.dirty) {
+      LightFragment.data.dirty[this.current_entity] = 1;
+    }
+    LightFragment.data.gpu_data_dirty = true;
+  }
+
+  view_entity(entity) {
+    this.current_entity = entity;
+    return this;
+  }
+}
+
+class LightDataView {
+  current_entity = -1;
+
+  constructor() {
+    this.position = new PositionDataView(this);
+    this.direction = new DirectionDataView(this);
+    this.color = new ColorDataView(this);
+  }
+
+  get type() {
+    return LightFragment.data.type[this.current_entity];
+  }
+
+  set type(value) {
+    LightFragment.data.type[this.current_entity] = value;
+    if (LightFragment.data.dirty) {
+      LightFragment.data.dirty[this.current_entity] = 1;
+    }
+    LightFragment.data.gpu_data_dirty = true;
+  }
+
+  get intensity() {
+    return LightFragment.data.intensity[this.current_entity];
+  }
+
+  set intensity(value) {
+    LightFragment.data.intensity[this.current_entity] = value;
+    if (LightFragment.data.dirty) {
+      LightFragment.data.dirty[this.current_entity] = 1;
+    }
+    LightFragment.data.gpu_data_dirty = true;
+  }
+
+  get radius() {
+    return LightFragment.data.radius[this.current_entity];
+  }
+
+  set radius(value) {
+    LightFragment.data.radius[this.current_entity] = value;
+    if (LightFragment.data.dirty) {
+      LightFragment.data.dirty[this.current_entity] = 1;
+    }
+    LightFragment.data.gpu_data_dirty = true;
+  }
+
+  get attenuation() {
+    return LightFragment.data.attenuation[this.current_entity];
+  }
+
+  set attenuation(value) {
+    LightFragment.data.attenuation[this.current_entity] = value;
+    if (LightFragment.data.dirty) {
+      LightFragment.data.dirty[this.current_entity] = 1;
+    }
+    LightFragment.data.gpu_data_dirty = true;
+  }
+
+  get outer_angle() {
+    return LightFragment.data.outer_angle[this.current_entity];
+  }
+
+  set outer_angle(value) {
+    LightFragment.data.outer_angle[this.current_entity] = value;
+    if (LightFragment.data.dirty) {
+      LightFragment.data.dirty[this.current_entity] = 1;
+    }
+    LightFragment.data.gpu_data_dirty = true;
+  }
+
+  get active() {
+    return LightFragment.data.active[this.current_entity];
+  }
+
+  set active(value) {
+    LightFragment.data.active[this.current_entity] = value;
+    if (LightFragment.data.dirty) {
+      LightFragment.data.dirty[this.current_entity] = 1;
+    }
+    LightFragment.data.gpu_data_dirty = true;
+  }
+
+  get dirty() {
+    return LightFragment.data.dirty[this.current_entity];
+  }
+
+  set dirty(value) {
+    LightFragment.data.dirty[this.current_entity] = value;
+    if (LightFragment.data.dirty) {
+      LightFragment.data.dirty[this.current_entity] = 1;
+    }
+    LightFragment.data.gpu_data_dirty = true;
+  }
+
+  view_entity(entity) {
+    this.current_entity = entity;
+
+    this.position.view_entity(entity);
+    this.direction.view_entity(entity);
+    this.color.view_entity(entity);
+
+    return this;
+  }
+}
+
 export class LightFragment extends Fragment {
+  static data_view_allocator = new RingBufferAllocator(256, LightDataView);
+
   static initialize() {
     this.data = {
       position: {
@@ -65,40 +313,38 @@ export class LightFragment extends Fragment {
     this.rebuild_buffers(Renderer.get().graphics_context);
   }
 
-  static add_entity(entity, data) {
-    super.add_entity(entity, data);
+  static add_entity(entity) {
+    super.add_entity(entity);
+    return this.get_entity_data(entity);
   }
 
   static remove_entity(entity) {
     super.remove_entity(entity);
-    this.update_entity_data(entity, {
-      position: {
-        x: 0,
-        y: 0,
-        z: 0,
-      },
-      direction: {
-        x: 0,
-        y: 0,
-        z: 0,
-      },
-      color: {
-        r: 0,
-        g: 0,
-        b: 0,
-      },
-      type: 0,
-      intensity: 0,
-      radius: 0,
-      attenuation: 0,
-      outer_angle: 0,
-      active: 0,
-      dirty: 0,
-    });
+    this.data.position.x[entity] = 0;
+    this.data.position.y[entity] = 0;
+    this.data.position.z[entity] = 0;
+
+    this.data.direction.x[entity] = 0;
+    this.data.direction.y[entity] = 0;
+    this.data.direction.z[entity] = 0;
+
+    this.data.color.r[entity] = 0;
+    this.data.color.g[entity] = 0;
+    this.data.color.b[entity] = 0;
+
+    this.data.type[entity] = 0;
+    this.data.intensity[entity] = 0;
+    this.data.radius[entity] = 0;
+    this.data.attenuation[entity] = 0;
+    this.data.outer_angle[entity] = 0;
+    this.data.active[entity] = 0;
   }
 
   static get_entity_data(entity) {
-    return super.get_entity_data(entity);
+    const data_view = this.data_view_allocator.allocate();
+    data_view.fragment = this;
+    data_view.view_entity(entity);
+    return data_view;
   }
 
   static duplicate_entity_data(entity) {
@@ -126,21 +372,6 @@ export class LightFragment extends Fragment {
     data.active = this.data.active[entity];
     data.dirty = this.data.dirty[entity];
     return data;
-  }
-
-  static update_entity_data(entity, data) {
-    if (!this.data) {
-      this.initialize();
-    }
-
-    super.update_entity_data(entity, data);
-
-    if (this.data.dirty) {
-      this.data.dirty[entity] = 1;
-    }
-    this.data.gpu_data_dirty = true;
-
-    this.data.active[entity] = 1;
   }
 
   static to_gpu_data(context) {

@@ -3,6 +3,7 @@ import { Fragment } from "../fragment.js";
 import { Renderer } from "../../../renderer/renderer.js";
 import { Buffer } from "../../../renderer/buffer.js";
 import { global_dispatcher } from "../../../core/dispatcher.js";
+import { RingBufferAllocator } from "../../../memory/allocator.js";
 import { Tree } from "../../../memory/container.js";
 
 const scene_graph_buffer_name = "scene_graph_buffer";
@@ -10,7 +11,55 @@ const scene_graph_cpu_buffer_name = "scene_graph_cpu_buffer";
 const scene_graph_event = "scene_graph";
 const scene_graph_update_event = "scene_graph_update";
 
+class SceneGraphDataView {
+  current_entity = -1;
+
+  constructor() {}
+
+  get parent() {
+    return SceneGraphFragment.data.parent[this.current_entity];
+  }
+
+  set parent(value) {
+    SceneGraphFragment.data.parent[this.current_entity] = value ?? -1;
+    SceneGraphFragment.data.scene_graph.add(value ?? null, this.current_entity);
+    if (SceneGraphFragment.data.dirty) {
+      SceneGraphFragment.data.dirty[this.current_entity] = 1;
+    }
+    SceneGraphFragment.data.gpu_data_dirty = true;
+  }
+
+  get children() {
+    return (
+      SceneGraphFragment.data.scene_graph.find_node(this.current_entity)
+        ?.children ?? []
+    );
+  }
+
+  set children(value) {
+    if (Array.isArray(value)) {
+      SceneGraphFragment.data.scene_graph.add_multiple(
+        this.current_entity,
+        value,
+        true /* replace_children */,
+      );
+    }
+    if (SceneGraphFragment.data.dirty) {
+      SceneGraphFragment.data.dirty[this.current_entity] = 1;
+    }
+    SceneGraphFragment.data.gpu_data_dirty = true;
+  }
+
+  view_entity(entity) {
+    this.current_entity = entity;
+
+    return this;
+  }
+}
+
 export class SceneGraphFragment extends Fragment {
+  static data_view_allocator = new RingBufferAllocator(256, SceneGraphDataView);
+
   static initialize() {
     this.data = {
       parent: new Int32Array(1),
@@ -33,19 +82,9 @@ export class SceneGraphFragment extends Fragment {
     this.rebuild_buffers(Renderer.get().graphics_context);
   }
 
-  static add_entity(entity, data) {
-    super.add_entity(entity, null);
-
-    if (data) {
-      this.data.parent[entity] = data.parent || -1;
-    }
-
-    this.data.scene_graph.add(data?.parent ?? null, entity);
-    if (Array.isArray(data.children)) {
-      this.data.scene_graph.add_multiple(entity, data.children);
-    }
-
-    this.data.gpu_data_dirty = true;
+  static add_entity(entity) {
+    super.add_entity(entity);
+    return this.get_entity_data(entity);
   }
 
   static remove_entity(entity) {
@@ -56,38 +95,18 @@ export class SceneGraphFragment extends Fragment {
   }
 
   static get_entity_data(entity) {
+    const data_view = this.data_view_allocator.allocate();
+    data_view.fragment = this;
+    data_view.view_entity(entity);
+    return data_view;
+  }
+
+  static duplicate_entity_data(entity) {
     const node = this.data.scene_graph.find_node(entity);
     return {
       parent: node?.parent ?? null,
       children: node?.children ?? [],
     };
-  }
-
-  static duplicate_entity_data(entity) {
-    return this.get_entity_data(entity);
-  }
-
-  static update_entity_data(entity, data) {
-    if (!this.data) {
-      this.initialize();
-    }
-
-    const { children, ...rest } = data;
-
-    super.update_entity_data(entity, rest);
-
-    if (children) {
-      this.data.scene_graph.add_multiple(
-        entity,
-        children,
-        true /* replace_children */,
-      );
-    }
-
-    if (this.data.dirty) {
-      this.data.dirty[entity] = 1;
-    }
-    this.data.gpu_data_dirty = true;
   }
 
   static to_gpu_data(context) {

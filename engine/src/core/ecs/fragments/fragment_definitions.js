@@ -89,13 +89,6 @@ const LightFragment = {
       `,
     },
   },
-  overrides: {
-    update_entity_data: {
-      post: `
-      this.data.active[entity] = 1;
-      `,
-    },
-  },
 };
 
 const StaticMeshFragment = {
@@ -111,6 +104,21 @@ const StaticMeshFragment = {
     material_slots: {
       type: DataType.BIGINT64,
       stride: 64,
+      getter: `StaticMeshFragment.data.material_slots.slice(this.current_entity * StaticMeshFragment.material_slot_stride, (this.current_entity + 1) * StaticMeshFragment.material_slot_stride);`,
+      setter: `
+      if (
+        Array.isArray(value) &&
+        value.length <= StaticMeshFragment.material_slot_stride
+      ) {
+        for (let i = 0; i < value.length; i++) {
+          StaticMeshFragment.data.material_slots[this.current_entity * StaticMeshFragment.material_slot_stride + i] = BigInt(value[i]);
+        }
+      }
+      if (StaticMeshFragment.data.dirty) {
+        StaticMeshFragment.data.dirty[this.current_entity] = 1;
+      }
+      StaticMeshFragment.data.gpu_data_dirty = true;
+      `,
     },
     instance_count: {
       type: DataType.BIGINT64,
@@ -126,33 +134,10 @@ const StaticMeshFragment = {
       skip_default: true,
       pre: `
       super.remove_entity(entity);
-      this.update_entity_data(entity, {
-        mesh: 0n,
-        material_slots: Array(this.material_slot_stride).fill(0),
-        instance_count: 0n,
-      });
-      `,
-    },
-    update_entity_data: {
-      skip_default: true,
-      pre: `
-      if (!this.data) {
-        this.initialize();
-      }
-
-      this.data.mesh[entity] = BigInt(data.mesh) ?? 0n;
-      this.data.instance_count[entity] = BigInt(data.instance_count) ?? 0n;
-
-      if (
-        Array.isArray(data.material_slots) &&
-        data.material_slots.length <= this.material_slot_stride
-      ) {
-        for (let i = 0; i < data.material_slots.length; i++) {
-          this.data.material_slots[entity * this.material_slot_stride + i] = BigInt(data.material_slots[i]);
-        }
-      }
-
-      this.data.dirty[entity] = 1;
+      const entity_data = this.get_entity_data(entity);
+      entity_data.mesh = 0n;
+      entity_data.material_slots = Array(this.material_slot_stride).fill(0);
+      entity_data.instance_count = 0n;
       `,
     },
   },
@@ -164,15 +149,94 @@ const TransformFragment = {
     position: {
       type: DataType.FLOAT32,
       stride: 4,
+      getter: `[
+        TransformFragment.data.position[this.current_entity * 4],
+        TransformFragment.data.position[this.current_entity * 4 + 1],
+        TransformFragment.data.position[this.current_entity * 4 + 2],
+      ];
+      `,
+      setter: `
+      TransformFragment.data.position[this.current_entity * 4] = value[0];
+      TransformFragment.data.position[this.current_entity * 4 + 1] = value[1];
+      TransformFragment.data.position[this.current_entity * 4 + 2] = value[2];
+      TransformFragment.data.position[this.current_entity * 4 + 3] = 1.0;
+      TransformFragment.data.position_buffer.write_raw(
+        Renderer.get().graphics_context,
+        TransformFragment.data.position.subarray(this.current_entity * 4, this.current_entity * 4 + 4),
+        this.current_entity * 4 * Float32Array.BYTES_PER_ELEMENT
+      );
+      if (TransformFragment.data.dirty) {
+        TransformFragment.data.dirty[this.current_entity] = 1;
+        TransformFragment.data.dirty_flags_buffer.write_raw(
+          Renderer.get().graphics_context,
+          TransformFragment.data.dirty.subarray(this.current_entity, this.current_entity + 1),
+          this.current_entity * Uint32Array.BYTES_PER_ELEMENT
+        );
+      }
+      TransformFragment.data.gpu_data_dirty = true;
+      `,
     },
     rotation: {
       type: DataType.FLOAT32,
       stride: 4,
+      getter: `[
+        TransformFragment.data.rotation[this.current_entity * 4],
+        TransformFragment.data.rotation[this.current_entity * 4 + 1],
+        TransformFragment.data.rotation[this.current_entity * 4 + 2],
+        TransformFragment.data.rotation[this.current_entity * 4 + 3],
+      ];
+      `,
+      setter: `
+      TransformFragment.data.rotation[this.current_entity * 4] = value[0];
+      TransformFragment.data.rotation[this.current_entity * 4 + 1] = value[1];
+      TransformFragment.data.rotation[this.current_entity * 4 + 2] = value[2];
+      TransformFragment.data.rotation[this.current_entity * 4 + 3] = value[3];
+      TransformFragment.data.rotation_buffer.write_raw(
+        Renderer.get().graphics_context,
+        TransformFragment.data.rotation.subarray(this.current_entity * 4, this.current_entity * 4 + 4),
+        this.current_entity * 4 * Float32Array.BYTES_PER_ELEMENT
+      );
+      if (TransformFragment.data.dirty) {
+        TransformFragment.data.dirty[this.current_entity] = 1;
+        TransformFragment.data.dirty_flags_buffer.write_raw(
+          Renderer.get().graphics_context,
+          TransformFragment.data.dirty.subarray(this.current_entity, this.current_entity + 1),
+          this.current_entity * Uint32Array.BYTES_PER_ELEMENT
+        );
+      }
+      TransformFragment.data.gpu_data_dirty = true;
+      `,
     },
     scale: {
       type: DataType.FLOAT32,
       stride: 4,
       default: 1,
+      getter: `[
+        TransformFragment.data.scale[this.current_entity * 4],
+        TransformFragment.data.scale[this.current_entity * 4 + 1],
+        TransformFragment.data.scale[this.current_entity * 4 + 2],
+      ];
+      `,
+      setter: `
+      TransformFragment.data.scale[this.current_entity * 4] = value[0];
+      TransformFragment.data.scale[this.current_entity * 4 + 1] = value[1];
+      TransformFragment.data.scale[this.current_entity * 4 + 2] = value[2];
+      TransformFragment.data.scale[this.current_entity * 4 + 3] = 0.0;
+      TransformFragment.data.scale_buffer.write_raw(
+        Renderer.get().graphics_context,
+        TransformFragment.data.scale.subarray(this.current_entity * 4, this.current_entity * 4 + 4),
+        this.current_entity * 4 * Float32Array.BYTES_PER_ELEMENT
+      );
+      if (TransformFragment.data.dirty) {
+        TransformFragment.data.dirty[this.current_entity] = 1;
+        TransformFragment.data.dirty_flags_buffer.write_raw(
+          Renderer.get().graphics_context,
+          TransformFragment.data.dirty.subarray(this.current_entity, this.current_entity + 1),
+          this.current_entity * Uint32Array.BYTES_PER_ELEMENT
+        );
+      }
+      TransformFragment.data.gpu_data_dirty = true;
+      `,
     },
     dirty: {
       type: DataType.UINT32,
@@ -227,14 +291,20 @@ const TransformFragment = {
       skip_default: true,
       pre: `
       super.remove_entity(entity);
-      this.update_entity_data(entity, {
-        position: { x: 0, y: 0, z: 0 },
-        rotation: { x: 0, y: 0, z: 0, w: 1 },
-        scale: { x: 1, y: 1, z: 1 },
-      });
+      const entity_data = this.get_entity_data(entity);
+      entity_data.position.x = 0;
+      entity_data.position.y = 0;
+      entity_data.position.z = 0;
+      entity_data.rotation.x = 0;
+      entity_data.rotation.y = 0;
+      entity_data.rotation.z = 0;
+      entity_data.rotation.w = 1;
+      entity_data.scale.x = 1;
+      entity_data.scale.y = 1;
+      entity_data.scale.z = 1;
       `,
     },
-    get_entity_data: {
+    duplicate_entity_data: {
       skip_default: true,
       pre: `
       return {
@@ -255,73 +325,6 @@ const TransformFragment = {
           z: this.data.scale[entity * 4 + 2],
         },
       };
-      `,
-    },
-    duplicate_entity_data: {
-      skip_default: true,
-      pre: `
-      const data = this.get_entity_data(entity);
-      return {
-        position: { x: data.position.x, y: data.position.y, z: data.position.z },
-        rotation: {
-          x: data.rotation.x,
-          y: data.rotation.y,
-          z: data.rotation.z,
-          w: data.rotation.w,
-        },
-        scale: { x: data.scale.x, y: data.scale.y, z: data.scale.z },
-      };
-      `,
-    },
-    update_entity_data: {
-      skip_default: true,
-      pre: `
-      if (!this.data) {
-        this.initialize();
-      }
-
-      const context = Renderer.get().graphics_context;
-
-      if (data.position) {
-        this.data.position[entity * 4 + 0] = data.position.x;
-        this.data.position[entity * 4 + 1] = data.position.y;
-        this.data.position[entity * 4 + 2] = data.position.z;
-        this.data.position[entity * 4 + 3] = 1.0;
-        this.data.position_buffer.write_raw(
-          context,
-          this.data.position.subarray(entity * 4, entity * 4 + 4),
-          entity * 4 * Float32Array.BYTES_PER_ELEMENT
-        );
-      }
-      if (data.rotation) {
-        this.data.rotation[entity * 4 + 0] = data.rotation.x;
-        this.data.rotation[entity * 4 + 1] = data.rotation.y;
-        this.data.rotation[entity * 4 + 2] = data.rotation.z;
-        this.data.rotation[entity * 4 + 3] = data.rotation.w;
-        this.data.rotation_buffer.write_raw(
-          context,
-          this.data.rotation.subarray(entity * 4, entity * 4 + 4),
-          entity * 4 * Float32Array.BYTES_PER_ELEMENT
-        );
-      }
-      if (data.scale) {
-        this.data.scale[entity * 4 + 0] = data.scale.x;
-        this.data.scale[entity * 4 + 1] = data.scale.y;
-        this.data.scale[entity * 4 + 2] = data.scale.z;
-        this.data.scale[entity * 4 + 3] = 0.0;
-        this.data.scale_buffer.write_raw(
-          context,
-          this.data.scale.subarray(entity * 4, entity * 4 + 4),
-          entity * 4 * Float32Array.BYTES_PER_ELEMENT
-        );
-      }
-
-      this.data.dirty[entity] = 1;
-      this.data.dirty_flags_buffer.write_raw(
-        context,
-        this.data.dirty.subarray(entity, entity + 1),
-        entity * Uint32Array.BYTES_PER_ELEMENT
-      );
       `,
     },
     to_gpu_data: {
@@ -404,14 +407,14 @@ const TransformFragment = {
   },
   hooks: {
     on_post_render: {
-        body: `
+      body: `
     if (!this.data) {
       return;
     }
 
     await this.sync_buffers(Renderer.get().graphics_context);
-    `
-    } ,
+    `,
+    },
   },
 };
 
@@ -424,12 +427,35 @@ const SceneGraphFragment = {
     parent: {
       type: DataType.INT32,
       stride: 1,
+      setter: `
+      SceneGraphFragment.data.parent[this.current_entity] = value ?? -1;
+      SceneGraphFragment.data.scene_graph.add(value ?? null, this.current_entity);
+      if (SceneGraphFragment.data.dirty) {
+        SceneGraphFragment.data.dirty[this.current_entity] = 1;
+      }
+      SceneGraphFragment.data.gpu_data_dirty = true;
+      `,
+    },
+    children: {
+      type: DataType.INT32,
+      stride: 1,
+      getter: `SceneGraphFragment.data.scene_graph.find_node(this.current_entity)?.children ?? [];`,
+      setter: `
+      if (Array.isArray(value)) {
+        SceneGraphFragment.data.scene_graph.add_multiple(this.current_entity, value, true /* replace_children */);
+      }
+      if (SceneGraphFragment.data.dirty) {
+        SceneGraphFragment.data.dirty[this.current_entity] = 1;
+      }
+      SceneGraphFragment.data.gpu_data_dirty = true;
+      `,
+      no_fragment_array: true,
     },
   },
   members: {
-    scene_graph: 'new Tree()',
-    scene_graph_layer_counts: '[]',
-    scene_graph_uniforms: '[]',
+    scene_graph: "new Tree()",
+    scene_graph_layer_counts: "[]",
+    scene_graph_uniforms: "[]",
   },
   buffers: {
     scene_graph: {
@@ -462,23 +488,6 @@ const SceneGraphFragment = {
     },
   },
   overrides: {
-    add_entity: {
-      skip_default: true,
-      post: `
-      super.add_entity(entity, null);
-
-      if (data) {
-        this.data.parent[entity] = data.parent || -1;
-      }
-
-      this.data.scene_graph.add(data?.parent ?? null, entity);
-      if (Array.isArray(data.children)) {
-        this.data.scene_graph.add_multiple(entity, data.children);
-      }
-
-      this.data.gpu_data_dirty = true;
-      `,
-    },
     remove_entity: {
       skip_default: true,
       post: `
@@ -488,7 +497,7 @@ const SceneGraphFragment = {
       this.data.gpu_data_dirty = true;
       `,
     },
-    get_entity_data: {
+    duplicate_entity_data: {
       skip_default: true,
       pre: `
       const node = this.data.scene_graph.find_node(entity);
@@ -496,33 +505,6 @@ const SceneGraphFragment = {
         parent: node?.parent ?? null,
         children: node?.children ?? [],
       };
-      `,
-    },
-    duplicate_entity_data: {
-      skip_default: true,
-      pre: `
-      return this.get_entity_data(entity);
-      `,
-    },
-    update_entity_data: {
-      skip_default: true,
-      post: `
-      if (!this.data) {
-        this.initialize();
-      }
-
-      const { children, ...rest } = data;
-
-      super.update_entity_data(entity, rest);
-
-      if (children) {
-        this.data.scene_graph.add_multiple(entity, children, true /* replace_children */);
-      }
-
-      if (this.data.dirty) {
-        this.data.dirty[entity] = 1;
-      }
-      this.data.gpu_data_dirty = true;
       `,
     },
   },
@@ -585,23 +567,70 @@ const UserInterfaceFragment = {
       stride: 1,
     },
   },
+};
+
+const TextFragment = {
+  name: "Text",
+  fields: {
+    text: {
+      type: DataType.UINT32,
+      stride: 1,
+      is_container: true,
+      getter: `String.fromCodePoint(...TextFragment.data.text.get_data_for_entity(this.current_entity));`,
+      setter: `
+      if (value) {
+        const code_points = Array.from(value).map((char) => char.codePointAt(0));
+        TextFragment.data.text.update(this.current_entity, code_points);
+      }
+      if (TextFragment.data.dirty) {
+        TextFragment.data.dirty[this.current_entity] = 1;
+      }
+      TextFragment.data.gpu_data_dirty = true;
+      `,
+    },
+    font: {
+      type: DataType.INT32,
+      stride: 1,
+    },
+    dirty: {
+      type: DataType.UINT8,
+      stride: 1,
+    },
+  },
+  buffers: {
+    text: {
+      type: DataType.UINT32,
+      usage: BufferType.STORAGE,
+      stride: 1,
+      gpu_data: `
+const gpu_data = this.data.text.get_data();
+      `,
+    },
+    dirty: {
+      type: DataType.UINT32,
+      usage: BufferType.STORAGE_SRC,
+      stride: 1,
+    },
+  },
   overrides: {
-    get_entity_data: {
+    duplicate_entity_data: {
       skip_default: true,
       pre: `
-      return {
-        allows_cursor_events: this.data.allows_cursor_events[entity],
-        auto_size: this.data.auto_size[entity],
-        was_cursor_inside: this.data.was_cursor_inside[entity],
-        is_cursor_inside: this.data.is_cursor_inside[entity],
-        was_clicked: this.data.was_clicked[entity],
-        is_clicked: this.data.is_clicked[entity],
-        is_pressed: this.data.is_pressed[entity],
-        was_pressed: this.data.was_pressed[entity],
-      };
+      const data = {};
+      data.text = String.fromCodePoint(...this.data.text.get_data_for_entity(entity));
+      data.font = this.data.font[entity];
+      return data;
       `,
     },
   },
 };
 
-export const definitions = [LightFragment, StaticMeshFragment, TransformFragment, SceneGraphFragment, VisibilityFragment, UserInterfaceFragment];
+export const definitions = [
+  LightFragment,
+  StaticMeshFragment,
+  TransformFragment,
+  SceneGraphFragment,
+  VisibilityFragment,
+  UserInterfaceFragment,
+  TextFragment,
+];

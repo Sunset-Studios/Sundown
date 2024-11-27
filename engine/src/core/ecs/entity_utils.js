@@ -158,44 +158,38 @@ export function spawn_mesh_entity(
 
   const entity = scene.create_entity(false /* refresh_entity_queries */);
 
-  scene.add_fragment(
+  const new_transform_view = scene.add_fragment(
     entity,
     TransformFragment,
-    {
-      position: position,
-      rotation: rotation,
-      scale: scale,
-    },
     false /* refresh_entity_queries */
   );
+  new_transform_view.position = [position.x, position.y, position.z];
+  new_transform_view.rotation = [rotation.x, rotation.y, rotation.z, rotation.w];
+  new_transform_view.scale = [scale.x, scale.y, scale.z];
 
-  scene.add_fragment(
+  const new_scene_graph_view = scene.add_fragment(
     entity,
     SceneGraphFragment,
-    {
-      parent: parent,
-      children: children,
-    },
     false /* refresh_entity_queries */
   );
+  new_scene_graph_view.parent = parent;
+  new_scene_graph_view.children = children;
 
-  scene.add_fragment(
+  const new_static_mesh_view = scene.add_fragment(
     entity,
     StaticMeshFragment,
-    {
-      mesh: BigInt(Name.from(mesh.name)),
-      material_slots: [material],
-      instance_count: BigInt(1),
-    },
     false /* refresh_entity_queries */
   );
+  new_static_mesh_view.mesh = BigInt(Name.from(mesh.name));
+  new_static_mesh_view.material_slots = [material];
+  new_static_mesh_view.instance_count = BigInt(1);
 
-  scene.add_fragment(
+  const new_visibility_view = scene.add_fragment(
     entity,
     VisibilityFragment,
-    { visible: 1 },
     false /* refresh_entity_queries */
   );
+  new_visibility_view.visible = 1;
 
   if (refresh_entity_queries) {
     scene.refresh_entity_queries();

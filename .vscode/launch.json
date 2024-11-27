@@ -9,7 +9,22 @@
             "request": "launch",
             "name": "Sundown Localhost",
             "url": "http://localhost:5173",
-            "webRoot": "${workspaceFolder}"
+            "webRoot": "${workspaceFolder}",
+            "resolveSourceMapLocations": [
+                "${workspaceFolder}/**",
+                "!**/node_modules/**"
+            ],
+            "sourceMaps": true,
+            "sourceMapPathOverrides": {
+                "webpack:///./*": "${webRoot}/*",
+                "webpack:///src/*": "${webRoot}/src/*",
+                "webpack:////*": "*"
+            },
+            "preLaunchTask": "npm: dev",
+            "userDataDir": false,
+            "skipFiles": [
+                "<node_internals>/**"
+            ]
         }
     ]
 }

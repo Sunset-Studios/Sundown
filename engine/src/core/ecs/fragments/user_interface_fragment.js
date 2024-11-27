@@ -3,8 +3,135 @@ import { Fragment } from "../fragment.js";
 import { Renderer } from "../../../renderer/renderer.js";
 import { Buffer } from "../../../renderer/buffer.js";
 import { global_dispatcher } from "../../../core/dispatcher.js";
+import { RingBufferAllocator } from "../../../memory/allocator.js";
+
+class UserInterfaceDataView {
+  current_entity = -1;
+
+  constructor() {}
+
+  get allows_cursor_events() {
+    return UserInterfaceFragment.data.allows_cursor_events[this.current_entity];
+  }
+
+  set allows_cursor_events(value) {
+    UserInterfaceFragment.data.allows_cursor_events[this.current_entity] =
+      value;
+    if (UserInterfaceFragment.data.dirty) {
+      UserInterfaceFragment.data.dirty[this.current_entity] = 1;
+    }
+    UserInterfaceFragment.data.gpu_data_dirty = true;
+  }
+
+  get auto_size() {
+    return UserInterfaceFragment.data.auto_size[this.current_entity];
+  }
+
+  set auto_size(value) {
+    UserInterfaceFragment.data.auto_size[this.current_entity] = value;
+    if (UserInterfaceFragment.data.dirty) {
+      UserInterfaceFragment.data.dirty[this.current_entity] = 1;
+    }
+    UserInterfaceFragment.data.gpu_data_dirty = true;
+  }
+
+  get was_cursor_inside() {
+    return UserInterfaceFragment.data.was_cursor_inside[this.current_entity];
+  }
+
+  set was_cursor_inside(value) {
+    UserInterfaceFragment.data.was_cursor_inside[this.current_entity] = value;
+    if (UserInterfaceFragment.data.dirty) {
+      UserInterfaceFragment.data.dirty[this.current_entity] = 1;
+    }
+    UserInterfaceFragment.data.gpu_data_dirty = true;
+  }
+
+  get is_cursor_inside() {
+    return UserInterfaceFragment.data.is_cursor_inside[this.current_entity];
+  }
+
+  set is_cursor_inside(value) {
+    UserInterfaceFragment.data.is_cursor_inside[this.current_entity] = value;
+    if (UserInterfaceFragment.data.dirty) {
+      UserInterfaceFragment.data.dirty[this.current_entity] = 1;
+    }
+    UserInterfaceFragment.data.gpu_data_dirty = true;
+  }
+
+  get was_clicked() {
+    return UserInterfaceFragment.data.was_clicked[this.current_entity];
+  }
+
+  set was_clicked(value) {
+    UserInterfaceFragment.data.was_clicked[this.current_entity] = value;
+    if (UserInterfaceFragment.data.dirty) {
+      UserInterfaceFragment.data.dirty[this.current_entity] = 1;
+    }
+    UserInterfaceFragment.data.gpu_data_dirty = true;
+  }
+
+  get is_clicked() {
+    return UserInterfaceFragment.data.is_clicked[this.current_entity];
+  }
+
+  set is_clicked(value) {
+    UserInterfaceFragment.data.is_clicked[this.current_entity] = value;
+    if (UserInterfaceFragment.data.dirty) {
+      UserInterfaceFragment.data.dirty[this.current_entity] = 1;
+    }
+    UserInterfaceFragment.data.gpu_data_dirty = true;
+  }
+
+  get is_pressed() {
+    return UserInterfaceFragment.data.is_pressed[this.current_entity];
+  }
+
+  set is_pressed(value) {
+    UserInterfaceFragment.data.is_pressed[this.current_entity] = value;
+    if (UserInterfaceFragment.data.dirty) {
+      UserInterfaceFragment.data.dirty[this.current_entity] = 1;
+    }
+    UserInterfaceFragment.data.gpu_data_dirty = true;
+  }
+
+  get was_pressed() {
+    return UserInterfaceFragment.data.was_pressed[this.current_entity];
+  }
+
+  set was_pressed(value) {
+    UserInterfaceFragment.data.was_pressed[this.current_entity] = value;
+    if (UserInterfaceFragment.data.dirty) {
+      UserInterfaceFragment.data.dirty[this.current_entity] = 1;
+    }
+    UserInterfaceFragment.data.gpu_data_dirty = true;
+  }
+
+  get dirty() {
+    return UserInterfaceFragment.data.dirty[this.current_entity];
+  }
+
+  set dirty(value) {
+    UserInterfaceFragment.data.dirty[this.current_entity] = value;
+    if (UserInterfaceFragment.data.dirty) {
+      UserInterfaceFragment.data.dirty[this.current_entity] = 1;
+    }
+    UserInterfaceFragment.data.gpu_data_dirty = true;
+  }
+
+  view_entity(entity) {
+    this.current_entity = entity;
+
+    return this;
+  }
+}
 
 export class UserInterfaceFragment extends Fragment {
+  static data_view_allocator = new RingBufferAllocator(
+    256,
+    UserInterfaceDataView,
+  );
+
   static initialize() {
     this.data = {
       allows_cursor_events: new Uint8Array(1),
@@ -53,36 +180,28 @@ export class UserInterfaceFragment extends Fragment {
     Fragment.resize_array(this.data, "dirty", new_size, Uint8Array, 1);
   }
 
-  static add_entity(entity, data) {
-    super.add_entity(entity, data);
+  static add_entity(entity) {
+    super.add_entity(entity);
+    return this.get_entity_data(entity);
   }
 
   static remove_entity(entity) {
     super.remove_entity(entity);
-    this.update_entity_data(entity, {
-      allows_cursor_events: 0,
-      auto_size: 0,
-      was_cursor_inside: 0,
-      is_cursor_inside: 0,
-      was_clicked: 0,
-      is_clicked: 0,
-      is_pressed: 0,
-      was_pressed: 0,
-      dirty: 0,
-    });
+    this.data.allows_cursor_events[entity] = 0;
+    this.data.auto_size[entity] = 0;
+    this.data.was_cursor_inside[entity] = 0;
+    this.data.is_cursor_inside[entity] = 0;
+    this.data.was_clicked[entity] = 0;
+    this.data.is_clicked[entity] = 0;
+    this.data.is_pressed[entity] = 0;
+    this.data.was_pressed[entity] = 0;
   }
 
   static get_entity_data(entity) {
-    return {
-      allows_cursor_events: this.data.allows_cursor_events[entity],
-      auto_size: this.data.auto_size[entity],
-      was_cursor_inside: this.data.was_cursor_inside[entity],
-      is_cursor_inside: this.data.is_cursor_inside[entity],
-      was_clicked: this.data.was_clicked[entity],
-      is_clicked: this.data.is_clicked[entity],
-      is_pressed: this.data.is_pressed[entity],
-      was_pressed: this.data.was_pressed[entity],
-    };
+    const data_view = this.data_view_allocator.allocate();
+    data_view.fragment = this;
+    data_view.view_entity(entity);
+    return data_view;
   }
 
   static duplicate_entity_data(entity) {
@@ -97,18 +216,5 @@ export class UserInterfaceFragment extends Fragment {
     data.was_pressed = this.data.was_pressed[entity];
     data.dirty = this.data.dirty[entity];
     return data;
-  }
-
-  static update_entity_data(entity, data) {
-    if (!this.data) {
-      this.initialize();
-    }
-
-    super.update_entity_data(entity, data);
-
-    if (this.data.dirty) {
-      this.data.dirty[entity] = 1;
-    }
-    this.data.gpu_data_dirty = true;
   }
 }

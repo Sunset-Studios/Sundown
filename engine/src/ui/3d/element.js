@@ -26,13 +26,15 @@ export class Element3D {
       false /* refresh_entity_queries */
     );
 
-    scene.add_fragment(entity, UserInterfaceFragment, {
-      allows_cursor_events: false,
-      was_cursor_inside: false,
-      is_cursor_inside: false,
-      was_clicked: false,
-      is_clicked: false,
-    });
+    const new_user_interface_view = scene.add_fragment(entity, UserInterfaceFragment);
+    new_user_interface_view.allows_cursor_events = 1;
+    new_user_interface_view.auto_size = 0;
+    new_user_interface_view.was_cursor_inside = 0;
+    new_user_interface_view.is_cursor_inside = 0;
+    new_user_interface_view.was_clicked = 0;
+    new_user_interface_view.is_clicked = 0;
+    new_user_interface_view.is_pressed = 0;
+    new_user_interface_view.was_pressed = 0;
 
     this.set_config(config);
 
@@ -47,10 +49,10 @@ export class Element3D {
     let this_scene_graph_data = scene.get_fragment(entity, SceneGraphFragment);
     let child_scene_graph_data = scene.get_fragment(child.entity, SceneGraphFragment);
     if (this_scene_graph_data && child_scene_graph_data) {
-      this_scene_graph_data.children.push(child.entity);
+      const children = this_scene_graph_data.children;
+      children.push(child.entity);
+      this_scene_graph_data.children = children;
       child_scene_graph_data.parent = entity;
-      scene.update_fragment(child.entity, SceneGraphFragment, child_scene_graph_data);
-      scene.update_fragment(entity, SceneGraphFragment, this_scene_graph_data);
     }
   }
 
@@ -62,8 +64,6 @@ export class Element3D {
         (c) => c !== child.entity
       );
       child_scene_graph_data.parent = null;
-      scene.update_fragment(child.entity, SceneGraphFragment, child_scene_graph_data);
-      scene.update_fragment(entity, SceneGraphFragment, this_scene_graph_data);
     }
   }
 
@@ -89,8 +89,10 @@ export class Element3D {
 
   static set_material(scene, entity, material) {
     let mesh_data = scene.get_fragment(entity, StaticMeshFragment);
+    if (!mesh_data) {
+      return;
+    }
     mesh_data.material_slots = [material];
-    scene.update_fragment(entity, StaticMeshFragment, mesh_data);
   }
 
   static set_parent(scene, entity, parent) {
@@ -102,17 +104,12 @@ export class Element3D {
     let parent_scene_graph_data = scene.get_fragment(parent.entity, SceneGraphFragment);
     if (parent_scene_graph_data) {
       this_scene_graph_data.parent = parent.entity;
-      parent_scene_graph_data.children.push(entity);
-      scene.update_fragment(
-        parent.entity,
-        SceneGraphFragment,
-        parent_scene_graph_data
-      );
+      const children = parent_scene_graph_data.children;
+      children.push(entity);
+      parent_scene_graph_data.children = children;
     } else {
       this_scene_graph_data.parent = null;
     }
-
-    scene.update_fragment(entity, SceneGraphFragment, this_scene_graph_data);
   }
 
   static set_children(scene, entity, children) {
@@ -128,11 +125,6 @@ export class Element3D {
       );
       if (child_scene_graph_data) {
         child_scene_graph_data.parent = null;
-        scene.update_fragment(
-          this_scene_graph_data.children[i],
-          SceneGraphFragment,
-          child_scene_graph_data
-        );
       }
     }
 
@@ -143,47 +135,56 @@ export class Element3D {
       let child_scene_graph_data = scene.get_fragment(child.entity, SceneGraphFragment);
       if (child_scene_graph_data) {
         child_scene_graph_data.parent = entity;
-        scene.update_fragment(child.entity, SceneGraphFragment, child_scene_graph_data);
       }
     }
-
-    scene.update_fragment(entity, SceneGraphFragment, this_scene_graph_data);
   }
 
   static set_position(scene, entity, position) {
     let transform_data = scene.get_fragment(entity, TransformFragment);
+    if (!transform_data) {
+      return;
+    }
     transform_data.position = position;
-    scene.update_fragment(entity, TransformFragment, transform_data);
   }
 
   static set_rotation(scene, entity, rotation) {
     let transform_data = scene.get_fragment(entity, TransformFragment);
+    if (!transform_data) {
+      return;
+    }
     transform_data.rotation = rotation;
-    scene.update_fragment(entity, TransformFragment, transform_data);
   }
 
   static set_scale(scene, entity, scale) {
     let transform_data = scene.get_fragment(entity, TransformFragment);
+    if (!transform_data) {
+      return;
+    }
     transform_data.scale = scale;
-    scene.update_fragment(entity, TransformFragment, transform_data);
   }
 
   static set_allows_cursor_events(scene, entity, allows_cursor_events) {
     let user_interface_data = scene.get_fragment(entity, UserInterfaceFragment);
+    if (!user_interface_data) {
+      return;
+    }
     user_interface_data.allows_cursor_events = allows_cursor_events;
-    scene.update_fragment(entity, UserInterfaceFragment, user_interface_data);
   }
 
   static set_visible(scene, entity, visible) {
     let visibility_data = scene.get_fragment(entity, VisibilityFragment);
+    if (!visibility_data) {
+      return;
+    }
     visibility_data.visible = visible;
-    scene.update_fragment(entity, VisibilityFragment, visibility_data);
   }
 
   static set_auto_size(scene, entity, auto_size) {
     let user_interface_data = scene.get_fragment(entity, UserInterfaceFragment);
+    if (!user_interface_data) {
+      return;
+    }
     user_interface_data.auto_size = auto_size;
-    scene.update_fragment(entity, UserInterfaceFragment, user_interface_data);
   }
 
   static on(entity, event, callback) {

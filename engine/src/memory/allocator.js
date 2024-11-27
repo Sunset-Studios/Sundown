@@ -1,11 +1,37 @@
+const function_string = 'function'
+
 class FrameAllocator {
     /**
      * @param {number} max_objects - The maximum number of objects to allocate
-     * @param {object} template_object - The template object to allocate
+     * @param {object|Function} template - Either a template object to clone or a constructor function
      */
-    constructor(max_objects, template_object) {
+    constructor(max_objects, template) {
         this.max_objects = max_objects;
-        this.buffer = new Array(max_objects).fill(null).map(() => ({ ...template_object }));
+        
+        // Preallocate array with exact size
+        this.buffer = new Array(max_objects);
+        
+        if (typeof template === function_string) {
+            // Class instances - have to create new instances
+            for (let i = 0; i < max_objects; i++) {
+                this.buffer[i] = new template();
+            }
+        } else if (Object.keys(template).length === 0) {
+            // Fast path for empty objects
+            const proto = Object.create(null);
+            for (let i = 0; i < max_objects; i++) {
+                this.buffer[i] = Object.create(proto);
+            }
+        } else {
+            // For non-empty plain objects, create a prototype once
+            const proto = Object.create(null);
+            Object.assign(proto, template);
+            
+            // Create objects sharing the same prototype
+            for (let i = 0; i < max_objects; i++) {
+                this.buffer[i] = Object.create(proto);
+            }
+        }
         this.offset = 0;
     }
 
@@ -65,11 +91,35 @@ class FrameAllocator {
 class RingBufferAllocator {
     /**
      * @param {number} max_objects - The maximum number of objects the allocator can hold
-     * @param {object} template_object - The template object to use for initialization
+     * @param {object|Function} template - Either a template object to clone or a constructor function
      */
-    constructor(max_objects, template_object) {
+    constructor(max_objects, template) {
         this.max_objects = max_objects;
-        this.buffer = new Array(max_objects).fill(null).map(() => ({ ...template_object }));
+        
+        // Preallocate array with exact size
+        this.buffer = new Array(max_objects);
+        
+        if (typeof template === function_string) {
+            // Class instances - have to create new instances
+            for (let i = 0; i < max_objects; i++) {
+                this.buffer[i] = new template();
+            }
+        } else if (Object.keys(template).length === 0) {
+            // Fast path for empty objects
+            const proto = Object.create(null);
+            for (let i = 0; i < max_objects; i++) {
+                this.buffer[i] = Object.create(proto);
+            }
+        } else {
+            // For non-empty plain objects, create a prototype once
+            const proto = Object.create(null);
+            Object.assign(proto, template);
+            
+            // Create objects sharing the same prototype
+            for (let i = 0; i < max_objects; i++) {
+                this.buffer[i] = Object.create(proto);
+            }
+        }
         this.head = 0;
         this.tail = 0;
     }

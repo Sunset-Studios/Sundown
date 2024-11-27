@@ -3,8 +3,83 @@ import { Fragment } from "../fragment.js";
 import { Renderer } from "../../../renderer/renderer.js";
 import { Buffer } from "../../../renderer/buffer.js";
 import { global_dispatcher } from "../../../core/dispatcher.js";
+import { RingBufferAllocator } from "../../../memory/allocator.js";
+
+class StaticMeshDataView {
+  current_entity = -1;
+
+  constructor() {}
+
+  get mesh() {
+    return StaticMeshFragment.data.mesh[this.current_entity];
+  }
+
+  set mesh(value) {
+    StaticMeshFragment.data.mesh[this.current_entity] = value;
+    if (StaticMeshFragment.data.dirty) {
+      StaticMeshFragment.data.dirty[this.current_entity] = 1;
+    }
+    StaticMeshFragment.data.gpu_data_dirty = true;
+  }
+
+  get material_slots() {
+    return StaticMeshFragment.data.material_slots.slice(
+      this.current_entity * StaticMeshFragment.material_slot_stride,
+      (this.current_entity + 1) * StaticMeshFragment.material_slot_stride,
+    );
+  }
+
+  set material_slots(value) {
+    if (
+      Array.isArray(value) &&
+      value.length <= StaticMeshFragment.material_slot_stride
+    ) {
+      for (let i = 0; i < value.length; i++) {
+        StaticMeshFragment.data.material_slots[
+          this.current_entity * StaticMeshFragment.material_slot_stride + i
+        ] = BigInt(value[i]);
+      }
+    }
+    if (StaticMeshFragment.data.dirty) {
+      StaticMeshFragment.data.dirty[this.current_entity] = 1;
+    }
+    StaticMeshFragment.data.gpu_data_dirty = true;
+  }
+
+  get instance_count() {
+    return StaticMeshFragment.data.instance_count[this.current_entity];
+  }
+
+  set instance_count(value) {
+    StaticMeshFragment.data.instance_count[this.current_entity] = value;
+    if (StaticMeshFragment.data.dirty) {
+      StaticMeshFragment.data.dirty[this.current_entity] = 1;
+    }
+    StaticMeshFragment.data.gpu_data_dirty = true;
+  }
+
+  get dirty() {
+    return StaticMeshFragment.data.dirty[this.current_entity];
+  }
+
+  set dirty(value) {
+    StaticMeshFragment.data.dirty[this.current_entity] = value;
+    if (StaticMeshFragment.data.dirty) {
+      StaticMeshFragment.data.dirty[this.current_entity] = 1;
+    }
+    StaticMeshFragment.data.gpu_data_dirty = true;
+  }
+
+  view_entity(entity) {
+    this.current_entity = entity;
+
+    return this;
+  }
+}
 
 export class StaticMeshFragment extends Fragment {
+  static data_view_allocator = new RingBufferAllocator(256, StaticMeshDataView);
+
   static material_slot_stride = 64;
 
   static initialize() {
@@ -39,21 +114,24 @@ export class StaticMeshFragment extends Fragment {
     Fragment.resize_array(this.data, "dirty", new_size, Uint8Array, 1);
   }
 
-  static add_entity(entity, data) {
-    super.add_entity(entity, data);
+  static add_entity(entity) {
+    super.add_entity(entity);
+    return this.get_entity_data(entity);
   }
 
   static remove_entity(entity) {
     super.remove_entity(entity);
-    this.update_entity_data(entity, {
-      mesh: 0n,
-      material_slots: Array(this.material_slot_stride).fill(0),
-      instance_count: 0n,
-    });
+    const entity_data = this.get_entity_data(entity);
+    entity_data.mesh = 0n;
+    entity_data.material_slots = Array(this.material_slot_stride).fill(0);
+    entity_data.instance_count = 0n;
   }
 
   static get_entity_data(entity) {
-    return super.get_entity_data(entity);
+    const data_view = this.data_view_allocator.allocate();
+    data_view.fragment = this;
+    data_view.view_entity(entity);
+    return data_view;
   }
 
   static duplicate_entity_data(entity) {
@@ -66,26 +144,5 @@ export class StaticMeshFragment extends Fragment {
     data.instance_count = this.data.instance_count[entity];
     data.dirty = this.data.dirty[entity];
     return data;
-  }
-
-  static update_entity_data(entity, data) {
-    if (!this.data) {
-      this.initialize();
-    }
-
-    this.data.mesh[entity] = BigInt(data.mesh) ?? 0n;
-    this.data.instance_count[entity] = BigInt(data.instance_count) ?? 0n;
-
-    if (
-      Array.isArray(data.material_slots) &&
-      data.material_slots.length <= this.material_slot_stride
-    ) {
-      for (let i = 0; i < data.material_slots.length; i++) {
-        this.data.material_slots[entity * this.material_slot_stride + i] =
-          BigInt(data.material_slots[i]);
-      }
-    }
-
-    this.data.dirty[entity] = 1;
   }
 }

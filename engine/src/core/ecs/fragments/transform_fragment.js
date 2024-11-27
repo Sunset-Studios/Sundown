@@ -3,6 +3,7 @@ import { Fragment } from "../fragment.js";
 import { Renderer } from "../../../renderer/renderer.js";
 import { Buffer } from "../../../renderer/buffer.js";
 import { global_dispatcher } from "../../../core/dispatcher.js";
+import { RingBufferAllocator } from "../../../memory/allocator.js";
 
 const position_buffer_name = "position_buffer";
 const position_cpu_buffer_name = "position_cpu_buffer";
@@ -39,7 +40,139 @@ const bounds_data_cpu_buffer_name = "bounds_data_cpu_buffer";
 const bounds_data_event = "bounds_data";
 const bounds_data_update_event = "bounds_data_update";
 
+class TransformDataView {
+  current_entity = -1;
+
+  constructor() {}
+
+  get position() {
+    return [
+      TransformFragment.data.position[this.current_entity * 4],
+      TransformFragment.data.position[this.current_entity * 4 + 1],
+      TransformFragment.data.position[this.current_entity * 4 + 2],
+    ];
+  }
+
+  set position(value) {
+    TransformFragment.data.position[this.current_entity * 4] = value[0];
+    TransformFragment.data.position[this.current_entity * 4 + 1] = value[1];
+    TransformFragment.data.position[this.current_entity * 4 + 2] = value[2];
+    TransformFragment.data.position[this.current_entity * 4 + 3] = 1.0;
+    TransformFragment.data.position_buffer.write_raw(
+      Renderer.get().graphics_context,
+      TransformFragment.data.position.subarray(
+        this.current_entity * 4,
+        this.current_entity * 4 + 4,
+      ),
+      this.current_entity * 4 * Float32Array.BYTES_PER_ELEMENT,
+    );
+    if (TransformFragment.data.dirty) {
+      TransformFragment.data.dirty[this.current_entity] = 1;
+      TransformFragment.data.dirty_flags_buffer.write_raw(
+        Renderer.get().graphics_context,
+        TransformFragment.data.dirty.subarray(
+          this.current_entity,
+          this.current_entity + 1,
+        ),
+        this.current_entity * Uint32Array.BYTES_PER_ELEMENT,
+      );
+    }
+    TransformFragment.data.gpu_data_dirty = true;
+  }
+
+  get rotation() {
+    return [
+      TransformFragment.data.rotation[this.current_entity * 4],
+      TransformFragment.data.rotation[this.current_entity * 4 + 1],
+      TransformFragment.data.rotation[this.current_entity * 4 + 2],
+      TransformFragment.data.rotation[this.current_entity * 4 + 3],
+    ];
+  }
+
+  set rotation(value) {
+    TransformFragment.data.rotation[this.current_entity * 4] = value[0];
+    TransformFragment.data.rotation[this.current_entity * 4 + 1] = value[1];
+    TransformFragment.data.rotation[this.current_entity * 4 + 2] = value[2];
+    TransformFragment.data.rotation[this.current_entity * 4 + 3] = value[3];
+    TransformFragment.data.rotation_buffer.write_raw(
+      Renderer.get().graphics_context,
+      TransformFragment.data.rotation.subarray(
+        this.current_entity * 4,
+        this.current_entity * 4 + 4,
+      ),
+      this.current_entity * 4 * Float32Array.BYTES_PER_ELEMENT,
+    );
+    if (TransformFragment.data.dirty) {
+      TransformFragment.data.dirty[this.current_entity] = 1;
+      TransformFragment.data.dirty_flags_buffer.write_raw(
+        Renderer.get().graphics_context,
+        TransformFragment.data.dirty.subarray(
+          this.current_entity,
+          this.current_entity + 1,
+        ),
+        this.current_entity * Uint32Array.BYTES_PER_ELEMENT,
+      );
+    }
+    TransformFragment.data.gpu_data_dirty = true;
+  }
+
+  get scale() {
+    return [
+      TransformFragment.data.scale[this.current_entity * 4],
+      TransformFragment.data.scale[this.current_entity * 4 + 1],
+      TransformFragment.data.scale[this.current_entity * 4 + 2],
+    ];
+  }
+
+  set scale(value) {
+    TransformFragment.data.scale[this.current_entity * 4] = value[0];
+    TransformFragment.data.scale[this.current_entity * 4 + 1] = value[1];
+    TransformFragment.data.scale[this.current_entity * 4 + 2] = value[2];
+    TransformFragment.data.scale[this.current_entity * 4 + 3] = 0.0;
+    TransformFragment.data.scale_buffer.write_raw(
+      Renderer.get().graphics_context,
+      TransformFragment.data.scale.subarray(
+        this.current_entity * 4,
+        this.current_entity * 4 + 4,
+      ),
+      this.current_entity * 4 * Float32Array.BYTES_PER_ELEMENT,
+    );
+    if (TransformFragment.data.dirty) {
+      TransformFragment.data.dirty[this.current_entity] = 1;
+      TransformFragment.data.dirty_flags_buffer.write_raw(
+        Renderer.get().graphics_context,
+        TransformFragment.data.dirty.subarray(
+          this.current_entity,
+          this.current_entity + 1,
+        ),
+        this.current_entity * Uint32Array.BYTES_PER_ELEMENT,
+      );
+    }
+    TransformFragment.data.gpu_data_dirty = true;
+  }
+
+  get dirty() {
+    return TransformFragment.data.dirty[this.current_entity];
+  }
+
+  set dirty(value) {
+    TransformFragment.data.dirty[this.current_entity] = value;
+    if (TransformFragment.data.dirty) {
+      TransformFragment.data.dirty[this.current_entity] = 1;
+    }
+    TransformFragment.data.gpu_data_dirty = true;
+  }
+
+  view_entity(entity) {
+    this.current_entity = entity;
+
+    return this;
+  }
+}
+
 export class TransformFragment extends Fragment {
+  static data_view_allocator = new RingBufferAllocator(256, TransformDataView);
+
   static initialize() {
     this.data = {
       position: new Float32Array(4),
@@ -74,20 +207,34 @@ export class TransformFragment extends Fragment {
     this.rebuild_buffers(Renderer.get().graphics_context);
   }
 
-  static add_entity(entity, data) {
-    super.add_entity(entity, data);
+  static add_entity(entity) {
+    super.add_entity(entity);
+    return this.get_entity_data(entity);
   }
 
   static remove_entity(entity) {
     super.remove_entity(entity);
-    this.update_entity_data(entity, {
-      position: { x: 0, y: 0, z: 0 },
-      rotation: { x: 0, y: 0, z: 0, w: 1 },
-      scale: { x: 1, y: 1, z: 1 },
-    });
+    const entity_data = this.get_entity_data(entity);
+    entity_data.position.x = 0;
+    entity_data.position.y = 0;
+    entity_data.position.z = 0;
+    entity_data.rotation.x = 0;
+    entity_data.rotation.y = 0;
+    entity_data.rotation.z = 0;
+    entity_data.rotation.w = 1;
+    entity_data.scale.x = 1;
+    entity_data.scale.y = 1;
+    entity_data.scale.z = 1;
   }
 
   static get_entity_data(entity) {
+    const data_view = this.data_view_allocator.allocate();
+    data_view.fragment = this;
+    data_view.view_entity(entity);
+    return data_view;
+  }
+
+  static duplicate_entity_data(entity) {
     return {
       position: {
         x: this.data.position[entity * 4],
@@ -106,69 +253,6 @@ export class TransformFragment extends Fragment {
         z: this.data.scale[entity * 4 + 2],
       },
     };
-  }
-
-  static duplicate_entity_data(entity) {
-    const data = this.get_entity_data(entity);
-    return {
-      position: { x: data.position.x, y: data.position.y, z: data.position.z },
-      rotation: {
-        x: data.rotation.x,
-        y: data.rotation.y,
-        z: data.rotation.z,
-        w: data.rotation.w,
-      },
-      scale: { x: data.scale.x, y: data.scale.y, z: data.scale.z },
-    };
-  }
-
-  static update_entity_data(entity, data) {
-    if (!this.data) {
-      this.initialize();
-    }
-
-    const context = Renderer.get().graphics_context;
-
-    if (data.position) {
-      this.data.position[entity * 4 + 0] = data.position.x;
-      this.data.position[entity * 4 + 1] = data.position.y;
-      this.data.position[entity * 4 + 2] = data.position.z;
-      this.data.position[entity * 4 + 3] = 1.0;
-      this.data.position_buffer.write_raw(
-        context,
-        this.data.position.subarray(entity * 4, entity * 4 + 4),
-        entity * 4 * Float32Array.BYTES_PER_ELEMENT,
-      );
-    }
-    if (data.rotation) {
-      this.data.rotation[entity * 4 + 0] = data.rotation.x;
-      this.data.rotation[entity * 4 + 1] = data.rotation.y;
-      this.data.rotation[entity * 4 + 2] = data.rotation.z;
-      this.data.rotation[entity * 4 + 3] = data.rotation.w;
-      this.data.rotation_buffer.write_raw(
-        context,
-        this.data.rotation.subarray(entity * 4, entity * 4 + 4),
-        entity * 4 * Float32Array.BYTES_PER_ELEMENT,
-      );
-    }
-    if (data.scale) {
-      this.data.scale[entity * 4 + 0] = data.scale.x;
-      this.data.scale[entity * 4 + 1] = data.scale.y;
-      this.data.scale[entity * 4 + 2] = data.scale.z;
-      this.data.scale[entity * 4 + 3] = 0.0;
-      this.data.scale_buffer.write_raw(
-        context,
-        this.data.scale.subarray(entity * 4, entity * 4 + 4),
-        entity * 4 * Float32Array.BYTES_PER_ELEMENT,
-      );
-    }
-
-    this.data.dirty[entity] = 1;
-    this.data.dirty_flags_buffer.write_raw(
-      context,
-      this.data.dirty.subarray(entity, entity + 1),
-      entity * Uint32Array.BYTES_PER_ELEMENT,
-    );
   }
 
   static to_gpu_data(context) {

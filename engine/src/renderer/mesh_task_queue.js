@@ -190,6 +190,7 @@ class MeshTask {
 }
 
 export class MeshTaskQueue {
+  static instance = null;
   constructor() {
     if (MeshTaskQueue.instance) {
       return MeshTaskQueue.instance;
@@ -199,15 +200,14 @@ export class MeshTaskQueue {
     this.object_instances = [];
     this.material_buckets = [];
     this.indirect_draw_object = new IndirectDrawObject();
-    this.tasks_allocator = new FrameAllocator(max_objects, new MeshTask());
+    this.tasks_allocator = new FrameAllocator(max_objects, MeshTask);
     this.object_instance_allocator = new FrameAllocator(
       max_objects,
-      new ObjectInstanceEntry()
+      ObjectInstanceEntry
     );
     this.has_transparency = false;
     this.needs_sort = false;
     this.initialized = false;
-    MeshTaskQueue.instance = this;
   }
 
   static get() {

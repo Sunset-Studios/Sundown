@@ -1,6 +1,7 @@
 import { SimulationLayer } from "./simulation_layer.js";
 import { StaticMeshProcessor } from "./subsystems/static_mesh_processor.js";
 import { TransformProcessor } from "./subsystems/transform_processor.js";
+import { FontCache } from "../ui/text/font_cache.js";
 import { UI3DProcessor } from "./subsystems/ui_3d_processor.js";
 import { UIProcessor } from "./subsystems/ui_processor.js";
 import { SharedViewBuffer } from "./shared_data.js";
@@ -15,7 +16,7 @@ export class Scene extends SimulationLayer {
     this.name = name;
   }
 
-  async init() {
+  init() {
     super.init();
 
     this.context.current_view = SharedViewBuffer.get().add_view_data(
@@ -23,6 +24,8 @@ export class Scene extends SimulationLayer {
     );
 
     this.setup_default_subsystems();
+
+    FontCache.auto_load_fonts();
   }
 
   update(delta_time) {
@@ -58,8 +61,8 @@ export class Scene extends SimulationLayer {
     return this.context.entity_manager.duplicate_entity(entity, refresh_entity_data);
   }
 
-  add_fragment(entity, FragmentType, data, refresh_entity_data = true) {
-    this.context.entity_manager.add_fragment(entity, FragmentType, data, refresh_entity_data);
+  add_fragment(entity, FragmentType, refresh_entity_data = true) {
+    return this.context.entity_manager.add_fragment(entity, FragmentType, refresh_entity_data);
   }
 
   remove_fragment(entity, FragmentType, refresh_entity_data = true) {
@@ -72,10 +75,6 @@ export class Scene extends SimulationLayer {
 
   remove_tag(entity, Tag, refresh_entity_data = true) {
     this.context.entity_manager.remove_tag(entity, Tag, refresh_entity_data);
-  }
-
-  update_fragment(entity, FragmentType, data, refresh_entity_data = true) {
-    this.context.entity_manager.update_fragment(entity, FragmentType, data, refresh_entity_data);
   }
 
   get_fragment(entity, FragmentType) {

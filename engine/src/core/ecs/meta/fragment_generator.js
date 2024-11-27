@@ -23,18 +23,18 @@
 //     overrides: {
 //         // Override with pre/post hooks
 //         initialize: {
-//             pre: `console.log('Before initialization');`,
+//             pre: `log('Before initialization');`,
 //             post: `
 //                 // Additional initialization
 //                 this.data.customCache = new Map();
-//                 console.log('After initialization');
+//                 log('After initialization');
 //             `
 //         },
 //         // Complete override
 //         resize: {
 //             skipDefault: true,
 //             pre: `
-//                 console.log('Custom resize implementation');
+//                 log('Custom resize implementation');
 //                 if (!this.data) this.initialize();
 //                 super.resize(new_size);
 
@@ -44,7 +44,7 @@
 //             `
 //         },
 //         // Extend default behavior
-//         update_entity_data: {
+//         duplicate_entity_data: {
 //             post: `
 //                 // Additional entity update logic
 //                 if (data.position) {
@@ -68,7 +68,7 @@
 //         on_post_render: {
 //             params: 'context',
 //             body: `
-//                 console.log('Post render hook');
+//                 log('Post render hook');
 //             `
 //         }
 //     }
@@ -85,7 +85,7 @@
 import { BufferType } from "./fragment_generator_types.js";
 
 export class FragmentGenerator {
-  static generate(config, relative_config_path = '') {
+  static generate(config, relative_config_path = "") {
     const {
       name,
       imports = {},
@@ -98,12 +98,15 @@ export class FragmentGenerator {
       overrides = {},
     } = config;
 
+    const fragment_name = name + "Fragment";
+
     const all_imports = {
       EntityLinearDataContainer: "../entity_utils.js",
       Fragment: "../fragment.js",
       Renderer: "../../../renderer/renderer.js",
       Buffer: "../../../renderer/buffer.js",
       global_dispatcher: "../../../core/dispatcher.js",
+      RingBufferAllocator: "../../../memory/allocator.js",
     };
 
     const implementations = {
@@ -116,16 +119,15 @@ export class FragmentGenerator {
         fields,
         overrides.duplicate_entity_data
       ),
-      update_entity_data: this.generate_update_entity_data(fields, overrides.update_entity_data),
       to_gpu_data: this.generate_to_gpu_data(buffers, overrides.to_gpu_data),
       rebuild_buffers: this.generate_rebuild_buffers(buffers, overrides.rebuild_buffers),
       sync_buffers: this.generate_sync_buffers(buffers, overrides.sync_buffers),
     };
 
     let adjusted_imports = Object.entries(all_imports).reduce((acc, [name, path]) => {
-      const adjusted_path = relative_config_path ? relative_config_path + '/' + path : path;
-      let final_path = adjusted_path.startsWith('.') ? adjusted_path : '.' + adjusted_path;
-      final_path = final_path.replaceAll('\\', '/');
+      const adjusted_path = relative_config_path ? relative_config_path + "/" + path : path;
+      let final_path = adjusted_path.startsWith(".") ? adjusted_path : "." + adjusted_path;
+      final_path = final_path.replaceAll("\\", "/");
       acc[name] = final_path;
       return acc;
     }, {});
@@ -140,15 +142,116 @@ export class FragmentGenerator {
 ${import_statements}
 
 ${Object.entries(buffers)
-      .map(([key, value]) => `
+  .map(
+    ([key, value]) => `
         const ${key}_buffer_name = "${key}_buffer";
         const ${key}_cpu_buffer_name = "${key}_cpu_buffer";
         const ${key}_event = "${key}";
         const ${key}_update_event = "${key}_update";
-      `)
+      `
+  )
+  .join("\n")}
+
+${Object.entries(fields)
+  .filter(([_, field]) => field.vector)
+  .map(
+    ([key, field]) => `
+    class ${key[0].toUpperCase() + key.slice(1)}DataView {
+        constructor() {
+            this.current_entity = -1;
+        }
+
+        ${Object.keys(field.vector)
+          .map(
+            (axis) => `
+            get ${axis}() {
+                return ${fragment_name}.data.${key}.${axis}[this.current_entity];
+            }
+
+            set ${axis}(value) {
+                ${fragment_name}.data.${key}.${axis}[this.current_entity] = value;
+                if (${fragment_name}.data.dirty) {
+                    ${fragment_name}.data.dirty[this.current_entity] = 1;
+                }
+                ${fragment_name}.data.gpu_data_dirty = true;
+            }
+        `
+          )
+          .join("\n")}
+
+        view_entity(entity) {
+            this.current_entity = entity;
+            return this;
+        }
+    }
+`
+  )
+  .join("\n")}
+
+class ${name}DataView {
+    current_entity = -1;
+
+    constructor() {
+      ${Object.entries(fields)
+        .filter(([_, field]) => field.vector)
+        .map(
+          ([key, _]) => `this.${key} = new ${key[0].toUpperCase() + key.slice(1)}DataView(this);`
+        )
+        .join("\n")}
+    }
+
+    ${Object.entries(fields)
+      .map(([key, field]) => {
+        if (field.vector) return "";
+
+        return `
+      get ${key}() {
+        return ${
+          field.getter
+            ? field.getter
+            : field.is_container
+              ? `${fragment_name}.data.${key}.get_data_for_entity(this.current_entity)`
+              : `${fragment_name}.data.${key}[this.current_entity]`
+        };
+      }
+
+      set ${key}(value) {
+        ${
+          field.readonly
+            ? `throw new Error('Field ${key} is readonly');`
+            : field.setter
+              ? field.setter
+              : field.is_container
+                ? `${fragment_name}.data.${key}.update(this.current_entity, value);
+                  if (${fragment_name}.data.dirty) {
+                      ${fragment_name}.data.dirty[this.current_entity] = 1;
+                  }
+                  ${fragment_name}.data.gpu_data_dirty = true;`
+                : `${fragment_name}.data.${key}[this.current_entity] = value;
+                  if (${fragment_name}.data.dirty) {
+                      ${fragment_name}.data.dirty[this.current_entity] = 1;
+                  }
+                  ${fragment_name}.data.gpu_data_dirty = true;`
+        }
+      }`;
+      })
       .join("\n")}
 
-export class ${name}Fragment extends Fragment {
+    view_entity(entity) {
+      this.current_entity = entity;
+
+      ${Object.entries(fields)
+        .filter(([_, field]) => field.vector)
+        .map(([key, _]) => `this.${key}.view_entity(entity);`)
+        .join("\n")}
+
+      return this;
+    }
+}
+
+export class ${fragment_name} extends Fragment {
+    static data_view_allocator = new RingBufferAllocator(256, ${name}DataView);
+
     ${Object.entries(constants)
       .map(([key, value]) => `static ${key} = ${value};`)
       .join("\n")}
@@ -158,7 +261,6 @@ export class ${name}Fragment extends Fragment {
     ${implementations.remove_entity}
     ${implementations.get_entity_data}
     ${implementations.duplicate_entity_data}
-    ${implementations.update_entity_data}
     ${implementations.to_gpu_data}
     ${implementations.rebuild_buffers}
     ${implementations.sync_buffers}
@@ -183,19 +285,21 @@ export class ${name}Fragment extends Fragment {
   }
 
   static get_default_initialize(fields, members, buffers, hooks) {
-    const field_inits = Object.entries(fields).map(([key, field]) => {
-      if (field.is_container) {
-        return `${key}: new EntityLinearDataContainer(${field.type.array.name || "Uint32Array"})`;
-      }
-      if (field.vector) {
-        return `${key}: {
+    const field_inits = Object.entries(fields)
+      .filter(([_, field]) => !field.no_fragment_array)
+      .map(([key, field]) => {
+        if (field.is_container) {
+          return `${key}: new EntityLinearDataContainer(${field.type.array.name || "Uint32Array"})`;
+        }
+        if (field.vector) {
+          return `${key}: {
                 ${Object.keys(field.vector)
                   .map((axis) => `${axis}: new ${field.type.array.name}(1)`)
                   .join(",\n")}
             }`;
-      }
-      return `${key}: new ${field.type.array.name}(${field.stride || 1})`;
-    });
+        }
+        return `${key}: new ${field.type.array.name}(${field.stride || 1})`;
+      });
 
     const member_inits = Object.entries(members).map(([key, member]) => `${key}: ${member}`);
 
@@ -242,6 +346,7 @@ export class ${name}Fragment extends Fragment {
         super.resize(new_size);
 
         ${Object.entries(fields)
+          .filter(([_, field]) => !field.no_fragment_array)
           .map(([key, field]) => {
             if (field.vector) {
               return `Object.keys(this.data.${key}).forEach(axis => {
@@ -263,20 +368,23 @@ export class ${name}Fragment extends Fragment {
   static generate_add_entity(override) {
     if (override) {
       return `
-    static add_entity(entity, data) {
+    static add_entity(entity) {
         ${override.pre ? override.pre : ""}
         ${!override.skip_default ? this.get_default_add_entity() : ""}
         ${override.post ? override.post : ""}
     }`;
     }
     return `
-    static add_entity(entity, data) {
+    static add_entity(entity) {
         ${this.get_default_add_entity()}
     }`;
   }
 
   static get_default_add_entity() {
-    return `super.add_entity(entity, data);`;
+    return `
+        super.add_entity(entity);
+        return this.get_entity_data(entity);
+    `;
   }
 
   static generate_remove_entity(fields, override) {
@@ -296,29 +404,30 @@ export class ${name}Fragment extends Fragment {
 
   static get_default_remove_entity(fields) {
     const field_resets = Object.entries(fields)
+      .filter(([_, field]) => !field.no_fragment_array)
       .map(([key, field]) => {
         if (field.is_container) {
           return `// ${key} will be handled separately`;
         }
         if (field.vector) {
-          return `${key}: {
-                    ${Object.keys(field.vector)
-                      .map(
-                        (axis) =>
-                          `${axis}: ${field.stride > 1 ? `Array(${field.stride}).fill(${field.default ? field.default[axis] : 0})` : field.default ? field.default[axis] : 0}`
-                      )
-                      .join(",\n")}
-                }`;
+          return `${Object.keys(field.vector)
+            .map(
+              (axis) =>
+                `this.data.${key}.${axis}[entity] = ${field.stride > 1 ? `Array(${field.stride}).fill(${field.default ? field.default[axis] : 0})` : field.default ? field.default[axis] : 0};`
+            )
+            .join("\n")}
+        `;
         }
-        return `${key}: ${field.stride > 1 ? `Array(${field.stride}).fill(${field.default || 0})` : field.default || 0}`;
+        if (key === "dirty") {
+          return "";
+        }
+        return `this.data.${key}[entity] = ${field.stride > 1 ? `Array(${field.stride}).fill(${field.default || 0})` : field.default || 0};`;
       })
       .filter((reset) => !reset.startsWith("//"));
 
     return `
         super.remove_entity(entity);
-        this.update_entity_data(entity, {
-            ${field_resets.join(",\n            ")}
-        });
+        ${field_resets.join("\n")}
         ${Object.entries(fields)
           .filter(([_, field]) => field.is_container)
           .map(([key, _]) => `this.data.${key}.remove(entity);`)
@@ -342,7 +451,12 @@ export class ${name}Fragment extends Fragment {
   }
 
   static get_default_get_entity_data(fields) {
-    return `return super.get_entity_data(entity);`;
+    return `
+        const data_view = this.data_view_allocator.allocate();
+        data_view.fragment = this;
+        data_view.view_entity(entity);
+        return data_view;
+    `;
   }
 
   static generate_duplicate_entity_data(fields, override) {
@@ -364,6 +478,7 @@ export class ${name}Fragment extends Fragment {
     return `
         const data = {};
         ${Object.entries(fields)
+          .filter(([_, field]) => !field.no_fragment_array)
           .map(([key, field]) => {
             if (field.is_container) {
               return `data.${key} = this.data.${key}.get_data_for_entity(entity);`;
@@ -385,53 +500,6 @@ export class ${name}Fragment extends Fragment {
           })
           .join("\n        ")}
         return data;
-    `;
-  }
-
-  static generate_update_entity_data(fields, override) {
-    if (override) {
-      return `
-    static update_entity_data(entity, data) {
-        ${override.pre ? override.pre : ""}
-        ${!override.skip_default ? this.get_default_update_entity_data(fields) : ""}
-        ${override.post ? override.post : ""}
-    }`;
-    }
-    return `
-    static update_entity_data(entity, data) {
-        ${this.get_default_update_entity_data(fields)}
-    }`;
-  }
-
-  static get_default_update_entity_data(fields) {
-    const container_keys = Object.entries(fields)
-      .filter(([_, field]) => field.is_container)
-      .map(([key, _]) => `${key}`);
-
-    const field_updates = `
-      ${container_keys.length > 0 ? `const { ${container_keys.join(",")}, ...rest_of_data } = data;` : ""}
-      super.update_entity_data(entity, ${container_keys.length > 0 ? "rest_of_data" : "data"});
-
-      ${container_keys
-        .map(
-          (key) => `
-        if (${key}) {
-            this.data.${key}.update(entity, ${key});
-        }
-      `
-        )
-        .join("\n")}
-    `;
-
-    return `
-        if (!this.data) {
-            this.initialize();
-        }
-        ${field_updates}
-        if (this.data.dirty) {
-            this.data.dirty[entity] = 1;
-        }
-        this.data.gpu_data_dirty = true;
     `;
   }
 
