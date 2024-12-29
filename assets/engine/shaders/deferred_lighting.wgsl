@@ -30,7 +30,7 @@ struct FragmentOutput {
 }
 
 @fragment fn fs(v_out: VertexOutput) -> FragmentOutput {
-    let ambient = vec3f(0.1, 0.1, 0.1);
+    let ambient = vec3f(0.2, 0.2, 0.2);
 
     var tex_sky = textureSample(skybox_texture, global_sampler, v_out.uv);
 

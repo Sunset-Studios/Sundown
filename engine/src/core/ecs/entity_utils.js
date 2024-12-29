@@ -150,6 +150,7 @@ export function spawn_mesh_entity(
   material,
   parent = null,
   children = [],
+  start_visible = true,
   refresh_entity_queries = false
 ) {
   if (!scene) {
@@ -189,7 +190,7 @@ export function spawn_mesh_entity(
     VisibilityFragment,
     false /* refresh_entity_queries */
   );
-  new_visibility_view.visible = 1;
+  new_visibility_view.visible = start_visible;
 
   if (refresh_entity_queries) {
     scene.refresh_entity_queries();

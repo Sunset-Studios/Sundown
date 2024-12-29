@@ -32,6 +32,7 @@ export class Element3DPool {
       Element3D.set_material(scene, element, material);
       Element3D.set_parent(scene, element, parent);
       Element3D.set_children(scene, element, children);
+      Element3D.set_visible(scene, element, true);
     } else {
       this.elements[element_id] = Element3D.create(scene, config, material, parent, children);
     }
@@ -49,7 +50,12 @@ export class Element3DPool {
       return;
     }
 
-    this.hide(element_id);
+    const element = this.elements[element_id];
+    Element3D.set_material(scene, element, null);
+    Element3D.set_parent(scene, element, null);
+    Element3D.set_children(scene, element, []);
+    Element3D.set_visible(scene, element, false);
+
     this._remove_from_active(element_id);
     this.available_elements.push(element_id);
   }

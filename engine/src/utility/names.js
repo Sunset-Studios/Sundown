@@ -16,7 +16,7 @@ export class Name {
         let hash = 0x811c9dc5;
         for (let i = 0; i < str.length; i++) {
             hash ^= str.charCodeAt(i);
-            hash *= 0x01000193;
+            hash = (hash * 0x01000193) >>> 0; // Force 32-bit unsigned integer
         }
         return hash;
     }

@@ -156,7 +156,10 @@ class TransformDataView {
   }
 
   set dirty(value) {
-    TransformFragment.data.dirty[this.current_entity] = value;
+    TransformFragment.data.dirty[this.current_entity] =
+      TransformFragment.data.dirty instanceof BigInt64Array
+        ? BigInt(value)
+        : value;
     if (TransformFragment.data.dirty) {
       TransformFragment.data.dirty[this.current_entity] = 1;
     }

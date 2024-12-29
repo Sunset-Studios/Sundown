@@ -15,7 +15,10 @@ class StaticMeshDataView {
   }
 
   set mesh(value) {
-    StaticMeshFragment.data.mesh[this.current_entity] = value;
+    StaticMeshFragment.data.mesh[this.current_entity] =
+      StaticMeshFragment.data.mesh instanceof BigInt64Array
+        ? BigInt(value)
+        : value;
     if (StaticMeshFragment.data.dirty) {
       StaticMeshFragment.data.dirty[this.current_entity] = 1;
     }
@@ -51,7 +54,10 @@ class StaticMeshDataView {
   }
 
   set instance_count(value) {
-    StaticMeshFragment.data.instance_count[this.current_entity] = value;
+    StaticMeshFragment.data.instance_count[this.current_entity] =
+      StaticMeshFragment.data.instance_count instanceof BigInt64Array
+        ? BigInt(value)
+        : value;
     if (StaticMeshFragment.data.dirty) {
       StaticMeshFragment.data.dirty[this.current_entity] = 1;
     }
@@ -63,7 +69,10 @@ class StaticMeshDataView {
   }
 
   set dirty(value) {
-    StaticMeshFragment.data.dirty[this.current_entity] = value;
+    StaticMeshFragment.data.dirty[this.current_entity] =
+      StaticMeshFragment.data.dirty instanceof BigInt64Array
+        ? BigInt(value)
+        : value;
     if (StaticMeshFragment.data.dirty) {
       StaticMeshFragment.data.dirty[this.current_entity] = 1;
     }

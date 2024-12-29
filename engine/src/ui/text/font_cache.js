@@ -1,15 +1,18 @@
 import { Renderer } from "../../renderer/renderer.js";
 import { Font } from "./font.js";
 import { read_file } from "../../utility/file_system.js";
+import { Name } from "../../utility/names.js";
 
 const json_extension = ".json";
 
 export class FontCache {
   static cache = new Map();
-  static name_to_id = new Map();
-  static next_id = 1;
   static font_paths = ['engine/fonts'];
 
+  /**
+   * Registers a new font path to be scanned for fonts.
+   * @param {string} path - The path to the directory containing font files
+   */
   static register_font_path(path) {
     this.font_paths.push(path);
   }
@@ -22,16 +25,15 @@ export class FontCache {
    */
   static get_font(font_name, font_path = null) {
     // Return existing ID if font is already loaded
-    if (this.name_to_id.has(font_name)) {
-      return this.name_to_id.get(font_name);
+    const font_id = Name.from(font_name);
+    if (this.cache.has(font_id)) {
+      return font_id;
     }
 
     const font = Font.create(Renderer.get().graphics_context, font_path);
     if (!font) return null;
 
-    const font_id = this.next_id++;
     this.cache.set(font_id, font);
-    this.name_to_id.set(font_name, font_id);
     return font_id;
   }
 
@@ -40,25 +42,24 @@ export class FontCache {
    * @param {number} font_id - The ID of the font
    * @returns {Font|null} The font object or null if not found
    */
-  static get_font_by_id(font_id) {
+  static get_font_object(font_id) {
     return this.cache.get(font_id) || null;
   }
 
   /**
-   * Gets the font ID for a given font name without loading
-   * @param {string} font_name - The name of the font
-   * @returns {number|null} The font ID or null if font isn't loaded
+   * Automatically loads all fonts from registered font paths by scanning their font manifests.
+   * Iterates through each registered font path and calls scan_directory() to load fonts.
    */
-  static get_font_id(font_name) {
-    return this.name_to_id.get(font_name) || null;
-  }
-
   static auto_load_fonts() {
     for (const path of this.font_paths) {
       this.scan_directory(path);
     }
   }
 
+  /**
+   * Scans a directory for font manifests and loads all fonts found.
+   * @param {string} path - The path to the directory to scan
+   */
   static scan_directory(path) {
     const manifest = JSON.parse(read_file(`${path}/font_manifest.json`));
 
@@ -71,6 +72,11 @@ export class FontCache {
     }
   }
 
+  /**
+   * Checks if a given file path is a valid font data file.
+   * @param {string} filepath - The path to the file to check
+   * @returns {boolean} True if the file is a valid font data file, false otherwise
+   */
   static is_valid_font_data_file(filepath) {
     return filepath.toLowerCase().endsWith(json_extension);
   }

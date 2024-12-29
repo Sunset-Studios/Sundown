@@ -9,7 +9,7 @@ import { UserInterfaceFragment } from "../../core/ecs/fragments/user_interface_f
 import { spawn_mesh_entity } from "../../core/ecs/entity_utils.js";
 
 export class Element3D {
-  events = {};
+  static events = {};
 
   static create(scene, config, material = null, parent = null, children = []) {
     const context = Renderer.get().graphics_context;
@@ -23,6 +23,7 @@ export class Element3D {
       material ?? Material.default_material(context),
       parent,
       children,
+      false, /* start_visible */
       false /* refresh_entity_queries */
     );
 
@@ -92,7 +93,12 @@ export class Element3D {
     if (!mesh_data) {
       return;
     }
-    mesh_data.material_slots = [material];
+    
+    if (material) {
+      mesh_data.material_slots = [material];
+    } else {
+      mesh_data.material_slots = [];
+    }
   }
 
   static set_parent(scene, entity, parent) {

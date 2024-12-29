@@ -104,7 +104,7 @@ const StaticMeshFragment = {
     material_slots: {
       type: DataType.BIGINT64,
       stride: 64,
-      getter: `StaticMeshFragment.data.material_slots.slice(this.current_entity * StaticMeshFragment.material_slot_stride, (this.current_entity + 1) * StaticMeshFragment.material_slot_stride);`,
+      getter: `return StaticMeshFragment.data.material_slots.slice(this.current_entity * StaticMeshFragment.material_slot_stride, (this.current_entity + 1) * StaticMeshFragment.material_slot_stride);`,
       setter: `
       if (
         Array.isArray(value) &&
@@ -149,7 +149,7 @@ const TransformFragment = {
     position: {
       type: DataType.FLOAT32,
       stride: 4,
-      getter: `[
+      getter: `return [
         TransformFragment.data.position[this.current_entity * 4],
         TransformFragment.data.position[this.current_entity * 4 + 1],
         TransformFragment.data.position[this.current_entity * 4 + 2],
@@ -179,7 +179,7 @@ const TransformFragment = {
     rotation: {
       type: DataType.FLOAT32,
       stride: 4,
-      getter: `[
+      getter: `return [
         TransformFragment.data.rotation[this.current_entity * 4],
         TransformFragment.data.rotation[this.current_entity * 4 + 1],
         TransformFragment.data.rotation[this.current_entity * 4 + 2],
@@ -211,7 +211,7 @@ const TransformFragment = {
       type: DataType.FLOAT32,
       stride: 4,
       default: 1,
-      getter: `[
+      getter: `return [
         TransformFragment.data.scale[this.current_entity * 4],
         TransformFragment.data.scale[this.current_entity * 4 + 1],
         TransformFragment.data.scale[this.current_entity * 4 + 2],
@@ -439,7 +439,7 @@ const SceneGraphFragment = {
     children: {
       type: DataType.INT32,
       stride: 1,
-      getter: `SceneGraphFragment.data.scene_graph.find_node(this.current_entity)?.children ?? [];`,
+      getter: `return SceneGraphFragment.data.scene_graph.find_node(this.current_entity)?.children ?? [];`,
       setter: `
       if (Array.isArray(value)) {
         SceneGraphFragment.data.scene_graph.add_multiple(this.current_entity, value, true /* replace_children */);
@@ -517,6 +517,10 @@ const VisibilityFragment = {
       type: DataType.UINT8,
       stride: 4,
     },
+    dirty: {
+      type: DataType.UINT8,
+      stride: 1,
+    },
   },
   buffers: {
     visible: {
@@ -571,22 +575,35 @@ const UserInterfaceFragment = {
 
 const TextFragment = {
   name: "Text",
+  imports: {
+    FontCache: "../../../ui/text/font_cache.js",
+  },
   fields: {
     text: {
       type: DataType.UINT32,
       stride: 1,
       is_container: true,
-      getter: `String.fromCodePoint(...TextFragment.data.text.get_data_for_entity(this.current_entity));`,
+      getter: `
+      const font = FontCache.get_font_object(TextFragment.data.font[this.current_entity]);
+      const code_point_indexes = TextFragment.data.text.get_data_for_entity(this.current_entity);
+      return code_point_indexes.map((code_point_index) => String.fromCodePoint(font.code_point[code_point_index])).join("");
+      `,
       setter: `
       if (value) {
-        const code_points = Array.from(value).map((char) => char.codePointAt(0));
-        TextFragment.data.text.update(this.current_entity, code_points);
+        const font = FontCache.get_font_object(TextFragment.data.font[this.current_entity]);
+        const code_point_indexes = Array.from(value).map((char) => font.code_point_index_map.get(char.codePointAt(0)));
+        TextFragment.data.text.update(this.current_entity, code_point_indexes);
       }
       if (TextFragment.data.dirty) {
         TextFragment.data.dirty[this.current_entity] = 1;
       }
       TextFragment.data.gpu_data_dirty = true;
       `,
+    },
+    offsets: {
+      type: DataType.FLOAT32,
+      stride: 1,
+      is_container: true,
     },
     font: {
       type: DataType.INT32,
@@ -606,10 +623,27 @@ const TextFragment = {
 const gpu_data = this.data.text.get_data();
       `,
     },
-    dirty: {
-      type: DataType.UINT32,
-      usage: BufferType.STORAGE_SRC,
+    offsets: {
+      type: DataType.FLOAT32,
+      usage: BufferType.STORAGE,
       stride: 1,
+      gpu_data: `
+const gpu_data = this.data.offsets.get_data();
+      `,
+    },
+    string_data: {
+      type: DataType.UINT32,
+      usage: BufferType.STORAGE,
+      stride: 2,
+      gpu_data: `
+      const gpu_data = new Uint32Array(Math.max(this.size * 2, 2));
+      for (let i = 0; i < this.size; i++) {
+        const metadata = this.data.text.get_metadata(i);
+        const gpu_data_offset = i * 2;
+        gpu_data[gpu_data_offset + 0] = metadata?.start ?? 0;
+        gpu_data[gpu_data_offset + 1] = metadata?.count ?? 0;
+      }
+      `,
     },
   },
   overrides: {

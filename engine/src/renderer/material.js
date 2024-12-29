@@ -496,6 +496,27 @@ export class Material {
     return this.#default_material;
   }
 
+  static #default_ui_material = null;
+  static default_ui_material(context) {
+    if (!this.#default_ui_material) {
+      MaterialTemplate.create(
+        context,
+        "DefaultUIMaterial",
+        "ui_standard_material.wgsl",
+        MaterialFamilyType.Opaque,
+        {
+          rasterizer_state: {
+            cull_mode: "none",
+          },
+        }
+      );
+      this.#default_ui_material = Material.create("DefaultUIMaterial", "DefaultUIMaterial", {
+        family: MaterialFamilyType.Opaque,
+      });
+    }
+    return this.#default_ui_material;
+  }
+
   static get(material_id) {
     return Material.materials.get(material_id);
   }

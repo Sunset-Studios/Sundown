@@ -1,4 +1,5 @@
 import { SimulationLayer } from "./simulation_layer.js";
+import { TextProcessor } from "./subsystems/text_processor.js";
 import { StaticMeshProcessor } from "./subsystems/static_mesh_processor.js";
 import { TransformProcessor } from "./subsystems/transform_processor.js";
 import { FontCache } from "../ui/text/font_cache.js";
@@ -38,6 +39,7 @@ export class Scene extends SimulationLayer {
 
   setup_default_subsystems() {
     this.add_layer(UIProcessor);
+    this.add_layer(TextProcessor);
     this.add_layer(StaticMeshProcessor);
     this.add_layer(TransformProcessor);
 

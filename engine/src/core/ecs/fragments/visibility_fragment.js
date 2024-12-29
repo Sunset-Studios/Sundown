@@ -20,7 +20,25 @@ class VisibilityDataView {
   }
 
   set visible(value) {
-    VisibilityFragment.data.visible[this.current_entity] = value;
+    VisibilityFragment.data.visible[this.current_entity] =
+      VisibilityFragment.data.visible instanceof BigInt64Array
+        ? BigInt(value)
+        : value;
+    if (VisibilityFragment.data.dirty) {
+      VisibilityFragment.data.dirty[this.current_entity] = 1;
+    }
+    VisibilityFragment.data.gpu_data_dirty = true;
+  }
+
+  get dirty() {
+    return VisibilityFragment.data.dirty[this.current_entity];
+  }
+
+  set dirty(value) {
+    VisibilityFragment.data.dirty[this.current_entity] =
+      VisibilityFragment.data.dirty instanceof BigInt64Array
+        ? BigInt(value)
+        : value;
     if (VisibilityFragment.data.dirty) {
       VisibilityFragment.data.dirty[this.current_entity] = 1;
     }
@@ -40,6 +58,7 @@ export class VisibilityFragment extends Fragment {
   static initialize() {
     this.data = {
       visible: new Uint8Array(4),
+      dirty: new Uint8Array(1),
       visible_buffer: null,
       gpu_data_dirty: true,
     };
@@ -52,6 +71,7 @@ export class VisibilityFragment extends Fragment {
     super.resize(new_size);
 
     Fragment.resize_array(this.data, "visible", new_size, Uint8Array, 4);
+    Fragment.resize_array(this.data, "dirty", new_size, Uint8Array, 1);
 
     this.rebuild_buffers(Renderer.get().graphics_context);
   }
@@ -79,6 +99,7 @@ export class VisibilityFragment extends Fragment {
     for (let i = 0; i < 4; i++) {
       data.visible[i] = this.data.visible[entity * 4 + i];
     }
+    data.dirty = this.data.dirty[entity];
     return data;
   }
 

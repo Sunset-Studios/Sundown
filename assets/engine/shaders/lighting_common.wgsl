@@ -4,7 +4,7 @@ struct Light {
     position: vec3f,
     direction: vec4f,
     color: vec3f,
-    light_type: u32,
+    light_type: f32,
     intensity: f32,
     radius: f32,
     attenuation: f32,
@@ -89,15 +89,15 @@ fn calculate_blinn_phong(
     var light_dir: vec3<f32>;
     var attenuation = 1.0;
 
-    if (light.light_type == 0u) { // Directional
+    if (light.light_type == 0.0) { // Directional
         light_dir = normalize(-light.position);
-    } else if (light.light_type == 1u) { // Point
+    } else if (light.light_type == 1.0) { // Point
         let light_to_frag = fragment_pos - light.position;
         light_dir = normalize(light_to_frag);
         let distance = length(light_to_frag);
         let falloff = 1.0 - smoothstep(0.0, light.radius, distance);
         attenuation = falloff / (1.0 + 0.09 * distance + 0.032 * distance * distance);
-    } else if (light.light_type == 2u) { // Spot
+    } else if (light.light_type == 2.0) { // Spot
         let light_to_frag = fragment_pos - light.position;
         light_dir = normalize(light_to_frag);
         let distance = length(light_to_frag);
@@ -147,9 +147,9 @@ fn calculate_brdf(
     var light_dir: vec3<f32>;
     var attenuation = 1.0;
 
-    if (light.light_type == 0u) { // Directional
+    if (light.light_type == 0.0) { // Directional
         light_dir = normalize(light.position);
-    } else if (light.light_type == 1u) { // Point
+    } else if (light.light_type == 1.0) { // Point
         let light_to_frag = light.position - fragment_pos;
         light_dir = normalize(light_to_frag);
         let distance_squared = dot(light_to_frag, light_to_frag);
@@ -157,7 +157,7 @@ fn calculate_brdf(
         let factor = distance_squared * light_inv_radius * light_inv_radius;
         let smooth_factor = max(1.0 - factor * factor, 0.0);
         attenuation = (smooth_factor * smooth_factor) / max(distance_squared, 0.0001); 
-    } else if (light.light_type == 2u) { // Spot
+    } else if (light.light_type == 2.0) { // Spot
         let light_to_frag = light.position - fragment_pos;
         light_dir = normalize(light_to_frag);
         let cos_outer = cos(light.outer_angle);

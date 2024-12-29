@@ -16,7 +16,9 @@ class UserInterfaceDataView {
 
   set allows_cursor_events(value) {
     UserInterfaceFragment.data.allows_cursor_events[this.current_entity] =
-      value;
+      UserInterfaceFragment.data.allows_cursor_events instanceof BigInt64Array
+        ? BigInt(value)
+        : value;
     if (UserInterfaceFragment.data.dirty) {
       UserInterfaceFragment.data.dirty[this.current_entity] = 1;
     }
@@ -28,7 +30,10 @@ class UserInterfaceDataView {
   }
 
   set auto_size(value) {
-    UserInterfaceFragment.data.auto_size[this.current_entity] = value;
+    UserInterfaceFragment.data.auto_size[this.current_entity] =
+      UserInterfaceFragment.data.auto_size instanceof BigInt64Array
+        ? BigInt(value)
+        : value;
     if (UserInterfaceFragment.data.dirty) {
       UserInterfaceFragment.data.dirty[this.current_entity] = 1;
     }
@@ -40,7 +45,10 @@ class UserInterfaceDataView {
   }
 
   set was_cursor_inside(value) {
-    UserInterfaceFragment.data.was_cursor_inside[this.current_entity] = value;
+    UserInterfaceFragment.data.was_cursor_inside[this.current_entity] =
+      UserInterfaceFragment.data.was_cursor_inside instanceof BigInt64Array
+        ? BigInt(value)
+        : value;
     if (UserInterfaceFragment.data.dirty) {
       UserInterfaceFragment.data.dirty[this.current_entity] = 1;
     }
@@ -52,7 +60,10 @@ class UserInterfaceDataView {
   }
 
   set is_cursor_inside(value) {
-    UserInterfaceFragment.data.is_cursor_inside[this.current_entity] = value;
+    UserInterfaceFragment.data.is_cursor_inside[this.current_entity] =
+      UserInterfaceFragment.data.is_cursor_inside instanceof BigInt64Array
+        ? BigInt(value)
+        : value;
     if (UserInterfaceFragment.data.dirty) {
       UserInterfaceFragment.data.dirty[this.current_entity] = 1;
     }
@@ -64,7 +75,10 @@ class UserInterfaceDataView {
   }
 
   set was_clicked(value) {
-    UserInterfaceFragment.data.was_clicked[this.current_entity] = value;
+    UserInterfaceFragment.data.was_clicked[this.current_entity] =
+      UserInterfaceFragment.data.was_clicked instanceof BigInt64Array
+        ? BigInt(value)
+        : value;
     if (UserInterfaceFragment.data.dirty) {
       UserInterfaceFragment.data.dirty[this.current_entity] = 1;
     }
@@ -76,7 +90,10 @@ class UserInterfaceDataView {
   }
 
   set is_clicked(value) {
-    UserInterfaceFragment.data.is_clicked[this.current_entity] = value;
+    UserInterfaceFragment.data.is_clicked[this.current_entity] =
+      UserInterfaceFragment.data.is_clicked instanceof BigInt64Array
+        ? BigInt(value)
+        : value;
     if (UserInterfaceFragment.data.dirty) {
       UserInterfaceFragment.data.dirty[this.current_entity] = 1;
     }
@@ -88,7 +105,10 @@ class UserInterfaceDataView {
   }
 
   set is_pressed(value) {
-    UserInterfaceFragment.data.is_pressed[this.current_entity] = value;
+    UserInterfaceFragment.data.is_pressed[this.current_entity] =
+      UserInterfaceFragment.data.is_pressed instanceof BigInt64Array
+        ? BigInt(value)
+        : value;
     if (UserInterfaceFragment.data.dirty) {
       UserInterfaceFragment.data.dirty[this.current_entity] = 1;
     }
@@ -100,7 +120,10 @@ class UserInterfaceDataView {
   }
 
   set was_pressed(value) {
-    UserInterfaceFragment.data.was_pressed[this.current_entity] = value;
+    UserInterfaceFragment.data.was_pressed[this.current_entity] =
+      UserInterfaceFragment.data.was_pressed instanceof BigInt64Array
+        ? BigInt(value)
+        : value;
     if (UserInterfaceFragment.data.dirty) {
       UserInterfaceFragment.data.dirty[this.current_entity] = 1;
     }
@@ -112,7 +135,10 @@ class UserInterfaceDataView {
   }
 
   set dirty(value) {
-    UserInterfaceFragment.data.dirty[this.current_entity] = value;
+    UserInterfaceFragment.data.dirty[this.current_entity] =
+      UserInterfaceFragment.data.dirty instanceof BigInt64Array
+        ? BigInt(value)
+        : value;
     if (UserInterfaceFragment.data.dirty) {
       UserInterfaceFragment.data.dirty[this.current_entity] = 1;
     }

@@ -165,7 +165,8 @@ class LightDataView {
   }
 
   set type(value) {
-    LightFragment.data.type[this.current_entity] = value;
+    LightFragment.data.type[this.current_entity] =
+      LightFragment.data.type instanceof BigInt64Array ? BigInt(value) : value;
     if (LightFragment.data.dirty) {
       LightFragment.data.dirty[this.current_entity] = 1;
     }
@@ -177,7 +178,10 @@ class LightDataView {
   }
 
   set intensity(value) {
-    LightFragment.data.intensity[this.current_entity] = value;
+    LightFragment.data.intensity[this.current_entity] =
+      LightFragment.data.intensity instanceof BigInt64Array
+        ? BigInt(value)
+        : value;
     if (LightFragment.data.dirty) {
       LightFragment.data.dirty[this.current_entity] = 1;
     }
@@ -189,7 +193,10 @@ class LightDataView {
   }
 
   set radius(value) {
-    LightFragment.data.radius[this.current_entity] = value;
+    LightFragment.data.radius[this.current_entity] =
+      LightFragment.data.radius instanceof BigInt64Array
+        ? BigInt(value)
+        : value;
     if (LightFragment.data.dirty) {
       LightFragment.data.dirty[this.current_entity] = 1;
     }
@@ -201,7 +208,10 @@ class LightDataView {
   }
 
   set attenuation(value) {
-    LightFragment.data.attenuation[this.current_entity] = value;
+    LightFragment.data.attenuation[this.current_entity] =
+      LightFragment.data.attenuation instanceof BigInt64Array
+        ? BigInt(value)
+        : value;
     if (LightFragment.data.dirty) {
       LightFragment.data.dirty[this.current_entity] = 1;
     }
@@ -213,7 +223,10 @@ class LightDataView {
   }
 
   set outer_angle(value) {
-    LightFragment.data.outer_angle[this.current_entity] = value;
+    LightFragment.data.outer_angle[this.current_entity] =
+      LightFragment.data.outer_angle instanceof BigInt64Array
+        ? BigInt(value)
+        : value;
     if (LightFragment.data.dirty) {
       LightFragment.data.dirty[this.current_entity] = 1;
     }
@@ -225,7 +238,10 @@ class LightDataView {
   }
 
   set active(value) {
-    LightFragment.data.active[this.current_entity] = value;
+    LightFragment.data.active[this.current_entity] =
+      LightFragment.data.active instanceof BigInt64Array
+        ? BigInt(value)
+        : value;
     if (LightFragment.data.dirty) {
       LightFragment.data.dirty[this.current_entity] = 1;
     }
@@ -237,7 +253,8 @@ class LightDataView {
   }
 
   set dirty(value) {
-    LightFragment.data.dirty[this.current_entity] = value;
+    LightFragment.data.dirty[this.current_entity] =
+      LightFragment.data.dirty instanceof BigInt64Array ? BigInt(value) : value;
     if (LightFragment.data.dirty) {
       LightFragment.data.dirty[this.current_entity] = 1;
     }

@@ -357,7 +357,7 @@ export class Texture {
     return cached_image;
   }
 
-  static async load(context, paths, config) {
+  static load(context, paths, config) {
     let image = ResourceCache.get().fetch(
       CacheTypes.IMAGE,
       Name.from(config.name)

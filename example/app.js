@@ -56,6 +56,7 @@ export class TestScene extends Scene {
     light_fragment_view.position.x = 50;
     light_fragment_view.position.y = 100;
     light_fragment_view.position.z = 50;
+    light_fragment_view.active = true;
     
 
     // Create a sphere mesh and add it to the scene

@@ -2,6 +2,7 @@ import { SimulationLayer } from "../simulation_layer.js";
 import { EntityManager } from "../ecs/entity.js";
 import { EntityMasks } from "../ecs/query.js";
 import { StaticMeshFragment } from "../ecs/fragments/static_mesh_fragment.js";
+import { VisibilityFragment } from "../ecs/fragments/visibility_fragment.js";
 import { MeshTaskQueue } from "../../renderer/mesh_task_queue.js";
 import { profile_scope } from "../../utility/performance.js";
 
@@ -14,7 +15,7 @@ export class StaticMeshProcessor extends SimulationLayer {
 
   init() {
     this.entity_query = EntityManager.get().create_query({
-      fragment_requirements: [StaticMeshFragment],
+      fragment_requirements: [StaticMeshFragment, VisibilityFragment],
     });
   }
 
@@ -22,7 +23,10 @@ export class StaticMeshProcessor extends SimulationLayer {
     profile_scope("static_mesh_processor_update", () => {
       const static_meshes =
         EntityManager.get().get_fragment_array(StaticMeshFragment);
-      if (!static_meshes) {
+      const visibilities =
+        EntityManager.get().get_fragment_array(VisibilityFragment);
+
+      if (!static_meshes || !visibilities) {
         return;
       }
 
@@ -39,7 +43,7 @@ export class StaticMeshProcessor extends SimulationLayer {
           continue;
         }
 
-        if (!static_meshes.dirty[entity]) {
+        if (!static_meshes.dirty[entity] && !visibilities.dirty[entity]) {
           continue;
         }
 
@@ -54,7 +58,7 @@ export class StaticMeshProcessor extends SimulationLayer {
         const instance_count =
           Number(static_meshes.instance_count[entity]) || 1;
 
-        if (mesh_id && material_id && instance_count) {
+        if (mesh_id && material_id && instance_count && visibilities.visible[entity]) {
           mesh_task_queue.new_task(
             mesh_id,
             entity,
@@ -64,6 +68,7 @@ export class StaticMeshProcessor extends SimulationLayer {
         }      
 
         static_meshes.dirty[entity] = 0;
+        visibilities.dirty[entity] = 0;
       }
 
       if (needs_resort) {

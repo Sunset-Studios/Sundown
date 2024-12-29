@@ -206,13 +206,13 @@ class ${name}DataView {
 
         return `
       get ${key}() {
-        return ${
+        ${
           field.getter
             ? field.getter
             : field.is_container
-              ? `${fragment_name}.data.${key}.get_data_for_entity(this.current_entity)`
-              : `${fragment_name}.data.${key}[this.current_entity]`
-        };
+              ? `return ${fragment_name}.data.${key}.get_data_for_entity(this.current_entity);`
+              : `return ${fragment_name}.data.${key}[this.current_entity];`
+        }
       }
 
       set ${key}(value) {
@@ -227,7 +227,7 @@ class ${name}DataView {
                       ${fragment_name}.data.dirty[this.current_entity] = 1;
                   }
                   ${fragment_name}.data.gpu_data_dirty = true;`
-                : `${fragment_name}.data.${key}[this.current_entity] = value;
+                : `${fragment_name}.data.${key}[this.current_entity] = ${fragment_name}.data.${key} instanceof BigInt64Array ? BigInt(value) : value;
                   if (${fragment_name}.data.dirty) {
                       ${fragment_name}.data.dirty[this.current_entity] = 1;
                   }

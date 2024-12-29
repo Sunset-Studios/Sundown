@@ -4,16 +4,22 @@ import { Renderer } from "../../../renderer/renderer.js";
 import { Buffer } from "../../../renderer/buffer.js";
 import { global_dispatcher } from "../../../core/dispatcher.js";
 import { RingBufferAllocator } from "../../../memory/allocator.js";
+import { FontCache } from "../../../ui/text/font_cache.js";
 
 const text_buffer_name = "text_buffer";
 const text_cpu_buffer_name = "text_cpu_buffer";
 const text_event = "text";
 const text_update_event = "text_update";
 
-const dirty_buffer_name = "dirty_buffer";
-const dirty_cpu_buffer_name = "dirty_cpu_buffer";
-const dirty_event = "dirty";
-const dirty_update_event = "dirty_update";
+const offsets_buffer_name = "offsets_buffer";
+const offsets_cpu_buffer_name = "offsets_cpu_buffer";
+const offsets_event = "offsets";
+const offsets_update_event = "offsets_update";
+
+const string_data_buffer_name = "string_data_buffer";
+const string_data_cpu_buffer_name = "string_data_cpu_buffer";
+const string_data_event = "string_data";
+const string_data_update_event = "string_data_update";
 
 class TextDataView {
   current_entity = -1;
@@ -21,16 +27,41 @@ class TextDataView {
   constructor() {}
 
   get text() {
-    return String.fromCodePoint(
-      ...TextFragment.data.text.get_data_for_entity(this.current_entity),
+    const font = FontCache.get_font_object(
+      TextFragment.data.font[this.current_entity],
     );
+    const code_point_indexes = TextFragment.data.text.get_data_for_entity(
+      this.current_entity,
+    );
+    return code_point_indexes
+      .map((code_point_index) =>
+        String.fromCodePoint(font.code_point[code_point_index]),
+      )
+      .join("");
   }
 
   set text(value) {
     if (value) {
-      const code_points = Array.from(value).map((char) => char.codePointAt(0));
-      TextFragment.data.text.update(this.current_entity, code_points);
+      const font = FontCache.get_font_object(
+        TextFragment.data.font[this.current_entity],
+      );
+      const code_point_indexes = Array.from(value).map((char) =>
+        font.code_point_index_map.get(char.codePointAt(0)),
+      );
+      TextFragment.data.text.update(this.current_entity, code_point_indexes);
     }
+    if (TextFragment.data.dirty) {
+      TextFragment.data.dirty[this.current_entity] = 1;
+    }
+    TextFragment.data.gpu_data_dirty = true;
+  }
+
+  get offsets() {
+    return TextFragment.data.offsets.get_data_for_entity(this.current_entity);
+  }
+
+  set offsets(value) {
+    TextFragment.data.offsets.update(this.current_entity, value);
     if (TextFragment.data.dirty) {
       TextFragment.data.dirty[this.current_entity] = 1;
     }
@@ -42,7 +73,8 @@ class TextDataView {
   }
 
   set font(value) {
-    TextFragment.data.font[this.current_entity] = value;
+    TextFragment.data.font[this.current_entity] =
+      TextFragment.data.font instanceof BigInt64Array ? BigInt(value) : value;
     if (TextFragment.data.dirty) {
       TextFragment.data.dirty[this.current_entity] = 1;
     }
@@ -54,7 +86,8 @@ class TextDataView {
   }
 
   set dirty(value) {
-    TextFragment.data.dirty[this.current_entity] = value;
+    TextFragment.data.dirty[this.current_entity] =
+      TextFragment.data.dirty instanceof BigInt64Array ? BigInt(value) : value;
     if (TextFragment.data.dirty) {
       TextFragment.data.dirty[this.current_entity] = 1;
     }
@@ -74,10 +107,12 @@ export class TextFragment extends Fragment {
   static initialize() {
     this.data = {
       text: new EntityLinearDataContainer(Uint32Array),
+      offsets: new EntityLinearDataContainer(Float32Array),
       font: new Int32Array(1),
       dirty: new Uint8Array(1),
       text_buffer: null,
-      dirty_buffer: null,
+      offsets_buffer: null,
+      string_data_buffer: null,
       gpu_data_dirty: true,
     };
 
@@ -104,6 +139,7 @@ export class TextFragment extends Fragment {
     this.data.font[entity] = 0;
 
     this.data.text.remove(entity);
+    this.data.offsets.remove(entity);
   }
 
   static get_entity_data(entity) {
@@ -128,7 +164,8 @@ export class TextFragment extends Fragment {
     if (!this.data.gpu_data_dirty) {
       return {
         text_buffer: this.data.text_buffer,
-        dirty_buffer: this.data.dirty_buffer,
+        offsets_buffer: this.data.offsets_buffer,
+        string_data_buffer: this.data.string_data_buffer,
       };
     }
 
@@ -136,7 +173,8 @@ export class TextFragment extends Fragment {
 
     return {
       text_buffer: this.data.text_buffer,
-      dirty_buffer: this.data.dirty_buffer,
+      offsets_buffer: this.data.offsets_buffer,
+      string_data_buffer: this.data.string_data_buffer,
     };
   }
 
@@ -165,30 +203,58 @@ export class TextFragment extends Fragment {
     }
 
     {
-      const gpu_data = this.data.dirty
-        ? this.data.dirty
-        : new Uint32Array(this.size * 1);
+      const gpu_data = this.data.offsets.get_data();
+
       if (
-        !this.data.dirty_buffer ||
-        this.data.dirty_buffer.config.size < gpu_data.byteLength
+        !this.data.offsets_buffer ||
+        this.data.offsets_buffer.config.size < gpu_data.byteLength
       ) {
-        this.data.dirty_buffer = Buffer.create(context, {
-          name: dirty_buffer_name,
-          usage:
-            GPUBufferUsage.STORAGE |
-            GPUBufferUsage.COPY_DST |
-            GPUBufferUsage.COPY_SRC,
+        this.data.offsets_buffer = Buffer.create(context, {
+          name: offsets_buffer_name,
+          usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
           raw_data: gpu_data,
           force: true,
         });
 
         Renderer.get().mark_bind_groups_dirty(true);
-        global_dispatcher.dispatch(dirty_event, this.data.dirty_buffer);
+        global_dispatcher.dispatch(offsets_event, this.data.offsets_buffer);
       } else {
-        this.data.dirty_buffer.write(context, gpu_data);
+        this.data.offsets_buffer.write(context, gpu_data);
       }
 
-      global_dispatcher.dispatch(dirty_update_event);
+      global_dispatcher.dispatch(offsets_update_event);
+    }
+
+    {
+      const gpu_data = new Uint32Array(Math.max(this.size * 2, 2));
+      for (let i = 0; i < this.size; i++) {
+        const metadata = this.data.text.get_metadata(i);
+        const gpu_data_offset = i * 2;
+        gpu_data[gpu_data_offset + 0] = metadata?.start ?? 0;
+        gpu_data[gpu_data_offset + 1] = metadata?.count ?? 0;
+      }
+
+      if (
+        !this.data.string_data_buffer ||
+        this.data.string_data_buffer.config.size < gpu_data.byteLength
+      ) {
+        this.data.string_data_buffer = Buffer.create(context, {
+          name: string_data_buffer_name,
+          usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+          raw_data: gpu_data,
+          force: true,
+        });
+
+        Renderer.get().mark_bind_groups_dirty(true);
+        global_dispatcher.dispatch(
+          string_data_event,
+          this.data.string_data_buffer,
+        );
+      } else {
+        this.data.string_data_buffer.write(context, gpu_data);
+      }
+
+      global_dispatcher.dispatch(string_data_update_event);
     }
 
     this.data.gpu_data_dirty = false;
