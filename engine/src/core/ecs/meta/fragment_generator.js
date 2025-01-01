@@ -222,7 +222,7 @@ class ${name}DataView {
             : field.setter
               ? field.setter
               : field.is_container
-                ? `${fragment_name}.data.${key}.update(this.current_entity, value);
+                ? `${fragment_name}.data.${key}.update(this.current_entity, value ?? []);
                   if (${fragment_name}.data.dirty) {
                       ${fragment_name}.data.dirty[this.current_entity] = 1;
                   }

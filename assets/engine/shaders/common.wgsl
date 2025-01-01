@@ -143,3 +143,29 @@ fn isinf(x: f32) -> bool {
 fn isinf3(v: vec3<f32>) -> vec3<bool> {
     return vec3<bool>(isinf(v.x), isinf(v.y), isinf(v.z));
 }
+
+// A helper function to compute the median of three values.
+fn median3(a: f32, b: f32, c: f32) -> f32 {
+    // Sort the three values and pick the middle one
+    // A simple way: median = a + b + c - min(a,b,c) - max(a,b,c)
+    let min_val = min(a, min(b, c));
+    let max_val = max(a, max(b, c));
+    return (a + b + c) - min_val - max_val;
+}
+
+// Simple hash function
+fn hash(x: u32) -> u32 {
+    var y = x;
+    y = y ^ (y >> u32(16));
+    y = y * 0x85ebca6bu;
+    y = y ^ (y >> u32(13));
+    y = y * 0xc2b2ae35u;
+    y = y ^ (y >> u32(16));
+    return y;
+}
+
+// Convert uint to float in [0, 1) range
+const one_over_float_max = 1.0 / 4294967296.0;
+fn uint_to_normalized_float(x: u32) -> f32 {
+    return f32(x) * one_over_float_max;
+}

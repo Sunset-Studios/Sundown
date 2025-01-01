@@ -61,7 +61,7 @@ class TextDataView {
   }
 
   set offsets(value) {
-    TextFragment.data.offsets.update(this.current_entity, value);
+    TextFragment.data.offsets.update(this.current_entity, value ?? []);
     if (TextFragment.data.dirty) {
       TextFragment.data.dirty[this.current_entity] = 1;
     }
@@ -75,6 +75,21 @@ class TextDataView {
   set font(value) {
     TextFragment.data.font[this.current_entity] =
       TextFragment.data.font instanceof BigInt64Array ? BigInt(value) : value;
+    if (TextFragment.data.dirty) {
+      TextFragment.data.dirty[this.current_entity] = 1;
+    }
+    TextFragment.data.gpu_data_dirty = true;
+  }
+
+  get font_size() {
+    return TextFragment.data.font_size[this.current_entity];
+  }
+
+  set font_size(value) {
+    TextFragment.data.font_size[this.current_entity] =
+      TextFragment.data.font_size instanceof BigInt64Array
+        ? BigInt(value)
+        : value;
     if (TextFragment.data.dirty) {
       TextFragment.data.dirty[this.current_entity] = 1;
     }
@@ -109,6 +124,7 @@ export class TextFragment extends Fragment {
       text: new EntityLinearDataContainer(Uint32Array),
       offsets: new EntityLinearDataContainer(Float32Array),
       font: new Int32Array(1),
+      font_size: new Uint32Array(1),
       dirty: new Uint8Array(1),
       text_buffer: null,
       offsets_buffer: null,
@@ -124,6 +140,7 @@ export class TextFragment extends Fragment {
     super.resize(new_size);
 
     Fragment.resize_array(this.data, "font", new_size, Int32Array, 1);
+    Fragment.resize_array(this.data, "font_size", new_size, Uint32Array, 1);
     Fragment.resize_array(this.data, "dirty", new_size, Uint8Array, 1);
 
     this.rebuild_buffers(Renderer.get().graphics_context);
@@ -137,6 +154,7 @@ export class TextFragment extends Fragment {
   static remove_entity(entity) {
     super.remove_entity(entity);
     this.data.font[entity] = 0;
+    this.data.font_size[entity] = 0;
 
     this.data.text.remove(entity);
     this.data.offsets.remove(entity);
@@ -226,12 +244,17 @@ export class TextFragment extends Fragment {
     }
 
     {
-      const gpu_data = new Uint32Array(Math.max(this.size * 2, 2));
+      const gpu_data = new Uint32Array(Math.max(this.size * 6, 6));
       for (let i = 0; i < this.size; i++) {
         const metadata = this.data.text.get_metadata(i);
-        const gpu_data_offset = i * 2;
+        const font = FontCache.get_font_object(this.data.font[i]);
+        const gpu_data_offset = i * 6;
         gpu_data[gpu_data_offset + 0] = metadata?.start ?? 0;
         gpu_data[gpu_data_offset + 1] = metadata?.count ?? 0;
+        gpu_data[gpu_data_offset + 2] = font?.texture_width ?? 0;
+        gpu_data[gpu_data_offset + 3] = font?.texture_height ?? 0;
+        gpu_data[gpu_data_offset + 4] = this.data.font_size[i];
+        gpu_data[gpu_data_offset + 5] = 0; // padding
       }
 
       if (

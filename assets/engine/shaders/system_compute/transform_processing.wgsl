@@ -118,7 +118,7 @@ fn cs(@builtin(global_invocation_id) global_id: vec3<u32>) {
         inverse_transform[0][3], inverse_transform[1][3], inverse_transform[2][3], inverse_transform[3][3]
     );
 
-    entity_bounds_data[entity_id].bounds_pos_radius = vec4f(position.x, position.y, position.z, max_scale);
+    entity_bounds_data[entity_id].bounds_pos_radius = vec4f(transform[3][0], transform[3][1], transform[3][2], max_scale);
 
     entity_bounds_data[entity_id].bounds_extent_and_custom_scale = vec4f(1.0, 1.0, 1.0, 1.0);
 

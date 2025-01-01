@@ -6,10 +6,7 @@ import { ComputeTaskQueue } from "../compute_task_queue.js";
 import { TransformFragment } from "../../core/ecs/fragments/transform_fragment.js";
 import { SceneGraphFragment } from "../../core/ecs/fragments/scene_graph_fragment.js";
 import { LightFragment } from "../../core/ecs/fragments/light_fragment.js";
-import {
-  SharedViewBuffer,
-  SharedEnvironmentMapData,
-} from "../../core/shared_data.js";
+import { SharedViewBuffer, SharedEnvironmentMapData } from "../../core/shared_data.js";
 import { Material, MaterialFamilyType } from "../material.js";
 import { npot, clamp } from "../../utility/math.js";
 import { profile_scope } from "../../utility/performance.js";
@@ -22,10 +19,7 @@ export class DeferredShadingStrategy {
   force_recreate = false;
 
   setup(context, render_graph) {
-    global_dispatcher.on(
-      "resolution_change",
-      this._recreate_persistent_resources.bind(this)
-    );
+    global_dispatcher.on("resolution_change", this._recreate_persistent_resources.bind(this));
     this._recreate_persistent_resources(render_graph);
   }
 
@@ -53,9 +47,7 @@ export class DeferredShadingStrategy {
       const scene_graph_gpu_data = SceneGraphFragment.to_gpu_data(context);
 
       const light_gpu_data = LightFragment.to_gpu_data(context);
-      const lights = render_graph.register_buffer(
-        light_gpu_data.light_fragment_buffer.config.name
-      );
+      const lights = render_graph.register_buffer(light_gpu_data.light_fragment_buffer.config.name);
 
       let skybox_image = null;
       let post_lighting_image_desc = null;
@@ -63,16 +55,13 @@ export class DeferredShadingStrategy {
 
       const image_extent = context.get_canvas_resolution();
 
-      let main_hzb_image = render_graph.register_image(
-        this.hzb_image.config.name
-      );
+      let main_hzb_image = render_graph.register_image(this.hzb_image.config.name);
       let main_albedo_image = render_graph.create_image({
         name: "main_albedo",
         format: "rgba16float",
         width: image_extent.width,
         height: image_extent.height,
-        usage:
-          GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+        usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
         force: this.force_recreate,
       });
       let main_emissive_image = render_graph.create_image({
@@ -80,8 +69,7 @@ export class DeferredShadingStrategy {
         format: "rgba16float",
         width: image_extent.width,
         height: image_extent.height,
-        usage:
-          GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+        usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
         force: this.force_recreate,
       });
       let main_smra_image = render_graph.create_image({
@@ -89,8 +77,7 @@ export class DeferredShadingStrategy {
         format: "rgba16float",
         width: image_extent.width,
         height: image_extent.height,
-        usage:
-          GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+        usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
         force: this.force_recreate,
       });
       let main_normal_image = render_graph.create_image({
@@ -98,8 +85,7 @@ export class DeferredShadingStrategy {
         format: "rgba16float",
         width: image_extent.width,
         height: image_extent.height,
-        usage:
-          GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+        usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
         force: this.force_recreate,
       });
       let main_position_image = render_graph.create_image({
@@ -107,8 +93,7 @@ export class DeferredShadingStrategy {
         format: "rgba16float",
         width: image_extent.width,
         height: image_extent.height,
-        usage:
-          GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+        usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
         force: this.force_recreate,
       });
       let main_transparency_accum_image = render_graph.create_image({
@@ -116,8 +101,7 @@ export class DeferredShadingStrategy {
         format: "rgba16float",
         width: image_extent.width,
         height: image_extent.height,
-        usage:
-          GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+        usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
         blend: {
           color: {
             srcFactor: "one",
@@ -135,9 +119,8 @@ export class DeferredShadingStrategy {
         format: "r8unorm",
         width: image_extent.width,
         height: image_extent.height,
-        usage:
-          GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
-        clear_value: { r: 1.0, g: 1.0, b: 1.0, a: 1.0 },
+        usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+        clear_value: { r: 0.0, g: 0.0, b: 0.0, a: 0.0 },
         blend: {
           color: {
             srcfactor: "zero",
@@ -155,14 +138,11 @@ export class DeferredShadingStrategy {
         format: "depth32float",
         width: image_extent.width,
         height: image_extent.height,
-        usage:
-          GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+        usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
         force: this.force_recreate,
       });
 
-      let main_entity_id_image = render_graph.register_image(
-        this.entity_id_image.config.name
-      );
+      let main_entity_id_image = render_graph.register_image(this.entity_id_image.config.name);
 
       if (this.force_recreate) {
         render_graph.mark_pass_cache_bind_groups_dirty(true /* pass_only */);
@@ -199,12 +179,8 @@ export class DeferredShadingStrategy {
               position: graph.get_physical_image(main_position_image),
               normal: graph.get_physical_image(main_normal_image),
               entity_id: graph.get_physical_image(main_entity_id_image),
-              transparency_accum: graph.get_physical_image(
-                main_transparency_accum_image
-              ),
-              transparency_reveal: graph.get_physical_image(
-                main_transparency_reveal_image
-              ),
+              transparency_accum: graph.get_physical_image(main_transparency_accum_image),
+              transparency_reveal: graph.get_physical_image(main_transparency_reveal_image),
               depth: graph.get_physical_image(main_depth_image),
             };
           }
@@ -236,8 +212,7 @@ export class DeferredShadingStrategy {
           format: "bgra8unorm",
           width: image_extent.width,
           height: image_extent.height,
-          usage:
-            GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+          usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
           force: this.force_recreate,
         });
 
@@ -256,20 +231,13 @@ export class DeferredShadingStrategy {
         );
       }
 
-      const object_instance_buffer =
-        MeshTaskQueue.get().get_object_instance_buffer();
-      const object_instances = render_graph.register_buffer(
-        object_instance_buffer.config.name
-      );
+      const object_instance_buffer = MeshTaskQueue.get().get_object_instance_buffer();
+      const object_instances = render_graph.register_buffer(object_instance_buffer.config.name);
 
-      const indirect_draw_buffer =
-        MeshTaskQueue.get().get_indirect_draw_buffer();
-      const indirect_draws = render_graph.register_buffer(
-        indirect_draw_buffer.config.name
-      );
+      const indirect_draw_buffer = MeshTaskQueue.get().get_indirect_draw_buffer();
+      const indirect_draws = render_graph.register_buffer(indirect_draw_buffer.config.name);
 
-      const compacted_object_instances =
-        MeshTaskQueue.get().get_compacted_object_instance_buffer();
+      const compacted_object_instances = MeshTaskQueue.get().get_compacted_object_instance_buffer();
       const compacted_object_instance_buffer = render_graph.register_buffer(
         compacted_object_instances.config.name
       );
@@ -357,8 +325,8 @@ export class DeferredShadingStrategy {
               inputs: [
                 entity_transforms,
                 entity_inverse_transforms,
-                entity_bounds_data,
                 compacted_object_instance_buffer,
+                lights
               ],
               outputs: [
                 material.family === MaterialFamilyType.Transparent
@@ -399,12 +367,10 @@ export class DeferredShadingStrategy {
                 frame_data.g_buffer_data.entity_id.config.load_op = "load";
               }
               if (frame_data.g_buffer_data.transparency_accum) {
-                frame_data.g_buffer_data.transparency_accum.config.load_op =
-                  "load";
+                frame_data.g_buffer_data.transparency_accum.config.load_op = "load";
               }
               if (frame_data.g_buffer_data.transparency_reveal) {
-                frame_data.g_buffer_data.transparency_reveal.config.load_op =
-                  "load";
+                frame_data.g_buffer_data.transparency_reveal.config.load_op = "load";
               }
               if (frame_data.g_buffer_data.depth) {
                 frame_data.g_buffer_data.depth.config.load_op = "load";
@@ -422,46 +388,41 @@ export class DeferredShadingStrategy {
       }
 
       // Transparency Composite Pass
-      if (MeshTaskQueue.get().has_transparency) {
-        const shader_setup = {
-          pipeline_shaders: {
-            vertex: {
-              path: "transparency_composite.wgsl",
-            },
-            fragment: {
-              path: "transparency_composite.wgsl",
-            },
+      const shader_setup = {
+        pipeline_shaders: {
+          vertex: {
+            path: "transparency_composite.wgsl",
           },
-          attachment_blend: {
-            color: {
-              srcFactor: "src-alpha",
-              dstFactor: "one-minus-src-alpha",
-            },
-            alpha: {
-              srcFactor: "src-alpha",
-              dstFactor: "one-minus-src-alpha",
-            },
+          fragment: {
+            path: "transparency_composite.wgsl",
           },
-        };
+        },
+        attachment_blend: {
+          color: {
+            srcFactor: "src-alpha",
+            dstFactor: "one-minus-src-alpha",
+          },
+          alpha: {
+            srcFactor: "src-alpha",
+            dstFactor: "one-minus-src-alpha",
+          },
+        },
+      };
 
-        render_graph.add_pass(
-          "transparency_composite",
-          RenderPassFlags.Graphics,
-          {
-            inputs: [
-              main_transparency_accum_image,
-              main_transparency_reveal_image,
-            ],
-            outputs: [main_albedo_image],
-            shader_setup,
-          },
-          (graph, frame_data, encoder) => {
-            const pass = graph.get_physical_pass(frame_data.current_pass);
+      render_graph.add_pass(
+        "transparency_composite",
+        RenderPassFlags.Graphics,
+        {
+          inputs: [main_transparency_accum_image, main_transparency_reveal_image],
+          outputs: [main_albedo_image],
+          shader_setup,
+        },
+        (graph, frame_data, encoder) => {
+          const pass = graph.get_physical_pass(frame_data.current_pass);
 
-            MeshTaskQueue.get().draw_quad(frame_data.context, pass);
-          }
-        );
-      }
+          MeshTaskQueue.get().draw_quad(frame_data.context, pass);
+        }
+      );
 
       // Reset GBuffer targets
       {
@@ -490,12 +451,10 @@ export class DeferredShadingStrategy {
                 frame_data.g_buffer_data.entity_id.config.load_op = "clear";
               }
               if (frame_data.g_buffer_data.transparency_accum) {
-                frame_data.g_buffer_data.transparency_accum.config.load_op =
-                  "clear";
+                frame_data.g_buffer_data.transparency_accum.config.load_op = "clear";
               }
               if (frame_data.g_buffer_data.transparency_reveal) {
-                frame_data.g_buffer_data.transparency_reveal.config.load_op =
-                  "clear";
+                frame_data.g_buffer_data.transparency_reveal.config.load_op = "clear";
               }
               if (frame_data.g_buffer_data.depth) {
                 frame_data.g_buffer_data.depth.config.load_op = "clear";
@@ -549,9 +508,7 @@ export class DeferredShadingStrategy {
               const depth = graph.get_physical_image(main_depth_image);
               const hzb = graph.get_physical_image(main_hzb_image);
 
-              const hzb_params = graph.get_physical_buffer(
-                hzb_params_chain[dst_index]
-              );
+              const hzb_params = graph.get_physical_buffer(hzb_params_chain[dst_index]);
 
               const src_mip_width = Math.max(
                 1,
@@ -563,10 +520,7 @@ export class DeferredShadingStrategy {
               );
 
               const dst_mip_width = Math.max(1, hzb.config.width >> dst_index);
-              const dst_mip_height = Math.max(
-                1,
-                hzb.config.height >> dst_index
-              );
+              const dst_mip_height = Math.max(1, hzb.config.height >> dst_index);
 
               hzb_params.write(frame_data.context, [
                 src_mip_width,
@@ -575,11 +529,7 @@ export class DeferredShadingStrategy {
                 dst_mip_height,
               ]);
 
-              pass.dispatch(
-                (dst_mip_width + 15) / 16,
-                (dst_mip_height + 15) / 16,
-                1
-              );
+              pass.dispatch((dst_mip_width + 15) / 16, (dst_mip_height + 15) / 16, 1);
             }
           );
         }
@@ -603,8 +553,7 @@ export class DeferredShadingStrategy {
           format: "rgba16float",
           width: image_extent.width,
           height: image_extent.height,
-          usage:
-            GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+          usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
           force: this.force_recreate,
         });
 
@@ -648,9 +597,7 @@ export class DeferredShadingStrategy {
               format: "rgba16float",
               width: extent_x >> i,
               height: extent_y >> i,
-              usage:
-                GPUTextureUsage.STORAGE_BINDING |
-                GPUTextureUsage.TEXTURE_BINDING,
+              usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
               force: this.force_recreate,
             })
           );
@@ -681,9 +628,7 @@ export class DeferredShadingStrategy {
             RenderPassFlags.Compute,
             {
               inputs: [
-                i === 0
-                  ? post_lighting_image_desc
-                  : bloom_blur_chain[src_index],
+                i === 0 ? post_lighting_image_desc : bloom_blur_chain[src_index],
                 bloom_blur_chain[dst_index],
                 bloom_blur_params_chain[dst_index],
               ],
@@ -712,11 +657,7 @@ export class DeferredShadingStrategy {
                 i,
               ]);
 
-              pass.dispatch(
-                (dst_mip_width + 15) / 16,
-                (dst_mip_height + 15) / 16,
-                1
-              );
+              pass.dispatch((dst_mip_width + 15) / 16, (dst_mip_height + 15) / 16, 1);
             }
           );
         }
@@ -767,11 +708,7 @@ export class DeferredShadingStrategy {
                 i,
               ]);
 
-              pass.dispatch(
-                (dst_mip_width + 15) / 16,
-                (dst_mip_height + 15) / 16,
-                1
-              );
+              pass.dispatch((dst_mip_width + 15) / 16, (dst_mip_height + 15) / 16, 1);
             }
           );
         }
@@ -798,8 +735,7 @@ export class DeferredShadingStrategy {
           format: "rgba16float",
           width: image_extent.width,
           height: image_extent.height,
-          usage:
-            GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+          usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
           force: this.force_recreate,
         });
 
@@ -807,26 +743,20 @@ export class DeferredShadingStrategy {
           "bloom_resolve_pass",
           RenderPassFlags.Graphics,
           {
-            inputs: [
-              post_lighting_image_desc,
-              bloom_blur_chain[0],
-              bloom_resolve_params_desc,
-            ],
+            inputs: [post_lighting_image_desc, bloom_blur_chain[0], bloom_resolve_params_desc],
             outputs: [post_bloom_color_desc],
             shader_setup: bloom_resolve_shader_setup,
           },
           (graph, frame_data, encoder) => {
             const pass = graph.get_physical_pass(frame_data.current_pass);
 
-            const bloom_resolve_params = graph.get_physical_buffer(
-              bloom_resolve_params_desc
-            );
+            const bloom_resolve_params = graph.get_physical_buffer(bloom_resolve_params_desc);
 
             bloom_resolve_params.write(
               frame_data.context,
               [
-                1.5 /* final exposure */, 0.3 /* bloom intensity */,
-                0.001 /* bloom threshold */, 0.0 /* bloom knee */,
+                1.5 /* final exposure */, 0.3 /* bloom intensity */, 0.001 /* bloom threshold */,
+                0.0 /* bloom knee */,
               ]
             );
 
@@ -844,9 +774,7 @@ export class DeferredShadingStrategy {
           "swapchain"
         );
 
-        const rg_output_image = render_graph.register_image(
-          swapchain_image.config.name
-        );
+        const rg_output_image = render_graph.register_image(swapchain_image.config.name);
 
         const shader_setup = {
           pipeline_shaders: {
@@ -889,10 +817,7 @@ export class DeferredShadingStrategy {
     const image_width_npot = npot(image_extent.width);
     const image_height_npot = npot(image_extent.height);
 
-    const mip_levels = Math.max(
-      Math.log2(image_width_npot),
-      Math.log2(image_height_npot)
-    );
+    const mip_levels = Math.max(Math.log2(image_width_npot), Math.log2(image_height_npot));
 
     this.force_recreate = true;
 

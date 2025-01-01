@@ -1,4 +1,5 @@
 #include "common.wgsl"
+#include "lighting_common.wgsl"
 
 struct VertexOutput {
     @builtin(position) @invariant position: vec4f,
@@ -12,6 +13,7 @@ struct VertexOutput {
     @location(7) bitangent: vec4f,
     @location(8) @interpolate(flat) instance_index: u32,
     @location(9) @interpolate(flat) instance_id: u32,
+    @location(10) @interpolate(flat) vertex_index: u32,
 };
 
 #ifndef SKIP_ENTITY_WRITES
@@ -36,8 +38,8 @@ struct FragmentOutput {
 
 @group(1) @binding(0) var<storage, read> entity_transforms: array<EntityTransform>;
 @group(1) @binding(1) var<storage, read> entity_inverse_transforms: array<EntityInverseTransform>;
-@group(1) @binding(2) var<storage, read> entity_bounds_data: array<EntityBoundsData>;
-@group(1) @binding(3) var<storage, read> compacted_object_instances: array<CompactedObjectInstance>;
+@group(1) @binding(2) var<storage, read> compacted_object_instances: array<CompactedObjectInstance>;
+@group(1) @binding(3) var<storage, read> lights_buffer: array<Light>; // Used for forward shading if necessary
 
 #ifndef CUSTOM_VS
 fn vertex(v_out: ptr<function, VertexOutput>) -> VertexOutput {
@@ -64,6 +66,7 @@ fn vertex(v_out: ptr<function, VertexOutput>) -> VertexOutput {
     output.normal = normalize(vec4f((entity_inverse_transforms[entity].transpose_inverse_model_matrix * instance_vertex.normal).xyz, 1.0));
     output.instance_index = ii;
     output.instance_id = entity;
+    output.vertex_index = vi;
 
     output = vertex(&output);
 
@@ -95,11 +98,37 @@ fn fragment(v_out: VertexOutput, f_out: ptr<function, FragmentOutput>) -> Fragme
     var post_material_output = fragment(v_out, &output);
 
 #if TRANSPARENT
+    var view_dir = normalize(-view_buffer[0].view_direction.xyz);
+    var color = vec3f(0.0);
+    let num_lights = arrayLength(&lights_buffer) * min(1u, u32(post_material_output.normal.w));
+
+    for (var i = 0u; i < num_lights; i++) {
+        var light = lights_buffer[i];
+        color += calculate_brdf(
+            light,
+            post_material_output.normal.xyz,
+            view_dir,
+            post_material_output.position.xyz,
+            post_material_output.albedo.rgb,
+            post_material_output.smra.r * 0.0009765625 /* 1.0f / 1024 */,
+            post_material_output.smra.g,
+            post_material_output.smra.b,
+            0.0, // clear coat
+            1.0, // clear coat roughness 
+            post_material_output.smra.a,
+            vec3f(1.0, 1.0, 1.0), // irradiance
+            vec3f(1.0, 1.0, 1.0), // prefilter color 
+            vec2f(1.0, 1.0), // env brdf
+            0, // shadow map index
+        );
+    }
+
+    color += (post_material_output.emissive.r * post_material_output.albedo.rgb);
+
     let weight = clamp(pow(min(1.0, post_material_output.albedo.a * 10.0) + 0.01, 3.0) * 1e8 * pow(1.0 - v_out.position.z * 0.9, 3.0), 1e-2, 3e3); 
     post_material_output.transparency_reveal = post_material_output.albedo.a;
-    post_material_output.albedo = vec4f(post_material_output.albedo.rgb * post_material_output.albedo.a, post_material_output.albedo.a) * weight;
-    post_material_output.normal.w = 0.0; // Disable deferred standard lighting for transparent objects
-    // TODO: Run forward transparent lighting instead for this pixel 
+    post_material_output.albedo = vec4f(color * post_material_output.albedo.a, post_material_output.albedo.a) * weight;
+    post_material_output.normal = vec4f(0.0); // Treat transparency as unlit in deferred lighting pass; We've already done lighting here
 #endif
 
     return post_material_output;

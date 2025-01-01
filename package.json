@@ -1,7 +1,7 @@
 {
-  "name": "brainfold",
+  "name": "sundown",
   "version": "1.0.0",
-  "description": "A simulated AI crafting sandbox for all mankind.",
+  "description": "A WebGPU game engine for fun and games.",
   "main": "dist/electron/main/index.js",
   "type": "module",
   "scripts": {
@@ -19,7 +19,7 @@
     "make": "vite build && electron-vite build && electron-forge make"
   },
   "build": {
-    "appId": "com.sunsetstudios.brainfold",
+    "appId": "com.sunsetstudios.sundown",
     "mac": {
       "category": "simulation"
     },
@@ -44,10 +44,7 @@
     "engine",
     "simulation",
     "renderer",
-    "rendering",
-    "ai",
-    "ai-crafting",
-    "ai-sandbox"
+    "rendering"
   ],
   "author": "Adrian Sanchez",
   "license": "MIT",

@@ -57,7 +57,7 @@ export class VisibilityFragment extends Fragment {
 
   static initialize() {
     this.data = {
-      visible: new Uint8Array(4),
+      visible: new Uint32Array(1),
       dirty: new Uint8Array(1),
       visible_buffer: null,
       gpu_data_dirty: true,
@@ -70,7 +70,7 @@ export class VisibilityFragment extends Fragment {
     if (!this.data) this.initialize();
     super.resize(new_size);
 
-    Fragment.resize_array(this.data, "visible", new_size, Uint8Array, 4);
+    Fragment.resize_array(this.data, "visible", new_size, Uint32Array, 1);
     Fragment.resize_array(this.data, "dirty", new_size, Uint8Array, 1);
 
     this.rebuild_buffers(Renderer.get().graphics_context);
@@ -83,7 +83,7 @@ export class VisibilityFragment extends Fragment {
 
   static remove_entity(entity) {
     super.remove_entity(entity);
-    this.data.visible[entity] = Array(4).fill(0);
+    this.data.visible[entity] = 0;
   }
 
   static get_entity_data(entity) {
@@ -95,10 +95,7 @@ export class VisibilityFragment extends Fragment {
 
   static duplicate_entity_data(entity) {
     const data = {};
-    data.visible = Array(4).fill(0);
-    for (let i = 0; i < 4; i++) {
-      data.visible[i] = this.data.visible[entity * 4 + i];
-    }
+    data.visible = this.data.visible[entity];
     data.dirty = this.data.dirty[entity];
     return data;
   }
@@ -123,7 +120,7 @@ export class VisibilityFragment extends Fragment {
     {
       const gpu_data = this.data.visible
         ? this.data.visible
-        : new Uint8Array(this.size * 4);
+        : new Uint32Array(this.size * 1);
       if (
         !this.data.visible_buffer ||
         this.data.visible_buffer.config.size < gpu_data.byteLength

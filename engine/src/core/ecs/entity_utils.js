@@ -174,7 +174,9 @@ export function spawn_mesh_entity(
     false /* refresh_entity_queries */
   );
   new_scene_graph_view.parent = parent;
-  new_scene_graph_view.children = children;
+  if (children.length > 0) {
+    new_scene_graph_view.children = children;
+  }
 
   const new_static_mesh_view = scene.add_fragment(
     entity,

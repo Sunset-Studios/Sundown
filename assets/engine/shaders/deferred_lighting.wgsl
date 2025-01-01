@@ -56,13 +56,12 @@ struct FragmentOutput {
     var position = tex_position.xyz;
 
     var view_dir = normalize(-view_buffer[0].view_direction.xyz);
-    var reflection = reflect(-view_dir, normalized_normal);
 
-    let unlit = f32(normal_length <= 0.0);
+    let unlit = min(1u, u32(normal_length <= 0.0) + u32(1.0 - deferred_standard_lighting));
 
-    var color = unlit * tex_sky.rgb;
+    var color = f32(unlit) * tex_sky.rgb;
 
-    let num_lights = arrayLength(&lights_buffer) * u32(deferred_standard_lighting);
+    let num_lights = arrayLength(&lights_buffer) * (1u - unlit);
     for (var i = 0u; i < num_lights; i++) {
         var light = lights_buffer[i];
         color += calculate_brdf(

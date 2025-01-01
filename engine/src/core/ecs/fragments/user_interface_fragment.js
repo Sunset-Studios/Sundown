@@ -5,10 +5,76 @@ import { Buffer } from "../../../renderer/buffer.js";
 import { global_dispatcher } from "../../../core/dispatcher.js";
 import { RingBufferAllocator } from "../../../memory/allocator.js";
 
+const element_data_buffer_name = "element_data_buffer";
+const element_data_cpu_buffer_name = "element_data_cpu_buffer";
+const element_data_event = "element_data";
+const element_data_update_event = "element_data_update";
+
+class ColorDataView {
+  constructor() {
+    this.current_entity = -1;
+  }
+
+  get r() {
+    return UserInterfaceFragment.data.color.r[this.current_entity];
+  }
+
+  set r(value) {
+    UserInterfaceFragment.data.color.r[this.current_entity] = value;
+    if (UserInterfaceFragment.data.dirty) {
+      UserInterfaceFragment.data.dirty[this.current_entity] = 1;
+    }
+    UserInterfaceFragment.data.gpu_data_dirty = true;
+  }
+
+  get g() {
+    return UserInterfaceFragment.data.color.g[this.current_entity];
+  }
+
+  set g(value) {
+    UserInterfaceFragment.data.color.g[this.current_entity] = value;
+    if (UserInterfaceFragment.data.dirty) {
+      UserInterfaceFragment.data.dirty[this.current_entity] = 1;
+    }
+    UserInterfaceFragment.data.gpu_data_dirty = true;
+  }
+
+  get b() {
+    return UserInterfaceFragment.data.color.b[this.current_entity];
+  }
+
+  set b(value) {
+    UserInterfaceFragment.data.color.b[this.current_entity] = value;
+    if (UserInterfaceFragment.data.dirty) {
+      UserInterfaceFragment.data.dirty[this.current_entity] = 1;
+    }
+    UserInterfaceFragment.data.gpu_data_dirty = true;
+  }
+
+  get a() {
+    return UserInterfaceFragment.data.color.a[this.current_entity];
+  }
+
+  set a(value) {
+    UserInterfaceFragment.data.color.a[this.current_entity] = value;
+    if (UserInterfaceFragment.data.dirty) {
+      UserInterfaceFragment.data.dirty[this.current_entity] = 1;
+    }
+    UserInterfaceFragment.data.gpu_data_dirty = true;
+  }
+
+  view_entity(entity) {
+    this.current_entity = entity;
+    return this;
+  }
+}
+
 class UserInterfaceDataView {
   current_entity = -1;
 
-  constructor() {}
+  constructor() {
+    this.color = new ColorDataView(this);
+  }
 
   get allows_cursor_events() {
     return UserInterfaceFragment.data.allows_cursor_events[this.current_entity];
@@ -148,6 +214,8 @@ class UserInterfaceDataView {
   view_entity(entity) {
     this.current_entity = entity;
 
+    this.color.view_entity(entity);
+
     return this;
   }
 }
@@ -168,9 +236,18 @@ export class UserInterfaceFragment extends Fragment {
       is_clicked: new Uint8Array(1),
       is_pressed: new Uint8Array(1),
       was_pressed: new Uint8Array(1),
+      color: {
+        r: new Float32Array(1),
+        g: new Float32Array(1),
+        b: new Float32Array(1),
+        a: new Float32Array(1),
+      },
       dirty: new Uint8Array(1),
+      element_data_buffer: null,
       gpu_data_dirty: true,
     };
+
+    this.rebuild_buffers(Renderer.get().graphics_context);
   }
 
   static resize(new_size) {
@@ -203,7 +280,12 @@ export class UserInterfaceFragment extends Fragment {
     Fragment.resize_array(this.data, "is_clicked", new_size, Uint8Array, 1);
     Fragment.resize_array(this.data, "is_pressed", new_size, Uint8Array, 1);
     Fragment.resize_array(this.data, "was_pressed", new_size, Uint8Array, 1);
+    Object.keys(this.data.color).forEach((axis) => {
+      Fragment.resize_array(this.data.color, axis, new_size, Float32Array);
+    });
     Fragment.resize_array(this.data, "dirty", new_size, Uint8Array, 1);
+
+    this.rebuild_buffers(Renderer.get().graphics_context);
   }
 
   static add_entity(entity) {
@@ -221,6 +303,10 @@ export class UserInterfaceFragment extends Fragment {
     this.data.is_clicked[entity] = 0;
     this.data.is_pressed[entity] = 0;
     this.data.was_pressed[entity] = 0;
+    this.data.color.r[entity] = 0;
+    this.data.color.g[entity] = 0;
+    this.data.color.b[entity] = 0;
+    this.data.color.a[entity] = 0;
   }
 
   static get_entity_data(entity) {
@@ -240,7 +326,69 @@ export class UserInterfaceFragment extends Fragment {
     data.is_clicked = this.data.is_clicked[entity];
     data.is_pressed = this.data.is_pressed[entity];
     data.was_pressed = this.data.was_pressed[entity];
+    data.color = {
+      r: this.data.color.r[entity],
+      g: this.data.color.g[entity],
+      b: this.data.color.b[entity],
+      a: this.data.color.a[entity],
+    };
     data.dirty = this.data.dirty[entity];
     return data;
   }
+
+  static to_gpu_data(context) {
+    if (!this.data) this.initialize();
+
+    if (!this.data.gpu_data_dirty) {
+      return {
+        element_data_buffer: this.data.element_data_buffer,
+      };
+    }
+
+    this.rebuild_buffers(context);
+
+    return {
+      element_data_buffer: this.data.element_data_buffer,
+    };
+  }
+
+  static rebuild_buffers(context) {
+    {
+      const gpu_data = new Float32Array(Math.max(this.size * 4, 4));
+      let offset = 0;
+      for (let i = 0; i < this.size; i++) {
+        gpu_data[offset + 0] = this.data.color.r[i];
+        gpu_data[offset + 1] = this.data.color.g[i];
+        gpu_data[offset + 2] = this.data.color.b[i];
+        gpu_data[offset + 3] = this.data.color.a[i];
+        offset += 4;
+      }
+
+      if (
+        !this.data.element_data_buffer ||
+        this.data.element_data_buffer.config.size < gpu_data.byteLength
+      ) {
+        this.data.element_data_buffer = Buffer.create(context, {
+          name: element_data_buffer_name,
+          usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+          raw_data: gpu_data,
+          force: true,
+        });
+
+        Renderer.get().mark_bind_groups_dirty(true);
+        global_dispatcher.dispatch(
+          element_data_event,
+          this.data.element_data_buffer,
+        );
+      } else {
+        this.data.element_data_buffer.write(context, gpu_data);
+      }
+
+      global_dispatcher.dispatch(element_data_update_event);
+    }
+
+    this.data.gpu_data_dirty = false;
+  }
+
+  static async sync_buffers(context) {}
 }

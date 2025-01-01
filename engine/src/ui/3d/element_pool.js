@@ -13,7 +13,7 @@ export class Element3DPool {
     this.active_elements = new Uint32Array(pool_size);
     this.available_elements = new TypedStack(pool_size, Uint32Array);
     for (let i = 0; i < pool_size; i++) {
-      const element = Element3D.create(scene, {}, null);
+      const element = Element3D.create(scene, {}, null, null, [], false);
       this.elements[i] = element;
       this.available_elements.push(i);
     }
@@ -42,7 +42,7 @@ export class Element3DPool {
     this.element_to_active_index.set(element_id, this.active_count);
     this.active_count++;
 
-    return element_id;
+    return this.elements[element_id];
   }
 
   destroy(element_id) {

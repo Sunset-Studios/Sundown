@@ -13,13 +13,16 @@ import { VisibilityFragment } from "../engine/src/core/ecs/fragments/visibility_
 import { SceneGraphFragment } from "../engine/src/core/ecs/fragments/scene_graph_fragment.js";
 import { FreeformArcballControlProcessor } from "../engine/src/core/subsystems/freeform_arcball_control_processor.js";
 import { LightFragment } from "../engine/src/core/ecs/fragments/light_fragment.js";
+import { TextFragment } from "../engine/src/core/ecs/fragments/text_fragment.js";
 import { LightType } from "../engine/src/core/minimal.js";
 import { Mesh } from "../engine/src/renderer/mesh.js";
 import { Name } from "../engine/src/utility/names.js";
 import { SharedEnvironmentMapData } from "../engine/src/core/shared_data.js";
 import { profile_scope } from "../engine/src/utility/performance.js";
 import { frame_runner } from "../engine/src/utility/frame_runner.js";
+import { spawn_mesh_entity } from "../engine/src/core/ecs/entity_utils.js";
 import { quat } from "gl-matrix";
+import { FontCache } from "../engine/src/ui/text/font_cache.js";
 
 export class TestScene extends Scene {
   async init(parent_context) {
@@ -57,12 +60,28 @@ export class TestScene extends Scene {
     light_fragment_view.position.y = 100;
     light_fragment_view.position.z = 50;
     light_fragment_view.active = true;
-    
+
+    // Create some text
+    const font_id = Name.from("Exo-Medium");
+    const font_object = FontCache.get_font_object(font_id);
+
+    const text_entity = spawn_mesh_entity(
+      this,
+      {x: 0, y: 15.0, z: 0},
+      {x: 0, y: 0, z: 0, w: 1},
+      {x: 1, y: 1, z: 1},
+      Mesh.quad(Renderer.get().graphics_context),
+      font_object.material
+    );
+    const text_fragment_view = this.add_fragment(text_entity, TextFragment, false);
+    text_fragment_view.font = font_id;
+    text_fragment_view.text = "Hello, World!";
+    text_fragment_view.font_size = 24;
 
     // Create a sphere mesh and add it to the scene
     const mesh = await Mesh.from_gltf(
       Renderer.get().graphics_context,
-      "engine/models/cube/cube.gltf"
+      "engine/models/sphere/sphere.gltf"
     );
 
     // Create a default material
@@ -79,11 +98,7 @@ export class TestScene extends Scene {
           let entity = this.create_entity(false /* refresh_entity_queries */);
 
           // Add a static mesh fragment to the sphere entity
-          const static_mesh_fragment_view = this.add_fragment(
-            entity,
-            StaticMeshFragment,
-            false,
-          );
+          const static_mesh_fragment_view = this.add_fragment(entity, StaticMeshFragment, false);
           static_mesh_fragment_view.mesh = BigInt(Name.from(mesh.name));
           static_mesh_fragment_view.material_slots = [default_material_id];
           static_mesh_fragment_view.instance_count = BigInt(1);
@@ -91,29 +106,21 @@ export class TestScene extends Scene {
           const rotation = quat.fromValues(0, 0, 0, 1);
 
           // Add a transform fragment to the sphere entity
-          const transform_fragment_view = this.add_fragment(
-            entity,
-            TransformFragment,
-            false,
-          );
-          transform_fragment_view.position = [(x - Math.floor(grid_size / 2)) * spacing, (y - Math.floor(grid_layers / 2)) * spacing, (z - Math.floor(grid_size / 2)) * spacing];
+          const transform_fragment_view = this.add_fragment(entity, TransformFragment, false);
+          transform_fragment_view.position = [
+            (x - Math.floor(grid_size / 2)) * spacing,
+            (y - Math.floor(grid_layers / 2)) * spacing,
+            (z - Math.floor(grid_size / 2)) * spacing,
+          ];
           transform_fragment_view.rotation = rotation;
           transform_fragment_view.scale = [0.5, 0.5, 0.5];
 
           // Add a visibility fragment to the sphere entity
-          const visibility_fragment_view = this.add_fragment(
-            entity,
-            VisibilityFragment,
-            false,
-          );
+          const visibility_fragment_view = this.add_fragment(entity, VisibilityFragment, false);
           visibility_fragment_view.visible = 1;
 
           // Add a scene graph fragment to the sphere entity
-          const scene_graph_fragment_view = this.add_fragment(
-            entity,
-            SceneGraphFragment,
-            false,
-          );
+          const scene_graph_fragment_view = this.add_fragment(entity, SceneGraphFragment, false);
           scene_graph_fragment_view.parent = null;
         }
       }
@@ -144,7 +151,7 @@ async function init() {
   const input_provider = InputProvider.get();
   await SimulationCore.get().register_simulation_layer(input_provider);
   input_provider.push_context(InputProvider.default_context());
-  
+
   // Initialize renderer with document canvas
   const canvas = document.getElementById("gpu-canvas");
   await Renderer.get().setup(canvas, DeferredShadingStrategy);

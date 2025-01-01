@@ -308,22 +308,22 @@ const TransformFragment = {
       skip_default: true,
       pre: `
       return {
-        position: {
-          x: this.data.position[entity * 4],
-          y: this.data.position[entity * 4 + 1],
-          z: this.data.position[entity * 4 + 2],
-        },
-        rotation: {
-          x: this.data.rotation[entity * 4],
-          y: this.data.rotation[entity * 4 + 1],
-          z: this.data.rotation[entity * 4 + 2],
-          w: this.data.rotation[entity * 4 + 3],
-        },
-        scale: {
-          x: this.data.scale[entity * 4],
-          y: this.data.scale[entity * 4 + 1],
-          z: this.data.scale[entity * 4 + 2],
-        },
+        position: [
+          this.data.position[entity * 4],
+          this.data.position[entity * 4 + 1],
+          this.data.position[entity * 4 + 2],
+        ],
+        rotation: [
+          this.data.rotation[entity * 4],
+          this.data.rotation[entity * 4 + 1],
+          this.data.rotation[entity * 4 + 2],
+          this.data.rotation[entity * 4 + 3],
+        ],
+        scale: [
+          this.data.scale[entity * 4],
+          this.data.scale[entity * 4 + 1],
+          this.data.scale[entity * 4 + 2],
+        ],
       };
       `,
     },
@@ -429,6 +429,7 @@ const SceneGraphFragment = {
       stride: 1,
       setter: `
       SceneGraphFragment.data.parent[this.current_entity] = value ?? -1;
+      SceneGraphFragment.data.scene_graph.remove(this.current_entity);
       SceneGraphFragment.data.scene_graph.add(value ?? null, this.current_entity);
       if (SceneGraphFragment.data.dirty) {
         SceneGraphFragment.data.dirty[this.current_entity] = 1;
@@ -439,10 +440,13 @@ const SceneGraphFragment = {
     children: {
       type: DataType.INT32,
       stride: 1,
-      getter: `return SceneGraphFragment.data.scene_graph.find_node(this.current_entity)?.children ?? [];`,
+      getter: `
+      const node = SceneGraphFragment.data.scene_graph.find_node(this.current_entity);
+      return [...(SceneGraphFragment.data.scene_graph.get_children(node))].map(child => child.data)
+      `,
       setter: `
       if (Array.isArray(value)) {
-        SceneGraphFragment.data.scene_graph.add_multiple(this.current_entity, value, true /* replace_children */);
+        SceneGraphFragment.data.scene_graph.add_multiple(this.current_entity, value, true /* replace_children */, true /* unique */);
       }
       if (SceneGraphFragment.data.dirty) {
         SceneGraphFragment.data.dirty[this.current_entity] = 1;
@@ -502,8 +506,8 @@ const SceneGraphFragment = {
       pre: `
       const node = this.data.scene_graph.find_node(entity);
       return {
-        parent: node?.parent ?? null,
-        children: node?.children ?? [],
+        parent: this.data.scene_graph.get_parent(node),
+        children: this.data.scene_graph.get_children(node).map(child => child.data),
       };
       `,
     },
@@ -514,8 +518,8 @@ const VisibilityFragment = {
   name: "Visibility",
   fields: {
     visible: {
-      type: DataType.UINT8,
-      stride: 4,
+      type: DataType.UINT32,
+      stride: 1,
     },
     dirty: {
       type: DataType.UINT8,
@@ -524,9 +528,9 @@ const VisibilityFragment = {
   },
   buffers: {
     visible: {
-      type: DataType.UINT8,
+      type: DataType.UINT32,
       usage: BufferType.STORAGE,
-      stride: 4,
+      stride: 1,
     },
   },
 };
@@ -566,9 +570,32 @@ const UserInterfaceFragment = {
       type: DataType.UINT8,
       stride: 1,
     },
+    color: {
+      type: DataType.FLOAT32,
+      vector: { r: true, g: true, b: true, a: true },
+      stride: 1,
+    },
     dirty: {
       type: DataType.UINT8,
       stride: 1,
+    },
+  },
+  buffers: {
+    element_data: {
+      type: DataType.FLOAT32,
+      usage: BufferType.STORAGE,
+      stride: 4,
+      gpu_data: `
+      const gpu_data = new Float32Array(Math.max(this.size * 4, 4));
+      let offset = 0;
+      for (let i = 0; i < this.size; i++) {
+        gpu_data[offset + 0] = this.data.color.r[i];
+        gpu_data[offset + 1] = this.data.color.g[i];
+        gpu_data[offset + 2] = this.data.color.b[i];
+        gpu_data[offset + 3] = this.data.color.a[i];
+        offset += 4;
+      }
+      `,
     },
   },
 };
@@ -609,6 +636,10 @@ const TextFragment = {
       type: DataType.INT32,
       stride: 1,
     },
+    font_size: {
+      type: DataType.UINT32,
+      stride: 1,
+    },
     dirty: {
       type: DataType.UINT8,
       stride: 1,
@@ -636,12 +667,17 @@ const gpu_data = this.data.offsets.get_data();
       usage: BufferType.STORAGE,
       stride: 2,
       gpu_data: `
-      const gpu_data = new Uint32Array(Math.max(this.size * 2, 2));
+      const gpu_data = new Uint32Array(Math.max(this.size * 6, 6));
       for (let i = 0; i < this.size; i++) {
         const metadata = this.data.text.get_metadata(i);
-        const gpu_data_offset = i * 2;
+        const font = FontCache.get_font_object(this.data.font[i]);
+        const gpu_data_offset = i * 6;
         gpu_data[gpu_data_offset + 0] = metadata?.start ?? 0;
         gpu_data[gpu_data_offset + 1] = metadata?.count ?? 0;
+        gpu_data[gpu_data_offset + 2] = font?.texture_width ?? 0;
+        gpu_data[gpu_data_offset + 3] = font?.texture_height ?? 0;
+        gpu_data[gpu_data_offset + 4] = this.data.font_size[i];
+        gpu_data[gpu_data_offset + 5] = 0; // padding
       }
       `,
     },

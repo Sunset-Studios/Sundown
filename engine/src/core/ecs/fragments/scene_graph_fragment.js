@@ -22,6 +22,7 @@ class SceneGraphDataView {
 
   set parent(value) {
     SceneGraphFragment.data.parent[this.current_entity] = value ?? -1;
+    SceneGraphFragment.data.scene_graph.remove(this.current_entity);
     SceneGraphFragment.data.scene_graph.add(value ?? null, this.current_entity);
     if (SceneGraphFragment.data.dirty) {
       SceneGraphFragment.data.dirty[this.current_entity] = 1;
@@ -30,9 +31,11 @@ class SceneGraphDataView {
   }
 
   get children() {
-    return (
-      SceneGraphFragment.data.scene_graph.find_node(this.current_entity)
-        ?.children ?? []
+    const node = SceneGraphFragment.data.scene_graph.find_node(
+      this.current_entity,
+    );
+    return [...SceneGraphFragment.data.scene_graph.get_children(node)].map(
+      (child) => child.data,
     );
   }
 
@@ -42,6 +45,7 @@ class SceneGraphDataView {
         this.current_entity,
         value,
         true /* replace_children */,
+        true /* unique */,
       );
     }
     if (SceneGraphFragment.data.dirty) {
@@ -104,8 +108,10 @@ export class SceneGraphFragment extends Fragment {
   static duplicate_entity_data(entity) {
     const node = this.data.scene_graph.find_node(entity);
     return {
-      parent: node?.parent ?? null,
-      children: node?.children ?? [],
+      parent: this.data.scene_graph.get_parent(node),
+      children: this.data.scene_graph
+        .get_children(node)
+        .map((child) => child.data),
     };
   }
 

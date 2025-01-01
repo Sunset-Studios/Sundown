@@ -28,12 +28,7 @@ struct FragmentOutput {
 
 @fragment fn fs(v_out: VertexOutput) -> FragmentOutput {
     var reveal = textureSample(reveal_texture, global_sampler, v_out.uv);
-    if (approx(reveal.r, 1.0)) {
-        discard;
-    }
-
     var accum = textureSample(accumulation_texture, global_sampler, v_out.uv);
-
     var average_color = accum.rgb / max(accum.a, epsilon);
     return FragmentOutput(vec4f(average_color, reveal.r));
 }

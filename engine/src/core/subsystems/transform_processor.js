@@ -58,7 +58,7 @@ export class TransformProcessor extends SimulationLayer {
         this.transform_processing_output_lists[i][3] = transforms.bounds_data_buffer;
 
         ComputeTaskQueue.get().new_task(
-          transform_processing_task_name,
+          transform_processing_task_name + i,
           transform_processing_wgsl_path,
           this.transform_processing_input_lists[i],
           this.transform_processing_output_lists[i],

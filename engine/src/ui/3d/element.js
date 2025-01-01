@@ -11,7 +11,7 @@ import { spawn_mesh_entity } from "../../core/ecs/entity_utils.js";
 export class Element3D {
   static events = {};
 
-  static create(scene, config, material = null, parent = null, children = []) {
+  static create(scene, config, material = null, parent = null, children = [], start_visible = true) {
     const context = Renderer.get().graphics_context;
 
     const entity = spawn_mesh_entity(
@@ -20,10 +20,10 @@ export class Element3D {
       { x: 0, y: 0, z: 0, w: 1 },
       { x: 1, y: 1, z: 1 },
       Mesh.quad(context),
-      material ?? Material.default_material(context),
+      material ?? Material.default_ui_material(context),
       parent,
       children,
-      false, /* start_visible */
+      start_visible,
       false /* refresh_entity_queries */
     );
 
@@ -106,10 +106,10 @@ export class Element3D {
     if (!this_scene_graph_data) {
       return;
     }
-
-    let parent_scene_graph_data = scene.get_fragment(parent.entity, SceneGraphFragment);
+    
+    let parent_scene_graph_data = scene.get_fragment(parent, SceneGraphFragment);
     if (parent_scene_graph_data) {
-      this_scene_graph_data.parent = parent.entity;
+      this_scene_graph_data.parent = parent;
       const children = parent_scene_graph_data.children;
       children.push(entity);
       parent_scene_graph_data.children = children;

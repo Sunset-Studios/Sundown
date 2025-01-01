@@ -1,3 +1,4 @@
+import { Renderer } from "../../renderer/renderer.js";
 import { SimulationLayer } from "../simulation_layer.js";
 import { EntityManager } from "../ecs/entity.js";
 import { UserInterfaceFragment } from "../ecs/fragments/user_interface_fragment.js";
@@ -22,6 +23,8 @@ export class UI3DProcessor extends SimulationLayer {
       if (!user_interfaces || user_interfaces.dirty.length === 0) {
         return;
       }
+
+      let updated = false;
 
       for (let i = 0; i < this.entity_query.matching_entities.length; ++i) {
         const entity = this.entity_query.matching_entities[i];
@@ -55,6 +58,12 @@ export class UI3DProcessor extends SimulationLayer {
             InputProvider.get().consume_action(InputKey.B_mouse_left);
           }
         }
+
+        updated = true;
+      }
+
+      if (updated) {
+        UserInterfaceFragment.to_gpu_data(Renderer.get().graphics_context);
       }
     });
   }

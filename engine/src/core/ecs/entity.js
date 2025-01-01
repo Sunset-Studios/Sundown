@@ -66,9 +66,15 @@ export class EntityManager {
                 const data = FragmentType.duplicate_entity_data?.(entity);
                 const new_frag_view = this.add_fragment(new_entity, FragmentType, refresh_entity_data);
                 for (const [key, value] of Object.entries(data)) {
-                    if (typeof value === 'object') {
-                        for (const [sub_key, sub_value] of Object.entries(value)) {
-                            new_frag_view[key][sub_key] = sub_value;
+                    if (value !== null) {
+                        if (Array.isArray(value)) {
+                            new_frag_view[key] = [...value];
+                        } else if (typeof value === 'object') {
+                            for (const [sub_key, sub_value] of Object.entries(value)) {
+                                new_frag_view[key][sub_key] = sub_value;
+                            }
+                        } else {
+                            new_frag_view[key] = value;
                         }
                     } else {
                         new_frag_view[key] = value;

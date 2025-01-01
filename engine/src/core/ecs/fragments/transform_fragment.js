@@ -239,22 +239,22 @@ export class TransformFragment extends Fragment {
 
   static duplicate_entity_data(entity) {
     return {
-      position: {
-        x: this.data.position[entity * 4],
-        y: this.data.position[entity * 4 + 1],
-        z: this.data.position[entity * 4 + 2],
-      },
-      rotation: {
-        x: this.data.rotation[entity * 4],
-        y: this.data.rotation[entity * 4 + 1],
-        z: this.data.rotation[entity * 4 + 2],
-        w: this.data.rotation[entity * 4 + 3],
-      },
-      scale: {
-        x: this.data.scale[entity * 4],
-        y: this.data.scale[entity * 4 + 1],
-        z: this.data.scale[entity * 4 + 2],
-      },
+      position: [
+        this.data.position[entity * 4],
+        this.data.position[entity * 4 + 1],
+        this.data.position[entity * 4 + 2],
+      ],
+      rotation: [
+        this.data.rotation[entity * 4],
+        this.data.rotation[entity * 4 + 1],
+        this.data.rotation[entity * 4 + 2],
+        this.data.rotation[entity * 4 + 3],
+      ],
+      scale: [
+        this.data.scale[entity * 4],
+        this.data.scale[entity * 4 + 1],
+        this.data.scale[entity * 4 + 2],
+      ],
     };
   }
 

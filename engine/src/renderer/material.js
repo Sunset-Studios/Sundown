@@ -513,6 +513,9 @@ export class Material {
       this.#default_ui_material = Material.create("DefaultUIMaterial", "DefaultUIMaterial", {
         family: MaterialFamilyType.Opaque,
       });
+
+      const default_ui_material_object = Material.get(this.#default_ui_material);
+      default_ui_material_object.listen_for_storage_data("element_data");
     }
     return this.#default_ui_material;
   }
