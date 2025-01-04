@@ -17,14 +17,12 @@ export class MaterialTemplate {
   static templates = new Map();
 
   constructor(
-    context,
     name,
     shader,
     family = MaterialFamilyType.Opaque,
     pipeline_state_config = {},
     parent = null
   ) {
-    this.context = context;
     this.name = name;
     this.shader = shader;
     this.pipeline_state_config = pipeline_state_config;
@@ -42,7 +40,6 @@ export class MaterialTemplate {
   }
 
   static create(
-    context,
     name,
     shader_path,
     family = MaterialFamilyType.Opaque,
@@ -65,14 +62,13 @@ export class MaterialTemplate {
     }
 
     if (shader_path) {
-      shader = Shader.create(context, shader_path);
+      shader = Shader.create(shader_path);
     }
     if (shader.defines["TRANSPARENT"]) {
       family = MaterialFamilyType.Transparent;
     }
 
     const template = new MaterialTemplate(
-      context,
       name,
       shader,
       family,
@@ -105,7 +101,6 @@ export class MaterialTemplate {
   }
 
   create_pipeline_state(
-    context,
     bind_group_layouts,
     output_targets = [],
     depth_stencil_options = {}
@@ -120,7 +115,6 @@ export class MaterialTemplate {
 
         all_bind_group_layouts.push(
           BindGroup.create_layout(
-            context,
             this.name,
             bind_group.map((binding) => {
               let binding_obj = {};
@@ -258,7 +252,7 @@ export class MaterialTemplate {
       };
     }
 
-    return PipelineState.create_render(context, this.name, pipeline_descriptor);
+    return PipelineState.create_render(this.name, pipeline_descriptor);
   }
 
   static get_template(name) {
@@ -336,7 +330,6 @@ export class Material {
     });
 
     this.bind_group = BindGroup.create(
-      this.template.context,
       this.template.name,
       this.pipeline_state,
       BindGroupType.Material,
@@ -347,7 +340,6 @@ export class Material {
 
   update_pipeline_state(bind_groups, output_targets = []) {
     this.pipeline_state = this.template.create_pipeline_state(
-      this.template.context,
       bind_groups
         .filter((bind_group) => bind_group !== null)
         .map((bind_group) => bind_group.layout),
@@ -485,9 +477,9 @@ export class Material {
   }
 
   static #default_material = null;
-  static default_material(context) {
+  static default_material() {
     if (!this.#default_material) {
-      MaterialTemplate.create(context, "DefaultMaterial", "standard_material.wgsl");
+      MaterialTemplate.create("DefaultMaterial", "standard_material.wgsl");
       this.#default_material = Material.create("DefaultMaterial", "DefaultMaterial", {
         family: MaterialFamilyType.Opaque,
       });
@@ -497,10 +489,9 @@ export class Material {
   }
 
   static #default_ui_material = null;
-  static default_ui_material(context) {
+  static default_ui_material() {
     if (!this.#default_ui_material) {
       MaterialTemplate.create(
-        context,
         "DefaultUIMaterial",
         "ui_standard_material.wgsl",
         MaterialFamilyType.Opaque,
@@ -526,12 +517,11 @@ export class Material {
 }
 
 // Usage example
-// const context = Renderer.get().graphics_context;
+// const renderer = Renderer.get();
 
 // // Create a material template
 // const shader_path = "standard.wgsl";
 // const template = MaterialTemplate.create(
-//   context,
 //   "StandardMaterial",
 //   shader_path
 // );

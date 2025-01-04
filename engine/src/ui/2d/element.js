@@ -32,7 +32,7 @@ export class Element {
   was_pressed = false;
   is_pressed = false;
 
-  init(context, name, config, children = [], element_type = "div") {
+  init(name, config, children = [], element_type = "div") {
     this.name = name;
     this.config = config;
 

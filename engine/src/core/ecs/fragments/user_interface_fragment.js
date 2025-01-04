@@ -4,6 +4,7 @@ import { Renderer } from "../../../renderer/renderer.js";
 import { Buffer } from "../../../renderer/buffer.js";
 import { global_dispatcher } from "../../../core/dispatcher.js";
 import { RingBufferAllocator } from "../../../memory/allocator.js";
+import { EntityID } from "../entity.js";
 
 const element_data_buffer_name = "element_data_buffer";
 const element_data_cpu_buffer_name = "element_data_cpu_buffer";
@@ -12,7 +13,7 @@ const element_data_update_event = "element_data_update";
 
 class ColorDataView {
   constructor() {
-    this.current_entity = -1;
+    this.current_entity = -1n;
   }
 
   get r() {
@@ -70,7 +71,7 @@ class ColorDataView {
 }
 
 class UserInterfaceDataView {
-  current_entity = -1;
+  current_entity = -1n;
 
   constructor() {
     this.color = new ColorDataView(this);
@@ -247,7 +248,7 @@ export class UserInterfaceFragment extends Fragment {
       gpu_data_dirty: true,
     };
 
-    this.rebuild_buffers(Renderer.get().graphics_context);
+    this.rebuild_buffers();
   }
 
   static resize(new_size) {
@@ -285,7 +286,7 @@ export class UserInterfaceFragment extends Fragment {
     });
     Fragment.resize_array(this.data, "dirty", new_size, Uint8Array, 1);
 
-    this.rebuild_buffers(Renderer.get().graphics_context);
+    this.rebuild_buffers();
   }
 
   static add_entity(entity) {
@@ -295,48 +296,57 @@ export class UserInterfaceFragment extends Fragment {
 
   static remove_entity(entity) {
     super.remove_entity(entity);
-    this.data.allows_cursor_events[entity] = 0;
-    this.data.auto_size[entity] = 0;
-    this.data.was_cursor_inside[entity] = 0;
-    this.data.is_cursor_inside[entity] = 0;
-    this.data.was_clicked[entity] = 0;
-    this.data.is_clicked[entity] = 0;
-    this.data.is_pressed[entity] = 0;
-    this.data.was_pressed[entity] = 0;
-    this.data.color.r[entity] = 0;
-    this.data.color.g[entity] = 0;
-    this.data.color.b[entity] = 0;
-    this.data.color.a[entity] = 0;
+
+    const instance_count = EntityID.get_instance_count(entity);
+    const entity_offset = EntityID.get_absolute_index(entity);
+
+    for (let i = 0; i < instance_count; ++i) {
+      const entity_index = entity_offset + i;
+      this.data.allows_cursor_events[entity_index] = 0;
+      this.data.auto_size[entity_index] = 0;
+      this.data.was_cursor_inside[entity_index] = 0;
+      this.data.is_cursor_inside[entity_index] = 0;
+      this.data.was_clicked[entity_index] = 0;
+      this.data.is_clicked[entity_index] = 0;
+      this.data.is_pressed[entity_index] = 0;
+      this.data.was_pressed[entity_index] = 0;
+      this.data.color.r[entity_index] = 0;
+      this.data.color.g[entity_index] = 0;
+      this.data.color.b[entity_index] = 0;
+      this.data.color.a[entity_index] = 0;
+    }
   }
 
-  static get_entity_data(entity) {
+  static get_entity_data(entity, instance = 0) {
+    const entity_index = EntityID.get_absolute_index(entity) + instance;
     const data_view = this.data_view_allocator.allocate();
     data_view.fragment = this;
-    data_view.view_entity(entity);
+    data_view.view_entity(entity_index);
     return data_view;
   }
 
-  static duplicate_entity_data(entity) {
+  static duplicate_entity_data(entity, instance = 0) {
     const data = {};
-    data.allows_cursor_events = this.data.allows_cursor_events[entity];
-    data.auto_size = this.data.auto_size[entity];
-    data.was_cursor_inside = this.data.was_cursor_inside[entity];
-    data.is_cursor_inside = this.data.is_cursor_inside[entity];
-    data.was_clicked = this.data.was_clicked[entity];
-    data.is_clicked = this.data.is_clicked[entity];
-    data.is_pressed = this.data.is_pressed[entity];
-    data.was_pressed = this.data.was_pressed[entity];
+    const entity_index = EntityID.get_absolute_index(entity) + instance;
+    data.allows_cursor_events = this.data.allows_cursor_events[entity_index];
+    data.auto_size = this.data.auto_size[entity_index];
+    data.was_cursor_inside = this.data.was_cursor_inside[entity_index];
+    data.is_cursor_inside = this.data.is_cursor_inside[entity_index];
+    data.was_clicked = this.data.was_clicked[entity_index];
+    data.is_clicked = this.data.is_clicked[entity_index];
+    data.is_pressed = this.data.is_pressed[entity_index];
+    data.was_pressed = this.data.was_pressed[entity_index];
     data.color = {
-      r: this.data.color.r[entity],
-      g: this.data.color.g[entity],
-      b: this.data.color.b[entity],
-      a: this.data.color.a[entity],
+      r: this.data.color.r[entity_index],
+      g: this.data.color.g[entity_index],
+      b: this.data.color.b[entity_index],
+      a: this.data.color.a[entity_index],
     };
-    data.dirty = this.data.dirty[entity];
+    data.dirty = this.data.dirty[entity_index];
     return data;
   }
 
-  static to_gpu_data(context) {
+  static to_gpu_data() {
     if (!this.data) this.initialize();
 
     if (!this.data.gpu_data_dirty) {
@@ -345,14 +355,14 @@ export class UserInterfaceFragment extends Fragment {
       };
     }
 
-    this.rebuild_buffers(context);
+    this.rebuild_buffers();
 
     return {
       element_data_buffer: this.data.element_data_buffer,
     };
   }
 
-  static rebuild_buffers(context) {
+  static rebuild_buffers() {
     {
       const gpu_data = new Float32Array(Math.max(this.size * 4, 4));
       let offset = 0;
@@ -368,7 +378,7 @@ export class UserInterfaceFragment extends Fragment {
         !this.data.element_data_buffer ||
         this.data.element_data_buffer.config.size < gpu_data.byteLength
       ) {
-        this.data.element_data_buffer = Buffer.create(context, {
+        this.data.element_data_buffer = Buffer.create({
           name: element_data_buffer_name,
           usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
           raw_data: gpu_data,
@@ -381,7 +391,7 @@ export class UserInterfaceFragment extends Fragment {
           this.data.element_data_buffer,
         );
       } else {
-        this.data.element_data_buffer.write(context, gpu_data);
+        this.data.element_data_buffer.write(gpu_data);
       }
 
       global_dispatcher.dispatch(element_data_update_event);
@@ -390,5 +400,5 @@ export class UserInterfaceFragment extends Fragment {
     this.data.gpu_data_dirty = false;
   }
 
-  static async sync_buffers(context) {}
+  static async sync_buffers() {}
 }

@@ -1,10 +1,5 @@
-import { EntityManager } from "./ecs/entity.js";
-import { SharedViewBuffer } from "./shared_data.js";
-import { Renderer } from "../renderer/renderer.js";
-
 export class LayerContext {
     current_view = null;
-    entity_manager = null;
 }
 
 export class SimulationLayer {
@@ -15,9 +10,7 @@ export class SimulationLayer {
         this.name = "SimulationLayer";
     }
 
-    init() {
-        this.context.entity_manager = EntityManager.get();
-    }
+    init() {}
 
     pre_update(delta_time) {
         for (let i = 0; i < this.layers.length; i++) {

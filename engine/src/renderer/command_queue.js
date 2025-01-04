@@ -1,13 +1,17 @@
+import { Renderer } from "./renderer.js";
+
 export class CommandQueue {
-    static create_encoder(context, name) {
-        return context.device.createCommandEncoder({ label: name });
+    static create_encoder(name) {
+        const renderer = Renderer.get();
+        return renderer.device.createCommandEncoder({ label: name });
     }
 
-    static submit(context, encoder) {
+    static submit(encoder) {
+        const renderer = Renderer.get();
         const command_buffer = encoder.finish();
-        context.device.queue.submit([command_buffer]);
-        context.device.queue.onSubmittedWorkDone().then(() => {
-            context.execution_queue.update();
+        renderer.device.queue.submit([command_buffer]);
+        renderer.device.queue.onSubmittedWorkDone().then(() => {
+            renderer.execution_queue.update();
         });
     }
 }

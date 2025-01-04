@@ -29,11 +29,13 @@ struct FrameInfo {
 struct EntityTransform {
     transform: mat4x4f,
     prev_transform: mat4x4f,
-};
-
-struct EntityInverseTransform {
     inverse_model_matrix: mat4x4f,
     transpose_inverse_model_matrix: mat4x4f,
+};
+
+struct EntityMetadata {
+    offset: u32,
+    count: u32,
 };
 
 struct EntityBoundsData {
@@ -74,6 +76,7 @@ const world_up = vec3f(0.0, 1.0, 0.0);
 @group(0) @binding(2) var global_sampler: sampler;
 @group(0) @binding(3) var non_filtering_sampler: sampler;
 @group(0) @binding(4) var<uniform> frame_info: FrameInfo;
+@group(0) @binding(5) var<storage, read> entity_metadata: array<EntityMetadata>;
 
 fn cubemap_direction_to_uv(direction: vec3f) -> vec3f {
     let abs_dir = abs(direction);

@@ -129,14 +129,10 @@ fn fragment(v_out: VertexOutput, f_out: ptr<function, FragmentOutput>) -> Fragme
         discard;
     }
 
-    // For this demo, we set the text color to white, multiplied by alpha.
-    // You can add a uniform for color if desired.
-    let text_color = vec4f(1.0, 1.0, 1.0, alpha);
-
     // Write out to the G-Buffer's albedo channel.
-    f_out.albedo = text_color;
+    f_out.albedo = vec4f(1.0, 0.1, 0.1, alpha);
     // If you have custom emissive, normal, etc. you can set them as needed:
-    f_out.emissive = vec4f(1.0, 0.0, 0.0, 0.0);
+    f_out.emissive = vec4f(3.0, 0.0, 0.0, 0.0);
 
     return *f_out;
 }

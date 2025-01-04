@@ -40,7 +40,7 @@
 
 //                 // Custom resize logic
 //                 this.data.customCache.clear();
-//                 this.rebuild_buffers(Renderer.get().graphics_context);
+//                 this.rebuild_buffers();
 //             `
 //         },
 //         // Extend default behavior
@@ -107,6 +107,7 @@ export class FragmentGenerator {
       Buffer: "../../../renderer/buffer.js",
       global_dispatcher: "../../../core/dispatcher.js",
       RingBufferAllocator: "../../../memory/allocator.js",
+      EntityID: "../entity.js",
     };
 
     const implementations = {
@@ -158,7 +159,7 @@ ${Object.entries(fields)
     ([key, field]) => `
     class ${key[0].toUpperCase() + key.slice(1)}DataView {
         constructor() {
-            this.current_entity = -1;
+            this.current_entity = -1n;
         }
 
         ${Object.keys(field.vector)
@@ -189,7 +190,7 @@ ${Object.entries(fields)
   .join("\n")}
 
 class ${name}DataView {
-    current_entity = -1;
+    current_entity = -1n;
 
     constructor() {
       ${Object.entries(fields)
@@ -319,7 +320,7 @@ export class ${fragment_name} extends Fragment {
         }
         ${
           Object.keys(buffers).length > 0
-            ? `this.rebuild_buffers(Renderer.get().graphics_context);`
+            ? `this.rebuild_buffers();`
             : ""
         }
     `;
@@ -361,7 +362,7 @@ export class ${fragment_name} extends Fragment {
           })
           .join("\n        ")}
         
-        ${Object.keys(buffers).length === 0 ? "" : `this.rebuild_buffers(Renderer.get().graphics_context);`}
+        ${Object.keys(buffers).length === 0 ? "" : `this.rebuild_buffers();`}
     `;
   }
 
@@ -413,7 +414,7 @@ export class ${fragment_name} extends Fragment {
           return `${Object.keys(field.vector)
             .map(
               (axis) =>
-                `this.data.${key}.${axis}[entity] = ${field.stride > 1 ? `Array(${field.stride}).fill(${field.default ? field.default[axis] : 0})` : field.default ? field.default[axis] : 0};`
+                `this.data.${key}.${axis}[entity_index] = ${field.stride > 1 ? `Array(${field.stride}).fill(${field.default ? field.default[axis] : 0})` : field.default ? field.default[axis] : 0};`
             )
             .join("\n")}
         `;
@@ -421,40 +422,48 @@ export class ${fragment_name} extends Fragment {
         if (key === "dirty") {
           return "";
         }
-        return `this.data.${key}[entity] = ${field.stride > 1 ? `Array(${field.stride}).fill(${field.default || 0})` : field.default || 0};`;
+        return `this.data.${key}[entity_index] = ${field.stride > 1 ? `Array(${field.stride}).fill(${field.default || 0})` : field.default || 0};`;
       })
       .filter((reset) => !reset.startsWith("//"));
 
     return `
         super.remove_entity(entity);
-        ${field_resets.join("\n")}
-        ${Object.entries(fields)
-          .filter(([_, field]) => field.is_container)
-          .map(([key, _]) => `this.data.${key}.remove(entity);`)
-          .join("\n        ")}
+
+        const instance_count = EntityID.get_instance_count(entity);
+        const entity_offset = EntityID.get_absolute_index(entity);
+
+        for (let i = 0; i < instance_count; ++i) {
+            const entity_index = entity_offset + i;
+            ${field_resets.join("\n")}
+            ${Object.entries(fields)
+              .filter(([_, field]) => field.is_container)
+              .map(([key, _]) => `this.data.${key}.remove(entity_index);`)
+              .join("\n        ")}
+        }
     `;
   }
 
   static generate_get_entity_data(fields, override) {
     if (override) {
       return `
-    static get_entity_data(entity) {
+    static get_entity_data(entity, instance = 0) {
         ${override.pre ? override.pre : ""}
         ${!override.skip_default ? this.get_default_get_entity_data(fields) : ""}
         ${override.post ? override.post : ""}
     }`;
     }
     return `
-    static get_entity_data(entity) {
+    static get_entity_data(entity, instance = 0) {
         ${this.get_default_get_entity_data(fields)}
     }`;
   }
 
   static get_default_get_entity_data(fields) {
     return `
+        const entity_index = EntityID.get_absolute_index(entity) + instance;
         const data_view = this.data_view_allocator.allocate();
         data_view.fragment = this;
-        data_view.view_entity(entity);
+        data_view.view_entity(entity_index);
         return data_view;
     `;
   }
@@ -462,14 +471,14 @@ export class ${fragment_name} extends Fragment {
   static generate_duplicate_entity_data(fields, override) {
     if (override) {
       return `
-    static duplicate_entity_data(entity) {
+    static duplicate_entity_data(entity, instance = 0) {
         ${override.pre ? override.pre : ""}
         ${!override.skip_default ? this.get_default_duplicate_entity_data(fields) : ""}
         ${override.post ? override.post : ""}
     }`;
     }
     return `
-    static duplicate_entity_data(entity) {
+    static duplicate_entity_data(entity, instance = 0) {
         ${this.get_default_duplicate_entity_data(fields)}
     }`;
   }
@@ -477,26 +486,27 @@ export class ${fragment_name} extends Fragment {
   static get_default_duplicate_entity_data(fields) {
     return `
         const data = {};
+        const entity_index = EntityID.get_absolute_index(entity) + instance;
         ${Object.entries(fields)
           .filter(([_, field]) => !field.no_fragment_array)
           .map(([key, field]) => {
             if (field.is_container) {
-              return `data.${key} = this.data.${key}.get_data_for_entity(entity);`;
+              return `data.${key} = this.data.${key}.get_data_for_entity(entity_index);`;
             }
             if (field.vector) {
               return `data.${key} = {
                         ${Object.keys(field.vector)
-                          .map((axis) => `${axis}: this.data.${key}.${axis}[entity]`)
+                          .map((axis) => `${axis}: this.data.${key}.${axis}[entity_index]`)
                           .join(",\n        ")}
                     };`;
             }
             if (field.stride > 1) {
               return `data.${key} = Array(${field.stride}).fill(${field.default || 0});
                     for (let i = 0; i < ${field.stride}; i++) {
-                        data.${key}[i] = this.data.${key}[entity * ${field.stride} + i];
+                        data.${key}[i] = this.data.${key}[entity_index * ${field.stride} + i];
                     }`;
             }
-            return `data.${key} = this.data.${key}[entity];`;
+            return `data.${key} = this.data.${key}[entity_index];`;
           })
           .join("\n        ")}
         return data;
@@ -508,14 +518,14 @@ export class ${fragment_name} extends Fragment {
 
     if (override) {
       return `
-    static rebuild_buffers(context) {
+    static rebuild_buffers() {
         ${override.pre ? override.pre : ""}
         ${!override.skip_default ? this.generate_default_rebuild_buffers(buffers) : ""}
         ${override.post ? override.post : ""}
     }`;
     }
     return `
-    static rebuild_buffers(context) {
+    static rebuild_buffers() {
         ${this.generate_default_rebuild_buffers(buffers)}
     }`;
   }
@@ -532,7 +542,7 @@ export class ${fragment_name} extends Fragment {
                 : `const gpu_data = this.data.${key} ? this.data.${key} : new ${buffer.type.array.name}(this.size * ${buffer.stride || 1});`
             }
             if (!this.data.${key}_buffer || this.data.${key}_buffer.config.size < gpu_data.byteLength) {
-                this.data.${key}_buffer = Buffer.create(context, {
+                this.data.${key}_buffer = Buffer.create({
                 name: ${key}_buffer_name,
                 usage: ${buffer.usage},
                 raw_data: gpu_data,
@@ -541,7 +551,7 @@ export class ${fragment_name} extends Fragment {
             ${
               buffer.cpu_buffer
                 ? `
-                this.data.${key}_cpu_buffer = Buffer.create(context, {
+                this.data.${key}_cpu_buffer = Buffer.create({
                     name: ${key}_cpu_buffer_name,
                     usage: ${BufferType.CPU_READ},
                     raw_data: gpu_data,
@@ -552,7 +562,7 @@ export class ${fragment_name} extends Fragment {
             Renderer.get().mark_bind_groups_dirty(true);
             ${buffer.no_dispatch ? "" : `global_dispatcher.dispatch(${key}_event, this.data.${key}_buffer);`}
           } else {
-            this.data.${key}_buffer.write(context, gpu_data);
+            this.data.${key}_buffer.write(gpu_data);
           }
 
           ${buffer.no_dispatch ? "" : `global_dispatcher.dispatch(${key}_update_event);`}
@@ -570,14 +580,14 @@ export class ${fragment_name} extends Fragment {
 
     if (override) {
       return `
-    static async sync_buffers(context) {
+    static async sync_buffers() {
         ${override.pre ? override.pre : ""}
         ${!override.skip_default ? this.generate_default_sync_buffers(buffers) : ""}
         ${override.post ? override.post : ""}
     }`;
     }
     return `
-    static async sync_buffers(context) {
+    static async sync_buffers() {
         ${this.generate_default_sync_buffers(buffers)}
     }`;
   }
@@ -590,7 +600,6 @@ export class ${fragment_name} extends Fragment {
             ([key, _]) => `
         if (this.data.${key}_cpu_buffer?.buffer.mapState === "unmapped") {
             await this.data.${key}_cpu_buffer.read(
-                context,
                 this.data.${key},
                 this.data.${key}.byteLength,
                 0,
@@ -608,14 +617,14 @@ export class ${fragment_name} extends Fragment {
 
     if (override) {
       return `
-    static to_gpu_data(context) {
+    static to_gpu_data() {
         ${override.pre ? override.pre : ""}
         ${!override.skip_default ? this.generate_default_to_gpu_data(buffers) : ""}
         ${override.post ? override.post : ""}
     }`;
     }
     return `
-    static to_gpu_data(context) {
+    static to_gpu_data() {
         ${this.generate_default_to_gpu_data(buffers)}
     }`;
   }
@@ -632,7 +641,7 @@ export class ${fragment_name} extends Fragment {
             };
         }
 
-      this.rebuild_buffers(context);
+      this.rebuild_buffers();
 
       return {
             ${Object.keys(buffers)

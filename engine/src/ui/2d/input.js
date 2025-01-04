@@ -1,8 +1,8 @@
 import { Element } from "./element.js";
 
 export class Input extends Element {
-  init(context, name, config, children = []) {
-    super.init(context, name, config, children, "input");
+  init(name, config, children = []) {
+    super.init(name, config, children, "input");
       
     this.dom.type = this.config.type ?? "text";
     this.dom.value = this.config.value ?? "";
@@ -28,9 +28,9 @@ export class Input extends Element {
     }
   }
 
-  static create(context, name, config, children = []) {
+  static create(name, config, children = []) {
     const input = new Input();
-    input.init(context, name, config, children);
+    input.init(name, config, children);
     return input;
   }
 }

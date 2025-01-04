@@ -1,6 +1,7 @@
 import { Renderer } from "../engine/src/renderer/renderer.js";
 import { DeferredShadingStrategy } from "../engine/src/renderer/strategies/deferred_shading.js";
 import { Material } from "../engine/src/renderer/material.js";
+import { Fragment } from "../engine/src/core/ecs/fragment.js";
 import SimulationCore from "../engine/src/core/simulation_core.js";
 import { InputProvider } from "../engine/src/input/input_provider.js";
 import { EntityManager } from "../engine/src/core/ecs/entity.js";
@@ -33,8 +34,7 @@ export class TestScene extends Scene {
     freeform_arcball_control_processor.set_scene(this);
 
     // Set the skybox for this scene.
-    await SharedEnvironmentMapData.get().add_skybox(
-      Renderer.get().graphics_context,
+    await SharedEnvironmentMapData.add_skybox(
       "default_scene_skybox",
       [
         "engine/textures/gradientbox/px.png",
@@ -70,17 +70,16 @@ export class TestScene extends Scene {
       {x: 0, y: 15.0, z: 0},
       {x: 0, y: 0, z: 0, w: 1},
       {x: 1, y: 1, z: 1},
-      Mesh.quad(Renderer.get().graphics_context),
+      Mesh.quad(),
       font_object.material
     );
     const text_fragment_view = this.add_fragment(text_entity, TextFragment, false);
     text_fragment_view.font = font_id;
-    text_fragment_view.text = "Hello, World!";
-    text_fragment_view.font_size = 24;
+    text_fragment_view.text = "SUNDOWN ENGINE";
+    text_fragment_view.font_size = 32;
 
     // Create a sphere mesh and add it to the scene
     const mesh = await Mesh.from_gltf(
-      Renderer.get().graphics_context,
       "engine/models/sphere/sphere.gltf"
     );
 
@@ -91,6 +90,8 @@ export class TestScene extends Scene {
     const grid_size = 100; // 100x100x10 grid
     const grid_layers = 10;
     const spacing = 2; // 2 units apart
+
+    this.reserve_entities(grid_size * grid_size * grid_layers);
 
     for (let x = 0; x < grid_size; x++) {
       for (let z = 0; z < grid_size; z++) {
@@ -132,7 +133,7 @@ export class TestScene extends Scene {
   update(delta_time) {
     super.update(delta_time);
 
-    const transforms = EntityManager.get().get_fragment_array(TransformFragment);
+    const transforms = EntityManager.get_fragment_array(TransformFragment);
 
     ComputeTaskQueue.get().new_task(
       "ripples",
@@ -154,7 +155,7 @@ async function init() {
 
   // Initialize renderer with document canvas
   const canvas = document.getElementById("gpu-canvas");
-  await Renderer.get().setup(canvas, DeferredShadingStrategy);
+  await Renderer.create(canvas, DeferredShadingStrategy, { pointer_lock: true });
 
   // Create a test scene and register it with the simulation system
   const scene = new TestScene("TestScene");

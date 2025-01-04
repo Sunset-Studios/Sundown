@@ -182,7 +182,7 @@ export class Tree {
     for (let i = 0; i < initial_capacity; i++) {
       this.nodes[i] = new TreeNode();
     }
-    
+
     // Free list tracking
     this.free_list = new Uint32Array(initial_capacity);
     this.free_count = initial_capacity;
@@ -196,7 +196,7 @@ export class Tree {
 
     // Quick node lookup
     this.node_map = new Map(); // Maps data -> node_index
-    
+
     this.size = 0;
   }
 
@@ -209,7 +209,7 @@ export class Tree {
       // Grow the pool
       const old_capacity = this.nodes.length;
       const new_capacity = old_capacity * 2;
-      
+
       // Grow nodes array
       for (let i = old_capacity; i < new_capacity; i++) {
         this.nodes[i] = new TreeNode();
@@ -247,7 +247,7 @@ export class Tree {
     const child_idx = this.#allocate_node();
     const child = this.nodes[child_idx];
     child.data = child_data;
-    
+
     if (parent_data === null) {
       if (this.root_count === this.roots.length) {
         // Grow roots array
@@ -261,7 +261,7 @@ export class Tree {
       if (parent_idx !== undefined) {
         const parent = this.nodes[parent_idx];
         child.parent_idx = parent_idx;
-        
+
         if (parent.child_count === parent.children.length) {
           // Grow children array
           const new_children = new Uint32Array(parent.children.length * 2);
@@ -286,11 +286,14 @@ export class Tree {
     if (node_idx === undefined) return;
 
     const node = this.nodes[node_idx];
-    
+
     // Remove from parent's children or roots
     if (node.parent_idx !== -1) {
       const parent = this.nodes[node.parent_idx];
-      const idx = Array.prototype.indexOf.call(parent.children.slice(0, parent.child_count), node_idx);
+      const idx = Array.prototype.indexOf.call(
+        parent.children.slice(0, parent.child_count),
+        node_idx
+      );
       if (idx !== -1) {
         parent.children.copyWithin(idx, idx + 1, parent.child_count);
         parent.child_count--;
@@ -331,7 +334,7 @@ export class Tree {
   find_parent(data) {
     const node_idx = this.node_map.get(data);
     if (node_idx === undefined) return null;
-    
+
     const node = this.nodes[node_idx];
     return node.parent_idx === -1 ? null : this.nodes[node.parent_idx].data;
   }
@@ -344,10 +347,9 @@ export class Tree {
   find_children(data) {
     const node_idx = this.node_map.get(data);
     if (node_idx === undefined) return null;
-    
+
     const node = this.nodes[node_idx];
-    return Array.from(node.children.slice(0, node.child_count))
-      .map(idx => this.nodes[idx].data);
+    return Array.from(node.children.slice(0, node.child_count)).map((idx) => this.nodes[idx].data);
   }
 
   /**
@@ -464,9 +466,10 @@ export class Tree {
   get_children(node_idx) {
     const node = this.get_node(node_idx);
     if (!node) return [];
-    
-    return Array.from(node.children.slice(0, node.child_count))
-      .map(child_idx => this.nodes[child_idx]);
+
+    return Array.from(node.children.slice(0, node.child_count)).map(
+      (child_idx) => this.nodes[child_idx]
+    );
   }
 
   /**
@@ -912,5 +915,240 @@ export class TypedStack {
    */
   clear() {
     this.#size = 0;
+  }
+}
+
+/**
+ * A resizable vector implementation using TypedArrays for contiguous storage.
+ */
+export class Vector {
+  #buffer;
+  #size;
+  #uniqueness_set;
+
+  /**
+   * Create a new Vector with the specified initial capacity and array type.
+   * @param {number} initial_capacity - The initial capacity of the vector.
+   * @param {TypedArrayConstructor} array_type - The type of TypedArray to use (e.g. Float32Array).
+   */
+  constructor(initial_capacity = 16, array_type = Float32Array) {
+    console.assert(Number.isInteger(initial_capacity) && initial_capacity > 0);
+    this.#buffer = new array_type(initial_capacity);
+    this.#size = 0;
+    this.#uniqueness_set = new Set();
+  }
+
+  /**
+   * Reserve space for at least the specified number of elements.
+   * @param {number} new_capacity - The minimum capacity to reserve.
+   */
+  reserve(new_capacity) {
+    if (new_capacity <= this.#buffer.length) return;
+
+    const new_buffer = new this.#buffer.constructor(new_capacity);
+    new_buffer.set(this.#buffer);
+    this.#buffer = new_buffer;
+  }
+
+  /**
+   * Resize the vector to the specified capacity.
+   * @param {number} new_capacity - The new capacity of the vector.
+   */
+  resize(new_capacity) {
+    if (new_capacity <= this.#buffer.length) {
+      this.#size = new_capacity;
+    } else {
+      this.reserve(new_capacity);
+      this.#size = new_capacity;
+    }
+  }
+
+  /**
+   * Add an element to the end of the vector.
+   * @param {number} value - The value to add.
+   */
+  push(value) {
+    if (this.#size === this.#buffer.length) {
+      // Grow by 2x when full
+      this.reserve(Math.max(1, this.#buffer.length * 2));
+    }
+    this.#buffer[this.#size++] = value;
+  }
+
+  /**
+   * Remove and return the last element.
+   * @returns {number} The removed value.
+   * @throws {Error} If the vector is empty.
+   */
+  pop() {
+    console.assert(this.#size > 0);
+    return this.#buffer[--this.#size];
+  }
+
+  /**
+   * Get the index of a value in the vector.
+   * @param {number} value - The value to get the index of.
+   * @returns {number} The index of the value.
+   */
+  index_of(value) {
+    return this.#buffer.indexOf(value);
+  }
+
+  /**
+   * Remove an element at the specified index.
+   * @param {number} index - The index to remove from.
+   * @throws {Error} If the index is out of bounds.
+   */
+  remove(index) {
+    console.assert(index >= 0 && index < this.#size);
+    // Shift remaining elements left
+    this.#buffer.copyWithin(index, index + 1, this.#size);
+    this.#size--;
+  }
+
+  /**
+   * Get the value at the specified index.
+   * @param {number} index - The index to retrieve.
+   * @returns {number} The value at the index.
+   * @throws {Error} If the index is out of bounds.
+   */
+  get(index) {
+    console.assert(index >= 0 && index < this.#size);
+    return this.#buffer[index];
+  }
+
+  /**
+   * Set the value at the specified index.
+   * @param {number} index - The index to set.
+   * @param {number} value - The value to set.
+   * @throws {Error} If the index is out of bounds.
+   */
+  set(index, value) {
+    console.assert(index >= 0 && index < this.#size);
+    this.#buffer[index] = value;
+  }
+
+  /**
+   * Clear all elements from the vector.
+   */
+  clear() {
+    this.#size = 0;
+  }
+
+  /**
+   * Compact the vector by removing unused elements.
+   */
+  compact() {
+    this.#buffer.set(this.#buffer.slice(0, this.#size));
+    this.#size = this.#buffer.length;
+  }
+
+  /**
+   * Add multiple values to the vector, ensuring uniqueness.
+   * @param {TypedArray} other_typed_array - The array of values to add.
+   */
+  union(other_vector) {
+    // Create a Set for fast uniqueness checking
+    const unique_values = this.#uniqueness_set;
+    unique_values.clear();
+    // Add existing values to the set
+    for (let i = 0; i < this.#size; i++) {
+      unique_values.add(this.#buffer[i]);
+    }
+
+    // Count how many new unique values we'll be adding
+    let new_unique_count = 0;
+    for (let i = 0; i < other_vector.length; i++) {
+      if (!unique_values.has(other_vector.get(i))) {
+        unique_values.add(other_vector.get(i));
+        new_unique_count++;
+      }
+    }
+
+    // Ensure we have enough capacity
+    const required_capacity = this.#size + new_unique_count;
+    if (required_capacity > this.#buffer.length) {
+      this.reserve(Math.max(required_capacity, this.#buffer.length * 2));
+    }
+
+    // Add only unique values from the other array
+    unique_values.clear(); // Clear and rebuild set with current values
+    for (let i = 0; i < this.#size; i++) {
+      unique_values.add(this.#buffer[i]);
+    }
+
+    // Now add values from other vector if not already in set
+    for (let i = 0; i < other_vector.length; i++) {
+      const value = other_vector.get(i);
+      if (!unique_values.has(value)) {
+        this.#buffer[this.#size++] = value;
+        unique_values.add(value);
+      }
+    }
+  }
+
+  /**
+   * Remove duplicate values from the vector.
+   */
+  make_unique() {
+    const unique_values = this.#uniqueness_set;
+    unique_values.clear();
+
+    let write_idx = 0;
+
+    // Only keep first occurrence of each value
+    for (let i = 0; i < this.#size; i++) {
+      const value = this.#buffer[i];
+      if (!unique_values.has(value)) {
+        unique_values.add(value);
+        if (write_idx !== i) {
+          this.#buffer[write_idx] = value;
+        }
+        write_idx++;
+      }
+    }
+
+    this.#size = write_idx;
+  }
+
+  /**
+   * Set the data of the vector.
+   * @param {TypedArray} data - The data to set.
+   */
+  set_data(data) {
+    this.#buffer = data;
+    this.#size = data.length;
+  }
+
+  /**
+   * Get the data of the vector.
+   * @returns {TypedArray} The data.
+   */
+  get_data() {
+    return this.#buffer;
+  }
+
+  /**
+   * Get the current number of elements.
+   * @returns {number} The current size.
+   */
+  get length() {
+    return this.#size;
+  }
+
+  /**
+   * Get the current capacity of the vector.
+   * @returns {number} The current capacity.
+   */
+  get capacity() {
+    return this.#buffer.length;
+  }
+
+  /**
+   * Get the underlying buffer.
+   * @returns {TypedArray} The underlying buffer.
+   */
+  get buffer() {
+    return this.#buffer;
   }
 }

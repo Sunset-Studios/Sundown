@@ -4,6 +4,7 @@ import { Renderer } from "../../../renderer/renderer.js";
 import { Buffer } from "../../../renderer/buffer.js";
 import { global_dispatcher } from "../../../core/dispatcher.js";
 import { RingBufferAllocator } from "../../../memory/allocator.js";
+import { EntityID } from "../entity.js";
 
 const light_fragment_buffer_name = "light_fragment_buffer";
 const light_fragment_cpu_buffer_name = "light_fragment_cpu_buffer";
@@ -12,7 +13,7 @@ const light_fragment_update_event = "light_fragment_update";
 
 class PositionDataView {
   constructor() {
-    this.current_entity = -1;
+    this.current_entity = -1n;
   }
 
   get x() {
@@ -59,7 +60,7 @@ class PositionDataView {
 
 class DirectionDataView {
   constructor() {
-    this.current_entity = -1;
+    this.current_entity = -1n;
   }
 
   get x() {
@@ -106,7 +107,7 @@ class DirectionDataView {
 
 class ColorDataView {
   constructor() {
-    this.current_entity = -1;
+    this.current_entity = -1n;
   }
 
   get r() {
@@ -152,7 +153,7 @@ class ColorDataView {
 }
 
 class LightDataView {
-  current_entity = -1;
+  current_entity = -1n;
 
   constructor() {
     this.position = new PositionDataView(this);
@@ -303,7 +304,7 @@ export class LightFragment extends Fragment {
       gpu_data_dirty: true,
     };
 
-    this.rebuild_buffers(Renderer.get().graphics_context);
+    this.rebuild_buffers();
   }
 
   static resize(new_size) {
@@ -327,7 +328,7 @@ export class LightFragment extends Fragment {
     Fragment.resize_array(this.data, "active", new_size, Uint8Array, 1);
     Fragment.resize_array(this.data, "dirty", new_size, Uint8Array, 1);
 
-    this.rebuild_buffers(Renderer.get().graphics_context);
+    this.rebuild_buffers();
   }
 
   static add_entity(entity) {
@@ -337,61 +338,70 @@ export class LightFragment extends Fragment {
 
   static remove_entity(entity) {
     super.remove_entity(entity);
-    this.data.position.x[entity] = 0;
-    this.data.position.y[entity] = 0;
-    this.data.position.z[entity] = 0;
 
-    this.data.direction.x[entity] = 0;
-    this.data.direction.y[entity] = 0;
-    this.data.direction.z[entity] = 0;
+    const instance_count = EntityID.get_instance_count(entity);
+    const entity_offset = EntityID.get_absolute_index(entity);
 
-    this.data.color.r[entity] = 0;
-    this.data.color.g[entity] = 0;
-    this.data.color.b[entity] = 0;
+    for (let i = 0; i < instance_count; ++i) {
+      const entity_index = entity_offset + i;
+      this.data.position.x[entity_index] = 0;
+      this.data.position.y[entity_index] = 0;
+      this.data.position.z[entity_index] = 0;
 
-    this.data.type[entity] = 0;
-    this.data.intensity[entity] = 0;
-    this.data.radius[entity] = 0;
-    this.data.attenuation[entity] = 0;
-    this.data.outer_angle[entity] = 0;
-    this.data.active[entity] = 0;
+      this.data.direction.x[entity_index] = 0;
+      this.data.direction.y[entity_index] = 0;
+      this.data.direction.z[entity_index] = 0;
+
+      this.data.color.r[entity_index] = 0;
+      this.data.color.g[entity_index] = 0;
+      this.data.color.b[entity_index] = 0;
+
+      this.data.type[entity_index] = 0;
+      this.data.intensity[entity_index] = 0;
+      this.data.radius[entity_index] = 0;
+      this.data.attenuation[entity_index] = 0;
+      this.data.outer_angle[entity_index] = 0;
+      this.data.active[entity_index] = 0;
+    }
   }
 
-  static get_entity_data(entity) {
+  static get_entity_data(entity, instance = 0) {
+    const entity_index = EntityID.get_absolute_index(entity) + instance;
     const data_view = this.data_view_allocator.allocate();
     data_view.fragment = this;
-    data_view.view_entity(entity);
+    data_view.view_entity(entity_index);
     return data_view;
   }
 
-  static duplicate_entity_data(entity) {
+  static duplicate_entity_data(entity, instance = 0) {
     const data = {};
+    const entity_index = EntityID.get_absolute_index(entity) + instance;
     data.position = {
-      x: this.data.position.x[entity],
-      y: this.data.position.y[entity],
-      z: this.data.position.z[entity],
+      x: this.data.position.x[entity_index],
+      y: this.data.position.y[entity_index],
+      z: this.data.position.z[entity_index],
     };
     data.direction = {
-      x: this.data.direction.x[entity],
-      y: this.data.direction.y[entity],
-      z: this.data.direction.z[entity],
+      x: this.data.direction.x[entity_index],
+      y: this.data.direction.y[entity_index],
+      z: this.data.direction.z[entity_index],
     };
     data.color = {
-      r: this.data.color.r[entity],
-      g: this.data.color.g[entity],
-      b: this.data.color.b[entity],
+      r: this.data.color.r[entity_index],
+      g: this.data.color.g[entity_index],
+      b: this.data.color.b[entity_index],
     };
-    data.type = this.data.type[entity];
-    data.intensity = this.data.intensity[entity];
-    data.radius = this.data.radius[entity];
-    data.attenuation = this.data.attenuation[entity];
-    data.outer_angle = this.data.outer_angle[entity];
-    data.active = this.data.active[entity];
-    data.dirty = this.data.dirty[entity];
+    data.type = this.data.type[entity_index];
+    data.intensity = this.data.intensity[entity_index];
+    data.radius = this.data.radius[entity_index];
+    data.attenuation = this.data.attenuation[entity_index];
+    data.outer_angle = this.data.outer_angle[entity_index];
+    data.active = this.data.active[entity_index];
+    data.dirty = this.data.dirty[entity_index];
     return data;
   }
 
-  static to_gpu_data(context) {
+  static to_gpu_data() {
     if (!this.data) this.initialize();
 
     if (!this.data.gpu_data_dirty) {
@@ -400,14 +410,14 @@ export class LightFragment extends Fragment {
       };
     }
 
-    this.rebuild_buffers(context);
+    this.rebuild_buffers();
 
     return {
       light_fragment_buffer: this.data.light_fragment_buffer,
     };
   }
 
-  static rebuild_buffers(context) {
+  static rebuild_buffers() {
     {
       let total_active = 0;
       for (let i = 0; i < this.size; i++) {
@@ -447,7 +457,7 @@ export class LightFragment extends Fragment {
         !this.data.light_fragment_buffer ||
         this.data.light_fragment_buffer.config.size < gpu_data.byteLength
       ) {
-        this.data.light_fragment_buffer = Buffer.create(context, {
+        this.data.light_fragment_buffer = Buffer.create({
           name: light_fragment_buffer_name,
           usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
           raw_data: gpu_data,
@@ -460,7 +470,7 @@ export class LightFragment extends Fragment {
           this.data.light_fragment_buffer,
         );
       } else {
-        this.data.light_fragment_buffer.write(context, gpu_data);
+        this.data.light_fragment_buffer.write(gpu_data);
       }
 
       global_dispatcher.dispatch(light_fragment_update_event);
@@ -469,5 +479,5 @@ export class LightFragment extends Fragment {
     this.data.gpu_data_dirty = false;
   }
 
-  static async sync_buffers(context) {}
+  static async sync_buffers() {}
 }

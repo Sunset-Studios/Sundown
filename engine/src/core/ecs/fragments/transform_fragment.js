@@ -4,6 +4,7 @@ import { Renderer } from "../../../renderer/renderer.js";
 import { Buffer } from "../../../renderer/buffer.js";
 import { global_dispatcher } from "../../../core/dispatcher.js";
 import { RingBufferAllocator } from "../../../memory/allocator.js";
+import { EntityID } from "../entity.js";
 
 const position_buffer_name = "position_buffer";
 const position_cpu_buffer_name = "position_cpu_buffer";
@@ -30,18 +31,13 @@ const transforms_cpu_buffer_name = "transforms_cpu_buffer";
 const transforms_event = "transforms";
 const transforms_update_event = "transforms_update";
 
-const inverse_transforms_buffer_name = "inverse_transforms_buffer";
-const inverse_transforms_cpu_buffer_name = "inverse_transforms_cpu_buffer";
-const inverse_transforms_event = "inverse_transforms";
-const inverse_transforms_update_event = "inverse_transforms_update";
-
 const bounds_data_buffer_name = "bounds_data_buffer";
 const bounds_data_cpu_buffer_name = "bounds_data_cpu_buffer";
 const bounds_data_event = "bounds_data";
 const bounds_data_update_event = "bounds_data_update";
 
 class TransformDataView {
-  current_entity = -1;
+  current_entity = -1n;
 
   constructor() {}
 
@@ -59,7 +55,6 @@ class TransformDataView {
     TransformFragment.data.position[this.current_entity * 4 + 2] = value[2];
     TransformFragment.data.position[this.current_entity * 4 + 3] = 1.0;
     TransformFragment.data.position_buffer.write_raw(
-      Renderer.get().graphics_context,
       TransformFragment.data.position.subarray(
         this.current_entity * 4,
         this.current_entity * 4 + 4,
@@ -69,7 +64,6 @@ class TransformDataView {
     if (TransformFragment.data.dirty) {
       TransformFragment.data.dirty[this.current_entity] = 1;
       TransformFragment.data.dirty_flags_buffer.write_raw(
-        Renderer.get().graphics_context,
         TransformFragment.data.dirty.subarray(
           this.current_entity,
           this.current_entity + 1,
@@ -95,7 +89,6 @@ class TransformDataView {
     TransformFragment.data.rotation[this.current_entity * 4 + 2] = value[2];
     TransformFragment.data.rotation[this.current_entity * 4 + 3] = value[3];
     TransformFragment.data.rotation_buffer.write_raw(
-      Renderer.get().graphics_context,
       TransformFragment.data.rotation.subarray(
         this.current_entity * 4,
         this.current_entity * 4 + 4,
@@ -105,7 +98,6 @@ class TransformDataView {
     if (TransformFragment.data.dirty) {
       TransformFragment.data.dirty[this.current_entity] = 1;
       TransformFragment.data.dirty_flags_buffer.write_raw(
-        Renderer.get().graphics_context,
         TransformFragment.data.dirty.subarray(
           this.current_entity,
           this.current_entity + 1,
@@ -130,7 +122,6 @@ class TransformDataView {
     TransformFragment.data.scale[this.current_entity * 4 + 2] = value[2];
     TransformFragment.data.scale[this.current_entity * 4 + 3] = 0.0;
     TransformFragment.data.scale_buffer.write_raw(
-      Renderer.get().graphics_context,
       TransformFragment.data.scale.subarray(
         this.current_entity * 4,
         this.current_entity * 4 + 4,
@@ -140,7 +131,6 @@ class TransformDataView {
     if (TransformFragment.data.dirty) {
       TransformFragment.data.dirty[this.current_entity] = 1;
       TransformFragment.data.dirty_flags_buffer.write_raw(
-        Renderer.get().graphics_context,
         TransformFragment.data.dirty.subarray(
           this.current_entity,
           this.current_entity + 1,
@@ -190,12 +180,11 @@ export class TransformFragment extends Fragment {
       scale_cpu_buffer: null,
       dirty_flags_buffer: null,
       transforms_buffer: null,
-      inverse_transforms_buffer: null,
       bounds_data_buffer: null,
       gpu_data_dirty: true,
     };
     Renderer.get().on_post_render(this.on_post_render.bind(this));
-    this.rebuild_buffers(Renderer.get().graphics_context);
+    this.rebuild_buffers();
   }
 
   static resize(new_size) {
@@ -207,7 +196,7 @@ export class TransformFragment extends Fragment {
     Fragment.resize_array(this.data, "scale", new_size, Float32Array, 4);
     Fragment.resize_array(this.data, "dirty", new_size, Uint32Array, 1);
 
-    this.rebuild_buffers(Renderer.get().graphics_context);
+    this.rebuild_buffers();
   }
 
   static add_entity(entity) {
@@ -230,42 +219,43 @@ export class TransformFragment extends Fragment {
     entity_data.scale.z = 1;
   }
 
-  static get_entity_data(entity) {
+  static get_entity_data(entity, instance = 0) {
+    const entity_index = EntityID.get_absolute_index(entity) + instance;
     const data_view = this.data_view_allocator.allocate();
     data_view.fragment = this;
-    data_view.view_entity(entity);
+    data_view.view_entity(entity_index);
     return data_view;
   }
 
-  static duplicate_entity_data(entity) {
+  static duplicate_entity_data(entity, instance = 0) {
+    const entity_offset = EntityID.get_absolute_index(entity);
     return {
       position: [
-        this.data.position[entity * 4],
-        this.data.position[entity * 4 + 1],
-        this.data.position[entity * 4 + 2],
+        this.data.position[entity_offset * 4],
+        this.data.position[entity_offset * 4 + 1],
+        this.data.position[entity_offset * 4 + 2],
       ],
       rotation: [
-        this.data.rotation[entity * 4],
-        this.data.rotation[entity * 4 + 1],
-        this.data.rotation[entity * 4 + 2],
-        this.data.rotation[entity * 4 + 3],
+        this.data.rotation[entity_offset * 4],
+        this.data.rotation[entity_offset * 4 + 1],
+        this.data.rotation[entity_offset * 4 + 2],
+        this.data.rotation[entity_offset * 4 + 3],
       ],
       scale: [
-        this.data.scale[entity * 4],
-        this.data.scale[entity * 4 + 1],
-        this.data.scale[entity * 4 + 2],
+        this.data.scale[entity_offset * 4],
+        this.data.scale[entity_offset * 4 + 1],
+        this.data.scale[entity_offset * 4 + 2],
       ],
     };
   }
 
-  static to_gpu_data(context) {
+  static to_gpu_data() {
     if (!this.data) {
       this.initialize();
     }
 
     return {
       transforms_buffer: this.data.transforms_buffer,
-      inverse_transforms_buffer: this.data.inverse_transforms_buffer,
       bounds_data_buffer: this.data.bounds_data_buffer,
       position_buffer: this.data.position_buffer,
       rotation_buffer: this.data.rotation_buffer,
@@ -274,7 +264,7 @@ export class TransformFragment extends Fragment {
     };
   }
 
-  static rebuild_buffers(context) {
+  static rebuild_buffers() {
     {
       const gpu_data = this.data.position
         ? this.data.position
@@ -283,7 +273,7 @@ export class TransformFragment extends Fragment {
         !this.data.position_buffer ||
         this.data.position_buffer.config.size < gpu_data.byteLength
       ) {
-        this.data.position_buffer = Buffer.create(context, {
+        this.data.position_buffer = Buffer.create({
           name: position_buffer_name,
           usage:
             GPUBufferUsage.STORAGE |
@@ -293,7 +283,7 @@ export class TransformFragment extends Fragment {
           force: true,
         });
 
-        this.data.position_cpu_buffer = Buffer.create(context, {
+        this.data.position_cpu_buffer = Buffer.create({
           name: position_cpu_buffer_name,
           usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
           raw_data: gpu_data,
@@ -302,7 +292,7 @@ export class TransformFragment extends Fragment {
         Renderer.get().mark_bind_groups_dirty(true);
         global_dispatcher.dispatch(position_event, this.data.position_buffer);
       } else {
-        this.data.position_buffer.write(context, gpu_data);
+        this.data.position_buffer.write(gpu_data);
       }
 
       global_dispatcher.dispatch(position_update_event);
@@ -316,7 +306,7 @@ export class TransformFragment extends Fragment {
         !this.data.rotation_buffer ||
         this.data.rotation_buffer.config.size < gpu_data.byteLength
       ) {
-        this.data.rotation_buffer = Buffer.create(context, {
+        this.data.rotation_buffer = Buffer.create({
           name: rotation_buffer_name,
           usage:
             GPUBufferUsage.STORAGE |
@@ -326,7 +316,7 @@ export class TransformFragment extends Fragment {
           force: true,
         });
 
-        this.data.rotation_cpu_buffer = Buffer.create(context, {
+        this.data.rotation_cpu_buffer = Buffer.create({
           name: rotation_cpu_buffer_name,
           usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
           raw_data: gpu_data,
@@ -335,7 +325,7 @@ export class TransformFragment extends Fragment {
         Renderer.get().mark_bind_groups_dirty(true);
         global_dispatcher.dispatch(rotation_event, this.data.rotation_buffer);
       } else {
-        this.data.rotation_buffer.write(context, gpu_data);
+        this.data.rotation_buffer.write(gpu_data);
       }
 
       global_dispatcher.dispatch(rotation_update_event);
@@ -349,7 +339,7 @@ export class TransformFragment extends Fragment {
         !this.data.scale_buffer ||
         this.data.scale_buffer.config.size < gpu_data.byteLength
       ) {
-        this.data.scale_buffer = Buffer.create(context, {
+        this.data.scale_buffer = Buffer.create({
           name: scale_buffer_name,
           usage:
             GPUBufferUsage.STORAGE |
@@ -359,7 +349,7 @@ export class TransformFragment extends Fragment {
           force: true,
         });
 
-        this.data.scale_cpu_buffer = Buffer.create(context, {
+        this.data.scale_cpu_buffer = Buffer.create({
           name: scale_cpu_buffer_name,
           usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
           raw_data: gpu_data,
@@ -368,7 +358,7 @@ export class TransformFragment extends Fragment {
         Renderer.get().mark_bind_groups_dirty(true);
         global_dispatcher.dispatch(scale_event, this.data.scale_buffer);
       } else {
-        this.data.scale_buffer.write(context, gpu_data);
+        this.data.scale_buffer.write(gpu_data);
       }
 
       global_dispatcher.dispatch(scale_update_event);
@@ -381,7 +371,7 @@ export class TransformFragment extends Fragment {
         !this.data.dirty_flags_buffer ||
         this.data.dirty_flags_buffer.config.size < gpu_data.byteLength
       ) {
-        this.data.dirty_flags_buffer = Buffer.create(context, {
+        this.data.dirty_flags_buffer = Buffer.create({
           name: dirty_flags_buffer_name,
           usage:
             GPUBufferUsage.STORAGE |
@@ -397,7 +387,7 @@ export class TransformFragment extends Fragment {
           this.data.dirty_flags_buffer,
         );
       } else {
-        this.data.dirty_flags_buffer.write(context, gpu_data);
+        this.data.dirty_flags_buffer.write(gpu_data);
       }
 
       global_dispatcher.dispatch(dirty_flags_update_event);
@@ -406,12 +396,12 @@ export class TransformFragment extends Fragment {
     {
       const gpu_data = this.data.transforms
         ? this.data.transforms
-        : new Float32Array(this.size * 32);
+        : new Float32Array(this.size * 64);
       if (
         !this.data.transforms_buffer ||
         this.data.transforms_buffer.config.size < gpu_data.byteLength
       ) {
-        this.data.transforms_buffer = Buffer.create(context, {
+        this.data.transforms_buffer = Buffer.create({
           name: transforms_buffer_name,
           usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
           raw_data: gpu_data,
@@ -424,37 +414,10 @@ export class TransformFragment extends Fragment {
           this.data.transforms_buffer,
         );
       } else {
-        this.data.transforms_buffer.write(context, gpu_data);
+        this.data.transforms_buffer.write(gpu_data);
       }
 
       global_dispatcher.dispatch(transforms_update_event);
-    }
-
-    {
-      const gpu_data = this.data.inverse_transforms
-        ? this.data.inverse_transforms
-        : new Float32Array(this.size * 32);
-      if (
-        !this.data.inverse_transforms_buffer ||
-        this.data.inverse_transforms_buffer.config.size < gpu_data.byteLength
-      ) {
-        this.data.inverse_transforms_buffer = Buffer.create(context, {
-          name: inverse_transforms_buffer_name,
-          usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-          raw_data: gpu_data,
-          force: true,
-        });
-
-        Renderer.get().mark_bind_groups_dirty(true);
-        global_dispatcher.dispatch(
-          inverse_transforms_event,
-          this.data.inverse_transforms_buffer,
-        );
-      } else {
-        this.data.inverse_transforms_buffer.write(context, gpu_data);
-      }
-
-      global_dispatcher.dispatch(inverse_transforms_update_event);
     }
 
     {
@@ -465,7 +428,7 @@ export class TransformFragment extends Fragment {
         !this.data.bounds_data_buffer ||
         this.data.bounds_data_buffer.config.size < gpu_data.byteLength
       ) {
-        this.data.bounds_data_buffer = Buffer.create(context, {
+        this.data.bounds_data_buffer = Buffer.create({
           name: bounds_data_buffer_name,
           usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
           raw_data: gpu_data,
@@ -478,7 +441,7 @@ export class TransformFragment extends Fragment {
           this.data.bounds_data_buffer,
         );
       } else {
-        this.data.bounds_data_buffer.write(context, gpu_data);
+        this.data.bounds_data_buffer.write(gpu_data);
       }
 
       global_dispatcher.dispatch(bounds_data_update_event);
@@ -491,7 +454,7 @@ export class TransformFragment extends Fragment {
       !this.data.dirty_flags_buffer ||
       this.data.dirty_flags_buffer.config.size < dirty_flags_buffer_size
     ) {
-      this.data.dirty_flags_buffer = Buffer.create(context, {
+      this.data.dirty_flags_buffer = Buffer.create({
         name: "transform_fragment_dirty_flags_buffer",
         usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
         raw_data: this.data.dirty,
@@ -503,26 +466,12 @@ export class TransformFragment extends Fragment {
     if (
       !this.data.transforms_buffer ||
       this.data.transforms_buffer.config.size <
-        this.size * 32 * Float32Array.BYTES_PER_ELEMENT
+        this.size * 64 * Float32Array.BYTES_PER_ELEMENT
     ) {
-      this.data.transforms_buffer = Buffer.create(context, {
+      this.data.transforms_buffer = Buffer.create({
         name: "transform_fragment_transforms_buffer",
         usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-        raw_data: new Float32Array(this.size * 32),
-        force: true,
-      });
-      Renderer.get().mark_bind_groups_dirty(true);
-    }
-
-    if (
-      !this.data.inverse_transforms_buffer ||
-      this.data.inverse_transforms_buffer.config.size <
-        this.size * 32 * Float32Array.BYTES_PER_ELEMENT
-    ) {
-      this.data.inverse_transforms_buffer = Buffer.create(context, {
-        name: "transform_fragment_inverse_transforms_buffer",
-        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-        raw_data: new Float32Array(this.size * 32),
+        raw_data: new Float32Array(this.size * 64),
         force: true,
       });
       Renderer.get().mark_bind_groups_dirty(true);
@@ -533,7 +482,7 @@ export class TransformFragment extends Fragment {
       this.data.bounds_data_buffer.config.size <
         this.size * 8 * Float32Array.BYTES_PER_ELEMENT
     ) {
-      this.data.bounds_data_buffer = Buffer.create(context, {
+      this.data.bounds_data_buffer = Buffer.create({
         name: "transform_fragment_bounds_data_buffer",
         usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
         raw_data: new Float32Array(this.size * 8),
@@ -543,10 +492,9 @@ export class TransformFragment extends Fragment {
     }
   }
 
-  static async sync_buffers(context) {
+  static async sync_buffers() {
     if (this.data.position_cpu_buffer?.buffer.mapState === "unmapped") {
       await this.data.position_cpu_buffer.read(
-        context,
         this.data.position,
         this.data.position.byteLength,
         0,
@@ -557,7 +505,6 @@ export class TransformFragment extends Fragment {
 
     if (this.data.rotation_cpu_buffer?.buffer.mapState === "unmapped") {
       await this.data.rotation_cpu_buffer.read(
-        context,
         this.data.rotation,
         this.data.rotation.byteLength,
         0,
@@ -568,7 +515,6 @@ export class TransformFragment extends Fragment {
 
     if (this.data.scale_cpu_buffer?.buffer.mapState === "unmapped") {
       await this.data.scale_cpu_buffer.read(
-        context,
         this.data.scale,
         this.data.scale.byteLength,
         0,
@@ -583,6 +529,6 @@ export class TransformFragment extends Fragment {
       return;
     }
 
-    await this.sync_buffers(Renderer.get().graphics_context);
+    await this.sync_buffers();
   }
 }

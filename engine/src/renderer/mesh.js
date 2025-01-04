@@ -13,13 +13,13 @@ export class Mesh {
     this.index_buffer = null;
   }
 
-  _build_index_buffer(context) {
+  _build_index_buffer() {
     let element_type = "uint16";
     if (this.indices.constructor.name === "Uint32Array") {
       element_type = "uint32";
     }
 
-    this.index_buffer = Buffer.create(context, {
+    this.index_buffer = Buffer.create({
       name: `${this.name}_index_buffer`,
       raw_data: this.indices,
       usage: GPUBufferUsage.INDEX | GPUBufferUsage.COPY_DST,
@@ -71,7 +71,7 @@ export class Mesh {
     return { t: tangents, b: bitangents };
   }
 
-  static create(context, name, vertices, indices) {
+  static create(name, vertices, indices) {
     let mesh = ResourceCache.get().fetch(CacheTypes.MESH, Name.from(name));
     if (mesh) {
       return mesh;
@@ -82,18 +82,17 @@ export class Mesh {
     mesh.vertices = vertices;
     mesh.indices = new Uint16Array(indices);
 
-    mesh.vertex_buffer_offset = SharedVertexBuffer.get().add_vertex_data(
-      context,
+    mesh.vertex_buffer_offset = SharedVertexBuffer.add_vertex_data(
       mesh.vertices
     );
-    mesh._build_index_buffer(context);
+    mesh._build_index_buffer();
 
     ResourceCache.get().store(CacheTypes.MESH, Name.from(name), mesh);
 
     return mesh;
   }
 
-  static quad(context) {
+  static quad() {
     let mesh = ResourceCache.get().fetch(
       CacheTypes.MESH,
       Name.from("engine_quad")
@@ -141,19 +140,18 @@ export class Mesh {
 
     mesh.indices = new Uint16Array([0, 1, 2, 0, 2, 3]);
 
-    mesh.vertex_buffer_offset = SharedVertexBuffer.get().add_vertex_data(
-      context,
+    mesh.vertex_buffer_offset = SharedVertexBuffer.add_vertex_data(
       mesh.vertices
     );
 
-    mesh._build_index_buffer(context);
+    mesh._build_index_buffer();
 
     ResourceCache.get().store(CacheTypes.MESH, Name.from("engine_quad"), mesh);
 
     return mesh;
   }
 
-  static cube(context) {
+  static cube() {
     let mesh = ResourceCache.get().fetch(
       CacheTypes.MESH,
       Name.from("engine_cube")
@@ -375,19 +373,18 @@ export class Mesh {
       15, 12, 16, 17, 18, 18, 19, 16, 20, 21, 22, 22, 23, 20,
     ]);
 
-    mesh.vertex_buffer_offset = SharedVertexBuffer.get().add_vertex_data(
-      context,
+    mesh.vertex_buffer_offset = SharedVertexBuffer.add_vertex_data(
       mesh.vertices
     );
 
-    mesh._build_index_buffer(context);
+    mesh._build_index_buffer();
 
     ResourceCache.get().store(CacheTypes.MESH, Name.from("engine_cube"), mesh);
 
     return mesh;
   }
 
-  static async from_gltf(context, gltf) {
+  static async from_gltf(gltf) {
     let mesh = ResourceCache.get().fetch(CacheTypes.MESH, Name.from(gltf));
     if (mesh) {
       return mesh;
@@ -531,12 +528,11 @@ export class Mesh {
         }
 
         mesh.name = gltf;
-        mesh.vertex_buffer_offset = SharedVertexBuffer.get().add_vertex_data(
-          context,
+        mesh.vertex_buffer_offset = SharedVertexBuffer.add_vertex_data(
           mesh.vertices
         );
 
-        mesh._build_index_buffer(context);
+        mesh._build_index_buffer();
 
         ResourceCache.get().store(CacheTypes.MESH, Name.from(gltf), mesh);
 

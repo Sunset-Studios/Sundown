@@ -69,11 +69,10 @@ export class Font {
     this.y = new Int16Array(num_chars);
   }
 
-  static create(context, font_data_file) {
+  static create(font_data_file) {
     const template = MaterialTemplate.get_template(default_text_material_template_key);
     if (!template) {
       MaterialTemplate.create(
-        context,
         default_text_material_template_key,
         default_text_shader_key,
         MaterialFamilyType.Opaque,
@@ -119,7 +118,7 @@ export class Font {
       font_glyph_data[i * 8 + 6] = font.x_advance[i];
       font_glyph_data[i * 8 + 7] = font.page[i];
     }
-    font.font_glyph_data_buffer = Buffer.create(context, {
+    font.font_glyph_data_buffer = Buffer.create({
       name: font_name_suffix + font_glyph_data_key,
       raw_data: font_glyph_data,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
@@ -130,7 +129,7 @@ export class Font {
       const page = font_data[pages_key][i];
       const page_location = font_data_file.substring(0, font_data_file.lastIndexOf(path_sep) + 1) + page;
       const page_name = page.substring(0, page.lastIndexOf(extension_sep));
-      Texture.load(context, [page_location], {
+      Texture.load([page_location], {
         name: page_name,
         format: page_format,
         dimension: page_dimension,

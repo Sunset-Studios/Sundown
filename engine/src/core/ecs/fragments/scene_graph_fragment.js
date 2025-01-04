@@ -4,6 +4,7 @@ import { Renderer } from "../../../renderer/renderer.js";
 import { Buffer } from "../../../renderer/buffer.js";
 import { global_dispatcher } from "../../../core/dispatcher.js";
 import { RingBufferAllocator } from "../../../memory/allocator.js";
+import { EntityID } from "../entity.js";
 import { Tree } from "../../../memory/container.js";
 
 const scene_graph_buffer_name = "scene_graph_buffer";
@@ -12,7 +13,7 @@ const scene_graph_event = "scene_graph";
 const scene_graph_update_event = "scene_graph_update";
 
 class SceneGraphDataView {
-  current_entity = -1;
+  current_entity = -1n;
 
   constructor() {}
 
@@ -68,13 +69,14 @@ export class SceneGraphFragment extends Fragment {
     this.data = {
       parent: new Int32Array(1),
       scene_graph: new Tree(),
+      scene_graph_flattened: [],
       scene_graph_layer_counts: [],
       scene_graph_uniforms: [],
       scene_graph_buffer: null,
       gpu_data_dirty: true,
     };
 
-    this.rebuild_buffers(Renderer.get().graphics_context);
+    this.rebuild_buffers();
   }
 
   static resize(new_size) {
@@ -83,7 +85,7 @@ export class SceneGraphFragment extends Fragment {
 
     Fragment.resize_array(this.data, "parent", new_size, Int32Array, 1);
 
-    this.rebuild_buffers(Renderer.get().graphics_context);
+    this.rebuild_buffers();
   }
 
   static add_entity(entity) {
@@ -93,20 +95,23 @@ export class SceneGraphFragment extends Fragment {
 
   static remove_entity(entity) {
     super.remove_entity(entity);
-    this.data.parent[entity] = -1;
-    this.data.scene_graph.remove(entity);
+    const entity_offset = EntityID.get_absolute_index(entity);
+    this.data.parent[entity_offset] = -1;
+    this.data.scene_graph.remove(entity_offset);
     this.data.gpu_data_dirty = true;
   }
 
-  static get_entity_data(entity) {
+  static get_entity_data(entity, instance = 0) {
+    const entity_index = EntityID.get_absolute_index(entity) + instance;
     const data_view = this.data_view_allocator.allocate();
     data_view.fragment = this;
-    data_view.view_entity(entity);
+    data_view.view_entity(entity_index);
     return data_view;
   }
 
-  static duplicate_entity_data(entity) {
-    const node = this.data.scene_graph.find_node(entity);
+  static duplicate_entity_data(entity, instance = 0) {
+    const entity_offset = EntityID.get_absolute_index(entity);
+    const node = this.data.scene_graph.find_node(entity_offset);
     return {
       parent: this.data.scene_graph.get_parent(node),
       children: this.data.scene_graph
@@ -115,7 +120,7 @@ export class SceneGraphFragment extends Fragment {
     };
   }
 
-  static to_gpu_data(context) {
+  static to_gpu_data() {
     if (!this.data) this.initialize();
 
     if (!this.data.gpu_data_dirty) {
@@ -124,17 +129,19 @@ export class SceneGraphFragment extends Fragment {
       };
     }
 
-    this.rebuild_buffers(context);
+    this.rebuild_buffers();
 
     return {
       scene_graph_buffer: this.data.scene_graph_buffer,
     };
   }
 
-  static rebuild_buffers(context) {
+  static rebuild_buffers() {
     {
       const { result, layer_counts } =
         this.data.scene_graph.flatten(Int32Array);
+
+      this.data.scene_graph_flattened = result;
       this.data.scene_graph_layer_counts = layer_counts;
 
       const num_elements = result?.length ?? 0;
@@ -147,7 +154,7 @@ export class SceneGraphFragment extends Fragment {
       this.data.scene_graph_uniforms = new Array(layer_counts.length);
       let layer_offset = 0;
       for (let i = 0; i < layer_counts.length; ++i) {
-        this.data.scene_graph_uniforms[i] = Buffer.create(context, {
+        this.data.scene_graph_uniforms[i] = Buffer.create({
           name: "scene_graph_uniforms_" + i,
           usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
           raw_data: new Uint32Array([layer_counts[i], layer_offset]),
@@ -160,7 +167,7 @@ export class SceneGraphFragment extends Fragment {
         !this.data.scene_graph_buffer ||
         this.data.scene_graph_buffer.config.size < gpu_data.byteLength
       ) {
-        this.data.scene_graph_buffer = Buffer.create(context, {
+        this.data.scene_graph_buffer = Buffer.create({
           name: scene_graph_buffer_name,
           usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
           raw_data: gpu_data,
@@ -173,7 +180,7 @@ export class SceneGraphFragment extends Fragment {
           this.data.scene_graph_buffer,
         );
       } else {
-        this.data.scene_graph_buffer.write(context, gpu_data);
+        this.data.scene_graph_buffer.write(gpu_data);
       }
 
       global_dispatcher.dispatch(scene_graph_update_event);
@@ -182,5 +189,5 @@ export class SceneGraphFragment extends Fragment {
     this.data.gpu_data_dirty = false;
   }
 
-  static async sync_buffers(context) {}
+  static async sync_buffers() {}
 }

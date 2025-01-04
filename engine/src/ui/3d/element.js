@@ -12,15 +12,13 @@ export class Element3D {
   static events = {};
 
   static create(scene, config, material = null, parent = null, children = [], start_visible = true) {
-    const context = Renderer.get().graphics_context;
-
     const entity = spawn_mesh_entity(
       scene,
       { x: 0, y: 0, z: 0 },
       { x: 0, y: 0, z: 0, w: 1 },
       { x: 1, y: 1, z: 1 },
-      Mesh.quad(context),
-      material ?? Material.default_ui_material(context),
+      Mesh.quad(),
+      material ?? Material.default_ui_material(),
       parent,
       children,
       start_visible,

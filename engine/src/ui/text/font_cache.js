@@ -30,7 +30,7 @@ export class FontCache {
       return font_id;
     }
 
-    const font = Font.create(Renderer.get().graphics_context, font_path);
+    const font = Font.create(font_path);
     if (!font) return null;
 
     this.cache.set(font_id, font);

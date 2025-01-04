@@ -3,8 +3,8 @@ import { Element } from './element.js'
 export class Button extends Element {
     icon = null;
 
-    init(context, name, config, children = []) {
-        super.init(context, name, config, children, 'button')
+    init(name, config, children = []) {
+        super.init(name, config, children, 'button')
         
         this.config.allows_cursor_events = true;
 
@@ -29,9 +29,9 @@ export class Button extends Element {
         }
     }
 
-    static create(context, name, config, children = []) {
+    static create(name, config, children = []) {
         const button = new Button()
-        button.init(context, name, config, children)
+        button.init(name, config, children)
         return button
     }
 }

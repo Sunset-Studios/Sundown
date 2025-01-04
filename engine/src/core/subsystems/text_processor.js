@@ -1,6 +1,6 @@
 import { Renderer } from "../../renderer/renderer.js";
 import { SimulationLayer } from "../simulation_layer.js";
-import { EntityManager } from "../ecs/entity.js";
+import { EntityManager, EntityID } from "../ecs/entity.js";
 import { TextFragment } from "../ecs/fragments/text_fragment.js";
 import { StaticMeshFragment } from "../ecs/fragments/static_mesh_fragment.js";
 import { profile_scope } from "../../utility/performance.js";
@@ -12,21 +12,20 @@ export class TextProcessor extends SimulationLayer {
   entity_query = null;
 
   init() {
-    this.entity_query = EntityManager.get().create_query({
+    this.entity_query = EntityManager.create_query({
       fragment_requirements: [TextFragment, StaticMeshFragment],
     });
   }
 
   update(delta_time) {
     profile_scope(text_processor_update_key, () => {
-      const texts =
-      EntityManager.get().get_fragment_array(TextFragment);
+      const texts = EntityManager.get_fragment_array(TextFragment);
       if (!texts) {
         return;
       }
 
       for (let i = 0; i < this.entity_query.matching_entities.length; ++i) {
-        const entity = this.entity_query.matching_entities[i];
+        const entity = this.entity_query.matching_entities.get(i);
 
         if (!texts.dirty[entity]) {
           continue;
@@ -53,7 +52,7 @@ export class TextProcessor extends SimulationLayer {
         texts.dirty[entity] = 0;
 
         // We discard the result as we only want to write the underlying buffers, which are already mapped to the GPU
-        TextFragment.to_gpu_data(Renderer.get().graphics_context);
+        TextFragment.to_gpu_data();
       }
     });
   }

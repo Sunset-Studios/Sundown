@@ -61,7 +61,7 @@ export class InputProvider extends SimulationLayer {
         if (this.contexts.length > 0) {
             const context = this.contexts[this.contexts.length - 1];
 
-            this.processor.update(context, delta_time, Renderer.get().graphics_context.canvas);
+            this.processor.update(context, delta_time, Renderer.get().canvas);
 
             this.current_dirty_states = [];
             context.visit_dirty_states((state) => {

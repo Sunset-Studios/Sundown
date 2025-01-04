@@ -6,7 +6,6 @@ import { screen_pos_to_world_pos } from "../../utility/camera.js";
 import { vec3 } from "gl-matrix";
 
 export class Cursor extends Element {
-  context = null;
   icon = null;
   icon_change_stack = [];
   world_position = vec3.create();
@@ -14,10 +13,9 @@ export class Cursor extends Element {
   prev_y = 0;
   current_depth = 2;
 
-  init(context, name, config, children = []) {
-    super.init(context, name, config, children, "cursor");
+  init(name, config, children = []) {
+    super.init(name, config, children, "cursor");
 
-    this.context = context;
     this.config.allows_cursor_events = false;
 
     if (this.config.icon) {
@@ -39,19 +37,17 @@ export class Cursor extends Element {
       this.dom.style.left = x + "px";
       this.dom.style.top = y + "px";
 
+      const renderer = Renderer.get();
       this.world_position = screen_pos_to_world_pos(
-        SharedViewBuffer.get().get_view_data(0),
+        SharedViewBuffer.get_view_data(0),
         x,
         y,
-        this.context.canvas.width,
-        this.context.canvas.height,
+        renderer.canvas.width,
+        renderer.canvas.height,
         this.current_depth
       );
 
-      SharedFrameInfoBuffer.get().set_cursor_world_position(
-        this.context,
-        this.world_position
-      );
+      SharedFrameInfoBuffer.set_cursor_world_position(this.world_position);
 
       this.prev_x = x;
       this.prev_y = y;
@@ -88,9 +84,9 @@ export class Cursor extends Element {
     }
   }
 
-  static create(context, name, config, children = []) {
+  static create(name, config, children = []) {
     const cursor = new Cursor();
-    cursor.init(context, name, config, children);
+    cursor.init(name, config, children);
     return cursor;
   }
 }

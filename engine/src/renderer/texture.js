@@ -1,3 +1,4 @@
+import { Renderer } from "./renderer.js";
 import { Name } from "../utility/names.js";
 import { ResourceCache, CacheTypes } from "./resource_cache.js";
 
@@ -33,10 +34,12 @@ export class TextureSampler {
   config = new TextureSamplerConfig();
   sampler = null;
 
-  init(context, config) {
+  init(config) {
+    const renderer = Renderer.get();
+
     this.config = { ...this.config, ...config };
 
-    this.sampler = context.device.createSampler({
+    this.sampler = renderer.device.createSampler({
       label: this.config.name,
       magFilter: this.config.mag_filter,
       minFilter: this.config.min_filter,
@@ -44,7 +47,7 @@ export class TextureSampler {
     });
   }
 
-  static create(context, config) {
+  static create(config) {
     let sampler = ResourceCache.get().fetch(
       CacheTypes.SAMPLER,
       Name.from(config.name)
@@ -54,7 +57,7 @@ export class TextureSampler {
     }
 
     sampler = new TextureSampler();
-    sampler.init(context, config);
+    sampler.init(config);
 
     ResourceCache.get().store(
       CacheTypes.SAMPLER,
@@ -110,7 +113,9 @@ export class Texture {
   current_view = 0;
 
   // Create a GPU buffer to store the data
-  init(context, config) {
+  init(config) {
+    const renderer = Renderer.get();
+
     this.config = { ...this.config, ...config };
     this.config.type = config.format.includes("depth") ? "depth" : "color";
 
@@ -119,7 +124,7 @@ export class Texture {
       this.config.load_op = "clear";
     }
 
-    this.image = context.device.createTexture({
+    this.image = renderer.device.createTexture({
       label: config.name,
       size: {
         width: config.width,
@@ -136,12 +141,14 @@ export class Texture {
     this._setup_views();
   }
 
-  destroy(context) {
+  destroy() {
     ResourceCache.get().remove(CacheTypes.IMAGE, Name.from(this.config.name));
     this.image = null;
   }
 
-  async load(context, paths, config) {
+  async load(paths, config) {
+    const renderer = Renderer.get();
+
     this.config = { ...this.config, ...config };
     this.config.type = config.format.includes("depth") ? "depth" : "color";
 
@@ -169,7 +176,7 @@ export class Texture {
     this.config.height = textures[0].height;
     this.config.depth = textures.length;
 
-    this.image = context.device.createTexture({
+    this.image = renderer.device.createTexture({
       label: this.config.name,
       size: {
         width: this.config.width,
@@ -183,7 +190,7 @@ export class Texture {
     });
 
     textures.forEach((texture, layer) => {
-      context.device.queue.copyExternalImageToTexture(
+      renderer.device.queue.copyExternalImageToTexture(
         { source: texture, flipY: true },
         { texture: this.image, origin: { x: 0, y: 0, z: layer } },
         [texture.width, texture.height]
@@ -306,26 +313,26 @@ export class Texture {
     }
   }
 
-  static get_default_sampler(context) {
-    return TextureSampler.create(context, {
+  static get_default_sampler() {
+    return TextureSampler.create({
       name: "default_sampler",
     });
   }
 
-  static create(context, config) {
+  static create(config) {
     let image = ResourceCache.get().fetch(
       CacheTypes.IMAGE,
       Name.from(config.name)
     );
 
     if (image && config.force) {
-      image.destroy(context);
+      image.destroy();
       image = null;
     }
 
     if (!image) {
       image = new Texture();
-      image.init(context, config);
+      image.init(config);
       ResourceCache.get().store(CacheTypes.IMAGE, Name.from(config.name), image);
     }
 
@@ -339,7 +346,7 @@ export class Texture {
     );
 
     if (cached_image && config && config.force) {
-      cached_image.destroy(context);
+      cached_image.destroy();
       cached_image = null;
     } else if (cached_image) {
       cached_image.set_image(raw_image);
@@ -357,20 +364,20 @@ export class Texture {
     return cached_image;
   }
 
-  static load(context, paths, config) {
+  static load(paths, config) {
     let image = ResourceCache.get().fetch(
       CacheTypes.IMAGE,
       Name.from(config.name)
     );
 
     if (image && config.force) {
-      image.destroy(context);
+      image.destroy();
       image = null;
     }
 
     if (!image) {
       image = new Texture();
-      image.load(context, paths, config);
+      image.load(paths, config);
       ResourceCache.get().store(CacheTypes.IMAGE, Name.from(config.name), image);
     }
 

@@ -1,3 +1,4 @@
+import { Renderer } from "./renderer.js";
 import { Name } from "../utility/names.js";
 import { ResourceCache, CacheTypes } from "./resource_cache.js";
 
@@ -85,11 +86,13 @@ export class BindGroup {
     layout = null;
     binding_table = null;
 
-    init(context, name, pipeline, index, bindings) {
+    init(name, pipeline, index, bindings) {
+        const renderer = Renderer.get();
+
         this.name = name;
         this.index = index;
         this.layout = pipeline.pipeline.getBindGroupLayout(index);
-        this.bind_group = context.device.createBindGroup({
+        this.bind_group = renderer.device.createBindGroup({
             label: name,
             layout: this.layout,
             entries: bindings,
@@ -97,11 +100,13 @@ export class BindGroup {
         this.binding_table = new GroupBindingTable();
     }
 
-    init_with_layout(context, name, layout, index, bindings) {
+    init_with_layout(name, layout, index, bindings) {
+        const renderer = Renderer.get();
+
         this.name = name;
         this.index = index;
-        this.layout = BindGroup.create_layout(context, name, layout);
-        this.bind_group = context.device.createBindGroup({
+        this.layout = BindGroup.create_layout(name, layout);
+        this.bind_group = renderer.device.createBindGroup({
             label: name,
             layout: this.layout,
             entries: bindings,
@@ -123,7 +128,7 @@ export class BindGroup {
         render_pass.pass.setBindGroup(this.index, this.bind_group);
     }
 
-    static create(context, name, pipeline, index, bindings, force = false) {
+    static create(name, pipeline, index, bindings, force = false) {
         let bind_group = ResourceCache.get().fetch(CacheTypes.BIND_GROUP, Name.from(name));
 
         if (bind_group && force) {
@@ -133,14 +138,14 @@ export class BindGroup {
 
         if (!bind_group) {
             bind_group = new BindGroup();
-            bind_group.init(context, name, pipeline, index, bindings);
+            bind_group.init(name, pipeline, index, bindings);
             ResourceCache.get().store(CacheTypes.BIND_GROUP, Name.from(name), bind_group);
         }
 
         return bind_group;
     }
 
-    static create_with_layout(context, name, layout, index, bindings, force = false) {
+    static create_with_layout(name, layout, index, bindings, force = false) {
         let bind_group = ResourceCache.get().fetch(CacheTypes.BIND_GROUP, Name.from(name));
 
         if (bind_group && force) {
@@ -150,14 +155,16 @@ export class BindGroup {
 
         if (!bind_group) {
             bind_group = new BindGroup();
-            bind_group.init_with_layout(context, name, layout, index, bindings);
+            bind_group.init_with_layout(name, layout, index, bindings);
             ResourceCache.get().store(CacheTypes.BIND_GROUP, Name.from(name), bind_group);
         }
 
         return bind_group;
     }
 
-    static create_layout(context, name, bind_layouts, force = false) {
+    static create_layout(name, bind_layouts, force = false) {
+        const renderer = Renderer.get();
+
         let layout = ResourceCache.get().fetch(CacheTypes.BIND_GROUP_LAYOUT, Name.from(name));
 
         if (layout && force) {
@@ -165,7 +172,7 @@ export class BindGroup {
         }
 
         if (!layout) {
-            layout = context.device.createBindGroupLayout({
+            layout = renderer.device.createBindGroupLayout({
                 label: name,
                 entries: bind_layouts,
             });

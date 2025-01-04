@@ -1,3 +1,5 @@
+import { EntityID } from "./entity.js";
+import { Vector } from "../../memory/container.js";
 import { profile_scope } from "../../utility/performance.js";
 import _ from "lodash";
 
@@ -14,9 +16,11 @@ export class EntityQuery {
   constructor(entity_manager, fragment_requirements) {
     this.entity_manager = entity_manager;
     this.fragment_requirements = fragment_requirements;
-    this.matching_entities = new Uint32Array();
-    this.entity_states = new Uint32Array();
-    this.entities_to_filter = [];
+    this.matching_entities = new Vector(256, BigInt64Array);
+    this.matching_entity_ids = new Vector(256, Uint32Array);
+    this.matching_entity_instance_counts = new Vector(256, Uint32Array);
+    this.entity_states = new Vector(256, Uint32Array);
+    this.entities_to_filter = new Vector(256, BigInt64Array);
     this.update_matching_entities();
   }
 
@@ -28,14 +32,16 @@ export class EntityQuery {
 
   update_matching_entities() {
     profile_scope("EntityQuery.update_matching_entities", () => {
-      const entities = _.union(this.entity_manager.get_entities(), this.matching_entities);
+      this.matching_entities.union(this.entity_manager.get_entities());
 
-      const new_matching_entities = new Uint32Array(entities.length);
-      const new_entity_states = new Uint32Array(entities.length);
+      const new_matching_entities = new BigInt64Array(this.matching_entities.length);
+      const new_matching_entity_ids = new Uint32Array(this.matching_entities.length);
+      const new_matching_entity_instance_counts = new Uint32Array(this.matching_entities.length);
+      const new_entity_states = new Uint32Array(this.matching_entities.length);
 
       this.#matching_count = 0;
-      for (let i = 0; i < entities.length; i++) {
-        const entity = entities[i];
+      for (let i = 0; i < this.matching_entities.length; i++) {
+        const entity = this.matching_entities.get(i);
 
         const passes_requirements =
           this._check_entity_fragment_requirements(entity);
@@ -45,24 +51,33 @@ export class EntityQuery {
           this.#seen_entities.add(entity);
           new_entity_states[this.#matching_count] = EntityMasks.Added;
           new_matching_entities[this.#matching_count] = entity;
+          new_matching_entity_ids[this.#matching_count] = EntityID.get_absolute_index(entity);
+          new_matching_entity_instance_counts[this.#matching_count] = EntityID.get_instance_count(entity);
           this.#matching_count++;
         } else if (!passes_requirements && in_seen_entities) {
           this.#seen_entities.delete(entity);
           new_entity_states[this.#matching_count] = EntityMasks.Removed;
           new_matching_entities[this.#matching_count] = entity;
+          new_matching_entity_ids[this.#matching_count] = EntityID.get_absolute_index(entity);
+          new_matching_entity_instance_counts[this.#matching_count] = EntityID.get_instance_count(entity);
           this.entities_to_filter.push(entity);
           this.#matching_count++;
         } else if (passes_requirements) {
           new_matching_entities[this.#matching_count] = entity;
+          new_matching_entity_ids[this.#matching_count] = EntityID.get_absolute_index(entity);
+          new_matching_entity_instance_counts[this.#matching_count] = EntityID.get_instance_count(entity);
           this.#matching_count++;
         }
       }
 
-      this.matching_entities = new_matching_entities.slice(
+      this.matching_entities.set_data(new_matching_entities.slice(
         0,
         this.#matching_count
-      );
-      this.entity_states = new_entity_states.slice(0, this.#matching_count);
+      ));
+
+      this.entity_states.set_data(new_entity_states.slice(0, this.#matching_count));
+      this.matching_entity_ids.set_data(new_matching_entity_ids.slice(0, this.#matching_count));
+      this.matching_entity_instance_counts.set_data(new_matching_entity_instance_counts.slice(0, this.#matching_count));
     });
   }
 
@@ -72,20 +87,17 @@ export class EntityQuery {
 
       this.#matching_count -= this.entities_to_filter.length;
 
+      const entities_to_filter_data = this.entities_to_filter.get_data();
       for (let i = 0; i < this.entities_to_filter.length; i++) {
-        const entity = this.entities_to_filter[i];
-        const index = this.matching_entities.indexOf(entity);
+        const entity = entities_to_filter_data[i];
+        const index = this.matching_entities.index_of(entity);
         if (index !== -1) {
-          this.matching_entities = this.matching_entities.filter(
-            (_, idx) => idx !== index
-          );
-          this.entity_states = this.entity_states.filter(
-            (_, idx) => idx !== index
-          );
+          this.matching_entities.remove(index);
+          this.entity_states.remove(index);
         }
       }
 
-      this.entities_to_filter.length = 0;
+      this.entities_to_filter.clear();
     });
   }
 }

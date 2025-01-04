@@ -14,8 +14,7 @@
  * renderGraph.initialize();
  *
  * // Begin a new frame
- * const context = ...; // Assume this is the rendering context
- * renderGraph.begin(context);
+ * renderGraph.begin();
  *
  * // Create an image resource
  * const imageConfig = {
@@ -51,18 +50,18 @@
  *   inputs: [imageHandle],
  *   outputs: [registeredImageHandle],
  * };
- * const passIndex = renderGraph.add_pass(context, "MyRenderPass", RenderPassFlags.Present, passParams, (graph, frameData, encoder) => {
+ * const passIndex = renderGraph.add_pass("MyRenderPass", RenderPassFlags.Present, passParams, (graph, frameData, encoder) => {
  *   // Execute the render pass
  * });
  *
  * // Compile and submit the render graph
- * renderGraph.submit(context);
+ * renderGraph.submit();
  *
  * // Reset the render graph at the end of the frame
- * renderGraph.reset(context);
+ * renderGraph.reset();
  *
  * // Destroy the render graph when done
- * renderGraph.destroy(context);
+ * renderGraph.destroy();
  * ```
  */
 
@@ -202,7 +201,6 @@ const RGGBufferData = Object.freeze({
  * Frame-specific data for the render graph.
  * @typedef {Object} RGFrameData
  * @property {number} current_pass - Index of the current pass being processed.
- * @property {Object|null} context - The rendering context.
  * @property {Object|null} global_bind_group - The global bind group.
  * @property {Object|null} pass_bind_group - The pass-specific bind group.
  * @property {number} pass_pipeline_state - The current pipeline state for the pass.
@@ -211,7 +209,6 @@ const RGGBufferData = Object.freeze({
  */
 const RGFrameData = Object.freeze({
   current_pass: 0,
-  context: null,
   global_bind_group: null,
   pass_bind_group: null,
   pass_bind_groups: Array(BindGroupType.Num).fill(null),
@@ -421,7 +418,8 @@ const PassCache = Object.freeze({
  * render pass management, graph compilation, and rendering/compute command submission.
  */
 export class RenderGraph {
-  constructor() {
+  constructor(max_bind_groups) {
+    this.max_bind_groups = max_bind_groups;
     this.pass_cache = _.cloneDeep(PassCache);
     this.registry = _.cloneDeep(RGRegistry);
     this.non_culled_passes = [];
@@ -450,17 +448,15 @@ export class RenderGraph {
    * Resets the render graph, clearing all resources and render passes.
    * This method should be called at the end of each frame to prepare for the next frame.
    *
-   * @param {Object} context - The rendering context.
-   *
    * @example
    * // At the end of each frame
    * const renderGraph = new RenderGraph();
    * // ... (rendering operations)
-   * renderGraph.reset(context);
+   * renderGraph.reset();
    * // The render graph is now ready for the next frame
    */
-  destroy(context) {
-    this.reset(context);
+  destroy() {
+    this.reset();
     this.registry.resource_deletion_queue.flush();
   }
 
@@ -468,18 +464,16 @@ export class RenderGraph {
    * Begins a new frame in the render graph.
    * This method resets the render graph state and prepares it for a new frame of rendering.
    *
-   * @param {Object} context - The rendering context for the new frame.
    * @returns {void}
    *
    * @example
    * const renderGraph = new RenderGraph();
-   * const context = getGraphicsContext();
-   * renderGraph.begin(context);
+   * renderGraph.begin();
    * // Add passes and resources...
-   * renderGraph.submit(context);
+   * renderGraph.submit();
    */
-  begin(context) {
-    this.reset(context);
+  begin() {
+    this.reset();
   }
 
   /**
@@ -1042,11 +1036,10 @@ export class RenderGraph {
    * It then submits the encoded commands to the GPU for rendering.
    *
    * @async
-   * @param {Object} context - The rendering context.
    * @returns {Promise<void>} A promise that resolves when all passes have been executed and submitted.
    * @throws {Error} If there's an error during pass execution or command submission.
    */
-  submit(context) {
+  submit() {
     profile_scope("RenderGraph.submit", () => {
       this._reset_pass_cache_bind_groups();
       this._add_queued_post_commands();
@@ -1057,12 +1050,10 @@ export class RenderGraph {
       }
 
       const encoder = CommandQueue.create_encoder(
-        context,
         "render_graph_encoder"
       );
 
       const frame_data = _.cloneDeep(RGFrameData);
-      frame_data.context = context;
       frame_data.resource_deletion_queue =
         this.registry.resource_deletion_queue;
 
@@ -1074,7 +1065,7 @@ export class RenderGraph {
         );
       }
 
-      CommandQueue.submit(context, encoder);
+      CommandQueue.submit(encoder);
     });
   }
 
@@ -1082,11 +1073,10 @@ export class RenderGraph {
    * Resets the render graph, clearing all resources and render passes.
    * This method should be called at the end of each frame to prepare for the next frame.
    *
-   * @param {Object} context - The rendering context.
    * @returns {void}
    */
-  reset(context) {
-    this._free_physical_resources(context);
+  reset() {
+    this._free_physical_resources();
 
     this.non_culled_passes.length = 0;
 
@@ -1157,7 +1147,6 @@ export class RenderGraph {
     ) => {
       if (this.registry.resource_metadata.has(resource)) {
         this._setup_physical_resource(
-          frame_data.context,
           resource,
           !is_compute_pass,
           is_input_resource
@@ -1199,7 +1188,6 @@ export class RenderGraph {
   }
 
   _setup_physical_resource(
-    context,
     resource,
     is_graphics_pass,
     is_input_resource
@@ -1213,7 +1201,7 @@ export class RenderGraph {
       const buffer_metadata = this.registry.resource_metadata.get(resource);
       if (buffer_metadata.physical_id === 0) {
         buffer_metadata.physical_id = Name.from(buffer_resource.config.name);
-        const buffer = Buffer.create(context, buffer_resource.config);
+        const buffer = Buffer.create(buffer_resource.config);
 
         if (!buffer_metadata.b_is_persistent) {
           this.registry.resource_deletion_queue.remove_execution(
@@ -1221,7 +1209,7 @@ export class RenderGraph {
           );
           this.registry.resource_deletion_queue.push_execution(
             () => {
-              buffer.destroy(context);
+              buffer.destroy();
             },
             buffer_metadata.physical_id,
             buffer_metadata.max_frame_lifetime
@@ -1241,7 +1229,7 @@ export class RenderGraph {
         image_metadata.b_is_persistent |= is_persistent;
 
         image_metadata.physical_id = Name.from(image_resource.config.name);
-        const image = Texture.create(context, image_resource.config);
+        const image = Texture.create(image_resource.config);
 
         if (!image_metadata.b_is_persistent) {
           this.registry.resource_deletion_queue.remove_execution(
@@ -1249,7 +1237,7 @@ export class RenderGraph {
           );
           this.registry.resource_deletion_queue.push_execution(
             () => {
-              image.destroy(context);
+              image.destroy();
             },
             image_metadata.physical_id,
             image_metadata.max_frame_lifetime
@@ -1333,19 +1321,16 @@ export class RenderGraph {
 
     if (is_compute_pass && shader_setup.pipeline_shaders.compute) {
       pass.shaders.compute = Shader.create(
-        frame_data.context,
         shader_setup.pipeline_shaders.compute.path
       );
     } else {
       if (shader_setup.pipeline_shaders.vertex) {
         pass.shaders.vertex = Shader.create(
-          frame_data.context,
           shader_setup.pipeline_shaders.vertex.path
         );
       }
       if (shader_setup.pipeline_shaders.fragment) {
         pass.shaders.fragment = Shader.create(
-          frame_data.context,
           shader_setup.pipeline_shaders.fragment.path
         );
       }
@@ -1360,7 +1345,7 @@ export class RenderGraph {
     const pass_binds = this.pass_cache.bind_groups.get(
       pass.pass_config.name
     ) || {
-      bind_groups: Array(frame_data.context.max_bind_groups()).fill(null),
+      bind_groups: Array(this.max_bind_groups).fill(null),
     };
     this.pass_cache.bind_groups.set(pass.pass_config.name, pass_binds);
 
@@ -1496,7 +1481,6 @@ export class RenderGraph {
 
     if (entries.length > 0) {
       const pass_bind_group = BindGroup.create_with_layout(
-        frame_data.context,
         `${pass.pass_config.name}_bindgroup_${BindGroupType.Pass}`,
         layouts,
         BindGroupType.Pass,
@@ -1544,7 +1528,6 @@ export class RenderGraph {
 
         pass.pipeline_state_id = Name.from(pass.pass_config.name);
         const pipeline = PipelineState.create_compute(
-          frame_data.context,
           pass.pass_config.name,
           pipeline_descriptor
         );
@@ -1615,7 +1598,6 @@ export class RenderGraph {
 
         pass.pipeline_state_id = Name.from(pass.pass_config.name);
         const pipeline = PipelineState.create_render(
-          frame_data.context,
           pass.pass_config.name,
           pipeline_descriptor
         );
@@ -1753,7 +1735,6 @@ export class RenderGraph {
 
     if (entries.length > 0) {
       const global_bind_group = BindGroup.create_with_layout(
-        frame_data.context,
         `global_bindgroup_${BindGroupType.Global}`,
         layouts,
         BindGroupType.Global,
@@ -1819,12 +1800,12 @@ export class RenderGraph {
     });
   }
 
-  _free_physical_resources(context) {
+  _free_physical_resources() {
     this.registry.resource_deletion_queue.update();
     // TODO: Free all bindless resources handles stored in this.registry.all_bindless_resource_handles
   }
 
-  static create() {
-    return new RenderGraph();
+  static create(max_bind_groups) {
+    return new RenderGraph(max_bind_groups);
   }
 }

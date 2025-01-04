@@ -14,7 +14,7 @@ export class StaticMeshProcessor extends SimulationLayer {
   }
 
   init() {
-    this.entity_query = EntityManager.get().create_query({
+    this.entity_query = EntityManager.create_query({
       fragment_requirements: [StaticMeshFragment, VisibilityFragment],
     });
   }
@@ -22,9 +22,9 @@ export class StaticMeshProcessor extends SimulationLayer {
   update(delta_time) {
     profile_scope("static_mesh_processor_update", () => {
       const static_meshes =
-        EntityManager.get().get_fragment_array(StaticMeshFragment);
+        EntityManager.get_fragment_array(StaticMeshFragment);
       const visibilities =
-        EntityManager.get().get_fragment_array(VisibilityFragment);
+        EntityManager.get_fragment_array(VisibilityFragment);
 
       if (!static_meshes || !visibilities) {
         return;
@@ -33,42 +33,44 @@ export class StaticMeshProcessor extends SimulationLayer {
       const mesh_task_queue = MeshTaskQueue.get();
 
       let needs_resort = false;
+      const entity_states = this.entity_query.entity_states.get_data();
+      const matching_entities_ids = this.entity_query.matching_entity_ids.get_data();
       for (let i = 0; i < this.entity_query.matching_entities.length; ++i) {
-        const entity = this.entity_query.matching_entities[i];
-        const entity_state = this.entity_query.entity_states[i];
+        const entity_id = matching_entities_ids[i];
+        const entity_state = entity_states[i];
 
         if (entity_state & EntityMasks.Removed) {
-          mesh_task_queue.remove(entity);
+          mesh_task_queue.remove(entity_id);
           needs_resort = true;
           continue;
         }
 
-        if (!static_meshes.dirty[entity] && !visibilities.dirty[entity]) {
+        if (!static_meshes.dirty[entity_id] && !visibilities.dirty[entity_id]) {
           continue;
         }
 
         needs_resort = true;
 
-        const mesh_id = Number(static_meshes.mesh[entity]);
+        const mesh_id = Number(static_meshes.mesh[entity_id]);
         const material_id = Number(
           static_meshes.material_slots[
-            entity * StaticMeshFragment.material_slot_stride
+            entity_id * StaticMeshFragment.material_slot_stride
           ]
         );
         const instance_count =
-          Number(static_meshes.instance_count[entity]) || 1;
+          Number(static_meshes.instance_count[entity_id]) || 1;
 
-        if (mesh_id && material_id && instance_count && visibilities.visible[entity]) {
+        if (mesh_id && material_id && instance_count && visibilities.visible[entity_id]) {
           mesh_task_queue.new_task(
             mesh_id,
-            entity,
+            entity_id,
             material_id,
             instance_count 
           );
         }      
 
-        static_meshes.dirty[entity] = 0;
-        visibilities.dirty[entity] = 0;
+        static_meshes.dirty[entity_id] = 0;
+        visibilities.dirty[entity_id] = 0;
       }
 
       if (needs_resort) {

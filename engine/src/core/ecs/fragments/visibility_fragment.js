@@ -4,6 +4,7 @@ import { Renderer } from "../../../renderer/renderer.js";
 import { Buffer } from "../../../renderer/buffer.js";
 import { global_dispatcher } from "../../../core/dispatcher.js";
 import { RingBufferAllocator } from "../../../memory/allocator.js";
+import { EntityID } from "../entity.js";
 
 const visible_buffer_name = "visible_buffer";
 const visible_cpu_buffer_name = "visible_cpu_buffer";
@@ -11,7 +12,7 @@ const visible_event = "visible";
 const visible_update_event = "visible_update";
 
 class VisibilityDataView {
-  current_entity = -1;
+  current_entity = -1n;
 
   constructor() {}
 
@@ -63,7 +64,7 @@ export class VisibilityFragment extends Fragment {
       gpu_data_dirty: true,
     };
 
-    this.rebuild_buffers(Renderer.get().graphics_context);
+    this.rebuild_buffers();
   }
 
   static resize(new_size) {
@@ -73,7 +74,7 @@ export class VisibilityFragment extends Fragment {
     Fragment.resize_array(this.data, "visible", new_size, Uint32Array, 1);
     Fragment.resize_array(this.data, "dirty", new_size, Uint8Array, 1);
 
-    this.rebuild_buffers(Renderer.get().graphics_context);
+    this.rebuild_buffers();
   }
 
   static add_entity(entity) {
@@ -83,24 +84,33 @@ export class VisibilityFragment extends Fragment {
 
   static remove_entity(entity) {
     super.remove_entity(entity);
-    this.data.visible[entity] = 0;
+
+    const instance_count = EntityID.get_instance_count(entity);
+    const entity_offset = EntityID.get_absolute_index(entity);
+
+    for (let i = 0; i < instance_count; ++i) {
+      const entity_index = entity_offset + i;
+      this.data.visible[entity_index] = 0;
+    }
   }
 
-  static get_entity_data(entity) {
+  static get_entity_data(entity, instance = 0) {
+    const entity_index = EntityID.get_absolute_index(entity) + instance;
     const data_view = this.data_view_allocator.allocate();
     data_view.fragment = this;
-    data_view.view_entity(entity);
+    data_view.view_entity(entity_index);
     return data_view;
   }
 
-  static duplicate_entity_data(entity) {
+  static duplicate_entity_data(entity, instance = 0) {
     const data = {};
-    data.visible = this.data.visible[entity];
-    data.dirty = this.data.dirty[entity];
+    const entity_index = EntityID.get_absolute_index(entity) + instance;
+    data.visible = this.data.visible[entity_index];
+    data.dirty = this.data.dirty[entity_index];
     return data;
   }
 
-  static to_gpu_data(context) {
+  static to_gpu_data() {
     if (!this.data) this.initialize();
 
     if (!this.data.gpu_data_dirty) {
@@ -109,14 +119,14 @@ export class VisibilityFragment extends Fragment {
       };
     }
 
-    this.rebuild_buffers(context);
+    this.rebuild_buffers();
 
     return {
       visible_buffer: this.data.visible_buffer,
     };
   }
 
-  static rebuild_buffers(context) {
+  static rebuild_buffers() {
     {
       const gpu_data = this.data.visible
         ? this.data.visible
@@ -125,7 +135,7 @@ export class VisibilityFragment extends Fragment {
         !this.data.visible_buffer ||
         this.data.visible_buffer.config.size < gpu_data.byteLength
       ) {
-        this.data.visible_buffer = Buffer.create(context, {
+        this.data.visible_buffer = Buffer.create({
           name: visible_buffer_name,
           usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
           raw_data: gpu_data,
@@ -135,7 +145,7 @@ export class VisibilityFragment extends Fragment {
         Renderer.get().mark_bind_groups_dirty(true);
         global_dispatcher.dispatch(visible_event, this.data.visible_buffer);
       } else {
-        this.data.visible_buffer.write(context, gpu_data);
+        this.data.visible_buffer.write(gpu_data);
       }
 
       global_dispatcher.dispatch(visible_update_event);
@@ -144,5 +154,5 @@ export class VisibilityFragment extends Fragment {
     this.data.gpu_data_dirty = false;
   }
 
-  static async sync_buffers(context) {}
+  static async sync_buffers() {}
 }

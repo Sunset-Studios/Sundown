@@ -4,9 +4,10 @@ import { Renderer } from "../../../renderer/renderer.js";
 import { Buffer } from "../../../renderer/buffer.js";
 import { global_dispatcher } from "../../../core/dispatcher.js";
 import { RingBufferAllocator } from "../../../memory/allocator.js";
+import { EntityID } from "../entity.js";
 
 class StaticMeshDataView {
-  current_entity = -1;
+  current_entity = -1n;
 
   constructor() {}
 
@@ -136,22 +137,24 @@ export class StaticMeshFragment extends Fragment {
     entity_data.instance_count = 0n;
   }
 
-  static get_entity_data(entity) {
+  static get_entity_data(entity, instance = 0) {
+    const entity_index = EntityID.get_absolute_index(entity) + instance;
     const data_view = this.data_view_allocator.allocate();
     data_view.fragment = this;
-    data_view.view_entity(entity);
+    data_view.view_entity(entity_index);
     return data_view;
   }
 
-  static duplicate_entity_data(entity) {
+  static duplicate_entity_data(entity, instance = 0) {
     const data = {};
-    data.mesh = this.data.mesh[entity];
+    const entity_index = EntityID.get_absolute_index(entity) + instance;
+    data.mesh = this.data.mesh[entity_index];
     data.material_slots = Array(64).fill(0);
     for (let i = 0; i < 64; i++) {
-      data.material_slots[i] = this.data.material_slots[entity * 64 + i];
+      data.material_slots[i] = this.data.material_slots[entity_index * 64 + i];
     }
-    data.instance_count = this.data.instance_count[entity];
-    data.dirty = this.data.dirty[entity];
+    data.instance_count = this.data.instance_count[entity_index];
+    data.dirty = this.data.dirty[entity_index];
     return data;
   }
 }

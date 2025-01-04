@@ -18,7 +18,7 @@ export class TransformProcessor extends SimulationLayer {
   transform_processing_output_lists = [];
 
   init() {
-    this.entity_query = EntityManager.get().create_query({
+    this.entity_query = EntityManager.create_query({
       fragment_requirements: [TransformFragment],
     });
     this.on_post_render_callback = this._on_post_render.bind(this);
@@ -26,12 +26,12 @@ export class TransformProcessor extends SimulationLayer {
 
   update(delta_time) {
     profile_scope(transform_processor_update_scope_name, () => {
-      const transforms = EntityManager.get().get_fragment_array(TransformFragment);
+      const transforms = EntityManager.get_fragment_array(TransformFragment);
       if (!transforms || transforms.dirty.length === 0) {
         return;
       }
 
-      const scene_graph = EntityManager.get().get_fragment_array(SceneGraphFragment);
+      const scene_graph = EntityManager.get_fragment_array(SceneGraphFragment);
       if (!scene_graph) {
         return;
       }
@@ -47,10 +47,9 @@ export class TransformProcessor extends SimulationLayer {
         this.transform_processing_input_lists[i][2] = transforms.scale_buffer;
         this.transform_processing_input_lists[i][3] = transforms.dirty_flags_buffer;
         this.transform_processing_input_lists[i][4] = transforms.transforms_buffer;
-        this.transform_processing_input_lists[i][5] = transforms.inverse_transforms_buffer;
-        this.transform_processing_input_lists[i][6] = transforms.bounds_data_buffer;
-        this.transform_processing_input_lists[i][7] = scene_graph.scene_graph_buffer;
-        this.transform_processing_input_lists[i][8] = scene_graph.scene_graph_uniforms[i];
+        this.transform_processing_input_lists[i][5] = transforms.bounds_data_buffer;
+        this.transform_processing_input_lists[i][6] = scene_graph.scene_graph_buffer;
+        this.transform_processing_input_lists[i][7] = scene_graph.scene_graph_uniforms[i];
 
         this.transform_processing_output_lists[i][0] = transforms.position_buffer;
         this.transform_processing_output_lists[i][1] = transforms.rotation_buffer;
@@ -74,7 +73,7 @@ export class TransformProcessor extends SimulationLayer {
   }
 
   _on_post_render(graph, frame_data, encoder) {
-    const transforms = EntityManager.get().get_fragment_array(TransformFragment);
+    const transforms = EntityManager.get_fragment_array(TransformFragment);
     if (!transforms) {
       return;
     }

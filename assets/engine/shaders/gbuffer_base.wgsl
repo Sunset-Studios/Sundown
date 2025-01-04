@@ -37,9 +37,8 @@ struct FragmentOutput {
 }
 
 @group(1) @binding(0) var<storage, read> entity_transforms: array<EntityTransform>;
-@group(1) @binding(1) var<storage, read> entity_inverse_transforms: array<EntityInverseTransform>;
-@group(1) @binding(2) var<storage, read> compacted_object_instances: array<CompactedObjectInstance>;
-@group(1) @binding(3) var<storage, read> lights_buffer: array<Light>; // Used for forward shading if necessary
+@group(1) @binding(1) var<storage, read> compacted_object_instances: array<CompactedObjectInstance>;
+@group(1) @binding(2) var<storage, read> lights_buffer: array<Light>; // Used for forward shading if necessary
 
 #ifndef CUSTOM_VS
 fn vertex(v_out: ptr<function, VertexOutput>) -> VertexOutput {
@@ -63,7 +62,7 @@ fn vertex(v_out: ptr<function, VertexOutput>) -> VertexOutput {
     output.world_position = entity_transform.transform * output.local_position;
     output.color = instance_vertex.color;
     output.uv = instance_vertex.uv;
-    output.normal = normalize(vec4f((entity_inverse_transforms[entity].transpose_inverse_model_matrix * instance_vertex.normal).xyz, 1.0));
+    output.normal = normalize(vec4f((entity_transform.transpose_inverse_model_matrix * instance_vertex.normal).xyz, 1.0));
     output.instance_index = ii;
     output.instance_id = entity;
     output.vertex_index = vi;

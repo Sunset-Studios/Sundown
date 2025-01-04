@@ -1,6 +1,6 @@
 import { Renderer } from "../../renderer/renderer.js";
 import { SimulationLayer } from "../simulation_layer.js";
-import { EntityManager } from "../ecs/entity.js";
+import { EntityManager, EntityID } from "../ecs/entity.js";
 import { UserInterfaceFragment } from "../ecs/fragments/user_interface_fragment.js";
 import { Element3D } from "../../ui/3d/element.js";
 import { InputProvider } from "../../input/input_provider.js";
@@ -12,14 +12,14 @@ export class UI3DProcessor extends SimulationLayer {
   scene = null;
 
   init() {
-    this.entity_query = EntityManager.get().create_query({
+    this.entity_query = EntityManager.create_query({
       fragment_requirements: [UserInterfaceFragment],
     });
   }
 
   update(delta_time) {
     profile_scope("UI3DProcessor.update", () => {
-      const user_interfaces = EntityManager.get().get_fragment_array(UserInterfaceFragment);
+      const user_interfaces = EntityManager.get_fragment_array(UserInterfaceFragment);
       if (!user_interfaces || user_interfaces.dirty.length === 0) {
         return;
       }
@@ -27,7 +27,7 @@ export class UI3DProcessor extends SimulationLayer {
       let updated = false;
 
       for (let i = 0; i < this.entity_query.matching_entities.length; ++i) {
-        const entity = this.entity_query.matching_entities[i];
+        const entity = this.entity_query.matching_entities.get(i);
 
         if (!user_interfaces.dirty[entity]) {
           continue;
@@ -63,7 +63,7 @@ export class UI3DProcessor extends SimulationLayer {
       }
 
       if (updated) {
-        UserInterfaceFragment.to_gpu_data(Renderer.get().graphics_context);
+        UserInterfaceFragment.to_gpu_data();
       }
     });
   }

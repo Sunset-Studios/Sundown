@@ -1,3 +1,5 @@
+import { EntityID } from "./entity.js";
+
 export class Fragment {
   static data = null;
   static size = 0;
@@ -22,11 +24,11 @@ export class Fragment {
     this.entity_set.delete(entity);
   }
 
-  static duplicate_entity_data(entity) {
-    return this.get_entity_data(entity);
+  static duplicate_entity_data(entity, instance = 0) {
+    return this.get_entity_data(entity, instance);
   }
 
-  static get_entity_data(entity) {
+  static get_entity_data(entity, instance = 0) {
     const get_nested_data = (source_data, entity_index) => {
       const result = {};
       for (const [key, value] of Object.entries(source_data)) {
@@ -51,7 +53,11 @@ export class Fragment {
       );
     }
 
-    return get_nested_data(this.data, entity);
+    return get_nested_data(this.data, entity + instance);
+  }
+
+  static entity_instance_count_changed(entity) {
+    const instance_count = EntityID.get_instance_count(entity);
   }
 
   static resize_array(

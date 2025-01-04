@@ -10,10 +10,9 @@ struct SceneGraphLayerData {
 @group(1) @binding(2) var<storage, read> entity_scales: array<vec4f>;
 @group(1) @binding(3) var<storage, read_write> entity_dirty_flags: array<u32>;
 @group(1) @binding(4) var<storage, read_write> entity_transforms: array<EntityTransform>;
-@group(1) @binding(5) var<storage, read_write> entity_inverse_transforms: array<EntityInverseTransform>;
-@group(1) @binding(6) var<storage, read_write> entity_bounds_data: array<EntityBoundsData>;
-@group(1) @binding(7) var<storage, read> scene_graph: array<vec2<i32>>;
-@group(1) @binding(8) var<uniform> scene_graph_layer_data: SceneGraphLayerData;
+@group(1) @binding(5) var<storage, read_write> entity_bounds_data: array<EntityBoundsData>;
+@group(1) @binding(6) var<storage, read> scene_graph: array<vec2<i32>>;
+@group(1) @binding(7) var<uniform> scene_graph_layer_data: SceneGraphLayerData;
 
 @compute @workgroup_size(256)
 fn cs(@builtin(global_invocation_id) global_id: vec3<u32>) {
@@ -109,9 +108,9 @@ fn cs(@builtin(global_invocation_id) global_id: vec3<u32>) {
 
     entity_transforms[entity_id].transform = transform;
 
-    entity_inverse_transforms[entity_id].inverse_model_matrix = inverse_transform;
+    entity_transforms[entity_id].inverse_model_matrix = inverse_transform;
 
-    entity_inverse_transforms[entity_id].transpose_inverse_model_matrix = mat4x4f(
+    entity_transforms[entity_id].transpose_inverse_model_matrix = mat4x4f(
         inverse_transform[0][0], inverse_transform[1][0], inverse_transform[2][0], inverse_transform[3][0],
         inverse_transform[0][1], inverse_transform[1][1], inverse_transform[2][1], inverse_transform[3][1],
         inverse_transform[0][2], inverse_transform[1][2], inverse_transform[2][2], inverse_transform[3][2],

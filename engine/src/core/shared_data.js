@@ -3,36 +3,28 @@ import { Texture } from "../renderer/texture.js";
 import { Renderer } from "../renderer/renderer.js";
 import { mat4, vec4, quat, vec3, vec2 } from "gl-matrix";
 import { WORLD_UP, WORLD_FORWARD } from "./minimal.js";
+import { Vector } from "../memory/container.js";
 import _ from "lodash";
 
+const vertex_buffer_name = "vertex_buffer";
+const view_buffer_name = "view_buffer";
+const frame_info_buffer_name = "frame_info_buffer";
+const entity_metadata_buffer_name = "entity_metadata_buffer";
+
 export class SharedVertexBuffer {
-  buffer = null;
-  vertex_data = [];
-  size = 0;
+  static buffer = null;
+  static vertex_data = [];
+  static size = 0;
 
-  constructor() {
-    if (SharedVertexBuffer.instance) {
-      return SharedVertexBuffer.instance;
-    }
-    SharedVertexBuffer.instance = this;
-  }
-
-  static get() {
-    if (!SharedVertexBuffer.instance) {
-      SharedVertexBuffer.instance = new SharedVertexBuffer();
-    }
-    return SharedVertexBuffer.instance;
-  }
-
-  add_vertex_data(context, data) {
+  static add_vertex_data(data) {
     const offset = this.vertex_data.length;
     this.vertex_data.push(...data);
     this.size = this._get_byte_size();
-    this.build(context);
+    this.build();
     return offset;
   }
 
-  _get_byte_size() {
+  static _get_byte_size() {
     return (
       this.vertex_data
         .map((v) =>
@@ -42,13 +34,13 @@ export class SharedVertexBuffer {
     );
   }
 
-  build(context) {
+  static build() {
     if (this.buffer) {
-      this.buffer.destroy(context);
+      this.buffer.destroy();
     }
 
-    this.buffer = Buffer.create(context, {
-      name: "vertex_buffer",
+    this.buffer = Buffer.create({
+      name: vertex_buffer_name,
       data: this.vertex_data.map((v) =>
         v.position.concat(v.normal, v.color, v.uv, v.tangent, v.bitangent)
       ),
@@ -60,27 +52,13 @@ export class SharedVertexBuffer {
 }
 
 export class SharedViewBuffer {
-  view_data = [];
-  type_size_bytes = 0;
-  raw_data = null;
-  size = 0;
-
-  constructor() {
-    if (SharedViewBuffer.instance) {
-      return SharedViewBuffer.instance;
-    }
-    SharedViewBuffer.instance = this;
-  }
-
-  static get() {
-    if (!SharedViewBuffer.instance) {
-      return new SharedViewBuffer();
-    }
-    return SharedViewBuffer.instance;
-  }
+  static view_data = [];
+  static type_size_bytes = 0;
+  static raw_data = null;
+  static size = 0;
 
   // Adds a view data to the buffer and returns the index. Should be called during setup, before the simulation begins.
-  add_view_data(context, view_data = {}) {
+  static add_view_data(view_data = {}) {
     this.view_data.push({
       position: view_data.position ?? vec4.create(),
       rotation: view_data.rotation ?? quat.create(),
@@ -113,12 +91,12 @@ export class SharedViewBuffer {
     this.raw_data.set(flattened_data);
     this.size = this.type_size_bytes * this.view_data.length;
 
-    this.build(context);
+    this.build();
 
     return this.view_data.length - 1;
   }
 
-  get_view_data(index) {
+  static get_view_data(index) {
     console.assert(
       index < this.view_data.length && index >= 0,
       "View data index out of bounds"
@@ -127,7 +105,7 @@ export class SharedViewBuffer {
   }
 
   // Updates the view data at the given index. Can be called during setup or at runtime.
-  set_view_data(context, index, view_data) {
+  static set_view_data(index, view_data) {
     let dirty = false;
     if (
       view_data.position &&
@@ -166,7 +144,7 @@ export class SharedViewBuffer {
   }
 
   // Updates the view transforms at the given index, given the view data previously set. Can be called during setup or at runtime.
-  update_transforms(context, index) {
+  static update_transforms(index) {
     if (this.view_data[index].dirty) {
       if (this.view_data[index].projection_matrix) {
         this.view_data[index].prev_projection_matrix = mat4.clone(
@@ -296,12 +274,9 @@ export class SharedViewBuffer {
       }
 
       if (this.buffer) {
-        this.buffer.write(
-          context,
-          this.view_data.map(this._get_gpu_type_layout)
-        );
+        this.buffer.write(this.view_data.map(this._get_gpu_type_layout));
       } else {
-        this.build(context);
+        this.build();
       }
 
       this.view_data[index].dirty = false;
@@ -309,13 +284,13 @@ export class SharedViewBuffer {
   }
 
   // Builds the GPU resident view buffer. Should be called during setup, before the simulation begins.
-  build(context) {
+  static build() {
     if (this.buffer) {
-      this.buffer.destroy(context);
+      this.buffer.destroy();
     }
 
-    this.buffer = Buffer.create(context, {
-      name: "view_buffer",
+    this.buffer = Buffer.create({
+      name: view_buffer_name,
       data: this.view_data.map(this._get_gpu_type_layout),
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
     });
@@ -323,7 +298,7 @@ export class SharedViewBuffer {
     Renderer.get().refresh_global_shader_bindings();
   }
 
-  _get_gpu_type_layout(item) {
+  static _get_gpu_type_layout(item) {
     return Array.of(
       ...item.view_matrix,
       ...item.prev_view_matrix,
@@ -339,24 +314,10 @@ export class SharedViewBuffer {
 }
 
 export class SharedEnvironmentMapData {
-  skybox = null;
+  static skybox = null;
 
-  constructor() {
-    if (SharedEnvironmentMapData.instance) {
-      return SharedEnvironmentMapData.instance;
-    }
-    SharedEnvironmentMapData.instance = this;
-  }
-
-  static get() {
-    if (!SharedEnvironmentMapData.instance) {
-      return new SharedEnvironmentMapData();
-    }
-    return SharedEnvironmentMapData.instance;
-  }
-
-  async add_skybox(context, name, texture_paths) {
-    const skybox = await Texture.load(context, texture_paths, {
+  static async add_skybox(name, texture_paths) {
+    const skybox = await Texture.load(texture_paths, {
       name: name,
       format: "rgba8unorm",
       dimension: "cube",
@@ -371,93 +332,80 @@ export class SharedEnvironmentMapData {
     return skybox;
   }
 
-  remove_skybox() {
+  static remove_skybox() {
     this.skybox = null;
   }
 
-  get_skybox() {
+  static get_skybox() {
     return this.skybox;
   }
 }
 
 export class SharedFrameInfoBuffer {
-  frame_info = {
+  static frame_info = {
     view_index: 0,
     time: 0,
     resolution: vec2.create(),
     cursor_world_position: vec4.create(),
   };
-  buffer = null;
+  static buffer = null;
+  static size = 0;
 
-  constructor() {
-    if (SharedFrameInfoBuffer.instance) {
-      return SharedFrameInfoBuffer.instance;
-    }
-    SharedFrameInfoBuffer.instance = this;
-  }
-
-  static get() {
-    if (!SharedFrameInfoBuffer.instance) {
-      return new SharedFrameInfoBuffer();
-    }
-    return SharedFrameInfoBuffer.instance;
-  }
-
-  get_view_index() {
+  static get_view_index() {
     return this.frame_info.view_index;
   }
 
-  get_time() {
+  static get_time() {
     return this.frame_info.time;
   }
 
-  set_view_index(context, index) {
+  static set_view_index(index) {
     this.frame_info.view_index = index;
     if (!this.buffer) {
-      this.build(context);
+      this.build();
     } else {
-      this.buffer.write(context, this._get_gpu_type_layout(this.frame_info));
+      this.buffer.write(this._get_gpu_type_layout(this.frame_info));
     }
   }
 
-  set_time(context, time) {
+  static set_time(time) {
     this.frame_info.time = time;
     if (!this.buffer) {
-      this.build(context);
+      this.build();
     } else {
-      this.buffer.write(context, this._get_gpu_type_layout(this.frame_info));
+      this.buffer.write(this._get_gpu_type_layout(this.frame_info));
     }
   }
 
-  set_cursor_world_position(context, cursor_world_position) {
+  static set_cursor_world_position(cursor_world_position) {
     this.frame_info.cursor_world_position = cursor_world_position;
     if (!this.buffer) {
-      this.build(context);
+      this.build();
     } else {
-      this.buffer.write(context, this._get_gpu_type_layout(this.frame_info));
+      this.buffer.write(this._get_gpu_type_layout(this.frame_info));
     }
   }
 
-  set_resolution(context, resolution) {
+  static set_resolution(resolution) {
     this.frame_info.resolution = resolution;
     if (!this.buffer) {
-      this.build(context);
+      this.build();
     } else {
-      this.buffer.write(context, this._get_gpu_type_layout(this.frame_info));
+      this.buffer.write(this._get_gpu_type_layout(this.frame_info));
     }
   }
 
-  build(context) {
+  static build() {
     if (this.buffer) {
-      this.buffer.destroy(context);
+      this.buffer.destroy();
     }
 
     const gpu_layout = this._get_gpu_type_layout(this.frame_info);
 
     this.size = gpu_layout.length * 4;
 
-    this.buffer = Buffer.create(context, {
-      name: "frame_info_buffer",
+    this.buffer = Buffer.create({
+      name: frame_info_buffer_name,
       data: gpu_layout,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
@@ -465,12 +413,103 @@ export class SharedFrameInfoBuffer {
     Renderer.get().refresh_global_shader_bindings();
   }
 
-  _get_gpu_type_layout(item) {
+  static _get_gpu_type_layout(item) {
     return Array.of(
       item.view_index,
       item.time,
       ...item.resolution,
       ...item.cursor_world_position
     );
+  }
+}
+
+export class SharedEntityMetadataBuffer {
+  static entity_metadata = new Vector(256, Uint32Array);
+  static capacity = 0;
+  static num_entities = 0;
+  static buffer = null;
+  static size = 0;
+
+  static get_entity_offset(entity) {
+    return this.entity_metadata.get(Number(entity) * 2);
+  }
+
+  static get_entity_count(entity) {
+    return this.entity_metadata.get(Number(entity) * 2 + 1);
+  }
+
+  static set_entity_instance_count(entity, count) {
+    entity = Number(entity);
+
+    const old_count = this.entity_metadata.get(entity * 2 + 1);
+    this.entity_metadata.set(entity * 2 + 1, count);
+    
+    // Shift subsequent entity offsets by the change in count
+    const count_delta = count - old_count;
+    if (count_delta !== 0) {
+      for (let i = entity + 1; i < this.num_entities; i++) {
+        const current_offset = this.entity_metadata.get(i * 2);
+        this.entity_metadata.set(i * 2, current_offset + count_delta);
+      }
+    }
+
+    if (!this.buffer) {
+      this.build();
+    } else {
+      this.buffer.write(this._get_gpu_type_layout());
+    }
+  }
+
+  static add_entity(entity) {
+    entity = Number(entity);
+    const adjusted_entity = entity + 1;
+
+    if (adjusted_entity > this.capacity) {
+      this.reserve(adjusted_entity);
+    }
+
+    if (this.num_entities < adjusted_entity) {
+      // Calculate the correct offset based on sum of previous entity counts
+      let offset = 0;
+      if (entity > 0) {
+        const prev_entity = entity - 1;
+        offset = this.entity_metadata.get(prev_entity * 2) + // Previous offset
+                this.entity_metadata.get(prev_entity * 2 + 1); // Plus previous count
+      }
+      
+      this.entity_metadata.set(entity * 2, offset);
+      this.entity_metadata.set(entity * 2 + 1, 1);
+      this.num_entities = adjusted_entity;
+    }
+  }
+
+  static reserve(capacity) {
+    if (this.capacity < capacity) {
+      this.entity_metadata.resize(Math.max(4, capacity * 4)); // Double the size of the buffer
+      this.capacity = capacity;
+      this.build();
+    }
+  }
+
+  static build() {
+    if (this.buffer) {
+      this.buffer.destroy();
+    }
+
+    const gpu_layout = this._get_gpu_type_layout();
+
+    this.size = gpu_layout.byteLength;
+
+    this.buffer = Buffer.create({
+      name: entity_metadata_buffer_name,
+      raw_data: gpu_layout,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+    });
+
+    Renderer.get().refresh_global_shader_bindings();
+  }
+
+  static _get_gpu_type_layout() {
+    return this.entity_metadata.get_data();
   }
 }

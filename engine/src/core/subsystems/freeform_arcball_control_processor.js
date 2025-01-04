@@ -1,4 +1,4 @@
-import { Renderer } from '../../renderer/renderer.js';
+import { Renderer } from '../../renderer/renderer.js'; 
 import { SimulationLayer } from '../simulation_layer.js';
 import { SharedViewBuffer } from '../shared_data.js';
 import { InputProvider } from '../../input/input_provider.js';
@@ -27,7 +27,7 @@ export class FreeformArcballControlProcessor extends SimulationLayer {
             return;
         }
         
-        const view_data = SharedViewBuffer.get().get_view_data(this.context.current_view);
+        const view_data = SharedViewBuffer.get_view_data(this.context.current_view);
         let position = vec4.clone(view_data.position);
         let rotation = quat.clone(view_data.rotation);
         
@@ -88,20 +88,18 @@ export class FreeformArcballControlProcessor extends SimulationLayer {
             moved = true;
         }
 
-        const context = Renderer.get().graphics_context;
         if (moved) {
-            SharedViewBuffer.get().set_view_data(context, this.context.current_view, {
+            SharedViewBuffer.set_view_data(this.context.current_view, {
                 position: position,
                 rotation: rotation
             });
         }
-        SharedViewBuffer.get().update_transforms(context, this.context.current_view);
+        SharedViewBuffer.update_transforms(this.context.current_view);
     }
 
     on_resolution_change() {
-        const context = Renderer.get().graphics_context;
-        SharedViewBuffer.get().set_view_data(context, this.context.current_view, {
-            aspect_ratio: context.aspect_ratio
+        SharedViewBuffer.set_view_data(this.context.current_view, {
+            aspect_ratio: Renderer.get().aspect_ratio
         });
     }
 
@@ -112,11 +110,10 @@ export class FreeformArcballControlProcessor extends SimulationLayer {
         const camera_position = vec4.fromValues(0, 0, 0, 1);
         const camera_rotation = quat.fromEuler(quat.create(), 0, 0, 0);
 
-        const context = Renderer.get().graphics_context;
-        SharedViewBuffer.get().set_view_data(context, this.scene.context.current_view, {
+        SharedViewBuffer.set_view_data(this.scene.context.current_view, {
             position: camera_position,
             rotation: camera_rotation,
-            aspect_ratio: context.aspect_ratio,
+            aspect_ratio: Renderer.get().aspect_ratio,
             fov: radians(75),
         });
     }

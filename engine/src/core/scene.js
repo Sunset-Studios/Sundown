@@ -1,3 +1,4 @@
+import { EntityManager } from "./ecs/entity.js";
 import { SimulationLayer } from "./simulation_layer.js";
 import { TextProcessor } from "./subsystems/text_processor.js";
 import { StaticMeshProcessor } from "./subsystems/static_mesh_processor.js";
@@ -20,9 +21,7 @@ export class Scene extends SimulationLayer {
   init() {
     super.init();
 
-    this.context.current_view = SharedViewBuffer.get().add_view_data(
-      Renderer.get().graphics_context
-    );
+    this.context.current_view = SharedViewBuffer.add_view_data();
 
     this.setup_default_subsystems();
 
@@ -33,7 +32,7 @@ export class Scene extends SimulationLayer {
     super.update(delta_time);
 
     profile_scope("Scene.update", () => {
-      this.context.entity_manager.process_query_changes();
+      EntityManager.process_query_changes();
     });
   }
 
@@ -48,52 +47,63 @@ export class Scene extends SimulationLayer {
   }
 
   get_entity_count() {
-    return this.context.entity_manager.get_entity_count();
+    return EntityManager.get_entity_count();
+  }
+
+  get_entity_instance_count(entity) {
+    return EntityManager.get_entity_instance_count(entity);
+  }
+
+  change_entity_instance_count(entity, instance_count) {
+    return EntityManager.change_entity_instance_count(entity, instance_count);
+  }
+
+  reserve_entities(size) {
+    EntityManager.reserve_entities(size);
   }
 
   create_entity(refresh_entity_data = true) {
-    return this.context.entity_manager.create_entity(refresh_entity_data);
+    return EntityManager.create_entity(refresh_entity_data);
   }
 
   delete_entity(entity, refresh_entity_data = true) {
-    this.context.entity_manager.delete_entity(entity, refresh_entity_data);
+    EntityManager.delete_entity(entity, refresh_entity_data);
   }
 
-  duplicate_entity(entity, refresh_entity_data = true) {
-    return this.context.entity_manager.duplicate_entity(entity, refresh_entity_data);
+  duplicate_entity(entity, refresh_entity_data = true, instance = 0) {
+    return EntityManager.duplicate_entity(entity, refresh_entity_data, instance);
   }
 
   add_fragment(entity, FragmentType, refresh_entity_data = true) {
-    return this.context.entity_manager.add_fragment(entity, FragmentType, refresh_entity_data);
+    return EntityManager.add_fragment(entity, FragmentType, refresh_entity_data);
   }
 
   remove_fragment(entity, FragmentType, refresh_entity_data = true) {
-    this.context.entity_manager.remove_fragment(entity, FragmentType, refresh_entity_data);
+    EntityManager.remove_fragment(entity, FragmentType, refresh_entity_data);
   }
 
   add_tag(entity, Tag, refresh_entity_data = true) {
-    this.context.entity_manager.add_tag(entity, Tag, refresh_entity_data);
+    EntityManager.add_tag(entity, Tag, refresh_entity_data);
   }
 
   remove_tag(entity, Tag, refresh_entity_data = true) {
-    this.context.entity_manager.remove_tag(entity, Tag, refresh_entity_data);
+    EntityManager.remove_tag(entity, Tag, refresh_entity_data);
   }
 
-  get_fragment(entity, FragmentType) {
-    return this.context.entity_manager.get_fragment(entity, FragmentType);
+  get_fragment(entity, FragmentType, instance = 0) {
+    return EntityManager.get_fragment(entity, FragmentType, instance);
   }
   
   has_fragment(entity, FragmentType) {
-    return this.context.entity_manager.has_fragment(entity, FragmentType);
+    return EntityManager.has_fragment(entity, FragmentType);
   }
 
-  refresh_entity_queries(params = {}) {
-    this.context.entity_manager.update_queries(params);
+  refresh_entity_queries() {
+    EntityManager.update_queries();
   }
 
   set_ui_root(ui_root) {
     this.get_layer(UIProcessor).set_ui_root(ui_root);
-    const canvas = Renderer.get().graphics_context.canvas;
-    canvas.after(ui_root.dom);
+    Renderer.get().canvas.after(ui_root.dom);
   }
 }

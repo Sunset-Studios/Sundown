@@ -4,6 +4,7 @@ import { Renderer } from "../../../renderer/renderer.js";
 import { Buffer } from "../../../renderer/buffer.js";
 import { global_dispatcher } from "../../../core/dispatcher.js";
 import { RingBufferAllocator } from "../../../memory/allocator.js";
+import { EntityID } from "../entity.js";
 import { FontCache } from "../../../ui/text/font_cache.js";
 
 const text_buffer_name = "text_buffer";
@@ -22,7 +23,7 @@ const string_data_event = "string_data";
 const string_data_update_event = "string_data_update";
 
 class TextDataView {
-  current_entity = -1;
+  current_entity = -1n;
 
   constructor() {}
 
@@ -132,7 +133,7 @@ export class TextFragment extends Fragment {
       gpu_data_dirty: true,
     };
 
-    this.rebuild_buffers(Renderer.get().graphics_context);
+    this.rebuild_buffers();
   }
 
   static resize(new_size) {
@@ -143,7 +144,7 @@ export class TextFragment extends Fragment {
     Fragment.resize_array(this.data, "font_size", new_size, Uint32Array, 1);
     Fragment.resize_array(this.data, "dirty", new_size, Uint8Array, 1);
 
-    this.rebuild_buffers(Renderer.get().graphics_context);
+    this.rebuild_buffers();
   }
 
   static add_entity(entity) {
@@ -153,30 +154,39 @@ export class TextFragment extends Fragment {
 
   static remove_entity(entity) {
     super.remove_entity(entity);
-    this.data.font[entity] = 0;
-    this.data.font_size[entity] = 0;
 
-    this.data.text.remove(entity);
-    this.data.offsets.remove(entity);
+    const instance_count = EntityID.get_instance_count(entity);
+    const entity_offset = EntityID.get_absolute_index(entity);
+
+    for (let i = 0; i < instance_count; ++i) {
+      const entity_index = entity_offset + i;
+      this.data.font[entity_index] = 0;
+      this.data.font_size[entity_index] = 0;
+
+      this.data.text.remove(entity_index);
+      this.data.offsets.remove(entity_index);
+    }
   }
 
-  static get_entity_data(entity) {
+  static get_entity_data(entity, instance = 0) {
+    const entity_index = EntityID.get_absolute_index(entity) + instance;
     const data_view = this.data_view_allocator.allocate();
     data_view.fragment = this;
-    data_view.view_entity(entity);
+    data_view.view_entity(entity_index);
     return data_view;
   }
 
-  static duplicate_entity_data(entity) {
+  static duplicate_entity_data(entity, instance = 0) {
+    const entity_offset = EntityID.get_absolute_index(entity);
     const data = {};
     data.text = String.fromCodePoint(
-      ...this.data.text.get_data_for_entity(entity),
+      ...this.data.text.get_data_for_entity(entity_offset),
     );
-    data.font = this.data.font[entity];
+    data.font = this.data.font[entity_offset];
     return data;
   }
 
-  static to_gpu_data(context) {
+  static to_gpu_data() {
     if (!this.data) this.initialize();
 
     if (!this.data.gpu_data_dirty) {
@@ -187,7 +197,7 @@ export class TextFragment extends Fragment {
       };
     }
 
-    this.rebuild_buffers(context);
+    this.rebuild_buffers();
 
     return {
       text_buffer: this.data.text_buffer,
@@ -196,7 +206,7 @@ export class TextFragment extends Fragment {
     };
   }
 
-  static rebuild_buffers(context) {
+  static rebuild_buffers() {
     {
       const gpu_data = this.data.text.get_data();
 
@@ -204,7 +214,7 @@ export class TextFragment extends Fragment {
         !this.data.text_buffer ||
         this.data.text_buffer.config.size < gpu_data.byteLength
       ) {
-        this.data.text_buffer = Buffer.create(context, {
+        this.data.text_buffer = Buffer.create({
           name: text_buffer_name,
           usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
           raw_data: gpu_data,
@@ -214,7 +224,7 @@ export class TextFragment extends Fragment {
         Renderer.get().mark_bind_groups_dirty(true);
         global_dispatcher.dispatch(text_event, this.data.text_buffer);
       } else {
-        this.data.text_buffer.write(context, gpu_data);
+        this.data.text_buffer.write(gpu_data);
       }
 
       global_dispatcher.dispatch(text_update_event);
@@ -227,7 +237,7 @@ export class TextFragment extends Fragment {
         !this.data.offsets_buffer ||
         this.data.offsets_buffer.config.size < gpu_data.byteLength
       ) {
-        this.data.offsets_buffer = Buffer.create(context, {
+        this.data.offsets_buffer = Buffer.create({
           name: offsets_buffer_name,
           usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
           raw_data: gpu_data,
@@ -237,7 +247,7 @@ export class TextFragment extends Fragment {
         Renderer.get().mark_bind_groups_dirty(true);
         global_dispatcher.dispatch(offsets_event, this.data.offsets_buffer);
       } else {
-        this.data.offsets_buffer.write(context, gpu_data);
+        this.data.offsets_buffer.write(gpu_data);
       }
 
       global_dispatcher.dispatch(offsets_update_event);
@@ -261,7 +271,7 @@ export class TextFragment extends Fragment {
         !this.data.string_data_buffer ||
         this.data.string_data_buffer.config.size < gpu_data.byteLength
       ) {
-        this.data.string_data_buffer = Buffer.create(context, {
+        this.data.string_data_buffer = Buffer.create({
           name: string_data_buffer_name,
           usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
           raw_data: gpu_data,
@@ -274,7 +284,7 @@ export class TextFragment extends Fragment {
           this.data.string_data_buffer,
         );
       } else {
-        this.data.string_data_buffer.write(context, gpu_data);
+        this.data.string_data_buffer.write(gpu_data);
       }
 
       global_dispatcher.dispatch(string_data_update_event);
@@ -283,5 +293,5 @@ export class TextFragment extends Fragment {
     this.data.gpu_data_dirty = false;
   }
 
-  static async sync_buffers(context) {}
+  static async sync_buffers() {}
 }

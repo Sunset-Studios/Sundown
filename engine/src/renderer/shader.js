@@ -1,3 +1,4 @@
+import { Renderer } from "./renderer.js";
 import { ResourceCache, CacheTypes } from "./resource_cache.js";
 import { WgslReflect, ResourceType } from "wgsl_reflect/wgsl_reflect.node.js";
 import { read_file } from "../utility/file_system.js";
@@ -29,7 +30,9 @@ export class Shader {
     Shader.shader_paths.push(path);
   }
 
-  initialize(context, file_path) {
+  initialize(file_path) {
+    const renderer = Renderer.get();
+
     let asset = this._load_shader_text(file_path);
     if (!asset) {
       return;
@@ -37,7 +40,7 @@ export class Shader {
 
     try {
       this.code = asset;
-      this.module = context.device.createShaderModule({
+      this.module = renderer.device.createShaderModule({
         label: file_path,
         code: asset,
       });
@@ -171,11 +174,11 @@ export class Shader {
     return result.trim();
   }
 
-  static create(context, file_path) {
+  static create(file_path) {
     let shader = ResourceCache.get().fetch(CacheTypes.SHADER, file_path);
     if (!shader) {
       shader = new Shader();
-      shader.initialize(context, file_path);
+      shader.initialize(file_path);
       ResourceCache.get().store(CacheTypes.SHADER, file_path, shader);
     }
     return shader;

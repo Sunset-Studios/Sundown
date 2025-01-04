@@ -23,7 +23,7 @@ class IndirectDrawBatch {
 }
 
 class ObjectInstanceEntry {
-  constructor(batch_index, entity_index, material_index) {
+  constructor(batch_index, entity_index) {
     this.batch_index = batch_index;
     this.entity_index = entity_index;
   }
@@ -38,10 +38,10 @@ class IndirectDrawObject {
   current_indirect_draw_write_offset = 0;
   current_object_instance_write_offset = 0;
 
-  init(context) {
+  init() {
     profile_scope("init_indirect_draw_object", () => {
       if (!this.indirect_draw_buffer) {
-        this.indirect_draw_buffer = Buffer.create(context, {
+        this.indirect_draw_buffer = Buffer.create({
           name: "indirect_draw_buffer",
           raw_data: this.indirect_draw_data,
           usage:
@@ -51,14 +51,14 @@ class IndirectDrawObject {
         });
       }
       if (!this.object_instance_buffer) {
-        this.object_instance_buffer = Buffer.create(context, {
+        this.object_instance_buffer = Buffer.create({
           name: "object_instance_buffer",
           raw_data: this.object_instance_data,
           usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
         });
       }
       if (!this.compacted_object_instance_buffer) {
-        this.compacted_object_instance_buffer = Buffer.create(context, {
+        this.compacted_object_instance_buffer = Buffer.create({
           name: "compacted_object_instance_buffer",
           raw_data: new Uint32Array(max_objects * 2),
           usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
@@ -68,13 +68,13 @@ class IndirectDrawObject {
   }
 
   // We assume this gets called once per frame
-  update_buffers(context, batches, object_instances) {
+  update_buffers(batches, object_instances) {
     profile_scope("update_indirect_buffers", () => {
       // Resize indirect draw buffer if needed
       const required_indirect_draw_size = batches.length * 5 * 4; // 5 uint32 per batch, 4 bytes per uint32
       if (this.indirect_draw_buffer.size < required_indirect_draw_size) {
-        this.indirect_draw_buffer.destroy(context);
-        this.indirect_draw_buffer = Buffer.create(context, {
+        this.indirect_draw_buffer.destroy();
+        this.indirect_draw_buffer = Buffer.create({
           name: "indirect_draw_buffer",
           data: batches.map((batch) => [
             batch.index_count,
@@ -93,8 +93,8 @@ class IndirectDrawObject {
       // Resize object instance buffer if needed
       const required_object_instance_size = object_instances.length * 2 * 4; // 3 uint32 per instance, 4 bytes per uint32
       if (this.object_instance_buffer.size < required_object_instance_size) {
-        this.object_instance_buffer.destroy(context);
-        this.object_instance_buffer = Buffer.create(context, {
+        this.object_instance_buffer.destroy();
+        this.object_instance_buffer = Buffer.create({
           name: "object_instance_buffer",
           data: object_instances.map((instance) => [
             instance.batch_index,
@@ -126,7 +126,6 @@ class IndirectDrawObject {
         }
 
         this.indirect_draw_buffer.write_raw(
-          context,
           this.indirect_draw_data,
           this.current_indirect_draw_write_offset * 4,
           write_length,
@@ -159,7 +158,6 @@ class IndirectDrawObject {
         }
 
         this.object_instance_buffer.write_raw(
-          context,
           this.object_instance_data,
           this.current_object_instance_write_offset * 4,
           write_length,
@@ -256,10 +254,10 @@ export class MeshTaskQueue {
     }
   }
 
-  sort_and_batch(context) {
+  sort_and_batch() {
     if (!this.initialized) {
       this.initialized = true;
-      this.indirect_draw_object.init(context);
+      this.indirect_draw_object.init();
     }
 
     if (this.needs_sort) {
@@ -362,7 +360,6 @@ export class MeshTaskQueue {
       this.needs_sort = false;
 
       this.indirect_draw_object.update_buffers(
-        context,
         this.batches,
         this.object_instances
       );
@@ -594,8 +591,8 @@ export class MeshTaskQueue {
     }
   }
 
-  draw_quad(context, render_pass) {
-    const mesh = Mesh.quad(context);
+  draw_quad(render_pass) {
+    const mesh = Mesh.quad();
     render_pass.pass.setIndexBuffer(
       mesh.index_buffer.buffer,
       mesh.index_buffer.config.element_type
@@ -608,8 +605,8 @@ export class MeshTaskQueue {
     );
   }
 
-  draw_cube(context, render_pass) {
-    const mesh = Mesh.cube(context);
+  draw_cube(render_pass) {
+    const mesh = Mesh.cube();
     render_pass.pass.setIndexBuffer(
       mesh.index_buffer.buffer,
       mesh.index_buffer.config.element_type
