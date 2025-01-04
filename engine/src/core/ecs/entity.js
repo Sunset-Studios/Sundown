@@ -33,10 +33,10 @@ export class EntityID {
 }
 
 export class EntityManager {
-  static next_entity_id = 0n;
+  static next_entity_id = 0;
   static entity_fragments = new Map();
   static fragment_types = new Set();
-  static entities = new Vector(256, BigInt64Array);
+  static entities = new Vector(256, Float64Array);
   static deleted_entities = new Set();
   static queries = [];
 
@@ -66,6 +66,7 @@ export class EntityManager {
         fragment_type.resize?.(entity);
       }
     }
+
     this.entities.push(entity);
     this.entity_fragments.set(entity, new Set());
     if (refresh_entity_data) {

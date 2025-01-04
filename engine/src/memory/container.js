@@ -1,7 +1,7 @@
 const max_objects = 5000000;
 
 /**
- * A class representing a statically sized BigInt64Array with reset functionality.
+ * A class representing a statically sized Int32Array with reset functionality.
  */
 export class StaticIntArray {
   #max_capacity;
@@ -13,7 +13,7 @@ export class StaticIntArray {
     if (!Number.isInteger(capacity) || capacity <= 0) {
       throw new Error("Capacity must be a positive integer.");
     }
-    this.buffer = new BigInt64Array(capacity);
+    this.buffer = new Int32Array(capacity);
     this.#max_capacity = capacity;
     this.size = 0;
   }
@@ -35,7 +35,7 @@ export class StaticIntArray {
    * @param {bigint} value - The value to add.
    */
   add(value) {
-    this.buffer[this.size++] = BigInt(value);
+    this.buffer[this.size++] = value;
   }
 
   /**
@@ -414,12 +414,10 @@ export class Tree {
     let nodes_remaining_in_layer = this.root_count;
     let nodes_in_next_layer = 0;
 
-    const is_bigint = array_type === BigInt64Array;
-
     while (queue_idx_tail !== queue_idx_head) {
       const current_idx = this.#flatten_queue[queue_idx_tail++];
       const current = this.nodes[current_idx];
-      result[result_size++] = is_bigint ? BigInt(current.data) : current.data;
+      result[result_size++] = current.data;
       nodes_remaining_in_layer--;
 
       for (let i = 0; i < current.child_count; i++) {

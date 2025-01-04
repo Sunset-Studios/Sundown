@@ -125,7 +125,7 @@ export class Font {
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
     });
 
-    font.page_textures = new BigInt64Array(font_data[pages_key].length);
+    font.page_textures = new Float64Array(font_data[pages_key].length);
     for (let i = 0; i < font_data[pages_key].length; i++) {
       const page = font_data[pages_key][i];
       const page_location = font_data_file.substring(0, font_data_file.lastIndexOf(path_sep) + 1) + page;
@@ -140,7 +140,7 @@ export class Font {
           GPUTextureUsage.RENDER_ATTACHMENT,
         force: true,
       });
-      font.page_textures[i] = BigInt(Name.from(page_name));
+      font.page_textures[i] = Name.from(page_name);
     }
 
     font.material = Material.create(font_name_suffix + material_key, default_text_material_template_key, {

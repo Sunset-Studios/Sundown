@@ -16,11 +16,11 @@ export class EntityQuery {
   constructor(entity_manager, fragment_requirements) {
     this.entity_manager = entity_manager;
     this.fragment_requirements = fragment_requirements;
-    this.matching_entities = new Vector(256, BigInt64Array);
+    this.matching_entities = new Vector(256, Float64Array);
     this.matching_entity_ids = new Vector(256, Uint32Array);
     this.matching_entity_instance_counts = new Vector(256, Uint32Array);
     this.entity_states = new Vector(256, Uint32Array);
-    this.entities_to_filter = new Vector(256, BigInt64Array);
+    this.entities_to_filter = new Vector(256, Float64Array);
     this.update_matching_entities();
   }
 
@@ -34,7 +34,7 @@ export class EntityQuery {
     profile_scope("EntityQuery.update_matching_entities", () => {
       this.matching_entities.union(this.entity_manager.get_entities());
 
-      const new_matching_entities = new BigInt64Array(this.matching_entities.length);
+      const new_matching_entities = new Float64Array(this.matching_entities.length);
       const new_matching_entity_ids = new Uint32Array(this.matching_entities.length);
       const new_matching_entity_instance_counts = new Uint32Array(this.matching_entities.length);
       const new_entity_states = new Uint32Array(this.matching_entities.length);

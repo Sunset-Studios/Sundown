@@ -9,7 +9,7 @@ export class Element3DPool {
   element_to_active_index = new Map();
 
   constructor(scene, pool_size = 0) {
-    this.elements = new BigInt64Array(pool_size);
+    this.elements = new Float64Array(pool_size);
     this.active_elements = new Uint32Array(pool_size);
     this.available_elements = new TypedStack(pool_size, Uint32Array);
     for (let i = 0; i < pool_size; i++) {
