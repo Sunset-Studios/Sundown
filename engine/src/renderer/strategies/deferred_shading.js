@@ -1,13 +1,13 @@
 import { Renderer } from "../renderer.js";
 import { Texture } from "../texture.js";
-import { RenderPassFlags } from "../render_pass.js";
+import { RenderPassFlags, MaterialFamilyType } from "../renderer_types.js";
 import { MeshTaskQueue } from "../mesh_task_queue.js";
 import { ComputeTaskQueue } from "../compute_task_queue.js";
 import { TransformFragment } from "../../core/ecs/fragments/transform_fragment.js";
 import { SceneGraphFragment } from "../../core/ecs/fragments/scene_graph_fragment.js";
 import { LightFragment } from "../../core/ecs/fragments/light_fragment.js";
 import { SharedViewBuffer, SharedEnvironmentMapData } from "../../core/shared_data.js";
-import { Material, MaterialFamilyType } from "../material.js";
+import { Material } from "../material.js";
 import { npot, clamp } from "../../utility/math.js";
 import { profile_scope } from "../../utility/performance.js";
 import { global_dispatcher } from "../../core/dispatcher.js";

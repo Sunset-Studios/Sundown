@@ -1,18 +1,7 @@
 import { Renderer } from "./renderer.js";
 import { Name } from "../utility/names.js";
-import { ResourceCache, CacheTypes } from "./resource_cache.js";
-
-export const BindlessGroupIndex = {
-    Image: 0,
-    StorageImage: 1
-}; 
-
-export const BindGroupType = {
-    Global: 0,
-    Pass: 1,
-    Material: 2,
-    Num: 3
-};
+import { ResourceCache } from "./resource_cache.js";
+import { CacheTypes } from "./renderer_types.js";
 
 export class BindingTableEntry {
     constructor(count) {

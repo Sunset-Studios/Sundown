@@ -1,11 +1,10 @@
-import { ResourceCache, CacheTypes } from "./resource_cache.js";
+import { ResourceCache } from "./resource_cache.js";
 import { Mesh } from "./mesh.js";
 import { Buffer } from "./buffer.js";
-import { MaterialFamilyType } from "./material.js";
 import { Name } from "../utility/names.js";
 import { FrameAllocator } from "../memory/allocator.js";
 import { profile_scope } from "../utility/performance.js";
-import { BindGroupType } from "./bind_group.js";
+import { CacheTypes, MaterialFamilyType, BindGroupType } from "./renderer_types.js";
 
 const max_objects = 5000000;
 const max_frame_buffer_writes = 1000;

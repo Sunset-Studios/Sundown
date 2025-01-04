@@ -1,19 +1,8 @@
 import { Renderer } from "./renderer.js";
 import { Name } from "../utility/names.js";
-import { ResourceCache, CacheTypes } from "./resource_cache.js";
-
-/**
- * Flags for image resources in the render graph.
- * @enum {number}
- */
-export const ImageFlags = Object.freeze({
-  /** No flags */
-  None: 0,
-  /** Indicates a transient image resource */
-  Transient: 1,
-  /** Indicates the image is loaded locally */
-  LocalLoad: 2,
-});
+import { ResourceCache } from "./resource_cache.js";
+import { ImageFlags } from "./renderer_types.js";
+import { CacheTypes } from "./renderer_types.js";
 
 /**
  * Configuration for a texture sampler.

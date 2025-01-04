@@ -1,21 +1,9 @@
 import { Renderer } from "./renderer.js";
-import { ResourceCache, CacheTypes } from "./resource_cache.js";
+import { ResourceCache } from "./resource_cache.js";
 import { WgslReflect, ResourceType } from "wgsl_reflect/wgsl_reflect.node.js";
 import { read_file } from "../utility/file_system.js";
-
-export const ShaderResourceType = {
-  Uniform: 0,
-  Storage: 1,
-  Texture: 2,
-  Sampler: 3,
-  StorageTexture: 4,
-};
-
-export const ShaderResource = {
-  type: ShaderResourceType.Uniform,
-  name: "",
-  binding: 0,
-};
+import { ShaderResourceType } from "./renderer_types.js";
+import { CacheTypes } from "./renderer_types.js";
 
 export class Shader {
   static shader_paths = ["engine/shaders"];

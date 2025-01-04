@@ -1,3 +1,4 @@
+import { Renderer } from "../../renderer/renderer.js";
 import { Element } from "./element.js";
 import { InputProvider } from "../../input/input_provider.js";
 import { InputRange } from "../../input/input_types.js";

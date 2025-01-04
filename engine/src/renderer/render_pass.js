@@ -1,22 +1,6 @@
 import { Name } from "../utility/names.js";
-import { ResourceCache, CacheTypes } from "./resource_cache.js";
-
-/**
- * Flags for render passes in the render graph.
- * @enum {number}
- */
-export const RenderPassFlags = Object.freeze({
-  /** No flags */
-  None: 0,
-  /** Indicates a graphics pass */
-  Graphics: 1,
-  /** Indicates a present pass */
-  Present: 2,
-  /** Indicates a compute pass */
-  Compute: 4,
-  /** Indicates a graph-local pass */
-  GraphLocal: 8,
-});
+import { ResourceCache } from "./resource_cache.js";
+import { RenderPassFlags, CacheTypes } from "./renderer_types.js";
 
 export class RenderPass {
   pass = null;

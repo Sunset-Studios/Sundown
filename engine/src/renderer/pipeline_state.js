@@ -1,6 +1,7 @@
 import { Renderer } from "./renderer.js";
 import { Name } from "../utility/names.js";
-import { ResourceCache, CacheTypes } from "./resource_cache.js";
+import { ResourceCache } from "./resource_cache.js";
+import { CacheTypes } from "./renderer_types.js";
 
 export class PipelineState {
     pipeline = null;

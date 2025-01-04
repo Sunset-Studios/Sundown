@@ -1,8 +1,8 @@
 import { Buffer } from "./buffer.js";
 import { Texture } from "./texture.js";
 import { FrameAllocator } from "../memory/allocator.js";
-import { RenderPassFlags } from "./render_pass.js";
 import { profile_scope } from "../utility/performance.js";
+import { RenderPassFlags } from "./renderer_types.js";
 
 const max_objects = 1024;
 

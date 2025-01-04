@@ -1,17 +1,13 @@
-import { Shader, ShaderResourceType } from "./shader.js";
-import { BindGroup, BindGroupType } from "./bind_group.js";
+import { Shader } from "./shader.js";
+import { BindGroup } from "./bind_group.js";
 import { PipelineState } from "./pipeline_state.js";
-import { ResourceCache, CacheTypes } from "./resource_cache.js";
+import { ResourceCache } from "./resource_cache.js";
 import { profile_scope } from "../utility/performance.js";
 import { hash_data, hash_value } from "../utility/hashing.js";
 import { Name } from "../utility/names.js";
 import { Texture } from "./texture.js";
 import { global_dispatcher } from "../core/dispatcher.js";
-
-export const MaterialFamilyType = {
-  Opaque: 0,
-  Transparent: 1,
-};
+import { ShaderResourceType, MaterialFamilyType, CacheTypes, BindGroupType } from "./renderer_types.js";
 
 export class MaterialTemplate {
   static templates = new Map();

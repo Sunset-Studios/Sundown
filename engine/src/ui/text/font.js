@@ -1,10 +1,11 @@
 import { Texture } from "../../renderer/texture.js";
 import { Buffer } from "../../renderer/buffer.js";
-import { Material, MaterialFamilyType, MaterialTemplate } from "../../renderer/material.js";
-import { ResourceCache, CacheTypes } from "../../renderer/resource_cache.js";
+import { Material, MaterialTemplate } from "../../renderer/material.js";
+import { ResourceCache } from "../../renderer/resource_cache.js";
 import { Name } from "../../utility/names.js";
 import { read_file } from "../../utility/file_system.js";
 import { no_cull_rasterizer_config } from "../../utility/config_permutations.js";
+import { CacheTypes, MaterialFamilyType } from "../../renderer/renderer_types.js";
 
 const chars_key = 'chars';
 const common_key = 'common';

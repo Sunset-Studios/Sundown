@@ -1,8 +1,9 @@
 import { glTFLoader } from "../utility/gltf_loader.js";
-import { ResourceCache, CacheTypes } from "./resource_cache.js";
+import { ResourceCache } from "./resource_cache.js";
 import { SharedVertexBuffer } from "../core/shared_data.js";
 import { Buffer } from "./buffer.js";
 import { Name } from "../utility/names.js";
+import { CacheTypes } from "./renderer_types.js";
 
 export class Mesh {
   constructor() {

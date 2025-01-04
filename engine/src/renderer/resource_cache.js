@@ -1,15 +1,4 @@
-export const CacheTypes = Object.freeze({
-    SHADER: 0,
-    PIPELINE_STATE: 1,
-    RENDER_PASS: 2,
-    BIND_GROUP: 3,
-    BIND_GROUP_LAYOUT: 4,
-    BUFFER: 5,
-    IMAGE: 6,
-    SAMPLER: 7,
-    MESH: 8,
-    MATERIAL: 9,
-});
+import { CacheTypes } from "./renderer_types.js";
 
 export class ResourceCache {
     constructor() {

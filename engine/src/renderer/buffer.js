@@ -1,17 +1,7 @@
 import { Name } from "../utility/names.js";
 import { Renderer } from "./renderer.js";
-import { ResourceCache, CacheTypes } from "./resource_cache.js";
-
-/**
- * Flags for buffer resources in the render graph.
- * @enum {number}
- */
-export const BufferFlags = Object.freeze({
-  /** No flags */
-  None: 0,
-  /** Indicates a transient buffer resource */
-  Transient: 1,
-});
+import { ResourceCache } from "./resource_cache.js";
+import { CacheTypes, BufferFlags } from "./renderer_types.js";
 
 export class Buffer {
     config = null;
