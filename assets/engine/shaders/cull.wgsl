@@ -114,12 +114,13 @@ fn cs(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let g_id = global_id.x;
     if (g_id < u32(draw_cull_constants.draw_count)) {
         let entity_id = object_instances[g_id].entity;
+        let entity_resolved = entity_metadata[entity_id].offset;
 
-        let sphere_bounds = entity_bounds_data[entity_id].bounds_pos_radius;
+        let sphere_bounds = entity_bounds_data[entity_resolved].bounds_pos_radius;
         let center = vec4<f32>(sphere_bounds.xyz, 1.0);
 
         // Inflate bounds conservatively
-        let radius = sphere_bounds.w * entity_bounds_data[entity_id].bounds_extent_and_custom_scale.w;
+        let radius = sphere_bounds.w * entity_bounds_data[entity_resolved].bounds_extent_and_custom_scale.w;
 
         let in_frustum = is_in_frustum(center, radius);
         let occluded = is_occluded(center, radius);

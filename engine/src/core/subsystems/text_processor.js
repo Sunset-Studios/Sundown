@@ -1,4 +1,3 @@
-import { Renderer } from "../../renderer/renderer.js";
 import { SimulationLayer } from "../simulation_layer.js";
 import { EntityManager, EntityID } from "../ecs/entity.js";
 import { TextFragment } from "../ecs/fragments/text_fragment.js";
@@ -24,8 +23,9 @@ export class TextProcessor extends SimulationLayer {
         return;
       }
 
+      const matching_entity_data = this.entity_query.matching_entities.get_data();
       for (let i = 0; i < this.entity_query.matching_entities.length; ++i) {
-        const entity = this.entity_query.matching_entities.get(i);
+        const entity = matching_entity_data[i];
 
         if (!texts.dirty[entity]) {
           continue;
@@ -35,8 +35,7 @@ export class TextProcessor extends SimulationLayer {
         const text = text_data.text;
 
         if (text) {
-          const text_mesh = StaticMeshFragment.get_entity_data(entity);
-          text_mesh.instance_count = text.length;
+          EntityManager.change_entity_instance_count(entity, text.length);
 
           let offsets = [0];
           for (let i = 1; i < text.length; ++i)

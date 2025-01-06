@@ -46,7 +46,7 @@ struct GlyphData {
 //     3       | (1,1)
 //------------------------------------------------------------------------------------
 fn vertex(v_out: ptr<function, VertexOutput>) -> VertexOutput {
-    let entity               = v_out.instance_id;
+    let entity               = v_out.base_instance_id;
     let local_instance_index = v_out.instance_index - compacted_object_instances[v_out.instance_index].base_instance;
 
     let string = string_data[entity];

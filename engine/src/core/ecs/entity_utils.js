@@ -100,6 +100,51 @@ export class EntityLinearDataContainer {
   }
 
   /**
+   * Shifts data in the array and fills any new gaps with duplicated data.
+   * @param {number} entity_index - The starting index to shift from.
+   * @param {number} shift_amount - The number of positions to shift (positive or negative).
+   */
+  shift_data_with_fill(entity_index, shift_amount) {
+    if (shift_amount === 0) return;
+
+    const adjusted_shift_amount = entity_index + shift_amount < 0 ? -entity_index : shift_amount;
+
+    if (adjusted_shift_amount > 0) {
+      // Make space by moving data forward
+      let i = Math.min(this.linear_data.length, this.linear_data.length - adjusted_shift_amount) - 1;
+      for (; i >= entity_index; --i) {
+        this.linear_data[i + adjusted_shift_amount] = this.linear_data[i];
+      }
+      // Fill the gap with duplicated data
+      i += 1;
+      for (; i < entity_index + adjusted_shift_amount; ++i) {
+        this.linear_data[i] = this.linear_data[entity_index];
+      }
+    } else {
+      // Compress by moving data backward
+      const size = Math.max(this.linear_data.length, this.linear_data.length - adjusted_shift_amount);
+      for (let i = entity_index; i < size; ++i) {
+        this.linear_data[i] = this.linear_data[i - adjusted_shift_amount];
+      }
+    }
+
+    // Update metadata for affected entities
+    for (const [entity, data] of this.entity_indices.entries()) {
+      if (data.start > entity_index) {
+        data.start += adjusted_shift_amount;
+      }
+    }
+
+    this.next_available_index += adjusted_shift_amount;
+    this.next_available_index = Math.max(this.next_available_index, 0);
+
+    // Resize if needed
+    if (this.next_available_index >= this.linear_data.length) {
+      this.resize(Math.max(this.linear_data.length * 2, this.next_available_index));
+    }
+  }
+
+  /**
    * Resizes the data array to a new size.
    * @param {number} new_size - The new size of the data array.
    */
@@ -151,18 +196,18 @@ export function spawn_mesh_entity(
   parent = null,
   children = [],
   start_visible = true,
-  refresh_entity_queries = false
+  refresh_entities = false
 ) {
   if (!scene) {
     return null;
   }
 
-  const entity = scene.create_entity(false /* refresh_entity_queries */);
+  const entity = scene.create_entity(false /* refresh_entities */);
 
   const new_transform_view = scene.add_fragment(
     entity,
     TransformFragment,
-    false /* refresh_entity_queries */
+    false /* refresh_entities */
   );
   new_transform_view.position = [position.x, position.y, position.z];
   new_transform_view.rotation = [rotation.x, rotation.y, rotation.z, rotation.w];
@@ -171,7 +216,7 @@ export function spawn_mesh_entity(
   const new_scene_graph_view = scene.add_fragment(
     entity,
     SceneGraphFragment,
-    false /* refresh_entity_queries */
+    false /* refresh_entities */
   );
   new_scene_graph_view.parent = parent;
   if (children.length > 0) {
@@ -181,21 +226,20 @@ export function spawn_mesh_entity(
   const new_static_mesh_view = scene.add_fragment(
     entity,
     StaticMeshFragment,
-    false /* refresh_entity_queries */
+    false /* refresh_entities */
   );
   new_static_mesh_view.mesh = BigInt(Name.from(mesh.name));
   new_static_mesh_view.material_slots = [material];
-  new_static_mesh_view.instance_count = BigInt(1);
 
   const new_visibility_view = scene.add_fragment(
     entity,
     VisibilityFragment,
-    false /* refresh_entity_queries */
+    false /* refresh_entities */
   );
   new_visibility_view.visible = start_visible;
 
-  if (refresh_entity_queries) {
-    scene.refresh_entity_queries();
+  if (refresh_entities) {
+    scene.refresh_entities();
   }
 
   return entity;

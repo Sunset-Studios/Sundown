@@ -425,22 +425,24 @@ export class SharedFrameInfoBuffer {
 
 export class SharedEntityMetadataBuffer {
   static entity_metadata = new Vector(256, Uint32Array);
-  static capacity = 0;
   static num_entities = 0;
   static buffer = null;
-  static size = 0;
+  static buffer_size = 0;
 
   static get_entity_offset(entity) {
-    return this.entity_metadata.get(Number(entity) * 2);
+    return this.entity_metadata.get(entity * 2);
   }
 
   static get_entity_count(entity) {
-    return this.entity_metadata.get(Number(entity) * 2 + 1);
+    return this.entity_metadata.get(entity * 2 + 1);
+  }
+
+  static get_absolute_entity_count() {
+    const adjusted_entity_count = this.num_entities - 1;
+    return this.entity_metadata.get(adjusted_entity_count * 2) + this.entity_metadata.get(adjusted_entity_count * 2 + 1);
   }
 
   static set_entity_instance_count(entity, count) {
-    entity = Number(entity);
-
     const old_count = this.entity_metadata.get(entity * 2 + 1);
     this.entity_metadata.set(entity * 2 + 1, count);
     
@@ -461,12 +463,9 @@ export class SharedEntityMetadataBuffer {
   }
 
   static add_entity(entity) {
-    entity = Number(entity);
     const adjusted_entity = entity + 1;
 
-    if (adjusted_entity > this.capacity) {
-      this.reserve(adjusted_entity);
-    }
+    this.resize(adjusted_entity);
 
     if (this.num_entities < adjusted_entity) {
       // Calculate the correct offset based on sum of previous entity counts
@@ -483,10 +482,9 @@ export class SharedEntityMetadataBuffer {
     }
   }
 
-  static reserve(capacity) {
-    if (this.capacity < capacity) {
-      this.entity_metadata.resize(Math.max(4, capacity * 4)); // Double the size of the buffer
-      this.capacity = capacity;
+  static resize(new_size) {
+    if (this.entity_metadata.length <= new_size * 2) {
+      this.entity_metadata.resize(Math.max(4, new_size * 4)); // Double the size of the buffer
       this.build();
     }
   }
@@ -498,12 +496,13 @@ export class SharedEntityMetadataBuffer {
 
     const gpu_layout = this._get_gpu_type_layout();
 
-    this.size = gpu_layout.byteLength;
+    this.buffer_size = gpu_layout.byteLength;
 
     this.buffer = Buffer.create({
       name: entity_metadata_buffer_name,
       raw_data: gpu_layout,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+      force: true,
     });
 
     Renderer.get().refresh_global_shader_bindings();
@@ -511,5 +510,9 @@ export class SharedEntityMetadataBuffer {
 
   static _get_gpu_type_layout() {
     return this.entity_metadata.get_data();
+  }
+
+  static write() {
+    this.buffer.write(this._get_gpu_type_layout());
   }
 }

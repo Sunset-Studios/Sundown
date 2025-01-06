@@ -96,13 +96,12 @@ export class TestScene extends Scene {
     for (let x = 0; x < grid_size; x++) {
       for (let z = 0; z < grid_size; z++) {
         for (let y = 0; y < grid_layers; y++) {
-          let entity = this.create_entity(false /* refresh_entity_queries */);
+          let entity = this.create_entity(false /* refresh_entities */);
 
           // Add a static mesh fragment to the sphere entity
           const static_mesh_fragment_view = this.add_fragment(entity, StaticMeshFragment, false);
           static_mesh_fragment_view.mesh = BigInt(Name.from(mesh.name));
           static_mesh_fragment_view.material_slots = [default_material_id];
-          static_mesh_fragment_view.instance_count = BigInt(1);
 
           const rotation = quat.fromValues(0, 0, 0, 1);
 
@@ -127,7 +126,7 @@ export class TestScene extends Scene {
       }
     }
 
-    this.refresh_entity_queries();
+    this.refresh_entities();
   }
 
   update(delta_time) {

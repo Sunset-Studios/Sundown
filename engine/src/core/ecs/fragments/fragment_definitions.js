@@ -120,10 +120,6 @@ const StaticMeshFragment = {
       StaticMeshFragment.data.gpu_data_dirty = true;
       `,
     },
-    instance_count: {
-      type: DataType.BIGINT64,
-      stride: 1,
-    },
     dirty: {
       type: DataType.UINT8,
       stride: 1,
@@ -133,11 +129,9 @@ const StaticMeshFragment = {
     remove_entity: {
       skip_default: true,
       pre: `
-      super.remove_entity(entity);
       const entity_data = this.get_entity_data(entity);
       entity_data.mesh = 0n;
       entity_data.material_slots = Array(this.material_slot_stride).fill(0);
-      entity_data.instance_count = 0n;
       `,
     },
   },
@@ -279,7 +273,6 @@ const TransformFragment = {
     remove_entity: {
       skip_default: true,
       pre: `
-      super.remove_entity(entity);
       const entity_data = this.get_entity_data(entity);
       entity_data.position.x = 0;
       entity_data.position.y = 0;
@@ -379,6 +372,11 @@ const TransformFragment = {
       }
       `,
     },
+    entity_instance_count_changed: {
+      post: `
+      this.rebuild_buffers();
+      `,
+    },
   },
   hooks: {
     on_post_render: {
@@ -473,7 +471,6 @@ const SceneGraphFragment = {
     remove_entity: {
       skip_default: true,
       post: `
-      super.remove_entity(entity);
       const entity_offset = EntityID.get_absolute_index(entity);
       this.data.parent[entity_offset] = -1;
       this.data.scene_graph.remove(entity_offset);
@@ -590,6 +587,7 @@ const TextFragment = {
       type: DataType.UINT32,
       stride: 1,
       is_container: true,
+      no_instance_count_resize: true,
       getter: `
       const font = FontCache.get_font_object(TextFragment.data.font[this.current_entity]);
       const code_point_indexes = TextFragment.data.text.get_data_for_entity(this.current_entity);
@@ -611,18 +609,22 @@ const TextFragment = {
       type: DataType.FLOAT32,
       stride: 1,
       is_container: true,
+      no_instance_count_resize: true,
     },
     font: {
       type: DataType.INT32,
       stride: 1,
+      no_instance_count_resize: true,
     },
     font_size: {
       type: DataType.UINT32,
       stride: 1,
+      no_instance_count_resize: true,
     },
     dirty: {
       type: DataType.UINT8,
       stride: 1,
+      no_instance_count_resize: true,
     },
   },
   buffers: {

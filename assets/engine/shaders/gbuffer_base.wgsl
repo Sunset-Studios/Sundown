@@ -12,8 +12,9 @@ struct VertexOutput {
     @location(6) tangent: vec4f,
     @location(7) bitangent: vec4f,
     @location(8) @interpolate(flat) instance_index: u32,
-    @location(9) @interpolate(flat) instance_id: u32,
-    @location(10) @interpolate(flat) vertex_index: u32,
+    @location(9) @interpolate(flat) base_instance_id: u32,
+    @location(10) @interpolate(flat) instance_id: u32,
+    @location(11) @interpolate(flat) vertex_index: u32,
 };
 
 #ifndef SKIP_ENTITY_WRITES
@@ -52,7 +53,9 @@ fn vertex(v_out: ptr<function, VertexOutput>) -> VertexOutput {
 ) -> VertexOutput {
     let instance_vertex = vertex_buffer[vi];
     let entity = compacted_object_instances[ii].entity;
-    let entity_transform = entity_transforms[entity];
+    let entity_resolved = entity_metadata[entity].offset;
+
+    let entity_transform = entity_transforms[entity_resolved];
     let view_mat = view_buffer[0].view_matrix;
     let view_proj_mat = view_buffer[0].view_projection_matrix;
 
@@ -64,7 +67,8 @@ fn vertex(v_out: ptr<function, VertexOutput>) -> VertexOutput {
     output.uv = instance_vertex.uv;
     output.normal = normalize(vec4f((entity_transform.transpose_inverse_model_matrix * instance_vertex.normal).xyz, 1.0));
     output.instance_index = ii;
-    output.instance_id = entity;
+    output.base_instance_id = entity;
+    output.instance_id = entity_resolved;
     output.vertex_index = vi;
 
     output = vertex(&output);

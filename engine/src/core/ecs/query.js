@@ -43,8 +43,7 @@ export class EntityQuery {
       for (let i = 0; i < this.matching_entities.length; i++) {
         const entity = this.matching_entities.get(i);
 
-        const passes_requirements =
-          this._check_entity_fragment_requirements(entity);
+        const passes_requirements = this._check_entity_fragment_requirements(entity);
         const in_seen_entities = this.#seen_entities.has(entity);
 
         if (passes_requirements && !in_seen_entities) {
@@ -52,32 +51,33 @@ export class EntityQuery {
           new_entity_states[this.#matching_count] = EntityMasks.Added;
           new_matching_entities[this.#matching_count] = entity;
           new_matching_entity_ids[this.#matching_count] = EntityID.get_absolute_index(entity);
-          new_matching_entity_instance_counts[this.#matching_count] = EntityID.get_instance_count(entity);
+          new_matching_entity_instance_counts[this.#matching_count] =
+            EntityID.get_instance_count(entity);
           this.#matching_count++;
         } else if (!passes_requirements && in_seen_entities) {
           this.#seen_entities.delete(entity);
           new_entity_states[this.#matching_count] = EntityMasks.Removed;
           new_matching_entities[this.#matching_count] = entity;
           new_matching_entity_ids[this.#matching_count] = EntityID.get_absolute_index(entity);
-          new_matching_entity_instance_counts[this.#matching_count] = EntityID.get_instance_count(entity);
+          new_matching_entity_instance_counts[this.#matching_count] =
+            EntityID.get_instance_count(entity);
           this.entities_to_filter.push(entity);
           this.#matching_count++;
         } else if (passes_requirements) {
           new_matching_entities[this.#matching_count] = entity;
           new_matching_entity_ids[this.#matching_count] = EntityID.get_absolute_index(entity);
-          new_matching_entity_instance_counts[this.#matching_count] = EntityID.get_instance_count(entity);
+          new_matching_entity_instance_counts[this.#matching_count] =
+            EntityID.get_instance_count(entity);
           this.#matching_count++;
         }
       }
 
-      this.matching_entities.set_data(new_matching_entities.slice(
-        0,
-        this.#matching_count
-      ));
-
       this.entity_states.set_data(new_entity_states.slice(0, this.#matching_count));
+      this.matching_entities.set_data(new_matching_entities.slice(0, this.#matching_count));
       this.matching_entity_ids.set_data(new_matching_entity_ids.slice(0, this.#matching_count));
-      this.matching_entity_instance_counts.set_data(new_matching_entity_instance_counts.slice(0, this.#matching_count));
+      this.matching_entity_instance_counts.set_data(
+        new_matching_entity_instance_counts.slice(0, this.#matching_count)
+      );
     });
   }
 

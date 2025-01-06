@@ -98,8 +98,8 @@ export class Scene extends SimulationLayer {
     return EntityManager.has_fragment(entity, FragmentType);
   }
 
-  refresh_entity_queries() {
-    EntityManager.update_queries();
+  refresh_entities() {
+    EntityManager.refresh_entities();
   }
 
   set_ui_root(ui_root) {

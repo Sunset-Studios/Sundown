@@ -5,6 +5,7 @@ import { Buffer } from "../../../renderer/buffer.js";
 import { global_dispatcher } from "../../../core/dispatcher.js";
 import { RingBufferAllocator } from "../../../memory/allocator.js";
 import { EntityID } from "../entity.js";
+import { EntityManager } from "../entity.js";
 
 const element_data_buffer_name = "element_data_buffer";
 const element_data_cpu_buffer_name = "element_data_cpu_buffer";
@@ -14,208 +15,214 @@ const element_data_update_event = "element_data_update";
 class ColorDataView {
   constructor() {
     this.current_entity = -1n;
+    this.absolute_entity = -1n;
   }
 
   get r() {
-    return UserInterfaceFragment.data.color.r[this.current_entity];
+    return UserInterfaceFragment.data.color.r[this.absolute_entity];
   }
 
   set r(value) {
-    UserInterfaceFragment.data.color.r[this.current_entity] = value;
+    UserInterfaceFragment.data.color.r[this.absolute_entity] = value;
     if (UserInterfaceFragment.data.dirty) {
-      UserInterfaceFragment.data.dirty[this.current_entity] = 1;
+      UserInterfaceFragment.data.dirty[this.absolute_entity] = 1;
     }
     UserInterfaceFragment.data.gpu_data_dirty = true;
   }
 
   get g() {
-    return UserInterfaceFragment.data.color.g[this.current_entity];
+    return UserInterfaceFragment.data.color.g[this.absolute_entity];
   }
 
   set g(value) {
-    UserInterfaceFragment.data.color.g[this.current_entity] = value;
+    UserInterfaceFragment.data.color.g[this.absolute_entity] = value;
     if (UserInterfaceFragment.data.dirty) {
-      UserInterfaceFragment.data.dirty[this.current_entity] = 1;
+      UserInterfaceFragment.data.dirty[this.absolute_entity] = 1;
     }
     UserInterfaceFragment.data.gpu_data_dirty = true;
   }
 
   get b() {
-    return UserInterfaceFragment.data.color.b[this.current_entity];
+    return UserInterfaceFragment.data.color.b[this.absolute_entity];
   }
 
   set b(value) {
-    UserInterfaceFragment.data.color.b[this.current_entity] = value;
+    UserInterfaceFragment.data.color.b[this.absolute_entity] = value;
     if (UserInterfaceFragment.data.dirty) {
-      UserInterfaceFragment.data.dirty[this.current_entity] = 1;
+      UserInterfaceFragment.data.dirty[this.absolute_entity] = 1;
     }
     UserInterfaceFragment.data.gpu_data_dirty = true;
   }
 
   get a() {
-    return UserInterfaceFragment.data.color.a[this.current_entity];
+    return UserInterfaceFragment.data.color.a[this.absolute_entity];
   }
 
   set a(value) {
-    UserInterfaceFragment.data.color.a[this.current_entity] = value;
+    UserInterfaceFragment.data.color.a[this.absolute_entity] = value;
     if (UserInterfaceFragment.data.dirty) {
-      UserInterfaceFragment.data.dirty[this.current_entity] = 1;
+      UserInterfaceFragment.data.dirty[this.absolute_entity] = 1;
     }
     UserInterfaceFragment.data.gpu_data_dirty = true;
   }
 
-  view_entity(entity) {
+  view_entity(entity, instance = 0) {
     this.current_entity = entity;
+    this.absolute_entity = EntityID.get_absolute_index(entity) + instance;
     return this;
   }
 }
 
 class UserInterfaceDataView {
   current_entity = -1n;
+  absolute_entity = -1n;
 
   constructor() {
     this.color = new ColorDataView(this);
   }
 
   get allows_cursor_events() {
-    return UserInterfaceFragment.data.allows_cursor_events[this.current_entity];
+    return UserInterfaceFragment.data.allows_cursor_events[
+      this.absolute_entity
+    ];
   }
 
   set allows_cursor_events(value) {
-    UserInterfaceFragment.data.allows_cursor_events[this.current_entity] =
+    UserInterfaceFragment.data.allows_cursor_events[this.absolute_entity] =
       UserInterfaceFragment.data.allows_cursor_events instanceof BigInt64Array
         ? BigInt(value)
         : value;
     if (UserInterfaceFragment.data.dirty) {
-      UserInterfaceFragment.data.dirty[this.current_entity] = 1;
+      UserInterfaceFragment.data.dirty[this.absolute_entity] = 1;
     }
     UserInterfaceFragment.data.gpu_data_dirty = true;
   }
 
   get auto_size() {
-    return UserInterfaceFragment.data.auto_size[this.current_entity];
+    return UserInterfaceFragment.data.auto_size[this.absolute_entity];
   }
 
   set auto_size(value) {
-    UserInterfaceFragment.data.auto_size[this.current_entity] =
+    UserInterfaceFragment.data.auto_size[this.absolute_entity] =
       UserInterfaceFragment.data.auto_size instanceof BigInt64Array
         ? BigInt(value)
         : value;
     if (UserInterfaceFragment.data.dirty) {
-      UserInterfaceFragment.data.dirty[this.current_entity] = 1;
+      UserInterfaceFragment.data.dirty[this.absolute_entity] = 1;
     }
     UserInterfaceFragment.data.gpu_data_dirty = true;
   }
 
   get was_cursor_inside() {
-    return UserInterfaceFragment.data.was_cursor_inside[this.current_entity];
+    return UserInterfaceFragment.data.was_cursor_inside[this.absolute_entity];
   }
 
   set was_cursor_inside(value) {
-    UserInterfaceFragment.data.was_cursor_inside[this.current_entity] =
+    UserInterfaceFragment.data.was_cursor_inside[this.absolute_entity] =
       UserInterfaceFragment.data.was_cursor_inside instanceof BigInt64Array
         ? BigInt(value)
         : value;
     if (UserInterfaceFragment.data.dirty) {
-      UserInterfaceFragment.data.dirty[this.current_entity] = 1;
+      UserInterfaceFragment.data.dirty[this.absolute_entity] = 1;
     }
     UserInterfaceFragment.data.gpu_data_dirty = true;
   }
 
   get is_cursor_inside() {
-    return UserInterfaceFragment.data.is_cursor_inside[this.current_entity];
+    return UserInterfaceFragment.data.is_cursor_inside[this.absolute_entity];
   }
 
   set is_cursor_inside(value) {
-    UserInterfaceFragment.data.is_cursor_inside[this.current_entity] =
+    UserInterfaceFragment.data.is_cursor_inside[this.absolute_entity] =
       UserInterfaceFragment.data.is_cursor_inside instanceof BigInt64Array
         ? BigInt(value)
         : value;
     if (UserInterfaceFragment.data.dirty) {
-      UserInterfaceFragment.data.dirty[this.current_entity] = 1;
+      UserInterfaceFragment.data.dirty[this.absolute_entity] = 1;
     }
     UserInterfaceFragment.data.gpu_data_dirty = true;
   }
 
   get was_clicked() {
-    return UserInterfaceFragment.data.was_clicked[this.current_entity];
+    return UserInterfaceFragment.data.was_clicked[this.absolute_entity];
   }
 
   set was_clicked(value) {
-    UserInterfaceFragment.data.was_clicked[this.current_entity] =
+    UserInterfaceFragment.data.was_clicked[this.absolute_entity] =
       UserInterfaceFragment.data.was_clicked instanceof BigInt64Array
         ? BigInt(value)
         : value;
     if (UserInterfaceFragment.data.dirty) {
-      UserInterfaceFragment.data.dirty[this.current_entity] = 1;
+      UserInterfaceFragment.data.dirty[this.absolute_entity] = 1;
     }
     UserInterfaceFragment.data.gpu_data_dirty = true;
   }
 
   get is_clicked() {
-    return UserInterfaceFragment.data.is_clicked[this.current_entity];
+    return UserInterfaceFragment.data.is_clicked[this.absolute_entity];
   }
 
   set is_clicked(value) {
-    UserInterfaceFragment.data.is_clicked[this.current_entity] =
+    UserInterfaceFragment.data.is_clicked[this.absolute_entity] =
       UserInterfaceFragment.data.is_clicked instanceof BigInt64Array
         ? BigInt(value)
         : value;
     if (UserInterfaceFragment.data.dirty) {
-      UserInterfaceFragment.data.dirty[this.current_entity] = 1;
+      UserInterfaceFragment.data.dirty[this.absolute_entity] = 1;
     }
     UserInterfaceFragment.data.gpu_data_dirty = true;
   }
 
   get is_pressed() {
-    return UserInterfaceFragment.data.is_pressed[this.current_entity];
+    return UserInterfaceFragment.data.is_pressed[this.absolute_entity];
   }
 
   set is_pressed(value) {
-    UserInterfaceFragment.data.is_pressed[this.current_entity] =
+    UserInterfaceFragment.data.is_pressed[this.absolute_entity] =
       UserInterfaceFragment.data.is_pressed instanceof BigInt64Array
         ? BigInt(value)
         : value;
     if (UserInterfaceFragment.data.dirty) {
-      UserInterfaceFragment.data.dirty[this.current_entity] = 1;
+      UserInterfaceFragment.data.dirty[this.absolute_entity] = 1;
     }
     UserInterfaceFragment.data.gpu_data_dirty = true;
   }
 
   get was_pressed() {
-    return UserInterfaceFragment.data.was_pressed[this.current_entity];
+    return UserInterfaceFragment.data.was_pressed[this.absolute_entity];
   }
 
   set was_pressed(value) {
-    UserInterfaceFragment.data.was_pressed[this.current_entity] =
+    UserInterfaceFragment.data.was_pressed[this.absolute_entity] =
       UserInterfaceFragment.data.was_pressed instanceof BigInt64Array
         ? BigInt(value)
         : value;
     if (UserInterfaceFragment.data.dirty) {
-      UserInterfaceFragment.data.dirty[this.current_entity] = 1;
+      UserInterfaceFragment.data.dirty[this.absolute_entity] = 1;
     }
     UserInterfaceFragment.data.gpu_data_dirty = true;
   }
 
   get dirty() {
-    return UserInterfaceFragment.data.dirty[this.current_entity];
+    return UserInterfaceFragment.data.dirty[this.absolute_entity];
   }
 
   set dirty(value) {
-    UserInterfaceFragment.data.dirty[this.current_entity] =
+    UserInterfaceFragment.data.dirty[this.absolute_entity] =
       UserInterfaceFragment.data.dirty instanceof BigInt64Array
         ? BigInt(value)
         : value;
     if (UserInterfaceFragment.data.dirty) {
-      UserInterfaceFragment.data.dirty[this.current_entity] = 1;
+      UserInterfaceFragment.data.dirty[this.absolute_entity] = 1;
     }
     UserInterfaceFragment.data.gpu_data_dirty = true;
   }
 
-  view_entity(entity) {
+  view_entity(entity, instance = 0) {
     this.current_entity = entity;
+    this.absolute_entity = EntityID.get_absolute_index(entity) + instance;
 
-    this.color.view_entity(entity);
+    this.color.view_entity(entity, instance);
 
     return this;
   }
@@ -226,6 +233,8 @@ export class UserInterfaceFragment extends Fragment {
     256,
     UserInterfaceDataView,
   );
+  static size = 0;
+  static data = null;
 
   static initialize() {
     this.data = {
@@ -252,8 +261,9 @@ export class UserInterfaceFragment extends Fragment {
   }
 
   static resize(new_size) {
+    this.size = new_size;
+
     if (!this.data) this.initialize();
-    super.resize(new_size);
 
     Fragment.resize_array(
       this.data,
@@ -290,13 +300,14 @@ export class UserInterfaceFragment extends Fragment {
   }
 
   static add_entity(entity) {
-    super.add_entity(entity);
+    if (entity >= this.size) {
+      this.resize(entity * 2);
+    }
+
     return this.get_entity_data(entity);
   }
 
   static remove_entity(entity) {
-    super.remove_entity(entity);
-
     const instance_count = EntityID.get_instance_count(entity);
     const entity_offset = EntityID.get_absolute_index(entity);
 
@@ -318,16 +329,15 @@ export class UserInterfaceFragment extends Fragment {
   }
 
   static get_entity_data(entity, instance = 0) {
-    const entity_index = EntityID.get_absolute_index(entity) + instance;
     const data_view = this.data_view_allocator.allocate();
     data_view.fragment = this;
-    data_view.view_entity(entity_index);
+    data_view.view_entity(entity, instance);
     return data_view;
   }
 
   static duplicate_entity_data(entity, instance = 0) {
     const data = {};
-    const entity_index = EntityID.get_absolute_index(entity) + instance;
+    const entity_index = EntityID.get_absolute_index(entity);
     data.allows_cursor_events = this.data.allows_cursor_events[entity_index];
     data.auto_size = this.data.auto_size[entity_index];
     data.was_cursor_inside = this.data.was_cursor_inside[entity_index];
@@ -401,4 +411,280 @@ export class UserInterfaceFragment extends Fragment {
   }
 
   static async sync_buffers() {}
+
+  static entity_instance_count_changed(entity, last_entity_count) {
+    const entity_index = EntityID.get_absolute_index(entity);
+    const entity_count = EntityID.get_instance_count(entity);
+
+    // Early out if this is the last entity (next_offset will be 0)
+    const next_entity_index = EntityID.get_absolute_index(entity + 1);
+    if (next_entity_index === 0) return;
+
+    const shift_amount = entity_count - last_entity_count;
+
+    // No need to shift if there's no change
+    if (shift_amount === 0) return;
+
+    if (shift_amount > 0) {
+      // Make space by moving data forward
+      let i = Math.min(this.size, this.size - shift_amount) - 1;
+      for (; i >= entity_index; --i) {
+        this.data.allows_cursor_events[(i + shift_amount) * 1 + 0] =
+          this.data.allows_cursor_events[i * 1 + 0];
+      }
+      i += 1;
+      for (; i < entity_index + shift_amount; ++i) {
+        this.data.allows_cursor_events[i * 1 + 0] =
+          this.data.allows_cursor_events[entity_index * 1 + 0];
+      }
+    } else {
+      // Compress by moving data backward
+      let size = Math.max(this.size, this.size - shift_amount);
+      for (let i = entity_index; i < size; ++i) {
+        this.data.allows_cursor_events[i * 1 + 0] =
+          this.data.allows_cursor_events[(i + shift_amount) * 1 + 0];
+      }
+    }
+
+    if (shift_amount > 0) {
+      // Make space by moving data forward
+      let i = Math.min(this.size, this.size - shift_amount) - 1;
+      for (; i >= entity_index; --i) {
+        this.data.auto_size[(i + shift_amount) * 1 + 0] =
+          this.data.auto_size[i * 1 + 0];
+      }
+      i += 1;
+      for (; i < entity_index + shift_amount; ++i) {
+        this.data.auto_size[i * 1 + 0] =
+          this.data.auto_size[entity_index * 1 + 0];
+      }
+    } else {
+      // Compress by moving data backward
+      let size = Math.max(this.size, this.size - shift_amount);
+      for (let i = entity_index; i < size; ++i) {
+        this.data.auto_size[i * 1 + 0] =
+          this.data.auto_size[(i + shift_amount) * 1 + 0];
+      }
+    }
+
+    if (shift_amount > 0) {
+      // Make space by moving data forward
+      let i = Math.min(this.size, this.size - shift_amount) - 1;
+      for (; i >= entity_index; --i) {
+        this.data.was_cursor_inside[(i + shift_amount) * 1 + 0] =
+          this.data.was_cursor_inside[i * 1 + 0];
+      }
+      i += 1;
+      for (; i < entity_index + shift_amount; ++i) {
+        this.data.was_cursor_inside[i * 1 + 0] =
+          this.data.was_cursor_inside[entity_index * 1 + 0];
+      }
+    } else {
+      // Compress by moving data backward
+      let size = Math.max(this.size, this.size - shift_amount);
+      for (let i = entity_index; i < size; ++i) {
+        this.data.was_cursor_inside[i * 1 + 0] =
+          this.data.was_cursor_inside[(i + shift_amount) * 1 + 0];
+      }
+    }
+
+    if (shift_amount > 0) {
+      // Make space by moving data forward
+      let i = Math.min(this.size, this.size - shift_amount) - 1;
+      for (; i >= entity_index; --i) {
+        this.data.is_cursor_inside[(i + shift_amount) * 1 + 0] =
+          this.data.is_cursor_inside[i * 1 + 0];
+      }
+      i += 1;
+      for (; i < entity_index + shift_amount; ++i) {
+        this.data.is_cursor_inside[i * 1 + 0] =
+          this.data.is_cursor_inside[entity_index * 1 + 0];
+      }
+    } else {
+      // Compress by moving data backward
+      let size = Math.max(this.size, this.size - shift_amount);
+      for (let i = entity_index; i < size; ++i) {
+        this.data.is_cursor_inside[i * 1 + 0] =
+          this.data.is_cursor_inside[(i + shift_amount) * 1 + 0];
+      }
+    }
+
+    if (shift_amount > 0) {
+      // Make space by moving data forward
+      let i = Math.min(this.size, this.size - shift_amount) - 1;
+      for (; i >= entity_index; --i) {
+        this.data.was_clicked[(i + shift_amount) * 1 + 0] =
+          this.data.was_clicked[i * 1 + 0];
+      }
+      i += 1;
+      for (; i < entity_index + shift_amount; ++i) {
+        this.data.was_clicked[i * 1 + 0] =
+          this.data.was_clicked[entity_index * 1 + 0];
+      }
+    } else {
+      // Compress by moving data backward
+      let size = Math.max(this.size, this.size - shift_amount);
+      for (let i = entity_index; i < size; ++i) {
+        this.data.was_clicked[i * 1 + 0] =
+          this.data.was_clicked[(i + shift_amount) * 1 + 0];
+      }
+    }
+
+    if (shift_amount > 0) {
+      // Make space by moving data forward
+      let i = Math.min(this.size, this.size - shift_amount) - 1;
+      for (; i >= entity_index; --i) {
+        this.data.is_clicked[(i + shift_amount) * 1 + 0] =
+          this.data.is_clicked[i * 1 + 0];
+      }
+      i += 1;
+      for (; i < entity_index + shift_amount; ++i) {
+        this.data.is_clicked[i * 1 + 0] =
+          this.data.is_clicked[entity_index * 1 + 0];
+      }
+    } else {
+      // Compress by moving data backward
+      let size = Math.max(this.size, this.size - shift_amount);
+      for (let i = entity_index; i < size; ++i) {
+        this.data.is_clicked[i * 1 + 0] =
+          this.data.is_clicked[(i + shift_amount) * 1 + 0];
+      }
+    }
+
+    if (shift_amount > 0) {
+      // Make space by moving data forward
+      let i = Math.min(this.size, this.size - shift_amount) - 1;
+      for (; i >= entity_index; --i) {
+        this.data.is_pressed[(i + shift_amount) * 1 + 0] =
+          this.data.is_pressed[i * 1 + 0];
+      }
+      i += 1;
+      for (; i < entity_index + shift_amount; ++i) {
+        this.data.is_pressed[i * 1 + 0] =
+          this.data.is_pressed[entity_index * 1 + 0];
+      }
+    } else {
+      // Compress by moving data backward
+      let size = Math.max(this.size, this.size - shift_amount);
+      for (let i = entity_index; i < size; ++i) {
+        this.data.is_pressed[i * 1 + 0] =
+          this.data.is_pressed[(i + shift_amount) * 1 + 0];
+      }
+    }
+
+    if (shift_amount > 0) {
+      // Make space by moving data forward
+      let i = Math.min(this.size, this.size - shift_amount) - 1;
+      for (; i >= entity_index; --i) {
+        this.data.was_pressed[(i + shift_amount) * 1 + 0] =
+          this.data.was_pressed[i * 1 + 0];
+      }
+      i += 1;
+      for (; i < entity_index + shift_amount; ++i) {
+        this.data.was_pressed[i * 1 + 0] =
+          this.data.was_pressed[entity_index * 1 + 0];
+      }
+    } else {
+      // Compress by moving data backward
+      let size = Math.max(this.size, this.size - shift_amount);
+      for (let i = entity_index; i < size; ++i) {
+        this.data.was_pressed[i * 1 + 0] =
+          this.data.was_pressed[(i + shift_amount) * 1 + 0];
+      }
+    }
+
+    if (shift_amount > 0) {
+      // Make space by moving data forward
+      let i = Math.min(this.size, this.size - shift_amount) - 1;
+      for (; i >= entity_index; --i) {
+        this.data.color.r[i + shift_amount] = this.data.color.r[i];
+      }
+      i += 1;
+      for (; i < entity_index + shift_amount; ++i) {
+        this.data.color.r[i] = this.data.color.r[entity_index];
+      }
+    } else {
+      // Compress by moving data backward
+      let size = Math.max(this.size, this.size - shift_amount);
+      for (let i = entity_index; i < size; ++i) {
+        this.data.color.r[i] = this.data.color.r[i + shift_amount];
+      }
+    }
+
+    if (shift_amount > 0) {
+      // Make space by moving data forward
+      let i = Math.min(this.size, this.size - shift_amount) - 1;
+      for (; i >= entity_index; --i) {
+        this.data.color.g[i + shift_amount] = this.data.color.g[i];
+      }
+      i += 1;
+      for (; i < entity_index + shift_amount; ++i) {
+        this.data.color.g[i] = this.data.color.g[entity_index];
+      }
+    } else {
+      // Compress by moving data backward
+      let size = Math.max(this.size, this.size - shift_amount);
+      for (let i = entity_index; i < size; ++i) {
+        this.data.color.g[i] = this.data.color.g[i + shift_amount];
+      }
+    }
+
+    if (shift_amount > 0) {
+      // Make space by moving data forward
+      let i = Math.min(this.size, this.size - shift_amount) - 1;
+      for (; i >= entity_index; --i) {
+        this.data.color.b[i + shift_amount] = this.data.color.b[i];
+      }
+      i += 1;
+      for (; i < entity_index + shift_amount; ++i) {
+        this.data.color.b[i] = this.data.color.b[entity_index];
+      }
+    } else {
+      // Compress by moving data backward
+      let size = Math.max(this.size, this.size - shift_amount);
+      for (let i = entity_index; i < size; ++i) {
+        this.data.color.b[i] = this.data.color.b[i + shift_amount];
+      }
+    }
+
+    if (shift_amount > 0) {
+      // Make space by moving data forward
+      let i = Math.min(this.size, this.size - shift_amount) - 1;
+      for (; i >= entity_index; --i) {
+        this.data.color.a[i + shift_amount] = this.data.color.a[i];
+      }
+      i += 1;
+      for (; i < entity_index + shift_amount; ++i) {
+        this.data.color.a[i] = this.data.color.a[entity_index];
+      }
+    } else {
+      // Compress by moving data backward
+      let size = Math.max(this.size, this.size - shift_amount);
+      for (let i = entity_index; i < size; ++i) {
+        this.data.color.a[i] = this.data.color.a[i + shift_amount];
+      }
+    }
+
+    if (shift_amount > 0) {
+      // Make space by moving data forward
+      let i = Math.min(this.size, this.size - shift_amount) - 1;
+      for (; i >= entity_index; --i) {
+        this.data.dirty[(i + shift_amount) * 1 + 0] =
+          this.data.dirty[i * 1 + 0];
+      }
+      i += 1;
+      for (; i < entity_index + shift_amount; ++i) {
+        this.data.dirty[i * 1 + 0] = this.data.dirty[entity_index * 1 + 0];
+      }
+    } else {
+      // Compress by moving data backward
+      let size = Math.max(this.size, this.size - shift_amount);
+      for (let i = entity_index; i < size; ++i) {
+        this.data.dirty[i * 1 + 0] =
+          this.data.dirty[(i + shift_amount) * 1 + 0];
+      }
+    }
+
+    this.data.gpu_data_dirty = true;
+  }
 }

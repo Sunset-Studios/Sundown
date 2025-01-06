@@ -26,8 +26,9 @@ export class UI3DProcessor extends SimulationLayer {
 
       let updated = false;
 
+      const matching_entity_data = this.entity_query.matching_entity_ids.get_data();
       for (let i = 0; i < this.entity_query.matching_entities.length; ++i) {
-        const entity = this.entity_query.matching_entities.get(i);
+        const entity = matching_entity_data[i];
 
         if (!user_interfaces.dirty[entity]) {
           continue;

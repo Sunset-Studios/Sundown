@@ -22,23 +22,26 @@ fn cs(@builtin(global_invocation_id) global_id: vec3<u32>) {
 
     let entity_id_offset = scene_graph_layer_data.offset + global_id.x;
     let entity_id = u32(scene_graph[entity_id_offset].x);
-    if (entity_id >= arrayLength(&entity_dirty_flags)) {
+    let entity_resolved = entity_metadata[entity_id].offset;
+
+    if (entity_resolved >= arrayLength(&entity_dirty_flags)) {
         return;
     }
 
-    let dirty_flag = entity_dirty_flags[entity_id];
+    let dirty_flag = entity_dirty_flags[entity_resolved];
     if (dirty_flag == 0u) {
         return;
     }
 
-    let position = entity_positions[entity_id];
-    let rotation = entity_rotations[entity_id];
-    let scale = entity_scales[entity_id];
+    let position = entity_positions[entity_resolved];
+    let rotation = entity_rotations[entity_resolved];
+    let scale = entity_scales[entity_resolved];
 
     let parent_id = scene_graph[entity_id_offset].y;
+    let parent_resolved = entity_metadata[parent_id].offset;
     var parent_transform = identity_matrix;
     if (parent_id >= 0) {
-        parent_transform = entity_transforms[parent_id].transform;
+        parent_transform = entity_transforms[parent_resolved].transform;
     }
 
     let max_scale = max(
@@ -104,22 +107,22 @@ fn cs(@builtin(global_invocation_id) global_id: vec3<u32>) {
         1.0
     );
 
-    entity_transforms[entity_id].prev_transform = entity_transforms[entity_id].transform;
+    entity_transforms[entity_resolved].prev_transform = entity_transforms[entity_resolved].transform;
 
-    entity_transforms[entity_id].transform = transform;
+    entity_transforms[entity_resolved].transform = transform;
 
-    entity_transforms[entity_id].inverse_model_matrix = inverse_transform;
+    entity_transforms[entity_resolved].inverse_model_matrix = inverse_transform;
 
-    entity_transforms[entity_id].transpose_inverse_model_matrix = mat4x4f(
+    entity_transforms[entity_resolved].transpose_inverse_model_matrix = mat4x4f(
         inverse_transform[0][0], inverse_transform[1][0], inverse_transform[2][0], inverse_transform[3][0],
         inverse_transform[0][1], inverse_transform[1][1], inverse_transform[2][1], inverse_transform[3][1],
         inverse_transform[0][2], inverse_transform[1][2], inverse_transform[2][2], inverse_transform[3][2],
         inverse_transform[0][3], inverse_transform[1][3], inverse_transform[2][3], inverse_transform[3][3]
     );
 
-    entity_bounds_data[entity_id].bounds_pos_radius = vec4f(transform[3][0], transform[3][1], transform[3][2], max_scale);
+    entity_bounds_data[entity_resolved].bounds_pos_radius = vec4f(transform[3][0], transform[3][1], transform[3][2], max_scale);
 
-    entity_bounds_data[entity_id].bounds_extent_and_custom_scale = vec4f(1.0, 1.0, 1.0, 1.0);
+    entity_bounds_data[entity_resolved].bounds_extent_and_custom_scale = vec4f(1.0, 1.0, 1.0, 1.0);
 
-    entity_dirty_flags[entity_id] = 0u;
+    entity_dirty_flags[entity_resolved] = 0u;
 }

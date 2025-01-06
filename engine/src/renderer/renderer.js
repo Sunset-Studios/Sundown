@@ -155,7 +155,7 @@ export class Renderer {
         {
           buffer: SharedEntityMetadataBuffer.buffer,
           offset: 0,
-          size: SharedEntityMetadataBuffer.size,
+          size: SharedEntityMetadataBuffer.buffer_size,
         },
       ],
       true /* overwrite */

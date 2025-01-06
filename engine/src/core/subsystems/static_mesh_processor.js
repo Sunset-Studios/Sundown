@@ -33,44 +33,49 @@ export class StaticMeshProcessor extends SimulationLayer {
       const mesh_task_queue = MeshTaskQueue.get();
 
       let needs_resort = false;
-      const entity_states = this.entity_query.entity_states.get_data();
-      const matching_entities_ids = this.entity_query.matching_entity_ids.get_data();
-      for (let i = 0; i < this.entity_query.matching_entities.length; ++i) {
-        const entity_id = matching_entities_ids[i];
-        const entity_state = entity_states[i];
 
+      const entity_states = this.entity_query.entity_states.get_data();
+      const matching_entity_data = this.entity_query.matching_entities.get_data();
+      const matching_entity_offset_data = this.entity_query.matching_entity_ids.get_data();
+      const matching_entity_instance_counts = this.entity_query.matching_entity_instance_counts.get_data();
+
+      for (let i = 0; i < this.entity_query.matching_entities.length; ++i) {
+        const entity = matching_entity_data[i];
+        const entity_state = entity_states[i];
+        
         if (entity_state & EntityMasks.Removed) {
-          mesh_task_queue.remove(entity_id);
+          mesh_task_queue.remove(entity);
           needs_resort = true;
           continue;
         }
 
-        if (!static_meshes.dirty[entity_id] && !visibilities.dirty[entity_id]) {
+        const entity_index = matching_entity_offset_data[i];
+        
+        if (!static_meshes.dirty[entity_index] && !visibilities.dirty[entity_index]) {
           continue;
         }
 
-        needs_resort = true;
-
-        const mesh_id = Number(static_meshes.mesh[entity_id]);
+        const mesh_id = Number(static_meshes.mesh[entity_index]);
         const material_id = Number(
           static_meshes.material_slots[
-            entity_id * StaticMeshFragment.material_slot_stride
+            entity_index * StaticMeshFragment.material_slot_stride
           ]
         );
-        const instance_count =
-          Number(static_meshes.instance_count[entity_id]) || 1;
-
-        if (mesh_id && material_id && instance_count && visibilities.visible[entity_id]) {
+        const instance_count = matching_entity_instance_counts[i] || 1;
+        
+        if (mesh_id && material_id && instance_count && visibilities.visible[entity_index]) {
           mesh_task_queue.new_task(
             mesh_id,
-            entity_id,
+            entity,
             material_id,
             instance_count 
           );
         }      
+        
+        static_meshes.dirty[entity_index] = 0;
+        visibilities.dirty[entity_index] = 0;
 
-        static_meshes.dirty[entity_id] = 0;
-        visibilities.dirty[entity_id] = 0;
+        needs_resort = true;
       }
 
       if (needs_resort) {

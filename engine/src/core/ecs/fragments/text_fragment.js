@@ -5,6 +5,7 @@ import { Buffer } from "../../../renderer/buffer.js";
 import { global_dispatcher } from "../../../core/dispatcher.js";
 import { RingBufferAllocator } from "../../../memory/allocator.js";
 import { EntityID } from "../entity.js";
+import { EntityManager } from "../entity.js";
 import { FontCache } from "../../../ui/text/font_cache.js";
 
 const text_buffer_name = "text_buffer";
@@ -24,6 +25,7 @@ const string_data_update_event = "string_data_update";
 
 class TextDataView {
   current_entity = -1n;
+  absolute_entity = -1n;
 
   constructor() {}
 
@@ -110,8 +112,9 @@ class TextDataView {
     TextFragment.data.gpu_data_dirty = true;
   }
 
-  view_entity(entity) {
+  view_entity(entity, instance = 0) {
     this.current_entity = entity;
+    this.absolute_entity = EntityID.get_absolute_index(entity) + instance;
 
     return this;
   }
@@ -119,6 +122,8 @@ class TextDataView {
 
 export class TextFragment extends Fragment {
   static data_view_allocator = new RingBufferAllocator(256, TextDataView);
+  static size = 0;
+  static data = null;
 
   static initialize() {
     this.data = {
@@ -137,8 +142,9 @@ export class TextFragment extends Fragment {
   }
 
   static resize(new_size) {
+    this.size = new_size;
+
     if (!this.data) this.initialize();
-    super.resize(new_size);
 
     Fragment.resize_array(this.data, "font", new_size, Int32Array, 1);
     Fragment.resize_array(this.data, "font_size", new_size, Uint32Array, 1);
@@ -148,31 +154,31 @@ export class TextFragment extends Fragment {
   }
 
   static add_entity(entity) {
-    super.add_entity(entity);
+    if (entity >= this.size) {
+      this.resize(entity * 2);
+    }
+
     return this.get_entity_data(entity);
   }
 
   static remove_entity(entity) {
-    super.remove_entity(entity);
-
     const instance_count = EntityID.get_instance_count(entity);
     const entity_offset = EntityID.get_absolute_index(entity);
 
+    this.data.text.remove(entity);
+    this.data.offsets.remove(entity);
+    this.data.font[entity] = 0;
+    this.data.font_size[entity] = 0;
+
     for (let i = 0; i < instance_count; ++i) {
       const entity_index = entity_offset + i;
-      this.data.font[entity_index] = 0;
-      this.data.font_size[entity_index] = 0;
-
-      this.data.text.remove(entity_index);
-      this.data.offsets.remove(entity_index);
     }
   }
 
   static get_entity_data(entity, instance = 0) {
-    const entity_index = EntityID.get_absolute_index(entity) + instance;
     const data_view = this.data_view_allocator.allocate();
     data_view.fragment = this;
-    data_view.view_entity(entity_index);
+    data_view.view_entity(entity, instance);
     return data_view;
   }
 
@@ -294,4 +300,20 @@ export class TextFragment extends Fragment {
   }
 
   static async sync_buffers() {}
+
+  static entity_instance_count_changed(entity, last_entity_count) {
+    const entity_index = EntityID.get_absolute_index(entity);
+    const entity_count = EntityID.get_instance_count(entity);
+
+    // Early out if this is the last entity (next_offset will be 0)
+    const next_entity_index = EntityID.get_absolute_index(entity + 1);
+    if (next_entity_index === 0) return;
+
+    const shift_amount = entity_count - last_entity_count;
+
+    // No need to shift if there's no change
+    if (shift_amount === 0) return;
+
+    this.data.gpu_data_dirty = true;
+  }
 }

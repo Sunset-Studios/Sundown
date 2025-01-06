@@ -17,13 +17,15 @@ struct FragmentOutput {
     @builtin(instance_index) ii: u32
 ) -> VertexOutput {
     let entity = compacted_object_instances[ii].entity;
-    let model_matrix = entity_transforms[entity].transform;
+    let entity_resolved = entity_metadata[entity].offset;
+
+    let model_matrix = entity_transforms[entity_resolved].transform;
     let mvp = view_buffer[0].view_projection_matrix * model_matrix;
 
     var output : VertexOutput;
 
     output.position = mvp * vertex_buffer[vi].position;
-    output.entity_id = entity;
+    output.entity_id = entity_resolved;
 
     return output;
 }

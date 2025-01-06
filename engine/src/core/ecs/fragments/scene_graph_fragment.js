@@ -5,6 +5,7 @@ import { Buffer } from "../../../renderer/buffer.js";
 import { global_dispatcher } from "../../../core/dispatcher.js";
 import { RingBufferAllocator } from "../../../memory/allocator.js";
 import { EntityID } from "../entity.js";
+import { EntityManager } from "../entity.js";
 import { Tree } from "../../../memory/container.js";
 
 const scene_graph_buffer_name = "scene_graph_buffer";
@@ -14,11 +15,12 @@ const scene_graph_update_event = "scene_graph_update";
 
 class SceneGraphDataView {
   current_entity = -1n;
+  absolute_entity = -1n;
 
   constructor() {}
 
   get parent() {
-    return SceneGraphFragment.data.parent[this.current_entity];
+    return SceneGraphFragment.data.parent[this.absolute_entity];
   }
 
   set parent(value) {
@@ -55,8 +57,9 @@ class SceneGraphDataView {
     SceneGraphFragment.data.gpu_data_dirty = true;
   }
 
-  view_entity(entity) {
+  view_entity(entity, instance = 0) {
     this.current_entity = entity;
+    this.absolute_entity = EntityID.get_absolute_index(entity) + instance;
 
     return this;
   }
@@ -64,6 +67,8 @@ class SceneGraphDataView {
 
 export class SceneGraphFragment extends Fragment {
   static data_view_allocator = new RingBufferAllocator(256, SceneGraphDataView);
+  static size = 0;
+  static data = null;
 
   static initialize() {
     this.data = {
@@ -80,8 +85,9 @@ export class SceneGraphFragment extends Fragment {
   }
 
   static resize(new_size) {
+    this.size = new_size;
+
     if (!this.data) this.initialize();
-    super.resize(new_size);
 
     Fragment.resize_array(this.data, "parent", new_size, Int32Array, 1);
 
@@ -89,12 +95,14 @@ export class SceneGraphFragment extends Fragment {
   }
 
   static add_entity(entity) {
-    super.add_entity(entity);
+    if (entity >= this.size) {
+      this.resize(entity * 2);
+    }
+
     return this.get_entity_data(entity);
   }
 
   static remove_entity(entity) {
-    super.remove_entity(entity);
     const entity_offset = EntityID.get_absolute_index(entity);
     this.data.parent[entity_offset] = -1;
     this.data.scene_graph.remove(entity_offset);
@@ -102,10 +110,9 @@ export class SceneGraphFragment extends Fragment {
   }
 
   static get_entity_data(entity, instance = 0) {
-    const entity_index = EntityID.get_absolute_index(entity) + instance;
     const data_view = this.data_view_allocator.allocate();
     data_view.fragment = this;
-    data_view.view_entity(entity_index);
+    data_view.view_entity(entity, instance);
     return data_view;
   }
 
@@ -190,4 +197,40 @@ export class SceneGraphFragment extends Fragment {
   }
 
   static async sync_buffers() {}
+
+  static entity_instance_count_changed(entity, last_entity_count) {
+    const entity_index = EntityID.get_absolute_index(entity);
+    const entity_count = EntityID.get_instance_count(entity);
+
+    // Early out if this is the last entity (next_offset will be 0)
+    const next_entity_index = EntityID.get_absolute_index(entity + 1);
+    if (next_entity_index === 0) return;
+
+    const shift_amount = entity_count - last_entity_count;
+
+    // No need to shift if there's no change
+    if (shift_amount === 0) return;
+
+    if (shift_amount > 0) {
+      // Make space by moving data forward
+      let i = Math.min(this.size, this.size - shift_amount) - 1;
+      for (; i >= entity_index; --i) {
+        this.data.parent[(i + shift_amount) * 1 + 0] =
+          this.data.parent[i * 1 + 0];
+      }
+      i += 1;
+      for (; i < entity_index + shift_amount; ++i) {
+        this.data.parent[i * 1 + 0] = this.data.parent[entity_index * 1 + 0];
+      }
+    } else {
+      // Compress by moving data backward
+      let size = Math.max(this.size, this.size - shift_amount);
+      for (let i = entity_index; i < size; ++i) {
+        this.data.parent[i * 1 + 0] =
+          this.data.parent[(i + shift_amount) * 1 + 0];
+      }
+    }
+
+    this.data.gpu_data_dirty = true;
+  }
 }

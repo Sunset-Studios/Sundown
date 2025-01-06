@@ -41,7 +41,7 @@ export class EntityManager {
   static queries = [];
 
   static reserve_entities(size) {
-    SharedEntityMetadataBuffer.reserve(size);
+    SharedEntityMetadataBuffer.resize(size);
 
     for (const fragment_type of this.fragment_types) {
       fragment_type.resize?.(size);
@@ -62,15 +62,15 @@ export class EntityManager {
 
     // Resize all fragment data arrays to fit the new entity
     if (refresh_entity_data) {
-      for (const fragment_type of this.fragment_types) {
-        fragment_type.resize?.(entity);
-      }
+        for (const fragment_type of this.fragment_types) {
+            fragment_type.resize?.(entity);
+        }
     }
-
+    
     this.entities.push(entity);
     this.entity_fragments.set(entity, new Set());
     if (refresh_entity_data) {
-      this.update_queries();
+      this.refresh_entities();
     }
 
     return entity;
@@ -87,7 +87,7 @@ export class EntityManager {
     this.entities.remove(this.entities.index_of(entity));
     this.deleted_entities.add(entity);
     if (refresh_entity_data) {
-      this.update_queries();
+      this.refresh_entities();
     }
   }
 
@@ -129,7 +129,7 @@ export class EntityManager {
     const fragment_view = FragmentType.add_entity(entity);
     this.entity_fragments.get(entity).add(FragmentType);
     if (refresh_entity_data) {
-      this.update_queries();
+      this.refresh_entities();
     }
     return fragment_view;
   }
@@ -144,7 +144,7 @@ export class EntityManager {
     FragmentType.remove_entity(entity);
     this.entity_fragments.get(entity).delete(FragmentType);
     if (refresh_entity_data) {
-      this.update_queries();
+      this.refresh_entities();
     }
   }
 
@@ -154,7 +154,7 @@ export class EntityManager {
     }
     this.entity_fragments.get(entity).add(Tag);
     if (refresh_entity_data) {
-      this.update_queries();
+      this.refresh_entities();
     }
   }
 
@@ -164,7 +164,7 @@ export class EntityManager {
     }
     this.entity_fragments.get(entity).delete(Tag);
     if (refresh_entity_data) {
-      this.update_queries();
+      this.refresh_entities();
     }
   }
 
@@ -194,16 +194,22 @@ export class EntityManager {
     return EntityID.get_instance_count(entity);
   }
 
-  static change_entity_instance_count(entity, instance_count) {
+  static change_entity_instance_count(entity, instance_count, refresh_entity_data = true) {
     if (!this.entity_fragments.has(entity)) {
       return null;
     }
 
-    SharedEntityMetadataBuffer.set_entity_count(entity, instance_count);
+    const last_entity_count = EntityID.get_instance_count(entity);
+    SharedEntityMetadataBuffer.set_entity_instance_count(entity, instance_count);
+    const absolute_entity_count = SharedEntityMetadataBuffer.get_absolute_entity_count();
 
     for (const fragment_type of this.fragment_types) {
-      fragment_type.resize?.(this.next_entity_id - 1);
-      fragment_type.entity_instance_count_changed?.(entity);
+      fragment_type.resize?.(absolute_entity_count);
+      fragment_type.entity_instance_count_changed?.(entity, last_entity_count);
+    }
+
+    if (refresh_entity_data) {
+      this.refresh_entities();
     }
 
     return entity;
@@ -219,7 +225,8 @@ export class EntityManager {
     return query;
   }
 
-  static update_queries() {
+  static refresh_entities() {
+    SharedEntityMetadataBuffer.write();
     for (let i = 0; i < this.queries.length; i++) {
       this.queries[i].update_matching_entities();
     }
@@ -252,7 +259,7 @@ export class EntityManager {
 
 // const query = EntityManager.create_query({ fragment_requirements: [PositionFragment, VelocityFragment] });
 
-// EntityManager.update_queries();
+// EntityManager.refresh_entities();
 
 // // System example: update positions
 // function update_positions(delta_time) {
