@@ -1,5 +1,9 @@
 #include "common.wgsl"
 
+// ------------------------------------------------------------------------------------
+// Data Structures
+// ------------------------------------------------------------------------------------ 
+
 struct DrawCommand {
     index_count: u32,
     instance_count: atomic<u32>,
@@ -21,12 +25,20 @@ struct DrawCullConstants {
     hzb_height: f32,
 }
 
+// ------------------------------------------------------------------------------------
+// Buffers
+// ------------------------------------------------------------------------------------ 
+
 @group(1) @binding(0) var input_texture: texture_2d<f32>;
 @group(1) @binding(1) var<storage, read> entity_bounds_data: array<EntityBoundsData>;
 @group(1) @binding(2) var<storage, read> object_instances: array<ObjectInstance>;
 @group(1) @binding(3) var<storage, read_write> compacted_object_instances: array<CompactedObjectInstance>;
 @group(1) @binding(4) var<storage, read_write> draw_indirect_buffer: array<DrawCommand>;
 @group(1) @binding(5) var<uniform> draw_cull_constants: DrawCullConstants;
+
+// ------------------------------------------------------------------------------------
+// Occlusion Helper Functions
+// ------------------------------------------------------------------------------------ 
 
 fn sphere_project(center: vec4<f32>, radius: f32, p00: f32, p11: f32, aabb: ptr<function, vec4<f32>>) -> bool {
     var center_view = view_buffer[0].view_matrix * center;
@@ -108,6 +120,10 @@ fn is_in_frustum(center: vec4<f32>, radius: f32) -> u32 {
 
     return visible * u32(draw_cull_constants.culling_enabled) + u32(1u - u32(draw_cull_constants.culling_enabled));
 }
+
+// ------------------------------------------------------------------------------------
+// Compute Shader
+// ------------------------------------------------------------------------------------ 
 
 @compute @workgroup_size(256)
 fn cs(@builtin(global_invocation_id) global_id: vec3<u32>) {

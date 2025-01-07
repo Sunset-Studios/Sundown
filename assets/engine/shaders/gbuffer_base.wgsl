@@ -1,6 +1,9 @@
 #include "common.wgsl"
 #include "lighting_common.wgsl"
 
+// ------------------------------------------------------------------------------------
+// Data Structures
+// ------------------------------------------------------------------------------------ 
 struct VertexOutput {
     @builtin(position) @invariant position: vec4f,
     @location(0) local_position: vec4f,
@@ -17,12 +20,6 @@ struct VertexOutput {
     @location(11) @interpolate(flat) vertex_index: u32,
 };
 
-#ifndef SKIP_ENTITY_WRITES
-const transparency_reveal_location = 6;
-#else
-const transparency_reveal_location = 5;
-#endif
-
 struct FragmentOutput {
     @location(0) albedo: vec4f,
     @location(1) emissive: vec4f,
@@ -30,16 +27,34 @@ struct FragmentOutput {
     @location(3) position: vec4f,
     @location(4) normal: vec4f,
 #ifndef SKIP_ENTITY_WRITES
-    @location(5) entity_id: u32,
+    @location(5) entity_id: vec2<u32>,
 #endif
 #if TRANSPARENT
     @location(transparency_reveal_location) transparency_reveal: f32,
 #endif
 }
 
+// ------------------------------------------------------------------------------------
+// Constants
+// ------------------------------------------------------------------------------------ 
+
+#ifndef SKIP_ENTITY_WRITES
+const transparency_reveal_location = 6;
+#else
+const transparency_reveal_location = 5;
+#endif
+
+// ------------------------------------------------------------------------------------
+// Buffers
+// ------------------------------------------------------------------------------------ 
+
 @group(1) @binding(0) var<storage, read> entity_transforms: array<EntityTransform>;
 @group(1) @binding(1) var<storage, read> compacted_object_instances: array<CompactedObjectInstance>;
 @group(1) @binding(2) var<storage, read> lights_buffer: array<Light>; // Used for forward shading if necessary
+
+// ------------------------------------------------------------------------------------
+// Vertex Shader
+// ------------------------------------------------------------------------------------ 
 
 #ifndef CUSTOM_VS
 fn vertex(v_out: ptr<function, VertexOutput>) -> VertexOutput {
@@ -81,6 +96,10 @@ fn vertex(v_out: ptr<function, VertexOutput>) -> VertexOutput {
     return output;
 }
 
+// ------------------------------------------------------------------------------------
+// Fragment Shader
+// ------------------------------------------------------------------------------------ 
+
 #ifndef CUSTOM_FS
 fn fragment(v_out: VertexOutput, f_out: ptr<function, FragmentOutput>) -> FragmentOutput {
     return *f_out;
@@ -95,7 +114,7 @@ fn fragment(v_out: VertexOutput, f_out: ptr<function, FragmentOutput>) -> Fragme
     output.normal = vec4f(v_out.normal.xyz, 1.0);
 
 #ifndef SKIP_ENTITY_WRITES
-    output.entity_id = v_out.instance_id;
+    output.entity_id = vec2<u32>(v_out.base_instance_id, v_out.instance_id);
 #endif
 
     var post_material_output = fragment(v_out, &output);

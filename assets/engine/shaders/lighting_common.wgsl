@@ -1,5 +1,8 @@
 const PI: f32 = 3.14159265359;
 
+// ------------------------------------------------------------------------------------
+// Data Structures
+// ------------------------------------------------------------------------------------ 
 struct Light {
     position: vec3f,
     direction: vec4f,
@@ -11,7 +14,9 @@ struct Light {
     outer_angle: f32,
 };
 
-// microfacet distribution
+// ------------------------------------------------------------------------------------
+// Microfacet Distribution
+// ------------------------------------------------------------------------------------
 fn d_ggx(n_dot_h: f32, roughness: f32) -> f32 {
     let a = n_dot_h * roughness;
     let k = roughness / max(0.001, 1.0 - n_dot_h * n_dot_h + a * a);
@@ -38,7 +43,9 @@ fn importance_sample_ggx(xi: vec2<f32>, n: vec3<f32>, roughness: f32) -> vec3<f3
     return normalize(sample_vec);
 }
 
-// visibility
+// ------------------------------------------------------------------------------------
+// Visibility
+// ------------------------------------------------------------------------------------
 fn v_smith_ggx_height_correlated(n_dot_v: f32, n_dot_l: f32, roughness: f32) -> f32 {
     let a2 = roughness * roughness;
     let ggx_v = n_dot_l * sqrt(n_dot_v * n_dot_v * (1.0 - a2) + a2);
@@ -50,7 +57,9 @@ fn v_smith_ggx_height_correlated_fast(n_dot_v: f32, n_dot_l: f32, roughness: f32
     return 0.5 / mix(2.0 * n_dot_l * n_dot_v, n_dot_l + n_dot_v, roughness);
 }
 
-// fresnel
+// ------------------------------------------------------------------------------------
+// Fresnel
+// ------------------------------------------------------------------------------------
 fn f_schlick_scalar(f0: f32, f90: f32, v_dot_h: f32) -> f32 {
     let one_minus_voh = 1.0 - v_dot_h;
     let one_minus_voh_2 = one_minus_voh * one_minus_voh;
@@ -67,16 +76,21 @@ fn f_schlick_roughness(n_dot_v: f32, f0: vec3<f32>, roughness: f32) -> vec3<f32>
     return f0 + (max(vec3<f32>(1.0 - roughness), f0) - f0) * pow(clamp(1.0 - n_dot_v, 0.0, 1.0), 5.0);
 }
 
-// diffuse
+// ------------------------------------------------------------------------------------
+// Diffuse
+// ------------------------------------------------------------------------------------
 fn fd_lambert() -> f32 {
     return 1.0 / PI;
 }
 
-// clear coat
+// ------------------------------------------------------------------------------------
+// Clear Coat
+// ------------------------------------------------------------------------------------
 fn v_kelemen(l_dot_h: f32) -> f32 {
     return clamp(0.25 / (l_dot_h * l_dot_h), 0.0, 1.0);
 }
 
+// ------------------------------------------------------------------------------------
 fn calculate_blinn_phong(
     light: Light,
     normal: vec3<f32>,
@@ -127,6 +141,9 @@ fn calculate_blinn_phong(
     return final_color;
 }
 
+// ------------------------------------------------------------------------------------
+// BRDF
+// ------------------------------------------------------------------------------------
 fn calculate_brdf(
     light: Light,
     normal: vec3<f32>,

@@ -1,6 +1,10 @@
 #include "common.wgsl"
 #include "lighting_common.wgsl"
 
+// ------------------------------------------------------------------------------------
+// Buffers
+// ------------------------------------------------------------------------------------ 
+
 @group(1) @binding(0) var skybox_texture: texture_2d<f32>;
 @group(1) @binding(1) var albedo_texture: texture_2d<f32>;
 @group(1) @binding(2) var emissive_texture: texture_2d<f32>;
@@ -9,6 +13,10 @@
 @group(1) @binding(5) var position_texture: texture_2d<f32>;
 @group(1) @binding(6) var depth_texture: texture_depth_2d;
 @group(1) @binding(7) var<storage, read> lights_buffer: array<Light>;
+
+// ------------------------------------------------------------------------------------
+// Data Structures
+// ------------------------------------------------------------------------------------ 
 
 struct VertexOutput {
     @builtin(position) position: vec4f,
@@ -19,6 +27,10 @@ struct FragmentOutput {
     @location(0) color: vec4f,
 };
 
+// ------------------------------------------------------------------------------------
+// Vertex Shader
+// ------------------------------------------------------------------------------------ 
+
 @vertex fn vs(
     @builtin(vertex_index) vi : u32,
     @builtin(instance_index) ii: u32
@@ -28,6 +40,10 @@ struct FragmentOutput {
     output.uv = vertex_buffer[vi].uv;
     return output;
 }
+
+// ------------------------------------------------------------------------------------
+// Fragment Shader
+// ------------------------------------------------------------------------------------ 
 
 @fragment fn fs(v_out: VertexOutput) -> FragmentOutput {
     let ambient = vec3f(0.2, 0.2, 0.2);

@@ -17,7 +17,7 @@ import {
   depth32float_format,
   bgra8unorm_format,
   r32float_format,
-  r32uint_format,
+  rg32uint_format,
   one_one_blend_config,
   src_alpha_one_minus_src_alpha_blend_config,
   load_op_load,
@@ -245,7 +245,7 @@ const hzb_image_config = {
 };
 const entity_id_image_config = {
   name: "entity_id",
-  format: r32uint_format,
+  format: rg32uint_format,
   width: 0,
   height: 0,
   usage:

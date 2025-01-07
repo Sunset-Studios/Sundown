@@ -43,6 +43,7 @@ export const depth32float_format = "depth32float";
 export const bgra8unorm_format = "bgra8unorm";
 export const r32float_format = "r32float";
 export const r32uint_format = "r32uint";
+export const rg32uint_format = "rg32uint";
 
 export const load_op_clear = "clear";
 export const load_op_load = "load";

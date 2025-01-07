@@ -2,6 +2,9 @@
 
 @group(1) @binding(0) var skybox_texture: texture_cube<f32>;
 
+// ------------------------------------------------------------------------------------
+// Data Structures
+// ------------------------------------------------------------------------------------ 
 struct VertexOutput {
     @builtin(position) position: vec4f,
     @location(0) pos: vec4f,
@@ -11,6 +14,9 @@ struct FragmentOutput {
     @location(0) color: vec4f,
 };
 
+// ------------------------------------------------------------------------------------
+// Vertex Shader
+// ------------------------------------------------------------------------------------ 
 @vertex fn vs(
     @builtin(vertex_index) vi : u32,
     @builtin(instance_index) ii: u32
@@ -36,6 +42,9 @@ struct FragmentOutput {
     return output;
 }
 
+// ------------------------------------------------------------------------------------
+// Fragment Shader
+// ------------------------------------------------------------------------------------ 
 @fragment fn fs(v_out: VertexOutput) -> FragmentOutput {
     var dir = v_out.pos.xyz - vec3(0.5);
     dir.z *= -1;

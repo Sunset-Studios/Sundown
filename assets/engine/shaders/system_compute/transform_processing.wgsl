@@ -1,9 +1,17 @@
 #include "common.wgsl"
 
+// ------------------------------------------------------------------------------------
+// Data Structures
+// ------------------------------------------------------------------------------------ 
+
 struct SceneGraphLayerData {
     count: u32,
     offset: u32
 };
+
+// ------------------------------------------------------------------------------------
+// Buffers
+// ------------------------------------------------------------------------------------ 
 
 @group(1) @binding(0) var<storage, read> entity_positions: array<vec4f>;
 @group(1) @binding(1) var<storage, read> entity_rotations: array<vec4f>;
@@ -13,6 +21,10 @@ struct SceneGraphLayerData {
 @group(1) @binding(5) var<storage, read_write> entity_bounds_data: array<EntityBoundsData>;
 @group(1) @binding(6) var<storage, read> scene_graph: array<vec2<i32>>;
 @group(1) @binding(7) var<uniform> scene_graph_layer_data: SceneGraphLayerData;
+
+// ------------------------------------------------------------------------------------
+// Compute Shader
+// ------------------------------------------------------------------------------------ 
 
 @compute @workgroup_size(256)
 fn cs(@builtin(global_invocation_id) global_id: vec3<u32>) {

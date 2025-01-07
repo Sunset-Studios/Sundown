@@ -508,7 +508,7 @@ export class LightFragment extends Fragment {
 
     if (shift_amount > 0) {
       // Make space by moving data forward
-      let i = Math.min(this.size, this.size - shift_amount) - 1;
+      let i = this.size - shift_amount - 1;
       for (; i >= entity_index; --i) {
         this.data.position.x[i + shift_amount] = this.data.position.x[i];
       }
@@ -516,7 +516,7 @@ export class LightFragment extends Fragment {
       for (; i < entity_index + shift_amount; ++i) {
         this.data.position.x[i] = this.data.position.x[entity_index];
       }
-    } else {
+    } else if (shift_amount < 0) {
       // Compress by moving data backward
       let size = Math.max(this.size, this.size - shift_amount);
       for (let i = entity_index; i < size; ++i) {
@@ -526,7 +526,7 @@ export class LightFragment extends Fragment {
 
     if (shift_amount > 0) {
       // Make space by moving data forward
-      let i = Math.min(this.size, this.size - shift_amount) - 1;
+      let i = this.size - shift_amount - 1;
       for (; i >= entity_index; --i) {
         this.data.position.y[i + shift_amount] = this.data.position.y[i];
       }
@@ -534,7 +534,7 @@ export class LightFragment extends Fragment {
       for (; i < entity_index + shift_amount; ++i) {
         this.data.position.y[i] = this.data.position.y[entity_index];
       }
-    } else {
+    } else if (shift_amount < 0) {
       // Compress by moving data backward
       let size = Math.max(this.size, this.size - shift_amount);
       for (let i = entity_index; i < size; ++i) {
@@ -544,7 +544,7 @@ export class LightFragment extends Fragment {
 
     if (shift_amount > 0) {
       // Make space by moving data forward
-      let i = Math.min(this.size, this.size - shift_amount) - 1;
+      let i = this.size - shift_amount - 1;
       for (; i >= entity_index; --i) {
         this.data.position.z[i + shift_amount] = this.data.position.z[i];
       }
@@ -552,7 +552,7 @@ export class LightFragment extends Fragment {
       for (; i < entity_index + shift_amount; ++i) {
         this.data.position.z[i] = this.data.position.z[entity_index];
       }
-    } else {
+    } else if (shift_amount < 0) {
       // Compress by moving data backward
       let size = Math.max(this.size, this.size - shift_amount);
       for (let i = entity_index; i < size; ++i) {
@@ -562,7 +562,7 @@ export class LightFragment extends Fragment {
 
     if (shift_amount > 0) {
       // Make space by moving data forward
-      let i = Math.min(this.size, this.size - shift_amount) - 1;
+      let i = this.size - shift_amount - 1;
       for (; i >= entity_index; --i) {
         this.data.direction.x[i + shift_amount] = this.data.direction.x[i];
       }
@@ -570,7 +570,7 @@ export class LightFragment extends Fragment {
       for (; i < entity_index + shift_amount; ++i) {
         this.data.direction.x[i] = this.data.direction.x[entity_index];
       }
-    } else {
+    } else if (shift_amount < 0) {
       // Compress by moving data backward
       let size = Math.max(this.size, this.size - shift_amount);
       for (let i = entity_index; i < size; ++i) {
@@ -580,7 +580,7 @@ export class LightFragment extends Fragment {
 
     if (shift_amount > 0) {
       // Make space by moving data forward
-      let i = Math.min(this.size, this.size - shift_amount) - 1;
+      let i = this.size - shift_amount - 1;
       for (; i >= entity_index; --i) {
         this.data.direction.y[i + shift_amount] = this.data.direction.y[i];
       }
@@ -588,7 +588,7 @@ export class LightFragment extends Fragment {
       for (; i < entity_index + shift_amount; ++i) {
         this.data.direction.y[i] = this.data.direction.y[entity_index];
       }
-    } else {
+    } else if (shift_amount < 0) {
       // Compress by moving data backward
       let size = Math.max(this.size, this.size - shift_amount);
       for (let i = entity_index; i < size; ++i) {
@@ -598,7 +598,7 @@ export class LightFragment extends Fragment {
 
     if (shift_amount > 0) {
       // Make space by moving data forward
-      let i = Math.min(this.size, this.size - shift_amount) - 1;
+      let i = this.size - shift_amount - 1;
       for (; i >= entity_index; --i) {
         this.data.direction.z[i + shift_amount] = this.data.direction.z[i];
       }
@@ -606,7 +606,7 @@ export class LightFragment extends Fragment {
       for (; i < entity_index + shift_amount; ++i) {
         this.data.direction.z[i] = this.data.direction.z[entity_index];
       }
-    } else {
+    } else if (shift_amount < 0) {
       // Compress by moving data backward
       let size = Math.max(this.size, this.size - shift_amount);
       for (let i = entity_index; i < size; ++i) {
@@ -616,7 +616,7 @@ export class LightFragment extends Fragment {
 
     if (shift_amount > 0) {
       // Make space by moving data forward
-      let i = Math.min(this.size, this.size - shift_amount) - 1;
+      let i = this.size - shift_amount - 1;
       for (; i >= entity_index; --i) {
         this.data.color.r[i + shift_amount] = this.data.color.r[i];
       }
@@ -624,7 +624,7 @@ export class LightFragment extends Fragment {
       for (; i < entity_index + shift_amount; ++i) {
         this.data.color.r[i] = this.data.color.r[entity_index];
       }
-    } else {
+    } else if (shift_amount < 0) {
       // Compress by moving data backward
       let size = Math.max(this.size, this.size - shift_amount);
       for (let i = entity_index; i < size; ++i) {
@@ -634,7 +634,7 @@ export class LightFragment extends Fragment {
 
     if (shift_amount > 0) {
       // Make space by moving data forward
-      let i = Math.min(this.size, this.size - shift_amount) - 1;
+      let i = this.size - shift_amount - 1;
       for (; i >= entity_index; --i) {
         this.data.color.g[i + shift_amount] = this.data.color.g[i];
       }
@@ -642,7 +642,7 @@ export class LightFragment extends Fragment {
       for (; i < entity_index + shift_amount; ++i) {
         this.data.color.g[i] = this.data.color.g[entity_index];
       }
-    } else {
+    } else if (shift_amount < 0) {
       // Compress by moving data backward
       let size = Math.max(this.size, this.size - shift_amount);
       for (let i = entity_index; i < size; ++i) {
@@ -652,7 +652,7 @@ export class LightFragment extends Fragment {
 
     if (shift_amount > 0) {
       // Make space by moving data forward
-      let i = Math.min(this.size, this.size - shift_amount) - 1;
+      let i = this.size - shift_amount - 1;
       for (; i >= entity_index; --i) {
         this.data.color.b[i + shift_amount] = this.data.color.b[i];
       }
@@ -660,7 +660,7 @@ export class LightFragment extends Fragment {
       for (; i < entity_index + shift_amount; ++i) {
         this.data.color.b[i] = this.data.color.b[entity_index];
       }
-    } else {
+    } else if (shift_amount < 0) {
       // Compress by moving data backward
       let size = Math.max(this.size, this.size - shift_amount);
       for (let i = entity_index; i < size; ++i) {
@@ -670,7 +670,7 @@ export class LightFragment extends Fragment {
 
     if (shift_amount > 0) {
       // Make space by moving data forward
-      let i = Math.min(this.size, this.size - shift_amount) - 1;
+      let i = this.size - shift_amount - 1;
       for (; i >= entity_index; --i) {
         this.data.type[(i + shift_amount) * 1 + 0] = this.data.type[i * 1 + 0];
       }
@@ -678,7 +678,7 @@ export class LightFragment extends Fragment {
       for (; i < entity_index + shift_amount; ++i) {
         this.data.type[i * 1 + 0] = this.data.type[entity_index * 1 + 0];
       }
-    } else {
+    } else if (shift_amount < 0) {
       // Compress by moving data backward
       let size = Math.max(this.size, this.size - shift_amount);
       for (let i = entity_index; i < size; ++i) {
@@ -688,7 +688,7 @@ export class LightFragment extends Fragment {
 
     if (shift_amount > 0) {
       // Make space by moving data forward
-      let i = Math.min(this.size, this.size - shift_amount) - 1;
+      let i = this.size - shift_amount - 1;
       for (; i >= entity_index; --i) {
         this.data.intensity[(i + shift_amount) * 1 + 0] =
           this.data.intensity[i * 1 + 0];
@@ -698,7 +698,7 @@ export class LightFragment extends Fragment {
         this.data.intensity[i * 1 + 0] =
           this.data.intensity[entity_index * 1 + 0];
       }
-    } else {
+    } else if (shift_amount < 0) {
       // Compress by moving data backward
       let size = Math.max(this.size, this.size - shift_amount);
       for (let i = entity_index; i < size; ++i) {
@@ -709,7 +709,7 @@ export class LightFragment extends Fragment {
 
     if (shift_amount > 0) {
       // Make space by moving data forward
-      let i = Math.min(this.size, this.size - shift_amount) - 1;
+      let i = this.size - shift_amount - 1;
       for (; i >= entity_index; --i) {
         this.data.radius[(i + shift_amount) * 1 + 0] =
           this.data.radius[i * 1 + 0];
@@ -718,7 +718,7 @@ export class LightFragment extends Fragment {
       for (; i < entity_index + shift_amount; ++i) {
         this.data.radius[i * 1 + 0] = this.data.radius[entity_index * 1 + 0];
       }
-    } else {
+    } else if (shift_amount < 0) {
       // Compress by moving data backward
       let size = Math.max(this.size, this.size - shift_amount);
       for (let i = entity_index; i < size; ++i) {
@@ -729,7 +729,7 @@ export class LightFragment extends Fragment {
 
     if (shift_amount > 0) {
       // Make space by moving data forward
-      let i = Math.min(this.size, this.size - shift_amount) - 1;
+      let i = this.size - shift_amount - 1;
       for (; i >= entity_index; --i) {
         this.data.attenuation[(i + shift_amount) * 1 + 0] =
           this.data.attenuation[i * 1 + 0];
@@ -739,7 +739,7 @@ export class LightFragment extends Fragment {
         this.data.attenuation[i * 1 + 0] =
           this.data.attenuation[entity_index * 1 + 0];
       }
-    } else {
+    } else if (shift_amount < 0) {
       // Compress by moving data backward
       let size = Math.max(this.size, this.size - shift_amount);
       for (let i = entity_index; i < size; ++i) {
@@ -750,7 +750,7 @@ export class LightFragment extends Fragment {
 
     if (shift_amount > 0) {
       // Make space by moving data forward
-      let i = Math.min(this.size, this.size - shift_amount) - 1;
+      let i = this.size - shift_amount - 1;
       for (; i >= entity_index; --i) {
         this.data.outer_angle[(i + shift_amount) * 1 + 0] =
           this.data.outer_angle[i * 1 + 0];
@@ -760,7 +760,7 @@ export class LightFragment extends Fragment {
         this.data.outer_angle[i * 1 + 0] =
           this.data.outer_angle[entity_index * 1 + 0];
       }
-    } else {
+    } else if (shift_amount < 0) {
       // Compress by moving data backward
       let size = Math.max(this.size, this.size - shift_amount);
       for (let i = entity_index; i < size; ++i) {
@@ -771,7 +771,7 @@ export class LightFragment extends Fragment {
 
     if (shift_amount > 0) {
       // Make space by moving data forward
-      let i = Math.min(this.size, this.size - shift_amount) - 1;
+      let i = this.size - shift_amount - 1;
       for (; i >= entity_index; --i) {
         this.data.active[(i + shift_amount) * 1 + 0] =
           this.data.active[i * 1 + 0];
@@ -780,7 +780,7 @@ export class LightFragment extends Fragment {
       for (; i < entity_index + shift_amount; ++i) {
         this.data.active[i * 1 + 0] = this.data.active[entity_index * 1 + 0];
       }
-    } else {
+    } else if (shift_amount < 0) {
       // Compress by moving data backward
       let size = Math.max(this.size, this.size - shift_amount);
       for (let i = entity_index; i < size; ++i) {
@@ -791,7 +791,7 @@ export class LightFragment extends Fragment {
 
     if (shift_amount > 0) {
       // Make space by moving data forward
-      let i = Math.min(this.size, this.size - shift_amount) - 1;
+      let i = this.size - shift_amount - 1;
       for (; i >= entity_index; --i) {
         this.data.dirty[(i + shift_amount) * 1 + 0] =
           this.data.dirty[i * 1 + 0];
@@ -800,7 +800,7 @@ export class LightFragment extends Fragment {
       for (; i < entity_index + shift_amount; ++i) {
         this.data.dirty[i * 1 + 0] = this.data.dirty[entity_index * 1 + 0];
       }
-    } else {
+    } else if (shift_amount < 0) {
       // Compress by moving data backward
       let size = Math.max(this.size, this.size - shift_amount);
       for (let i = entity_index; i < size; ++i) {

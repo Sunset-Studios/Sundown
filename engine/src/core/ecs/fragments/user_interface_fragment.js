@@ -427,7 +427,7 @@ export class UserInterfaceFragment extends Fragment {
 
     if (shift_amount > 0) {
       // Make space by moving data forward
-      let i = Math.min(this.size, this.size - shift_amount) - 1;
+      let i = this.size - shift_amount - 1;
       for (; i >= entity_index; --i) {
         this.data.allows_cursor_events[(i + shift_amount) * 1 + 0] =
           this.data.allows_cursor_events[i * 1 + 0];
@@ -437,7 +437,7 @@ export class UserInterfaceFragment extends Fragment {
         this.data.allows_cursor_events[i * 1 + 0] =
           this.data.allows_cursor_events[entity_index * 1 + 0];
       }
-    } else {
+    } else if (shift_amount < 0) {
       // Compress by moving data backward
       let size = Math.max(this.size, this.size - shift_amount);
       for (let i = entity_index; i < size; ++i) {
@@ -448,7 +448,7 @@ export class UserInterfaceFragment extends Fragment {
 
     if (shift_amount > 0) {
       // Make space by moving data forward
-      let i = Math.min(this.size, this.size - shift_amount) - 1;
+      let i = this.size - shift_amount - 1;
       for (; i >= entity_index; --i) {
         this.data.auto_size[(i + shift_amount) * 1 + 0] =
           this.data.auto_size[i * 1 + 0];
@@ -458,7 +458,7 @@ export class UserInterfaceFragment extends Fragment {
         this.data.auto_size[i * 1 + 0] =
           this.data.auto_size[entity_index * 1 + 0];
       }
-    } else {
+    } else if (shift_amount < 0) {
       // Compress by moving data backward
       let size = Math.max(this.size, this.size - shift_amount);
       for (let i = entity_index; i < size; ++i) {
@@ -469,7 +469,7 @@ export class UserInterfaceFragment extends Fragment {
 
     if (shift_amount > 0) {
       // Make space by moving data forward
-      let i = Math.min(this.size, this.size - shift_amount) - 1;
+      let i = this.size - shift_amount - 1;
       for (; i >= entity_index; --i) {
         this.data.was_cursor_inside[(i + shift_amount) * 1 + 0] =
           this.data.was_cursor_inside[i * 1 + 0];
@@ -479,7 +479,7 @@ export class UserInterfaceFragment extends Fragment {
         this.data.was_cursor_inside[i * 1 + 0] =
           this.data.was_cursor_inside[entity_index * 1 + 0];
       }
-    } else {
+    } else if (shift_amount < 0) {
       // Compress by moving data backward
       let size = Math.max(this.size, this.size - shift_amount);
       for (let i = entity_index; i < size; ++i) {
@@ -490,7 +490,7 @@ export class UserInterfaceFragment extends Fragment {
 
     if (shift_amount > 0) {
       // Make space by moving data forward
-      let i = Math.min(this.size, this.size - shift_amount) - 1;
+      let i = this.size - shift_amount - 1;
       for (; i >= entity_index; --i) {
         this.data.is_cursor_inside[(i + shift_amount) * 1 + 0] =
           this.data.is_cursor_inside[i * 1 + 0];
@@ -500,7 +500,7 @@ export class UserInterfaceFragment extends Fragment {
         this.data.is_cursor_inside[i * 1 + 0] =
           this.data.is_cursor_inside[entity_index * 1 + 0];
       }
-    } else {
+    } else if (shift_amount < 0) {
       // Compress by moving data backward
       let size = Math.max(this.size, this.size - shift_amount);
       for (let i = entity_index; i < size; ++i) {
@@ -511,7 +511,7 @@ export class UserInterfaceFragment extends Fragment {
 
     if (shift_amount > 0) {
       // Make space by moving data forward
-      let i = Math.min(this.size, this.size - shift_amount) - 1;
+      let i = this.size - shift_amount - 1;
       for (; i >= entity_index; --i) {
         this.data.was_clicked[(i + shift_amount) * 1 + 0] =
           this.data.was_clicked[i * 1 + 0];
@@ -521,7 +521,7 @@ export class UserInterfaceFragment extends Fragment {
         this.data.was_clicked[i * 1 + 0] =
           this.data.was_clicked[entity_index * 1 + 0];
       }
-    } else {
+    } else if (shift_amount < 0) {
       // Compress by moving data backward
       let size = Math.max(this.size, this.size - shift_amount);
       for (let i = entity_index; i < size; ++i) {
@@ -532,7 +532,7 @@ export class UserInterfaceFragment extends Fragment {
 
     if (shift_amount > 0) {
       // Make space by moving data forward
-      let i = Math.min(this.size, this.size - shift_amount) - 1;
+      let i = this.size - shift_amount - 1;
       for (; i >= entity_index; --i) {
         this.data.is_clicked[(i + shift_amount) * 1 + 0] =
           this.data.is_clicked[i * 1 + 0];
@@ -542,7 +542,7 @@ export class UserInterfaceFragment extends Fragment {
         this.data.is_clicked[i * 1 + 0] =
           this.data.is_clicked[entity_index * 1 + 0];
       }
-    } else {
+    } else if (shift_amount < 0) {
       // Compress by moving data backward
       let size = Math.max(this.size, this.size - shift_amount);
       for (let i = entity_index; i < size; ++i) {
@@ -553,7 +553,7 @@ export class UserInterfaceFragment extends Fragment {
 
     if (shift_amount > 0) {
       // Make space by moving data forward
-      let i = Math.min(this.size, this.size - shift_amount) - 1;
+      let i = this.size - shift_amount - 1;
       for (; i >= entity_index; --i) {
         this.data.is_pressed[(i + shift_amount) * 1 + 0] =
           this.data.is_pressed[i * 1 + 0];
@@ -563,7 +563,7 @@ export class UserInterfaceFragment extends Fragment {
         this.data.is_pressed[i * 1 + 0] =
           this.data.is_pressed[entity_index * 1 + 0];
       }
-    } else {
+    } else if (shift_amount < 0) {
       // Compress by moving data backward
       let size = Math.max(this.size, this.size - shift_amount);
       for (let i = entity_index; i < size; ++i) {
@@ -574,7 +574,7 @@ export class UserInterfaceFragment extends Fragment {
 
     if (shift_amount > 0) {
       // Make space by moving data forward
-      let i = Math.min(this.size, this.size - shift_amount) - 1;
+      let i = this.size - shift_amount - 1;
       for (; i >= entity_index; --i) {
         this.data.was_pressed[(i + shift_amount) * 1 + 0] =
           this.data.was_pressed[i * 1 + 0];
@@ -584,7 +584,7 @@ export class UserInterfaceFragment extends Fragment {
         this.data.was_pressed[i * 1 + 0] =
           this.data.was_pressed[entity_index * 1 + 0];
       }
-    } else {
+    } else if (shift_amount < 0) {
       // Compress by moving data backward
       let size = Math.max(this.size, this.size - shift_amount);
       for (let i = entity_index; i < size; ++i) {
@@ -595,7 +595,7 @@ export class UserInterfaceFragment extends Fragment {
 
     if (shift_amount > 0) {
       // Make space by moving data forward
-      let i = Math.min(this.size, this.size - shift_amount) - 1;
+      let i = this.size - shift_amount - 1;
       for (; i >= entity_index; --i) {
         this.data.color.r[i + shift_amount] = this.data.color.r[i];
       }
@@ -603,7 +603,7 @@ export class UserInterfaceFragment extends Fragment {
       for (; i < entity_index + shift_amount; ++i) {
         this.data.color.r[i] = this.data.color.r[entity_index];
       }
-    } else {
+    } else if (shift_amount < 0) {
       // Compress by moving data backward
       let size = Math.max(this.size, this.size - shift_amount);
       for (let i = entity_index; i < size; ++i) {
@@ -613,7 +613,7 @@ export class UserInterfaceFragment extends Fragment {
 
     if (shift_amount > 0) {
       // Make space by moving data forward
-      let i = Math.min(this.size, this.size - shift_amount) - 1;
+      let i = this.size - shift_amount - 1;
       for (; i >= entity_index; --i) {
         this.data.color.g[i + shift_amount] = this.data.color.g[i];
       }
@@ -621,7 +621,7 @@ export class UserInterfaceFragment extends Fragment {
       for (; i < entity_index + shift_amount; ++i) {
         this.data.color.g[i] = this.data.color.g[entity_index];
       }
-    } else {
+    } else if (shift_amount < 0) {
       // Compress by moving data backward
       let size = Math.max(this.size, this.size - shift_amount);
       for (let i = entity_index; i < size; ++i) {
@@ -631,7 +631,7 @@ export class UserInterfaceFragment extends Fragment {
 
     if (shift_amount > 0) {
       // Make space by moving data forward
-      let i = Math.min(this.size, this.size - shift_amount) - 1;
+      let i = this.size - shift_amount - 1;
       for (; i >= entity_index; --i) {
         this.data.color.b[i + shift_amount] = this.data.color.b[i];
       }
@@ -639,7 +639,7 @@ export class UserInterfaceFragment extends Fragment {
       for (; i < entity_index + shift_amount; ++i) {
         this.data.color.b[i] = this.data.color.b[entity_index];
       }
-    } else {
+    } else if (shift_amount < 0) {
       // Compress by moving data backward
       let size = Math.max(this.size, this.size - shift_amount);
       for (let i = entity_index; i < size; ++i) {
@@ -649,7 +649,7 @@ export class UserInterfaceFragment extends Fragment {
 
     if (shift_amount > 0) {
       // Make space by moving data forward
-      let i = Math.min(this.size, this.size - shift_amount) - 1;
+      let i = this.size - shift_amount - 1;
       for (; i >= entity_index; --i) {
         this.data.color.a[i + shift_amount] = this.data.color.a[i];
       }
@@ -657,7 +657,7 @@ export class UserInterfaceFragment extends Fragment {
       for (; i < entity_index + shift_amount; ++i) {
         this.data.color.a[i] = this.data.color.a[entity_index];
       }
-    } else {
+    } else if (shift_amount < 0) {
       // Compress by moving data backward
       let size = Math.max(this.size, this.size - shift_amount);
       for (let i = entity_index; i < size; ++i) {
@@ -667,7 +667,7 @@ export class UserInterfaceFragment extends Fragment {
 
     if (shift_amount > 0) {
       // Make space by moving data forward
-      let i = Math.min(this.size, this.size - shift_amount) - 1;
+      let i = this.size - shift_amount - 1;
       for (; i >= entity_index; --i) {
         this.data.dirty[(i + shift_amount) * 1 + 0] =
           this.data.dirty[i * 1 + 0];
@@ -676,7 +676,7 @@ export class UserInterfaceFragment extends Fragment {
       for (; i < entity_index + shift_amount; ++i) {
         this.data.dirty[i * 1 + 0] = this.data.dirty[entity_index * 1 + 0];
       }
-    } else {
+    } else if (shift_amount < 0) {
       // Compress by moving data backward
       let size = Math.max(this.size, this.size - shift_amount);
       for (let i = entity_index; i < size; ++i) {

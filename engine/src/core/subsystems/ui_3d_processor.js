@@ -26,35 +26,37 @@ export class UI3DProcessor extends SimulationLayer {
 
       let updated = false;
 
-      const matching_entity_data = this.entity_query.matching_entity_ids.get_data();
+      const matching_entities = this.entity_query.matching_entities.get_data();
+      const matching_entity_ids = this.entity_query.matching_entity_ids.get_data();
       for (let i = 0; i < this.entity_query.matching_entities.length; ++i) {
-        const entity = matching_entity_data[i];
+        const entity = matching_entities[i];
+        const entity_index = matching_entity_ids[i];
 
-        if (!user_interfaces.dirty[entity]) {
+        if (!user_interfaces.dirty[entity_index]) {
           continue;
         }
 
-        if (user_interfaces.allows_cursor_events[entity]) {
-          user_interfaces.was_cursor_inside[entity] = user_interfaces.is_cursor_inside[entity];
-          user_interfaces.is_cursor_inside[entity] = entity === this.scene.get_cursor_pixel_entity();
+        if (user_interfaces.allows_cursor_events[entity_index]) {
+          user_interfaces.was_cursor_inside[entity_index] = user_interfaces.is_cursor_inside[entity_index];
+          user_interfaces.is_cursor_inside[entity_index] = entity === this.scene.get_cursor_pixel_entity();
 
-          user_interfaces.was_clicked[entity] = user_interfaces.is_clicked[entity];
-          user_interfaces.is_clicked[entity] = user_interfaces.is_cursor_inside[entity] && InputProvider.get().get_action(InputKey.B_mouse_left);
+          user_interfaces.was_clicked[entity_index] = user_interfaces.is_clicked[entity_index];
+          user_interfaces.is_clicked[entity_index] = user_interfaces.is_cursor_inside[entity_index] && InputProvider.get().get_action(InputKey.B_mouse_left);
 
-          user_interfaces.was_pressed[entity] = user_interfaces.is_pressed[entity];
-          user_interfaces.is_pressed[entity] = user_interfaces.is_cursor_inside[entity] && InputProvider.get().get_state(InputKey.B_mouse_left);
+          user_interfaces.was_pressed[entity_index] = user_interfaces.is_pressed[entity_index];
+          user_interfaces.is_pressed[entity_index] = user_interfaces.is_cursor_inside[entity_index] && InputProvider.get().get_state(InputKey.B_mouse_left);
 
-          if (!user_interfaces.was_cursor_inside[entity] && user_interfaces.is_cursor_inside[entity]) {
+          if (!user_interfaces.was_cursor_inside[entity_index] && user_interfaces.is_cursor_inside[entity_index]) {
             Element3D.trigger(entity, "hover");
-          } else if (user_interfaces.was_cursor_inside[entity] && !user_interfaces.is_cursor_inside[entity]) {
+          } else if (user_interfaces.was_cursor_inside[entity_index] && !user_interfaces.is_cursor_inside[entity_index]) {
             Element3D.trigger(entity, "leave");
           }
 
-          if (user_interfaces.is_clicked[entity]) {
+          if (user_interfaces.is_clicked[entity_index]) {
             Element3D.trigger(entity, "selected");
             InputProvider.get().consume_action(InputKey.B_mouse_left);
           }
-          if (user_interfaces.is_pressed[entity]) {
+          if (user_interfaces.is_pressed[entity_index]) {
             Element3D.trigger(entity, "pressed");
             InputProvider.get().consume_action(InputKey.B_mouse_left);
           }

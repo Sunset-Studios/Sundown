@@ -1,9 +1,16 @@
 #include "common.wgsl"
 
+// ------------------------------------------------------------------------------------
+// Data Structures
+// ------------------------------------------------------------------------------------ 
 struct HZBParams {
     input_image_size: vec2<f32>,
     output_image_size: vec2<f32>,
 }
+
+// ------------------------------------------------------------------------------------
+// Compute Shader
+// ------------------------------------------------------------------------------------ 
 
 @group(1) @binding(0) var input_texture: texture_2d<f32>;
 @group(1) @binding(1) var output_texture: texture_storage_2d<r32float, write>;

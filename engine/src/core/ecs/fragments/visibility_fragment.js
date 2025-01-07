@@ -177,7 +177,7 @@ export class VisibilityFragment extends Fragment {
 
     if (shift_amount > 0) {
       // Make space by moving data forward
-      let i = Math.min(this.size, this.size - shift_amount) - 1;
+      let i = this.size - shift_amount - 1;
       for (; i >= entity_index; --i) {
         this.data.visible[(i + shift_amount) * 1 + 0] =
           this.data.visible[i * 1 + 0];
@@ -186,7 +186,7 @@ export class VisibilityFragment extends Fragment {
       for (; i < entity_index + shift_amount; ++i) {
         this.data.visible[i * 1 + 0] = this.data.visible[entity_index * 1 + 0];
       }
-    } else {
+    } else if (shift_amount < 0) {
       // Compress by moving data backward
       let size = Math.max(this.size, this.size - shift_amount);
       for (let i = entity_index; i < size; ++i) {
@@ -197,7 +197,7 @@ export class VisibilityFragment extends Fragment {
 
     if (shift_amount > 0) {
       // Make space by moving data forward
-      let i = Math.min(this.size, this.size - shift_amount) - 1;
+      let i = this.size - shift_amount - 1;
       for (; i >= entity_index; --i) {
         this.data.dirty[(i + shift_amount) * 1 + 0] =
           this.data.dirty[i * 1 + 0];
@@ -206,7 +206,7 @@ export class VisibilityFragment extends Fragment {
       for (; i < entity_index + shift_amount; ++i) {
         this.data.dirty[i * 1 + 0] = this.data.dirty[entity_index * 1 + 0];
       }
-    } else {
+    } else if (shift_amount < 0) {
       // Compress by moving data backward
       let size = Math.max(this.size, this.size - shift_amount);
       for (let i = entity_index; i < size; ++i) {

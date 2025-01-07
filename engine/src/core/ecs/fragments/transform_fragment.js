@@ -546,7 +546,7 @@ export class TransformFragment extends Fragment {
 
     if (shift_amount > 0) {
       // Make space by moving data forward
-      let i = Math.min(this.size, this.size - shift_amount) - 1;
+      let i = this.size - shift_amount - 1;
       for (; i >= entity_index; --i) {
         this.data.position[(i + shift_amount) * 4 + 0] =
           this.data.position[i * 4 + 0];
@@ -574,7 +574,7 @@ export class TransformFragment extends Fragment {
         this.data.position[i * 4 + 3] =
           this.data.position[entity_index * 4 + 3];
       }
-    } else {
+    } else if (shift_amount < 0) {
       // Compress by moving data backward
       let size = Math.max(this.size, this.size - shift_amount);
       for (let i = entity_index; i < size; ++i) {
@@ -594,7 +594,7 @@ export class TransformFragment extends Fragment {
 
     if (shift_amount > 0) {
       // Make space by moving data forward
-      let i = Math.min(this.size, this.size - shift_amount) - 1;
+      let i = this.size - shift_amount - 1;
       for (; i >= entity_index; --i) {
         this.data.rotation[(i + shift_amount) * 4 + 0] =
           this.data.rotation[i * 4 + 0];
@@ -622,7 +622,7 @@ export class TransformFragment extends Fragment {
         this.data.rotation[i * 4 + 3] =
           this.data.rotation[entity_index * 4 + 3];
       }
-    } else {
+    } else if (shift_amount < 0) {
       // Compress by moving data backward
       let size = Math.max(this.size, this.size - shift_amount);
       for (let i = entity_index; i < size; ++i) {
@@ -642,7 +642,7 @@ export class TransformFragment extends Fragment {
 
     if (shift_amount > 0) {
       // Make space by moving data forward
-      let i = Math.min(this.size, this.size - shift_amount) - 1;
+      let i = this.size - shift_amount - 1;
       for (; i >= entity_index; --i) {
         this.data.scale[(i + shift_amount) * 4 + 0] =
           this.data.scale[i * 4 + 0];
@@ -666,7 +666,7 @@ export class TransformFragment extends Fragment {
 
         this.data.scale[i * 4 + 3] = this.data.scale[entity_index * 4 + 3];
       }
-    } else {
+    } else if (shift_amount < 0) {
       // Compress by moving data backward
       let size = Math.max(this.size, this.size - shift_amount);
       for (let i = entity_index; i < size; ++i) {
@@ -686,7 +686,7 @@ export class TransformFragment extends Fragment {
 
     if (shift_amount > 0) {
       // Make space by moving data forward
-      let i = Math.min(this.size, this.size - shift_amount) - 1;
+      let i = this.size - shift_amount - 1;
       for (; i >= entity_index; --i) {
         this.data.dirty[(i + shift_amount) * 1 + 0] =
           this.data.dirty[i * 1 + 0];
@@ -695,7 +695,7 @@ export class TransformFragment extends Fragment {
       for (; i < entity_index + shift_amount; ++i) {
         this.data.dirty[i * 1 + 0] = this.data.dirty[entity_index * 1 + 0];
       }
-    } else {
+    } else if (shift_amount < 0) {
       // Compress by moving data backward
       let size = Math.max(this.size, this.size - shift_amount);
       for (let i = entity_index; i < size; ++i) {

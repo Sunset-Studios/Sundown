@@ -1,3 +1,7 @@
+// ------------------------------------------------------------------------------------
+// Data Structures
+// ------------------------------------------------------------------------------------ 
+
 struct Vertex {
     position: vec4f,
     normal: vec4f,
@@ -53,6 +57,10 @@ struct CompactedObjectInstance {
     base_instance: u32,
 };
 
+// ------------------------------------------------------------------------------------
+// Constants
+// ------------------------------------------------------------------------------------ 
+
 // 4x4 Bayer matrix for dithering
 const bayer_matrix = array<f32, 16>(
     0.0 / 16.0, 8.0 / 16.0, 2.0 / 16.0, 10.0 / 16.0,
@@ -71,12 +79,22 @@ const identity_matrix = mat4x4f(
 const epsilon = 1e-5;
 const world_up = vec3f(0.0, 1.0, 0.0);
 
+const one_over_float_max = 1.0 / 4294967296.0;
+
+// ------------------------------------------------------------------------------------
+// Buffers
+// ------------------------------------------------------------------------------------ 
+
 @group(0) @binding(0) var<storage, read> vertex_buffer: array<Vertex>;
 @group(0) @binding(1) var<storage, read> view_buffer: array<View>;
 @group(0) @binding(2) var global_sampler: sampler;
 @group(0) @binding(3) var non_filtering_sampler: sampler;
 @group(0) @binding(4) var<uniform> frame_info: FrameInfo;
 @group(0) @binding(5) var<storage, read> entity_metadata: array<EntityMetadata>;
+
+// ------------------------------------------------------------------------------------
+// Helper Functions
+// ------------------------------------------------------------------------------------ 
 
 fn cubemap_direction_to_uv(direction: vec3f) -> vec3f {
     let abs_dir = abs(direction);
@@ -168,7 +186,6 @@ fn hash(x: u32) -> u32 {
 }
 
 // Convert uint to float in [0, 1) range
-const one_over_float_max = 1.0 / 4294967296.0;
 fn uint_to_normalized_float(x: u32) -> f32 {
     return f32(x) * one_over_float_max;
 }

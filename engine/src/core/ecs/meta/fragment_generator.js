@@ -721,7 +721,7 @@ export class ${fragment_name} extends Fragment {
                 .map(axis => `
                   if (shift_amount > 0) {
                     // Make space by moving data forward
-                    let i = Math.min(this.size, this.size - shift_amount) - 1;
+                    let i = this.size - shift_amount - 1;
                     for (; i >= entity_index; --i) {
                       this.data.${key}.${axis}[i + shift_amount] = this.data.${key}.${axis}[i];
                     }
@@ -729,7 +729,7 @@ export class ${fragment_name} extends Fragment {
                     for (; i < entity_index + shift_amount; ++i) {
                       this.data.${key}.${axis}[i] = this.data.${key}.${axis}[entity_index];
                     }
-                  } else {
+                  } else if (shift_amount < 0) {
                     // Compress by moving data backward
                     let size = Math.max(this.size, this.size - shift_amount);
                     for (let i = entity_index; i < size; ++i) {
@@ -741,7 +741,7 @@ export class ${fragment_name} extends Fragment {
             return `
               if (shift_amount > 0) {
                 // Make space by moving data forward
-                let i = Math.min(this.size, this.size - shift_amount) - 1;
+                let i = this.size - shift_amount - 1;
                 for (; i >= entity_index; --i) {
                   ${Array.from({length: field.stride}, (_, j) => `
                   this.data.${key}[(i + shift_amount) * ${field.stride} + ${j}] = this.data.${key}[i * ${field.stride} + ${j}];`).join("\n")}
@@ -751,7 +751,7 @@ export class ${fragment_name} extends Fragment {
                   ${Array.from({length: field.stride}, (_, j) => `
                   this.data.${key}[i * ${field.stride} + ${j}] = this.data.${key}[entity_index * ${field.stride} + ${j}];`).join("\n")}
                 }
-              } else {
+              } else if (shift_amount < 0) {
                 // Compress by moving data backward
                 let size = Math.max(this.size, this.size - shift_amount);
                 for (let i = entity_index; i < size; ++i) {

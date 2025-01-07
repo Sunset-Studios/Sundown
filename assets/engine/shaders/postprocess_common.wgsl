@@ -1,3 +1,6 @@
+// ------------------------------------------------------------------------------------
+// Tonemapping
+// ------------------------------------------------------------------------------------
 fn reinhard_tonemapping(color: vec3<f32>, exposure: f32) -> vec3<f32> {
     var adjusted_color = color * exposure;
     return adjusted_color / (adjusted_color + vec3<f32>(1.0));

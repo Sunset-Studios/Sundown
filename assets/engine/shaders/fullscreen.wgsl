@@ -1,6 +1,14 @@
 #include "common.wgsl"
 
+// ------------------------------------------------------------------------------------
+// Buffers
+// ------------------------------------------------------------------------------------ 
+
 @group(1) @binding(0) var input_texture: texture_2d<f32>;
+
+// ------------------------------------------------------------------------------------
+// Data Structures
+// ------------------------------------------------------------------------------------ 
 
 struct VertexOutput {
     @builtin(position) position: vec4f,
@@ -13,6 +21,10 @@ struct FragmentOutput {
     @location(0) color: vec4f,
 };
 
+// ------------------------------------------------------------------------------------
+// Vertex Shader
+// ------------------------------------------------------------------------------------ 
+
 @vertex fn vs(
     @builtin(vertex_index) vi : u32,
     @builtin(instance_index) ii: u32
@@ -24,6 +36,10 @@ struct FragmentOutput {
     output.instance_index = ii;
     return output;
 }
+
+// ------------------------------------------------------------------------------------
+// Fragment Shader
+// ------------------------------------------------------------------------------------ 
 
 @fragment fn fs(v_out: VertexOutput) -> FragmentOutput {
     var color = textureSample(input_texture, global_sampler, v_out.uv);
