@@ -1178,3 +1178,113 @@ export class Vector {
     return this.#buffer;
   }
 }
+
+export class SquareAdjacencyMatrix {
+  /**
+   * @param {number} size - The dimension of the matrix (size x size).
+   * @param {TypedArrayConstructor} ArrayType - Optional, specify the type of the underlying array (e.g. Int8Array, Uint8Array, Float64Array, etc.)
+   */
+  constructor(items, array_type = Int8Array) {
+    console.assert(items && items.length > 0);
+    this.size = items.length;
+    this.array_type = array_type;
+    this.data = new array_type(this.size * this.size);
+    this.keys = new Map();
+    for (let i = 0; i < items.length; i++) {
+      this.keys.set(items[i], i);
+    }
+  }
+
+  /**
+   * Internal helper method to compute the correct index in the linear array.
+   */
+  _index(row, col) {
+    return row * this.size + col;
+  }
+
+  /**
+   * Get the value of the adjacency between two keys.
+   * @param {number} k1 - The first key.
+   * @param {number} k2 - The second key.
+   * @returns {number} The value of the adjacency.
+   */
+  get_adjacent_value(k1, k2) {
+    const i = this.keys.get(k1);
+    const j = this.keys.get(k2);
+    return this.get(i, j);
+  }
+
+  /**
+   * Set the value of the adjacency between two keys.
+   * @param {number} k1 - The first key.
+   * @param {number} k2 - The second key.
+   * @param {number} value - The value to set.
+   */
+  set_adjacent_value(k1, k2, value) {
+    const i = this.keys.get(k1);
+    const j = this.keys.get(k2);
+    this.set(i, j, value);
+    this.set(j, i, value);
+  }
+
+  /**
+   * Get the element at position (i, j).
+   * @param {number} i - Row index.
+   * @param {number} j - Column index.
+   * @returns {number} The value at (i, j).
+   */
+  get(i, j) {
+    this._validate_indices(i, j);
+    return this.data[this._index(i, j)];
+  }
+
+  /**
+   * Set the element at position (i, j).
+   * @param {number} i - Row index.
+   * @param {number} j - Column index.
+   * @param {number} value - The value to set.
+   */
+  set(i, j, value) {
+    this._validate_indices(i, j);
+    this.data[this._index(i, j)] = value;
+  }
+
+  /**
+   * Returns the entire i-th row as a new TypedArray.
+   * @param {number} i - Row index.
+   * @returns {TypedArray} A TypedArray containing all elements in row i.
+   */
+  get_row(i) {
+    if (i < 0 || i >= this.size) {
+      throw new Error(`Index i out of range [0, ${this.size - 1}].`);
+    }
+    const row = new this.array_type(this.size);
+    for (let col = 0; col < this.size; col++) {
+      row[col] = this.data[this._index(i, col)];
+    }
+    return row;
+  }
+
+  /**
+   * Returns the entire j-th column as a new TypedArray.
+   * @param {number} j - Column index.
+   * @returns {TypedArray} A TypedArray containing all elements in column j.
+   */
+  get_column(j) {
+    if (j < 0 || j >= this.size) {
+      throw new Error(`Index j out of range [0, ${this.size - 1}].`);
+    }
+    const col = new this.array_type(this.size);
+    for (let row = 0; row < this.size; row++) {
+      col[row] = this.data[this._index(row, j)];
+    }
+    return col;
+  }
+
+  /**
+   * Helper to check that indices are valid.
+   */
+  _validate_indices(i, j) {
+    console.assert(i >= 0 && i < this.size && j >= 0 && j < this.size, `Index i out of range [0, ${this.size - 1}], index j out of range [0, ${this.size - 1}]`);
+  }
+}

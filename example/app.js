@@ -123,7 +123,7 @@ export class TestScene extends Scene {
     );
     const text_fragment_view = this.add_fragment(text_entity, TextFragment, false);
     text_fragment_view.font = font_id;
-    text_fragment_view.text = "SUNDOWN ENGINE";
+    text_fragment_view.text = "Hello, World!";
     text_fragment_view.font_size = 32;
 
     this.refresh_entities();

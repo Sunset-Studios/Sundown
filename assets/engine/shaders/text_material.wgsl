@@ -17,12 +17,8 @@ struct StringData {
 struct GlyphData {
     width:   u32,
     height:  u32,
-    offset_x: i32,
-    offset_y: i32,
     x: i32,
     y: i32,
-    advance: i32,
-    page:   u32,
 };
 
 //------------------------------------------------------------------------------------
@@ -105,7 +101,7 @@ fn fragment(v_out: VertexOutput, f_out: ptr<function, FragmentOutput>) -> Fragme
 
     // Anti-aliased alpha
     let alpha = smoothstep(-w, w, sd);
-    if (alpha == 0.0) {
+    if (alpha <= 0.0) {
         discard;
     }
 

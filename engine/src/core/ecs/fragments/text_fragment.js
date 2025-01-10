@@ -28,14 +28,7 @@ class TextDataView {
     const font = FontCache.get_font_object(
       TextFragment.data.font[this.current_entity],
     );
-    const code_point_indexes = TextFragment.data.text.get_data_for_entity(
-      this.current_entity,
-    );
-    return code_point_indexes
-      .map((code_point_index) =>
-        String.fromCodePoint(font.code_point[code_point_index]),
-      )
-      .join("");
+    return TextFragment.data.text.get_data_for_entity(this.current_entity);
   }
 
   set text(value) {
