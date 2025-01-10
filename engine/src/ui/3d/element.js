@@ -104,13 +104,9 @@ export class Element3D {
     if (!this_scene_graph_data) {
       return;
     }
-    
-    let parent_scene_graph_data = scene.get_fragment(parent, SceneGraphFragment);
-    if (parent_scene_graph_data) {
+
+    if (scene.has_fragment(parent, SceneGraphFragment)) {
       this_scene_graph_data.parent = parent;
-      const children = parent_scene_graph_data.children;
-      children.push(entity);
-      parent_scene_graph_data.children = children;
     } else {
       this_scene_graph_data.parent = null;
     }
@@ -131,8 +127,6 @@ export class Element3D {
         child_scene_graph_data.parent = null;
       }
     }
-
-    this_scene_graph_data.children = children.map((c) => c.entity);
 
     for (let i = 0; i < children.length; i++) {
       let child = children[i];

@@ -24,11 +24,11 @@ class SceneGraphDataView {
   }
 
   set parent(value) {
-    SceneGraphFragment.data.parent[this.current_entity] = value ?? -1;
+    SceneGraphFragment.data.parent[this.absolute_entity] = value ?? -1;
     SceneGraphFragment.data.scene_graph.remove(this.current_entity);
     SceneGraphFragment.data.scene_graph.add(value ?? null, this.current_entity);
     if (SceneGraphFragment.data.dirty) {
-      SceneGraphFragment.data.dirty[this.current_entity] = 1;
+      SceneGraphFragment.data.dirty[this.absolute_entity] = 1;
     }
     SceneGraphFragment.data.gpu_data_dirty = true;
   }
@@ -52,7 +52,7 @@ class SceneGraphDataView {
       );
     }
     if (SceneGraphFragment.data.dirty) {
-      SceneGraphFragment.data.dirty[this.current_entity] = 1;
+      SceneGraphFragment.data.dirty[this.absolute_entity] = 1;
     }
     SceneGraphFragment.data.gpu_data_dirty = true;
   }
@@ -145,8 +145,20 @@ export class SceneGraphFragment extends Fragment {
 
   static rebuild_buffers() {
     {
-      const { result, layer_counts } =
-        this.data.scene_graph.flatten(Int32Array);
+      const { result, layer_counts } = this.data.scene_graph.flatten(
+        Int32Array,
+        (result, node, result_size) => {
+          let instance_count = EntityID.get_instance_count(node.data);
+          for (let i = 0; i < instance_count; i++) {
+            result[result_size + i] =
+              EntityID.get_absolute_index(node.data) + i;
+          }
+          return instance_count;
+        },
+        (node) => {
+          return EntityID.get_instance_count(node.data);
+        },
+      );
 
       this.data.scene_graph_flattened = result;
       this.data.scene_graph_layer_counts = layer_counts;
@@ -155,7 +167,10 @@ export class SceneGraphFragment extends Fragment {
       const gpu_data = new Int32Array(Math.max(num_elements * 2, 2));
       for (let i = 0; i < num_elements; ++i) {
         gpu_data[i * 2] = result[i];
-        gpu_data[i * 2 + 1] = this.data.parent[result[i]];
+        gpu_data[i * 2 + 1] =
+          this.data.parent[result[i]] >= 0
+            ? EntityID.get_absolute_index(this.data.parent[result[i]])
+            : -1;
       }
 
       this.data.scene_graph_uniforms = new Array(layer_counts.length);
@@ -201,10 +216,6 @@ export class SceneGraphFragment extends Fragment {
   static entity_instance_count_changed(entity, last_entity_count) {
     const entity_index = EntityID.get_absolute_index(entity);
     const entity_count = EntityID.get_instance_count(entity);
-
-    // Early out if this is the last entity (next_offset will be 0)
-    const next_entity_index = EntityID.get_absolute_index(entity + 1);
-    if (next_entity_index === 0) return;
 
     const shift_amount = entity_count - last_entity_count;
 

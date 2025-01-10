@@ -392,42 +392,70 @@ export class Tree {
    * @returns {Object} Object containing result array and layer_counts array
    */
   #flatten_queue = null;
-  flatten(array_type = Float32Array) {
+  #node_count_map = null;
+  flatten(array_type = Float32Array, result_generator_cb = null, instance_count_cb = null) {
     if (!this.#flatten_queue) {
       this.#flatten_queue = new Uint32Array(max_objects);
     }
 
+    if (!this.#node_count_map) {
+      this.#node_count_map = new Map();
+    }
+
     if (this.root_count === 0) return { result: null, layer_counts: [] };
 
-    const layer_counts = [this.root_count];
+    // Get total size needed for result array
+    let total_size = 0;
+    this.#node_count_map.clear();
 
-    const result = new array_type(this.size);
+    if (instance_count_cb) {
+      const all_nodes = this.node_map.values().toArray();
+      for (let i = 0; i < all_nodes.length; i++) {
+        let instance_count = instance_count_cb(this.nodes[all_nodes[i]]) || 0;
+        this.#node_count_map.set(all_nodes[i], instance_count);
+        total_size += instance_count;
+      }
+    } else {
+      total_size = this.size;
+    }
+
+    const result = new array_type(total_size);
+    let true_root_count = 0;
 
     for (let i = 0; i < this.root_count; i++) {
       this.#flatten_queue[i] = this.roots[i];
+      true_root_count += this.#node_count_map.get(this.roots[i]);
     }
 
     let result_size = 0;
     let queue_idx_tail = 0;
     let queue_idx_head = this.root_count;
-
     let nodes_remaining_in_layer = this.root_count;
     let nodes_in_next_layer = 0;
+    let next_layer_count = 0;
+
+    const layer_counts = [true_root_count];
 
     while (queue_idx_tail !== queue_idx_head) {
       const current_idx = this.#flatten_queue[queue_idx_tail++];
       const current = this.nodes[current_idx];
-      result[result_size++] = current.data;
+      if (result_generator_cb) {
+        result_size += result_generator_cb(result, current, result_size);
+      } else {
+        result[result_size++] = current.data;
+      }
       nodes_remaining_in_layer--;
 
       for (let i = 0; i < current.child_count; i++) {
         this.#flatten_queue[queue_idx_head++] = current.children[i];
+        next_layer_count += this.#node_count_map.get(current.children[i]);
         nodes_in_next_layer++;
       }
 
       if (nodes_remaining_in_layer === 0 && nodes_in_next_layer > 0) {
-        layer_counts.push(nodes_in_next_layer);
+        layer_counts.push(next_layer_count);
         nodes_remaining_in_layer = nodes_in_next_layer;
+        next_layer_count = 0;
         nodes_in_next_layer = 0;
       }
     }

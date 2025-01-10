@@ -49,11 +49,13 @@ struct EntityBoundsData {
 
 struct ObjectInstance {
     batch: u32,
-    entity: u32
+    entity: u32,
+    entity_instance: u32
 };
 
 struct CompactedObjectInstance {
     entity: u32,
+    entity_instance: u32,
     base_instance: u32,
 };
 

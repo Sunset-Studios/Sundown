@@ -30,8 +30,8 @@ class StaticMeshDataView {
 
   get material_slots() {
     return StaticMeshFragment.data.material_slots.slice(
-      this.current_entity * StaticMeshFragment.material_slot_stride,
-      (this.current_entity + 1) * StaticMeshFragment.material_slot_stride,
+      this.absolute_entity * StaticMeshFragment.material_slot_stride,
+      (this.absolute_entity + 1) * StaticMeshFragment.material_slot_stride,
     );
   }
 
@@ -42,12 +42,12 @@ class StaticMeshDataView {
     ) {
       for (let i = 0; i < value.length; i++) {
         StaticMeshFragment.data.material_slots[
-          this.current_entity * StaticMeshFragment.material_slot_stride + i
+          this.absolute_entity * StaticMeshFragment.material_slot_stride + i
         ] = BigInt(value[i]);
       }
     }
     if (StaticMeshFragment.data.dirty) {
-      StaticMeshFragment.data.dirty[this.current_entity] = 1;
+      StaticMeshFragment.data.dirty[this.absolute_entity] = 1;
     }
     StaticMeshFragment.data.gpu_data_dirty = true;
   }
@@ -143,10 +143,6 @@ export class StaticMeshFragment extends Fragment {
   static entity_instance_count_changed(entity, last_entity_count) {
     const entity_index = EntityID.get_absolute_index(entity);
     const entity_count = EntityID.get_instance_count(entity);
-
-    // Early out if this is the last entity (next_offset will be 0)
-    const next_entity_index = EntityID.get_absolute_index(entity + 1);
-    if (next_entity_index === 0) return;
 
     const shift_amount = entity_count - last_entity_count;
 

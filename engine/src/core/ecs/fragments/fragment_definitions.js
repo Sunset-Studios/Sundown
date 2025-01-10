@@ -104,18 +104,18 @@ const StaticMeshFragment = {
     material_slots: {
       type: DataType.BIGINT64,
       stride: 64,
-      getter: `return StaticMeshFragment.data.material_slots.slice(this.current_entity * StaticMeshFragment.material_slot_stride, (this.current_entity + 1) * StaticMeshFragment.material_slot_stride);`,
+      getter: `return StaticMeshFragment.data.material_slots.slice(this.absolute_entity * StaticMeshFragment.material_slot_stride, (this.absolute_entity + 1) * StaticMeshFragment.material_slot_stride);`,
       setter: `
       if (
         Array.isArray(value) &&
         value.length <= StaticMeshFragment.material_slot_stride
       ) {
         for (let i = 0; i < value.length; i++) {
-          StaticMeshFragment.data.material_slots[this.current_entity * StaticMeshFragment.material_slot_stride + i] = BigInt(value[i]);
+          StaticMeshFragment.data.material_slots[this.absolute_entity * StaticMeshFragment.material_slot_stride + i] = BigInt(value[i]);
         }
       }
       if (StaticMeshFragment.data.dirty) {
-        StaticMeshFragment.data.dirty[this.current_entity] = 1;
+        StaticMeshFragment.data.dirty[this.absolute_entity] = 1;
       }
       StaticMeshFragment.data.gpu_data_dirty = true;
       `,
@@ -144,25 +144,25 @@ const TransformFragment = {
       type: DataType.FLOAT32,
       stride: 4,
       getter: `return [
-        TransformFragment.data.position[this.current_entity * 4],
-        TransformFragment.data.position[this.current_entity * 4 + 1],
-        TransformFragment.data.position[this.current_entity * 4 + 2],
+        TransformFragment.data.position[this.absolute_entity * 4],
+        TransformFragment.data.position[this.absolute_entity * 4 + 1],
+        TransformFragment.data.position[this.absolute_entity * 4 + 2],
       ];
       `,
       setter: `
-      TransformFragment.data.position[this.current_entity * 4] = value[0];
-      TransformFragment.data.position[this.current_entity * 4 + 1] = value[1];
-      TransformFragment.data.position[this.current_entity * 4 + 2] = value[2];
-      TransformFragment.data.position[this.current_entity * 4 + 3] = 1.0;
+      TransformFragment.data.position[this.absolute_entity * 4] = value[0];
+      TransformFragment.data.position[this.absolute_entity * 4 + 1] = value[1];
+      TransformFragment.data.position[this.absolute_entity * 4 + 2] = value[2];
+      TransformFragment.data.position[this.absolute_entity * 4 + 3] = 1.0;
       TransformFragment.data.position_buffer.write_raw(
-        TransformFragment.data.position.subarray(this.current_entity * 4, this.current_entity * 4 + 4),
-        this.current_entity * 4 * Float32Array.BYTES_PER_ELEMENT
+        TransformFragment.data.position.subarray(this.absolute_entity * 4, this.absolute_entity * 4 + 4),
+        this.absolute_entity * 4 * Float32Array.BYTES_PER_ELEMENT
       );
       if (TransformFragment.data.dirty) {
-        TransformFragment.data.dirty[this.current_entity] = 1;
+        TransformFragment.data.dirty[this.absolute_entity] = 1;
         TransformFragment.data.dirty_flags_buffer.write_raw(
-          TransformFragment.data.dirty.subarray(this.current_entity, this.current_entity + 1),
-          this.current_entity * Uint32Array.BYTES_PER_ELEMENT
+          TransformFragment.data.dirty.subarray(this.absolute_entity, this.absolute_entity + 1),
+          this.absolute_entity * Uint32Array.BYTES_PER_ELEMENT
         );
       }
       TransformFragment.data.gpu_data_dirty = true;
@@ -172,26 +172,26 @@ const TransformFragment = {
       type: DataType.FLOAT32,
       stride: 4,
       getter: `return [
-        TransformFragment.data.rotation[this.current_entity * 4],
-        TransformFragment.data.rotation[this.current_entity * 4 + 1],
-        TransformFragment.data.rotation[this.current_entity * 4 + 2],
-        TransformFragment.data.rotation[this.current_entity * 4 + 3],
+        TransformFragment.data.rotation[this.absolute_entity * 4],
+        TransformFragment.data.rotation[this.absolute_entity * 4 + 1],
+        TransformFragment.data.rotation[this.absolute_entity * 4 + 2],
+        TransformFragment.data.rotation[this.absolute_entity * 4 + 3],
       ];
       `,
       setter: `
-      TransformFragment.data.rotation[this.current_entity * 4] = value[0];
-      TransformFragment.data.rotation[this.current_entity * 4 + 1] = value[1];
-      TransformFragment.data.rotation[this.current_entity * 4 + 2] = value[2];
-      TransformFragment.data.rotation[this.current_entity * 4 + 3] = value[3];
+      TransformFragment.data.rotation[this.absolute_entity * 4] = value[0];
+      TransformFragment.data.rotation[this.absolute_entity * 4 + 1] = value[1];
+      TransformFragment.data.rotation[this.absolute_entity * 4 + 2] = value[2];
+      TransformFragment.data.rotation[this.absolute_entity * 4 + 3] = value[3];
       TransformFragment.data.rotation_buffer.write_raw(
-        TransformFragment.data.rotation.subarray(this.current_entity * 4, this.current_entity * 4 + 4),
-        this.current_entity * 4 * Float32Array.BYTES_PER_ELEMENT
+        TransformFragment.data.rotation.subarray(this.absolute_entity * 4, this.absolute_entity * 4 + 4),
+        this.absolute_entity * 4 * Float32Array.BYTES_PER_ELEMENT
       );
       if (TransformFragment.data.dirty) {
-        TransformFragment.data.dirty[this.current_entity] = 1;
+        TransformFragment.data.dirty[this.absolute_entity] = 1;
         TransformFragment.data.dirty_flags_buffer.write_raw(
-          TransformFragment.data.dirty.subarray(this.current_entity, this.current_entity + 1),
-          this.current_entity * Uint32Array.BYTES_PER_ELEMENT
+          TransformFragment.data.dirty.subarray(this.absolute_entity, this.absolute_entity + 1),
+          this.absolute_entity * Uint32Array.BYTES_PER_ELEMENT
         );
       }
       TransformFragment.data.gpu_data_dirty = true;
@@ -202,25 +202,25 @@ const TransformFragment = {
       stride: 4,
       default: 1,
       getter: `return [
-        TransformFragment.data.scale[this.current_entity * 4],
-        TransformFragment.data.scale[this.current_entity * 4 + 1],
-        TransformFragment.data.scale[this.current_entity * 4 + 2],
+        TransformFragment.data.scale[this.absolute_entity * 4],
+        TransformFragment.data.scale[this.absolute_entity * 4 + 1],
+        TransformFragment.data.scale[this.absolute_entity * 4 + 2],
       ];
       `,
       setter: `
-      TransformFragment.data.scale[this.current_entity * 4] = value[0];
-      TransformFragment.data.scale[this.current_entity * 4 + 1] = value[1];
-      TransformFragment.data.scale[this.current_entity * 4 + 2] = value[2];
-      TransformFragment.data.scale[this.current_entity * 4 + 3] = 0.0;
+      TransformFragment.data.scale[this.absolute_entity * 4] = value[0];
+      TransformFragment.data.scale[this.absolute_entity * 4 + 1] = value[1];
+      TransformFragment.data.scale[this.absolute_entity * 4 + 2] = value[2];
+      TransformFragment.data.scale[this.absolute_entity * 4 + 3] = 0.0;
       TransformFragment.data.scale_buffer.write_raw(
-        TransformFragment.data.scale.subarray(this.current_entity * 4, this.current_entity * 4 + 4),
-        this.current_entity * 4 * Float32Array.BYTES_PER_ELEMENT
+        TransformFragment.data.scale.subarray(this.absolute_entity * 4, this.absolute_entity * 4 + 4),
+        this.absolute_entity * 4 * Float32Array.BYTES_PER_ELEMENT
       );
       if (TransformFragment.data.dirty) {
-        TransformFragment.data.dirty[this.current_entity] = 1;
+        TransformFragment.data.dirty[this.absolute_entity] = 1;
         TransformFragment.data.dirty_flags_buffer.write_raw(
-          TransformFragment.data.dirty.subarray(this.current_entity, this.current_entity + 1),
-          this.current_entity * Uint32Array.BYTES_PER_ELEMENT
+          TransformFragment.data.dirty.subarray(this.absolute_entity, this.absolute_entity + 1),
+          this.absolute_entity * Uint32Array.BYTES_PER_ELEMENT
         );
       }
       TransformFragment.data.gpu_data_dirty = true;
@@ -401,11 +401,11 @@ const SceneGraphFragment = {
       type: DataType.INT32,
       stride: 1,
       setter: `
-      SceneGraphFragment.data.parent[this.current_entity] = value ?? -1;
+      SceneGraphFragment.data.parent[this.absolute_entity] = value ?? -1;
       SceneGraphFragment.data.scene_graph.remove(this.current_entity);
       SceneGraphFragment.data.scene_graph.add(value ?? null, this.current_entity);
       if (SceneGraphFragment.data.dirty) {
-        SceneGraphFragment.data.dirty[this.current_entity] = 1;
+        SceneGraphFragment.data.dirty[this.absolute_entity] = 1;
       }
       SceneGraphFragment.data.gpu_data_dirty = true;
       `,
@@ -422,7 +422,7 @@ const SceneGraphFragment = {
         SceneGraphFragment.data.scene_graph.add_multiple(this.current_entity, value, true /* replace_children */, true /* unique */);
       }
       if (SceneGraphFragment.data.dirty) {
-        SceneGraphFragment.data.dirty[this.current_entity] = 1;
+        SceneGraphFragment.data.dirty[this.absolute_entity] = 1;
       }
       SceneGraphFragment.data.gpu_data_dirty = true;
       `,
@@ -441,7 +441,15 @@ const SceneGraphFragment = {
       usage: BufferType.STORAGE,
       stride: 2,
       gpu_data: `
-      const { result, layer_counts } = this.data.scene_graph.flatten(Int32Array);
+      const { result, layer_counts } = this.data.scene_graph.flatten(Int32Array, (result, node, result_size) => {
+        let instance_count = EntityID.get_instance_count(node.data);
+        for (let i = 0; i < instance_count; i++) {
+          result[result_size + i] = EntityID.get_absolute_index(node.data) + i;
+        }
+        return instance_count;
+      }, (node) => {
+        return EntityID.get_instance_count(node.data);
+      });
 
       this.data.scene_graph_flattened = result;
       this.data.scene_graph_layer_counts = layer_counts;
@@ -450,7 +458,7 @@ const SceneGraphFragment = {
       const gpu_data = new Int32Array(Math.max(num_elements * 2, 2));
       for (let i = 0; i < num_elements; ++i) {
         gpu_data[i * 2] = result[i];
-        gpu_data[i * 2 + 1] = this.data.parent[result[i]];
+        gpu_data[i * 2 + 1] = this.data.parent[result[i]] >= 0 ? EntityID.get_absolute_index(this.data.parent[result[i]]) : -1;
       }
 
       this.data.scene_graph_uniforms = new Array(layer_counts.length);
@@ -634,14 +642,6 @@ const TextFragment = {
       stride: 1,
       gpu_data: `
 const gpu_data = this.data.text.get_data();
-      `,
-    },
-    offsets: {
-      type: DataType.FLOAT32,
-      usage: BufferType.STORAGE,
-      stride: 1,
-      gpu_data: `
-const gpu_data = this.data.offsets.get_data();
       `,
     },
     string_data: {

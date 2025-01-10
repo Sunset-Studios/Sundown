@@ -68,7 +68,7 @@ fn vertex(v_out: ptr<function, VertexOutput>) -> VertexOutput {
 ) -> VertexOutput {
     let instance_vertex = vertex_buffer[vi];
     let entity = compacted_object_instances[ii].entity;
-    let entity_resolved = entity_metadata[entity].offset;
+    let entity_resolved = entity_metadata[entity].offset + compacted_object_instances[ii].entity_instance;
 
     let entity_transform = entity_transforms[entity_resolved];
     let view_mat = view_buffer[0].view_matrix;

@@ -4,6 +4,7 @@ import { TextFragment } from "../ecs/fragments/text_fragment.js";
 import { StaticMeshFragment } from "../ecs/fragments/static_mesh_fragment.js";
 import { profile_scope } from "../../utility/performance.js";
 import { FontCache } from "../../ui/text/font_cache.js";
+import { TransformFragment } from "../ecs/fragments/transform_fragment.js";
 
 const text_processor_update_key = "text_processor_update";
 
@@ -12,7 +13,7 @@ export class TextProcessor extends SimulationLayer {
 
   init() {
     this.entity_query = EntityManager.create_query({
-      fragment_requirements: [TextFragment, StaticMeshFragment],
+      fragment_requirements: [TextFragment, StaticMeshFragment, TransformFragment],
     });
   }
 
@@ -20,6 +21,11 @@ export class TextProcessor extends SimulationLayer {
     profile_scope(text_processor_update_key, () => {
       const texts = EntityManager.get_fragment_array(TextFragment);
       if (!texts) {
+        return;
+      }
+
+      const transform = EntityManager.get_fragment_array(TransformFragment);
+      if (!transform) {
         return;
       }
 
@@ -33,18 +39,50 @@ export class TextProcessor extends SimulationLayer {
 
         const text_data = TextFragment.get_entity_data(entity);
         const text = text_data.text;
-
+        
         if (text) {
           EntityManager.change_entity_instance_count(entity, text.length);
 
-          let offsets = [0];
-          for (let i = 1; i < text.length; ++i)
-          {
-            const font = text_data.font;
-            const font_object = FontCache.get_font_object(font);
-            const code_point_index = text[i];
-            offsets.push(offsets[i - 1] + font_object.width[code_point_index] + font_object.x_advance[code_point_index]);
+          const font = text_data.font;
+          const font_object = FontCache.get_font_object(font);
+
+          let offsets = Array(text.length).fill(0);
+          for (let j = 1; j < text.length; ++j) {
+            const code_point_index = text[j];
+            offsets[j] =
+              offsets[j - 1] +
+              font_object.width[code_point_index] +
+              font_object.x_advance[code_point_index];
           }
+
+          if (transform && transform.position) {
+            // Calculate the total width of the text block
+            const total_width = offsets[offsets.length - 1];
+
+            // Update position for each glyph
+            for (let j = 0; j < text.length; ++j) {
+              const code_point_index = text[j];
+
+              const transform_fragment = EntityManager.get_fragment(entity, TransformFragment, j);
+              if (!transform_fragment) {
+                continue;
+              }
+
+              const position = transform_fragment.position;
+              transform_fragment.position = [
+                position[0] +
+                  (offsets[j] + font_object.x_offset[code_point_index] - total_width * 0.5) *
+                    (text_data.font_size / font_object.texture_width),
+                position[1] +
+                  (font_object.y_offset[code_point_index] +
+                    font_object.height[code_point_index] -
+                  text_data.font_size) *
+                (text_data.font_size / font_object.texture_height),
+                position[2],
+              ];
+            }
+          }
+
           text_data.offsets = offsets;
         }
 

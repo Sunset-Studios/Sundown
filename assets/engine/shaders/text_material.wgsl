@@ -29,10 +29,9 @@ struct GlyphData {
 // Buffers / Textures
 //------------------------------------------------------------------------------------
 @group(2) @binding(0) var<storage, read> text:            array<u32>;
-@group(2) @binding(1) var<storage, read> offsets:         array<f32>;
-@group(2) @binding(2) var<storage, read> string_data:     array<StringData>;
-@group(2) @binding(3) var<storage, read> font_glyph_data: array<GlyphData>;
-@group(2) @binding(4) var font_page_texture: texture_2d<f32>;
+@group(2) @binding(1) var<storage, read> string_data:     array<StringData>;
+@group(2) @binding(2) var<storage, read> font_glyph_data: array<GlyphData>;
+@group(2) @binding(3) var font_page_texture: texture_2d<f32>;
 
 //------------------------------------------------------------------------------------
 // VERTEX STAGE
@@ -47,7 +46,7 @@ struct GlyphData {
 //------------------------------------------------------------------------------------
 fn vertex(v_out: ptr<function, VertexOutput>) -> VertexOutput {
     let entity               = v_out.base_instance_id;
-    let local_instance_index = v_out.instance_index - compacted_object_instances[v_out.instance_index].base_instance;
+    let local_instance_index = compacted_object_instances[v_out.instance_index].entity_instance;
 
     let string = string_data[entity];
     if (string.count > 0u) {
@@ -56,28 +55,9 @@ fn vertex(v_out: ptr<function, VertexOutput>) -> VertexOutput {
         let ch         = text[text_index];
         let glyph_data = font_glyph_data[ch];
 
-        // Retrieve the transform for this "string"
-        let transform = entity_transforms[entity];
-
         // Use the provided UV coordinates for corner offset
-        let corner_offset = v_out.uv.xy;
-
-        // Calculate the total width of the text block (using the last offset)
-        let total_width = offsets[string.start + string.count - 1u];
-        
-        // Calculate glyph position with proper scaling and offset
-        let glyph_local_pos = (vec2f(
-            // Center horizontally by subtracting the total width
-            offsets[text_index] + f32(glyph_data.offset_x) - (total_width),
-            // Center vertically by offsetting by the font size
-            f32(glyph_data.offset_y) + f32(glyph_data.height) - f32(string.font_size)
-        ) + corner_offset * vec2f(
-            f32(glyph_data.width),
-            f32(glyph_data.height)
-        )) / vec2f(string.page_texture_size) * f32(string.font_size);
-
-        // Transform this local 2D position by the entity's transform
-        v_out.world_position = transform.transform * vec4f(glyph_local_pos.x, glyph_local_pos.y, 0.0, 1.0);
+        var corner_offset = v_out.uv.xy;
+        corner_offset.y = 1.0 - corner_offset.y;
 
         // Calculate UV coordinates for the glyph in the texture atlas
         var uv_top_left = vec2f(

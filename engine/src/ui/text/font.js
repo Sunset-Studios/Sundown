@@ -21,7 +21,6 @@ const x_key = 'x';
 const y_key = 'y';
 
 const text_data_key = 'text';
-const offsets_data_key = 'offsets';
 const string_data_key = 'string_data';
 const font_glyph_data_key = 'font_glyph_data';
 const font_page_texture_key = 'font_page_texture';
@@ -153,7 +152,6 @@ export class Font {
     material_obj.set_texture_data(font_page_texture_key, page_texture_obj);
     material_obj.set_storage_data(font_glyph_data_key, font.font_glyph_data_buffer);
     material_obj.listen_for_storage_data(text_data_key);
-    material_obj.listen_for_storage_data(offsets_data_key);
     material_obj.listen_for_storage_data(string_data_key);
 
     return font;

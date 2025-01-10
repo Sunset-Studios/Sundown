@@ -61,23 +61,6 @@ export class TestScene extends Scene {
     light_fragment_view.position.z = 50;
     light_fragment_view.active = true;
 
-    // Create some text
-    const font_id = Name.from("Exo-Medium");
-    const font_object = FontCache.get_font_object(font_id);
-
-    const text_entity = spawn_mesh_entity(
-      this,
-      {x: 0, y: 15.0, z: 0},
-      {x: 0, y: 0, z: 0, w: 1},
-      {x: 1, y: 1, z: 1},
-      Mesh.quad(),
-      font_object.material
-    );
-    const text_fragment_view = this.add_fragment(text_entity, TextFragment, false);
-    text_fragment_view.font = font_id;
-    text_fragment_view.text = "SUNDOWN ENGINE";
-    text_fragment_view.font_size = 32;
-
     // Create a sphere mesh and add it to the scene
     const mesh = await Mesh.from_gltf(
       "engine/models/sphere/sphere.gltf"
@@ -125,6 +108,23 @@ export class TestScene extends Scene {
         }
       }
     }
+
+    // Create some text
+    const font_id = Name.from("Exo-Medium");
+    const font_object = FontCache.get_font_object(font_id);
+
+    const text_entity = spawn_mesh_entity(
+      this,
+      {x: 0, y: 15.0, z: 0},
+      {x: 0, y: 0, z: 0, w: 1},
+      {x: 1, y: 1, z: 1},
+      Mesh.quad(),
+      font_object.material
+    );
+    const text_fragment_view = this.add_fragment(text_entity, TextFragment, false);
+    text_fragment_view.font = font_id;
+    text_fragment_view.text = "SUNDOWN ENGINE";
+    text_fragment_view.font_size = 32;
 
     this.refresh_entities();
   }

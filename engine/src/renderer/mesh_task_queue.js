@@ -22,9 +22,10 @@ class IndirectDrawBatch {
 }
 
 class ObjectInstanceEntry {
-  constructor(batch_index, entity_index) {
+  constructor(batch_index, entity_index, entity_instance_index) {
     this.batch_index = batch_index;
     this.entity_index = entity_index;
+    this.entity_instance_index = entity_instance_index;
   }
 }
 
@@ -33,7 +34,7 @@ class IndirectDrawObject {
   object_instance_buffer = null;
   compacted_object_instance_buffer = null;
   indirect_draw_data = new Uint32Array(max_objects * 5);
-  object_instance_data = new Uint32Array(max_objects * 2);
+  object_instance_data = new Uint32Array(max_objects * 4);
   current_indirect_draw_write_offset = 0;
   current_object_instance_write_offset = 0;
 
@@ -59,7 +60,7 @@ class IndirectDrawObject {
       if (!this.compacted_object_instance_buffer) {
         this.compacted_object_instance_buffer = Buffer.create({
           name: "compacted_object_instance_buffer",
-          raw_data: new Uint32Array(max_objects * 2),
+          raw_data: new Uint32Array(max_objects * 4),
           usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
         });
       }
@@ -90,7 +91,7 @@ class IndirectDrawObject {
       }
 
       // Resize object instance buffer if needed
-      const required_object_instance_size = object_instances.length * 2 * 4; // 3 uint32 per instance, 4 bytes per uint32
+      const required_object_instance_size = object_instances.length * 4 * 4; // 4 uint32 per instance, 4 bytes per uint32
       if (this.object_instance_buffer.size < required_object_instance_size) {
         this.object_instance_buffer.destroy();
         this.object_instance_buffer = Buffer.create({
@@ -98,6 +99,8 @@ class IndirectDrawObject {
           data: object_instances.map((instance) => [
             instance.batch_index,
             instance.entity_index,
+            instance.entity_instance_index,
+            0, // padding
           ]),
           usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
         });
@@ -140,20 +143,23 @@ class IndirectDrawObject {
       profile_scope("write_object_instance_buffer", () => {
         // Update object instance buffer
         let write_length = 0;
-        let max_length = object_instances.length * 2;
+        let max_length = object_instances.length * 4;
 
         if (max_length > 0) {
           for (let i = 0; i < object_instances.length; i++) {
-            const offset = i * 2;
+            const offset = i * 3;
             this.object_instance_data[offset] = object_instances[i].batch_index;
             this.object_instance_data[offset + 1] =
               object_instances[i].entity_index;
+            this.object_instance_data[offset + 2] =
+              object_instances[i].entity_instance_index;
+            this.object_instance_data[offset + 3] = 0; // padding
           }
           write_length = Math.min(
             write_length,
             max_length - this.current_object_instance_write_offset
           );
-          write_length = Math.min(max_length, max_frame_buffer_writes * 2);
+          write_length = Math.min(max_length, max_frame_buffer_writes * 4);
         }
 
         this.object_instance_buffer.write_raw(
@@ -319,10 +325,19 @@ export class MeshTaskQueue {
 
         for (let j = 0; j < this.batches.length; j++) {
           this.add_material_bucket(this.batches[j].material_id);
+
+          let last_batch_entity_id = -1;
+          let entity_instance_index = 0;
           for (let k = 0; k < this.batches[j].instance_count; k++) {
+            if (this.batches[j].entity_ids[k] !== last_batch_entity_id) {
+              entity_instance_index = 0;
+            }
+            last_batch_entity_id = this.batches[j].entity_ids[k];
+
             const object_instance = this.object_instance_allocator.allocate();
+            object_instance.entity_instance_index = entity_instance_index++;
             object_instance.batch_index = j;
-            object_instance.entity_index = this.batches[j].entity_ids[k];
+            object_instance.entity_index = last_batch_entity_id;
             this.object_instances.push(object_instance);
           }
         }

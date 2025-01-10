@@ -45,32 +45,32 @@ class TransformDataView {
 
   get position() {
     return [
-      TransformFragment.data.position[this.current_entity * 4],
-      TransformFragment.data.position[this.current_entity * 4 + 1],
-      TransformFragment.data.position[this.current_entity * 4 + 2],
+      TransformFragment.data.position[this.absolute_entity * 4],
+      TransformFragment.data.position[this.absolute_entity * 4 + 1],
+      TransformFragment.data.position[this.absolute_entity * 4 + 2],
     ];
   }
 
   set position(value) {
-    TransformFragment.data.position[this.current_entity * 4] = value[0];
-    TransformFragment.data.position[this.current_entity * 4 + 1] = value[1];
-    TransformFragment.data.position[this.current_entity * 4 + 2] = value[2];
-    TransformFragment.data.position[this.current_entity * 4 + 3] = 1.0;
+    TransformFragment.data.position[this.absolute_entity * 4] = value[0];
+    TransformFragment.data.position[this.absolute_entity * 4 + 1] = value[1];
+    TransformFragment.data.position[this.absolute_entity * 4 + 2] = value[2];
+    TransformFragment.data.position[this.absolute_entity * 4 + 3] = 1.0;
     TransformFragment.data.position_buffer.write_raw(
       TransformFragment.data.position.subarray(
-        this.current_entity * 4,
-        this.current_entity * 4 + 4,
+        this.absolute_entity * 4,
+        this.absolute_entity * 4 + 4,
       ),
-      this.current_entity * 4 * Float32Array.BYTES_PER_ELEMENT,
+      this.absolute_entity * 4 * Float32Array.BYTES_PER_ELEMENT,
     );
     if (TransformFragment.data.dirty) {
-      TransformFragment.data.dirty[this.current_entity] = 1;
+      TransformFragment.data.dirty[this.absolute_entity] = 1;
       TransformFragment.data.dirty_flags_buffer.write_raw(
         TransformFragment.data.dirty.subarray(
-          this.current_entity,
-          this.current_entity + 1,
+          this.absolute_entity,
+          this.absolute_entity + 1,
         ),
-        this.current_entity * Uint32Array.BYTES_PER_ELEMENT,
+        this.absolute_entity * Uint32Array.BYTES_PER_ELEMENT,
       );
     }
     TransformFragment.data.gpu_data_dirty = true;
@@ -78,33 +78,33 @@ class TransformDataView {
 
   get rotation() {
     return [
-      TransformFragment.data.rotation[this.current_entity * 4],
-      TransformFragment.data.rotation[this.current_entity * 4 + 1],
-      TransformFragment.data.rotation[this.current_entity * 4 + 2],
-      TransformFragment.data.rotation[this.current_entity * 4 + 3],
+      TransformFragment.data.rotation[this.absolute_entity * 4],
+      TransformFragment.data.rotation[this.absolute_entity * 4 + 1],
+      TransformFragment.data.rotation[this.absolute_entity * 4 + 2],
+      TransformFragment.data.rotation[this.absolute_entity * 4 + 3],
     ];
   }
 
   set rotation(value) {
-    TransformFragment.data.rotation[this.current_entity * 4] = value[0];
-    TransformFragment.data.rotation[this.current_entity * 4 + 1] = value[1];
-    TransformFragment.data.rotation[this.current_entity * 4 + 2] = value[2];
-    TransformFragment.data.rotation[this.current_entity * 4 + 3] = value[3];
+    TransformFragment.data.rotation[this.absolute_entity * 4] = value[0];
+    TransformFragment.data.rotation[this.absolute_entity * 4 + 1] = value[1];
+    TransformFragment.data.rotation[this.absolute_entity * 4 + 2] = value[2];
+    TransformFragment.data.rotation[this.absolute_entity * 4 + 3] = value[3];
     TransformFragment.data.rotation_buffer.write_raw(
       TransformFragment.data.rotation.subarray(
-        this.current_entity * 4,
-        this.current_entity * 4 + 4,
+        this.absolute_entity * 4,
+        this.absolute_entity * 4 + 4,
       ),
-      this.current_entity * 4 * Float32Array.BYTES_PER_ELEMENT,
+      this.absolute_entity * 4 * Float32Array.BYTES_PER_ELEMENT,
     );
     if (TransformFragment.data.dirty) {
-      TransformFragment.data.dirty[this.current_entity] = 1;
+      TransformFragment.data.dirty[this.absolute_entity] = 1;
       TransformFragment.data.dirty_flags_buffer.write_raw(
         TransformFragment.data.dirty.subarray(
-          this.current_entity,
-          this.current_entity + 1,
+          this.absolute_entity,
+          this.absolute_entity + 1,
         ),
-        this.current_entity * Uint32Array.BYTES_PER_ELEMENT,
+        this.absolute_entity * Uint32Array.BYTES_PER_ELEMENT,
       );
     }
     TransformFragment.data.gpu_data_dirty = true;
@@ -112,32 +112,32 @@ class TransformDataView {
 
   get scale() {
     return [
-      TransformFragment.data.scale[this.current_entity * 4],
-      TransformFragment.data.scale[this.current_entity * 4 + 1],
-      TransformFragment.data.scale[this.current_entity * 4 + 2],
+      TransformFragment.data.scale[this.absolute_entity * 4],
+      TransformFragment.data.scale[this.absolute_entity * 4 + 1],
+      TransformFragment.data.scale[this.absolute_entity * 4 + 2],
     ];
   }
 
   set scale(value) {
-    TransformFragment.data.scale[this.current_entity * 4] = value[0];
-    TransformFragment.data.scale[this.current_entity * 4 + 1] = value[1];
-    TransformFragment.data.scale[this.current_entity * 4 + 2] = value[2];
-    TransformFragment.data.scale[this.current_entity * 4 + 3] = 0.0;
+    TransformFragment.data.scale[this.absolute_entity * 4] = value[0];
+    TransformFragment.data.scale[this.absolute_entity * 4 + 1] = value[1];
+    TransformFragment.data.scale[this.absolute_entity * 4 + 2] = value[2];
+    TransformFragment.data.scale[this.absolute_entity * 4 + 3] = 0.0;
     TransformFragment.data.scale_buffer.write_raw(
       TransformFragment.data.scale.subarray(
-        this.current_entity * 4,
-        this.current_entity * 4 + 4,
+        this.absolute_entity * 4,
+        this.absolute_entity * 4 + 4,
       ),
-      this.current_entity * 4 * Float32Array.BYTES_PER_ELEMENT,
+      this.absolute_entity * 4 * Float32Array.BYTES_PER_ELEMENT,
     );
     if (TransformFragment.data.dirty) {
-      TransformFragment.data.dirty[this.current_entity] = 1;
+      TransformFragment.data.dirty[this.absolute_entity] = 1;
       TransformFragment.data.dirty_flags_buffer.write_raw(
         TransformFragment.data.dirty.subarray(
-          this.current_entity,
-          this.current_entity + 1,
+          this.absolute_entity,
+          this.absolute_entity + 1,
         ),
-        this.current_entity * Uint32Array.BYTES_PER_ELEMENT,
+        this.absolute_entity * Uint32Array.BYTES_PER_ELEMENT,
       );
     }
     TransformFragment.data.gpu_data_dirty = true;
@@ -534,10 +534,6 @@ export class TransformFragment extends Fragment {
   static entity_instance_count_changed(entity, last_entity_count) {
     const entity_index = EntityID.get_absolute_index(entity);
     const entity_count = EntityID.get_instance_count(entity);
-
-    // Early out if this is the last entity (next_offset will be 0)
-    const next_entity_index = EntityID.get_absolute_index(entity + 1);
-    if (next_entity_index === 0) return;
 
     const shift_amount = entity_count - last_entity_count;
 

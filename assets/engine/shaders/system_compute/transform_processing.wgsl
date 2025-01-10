@@ -33,8 +33,7 @@ fn cs(@builtin(global_invocation_id) global_id: vec3<u32>) {
     }
 
     let entity_id_offset = scene_graph_layer_data.offset + global_id.x;
-    let entity_id = u32(scene_graph[entity_id_offset].x);
-    let entity_resolved = entity_metadata[entity_id].offset;
+    let entity_resolved = u32(scene_graph[entity_id_offset].x);
 
     if (entity_resolved >= arrayLength(&entity_dirty_flags)) {
         return;
@@ -49,10 +48,9 @@ fn cs(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let rotation = entity_rotations[entity_resolved];
     let scale = entity_scales[entity_resolved];
 
-    let parent_id = scene_graph[entity_id_offset].y;
-    let parent_resolved = entity_metadata[parent_id].offset;
+    let parent_resolved = scene_graph[entity_id_offset].y;
     var parent_transform = identity_matrix;
-    if (parent_id >= 0) {
+    if (parent_resolved >= 0) {
         parent_transform = entity_transforms[parent_resolved].transform;
     }
 

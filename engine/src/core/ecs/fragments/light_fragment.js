@@ -497,10 +497,6 @@ export class LightFragment extends Fragment {
     const entity_index = EntityID.get_absolute_index(entity);
     const entity_count = EntityID.get_instance_count(entity);
 
-    // Early out if this is the last entity (next_offset will be 0)
-    const next_entity_index = EntityID.get_absolute_index(entity + 1);
-    if (next_entity_index === 0) return;
-
     const shift_amount = entity_count - last_entity_count;
 
     // No need to shift if there's no change

@@ -13,11 +13,6 @@ const text_cpu_buffer_name = "text_cpu_buffer";
 const text_event = "text";
 const text_update_event = "text_update";
 
-const offsets_buffer_name = "offsets_buffer";
-const offsets_cpu_buffer_name = "offsets_cpu_buffer";
-const offsets_event = "offsets";
-const offsets_update_event = "offsets_update";
-
 const string_data_buffer_name = "string_data_buffer";
 const string_data_cpu_buffer_name = "string_data_cpu_buffer";
 const string_data_event = "string_data";
@@ -133,7 +128,6 @@ export class TextFragment extends Fragment {
       font_size: new Uint32Array(1),
       dirty: new Uint8Array(1),
       text_buffer: null,
-      offsets_buffer: null,
       string_data_buffer: null,
       gpu_data_dirty: true,
     };
@@ -198,7 +192,6 @@ export class TextFragment extends Fragment {
     if (!this.data.gpu_data_dirty) {
       return {
         text_buffer: this.data.text_buffer,
-        offsets_buffer: this.data.offsets_buffer,
         string_data_buffer: this.data.string_data_buffer,
       };
     }
@@ -207,7 +200,6 @@ export class TextFragment extends Fragment {
 
     return {
       text_buffer: this.data.text_buffer,
-      offsets_buffer: this.data.offsets_buffer,
       string_data_buffer: this.data.string_data_buffer,
     };
   }
@@ -234,29 +226,6 @@ export class TextFragment extends Fragment {
       }
 
       global_dispatcher.dispatch(text_update_event);
-    }
-
-    {
-      const gpu_data = this.data.offsets.get_data();
-
-      if (
-        !this.data.offsets_buffer ||
-        this.data.offsets_buffer.config.size < gpu_data.byteLength
-      ) {
-        this.data.offsets_buffer = Buffer.create({
-          name: offsets_buffer_name,
-          usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-          raw_data: gpu_data,
-          force: true,
-        });
-
-        Renderer.get().mark_bind_groups_dirty(true);
-        global_dispatcher.dispatch(offsets_event, this.data.offsets_buffer);
-      } else {
-        this.data.offsets_buffer.write(gpu_data);
-      }
-
-      global_dispatcher.dispatch(offsets_update_event);
     }
 
     {
@@ -304,10 +273,6 @@ export class TextFragment extends Fragment {
   static entity_instance_count_changed(entity, last_entity_count) {
     const entity_index = EntityID.get_absolute_index(entity);
     const entity_count = EntityID.get_instance_count(entity);
-
-    // Early out if this is the last entity (next_offset will be 0)
-    const next_entity_index = EntityID.get_absolute_index(entity + 1);
-    if (next_entity_index === 0) return;
 
     const shift_amount = entity_count - last_entity_count;
 
