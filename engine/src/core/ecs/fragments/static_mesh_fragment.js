@@ -92,6 +92,8 @@ export class StaticMeshFragment extends Fragment {
   }
 
   static resize(new_size) {
+    if (new_size <= this.size) return;
+
     this.size = new_size;
 
     if (!this.data) this.initialize();
@@ -108,8 +110,9 @@ export class StaticMeshFragment extends Fragment {
   }
 
   static add_entity(entity) {
-    if (entity >= this.size) {
-      this.resize(entity * 2);
+    const absolute_entity = EntityID.get_absolute_index(entity);
+    if (absolute_entity >= this.size) {
+      this.resize(absolute_entity * 2);
     }
 
     return this.get_entity_data(entity);
@@ -140,640 +143,141 @@ export class StaticMeshFragment extends Fragment {
     return data;
   }
 
-  static entity_instance_count_changed(entity, last_entity_count) {
-    const entity_index = EntityID.get_absolute_index(entity);
-    const entity_count = EntityID.get_instance_count(entity);
-
-    const shift_amount = entity_count - last_entity_count;
-
-    // No need to shift if there's no change
-    if (shift_amount === 0) return;
-
-    if (shift_amount > 0) {
-      // Make space by moving data forward
-      let i = this.size - shift_amount - 1;
-      for (; i >= entity_index; --i) {
-        this.data.mesh[(i + shift_amount) * 1 + 0] = this.data.mesh[i * 1 + 0];
-      }
-      i += 1;
-      for (; i < entity_index + shift_amount; ++i) {
-        this.data.mesh[i * 1 + 0] = this.data.mesh[entity_index * 1 + 0];
-      }
-    } else if (shift_amount < 0) {
-      // Compress by moving data backward
-      let size = Math.max(this.size, this.size - shift_amount);
-      for (let i = entity_index; i < size; ++i) {
-        this.data.mesh[i * 1 + 0] = this.data.mesh[(i + shift_amount) * 1 + 0];
-      }
-    }
-
-    if (shift_amount > 0) {
-      // Make space by moving data forward
-      let i = this.size - shift_amount - 1;
-      for (; i >= entity_index; --i) {
-        this.data.material_slots[(i + shift_amount) * 64 + 0] =
-          this.data.material_slots[i * 64 + 0];
-
-        this.data.material_slots[(i + shift_amount) * 64 + 1] =
-          this.data.material_slots[i * 64 + 1];
-
-        this.data.material_slots[(i + shift_amount) * 64 + 2] =
-          this.data.material_slots[i * 64 + 2];
-
-        this.data.material_slots[(i + shift_amount) * 64 + 3] =
-          this.data.material_slots[i * 64 + 3];
-
-        this.data.material_slots[(i + shift_amount) * 64 + 4] =
-          this.data.material_slots[i * 64 + 4];
-
-        this.data.material_slots[(i + shift_amount) * 64 + 5] =
-          this.data.material_slots[i * 64 + 5];
-
-        this.data.material_slots[(i + shift_amount) * 64 + 6] =
-          this.data.material_slots[i * 64 + 6];
-
-        this.data.material_slots[(i + shift_amount) * 64 + 7] =
-          this.data.material_slots[i * 64 + 7];
-
-        this.data.material_slots[(i + shift_amount) * 64 + 8] =
-          this.data.material_slots[i * 64 + 8];
-
-        this.data.material_slots[(i + shift_amount) * 64 + 9] =
-          this.data.material_slots[i * 64 + 9];
-
-        this.data.material_slots[(i + shift_amount) * 64 + 10] =
-          this.data.material_slots[i * 64 + 10];
-
-        this.data.material_slots[(i + shift_amount) * 64 + 11] =
-          this.data.material_slots[i * 64 + 11];
-
-        this.data.material_slots[(i + shift_amount) * 64 + 12] =
-          this.data.material_slots[i * 64 + 12];
-
-        this.data.material_slots[(i + shift_amount) * 64 + 13] =
-          this.data.material_slots[i * 64 + 13];
-
-        this.data.material_slots[(i + shift_amount) * 64 + 14] =
-          this.data.material_slots[i * 64 + 14];
-
-        this.data.material_slots[(i + shift_amount) * 64 + 15] =
-          this.data.material_slots[i * 64 + 15];
-
-        this.data.material_slots[(i + shift_amount) * 64 + 16] =
-          this.data.material_slots[i * 64 + 16];
-
-        this.data.material_slots[(i + shift_amount) * 64 + 17] =
-          this.data.material_slots[i * 64 + 17];
-
-        this.data.material_slots[(i + shift_amount) * 64 + 18] =
-          this.data.material_slots[i * 64 + 18];
-
-        this.data.material_slots[(i + shift_amount) * 64 + 19] =
-          this.data.material_slots[i * 64 + 19];
-
-        this.data.material_slots[(i + shift_amount) * 64 + 20] =
-          this.data.material_slots[i * 64 + 20];
-
-        this.data.material_slots[(i + shift_amount) * 64 + 21] =
-          this.data.material_slots[i * 64 + 21];
-
-        this.data.material_slots[(i + shift_amount) * 64 + 22] =
-          this.data.material_slots[i * 64 + 22];
-
-        this.data.material_slots[(i + shift_amount) * 64 + 23] =
-          this.data.material_slots[i * 64 + 23];
-
-        this.data.material_slots[(i + shift_amount) * 64 + 24] =
-          this.data.material_slots[i * 64 + 24];
-
-        this.data.material_slots[(i + shift_amount) * 64 + 25] =
-          this.data.material_slots[i * 64 + 25];
-
-        this.data.material_slots[(i + shift_amount) * 64 + 26] =
-          this.data.material_slots[i * 64 + 26];
-
-        this.data.material_slots[(i + shift_amount) * 64 + 27] =
-          this.data.material_slots[i * 64 + 27];
-
-        this.data.material_slots[(i + shift_amount) * 64 + 28] =
-          this.data.material_slots[i * 64 + 28];
-
-        this.data.material_slots[(i + shift_amount) * 64 + 29] =
-          this.data.material_slots[i * 64 + 29];
-
-        this.data.material_slots[(i + shift_amount) * 64 + 30] =
-          this.data.material_slots[i * 64 + 30];
-
-        this.data.material_slots[(i + shift_amount) * 64 + 31] =
-          this.data.material_slots[i * 64 + 31];
-
-        this.data.material_slots[(i + shift_amount) * 64 + 32] =
-          this.data.material_slots[i * 64 + 32];
-
-        this.data.material_slots[(i + shift_amount) * 64 + 33] =
-          this.data.material_slots[i * 64 + 33];
-
-        this.data.material_slots[(i + shift_amount) * 64 + 34] =
-          this.data.material_slots[i * 64 + 34];
-
-        this.data.material_slots[(i + shift_amount) * 64 + 35] =
-          this.data.material_slots[i * 64 + 35];
-
-        this.data.material_slots[(i + shift_amount) * 64 + 36] =
-          this.data.material_slots[i * 64 + 36];
-
-        this.data.material_slots[(i + shift_amount) * 64 + 37] =
-          this.data.material_slots[i * 64 + 37];
-
-        this.data.material_slots[(i + shift_amount) * 64 + 38] =
-          this.data.material_slots[i * 64 + 38];
-
-        this.data.material_slots[(i + shift_amount) * 64 + 39] =
-          this.data.material_slots[i * 64 + 39];
-
-        this.data.material_slots[(i + shift_amount) * 64 + 40] =
-          this.data.material_slots[i * 64 + 40];
-
-        this.data.material_slots[(i + shift_amount) * 64 + 41] =
-          this.data.material_slots[i * 64 + 41];
-
-        this.data.material_slots[(i + shift_amount) * 64 + 42] =
-          this.data.material_slots[i * 64 + 42];
-
-        this.data.material_slots[(i + shift_amount) * 64 + 43] =
-          this.data.material_slots[i * 64 + 43];
-
-        this.data.material_slots[(i + shift_amount) * 64 + 44] =
-          this.data.material_slots[i * 64 + 44];
-
-        this.data.material_slots[(i + shift_amount) * 64 + 45] =
-          this.data.material_slots[i * 64 + 45];
-
-        this.data.material_slots[(i + shift_amount) * 64 + 46] =
-          this.data.material_slots[i * 64 + 46];
-
-        this.data.material_slots[(i + shift_amount) * 64 + 47] =
-          this.data.material_slots[i * 64 + 47];
-
-        this.data.material_slots[(i + shift_amount) * 64 + 48] =
-          this.data.material_slots[i * 64 + 48];
-
-        this.data.material_slots[(i + shift_amount) * 64 + 49] =
-          this.data.material_slots[i * 64 + 49];
-
-        this.data.material_slots[(i + shift_amount) * 64 + 50] =
-          this.data.material_slots[i * 64 + 50];
-
-        this.data.material_slots[(i + shift_amount) * 64 + 51] =
-          this.data.material_slots[i * 64 + 51];
-
-        this.data.material_slots[(i + shift_amount) * 64 + 52] =
-          this.data.material_slots[i * 64 + 52];
-
-        this.data.material_slots[(i + shift_amount) * 64 + 53] =
-          this.data.material_slots[i * 64 + 53];
-
-        this.data.material_slots[(i + shift_amount) * 64 + 54] =
-          this.data.material_slots[i * 64 + 54];
-
-        this.data.material_slots[(i + shift_amount) * 64 + 55] =
-          this.data.material_slots[i * 64 + 55];
-
-        this.data.material_slots[(i + shift_amount) * 64 + 56] =
-          this.data.material_slots[i * 64 + 56];
-
-        this.data.material_slots[(i + shift_amount) * 64 + 57] =
-          this.data.material_slots[i * 64 + 57];
-
-        this.data.material_slots[(i + shift_amount) * 64 + 58] =
-          this.data.material_slots[i * 64 + 58];
-
-        this.data.material_slots[(i + shift_amount) * 64 + 59] =
-          this.data.material_slots[i * 64 + 59];
-
-        this.data.material_slots[(i + shift_amount) * 64 + 60] =
-          this.data.material_slots[i * 64 + 60];
-
-        this.data.material_slots[(i + shift_amount) * 64 + 61] =
-          this.data.material_slots[i * 64 + 61];
-
-        this.data.material_slots[(i + shift_amount) * 64 + 62] =
-          this.data.material_slots[i * 64 + 62];
-
-        this.data.material_slots[(i + shift_amount) * 64 + 63] =
-          this.data.material_slots[i * 64 + 63];
-      }
-      i += 1;
-      for (; i < entity_index + shift_amount; ++i) {
-        this.data.material_slots[i * 64 + 0] =
-          this.data.material_slots[entity_index * 64 + 0];
-
-        this.data.material_slots[i * 64 + 1] =
-          this.data.material_slots[entity_index * 64 + 1];
-
-        this.data.material_slots[i * 64 + 2] =
-          this.data.material_slots[entity_index * 64 + 2];
-
-        this.data.material_slots[i * 64 + 3] =
-          this.data.material_slots[entity_index * 64 + 3];
-
-        this.data.material_slots[i * 64 + 4] =
-          this.data.material_slots[entity_index * 64 + 4];
-
-        this.data.material_slots[i * 64 + 5] =
-          this.data.material_slots[entity_index * 64 + 5];
-
-        this.data.material_slots[i * 64 + 6] =
-          this.data.material_slots[entity_index * 64 + 6];
-
-        this.data.material_slots[i * 64 + 7] =
-          this.data.material_slots[entity_index * 64 + 7];
-
-        this.data.material_slots[i * 64 + 8] =
-          this.data.material_slots[entity_index * 64 + 8];
-
-        this.data.material_slots[i * 64 + 9] =
-          this.data.material_slots[entity_index * 64 + 9];
-
-        this.data.material_slots[i * 64 + 10] =
-          this.data.material_slots[entity_index * 64 + 10];
-
-        this.data.material_slots[i * 64 + 11] =
-          this.data.material_slots[entity_index * 64 + 11];
-
-        this.data.material_slots[i * 64 + 12] =
-          this.data.material_slots[entity_index * 64 + 12];
-
-        this.data.material_slots[i * 64 + 13] =
-          this.data.material_slots[entity_index * 64 + 13];
-
-        this.data.material_slots[i * 64 + 14] =
-          this.data.material_slots[entity_index * 64 + 14];
-
-        this.data.material_slots[i * 64 + 15] =
-          this.data.material_slots[entity_index * 64 + 15];
-
-        this.data.material_slots[i * 64 + 16] =
-          this.data.material_slots[entity_index * 64 + 16];
-
-        this.data.material_slots[i * 64 + 17] =
-          this.data.material_slots[entity_index * 64 + 17];
-
-        this.data.material_slots[i * 64 + 18] =
-          this.data.material_slots[entity_index * 64 + 18];
-
-        this.data.material_slots[i * 64 + 19] =
-          this.data.material_slots[entity_index * 64 + 19];
-
-        this.data.material_slots[i * 64 + 20] =
-          this.data.material_slots[entity_index * 64 + 20];
-
-        this.data.material_slots[i * 64 + 21] =
-          this.data.material_slots[entity_index * 64 + 21];
-
-        this.data.material_slots[i * 64 + 22] =
-          this.data.material_slots[entity_index * 64 + 22];
-
-        this.data.material_slots[i * 64 + 23] =
-          this.data.material_slots[entity_index * 64 + 23];
-
-        this.data.material_slots[i * 64 + 24] =
-          this.data.material_slots[entity_index * 64 + 24];
-
-        this.data.material_slots[i * 64 + 25] =
-          this.data.material_slots[entity_index * 64 + 25];
-
-        this.data.material_slots[i * 64 + 26] =
-          this.data.material_slots[entity_index * 64 + 26];
-
-        this.data.material_slots[i * 64 + 27] =
-          this.data.material_slots[entity_index * 64 + 27];
-
-        this.data.material_slots[i * 64 + 28] =
-          this.data.material_slots[entity_index * 64 + 28];
-
-        this.data.material_slots[i * 64 + 29] =
-          this.data.material_slots[entity_index * 64 + 29];
-
-        this.data.material_slots[i * 64 + 30] =
-          this.data.material_slots[entity_index * 64 + 30];
-
-        this.data.material_slots[i * 64 + 31] =
-          this.data.material_slots[entity_index * 64 + 31];
-
-        this.data.material_slots[i * 64 + 32] =
-          this.data.material_slots[entity_index * 64 + 32];
-
-        this.data.material_slots[i * 64 + 33] =
-          this.data.material_slots[entity_index * 64 + 33];
-
-        this.data.material_slots[i * 64 + 34] =
-          this.data.material_slots[entity_index * 64 + 34];
-
-        this.data.material_slots[i * 64 + 35] =
-          this.data.material_slots[entity_index * 64 + 35];
-
-        this.data.material_slots[i * 64 + 36] =
-          this.data.material_slots[entity_index * 64 + 36];
-
-        this.data.material_slots[i * 64 + 37] =
-          this.data.material_slots[entity_index * 64 + 37];
-
-        this.data.material_slots[i * 64 + 38] =
-          this.data.material_slots[entity_index * 64 + 38];
-
-        this.data.material_slots[i * 64 + 39] =
-          this.data.material_slots[entity_index * 64 + 39];
-
-        this.data.material_slots[i * 64 + 40] =
-          this.data.material_slots[entity_index * 64 + 40];
-
-        this.data.material_slots[i * 64 + 41] =
-          this.data.material_slots[entity_index * 64 + 41];
-
-        this.data.material_slots[i * 64 + 42] =
-          this.data.material_slots[entity_index * 64 + 42];
-
-        this.data.material_slots[i * 64 + 43] =
-          this.data.material_slots[entity_index * 64 + 43];
-
-        this.data.material_slots[i * 64 + 44] =
-          this.data.material_slots[entity_index * 64 + 44];
-
-        this.data.material_slots[i * 64 + 45] =
-          this.data.material_slots[entity_index * 64 + 45];
-
-        this.data.material_slots[i * 64 + 46] =
-          this.data.material_slots[entity_index * 64 + 46];
-
-        this.data.material_slots[i * 64 + 47] =
-          this.data.material_slots[entity_index * 64 + 47];
-
-        this.data.material_slots[i * 64 + 48] =
-          this.data.material_slots[entity_index * 64 + 48];
-
-        this.data.material_slots[i * 64 + 49] =
-          this.data.material_slots[entity_index * 64 + 49];
-
-        this.data.material_slots[i * 64 + 50] =
-          this.data.material_slots[entity_index * 64 + 50];
-
-        this.data.material_slots[i * 64 + 51] =
-          this.data.material_slots[entity_index * 64 + 51];
-
-        this.data.material_slots[i * 64 + 52] =
-          this.data.material_slots[entity_index * 64 + 52];
-
-        this.data.material_slots[i * 64 + 53] =
-          this.data.material_slots[entity_index * 64 + 53];
-
-        this.data.material_slots[i * 64 + 54] =
-          this.data.material_slots[entity_index * 64 + 54];
-
-        this.data.material_slots[i * 64 + 55] =
-          this.data.material_slots[entity_index * 64 + 55];
-
-        this.data.material_slots[i * 64 + 56] =
-          this.data.material_slots[entity_index * 64 + 56];
-
-        this.data.material_slots[i * 64 + 57] =
-          this.data.material_slots[entity_index * 64 + 57];
-
-        this.data.material_slots[i * 64 + 58] =
-          this.data.material_slots[entity_index * 64 + 58];
-
-        this.data.material_slots[i * 64 + 59] =
-          this.data.material_slots[entity_index * 64 + 59];
-
-        this.data.material_slots[i * 64 + 60] =
-          this.data.material_slots[entity_index * 64 + 60];
-
-        this.data.material_slots[i * 64 + 61] =
-          this.data.material_slots[entity_index * 64 + 61];
-
-        this.data.material_slots[i * 64 + 62] =
-          this.data.material_slots[entity_index * 64 + 62];
-
-        this.data.material_slots[i * 64 + 63] =
-          this.data.material_slots[entity_index * 64 + 63];
-      }
-    } else if (shift_amount < 0) {
-      // Compress by moving data backward
-      let size = Math.max(this.size, this.size - shift_amount);
-      for (let i = entity_index; i < size; ++i) {
-        this.data.material_slots[i * 64 + 0] =
-          this.data.material_slots[(i + shift_amount) * 64 + 0];
-
-        this.data.material_slots[i * 64 + 1] =
-          this.data.material_slots[(i + shift_amount) * 64 + 1];
-
-        this.data.material_slots[i * 64 + 2] =
-          this.data.material_slots[(i + shift_amount) * 64 + 2];
-
-        this.data.material_slots[i * 64 + 3] =
-          this.data.material_slots[(i + shift_amount) * 64 + 3];
-
-        this.data.material_slots[i * 64 + 4] =
-          this.data.material_slots[(i + shift_amount) * 64 + 4];
-
-        this.data.material_slots[i * 64 + 5] =
-          this.data.material_slots[(i + shift_amount) * 64 + 5];
-
-        this.data.material_slots[i * 64 + 6] =
-          this.data.material_slots[(i + shift_amount) * 64 + 6];
-
-        this.data.material_slots[i * 64 + 7] =
-          this.data.material_slots[(i + shift_amount) * 64 + 7];
-
-        this.data.material_slots[i * 64 + 8] =
-          this.data.material_slots[(i + shift_amount) * 64 + 8];
-
-        this.data.material_slots[i * 64 + 9] =
-          this.data.material_slots[(i + shift_amount) * 64 + 9];
-
-        this.data.material_slots[i * 64 + 10] =
-          this.data.material_slots[(i + shift_amount) * 64 + 10];
-
-        this.data.material_slots[i * 64 + 11] =
-          this.data.material_slots[(i + shift_amount) * 64 + 11];
-
-        this.data.material_slots[i * 64 + 12] =
-          this.data.material_slots[(i + shift_amount) * 64 + 12];
-
-        this.data.material_slots[i * 64 + 13] =
-          this.data.material_slots[(i + shift_amount) * 64 + 13];
-
-        this.data.material_slots[i * 64 + 14] =
-          this.data.material_slots[(i + shift_amount) * 64 + 14];
-
-        this.data.material_slots[i * 64 + 15] =
-          this.data.material_slots[(i + shift_amount) * 64 + 15];
-
-        this.data.material_slots[i * 64 + 16] =
-          this.data.material_slots[(i + shift_amount) * 64 + 16];
-
-        this.data.material_slots[i * 64 + 17] =
-          this.data.material_slots[(i + shift_amount) * 64 + 17];
-
-        this.data.material_slots[i * 64 + 18] =
-          this.data.material_slots[(i + shift_amount) * 64 + 18];
-
-        this.data.material_slots[i * 64 + 19] =
-          this.data.material_slots[(i + shift_amount) * 64 + 19];
-
-        this.data.material_slots[i * 64 + 20] =
-          this.data.material_slots[(i + shift_amount) * 64 + 20];
-
-        this.data.material_slots[i * 64 + 21] =
-          this.data.material_slots[(i + shift_amount) * 64 + 21];
-
-        this.data.material_slots[i * 64 + 22] =
-          this.data.material_slots[(i + shift_amount) * 64 + 22];
-
-        this.data.material_slots[i * 64 + 23] =
-          this.data.material_slots[(i + shift_amount) * 64 + 23];
-
-        this.data.material_slots[i * 64 + 24] =
-          this.data.material_slots[(i + shift_amount) * 64 + 24];
-
-        this.data.material_slots[i * 64 + 25] =
-          this.data.material_slots[(i + shift_amount) * 64 + 25];
-
-        this.data.material_slots[i * 64 + 26] =
-          this.data.material_slots[(i + shift_amount) * 64 + 26];
-
-        this.data.material_slots[i * 64 + 27] =
-          this.data.material_slots[(i + shift_amount) * 64 + 27];
-
-        this.data.material_slots[i * 64 + 28] =
-          this.data.material_slots[(i + shift_amount) * 64 + 28];
-
-        this.data.material_slots[i * 64 + 29] =
-          this.data.material_slots[(i + shift_amount) * 64 + 29];
-
-        this.data.material_slots[i * 64 + 30] =
-          this.data.material_slots[(i + shift_amount) * 64 + 30];
-
-        this.data.material_slots[i * 64 + 31] =
-          this.data.material_slots[(i + shift_amount) * 64 + 31];
-
-        this.data.material_slots[i * 64 + 32] =
-          this.data.material_slots[(i + shift_amount) * 64 + 32];
-
-        this.data.material_slots[i * 64 + 33] =
-          this.data.material_slots[(i + shift_amount) * 64 + 33];
-
-        this.data.material_slots[i * 64 + 34] =
-          this.data.material_slots[(i + shift_amount) * 64 + 34];
-
-        this.data.material_slots[i * 64 + 35] =
-          this.data.material_slots[(i + shift_amount) * 64 + 35];
-
-        this.data.material_slots[i * 64 + 36] =
-          this.data.material_slots[(i + shift_amount) * 64 + 36];
-
-        this.data.material_slots[i * 64 + 37] =
-          this.data.material_slots[(i + shift_amount) * 64 + 37];
-
-        this.data.material_slots[i * 64 + 38] =
-          this.data.material_slots[(i + shift_amount) * 64 + 38];
-
-        this.data.material_slots[i * 64 + 39] =
-          this.data.material_slots[(i + shift_amount) * 64 + 39];
-
-        this.data.material_slots[i * 64 + 40] =
-          this.data.material_slots[(i + shift_amount) * 64 + 40];
-
-        this.data.material_slots[i * 64 + 41] =
-          this.data.material_slots[(i + shift_amount) * 64 + 41];
-
-        this.data.material_slots[i * 64 + 42] =
-          this.data.material_slots[(i + shift_amount) * 64 + 42];
-
-        this.data.material_slots[i * 64 + 43] =
-          this.data.material_slots[(i + shift_amount) * 64 + 43];
-
-        this.data.material_slots[i * 64 + 44] =
-          this.data.material_slots[(i + shift_amount) * 64 + 44];
-
-        this.data.material_slots[i * 64 + 45] =
-          this.data.material_slots[(i + shift_amount) * 64 + 45];
-
-        this.data.material_slots[i * 64 + 46] =
-          this.data.material_slots[(i + shift_amount) * 64 + 46];
-
-        this.data.material_slots[i * 64 + 47] =
-          this.data.material_slots[(i + shift_amount) * 64 + 47];
-
-        this.data.material_slots[i * 64 + 48] =
-          this.data.material_slots[(i + shift_amount) * 64 + 48];
-
-        this.data.material_slots[i * 64 + 49] =
-          this.data.material_slots[(i + shift_amount) * 64 + 49];
-
-        this.data.material_slots[i * 64 + 50] =
-          this.data.material_slots[(i + shift_amount) * 64 + 50];
-
-        this.data.material_slots[i * 64 + 51] =
-          this.data.material_slots[(i + shift_amount) * 64 + 51];
-
-        this.data.material_slots[i * 64 + 52] =
-          this.data.material_slots[(i + shift_amount) * 64 + 52];
-
-        this.data.material_slots[i * 64 + 53] =
-          this.data.material_slots[(i + shift_amount) * 64 + 53];
-
-        this.data.material_slots[i * 64 + 54] =
-          this.data.material_slots[(i + shift_amount) * 64 + 54];
-
-        this.data.material_slots[i * 64 + 55] =
-          this.data.material_slots[(i + shift_amount) * 64 + 55];
-
-        this.data.material_slots[i * 64 + 56] =
-          this.data.material_slots[(i + shift_amount) * 64 + 56];
-
-        this.data.material_slots[i * 64 + 57] =
-          this.data.material_slots[(i + shift_amount) * 64 + 57];
-
-        this.data.material_slots[i * 64 + 58] =
-          this.data.material_slots[(i + shift_amount) * 64 + 58];
-
-        this.data.material_slots[i * 64 + 59] =
-          this.data.material_slots[(i + shift_amount) * 64 + 59];
-
-        this.data.material_slots[i * 64 + 60] =
-          this.data.material_slots[(i + shift_amount) * 64 + 60];
-
-        this.data.material_slots[i * 64 + 61] =
-          this.data.material_slots[(i + shift_amount) * 64 + 61];
-
-        this.data.material_slots[i * 64 + 62] =
-          this.data.material_slots[(i + shift_amount) * 64 + 62];
-
-        this.data.material_slots[i * 64 + 63] =
-          this.data.material_slots[(i + shift_amount) * 64 + 63];
-      }
-    }
-
-    if (shift_amount > 0) {
-      // Make space by moving data forward
-      let i = this.size - shift_amount - 1;
-      for (; i >= entity_index; --i) {
-        this.data.dirty[(i + shift_amount) * 1 + 0] =
-          this.data.dirty[i * 1 + 0];
-      }
-      i += 1;
-      for (; i < entity_index + shift_amount; ++i) {
-        this.data.dirty[i * 1 + 0] = this.data.dirty[entity_index * 1 + 0];
-      }
-    } else if (shift_amount < 0) {
-      // Compress by moving data backward
-      let size = Math.max(this.size, this.size - shift_amount);
-      for (let i = entity_index; i < size; ++i) {
-        this.data.dirty[i * 1 + 0] =
-          this.data.dirty[(i + shift_amount) * 1 + 0];
-      }
-    }
+  static batch_entity_instance_count_changed(index, shift) {
+    const source_index = Math.min(Math.max(0, index - shift), this.size - 1);
+
+    this.data.mesh[index * 1 + 0] = this.data.mesh[source_index * 1 + 0];
+
+    this.data.material_slots[index * 64 + 0] =
+      this.data.material_slots[source_index * 64 + 0];
+    this.data.material_slots[index * 64 + 1] =
+      this.data.material_slots[source_index * 64 + 1];
+    this.data.material_slots[index * 64 + 2] =
+      this.data.material_slots[source_index * 64 + 2];
+    this.data.material_slots[index * 64 + 3] =
+      this.data.material_slots[source_index * 64 + 3];
+    this.data.material_slots[index * 64 + 4] =
+      this.data.material_slots[source_index * 64 + 4];
+    this.data.material_slots[index * 64 + 5] =
+      this.data.material_slots[source_index * 64 + 5];
+    this.data.material_slots[index * 64 + 6] =
+      this.data.material_slots[source_index * 64 + 6];
+    this.data.material_slots[index * 64 + 7] =
+      this.data.material_slots[source_index * 64 + 7];
+    this.data.material_slots[index * 64 + 8] =
+      this.data.material_slots[source_index * 64 + 8];
+    this.data.material_slots[index * 64 + 9] =
+      this.data.material_slots[source_index * 64 + 9];
+    this.data.material_slots[index * 64 + 10] =
+      this.data.material_slots[source_index * 64 + 10];
+    this.data.material_slots[index * 64 + 11] =
+      this.data.material_slots[source_index * 64 + 11];
+    this.data.material_slots[index * 64 + 12] =
+      this.data.material_slots[source_index * 64 + 12];
+    this.data.material_slots[index * 64 + 13] =
+      this.data.material_slots[source_index * 64 + 13];
+    this.data.material_slots[index * 64 + 14] =
+      this.data.material_slots[source_index * 64 + 14];
+    this.data.material_slots[index * 64 + 15] =
+      this.data.material_slots[source_index * 64 + 15];
+    this.data.material_slots[index * 64 + 16] =
+      this.data.material_slots[source_index * 64 + 16];
+    this.data.material_slots[index * 64 + 17] =
+      this.data.material_slots[source_index * 64 + 17];
+    this.data.material_slots[index * 64 + 18] =
+      this.data.material_slots[source_index * 64 + 18];
+    this.data.material_slots[index * 64 + 19] =
+      this.data.material_slots[source_index * 64 + 19];
+    this.data.material_slots[index * 64 + 20] =
+      this.data.material_slots[source_index * 64 + 20];
+    this.data.material_slots[index * 64 + 21] =
+      this.data.material_slots[source_index * 64 + 21];
+    this.data.material_slots[index * 64 + 22] =
+      this.data.material_slots[source_index * 64 + 22];
+    this.data.material_slots[index * 64 + 23] =
+      this.data.material_slots[source_index * 64 + 23];
+    this.data.material_slots[index * 64 + 24] =
+      this.data.material_slots[source_index * 64 + 24];
+    this.data.material_slots[index * 64 + 25] =
+      this.data.material_slots[source_index * 64 + 25];
+    this.data.material_slots[index * 64 + 26] =
+      this.data.material_slots[source_index * 64 + 26];
+    this.data.material_slots[index * 64 + 27] =
+      this.data.material_slots[source_index * 64 + 27];
+    this.data.material_slots[index * 64 + 28] =
+      this.data.material_slots[source_index * 64 + 28];
+    this.data.material_slots[index * 64 + 29] =
+      this.data.material_slots[source_index * 64 + 29];
+    this.data.material_slots[index * 64 + 30] =
+      this.data.material_slots[source_index * 64 + 30];
+    this.data.material_slots[index * 64 + 31] =
+      this.data.material_slots[source_index * 64 + 31];
+    this.data.material_slots[index * 64 + 32] =
+      this.data.material_slots[source_index * 64 + 32];
+    this.data.material_slots[index * 64 + 33] =
+      this.data.material_slots[source_index * 64 + 33];
+    this.data.material_slots[index * 64 + 34] =
+      this.data.material_slots[source_index * 64 + 34];
+    this.data.material_slots[index * 64 + 35] =
+      this.data.material_slots[source_index * 64 + 35];
+    this.data.material_slots[index * 64 + 36] =
+      this.data.material_slots[source_index * 64 + 36];
+    this.data.material_slots[index * 64 + 37] =
+      this.data.material_slots[source_index * 64 + 37];
+    this.data.material_slots[index * 64 + 38] =
+      this.data.material_slots[source_index * 64 + 38];
+    this.data.material_slots[index * 64 + 39] =
+      this.data.material_slots[source_index * 64 + 39];
+    this.data.material_slots[index * 64 + 40] =
+      this.data.material_slots[source_index * 64 + 40];
+    this.data.material_slots[index * 64 + 41] =
+      this.data.material_slots[source_index * 64 + 41];
+    this.data.material_slots[index * 64 + 42] =
+      this.data.material_slots[source_index * 64 + 42];
+    this.data.material_slots[index * 64 + 43] =
+      this.data.material_slots[source_index * 64 + 43];
+    this.data.material_slots[index * 64 + 44] =
+      this.data.material_slots[source_index * 64 + 44];
+    this.data.material_slots[index * 64 + 45] =
+      this.data.material_slots[source_index * 64 + 45];
+    this.data.material_slots[index * 64 + 46] =
+      this.data.material_slots[source_index * 64 + 46];
+    this.data.material_slots[index * 64 + 47] =
+      this.data.material_slots[source_index * 64 + 47];
+    this.data.material_slots[index * 64 + 48] =
+      this.data.material_slots[source_index * 64 + 48];
+    this.data.material_slots[index * 64 + 49] =
+      this.data.material_slots[source_index * 64 + 49];
+    this.data.material_slots[index * 64 + 50] =
+      this.data.material_slots[source_index * 64 + 50];
+    this.data.material_slots[index * 64 + 51] =
+      this.data.material_slots[source_index * 64 + 51];
+    this.data.material_slots[index * 64 + 52] =
+      this.data.material_slots[source_index * 64 + 52];
+    this.data.material_slots[index * 64 + 53] =
+      this.data.material_slots[source_index * 64 + 53];
+    this.data.material_slots[index * 64 + 54] =
+      this.data.material_slots[source_index * 64 + 54];
+    this.data.material_slots[index * 64 + 55] =
+      this.data.material_slots[source_index * 64 + 55];
+    this.data.material_slots[index * 64 + 56] =
+      this.data.material_slots[source_index * 64 + 56];
+    this.data.material_slots[index * 64 + 57] =
+      this.data.material_slots[source_index * 64 + 57];
+    this.data.material_slots[index * 64 + 58] =
+      this.data.material_slots[source_index * 64 + 58];
+    this.data.material_slots[index * 64 + 59] =
+      this.data.material_slots[source_index * 64 + 59];
+    this.data.material_slots[index * 64 + 60] =
+      this.data.material_slots[source_index * 64 + 60];
+    this.data.material_slots[index * 64 + 61] =
+      this.data.material_slots[source_index * 64 + 61];
+    this.data.material_slots[index * 64 + 62] =
+      this.data.material_slots[source_index * 64 + 62];
+    this.data.material_slots[index * 64 + 63] =
+      this.data.material_slots[source_index * 64 + 63];
+
+    this.data.dirty[index * 1 + 0] = this.data.dirty[source_index * 1 + 0];
 
     this.data.gpu_data_dirty = true;
   }

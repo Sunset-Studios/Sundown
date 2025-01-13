@@ -319,6 +319,8 @@ export class LightFragment extends Fragment {
   }
 
   static resize(new_size) {
+    if (new_size <= this.size) return;
+
     this.size = new_size;
 
     if (!this.data) this.initialize();
@@ -340,12 +342,13 @@ export class LightFragment extends Fragment {
     Fragment.resize_array(this.data, "active", new_size, Uint8Array, 1);
     Fragment.resize_array(this.data, "dirty", new_size, Uint8Array, 1);
 
-    this.rebuild_buffers();
+    this.data.gpu_data_dirty = true;
   }
 
   static add_entity(entity) {
-    if (entity >= this.size) {
-      this.resize(entity * 2);
+    const absolute_entity = EntityID.get_absolute_index(entity);
+    if (absolute_entity >= this.size) {
+      this.resize(absolute_entity * 2);
     }
 
     return this.get_entity_data(entity);
@@ -430,6 +433,8 @@ export class LightFragment extends Fragment {
   }
 
   static rebuild_buffers() {
+    if (!this.data.gpu_data_dirty) return;
+
     {
       let total_active = 0;
       for (let i = 0; i < this.size; i++) {
@@ -493,317 +498,49 @@ export class LightFragment extends Fragment {
 
   static async sync_buffers() {}
 
-  static entity_instance_count_changed(entity, last_entity_count) {
-    const entity_index = EntityID.get_absolute_index(entity);
-    const entity_count = EntityID.get_instance_count(entity);
+  static batch_entity_instance_count_changed(index, shift) {
+    const source_index = Math.min(Math.max(0, index - shift), this.size - 1);
 
-    const shift_amount = entity_count - last_entity_count;
+    this.data.position.x[index * 1 + 0] =
+      this.data.position.x[source_index * 1 + 0];
 
-    // No need to shift if there's no change
-    if (shift_amount === 0) return;
+    this.data.position.y[index * 1 + 0] =
+      this.data.position.y[source_index * 1 + 0];
 
-    if (shift_amount > 0) {
-      // Make space by moving data forward
-      let i = this.size - shift_amount - 1;
-      for (; i >= entity_index; --i) {
-        this.data.position.x[i + shift_amount] = this.data.position.x[i];
-      }
-      i += 1;
-      for (; i < entity_index + shift_amount; ++i) {
-        this.data.position.x[i] = this.data.position.x[entity_index];
-      }
-    } else if (shift_amount < 0) {
-      // Compress by moving data backward
-      let size = Math.max(this.size, this.size - shift_amount);
-      for (let i = entity_index; i < size; ++i) {
-        this.data.position.x[i] = this.data.position.x[i + shift_amount];
-      }
-    }
+    this.data.position.z[index * 1 + 0] =
+      this.data.position.z[source_index * 1 + 0];
 
-    if (shift_amount > 0) {
-      // Make space by moving data forward
-      let i = this.size - shift_amount - 1;
-      for (; i >= entity_index; --i) {
-        this.data.position.y[i + shift_amount] = this.data.position.y[i];
-      }
-      i += 1;
-      for (; i < entity_index + shift_amount; ++i) {
-        this.data.position.y[i] = this.data.position.y[entity_index];
-      }
-    } else if (shift_amount < 0) {
-      // Compress by moving data backward
-      let size = Math.max(this.size, this.size - shift_amount);
-      for (let i = entity_index; i < size; ++i) {
-        this.data.position.y[i] = this.data.position.y[i + shift_amount];
-      }
-    }
+    this.data.direction.x[index * 1 + 0] =
+      this.data.direction.x[source_index * 1 + 0];
 
-    if (shift_amount > 0) {
-      // Make space by moving data forward
-      let i = this.size - shift_amount - 1;
-      for (; i >= entity_index; --i) {
-        this.data.position.z[i + shift_amount] = this.data.position.z[i];
-      }
-      i += 1;
-      for (; i < entity_index + shift_amount; ++i) {
-        this.data.position.z[i] = this.data.position.z[entity_index];
-      }
-    } else if (shift_amount < 0) {
-      // Compress by moving data backward
-      let size = Math.max(this.size, this.size - shift_amount);
-      for (let i = entity_index; i < size; ++i) {
-        this.data.position.z[i] = this.data.position.z[i + shift_amount];
-      }
-    }
+    this.data.direction.y[index * 1 + 0] =
+      this.data.direction.y[source_index * 1 + 0];
 
-    if (shift_amount > 0) {
-      // Make space by moving data forward
-      let i = this.size - shift_amount - 1;
-      for (; i >= entity_index; --i) {
-        this.data.direction.x[i + shift_amount] = this.data.direction.x[i];
-      }
-      i += 1;
-      for (; i < entity_index + shift_amount; ++i) {
-        this.data.direction.x[i] = this.data.direction.x[entity_index];
-      }
-    } else if (shift_amount < 0) {
-      // Compress by moving data backward
-      let size = Math.max(this.size, this.size - shift_amount);
-      for (let i = entity_index; i < size; ++i) {
-        this.data.direction.x[i] = this.data.direction.x[i + shift_amount];
-      }
-    }
+    this.data.direction.z[index * 1 + 0] =
+      this.data.direction.z[source_index * 1 + 0];
 
-    if (shift_amount > 0) {
-      // Make space by moving data forward
-      let i = this.size - shift_amount - 1;
-      for (; i >= entity_index; --i) {
-        this.data.direction.y[i + shift_amount] = this.data.direction.y[i];
-      }
-      i += 1;
-      for (; i < entity_index + shift_amount; ++i) {
-        this.data.direction.y[i] = this.data.direction.y[entity_index];
-      }
-    } else if (shift_amount < 0) {
-      // Compress by moving data backward
-      let size = Math.max(this.size, this.size - shift_amount);
-      for (let i = entity_index; i < size; ++i) {
-        this.data.direction.y[i] = this.data.direction.y[i + shift_amount];
-      }
-    }
+    this.data.color.r[index * 1 + 0] = this.data.color.r[source_index * 1 + 0];
 
-    if (shift_amount > 0) {
-      // Make space by moving data forward
-      let i = this.size - shift_amount - 1;
-      for (; i >= entity_index; --i) {
-        this.data.direction.z[i + shift_amount] = this.data.direction.z[i];
-      }
-      i += 1;
-      for (; i < entity_index + shift_amount; ++i) {
-        this.data.direction.z[i] = this.data.direction.z[entity_index];
-      }
-    } else if (shift_amount < 0) {
-      // Compress by moving data backward
-      let size = Math.max(this.size, this.size - shift_amount);
-      for (let i = entity_index; i < size; ++i) {
-        this.data.direction.z[i] = this.data.direction.z[i + shift_amount];
-      }
-    }
+    this.data.color.g[index * 1 + 0] = this.data.color.g[source_index * 1 + 0];
 
-    if (shift_amount > 0) {
-      // Make space by moving data forward
-      let i = this.size - shift_amount - 1;
-      for (; i >= entity_index; --i) {
-        this.data.color.r[i + shift_amount] = this.data.color.r[i];
-      }
-      i += 1;
-      for (; i < entity_index + shift_amount; ++i) {
-        this.data.color.r[i] = this.data.color.r[entity_index];
-      }
-    } else if (shift_amount < 0) {
-      // Compress by moving data backward
-      let size = Math.max(this.size, this.size - shift_amount);
-      for (let i = entity_index; i < size; ++i) {
-        this.data.color.r[i] = this.data.color.r[i + shift_amount];
-      }
-    }
+    this.data.color.b[index * 1 + 0] = this.data.color.b[source_index * 1 + 0];
 
-    if (shift_amount > 0) {
-      // Make space by moving data forward
-      let i = this.size - shift_amount - 1;
-      for (; i >= entity_index; --i) {
-        this.data.color.g[i + shift_amount] = this.data.color.g[i];
-      }
-      i += 1;
-      for (; i < entity_index + shift_amount; ++i) {
-        this.data.color.g[i] = this.data.color.g[entity_index];
-      }
-    } else if (shift_amount < 0) {
-      // Compress by moving data backward
-      let size = Math.max(this.size, this.size - shift_amount);
-      for (let i = entity_index; i < size; ++i) {
-        this.data.color.g[i] = this.data.color.g[i + shift_amount];
-      }
-    }
+    this.data.type[index * 1 + 0] = this.data.type[source_index * 1 + 0];
 
-    if (shift_amount > 0) {
-      // Make space by moving data forward
-      let i = this.size - shift_amount - 1;
-      for (; i >= entity_index; --i) {
-        this.data.color.b[i + shift_amount] = this.data.color.b[i];
-      }
-      i += 1;
-      for (; i < entity_index + shift_amount; ++i) {
-        this.data.color.b[i] = this.data.color.b[entity_index];
-      }
-    } else if (shift_amount < 0) {
-      // Compress by moving data backward
-      let size = Math.max(this.size, this.size - shift_amount);
-      for (let i = entity_index; i < size; ++i) {
-        this.data.color.b[i] = this.data.color.b[i + shift_amount];
-      }
-    }
+    this.data.intensity[index * 1 + 0] =
+      this.data.intensity[source_index * 1 + 0];
 
-    if (shift_amount > 0) {
-      // Make space by moving data forward
-      let i = this.size - shift_amount - 1;
-      for (; i >= entity_index; --i) {
-        this.data.type[(i + shift_amount) * 1 + 0] = this.data.type[i * 1 + 0];
-      }
-      i += 1;
-      for (; i < entity_index + shift_amount; ++i) {
-        this.data.type[i * 1 + 0] = this.data.type[entity_index * 1 + 0];
-      }
-    } else if (shift_amount < 0) {
-      // Compress by moving data backward
-      let size = Math.max(this.size, this.size - shift_amount);
-      for (let i = entity_index; i < size; ++i) {
-        this.data.type[i * 1 + 0] = this.data.type[(i + shift_amount) * 1 + 0];
-      }
-    }
+    this.data.radius[index * 1 + 0] = this.data.radius[source_index * 1 + 0];
 
-    if (shift_amount > 0) {
-      // Make space by moving data forward
-      let i = this.size - shift_amount - 1;
-      for (; i >= entity_index; --i) {
-        this.data.intensity[(i + shift_amount) * 1 + 0] =
-          this.data.intensity[i * 1 + 0];
-      }
-      i += 1;
-      for (; i < entity_index + shift_amount; ++i) {
-        this.data.intensity[i * 1 + 0] =
-          this.data.intensity[entity_index * 1 + 0];
-      }
-    } else if (shift_amount < 0) {
-      // Compress by moving data backward
-      let size = Math.max(this.size, this.size - shift_amount);
-      for (let i = entity_index; i < size; ++i) {
-        this.data.intensity[i * 1 + 0] =
-          this.data.intensity[(i + shift_amount) * 1 + 0];
-      }
-    }
+    this.data.attenuation[index * 1 + 0] =
+      this.data.attenuation[source_index * 1 + 0];
 
-    if (shift_amount > 0) {
-      // Make space by moving data forward
-      let i = this.size - shift_amount - 1;
-      for (; i >= entity_index; --i) {
-        this.data.radius[(i + shift_amount) * 1 + 0] =
-          this.data.radius[i * 1 + 0];
-      }
-      i += 1;
-      for (; i < entity_index + shift_amount; ++i) {
-        this.data.radius[i * 1 + 0] = this.data.radius[entity_index * 1 + 0];
-      }
-    } else if (shift_amount < 0) {
-      // Compress by moving data backward
-      let size = Math.max(this.size, this.size - shift_amount);
-      for (let i = entity_index; i < size; ++i) {
-        this.data.radius[i * 1 + 0] =
-          this.data.radius[(i + shift_amount) * 1 + 0];
-      }
-    }
+    this.data.outer_angle[index * 1 + 0] =
+      this.data.outer_angle[source_index * 1 + 0];
 
-    if (shift_amount > 0) {
-      // Make space by moving data forward
-      let i = this.size - shift_amount - 1;
-      for (; i >= entity_index; --i) {
-        this.data.attenuation[(i + shift_amount) * 1 + 0] =
-          this.data.attenuation[i * 1 + 0];
-      }
-      i += 1;
-      for (; i < entity_index + shift_amount; ++i) {
-        this.data.attenuation[i * 1 + 0] =
-          this.data.attenuation[entity_index * 1 + 0];
-      }
-    } else if (shift_amount < 0) {
-      // Compress by moving data backward
-      let size = Math.max(this.size, this.size - shift_amount);
-      for (let i = entity_index; i < size; ++i) {
-        this.data.attenuation[i * 1 + 0] =
-          this.data.attenuation[(i + shift_amount) * 1 + 0];
-      }
-    }
+    this.data.active[index * 1 + 0] = this.data.active[source_index * 1 + 0];
 
-    if (shift_amount > 0) {
-      // Make space by moving data forward
-      let i = this.size - shift_amount - 1;
-      for (; i >= entity_index; --i) {
-        this.data.outer_angle[(i + shift_amount) * 1 + 0] =
-          this.data.outer_angle[i * 1 + 0];
-      }
-      i += 1;
-      for (; i < entity_index + shift_amount; ++i) {
-        this.data.outer_angle[i * 1 + 0] =
-          this.data.outer_angle[entity_index * 1 + 0];
-      }
-    } else if (shift_amount < 0) {
-      // Compress by moving data backward
-      let size = Math.max(this.size, this.size - shift_amount);
-      for (let i = entity_index; i < size; ++i) {
-        this.data.outer_angle[i * 1 + 0] =
-          this.data.outer_angle[(i + shift_amount) * 1 + 0];
-      }
-    }
-
-    if (shift_amount > 0) {
-      // Make space by moving data forward
-      let i = this.size - shift_amount - 1;
-      for (; i >= entity_index; --i) {
-        this.data.active[(i + shift_amount) * 1 + 0] =
-          this.data.active[i * 1 + 0];
-      }
-      i += 1;
-      for (; i < entity_index + shift_amount; ++i) {
-        this.data.active[i * 1 + 0] = this.data.active[entity_index * 1 + 0];
-      }
-    } else if (shift_amount < 0) {
-      // Compress by moving data backward
-      let size = Math.max(this.size, this.size - shift_amount);
-      for (let i = entity_index; i < size; ++i) {
-        this.data.active[i * 1 + 0] =
-          this.data.active[(i + shift_amount) * 1 + 0];
-      }
-    }
-
-    if (shift_amount > 0) {
-      // Make space by moving data forward
-      let i = this.size - shift_amount - 1;
-      for (; i >= entity_index; --i) {
-        this.data.dirty[(i + shift_amount) * 1 + 0] =
-          this.data.dirty[i * 1 + 0];
-      }
-      i += 1;
-      for (; i < entity_index + shift_amount; ++i) {
-        this.data.dirty[i * 1 + 0] = this.data.dirty[entity_index * 1 + 0];
-      }
-    } else if (shift_amount < 0) {
-      // Compress by moving data backward
-      let size = Math.max(this.size, this.size - shift_amount);
-      for (let i = entity_index; i < size; ++i) {
-        this.data.dirty[i * 1 + 0] =
-          this.data.dirty[(i + shift_amount) * 1 + 0];
-      }
-    }
+    this.data.dirty[index * 1 + 0] = this.data.dirty[source_index * 1 + 0];
 
     this.data.gpu_data_dirty = true;
   }

@@ -1,14 +1,22 @@
 import { EntityManager } from "./ecs/entity.js";
 import { SimulationLayer } from "./simulation_layer.js";
+
+import { EntityPreprocessor } from "./subsystems/entity_preprocessor.js";
 import { TextProcessor } from "./subsystems/text_processor.js";
 import { StaticMeshProcessor } from "./subsystems/static_mesh_processor.js";
 import { TransformProcessor } from "./subsystems/transform_processor.js";
+
+import { TransformFragment } from "./ecs/fragments/transform_fragment.js";
+import { VisibilityFragment } from "./ecs/fragments/visibility_fragment.js";
+import { StaticMeshFragment } from "./ecs/fragments/static_mesh_fragment.js";
+import { TextFragment } from "./ecs/fragments/text_fragment.js";
+import { SceneGraphFragment } from "./ecs/fragments/scene_graph_fragment.js";
+
 import { FontCache } from "../ui/text/font_cache.js";
 import { UI3DProcessor } from "./subsystems/ui_3d_processor.js";
 import { UIProcessor } from "./subsystems/ui_processor.js";
 import { SharedViewBuffer } from "./shared_data.js";
 import { Renderer } from "../renderer/renderer.js";
-import { profile_scope } from "../utility/performance.js";
 
 export class Scene extends SimulationLayer {
   name = "";
@@ -23,20 +31,18 @@ export class Scene extends SimulationLayer {
 
     this.context.current_view = SharedViewBuffer.add_view_data();
 
-    this.setup_default_subsystems();
-
     FontCache.auto_load_fonts();
+
+    this.setup_default_fragments();
+    this.setup_default_subsystems();
   }
 
   update(delta_time) {
     super.update(delta_time);
-
-    profile_scope("Scene.update", () => {
-      EntityManager.process_query_changes();
-    });
   }
 
   setup_default_subsystems() {
+    this.add_layer(EntityPreprocessor);
     this.add_layer(UIProcessor);
     this.add_layer(TextProcessor);
     this.add_layer(StaticMeshProcessor);
@@ -46,60 +52,14 @@ export class Scene extends SimulationLayer {
     ui_3d_processor.set_scene(this);
   }
 
-  get_entity_count() {
-    return EntityManager.get_entity_count();
-  }
-
-  get_entity_instance_count(entity) {
-    return EntityManager.get_entity_instance_count(entity);
-  }
-
-  change_entity_instance_count(entity, instance_count) {
-    return EntityManager.change_entity_instance_count(entity, instance_count);
-  }
-
-  reserve_entities(size) {
-    EntityManager.reserve_entities(size);
-  }
-
-  create_entity(refresh_entity_data = true) {
-    return EntityManager.create_entity(refresh_entity_data);
-  }
-
-  delete_entity(entity, refresh_entity_data = true) {
-    EntityManager.delete_entity(entity, refresh_entity_data);
-  }
-
-  duplicate_entity(entity, refresh_entity_data = true, instance = 0) {
-    return EntityManager.duplicate_entity(entity, refresh_entity_data, instance);
-  }
-
-  add_fragment(entity, FragmentType, refresh_entity_data = true) {
-    return EntityManager.add_fragment(entity, FragmentType, refresh_entity_data);
-  }
-
-  remove_fragment(entity, FragmentType, refresh_entity_data = true) {
-    EntityManager.remove_fragment(entity, FragmentType, refresh_entity_data);
-  }
-
-  add_tag(entity, Tag, refresh_entity_data = true) {
-    EntityManager.add_tag(entity, Tag, refresh_entity_data);
-  }
-
-  remove_tag(entity, Tag, refresh_entity_data = true) {
-    EntityManager.remove_tag(entity, Tag, refresh_entity_data);
-  }
-
-  get_fragment(entity, FragmentType, instance = 0) {
-    return EntityManager.get_fragment(entity, FragmentType, instance);
-  }
-  
-  has_fragment(entity, FragmentType) {
-    return EntityManager.has_fragment(entity, FragmentType);
-  }
-
-  refresh_entities() {
-    EntityManager.refresh_entities();
+  setup_default_fragments() {
+    EntityManager.preinit_fragments(
+      TransformFragment,
+      VisibilityFragment,
+      StaticMeshFragment,
+      TextFragment,
+      SceneGraphFragment
+    );
   }
 
   set_ui_root(ui_root) {

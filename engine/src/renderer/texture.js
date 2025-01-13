@@ -87,7 +87,7 @@ class TextureConfig {
   dimension = "2d";
   b_is_bindless = false;
   flags = ImageFlags.None;
-  clear_value = { r: 0, g: 0, b: 0, a: 1 };
+  clear_value = { r: 0, g: 0, b: 0, a: 0 };
   blend = null;
   load_op = "clear";
   store_op = "store";
@@ -205,7 +205,7 @@ export class Texture {
       this.config.clear_value = 1.0;
       this.config.load_op = "clear";
     } else {
-      this.config.clear_value = { r: 0, g: 0, b: 0, a: 1 };
+      this.config.clear_value = { r: 0, g: 0, b: 0, a: 0 };
       this.config.load_op = "clear";
     }
 

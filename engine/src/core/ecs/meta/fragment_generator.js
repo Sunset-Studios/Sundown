@@ -123,7 +123,10 @@ export class FragmentGenerator {
       to_gpu_data: this.generate_to_gpu_data(buffers, overrides.to_gpu_data),
       rebuild_buffers: this.generate_rebuild_buffers(buffers, overrides.rebuild_buffers),
       sync_buffers: this.generate_sync_buffers(buffers, overrides.sync_buffers),
-      entity_instance_count_changed: this.generate_entity_instance_count_changed(fields, overrides.entity_instance_count_changed),
+      batch_entity_instance_count_changed: this.generate_batch_entity_instance_count_changed(
+        fields,
+        overrides.batch_entity_instance_count_changed
+      ),
     };
 
     let adjusted_imports = Object.entries(all_imports).reduce((acc, [name, path]) => {
@@ -272,7 +275,7 @@ export class ${fragment_name} extends Fragment {
     ${implementations.to_gpu_data}
     ${implementations.rebuild_buffers}
     ${implementations.sync_buffers}
-    ${implementations.entity_instance_count_changed}
+    ${implementations.batch_entity_instance_count_changed}
     ${this.generate_custom_methods(custom_methods)}
     ${this.generate_hooks(hooks)}
 }`;
@@ -326,11 +329,7 @@ export class ${fragment_name} extends Fragment {
             ? `Renderer.get().on_post_render(this.on_post_render.bind(this));`
             : ""
         }
-        ${
-          Object.keys(buffers).length > 0
-            ? `this.rebuild_buffers();`
-            : ""
-        }
+        ${Object.keys(buffers).length > 0 ? `this.rebuild_buffers();` : ""}
     `;
   }
 
@@ -338,6 +337,8 @@ export class ${fragment_name} extends Fragment {
     if (override) {
       return `
     static resize(new_size) {
+        if (new_size <= this.size) return;
+
         this.size = new_size;
         ${override.pre ? override.pre : ""}
         ${!override.skip_default ? this.get_default_resize(fields, buffers) : ""}
@@ -346,6 +347,8 @@ export class ${fragment_name} extends Fragment {
     }
     return `
     static resize(new_size) {
+        if (new_size <= this.size) return;
+
         this.size = new_size;
         ${this.get_default_resize(fields, buffers)}
     }`;
@@ -371,7 +374,7 @@ export class ${fragment_name} extends Fragment {
           })
           .join("\n        ")}
         
-        ${Object.keys(buffers).length === 0 ? "" : `this.rebuild_buffers();`}
+        ${Object.keys(buffers).length === 0 ? "" : `this.data.gpu_data_dirty = true;`}
     `;
   }
 
@@ -379,8 +382,9 @@ export class ${fragment_name} extends Fragment {
     if (override) {
       return `
     static add_entity(entity) {
-        if (entity >= this.size) {
-          this.resize(entity * 2);
+        const absolute_entity = EntityID.get_absolute_index(entity);
+        if (absolute_entity >= this.size) {
+          this.resize(absolute_entity * 2);
         }
         ${override.pre ? override.pre : ""}
         ${!override.skip_default ? this.get_default_add_entity() : ""}
@@ -389,8 +393,9 @@ export class ${fragment_name} extends Fragment {
     }
     return `
     static add_entity(entity) {
-        if (entity >= this.size) {
-          this.resize(entity * 2);
+        const absolute_entity = EntityID.get_absolute_index(entity);
+        if (absolute_entity >= this.size) {
+          this.resize(absolute_entity * 2);
         }
         ${this.get_default_add_entity()}
     }`;
@@ -441,7 +446,7 @@ export class ${fragment_name} extends Fragment {
     const instance_field_resets = Object.entries(fields)
       .filter(([_, field]) => !field.no_fragment_array && !field.no_instance_count_resize)
       .map(([key, field]) => {
-      if (field.is_container) {
+        if (field.is_container) {
           return `this.data.${key}.remove(entity_index);`;
         }
         if (field.vector) {
@@ -456,7 +461,7 @@ export class ${fragment_name} extends Fragment {
         if (key === "dirty") {
           return "";
         }
-        return `this.data.${key}[entity_index] = ${field.stride > 1 ? `Array(${field.stride}).fill(${field.default || 0})` : field.default || 0};`
+        return `this.data.${key}[entity_index] = ${field.stride > 1 ? `Array(${field.stride}).fill(${field.default || 0})` : field.default || 0};`;
       });
 
     return `
@@ -523,7 +528,10 @@ export class ${fragment_name} extends Fragment {
             if (field.vector) {
               return `data.${key} = {
                         ${Object.keys(field.vector)
-                          .map((axis) => `${axis}: this.data.${key}.${axis}[${field.no_instance_count_resize ? `entity` : `entity_index`}]`)
+                          .map(
+                            (axis) =>
+                              `${axis}: this.data.${key}.${axis}[${field.no_instance_count_resize ? `entity` : `entity_index`}]`
+                          )
                           .join(",\n        ")}
                     };`;
             }
@@ -546,6 +554,8 @@ export class ${fragment_name} extends Fragment {
     if (override) {
       return `
     static rebuild_buffers() {
+        if (!this.data.gpu_data_dirty) return;
+
         ${override.pre ? override.pre : ""}
         ${!override.skip_default ? this.generate_default_rebuild_buffers(buffers) : ""}
         ${override.post ? override.post : ""}
@@ -553,6 +563,8 @@ export class ${fragment_name} extends Fragment {
     }
     return `
     static rebuild_buffers() {
+        if (!this.data.gpu_data_dirty) return;
+
         ${this.generate_default_rebuild_buffers(buffers)}
     }`;
   }
@@ -566,7 +578,7 @@ export class ${fragment_name} extends Fragment {
             ${
               buffer.gpu_data
                 ? `${buffer.gpu_data}`
-                : `const gpu_data = this.data.${key} ? this.data.${key} : new ${buffer.type.array.name}(this.size * ${buffer.stride || 1});`
+                : `const gpu_data = this.data.${key} ? this.data.${key} : new ${buffer.type.array.name}(this.size * ${buffer.stride || 1} + ${buffer.stride || 1});`
             }
             if (!this.data.${key}_buffer || this.data.${key}_buffer.config.size < gpu_data.byteLength) {
                 this.data.${key}_buffer = Buffer.create({
@@ -678,87 +690,56 @@ export class ${fragment_name} extends Fragment {
     `;
   }
 
-  static generate_entity_instance_count_changed(fields, override) {
+  static generate_batch_entity_instance_count_changed(fields, override) {
     if (override) {
       return `
-    static entity_instance_count_changed(entity, last_entity_count) {
+    static batch_entity_instance_count_changed(index, shift) {
         ${override.pre ? override.pre : ""}
-        ${!override.skip_default ? this.generate_default_entity_instance_count_changed(fields) : ""}
+        ${!override.skip_default ? this.generate_default_batch_entity_instance_count_changed(fields) : ""}
         ${override.post ? override.post : ""}
     }`;
     }
     return `
-    static entity_instance_count_changed(entity, last_entity_count) {
-        ${this.generate_default_entity_instance_count_changed(fields)}
+    static batch_entity_instance_count_changed(index, shift) {
+        ${this.generate_default_batch_entity_instance_count_changed(fields)}
     }`;
   }
 
-  static generate_default_entity_instance_count_changed(fields) {
+  static generate_default_batch_entity_instance_count_changed(fields) {
+    const filtered_fields = Object.entries(fields).filter(
+      ([_, field]) => !field.no_fragment_array && !field.no_instance_count_resize
+    );
+    const has_fields = filtered_fields.length > 0;
     return `
-        const entity_index = EntityID.get_absolute_index(entity);
-        const entity_count = EntityID.get_instance_count(entity);
-        
-        const shift_amount = entity_count - last_entity_count;
-        
-        // No need to shift if there's no change
-        if (shift_amount === 0) return;
-
-        ${Object.entries(fields)
-          .filter(([_, field]) => !field.no_fragment_array)
+        const source_index = Math.min(Math.max(0, index - shift), this.size - 1);
+      ${
+        has_fields
+          ? `
+        ${filtered_fields
           .map(([key, field]) => {
-            if (field.no_instance_count_resize) {
-              return ``;
-            }
-            if (field.is_container) {
-              return `this.data.${key}.shift_data(entity_index + last_entity_count, shift_amount);`;
-            }
             if (field.vector) {
               return Object.keys(field.vector)
-                .map(axis => `
-                  if (shift_amount > 0) {
-                    // Make space by moving data forward
-                    let i = this.size - shift_amount - 1;
-                    for (; i >= entity_index; --i) {
-                      this.data.${key}.${axis}[i + shift_amount] = this.data.${key}.${axis}[i];
-                    }
-                    i += 1;
-                    for (; i < entity_index + shift_amount; ++i) {
-                      this.data.${key}.${axis}[i] = this.data.${key}.${axis}[entity_index];
-                    }
-                  } else if (shift_amount < 0) {
-                    // Compress by moving data backward
-                    let size = Math.max(this.size, this.size - shift_amount);
-                    for (let i = entity_index; i < size; ++i) {
-                      this.data.${key}.${axis}[i] = this.data.${key}.${axis}[i + shift_amount];
-                    }
-                  }`)
+                .map(
+                  (axis) => `
+                          ${Array.from({ length: field.stride }, (_, s) => {
+                            return `this.data.${key}.${axis}[index * ${field.stride} + ${s}] = this.data.${key}.${axis}[source_index * ${field.stride} + ${s}];`;
+                          }).join("\n")}
+                          `
+                )
                 .join("\n");
             }
             return `
-              if (shift_amount > 0) {
-                // Make space by moving data forward
-                let i = this.size - shift_amount - 1;
-                for (; i >= entity_index; --i) {
-                  ${Array.from({length: field.stride}, (_, j) => `
-                  this.data.${key}[(i + shift_amount) * ${field.stride} + ${j}] = this.data.${key}[i * ${field.stride} + ${j}];`).join("\n")}
-                }
-                i += 1;
-                for (; i < entity_index + shift_amount; ++i) {
-                  ${Array.from({length: field.stride}, (_, j) => `
-                  this.data.${key}[i * ${field.stride} + ${j}] = this.data.${key}[entity_index * ${field.stride} + ${j}];`).join("\n")}
-                }
-              } else if (shift_amount < 0) {
-                // Compress by moving data backward
-                let size = Math.max(this.size, this.size - shift_amount);
-                for (let i = entity_index; i < size; ++i) {
-                  ${Array.from({length: field.stride}, (_, j) => `
-                  this.data.${key}[i * ${field.stride} + ${j}] = this.data.${key}[(i + shift_amount) * ${field.stride} + ${j}];`).join("\n")}
-                }
-              }`;
+                      ${Array.from({ length: field.stride }, (_, s) => {
+                        return `this.data.${key}[index * ${field.stride} + ${s}] = this.data.${key}[source_index * ${field.stride} + ${s}];`;
+                      }).join("\n")}
+                    `;
           })
-          .join("\n        ")}
+          .join("\n")}
+                    `
+          : ``
+      }
 
-        this.data.gpu_data_dirty = true;
+    this.data.gpu_data_dirty = true;
     `;
   }
 

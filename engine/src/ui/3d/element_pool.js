@@ -8,18 +8,18 @@ export class Element3DPool {
   active_count = 0;
   element_to_active_index = new Map();
 
-  constructor(scene, pool_size = 0) {
+  constructor(pool_size = 0) {
     this.elements = new Float64Array(pool_size);
     this.active_elements = new Uint32Array(pool_size);
     this.available_elements = new TypedStack(pool_size, Uint32Array);
     for (let i = 0; i < pool_size; i++) {
-      const element = Element3D.create(scene, {}, null, null, [], false);
+      const element = Element3D.create({}, null, null, [], false);
       this.elements[i] = element;
       this.available_elements.push(i);
     }
   }
 
-  create(scene, config, material, parent = null, children = []) {
+  create(config, material, parent = null, children = []) {
     const should_construct = this.available_elements.is_empty();
 
     this._ensure_elements_capacity();
@@ -28,13 +28,13 @@ export class Element3DPool {
 
     if (!should_construct) {
       const element = this.elements[element_id];
-      Element3D.set_config(scene, element, config);
-      Element3D.set_material(scene, element, material);
-      Element3D.set_parent(scene, element, parent);
-      Element3D.set_children(scene, element, children);
-      Element3D.set_visible(scene, element, true);
+      Element3D.set_config(element, config);
+      Element3D.set_material(element, material);
+      Element3D.set_parent(element, parent);
+      Element3D.set_children(element, children);
+      Element3D.set_visible(element, true);
     } else {
-      this.elements[element_id] = Element3D.create(scene, config, material, parent, children);
+      this.elements[element_id] = Element3D.create(config, material, parent, children);
     }
 
     this._ensure_active_capacity();
@@ -51,10 +51,10 @@ export class Element3DPool {
     }
 
     const element = this.elements[element_id];
-    Element3D.set_material(scene, element, null);
-    Element3D.set_parent(scene, element, null);
-    Element3D.set_children(scene, element, []);
-    Element3D.set_visible(scene, element, false);
+    Element3D.set_material(element, null);
+    Element3D.set_parent(element, null);
+    Element3D.set_children(element, []);
+    Element3D.set_visible(element, false);
 
     this._remove_from_active(element_id);
     this.available_elements.push(element_id);
@@ -140,8 +140,8 @@ export class Element3DPool {
     this.element_to_active_index.clear();
   }
 
-  static create(scene, pool_size = 0) {
-    const element_pool = new Element3DPool(scene, pool_size);
+  static create(pool_size = 0) {
+    const element_pool = new Element3DPool(pool_size);
     return element_pool;
   }
 }

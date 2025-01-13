@@ -1,7 +1,6 @@
 import { Renderer } from "../engine/src/renderer/renderer.js";
 import { DeferredShadingStrategy } from "../engine/src/renderer/strategies/deferred_shading.js";
 import { Material } from "../engine/src/renderer/material.js";
-import { Fragment } from "../engine/src/core/ecs/fragment.js";
 import SimulationCore from "../engine/src/core/simulation_core.js";
 import { InputProvider } from "../engine/src/input/input_provider.js";
 import { EntityManager } from "../engine/src/core/ecs/entity.js";
@@ -22,7 +21,6 @@ import { SharedEnvironmentMapData } from "../engine/src/core/shared_data.js";
 import { profile_scope } from "../engine/src/utility/performance.js";
 import { frame_runner } from "../engine/src/utility/frame_runner.js";
 import { spawn_mesh_entity } from "../engine/src/core/ecs/entity_utils.js";
-import { quat } from "gl-matrix";
 import { FontCache } from "../engine/src/ui/text/font_cache.js";
 
 export class TestScene extends Scene {
@@ -34,30 +32,27 @@ export class TestScene extends Scene {
     freeform_arcball_control_processor.set_scene(this);
 
     // Set the skybox for this scene.
-    await SharedEnvironmentMapData.add_skybox(
-      "default_scene_skybox",
-      [
-        "engine/textures/gradientbox/px.png",
-        "engine/textures/gradientbox/nx.png",
-        "engine/textures/gradientbox/ny.png",
-        "engine/textures/gradientbox/py.png",
-        "engine/textures/gradientbox/pz.png",
-        "engine/textures/gradientbox/nz.png",
-      ]
-    );
+    await SharedEnvironmentMapData.add_skybox("default_scene_skybox", [
+      "engine/textures/gradientbox/px.png",
+      "engine/textures/gradientbox/nx.png",
+      "engine/textures/gradientbox/ny.png",
+      "engine/textures/gradientbox/py.png",
+      "engine/textures/gradientbox/pz.png",
+      "engine/textures/gradientbox/nz.png",
+    ]);
 
     // Create a light and add it to the scene
-    const light_entity = this.create_entity();
+    const light_entity = EntityManager.create_entity();
 
     // Add a light fragment to the light entity
-    const light_fragment_view = this.add_fragment(light_entity, LightFragment, false);
+    const light_fragment_view = EntityManager.add_fragment(light_entity, LightFragment, false);
     light_fragment_view.type = LightType.DIRECTIONAL;
     light_fragment_view.color.r = 1;
     light_fragment_view.color.g = 1;
     light_fragment_view.color.b = 1;
     light_fragment_view.intensity = 5;
     light_fragment_view.position.x = 50;
-    light_fragment_view.position.y = 100;
+    light_fragment_view.position.y = 0;
     light_fragment_view.position.z = 50;
     light_fragment_view.active = true;
 
@@ -69,64 +64,64 @@ export class TestScene extends Scene {
     // Create a default material
     const default_material_id = Material.create("MyMaterial", "StandardMaterial");
 
+    // Get Exo-Medium font
+    const font_id = Name.from("Exo-Medium");
+    const font_object = FontCache.get_font_object(font_id);
+
     // Create a 3D grid of sphere entities
     const grid_size = 100; // 100x100x10 grid
     const grid_layers = 10;
-    const spacing = 2; // 2 units apart
+    const spacing = 5; // 2 units apart
 
-    this.reserve_entities(grid_size * grid_size * grid_layers);
+    EntityManager.reserve_entities(grid_size * grid_size * grid_layers + 2);
 
     for (let x = 0; x < grid_size; x++) {
       for (let z = 0; z < grid_size; z++) {
         for (let y = 0; y < grid_layers; y++) {
-          let entity = this.create_entity(false /* refresh_entities */);
-
-          // Add a static mesh fragment to the sphere entity
-          const static_mesh_fragment_view = this.add_fragment(entity, StaticMeshFragment, false);
-          static_mesh_fragment_view.mesh = BigInt(Name.from(mesh.name));
-          static_mesh_fragment_view.material_slots = [default_material_id];
-
-          const rotation = quat.fromValues(0, 0, 0, 1);
-
-          // Add a transform fragment to the sphere entity
-          const transform_fragment_view = this.add_fragment(entity, TransformFragment, false);
-          transform_fragment_view.position = [
-            (x - Math.floor(grid_size / 2)) * spacing,
-            (y - Math.floor(grid_layers / 2)) * spacing,
-            (z - Math.floor(grid_size / 2)) * spacing,
-          ];
-          transform_fragment_view.rotation = rotation;
-          transform_fragment_view.scale = [0.5, 0.5, 0.5];
-
-          // Add a visibility fragment to the sphere entity
-          const visibility_fragment_view = this.add_fragment(entity, VisibilityFragment, false);
-          visibility_fragment_view.visible = 1;
-
-          // Add a scene graph fragment to the sphere entity
-          const scene_graph_fragment_view = this.add_fragment(entity, SceneGraphFragment, false);
-          scene_graph_fragment_view.parent = null;
+          const sphere = spawn_mesh_entity(
+            {
+              x: (x - Math.floor(grid_size / 2)) * spacing,
+              y: (y - Math.floor(grid_layers / 2)) * spacing,
+              z: (z - Math.floor(grid_size / 2)) * spacing,
+            },
+            { x: 0, y: 0, z: 0, w: 1 },
+            { x: 1.0, y: 1.0, z: 1.0 },
+            mesh,
+            default_material_id,
+            null /* parent */,
+            [] /* children */,
+            true /* start_visible */,
+            false /* refresh_entities */
+          );
         }
       }
     }
 
-    // Create some text
-    const font_id = Name.from("Exo-Medium");
-    const font_object = FontCache.get_font_object(font_id);
-
     const text_entity = spawn_mesh_entity(
-      this,
-      {x: 0, y: 15.0, z: 0},
-      {x: 0, y: 0, z: 0, w: 1},
-      {x: 1, y: 1, z: 1},
+      {
+        x: 0,
+        y: 25,
+        z: 0,
+      },
+      { x: 0, y: 0, z: 0, w: 1 },
+      { x: 0.5, y: 0.5, z: 0.5 },
       Mesh.quad(),
-      font_object.material
+      font_object.material,
+      null /* parent */,
+      [] /* children */,
+      true /* start_visible */,
+      false /* refresh_entities */
     );
-    const text_fragment_view = this.add_fragment(text_entity, TextFragment, false);
+    const text_fragment_view = EntityManager.add_fragment(
+      text_entity,
+      TextFragment,
+      false /* refresh_entities */
+    );
     text_fragment_view.font = font_id;
-    text_fragment_view.text = "Hello, World!";
+    text_fragment_view.text = "Sundown Engine";
     text_fragment_view.font_size = 32;
 
-    this.refresh_entities();
+    EntityManager.refresh_entities();
   }
 
   update(delta_time) {

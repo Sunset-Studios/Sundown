@@ -1007,7 +1007,6 @@ export class Vector {
    * @throws {Error} If the vector is empty.
    */
   pop() {
-    console.assert(this.#size > 0);
     return this.#buffer[--this.#size];
   }
 
@@ -1026,7 +1025,6 @@ export class Vector {
    * @throws {Error} If the index is out of bounds.
    */
   remove(index) {
-    console.assert(index >= 0 && index < this.#size);
     // Shift remaining elements left
     this.#buffer.copyWithin(index, index + 1, this.#size);
     this.#size--;
@@ -1039,7 +1037,6 @@ export class Vector {
    * @throws {Error} If the index is out of bounds.
    */
   get(index) {
-    console.assert(index >= 0 && index < this.#size);
     return this.#buffer[index];
   }
 
@@ -1050,7 +1047,6 @@ export class Vector {
    * @throws {Error} If the index is out of bounds.
    */
   set(index, value) {
-    console.assert(index >= 0 && index < this.#size);
     this.#buffer[index] = value;
   }
 

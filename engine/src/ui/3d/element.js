@@ -1,4 +1,4 @@
-import { Renderer } from "../../renderer/renderer.js";
+import { EntityManager } from "../../core/ecs/entity.js";
 import { Mesh } from "../../renderer/mesh.js";
 import { Material } from "../../renderer/material.js";
 import { StaticMeshFragment } from "../../core/ecs/fragments/static_mesh_fragment.js";
@@ -11,9 +11,8 @@ import { spawn_mesh_entity } from "../../core/ecs/entity_utils.js";
 export class Element3D {
   static events = {};
 
-  static create(scene, config, material = null, parent = null, children = [], start_visible = true) {
+  static create(config, material = null, parent = null, children = [], start_visible = true) {
     const entity = spawn_mesh_entity(
-      scene,
       { x: 0, y: 0, z: 0 },
       { x: 0, y: 0, z: 0, w: 1 },
       { x: 1, y: 1, z: 1 },
@@ -25,7 +24,7 @@ export class Element3D {
       false /* refresh_entities */
     );
 
-    const new_user_interface_view = scene.add_fragment(entity, UserInterfaceFragment);
+    const new_user_interface_view = EntityManager.add_fragment(entity, UserInterfaceFragment);
     new_user_interface_view.allows_cursor_events = 1;
     new_user_interface_view.auto_size = 0;
     new_user_interface_view.was_cursor_inside = 0;
@@ -40,13 +39,13 @@ export class Element3D {
     return entity;
   }
 
-  static destroy(scene, entity) {
-    scene.delete_entity(entity);
+  static destroy(entity) {
+    EntityManager.delete_entity(entity);
   }
 
-  static add_child(scene, entity, child) {
-    let this_scene_graph_data = scene.get_fragment(entity, SceneGraphFragment);
-    let child_scene_graph_data = scene.get_fragment(child.entity, SceneGraphFragment);
+  static add_child(entity, child) {
+    let this_scene_graph_data = EntityManager.get_fragment(entity, SceneGraphFragment);
+    let child_scene_graph_data = EntityManager.get_fragment(child.entity, SceneGraphFragment);
     if (this_scene_graph_data && child_scene_graph_data) {
       const children = this_scene_graph_data.children;
       children.push(child.entity);
@@ -55,9 +54,9 @@ export class Element3D {
     }
   }
 
-  static remove_child(scene, entity, child) {
-    let this_scene_graph_data = scene.get_fragment(entity, SceneGraphFragment);
-    let child_scene_graph_data = scene.get_fragment(child.entity, SceneGraphFragment);
+  static remove_child(entity, child) {
+    let this_scene_graph_data = EntityManager.get_fragment(entity, SceneGraphFragment);
+    let child_scene_graph_data = EntityManager.get_fragment(child.entity, SceneGraphFragment);
     if (this_scene_graph_data && child_scene_graph_data) {
       this_scene_graph_data.children = this_scene_graph_data.children.filter(
         (c) => c !== child.entity
@@ -66,28 +65,28 @@ export class Element3D {
     }
   }
 
-  static set_config(scene, entity, config) {
+  static set_config(entity, config) {
     if (!config) return;
 
     const { position, rotation, scale, allows_cursor_events } = config;
 
     if (position) {
-      this.set_position(scene, entity, position);
+      this.set_position(entity, position);
     }
     if (rotation) {
-      this.set_rotation(scene, entity, rotation);
+      this.set_rotation(entity, rotation);
     }
     if (scale) {
-      this.set_scale(scene, entity, scale);
+      this.set_scale(entity, scale);
     }
 
     if (allows_cursor_events !== undefined) {
-      this.set_allows_cursor_events(scene, entity, allows_cursor_events);
+      this.set_allows_cursor_events(entity, allows_cursor_events);
     }
   }
 
-  static set_material(scene, entity, material) {
-    let mesh_data = scene.get_fragment(entity, StaticMeshFragment);
+  static set_material(entity, material) {
+    let mesh_data = EntityManager.get_fragment(entity, StaticMeshFragment);
     if (!mesh_data) {
       return;
     }
@@ -99,27 +98,27 @@ export class Element3D {
     }
   }
 
-  static set_parent(scene, entity, parent) {
-    let this_scene_graph_data = scene.get_fragment(entity, SceneGraphFragment);
+  static set_parent(entity, parent) {
+    let this_scene_graph_data = EntityManager.get_fragment(entity, SceneGraphFragment);
     if (!this_scene_graph_data) {
       return;
     }
 
-    if (scene.has_fragment(parent, SceneGraphFragment)) {
+    if (EntityManager.has_fragment(parent, SceneGraphFragment)) {
       this_scene_graph_data.parent = parent;
     } else {
       this_scene_graph_data.parent = null;
     }
   }
 
-  static set_children(scene, entity, children) {
-    let this_scene_graph_data = scene.get_fragment(entity, SceneGraphFragment);
+  static set_children(entity, children) {
+    let this_scene_graph_data = EntityManager.get_fragment(entity, SceneGraphFragment);
     if (!this_scene_graph_data) {
       return;
     }
 
     for (let i = 0; i < this_scene_graph_data.children.length; i++) {
-      let child_scene_graph_data = scene.get_fragment(
+      let child_scene_graph_data = EntityManager.get_fragment(
         this_scene_graph_data.children[i],
         SceneGraphFragment
       );
@@ -130,55 +129,55 @@ export class Element3D {
 
     for (let i = 0; i < children.length; i++) {
       let child = children[i];
-      let child_scene_graph_data = scene.get_fragment(child.entity, SceneGraphFragment);
+      let child_scene_graph_data = EntityManager.get_fragment(child.entity, SceneGraphFragment);
       if (child_scene_graph_data) {
         child_scene_graph_data.parent = entity;
       }
     }
   }
 
-  static set_position(scene, entity, position) {
-    let transform_data = scene.get_fragment(entity, TransformFragment);
+  static set_position(entity, position) {
+    let transform_data = EntityManager.get_fragment(entity, TransformFragment);
     if (!transform_data) {
       return;
     }
     transform_data.position = position;
   }
 
-  static set_rotation(scene, entity, rotation) {
-    let transform_data = scene.get_fragment(entity, TransformFragment);
+  static set_rotation(entity, rotation) {
+    let transform_data = EntityManager.get_fragment(entity, TransformFragment);
     if (!transform_data) {
       return;
     }
     transform_data.rotation = rotation;
   }
 
-  static set_scale(scene, entity, scale) {
-    let transform_data = scene.get_fragment(entity, TransformFragment);
+  static set_scale(entity, scale) {
+    let transform_data = EntityManager.get_fragment(entity, TransformFragment);
     if (!transform_data) {
       return;
     }
     transform_data.scale = scale;
   }
 
-  static set_allows_cursor_events(scene, entity, allows_cursor_events) {
-    let user_interface_data = scene.get_fragment(entity, UserInterfaceFragment);
+  static set_allows_cursor_events(entity, allows_cursor_events) {
+    let user_interface_data = EntityManager.get_fragment(entity, UserInterfaceFragment);
     if (!user_interface_data) {
       return;
     }
     user_interface_data.allows_cursor_events = allows_cursor_events;
   }
 
-  static set_visible(scene, entity, visible) {
-    let visibility_data = scene.get_fragment(entity, VisibilityFragment);
+  static set_visible(entity, visible) {
+    let visibility_data = EntityManager.get_fragment(entity, VisibilityFragment);
     if (!visibility_data) {
       return;
     }
     visibility_data.visible = visible;
   }
 
-  static set_auto_size(scene, entity, auto_size) {
-    let user_interface_data = scene.get_fragment(entity, UserInterfaceFragment);
+  static set_auto_size(entity, auto_size) {
+    let user_interface_data = EntityManager.get_fragment(entity, UserInterfaceFragment);
     if (!user_interface_data) {
       return;
     }

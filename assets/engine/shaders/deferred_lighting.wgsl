@@ -75,7 +75,7 @@ struct FragmentOutput {
 
     let unlit = min(1u, u32(normal_length <= 0.0) + u32(1.0 - deferred_standard_lighting));
 
-    var color = f32(unlit) * tex_sky.rgb;
+    var color = f32(unlit) * tex_sky.rgb * mix(vec3f(1.0), albedo, tex_albedo.a);
 
     let num_lights = arrayLength(&lights_buffer) * (1u - unlit);
     for (var i = 0u; i < num_lights; i++) {

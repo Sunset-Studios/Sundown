@@ -193,6 +193,8 @@ export class TransformFragment extends Fragment {
   }
 
   static resize(new_size) {
+    if (new_size <= this.size) return;
+
     this.size = new_size;
 
     if (!this.data) this.initialize();
@@ -202,12 +204,13 @@ export class TransformFragment extends Fragment {
     Fragment.resize_array(this.data, "scale", new_size, Float32Array, 4);
     Fragment.resize_array(this.data, "dirty", new_size, Uint32Array, 1);
 
-    this.rebuild_buffers();
+    this.data.gpu_data_dirty = true;
   }
 
   static add_entity(entity) {
-    if (entity >= this.size) {
-      this.resize(entity * 2);
+    const absolute_entity = EntityID.get_absolute_index(entity);
+    if (absolute_entity >= this.size) {
+      this.resize(absolute_entity * 2);
     }
 
     return this.get_entity_data(entity);
@@ -272,10 +275,12 @@ export class TransformFragment extends Fragment {
   }
 
   static rebuild_buffers() {
+    if (!this.data.gpu_data_dirty) return;
+
     {
       const gpu_data = this.data.position
         ? this.data.position
-        : new Float32Array(this.size * 4);
+        : new Float32Array(this.size * 4 + 4);
       if (
         !this.data.position_buffer ||
         this.data.position_buffer.config.size < gpu_data.byteLength
@@ -308,7 +313,7 @@ export class TransformFragment extends Fragment {
     {
       const gpu_data = this.data.rotation
         ? this.data.rotation
-        : new Float32Array(this.size * 4);
+        : new Float32Array(this.size * 4 + 4);
       if (
         !this.data.rotation_buffer ||
         this.data.rotation_buffer.config.size < gpu_data.byteLength
@@ -341,7 +346,7 @@ export class TransformFragment extends Fragment {
     {
       const gpu_data = this.data.scale
         ? this.data.scale
-        : new Float32Array(this.size * 4);
+        : new Float32Array(this.size * 4 + 4);
       if (
         !this.data.scale_buffer ||
         this.data.scale_buffer.config.size < gpu_data.byteLength
@@ -403,7 +408,7 @@ export class TransformFragment extends Fragment {
     {
       const gpu_data = this.data.transforms
         ? this.data.transforms
-        : new Float32Array(this.size * 64);
+        : new Float32Array(this.size * 64 + 64);
       if (
         !this.data.transforms_buffer ||
         this.data.transforms_buffer.config.size < gpu_data.byteLength
@@ -430,7 +435,7 @@ export class TransformFragment extends Fragment {
     {
       const gpu_data = this.data.bounds_data
         ? this.data.bounds_data
-        : new Float32Array(this.size * 8);
+        : new Float32Array(this.size * 8 + 8);
       if (
         !this.data.bounds_data_buffer ||
         this.data.bounds_data_buffer.config.size < gpu_data.byteLength
@@ -531,178 +536,35 @@ export class TransformFragment extends Fragment {
     }
   }
 
-  static entity_instance_count_changed(entity, last_entity_count) {
-    const entity_index = EntityID.get_absolute_index(entity);
-    const entity_count = EntityID.get_instance_count(entity);
+  static batch_entity_instance_count_changed(index, shift) {
+    const source_index = Math.min(Math.max(0, index - shift), this.size - 1);
 
-    const shift_amount = entity_count - last_entity_count;
+    this.data.position[index * 4 + 0] =
+      this.data.position[source_index * 4 + 0];
+    this.data.position[index * 4 + 1] =
+      this.data.position[source_index * 4 + 1];
+    this.data.position[index * 4 + 2] =
+      this.data.position[source_index * 4 + 2];
+    this.data.position[index * 4 + 3] =
+      this.data.position[source_index * 4 + 3];
 
-    // No need to shift if there's no change
-    if (shift_amount === 0) return;
+    this.data.rotation[index * 4 + 0] =
+      this.data.rotation[source_index * 4 + 0];
+    this.data.rotation[index * 4 + 1] =
+      this.data.rotation[source_index * 4 + 1];
+    this.data.rotation[index * 4 + 2] =
+      this.data.rotation[source_index * 4 + 2];
+    this.data.rotation[index * 4 + 3] =
+      this.data.rotation[source_index * 4 + 3];
 
-    if (shift_amount > 0) {
-      // Make space by moving data forward
-      let i = this.size - shift_amount - 1;
-      for (; i >= entity_index; --i) {
-        this.data.position[(i + shift_amount) * 4 + 0] =
-          this.data.position[i * 4 + 0];
+    this.data.scale[index * 4 + 0] = this.data.scale[source_index * 4 + 0];
+    this.data.scale[index * 4 + 1] = this.data.scale[source_index * 4 + 1];
+    this.data.scale[index * 4 + 2] = this.data.scale[source_index * 4 + 2];
+    this.data.scale[index * 4 + 3] = this.data.scale[source_index * 4 + 3];
 
-        this.data.position[(i + shift_amount) * 4 + 1] =
-          this.data.position[i * 4 + 1];
-
-        this.data.position[(i + shift_amount) * 4 + 2] =
-          this.data.position[i * 4 + 2];
-
-        this.data.position[(i + shift_amount) * 4 + 3] =
-          this.data.position[i * 4 + 3];
-      }
-      i += 1;
-      for (; i < entity_index + shift_amount; ++i) {
-        this.data.position[i * 4 + 0] =
-          this.data.position[entity_index * 4 + 0];
-
-        this.data.position[i * 4 + 1] =
-          this.data.position[entity_index * 4 + 1];
-
-        this.data.position[i * 4 + 2] =
-          this.data.position[entity_index * 4 + 2];
-
-        this.data.position[i * 4 + 3] =
-          this.data.position[entity_index * 4 + 3];
-      }
-    } else if (shift_amount < 0) {
-      // Compress by moving data backward
-      let size = Math.max(this.size, this.size - shift_amount);
-      for (let i = entity_index; i < size; ++i) {
-        this.data.position[i * 4 + 0] =
-          this.data.position[(i + shift_amount) * 4 + 0];
-
-        this.data.position[i * 4 + 1] =
-          this.data.position[(i + shift_amount) * 4 + 1];
-
-        this.data.position[i * 4 + 2] =
-          this.data.position[(i + shift_amount) * 4 + 2];
-
-        this.data.position[i * 4 + 3] =
-          this.data.position[(i + shift_amount) * 4 + 3];
-      }
-    }
-
-    if (shift_amount > 0) {
-      // Make space by moving data forward
-      let i = this.size - shift_amount - 1;
-      for (; i >= entity_index; --i) {
-        this.data.rotation[(i + shift_amount) * 4 + 0] =
-          this.data.rotation[i * 4 + 0];
-
-        this.data.rotation[(i + shift_amount) * 4 + 1] =
-          this.data.rotation[i * 4 + 1];
-
-        this.data.rotation[(i + shift_amount) * 4 + 2] =
-          this.data.rotation[i * 4 + 2];
-
-        this.data.rotation[(i + shift_amount) * 4 + 3] =
-          this.data.rotation[i * 4 + 3];
-      }
-      i += 1;
-      for (; i < entity_index + shift_amount; ++i) {
-        this.data.rotation[i * 4 + 0] =
-          this.data.rotation[entity_index * 4 + 0];
-
-        this.data.rotation[i * 4 + 1] =
-          this.data.rotation[entity_index * 4 + 1];
-
-        this.data.rotation[i * 4 + 2] =
-          this.data.rotation[entity_index * 4 + 2];
-
-        this.data.rotation[i * 4 + 3] =
-          this.data.rotation[entity_index * 4 + 3];
-      }
-    } else if (shift_amount < 0) {
-      // Compress by moving data backward
-      let size = Math.max(this.size, this.size - shift_amount);
-      for (let i = entity_index; i < size; ++i) {
-        this.data.rotation[i * 4 + 0] =
-          this.data.rotation[(i + shift_amount) * 4 + 0];
-
-        this.data.rotation[i * 4 + 1] =
-          this.data.rotation[(i + shift_amount) * 4 + 1];
-
-        this.data.rotation[i * 4 + 2] =
-          this.data.rotation[(i + shift_amount) * 4 + 2];
-
-        this.data.rotation[i * 4 + 3] =
-          this.data.rotation[(i + shift_amount) * 4 + 3];
-      }
-    }
-
-    if (shift_amount > 0) {
-      // Make space by moving data forward
-      let i = this.size - shift_amount - 1;
-      for (; i >= entity_index; --i) {
-        this.data.scale[(i + shift_amount) * 4 + 0] =
-          this.data.scale[i * 4 + 0];
-
-        this.data.scale[(i + shift_amount) * 4 + 1] =
-          this.data.scale[i * 4 + 1];
-
-        this.data.scale[(i + shift_amount) * 4 + 2] =
-          this.data.scale[i * 4 + 2];
-
-        this.data.scale[(i + shift_amount) * 4 + 3] =
-          this.data.scale[i * 4 + 3];
-      }
-      i += 1;
-      for (; i < entity_index + shift_amount; ++i) {
-        this.data.scale[i * 4 + 0] = this.data.scale[entity_index * 4 + 0];
-
-        this.data.scale[i * 4 + 1] = this.data.scale[entity_index * 4 + 1];
-
-        this.data.scale[i * 4 + 2] = this.data.scale[entity_index * 4 + 2];
-
-        this.data.scale[i * 4 + 3] = this.data.scale[entity_index * 4 + 3];
-      }
-    } else if (shift_amount < 0) {
-      // Compress by moving data backward
-      let size = Math.max(this.size, this.size - shift_amount);
-      for (let i = entity_index; i < size; ++i) {
-        this.data.scale[i * 4 + 0] =
-          this.data.scale[(i + shift_amount) * 4 + 0];
-
-        this.data.scale[i * 4 + 1] =
-          this.data.scale[(i + shift_amount) * 4 + 1];
-
-        this.data.scale[i * 4 + 2] =
-          this.data.scale[(i + shift_amount) * 4 + 2];
-
-        this.data.scale[i * 4 + 3] =
-          this.data.scale[(i + shift_amount) * 4 + 3];
-      }
-    }
-
-    if (shift_amount > 0) {
-      // Make space by moving data forward
-      let i = this.size - shift_amount - 1;
-      for (; i >= entity_index; --i) {
-        this.data.dirty[(i + shift_amount) * 1 + 0] =
-          this.data.dirty[i * 1 + 0];
-      }
-      i += 1;
-      for (; i < entity_index + shift_amount; ++i) {
-        this.data.dirty[i * 1 + 0] = this.data.dirty[entity_index * 1 + 0];
-      }
-    } else if (shift_amount < 0) {
-      // Compress by moving data backward
-      let size = Math.max(this.size, this.size - shift_amount);
-      for (let i = entity_index; i < size; ++i) {
-        this.data.dirty[i * 1 + 0] =
-          this.data.dirty[(i + shift_amount) * 1 + 0];
-      }
-    }
+    this.data.dirty[index * 1 + 0] = this.data.dirty[source_index * 1 + 0];
 
     this.data.gpu_data_dirty = true;
-
-    this.rebuild_buffers();
   }
 
   static async on_post_render() {

@@ -428,9 +428,14 @@ export class SharedEntityMetadataBuffer {
   static num_entities = 0;
   static buffer = null;
   static buffer_size = 0;
+  static dirty = false;
 
   static get_entity_offset(entity) {
     return this.entity_metadata.get(entity * 2);
+  }
+
+  static set_entity_offset(entity, offset) {
+    this.entity_metadata.set(entity * 2, offset);
   }
 
   static get_entity_count(entity) {
@@ -443,23 +448,16 @@ export class SharedEntityMetadataBuffer {
   }
 
   static set_entity_instance_count(entity, count) {
-    const old_count = this.entity_metadata.get(entity * 2 + 1);
     this.entity_metadata.set(entity * 2 + 1, count);
-    
-    // Shift subsequent entity offsets by the change in count
-    const count_delta = count - old_count;
-    if (count_delta !== 0) {
-      for (let i = entity + 1; i < this.num_entities; i++) {
-        const current_offset = this.entity_metadata.get(i * 2);
-        this.entity_metadata.set(i * 2, current_offset + count_delta);
-      }
-    }
+    this.dirty = true;
+  }
 
-    if (!this.buffer) {
-      this.build();
-    } else {
-      this.buffer.write(this._get_gpu_type_layout());
+  static update_offsets() {
+    for (let i = 0, offset = 0; i < this.num_entities; i++) {
+      this.set_entity_offset(i, offset);
+      offset += this.get_entity_count(i);
     }
+    this.dirty = true;
   }
 
   static add_entity(entity) {
@@ -487,6 +485,18 @@ export class SharedEntityMetadataBuffer {
       this.entity_metadata.resize(Math.max(4, new_size * 4)); // Double the size of the buffer
       this.build();
     }
+  }
+
+  static rebuild() {
+    if (!this.dirty) return;
+
+    if (!this.buffer || this.buffer_size < this.entity_metadata.get_data().byteLength) {
+      this.build();
+    } else {
+      this.buffer.write(this._get_gpu_type_layout());
+    }
+
+    this.dirty = false;
   }
 
   static build() {

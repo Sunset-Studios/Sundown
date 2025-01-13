@@ -2,23 +2,6 @@ import { SharedEntityMetadataBuffer } from "../shared_data.js";
 import { EntityQuery } from "./query.js";
 import { Vector } from "../../memory/container.js";
 
-// The semantics of the entity id are as follows:
-//
-// entity_index: 32 bits
-// instance_count: 32 bits
-//
-// The entity index is the index of the entity in the entity manager.
-// The instance count is the number of instances of that entity, where an entity is like a more granular archetype.
-// The entity index is used to identify the entity, and the instance count is used internally by fragments to manage buffer data.
-// This usually means that entity instances run contiguously after the entity index to optimize for cache performance.
-// Deleting an entity should wholesale free all of its instances as well.
-// You can duplicate or get data for a specific instance of an entity.
-// All other operations are done across all instances of an entity.
-// It is the responsibility of the caller to manage the returned entity id and to manage the instance count via calls to change_entity_instance_count.
-//
-// TODO: Maybe find a better way to internally manage instance counts for entities? Divergences can occur if the application stores multiple copies
-// of the entity id with differing instance counts, which can lead to undefined behavior.
-
 const entity_image_buffer_name = "entity_image_buffer";
 const object_name = "object";
 
@@ -30,6 +13,10 @@ export class EntityID {
   static get_instance_count(entity) {
     return SharedEntityMetadataBuffer.get_entity_count(entity);
   }
+
+  static set_instance_count(entity, instance_count) {
+    SharedEntityMetadataBuffer.set_entity_instance_count(entity, instance_count);
+  }
 }
 
 export class EntityManager {
@@ -39,12 +26,26 @@ export class EntityManager {
   static entities = new Vector(256, Float64Array);
   static deleted_entities = new Set();
   static queries = [];
+  static pending_instance_count_changes = new Map();
 
-  static reserve_entities(size) {
+  static preinit_fragments(...fragment_types) {
+    for (const fragment_type of fragment_types) {
+      if (!this.fragment_types.has(fragment_type)) {
+        fragment_type.initialize();
+        this.fragment_types.add(fragment_type);
+      }
+    }
+  }
+
+  static reserve_entities(size, rebuild_buffers = true) {
     SharedEntityMetadataBuffer.resize(size);
 
     for (const fragment_type of this.fragment_types) {
       fragment_type.resize?.(size);
+    }
+
+    if (rebuild_buffers) {
+      this.rebuild_buffers();
     }
   }
 
@@ -62,11 +63,11 @@ export class EntityManager {
 
     // Resize all fragment data arrays to fit the new entity
     if (refresh_entity_data) {
-        for (const fragment_type of this.fragment_types) {
-            fragment_type.resize?.(entity);
-        }
+      for (const fragment_type of this.fragment_types) {
+        fragment_type.resize?.(entity);
+      }
     }
-    
+
     this.entities.push(entity);
     this.entity_fragments.set(entity, new Set());
     if (refresh_entity_data) {
@@ -194,25 +195,113 @@ export class EntityManager {
     return EntityID.get_instance_count(entity);
   }
 
-  static change_entity_instance_count(entity, instance_count, refresh_entity_data = true) {
-    if (!this.entity_fragments.has(entity)) {
-      return null;
+  static set_entity_instance_count(entity, instance_count) {
+    const last_count = EntityID.get_instance_count(entity);
+    if (instance_count === last_count) return;
+    EntityID.set_instance_count(entity, instance_count);
+    this.pending_instance_count_changes.set(entity, [last_count, instance_count]);
+  }
+
+  static flush_instance_count_changes() {
+    // 1. If no pending changes, nothing to do
+    if (this.pending_instance_count_changes.size === 0) return;
+
+    // 1.5. Update offsets
+    SharedEntityMetadataBuffer.update_offsets();
+
+    // 2. Sort changes by ascending entity index
+    const sorted_changes = Array.from(this.pending_instance_count_changes.entries()).sort(
+      ([entityA], [entityB]) =>
+        EntityID.get_absolute_index(entityA) - EntityID.get_absolute_index(entityB)
+    );
+
+    // 3. Compute total net change, and also build a difference array
+    //    that marks how many slots get added/removed starting at entity_index+old_count
+    let total_size_change = 0;
+    for (const [entity, [last_count, new_count]] of sorted_changes) {
+      total_size_change += new_count - last_count;
     }
 
-    const last_entity_count = EntityID.get_instance_count(entity);
-    SharedEntityMetadataBuffer.set_entity_instance_count(entity, instance_count);
-    const absolute_entity_count = SharedEntityMetadataBuffer.get_absolute_entity_count();
-
-    for (const fragment_type of this.fragment_types) {
-      fragment_type.resize?.(absolute_entity_count);
-      fragment_type.entity_instance_count_changed?.(entity, last_entity_count);
+    // 4. Resize the fragment arrays to the new total size
+    for (const frag of this.fragment_types) {
+      const new_size = frag.size + total_size_change;
+      if (new_size > frag.size) {
+        frag.resize(new_size * 2);
+      }
     }
 
-    if (refresh_entity_data) {
-      this.refresh_entities();
+    // 5. Build the “difference array” + prefix sum to figure out the shift for each slot.
+    //    Let’s define `max_size` as the final capacity in the largest fragment.
+    const max_size = Math.max(...Array.from(this.fragment_types).map((ft) => ft.size));
+    const shifts = new Int32Array(max_size + 1);
+
+    // Build difference array
+    for (const [entity, [last_count, new_count]] of sorted_changes) {
+      // Add shift_amount starting from (entity_index + last_count)
+      // because that range effectively "moves" the data
+      const start = EntityID.get_absolute_index(entity) + last_count;
+      if (start <= max_size) {
+        shifts[start] += (new_count - last_count);
+      }
     }
 
-    return entity;
+    // Turn it into an actual offset array by prefix sum
+    for (let i = 1; i < shifts.length; i++) {
+      shifts[i] += shifts[i - 1];
+    }
+    // Now `shifts[i]` = how far index `i` in the old layout should move (positive => right)
+
+    // 6A. Expansions pass
+    //     We do a single loop from (max_size - 1) down to 0.
+    //     If shifts[i] > 0, we move from i -> i+shifts[i].
+    //     Then we mark that we used up that old data.
+    for (let i = max_size - 1; i >= 0; i--) {
+      const shift = shifts[i];
+      if (shift > 0) {
+        for (const frag of this.fragment_types) {
+          frag.batch_entity_instance_count_changed?.(i + shift, 0);
+        }
+      }
+    }
+
+    // 6B. Contractions pass
+    //     We do a single loop from 0 up to (max_size - 1).
+    //     If shifts[i] < 0, we move from i -> i+shifts[i].
+    //     Then we mark that we used up that old data.
+    for (let i = 0; i < max_size; i++) {
+      const shift = shifts[i];
+      if (shift < 0) {
+        for (const frag of this.fragment_types) {
+          frag.batch_entity_instance_count_changed?.(i + shift, 0);
+        }
+      }
+    }
+
+    // 7. Now we handle truly “new” slots that didn’t exist before.
+    //    For example, if an entity had old_count=1, new_count=3 => we shifted the *existing* slot,
+    //    but we haven’t filled the brand‐new 2 slots with data yet.
+    //
+    //    To do that, we’ll iterate over each entity in ascending order.
+    //    For the newly added slots, we replicate from the "original entity" index
+    //    (which might be the first slot of that entity, or some known reference index).
+    //    We find these new slots by scanning the range [entity_index + old_count, entity_index + new_count).
+    //    The shift array told us where to shift old data, but new data is “uninitialized.”
+
+    for (const [entity, [last_count, new_count]] of sorted_changes) {
+      const added = new_count - last_count;
+      if (added <= 0) continue;
+
+      const entity_index = EntityID.get_absolute_index(entity);
+      for (let j = last_count; j < new_count; j++) {
+        const new_absolute_index = entity_index + j;
+        for (const frag of this.fragment_types) {
+          frag.batch_entity_instance_count_changed?.(new_absolute_index, j);
+        }
+      }
+    }
+
+    // 8. Clear pending changes
+    this.pending_instance_count_changes.clear();
   }
 
   static get_entities() {
@@ -223,6 +312,13 @@ export class EntityManager {
     const query = new EntityQuery(this, fragment_requirements);
     this.queries.push(query);
     return query;
+  }
+
+  static rebuild_buffers() {
+    SharedEntityMetadataBuffer.rebuild();
+    for (const fragment_type of this.fragment_types) {
+      fragment_type.rebuild_buffers?.();
+    }
   }
 
   static refresh_entities() {

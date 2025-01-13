@@ -73,6 +73,8 @@ export class VisibilityFragment extends Fragment {
   }
 
   static resize(new_size) {
+    if (new_size <= this.size) return;
+
     this.size = new_size;
 
     if (!this.data) this.initialize();
@@ -80,12 +82,13 @@ export class VisibilityFragment extends Fragment {
     Fragment.resize_array(this.data, "visible", new_size, Uint32Array, 1);
     Fragment.resize_array(this.data, "dirty", new_size, Uint8Array, 1);
 
-    this.rebuild_buffers();
+    this.data.gpu_data_dirty = true;
   }
 
   static add_entity(entity) {
-    if (entity >= this.size) {
-      this.resize(entity * 2);
+    const absolute_entity = EntityID.get_absolute_index(entity);
+    if (absolute_entity >= this.size) {
+      this.resize(absolute_entity * 2);
     }
 
     return this.get_entity_data(entity);
@@ -133,10 +136,12 @@ export class VisibilityFragment extends Fragment {
   }
 
   static rebuild_buffers() {
+    if (!this.data.gpu_data_dirty) return;
+
     {
       const gpu_data = this.data.visible
         ? this.data.visible
-        : new Uint32Array(this.size * 1);
+        : new Uint32Array(this.size * 1 + 1);
       if (
         !this.data.visible_buffer ||
         this.data.visible_buffer.config.size < gpu_data.byteLength
@@ -162,54 +167,12 @@ export class VisibilityFragment extends Fragment {
 
   static async sync_buffers() {}
 
-  static entity_instance_count_changed(entity, last_entity_count) {
-    const entity_index = EntityID.get_absolute_index(entity);
-    const entity_count = EntityID.get_instance_count(entity);
+  static batch_entity_instance_count_changed(index, shift) {
+    const source_index = Math.min(Math.max(0, index - shift), this.size - 1);
 
-    const shift_amount = entity_count - last_entity_count;
+    this.data.visible[index * 1 + 0] = this.data.visible[source_index * 1 + 0];
 
-    // No need to shift if there's no change
-    if (shift_amount === 0) return;
-
-    if (shift_amount > 0) {
-      // Make space by moving data forward
-      let i = this.size - shift_amount - 1;
-      for (; i >= entity_index; --i) {
-        this.data.visible[(i + shift_amount) * 1 + 0] =
-          this.data.visible[i * 1 + 0];
-      }
-      i += 1;
-      for (; i < entity_index + shift_amount; ++i) {
-        this.data.visible[i * 1 + 0] = this.data.visible[entity_index * 1 + 0];
-      }
-    } else if (shift_amount < 0) {
-      // Compress by moving data backward
-      let size = Math.max(this.size, this.size - shift_amount);
-      for (let i = entity_index; i < size; ++i) {
-        this.data.visible[i * 1 + 0] =
-          this.data.visible[(i + shift_amount) * 1 + 0];
-      }
-    }
-
-    if (shift_amount > 0) {
-      // Make space by moving data forward
-      let i = this.size - shift_amount - 1;
-      for (; i >= entity_index; --i) {
-        this.data.dirty[(i + shift_amount) * 1 + 0] =
-          this.data.dirty[i * 1 + 0];
-      }
-      i += 1;
-      for (; i < entity_index + shift_amount; ++i) {
-        this.data.dirty[i * 1 + 0] = this.data.dirty[entity_index * 1 + 0];
-      }
-    } else if (shift_amount < 0) {
-      // Compress by moving data backward
-      let size = Math.max(this.size, this.size - shift_amount);
-      for (let i = entity_index; i < size; ++i) {
-        this.data.dirty[i * 1 + 0] =
-          this.data.dirty[(i + shift_amount) * 1 + 0];
-      }
-    }
+    this.data.dirty[index * 1 + 0] = this.data.dirty[source_index * 1 + 0];
 
     this.data.gpu_data_dirty = true;
   }

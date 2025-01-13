@@ -1,3 +1,4 @@
+import { EntityManager } from "./entity.js";
 import { TransformFragment } from "./fragments/transform_fragment.js";
 import { StaticMeshFragment } from "./fragments/static_mesh_fragment.js";
 import { SceneGraphFragment } from "./fragments/scene_graph_fragment.js";
@@ -187,7 +188,6 @@ export class EntityLinearDataContainer {
 }
 
 export function spawn_mesh_entity(
-  scene,
   position,
   rotation,
   scale,
@@ -198,13 +198,9 @@ export function spawn_mesh_entity(
   start_visible = true,
   refresh_entities = false
 ) {
-  if (!scene) {
-    return null;
-  }
+  const entity = EntityManager.create_entity(false /* refresh_entities */);
 
-  const entity = scene.create_entity(false /* refresh_entities */);
-
-  const new_transform_view = scene.add_fragment(
+  const new_transform_view = EntityManager.add_fragment(
     entity,
     TransformFragment,
     false /* refresh_entities */
@@ -213,7 +209,7 @@ export function spawn_mesh_entity(
   new_transform_view.rotation = [rotation.x, rotation.y, rotation.z, rotation.w];
   new_transform_view.scale = [scale.x, scale.y, scale.z];
 
-  const new_scene_graph_view = scene.add_fragment(
+  const new_scene_graph_view = EntityManager.add_fragment(
     entity,
     SceneGraphFragment,
     false /* refresh_entities */
@@ -223,7 +219,7 @@ export function spawn_mesh_entity(
     new_scene_graph_view.children = children;
   }
 
-  const new_static_mesh_view = scene.add_fragment(
+  const new_static_mesh_view = EntityManager.add_fragment(
     entity,
     StaticMeshFragment,
     false /* refresh_entities */
@@ -231,7 +227,7 @@ export function spawn_mesh_entity(
   new_static_mesh_view.mesh = BigInt(Name.from(mesh.name));
   new_static_mesh_view.material_slots = [material];
 
-  const new_visibility_view = scene.add_fragment(
+  const new_visibility_view = EntityManager.add_fragment(
     entity,
     VisibilityFragment,
     false /* refresh_entities */
@@ -239,7 +235,7 @@ export function spawn_mesh_entity(
   new_visibility_view.visible = start_visible;
 
   if (refresh_entities) {
-    scene.refresh_entities();
+    EntityManager.refresh_entities();
   }
 
   return entity;

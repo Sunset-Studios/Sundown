@@ -40,6 +40,10 @@ class TextDataView {
         font.code_point_index_map.get(char.codePointAt(0)),
       );
       TextFragment.data.text.update(this.current_entity, code_point_indexes);
+      EntityManager.set_entity_instance_count(
+        this.current_entity,
+        code_point_indexes.length,
+      );
     }
     if (TextFragment.data.dirty) {
       TextFragment.data.dirty[this.current_entity] = 1;
@@ -129,6 +133,8 @@ export class TextFragment extends Fragment {
   }
 
   static resize(new_size) {
+    if (new_size <= this.size) return;
+
     this.size = new_size;
 
     if (!this.data) this.initialize();
@@ -137,12 +143,13 @@ export class TextFragment extends Fragment {
     Fragment.resize_array(this.data, "font_size", new_size, Uint32Array, 1);
     Fragment.resize_array(this.data, "dirty", new_size, Uint8Array, 1);
 
-    this.rebuild_buffers();
+    this.data.gpu_data_dirty = true;
   }
 
   static add_entity(entity) {
-    if (entity >= this.size) {
-      this.resize(entity * 2);
+    const absolute_entity = EntityID.get_absolute_index(entity);
+    if (absolute_entity >= this.size) {
+      this.resize(absolute_entity * 2);
     }
 
     return this.get_entity_data(entity);
@@ -198,6 +205,8 @@ export class TextFragment extends Fragment {
   }
 
   static rebuild_buffers() {
+    if (!this.data.gpu_data_dirty) return;
+
     {
       const gpu_data = this.data.text.get_data();
 
@@ -263,14 +272,8 @@ export class TextFragment extends Fragment {
 
   static async sync_buffers() {}
 
-  static entity_instance_count_changed(entity, last_entity_count) {
-    const entity_index = EntityID.get_absolute_index(entity);
-    const entity_count = EntityID.get_instance_count(entity);
-
-    const shift_amount = entity_count - last_entity_count;
-
-    // No need to shift if there's no change
-    if (shift_amount === 0) return;
+  static batch_entity_instance_count_changed(index, shift) {
+    const source_index = Math.min(Math.max(0, index - shift), this.size - 1);
 
     this.data.gpu_data_dirty = true;
   }

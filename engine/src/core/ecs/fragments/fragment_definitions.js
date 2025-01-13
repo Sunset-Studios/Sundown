@@ -372,11 +372,6 @@ const TransformFragment = {
       }
       `,
     },
-    entity_instance_count_changed: {
-      post: `
-      this.rebuild_buffers();
-      `,
-    },
   },
   hooks: {
     on_post_render: {
@@ -605,6 +600,7 @@ const TextFragment = {
         const font = FontCache.get_font_object(TextFragment.data.font[this.current_entity]);
         const code_point_indexes = Array.from(value).map((char) => font.code_point_index_map.get(char.codePointAt(0)));
         TextFragment.data.text.update(this.current_entity, code_point_indexes);
+        EntityManager.set_entity_instance_count(this.current_entity, code_point_indexes.length);
       }
       if (TextFragment.data.dirty) {
         TextFragment.data.dirty[this.current_entity] = 1;
