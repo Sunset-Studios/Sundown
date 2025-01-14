@@ -10,6 +10,7 @@ export class EntityPreprocessor extends SimulationLayer {
   pre_update(delta_time) {
     super.pre_update(delta_time);
     profile_scope(entity_preprocessor_update_key, () => {
+      EntityManager.refresh_entities();
       EntityManager.flush_instance_count_changes();
       EntityManager.rebuild_buffers();
       EntityManager.process_query_changes();

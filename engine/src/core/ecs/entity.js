@@ -27,6 +27,7 @@ export class EntityManager {
   static deleted_entities = new Set();
   static queries = [];
   static pending_instance_count_changes = new Map();
+  static needs_entity_refresh = false;
 
   static preinit_fragments(...fragment_types) {
     for (const fragment_type of fragment_types) {
@@ -49,7 +50,7 @@ export class EntityManager {
     }
   }
 
-  static create_entity(refresh_entity_data = true) {
+  static create_entity() {
     let entity;
 
     if (this.deleted_entities.size > 0) {
@@ -62,22 +63,18 @@ export class EntityManager {
     SharedEntityMetadataBuffer.add_entity(entity);
 
     // Resize all fragment data arrays to fit the new entity
-    if (refresh_entity_data) {
-      for (const fragment_type of this.fragment_types) {
-        fragment_type.resize?.(entity);
-      }
+    for (const fragment_type of this.fragment_types) {
+      fragment_type.resize?.(entity);
     }
 
     this.entities.push(entity);
     this.entity_fragments.set(entity, new Set());
-    if (refresh_entity_data) {
-      this.refresh_entities();
-    }
+    this.needs_entity_refresh = true;
 
     return entity;
   }
 
-  static delete_entity(entity, refresh_entity_data = true) {
+  static delete_entity(entity) {
     if (!this.entity_fragments.has(entity)) {
       return;
     }
@@ -87,18 +84,16 @@ export class EntityManager {
     this.entity_fragments.delete(entity);
     this.entities.remove(this.entities.index_of(entity));
     this.deleted_entities.add(entity);
-    if (refresh_entity_data) {
-      this.refresh_entities();
-    }
+    this.needs_entity_refresh = true;
   }
 
-  static duplicate_entity(entity, refresh_entity_data = true, instance = 0) {
-    const new_entity = this.create_entity(refresh_entity_data);
+  static duplicate_entity(entity, instance = 0) {
+    const new_entity = this.create_entity();
 
     for (const FragmentType of this.entity_fragments.get(entity)) {
       if (FragmentType.data) {
         const data = FragmentType.duplicate_entity_data?.(entity, instance);
-        const new_frag_view = this.add_fragment(new_entity, FragmentType, refresh_entity_data);
+        const new_frag_view = this.add_fragment(new_entity, FragmentType);
         for (const [key, value] of Object.entries(data)) {
           if (value !== null) {
             if (Array.isArray(value)) {
@@ -115,27 +110,25 @@ export class EntityManager {
           }
         }
       } else {
-        this.add_tag(new_entity, FragmentType, refresh_entity_data);
+        this.add_tag(new_entity, FragmentType);
       }
     }
 
     return new_entity;
   }
 
-  static add_fragment(entity, FragmentType, refresh_entity_data = true) {
+  static add_fragment(entity, FragmentType) {
     if (!this.fragment_types.has(FragmentType)) {
       FragmentType.initialize();
       this.fragment_types.add(FragmentType);
     }
     const fragment_view = FragmentType.add_entity(entity);
     this.entity_fragments.get(entity).add(FragmentType);
-    if (refresh_entity_data) {
-      this.refresh_entities();
-    }
+    this.needs_entity_refresh = true;
     return fragment_view;
   }
 
-  static remove_fragment(entity, FragmentType, refresh_entity_data = true) {
+  static remove_fragment(entity, FragmentType) {
     if (
       !this.entity_fragments.has(entity) ||
       !this.entity_fragments.get(entity).has(FragmentType)
@@ -144,29 +137,23 @@ export class EntityManager {
     }
     FragmentType.remove_entity(entity);
     this.entity_fragments.get(entity).delete(FragmentType);
-    if (refresh_entity_data) {
-      this.refresh_entities();
-    }
+    this.needs_entity_refresh = true;
   }
 
-  static add_tag(entity, Tag, refresh_entity_data = true) {
+  static add_tag(entity, Tag) {
     if (!this.fragment_types.has(Tag)) {
       this.fragment_types.add(Tag);
     }
     this.entity_fragments.get(entity).add(Tag);
-    if (refresh_entity_data) {
-      this.refresh_entities();
-    }
+    this.needs_entity_refresh = true;
   }
 
-  static remove_tag(entity, Tag, refresh_entity_data = true) {
+  static remove_tag(entity, Tag) {
     if (!this.entity_fragments.has(entity) || !this.entity_fragments.get(entity).has(Tag)) {
       return;
     }
     this.entity_fragments.get(entity).delete(Tag);
-    if (refresh_entity_data) {
-      this.refresh_entities();
-    }
+    this.needs_entity_refresh = true;
   }
 
   static get_fragment(entity, FragmentType, instance = 0) {
@@ -322,9 +309,12 @@ export class EntityManager {
   }
 
   static refresh_entities() {
-    SharedEntityMetadataBuffer.write();
-    for (let i = 0; i < this.queries.length; i++) {
-      this.queries[i].update_matching_entities();
+    if (this.needs_entity_refresh) {
+      SharedEntityMetadataBuffer.write();
+      for (let i = 0; i < this.queries.length; i++) {
+        this.queries[i].update_matching_entities();
+      }
+      this.needs_entity_refresh = false;
     }
   }
 
@@ -347,15 +337,13 @@ export class EntityManager {
 // const entity_manager = new EntityManager();
 
 // const entity1 = EntityManager.create_entity();
-// EntityManager.add_fragment(entity1, PositionFragment, false /* refresh_entity_data */);
-// EntityManager.add_fragment(entity1, VelocityFragment, false /* refresh_entity_data */);
+// EntityManager.add_fragment(entity1, PositionFragment);
+// EntityManager.add_fragment(entity1, VelocityFragment);
 
 // const entity2 = EntityManager.create_entity();
-// EntityManager.add_fragment(entity2, PositionFragment, false /* refresh_entity_data */);
+// EntityManager.add_fragment(entity2, PositionFragment);
 
 // const query = EntityManager.create_query({ fragment_requirements: [PositionFragment, VelocityFragment] });
-
-// EntityManager.refresh_entities();
 
 // // System example: update positions
 // function update_positions(delta_time) {

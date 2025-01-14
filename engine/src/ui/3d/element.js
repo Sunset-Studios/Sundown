@@ -21,7 +21,6 @@ export class Element3D {
       parent,
       children,
       start_visible,
-      false /* refresh_entities */
     );
 
     const new_user_interface_view = EntityManager.add_fragment(entity, UserInterfaceFragment);

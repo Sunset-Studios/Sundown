@@ -91,7 +91,6 @@ export class TestScene extends Scene {
             null /* parent */,
             [] /* children */,
             true /* start_visible */,
-            false /* refresh_entities */
           );
         }
       }
@@ -110,18 +109,14 @@ export class TestScene extends Scene {
       null /* parent */,
       [] /* children */,
       true /* start_visible */,
-      false /* refresh_entities */
     );
     const text_fragment_view = EntityManager.add_fragment(
       text_entity,
       TextFragment,
-      false /* refresh_entities */
     );
     text_fragment_view.font = font_id;
     text_fragment_view.text = "Sundown Engine";
     text_fragment_view.font_size = 32;
-
-    EntityManager.refresh_entities();
   }
 
   update(delta_time) {

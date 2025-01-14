@@ -196,14 +196,12 @@ export function spawn_mesh_entity(
   parent = null,
   children = [],
   start_visible = true,
-  refresh_entities = false
 ) {
-  const entity = EntityManager.create_entity(false /* refresh_entities */);
+  const entity = EntityManager.create_entity();
 
   const new_transform_view = EntityManager.add_fragment(
     entity,
     TransformFragment,
-    false /* refresh_entities */
   );
   new_transform_view.position = [position.x, position.y, position.z];
   new_transform_view.rotation = [rotation.x, rotation.y, rotation.z, rotation.w];
@@ -212,7 +210,6 @@ export function spawn_mesh_entity(
   const new_scene_graph_view = EntityManager.add_fragment(
     entity,
     SceneGraphFragment,
-    false /* refresh_entities */
   );
   new_scene_graph_view.parent = parent;
   if (children.length > 0) {
@@ -222,7 +219,6 @@ export function spawn_mesh_entity(
   const new_static_mesh_view = EntityManager.add_fragment(
     entity,
     StaticMeshFragment,
-    false /* refresh_entities */
   );
   new_static_mesh_view.mesh = BigInt(Name.from(mesh.name));
   new_static_mesh_view.material_slots = [material];
@@ -230,13 +226,8 @@ export function spawn_mesh_entity(
   const new_visibility_view = EntityManager.add_fragment(
     entity,
     VisibilityFragment,
-    false /* refresh_entities */
   );
   new_visibility_view.visible = start_visible;
-
-  if (refresh_entities) {
-    EntityManager.refresh_entities();
-  }
 
   return entity;
 }

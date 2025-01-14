@@ -29,8 +29,6 @@ export class TextProcessor extends SimulationLayer {
         return;
       }
 
-      let b_text_changed = false;
-
       const matching_entity_data = this.entity_query.matching_entities.get_data();
       for (let i = 0; i < this.entity_query.matching_entities.length; ++i) {
         const entity = matching_entity_data[i];
@@ -43,8 +41,6 @@ export class TextProcessor extends SimulationLayer {
         const text = text_data.text;
 
         if (text) {
-          b_text_changed = true;
-
           const font = text_data.font;
           const font_object = FontCache.get_font_object(font);
           const font_scale = text_data.font_size / font_object.texture_height;
@@ -107,11 +103,6 @@ export class TextProcessor extends SimulationLayer {
 
       // We discard the result as we only want to write the underlying buffers, which are already mapped to the GPU
       TextFragment.to_gpu_data();
-
-      if (b_text_changed) {
-        EntityManager.refresh_entities();
-      }
     });
   }
 }
-
