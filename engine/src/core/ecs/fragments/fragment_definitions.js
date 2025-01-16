@@ -129,9 +129,15 @@ const StaticMeshFragment = {
     remove_entity: {
       skip_default: true,
       pre: `
-      const entity_data = this.get_entity_data(entity);
-      entity_data.mesh = 0n;
-      entity_data.material_slots = Array(this.material_slot_stride).fill(0);
+      const entity_offset = EntityID.get_absolute_index(entity);
+      const entity_instances = EntityID.get_instance_count(entity);
+      for (let i = 0; i < entity_instances; i++) {
+        this.data.mesh[entity_offset + i] = 0n;
+        for (let j = 0; j < this.material_slot_stride; j++) {
+          this.data.material_slots[(entity_offset + i) * this.material_slot_stride + j] = 0n;
+        }
+        this.data.dirty[entity_offset + i] = 1;
+      }
       `,
     },
   },
@@ -154,16 +160,9 @@ const TransformFragment = {
       TransformFragment.data.position[this.absolute_entity * 4 + 1] = value[1];
       TransformFragment.data.position[this.absolute_entity * 4 + 2] = value[2];
       TransformFragment.data.position[this.absolute_entity * 4 + 3] = 1.0;
-      TransformFragment.data.position_buffer.write_raw(
-        TransformFragment.data.position.subarray(this.absolute_entity * 4, this.absolute_entity * 4 + 4),
-        this.absolute_entity * 4 * Float32Array.BYTES_PER_ELEMENT
-      );
+
       if (TransformFragment.data.dirty) {
         TransformFragment.data.dirty[this.absolute_entity] = 1;
-        TransformFragment.data.dirty_flags_buffer.write_raw(
-          TransformFragment.data.dirty.subarray(this.absolute_entity, this.absolute_entity + 1),
-          this.absolute_entity * Uint32Array.BYTES_PER_ELEMENT
-        );
       }
       TransformFragment.data.gpu_data_dirty = true;
       `,
@@ -183,16 +182,9 @@ const TransformFragment = {
       TransformFragment.data.rotation[this.absolute_entity * 4 + 1] = value[1];
       TransformFragment.data.rotation[this.absolute_entity * 4 + 2] = value[2];
       TransformFragment.data.rotation[this.absolute_entity * 4 + 3] = value[3];
-      TransformFragment.data.rotation_buffer.write_raw(
-        TransformFragment.data.rotation.subarray(this.absolute_entity * 4, this.absolute_entity * 4 + 4),
-        this.absolute_entity * 4 * Float32Array.BYTES_PER_ELEMENT
-      );
+
       if (TransformFragment.data.dirty) {
         TransformFragment.data.dirty[this.absolute_entity] = 1;
-        TransformFragment.data.dirty_flags_buffer.write_raw(
-          TransformFragment.data.dirty.subarray(this.absolute_entity, this.absolute_entity + 1),
-          this.absolute_entity * Uint32Array.BYTES_PER_ELEMENT
-        );
       }
       TransformFragment.data.gpu_data_dirty = true;
       `,
@@ -212,16 +204,9 @@ const TransformFragment = {
       TransformFragment.data.scale[this.absolute_entity * 4 + 1] = value[1];
       TransformFragment.data.scale[this.absolute_entity * 4 + 2] = value[2];
       TransformFragment.data.scale[this.absolute_entity * 4 + 3] = 0.0;
-      TransformFragment.data.scale_buffer.write_raw(
-        TransformFragment.data.scale.subarray(this.absolute_entity * 4, this.absolute_entity * 4 + 4),
-        this.absolute_entity * 4 * Float32Array.BYTES_PER_ELEMENT
-      );
+
       if (TransformFragment.data.dirty) {
         TransformFragment.data.dirty[this.absolute_entity] = 1;
-        TransformFragment.data.dirty_flags_buffer.write_raw(
-          TransformFragment.data.dirty.subarray(this.absolute_entity, this.absolute_entity + 1),
-          this.absolute_entity * Uint32Array.BYTES_PER_ELEMENT
-        );
       }
       TransformFragment.data.gpu_data_dirty = true;
       `,
@@ -273,17 +258,23 @@ const TransformFragment = {
     remove_entity: {
       skip_default: true,
       pre: `
-      const entity_data = this.get_entity_data(entity);
-      entity_data.position.x = 0;
-      entity_data.position.y = 0;
-      entity_data.position.z = 0;
-      entity_data.rotation.x = 0;
-      entity_data.rotation.y = 0;
-      entity_data.rotation.z = 0;
-      entity_data.rotation.w = 1;
-      entity_data.scale.x = 1;
-      entity_data.scale.y = 1;
-      entity_data.scale.z = 1;
+      const entity_offset = EntityID.get_absolute_index(entity);
+      const entity_instances = EntityID.get_instance_count(entity);
+      for (let i = 0; i < entity_instances; i++) {
+        this.data.position[(entity_offset + i) * 4] = 0;
+        this.data.position[(entity_offset + i) * 4 + 1] = 0;
+        this.data.position[(entity_offset + i) * 4 + 2] = 0;
+        this.data.position[(entity_offset + i) * 4 + 3] = 1;
+        this.data.rotation[(entity_offset + i) * 4] = 0;
+        this.data.rotation[(entity_offset + i) * 4 + 1] = 0;
+        this.data.rotation[(entity_offset + i) * 4 + 2] = 0;
+        this.data.rotation[(entity_offset + i) * 4 + 3] = 0;
+        this.data.scale[(entity_offset + i) * 4] = 1;
+        this.data.scale[(entity_offset + i) * 4 + 1] = 1;
+        this.data.scale[(entity_offset + i) * 4 + 2] = 1;
+        this.data.scale[(entity_offset + i) * 4 + 3] = 0;
+        this.data.dirty[entity_offset + i] = 1;
+      }
       `,
     },
     duplicate_entity_data: {
@@ -475,8 +466,11 @@ const SceneGraphFragment = {
       skip_default: true,
       post: `
       const entity_offset = EntityID.get_absolute_index(entity);
-      this.data.parent[entity_offset] = -1;
-      this.data.scene_graph.remove(entity_offset);
+      const entity_instances = EntityID.get_instance_count(entity);
+      for (let i = 0; i < entity_instances; i++) {
+        this.data.parent[entity_offset + i] = -1;
+      }
+      this.data.scene_graph.remove(entity);
       this.data.gpu_data_dirty = true;
       `,
     },

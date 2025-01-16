@@ -1,6 +1,7 @@
 import { SharedEntityMetadataBuffer } from "../shared_data.js";
 import { EntityQuery } from "./query.js";
 import { Vector } from "../../memory/container.js";
+import { clamp } from "../../utility/math.js";
 
 const entity_image_buffer_name = "entity_image_buffer";
 const object_name = "object";
@@ -187,6 +188,11 @@ export class EntityManager {
     if (instance_count === last_count) return;
     EntityID.set_instance_count(entity, instance_count);
     this.pending_instance_count_changes.set(entity, [last_count, instance_count]);
+    this.needs_entity_refresh = true;
+  }
+
+  static mark_needs_entity_refresh() {
+    this.needs_entity_refresh = true;
   }
 
   static flush_instance_count_changes() {
@@ -211,6 +217,7 @@ export class EntityManager {
 
     // 4. Resize the fragment arrays to the new total size
     for (const frag of this.fragment_types) {
+      if (!frag.size) continue;
       const new_size = frag.size + total_size_change;
       if (new_size > frag.size) {
         frag.resize(new_size * 2);
@@ -219,16 +226,15 @@ export class EntityManager {
 
     // 5. Build the “difference array” + prefix sum to figure out the shift for each slot.
     //    Let’s define `max_size` as the final capacity in the largest fragment.
-    const max_size = Math.max(...Array.from(this.fragment_types).map((ft) => ft.size));
+    const max_size = Math.max(...Array.from(this.fragment_types).map((ft) => ft.size ? ft.size : 0));
     const shifts = new Int32Array(max_size + 1);
 
     // Build difference array
     for (const [entity, [last_count, new_count]] of sorted_changes) {
       // Add shift_amount starting from (entity_index + last_count)
       // because that range effectively "moves" the data
-      const start = EntityID.get_absolute_index(entity) + last_count;
-      if (start <= max_size) {
-        shifts[start] += (new_count - last_count);
+      if (entity <= max_size) {
+        shifts[entity] += (new_count - last_count);
       }
     }
 
@@ -246,7 +252,10 @@ export class EntityManager {
       const shift = shifts[i];
       if (shift > 0) {
         for (const frag of this.fragment_types) {
-          frag.batch_entity_instance_count_changed?.(i + shift, 0);
+          if (!frag.size) continue;
+          const to = clamp(i + shift, 0, frag.size - 1);
+          const from = clamp(i, 0, frag.size - 1);
+          frag.copy_entity_instance?.(to, from);
         }
       }
     }
@@ -259,7 +268,10 @@ export class EntityManager {
       const shift = shifts[i];
       if (shift < 0) {
         for (const frag of this.fragment_types) {
-          frag.batch_entity_instance_count_changed?.(i + shift, 0);
+          if (!frag.size) continue;
+          const to = clamp(i + shift, 0, frag.size - 1);
+          const from = clamp(i, 0, frag.size - 1);
+          frag.copy_entity_instance?.(to, from);
         }
       }
     }
@@ -282,7 +294,7 @@ export class EntityManager {
       for (let j = last_count; j < new_count; j++) {
         const new_absolute_index = entity_index + j;
         for (const frag of this.fragment_types) {
-          frag.batch_entity_instance_count_changed?.(new_absolute_index, j);
+          frag.copy_entity_instance?.(new_absolute_index, entity_index);
         }
       }
     }

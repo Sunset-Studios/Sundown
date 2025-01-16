@@ -107,8 +107,11 @@ export class SceneGraphFragment extends Fragment {
 
   static remove_entity(entity) {
     const entity_offset = EntityID.get_absolute_index(entity);
-    this.data.parent[entity_offset] = -1;
-    this.data.scene_graph.remove(entity_offset);
+    const entity_instances = EntityID.get_instance_count(entity);
+    for (let i = 0; i < entity_instances; i++) {
+      this.data.parent[entity_offset + i] = -1;
+    }
+    this.data.scene_graph.remove(entity);
     this.data.gpu_data_dirty = true;
   }
 
@@ -218,10 +221,8 @@ export class SceneGraphFragment extends Fragment {
 
   static async sync_buffers() {}
 
-  static batch_entity_instance_count_changed(index, shift) {
-    const source_index = Math.min(Math.max(0, index - shift), this.size - 1);
-
-    this.data.parent[index * 1 + 0] = this.data.parent[source_index * 1 + 0];
+  static copy_entity_instance(to_index, from_index) {
+    this.data.parent[to_index * 1 + 0] = this.data.parent[from_index * 1 + 0];
 
     this.data.gpu_data_dirty = true;
   }

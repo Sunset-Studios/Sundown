@@ -1,5 +1,5 @@
 import { SimulationLayer } from "../simulation_layer.js";
-import { EntityManager } from "../ecs/entity.js";
+import { EntityManager, EntityID } from "../ecs/entity.js";
 import { EntityMasks } from "../ecs/query.js";
 import { StaticMeshFragment } from "../ecs/fragments/static_mesh_fragment.js";
 import { VisibilityFragment } from "../ecs/fragments/visibility_fragment.js";

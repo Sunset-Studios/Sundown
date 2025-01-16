@@ -379,6 +379,8 @@ export class LightFragment extends Fragment {
       this.data.outer_angle[entity_index] = 0;
       this.data.active[entity_index] = 0;
     }
+
+    this.data.gpu_data_dirty = true;
   }
 
   static get_entity_data(entity, instance = 0) {
@@ -498,49 +500,47 @@ export class LightFragment extends Fragment {
 
   static async sync_buffers() {}
 
-  static batch_entity_instance_count_changed(index, shift) {
-    const source_index = Math.min(Math.max(0, index - shift), this.size - 1);
+  static copy_entity_instance(to_index, from_index) {
+    this.data.position.x[to_index * 1 + 0] =
+      this.data.position.x[from_index * 1 + 0];
 
-    this.data.position.x[index * 1 + 0] =
-      this.data.position.x[source_index * 1 + 0];
+    this.data.position.y[to_index * 1 + 0] =
+      this.data.position.y[from_index * 1 + 0];
 
-    this.data.position.y[index * 1 + 0] =
-      this.data.position.y[source_index * 1 + 0];
+    this.data.position.z[to_index * 1 + 0] =
+      this.data.position.z[from_index * 1 + 0];
 
-    this.data.position.z[index * 1 + 0] =
-      this.data.position.z[source_index * 1 + 0];
+    this.data.direction.x[to_index * 1 + 0] =
+      this.data.direction.x[from_index * 1 + 0];
 
-    this.data.direction.x[index * 1 + 0] =
-      this.data.direction.x[source_index * 1 + 0];
+    this.data.direction.y[to_index * 1 + 0] =
+      this.data.direction.y[from_index * 1 + 0];
 
-    this.data.direction.y[index * 1 + 0] =
-      this.data.direction.y[source_index * 1 + 0];
+    this.data.direction.z[to_index * 1 + 0] =
+      this.data.direction.z[from_index * 1 + 0];
 
-    this.data.direction.z[index * 1 + 0] =
-      this.data.direction.z[source_index * 1 + 0];
+    this.data.color.r[to_index * 1 + 0] = this.data.color.r[from_index * 1 + 0];
 
-    this.data.color.r[index * 1 + 0] = this.data.color.r[source_index * 1 + 0];
+    this.data.color.g[to_index * 1 + 0] = this.data.color.g[from_index * 1 + 0];
 
-    this.data.color.g[index * 1 + 0] = this.data.color.g[source_index * 1 + 0];
+    this.data.color.b[to_index * 1 + 0] = this.data.color.b[from_index * 1 + 0];
 
-    this.data.color.b[index * 1 + 0] = this.data.color.b[source_index * 1 + 0];
+    this.data.type[to_index * 1 + 0] = this.data.type[from_index * 1 + 0];
 
-    this.data.type[index * 1 + 0] = this.data.type[source_index * 1 + 0];
+    this.data.intensity[to_index * 1 + 0] =
+      this.data.intensity[from_index * 1 + 0];
 
-    this.data.intensity[index * 1 + 0] =
-      this.data.intensity[source_index * 1 + 0];
+    this.data.radius[to_index * 1 + 0] = this.data.radius[from_index * 1 + 0];
 
-    this.data.radius[index * 1 + 0] = this.data.radius[source_index * 1 + 0];
+    this.data.attenuation[to_index * 1 + 0] =
+      this.data.attenuation[from_index * 1 + 0];
 
-    this.data.attenuation[index * 1 + 0] =
-      this.data.attenuation[source_index * 1 + 0];
+    this.data.outer_angle[to_index * 1 + 0] =
+      this.data.outer_angle[from_index * 1 + 0];
 
-    this.data.outer_angle[index * 1 + 0] =
-      this.data.outer_angle[source_index * 1 + 0];
+    this.data.active[to_index * 1 + 0] = this.data.active[from_index * 1 + 0];
 
-    this.data.active[index * 1 + 0] = this.data.active[source_index * 1 + 0];
-
-    this.data.dirty[index * 1 + 0] = this.data.dirty[source_index * 1 + 0];
+    this.data.dirty[to_index * 1 + 0] = this.data.dirty[from_index * 1 + 0];
 
     this.data.gpu_data_dirty = true;
   }

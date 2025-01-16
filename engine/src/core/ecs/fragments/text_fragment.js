@@ -167,6 +167,8 @@ export class TextFragment extends Fragment {
     for (let i = 0; i < instance_count; ++i) {
       const entity_index = entity_offset + i;
     }
+
+    this.data.gpu_data_dirty = true;
   }
 
   static get_entity_data(entity, instance = 0) {
@@ -272,9 +274,7 @@ export class TextFragment extends Fragment {
 
   static async sync_buffers() {}
 
-  static batch_entity_instance_count_changed(index, shift) {
-    const source_index = Math.min(Math.max(0, index - shift), this.size - 1);
-
+  static copy_entity_instance(to_index, from_index) {
     this.data.gpu_data_dirty = true;
   }
 }

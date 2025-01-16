@@ -102,6 +102,8 @@ export class VisibilityFragment extends Fragment {
       const entity_index = entity_offset + i;
       this.data.visible[entity_index] = 0;
     }
+
+    this.data.gpu_data_dirty = true;
   }
 
   static get_entity_data(entity, instance = 0) {
@@ -167,12 +169,10 @@ export class VisibilityFragment extends Fragment {
 
   static async sync_buffers() {}
 
-  static batch_entity_instance_count_changed(index, shift) {
-    const source_index = Math.min(Math.max(0, index - shift), this.size - 1);
+  static copy_entity_instance(to_index, from_index) {
+    this.data.visible[to_index * 1 + 0] = this.data.visible[from_index * 1 + 0];
 
-    this.data.visible[index * 1 + 0] = this.data.visible[source_index * 1 + 0];
-
-    this.data.dirty[index * 1 + 0] = this.data.dirty[source_index * 1 + 0];
+    this.data.dirty[to_index * 1 + 0] = this.data.dirty[from_index * 1 + 0];
 
     this.data.gpu_data_dirty = true;
   }

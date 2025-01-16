@@ -50,16 +50,14 @@ export class TestScene extends Scene {
     light_fragment_view.color.r = 1;
     light_fragment_view.color.g = 1;
     light_fragment_view.color.b = 1;
-    light_fragment_view.intensity = 5;
+    light_fragment_view.intensity = 3;
     light_fragment_view.position.x = 50;
     light_fragment_view.position.y = 0;
     light_fragment_view.position.z = 50;
     light_fragment_view.active = true;
 
     // Create a sphere mesh and add it to the scene
-    const mesh = await Mesh.from_gltf(
-      "engine/models/sphere/sphere.gltf"
-    );
+    const mesh = await Mesh.from_gltf("engine/models/sphere/sphere.gltf");
 
     // Create a default material
     const default_material_id = Material.create("MyMaterial", "StandardMaterial");
@@ -73,7 +71,7 @@ export class TestScene extends Scene {
     const grid_layers = 10;
     const spacing = 5; // 2 units apart
 
-    EntityManager.reserve_entities(grid_size * grid_size * grid_layers + 2);
+    EntityManager.reserve_entities(grid_size * grid_size * grid_layers);
 
     for (let x = 0; x < grid_size; x++) {
       for (let z = 0; z < grid_size; z++) {
@@ -108,12 +106,9 @@ export class TestScene extends Scene {
       font_object.material,
       null /* parent */,
       [] /* children */,
-      true /* start_visible */,
+      true /* start_visible */
     );
-    const text_fragment_view = EntityManager.add_fragment(
-      text_entity,
-      TextFragment,
-    );
+    const text_fragment_view = EntityManager.add_fragment(text_entity, TextFragment);
     text_fragment_view.font = font_id;
     text_fragment_view.text = "Sundown Engine";
     text_fragment_view.font_size = 32;

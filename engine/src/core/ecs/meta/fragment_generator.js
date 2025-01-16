@@ -123,9 +123,9 @@ export class FragmentGenerator {
       to_gpu_data: this.generate_to_gpu_data(buffers, overrides.to_gpu_data),
       rebuild_buffers: this.generate_rebuild_buffers(buffers, overrides.rebuild_buffers),
       sync_buffers: this.generate_sync_buffers(buffers, overrides.sync_buffers),
-      batch_entity_instance_count_changed: this.generate_batch_entity_instance_count_changed(
+      copy_entity_instance: this.generate_copy_entity_instance(
         fields,
-        overrides.batch_entity_instance_count_changed
+        overrides.copy_entity_instance
       ),
     };
 
@@ -275,7 +275,7 @@ export class ${fragment_name} extends Fragment {
     ${implementations.to_gpu_data}
     ${implementations.rebuild_buffers}
     ${implementations.sync_buffers}
-    ${implementations.batch_entity_instance_count_changed}
+    ${implementations.copy_entity_instance}
     ${this.generate_custom_methods(custom_methods)}
     ${this.generate_hooks(hooks)}
 }`;
@@ -327,6 +327,11 @@ export class ${fragment_name} extends Fragment {
         ${
           hooks.on_post_render
             ? `Renderer.get().on_post_render(this.on_post_render.bind(this));`
+            : ""
+        }
+        ${
+          hooks.on_pre_render
+            ? `Renderer.get().on_pre_render(this.on_pre_render.bind(this));`
             : ""
         }
         ${Object.keys(buffers).length > 0 ? `this.rebuild_buffers();` : ""}
@@ -473,6 +478,8 @@ export class ${fragment_name} extends Fragment {
             const entity_index = entity_offset + i;
             ${instance_field_resets.join("\n")}
         }
+
+        this.data.gpu_data_dirty = true;
     `;
   }
 
@@ -600,9 +607,10 @@ export class ${fragment_name} extends Fragment {
             }
             Renderer.get().mark_bind_groups_dirty(true);
             ${buffer.no_dispatch ? "" : `global_dispatcher.dispatch(${key}_event, this.data.${key}_buffer);`}
+          ${buffer.only_rebuild_on_resize ? `}` : `
           } else {
             this.data.${key}_buffer.write(gpu_data);
-          }
+          }`}
 
           ${buffer.no_dispatch ? "" : `global_dispatcher.dispatch(${key}_update_event);`}
         }
@@ -690,28 +698,27 @@ export class ${fragment_name} extends Fragment {
     `;
   }
 
-  static generate_batch_entity_instance_count_changed(fields, override) {
+  static generate_copy_entity_instance(fields, override) {
     if (override) {
       return `
-    static batch_entity_instance_count_changed(index, shift) {
+    static copy_entity_instance(to_index, from_index) {
         ${override.pre ? override.pre : ""}
-        ${!override.skip_default ? this.generate_default_batch_entity_instance_count_changed(fields) : ""}
+        ${!override.skip_default ? this.generate_default_copy_entity_instance(fields) : ""}
         ${override.post ? override.post : ""}
     }`;
     }
     return `
-    static batch_entity_instance_count_changed(index, shift) {
-        ${this.generate_default_batch_entity_instance_count_changed(fields)}
+    static copy_entity_instance(to_index, from_index) {
+        ${this.generate_default_copy_entity_instance(fields)}
     }`;
   }
 
-  static generate_default_batch_entity_instance_count_changed(fields) {
+  static generate_default_copy_entity_instance(fields) {
     const filtered_fields = Object.entries(fields).filter(
       ([_, field]) => !field.no_fragment_array && !field.no_instance_count_resize
     );
     const has_fields = filtered_fields.length > 0;
     return `
-        const source_index = Math.min(Math.max(0, index - shift), this.size - 1);
       ${
         has_fields
           ? `
@@ -722,7 +729,7 @@ export class ${fragment_name} extends Fragment {
                 .map(
                   (axis) => `
                           ${Array.from({ length: field.stride }, (_, s) => {
-                            return `this.data.${key}.${axis}[index * ${field.stride} + ${s}] = this.data.${key}.${axis}[source_index * ${field.stride} + ${s}];`;
+                            return `this.data.${key}.${axis}[to_index * ${field.stride} + ${s}] = this.data.${key}.${axis}[from_index * ${field.stride} + ${s}];`;
                           }).join("\n")}
                           `
                 )
@@ -730,7 +737,7 @@ export class ${fragment_name} extends Fragment {
             }
             return `
                       ${Array.from({ length: field.stride }, (_, s) => {
-                        return `this.data.${key}[index * ${field.stride} + ${s}] = this.data.${key}[source_index * ${field.stride} + ${s}];`;
+                        return `this.data.${key}[to_index * ${field.stride} + ${s}] = this.data.${key}[from_index * ${field.stride} + ${s}];`;
                       }).join("\n")}
                     `;
           })

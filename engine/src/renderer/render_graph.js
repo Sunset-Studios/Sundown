@@ -430,7 +430,10 @@ export class RenderGraph {
     this.registry = _.cloneDeep(RGRegistry);
     this.non_culled_passes = [];
     this.queued_global_bind_group_writes = [];
-    this.queued_commands = [];
+    this.queued_pre_commands = [];
+    this.queued_post_commands = [];
+    this.pre_render_callbacks = [];
+    this.post_render_callbacks = [];
 
     this.image_resource_allocator = new FrameAllocator(max_image_resources, _.clone(RGResource));
     this.buffer_resource_allocator = new FrameAllocator(max_buffer_resources, _.clone(RGResource));
@@ -439,6 +442,9 @@ export class RenderGraph {
       max_image_resources + max_buffer_resources,
       _.cloneDeep(RGResourceMetadata)
     );
+
+    this._execute_post_render_callbacks = this._execute_post_render_callbacks.bind(this);
+    this._execute_pre_render_callbacks = this._execute_pre_render_callbacks.bind(this);
   }
 
   /**
@@ -470,7 +476,9 @@ export class RenderGraph {
    * renderGraph.submit();
    */
   begin() {
+    this._execute_pre_render_callbacks();
     this.reset();
+    this._add_queued_pre_commands();
   }
 
   /**
@@ -794,8 +802,15 @@ export class RenderGraph {
    *   encoder.drawUI();
    * });
    */
-  queue_commands(name, commands_callback) {
-    this.add_pass(name, RenderPassFlags.GraphLocal, {}, commands_callback);
+  queue_pre_commands(name, commands_callback) {
+    this.queued_pre_commands.push({ name, commands_callback });
+  }
+
+  _add_queued_pre_commands() {
+    for (const command of this.queued_pre_commands) {
+      this.add_pass(command.name, RenderPassFlags.GraphLocal, {}, command.commands_callback);
+    }
+    this.queued_pre_commands.length = 0;
   }
 
   /**
@@ -812,14 +827,14 @@ export class RenderGraph {
    * });
    */
   queue_post_commands(name, commands_callback) {
-    this.queued_commands.push({ name, commands_callback });
+    this.queued_post_commands.push({ name, commands_callback });
   }
 
   _add_queued_post_commands() {
-    for (const command of this.queued_commands) {
+    for (const command of this.queued_post_commands) {
       this.add_pass(command.name, RenderPassFlags.GraphLocal, {}, command.commands_callback);
     }
-    this.queued_commands.length = 0;
+    this.queued_post_commands.length = 0;
   }
 
   _update_reference_counts(pass) {
@@ -988,6 +1003,29 @@ export class RenderGraph {
   }
 
   /**
+   * Adds a callback to be executed before the render graph is submitted.
+   *
+   * @param {Function} callback - The callback function to be executed.
+   * @returns {void}
+   */
+  on_pre_render(callback) {
+    this.pre_render_callbacks.push(callback);
+  }
+
+  /**
+   * Removes a callback from the pre-render callbacks list.
+   *
+   * @param {Function} callback - The callback function to be removed.
+   * @returns {void}
+   */
+  remove_pre_render(callback) {
+    const index = this.pre_render_callbacks.indexOf(callback);
+    if (index !== -1) {
+      this.pre_render_callbacks.splice(index, 1);
+    }
+  }
+
+  /**
    * Submits the compiled render graph for execution.
    * This method compiles the render graph, creates a command encoder, and executes all non-culled passes.
    * It then submits the encoded commands to the GPU for rendering.
@@ -1015,8 +1053,31 @@ export class RenderGraph {
         this._execute_pass(this.registry.render_passes[pass_handle], frame_data, encoder);
       }
 
-      CommandQueue.submit(encoder);
+      CommandQueue.submit(encoder, this._execute_post_render_callbacks);
     });
+  }
+
+  /**
+   * Adds a callback to be executed after the render graph is submitted.
+   *
+   * @param {Function} callback - The callback function to be executed.
+   * @returns {void}
+   */
+  on_post_render(callback) {
+    this.post_render_callbacks.push(callback);
+  }
+
+  /**
+   * Removes a callback from the post-render callbacks list.
+   *
+   * @param {Function} callback - The callback function to be removed.
+   * @returns {void}
+   */
+  remove_post_render(callback) {
+    const index = this.post_render_callbacks.indexOf(callback);
+    if (index !== -1) {
+      this.post_render_callbacks.splice(index, 1);
+    }
   }
 
   /**
@@ -1038,6 +1099,18 @@ export class RenderGraph {
     this.buffer_resource_allocator.reset();
     this.render_pass_allocator.reset();
     this.resource_metadata_allocator.reset();
+  }
+
+  _execute_post_render_callbacks() {
+    for (let i = 0; i < this.post_render_callbacks.length; i++) {
+      this.post_render_callbacks[i]();
+    }
+  }
+
+  _execute_pre_render_callbacks() {
+    for (let i = 0; i < this.pre_render_callbacks.length; i++) {
+      this.pre_render_callbacks[i]();
+    }
   }
 
   _execute_pass(pass, frame_data, encoder) {

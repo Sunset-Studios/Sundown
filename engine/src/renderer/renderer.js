@@ -27,6 +27,7 @@ export class Renderer {
   render_strategy = null;
   render_graph = null;
   post_render_callbacks = [];
+  pre_render_callbacks = [];
 
   static renderers = [];
 
@@ -95,13 +96,15 @@ export class Renderer {
       this.render_graph.begin();
 
       this.render_strategy.draw(this.render_graph);
-
-      this._execute_post_render_callbacks();
     });
   }
 
-  enqueue_commands(name, commands_callback) {
-    this.render_graph.queue_commands(name, commands_callback);
+  on_pre_render(callback) {
+    this.render_graph.on_pre_render(callback);
+  }
+
+  enqueue_pre_commands(name, commands_callback) {
+    this.render_graph.queue_pre_commands(name, commands_callback);
   }
 
   enqueue_post_commands(name, commands_callback) {
@@ -109,14 +112,15 @@ export class Renderer {
   }
 
   on_post_render(callback) {
-    this.post_render_callbacks.push(callback);
+    this.render_graph.on_post_render(callback);
+  }
+
+  remove_pre_render(callback) {
+    this.render_graph.remove_pre_render(callback);
   }
 
   remove_post_render(callback) {
-    const index = this.post_render_callbacks.indexOf(callback);
-    if (index !== -1) {
-      this.post_render_callbacks.splice(index, 1);
-    }
+    this.render_graph.remove_post_render(callback);
   }
 
   mark_bind_groups_dirty(passes_only = false) {
@@ -212,12 +216,6 @@ export class Renderer {
     observer.observe(this.canvas);
 
     this._set_shared_frame_resolution();
-  }
-
-  _execute_post_render_callbacks() {
-    for (let i = 0; i < this.post_render_callbacks.length; i++) {
-      this.post_render_callbacks[i]();
-    }
   }
 
   _set_shared_frame_resolution() {

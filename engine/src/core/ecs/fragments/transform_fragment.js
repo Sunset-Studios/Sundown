@@ -56,22 +56,9 @@ class TransformDataView {
     TransformFragment.data.position[this.absolute_entity * 4 + 1] = value[1];
     TransformFragment.data.position[this.absolute_entity * 4 + 2] = value[2];
     TransformFragment.data.position[this.absolute_entity * 4 + 3] = 1.0;
-    TransformFragment.data.position_buffer.write_raw(
-      TransformFragment.data.position.subarray(
-        this.absolute_entity * 4,
-        this.absolute_entity * 4 + 4,
-      ),
-      this.absolute_entity * 4 * Float32Array.BYTES_PER_ELEMENT,
-    );
+
     if (TransformFragment.data.dirty) {
       TransformFragment.data.dirty[this.absolute_entity] = 1;
-      TransformFragment.data.dirty_flags_buffer.write_raw(
-        TransformFragment.data.dirty.subarray(
-          this.absolute_entity,
-          this.absolute_entity + 1,
-        ),
-        this.absolute_entity * Uint32Array.BYTES_PER_ELEMENT,
-      );
     }
     TransformFragment.data.gpu_data_dirty = true;
   }
@@ -90,22 +77,9 @@ class TransformDataView {
     TransformFragment.data.rotation[this.absolute_entity * 4 + 1] = value[1];
     TransformFragment.data.rotation[this.absolute_entity * 4 + 2] = value[2];
     TransformFragment.data.rotation[this.absolute_entity * 4 + 3] = value[3];
-    TransformFragment.data.rotation_buffer.write_raw(
-      TransformFragment.data.rotation.subarray(
-        this.absolute_entity * 4,
-        this.absolute_entity * 4 + 4,
-      ),
-      this.absolute_entity * 4 * Float32Array.BYTES_PER_ELEMENT,
-    );
+
     if (TransformFragment.data.dirty) {
       TransformFragment.data.dirty[this.absolute_entity] = 1;
-      TransformFragment.data.dirty_flags_buffer.write_raw(
-        TransformFragment.data.dirty.subarray(
-          this.absolute_entity,
-          this.absolute_entity + 1,
-        ),
-        this.absolute_entity * Uint32Array.BYTES_PER_ELEMENT,
-      );
     }
     TransformFragment.data.gpu_data_dirty = true;
   }
@@ -123,22 +97,9 @@ class TransformDataView {
     TransformFragment.data.scale[this.absolute_entity * 4 + 1] = value[1];
     TransformFragment.data.scale[this.absolute_entity * 4 + 2] = value[2];
     TransformFragment.data.scale[this.absolute_entity * 4 + 3] = 0.0;
-    TransformFragment.data.scale_buffer.write_raw(
-      TransformFragment.data.scale.subarray(
-        this.absolute_entity * 4,
-        this.absolute_entity * 4 + 4,
-      ),
-      this.absolute_entity * 4 * Float32Array.BYTES_PER_ELEMENT,
-    );
+
     if (TransformFragment.data.dirty) {
       TransformFragment.data.dirty[this.absolute_entity] = 1;
-      TransformFragment.data.dirty_flags_buffer.write_raw(
-        TransformFragment.data.dirty.subarray(
-          this.absolute_entity,
-          this.absolute_entity + 1,
-        ),
-        this.absolute_entity * Uint32Array.BYTES_PER_ELEMENT,
-      );
     }
     TransformFragment.data.gpu_data_dirty = true;
   }
@@ -189,6 +150,7 @@ export class TransformFragment extends Fragment {
       gpu_data_dirty: true,
     };
     Renderer.get().on_post_render(this.on_post_render.bind(this));
+
     this.rebuild_buffers();
   }
 
@@ -217,17 +179,23 @@ export class TransformFragment extends Fragment {
   }
 
   static remove_entity(entity) {
-    const entity_data = this.get_entity_data(entity);
-    entity_data.position.x = 0;
-    entity_data.position.y = 0;
-    entity_data.position.z = 0;
-    entity_data.rotation.x = 0;
-    entity_data.rotation.y = 0;
-    entity_data.rotation.z = 0;
-    entity_data.rotation.w = 1;
-    entity_data.scale.x = 1;
-    entity_data.scale.y = 1;
-    entity_data.scale.z = 1;
+    const entity_offset = EntityID.get_absolute_index(entity);
+    const entity_instances = EntityID.get_instance_count(entity);
+    for (let i = 0; i < entity_instances; i++) {
+      this.data.position[(entity_offset + i) * 4] = 0;
+      this.data.position[(entity_offset + i) * 4 + 1] = 0;
+      this.data.position[(entity_offset + i) * 4 + 2] = 0;
+      this.data.position[(entity_offset + i) * 4 + 3] = 1;
+      this.data.rotation[(entity_offset + i) * 4] = 0;
+      this.data.rotation[(entity_offset + i) * 4 + 1] = 0;
+      this.data.rotation[(entity_offset + i) * 4 + 2] = 0;
+      this.data.rotation[(entity_offset + i) * 4 + 3] = 0;
+      this.data.scale[(entity_offset + i) * 4] = 1;
+      this.data.scale[(entity_offset + i) * 4 + 1] = 1;
+      this.data.scale[(entity_offset + i) * 4 + 2] = 1;
+      this.data.scale[(entity_offset + i) * 4 + 3] = 0;
+      this.data.dirty[entity_offset + i] = 1;
+    }
   }
 
   static get_entity_data(entity, instance = 0) {
@@ -536,33 +504,31 @@ export class TransformFragment extends Fragment {
     }
   }
 
-  static batch_entity_instance_count_changed(index, shift) {
-    const source_index = Math.min(Math.max(0, index - shift), this.size - 1);
+  static copy_entity_instance(to_index, from_index) {
+    this.data.position[to_index * 4 + 0] =
+      this.data.position[from_index * 4 + 0];
+    this.data.position[to_index * 4 + 1] =
+      this.data.position[from_index * 4 + 1];
+    this.data.position[to_index * 4 + 2] =
+      this.data.position[from_index * 4 + 2];
+    this.data.position[to_index * 4 + 3] =
+      this.data.position[from_index * 4 + 3];
 
-    this.data.position[index * 4 + 0] =
-      this.data.position[source_index * 4 + 0];
-    this.data.position[index * 4 + 1] =
-      this.data.position[source_index * 4 + 1];
-    this.data.position[index * 4 + 2] =
-      this.data.position[source_index * 4 + 2];
-    this.data.position[index * 4 + 3] =
-      this.data.position[source_index * 4 + 3];
+    this.data.rotation[to_index * 4 + 0] =
+      this.data.rotation[from_index * 4 + 0];
+    this.data.rotation[to_index * 4 + 1] =
+      this.data.rotation[from_index * 4 + 1];
+    this.data.rotation[to_index * 4 + 2] =
+      this.data.rotation[from_index * 4 + 2];
+    this.data.rotation[to_index * 4 + 3] =
+      this.data.rotation[from_index * 4 + 3];
 
-    this.data.rotation[index * 4 + 0] =
-      this.data.rotation[source_index * 4 + 0];
-    this.data.rotation[index * 4 + 1] =
-      this.data.rotation[source_index * 4 + 1];
-    this.data.rotation[index * 4 + 2] =
-      this.data.rotation[source_index * 4 + 2];
-    this.data.rotation[index * 4 + 3] =
-      this.data.rotation[source_index * 4 + 3];
+    this.data.scale[to_index * 4 + 0] = this.data.scale[from_index * 4 + 0];
+    this.data.scale[to_index * 4 + 1] = this.data.scale[from_index * 4 + 1];
+    this.data.scale[to_index * 4 + 2] = this.data.scale[from_index * 4 + 2];
+    this.data.scale[to_index * 4 + 3] = this.data.scale[from_index * 4 + 3];
 
-    this.data.scale[index * 4 + 0] = this.data.scale[source_index * 4 + 0];
-    this.data.scale[index * 4 + 1] = this.data.scale[source_index * 4 + 1];
-    this.data.scale[index * 4 + 2] = this.data.scale[source_index * 4 + 2];
-    this.data.scale[index * 4 + 3] = this.data.scale[source_index * 4 + 3];
-
-    this.data.dirty[index * 1 + 0] = this.data.dirty[source_index * 1 + 0];
+    this.data.dirty[to_index * 1 + 0] = this.data.dirty[from_index * 1 + 0];
 
     this.data.gpu_data_dirty = true;
   }

@@ -64,10 +64,10 @@ export class TransformProcessor extends SimulationLayer {
           Math.floor((scene_graph.scene_graph_layer_counts[i] + 255) / 256)
         );
       }
-      
+
       Renderer.get().enqueue_post_commands(
         copy_position_rotation_scale_to_buffer_name,
-        this._on_post_render
+        this.on_post_render_callback
       );
     });
   }

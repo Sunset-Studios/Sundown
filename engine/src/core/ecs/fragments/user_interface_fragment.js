@@ -329,6 +329,8 @@ export class UserInterfaceFragment extends Fragment {
       this.data.color.b[entity_index] = 0;
       this.data.color.a[entity_index] = 0;
     }
+
+    this.data.gpu_data_dirty = true;
   }
 
   static get_entity_data(entity, instance = 0) {
@@ -417,42 +419,40 @@ export class UserInterfaceFragment extends Fragment {
 
   static async sync_buffers() {}
 
-  static batch_entity_instance_count_changed(index, shift) {
-    const source_index = Math.min(Math.max(0, index - shift), this.size - 1);
+  static copy_entity_instance(to_index, from_index) {
+    this.data.allows_cursor_events[to_index * 1 + 0] =
+      this.data.allows_cursor_events[from_index * 1 + 0];
 
-    this.data.allows_cursor_events[index * 1 + 0] =
-      this.data.allows_cursor_events[source_index * 1 + 0];
+    this.data.auto_size[to_index * 1 + 0] =
+      this.data.auto_size[from_index * 1 + 0];
 
-    this.data.auto_size[index * 1 + 0] =
-      this.data.auto_size[source_index * 1 + 0];
+    this.data.was_cursor_inside[to_index * 1 + 0] =
+      this.data.was_cursor_inside[from_index * 1 + 0];
 
-    this.data.was_cursor_inside[index * 1 + 0] =
-      this.data.was_cursor_inside[source_index * 1 + 0];
+    this.data.is_cursor_inside[to_index * 1 + 0] =
+      this.data.is_cursor_inside[from_index * 1 + 0];
 
-    this.data.is_cursor_inside[index * 1 + 0] =
-      this.data.is_cursor_inside[source_index * 1 + 0];
+    this.data.was_clicked[to_index * 1 + 0] =
+      this.data.was_clicked[from_index * 1 + 0];
 
-    this.data.was_clicked[index * 1 + 0] =
-      this.data.was_clicked[source_index * 1 + 0];
+    this.data.is_clicked[to_index * 1 + 0] =
+      this.data.is_clicked[from_index * 1 + 0];
 
-    this.data.is_clicked[index * 1 + 0] =
-      this.data.is_clicked[source_index * 1 + 0];
+    this.data.is_pressed[to_index * 1 + 0] =
+      this.data.is_pressed[from_index * 1 + 0];
 
-    this.data.is_pressed[index * 1 + 0] =
-      this.data.is_pressed[source_index * 1 + 0];
+    this.data.was_pressed[to_index * 1 + 0] =
+      this.data.was_pressed[from_index * 1 + 0];
 
-    this.data.was_pressed[index * 1 + 0] =
-      this.data.was_pressed[source_index * 1 + 0];
+    this.data.color.r[to_index * 1 + 0] = this.data.color.r[from_index * 1 + 0];
 
-    this.data.color.r[index * 1 + 0] = this.data.color.r[source_index * 1 + 0];
+    this.data.color.g[to_index * 1 + 0] = this.data.color.g[from_index * 1 + 0];
 
-    this.data.color.g[index * 1 + 0] = this.data.color.g[source_index * 1 + 0];
+    this.data.color.b[to_index * 1 + 0] = this.data.color.b[from_index * 1 + 0];
 
-    this.data.color.b[index * 1 + 0] = this.data.color.b[source_index * 1 + 0];
+    this.data.color.a[to_index * 1 + 0] = this.data.color.a[from_index * 1 + 0];
 
-    this.data.color.a[index * 1 + 0] = this.data.color.a[source_index * 1 + 0];
-
-    this.data.dirty[index * 1 + 0] = this.data.dirty[source_index * 1 + 0];
+    this.data.dirty[to_index * 1 + 0] = this.data.dirty[from_index * 1 + 0];
 
     this.data.gpu_data_dirty = true;
   }
