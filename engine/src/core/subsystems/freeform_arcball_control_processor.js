@@ -108,7 +108,7 @@ export class FreeformArcballControlProcessor extends SimulationLayer {
         this.context.current_view = scene.context.current_view;
 
         const camera_position = vec4.fromValues(0, 0, 0, 1);
-        const camera_rotation = quat.fromEuler(quat.create(), 0, 0, 0);
+        const camera_rotation = quat.fromEuler(quat.create(), 0, 180.0, 0);
 
         SharedViewBuffer.set_view_data(this.scene.context.current_view, {
             position: camera_position,

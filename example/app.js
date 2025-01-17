@@ -1,5 +1,6 @@
 import { Renderer } from "../engine/src/renderer/renderer.js";
 import { DeferredShadingStrategy } from "../engine/src/renderer/strategies/deferred_shading.js";
+import { PostProcessStack } from "../engine/src/renderer/post_process_stack.js";
 import { Material } from "../engine/src/renderer/material.js";
 import SimulationCore from "../engine/src/core/simulation_core.js";
 import { InputProvider } from "../engine/src/input/input_provider.js";
@@ -7,10 +8,7 @@ import { EntityManager } from "../engine/src/core/ecs/entity.js";
 import { Scene } from "../engine/src/core/scene.js";
 import application_state from "../engine/src/core/application_state.js";
 import { ComputeTaskQueue } from "../engine/src/renderer/compute_task_queue.js";
-import { StaticMeshFragment } from "../engine/src/core/ecs/fragments/static_mesh_fragment.js";
 import { TransformFragment } from "../engine/src/core/ecs/fragments/transform_fragment.js";
-import { VisibilityFragment } from "../engine/src/core/ecs/fragments/visibility_fragment.js";
-import { SceneGraphFragment } from "../engine/src/core/ecs/fragments/scene_graph_fragment.js";
 import { FreeformArcballControlProcessor } from "../engine/src/core/subsystems/freeform_arcball_control_processor.js";
 import { LightFragment } from "../engine/src/core/ecs/fragments/light_fragment.js";
 import { TextFragment } from "../engine/src/core/ecs/fragments/text_fragment.js";
@@ -98,7 +96,7 @@ export class TestScene extends Scene {
       {
         x: 0,
         y: 25,
-        z: 0,
+        z: -5,
       },
       { x: 0, y: 0, z: 0, w: 1 },
       { x: 0.5, y: 0.5, z: 0.5 },
@@ -112,6 +110,19 @@ export class TestScene extends Scene {
     text_fragment_view.font = font_id;
     text_fragment_view.text = "Sundown Engine";
     text_fragment_view.font_size = 32;
+    text_fragment_view.color.r = 1;
+    text_fragment_view.color.g = 1;
+    text_fragment_view.color.b = 1;
+    text_fragment_view.color.a = 1;
+    text_fragment_view.emissive = 5;
+
+    PostProcessStack.register_pass(0, "outline", "effects/outline_post.wgsl", {
+      outline_thickness: 1.0,
+      depth_threshold: 0.01,
+      normal_threshold: 1.0,
+      depth_scale: 1000.0,
+      outline_color: [0.0, 0.0, 0.0, 1.0], 
+    });
   }
 
   update(delta_time) {

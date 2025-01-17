@@ -18,11 +18,74 @@ const string_data_cpu_buffer_name = "string_data_cpu_buffer";
 const string_data_event = "string_data";
 const string_data_update_event = "string_data_update";
 
+class ColorDataView {
+  constructor() {
+    this.current_entity = -1n;
+    this.absolute_entity = -1n;
+  }
+
+  get r() {
+    return TextFragment.data.color.r[this.current_entity];
+  }
+
+  set r(value) {
+    TextFragment.data.color.r[this.current_entity] = value;
+    if (TextFragment.data.dirty) {
+      TextFragment.data.dirty[this.current_entity] = 1;
+    }
+    TextFragment.data.gpu_data_dirty = true;
+  }
+
+  get g() {
+    return TextFragment.data.color.g[this.current_entity];
+  }
+
+  set g(value) {
+    TextFragment.data.color.g[this.current_entity] = value;
+    if (TextFragment.data.dirty) {
+      TextFragment.data.dirty[this.current_entity] = 1;
+    }
+    TextFragment.data.gpu_data_dirty = true;
+  }
+
+  get b() {
+    return TextFragment.data.color.b[this.current_entity];
+  }
+
+  set b(value) {
+    TextFragment.data.color.b[this.current_entity] = value;
+    if (TextFragment.data.dirty) {
+      TextFragment.data.dirty[this.current_entity] = 1;
+    }
+    TextFragment.data.gpu_data_dirty = true;
+  }
+
+  get a() {
+    return TextFragment.data.color.a[this.current_entity];
+  }
+
+  set a(value) {
+    TextFragment.data.color.a[this.current_entity] = value;
+    if (TextFragment.data.dirty) {
+      TextFragment.data.dirty[this.current_entity] = 1;
+    }
+    TextFragment.data.gpu_data_dirty = true;
+  }
+
+  view_entity(entity, instance = 0) {
+    this.current_entity = entity;
+    this.absolute_entity = EntityID.get_absolute_index(entity) + instance;
+    return this;
+  }
+}
+
 class TextDataView {
   current_entity = -1n;
   absolute_entity = -1n;
 
-  constructor() {}
+  constructor() {
+    this.color = new ColorDataView(this);
+  }
 
   get text() {
     const font = FontCache.get_font_object(
@@ -91,6 +154,21 @@ class TextDataView {
     TextFragment.data.gpu_data_dirty = true;
   }
 
+  get emissive() {
+    return TextFragment.data.emissive[this.current_entity];
+  }
+
+  set emissive(value) {
+    TextFragment.data.emissive[this.current_entity] =
+      TextFragment.data.emissive instanceof BigInt64Array
+        ? BigInt(value)
+        : value;
+    if (TextFragment.data.dirty) {
+      TextFragment.data.dirty[this.current_entity] = 1;
+    }
+    TextFragment.data.gpu_data_dirty = true;
+  }
+
   get dirty() {
     return TextFragment.data.dirty[this.current_entity];
   }
@@ -108,6 +186,8 @@ class TextDataView {
     this.current_entity = entity;
     this.absolute_entity = EntityID.get_absolute_index(entity) + instance;
 
+    this.color.view_entity(entity, instance);
+
     return this;
   }
 }
@@ -123,6 +203,13 @@ export class TextFragment extends Fragment {
       offsets: new EntityLinearDataContainer(Float32Array),
       font: new Int32Array(1),
       font_size: new Uint32Array(1),
+      color: {
+        r: new Float32Array(1),
+        g: new Float32Array(1),
+        b: new Float32Array(1),
+        a: new Float32Array(1),
+      },
+      emissive: new Float32Array(1),
       dirty: new Uint8Array(1),
       text_buffer: null,
       string_data_buffer: null,
@@ -141,6 +228,10 @@ export class TextFragment extends Fragment {
 
     Fragment.resize_array(this.data, "font", new_size, Int32Array, 1);
     Fragment.resize_array(this.data, "font_size", new_size, Uint32Array, 1);
+    Object.keys(this.data.color).forEach((axis) => {
+      Fragment.resize_array(this.data.color, axis, new_size, Float32Array);
+    });
+    Fragment.resize_array(this.data, "emissive", new_size, Float32Array, 1);
     Fragment.resize_array(this.data, "dirty", new_size, Uint8Array, 1);
 
     this.data.gpu_data_dirty = true;
@@ -163,6 +254,12 @@ export class TextFragment extends Fragment {
     this.data.offsets.remove(entity);
     this.data.font[entity] = 0;
     this.data.font_size[entity] = 0;
+    this.data.color.r[entity] = 0;
+    this.data.color.g[entity] = 0;
+    this.data.color.b[entity] = 0;
+    this.data.color.a[entity] = 0;
+
+    this.data.emissive[entity] = 0;
 
     for (let i = 0; i < instance_count; ++i) {
       const entity_index = entity_offset + i;
@@ -179,12 +276,19 @@ export class TextFragment extends Fragment {
   }
 
   static duplicate_entity_data(entity, instance = 0) {
-    const entity_offset = EntityID.get_absolute_index(entity);
     const data = {};
     data.text = String.fromCodePoint(
-      ...this.data.text.get_data_for_entity(entity_offset),
+      ...this.data.text.get_data_for_entity(entity),
     );
-    data.font = this.data.font[entity_offset];
+    data.font = this.data.font[entity];
+    data.font_size = this.data.font_size[entity];
+    data.emissive = this.data.emissive[entity];
+    data.color = {
+      r: this.data.color.r[entity],
+      g: this.data.color.g[entity],
+      b: this.data.color.b[entity],
+      a: this.data.color.a[entity],
+    };
     return data;
   }
 
@@ -233,17 +337,23 @@ export class TextFragment extends Fragment {
     }
 
     {
-      const gpu_data = new Uint32Array(Math.max(this.size * 6, 6));
+      const gpu_data = new Float32Array(Math.max(this.size * 12, 12));
       for (let i = 0; i < this.size; i++) {
         const metadata = this.data.text.get_metadata(i);
         const font = FontCache.get_font_object(this.data.font[i]);
-        const gpu_data_offset = i * 6;
+        const gpu_data_offset = i * 12;
         gpu_data[gpu_data_offset + 0] = metadata?.start ?? 0;
         gpu_data[gpu_data_offset + 1] = metadata?.count ?? 0;
         gpu_data[gpu_data_offset + 2] = font?.texture_width ?? 0;
         gpu_data[gpu_data_offset + 3] = font?.texture_height ?? 0;
-        gpu_data[gpu_data_offset + 4] = this.data.font_size[i];
-        gpu_data[gpu_data_offset + 5] = 0; // padding
+        gpu_data[gpu_data_offset + 4] = this.data.color.r[i];
+        gpu_data[gpu_data_offset + 5] = this.data.color.g[i];
+        gpu_data[gpu_data_offset + 6] = this.data.color.b[i];
+        gpu_data[gpu_data_offset + 7] = this.data.color.a[i];
+        gpu_data[gpu_data_offset + 8] = this.data.emissive[i];
+        gpu_data[gpu_data_offset + 9] = 0; // padding
+        gpu_data[gpu_data_offset + 10] = 0; // padding
+        gpu_data[gpu_data_offset + 11] = 0; // padding
       }
 
       if (

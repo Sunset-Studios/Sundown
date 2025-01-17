@@ -8,6 +8,7 @@ import { SceneGraphFragment } from "../../core/ecs/fragments/scene_graph_fragmen
 import { LightFragment } from "../../core/ecs/fragments/light_fragment.js";
 import { SharedViewBuffer, SharedEnvironmentMapData } from "../../core/shared_data.js";
 import { Material } from "../material.js";
+import { PostProcessStack } from "../post_process_stack.js";
 import { npot, clamp } from "../../utility/math.js";
 import { profile_scope } from "../../utility/performance.js";
 import { global_dispatcher } from "../../core/dispatcher.js";
@@ -494,11 +495,7 @@ export class DeferredShadingStrategy {
             `g_buffer_${material.template.name}_${material_id}`,
             RenderPassFlags.Graphics,
             {
-              inputs: [
-                entity_transforms,
-                compacted_object_instance_buffer,
-                lights,
-              ],
+              inputs: [entity_transforms, compacted_object_instance_buffer, lights],
               outputs: [
                 material.family === MaterialFamilyType.Transparent
                   ? main_transparency_accum_image
@@ -664,12 +661,7 @@ export class DeferredShadingStrategy {
               const dst_mip_width = Math.max(1, hzb.config.width >> dst_index);
               const dst_mip_height = Math.max(1, hzb.config.height >> dst_index);
 
-              hzb_params.write([
-                src_mip_width,
-                src_mip_height,
-                dst_mip_width,
-                dst_mip_height,
-              ]);
+              hzb_params.write([src_mip_width, src_mip_height, dst_mip_width, dst_mip_height]);
 
               pass.dispatch((dst_mip_width + 15) / 16, (dst_mip_height + 15) / 16, 1);
             }
@@ -853,6 +845,16 @@ export class DeferredShadingStrategy {
 
       const antialiased_scene_color_desc = post_bloom_color_desc;
 
+      // Post Process Pass
+      const post_processed_image = PostProcessStack.compile_passes(
+        0,
+        render_graph,
+        post_bloom_color_image_config,
+        antialiased_scene_color_desc,
+        main_depth_image,
+        main_normal_image
+      );
+
       // Fullscreen Present Pass
       {
         const swapchain_image = Texture.create_from_texture(
@@ -866,7 +868,7 @@ export class DeferredShadingStrategy {
           fullscreen_present_pass_name,
           RenderPassFlags.Graphics | RenderPassFlags.Present,
           {
-            inputs: [antialiased_scene_color_desc],
+            inputs: [post_processed_image],
             outputs: [rg_output_image],
             shader_setup: fullscreen_shader_setup,
           },

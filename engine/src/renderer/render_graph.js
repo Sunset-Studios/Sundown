@@ -1433,6 +1433,10 @@ export class RenderGraph {
     });
 
     if (entries.length > 0) {
+      if (entries.length > layouts.length) {
+        entries = entries.slice(0, layouts.length);
+      }
+
       const pass_bind_group = BindGroup.create_with_layout(
         `${pass.pass_config.name}_bindgroup_${BindGroupType.Pass}`,
         layouts,

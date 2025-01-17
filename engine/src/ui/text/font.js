@@ -74,6 +74,7 @@ export class Font {
     this.x = new Int16Array(num_chars);
     this.y = new Int16Array(num_chars);
     this.kerning_matrix = null;
+    this.line_height = 0;
   }
 
   static create(font_data_file) {
@@ -99,6 +100,7 @@ export class Font {
 
     font.texture_width = font_data[common_key].scaleW;
     font.texture_height = font_data[common_key].scaleH;
+    font.line_height = font_data[common_key].lineHeight;
 
     for (let i = 0; i < font_data[chars_key].length; i++) {
       const char = font_data[chars_key][i];

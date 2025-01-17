@@ -78,7 +78,8 @@ export class TextProcessor extends SimulationLayer {
                 position[0] + (offsets[j] - total_width * 0.5),
                 position[1] -
                   (font_object.y_offset[code_point_index] * 2.0 +
-                    font_object.height[code_point_index]) *
+                    font_object.height[code_point_index] -
+                    font_object.line_height) *
                     font_scale,
                 position[2],
               ];

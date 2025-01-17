@@ -7,10 +7,11 @@
 // Data Structures
 //------------------------------------------------------------------------------------
 struct StringData {
-    start: u32,
-    count: u32,
-    page_texture_size: vec2i,
-    font_size: u32,
+    start: f32,
+    count: f32,
+    page_texture_size: vec2f,
+    color: vec4f,
+    emissive: f32,
 };
 
 struct GlyphData {
@@ -44,9 +45,9 @@ fn vertex(v_out: ptr<function, VertexOutput>) -> VertexOutput {
     let local_instance_index = compacted_object_instances[v_out.instance_index].entity_instance;
 
     let string = string_data[entity];
-    if (string.count > 0u) {
+    if (string.count > 0.0) {
         // Find which character in the text we are drawing
-        let text_index = string.start + local_instance_index;
+        let text_index = u32(string.start) + local_instance_index;
         let ch         = text[text_index];
         let glyph_data = font_glyph_data[ch];
 
@@ -58,12 +59,12 @@ fn vertex(v_out: ptr<function, VertexOutput>) -> VertexOutput {
         var uv_top_left = vec2f(
             f32(glyph_data.x),
             f32(glyph_data.y)
-        ) / vec2f(string.page_texture_size);
+        ) / string.page_texture_size;
 
         let uv_size = vec2f(
             f32(glyph_data.width),
             f32(glyph_data.height)
-        ) / vec2f(string.page_texture_size);
+        ) / string.page_texture_size;
 
         // Flip Y coordinate and apply the corner offset
         uv_top_left.y = 1.0 - uv_top_left.y - uv_size.y;
@@ -84,6 +85,8 @@ fn vertex(v_out: ptr<function, VertexOutput>) -> VertexOutput {
 fn fragment(v_out: VertexOutput, f_out: ptr<function, FragmentOutput>) -> FragmentOutput {
     // Sample the MSDF texture
     let sample_color = textureSample(font_page_texture, global_sampler, v_out.uv);
+    let string_color = string_data[v_out.base_instance_id].color;
+    let emissive = string_data[v_out.base_instance_id].emissive;
 
     let r = sample_color.r;
     let g = sample_color.g;
@@ -104,8 +107,8 @@ fn fragment(v_out: VertexOutput, f_out: ptr<function, FragmentOutput>) -> Fragme
         discard;
     }
 
-    f_out.albedo = vec4f(0.0, 1.0, 0.0, alpha);
-    f_out.emissive = vec4f(0.2, 0.0, 0.0, 0.0);
+    f_out.albedo = vec4f(string_color.rgb, alpha);
+    f_out.emissive = vec4f(emissive, emissive, emissive, 0.0);
 
     f_out.smra.r = 2555.0;
     f_out.smra.g = 0.5;

@@ -618,6 +618,17 @@ const TextFragment = {
       stride: 1,
       no_instance_count_resize: true,
     },
+    color: {
+      type: DataType.FLOAT32,
+      vector: { r: true, g: true, b: true, a: true },
+      stride: 1,
+      no_instance_count_resize: true,
+    },
+    emissive: {
+      type: DataType.FLOAT32,
+      stride: 1,
+      no_instance_count_resize: true,
+    },
     dirty: {
       type: DataType.UINT8,
       stride: 1,
@@ -634,21 +645,27 @@ const gpu_data = this.data.text.get_data();
       `,
     },
     string_data: {
-      type: DataType.UINT32,
+      type: DataType.FLOAT32,
       usage: BufferType.STORAGE,
-      stride: 2,
+      stride: 12,
       gpu_data: `
-      const gpu_data = new Uint32Array(Math.max(this.size * 6, 6));
+      const gpu_data = new Float32Array(Math.max(this.size * 12, 12));
       for (let i = 0; i < this.size; i++) {
         const metadata = this.data.text.get_metadata(i);
         const font = FontCache.get_font_object(this.data.font[i]);
-        const gpu_data_offset = i * 6;
+        const gpu_data_offset = i * 12;
         gpu_data[gpu_data_offset + 0] = metadata?.start ?? 0;
         gpu_data[gpu_data_offset + 1] = metadata?.count ?? 0;
         gpu_data[gpu_data_offset + 2] = font?.texture_width ?? 0;
         gpu_data[gpu_data_offset + 3] = font?.texture_height ?? 0;
-        gpu_data[gpu_data_offset + 4] = this.data.font_size[i];
-        gpu_data[gpu_data_offset + 5] = 0; // padding
+        gpu_data[gpu_data_offset + 4] = this.data.color.r[i];
+        gpu_data[gpu_data_offset + 5] = this.data.color.g[i];
+        gpu_data[gpu_data_offset + 6] = this.data.color.b[i];
+        gpu_data[gpu_data_offset + 7] = this.data.color.a[i];
+        gpu_data[gpu_data_offset + 8] = this.data.emissive[i]; 
+        gpu_data[gpu_data_offset + 9] = 0; // padding
+        gpu_data[gpu_data_offset + 10] = 0; // padding
+        gpu_data[gpu_data_offset + 11] = 0; // padding
       }
       `,
     },
@@ -657,10 +674,17 @@ const gpu_data = this.data.text.get_data();
     duplicate_entity_data: {
       skip_default: true,
       pre: `
-      const entity_offset = EntityID.get_absolute_index(entity);
       const data = {};
-      data.text = String.fromCodePoint(...this.data.text.get_data_for_entity(entity_offset));
-      data.font = this.data.font[entity_offset];
+      data.text = String.fromCodePoint(...this.data.text.get_data_for_entity(entity));
+      data.font = this.data.font[entity];
+      data.font_size = this.data.font_size[entity];
+      data.emissive = this.data.emissive[entity];
+      data.color = {
+        r: this.data.color.r[entity],
+        g: this.data.color.g[entity],
+        b: this.data.color.b[entity],
+        a: this.data.color.a[entity],
+      };
       return data;
       `,
     },
