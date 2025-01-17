@@ -7,11 +7,14 @@ An extendible WebGPU game and simulation engine for fun, games and research. Som
 * ⚡ Flexible render graph for crafting render and compute pipelines
 * ⚡ Simple, expressive material system for crafting custom shaders and materials
 * ⚡ Gameplay simulation layer system for adding layered, modular functionality
-* ⚡ ECS system for more efficient processing, using TypedArrays where possible
+* ⚡ ECS system for more efficient processing, using a fragment framework and TypedArrays where possible
 * ⚡ Simple, context-based input system, allowing you to set up different input schemes and contexts
 * ⚡ Built-in PBR shaders
+* ⚡ Entity-first instancing
 * ⚡ Auto instancing and draw batching of meshes using a specialized mesh task queue
 * ⚡ Compute task queue for easily submitting compute shader work
+* ⚡ MSDF text rendering
+* ⚡ Configurable post-process stack 
 * ⚡ Helpers for loading GTLFs, tracking performance scopes, named IDs, running frames and more.
 
 ![Sundown Demo](./sundown_demo.gif)
