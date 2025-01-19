@@ -187,7 +187,7 @@ export class SceneGraphFragment extends Fragment {
         this.data.scene_graph_uniforms[i] = Buffer.create({
           name: "scene_graph_uniforms_" + i,
           usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-          raw_data: new Uint32Array([layer_counts[i], layer_offset]),
+          raw_data: new Uint32Array([layer_counts[i], layer_offset, i]),
           force: true,
         });
         layer_offset += layer_counts[i];

@@ -203,6 +203,51 @@ class UserInterfaceDataView {
     UserInterfaceFragment.data.gpu_data_dirty = true;
   }
 
+  get consume_events() {
+    return UserInterfaceFragment.data.consume_events[this.absolute_entity];
+  }
+
+  set consume_events(value) {
+    UserInterfaceFragment.data.consume_events[this.absolute_entity] =
+      UserInterfaceFragment.data.consume_events instanceof BigInt64Array
+        ? BigInt(value)
+        : value;
+    if (UserInterfaceFragment.data.dirty) {
+      UserInterfaceFragment.data.dirty[this.absolute_entity] = 1;
+    }
+    UserInterfaceFragment.data.gpu_data_dirty = true;
+  }
+
+  get emissive() {
+    return UserInterfaceFragment.data.emissive[this.absolute_entity];
+  }
+
+  set emissive(value) {
+    UserInterfaceFragment.data.emissive[this.absolute_entity] =
+      UserInterfaceFragment.data.emissive instanceof BigInt64Array
+        ? BigInt(value)
+        : value;
+    if (UserInterfaceFragment.data.dirty) {
+      UserInterfaceFragment.data.dirty[this.absolute_entity] = 1;
+    }
+    UserInterfaceFragment.data.gpu_data_dirty = true;
+  }
+
+  get rounding() {
+    return UserInterfaceFragment.data.rounding[this.absolute_entity];
+  }
+
+  set rounding(value) {
+    UserInterfaceFragment.data.rounding[this.absolute_entity] =
+      UserInterfaceFragment.data.rounding instanceof BigInt64Array
+        ? BigInt(value)
+        : value;
+    if (UserInterfaceFragment.data.dirty) {
+      UserInterfaceFragment.data.dirty[this.absolute_entity] = 1;
+    }
+    UserInterfaceFragment.data.gpu_data_dirty = true;
+  }
+
   get dirty() {
     return UserInterfaceFragment.data.dirty[this.absolute_entity];
   }
@@ -246,12 +291,15 @@ export class UserInterfaceFragment extends Fragment {
       is_clicked: new Uint8Array(1),
       is_pressed: new Uint8Array(1),
       was_pressed: new Uint8Array(1),
+      consume_events: new Uint8Array(1),
       color: {
         r: new Float32Array(1),
         g: new Float32Array(1),
         b: new Float32Array(1),
         a: new Float32Array(1),
       },
+      emissive: new Float32Array(1),
+      rounding: new Float32Array(1),
       dirty: new Uint8Array(1),
       element_data_buffer: null,
       gpu_data_dirty: true,
@@ -293,9 +341,12 @@ export class UserInterfaceFragment extends Fragment {
     Fragment.resize_array(this.data, "is_clicked", new_size, Uint8Array, 1);
     Fragment.resize_array(this.data, "is_pressed", new_size, Uint8Array, 1);
     Fragment.resize_array(this.data, "was_pressed", new_size, Uint8Array, 1);
+    Fragment.resize_array(this.data, "consume_events", new_size, Uint8Array, 1);
     Object.keys(this.data.color).forEach((axis) => {
       Fragment.resize_array(this.data.color, axis, new_size, Float32Array);
     });
+    Fragment.resize_array(this.data, "emissive", new_size, Float32Array, 1);
+    Fragment.resize_array(this.data, "rounding", new_size, Float32Array, 1);
     Fragment.resize_array(this.data, "dirty", new_size, Uint8Array, 1);
 
     this.data.gpu_data_dirty = true;
@@ -324,10 +375,14 @@ export class UserInterfaceFragment extends Fragment {
       this.data.is_clicked[entity_index] = 0;
       this.data.is_pressed[entity_index] = 0;
       this.data.was_pressed[entity_index] = 0;
+      this.data.consume_events[entity_index] = 0;
       this.data.color.r[entity_index] = 0;
       this.data.color.g[entity_index] = 0;
       this.data.color.b[entity_index] = 0;
       this.data.color.a[entity_index] = 0;
+
+      this.data.emissive[entity_index] = 0;
+      this.data.rounding[entity_index] = 0;
     }
 
     this.data.gpu_data_dirty = true;
@@ -351,12 +406,15 @@ export class UserInterfaceFragment extends Fragment {
     data.is_clicked = this.data.is_clicked[entity_index];
     data.is_pressed = this.data.is_pressed[entity_index];
     data.was_pressed = this.data.was_pressed[entity_index];
+    data.consume_events = this.data.consume_events[entity_index];
     data.color = {
       r: this.data.color.r[entity_index],
       g: this.data.color.g[entity_index],
       b: this.data.color.b[entity_index],
       a: this.data.color.a[entity_index],
     };
+    data.emissive = this.data.emissive[entity_index];
+    data.rounding = this.data.rounding[entity_index];
     data.dirty = this.data.dirty[entity_index];
     return data;
   }
@@ -381,14 +439,18 @@ export class UserInterfaceFragment extends Fragment {
     if (!this.data.gpu_data_dirty) return;
 
     {
-      const gpu_data = new Float32Array(Math.max(this.size * 4, 4));
+      const gpu_data = new Float32Array(Math.max(this.size * 8, 8));
       let offset = 0;
       for (let i = 0; i < this.size; i++) {
         gpu_data[offset + 0] = this.data.color.r[i];
         gpu_data[offset + 1] = this.data.color.g[i];
         gpu_data[offset + 2] = this.data.color.b[i];
         gpu_data[offset + 3] = this.data.color.a[i];
-        offset += 4;
+        gpu_data[offset + 4] = this.data.emissive[i];
+        gpu_data[offset + 5] = this.data.rounding[i];
+        gpu_data[offset + 6] = 0; // padding
+        gpu_data[offset + 7] = 0; // padding
+        offset += 8;
       }
 
       if (
@@ -444,6 +506,9 @@ export class UserInterfaceFragment extends Fragment {
     this.data.was_pressed[to_index * 1 + 0] =
       this.data.was_pressed[from_index * 1 + 0];
 
+    this.data.consume_events[to_index * 1 + 0] =
+      this.data.consume_events[from_index * 1 + 0];
+
     this.data.color.r[to_index * 1 + 0] = this.data.color.r[from_index * 1 + 0];
 
     this.data.color.g[to_index * 1 + 0] = this.data.color.g[from_index * 1 + 0];
@@ -451,6 +516,12 @@ export class UserInterfaceFragment extends Fragment {
     this.data.color.b[to_index * 1 + 0] = this.data.color.b[from_index * 1 + 0];
 
     this.data.color.a[to_index * 1 + 0] = this.data.color.a[from_index * 1 + 0];
+
+    this.data.emissive[to_index * 1 + 0] =
+      this.data.emissive[from_index * 1 + 0];
+
+    this.data.rounding[to_index * 1 + 0] =
+      this.data.rounding[from_index * 1 + 0];
 
     this.data.dirty[to_index * 1 + 0] = this.data.dirty[from_index * 1 + 0];
 

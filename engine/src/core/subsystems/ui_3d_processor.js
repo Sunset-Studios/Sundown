@@ -54,11 +54,15 @@ export class UI3DProcessor extends SimulationLayer {
 
           if (user_interfaces.is_clicked[entity_index]) {
             Element3D.trigger(entity, "selected");
-            InputProvider.get().consume_action(InputKey.B_mouse_left);
+            if (user_interfaces.consume_events[entity_index]) {
+              InputProvider.get().consume_action(InputKey.B_mouse_left);
+            }
           }
           if (user_interfaces.is_pressed[entity_index]) {
             Element3D.trigger(entity, "pressed");
-            InputProvider.get().consume_action(InputKey.B_mouse_left);
+            if (user_interfaces.consume_events[entity_index]) {
+              InputProvider.get().consume_action(InputKey.B_mouse_left);
+            }
           }
         }
 

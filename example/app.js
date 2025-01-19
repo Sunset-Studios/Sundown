@@ -114,7 +114,7 @@ export class TestScene extends Scene {
     text_fragment_view.color.g = 1;
     text_fragment_view.color.b = 1;
     text_fragment_view.color.a = 1;
-    text_fragment_view.emissive = 5;
+    text_fragment_view.emissive = 1;
 
     PostProcessStack.register_pass(0, "outline", "effects/outline_post.wgsl", {
       outline_thickness: 1.0,

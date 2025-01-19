@@ -120,6 +120,10 @@ fn fragment(v_out: VertexOutput, f_out: ptr<function, FragmentOutput>) -> Fragme
     var post_material_output = fragment(v_out, &output);
 
 #if TRANSPARENT
+    if (post_material_output.albedo.a <= 0.0) {
+        discard;
+    } 
+
     var view_dir = normalize(-view_buffer[0].view_direction.xyz);
     var color = vec3f(0.0);
     let num_lights = arrayLength(&lights_buffer) * min(1u, u32(post_material_output.normal.w));

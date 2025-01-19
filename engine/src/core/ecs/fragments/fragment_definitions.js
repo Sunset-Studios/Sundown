@@ -453,7 +453,7 @@ const SceneGraphFragment = {
         this.data.scene_graph_uniforms[i] = Buffer.create({
           name: "scene_graph_uniforms_" + i,
           usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-          raw_data: new Uint32Array([layer_counts[i], layer_offset]),
+          raw_data: new Uint32Array([layer_counts[i], layer_offset, i]),
           force: true,
         });
         layer_offset += layer_counts[i];
@@ -544,9 +544,21 @@ const UserInterfaceFragment = {
       type: DataType.UINT8,
       stride: 1,
     },
+    consume_events: {
+      type: DataType.UINT8,
+      stride: 1,
+    },
     color: {
       type: DataType.FLOAT32,
       vector: { r: true, g: true, b: true, a: true },
+      stride: 1,
+    },
+    emissive: {
+      type: DataType.FLOAT32,
+      stride: 1,
+    },
+    rounding: {
+      type: DataType.FLOAT32,
       stride: 1,
     },
     dirty: {
@@ -558,16 +570,20 @@ const UserInterfaceFragment = {
     element_data: {
       type: DataType.FLOAT32,
       usage: BufferType.STORAGE,
-      stride: 4,
+      stride: 8,
       gpu_data: `
-      const gpu_data = new Float32Array(Math.max(this.size * 4, 4));
+      const gpu_data = new Float32Array(Math.max(this.size * 8, 8));
       let offset = 0;
       for (let i = 0; i < this.size; i++) {
         gpu_data[offset + 0] = this.data.color.r[i];
         gpu_data[offset + 1] = this.data.color.g[i];
         gpu_data[offset + 2] = this.data.color.b[i];
         gpu_data[offset + 3] = this.data.color.a[i];
-        offset += 4;
+        gpu_data[offset + 4] = this.data.emissive[i];
+        gpu_data[offset + 5] = this.data.rounding[i];
+        gpu_data[offset + 6] = 0; // padding
+        gpu_data[offset + 7] = 0; // padding
+        offset += 8;
       }
       `,
     },

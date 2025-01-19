@@ -1,12 +1,20 @@
 #include "common.wgsl"
 
 // ------------------------------------------------------------------------------------
+// Constants
+// ------------------------------------------------------------------------------------ 
+
+// For things like world space UI, this prevents z-fighting between parent-child elements that are positioned at the same z-depth
+const layer_z_offset_amount = 0.05;
+
+// ------------------------------------------------------------------------------------
 // Data Structures
 // ------------------------------------------------------------------------------------ 
 
 struct SceneGraphLayerData {
     count: u32,
-    offset: u32
+    offset: u32,
+    layer_index: u32
 };
 
 // ------------------------------------------------------------------------------------
@@ -78,7 +86,7 @@ fn cs(@builtin(global_invocation_id) global_id: vec3<u32>) {
         
         position.x,
         position.y,
-        position.z,
+        position.z + layer_z_offset_amount * f32(scene_graph_layer_data.layer_index),
         1.0
     );
 
