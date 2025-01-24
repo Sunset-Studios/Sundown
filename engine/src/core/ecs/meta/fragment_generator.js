@@ -258,6 +258,8 @@ class ${name}DataView {
     }
 }
 
+const unmapped_state = 'unmapped';
+
 export class ${fragment_name} extends Fragment {
     static data_view_allocator = new RingBufferAllocator(256, ${name}DataView);
     static size = 0;
@@ -645,7 +647,7 @@ export class ${fragment_name} extends Fragment {
           .filter(([_, buf]) => buf.cpu_buffer)
           .map(
             ([key, _]) => `
-        if (this.data.${key}_cpu_buffer?.buffer.mapState === "unmapped") {
+        if (this.data.${key}_cpu_buffer?.buffer.mapState === unmapped_state) {
             await this.data.${key}_cpu_buffer.read(
                 this.data.${key},
                 this.data.${key}.byteLength,

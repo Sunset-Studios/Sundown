@@ -26,7 +26,6 @@ export class EntityManager {
   static fragment_types = new Set();
   static entities = new Vector(256, Float64Array);
   static deleted_entities = new Set();
-  static queries = [];
   static pending_instance_count_changes = new Map();
   static needs_entity_refresh = false;
 
@@ -308,9 +307,7 @@ export class EntityManager {
   }
 
   static create_query({ fragment_requirements }) {
-    const query = new EntityQuery(this, fragment_requirements);
-    this.queries.push(query);
-    return query;
+    return EntityQuery.create(this, fragment_requirements);
   }
 
   static rebuild_buffers() {
@@ -323,16 +320,16 @@ export class EntityManager {
   static refresh_entities() {
     if (this.needs_entity_refresh) {
       SharedEntityMetadataBuffer.write();
-      for (let i = 0; i < this.queries.length; i++) {
-        this.queries[i].update_matching_entities();
+      for (let i = 0; i < EntityQuery.query_cache.length; i++) {
+        EntityQuery.query_cache[i].update_matching_entities();
       }
       this.needs_entity_refresh = false;
     }
   }
 
   static process_query_changes() {
-    for (let i = 0; i < this.queries.length; i++) {
-      this.queries[i].process_entity_changes();
+    for (let i = 0; i < EntityQuery.query_cache.length; i++) {
+      EntityQuery.query_cache[i].process_entity_changes();
     }
   }
 

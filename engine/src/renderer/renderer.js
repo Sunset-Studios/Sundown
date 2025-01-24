@@ -189,6 +189,10 @@ export class Renderer {
     render_pass.pass.draw(triangles, instance_count);
   }
 
+  set_scene_id(scene_id) {
+    this.render_graph.set_scene_id(scene_id);
+  }
+
   max_bind_groups() {
     return this.adapter.limits.maxBindGroups;
   }

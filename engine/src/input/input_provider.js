@@ -131,4 +131,18 @@ export class InputProvider extends SimulationLayer {
         return index !== -1 ? this.current_dirty_states[index].range_value : 0.0;
 
     }
+
+    consume_range(name) {
+        let index = this.current_dirty_states.findIndex(state => 
+            (typeof name === 'number' ? state.raw_range === name : state.mapped_name === name) && 
+            state.input_type === InputType.Range
+        );
+        while (index !== -1) {
+            this.current_dirty_states.splice(index, 1);
+            index = this.current_dirty_states.findIndex(state => 
+                (typeof name === 'number' ? state.raw_range === name : state.mapped_name === name) && 
+                state.input_type === InputType.Range
+            );
+        }
+    }
 }

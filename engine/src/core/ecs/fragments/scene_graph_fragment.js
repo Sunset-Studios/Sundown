@@ -65,6 +65,8 @@ class SceneGraphDataView {
   }
 }
 
+const unmapped_state = "unmapped";
+
 export class SceneGraphFragment extends Fragment {
   static data_view_allocator = new RingBufferAllocator(256, SceneGraphDataView);
   static size = 0;

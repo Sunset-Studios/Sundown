@@ -282,6 +282,8 @@ class LightDataView {
   }
 }
 
+const unmapped_state = "unmapped";
+
 export class LightFragment extends Fragment {
   static data_view_allocator = new RingBufferAllocator(256, LightDataView);
   static size = 0;

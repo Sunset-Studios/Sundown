@@ -11,4 +11,7 @@ export default defineConfig({
     },
   },
   publicDir: "assets",
+  define: {
+    __DEV__: 'true',
+  }
 });

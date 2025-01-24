@@ -9,6 +9,8 @@ export const EntityMasks = {
 };
 
 export class EntityQuery {
+  static query_cache = [];
+
   #seen_entities = new Set();
   #matching_count = 0;
   previous_entity_count = 0;
@@ -99,5 +101,24 @@ export class EntityQuery {
 
       this.entities_to_filter.clear();
     });
+  }
+
+  static create(entity_manager, fragment_requirements) {
+    let query = this.query_cache.find(query => {
+      if (query.fragment_requirements.length !== fragment_requirements.length) {
+        return false;
+      }
+      return query.fragment_requirements.every(req => 
+        fragment_requirements.includes(req)
+      );
+    });
+
+    if (query) {
+      return query;
+    }
+
+    query = new EntityQuery(entity_manager, fragment_requirements);
+    this.query_cache.push(query);
+    return query;
   }
 }

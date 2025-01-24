@@ -56,6 +56,8 @@ class VisibilityDataView {
   }
 }
 
+const unmapped_state = "unmapped";
+
 export class VisibilityFragment extends Fragment {
   static data_view_allocator = new RingBufferAllocator(256, VisibilityDataView);
   static size = 0;

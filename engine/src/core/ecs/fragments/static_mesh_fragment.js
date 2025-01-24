@@ -75,6 +75,8 @@ class StaticMeshDataView {
   }
 }
 
+const unmapped_state = "unmapped";
+
 export class StaticMeshFragment extends Fragment {
   static data_view_allocator = new RingBufferAllocator(256, StaticMeshDataView);
   static size = 0;

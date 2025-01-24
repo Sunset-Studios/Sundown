@@ -273,6 +273,8 @@ class UserInterfaceDataView {
   }
 }
 
+const unmapped_state = "unmapped";
+
 export class UserInterfaceFragment extends Fragment {
   static data_view_allocator = new RingBufferAllocator(
     256,

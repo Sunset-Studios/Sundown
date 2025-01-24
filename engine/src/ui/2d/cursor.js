@@ -6,6 +6,11 @@ import { SharedViewBuffer, SharedFrameInfoBuffer } from "../../core/shared_data.
 import { screen_pos_to_world_pos } from "../../utility/camera.js";
 import { vec3 } from "gl-matrix";
 
+const pixel_suffix = "px";
+const cursor_name = "cursor";
+const img_name = "img";
+const default_cursor_transition = "all 0.2s ease";
+
 export class Cursor extends Element {
   icon = null;
   icon_change_stack = [];
@@ -15,7 +20,7 @@ export class Cursor extends Element {
   current_depth = 2;
 
   init(name, config, children = []) {
-    super.init(name, config, children, "cursor");
+    super.init(name, config, children, cursor_name);
 
     this.config.allows_cursor_events = false;
 
@@ -35,8 +40,8 @@ export class Cursor extends Element {
     if (this.prev_x !== x || this.prev_y !== y || mouse_wheel !== 0) {
       this.current_depth += mouse_wheel;
 
-      this.dom.style.left = x + "px";
-      this.dom.style.top = y + "px";
+      this.dom.style.left = x + pixel_suffix;
+      this.dom.style.top = y + pixel_suffix;
 
       const renderer = Renderer.get();
       this.world_position = screen_pos_to_world_pos(
@@ -59,11 +64,11 @@ export class Cursor extends Element {
     const url = new URL(`${path}`, window.location.href);
     this.icon_change_stack.push(url.href);
     if (!this.icon) {
-      this.icon = document.createElement("img");
+      this.icon = document.createElement(img_name);
       this.icon.src = url.href;
       this.icon.style.width = this.config.style.width;
       this.icon.style.height = this.config.style.height;
-      this.icon.style.transition = "all 0.2s ease";
+      this.icon.style.transition = default_cursor_transition;
       this.dom.appendChild(this.icon);
     }
     this.icon.src = url.href;
@@ -79,6 +84,9 @@ export class Cursor extends Element {
 
   apply_style(style, reset = false) {
     super.apply_style(style, reset);
+    if (!style) {
+      style = this.config.style;
+    }
     if (this.icon) {
       this.icon.style.width = style.width;
       this.icon.style.height = style.height;

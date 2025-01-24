@@ -11,7 +11,6 @@
  * ```javascript
  * // Create and initialize the render graph
  * const renderGraph = new RenderGraph();
- * renderGraph.initialize();
  *
  * // Begin a new frame
  * renderGraph.begin();
@@ -64,7 +63,7 @@
  * renderGraph.destroy();
  * ```
  */
-
+import { ConfigDB, ConfigSync } from "../core/config_db.js";
 import ExecutionQueue from "../utility/execution_queue.js";
 import { FrameAllocator } from "../memory/allocator.js";
 import { ResourceCache } from "./resource_cache.js";
@@ -87,10 +86,11 @@ import { Name } from "../utility/names.js";
 import { StaticIntArray } from "../memory/container.js";
 import _ from "lodash";
 import { profile_scope } from "../utility/performance.js";
+import { read_file } from "../utility/file_system.js";
 
-const max_image_resources = 256;
-const max_buffer_resources = 256;
-const max_render_passes = 256;
+const max_image_resources = 128;
+const max_buffer_resources = 128;
+const max_render_passes = 128;
 
 /**
  * Creates a unique handle for a graph resource.
@@ -389,6 +389,7 @@ const RGPass = Object.freeze({
  * should be allocated externally and registered to the render graph as external resources.
  * @typedef {Object} RGRegistry
  * @property {Array} render_passes - Array of render passes.
+ * @property {Map} pass_order_map - Map of pass order.
  * @property {Array} all_resource_handles - Array of all resource handles.
  * @property {Map} resource_metadata - Map of resource metadata.
  * @property {Array} all_bindless_resource_handles - Array of all bindless resource handles.
@@ -396,7 +397,9 @@ const RGPass = Object.freeze({
  * @property {boolean} b_global_bind_group_bound - Whether the global bind group is bound.
  */
 const RGRegistry = Object.freeze({
+  current_scene_id: "",
   render_passes: [],
+  pass_order_map: new Map(),
   all_resource_handles: new StaticIntArray(max_image_resources + max_buffer_resources),
   resource_metadata: new Map(),
   all_bindless_resource_handles: [],
@@ -417,6 +420,22 @@ const PassCache = Object.freeze({
   pipeline_states: new Map(),
 });
 
+const CustomPassOrderReadyFlag = 1 << 0;
+const DefaultPassOrderReadyFlag = 1 << 1;
+
+/**
+ * Represents the stored pass order.
+ * @typedef {Object} StoredPassOrder
+ * @property {Array} default - The default pass order.
+ * @property {Array} custom - The custom pass order.
+ * @property {number} ready_flags - The ready flags for the pass order.
+ */
+const StoredPassOrder = Object.freeze({
+  default: [],
+  custom: [],
+  ready_flags: 0,
+});
+
 /**
  * A render graph is used to organize rendering operations in a graphics application.
  * This API provides a comprehensive set of functions to manage resources, pipeline states, and bind groups for a render graph.
@@ -428,6 +447,7 @@ export class RenderGraph {
     this.max_bind_groups = max_bind_groups;
     this.pass_cache = _.cloneDeep(PassCache);
     this.registry = _.cloneDeep(RGRegistry);
+    this.stored_pass_order = _.cloneDeep(StoredPassOrder);
     this.non_culled_passes = [];
     this.queued_global_bind_group_writes = [];
     this.queued_pre_commands = [];
@@ -445,6 +465,8 @@ export class RenderGraph {
 
     this._execute_post_render_callbacks = this._execute_post_render_callbacks.bind(this);
     this._execute_pre_render_callbacks = this._execute_pre_render_callbacks.bind(this);
+
+    this._init_pass_order_info();
   }
 
   /**
@@ -509,6 +531,7 @@ export class RenderGraph {
 
     new_resource = this.image_resource_allocator.allocate();
     new_resource.config = { ...RGImageConfig, ...config };
+    new_resource.config.encoded_name = Name.from(config.name);
 
     new_resource.handle = create_graph_resource_handle(index, ResourceType.Image, 1);
 
@@ -557,6 +580,7 @@ export class RenderGraph {
       ...RGImageConfig,
       ...image_obj.config,
     };
+    new_resource.config.encoded_name = physical_id;
 
     new_resource.handle = create_graph_resource_handle(index, ResourceType.Image, 1);
 
@@ -604,6 +628,7 @@ export class RenderGraph {
 
     new_resource = this.buffer_resource_allocator.allocate();
     new_resource.config = { ...RGBufferConfig, ...config };
+    new_resource.config.encoded_name = Name.from(config.name);
 
     new_resource.handle = create_graph_resource_handle(index, ResourceType.Buffer, 1);
 
@@ -652,6 +677,7 @@ export class RenderGraph {
       ...RGBufferConfig,
       ...buffer_obj.config,
     };
+    new_resource.config.encoded_name = physical_id;
 
     new_resource.handle = create_graph_resource_handle(index, ResourceType.Buffer, 1);
 
@@ -697,7 +723,12 @@ export class RenderGraph {
     let index;
 
     const pass = this.render_pass_allocator.allocate();
-    pass.pass_config = { name: name, flags: pass_type, attachments: [] };
+    pass.pass_config = {
+      name: name,
+      encoded_name: Name.from(name),
+      flags: pass_type,
+      attachments: [],
+    };
     pass.parameters = { ..._.cloneDeep(RGPassParameters), ...params };
     pass.executor = execution_callback;
     pass.shaders = {};
@@ -806,6 +837,16 @@ export class RenderGraph {
     this.queued_pre_commands.push({ name, commands_callback });
   }
 
+  /**
+   * Sets the scene ID for the render graph, used to set and get the current pass order.
+   *
+   * @param {string} scene_id - The ID of the scene to set.
+   * @returns {void}
+   */
+  set_scene_id(scene_id) {
+    this.registry.current_scene_id = scene_id;
+  }
+
   _add_queued_pre_commands() {
     for (const command of this.queued_pre_commands) {
       this.add_pass(command.name, RenderPassFlags.GraphLocal, {}, command.commands_callback);
@@ -835,6 +876,45 @@ export class RenderGraph {
       this.add_pass(command.name, RenderPassFlags.GraphLocal, {}, command.commands_callback);
     }
     this.queued_post_commands.length = 0;
+  }
+
+  _init_pass_order_info() {
+    const config_file = read_file("config/renderer.config.json");
+    if (config_file) {
+      const config = JSON.parse(config_file);
+      if (config.rg?.pass_order?.default) {
+        ConfigDB.set_config_property(
+          "renderer.config",
+          "rg.pass_order.default",
+          config.rg.pass_order.default
+        ).then(() => {
+          this.stored_pass_order.default = config.rg.pass_order.default;
+          this.stored_pass_order.ready_flags |= DefaultPassOrderReadyFlag;
+          if (config.rg?.pass_order?.custom) {
+            ConfigDB.set_config_property(
+              "renderer.config",
+              "rg.pass_order.custom",
+              config.rg.pass_order.custom
+            ).then(() => {
+              this.stored_pass_order.custom = config.rg.pass_order.custom;
+              this.stored_pass_order.ready_flags |= CustomPassOrderReadyFlag;
+            });
+          }
+        });
+      }
+    } else {
+      ConfigDB.get_config_property("renderer.config", "rg.pass_order.default").then(
+        (pass_order) => {
+          this.stored_pass_order.default = pass_order || {};
+          this.stored_pass_order.ready_flags |= DefaultPassOrderReadyFlag;
+        }
+      );
+
+      ConfigDB.get_config_property("renderer.config", "rg.pass_order.custom").then((pass_order) => {
+        this.stored_pass_order.custom = pass_order || {};
+        this.stored_pass_order.ready_flags |= CustomPassOrderReadyFlag;
+      });
+    }
   }
 
   _update_reference_counts(pass) {
@@ -874,6 +954,7 @@ export class RenderGraph {
 
   _compile() {
     this._cull_graph_passes();
+    this._sort_graph_passes();
     this._compute_resource_first_and_last_users();
   }
 
@@ -941,6 +1022,35 @@ export class RenderGraph {
         this.non_culled_passes.splice(i, 1);
       }
     }
+  }
+
+  _sort_graph_passes() {
+    // Skip if current_pass_order is empty
+    const current_pass_order = this.stored_pass_order.custom[this.registry.current_scene_id] || [];
+    if (!current_pass_order || current_pass_order.length === 0) {
+      return;
+    }
+
+    // Sort non_culled_passes based on the order in current_pass_order
+    this.non_culled_passes.sort((a, b) => {
+      const pass_a = this.registry.render_passes[a];
+      const pass_b = this.registry.render_passes[b];
+
+      // Get the encoded IDs for the pass names
+      const id_a = pass_a.pass_config.name;
+      const id_b = pass_b.pass_config.name;
+
+      // Get their positions from the order map
+      const order_a = this.registry.pass_order_map.has(id_a)
+        ? this.registry.pass_order_map.get(id_a)
+        : Number.MAX_SAFE_INTEGER;
+      const order_b = this.registry.pass_order_map.has(id_b)
+        ? this.registry.pass_order_map.get(id_b)
+        : Number.MAX_SAFE_INTEGER;
+
+      // Sort based on position
+      return order_a === order_b ? a - b : order_a - order_b;
+    });
   }
 
   _compute_resource_first_and_last_users() {
@@ -1049,7 +1159,8 @@ export class RenderGraph {
       const frame_data = _.cloneDeep(RGFrameData);
       frame_data.resource_deletion_queue = this.registry.resource_deletion_queue;
 
-      for (const pass_handle of this.non_culled_passes) {
+      for (let i = 0; i < this.non_culled_passes.length; i++) {
+        const pass_handle = this.non_culled_passes[i];
         this._execute_pass(this.registry.render_passes[pass_handle], frame_data, encoder);
       }
 
@@ -1099,6 +1210,111 @@ export class RenderGraph {
     this.buffer_resource_allocator.reset();
     this.render_pass_allocator.reset();
     this.resource_metadata_allocator.reset();
+  }
+
+  /**
+   * Records the default pass order in the configuration database.
+   * This method is used to save the default pass order for future reference.
+   *
+   * @returns {void}
+   */
+  async record_default_pass_order() {
+    await ConfigDB.set_config_property(
+      "renderer.config",
+      "rg.pass_order.default",
+      this.stored_pass_order.default
+    );
+    await ConfigSync.save_to_server("renderer.config");
+  }
+
+  /**
+   * Records the current pass order in the configuration database for the specified scene.
+   * This method is used to save the pass order for future reference.
+   *
+   * @returns {void}
+   */
+  async record_custom_pass_order() {
+    await ConfigDB.set_config_property(
+      "renderer.config",
+      "rg.pass_order.custom",
+      this.stored_pass_order.custom
+    );
+    await ConfigSync.save_to_server("renderer.config");
+    this._update_pass_order_map();
+  }
+
+  /**
+   * Checks if the default pass order is ready.
+   *
+   * @returns {boolean} True if the default pass order is ready, false otherwise.
+   */
+  is_default_pass_order_ready() {
+    return (this.stored_pass_order.ready_flags & DefaultPassOrderReadyFlag) !== 0;
+  }
+
+  /**
+   * Checks if the custom pass order is ready.
+   *
+   * @returns {boolean} True if the custom pass order is ready, false otherwise.
+   */
+  is_custom_pass_order_ready() {
+    return (this.stored_pass_order.ready_flags & CustomPassOrderReadyFlag) !== 0;
+  }
+
+  /**
+   * Sets the default pass order for the render graph.
+   *
+   * @param {Array} value - The pass order to set for the default scene
+   * @returns {void}
+   */
+  set_default_pass_order(value, scene_id = null) {
+    const scene = scene_id ?? this.registry.current_scene_id;
+    this.stored_pass_order.default[scene] = value;
+  }
+
+  /**
+   * Returns the default pass order for the render graph.
+   *
+   * @param {string|number} scene_id - The ID of the scene to get the default pass order for
+   * @returns {Array} The default pass order for the specified scene
+   */
+  get_default_pass_order(scene_id = null) {
+    const scene = scene_id ?? this.registry.current_scene_id;
+    return this.stored_pass_order.default[scene] || [];
+  }
+
+  /**
+   * Sets the pass order for a specific scene.
+   *
+   * @param {Array} value - The pass order to set for the specified scene
+   * @param {string|number} scene_id - The ID of the scene to set the pass order for
+   * @returns {void}
+   */
+  set_scene_pass_order(value, scene_id = null) {
+    const scene = scene_id ?? this.registry.current_scene_id;
+    this.stored_pass_order.custom[scene] = value;
+    if (scene === this.registry.current_scene_id) {
+      this._update_pass_order_map();
+    }
+  }
+
+  /**
+   * Returns the pass order for a specific scene.
+   *
+   * @param {string|number} scene_id - The ID of the scene to get the pass order for
+   * @returns {Array} The pass order for the specified scene
+   */
+  get_scene_pass_order(scene_id = null) {
+    const scene = scene_id ?? this.registry.current_scene_id;
+    return this.stored_pass_order.custom[scene] || [];
+  }
+
+  _update_pass_order_map() {
+    this.registry.pass_order_map.clear();
+    const current_pass_order = this.stored_pass_order.custom[this.registry.current_scene_id] || [];
+    for (let i = 0; i < current_pass_order.length; i++) {
+      this.registry.pass_order_map.set(current_pass_order[i], i);
+    }
   }
 
   _execute_post_render_callbacks() {
@@ -1176,7 +1392,7 @@ export class RenderGraph {
     );
 
     if (!is_graph_local_pass) {
-      pass.physical_id = Name.from(pass.pass_config.name);
+      pass.physical_id = pass.pass_config.encoded_name;
       RenderPass.create(pass.pass_config);
 
       this._setup_pass_shaders(pass, frame_data);
@@ -1193,7 +1409,7 @@ export class RenderGraph {
       const buffer_resource = this.buffer_resource_allocator.get(resource_index);
       const buffer_metadata = this.registry.resource_metadata.get(resource);
       if (buffer_metadata.physical_id === 0) {
-        buffer_metadata.physical_id = Name.from(buffer_resource.config.name);
+        buffer_metadata.physical_id = buffer_resource.config.encoded_name;
         const buffer = Buffer.create(buffer_resource.config);
 
         if (!buffer_metadata.b_is_persistent) {
@@ -1217,7 +1433,7 @@ export class RenderGraph {
       if (image_metadata.physical_id === 0) {
         image_metadata.b_is_persistent |= is_persistent;
 
-        image_metadata.physical_id = Name.from(image_resource.config.name);
+        image_metadata.physical_id = image_resource.config.encoded_name;
         const image = Texture.create(image_resource.config);
 
         if (!image_metadata.b_is_persistent) {
@@ -1479,7 +1695,7 @@ export class RenderGraph {
           },
         };
 
-        pass.pipeline_state_id = Name.from(pass.pass_config.name);
+        pass.pipeline_state_id = pass.pass_config.encoded_name;
         const pipeline = PipelineState.create_compute(pass.pass_config.name, pipeline_descriptor);
       } else {
         const targets = pass.pass_config.attachments
@@ -1538,7 +1754,7 @@ export class RenderGraph {
           pipeline_descriptor.depthStencil = depth_stencil_target;
         }
 
-        pass.pipeline_state_id = Name.from(pass.pass_config.name);
+        pass.pipeline_state_id = pass.pass_config.encoded_name;
         const pipeline = PipelineState.create_render(pass.pass_config.name, pipeline_descriptor);
       }
 
@@ -1627,37 +1843,6 @@ export class RenderGraph {
     });
 
     this.queued_global_bind_group_writes = [];
-
-    // TODO: Figure out how to write these bindless resources into the global buffer and image arrays
-    //   // Setup bindless resources on global bind group
-    //   if (!pass.parameters.b_skip_auto_descriptor_setup) {
-    //     frame_data.pass_bindless_resources.handles = [];
-
-    //     const bindless_entries = pass.parameters.bindless_inputs.map((resource) => {
-    //         const resource_type = get_graph_resource_type(resource);
-    //         if (resource_type === ResourceType.Image) {
-    //           const image = ResourceCache.get().fetch(
-    //             CacheTypes.IMAGE,
-    //             this.registry.resource_metadata.get(resource).physical_id
-    //           );
-    //           const handle = bindless_bind_group.binding_table.get_new(BindlessGroupIndex.Image);
-    //           frame_data.pass_bindless_resources.handles.push(handle);
-    //           return {
-    //             binding: handle.slot,
-    //             resource: image.create_view({
-    //               dimension: pass.parameters.b_split_input_image_mips
-    //                 ? "2d-array"
-    //                 : "2d",
-    //             }),
-    //           };
-    //         }
-    //         return null;
-    //       });
-
-    //     this.registry.all_bindless_resource_handles.push(
-    //       ...frame_data.pass_bindless_resources.handles
-    //     );
-    //   }
 
     if (entries.length > 0) {
       const global_bind_group = BindGroup.create_with_layout(

@@ -192,6 +192,8 @@ class TextDataView {
   }
 }
 
+const unmapped_state = "unmapped";
+
 export class TextFragment extends Fragment {
   static data_view_allocator = new RingBufferAllocator(256, TextDataView);
   static size = 0;

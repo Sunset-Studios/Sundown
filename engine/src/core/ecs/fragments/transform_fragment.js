@@ -127,6 +127,8 @@ class TransformDataView {
   }
 }
 
+const unmapped_state = "unmapped";
+
 export class TransformFragment extends Fragment {
   static data_view_allocator = new RingBufferAllocator(256, TransformDataView);
   static size = 0;
@@ -473,7 +475,7 @@ export class TransformFragment extends Fragment {
   }
 
   static async sync_buffers() {
-    if (this.data.position_cpu_buffer?.buffer.mapState === "unmapped") {
+    if (this.data.position_cpu_buffer?.buffer.mapState === unmapped_state) {
       await this.data.position_cpu_buffer.read(
         this.data.position,
         this.data.position.byteLength,
@@ -483,7 +485,7 @@ export class TransformFragment extends Fragment {
       );
     }
 
-    if (this.data.rotation_cpu_buffer?.buffer.mapState === "unmapped") {
+    if (this.data.rotation_cpu_buffer?.buffer.mapState === unmapped_state) {
       await this.data.rotation_cpu_buffer.read(
         this.data.rotation,
         this.data.rotation.byteLength,
@@ -493,7 +495,7 @@ export class TransformFragment extends Fragment {
       );
     }
 
-    if (this.data.scale_cpu_buffer?.buffer.mapState === "unmapped") {
+    if (this.data.scale_cpu_buffer?.buffer.mapState === unmapped_state) {
       await this.data.scale_cpu_buffer.read(
         this.data.scale,
         this.data.scale.byteLength,
