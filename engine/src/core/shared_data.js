@@ -4,7 +4,6 @@ import { Renderer } from "../renderer/renderer.js";
 import { mat4, vec4, quat, vec3, vec2 } from "gl-matrix";
 import { WORLD_UP, WORLD_FORWARD } from "./minimal.js";
 import { Vector } from "../memory/container.js";
-import _ from "lodash";
 
 const vertex_buffer_name = "vertex_buffer";
 const view_buffer_name = "view_buffer";

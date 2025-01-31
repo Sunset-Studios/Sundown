@@ -51,8 +51,6 @@
   "dependencies": {
     "electron-squirrel-startup": "^1.0.1",
     "gl-matrix": "^3.4.3",
-    "lodash": "^4.17.21",
-    "module-alias": "^2.2.3",
     "vite": "^5.3.1",
     "wgsl_reflect": "^1.0.8"
   },

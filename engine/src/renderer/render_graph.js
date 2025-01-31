@@ -84,9 +84,9 @@ import {
 } from "./renderer_types.js";
 import { Name } from "../utility/names.js";
 import { StaticIntArray } from "../memory/container.js";
-import _ from "lodash";
 import { profile_scope } from "../utility/performance.js";
 import { read_file } from "../utility/file_system.js";
+import { deep_clone } from "../utility/object.js";
 
 const max_image_resources = 128;
 const max_buffer_resources = 128;
@@ -348,7 +348,7 @@ const RGBufferConfig = Object.freeze({
  * @property {boolean} b_force_keep_pass - Whether to prevent this pass from being culled during render graph compilation.
  */
 const RGPassParameters = Object.freeze({
-  shader_setup: _.cloneDeep(RGShaderDataSetup),
+  shader_setup: deep_clone(RGShaderDataSetup),
   inputs: [],
   outputs: [],
   input_views: [],
@@ -445,9 +445,9 @@ const StoredPassOrder = Object.freeze({
 export class RenderGraph {
   constructor(max_bind_groups) {
     this.max_bind_groups = max_bind_groups;
-    this.pass_cache = _.cloneDeep(PassCache);
-    this.registry = _.cloneDeep(RGRegistry);
-    this.stored_pass_order = _.cloneDeep(StoredPassOrder);
+    this.pass_cache = deep_clone(PassCache);
+    this.registry = deep_clone(RGRegistry);
+    this.stored_pass_order = deep_clone(StoredPassOrder);
     this.non_culled_passes = [];
     this.queued_global_bind_group_writes = [];
     this.queued_pre_commands = [];
@@ -455,12 +455,13 @@ export class RenderGraph {
     this.pre_render_callbacks = [];
     this.post_render_callbacks = [];
 
-    this.image_resource_allocator = new FrameAllocator(max_image_resources, _.clone(RGResource));
-    this.buffer_resource_allocator = new FrameAllocator(max_buffer_resources, _.clone(RGResource));
-    this.render_pass_allocator = new FrameAllocator(max_render_passes, _.cloneDeep(RGPass));
+    this.image_resource_allocator = new FrameAllocator(max_image_resources, deep_clone(RGResource));
+    this.buffer_resource_allocator = new FrameAllocator(max_buffer_resources, deep_clone(RGResource));
+    this.render_pass_allocator = new FrameAllocator(max_render_passes, deep_clone(RGPass));
+
     this.resource_metadata_allocator = new FrameAllocator(
       max_image_resources + max_buffer_resources,
-      _.cloneDeep(RGResourceMetadata)
+      deep_clone(RGResourceMetadata)
     );
 
     this._execute_post_render_callbacks = this._execute_post_render_callbacks.bind(this);
@@ -729,7 +730,7 @@ export class RenderGraph {
       flags: pass_type,
       attachments: [],
     };
-    pass.parameters = { ..._.cloneDeep(RGPassParameters), ...params };
+    pass.parameters = { ...deep_clone(RGPassParameters), ...params };
     pass.executor = execution_callback;
     pass.shaders = {};
     pass.physical_id = 0;
@@ -1156,7 +1157,7 @@ export class RenderGraph {
 
       const encoder = CommandQueue.create_encoder("render_graph_encoder");
 
-      const frame_data = _.cloneDeep(RGFrameData);
+      const frame_data = deep_clone(RGFrameData);
       frame_data.resource_deletion_queue = this.registry.resource_deletion_queue;
 
       for (let i = 0; i < this.non_culled_passes.length; i++) {

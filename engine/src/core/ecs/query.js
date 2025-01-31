@@ -1,7 +1,6 @@
 import { EntityID } from "./entity.js";
 import { Vector } from "../../memory/container.js";
 import { profile_scope } from "../../utility/performance.js";
-import _ from "lodash";
 
 export const EntityMasks = {
   Added: 0x1, // Flag for newly added entities
