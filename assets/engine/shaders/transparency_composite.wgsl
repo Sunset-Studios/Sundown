@@ -8,14 +8,14 @@
 // ------------------------------------------------------------------------------------ 
 struct VertexOutput {
     @builtin(position) position: vec4f,
-    @location(0) color: vec4f,
-    @location(1) uv: vec2f,
-    @location(2) @interpolate(flat) instance_index: u32,
+    @location(0) uv: vec2<precision_float>,
+    @location(1) @interpolate(flat) instance_index: u32,
 };
 
 struct FragmentOutput {
-    @location(0) color: vec4f,
+    @location(0) color: vec4<precision_float>,
 };
+
 
 // ------------------------------------------------------------------------------------
 // Vertex Shader
@@ -25,8 +25,7 @@ struct FragmentOutput {
     @builtin(instance_index) ii: u32
 ) -> VertexOutput {
     var output : VertexOutput;
-    output.position = vertex_buffer[vi].position;
-    output.color = vertex_buffer[vi].color;
+    output.position = vec4<f32>(vertex_buffer[vi].position);
     output.uv = vertex_buffer[vi].uv;
     output.instance_index = ii;
     return output;
@@ -36,8 +35,9 @@ struct FragmentOutput {
 // Fragment Shader
 // ------------------------------------------------------------------------------------ 
 @fragment fn fs(v_out: VertexOutput) -> FragmentOutput {
-    var reveal = textureSample(reveal_texture, global_sampler, v_out.uv);
-    var accum = textureSample(accumulation_texture, global_sampler, v_out.uv);
+    var reveal = vec4<precision_float>(textureSample(reveal_texture, global_sampler, vec2<f32>(v_out.uv)));
+    var accum = vec4<precision_float>(textureSample(accumulation_texture, global_sampler, vec2<f32>(v_out.uv)));
     var average_color = accum.rgb / max(accum.a, epsilon);
-    return FragmentOutput(vec4f(average_color, reveal.r));
+    return FragmentOutput(vec4<precision_float>(average_color, reveal.r));
+
 }

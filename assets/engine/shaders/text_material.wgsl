@@ -9,9 +9,10 @@
 struct StringData {
     start: f32,
     count: f32,
-    page_texture_size: vec2f,
-    color: vec4f,
-    emissive: f32,
+    page_texture_size: vec2<precision_float>,
+    color: vec4<precision_float>,
+    emissive: precision_float,
+
 };
 
 struct GlyphData {
@@ -56,15 +57,19 @@ fn vertex(v_out: ptr<function, VertexOutput>) -> VertexOutput {
         corner_offset.y = 1.0 - corner_offset.y;
 
         // Calculate UV coordinates for the glyph in the texture atlas
-        var uv_top_left = vec2f(
-            f32(glyph_data.x),
-            f32(glyph_data.y)
+        var uv_top_left = vec2<precision_float>(
+            precision_float(glyph_data.x),
+            precision_float(glyph_data.y)
         ) / string.page_texture_size;
 
-        let uv_size = vec2f(
-            f32(glyph_data.width),
-            f32(glyph_data.height)
+
+
+        let uv_size = vec2<precision_float>(
+            precision_float(glyph_data.width),
+            precision_float(glyph_data.height)
         ) / string.page_texture_size;
+
+
 
         // Flip Y coordinate and apply the corner offset
         uv_top_left.y = 1.0 - uv_top_left.y - uv_size.y;
@@ -84,7 +89,7 @@ fn vertex(v_out: ptr<function, VertexOutput>) -> VertexOutput {
 //------------------------------------------------------------------------------------
 fn fragment(v_out: VertexOutput, f_out: ptr<function, FragmentOutput>) -> FragmentOutput {
     // Sample the MSDF texture
-    let sample_color = textureSample(font_page_texture, global_sampler, v_out.uv);
+    let sample_color = vec4<precision_float>(textureSample(font_page_texture, global_sampler, vec2<f32>(v_out.uv)));
     let string_color = string_data[v_out.base_instance_id].color;
     let emissive = string_data[v_out.base_instance_id].emissive;
 
@@ -95,7 +100,7 @@ fn fragment(v_out: VertexOutput, f_out: ptr<function, FragmentOutput>) -> Fragme
     // Compute MSDF distance
     let dist = median3(r, g, b);
     // Shift by 0.5 so that the isocontour for the glyph edge is at 0.5
-    let sd = dist - 0.5;
+    let sd = f32(dist) - 0.5;
 
     // fwidth() calculates how quickly 'sd' changes across the pixel,
     // and we use this to create a smooth transition.
@@ -107,8 +112,9 @@ fn fragment(v_out: VertexOutput, f_out: ptr<function, FragmentOutput>) -> Fragme
         discard;
     }
 
-    f_out.albedo = vec4f(string_color.rgb, alpha);
-    f_out.emissive = vec4f(emissive, emissive, emissive, 0.0);
+    f_out.albedo = vec4<precision_float>(string_color.rgb, precision_float(alpha));
+    f_out.emissive = vec4<precision_float>(emissive, emissive, emissive, 0.0);
+
 
     f_out.smra.r = 2555.0;
     f_out.smra.g = 0.5;

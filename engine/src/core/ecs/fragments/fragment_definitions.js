@@ -337,12 +337,12 @@ const TransformFragment = {
       if (
         !this.data.transforms_buffer ||
         this.data.transforms_buffer.config.size <
-        this.size * 64 * Float32Array.BYTES_PER_ELEMENT
+        this.size * 32 * Float32Array.BYTES_PER_ELEMENT
       ) {
         this.data.transforms_buffer = Buffer.create({
           name: "transform_fragment_transforms_buffer",
           usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-          raw_data: new Float32Array(this.size * 64),
+          raw_data: new Float32Array(this.size * 32),
           force: true,
         });
         Renderer.get().mark_bind_groups_dirty(true);

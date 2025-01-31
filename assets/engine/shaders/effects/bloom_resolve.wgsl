@@ -3,9 +3,8 @@
 
 struct VertexOutput {
     @builtin(position) position: vec4<f32>,
-    @location(0) color: vec4<f32>,
-    @location(1) uv: vec2<f32>,
-    @location(2) @interpolate(flat) instance_index: u32,
+    @location(0) uv: vec2<precision_float>,
+    @location(1) @interpolate(flat) instance_index: u32,
 }
 
 struct BloomResolveConstants {
@@ -37,9 +36,10 @@ fn apply_bloom(scene: vec3<f32>, bloom: vec3<f32>, intensity: f32, threshold: f3
 }
 
 @fragment
-fn fs(in: VertexOutput) -> @location(0) vec4<f32> {
-    var color = textureSample(scene_color, global_sampler, in.uv).rgb;
-    let bloom_color = textureSample(bloom_brightness, global_sampler, in.uv).rgb;
+fn fs(in: VertexOutput) -> @location(0) vec4<precision_float> {
+    let uv = vec2<f32>(in.uv);
+    var color = textureSample(scene_color, global_sampler, uv).rgb;
+    let bloom_color = textureSample(bloom_brightness, global_sampler, uv).rgb;
 
     color = apply_bloom(
         color, 
@@ -51,5 +51,5 @@ fn fs(in: VertexOutput) -> @location(0) vec4<f32> {
     
     color = reinhard_tonemapping(color, bloom_resolve_constants.exposure);
 
-    return vec4<f32>(color, 1.0);
+    return vec4<precision_float>(vec4<f32>(color, 1.0));
 }

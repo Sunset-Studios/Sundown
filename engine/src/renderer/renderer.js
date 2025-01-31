@@ -23,6 +23,7 @@ export class Renderer {
   canvas_format = null;
   frame_number = 0;
   aspect_ratio = 1.0;
+  has_f16 = false;
   execution_queue = new ExecutionQueue();
   render_strategy = null;
   render_graph = null;
@@ -47,9 +48,16 @@ export class Renderer {
       throw Error("Unable to request WebGPU adapter");
     }
 
+    this.has_f16 = this.adapter.features.has("shader-f16") && !options.use_precision_float;
+
+    let required_features = ["indirect-first-instance"];
+    if (this.has_f16) {
+      required_features.push("shader-f16");
+    }
+
     try {
       this.device = await this.adapter.requestDevice({
-        requiredFeatures: ["indirect-first-instance"],
+        requiredFeatures: required_features,
         requiredLimits: {
           maxColorAttachmentBytesPerSample: 64,
           maxStorageBuffersPerShaderStage: 10,

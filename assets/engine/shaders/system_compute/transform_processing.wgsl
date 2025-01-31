@@ -125,11 +125,7 @@ fn cs(@builtin(global_invocation_id) global_id: vec3<u32>) {
         1.0
     );
 
-    entity_transforms[entity_resolved].prev_transform = entity_transforms[entity_resolved].transform;
-
     entity_transforms[entity_resolved].transform = transform;
-
-    entity_transforms[entity_resolved].inverse_model_matrix = inverse_transform;
 
     entity_transforms[entity_resolved].transpose_inverse_model_matrix = mat4x4f(
         inverse_transform[0][0], inverse_transform[1][0], inverse_transform[2][0], inverse_transform[3][0],

@@ -1,5 +1,5 @@
-#include "postprocess_common.wgsl"
 #include "common.wgsl"
+#include "postprocess_common.wgsl"
 
 // ------------------------------------------------------------------------------------
 // Data Structures
@@ -15,13 +15,12 @@ struct OutlineParams {
 
 struct VertexOutput {
     @builtin(position) position: vec4f,
-    @location(0) color: vec4f,
-    @location(1) uv: vec2f,
-    @location(2) @interpolate(flat) instance_index: u32,
+    @location(0) uv: vec2<precision_float>,
+    @location(1) @interpolate(flat) instance_index: u32,
 };
 
 struct FragmentOutput {
-    @location(0) color: vec4f,
+    @location(0) color: vec4<precision_float>,
 };
 
 // ------------------------------------------------------------------------------------
@@ -92,13 +91,14 @@ fn detect_edge(uv: vec2f) -> f32 {
 
 @fragment
 fn fs(v_out: VertexOutput) -> FragmentOutput {
-    let edge = detect_edge(v_out.uv);
+    let uv = vec2<f32>(v_out.uv);
+    let edge = detect_edge(uv);
     
     // Sample original color
-    let original_color = textureSample(color_texture, global_sampler, v_out.uv);
+    let original_color = textureSample(color_texture, global_sampler, uv);
     
     // Only show outline (no white dots)
     let final_color = select(original_color, outline_params.outline_color, edge > 0.1);
     
-    return FragmentOutput(final_color);
+    return FragmentOutput(vec4<precision_float>(final_color));
 } 

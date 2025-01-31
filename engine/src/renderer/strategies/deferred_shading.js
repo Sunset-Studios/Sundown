@@ -3,6 +3,7 @@ import { Texture } from "../texture.js";
 import { RenderPassFlags, MaterialFamilyType } from "../renderer_types.js";
 import { MeshTaskQueue } from "../mesh_task_queue.js";
 import { ComputeTaskQueue } from "../compute_task_queue.js";
+import { ComputeRasterTaskQueue } from "../compute_raster_task_queue.js";
 import { TransformFragment } from "../../core/ecs/fragments/transform_fragment.js";
 import { SceneGraphFragment } from "../../core/ecs/fragments/scene_graph_fragment.js";
 import { LightFragment } from "../../core/ecs/fragments/light_fragment.js";
@@ -13,6 +14,7 @@ import { npot, clamp } from "../../utility/math.js";
 import { profile_scope } from "../../utility/performance.js";
 import { global_dispatcher } from "../../core/dispatcher.js";
 import {
+  rgba32float_format,
   rgba16float_format,
   r8unorm_format,
   depth32float_format,
@@ -131,6 +133,16 @@ const draw_cull_data_config = {
   usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
 };
 
+const depth_only_shader_setup = {
+  pipeline_shaders: {
+    vertex: {
+      path: "depth_only.wgsl",
+    },
+  },
+  depth_write_enabled: true,
+  depth_compare: "less",
+};
+
 const g_buffer_shader_setup = {
   pipeline_shaders: {
     vertex: {
@@ -140,6 +152,8 @@ const g_buffer_shader_setup = {
       path: "gbuffer_base.wgsl",
     },
   },
+  depth_write_enabled: false,
+  depth_compare: "less",
 };
 
 const transparency_composite_shader_setup = {
@@ -258,6 +272,7 @@ const swapchain_name = "swapchain";
 
 const clear_g_buffer_pass_name = "clear_g_buffer";
 const skybox_pass_name = "skybox_pass";
+const depth_prepass_name = "depth_prepass";
 const transparency_composite_pass_name = "transparency_composite";
 const reset_g_buffer_targets_pass_name = "reset_g_buffer_targets";
 const compute_cull_pass_name = "compute_cull";
@@ -482,6 +497,28 @@ export class DeferredShadingStrategy {
             pass.dispatch((draw_count + 255) / 256, 1, 1);
           }
         );
+      }
+      
+      // Depth prepass
+      {
+        render_graph.add_pass(
+          depth_prepass_name,
+          RenderPassFlags.Graphics,
+          {
+            inputs: [entity_transforms, compacted_object_instance_buffer],
+            outputs: [main_depth_image],
+            shader_setup: depth_only_shader_setup,
+          },
+          (graph, frame_data, encoder) => {
+            const pass = graph.get_physical_pass(frame_data.current_pass);
+            MeshTaskQueue.get().submit_indexed_indirect_draws(pass, frame_data);
+          }
+        );
+      }
+
+      // Compute rasterization passes
+      {
+        ComputeRasterTaskQueue.compile_rg_passes(render_graph, []);
       }
 
       // GBuffer Base Pass

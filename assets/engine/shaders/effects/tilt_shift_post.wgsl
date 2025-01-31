@@ -1,5 +1,5 @@
-#include "postprocess_common.wgsl"
 #include "common.wgsl"
+#include "postprocess_common.wgsl"
 
 // ------------------------------------------------------------------------------------
 // Data Structures
@@ -15,13 +15,12 @@ struct TiltShiftParams {
 
 struct VertexOutput {
     @builtin(position) position: vec4f,
-    @location(0) color: vec4f,
-    @location(1) uv: vec2f,
-    @location(2) @interpolate(flat) instance_index: u32,
+    @location(0) uv: vec2<precision_float>,
+    @location(1) @interpolate(flat) instance_index: u32,
 };
 
 struct FragmentOutput {
-    @location(0) color: vec4f,
+    @location(0) color: vec4<precision_float>,
 };
 
 // ------------------------------------------------------------------------------------

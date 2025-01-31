@@ -6,3 +6,4 @@ out/
 
 **/fonts/**/*.json
 **/fonts/**/*.png
+**/config/**/*.json

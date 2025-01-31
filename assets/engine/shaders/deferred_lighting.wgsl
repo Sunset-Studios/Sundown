@@ -20,12 +20,13 @@
 
 struct VertexOutput {
     @builtin(position) position: vec4f,
-    @location(0) uv: vec2f,
+    @location(0) uv: vec2<precision_float>,
 };
 
 struct FragmentOutput {
-    @location(0) color: vec4f,
+    @location(0) color: vec4<precision_float>,
 };
+
 
 // ------------------------------------------------------------------------------------
 // Vertex Shader
@@ -36,7 +37,7 @@ struct FragmentOutput {
     @builtin(instance_index) ii: u32
 ) -> VertexOutput {
     var output : VertexOutput;
-    output.position = vertex_buffer[vi].position;
+    output.position = vec4<f32>(vertex_buffer[vi].position);
     output.uv = vertex_buffer[vi].uv;
     return output;
 }
@@ -46,29 +47,30 @@ struct FragmentOutput {
 // ------------------------------------------------------------------------------------ 
 
 @fragment fn fs(v_out: VertexOutput) -> FragmentOutput {
-    let ambient = vec3f(0.2, 0.2, 0.2);
+    let ambient = vec3<precision_float>(0.2, 0.2, 0.2);
+    let uv = vec2<f32>(v_out.uv);
 
-    var tex_sky = textureSample(skybox_texture, global_sampler, v_out.uv);
+    var tex_sky = textureSample(skybox_texture, global_sampler, uv);
 
-    var tex_albedo = textureSample(albedo_texture, global_sampler, v_out.uv);
+    var tex_albedo = textureSample(albedo_texture, global_sampler, uv);
     var albedo = tex_albedo.rgb;
 
-    var tex_emissive = textureSample(emissive_texture, global_sampler, v_out.uv);
+    var tex_emissive = textureSample(emissive_texture, global_sampler, uv);
     var emissive = tex_emissive.r;
     
-	var tex_normal = textureSample(normal_texture, global_sampler, v_out.uv);
+	var tex_normal = textureSample(normal_texture, global_sampler, uv);
     var normal = tex_normal.xyz;
 	var normal_length = length(normal);
 	var normalized_normal = normal / normal_length;
     var deferred_standard_lighting = tex_normal.w;
 
-    var tex_smra = textureSample(smra_texture, global_sampler, v_out.uv);
+    var tex_smra = textureSample(smra_texture, global_sampler, uv);
     var reflectance = tex_smra.r * 0.0009765625 /* 1.0f / 1024 */;
     var metallic = tex_smra.g;
     var roughness = tex_smra.b;
     var ao = tex_smra.a;
 
-    var tex_position = textureSample(position_texture, global_sampler, v_out.uv);
+    var tex_position = textureSample(position_texture, global_sampler, uv);
     var position = tex_position.xyz;
 
     var view_dir = normalize(-view_buffer[0].view_direction.xyz);
@@ -101,5 +103,5 @@ struct FragmentOutput {
 
     color += (emissive * albedo);
 
-    return FragmentOutput(vec4f(color, 1.0));
+    return FragmentOutput(vec4<precision_float>(vec4<f32>(color, 1.0)));
 }

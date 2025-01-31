@@ -150,7 +150,7 @@ async function init() {
 
   // Initialize renderer with document canvas
   const canvas = document.getElementById("gpu-canvas");
-  await Renderer.create(canvas, DeferredShadingStrategy, { pointer_lock: true });
+  await Renderer.create(canvas, DeferredShadingStrategy, { pointer_lock: true, use_precision_float: true });
 
   // Create a test scene and register it with the simulation system
   const scene = new TestScene("TestScene");

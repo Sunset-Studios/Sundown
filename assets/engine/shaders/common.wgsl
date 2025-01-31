@@ -1,15 +1,20 @@
+#if HAS_PRECISION_FLOAT
+enable f16;
+#endif
+
 // ------------------------------------------------------------------------------------
 // Data Structures
 // ------------------------------------------------------------------------------------ 
 
+
 struct Vertex {
-    position: vec4f,
-    normal: vec4f,
-    color: vec4f,
-    uv: vec2f,
-    tangent: vec4f,
-    bitangent: vec4f,
+    position: vec4<precision_float>,
+    normal: vec4<precision_float>,
+    uv: vec2<precision_float>,
+    tangent: vec4<precision_float>,
+    bitangent: vec4<precision_float>,
 };
+
 
 struct View {
     view_matrix: mat4x4f,
@@ -32,8 +37,6 @@ struct FrameInfo {
 
 struct EntityTransform {
     transform: mat4x4f,
-    prev_transform: mat4x4f,
-    inverse_model_matrix: mat4x4f,
     transpose_inverse_model_matrix: mat4x4f,
 };
 
@@ -168,10 +171,11 @@ fn isinf3(v: vec3<f32>) -> vec3<bool> {
 }
 
 // A helper function to compute the median of three values.
-fn median3(a: f32, b: f32, c: f32) -> f32 {
+fn median3(a: precision_float, b: precision_float, c: precision_float) -> precision_float {
     // Sort the three values and pick the middle one
     // A simple way: median = a + b + c - min(a,b,c) - max(a,b,c)
     let min_val = min(a, min(b, c));
+
     let max_val = max(a, max(b, c));
     return (a + b + c) - min_val - max_val;
 }
@@ -188,6 +192,12 @@ fn hash(x: u32) -> u32 {
 }
 
 // Convert uint to float in [0, 1) range
-fn uint_to_normalized_float(x: u32) -> f32 {
-    return f32(x) * one_over_float_max;
+fn uint_to_normalized_float(x: u32) -> precision_float {
+    return precision_float(f32(x) * one_over_float_max);
+}
+
+
+// Interpolate between two values
+fn interpolate(v0: precision_float, v1: precision_float, t: precision_float) -> precision_float {
+    return v0 * (1.0 - t) + v1 * t;
 }

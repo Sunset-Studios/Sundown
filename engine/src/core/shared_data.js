@@ -28,7 +28,7 @@ export class SharedVertexBuffer {
     return (
       this.vertex_data
         .map((v) =>
-          v.position.concat(v.normal, v.color, v.uv, v.tangent, v.bitangent)
+          v.position.concat(v.normal, v.uv, v.tangent, v.bitangent)
         )
         .flat().length * 4
     );
@@ -42,7 +42,7 @@ export class SharedVertexBuffer {
     this.buffer = Buffer.create({
       name: vertex_buffer_name,
       data: this.vertex_data.map((v) =>
-        v.position.concat(v.normal, v.color, v.uv, v.tangent, v.bitangent)
+        v.position.concat(v.normal, v.uv, v.tangent, v.bitangent)
       ),
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
     });

@@ -1550,11 +1550,18 @@ export class RenderGraph {
     let reflection_groups = [];
     if (is_compute_pass) {
       reflection_groups = pass.shaders.compute.reflection.getBindGroups();
-    } else {
+    } else if (pass.shaders.fragment){
       const fragment_group = pass.shaders.fragment.reflection.getBindGroups();
       for (let i = 0; i < BindGroupType.Num; i++) {
         if (fragment_group[i]) {
           reflection_groups.push(fragment_group[i]);
+        }
+      }
+    } else {
+      const vertex_group = pass.shaders.vertex.reflection.getBindGroups();
+      for (let i = 0; i < BindGroupType.Num; i++) {
+        if (vertex_group[i]) {
+          reflection_groups.push(vertex_group[i]);
         }
       }
     }
@@ -1729,7 +1736,7 @@ export class RenderGraph {
           };
         }
 
-        const pipeline_descriptor = {
+        let pipeline_descriptor = {
           label: pass.pass_config.name,
           bind_layouts: pass_binds.bind_groups
             .filter((bind_group) => bind_group !== null)
@@ -1739,16 +1746,19 @@ export class RenderGraph {
             entryPoint: shader_setup.pipeline_shaders.vertex.entry_point || "vs",
             buffers: [], // Add vertex buffer layouts if needed
           },
-          fragment: {
-            module: pass.shaders.fragment.module,
-            entryPoint: shader_setup.pipeline_shaders.fragment.entry_point || "fs",
-            targets: targets,
-          },
           primitive: {
             topology: shader_setup.primitive_topology_type || "triangle-list",
             cullMode: shader_setup.rasterizer_state?.cull_mode || "back",
           },
         };
+
+        if (pass.shaders.fragment) {
+          pipeline_descriptor.fragment = {
+            module: pass.shaders.fragment.module,
+            entryPoint: shader_setup.pipeline_shaders.fragment.entry_point || "fs",
+            targets: targets,
+          };
+        }
 
         if (depth_stencil_target) {
           pipeline_descriptor.depthStencil = depth_stencil_target;

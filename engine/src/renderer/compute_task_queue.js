@@ -4,7 +4,7 @@ import { FrameAllocator } from "../memory/allocator.js";
 import { profile_scope } from "../utility/performance.js";
 import { RenderPassFlags } from "./renderer_types.js";
 
-const max_objects = 1024;
+const max_objects = 512;
 
 class ComputeTask {
   static init(

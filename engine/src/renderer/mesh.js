@@ -492,12 +492,6 @@ export class Mesh {
               normals[i + 2] ?? 0.0,
               0.0,
             ],
-            color: [
-              colors[i] ?? 0.0,
-              colors[i + 1] ?? 0.0,
-              colors[i + 2] ?? 0.0,
-              colors[i + 3] ?? 1.0,
-            ],
             uv: [uvs[uv_index] ?? 0.0, uvs[uv_index + 1] ?? 0.0, 0.0, 0.0],
             tangent: [
               tangents[i] ?? 0.0,
