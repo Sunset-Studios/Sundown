@@ -136,13 +136,11 @@ export class TestScene extends Scene {
 }
 
 (async () => {
-  await Simulator.create();
+  const simulator = await Simulator.create();
 
   // Create a test scene and register it with the simulation system
   const scene = new TestScene("TestScene");
-  await SimulationCore.register_simulation_layer(scene);
+  await simulator.add_scene(scene);
 
-  await Simulator.add_scene(scene);
-
-  Simulator.run();
+  simulator.run();
 })();

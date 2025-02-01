@@ -1,11 +1,11 @@
-import application_state from "../../engine/src/core/application_state.js";
-import SimulationCore from "../../engine/src/core/simulation_core.js";
-import { Renderer } from "../../engine/src/renderer/renderer.js";
-import { DeferredShadingStrategy } from "../../engine/src/renderer/strategies/deferred_shading.js";
-import { InputProvider } from "../../engine/src/input/input_provider.js";
-import { MetaSystem } from "../../engine/src/meta/meta_system.js";
-import { profile_scope } from "../../engine/src/utility/performance.js";
-import { frame_runner } from "../../engine/src/utility/frame_runner.js";
+import application_state from "./application_state.js";
+import SimulationCore from "./simulation_core.js";
+import { Renderer } from "../renderer/renderer.js";
+import { DeferredShadingStrategy } from "../renderer/strategies/deferred_shading.js";
+import { InputProvider } from "../input/input_provider.js";
+import { MetaSystem } from "../meta/meta_system.js";
+import { profile_scope } from "../utility/performance.js";
+import { frame_runner } from "../utility/frame_runner.js";
 
 export class Simulator {
   async init() {
@@ -51,5 +51,4 @@ export class Simulator {
     await instance.init();
     return instance;
   }
-
 }
