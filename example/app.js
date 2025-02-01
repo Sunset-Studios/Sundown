@@ -1,12 +1,9 @@
-import { Renderer } from "../engine/src/renderer/renderer.js";
-import { DeferredShadingStrategy } from "../engine/src/renderer/strategies/deferred_shading.js";
 import { PostProcessStack } from "../engine/src/renderer/post_process_stack.js";
 import { Material } from "../engine/src/renderer/material.js";
 import SimulationCore from "../engine/src/core/simulation_core.js";
-import { InputProvider } from "../engine/src/input/input_provider.js";
+import { Simulator } from "../engine/src/core/simulator.js";
 import { EntityManager } from "../engine/src/core/ecs/entity.js";
 import { Scene } from "../engine/src/core/scene.js";
-import application_state from "../engine/src/core/application_state.js";
 import { ComputeTaskQueue } from "../engine/src/renderer/compute_task_queue.js";
 import { TransformFragment } from "../engine/src/core/ecs/fragments/transform_fragment.js";
 import { FreeformArcballControlProcessor } from "../engine/src/core/subsystems/freeform_arcball_control_processor.js";
@@ -16,8 +13,6 @@ import { LightType } from "../engine/src/core/minimal.js";
 import { Mesh } from "../engine/src/renderer/mesh.js";
 import { Name } from "../engine/src/utility/names.js";
 import { SharedEnvironmentMapData } from "../engine/src/core/shared_data.js";
-import { profile_scope } from "../engine/src/utility/performance.js";
-import { frame_runner } from "../engine/src/utility/frame_runner.js";
 import { spawn_mesh_entity } from "../engine/src/core/ecs/entity_utils.js";
 import { FontCache } from "../engine/src/ui/text/font_cache.js";
 
@@ -140,37 +135,14 @@ export class TestScene extends Scene {
   }
 }
 
-async function init() {
-  application_state.is_running = true;
-
-  // Initialize input provider
-  const input_provider = InputProvider.get();
-  await SimulationCore.get().register_simulation_layer(input_provider);
-  input_provider.push_context(InputProvider.default_context());
-
-  // Initialize renderer with document canvas
-  const canvas = document.getElementById("gpu-canvas");
-  await Renderer.create(canvas, DeferredShadingStrategy, { pointer_lock: true, use_precision_float: true });
+(async () => {
+  await Simulator.create();
 
   // Create a test scene and register it with the simulation system
   const scene = new TestScene("TestScene");
-  await SimulationCore.get().register_simulation_layer(scene);
-}
+  await SimulationCore.register_simulation_layer(scene);
 
-function simulate(delta_time) {
-  if (application_state.is_running) {
-    profile_scope("frame_loop", () => {
-      SimulationCore.get().update(delta_time);
-      Renderer.get().render(delta_time);
-    });
-  }
-}
+  await Simulator.add_scene(scene);
 
-function run() {
-  frame_runner(simulate, 60);
-}
-
-(async () => {
-  await init();
-  run();
+  Simulator.run();
 })();
