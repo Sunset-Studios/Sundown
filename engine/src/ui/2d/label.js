@@ -10,9 +10,15 @@ export class Label extends Element {
     }
   }
 
+  set_text(text) {
+    this.config.text = text;
+    this.dom.textContent = text;
+  }
+
   static create(name, config, children = []) {
     const label = new Label();
     label.init(name, config, children);
     return label;
   }
+
 }

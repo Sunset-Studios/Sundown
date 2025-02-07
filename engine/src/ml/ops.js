@@ -1,6 +1,7 @@
 import { FrameAllocator } from "./memory/allocator.js";
 import { Tensor } from "./tensor.js";
 import { Name } from "./names.js";
+import { logger } from "./logger.js";
 
 // MLOps acts as a virtual machine for all ML operations.
 // It is responsible for executing the operations on the appropriate backend.
@@ -498,7 +499,6 @@ export class MLOpsCPU {
   }
 
   static mse_loss(result, target, output, enabled_logging = false, name = null) {
-
     if (target.batch_size !== output.batch_size)
       throw new Error("Batch size mismatch in mse_loss().");
     if (target.length !== output.length) throw new Error("Length mismatch in mse_loss().");
@@ -521,7 +521,7 @@ export class MLOpsCPU {
       );
     }
     if (enabled_logging) {
-      console.log(`${Name.string(name)} MSE Loss: ${result.data[0]}`);
+      logger.log(`${Name.string(name)} MSE Loss: ${result.data[0]}`);
     }
     Tensor.debug_log_tensor(result.id, "mse_loss");
   }
@@ -594,7 +594,7 @@ export class MLOpsCPU {
       );
     }
     if (enabled_logging) {
-      console.log(`${Name.string(name)} Cross Entropy Loss: ${result.data[0]}`);
+      logger.log(`${Name.string(name)} Cross Entropy Loss: ${result.data[0]}`);
     }
     Tensor.debug_log_tensor(result.id, "cross_entropy_loss");
   }
@@ -642,7 +642,7 @@ export class MLOpsCPU {
                       ", target: " + target.id + ", output: " + output.id);
     }
     if (enabled_logging) {
-      console.log(`${Name.string(name)} Binary Cross Entropy Loss: ${result.data[0]}`);
+      logger.log(`${Name.string(name)} Binary Cross Entropy Loss: ${result.data[0]}`);
     }
     Tensor.debug_log_tensor(result.id, "binary_cross_entropy_loss");
   }

@@ -6,6 +6,7 @@ import { Input } from "../ui/2d/input.js";
 import { Panel } from "../ui/2d/panel.js";
 import { Label } from "../ui/2d/label.js";
 import { RenderPassOrganizer } from "./render_pass_organizer.js";
+import { MLStats } from "./ml_stats.js";
 
 const console_panel_name = "dev_console";
 const input_name = "console_input";
@@ -74,6 +75,7 @@ export class DevConsole extends SimulationLayer {
     this._bind_events();
 
     this.register_command("render_pass_organizer", new RenderPassOrganizer());
+    this.register_command("ml_stats", new MLStats());
   }
 
   update(delta_time) {

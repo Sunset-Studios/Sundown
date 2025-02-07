@@ -8,6 +8,7 @@ const binary_cross_entropy_loss_name = "binary_cross_entropy_loss";
 export class BinaryCrossEntropyLoss extends Layer {
   name = null;
   enabled_logging = false;
+  loss = 0;
 
   constructor(enabled_logging = false, name = binary_cross_entropy_loss_name) {
     super();
@@ -16,7 +17,7 @@ export class BinaryCrossEntropyLoss extends Layer {
   }
 
   forward(input_tensor, target_tensor = null) {
-    MLOps.binary_cross_entropy_loss(target_tensor, input_tensor, this.enabled_logging, this.name);
+    this.loss = MLOps.binary_cross_entropy_loss(target_tensor, input_tensor, this.enabled_logging, this.name);
     return super.forward(input_tensor, target_tensor);
   }
 

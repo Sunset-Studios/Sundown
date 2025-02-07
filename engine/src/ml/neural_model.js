@@ -1,15 +1,18 @@
 import { Layer } from "./layer.js";
 
 export class NeuralModel extends Layer {
+  name = null;
   learning_rate = 0.01;
   loss_fn = null;
 
-  constructor(options = {}) {
+  constructor(name, options = {}) {
     super();
+    this.name = name;
     this.learning_rate = options.learning_rate || 0.01;
     this.loss_fn = options.loss_fn || null;
     this.optimizer = options.optimizer || null;
   }
+
 
   /**
    * Runs inference on the neural network based on the input tensor.

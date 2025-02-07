@@ -7,6 +7,7 @@ const mse_loss_name = 'mse_loss';
 export class MSELoss extends Layer {
   name = null;
   enabled_logging = false;
+  loss = 0;
 
   constructor(enabled_logging = false, name = mse_loss_name) {
     super();
@@ -15,7 +16,7 @@ export class MSELoss extends Layer {
   }
 
   forward(input_tensor, target_tensor = null) {
-    MLOps.mse_loss(target_tensor, input_tensor, this.enabled_logging, this.name);
+    this.loss = MLOps.mse_loss(target_tensor, input_tensor, this.enabled_logging, this.name);
     return super.forward(input_tensor, target_tensor);
   }
 

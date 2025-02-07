@@ -89,11 +89,13 @@ class TrainingQueue {
  */
 export class MasterMind {
   static next_model_id = 0;
+  static all_masterminds = [];
 
   /**
    * @param {Object} options - Configuration options.
    * @param {boolean} [options.enable_weight_sharing=false] - Whether to enable weight sharing.
    * @param {number} [options.weight_sharing_interval=1000] - The interval between weight sharing updates in milliseconds.
+   * @param {number} [options.mini_batch_size=1] - The size of the mini-batch to use for training.
    */
   constructor(options = {}) {
     this.enable_weight_sharing = options.enable_weight_sharing || false;
@@ -103,6 +105,14 @@ export class MasterMind {
     this.models = {}; // model registry keyed by model ID.
     this.active_model = null; // ID of the model to receive training frames.
     this.paused = false;
+    MasterMind.all_masterminds.push(this);
+  }
+
+  /**
+   * Destroys the MasterMind instance.
+   */
+  destroy() {
+    MasterMind.all_masterminds = MasterMind.all_masterminds.filter((m) => m !== this);
   }
 
   /**
@@ -110,11 +120,13 @@ export class MasterMind {
    *
    * @param {string} model_id - Unique identifier for the model.
    * @param {Object} model_obj - The model object (e.g., NeuralModel instance).
+
+
    * @param {function} [train_step_callback] - A training function. Depending on the model,
    * @param {function} [infer_callback] - A function(inputData) that returns inference results.
    * @returns {string} The registered model ID.
    */
-  register_model(model_name, model_obj, train_step_callback, infer_callback) {
+  register_model(model_obj, train_step_callback, infer_callback) {
     // If no training callback is provided but the model object supports .train(),
     // wrap it so that it can be called with a batch.
     if (!train_step_callback && typeof model_obj.train === function_name) {
@@ -133,7 +145,7 @@ export class MasterMind {
 
     this.models[model_id] = {
       id: model_id,
-      name: model_name,
+      name: model_obj.name,
       model: model_obj,
       train_step: train_step_callback,
       infer: infer_callback,
@@ -170,6 +182,8 @@ export class MasterMind {
   tick(delta_time) {
     if (this.paused) return;
 
+    MLOps.reset();
+
     // If there are no models, do nothing.
     if (this.models.length === 0) {
       return;
@@ -181,7 +195,10 @@ export class MasterMind {
       const model_id = model_ids[i];
       let model_entry = this.models[model_id];
 
-      if (model_entry.training_queue.length > 0 && typeof model_entry.train_step === function_name) {
+      if (
+        model_entry.training_queue.length > 0 &&
+        typeof model_entry.train_step === function_name
+      ) {
         const samples = [];
 
         while (samples.length < this.mini_batch_size && model_entry.training_queue.length > 0) {
@@ -209,9 +226,7 @@ export class MasterMind {
       this.weight_sharing_time_elapsed >= this.weight_sharing_interval
     ) {
       // For weight sharing, we consider only models that have a non-null cached_output.
-      const candidate_models = Object.values(this.models).filter(
-        (m) => m.model.cached_output
-      );
+      const candidate_models = Object.values(this.models).filter((m) => m.model.cached_output);
 
       if (candidate_models.length >= 2) {
         // Select donor and receiver randomly (ensuring they are distinct).
@@ -236,7 +251,6 @@ export class MasterMind {
 
     MLOps.compile();
     MLOps.run();
-    MLOps.reset();
   }
 
   /**
@@ -304,5 +318,33 @@ export class MasterMind {
    */
   resume_training() {
     this.paused = false;
+  }
+
+  /**
+   * Gets the stats for all models.
+   * @returns {Object[]} An array of model stats.
+   */
+  get_model_stats() {
+    return Object.values(this.models).map((m) => {
+      return {
+        name: m.model.name,
+        stats: [
+          {
+            name: "loss",
+            loss: m.model.last_layer.loss,
+          },
+        ],
+      };
+    });
+  }
+
+  /**
+   * Creates a new MasterMind instance.
+   * @param {Object} options - Configuration options.
+   * @returns {MasterMind} A new MasterMind instance.
+   */
+  static create(options = {}) {
+    const mastermind = new MasterMind(options);
+    return mastermind;
   }
 }

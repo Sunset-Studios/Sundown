@@ -12,6 +12,7 @@ export class Layer {
    */
   add(layer) {
     this.layers.push(layer);
+    return this.layers.length - 1;
   }
 
   /**
@@ -21,6 +22,16 @@ export class Layer {
    */
   remove(layer) {
     this.layers = this.layers.filter((l) => l !== layer);
+  }
+
+  /**
+   * Gets a sublayer by index.
+   *
+   * @param {number} layer_index - The index of the layer to get.
+   * @returns {Object} The layer at the given index.
+   */
+  get(layer_index) {
+    return this.layers[layer_index];
   }
 
   /**
@@ -75,5 +86,23 @@ export class Layer {
     for (let i = this.layers.length - 1; i >= 0; i--) {
       this.layers[i].update_weights(learning_rate, optimizer);
     }
+  }
+
+  /**
+   * Gets the number of layers in the layer.
+   *
+   * @returns {number} The number of layers in the layer.
+   */
+  get layer_count() {
+    return this.layers.length;
+  }
+
+  /**
+   * Gets the last layer in the layer.
+   *
+   * @returns {Object} The last layer in the layer.
+   */
+  get last_layer() {
+    return this.layers[this.layers.length - 1];
   }
 }
