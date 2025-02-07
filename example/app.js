@@ -1,6 +1,5 @@
 import { PostProcessStack } from "../engine/src/renderer/post_process_stack.js";
 import { Material } from "../engine/src/renderer/material.js";
-import SimulationCore from "../engine/src/core/simulation_core.js";
 import { Simulator } from "../engine/src/core/simulator.js";
 import { EntityManager } from "../engine/src/core/ecs/entity.js";
 import { Scene } from "../engine/src/core/scene.js";
@@ -16,7 +15,24 @@ import { SharedEnvironmentMapData } from "../engine/src/core/shared_data.js";
 import { spawn_mesh_entity } from "../engine/src/core/ecs/entity_utils.js";
 import { FontCache } from "../engine/src/ui/text/font_cache.js";
 
+import { MasterMind } from "../engine/src/ml/mastermind.js";
+import { NeuralModel } from "../engine/src/ml/neural_model.js";
+import { FullyConnected } from "../engine/src/ml/layers/fully_connected.js";
+import { ReLU } from "../engine/src/ml/layers/relu.js";
+import { Tanh } from "../engine/src/ml/layers/tanh.js";
+import { Sigmoid } from "../engine/src/ml/layers/sigmoid.js";
+import { MSELoss } from "../engine/src/ml/layers/mse_loss.js";
+import { BinaryCrossEntropyLoss } from "../engine/src/ml/layers/binary_cross_entropy.js";
+import { Tensor, TensorInitializer } from "../engine/src/ml/tensor.js";
+import { Adam } from "../engine/src/ml/optimizers/adam.js";
+
+import { profile_scope } from "../engine/src/utility/performance.js";
+
 export class TestScene extends Scene {
+  mastermind = null;
+  sine_model = null;
+  xor_model = null;
+
   async init(parent_context) {
     super.init(parent_context);
 
@@ -81,7 +97,7 @@ export class TestScene extends Scene {
             default_material_id,
             null /* parent */,
             [] /* children */,
-            true /* start_visible */,
+            true /* start_visible */
           );
         }
       }
@@ -116,8 +132,10 @@ export class TestScene extends Scene {
       depth_threshold: 0.01,
       normal_threshold: 1.0,
       depth_scale: 1000.0,
-      outline_color: [0.0, 0.0, 0.0, 1.0], 
+      outline_color: [0.0, 0.0, 0.0, 1.0],
     });
+
+    this.setup_ml_test();
   }
 
   update(delta_time) {
@@ -132,6 +150,86 @@ export class TestScene extends Scene {
       [transforms.position_buffer, transforms.dirty_flags_buffer],
       Math.ceil(transforms.dirty.length / 256)
     );
+
+    profile_scope("ml_training_test.update", () => {
+      for (let i = 0; i < 4; i++) {
+        // Generate and enqueue a training batch for the sine model.
+        const sine_batch = this.create_sine_batch();
+        this.mastermind.add_training_batch(this.sine_model, sine_batch.input, sine_batch.target);
+
+        // Generate and enqueue a training batch for the XOR model.
+        const xor_batch = this.create_xor_batch();
+        this.mastermind.add_training_batch(this.xor_model, xor_batch.input, xor_batch.target);
+      }
+
+      this.mastermind.tick(delta_time);
+    });
+  }
+
+  setup_ml_test() {
+    // Create a MasterMind instance with weight sharing enabled.
+    this.mastermind = new MasterMind({
+      enable_weight_sharing: false,
+      weight_sharing_interval: 0.5, // seconds between weight sharing updates
+      mini_batch_size: 4,
+    });
+
+    // ---------------------------------------------------------------------------
+    // Model A: Sine Function Approximator
+    // Task: Given an input x, predict sin(x).
+    // Architecture: [1] -> FullyConnectedLayer (1 -> 10) -> Tanh ->
+    //               FullyConnectedLayer (10 -> 1) -> MSELoss
+    // ---------------------------------------------------------------------------
+    const sine_model = new NeuralModel({ learning_rate: 0.01, optimizer: new Adam() });
+    sine_model.add(new FullyConnected(1, 10, { initializer: TensorInitializer.GLOROT }));
+    sine_model.add(new Tanh());
+    sine_model.add(new FullyConnected(10, 1, { initializer: TensorInitializer.GLOROT }));
+    sine_model.add(new Tanh());
+    sine_model.add(new MSELoss(false /* enabled_logging */, "sine_approximator"));
+
+    this.sine_model = this.mastermind.register_model("sine_approximator", sine_model);
+
+    // ---------------------------------------------------------------------------
+    // Model B: XOR Classifier
+    // Task: Given two binary inputs, predict the XOR (0 or 1).
+    // Architecture: [2] -> FullyConnectedLayer (2 -> 4) -> ReLu ->
+    //               FullyConnectedLayer (4 -> 1) -> MSELoss
+    // ---------------------------------------------------------------------------
+    const xor_model = new NeuralModel({ learning_rate: 0.01, optimizer: new Adam() });
+    xor_model.add(new FullyConnected(2, 4, { initializer: TensorInitializer.GLOROT }));
+    xor_model.add(new ReLU());
+    xor_model.add(new FullyConnected(4, 1, { initializer: TensorInitializer.GLOROT }));
+    xor_model.add(new Sigmoid());
+    xor_model.add(new MSELoss(true /* enabled_logging */, "xor_classifier"));
+
+    this.xor_model = this.mastermind.register_model("xor_classifier", xor_model);
+  }
+
+  // Helper function: Create a training batch for the sine approximator.
+  create_sine_batch() {
+    // Random x in range [-π, π]
+    const x = Math.random() * (2 * Math.PI) - Math.PI;
+    const y = Math.sin(x);
+    return {
+      input: Tensor.create(new Float32Array([x]), [1, 1]),
+      target: Tensor.create(new Float32Array([y]), [1, 1]),
+    };
+  }
+
+  // Helper function: Create a training batch for the XOR classifier.
+  create_xor_batch() {
+    // The XOR truth table
+    const xor_data = [
+      { input: [0, 0], target: 0 },
+      { input: [0, 1], target: 1 },
+      { input: [1, 0], target: 1 },
+      { input: [1, 1], target: 0 },
+    ];
+    const sample = xor_data[Math.floor(Math.random() * xor_data.length)];
+    return {
+      input: Tensor.create(new Float32Array(sample.input), [1, 2]),
+      target: Tensor.create(new Float32Array([sample.target]), [1, 1]),
+    };
   }
 }
 

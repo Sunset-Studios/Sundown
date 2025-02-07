@@ -498,6 +498,8 @@ export class DeferredShadingStrategy {
           }
         );
       }
+
+      // TODO: Meshlet cull pass
       
       // Depth prepass
       {
@@ -517,6 +519,7 @@ export class DeferredShadingStrategy {
       }
 
       // Compute rasterization passes
+      // TODO: Automatically run software rasterization over triangle clusters that fall within some maximum screen size
       {
         ComputeRasterTaskQueue.compile_rg_passes(render_graph, []);
       }
