@@ -1,7 +1,10 @@
 # Sundown Engine 🕹️
 
+An extendible WebGPU game and simulation engine for fun, games and research.
 
-An extendible WebGPU game and simulation engine for fun, games and research. Some of the current (code) features include:
+![Sundown Demo](./sundown_demo.gif)
+
+Some of the current (code) features include:
 
 * ⚡ WebGPU renderable abstractions
 * ⚡ Flexible render graph for crafting render and compute pipelines
@@ -17,7 +20,12 @@ An extendible WebGPU game and simulation engine for fun, games and research. Som
 * ⚡ Configurable post-process stack 
 * ⚡ Helpers for loading GTLFs, tracking performance scopes, named IDs, running frames and more.
 
-![Sundown Demo](./sundown_demo.gif)
+Sundown also includes a simple but capable ML framework for running real-time AI experiments:
+* ⚡ Simple gradient tape for backprop based learning
+* ⚡ Composable layer-based modeling
+* ⚡ Expanding library of activation functions, loss functions, optimizers and configurable layers
+* ⚡ MasterMind class for orchestrating weight sharing, adaptation and real-time retraining of multiple models
+* ⚡ High-level, inspired API for those familiar with third-party ML frameworks like TensorFlow and PyTorch
 
 ### Installation
 
