@@ -1,79 +1,65 @@
 import { SimulationLayer } from "../core/simulation_layer.js";
 import { InputProvider } from "../input/input_provider.js";
-import { InputRange, InputKey } from "../input/input_types.js";
-import { Element } from "../ui/2d/element.js";
-import { Input } from "../ui/2d/input.js";
-import { Panel } from "../ui/2d/panel.js";
-import { Label } from "../ui/2d/label.js";
+import { InputKey } from "../input/input_types.js";
+import { panel, input, label, UIContext } from "../ui/2d/immediate.js";
 import { RenderPassOrganizer } from "./render_pass_organizer.js";
 import { MLStats } from "./ml_stats.js";
 
-const console_panel_name = "dev_console";
+// Constants for naming and key codes
 const input_name = "console_input";
-const keydown_event_name = "keydown";
-const click_event_name = "click";
-const visible_name = "visible";
-const hidden_name = "hidden";
-const display_none_name = "none";
-const display_block_name = "block";
+const bottom = "bottom";
 
-const enter_key = "Enter";
-const escape_key = "Escape";
-const arrow_up_key = "ArrowUp";
-const arrow_down_key = "ArrowDown";
-const tab_key = "Tab";
-const equal_key = "=";
-
+// These configurations roughly mirror the previous style settings
 const console_panel_config = {
-  style: {
-    position: "absolute",
-    bottom: "125px",
-    left: "50%",
-    transform: "translateX(-50%)",
-    width: "600px",
-    visibility: "hidden",
-    backgroundColor: "rgba(0, 0, 0, 0.8)",
-    padding: "8px",
-    borderRadius: "4px",
-    border: "1px solid #444",
-  },
-};
-const input_config = {
-  type: "text",
-  style: {
-    width: "100%",
-    backgroundColor: "rgba(0, 0, 0, 0.5)",
-    border: "none",
-    padding: "8px 0px",
-    color: "#fff",
-    fontSize: "14px",
-    fontFamily: "monospace",
-    outline: "none",
-  },
+  layout: "column",
+  gap: 4,
+  y: "20%",
+  anchor_y: bottom,
+  width: 600,
+  background_color: "rgba(0, 0, 0, 0.8)",
+  padding: 8,
+  corner_radius: 4,
+  border: "1px solid #444",
 };
 
+const input_config = {
+  // Renders a textfield spanning the panel width
+  width: "100%",
+  height: 30,
+  background_color: "rgba(0, 0, 0, 0.5)",
+  border: "none",
+  padding_left: 8,
+  padding_right: 8,
+  text_color: "#fff",
+  font: "14px monospace",
+  cursor_color: "#fff",
+};
+
+const console_suggestions_config = {
+  layout: "column",
+  gap: 4,
+  width: "100%",
+  background_color: "rgba(0, 0, 0, 0.5)",
+  padding: 4,
+};
+
+//
+// DevConsole class using the new immediate–mode UI framework.
+//
 export class DevConsole extends SimulationLayer {
   name = "DevConsole";
   is_open = false;
   history = [];
   history_index = -1;
-  console_panel = null;
-  input = null;
-  cursor = null;
   command_handlers = new Map();
   command_handler_list = [];
-  suggestions_panel = null;
   current_suggestions = [];
   suggestion_index = -1;
   scene = null;
-  use_own_cursor = true;
 
   init() {
     super.init();
-
-    this._init_ui();
-    this._bind_events();
-
+    // Register example command handlers.
     this.register_command("render_pass_organizer", new RenderPassOrganizer());
     this.register_command("ml_stats", new MLStats());
   }
@@ -81,148 +67,168 @@ export class DevConsole extends SimulationLayer {
   update(delta_time) {
     super.update(delta_time);
 
-    if (this.is_open) {
-      const input_provider = InputProvider.get();
+    // Process keyboard input from UIContext each frame.
+    this._update_input();
 
-      if (input_provider.get_action(InputKey.B_mouse_left)) {
-        const mouse_x = input_provider.get_range(InputRange.M_xabs);
-        const mouse_y = input_provider.get_range(InputRange.M_yabs);
+    if (!this.is_open) return;
 
-        if (!this.console_panel.is_inside(mouse_x, mouse_y)) {
-          this.hide();
-        }
+    this.render();
 
-        input_provider.consume_action(InputKey.B_mouse_left);
+    // Update any registered command handlers (if they implement an update method).
+    for (let i = 0; i < this.command_handler_list.length; i++) {
+      if (typeof this.command_handler_list[i].update === "function") {
+        this.command_handler_list[i].update(delta_time);
+      }
+    }
+  }
+
+  /**
+   * Handles keyboard events from UIContext instead of document events.
+   * This method should be called once per frame (e.g., in update()).
+   */
+  _update_input() {
+    const keys = UIContext.keyboard_events;
+
+    // Check for the toggle key ("=") to open/close the console.
+    for (let i = 0; i < keys.length; i++) {
+      const key = keys.get(i);
+      if (key.key === InputKey.K_Equals && !key.held) {
+        this.toggle();
+        key.consumed = true;
+        // Break so that we don't process further events from this frame that might toggle again.
+        break;
       }
     }
 
-    for (let i = 0; i < this.command_handler_list.length; i++) {
-      this.command_handler_list[i].update(delta_time);
+    // Don't process further events if the console isn't open.
+    if (!this.is_open) return;
+
+    // Retrieve the input field state from the global UIContext.
+    const input_state = UIContext.input_field_state[input_name] || { value: "" };
+
+    // Process each key event.
+    for (let i = 0; i < keys.length; i++) {
+      const key = keys.get(i);
+
+      let consume = false;
+
+      // Skip the equal key since it is already handled.
+      if (key.key === InputKey.K_Equals) continue;
+
+      if (key.key === InputKey.K_Escape) {
+        this.hide();
+        consume = true;
+      } else if (key.key === InputKey.K_ArrowUp) {
+        if (this.current_suggestions.length > 0) {
+          this._navigate_suggestions(-1, input_state);
+          consume = true;
+        } else {
+          this._navigate_history(1, input_state);
+          consume = true;
+        }
+      } else if (key.key === InputKey.K_ArrowDown) {
+        if (this.current_suggestions.length > 0) {
+          this._navigate_suggestions(1, input_state);
+          consume = true;
+        } else {
+          this._navigate_history(-1, input_state);
+          consume = true;
+        }
+      } else if (key.key === InputKey.K_Tab) {
+        // Complete the current suggestion.
+        this._complete_suggestion(input_state);
+        consume = true;
+      } else if (key.key === InputKey.K_Return) {
+        // Execute the command.
+        this._handle_command(input_state.value);
+        this.hide();
+        consume = true;
+      }
+
+      if (consume) {
+        key.consumed = true;
+        InputProvider.consume_action(key.key);
+        InputProvider.consume_state(key.key);
+      }
+    }
+  }
+
+  /**
+   * Render the developer console using immediate mode UI calls.
+   * This method should be called during the main render loop.
+   */
+  render() {
+    if (!this.is_open) return;
+
+    // Render the console panel.
+    const panel_state = panel(console_panel_config, () => {
+      // Render the input field.
+      const input_state = input(input_name, input_config);
+      // Force focus.
+      if (!input_state.is_focused) {
+        input_state.is_focused = true;
+      }
+
+      const current_text = input_state.value.trim();
+      if (current_text === "") {
+        this.current_suggestions = [];
+        this.suggestion_index = -1;
+      } else {
+        const commands = Array.from(this.command_handlers.keys());
+        this.current_suggestions = commands.filter((cmd) =>
+          cmd.toLowerCase().startsWith(current_text.toLowerCase())
+        );
+        if (this.suggestion_index >= this.current_suggestions.length) {
+          this.suggestion_index = -1;
+        }
+      }
+
+      if (this.current_suggestions.length > 0) {
+        panel(console_suggestions_config, () => {
+          for (let index = 0; index < this.current_suggestions.length; index++) {
+            const suggestion = this.current_suggestions[index];
+            const btn = label(suggestion, {
+              width: "100%",
+              text_valign: "middle",
+              text_padding: 5,
+              height: 30,
+              padding_left: 4,
+              padding_right: 4,
+              padding_top: 8,
+              padding_bottom: 8,
+              background_color:
+                index === this.suggestion_index ? "rgba(255, 255, 255, 0.1)" : "rgba(0, 0, 0, 1.0)",
+              text_color: "#ccc",
+              font: "14px monospace",
+            });
+            if (btn.clicked) {
+              input_state.value = suggestion;
+              input_state.is_focused = true;
+              this.suggestion_index = index;
+            }
+          }
+        });
+      }
+    });
+
+    if (this.is_open && InputProvider.get_action(InputKey.B_mouse_left)) {
+      if (!panel_state.hovered) {
+        this.hide();
+      }
+      InputProvider.consume_action(InputKey.B_mouse_left);
     }
   }
 
   set_scene(scene) {
     this.scene = scene;
     for (let i = 0; i < this.command_handler_list.length; i++) {
-      this.command_handler_list[i].set_scene(scene);
-    }
-  }
-
-  _init_ui() {
-    this.console_panel = Panel.create(console_panel_name, console_panel_config);
-    this.input = Input.create(input_name, input_config);
-
-    // Suggestions panel
-    this.suggestions_panel = Panel.create("console_suggestions", {
-      style: {
-        width: "100%",
-        backgroundColor: "rgba(0, 0, 0, 0.8)",
-        marginTop: "4px",
-        maxHeight: "200px",
-        overflowY: "auto",
-        display: "none",
-      },
-    });
-
-    this.console_panel.add_child(this.input);
-    this.console_panel.add_child(this.suggestions_panel);
-
-    const view_root = Element.get_view_root();
-    view_root.add_child(this.console_panel);
-  }
-
-  _bind_events() {
-    document.addEventListener(keydown_event_name, (e) => {
-      if (e.key === equal_key && !e.repeat) {
-        e.preventDefault();
-        this.toggle();
+      if (typeof this.command_handler_list[i].set_scene === "function") {
+        this.command_handler_list[i].set_scene(scene);
       }
-
-      if (!this.is_open) return;
-
-      e.stopPropagation();
-
-      if (e.key === escape_key) {
-        this.hide();
-      } else if (e.key === arrow_up_key) {
-        if (this.suggestions_panel.dom.style.display === display_block_name) {
-          this._navigate_suggestions(-1);
-        } else {
-          this._navigate_history(1);
-        }
-      } else if (e.key === arrow_down_key) {
-        if (this.suggestions_panel.dom.style.display === display_block_name) {
-          this._navigate_suggestions(1);
-        } else {
-          this._navigate_history(-1);
-        }
-      } else if (e.key === tab_key) {
-        this._complete_suggestion();
-      } else if (e.key === enter_key) {
-        this._handle_command(this.input.dom.value);
-        this.hide();
-      } else {
-        // Update suggestions on any other key press
-        this._update_suggestions(this.input.dom.value);
-      }
-    });
-  }
-
-  _update_suggestions(input) {
-    if (!input) {
-      this.suggestions_panel.dom.style.display = display_none_name;
-      return;
     }
-
-    const commands = Array.from(this.command_handlers.keys());
-    this.current_suggestions = commands.filter((cmd) =>
-      cmd.toLowerCase().startsWith(input.toLowerCase())
-    );
-
-    if (this.current_suggestions.length === 0) {
-      this.suggestions_panel.dom.style.display = display_none_name;
-      return;
-    }
-
-    this.suggestion_index = -1;
-    this._render_suggestions();
   }
 
-  _render_suggestions() {
-    this.suggestions_panel.clear_children();
-
-    this.current_suggestions.forEach((suggestion, index) => {
-      const suggestion_panel = Panel.create(`suggestion_${index}`, {
-        style: {
-          padding: "4px 8px",
-          cursor: "pointer",
-          backgroundColor:
-            index === this.suggestion_index ? "rgba(255, 255, 255, 0.1)" : "transparent",
-        },
-      });
-
-      const label = Label.create(`suggestion_label_${index}`, {
-        text: suggestion,
-        style: {
-          color: "#fff",
-          fontFamily: "monospace",
-        },
-      });
-
-      suggestion_panel.add_child(label);
-      suggestion_panel.dom.addEventListener(click_event_name, () => {
-        this.input.dom.value = suggestion;
-        this.input.dom.focus();
-        this._update_suggestions(suggestion);
-      });
-
-      this.suggestions_panel.add_child(suggestion_panel);
-    });
-
-    this.suggestions_panel.dom.style.display = display_block_name;
-  }
-
-  _navigate_suggestions(direction) {
+  _navigate_suggestions(direction, input_state) {
     if (this.current_suggestions.length === 0) return;
 
     this.suggestion_index = Math.max(
@@ -230,44 +236,39 @@ export class DevConsole extends SimulationLayer {
       Math.min(this.current_suggestions.length - 1, this.suggestion_index + direction)
     );
 
-    this._render_suggestions();
-
     if (this.suggestion_index !== -1) {
-      this.input.dom.value = this.current_suggestions[this.suggestion_index];
+      input_state.value = this.current_suggestions[this.suggestion_index];
     }
   }
 
-  _complete_suggestion() {
+  _complete_suggestion(input_state) {
     if (this.current_suggestions.length === 0) return;
 
     if (this.suggestion_index === -1) {
-      this.input.dom.value = this.current_suggestions[0];
+      input_state.value = this.current_suggestions[0];
+      this.suggestion_index = 0;
     } else {
-      this.input.dom.value = this.current_suggestions[this.suggestion_index];
+      input_state.value = this.current_suggestions[this.suggestion_index];
     }
-
-    this._update_suggestions(this.input.dom.value);
   }
 
-  _navigate_history(direction) {
+  _navigate_history(direction, input_state) {
     if (this.history.length === 0) return;
-
     this.history_index = Math.max(
       -1,
       Math.min(this.history.length - 1, this.history_index + direction)
     );
-
     if (this.history_index === -1) {
-      this.input.dom.value = "";
+      input_state.value = "";
     } else {
-      this.input.dom.value = this.history[this.history_index];
+      input_state.value = this.history[this.history_index];
     }
   }
 
   _handle_command(command) {
     if (!command) return;
 
-    // Add to history if it's a new command
+    // Add the command to history if it is different from the last.
     if (this.history[0] !== command) {
       this.history.unshift(command);
       if (this.history.length > 50) {
@@ -276,12 +277,11 @@ export class DevConsole extends SimulationLayer {
     }
     this.history_index = -1;
 
-    // Parse command and arguments
+    // Parse command and its arguments.
     const parts = command.split(" ");
     const cmd = parts[0].toLowerCase();
     const args = parts.slice(1);
 
-    // Execute handler if registered
     const handler_index = this.command_handlers.get(cmd);
     if (handler_index !== undefined) {
       this.command_handler_list[handler_index].execute(args);
@@ -291,9 +291,9 @@ export class DevConsole extends SimulationLayer {
   }
 
   /**
-   * Register a new command handler
-   * @param {string} command - The command name
-   * @param {Function} handler - The function to handle the command
+   * Register a new command handler.
+   * @param {string} command - The command name.
+   * @param {Function} command_handler - The command handler.
    */
   register_command(command, command_handler) {
     if (command_handler) {
@@ -305,9 +305,9 @@ export class DevConsole extends SimulationLayer {
   }
 
   /**
-   * Get a command handler by command name
-   * @param {string} command - The command name
-   * @returns {Function} The command handler
+   * Get a command handler by its command name.
+   * @param {string} command - The command name.
+   * @returns {Function} The command handler.
    */
   get_command_handler(command) {
     return this.command_handler_list[this.command_handlers.get(command.toLowerCase())];
@@ -315,21 +315,28 @@ export class DevConsole extends SimulationLayer {
 
   show() {
     this.is_open = true;
-    this.console_panel.dom.style.visibility = visible_name;
-    this.input.dom.value = "";
-    this.input.dom.focus();
-    this.suggestions_panel.dom.style.display = display_none_name;
+    const input_state = UIContext.input_field_state[input_name];
+    if (input_state) {
+      input_state.value = "";
+      input_state.is_focused = true;
+    }
+    this.current_suggestions = [];
+    this.suggestion_index = -1;
 
     for (let i = 0; i < this.command_handler_list.length; i++) {
-      this.command_handler_list[i].hide();
+      if (typeof this.command_handler_list[i].hide === "function") {
+        this.command_handler_list[i].hide();
+      }
     }
   }
 
   hide() {
     this.is_open = false;
-    this.console_panel.dom.style.visibility = hidden_name;
-    this.suggestions_panel.dom.style.display = display_none_name;
-    this.input.dom.blur();
+    const input_state = UIContext.input_field_state[input_name];
+    if (input_state) {
+      input_state.is_focused = false;
+    }
+    this.current_suggestions = [];
   }
 
   toggle() {
@@ -338,5 +345,29 @@ export class DevConsole extends SimulationLayer {
     } else {
       this.show();
     }
+  }
+
+  /**
+   * Helper: Computes the on-screen rectangle for the console panel.
+   * Positions the panel at the bottom center of the canvas.
+   */
+  _get_panel_rect() {
+    const canvas_width = UIContext.canvas_size.width || window.innerWidth;
+    const canvas_height = UIContext.canvas_size.height || window.innerHeight;
+    const width = 600;
+    const height = 100;
+    const left = (canvas_width - width) / 2;
+    const bottom_offset = 125;
+    const top = canvas_height - bottom_offset - height;
+    return { x: left, y: top, width, height };
+  }
+
+  _is_inside_panel(x, y, panel_rect) {
+    return (
+      x >= panel_rect.x &&
+      x <= panel_rect.x + panel_rect.width &&
+      y >= panel_rect.y &&
+      y <= panel_rect.y + panel_rect.height
+    );
   }
 }

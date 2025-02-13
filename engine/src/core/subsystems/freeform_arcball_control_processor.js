@@ -22,7 +22,7 @@ export class FreeformArcballControlProcessor extends SimulationLayer {
     pre_update(delta_time) {
         super.pre_update(delta_time);
 
-        const ctrl_held = InputProvider.get().get_state(InputKey.K_LControl) || InputProvider.get().get_state(InputKey.K_RControl);
+        const ctrl_held = InputProvider.get_state(InputKey.K_LControl) || InputProvider.get_state(InputKey.K_RControl);
         if (ctrl_held) {
             return;
         }
@@ -32,40 +32,40 @@ export class FreeformArcballControlProcessor extends SimulationLayer {
         let rotation = quat.clone(view_data.rotation);
         
         let moved = false;
-        if (InputProvider.get().get_state(InputKey.K_w)) {
+        if (InputProvider.get_state(InputKey.K_w)) {
             const forward = vec4.scale(vec4.create(), view_data.view_forward ?? WORLD_FORWARD, this.move_speed * delta_time);
             vec4.add(position, position, forward);
             moved = true;
         }
-        if (InputProvider.get().get_state(InputKey.K_s)) {
+        if (InputProvider.get_state(InputKey.K_s)) {
             const backward = vec4.scale(vec4.create(), view_data.view_forward ?? WORLD_FORWARD, -this.move_speed * delta_time);
             vec4.add(position, position, backward);
             moved = true;
         }
-        if (InputProvider.get().get_state(InputKey.K_a)) {
+        if (InputProvider.get_state(InputKey.K_a)) {
             const left = vec4.scale(vec4.create(), view_data.view_right ?? WORLD_RIGHT, -this.move_speed * delta_time);
             vec4.add(position, position, left);
             moved = true;
         }
-        if (InputProvider.get().get_state(InputKey.K_d)) {
+        if (InputProvider.get_state(InputKey.K_d)) {
             const right = vec4.scale(vec4.create(), view_data.view_right ?? WORLD_RIGHT, this.move_speed * delta_time);
             vec4.add(position, position, right);
             moved = true;
         }
-        if (InputProvider.get().get_state(InputKey.K_q)) {
+        if (InputProvider.get_state(InputKey.K_q)) {
             const up = vec4.scale(vec4.create(), WORLD_UP, this.move_speed * delta_time);
             vec4.add(position, position, up);
             moved = true;
         }
-        if (InputProvider.get().get_state(InputKey.K_e)) {
+        if (InputProvider.get_state(InputKey.K_e)) {
             const down = vec4.scale(vec4.create(), WORLD_UP, -this.move_speed * delta_time);
             vec4.add(position, position, down);
             moved = true;
         }
         
-        const shift_held = InputProvider.get().get_state(InputKey.K_LShift) || InputProvider.get().get_state(InputKey.K_RShift);
-        const x = InputProvider.get().get_range(InputRange.M_x);
-        const y = InputProvider.get().get_range(InputRange.M_y);
+        const shift_held = InputProvider.get_state(InputKey.K_LShift) || InputProvider.get_state(InputKey.K_RShift);
+        const x = InputProvider.get_range(InputRange.M_x);
+        const y = InputProvider.get_range(InputRange.M_y);
 
         if ((x || y) && shift_held) {
             const pivot_point = vec3.scaleAndAdd(vec3.create(), position, view_data.view_forward ?? WORLD_FORWARD, this.orbit_distance);

@@ -15,64 +15,79 @@ export class UI3DProcessor extends SimulationLayer {
     this.entity_query = EntityManager.create_query({
       fragment_requirements: [UserInterfaceFragment],
     });
+    this._update_internal = this._update_internal.bind(this);
   }
 
   update(delta_time) {
-    profile_scope("UI3DProcessor.update", () => {
-      const user_interfaces = EntityManager.get_fragment_array(UserInterfaceFragment);
-      if (!user_interfaces || user_interfaces.dirty.length === 0) {
-        return;
+    profile_scope("UI3DProcessor.update", this._update_internal);
+  }
+
+  _update_internal() {
+    const user_interfaces = EntityManager.get_fragment_array(UserInterfaceFragment);
+    if (!user_interfaces || user_interfaces.dirty.length === 0) {
+      return;
+    }
+
+    let updated = false;
+
+    const matching_entities = this.entity_query.matching_entities.get_data();
+    const matching_entity_ids = this.entity_query.matching_entity_ids.get_data();
+    for (let i = 0; i < this.entity_query.matching_entities.length; ++i) {
+      const entity = matching_entities[i];
+      const entity_index = matching_entity_ids[i];
+
+      if (!user_interfaces.dirty[entity_index]) {
+        continue;
       }
 
-      let updated = false;
+      if (user_interfaces.allows_cursor_events[entity_index]) {
+        user_interfaces.was_cursor_inside[entity_index] =
+          user_interfaces.is_cursor_inside[entity_index];
+        user_interfaces.is_cursor_inside[entity_index] =
+          entity === this.scene.get_cursor_pixel_entity();
 
-      const matching_entities = this.entity_query.matching_entities.get_data();
-      const matching_entity_ids = this.entity_query.matching_entity_ids.get_data();
-      for (let i = 0; i < this.entity_query.matching_entities.length; ++i) {
-        const entity = matching_entities[i];
-        const entity_index = matching_entity_ids[i];
+        user_interfaces.was_clicked[entity_index] = user_interfaces.is_clicked[entity_index];
+        user_interfaces.is_clicked[entity_index] =
+          user_interfaces.is_cursor_inside[entity_index] &&
+          InputProvider.get_action(InputKey.B_mouse_left);
 
-        if (!user_interfaces.dirty[entity_index]) {
-          continue;
+        user_interfaces.was_pressed[entity_index] = user_interfaces.is_pressed[entity_index];
+        user_interfaces.is_pressed[entity_index] =
+          user_interfaces.is_cursor_inside[entity_index] &&
+          InputProvider.get_state(InputKey.B_mouse_left);
+
+        if (
+          !user_interfaces.was_cursor_inside[entity_index] &&
+          user_interfaces.is_cursor_inside[entity_index]
+        ) {
+          Element3D.trigger(entity, "hover");
+        } else if (
+          user_interfaces.was_cursor_inside[entity_index] &&
+          !user_interfaces.is_cursor_inside[entity_index]
+        ) {
+          Element3D.trigger(entity, "leave");
         }
 
-        if (user_interfaces.allows_cursor_events[entity_index]) {
-          user_interfaces.was_cursor_inside[entity_index] = user_interfaces.is_cursor_inside[entity_index];
-          user_interfaces.is_cursor_inside[entity_index] = entity === this.scene.get_cursor_pixel_entity();
-
-          user_interfaces.was_clicked[entity_index] = user_interfaces.is_clicked[entity_index];
-          user_interfaces.is_clicked[entity_index] = user_interfaces.is_cursor_inside[entity_index] && InputProvider.get().get_action(InputKey.B_mouse_left);
-
-          user_interfaces.was_pressed[entity_index] = user_interfaces.is_pressed[entity_index];
-          user_interfaces.is_pressed[entity_index] = user_interfaces.is_cursor_inside[entity_index] && InputProvider.get().get_state(InputKey.B_mouse_left);
-
-          if (!user_interfaces.was_cursor_inside[entity_index] && user_interfaces.is_cursor_inside[entity_index]) {
-            Element3D.trigger(entity, "hover");
-          } else if (user_interfaces.was_cursor_inside[entity_index] && !user_interfaces.is_cursor_inside[entity_index]) {
-            Element3D.trigger(entity, "leave");
-          }
-
-          if (user_interfaces.is_clicked[entity_index]) {
-            Element3D.trigger(entity, "selected");
-            if (user_interfaces.consume_events[entity_index]) {
-              InputProvider.get().consume_action(InputKey.B_mouse_left);
-            }
-          }
-          if (user_interfaces.is_pressed[entity_index]) {
-            Element3D.trigger(entity, "pressed");
-            if (user_interfaces.consume_events[entity_index]) {
-              InputProvider.get().consume_action(InputKey.B_mouse_left);
-            }
+        if (user_interfaces.is_clicked[entity_index]) {
+          Element3D.trigger(entity, "selected");
+          if (user_interfaces.consume_events[entity_index]) {
+            InputProvider.consume_action(InputKey.B_mouse_left);
           }
         }
-
-        updated = true;
+        if (user_interfaces.is_pressed[entity_index]) {
+          Element3D.trigger(entity, "pressed");
+          if (user_interfaces.consume_events[entity_index]) {
+            InputProvider.consume_action(InputKey.B_mouse_left);
+          }
+        }
       }
 
-      if (updated) {
-        UserInterfaceFragment.to_gpu_data();
-      }
-    });
+      updated = true;
+    }
+
+    if (updated) {
+      UserInterfaceFragment.to_gpu_data();
+    }
   }
 
   set_scene(scene) {

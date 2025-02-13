@@ -61,7 +61,7 @@ export class RenderingScene extends Scene {
     light_fragment_view.active = true;
 
     // Create a sphere mesh and add it to the scene
-    const mesh = await Mesh.from_gltf("engine/models/sphere/sphere.gltf");
+    const mesh = Mesh.from_gltf("engine/models/sphere/sphere.gltf");
 
     // Create a default material
     const default_material_id = Material.create("MyMaterial", "StandardMaterial");
@@ -182,12 +182,6 @@ export class MLScene extends Scene {
     light_fragment_view.position.y = 0;
     light_fragment_view.position.z = 0;
     light_fragment_view.active = true;
-
-    // Create a sphere mesh and add it to the scene
-    const mesh = await Mesh.from_gltf("engine/models/sphere/sphere.gltf");
-
-    // Create a default material
-    const default_material_id = Material.create("MyMaterial", "StandardMaterial");
 
     // Get Exo-Medium font
     const font_id = Name.from("Exo-Medium");
@@ -313,7 +307,7 @@ export class MLScene extends Scene {
 }
 
 (async () => {
-  const simulator = await Simulator.create();
+  const simulator = await Simulator.create("gpu-canvas", "ui-canvas");
 
   // Create a test scene and register it with the simulation system
   const scene = new MLScene("MLScene");

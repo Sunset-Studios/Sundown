@@ -314,6 +314,8 @@ export class SharedViewBuffer {
 
 export class SharedEnvironmentMapData {
   static skybox = null;
+  static skybox_data = null;
+  static skybox_data_buffer = new Float32Array([1, 1, 1, 1]);
 
   static async add_skybox(name, texture_paths) {
     const skybox = await Texture.load(texture_paths, {
@@ -326,9 +328,21 @@ export class SharedEnvironmentMapData {
         GPUTextureUsage.RENDER_ATTACHMENT,
     });
 
+    const skybox_data = Buffer.create({
+      name: name + "_data",
+      raw_data: this.skybox_data_buffer,
+      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+    });
+
     this.skybox = skybox;
+    this.skybox_data = skybox_data;
 
     return skybox;
+  }
+
+  static set_skybox_color(color) {
+    this.skybox_data_buffer.set(color);
+    this.skybox_data.write(this.skybox_data_buffer);
   }
 
   static remove_skybox() {
@@ -337,6 +351,10 @@ export class SharedEnvironmentMapData {
 
   static get_skybox() {
     return this.skybox;
+  }
+
+  static get_skybox_data() {
+    return this.skybox_data;
   }
 }
 

@@ -32,7 +32,7 @@ export class Renderer {
 
   static renderers = [];
 
-  async setup(canvas, render_strategy, options = {}) {
+  async setup(canvas, canvas_ui, render_strategy, options = {}) {
     if (!navigator.gpu) {
       throw Error("WebGPU is not supported");
     }
@@ -41,9 +41,14 @@ export class Renderer {
     this.canvas.width = this.canvas.clientWidth;
     this.canvas.height = this.canvas.clientHeight;
 
+    this.canvas_ui = canvas_ui;
+    this.canvas_ui.width = this.canvas_ui.clientWidth;
+    this.canvas_ui.height = this.canvas_ui.clientHeight;
+
     this.adapter = await navigator.gpu.requestAdapter({
       powerPreference: "high-performance",
     });
+
     if (!this.adapter) {
       throw Error("Unable to request WebGPU adapter");
     }
@@ -77,6 +82,12 @@ export class Renderer {
       format: this.canvas_format,
       alphaMode: "premultiplied",
     });
+
+    if (this.canvas_ui) {
+      this.context_ui = this.canvas_ui.getContext("2d", {
+        alpha: true,
+      });
+    }
 
     this.aspect_ratio = this.canvas.width / this.canvas.height;
 
@@ -240,10 +251,10 @@ export class Renderer {
     return this.renderers[index];
   }
 
-  static async create(canvas, render_strategy, options = {}) {
+  static async create(canvas, canvas_ui, render_strategy, options = {}) {
     const renderer = new Renderer();
     this.renderers.push(renderer);
-    await renderer.setup(canvas, render_strategy, options);
+    await renderer.setup(canvas, canvas_ui, render_strategy, options);
     return this.renderers.length - 1;
   }
 }

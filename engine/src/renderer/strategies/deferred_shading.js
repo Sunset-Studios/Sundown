@@ -419,6 +419,9 @@ export class DeferredShadingStrategy {
       // Skybox Pass
       {
         const skybox = SharedEnvironmentMapData.get_skybox();
+        const skybox_data = SharedEnvironmentMapData.get_skybox_data();
+
+        const skybox_data_buffer = render_graph.register_buffer(skybox_data.config.name);
         const skybox_texture = render_graph.register_image(skybox.config.name);
 
         skybox_output_image_config.width = image_extent.width;
@@ -430,7 +433,7 @@ export class DeferredShadingStrategy {
           skybox_pass_name,
           RenderPassFlags.Graphics,
           {
-            inputs: [skybox_texture],
+            inputs: [skybox_texture, skybox_data_buffer],
             outputs: [skybox_image],
             shader_setup: skybox_shader_setup,
           },

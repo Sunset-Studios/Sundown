@@ -1,9 +1,15 @@
 #include "common.wgsl"
 
+struct SkyboxData {
+    @location(0) color: vec4<f32>,
+};
+
 @group(1) @binding(0) var skybox_texture: texture_cube<f32>;
+@group(1) @binding(1) var<uniform> skybox_data: SkyboxData;
 
 // ------------------------------------------------------------------------------------
 // Data Structures
+
 // ------------------------------------------------------------------------------------ 
 struct VertexOutput {
     @builtin(position) position: vec4f,
@@ -48,6 +54,6 @@ struct FragmentOutput {
 @fragment fn fs(v_out: VertexOutput) -> FragmentOutput {
     var dir = v_out.pos.xyz - vec3(0.5);
     dir.z *= -1;
-    var color = textureSample(skybox_texture, global_sampler, dir);
+    var color = textureSample(skybox_texture, global_sampler, dir) * skybox_data.color;
     return FragmentOutput(vec4<precision_float>(color));
 }

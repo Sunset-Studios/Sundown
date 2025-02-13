@@ -33,6 +33,9 @@ export class InputContext {
 
     set_state(input_state_index, new_state) {
         console.assert(input_state_index < this.state_mappings.length && input_state_index >= 0, 'Invalid input state index');
+        if (this.state_mappings[input_state_index] !== new_state) {
+            this.input_states[input_state_index].last_change_time = performance.now();
+        }
         this.state_mappings[input_state_index] = new_state;
         if (new_state) {
             this.dirty_states.add(input_state_index);
@@ -41,6 +44,9 @@ export class InputContext {
 
     set_action(input_state_index, new_action) {
         console.assert(input_state_index < this.action_mappings.length && input_state_index >= 0, 'Invalid input state index');
+        if (this.action_mappings[input_state_index] !== new_action) {
+            this.input_states[input_state_index].last_change_time = performance.now();
+        }
         const action_fired = !this.action_mappings[input_state_index] && new_action;
         this.action_mappings[input_state_index] = new_action;
         if (action_fired) {
@@ -50,6 +56,9 @@ export class InputContext {
 
     set_range(input_state_index, new_range) {
         console.assert(input_state_index < this.range_mappings.length && input_state_index >= 0, 'Invalid input state index');
+        if (this.range_mappings[input_state_index] !== new_range) {
+            this.input_states[input_state_index].last_change_time = performance.now();
+        }
         if (new_range !== 0.0) {
             this.range_mappings[input_state_index] = new_range;
             this.input_states[input_state_index].range_value = new_range;

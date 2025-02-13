@@ -13,18 +13,17 @@ import { StaticMeshFragment } from "./ecs/fragments/static_mesh_fragment.js";
 import { TextFragment } from "./ecs/fragments/text_fragment.js";
 import { SceneGraphFragment } from "./ecs/fragments/scene_graph_fragment.js";
 
-import { Element } from "../ui/2d/element.js";
+import { cursor } from "../ui/2d/immediate.js";
 import { FontCache } from "../ui/text/font_cache.js";
 import { UI3DProcessor } from "./subsystems/ui_3d_processor.js";
 import { UIProcessor } from "./subsystems/ui_processor.js";
 import { SharedViewBuffer } from "./shared_data.js";
 import { Renderer } from "../renderer/renderer.js";
-import { Cursor } from "../ui/2d/cursor.js";
 
 export class Scene extends SimulationLayer {
   name = "";
-  dev_cursor = null;
   dev_cursor_enabled = true;
+  dev_cursor_visible = false;
 
   constructor(name) {
     super();
@@ -37,17 +36,16 @@ export class Scene extends SimulationLayer {
     Renderer.get().set_scene_id(this.name);
 
     this.context.current_view = SharedViewBuffer.add_view_data();
-    Element.new_view_root(this.context.current_view);
 
     FontCache.auto_load_fonts();
 
     this.setup_default_fragments();
     this.setup_default_subsystems();
-    this.setup_default_ui();
   }
 
   update(delta_time) {
     super.update(delta_time);
+    this._update_dev_cursor();
   }
 
   setup_default_subsystems() {
@@ -76,21 +74,15 @@ export class Scene extends SimulationLayer {
     );
   }
 
-  setup_default_ui() {
-    this.dev_cursor = Cursor.create("dev_cursor", {
-      icon: "engine/sprites/cursor.png",
-      style: {
-        position: "absolute",
-        width: "25px",
-        height: "25px",
-        background: "transparent",
-        border: "none",
-      },
-    });
+  _update_dev_cursor() {
+    if (!this.dev_cursor_enabled || !this.dev_cursor_visible) return;
 
-    const view_root = Element.get_view_root();
-    view_root.add_child(this.dev_cursor);
-    this.dev_cursor.is_visible = false;
+    cursor({
+      icon: "engine/sprites/cursor.png",
+      width: 25,
+      height: 25,
+      background_color: "transparent",
+    });
   }
 
   set_dev_cursor_enabled(enabled) {
@@ -99,11 +91,11 @@ export class Scene extends SimulationLayer {
 
   show_dev_cursor() {
     if (!this.dev_cursor_enabled) return;
-    this.dev_cursor.is_visible = true;
+    this.dev_cursor_visible = true;
   }
 
   hide_dev_cursor() {
     if (!this.dev_cursor_enabled) return;
-    this.dev_cursor.is_visible = false;
+    this.dev_cursor_visible = false;
   }
 }

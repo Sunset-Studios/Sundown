@@ -22,54 +22,57 @@ export class TransformProcessor extends SimulationLayer {
       fragment_requirements: [TransformFragment],
     });
     this.on_post_render_callback = this._on_post_render.bind(this);
+    this._update_internal = this._update_internal.bind(this);
   }
 
   update(delta_time) {
-    profile_scope(transform_processor_update_scope_name, () => {
-      const transforms = EntityManager.get_fragment_array(TransformFragment);
-      if (!transforms || transforms.dirty.length === 0) {
-        return;
+    profile_scope(transform_processor_update_scope_name, this._update_internal);
+  }
+
+  _update_internal() {
+    const transforms = EntityManager.get_fragment_array(TransformFragment);
+    if (!transforms || transforms.dirty.length === 0) {
+      return;
+    }
+
+    const scene_graph = EntityManager.get_fragment_array(SceneGraphFragment);
+    if (!scene_graph) {
+      return;
+    }
+
+    for (let i = 0; i < scene_graph.scene_graph_layer_counts.length; ++i) {
+      if (this.transform_processing_input_lists.length <= i) {
+        this.transform_processing_input_lists.push(new Array(9));
+        this.transform_processing_output_lists.push(new Array(4));
       }
 
-      const scene_graph = EntityManager.get_fragment_array(SceneGraphFragment);
-      if (!scene_graph) {
-        return;
-      }
+      this.transform_processing_input_lists[i][0] = transforms.position_buffer;
+      this.transform_processing_input_lists[i][1] = transforms.rotation_buffer;
+      this.transform_processing_input_lists[i][2] = transforms.scale_buffer;
+      this.transform_processing_input_lists[i][3] = transforms.dirty_flags_buffer;
+      this.transform_processing_input_lists[i][4] = transforms.transforms_buffer;
+      this.transform_processing_input_lists[i][5] = transforms.bounds_data_buffer;
+      this.transform_processing_input_lists[i][6] = scene_graph.scene_graph_buffer;
+      this.transform_processing_input_lists[i][7] = scene_graph.scene_graph_uniforms[i];
 
-      for (let i = 0; i < scene_graph.scene_graph_layer_counts.length; ++i) {
-        if (this.transform_processing_input_lists.length <= i) {
-          this.transform_processing_input_lists.push(new Array(9));
-          this.transform_processing_output_lists.push(new Array(4));
-        }
+      this.transform_processing_output_lists[i][0] = transforms.position_buffer;
+      this.transform_processing_output_lists[i][1] = transforms.rotation_buffer;
+      this.transform_processing_output_lists[i][2] = transforms.scale_buffer;
+      this.transform_processing_output_lists[i][3] = transforms.bounds_data_buffer;
 
-        this.transform_processing_input_lists[i][0] = transforms.position_buffer;
-        this.transform_processing_input_lists[i][1] = transforms.rotation_buffer;
-        this.transform_processing_input_lists[i][2] = transforms.scale_buffer;
-        this.transform_processing_input_lists[i][3] = transforms.dirty_flags_buffer;
-        this.transform_processing_input_lists[i][4] = transforms.transforms_buffer;
-        this.transform_processing_input_lists[i][5] = transforms.bounds_data_buffer;
-        this.transform_processing_input_lists[i][6] = scene_graph.scene_graph_buffer;
-        this.transform_processing_input_lists[i][7] = scene_graph.scene_graph_uniforms[i];
-
-        this.transform_processing_output_lists[i][0] = transforms.position_buffer;
-        this.transform_processing_output_lists[i][1] = transforms.rotation_buffer;
-        this.transform_processing_output_lists[i][2] = transforms.scale_buffer;
-        this.transform_processing_output_lists[i][3] = transforms.bounds_data_buffer;
-
-        ComputeTaskQueue.get().new_task(
-          transform_processing_task_name + i,
-          transform_processing_wgsl_path,
-          this.transform_processing_input_lists[i],
-          this.transform_processing_output_lists[i],
-          Math.floor((scene_graph.scene_graph_layer_counts[i] + 255) / 256)
-        );
-      }
-
-      Renderer.get().enqueue_post_commands(
-        copy_position_rotation_scale_to_buffer_name,
-        this.on_post_render_callback
+      ComputeTaskQueue.get().new_task(
+        transform_processing_task_name + i,
+        transform_processing_wgsl_path,
+        this.transform_processing_input_lists[i],
+        this.transform_processing_output_lists[i],
+        Math.floor((scene_graph.scene_graph_layer_counts[i] + 255) / 256)
       );
-    });
+    }
+
+    Renderer.get().enqueue_post_commands(
+      copy_position_rotation_scale_to_buffer_name,
+      this.on_post_render_callback
+    );
   }
 
   _on_post_render(graph, frame_data, encoder) {

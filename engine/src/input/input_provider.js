@@ -1,148 +1,137 @@
-import { InputContext } from './input_context.js';
-import { InputState, InputRange, InputType, InputKey } from './input_types.js';
-import { InputProcessor } from './input_processor.js';
-import { SimulationLayer } from '../core/simulation_layer.js';
-import { Renderer } from '../renderer/renderer.js';
+import { InputContext } from "./input_context.js";
+import { InputState, InputRange, InputType, InputKey } from "./input_types.js";
+import { InputProcessor } from "./input_processor.js";
+import { Renderer } from "../renderer/renderer.js";
+import { profile_scope } from "../utility/performance.js";
 
-export class InputProvider extends SimulationLayer {
-    static default_context_instance = null;
+const input_provider_update_scope_name = "InputProvider.update";
 
-    contexts = [];
-    current_dirty_states = [];
-    b_initialized = false;
-    processor = null;
+export class InputProvider {
+  static default_context_instance = null;
+  static contexts = [];
+  static current_dirty_states = [];
+  static processor = null;
 
-    constructor() {
-        if (InputProvider.instance) {
-            return InputProvider.instance;
+  static default_context() {
+    if (!this.default_context_instance) {
+      this.default_context_instance = new InputContext();
+      if (this.default_context_instance.num_states() === 0) {
+        const input_states = [];
+        for (let i = 0; i < InputKey.NumKeys; ++i) {
+          input_states.push(new InputState("", i, InputRange.NumRanges, InputType.State));
+          input_states.push(new InputState("", i, InputRange.NumRanges, InputType.Action));
         }
-        super();
-        InputProvider.instance = this;
-    }
-
-    static get() {
-        if (!InputProvider.instance) {
-            return new InputProvider();
+        for (let i = 0; i < InputRange.NumRanges; ++i) {
+          input_states.push(new InputState("", InputKey.NumKeys, i, InputType.Range));
         }
-        return InputProvider.instance;
+        this.default_context_instance.set_states(input_states);
+      }
     }
+    return this.default_context_instance;
+  }
 
-    static default_context() {
-        if (!InputProvider.default_context_instance) {
-            InputProvider.default_context_instance = new InputContext();
-            if (InputProvider.default_context_instance.num_states() === 0) {
-                const input_states = [];
-                for (let i = 0; i < InputKey.NumKeys; ++i) {
-                    input_states.push(new InputState("", i, InputRange.NumRanges, InputType.State));
-                    input_states.push(new InputState("", i, InputRange.NumRanges, InputType.Action));
-                }
-                for (let i = 0; i < InputRange.NumRanges; ++i) {
-                    input_states.push(new InputState("", InputKey.NumKeys, i, InputType.Range));
-                }
-                InputProvider.default_context_instance.set_states(input_states);
-            }
-        }
-        return InputProvider.default_context_instance;
+  static setup() {
+    this.processor = new InputProcessor();
+    this.processor.init();
+    this.push_context(this.default_context());
+  }
+
+  static update(delta_time) {
+    profile_scope(input_provider_update_scope_name, () => {
+      if (this.contexts.length > 0) {
+        const context = this.contexts[this.contexts.length - 1];
+
+        this.processor.update(context, delta_time, Renderer.get().canvas);
+
+        this.current_dirty_states = [];
+        context.visit_dirty_states((state) => {
+          this.current_dirty_states.push(state);
+        });
+      }
+    });
+  }
+
+  static push_context(context) {
+    this.contexts.push(context);
+  }
+
+  static pop_context() {
+    if (this.contexts.length > 0) {
+      return this.contexts.pop();
     }
+    return null;
+  }
 
-    init() {
-        if (!this.b_initialized) {
-            this.b_initialized = true;
-            this.processor = new InputProcessor();
-            this.processor.init();
-        }
+  static get_state(name) {
+    return this.current_dirty_states.some(
+      (state) =>
+        (typeof name === "number" ? state.raw_input === name : state.mapped_name === name) &&
+        state.input_type === InputType.State
+    );
+  }
+
+  static consume_state(name) {
+    let index = this.current_dirty_states.findIndex(
+      (state) =>
+        (typeof name === "number" ? state.raw_input === name : state.mapped_name === name) &&
+        state.input_type === InputType.State
+    );
+    while (index !== -1) {
+      this.current_dirty_states.splice(index, 1);
+      index = this.current_dirty_states.findIndex(
+        (state) =>
+          (typeof name === "number" ? state.raw_input === name : state.mapped_name === name) &&
+          state.input_type === InputType.State
+      );
     }
+  }
 
-    pre_update(delta_time) {
-        super.pre_update(delta_time);
+  static get_action(name) {
+    return this.current_dirty_states.some(
+      (state) =>
+        (typeof name === "number" ? state.raw_input === name : state.mapped_name === name) &&
+        state.input_type === InputType.Action
+    );
+  }
 
-        performance.mark('input provider update');
-
-        if (this.contexts.length > 0) {
-            const context = this.contexts[this.contexts.length - 1];
-
-            this.processor.update(context, delta_time, Renderer.get().canvas);
-
-            this.current_dirty_states = [];
-            context.visit_dirty_states((state) => {
-                this.current_dirty_states.push(state);
-            });
-        }
+  static consume_action(name) {
+    let index = this.current_dirty_states.findIndex(
+      (state) =>
+        (typeof name === "number" ? state.raw_input === name : state.mapped_name === name) &&
+        state.input_type === InputType.Action
+    );
+    while (index !== -1) {
+      this.current_dirty_states.splice(index, 1);
+      index = this.current_dirty_states.findIndex(
+        (state) =>
+          (typeof name === "number" ? state.raw_input === name : state.mapped_name === name) &&
+          state.input_type === InputType.Action
+      );
     }
+  }
 
-    push_context(context) {
-        this.contexts.push(context);
+  static get_range(name) {
+    const index = this.current_dirty_states.findIndex(
+      (state) =>
+        (typeof name === "number" ? state.raw_range === name : state.mapped_name === name) &&
+        state.input_type === InputType.Range
+    );
+    return index !== -1 ? this.current_dirty_states[index].range_value : 0.0;
+  }
+
+  static consume_range(name) {
+    let index = this.current_dirty_states.findIndex(
+      (state) =>
+        (typeof name === "number" ? state.raw_range === name : state.mapped_name === name) &&
+        state.input_type === InputType.Range
+    );
+    while (index !== -1) {
+      this.current_dirty_states.splice(index, 1);
+      index = this.current_dirty_states.findIndex(
+        (state) =>
+          (typeof name === "number" ? state.raw_range === name : state.mapped_name === name) &&
+          state.input_type === InputType.Range
+      );
     }
-
-    pop_context() {
-        if (this.contexts.length > 0) {
-            return this.contexts.pop();
-        }
-        return null;
-    }
-
-    get_state(name) {
-        return this.current_dirty_states.some(state => 
-            (typeof name === 'number' ? state.raw_input === name : state.mapped_name === name) && 
-            state.input_type === InputType.State
-        );
-    }
-
-    consume_state(name) {
-        let index = this.current_dirty_states.findIndex(state => 
-            (typeof name === 'number' ? state.raw_input === name : state.mapped_name === name) && 
-            state.input_type === InputType.State
-        );
-        while (index !== -1) {
-            this.current_dirty_states.splice(index, 1);
-            index = this.current_dirty_states.findIndex(state => 
-                (typeof name === 'number' ? state.raw_input === name : state.mapped_name === name) && 
-                state.input_type === InputType.State
-            );
-        }
-    }
-
-    get_action(name) {
-        return this.current_dirty_states.some(state => 
-            (typeof name === 'number' ? state.raw_input === name : state.mapped_name === name) && 
-            state.input_type === InputType.Action
-        );
-    }
-
-    consume_action(name) {
-        let index = this.current_dirty_states.findIndex(state => 
-            (typeof name === 'number' ? state.raw_input === name : state.mapped_name === name) && 
-            state.input_type === InputType.Action
-        );
-        while (index !== -1) {
-            this.current_dirty_states.splice(index, 1);
-            index = this.current_dirty_states.findIndex(state => 
-                (typeof name === 'number' ? state.raw_input === name : state.mapped_name === name) && 
-                state.input_type === InputType.Action
-            );
-        }
-    }
-
-    get_range(name) {
-        const index = this.current_dirty_states.findIndex(state => 
-            (typeof name === 'number' ? state.raw_range === name : state.mapped_name === name) && 
-            state.input_type === InputType.Range
-        );
-        return index !== -1 ? this.current_dirty_states[index].range_value : 0.0;
-
-    }
-
-    consume_range(name) {
-        let index = this.current_dirty_states.findIndex(state => 
-            (typeof name === 'number' ? state.raw_range === name : state.mapped_name === name) && 
-            state.input_type === InputType.Range
-        );
-        while (index !== -1) {
-            this.current_dirty_states.splice(index, 1);
-            index = this.current_dirty_states.findIndex(state => 
-                (typeof name === 'number' ? state.raw_range === name : state.mapped_name === name) && 
-                state.input_type === InputType.Range
-            );
-        }
-    }
+  }
 }

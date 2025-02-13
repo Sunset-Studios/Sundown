@@ -6,15 +6,16 @@ import { Name } from "../utility/names.js";
 import { CacheTypes } from "./renderer_types.js";
 
 export class Mesh {
-  constructor() {
-    this.name = "";
-    this.vertices = [];
-    this.indices = [];
-    this.vertex_buffer_offset = 0;
-    this.index_buffer = null;
-  }
+  static loading_meshes = new Map(); 
 
-  _build_index_buffer() {
+  name = "";
+  vertices = [];
+  indices = [];
+  vertex_buffer_offset = 0;
+  index_buffer = null;
+  pending_loader = null;
+
+  _recreate_index_buffer() {
     let element_type = "uint16";
     if (this.indices.constructor.name === "Uint32Array") {
       element_type = "uint32";
@@ -83,10 +84,8 @@ export class Mesh {
     mesh.vertices = vertices;
     mesh.indices = new Uint16Array(indices);
 
-    mesh.vertex_buffer_offset = SharedVertexBuffer.add_vertex_data(
-      mesh.vertices
-    );
-    mesh._build_index_buffer();
+    mesh.vertex_buffer_offset = SharedVertexBuffer.add_vertex_data(mesh.vertices);
+    mesh._recreate_index_buffer();
 
     ResourceCache.get().store(CacheTypes.MESH, Name.from(name), mesh);
 
@@ -94,10 +93,7 @@ export class Mesh {
   }
 
   static quad() {
-    let mesh = ResourceCache.get().fetch(
-      CacheTypes.MESH,
-      Name.from("engine_quad")
-    );
+    let mesh = ResourceCache.get().fetch(CacheTypes.MESH, Name.from("engine_quad"));
     if (mesh) {
       return mesh;
     }
@@ -141,11 +137,9 @@ export class Mesh {
 
     mesh.indices = new Uint16Array([0, 1, 2, 0, 2, 3]);
 
-    mesh.vertex_buffer_offset = SharedVertexBuffer.add_vertex_data(
-      mesh.vertices
-    );
+    mesh.vertex_buffer_offset = SharedVertexBuffer.add_vertex_data(mesh.vertices);
 
-    mesh._build_index_buffer();
+    mesh._recreate_index_buffer();
 
     ResourceCache.get().store(CacheTypes.MESH, Name.from("engine_quad"), mesh);
 
@@ -153,10 +147,7 @@ export class Mesh {
   }
 
   static cube() {
-    let mesh = ResourceCache.get().fetch(
-      CacheTypes.MESH,
-      Name.from("engine_cube")
-    );
+    let mesh = ResourceCache.get().fetch(CacheTypes.MESH, Name.from("engine_cube"));
     if (mesh) {
       return mesh;
     }
@@ -370,22 +361,20 @@ export class Mesh {
     ];
 
     mesh.indices = new Uint16Array([
-      0, 1, 2, 2, 3, 0, 4, 5, 6, 6, 7, 4, 8, 9, 10, 10, 11, 8, 12, 13, 14, 14,
-      15, 12, 16, 17, 18, 18, 19, 16, 20, 21, 22, 22, 23, 20,
+      0, 1, 2, 2, 3, 0, 4, 5, 6, 6, 7, 4, 8, 9, 10, 10, 11, 8, 12, 13, 14, 14, 15, 12, 16, 17, 18,
+      18, 19, 16, 20, 21, 22, 22, 23, 20,
     ]);
 
-    mesh.vertex_buffer_offset = SharedVertexBuffer.add_vertex_data(
-      mesh.vertices
-    );
+    mesh.vertex_buffer_offset = SharedVertexBuffer.add_vertex_data(mesh.vertices);
 
-    mesh._build_index_buffer();
+    mesh._recreate_index_buffer();
 
     ResourceCache.get().store(CacheTypes.MESH, Name.from("engine_cube"), mesh);
 
     return mesh;
   }
 
-  static async from_gltf(gltf) {
+  static from_gltf(gltf) {
     let mesh = ResourceCache.get().fetch(CacheTypes.MESH, Name.from(gltf));
     if (mesh) {
       return mesh;
@@ -394,54 +383,35 @@ export class Mesh {
     const parse_node_mesh = (gltf_obj, node) => {
       for (const primitive of node.mesh.primitives) {
         if (primitive.indices) {
-          if (
-            primitive.indicesComponentType === 5122 ||
-            primitive.indicesComponentType === 5123
-          ) {
-            mesh.indices = new Uint16Array(
-              gltf_obj.accessors[primitive.indices].bufferView.data
-            );
+          if (primitive.indicesComponentType === 5122 || primitive.indicesComponentType === 5123) {
+            mesh.indices = new Uint16Array(gltf_obj.accessors[primitive.indices].bufferView.data);
           } else if (primitive.indicesComponentType === 5125) {
-            mesh.indices = new Uint32Array(
-              gltf_obj.accessors[primitive.indices].bufferView.data
-            );
+            mesh.indices = new Uint32Array(gltf_obj.accessors[primitive.indices].bufferView.data);
           }
         }
         let positions = [];
         if (primitive.attributes.POSITION) {
-          positions = new Float32Array(
-            primitive.attributes.POSITION.bufferView.data
-          );
+          positions = new Float32Array(primitive.attributes.POSITION.bufferView.data);
         }
         let normals = [];
         if (primitive.attributes.NORMAL) {
-          normals = new Float32Array(
-            primitive.attributes.NORMAL.bufferView.data
-          );
+          normals = new Float32Array(primitive.attributes.NORMAL.bufferView.data);
         }
         let colors = [];
         if (primitive.attributes.COLOR_0) {
-          colors = new Float32Array(
-            primitive.attributes.COLOR_0.bufferView.data
-          );
+          colors = new Float32Array(primitive.attributes.COLOR_0.bufferView.data);
         }
         let uvs = [];
         if (primitive.attributes.TEXCOORD_0) {
           switch (primitive.attributes.TEXCOORD_0.componentType) {
             case 5126: // FLOAT
-              uvs = new Float32Array(
-                primitive.attributes.TEXCOORD_0.bufferView.data
-              );
+              uvs = new Float32Array(primitive.attributes.TEXCOORD_0.bufferView.data);
               break;
             case 5121: // UNSIGNED_BYTE
-              uvs = new Uint8Array(
-                primitive.attributes.TEXCOORD_0.bufferView.data
-              );
+              uvs = new Uint8Array(primitive.attributes.TEXCOORD_0.bufferView.data);
               break;
             case 5123: // UNSIGNED_SHORT
-              uvs = new Uint16Array(
-                primitive.attributes.TEXCOORD_0.bufferView.data
-              );
+              uvs = new Uint16Array(primitive.attributes.TEXCOORD_0.bufferView.data);
               break;
           }
 
@@ -449,25 +419,17 @@ export class Mesh {
             uvs = uvs.map(
               (v) =>
                 v /
-                ((1 <<
-                  (8 *
-                    primitive.attributes.TEXCOORD_0.componentType
-                      .BYTES_PER_ELEMENT)) -
-                  1)
+                ((1 << (8 * primitive.attributes.TEXCOORD_0.componentType.BYTES_PER_ELEMENT)) - 1)
             );
           }
         }
         let tangents = [];
         if (primitive.attributes.TANGENT) {
-          tangents = new Float32Array(
-            primitive.attributes.TANGENT.bufferView.data
-          );
+          tangents = new Float32Array(primitive.attributes.TANGENT.bufferView.data);
         }
         let bitangents = [];
         if (primitive.attributes.BITANGENT) {
-          bitangents = new Float32Array(
-            primitive.attributes.BITANGENT.bufferView.data
-          );
+          bitangents = new Float32Array(primitive.attributes.BITANGENT.bufferView.data);
         }
 
         // Generate tangents and bitangents if they're not provided
@@ -480,25 +442,10 @@ export class Mesh {
         let uv_index = 0;
         for (let i = 0; i < positions.length; i += 3) {
           mesh.vertices.push({
-            position: [
-              positions[i] ?? 0.0,
-              positions[i + 1] ?? 0.0,
-              positions[i + 2] ?? 0.0,
-              1.0,
-            ],
-            normal: [
-              normals[i] ?? 0.0,
-              normals[i + 1] ?? 0.0,
-              normals[i + 2] ?? 0.0,
-              0.0,
-            ],
+            position: [positions[i] ?? 0.0, positions[i + 1] ?? 0.0, positions[i + 2] ?? 0.0, 1.0],
+            normal: [normals[i] ?? 0.0, normals[i + 1] ?? 0.0, normals[i + 2] ?? 0.0, 0.0],
             uv: [uvs[uv_index] ?? 0.0, uvs[uv_index + 1] ?? 0.0, 0.0, 0.0],
-            tangent: [
-              tangents[i] ?? 0.0,
-              tangents[i + 1] ?? 0.0,
-              tangents[i + 2] ?? 0.0,
-              0.0,
-            ],
+            tangent: [tangents[i] ?? 0.0, tangents[i + 1] ?? 0.0, tangents[i + 2] ?? 0.0, 0.0],
             bitangent: [
               bitangents[i] ?? 0.0,
               bitangents[i + 1] ?? 0.0,
@@ -511,28 +458,30 @@ export class Mesh {
       }
     };
 
-    return new Promise((resolve) => {
-      const loader = new glTFLoader();
-      loader.load(gltf, (gltf_obj) => {
-        mesh = new Mesh();
+    mesh = new Mesh();
+    mesh.name = gltf;
 
-        for (const node of gltf_obj.nodes) {
-          if (node.mesh) {
-            parse_node_mesh(gltf_obj, node);
-          }
+    const mesh_id = Name.from(gltf);
+
+    Mesh.loading_meshes.set(mesh_id, true);
+
+    mesh.pending_loader = new glTFLoader();
+    mesh.pending_loader.load(gltf, (gltf_obj) => {
+      for (const node of gltf_obj.nodes) {
+        if (node.mesh) {
+          parse_node_mesh(gltf_obj, node);
         }
+      }
 
-        mesh.name = gltf;
-        mesh.vertex_buffer_offset = SharedVertexBuffer.add_vertex_data(
-          mesh.vertices
-        );
+      mesh.vertex_buffer_offset = SharedVertexBuffer.add_vertex_data(mesh.vertices);
 
-        mesh._build_index_buffer();
+      mesh._recreate_index_buffer();
 
-        ResourceCache.get().store(CacheTypes.MESH, Name.from(gltf), mesh);
-
-        resolve(mesh);
-      });
+      Mesh.loading_meshes.delete(mesh_id);
     });
+
+    ResourceCache.get().store(CacheTypes.MESH, mesh_id, mesh);
+
+    return mesh;
   }
 }
