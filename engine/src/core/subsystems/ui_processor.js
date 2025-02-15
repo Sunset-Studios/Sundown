@@ -69,7 +69,7 @@ export class UIProcessor extends SimulationLayer {
     for (let i = 0; i < keyboard_events.length; i++) {
       const key = keyboard_events[i].raw_input;
       
-      if (InputKeyToPrintableString[key] && !this.processed_keys.has(key)) {
+      if (!this.processed_keys.has(key)) {
         const has_state = InputProvider.get_state(key);
         const has_action = InputProvider.get_action(key);
         

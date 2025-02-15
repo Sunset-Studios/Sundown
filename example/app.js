@@ -20,7 +20,6 @@ import { NeuralModel } from "../engine/src/ml/neural_model.js";
 import { FullyConnected } from "../engine/src/ml/layers/fully_connected.js";
 import { ReLU } from "../engine/src/ml/layers/relu.js";
 import { Tanh } from "../engine/src/ml/layers/tanh.js";
-import { Sigmoid } from "../engine/src/ml/layers/sigmoid.js";
 import { MSELoss } from "../engine/src/ml/layers/mse_loss.js";
 import { Tensor, TensorInitializer } from "../engine/src/ml/tensor.js";
 import { Adam } from "../engine/src/ml/optimizers/adam.js";
@@ -28,7 +27,7 @@ import { Adam } from "../engine/src/ml/optimizers/adam.js";
 import { profile_scope } from "../engine/src/utility/performance.js";
 
 export class RenderingScene extends Scene {
-  async init(parent_context) {
+  init(parent_context) {
     super.init(parent_context);
 
     // Add the freeform arcball control processor to the scene
@@ -36,7 +35,7 @@ export class RenderingScene extends Scene {
     freeform_arcball_control_processor.set_scene(this);
 
     // Set the skybox for this scene.
-    await SharedEnvironmentMapData.add_skybox("default_scene_skybox", [
+    SharedEnvironmentMapData.add_skybox("default_scene_skybox", [
       "engine/textures/gradientbox/px.png",
       "engine/textures/gradientbox/nx.png",
       "engine/textures/gradientbox/ny.png",
@@ -44,6 +43,9 @@ export class RenderingScene extends Scene {
       "engine/textures/gradientbox/pz.png",
       "engine/textures/gradientbox/nz.png",
     ]);
+
+    // Set the skybox color to white.
+    SharedEnvironmentMapData.set_skybox_color([1, 1, 1, 1]);
 
     // Create a light and add it to the scene
     const light_entity = EntityManager.create_entity();
@@ -151,7 +153,7 @@ export class MLScene extends Scene {
   sine_model = null;
   xor_model = null;
 
-  async init(parent_context) {
+  init(parent_context) {
     super.init(parent_context);
 
     // Add the freeform arcball control processor to the scene
@@ -159,7 +161,7 @@ export class MLScene extends Scene {
     freeform_arcball_control_processor.set_scene(this);
 
     // Set the skybox for this scene.
-    await SharedEnvironmentMapData.add_skybox("default_scene_skybox", [
+    SharedEnvironmentMapData.add_skybox("default_scene_skybox", [
       "engine/textures/gradientbox/px.png",
       "engine/textures/gradientbox/nx.png",
       "engine/textures/gradientbox/ny.png",
@@ -167,6 +169,9 @@ export class MLScene extends Scene {
       "engine/textures/gradientbox/pz.png",
       "engine/textures/gradientbox/nz.png",
     ]);
+
+    // Set the skybox color to white.
+    SharedEnvironmentMapData.set_skybox_color([1, 1, 1, 1]);
 
     // Create a light and add it to the scene
     const light_entity = EntityManager.create_entity();

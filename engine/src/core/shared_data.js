@@ -317,8 +317,8 @@ export class SharedEnvironmentMapData {
   static skybox_data = null;
   static skybox_data_buffer = new Float32Array([1, 1, 1, 1]);
 
-  static async add_skybox(name, texture_paths) {
-    const skybox = await Texture.load(texture_paths, {
+  static add_skybox(name, texture_paths) {
+    const skybox = Texture.load(texture_paths, {
       name: name,
       format: "rgba8unorm",
       dimension: "cube",

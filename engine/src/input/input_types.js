@@ -79,10 +79,14 @@ export const InputKey = {
     K_RControl: 73,
     K_LAlt: 74,
     K_RAlt: 75,
-    B_mouse_left: 76,
-    B_mouse_right: 77,
-    B_mouse_middle: 78,
-    NumKeys: 79
+    K_Up: 76,
+    K_Down: 77,
+    K_Left: 78,
+    K_Right: 79,
+    B_mouse_left: 80,
+    B_mouse_right: 81,
+    B_mouse_middle: 82,
+    NumKeys: 83
 };
 
 /**
@@ -187,6 +191,10 @@ export const InputKeyToPrintableString = {
     [InputKey.B_mouse_left]: "",
     [InputKey.B_mouse_right]: "",
     [InputKey.B_mouse_middle]: "",
+    [InputKey.K_Up]: "",
+    [InputKey.K_Down]: "",
+    [InputKey.K_Left]: "",
+    [InputKey.K_Right]: "",
 };
 
 /**

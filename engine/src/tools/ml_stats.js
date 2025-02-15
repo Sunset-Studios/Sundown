@@ -1,26 +1,33 @@
 import { DevConsoleTool } from "./dev_console_tool.js";
 import { MasterMind } from "../ml/mastermind.js";
 import { InputProvider } from "../input/input_provider.js";
-import { InputKey, InputRange } from "../input/input_types.js";
-import { panel, label, UIContext } from "../ui/2d/immediate.js";
+import { InputKey } from "../input/input_types.js";
+import { panel, label } from "../ui/2d/immediate.js";
 
 /*
   Panel and label configurations adapted for immediate mode UI.
   Adjust these values as needed.
 */
 const stats_panel_config = {
+  layout: "column",
+  gap: 4,
+  y: "20%",
   dont_consume_cursor_events: true,
   background_color: "rgba(0, 0, 0, 0.7)",
-  padding: "10px",
+  width: 600,
+  padding: 10,
   border: "1px solid rgb(68, 68, 68)",
-  corner_radius: "5px",
-  font: "16px monospace",
+  corner_radius: 5,
 };
 
 const stats_label_config = {
   text_color: "#fff",
   font: "16px monospace",
-  // Note: Immediate mode UI's label() may not use margin settings.
+  height: 20,
+  width: "100%",
+  text_valign: "middle",
+  text_align: "left",
+  text_padding: 5,
 };
 
 /**
@@ -37,19 +44,6 @@ export class MLStats extends DevConsoleTool {
    */
   update(delta_time) {
     if (!this.is_open) return;
-
-    if (InputProvider.get_action(InputKey.B_mouse_left)) {
-      const mouse_x = InputProvider.get_range(InputRange.M_xabs);
-      const mouse_y = InputProvider.get_range(InputRange.M_yabs);
-      const panel_rect = this._get_panel_rect();
-      if (!this._is_inside_panel(mouse_x, mouse_y, panel_rect)) {
-        this.hide();
-      }
-      InputProvider.consume_action(InputKey.B_mouse_left);
-    }
-
-    if (!this.is_open) return;
-
     this.render();
   }
 
@@ -58,18 +52,7 @@ export class MLStats extends DevConsoleTool {
    * This method should be called every frame as part of the render loop.
    */
   render() {
-    if (!this.is_open) return;
-
-    const panel_rect = this._get_panel_rect();
-
-    panel(
-      {
-        ...stats_panel_config,
-        x: `${panel_rect.x}px`,
-        y: `${panel_rect.y}px`,
-        width: `${panel_rect.width}px`,
-        height: `${panel_rect.height}px`,
-      },
+    let panel_state = panel(stats_panel_config,
       () => {
         // Gather the aggregated stats from all MasterMind instances.
         const all_masterminds = MasterMind.all_masterminds;
@@ -95,6 +78,13 @@ export class MLStats extends DevConsoleTool {
         }
       }
     );
+
+    if (this.is_open && InputProvider.get_action(InputKey.B_mouse_left)) {
+      if (!panel_state.hovered) {
+        this.hide();
+      }
+      InputProvider.consume_action(InputKey.B_mouse_left);
+    }
   }
 
   /**
@@ -131,31 +121,5 @@ export class MLStats extends DevConsoleTool {
 
   set_scene(scene) {
     this.scene = scene;
-  }
-
-  /**
-   * Computes the on-screen rectangle for the stats panel.
-   * For this example, we center the panel.
-   */
-  _get_panel_rect() {
-    const canvas_width = UIContext.canvas_size.width || window.innerWidth;
-    const canvas_height = UIContext.canvas_size.height || window.innerHeight;
-    const width = 600;
-    const height = 200;
-    const x = (canvas_width - width) / 2;
-    const y = (canvas_height - height) / 2;
-    return { x, y, width, height };
-  }
-
-  /**
-   * Determines whether the given (x, y) coordinate lies within the panel.
-   */
-  _is_inside_panel(x, y, panel_rect) {
-    return (
-      x >= panel_rect.x &&
-      x <= panel_rect.x + panel_rect.width &&
-      y >= panel_rect.y &&
-      y <= panel_rect.y + panel_rect.height
-    );
   }
 }

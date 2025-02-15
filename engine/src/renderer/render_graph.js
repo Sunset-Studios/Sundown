@@ -1532,7 +1532,7 @@ export class RenderGraph {
     }
   }
 
-  async _setup_pass_bind_groups(pass, frame_data) {
+  _setup_pass_bind_groups(pass, frame_data) {
     const is_compute_pass =
       (pass.pass_config.flags & RenderPassFlags.Compute) !== RenderPassFlags.None;
 
@@ -1543,8 +1543,9 @@ export class RenderGraph {
 
     this._setup_global_bind_group(pass, frame_data);
 
-    if (pass_binds.bind_groups[BindGroupType.Pass] || pass.parameters.b_skip_pass_bind_group_setup)
+    if (pass_binds.bind_groups[BindGroupType.Pass] || pass.parameters.b_skip_pass_bind_group_setup) {
       return;
+    }
 
     // Setup pass-specific bind group
     let layouts = [];
@@ -1632,17 +1633,26 @@ export class RenderGraph {
         };
       });
     }
-
+    
     let entries = [];
     pass.parameters.pass_inputs.forEach((resource, index) => {
       const metadata = this.registry.resource_metadata.get(resource);
       const resource_type = get_graph_resource_type(resource);
       if (resource_type === ResourceType.Image) {
         const image = ResourceCache.get().fetch(CacheTypes.IMAGE, metadata.physical_id);
-        entries.push({
-          binding: index,
-          resource: image.get_view(pass.parameters.input_views[index]) || image.view,
-        });
+        const image_view = image.get_view(pass.parameters.input_views[index]) || image.view;
+        const true_image_view = image.config.dimension === "cube" ? Texture.default_cube().view : image_view;
+        if (!image_view) {
+          entries.push({
+            binding: index,
+            resource: true_image_view,
+          });
+        } else {
+          entries.push({
+            binding: index,
+            resource: image_view,
+          });
+        }
       } else {
         const buffer = ResourceCache.get().fetch(CacheTypes.BUFFER, metadata.physical_id);
         entries.push({
@@ -1650,12 +1660,12 @@ export class RenderGraph {
           resource: {
             buffer: buffer.buffer,
             offset: 0,
-            size: buffer.size,
+            size: buffer.config.size,
           },
         });
       }
     });
-
+    
     if (entries.length > 0) {
       if (entries.length > layouts.length) {
         entries = entries.slice(0, layouts.length);

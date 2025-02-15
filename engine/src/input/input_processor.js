@@ -61,6 +61,10 @@ export class InputProcessor {
     ControlRight: InputKey.K_RControl,
     AltLeft: InputKey.K_LAlt,
     AltRight: InputKey.K_RAlt,
+    ArrowUp: InputKey.K_Up,
+    ArrowDown: InputKey.K_Down,
+    ArrowLeft: InputKey.K_Left,
+    ArrowRight: InputKey.K_Right,
   };
 
   static button_mapping = {

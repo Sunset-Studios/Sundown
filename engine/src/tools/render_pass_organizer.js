@@ -75,7 +75,7 @@ export class RenderPassOrganizer extends DevConsoleTool {
     }));
 
     // Rebuild the UI every frame.
-    this.drawUI();
+    this.render();
   }
 
   execute() {
@@ -87,13 +87,15 @@ export class RenderPassOrganizer extends DevConsoleTool {
     this.scene = scene;
   }
 
-  drawUI() {
+  render() {
+    console.log(this.height)
     // Build the organizer panel using the new immediate–mode API.
     panel({
       x: this.pos_x,
       y: this.pos_y,
-      width: this.width,
+      anchor_x: "right",
       height: this.height,
+      width: this.width,
       background_color: "rgba(0, 0, 0, 0.7)",
       border: "1px solid rgb(68, 68, 68)",
       corner_radius: "5px",
@@ -132,8 +134,8 @@ export class RenderPassOrganizer extends DevConsoleTool {
       begin_container({
         x: 0,
         y: 40,
-        width: content_width,
         height: content_height,
+        width: content_width,
         layout: "row",
         gap: 10,
         padding: 0,

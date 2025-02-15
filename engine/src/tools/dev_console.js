@@ -70,8 +70,6 @@ export class DevConsole extends SimulationLayer {
     // Process keyboard input from UIContext each frame.
     this._update_input();
 
-    if (!this.is_open) return;
-
     this.render();
 
     // Update any registered command handlers (if they implement an update method).
@@ -118,7 +116,7 @@ export class DevConsole extends SimulationLayer {
       if (key.key === InputKey.K_Escape) {
         this.hide();
         consume = true;
-      } else if (key.key === InputKey.K_ArrowUp) {
+      } else if (key.key === InputKey.K_Up) {
         if (this.current_suggestions.length > 0) {
           this._navigate_suggestions(-1, input_state);
           consume = true;
@@ -126,7 +124,7 @@ export class DevConsole extends SimulationLayer {
           this._navigate_history(1, input_state);
           consume = true;
         }
-      } else if (key.key === InputKey.K_ArrowDown) {
+      } else if (key.key === InputKey.K_Down) {
         if (this.current_suggestions.length > 0) {
           this._navigate_suggestions(1, input_state);
           consume = true;

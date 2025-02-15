@@ -154,6 +154,7 @@ export class Font {
           GPUTextureUsage.COPY_DST |
           GPUTextureUsage.RENDER_ATTACHMENT,
         force: true,
+        material_notifier: font_page_texture_key,
       });
       font.page_textures[i] = Name.from(page_name);
     }
@@ -174,6 +175,8 @@ export class Font {
 
     material_obj.set_texture_data(font_page_texture_key, page_texture_obj);
     material_obj.set_storage_data(font_glyph_data_key, font.font_glyph_data_buffer);
+    
+    material_obj.listen_for_texture_data(font_page_texture_key);
     material_obj.listen_for_storage_data(text_data_key);
     material_obj.listen_for_storage_data(string_data_key);
 

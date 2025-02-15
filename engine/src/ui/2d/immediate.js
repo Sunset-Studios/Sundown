@@ -416,7 +416,6 @@ export function begin_container(config = {}) {
           width: UIContext.canvas_size.width,
           height: UIContext.canvas_size.height,
         };
-  const input_state = UIContext.input_state;
 
   // Determine auto-sizing flags for each dimension.
   const auto_width = !(width_name in config);
@@ -455,11 +454,6 @@ export function begin_container(config = {}) {
   } else {
     y = parent.cursor.y + offset_y;
   }
-
-  // Hit testing against current input state.
-  const hovered = is_input_within(x, y, width, height);
-  const clicked = hovered && input_state.clicked;
-  const pressed = hovered && input_state.pressed;
 
   let gap = parse_dimension(config.gap || 0, parent.width);
   let layout = config.layout || absolute; // "row", "column", or "absolute"
@@ -510,8 +504,6 @@ export function begin_container(config = {}) {
     base_draw(ctx, container.x, container.y, total_width, total_height, config);
     ctx.restore();
   });
-
-  return { hovered, clicked, pressed };
 }
 
 /**
@@ -521,6 +513,7 @@ export function end_container() {
   // Before popping the container, update its size if auto-sizing is enabled.
   const container_index = UIContext.layout_stack.peek();
   const container = UIContext.layout_allocator.get(container_index.value);
+  const input_state = UIContext.input_state;
 
   if (container.auto_width) {
     container.width = container.content_max_x;
@@ -559,6 +552,17 @@ export function end_container() {
       }
     }
   }
+
+  const hovered = is_input_within(
+    container.x,
+    container.y,
+    container.width + container.padding_left + container.padding_right,
+    container.height + container.padding_top + container.padding_bottom
+  );
+  const clicked = hovered && input_state.clicked;
+  const pressed = hovered && input_state.pressed;
+
+  return { hovered, clicked, pressed };
 }
 
 /**
@@ -569,10 +573,9 @@ export function end_container() {
  * @param {function} callback - A function in which you call child widget functions.
  */
 export function panel(config, callback) {
-  const panel_state = begin_container(config);
+  begin_container(config);
   if (callback) callback();
-  end_container();
-  return panel_state;
+  return end_container();
 }
 
 // ------------------------------
