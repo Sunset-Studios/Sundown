@@ -145,9 +145,10 @@ export class DevConsole extends SimulationLayer {
 
       if (consume) {
         key.consumed = true;
-        InputProvider.consume_action(key.key);
-        InputProvider.consume_state(key.key);
       }
+
+      InputProvider.consume_action(key.key);
+      InputProvider.consume_state(key.key);
     }
   }
 
@@ -343,29 +344,5 @@ export class DevConsole extends SimulationLayer {
     } else {
       this.show();
     }
-  }
-
-  /**
-   * Helper: Computes the on-screen rectangle for the console panel.
-   * Positions the panel at the bottom center of the canvas.
-   */
-  _get_panel_rect() {
-    const canvas_width = UIContext.canvas_size.width || window.innerWidth;
-    const canvas_height = UIContext.canvas_size.height || window.innerHeight;
-    const width = 600;
-    const height = 100;
-    const left = (canvas_width - width) / 2;
-    const bottom_offset = 125;
-    const top = canvas_height - bottom_offset - height;
-    return { x: left, y: top, width, height };
-  }
-
-  _is_inside_panel(x, y, panel_rect) {
-    return (
-      x >= panel_rect.x &&
-      x <= panel_rect.x + panel_rect.width &&
-      y >= panel_rect.y &&
-      y <= panel_rect.y + panel_rect.height
-    );
   }
 }

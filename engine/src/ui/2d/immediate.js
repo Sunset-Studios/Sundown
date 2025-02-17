@@ -88,13 +88,17 @@ export const UIContext = {
    */
   id_counter: 0,
   /**
+   * Global delta time.
+   */
+  delta_time: 0,
+  /**
    * Global drag state.
    */
   drag_state: {
     active: false,
+    started: false,
     widget_id: null,
-    offset_x: 0,
-    offset_y: 0,
+    timer: 0,
   },
   /**
    * Global input state must be updated externally by event handlers.
@@ -112,6 +116,10 @@ export const UIContext = {
     world_position: null, // assume this is a vec3 from a math library
     wheel: 0,
   },
+  /**
+   * Global scroll state.
+   */
+  scroll_state: {},
   /**
    * Global keyboard events array.
 
@@ -148,6 +156,16 @@ export const UIContext = {
         this.keyboard_events.splice(i, 1);
       }
     }
+  },
+  /**
+   * Global measure context for text measurement.
+   */
+  measure_context: null,
+  get_measure_context() {
+    if (!this.measure_context) {
+      this.measure_context = document.createElement("canvas").getContext("2d");
+    }
+    return this.measure_context;
   },
 };
 
@@ -278,7 +296,117 @@ function base_draw(ctx, x, y, width, height, config) {
   }
 
   // Draw the border if provided.
-  if (config.border) {
+  if (config.border_top || config.border_right || config.border_bottom || config.border_left) {
+    // -------------------------------
+    // Draw individual borders if specified.
+    // -------------------------------
+    // Top border
+    if (config.border_top) {
+      const parts = config.border_top.split(" ");
+      const border_width_top = parseFloat(parts[0]);
+      const border_color_top = parts[2] || "#000";
+      ctx.strokeStyle = border_color_top;
+      ctx.lineWidth = border_width_top;
+      ctx.beginPath();
+      if (has_per_corner && should_round) {
+        const tl_radius =
+          config.corner_radius_top_left !== undefined
+            ? config.corner_radius_top_left
+            : config.corner_radius || 0;
+        const tr_radius =
+          config.corner_radius_top_right !== undefined
+            ? config.corner_radius_top_right
+            : config.corner_radius || 0;
+        ctx.moveTo(x + tl_radius, y);
+        ctx.lineTo(x + width - tr_radius, y);
+      } else {
+        ctx.moveTo(x, y);
+        ctx.lineTo(x + width, y);
+      }
+      ctx.stroke();
+    }
+
+    // Right border
+    if (config.border_right) {
+      const parts = config.border_right.split(" ");
+      const border_width_right = parseFloat(parts[0]);
+      const border_color_right = parts[2] || "#000";
+      ctx.strokeStyle = border_color_right;
+      ctx.lineWidth = border_width_right;
+      ctx.beginPath();
+      if (has_per_corner && should_round) {
+        const tr_radius =
+          config.corner_radius_top_right !== undefined
+            ? config.corner_radius_top_right
+            : config.corner_radius || 0;
+        const br_radius =
+          config.corner_radius_bottom_right !== undefined
+            ? config.corner_radius_bottom_right
+            : config.corner_radius || 0;
+        ctx.moveTo(x + width, y + tr_radius);
+        ctx.lineTo(x + width, y + height - br_radius);
+      } else {
+        ctx.moveTo(x + width, y);
+        ctx.lineTo(x + width, y + height);
+      }
+      ctx.stroke();
+    }
+
+    // Bottom border
+    if (config.border_bottom) {
+      const parts = config.border_bottom.split(" ");
+      const border_width_bottom = parseFloat(parts[0]);
+      const border_color_bottom = parts[2] || "#000";
+      ctx.strokeStyle = border_color_bottom;
+      ctx.lineWidth = border_width_bottom;
+      ctx.beginPath();
+      if (has_per_corner && should_round) {
+        const br_radius =
+          config.corner_radius_bottom_right !== undefined
+            ? config.corner_radius_bottom_right
+            : config.corner_radius || 0;
+        const bl_radius =
+          config.corner_radius_bottom_left !== undefined
+            ? config.corner_radius_bottom_left
+            : config.corner_radius || 0;
+        ctx.moveTo(x + width - br_radius, y + height);
+        ctx.lineTo(x + bl_radius, y + height);
+      } else {
+        ctx.moveTo(x, y + height);
+        ctx.lineTo(x + width, y + height);
+      }
+      ctx.stroke();
+    }
+
+    // Left border
+    if (config.border_left) {
+      const parts = config.border_left.split(" ");
+      const border_width_left = parseFloat(parts[0]);
+      const border_color_left = parts[2] || "#000";
+      ctx.strokeStyle = border_color_left;
+      ctx.lineWidth = border_width_left;
+      ctx.beginPath();
+      if (has_per_corner && should_round) {
+        const tl_radius =
+          config.corner_radius_top_left !== undefined
+            ? config.corner_radius_top_left
+            : config.corner_radius || 0;
+        const bl_radius =
+          config.corner_radius_bottom_left !== undefined
+            ? config.corner_radius_bottom_left
+            : config.corner_radius || 0;
+        ctx.moveTo(x, y + height - bl_radius);
+        ctx.lineTo(x, y + tl_radius);
+      } else {
+        ctx.moveTo(x, y);
+        ctx.lineTo(x, y + height);
+      }
+      ctx.stroke();
+    }
+  } else if (config.border) {
+    // -------------------------------
+    // Global border (fallback to the existing implementation).
+    // -------------------------------
     const parts = config.border.split(" ");
     const border_width = parseFloat(parts[0]);
     const border_color = parts[2] || "#000";
@@ -357,6 +485,103 @@ function child_container_layout_update(container, x, y, width, height) {
   }
 }
 
+function element_handle_input(x, y, width, height, config, container) {
+  // If the parent container is scrollable, adjust the widget's y coordinate
+  // to account for the scrolling translation applied during drawing.
+  if (container && container.config && container.config.scrollable) {
+    y += container.scroll_offset || 0;
+  }
+
+  // Hit testing against current input state.
+  const hovered = is_input_within(x, y, width, height);
+  const clicked = hovered && UIContext.input_state.clicked;
+  const pressed = hovered && UIContext.input_state.pressed;
+  let dragged = false;
+
+  if (!UIContext.drag_state.active && (clicked || pressed)) {
+    InputProvider.consume_action(InputKey.B_mouse_left);
+  }
+
+  // ----------------------
+  // Drag-and-Drop Handling
+  // ----------------------
+  if (config.draggable) {
+    if (!UIContext.drag_state.active && hovered && UIContext.input_state.pressed) {
+      UIContext.drag_state.active = true;
+      UIContext.drag_state.widget_id = config.widget_id;
+    }
+
+    if (
+      UIContext.drag_state.active &&
+      !UIContext.drag_state.started &&
+      UIContext.drag_state.timer > (config.drag_delay || 0) &&
+      UIContext.drag_state.widget_id === config.widget_id
+    ) {
+      if (config.on_drag_start) config.on_drag_start();
+      UIContext.drag_state.started = true;
+    }
+
+    if (UIContext.drag_state.active && UIContext.drag_state.started) {
+      if (UIContext.drag_state.widget_id === config.widget_id) {
+        const offset_x = UIContext.input_state.prev_x - UIContext.input_state.x;
+        const offset_y = UIContext.input_state.y - UIContext.input_state.prev_y;
+        if (UIContext.input_state.pressed) {
+          if (config.on_drag) config.on_drag(offset_x, offset_y);
+          dragged = true;
+        } else {
+          if (config.on_drop) config.on_drop(x, y);
+        }
+        InputProvider.consume_action(InputKey.B_mouse_left);
+      } else if (UIContext.input_state.pressed && hovered) {
+        if (config.on_drag_over) config.on_drag_over(x, y, width, height);
+      }
+    }
+  }
+
+  // ----------------------
+  // Scroll Handling Implementation
+  // ----------------------
+  if (config.scrollable && UIContext.input_state.wheel !== 0) {
+    let scroll_delta = -UIContext.input_state.wheel * (config.scroll_speed || 20);
+    let scroll_id = config.widget_id;
+    let current_scroll = UIContext.scroll_state[scroll_id] || 0;
+    let new_scroll = current_scroll + scroll_delta;
+    if (container) {
+      const extra_scroll = Math.max(0, container.content_max_y - container.height);
+      new_scroll = Math.max(new_scroll, -extra_scroll);
+      new_scroll = Math.min(new_scroll, 0);
+    }
+
+    if (scroll_id) {
+      UIContext.scroll_state[scroll_id] = new_scroll;
+    } else {
+      config.scroll_offset = new_scroll;
+    }
+    InputProvider.consume_range(InputRange.M_wheel);
+  }
+
+  return { hovered, clicked, pressed, dragged, widget_id: config.widget_id };
+}
+
+function wrap_text(text, max_width) {
+  const words = text.split(/\s+|_/);
+  let lines = [];
+  let current_line = words[0];
+
+  for (let i = 1; i < words.length; i++) {
+    const word = words[i];
+    const test_line = current_line + " " + word;
+    if (UIContext.get_measure_context().measureText(test_line).width > max_width) {
+      lines.push(current_line);
+      current_line = word;
+    } else {
+      current_line = test_line;
+    }
+  }
+  lines.push(current_line);
+  return lines;
+}
+
 // ------------------------------
 // Reset & Flush
 // ------------------------------
@@ -405,6 +630,8 @@ export function flush_ui(ctx) {
  *    (Other style settings such as background_color, border, etc. may also be provided.)
  */
 export function begin_container(config = {}) {
+  config.widget_id = UIContext.get_unique_id();
+
   let parent_index = UIContext.layout_stack.peek();
   let parent =
     parent_index !== null
@@ -482,6 +709,7 @@ export function begin_container(config = {}) {
   container.padding_bottom = padding_bottom;
   container.cursor = { x: x + padding_left, y: y + padding_top };
   container.config = config;
+  container._has_clip = false;
   // Set auto-sizing flags and prepare to track children extents.
   container.auto_width = auto_width;
   container.auto_height = auto_height;
@@ -504,6 +732,47 @@ export function begin_container(config = {}) {
     base_draw(ctx, container.x, container.y, total_width, total_height, config);
     ctx.restore();
   });
+
+  // --- Begin Clipping (for "clip") ---
+  // If requested, add a clip region so that children drawn afterward will be clipped
+  // to this container's bounds.
+  if (config.clip) {
+    UIContext.draw_commands.push((ctx) => {
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(
+        container.x,
+        container.y,
+        container.width + container.padding_left + container.padding_right,
+        container.height + container.padding_top + container.padding_bottom
+      );
+      ctx.clip();
+    });
+    // Mark that this container activated a clip.
+    container._has_clip = true;
+  }
+  // --- End Clipping (for "clip") ---
+
+  // --- Begin Scroll Translation (for scrollable containers) ---
+  if (config.scrollable) {
+    // Determine a persistent scroll offset.
+    let scroll_id = config.widget_id;
+    if (scroll_id) {
+      if (!(scroll_id in UIContext.scroll_state)) {
+        UIContext.scroll_state[scroll_id] = 0;
+      }
+      container.scroll_offset = UIContext.scroll_state[scroll_id];
+    } else {
+      container.scroll_offset = config.scroll_offset || 0;
+    }
+
+    // Push a translation draw command so that children are drawn shifted.
+    UIContext.draw_commands.push((ctx) => {
+      ctx.save();
+      ctx.translate(0, container.scroll_offset);
+    });
+  }
+  // --- End Scroll Translation ---
 }
 
 /**
@@ -513,13 +782,23 @@ export function end_container() {
   // Before popping the container, update its size if auto-sizing is enabled.
   const container_index = UIContext.layout_stack.peek();
   const container = UIContext.layout_allocator.get(container_index.value);
-  const input_state = UIContext.input_state;
 
   if (container.auto_width) {
     container.width = container.content_max_x;
+  } else if (container.config.scrollable) {
+    // When width is fixed but the container is scrollable,
+    // calculate the content_max_x from the current cursor.
+    // (This assumes that container.cursor.x represents the maximum X coordinate reached by its children.)
+    container.content_max_x = container.cursor.x - (container.x + container.padding_left);
   }
+
   if (container.auto_height) {
     container.height = container.content_max_y;
+  } else if (container.config.scrollable) {
+    // When height is fixed but the container is scrollable,
+    // calculate the content_max_y from the current cursor.
+    // (This assumes that container.cursor.y represents the maximum Y coordinate reached by its children.)
+    container.content_max_y = container.cursor.y - (container.y + container.padding_top);
   }
 
   // Remove the current container from the layout stack.
@@ -553,16 +832,29 @@ export function end_container() {
     }
   }
 
-  const hovered = is_input_within(
+  // --- End Scroll Translation for scrollable containers ---
+  if (container.config.scrollable) {
+    UIContext.draw_commands.push((ctx) => {
+      ctx.restore();
+    });
+  }
+  // --- End Clipping for "clip" ---
+  // If this container activated a clip, push a draw command to restore the context.
+  if (container._has_clip) {
+    UIContext.draw_commands.push((ctx) => {
+      ctx.restore();
+    });
+  }
+  // --- End Clipping for "clip" ---
+
+  return element_handle_input(
     container.x,
     container.y,
-    container.width + container.padding_left + container.padding_right,
-    container.height + container.padding_top + container.padding_bottom
+    container.width,
+    container.height,
+    container.config,
+    container
   );
-  const clicked = hovered && input_state.clicked;
-  const pressed = hovered && input_state.pressed;
-
-  return { hovered, clicked, pressed };
 }
 
 /**
@@ -602,6 +894,8 @@ export function panel(config, callback) {
  * @returns {object} An object containing { hovered, clicked, widgetId }.
  */
 export function button(label, config = {}) {
+  config.widget_id = UIContext.get_unique_id();
+
   // Get the current container (or default)
   const container_index = UIContext.layout_stack.peek();
   const container =
@@ -614,8 +908,12 @@ export function button(label, config = {}) {
           width: UIContext.canvas_size.width,
           height: UIContext.canvas_size.height,
         };
-  const input_state = UIContext.input_state;
-  const widget_id = UIContext.get_unique_id();
+
+  let lines = [label];
+  if (config.wrap) {
+    const max_text_width = container.width - text_padding * 2;
+    lines = wrap_text(label, max_text_width);
+  }
 
   // Determine widget width and height.
   let width = parse_dimension(config.width, container.width);
@@ -650,43 +948,6 @@ export function button(label, config = {}) {
     y = container.cursor.y + offset_y;
   }
 
-  // Hit testing against current input state.
-  const hovered = is_input_within(x, y, width, height);
-  const clicked = hovered && input_state.clicked;
-  const pressed = hovered && input_state.pressed;
-
-  if (!UIContext.drag_state.active && (clicked || pressed)) {
-    InputProvider.consume_action(InputKey.B_mouse_left);
-  }
-
-  // ----------------------
-  // Drag-and-Drop Handling
-  // ----------------------
-  if (config.draggable) {
-    if (!UIContext.drag_state.active && hovered && input_state.pressed) {
-      UIContext.drag_state.active = true;
-      UIContext.drag_state.widget_id = widget_id;
-      UIContext.drag_state.offset_x = input_state.x - x;
-      UIContext.drag_state.offset_y = input_state.y - y;
-      if (config.on_drag_start) config.on_drag_start(widget_id);
-      InputProvider.consume_action(InputKey.B_mouse_left);
-    }
-    if (UIContext.drag_state.active && UIContext.drag_state.widget_id === widget_id) {
-      if (input_state.pressed) {
-        x = input_state.x - UIContext.drag_state.offset_x;
-        y = input_state.y - UIContext.drag_state.offset_y;
-        if (config.on_drag) config.on_drag(widget_id, x, y);
-      } else {
-        UIContext.drag_state.active = false;
-        if (config.on_drop) config.on_drop(widget_id, x, y);
-      }
-    }
-  }
-
-  if (config.scrollable && input_state.wheel !== 0) {
-    InputProvider.consume_range(InputRange.M_wheel);
-  }
-
   child_container_layout_update(container, x, y, width, height);
 
   // ----------------------
@@ -718,6 +979,7 @@ export function button(label, config = {}) {
         const text_valign = config.text_valign || middle;
         const text_padding = config.text_padding || 10;
         let text_x, text_y;
+
         if (text_align === left) {
           text_x = x + text_padding;
         } else if (text_align === right) {
@@ -725,25 +987,48 @@ export function button(label, config = {}) {
         } else {
           text_x = x + width / 2;
         }
-        if (text_valign === top) {
-          text_y = y + text_padding;
-        } else if (text_valign === bottom) {
-          text_y = y + height - text_padding;
+
+        if (config.wrap) {
+          const font_size_match = (config.font || "16px sans-serif").match(/(\d+)px/);
+          const font_size = font_size_match ? parseInt(font_size_match[1], 10) : 16;
+          const line_height = font_size * 1.2;
+          const total_text_height = lines.length * line_height;
+
+          let start_y;
+          if (text_valign === top) {
+            start_y = y + text_padding + line_height;
+          } else if (text_valign === bottom) {
+            start_y = y + height - total_text_height + line_height;
+          } else {
+            start_y = y + (height - total_text_height) / 2 + line_height;
+          }
+
+          for (let i = 0; i < lines.length; i++) {
+            ctx.fillText(lines[i], text_x, start_y + i * line_height);
+          }
         } else {
-          text_y = y + height / 2;
+          if (text_valign === top) {
+            text_y = y + text_padding;
+          } else if (text_valign === bottom) {
+            text_y = y + height - text_padding;
+          } else {
+            text_y = y + height / 2;
+          }
+          ctx.textAlign = text_align;
+          ctx.textBaseline = text_valign === center ? middle : text_valign;
+          ctx.fillText(config.text || label, text_x, text_y);
         }
-        ctx.textAlign = text_align;
-        ctx.textBaseline = text_valign === center ? middle : text_valign;
-        ctx.fillText(config.text || label, text_x, text_y);
       }
     } else {
       if (config.text || label) {
+        // Fallback to text drawing with alignment properties.
         ctx.fillStyle = config.text_color || "#fff";
         ctx.font = config.font || "16px sans-serif";
         const text_align = config.text_align || center;
         const text_valign = config.text_valign || middle;
         const text_padding = config.text_padding || 10;
         let text_x, text_y;
+
         if (text_align === left) {
           text_x = x + text_padding;
         } else if (text_align === right) {
@@ -751,22 +1036,43 @@ export function button(label, config = {}) {
         } else {
           text_x = x + width / 2;
         }
-        if (text_valign === top) {
-          text_y = y + text_padding;
-        } else if (text_valign === bottom) {
-          text_y = y + height - text_padding;
+
+        if (config.wrap) {
+          const font_size_match = (config.font || "16px sans-serif").match(/(\d+)px/);
+          const font_size = font_size_match ? parseInt(font_size_match[1], 10) : 16;
+          const line_height = font_size * 1.2;
+          const total_text_height = lines.length * line_height;
+
+          let start_y;
+          if (text_valign === top) {
+            start_y = y + text_padding + line_height;
+          } else if (text_valign === bottom) {
+            start_y = y + height - total_text_height + line_height;
+          } else {
+            start_y = y + (height - total_text_height) / 2 + line_height;
+          }
+
+          for (let i = 0; i < lines.length; i++) {
+            ctx.fillText(lines[i], text_x, start_y + i * line_height);
+          }
         } else {
-          text_y = y + height / 2;
+          if (text_valign === top) {
+            text_y = y + text_padding;
+          } else if (text_valign === bottom) {
+            text_y = y + height - text_padding;
+          } else {
+            text_y = y + height / 2;
+          }
+          ctx.textAlign = text_align;
+          ctx.textBaseline = text_valign === center ? middle : text_valign;
+          ctx.fillText(config.text || label, text_x, text_y);
         }
-        ctx.textAlign = text_align;
-        ctx.textBaseline = text_valign === center ? middle : text_valign;
-        ctx.fillText(config.text || label, text_x, text_y);
       }
     }
     ctx.restore();
   });
 
-  return { hovered, clicked, pressed, widget_id };
+  return element_handle_input(x, y, width, height, config, container);
 }
 
 /**
@@ -778,6 +1084,8 @@ export function button(label, config = {}) {
  *    offsetX, offsetY, font, textColor, etc.
  */
 export function label(text, config = {}) {
+  config.widget_id = UIContext.get_unique_id();
+
   const container_index = UIContext.layout_stack.peek();
   const container =
     container_index !== null
@@ -790,11 +1098,43 @@ export function label(text, config = {}) {
           height: UIContext.canvas_size.height,
         };
 
-  // Use provided width/height to calculate anchoring; default width/height may be provided via config.
-  const width = parse_dimension(config.width, container.width);
-  const height = parse_dimension(config.height, container.height);
+  // Determine the effective font, padding, etc.
+  const font = config.font || "16px sans-serif";
+  const text_padding = config.text_padding || 0;
 
-  // Determine offsets using auto-sizing flags.
+  let lines = [text];
+  if (config.wrap) {
+    const max_text_width = container.width - text_padding * 2;
+    lines = wrap_text(text, max_text_width);
+  }
+
+  // ------------------------------
+  // Compute Dimensions: fit-content vs. fixed
+  // ------------------------------
+  let width, height;
+
+  if (config.width === "fit-content") {
+    // Use the shared measurement context for text measurement.
+    const mc = UIContext.get_measure_context();
+    mc.font = font;
+    const metrics = mc.measureText(text);
+    width = metrics.width + text_padding * 2;
+  } else {
+    width = parse_dimension(config.width, container.width);
+  }
+
+  if (config.height === "fit-content") {
+    // There is no built–in text height measurement; extract font size and use a heuristic.
+    const font_match = font.match(/(\d+)px/);
+    const font_size = font_match ? parseInt(font_match[1], 10) : 16;
+    height = (config.wrap ? lines.length : 1) * font_size * 1.2;
+  } else {
+    height = parse_dimension(config.height, container.height);
+  }
+
+  // ------------------------------
+  // Determine Offsets Using Auto-sizing Flags
+  // ------------------------------
   let offset_x;
   if (config.x !== undefined) {
     offset_x = parse_dimension(config.x, container.width);
@@ -823,27 +1163,25 @@ export function label(text, config = {}) {
     y = container.cursor.y + offset_y;
   }
 
-  // Hit testing against current input state.
-  const hovered = is_input_within(x, y, width, height);
-  const clicked = hovered && UIContext.input_state.clicked;
-  const pressed = hovered && UIContext.input_state.pressed;
-
-  const font = config.font || "16px sans-serif";
-  const text_color = config.text_color || "#000";
-
+  // Update the parent's layout (for auto–layout on containers).
   child_container_layout_update(container, x, y, width, height);
 
+  // ------------------------------
+  // Add the Draw Command
+  // ------------------------------
   UIContext.draw_commands.push((ctx) => {
     ctx.save();
+    ctx.font = font;
 
+    // Draw the background, border, etc.
     base_draw(ctx, x, y, width, height, config);
 
-    ctx.fillStyle = text_color;
-    ctx.font = font;
+    // Set up tracking for text color, alignment, and padding.
+    ctx.fillStyle = config.text_color || "#000";
     const text_align = config.text_align || left;
     const text_valign = config.text_valign || top;
-    const text_padding = config.text_padding || 0;
-    let text_x, text_y;
+
+    let text_x;
     if (text_align === left) {
       text_x = x + text_padding;
     } else if (text_align === right) {
@@ -851,21 +1189,47 @@ export function label(text, config = {}) {
     } else {
       text_x = x + width / 2;
     }
-    if (text_valign === top) {
-      text_y = y + text_padding;
-    } else if (text_valign === bottom) {
-      text_y = y + height - text_padding;
+
+    if (config.wrap) {
+      // Estimate a line height by extracting the font size (assumes font in px).
+      const font_size_match = font.match(/(\d+)px/);
+      const font_size = font_size_match ? parseInt(font_size_match[1], 10) : 16;
+      const line_height = font_size;
+      const total_text_height = lines.length * (line_height + text_padding);
+
+      // Determine the starting y based on vertical alignment.
+      let start_y;
+      if (text_valign === top) {
+        start_y = y + text_padding + line_height;
+      } else if (text_valign === bottom) {
+        start_y = y + height - text_padding - total_text_height + line_height;
+      } else {
+        start_y = y + (height - total_text_height) / 2 + line_height;
+      }
+
+      for (let i = 0; i < lines.length; i++) {
+        ctx.fillText(lines[i], text_x, start_y + i * line_height);
+      }
     } else {
-      text_y = y + height / 2;
+      // Fall-back: no wrapping, single-line text.
+      let text_y;
+      if (text_valign === top) {
+        text_y = y + text_padding;
+      } else if (text_valign === bottom) {
+        text_y = y + height - text_padding;
+      } else {
+        text_y = y + height / 2;
+      }
+      ctx.textAlign = text_align;
+      ctx.textBaseline = text_valign === center ? middle : text_valign;
+      ctx.fillText(text, text_x, text_y);
     }
-    ctx.textAlign = text_align;
-    ctx.textBaseline = text_valign === center ? middle : text_valign;
-    ctx.fillText(text, text_x, text_y);
 
     ctx.restore();
   });
 
-  return { hovered, clicked, pressed };
+  // Return the input handling results.
+  return element_handle_input(x, y, width, height, config, container);
 }
 
 /**
@@ -879,6 +1243,8 @@ export function label(text, config = {}) {
  *   icon: URL for an image file.
  */
 export function image(config = {}) {
+  config.widget_id = UIContext.get_unique_id();
+
   const container_index = UIContext.layout_stack.peek();
   const container =
     container_index !== null
@@ -923,11 +1289,6 @@ export function image(config = {}) {
     y = container.cursor.y + offset_y;
   }
 
-  // Hit testing against current input state.
-  const hovered = is_input_within(x, y, width, height);
-  const clicked = hovered && input_state.clicked;
-  const pressed = hovered && input_state.pressed;
-
   child_container_layout_update(container, x, y, width, height);
 
   UIContext.draw_commands.push((ctx) => {
@@ -953,7 +1314,7 @@ export function image(config = {}) {
     ctx.restore();
   });
 
-  return { hovered, clicked, pressed };
+  return element_handle_input(x, y, width, height, config, container);
 }
 
 /**
@@ -970,6 +1331,8 @@ export function image(config = {}) {
  * @returns {object} The updated state { value, isFocused }.
  */
 export function input(name, config = {}) {
+  config.widget_id = UIContext.get_unique_id();
+
   if (!UIContext.input_field_state[name]) {
     UIContext.input_field_state[name] = {
       value: config.value || "",
@@ -1110,6 +1473,8 @@ export function input(name, config = {}) {
  * @param {object} config - Configuration for style, optional icon, text, etc.
  */
 export function cursor(config = {}) {
+  config.widget_id = UIContext.get_unique_id();
+
   const input_state = UIContext.input_state;
   input_state.depth += input_state.mouse_wheel;
 

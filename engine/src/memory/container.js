@@ -85,6 +85,7 @@ export class StaticIntArray {
 export class ResizableBitArray {
   #buffer;
   #size;
+  #capacity;
 
   /**
    * @param {number} initialCapacity - The initial capacity of the array in bits.
@@ -95,6 +96,7 @@ export class ResizableBitArray {
     }
     this.#buffer = new Uint32Array(Math.ceil(initial_capacity / 32));
     this.#size = 0;
+    this.#capacity = initial_capacity;
   }
 
   /**
@@ -104,7 +106,7 @@ export class ResizableBitArray {
    */
   get(index) {
     if (!Number.isInteger(index) || index < 0 || index >= this.#size) {
-      throw new Error(`Index out of bounds: ${index}`);
+      return false;
     }
     const array_index = Math.floor(index / 32);
     const bit_index = index % 32;
@@ -137,10 +139,13 @@ export class ResizableBitArray {
    * @param {number} newSize - The new size of the array in bits.
    */
   #resize(new_size) {
-    const new_capacity = Math.max(new_size, this.#buffer.length * 32 * 2);
-    const new_buffer = new Uint32Array(Math.ceil(new_capacity / 32));
-    new_buffer.set(this.#buffer);
-    this.#buffer = new_buffer;
+    if (new_size > this.#capacity) {
+      this.#capacity = new_size;
+      const new_capacity = Math.max(new_size, this.#buffer.length * 32 * 2);
+      const new_buffer = new Uint32Array(Math.ceil(new_capacity / 32));
+      new_buffer.set(this.#buffer);
+      this.#buffer = new_buffer;
+    }
     this.#size = new_size;
   }
 

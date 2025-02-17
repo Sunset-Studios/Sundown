@@ -3,7 +3,6 @@ import { InputProvider } from "../../input/input_provider.js";
 import {
   InputRange,
   InputKey,
-  InputKeyToPrintableString,
 } from "../../input/input_types.js";
 import { SimulationLayer } from "../simulation_layer.js";
 import { UIContext, ImmediateUIUpdater } from "../../ui/2d/immediate.js";
@@ -15,18 +14,6 @@ export class UIProcessor extends SimulationLayer {
   context = null;
   current_delta_time = 0;
   processed_keys = new Set();
-  input = {
-    x: 0,
-    y: 0,
-    clicked: false,
-    pressed: false,
-  };
-  root_rect = {
-    top: 0,
-    left: 0,
-    width: 0,
-    height: 0,
-  };
 
   init() {
     super.init();
@@ -45,22 +32,26 @@ export class UIProcessor extends SimulationLayer {
 
   _pre_update_internal() {
     const renderer = Renderer.get();
-    this.root_rect.width = renderer.canvas_ui.width;
-    this.root_rect.height = renderer.canvas_ui.height;
 
-    this.input.x = InputProvider.get_range(InputRange.M_xabs);
-    this.input.y = InputProvider.get_range(InputRange.M_yabs);
-    this.input.clicked = InputProvider.get_action(InputKey.B_mouse_left);
-    this.input.pressed = InputProvider.get_state(InputKey.B_mouse_left);
-    this.input.mouse_wheel = InputProvider.get_range(InputRange.M_wheel) * 0.01;
+    if (!UIContext.input_state.pressed) {
+      UIContext.drag_state.active = false;
+      UIContext.drag_state.started = false;
+      UIContext.drag_state.widget_id = null;
+      UIContext.drag_state.timer = 0;
+    }
 
     UIContext.input_state.prev_x = UIContext.input_state.x;
     UIContext.input_state.prev_y = UIContext.input_state.y;
-    UIContext.input_state.x = this.input.x;
-    UIContext.input_state.y = this.input.y;
-    UIContext.input_state.clicked = this.input.clicked;
-    UIContext.input_state.pressed = this.input.pressed;
-    UIContext.input_state.wheel = this.input.mouse_wheel;
+    UIContext.input_state.x = InputProvider.get_range(InputRange.M_xabs);
+    UIContext.input_state.y = InputProvider.get_range(InputRange.M_yabs);
+    UIContext.input_state.clicked = InputProvider.get_action(InputKey.B_mouse_left);
+    UIContext.input_state.pressed = InputProvider.get_state(InputKey.B_mouse_left);
+    UIContext.input_state.wheel = InputProvider.get_range(InputRange.M_wheel) * 0.01;
+    UIContext.delta_time = this.current_delta_time;
+
+    if (UIContext.drag_state.active) {
+      UIContext.drag_state.timer += this.current_delta_time;
+    }
 
     this.processed_keys.clear();
 

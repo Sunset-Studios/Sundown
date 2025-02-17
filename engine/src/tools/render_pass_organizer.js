@@ -1,10 +1,13 @@
 import { DevConsoleTool } from "./dev_console_tool.js";
+import { InputProvider } from "../input/input_provider.js";
+import { InputKey } from "../input/input_types.js";
 import { RenderPassFlags, render_pass_flags_to_string } from "../renderer/renderer_types.js";
 import { Renderer } from "../renderer/renderer.js";
+import { ResizableBitArray } from "../memory/container.js";
 import { Name } from "../utility/names.js";
 
 // Import the new immediate–mode UI API functions.
-import { panel, begin_container, end_container, button, label, UIContext } from "../ui/2d/immediate.js";
+import { panel, button, label, UIContext } from "../ui/2d/immediate.js";
 
 const yes_name = "Yes";
 const no_name = "No";
@@ -19,21 +22,127 @@ export class RenderPassOrganizer extends DevConsoleTool {
   pos_x = 20;
   pos_y = 50;
   width = 600;
-  height = 400;
-  is_panel_dragging = false;
-  drag_offset_x = 0;
-  drag_offset_y = 0;
+  panel_height = 400;
   dragging_pass_index = null;
+  current_drag_indicator = null;
   current_pass_details = null;
+  current_hovered_item = null;
+  pass_button_hovered_bit_array = new ResizableBitArray();
+
+  panel_config = {
+    x: 0,
+    y: 0,
+    anchor_x: "right",
+    height: 0,
+    width: 0,
+    background_color: "rgba(0, 0, 0, 0.7)",
+    border: "1px solid rgb(68, 68, 68)",
+    corner_radius: 5,
+    padding: 10,
+    draggable: true,
+    drag_delay: 0.6,
+    layout: "column",
+    gap: 5,
+    clip: true,
+    on_drag_start: () => {},
+    on_drag: (new_x, new_y) => {
+      this.pos_x += new_x;
+      this.pos_y += new_y;
+    },
+    on_drop: (final_x, final_y) => {},
+  };
+  organizer_header_config = {
+    y: 0,
+    width: 0,
+    height: 30,
+    background_color: "rgba(0, 0, 0, 0.7)",
+    text_color: "#8f8f8f",
+    font: "18px monospace",
+  };
+  content_panel_config = {
+    x: 0,
+    y: 10,
+    height: 0,
+    width: 0,
+    layout: "row",
+    gap: 10,
+    padding: 0,
+    clip: true,
+  };
+  passes_panel_config = {
+    x: 0,
+    y: 0,
+    width: 0,
+    height: 0,
+    layout: "column",
+    gap: 8,
+    padding: 0,
+    background_color: "transparent",
+    scrollable: true,
+    scroll_speed: 35,
+    clip: true,
+  };
+  title_row_config = {
+    x: 0,
+    y: 0,
+    width: 0,
+    height: 30,
+    layout: "row",
+    gap: 10,
+    padding: 0,
+  };
+  render_passes_label_config = {
+    x: 0,
+    width: 0,
+    height: 30,
+    padding_left: 100,
+    text_valign: "middle",
+    text_align: "center",
+    font: "bold 16px monospace",
+    text_color: "#8f8f8f",
+  };
+  reset_button_config = {
+    x: 0,
+    anchor_x: "right",
+    width: 80,
+    height: 30,
+    background_color: "#4a1515",
+    text_color: "white",
+    font: "12px monospace",
+  };
+  details_panel_config = {
+    x: 0,
+    y: 0,
+    width: 0,
+    height: 0,
+    layout: "column",
+    gap: 8,
+    padding: 15,
+    background_color: "rgb(29,29,29)",
+    scrollable: true,
+    clip: true,
+  };
+  pass_details_label_config = {
+    y: 0,
+    x: 0,
+    width: '100%',
+    height: 'fit-content',
+    font: "16px monospace",
+    text_color: "#8f8f8f",
+    wrap: true,
+  };
+  pass_details_info_label_config = {
+    y: 0,
+    x: 0,
+    width: 'fit-content',
+    height: 'fit-content',
+    font: "14px monospace",
+    text_color: "white",
+    wrap: true,
+  };
 
   init() {
     super.init();
-    // If UIContext.canvas_size is set already then adjust our panel position.
-    if (UIContext.canvas_size.width && UIContext.canvas_size.height) {
-      // For a top–right anchored panel (translate right style into a left offset)
-      this.pos_x = UIContext.canvas_size.width - this.width - 20;
-      this.height = UIContext.canvas_size.height * 0.8;
-    }
   }
 
   update() {
@@ -88,187 +197,170 @@ export class RenderPassOrganizer extends DevConsoleTool {
   }
 
   render() {
-    console.log(this.height)
     // Build the organizer panel using the new immediate–mode API.
-    panel({
-      x: this.pos_x,
-      y: this.pos_y,
-      anchor_x: "right",
-      height: this.height,
-      width: this.width,
-      background_color: "rgba(0, 0, 0, 0.7)",
-      border: "1px solid rgb(68, 68, 68)",
-      corner_radius: "5px",
-      padding: 10,
-    }, () => {
+    this.panel_height = UIContext.canvas_size.height * 0.9;
+
+    if (this.pos_x === 0) {
+      // For a top–right anchored panel (translate right style into a left offset)
+      this.pos_x = this.width - 20;
+    }
+
+    if (this.pos_y === 0) {
+      this.pos_y = "15%";
+    }
+
+    this.panel_config.height = this.panel_height;
+    this.panel_config.width = this.width;
+    this.panel_config.x = this.pos_x;
+    this.panel_config.y = this.pos_y;
+
+    let panel_state = panel(this.panel_config, () => {
       // Draw a header that acts as the draggable area for the panel.
-      const header = button("Render Pass Organizer", {
-        width: this.width - 20, // subtract horizontal padding
-        height: 30,
-        background_color: "rgba(0, 0, 0, 0.7)",
-        text_color: "#8f8f8f",
-        font: "16px monospace",
-        draggable: true,
-        on_drag_start: (widget_id) => {
-          this.is_panel_dragging = true;
-          // Store offset from mouse to panel origin.
-          this.drag_offset_x = UIContext.input_state.x - this.pos_x;
-          this.drag_offset_y = UIContext.input_state.y - this.pos_y;
-        },
-        on_drag: (widget_id, new_x, new_y) => {
-          // Update the panel position.
-          this.pos_x = new_x;
-          this.pos_y = new_y;
-        },
-        on_drop: (widget_id, final_x, final_y) => {
-          this.is_panel_dragging = false;
-        },
-      });
-      // (You may add additional header styling or a close–button here if desired.)
+      this.organizer_header_config.width = this.width - 20;
+      button("Render Pass Organizer", this.organizer_header_config);
 
       // Compute inner container dimensions.
-      const content_height = this.height - 30 - 10;
+      const content_height = this.panel_height - 50;
       const content_width = this.width - 20;
 
+      this.content_panel_config.height = content_height;
+      this.content_panel_config.width = content_width;
+
       // Create a horizontal container to hold the passes list (left) and details view (right).
-      begin_container({
-        x: 0,
-        y: 40,
-        height: content_height,
-        width: content_width,
-        layout: "row",
-        gap: 10,
-        padding: 0,
-      });
+      panel(this.content_panel_config, () => {
+        // ---- Passes Panel (Left) ----
+        const passes_panel_width = Math.floor((content_width * 2) / 3);
 
-      // ---- Passes Panel (Left) ----
-      const passes_panel_width = Math.floor(content_width * 2 / 3);
-      begin_container({
-        x: 0,
-        y: 0,
-        width: passes_panel_width,
-        height: content_height,
-        layout: "column",
-        gap: 8,
-        padding: 0,
-        background_color: "transparent",
-      });
+        this.passes_panel_config.width = passes_panel_width;
+        this.passes_panel_config.height = content_height;
 
-      // Title row for passes panel: contains a title label and a reset button.
-      begin_container({
-        x: 0,
-        y: 0,
-        width: passes_panel_width,
-        height: 30,
-        layout: "row",
-        gap: 10,
-        padding: 0,
-      });
-      label("Render Passes", {
-        font: "16px monospace",
-        text_color: "#8f8f8f",
-      });
-      const reset = button("Reset Order", {
-        width: 80,
-        height: 30,
-        background_color: "#4a1515",
-        text_color: "white",
-        font: "12px monospace",
-      });
-      if (reset.clicked) {
-        this._reset_pass_order();
-      }
-      end_container(); // end title row
+        panel(this.passes_panel_config, () => {
+          // Title row for passes panel: contains a title label and a reset button.
+          this.title_row_config.width = passes_panel_width;
 
-      // List the passes as draggable buttons.
-      const render_graph = Renderer.get().render_graph;
-      const current_pass_order = render_graph.get_scene_pass_order();
-      for (let i = 0; i < current_pass_order.length; i++) {
-        const pass_name = current_pass_order[i];
-        let pass = this.passes_data.find((p) => p.name === pass_name);
-        let pass_panel_color = "#151515";
-        if (pass) {
-          if (pass.raw_flags & RenderPassFlags.Present) {
-            pass_panel_color = "#4a1515";
-          } else if (pass.raw_flags & RenderPassFlags.Compute) {
-            pass_panel_color = "#153d4a";
-          } else if (pass.raw_flags & RenderPassFlags.Graphics) {
-            pass_panel_color = "#154a1d";
-          } else if (pass.raw_flags & RenderPassFlags.GraphLocal) {
-            pass_panel_color = "#4a3d15";
-          }
-        }
-        const pass_button = button(pass_name, {
-          width: passes_panel_width,
-          height: 30,
-          background_color: pass_panel_color,
-          text_color: "white",
-          font: "14px monospace",
-          draggable: true,
-          on_drag_start: (widget_id) => {
-            this.dragging_pass_index = i;
-          },
-          on_drop: (widget_id, dropX, dropY) => {
-            // In this simple implementation we assume each pass button takes ~38px (30px height + 8px gap).
-            const drop_index = Math.floor(drop_y / 38);
-            if (drop_index !== this.dragging_pass_index) {
-              // Determine drop direction by comparing dropY to the vertical midpoint of the target item.
-              const target_mid = drop_index * 38 + 15;
-              const drop_before = drop_y < target_mid;
-              this._reorder_passes(this.dragging_pass_index, drop_index, !drop_before);
-              this._save_custom_pass_order();
+          panel(this.title_row_config, () => {
+            this.render_passes_label_config.width = passes_panel_width - 80;
+            label("Render Passes", this.render_passes_label_config);
+
+            const reset = button("Reset Order", this.reset_button_config);
+            if (reset.clicked) {
+              this._reset_pass_order();
             }
-            this.dragging_pass_index = null;
-          },
+          });
+
+          // List the passes as draggable buttons.
+          const render_graph = Renderer.get().render_graph;
+          const current_pass_order = render_graph.get_scene_pass_order();
+          for (let i = 0; i < current_pass_order.length; i++) {
+            const pass_name = current_pass_order[i];
+            let pass = this.passes_data.find((p) => p.name === pass_name);
+            let pass_panel_color = "#151515";
+            if (pass) {
+              if (pass.raw_flags & RenderPassFlags.Present) {
+                pass_panel_color = "#4a1515";
+              } else if (pass.raw_flags & RenderPassFlags.Compute) {
+                pass_panel_color = "#153d4a";
+              } else if (pass.raw_flags & RenderPassFlags.Graphics) {
+                pass_panel_color = "#154a1d";
+              } else if (pass.raw_flags & RenderPassFlags.GraphLocal) {
+                pass_panel_color = "#4a3d15";
+              }
+            }
+            
+            if (this.pass_button_hovered_bit_array.get(i)) {
+              pass_panel_color = "#2a2a2a";
+            }
+
+            // Build the button configuration.
+            const button_config = {
+              y: 0,
+              width: passes_panel_width,
+              height: 30,
+              background_color: pass_panel_color,
+              text_color: "white",
+              font: "14px monospace",
+              draggable: true,
+              drag_delay: 0.4,
+              on_drag_start: () => {
+                this.dragging_pass_index = i;
+                this.current_drag_indicator = null;
+              },
+              on_drag_over: (x, y, width, height) => {
+                const candidate_mid = y + height / 2;
+                const drag_position = UIContext.input_state.y < candidate_mid ? "top" : "bottom";
+                this.current_drag_indicator = {
+                  index: i,
+                  position: drag_position
+                };
+              },
+              on_drop: (drop_x, drop_y) => {
+                if (this.current_drag_indicator.index !== this.dragging_pass_index) {
+                  const drop_before = this.current_drag_indicator.position === "top";
+                  this._reorder_passes(this.dragging_pass_index, this.current_drag_indicator.index, !drop_before);
+                  this._save_custom_pass_order();
+                }
+                this.dragging_pass_index = null;
+                this.current_drag_indicator = null;
+              },
+            };
+            
+            // Optionally override the border style to show a drag indicator.
+            // If the current drag indicator points at this index (top insertion) or if the candidate
+            // drop index is after this button (bottom insertion), modify the button border.
+            if (this.current_drag_indicator && i === this.current_drag_indicator.index) {
+              if (this.current_drag_indicator.position === "top") {
+                // Show an indicator at the top of this button.
+                button_config.border_top = "2px dashed red";
+              } else if (this.current_drag_indicator.position === "bottom") {
+                // Show an indicator at the bottom of this button.
+                button_config.border_bottom = "2px dashed red";
+              }
+            }
+            
+            const pass_button = button(pass_name, button_config);
+            
+            // If a pass button is clicked (and not dragged) then show its details.
+            if (pass_button.clicked) {
+              this._show_pass_details(pass_name);
+            }
+
+            this.pass_button_hovered_bit_array.set(i, pass_button.hovered);
+          }
         });
-        // If a pass button is clicked (and not dragged) then show its details.
-        if (pass_button.clicked) {
-          this._show_pass_details(pass_name);
-        }
-      }
-      end_container(); // end passes panel container
 
-      // ---- Details Panel (Right) ----
-      const details_panel_width = content_width - passes_panel_width - 10;
-      begin_container({
-        x: 0,
-        y: 0,
-        width: details_panel_width,
-        height: content_height,
-        layout: "column",
-        gap: 8,
-        padding: 0,
-        background_color: "rgb(29,29,29)",
+        // ---- Details Panel (Right) ----
+        this.details_panel_config.width = content_width - passes_panel_width - 10;
+        this.details_panel_config.height = content_height;
+        panel(this.details_panel_config, () => {
+          label("Pass Details", this.pass_details_label_config);
+          if (this.current_pass_details) {
+            let pass = this.passes_data.find((p) => p.name === this.current_pass_details);
+            if (pass) {
+              label(pass.name, this.pass_details_info_label_config);
+              label("Inputs: " + pass.num_inputs, this.pass_details_info_label_config);
+              label("Outputs: " + pass.num_outputs, this.pass_details_info_label_config);
+              label(
+                "Color Attachments: " + pass.num_attachments,
+                this.pass_details_info_label_config
+              );
+              label(
+                "Has Depth: " + (pass.has_depth ? yes_name : no_name),
+                this.pass_details_info_label_config
+              );
+              label("Type: " + pass.type, this.pass_details_info_label_config);
+            } else {
+              label(pass_display_label_no_info_text, this.pass_details_info_label_config);
+            }
+          } else {
+            label("Select a pass to view details", this.pass_details_info_label_config);
+          }
+        });
       });
-      label("Pass Details", {
-        font: "16px monospace",
-        text_color: "#8f8f8f",
-      });
-      if (this.current_pass_details) {
-        let pass = this.passes_data.find((p) => p.name === this.current_pass_details);
-        if (pass) {
-          label("Name: " + pass.name, { font: "14px monospace", text_color: "white" });
-          label("Inputs: " + pass.num_inputs, { font: "14px monospace", text_color: "white" });
-          label("Outputs: " + pass.num_outputs, { font: "14px monospace", text_color: "white" });
-          label("Color Attachments: " + pass.num_attachments, {
-            font: "14px monospace",
-            text_color: "white",
-          });
-          label("Has Depth: " + (pass.has_depth ? yes_name : no_name), {
-            font: "14px monospace",
-            text_color: "white",
-          });
-          label("Type: " + pass.type, { font: "14px monospace", text_color: "white" });
-        } else {
-          label(pass_display_label_no_info_text, { font: "14px monospace", text_color: "white" });
-        }
-      } else {
-        label("Select a pass to view details", { font: "14px monospace", text_color: "#888" });
-      }
-      end_container(); // end details panel
-
-      end_container(); // end horizontal container for panels
     });
+
+    if (InputProvider.get_action(InputKey.B_mouse_left) && !panel_state.hovered) {
+      this.hide();
+    }
   }
 
   _reorder_passes(from_index, to_index, drop_before) {

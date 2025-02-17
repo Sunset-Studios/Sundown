@@ -49,11 +49,6 @@ export class Scene extends SimulationLayer {
   }
 
   setup_default_subsystems() {
-    if (__DEV__) {
-      const dev_console = this.add_layer(DevConsole);
-      dev_console.set_scene(this);
-    }
-
     this.add_layer(EntityPreprocessor);
     this.add_layer(UIProcessor);
     this.add_layer(TextProcessor);
@@ -62,6 +57,11 @@ export class Scene extends SimulationLayer {
 
     const ui_3d_processor = this.add_layer(UI3DProcessor);
     ui_3d_processor.set_scene(this);
+
+    if (__DEV__) {
+      const dev_console = this.add_layer(DevConsole);
+      dev_console.set_scene(this);
+    }
   }
 
   setup_default_fragments() {
