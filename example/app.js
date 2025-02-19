@@ -1,3 +1,7 @@
+import SimulationCore from "../engine/src/core/simulation_core.js";
+import { SimulationLayer } from "../engine/src/core/simulation_layer.js";
+import { InputProvider } from "../engine/src/input/input_provider.js";
+import { InputKey } from '../engine/src/input/input_types.js'
 import { PostProcessStack } from "../engine/src/renderer/post_process_stack.js";
 import { Material } from "../engine/src/renderer/material.js";
 import { Simulator } from "../engine/src/core/simulator.js";
@@ -11,8 +15,8 @@ import { TextFragment } from "../engine/src/core/ecs/fragments/text_fragment.js"
 import { LightType } from "../engine/src/core/minimal.js";
 import { Mesh } from "../engine/src/renderer/mesh.js";
 import { Name } from "../engine/src/utility/names.js";
-import { SharedEnvironmentMapData } from "../engine/src/core/shared_data.js";
-import { spawn_mesh_entity } from "../engine/src/core/ecs/entity_utils.js";
+import { SharedEnvironmentMapData, SharedViewBuffer } from "../engine/src/core/shared_data.js";
+import { spawn_mesh_entity, delete_entity } from "../engine/src/core/ecs/entity_utils.js";
 import { FontCache } from "../engine/src/ui/text/font_cache.js";
 
 import { MasterMind } from "../engine/src/ml/mastermind.js";
@@ -24,9 +28,12 @@ import { MSELoss } from "../engine/src/ml/layers/mse_loss.js";
 import { Tensor, TensorInitializer } from "../engine/src/ml/tensor.js";
 import { Adam } from "../engine/src/ml/optimizers/adam.js";
 
+import { radians } from '../engine/src/utility/math.js';
 import { profile_scope } from "../engine/src/utility/performance.js";
 
 export class RenderingScene extends Scene {
+  scene_entities = [];
+
   init(parent_context) {
     super.init(parent_context);
 
@@ -35,7 +42,7 @@ export class RenderingScene extends Scene {
     freeform_arcball_control_processor.set_scene(this);
 
     // Set the skybox for this scene.
-    SharedEnvironmentMapData.add_skybox("default_scene_skybox", [
+    SharedEnvironmentMapData.set_skybox("default_scene_skybox", [
       "engine/textures/gradientbox/px.png",
       "engine/textures/gradientbox/nx.png",
       "engine/textures/gradientbox/ny.png",
@@ -49,6 +56,7 @@ export class RenderingScene extends Scene {
 
     // Create a light and add it to the scene
     const light_entity = EntityManager.create_entity();
+    this.scene_entities.push(light_entity);
 
     // Add a light fragment to the light entity
     const light_fragment_view = EntityManager.add_fragment(light_entity, LightFragment, false);
@@ -83,31 +91,28 @@ export class RenderingScene extends Scene {
       for (let z = 0; z < grid_size; z++) {
         for (let y = 0; y < grid_layers; y++) {
           const sphere = spawn_mesh_entity(
-            {
-              x: (x - Math.floor(grid_size / 2)) * spacing,
-              y: (y - Math.floor(grid_layers / 2)) * spacing,
-              z: (z - Math.floor(grid_size / 2)) * spacing,
-            },
-            { x: 0, y: 0, z: 0, w: 1 },
-            { x: 1.0, y: 1.0, z: 1.0 },
+            [
+              (x - Math.floor(grid_size / 2)) * spacing,
+              (y - Math.floor(grid_layers / 2)) * spacing,
+              (z - Math.floor(grid_size / 2)) * spacing,
+            ],
+            [0, 0, 0, 1],
+            [0.5, 0.5, 0.5],
             mesh,
             default_material_id,
             null /* parent */,
             [] /* children */,
             true /* start_visible */
           );
+          this.scene_entities.push(sphere);
         }
       }
     }
 
     const text_entity = spawn_mesh_entity(
-      {
-        x: 0,
-        y: 25,
-        z: -5,
-      },
-      { x: 0, y: 0, z: 0, w: 1 },
-      { x: 0.5, y: 0.5, z: 0.5 },
+      [0, 25, -5],
+      [0, 0, 0, 1],
+      [0.5, 0.5, 0.5],
       Mesh.quad(),
       font_object.material,
       null /* parent */,
@@ -123,6 +128,7 @@ export class RenderingScene extends Scene {
     text_fragment_view.color.b = 1;
     text_fragment_view.color.a = 1;
     text_fragment_view.emissive = 1;
+    this.scene_entities.push(text_entity);
 
     PostProcessStack.register_pass(0, "outline", "effects/outline_post.wgsl", {
       outline_thickness: 1.0,
@@ -131,6 +137,18 @@ export class RenderingScene extends Scene {
       depth_scale: 1000.0,
       outline_color: [0.0, 0.0, 0.0, 1.0],
     });
+  }
+
+  cleanup() {
+    PostProcessStack.reset();
+
+    for (const entity of this.scene_entities) {
+      delete_entity(entity);
+    }
+
+    this.remove_layer(FreeformArcballControlProcessor);
+
+    super.cleanup();
   }
 
   update(delta_time) {
@@ -153,6 +171,8 @@ export class MLScene extends Scene {
   sine_model = null;
   xor_model = null;
 
+  scene_entities = [];
+
   init(parent_context) {
     super.init(parent_context);
 
@@ -161,7 +181,7 @@ export class MLScene extends Scene {
     freeform_arcball_control_processor.set_scene(this);
 
     // Set the skybox for this scene.
-    SharedEnvironmentMapData.add_skybox("default_scene_skybox", [
+    SharedEnvironmentMapData.set_skybox("default_scene_skybox", [
       "engine/textures/gradientbox/px.png",
       "engine/textures/gradientbox/nx.png",
       "engine/textures/gradientbox/ny.png",
@@ -195,13 +215,9 @@ export class MLScene extends Scene {
     EntityManager.reserve_entities(1);
 
     const text_entity = spawn_mesh_entity(
-      {
-        x: 0,
-        y: 25,
-        z: -50,
-      },
-      { x: 0, y: 0, z: 0, w: 1 },
-      { x: 0.5, y: 0.5, z: 0.5 },
+      [0, 25, -50],
+      [0, 0, 0, 1],
+      [0.5, 0.5, 0.5],
       Mesh.quad(),
       font_object.material,
       null /* parent */,
@@ -218,7 +234,25 @@ export class MLScene extends Scene {
     text_fragment_view.color.a = 1;
     text_fragment_view.emissive = 1;
 
+    this.scene_entities.push(light_entity);
+    this.scene_entities.push(text_entity);
+
     this.setup_ml_test();
+  }
+
+  cleanup() {
+    this.mastermind.destroy();
+
+    this.sine_model = null;
+    this.xor_model = null;
+
+    for (const entity of this.scene_entities) {
+      delete_entity(entity);
+    }
+
+    this.remove_layer(FreeformArcballControlProcessor);
+
+    super.cleanup();
   }
 
   update(delta_time) {
@@ -311,12 +345,49 @@ export class MLScene extends Scene {
   }
 }
 
+export class SceneSwitcher extends SimulationLayer {
+  current_scene_index = null;
+  scenes = [];
+
+  constructor(name) {
+    super();
+    this.name = name;
+  }
+
+  async update(delta_time) {
+    super.update(delta_time);
+
+    if (InputProvider.get_action(InputKey.K_Return)) {
+      if (this.current_scene_index !== null) {
+        SimulationCore.unregister_simulation_layer(this.scenes[this.current_scene_index]);
+      }
+
+      this.current_scene_index = (this.current_scene_index + 1) % this.scenes.length;
+
+      await SimulationCore.register_simulation_layer(this.scenes[this.current_scene_index]);
+    }
+  }
+
+  async add_scene(scene) {
+    if (this.current_scene_index === null) {
+      this.current_scene_index = 0;
+      await SimulationCore.register_simulation_layer(scene);
+    }
+    this.scenes.push(scene);
+  }
+}
+
 (async () => {
   const simulator = await Simulator.create("gpu-canvas", "ui-canvas");
 
   // Create a test scene and register it with the simulation system
-  const scene = new MLScene("MLScene");
-  await simulator.add_scene(scene);
+  const ml_scene = new MLScene("MLScene");
+  const rendering_scene = new RenderingScene("RenderingScene");
+
+  const scene_switcher = new SceneSwitcher("SceneSwitcher");
+  await scene_switcher.add_scene(rendering_scene);
+  await scene_switcher.add_scene(ml_scene);
+  await simulator.add_sim_layer(scene_switcher);
 
   simulator.run();
 })();

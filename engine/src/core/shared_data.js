@@ -25,11 +25,8 @@ export class SharedVertexBuffer {
 
   static _get_byte_size() {
     return (
-      this.vertex_data
-        .map((v) =>
-          v.position.concat(v.normal, v.uv, v.tangent, v.bitangent)
-        )
-        .flat().length * 4
+      this.vertex_data.map((v) => v.position.concat(v.normal, v.uv, v.tangent, v.bitangent)).flat()
+        .length * 4
     );
   }
 
@@ -40,9 +37,7 @@ export class SharedVertexBuffer {
 
     this.buffer = Buffer.create({
       name: vertex_buffer_name,
-      data: this.vertex_data.map((v) =>
-        v.position.concat(v.normal, v.uv, v.tangent, v.bitangent)
-      ),
+      data: this.vertex_data.map((v) => v.position.concat(v.normal, v.uv, v.tangent, v.bitangent)),
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
     });
 
@@ -74,18 +69,17 @@ export class SharedViewBuffer {
       prev_projection_matrix: view_data.prev_projection_matrix ?? mat4.create(),
       view_projection_matrix: view_data.view_projection_matrix ?? mat4.create(),
       inverse_view_projection_matrix:
-        view_data.inverse_view_projection_matrix_direction_only ??
-        mat4.create(),
+        view_data.inverse_view_projection_matrix_direction_only ?? mat4.create(),
+      projection_type: view_data.projection_type ?? "perspective",
+      ortho_width: view_data.ortho_width ?? 10,
+      ortho_height: view_data.ortho_height ?? 10,
     });
 
     if (this.type_size_bytes === 0) {
-      this.type_size_bytes =
-        this._get_gpu_type_layout(this.view_data[0]).flat().length * 4;
+      this.type_size_bytes = this._get_gpu_type_layout(this.view_data[0]).flat().length * 4;
     }
 
-    const flattened_data = this.view_data
-      .map((x) => this._get_gpu_type_layout(x))
-      .flat();
+    const flattened_data = this.view_data.map((x) => this._get_gpu_type_layout(x)).flat();
     this.raw_data = new Float32Array(flattened_data.length);
     this.raw_data.set(flattened_data);
     this.size = this.type_size_bytes * this.view_data.length;
@@ -95,39 +89,34 @@ export class SharedViewBuffer {
     return this.view_data.length - 1;
   }
 
+  static remove_view_data(index) {
+    this.view_data.splice(index, 1);
+    this.size = this.type_size_bytes * this.view_data.length;
+    this.build();
+  }
+
   static get_view_data(index) {
-    console.assert(
-      index < this.view_data.length && index >= 0,
-      "View data index out of bounds"
-    );
+    console.assert(index < this.view_data.length && index >= 0, "View data index out of bounds");
     return this.view_data[index];
   }
 
   // Updates the view data at the given index. Can be called during setup or at runtime.
   static set_view_data(index, view_data) {
     let dirty = false;
-    if (
-      view_data.position &&
-      !vec4.equals(this.view_data[index].position, view_data.position)
-    ) {
+    if (view_data.position && !vec4.equals(this.view_data[index].position, view_data.position)) {
       this.view_data[index].position = vec4.clone(view_data.position);
       dirty = true;
     }
-    if (
-      view_data.rotation &&
-      !quat.equals(this.view_data[index].rotation, view_data.rotation)
-    ) {
+    if (view_data.rotation && !quat.equals(this.view_data[index].rotation, view_data.rotation)) {
       this.view_data[index].rotation = quat.clone(view_data.rotation);
       dirty = true;
     }
     if (view_data.fov && this.view_data[index].fov !== view_data.fov) {
       this.view_data[index].fov = view_data.fov;
+      console.trace("fov", this.view_data[index].fov);
       dirty = true;
     }
-    if (
-      view_data.aspect_ratio &&
-      this.view_data[index].aspect_ratio !== view_data.aspect_ratio
-    ) {
+    if (view_data.aspect_ratio && this.view_data[index].aspect_ratio !== view_data.aspect_ratio) {
       this.view_data[index].aspect_ratio = view_data.aspect_ratio;
       dirty = true;
     }
@@ -137,6 +126,21 @@ export class SharedViewBuffer {
     }
     if (view_data.far && this.view_data[index].far !== view_data.far) {
       this.view_data[index].far = view_data.far;
+      dirty = true;
+    }
+    if (
+      view_data.projection_type &&
+      this.view_data[index].projection_type !== view_data.projection_type
+    ) {
+      this.view_data[index].projection_type = view_data.projection_type;
+      dirty = true;
+    }
+    if (view_data.ortho_width && this.view_data[index].ortho_width !== view_data.ortho_width) {
+      this.view_data[index].ortho_width = view_data.ortho_width;
+      dirty = true;
+    }
+    if (view_data.ortho_height && this.view_data[index].ortho_height !== view_data.ortho_height) {
+      this.view_data[index].ortho_height = view_data.ortho_height;
       dirty = true;
     }
     this.view_data[index].dirty |= dirty;
@@ -151,20 +155,16 @@ export class SharedViewBuffer {
         );
       }
       if (this.view_data[index].view_matrix) {
-        this.view_data[index].prev_view_matrix = mat4.clone(
-          this.view_data[index].view_matrix
-        );
+        this.view_data[index].prev_view_matrix = mat4.clone(this.view_data[index].view_matrix);
       }
 
-      {
-        mat4.perspective(
-          this.view_data[index].projection_matrix,
-          this.view_data[index].fov,
-          this.view_data[index].aspect_ratio,
-          this.view_data[index].near,
-          this.view_data[index].far
-        );
-      }
+      mat4.perspective(
+        this.view_data[index].projection_matrix,
+        this.view_data[index].fov,
+        this.view_data[index].aspect_ratio,
+        this.view_data[index].near,
+        this.view_data[index].far
+      );
 
       {
         this.view_data[index].view_forward = vec4.transformQuat(
@@ -177,17 +177,8 @@ export class SharedViewBuffer {
           this.view_data[index].view_forward
         );
 
-        const right = vec3.cross(
-          vec3.create(),
-          this.view_data[index].view_forward,
-          WORLD_UP
-        );
-        this.view_data[index].view_right = vec4.fromValues(
-          right[0],
-          right[1],
-          right[2],
-          0
-        );
+        const right = vec3.cross(vec3.create(), this.view_data[index].view_forward, WORLD_UP);
+        this.view_data[index].view_right = vec4.fromValues(right[0], right[1], right[2], 0);
         this.view_data[index].view_right = vec3.normalize(
           vec3.create(),
           this.view_data[index].view_right
@@ -317,7 +308,7 @@ export class SharedEnvironmentMapData {
   static skybox_data = null;
   static skybox_data_buffer = new Float32Array([1, 1, 1, 1]);
 
-  static add_skybox(name, texture_paths) {
+  static set_skybox(name, texture_paths) {
     const skybox = Texture.load(texture_paths, {
       name: name,
       format: "rgba8unorm",
@@ -326,12 +317,14 @@ export class SharedEnvironmentMapData {
         GPUTextureUsage.TEXTURE_BINDING |
         GPUTextureUsage.COPY_DST |
         GPUTextureUsage.RENDER_ATTACHMENT,
+      force: true,
     });
 
     const skybox_data = Buffer.create({
       name: name + "_data",
       raw_data: this.skybox_data_buffer,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+      force: true,
     });
 
     this.skybox = skybox;
@@ -343,10 +336,6 @@ export class SharedEnvironmentMapData {
   static set_skybox_color(color) {
     this.skybox_data_buffer.set(color);
     this.skybox_data.write(this.skybox_data_buffer);
-  }
-
-  static remove_skybox() {
-    this.skybox = null;
   }
 
   static get_skybox() {
@@ -431,12 +420,7 @@ export class SharedFrameInfoBuffer {
   }
 
   static _get_gpu_type_layout(item) {
-    return Array.of(
-      item.view_index,
-      item.time,
-      ...item.resolution,
-      ...item.cursor_world_position
-    );
+    return Array.of(item.view_index, item.time, ...item.resolution, ...item.cursor_world_position);
   }
 }
 
@@ -461,7 +445,10 @@ export class SharedEntityMetadataBuffer {
 
   static get_absolute_entity_count() {
     const adjusted_entity_count = this.num_entities - 1;
-    return this.entity_metadata.get(adjusted_entity_count * 2) + this.entity_metadata.get(adjusted_entity_count * 2 + 1);
+    return (
+      this.entity_metadata.get(adjusted_entity_count * 2) +
+      this.entity_metadata.get(adjusted_entity_count * 2 + 1)
+    );
   }
 
   static set_entity_instance_count(entity, count) {
@@ -487,10 +474,11 @@ export class SharedEntityMetadataBuffer {
       let offset = 0;
       if (entity > 0) {
         const prev_entity = entity - 1;
-        offset = this.entity_metadata.get(prev_entity * 2) + // Previous offset
-                this.entity_metadata.get(prev_entity * 2 + 1); // Plus previous count
+        offset =
+          this.entity_metadata.get(prev_entity * 2) + // Previous offset
+          this.entity_metadata.get(prev_entity * 2 + 1); // Plus previous count
       }
-      
+
       this.entity_metadata.set(entity * 2, offset);
       this.entity_metadata.set(entity * 2 + 1, 1);
       this.num_entities = adjusted_entity;

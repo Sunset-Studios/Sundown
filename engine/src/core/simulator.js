@@ -26,12 +26,12 @@ export class Simulator {
     });
   }
 
-  async add_scene(scene) {
-    await SimulationCore.register_simulation_layer(scene);
+  async add_sim_layer(sim_layer) {
+    await SimulationCore.register_simulation_layer(sim_layer);
   }
 
-  remove_scene(scene) {
-    SimulationCore.unregister_simulation_layer(scene);
+  remove_sim_layer(sim_layer) {
+    SimulationCore.unregister_simulation_layer(sim_layer);
   }
 
   _simulate(delta_time) {

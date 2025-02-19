@@ -14,7 +14,6 @@ import { npot, clamp } from "../../utility/math.js";
 import { profile_scope } from "../../utility/performance.js";
 import { global_dispatcher } from "../../core/dispatcher.js";
 import {
-  rgba32float_format,
   rgba16float_format,
   r8unorm_format,
   depth32float_format,
@@ -129,7 +128,7 @@ const compute_cull_shader_setup = {
 };
 const draw_cull_data_config = {
   name: `draw_cull_data`,
-  data: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+  data: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
   usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
 };
 
@@ -417,31 +416,33 @@ export class DeferredShadingStrategy {
       }
 
       // Skybox Pass
+      skybox_output_image_config.width = image_extent.width;
+      skybox_output_image_config.height = image_extent.height;
+      skybox_output_image_config.force = this.force_recreate;
+      skybox_image = render_graph.create_image(skybox_output_image_config);
+
       {
         const skybox = SharedEnvironmentMapData.get_skybox();
         const skybox_data = SharedEnvironmentMapData.get_skybox_data();
 
-        const skybox_data_buffer = render_graph.register_buffer(skybox_data.config.name);
-        const skybox_texture = render_graph.register_image(skybox.config.name);
+        if (skybox) {
+          const skybox_data_buffer = render_graph.register_buffer(skybox_data.config.name);
+          const skybox_texture = render_graph.register_image(skybox.config.name);
 
-        skybox_output_image_config.width = image_extent.width;
-        skybox_output_image_config.height = image_extent.height;
-        skybox_output_image_config.force = this.force_recreate;
-        skybox_image = render_graph.create_image(skybox_output_image_config);
-
-        render_graph.add_pass(
-          skybox_pass_name,
-          RenderPassFlags.Graphics,
-          {
-            inputs: [skybox_texture, skybox_data_buffer],
-            outputs: [skybox_image],
-            shader_setup: skybox_shader_setup,
-          },
-          (graph, frame_data, encoder) => {
-            const pass = graph.get_physical_pass(frame_data.current_pass);
-            MeshTaskQueue.get().draw_cube(pass);
-          }
-        );
+          render_graph.add_pass(
+            skybox_pass_name,
+            RenderPassFlags.Graphics,
+            {
+              inputs: [skybox_texture, skybox_data_buffer],
+              outputs: [skybox_image],
+              shader_setup: skybox_shader_setup,
+            },
+            (graph, frame_data, encoder) => {
+              const pass = graph.get_physical_pass(frame_data.current_pass);
+              MeshTaskQueue.get().draw_cube(pass);
+            }
+          );
+        }
       }
 
       const object_instance_buffer = MeshTaskQueue.get().get_object_instance_buffer();
@@ -484,6 +485,8 @@ export class DeferredShadingStrategy {
             const draw_count = MeshTaskQueue.get().get_total_draw_count();
             const view_data = SharedViewBuffer.get_view_data(0);
 
+            let p00 = view_data.projection_matrix[0];
+            let p11 = view_data.projection_matrix[5];
             draw_cull.write([
               draw_count,
               1 /* culling_enabled */,
@@ -491,8 +494,8 @@ export class DeferredShadingStrategy {
               1 /* distance_check */,
               view_data.near,
               view_data.far,
-              view_data.projection_matrix[0],
-              view_data.projection_matrix[5],
+              p00,
+              p11,
               hzb.config.width,
               hzb.config.height,
             ]);
@@ -503,7 +506,7 @@ export class DeferredShadingStrategy {
       }
 
       // TODO: Meshlet cull pass
-      
+
       // Depth prepass
       {
         render_graph.add_pass(

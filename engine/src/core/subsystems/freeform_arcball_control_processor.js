@@ -19,6 +19,12 @@ export class FreeformArcballControlProcessor extends SimulationLayer {
         global_dispatcher.on("resolution_change", this.on_resolution_change.bind(this));
     }
 
+    cleanup() {
+        scene = null;
+        global_dispatcher.off("resolution_change", this.on_resolution_change.bind(this));
+        super.cleanup();
+    }
+
     update(delta_time) {
         super.update(delta_time);
 

@@ -43,6 +43,15 @@ export class Scene extends SimulationLayer {
     this.setup_default_subsystems();
   }
 
+  cleanup() {
+    SharedViewBuffer.remove_view_data(this.context.current_view);
+    this.context.current_view = null;
+
+    this.teardown_default_subsystems();
+
+    super.cleanup();
+  }
+
   update(delta_time) {
     super.update(delta_time);
     this._update_dev_cursor();
@@ -62,6 +71,18 @@ export class Scene extends SimulationLayer {
       const dev_console = this.add_layer(DevConsole);
       dev_console.set_scene(this);
     }
+  }
+
+  teardown_default_subsystems() {
+    if (__DEV__) {
+      this.remove_layer(DevConsole);
+    }
+    this.remove_layer(UI3DProcessor);
+    this.remove_layer(EntityPreprocessor);
+    this.remove_layer(UIProcessor);
+    this.remove_layer(TextProcessor);
+    this.remove_layer(StaticMeshProcessor);
+    this.remove_layer(TransformProcessor);
   }
 
   setup_default_fragments() {

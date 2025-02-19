@@ -11,6 +11,7 @@ export class SimulationLayer {
     }
 
     init() {}
+    cleanup() {}
 
     pre_update(delta_time) {
         for (let i = 0; i < this.layers.length; i++) {

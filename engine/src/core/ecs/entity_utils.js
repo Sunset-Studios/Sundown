@@ -203,9 +203,9 @@ export function spawn_mesh_entity(
     entity,
     TransformFragment,
   );
-  new_transform_view.position = [position.x, position.y, position.z];
-  new_transform_view.rotation = [rotation.x, rotation.y, rotation.z, rotation.w];
-  new_transform_view.scale = [scale.x, scale.y, scale.z];
+  new_transform_view.position = position;
+  new_transform_view.rotation = rotation;
+  new_transform_view.scale = scale;
 
   const new_scene_graph_view = EntityManager.add_fragment(
     entity,
@@ -230,4 +230,8 @@ export function spawn_mesh_entity(
   new_visibility_view.visible = start_visible;
 
   return entity;
+}
+
+export function delete_entity(entity) {
+  EntityManager.delete_entity(entity);
 }

@@ -13,9 +13,9 @@ export class Element3D {
 
   static create(config, material = null, parent = null, children = [], start_visible = true) {
     const entity = spawn_mesh_entity(
-      { x: 0, y: 0, z: 0 },
-      { x: 0, y: 0, z: 0, w: 1 },
-      { x: 1, y: 1, z: 1 },
+      [0, 0, 0],
+      [0, 0, 0, 1],
+      [1, 1, 1],
       Mesh.quad(),
       material ?? Material.default_ui_material(),
       parent,
@@ -32,8 +32,12 @@ export class Element3D {
     new_user_interface_view.is_clicked = 0;
     new_user_interface_view.is_pressed = 0;
     new_user_interface_view.was_pressed = 0;
+    new_user_interface_view.color.r = 0;
+    new_user_interface_view.color.g = 0;
+    new_user_interface_view.color.b = 0;
+    new_user_interface_view.color.a = 0;
 
-    this.set_config(config);
+    this.set_config(entity, config);
 
     return entity;
   }
@@ -67,7 +71,7 @@ export class Element3D {
   static set_config(entity, config) {
     if (!config) return;
 
-    const { position, rotation, scale, allows_cursor_events } = config;
+    const { position, rotation, scale, allows_cursor_events, visible, auto_size, color } = config;
 
     if (position) {
       this.set_position(entity, position);
@@ -78,9 +82,17 @@ export class Element3D {
     if (scale) {
       this.set_scale(entity, scale);
     }
-
     if (allows_cursor_events !== undefined) {
       this.set_allows_cursor_events(entity, allows_cursor_events);
+    }
+    if (visible !== undefined) {
+      this.set_visible(entity, visible);
+    }
+    if (auto_size !== undefined) {
+      this.set_auto_size(entity, auto_size);
+    }
+    if (color) {
+      this.set_color(entity, color);
     }
   }
 
@@ -183,6 +195,17 @@ export class Element3D {
     user_interface_data.auto_size = auto_size;
   }
 
+  static set_color(entity, color) {
+    let user_interface_data = EntityManager.get_fragment(entity, UserInterfaceFragment);
+    if (!user_interface_data) {
+      return;
+    }
+    user_interface_data.color.r = color.r;
+    user_interface_data.color.g = color.g;
+    user_interface_data.color.b = color.b;
+    user_interface_data.color.a = color.a;
+  }
+
   static on(entity, event, callback) {
     if (!this.events[entity]) {
       this.events[entity] = {};
@@ -198,7 +221,7 @@ export class Element3D {
   static trigger(entity, event, ...args) {
     if (this.events[entity] && this.events[entity][event]) {
       for (let i = 0; i < this.events[entity][event].length; i++) {
-        this.events[entity][event][i](...args);
+        this.events[entity][event][i](entity, ...args);
       }
     }
   }
