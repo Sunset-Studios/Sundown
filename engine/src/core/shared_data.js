@@ -179,8 +179,8 @@ export class SharedViewBuffer {
 
         const right = vec3.cross(vec3.create(), this.view_data[index].view_forward, WORLD_UP);
         this.view_data[index].view_right = vec4.fromValues(right[0], right[1], right[2], 0);
-        this.view_data[index].view_right = vec3.normalize(
-          vec3.create(),
+        this.view_data[index].view_right = vec4.normalize(
+          vec4.create(),
           this.view_data[index].view_right
         );
 

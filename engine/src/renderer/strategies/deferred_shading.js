@@ -128,7 +128,7 @@ const compute_cull_shader_setup = {
 };
 const draw_cull_data_config = {
   name: `draw_cull_data`,
-  data: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+  data: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
   usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
 };
 
