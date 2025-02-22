@@ -503,7 +503,6 @@ export class ${fragment_name} extends Fragment {
   static get_default_get_entity_data(fields) {
     return `
         const data_view = this.data_view_allocator.allocate();
-        data_view.fragment = this;
         data_view.view_entity(entity, instance);
         return data_view;
     `;

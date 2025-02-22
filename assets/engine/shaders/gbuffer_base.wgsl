@@ -12,12 +12,11 @@ struct VertexOutput {
     @location(3) color: vec4<precision_float>,
     @location(4) uv: vec2<precision_float>,
     @location(5) normal: vec4<precision_float>,
-    @location(6) tangent: vec4<precision_float>,
-    @location(7) bitangent: vec4<precision_float>,
-    @location(8) @interpolate(flat) instance_index: u32,
-    @location(9) @interpolate(flat) base_instance_id: u32,
-    @location(10) @interpolate(flat) instance_id: u32,
-    @location(11) @interpolate(flat) vertex_index: u32,
+    @location(6) barycentrics: vec3<precision_float>,
+    @location(7) @interpolate(flat) instance_index: u32,
+    @location(8) @interpolate(flat) base_instance_id: u32,
+    @location(9) @interpolate(flat) instance_id: u32,
+    @location(10) @interpolate(flat) vertex_index: u32,
 };
 
 struct FragmentOutput {
@@ -84,7 +83,6 @@ fn vertex(v_out: ptr<function, VertexOutput>) -> VertexOutput {
     output.instance_index = ii;
     output.base_instance_id = entity;
     output.instance_id = entity_resolved;
-
     output.vertex_index = vi;
 
     output = vertex(&output);

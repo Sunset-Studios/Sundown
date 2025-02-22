@@ -6,6 +6,8 @@ enable f16;
 // Data Structures
 // ------------------------------------------------------------------------------------ 
 
+const ETF_DIRTY = 1 << 0;
+const ETF_IGNORE_PARENT_SCALE = 1 << 1;
 
 struct Vertex {
     position: vec4<precision_float>,
@@ -25,6 +27,7 @@ struct View {
     inverse_view_projection_matrix: mat4x4f,
     view_position: vec4f,
     view_direction: vec4f,
+    view_right: vec4f,
     frustum: array<vec4f, 6>,
 };
 

@@ -145,6 +145,9 @@ const StaticMeshFragment = {
 
 const TransformFragment = {
   name: "Transform",
+  imports: {
+    EntityTransformFlags: "../../minimal.js",
+  },
   fields: {
     position: {
       type: DataType.FLOAT32,
@@ -160,10 +163,7 @@ const TransformFragment = {
       TransformFragment.data.position[this.absolute_entity * 4 + 1] = value[1];
       TransformFragment.data.position[this.absolute_entity * 4 + 2] = value[2];
       TransformFragment.data.position[this.absolute_entity * 4 + 3] = 1.0;
-
-      if (TransformFragment.data.dirty) {
-        TransformFragment.data.dirty[this.absolute_entity] = 1;
-      }
+      TransformFragment.data.flags[this.absolute_entity] |= EntityTransformFlags.DIRTY;
       TransformFragment.data.gpu_data_dirty = true;
       `,
     },
@@ -182,10 +182,7 @@ const TransformFragment = {
       TransformFragment.data.rotation[this.absolute_entity * 4 + 1] = value[1];
       TransformFragment.data.rotation[this.absolute_entity * 4 + 2] = value[2];
       TransformFragment.data.rotation[this.absolute_entity * 4 + 3] = value[3];
-
-      if (TransformFragment.data.dirty) {
-        TransformFragment.data.dirty[this.absolute_entity] = 1;
-      }
+      TransformFragment.data.flags[this.absolute_entity] |= EntityTransformFlags.DIRTY;
       TransformFragment.data.gpu_data_dirty = true;
       `,
     },
@@ -204,15 +201,12 @@ const TransformFragment = {
       TransformFragment.data.scale[this.absolute_entity * 4 + 1] = value[1];
       TransformFragment.data.scale[this.absolute_entity * 4 + 2] = value[2];
       TransformFragment.data.scale[this.absolute_entity * 4 + 3] = 0.0;
-
-      if (TransformFragment.data.dirty) {
-        TransformFragment.data.dirty[this.absolute_entity] = 1;
-      }
+      TransformFragment.data.flags[this.absolute_entity] |= EntityTransformFlags.DIRTY;
       TransformFragment.data.gpu_data_dirty = true;
       `,
     },
-    dirty: {
-      type: DataType.UINT32,
+    flags: {
+      type: DataType.INT32,
       stride: 1,
     },
   },
@@ -235,18 +229,15 @@ const TransformFragment = {
       stride: 4,
       cpu_buffer: true,
     },
-    dirty_flags: {
-      type: DataType.UINT32,
+    flags: {
+      type: DataType.INT32,
       usage: BufferType.STORAGE_SRC,
       stride: 1,
-      gpu_data: `
-      const gpu_data = this.data.dirty;
-      `,
     },
     transforms: {
       type: DataType.FLOAT32,
       usage: BufferType.STORAGE,
-      stride: 64,
+      stride: 32,
     },
     bounds_data: {
       type: DataType.FLOAT32,
@@ -273,7 +264,7 @@ const TransformFragment = {
         this.data.scale[(entity_offset + i) * 4 + 1] = 1;
         this.data.scale[(entity_offset + i) * 4 + 2] = 1;
         this.data.scale[(entity_offset + i) * 4 + 3] = 0;
-        this.data.dirty[entity_offset + i] = 1;
+        this.data.flags[(entity_offset + i)] = 0;
       }
       `,
     },
@@ -298,6 +289,7 @@ const TransformFragment = {
           this.data.scale[entity_offset * 4 + 1],
           this.data.scale[entity_offset * 4 + 2],
         ],
+        flags: this.data.flags[entity_offset],
       };
       `,
     },
@@ -314,53 +306,8 @@ const TransformFragment = {
         position_buffer: this.data.position_buffer,
         rotation_buffer: this.data.rotation_buffer,
         scale_buffer: this.data.scale_buffer,
-        dirty_flags_buffer: this.data.dirty_flags_buffer,
+        flags_buffer: this.data.flags_buffer,
       };
-      `,
-    },
-    rebuild_buffers: {
-      post: `
-      const dirty_flags_buffer_size = this.data.dirty.byteLength;
-      if (
-        !this.data.dirty_flags_buffer ||
-        this.data.dirty_flags_buffer.config.size < dirty_flags_buffer_size
-      ) {
-        this.data.dirty_flags_buffer = Buffer.create({
-          name: "transform_fragment_dirty_flags_buffer",
-          usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-          raw_data: this.data.dirty,
-          force: true,
-        });
-        Renderer.get().mark_bind_groups_dirty(true);
-      }
-
-      if (
-        !this.data.transforms_buffer ||
-        this.data.transforms_buffer.config.size <
-        this.size * 32 * Float32Array.BYTES_PER_ELEMENT
-      ) {
-        this.data.transforms_buffer = Buffer.create({
-          name: "transform_fragment_transforms_buffer",
-          usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-          raw_data: new Float32Array(this.size * 32),
-          force: true,
-        });
-        Renderer.get().mark_bind_groups_dirty(true);
-      }
-
-      if (
-        !this.data.bounds_data_buffer ||
-        this.data.bounds_data_buffer.config.size <
-        this.size * 8 * Float32Array.BYTES_PER_ELEMENT
-      ) {
-        this.data.bounds_data_buffer = Buffer.create({
-          name: "transform_fragment_bounds_data_buffer",
-          usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-          raw_data: new Float32Array(this.size * 8),
-          force: true,
-        });
-        Renderer.get().mark_bind_groups_dirty(true);
-      }
       `,
     },
   },

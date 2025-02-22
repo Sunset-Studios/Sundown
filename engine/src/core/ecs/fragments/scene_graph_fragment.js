@@ -119,7 +119,6 @@ export class SceneGraphFragment extends Fragment {
 
   static get_entity_data(entity, instance = 0) {
     const data_view = this.data_view_allocator.allocate();
-    data_view.fragment = this;
     data_view.view_entity(entity, instance);
     return data_view;
   }

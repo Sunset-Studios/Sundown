@@ -24,7 +24,7 @@ struct SceneGraphLayerData {
 @group(1) @binding(0) var<storage, read> entity_positions: array<vec4f>;
 @group(1) @binding(1) var<storage, read> entity_rotations: array<vec4f>;
 @group(1) @binding(2) var<storage, read> entity_scales: array<vec4f>;
-@group(1) @binding(3) var<storage, read_write> entity_dirty_flags: array<u32>;
+@group(1) @binding(3) var<storage, read_write> entity_flags: array<i32>;
 @group(1) @binding(4) var<storage, read_write> entity_transforms: array<EntityTransform>;
 @group(1) @binding(5) var<storage, read_write> entity_bounds_data: array<EntityBoundsData>;
 @group(1) @binding(6) var<storage, read> scene_graph: array<vec2<i32>>;
@@ -43,12 +43,12 @@ fn cs(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let entity_id_offset = scene_graph_layer_data.offset + global_id.x;
     let entity_resolved = u32(scene_graph[entity_id_offset].x);
 
-    if (entity_resolved >= arrayLength(&entity_dirty_flags)) {
+    if (entity_resolved >= arrayLength(&entity_flags)) {
         return;
     }
 
-    let dirty_flag = entity_dirty_flags[entity_resolved];
-    if (dirty_flag == 0u) {
+    let flag = entity_flags[entity_resolved];
+    if ((flag & ETF_DIRTY) == 0) {
         return;
     }
 
@@ -60,6 +60,12 @@ fn cs(@builtin(global_invocation_id) global_id: vec3<u32>) {
     var parent_transform = identity_matrix;
     if (parent_resolved >= 0) {
         parent_transform = entity_transforms[parent_resolved].transform;
+
+        if ((flag & ETF_IGNORE_PARENT_SCALE) == ETF_IGNORE_PARENT_SCALE) {
+            parent_transform[0] = parent_transform[0] / length(vec3f(parent_transform[0].xyz));
+            parent_transform[1] = parent_transform[1] / length(vec3f(parent_transform[1].xyz));
+            parent_transform[2] = parent_transform[2] / length(vec3f(parent_transform[2].xyz));
+        }
     }
 
     let max_scale = max(
@@ -138,5 +144,5 @@ fn cs(@builtin(global_invocation_id) global_id: vec3<u32>) {
 
     entity_bounds_data[entity_resolved].bounds_extent_and_custom_scale = vec4f(1.0, 1.0, 1.0, 1.0);
 
-    entity_dirty_flags[entity_resolved] = 0u;
+    entity_flags[entity_resolved] &= ~ETF_DIRTY;
 }

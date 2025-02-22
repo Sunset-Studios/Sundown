@@ -28,7 +28,6 @@ import { MSELoss } from "../engine/src/ml/layers/mse_loss.js";
 import { Tensor, TensorInitializer } from "../engine/src/ml/tensor.js";
 import { Adam } from "../engine/src/ml/optimizers/adam.js";
 
-import { radians } from '../engine/src/utility/math.js';
 import { profile_scope } from "../engine/src/utility/performance.js";
 
 export class RenderingScene extends Scene {
@@ -40,6 +39,11 @@ export class RenderingScene extends Scene {
     // Add the freeform arcball control processor to the scene
     const freeform_arcball_control_processor = this.add_layer(FreeformArcballControlProcessor);
     freeform_arcball_control_processor.set_scene(this);
+
+    SharedViewBuffer.set_view_data(0, {
+      position: [-1.0, 22.0, 26.0],
+      rotation: [-0.00061309, 0.9948077, -0.10095515, -0.00604141],
+    });
 
     // Set the skybox for this scene.
     SharedEnvironmentMapData.set_skybox("default_scene_skybox", [
@@ -115,9 +119,6 @@ export class RenderingScene extends Scene {
       [0.5, 0.5, 0.5],
       Mesh.quad(),
       font_object.material,
-      null /* parent */,
-      [] /* children */,
-      true /* start_visible */
     );
     const text_fragment_view = EntityManager.add_fragment(text_entity, TextFragment);
     text_fragment_view.font = font_id;
@@ -132,10 +133,10 @@ export class RenderingScene extends Scene {
 
     PostProcessStack.register_pass(0, "outline", "effects/outline_post.wgsl", {
       outline_thickness: 1.0,
-      depth_threshold: 0.01,
+      depth_threshold: 0.1,
       normal_threshold: 1.0,
-      depth_scale: 1000.0,
-      outline_color: [0.0, 0.0, 0.0, 1.0],
+      depth_scale: 2000.0,
+      outline_color: [0.2, 0.3, 0.8, 1.0],
     });
   }
 
@@ -159,9 +160,9 @@ export class RenderingScene extends Scene {
     ComputeTaskQueue.get().new_task(
       "ripples",
       "effects/transform_ripples.wgsl",
-      [transforms.position_buffer, transforms.dirty_flags_buffer],
-      [transforms.position_buffer, transforms.dirty_flags_buffer],
-      Math.ceil(transforms.dirty.length / 256)
+      [transforms.position_buffer, transforms.flags_buffer],
+      [transforms.position_buffer, transforms.flags_buffer],
+      Math.ceil(transforms.flags.length / 256)
     );
   }
 }

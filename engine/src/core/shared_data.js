@@ -49,7 +49,7 @@ export class SharedViewBuffer {
   static view_data = [];
   static type_size_bytes = 0;
   static raw_data = null;
-  static size = 0;
+  static buffer_size = 0;
 
   // Adds a view data to the buffer and returns the index. Should be called during setup, before the simulation begins.
   static add_view_data(view_data = {}) {
@@ -70,19 +70,11 @@ export class SharedViewBuffer {
       view_projection_matrix: view_data.view_projection_matrix ?? mat4.create(),
       inverse_view_projection_matrix:
         view_data.inverse_view_projection_matrix_direction_only ?? mat4.create(),
-      projection_type: view_data.projection_type ?? "perspective",
-      ortho_width: view_data.ortho_width ?? 10,
-      ortho_height: view_data.ortho_height ?? 10,
     });
-
-    if (this.type_size_bytes === 0) {
-      this.type_size_bytes = this._get_gpu_type_layout(this.view_data[0]).flat().length * 4;
-    }
 
     const flattened_data = this.view_data.map((x) => this._get_gpu_type_layout(x)).flat();
     this.raw_data = new Float32Array(flattened_data.length);
     this.raw_data.set(flattened_data);
-    this.size = this.type_size_bytes * this.view_data.length;
 
     this.build();
 
@@ -91,13 +83,16 @@ export class SharedViewBuffer {
 
   static remove_view_data(index) {
     this.view_data.splice(index, 1);
-    this.size = this.type_size_bytes * this.view_data.length;
     this.build();
   }
 
   static get_view_data(index) {
     console.assert(index < this.view_data.length && index >= 0, "View data index out of bounds");
     return this.view_data[index];
+  }
+
+  static get_view_data_count() {
+    return this.view_data.length;
   }
 
   // Updates the view data at the given index. Can be called during setup or at runtime.
@@ -113,7 +108,6 @@ export class SharedViewBuffer {
     }
     if (view_data.fov && this.view_data[index].fov !== view_data.fov) {
       this.view_data[index].fov = view_data.fov;
-      console.trace("fov", this.view_data[index].fov);
       dirty = true;
     }
     if (view_data.aspect_ratio && this.view_data[index].aspect_ratio !== view_data.aspect_ratio) {
@@ -126,21 +120,6 @@ export class SharedViewBuffer {
     }
     if (view_data.far && this.view_data[index].far !== view_data.far) {
       this.view_data[index].far = view_data.far;
-      dirty = true;
-    }
-    if (
-      view_data.projection_type &&
-      this.view_data[index].projection_type !== view_data.projection_type
-    ) {
-      this.view_data[index].projection_type = view_data.projection_type;
-      dirty = true;
-    }
-    if (view_data.ortho_width && this.view_data[index].ortho_width !== view_data.ortho_width) {
-      this.view_data[index].ortho_width = view_data.ortho_width;
-      dirty = true;
-    }
-    if (view_data.ortho_height && this.view_data[index].ortho_height !== view_data.ortho_height) {
-      this.view_data[index].ortho_height = view_data.ortho_height;
       dirty = true;
     }
     this.view_data[index].dirty |= dirty;
@@ -189,7 +168,7 @@ export class SharedViewBuffer {
           view_target,
           this.view_data[index].position,
           this.view_data[index].view_forward,
-          1.0
+          1.0 
         );
 
         mat4.lookAt(
@@ -204,7 +183,7 @@ export class SharedViewBuffer {
         mat4.mul(
           this.view_data[index].view_projection_matrix,
           this.view_data[index].projection_matrix,
-          this.view_data[index].view_matrix
+          this.view_data[index].view_matrix,
         );
         mat4.invert(
           this.view_data[index].inverse_view_projection_matrix,
@@ -246,12 +225,12 @@ export class SharedViewBuffer {
         frustum[14] = tmp[2] / l;
         frustum[15] = (vp[15] + vp[13]) / l;
         // Near clipping plane
-        vec3.set(tmp, vp[2], vp[6], vp[10]);
+        vec3.set(tmp, vp[3] + vp[2], vp[7] + vp[6], vp[11] + vp[10]);
         l = vec3.length(tmp);
         frustum[16] = tmp[0] / l;
         frustum[17] = tmp[1] / l;
         frustum[18] = tmp[2] / l;
-        frustum[19] = vp[14] / l;
+        frustum[19] = (vp[15] + vp[14]) / l;
         // Far clipping plane
         vec3.set(tmp, vp[3] - vp[2], vp[7] - vp[6], vp[11] - vp[10]);
         l = vec3.length(tmp);
@@ -279,11 +258,14 @@ export class SharedViewBuffer {
       this.buffer.destroy();
     }
 
+    const data = this.view_data.map(this._get_gpu_type_layout);
     this.buffer = Buffer.create({
       name: view_buffer_name,
-      data: this.view_data.map(this._get_gpu_type_layout),
+      data: data,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
     });
+
+    this.buffer_size = data.byteLength;
 
     Renderer.get().refresh_global_shader_bindings();
   }
@@ -298,6 +280,7 @@ export class SharedViewBuffer {
       ...item.inverse_view_projection_matrix,
       ...item.position,
       ...item.view_forward,
+      ...item.view_right,
       ...item.frustum
     );
   }

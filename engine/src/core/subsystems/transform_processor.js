@@ -31,7 +31,7 @@ export class TransformProcessor extends SimulationLayer {
 
   _update_internal() {
     const transforms = EntityManager.get_fragment_array(TransformFragment);
-    if (!transforms || transforms.dirty.length === 0) {
+    if (!transforms || transforms.flags.length === 0) {
       return;
     }
 
@@ -49,7 +49,7 @@ export class TransformProcessor extends SimulationLayer {
       this.transform_processing_input_lists[i][0] = transforms.position_buffer;
       this.transform_processing_input_lists[i][1] = transforms.rotation_buffer;
       this.transform_processing_input_lists[i][2] = transforms.scale_buffer;
-      this.transform_processing_input_lists[i][3] = transforms.dirty_flags_buffer;
+      this.transform_processing_input_lists[i][3] = transforms.flags_buffer;
       this.transform_processing_input_lists[i][4] = transforms.transforms_buffer;
       this.transform_processing_input_lists[i][5] = transforms.bounds_data_buffer;
       this.transform_processing_input_lists[i][6] = scene_graph.scene_graph_buffer;

@@ -1,5 +1,5 @@
 import { DevConsoleTool } from "./dev_console_tool.js";
-import { MasterMind } from "../ml/mastermind.js";
+import { SharedViewBuffer } from "../core/shared_data.js";
 import { InputProvider } from "../input/input_provider.js";
 import { InputKey } from "../input/input_types.js";
 import { panel, label } from "../ui/2d/immediate.js";
@@ -24,19 +24,20 @@ const stats_panel_config = {
 
 const stats_label_config = {
   text_color: "#fff",
+  wrap: true,
   font: "16px monospace",
-  height: 20,
   width: "100%",
+  height: "fit-content",
   text_valign: "middle",
   text_align: "left",
   text_padding: 5,
 };
 
 /**
- * MLStats displays machine learning model statistics using the
+ * CameraInfo displays camera information using the
  * immediate mode UI framework.
  */
-export class MLStats extends DevConsoleTool {
+export class CameraInfo extends DevConsoleTool {
   is_open = false;
   scene = null;
 
@@ -50,36 +51,27 @@ export class MLStats extends DevConsoleTool {
   }
 
   /**
-   * Renders the ML statistics panel.
+   * Renders the camera info panel.
    * This method should be called every frame as part of the render loop.
    */
   render() {
-    let panel_state = panel(stats_panel_config,
-      () => {
-        // Gather the aggregated stats from all MasterMind instances.
-        const all_masterminds = MasterMind.all_masterminds;
-        let all_stats = [];
-        for (let i = 0; i < all_masterminds.length; i++) {
-          const mastermind = all_masterminds[i];
-          const stats = mastermind.get_model_stats();
-          all_stats.push(...stats);
-        }
-
-        // For each model, render one label per statistic.
-        for (let i = 0; i < all_stats.length; i++) {
-          const entry = all_stats[i];
-          const model_name = entry.name || `model_${i}`;
-          const model_stats = entry.stats;
-          for (let j = 0; j < model_stats.length; j++) {
-            const stat = model_stats[j];
-            label(
-              `${model_name} - ${stat.name}: ${stat.loss.data[0]}`,
-              stats_label_config
-            );
-          }
-        }
+    let panel_state = panel(stats_panel_config, () => {
+      const count = SharedViewBuffer.get_view_data_count();
+      for (let i = 0; i < count; i++) {
+        const view_data = SharedViewBuffer.get_view_data(i);
+        label(
+          `Camera ${i} Position: ${view_data.position[0]}, ${view_data.position[1]}, ${view_data.position[2]}`,
+          stats_label_config
+        );
+        label(
+          `Camera ${i} Rotation: ${view_data.rotation[0]}, ${view_data.rotation[1]}, ${view_data.rotation[2]}, ${view_data.rotation[3]}`,
+          stats_label_config
+        );
+        label(`Camera ${i} FOV: ${view_data.fov}`, stats_label_config);
+        label(`Camera ${i} Near: ${view_data.near}`, stats_label_config);
+        label(`Camera ${i} Far: ${view_data.far}`, stats_label_config);
       }
-    );
+    });
 
     if (this.is_open && InputProvider.get_action(InputKey.B_mouse_left)) {
       if (!panel_state.hovered) {

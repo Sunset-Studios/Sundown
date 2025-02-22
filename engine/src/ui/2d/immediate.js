@@ -563,15 +563,17 @@ function element_handle_input(x, y, width, height, config, container) {
   return { hovered, clicked, pressed, dragged, widget_id: config.widget_id };
 }
 
-function wrap_text(text, max_width) {
+function wrap_text(text, font, max_width) {
   const words = text.split(/\s+|_/);
   let lines = [];
   let current_line = words[0];
 
+  const measure_context = UIContext.get_measure_context();
+  measure_context.font = font;
   for (let i = 1; i < words.length; i++) {
     const word = words[i];
     const test_line = current_line + " " + word;
-    if (UIContext.get_measure_context().measureText(test_line).width > max_width) {
+    if (measure_context.measureText(test_line).width > max_width) {
       lines.push(current_line);
       current_line = word;
     } else {
@@ -909,10 +911,13 @@ export function button(label, config = {}) {
           height: UIContext.canvas_size.height,
         };
 
+  const font = config.font || "16px sans-serif";
+  const text_padding = config.text_padding || 0;
+
   let lines = [label];
   if (config.wrap) {
     const max_text_width = container.width - text_padding * 2;
-    lines = wrap_text(label, max_text_width);
+    lines = wrap_text(label, font, max_text_width);
   }
 
   // Determine widget width and height.
@@ -974,7 +979,7 @@ export function button(label, config = {}) {
       } else if (config.text || label) {
         // Fallback to text drawing with alignment properties.
         ctx.fillStyle = config.text_color || "#fff";
-        ctx.font = config.font || "16px sans-serif";
+        ctx.font = font;
         const text_align = config.text_align || center;
         const text_valign = config.text_valign || middle;
         const text_padding = config.text_padding || 10;
@@ -989,7 +994,7 @@ export function button(label, config = {}) {
         }
 
         if (config.wrap) {
-          const font_size_match = (config.font || "16px sans-serif").match(/(\d+)px/);
+          const font_size_match = font.match(/(\d+)px/);
           const font_size = font_size_match ? parseInt(font_size_match[1], 10) : 16;
           const line_height = font_size * 1.2;
           const total_text_height = lines.length * line_height;
@@ -1023,7 +1028,7 @@ export function button(label, config = {}) {
       if (config.text || label) {
         // Fallback to text drawing with alignment properties.
         ctx.fillStyle = config.text_color || "#fff";
-        ctx.font = config.font || "16px sans-serif";
+        ctx.font = font;
         const text_align = config.text_align || center;
         const text_valign = config.text_valign || middle;
         const text_padding = config.text_padding || 10;
@@ -1038,7 +1043,7 @@ export function button(label, config = {}) {
         }
 
         if (config.wrap) {
-          const font_size_match = (config.font || "16px sans-serif").match(/(\d+)px/);
+          const font_size_match = font.match(/(\d+)px/);
           const font_size = font_size_match ? parseInt(font_size_match[1], 10) : 16;
           const line_height = font_size * 1.2;
           const total_text_height = lines.length * line_height;
@@ -1105,7 +1110,7 @@ export function label(text, config = {}) {
   let lines = [text];
   if (config.wrap) {
     const max_text_width = container.width - text_padding * 2;
-    lines = wrap_text(text, max_text_width);
+    lines = wrap_text(text, font, max_text_width);
   }
 
   // ------------------------------
@@ -1476,7 +1481,7 @@ export function cursor(config = {}) {
   config.widget_id = UIContext.get_unique_id();
 
   const input_state = UIContext.input_state;
-  input_state.depth += input_state.mouse_wheel;
+  input_state.depth += input_state.wheel;
 
   UIContext.draw_commands.push((ctx) => {
     ctx.save();

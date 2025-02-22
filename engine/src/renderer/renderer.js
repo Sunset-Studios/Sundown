@@ -157,7 +157,7 @@ export class Renderer {
         {
           buffer: SharedViewBuffer.buffer,
           offset: 0,
-          size: SharedViewBuffer.size,
+          size: SharedViewBuffer.buffer_size,
         },
         {
           sampler: Texture.get_default_sampler(),

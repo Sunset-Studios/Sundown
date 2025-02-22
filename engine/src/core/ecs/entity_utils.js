@@ -1,9 +1,12 @@
+import { Mesh } from "../../renderer/mesh.js";
 import { EntityManager } from "./entity.js";
 import { TransformFragment } from "./fragments/transform_fragment.js";
 import { StaticMeshFragment } from "./fragments/static_mesh_fragment.js";
 import { SceneGraphFragment } from "./fragments/scene_graph_fragment.js";
 import { VisibilityFragment } from "./fragments/visibility_fragment.js";
 import { Name } from "../../utility/names.js";
+import { WORLD_FORWARD, EntityTransformFlags } from "../../core/minimal.js";
+import { quat } from "gl-matrix";
 
 export class EntityLinearDataContainer {
   constructor(container_type = Uint32Array) {
@@ -196,6 +199,7 @@ export function spawn_mesh_entity(
   parent = null,
   children = [],
   start_visible = true,
+  transform_flags = EntityTransformFlags.IGNORE_PARENT_SCALE,
 ) {
   const entity = EntityManager.create_entity();
 
@@ -206,6 +210,10 @@ export function spawn_mesh_entity(
   new_transform_view.position = position;
   new_transform_view.rotation = rotation;
   new_transform_view.scale = scale;
+
+  let flags = new_transform_view.flags;
+  flags |= transform_flags;
+  new_transform_view.flags = flags;
 
   const new_scene_graph_view = EntityManager.add_fragment(
     entity,
@@ -220,6 +228,43 @@ export function spawn_mesh_entity(
     entity,
     StaticMeshFragment,
   );
+  new_static_mesh_view.mesh = BigInt(Name.from(mesh.name));
+  new_static_mesh_view.material_slots = [material];
+
+  const new_visibility_view = EntityManager.add_fragment(
+    entity,
+    VisibilityFragment,
+  );
+  new_visibility_view.visible = start_visible;
+
+  return entity;
+}
+
+export function spawn_plane_entity(position, normal, scale, material, parent = null, children = []) {
+  const entity = EntityManager.create_entity();
+
+  const new_transform_view = EntityManager.add_fragment(
+    entity,
+    TransformFragment,
+  );
+  new_transform_view.position = position;
+  new_transform_view.rotation = quat.rotationTo(WORLD_FORWARD, normal);
+  new_transform_view.scale = scale;
+
+  const new_scene_graph_view = EntityManager.add_fragment(
+    entity,
+    SceneGraphFragment,
+  );
+  new_scene_graph_view.parent = parent;
+  if (children.length > 0) {
+    new_scene_graph_view.children = children;
+  }
+
+  const mesh = Mesh.quad();
+  const new_static_mesh_view = EntityManager.add_fragment(
+    entity,
+    StaticMeshFragment,
+  );  
   new_static_mesh_view.mesh = BigInt(Name.from(mesh.name));
   new_static_mesh_view.material_slots = [material];
 

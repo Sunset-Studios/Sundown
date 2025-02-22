@@ -10,4 +10,7 @@ export const LightType = {
   SPOT: 2,
 };
 
-
+export const EntityTransformFlags = {
+  DIRTY: 1 << 0,
+  IGNORE_PARENT_SCALE: 1 << 1,
+};

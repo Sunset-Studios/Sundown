@@ -6,6 +6,7 @@ import { global_dispatcher } from "../../../core/dispatcher.js";
 import { RingBufferAllocator } from "../../../memory/allocator.js";
 import { EntityID } from "../entity.js";
 import { EntityManager } from "../entity.js";
+import { EntityTransformFlags } from "../../minimal.js";
 
 const position_buffer_name = "position_buffer";
 const position_cpu_buffer_name = "position_cpu_buffer";
@@ -22,10 +23,10 @@ const scale_cpu_buffer_name = "scale_cpu_buffer";
 const scale_event = "scale";
 const scale_update_event = "scale_update";
 
-const dirty_flags_buffer_name = "dirty_flags_buffer";
-const dirty_flags_cpu_buffer_name = "dirty_flags_cpu_buffer";
-const dirty_flags_event = "dirty_flags";
-const dirty_flags_update_event = "dirty_flags_update";
+const flags_buffer_name = "flags_buffer";
+const flags_cpu_buffer_name = "flags_cpu_buffer";
+const flags_event = "flags";
+const flags_update_event = "flags_update";
 
 const transforms_buffer_name = "transforms_buffer";
 const transforms_cpu_buffer_name = "transforms_cpu_buffer";
@@ -56,10 +57,8 @@ class TransformDataView {
     TransformFragment.data.position[this.absolute_entity * 4 + 1] = value[1];
     TransformFragment.data.position[this.absolute_entity * 4 + 2] = value[2];
     TransformFragment.data.position[this.absolute_entity * 4 + 3] = 1.0;
-
-    if (TransformFragment.data.dirty) {
-      TransformFragment.data.dirty[this.absolute_entity] = 1;
-    }
+    TransformFragment.data.flags[this.absolute_entity] |=
+      EntityTransformFlags.DIRTY;
     TransformFragment.data.gpu_data_dirty = true;
   }
 
@@ -77,10 +76,8 @@ class TransformDataView {
     TransformFragment.data.rotation[this.absolute_entity * 4 + 1] = value[1];
     TransformFragment.data.rotation[this.absolute_entity * 4 + 2] = value[2];
     TransformFragment.data.rotation[this.absolute_entity * 4 + 3] = value[3];
-
-    if (TransformFragment.data.dirty) {
-      TransformFragment.data.dirty[this.absolute_entity] = 1;
-    }
+    TransformFragment.data.flags[this.absolute_entity] |=
+      EntityTransformFlags.DIRTY;
     TransformFragment.data.gpu_data_dirty = true;
   }
 
@@ -97,20 +94,18 @@ class TransformDataView {
     TransformFragment.data.scale[this.absolute_entity * 4 + 1] = value[1];
     TransformFragment.data.scale[this.absolute_entity * 4 + 2] = value[2];
     TransformFragment.data.scale[this.absolute_entity * 4 + 3] = 0.0;
-
-    if (TransformFragment.data.dirty) {
-      TransformFragment.data.dirty[this.absolute_entity] = 1;
-    }
+    TransformFragment.data.flags[this.absolute_entity] |=
+      EntityTransformFlags.DIRTY;
     TransformFragment.data.gpu_data_dirty = true;
   }
 
-  get dirty() {
-    return TransformFragment.data.dirty[this.absolute_entity];
+  get flags() {
+    return TransformFragment.data.flags[this.absolute_entity];
   }
 
-  set dirty(value) {
-    TransformFragment.data.dirty[this.absolute_entity] =
-      TransformFragment.data.dirty instanceof BigInt64Array
+  set flags(value) {
+    TransformFragment.data.flags[this.absolute_entity] =
+      TransformFragment.data.flags instanceof BigInt64Array
         ? BigInt(value)
         : value;
     if (TransformFragment.data.dirty) {
@@ -139,14 +134,14 @@ export class TransformFragment extends Fragment {
       position: new Float32Array(4),
       rotation: new Float32Array(4),
       scale: new Float32Array(4),
-      dirty: new Uint32Array(1),
+      flags: new Int32Array(1),
       position_buffer: null,
       position_cpu_buffer: null,
       rotation_buffer: null,
       rotation_cpu_buffer: null,
       scale_buffer: null,
       scale_cpu_buffer: null,
-      dirty_flags_buffer: null,
+      flags_buffer: null,
       transforms_buffer: null,
       bounds_data_buffer: null,
       gpu_data_dirty: true,
@@ -166,7 +161,7 @@ export class TransformFragment extends Fragment {
     Fragment.resize_array(this.data, "position", new_size, Float32Array, 4);
     Fragment.resize_array(this.data, "rotation", new_size, Float32Array, 4);
     Fragment.resize_array(this.data, "scale", new_size, Float32Array, 4);
-    Fragment.resize_array(this.data, "dirty", new_size, Uint32Array, 1);
+    Fragment.resize_array(this.data, "flags", new_size, Int32Array, 1);
 
     this.data.gpu_data_dirty = true;
   }
@@ -196,13 +191,12 @@ export class TransformFragment extends Fragment {
       this.data.scale[(entity_offset + i) * 4 + 1] = 1;
       this.data.scale[(entity_offset + i) * 4 + 2] = 1;
       this.data.scale[(entity_offset + i) * 4 + 3] = 0;
-      this.data.dirty[entity_offset + i] = 1;
+      this.data.flags[entity_offset + i] = 0;
     }
   }
 
   static get_entity_data(entity, instance = 0) {
     const data_view = this.data_view_allocator.allocate();
-    data_view.fragment = this;
     data_view.view_entity(entity, instance);
     return data_view;
   }
@@ -226,6 +220,7 @@ export class TransformFragment extends Fragment {
         this.data.scale[entity_offset * 4 + 1],
         this.data.scale[entity_offset * 4 + 2],
       ],
+      flags: this.data.flags[entity_offset],
     };
   }
 
@@ -240,7 +235,7 @@ export class TransformFragment extends Fragment {
       position_buffer: this.data.position_buffer,
       rotation_buffer: this.data.rotation_buffer,
       scale_buffer: this.data.scale_buffer,
-      dirty_flags_buffer: this.data.dirty_flags_buffer,
+      flags_buffer: this.data.flags_buffer,
     };
   }
 
@@ -347,14 +342,15 @@ export class TransformFragment extends Fragment {
     }
 
     {
-      const gpu_data = this.data.dirty;
-
+      const gpu_data = this.data.flags
+        ? this.data.flags
+        : new Int32Array(this.size * 1 + 1);
       if (
-        !this.data.dirty_flags_buffer ||
-        this.data.dirty_flags_buffer.config.size < gpu_data.byteLength
+        !this.data.flags_buffer ||
+        this.data.flags_buffer.config.size < gpu_data.byteLength
       ) {
-        this.data.dirty_flags_buffer = Buffer.create({
-          name: dirty_flags_buffer_name,
+        this.data.flags_buffer = Buffer.create({
+          name: flags_buffer_name,
           usage:
             GPUBufferUsage.STORAGE |
             GPUBufferUsage.COPY_DST |
@@ -364,21 +360,18 @@ export class TransformFragment extends Fragment {
         });
 
         Renderer.get().mark_bind_groups_dirty(true);
-        global_dispatcher.dispatch(
-          dirty_flags_event,
-          this.data.dirty_flags_buffer,
-        );
+        global_dispatcher.dispatch(flags_event, this.data.flags_buffer);
       } else {
-        this.data.dirty_flags_buffer.write(gpu_data);
+        this.data.flags_buffer.write(gpu_data);
       }
 
-      global_dispatcher.dispatch(dirty_flags_update_event);
+      global_dispatcher.dispatch(flags_update_event);
     }
 
     {
       const gpu_data = this.data.transforms
         ? this.data.transforms
-        : new Float32Array(this.size * 64 + 64);
+        : new Float32Array(this.size * 32 + 32);
       if (
         !this.data.transforms_buffer ||
         this.data.transforms_buffer.config.size < gpu_data.byteLength
@@ -430,48 +423,6 @@ export class TransformFragment extends Fragment {
     }
 
     this.data.gpu_data_dirty = false;
-
-    const dirty_flags_buffer_size = this.data.dirty.byteLength;
-    if (
-      !this.data.dirty_flags_buffer ||
-      this.data.dirty_flags_buffer.config.size < dirty_flags_buffer_size
-    ) {
-      this.data.dirty_flags_buffer = Buffer.create({
-        name: "transform_fragment_dirty_flags_buffer",
-        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-        raw_data: this.data.dirty,
-        force: true,
-      });
-      Renderer.get().mark_bind_groups_dirty(true);
-    }
-
-    if (
-      !this.data.transforms_buffer ||
-      this.data.transforms_buffer.config.size <
-        this.size * 32 * Float32Array.BYTES_PER_ELEMENT
-    ) {
-      this.data.transforms_buffer = Buffer.create({
-        name: "transform_fragment_transforms_buffer",
-        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-        raw_data: new Float32Array(this.size * 32),
-        force: true,
-      });
-      Renderer.get().mark_bind_groups_dirty(true);
-    }
-
-    if (
-      !this.data.bounds_data_buffer ||
-      this.data.bounds_data_buffer.config.size <
-        this.size * 8 * Float32Array.BYTES_PER_ELEMENT
-    ) {
-      this.data.bounds_data_buffer = Buffer.create({
-        name: "transform_fragment_bounds_data_buffer",
-        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-        raw_data: new Float32Array(this.size * 8),
-        force: true,
-      });
-      Renderer.get().mark_bind_groups_dirty(true);
-    }
   }
 
   static async sync_buffers() {
@@ -530,7 +481,7 @@ export class TransformFragment extends Fragment {
     this.data.scale[to_index * 4 + 2] = this.data.scale[from_index * 4 + 2];
     this.data.scale[to_index * 4 + 3] = this.data.scale[from_index * 4 + 3];
 
-    this.data.dirty[to_index * 1 + 0] = this.data.dirty[from_index * 1 + 0];
+    this.data.flags[to_index * 1 + 0] = this.data.flags[from_index * 1 + 0];
 
     this.data.gpu_data_dirty = true;
   }

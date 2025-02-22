@@ -4,7 +4,7 @@ import { InputKey } from "../input/input_types.js";
 import { panel, input, label, UIContext } from "../ui/2d/immediate.js";
 import { RenderPassOrganizer } from "./render_pass_organizer.js";
 import { MLStats } from "./ml_stats.js";
-
+import { CameraInfo } from "./camera_info.js";
 // Constants for naming and key codes
 const input_name = "console_input";
 const bottom = "bottom";
@@ -62,6 +62,7 @@ export class DevConsole extends SimulationLayer {
     // Register example command handlers.
     this.register_command("render_pass_organizer", new RenderPassOrganizer());
     this.register_command("ml_stats", new MLStats());
+    this.register_command("camera_info", new CameraInfo());
   }
 
   update(delta_time) {
