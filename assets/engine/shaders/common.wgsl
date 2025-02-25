@@ -8,6 +8,7 @@ enable f16;
 
 const ETF_DIRTY = 1 << 0;
 const ETF_IGNORE_PARENT_SCALE = 1 << 1;
+const ETF_IGNORE_PARENT_ROTATION = 1 << 2;
 
 struct Vertex {
     position: vec4<precision_float>,
@@ -203,4 +204,47 @@ fn uint_to_normalized_float(x: u32) -> precision_float {
 // Interpolate between two values
 fn interpolate(v0: precision_float, v1: precision_float, t: precision_float) -> precision_float {
     return v0 * (1.0 - t) + v1 * t;
+}
+
+// A billboard function that works with local position and entity transform
+// Uses model-view matrix manipulation for robust billboarding
+fn billboard_vertex_local(uv: vec2f, local_position: vec4f, entity_transform: mat4x4f) -> vec4f {
+    // Get view and projection matrices
+    let view = view_buffer[0].view_matrix;
+    // Extract translation from the entity transform (4th column)
+    let world_position = vec3f(
+        entity_transform[3][0],
+        entity_transform[3][1],
+        entity_transform[3][2]
+    );
+    // Extract scale from the entity transform
+    // Scale is the magnitude of each of the first three column vectors
+    let scale = vec3f(
+        length(vec3f(entity_transform[0][0], entity_transform[0][1], entity_transform[0][2])),
+        length(vec3f(entity_transform[1][0], entity_transform[1][1], entity_transform[1][2])),
+        length(vec3f(entity_transform[2][0], entity_transform[2][1], entity_transform[2][2]))
+    );
+    // Calculate the billboard size - use the entity's scale
+    // Using average of X and Y scale for consistent sizing
+    let billboard_size = 0.6 * (scale.x + scale.y) * 0.5;
+    // Calculate the vertex position in local space (centered quad)
+    let billboard_local_pos = vec4f(
+        (uv.x - 0.5) * billboard_size,
+        (uv.y - 0.5) * billboard_size,
+        0.0,
+        1.0
+    );
+    // Transform back to world space using the inverse view matrix
+    let inverse_view = mat4x4f(
+        view[0][0], view[1][0], view[2][0], 0.0,
+        view[0][1], view[1][1], view[2][1], 0.0,
+        view[0][2], view[1][2], view[2][2], 0.0,
+        0.0, 0.0, 0.0, 1.0
+    );
+    // Calculate the final world position
+    let final_world_position = world_position + 
+        inverse_view[0].xyz * billboard_local_pos.x +
+        inverse_view[1].xyz * billboard_local_pos.y;
+    
+    return vec4f(final_world_position, 1.0);
 }

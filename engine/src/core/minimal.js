@@ -13,4 +13,5 @@ export const LightType = {
 export const EntityTransformFlags = {
   DIRTY: 1 << 0,
   IGNORE_PARENT_SCALE: 1 << 1,
+  IGNORE_PARENT_ROTATION: 1 << 2,
 };

@@ -219,6 +219,8 @@ export class Renderer {
   on_resize() {
     this.canvas.width = this.canvas.clientWidth;
     this.canvas.height = this.canvas.clientHeight;
+    this.canvas_ui.width = this.canvas_ui.clientWidth;
+    this.canvas_ui.height = this.canvas_ui.clientHeight;
     this.aspect_ratio = this.canvas.width / this.canvas.height;
   }
 
