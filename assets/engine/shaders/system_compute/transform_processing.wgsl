@@ -61,13 +61,6 @@ fn cs(@builtin(global_invocation_id) global_id: vec3<u32>) {
     if (parent_resolved >= 0) {
         parent_transform = entity_transforms[parent_resolved].transform;
 
-
-        if ((flag & ETF_IGNORE_PARENT_SCALE) != 0) {
-            // Create a new parent transform that only has translation and scale
-            parent_transform[0] = parent_transform[0] / length(vec3f(parent_transform[0].xyz));
-            parent_transform[1] = parent_transform[1] / length(vec3f(parent_transform[1].xyz));
-            parent_transform[2] = parent_transform[2] / length(vec3f(parent_transform[2].xyz));
-        }
         if ((flag & ETF_IGNORE_PARENT_ROTATION) != 0) {
             // Extract translation from parent transform
             let parent_translation = vec3f(parent_transform[3].xyz);
@@ -79,6 +72,12 @@ fn cs(@builtin(global_invocation_id) global_id: vec3<u32>) {
                 0.0, 0.0, parent_scale.z, 0.0,
                 parent_translation.x, parent_translation.y, parent_translation.z, 1.0
             );
+        }
+        if ((flag & ETF_IGNORE_PARENT_SCALE) != 0) {
+            // Create a new parent transform that only has translation and rotation
+            parent_transform[0] = parent_transform[0] / length(vec3f(parent_transform[0].xyz));
+            parent_transform[1] = parent_transform[1] / length(vec3f(parent_transform[1].xyz));
+            parent_transform[2] = parent_transform[2] / length(vec3f(parent_transform[2].xyz));
         }
     }
 

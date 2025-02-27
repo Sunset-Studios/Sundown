@@ -205,6 +205,29 @@ const TransformFragment = {
       TransformFragment.data.gpu_data_dirty = true;
       `,
     },
+    transforms: {
+      type: DataType.FLOAT32,
+      stride: 32,
+      getter: `return [
+        TransformFragment.data.transforms[this.absolute_entity * 32],
+        TransformFragment.data.transforms[this.absolute_entity * 32 + 1],
+        TransformFragment.data.transforms[this.absolute_entity * 32 + 2],
+        TransformFragment.data.transforms[this.absolute_entity * 32 + 3],
+        TransformFragment.data.transforms[this.absolute_entity * 32 + 4],
+        TransformFragment.data.transforms[this.absolute_entity * 32 + 5],
+        TransformFragment.data.transforms[this.absolute_entity * 32 + 6],
+        TransformFragment.data.transforms[this.absolute_entity * 32 + 7],
+        TransformFragment.data.transforms[this.absolute_entity * 32 + 8],
+        TransformFragment.data.transforms[this.absolute_entity * 32 + 9],
+        TransformFragment.data.transforms[this.absolute_entity * 32 + 10],
+        TransformFragment.data.transforms[this.absolute_entity * 32 + 11],
+        TransformFragment.data.transforms[this.absolute_entity * 32 + 12],
+        TransformFragment.data.transforms[this.absolute_entity * 32 + 13],
+        TransformFragment.data.transforms[this.absolute_entity * 32 + 14],
+        TransformFragment.data.transforms[this.absolute_entity * 32 + 15],
+      ];
+      `,
+    },
     flags: {
       type: DataType.INT32,
       stride: 1,
@@ -236,8 +259,9 @@ const TransformFragment = {
     },
     transforms: {
       type: DataType.FLOAT32,
-      usage: BufferType.STORAGE,
+      usage: BufferType.STORAGE_SRC,
       stride: 32,
+      cpu_buffer: true,
     },
     bounds_data: {
       type: DataType.FLOAT32,
@@ -308,6 +332,100 @@ const TransformFragment = {
         scale_buffer: this.data.scale_buffer,
         flags_buffer: this.data.flags_buffer,
       };
+      `,
+    },
+  },
+  custom_methods: {
+    get_world_position: {
+      params: `entity, instance = 0`,
+      body: `
+      const entity_offset = EntityID.get_absolute_index(entity);
+      const entity_index = entity_offset + instance;
+
+      const translation_x = this.data.transforms[entity_index * 32 + 12];
+      const translation_y = this.data.transforms[entity_index * 32 + 13];
+      const translation_z = this.data.transforms[entity_index * 32 + 14];
+      
+      return [
+        translation_x,
+        translation_y,
+        translation_z
+      ];
+      `,
+    },
+    get_world_rotation: {
+      params: `entity, instance = 0`,
+      body: `
+      const entity_offset = EntityID.get_absolute_index(entity);
+      const entity_index = entity_offset + instance;
+
+      const m00 = this.data.transforms[entity_index * 32 + 0];
+      const m01 = this.data.transforms[entity_index * 32 + 1];
+      const m02 = this.data.transforms[entity_index * 32 + 2];
+      const m10 = this.data.transforms[entity_index * 32 + 4];
+      const m11 = this.data.transforms[entity_index * 32 + 5];
+      const m12 = this.data.transforms[entity_index * 32 + 6];
+      const m20 = this.data.transforms[entity_index * 32 + 8];
+      const m21 = this.data.transforms[entity_index * 32 + 9];
+      const m22 = this.data.transforms[entity_index * 32 + 10];
+      
+      const trace = m00 + m11 + m22;
+      let qx, qy, qz, qw;
+      
+      if (trace > 0) {
+        const s = 0.5 / Math.sqrt(trace + 1.0);
+        qw = 0.25 / s;
+        qx = (m21 - m12) * s;
+        qy = (m02 - m20) * s;
+        qz = (m10 - m01) * s;
+      } else if (m00 > m11 && m00 > m22) {
+        const s = 2.0 * Math.sqrt(1.0 + m00 - m11 - m22);
+        qw = (m21 - m12) / s;
+        qx = 0.25 * s;
+        qy = (m01 + m10) / s;
+        qz = (m02 + m20) / s;
+      } else if (m11 > m22) {
+        const s = 2.0 * Math.sqrt(1.0 + m11 - m00 - m22);
+        qw = (m02 - m20) / s;
+        qx = (m01 + m10) / s;
+        qy = 0.25 * s;
+        qz = (m12 + m21) / s;
+      } else {
+        const s = 2.0 * Math.sqrt(1.0 + m22 - m00 - m11);
+        qw = (m10 - m01) / s;
+        qx = (m02 + m20) / s;
+        qy = (m12 + m21) / s;
+        qz = 0.25 * s;
+      }
+      
+      return [qx, qy, qz, qw];
+      `,
+    },
+    get_world_scale: {
+      params: `entity, instance = 0`,
+      body: `
+      const entity_offset = EntityID.get_absolute_index(entity);
+      const entity_index = entity_offset + instance;
+
+      const scale_x = Math.sqrt(
+        this.data.transforms[entity_index * 32 + 0] * this.data.transforms[entity_index * 32 + 0] +
+        this.data.transforms[entity_index * 32 + 1] * this.data.transforms[entity_index * 32 + 1] +
+        this.data.transforms[entity_index * 32 + 2] * this.data.transforms[entity_index * 32 + 2]
+      );
+      
+      const scale_y = Math.sqrt(
+        this.data.transforms[entity_index * 32 + 4] * this.data.transforms[entity_index * 32 + 4] +
+        this.data.transforms[entity_index * 32 + 5] * this.data.transforms[entity_index * 32 + 5] +
+        this.data.transforms[entity_index * 32 + 6] * this.data.transforms[entity_index * 32 + 6]
+      );
+      
+      const scale_z = Math.sqrt(
+        this.data.transforms[entity_index * 32 + 8] * this.data.transforms[entity_index * 32 + 8] +
+        this.data.transforms[entity_index * 32 + 9] * this.data.transforms[entity_index * 32 + 9] +
+        this.data.transforms[entity_index * 32 + 10] * this.data.transforms[entity_index * 32 + 10]
+      );
+      
+      return [scale_x, scale_y, scale_z];
       `,
     },
   },

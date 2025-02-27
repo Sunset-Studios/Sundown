@@ -43,7 +43,7 @@ export class TransformProcessor extends SimulationLayer {
     for (let i = 0; i < scene_graph.scene_graph_layer_counts.length; ++i) {
       if (this.transform_processing_input_lists.length <= i) {
         this.transform_processing_input_lists.push(new Array(9));
-        this.transform_processing_output_lists.push(new Array(4));
+        this.transform_processing_output_lists.push(new Array(5));
       }
 
       this.transform_processing_input_lists[i][0] = transforms.position_buffer;
@@ -58,7 +58,8 @@ export class TransformProcessor extends SimulationLayer {
       this.transform_processing_output_lists[i][0] = transforms.position_buffer;
       this.transform_processing_output_lists[i][1] = transforms.rotation_buffer;
       this.transform_processing_output_lists[i][2] = transforms.scale_buffer;
-      this.transform_processing_output_lists[i][3] = transforms.bounds_data_buffer;
+      this.transform_processing_output_lists[i][3] = transforms.transforms_buffer;
+      this.transform_processing_output_lists[i][4] = transforms.bounds_data_buffer;
 
       ComputeTaskQueue.get().new_task(
         transform_processing_task_name + i,
@@ -91,6 +92,10 @@ export class TransformProcessor extends SimulationLayer {
 
     if (transforms.scale_cpu_buffer.buffer.mapState === unmapped_state) {
       transforms.scale_buffer.copy_buffer(encoder, 0, transforms.scale_cpu_buffer);
+    }
+
+    if (transforms.transforms_cpu_buffer.buffer.mapState === unmapped_state) {
+      transforms.transforms_buffer.copy_buffer(encoder, 0, transforms.transforms_cpu_buffer);
     }
   }
 }
