@@ -1,6 +1,7 @@
 import { Renderer } from "../renderer.js";
 import { Texture } from "../texture.js";
 import { RenderPassFlags, MaterialFamilyType } from "../renderer_types.js";
+import { AABB } from "../../acceleration/aabb.js";
 import { MeshTaskQueue } from "../mesh_task_queue.js";
 import { ComputeTaskQueue } from "../compute_task_queue.js";
 import { ComputeRasterTaskQueue } from "../compute_raster_task_queue.js";
@@ -25,6 +26,7 @@ import {
   load_op_load,
   load_op_clear,
 } from "../../utility/config_permutations.js";
+import { LineRenderer } from "../line_renderer.js";
 
 const resolution_change_event_name = "resolution_change";
 const deferred_shading_profile_scope_name = "DeferredShadingStrategy.draw";
@@ -194,6 +196,27 @@ const post_lighting_image_config = {
   force: false,
 };
 
+const line_transform_processing_shader_setup = {
+  pipeline_shaders: {
+    compute: {
+      path: "system_compute/line_transform_processing.wgsl",
+    },
+  },
+};
+const line_draw_shader_setup = {
+  pipeline_shaders: {
+    vertex: {
+      path: "line.wgsl",
+    },
+    fragment: {
+      path: "line.wgsl",
+    },
+  },
+  rasterizer_state: {
+    cull_mode: "none",
+  },
+};
+
 const bloom_downsample_shader_setup = {
   pipeline_shaders: {
     compute: {
@@ -316,11 +339,16 @@ export class DeferredShadingStrategy {
       const entity_transforms = render_graph.register_buffer(
         transform_gpu_data.transforms_buffer.config.name
       );
-      const entity_bounds_data = render_graph.register_buffer(
-        transform_gpu_data.bounds_data_buffer.config.name
+      const entity_aabb_node_indices = render_graph.register_buffer(
+        transform_gpu_data.aabb_node_index_buffer.config.name
       );
 
       const scene_graph_gpu_data = SceneGraphFragment.to_gpu_data();
+
+      const aabb_gpu_data = AABB.to_gpu_data();
+      const aabb_tree_nodes = render_graph.register_buffer(
+        aabb_gpu_data.aabb_tree_nodes_buffer.config.name
+      );
 
       const light_gpu_data = LightFragment.to_gpu_data();
       const lights = render_graph.register_buffer(light_gpu_data.light_fragment_buffer.config.name);
@@ -469,10 +497,11 @@ export class DeferredShadingStrategy {
             shader_setup: compute_cull_shader_setup,
             inputs: [
               main_hzb_image,
-              entity_bounds_data,
+              aabb_tree_nodes,
               object_instances,
               compacted_object_instance_buffer,
               indirect_draws,
+              entity_aabb_node_indices,
               draw_cull_data,
             ],
             outputs: [indirect_draws],
@@ -616,6 +645,51 @@ export class DeferredShadingStrategy {
           MeshTaskQueue.get().draw_quad(pass);
         }
       );
+
+      // Add line renderer pass
+      if (LineRenderer.enabled && LineRenderer.line_positions.length > 0) {
+        const { position_buffer, line_data_buffer, transform_buffer, visible_line_count } = LineRenderer.to_gpu_data();
+        if (visible_line_count > 0) {
+          const line_position_buffer_rg = render_graph.register_buffer(position_buffer.config.name);
+          const line_data_buffer_rg = render_graph.register_buffer(line_data_buffer.config.name);
+          const line_transform_buffer_rg = render_graph.register_buffer(transform_buffer.config.name);
+    
+          render_graph.add_pass(
+            "line_transform_processing",
+            RenderPassFlags.Compute,
+            {
+              inputs: [line_transform_buffer_rg, line_position_buffer_rg],
+              outputs: [line_transform_buffer_rg],
+              shader_setup: line_transform_processing_shader_setup,
+            },
+            (graph, frame_data, encoder) => {
+              const pass = graph.get_physical_pass(frame_data.current_pass);
+              pass.dispatch((visible_line_count + 63) / 64, 1, 1);
+            }
+          );
+    
+          render_graph.add_pass(
+            "line_renderer_pass",
+            RenderPassFlags.Graphics,
+            {
+              inputs: [line_transform_buffer_rg, line_data_buffer_rg],
+              outputs: [
+                main_albedo_image,
+                main_emissive_image,
+                main_smra_image,
+                main_position_image,
+                main_normal_image,
+                main_depth_image,
+              ],
+              shader_setup: line_draw_shader_setup,
+            },
+            (graph, frame_data, encoder) => {
+              const pass = graph.get_physical_pass(frame_data.current_pass);
+              MeshTaskQueue.get().draw_quad(pass, visible_line_count);
+            }
+          );
+        }
+      }
 
       // Reset GBuffer targets
       {

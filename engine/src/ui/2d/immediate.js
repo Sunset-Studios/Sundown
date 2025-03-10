@@ -920,9 +920,29 @@ export function button(label, config = {}) {
     lines = wrap_text(label, font, max_text_width);
   }
 
-  // Determine widget width and height.
-  let width = parse_dimension(config.width, container.width);
-  let height = parse_dimension(config.height, container.height);
+  // ------------------------------
+  // Compute Dimensions: fit-content vs. fixed
+  // ------------------------------
+  let width, height;
+
+  if (config.width === "fit-content") {
+    // Use the shared measurement context for text measurement.
+    const mc = UIContext.get_measure_context();
+    mc.font = font;
+    const metrics = mc.measureText(label);
+    width = metrics.width + text_padding * 2;
+  } else {
+    width = parse_dimension(config.width, container.width);
+  }
+
+  if (config.height === "fit-content") {
+    // There is no built–in text height measurement; extract font size and use a heuristic.
+    const font_match = font.match(/(\d+)px/);
+    const font_size = font_match ? parseInt(font_match[1], 10) : 16;
+    height = (config.wrap ? lines.length : 1) * font_size * 1.2;
+  } else {
+    height = parse_dimension(config.height, container.height);
+  }
 
   // Determine offsets using auto-sizing flags.
   let offset_x;

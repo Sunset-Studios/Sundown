@@ -305,7 +305,7 @@ export class MeshTaskQueue {
             batch.index_buffer_id = Name.from(mesh.index_buffer.config.name);
             batch.instance_count = task.instance_count;
             batch.first_index = 0;
-            batch.index_count = mesh.indices.length;
+            batch.index_count = mesh.index_count;
             batch.base_vertex = mesh.vertex_buffer_offset;
             batch.base_instance = last_batch
               ? last_batch.base_instance + last_batch.instance_count
@@ -453,7 +453,7 @@ export class MeshTaskQueue {
       }
 
       render_pass.pass.draw(
-        mesh.vertices.length,
+        mesh.vertex_count,
         task.instance_count,
         mesh.vertex_buffer_offset
       );
@@ -495,7 +495,7 @@ export class MeshTaskQueue {
         mesh.index_buffer.config.element_type
       );
       render_pass.pass.drawIndexed(
-        mesh.indices.length,
+        mesh.index_count,
         task.instance_count,
         0,
         mesh.vertex_buffer_offset
@@ -605,29 +605,29 @@ export class MeshTaskQueue {
     }
   }
 
-  draw_quad(render_pass) {
+  draw_quad(render_pass, instance_count = 1) {
     const mesh = Mesh.quad();
     render_pass.pass.setIndexBuffer(
       mesh.index_buffer.buffer,
       mesh.index_buffer.config.element_type
     );
     render_pass.pass.drawIndexed(
-      mesh.indices.length,
-      1,
+      mesh.index_count,
+      instance_count,
       0,
       mesh.vertex_buffer_offset
     );
   }
 
-  draw_cube(render_pass) {
+  draw_cube(render_pass, instance_count = 1) {
     const mesh = Mesh.cube();
     render_pass.pass.setIndexBuffer(
       mesh.index_buffer.buffer,
       mesh.index_buffer.config.element_type
     );
     render_pass.pass.drawIndexed(
-      mesh.indices.length,
-      1,
+      mesh.index_count,
+      instance_count,
       0,
       mesh.vertex_buffer_offset
     );

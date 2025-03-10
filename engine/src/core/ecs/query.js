@@ -1,5 +1,5 @@
 import { EntityID } from "./entity.js";
-import { Vector } from "../../memory/container.js";
+import { TypedVector } from "../../memory/container.js";
 import { profile_scope } from "../../utility/performance.js";
 
 export const EntityMasks = {
@@ -17,11 +17,11 @@ export class EntityQuery {
   constructor(entity_manager, fragment_requirements) {
     this.entity_manager = entity_manager;
     this.fragment_requirements = fragment_requirements;
-    this.matching_entities = new Vector(256, Float64Array);
-    this.matching_entity_ids = new Vector(256, Uint32Array);
-    this.matching_entity_instance_counts = new Vector(256, Uint32Array);
-    this.entity_states = new Vector(256, Uint32Array);
-    this.entities_to_filter = new Vector(256, Float64Array);
+    this.matching_entities = new TypedVector(256, -1, Float64Array);
+    this.matching_entity_ids = new TypedVector(256, -1, Uint32Array);
+    this.matching_entity_instance_counts = new TypedVector(256, -1, Uint32Array);
+    this.entity_states = new TypedVector(256, 0, Uint32Array);
+    this.entities_to_filter = new TypedVector(256, -1, Float64Array);
     this.update_matching_entities();
   }
 

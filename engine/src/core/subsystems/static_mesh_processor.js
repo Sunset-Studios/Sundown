@@ -46,14 +46,13 @@ export class StaticMeshProcessor extends SimulationLayer {
     for (let i = 0; i < this.entity_query.matching_entities.length; ++i) {
       const entity = matching_entity_data[i];
       const entity_state = entity_states[i];
+      const entity_index = matching_entity_offset_data[i];
 
       if (entity_state & EntityMasks.Removed) {
         mesh_task_queue.remove(entity);
         needs_resort = true;
         continue;
       }
-
-      const entity_index = matching_entity_offset_data[i];
 
       if (!static_meshes.dirty[entity_index] && !visibilities.dirty[entity_index]) {
         continue;

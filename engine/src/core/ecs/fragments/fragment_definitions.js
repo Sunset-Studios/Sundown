@@ -147,6 +147,7 @@ const TransformFragment = {
   name: "Transform",
   imports: {
     EntityTransformFlags: "../../minimal.js",
+    AABB: "../../../acceleration/aabb.js",
   },
   fields: {
     position: {
@@ -205,6 +206,11 @@ const TransformFragment = {
       TransformFragment.data.gpu_data_dirty = true;
       `,
     },
+    aabb_node_index: {
+      type: DataType.UINT32,
+      stride: 1,
+      default: 0,
+    },
     transforms: {
       type: DataType.FLOAT32,
       stride: 32,
@@ -227,10 +233,35 @@ const TransformFragment = {
         TransformFragment.data.transforms[this.absolute_entity * 32 + 15],
       ];
       `,
+      setter: `
+      TransformFragment.data.transforms[this.absolute_entity * 32] = value[0];
+      TransformFragment.data.transforms[this.absolute_entity * 32 + 1] = value[1];
+      TransformFragment.data.transforms[this.absolute_entity * 32 + 2] = value[2];
+      TransformFragment.data.transforms[this.absolute_entity * 32 + 3] = value[3];
+      TransformFragment.data.transforms[this.absolute_entity * 32 + 4] = value[4];
+      TransformFragment.data.transforms[this.absolute_entity * 32 + 5] = value[5];
+      TransformFragment.data.transforms[this.absolute_entity * 32 + 6] = value[6];
+      TransformFragment.data.transforms[this.absolute_entity * 32 + 7] = value[7];
+      TransformFragment.data.transforms[this.absolute_entity * 32 + 8] = value[8];
+      TransformFragment.data.transforms[this.absolute_entity * 32 + 9] = value[9];
+      TransformFragment.data.transforms[this.absolute_entity * 32 + 10] = value[10];
+      TransformFragment.data.transforms[this.absolute_entity * 32 + 11] = value[11];
+      TransformFragment.data.transforms[this.absolute_entity * 32 + 12] = value[12];
+      TransformFragment.data.transforms[this.absolute_entity * 32 + 13] = value[13];
+      TransformFragment.data.transforms[this.absolute_entity * 32 + 14] = value[14];
+      TransformFragment.data.transforms[this.absolute_entity * 32 + 15] = value[15];
+      TransformFragment.data.flags[this.absolute_entity] |= EntityTransformFlags.TRANSFORM_DIRTY;
+      TransformFragment.data.gpu_data_dirty = true;
+      `,
     },
     flags: {
       type: DataType.INT32,
       stride: 1,
+      getter: `return TransformFragment.data.flags[this.absolute_entity];`,
+      setter: `
+      TransformFragment.data.flags[this.absolute_entity] = value;
+      TransformFragment.data.gpu_data_dirty = true;
+      `,
     },
   },
   buffers: {
@@ -252,10 +283,16 @@ const TransformFragment = {
       stride: 4,
       cpu_buffer: true,
     },
+    aabb_node_index: {
+      type: DataType.UINT32,
+      usage: BufferType.STORAGE,
+      stride: 1,
+    },
     flags: {
       type: DataType.INT32,
       usage: BufferType.STORAGE_SRC,
       stride: 1,
+      cpu_buffer: true,
     },
     transforms: {
       type: DataType.FLOAT32,
@@ -263,13 +300,17 @@ const TransformFragment = {
       stride: 32,
       cpu_buffer: true,
     },
-    bounds_data: {
-      type: DataType.FLOAT32,
-      usage: BufferType.STORAGE,
-      stride: 8,
-    },
   },
   overrides: {
+    add_entity: {
+      skip_default: true,
+      pre: `
+      const aabb_node_index = AABB.allocate_node(absolute_entity);
+      this.data.aabb_node_index[absolute_entity] = aabb_node_index;
+
+      return this.get_entity_data(entity);
+      `,
+    },
     remove_entity: {
       skip_default: true,
       pre: `
@@ -289,7 +330,13 @@ const TransformFragment = {
         this.data.scale[(entity_offset + i) * 4 + 2] = 1;
         this.data.scale[(entity_offset + i) * 4 + 3] = 0;
         this.data.flags[(entity_offset + i)] = 0;
+
+        if (this.data.aabb_node_index[(entity_offset + i)] !== 0) {
+          AABB.free_node(this.data.aabb_node_index[(entity_offset + i)]);
+          this.data.aabb_node_index[(entity_offset + i)] = 0;
+        }
       }
+      this.data.gpu_data_dirty = true;
       `,
     },
     duplicate_entity_data: {
@@ -313,6 +360,7 @@ const TransformFragment = {
           this.data.scale[entity_offset * 4 + 1],
           this.data.scale[entity_offset * 4 + 2],
         ],
+        aabb_node_index: this.data.aabb_node_index[entity_offset],
         flags: this.data.flags[entity_offset],
       };
       `,
@@ -326,12 +374,19 @@ const TransformFragment = {
 
       return {
         transforms_buffer: this.data.transforms_buffer,
-        bounds_data_buffer: this.data.bounds_data_buffer,
         position_buffer: this.data.position_buffer,
         rotation_buffer: this.data.rotation_buffer,
         scale_buffer: this.data.scale_buffer,
         flags_buffer: this.data.flags_buffer,
+        aabb_node_index_buffer: this.data.aabb_node_index_buffer,
       };
+      `,
+    },
+    copy_entity_instance: {
+      post: `
+      if (to_index > from_index) {
+        this.data.aabb_node_index[to_index] = AABB.allocate_node(to_index);
+      }
       `,
     },
   },

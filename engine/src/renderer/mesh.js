@@ -5,13 +5,19 @@ import { Buffer } from "./buffer.js";
 import { Name } from "../utility/names.js";
 import { CacheTypes } from "./renderer_types.js";
 
+const discard_cpu_data = true;
+
 export class Mesh {
   static loading_meshes = new Map(); 
 
   name = "";
   vertices = [];
   indices = [];
+  bounds_min_and_max = [0, 0, 0, 0, 0, 0];
   vertex_buffer_offset = 0;
+  vertex_count = 0;
+  index_count = 0;
+
   index_buffer = null;
   pending_loader = null;
 
@@ -73,6 +79,29 @@ export class Mesh {
     return { t: tangents, b: bitangents };
   }
 
+  _get_vertex_bounds(vertices) {
+    let min_x = Infinity;
+    let min_y = Infinity;
+    let min_z = Infinity;
+    let max_x = -Infinity;
+    let max_y = -Infinity;
+    let max_z = -Infinity;
+
+    for (const vertex of vertices) {
+      const position = vertex.position;
+      
+      min_x = Math.min(min_x, position[0]);
+      min_y = Math.min(min_y, position[1]);
+      min_z = Math.min(min_z, position[2]);
+
+      max_x = Math.max(max_x, position[0]);
+      max_y = Math.max(max_y, position[1]);
+      max_z = Math.max(max_z, position[2]);
+    }
+
+    return [min_x, min_y, min_z, max_x, max_y, max_z];
+  }
+
   static create(name, vertices, indices) {
     let mesh = ResourceCache.get().fetch(CacheTypes.MESH, Name.from(name));
     if (mesh) {
@@ -83,9 +112,19 @@ export class Mesh {
     mesh.name = name;
     mesh.vertices = vertices;
     mesh.indices = new Uint16Array(indices);
+    mesh.bounds_min_and_max = mesh._get_vertex_bounds(vertices);
 
     mesh.vertex_buffer_offset = SharedVertexBuffer.add_vertex_data(mesh.vertices);
+
+    mesh.vertex_count = mesh.vertices.length;
+    mesh.index_count = mesh.indices.length;
+
     mesh._recreate_index_buffer();
+
+    if (discard_cpu_data) {
+      mesh.vertices = null;
+      mesh.indices = null;
+    }
 
     ResourceCache.get().store(CacheTypes.MESH, Name.from(name), mesh);
 
@@ -106,40 +145,45 @@ export class Mesh {
         normal: [0, 0, -1, 0],
         color: [1, 1, 1, 1],
         uv: [0, 0, 0, 0],
-        tangent: [1, 0, 0, 0],
-        bitangent: [0, 1, 0, 0],
       },
       {
         position: [-1, -1, 0, 1],
         normal: [0, 0, -1, 0],
         color: [1, 1, 1, 1],
         uv: [0, 1, 0, 0],
-        tangent: [1, 0, 0, 0],
-        bitangent: [0, 1, 0, 0],
       },
       {
         position: [1, -1, 0, 1],
         normal: [0, 0, -1, 0],
         color: [1, 1, 1, 1],
         uv: [1, 1, 0, 0],
-        tangent: [1, 0, 0, 0],
-        bitangent: [0, 1, 0, 0],
       },
       {
         position: [1, 1, 0, 1],
         normal: [0, 0, -1, 0],
         color: [1, 1, 1, 1],
         uv: [1, 0, 0, 0],
-        tangent: [1, 0, 0, 0],
-        bitangent: [0, 1, 0, 0],
       },
     ];
 
     mesh.indices = new Uint16Array([0, 1, 2, 0, 2, 3]);
 
+    mesh.bounds_min_and_max = [
+      -1, -1, 0,  // min x, min y, min z
+      1, 1, 0,  // max x, max y, max z
+    ];
+
     mesh.vertex_buffer_offset = SharedVertexBuffer.add_vertex_data(mesh.vertices);
 
+    mesh.vertex_count = mesh.vertices.length;
+    mesh.index_count = mesh.indices.length;
+
     mesh._recreate_index_buffer();
+
+    if (discard_cpu_data) {
+      mesh.vertices = null;
+      mesh.indices = null;
+    }
 
     ResourceCache.get().store(CacheTypes.MESH, Name.from("engine_quad"), mesh);
 
@@ -161,32 +205,24 @@ export class Mesh {
         normal: [0, 0, 1, 0],
         color: [1, 1, 1, 1],
         uv: [0, 0, 0, 0],
-        tangent: [1, 0, 0, 0],
-        bitangent: [0, 1, 0, 0],
       },
       {
         position: [1, -1, 1, 1],
         normal: [0, 0, 1, 0],
         color: [1, 1, 1, 1],
         uv: [1, 0, 0, 0],
-        tangent: [1, 0, 0, 0],
-        bitangent: [0, 1, 0, 0],
       },
       {
         position: [1, 1, 1, 1],
         normal: [0, 0, 1, 0],
         color: [1, 1, 1, 1],
         uv: [1, 1, 0, 0],
-        tangent: [1, 0, 0, 0],
-        bitangent: [0, 1, 0, 0],
       },
       {
         position: [-1, 1, 1, 1],
         normal: [0, 0, 1, 0],
         color: [1, 1, 1, 1],
         uv: [0, 1, 0, 0],
-        tangent: [1, 0, 0, 0],
-        bitangent: [0, 1, 0, 0],
       },
 
       // Back face
@@ -195,32 +231,24 @@ export class Mesh {
         normal: [0, 0, -1, 0],
         color: [1, 1, 1, 1],
         uv: [0, 0, 0, 0],
-        tangent: [-1, 0, 0, 0],
-        bitangent: [0, 1, 0, 0],
       },
       {
         position: [-1, -1, -1, 1],
         normal: [0, 0, -1, 0],
         color: [1, 1, 1, 1],
         uv: [1, 0, 0, 0],
-        tangent: [-1, 0, 0, 0],
-        bitangent: [0, 1, 0, 0],
       },
       {
         position: [-1, 1, -1, 1],
         normal: [0, 0, -1, 0],
         color: [1, 1, 1, 1],
         uv: [1, 1, 0, 0],
-        tangent: [-1, 0, 0, 0],
-        bitangent: [0, 1, 0, 0],
       },
       {
         position: [1, 1, -1, 1],
         normal: [0, 0, -1, 0],
         color: [1, 1, 1, 1],
         uv: [0, 1, 0, 0],
-        tangent: [-1, 0, 0, 0],
-        bitangent: [0, 1, 0, 0],
       },
 
       // Top face
@@ -229,32 +257,24 @@ export class Mesh {
         normal: [0, 1, 0, 0],
         color: [1, 1, 1, 1],
         uv: [0, 0, 0, 0],
-        tangent: [1, 0, 0, 0],
-        bitangent: [0, 0, -1, 0],
       },
       {
         position: [1, 1, 1, 1],
         normal: [0, 1, 0, 0],
         color: [1, 1, 1, 1],
         uv: [1, 0, 0, 0],
-        tangent: [1, 0, 0, 0],
-        bitangent: [0, 0, -1, 0],
       },
       {
         position: [1, 1, -1, 1],
         normal: [0, 1, 0, 0],
         color: [1, 1, 1, 1],
         uv: [1, 1, 0, 0],
-        tangent: [1, 0, 0, 0],
-        bitangent: [0, 0, -1, 0],
       },
       {
         position: [-1, 1, -1, 1],
         normal: [0, 1, 0, 0],
         color: [1, 1, 1, 1],
         uv: [0, 1, 0, 0],
-        tangent: [1, 0, 0, 0],
-        bitangent: [0, 0, -1, 0],
       },
 
       // Bottom face
@@ -263,32 +283,24 @@ export class Mesh {
         normal: [0, -1, 0, 0],
         color: [1, 1, 1, 1],
         uv: [0, 0, 0, 0],
-        tangent: [1, 0, 0, 0],
-        bitangent: [0, 0, 1, 0],
       },
       {
         position: [1, -1, -1, 1],
         normal: [0, -1, 0, 0],
         color: [1, 1, 1, 1],
         uv: [1, 0, 0, 0],
-        tangent: [1, 0, 0, 0],
-        bitangent: [0, 0, 1, 0],
       },
       {
         position: [1, -1, 1, 1],
         normal: [0, -1, 0, 0],
         color: [1, 1, 1, 1],
         uv: [1, 1, 0, 0],
-        tangent: [1, 0, 0, 0],
-        bitangent: [0, 0, 1, 0],
       },
       {
         position: [-1, -1, 1, 1],
         normal: [0, -1, 0, 0],
         color: [1, 1, 1, 1],
         uv: [0, 1, 0, 0],
-        tangent: [1, 0, 0, 0],
-        bitangent: [0, 0, 1, 0],
       },
 
       // Right face
@@ -297,32 +309,24 @@ export class Mesh {
         normal: [1, 0, 0, 0],
         color: [1, 1, 1, 1],
         uv: [0, 0, 0, 0],
-        tangent: [0, 0, -1, 0],
-        bitangent: [0, 1, 0, 0],
       },
       {
         position: [1, -1, -1, 1],
         normal: [1, 0, 0, 0],
         color: [1, 1, 1, 1],
         uv: [1, 0, 0, 0],
-        tangent: [0, 0, -1, 0],
-        bitangent: [0, 1, 0, 0],
       },
       {
         position: [1, 1, -1, 1],
         normal: [1, 0, 0, 0],
         color: [1, 1, 1, 1],
         uv: [1, 1, 0, 0],
-        tangent: [0, 0, -1, 0],
-        bitangent: [0, 1, 0, 0],
       },
       {
         position: [1, 1, 1, 1],
         normal: [1, 0, 0, 0],
         color: [1, 1, 1, 1],
         uv: [0, 1, 0, 0],
-        tangent: [0, 0, -1, 0],
-        bitangent: [0, 1, 0, 0],
       },
 
       // Left face
@@ -331,32 +335,24 @@ export class Mesh {
         normal: [-1, 0, 0, 0],
         color: [1, 1, 1, 1],
         uv: [0, 0, 0, 0],
-        tangent: [0, 0, 1, 0],
-        bitangent: [0, 1, 0, 0],
       },
       {
         position: [-1, -1, 1, 1],
         normal: [-1, 0, 0, 0],
         color: [1, 1, 1, 1],
         uv: [1, 0, 0, 0],
-        tangent: [0, 0, 1, 0],
-        bitangent: [0, 1, 0, 0],
       },
       {
         position: [-1, 1, 1, 1],
         normal: [-1, 0, 0, 0],
         color: [1, 1, 1, 1],
         uv: [1, 1, 0, 0],
-        tangent: [0, 0, 1, 0],
-        bitangent: [0, 1, 0, 0],
       },
       {
         position: [-1, 1, -1, 1],
         normal: [-1, 0, 0, 0],
         color: [1, 1, 1, 1],
         uv: [0, 1, 0, 0],
-        tangent: [0, 0, 1, 0],
-        bitangent: [0, 1, 0, 0],
       },
     ];
 
@@ -364,10 +360,22 @@ export class Mesh {
       0, 1, 2, 2, 3, 0, 4, 5, 6, 6, 7, 4, 8, 9, 10, 10, 11, 8, 12, 13, 14, 14, 15, 12, 16, 17, 18,
       18, 19, 16, 20, 21, 22, 22, 23, 20,
     ]);
+    mesh.bounds_min_and_max = [
+      -1, -1, -1,  // min x, min y, min z
+      1, 1, 1      // max x, max y, max z
+    ];
 
     mesh.vertex_buffer_offset = SharedVertexBuffer.add_vertex_data(mesh.vertices);
 
+    mesh.vertex_count = mesh.vertices.length;
+    mesh.index_count = mesh.indices.length;
+
     mesh._recreate_index_buffer();
+
+    if (discard_cpu_data) {
+      mesh.vertices = null;
+      mesh.indices = null;
+    }
 
     ResourceCache.get().store(CacheTypes.MESH, Name.from("engine_cube"), mesh);
 
@@ -423,21 +431,6 @@ export class Mesh {
             );
           }
         }
-        let tangents = [];
-        if (primitive.attributes.TANGENT) {
-          tangents = new Float32Array(primitive.attributes.TANGENT.bufferView.data);
-        }
-        let bitangents = [];
-        if (primitive.attributes.BITANGENT) {
-          bitangents = new Float32Array(primitive.attributes.BITANGENT.bufferView.data);
-        }
-
-        // Generate tangents and bitangents if they're not provided
-        if (tangents.length === 0 || bitangents.length === 0) {
-          const { t, b } = mesh._get_tangents_and_bitangents(positions, uvs);
-          tangents = t;
-          bitangents = b;
-        }
 
         let uv_index = 0;
         for (let i = 0; i < positions.length; i += 3) {
@@ -445,13 +438,6 @@ export class Mesh {
             position: [positions[i] ?? 0.0, positions[i + 1] ?? 0.0, positions[i + 2] ?? 0.0, 1.0],
             normal: [normals[i] ?? 0.0, normals[i + 1] ?? 0.0, normals[i + 2] ?? 0.0, 0.0],
             uv: [uvs[uv_index] ?? 0.0, uvs[uv_index + 1] ?? 0.0, 0.0, 0.0],
-            tangent: [tangents[i] ?? 0.0, tangents[i + 1] ?? 0.0, tangents[i + 2] ?? 0.0, 0.0],
-            bitangent: [
-              bitangents[i] ?? 0.0,
-              bitangents[i + 1] ?? 0.0,
-              bitangents[i + 2] ?? 0.0,
-              0.0,
-            ],
           });
           uv_index += 2;
         }
@@ -473,9 +459,19 @@ export class Mesh {
         }
       }
 
+      mesh.bounds_min_and_max = mesh._get_vertex_bounds(mesh.vertices);
+
       mesh.vertex_buffer_offset = SharedVertexBuffer.add_vertex_data(mesh.vertices);
 
+      mesh.vertex_count = mesh.vertices.length;
+      mesh.index_count = mesh.indices.length;
+      
       mesh._recreate_index_buffer();
+
+      if (discard_cpu_data) {
+        mesh.vertices = null;
+        mesh.indices = null;
+      }
 
       Mesh.loading_meshes.delete(mesh_id);
     });

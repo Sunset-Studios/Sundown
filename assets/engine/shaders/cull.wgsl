@@ -30,11 +30,12 @@ struct DrawCullConstants {
 // ------------------------------------------------------------------------------------ 
 
 @group(1) @binding(0) var input_texture: texture_2d<f32>;
-@group(1) @binding(1) var<storage, read> entity_bounds_data: array<EntityBoundsData>;
+@group(1) @binding(1) var<storage, read> aabb_tree_nodes: array<AABBTreeNode>;
 @group(1) @binding(2) var<storage, read> object_instances: array<ObjectInstance>;
 @group(1) @binding(3) var<storage, read_write> compacted_object_instances: array<CompactedObjectInstance>;
 @group(1) @binding(4) var<storage, read_write> draw_indirect_buffer: array<DrawCommand>;
-@group(1) @binding(5) var<uniform> draw_cull_constants: DrawCullConstants;
+@group(1) @binding(5) var<storage, read> entity_aabb_node_indices: array<u32>;
+@group(1) @binding(6) var<uniform> draw_cull_constants: DrawCullConstants;
 
 // ------------------------------------------------------------------------------------
 // Occlusion Helper Functions
@@ -132,12 +133,12 @@ fn cs(@builtin(global_invocation_id) global_id: vec3<u32>) {
         let entity_id = object_instances[g_id].entity;
         let entity_instance = object_instances[g_id].entity_instance;
         let entity_resolved = entity_metadata[entity_id].offset + entity_instance;
+        let aabb_node_index = entity_aabb_node_indices[entity_resolved];
 
-        let sphere_bounds = entity_bounds_data[entity_resolved].bounds_pos_radius;
-        let center = vec4<f32>(sphere_bounds.xyz, 1.0);
-
-        // Inflate bounds conservatively
-        let radius = sphere_bounds.w * entity_bounds_data[entity_resolved].bounds_extent_and_custom_scale.w;
+        let aabb_node = aabb_tree_nodes[aabb_node_index];
+        let center = vec4f((aabb_node.min_point_and_node_type.xyz + aabb_node.max_point_and_flags.xyz) * 0.5, 1.0);
+        var radius = length(aabb_node.max_point_and_flags.xyz - aabb_node.min_point_and_node_type.xyz) * 0.5;
+        radius *= 1.05; // Inflate bounds conservatively
 
         let in_frustum = is_in_frustum(center, radius);
         let occluded = is_occluded(center, radius);

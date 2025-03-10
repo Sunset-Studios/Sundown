@@ -327,7 +327,6 @@ export class Material {
 
     for (let i = 0; i < entries.length; i++) {
       if (!entries[i].resource) {
-        console.log(entries[i]);
         throw new Error(`Binding ${this.template.name} has an invalid resource at index ${i}`);
       }
     }

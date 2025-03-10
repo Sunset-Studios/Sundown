@@ -62,14 +62,10 @@ fn vertex(v_out: ptr<function, VertexOutput>) -> VertexOutput {
             precision_float(glyph_data.y)
         ) / string.page_texture_size;
 
-
-
         let uv_size = vec2<precision_float>(
             precision_float(glyph_data.width),
             precision_float(glyph_data.height)
         ) / string.page_texture_size;
-
-
 
         // Flip Y coordinate and apply the corner offset
         uv_top_left.y = 1.0 - uv_top_left.y - uv_size.y;

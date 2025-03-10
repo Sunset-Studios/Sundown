@@ -7,6 +7,10 @@ struct VertexOutput {
     @builtin(position) position: vec4f,
 };
 
+struct FragmentOutput {
+    @builtin(frag_depth) depth: f32,
+};
+
 // ------------------------------------------------------------------------------------
 // Buffers
 // ------------------------------------------------------------------------------------ 
@@ -27,8 +31,22 @@ struct VertexOutput {
 
     let entity_transform = entity_transforms[entity_resolved];
     let view_proj_mat = view_buffer[0].view_projection_matrix;
+    let view_mat = view_buffer[0].view_matrix;
 
     var output : VertexOutput;
+    
     output.position = view_proj_mat * entity_transform.transform * vec4<f32>(instance_vertex.position);
+    
+    return output;
+}
+
+// ------------------------------------------------------------------------------------
+// Fragment Shader
+// ------------------------------------------------------------------------------------ 
+@fragment fn fs(v_out: VertexOutput) -> FragmentOutput {
+    var output: FragmentOutput;
+    
+    output.depth = log_depth(v_out.position);
+    
     return output;
 }

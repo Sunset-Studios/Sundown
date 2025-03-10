@@ -1,6 +1,6 @@
 import { SharedEntityMetadataBuffer } from "../shared_data.js";
 import { EntityQuery } from "./query.js";
-import { Vector } from "../../memory/container.js";
+import { TypedVector } from "../../memory/container.js";
 import { clamp } from "../../utility/math.js";
 
 const entity_image_buffer_name = "entity_image_buffer";
@@ -18,13 +18,21 @@ export class EntityID {
   static set_instance_count(entity, instance_count) {
     SharedEntityMetadataBuffer.set_entity_instance_count(entity, instance_count);
   }
+
+  static get_entity_flags(entity) {
+    return SharedEntityMetadataBuffer.get_entity_flags(entity);
+  }
+
+  static set_entity_flags(entity, flags) {
+    SharedEntityMetadataBuffer.set_entity_flags(entity, flags);
+  }
 }
 
 export class EntityManager {
   static next_entity_id = 0;
   static entity_fragments = new Map();
   static fragment_types = new Set();
-  static entities = new Vector(256, Float64Array);
+  static entities = new TypedVector(256, 0, Float64Array);
   static deleted_entities = new Set();
   static pending_instance_count_changes = new Map();
   static needs_entity_refresh = false;

@@ -11,6 +11,7 @@ import { global_dispatcher } from "../core/dispatcher.js";
 import { vec2 } from "gl-matrix";
 import { profile_scope } from "../utility/performance.js";
 import ExecutionQueue from "../utility/execution_queue.js";
+import { MaterialFamilyType } from "./renderer_types.js";
 
 const frame_render_event_name = "frame_render";
 const MAX_BUFFERED_FRAMES = 2;
@@ -66,7 +67,7 @@ export class Renderer {
         requiredLimits: {
           maxColorAttachmentBytesPerSample: 64,
           maxStorageBuffersPerShaderStage: 10,
-          maxStorageBufferBindingSize: 256 * 1024 * 1024
+          maxStorageBufferBindingSize: 256 * 1024 * 1024,
         },
       });
     } catch (e) {
@@ -74,6 +75,11 @@ export class Renderer {
       console.log("Falling back to default limits");
       this.device = await this.adapter.requestDevice();
     }
+
+    // Use lost to handle lost devices
+    this.device.lost.then((info) => {
+      console.error(`WebGPU device was lost: ${info.message}`);
+    });
 
     this.context = this.canvas.getContext("webgpu");
     this.canvas_format = navigator.gpu.getPreferredCanvasFormat();
@@ -103,7 +109,7 @@ export class Renderer {
 
     this.refresh_global_shader_bindings();
 
-    this._setup_builtin_material_template();
+    this._setup_builtin_material_templates();
 
     this._setup_resize_observer();
   }
@@ -224,12 +230,18 @@ export class Renderer {
     this.aspect_ratio = this.canvas.width / this.canvas.height;
   }
 
-  _setup_builtin_material_template() {
-    // Create a material template for a standard material
-    const template = MaterialTemplate.create(
+  _setup_builtin_material_templates() {
+    MaterialTemplate.create(
       "StandardMaterial",
-      "standard_material.wgsl"
+      "standard_material.wgsl",
+      MaterialFamilyType.Opaque
     );
+    MaterialTemplate.create("DebugLineMaterial", "line.wgsl", MaterialFamilyType.Opaque, {
+      primitive_topology_type: "line-list",
+      rasterizer_state: {
+        cull_mode: "none",
+      },
+    });
   }
 
   _setup_resize_observer() {
@@ -244,9 +256,7 @@ export class Renderer {
   }
 
   _set_shared_frame_resolution() {
-    SharedFrameInfoBuffer.set_resolution(
-      vec2.fromValues(this.canvas.width, this.canvas.height)
-    );
+    SharedFrameInfoBuffer.set_resolution(vec2.fromValues(this.canvas.width, this.canvas.height));
   }
 
   static get(index = 0) {

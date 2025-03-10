@@ -3,7 +3,7 @@ import { Texture } from "../renderer/texture.js";
 import { Renderer } from "../renderer/renderer.js";
 import { mat4, vec4, quat, vec3, vec2 } from "gl-matrix";
 import { WORLD_UP, WORLD_FORWARD } from "./minimal.js";
-import { Vector } from "../memory/container.js";
+import { TypedVector } from "../memory/container.js";
 
 const vertex_buffer_name = "vertex_buffer";
 const view_buffer_name = "view_buffer";
@@ -25,8 +25,7 @@ export class SharedVertexBuffer {
 
   static _get_byte_size() {
     return (
-      this.vertex_data.map((v) => v.position.concat(v.normal, v.uv, v.tangent, v.bitangent)).flat()
-        .length * 4
+      this.vertex_data.map((v) => v.position.concat(v.normal, v.uv)).flat().length * 4
     );
   }
 
@@ -37,7 +36,7 @@ export class SharedVertexBuffer {
 
     this.buffer = Buffer.create({
       name: vertex_buffer_name,
-      data: this.vertex_data.map((v) => v.position.concat(v.normal, v.uv, v.tangent, v.bitangent)),
+      data: this.vertex_data.map((v) => v.position.concat(v.normal, v.uv)).flat(),
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
     });
 
@@ -408,35 +407,43 @@ export class SharedFrameInfoBuffer {
 }
 
 export class SharedEntityMetadataBuffer {
-  static entity_metadata = new Vector(256, Uint32Array);
+  static entity_metadata = new TypedVector(256, 0, Uint32Array);
   static num_entities = 0;
   static buffer = null;
   static buffer_size = 0;
   static dirty = false;
 
   static get_entity_offset(entity) {
-    return this.entity_metadata.get(entity * 2);
+    return this.entity_metadata.get(entity * 3);
   }
 
   static set_entity_offset(entity, offset) {
-    this.entity_metadata.set(entity * 2, offset);
+    this.entity_metadata.set(entity * 3, offset);
   }
 
   static get_entity_count(entity) {
-    return this.entity_metadata.get(entity * 2 + 1);
+    return this.entity_metadata.get(entity * 3 + 1);
   }
 
   static get_absolute_entity_count() {
     const adjusted_entity_count = this.num_entities - 1;
     return (
-      this.entity_metadata.get(adjusted_entity_count * 2) +
-      this.entity_metadata.get(adjusted_entity_count * 2 + 1)
+      this.entity_metadata.get(adjusted_entity_count * 3) +
+      this.entity_metadata.get(adjusted_entity_count * 3 + 1)
     );
   }
 
   static set_entity_instance_count(entity, count) {
-    this.entity_metadata.set(entity * 2 + 1, count);
+    this.entity_metadata.set(entity * 3 + 1, count);
     this.dirty = true;
+  }
+
+  static get_entity_flags(entity) {
+    return this.entity_metadata.get(entity * 3 + 2);
+  }
+
+  static set_entity_flags(entity, flags) {
+    this.entity_metadata.set(entity * 3 + 2, flags);
   }
 
   static update_offsets() {
@@ -458,19 +465,20 @@ export class SharedEntityMetadataBuffer {
       if (entity > 0) {
         const prev_entity = entity - 1;
         offset =
-          this.entity_metadata.get(prev_entity * 2) + // Previous offset
-          this.entity_metadata.get(prev_entity * 2 + 1); // Plus previous count
+          this.entity_metadata.get(prev_entity * 3) + // Previous offset
+          this.entity_metadata.get(prev_entity * 3 + 1); // Plus previous count
       }
 
-      this.entity_metadata.set(entity * 2, offset);
-      this.entity_metadata.set(entity * 2 + 1, 1);
+      this.entity_metadata.set(entity * 3, offset);
+      this.entity_metadata.set(entity * 3 + 1, 1);
+      this.entity_metadata.set(entity * 3 + 2, 0);
       this.num_entities = adjusted_entity;
     }
   }
 
   static resize(new_size) {
-    if (this.entity_metadata.length <= new_size * 2) {
-      this.entity_metadata.resize(Math.max(4, new_size * 4)); // Double the size of the buffer
+    if (this.entity_metadata.capacity <= new_size * 3) {
+      this.entity_metadata.resize(Math.max(3, new_size * 6)); // Double the size of the buffer
       this.build();
     }
   }
@@ -481,17 +489,13 @@ export class SharedEntityMetadataBuffer {
     if (!this.buffer || this.buffer_size < this.entity_metadata.get_data().byteLength) {
       this.build();
     } else {
-      this.buffer.write(this._get_gpu_type_layout());
+      this.write();
     }
 
     this.dirty = false;
   }
 
   static build() {
-    if (this.buffer) {
-      this.buffer.destroy();
-    }
-
     const gpu_layout = this._get_gpu_type_layout();
 
     this.buffer_size = gpu_layout.byteLength;

@@ -849,6 +849,7 @@ export class TypedTree {
 export class TypedStack {
   #buffer;
   #size;
+  #capacity;
 
   /**
    * Create a new TypedStack with the specified capacity and array type.
@@ -861,6 +862,7 @@ export class TypedStack {
     }
     this.#buffer = new array_type(capacity);
     this.#size = 0;
+    this.#capacity = capacity;
   }
 
   /**
@@ -869,7 +871,7 @@ export class TypedStack {
    * @throws {Error} If the stack is full.
    */
   push(value) {
-    if (this.#size >= this.#buffer.length) {
+    if (this.#size >= this.#capacity) {
       throw new Error("Stack overflow");
     }
     this.#buffer[this.#size++] = value;
@@ -904,9 +906,11 @@ export class TypedStack {
    * @param {number} new_capacity - The new capacity of the stack.
    */
   resize(new_capacity) {
+    if (new_capacity <= this.#capacity) return;
     const new_buffer = new this.#buffer.constructor(new_capacity);
     new_buffer.set(this.#buffer);
     this.#buffer = new_buffer;
+    this.#capacity = new_capacity;
   }
 
   /**
@@ -922,7 +926,7 @@ export class TypedStack {
    * @returns {boolean} True if the stack is full.
    */
   is_full() {
-    return this.#size === this.#buffer.length;
+    return this.#size === this.#capacity;
   }
 
   /**
@@ -938,7 +942,7 @@ export class TypedStack {
    * @returns {number} The maximum capacity.
    */
   get capacity() {
-    return this.#buffer.length;
+    return this.#capacity;
   }
 
   /**
@@ -950,35 +954,185 @@ export class TypedStack {
 }
 
 /**
- * A resizable vector implementation using TypedArrays for contiguous storage.
+ * A typed free list implementation for efficient memory reuse.
+ * Manages a pool of typed array elements with O(1) allocation and deallocation.
  */
-export class Vector {
+export class TypedFreeList {
+  #buffer;
+  #free_indices;
+  #free_count;
+  #size;
+  #stride;
+
+  /**
+   * Create a new TypedFreeList with the specified initial capacity and array type.
+   * @param {number} initial_capacity - The initial capacity of the free list.
+   * @param {TypedArrayConstructor} array_type - The type of TypedArray to use (e.g. Float32Array).
+   */
+  constructor(initial_capacity = 16, stride = 1, array_type = Float32Array) {
+    console.assert(Number.isInteger(initial_capacity) && initial_capacity > 0);
+    this.#buffer = new array_type(initial_capacity * stride);
+    this.#free_indices = new Uint32Array(initial_capacity);
+    
+    // Initialize free list with all indices
+    for (let i = 0; i < initial_capacity; i++) {
+      this.#free_indices[i] = i;
+    }
+    
+    this.#free_count = initial_capacity;
+    this.#size = 0;
+    this.#stride = stride;
+  }
+
+  /**
+   * Allocate an index from the free list.
+   * @returns {number} The allocated index, or -1 if the list is full and couldn't grow.
+   */
+  allocate() {
+    if (this.#free_count === 0) {
+      // Grow the buffer when out of free indices
+      const old_capacity = this.#buffer.length;
+      const new_capacity = old_capacity * 2;
+      
+      // Grow the data buffer
+      const new_buffer = new this.#buffer.constructor(new_capacity);
+      new_buffer.set(this.#buffer);
+      this.#buffer = new_buffer;
+      
+      // Grow the free indices list
+      const new_free_indices = new Uint32Array(new_capacity);
+      new_free_indices.set(this.#free_indices);
+      
+      // Add new indices to free list
+      for (let i = 0; i < old_capacity; i++) {
+        new_free_indices[i] = old_capacity + i;
+      }
+      
+      this.#free_indices = new_free_indices;
+      this.#free_count = old_capacity;
+    }
+    
+    const index = this.#free_indices[--this.#free_count];
+    this.#size++;
+    return index;
+  }
+
+  resize(new_capacity) {
+    if (new_capacity <= this.#buffer.length) return;
+
+    // Grow the buffer when out of free indices
+    const old_capacity = this.#buffer.length;
+      
+    // Grow the data buffer
+    const new_buffer = new this.#buffer.constructor(new_capacity);
+    new_buffer.set(this.#buffer);
+    this.#buffer = new_buffer;
+      
+    // Grow the free indices list
+    const new_free_indices = new Uint32Array(new_capacity);
+    new_free_indices.set(this.#free_indices);
+      
+    // Add new indices to free list
+    for (let i = old_capacity; i < new_capacity; i++) {
+      new_free_indices[this.#free_count++] = i;
+    }
+      
+    this.#free_indices = new_free_indices;
+  }
+
+  /**
+   * Free an index, returning it to the free list.
+   * @param {number} index - The index to free.
+   */
+  free(index) {
+    console.assert(index >= 0 && index < this.#buffer.length, "Index out of bounds");
+    this.#free_indices[this.#free_count++] = index;
+    this.#size--;
+  }
+
+  /**
+   * Get the value at the specified index.
+   * @param {number} index - The index to access.
+   * @returns {number} The value at the index.
+   */
+  get(index) {
+    console.assert(index >= 0 && index < this.#buffer.length, "Index out of bounds");
+    return this.#buffer[index];
+  }
+
+  /**
+   * Set the value at the specified index.
+   * @param {number} index - The index to set.
+   * @param {number} value - The value to set.
+   */
+  set(index, value) {
+    console.assert(index >= 0 && index < this.#buffer.length, "Index out of bounds");
+    this.#buffer[index] = value;
+  }
+
+  /**
+   * Get the current number of allocated elements.
+   * @returns {number} The current size.
+   */
+  get size() {
+    return this.#size;
+  }
+
+  /**
+   * Get the maximum capacity of the free list.
+   * @returns {number} The maximum capacity.
+   */
+  get capacity() {
+    return this.#buffer.length;
+  }
+
+  /**
+   * Get the underlying buffer.
+   * @returns {TypedArray} The underlying buffer.
+   */
+  get buffer() {
+    return this.#buffer;
+  }
+
+  /**
+   * Reset the free list, freeing all allocated indices.
+   */
+  clear() {
+    // Reset free list with all indices
+    for (let i = 0; i < this.#buffer.length; i++) {
+      this.#free_indices[i] = i;
+    }
+    this.#free_count = this.#buffer.length;
+    this.#size = 0;
+  }
+}
+
+
+/**
+ * A resizable typed vector implementation using TypedArrays for contiguous storage.
+ */
+export class TypedVector {
   #buffer;
   #size;
+  #capacity;
   #uniqueness_set;
+  #default_value;
 
   /**
    * Create a new Vector with the specified initial capacity and array type.
    * @param {number} initial_capacity - The initial capacity of the vector.
    * @param {TypedArrayConstructor} array_type - The type of TypedArray to use (e.g. Float32Array).
    */
-  constructor(initial_capacity = 16, array_type = Float32Array) {
+  constructor(initial_capacity = 16, default_value = 0, array_type = Float32Array) {
     console.assert(Number.isInteger(initial_capacity) && initial_capacity > 0);
     this.#buffer = new array_type(initial_capacity);
     this.#size = 0;
+    this.#capacity = initial_capacity;
     this.#uniqueness_set = new Set();
-  }
-
-  /**
-   * Reserve space for at least the specified number of elements.
-   * @param {number} new_capacity - The minimum capacity to reserve.
-   */
-  reserve(new_capacity) {
-    if (new_capacity <= this.#buffer.length) return;
-
-    const new_buffer = new this.#buffer.constructor(new_capacity);
-    new_buffer.set(this.#buffer);
-    this.#buffer = new_buffer;
+    this.#default_value = default_value;
+    for (let i = 0; i < initial_capacity; i++) {
+      this.#buffer[i] = default_value;
+    }
   }
 
   /**
@@ -986,12 +1140,12 @@ export class Vector {
    * @param {number} new_capacity - The new capacity of the vector.
    */
   resize(new_capacity) {
-    if (new_capacity <= this.#buffer.length) {
-      this.#size = new_capacity;
-    } else {
-      this.reserve(new_capacity);
-      this.#size = new_capacity;
-    }
+    if (new_capacity <= this.#capacity) return;
+
+    const new_buffer = new this.#buffer.constructor(new_capacity);
+    new_buffer.set(this.#buffer);
+    this.#buffer = new_buffer;
+    this.#capacity = new_capacity;
   }
 
   /**
@@ -999,9 +1153,9 @@ export class Vector {
    * @param {number} value - The value to add.
    */
   push(value) {
-    if (this.#size === this.#buffer.length) {
+    if (this.#size >= this.#capacity) {
       // Grow by 2x when full
-      this.reserve(Math.max(1, this.#buffer.length * 2));
+      this.resize(Math.max(1, this.#capacity * 2));
     }
     this.#buffer[this.#size++] = value;
   }
@@ -1012,6 +1166,7 @@ export class Vector {
    * @throws {Error} If the vector is empty.
    */
   pop() {
+    console.assert(this.#size > 0, "Vector is empty");
     return this.#buffer[--this.#size];
   }
 
@@ -1067,7 +1222,7 @@ export class Vector {
    */
   compact() {
     this.#buffer.set(this.#buffer.slice(0, this.#size));
-    this.#size = this.#buffer.length;
+    this.#size = this.#capacity;
   }
 
   /**
@@ -1094,8 +1249,8 @@ export class Vector {
 
     // Ensure we have enough capacity
     const required_capacity = this.#size + new_unique_count;
-    if (required_capacity > this.#buffer.length) {
-      this.reserve(Math.max(required_capacity, this.#buffer.length * 2));
+    if (required_capacity > this.#capacity) {
+      this.resize(Math.max(required_capacity, this.#capacity * 2));
     }
 
     // Add only unique values from the other array
@@ -1168,7 +1323,7 @@ export class Vector {
    * @returns {number} The current capacity.
    */
   get capacity() {
-    return this.#buffer.length;
+    return this.#capacity;
   }
 
   /**
@@ -1179,6 +1334,226 @@ export class Vector {
     return this.#buffer;
   }
 }
+
+/**
+ * A simple and efficient FIFO queue implementation using TypedArrays.
+ * Uses a circular buffer approach for optimal performance.
+ */
+export class TypedQueue {
+  #buffer;
+  #head;
+  #tail;
+  #size;
+  #capacity;
+  #default_value;
+  #uniqueness_set;
+
+  /**
+   * Create a new Queue with the specified initial capacity and array type.
+   * @param {number} initial_capacity - The initial capacity of the queue.
+   * @param {number} default_value - The default value to initialize the buffer with.
+   * @param {TypedArrayConstructor} array_type - The type of TypedArray to use (e.g. Float32Array).
+   */
+  constructor(initial_capacity = 16, default_value = 0, array_type = Uint32Array) {
+    this.#buffer = new array_type(initial_capacity);
+    this.#head = 0;
+    this.#tail = 0;
+    this.#size = 0;
+    this.#capacity = initial_capacity;
+    this.#default_value = default_value;
+    this.#uniqueness_set = new Set();
+    
+    // Initialize buffer with default values
+    for (let i = 0; i < initial_capacity; i++) {
+      this.#buffer[i] = default_value;
+    }
+  }
+
+  /**
+   * Get the value at the specified logical index from the front of the queue.
+   * @param {number} index - The logical index from the front (0 is the front element).
+   * @returns {number} The value at the index, or default value if out of bounds.
+   */
+  get(index) {
+    console.assert(index >= 0 && index < this.#size, "Index out of bounds");
+    return this.#buffer[(this.#head + index) % this.#capacity];
+  }
+
+  /**
+   * Set the value at the specified logical index from the front of the queue.
+   * @param {number} index - The logical index from the front (0 is the front element).
+   * @param {number} value - The value to set.
+   */
+  set(index, value) {
+    console.assert(index >= 0 && index < this.#size, "Index out of bounds");
+    this.#buffer[(this.#head + index) % this.#capacity] = value;
+  }
+
+  /**
+   * Check if the queue is empty.
+   * @returns {boolean} True if the queue is empty, false otherwise.
+   */
+  is_empty() {
+    return this.#size === 0;
+  }
+
+  /**
+   * Add a value to the end of the queue (enqueue).
+   * @param {number} value - The value to add.
+   */
+  push(value) {
+    // Resize if full
+    if (this.#size >= this.#capacity) {
+      this._resize(this.#capacity * 2);
+    }
+    
+    // Add value at tail position
+    this.#buffer[this.#tail] = value;
+    
+    // Move tail pointer and wrap around if needed
+    this.#tail = (this.#tail + 1) % this.#capacity;
+
+    this.#size++;
+  }
+
+  /**
+   * Remove and return the value from the front of the queue (dequeue).
+   * @returns {number} The value at the front of the queue, or default value if empty.
+   */
+  pop() {
+    console.assert(this.#size > 0, "Queue is empty");
+
+    // Get value at head position
+    const value = this.#buffer[this.#head];
+    
+    // Move head pointer and wrap around if needed
+    this.#head = (this.#head + 1) % this.#capacity;
+
+    this.#size--;
+    
+    return value;
+  }
+
+  /**
+   * Look at the value at the front of the queue without removing it.
+   * @returns {number} The value at the front of the queue, or default value if empty.
+   */
+  peek() {
+    console.assert(this.#size > 0, "Queue is empty");
+    return this.#buffer[this.#head];
+  }
+
+  /**
+   * Clear the queue, resetting it to empty state.
+   */
+  clear() {
+    this.#head = 0;
+    this.#tail = 0;
+    this.#size = 0;
+  }
+
+  /**
+   * Compact the queue to reduce memory usage.
+   * Moves all elements to the beginning of the buffer and reduces capacity to match size.
+   */
+  compact() {
+    if (this.#size === 0) {
+      // If empty, just reset with minimal capacity
+      const min_capacity = 16;
+      this.#buffer = new this.#buffer.constructor(min_capacity);
+      this.#head = 0;
+      this.#tail = 0;
+      this.#capacity = min_capacity;
+      return;
+    }
+    
+    // Create a new buffer with exactly the right size
+    const new_capacity = Math.max(16, this.#size);
+    const new_buffer = new this.#buffer.constructor(new_capacity);
+    
+    // Copy elements in order
+    for (let i = 0; i < this.#size; i++) {
+      new_buffer[i] = this.#buffer[(this.#head + i) % this.#capacity];
+    }
+    
+    this.#buffer = new_buffer;
+    this.#head = 0;
+    this.#tail = this.#size;
+    this.#capacity = new_capacity;
+  }
+
+  /**
+   * Remove duplicate values from the vector.
+   */
+  make_unique() {
+    const unique_values = this.#uniqueness_set;
+    unique_values.clear();
+
+    let write_idx = 0;
+
+    // Only keep first occurrence of each value
+    for (let i = 0; i < this.#size; i++) {
+      const value = this.#buffer[i];
+      if (!unique_values.has(value)) {
+        unique_values.add(value);
+        if (write_idx !== i) {
+          this.#buffer[write_idx] = value;
+        }
+        write_idx++;
+      }
+    }
+
+    this.#tail = write_idx;
+  }
+
+  /**
+   * Resize the internal buffer to a new capacity.
+   * @private
+   * @param {number} new_capacity - The new capacity.
+   */
+  _resize(new_capacity) {
+    if (new_capacity <= this.#capacity) {
+      return;
+    }
+    
+    const new_buffer = new this.#buffer.constructor(new_capacity);
+    
+    // Copy existing elements in order
+    for (let i = 0; i < this.#size; i++) {
+      new_buffer[i] = this.#buffer[(this.#head + i) % this.#capacity];
+    }
+    
+    this.#buffer = new_buffer;
+    this.#head = 0;
+    this.#tail = this.#size;
+    this.#capacity = new_capacity;
+  }
+
+  /**
+   * Get the current size of the queue.
+   * @returns {number} The current size.
+   */
+  get length() {
+    return this.#size;
+  }
+
+  /**
+   * Get the current capacity of the queue.
+   * @returns {number} The current capacity.
+   */
+  get capacity() {
+    return this.#capacity;
+  }
+
+  /**
+   * Get the underlying buffer.
+   * @returns {TypedArray} The underlying buffer.
+   */
+  get buffer() {
+    return this.#buffer;
+  }
+}
+
 
 export class SquareAdjacencyMatrix {
   /**

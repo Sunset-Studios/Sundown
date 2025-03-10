@@ -26,9 +26,8 @@ struct SceneGraphLayerData {
 @group(1) @binding(2) var<storage, read> entity_scales: array<vec4f>;
 @group(1) @binding(3) var<storage, read_write> entity_flags: array<i32>;
 @group(1) @binding(4) var<storage, read_write> entity_transforms: array<EntityTransform>;
-@group(1) @binding(5) var<storage, read_write> entity_bounds_data: array<EntityBoundsData>;
-@group(1) @binding(6) var<storage, read> scene_graph: array<vec2<i32>>;
-@group(1) @binding(7) var<uniform> scene_graph_layer_data: SceneGraphLayerData;
+@group(1) @binding(5) var<storage, read> scene_graph: array<vec2<i32>>;
+@group(1) @binding(6) var<uniform> scene_graph_layer_data: SceneGraphLayerData;
 
 // ------------------------------------------------------------------------------------
 // Compute Shader
@@ -153,9 +152,6 @@ fn cs(@builtin(global_invocation_id) global_id: vec3<u32>) {
         inverse_transform[0][3], inverse_transform[1][3], inverse_transform[2][3], inverse_transform[3][3]
     );
 
-    entity_bounds_data[entity_resolved].bounds_pos_radius = vec4f(transform[3][0], transform[3][1], transform[3][2], max_scale);
-
-    entity_bounds_data[entity_resolved].bounds_extent_and_custom_scale = vec4f(1.0, 1.0, 1.0, 1.0);
-
     entity_flags[entity_resolved] &= ~ETF_DIRTY;
+    entity_flags[entity_resolved] |= ETF_TRANSFORM_DIRTY;
 }

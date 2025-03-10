@@ -5,6 +5,8 @@ import { panel, input, label, UIContext } from "../ui/2d/immediate.js";
 import { RenderPassOrganizer } from "./render_pass_organizer.js";
 import { MLStats } from "./ml_stats.js";
 import { CameraInfo } from "./camera_info.js";
+import { AABBDebug } from "./aabb_debug.js";
+
 // Constants for naming and key codes
 const input_name = "console_input";
 const bottom = "bottom";
@@ -63,6 +65,7 @@ export class DevConsole extends SimulationLayer {
     this.register_command("render_pass_organizer", new RenderPassOrganizer());
     this.register_command("ml_stats", new MLStats());
     this.register_command("camera_info", new CameraInfo());
+    this.register_command("aabb_debug", new AABBDebug());
   }
 
   update(delta_time) {

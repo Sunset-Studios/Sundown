@@ -9,15 +9,17 @@ enable f16;
 const ETF_DIRTY = 1 << 0;
 const ETF_IGNORE_PARENT_SCALE = 1 << 1;
 const ETF_IGNORE_PARENT_ROTATION = 1 << 2;
+const ETF_TRANSFORM_DIRTY = 1 << 3;
+const LOG_DEPTH_C = 1.0; // Can adjust this value based on scene scale
+
+const AABB_NODE_FLAGS_MOVED = 1 << 0;
+const AABB_NODE_FLAGS_FREE = 1 << 1;
 
 struct Vertex {
     position: vec4<precision_float>,
     normal: vec4<precision_float>,
     uv: vec2<precision_float>,
-    tangent: vec4<precision_float>,
-    bitangent: vec4<precision_float>,
 };
-
 
 struct View {
     view_matrix: mat4x4f,
@@ -47,11 +49,7 @@ struct EntityTransform {
 struct EntityMetadata {
     offset: u32,
     count: u32,
-};
-
-struct EntityBoundsData {
-    bounds_pos_radius: vec4f,
-    bounds_extent_and_custom_scale: vec4f,
+    flags: u32,
 };
 
 struct ObjectInstance {
@@ -65,6 +63,13 @@ struct CompactedObjectInstance {
     entity_instance: u32,
     base_instance: u32,
 };
+
+struct AABBTreeNode {
+    min_point_and_node_type: vec4f,
+    max_point_and_flags: vec4f,
+    left_right_parent_ud: vec4f,
+};
+
 
 // ------------------------------------------------------------------------------------
 // Constants
@@ -248,3 +253,11 @@ fn billboard_vertex_local(uv: vec2f, local_position: vec4f, entity_transform: ma
     
     return vec4f(final_world_position, 1.0);
 }
+
+fn log_depth(position: vec4f) -> f32 {
+    let far_plane = -view_buffer[0].frustum[5].w / length(view_buffer[0].frustum[5].xyz);
+    let view_position = view_buffer[0].view_matrix * position;
+    let view_space_z = view_position.z;
+    return log(LOG_DEPTH_C * view_space_z + 1.0) / log(LOG_DEPTH_C * far_plane + 1.0);
+}
+

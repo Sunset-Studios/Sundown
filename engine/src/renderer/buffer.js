@@ -17,10 +17,13 @@ export class Buffer {
 
         if (config.raw_data) {
             buffer_data = config.raw_data;
-        } else {
+        } else if (config.data) {
             const data = config.data.flat();
             buffer_data = new Float32Array(data.length);
             buffer_data.set(data);
+        } else if (this.config.size != undefined) {
+            buffer_data = new Float32Array(this.config.size);
+            this.config.size = buffer_data.byteLength;
         }
 
         this.config.size = this.config.size || buffer_data.byteLength;

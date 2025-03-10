@@ -3,6 +3,13 @@
 
 #include "gbuffer_base.wgsl"
 
+struct MaterialParams {
+    color: vec4<precision_float>,
+    emission: vec4<precision_float>,
+}
+
+@group(2) @binding(0) var<uniform> material_params: MaterialParams;
+
 // ------------------------------------------------------------------------------------
 // Vertex Shader
 // ------------------------------------------------------------------------------------ 
