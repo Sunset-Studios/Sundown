@@ -11,9 +11,10 @@ const bounds_padding = 1.0;
 // ------------------------------------------------------------------------------------ 
 
 @group(1) @binding(0) var<storage, read> entity_transforms: array<EntityTransform>;
-@group(1) @binding(1) var<storage, read> entity_flags: array<i32>;
-@group(1) @binding(2) var<storage, read_write> aabb_tree_nodes: array<AABBTreeNode>;
-@group(1) @binding(3) var<storage, read> entity_aabb_node_indices: array<u32>;
+@group(1) @binding(1) var<storage, read_write> entity_flags: array<i32>;
+@group(1) @binding(2) var<storage, read> aabb_tree_nodes: array<AABBTreeNode>;
+@group(1) @binding(3) var<storage, read_write> aabb_bounds: array<AABBNodeBounds>;
+@group(1) @binding(4) var<storage, read> entity_aabb_node_indices: array<u32>;
 
 // ------------------------------------------------------------------------------------
 // Compute Shader
@@ -26,22 +27,19 @@ fn cs(@builtin(global_invocation_id) global_id: vec3<u32>) {
     }
 
     let entity_id_offset = global_id.x;
-
-    if ((entity_flags[entity_id_offset] & ETF_TRANSFORM_DIRTY) == 0) {
-        return;
-    }
-
     let node_index = entity_aabb_node_indices[entity_id_offset];
     let node = aabb_tree_nodes[node_index];
+    let ent_flags = entity_flags[entity_id_offset];
 
-    var flags = i32(node.max_point_and_flags.w);
-    if ((flags & AABB_NODE_FLAGS_FREE) == AABB_NODE_FLAGS_FREE) {
+    if ((ent_flags & ETF_TRANSFORM_DIRTY) == 0) {
         return;
     }
 
-    let node_type = node.min_point_and_node_type.w;
-    // Mark the node as moved
-    flags = flags | AABB_NODE_FLAGS_MOVED;
+    var flags = i32(node.flags_and_node_data.x);
+    var node_type = i32(node.flags_and_node_data.y);
+    if ((flags & AABB_NODE_FLAGS_FREE) == AABB_NODE_FLAGS_FREE || node_type != AABB_NODE_TYPE_LEAF) {
+        return;
+    }
 
     // Get the entity's world transform
     let transform = entity_transforms[entity_id_offset].transform;
@@ -76,6 +74,8 @@ fn cs(@builtin(global_invocation_id) global_id: vec3<u32>) {
       position[2] + half_size[2] + padding[2],
     );
 
-    aabb_tree_nodes[node_index].min_point_and_node_type = vec4f(min_point, node_type);
-    aabb_tree_nodes[node_index].max_point_and_flags = vec4f(max_point, f32(flags));
+    aabb_bounds[node_index].min_point = vec4f(min_point, 1.0);
+    aabb_bounds[node_index].max_point = vec4f(max_point, 1.0);
+
+    entity_flags[entity_id_offset] = (ent_flags & ~ETF_TRANSFORM_DIRTY) | ETF_AABB_DIRTY;
 }

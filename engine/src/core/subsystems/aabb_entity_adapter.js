@@ -56,12 +56,10 @@ export class AABBEntityAdapter extends SimulationLayer {
    * @param {number} delta_time - Time since last update
    */
   update(delta_time) {
-    profile_scope(entity_adapter_update_name, () => {
-      this._dispatch_bounds_update();
-      // Process dirty entities
+    profile_scope(entity_adapter_update_name, async () => {
       this._process_entity_changes();
-      // Update the AABB tree
       this.tree_processor.update(delta_time);
+      this._dispatch_bounds_update();
     });
   }
 
@@ -143,16 +141,18 @@ export class AABBEntityAdapter extends SimulationLayer {
     this.bounds_update_input_list[0] = transforms.transforms_buffer;
     this.bounds_update_input_list[1] = transforms.flags_buffer;
     this.bounds_update_input_list[2] = AABB.data.node_data_buffer;
-    this.bounds_update_input_list[3] = transforms.aabb_node_index_buffer;
+    this.bounds_update_input_list[3] = AABB.data.node_bounds_buffer;
+    this.bounds_update_input_list[4] = transforms.aabb_node_index_buffer;
 
-    this.bounds_update_output_list[0] = AABB.data.node_data_buffer;
+    this.bounds_update_output_list[0] = transforms.flags_buffer;
+    this.bounds_update_output_list[1] = AABB.data.node_bounds_buffer;
 
     ComputeTaskQueue.get().new_task(
       entity_bounds_update_task_name,
       entity_bounds_update_wgsl_path,
       this.bounds_update_input_list,
       this.bounds_update_output_list,
-      Math.floor((TransformFragment.size + 255) / 256)
+      Math.max(1, Math.floor((TransformFragment.size + 255) / 256))
     );
 
     Renderer.get().enqueue_post_commands(
@@ -172,6 +172,7 @@ export class AABBEntityAdapter extends SimulationLayer {
     const entities = this.entity_query.matching_entities.get_data();
     const entity_offsets = this.entity_query.matching_entity_ids.get_data();
     const entity_states = this.entity_query.entity_states.get_data();
+    const entity_instance_counts = this.entity_query.matching_entity_instance_counts.get_data();
 
     // Process entities that need updating
     for (let i = 0; i < this.entity_query.matching_entities.length; i++) {
@@ -181,34 +182,38 @@ export class AABBEntityAdapter extends SimulationLayer {
 
       const node_index = transforms.aabb_node_index[entity_offset];
 
+      if ((transforms.flags[entity_offset] & EntityTransformFlags.NO_AABB_UPDATE) !== 0) {
+        continue;
+      }
+
       // Handle removed entities
-      if (entity_state === EntityMasks.REMOVED && node_index) {
-        const entity_count = EntityID.get_instance_count(entity);
+      if (entity_state === EntityMasks.Removed && node_index) {
+        const entity_count = entity_instance_counts[i];
         for (let i = 0; i < entity_count; i++) {
           const entity_instance_offset = entity_offset + i;
           this.tree_processor.remove_node_from_tree(
             transforms.aabb_node_index[entity_instance_offset]
           );
+          AABB.free_node(transforms.aabb_node_index[entity_instance_offset]);
+          transforms.aabb_node_index[entity_instance_offset] = 0;
         }
       }
       // Handle new or updated entities
-      else if (
-        (!node_index ||
-          (transforms.flags[entity_offset] & EntityTransformFlags.TRANSFORM_DIRTY) !== 0) &&
-        (transforms.flags[entity_offset] & EntityTransformFlags.NO_AABB_UPDATE) === 0
-      ) {
+      else if (node_index && (transforms.flags[entity_offset] & EntityTransformFlags.AABB_DIRTY) !== 0) {
         const entity_instances = EntityID.get_instance_count(entity);
         for (let i = 0; i < entity_instances; i++) {
-          let node_index = transforms.aabb_node_index[entity_offset + i];
-          this.tree_processor.mark_node_dirty(node_index);
+          const instance_node_index = transforms.aabb_node_index[entity_offset + i];
+          this.tree_processor.mark_node_dirty(instance_node_index);
+          transforms.flags[entity_offset + i] &= ~EntityTransformFlags.AABB_DIRTY;
+          transforms.gpu_data_dirty = true;
         }
       }
     }
   }
 
   _on_post_render(graph, frame_data, encoder) {
-    if (AABB.data.node_data_cpu_buffer.buffer.mapState === unmapped_state) {
-      AABB.data.node_data_buffer.copy_buffer(encoder, 0, AABB.data.node_data_cpu_buffer);
+    if (AABB.data.node_bounds_cpu_buffer.buffer.mapState === unmapped_state && !AABB.data.pending_cpu_changes) {
+      AABB.data.node_bounds_buffer.copy_buffer(encoder, 0, AABB.data.node_bounds_cpu_buffer);
     }
   }
 }

@@ -18,6 +18,4 @@ fn cs(@builtin(global_invocation_id) global_id: vec3<u32>) {
     entity_position.y += sin(time) * 0.02;
 
     entity_positions[entity] = entity_position;
-
-    entity_flags[entity] |= ETF_DIRTY;
 }

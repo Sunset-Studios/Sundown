@@ -30,7 +30,7 @@ struct DrawCullConstants {
 // ------------------------------------------------------------------------------------ 
 
 @group(1) @binding(0) var input_texture: texture_2d<f32>;
-@group(1) @binding(1) var<storage, read> aabb_tree_nodes: array<AABBTreeNode>;
+@group(1) @binding(1) var<storage, read> aabb_bounds: array<AABBNodeBounds>;
 @group(1) @binding(2) var<storage, read> object_instances: array<ObjectInstance>;
 @group(1) @binding(3) var<storage, read_write> compacted_object_instances: array<CompactedObjectInstance>;
 @group(1) @binding(4) var<storage, read_write> draw_indirect_buffer: array<DrawCommand>;
@@ -135,9 +135,9 @@ fn cs(@builtin(global_invocation_id) global_id: vec3<u32>) {
         let entity_resolved = entity_metadata[entity_id].offset + entity_instance;
         let aabb_node_index = entity_aabb_node_indices[entity_resolved];
 
-        let aabb_node = aabb_tree_nodes[aabb_node_index];
-        let center = vec4f((aabb_node.min_point_and_node_type.xyz + aabb_node.max_point_and_flags.xyz) * 0.5, 1.0);
-        var radius = length(aabb_node.max_point_and_flags.xyz - aabb_node.min_point_and_node_type.xyz) * 0.5;
+        let aabb_node = aabb_bounds[aabb_node_index];
+        let center = vec4f((aabb_node.min_point.xyz + aabb_node.max_point.xyz) * 0.5, 1.0);
+        var radius = length(aabb_node.max_point.xyz - aabb_node.min_point.xyz) * 0.5;
         radius *= 1.05; // Inflate bounds conservatively
 
         let in_frustum = is_in_frustum(center, radius);

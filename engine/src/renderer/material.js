@@ -266,7 +266,8 @@ export class MaterialTemplate {
 export class Material {
   static materials = new Map();
 
-  constructor(template) {
+  constructor(name, template) {
+    this.name = name;
     this.template = template;
     this.pipeline_state = null;
     this.bind_group = null;
@@ -332,7 +333,7 @@ export class Material {
     }
 
     this.bind_group = BindGroup.create(
-      this.template.name,
+      this.name,
       this.pipeline_state,
       BindGroupType.Material,
       entries,
@@ -464,7 +465,7 @@ export class Material {
     }
 
     if (!material) {
-      material = new Material(template);
+      material = new Material(name, template);
       if (options.family) {
         material.family = options.family;
       }

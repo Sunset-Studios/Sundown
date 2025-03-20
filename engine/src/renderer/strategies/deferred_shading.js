@@ -346,8 +346,8 @@ export class DeferredShadingStrategy {
       const scene_graph_gpu_data = SceneGraphFragment.to_gpu_data();
 
       const aabb_gpu_data = AABB.to_gpu_data();
-      const aabb_tree_nodes = render_graph.register_buffer(
-        aabb_gpu_data.aabb_tree_nodes_buffer.config.name
+      const aabb_bounds = render_graph.register_buffer(
+        aabb_gpu_data.node_bounds_buffer.config.name
       );
 
       const light_gpu_data = LightFragment.to_gpu_data();
@@ -497,7 +497,7 @@ export class DeferredShadingStrategy {
             shader_setup: compute_cull_shader_setup,
             inputs: [
               main_hzb_image,
-              aabb_tree_nodes,
+              aabb_bounds,
               object_instances,
               compacted_object_instance_buffer,
               indirect_draws,

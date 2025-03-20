@@ -6,14 +6,21 @@ enable f16;
 // Data Structures
 // ------------------------------------------------------------------------------------ 
 
-const ETF_DIRTY = 1 << 0;
+const ETF_VALID = 1 << 0;
 const ETF_IGNORE_PARENT_SCALE = 1 << 1;
 const ETF_IGNORE_PARENT_ROTATION = 1 << 2;
 const ETF_TRANSFORM_DIRTY = 1 << 3;
-const LOG_DEPTH_C = 1.0; // Can adjust this value based on scene scale
+const ETF_NO_AABB_UPDATE = 1 << 4;
+const ETF_AABB_DIRTY = 1 << 5;
 
 const AABB_NODE_FLAGS_MOVED = 1 << 0;
 const AABB_NODE_FLAGS_FREE = 1 << 1;
+
+// Node types
+const AABB_NODE_TYPE_INTERNAL = 0;
+const AABB_NODE_TYPE_LEAF = 1;
+
+const LOG_DEPTH_C = 1.0; // Can adjust this value based on scene scale
 
 struct Vertex {
     position: vec4<precision_float>,
@@ -65,11 +72,14 @@ struct CompactedObjectInstance {
 };
 
 struct AABBTreeNode {
-    min_point_and_node_type: vec4f,
-    max_point_and_flags: vec4f,
+    flags_and_node_data: vec4f,
     left_right_parent_ud: vec4f,
 };
 
+struct AABBNodeBounds {
+    min_point: vec4f,
+    max_point: vec4f,
+};
 
 // ------------------------------------------------------------------------------------
 // Constants

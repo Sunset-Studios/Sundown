@@ -7,7 +7,7 @@ import { profile_scope } from "../utility/performance.js";
 import { CacheTypes, MaterialFamilyType, BindGroupType } from "./renderer_types.js";
 
 const max_objects = 5000000;
-const max_frame_buffer_writes = 1000;
+const max_frame_buffer_writes = 100000;
 
 class IndirectDrawBatch {
   mesh_id = 0;
@@ -91,7 +91,7 @@ class IndirectDrawObject {
       }
 
       // Resize object instance buffer if needed
-      const required_object_instance_size = object_instances.length * 4 * 4; // 4 uint32 per instance, 4 bytes per uint32
+      const required_object_instance_size = object_instances.length * 3 * 4; // 3 uint32 per instance, 4 bytes per uint32
       if (this.object_instance_buffer.size < required_object_instance_size) {
         this.object_instance_buffer.destroy();
         this.object_instance_buffer = Buffer.create({
@@ -100,7 +100,6 @@ class IndirectDrawObject {
             instance.batch_index,
             instance.entity_index,
             instance.entity_instance_index,
-            0, // padding
           ]),
           usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
         });
@@ -109,9 +108,9 @@ class IndirectDrawObject {
       profile_scope("write_indirect_draw_buffer", () => {
         // Update indirect draw buffer
         let write_length = 0;
-        let max_length = batches.length * 5;
+        let batches_length = batches.length * 5;
 
-        if (max_length > 0) {
+        if (batches_length > 0) {
           for (let i = 0; i < batches.length; i++) {
             const offset = i * 5;
             this.indirect_draw_data[offset] = batches[i].index_count;
@@ -120,10 +119,10 @@ class IndirectDrawObject {
             this.indirect_draw_data[offset + 3] = batches[i].base_vertex;
             this.indirect_draw_data[offset + 4] = batches[i].base_instance;
           }
-          write_length = Math.min(max_length, max_frame_buffer_writes * 5);
+          write_length = Math.min(batches_length, max_frame_buffer_writes * 5);
           write_length = Math.min(
             write_length,
-            max_length - this.current_indirect_draw_write_offset
+            batches_length - this.current_indirect_draw_write_offset
           );
         }
 
@@ -135,7 +134,7 @@ class IndirectDrawObject {
         );
 
         this.current_indirect_draw_write_offset += write_length;
-        if (this.current_indirect_draw_write_offset >= max_length) {
+        if (this.current_indirect_draw_write_offset >= batches_length) {
           this.current_indirect_draw_write_offset = 0;
         }
       });
@@ -143,9 +142,9 @@ class IndirectDrawObject {
       profile_scope("write_object_instance_buffer", () => {
         // Update object instance buffer
         let write_length = 0;
-        let max_length = object_instances.length * 4;
+        let object_instances_length = object_instances.length * 3;
 
-        if (max_length > 0) {
+        if (object_instances_length > 0) {
           for (let i = 0; i < object_instances.length; i++) {
             const offset = i * 3;
             this.object_instance_data[offset] = object_instances[i].batch_index;
@@ -153,13 +152,12 @@ class IndirectDrawObject {
               object_instances[i].entity_index;
             this.object_instance_data[offset + 2] =
               object_instances[i].entity_instance_index;
-            this.object_instance_data[offset + 3] = 0; // padding
           }
           write_length = Math.min(
             write_length,
-            max_length - this.current_object_instance_write_offset
+            object_instances_length - this.current_object_instance_write_offset
           );
-          write_length = Math.min(max_length, max_frame_buffer_writes * 4);
+          write_length = Math.min(object_instances_length, max_frame_buffer_writes * 3);
         }
 
         this.object_instance_buffer.write_raw(
@@ -170,7 +168,7 @@ class IndirectDrawObject {
         );
 
         this.current_object_instance_write_offset += write_length;
-        if (this.current_object_instance_write_offset >= max_length) {
+        if (this.current_object_instance_write_offset >= object_instances_length) {
           this.current_object_instance_write_offset = 0;
         }
       });
@@ -238,7 +236,7 @@ export class MeshTaskQueue {
     entity,
     material_id = null,
     instance_count = 1,
-    resort = false
+    resort = true
   ) {
     const task = this.tasks_allocator.allocate();
 
@@ -286,12 +284,14 @@ export class MeshTaskQueue {
             last_batch.mesh_id === task.mesh_id &&
             last_batch.material_id === task.material_id
           ) {
+            const start_index =
+              last_batch.entity_ids.length;
+
             last_batch.instance_count += task.instance_count;
             last_batch.entity_ids.length += task.instance_count;
-            const start_index =
-              last_batch.entity_ids.length - task.instance_count;
-            for (let j = 0; j < task.instance_count; j++) {
-              last_batch.entity_ids[start_index + j] = task.entity;
+
+            for (let j = start_index; j < last_batch.entity_ids.length; ++j) {
+              last_batch.entity_ids[j] = task.entity;
             }
           } else {
             const mesh = ResourceCache.get().fetch(
@@ -380,14 +380,12 @@ export class MeshTaskQueue {
     });
   }
 
-  remove(entity) {
+  remove(entity, resort = true) {
     // Use a single-pass, in-place removal algorithm
     let write_index = 0;
     for (let read_index = 0; read_index < this.tasks.length; read_index++) {
       if (this.tasks[read_index].entity !== entity) {
-        if (write_index !== read_index) {
-          this.tasks[write_index] = this.tasks[read_index];
-        }
+        this.tasks[write_index] = this.tasks[read_index];
         write_index++;
       }
     }
@@ -398,10 +396,14 @@ export class MeshTaskQueue {
     }
 
     // Reset the batches and object instances if there are no tasks left
-    if (this.tasks.length == 0) {
+    if (this.tasks.length === 0) {
       this.batches.length = 0;
       this.object_instances.length = 0;
       this.material_buckets.length = 0;
+    }
+
+    if (resort) {
+      this.needs_sort = true;
     }
   }
 

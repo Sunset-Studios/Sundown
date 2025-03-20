@@ -23,15 +23,16 @@ export class Ray {
             direction[1] * direction[1] + 
             direction[2] * direction[2]
         );
+        const one_over_dir_length = 1.0 / dir_length;
         
         if (dir_length < EPSILON) {
             this.direction = [0, 0, 0];
             this.inv_direction = [0, 0, 0];
         } else {
             this.direction = [
-                direction[0] / dir_length,
-                direction[1] / dir_length,
-                direction[2] / dir_length
+                direction[0] * one_over_dir_length,
+                direction[1] * one_over_dir_length,
+                direction[2] * one_over_dir_length
             ];
             
             // Pre-compute inverse direction for AABB tests
@@ -82,7 +83,7 @@ export class AABBRaycast {
      * @param {Object} options - Options for the raycast
      * @returns {Promise<RaycastHit|null>} - Promise that resolves to the hit information or null if no hit
      */
-    static async raycast(ray, options = {}) {
+    static raycast(ray, options = {}, callback = null) {
         const opts = {...this.default_options, ...options};
         
         const hit = new RaycastHit();
@@ -102,7 +103,9 @@ export class AABBRaycast {
             this._traverse_tree(ray, AABB.root_node, hit, opts);
         });
         
-        return hit.user_data !== 0 ? hit : null;
+        if (callback) {
+            callback(hit.user_data !== 0 ? hit : null);
+        }
     }
     
     /**
@@ -111,7 +114,7 @@ export class AABBRaycast {
      * @param {Object} options - Options for the raycast
      * @returns {Promise<RaycastHit[]>} - Promise that resolves to array of hits
      */
-    static async raycast_all(ray, options = {}) {
+    static raycast_all(ray, options = {}, callback = null) {
         const opts = {...this.default_options, ...options};
         const hits = [];
         
@@ -134,8 +137,10 @@ export class AABBRaycast {
                 hits.sort((a, b) => a.distance - b.distance);
             }
         });
-        
-        return hits;
+
+        if (callback) {
+            callback(hits);
+        }
     }
     
     /**

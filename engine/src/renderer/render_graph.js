@@ -1318,15 +1318,15 @@ export class RenderGraph {
     }
   }
 
-  _execute_post_render_callbacks() {
+  async _execute_post_render_callbacks() {
     for (let i = 0; i < this.post_render_callbacks.length; i++) {
-      this.post_render_callbacks[i]();
+      await this.post_render_callbacks[i]();
     }
   }
 
-  _execute_pre_render_callbacks() {
+  async _execute_pre_render_callbacks() {
     for (let i = 0; i < this.pre_render_callbacks.length; i++) {
-      this.pre_render_callbacks[i]();
+      await this.pre_render_callbacks[i]();
     }
   }
 

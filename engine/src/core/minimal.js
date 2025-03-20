@@ -11,12 +11,15 @@ export const LightType = {
 };
 
 export const EntityTransformFlags = {
-  DIRTY: 1 << 0,
+  VALID: 1 << 0,
   IGNORE_PARENT_SCALE: 1 << 1,
   IGNORE_PARENT_ROTATION: 1 << 2,
   TRANSFORM_DIRTY: 1 << 3,
   NO_AABB_UPDATE: 1 << 4,
+  AABB_DIRTY: 1 << 5,
 };
 
-export const EntityFlags = { };
+export const EntityFlags = {
+  PENDING_DELETE: 1 << 0,
+};
 

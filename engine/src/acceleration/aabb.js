@@ -7,20 +7,25 @@ import { TypedStack, TypedQueue } from "../memory/container.js";
 
 // Buffer names for GPU access
 const AABB_TREE_NODES_BUFFER_NAME = "aabb_tree_nodes_buffer";
-const AABB_TREE_NODES_CPU_BUFFER_NAME = "aabb_tree_nodes_cpu_buffer";
+const AABB_TREE_NODES_BOUNDS_BUFFER_NAME = "aabb_tree_nodes_bounds_buffer";
+const AABB_TREE_NODES_CPU_BOUNDS_BUFFER_NAME = "aabb_tree_nodes_cpu_bounds_buffer";
 
 // Events for notifying systems about buffer updates
 const AABB_TREE_NODES_EVENT = "aabb_tree_nodes";
 const AABB_TREE_NODES_UPDATE_EVENT = "aabb_tree_nodes_update";
+const AABB_NODE_BOUNDS_UPDATE_EVENT = "aabb_node_bounds_update";
 
 // Node structure in memory:
-// float4 min_point (xyz + node_type as w)
-// float4 max_point (xyz + flags as w)
+// float4 flags_and_node_data (flags, node_type, padding, padding)
 // uint4 node_data (left, right, parent, user_data)
-const NODE_SIZE = 12; // Size in float32 elements
+const NODE_SIZE = 8; // Size in float32 elements
 
-// float4 min_point (xyz + flags as w)
-// float4 max_point (xyz + flags as w)
+// float4 min_point (xyz + additional_data as w)
+// float4 max_point (xyz + additional_data as w)
+const NODE_BOUNDS_SIZE = 8; // Size in float32 elements
+
+// float4 min_point (xyz + additional_data as w)
+// float4 max_point (xyz + additional_data as w)
 const NODE_FAT_BOUNDS_SIZE = 8; // Size in float32 elements
 
 // Node types
@@ -45,85 +50,85 @@ class AABBNodeDataView {
 
   get min_point() {
     return [
-      AABB.data.node_data[this.current_node * NODE_SIZE],
-      AABB.data.node_data[this.current_node * NODE_SIZE + 1],
-      AABB.data.node_data[this.current_node * NODE_SIZE + 2],
+      AABB.data.node_bounds[this.current_node * NODE_BOUNDS_SIZE],
+      AABB.data.node_bounds[this.current_node * NODE_BOUNDS_SIZE + 1],
+      AABB.data.node_bounds[this.current_node * NODE_BOUNDS_SIZE + 2],
     ];
   }
 
   set min_point(value) {
-    AABB.data.node_data[this.current_node * NODE_SIZE] = value[0];
-    AABB.data.node_data[this.current_node * NODE_SIZE + 1] = value[1];
-    AABB.data.node_data[this.current_node * NODE_SIZE + 2] = value[2];
+    AABB.data.node_bounds[this.current_node * NODE_BOUNDS_SIZE] = value[0];
+    AABB.data.node_bounds[this.current_node * NODE_BOUNDS_SIZE + 1] = value[1];
+    AABB.data.node_bounds[this.current_node * NODE_BOUNDS_SIZE + 2] = value[2];
     AABB.data.modified = true;
   }
 
   get max_point() {
     return [
-      AABB.data.node_data[this.current_node * NODE_SIZE + 4],
-      AABB.data.node_data[this.current_node * NODE_SIZE + 5],
-      AABB.data.node_data[this.current_node * NODE_SIZE + 6],
+      AABB.data.node_bounds[this.current_node * NODE_BOUNDS_SIZE + 4],
+      AABB.data.node_bounds[this.current_node * NODE_BOUNDS_SIZE + 5],
+      AABB.data.node_bounds[this.current_node * NODE_BOUNDS_SIZE + 6],
     ];
   }
 
   set max_point(value) {
-    AABB.data.node_data[this.current_node * NODE_SIZE + 4] = value[0];
-    AABB.data.node_data[this.current_node * NODE_SIZE + 5] = value[1];
-    AABB.data.node_data[this.current_node * NODE_SIZE + 6] = value[2];
+    AABB.data.node_bounds[this.current_node * NODE_BOUNDS_SIZE + 4] = value[0];
+    AABB.data.node_bounds[this.current_node * NODE_BOUNDS_SIZE + 5] = value[1];
+    AABB.data.node_bounds[this.current_node * NODE_BOUNDS_SIZE + 6] = value[2];
     AABB.data.modified = true;
   }
 
   get node_type() {
-    return AABB.data.node_data[this.current_node * NODE_SIZE + 3];
+    return AABB.data.node_data[this.current_node * NODE_SIZE + 1];
   }
 
   set node_type(value) {
-    AABB.data.node_data[this.current_node * NODE_SIZE + 3] = value;
+    AABB.data.node_data[this.current_node * NODE_SIZE + 1] = value;
     AABB.data.modified = true;
   }
 
   get flags() {
-    return AABB.data.node_data[this.current_node * NODE_SIZE + 7];
+    return AABB.data.node_data[this.current_node * NODE_SIZE + 0];
   }
 
   set flags(value) {
-    AABB.data.node_data[this.current_node * NODE_SIZE + 7] = value;
+    AABB.data.node_data[this.current_node * NODE_SIZE + 0] = value;
     AABB.data.modified = true;
   }
 
   get left() {
-    return AABB.data.node_data[this.current_node * NODE_SIZE + 8];
+    return AABB.data.node_data[this.current_node * NODE_SIZE + 4];
   }
 
   set left(value) {
-    AABB.data.node_data[this.current_node * NODE_SIZE + 8] = value;
+    AABB.data.node_data[this.current_node * NODE_SIZE + 4] = value;
     AABB.data.modified = true;
   }
 
   get right() {
-    return AABB.data.node_data[this.current_node * NODE_SIZE + 9];
+    return AABB.data.node_data[this.current_node * NODE_SIZE + 5];
   }
 
   set right(value) {
-    AABB.data.node_data[this.current_node * NODE_SIZE + 9] = value;
+    AABB.data.node_data[this.current_node * NODE_SIZE + 5] = value;
     AABB.data.modified = true;
   }
 
   get parent() {
-    return AABB.data.node_data[this.current_node * NODE_SIZE + 10];
+    return AABB.data.node_data[this.current_node * NODE_SIZE + 6];
   }
 
   set parent(value) {
-    AABB.data.node_data[this.current_node * NODE_SIZE + 10] = value;
+    AABB.data.node_data[this.current_node * NODE_SIZE + 6] = value;
     AABB.data.modified = true;
   }
 
   get user_data() {
-    return AABB.data.node_data[this.current_node * NODE_SIZE + 11];
+    return AABB.data.node_data[this.current_node * NODE_SIZE + 7];
   }
 
   set user_data(value) {
-    AABB.data.node_data[this.current_node * NODE_SIZE + 11] = value;
+    AABB.data.node_data[this.current_node * NODE_SIZE + 7] = value;
     AABB.data.modified = true;
   }
 
@@ -181,12 +186,12 @@ const unmapped_state = "unmapped";
 export class AABB {
   // Static properties
   static data_view_allocator = new RingBufferAllocator(1024, AABBNodeDataView);
-  static size = 0;
+  static size = 1024;
   static data = null;
   static root_node = 0;
   static free_nodes = new TypedStack(1024, Uint32Array);
   static dirty_nodes = new TypedQueue(1024, 0, Uint32Array);
-  static rebalance_threshold = 2;
+  static allocated_count = 0;
 
   /**
    * Initialize the AABB tree
@@ -194,14 +199,38 @@ export class AABB {
   static initialize() {
     this.data = {
       node_data: new Float32Array(NODE_SIZE),
-      node_heights: new Float32Array(1),
+      node_bounds: new Float32Array(NODE_BOUNDS_SIZE),
       node_fat_bounds: new Float32Array(NODE_FAT_BOUNDS_SIZE),
+      node_heights: new Float32Array(1),
       node_data_buffer: null,
-      node_data_cpu_buffer: null,
+      node_bounds_buffer: null,
+      node_bounds_cpu_buffer: null,
       modified: true,
+      pending_cpu_changes: false,
     };
 
     Renderer.get().on_post_render(this.on_post_render.bind(this));
+
+    this.free_nodes.resize(this.size);
+
+    // Initialize new nodes as free
+    for (let i = 0; i < this.size; i++) {
+      const node_view = this.get_node_data(i);
+      node_view.min_point = [Infinity, Infinity, Infinity];
+      node_view.max_point = [-Infinity, -Infinity, -Infinity];
+      node_view.fat_min_point = [Infinity, Infinity, Infinity];
+      node_view.fat_max_point = [-Infinity, -Infinity, -Infinity];
+      node_view.node_type = AABB_NODE_TYPE.LEAF;
+      node_view.flags = AABB_NODE_FLAGS.FREE;
+      node_view.left = 0;
+      node_view.right = 0;
+      node_view.parent = 0;
+      node_view.user_data = 0xffffffff;
+      node_view.height = 0; // Initialize height to 0 for free nodes
+
+      // Add to free list
+      this.free_nodes.push(i);
+    }
 
     // Set up the root node
     this.reinitialize_root_node();
@@ -216,10 +245,10 @@ export class AABB {
 
     // Initialize the root node with "infinite" bounds
     const root_view = this.get_node_data(0);
-    root_view.min_point = [0, 0, 0];
-    root_view.max_point = [0, 0, 0];
-    root_view.fat_min_point = [0, 0, 0];
-    root_view.fat_max_point = [0, 0, 0];
+    root_view.min_point = [Infinity, Infinity, Infinity];
+    root_view.max_point = [-Infinity, -Infinity, -Infinity];
+    root_view.fat_min_point = [Infinity, Infinity, Infinity];
+    root_view.fat_max_point = [-Infinity, -Infinity, -Infinity];
     root_view.node_type = AABB_NODE_TYPE.INTERNAL;
     root_view.flags = 0;
     root_view.left = 0;
@@ -241,37 +270,67 @@ export class AABB {
 
     if (!this.data) this.initialize();
 
-    // Create a new array with the new size
-    const new_node_data = new Float32Array(this.size * NODE_SIZE);
+    {
+      // Create a new array with the new size
+      const new_node_data = new Float32Array(this.size * NODE_SIZE);
 
-    // Copy existing data
-    if (this.data.node_data) {
-      new_node_data.set(this.data.node_data);
+      // Copy existing data
+      if (this.data.node_data) {
+        new_node_data.set(this.data.node_data);
+      }
+
+      // Replace the old array
+      this.data.node_data = new_node_data;
     }
 
-    // Replace the old array
-    this.data.node_data = new_node_data;
+    {
+      // Create a new array with the new size
+      const new_node_bounds = new Float32Array(this.size * NODE_BOUNDS_SIZE);
 
-    // Create a new array with the new size
-    const new_node_heights = new Float32Array(this.size);
+      // Copy existing bounds
+      if (this.data.node_bounds) {
+        new_node_bounds.set(this.data.node_bounds);
+      }
 
-    // Copy existing heights
-    if (this.data.node_heights) {
-      this.data.node_heights.set(this.data.node_heights);
+      // Replace the old array
+      this.data.node_bounds = new_node_bounds;
     }
 
-    // Replace the old array
-    this.data.node_heights = new_node_heights;
+    {
+      // Create a new array with the new size
+      const new_node_fat_bounds = new Float32Array(this.size * NODE_FAT_BOUNDS_SIZE);
+
+      // Copy existing bounds
+      if (this.data.node_fat_bounds) {
+        new_node_fat_bounds.set(this.data.node_fat_bounds);
+      }
+
+      // Replace the old array
+      this.data.node_fat_bounds = new_node_fat_bounds;
+    }
+
+    {
+      // Create a new array with the new size
+      const new_node_heights = new Float32Array(this.size);
+
+      // Copy existing heights
+      if (this.data.node_heights) {
+        this.data.node_heights.set(this.data.node_heights);
+      }
+
+      // Replace the old array
+      this.data.node_heights = new_node_heights;
+    }
 
     this.free_nodes.resize(this.size);
 
     // Initialize new nodes as free
     for (let i = old_size; i < this.size; i++) {
       const node_view = this.get_node_data(i);
-      node_view.min_point = [0, 0, 0];
-      node_view.max_point = [0, 0, 0];
-      node_view.fat_min_point = [0, 0, 0];
-      node_view.fat_max_point = [0, 0, 0];
+      node_view.min_point = [Infinity, Infinity, Infinity];
+      node_view.max_point = [-Infinity, -Infinity, -Infinity];
+      node_view.fat_min_point = [Infinity, Infinity, Infinity];
+      node_view.fat_max_point = [-Infinity, -Infinity, -Infinity];
       node_view.node_type = AABB_NODE_TYPE.LEAF;
       node_view.flags = AABB_NODE_FLAGS.FREE;
       node_view.left = 0;
@@ -300,17 +359,23 @@ export class AABB {
     const node_index = this.free_nodes.pop();
     const node_view = this.get_node_data(node_index);
 
-    node_view.min_point = [0, 0, 0];
-    node_view.max_point = [0, 0, 0];
-    node_view.fat_min_point = [0, 0, 0];
-    node_view.fat_max_point = [0, 0, 0];
+    node_view.min_point = [Infinity, Infinity, Infinity];
+    node_view.max_point = [-Infinity, -Infinity, -Infinity];
+    node_view.fat_min_point = [Infinity, Infinity, Infinity];
+    node_view.fat_max_point = [-Infinity, -Infinity, -Infinity];
     node_view.node_type = AABB_NODE_TYPE.LEAF;
-    node_view.flags = AABB_NODE_FLAGS.MOVED;
+    node_view.flags = 0;
     node_view.left = 0;
     node_view.right = 0;
     node_view.parent = 0;
     node_view.user_data = user_data;
     node_view.height = 1; // Initialize height to 1 for leaf nodes
+
+    ++this.allocated_count;
+
+    this.data.modified = true;
+    // Lock out readbacks until this change has been pushed to the GPU
+    this.data.pending_cpu_changes = true;
 
     return node_index;
   }
@@ -329,10 +394,10 @@ export class AABB {
       return; // Node is already free
     }
 
-    node_view.min_point = [0, 0, 0];
-    node_view.max_point = [0, 0, 0];
-    node_view.fat_min_point = [0, 0, 0];
-    node_view.fat_max_point = [0, 0, 0];
+    node_view.min_point = [Infinity, Infinity, Infinity];
+    node_view.max_point = [-Infinity, -Infinity, -Infinity];
+    node_view.fat_min_point = [Infinity, Infinity, Infinity];
+    node_view.fat_max_point = [-Infinity, -Infinity, -Infinity];
     node_view.node_type = AABB_NODE_TYPE.LEAF;
     node_view.flags = AABB_NODE_FLAGS.FREE;
     node_view.left = 0;
@@ -344,7 +409,11 @@ export class AABB {
     // Add to free list
     this.free_nodes.push(node_index);
 
+    --this.allocated_count;
+
     this.data.modified = true;
+    // Lock out readbacks until this change has been pushed to the GPU
+    this.data.pending_cpu_changes = true;
   }
 
   /**
@@ -356,24 +425,6 @@ export class AABB {
     const data_view = this.data_view_allocator.allocate();
     data_view.view_node(node_index);
     return data_view;
-  }
-
-  /**
-   * Mark a node as moved (needs update)
-   * @param {number} node_index - The index of the node
-   * @returns {boolean} - True if the node was marked, false otherwise
-   */
-  static mark_node_moved(node_index) {
-    if (node_index <= 0 || node_index >= this.size) return false;
-
-    const node_view = this.get_node_data(node_index);
-    if ((node_view.flags & AABB_NODE_FLAGS.FREE) === 0) {
-      let flags = node_view.flags;
-      flags |= AABB_NODE_FLAGS.MOVED;
-      node_view.flags = flags;
-      return true;
-    }
-    return false;
   }
 
   /**
@@ -412,13 +463,6 @@ export class AABB {
         force: true,
       });
 
-      this.data.node_data_cpu_buffer = Buffer.create({
-        name: AABB_TREE_NODES_CPU_BUFFER_NAME,
-        usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
-        raw_data: this.data.node_data,
-        force: true,
-      });
-
       global_dispatcher.dispatch(AABB_TREE_NODES_EVENT, this.data.node_data_buffer);
 
       Renderer.get().mark_bind_groups_dirty(true);
@@ -428,6 +472,33 @@ export class AABB {
 
     global_dispatcher.dispatch(AABB_TREE_NODES_UPDATE_EVENT);
 
+    if (
+      !this.data.node_bounds_buffer ||
+      this.data.node_bounds_buffer.config.size < this.data.node_bounds.byteLength
+    ) {
+      this.data.node_bounds_buffer = Buffer.create({
+        name: AABB_TREE_NODES_BOUNDS_BUFFER_NAME,
+        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC,
+        raw_data: this.data.node_bounds,
+        force: true,
+      });
+
+      this.data.node_bounds_cpu_buffer = Buffer.create({
+        name: AABB_TREE_NODES_CPU_BOUNDS_BUFFER_NAME,
+        usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
+        raw_data: this.data.node_bounds,
+        force: true,
+      });
+
+      global_dispatcher.dispatch(AABB_TREE_NODES_UPDATE_EVENT);
+    } else {
+      this.data.node_bounds_buffer.write(this.data.node_bounds);
+    }
+
+    global_dispatcher.dispatch(AABB_NODE_BOUNDS_UPDATE_EVENT);
+
+    // After changes are pushed to GPU, we can allow readbacks again
+    this.data.pending_cpu_changes = false;
     this.data.modified = false;
   }
 
@@ -435,6 +506,10 @@ export class AABB {
    * Get GPU data for binding to shaders
    * @returns {Object} - Object containing GPU buffers
    */
+  static #data_buffers = {
+    node_data_buffer: null,
+    node_bounds_buffer: null,
+  }
   static to_gpu_data() {
     if (!this.data) {
       this.initialize();
@@ -442,26 +517,60 @@ export class AABB {
 
     this.rebuild_buffers();
 
-    return {
-      aabb_tree_nodes_buffer: this.data.node_data_buffer,
-    };
+    this.#data_buffers.node_data_buffer = this.data.node_data_buffer;
+    this.#data_buffers.node_bounds_buffer = this.data.node_bounds_buffer;
+
+    return this.#data_buffers;
   }
 
+  /**
+   * Sync the AABB tree buffers
+   */
+  static #temp_sync_buffer = new Float32Array(NODE_BOUNDS_SIZE);
   static async sync_buffers() {
-    if (this.data.node_data_cpu_buffer?.buffer.mapState === unmapped_state) {
-      await this.data.node_data_cpu_buffer.read(
-        this.data.node_data,
-        this.data.node_data.byteLength,
-        0,
-        0,
-        Float32Array,
-      );
+    // Don't do readbacks if there are pending CPU changes
+    if (this.data.pending_cpu_changes) return;
+    
+    // Only do readbacks if the buffer is ready and not being modified
+    if (this.data.node_bounds_cpu_buffer?.buffer.mapState === unmapped_state) {
+      // Set pending flag to prevent overlapping readbacks
+      this.data.pending_cpu_changes = true;
+      
+      if (this.#temp_sync_buffer.byteLength < this.data.node_bounds.byteLength) {
+        this.#temp_sync_buffer = new Float32Array(this.data.node_bounds.byteLength);
+      }
+
+      try {
+        // Do the readback
+        await this.data.node_bounds_cpu_buffer.read(
+          this.#temp_sync_buffer,
+          this.#temp_sync_buffer.byteLength,
+          0,
+          0,
+          Float32Array
+        );
+      } finally {
+        for (let i = 0; i < this.size; i++) {
+          if (this.data.node_data[i * NODE_SIZE + 1] === AABB_NODE_TYPE.LEAF) {
+            this.data.node_bounds[i * NODE_BOUNDS_SIZE + 0] = this.#temp_sync_buffer[i * NODE_BOUNDS_SIZE + 0];
+            this.data.node_bounds[i * NODE_BOUNDS_SIZE + 1] = this.#temp_sync_buffer[i * NODE_BOUNDS_SIZE + 1];
+            this.data.node_bounds[i * NODE_BOUNDS_SIZE + 2] = this.#temp_sync_buffer[i * NODE_BOUNDS_SIZE + 2];
+            this.data.node_bounds[i * NODE_BOUNDS_SIZE + 3] = this.#temp_sync_buffer[i * NODE_BOUNDS_SIZE + 3];
+            this.data.node_bounds[i * NODE_BOUNDS_SIZE + 4] = this.#temp_sync_buffer[i * NODE_BOUNDS_SIZE + 4];
+            this.data.node_bounds[i * NODE_BOUNDS_SIZE + 5] = this.#temp_sync_buffer[i * NODE_BOUNDS_SIZE + 5];
+            this.data.node_bounds[i * NODE_BOUNDS_SIZE + 6] = this.#temp_sync_buffer[i * NODE_BOUNDS_SIZE + 6];
+            this.data.node_bounds[i * NODE_BOUNDS_SIZE + 7] = this.#temp_sync_buffer[i * NODE_BOUNDS_SIZE + 7];
+          }
+        }
+        // Always clear pending flag regardless of success/failure
+        this.data.pending_cpu_changes = false;
+      }
     }
   }
 
-  static on_post_render() {
+  static async on_post_render() {
     if (!this.data) return;
-    this.sync_buffers();
+    await this.sync_buffers();
   }
 
   /**
@@ -577,5 +686,29 @@ export class AABB {
     ];
 
     return this.#bounds;
+  }
+
+  /**
+   * Calculate the cost of combining two AABBs
+   * @param {Array<number>} node_min_point - The min point of the node AABB
+   * @param {Array<number>} node_max_point - The max point of the node AABB
+   * @param {Array<number>} other_min_point - The min point of the other AABB
+   * @param {Array<number>} other_max_point - The max point of the other AABB
+   * @returns {number} - The cost of combining the AABBs
+   */
+  static calculate_combination_cost(
+    node_min_point,
+    node_max_point,
+    other_min_point,
+    other_max_point
+  ) {
+    const combined = AABB.merge_aabbs(
+      node_min_point,
+      node_max_point,
+      other_min_point,
+      other_max_point
+    );
+
+    return AABB.calculate_aabb_surface_area(combined.min, combined.max);
   }
 }

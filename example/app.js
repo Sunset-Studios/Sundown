@@ -4,7 +4,7 @@ import { SimulationLayer } from "../engine/src/core/simulation_layer.js";
 import { EntityManager } from "../engine/src/core/ecs/entity.js";
 import { Scene } from "../engine/src/core/scene.js";
 import { InputProvider } from "../engine/src/input/input_provider.js";
-import { InputKey } from '../engine/src/input/input_types.js'
+import { InputKey } from "../engine/src/input/input_types.js";
 import { PostProcessStack } from "../engine/src/renderer/post_process_stack.js";
 import { AABBTreeDebugRenderer } from "../engine/src/core/subsystems/aabb_debug_renderer.js";
 import { AABBRaycast, Ray, RaycastHit } from "../engine/src/acceleration/aabb_raycast.js";
@@ -24,7 +24,7 @@ import { spawn_mesh_entity, delete_entity } from "../engine/src/core/ecs/entity_
 import { FontCache } from "../engine/src/ui/text/font_cache.js";
 import { Name } from "../engine/src/utility/names.js";
 import { profile_scope } from "../engine/src/utility/performance.js";
-import { quat } from "gl-matrix";
+import { vec4, quat } from "gl-matrix";
 
 import * as UI from "../engine/src/ui/2d/immediate.js";
 
@@ -388,6 +388,46 @@ export class MLScene extends Scene {
 // =============================== AABB Scene =======================================
 // ------------------------------------------------------------------------------------
 
+const stats_panel_config = {
+  layout: "column",
+  gap: 4,
+  y: 400,
+  x: 25,
+  anchor_x: "right",
+  anchor_y: "bottom",
+  dont_consume_cursor_events: true,
+  background_color: "rgba(0, 0, 0, 0.7)",
+  width: 600,
+  padding: 10,
+  border: "1px solid rgb(68, 68, 68)",
+  corner_radius: 5,
+};
+
+const stats_label_config = {
+  text_color: "#fff",
+  x: 0,
+  y: 0,
+  wrap: true,
+  font: "16px monospace",
+  width: "100%",
+  height: "fit-content",
+  text_valign: "middle",
+  text_align: "left",
+  text_padding: 5,
+};
+
+const button_config = {
+  y: 0,
+  x: 0,
+  width: "fit-content",
+  font: "bold 16px monospace",
+  height: 30,
+  background_color: "#FFA500",
+  text_color: "#111111",
+  corner_radius: 5,
+  text_padding: 10,
+};
+
 export class AABBScene extends Scene {
   name = "AABBScene";
   show_ui = false;
@@ -397,6 +437,7 @@ export class AABBScene extends Scene {
   ray_hits = [];
   last_ray_origin = null;
   last_ray_direction = null;
+  ray_line_collection = null;
 
   init(parent_context) {
     super.init(parent_context);
@@ -410,10 +451,10 @@ export class AABBScene extends Scene {
       "engine/textures/gradientbox/pz.png",
       "engine/textures/gradientbox/nz.png",
     ]);
-    
+
     // Set the skybox color to a subtle blue
     SharedEnvironmentMapData.set_skybox_color([0.7, 0.8, 1.0, 1]);
-    
+
     // Add the freeform arcball control processor to the scene
     const freeform_arcball_control_processor = this.add_layer(FreeformArcballControlProcessor);
     freeform_arcball_control_processor.set_scene(this);
@@ -452,7 +493,7 @@ export class AABBScene extends Scene {
       [0, 0, 0, 1],
       [0.5, 0.5, 0.5],
       Mesh.quad(),
-      font_object.material,
+      font_object.material
     );
     const text_fragment_view = EntityManager.add_fragment(text_entity, TextFragment);
     text_fragment_view.font = font_id;
@@ -467,46 +508,58 @@ export class AABBScene extends Scene {
 
     // Create a default material
     this.default_material_id = Material.create("AABBTreeDefaultMaterial", "StandardMaterial");
-    this.selected_material_id = Material.create("AABBTreeSelectedMaterial", "StandardMaterial");
+    // Create a default material for the selected entity
+    this.selected_entity_material_id = Material.create(
+      "AABBTreeSelectedEntityMaterial",
+      "StandardMaterial"
+    );
 
-    // Configure the materials using combined uniform buffers
-    const default_material = Material.get(this.default_material_id);
-    // Create a combined uniform buffer for the default material
-    // Contains: color (vec4) and emission (float, aligned to vec4)
-    const default_material_data = new Float32Array([
-      // color: vec4 (RGBA)
-      0.7, 0.7, 0.7, 1.0,
-      // emission: float (followed by padding to maintain alignment)
-      0.0, 0.0, 0.0, 0.0,
-    ]);
+    {
+      // Configure the materials using combined uniform buffers
+      const default_material = Material.get(this.default_material_id);
+      // Create a combined uniform buffer for the default material
+      // Contains: color (vec4) and emission (float, aligned to vec4)
+      this.default_material_data = new Float32Array([
+        // color: vec4 (RGBA)
+        0.7, 0.7, 0.7, 1.0,
+        // emission: float (followed by padding to maintain alignment)
+        0.2, 0.0, 0.0, 0.0,
+      ]);
 
-    const default_material_buffer = Buffer.create({
-      name: "default_material_buffer",
-      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-      raw_data: default_material_data,
-    });
+      this.default_material_buffer = Buffer.create({
+        name: "default_material_buffer",
+        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+        raw_data: this.default_material_data,
+      });
 
-    // Set the uniform buffer for the material
-    default_material.set_uniform_data("material_params", default_material_buffer);
+      // Set the uniform buffer for the material
+      default_material.set_uniform_data("material_params", this.default_material_buffer);
+    }
 
-    // Configure the selected material
-    const selected_material = Material.get(this.selected_material_id);
-    // Create a combined uniform buffer for the selected material
-    const selected_material_data = new Float32Array([
-      // color: vec4 (RGBA)
-      1.0, 0.3, 0.3, 1.0,
-      // emission: float (followed by padding to maintain alignment)
-      0.5, 0.0, 0.0, 0.0,
-    ]);
+    {
+      // Create a combined uniform buffer for the selected entity material
+      const selected_entity_material = Material.get(this.selected_entity_material_id);
+      // Create a combined uniform buffer for the selected entity material
+      // Contains: color (vec4) and emission (float, aligned to vec4)
+      this.selected_entity_material_data = new Float32Array([
+        // color: vec4 (RGBA)
+        1.0, 0.3, 0.3, 1.0,
+        // emission: float (followed by padding to maintain alignment)
+        1.0, 0.0, 0.0, 0.0,
+      ]);
 
-    const selected_material_buffer = Buffer.create({
-      name: "selected_material_buffer",
-      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-      raw_data: selected_material_data,
-    });
+      this.selected_entity_material_buffer = Buffer.create({
+        name: "selected_entity_material_buffer",
+        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+        raw_data: this.selected_entity_material_data,
+      });
 
-    // Set the uniform buffer for the selected material
-    selected_material.set_uniform_data("material_params", selected_material_buffer);
+      // Set the uniform buffer for the material
+      selected_entity_material.set_uniform_data(
+        "material_params",
+        this.selected_entity_material_buffer
+      );
+    }
 
     // Create a sphere mesh
     this.sphere_mesh = Mesh.from_gltf("engine/models/sphere/sphere.gltf");
@@ -536,7 +589,7 @@ export class AABBScene extends Scene {
 
     this.handle_input();
 
-    // Run a raycast every frame from camera position
+    // Run a raycast every frame from mouse position
     if (this.entities.length > 0) {
       this.run_raycast();
     }
@@ -558,17 +611,12 @@ export class AABBScene extends Scene {
           const mesh = (x + z) % 2 === 0 ? this.cube_mesh : this.sphere_mesh;
 
           // Random position with small offset
-          const position = [
-            x * spacing,
-            y * spacing,
-            z * spacing,
-          ];
+          const position = [x * spacing, y * spacing, z * spacing];
 
           // Random scale
           const scale = [
-            0.5 + Math.random() * 0.5,
-            0.5 + Math.random() * 0.5,
-            0.5 + Math.random() * 0.5,
+            0.5 /*+ Math.random() * 0.5*/, 0.5 /*+ Math.random() * 0.5*/,
+            0.5 /*+ Math.random() * 0.5*/,
           ];
 
           // Create entity
@@ -577,7 +625,7 @@ export class AABBScene extends Scene {
             quat.fromEuler(quat.create(), 0, 0, 0),
             scale,
             mesh,
-            this.default_material_id,
+            this.default_material_id
           );
 
           this.entities.push(entity);
@@ -590,6 +638,16 @@ export class AABBScene extends Scene {
     // Toggle GPU raycast mode
     if (InputProvider.get_action(InputKey.K_g)) {
       this.use_gpu_raycast = !this.use_gpu_raycast;
+    }
+
+    // Toggle raycast UI
+    if (InputProvider.get_action(InputKey.K_u)) {
+      this.show_ui = !this.show_ui;
+      if (this.show_ui) {
+        this.show_dev_cursor();
+      } else {
+        this.hide_dev_cursor();
+      }
     }
 
     // Add a new entity at the previous hit point
@@ -605,14 +663,15 @@ export class AABBScene extends Scene {
         this.default_material_id,
         null,
         [],
-        true
+        true,
+        EntityTransformFlags.IGNORE_PARENT_SCALE | EntityTransformFlags.NO_AABB_UPDATE
       );
 
       this.entities.push(entity);
     }
 
     // Delete the selected entity
-    if (InputProvider.get_action(InputKey.K_Delete) && this.selected_entity) {
+    if (InputProvider.get_action(InputKey.K_Backspace) && this.selected_entity) {
       delete_entity(this.selected_entity);
 
       // Remove from entities array
@@ -630,94 +689,106 @@ export class AABBScene extends Scene {
     const view_data = SharedViewBuffer.get_view_data(0);
     if (!view_data) return;
 
-    this.last_ray_origin = view_data.position;
-    this.last_ray_direction = [
-      -view_data.view_matrix[2],
-      -view_data.view_matrix[6],
-      -view_data.view_matrix[10],
-    ];
+    // Get cursor world position (this is a point on the far plane)
+    const cursor_world_position = UI.UIContext.input_state.world_position;
+    if (!cursor_world_position) return;
 
-    // Normalize direction
+    // Use camera position as ray origin
+    this.last_ray_origin = cursor_world_position;
+    
+    // Calculate ray direction from camera to cursor world position
+    this.last_ray_direction = vec4.sub(vec4.create(), cursor_world_position, view_data.position);
+    // Normalize the direction vector
     const length = Math.sqrt(
       this.last_ray_direction[0] * this.last_ray_direction[0] +
       this.last_ray_direction[1] * this.last_ray_direction[1] +
       this.last_ray_direction[2] * this.last_ray_direction[2]
     );
-
+    
     this.last_ray_direction[0] /= length;
     this.last_ray_direction[1] /= length;
     this.last_ray_direction[2] /= length;
 
-    // Create ray
+    // Create ray for raycasting
     const ray = new Ray(this.last_ray_origin, this.last_ray_direction);
 
-    try {
-      // Perform raycast based on current mode
-      let hits;
-      if (this.use_gpu_raycast) {
-        hits = await AABBGPURaycast.raycast(ray);
-      } else {
-        hits = await AABBRaycast.raycast(ray);
-      }
-
-      // Process the hits (if any)
-      if (hits) {
-        if (Array.isArray(hits)) {
-          this.ray_hits = hits;
-        } else {
-          this.ray_hits = [hits]; // Single hit, wrap in array
-        }
-        this.process_raycast_results(this.ray_hits);
-      } else {
-        this.ray_hits = [];
-        this.process_raycast_results([]);
-      }
-      
-      // Update ray visualization in debug renderer if enabled
-      if (this.aabb_tree_debug_renderer) {
-        if (this.ray_hits.length > 0) {
-          this.aabb_tree_debug_renderer.set_ray(
-            ray.origin, 
-            ray.direction, 
-            this.ray_hits[0].point
-          );
-        } else {
-          this.aabb_tree_debug_renderer.set_ray(ray.origin, ray.direction);
-        }
-      }
-    } catch (error) {
-      console.error("Error during raycast:", error);
+    // Perform raycast based on current mode
+    if (this.use_gpu_raycast) {
+      AABBGPURaycast.raycast(ray, {}, (hits) => {
+        this.process_raycast_results(hits);
+      });
+    } else {
+      AABBRaycast.raycast(ray, {}, (hits) => {
+        this.process_raycast_results(hits);
+      });
     }
   }
 
   process_raycast_results(hits) {
-    this.ray_hits = hits;
+    // Process the hits (if any)
+    let new_ray_hits = [];
+    if (hits) {
+      if (Array.isArray(hits)) {
+        new_ray_hits = hits;
+      } else {
+        new_ray_hits = [hits]; // Single hit, wrap in array
+      }
+    } else {
+      new_ray_hits = [];
+    }
+
+    // Early out if same hits as last frame
+    if (
+      this.ray_hits.length === new_ray_hits.length &&
+      this.ray_hits.every((hit, index) => hit === new_ray_hits[index])
+    ) {
+      return;
+    }
+
+    this.ray_hits = new_ray_hits;
 
     // Update selected entity highlighting
     if (this.selected_entity !== null) {
       // Reset previous selection
-      const static_mesh = EntityManager.get_fragment(this.selected_entity, StaticMeshFragment);
-      if (static_mesh) {
-        const material_slots = static_mesh.material_slots;
-        material_slots[0] = this.default_material_id;
-        static_mesh.material_slots = material_slots;
+      const static_mesh_fragment = EntityManager.get_fragment(
+        this.selected_entity,
+        StaticMeshFragment
+      );
+      if (static_mesh_fragment) {
+        static_mesh_fragment.material_slots = [this.default_material_id];
       }
+
       this.selected_entity = null;
     }
 
     // Select new entity if we hit something
-    if (hits.length > 0) {
-      const hit = hits[0];
-      this.selected_entity = hit.entity;
-
-      // Highlight the selected entity
-      const static_mesh = EntityManager.get_fragment(this.selected_entity, StaticMeshFragment);
-      if (static_mesh) {
-        const material_slots = static_mesh.material_slots;
-        material_slots[0] = this.selected_material_id;
-        static_mesh.material_slots = material_slots;
+    if (this.ray_hits.length > 0) {
+      const hit = this.ray_hits[0];
+      
+      // Update the line visualization
+      if (this.ray_line_collection) {
+        LineRenderer.clear_collection(this.ray_line_collection);
+      }
+      
+      this.ray_line_collection = LineRenderer.start_collection();
+      
+      // Draw the ray from camera to end point
+      LineRenderer.add_line(this.last_ray_origin, hit.point, [1, 0, 0, 1]);
+      
+      LineRenderer.end_collection();
+      
+      // Highlight the selected entity by writing to the material buffer
+      this.selected_entity = hit.user_data;
+      const static_mesh_fragment = EntityManager.get_fragment(
+        this.selected_entity,
+        StaticMeshFragment
+      );
+      if (static_mesh_fragment) {
+        static_mesh_fragment.material_slots = [this.selected_entity_material_id];
       }
     }
+
+    this.default_material_buffer.write(this.default_material_data);
   }
 
   render_ui() {
@@ -751,7 +822,7 @@ export class AABBScene extends Scene {
 
       if (this.ray_hits.length > 0) {
         const hit = this.ray_hits[0];
-        UI.label(`Hit Entity: ${hit.entity}`, stats_label_config);
+        UI.label(`Hit Entity: ${hit.user_data}`, stats_label_config);
         UI.label(`Distance: ${hit.distance.toFixed(2)}`, stats_label_config);
 
         const pos_text = `Position: [${hit.point[0].toFixed(2)}, ${hit.point[1].toFixed(2)}, ${hit.point[2].toFixed(2)}]`;
@@ -798,7 +869,7 @@ export class AABBScene extends Scene {
             quat.fromEuler(quat.create(), 0, 0, 0),
             [0.5, 0.5, 0.5],
             Math.random() > 0.5 ? this.cube_mesh : this.sphere_mesh,
-            this.default_material_id,
+            this.default_material_id
           );
           this.entities.push(entity);
         }
@@ -815,7 +886,7 @@ export class AABBScene extends Scene {
           this.selected_entity = null;
         }
       }
-      
+
       // Add button for stress test
       const add_button = UI.button("Add 1000 Objects", button_config);
       if (add_button.clicked) {
@@ -825,28 +896,28 @@ export class AABBScene extends Scene {
       UI.end_container();
     });
   }
-  
+
   add_random_objects(count) {
     // Create random objects in a sphere around the camera
     const view_data = SharedViewBuffer.get_view_data(0);
     if (!view_data) return;
-    
+
     const center = view_data.position;
     const radius = 50.0;
-    
+
     for (let i = 0; i < count; i++) {
       // Random point in sphere
       const theta = Math.random() * Math.PI * 2;
       const phi = Math.acos(2 * Math.random() - 1);
       const r = radius * Math.cbrt(Math.random()); // Cube root for uniform distribution
-      
+
       const x = center[0] + r * Math.sin(phi) * Math.cos(theta);
       const y = center[1] + r * Math.sin(phi) * Math.sin(theta);
       const z = center[2] + r * Math.cos(phi);
-      
+
       // Random size
       const scale = 0.2 + Math.random() * 0.8;
-      
+
       // Create entity
       const entity = spawn_mesh_entity(
         [x, y, z],
@@ -858,7 +929,7 @@ export class AABBScene extends Scene {
         [],
         true
       );
-      
+
       this.entities.push(entity);
     }
   }
@@ -914,8 +985,8 @@ export class SceneSwitcher extends SimulationLayer {
 
   const scene_switcher = new SceneSwitcher("SceneSwitcher");
   await scene_switcher.add_scene(aabb_scene);
-  await scene_switcher.add_scene(rendering_scene);
-  await scene_switcher.add_scene(ml_scene);
+  //await scene_switcher.add_scene(rendering_scene);
+  //await scene_switcher.add_scene(ml_scene);
   await simulator.add_sim_layer(scene_switcher);
 
   simulator.run();

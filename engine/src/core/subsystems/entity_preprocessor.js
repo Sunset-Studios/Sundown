@@ -19,6 +19,7 @@ export class EntityPreprocessor extends SimulationLayer {
   _pre_update_internal() {
     EntityManager.flush_instance_count_changes();
     EntityManager.refresh_entities();
+    EntityManager.process_pending_deletes();
   }
 
   post_update(delta_time) {

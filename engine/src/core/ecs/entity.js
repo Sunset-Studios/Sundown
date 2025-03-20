@@ -1,7 +1,8 @@
 import { SharedEntityMetadataBuffer } from "../shared_data.js";
 import { EntityQuery } from "./query.js";
-import { TypedVector } from "../../memory/container.js";
+import { TypedVector, TypedQueue } from "../../memory/container.js";
 import { clamp } from "../../utility/math.js";
+import { EntityFlags } from "../minimal.js";
 
 const entity_image_buffer_name = "entity_image_buffer";
 const object_name = "object";
@@ -35,6 +36,7 @@ export class EntityManager {
   static entities = new TypedVector(256, 0, Float64Array);
   static deleted_entities = new Set();
   static pending_instance_count_changes = new Map();
+  static pending_entity_deletes = new TypedQueue(256, Uint32Array);
   static needs_entity_refresh = false;
 
   static preinit_fragments(...fragment_types) {
@@ -68,7 +70,7 @@ export class EntityManager {
       entity = this.next_entity_id++;
     }
 
-    SharedEntityMetadataBuffer.add_entity(entity);
+    SharedEntityMetadataBuffer.add_entity(entity, this.pending_instance_count_changes);
 
     // Resize all fragment data arrays to fit the new entity
     for (const fragment_type of this.fragment_types) {
@@ -79,6 +81,8 @@ export class EntityManager {
     this.entity_fragments.set(entity, new Set());
     this.needs_entity_refresh = true;
 
+    EntityID.set_entity_flags(entity, 0);
+
     return entity;
   }
 
@@ -86,12 +90,12 @@ export class EntityManager {
     if (!this.entity_fragments.has(entity)) {
       return;
     }
-    for (const FragmentType of this.entity_fragments.get(entity)) {
-      FragmentType.remove_entity?.(entity);
-    }
-    this.entity_fragments.delete(entity);
-    this.entities.remove(this.entities.index_of(entity));
-    this.deleted_entities.add(entity);
+
+    this.pending_entity_deletes.push(entity);
+
+    const flags = EntityID.get_entity_flags(entity);
+    EntityID.set_entity_flags(entity, flags | EntityFlags.PENDING_DELETE);
+
     this.needs_entity_refresh = true;
   }
 
@@ -200,6 +204,23 @@ export class EntityManager {
 
   static mark_needs_entity_refresh() {
     this.needs_entity_refresh = true;
+  }
+
+  static process_pending_deletes() {
+    while (this.pending_entity_deletes.length > 0) {
+      const entity = this.pending_entity_deletes.pop();
+
+      for (const FragmentType of this.entity_fragments.get(entity)) {
+        FragmentType.remove_entity?.(entity);
+      }
+  
+      SharedEntityMetadataBuffer.remove_entity(entity);
+      
+      this.entity_fragments.delete(entity);
+      this.entities.remove(this.entities.index_of(entity));
+      this.deleted_entities.add(entity);
+      this.needs_entity_refresh = true;
+    }
   }
 
   static flush_instance_count_changes() {
@@ -315,7 +336,7 @@ export class EntityManager {
   }
 
   static create_query({ fragment_requirements }) {
-    return EntityQuery.create(this, fragment_requirements);
+    return EntityQuery.create(fragment_requirements);
   }
 
   static rebuild_buffers() {

@@ -872,7 +872,7 @@ export class TypedStack {
    */
   push(value) {
     if (this.#size >= this.#capacity) {
-      throw new Error("Stack overflow");
+      this.resize(this.#capacity * 2);
     }
     this.#buffer[this.#size++] = value;
   }
@@ -1116,7 +1116,7 @@ export class TypedVector {
   #size;
   #capacity;
   #uniqueness_set;
-  #default_value;
+  #array_type;
 
   /**
    * Create a new Vector with the specified initial capacity and array type.
@@ -1129,7 +1129,7 @@ export class TypedVector {
     this.#size = 0;
     this.#capacity = initial_capacity;
     this.#uniqueness_set = new Set();
-    this.#default_value = default_value;
+    this.#array_type = array_type;
     for (let i = 0; i < initial_capacity; i++) {
       this.#buffer[i] = default_value;
     }
@@ -1142,9 +1142,12 @@ export class TypedVector {
   resize(new_capacity) {
     if (new_capacity <= this.#capacity) return;
 
-    const new_buffer = new this.#buffer.constructor(new_capacity);
-    new_buffer.set(this.#buffer);
-    this.#buffer = new_buffer;
+    if (new_capacity > this.#buffer.length) {
+      const new_buffer = new this.#array_type(new_capacity);
+      new_buffer.set(this.#buffer);
+      this.#buffer = new_buffer;
+    }
+
     this.#capacity = new_capacity;
   }
 
@@ -1217,12 +1220,27 @@ export class TypedVector {
     this.#size = 0;
   }
 
+  set_num_elements(num_elements) {
+    if (num_elements > this.#capacity) {
+      this.resize(num_elements);
+    }
+    this.#size = num_elements;
+  }
+
   /**
    * Compact the vector by removing unused elements.
    */
-  compact() {
-    this.#buffer.set(this.#buffer.slice(0, this.#size));
-    this.#size = this.#capacity;
+  compact(new_size = this.#size, realloc = true) {
+    if (new_size > this.#capacity) return;
+
+    if (realloc) {
+      this.#buffer.set(this.#buffer.slice(0, new_size));
+    }
+    if (new_size < this.#size) {
+      this.#size = new_size;
+    }
+
+    this.#capacity = new_size;
   }
 
   /**
@@ -1230,43 +1248,20 @@ export class TypedVector {
    * @param {TypedArray} other_typed_array - The array of values to add.
    */
   union(other_vector) {
-    // Create a Set for fast uniqueness checking
-    const unique_values = this.#uniqueness_set;
-    unique_values.clear();
-    // Add existing values to the set
-    for (let i = 0; i < this.#size; i++) {
-      unique_values.add(this.#buffer[i]);
-    }
-
-    // Count how many new unique values we'll be adding
-    let new_unique_count = 0;
-    for (let i = 0; i < other_vector.length; i++) {
-      if (!unique_values.has(other_vector.get(i))) {
-        unique_values.add(other_vector.get(i));
-        new_unique_count++;
-      }
-    }
-
     // Ensure we have enough capacity
-    const required_capacity = this.#size + new_unique_count;
+    const required_capacity = this.#size + other_vector.length;
     if (required_capacity > this.#capacity) {
       this.resize(Math.max(required_capacity, this.#capacity * 2));
-    }
-
-    // Add only unique values from the other array
-    unique_values.clear(); // Clear and rebuild set with current values
-    for (let i = 0; i < this.#size; i++) {
-      unique_values.add(this.#buffer[i]);
     }
 
     // Now add values from other vector if not already in set
     for (let i = 0; i < other_vector.length; i++) {
       const value = other_vector.get(i);
-      if (!unique_values.has(value)) {
-        this.#buffer[this.#size++] = value;
-        unique_values.add(value);
-      }
+      this.#buffer[this.#size++] = value;
     }
+
+    // Make the vector elements unique
+    this.make_unique();
   }
 
   /**
@@ -1283,9 +1278,7 @@ export class TypedVector {
       const value = this.#buffer[i];
       if (!unique_values.has(value)) {
         unique_values.add(value);
-        if (write_idx !== i) {
-          this.#buffer[write_idx] = value;
-        }
+        this.#buffer[write_idx] = value;
         write_idx++;
       }
     }
@@ -1300,6 +1293,7 @@ export class TypedVector {
   set_data(data) {
     this.#buffer = data;
     this.#size = data.length;
+    this.#capacity = data.length;
   }
 
   /**
@@ -1345,7 +1339,6 @@ export class TypedQueue {
   #tail;
   #size;
   #capacity;
-  #default_value;
   #uniqueness_set;
 
   /**
@@ -1360,7 +1353,6 @@ export class TypedQueue {
     this.#tail = 0;
     this.#size = 0;
     this.#capacity = initial_capacity;
-    this.#default_value = default_value;
     this.#uniqueness_set = new Set();
     
     // Initialize buffer with default values
@@ -1398,6 +1390,15 @@ export class TypedQueue {
   }
 
   /**
+   * Check if the queue contains a value.
+   * @param {number} value - The value to check for.
+   * @returns {boolean} True if the value is in the queue, false otherwise.
+   */
+  contains(value) {
+    return this.#buffer.indexOf(value) !== -1;
+  }
+
+  /**
    * Add a value to the end of the queue (enqueue).
    * @param {number} value - The value to add.
    */
@@ -1406,7 +1407,7 @@ export class TypedQueue {
     if (this.#size >= this.#capacity) {
       this._resize(this.#capacity * 2);
     }
-    
+
     // Add value at tail position
     this.#buffer[this.#tail] = value;
     
@@ -1483,27 +1484,41 @@ export class TypedQueue {
   }
 
   /**
-   * Remove duplicate values from the vector.
+   * Remove duplicate values from the queue.
    */
   make_unique() {
-    const unique_values = this.#uniqueness_set;
-    unique_values.clear();
+    this.#uniqueness_set.clear();
 
-    let write_idx = 0;
+    if (this.#size <= 1) return; // Already unique if empty or has one element
 
-    // Only keep first occurrence of each value
-    for (let i = 0; i < this.#size; i++) {
-      const value = this.#buffer[i];
-      if (!unique_values.has(value)) {
-        unique_values.add(value);
-        if (write_idx !== i) {
-          this.#buffer[write_idx] = value;
-        }
-        write_idx++;
+    let read_idx = this.#head;
+    let write_idx = this.#head;
+    let remaining = this.#size;
+    let new_size = 0;
+    
+    // Add the first element to the set
+    this.#uniqueness_set.add(this.#buffer[read_idx]);
+    read_idx = (read_idx + 1) % this.#capacity;
+    remaining--;
+    new_size++;
+    
+    // Process the rest of the elements
+    while (remaining > 0) {
+      const value = this.#buffer[read_idx];
+      read_idx = (read_idx + 1) % this.#capacity;
+      remaining--;
+      
+      if (!this.#uniqueness_set.has(value)) {
+        this.#uniqueness_set.add(value);
+        this.#buffer[write_idx] = value;
+        write_idx = (write_idx + 1) % this.#capacity;
+        new_size++;
       }
     }
-
+    
+    // Update size and tail
     this.#tail = write_idx;
+    this.#size = new_size;
   }
 
   /**

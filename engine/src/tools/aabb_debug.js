@@ -78,11 +78,10 @@ export class AABBDebug extends DevConsoleTool {
     // Use immediate mode UI panel instead of window
     let panel_state = panel(stats_panel_config, () => {
       // AABB tree stats
-      const node_count = stats.num_nodes;
-      const max_depth = stats.max_depth;
-
-      label(`AABB Nodes: ${node_count}`, stats_label_config);
-      label(`AABB Depth: ${max_depth}`, stats_label_config);
+      label(`Allocated Nodes: ${stats.allocated_nodes}`, stats_label_config);
+      label(`Tree Leaf Nodes: ${stats.leaf_nodes}`, stats_label_config);
+      label(`Tree Internal Nodes: ${stats.internal_nodes}`, stats_label_config);
+      label(`Tree Depth: ${stats.max_depth}`, stats_label_config);
       label(`Entity Count: ${EntityManager.get_entity_count()}`, stats_label_config);
       label(`Dirty Nodes: ${stats.dirty_nodes}`, stats_label_config);
 

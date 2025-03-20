@@ -34,6 +34,11 @@ const flags_cpu_buffer_name = "flags_cpu_buffer";
 const flags_event = "flags";
 const flags_update_event = "flags_update";
 
+const dirty_buffer_name = "dirty_buffer";
+const dirty_cpu_buffer_name = "dirty_cpu_buffer";
+const dirty_event = "dirty";
+const dirty_update_event = "dirty_update";
+
 const transforms_buffer_name = "transforms_buffer";
 const transforms_cpu_buffer_name = "transforms_cpu_buffer";
 const transforms_event = "transforms";
@@ -58,8 +63,7 @@ class TransformDataView {
     TransformFragment.data.position[this.absolute_entity * 4 + 1] = value[1];
     TransformFragment.data.position[this.absolute_entity * 4 + 2] = value[2];
     TransformFragment.data.position[this.absolute_entity * 4 + 3] = 1.0;
-    TransformFragment.data.flags[this.absolute_entity] |=
-      EntityTransformFlags.DIRTY;
+    TransformFragment.data.dirty[this.absolute_entity] = 1;
     TransformFragment.data.gpu_data_dirty = true;
   }
 
@@ -77,8 +81,7 @@ class TransformDataView {
     TransformFragment.data.rotation[this.absolute_entity * 4 + 1] = value[1];
     TransformFragment.data.rotation[this.absolute_entity * 4 + 2] = value[2];
     TransformFragment.data.rotation[this.absolute_entity * 4 + 3] = value[3];
-    TransformFragment.data.flags[this.absolute_entity] |=
-      EntityTransformFlags.DIRTY;
+    TransformFragment.data.dirty[this.absolute_entity] = 1;
     TransformFragment.data.gpu_data_dirty = true;
   }
 
@@ -95,8 +98,7 @@ class TransformDataView {
     TransformFragment.data.scale[this.absolute_entity * 4 + 1] = value[1];
     TransformFragment.data.scale[this.absolute_entity * 4 + 2] = value[2];
     TransformFragment.data.scale[this.absolute_entity * 4 + 3] = 0.0;
-    TransformFragment.data.flags[this.absolute_entity] |=
-      EntityTransformFlags.DIRTY;
+    TransformFragment.data.dirty[this.absolute_entity] = 1;
     TransformFragment.data.gpu_data_dirty = true;
   }
 
@@ -173,6 +175,15 @@ class TransformDataView {
     TransformFragment.data.gpu_data_dirty = true;
   }
 
+  get dirty() {
+    return TransformFragment.data.dirty[this.absolute_entity];
+  }
+
+  set dirty(value) {
+    TransformFragment.data.dirty[this.absolute_entity] = value;
+    TransformFragment.data.gpu_data_dirty = true;
+  }
+
   view_entity(entity, instance = 0) {
     this.current_entity = entity;
     this.absolute_entity = EntityID.get_absolute_index(entity) + instance;
@@ -196,6 +207,7 @@ export class TransformFragment extends Fragment {
       aabb_node_index: new Uint32Array(1),
       transforms: new Float32Array(32),
       flags: new Int32Array(1),
+      dirty: new Uint32Array(1),
       position_buffer: null,
       position_cpu_buffer: null,
       rotation_buffer: null,
@@ -205,6 +217,7 @@ export class TransformFragment extends Fragment {
       aabb_node_index_buffer: null,
       flags_buffer: null,
       flags_cpu_buffer: null,
+      dirty_buffer: null,
       transforms_buffer: null,
       transforms_cpu_buffer: null,
       gpu_data_dirty: true,
@@ -233,6 +246,7 @@ export class TransformFragment extends Fragment {
     );
     Fragment.resize_array(this.data, "transforms", new_size, Float32Array, 32);
     Fragment.resize_array(this.data, "flags", new_size, Int32Array, 1);
+    Fragment.resize_array(this.data, "dirty", new_size, Uint32Array, 1);
 
     this.data.gpu_data_dirty = true;
   }
@@ -243,7 +257,9 @@ export class TransformFragment extends Fragment {
       this.resize(absolute_entity * 2);
     }
 
-    const aabb_node_index = AABB.allocate_node(absolute_entity);
+    this.data.flags[absolute_entity] |= EntityTransformFlags.VALID;
+
+    const aabb_node_index = AABB.allocate_node(entity);
     this.data.aabb_node_index[absolute_entity] = aabb_node_index;
 
     return this.get_entity_data(entity);
@@ -266,11 +282,7 @@ export class TransformFragment extends Fragment {
       this.data.scale[(entity_offset + i) * 4 + 2] = 1;
       this.data.scale[(entity_offset + i) * 4 + 3] = 0;
       this.data.flags[entity_offset + i] = 0;
-
-      if (this.data.aabb_node_index[entity_offset + i] !== 0) {
-        AABB.free_node(this.data.aabb_node_index[entity_offset + i]);
-        this.data.aabb_node_index[entity_offset + i] = 0;
-      }
+      this.data.dirty[entity_offset + i] = 0;
     }
     this.data.gpu_data_dirty = true;
   }
@@ -302,6 +314,7 @@ export class TransformFragment extends Fragment {
       ],
       aabb_node_index: this.data.aabb_node_index[entity_offset],
       flags: this.data.flags[entity_offset],
+      dirty: this.data.dirty[entity_offset],
     };
   }
 
@@ -317,6 +330,7 @@ export class TransformFragment extends Fragment {
       scale_buffer: this.data.scale_buffer,
       flags_buffer: this.data.flags_buffer,
       aabb_node_index_buffer: this.data.aabb_node_index_buffer,
+      dirty_buffer: this.data.dirty_buffer,
     };
   }
 
@@ -480,6 +494,33 @@ export class TransformFragment extends Fragment {
       }
 
       global_dispatcher.dispatch(flags_update_event);
+    }
+
+    {
+      const gpu_data = this.data.dirty
+        ? this.data.dirty
+        : new Uint32Array(this.size * 1 + 1);
+      if (
+        !this.data.dirty_buffer ||
+        this.data.dirty_buffer.config.size < gpu_data.byteLength
+      ) {
+        this.data.dirty_buffer = Buffer.create({
+          name: dirty_buffer_name,
+          usage:
+            GPUBufferUsage.STORAGE |
+            GPUBufferUsage.COPY_DST |
+            GPUBufferUsage.COPY_SRC,
+          raw_data: gpu_data,
+          force: true,
+        });
+
+        Renderer.get().mark_bind_groups_dirty(true);
+        global_dispatcher.dispatch(dirty_event, this.data.dirty_buffer);
+      } else {
+        this.data.dirty_buffer.write(gpu_data);
+      }
+
+      global_dispatcher.dispatch(dirty_update_event);
     }
 
     {
@@ -667,10 +708,21 @@ export class TransformFragment extends Fragment {
 
     this.data.flags[to_index * 1 + 0] = this.data.flags[from_index * 1 + 0];
 
+    this.data.dirty[to_index * 1 + 0] = this.data.dirty[from_index * 1 + 0];
+
     this.data.gpu_data_dirty = true;
 
-    if (to_index > from_index) {
-      this.data.aabb_node_index[to_index] = AABB.allocate_node(to_index);
+    if (
+      to_index > from_index &&
+      this.data.flags[to_index] & EntityTransformFlags.VALID
+    ) {
+      this.data.aabb_node_index[to_index] = AABB.allocate_node(from_index);
+    } else if (to_index < from_index) {
+      if (this.data.aabb_node_index[to_index] !== 0) {
+        AABB.free_node(this.data.aabb_node_index[to_index]);
+      }
+      this.data.aabb_node_index[to_index] =
+        this.data.aabb_node_index[from_index];
     }
   }
 
@@ -763,6 +815,11 @@ export class TransformFragment extends Fragment {
     );
 
     return [scale_x, scale_y, scale_z];
+  }
+
+  static clear_all_dirty_flags() {
+    this.data.dirty.fill(0);
+    this.data.gpu_data_dirty = true;
   }
 
   static async on_post_render() {

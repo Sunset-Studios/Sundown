@@ -1,19 +1,10 @@
 #include "common.wgsl"
 
-// AABB Tree Node structure
-struct AABBNode {
-    min_point: vec4<f32>, // xyz + node_type
-    max_point: vec4<f32>, // xyz + flags 
-    node_data: vec4<u32>, // left, right, parent, user_data
-}
-
 // Ray structure
 struct Ray {
-    origin: vec3<f32>,
-    direction: vec3<f32>,
-    inv_direction: vec3<f32>,
-    t_min: f32,
-    t_max: f32,
+    origin_tmin: vec4<f32>,
+    direction_tmax: vec4<f32>,
+    inv_direction: vec4<f32>,
 }
 
 // Hit result structure
@@ -32,29 +23,25 @@ struct RaycastUniforms {
     max_traversal_steps: u32,
 }
 
-// Node types
-const NODE_TYPE_INTERNAL: u32 = 0u;
-const NODE_TYPE_LEAF: u32 = 1u;
-const NODE_TYPE_FREE: u32 = 2u;
-
 // Bindings
 @group(1) @binding(0) var<uniform> uniforms: RaycastUniforms;
-@group(1) @binding(1) var<storage, read> aabb_nodes: array<AABBNode>;
-@group(1) @binding(2) var<storage, read> input_rays: array<Ray>;
-@group(1) @binding(3) var<storage, read_write> output_hits: array<RaycastHit>;
+@group(1) @binding(1) var<storage, read> aabb_bounds: array<AABBNodeBounds>;
+@group(1) @binding(2) var<storage, read> aabb_nodes: array<AABBTreeNode>;
+@group(1) @binding(3) var<storage, read> input_rays: array<Ray>;
+@group(1) @binding(4) var<storage, read_write> output_hits: array<RaycastHit>;
 
 // Epsilon to avoid precision issues
 const EPSILON: f32 = 0.0001;
 
 // Check if ray intersects AABB, returns distance to intersection or -1 if no intersection
-fn ray_aabb_intersection(ray: Ray, min_point: vec3<f32>, max_point: vec3<f32>, t_min: f32, t_max: f32) -> f32 {
-    var tmin = t_min;
-    var tmax = t_max;
+fn ray_aabb_intersection(ray: Ray, min_point: vec3<f32>, max_point: vec3<f32>) -> f32 {
+    var tmin = ray.origin_tmin.w;
+    var tmax = ray.direction_tmax.w;
     
     for (var i = 0; i < 3; i++) {
         let inv_d = ray.inv_direction[i];
-        var t1 = (min_point[i] - ray.origin[i]) * inv_d;
-        var t2 = (max_point[i] - ray.origin[i]) * inv_d;
+        var t1 = (min_point[i] - ray.origin_tmin[i]) * inv_d;
+        var t2 = (max_point[i] - ray.origin_tmin[i]) * inv_d;
         
         if (inv_d < 0.0) {
             let temp = t1;
@@ -107,17 +94,6 @@ fn calculate_face_normal(hit_point: vec3<f32>, min_point: vec3<f32>, max_point: 
     }
 }
 
-// Compute inverse ray direction and ensure it's valid
-fn compute_inv_direction(direction: vec3<f32>) -> vec3<f32> {
-    var inv_direction: vec3<f32>;
-    
-    inv_direction.x = select(1.0 / direction.x, 1000000.0, abs(direction.x) < EPSILON);
-    inv_direction.y = select(1.0 / direction.y, 1000000.0, abs(direction.y) < EPSILON);
-    inv_direction.z = select(1.0 / direction.z, 1000000.0, abs(direction.z) < EPSILON);
-    
-    return inv_direction;
-}
-
 // Main compute shader
 @compute @workgroup_size(64, 1, 1)
 fn cs(@builtin(global_invocation_id) global_id: vec3<u32>) {
@@ -131,11 +107,6 @@ fn cs(@builtin(global_invocation_id) global_id: vec3<u32>) {
     // Get input ray
     var ray = input_rays[ray_index];
     
-    // Compute inverse direction if needed
-    if (ray.inv_direction.x == 0.0 && ray.inv_direction.y == 0.0 && ray.inv_direction.z == 0.0) {
-        ray.inv_direction = compute_inv_direction(ray.direction);
-    }
-    
     // Initialize hit result
     var hit: RaycastHit;
     hit.user_data = 0u;
@@ -144,8 +115,8 @@ fn cs(@builtin(global_invocation_id) global_id: vec3<u32>) {
     hit.normal = vec3<f32>(0.0, 0.0, 0.0);
     
     // First check if ray hits root node
-    let root_node = aabb_nodes[0];
-    let t_root = ray_aabb_intersection(ray, root_node.min_point.xyz, root_node.max_point.xyz, ray.t_min, ray.t_max);
+    let root_node = aabb_bounds[0];
+    let t_root = ray_aabb_intersection(ray, root_node.min_point.xyz, root_node.max_point.xyz);
     
     if (t_root < 0.0) {
         // Ray doesn't hit the root, early out
@@ -169,33 +140,34 @@ fn cs(@builtin(global_invocation_id) global_id: vec3<u32>) {
         stack_ptr -= 1u;
         let node_index = stack[stack_ptr];
         let node = aabb_nodes[node_index];
+        let bounds = aabb_bounds[node_index];
         
         // Skip free nodes
-        if ((u32(node.max_point.w) & NODE_TYPE_FREE) != 0u) {
+        if ((u32(node.flags_and_node_data.x) & AABB_NODE_FLAGS_FREE) != 0u) {
             continue;
         }
         
         // Check intersection with this node's AABB
-        let t = ray_aabb_intersection(ray, node.min_point.xyz, node.max_point.xyz, ray.t_min, min(hit.distance, ray.t_max));
+        let t = ray_aabb_intersection(ray, bounds.min_point.xyz, bounds.max_point.xyz);
         
         if (t < 0.0 || t > hit.distance) {
             // No intersection or intersection is farther than current hit
             continue;
         }
         
-        if (u32(node.min_point.w) == NODE_TYPE_LEAF) {
+        if (u32(node.flags_and_node_data.y) == AABB_NODE_TYPE_LEAF) {
             // This is a leaf node, perform detailed intersection test with entity
             // For simplicity, we'll use the AABB test as the entity intersection
             
             // Calculate hit point
-            let hit_point = ray.origin + ray.direction * t;
+            let hit_point = ray.origin_tmin.xyz + ray.direction_tmax.xyz * t;
             
             // Calculate normal
-            let normal = calculate_face_normal(hit_point, node.min_point.xyz, node.max_point.xyz);
+            let normal = calculate_face_normal(hit_point, bounds.min_point.xyz, bounds.max_point.xyz);
             
             // Update hit if this is closer
             if (t < hit.distance) {
-                hit.user_data = node.node_data.w;  // user_data
+                hit.user_data = u32(node.left_right_parent_ud.w);  // user_data
                 hit.distance = t;
                 hit.position = hit_point;
                 hit.normal = normal;
@@ -207,20 +179,18 @@ fn cs(@builtin(global_invocation_id) global_id: vec3<u32>) {
             }
         } else {
             // This is an internal node, add children to stack
-            let left_child = node.node_data.x;  // left
-            let right_child = node.node_data.y; // right
+            let left_child = u32(node.left_right_parent_ud.x);  // left
+            let right_child = u32(node.left_right_parent_ud.y); // right
             
             // Add children to stack (right then left for front-to-back traversal)
             // We handle invalid child indices (0) by checking in the next iteration
             if (left_child != 0u && right_child != 0u) {
                 // Both children exist, determine the traversal order
-                let left_node = aabb_nodes[left_child];
-                let right_node = aabb_nodes[right_child];
+                let left_bounds = aabb_bounds[left_child];
+                let right_bounds = aabb_bounds[right_child];
                 
-                let t_left = ray_aabb_intersection(ray, left_node.min_point.xyz, left_node.max_point.xyz, 
-                                           ray.t_min, min(hit.distance, ray.t_max));
-                let t_right = ray_aabb_intersection(ray, right_node.min_point.xyz, right_node.max_point.xyz, 
-                                            ray.t_min, min(hit.distance, ray.t_max));
+                let t_left = ray_aabb_intersection(ray, left_bounds.min_point.xyz, left_bounds.max_point.xyz);
+                let t_right = ray_aabb_intersection(ray, right_bounds.min_point.xyz, right_bounds.max_point.xyz);
                 
                 // Add nodes to stack in the order of closest intersection first
                 if (t_left > t_right) {

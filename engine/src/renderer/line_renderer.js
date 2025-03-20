@@ -190,22 +190,45 @@ export class LineRenderer {
         [4, 5], [5, 7], [7, 6], [6, 4], // Top face
         [0, 4], [1, 5], [2, 6], [3, 7]  // Connecting edges
     ];
+    static #corners = [
+        [0, 0, 0], // Bottom face
+        [1, 0, 0], // Top face
+        [0, 1, 0], // Connecting edges
+        [1, 1, 0], // Connecting edges
+        [0, 0, 1], // Connecting edges
+        [1, 0, 1], // Connecting edges
+        [0, 1, 1], // Connecting edges
+        [1, 1, 1], // Connecting edges
+    ];
     static add_box(min_point, max_point, color = DEFAULT_LINE_COLOR, width = LINE_WIDTH, collection_id = null) {
         // Define the 8 corners of the box
-        const corners = [
-            [min_point[0], min_point[1], min_point[2]], // 0: min corner
-            [max_point[0], min_point[1], min_point[2]], // 1: x-extended
-            [min_point[0], max_point[1], min_point[2]], // 2: y-extended
-            [max_point[0], max_point[1], min_point[2]], // 3: xy-extended
-            [min_point[0], min_point[1], max_point[2]], // 4: z-extended
-            [max_point[0], min_point[1], max_point[2]], // 5: xz-extended
-            [min_point[0], max_point[1], max_point[2]], // 6: yz-extended
-            [max_point[0], max_point[1], max_point[2]]  // 7: max corner
-        ];
-        
+        this.#corners[0][0] = min_point[0];
+        this.#corners[0][1] = min_point[1];
+        this.#corners[0][2] = min_point[2];
+        this.#corners[1][0] = max_point[0];
+        this.#corners[1][1] = min_point[1];
+        this.#corners[1][2] = min_point[2];
+        this.#corners[2][0] = min_point[0];
+        this.#corners[2][1] = max_point[1];
+        this.#corners[2][2] = min_point[2];
+        this.#corners[3][0] = max_point[0];
+        this.#corners[3][1] = max_point[1];
+        this.#corners[3][2] = min_point[2];
+        this.#corners[4][0] = min_point[0];
+        this.#corners[4][1] = min_point[1];
+        this.#corners[4][2] = max_point[2];
+        this.#corners[5][0] = max_point[0];
+        this.#corners[5][1] = min_point[1];
+        this.#corners[5][2] = max_point[2];
+        this.#corners[6][0] = min_point[0];
+        this.#corners[6][1] = max_point[1];
+        this.#corners[6][2] = max_point[2];
+        this.#corners[7][0] = max_point[0];
+        this.#corners[7][1] = max_point[1];
+        this.#corners[7][2] = max_point[2];
         // Create a line for each edge
         for (const [start_idx, end_idx] of this.#box_edges) {
-            this.add_line(corners[start_idx], corners[end_idx], color, width, collection_id);
+            this.add_line(this.#corners[start_idx], this.#corners[end_idx], color, width, collection_id);
         }
     }
     

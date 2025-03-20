@@ -37,15 +37,15 @@ fn create_line_transform(start: vec4f, end: vec4f) -> mat4x4f {
     let direction = end.xyz - start.xyz;
     
     // Calculate length of the line
-    let length = sqrt(dot(direction, direction));
+    let line_length = length(direction);
     
-    if (length < 0.0001) {
+    if (line_length < 0.0001) {
         // Handle degenerate case (zero-length line)
         return mat4_identity();
     }
     
     // Normalized direction
-    let normalized_direction = direction / length;
+    let normalized_direction = direction / line_length;
     
     // Find perpendicular vectors to create a coordinate system
     // Start with a default up vector
@@ -80,7 +80,7 @@ fn create_line_transform(start: vec4f, end: vec4f) -> mat4x4f {
     );
     
     // Apply scale to make the line the correct length
-    let scale_matrix = mat4_from_scaling(vec3f(length, 1.0, 1.0));
+    let scale_matrix = mat4_from_scaling(vec3f(line_length, 1.0, 1.0));
     
     // Combine transformations: first scale, then rotate, then translate
     // Order matters in matrix multiplication

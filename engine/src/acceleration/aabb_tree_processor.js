@@ -1,5 +1,5 @@
 import { AABB, AABB_NODE_TYPE, AABB_NODE_FLAGS } from "./aabb.js";
-import { TypedQueue, TypedVector } from "../memory/container.js";
+import { TypedQueue, TypedStack, TypedVector } from "../memory/container.js";
 import { profile_scope } from "../utility/performance.js";
 
 /**
@@ -9,24 +9,24 @@ import { profile_scope } from "../utility/performance.js";
 export class AABBTreeProcessor {
   // Configuration
   fat_margin_factor = 0.3; // 30% additional padding for fat AABBs
-  batch_size = 64; // Process nodes in batches for better performance
-  max_balance_per_update = 5; // Maximum number of nodes to balance per update
+  batch_size = 512; // Process nodes in batches for better performance
 
   // Statistics
-  num_nodes = 0;
+  leaf_nodes = 0;
+  internal_nodes = 0;
   max_depth = 0;
+  stats_dirty = false;
 
   // Tracking
   nodes_to_balance = new TypedQueue(1024);
+  dirty_nodes_set = new Set();
 
   /**
    * Called before the update cycle
    */
   pre_update() {
     // Initialize AABB data if needed
-    if (!AABB.data) {
-      AABB.initialize();
-    }
+    if (!AABB.data) AABB.initialize();
   }
 
   /**
@@ -41,7 +41,7 @@ export class AABBTreeProcessor {
       // Perform incremental balancing
       this._process_incremental_balancing();
 
-      if (__DEV__) {
+      if (__DEV__ && this.stats_dirty) {
         // Calculate statistics
         this._calculate_stats();
       }
@@ -56,93 +56,71 @@ export class AABBTreeProcessor {
   /**
    * Process changes to nodes
    */
-  #leaf_nodes = new TypedVector(1024, 0, Uint32Array);
   _process_node_changes() {
     profile_scope("aabb_tree_processor.process_changes", () => {
-      // Skip if no dirty nodes
       if (AABB.dirty_nodes.length === 0) {
         return;
       }
 
-      // Collect leaf nodes that need processing
-      this.#leaf_nodes.clear();
+      const max_iterations = Math.min(AABB.dirty_nodes.length, this.batch_size);
 
-      const num_to_process = Math.min(AABB.dirty_nodes.length, this.batch_size);
-      for (let i = 0; i < num_to_process; i++) {
+      for (let i = 0; i < max_iterations; i++) {
         const node_index = AABB.dirty_nodes.pop();
-
-        if (node_index <= 0 || node_index >= AABB.size) continue;
+        this.dirty_nodes_set.delete(node_index);
 
         const node_view = AABB.get_node_data(node_index);
-        const node_type = node_view.node_type;
         let flags = node_view.flags;
-
-        if ((flags & AABB_NODE_FLAGS.FREE) !== 0 || node_type !== AABB_NODE_TYPE.LEAF) {
-          continue;
-        }
-
-        // Clear the moved flag
         flags &= ~AABB_NODE_FLAGS.MOVED;
         node_view.flags = flags;
 
-        // Add to processing list
-        this.#leaf_nodes.push(node_index);
-      }
+        if ((flags & AABB_NODE_FLAGS.FREE) !== 0) {
+          continue;
+        }
 
-      // Process leaf nodes in batches
-      for (let i = 0; i < this.#leaf_nodes.length; ++i) {
-        this._process_leaf_node(this.#leaf_nodes.get(i));
+        this._process_leaf_check(node_index);
       }
     });
   }
 
-  /**
-   * Process a batch of leaf nodes
-   * @param {Array<number>} nodes - Array of node indices
-   * @param {number} batch_start - Start index of the batch
-   * @param {number} batch_end - End index of the batch
-   */
-  _process_leaf_node(node_index) {
+  _process_leaf_check(node_index) {
     let node_view = AABB.get_node_data(node_index);
     const min_point = node_view.min_point;
     const max_point = node_view.max_point;
 
-    // If node is not in the tree, add it
-    if (node_view.parent === 0 && node_index !== AABB.root_node) {
-      // Update node bounds with fat margin
-      const fat_aabb = AABB.calculate_fat_margin(min_point, max_point, this.fat_margin_factor);
-      node_view.fat_min_point = fat_aabb.min;
-      node_view.fat_max_point = fat_aabb.max;
-
-      // Insert into tree
-      this._insert_leaf(node_index);
-    } else {
-      const fat_aabb_min = node_view.fat_min_point;
-      const fat_aabb_max = node_view.fat_max_point;
-
-      // Node is already in the tree, check if it needs updating
-      const fits_in_fat_aabb =
-        min_point[0] >= fat_aabb_min[0] &&
-        min_point[1] >= fat_aabb_min[1] &&
-        min_point[2] >= fat_aabb_min[2] &&
-        max_point[0] <= fat_aabb_max[0] &&
-        max_point[1] <= fat_aabb_max[1] &&
-        max_point[2] <= fat_aabb_max[2];
-
-      if (!fits_in_fat_aabb) {
-        // Remove from tree
-        this._remove_leaf(node_index);
-
-        // Update bounds with new fat margin
-        node_view = AABB.get_node_data(node_index);
-        const fat_aabb = AABB.calculate_fat_margin(min_point, max_point, this.fat_margin_factor);
-        node_view.fat_min_point = fat_aabb.min;
-        node_view.fat_max_point = fat_aabb.max;
-
-        // Reinsert into tree
-        this._insert_leaf(node_index);
-      }
+    if (node_view.parent === 0 && AABB.root_node !== node_index) {
+      this._process_leaf_reinsert(node_index);
+      return;
     }
+
+    const fat_aabb_min = node_view.fat_min_point;
+    const fat_aabb_max = node_view.fat_max_point;
+
+    // Node is already in the tree, check if it needs updating
+    const fits_in_fat_aabb =
+      min_point[0] >= fat_aabb_min[0] &&
+      min_point[1] >= fat_aabb_min[1] &&
+      min_point[2] >= fat_aabb_min[2] &&
+      max_point[0] <= fat_aabb_max[0] &&
+      max_point[1] <= fat_aabb_max[1] &&
+      max_point[2] <= fat_aabb_max[2];
+
+    if (!fits_in_fat_aabb) {
+      // Remove from tree
+      this._process_leaf_reinsert(node_index);
+    }
+  }
+
+  _process_leaf_reinsert(node_index) {
+    this._remove_leaf(node_index);
+
+    let node_view = AABB.get_node_data(node_index);
+    const min_point = node_view.min_point;
+    const max_point = node_view.max_point;
+    const fat_aabb = AABB.calculate_fat_margin(min_point, max_point, this.fat_margin_factor);
+    node_view.fat_min_point = fat_aabb.min;
+    node_view.fat_max_point = fat_aabb.max;
+
+    this._insert_leaf(node_index);
   }
 
   /**
@@ -165,9 +143,6 @@ export class AABBTreeProcessor {
 
       // Find the best sibling for this leaf
       const sibling_index = this._find_best_sibling(leaf_index);
-      
-      // Skip if we got an invalid sibling or the leaf itself
-      if (sibling_index <= 0 || sibling_index === leaf_index) return;
 
       // Get the old parent of the sibling
       const sibling_view = AABB.get_node_data(sibling_index);
@@ -175,13 +150,6 @@ export class AABBTreeProcessor {
 
       // Set up the new parent
       const new_parent = this._allocate_internal_node();
-      
-      // Skip if allocation failed or returned the leaf or sibling
-      if (new_parent <= 0 || new_parent === leaf_index || new_parent === sibling_index) {
-        if (new_parent > 0) AABB.free_node(new_parent);
-        return;
-      }
-      
       const new_parent_view = AABB.get_node_data(new_parent);
       new_parent_view.parent = old_parent;
       new_parent_view.left = sibling_index;
@@ -232,6 +200,8 @@ export class AABBTreeProcessor {
 
       // Update the height of the new parent
       this._update_node_heights(new_parent);
+
+      this.stats_dirty = true;
     });
   }
 
@@ -241,9 +211,6 @@ export class AABBTreeProcessor {
    */
   _remove_leaf(leaf_index) {
     profile_scope("aabb_tree_processor.remove_leaf", () => {
-      // Skip invalid nodes
-      if (leaf_index <= 0 || leaf_index >= AABB.size) return;
-
       const leaf_view = AABB.get_node_data(leaf_index);
 
       // If this is the root, clear the tree
@@ -254,11 +221,7 @@ export class AABBTreeProcessor {
       }
 
       const parent = leaf_view.parent;
-      if (parent <= 0 || parent >= AABB.size) {
-        // Node is not in the tree
-        leaf_view.parent = 0;
-        return;
-      }
+      leaf_view.parent = 0;
 
       const parent_view = AABB.get_node_data(parent);
       const grandparent = parent_view.parent;
@@ -267,49 +230,51 @@ export class AABBTreeProcessor {
       const sibling = parent_view.left === leaf_index ? parent_view.right : parent_view.left;
 
       if (sibling <= 0 || sibling >= AABB.size) {
-        // Invalid sibling, something is wrong
-        leaf_view.parent = 0;
-        
         // If parent is the root, clear the tree
         if (parent === AABB.root_node) {
           AABB.root_node = 0;
+        } else if (grandparent > 0 && grandparent < AABB.size) {
+          // Only disconnect from grandparent if grandparent is valid
+          const grandparent_view = AABB.get_node_data(grandparent);
+          if (grandparent_view.left === parent) {
+            grandparent_view.left = 0;
+          } else if (grandparent_view.right === parent) {
+            grandparent_view.right = 0;
+          }
         }
-        
+
         // Free the parent node
         AABB.free_node(parent);
-        
-        return;
-      }
-
-      // Store sibling's parent before any modifications
-      const sibling_view = AABB.get_node_data(sibling);
-      
-      // Connect sibling to grandparent
-      if (grandparent === 0) {
-        // Parent was the root, make sibling the new root
-        AABB.root_node = sibling;
-        sibling_view.parent = 0;
       } else {
+        // Store sibling's parent before any modifications
+        const sibling_view = AABB.get_node_data(sibling);
+    
         // Connect sibling to grandparent
-        const grandparent_view = AABB.get_node_data(grandparent);
-        if (grandparent_view.left === parent) {
-          grandparent_view.left = sibling;
+        if (grandparent === 0) {
+          // Parent was the root, make sibling the new root
+          AABB.root_node = sibling;
+          sibling_view.parent = 0;
         } else {
-          grandparent_view.right = sibling;
+          // Connect sibling to grandparent
+          const grandparent_view = AABB.get_node_data(grandparent);
+          if (grandparent_view.left === parent) {
+            grandparent_view.left = sibling;
+          } else {
+            grandparent_view.right = sibling;
+          }
+          sibling_view.parent = grandparent;
         }
+    
+        // Free the parent node
+        AABB.free_node(parent);
+    
+        // Refit AABBs up the tree
+        this._refit_ancestors(sibling);
+    
+        // Update the height of the sibling
+        this._update_node_heights(sibling);
 
-        sibling_view.parent = grandparent;
-      }
-
-      // Clear parent pointer before freeing the parent node
-      leaf_view.parent = 0;
-      
-      // Free the parent node
-      AABB.free_node(parent);
-
-      // Refit AABBs up the tree
-      if (grandparent !== 0) {
-        this._refit_ancestors(grandparent);
+        this.stats_dirty = true;
       }
     });
   }
@@ -329,6 +294,9 @@ export class AABBTreeProcessor {
     if (current === 0) {
       return 0;
     }
+
+    // Prevent infinite loops by tracking visited nodes
+    const visited_nodes = new Set();
 
     // Calculate the cost of creating a new parent for this node and the root
     const root_view = AABB.get_node_data(current);
@@ -360,20 +328,28 @@ export class AABBTreeProcessor {
 
     // Traverse the tree to find the best sibling
     while (current !== 0) {
+      // Check for cycles
+      if (visited_nodes.has(current)) {
+        break;
+      }
+      visited_nodes.add(current);
+
       const current_view = AABB.get_node_data(current);
+      const current_min_point = current_view.min_point;
+      const current_max_point = current_view.max_point;
 
       // If this is a leaf, it's a potential sibling
       if (current_view.node_type === AABB_NODE_TYPE.LEAF) {
         // Calculate the cost of creating a new parent for this node and the current node
         const combined_aabb_min = [
-          Math.min(node_min_point[0], current_view.min_point[0]),
-          Math.min(node_min_point[1], current_view.min_point[1]),
-          Math.min(node_min_point[2], current_view.min_point[2]),
+          Math.min(node_min_point[0], current_min_point[0]),
+          Math.min(node_min_point[1], current_min_point[1]),
+          Math.min(node_min_point[2], current_min_point[2]),
         ];
         const combined_aabb_max = [
-          Math.max(node_max_point[0], current_view.max_point[0]),
-          Math.max(node_max_point[1], current_view.max_point[1]),
-          Math.max(node_max_point[2], current_view.max_point[2]),
+          Math.max(node_max_point[0], current_max_point[0]),
+          Math.max(node_max_point[1], current_max_point[1]),
+          Math.max(node_max_point[2], current_max_point[2]),
         ];
 
         // Calculate the surface area of the combined AABB
@@ -400,14 +376,14 @@ export class AABBTreeProcessor {
 
         // Calculate the cost of creating a new parent for this node and the current node
         const combined_aabb_min = [
-          Math.min(node_min_point[0], current_view.min_point[0]),
-          Math.min(node_min_point[1], current_view.min_point[1]),
-          Math.min(node_min_point[2], current_view.min_point[2]),
+          Math.min(node_min_point[0], current_min_point[0]),
+          Math.min(node_min_point[1], current_min_point[1]),
+          Math.min(node_min_point[2], current_min_point[2]),
         ];
         const combined_aabb_max = [
-          Math.max(node_max_point[0], current_view.max_point[0]),
-          Math.max(node_max_point[1], current_view.max_point[1]),
-          Math.max(node_max_point[2], current_view.max_point[2]),
+          Math.max(node_max_point[0], current_max_point[0]),
+          Math.max(node_max_point[1], current_max_point[1]),
+          Math.max(node_max_point[2], current_max_point[2]),
         ];
 
         // Calculate the surface area of the combined AABB
@@ -431,15 +407,17 @@ export class AABBTreeProcessor {
 
         if (left !== 0) {
           const left_view = AABB.get_node_data(left);
+          const left_min_point = left_view.min_point;
+          const left_max_point = left_view.max_point;
           const left_combined_min = [
-            Math.min(node_min_point[0], left_view.min_point[0]),
-            Math.min(node_min_point[1], left_view.min_point[1]),
-            Math.min(node_min_point[2], left_view.min_point[2]),
+            Math.min(node_min_point[0], left_min_point[0]),
+            Math.min(node_min_point[1], left_min_point[1]),
+            Math.min(node_min_point[2], left_min_point[2]),
           ];
           const left_combined_max = [
-            Math.max(node_max_point[0], left_view.max_point[0]),
-            Math.max(node_max_point[1], left_view.max_point[1]),
-            Math.max(node_max_point[2], left_view.max_point[2]),
+            Math.max(node_max_point[0], left_max_point[0]),
+            Math.max(node_max_point[1], left_max_point[1]),
+            Math.max(node_max_point[2], left_max_point[2]),
           ];
 
           const left_surface_area = AABB.calculate_aabb_surface_area(
@@ -447,21 +425,22 @@ export class AABBTreeProcessor {
             left_combined_max
           );
           left_cost =
-            left_surface_area -
-            AABB.calculate_aabb_surface_area(left_view.min_point, left_view.max_point);
+            left_surface_area - AABB.calculate_aabb_surface_area(left_min_point, left_max_point);
         }
 
         if (right !== 0) {
           const right_view = AABB.get_node_data(right);
+          const right_min_point = right_view.min_point;
+          const right_max_point = right_view.max_point;
           const right_combined_min = [
-            Math.min(node_min_point[0], right_view.min_point[0]),
-            Math.min(node_min_point[1], right_view.min_point[1]),
-            Math.min(node_min_point[2], right_view.min_point[2]),
+            Math.min(node_min_point[0], right_min_point[0]),
+            Math.min(node_min_point[1], right_min_point[1]),
+            Math.min(node_min_point[2], right_min_point[2]),
           ];
           const right_combined_max = [
-            Math.max(node_max_point[0], right_view.max_point[0]),
-            Math.max(node_max_point[1], right_view.max_point[1]),
-            Math.max(node_max_point[2], right_view.max_point[2]),
+            Math.max(node_max_point[0], right_max_point[0]),
+            Math.max(node_max_point[1], right_max_point[1]),
+            Math.max(node_max_point[2], right_max_point[2]),
           ];
 
           const right_surface_area = AABB.calculate_aabb_surface_area(
@@ -469,8 +448,7 @@ export class AABBTreeProcessor {
             right_combined_max
           );
           right_cost =
-            right_surface_area -
-            AABB.calculate_aabb_surface_area(right_view.min_point, right_view.max_point);
+            right_surface_area - AABB.calculate_aabb_surface_area(right_min_point, right_max_point);
         }
 
         // Descend to the child with the lower cost
@@ -494,8 +472,8 @@ export class AABBTreeProcessor {
     const node_view = AABB.get_node_data(node_index);
 
     node_view.node_type = AABB_NODE_TYPE.INTERNAL;
-    node_view.min_point = [Infinity, Infinity, Infinity];
-    node_view.max_point = [-Infinity, -Infinity, -Infinity];
+    node_view.min_point = [-Infinity, -Infinity, -Infinity];
+    node_view.max_point = [Infinity, Infinity, Infinity];
     node_view.height = 1; // Initialize height to 1
 
     return node_index;
@@ -506,40 +484,47 @@ export class AABBTreeProcessor {
    * @param {number} node_index - The index of the node to start refitting from
    */
   #refit_visited = new Set();
-  _refit_ancestors(node_index) {
+  _refit_ancestors(node_index, rebalance = true) {
     let current = node_index;
-    
+
     this.#refit_visited.clear();
+
     while (current !== 0) {
       // Skip invalid nodes
       if (current <= 0 || current >= AABB.size) break;
-      
-      // Check for cycles
-      if (this.#refit_visited.has(current)) {
-        console.warn(`Cycle detected during refit_ancestors at node ${current}`);
-        const node_view = AABB.get_node_data(current);
-        node_view.parent = 0;
-        break;
-      }
-      
-      this.#refit_visited.add(current);
-      
-      const current_view = AABB.get_node_data(current);
 
-      // Skip free nodes
-      if ((current_view.flags & AABB_NODE_FLAGS.FREE) !== 0) break;
+      let current_view = AABB.get_node_data(current);
 
-      // Skip leaf nodes
+      // Skip leaf nodes (just move to parent)
       if (current_view.node_type === AABB_NODE_TYPE.LEAF) {
-        // Leaf nodes always have height 1
-        current_view.height = 1;
         current = current_view.parent;
         continue;
       }
 
+      // Check for cycles
+      if (this.#refit_visited.has(current)) {
+        // Fix the cycle by breaking the parent link
+        current_view.parent = 0;
+        break; // Exit the loop to prevent infinite cycling
+      }
+
+      this.#refit_visited.add(current);
+
+      // Skip free nodes
+      if ((current_view.flags & AABB_NODE_FLAGS.FREE) !== 0) break;
+
       // Get children
       const left = current_view.left;
       const right = current_view.right;
+
+      // Validate children to prevent self-references
+      if (left === current || right === current) {
+        // Fix self-reference by clearing the child
+        if (left === current) current_view.left = 0;
+        if (right === current) current_view.right = 0;
+        current = current_view.parent;
+        continue;
+      }
 
       // Start with infinite bounds
       let min_point = [Infinity, Infinity, Infinity];
@@ -548,30 +533,34 @@ export class AABBTreeProcessor {
       // Include left child if valid
       if (left !== 0) {
         const left_view = AABB.get_node_data(left);
+        const left_view_min = left_view.min_point;
+        const left_view_max = left_view.max_point;
 
         // Skip if left child is free
         if ((left_view.flags & AABB_NODE_FLAGS.FREE) === 0) {
-          min_point[0] = Math.min(min_point[0], left_view.min_point[0]);
-          min_point[1] = Math.min(min_point[1], left_view.min_point[1]);
-          min_point[2] = Math.min(min_point[2], left_view.min_point[2]);
-          max_point[0] = Math.max(max_point[0], left_view.max_point[0]);
-          max_point[1] = Math.max(max_point[1], left_view.max_point[1]);
-          max_point[2] = Math.max(max_point[2], left_view.max_point[2]);
+          min_point[0] = Math.min(min_point[0], left_view_min[0]);
+          min_point[1] = Math.min(min_point[1], left_view_min[1]);
+          min_point[2] = Math.min(min_point[2], left_view_min[2]);
+          max_point[0] = Math.max(max_point[0], left_view_max[0]);
+          max_point[1] = Math.max(max_point[1], left_view_max[1]);
+          max_point[2] = Math.max(max_point[2], left_view_max[2]);
         }
       }
 
       // Include right child if valid
       if (right !== 0) {
         const right_view = AABB.get_node_data(right);
+        const right_view_min = right_view.min_point;
+        const right_view_max = right_view.max_point;
 
         // Skip if right child is free
         if ((right_view.flags & AABB_NODE_FLAGS.FREE) === 0) {
-          min_point[0] = Math.min(min_point[0], right_view.min_point[0]);
-          min_point[1] = Math.min(min_point[1], right_view.min_point[1]);
-          min_point[2] = Math.min(min_point[2], right_view.min_point[2]);
-          max_point[0] = Math.max(max_point[0], right_view.max_point[0]);
-          max_point[1] = Math.max(max_point[1], right_view.max_point[1]);
-          max_point[2] = Math.max(max_point[2], right_view.max_point[2]);
+          min_point[0] = Math.min(min_point[0], right_view_min[0]);
+          min_point[1] = Math.min(min_point[1], right_view_min[1]);
+          min_point[2] = Math.min(min_point[2], right_view_min[2]);
+          max_point[0] = Math.max(max_point[0], right_view_max[0]);
+          max_point[1] = Math.max(max_point[1], right_view_max[1]);
+          max_point[2] = Math.max(max_point[2], right_view_max[2]);
         }
       }
 
@@ -579,13 +568,20 @@ export class AABBTreeProcessor {
       current_view.min_point = min_point;
       current_view.max_point = max_point;
 
-      // Update height
-      const left_height = left <= 0 ? 0 : this._get_node_height(left);
-      const right_height = right <= 0 ? 0 : this._get_node_height(right);
-      current_view.height = Math.max(left_height, right_height) + 1;
-
       // Move to parent
-      current = current_view.parent;
+      const parent = current_view.parent;
+
+      // Check for parent-child cycle
+      if (parent === current) {
+        current_view.parent = 0; // Break the cycle
+        break;
+      }
+
+      if (rebalance) {
+        this.nodes_to_balance.push(current);
+      }
+
+      current = parent;
     }
   }
 
@@ -600,7 +596,7 @@ export class AABBTreeProcessor {
       }
 
       // Process a limited number of nodes per update
-      const num_to_process = Math.min(this.nodes_to_balance.length, this.max_balance_per_update);
+      const num_to_process = Math.min(this.nodes_to_balance.length, this.batch_size);
 
       for (let i = 0; i < num_to_process; i++) {
         const node_index = this.nodes_to_balance.pop();
@@ -610,12 +606,8 @@ export class AABBTreeProcessor {
 
         const node_view = AABB.get_node_data(node_index);
 
-        // Skip free and non-internal nodes
-        if (
-          (node_view.flags & AABB_NODE_FLAGS.FREE) !== 0 ||
-          node_view.node_type !== AABB_NODE_TYPE.INTERNAL
-        )
-          continue;
+        // Skip non-internal nodes
+        if (node_view.node_type !== AABB_NODE_TYPE.INTERNAL) continue;
 
         // Balance this node
         this._balance_node(node_index);
@@ -671,28 +663,7 @@ export class AABBTreeProcessor {
 
     const node_view = AABB.get_node_data(node_index);
 
-    // Skip free nodes
-    if ((node_view.flags & AABB_NODE_FLAGS.FREE) !== 0) return 0;
-
-    // Use cached height if available
-    if (node_view.height !== undefined && node_view.height > 0) {
-      return node_view.height;
-    }
-
-    // For leaf nodes, height is always 1
-    if (node_view.node_type === AABB_NODE_TYPE.LEAF) {
-      node_view.height = 1;
-      return 1;
-    }
-
-    // For internal nodes, calculate height based on children
-    // This is non-recursive and uses the cached heights of children
-    const left_height = node_view.left <= 0 ? 0 : AABB.get_node_data(node_view.left).height || 1;
-    const right_height = node_view.right <= 0 ? 0 : AABB.get_node_data(node_view.right).height || 1;
-
-    // Calculate and cache the height
-    node_view.height = Math.max(left_height, right_height) + 1;
-    return node_view.height;
+    return node_view.height || 0;
   }
 
   /**
@@ -726,7 +697,7 @@ export class AABBTreeProcessor {
 
     // Store original parent before any modifications
     const parent = node_view.parent;
-    
+
     // Skip if parent is the right child (would create a cycle)
     if (parent === right) return;
 
@@ -758,8 +729,8 @@ export class AABBTreeProcessor {
       }
     }
 
-    // Refit AABBs
-    this._refit_ancestors(node_index);
+    // Refit the ancestors without rebalancing
+    this._refit_ancestors(node_index, false);
 
     // Update heights
     this._update_node_heights(node_index);
@@ -796,7 +767,7 @@ export class AABBTreeProcessor {
 
     // Store original parent before any modifications
     const parent = node_view.parent;
-    
+
     // Skip if parent is the left child (would create a cycle)
     if (parent === left) return;
 
@@ -828,8 +799,8 @@ export class AABBTreeProcessor {
       }
     }
 
-    // Refit AABBs
-    this._refit_ancestors(node_index);
+    // Refit the ancestors without rebalancing
+    this._refit_ancestors(node_index, false);
 
     // Update heights
     this._update_node_heights(node_index);
@@ -850,6 +821,9 @@ export class AABBTreeProcessor {
 
       // Update depth using cached height values
       this._update_node_depth(AABB.root_node);
+
+      // Mark stats as not dirty
+      this.stats_dirty = false;
     });
   }
 
@@ -873,39 +847,50 @@ export class AABBTreeProcessor {
    * @param {number} start_node_index - The index of the node to start from
    * @param {number} start_depth - The depth of the start node
    */
+  #count_nodes_stack = new TypedStack(1024, Uint32Array);
+  #count_nodes_visited = new Set();
   _count_nodes(start_node_index) {
     // Skip if tree is empty
     if (start_node_index <= 0 || start_node_index >= AABB.size) return;
 
     // reset the number of nodes
-    this.num_nodes = 0;
+    this.leaf_nodes = 0;
+    this.internal_nodes = 0;
 
     // Use a stack to track nodes to process
-    const stack = [start_node_index];
+    this.#count_nodes_stack.clear();
+    this.#count_nodes_visited.clear();
 
-    while (stack.length > 0) {
-      const node_index = stack.pop();
+    this.#count_nodes_stack.push(start_node_index);
+
+    while (this.#count_nodes_stack.length > 0) {
+      const node_index = this.#count_nodes_stack.pop();
+
+      if (this.#count_nodes_visited.has(node_index)) continue;
+
+      this.#count_nodes_visited.add(node_index);
 
       // Skip invalid nodes
       if (node_index <= 0 || node_index >= AABB.size) continue;
 
       const node_view = AABB.get_node_data(node_index);
 
-      // Skip free nodes
-      if ((node_view.flags & AABB_NODE_FLAGS.FREE) !== 0) continue;
-
       // Count this node
-      this.num_nodes++;
+      if (node_view.node_type === AABB_NODE_TYPE.LEAF) {
+        this.leaf_nodes++;
+      } else if (node_view.node_type === AABB_NODE_TYPE.INTERNAL) {
+        this.internal_nodes++;
+      }
 
       // Add children to stack if this is an internal node
       if (node_view.node_type === AABB_NODE_TYPE.INTERNAL) {
         // Push right child first so left child is processed first (stack is LIFO)
         if (node_view.right > 0) {
-          stack.push(node_view.right);
+          this.#count_nodes_stack.push(node_view.right);
         }
 
         if (node_view.left > 0) {
-          stack.push(node_view.left);
+          this.#count_nodes_stack.push(node_view.left);
         }
       }
     }
@@ -916,16 +901,12 @@ export class AABBTreeProcessor {
    * @param {number} node_index - The index of the node to mark as dirty
    */
   mark_node_dirty(node_index) {
-    // Skip invalid nodes
     if (node_index <= 0 || node_index >= AABB.size) return;
 
-    const node_view = AABB.get_node_data(node_index);
-
-    // Skip free nodes
-    if ((node_view.flags & AABB_NODE_FLAGS.FREE) !== 0) return;
-
-    // Add to dirty nodes
-    AABB.dirty_nodes.push(node_index);
+    if (!this.dirty_nodes_set.has(node_index)) {
+      this.dirty_nodes_set.add(node_index);
+      AABB.dirty_nodes.push(node_index);
+    }
   }
 
   /**
@@ -941,9 +922,6 @@ export class AABBTreeProcessor {
     // Skip free nodes
     if ((node_view.flags & AABB_NODE_FLAGS.FREE) !== 0) return;
 
-    // Skip nodes not in the tree
-    if (node_view.parent === 0 && node_index !== AABB.root_node) return;
-
     // Remove from tree
     this._remove_leaf(node_index);
   }
@@ -954,7 +932,9 @@ export class AABBTreeProcessor {
    */
   get_stats() {
     return {
-      num_nodes: this.num_nodes,
+      allocated_nodes: AABB.allocated_count,
+      leaf_nodes: this.leaf_nodes,
+      internal_nodes: this.internal_nodes,
       max_depth: this.max_depth,
       nodes_to_balance: this.nodes_to_balance.length,
       dirty_nodes: AABB.dirty_nodes.length,
@@ -970,18 +950,19 @@ export class AABBTreeProcessor {
   _update_node_heights(node_index) {
     let current = node_index;
     this.#update_node_heights_visited.clear();
-    
+
+    // Add a safety counter to prevent infinite loops
+
     while (current > 0) {
       // Check for cycles
       if (this.#update_node_heights_visited.has(current)) {
-        console.warn(`Cycle detected during update_node_heights at node ${current}`);
         const node_view = AABB.get_node_data(current);
-        node_view.parent = 0;
+        node_view.parent = 0; // Break the cycle
         break;
       }
-      
+
       this.#update_node_heights_visited.add(current);
-      
+
       const node_view = AABB.get_node_data(current);
 
       // Skip free nodes
@@ -997,8 +978,18 @@ export class AABBTreeProcessor {
         const left_child = node_view.left;
         const right_child = node_view.right;
 
-        const left_height = left_child <= 0 ? 0 : AABB.get_node_data(left_child).height || 1;
-        const right_height = right_child <= 0 ? 0 : AABB.get_node_data(right_child).height || 1;
+        // Validate children to prevent self-references
+        if (left_child === current) node_view.left = 0;
+        if (right_child === current) node_view.right = 0;
+
+        const left_height =
+          left_child <= 0 || left_child === current
+            ? 0
+            : AABB.get_node_data(left_child).height || 1;
+        const right_height =
+          right_child <= 0 || right_child === current
+            ? 0
+            : AABB.get_node_data(right_child).height || 1;
 
         new_height = Math.max(left_height, right_height) + 1;
       }
@@ -1010,78 +1001,15 @@ export class AABBTreeProcessor {
       node_view.height = new_height;
 
       // Move to parent
-      current = node_view.parent;
-    }
-  }
+      const parent = node_view.parent;
 
-  /**
-   * Debug method to verify node types in the tree
-   * @returns {Object} - Statistics about node types
-   */
-  debug_verify_node_types() {
-    const stats = {
-      total_nodes: 0,
-      internal_nodes: 0,
-      leaf_nodes: 0,
-      invalid_nodes: 0,
-      fixed_nodes: 0,
-    };
-
-    // Use a stack to traverse the tree
-    const stack = [];
-    const visited = new Set();
-
-    if (AABB.root_node > 0) {
-      stack.push(AABB.root_node);
-    }
-
-    while (stack.length > 0) {
-      const node_index = stack.pop();
-
-      // Skip if already visited
-      if (visited.has(node_index)) continue;
-      visited.add(node_index);
-
-      // Skip invalid nodes
-      if (node_index <= 0 || node_index >= AABB.size) {
-        stats.invalid_nodes++;
-        continue;
+      // Check for parent-child cycle
+      if (parent === current) {
+        node_view.parent = 0; // Break the cycle
+        break;
       }
 
-      const node_view = AABB.get_node_data(node_index);
-
-      // Skip free nodes
-      if ((node_view.flags & AABB_NODE_FLAGS.FREE) !== 0) continue;
-
-      stats.total_nodes++;
-
-      // Check if node type matches its structure
-      const has_children = node_view.left > 0 || node_view.right > 0;
-
-      if (has_children && node_view.node_type !== AABB_NODE_TYPE.INTERNAL) {
-        // Fix the node type
-        node_view.node_type = AABB_NODE_TYPE.INTERNAL;
-        stats.fixed_nodes++;
-      } else if (!has_children && node_view.node_type !== AABB_NODE_TYPE.LEAF) {
-        // Fix the node type
-        node_view.node_type = AABB_NODE_TYPE.LEAF;
-        stats.fixed_nodes++;
-      }
-
-      // Count node types
-      if (node_view.node_type === AABB_NODE_TYPE.INTERNAL) {
-        stats.internal_nodes++;
-
-        // Add children to stack
-        if (node_view.left > 0) stack.push(node_view.left);
-        if (node_view.right > 0) stack.push(node_view.right);
-      } else if (node_view.node_type === AABB_NODE_TYPE.LEAF) {
-        stats.leaf_nodes++;
-      }
+      current = parent;
     }
-
-    console.log("AABB Tree Node Type Verification:", stats);
-
-    return stats;
   }
 }

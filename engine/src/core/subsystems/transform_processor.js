@@ -4,15 +4,14 @@ import { EntityManager } from "../ecs/entity.js";
 import { ComputeTaskQueue } from "../../renderer/compute_task_queue.js";
 import { TransformFragment } from "../ecs/fragments/transform_fragment.js";
 import { SceneGraphFragment } from "../ecs/fragments/scene_graph_fragment.js";
-import { EntityTransformFlags } from "../minimal.js";
 import { profile_scope } from "../../utility/performance.js";
 
 const unmapped_state = "unmapped";
+const transform_processor_pre_update_scope_name = "TransformProcessor.pre_update";
 const transform_processor_update_scope_name = "TransformProcessor.update";
 const transform_processing_task_name = "transform_processing";
 const transform_processing_wgsl_path = "system_compute/transform_processing.wgsl";
 const copy_position_rotation_scale_to_buffer_name = "copy_position_rotation_scale_to_buffer";
-const reset_transform_dirty_flag_name = "reset_transform_dirty_flag";
 
 export class TransformProcessor extends SimulationLayer {
   entity_query = null;
@@ -24,8 +23,10 @@ export class TransformProcessor extends SimulationLayer {
       fragment_requirements: [TransformFragment],
     });
     this.on_post_render_callback = this._on_post_render.bind(this);
-    this.on_pre_render_callback = this._on_pre_render.bind(this);
     this._update_internal = this._update_internal.bind(this);
+    this._on_render_complete = this._on_render_complete.bind(this);
+
+    Renderer.get().on_post_render(this._on_render_complete);
   }
 
   update(delta_time) {
@@ -53,9 +54,10 @@ export class TransformProcessor extends SimulationLayer {
       this.transform_processing_input_lists[i][1] = transforms.rotation_buffer;
       this.transform_processing_input_lists[i][2] = transforms.scale_buffer;
       this.transform_processing_input_lists[i][3] = transforms.flags_buffer;
-      this.transform_processing_input_lists[i][4] = transforms.transforms_buffer;
-      this.transform_processing_input_lists[i][5] = scene_graph.scene_graph_buffer;
-      this.transform_processing_input_lists[i][6] = scene_graph.scene_graph_uniforms[i];
+      this.transform_processing_input_lists[i][4] = transforms.dirty_buffer;
+      this.transform_processing_input_lists[i][5] = transforms.transforms_buffer;
+      this.transform_processing_input_lists[i][6] = scene_graph.scene_graph_buffer;
+      this.transform_processing_input_lists[i][7] = scene_graph.scene_graph_uniforms[i];
 
       this.transform_processing_output_lists[i][0] = transforms.position_buffer;
       this.transform_processing_output_lists[i][1] = transforms.rotation_buffer;
@@ -68,33 +70,14 @@ export class TransformProcessor extends SimulationLayer {
         transform_processing_wgsl_path,
         this.transform_processing_input_lists[i],
         this.transform_processing_output_lists[i],
-        Math.floor((scene_graph.scene_graph_layer_counts[i] + 255) / 256)
+        Math.max(1, Math.floor((scene_graph.scene_graph_layer_counts[i] + 255) / 256))
       );
     }
-
-    Renderer.get().enqueue_pre_commands(
-      reset_transform_dirty_flag_name,
-      this.on_pre_render_callback
-    );
 
     Renderer.get().enqueue_post_commands(
       copy_position_rotation_scale_to_buffer_name,
       this.on_post_render_callback
     );
-  }
-
-  _on_pre_render(graph, frame_data, encoder) {
-    const transforms = EntityManager.get_fragment_array(TransformFragment);
-    if (!transforms) {
-      return;
-    }
-
-    for (let i = 0; i < transforms.flags.length; i++) {
-      if ((transforms.flags[i] & EntityTransformFlags.TRANSFORM_DIRTY) !== 0) {
-        transforms.flags[i] &= ~EntityTransformFlags.TRANSFORM_DIRTY;
-        transforms.gpu_data_dirty = true;
-      }
-    }
   }
 
   _on_post_render(graph, frame_data, encoder) {
@@ -103,24 +86,28 @@ export class TransformProcessor extends SimulationLayer {
       return;
     }
 
-    if (transforms.position_cpu_buffer.buffer.mapState === unmapped_state) {
+    if (transforms.position_cpu_buffer.buffer.mapState === unmapped_state && !transforms.pending_cpu_write) {
       transforms.position_buffer.copy_buffer(encoder, 0, transforms.position_cpu_buffer);
     }
 
-    if (transforms.rotation_cpu_buffer.buffer.mapState === unmapped_state) {
+    if (transforms.rotation_cpu_buffer.buffer.mapState === unmapped_state && !transforms.pending_cpu_write) {
       transforms.rotation_buffer.copy_buffer(encoder, 0, transforms.rotation_cpu_buffer);
     }
 
-    if (transforms.scale_cpu_buffer.buffer.mapState === unmapped_state) {
+    if (transforms.scale_cpu_buffer.buffer.mapState === unmapped_state && !transforms.pending_cpu_write) {
       transforms.scale_buffer.copy_buffer(encoder, 0, transforms.scale_cpu_buffer);
     }
 
-    if (transforms.flags_cpu_buffer.buffer.mapState === unmapped_state) {
+    if (transforms.flags_cpu_buffer.buffer.mapState === unmapped_state && !transforms.pending_cpu_write) {
       transforms.flags_buffer.copy_buffer(encoder, 0, transforms.flags_cpu_buffer);
     }
 
-    if (transforms.transforms_cpu_buffer.buffer.mapState === unmapped_state) {
+    if (transforms.transforms_cpu_buffer.buffer.mapState === unmapped_state && !transforms.pending_cpu_write) {
       transforms.transforms_buffer.copy_buffer(encoder, 0, transforms.transforms_cpu_buffer);
     }
+  }
+
+  _on_render_complete() {
+    TransformFragment.clear_all_dirty_flags();
   }
 }

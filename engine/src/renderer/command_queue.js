@@ -10,10 +10,10 @@ export class CommandQueue {
         const renderer = Renderer.get();
         const command_buffer = encoder.finish();
         renderer.device.queue.submit([command_buffer]);
-        renderer.device.queue.onSubmittedWorkDone().then(() => {
+        renderer.device.queue.onSubmittedWorkDone().then(async () => {
             renderer.execution_queue.update();
             if (post_render_cb) {
-                post_render_cb();
+                await post_render_cb();
             }
         });
     }
