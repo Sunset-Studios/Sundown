@@ -62,8 +62,7 @@ export class TransformProcessor extends SimulationLayer {
       this.transform_processing_output_lists[i][0] = transforms.position_buffer;
       this.transform_processing_output_lists[i][1] = transforms.rotation_buffer;
       this.transform_processing_output_lists[i][2] = transforms.scale_buffer;
-      this.transform_processing_output_lists[i][3] = transforms.flags_buffer;
-      this.transform_processing_output_lists[i][4] = transforms.transforms_buffer;
+      this.transform_processing_output_lists[i][3] = transforms.transforms_buffer;
 
       ComputeTaskQueue.get().new_task(
         transform_processing_task_name + i,
@@ -86,28 +85,28 @@ export class TransformProcessor extends SimulationLayer {
       return;
     }
 
-    if (transforms.position_cpu_buffer.buffer.mapState === unmapped_state && !transforms.pending_cpu_write) {
+    if (transforms.position_cpu_buffer.buffer.mapState === unmapped_state && !transforms.gpu_data_dirty) {
       transforms.position_buffer.copy_buffer(encoder, 0, transforms.position_cpu_buffer);
     }
 
-    if (transforms.rotation_cpu_buffer.buffer.mapState === unmapped_state && !transforms.pending_cpu_write) {
+    if (transforms.rotation_cpu_buffer.buffer.mapState === unmapped_state && !transforms.gpu_data_dirty) {
       transforms.rotation_buffer.copy_buffer(encoder, 0, transforms.rotation_cpu_buffer);
     }
 
-    if (transforms.scale_cpu_buffer.buffer.mapState === unmapped_state && !transforms.pending_cpu_write) {
+    if (transforms.scale_cpu_buffer.buffer.mapState === unmapped_state && !transforms.gpu_data_dirty) {
       transforms.scale_buffer.copy_buffer(encoder, 0, transforms.scale_cpu_buffer);
     }
 
-    if (transforms.flags_cpu_buffer.buffer.mapState === unmapped_state && !transforms.pending_cpu_write) {
+    if (transforms.flags_cpu_buffer.buffer.mapState === unmapped_state && !transforms.gpu_data_dirty) {
       transforms.flags_buffer.copy_buffer(encoder, 0, transforms.flags_cpu_buffer);
     }
 
-    if (transforms.transforms_cpu_buffer.buffer.mapState === unmapped_state && !transforms.pending_cpu_write) {
+    if (transforms.transforms_cpu_buffer.buffer.mapState === unmapped_state && !transforms.gpu_data_dirty) {
       transforms.transforms_buffer.copy_buffer(encoder, 0, transforms.transforms_cpu_buffer);
     }
   }
 
-  _on_render_complete() {
+  async _on_render_complete() {
     TransformFragment.clear_all_dirty_flags();
   }
 }

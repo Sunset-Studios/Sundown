@@ -438,6 +438,8 @@ export class LightFragment extends Fragment {
   static rebuild_buffers() {
     if (!this.data.gpu_data_dirty) return;
 
+    let retry = this.#synching;
+
     {
       let total_active = 0;
       for (let i = 0; i < this.size; i++) {
@@ -489,17 +491,23 @@ export class LightFragment extends Fragment {
           light_fragment_event,
           this.data.light_fragment_buffer,
         );
-      } else {
+      } else if (!retry) {
         this.data.light_fragment_buffer.write(gpu_data);
       }
 
       global_dispatcher.dispatch(light_fragment_update_event);
     }
 
-    this.data.gpu_data_dirty = false;
+    this.data.gpu_data_dirty = retry;
   }
 
-  static async sync_buffers() {}
+  static #synching = false;
+  static async sync_buffers() {
+    if (this.#synching) return;
+    this.#synching = true;
+
+    this.#synching = false;
+  }
 
   static copy_entity_instance(to_index, from_index) {
     this.data.position.x[to_index * 1 + 0] =

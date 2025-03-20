@@ -153,6 +153,8 @@ export class SceneGraphFragment extends Fragment {
   static rebuild_buffers() {
     if (!this.data.gpu_data_dirty) return;
 
+    let retry = this.#synching;
+
     {
       const { result, layer_counts } = this.data.scene_graph.flatten(
         Int32Array,
@@ -210,17 +212,23 @@ export class SceneGraphFragment extends Fragment {
           scene_graph_event,
           this.data.scene_graph_buffer,
         );
-      } else {
+      } else if (!retry) {
         this.data.scene_graph_buffer.write(gpu_data);
       }
 
       global_dispatcher.dispatch(scene_graph_update_event);
     }
 
-    this.data.gpu_data_dirty = false;
+    this.data.gpu_data_dirty = retry;
   }
 
-  static async sync_buffers() {}
+  static #synching = false;
+  static async sync_buffers() {
+    if (this.#synching) return;
+    this.#synching = true;
+
+    this.#synching = false;
+  }
 
   static copy_entity_instance(to_index, from_index) {
     this.data.parent[to_index * 1 + 0] = this.data.parent[from_index * 1 + 0];

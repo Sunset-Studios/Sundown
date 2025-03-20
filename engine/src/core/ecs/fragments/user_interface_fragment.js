@@ -439,6 +439,8 @@ export class UserInterfaceFragment extends Fragment {
   static rebuild_buffers() {
     if (!this.data.gpu_data_dirty) return;
 
+    let retry = this.#synching;
+
     {
       const gpu_data = new Float32Array(Math.max(this.size * 8, 8));
       let offset = 0;
@@ -470,17 +472,23 @@ export class UserInterfaceFragment extends Fragment {
           element_data_event,
           this.data.element_data_buffer,
         );
-      } else {
+      } else if (!retry) {
         this.data.element_data_buffer.write(gpu_data);
       }
 
       global_dispatcher.dispatch(element_data_update_event);
     }
 
-    this.data.gpu_data_dirty = false;
+    this.data.gpu_data_dirty = retry;
   }
 
-  static async sync_buffers() {}
+  static #synching = false;
+  static async sync_buffers() {
+    if (this.#synching) return;
+    this.#synching = true;
+
+    this.#synching = false;
+  }
 
   static copy_entity_instance(to_index, from_index) {
     this.data.allows_cursor_events[to_index * 1 + 0] =

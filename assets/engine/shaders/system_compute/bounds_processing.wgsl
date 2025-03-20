@@ -12,9 +12,10 @@ const bounds_padding = 1.0;
 
 @group(1) @binding(0) var<storage, read> entity_transforms: array<EntityTransform>;
 @group(1) @binding(1) var<storage, read_write> entity_flags: array<i32>;
-@group(1) @binding(2) var<storage, read> aabb_tree_nodes: array<AABBTreeNode>;
-@group(1) @binding(3) var<storage, read_write> aabb_bounds: array<AABBNodeBounds>;
-@group(1) @binding(4) var<storage, read> entity_aabb_node_indices: array<u32>;
+@group(1) @binding(2) var<storage, read> entity_dirty: array<u32>;
+@group(1) @binding(3) var<storage, read> aabb_tree_nodes: array<AABBTreeNode>;
+@group(1) @binding(4) var<storage, read_write> aabb_bounds: array<AABBNodeBounds>;
+@group(1) @binding(5) var<storage, read> entity_aabb_node_indices: array<u32>;
 
 // ------------------------------------------------------------------------------------
 // Compute Shader
@@ -31,7 +32,7 @@ fn cs(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let node = aabb_tree_nodes[node_index];
     let ent_flags = entity_flags[entity_id_offset];
 
-    if ((ent_flags & ETF_TRANSFORM_DIRTY) == 0) {
+    if (entity_dirty[entity_id_offset] == 0) {
         return;
     }
 
@@ -77,5 +78,5 @@ fn cs(@builtin(global_invocation_id) global_id: vec3<u32>) {
     aabb_bounds[node_index].min_point = vec4f(min_point, 1.0);
     aabb_bounds[node_index].max_point = vec4f(max_point, 1.0);
 
-    entity_flags[entity_id_offset] = (ent_flags & ~ETF_TRANSFORM_DIRTY) | ETF_AABB_DIRTY;
+    entity_flags[entity_id_offset] = ent_flags | ETF_AABB_DIRTY;
 }

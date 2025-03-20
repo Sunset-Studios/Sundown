@@ -141,6 +141,8 @@ export class VisibilityFragment extends Fragment {
   static rebuild_buffers() {
     if (!this.data.gpu_data_dirty) return;
 
+    let retry = this.#synching;
+
     {
       const gpu_data = this.data.visible
         ? this.data.visible
@@ -158,17 +160,23 @@ export class VisibilityFragment extends Fragment {
 
         Renderer.get().mark_bind_groups_dirty(true);
         global_dispatcher.dispatch(visible_event, this.data.visible_buffer);
-      } else {
+      } else if (!retry) {
         this.data.visible_buffer.write(gpu_data);
       }
 
       global_dispatcher.dispatch(visible_update_event);
     }
 
-    this.data.gpu_data_dirty = false;
+    this.data.gpu_data_dirty = retry;
   }
 
-  static async sync_buffers() {}
+  static #synching = false;
+  static async sync_buffers() {
+    if (this.#synching) return;
+    this.#synching = true;
+
+    this.#synching = false;
+  }
 
   static copy_entity_instance(to_index, from_index) {
     this.data.visible[to_index * 1 + 0] = this.data.visible[from_index * 1 + 0];

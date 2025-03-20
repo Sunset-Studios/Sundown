@@ -24,7 +24,7 @@ struct SceneGraphLayerData {
 @group(1) @binding(0) var<storage, read> entity_positions: array<vec4f>;
 @group(1) @binding(1) var<storage, read> entity_rotations: array<vec4f>;
 @group(1) @binding(2) var<storage, read> entity_scales: array<vec4f>;
-@group(1) @binding(3) var<storage, read_write> entity_flags: array<i32>;
+@group(1) @binding(3) var<storage, read> entity_flags: array<i32>;
 @group(1) @binding(4) var<storage, read_write> entity_dirty: array<u32>;
 @group(1) @binding(5) var<storage, read_write> entity_transforms: array<EntityTransform>;
 @group(1) @binding(6) var<storage, read> scene_graph: array<vec2<i32>>;
@@ -78,9 +78,9 @@ fn cs(@builtin(global_invocation_id) global_id: vec3<u32>) {
         }
         if ((flag & ETF_IGNORE_PARENT_SCALE) != 0) {
             // Create a new parent transform that only has translation and rotation
-            parent_transform[0] = parent_transform[0] / length(vec3f(parent_transform[0].xyz));
-            parent_transform[1] = parent_transform[1] / length(vec3f(parent_transform[1].xyz));
-            parent_transform[2] = parent_transform[2] / length(vec3f(parent_transform[2].xyz));
+            parent_transform[0] = parent_transform[0] / max(length(vec3f(parent_transform[0].xyz)), 1e-6);
+            parent_transform[1] = parent_transform[1] / max(length(vec3f(parent_transform[1].xyz)), 1e-6);
+            parent_transform[2] = parent_transform[2] / max(length(vec3f(parent_transform[2].xyz)), 1e-6);
         }
     }
 
@@ -155,6 +155,4 @@ fn cs(@builtin(global_invocation_id) global_id: vec3<u32>) {
         inverse_transform[0][2], inverse_transform[1][2], inverse_transform[2][2], inverse_transform[3][2],
         inverse_transform[0][3], inverse_transform[1][3], inverse_transform[2][3], inverse_transform[3][3]
     );
-
-    entity_flags[entity_resolved] = flag | ETF_TRANSFORM_DIRTY;
 }

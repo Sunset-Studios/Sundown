@@ -140,9 +140,10 @@ export class AABBEntityAdapter extends SimulationLayer {
 
     this.bounds_update_input_list[0] = transforms.transforms_buffer;
     this.bounds_update_input_list[1] = transforms.flags_buffer;
-    this.bounds_update_input_list[2] = AABB.data.node_data_buffer;
-    this.bounds_update_input_list[3] = AABB.data.node_bounds_buffer;
-    this.bounds_update_input_list[4] = transforms.aabb_node_index_buffer;
+    this.bounds_update_input_list[2] = transforms.dirty_buffer;
+    this.bounds_update_input_list[3] = AABB.data.node_data_buffer;
+    this.bounds_update_input_list[4] = AABB.data.node_bounds_buffer;
+    this.bounds_update_input_list[5] = transforms.aabb_node_index_buffer;
 
     this.bounds_update_output_list[0] = transforms.flags_buffer;
     this.bounds_update_output_list[1] = AABB.data.node_bounds_buffer;
@@ -212,7 +213,7 @@ export class AABBEntityAdapter extends SimulationLayer {
   }
 
   _on_post_render(graph, frame_data, encoder) {
-    if (AABB.data.node_bounds_cpu_buffer.buffer.mapState === unmapped_state && !AABB.data.pending_cpu_changes) {
+    if (AABB.data.node_bounds_cpu_buffer.buffer.mapState === unmapped_state) {
       AABB.data.node_bounds_buffer.copy_buffer(encoder, 0, AABB.data.node_bounds_cpu_buffer);
     }
   }

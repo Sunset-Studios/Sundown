@@ -337,6 +337,8 @@ export class TransformFragment extends Fragment {
   static rebuild_buffers() {
     if (!this.data.gpu_data_dirty) return;
 
+    let retry = this.#synching;
+
     {
       const gpu_data = this.data.position
         ? this.data.position
@@ -363,7 +365,7 @@ export class TransformFragment extends Fragment {
         });
         Renderer.get().mark_bind_groups_dirty(true);
         global_dispatcher.dispatch(position_event, this.data.position_buffer);
-      } else {
+      } else if (!retry) {
         this.data.position_buffer.write(gpu_data);
       }
 
@@ -396,7 +398,7 @@ export class TransformFragment extends Fragment {
         });
         Renderer.get().mark_bind_groups_dirty(true);
         global_dispatcher.dispatch(rotation_event, this.data.rotation_buffer);
-      } else {
+      } else if (!retry) {
         this.data.rotation_buffer.write(gpu_data);
       }
 
@@ -429,7 +431,7 @@ export class TransformFragment extends Fragment {
         });
         Renderer.get().mark_bind_groups_dirty(true);
         global_dispatcher.dispatch(scale_event, this.data.scale_buffer);
-      } else {
+      } else if (!retry) {
         this.data.scale_buffer.write(gpu_data);
       }
 
@@ -456,7 +458,7 @@ export class TransformFragment extends Fragment {
           aabb_node_index_event,
           this.data.aabb_node_index_buffer,
         );
-      } else {
+      } else if (!retry) {
         this.data.aabb_node_index_buffer.write(gpu_data);
       }
 
@@ -489,7 +491,7 @@ export class TransformFragment extends Fragment {
         });
         Renderer.get().mark_bind_groups_dirty(true);
         global_dispatcher.dispatch(flags_event, this.data.flags_buffer);
-      } else {
+      } else if (!retry) {
         this.data.flags_buffer.write(gpu_data);
       }
 
@@ -516,7 +518,7 @@ export class TransformFragment extends Fragment {
 
         Renderer.get().mark_bind_groups_dirty(true);
         global_dispatcher.dispatch(dirty_event, this.data.dirty_buffer);
-      } else {
+      } else if (!retry) {
         this.data.dirty_buffer.write(gpu_data);
       }
 
@@ -552,17 +554,21 @@ export class TransformFragment extends Fragment {
           transforms_event,
           this.data.transforms_buffer,
         );
-      } else {
+      } else if (!retry) {
         this.data.transforms_buffer.write(gpu_data);
       }
 
       global_dispatcher.dispatch(transforms_update_event);
     }
 
-    this.data.gpu_data_dirty = false;
+    this.data.gpu_data_dirty = retry;
   }
 
+  static #synching = false;
   static async sync_buffers() {
+    if (this.#synching) return;
+    this.#synching = true;
+
     if (this.data.position_cpu_buffer?.buffer.mapState === unmapped_state) {
       await this.data.position_cpu_buffer.read(
         this.data.position,
@@ -612,6 +618,8 @@ export class TransformFragment extends Fragment {
         Float32Array,
       );
     }
+
+    this.#synching = false;
   }
 
   static copy_entity_instance(to_index, from_index) {

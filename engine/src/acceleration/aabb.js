@@ -206,7 +206,6 @@ export class AABB {
       node_bounds_buffer: null,
       node_bounds_cpu_buffer: null,
       modified: true,
-      pending_cpu_changes: false,
     };
 
     Renderer.get().on_post_render(this.on_post_render.bind(this));
@@ -322,6 +321,19 @@ export class AABB {
       this.data.node_heights = new_node_heights;
     }
 
+    {
+      // Create a new array with the new size
+      const new_temp_sync_buffer = new Float32Array(this.size * NODE_BOUNDS_SIZE);
+
+      // Copy existing data
+      if (this.data.node_bounds) {
+        new_temp_sync_buffer.set(this.data.node_bounds);
+      }
+
+      // Replace the old array
+      this.#temp_sync_buffer = new_temp_sync_buffer;
+    }
+
     this.free_nodes.resize(this.size);
 
     // Initialize new nodes as free
@@ -374,8 +386,6 @@ export class AABB {
     ++this.allocated_count;
 
     this.data.modified = true;
-    // Lock out readbacks until this change has been pushed to the GPU
-    this.data.pending_cpu_changes = true;
 
     return node_index;
   }
@@ -412,8 +422,6 @@ export class AABB {
     --this.allocated_count;
 
     this.data.modified = true;
-    // Lock out readbacks until this change has been pushed to the GPU
-    this.data.pending_cpu_changes = true;
   }
 
   /**
@@ -451,6 +459,8 @@ export class AABB {
    */
   static rebuild_buffers() {
     if (!this.data.modified) return;
+
+    let retry = this.#synching;
 
     if (
       !this.data.node_data_buffer ||
@@ -491,15 +501,13 @@ export class AABB {
       });
 
       global_dispatcher.dispatch(AABB_TREE_NODES_UPDATE_EVENT);
-    } else {
+    } else if (!retry) {
       this.data.node_bounds_buffer.write(this.data.node_bounds);
-    }
+    } 
 
     global_dispatcher.dispatch(AABB_NODE_BOUNDS_UPDATE_EVENT);
 
-    // After changes are pushed to GPU, we can allow readbacks again
-    this.data.pending_cpu_changes = false;
-    this.data.modified = false;
+    this.data.modified = retry;
   }
 
   /**
@@ -527,20 +535,13 @@ export class AABB {
    * Sync the AABB tree buffers
    */
   static #temp_sync_buffer = new Float32Array(NODE_BOUNDS_SIZE);
+  static #synching = false;
   static async sync_buffers() {
-    // Don't do readbacks if there are pending CPU changes
-    if (this.data.pending_cpu_changes) return;
-    
+    if (this.#synching) return;
     // Only do readbacks if the buffer is ready and not being modified
-    if (this.data.node_bounds_cpu_buffer?.buffer.mapState === unmapped_state) {
-      // Set pending flag to prevent overlapping readbacks
-      this.data.pending_cpu_changes = true;
-      
-      if (this.#temp_sync_buffer.byteLength < this.data.node_bounds.byteLength) {
-        this.#temp_sync_buffer = new Float32Array(this.data.node_bounds.byteLength);
-      }
-
+    if (this.data.node_bounds_cpu_buffer?.buffer.mapState === unmapped_state && !this.data.modified) {
       try {
+        this.#synching = true;
         // Do the readback
         await this.data.node_bounds_cpu_buffer.read(
           this.#temp_sync_buffer,
@@ -550,6 +551,7 @@ export class AABB {
           Float32Array
         );
       } finally {
+        this.#synching = false;
         for (let i = 0; i < this.size; i++) {
           if (this.data.node_data[i * NODE_SIZE + 1] === AABB_NODE_TYPE.LEAF) {
             this.data.node_bounds[i * NODE_BOUNDS_SIZE + 0] = this.#temp_sync_buffer[i * NODE_BOUNDS_SIZE + 0];
@@ -562,8 +564,6 @@ export class AABB {
             this.data.node_bounds[i * NODE_BOUNDS_SIZE + 7] = this.#temp_sync_buffer[i * NODE_BOUNDS_SIZE + 7];
           }
         }
-        // Always clear pending flag regardless of success/failure
-        this.data.pending_cpu_changes = false;
       }
     }
   }

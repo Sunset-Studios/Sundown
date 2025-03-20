@@ -1,3 +1,5 @@
+import { EntityManager } from "../ecs/entity.js";
+import { TransformFragment } from "../ecs/fragments/transform_fragment.js";
 import { SimulationLayer } from "../simulation_layer.js";
 import { AABB, AABB_NODE_TYPE, AABB_NODE_FLAGS } from "../../acceleration/aabb.js";
 import { profile_scope } from "../../utility/performance.js";
@@ -5,14 +7,16 @@ import { LineRenderer } from "../../renderer/line_renderer.js";
 import { vec3 } from "gl-matrix";
 
 // Constants for debug rendering
-const LEAF_NODE_COLOR = [0.0, 2.0, 0.0, 1.0]; // Green for leaf nodes
+const LEAF_NODE_COLOR = [2.0, 0.0, 2.0, 1.0]; // Purple for leaf nodes
 const INTERNAL_NODE_COLOR = [2.0, 0.5, 0.0, 1.0]; // Orange for internal nodes
 const ROOT_NODE_COLOR = [0.0, 0.0, 2.0, 1.0]; // Blue for root node
+const BOUNDS_COLOR = [0.0, 2.0, 0.0, 1.0]; // Green for bounds
 const RAY_COLOR = [1.0, 1.0, 0.0, 1.0]; // Yellow for ray
 
 export class AABBTreeDebugRenderer extends SimulationLayer {
   enabled = false;
   max_depth_to_render = Infinity;
+  show_bounds = true;
   show_leaf_nodes = true;
   show_internal_nodes = true;
   ray_origin = null;
@@ -56,6 +60,11 @@ export class AABBTreeDebugRenderer extends SimulationLayer {
     if (!this.should_recreate_line_collection) {
         return;
     }
+
+    const transforms = EntityManager.get_fragment_array(TransformFragment);
+    if (!transforms) {
+      return;
+    }
     
     if (this.line_collection_id) {
       LineRenderer.clear_collection(this.line_collection_id);
@@ -64,16 +73,28 @@ export class AABBTreeDebugRenderer extends SimulationLayer {
     this.line_collection_id = LineRenderer.start_collection();
 
     for (let i = 1; i < AABB.size; i++) {
+      const is_root = i === AABB.root_node;
+
       // Get the node
       const node = AABB.get_node_data(i);
-
-      // Skip free nodes
-      if ((node.flags & AABB_NODE_FLAGS.FREE) != 0) {
+      const is_free = (node.flags & AABB_NODE_FLAGS.FREE) != 0;
+      if (is_free) {
+        continue;
+      }
+      
+      const is_detached = !is_root && node.parent === 0;
+      if (is_detached) {
+        if (this.show_bounds && node.user_data) {
+          const min_point = node.min_point;
+          const max_point = node.max_point;
+  
+          LineRenderer.add_box(min_point, max_point, BOUNDS_COLOR);
+  
+        }
         continue;
       }
 
       // Add this node for visualization
-      const is_root = i === AABB.root_node;
       const is_leaf = node.node_type === AABB_NODE_TYPE.LEAF;
 
       if ((is_leaf && this.show_leaf_nodes) || (!is_leaf && this.show_internal_nodes)) {
@@ -141,6 +162,12 @@ export class AABBTreeDebugRenderer extends SimulationLayer {
 
   set_max_depth(depth) {
     this.max_depth_to_render = depth;
+  }
+
+  toggle_bounds() {
+    this.show_bounds = !this.show_bounds;
+    this.should_recreate_line_collection = true;
+    return this.show_bounds;
   }
 
   toggle_leaf_nodes() {

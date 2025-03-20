@@ -314,6 +314,8 @@ export class TextFragment extends Fragment {
   static rebuild_buffers() {
     if (!this.data.gpu_data_dirty) return;
 
+    let retry = this.#synching;
+
     {
       const gpu_data = this.data.text.get_data();
 
@@ -330,7 +332,7 @@ export class TextFragment extends Fragment {
 
         Renderer.get().mark_bind_groups_dirty(true);
         global_dispatcher.dispatch(text_event, this.data.text_buffer);
-      } else {
+      } else if (!retry) {
         this.data.text_buffer.write(gpu_data);
       }
 
@@ -373,17 +375,23 @@ export class TextFragment extends Fragment {
           string_data_event,
           this.data.string_data_buffer,
         );
-      } else {
+      } else if (!retry) {
         this.data.string_data_buffer.write(gpu_data);
       }
 
       global_dispatcher.dispatch(string_data_update_event);
     }
 
-    this.data.gpu_data_dirty = false;
+    this.data.gpu_data_dirty = retry;
   }
 
-  static async sync_buffers() {}
+  static #synching = false;
+  static async sync_buffers() {
+    if (this.#synching) return;
+    this.#synching = true;
+
+    this.#synching = false;
+  }
 
   static copy_entity_instance(to_index, from_index) {
     this.data.gpu_data_dirty = true;

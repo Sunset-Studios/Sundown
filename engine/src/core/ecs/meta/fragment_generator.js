@@ -564,6 +564,8 @@ export class ${fragment_name} extends Fragment {
     static rebuild_buffers() {
         if (!this.data.gpu_data_dirty) return;
 
+        let retry = this.#synching;
+
         ${override.pre ? override.pre : ""}
         ${!override.skip_default ? this.generate_default_rebuild_buffers(buffers) : ""}
         ${override.post ? override.post : ""}
@@ -572,6 +574,8 @@ export class ${fragment_name} extends Fragment {
     return `
     static rebuild_buffers() {
         if (!this.data.gpu_data_dirty) return;
+
+        let retry = this.#synching;
 
         ${this.generate_default_rebuild_buffers(buffers)}
     }`;
@@ -609,7 +613,7 @@ export class ${fragment_name} extends Fragment {
             Renderer.get().mark_bind_groups_dirty(true);
             ${buffer.no_dispatch ? "" : `global_dispatcher.dispatch(${key}_event, this.data.${key}_buffer);`}
           ${buffer.only_rebuild_on_resize ? `}` : `
-          } else {
+          } else if (!retry) {
             this.data.${key}_buffer.write(gpu_data);
           }`}
 
@@ -619,7 +623,7 @@ export class ${fragment_name} extends Fragment {
           )
           .join("\n")}
 
-        this.data.gpu_data_dirty = false;
+        this.data.gpu_data_dirty = retry;
     `;
   }
 
@@ -628,15 +632,23 @@ export class ${fragment_name} extends Fragment {
 
     if (override) {
       return `
+    static #synching = false;
     static async sync_buffers() {
+        if (this.#synching) return;
+        this.#synching = true;
         ${override.pre ? override.pre : ""}
         ${!override.skip_default ? this.generate_default_sync_buffers(buffers) : ""}
         ${override.post ? override.post : ""}
+        this.#synching = false;
     }`;
     }
     return `
+    static #synching = false;
     static async sync_buffers() {
+        if (this.#synching) return;
+        this.#synching = true;
         ${this.generate_default_sync_buffers(buffers)}
+        this.#synching = false;
     }`;
   }
 

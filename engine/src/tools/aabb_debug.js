@@ -115,6 +115,12 @@ export class AABBDebug extends DevConsoleTool {
           padding_bottom: 10,
         });
 
+        const bounds_text = `Bounds: ${this.aabb_tree_debug_renderer.show_bounds ? "ON" : "OFF"}`;
+        const bounds_button = button(bounds_text, button_config);
+        if (bounds_button.clicked) {
+          this.aabb_tree_debug_renderer.toggle_bounds();
+        }
+
         const leaf_nodes_text = `Leaf Nodes: ${this.aabb_tree_debug_renderer.show_leaf_nodes ? "ON" : "OFF"}`;
         const leaf_nodes_button = button(leaf_nodes_text, button_config);
         if (leaf_nodes_button.clicked) {
