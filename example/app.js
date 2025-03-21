@@ -684,7 +684,7 @@ export class AABBScene extends Scene {
     }
   }
 
-  async run_raycast() {
+  run_raycast() {
     // Get camera position and direction
     const view_data = SharedViewBuffer.get_view_data(0);
     if (!view_data) return;
@@ -714,11 +714,11 @@ export class AABBScene extends Scene {
 
     // Perform raycast based on current mode
     if (this.use_gpu_raycast) {
-      AABBGPURaycast.raycast(ray, {}, (hits) => {
+      AABBGPURaycast.raycast(ray, {first_hit_only: true}, (hits) => {
         this.process_raycast_results(hits);
       });
     } else {
-      AABBRaycast.raycast(ray, {}, (hits) => {
+      AABBRaycast.raycast(ray, {first_hit_only: true}, (hits) => {
         this.process_raycast_results(hits);
       });
     }

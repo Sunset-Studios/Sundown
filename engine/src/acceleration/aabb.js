@@ -3,7 +3,7 @@ import { Buffer } from "../renderer/buffer.js";
 import { TransformFragment } from "../core/ecs/fragments/transform_fragment.js";
 import { global_dispatcher } from "../core/dispatcher.js";
 import { RingBufferAllocator } from "../memory/allocator.js";
-import { TypedStack, TypedQueue } from "../memory/container.js";
+import { TypedQueue, TypedStack } from "../memory/container.js";
 
 // Buffer names for GPU access
 const AABB_TREE_NODES_BUFFER_NAME = "aabb_tree_nodes_buffer";
@@ -78,21 +78,21 @@ class AABBNodeDataView {
     AABB.data.modified = true;
   }
 
-  get node_type() {
-    return AABB.data.node_data[this.current_node * NODE_SIZE + 1];
-  }
-
-  set node_type(value) {
-    AABB.data.node_data[this.current_node * NODE_SIZE + 1] = value;
-    AABB.data.modified = true;
-  }
-
   get flags() {
     return AABB.data.node_data[this.current_node * NODE_SIZE + 0];
   }
 
   set flags(value) {
     AABB.data.node_data[this.current_node * NODE_SIZE + 0] = value;
+    AABB.data.modified = true;
+  }
+
+  get node_type() {
+    return AABB.data.node_data[this.current_node * NODE_SIZE + 1];
+  }
+
+  set node_type(value) {
+    AABB.data.node_data[this.current_node * NODE_SIZE + 1] = value;
     AABB.data.modified = true;
   }
 
@@ -227,7 +227,6 @@ export class AABB {
       node_view.user_data = 0xffffffff;
       node_view.height = 0; // Initialize height to 0 for free nodes
 
-      // Add to free list
       this.free_nodes.push(i);
     }
 
@@ -262,12 +261,12 @@ export class AABB {
    * @param {number} new_size - The new size of the tree
    */
   static resize(new_size) {
+    if (!this.data) this.initialize();
+
     if (new_size <= this.size) return;
 
     const old_size = this.size + 1;
     this.size = new_size + 1;
-
-    if (!this.data) this.initialize();
 
     {
       // Create a new array with the new size
@@ -351,7 +350,6 @@ export class AABB {
       node_view.user_data = 0xffffffff;
       node_view.height = 0; // Initialize height to 0 for free nodes
 
-      // Add to free list
       this.free_nodes.push(i);
     }
 
@@ -416,7 +414,6 @@ export class AABB {
     node_view.user_data = 0xffffffff;
     node_view.height = 0; // Reset height to 0 for free nodes
 
-    // Add to free list
     this.free_nodes.push(node_index);
 
     --this.allocated_count;
@@ -539,7 +536,7 @@ export class AABB {
   static async sync_buffers() {
     if (this.#synching) return;
     // Only do readbacks if the buffer is ready and not being modified
-    if (this.data.node_bounds_cpu_buffer?.buffer.mapState === unmapped_state && !this.data.modified) {
+    if (this.data.node_bounds_cpu_buffer?.buffer.mapState === unmapped_state) {
       try {
         this.#synching = true;
         // Do the readback

@@ -182,25 +182,24 @@ export class AABBEntityAdapter extends SimulationLayer {
       const entity_offset = entity_offsets[i];
 
       const node_index = transforms.aabb_node_index[entity_offset];
-
-      if ((transforms.flags[entity_offset] & EntityTransformFlags.NO_AABB_UPDATE) !== 0) {
-        continue;
-      }
+      const no_aabb_update = (transforms.flags[entity_offset] & EntityTransformFlags.NO_AABB_UPDATE) !== 0;
 
       // Handle removed entities
       if (entity_state === EntityMasks.Removed && node_index) {
         const entity_count = entity_instance_counts[i];
         for (let i = 0; i < entity_count; i++) {
           const entity_instance_offset = entity_offset + i;
-          this.tree_processor.remove_node_from_tree(
-            transforms.aabb_node_index[entity_instance_offset]
-          );
+          if (!no_aabb_update) {
+            this.tree_processor.remove_node_from_tree(
+              transforms.aabb_node_index[entity_instance_offset]
+            );
+          }
           AABB.free_node(transforms.aabb_node_index[entity_instance_offset]);
           transforms.aabb_node_index[entity_instance_offset] = 0;
         }
       }
       // Handle new or updated entities
-      else if (node_index && (transforms.flags[entity_offset] & EntityTransformFlags.AABB_DIRTY) !== 0) {
+      else if (node_index && (transforms.flags[entity_offset] & EntityTransformFlags.AABB_DIRTY) !== 0 && !no_aabb_update) {
         const entity_instances = EntityID.get_instance_count(entity);
         for (let i = 0; i < entity_instances; i++) {
           const instance_node_index = transforms.aabb_node_index[entity_offset + i];

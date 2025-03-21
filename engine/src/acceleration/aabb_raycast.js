@@ -74,7 +74,8 @@ export class AABBRaycast {
     static default_options = {
         max_distance: Infinity,
         sort_results: true,
-        return_face_normal: true
+        return_face_normal: true,
+        first_hit_only: false
     };
     
     /**
@@ -100,7 +101,9 @@ export class AABBRaycast {
                 return null;
             }
             
-            this._traverse_tree(ray, AABB.root_node, hit, opts);
+            // Pass an empty Set for cycle detection
+            const visited_nodes = new Set();
+            this._traverse_tree(ray, AABB.root_node, hit, opts, visited_nodes);
         });
         
         if (callback) {
@@ -130,7 +133,9 @@ export class AABBRaycast {
                 return [];
             }
             
-            this._traverse_tree_all(ray, AABB.root_node, hits, opts);
+            // Pass an empty Set for cycle detection
+            const visited_nodes = new Set();
+            this._traverse_tree_all(ray, AABB.root_node, hits, opts, visited_nodes);
             
             // Sort hits by distance if requested
             if (opts.sort_results && hits.length > 1) {
@@ -145,8 +150,21 @@ export class AABBRaycast {
     
     /**
      * Traverse the AABB tree for the closest hit
+     * @param {Ray} ray - The ray to cast
+     * @param {number} node_index - Index of the current node
+     * @param {RaycastHit} hit - Current hit information
+     * @param {Object} options - Raycast options
+     * @param {Set} visited_nodes - Set of already visited node indices to detect cycles
      */
-    static _traverse_tree(ray, node_index, hit, options) {
+    static _traverse_tree(ray, node_index, hit, options, visited_nodes) {
+        // Check for cycles
+        if (visited_nodes.has(node_index)) {
+            return;
+        }
+        
+        // Add this node to visited set
+        visited_nodes.add(node_index);
+        
         const node = AABB.get_node_data(node_index);
         
         // Skip free nodes
@@ -168,7 +186,9 @@ export class AABBRaycast {
                 hit.normal = result.normal;
             }
             
-            return;
+            if (options.first_hit_only) {
+                return;
+            }
         }
         
         // This is an internal node - test children
@@ -194,30 +214,43 @@ export class AABBRaycast {
         if (left_t_min < right_t_min) {
             // Left is closer, test it first
             if (left_t_min !== false) {
-                this._traverse_tree(ray, left_child, hit, options);
+                this._traverse_tree(ray, left_child, hit, options, visited_nodes);
             }
             
             // Only test right if it's potentially closer than current hit
             if (right_t_min !== false && right_t_min < hit.distance) {
-                this._traverse_tree(ray, right_child, hit, options);
+                this._traverse_tree(ray, right_child, hit, options, visited_nodes);
             }
         } else {
             // Right is closer, test it first
             if (right_t_min !== false) {
-                this._traverse_tree(ray, right_child, hit, options);
+                this._traverse_tree(ray, right_child, hit, options, visited_nodes);
             }
             
             // Only test left if it's potentially closer than current hit
             if (left_t_min !== false && left_t_min < hit.distance) {
-                this._traverse_tree(ray, left_child, hit, options);
+                this._traverse_tree(ray, left_child, hit, options, visited_nodes);
             }
         }
     }
     
     /**
      * Traverse the AABB tree for all hits
+     * @param {Ray} ray - The ray to cast
+     * @param {number} node_index - Index of the current node
+     * @param {Array} hits - Array to collect hits
+     * @param {Object} options - Raycast options
+     * @param {Set} visited_nodes - Set of already visited node indices to detect cycles
      */
-    static _traverse_tree_all(ray, node_index, hits, options) {
+    static _traverse_tree_all(ray, node_index, hits, options, visited_nodes) {
+        // Check for cycles
+        if (visited_nodes.has(node_index)) {
+            return;
+        }
+        
+        // Add this node to visited set
+        visited_nodes.add(node_index);
+        
         const node = AABB.get_node_data(node_index);
         
         // Skip free nodes
@@ -254,7 +287,7 @@ export class AABBRaycast {
             const left_hit = this._intersect_aabb(ray, left_node, 0, options.max_distance);
             
             if (left_hit !== false) {
-                this._traverse_tree_all(ray, left_child, hits, options);
+                this._traverse_tree_all(ray, left_child, hits, options, visited_nodes);
             }
         }
         
@@ -264,7 +297,7 @@ export class AABBRaycast {
             const right_hit = this._intersect_aabb(ray, right_node, 0, options.max_distance);
             
             if (right_hit !== false) {
-                this._traverse_tree_all(ray, right_child, hits, options);
+                this._traverse_tree_all(ray, right_child, hits, options, visited_nodes);
             }
         }
     }

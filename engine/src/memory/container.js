@@ -850,6 +850,7 @@ export class TypedStack {
   #buffer;
   #size;
   #capacity;
+  #array_type;
 
   /**
    * Create a new TypedStack with the specified capacity and array type.
@@ -863,6 +864,7 @@ export class TypedStack {
     this.#buffer = new array_type(capacity);
     this.#size = 0;
     this.#capacity = capacity;
+    this.#array_type = array_type;
   }
 
   /**
@@ -907,7 +909,7 @@ export class TypedStack {
    */
   resize(new_capacity) {
     if (new_capacity <= this.#capacity) return;
-    const new_buffer = new this.#buffer.constructor(new_capacity);
+    const new_buffer = new this.#array_type(new_capacity);
     new_buffer.set(this.#buffer);
     this.#buffer = new_buffer;
     this.#capacity = new_capacity;
@@ -962,26 +964,29 @@ export class TypedFreeList {
   #free_indices;
   #free_count;
   #size;
-  #stride;
+  #default_value;
 
   /**
    * Create a new TypedFreeList with the specified initial capacity and array type.
    * @param {number} initial_capacity - The initial capacity of the free list.
    * @param {TypedArrayConstructor} array_type - The type of TypedArray to use (e.g. Float32Array).
    */
-  constructor(initial_capacity = 16, stride = 1, array_type = Float32Array) {
+  constructor(initial_capacity = 16, default_value = 0, array_type = Float32Array) {
     console.assert(Number.isInteger(initial_capacity) && initial_capacity > 0);
-    this.#buffer = new array_type(initial_capacity * stride);
+    this.#buffer = new array_type(initial_capacity);
     this.#free_indices = new Uint32Array(initial_capacity);
+    this.#default_value = default_value;
+    
+    // Initialize buffer with default values
+    this.#buffer.fill(default_value);
     
     // Initialize free list with all indices
     for (let i = 0; i < initial_capacity; i++) {
-      this.#free_indices[i] = i;
+        this.#free_indices[i] = i;
     }
     
     this.#free_count = initial_capacity;
     this.#size = 0;
-    this.#stride = stride;
   }
 
   /**
@@ -990,26 +995,28 @@ export class TypedFreeList {
    */
   allocate() {
     if (this.#free_count === 0) {
-      // Grow the buffer when out of free indices
-      const old_capacity = this.#buffer.length;
-      const new_capacity = old_capacity * 2;
-      
-      // Grow the data buffer
-      const new_buffer = new this.#buffer.constructor(new_capacity);
-      new_buffer.set(this.#buffer);
-      this.#buffer = new_buffer;
-      
-      // Grow the free indices list
-      const new_free_indices = new Uint32Array(new_capacity);
-      new_free_indices.set(this.#free_indices);
-      
-      // Add new indices to free list
-      for (let i = 0; i < old_capacity; i++) {
-        new_free_indices[i] = old_capacity + i;
-      }
-      
-      this.#free_indices = new_free_indices;
-      this.#free_count = old_capacity;
+        // Grow the buffer when out of free indices
+        const old_capacity = this.#buffer.length;
+        const new_capacity = old_capacity * 2;
+        
+        // Grow the data buffer
+        const new_buffer = new this.#buffer.constructor(new_capacity);
+        new_buffer.set(this.#buffer);
+        // Fill new elements with default value
+        new_buffer.fill(this.#default_value, old_capacity);
+        this.#buffer = new_buffer;
+        
+        // Grow the free indices list
+        const new_free_indices = new Uint32Array(new_capacity);
+        new_free_indices.set(this.#free_indices);
+        
+        // Add new indices to free list
+        for (let i = 0; i < old_capacity; i++) {
+            new_free_indices[this.#free_count + i] = old_capacity + i;
+        }
+        
+        this.#free_indices = new_free_indices;
+        this.#free_count += old_capacity;
     }
     
     const index = this.#free_indices[--this.#free_count];
@@ -1026,6 +1033,8 @@ export class TypedFreeList {
     // Grow the data buffer
     const new_buffer = new this.#buffer.constructor(new_capacity);
     new_buffer.set(this.#buffer);
+    // Fill new elements with default value
+    new_buffer.fill(this.#default_value, old_capacity);
     this.#buffer = new_buffer;
       
     // Grow the free indices list
@@ -1033,11 +1042,12 @@ export class TypedFreeList {
     new_free_indices.set(this.#free_indices);
       
     // Add new indices to free list
-    for (let i = old_capacity; i < new_capacity; i++) {
-      new_free_indices[this.#free_count++] = i;
+    for (let i = 0; i < new_capacity - old_capacity; i++) {
+        new_free_indices[this.#free_count + i] = old_capacity + i;
     }
       
     this.#free_indices = new_free_indices;
+    this.#free_count += (new_capacity - old_capacity);
   }
 
   /**
@@ -1046,6 +1056,16 @@ export class TypedFreeList {
    */
   free(index) {
     console.assert(index >= 0 && index < this.#buffer.length, "Index out of bounds");
+    
+    // Optionally: check if this index is already in the free list
+    // This is more expensive but prevents double-freeing
+    // for (let i = 0; i < this.#free_count; i++) {
+    //     if (this.#free_indices[i] === index) {
+    //         console.warn("Attempted to free an already freed index:", index);
+    //         return;
+    //     }
+    // }
+    
     this.#free_indices[this.#free_count++] = index;
     this.#size--;
   }
@@ -1068,6 +1088,14 @@ export class TypedFreeList {
   set(index, value) {
     console.assert(index >= 0 && index < this.#buffer.length, "Index out of bounds");
     this.#buffer[index] = value;
+  }
+
+  /**
+   * Get the number of free indices.
+   * @returns {number} The number of free indices.
+   */
+  get free_count() {
+    return this.#free_count;
   }
 
   /**
