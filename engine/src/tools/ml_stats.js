@@ -72,10 +72,12 @@ export class MLStats extends DevConsoleTool {
           const model_stats = entry.stats;
           for (let j = 0; j < model_stats.length; j++) {
             const stat = model_stats[j];
-            label(
-              `${model_name} - ${stat.name}: ${stat.loss.data[0]}`,
-              stats_label_config
-            );
+            if (stat && stat.loss) {
+              label(
+                `${model_name} - ${stat.name}: ${stat.loss.data[0]}`,
+                stats_label_config
+              );
+            }
           }
         }
       }

@@ -1,4 +1,4 @@
-import { Layer } from "./layer.js";
+import { Layer } from "../layer.js";
 
 export class NeuralModel extends Layer {
   name = null;
@@ -12,7 +12,6 @@ export class NeuralModel extends Layer {
     this.loss_fn = options.loss_fn || null;
     this.optimizer = options.optimizer || null;
   }
-
 
   /**
    * Runs inference on the neural network based on the input tensor.

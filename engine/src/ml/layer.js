@@ -1,9 +1,16 @@
 export class Layer {
+  static next_layer_id = 0;
+
+  id = null;
   layers = [];
   cached_input = null;
   cached_output = null;
   params = null;
   grad_params = null;
+
+  constructor() {
+    this.id = Layer.next_layer_id++;
+  }
 
   /**
    * Adds a sublayer to the layer.
@@ -21,7 +28,12 @@ export class Layer {
    * @param {Object} layer - The layer to remove.
    */
   remove(layer) {
-    this.layers = this.layers.filter((l) => l !== layer);
+    for (let i = this.layers.length - 1; i >= 0; i--) {
+      if (this.layers[i] === layer) {
+        this.layers[i].store = null;
+        this.layers.splice(i, 1);
+      }
+    }
   }
 
   /**
@@ -86,6 +98,17 @@ export class Layer {
     for (let i = this.layers.length - 1; i >= 0; i--) {
       this.layers[i].update_weights(learning_rate, optimizer);
     }
+  }
+
+  /**
+   * Clears the model of layers and cached data.
+   */
+  clear() {
+    this.layers.length = 0;
+    this.cached_input = null;
+    this.cached_output = null;
+    this.params = null;
+    this.grad_params = null;
   }
 
   /**

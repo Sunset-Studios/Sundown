@@ -1,4 +1,4 @@
-import { Tensor } from "../tensor.js";
+import { Tensor } from "../math/tensor.js";
 import { Optimizer } from "../optimizer.js";
 
 export class Adam extends Optimizer {

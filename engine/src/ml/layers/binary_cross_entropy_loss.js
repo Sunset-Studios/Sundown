@@ -1,7 +1,6 @@
-import { MLOps } from "../ops.js";
+import { MLOps } from "../ops/ops.js";
 import { Layer } from "../layer.js";
 import { Name } from "../names.js";
-import { Tensor } from "../tensor.js";
 
 const binary_cross_entropy_loss_name = "binary_cross_entropy_loss";
 

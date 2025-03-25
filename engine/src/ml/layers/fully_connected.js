@@ -1,5 +1,5 @@
 import { Layer } from "../layer.js";
-import { Tensor, TensorInitializer } from "../tensor.js";
+import { Tensor, TensorInitializer } from "../math/tensor.js";
 
 export class FullyConnected extends Layer {
   constructor(input_size, output_size, options = {}, params = null) {

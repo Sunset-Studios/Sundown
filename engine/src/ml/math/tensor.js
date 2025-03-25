@@ -1,9 +1,11 @@
-import { MLOps } from "./ops.js";
+import { MLOps } from "../ops/ops.js";
 
 /**
  * A tensor is a multi-dimensional array of floating-point numbers.
  * Tensors are used to store the weights, biases, and input/output data of a neural network.
  *
+ * Tensors are managed by the Tensor class, which provides a pool of reusable tensors.
+ * The Tensor class also provides utility methods for creating and manipulating tensors.
  */
 
 export const TensorInitializer = {
@@ -198,6 +200,23 @@ export class Tensor {
    */
   sigmoid_backward(grad) {
     return MLOps.sigmoid_backward(this, grad);
+  }
+
+  /**
+   * Utility to apply the Softmax function to a tensor.
+   * @returns {Tensor} the Softmax of the tensor.
+   */
+  softmax() {
+    return MLOps.softmax(this);
+  }
+
+  /**
+   * Utility to apply the Softmax function to a tensor.
+   * @param {Tensor} grad - the gradient of the tensor.
+   * @returns {Tensor} the Softmax of the tensor.
+   */
+  softmax_backward(grad) {
+    return MLOps.softmax_backward(this, grad);
   }
 
   /**

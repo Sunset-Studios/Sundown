@@ -1,5 +1,5 @@
-import { MLOps } from "./ops.js";
-import { Tensor } from "./tensor.js";
+import { MLOps } from "./ops/ops.js";
+import { Tensor } from "./math/tensor.js";
 
 const function_name = "function";
 
@@ -105,6 +105,8 @@ export class MasterMind {
     this.models = {}; // model registry keyed by model ID.
     this.active_model = null; // ID of the model to receive training frames.
     this.paused = false;
+    this.store = MLOps.new_op_store();
+
     MasterMind.all_masterminds.push(this);
   }
 

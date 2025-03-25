@@ -19,6 +19,7 @@ import { LightType, EntityTransformFlags } from "../engine/src/core/minimal.js";
 import { Material } from "../engine/src/renderer/material.js";
 import { Buffer } from "../engine/src/renderer/buffer.js";
 import { Mesh } from "../engine/src/renderer/mesh.js";
+import { LineRenderer } from "../engine/src/renderer/line_renderer.js";
 import { SharedEnvironmentMapData, SharedViewBuffer } from "../engine/src/core/shared_data.js";
 import { spawn_mesh_entity, delete_entity } from "../engine/src/core/ecs/entity_utils.js";
 import { FontCache } from "../engine/src/ui/text/font_cache.js";
@@ -28,15 +29,15 @@ import { vec4, quat } from "gl-matrix";
 
 import * as UI from "../engine/src/ui/2d/immediate.js";
 
+import { ModelType, LossType, LayerType, ActivationType } from "../engine/src/ml/ml_types.js";
 import { MasterMind } from "../engine/src/ml/mastermind.js";
-import { NeuralModel } from "../engine/src/ml/neural_model.js";
+import { NeuralModel } from "../engine/src/ml/models/neural_model.js";
 import { FullyConnected } from "../engine/src/ml/layers/fully_connected.js";
 import { ReLU } from "../engine/src/ml/layers/relu.js";
 import { Tanh } from "../engine/src/ml/layers/tanh.js";
 import { MSELoss } from "../engine/src/ml/layers/mse_loss.js";
-import { Tensor, TensorInitializer } from "../engine/src/ml/tensor.js";
+import { Tensor, TensorInitializer } from "../engine/src/ml/math/tensor.js";
 import { Adam } from "../engine/src/ml/optimizers/adam.js";
-import { LineRenderer } from "../engine/src/renderer/line_renderer.js";
 
 // ------------------------------------------------------------------------------------
 // =============================== Rendering Scene ===============================
@@ -320,26 +321,32 @@ export class MLScene extends Scene {
       mini_batch_size: 4,
     });
 
+    // Demonstrates two possible APIs:
+    // 1. The "store" API, which is a more low-level API that allows for more control over the model.
+    //    It also allows external observers to observe changes in the store's state. Useful for applying views over the model data.
+    //    The mastermind creates a default store, but you can create your own using MLOps.new_ops_store().
+    // 2. The "model" API, which is a higher-level API that is easier to use.
+    //    It hides the details of the model from the user and provides a more intuitive API for training and inference via
+    //    simple function calls and class objects. The store API occasionally uses the model API internally.
+
     // ---------------------------------------------------------------------------
-    // Model A: Sine Function Approximator
+    // Model A: Sine Function Approximator (store API)
+    // ---------------------------------------------------------------------------
     // Task: Given an input x, predict sin(x).
     // Architecture: [1] -> FullyConnectedLayer (1 -> 10) -> Tanh ->
     //               FullyConnectedLayer (10 -> 1) -> MSELoss
     // ---------------------------------------------------------------------------
-    const sine_model = new NeuralModel("sine_approximator", {
-      learning_rate: 0.01,
-      optimizer: new Adam(),
-    });
-    sine_model.add(new FullyConnected(1, 10, { initializer: TensorInitializer.GLOROT }));
-    sine_model.add(new Tanh());
-    sine_model.add(new FullyConnected(10, 1, { initializer: TensorInitializer.GLOROT }));
-    sine_model.add(new Tanh());
-    sine_model.add(new MSELoss(false /* enabled_logging */, "sine_approximator"));
+    const sine_model = this.mastermind.store.create_model(ModelType.NEURAL, 0.01, LossType.MSE, new Adam());
+    this.mastermind.store.add_layer(LayerType.FULLY_CONNECTED, 1, 10, sine_model, { initializer: TensorInitializer.GLOROT });
+    this.mastermind.store.add_activation(ActivationType.TANH, sine_model);
+    this.mastermind.store.add_layer(LayerType.FULLY_CONNECTED, 10, 1, sine_model, { initializer: TensorInitializer.GLOROT });
+    this.mastermind.store.add_activation(ActivationType.TANH, sine_model);
+    this.mastermind.store.add_loss(LossType.MSE, false /* enabled_logging */, "sine_approximator", sine_model);
 
     this.sine_model = this.mastermind.register_model(sine_model);
 
     // ---------------------------------------------------------------------------
-    // Model B: XOR Classifier
+    // Model B: XOR Classifier (model API)
     // Task: Given two binary inputs, predict the XOR (0 or 1).
     // Architecture: [2] -> FullyConnectedLayer (2 -> 4) -> ReLu ->
     //               FullyConnectedLayer (4 -> 1) -> MSELoss
@@ -984,9 +991,9 @@ export class SceneSwitcher extends SimulationLayer {
   const ml_scene = new MLScene("MLScene");
 
   const scene_switcher = new SceneSwitcher("SceneSwitcher");
-  await scene_switcher.add_scene(aabb_scene);
+  //await scene_switcher.add_scene(aabb_scene);
   //await scene_switcher.add_scene(rendering_scene);
-  //await scene_switcher.add_scene(ml_scene);
+  await scene_switcher.add_scene(ml_scene);
   await simulator.add_sim_layer(scene_switcher);
 
   simulator.run();

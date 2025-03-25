@@ -1,4 +1,4 @@
-import { MLOps } from "../ops.js";
+import { MLOps } from "../ops/ops.js";
 import { Layer } from "../layer.js";
 import { Name } from "../names.js";
 
