@@ -20,3 +20,8 @@ export const ActivationType = Object.freeze({
   SIGMOID: 2,
   SOFTMAX: 3,
 });
+
+export const OptimizerType = Object.freeze({
+  ADAM: 0,
+  SGD: 1,
+});

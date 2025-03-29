@@ -177,6 +177,15 @@ export class MasterMind {
   }
 
   /**
+   * Returns a model by its ID.
+   * @param {string} model_id - The ID of the model to retrieve.
+   * @returns {Object} The model object.
+   */
+  get_model(model_id) {
+    return this.models[model_id].model;
+  }
+
+  /**
    * Should be called on each frame.
    * @param {number} delta_time - Time elapsed since the last frame (in seconds).
    * @private

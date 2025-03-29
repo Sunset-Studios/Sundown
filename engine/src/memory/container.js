@@ -140,11 +140,11 @@ export class ResizableBitArray {
    */
   #resize(new_size) {
     if (new_size > this.#capacity) {
-      this.#capacity = new_size;
       const new_capacity = Math.max(new_size, this.#buffer.length * 32 * 2);
       const new_buffer = new Uint32Array(Math.ceil(new_capacity / 32));
       new_buffer.set(this.#buffer);
       this.#buffer = new_buffer;
+      this.#capacity = new_capacity;
     }
     this.#size = new_size;
   }

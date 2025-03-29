@@ -278,19 +278,16 @@ const TransformFragment = {
       type: DataType.FLOAT32,
       usage: BufferType.STORAGE_SRC,
       stride: 4,
-      cpu_buffer: true,
     },
     rotation: {
       type: DataType.FLOAT32,
       usage: BufferType.STORAGE_SRC,
       stride: 4,
-      cpu_buffer: true,
     },
     scale: {
       type: DataType.FLOAT32,
       usage: BufferType.STORAGE_SRC,
       stride: 4,
-      cpu_buffer: true,
     },
     aabb_node_index: {
       type: DataType.UINT32,
@@ -506,11 +503,13 @@ const TransformFragment = {
       return [scale_x, scale_y, scale_z];
       `,
     },
-    clear_all_dirty_flags: {
+    clear_dirty_flags: {
       params: ``,
       body: `
-      this.data.dirty.fill(0);
-      this.data.gpu_data_dirty = true;
+      for (let i = 0; i < this.size; i++) {
+        this.data.gpu_data_dirty |= (this.data.dirty[i] !== 0);
+        this.data.dirty[i] = 0;
+      }
       `,
     },
   },

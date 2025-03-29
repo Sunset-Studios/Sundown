@@ -85,18 +85,6 @@ export class TransformProcessor extends SimulationLayer {
       return;
     }
 
-    if (transforms.position_cpu_buffer.buffer.mapState === unmapped_state && !transforms.gpu_data_dirty) {
-      transforms.position_buffer.copy_buffer(encoder, 0, transforms.position_cpu_buffer);
-    }
-
-    if (transforms.rotation_cpu_buffer.buffer.mapState === unmapped_state && !transforms.gpu_data_dirty) {
-      transforms.rotation_buffer.copy_buffer(encoder, 0, transforms.rotation_cpu_buffer);
-    }
-
-    if (transforms.scale_cpu_buffer.buffer.mapState === unmapped_state && !transforms.gpu_data_dirty) {
-      transforms.scale_buffer.copy_buffer(encoder, 0, transforms.scale_cpu_buffer);
-    }
-
     if (transforms.flags_cpu_buffer.buffer.mapState === unmapped_state && !transforms.gpu_data_dirty) {
       transforms.flags_buffer.copy_buffer(encoder, 0, transforms.flags_cpu_buffer);
     }
@@ -107,6 +95,6 @@ export class TransformProcessor extends SimulationLayer {
   }
 
   async _on_render_complete() {
-    TransformFragment.clear_all_dirty_flags();
+    TransformFragment.clear_dirty_flags();
   }
 }

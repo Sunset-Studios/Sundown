@@ -5,12 +5,45 @@ export class NeuralModel extends Layer {
   learning_rate = 0.01;
   loss_fn = null;
 
+  /**
+   * Creates a new NeuralModel.
+   *
+   * @param {string} name - The name of the neural network.
+   * @param {Object} options - The options for the neural network.
+   */
   constructor(name, options = {}) {
     super();
     this.name = name;
     this.learning_rate = options.learning_rate || 0.01;
     this.loss_fn = options.loss_fn || null;
     this.optimizer = options.optimizer || null;
+  }
+
+  /**
+   * Sets the optimizer for the neural network.
+   *
+   * @param {Object} optimizer - The optimizer.
+   */
+  set_optimizer(optimizer) {
+    this.optimizer = optimizer;
+  }
+
+  /**
+   * Sets the loss function for the neural network.
+   *
+   * @param {Object} loss_fn - The loss function.
+   */
+  set_loss_fn(loss_fn) {
+    this.loss_fn = loss_fn;
+  }
+
+  /**
+   * Sets the learning rate for the neural network.
+   *
+   * @param {number} learning_rate - The learning rate.
+   */
+  set_learning_rate(learning_rate) {
+    this.learning_rate = learning_rate;
   }
 
   /**

@@ -356,6 +356,7 @@ export class ${fragment_name} extends Fragment {
     static resize(new_size) {
         if (new_size <= this.size) return;
 
+        new_size *= 2;
         this.size = new_size;
         ${this.get_default_resize(fields, buffers)}
     }`;

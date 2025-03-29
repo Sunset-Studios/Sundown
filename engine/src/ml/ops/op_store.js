@@ -31,6 +31,7 @@ export class MLOpStore {
     this.register_hop_handler(MLHopType.ADD_LAYER, HopAPIAdapter.add_layer);
     this.register_hop_handler(MLHopType.ADD_ACTIVATION, HopAPIAdapter.add_activation);
     this.register_hop_handler(MLHopType.ADD_LOSS, HopAPIAdapter.add_loss);
+    this.register_hop_handler(MLHopType.ADD_OPTIMIZER, HopAPIAdapter.add_optimizer);
     this.register_hop_handler(MLHopType.RESET_MODEL, HopAPIAdapter.clear_model);
   }
 
@@ -47,7 +48,7 @@ export class MLOpStore {
   
   notify_observers(op) {
     for (let i = 0; i < this.observers.length; i++) {
-      this.observers[i].on_model_changed(this, op);
+      this.observers[i].on_ops_changed(this, op);
     }
   }
 
@@ -634,7 +635,7 @@ export class MLOpStore {
 
   // ===== High-level operations (for external systems, never processed by MLOps) =====
 
-  create_model(type, learning_rate, loss_fn, optimizer) {
+  create_model(type, learning_rate, loss_fn, optimizer_type = null) {
     const hop = this.hops.allocate();
     hop.type = MLHopType.CREATE_MODEL;
     hop.param_start = this.hops_params.length;
@@ -642,7 +643,7 @@ export class MLOpStore {
     
     let result = null;
     if (this.hop_handlers.has(MLHopType.CREATE_MODEL)) {
-      result = this.hop_handlers.get(MLHopType.CREATE_MODEL)(type, learning_rate, loss_fn, optimizer);
+      result = this.hop_handlers.get(MLHopType.CREATE_MODEL)(type, learning_rate, loss_fn, optimizer_type);
     }
 
     hop.result = result;
@@ -714,6 +715,26 @@ export class MLOpStore {
     return result;
   }
 
+  add_optimizer(type, model = null, beta1 = 0.9, beta2 = 0.999, epsilon = 1e-8) {
+    const hop = this.hops.allocate();
+    hop.type = MLHopType.ADD_OPTIMIZER;
+    hop.param_start = this.hops_params.length;
+    hop.param_count = 1;
+    
+    let result = null;
+    if (this.hop_handlers.has(MLHopType.ADD_OPTIMIZER)) {
+      result = this.hop_handlers.get(MLHopType.ADD_OPTIMIZER)(type, model, beta1, beta2, epsilon);
+    }
+
+    hop.result = result;
+
+    this.hops_params.add(type, 1);
+
+    this.notify_observers(hop);
+
+    return result;
+  }
+
   reset_model(model) {
     const hop = this.hops.allocate();
     hop.type = MLHopType.RESET_MODEL;
@@ -738,6 +759,10 @@ export class MLOpStore {
 
     this.notify_observers(default_reset_op);
   }
+
+  is_empty() {
+    return this.ops.length === 0 && this.hops.length === 0;
+  }
   
   export_to_json() {
     if (this.transient) return;
@@ -761,8 +786,8 @@ export class MLOpStore {
 }
 
 // Base class for observers that want to be notified of model changes
-export class model_observer {
-  on_model_changed(store, op) {
+export class OpsObserver {
+  on_ops_changed(store, op) {
     // To be implemented by concrete observers
   }
 }

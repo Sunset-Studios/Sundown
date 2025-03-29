@@ -33,9 +33,8 @@ import { ModelType, LossType, LayerType, ActivationType } from "../engine/src/ml
 import { MasterMind } from "../engine/src/ml/mastermind.js";
 import { NeuralModel } from "../engine/src/ml/models/neural_model.js";
 import { FullyConnected } from "../engine/src/ml/layers/fully_connected.js";
-import { ReLU } from "../engine/src/ml/layers/relu.js";
-import { Tanh } from "../engine/src/ml/layers/tanh.js";
 import { MSELoss } from "../engine/src/ml/layers/mse_loss.js";
+import { ReLU } from "../engine/src/ml/layers/relu.js";
 import { Tensor, TensorInitializer } from "../engine/src/ml/math/tensor.js";
 import { Adam } from "../engine/src/ml/optimizers/adam.js";
 
@@ -195,8 +194,8 @@ export class RenderingScene extends Scene {
     ComputeTaskQueue.get().new_task(
       "ripples",
       "effects/transform_ripples.wgsl",
-      [transforms.position_buffer, transforms.flags_buffer],
-      [transforms.position_buffer, transforms.flags_buffer],
+      [transforms.position_buffer, transforms.flags_buffer, transforms.dirty_buffer],
+      [transforms.position_buffer, transforms.flags_buffer, transforms.dirty_buffer],
       Math.ceil(transforms.flags.length / 256)
     );
   }
@@ -440,7 +439,7 @@ export class AABBScene extends Scene {
   show_ui = false;
   entities = [];
   selected_entity = null;
-  use_gpu_raycast = true;
+  use_gpu_raycast = false;
   ray_hits = [];
   last_ray_origin = null;
   last_ray_direction = null;
@@ -991,9 +990,9 @@ export class SceneSwitcher extends SimulationLayer {
   const ml_scene = new MLScene("MLScene");
 
   const scene_switcher = new SceneSwitcher("SceneSwitcher");
-  //await scene_switcher.add_scene(aabb_scene);
+  await scene_switcher.add_scene(aabb_scene);
   //await scene_switcher.add_scene(rendering_scene);
-  await scene_switcher.add_scene(ml_scene);
+  //await scene_switcher.add_scene(ml_scene);
   await simulator.add_sim_layer(scene_switcher);
 
   simulator.run();

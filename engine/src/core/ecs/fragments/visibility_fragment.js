@@ -77,6 +77,7 @@ export class VisibilityFragment extends Fragment {
   static resize(new_size) {
     if (new_size <= this.size) return;
 
+    new_size *= 2;
     this.size = new_size;
 
     if (!this.data) this.initialize();

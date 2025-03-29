@@ -46,7 +46,8 @@ export const MLHopType = Object.freeze({
   ADD_LAYER: 2,
   ADD_ACTIVATION: 3,
   ADD_LOSS: 4,
-  RESET_MODEL: 5,
+  ADD_OPTIMIZER: 5,
+  RESET_MODEL: 6,
 });
 
 // A class that represents a low-level operation and all associated parameters.

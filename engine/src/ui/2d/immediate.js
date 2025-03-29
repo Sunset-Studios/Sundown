@@ -2,6 +2,7 @@ import { InputProvider } from "../../input/input_provider.js";
 import { InputKey, InputRange, InputKeyToPrintableString } from "../../input/input_types.js";
 import { FrameAllocator, FrameStackAllocator } from "../../memory/allocator.js";
 import { profile_scope } from "../../utility/performance.js";
+import { clamp } from "../../utility/math.js";
 
 const corner_radius_top_left = "corner_radius_top_left";
 const corner_radius_top_right = "corner_radius_top_right";
@@ -279,8 +280,6 @@ function base_draw(ctx, x, y, width, height, config) {
   }
   ctx.clip();
 
-  ctx.save();
-
   // Draw background using the appropriate shape.
   if (config.background_color) {
     ctx.fillStyle = config.background_color || "#ccc";
@@ -423,19 +422,21 @@ function base_draw(ctx, x, y, width, height, config) {
     ctx.stroke();
   }
 
-  // Additional style settings (e.g. box-shadow, filter)
   if (config.box_shadow) {
+    ctx.save();
     const parts = config.box_shadow.split(" ");
-    ctx.shadowOffsetX = parse_dimension(parts[0], 0);
-    ctx.shadowOffsetY = parse_dimension(parts[1], 0);
+    ctx.shadowOffsetX = parse_dimension(parts[0], 10);
+    ctx.shadowOffsetY = parse_dimension(parts[1], 10);
     ctx.shadowBlur = parse_dimension(parts[2], 10);
     ctx.shadowColor = parts[3] || "rgba(0, 0, 0, 0.5)";
+    ctx.fillStyle = "none";
+    ctx.fill();
+    ctx.restore();
   }
 
   if (config.filter) {
     ctx.filter = config.filter;
   }
-  ctx.restore();
 }
 
 function is_input_within(x, y, width, height) {
@@ -711,6 +712,7 @@ export function begin_container(config = {}) {
   container.padding_bottom = padding_bottom;
   container.cursor = { x: x + padding_left, y: y + padding_top };
   container.config = config;
+
   container._has_clip = false;
   // Set auto-sizing flags and prepare to track children extents.
   container.auto_width = auto_width;
@@ -727,29 +729,13 @@ export function begin_container(config = {}) {
   // Record a background draw command for the container.
   // Note that we reference container properties so that if they later change due to auto-sizing,
   // the final drawn background will use the updated dimensions.
-  UIContext.draw_commands.push((ctx) => {
-    ctx.save();
-    let total_width = container.width + container.padding_left + container.padding_right;
-    let total_height = container.height + container.padding_top + container.padding_bottom;
-    base_draw(ctx, container.x, container.y, total_width, total_height, config);
-    ctx.restore();
-  });
+  container._base_command_index = UIContext.draw_commands.length;
+  UIContext.draw_commands.push(null);
 
   // --- Begin Clipping (for "clip") ---
   // If requested, add a clip region so that children drawn afterward will be clipped
   // to this container's bounds.
   if (config.clip) {
-    UIContext.draw_commands.push((ctx) => {
-      ctx.save();
-      ctx.beginPath();
-      ctx.rect(
-        container.x,
-        container.y,
-        container.width + container.padding_left + container.padding_right,
-        container.height + container.padding_top + container.padding_bottom
-      );
-      ctx.clip();
-    });
     // Mark that this container activated a clip.
     container._has_clip = true;
   }
@@ -803,6 +789,18 @@ export function end_container() {
     container.content_max_y = container.cursor.y - (container.y + container.padding_top);
   }
 
+  // --- Push base draw command for container ---
+  UIContext.draw_commands[container._base_command_index] = (ctx) => {
+    ctx.save();
+    let total_width = container.width + container.padding_left + container.padding_right;
+    let total_height = container.height + container.padding_top + container.padding_bottom;
+    base_draw(ctx, container.x, container.y, total_width, total_height, container.config);
+
+    if (!container._has_clip) {
+      ctx.restore();
+    }
+  };
+
   // Remove the current container from the layout stack.
   UIContext.layout_stack.pop();
 
@@ -841,13 +839,12 @@ export function end_container() {
     });
   }
   // --- End Clipping for "clip" ---
-  // If this container activated a clip, push a draw command to restore the context.
+  // If this container activated a clip, push draw command to restore the context.
   if (container._has_clip) {
     UIContext.draw_commands.push((ctx) => {
       ctx.restore();
     });
   }
-  // --- End Clipping for "clip" ---
 
   return element_handle_input(
     container.x,
@@ -1285,7 +1282,27 @@ export function image(config = {}) {
   let width = parse_dimension(config.width, container.width);
   let height = parse_dimension(config.height, container.height);
 
-  // Determine offsets using auto-sizing flags.
+  // If the image is provided, adjust the width and height to fit the image.
+  if (config.src) {
+    if (!UIContext.image_cache[config.src]) {
+      const img = new Image();
+      img.src = config.src;
+      UIContext.image_cache[config.src] = img;
+    }
+    const img = UIContext.image_cache[config.src];
+    if (img && img.complete) {
+      const aspect = img.width / img.height;
+      if (width > 0 && height <= 0) {
+        height = width / aspect;
+      } else if (height > 0 && width <= 0) {
+        width = height * aspect;
+      }
+    }
+  }
+
+  // ------------------------------
+  // Determine Offsets Using Auto-sizing Flags
+  // ------------------------------
   let offset_x;
   if (config.x !== undefined) {
     offset_x = parse_dimension(config.x, container.width);
@@ -1314,6 +1331,7 @@ export function image(config = {}) {
     y = container.cursor.y + offset_y;
   }
 
+  // Update the parent's layout (for auto–layout on containers).
   child_container_layout_update(container, x, y, width, height);
 
   UIContext.draw_commands.push((ctx) => {
@@ -1321,19 +1339,28 @@ export function image(config = {}) {
 
     base_draw(ctx, x, y, width, height, config);
 
-    if (config.icon) {
-      if (!UIContext.image_cache[config.icon]) {
-        const img = new Image();
-        img.src = config.icon;
-        UIContext.image_cache[config.icon] = img;
-      }
-      const img = UIContext.image_cache[config.icon];
+    if (config.src) {
+      const img = UIContext.image_cache[config.src];
       if (img.complete) {
-        const icon_width = width * 0.8;
-        const icon_height = height * 0.8;
-        const icon_x = x + (width - icon_width) / 2;
-        const icon_y = y + (height - icon_height) / 2;
-        ctx.drawImage(img, icon_x, icon_y, icon_width, icon_height);
+        if (config.cover) {
+          // Calculate scaling factors for both dimensions
+          const scale_x = width / img.width;
+          const scale_y = height / img.height;
+          // Use the larger scaling factor to ensure coverage
+          const scale = Math.max(scale_x, scale_y);
+
+          // Calculate dimensions at this scale
+          const scaled_width = img.width * scale;
+          const scaled_height = img.height * scale;
+
+          // Center the image
+          const offset_x = (width - scaled_width) / 2;
+          const offset_y = (height - scaled_height) / 2;
+
+          ctx.drawImage(img, x + offset_x, y + offset_y, scaled_width, scaled_height);
+        } else {
+          ctx.drawImage(img, x, y, width, height);
+        }
       }
     }
     ctx.restore();
@@ -1575,5 +1602,67 @@ export class ImmediateUIUpdater {
         ImmediateUIUpdater.all_updaters.splice(i, 1);
       }
     }
+  }
+}
+
+/**
+ * Property animator.
+ *
+ * Helper class used to animate properties over time.
+ *
+ */
+export class PropertyAnimator {
+  #current_value = null;
+  #target_value = null;
+  #animation_speed = 5;
+  #is_array = false;
+
+  constructor(initial_value, animation_speed = 5) {
+    this.#is_array = Array.isArray(initial_value);
+    if (this.#is_array) {
+      this.#current_value = [...initial_value];
+      this.#target_value = [...initial_value];
+    } else {
+      this.#current_value = initial_value;
+      this.#target_value = initial_value;
+    }
+    this.#animation_speed = animation_speed;
+  }
+
+  set_target(target_value) {
+    if (this.#is_array) {
+      for (let i = 0; i < this.#current_value.length; i++) {
+        this.#target_value[i] = target_value[i];
+      }
+    } else {
+      this.#target_value = target_value;
+    }
+  }
+
+  update(delta_time) {
+    if (this.#is_array) {
+      // Handle array values (like RGB colors)
+      for (let i = 0; i < this.#current_value.length; i++) {
+        const diff = this.#target_value[i] - this.#current_value[i];
+        this.#current_value[i] = clamp(
+          this.#current_value[i] + diff * this.#animation_speed * delta_time,
+          diff > 0 ? this.#current_value[i] : this.#target_value[i],
+          diff < 0 ? this.#current_value[i] : this.#target_value[i]
+        );
+      }
+    } else {
+      // Handle single numeric values
+      const diff = this.#target_value - this.#current_value;
+      this.#current_value = clamp(
+        this.#current_value + diff * this.#animation_speed * delta_time,
+        diff > 0 ? this.#current_value : this.#target_value,
+        diff < 0 ? this.#current_value : this.#target_value
+      );
+    }
+    return this.#current_value;
+  }
+
+  get value() {
+    return this.#current_value;
   }
 }

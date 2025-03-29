@@ -1,7 +1,8 @@
 export class Layer {
-  static next_layer_id = 0;
+  static all_layers = [];
 
   id = null;
+  parent = null;
   layers = [];
   cached_input = null;
   cached_output = null;
@@ -9,7 +10,15 @@ export class Layer {
   grad_params = null;
 
   constructor() {
-    this.id = Layer.next_layer_id++;
+    this.id = Layer.all_layers.length;
+    Layer.all_layers.push(this);
+  }
+
+  /**
+   * Destroys the layer.
+   */
+  destroy() {
+    Layer.all_layers.splice(this.id, 1);
   }
 
   /**
@@ -18,6 +27,7 @@ export class Layer {
    * @param {Object} layer - The layer to add.
    */
   add(layer) {
+    layer.parent = this;
     this.layers.push(layer);
     return this.layers.length - 1;
   }
@@ -30,7 +40,7 @@ export class Layer {
   remove(layer) {
     for (let i = this.layers.length - 1; i >= 0; i--) {
       if (this.layers[i] === layer) {
-        this.layers[i].store = null;
+        this.layers[i].parent = null;
         this.layers.splice(i, 1);
       }
     }

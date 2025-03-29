@@ -1,4 +1,4 @@
-import { ModelType, LossType, ActivationType, LayerType } from "../ml_types.js";
+import { ModelType, LossType, ActivationType, LayerType, OptimizerType } from "../ml_types.js";
 
 import { NeuralModel } from "../models/neural_model.js";
 
@@ -12,16 +12,21 @@ import { MSELoss } from "../layers/mse_loss.js";
 import { BinaryCrossEntropyLoss } from "../layers/binary_cross_entropy_loss.js";
 import { CrossEntropyLoss } from "../layers/cross_entropy_loss.js";
 
+import { Adam } from "../optimizers/adam.js";
+
 export class HopAPIAdapter {
-  static create_model(type, learning_rate, loss_fn, optimizer) {
+  static create_model(type, learning_rate, loss_fn, optimizer_type = null) {
     let model = null;
 
     if (type === ModelType.NEURAL) {
-      model = new NeuralModel("sine_approximator", {
+      model = new NeuralModel("neural_network", {
         learning_rate: learning_rate,
-        optimizer: optimizer,
         loss_fn: loss_fn,
       });
+    }
+
+    if (optimizer_type !== null) {
+      HopAPIAdapter.add_optimizer(optimizer_type, model);
     }
 
     return model;
@@ -75,6 +80,20 @@ export class HopAPIAdapter {
     }
 
     return loss;
+  }
+
+  static add_optimizer(type, model = null, beta1 = 0.9, beta2 = 0.999, epsilon = 1e-8) {
+    let optimizer = null;
+
+    if (type === OptimizerType.ADAM) {
+      optimizer = new Adam(beta1, beta2, epsilon);
+    }
+
+    if (model) {
+      model.set_optimizer(optimizer);
+    }
+
+    return optimizer;
   }
 
   static clear_model(model) {

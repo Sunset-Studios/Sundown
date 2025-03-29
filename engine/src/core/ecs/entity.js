@@ -182,6 +182,10 @@ export class EntityManager {
     return this.entity_fragments.has(entity) && this.entity_fragments.get(entity).has(FragmentType);
   }
 
+  static has_tag(entity, Tag) {
+    return this.entity_fragments.has(entity) && this.entity_fragments.get(entity).has(Tag);
+  }
+
   static get_fragment_array(FragmentType) {
     return FragmentType.data;
   }

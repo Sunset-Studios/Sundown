@@ -45,7 +45,9 @@ export const Easing = {
   [EasingType.EaseInCubic]: (t) => t * t * t,
   [EasingType.EaseOutCubic]: (t) => (t - 1) * (t - 1) * (t - 1) + 1,
   [EasingType.EaseInOutCubic]: (t) =>
-    t < 0.5 ? 4 * t * t * t : (t - 1) * (t - 1) * (t - 1) + 1,
+    t < 0.5
+      ? 4 * t * t * t
+      : 1 - Math.pow(-2 * t + 2, 3) / 2,
   [EasingType.EaseInQuart]: (t) => t * t * t * t,
   [EasingType.EaseOutQuart]: (t) => 1 - (t - 1) * (t - 1) * (t - 1) * (t - 1),
   [EasingType.EaseInOutQuart]: (t) =>
@@ -102,19 +104,38 @@ export const Easing = {
           (Math.pow(2, -20 * t + 10) *
             Math.sin(((20 * t - 11.12) * (2 * Math.PI)) / 0.4)) +
         1,
-  [EasingType.EaseInBack]: (t) => t * t * (2.70158 * t - 1.70158),
-  [EasingType.EaseOutBack]: (t) =>
-    1 + (t - 1) * (t - 1) * (2.70158 * (t - 1) + 1.70158),
-  [EasingType.EaseInOutBack]: (t) =>
-    t < 0.5
-      ? 0.5 * (t * t * (2.70158 * t - 1.70158))
-      : 0.5 * (1 + (t - 1) * (t - 1) * (2.70158 * (t - 1) + 1.70158)),
-  [EasingType.EaseInBounce]: (t) => 1 - Easing.EaseOutBounce(1 - t),
-  [EasingType.EaseOutBounce]: (t) => 1 - Easing.EaseInBounce(t),
+  [EasingType.EaseInBack]: (t) => {
+    const c1 = 1.70158;
+    return c1 * t * t * t - c1 * t * t;
+  },
+  [EasingType.EaseOutBack]: (t) => {
+    const c1 = 1.70158;
+    return 1 + c1 * Math.pow(t - 1, 3) + c1 * Math.pow(t - 1, 2);
+  },
+  [EasingType.EaseInOutBack]: (t) => {
+    const c2 = 2.5949095;
+    return t < 0.5
+      ? (Math.pow(2 * t, 2) * ((c2 + 1) * 2 * t - c2)) / 2
+      : (Math.pow(2 * t - 2, 2) * ((c2 + 1) * (t * 2 - 2) + c2) + 2) / 2;
+  },
+  [EasingType.EaseInBounce]: (t) => 1 - Easing[EasingType.EaseOutBounce](1 - t),
+  [EasingType.EaseOutBounce]: (t) => {
+    const n1 = 7.5625;
+    const d1 = 2.75;
+    if (t < 1 / d1) {
+      return n1 * t * t;
+    } else if (t < 2 / d1) {
+      return n1 * (t -= 1.5 / d1) * t + 0.75;
+    } else if (t < 2.5 / d1) {
+      return n1 * (t -= 2.25 / d1) * t + 0.9375;
+    } else {
+      return n1 * (t -= 2.625 / d1) * t + 0.984375;
+    }
+  },
   [EasingType.EaseInOutBounce]: (t) =>
     t < 0.5
-      ? 0.5 * (1 - Easing.EaseOutBounce(1 - 2 * t))
-      : 0.5 * (1 + Easing.EaseOutBounce(2 * t - 1)),
+      ? (1 - Easing[EasingType.EaseOutBounce](1 - 2 * t)) / 2
+      : (1 + Easing[EasingType.EaseOutBounce](2 * t - 1)) / 2,
 };
 
 export function radians(deg) {

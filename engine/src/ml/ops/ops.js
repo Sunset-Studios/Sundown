@@ -7,10 +7,234 @@ import { logger } from "../logger.js";
 
 // MLOps acts as a virtual machine for all ML operations.
 // It is responsible for executing the operations on the appropriate backend.
+export class MLOps {
+  static #backend = null;
+  static #op_stores = null;
+  static #runtime_store = null;
+
+  static get runtime_store() {
+    if (this.#runtime_store === null) {
+      this.#runtime_store = new MLOpStore(true /* transient */);
+    }
+    return this.#runtime_store;
+  }
+
+  static get op_stores() {
+    if (this.#op_stores === null) {
+      this.#op_stores = new FreeListAllocator(256, MLOpStore);
+    }
+    return this.#op_stores;
+  }
+
+  static get backend() {
+    if (this.#backend === null) {
+      this.#backend = MLOpsCPU;
+    }
+    return this.#backend;
+  }
+
+  static set_backend(backend) {
+    this.#backend = backend;
+  }
+
+  static set_gpu_implementation(gpu_implementation) {
+    if (this.backend.set_gpu_implementation) {
+      this.backend.set_gpu_implementation(gpu_implementation);
+    }
+  }
+
+  static get_runtime_store() {
+    return this.runtime_store;
+  }
+
+  static new_op_store() {
+    const store = this.op_stores.allocate();
+    return store;
+  }
+
+  static delete_op_store(store) {
+    this.op_stores.free(store);
+  }
+
+  static create_zero_tensor(shape, batch_size) {
+    return this.runtime_store.create_zero_tensor(shape, batch_size);
+  }
+
+  static init_random(a, scale = 1) {
+    this.runtime_store.init_random(a, scale);
+  }
+
+  static init_he(a) {
+    this.runtime_store.init_he(a);
+  }
+
+  static init_glorot(a, output_size) {
+    this.runtime_store.init_glorot(a, output_size);
+  }
+
+  static mat_mul(a, b) {
+    return this.runtime_store.mat_mul(a, b);
+  }
+
+  static transpose(a) {
+    return this.runtime_store.transpose(a);
+  }
+
+  static fill(a, value, offset = 0, size = null) {
+    return this.runtime_store.fill(a, value, offset, size);
+  }
+
+  static extend(a, add_dims = [], fill_value = 0) {
+    return this.runtime_store.extend(a, add_dims, fill_value);
+  }
+
+  static reshape(a, shape) {
+    return this.runtime_store.reshape(a, shape);
+  }
+
+  static copy(a, b, offset = 0, size = null) {
+    return this.runtime_store.copy(a, b, offset, size);
+  }
+
+  static clone(a) {
+    return this.runtime_store.clone(a);
+  }
+
+  static add(a, b) {
+    return this.runtime_store.add(a, b);
+  }
+
+  static sub(a, b) {
+    return this.runtime_store.sub(a, b);
+  }
+
+  static sub_assign(a, b) {
+    return this.runtime_store.sub_assign(a, b);
+  }
+
+  static div(a, b) {
+    return this.runtime_store.div(a, b);
+  }
+
+  static dot(a, b) {
+    return this.runtime_store.dot(a, b);
+  }
+
+  static scale(a, b) {
+    return this.runtime_store.scale(a, b);
+  }
+
+  static relu(a) {
+    return this.runtime_store.relu(a);
+  }
+
+  static relu_backward(a, grad) {
+    return this.runtime_store.relu_backward(a, grad);
+  }
+
+  static tanh(a) {
+    return this.runtime_store.tanh(a);
+  }
+
+  static tanh_backward(a, grad) {
+    return this.runtime_store.tanh_backward(a, grad);
+  }
+
+  static sigmoid(a) {
+    return this.runtime_store.sigmoid(a);
+  }
+
+  static sigmoid_backward(a, grad) {
+    return this.runtime_store.sigmoid_backward(a, grad);
+  }
+
+  static fused_mul_add(a, b, c) {
+    return this.runtime_store.fused_mul_add(a, b, c);
+  }
+
+  static mse_loss(target, output, enabled_logging = false, name = null) {
+    return this.runtime_store.mse_loss(target, output, enabled_logging, name);
+  }
+
+  static mse_loss_prime(target, output) {
+    return this.runtime_store.mse_loss_prime(target, output);
+  }
+
+  static softmax(a) {
+    return this.runtime_store.softmax(a);
+  }
+
+  static softmax_backward(a, grad) {
+    return this.runtime_store.softmax_backward(a, grad);
+  }
+
+  static cross_entropy_loss(target, output, enabled_logging = false, name = null) {
+    return this.runtime_store.cross_entropy_loss(target, output, enabled_logging, name);
+  }
+
+  static cross_entropy_loss_prime(target, output) {
+    return this.runtime_store.cross_entropy_loss_prime(target, output);
+  }
+
+  static binary_cross_entropy_loss(target, output, enabled_logging = false, name = null) {
+    return this.runtime_store.binary_cross_entropy_loss(target, output, enabled_logging, name);
+  }
+
+  static binary_cross_entropy_loss_prime(target, output) {
+    return this.runtime_store.binary_cross_entropy_loss_prime(target, output);
+  }
+
+  static clip_l2_norm(a, max_norm) {
+    return this.runtime_store.clip_l2_norm(a, max_norm);
+  }
+
+  static batch_reduce_mean(a) {
+    return this.runtime_store.batch_reduce_mean(a);
+  }
+
+  static adam_moment_update(
+    variable,
+    m_tensor,
+    v_tensor,
+    grad,
+    beta1,
+    beta2,
+    t,
+    epsilon,
+    learning_rate
+  ) {
+    return this.runtime_store.adam_moment_update(variable, m_tensor, v_tensor, grad, beta1, beta2, t, epsilon, learning_rate);
+  }
+
+  static write_tensor(tensor, index, value) {
+    return this.runtime_store.write_tensor(tensor, index, value);
+  }
+
+  static read_tensor(tensor, index) {
+    return this.runtime_store.read_tensor(tensor, index);
+  }
+
+  static reset() {
+    this.runtime_store.reset();
+    Tensor.cleanup();
+  }
+
+  static compile() {
+    for (let i = 0; i < this.op_stores.length; i++) {
+      const other = this.op_stores.get(i);
+      this.runtime_store.append(other);
+    }
+    this.backend.compile(this.runtime_store);
+  }
+
+  static run() {
+    return this.backend.run();
+  }
+}
 
 // A class that represents the CPU implementation of the low-level ML operations.
 export class MLOpsCPU {
-  store = null;
+  static store = null;
 
   static init_random(a, scale = 1) {
     for (let i = 0; i < a.batched_length; i++) {
@@ -876,209 +1100,5 @@ export class MLOpsGPU {
 
   static run() {
     return this.gpu_impl.run();
-  }
-}
-
-export class MLOps {
-  static backend = MLOpsCPU;
-  static runtime_store = new MLOpStore(true /* transient */);
-  static op_stores = new FreeListAllocator(256, MLOpStore);
-
-  static set_backend(backend) {
-    this.backend = backend;
-  }
-
-  static set_gpu_implementation(gpu_implementation) {
-    if (this.backend.set_gpu_implementation) {
-      this.backend.set_gpu_implementation(gpu_implementation);
-    }
-  }
-
-  static get_runtime_store() {
-    return this.runtime_store;
-  }
-
-  static new_op_store() {
-    const store = this.op_stores.allocate();
-    return store;
-  }
-
-  static delete_op_store(store) {
-    this.op_stores.free(store);
-  }
-
-  static create_zero_tensor(shape, batch_size) {
-    return this.runtime_store.create_zero_tensor(shape, batch_size);
-  }
-
-  static init_random(a, scale = 1) {
-    this.runtime_store.init_random(a, scale);
-  }
-
-  static init_he(a) {
-    this.runtime_store.init_he(a);
-  }
-
-  static init_glorot(a, output_size) {
-    this.runtime_store.init_glorot(a, output_size);
-  }
-
-  static mat_mul(a, b) {
-    return this.runtime_store.mat_mul(a, b);
-  }
-
-  static transpose(a) {
-    return this.runtime_store.transpose(a);
-  }
-
-  static fill(a, value, offset = 0, size = null) {
-    return this.runtime_store.fill(a, value, offset, size);
-  }
-
-  static extend(a, add_dims = [], fill_value = 0) {
-    return this.runtime_store.extend(a, add_dims, fill_value);
-  }
-
-  static reshape(a, shape) {
-    return this.runtime_store.reshape(a, shape);
-  }
-
-  static copy(a, b, offset = 0, size = null) {
-    return this.runtime_store.copy(a, b, offset, size);
-  }
-
-  static clone(a) {
-    return this.runtime_store.clone(a);
-  }
-
-  static add(a, b) {
-    return this.runtime_store.add(a, b);
-  }
-
-  static sub(a, b) {
-    return this.runtime_store.sub(a, b);
-  }
-
-  static sub_assign(a, b) {
-    return this.runtime_store.sub_assign(a, b);
-  }
-
-  static div(a, b) {
-    return this.runtime_store.div(a, b);
-  }
-
-  static dot(a, b) {
-    return this.runtime_store.dot(a, b);
-  }
-
-  static scale(a, b) {
-    return this.runtime_store.scale(a, b);
-  }
-
-  static relu(a) {
-    return this.runtime_store.relu(a);
-  }
-
-  static relu_backward(a, grad) {
-    return this.runtime_store.relu_backward(a, grad);
-  }
-
-  static tanh(a) {
-    return this.runtime_store.tanh(a);
-  }
-
-  static tanh_backward(a, grad) {
-    return this.runtime_store.tanh_backward(a, grad);
-  }
-
-  static sigmoid(a) {
-    return this.runtime_store.sigmoid(a);
-  }
-
-  static sigmoid_backward(a, grad) {
-    return this.runtime_store.sigmoid_backward(a, grad);
-  }
-
-  static fused_mul_add(a, b, c) {
-    return this.runtime_store.fused_mul_add(a, b, c);
-  }
-
-  static mse_loss(target, output, enabled_logging = false, name = null) {
-    return this.runtime_store.mse_loss(target, output, enabled_logging, name);
-  }
-
-  static mse_loss_prime(target, output) {
-    return this.runtime_store.mse_loss_prime(target, output);
-  }
-
-  static softmax(a) {
-    return this.runtime_store.softmax(a);
-  }
-
-  static softmax_backward(a, grad) {
-    return this.runtime_store.softmax_backward(a, grad);
-  }
-
-  static cross_entropy_loss(target, output, enabled_logging = false, name = null) {
-    return this.runtime_store.cross_entropy_loss(target, output, enabled_logging, name);
-  }
-
-  static cross_entropy_loss_prime(target, output) {
-    return this.runtime_store.cross_entropy_loss_prime(target, output);
-  }
-
-  static binary_cross_entropy_loss(target, output, enabled_logging = false, name = null) {
-    return this.runtime_store.binary_cross_entropy_loss(target, output, enabled_logging, name);
-  }
-
-  static binary_cross_entropy_loss_prime(target, output) {
-    return this.runtime_store.binary_cross_entropy_loss_prime(target, output);
-  }
-
-  static clip_l2_norm(a, max_norm) {
-    return this.runtime_store.clip_l2_norm(a, max_norm);
-  }
-
-  static batch_reduce_mean(a) {
-    return this.runtime_store.batch_reduce_mean(a);
-  }
-
-  static adam_moment_update(
-    variable,
-    m_tensor,
-    v_tensor,
-    grad,
-    beta1,
-    beta2,
-    t,
-    epsilon,
-    learning_rate
-  ) {
-    return this.runtime_store.adam_moment_update(variable, m_tensor, v_tensor, grad, beta1, beta2, t, epsilon, learning_rate);
-  }
-
-  static write_tensor(tensor, index, value) {
-    return this.runtime_store.write_tensor(tensor, index, value);
-  }
-
-  static read_tensor(tensor, index) {
-    return this.runtime_store.read_tensor(tensor, index);
-  }
-
-  static reset() {
-    this.runtime_store.reset();
-    Tensor.cleanup();
-  }
-
-  static compile() {
-    for (let i = 0; i < this.op_stores.length; i++) {
-      const other = this.op_stores.get(i);
-      this.runtime_store.append(other);
-    }
-    this.backend.compile(this.runtime_store);
-  }
-
-  static run() {
-    return this.backend.run();
   }
 }
