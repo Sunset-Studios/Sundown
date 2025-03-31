@@ -1,7 +1,8 @@
 import { Tensor } from "../math/tensor.js";
 import { MLOp, MLHop, MLOpParams, MLOpType, MLHopType } from "./op_types.js";
-import { FrameAllocator, RandomAccessAllocator } from "../memory/allocator.js";
+import { FrameAllocator, RandomAccessAllocator } from "../../memory/allocator.js";
 import { HopAPIAdapter } from "./hop_api_adapter.js";
+import { Layer } from "../layer.js";
 
 const default_reset_op = { type: MLHopType.RESET_MODEL };
 
@@ -27,12 +28,20 @@ export class MLOpStore {
     this.params = new MLOpParams(2048 * 16);
     this.hops_params = new MLOpParams(2048 * 16);
 
-    this.register_hop_handler(MLHopType.CREATE_MODEL, HopAPIAdapter.create_model);
+    // Register handlers for hop operations
+    this.register_hop_handler(MLHopType.SET_SUBNET_CONTEXT, HopAPIAdapter.set_subnet_context);
+    this.register_hop_handler(MLHopType.SET_SUBNET_CONTEXT_PROPERTY, HopAPIAdapter.set_subnet_context_property);
     this.register_hop_handler(MLHopType.ADD_LAYER, HopAPIAdapter.add_layer);
     this.register_hop_handler(MLHopType.ADD_ACTIVATION, HopAPIAdapter.add_activation);
     this.register_hop_handler(MLHopType.ADD_LOSS, HopAPIAdapter.add_loss);
-    this.register_hop_handler(MLHopType.ADD_OPTIMIZER, HopAPIAdapter.add_optimizer);
+    this.register_hop_handler(MLHopType.SET_OPTIMIZER, HopAPIAdapter.set_optimizer);
     this.register_hop_handler(MLHopType.RESET_MODEL, HopAPIAdapter.clear_model);
+    
+    // Register handlers for layer manipulation operations
+    this.register_hop_handler(MLHopType.CONNECT_LAYER, HopAPIAdapter.connect_layer);
+    this.register_hop_handler(MLHopType.DISCONNECT_LAYER, HopAPIAdapter.disconnect_layer);
+    this.register_hop_handler(MLHopType.DISCONNECT_LAYER_FROM_ALL, HopAPIAdapter.disconnect_layer_from_all);
+    this.register_hop_handler(MLHopType.REORDER_LAYER, HopAPIAdapter.reorder_layer);
   }
 
   register_observer(observer) {
@@ -443,6 +452,7 @@ export class MLOpStore {
     op.param_start = this.params.length;
     op.param_count = 2;
     op.result = result.id;
+
     this.params.add(target.id, 1);
     this.params.add(output.id, 1);
 
@@ -635,27 +645,49 @@ export class MLOpStore {
 
   // ===== High-level operations (for external systems, never processed by MLOps) =====
 
-  create_model(type, learning_rate, loss_fn, optimizer_type = null) {
+  set_subnet_context(subnet_id, options = {}) {
     const hop = this.hops.allocate();
-    hop.type = MLHopType.CREATE_MODEL;
+    hop.type = MLHopType.SET_SUBNET_CONTEXT;
     hop.param_start = this.hops_params.length;
     hop.param_count = 1;
-    
+
     let result = null;
-    if (this.hop_handlers.has(MLHopType.CREATE_MODEL)) {
-      result = this.hop_handlers.get(MLHopType.CREATE_MODEL)(type, learning_rate, loss_fn, optimizer_type);
+    if (this.hop_handlers.has(MLHopType.SET_SUBNET_CONTEXT)) {
+      result = this.hop_handlers.get(MLHopType.SET_SUBNET_CONTEXT)(subnet_id, options);
     }
 
     hop.result = result;
 
-    this.hops_params.add(type, 1);
+    this.hops_params.add(subnet_id, 1);
 
     this.notify_observers(hop);
 
     return result;
   }
 
-  add_layer(type, input_size, output_size, model, options = {}, params = null) {
+  set_subnet_context_property(subnet_id, prop_name, value) {
+    const hop = this.hops.allocate();
+    hop.type = MLHopType.SET_SUBNET_CONTEXT_PROPERTY;
+    hop.param_start = this.hops_params.length;
+    hop.param_count = 3;
+    
+    let result = null;
+    if (this.hop_handlers.has(MLHopType.SET_SUBNET_CONTEXT_PROPERTY)) {
+      result = this.hop_handlers.get(MLHopType.SET_SUBNET_CONTEXT_PROPERTY)(subnet_id, prop_name, value);
+    }
+
+    hop.result = result;
+
+    this.hops_params.add(subnet_id, 1);
+    this.hops_params.add(prop_name, 1);
+    this.hops_params.add(value, 1);
+
+    this.notify_observers(hop);
+
+    return result;
+  }
+
+  add_layer(type, input_size, output_size, parent = null, options = {}, params = null) {
     const hop = this.hops.allocate();
     hop.type = MLHopType.ADD_LAYER;
     hop.param_start = this.hops_params.length;
@@ -663,7 +695,7 @@ export class MLOpStore {
 
     let result = null;
     if (this.hop_handlers.has(MLHopType.ADD_LAYER)) {
-      result = this.hop_handlers.get(MLHopType.ADD_LAYER)(type, input_size, output_size, model, options, params);
+      result = this.hop_handlers.get(MLHopType.ADD_LAYER)(type, input_size, output_size, parent, options, params);
     }
 
     hop.result = result;
@@ -675,7 +707,7 @@ export class MLOpStore {
     return result;
   }
 
-  add_activation(type, model = null) {
+  add_activation(type, parent = null) {
     const hop = this.hops.allocate();
     hop.type = MLHopType.ADD_ACTIVATION;
     hop.param_start = this.hops_params.length;
@@ -683,7 +715,7 @@ export class MLOpStore {
     
     let result = null;
     if (this.hop_handlers.has(MLHopType.ADD_ACTIVATION)) {
-      result = this.hop_handlers.get(MLHopType.ADD_ACTIVATION)(type, model);
+      result = this.hop_handlers.get(MLHopType.ADD_ACTIVATION)(type, parent);
     }
 
     hop.result = result;
@@ -695,7 +727,7 @@ export class MLOpStore {
     return result;
   }
 
-  add_loss(type, enabled_logging = false, name = null, model = null) {
+  add_loss(type, enabled_logging = false, name = null, parent = null) {
     const hop = this.hops.allocate();
     hop.type = MLHopType.ADD_LOSS;
     hop.param_start = this.hops_params.length;
@@ -703,7 +735,7 @@ export class MLOpStore {
     
     let result = null;
     if (this.hop_handlers.has(MLHopType.ADD_LOSS)) {
-      result = this.hop_handlers.get(MLHopType.ADD_LOSS)(type, enabled_logging, name, model);
+      result = this.hop_handlers.get(MLHopType.ADD_LOSS)(type, enabled_logging, name, parent);
     }
 
     hop.result = result;
@@ -715,15 +747,15 @@ export class MLOpStore {
     return result;
   }
 
-  add_optimizer(type, model = null, beta1 = 0.9, beta2 = 0.999, epsilon = 1e-8) {
+  set_optimizer(type, parent = null, beta1 = 0.9, beta2 = 0.999, epsilon = 1e-8) {
     const hop = this.hops.allocate();
-    hop.type = MLHopType.ADD_OPTIMIZER;
+    hop.type = MLHopType.SET_OPTIMIZER;
     hop.param_start = this.hops_params.length;
     hop.param_count = 1;
     
     let result = null;
-    if (this.hop_handlers.has(MLHopType.ADD_OPTIMIZER)) {
-      result = this.hop_handlers.get(MLHopType.ADD_OPTIMIZER)(type, model, beta1, beta2, epsilon);
+    if (this.hop_handlers.has(MLHopType.SET_OPTIMIZER)) {
+      result = this.hop_handlers.get(MLHopType.SET_OPTIMIZER)(type, parent, beta1, beta2, epsilon);
     }
 
     hop.result = result;
@@ -735,13 +767,13 @@ export class MLOpStore {
     return result;
   }
 
-  reset_model(model) {
+  reset_model(parent = null) {
     const hop = this.hops.allocate();
     hop.type = MLHopType.RESET_MODEL;
     
     let result = null;
     if (this.hop_handlers.has(MLHopType.RESET_MODEL)) {
-      result = this.hop_handlers.get(MLHopType.RESET_MODEL)(model);
+      result = this.hop_handlers.get(MLHopType.RESET_MODEL)(parent);
     }
 
     hop.result = result;
@@ -749,6 +781,98 @@ export class MLOpStore {
     this.notify_observers(hop);
 
     return result;
+  }
+
+  connect_layer(source_layer_id, target_layer_id) {
+    const hop = this.hops.allocate();
+    hop.type = MLHopType.CONNECT_LAYER;
+    hop.param_start = this.hops_params.length;
+    hop.param_count = 2;
+    
+    let result = null;
+    if (this.hop_handlers.has(MLHopType.CONNECT_LAYER)) {
+      result = this.hop_handlers.get(MLHopType.CONNECT_LAYER)(source_layer_id, target_layer_id);
+    }
+
+    hop.result = result;
+
+    this.hops_params.add(source_layer_id, 1);
+    this.hops_params.add(target_layer_id, 1);
+
+    this.notify_observers(hop);
+
+    return result;
+  }
+
+  disconnect_layer(layer_id) {
+    const hop = this.hops.allocate();
+    hop.type = MLHopType.DISCONNECT_LAYER;
+    hop.param_start = this.hops_params.length;
+    hop.param_count = 1;
+    
+    let result = null;
+    if (this.hop_handlers.has(MLHopType.DISCONNECT_LAYER)) {
+      result = this.hop_handlers.get(MLHopType.DISCONNECT_LAYER)(layer_id);
+    }
+
+    hop.result = result;
+
+    this.hops_params.add(layer_id, 1);
+
+    this.notify_observers(hop);
+
+    return result;
+  }
+
+  reorder_layer(layer_id, target_index) {
+    const hop = this.hops.allocate();
+    hop.type = MLHopType.REORDER_LAYER;
+    hop.param_start = this.hops_params.length;
+    hop.param_count = 2;
+    
+    let result = null;
+    if (this.hop_handlers.has(MLHopType.REORDER_LAYER)) {
+      result = this.hop_handlers.get(MLHopType.REORDER_LAYER)(layer_id, target_index);
+    }
+
+    hop.result = result;
+
+    this.hops_params.add(layer_id, 1);
+    this.hops_params.add(target_index, 1);
+
+    this.notify_observers(hop);
+
+    return result;
+  }
+
+  merge_models(source_root_id, target_layer_id) {
+    const hop = this.hops.allocate();
+    hop.type = MLHopType.MERGE_MODELS;
+    hop.param_start = this.hops_params.length;
+    hop.param_count = 2;
+    
+    let result = null;
+    if (this.hop_handlers.has(MLHopType.MERGE_MODELS)) {
+      result = this.hop_handlers.get(MLHopType.MERGE_MODELS)(source_root_id, target_layer_id);
+    }
+
+    hop.result = result;
+
+    this.hops_params.add(source_root_id, 1);
+    this.hops_params.add(target_layer_id, 1);
+
+    this.notify_observers(hop);
+
+    return result;
+  }
+  
+  /**
+   * Gets all available root layers (micro-models)
+   * 
+   * @returns {Array<number>} Array of IDs of all root layers
+   */
+  get_all_micro_models() {
+    return Layer.roots.map(layer => layer.id);
   }
 
   reset() {

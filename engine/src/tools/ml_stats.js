@@ -61,20 +61,20 @@ export class MLStats extends DevConsoleTool {
         let all_stats = [];
         for (let i = 0; i < all_masterminds.length; i++) {
           const mastermind = all_masterminds[i];
-          const stats = mastermind.get_model_stats();
+          const stats = mastermind.get_subnet_stats();
           all_stats.push(...stats);
         }
 
         // For each model, render one label per statistic.
         for (let i = 0; i < all_stats.length; i++) {
           const entry = all_stats[i];
-          const model_name = entry.name || `model_${i}`;
-          const model_stats = entry.stats;
-          for (let j = 0; j < model_stats.length; j++) {
-            const stat = model_stats[j];
+          const subnet_name = entry.name || `subnet_${i}`;
+          const subnet_stats = entry.stats;
+          for (let j = 0; j < subnet_stats.length; j++) {
+            const stat = subnet_stats[j];
             if (stat && stat.loss) {
               label(
-                `${model_name} - ${stat.name}: ${stat.loss.data[0]}`,
+                `${subnet_name} - ${stat.name}: ${stat.loss ? stat.loss.data[0] : "N/A"}`,
                 stats_label_config
               );
             }

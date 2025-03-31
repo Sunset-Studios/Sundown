@@ -298,7 +298,17 @@ export class Tensor {
    * @param {number} learning_rate - the learning rate.
    */
   adam_moment_update(m_tensor, v_tensor, grad, beta1, beta2, t, epsilon, learning_rate) {
-    MLOps.adam_moment_update(this, m_tensor, v_tensor, grad, beta1, beta2, t, epsilon, learning_rate);
+    MLOps.adam_moment_update(
+      this,
+      m_tensor,
+      v_tensor,
+      grad,
+      beta1,
+      beta2,
+      t,
+      epsilon,
+      learning_rate
+    );
   }
 
   /**
@@ -314,6 +324,7 @@ export class Tensor {
     this.shape = null;
     this.size = 0;
     this.batch_size = 0;
+    this.array_type = null;
   }
 
   /**
@@ -472,16 +483,30 @@ export class Tensor {
    * individual tensors. It is important that all tensors have the same shape
    * (excluding the first dimension) to ensure proper stacking.
    * @param {Tensor[]} tensors - the tensors to stack.
+   * @param {Tensor} reference_tensor - the reference tensor to use for the shape.
    * @returns {Tensor} the stacked tensor.
    */
-  static stack(tensors) {
+  static stack(tensors, reference_tensor = null, immediate = false) {
     if (tensors.length === 0) {
       throw new Error("Cannot stack an empty array of tensors.");
     }
-    const reference_tensor = tensors[0];
-    const result = Tensor.zeros(reference_tensor.shape, tensors.length);
+    if (reference_tensor === null) {
+      reference_tensor = tensors[0];
+    }
+    const result = Tensor.zeros(
+      reference_tensor.shape,
+      tensors.length * reference_tensor.batch_size
+    );
     for (let i = 0; i < tensors.length; i++) {
-      result.data.set(tensors[i].data, i * reference_tensor.length);
+      if (immediate) {
+        result.data.set(tensors[i].data, i * reference_tensor.length * reference_tensor.batch_size);
+      } else {
+        result.copy(
+          tensors[i],
+          i * reference_tensor.length * reference_tensor.batch_size,
+          tensors[i].length * tensors[i].batch_size
+        );
+      }
     }
     return result;
   }

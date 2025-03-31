@@ -1,104 +1,94 @@
-import { ModelType, LossType, ActivationType, LayerType, OptimizerType } from "../ml_types.js";
-
-import { NeuralModel } from "../models/neural_model.js";
-
-import { FullyConnected } from "../layers/fully_connected.js";
-
-import { ReLU } from "../layers/relu.js";
-import { Sigmoid } from "../layers/sigmoid.js";
-import { Tanh } from "../layers/tanh.js";
-
-import { MSELoss } from "../layers/mse_loss.js";
-import { BinaryCrossEntropyLoss } from "../layers/binary_cross_entropy_loss.js";
-import { CrossEntropyLoss } from "../layers/cross_entropy_loss.js";
+import { ModelType, LayerType, OptimizerType } from "../ml_types.js";
+import { Layer, TrainingContext } from "../layer.js";
 
 import { Adam } from "../optimizers/adam.js";
 
 export class HopAPIAdapter {
-  static create_model(type, learning_rate, loss_fn, optimizer_type = null) {
-    let model = null;
-
-    if (type === ModelType.NEURAL) {
-      model = new NeuralModel("neural_network", {
-        learning_rate: learning_rate,
-        loss_fn: loss_fn,
-      });
-    }
-
-    if (optimizer_type !== null) {
-      HopAPIAdapter.add_optimizer(optimizer_type, model);
-    }
-
-    return model;
+  static set_subnet_context(subnet_id, options = {}) {
+    const context = new TrainingContext(options);
+    Layer.set_subnet_context(subnet_id, context);
+    return context;
   }
 
-  static add_layer(type, input_size, output_size, model = null, options = {}, params = null) {
+  static set_subnet_context_property(subnet_id, prop_name, value) {
+    return Layer.set_layer_context_property(subnet_id, prop_name, value);
+  }
+
+  static add_layer(type, input_size, output_size, parent = null, options = {}, params = null) {
     let layer = null;
 
     if (type === LayerType.FULLY_CONNECTED) {
-      layer = new FullyConnected(input_size, output_size, options, params);
-    }
-
-    if (model) {
-      model.add(layer);
+      layer = Layer.create(type, { input_size, output_size, ...options }, parent, params);
     }
 
     return layer;
   }
 
-  static add_activation(type, model = null) {
-    let activation = null;
-
-    if (type === ActivationType.RELU) {
-      activation = new ReLU();
-    } else if (type === ActivationType.SIGMOID) {
-      activation = new Sigmoid();
-    } else if (type === ActivationType.TANH) {
-      activation = new Tanh();
-    }
-
-    if (model) {
-      model.add(activation);
-    }
-
-    return activation;
+  static add_activation(type, parent = null) {
+    return Layer.create(type, {}, parent);
   }
 
-  static add_loss(type, enabled_logging = false, name = null, model = null) {
-    let loss = null;
-
-    if (type === LossType.MSE) {
-      loss = new MSELoss(enabled_logging, name);
-    } else if (type === LossType.BINARY_CROSS_ENTROPY) {
-      loss = new BinaryCrossEntropyLoss(enabled_logging, name);
-    } else if (type === LossType.CROSS_ENTROPY) {
-      loss = new CrossEntropyLoss(enabled_logging, name);
-    }
-    
-    if (model) {
-      model.add(loss);
-    }
-
-    return loss;
+  static add_loss(type, enabled_logging = false, name = null, parent = null) {
+    return Layer.create(type, { enabled_logging, name }, parent);
   }
 
-  static add_optimizer(type, model = null, beta1 = 0.9, beta2 = 0.999, epsilon = 1e-8) {
+  static set_optimizer(type, root = null, beta1 = 0.9, beta2 = 0.999, epsilon = 1e-8) {
     let optimizer = null;
 
     if (type === OptimizerType.ADAM) {
       optimizer = new Adam(beta1, beta2, epsilon);
     }
 
-    if (model) {
-      model.set_optimizer(optimizer);
+    if (root) {
+      Layer.set_layer_context_property(root, 'optimizer', optimizer);
     }
 
     return optimizer;
   }
 
-  static clear_model(model) {
-    if (!model) return;
-    model.clear();
-    return model;
+  static clear_model(root) {
+    Layer.destroy(root);
+  }
+
+  /**
+   * Connects one layer to another layer
+   * 
+   * @param {number} source_layer_id - ID of the layer to be connected
+   * @param {number} target_layer_id - ID of the layer to connect to as a parent
+   * @returns {boolean} True if the operation was successful
+   */
+  static connect_layer(source_layer_id, target_layer_id) {
+    return Layer.connect(source_layer_id, target_layer_id);
+  }
+  
+  /**
+   * Disconnects a layer from its parent
+   * 
+   * @param {number} layer_id - ID of the layer to disconnect
+   * @returns {boolean} True if the operation was successful
+   */
+  static disconnect_layer(layer_id) {
+    return Layer.disconnect(layer_id);
+  }
+
+  /**
+   * Disconnects a layer from all its parents
+   * 
+   * @param {number} layer_id - ID of the layer to disconnect
+   * @returns {boolean} True if the operation was successful
+   */
+  static disconnect_layer_from_all(layer_id) {
+    return Layer.disconnect_all(layer_id);
+  }
+  
+  /**
+   * Reorders a layer within its parent's children
+   * 
+   * @param {number} layer_id - ID of the layer to reorder
+   * @param {number} target_index - New index for the layer
+   * @returns {boolean} True if the operation was successful
+   */
+  static reorder_layer(layer_id, target_index) {
+    return Layer.reorder_in_parent(layer_id, target_index);
   }
 }

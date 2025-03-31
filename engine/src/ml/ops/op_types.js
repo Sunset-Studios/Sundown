@@ -42,12 +42,18 @@ export const MLOpType = Object.freeze({
 // An enum of all supported high-level operations.
 export const MLHopType = Object.freeze({
   NONE: 0,
-  CREATE_MODEL: 1,
-  ADD_LAYER: 2,
-  ADD_ACTIVATION: 3,
-  ADD_LOSS: 4,
-  ADD_OPTIMIZER: 5,
-  RESET_MODEL: 6,
+  SET_SUBNET_CONTEXT: 1,
+  SET_SUBNET_CONTEXT_PROPERTY: 2,
+  ADD_LAYER: 3,
+  ADD_ACTIVATION: 4,
+  ADD_LOSS: 5,
+  SET_OPTIMIZER: 6,
+  RESET_MODEL: 7,
+  CONNECT_LAYER: 8,
+  DISCONNECT_LAYER: 9,
+  DISCONNECT_LAYER_FROM_ALL: 10,
+  REORDER_LAYER: 11,
+  MERGE_MODELS: 12
 });
 
 // A class that represents a low-level operation and all associated parameters.

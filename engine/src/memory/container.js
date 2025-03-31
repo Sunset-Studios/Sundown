@@ -1202,6 +1202,21 @@ export class TypedVector {
   }
 
   /**
+   * Insert an element at the specified index.
+   * @param {number} value - The value to insert.
+   * @param {number} index - The index to insert at.
+   */
+  insert(value, index = this.#size) {
+    if (index >= this.#size) {
+      this.push(value);
+    } else {
+      this.#buffer.copyWithin(index + 1, index, this.#size);
+      this.#buffer[index] = value;
+      this.#size++;
+    }
+  }
+
+  /**
    * Get the index of a value in the vector.
    * @param {number} value - The value to get the index of.
    * @returns {number} The index of the value.
@@ -1219,6 +1234,17 @@ export class TypedVector {
     // Shift remaining elements left
     this.#buffer.copyWithin(index, index + 1, this.#size);
     this.#size--;
+  }
+
+  /**
+   * Remove an element from the vector.
+   * @param {number} element - The element to remove.
+   */
+  remove_element(element) {
+    const index = this.#buffer.indexOf(element);
+    if (index !== -1) {
+      this.remove(index);
+    }
   }
 
   /**

@@ -28,7 +28,7 @@ export class Adam extends Optimizer {
 
   // Applies an update to a variable given its gradient.
   // This method uses in-place updates on the variable tensor.
-  apply_gradients(variable, grad, learning_rate = 0.001) {
+  apply_gradients(variable, grad, learning_rate = 0.001, weight_decay = 0) {
     // Register variable if needed.
     this.#register_variable(variable);
 
@@ -37,6 +37,7 @@ export class Adam extends Optimizer {
 
     this.t += 1; // Increase timestep.
 
+    // First perform the Adam update with just the gradient
     variable.adam_moment_update(
       m_tensor,
       v_tensor,
@@ -47,5 +48,11 @@ export class Adam extends Optimizer {
       this.epsilon,
       learning_rate
     );
+
+    // Then apply weight decay separately after the Adam update
+    if (weight_decay > 0) {
+      const decay = variable.scale(weight_decay * learning_rate);
+      variable.sub_assign(decay);  // In-place subtraction
+    }
   }
 }

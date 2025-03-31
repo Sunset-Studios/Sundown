@@ -29,9 +29,9 @@ import { vec4, quat } from "gl-matrix";
 
 import * as UI from "../engine/src/ui/2d/immediate.js";
 
-import { ModelType, LossType, LayerType, ActivationType } from "../engine/src/ml/ml_types.js";
+import { Layer, TrainingContext } from "../engine/src/ml/layer.js";
+import { LayerType } from "../engine/src/ml/ml_types.js";
 import { MasterMind } from "../engine/src/ml/mastermind.js";
-import { NeuralModel } from "../engine/src/ml/models/neural_model.js";
 import { FullyConnected } from "../engine/src/ml/layers/fully_connected.js";
 import { MSELoss } from "../engine/src/ml/layers/mse_loss.js";
 import { ReLU } from "../engine/src/ml/layers/relu.js";
@@ -317,16 +317,16 @@ export class MLScene extends Scene {
     this.mastermind = MasterMind.create({
       enable_weight_sharing: false,
       weight_sharing_interval: 0.5, // seconds between weight sharing updates
-      mini_batch_size: 4,
+      mini_batch_size: 16,
     });
 
     // Demonstrates two possible APIs:
-    // 1. The "store" API, which is a more low-level API that allows for more control over the model.
-    //    It also allows external observers to observe changes in the store's state. Useful for applying views over the model data.
+    // 1. The "store" API, which is a high-level API that allows for more control over subnets.
+    //    It also allows external observers to observe changes in the store's state. Useful for applying views over the subnet data.
     //    The mastermind creates a default store, but you can create your own using MLOps.new_ops_store().
-    // 2. The "model" API, which is a higher-level API that is easier to use.
+    // 2. The "layers" API, which is a high-level API that does not use observers. The store API relies on the layers API internally.
     //    It hides the details of the model from the user and provides a more intuitive API for training and inference via
-    //    simple function calls and class objects. The store API occasionally uses the model API internally.
+    //    simple function calls and layer chaining.
 
     // ---------------------------------------------------------------------------
     // Model A: Sine Function Approximator (store API)
@@ -335,32 +335,83 @@ export class MLScene extends Scene {
     // Architecture: [1] -> FullyConnectedLayer (1 -> 10) -> Tanh ->
     //               FullyConnectedLayer (10 -> 1) -> MSELoss
     // ---------------------------------------------------------------------------
-    const sine_model = this.mastermind.store.create_model(ModelType.NEURAL, 0.01, LossType.MSE, new Adam());
-    this.mastermind.store.add_layer(LayerType.FULLY_CONNECTED, 1, 10, sine_model, { initializer: TensorInitializer.GLOROT });
-    this.mastermind.store.add_activation(ActivationType.TANH, sine_model);
-    this.mastermind.store.add_layer(LayerType.FULLY_CONNECTED, 10, 1, sine_model, { initializer: TensorInitializer.GLOROT });
-    this.mastermind.store.add_activation(ActivationType.TANH, sine_model);
-    this.mastermind.store.add_loss(LossType.MSE, false /* enabled_logging */, "sine_approximator", sine_model);
+    {
+      const root = this.mastermind.store.add_layer(LayerType.FULLY_CONNECTED, 1, 10, null, {
+        initializer: TensorInitializer.GLOROT,
+      });
 
-    this.sine_model = this.mastermind.register_model(sine_model);
+      const tanh = this.mastermind.store.add_activation(LayerType.TANH, root);
+
+      const hidden1 = this.mastermind.store.add_layer(LayerType.FULLY_CONNECTED, 10, 1, tanh, {
+        initializer: TensorInitializer.GLOROT,
+      });
+
+      const output = this.mastermind.store.add_loss(
+        LayerType.MSE,
+        false /* enabled_logging */,
+        "sine_approximator",
+        hidden1
+      );
+
+      const context = this.mastermind.store.set_subnet_context(root, {
+        name: "sine_approximator",
+        learning_rate: 0.01,
+        weight_decay: 0.001,
+        optimizer: new Adam(),
+      });
+
+      this.sine_model = this.mastermind.register_subnet(root);
+    }
 
     // ---------------------------------------------------------------------------
     // Model B: XOR Classifier (model API)
     // Task: Given two binary inputs, predict the XOR (0 or 1).
-    // Architecture: [2] -> FullyConnectedLayer (2 -> 4) -> ReLu ->
-    //               FullyConnectedLayer (4 -> 1) -> MSELoss
+    // Architecture: [2] -> FullyConnectedLayer (2 -> 8) -> ReLu ->
+    //               FullyConnectedLayer (8 -> 4) -> ReLu ->
+    //               FullyConnectedLayer (4 -> 1) -> Sigmoid -> MSELoss
     // ---------------------------------------------------------------------------
-    const xor_model = new NeuralModel("xor_classifier", {
-      learning_rate: 0.01,
-      optimizer: new Adam(),
-    });
-    xor_model.add(new FullyConnected(2, 4, { initializer: TensorInitializer.GLOROT }));
-    xor_model.add(new ReLU());
-    xor_model.add(new FullyConnected(4, 1, { initializer: TensorInitializer.GLOROT }));
-    xor_model.add(new MSELoss(false /* enabled_logging */, "xor_classifier"));
+    {
+      const root = Layer.create(LayerType.FULLY_CONNECTED, {
+        input_size: 2,
+        output_size: 8,
+        initializer: TensorInitializer.GLOROT,
+      });
 
-    this.xor_model = this.mastermind.register_model(xor_model);
+      const relu1 = Layer.create(LayerType.RELU, {}, root);
+
+      const hidden1 = Layer.create(
+        LayerType.FULLY_CONNECTED,
+        { input_size: 8, output_size: 4, initializer: TensorInitializer.GLOROT },
+        relu1
+      );
+
+      const relu2 = Layer.create(LayerType.RELU, {}, hidden1);
+
+      const hidden2 = Layer.create( 
+        LayerType.FULLY_CONNECTED,
+        { input_size: 4, output_size: 1, initializer: TensorInitializer.GLOROT },
+        relu2
+      );
+
+      const sigmoid = Layer.create(LayerType.SIGMOID, {}, hidden2);
+
+      const loss = Layer.create(
+        LayerType.MSE,
+        { enable_logging: false, name: "xor_classifier" },
+        sigmoid
+      );
+
+      Layer.set_subnet_context(root, new TrainingContext({
+        name: "xor_classifier",
+        learning_rate: 0.01,
+        weight_decay: 0.0001,
+        optimizer: new Adam(),
+      }));
+
+      this.xor_model = this.mastermind.register_subnet(root);
+    }
   }
+
 
   // Helper function: Create a training batch for the sine approximator.
   create_sine_batch() {
@@ -701,16 +752,16 @@ export class AABBScene extends Scene {
 
     // Use camera position as ray origin
     this.last_ray_origin = cursor_world_position;
-    
+
     // Calculate ray direction from camera to cursor world position
     this.last_ray_direction = vec4.sub(vec4.create(), cursor_world_position, view_data.position);
     // Normalize the direction vector
     const length = Math.sqrt(
       this.last_ray_direction[0] * this.last_ray_direction[0] +
-      this.last_ray_direction[1] * this.last_ray_direction[1] +
-      this.last_ray_direction[2] * this.last_ray_direction[2]
+        this.last_ray_direction[1] * this.last_ray_direction[1] +
+        this.last_ray_direction[2] * this.last_ray_direction[2]
     );
-    
+
     this.last_ray_direction[0] /= length;
     this.last_ray_direction[1] /= length;
     this.last_ray_direction[2] /= length;
@@ -720,11 +771,11 @@ export class AABBScene extends Scene {
 
     // Perform raycast based on current mode
     if (this.use_gpu_raycast) {
-      AABBGPURaycast.raycast(ray, {first_hit_only: true}, (hits) => {
+      AABBGPURaycast.raycast(ray, { first_hit_only: true }, (hits) => {
         this.process_raycast_results(hits);
       });
     } else {
-      AABBRaycast.raycast(ray, {first_hit_only: true}, (hits) => {
+      AABBRaycast.raycast(ray, { first_hit_only: true }, (hits) => {
         this.process_raycast_results(hits);
       });
     }
@@ -770,19 +821,19 @@ export class AABBScene extends Scene {
     // Select new entity if we hit something
     if (this.ray_hits.length > 0) {
       const hit = this.ray_hits[0];
-      
+
       // Update the line visualization
       if (this.ray_line_collection) {
         LineRenderer.clear_collection(this.ray_line_collection);
       }
-      
+
       this.ray_line_collection = LineRenderer.start_collection();
-      
+
       // Draw the ray from camera to end point
       LineRenderer.add_line(this.last_ray_origin, hit.point, [1, 0, 0, 1]);
-      
+
       LineRenderer.end_collection();
-      
+
       // Highlight the selected entity by writing to the material buffer
       this.selected_entity = hit.user_data;
       const static_mesh_fragment = EntityManager.get_fragment(
@@ -990,9 +1041,9 @@ export class SceneSwitcher extends SimulationLayer {
   const ml_scene = new MLScene("MLScene");
 
   const scene_switcher = new SceneSwitcher("SceneSwitcher");
-  await scene_switcher.add_scene(aabb_scene);
+  //await scene_switcher.add_scene(aabb_scene);
   //await scene_switcher.add_scene(rendering_scene);
-  //await scene_switcher.add_scene(ml_scene);
+  await scene_switcher.add_scene(ml_scene);
   await simulator.add_sim_layer(scene_switcher);
 
   simulator.run();

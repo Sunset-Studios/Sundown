@@ -2,7 +2,7 @@ import { Tensor } from "../math/tensor.js";
 import { MLOpType } from "./op_types.js";
 import { MLOpStore } from "./op_store.js";
 import { Name } from "../names.js";
-import { FreeListAllocator } from "../memory/allocator.js";
+import { FreeListAllocator } from "../../memory/allocator.js";
 import { logger } from "../logger.js";
 
 // MLOps acts as a virtual machine for all ML operations.
@@ -472,10 +472,21 @@ export class MLOpsCPU {
   }
 
   static add(result, a, b) {
-    if (a.batch_size !== b.batch_size) throw new Error("Batch size mismatch in add().");
+    if (b.batch_size !== 1 && a.batch_size !== b.batch_size) throw new Error("Batch size mismatch in add().");
     if (a.length !== b.length) throw new Error("Length mismatch in add().");
-    for (let i = 0; i < a.batched_length; i++) {
-      result.data[i] = a.data[i] + b.data[i];
+
+    const max_batch_size = Math.max(a.batch_size, b.batch_size);
+    const a_batch_size = a.batch_size;
+    const b_batch_size = b.batch_size;
+
+    for (let batch = 0; batch < max_batch_size; batch++) {
+      const a_batch_offset = (a_batch_size === 1 ? 0 : batch) * a.length;
+      const b_batch_offset = (b_batch_size === 1 ? 0 : batch) * b.length;
+      const result_batch_offset = batch * a.length;
+
+      for (let i = 0; i < a.length; i++) {
+        result.data[result_batch_offset + i] = a.data[a_batch_offset + i] + b.data[b_batch_offset + i];
+      }
     }
     if (result.data.some(isNaN)) {
       throw new Error("NaN in add(): tensor " + result.id + ", a: " + a.id + ", b: " + b.id);
@@ -484,10 +495,21 @@ export class MLOpsCPU {
   }
 
   static sub(result, a, b) {
-    if (a.batch_size !== b.batch_size) throw new Error("Batch size mismatch in sub().");
+    if (b.batch_size !== 1 && a.batch_size !== b.batch_size) throw new Error("Batch size mismatch in sub().");
     if (a.length !== b.length) throw new Error("Length mismatch in sub().");
-    for (let i = 0; i < a.batched_length; i++) {
-      result.data[i] = a.data[i] - b.data[i];
+
+    const max_batch_size = Math.max(a.batch_size, b.batch_size);
+    const a_batch_size = a.batch_size;
+    const b_batch_size = b.batch_size;
+
+    for (let batch = 0; batch < max_batch_size; batch++) {
+      const a_batch_offset = (a_batch_size === 1 ? 0 : batch) * a.length;
+      const b_batch_offset = (b_batch_size === 1 ? 0 : batch) * b.length;
+      const result_batch_offset = batch * a.length;
+
+      for (let i = 0; i < a.length; i++) {
+        result.data[result_batch_offset + i] = a.data[a_batch_offset + i] - b.data[b_batch_offset + i];
+      }
     }
     if (result.data.some(isNaN)) {
       throw new Error("NaN in sub(): tensor " + result.id + ", a: " + a.id + ", b: " + b.id);
@@ -496,10 +518,20 @@ export class MLOpsCPU {
   }
 
   static sub_assign(result, b) {
-    if (result.batch_size !== b.batch_size) throw new Error("Batch size mismatch in sub_assign().");
+    if (b.batch_size !== 1 && result.batch_size !== b.batch_size) throw new Error("Batch size mismatch in sub_assign().");
     if (result.length !== b.length) throw new Error("Length mismatch in sub_assign().");
-    for (let i = 0; i < result.batched_length; i++) {
-      result.data[i] -= b.data[i];
+
+    const max_batch_size = Math.max(result.batch_size, b.batch_size);
+    const result_batch_size = result.batch_size;
+    const b_batch_size = b.batch_size;
+
+    for (let batch = 0; batch < max_batch_size; batch++) {
+      const result_batch_offset = (result_batch_size === 1 ? 0 : batch) * result.length;
+      const b_batch_offset = (b_batch_size === 1 ? 0 : batch) * b.length;
+
+      for (let i = 0; i < result.length; i++) {
+        result.data[result_batch_offset + i] -= b.data[b_batch_offset + i];
+      }
     }
     if (result.data.some(isNaN)) {
       throw new Error("NaN in sub_assign(): tensor " + result.id + ", b: " + b.id);
@@ -508,10 +540,21 @@ export class MLOpsCPU {
   }
 
   static div(result, a, b) {
-    if (a.batch_size !== b.batch_size) throw new Error("Batch size mismatch in div().");
+    if (b.batch_size !== 1 && a.batch_size !== b.batch_size) throw new Error("Batch size mismatch in div().");
     if (a.length !== b.length) throw new Error("Length mismatch in div().");
-    for (let i = 0; i < a.batched_length; i++) {
-      result.data[i] = a.data[i] / b.data[i];
+
+    const max_batch_size = Math.max(a.batch_size, b.batch_size);
+    const a_batch_size = a.batch_size;
+    const b_batch_size = b.batch_size;
+
+    for (let batch = 0; batch < max_batch_size; batch++) {
+      const a_batch_offset = (a_batch_size === 1 ? 0 : batch) * a.length;
+      const b_batch_offset = (b_batch_size === 1 ? 0 : batch) * b.length;
+      const result_batch_offset = batch * a.length;
+
+      for (let i = 0; i < a.length; i++) {
+        result.data[result_batch_offset + i] = a.data[a_batch_offset + i] / b.data[b_batch_offset + i];
+      }
     }
     if (result.data.some(isNaN)) {
       throw new Error("NaN in div(): tensor " + result.id + ", a: " + a.id + ", b: " + b.id);
@@ -520,11 +563,11 @@ export class MLOpsCPU {
   }
 
   static dot(result, a, b) {
-    if (a.batch_size !== b.batch_size) throw new Error("Batch size mismatch in dot().");
+    if (b.batch_size !== 1 && a.batch_size !== b.batch_size) throw new Error("Batch size mismatch in dot().");
     if (a.length !== b.length) throw new Error("Length mismatch in dot().");
     for (let b = 0; b < a.batch_size; b++) {
-      const a_batch_offset = b * a.length;
-      const b_batch_offset = b * b.length;
+      const a_batch_offset = (a.batch_size === 1 ? 0 : b) * a.length;
+      const b_batch_offset = (b.batch_size === 1 ? 0 : b) * b.length;
       for (let i = 0; i < a.length; i++) {
         result.data[b] += a.data[a_batch_offset + i] * b.data[b_batch_offset + i];
       }
@@ -546,6 +589,8 @@ export class MLOpsCPU {
   }
 
   static relu(result, a) {
+    if (a.batch_size !== result.batch_size) throw new Error("Batch size mismatch in relu().");
+    if (a.length !== result.length) throw new Error("Length mismatch in relu().");
     for (let i = 0; i < a.batched_length; i++) {
       result.data[i] = Math.max(0, a.data[i]);
     }
@@ -571,6 +616,8 @@ export class MLOpsCPU {
   }
 
   static tanh(result, a) {
+    if (a.batch_size !== result.batch_size) throw new Error("Batch size mismatch in tanh().");
+    if (a.length !== result.length) throw new Error("Length mismatch in tanh().");
     for (let i = 0; i < a.batched_length; i++) {
       result.data[i] = Math.tanh(a.data[i]);
     }
@@ -597,6 +644,8 @@ export class MLOpsCPU {
   }
 
   static sigmoid(result, a) {
+    if (a.batch_size !== result.batch_size) throw new Error("Batch size mismatch in sigmoid().");
+    if (a.length !== result.length) throw new Error("Length mismatch in sigmoid().");
     for (let i = 0; i < a.batched_length; i++) {
       result.data[i] = 1 / (1 + Math.exp(-a.data[i]));
     }
@@ -607,6 +656,8 @@ export class MLOpsCPU {
   }
 
   static sigmoid_backward(result, a, grad) {
+    if (a.batch_size !== grad.batch_size) throw new Error("Batch size mismatch in sigmoid_backward().");
+    if (a.length !== grad.length) throw new Error("Length mismatch in sigmoid_backward().");
     for (let i = 0; i < a.batched_length; i++) {
       result.data[i] = grad.data[i] * a.data[i] * (1 - a.data[i]);
     }
@@ -666,6 +717,8 @@ export class MLOpsCPU {
   }
 
   static softmax(result, a) {
+    if (a.batch_size !== result.batch_size) throw new Error("Batch size mismatch in softmax().");
+    if (a.length !== result.length) throw new Error("Length mismatch in softmax().");
     for (let i = 0; i < a.batched_length; i++) {
       result.data[i] = Math.exp(a.data[i]) / a.data.length;
     }
