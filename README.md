@@ -23,10 +23,9 @@ Some of the current (code) features include:
 
 Sundown also includes a simple but capable ML framework for running real-time AI experiments:
 * ⚡ Simple gradient tape for backprop based learning
-* ⚡ Composable layer-based modeling
+* ⚡ High-level, layer-based DAG subnet API for composing models from smaller subnetworks
 * ⚡ Expanding library of activation functions, loss functions, optimizers and configurable layers
 * ⚡ MasterMind class for orchestrating weight sharing, adaptation and real-time retraining of multiple models
-* ⚡ High-level, inspired API for those familiar with third-party ML frameworks like TensorFlow and PyTorch
 
 ### Installation
 
