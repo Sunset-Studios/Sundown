@@ -19,6 +19,7 @@ Some of the current (code) features include:
 * ⚡ MSDF text rendering
 * ⚡ Configurable post-process stack
 * ⚡ Immediate mode screen-space UI
+* ⚡ Dynamic AABB tree acceleration structure and ray casting
 * ⚡ Helpers for loading GTLFs, tracking performance scopes, named IDs, running frames and more.
 
 Sundown also includes a simple but capable ML framework for running real-time AI experiments:
