@@ -94,7 +94,7 @@ const LightFragment = {
 const StaticMeshFragment = {
   name: "StaticMesh",
   constants: {
-    material_slot_stride: 64,
+    material_slot_stride: 16,
   },
   fields: {
     mesh: {
@@ -103,7 +103,7 @@ const StaticMeshFragment = {
     },
     material_slots: {
       type: DataType.BIGINT64,
-      stride: 64,
+      stride: 16,
       getter: `return StaticMeshFragment.data.material_slots.slice(this.absolute_entity * StaticMeshFragment.material_slot_stride, (this.absolute_entity + 1) * StaticMeshFragment.material_slot_stride);`,
       setter: `
       if (

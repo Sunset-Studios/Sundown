@@ -364,7 +364,7 @@ export class MLScene extends Scene {
     }
 
     // ---------------------------------------------------------------------------
-    // Model B: XOR Classifier (model API)
+    // Model B: XOR Classifier (layers API)
     // Task: Given two binary inputs, predict the XOR (0 or 1).
     // Architecture: [2] -> FullyConnectedLayer (2 -> 8) -> ReLu ->
     //               FullyConnectedLayer (8 -> 4) -> ReLu ->
@@ -411,7 +411,6 @@ export class MLScene extends Scene {
       this.xor_model = this.mastermind.register_subnet(root);
     }
   }
-
 
   // Helper function: Create a training batch for the sine approximator.
   create_sine_batch() {
@@ -1041,9 +1040,9 @@ export class SceneSwitcher extends SimulationLayer {
   const ml_scene = new MLScene("MLScene");
 
   const scene_switcher = new SceneSwitcher("SceneSwitcher");
-  //await scene_switcher.add_scene(aabb_scene);
+  await scene_switcher.add_scene(aabb_scene);
   //await scene_switcher.add_scene(rendering_scene);
-  await scene_switcher.add_scene(ml_scene);
+  //await scene_switcher.add_scene(ml_scene);
   await simulator.add_sim_layer(scene_switcher);
 
   simulator.run();

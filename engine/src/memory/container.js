@@ -1,4 +1,4 @@
-const max_objects = 4194304;
+const max_objects = 1000000;
 
 /**
  * A class representing a statically sized Int32Array with reset functionality.

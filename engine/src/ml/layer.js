@@ -252,6 +252,7 @@ export class Layer {
       return false;
     }
 
+    console.log(source_id, target_id)
     // Add connection
     source.child_ids.push(target_id);
     target.parent_ids.push(source_id);
@@ -476,30 +477,96 @@ export class Layer {
    * @param {number} root_id - The ID of the root layer
    * @returns {Set<number>} Set of layer IDs in the subnet
    */
+  static #subnet_layers = new Set();
   static get_subnet_layers(root_id) {
-    const visited = new Set();
+    Layer.#subnet_layers.clear();
+
     const to_visit = [root_id];
 
     while (to_visit.length > 0) {
       const current_id = to_visit.pop();
 
-      if (visited.has(current_id)) {
+      if (Layer.#subnet_layers.has(current_id)) {
         continue;
       }
-      visited.add(current_id);
+      Layer.#subnet_layers.add(current_id);
 
       const layer = Layer.get(current_id);
       if (!layer) continue;
 
       for (let i = 0; i < layer.child_ids.length; ++i) {
         const child_id = layer.child_ids.get(i);
-        if (!visited.has(child_id)) {
+        if (!Layer.#subnet_layers.has(child_id)) {
           to_visit.push(child_id);
         }
       }
     }
 
-    return Array.from(visited);
+    return Array.from(Layer.#subnet_layers);
+  }
+
+  /**
+   * Gets the shared roots of a subnet
+   *
+   * @param {number} root_id - The ID of the root layer
+   * @returns {Array<number>} Array of shared root layer IDs
+   */
+  static #shared_roots = new Set();
+  static get_subnet_shared_roots(root_id) {
+    Layer.#shared_roots.clear();
+
+    const subnet_layers = Layer.get_subnet_layers(root_id);
+
+    // Get all root layers in the subnet iteratively
+    while (subnet_layers.length > 0) {
+      const current_id = subnet_layers.pop();
+      if (Layer.#shared_roots.has(current_id)) continue;
+
+      const layer = Layer.get(current_id);
+      if (layer.parent_ids.length === 0) {
+        Layer.#shared_roots.add(current_id);
+      } else {
+        for (let i = 0; i < layer.parent_ids.length; ++i) {
+          const parent_id = layer.parent_ids.get(i);
+          if (!subnet_layers.includes(parent_id)) {
+            subnet_layers.push(parent_id);
+          }
+        }
+      }
+    }
+
+    return Array.from(Layer.#shared_roots);
+  }
+
+  /**
+   * Gets all layers in a subnet and any shared layers from connected roots
+   *
+   * @param {number} root_id - The ID of the root layer
+   * @returns {Array<number>} Array of layer IDs in the subnet
+   */
+  static #shared_layers = new Set();
+  static get_subnet_and_shared_layers(root_id) {
+    Layer.#shared_layers.clear();
+
+    const subnet_layers = Layer.get_subnet_layers(root_id);
+
+    // Get all root layers in the subnet iteratively
+    while (subnet_layers.length > 0) {
+      const current_id = subnet_layers.pop();
+      if (Layer.#shared_layers.has(current_id)) continue;
+
+      Layer.#shared_layers.add(current_id);
+
+      const layer = Layer.get(current_id);
+      for (let i = 0; i < layer.parent_ids.length; ++i) {
+        const parent_id = layer.parent_ids.get(i);
+        if (!subnet_layers.includes(parent_id)) {
+          subnet_layers.push(parent_id);
+        }
+      }
+    }
+
+    return Array.from(Layer.#shared_layers);
   }
 
   /**

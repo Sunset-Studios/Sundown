@@ -123,7 +123,7 @@ export class MasterMind {
    * Registers a new subnet with the MasterMind.
    *
    * @param {string} subnet_id - Unique identifier for the subnet.
-   * @param {Object} subnet_obj - The subnet object (e.g., NeuralModel instance).
+   * @param {Object} subnet_obj - The subnet object.
 
 
    * @param {function} [train_step_callback] - A training function. Depending on the model,

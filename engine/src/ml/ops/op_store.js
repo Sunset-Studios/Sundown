@@ -804,15 +804,36 @@ export class MLOpStore {
     return result;
   }
 
-  disconnect_layer(layer_id) {
+  disconnect_layer(parent_id, layer_id) {
     const hop = this.hops.allocate();
     hop.type = MLHopType.DISCONNECT_LAYER;
+    hop.param_start = this.hops_params.length;
+    hop.param_count = 2;
+    
+    let result = null;
+    if (this.hop_handlers.has(MLHopType.DISCONNECT_LAYER)) {
+      result = this.hop_handlers.get(MLHopType.DISCONNECT_LAYER)(parent_id, layer_id);
+    }
+
+    hop.result = result;
+
+    this.hops_params.add(parent_id, 1);
+    this.hops_params.add(layer_id, 2);
+
+    this.notify_observers(hop);
+
+    return result;
+  }
+
+  disconnect_layer_from_all(layer_id) {
+    const hop = this.hops.allocate();
+    hop.type = MLHopType.DISCONNECT_LAYER_FROM_ALL;
     hop.param_start = this.hops_params.length;
     hop.param_count = 1;
     
     let result = null;
-    if (this.hop_handlers.has(MLHopType.DISCONNECT_LAYER)) {
-      result = this.hop_handlers.get(MLHopType.DISCONNECT_LAYER)(layer_id);
+    if (this.hop_handlers.has(MLHopType.DISCONNECT_LAYER_FROM_ALL)) {
+      result = this.hop_handlers.get(MLHopType.DISCONNECT_LAYER_FROM_ALL)(layer_id);
     }
 
     hop.result = result;

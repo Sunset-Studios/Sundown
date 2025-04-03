@@ -64,11 +64,12 @@ export class HopAPIAdapter {
   /**
    * Disconnects a layer from its parent
    * 
+   * @param {number} parent_id - ID of the parent layer
    * @param {number} layer_id - ID of the layer to disconnect
    * @returns {boolean} True if the operation was successful
    */
-  static disconnect_layer(layer_id) {
-    return Layer.disconnect(layer_id);
+  static disconnect_layer(parent_id, layer_id) {
+    return Layer.disconnect(parent_id, layer_id);
   }
 
   /**

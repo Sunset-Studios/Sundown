@@ -1,10 +1,9 @@
 import { Renderer } from "./renderer.js";
-import { FrameAllocator } from "../memory/allocator.js";
+import { RandomAccessAllocator } from "../memory/allocator.js";
 import { Buffer } from "./buffer.js";
 import { vec3, vec4 } from "gl-matrix";
 
 // Constants
-const MAX_DEBUG_LINES = 10000000;
 const LINE_WIDTH = 0.05;
 const DEFAULT_LINE_COLOR = [1.0, 1.0, 1.0, 1.0]; // White
 const DEFAULT_COLLECTION_ID = 0; // Default collection ID
@@ -21,8 +20,8 @@ class LinePosition {
  */
 export class LineRenderer {
     static enabled = true;
-    static line_positions = new FrameAllocator(MAX_DEBUG_LINES, LinePosition);
-    static line_data = new FrameAllocator(MAX_DEBUG_LINES, [0.0, 0.0, 0.0, LINE_WIDTH]);
+    static line_positions = new RandomAccessAllocator(1024, LinePosition);
+    static line_data = new RandomAccessAllocator(1024, [0.0, 0.0, 0.0, LINE_WIDTH]);
     static position_buffer = null;
     static line_data_buffer = null;
     static transform_buffer = null;

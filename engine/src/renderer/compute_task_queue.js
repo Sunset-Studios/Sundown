@@ -1,10 +1,8 @@
 import { Buffer } from "./buffer.js";
 import { Texture } from "./texture.js";
-import { FrameAllocator } from "../memory/allocator.js";
+import { RandomAccessAllocator } from "../memory/allocator.js";
 import { profile_scope } from "../utility/performance.js";
 import { RenderPassFlags } from "./renderer_types.js";
-
-const max_objects = 512;
 
 class ComputeTask {
   static init(
@@ -33,7 +31,7 @@ export class ComputeTaskQueue {
       return ComputeTaskQueue.instance;
     }
     this.tasks = [];
-    this.tasks_allocator = new FrameAllocator(max_objects, new ComputeTask());
+    this.tasks_allocator = new RandomAccessAllocator(256, new ComputeTask());
     ComputeTaskQueue.instance = this;
   }
 
