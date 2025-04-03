@@ -252,7 +252,6 @@ export class Layer {
       return false;
     }
 
-    console.log(source_id, target_id)
     // Add connection
     source.child_ids.push(target_id);
     target.parent_ids.push(source_id);
@@ -289,7 +288,7 @@ export class Layer {
   }
 
   /**
-   * Disconnects a layer from all its parents
+   * Disconnects a layer from all its parents and children
    *
    * @param {number} id - The ID of the layer
    * @returns {boolean} True if disconnection was successful
@@ -298,7 +297,13 @@ export class Layer {
     const layer = Layer.get(id);
     if (!layer) return false;
 
-    layer.parent_ids.clear();
+    for (let i = 0; i < layer.parent_ids.length; ++i) {
+      Layer.disconnect(layer.parent_ids.get(i), id);
+    }
+
+    for (let i = 0; i < layer.child_ids.length; ++i) {
+      Layer.disconnect(id, layer.child_ids.get(i));
+    }
 
     Layer.roots.add(id);
 

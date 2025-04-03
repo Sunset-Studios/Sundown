@@ -809,6 +809,11 @@ export class MLOpStore {
     hop.type = MLHopType.DISCONNECT_LAYER;
     hop.param_start = this.hops_params.length;
     hop.param_count = 2;
+
+    this.hops_params.add(parent_id, 1);
+    this.hops_params.add(layer_id, 2);
+
+    this.notify_observers(hop);
     
     let result = null;
     if (this.hop_handlers.has(MLHopType.DISCONNECT_LAYER)) {
@@ -816,11 +821,6 @@ export class MLOpStore {
     }
 
     hop.result = result;
-
-    this.hops_params.add(parent_id, 1);
-    this.hops_params.add(layer_id, 2);
-
-    this.notify_observers(hop);
 
     return result;
   }
@@ -831,16 +831,16 @@ export class MLOpStore {
     hop.param_start = this.hops_params.length;
     hop.param_count = 1;
     
+    this.hops_params.add(layer_id, 1);
+
+    this.notify_observers(hop);
+
     let result = null;
     if (this.hop_handlers.has(MLHopType.DISCONNECT_LAYER_FROM_ALL)) {
       result = this.hop_handlers.get(MLHopType.DISCONNECT_LAYER_FROM_ALL)(layer_id);
     }
 
     hop.result = result;
-
-    this.hops_params.add(layer_id, 1);
-
-    this.notify_observers(hop);
 
     return result;
   }
