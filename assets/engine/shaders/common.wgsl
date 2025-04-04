@@ -25,6 +25,8 @@ const LOG_DEPTH_C = 1.0; // Can adjust this value based on scene scale
 struct Vertex {
     position: vec4<precision_float>,
     normal: vec4<precision_float>,
+    tangent: vec4<precision_float>,
+    bitangent: vec4<precision_float>,
     uv: vec2<precision_float>,
 };
 

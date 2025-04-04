@@ -73,7 +73,7 @@ struct FragmentOutput {
     var tex_position = textureSample(position_texture, global_sampler, uv);
     var position = tex_position.xyz;
 
-    var view_dir = normalize(-view_buffer[0].view_direction.xyz);
+    var view_dir = normalize(view_buffer[0].view_position.xyz - position);
 
     let unlit = min(1u, u32(normal_length <= 0.0) + u32(1.0 - deferred_standard_lighting));
 
@@ -84,7 +84,7 @@ struct FragmentOutput {
         var light = lights_buffer[i];
         color += calculate_brdf(
             light,
-            normal,
+            normalized_normal,
             view_dir,
             position,
             albedo,

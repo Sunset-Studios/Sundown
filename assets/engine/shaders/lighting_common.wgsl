@@ -91,6 +91,16 @@ fn v_kelemen(l_dot_h: f32) -> f32 {
 }
 
 // ------------------------------------------------------------------------------------
+// Normal Mapping
+// ------------------------------------------------------------------------------------
+fn get_normal_from_normal_map(normal_map: texture_2d<f32>, uv: vec2<f32>, tbn_matrix: mat3x3<f32>) -> vec3<f32> {
+    let tangent_normal = normalize(textureSample(normal_map, global_sampler, uv).xyz * 2.0 - 1.0);
+    return tbn_matrix * tangent_normal;
+}
+
+// ------------------------------------------------------------------------------------
+// Lighting
+// ------------------------------------------------------------------------------------
 fn calculate_blinn_phong(
     light: Light,
     normal: vec3<f32>,
@@ -104,7 +114,7 @@ fn calculate_blinn_phong(
     var attenuation = 1.0;
 
     if (light.light_type == 0.0) { // Directional
-        light_dir = normalize(-light.position);
+        light_dir = normalize(light.position);
     } else if (light.light_type == 1.0) { // Point
         let light_to_frag = fragment_pos - light.position;
         light_dir = normalize(light_to_frag);
@@ -126,7 +136,8 @@ fn calculate_blinn_phong(
     let ambient_color = albedo * ambient;
 
     // Diffuse
-    let n_dot_l = max(dot(normal, light_dir), 0.0);
+    let wrap_factor = 0.01;
+    let n_dot_l = max((dot(normal, light_dir) + wrap_factor) / (1.0 + wrap_factor), 0.0);
     let diffuse_color = light.color.rgb * albedo * n_dot_l;
 
     // Specular
@@ -180,20 +191,20 @@ fn calculate_brdf(
         let cos_outer = cos(light.outer_angle);
         let spot_scale = 1.0 / max(cos(light.direction.w) - cos_outer, 0.0001);
         let spot_offset = -cos_outer * spot_scale;
-        let cd = dot(normalize(light_dir), vec3<f32>(1.0));
+        let cd = dot(normalize(-light_dir), normalize(light.direction.xyz));
         attenuation = clamp(cd * spot_scale + spot_offset, 0.0, 1.0);
         attenuation = attenuation * attenuation;
     }
 
     attenuation = clamp(attenuation, 0.0, 255.0);
 
-    let halfway = normalize(view_dir + light_dir);
+    let halfway = normalize(light_dir + view_dir);
 
-    let n_dot_v = clamp(dot(normal, view_dir), 0.0001, 1.0);
-    let n_dot_l = clamp(dot(normal, light_dir), 0.0001, 1.0);
-    let n_dot_h = clamp(dot(normal, halfway), 0.0001, 1.0);
-    let l_dot_h = clamp(dot(light_dir, halfway), 0.0001, 1.0);
-    let v_dot_h = clamp(dot(view_dir, halfway), 0.0001, 1.0);
+    let n_dot_v = max(dot(normal, view_dir), 0.0001);
+    let n_dot_h = max(dot(normal, halfway), 0.0001);
+    let l_dot_h = max(dot(light_dir, halfway), 0.0001);
+    let v_dot_h = max(dot(view_dir, halfway), 0.0001);
+    let n_dot_l = max(dot(normal, light_dir), 0.0001);
 
     let a = roughness * roughness;
 
@@ -208,9 +219,9 @@ fn calculate_brdf(
     }
     let f90 = clamp(dot(f0, vec3<f32>(50.0 * 0.33)), 0.0, 1.0);
 
-    let d = d_ggx(n_dot_h, a);
-    let f = f_schlick_vec3(f0, f90, l_dot_h);
-    let v = v_smith_ggx_height_correlated_fast(n_dot_v, n_dot_l, a);
+    let d = d_ggx(n_dot_h, roughness);
+    let f = f_schlick_vec3(f0, f90, v_dot_h);
+    let v = v_smith_ggx_height_correlated_fast(n_dot_v, n_dot_l, roughness);
 
     // specular BRDF
     let fr = (d * v) * f;
@@ -232,9 +243,9 @@ fn calculate_brdf(
 
     // clear coat BRDG
     // TODO: clear coat should be using geometric normal instead of detail normal
-    let dc = d_ggx(cc_roughness, n_dot_h);
+    let dc = d_ggx(n_dot_h, cc_roughness);
     let vc = v_kelemen(l_dot_h);
-    let fc = f_schlick_scalar(0.04, 1.0, l_dot_h) * clear_coat;
+    let fc = f_schlick_scalar(0.04, 1.0, v_dot_h) * clear_coat;
     let frc = (dc * vc) * fc;
 
     // account for energy loss in the base layer

@@ -25,7 +25,8 @@ export class SharedVertexBuffer {
 
   static _get_byte_size() {
     return (
-      this.vertex_data.map((v) => v.position.concat(v.normal, v.uv)).flat().length * 4
+      this.vertex_data.map((v) => v.position.concat(v.normal, v.tangent, v.bitangent, v.uv)).flat()
+        .length * 4
     );
   }
 
@@ -36,7 +37,9 @@ export class SharedVertexBuffer {
 
     this.buffer = Buffer.create({
       name: vertex_buffer_name,
-      data: this.vertex_data.map((v) => v.position.concat(v.normal, v.uv)).flat(),
+      data: this.vertex_data
+        .map((v) => v.position.concat(v.normal, v.tangent, v.bitangent, v.uv))
+        .flat(),
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
     });
 
@@ -167,7 +170,7 @@ export class SharedViewBuffer {
           view_target,
           this.view_data[index].position,
           this.view_data[index].view_forward,
-          1.0 
+          1.0
         );
 
         mat4.lookAt(
@@ -182,7 +185,7 @@ export class SharedViewBuffer {
         mat4.mul(
           this.view_data[index].view_projection_matrix,
           this.view_data[index].projection_matrix,
-          this.view_data[index].view_matrix,
+          this.view_data[index].view_matrix
         );
         mat4.invert(
           this.view_data[index].inverse_view_projection_matrix,

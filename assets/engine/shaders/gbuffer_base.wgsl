@@ -12,11 +12,12 @@ struct VertexOutput {
     @location(3) color: vec4<precision_float>,
     @location(4) uv: vec2<precision_float>,
     @location(5) normal: vec4<precision_float>,
-    @location(6) barycentrics: vec3<precision_float>,
-    @location(7) @interpolate(flat) instance_index: u32,
-    @location(8) @interpolate(flat) base_instance_id: u32,
-    @location(9) @interpolate(flat) instance_id: u32,
-    @location(10) @interpolate(flat) vertex_index: u32,
+    @location(6) tangent: vec4<precision_float>,
+    @location(7) bitangent: vec4<precision_float>,
+    @location(8) @interpolate(flat) instance_index: u32,
+    @location(9) @interpolate(flat) base_instance_id: u32,
+    @location(10) @interpolate(flat) instance_id: u32,
+    @location(11) @interpolate(flat) vertex_index: u32,
 };
 
 struct FragmentOutput {
@@ -79,11 +80,18 @@ fn vertex(v_out: ptr<function, VertexOutput>) -> VertexOutput {
     output.local_position = instance_vertex.position;
     output.world_position = entity_transform.transform * vec4<f32>(output.local_position);
     output.uv = instance_vertex.uv;
-    output.normal = vec4<precision_float>(normalize(vec4<f32>((entity_transform.transpose_inverse_model_matrix * vec4<f32>(instance_vertex.normal)).xyz, 1.0)));
     output.instance_index = ii;
     output.base_instance_id = entity;
     output.instance_id = entity_resolved;
     output.vertex_index = vi;
+
+    let n = normalize((entity_transform.transpose_inverse_model_matrix * vec4<f32>(instance_vertex.normal)).xyz);
+    let t = normalize((entity_transform.transform * vec4<f32>(instance_vertex.tangent.xyz, 0.0)).xyz);
+    let b = normalize((entity_transform.transform * vec4<f32>(instance_vertex.bitangent.xyz, 0.0)).xyz);
+
+    output.normal = vec4<precision_float>(n, 0.0);
+    output.tangent = vec4<precision_float>(t, 0.0);
+    output.bitangent = vec4<precision_float>(b, 0.0);
 
     output = vertex(&output);
 

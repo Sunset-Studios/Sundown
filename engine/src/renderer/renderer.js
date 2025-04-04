@@ -231,11 +231,6 @@ export class Renderer {
   }
 
   _setup_builtin_material_templates() {
-    MaterialTemplate.create(
-      "StandardMaterial",
-      "standard_material.wgsl",
-      MaterialFamilyType.Opaque
-    );
     MaterialTemplate.create("DebugLineMaterial", "line.wgsl", MaterialFamilyType.Opaque, {
       primitive_topology_type: "line-list",
       rasterizer_state: {

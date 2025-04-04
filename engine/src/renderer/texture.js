@@ -12,12 +12,18 @@ import { global_dispatcher } from "../core/dispatcher.js";
  * @property {string} mag_filter - The magnification filter. Default is "linear".
  * @property {string} min_filter - The minification filter. Default is "linear".
  * @property {string} mipmap_filter - The mipmap filter. Default is "linear".
+ * @property {string} address_mode_u - The address mode for the U coordinate. Default is "repeat".
+ * @property {string} address_mode_v - The address mode for the V coordinate. Default is "repeat".
+ * @property {string} address_mode_w - The address mode for the W coordinate. Default is "repeat".
  */
 class TextureSamplerConfig {
   name = null;
   mag_filter = "linear";
   min_filter = "linear";
   mipmap_filter = "linear";
+  address_mode_u = "repeat";
+  address_mode_v = "repeat";
+  address_mode_w = "repeat";
 }
 
 export class TextureSampler {
@@ -31,6 +37,9 @@ export class TextureSampler {
 
     this.sampler = renderer.device.createSampler({
       label: this.config.name,
+      addressModeU: this.config.address_mode_u,
+      addressModeV: this.config.address_mode_v,
+      addressModeW: this.config.address_mode_w,
       magFilter: this.config.mag_filter,
       minFilter: this.config.min_filter,
       mipmapFilter: this.config.mipmap_filter,

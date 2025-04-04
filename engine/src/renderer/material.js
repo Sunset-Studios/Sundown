@@ -6,8 +6,14 @@ import { profile_scope } from "../utility/performance.js";
 import { hash_data, hash_value } from "../utility/hashing.js";
 import { Name } from "../utility/names.js";
 import { Texture } from "./texture.js";
+import { Buffer } from "./buffer.js";
 import { global_dispatcher } from "../core/dispatcher.js";
-import { ShaderResourceType, MaterialFamilyType, CacheTypes, BindGroupType } from "./renderer_types.js";
+import {
+  ShaderResourceType,
+  MaterialFamilyType,
+  CacheTypes,
+  BindGroupType,
+} from "./renderer_types.js";
 
 export class MaterialTemplate {
   static templates = new Map();
@@ -64,13 +70,7 @@ export class MaterialTemplate {
       family = MaterialFamilyType.Transparent;
     }
 
-    const template = new MaterialTemplate(
-      name,
-      shader,
-      family,
-      pipeline_state_config,
-      parent
-    );
+    const template = new MaterialTemplate(name, shader, family, pipeline_state_config, parent);
 
     if (parent) {
       template.resources = [...parent.resources];
@@ -96,11 +96,7 @@ export class MaterialTemplate {
     return template;
   }
 
-  create_pipeline_state(
-    bind_group_layouts,
-    output_targets = [],
-    depth_stencil_options = {}
-  ) {
+  create_pipeline_state(bind_group_layouts, output_targets = [], depth_stencil_options = {}) {
     let all_bind_group_layouts = [bind_group_layouts[0]];
 
     // Set material binding group inputs
@@ -314,9 +310,10 @@ export class Material {
             resource: { buffer: this.storage_data.get(resource.name).buffer },
           };
         case ShaderResourceType.Texture:
+          const texture = this.texture_data.get(resource.name) ?? Texture.default();
           return {
             binding: resource.binding,
-            resource: this.texture_data.get(resource.name).view,
+            resource: texture.view,
           };
         case ShaderResourceType.Sampler:
           return {
@@ -519,45 +516,228 @@ export class Material {
   }
 }
 
-// Usage example
-// const renderer = Renderer.get();
+/**
+ * Standard material is a material helper class that has a color, normal, roughness, metallic, and emission.
+ * It is the default material for the engine.
+ */
+export class StandardMaterial {
+  material_id = null;
+  material_params_data = null;
+  material_params_buffer = null;
 
-// // Create a material template
-// const shader_path = "standard.wgsl";
-// const template = MaterialTemplate.create(
-//   "StandardMaterial",
-//   shader_path
-// );
+  static create(name, params = {}, options = {}, template = null) {
+    if (!template) {
+      MaterialTemplate.create(
+        "StandardMaterial",
+        "standard_material.wgsl",
+        MaterialFamilyType.Opaque
+      );
+      template = "StandardMaterial";
+    }
 
-// // Add resources to the template
-// template.add_resource({
-//   type: ShaderResourceType.Uniform,
-//   name: "model_view_projection",
-//   binding: 0,
-// });
-// template.add_resource({
-//   type: ShaderResourceType.Texture,
-//   name: "albedo_texture",
-//   binding: 1,
-// });
-// template.add_resource({
-//   type: ShaderResourceType.Sampler,
-//   name: "texture_sampler",
-//   binding: 2,
-// });
+    let standard_material = new StandardMaterial();
 
-// // Create a material instance
-// const material_id = Material.create("MyMaterial","StandardMaterial");
-// const material = Material.get(material_id);
+    // Create the material
+    standard_material.material_id = Material.create(name, template, options);
 
-// // Set material instance data
-// material.set_uniform_data("model_view_projection", new Buffer(/* ... */));
-// material.set_texture_data("albedo_texture", new Texture(/* ... */));
-// material.set_sampler_data("texture_sampler", device.create_sampler(/* ... */));
+    // Get the material
+    const material = Material.get(standard_material.material_id);
 
-// // Use the material in rendering
-// function render(render_pass) {
-//   // ... other rendering setup ...
-//   material.bind(render_pass);
-//   // ... draw calls ...
-// }
+    // Create a combined uniform buffer for the default material
+    // Contains: color (vec4) and emission (float, aligned to vec4)
+    standard_material.material_params_data = new Float32Array([
+      // color: vec4 (RGBA)
+      0.5, 0.5, 0.5, 1.0,
+      // normal: vec4 (RGBA)
+      0.0, 0.0, 1.0, 1.0,
+      // emission_roughness_metallic_tiling
+      0.2, 0.7, 0.3, 1.0,
+      // ao_height_specular_padding
+      0.1, 0.0, 0.1, 0.0,
+      // texture flags 1: vec4 (albedo, normal, roughness, metallic)
+      0.0, 0.0, 0.0, 0.0,
+      // texture flags 2: vec4 (ao, height, specular, emission)
+      0.0, 0.0, 0.0, 0.0,
+    ]);
+
+    standard_material.material_params_buffer = Buffer.create({
+      name: `${name}_material_params_buffer`,
+      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+      raw_data: standard_material.material_params_data,
+    });
+
+    // Set the uniform buffer for the material
+    material.set_uniform_data("material_params", standard_material.material_params_buffer);
+
+    // Set default parameter values
+    standard_material.set_albedo(params.albedo || [1, 1, 1, 1], params.albedo_texture || null);
+    standard_material.set_normal(params.normal || [0, 0, 1, 1], params.normal_texture || null);
+    standard_material.set_roughness(
+      params.roughness !== undefined ? params.roughness : 0.7,
+      params.roughness_texture || null
+    );
+    standard_material.set_metallic(
+      params.metallic !== undefined ? params.metallic : 0.3,
+      params.metallic_texture || null
+    );
+    standard_material.set_emission(
+      params.emission !== undefined ? params.emission : 0.2,
+      params.emission_texture || null
+    );
+    standard_material.set_ao(params.ao !== undefined ? params.ao : 0.1, params.ao_texture || null);
+    standard_material.set_height(
+      params.height !== undefined ? params.height : 0.0,
+      params.height_texture || null
+    );
+    standard_material.set_specular(
+      params.specular !== undefined ? params.specular : 0.1,
+      params.specular_texture || null
+    );
+
+    return standard_material;
+  }
+
+  set_albedo(color, texture = null) {
+    const material = Material.get(this.material_id);
+
+    if (texture) {
+      material.set_texture_data("albedo", texture);
+      if (texture.config.material_notifier) {
+        material.listen_for_texture_data(texture.config.material_notifier);
+      }
+    }
+
+    this.material_params_data[0] = color[0];
+    this.material_params_data[1] = color[1];
+    this.material_params_data[2] = color[2];
+    this.material_params_data[3] = color[3];
+    this.material_params_data[16] = texture ? 1 : 0;
+
+    this.update_texture_flags();
+  }
+
+  set_normal(normal, texture = null) {
+    const material = Material.get(this.material_id);
+
+    if (texture) {
+      material.set_texture_data("normal", texture);
+      if (texture.config.material_notifier) {
+        material.listen_for_texture_data(texture.config.material_notifier);
+      }
+    }
+
+    this.material_params_data[4] = normal[0];
+    this.material_params_data[5] = normal[1];
+    this.material_params_data[6] = normal[2];
+    this.material_params_data[7] = normal[3];
+    this.material_params_data[17] = texture ? 1 : 0;
+
+    this.update_texture_flags();
+  }
+
+  set_roughness(roughness, texture = null) {
+    const material = Material.get(this.material_id);
+
+    if (texture) {
+      material.set_texture_data("roughness", texture);
+      if (texture.config.material_notifier) {
+        material.listen_for_texture_data(texture.config.material_notifier);
+      }
+    }
+
+    this.material_params_data[9] = roughness;
+    this.material_params_data[18] = texture ? 1 : 0;
+
+    this.update_texture_flags();
+  }
+
+  set_metallic(metallic, texture = null) {
+    const material = Material.get(this.material_id);
+
+    if (texture) {
+      material.set_texture_data("metallic", texture);
+      if (texture.config.material_notifier) {
+        material.listen_for_texture_data(texture.config.material_notifier);
+      }
+    }
+
+    this.material_params_data[10] = metallic;
+    this.material_params_data[19] = texture ? 1 : 0;
+
+    this.update_texture_flags();
+  }
+
+  set_ao(ao, texture = null) {
+    const material = Material.get(this.material_id);
+
+    if (texture) {
+      material.set_texture_data("ao", texture);
+      if (texture.config.material_notifier) {
+        material.listen_for_texture_data(texture.config.material_notifier);
+      }
+    }
+
+    this.material_params_data[12] = ao;
+    this.material_params_data[20] = texture ? 1 : 0;
+
+    this.update_texture_flags();
+  }
+
+  set_height(height, texture = null) {
+    const material = Material.get(this.material_id);
+
+    if (texture) {
+      material.set_texture_data("height", texture);
+      if (texture.config.material_notifier) {
+        material.listen_for_texture_data(texture.config.material_notifier);
+      }
+    }
+
+    this.material_params_data[13] = height;
+    this.material_params_data[21] = texture ? 1 : 0;
+
+    this.update_texture_flags();
+  }
+
+  set_specular(specular, texture = null) {
+    const material = Material.get(this.material_id);
+
+    if (texture) {
+      material.set_texture_data("specular", texture);
+      if (texture.config.material_notifier) {
+        material.listen_for_texture_data(texture.config.material_notifier);
+      }
+    }
+
+    this.material_params_data[14] = specular;
+    this.material_params_data[22] = texture ? 1 : 0;
+
+    this.update_texture_flags();
+  }
+
+  set_emission(emission, texture = null) {
+    const material = Material.get(this.material_id);
+
+    if (texture) {
+      material.set_texture_data("emission", texture);
+      if (texture.config.material_notifier) {
+        material.listen_for_texture_data(texture.config.material_notifier);
+      }
+    }
+
+    this.material_params_data[8] = emission;
+    this.material_params_data[23] = texture ? 1 : 0;
+
+    this.update_texture_flags();
+  }
+
+  set_tiling(tiling) {
+    this.material_params_data[11] = tiling;
+
+    this.update_texture_flags();
+  }
+
+  update_texture_flags() {
+    this.material_params_buffer.write_raw(this.material_params_data);
+  }
+}

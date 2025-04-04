@@ -7,7 +7,7 @@ import { InputProvider } from "../engine/src/input/input_provider.js";
 import { InputKey } from "../engine/src/input/input_types.js";
 import { PostProcessStack } from "../engine/src/renderer/post_process_stack.js";
 import { AABBTreeDebugRenderer } from "../engine/src/core/subsystems/aabb_debug_renderer.js";
-import { AABBRaycast, Ray, RaycastHit } from "../engine/src/acceleration/aabb_raycast.js";
+import { AABBRaycast, Ray } from "../engine/src/acceleration/aabb_raycast.js";
 import { AABBGPURaycast } from "../engine/src/acceleration/aabb_gpu_raycast.js";
 import { ComputeTaskQueue } from "../engine/src/renderer/compute_task_queue.js";
 import { TransformFragment } from "../engine/src/core/ecs/fragments/transform_fragment.js";
@@ -16,7 +16,8 @@ import { LightFragment } from "../engine/src/core/ecs/fragments/light_fragment.j
 import { TextFragment } from "../engine/src/core/ecs/fragments/text_fragment.js";
 import { StaticMeshFragment } from "../engine/src/core/ecs/fragments/static_mesh_fragment.js";
 import { LightType, EntityTransformFlags } from "../engine/src/core/minimal.js";
-import { Material } from "../engine/src/renderer/material.js";
+import { Material, StandardMaterial } from "../engine/src/renderer/material.js";
+import { Texture } from "../engine/src/renderer/texture.js";
 import { Buffer } from "../engine/src/renderer/buffer.js";
 import { Mesh } from "../engine/src/renderer/mesh.js";
 import { LineRenderer } from "../engine/src/renderer/line_renderer.js";
@@ -32,9 +33,6 @@ import * as UI from "../engine/src/ui/2d/immediate.js";
 import { Layer, TrainingContext } from "../engine/src/ml/layer.js";
 import { LayerType } from "../engine/src/ml/ml_types.js";
 import { MasterMind } from "../engine/src/ml/mastermind.js";
-import { FullyConnected } from "../engine/src/ml/layers/fully_connected.js";
-import { MSELoss } from "../engine/src/ml/layers/mse_loss.js";
-import { ReLU } from "../engine/src/ml/layers/relu.js";
 import { Tensor, TensorInitializer } from "../engine/src/ml/math/tensor.js";
 import { Adam } from "../engine/src/ml/optimizers/adam.js";
 
@@ -387,7 +385,7 @@ export class MLScene extends Scene {
 
       const relu2 = Layer.create(LayerType.RELU, {}, hidden1);
 
-      const hidden2 = Layer.create( 
+      const hidden2 = Layer.create(
         LayerType.FULLY_CONNECTED,
         { input_size: 4, output_size: 1, initializer: TensorInitializer.GLOROT },
         relu2
@@ -401,12 +399,15 @@ export class MLScene extends Scene {
         sigmoid
       );
 
-      Layer.set_subnet_context(root, new TrainingContext({
-        name: "xor_classifier",
-        learning_rate: 0.01,
-        weight_decay: 0.0001,
-        optimizer: new Adam(),
-      }));
+      Layer.set_subnet_context(
+        root,
+        new TrainingContext({
+          name: "xor_classifier",
+          learning_rate: 0.01,
+          weight_decay: 0.0001,
+          optimizer: new Adam(),
+        })
+      );
 
       this.xor_model = this.mastermind.register_subnet(root);
     }
@@ -437,6 +438,270 @@ export class MLScene extends Scene {
       input: Tensor.create(new Float32Array(sample.input), [1, 2]),
       target: Tensor.create(new Float32Array([sample.target]), [1, 1]),
     };
+  }
+}
+
+// ------------------------------------------------------------------------------------
+// =============================== Textures Scene =======================================
+// ------------------------------------------------------------------------------------
+
+export class TexturesScene extends Scene {
+  name = "TexturesScene";
+  entities = [];
+
+  init(parent_context) {
+    super.init(parent_context);
+
+    // Set the skybox for this scene.
+    SharedEnvironmentMapData.set_skybox("default_scene_skybox", [
+      "engine/textures/gradientbox/px.png",
+      "engine/textures/gradientbox/nx.png",
+      "engine/textures/gradientbox/ny.png",
+      "engine/textures/gradientbox/py.png",
+      "engine/textures/gradientbox/pz.png",
+      "engine/textures/gradientbox/nz.png",
+    ]);
+
+    // Set the skybox color to a subtle blue
+    SharedEnvironmentMapData.set_skybox_color([0.7, 0.8, 1.0, 1]);
+
+    // Add the freeform arcball control processor to the scene
+    const freeform_arcball_control_processor = this.add_layer(FreeformArcballControlProcessor);
+    freeform_arcball_control_processor.set_scene(this);
+
+    // Reset view to a good position for the BVH scene
+    SharedViewBuffer.set_view_data(0, {
+      position: [39.198, 14.0851, 78.60858],
+      rotation: [-0.0203683, 0.9771718, -0.179953, -0.110603],
+    });
+
+    // Create a light and add it to the scene
+    const light_entity = EntityManager.create_entity();
+    this.entities.push(light_entity);
+
+    // Add a light fragment to the light entity
+    const light_fragment_view = EntityManager.add_fragment(light_entity, LightFragment, false);
+    light_fragment_view.type = LightType.DIRECTIONAL;
+    light_fragment_view.color.r = 1;
+    light_fragment_view.color.g = 1;
+    light_fragment_view.color.b = 1;
+    light_fragment_view.intensity = 2;
+    light_fragment_view.position.x = 50;
+    light_fragment_view.position.y = 20;
+    light_fragment_view.position.z = -10;
+    light_fragment_view.active = true;
+
+    // Get Exo-Medium font
+    const font_id = Name.from("Exo-Medium");
+    const font_object = FontCache.get_font_object(font_id);
+
+    // Add a title text entity
+    const text_entity = spawn_mesh_entity(
+      [0, 20, 0],
+      [0, 0, 0, 1],
+      [0.5, 0.5, 0.5],
+      Mesh.quad(),
+      font_object.material
+    );
+    const text_fragment_view = EntityManager.add_fragment(text_entity, TextFragment);
+    text_fragment_view.font = font_id;
+    text_fragment_view.text = "Textures Test Scene";
+    text_fragment_view.font_size = 32;
+    text_fragment_view.color.r = 1;
+    text_fragment_view.color.g = 1;
+    text_fragment_view.color.b = 1;
+    text_fragment_view.color.a = 1;
+    text_fragment_view.emissive = 1;
+    this.entities.push(text_entity);
+
+    // Load metal plane material
+    {
+      let worn_panel_albedo = Texture.load(["engine/textures/worn_panel/worn_panel_albedo.png"], {
+        name: "worn_panel_albedo",
+        format: "rgba8unorm",
+        dimension: "2d",
+        usage:
+          GPUTextureUsage.TEXTURE_BINDING |
+          GPUTextureUsage.COPY_DST |
+          GPUTextureUsage.RENDER_ATTACHMENT,
+        material_notifier: "worn_panel_albedo",
+      });
+      let worn_panel_normal = Texture.load(["engine/textures/worn_panel/worn_panel_normal.png"], {
+        name: "worn_panel_normal",
+        format: "rgba8unorm",
+        dimension: "2d",
+        usage:
+          GPUTextureUsage.TEXTURE_BINDING |
+          GPUTextureUsage.COPY_DST |
+          GPUTextureUsage.RENDER_ATTACHMENT,
+        material_notifier: "worn_panel_normal",
+      });
+      let worn_panel_roughness = Texture.load(
+        ["engine/textures/worn_panel/worn_panel_roughness.png"],
+        {
+          name: "worn_panel_roughness",
+          format: "rgba8unorm",
+          dimension: "2d",
+          usage:
+            GPUTextureUsage.TEXTURE_BINDING |
+            GPUTextureUsage.COPY_DST |
+            GPUTextureUsage.RENDER_ATTACHMENT,
+          material_notifier: "worn_panel_roughness",
+        }
+      );
+      let worn_panel_metallic = Texture.load(
+        ["engine/textures/worn_panel/worn_panel_metallic.png"],
+        {
+          name: "worn_panel_metallic",
+          format: "rgba8unorm",
+          dimension: "2d",
+          usage:
+            GPUTextureUsage.TEXTURE_BINDING |
+            GPUTextureUsage.COPY_DST |
+            GPUTextureUsage.RENDER_ATTACHMENT,
+          material_notifier: "worn_panel_metallic",
+        }
+      );
+      let worn_panel_ao = Texture.load(["engine/textures/worn_panel/worn_panel_ao.png"], {
+        name: "worn_panel_ao",
+        format: "rgba8unorm",
+        dimension: "2d",
+        usage:
+          GPUTextureUsage.TEXTURE_BINDING |
+          GPUTextureUsage.COPY_DST |
+          GPUTextureUsage.RENDER_ATTACHMENT,
+        material_notifier: "worn_panel_ao",
+      });
+
+      // Create a default material
+      const default_plane_material = StandardMaterial.create("TexturesDefaultMaterial");
+      this.default_plane_material_id = default_plane_material.material_id;
+      default_plane_material.set_albedo([0.5, 0.5, 0.5, 1], worn_panel_albedo);
+      default_plane_material.set_normal([0, 1, 0, 1], worn_panel_normal);
+      default_plane_material.set_roughness(0.5, worn_panel_roughness);
+      default_plane_material.set_metallic(0.5, worn_panel_metallic);
+      default_plane_material.set_ao(0.5, worn_panel_ao);
+      default_plane_material.set_emission(0.1);
+      default_plane_material.set_tiling(30.0);
+    }
+
+    // Load wall material
+    {
+      let wall_albedo = Texture.load(["engine/textures/wall/wall_albedo.png"], {
+        name: "wall_albedo",
+        format: "rgba8unorm",
+        dimension: "2d",
+        usage:
+          GPUTextureUsage.TEXTURE_BINDING |
+          GPUTextureUsage.COPY_DST |
+          GPUTextureUsage.RENDER_ATTACHMENT,
+        material_notifier: "wall_albedo",
+      });
+      let wall_normal = Texture.load(["engine/textures/wall/wall_normal.png"], {
+        name: "wall_normal",
+        format: "rgba8unorm",
+        dimension: "2d",
+        usage:
+          GPUTextureUsage.TEXTURE_BINDING |
+          GPUTextureUsage.COPY_DST |
+          GPUTextureUsage.RENDER_ATTACHMENT,
+        material_notifier: "wall_normal",
+      });
+      let wall_roughness = Texture.load(["engine/textures/wall/wall_roughness.png"], {
+        name: "wall_roughness",
+        format: "rgba8unorm",
+        dimension: "2d",
+        usage:
+          GPUTextureUsage.TEXTURE_BINDING |
+          GPUTextureUsage.COPY_DST |
+          GPUTextureUsage.RENDER_ATTACHMENT,
+        material_notifier: "wall_roughness",
+      });
+      let wall_metallic = Texture.load(["engine/textures/wall/wall_metallic.png"], {
+        name: "wall_metallic",
+        format: "rgba8unorm",
+        dimension: "2d",
+        usage:
+          GPUTextureUsage.TEXTURE_BINDING |
+          GPUTextureUsage.COPY_DST |
+          GPUTextureUsage.RENDER_ATTACHMENT,
+        material_notifier: "wall_metallic",
+      });
+      let wall_ao = Texture.load(["engine/textures/wall/wall_ao.png"], {
+        name: "wall_ao",
+        format: "rgba8unorm",
+        dimension: "2d",
+        usage:
+          GPUTextureUsage.TEXTURE_BINDING |
+          GPUTextureUsage.COPY_DST |
+          GPUTextureUsage.RENDER_ATTACHMENT,
+        material_notifier: "wall_ao",
+      });
+
+      // Create a default material
+      const wall_material = StandardMaterial.create("TexturesWallMaterial");
+      this.wall_material_id = wall_material.material_id;
+      wall_material.set_albedo([0.5, 0.5, 0.5, 1], wall_albedo);
+      wall_material.set_normal([0, 1, 0, 1], wall_normal);
+      wall_material.set_roughness(0.5, wall_roughness);
+      wall_material.set_metallic(0.5, wall_metallic);
+      wall_material.set_ao(0.5, wall_ao);
+      wall_material.set_emission(0.1);
+      wall_material.set_tiling(2.0);
+    }
+
+    // Create a sphere mesh
+    this.sphere_mesh = Mesh.from_gltf("engine/models/sphere/sphere.gltf");
+
+    // Create a cube mesh
+    this.cube_mesh = Mesh.cube();
+
+    EntityManager.reserve_entities(256);
+
+    // Setup the world plane
+    this.setup_world_plane();
+
+    // Setup sphere entity
+    this.setup_sphere_entity();
+  }
+
+  cleanup() {
+    for (let i = 0; i < this.entities.length; i++) {
+      delete_entity(this.entities[i]);
+    }
+    this.entities.length = 0;
+
+    this.remove_layer(FreeformArcballControlProcessor);
+
+    super.cleanup();
+  }
+
+  update(delta_time) {
+    super.update(delta_time);
+  }
+
+  setup_world_plane() {
+    // Create a plane entity
+    const plane = spawn_mesh_entity(
+      [0, 0, 0],
+      quat.fromEuler(quat.create(), 0, 0, 0),
+      [500, 0.1, 500],
+      Mesh.cube(),
+      this.default_plane_material_id
+    );
+    this.entities.push(plane);
+  }
+
+  setup_sphere_entity() {
+    // Create a sphere entity
+    const sphere = spawn_mesh_entity(
+      [0, 10, 10],
+      quat.fromEuler(quat.create(), 0, 0, 0),
+      [5, 5, 5],
+      this.sphere_mesh,
+      this.wall_material_id
+    );
+    this.entities.push(sphere);
   }
 }
 
@@ -1038,11 +1303,13 @@ export class SceneSwitcher extends SimulationLayer {
   const aabb_scene = new AABBScene("AABBScene");
   const rendering_scene = new RenderingScene("RenderingScene");
   const ml_scene = new MLScene("MLScene");
+  const textures_scene = new TexturesScene("TexturesScene");
 
   const scene_switcher = new SceneSwitcher("SceneSwitcher");
-  await scene_switcher.add_scene(aabb_scene);
+  //await scene_switcher.add_scene(aabb_scene);
   //await scene_switcher.add_scene(rendering_scene);
   //await scene_switcher.add_scene(ml_scene);
+  await scene_switcher.add_scene(textures_scene);
   await simulator.add_sim_layer(scene_switcher);
 
   simulator.run();
