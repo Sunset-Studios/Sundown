@@ -1,3 +1,5 @@
+const EPSILON = 0.000001;
+
 /**
  * Returns an euler angle representation of a quaternion, in degrees
  * @param  {vec3} out Euler angles, pitch-yaw-roll
@@ -88,3 +90,8 @@ export function direction_vector_to_quat(vec) {
     
     return [qx, qy, qz, qw];
 }
+
+export function is_vec_nearly_zero(vec) {
+  return Math.abs(vec[0]) < EPSILON && Math.abs(vec[1]) < EPSILON && Math.abs(vec[2]) < EPSILON;
+}
+

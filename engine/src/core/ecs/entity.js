@@ -129,6 +129,10 @@ export class EntityManager {
     return new_entity;
   }
 
+  static entity_exists(entity) {
+    return SharedEntityMetadataBuffer.entity_exists(entity);
+  }
+
   static add_fragment(entity, FragmentType) {
     if (!this.fragment_types.has(FragmentType)) {
       FragmentType.initialize();
@@ -224,6 +228,8 @@ export class EntityManager {
       this.entities.remove(this.entities.index_of(entity));
       this.deleted_entities.add(entity);
       this.needs_entity_refresh = true;
+
+      EntityID.set_entity_flags(entity, 0);
     }
   }
 

@@ -10,6 +10,8 @@ import { screen_pos_to_world_pos } from "../../utility/camera.js";
 import { SharedViewBuffer, SharedFrameInfoBuffer } from "../shared_data.js";
 import { profile_scope } from "../../utility/performance.js";
 
+const ui_processor_pre_update_scope_name = "UIProcessor.pre_update";
+
 export class UIProcessor extends SimulationLayer {
   context = null;
   current_delta_time = 0;
@@ -27,7 +29,7 @@ export class UIProcessor extends SimulationLayer {
   pre_update(delta_time) {
     super.pre_update(delta_time);
     this.current_delta_time = delta_time;
-    profile_scope("UIProcessor.pre_update", this._pre_update_internal);
+    profile_scope(ui_processor_pre_update_scope_name, this._pre_update_internal);
   }
 
   _pre_update_internal() {
@@ -75,21 +77,15 @@ export class UIProcessor extends SimulationLayer {
       }
     }
 
-    if (
-      UIContext.input_state.x !== UIContext.input_state.prev_x ||
-      UIContext.input_state.y !== UIContext.input_state.prev_y ||
-      UIContext.input_state.wheel !== 0
-    ) {
-      UIContext.input_state.world_position = screen_pos_to_world_pos(
-        SharedViewBuffer.get_view_data(0),
-        UIContext.input_state.x,
-        UIContext.input_state.y,
-        renderer.canvas.width,
-        renderer.canvas.height,
-        UIContext.input_state.depth
-      );
-      SharedFrameInfoBuffer.set_cursor_world_position(UIContext.input_state.world_position);
-    }
+    UIContext.input_state.world_position = screen_pos_to_world_pos(
+      SharedViewBuffer.get_view_data(0),
+      UIContext.input_state.x,
+      UIContext.input_state.y,
+      renderer.canvas.width,
+      renderer.canvas.height,
+      500.0 
+    );
+    SharedFrameInfoBuffer.set_cursor_world_position(UIContext.input_state.world_position);
 
     this.context.clearRect(0, 0, renderer.canvas.width, renderer.canvas.height);
 

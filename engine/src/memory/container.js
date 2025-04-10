@@ -294,27 +294,54 @@ export class Tree {
 
     // Remove from parent's children or roots
     if (node.parent_idx !== -1) {
-      const parent = this.nodes[node.parent_idx];
-      const idx = Array.prototype.indexOf.call(
-        parent.children.slice(0, parent.child_count),
-        node_idx
-      );
-      if (idx !== -1) {
-        parent.children.copyWithin(idx, idx + 1, parent.child_count);
-        parent.child_count--;
-      }
-    } else {
-      const idx = Array.prototype.indexOf.call(this.roots.slice(0, this.root_count), node_idx);
-      if (idx !== -1) {
-        this.roots.copyWithin(idx, idx + 1, this.root_count);
-        this.root_count--;
-      }
-    }
+        const parent = this.nodes[node.parent_idx];
+        const idx = Array.prototype.indexOf.call(
+            parent.children.slice(0, parent.child_count),
+            node_idx
+        );
+        if (idx !== -1) {
+            // Move children to parent before removing the node
+            for (let i = 0; i < node.child_count; i++) {
+                const child = this.nodes[node.children[i]];
+                child.parent_idx = node.parent_idx;
+                
+                // Add child to parent's children array
+                if (parent.child_count === parent.children.length) {
+                    // Grow children array if needed
+                    const new_children = new Uint32Array(parent.children.length * 2);
+                    new_children.set(parent.children);
+                    parent.children = new_children;
+                }
+                parent.children[parent.child_count++] = node.children[i];
+            }
 
-    // Update children's parent references
-    for (let i = 0; i < node.child_count; i++) {
-      const child = this.nodes[node.children[i]];
-      child.parent_idx = node.parent_idx;
+            // Remove the node from parent's children
+            parent.children.copyWithin(idx, idx + 1, parent.child_count);
+            parent.child_count--;
+        }
+    } else {
+        // Handle root node removal
+        const idx = Array.prototype.indexOf.call(this.roots.slice(0, this.root_count), node_idx);
+        if (idx !== -1) {
+            // Add all children as new roots
+            for (let i = 0; i < node.child_count; i++) {
+                const child = this.nodes[node.children[i]];
+                child.parent_idx = -1;
+                
+                // Add child as a new root
+                if (this.root_count === this.roots.length) {
+                    // Grow roots array if needed
+                    const new_roots = new Uint32Array(this.roots.length * 2);
+                    new_roots.set(this.roots);
+                    this.roots = new_roots;
+                }
+                this.roots[this.root_count++] = node.children[i];
+            }
+
+            // Remove the root node
+            this.roots.copyWithin(idx, idx + 1, this.root_count);
+            this.root_count--;
+        }
     }
 
     this.node_map.delete(data);

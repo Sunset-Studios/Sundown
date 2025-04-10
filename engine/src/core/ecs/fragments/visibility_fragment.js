@@ -103,7 +103,8 @@ export class VisibilityFragment extends Fragment {
 
     for (let i = 0; i < instance_count; ++i) {
       const entity_index = entity_offset + i;
-      this.data.visible[entity_index] = 0;
+      this.data.visible[entity_index] =
+        this.data.visible instanceof BigInt64Array ? 0n : 0;
     }
 
     this.data.gpu_data_dirty = true;

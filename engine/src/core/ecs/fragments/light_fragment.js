@@ -363,24 +363,39 @@ export class LightFragment extends Fragment {
 
     for (let i = 0; i < instance_count; ++i) {
       const entity_index = entity_offset + i;
-      this.data.position.x[entity_index] = 0;
-      this.data.position.y[entity_index] = 0;
-      this.data.position.z[entity_index] = 0;
+      this.data.position.x[entity_index] =
+        this.data.position instanceof BigInt64Array ? 0n : 0;
+      this.data.position.y[entity_index] =
+        this.data.position instanceof BigInt64Array ? 0n : 0;
+      this.data.position.z[entity_index] =
+        this.data.position instanceof BigInt64Array ? 0n : 0;
 
-      this.data.direction.x[entity_index] = 0;
-      this.data.direction.y[entity_index] = 0;
-      this.data.direction.z[entity_index] = 0;
+      this.data.direction.x[entity_index] =
+        this.data.direction instanceof BigInt64Array ? 0n : 0;
+      this.data.direction.y[entity_index] =
+        this.data.direction instanceof BigInt64Array ? 0n : 0;
+      this.data.direction.z[entity_index] =
+        this.data.direction instanceof BigInt64Array ? 0n : 0;
 
-      this.data.color.r[entity_index] = 0;
-      this.data.color.g[entity_index] = 0;
-      this.data.color.b[entity_index] = 0;
+      this.data.color.r[entity_index] =
+        this.data.color instanceof BigInt64Array ? 0n : 0;
+      this.data.color.g[entity_index] =
+        this.data.color instanceof BigInt64Array ? 0n : 0;
+      this.data.color.b[entity_index] =
+        this.data.color instanceof BigInt64Array ? 0n : 0;
 
-      this.data.type[entity_index] = 0;
-      this.data.intensity[entity_index] = 0;
-      this.data.radius[entity_index] = 0;
-      this.data.attenuation[entity_index] = 0;
-      this.data.outer_angle[entity_index] = 0;
-      this.data.active[entity_index] = 0;
+      this.data.type[entity_index] =
+        this.data.type instanceof BigInt64Array ? 0n : 0;
+      this.data.intensity[entity_index] =
+        this.data.intensity instanceof BigInt64Array ? 0n : 0;
+      this.data.radius[entity_index] =
+        this.data.radius instanceof BigInt64Array ? 0n : 0;
+      this.data.attenuation[entity_index] =
+        this.data.attenuation instanceof BigInt64Array ? 0n : 0;
+      this.data.outer_angle[entity_index] =
+        this.data.outer_angle instanceof BigInt64Array ? 0n : 0;
+      this.data.active[entity_index] =
+        this.data.active instanceof BigInt64Array ? 0n : 0;
     }
 
     this.data.gpu_data_dirty = true;

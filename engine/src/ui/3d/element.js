@@ -1,4 +1,5 @@
 import { EntityManager } from "../../core/ecs/entity.js";
+import { EntityTransformFlags } from "../../core/minimal.js";
 import { Mesh } from "../../renderer/mesh.js";
 import { Material } from "../../renderer/material.js";
 import { StaticMeshFragment } from "../../core/ecs/fragments/static_mesh_fragment.js";
@@ -11,7 +12,7 @@ import { spawn_mesh_entity } from "../../core/ecs/entity_utils.js";
 export class Element3D {
   static events = {};
 
-  static create(config, material = null, parent = null, children = [], start_visible = true) {
+  static create(config, material = null, parent = null, children = [], start_visible = true, flags = EntityTransformFlags.IGNORE_PARENT_SCALE) {
     const entity = spawn_mesh_entity(
       [0, 0, 0],
       [0, 0, 0, 1],
@@ -21,6 +22,7 @@ export class Element3D {
       parent,
       children,
       start_visible,
+      flags
     );
 
     const new_user_interface_view = EntityManager.add_fragment(entity, UserInterfaceFragment);

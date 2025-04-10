@@ -75,6 +75,7 @@ export class EntityQuery {
           this.entities_to_filter.push(entity);
           this.#matching_count++;
         } else if (passes_requirements) {
+          new_entity_states[this.#matching_count] = 0;
           new_matching_entities[this.#matching_count] = entity;
           new_matching_entity_ids[this.#matching_count] = EntityID.get_absolute_index(entity);
           new_matching_entity_instance_counts[this.#matching_count] =

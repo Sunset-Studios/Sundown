@@ -277,6 +277,22 @@ export function spawn_plane_entity(position, normal, scale, material, parent = n
   return entity;
 }
 
-export function delete_entity(entity) {
+export function get_entity_parent(entity) {
+  const scene_graph_frame = EntityManager.get_fragment(entity, SceneGraphFragment);
+  return scene_graph_frame.parent;
+}
+
+export function get_entity_children(entity) {
+  const scene_graph_frame = EntityManager.get_fragment(entity, SceneGraphFragment);
+  return scene_graph_frame.children;
+}
+
+export function delete_entity(entity, delete_children = false) {
   EntityManager.delete_entity(entity);
+  if (delete_children) {
+    const children = get_entity_children(entity);
+    for (let i = 0; i < children.length; i++) {
+      delete_entity(children[i], delete_children);
+    }
+  }
 }

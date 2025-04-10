@@ -255,14 +255,20 @@ export class TextFragment extends Fragment {
 
     this.data.text.remove(entity);
     this.data.offsets.remove(entity);
-    this.data.font[entity] = 0;
-    this.data.font_size[entity] = 0;
-    this.data.color.r[entity] = 0;
-    this.data.color.g[entity] = 0;
-    this.data.color.b[entity] = 0;
-    this.data.color.a[entity] = 0;
+    this.data.font[entity] = this.data.font instanceof BigInt64Array ? 0n : 0;
+    this.data.font_size[entity] =
+      this.data.font_size instanceof BigInt64Array ? 0n : 0;
+    this.data.color.r[entity] =
+      this.data.color instanceof BigInt64Array ? 0n : 0;
+    this.data.color.g[entity] =
+      this.data.color instanceof BigInt64Array ? 0n : 0;
+    this.data.color.b[entity] =
+      this.data.color instanceof BigInt64Array ? 0n : 0;
+    this.data.color.a[entity] =
+      this.data.color instanceof BigInt64Array ? 0n : 0;
 
-    this.data.emissive[entity] = 0;
+    this.data.emissive[entity] =
+      this.data.emissive instanceof BigInt64Array ? 0n : 0;
 
     for (let i = 0; i < instance_count; ++i) {
       const entity_index = entity_offset + i;

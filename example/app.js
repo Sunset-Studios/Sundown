@@ -88,24 +88,10 @@ export class RenderingScene extends Scene {
     const mesh = Mesh.from_gltf("engine/models/sphere/sphere.gltf");
 
     // Create a default material
-    const default_material_id = Material.create("MyMaterial", "StandardMaterial");
-    // Configure the materials using combined uniform buffers
-    const default_material = Material.get(default_material_id);
-    // Create a combined uniform buffer for the default material
-    // Contains: color (vec4) and emission (float, aligned to vec4)
-    const default_material_data = new Float32Array([
-      // color: vec4 (RGBA)
-      0.7, 0.7, 0.7, 1.0,
-      // emission: float (followed by padding to maintain alignment)
-      0.0, 0.0, 0.0, 0.0,
-    ]);
-    const default_material_buffer = Buffer.create({
-      name: "default_material_buffer",
-      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-      raw_data: default_material_data,
-    });
-    // Set the uniform buffer for the material
-    default_material.set_uniform_data("material_params", default_material_buffer);
+    const default_material = StandardMaterial.create("MyMaterial");
+    const default_material_id = default_material.material_id;
+    default_material.set_albedo([0.7, 0.7, 0.7, 1.0]);
+    default_material.set_emission(0.0);
 
     // Get Exo-Medium font
     const font_id = Name.from("Exo-Medium");
@@ -828,59 +814,20 @@ export class AABBScene extends Scene {
     this.entities.push(text_entity);
 
     // Create a default material
-    this.default_material_id = Material.create("AABBTreeDefaultMaterial", "StandardMaterial");
+    const default_material = StandardMaterial.create("AABBTreeDefaultMaterial");
+    this.default_material_id = default_material.material_id;
+    default_material.set_albedo([0.5, 0.5, 0.5, 1]);
+    default_material.set_normal([0, 1, 0, 1]);
+    default_material.set_roughness(0.5);
+    default_material.set_metallic(0.5);
+    default_material.set_ao(0.5);
+    default_material.set_emission(0.1);
+
     // Create a default material for the selected entity
-    this.selected_entity_material_id = Material.create(
-      "AABBTreeSelectedEntityMaterial",
-      "StandardMaterial"
-    );
-
-    {
-      // Configure the materials using combined uniform buffers
-      const default_material = Material.get(this.default_material_id);
-      // Create a combined uniform buffer for the default material
-      // Contains: color (vec4) and emission (float, aligned to vec4)
-      this.default_material_data = new Float32Array([
-        // color: vec4 (RGBA)
-        0.7, 0.7, 0.7, 1.0,
-        // emission: float (followed by padding to maintain alignment)
-        0.2, 0.0, 0.0, 0.0,
-      ]);
-
-      this.default_material_buffer = Buffer.create({
-        name: "default_material_buffer",
-        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-        raw_data: this.default_material_data,
-      });
-
-      // Set the uniform buffer for the material
-      default_material.set_uniform_data("material_params", this.default_material_buffer);
-    }
-
-    {
-      // Create a combined uniform buffer for the selected entity material
-      const selected_entity_material = Material.get(this.selected_entity_material_id);
-      // Create a combined uniform buffer for the selected entity material
-      // Contains: color (vec4) and emission (float, aligned to vec4)
-      this.selected_entity_material_data = new Float32Array([
-        // color: vec4 (RGBA)
-        1.0, 0.3, 0.3, 1.0,
-        // emission: float (followed by padding to maintain alignment)
-        1.0, 0.0, 0.0, 0.0,
-      ]);
-
-      this.selected_entity_material_buffer = Buffer.create({
-        name: "selected_entity_material_buffer",
-        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-        raw_data: this.selected_entity_material_data,
-      });
-
-      // Set the uniform buffer for the material
-      selected_entity_material.set_uniform_data(
-        "material_params",
-        this.selected_entity_material_buffer
-      );
-    }
+    const selected_entity_material = StandardMaterial.create("AABBTreeSelectedEntityMaterial");
+    this.selected_entity_material_id = selected_entity_material.material_id;
+    selected_entity_material.set_albedo([1.0, 0.3, 0.3, 1]);
+    selected_entity_material.set_emission(1.0);
 
     // Create a sphere mesh
     this.sphere_mesh = Mesh.from_gltf("engine/models/sphere/sphere.gltf");
@@ -1306,10 +1253,11 @@ export class SceneSwitcher extends SimulationLayer {
   const textures_scene = new TexturesScene("TexturesScene");
 
   const scene_switcher = new SceneSwitcher("SceneSwitcher");
+  await scene_switcher.add_scene(textures_scene);
   //await scene_switcher.add_scene(aabb_scene);
   //await scene_switcher.add_scene(rendering_scene);
   //await scene_switcher.add_scene(ml_scene);
-  await scene_switcher.add_scene(textures_scene);
+ 
   await simulator.add_sim_layer(scene_switcher);
 
   simulator.run();

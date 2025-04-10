@@ -462,25 +462,25 @@ export class SharedEntityMetadataBuffer {
 
     this.resize(adjusted_entity);
 
-    if (this.num_entities < adjusted_entity) {
-      // Calculate the correct offset based on sum of previous entity counts
-      let offset = 0;
-      if (entity > 0) {
-        const prev_entity = entity - 1;
-        offset =
-          this.entity_metadata.get(prev_entity * 3) + // Offset of previous entity
-          this.entity_metadata.get(prev_entity * 3 + 1); // Count of previous entity
-
-        if (pending_instance_count_changes && pending_instance_count_changes.has(prev_entity)) {
-          const [old_count, new_count] = pending_instance_count_changes.get(prev_entity);
-          // Adjust offset based on the pending change
-          offset = offset - (new_count - old_count);
-        }
+    // Calculate the correct offset based on sum of previous entity counts
+    let offset = 0;
+    if (entity > 0) {
+      const prev_entity = entity - 1;
+      offset =
+      this.entity_metadata.get(prev_entity * 3) + // Offset of previous entity
+      this.entity_metadata.get(prev_entity * 3 + 1); // Count of previous entity
+      
+      if (pending_instance_count_changes && pending_instance_count_changes.has(prev_entity)) {
+        const [old_count, new_count] = pending_instance_count_changes.get(prev_entity);
+        // Adjust offset based on the pending change
+        offset = offset - (new_count - old_count);
       }
+    }
 
-      this.entity_metadata.set(entity * 3, offset);
-      this.entity_metadata.set(entity * 3 + 1, 1);
-      this.entity_metadata.set(entity * 3 + 2, 0);
+    this.entity_metadata.set(entity * 3, offset);
+    this.entity_metadata.set(entity * 3 + 1, 1);
+    this.entity_metadata.set(entity * 3 + 2, 0);
+    if (this.num_entities < adjusted_entity) {
       this.num_entities = adjusted_entity;
     }
   }
@@ -490,6 +490,10 @@ export class SharedEntityMetadataBuffer {
     this.entity_metadata.set(entity * 3 + 1, 0);
     this.entity_metadata.set(entity * 3 + 2, 0);
     this.num_entities = this.num_entities - 1;
+  }
+
+  static entity_exists(entity) {
+    return this.entity_metadata.get(entity * 3 + 1) > 0;
   }
 
   static resize(new_size) {

@@ -19,6 +19,8 @@ const height_name = "height";
 const absolute = "absolute";
 const row = "row";
 const column = "column";
+const row_reversed = "row_reversed";
+const column_reversed = "column_reversed";
 
 class LayoutStackContainer {
   x = 0;
@@ -111,7 +113,7 @@ export const UIContext = {
     y: 0,
     prev_x: 0,
     prev_y: 0,
-    depth: 2,
+    depth: 200,
     pressed: false,
     was_clicked: false,
     world_position: null, // assume this is a vec3 from a math library
@@ -453,24 +455,44 @@ function child_container_layout_update(container, x, y, width, height) {
   if (container.layout !== absolute) {
     if (container.layout === row) {
       container.cursor.x += width + container.gap;
+    } else if (container.layout === row_reversed) {
+      container.cursor.x -= width + container.gap;
     } else if (container.layout === column) {
       container.cursor.y += height + container.gap;
+    } else if (container.layout === column_reversed) {
+      container.cursor.y -= height + container.gap;
     }
 
     // ---------- Auto–size update ----------
     // Now that the container's cursor has been advanced,
     // use its new position to update the content sizing.
     if (container.auto_width) {
-      container.content_max_x = Math.max(
-        container.content_max_x,
-        container.cursor.x - (container.x + container.padding_left + container.gap)
-      );
+      if (container.layout === row_reversed) {
+        // For reversed row, track the minimum (leftmost) x position
+        container.content_max_x = Math.max(
+          container.content_max_x,
+          (container.x + container.width + container.padding_right) - container.cursor.x
+        );
+      } else {
+        container.content_max_x = Math.max(
+          container.content_max_x,
+          container.cursor.x - (container.x + container.padding_left + container.gap)
+        );
+      }
     }
     if (container.auto_height) {
-      container.content_max_y = Math.max(
-        container.content_max_y,
-        container.cursor.y - (container.y + container.padding_top + container.gap)
-      );
+      if (container.layout === column_reversed) {
+        // For reversed column, track the minimum (topmost) y position
+        container.content_max_y = Math.max(
+          container.content_max_y,
+          (container.y + container.height + container.padding_bottom) - container.cursor.y
+        );
+      } else {
+        container.content_max_y = Math.max(
+          container.content_max_y,
+          container.cursor.y - (container.y + container.padding_top + container.gap)
+        );
+      }
     }
     // ---------- End auto–size update ----------
   } else {
@@ -627,7 +649,7 @@ export function flush_ui(ctx) {
  * @param {object} config - Container configuration:
  *    x, y: offset relative to parent (default 0)
  *    width, height: of the container (default 100)
- *    layout: "absolute", "row", or "column" (default "absolute")
+ *    layout: "absolute", "row", "column", "row_reversed", "column_reversed", or "absolute"
  *    gap: gap between children in auto–layout (default 0)
  *    padding: inner padding (default 0)
  *    (Other style settings such as background_color, border, etc. may also be provided.)
@@ -686,7 +708,7 @@ export function begin_container(config = {}) {
   }
 
   let gap = parse_dimension(config.gap || 0, parent.width);
-  let layout = config.layout || absolute; // "row", "column", or "absolute"
+  let layout = config.layout || absolute; // "row", "column", "row_reversed", "column_reversed", or "absolute"
 
   // Parse padding values.
   const padding_left = config.padding_left || config.padding || 0;
@@ -710,7 +732,28 @@ export function begin_container(config = {}) {
   container.padding_top = padding_top;
   container.padding_right = padding_right;
   container.padding_bottom = padding_bottom;
-  container.cursor = { x: x + padding_left, y: y + padding_top };
+  
+  // Set initial cursor position based on layout type
+  if (layout === row_reversed) {
+    // For reversed row, start from the right side
+    container.cursor = { 
+      x: x + width - padding_right, 
+      y: y + padding_top 
+    };
+  } else if (layout === column_reversed) {
+    // For reversed column, start from the bottom
+    container.cursor = { 
+      x: x + padding_left, 
+      y: y + height - padding_bottom 
+    };
+  } else {
+    // Default cursor position (top-left corner)
+    container.cursor = { 
+      x: x + padding_left, 
+      y: y + padding_top 
+    };
+  }
+  
   container.config = config;
 
   container._has_clip = false;
@@ -777,7 +820,11 @@ export function end_container() {
     // When width is fixed but the container is scrollable,
     // calculate the content_max_x from the current cursor.
     // (This assumes that container.cursor.x represents the maximum X coordinate reached by its children.)
-    container.content_max_x = container.cursor.x - (container.x + container.padding_left);
+    if (container.layout === row_reversed) {
+      container.content_max_x = (container.x + container.width + container.padding_right) - container.cursor.x;
+    } else {
+      container.content_max_x = container.cursor.x - (container.x + container.padding_left);
+    }
   }
 
   if (container.auto_height) {
@@ -786,7 +833,11 @@ export function end_container() {
     // When height is fixed but the container is scrollable,
     // calculate the content_max_y from the current cursor.
     // (This assumes that container.cursor.y represents the maximum Y coordinate reached by its children.)
-    container.content_max_y = container.cursor.y - (container.y + container.padding_top);
+    if (container.layout === column_reversed) {
+      container.content_max_y = (container.y + container.height + container.padding_bottom) - container.cursor.y;
+    } else {
+      container.content_max_y = container.cursor.y - (container.y + container.padding_top);
+    }
   }
 
   // --- Push base draw command for container ---
@@ -819,10 +870,30 @@ export function end_container() {
             rel_x + container.width + container.padding_left + container.padding_right
           );
         }
+      } else if (parent.layout === row_reversed) {
+        parent.cursor.x -= container.width + parent.gap;
+        if (parent.auto_width) {
+          const rel_x = (parent.x + parent.width + parent.padding_right) - 
+                        (container.x + container.width + container.padding_right);
+          parent.content_max_x = Math.max(
+            parent.content_max_x,
+            rel_x + container.width + container.padding_left + container.padding_right
+          );
+        }
       } else if (parent.layout === column) {
         parent.cursor.y += container.height + parent.gap;
         if (parent.auto_height) {
           const rel_y = container.y - (parent.y + parent.padding_top);
+          parent.content_max_y = Math.max(
+            parent.content_max_y,
+            rel_y + container.height + container.padding_top + container.padding_bottom
+          );
+        }
+      } else if (parent.layout === column_reversed) {
+        parent.cursor.y -= container.height + parent.gap;
+        if (parent.auto_height) {
+          const rel_y = (parent.y + parent.height + parent.padding_bottom) - 
+                        (container.y + container.height + container.padding_bottom);
           parent.content_max_y = Math.max(
             parent.content_max_y,
             rel_y + container.height + container.padding_top + container.padding_bottom

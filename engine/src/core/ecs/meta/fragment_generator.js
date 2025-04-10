@@ -441,7 +441,9 @@ export class ${fragment_name} extends Fragment {
           return `${Object.keys(field.vector)
             .map(
               (axis) =>
-                `this.data.${key}.${axis}[entity] = ${field.stride > 1 ? `Array(${field.stride}).fill(${field.default ? field.default[axis] : 0})` : field.default ? field.default[axis] : 0};`
+                `this.data.${key}.${axis}[entity] = ${field.stride > 1 
+                  ? `Array(${field.stride}).fill(${field.default ? field.default[axis] : 0})` 
+                  : `this.data.${key} instanceof BigInt64Array ? ${field.default ? field.default[axis] : 0}n : ${field.default ? field.default[axis] : 0}`};`
             )
             .join("\n")}
         `;
@@ -449,7 +451,9 @@ export class ${fragment_name} extends Fragment {
         if (key === "dirty") {
           return "";
         }
-        return `this.data.${key}[entity] = ${field.stride > 1 ? `Array(${field.stride}).fill(${field.default || 0})` : field.default || 0};`;
+        return `this.data.${key}[entity] = ${field.stride > 1 
+          ? `Array(${field.stride}).fill(${field.default || 0})` 
+          : `this.data.${key} instanceof BigInt64Array ? ${field.default || 0}n : ${field.default || 0}`};`;
       });
     const instance_field_resets = Object.entries(fields)
       .filter(([_, field]) => !field.no_fragment_array && !field.no_instance_count_resize)
@@ -461,7 +465,9 @@ export class ${fragment_name} extends Fragment {
           return `${Object.keys(field.vector)
             .map(
               (axis) =>
-                `this.data.${key}.${axis}[entity_index] = ${field.stride > 1 ? `Array(${field.stride}).fill(${field.default ? field.default[axis] : 0})` : field.default ? field.default[axis] : 0};`
+                `this.data.${key}.${axis}[entity_index] = ${field.stride > 1 
+                  ? `Array(${field.stride}).fill(${field.default ? field.default[axis] : 0})` 
+                  : `this.data.${key} instanceof BigInt64Array ? ${field.default ? field.default[axis] : 0}n : ${field.default ? field.default[axis] : 0}`};`
             )
             .join("\n")}
         `;
@@ -469,7 +475,9 @@ export class ${fragment_name} extends Fragment {
         if (key === "dirty") {
           return "";
         }
-        return `this.data.${key}[entity_index] = ${field.stride > 1 ? `Array(${field.stride}).fill(${field.default || 0})` : field.default || 0};`;
+        return `this.data.${key}[entity_index] = ${field.stride > 1 
+          ? `Array(${field.stride}).fill(${field.default || 0})` 
+          : `this.data.${key} instanceof BigInt64Array ? ${field.default || 0}n : ${field.default || 0}`};`;
       });
 
     return `

@@ -279,8 +279,9 @@ export class TransformFragment extends Fragment {
       this.data.scale[(entity_offset + i) * 4 + 1] = 1;
       this.data.scale[(entity_offset + i) * 4 + 2] = 1;
       this.data.scale[(entity_offset + i) * 4 + 3] = 0;
+      this.data.aabb_node_index[entity_offset + i] = 0;
       this.data.flags[entity_offset + i] = 0;
-      this.data.dirty[entity_offset + i] = 0;
+      this.data.dirty[entity_offset + i] = 1;
     }
     this.data.gpu_data_dirty = true;
   }

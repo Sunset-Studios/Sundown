@@ -635,8 +635,25 @@ export class Layer {
         }
       }
     }
-    
+
     return Array.from(all_children);
+  }
+
+  /**
+   * Checks if a layer is an activation layer
+   *
+   * @param {number} id - The ID of the layer
+   * @returns {boolean} True if the layer is an activation layer
+   */
+  static is_activation(id) {
+    const layer = Layer.get(id);
+    return (
+      layer &&
+      (layer.type === LayerType.RELU ||
+        layer.type === LayerType.TANH ||
+        layer.type === LayerType.SIGMOID ||
+        layer.type === LayerType.SOFTMAX)
+    );
   }
 
   /**

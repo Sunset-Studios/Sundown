@@ -31,6 +31,6 @@ export class Name {
 
     static from(str) {
         const name = new Name(str);
-        return Name.hash(str);
+        return name.hash;
     }
 }

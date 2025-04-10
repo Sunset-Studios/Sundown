@@ -370,22 +370,37 @@ export class UserInterfaceFragment extends Fragment {
 
     for (let i = 0; i < instance_count; ++i) {
       const entity_index = entity_offset + i;
-      this.data.allows_cursor_events[entity_index] = 0;
-      this.data.auto_size[entity_index] = 0;
-      this.data.was_cursor_inside[entity_index] = 0;
-      this.data.is_cursor_inside[entity_index] = 0;
-      this.data.was_clicked[entity_index] = 0;
-      this.data.is_clicked[entity_index] = 0;
-      this.data.is_pressed[entity_index] = 0;
-      this.data.was_pressed[entity_index] = 0;
-      this.data.consume_events[entity_index] = 0;
-      this.data.color.r[entity_index] = 0;
-      this.data.color.g[entity_index] = 0;
-      this.data.color.b[entity_index] = 0;
-      this.data.color.a[entity_index] = 0;
+      this.data.allows_cursor_events[entity_index] =
+        this.data.allows_cursor_events instanceof BigInt64Array ? 0n : 0;
+      this.data.auto_size[entity_index] =
+        this.data.auto_size instanceof BigInt64Array ? 0n : 0;
+      this.data.was_cursor_inside[entity_index] =
+        this.data.was_cursor_inside instanceof BigInt64Array ? 0n : 0;
+      this.data.is_cursor_inside[entity_index] =
+        this.data.is_cursor_inside instanceof BigInt64Array ? 0n : 0;
+      this.data.was_clicked[entity_index] =
+        this.data.was_clicked instanceof BigInt64Array ? 0n : 0;
+      this.data.is_clicked[entity_index] =
+        this.data.is_clicked instanceof BigInt64Array ? 0n : 0;
+      this.data.is_pressed[entity_index] =
+        this.data.is_pressed instanceof BigInt64Array ? 0n : 0;
+      this.data.was_pressed[entity_index] =
+        this.data.was_pressed instanceof BigInt64Array ? 0n : 0;
+      this.data.consume_events[entity_index] =
+        this.data.consume_events instanceof BigInt64Array ? 0n : 0;
+      this.data.color.r[entity_index] =
+        this.data.color instanceof BigInt64Array ? 0n : 0;
+      this.data.color.g[entity_index] =
+        this.data.color instanceof BigInt64Array ? 0n : 0;
+      this.data.color.b[entity_index] =
+        this.data.color instanceof BigInt64Array ? 0n : 0;
+      this.data.color.a[entity_index] =
+        this.data.color instanceof BigInt64Array ? 0n : 0;
 
-      this.data.emissive[entity_index] = 0;
-      this.data.rounding[entity_index] = 0;
+      this.data.emissive[entity_index] =
+        this.data.emissive instanceof BigInt64Array ? 0n : 0;
+      this.data.rounding[entity_index] =
+        this.data.rounding instanceof BigInt64Array ? 0n : 0;
     }
 
     this.data.gpu_data_dirty = true;

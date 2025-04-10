@@ -342,8 +342,9 @@ const TransformFragment = {
         this.data.scale[(entity_offset + i) * 4 + 1] = 1;
         this.data.scale[(entity_offset + i) * 4 + 2] = 1;
         this.data.scale[(entity_offset + i) * 4 + 3] = 0;
+        this.data.aabb_node_index[entity_offset + i] = 0;
         this.data.flags[(entity_offset + i)] = 0;
-        this.data.dirty[(entity_offset + i)] = 0;
+        this.data.dirty[(entity_offset + i)] = 1;
       }
       this.data.gpu_data_dirty = true;
       `,
@@ -577,9 +578,10 @@ const SceneGraphFragment = {
       stride: 2,
       gpu_data: `
       const { result, layer_counts } = this.data.scene_graph.flatten(Int32Array, (result, node, result_size) => {
-        let instance_count = EntityID.get_instance_count(node.data);
+        const instance_count = EntityID.get_instance_count(node.data);
+        const absolute_index = EntityID.get_absolute_index(node.data);
         for (let i = 0; i < instance_count; i++) {
-          result[result_size + i] = EntityID.get_absolute_index(node.data) + i;
+          result[result_size + i] = absolute_index + i;
         }
         return instance_count;
       }, (node) => {
@@ -596,16 +598,19 @@ const SceneGraphFragment = {
         gpu_data[i * 2 + 1] = this.data.parent[result[i]] >= 0 ? EntityID.get_absolute_index(this.data.parent[result[i]]) : -1;
       }
 
-      this.data.scene_graph_uniforms = new Array(layer_counts.length);
-      let layer_offset = 0;
-      for (let i = 0; i < layer_counts.length; ++i) {
-        this.data.scene_graph_uniforms[i] = Buffer.create({
-          name: "scene_graph_uniforms_" + i,
-          usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-          raw_data: new Uint32Array([layer_counts[i], layer_offset, i]),
-          force: true,
-        });
-        layer_offset += layer_counts[i];
+      {
+        this.data.scene_graph_uniforms = new Array(layer_counts.length);
+        let layer_offset = 0;
+        for (let i = 0; i < layer_counts.length; ++i) {
+          this.data.scene_graph_uniforms[i] = Buffer.create({
+            name: "scene_graph_uniforms_" + i,
+            usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+            raw_data: new Uint32Array([layer_counts[i], layer_offset, i]),
+            force: true,
+          });
+          layer_offset += layer_counts[i];
+        }
+        Renderer.get().mark_bind_groups_dirty(true);
       }
       `,
     },

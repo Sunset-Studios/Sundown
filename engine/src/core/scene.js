@@ -60,7 +60,6 @@ export class Scene extends SimulationLayer {
   }
 
   setup_default_subsystems() {
-    this.add_layer(EntityPreprocessor);
     this.add_layer(UIProcessor);
     this.add_layer(TextProcessor);
     this.add_layer(StaticMeshProcessor);
@@ -77,6 +76,8 @@ export class Scene extends SimulationLayer {
       const dev_console = this.add_layer(DevConsole);
       dev_console.set_scene(this);
     }
+    
+    this.add_layer(EntityPreprocessor);
   }
 
   teardown_default_subsystems() {
