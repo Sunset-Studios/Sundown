@@ -89,5 +89,7 @@ export class TransformProcessor extends SimulationLayer {
     if (transforms.transforms_cpu_buffer[buffered_frame]?.buffer.mapState === unmapped_state) {
       transforms.transforms_buffer.copy_buffer(encoder, 0, transforms.transforms_cpu_buffer[buffered_frame]);
     }
+
+    TransformFragment.attempt_clear_all_dirty_flags();
   }
 }

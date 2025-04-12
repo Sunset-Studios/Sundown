@@ -150,6 +150,12 @@ const TransformFragment = {
     AABB: "../../../acceleration/aabb.js",
     BufferSync: "../../../renderer/buffer.js",
   },
+  constants: {
+    MAX_DIRTY_FLAG_RETAIN_FRAMES: 12,
+  },
+  members: {
+    dirty_flag_retain_frames: 0
+  },
   fields: {
     position: {
       type: DataType.FLOAT32,
@@ -516,12 +522,16 @@ const TransformFragment = {
       this.data.transforms[entity_index * 32 + 14] += offset[2];
       `,
     },
-    clear_all_dirty_flags: {
+    attempt_clear_all_dirty_flags: {
       body: `
-      for (let i = 0; i < this.size; i++) {
-        this.data.dirty[i] = 0;
+      ++this.data.dirty_flag_retain_frames;
+      if (this.dirty_flag_retain_frames >= this.MAX_DIRTY_FLAG_RETAIN_FRAMES) {
+        for (let i = 0; i < this.size; i++) {
+          this.data.dirty[i] = 0;
+        }
+        this.data.gpu_data_dirty = true;
+        this.data.dirty_flag_retain_frames = 0;
       }
-      this.data.gpu_data_dirty = true;
       `,
     },
   },

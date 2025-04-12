@@ -201,6 +201,8 @@ export class TransformFragment extends Fragment {
   static size = 0;
   static data = null;
 
+  static MAX_DIRTY_FLAG_RETAIN_FRAMES = 12;
+
   static initialize() {
     this.data = {
       position: new Float32Array(4),
@@ -210,6 +212,7 @@ export class TransformFragment extends Fragment {
       transforms: new Float32Array(32),
       flags: new Int32Array(1),
       dirty: new Uint32Array(1),
+      dirty_flag_retain_frames: 0,
       position_buffer: null,
       rotation_buffer: null,
       scale_buffer: null,
@@ -791,11 +794,15 @@ export class TransformFragment extends Fragment {
     this.data.transforms[entity_index * 32 + 14] += offset[2];
   }
 
-  static clear_all_dirty_flags() {
-    for (let i = 0; i < this.size; i++) {
-      this.data.dirty[i] = 0;
+  static attempt_clear_all_dirty_flags() {
+    ++this.data.dirty_flag_retain_frames;
+    if (this.dirty_flag_retain_frames >= this.MAX_DIRTY_FLAG_RETAIN_FRAMES) {
+      for (let i = 0; i < this.size; i++) {
+        this.data.dirty[i] = 0;
+      }
+      this.data.gpu_data_dirty = true;
+      this.data.dirty_flag_retain_frames = 0;
     }
-    this.data.gpu_data_dirty = true;
   }
 
   static async on_post_render() {
