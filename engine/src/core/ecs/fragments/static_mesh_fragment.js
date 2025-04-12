@@ -6,6 +6,7 @@ import { global_dispatcher } from "../../../core/dispatcher.js";
 import { RingBufferAllocator } from "../../../memory/allocator.js";
 import { EntityID } from "../entity.js";
 import { EntityManager } from "../entity.js";
+import { MAX_BUFFERED_FRAMES } from "../../../core/minimal.js";
 
 class StaticMeshDataView {
   current_entity = -1n;

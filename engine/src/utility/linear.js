@@ -91,7 +91,7 @@ export function direction_vector_to_quat(vec) {
     return [qx, qy, qz, qw];
 }
 
-export function is_vec_nearly_zero(vec) {
-  return Math.abs(vec[0]) < EPSILON && Math.abs(vec[1]) < EPSILON && Math.abs(vec[2]) < EPSILON;
+export function is_vec_nearly_zero(vec, epsilon = EPSILON) {
+  return Math.abs(vec[0]) < epsilon && Math.abs(vec[1]) < epsilon && Math.abs(vec[2]) < epsilon;
 }
 

@@ -108,6 +108,7 @@ export class FragmentGenerator {
       RingBufferAllocator: "../../../memory/allocator.js",
       EntityID: "../entity.js",
       EntityManager: "../entity.js",
+      MAX_BUFFERED_FRAMES: "../../../core/minimal.js",
     };
 
     const implementations = {
@@ -318,7 +319,7 @@ export class ${fragment_name} extends Fragment {
     const member_inits = Object.entries(members).map(([key, member]) => `${key}: ${member}`);
 
     const buffer_inits = Object.keys(buffers).map(
-      (key) => `${key}_buffer: null${buffers[key].cpu_buffer ? `,\n${key}_cpu_buffer: null` : ""}`
+      (key) => `${key}_buffer: null${buffers[key].cpu_buffer ? `,\n${key}_cpu_buffer: Array(MAX_BUFFERED_FRAMES).fill(null)` : ""}`
     );
 
     return `
@@ -573,8 +574,6 @@ export class ${fragment_name} extends Fragment {
     static rebuild_buffers() {
         if (!this.data.gpu_data_dirty) return;
 
-        let retry = this.#synching;
-
         ${override.pre ? override.pre : ""}
         ${!override.skip_default ? this.generate_default_rebuild_buffers(buffers) : ""}
         ${override.post ? override.post : ""}
@@ -583,8 +582,6 @@ export class ${fragment_name} extends Fragment {
     return `
     static rebuild_buffers() {
         if (!this.data.gpu_data_dirty) return;
-
-        let retry = this.#synching;
 
         ${this.generate_default_rebuild_buffers(buffers)}
     }`;
@@ -611,18 +608,20 @@ export class ${fragment_name} extends Fragment {
             ${
               buffer.cpu_buffer
                 ? `
-                this.data.${key}_cpu_buffer = Buffer.create({
-                    name: ${key}_cpu_buffer_name,
-                    usage: ${BufferType.CPU_READ},
-                    raw_data: gpu_data,
-                    force: true
-                });`
+                for (let i = 0; i < MAX_BUFFERED_FRAMES; i++) {
+                    this.data.${key}_cpu_buffer[i] = Buffer.create({
+                        name: \`${key}_cpu_buffer_\${i}\`,
+                        usage: ${BufferType.CPU_READ},
+                        raw_data: gpu_data,
+                        force: true
+                    });
+                }`
                 : ""
             }
             Renderer.get().mark_bind_groups_dirty(true);
             ${buffer.no_dispatch ? "" : `global_dispatcher.dispatch(${key}_event, this.data.${key}_buffer);`}
           ${buffer.only_rebuild_on_resize ? `}` : `
-          } else if (!retry) {
+          } else {
             this.data.${key}_buffer.write(gpu_data);
           }`}
 
@@ -632,7 +631,7 @@ export class ${fragment_name} extends Fragment {
           )
           .join("\n")}
 
-        this.data.gpu_data_dirty = retry;
+        this.data.gpu_data_dirty = false;
     `;
   }
 
@@ -641,23 +640,17 @@ export class ${fragment_name} extends Fragment {
 
     if (override) {
       return `
-    static #synching = false;
     static async sync_buffers() {
-        if (this.#synching) return;
-        this.#synching = true;
+        const buffered_frame = Renderer.get().get_buffered_frame_number();
         ${override.pre ? override.pre : ""}
         ${!override.skip_default ? this.generate_default_sync_buffers(buffers) : ""}
         ${override.post ? override.post : ""}
-        this.#synching = false;
     }`;
     }
     return `
-    static #synching = false;
     static async sync_buffers() {
-        if (this.#synching) return;
-        this.#synching = true;
+        const buffered_frame = Renderer.get().get_buffered_frame_number();
         ${this.generate_default_sync_buffers(buffers)}
-        this.#synching = false;
     }`;
   }
 
@@ -667,8 +660,8 @@ export class ${fragment_name} extends Fragment {
           .filter(([_, buf]) => buf.cpu_buffer)
           .map(
             ([key, _]) => `
-        if (this.data.${key}_cpu_buffer?.buffer.mapState === unmapped_state) {
-            await this.data.${key}_cpu_buffer.read(
+        if (this.data.${key}_cpu_buffer[buffered_frame]?.buffer.mapState === unmapped_state) {
+            await this.data.${key}_cpu_buffer[buffered_frame].read(
                 this.data.${key},
                 this.data.${key}.byteLength,
                 0,

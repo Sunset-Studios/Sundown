@@ -148,6 +148,7 @@ const TransformFragment = {
   imports: {
     EntityTransformFlags: "../../minimal.js",
     AABB: "../../../acceleration/aabb.js",
+    BufferSync: "../../../renderer/buffer.js",
   },
   fields: {
     position: {
@@ -344,7 +345,7 @@ const TransformFragment = {
         this.data.scale[(entity_offset + i) * 4 + 3] = 0;
         this.data.aabb_node_index[entity_offset + i] = 0;
         this.data.flags[(entity_offset + i)] = 0;
-        this.data.dirty[(entity_offset + i)] = 1;
+        this.data.dirty[(entity_offset + i)] = 0;
       }
       this.data.gpu_data_dirty = true;
       `,
@@ -504,13 +505,23 @@ const TransformFragment = {
       return [scale_x, scale_y, scale_z];
       `,
     },
-    clear_dirty_flags: {
-      params: ``,
+    add_world_offset: {
+      params: `entity, offset, instance = 0 `,
+      body: `
+      const entity_offset = EntityID.get_absolute_index(entity);
+      const entity_index = entity_offset + instance;
+
+      this.data.transforms[entity_index * 32 + 12] += offset[0];
+      this.data.transforms[entity_index * 32 + 13] += offset[1];
+      this.data.transforms[entity_index * 32 + 14] += offset[2];
+      `,
+    },
+    clear_all_dirty_flags: {
       body: `
       for (let i = 0; i < this.size; i++) {
-        this.data.gpu_data_dirty |= (this.data.dirty[i] !== 0);
         this.data.dirty[i] = 0;
       }
+      this.data.gpu_data_dirty = true;
       `,
     },
   },
@@ -520,8 +531,7 @@ const TransformFragment = {
     if (!this.data) {
       return;
     }
-
-    await this.sync_buffers();
+    BufferSync.request_sync(this);
     `,
     },
   },

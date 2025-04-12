@@ -1,5 +1,6 @@
+import { MAX_BUFFERED_FRAMES } from "../core/minimal.js";
 import { Renderer } from "../renderer/renderer.js";
-import { Buffer } from "../renderer/buffer.js";
+import { Buffer, BufferSync } from "../renderer/buffer.js";
 import { ComputeTaskQueue } from "../renderer/compute_task_queue.js";
 import { AABB } from "./aabb.js";
 import { profile_scope } from "../utility/performance.js";
@@ -12,7 +13,7 @@ const unmapped_state = "unmapped";
 export class AABBGPURaycast {
     static ray_buffer = null;
     static hits_buffer = null;
-    static hits_cpu_buffer = null;
+    static hits_cpu_buffer = Array(MAX_BUFFERED_FRAMES).fill(null);
     static uniforms = null;
     static uniforms_buffer = null;
     static rays = [];
@@ -42,11 +43,13 @@ export class AABBGPURaycast {
         });
 
         // Create a hits cpu buffer
-        this.hits_cpu_buffer = Buffer.create({
-            name: "aabb_raycast_hits_cpu",
-            usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
-            size: MAX_RAYS * 8 // Hit structure is 8 floats
-        });
+        for (let i = 0; i < MAX_BUFFERED_FRAMES; i++) {
+            this.hits_cpu_buffer[i] = Buffer.create({
+                name: `aabb_raycast_hits_cpu_${i}`,
+                usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
+                size: MAX_RAYS * 8 // Hit structure is 8 floats
+            });
+        }
         
         // Create uniforms buffer
         this.uniforms_buffer = Buffer.create({
@@ -160,8 +163,9 @@ export class AABBGPURaycast {
     static _copy_hits_to_cpu(graph, frame_data, encoder) {
         if (!this.pending_callback) return;
 
-        if (this.hits_cpu_buffer.buffer.mapState === unmapped_state) {
-            this.hits_buffer.copy_buffer(encoder, 0, this.hits_cpu_buffer);
+        const buffered_frame = Renderer.get().get_buffered_frame_number();
+        if (this.hits_cpu_buffer[buffered_frame].buffer.mapState === unmapped_state) {
+            this.hits_buffer.copy_buffer(encoder, 0, this.hits_cpu_buffer[buffered_frame]);
         }
     }
     
@@ -169,9 +173,14 @@ export class AABBGPURaycast {
      * Called when the GPU raycast is complete
      */
     static async _on_post_render() {
+        BufferSync.request_sync(this);
+    }
+
+    static async sync_buffers() {
+        const buffered_frame = Renderer.get().get_buffered_frame_number();
         // Read hit data from GPU
-        if (this.hits_cpu_buffer.buffer.mapState === unmapped_state) {
-            await this.hits_cpu_buffer.read(
+        if (this.hits_cpu_buffer[buffered_frame].buffer.mapState === unmapped_state) {
+            await this.hits_cpu_buffer[buffered_frame].read(
                 this.hits,
                 this.last_ray_count * 8 * 4,
                 0,
@@ -208,7 +217,6 @@ export class AABBGPURaycast {
         this.pending_callback(hits);
         this.pending_callback = null;
     }
-    
     /**
      * Convenience method for single ray casting
      * @param {Ray} ray - The ray to cast
@@ -232,7 +240,13 @@ export class AABBGPURaycast {
             this.hits_buffer.destroy();
             this.hits_buffer = null;
         }
-        
+
+        for (let i = 0; i < MAX_BUFFERED_FRAMES; i++) {
+            if (this.hits_cpu_buffer[i]) {
+                this.hits_cpu_buffer[i].destroy();
+                this.hits_cpu_buffer[i] = null;
+            }
+        }
         if (this.uniforms_buffer) {
             this.uniforms_buffer.destroy();
             this.uniforms_buffer = null;

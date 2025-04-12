@@ -213,8 +213,8 @@ export class MeshTaskQueue {
     this.object_instances = [];
     this.material_buckets = [];
     this.indirect_draw_object = new IndirectDrawObject();
-    this.tasks_allocator = new RandomAccessAllocator(256, MeshTask);
-    this.object_instance_allocator = new RandomAccessAllocator(
+    this.tasks_allocator = new RandomAccessAllocator(256, MeshTask); // TODO: This can potentially use a TypedVector depending on how it's structured. May need to split the fields out.
+    this.object_instance_allocator = new RandomAccessAllocator( // TODO: This can potentially use a TypedVector depending on how it's structured. May need to split the fields out.
       256,
       ObjectInstanceEntry
     );

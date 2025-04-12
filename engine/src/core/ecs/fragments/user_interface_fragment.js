@@ -6,6 +6,7 @@ import { global_dispatcher } from "../../../core/dispatcher.js";
 import { RingBufferAllocator } from "../../../memory/allocator.js";
 import { EntityID } from "../entity.js";
 import { EntityManager } from "../entity.js";
+import { MAX_BUFFERED_FRAMES } from "../../../core/minimal.js";
 
 const element_data_buffer_name = "element_data_buffer";
 const element_data_cpu_buffer_name = "element_data_cpu_buffer";
@@ -455,8 +456,6 @@ export class UserInterfaceFragment extends Fragment {
   static rebuild_buffers() {
     if (!this.data.gpu_data_dirty) return;
 
-    let retry = this.#synching;
-
     {
       const gpu_data = new Float32Array(Math.max(this.size * 8, 8));
       let offset = 0;
@@ -488,22 +487,18 @@ export class UserInterfaceFragment extends Fragment {
           element_data_event,
           this.data.element_data_buffer,
         );
-      } else if (!retry) {
+      } else {
         this.data.element_data_buffer.write(gpu_data);
       }
 
       global_dispatcher.dispatch(element_data_update_event);
     }
 
-    this.data.gpu_data_dirty = retry;
+    this.data.gpu_data_dirty = false;
   }
 
-  static #synching = false;
   static async sync_buffers() {
-    if (this.#synching) return;
-    this.#synching = true;
-
-    this.#synching = false;
+    const buffered_frame = Renderer.get().get_buffered_frame_number();
   }
 
   static copy_entity_instance(to_index, from_index) {

@@ -6,8 +6,10 @@ import { global_dispatcher } from "../../../core/dispatcher.js";
 import { RingBufferAllocator } from "../../../memory/allocator.js";
 import { EntityID } from "../entity.js";
 import { EntityManager } from "../entity.js";
+import { MAX_BUFFERED_FRAMES } from "../../../core/minimal.js";
 import { EntityTransformFlags } from "../../minimal.js";
 import { AABB } from "../../../acceleration/aabb.js";
+import { BufferSync } from "../../../renderer/buffer.js";
 
 const position_buffer_name = "position_buffer";
 const position_cpu_buffer_name = "position_cpu_buffer";
@@ -213,10 +215,10 @@ export class TransformFragment extends Fragment {
       scale_buffer: null,
       aabb_node_index_buffer: null,
       flags_buffer: null,
-      flags_cpu_buffer: null,
+      flags_cpu_buffer: Array(MAX_BUFFERED_FRAMES).fill(null),
       dirty_buffer: null,
       transforms_buffer: null,
-      transforms_cpu_buffer: null,
+      transforms_cpu_buffer: Array(MAX_BUFFERED_FRAMES).fill(null),
       gpu_data_dirty: true,
     };
     Renderer.get().on_post_render(this.on_post_render.bind(this));
@@ -281,7 +283,7 @@ export class TransformFragment extends Fragment {
       this.data.scale[(entity_offset + i) * 4 + 3] = 0;
       this.data.aabb_node_index[entity_offset + i] = 0;
       this.data.flags[entity_offset + i] = 0;
-      this.data.dirty[entity_offset + i] = 1;
+      this.data.dirty[entity_offset + i] = 0;
     }
     this.data.gpu_data_dirty = true;
   }
@@ -336,8 +338,6 @@ export class TransformFragment extends Fragment {
   static rebuild_buffers() {
     if (!this.data.gpu_data_dirty) return;
 
-    let retry = this.#synching;
-
     {
       const gpu_data = this.data.position
         ? this.data.position
@@ -358,7 +358,7 @@ export class TransformFragment extends Fragment {
 
         Renderer.get().mark_bind_groups_dirty(true);
         global_dispatcher.dispatch(position_event, this.data.position_buffer);
-      } else if (!retry) {
+      } else {
         this.data.position_buffer.write(gpu_data);
       }
 
@@ -385,7 +385,7 @@ export class TransformFragment extends Fragment {
 
         Renderer.get().mark_bind_groups_dirty(true);
         global_dispatcher.dispatch(rotation_event, this.data.rotation_buffer);
-      } else if (!retry) {
+      } else {
         this.data.rotation_buffer.write(gpu_data);
       }
 
@@ -412,7 +412,7 @@ export class TransformFragment extends Fragment {
 
         Renderer.get().mark_bind_groups_dirty(true);
         global_dispatcher.dispatch(scale_event, this.data.scale_buffer);
-      } else if (!retry) {
+      } else {
         this.data.scale_buffer.write(gpu_data);
       }
 
@@ -439,7 +439,7 @@ export class TransformFragment extends Fragment {
           aabb_node_index_event,
           this.data.aabb_node_index_buffer,
         );
-      } else if (!retry) {
+      } else {
         this.data.aabb_node_index_buffer.write(gpu_data);
       }
 
@@ -464,15 +464,17 @@ export class TransformFragment extends Fragment {
           force: true,
         });
 
-        this.data.flags_cpu_buffer = Buffer.create({
-          name: flags_cpu_buffer_name,
-          usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
-          raw_data: gpu_data,
-          force: true,
-        });
+        for (let i = 0; i < MAX_BUFFERED_FRAMES; i++) {
+          this.data.flags_cpu_buffer[i] = Buffer.create({
+            name: `flags_cpu_buffer_${i}`,
+            usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
+            raw_data: gpu_data,
+            force: true,
+          });
+        }
         Renderer.get().mark_bind_groups_dirty(true);
         global_dispatcher.dispatch(flags_event, this.data.flags_buffer);
-      } else if (!retry) {
+      } else {
         this.data.flags_buffer.write(gpu_data);
       }
 
@@ -499,7 +501,7 @@ export class TransformFragment extends Fragment {
 
         Renderer.get().mark_bind_groups_dirty(true);
         global_dispatcher.dispatch(dirty_event, this.data.dirty_buffer);
-      } else if (!retry) {
+      } else {
         this.data.dirty_buffer.write(gpu_data);
       }
 
@@ -524,34 +526,37 @@ export class TransformFragment extends Fragment {
           force: true,
         });
 
-        this.data.transforms_cpu_buffer = Buffer.create({
-          name: transforms_cpu_buffer_name,
-          usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
-          raw_data: gpu_data,
-          force: true,
-        });
+        for (let i = 0; i < MAX_BUFFERED_FRAMES; i++) {
+          this.data.transforms_cpu_buffer[i] = Buffer.create({
+            name: `transforms_cpu_buffer_${i}`,
+            usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
+            raw_data: gpu_data,
+            force: true,
+          });
+        }
         Renderer.get().mark_bind_groups_dirty(true);
         global_dispatcher.dispatch(
           transforms_event,
           this.data.transforms_buffer,
         );
-      } else if (!retry) {
+      } else {
         this.data.transforms_buffer.write(gpu_data);
       }
 
       global_dispatcher.dispatch(transforms_update_event);
     }
 
-    this.data.gpu_data_dirty = retry;
+    this.data.gpu_data_dirty = false;
   }
 
-  static #synching = false;
   static async sync_buffers() {
-    if (this.#synching) return;
-    this.#synching = true;
+    const buffered_frame = Renderer.get().get_buffered_frame_number();
 
-    if (this.data.flags_cpu_buffer?.buffer.mapState === unmapped_state) {
-      await this.data.flags_cpu_buffer.read(
+    if (
+      this.data.flags_cpu_buffer[buffered_frame]?.buffer.mapState ===
+      unmapped_state
+    ) {
+      await this.data.flags_cpu_buffer[buffered_frame].read(
         this.data.flags,
         this.data.flags.byteLength,
         0,
@@ -560,8 +565,11 @@ export class TransformFragment extends Fragment {
       );
     }
 
-    if (this.data.transforms_cpu_buffer?.buffer.mapState === unmapped_state) {
-      await this.data.transforms_cpu_buffer.read(
+    if (
+      this.data.transforms_cpu_buffer[buffered_frame]?.buffer.mapState ===
+      unmapped_state
+    ) {
+      await this.data.transforms_cpu_buffer[buffered_frame].read(
         this.data.transforms,
         this.data.transforms.byteLength,
         0,
@@ -569,8 +577,6 @@ export class TransformFragment extends Fragment {
         Float32Array,
       );
     }
-
-    this.#synching = false;
   }
 
   static copy_entity_instance(to_index, from_index) {
@@ -776,18 +782,26 @@ export class TransformFragment extends Fragment {
     return [scale_x, scale_y, scale_z];
   }
 
-  static clear_dirty_flags() {
+  static add_world_offset(entity, offset, instance = 0) {
+    const entity_offset = EntityID.get_absolute_index(entity);
+    const entity_index = entity_offset + instance;
+
+    this.data.transforms[entity_index * 32 + 12] += offset[0];
+    this.data.transforms[entity_index * 32 + 13] += offset[1];
+    this.data.transforms[entity_index * 32 + 14] += offset[2];
+  }
+
+  static clear_all_dirty_flags() {
     for (let i = 0; i < this.size; i++) {
-      this.data.gpu_data_dirty |= this.data.dirty[i] !== 0;
       this.data.dirty[i] = 0;
     }
+    this.data.gpu_data_dirty = true;
   }
 
   static async on_post_render() {
     if (!this.data) {
       return;
     }
-
-    await this.sync_buffers();
+    BufferSync.request_sync(this);
   }
 }

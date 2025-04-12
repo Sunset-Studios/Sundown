@@ -1,6 +1,7 @@
 import application_state from "./application_state.js";
 import SimulationCore from "./simulation_core.js";
 import { Renderer } from "../renderer/renderer.js";
+import { BufferSync } from "../renderer/buffer.js";
 import { DeferredShadingStrategy } from "../renderer/strategies/deferred_shading.js";
 import { InputProvider } from "../input/input_provider.js";
 import { MetaSystem } from "../meta/meta_system.js";
@@ -36,12 +37,18 @@ export class Simulator {
 
   _simulate(delta_time) {
     if (application_state.is_running) {
-      profile_scope("frame_loop", () => {
+      profile_scope("frame_loop", async () => {
+        await BufferSync.process_syncs();
+
         const renderer = Renderer.get();
         reset_ui(renderer.canvas_ui?.width ?? 0, renderer.canvas_ui?.height ?? 0);
+        
         InputProvider.update(delta_time);
+        
         SimulationCore.update(delta_time);
+        
         renderer.render(delta_time);
+        
         flush_ui(renderer.context_ui);
       });
     }

@@ -1,6 +1,7 @@
 import { Name } from "../utility/names.js";
 import { Renderer } from "./renderer.js";
 import { ResourceCache } from "./resource_cache.js";
+import { RandomAccessAllocator } from "../memory/allocator.js";
 import { CacheTypes, BufferFlags } from "./renderer_types.js";
 
 export class Buffer {
@@ -122,4 +123,22 @@ export class Buffer {
 
         return existing_buffer;
     }
+}
+
+export class BufferSync {
+  static sync_targets = new Set();
+  
+  static request_sync(target) {
+    this.sync_targets.add(target);
+  }
+  
+  static async process_syncs() {
+    try {
+      for (const target of this.sync_targets) {
+        await target.sync_buffers();
+      }
+    } finally {
+      this.sync_targets.clear();
+    }
+  }
 }

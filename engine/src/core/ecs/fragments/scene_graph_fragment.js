@@ -6,6 +6,7 @@ import { global_dispatcher } from "../../../core/dispatcher.js";
 import { RingBufferAllocator } from "../../../memory/allocator.js";
 import { EntityID } from "../entity.js";
 import { EntityManager } from "../entity.js";
+import { MAX_BUFFERED_FRAMES } from "../../../core/minimal.js";
 import { Tree } from "../../../memory/container.js";
 
 const scene_graph_buffer_name = "scene_graph_buffer";
@@ -154,8 +155,6 @@ export class SceneGraphFragment extends Fragment {
   static rebuild_buffers() {
     if (!this.data.gpu_data_dirty) return;
 
-    let retry = this.#synching;
-
     {
       const { result, layer_counts } = this.data.scene_graph.flatten(
         Int32Array,
@@ -216,22 +215,18 @@ export class SceneGraphFragment extends Fragment {
           scene_graph_event,
           this.data.scene_graph_buffer,
         );
-      } else if (!retry) {
+      } else {
         this.data.scene_graph_buffer.write(gpu_data);
       }
 
       global_dispatcher.dispatch(scene_graph_update_event);
     }
 
-    this.data.gpu_data_dirty = retry;
+    this.data.gpu_data_dirty = false;
   }
 
-  static #synching = false;
   static async sync_buffers() {
-    if (this.#synching) return;
-    this.#synching = true;
-
-    this.#synching = false;
+    const buffered_frame = Renderer.get().get_buffered_frame_number();
   }
 
   static copy_entity_instance(to_index, from_index) {

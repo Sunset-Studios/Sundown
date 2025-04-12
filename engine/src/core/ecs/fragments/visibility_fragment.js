@@ -6,6 +6,7 @@ import { global_dispatcher } from "../../../core/dispatcher.js";
 import { RingBufferAllocator } from "../../../memory/allocator.js";
 import { EntityID } from "../entity.js";
 import { EntityManager } from "../entity.js";
+import { MAX_BUFFERED_FRAMES } from "../../../core/minimal.js";
 
 const visible_buffer_name = "visible_buffer";
 const visible_cpu_buffer_name = "visible_cpu_buffer";
@@ -143,8 +144,6 @@ export class VisibilityFragment extends Fragment {
   static rebuild_buffers() {
     if (!this.data.gpu_data_dirty) return;
 
-    let retry = this.#synching;
-
     {
       const gpu_data = this.data.visible
         ? this.data.visible
@@ -162,22 +161,18 @@ export class VisibilityFragment extends Fragment {
 
         Renderer.get().mark_bind_groups_dirty(true);
         global_dispatcher.dispatch(visible_event, this.data.visible_buffer);
-      } else if (!retry) {
+      } else {
         this.data.visible_buffer.write(gpu_data);
       }
 
       global_dispatcher.dispatch(visible_update_event);
     }
 
-    this.data.gpu_data_dirty = retry;
+    this.data.gpu_data_dirty = false;
   }
 
-  static #synching = false;
   static async sync_buffers() {
-    if (this.#synching) return;
-    this.#synching = true;
-
-    this.#synching = false;
+    const buffered_frame = Renderer.get().get_buffered_frame_number();
   }
 
   static copy_entity_instance(to_index, from_index) {

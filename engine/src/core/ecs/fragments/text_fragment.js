@@ -6,6 +6,7 @@ import { global_dispatcher } from "../../../core/dispatcher.js";
 import { RingBufferAllocator } from "../../../memory/allocator.js";
 import { EntityID } from "../entity.js";
 import { EntityManager } from "../entity.js";
+import { MAX_BUFFERED_FRAMES } from "../../../core/minimal.js";
 import { FontCache } from "../../../ui/text/font_cache.js";
 
 const text_buffer_name = "text_buffer";
@@ -321,8 +322,6 @@ export class TextFragment extends Fragment {
   static rebuild_buffers() {
     if (!this.data.gpu_data_dirty) return;
 
-    let retry = this.#synching;
-
     {
       const gpu_data = this.data.text.get_data();
 
@@ -339,7 +338,7 @@ export class TextFragment extends Fragment {
 
         Renderer.get().mark_bind_groups_dirty(true);
         global_dispatcher.dispatch(text_event, this.data.text_buffer);
-      } else if (!retry) {
+      } else {
         this.data.text_buffer.write(gpu_data);
       }
 
@@ -382,22 +381,18 @@ export class TextFragment extends Fragment {
           string_data_event,
           this.data.string_data_buffer,
         );
-      } else if (!retry) {
+      } else {
         this.data.string_data_buffer.write(gpu_data);
       }
 
       global_dispatcher.dispatch(string_data_update_event);
     }
 
-    this.data.gpu_data_dirty = retry;
+    this.data.gpu_data_dirty = false;
   }
 
-  static #synching = false;
   static async sync_buffers() {
-    if (this.#synching) return;
-    this.#synching = true;
-
-    this.#synching = false;
+    const buffered_frame = Renderer.get().get_buffered_frame_number();
   }
 
   static copy_entity_instance(to_index, from_index) {

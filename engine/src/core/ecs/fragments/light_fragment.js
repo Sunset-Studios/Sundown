@@ -6,6 +6,7 @@ import { global_dispatcher } from "../../../core/dispatcher.js";
 import { RingBufferAllocator } from "../../../memory/allocator.js";
 import { EntityID } from "../entity.js";
 import { EntityManager } from "../entity.js";
+import { MAX_BUFFERED_FRAMES } from "../../../core/minimal.js";
 
 const light_fragment_buffer_name = "light_fragment_buffer";
 const light_fragment_cpu_buffer_name = "light_fragment_cpu_buffer";
@@ -454,8 +455,6 @@ export class LightFragment extends Fragment {
   static rebuild_buffers() {
     if (!this.data.gpu_data_dirty) return;
 
-    let retry = this.#synching;
-
     {
       let total_active = 0;
       for (let i = 0; i < this.size; i++) {
@@ -507,22 +506,18 @@ export class LightFragment extends Fragment {
           light_fragment_event,
           this.data.light_fragment_buffer,
         );
-      } else if (!retry) {
+      } else {
         this.data.light_fragment_buffer.write(gpu_data);
       }
 
       global_dispatcher.dispatch(light_fragment_update_event);
     }
 
-    this.data.gpu_data_dirty = retry;
+    this.data.gpu_data_dirty = false;
   }
 
-  static #synching = false;
   static async sync_buffers() {
-    if (this.#synching) return;
-    this.#synching = true;
-
-    this.#synching = false;
+    const buffered_frame = Renderer.get().get_buffered_frame_number();
   }
 
   static copy_entity_instance(to_index, from_index) {

@@ -205,15 +205,15 @@ export class AABBEntityAdapter extends SimulationLayer {
           const instance_node_index = transforms.aabb_node_index[entity_offset + i];
           this.tree_processor.mark_node_dirty(instance_node_index);
           transforms.flags[entity_offset + i] &= ~EntityTransformFlags.AABB_DIRTY;
-          transforms.gpu_data_dirty = true;
         }
       }
     }
   }
 
   _on_post_render(graph, frame_data, encoder) {
-    if (AABB.data.node_bounds_cpu_buffer.buffer.mapState === unmapped_state) {
-      AABB.data.node_bounds_buffer.copy_buffer(encoder, 0, AABB.data.node_bounds_cpu_buffer);
+    const buffered_frame = Renderer.get().get_buffered_frame_number();
+    if (AABB.data.node_bounds_cpu_buffer[buffered_frame]?.buffer.mapState === unmapped_state) {
+      AABB.data.node_bounds_buffer.copy_buffer(encoder, 0, AABB.data.node_bounds_cpu_buffer[buffered_frame]);
     }
   }
 }

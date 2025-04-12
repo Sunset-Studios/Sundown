@@ -1,4 +1,5 @@
 import { Renderer } from "../../renderer/renderer.js";
+import { MAX_BUFFERED_FRAMES } from "../minimal.js";
 import { SimulationLayer } from "../simulation_layer.js";
 import { EntityManager } from "../ecs/entity.js";
 import { ComputeTaskQueue } from "../../renderer/compute_task_queue.js";
@@ -24,12 +25,10 @@ export class TransformProcessor extends SimulationLayer {
     });
     this.on_post_render_callback = this._on_post_render.bind(this);
     this._update_internal = this._update_internal.bind(this);
-    this._on_render_complete = this._on_render_complete.bind(this);
-
-    Renderer.get().on_post_render(this._on_render_complete);
   }
 
   update(delta_time) {
+    super.update(delta_time);
     profile_scope(transform_processor_update_scope_name, this._update_internal);
   }
 
@@ -81,20 +80,14 @@ export class TransformProcessor extends SimulationLayer {
 
   _on_post_render(graph, frame_data, encoder) {
     const transforms = EntityManager.get_fragment_array(TransformFragment);
-    if (!transforms) {
-      return;
+    const buffered_frame = Renderer.get().get_buffered_frame_number();
+
+    if (transforms.flags_cpu_buffer[buffered_frame]?.buffer.mapState === unmapped_state) {
+      transforms.flags_buffer.copy_buffer(encoder, 0, transforms.flags_cpu_buffer[buffered_frame]);
     }
 
-    if (transforms.flags_cpu_buffer.buffer.mapState === unmapped_state && !transforms.gpu_data_dirty) {
-      transforms.flags_buffer.copy_buffer(encoder, 0, transforms.flags_cpu_buffer);
+    if (transforms.transforms_cpu_buffer[buffered_frame]?.buffer.mapState === unmapped_state) {
+      transforms.transforms_buffer.copy_buffer(encoder, 0, transforms.transforms_cpu_buffer[buffered_frame]);
     }
-
-    if (transforms.transforms_cpu_buffer.buffer.mapState === unmapped_state && !transforms.gpu_data_dirty) {
-      transforms.transforms_buffer.copy_buffer(encoder, 0, transforms.transforms_cpu_buffer);
-    }
-  }
-
-  async _on_render_complete() {
-    TransformFragment.clear_dirty_flags();
   }
 }

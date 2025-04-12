@@ -85,7 +85,7 @@ export const UIContext = {
   /**
    * Global layout stack.
    */
-  layout_stack: new FrameStackAllocator(100, 0),
+  layout_stack: new FrameStackAllocator(100, 0), // TODO: Turn this into a TypedStack since it's just storing a single int per entry.
   /**
    * Global unique ID counter.
    */
