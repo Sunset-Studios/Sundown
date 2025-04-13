@@ -32,6 +32,7 @@ import * as UI from "../engine/src/ui/2d/immediate.js";
 
 import { Layer, TrainingContext } from "../engine/src/ml/layer.js";
 import { LayerType } from "../engine/src/ml/ml_types.js";
+import { Input } from "../engine/src/ml/layers/input.js";
 import { MasterMind } from "../engine/src/ml/mastermind.js";
 import { Tensor, TensorInitializer } from "../engine/src/ml/math/tensor.js";
 import { Adam } from "../engine/src/ml/optimizers/adam.js";
@@ -193,6 +194,7 @@ export class MLScene extends Scene {
   mastermind = null;
   sine_model = null;
   xor_model = null;
+  xor_model_input = null;
 
   scene_entities = [];
 
@@ -283,13 +285,14 @@ export class MLScene extends Scene {
 
     profile_scope("ml_training_test.update", () => {
       for (let i = 0; i < 4; i++) {
-        // Generate and enqueue a training batch for the sine model.
+        // Generate and enqueue a training batch for the sine model. This example shows how to use the mastermind to add training data.
         const sine_batch = this.create_sine_batch();
         this.mastermind.add_training_batch(this.sine_model, sine_batch.input, sine_batch.target);
 
-        // Generate and enqueue a training batch for the XOR model.
+        // Generate and enqueue a training batch for the XOR model. This example shows how to use the Input layer to add training data.
         const xor_batch = this.create_xor_batch();
-        this.mastermind.add_training_batch(this.xor_model, xor_batch.input, xor_batch.target);
+        const xor_input_layer = Layer.get(this.xor_model_input);
+        Input.add_sample_batch(xor_input_layer, xor_batch.input, xor_batch.target);
       }
 
       this.mastermind.tick(delta_time);
@@ -350,34 +353,39 @@ export class MLScene extends Scene {
     // ---------------------------------------------------------------------------
     // Model B: XOR Classifier (layers API)
     // Task: Given two binary inputs, predict the XOR (0 or 1).
-    // Architecture: [2] -> FullyConnectedLayer (2 -> 8) -> ReLu ->
+    // Architecture: InputLayer [2] -> FullyConnectedLayer (2 -> 8) -> ReLu ->
     //               FullyConnectedLayer (8 -> 4) -> ReLu ->
     //               FullyConnectedLayer (4 -> 1) -> Sigmoid -> MSELoss
     // ---------------------------------------------------------------------------
     {
-      const root = Layer.create(LayerType.FULLY_CONNECTED, {
+      const root = Layer.create(LayerType.INPUT, {
+        capacity: 1000,
+        batch_size: 16,
+      });
+
+      const hidden1 = Layer.create(LayerType.FULLY_CONNECTED, {
         input_size: 2,
         output_size: 8,
         initializer: TensorInitializer.GLOROT,
-      });
+      }, root);
 
-      const relu1 = Layer.create(LayerType.RELU, {}, root);
+      const relu1 = Layer.create(LayerType.RELU, {}, hidden1);
 
-      const hidden1 = Layer.create(
+      const hidden2 = Layer.create(
         LayerType.FULLY_CONNECTED,
         { input_size: 8, output_size: 4, initializer: TensorInitializer.GLOROT },
         relu1
       );
 
-      const relu2 = Layer.create(LayerType.RELU, {}, hidden1);
+      const relu2 = Layer.create(LayerType.RELU, {}, hidden2);
 
-      const hidden2 = Layer.create(
+      const hidden3 = Layer.create(
         LayerType.FULLY_CONNECTED,
         { input_size: 4, output_size: 1, initializer: TensorInitializer.GLOROT },
         relu2
       );
 
-      const sigmoid = Layer.create(LayerType.SIGMOID, {}, hidden2);
+      const sigmoid = Layer.create(LayerType.SIGMOID, {}, hidden3);
 
       const loss = Layer.create(
         LayerType.MSE,
@@ -395,6 +403,7 @@ export class MLScene extends Scene {
         })
       );
 
+      this.xor_model_input = root;
       this.xor_model = this.mastermind.register_subnet(root);
     }
   }
@@ -1253,10 +1262,10 @@ export class SceneSwitcher extends SimulationLayer {
   const textures_scene = new TexturesScene("TexturesScene");
 
   const scene_switcher = new SceneSwitcher("SceneSwitcher");
-  await scene_switcher.add_scene(textures_scene);
+  //await scene_switcher.add_scene(textures_scene);
   //await scene_switcher.add_scene(aabb_scene);
   //await scene_switcher.add_scene(rendering_scene);
-  //await scene_switcher.add_scene(ml_scene);
+  await scene_switcher.add_scene(ml_scene);
  
   await simulator.add_sim_layer(scene_switcher);
 

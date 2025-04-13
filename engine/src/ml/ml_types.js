@@ -8,15 +8,16 @@ export const OptimizerType = Object.freeze({
 });
 
 export const LayerType = Object.freeze({
-  FULLY_CONNECTED: 0,
-  CONVOLUTIONAL: 1,
-  POOLING: 2,
-  DROPOUT: 3,
-  MSE: 4,
-  CROSS_ENTROPY: 5,
-  BINARY_CROSS_ENTROPY: 6,
-  RELU: 7,
-  TANH: 8,
-  SIGMOID: 9,
-  SOFTMAX: 10,
+  INPUT: 0,
+  FULLY_CONNECTED: 1,
+  CONVOLUTIONAL: 2,
+  POOLING: 3,
+  DROPOUT: 4,
+  MSE: 5,
+  CROSS_ENTROPY: 6,
+  BINARY_CROSS_ENTROPY: 7,
+  RELU: 8,
+  TANH: 9,
+  SIGMOID: 10,
+  SOFTMAX: 11,
 });

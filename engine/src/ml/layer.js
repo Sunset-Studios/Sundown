@@ -3,6 +3,7 @@ import { TypedVector } from "../memory/container.js";
 import { Tensor } from "./math/tensor.js";
 import { LayerType } from "./ml_types.js";
 
+import { Input } from "./layers/input.js";
 import { FullyConnected } from "./layers/fully_connected.js";
 import { MSELoss } from "./layers/mse_loss.js";
 import { CrossEntropyLoss } from "./layers/cross_entropy_loss.js";
@@ -42,6 +43,7 @@ export class TrainingContext {
     this.momentum = options.momentum || 0;
     this.weight_decay = options.weight_decay || 0;
     this.name = options.name || null;
+    this.target_batch = options.target_batch || null;
   }
 
   derive(overrides = {}) {
@@ -63,6 +65,8 @@ export class Layer {
 
   static initialize() {
     if (Layer.initialized) return;
+
+    Layer.register_handler(LayerType.INPUT, Input);
 
     Layer.register_handler(LayerType.FULLY_CONNECTED, FullyConnected);
 
@@ -708,18 +712,22 @@ export class Layer {
       }
 
       // Process the layer
-      let layer_output;
+      let combined_input = null;
       if (layer_inputs.length > 0) {
         // Combine inputs if multiple parents
-        const combined_input = Layer.combine_inputs(current_layer, layer_inputs);
-        layer_output = Layer.process_forward(current_id, combined_input, target);
-      } else {
-        // No inputs (shouldn't happen in normal operation)
-        layer_output = null;
+        combined_input = Layer.combine_inputs(current_layer, layer_inputs);
       }
 
+      let layer_output = Layer.process_forward(current_id, combined_input, target);
       // Store the output
       outputs.set(current_id, layer_output);
+
+      // If target is not provided, use the target from the effective context set from input layers if they're present
+      // (target in effective context is processed in Input.forward())
+      if (target === null) {
+        const context = Layer.get_effective_context(current_id);
+        target = context.target_batch;
+      }
 
       // Enqueue children whose dependencies are resolved
       for (let i = 0; i < current_layer.child_ids.length; ++i) {
@@ -790,6 +798,13 @@ export class Layer {
       const current_id = queue.shift();
       const current_layer = Layer.get(current_id);
       const current_grad = gradients.get(current_id);
+
+      // If target is not provided, use the target from the effective context set from input layers if they're present
+      // (target in effective context is processed in Input.forward())
+      if (target === null) {
+        const context = Layer.get_effective_context(current_id);
+        target = context.target_batch;
+      }
 
       // Compute gradient with respect to input
       const input_grad = Layer.process_backward(current_id, current_grad, target);

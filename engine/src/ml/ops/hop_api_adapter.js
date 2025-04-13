@@ -14,6 +14,10 @@ export class HopAPIAdapter {
     return Layer.set_layer_context_property(subnet_id, prop_name, value);
   }
 
+  static add_input(capacity, batch_size, parent = null) {
+    return Layer.create(LayerType.INPUT, { capacity, batch_size }, parent);
+  }
+
   static add_layer(type, input_size, output_size, parent = null, options = {}, params = null) {
     let layer = null;
 

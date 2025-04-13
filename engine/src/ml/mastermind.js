@@ -1,68 +1,9 @@
+import { TrainingQueue } from "./layers/input.js";
 import { Layer } from "./layer.js";
 import { MLOps } from "./ops/ops.js";
-import { Tensor } from "./math/tensor.js";
 import { NeuralArchitectureHelpers } from "./neural_architecture.js";
 
 const function_name = "function";
-
-/**
- * A simple ring buffer for training batches.
-
- *
- * Each training batch is an object with "input" and "target" properties.
- * This fixed‑capacity queue avoids array shifting overhead.
- */
-class TrainingQueue {
-  /**
-   * @param {number} capacity - Maximum number of batches to hold.
-   */
-  constructor(capacity) {
-    this.capacity = capacity;
-    this.buffer = new Array(capacity);
-    this.head = 0;
-    this.tail = 0;
-    this.count = 0;
-  }
-
-  /**
-   * Adds a training batch to the queue.
-   * If the queue is full, it overwrites the oldest batch.
-   *
-   * @param {Object} batch - An object with properties { input, target }.
-   */
-  push(batch) {
-    if (this.count === this.capacity) {
-      // Overwrite the oldest: advance head
-      this.buffer[this.tail] = batch;
-      this.tail = (this.tail + 1) % this.capacity;
-      this.head = (this.head + 1) % this.capacity;
-    } else {
-      this.buffer[this.tail] = batch;
-      this.tail = (this.tail + 1) % this.capacity;
-      this.count++;
-    }
-  }
-
-  /**
-   * Removes and returns the oldest training batch.
-   *
-   * @returns {Object|null} The batch object or null if empty.
-   */
-  shift() {
-    if (this.count === 0) return null;
-    const batch = this.buffer[this.head];
-    this.head = (this.head + 1) % this.capacity;
-    this.count--;
-    return batch;
-  }
-
-  /**
-   * @returns {number} The current number of items in the queue.
-   */
-  get length() {
-    return this.count;
-  }
-}
 
 /**
  * The MasterMind is an orchestrator that runs a continuous training loop in real time,
@@ -124,8 +65,7 @@ export class MasterMind {
    *
    * @param {string} subnet_id - Unique identifier for the subnet.
    * @param {Object} subnet_obj - The subnet object.
-
-
+   * @param {number} [mini_batch_size=1] - The size of the mini-batch to use for training.
    * @param {function} [train_step_callback] - A training function. Depending on the model,
    * @param {function} [infer_callback] - A function(inputData) that returns inference results.
    * @returns {string} The registered model ID.
@@ -210,25 +150,10 @@ export class MasterMind {
       let subnet_entry = this.subnets[subnet_id];
 
       if (
-        subnet_entry.training_queue.length > 0 &&
         typeof subnet_entry.train_step === function_name
       ) {
-        const samples = [];
-
-        while (samples.length < this.mini_batch_size && subnet_entry.training_queue.length > 0) {
-          const batch = subnet_entry.training_queue.shift();
-          samples.push(batch);
-        }
-
-        const input_tensor_stack = Tensor.stack(samples.map((s) => s.input), null /* reference_tensor */, true /* immediate */);
-        const target_tensor_stack = Tensor.stack(samples.map((s) => s.target), null /* reference_tensor */, true /* immediate */);
-
-        for (let i = 0; i < samples.length; i++) {
-          samples[i].input.dispose();
-          samples[i].target.dispose();
-        }
-
-        subnet_entry.train_step(delta_time, input_tensor_stack, target_tensor_stack);
+        const { input, target } = subnet_entry.training_queue.next(this.mini_batch_size);
+        subnet_entry.train_step(delta_time, input, target);
       }
     }
 
@@ -314,9 +239,11 @@ export class MasterMind {
     if (!subnet_entry) {
       throw new Error(`Subnet "${subnet_id}" is not registered.`);
     }
-    if (subnet_entry.training_queue.length > 0 && typeof subnet_entry.train_step === function_name) {
-      const batch = subnet_entry.training_queue.shift();
-      subnet_entry.train_step(delta_time, batch.input, batch.target);
+    if (
+      typeof subnet_entry.train_step === function_name
+    ) {
+      const { input, target } = subnet_entry.training_queue.next(this.mini_batch_size);
+      subnet_entry.train_step(delta_time, input, target);
     }
   }
 
@@ -352,7 +279,7 @@ export class MasterMind {
           loss: layer.loss,
         });
       }
-      
+
       return {
         name: name,
         stats: stats,

@@ -31,6 +31,7 @@ export class MLOpStore {
     // Register handlers for hop operations
     this.register_hop_handler(MLHopType.SET_SUBNET_CONTEXT, HopAPIAdapter.set_subnet_context);
     this.register_hop_handler(MLHopType.SET_SUBNET_CONTEXT_PROPERTY, HopAPIAdapter.set_subnet_context_property);
+    this.register_hop_handler(MLHopType.ADD_INPUT, HopAPIAdapter.add_input);
     this.register_hop_handler(MLHopType.ADD_LAYER, HopAPIAdapter.add_layer);
     this.register_hop_handler(MLHopType.ADD_ACTIVATION, HopAPIAdapter.add_activation);
     this.register_hop_handler(MLHopType.ADD_LOSS, HopAPIAdapter.add_loss);
@@ -681,6 +682,27 @@ export class MLOpStore {
     this.hops_params.add(subnet_id, 1);
     this.hops_params.add(prop_name, 1);
     this.hops_params.add(value, 1);
+
+    this.notify_observers(hop);
+
+    return result;
+  }
+
+  add_input(capacity, batch_size, parent = null) {
+    const hop = this.hops.allocate();
+    hop.type = MLHopType.ADD_INPUT;
+    hop.param_start = this.hops_params.length;
+    hop.param_count = 2;
+    
+    let result = null;
+    if (this.hop_handlers.has(MLHopType.ADD_INPUT)) {
+      result = this.hop_handlers.get(MLHopType.ADD_INPUT)(capacity, batch_size, parent);
+    }
+
+    hop.result = result;
+
+    this.hops_params.add(capacity, 1);
+    this.hops_params.add(batch_size, 1);
 
     this.notify_observers(hop);
 
