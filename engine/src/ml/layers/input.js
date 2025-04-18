@@ -1,5 +1,6 @@
 import { Tensor } from "../math/tensor.js";
 import { Layer } from "../layer.js";
+import { InputType } from "../ml_types.js";
 
 const number_name = "number";
 const input_layer_error = "InputLayer not initialized correctly.";
@@ -157,6 +158,7 @@ export class Input {
     layer.batch_size = props.batch_size;
     layer.current_input_batch = null; // To hold the latest batch for children
     layer.current_target_batch = null; // To hold the latest batch for loss functions
+    layer.input_type = InputType.NUMERIC;
   }
 
   /**
@@ -175,6 +177,16 @@ export class Input {
     input_batch.persistent = mark_persistent;
     target_batch.persistent = mark_persistent;
     layer.training_queue.push({ input: input_batch, target: target_batch });
+  }
+
+  /**
+   * Sets the input type for the input layer.
+   *
+   * @param {Layer} layer - The input layer instance.
+   * @param {number} input_type - The input type to set.
+   */
+  static set_input_type(layer, input_type) {
+    layer.input_type = input_type;
   }
 
   /**

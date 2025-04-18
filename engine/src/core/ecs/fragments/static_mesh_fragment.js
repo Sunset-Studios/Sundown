@@ -90,6 +90,10 @@ export class StaticMeshFragment extends Fragment {
       mesh: new BigInt64Array(1),
       material_slots: new BigInt64Array(16),
       dirty: new Uint8Array(1),
+      valid_prev: new Int32Array(1),
+      valid_next: new Int32Array(1),
+      first_valid_index: -1,
+      last_valid_index: -1,
       gpu_data_dirty: true,
     };
   }
@@ -111,6 +115,9 @@ export class StaticMeshFragment extends Fragment {
       16,
     );
     Fragment.resize_array(this.data, "dirty", new_size, Uint8Array, 1);
+
+    Fragment.resize_array(this.data, "valid_prev", new_size, Int32Array, 1);
+    Fragment.resize_array(this.data, "valid_next", new_size, Int32Array, 1);
   }
 
   static add_entity(entity) {
@@ -118,6 +125,18 @@ export class StaticMeshFragment extends Fragment {
     if (absolute_entity >= this.size) {
       this.resize(absolute_entity * 2);
     }
+
+    const idx = Number(absolute_entity);
+    const tail = this.data.last_valid_index;
+    if (tail >= 0) {
+      this.data.valid_next[tail] = idx;
+      this.data.valid_prev[idx] = tail;
+    } else {
+      this.data.first_valid_index = idx;
+      this.data.valid_prev[idx] = -1;
+    }
+    this.data.valid_next[idx] = -1;
+    this.data.last_valid_index = idx;
 
     return this.get_entity_data(entity);
   }
@@ -134,6 +153,27 @@ export class StaticMeshFragment extends Fragment {
       }
       this.data.dirty[entity_offset + i] = 1;
     }
+
+    // unlink from the live‐list in O(1)
+    const idx = Number(EntityID.get_absolute_index(entity));
+    const p = this.data.valid_prev[idx];
+    const n = this.data.valid_next[idx];
+
+    if (p >= 0) {
+      this.data.valid_next[p] = n;
+    } else {
+      this.data.first_valid_index = n;
+    }
+
+    if (n >= 0) {
+      this.data.valid_prev[n] = p;
+    } else {
+      this.data.last_valid_index = p;
+    }
+
+    // clear pointers for safety
+    this.data.valid_prev[idx] = -1;
+    this.data.valid_next[idx] = -1;
   }
 
   static get_entity_data(entity, instance = 0) {
@@ -193,5 +233,12 @@ export class StaticMeshFragment extends Fragment {
     this.data.dirty[to_index * 1 + 0] = this.data.dirty[from_index * 1 + 0];
 
     this.data.gpu_data_dirty = true;
+
+    this.data.dirty[to_index] = 1;
+    this.data.dirty[from_index] = 1;
+  }
+
+  static get highest_entity() {
+    return this.data.last_valid_index;
   }
 }

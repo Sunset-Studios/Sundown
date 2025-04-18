@@ -16,7 +16,6 @@ export const TensorInitializer = {
 
 export class Tensor {
   // A pool of all allocated Tensor objects (by tensor ID/index).
-
   static pool = [];
   // A free list of tensor IDs that are available for reuse.
   static free_list = [];

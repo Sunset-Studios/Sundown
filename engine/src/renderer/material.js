@@ -262,11 +262,12 @@ export class MaterialTemplate {
 export class Material {
   static materials = new Map();
 
-  constructor(name, template) {
+  constructor(name, template, parent_id = null) {
     this.name = name;
     this.template = template;
     this.pipeline_state = null;
     this.bind_group = null;
+    this.parent = parent_id;
     this.uniform_data = new Map();
     this.storage_data = new Map();
     this.texture_data = new Map();
@@ -419,13 +420,24 @@ export class Material {
   }
 
   bind(render_pass, bind_groups = [], output_targets = []) {
-    if (!this.pipeline_state && bind_groups.length > 0 && output_targets.length > 0) {
+    if (
+      !this.pipeline_state &&
+      !this.parent &&
+      bind_groups.length > 0 &&
+      output_targets.length > 0
+    ) {
       this.update_pipeline_state(bind_groups, output_targets);
-      bind_groups.forEach((bind_group) => {
-        if (bind_group) {
-          bind_group.bind(render_pass);
+      for (let i = 0; i < bind_groups.length; i++) {
+        if (bind_groups[i]) {
+          bind_groups[i].bind(render_pass);
         }
-      });
+      }
+    }
+
+    let pso = this.pipeline_state;
+    const parent_material = Material.get(this.parent);
+    if (parent_material) {
+      pso = parent_material.pipeline_state;
     }
 
     if (this.needs_bind_group_update) {
@@ -433,8 +445,8 @@ export class Material {
       this.needs_bind_group_update = false;
     }
 
-    if (this.pipeline_state) {
-      render_pass.set_pipeline(this.pipeline_state);
+    if (pso) {
+      render_pass.set_pipeline(pso);
     }
 
     if (this.bind_group) {
@@ -446,7 +458,11 @@ export class Material {
     return this.state_hash;
   }
 
-  static create(name, template_name, options = {}) {
+  new_instance(instance_name) {
+    return Material.create(instance_name, this.template.name, {}, this.parent);
+  }
+
+  static create(name, template_name, options = {}, parent_id = null) {
     const template = MaterialTemplate.get_template(template_name);
     if (!template) {
       throw new Error(`Material template '${template_name}' not found`);
@@ -462,7 +478,7 @@ export class Material {
     }
 
     if (!material) {
-      material = new Material(name, template);
+      material = new Material(name, template, parent_id);
       if (options.family) {
         material.family = options.family;
       }

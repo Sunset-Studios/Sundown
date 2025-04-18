@@ -35,6 +35,7 @@ export class MLOpStore {
     this.register_hop_handler(MLHopType.ADD_LAYER, HopAPIAdapter.add_layer);
     this.register_hop_handler(MLHopType.ADD_ACTIVATION, HopAPIAdapter.add_activation);
     this.register_hop_handler(MLHopType.ADD_LOSS, HopAPIAdapter.add_loss);
+    this.register_hop_handler(MLHopType.PUSH_SAMPLES, HopAPIAdapter.push_samples);
     this.register_hop_handler(MLHopType.SET_OPTIMIZER, HopAPIAdapter.set_optimizer);
     this.register_hop_handler(MLHopType.RESET_MODEL, HopAPIAdapter.clear_model);
     
@@ -763,6 +764,27 @@ export class MLOpStore {
     hop.result = result;
 
     this.hops_params.add(type, 1);
+
+    this.notify_observers(hop);
+
+    return result;
+  }
+
+  push_samples(source_layer_id, data, shape, batch_size, input_type = InputType.NUMERIC) {
+    const hop = this.hops.allocate();
+    hop.type = MLHopType.PUSH_SAMPLES;
+    hop.param_start = this.hops_params.length;
+    hop.param_count = 2;
+    
+    let result = null;
+    if (this.hop_handlers.has(MLHopType.PUSH_SAMPLES)) {
+      result = this.hop_handlers.get(MLHopType.PUSH_SAMPLES)(source_layer_id, data, shape, batch_size, input_type);
+    }
+
+    hop.result = result.id;
+
+    this.hops_params.add(source_layer_id, 1);  
+    this.hops_params.add(input_type, 1);  
 
     this.notify_observers(hop);
 

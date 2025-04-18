@@ -127,6 +127,7 @@ export class Texture {
       sampleCount: config.sample_count,
       format: config.format,
       usage: config.usage,
+      dimension: Texture.texture_dimension_to_image_dimension(config.dimension),
     });
 
     this._setup_views();
@@ -172,6 +173,7 @@ export class Texture {
       mipLevelCount: this.config.mip_levels,
       sampleCount: this.config.sample_count,
       format: this.config.format,
+      dimension: Texture.texture_dimension_to_image_dimension(this.config.dimension),
       usage:
         GPUTextureUsage.TEXTURE_BINDING |
         GPUTextureUsage.RENDER_ATTACHMENT |
@@ -197,6 +199,7 @@ export class Texture {
       sampleCount: config.sample_count,
       format: config.format,
       usage: config.usage,
+      dimension: Texture.texture_dimension_to_image_dimension(config.dimension),
     });
 
     textures.forEach((texture, layer) => {
@@ -287,6 +290,64 @@ export class Texture {
         height: texture.config.height,
         depthOrArrayLayers: this.config.depth,
       }
+    );
+  }
+
+  copy_external(encoder, image, origin = [0, 0, 0], cols = 0, rows = 0, flip_y = false) {
+    encoder.copyExternalImageToTexture(
+      { source: image, flipY: flip_y },
+      { texture: this.image, origin: origin },
+      [cols, rows]
+    );
+  }
+
+  write(
+    data,
+    origin = [0, 0, 0],
+    data_offset = 0,
+    cols = 0,
+    rows = 0,
+    components = 1,
+    data_type = Float32Array
+  ) {
+    const renderer = Renderer.get();
+    const is_array_buffer = ArrayBuffer.isView(data);
+    const raw_data = is_array_buffer ? data : data.flat();
+    const buffer_data = is_array_buffer ? raw_data : new data_type(raw_data);
+
+    const unpadded_bytes_per_row = cols * components;
+
+    // WebGPU requires bytesPerRow to be a multiple of 256 bytes
+    const align                  = 256;
+    const padded_bytes_per_row   =
+        Math.ceil(unpadded_bytes_per_row / align) * align;
+
+    // If the row length is already aligned we can upload directly,
+    // otherwise we copy each row into a padded buffer.
+    let upload_array;
+    if (unpadded_bytes_per_row === padded_bytes_per_row) {
+      upload_array = buffer_data;
+    } else {
+      upload_array = new Uint8Array(padded_bytes_per_row * rows);
+      for (let row = 0; row < rows; ++row) {
+        const src_offset = row * unpadded_bytes_per_row;
+        const dst_offset = row * padded_bytes_per_row;
+        upload_array.set(
+          buffer_data.subarray(src_offset, src_offset + unpadded_bytes_per_row),
+          dst_offset
+        );
+      }
+    }
+
+    renderer.device.queue.writeTexture(
+      { texture: this.image, origin: origin },
+      upload_array,
+      {
+        offset: data_offset,
+        bytesPerRow: padded_bytes_per_row,
+        rowsPerImage: rows,
+      },
+      { width: cols, height: rows }
     );
   }
 
@@ -539,9 +600,25 @@ export class Texture {
       case "texture_3d":
         return "3d";
       case "texture_array":
-        return "2d_array";
+      case "texture_2d_array":
+        return "2d-array";
       case "texture_cube_array":
-        return "cube_array";
+        return "cube-array";
+      default:
+        return "2d";
+    }
+  }
+
+  static texture_dimension_to_image_dimension(texture_dimension) {
+    switch (texture_dimension) {
+      case "1d":
+        return "1d";
+      case "2d":
+      case "2d-array":
+      case "cube-array":
+        return "2d";
+      case "3d":
+        return "3d";
       default:
         return "2d";
     }

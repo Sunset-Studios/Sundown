@@ -1,5 +1,7 @@
-import { ModelType, LayerType, OptimizerType } from "../ml_types.js";
+import { LayerType, OptimizerType, InputType } from "../ml_types.js";
 import { Layer, TrainingContext } from "../layer.js";
+import { Input } from "../layers/input.js";
+import { Tensor } from "../math/tensor.js";
 
 import { Adam } from "../optimizers/adam.js";
 
@@ -34,6 +36,19 @@ export class HopAPIAdapter {
 
   static add_loss(type, enabled_logging = false, name = null, parent = null) {
     return Layer.create(type, { enabled_logging, name }, parent);
+  }
+
+  static push_samples(source_layer_id, data, shape, batch_size, input_type = InputType.NUMERIC) {
+    const input_layer = Layer.get(source_layer_id);
+    if (input_layer.type !== LayerType.INPUT) {
+      throw new Error("Source layer is not an input layer");
+    }
+
+    const tensor = Tensor.create(data, shape, batch_size, data.constructor);
+    Input.set_input_type(input_layer, input_type);
+    Input.add_sample_batch(input_layer, tensor, tensor);
+
+    return tensor;
   }
 
   static set_optimizer(type, root = null, beta1 = 0.9, beta2 = 0.999, epsilon = 1e-8) {

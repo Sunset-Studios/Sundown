@@ -68,6 +68,7 @@ export class Renderer {
           maxColorAttachmentBytesPerSample: 64,
           maxStorageBuffersPerShaderStage: 10,
           maxStorageBufferBindingSize: 256 * 1024 * 1024,
+          maxTextureArrayLayers: 2048,
         },
       });
     } catch (e) {

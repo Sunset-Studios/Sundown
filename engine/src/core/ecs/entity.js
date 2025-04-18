@@ -256,9 +256,10 @@ export class EntityManager {
     // 4. Resize the fragment arrays to the new total size
     for (const frag of this.fragment_types) {
       if (!frag.size) continue;
-      const new_size = frag.size + total_size_change;
+      const last_valid_index = frag.highest_entity;
+      const new_size = last_valid_index + total_size_change;
       if (new_size > frag.size) {
-        frag.resize(new_size * 2);
+        frag.resize(new_size);
       }
     }
 
@@ -267,12 +268,13 @@ export class EntityManager {
     const max_size = Math.max(...Array.from(this.fragment_types).map((ft) => ft.size ? ft.size : 0));
     const shifts = new Int32Array(max_size + 1);
 
-    // Build difference array
+    // Build difference array (use absolute index + last_count, not raw entity ID)
     for (const [entity, [last_count, new_count]] of sorted_changes) {
-      // Add shift_amount starting from (entity_index + last_count)
-      // because that range effectively "moves" the data
-      if (entity <= max_size) {
-        shifts[entity] += (new_count - last_count);
+      // compute where this entity’s old block ends
+      const entity_offset = EntityID.get_absolute_index(entity);
+      const shift_start = entity_offset + last_count;
+      if (shift_start <= max_size) {
+        shifts[shift_start] += (new_count - last_count);
       }
     }
 

@@ -140,6 +140,12 @@ const StaticMeshFragment = {
       }
       `,
     },
+    copy_entity_instance: {
+      post: `
+      this.data.dirty[to_index] = 1;
+      this.data.dirty[from_index] = 1;
+      `,
+    },
   },
 };
 

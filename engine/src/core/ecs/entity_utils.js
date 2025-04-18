@@ -296,3 +296,17 @@ export function delete_entity(entity, delete_children = false) {
     }
   }
 }
+
+export function delete_entity_children_with_tag(entity, tag) {
+  const scene_graph = EntityManager.get_fragment(entity, SceneGraphFragment);
+  if (!scene_graph) return;
+
+  const current_children = scene_graph.children;
+  for (let i = 0; i < current_children.length; i++) {
+    const child = current_children[i];
+    if (EntityManager.has_tag(child, tag)) {
+      delete_entity(child);
+    }
+  }
+}
+

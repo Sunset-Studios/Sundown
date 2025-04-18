@@ -222,6 +222,10 @@ export class TransformFragment extends Fragment {
       dirty_buffer: null,
       transforms_buffer: null,
       transforms_cpu_buffer: Array(MAX_BUFFERED_FRAMES).fill(null),
+      valid_prev: new Int32Array(1),
+      valid_next: new Int32Array(1),
+      first_valid_index: -1,
+      last_valid_index: -1,
       gpu_data_dirty: true,
     };
     Renderer.get().on_post_render(this.on_post_render.bind(this));
@@ -251,6 +255,9 @@ export class TransformFragment extends Fragment {
     Fragment.resize_array(this.data, "flags", new_size, Int32Array, 1);
     Fragment.resize_array(this.data, "dirty", new_size, Uint32Array, 1);
 
+    Fragment.resize_array(this.data, "valid_prev", new_size, Int32Array, 1);
+    Fragment.resize_array(this.data, "valid_next", new_size, Int32Array, 1);
+
     this.data.gpu_data_dirty = true;
   }
 
@@ -259,6 +266,18 @@ export class TransformFragment extends Fragment {
     if (absolute_entity >= this.size) {
       this.resize(absolute_entity * 2);
     }
+
+    const idx = Number(absolute_entity);
+    const tail = this.data.last_valid_index;
+    if (tail >= 0) {
+      this.data.valid_next[tail] = idx;
+      this.data.valid_prev[idx] = tail;
+    } else {
+      this.data.first_valid_index = idx;
+      this.data.valid_prev[idx] = -1;
+    }
+    this.data.valid_next[idx] = -1;
+    this.data.last_valid_index = idx;
 
     this.data.flags[absolute_entity] |= EntityTransformFlags.VALID;
 
@@ -289,6 +308,27 @@ export class TransformFragment extends Fragment {
       this.data.dirty[entity_offset + i] = 0;
     }
     this.data.gpu_data_dirty = true;
+
+    // unlink from the live‐list in O(1)
+    const idx = Number(EntityID.get_absolute_index(entity));
+    const p = this.data.valid_prev[idx];
+    const n = this.data.valid_next[idx];
+
+    if (p >= 0) {
+      this.data.valid_next[p] = n;
+    } else {
+      this.data.first_valid_index = n;
+    }
+
+    if (n >= 0) {
+      this.data.valid_prev[n] = p;
+    } else {
+      this.data.last_valid_index = p;
+    }
+
+    // clear pointers for safety
+    this.data.valid_prev[idx] = -1;
+    this.data.valid_next[idx] = -1;
   }
 
   static get_entity_data(entity, instance = 0) {
@@ -810,5 +850,9 @@ export class TransformFragment extends Fragment {
       return;
     }
     BufferSync.request_sync(this);
+  }
+
+  static get highest_entity() {
+    return this.data.last_valid_index;
   }
 }

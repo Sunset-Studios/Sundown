@@ -48,13 +48,14 @@ export const MLHopType = Object.freeze({
   ADD_LAYER: 4,
   ADD_ACTIVATION: 5,
   ADD_LOSS: 6,
-  SET_OPTIMIZER: 7,
-  RESET_MODEL: 8,
-  CONNECT_LAYER: 9,
-  DISCONNECT_LAYER: 10,
-  DISCONNECT_LAYER_FROM_ALL: 11,
-  REORDER_LAYER: 12,
-  MERGE_MODELS: 13
+  PUSH_SAMPLES: 7,
+  SET_OPTIMIZER: 8,
+  RESET_MODEL: 9,
+  CONNECT_LAYER: 10,
+  DISCONNECT_LAYER: 11,
+  DISCONNECT_LAYER_FROM_ALL: 12,
+  REORDER_LAYER: 13,
+  MERGE_MODELS: 14,
 });
 
 // A class that represents a low-level operation and all associated parameters.

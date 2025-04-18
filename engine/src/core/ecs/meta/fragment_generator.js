@@ -281,6 +281,10 @@ export class ${fragment_name} extends Fragment {
     ${implementations.copy_entity_instance}
     ${this.generate_custom_methods(custom_methods)}
     ${this.generate_hooks(hooks)}
+
+    static get highest_entity() {
+      return this.data.last_valid_index;
+    }
 }`;
   }
 
@@ -325,6 +329,10 @@ export class ${fragment_name} extends Fragment {
     return `
         this.data = {
             ${[...field_inits, ...member_inits, ...buffer_inits].join(",\n            ")},
+            valid_prev: new Int32Array(1),
+            valid_next: new Int32Array(1),
+            first_valid_index: -1,
+            last_valid_index: -1,
             gpu_data_dirty: true
         };
         ${
@@ -382,6 +390,9 @@ export class ${fragment_name} extends Fragment {
             }
           })
           .join("\n        ")}
+
+        Fragment.resize_array(this.data, "valid_prev", new_size, Int32Array, 1);
+        Fragment.resize_array(this.data, "valid_next", new_size, Int32Array, 1);
         
         ${Object.keys(buffers).length === 0 ? "" : `this.data.gpu_data_dirty = true;`}
     `;
@@ -395,6 +406,19 @@ export class ${fragment_name} extends Fragment {
         if (absolute_entity >= this.size) {
           this.resize(absolute_entity * 2);
         }
+
+        const idx = Number(absolute_entity);
+        const tail = this.data.last_valid_index;
+        if (tail >= 0) {
+          this.data.valid_next[tail] = idx;
+          this.data.valid_prev[idx] = tail;
+        } else {
+          this.data.first_valid_index = idx;
+          this.data.valid_prev[idx] = -1;
+        }
+        this.data.valid_next[idx] = -1;
+        this.data.last_valid_index = idx;
+
         ${override.pre ? override.pre : ""}
         ${!override.skip_default ? this.get_default_add_entity() : ""}
         ${override.post ? override.post : ""}
@@ -406,6 +430,19 @@ export class ${fragment_name} extends Fragment {
         if (absolute_entity >= this.size) {
           this.resize(absolute_entity * 2);
         }
+
+        const idx = Number(absolute_entity);
+        const tail = this.data.last_valid_index;
+        if (tail >= 0) {
+          this.data.valid_next[tail] = idx;
+          this.data.valid_prev[idx] = tail;
+        } else {
+          this.data.first_valid_index = idx;
+          this.data.valid_prev[idx] = -1;
+        }
+        this.data.valid_next[idx] = -1;
+        this.data.last_valid_index = idx;
+
         ${this.get_default_add_entity()}
     }`;
   }
@@ -423,11 +460,53 @@ export class ${fragment_name} extends Fragment {
         ${override.pre ? override.pre : ""}
         ${!override.skip_default ? this.get_default_remove_entity(fields) : ""}
         ${override.post ? override.post : ""}
+
+        // unlink from the live‐list in O(1)
+        const idx = Number(EntityID.get_absolute_index(entity));
+        const p   = this.data.valid_prev[idx];
+        const n   = this.data.valid_next[idx];
+
+        if (p >= 0) {
+          this.data.valid_next[p] = n;
+        } else {
+          this.data.first_valid_index = n;
+        }
+
+        if (n >= 0) {
+          this.data.valid_prev[n] = p;
+        } else {
+          this.data.last_valid_index = p;
+        }
+
+        // clear pointers for safety
+        this.data.valid_prev[idx] = -1;
+        this.data.valid_next[idx] = -1;
     }`;
     }
     return `
     static remove_entity(entity) {
         ${this.get_default_remove_entity(fields)}
+
+        // unlink from the live‐list in O(1)
+        const idx = Number(EntityID.get_absolute_index(entity));
+        const p   = this.data.valid_prev[idx];
+        const n   = this.data.valid_next[idx];
+
+        if (p >= 0) {
+          this.data.valid_next[p] = n;
+        } else {
+          this.data.first_valid_index = n;
+        }
+
+        if (n >= 0) {
+          this.data.valid_prev[n] = p;
+        } else {
+          this.data.last_valid_index = p;
+        }
+
+        // clear pointers for safety
+        this.data.valid_prev[idx] = -1;
+        this.data.valid_next[idx] = -1;
     }`;
   }
 

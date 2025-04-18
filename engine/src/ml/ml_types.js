@@ -21,3 +21,10 @@ export const LayerType = Object.freeze({
   SIGMOID: 10,
   SOFTMAX: 11,
 });
+
+export const InputType = Object.freeze({
+  IMAGE: 0,
+  NUMERIC: 1,
+  TEXT: 2,
+});
+
