@@ -1,5 +1,6 @@
+import { MAX_BUFFERED_FRAMES } from "../core/minimal.js";
 import { Renderer } from "../renderer/renderer.js";
-import { Buffer } from "../renderer/buffer.js";
+import { Buffer, BufferSync } from "../renderer/buffer.js";
 import { TransformFragment } from "../core/ecs/fragments/transform_fragment.js";
 import { global_dispatcher } from "../core/dispatcher.js";
 import { RingBufferAllocator } from "../memory/allocator.js";
@@ -204,7 +205,7 @@ export class AABB {
       node_heights: new Float32Array(1),
       node_data_buffer: null,
       node_bounds_buffer: null,
-      node_bounds_cpu_buffer: null,
+      node_bounds_cpu_buffer: Array(MAX_BUFFERED_FRAMES).fill(null),
       modified: true,
     };
 
@@ -322,15 +323,17 @@ export class AABB {
 
     {
       // Create a new array with the new size
-      const new_temp_sync_buffer = new Float32Array(this.size * NODE_BOUNDS_SIZE);
+      const new_temp_sync_buffers = new Array(MAX_BUFFERED_FRAMES).fill(new Float32Array(this.size * NODE_BOUNDS_SIZE));
 
       // Copy existing data
-      if (this.data.node_bounds) {
-        new_temp_sync_buffer.set(this.data.node_bounds);
+      for (let i = 0; i < MAX_BUFFERED_FRAMES; i++) {
+        if (this.data.node_bounds_cpu_buffer[i]) {
+          new_temp_sync_buffers[i].set(this.data.node_bounds_cpu_buffer[i]);
+        }
       }
 
       // Replace the old array
-      this.#temp_sync_buffer = new_temp_sync_buffer;
+      this.#temp_sync_buffer = new_temp_sync_buffers;
     }
 
     this.free_nodes.resize(this.size);
@@ -457,8 +460,6 @@ export class AABB {
   static rebuild_buffers() {
     if (!this.data.modified) return;
 
-    let retry = this.#synching;
-
     if (
       !this.data.node_data_buffer ||
       this.data.node_data_buffer.config.size < this.data.node_data.byteLength
@@ -490,21 +491,23 @@ export class AABB {
         force: true,
       });
 
-      this.data.node_bounds_cpu_buffer = Buffer.create({
-        name: AABB_TREE_NODES_CPU_BOUNDS_BUFFER_NAME,
-        usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
-        raw_data: this.data.node_bounds,
-        force: true,
-      });
+      for (let i = 0; i < MAX_BUFFERED_FRAMES; i++) {
+        this.data.node_bounds_cpu_buffer[i] = Buffer.create({
+          name: `AABB_TREE_NODES_CPU_BOUNDS_BUFFER_${i}`,
+          usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
+          raw_data: this.data.node_bounds,
+          force: true,
+        });
+      }
 
       global_dispatcher.dispatch(AABB_TREE_NODES_UPDATE_EVENT);
-    } else if (!retry) {
+    } else {
       this.data.node_bounds_buffer.write(this.data.node_bounds);
     } 
 
     global_dispatcher.dispatch(AABB_NODE_BOUNDS_UPDATE_EVENT);
 
-    this.data.modified = retry;
+    this.data.modified = false;
   }
 
   /**
@@ -531,34 +534,31 @@ export class AABB {
   /**
    * Sync the AABB tree buffers
    */
-  static #temp_sync_buffer = new Float32Array(NODE_BOUNDS_SIZE);
-  static #synching = false;
+  static #temp_sync_buffer = new Array(MAX_BUFFERED_FRAMES).fill(new Float32Array(NODE_BOUNDS_SIZE));
   static async sync_buffers() {
-    if (this.#synching) return;
+    const buffered_frame = Renderer.get().get_buffered_frame_number();
     // Only do readbacks if the buffer is ready and not being modified
-    if (this.data.node_bounds_cpu_buffer?.buffer.mapState === unmapped_state) {
+    if (this.data.node_bounds_cpu_buffer[buffered_frame]?.buffer.mapState === unmapped_state) {
       try {
-        this.#synching = true;
         // Do the readback
-        await this.data.node_bounds_cpu_buffer.read(
-          this.#temp_sync_buffer,
-          this.#temp_sync_buffer.byteLength,
+        await this.data.node_bounds_cpu_buffer[buffered_frame].read(
+          this.#temp_sync_buffer[buffered_frame],
+          this.#temp_sync_buffer[buffered_frame].byteLength,
           0,
           0,
           Float32Array
         );
       } finally {
-        this.#synching = false;
         for (let i = 0; i < this.size; i++) {
           if (this.data.node_data[i * NODE_SIZE + 1] === AABB_NODE_TYPE.LEAF) {
-            this.data.node_bounds[i * NODE_BOUNDS_SIZE + 0] = this.#temp_sync_buffer[i * NODE_BOUNDS_SIZE + 0];
-            this.data.node_bounds[i * NODE_BOUNDS_SIZE + 1] = this.#temp_sync_buffer[i * NODE_BOUNDS_SIZE + 1];
-            this.data.node_bounds[i * NODE_BOUNDS_SIZE + 2] = this.#temp_sync_buffer[i * NODE_BOUNDS_SIZE + 2];
-            this.data.node_bounds[i * NODE_BOUNDS_SIZE + 3] = this.#temp_sync_buffer[i * NODE_BOUNDS_SIZE + 3];
-            this.data.node_bounds[i * NODE_BOUNDS_SIZE + 4] = this.#temp_sync_buffer[i * NODE_BOUNDS_SIZE + 4];
-            this.data.node_bounds[i * NODE_BOUNDS_SIZE + 5] = this.#temp_sync_buffer[i * NODE_BOUNDS_SIZE + 5];
-            this.data.node_bounds[i * NODE_BOUNDS_SIZE + 6] = this.#temp_sync_buffer[i * NODE_BOUNDS_SIZE + 6];
-            this.data.node_bounds[i * NODE_BOUNDS_SIZE + 7] = this.#temp_sync_buffer[i * NODE_BOUNDS_SIZE + 7];
+            this.data.node_bounds[i * NODE_BOUNDS_SIZE + 0] = this.#temp_sync_buffer[buffered_frame][i * NODE_BOUNDS_SIZE + 0];
+            this.data.node_bounds[i * NODE_BOUNDS_SIZE + 1] = this.#temp_sync_buffer[buffered_frame][i * NODE_BOUNDS_SIZE + 1];
+            this.data.node_bounds[i * NODE_BOUNDS_SIZE + 2] = this.#temp_sync_buffer[buffered_frame][i * NODE_BOUNDS_SIZE + 2];
+            this.data.node_bounds[i * NODE_BOUNDS_SIZE + 3] = this.#temp_sync_buffer[buffered_frame][i * NODE_BOUNDS_SIZE + 3];
+            this.data.node_bounds[i * NODE_BOUNDS_SIZE + 4] = this.#temp_sync_buffer[buffered_frame][i * NODE_BOUNDS_SIZE + 4];
+            this.data.node_bounds[i * NODE_BOUNDS_SIZE + 5] = this.#temp_sync_buffer[buffered_frame][i * NODE_BOUNDS_SIZE + 5];
+            this.data.node_bounds[i * NODE_BOUNDS_SIZE + 6] = this.#temp_sync_buffer[buffered_frame][i * NODE_BOUNDS_SIZE + 6];
+            this.data.node_bounds[i * NODE_BOUNDS_SIZE + 7] = this.#temp_sync_buffer[buffered_frame][i * NODE_BOUNDS_SIZE + 7];
           }
         }
       }
@@ -567,7 +567,13 @@ export class AABB {
 
   static async on_post_render() {
     if (!this.data) return;
-    await this.sync_buffers();
+    BufferSync.request_sync(this);
+  }
+
+  static is_node_free(node_index) {
+    if (node_index <= 0 || node_index >= this.size) return false;
+    const node_view = this.get_node_data(node_index);
+    return (node_view.flags & AABB_NODE_FLAGS.FREE) !== 0;
   }
 
   /**

@@ -23,54 +23,59 @@ export class AABBTreeDebugRenderer extends SimulationLayer {
   ray_direction = null;
   ray_hit_point = null;
   show_ray = false;
-  line_collection_id = null;
+  leaf_collection_id = null;
+  internal_collection_id = null;
+  bounds_collection_id = null;
   should_recreate_line_collection = false;
 
   constructor() {
     super();
     this.name = "aabb_tree_debug_renderer";
+
+    this._update_internal = this._update_internal.bind(this);
   }
 
   update(delta_time) {
+    profile_scope("aabb_tree_debug_renderer", () => {
+      this._update_internal();
+    });
+  }
+
+  _update_internal() {
     this.should_recreate_line_collection =
       this.should_recreate_line_collection || AABB.data.modified;
 
     if (!this.enabled) {
-      if (this.line_collection_id) {
-        LineRenderer.clear_collection(this.line_collection_id);
-        this.line_collection_id = null;
-      }
+      this.clear_all();
       return;
     }
 
-    profile_scope("aabb_tree_debug_renderer", () => {
-      // Collect visible nodes
-      this._collect_visible_nodes();
+    // Collect visible nodes
+    this._collect_visible_nodes();
 
-      // Add ray visualization if needed
-      if (this.show_ray) {
-        this._add_ray_visualization();
-      }
+    // Add ray visualization if needed
+    if (this.show_ray) {
+      this._add_ray_visualization();
+    }
 
-      this.should_recreate_line_collection = false;
-    });
+    this.should_recreate_line_collection = false;
   }
 
   _collect_visible_nodes() {
     if (!this.should_recreate_line_collection) {
-        return;
+      return;
     }
 
     const transforms = EntityManager.get_fragment_array(TransformFragment);
     if (!transforms) {
       return;
     }
-    
-    if (this.line_collection_id) {
-      LineRenderer.clear_collection(this.line_collection_id);
+
+    if (this.leaf_collection_id) {
+      LineRenderer.clear_collection(this.leaf_collection_id);
     }
 
-    this.line_collection_id = LineRenderer.start_collection();
+    this.leaf_collection_id = LineRenderer.start_collection();
 
     for (let i = 1; i < AABB.size; i++) {
       const is_root = i === AABB.root_node;
@@ -81,15 +86,14 @@ export class AABBTreeDebugRenderer extends SimulationLayer {
       if (is_free) {
         continue;
       }
-      
+
       const is_detached = !is_root && node.parent === 0;
       if (is_detached) {
         if (this.show_bounds && node.user_data) {
           const min_point = node.min_point;
           const max_point = node.max_point;
-  
+
           LineRenderer.add_box(min_point, max_point, BOUNDS_COLOR);
-  
         }
         continue;
       }
@@ -193,5 +197,12 @@ export class AABBTreeDebugRenderer extends SimulationLayer {
   clear_ray() {
     this.show_ray = false;
     this.should_recreate_line_collection = true;
+  }
+
+  clear_all() {
+    if (this.leaf_collection_id) {
+      LineRenderer.clear_collection(this.leaf_collection_id);
+      this.leaf_collection_id = null;
+    }
   }
 }

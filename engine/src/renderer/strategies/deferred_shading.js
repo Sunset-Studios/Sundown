@@ -36,7 +36,7 @@ const main_albedo_image_config = {
   format: rgba16float_format,
   width: 0,
   height: 0,
-  usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+  usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.STORAGE_BINDING,
   force: false,
 };
 const main_emissive_image_config = {
@@ -44,7 +44,7 @@ const main_emissive_image_config = {
   format: rgba16float_format,
   width: 0,
   height: 0,
-  usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+  usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.STORAGE_BINDING,
   force: false,
 };
 const main_smra_image_config = {
@@ -52,7 +52,7 @@ const main_smra_image_config = {
   format: rgba16float_format,
   width: 0,
   height: 0,
-  usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+  usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.STORAGE_BINDING,
   force: false,
 };
 const main_normal_image_config = {
@@ -60,7 +60,7 @@ const main_normal_image_config = {
   format: rgba16float_format,
   width: 0,
   height: 0,
-  usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+  usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.STORAGE_BINDING,
   force: false,
 };
 const main_position_image_config = {
@@ -68,7 +68,7 @@ const main_position_image_config = {
   format: rgba16float_format,
   width: 0,
   height: 0,
-  usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+  usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.STORAGE_BINDING,
   force: false,
 };
 const main_transparency_accum_image_config = {
@@ -76,7 +76,7 @@ const main_transparency_accum_image_config = {
   format: rgba16float_format,
   width: 0,
   height: 0,
-  usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+  usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.STORAGE_BINDING,
   blend: one_one_blend_config,
   force: false,
 };
@@ -556,7 +556,11 @@ export class DeferredShadingStrategy {
       // Compute rasterization passes
       // TODO: Automatically run software rasterization over triangle clusters that fall within some maximum screen size
       {
-        ComputeRasterTaskQueue.compile_rg_passes(render_graph, []);
+        // Rasterize particle positions into the G-Buffer (albedo & depth)
+        ComputeRasterTaskQueue.compile_rg_passes(
+          render_graph,
+          [main_albedo_image, main_depth_image]
+        );
       }
 
       // GBuffer Base Pass
@@ -690,6 +694,8 @@ export class DeferredShadingStrategy {
           );
         }
       }
+
+
 
       // Reset GBuffer targets
       {

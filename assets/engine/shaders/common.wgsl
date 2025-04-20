@@ -273,3 +273,66 @@ fn log_depth(position: vec4f) -> f32 {
     return log(LOG_DEPTH_C * view_space_z + 1.0) / log(LOG_DEPTH_C * far_plane + 1.0);
 }
 
+fn rotate_hue(color: vec4f, hue_rotation: f32) -> vec4f {
+    // Convert RGB to HSV
+    let rgb = color.rgb;
+    let max_val = max(max(rgb.r, rgb.g), rgb.b);
+    let min_val = min(min(rgb.r, rgb.g), rgb.b);
+    let delta = max_val - min_val;
+    
+    // Calculate hue
+    var hue: f32 = 0.0;
+    if (delta > 0.0) {
+        // Use a formula that avoids branching for hue calculation
+        let r_dist = select((rgb.g - rgb.b) / delta, 0.0, max_val == rgb.r);
+        let g_dist = select((rgb.b - rgb.r) / delta, 0.0, max_val == rgb.g);
+        let b_dist = select((rgb.r - rgb.g) / delta, 0.0, max_val == rgb.b);
+        
+        hue = fract((r_dist + 6.0 * select(1.0, 0.0, max_val == rgb.r) + 
+                     g_dist + 2.0 * select(1.0, 0.0, max_val == rgb.g) + 
+                     b_dist + 4.0 * select(1.0, 0.0, max_val == rgb.b)) / 6.0);
+    }
+    
+    // Calculate saturation and value
+    let saturation = select(0.0, delta / max_val, max_val == 0.0);
+    let value = max_val;
+    
+    // Apply hue rotation
+    hue = fract(hue + hue_rotation / (2.0 * 3.14159265359));
+    
+    // Convert back to RGB using a more efficient approach
+    let hue_6 = hue * 6.0;
+    let hue_sector = floor(hue_6);
+    let hue_fract = hue_6 - hue_sector;
+    
+    // Calculate the RGB components using the HSV color wheel
+    let p = value * (1.0 - saturation);
+    let q = value * (1.0 - saturation * hue_fract);
+    let t = value * (1.0 - saturation * (1.0 - hue_fract));
+    
+    // Create a lookup table for the RGB values based on the hue sector
+    let sector_0 = vec3f(value, t, p);
+    let sector_1 = vec3f(q, value, p);
+    let sector_2 = vec3f(p, value, t);
+    let sector_3 = vec3f(p, q, value);
+    let sector_4 = vec3f(t, p, value);
+    let sector_5 = vec3f(value, p, q);
+    
+    // Select the appropriate sector using dot products with a mask
+    let sector_mask = vec3f(
+        select(1.0, 0.0, hue_sector == 0.0 || hue_sector == 5.0),
+        select(1.0, 0.0, hue_sector == 1.0 || hue_sector == 2.0),
+        select(1.0, 0.0, hue_sector == 3.0 || hue_sector == 4.0)
+    );
+    
+    let r = dot(vec3f(sector_0.x, sector_1.x, sector_2.x) * sector_mask, vec3f(1.0)) + 
+            dot(vec3f(sector_3.x, sector_4.x, sector_5.x) * sector_mask, vec3f(1.0));
+    let g = dot(vec3f(sector_0.y, sector_1.y, sector_2.y) * sector_mask, vec3f(1.0)) + 
+            dot(vec3f(sector_3.y, sector_4.y, sector_5.y) * sector_mask, vec3f(1.0));
+    let b = dot(vec3f(sector_0.z, sector_1.z, sector_2.z) * sector_mask, vec3f(1.0)) + 
+            dot(vec3f(sector_3.z, sector_4.z, sector_5.z) * sector_mask, vec3f(1.0));
+    
+    return vec4f(r, g, b, color.a);
+}
+
+

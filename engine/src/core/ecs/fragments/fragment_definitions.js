@@ -329,10 +329,12 @@ const TransformFragment = {
     add_entity: {
       skip_default: true,
       pre: `
-      this.data.flags[absolute_entity] |= EntityTransformFlags.VALID;
-
       const aabb_node_index = AABB.allocate_node(entity);
       this.data.aabb_node_index[absolute_entity] = aabb_node_index;
+      
+      this.data.flags[absolute_entity] |= EntityTransformFlags.VALID;
+
+      this.data.gpu_data_dirty = true;
 
       return this.get_entity_data(entity);
       `,
@@ -531,7 +533,7 @@ const TransformFragment = {
     attempt_clear_all_dirty_flags: {
       body: `
       ++this.data.dirty_flag_retain_frames;
-      if (this.dirty_flag_retain_frames >= this.MAX_DIRTY_FLAG_RETAIN_FRAMES) {
+      if (this.data.dirty_flag_retain_frames >= this.MAX_DIRTY_FLAG_RETAIN_FRAMES) {
         for (let i = 0; i < this.size; i++) {
           this.data.dirty[i] = 0;
         }

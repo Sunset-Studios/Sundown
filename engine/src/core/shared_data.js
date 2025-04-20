@@ -497,8 +497,12 @@ export class SharedEntityMetadataBuffer {
   }
 
   static resize(new_size) {
+    let should_rebuild = !this.buffer;
     if (this.entity_metadata.capacity <= new_size * 3) {
       this.entity_metadata.resize(Math.max(3, new_size * 6)); // Double the size of the buffer
+      should_rebuild = true;
+    }
+    if (should_rebuild) {
       this.build();
     }
   }

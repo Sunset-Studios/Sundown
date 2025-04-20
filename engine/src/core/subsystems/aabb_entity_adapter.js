@@ -186,25 +186,32 @@ export class AABBEntityAdapter extends SimulationLayer {
 
       // Handle removed entities
       if (entity_state === EntityMasks.Removed && node_index) {
+        // Make sure to remove all instances of the entity from the tree
         const entity_count = entity_instance_counts[i];
         for (let i = 0; i < entity_count; i++) {
           const entity_instance_offset = entity_offset + i;
-          if (!no_aabb_update) {
-            this.tree_processor.remove_node_from_tree(
-              transforms.aabb_node_index[entity_instance_offset]
-            );
+          const aabb_instance_index = transforms.aabb_node_index[entity_instance_offset];
+          const is_free = AABB.is_node_free(aabb_instance_index);
+
+          if (!no_aabb_update || is_free) {
+            this.tree_processor.remove_node_from_tree(aabb_instance_index);
           }
-          AABB.free_node(transforms.aabb_node_index[entity_instance_offset]);
+
+          if (!is_free) {
+            AABB.free_node(aabb_instance_index);
+          }
+
           transforms.aabb_node_index[entity_instance_offset] = 0;
         }
       }
       // Handle new or updated entities
-      else if (node_index && (transforms.flags[entity_offset] & EntityTransformFlags.AABB_DIRTY) !== 0 && !no_aabb_update) {
+      else if (node_index > 0 && (transforms.flags[entity_offset] & EntityTransformFlags.AABB_DIRTY) !== 0 && !no_aabb_update) {
         const entity_instances = EntityID.get_instance_count(entity);
         for (let i = 0; i < entity_instances; i++) {
-          const instance_node_index = transforms.aabb_node_index[entity_offset + i];
-          this.tree_processor.mark_node_dirty(instance_node_index);
-          transforms.flags[entity_offset + i] &= ~EntityTransformFlags.AABB_DIRTY;
+          const entity_instance_offset = entity_offset + i;
+          const aabb_instance_index = transforms.aabb_node_index[entity_instance_offset];
+          this.tree_processor.mark_node_dirty(aabb_instance_index);
+          transforms.flags[entity_instance_offset] &= ~EntityTransformFlags.AABB_DIRTY;
         }
       }
     }

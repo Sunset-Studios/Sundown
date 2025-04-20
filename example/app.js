@@ -1262,8 +1262,8 @@ export class SceneSwitcher extends SimulationLayer {
   const textures_scene = new TexturesScene("TexturesScene");
 
   const scene_switcher = new SceneSwitcher("SceneSwitcher");
-  await scene_switcher.add_scene(textures_scene);
-  //await scene_switcher.add_scene(aabb_scene);
+  //await scene_switcher.add_scene(textures_scene);
+  await scene_switcher.add_scene(aabb_scene);
   //await scene_switcher.add_scene(rendering_scene);
   //await scene_switcher.add_scene(ml_scene);
  

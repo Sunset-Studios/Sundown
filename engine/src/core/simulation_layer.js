@@ -31,13 +31,13 @@ export class SimulationLayer {
         }
     }
 
-    add_layer(prototype) {
+    add_layer(prototype, ...args) {
         let found_layer = this.get_layer(prototype);
         if (found_layer) {
             return found_layer;
         }
 
-        const layer = new prototype();
+        const layer = new prototype(...args);
         layer.init();
         this.layers.push(layer);
         return layer;

@@ -28,16 +28,16 @@ class ComputeRasterTask {
       throw new Error("ComputeRasterTask requires a valid 'points' buffer.");
     }
 
-    if (!ComputeRasterPrimitiveType.hasOwnProperty(primitive_type.toUpperCase())) {
-      throw new Error(`Unsupported primitive type: ${primitive_type}`);
-    }
-
+    // Validate and determine stride from supported primitive types
     const stride = ComputeRasterPrimitiveStride[primitive_type];
-    if (!stride) {
-      throw new Error(`Stride not defined for primitive type: ${primitive_type}`);
+    if (stride === undefined) {
+      throw new Error(`Unsupported or undefined primitive type: ${primitive_type}`);
     }
 
-    const num_connections = connections.size; // Assuming 'size' represents the number of points
+    // Determine the number of primitives (e.g. points) from the connections buffer
+    let raw = connections.config.raw_data;
+    let num_connections = ArrayBuffer.isView(raw) ? raw.length : 0;
+
     const num_primitives = Math.floor(num_connections / stride);
     const dispatch_count = Math.ceil(num_primitives / workgroup_size);
 
@@ -65,6 +65,8 @@ export class ComputeRasterTaskQueue {
    * @param {string} name - The name of the task.
    * @param {string} shader - The path to the compute shader.
    * @param {Buffer} points - The required points buffer (vertex buffer).
+   * @param {Buffer} connections - The required connections buffer (index buffer).
+   * @param {Buffer[]} inputs - The optional input buffers.
    * @param {string} primitiveType - The type of primitive to rasterize (e.g., 'point', 'line').
    * @returns {ComputeRasterTask} The newly created task.
    */
@@ -80,70 +82,33 @@ export class ComputeRasterTaskQueue {
 
   static compile_rg_passes(render_graph, pipeline_outputs) {
     profile_scope(compile_rg_pass_scope_name, () => {
-      const renderer = Renderer.get();
-      const canvas_width = renderer.canvas.width;
-      const canvas_height = renderer.canvas.height;
-
+      // For each task, bind outputs directly to textures
       for (let i = 0; i < this.tasks.length; i++) {
         const task = this.tasks[i];
-
-        task.intermediate_buffers = Array(pipeline_outputs.length).fill(null);
-
-        // Register the required points buffer
+        // Register required buffers
         task.points = render_graph.register_buffer(task.points.config.name);
-
-        // Register other inputs (if any)
-        for (let j = 0; j < task.inputs.length; j++) {
-          task.inputs[j] = render_graph.register_buffer(task.inputs[j].config.name);
+        task.connections = render_graph.register_buffer(task.connections.config.name);
+        for (let k = 0; k < task.inputs.length; k++) {
+          task.inputs[k] = render_graph.register_buffer(task.inputs[k].config.name);
         }
 
-        // Derive outputs from the rendering strategy's pipeline outputs
-        for (let j = 0; j < pipeline_outputs.length; j++) {
-          const output = pipeline_outputs[j];
-          const output_config = render_graph.get_image_config(output);
-          const stride = Texture.stride_from_format(output_config.format);
-          task.intermediate_buffers[j] = render_graph.create_buffer({
-            name: `${output_config.name}_intermediate`,
-            size: canvas_width * canvas_height * stride,
-            raw_data: new Uint8Array(canvas_width * canvas_height * stride),
-            usage: GPUBufferUsage.Storage | GPUBufferUsage.CopySrc | GPUBufferUsage.CopyDst,
-          });
-        }
-
-        // Add rasterization pass
+        // Add compute pass writing directly to G-Buffer textures
         render_graph.add_pass(
           task.name,
           RenderPassFlags.Compute,
           {
             shader_setup: { pipeline_shaders: { compute: { path: task.shader } } },
-            inputs: [task.points, task.connections, ...task.inputs], // Include points and connections as input
-            outputs: task.intermediate_buffers, // Output to intermediate buffers
+            inputs: [task.points, task.connections, ...pipeline_outputs, ...task.inputs],
+            outputs: pipeline_outputs,
           },
           (graph, frame_data, encoder) => {
             const pass = graph.get_physical_pass(frame_data.current_pass);
             pass.dispatch(task.dispatch_x, task.dispatch_y, task.dispatch_z);
           }
         );
-
-        // Add buffer-to-texture copy pass based on pipeline outputs
-        for (let j = 0; j < pipeline_outputs.length; j++) {
-          const output = pipeline_outputs[j];
-          const copy_pass_name = `${task.name}_copy_${j}`;
-          const buffer = task.intermediate_buffers[j];
-          const texture = output;
-
-          render_graph.add_pass(
-            copy_pass_name,
-            RenderPassFlags.GraphLocal,
-            {},
-            (graph, frame_data, encoder) => {
-              const texture_object = graph.get_physical_image(texture);
-              const buffer_object = graph.get_physical_buffer(buffer);
-              texture_object.copy_buffer(encoder, buffer_object);
-            }
-          );
-        }
       }
+      // Clear tasks after dispatch
+      this.reset();
     });
   }
 
