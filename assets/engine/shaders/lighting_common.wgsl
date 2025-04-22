@@ -213,10 +213,9 @@ fn calculate_brdf(
     // specular reflectance at normal incidence angle for both dielectric and metallic materials
     var f0 = 0.16 * reflectance * reflectance * (1.0 - metallic) + albedo * metallic;
     // account for clear coat interface
-    if (clear_coat > 0.0) {
-        let f0_clear_coat = clamp(f0 * (f0 * (0.941892 - 0.263008 * f0) + 0.346479) - 0.0285998, vec3<f32>(0.0), vec3<f32>(1.0));
-        f0 = mix(f0, f0_clear_coat, clear_coat);
-    }
+    let f0_clear_coat = clamp(f0 * (f0 * (0.941892 - 0.263008 * f0) + 0.346479) - 0.0285998, vec3<f32>(0.0), vec3<f32>(1.0));
+    f0 = mix(f0, f0_clear_coat, clear_coat);
+    
     let f90 = clamp(dot(f0, vec3<f32>(50.0 * 0.33)), 0.0, 1.0);
 
     let d = d_ggx(n_dot_h, roughness);

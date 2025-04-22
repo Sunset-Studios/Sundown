@@ -222,8 +222,4 @@ export class VisibilityFragment extends Fragment {
 
     this.data.gpu_data_dirty = true;
   }
-
-  static get highest_entity() {
-    return this.data.last_valid_index;
-  }
 }

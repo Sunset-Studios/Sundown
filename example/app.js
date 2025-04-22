@@ -105,25 +105,34 @@ export class RenderingScene extends Scene {
 
     EntityManager.reserve_entities(grid_size * grid_size * grid_layers);
 
+    const sphere = spawn_mesh_entity(
+      [0, 0, 0],
+      [0, 0, 0, 1],
+      [0.5, 0.5, 0.5],
+      mesh,
+      default_material_id,
+      null /* parent */,
+      [] /* children */,
+      true /* start_visible */,
+      EntityTransformFlags.NO_AABB_UPDATE | EntityTransformFlags.IGNORE_PARENT_SCALE
+    );
+    EntityManager.set_entity_instance_count(sphere, grid_size * grid_size * grid_layers);
+
+    EntityManager.flush_instance_count_changes();
+
+    this.entities.push(sphere);
+
+    let sphere_count = 0;
     for (let x = 0; x < grid_size; x++) {
       for (let z = 0; z < grid_size; z++) {
         for (let y = 0; y < grid_layers; y++) {
-          const sphere = spawn_mesh_entity(
-            [
-              (x - Math.floor(grid_size / 2)) * spacing,
-              (y - Math.floor(grid_layers / 2)) * spacing,
-              (z - Math.floor(grid_size / 2)) * spacing,
-            ],
-            [0, 0, 0, 1],
-            [0.5, 0.5, 0.5],
-            mesh,
-            default_material_id,
-            null /* parent */,
-            [] /* children */,
-            true /* start_visible */,
-            EntityTransformFlags.NO_AABB_UPDATE | EntityTransformFlags.IGNORE_PARENT_SCALE
-          );
-          this.entities.push(sphere);
+          const pos = [
+            (x - Math.floor(grid_size / 2)) * spacing,
+            (y - Math.floor(grid_layers / 2)) * spacing,
+            (z - Math.floor(grid_size / 2)) * spacing,
+          ];
+          EntityManager.get_fragment(sphere, TransformFragment, sphere_count).position = pos;
+          ++sphere_count;
         }
       }
     }
@@ -150,12 +159,12 @@ export class RenderingScene extends Scene {
     text_fragment_view.emissive = 1;
     this.entities.push(text_entity);
 
-    PostProcessStack.register_pass(0, "outline", "effects/outline_post.wgsl", {
-      outline_thickness: 1.0,
-      depth_threshold: 0.1,
-      normal_threshold: 1.0,
-      depth_scale: 2000.0,
-      outline_color: [0.2, 0.3, 0.8, 1.0],
+    PostProcessStack.register_pass(0, "crt", "effects/crt_post.wgsl", {
+      curvature: 0.0,
+      vignette: 0.2,
+      scan_brightness: 0.5,
+      rgb_offset: 0.2,
+      bloom_strength: 0.3,
     });
   }
 
@@ -1262,8 +1271,8 @@ export class SceneSwitcher extends SimulationLayer {
   const textures_scene = new TexturesScene("TexturesScene");
 
   const scene_switcher = new SceneSwitcher("SceneSwitcher");
-  //await scene_switcher.add_scene(textures_scene);
-  await scene_switcher.add_scene(aabb_scene);
+  await scene_switcher.add_scene(textures_scene);
+  //await scene_switcher.add_scene(aabb_scene);
   //await scene_switcher.add_scene(rendering_scene);
   //await scene_switcher.add_scene(ml_scene);
  

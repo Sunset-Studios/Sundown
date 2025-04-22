@@ -19,6 +19,7 @@ export const EntityTransformFlags = {
   TRANSFORM_DIRTY: 1 << 3,
   NO_AABB_UPDATE: 1 << 4,
   AABB_DIRTY: 1 << 5,
+  BILLBOARD: 1 << 6,
 };
 
 export const EntityFlags = {

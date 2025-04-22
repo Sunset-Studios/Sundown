@@ -237,8 +237,4 @@ export class StaticMeshFragment extends Fragment {
     this.data.dirty[to_index] = 1;
     this.data.dirty[from_index] = 1;
   }
-
-  static get highest_entity() {
-    return this.data.last_valid_index;
-  }
 }

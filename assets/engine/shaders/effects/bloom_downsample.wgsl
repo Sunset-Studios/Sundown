@@ -33,22 +33,22 @@ fn cs(@builtin(global_invocation_id) global_id: vec3<u32>) {
         // - l - m -
         // g - h - i
         // === ('e' is the current texel) ===
-        let a = textureSampleLevel(input_texture, global_sampler, vec2f(texture_coord.x - 2.0 * source_texel_size.x, texture_coord.y + 2.0 * source_texel_size.y), 0).rgb;
-        let b = textureSampleLevel(input_texture, global_sampler, vec2f(texture_coord.x, texture_coord.y + 2.0 * source_texel_size.y), 0).rgb;
-        let c = textureSampleLevel(input_texture, global_sampler, vec2f(texture_coord.x + 2.0 * source_texel_size.x, texture_coord.y + 2.0 * source_texel_size.y), 0).rgb;
+        let a = textureSampleLevel(input_texture, clamped_sampler, vec2f(texture_coord.x - 2.0 * source_texel_size.x, texture_coord.y + 2.0 * source_texel_size.y), 0).rgb;
+        let b = textureSampleLevel(input_texture, clamped_sampler, vec2f(texture_coord.x, texture_coord.y + 2.0 * source_texel_size.y), 0).rgb;
+        let c = textureSampleLevel(input_texture, clamped_sampler, vec2f(texture_coord.x + 2.0 * source_texel_size.x, texture_coord.y + 2.0 * source_texel_size.y), 0).rgb;
 
-        let d = textureSampleLevel(input_texture, global_sampler, vec2f(texture_coord.x - 2.0 * source_texel_size.x, texture_coord.y), 0).rgb;
-        let e = textureSampleLevel(input_texture, global_sampler, vec2f(texture_coord.x, texture_coord.y), 0).rgb;
-        let f = textureSampleLevel(input_texture, global_sampler, vec2f(texture_coord.x + 2.0 * source_texel_size.x, texture_coord.y), 0).rgb;
+        let d = textureSampleLevel(input_texture, clamped_sampler, vec2f(texture_coord.x - 2.0 * source_texel_size.x, texture_coord.y), 0).rgb;
+        let e = textureSampleLevel(input_texture, clamped_sampler, vec2f(texture_coord.x, texture_coord.y), 0).rgb;
+        let f = textureSampleLevel(input_texture, clamped_sampler, vec2f(texture_coord.x + 2.0 * source_texel_size.x, texture_coord.y), 0).rgb;
 
-        let g = textureSampleLevel(input_texture, global_sampler, vec2f(texture_coord.x - 2.0 * source_texel_size.x, texture_coord.y - 2.0 * source_texel_size.y), 0).rgb;
-        let h = textureSampleLevel(input_texture, global_sampler, vec2f(texture_coord.x, texture_coord.y - 2.0 * source_texel_size.y), 0).rgb;
-        let i = textureSampleLevel(input_texture, global_sampler, vec2f(texture_coord.x + 2.0 * source_texel_size.x, texture_coord.y - 2.0 * source_texel_size.y), 0).rgb;
+        let g = textureSampleLevel(input_texture, clamped_sampler, vec2f(texture_coord.x - 2.0 * source_texel_size.x, texture_coord.y - 2.0 * source_texel_size.y), 0).rgb;
+        let h = textureSampleLevel(input_texture, clamped_sampler, vec2f(texture_coord.x, texture_coord.y - 2.0 * source_texel_size.y), 0).rgb;
+        let i = textureSampleLevel(input_texture, clamped_sampler, vec2f(texture_coord.x + 2.0 * source_texel_size.x, texture_coord.y - 2.0 * source_texel_size.y), 0).rgb;
 
-        let j = textureSampleLevel(input_texture, global_sampler, vec2f(texture_coord.x - 1.0 * source_texel_size.x, texture_coord.y + 1.0 * source_texel_size.y), 0).rgb;
-        let k = textureSampleLevel(input_texture, global_sampler, vec2f(texture_coord.x + 1.0 * source_texel_size.x, texture_coord.y + 1.0 * source_texel_size.y), 0).rgb;
-        let l = textureSampleLevel(input_texture, global_sampler, vec2f(texture_coord.x - 1.0 * source_texel_size.x, texture_coord.y - 1.0 * source_texel_size.y), 0).rgb;
-        let m = textureSampleLevel(input_texture, global_sampler, vec2f(texture_coord.x + 1.0 * source_texel_size.x, texture_coord.y - 1.0 * source_texel_size.y), 0).rgb;
+        let j = textureSampleLevel(input_texture, clamped_sampler, vec2f(texture_coord.x - 1.0 * source_texel_size.x, texture_coord.y + 1.0 * source_texel_size.y), 0).rgb;
+        let k = textureSampleLevel(input_texture, clamped_sampler, vec2f(texture_coord.x + 1.0 * source_texel_size.x, texture_coord.y + 1.0 * source_texel_size.y), 0).rgb;
+        let l = textureSampleLevel(input_texture, clamped_sampler, vec2f(texture_coord.x - 1.0 * source_texel_size.x, texture_coord.y - 1.0 * source_texel_size.y), 0).rgb;
+        let m = textureSampleLevel(input_texture, clamped_sampler, vec2f(texture_coord.x + 1.0 * source_texel_size.x, texture_coord.y - 1.0 * source_texel_size.y), 0).rgb;
 
         // Apply weighted distribution:
         // 0.5 + 0.125 + 0.125 + 0.125 + 0.125 = 1

@@ -157,7 +157,7 @@ const TransformFragment = {
     BufferSync: "../../../renderer/buffer.js",
   },
   constants: {
-    MAX_DIRTY_FLAG_RETAIN_FRAMES: 12,
+    MAX_DIRTY_FLAG_RETAIN_FRAMES: 16,
   },
   members: {
     dirty_flag_retain_frames: 0
@@ -422,7 +422,10 @@ const TransformFragment = {
       }
       this.data.aabb_node_index[to_index] =
         this.data.aabb_node_index[from_index];
-    }
+      }
+
+      this.data.dirty[to_index] = 1;
+      this.data.dirty[from_index] = 1;
       `,
     },
   },
@@ -533,13 +536,19 @@ const TransformFragment = {
     attempt_clear_all_dirty_flags: {
       body: `
       ++this.data.dirty_flag_retain_frames;
-      if (this.data.dirty_flag_retain_frames >= this.MAX_DIRTY_FLAG_RETAIN_FRAMES) {
-        for (let i = 0; i < this.size; i++) {
-          this.data.dirty[i] = 0;
-        }
-        this.data.gpu_data_dirty = true;
-        this.data.dirty_flag_retain_frames = 0;
+    if (
+      this.data.dirty_flag_retain_frames >= this.MAX_DIRTY_FLAG_RETAIN_FRAMES
+    ) {
+      let cleared = false;
+      for (let i = 0; i < this.size; i++) {
+        cleared = cleared || this.data.dirty[i] !== 0;
+        this.data.dirty[i] = 0;
       }
+      if (cleared) {
+        this.data.gpu_data_dirty = true;
+      }
+      this.data.dirty_flag_retain_frames = 0;
+    }
       `,
     },
   },

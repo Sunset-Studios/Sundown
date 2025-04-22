@@ -11,14 +11,14 @@ import { LightFragment } from "../../core/ecs/fragments/light_fragment.js";
 import { SharedViewBuffer, SharedEnvironmentMapData } from "../../core/shared_data.js";
 import { Material } from "../material.js";
 import { PostProcessStack } from "../post_process_stack.js";
-import { npot, clamp } from "../../utility/math.js";
+import { npot, ppot, clamp } from "../../utility/math.js";
 import { profile_scope } from "../../utility/performance.js";
 import { global_dispatcher } from "../../core/dispatcher.js";
 import {
+  rgba8unorm_format,
   rgba16float_format,
   r8unorm_format,
   depth32float_format,
-  bgra8unorm_format,
   r32float_format,
   rg32uint_format,
   one_one_blend_config,
@@ -28,6 +28,8 @@ import {
 } from "../../utility/config_permutations.js";
 import { LineRenderer } from "../line_renderer.js";
 
+const use_depth_prepass = false;
+
 const resolution_change_event_name = "resolution_change";
 const deferred_shading_profile_scope_name = "DeferredShadingStrategy.draw";
 
@@ -36,23 +38,32 @@ const main_albedo_image_config = {
   format: rgba16float_format,
   width: 0,
   height: 0,
-  usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.STORAGE_BINDING,
+  usage:
+    GPUTextureUsage.RENDER_ATTACHMENT |
+    GPUTextureUsage.TEXTURE_BINDING |
+    GPUTextureUsage.STORAGE_BINDING,
   force: false,
 };
 const main_emissive_image_config = {
   name: "main_emissive",
-  format: rgba16float_format,
+  format: rgba8unorm_format,
   width: 0,
   height: 0,
-  usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.STORAGE_BINDING,
+  usage:
+    GPUTextureUsage.RENDER_ATTACHMENT |
+    GPUTextureUsage.TEXTURE_BINDING |
+    GPUTextureUsage.STORAGE_BINDING,
   force: false,
 };
 const main_smra_image_config = {
   name: "main_smra",
-  format: rgba16float_format,
+  format: rgba8unorm_format,
   width: 0,
   height: 0,
-  usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.STORAGE_BINDING,
+  usage:
+    GPUTextureUsage.RENDER_ATTACHMENT |
+    GPUTextureUsage.TEXTURE_BINDING |
+    GPUTextureUsage.STORAGE_BINDING,
   force: false,
 };
 const main_normal_image_config = {
@@ -60,7 +71,10 @@ const main_normal_image_config = {
   format: rgba16float_format,
   width: 0,
   height: 0,
-  usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.STORAGE_BINDING,
+  usage:
+    GPUTextureUsage.RENDER_ATTACHMENT |
+    GPUTextureUsage.TEXTURE_BINDING |
+    GPUTextureUsage.STORAGE_BINDING,
   force: false,
 };
 const main_position_image_config = {
@@ -68,7 +82,10 @@ const main_position_image_config = {
   format: rgba16float_format,
   width: 0,
   height: 0,
-  usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.STORAGE_BINDING,
+  usage:
+    GPUTextureUsage.RENDER_ATTACHMENT |
+    GPUTextureUsage.TEXTURE_BINDING |
+    GPUTextureUsage.STORAGE_BINDING,
   force: false,
 };
 const main_transparency_accum_image_config = {
@@ -76,7 +93,10 @@ const main_transparency_accum_image_config = {
   format: rgba16float_format,
   width: 0,
   height: 0,
-  usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.STORAGE_BINDING,
+  usage:
+    GPUTextureUsage.RENDER_ATTACHMENT |
+    GPUTextureUsage.TEXTURE_BINDING |
+    GPUTextureUsage.STORAGE_BINDING,
   blend: one_one_blend_config,
   force: false,
 };
@@ -114,7 +134,7 @@ const skybox_shader_setup = {
 };
 const skybox_output_image_config = {
   name: "skybox_output",
-  format: bgra8unorm_format,
+  format: rgba8unorm_format,
   width: 0,
   height: 0,
   usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
@@ -153,8 +173,8 @@ const g_buffer_shader_setup = {
       path: "gbuffer_base.wgsl",
     },
   },
-  depth_write_enabled: false,
-  depth_compare: "less",
+  depth_write_enabled: !use_depth_prepass,
+  depth_compare: use_depth_prepass ? "less-equal" : "less",
 };
 
 const transparency_composite_shader_setup = {
@@ -248,7 +268,7 @@ const bloom_resolve_params_config = {
 };
 const post_bloom_color_image_config = {
   name: "post_bloom_color",
-  format: rgba16float_format,
+  format: rgba8unorm_format,
   width: 0,
   height: 0,
   usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
@@ -338,6 +358,9 @@ export class DeferredShadingStrategy {
       const transform_gpu_data = TransformFragment.to_gpu_data();
       const entity_transforms = render_graph.register_buffer(
         transform_gpu_data.transforms_buffer.config.name
+      );
+      const entity_flags = render_graph.register_buffer(
+        transform_gpu_data.flags_buffer.config.name
       );
       const entity_aabb_node_indices = render_graph.register_buffer(
         transform_gpu_data.aabb_node_index_buffer.config.name
@@ -536,65 +559,14 @@ export class DeferredShadingStrategy {
 
       // TODO: Meshlet cull pass
 
-      // Depth prepass
+      // G-Buffer set load pass
       {
         render_graph.add_pass(
-          depth_prepass_name,
-          RenderPassFlags.Graphics,
-          {
-            inputs: [entity_transforms, compacted_object_instance_buffer],
-            outputs: [main_depth_image],
-            shader_setup: depth_only_shader_setup,
-          },
+          reset_g_buffer_targets_pass_name,
+          RenderPassFlags.GraphLocal,
+          {},
           (graph, frame_data, encoder) => {
-            const pass = graph.get_physical_pass(frame_data.current_pass);
-            MeshTaskQueue.get().submit_indexed_indirect_draws(pass, frame_data);
-          }
-        );
-      }
-
-      // Compute rasterization passes
-      // TODO: Automatically run software rasterization over triangle clusters that fall within some maximum screen size
-      {
-        // Rasterize particle positions into the G-Buffer (albedo & depth)
-        ComputeRasterTaskQueue.compile_rg_passes(
-          render_graph,
-          [main_albedo_image, main_depth_image]
-        );
-      }
-
-      // GBuffer Base Pass
-      {
-        const material_buckets = MeshTaskQueue.get().get_material_buckets();
-        for (let i = 0; i < material_buckets.length; i++) {
-          const material_id = material_buckets[i];
-          const material = Material.get(material_id);
-
-          render_graph.add_pass(
-            `g_buffer_${material.template.name}_${material_id}`,
-            RenderPassFlags.Graphics,
-            {
-              inputs: [entity_transforms, compacted_object_instance_buffer, lights],
-              outputs: [
-                material.family === MaterialFamilyType.Transparent
-                  ? main_transparency_accum_image
-                  : main_albedo_image,
-                main_emissive_image,
-                main_smra_image,
-                main_position_image,
-                main_normal_image,
-                material.writes_entity_id ? main_entity_id_image : null,
-                material.family === MaterialFamilyType.Transparent
-                  ? main_transparency_reveal_image
-                  : null,
-                main_depth_image,
-              ],
-              shader_setup: g_buffer_shader_setup,
-              b_skip_pass_pipeline_setup: true,
-            },
-            (graph, frame_data, encoder) => {
-              const pass = graph.get_physical_pass(frame_data.current_pass);
-
+            if (frame_data.g_buffer_data) {
               if (frame_data.g_buffer_data.albedo) {
                 frame_data.g_buffer_data.albedo.config.load_op = load_op_load;
               }
@@ -622,6 +594,75 @@ export class DeferredShadingStrategy {
               if (frame_data.g_buffer_data.depth) {
                 frame_data.g_buffer_data.depth.config.load_op = load_op_load;
               }
+            }
+          }
+        );
+      }
+
+      // Depth prepass
+      if (use_depth_prepass) {
+        render_graph.add_pass(
+          depth_prepass_name,
+          RenderPassFlags.Graphics,
+          {
+            inputs: [entity_transforms, entity_flags, compacted_object_instance_buffer],
+            outputs: [main_depth_image],
+            shader_setup: depth_only_shader_setup,
+          },
+          (graph, frame_data, encoder) => {
+            const pass = graph.get_physical_pass(frame_data.current_pass);
+            MeshTaskQueue.get().submit_indexed_indirect_draws(
+              pass,
+              frame_data,
+              false /* should_reset */,
+              true /* skip_material_bind */,
+              true /* opaque_only */
+            );
+          }
+        );
+      }
+
+      // Compute rasterization passes
+      // TODO: Automatically run software rasterization over triangle clusters that fall within some maximum screen size
+      {
+        // Rasterize particle positions into the G-Buffer (albedo & depth)
+        ComputeRasterTaskQueue.compile_rg_passes(render_graph, [
+          main_albedo_image,
+          main_depth_image,
+        ]);
+      }
+
+      // GBuffer Base Pass
+      {
+        const material_buckets = MeshTaskQueue.get().get_material_buckets();
+        for (let i = 0; i < material_buckets.length; i++) {
+          const material_id = material_buckets[i];
+          const material = Material.get(material_id);
+
+          render_graph.add_pass(
+            `g_buffer_${material.template.name}_${material_id}`,
+            RenderPassFlags.Graphics,
+            {
+              inputs: [entity_transforms, entity_flags, compacted_object_instance_buffer, lights],
+              outputs: [
+                material.family === MaterialFamilyType.Transparent
+                  ? main_transparency_accum_image
+                  : main_albedo_image,
+                main_emissive_image,
+                main_smra_image,
+                main_position_image,
+                main_normal_image,
+                material.writes_entity_id ? main_entity_id_image : null,
+                material.family === MaterialFamilyType.Transparent
+                  ? main_transparency_reveal_image
+                  : null,
+                main_depth_image,
+              ],
+              shader_setup: g_buffer_shader_setup,
+              b_skip_pass_pipeline_setup: true,
+            },
+            (graph, frame_data, encoder) => {
+              const pass = graph.get_physical_pass(frame_data.current_pass);
 
               MeshTaskQueue.get().submit_material_indexed_indirect_draws(
                 pass,
@@ -652,12 +693,15 @@ export class DeferredShadingStrategy {
 
       // Add line renderer pass
       if (LineRenderer.enabled && LineRenderer.line_positions.length > 0) {
-        const { position_buffer, line_data_buffer, transform_buffer, visible_line_count } = LineRenderer.to_gpu_data();
+        const { position_buffer, line_data_buffer, transform_buffer, visible_line_count } =
+          LineRenderer.to_gpu_data();
         if (visible_line_count > 0) {
           const line_position_buffer_rg = render_graph.register_buffer(position_buffer.config.name);
           const line_data_buffer_rg = render_graph.register_buffer(line_data_buffer.config.name);
-          const line_transform_buffer_rg = render_graph.register_buffer(transform_buffer.config.name);
-    
+          const line_transform_buffer_rg = render_graph.register_buffer(
+            transform_buffer.config.name
+          );
+
           render_graph.add_pass(
             "line_transform_processing",
             RenderPassFlags.Compute,
@@ -671,7 +715,7 @@ export class DeferredShadingStrategy {
               pass.dispatch((visible_line_count + 63) / 64, 1, 1);
             }
           );
-    
+
           render_graph.add_pass(
             "line_renderer_pass",
             RenderPassFlags.Graphics,
@@ -693,48 +737,6 @@ export class DeferredShadingStrategy {
             }
           );
         }
-      }
-
-
-
-      // Reset GBuffer targets
-      {
-        render_graph.add_pass(
-          reset_g_buffer_targets_pass_name,
-          RenderPassFlags.GraphLocal,
-          {},
-          (graph, frame_data, encoder) => {
-            if (frame_data.g_buffer_data) {
-              if (frame_data.g_buffer_data.albedo) {
-                frame_data.g_buffer_data.albedo.config.load_op = load_op_clear;
-              }
-              if (frame_data.g_buffer_data.emissive) {
-                frame_data.g_buffer_data.emissive.config.load_op = load_op_clear;
-              }
-              if (frame_data.g_buffer_data.smra) {
-                frame_data.g_buffer_data.smra.config.load_op = load_op_clear;
-              }
-              if (frame_data.g_buffer_data.position) {
-                frame_data.g_buffer_data.position.config.load_op = load_op_clear;
-              }
-              if (frame_data.g_buffer_data.normal) {
-                frame_data.g_buffer_data.normal.config.load_op = load_op_clear;
-              }
-              if (frame_data.g_buffer_data.entity_id) {
-                frame_data.g_buffer_data.entity_id.config.load_op = load_op_clear;
-              }
-              if (frame_data.g_buffer_data.transparency_accum) {
-                frame_data.g_buffer_data.transparency_accum.config.load_op = load_op_clear;
-              }
-              if (frame_data.g_buffer_data.transparency_reveal) {
-                frame_data.g_buffer_data.transparency_reveal.config.load_op = load_op_clear;
-              }
-              if (frame_data.g_buffer_data.depth) {
-                frame_data.g_buffer_data.depth.config.load_op = load_op_clear;
-              }
-            }
-          }
-        );
       }
 
       // HZB generation pass
@@ -830,8 +832,8 @@ export class DeferredShadingStrategy {
       const num_iterations = 4;
       if (num_iterations > 0) {
         const image_extent = renderer.get_canvas_resolution();
-        const extent_x = npot(image_extent.width);
-        const extent_y = npot(image_extent.height);
+        const extent_x = ppot(image_extent.width);
+        const extent_y = ppot(image_extent.height);
 
         let bloom_blur_chain = [];
         let bloom_blur_params_chain = [];
@@ -1001,6 +1003,46 @@ export class DeferredShadingStrategy {
           (graph, frame_data, encoder) => {
             const pass = graph.get_physical_pass(frame_data.current_pass);
             MeshTaskQueue.get().draw_quad(pass);
+          }
+        );
+      }
+
+      // G-Buffer set clear pass
+      {
+        render_graph.add_pass(
+          reset_g_buffer_targets_pass_name,
+          RenderPassFlags.GraphLocal,
+          {},
+          (graph, frame_data, encoder) => {
+            if (frame_data.g_buffer_data) {
+              if (frame_data.g_buffer_data.albedo) {
+                frame_data.g_buffer_data.albedo.config.load_op = load_op_clear;
+              }
+              if (frame_data.g_buffer_data.emissive) {
+                frame_data.g_buffer_data.emissive.config.load_op = load_op_clear;
+              }
+              if (frame_data.g_buffer_data.smra) {
+                frame_data.g_buffer_data.smra.config.load_op = load_op_clear;
+              }
+              if (frame_data.g_buffer_data.position) {
+                frame_data.g_buffer_data.position.config.load_op = load_op_clear;
+              }
+              if (frame_data.g_buffer_data.normal) {
+                frame_data.g_buffer_data.normal.config.load_op = load_op_clear;
+              }
+              if (frame_data.g_buffer_data.entity_id) {
+                frame_data.g_buffer_data.entity_id.config.load_op = load_op_clear;
+              }
+              if (frame_data.g_buffer_data.transparency_accum) {
+                frame_data.g_buffer_data.transparency_accum.config.load_op = load_op_clear;
+              }
+              if (frame_data.g_buffer_data.transparency_reveal) {
+                frame_data.g_buffer_data.transparency_reveal.config.load_op = load_op_clear;
+              }
+              if (frame_data.g_buffer_data.depth) {
+                frame_data.g_buffer_data.depth.config.load_op = load_op_clear;
+              }
+            }
           }
         );
       }

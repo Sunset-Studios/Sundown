@@ -17,6 +17,7 @@ import { SceneGraphFragment } from "./ecs/fragments/scene_graph_fragment.js";
 
 import { cursor } from "../ui/2d/immediate.js";
 import { FontCache } from "../ui/text/font_cache.js";
+import { ViewProcessor } from "./subsystems/view_processor.js";
 import { UI3DProcessor } from "./subsystems/ui_3d_processor.js";
 import { UIProcessor } from "./subsystems/ui_processor.js";
 import { SharedViewBuffer } from "./shared_data.js";
@@ -60,6 +61,9 @@ export class Scene extends SimulationLayer {
   }
 
   setup_default_subsystems() {
+    const view_processor = this.add_layer(ViewProcessor);
+    view_processor.set_scene(this);
+
     this.add_layer(UIProcessor);
     this.add_layer(TextProcessor);
     this.add_layer(StaticMeshProcessor);
@@ -68,15 +72,15 @@ export class Scene extends SimulationLayer {
     if (__DEV__) {
       this.add_layer(AABBTreeDebugRenderer);
     }
-    
+
     const ui_3d_processor = this.add_layer(UI3DProcessor);
     ui_3d_processor.set_scene(this);
-    
+
     if (__DEV__) {
       const dev_console = this.add_layer(DevConsole);
       dev_console.set_scene(this);
     }
-    
+
     this.add_layer(EntityPreprocessor);
   }
 
@@ -92,6 +96,7 @@ export class Scene extends SimulationLayer {
     this.remove_layer(TextProcessor);
     this.remove_layer(StaticMeshProcessor);
     this.remove_layer(TransformProcessor);
+    this.remove_layer(ViewProcessor);
   }
 
   setup_default_fragments() {

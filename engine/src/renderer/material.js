@@ -235,12 +235,18 @@ export class MaterialTemplate {
           this.pipeline_state_config.depth_stencil_target.depth_compare ??
           depth_stencil_options.depth_compare ??
           "less",
+        depthBias: this.pipeline_state_config.depth_stencil_target.depth_bias ?? 0,
+        depthBiasClamp: this.pipeline_state_config.depth_stencil_target.depth_bias_clamp ?? 0,
+        depthBiasSlopeScale: this.pipeline_state_config.depth_stencil_target.depth_slope_scale ?? 0,
       };
     } else if (depth_target) {
       pipeline_descriptor.depthStencil = {
         format: depth_target.config.format,
         depthWriteEnabled: depth_stencil_options.depth_write_enabled ?? true,
         depthCompare: depth_stencil_options.depth_compare ?? "less",
+        depthBias: depth_stencil_options.depth_bias ?? 0,
+        depthBiasClamp: depth_stencil_options.depth_bias_clamp ?? 0,
+        depthBiasSlopeScale: depth_stencil_options.depth_slope_scale ?? 0,
       };
     }
 
@@ -510,7 +516,7 @@ export class Material {
       MaterialTemplate.create(
         "DefaultUIMaterial",
         "ui_standard_material.wgsl",
-        MaterialFamilyType.Opaque,
+        MaterialFamilyType.Transparent,
         {
           rasterizer_state: {
             cull_mode: "none",
@@ -518,7 +524,7 @@ export class Material {
         }
       );
       this.#default_ui_material = Material.create("DefaultUIMaterial", "DefaultUIMaterial", {
-        family: MaterialFamilyType.Opaque,
+        family: MaterialFamilyType.Transparent,
       });
 
       const default_ui_material_object = Material.get(this.#default_ui_material);

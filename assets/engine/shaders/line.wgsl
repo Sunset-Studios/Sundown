@@ -92,7 +92,7 @@ fn fs(input: VertexOutput) -> FragmentOutput {
 
     output.color = input.color;
     output.position = input.position;
-    output.emissive = vec4f(1.0, 0.0, 0.0, 0.0);
+    output.emissive = vec4f(2.0, 0.0, 0.0, 0.0);
     //output.smra = vec4f(0.0, 0.0, 0.0, 0.0);
     output.normal = vec4f(0.0, 0.0, 0.0, 0.0);
     

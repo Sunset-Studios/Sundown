@@ -281,10 +281,6 @@ export class ${fragment_name} extends Fragment {
     ${implementations.copy_entity_instance}
     ${this.generate_custom_methods(custom_methods)}
     ${this.generate_hooks(hooks)}
-
-    static get highest_entity() {
-      return this.data.last_valid_index;
-    }
 }`;
   }
 

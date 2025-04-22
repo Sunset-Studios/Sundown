@@ -1743,6 +1743,9 @@ export class RenderGraph {
           depth_stencil_target = {
             depthWriteEnabled: shader_setup.b_depth_write_enabled ?? true,
             depthCompare: shader_setup.depth_stencil_compare_op || "less",
+            depthBias: shader_setup.depth_bias || 0,
+            depthBiasClamp: shader_setup.depth_bias_clamp || 0,
+            depthBiasSlopeScale: shader_setup.depth_slope_scale || 0,
             format: image.config.format || "depth24plus",
           };
         }

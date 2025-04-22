@@ -438,8 +438,4 @@ export class TextFragment extends Fragment {
   static copy_entity_instance(to_index, from_index) {
     this.data.gpu_data_dirty = true;
   }
-
-  static get highest_entity() {
-    return this.data.last_valid_index;
-  }
 }

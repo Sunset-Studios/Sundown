@@ -26,7 +26,6 @@ struct FragmentOutput {
     @location(2) smra: vec4<precision_float>,
     @location(3) position: vec4<f32>,
     @location(4) normal: vec4<precision_float>,
-
 #ifndef SKIP_ENTITY_WRITES
     @location(5) entity_id: vec2<u32>,
 #endif
@@ -50,8 +49,9 @@ const transparency_reveal_location = 5;
 // ------------------------------------------------------------------------------------ 
 
 @group(1) @binding(0) var<storage, read> entity_transforms: array<EntityTransform>;
-@group(1) @binding(1) var<storage, read> compacted_object_instances: array<CompactedObjectInstance>;
-@group(1) @binding(2) var<storage, read> lights_buffer: array<Light>; // Used for forward shading if necessary
+@group(1) @binding(1) var<storage, read> entity_flags: array<i32>;
+@group(1) @binding(2) var<storage, read> compacted_object_instances: array<CompactedObjectInstance>;
+@group(1) @binding(3) var<storage, read> lights_buffer: array<Light>; // Used for forward shading if necessary
 
 // ------------------------------------------------------------------------------------
 // Vertex Shader
@@ -77,13 +77,21 @@ fn vertex(v_out: ptr<function, VertexOutput>) -> VertexOutput {
 
     var output : VertexOutput;
 
-    output.local_position = instance_vertex.position;
-    output.world_position = entity_transform.transform * vec4<f32>(output.local_position);
     output.uv = instance_vertex.uv;
     output.instance_index = ii;
     output.base_instance_id = entity;
     output.instance_id = entity_resolved;
     output.vertex_index = vi;
+    output.local_position = instance_vertex.position;
+
+    output.world_position = select(
+        entity_transform.transform * vec4<f32>(output.local_position),
+        billboard_vertex_local(
+            output.uv,
+            entity_transform.transform
+        ),
+        (entity_flags[entity_resolved] & ETF_BILLBOARD) != 0
+    );
 
     let n = normalize((entity_transform.transpose_inverse_model_matrix * vec4<f32>(instance_vertex.normal)).xyz);
     let t = normalize((entity_transform.transform * vec4<f32>(instance_vertex.tangent.xyz, 0.0)).xyz);

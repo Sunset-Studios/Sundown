@@ -201,7 +201,7 @@ export class TransformFragment extends Fragment {
   static size = 0;
   static data = null;
 
-  static MAX_DIRTY_FLAG_RETAIN_FRAMES = 12;
+  static MAX_DIRTY_FLAG_RETAIN_FRAMES = 16;
 
   static initialize() {
     this.data = {
@@ -734,6 +734,9 @@ export class TransformFragment extends Fragment {
       this.data.aabb_node_index[to_index] =
         this.data.aabb_node_index[from_index];
     }
+
+    this.data.dirty[to_index] = 1;
+    this.data.dirty[from_index] = 1;
   }
 
   static get_world_position(entity, instance = 0) {
@@ -841,10 +844,14 @@ export class TransformFragment extends Fragment {
     if (
       this.data.dirty_flag_retain_frames >= this.MAX_DIRTY_FLAG_RETAIN_FRAMES
     ) {
+      let cleared = false;
       for (let i = 0; i < this.size; i++) {
+        cleared = cleared || this.data.dirty[i] !== 0;
         this.data.dirty[i] = 0;
       }
-      this.data.gpu_data_dirty = true;
+      if (cleared) {
+        this.data.gpu_data_dirty = true;
+      }
       this.data.dirty_flag_retain_frames = 0;
     }
   }
@@ -854,9 +861,5 @@ export class TransformFragment extends Fragment {
       return;
     }
     BufferSync.request_sync(this);
-  }
-
-  static get highest_entity() {
-    return this.data.last_valid_index;
   }
 }

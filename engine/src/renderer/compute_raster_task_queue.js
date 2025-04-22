@@ -82,6 +82,8 @@ export class ComputeRasterTaskQueue {
 
   static compile_rg_passes(render_graph, pipeline_outputs) {
     profile_scope(compile_rg_pass_scope_name, () => {
+      if (this.tasks.length === 0) return;
+      
       // For each task, bind outputs directly to textures
       for (let i = 0; i < this.tasks.length; i++) {
         const task = this.tasks[i];

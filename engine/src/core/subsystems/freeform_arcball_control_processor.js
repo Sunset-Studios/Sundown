@@ -6,7 +6,6 @@ import { InputKey, InputRange } from '../../input/input_types.js';
 import { radians } from '../../utility/math.js';
 import { vec4, quat, vec3 } from 'gl-matrix';
 import { WORLD_FORWARD, WORLD_UP } from '../minimal.js';
-import { global_dispatcher } from '../dispatcher.js';
 
 export class FreeformArcballControlProcessor extends SimulationLayer {
     move_speed = 10.0;
@@ -16,12 +15,10 @@ export class FreeformArcballControlProcessor extends SimulationLayer {
 
     init() {
         super.init();
-        global_dispatcher.on("resolution_change", this.on_resolution_change.bind(this));
     }
 
     cleanup() {
         scene = null;
-        global_dispatcher.off("resolution_change", this.on_resolution_change.bind(this));
         super.cleanup();
     }
 
@@ -103,12 +100,6 @@ export class FreeformArcballControlProcessor extends SimulationLayer {
         SharedViewBuffer.update_transforms(this.context.current_view);
     }
 
-    on_resolution_change() {
-        SharedViewBuffer.set_view_data(this.context.current_view, {
-            aspect_ratio: Renderer.get().aspect_ratio
-        });
-    }
-
     set_scene(scene) {
         this.scene = scene;
         this.context.current_view = scene.context.current_view;
@@ -119,7 +110,6 @@ export class FreeformArcballControlProcessor extends SimulationLayer {
         SharedViewBuffer.set_view_data(this.scene.context.current_view, {
             position: camera_position,
             rotation: camera_rotation,
-            aspect_ratio: Renderer.get().aspect_ratio,
             fov: radians(75),
         });
     }

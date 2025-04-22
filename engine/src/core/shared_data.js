@@ -129,6 +129,10 @@ export class SharedViewBuffer {
 
   // Updates the view transforms at the given index, given the view data previously set. Can be called during setup or at runtime.
   static update_transforms(index) {
+    if (index >= this.view_data.length) {
+      return;
+    }
+
     if (this.view_data[index].dirty) {
       if (this.view_data[index].projection_matrix) {
         this.view_data[index].prev_projection_matrix = mat4.clone(

@@ -12,6 +12,7 @@ const ETF_IGNORE_PARENT_ROTATION = 1 << 2;
 const ETF_TRANSFORM_DIRTY = 1 << 3;
 const ETF_NO_AABB_UPDATE = 1 << 4;
 const ETF_AABB_DIRTY = 1 << 5;
+const ETF_BILLBOARD = 1 << 6;
 
 const AABB_NODE_FLAGS_MOVED = 1 << 0;
 const AABB_NODE_FLAGS_FREE = 1 << 1;
@@ -20,7 +21,7 @@ const AABB_NODE_FLAGS_FREE = 1 << 1;
 const AABB_NODE_TYPE_INTERNAL = 0;
 const AABB_NODE_TYPE_LEAF = 1;
 
-const LOG_DEPTH_C = 1.0; // Can adjust this value based on scene scale
+const LOG_DEPTH_C = 0.1; // Can adjust this value based on scene scale
 
 struct Vertex {
     position: vec4<precision_float>,
@@ -115,8 +116,9 @@ const one_over_float_max = 1.0 / 4294967296.0;
 @group(0) @binding(1) var<storage, read> view_buffer: array<View>;
 @group(0) @binding(2) var global_sampler: sampler;
 @group(0) @binding(3) var non_filtering_sampler: sampler;
-@group(0) @binding(4) var<uniform> frame_info: FrameInfo;
-@group(0) @binding(5) var<storage, read> entity_metadata: array<EntityMetadata>;
+@group(0) @binding(4) var clamped_sampler: sampler;
+@group(0) @binding(5) var<uniform> frame_info: FrameInfo;
+@group(0) @binding(6) var<storage, read> entity_metadata: array<EntityMetadata>;
 
 // ------------------------------------------------------------------------------------
 // Helper Functions
@@ -225,7 +227,7 @@ fn interpolate(v0: precision_float, v1: precision_float, t: precision_float) -> 
 
 // A billboard function that works with local position and entity transform
 // Uses model-view matrix manipulation for robust billboarding
-fn billboard_vertex_local(uv: vec2f, local_position: vec4f, entity_transform: mat4x4f) -> vec4f {
+fn billboard_vertex_local(uv: vec2f, entity_transform: mat4x4f) -> vec4f {
     // Get view and projection matrices
     let view = view_buffer[0].view_matrix;
     // Extract translation from the entity transform (4th column)
@@ -266,11 +268,13 @@ fn billboard_vertex_local(uv: vec2f, local_position: vec4f, entity_transform: ma
     return vec4f(final_world_position, 1.0);
 }
 
-fn log_depth(position: vec4f) -> f32 {
-    let far_plane = -view_buffer[0].frustum[5].w / length(view_buffer[0].frustum[5].xyz);
-    let view_position = view_buffer[0].view_matrix * position;
-    let view_space_z = view_position.z;
-    return log(LOG_DEPTH_C * view_space_z + 1.0) / log(LOG_DEPTH_C * far_plane + 1.0);
+fn log_depth(view_space_z: f32) -> f32 {
+    let far_plane = -view_buffer[0].frustum[5].w;
+    let near_plane = -view_buffer[0].frustum[4].w;
+    let z = -view_space_z;
+    return
+    (log(LOG_DEPTH_C * z + 1.0) - log(LOG_DEPTH_C * near_plane + 1.0)) 
+        / (log(LOG_DEPTH_C * far_plane + 1.0) - log(LOG_DEPTH_C * near_plane + 1.0));
 }
 
 fn rotate_hue(color: vec4f, hue_rotation: f32) -> vec4f {

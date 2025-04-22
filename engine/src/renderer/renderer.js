@@ -178,6 +178,17 @@ export class Renderer {
           }),
         },
         {
+          sampler: TextureSampler.create({
+            name: "clamped_sampler",
+            address_mode_u: "clamp-to-edge",
+            address_mode_v: "clamp-to-edge",
+            address_mode_w: "clamp-to-edge",
+            mag_filter: "nearest",
+            min_filter: "nearest",
+            mipmap_filter: "nearest",
+          }),
+        },
+        {
           buffer: SharedFrameInfoBuffer.buffer,
           offset: 0,
           size: SharedFrameInfoBuffer.size,

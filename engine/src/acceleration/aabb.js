@@ -323,17 +323,15 @@ export class AABB {
 
     {
       // Create a new array with the new size
-      const new_temp_sync_buffers = new Array(MAX_BUFFERED_FRAMES).fill(new Float32Array(this.size * NODE_BOUNDS_SIZE));
+      const new_temp_sync_buffer = new Float32Array(this.size * NODE_BOUNDS_SIZE);
 
       // Copy existing data
-      for (let i = 0; i < MAX_BUFFERED_FRAMES; i++) {
-        if (this.data.node_bounds_cpu_buffer[i]) {
-          new_temp_sync_buffers[i].set(this.data.node_bounds_cpu_buffer[i]);
-        }
+      if (this.data.node_bounds_cpu_buffer[0]) {
+        new_temp_sync_buffer.set(this.data.node_bounds_cpu_buffer[0]);
       }
 
       // Replace the old array
-      this.#temp_sync_buffer = new_temp_sync_buffers;
+      this.#temp_sync_buffer = new_temp_sync_buffer;
     }
 
     this.free_nodes.resize(this.size);
@@ -534,7 +532,7 @@ export class AABB {
   /**
    * Sync the AABB tree buffers
    */
-  static #temp_sync_buffer = new Array(MAX_BUFFERED_FRAMES).fill(new Float32Array(NODE_BOUNDS_SIZE));
+  static #temp_sync_buffer = new Float32Array(NODE_BOUNDS_SIZE);
   static async sync_buffers() {
     const buffered_frame = Renderer.get().get_buffered_frame_number();
     // Only do readbacks if the buffer is ready and not being modified
@@ -542,8 +540,8 @@ export class AABB {
       try {
         // Do the readback
         await this.data.node_bounds_cpu_buffer[buffered_frame].read(
-          this.#temp_sync_buffer[buffered_frame],
-          this.#temp_sync_buffer[buffered_frame].byteLength,
+          this.#temp_sync_buffer,
+          this.#temp_sync_buffer.byteLength,
           0,
           0,
           Float32Array
@@ -551,14 +549,14 @@ export class AABB {
       } finally {
         for (let i = 0; i < this.size; i++) {
           if (this.data.node_data[i * NODE_SIZE + 1] === AABB_NODE_TYPE.LEAF) {
-            this.data.node_bounds[i * NODE_BOUNDS_SIZE + 0] = this.#temp_sync_buffer[buffered_frame][i * NODE_BOUNDS_SIZE + 0];
-            this.data.node_bounds[i * NODE_BOUNDS_SIZE + 1] = this.#temp_sync_buffer[buffered_frame][i * NODE_BOUNDS_SIZE + 1];
-            this.data.node_bounds[i * NODE_BOUNDS_SIZE + 2] = this.#temp_sync_buffer[buffered_frame][i * NODE_BOUNDS_SIZE + 2];
-            this.data.node_bounds[i * NODE_BOUNDS_SIZE + 3] = this.#temp_sync_buffer[buffered_frame][i * NODE_BOUNDS_SIZE + 3];
-            this.data.node_bounds[i * NODE_BOUNDS_SIZE + 4] = this.#temp_sync_buffer[buffered_frame][i * NODE_BOUNDS_SIZE + 4];
-            this.data.node_bounds[i * NODE_BOUNDS_SIZE + 5] = this.#temp_sync_buffer[buffered_frame][i * NODE_BOUNDS_SIZE + 5];
-            this.data.node_bounds[i * NODE_BOUNDS_SIZE + 6] = this.#temp_sync_buffer[buffered_frame][i * NODE_BOUNDS_SIZE + 6];
-            this.data.node_bounds[i * NODE_BOUNDS_SIZE + 7] = this.#temp_sync_buffer[buffered_frame][i * NODE_BOUNDS_SIZE + 7];
+            this.data.node_bounds[i * NODE_BOUNDS_SIZE + 0] = this.#temp_sync_buffer[i * NODE_BOUNDS_SIZE + 0];
+            this.data.node_bounds[i * NODE_BOUNDS_SIZE + 1] = this.#temp_sync_buffer[i * NODE_BOUNDS_SIZE + 1];
+            this.data.node_bounds[i * NODE_BOUNDS_SIZE + 2] = this.#temp_sync_buffer[i * NODE_BOUNDS_SIZE + 2];
+            this.data.node_bounds[i * NODE_BOUNDS_SIZE + 3] = this.#temp_sync_buffer[i * NODE_BOUNDS_SIZE + 3];
+            this.data.node_bounds[i * NODE_BOUNDS_SIZE + 4] = this.#temp_sync_buffer[i * NODE_BOUNDS_SIZE + 4];
+            this.data.node_bounds[i * NODE_BOUNDS_SIZE + 5] = this.#temp_sync_buffer[i * NODE_BOUNDS_SIZE + 5];
+            this.data.node_bounds[i * NODE_BOUNDS_SIZE + 6] = this.#temp_sync_buffer[i * NODE_BOUNDS_SIZE + 6];
+            this.data.node_bounds[i * NODE_BOUNDS_SIZE + 7] = this.#temp_sync_buffer[i * NODE_BOUNDS_SIZE + 7];
           }
         }
       }

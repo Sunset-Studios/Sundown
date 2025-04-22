@@ -31,6 +31,7 @@ export class EntityID {
 
 export class EntityManager {
   static next_entity_id = 0;
+  static highest_entity = 0;
   static entity_fragments = new Map();
   static fragment_types = new Set();
   static entities = new TypedVector(256, 0, Float64Array);
@@ -246,24 +247,27 @@ export class EntityManager {
         EntityID.get_absolute_index(entityA) - EntityID.get_absolute_index(entityB)
     );
 
-    // 3. Compute total net change, and also build a difference array
+    // 3. Retrieve the highest entity and cache it in the entity manager
+    const highest_entity = sorted_changes[sorted_changes.length - 1][0];
+    const highest_entity_new_count = sorted_changes[sorted_changes.length - 1][1][1];
+    this.highest_entity = EntityID.get_absolute_index(highest_entity) + highest_entity_new_count;
+
+    // 4. Compute total net change, and also build a difference array
     //    that marks how many slots get added/removed starting at entity_index+old_count
     let total_size_change = 0;
     for (const [entity, [last_count, new_count]] of sorted_changes) {
       total_size_change += new_count - last_count;
     }
 
-    // 4. Resize the fragment arrays to the new total size
+    // 5. Resize the fragment arrays to the new total size
     for (const frag of this.fragment_types) {
       if (!frag.size) continue;
-      const last_valid_index = frag.highest_entity;
-      const new_size = last_valid_index + total_size_change;
-      if (new_size > frag.size) {
-        frag.resize(new_size);
+      if (this.highest_entity > frag.size) {
+        frag.resize(this.highest_entity);
       }
     }
 
-    // 5. Build the “difference array” + prefix sum to figure out the shift for each slot.
+    // 6. Build the “difference array” + prefix sum to figure out the shift for each slot.
     //    Let’s define `max_size` as the final capacity in the largest fragment.
     const max_size = Math.max(...Array.from(this.fragment_types).map((ft) => ft.size ? ft.size : 0));
     const shifts = new Int32Array(max_size + 1);
@@ -284,7 +288,7 @@ export class EntityManager {
     }
     // Now `shifts[i]` = how far index `i` in the old layout should move (positive => right)
 
-    // 6A. Expansions pass
+    // 7A. Expansions pass (not needed here, as it's the last pass as well?)
     //     We do a single loop from (max_size - 1) down to 0.
     //     If shifts[i] > 0, we move from i -> i+shifts[i].
     //     Then we mark that we used up that old data.
@@ -300,7 +304,7 @@ export class EntityManager {
       }
     }
 
-    // 6B. Contractions pass
+    // 7B. Contractions pass
     //     We do a single loop from 0 up to (max_size - 1).
     //     If shifts[i] < 0, we move from i -> i+shifts[i].
     //     Then we mark that we used up that old data.
@@ -316,7 +320,7 @@ export class EntityManager {
       }
     }
 
-    // 7. Now we handle truly “new” slots that didn’t exist before.
+    // 9. Now we handle truly “new” slots that didn’t exist before.
     //    For example, if an entity had old_count=1, new_count=3 => we shifted the *existing* slot,
     //    but we haven’t filled the brand‐new 2 slots with data yet.
     //
@@ -329,7 +333,7 @@ export class EntityManager {
     for (const [entity, [last_count, new_count]] of sorted_changes) {
       const added = new_count - last_count;
       if (added <= 0) continue;
-
+      
       const entity_index = EntityID.get_absolute_index(entity);
       for (let j = last_count; j < new_count; j++) {
         const new_absolute_index = entity_index + j;
@@ -339,7 +343,7 @@ export class EntityManager {
       }
     }
 
-    // 8. Clear pending changes
+    // 10. Clear pending changes
     this.pending_instance_count_changes.clear();
   }
 
