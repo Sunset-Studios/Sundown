@@ -35,6 +35,7 @@ async function create_window() {
     webPreferences: {
       nodeIntegration: true,
       contextIsolation: true,
+      crossOriginIsolated: true,
       preload: path.join(__dirname, '../preload/index.mjs'),
     }
   });

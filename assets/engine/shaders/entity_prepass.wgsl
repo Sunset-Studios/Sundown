@@ -30,7 +30,7 @@ struct FragmentOutput {
     @builtin(instance_index) ii: u32
 ) -> VertexOutput {
     let entity = compacted_object_instances[ii].entity;
-    let entity_resolved = entity_metadata[entity].offset + compacted_object_instances[ii].entity_instance;
+    let entity_resolved = get_entity_row(entity) + compacted_object_instances[ii].entity_instance;
 
     let model_matrix = entity_transforms[entity_resolved].transform;
     let mvp = view_buffer[0].view_projection_matrix * model_matrix;

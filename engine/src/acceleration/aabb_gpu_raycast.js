@@ -140,8 +140,8 @@ export class AABBGPURaycast {
                 "system_compute/aabb_raycast.wgsl",
                 [
                     this.uniforms_buffer,
-                    AABB.data.node_bounds_buffer,
-                    AABB.data.node_data_buffer,
+                    AABB.node_bounds_buffer,
+                    AABB.node_data_buffer,
                     this.ray_buffer,
                     this.hits_buffer
                 ],

@@ -14,7 +14,7 @@ const max_frame_buffer_writes = 100000;
 class IndirectDrawBatch {
   mesh_id = 0;
   material_id = 0;
-  entity_ids = [];
+  entities = [];
   index_buffer_id = null;
   instance_count = 0;
   first_index = 0;
@@ -24,9 +24,9 @@ class IndirectDrawBatch {
 }
 
 class ObjectInstanceEntry {
-  constructor(batch_index, entity_index, entity_instance_index) {
+  constructor(batch_index, entity, entity_instance_index) {
     this.batch_index = batch_index;
-    this.entity_index = entity_index;
+    this.entity = entity;
     this.entity_instance_index = entity_instance_index;
   }
 }
@@ -176,7 +176,7 @@ class IndirectDrawObject {
             for (let i = actual_write_offset; i < actual_write_offset + write_count_obj; i += 3) {
               const offset = Math.floor(i / 3);
               this.object_instance_data[i] = object_instances[offset].batch_index;
-              this.object_instance_data[i + 1] = object_instances[offset].entity_index;
+              this.object_instance_data[i + 1] = object_instances[offset].entity.id;
               this.object_instance_data[i + 2] = object_instances[offset].entity_instance_index;
             }
             this.object_instance_buffer.write_raw(
@@ -292,13 +292,13 @@ export class MeshTaskQueue {
             last_batch.mesh_id === task.mesh_id &&
             last_batch.material_id === task.material_id
           ) {
-            const start_index = last_batch.entity_ids.length;
+            const start_index = last_batch.entities.length;
 
             last_batch.instance_count += task.instance_count;
-            last_batch.entity_ids.length += task.instance_count;
+            last_batch.entities.length += task.instance_count;
 
-            for (let j = start_index; j < last_batch.entity_ids.length; ++j) {
-              last_batch.entity_ids[j] = task.entity;
+            for (let j = start_index; j < last_batch.entities.length; ++j) {
+              last_batch.entities[j] = task.entity;
             }
           } else {
             const mesh = ResourceCache.get().fetch(CacheTypes.MESH, task.mesh_id);
@@ -315,8 +315,8 @@ export class MeshTaskQueue {
               ? last_batch.base_instance + last_batch.instance_count
               : 0;
 
-            batch.entity_ids.length = task.instance_count;
-            batch.entity_ids.fill(task.entity);
+            batch.entities.length = task.instance_count;
+            batch.entities.fill(task.entity);
 
             last_batch = batch;
 
@@ -330,18 +330,18 @@ export class MeshTaskQueue {
         for (let j = 0; j < this.batches.length; j++) {
           this.add_material_bucket(this.batches[j].material_id);
 
-          let last_batch_entity_id = -1;
+          let last_batch_entity = null;
           let entity_instance_index = 0;
           for (let k = 0; k < this.batches[j].instance_count; k++) {
-            if (this.batches[j].entity_ids[k] !== last_batch_entity_id) {
+            if (this.batches[j].entities[k] !== last_batch_entity) {
               entity_instance_index = 0;
             }
-            last_batch_entity_id = this.batches[j].entity_ids[k];
+            last_batch_entity = this.batches[j].entities[k];
 
             const object_instance = this.object_instance_allocator.allocate();
             object_instance.entity_instance_index = entity_instance_index++;
             object_instance.batch_index = j;
-            object_instance.entity_index = last_batch_entity_id;
+            object_instance.entity = last_batch_entity;
             this.object_instances.push(object_instance);
           }
         }

@@ -4,7 +4,6 @@ import {
   SharedVertexBuffer,
   SharedViewBuffer,
   SharedFrameInfoBuffer,
-  SharedEntityMetadataBuffer,
 } from "../core/shared_data.js";
 import { MaterialTemplate } from "./material.js";
 import { global_dispatcher } from "../core/dispatcher.js";
@@ -12,6 +11,8 @@ import { vec2 } from "gl-matrix";
 import { profile_scope } from "../utility/performance.js";
 import ExecutionQueue from "../utility/execution_queue.js";
 import { MaterialFamilyType } from "./renderer_types.js";
+import { FragmentGpuBuffer } from "../core/ecs/solar/memory.js";
+import { log, warn, error } from "../utility/logging.js";
 
 const frame_render_event_name = "frame_render";
 const MAX_BUFFERED_FRAMES = 2;
@@ -72,14 +73,14 @@ export class Renderer {
         },
       });
     } catch (e) {
-      console.log(e);
-      console.log("Falling back to default limits");
+      log(e);
+      log("Falling back to default limits");
       this.device = await this.adapter.requestDevice();
     }
 
     // Use lost to handle lost devices
     this.device.lost.then((info) => {
-      console.error(`WebGPU device was lost: ${info.message}`);
+      error(`WebGPU device was lost: ${info.message}`);
     });
 
     this.context = this.canvas.getContext("webgpu");
@@ -107,8 +108,6 @@ export class Renderer {
     this.render_graph = RenderGraph.create(this.max_bind_groups());
 
     this.render_strategy = new render_strategy();
-
-    this.refresh_global_shader_bindings();
 
     this._setup_builtin_material_templates();
 
@@ -154,8 +153,7 @@ export class Renderer {
   }
 
   refresh_global_shader_bindings() {
-    this.render_graph.queue_global_bind_group_write(
-      [
+    const global_bindings = [
         {
           buffer: SharedVertexBuffer.buffer,
           offset: 0,
@@ -193,12 +191,26 @@ export class Renderer {
           offset: 0,
           size: SharedFrameInfoBuffer.size,
         },
-        {
-          buffer: SharedEntityMetadataBuffer.buffer,
-          offset: 0,
-          size: SharedEntityMetadataBuffer.buffer_size,
-        },
-      ],
+      ];
+
+    if (FragmentGpuBuffer.entity_flags_buffer) {
+      global_bindings.push({
+        buffer: FragmentGpuBuffer.entity_flags_buffer.buffer,
+        offset: 0,
+        size: FragmentGpuBuffer.entity_flags_buffer.buffer.config.size,
+      });
+    }
+
+    if (FragmentGpuBuffer.enable_entity_compaction) {
+      global_bindings.push({
+        buffer: FragmentGpuBuffer.entity_index_map_buffer.buffer,
+        offset: 0,
+        size: FragmentGpuBuffer.entity_index_map_buffer.config.size,
+      });
+    }
+
+    this.render_graph.queue_global_bind_group_write(
+      global_bindings,
       true /* overwrite */
     );
   }

@@ -1,4 +1,5 @@
 import { vec3, vec4 } from 'gl-matrix';
+import { log, warn, error } from "./logging.js";
 
 export function screen_pos_to_world_pos(view_data, screen_x, screen_y, width, height, depth = 0) {
     // Convert screen coordinates to clip space
@@ -101,7 +102,7 @@ export function screen_pos_to_axis_plane_pos(
 
     // Check if the ray is parallel to the plane (or very close to parallel)
     if (Math.abs(denominator) < 1e-6) {
-        console.warn(`Ray is parallel to the plane normal to ${plane_axis}, cannot find intersection.`);
+        warn(`Ray is parallel to the plane normal to ${plane_axis}, cannot find intersection.`);
         // Return null to indicate failure
         return null;
     }

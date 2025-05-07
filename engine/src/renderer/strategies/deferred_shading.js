@@ -1,12 +1,12 @@
 import { Renderer } from "../renderer.js";
 import { Texture } from "../texture.js";
 import { RenderPassFlags, MaterialFamilyType } from "../renderer_types.js";
+import { EntityManager } from "../../core/ecs/entity.js";
 import { AABB } from "../../acceleration/aabb.js";
 import { MeshTaskQueue } from "../mesh_task_queue.js";
 import { ComputeTaskQueue } from "../compute_task_queue.js";
 import { ComputeRasterTaskQueue } from "../compute_raster_task_queue.js";
 import { TransformFragment } from "../../core/ecs/fragments/transform_fragment.js";
-import { SceneGraphFragment } from "../../core/ecs/fragments/scene_graph_fragment.js";
 import { LightFragment } from "../../core/ecs/fragments/light_fragment.js";
 import { SharedViewBuffer, SharedEnvironmentMapData } from "../../core/shared_data.js";
 import { Material } from "../material.js";
@@ -32,6 +32,9 @@ const use_depth_prepass = false;
 
 const resolution_change_event_name = "resolution_change";
 const deferred_shading_profile_scope_name = "DeferredShadingStrategy.draw";
+const transforms_name = "transforms";
+const aabb_node_index_name = "aabb_node_index";
+const light_fragment_name = "light_fragment";
 
 const main_albedo_image_config = {
   name: "main_albedo",
@@ -355,26 +358,25 @@ export class DeferredShadingStrategy {
       MeshTaskQueue.get().sort_and_batch();
       ComputeTaskQueue.get().compile_rg_passes(render_graph);
 
-      const transform_gpu_data = TransformFragment.to_gpu_data();
+      
+      const transforms_buffer = EntityManager.get_fragment_gpu_buffer(TransformFragment, transforms_name);
       const entity_transforms = render_graph.register_buffer(
-        transform_gpu_data.transforms_buffer.config.name
+        transforms_buffer.buffer.config.name
       );
-      const entity_flags = render_graph.register_buffer(
-        transform_gpu_data.flags_buffer.config.name
-      );
+      const aabb_node_index_buffer = EntityManager.get_fragment_gpu_buffer(TransformFragment, aabb_node_index_name);
       const entity_aabb_node_indices = render_graph.register_buffer(
-        transform_gpu_data.aabb_node_index_buffer.config.name
+        aabb_node_index_buffer.buffer.config.name
       );
 
-      const scene_graph_gpu_data = SceneGraphFragment.to_gpu_data();
+      const light_fragment_buffer = EntityManager.get_fragment_gpu_buffer(LightFragment, light_fragment_name);
+      const lights = render_graph.register_buffer(
+        light_fragment_buffer.buffer.config.name
+      );
 
       const aabb_gpu_data = AABB.to_gpu_data();
       const aabb_bounds = render_graph.register_buffer(
         aabb_gpu_data.node_bounds_buffer.config.name
       );
-
-      const light_gpu_data = LightFragment.to_gpu_data();
-      const lights = render_graph.register_buffer(light_gpu_data.light_fragment_buffer.config.name);
 
       let skybox_image = null;
       let post_lighting_image_desc = null;
@@ -605,7 +607,7 @@ export class DeferredShadingStrategy {
           depth_prepass_name,
           RenderPassFlags.Graphics,
           {
-            inputs: [entity_transforms, entity_flags, compacted_object_instance_buffer],
+            inputs: [entity_transforms, compacted_object_instance_buffer],
             outputs: [main_depth_image],
             shader_setup: depth_only_shader_setup,
           },
@@ -643,7 +645,7 @@ export class DeferredShadingStrategy {
             `g_buffer_${material.template.name}_${material_id}`,
             RenderPassFlags.Graphics,
             {
-              inputs: [entity_transforms, entity_flags, compacted_object_instance_buffer, lights],
+              inputs: [entity_transforms, compacted_object_instance_buffer, lights],
               outputs: [
                 material.family === MaterialFamilyType.Transparent
                   ? main_transparency_accum_image

@@ -7,8 +7,6 @@
 // Data Structures
 //------------------------------------------------------------------------------------
 struct StringData {
-    start: f32,
-    count: f32,
     page_texture_size: vec2<precision_float>,
     color: vec4<precision_float>,
     emissive: precision_float,
@@ -43,34 +41,33 @@ struct GlyphData {
 //------------------------------------------------------------------------------------
 fn vertex(v_out: ptr<function, VertexOutput>) -> VertexOutput {
     let entity               = v_out.base_instance_id;
+    let entity_row           = get_entity_row(entity);
     let local_instance_index = compacted_object_instances[v_out.instance_index].entity_instance;
 
-    let string = string_data[entity];
-    if (string.count > 0.0) {
-        // Find which character in the text we are drawing
-        let text_index = u32(string.start) + local_instance_index;
-        let ch         = text[text_index];
-        let glyph_data = font_glyph_data[ch];
+    // Find which character in the text we are drawing
+    let string = string_data[entity_row];
+    let text_index = entity_row + local_instance_index;
+    let ch         = text[text_index];
+    let glyph_data = font_glyph_data[ch];
 
-        // Use the provided UV coordinates for corner offset
-        var corner_offset = v_out.uv.xy;
-        corner_offset.y = 1.0 - corner_offset.y;
+    // Use the provided UV coordinates for corner offset
+    var corner_offset = v_out.uv.xy;
+    corner_offset.y = 1.0 - corner_offset.y;
 
-        // Calculate UV coordinates for the glyph in the texture atlas
-        var uv_top_left = vec2<precision_float>(
-            precision_float(glyph_data.x),
-            precision_float(glyph_data.y)
-        ) / string.page_texture_size;
+    // Calculate UV coordinates for the glyph in the texture atlas
+    var uv_top_left = vec2<precision_float>(
+        precision_float(glyph_data.x),
+        precision_float(glyph_data.y)
+    ) / string.page_texture_size;
 
-        let uv_size = vec2<precision_float>(
-            precision_float(glyph_data.width),
-            precision_float(glyph_data.height)
-        ) / string.page_texture_size;
+    let uv_size = vec2<precision_float>(
+        precision_float(glyph_data.width),
+        precision_float(glyph_data.height)
+    ) / string.page_texture_size;
 
-        // Flip Y coordinate and apply the corner offset
-        uv_top_left.y = 1.0 - uv_top_left.y - uv_size.y;
-        v_out.uv = uv_top_left + corner_offset * uv_size;
-    }
+    // Flip Y coordinate and apply the corner offset
+    uv_top_left.y = 1.0 - uv_top_left.y - uv_size.y;
+    v_out.uv = uv_top_left + corner_offset * uv_size;
 
     return *v_out;
 }
@@ -85,9 +82,11 @@ fn vertex(v_out: ptr<function, VertexOutput>) -> VertexOutput {
 //------------------------------------------------------------------------------------
 fn fragment(v_out: VertexOutput, f_out: ptr<function, FragmentOutput>) -> FragmentOutput {
     // Sample the MSDF texture
+    let entity_row = get_entity_row(v_out.base_instance_id);
+
     let sample_color = vec4<precision_float>(textureSample(font_page_texture, global_sampler, vec2<f32>(v_out.uv)));
-    let string_color = string_data[v_out.base_instance_id].color;
-    let emissive = string_data[v_out.base_instance_id].emissive;
+    let string_color = string_data[entity_row].color;
+    let emissive = string_data[entity_row].emissive;
 
     let r = sample_color.r;
     let g = sample_color.g;

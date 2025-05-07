@@ -1,8 +1,8 @@
 import { Name } from "../utility/names.js";
 import { Renderer } from "./renderer.js";
 import { ResourceCache } from "./resource_cache.js";
-import { RandomAccessAllocator } from "../memory/allocator.js";
-import { CacheTypes, BufferFlags } from "./renderer_types.js";
+import { CacheTypes } from "./renderer_types.js";
+import { global_dispatcher } from "../core/dispatcher.js";
 
 export class Buffer {
     config = null;
@@ -49,14 +49,18 @@ export class Buffer {
         const raw_data = is_array_buffer ? data : data.flat();
         const buffer_data = is_array_buffer ? raw_data : new data_type(raw_data);
         renderer.device.queue.writeBuffer(this.buffer, offset, buffer_data, data_offset, size ?? buffer_data.length);
+
+        if (this.config.dispatch) {
+            global_dispatcher.dispatch(this.config.name, this);
+        }
     }
 
     write_raw(data, offset = 0, size = null, data_offset = 0) {
         const renderer = Renderer.get();
-        try {
-            renderer.device.queue.writeBuffer(this.buffer, offset, data, data_offset, size ?? data.length);
-        } catch (e) {
-            console.error('Error writing buffer with offset ', offset, ' and size ', size, ': ', e);
+        renderer.device.queue.writeBuffer(this.buffer, offset, data, data_offset, size ?? data.length);
+
+        if (this.config.dispatch) {
+            global_dispatcher.dispatch(this.config.name, this);
         }
     }
 
@@ -66,6 +70,10 @@ export class Buffer {
             buffer_data.set(data, offset);
             this.buffer.unmap();
         });
+
+        if (this.config.dispatch) {
+            global_dispatcher.dispatch(this.config.name, this);
+        }
     }
 
     async read(data, data_length, offset = 0, data_offset = 0, data_type = Float32Array) {

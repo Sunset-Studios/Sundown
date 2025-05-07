@@ -15,10 +15,9 @@ import { FreeformArcballControlProcessor } from "../engine/src/core/subsystems/f
 import { LightFragment } from "../engine/src/core/ecs/fragments/light_fragment.js";
 import { TextFragment } from "../engine/src/core/ecs/fragments/text_fragment.js";
 import { StaticMeshFragment } from "../engine/src/core/ecs/fragments/static_mesh_fragment.js";
-import { LightType, EntityTransformFlags } from "../engine/src/core/minimal.js";
-import { Material, StandardMaterial } from "../engine/src/renderer/material.js";
+import { LightType, EntityFlags } from "../engine/src/core/minimal.js";
+import { StandardMaterial } from "../engine/src/renderer/material.js";
 import { Texture } from "../engine/src/renderer/texture.js";
-import { Buffer } from "../engine/src/renderer/buffer.js";
 import { Mesh } from "../engine/src/renderer/mesh.js";
 import { LineRenderer } from "../engine/src/renderer/line_renderer.js";
 import { SharedEnvironmentMapData, SharedViewBuffer } from "../engine/src/core/shared_data.js";
@@ -26,6 +25,7 @@ import { spawn_mesh_entity, delete_entity } from "../engine/src/core/ecs/entity_
 import { FontCache } from "../engine/src/ui/text/font_cache.js";
 import { Name } from "../engine/src/utility/names.js";
 import { profile_scope } from "../engine/src/utility/performance.js";
+import { log, warn, error } from "../engine/src/utility/logging.js";
 import { vec4, quat } from "gl-matrix";
 
 import * as UI from "../engine/src/ui/2d/immediate.js";
@@ -37,9 +37,14 @@ import { MasterMind } from "../engine/src/ml/mastermind.js";
 import { Tensor, TensorInitializer } from "../engine/src/ml/math/tensor.js";
 import { Adam } from "../engine/src/ml/optimizers/adam.js";
 
+
 // ------------------------------------------------------------------------------------
 // =============================== Rendering Scene ===============================
 // ------------------------------------------------------------------------------------
+
+const positions_name = "position";
+const ripples_name = "ripples";
+const ripples_shader = "effects/transform_ripples.wgsl";
 
 export class RenderingScene extends Scene {
   entities = [];
@@ -70,19 +75,15 @@ export class RenderingScene extends Scene {
     SharedEnvironmentMapData.set_skybox_color([1, 1, 1, 1]);
 
     // Create a light and add it to the scene
-    const light_entity = EntityManager.create_entity();
+    const light_entity = EntityManager.create_entity([LightFragment]);
     this.entities.push(light_entity);
 
     // Add a light fragment to the light entity
-    const light_fragment_view = EntityManager.add_fragment(light_entity, LightFragment, false);
+    const light_fragment_view = EntityManager.get_fragment(light_entity, LightFragment);
     light_fragment_view.type = LightType.DIRECTIONAL;
-    light_fragment_view.color.r = 1;
-    light_fragment_view.color.g = 1;
-    light_fragment_view.color.b = 1;
+    light_fragment_view.color = [1, 1, 1];
     light_fragment_view.intensity = 3;
-    light_fragment_view.position.x = 50;
-    light_fragment_view.position.y = 0;
-    light_fragment_view.position.z = 50;
+    light_fragment_view.position = [50, 0, 50];
     light_fragment_view.active = true;
 
     // Create a sphere mesh and add it to the scene
@@ -103,8 +104,6 @@ export class RenderingScene extends Scene {
     const grid_layers = 10;
     const spacing = 5; // 2 units apart
 
-    EntityManager.reserve_entities(grid_size * grid_size * grid_layers);
-
     const sphere = spawn_mesh_entity(
       [0, 0, 0],
       [0, 0, 0, 1],
@@ -114,11 +113,9 @@ export class RenderingScene extends Scene {
       null /* parent */,
       [] /* children */,
       true /* start_visible */,
-      EntityTransformFlags.NO_AABB_UPDATE | EntityTransformFlags.IGNORE_PARENT_SCALE
+      EntityFlags.NO_AABB_UPDATE | EntityFlags.IGNORE_PARENT_SCALE
     );
     EntityManager.set_entity_instance_count(sphere, grid_size * grid_size * grid_layers);
-
-    EntityManager.flush_instance_count_changes();
 
     this.entities.push(sphere);
 
@@ -146,7 +143,7 @@ export class RenderingScene extends Scene {
       null /* parent */,
       [] /* children */,
       true /* start_visible */,
-      EntityTransformFlags.NO_AABB_UPDATE | EntityTransformFlags.IGNORE_PARENT_SCALE
+      EntityFlags.NO_AABB_UPDATE | EntityFlags.IGNORE_PARENT_SCALE
     );
     const text_fragment_view = EntityManager.add_fragment(text_entity, TextFragment);
     text_fragment_view.font = font_id;
@@ -183,14 +180,16 @@ export class RenderingScene extends Scene {
   update(delta_time) {
     super.update(delta_time);
 
-    const transforms = EntityManager.get_fragment_array(TransformFragment);
+    const positions = EntityManager.get_fragment_gpu_buffer(TransformFragment, positions_name);
+
+    const total_transforms = EntityManager.get_total_subscribed(TransformFragment);
 
     ComputeTaskQueue.get().new_task(
-      "ripples",
-      "effects/transform_ripples.wgsl",
-      [transforms.position_buffer, transforms.flags_buffer, transforms.dirty_buffer],
-      [transforms.position_buffer, transforms.flags_buffer, transforms.dirty_buffer],
-      Math.ceil(transforms.flags.length / 256)
+      ripples_name,
+      ripples_shader,
+      [positions.buffer],
+      [positions.buffer],
+      Math.ceil(total_transforms / 256)
     );
   }
 }
@@ -228,25 +227,19 @@ export class MLScene extends Scene {
     SharedEnvironmentMapData.set_skybox_color([1, 1, 1, 1]);
 
     // Create a light and add it to the scene
-    const light_entity = EntityManager.create_entity();
+    const light_entity = EntityManager.create_entity([LightFragment]);
 
     // Add a light fragment to the light entity
-    const light_fragment_view = EntityManager.add_fragment(light_entity, LightFragment, false);
+    const light_fragment_view = EntityManager.get_fragment(light_entity, LightFragment);
     light_fragment_view.type = LightType.DIRECTIONAL;
-    light_fragment_view.color.r = 1;
-    light_fragment_view.color.g = 1;
-    light_fragment_view.color.b = 1;
+    light_fragment_view.color = [1, 1, 1];
     light_fragment_view.intensity = 3;
-    light_fragment_view.position.x = 50;
-    light_fragment_view.position.y = 0;
-    light_fragment_view.position.z = 0;
+    light_fragment_view.position = [50, 0, 0];
     light_fragment_view.active = true;
 
     // Get Exo-Medium font
     const font_id = Name.from("Exo-Medium");
     const font_object = FontCache.get_font_object(font_id);
-
-    EntityManager.reserve_entities(1);
 
     const text_entity = spawn_mesh_entity(
       [0, 25, -50],
@@ -480,19 +473,15 @@ export class TexturesScene extends Scene {
     });
 
     // Create a light and add it to the scene
-    const light_entity = EntityManager.create_entity();
+    const light_entity = EntityManager.create_entity([LightFragment]);
     this.entities.push(light_entity);
 
     // Add a light fragment to the light entity
-    const light_fragment_view = EntityManager.add_fragment(light_entity, LightFragment, false);
+    const light_fragment_view = EntityManager.get_fragment(light_entity, LightFragment);
     light_fragment_view.type = LightType.DIRECTIONAL;
-    light_fragment_view.color.r = 1;
-    light_fragment_view.color.g = 1;
-    light_fragment_view.color.b = 1;
+    light_fragment_view.color = [1, 1, 1];
     light_fragment_view.intensity = 2;
-    light_fragment_view.position.x = 50;
-    light_fragment_view.position.y = 20;
-    light_fragment_view.position.z = -10;
+    light_fragment_view.position = [50, 20, -10];
     light_fragment_view.active = true;
 
     // Get Exo-Medium font
@@ -660,8 +649,6 @@ export class TexturesScene extends Scene {
     // Create a cube mesh
     this.cube_mesh = Mesh.cube();
 
-    EntityManager.reserve_entities(256);
-
     // Setup the world plane
     this.setup_world_plane();
 
@@ -793,19 +780,15 @@ export class AABBScene extends Scene {
     this.aabb_tree_debug_renderer = this.get_layer(AABBTreeDebugRenderer);
 
     // Create a light and add it to the scene
-    const light_entity = EntityManager.create_entity();
+    const light_entity = EntityManager.create_entity([LightFragment]);
     this.entities.push(light_entity);
 
     // Add a light fragment to the light entity
-    const light_fragment_view = EntityManager.add_fragment(light_entity, LightFragment, false);
+    const light_fragment_view = EntityManager.get_fragment(light_entity, LightFragment);
     light_fragment_view.type = LightType.DIRECTIONAL;
-    light_fragment_view.color.r = 1;
-    light_fragment_view.color.g = 1;
-    light_fragment_view.color.b = 1;
+    light_fragment_view.color = [1, 1, 1];
     light_fragment_view.intensity = 3;
-    light_fragment_view.position.x = 50;
-    light_fragment_view.position.y = 20;
-    light_fragment_view.position.z = 50;
+    light_fragment_view.position = [50, 20, 50];
     light_fragment_view.active = true;
 
     // Get Exo-Medium font
@@ -888,8 +871,6 @@ export class AABBScene extends Scene {
     const grid_size = 20;
     const spacing = 3.0;
 
-    EntityManager.reserve_entities(grid_size * grid_size * grid_size);
-
     for (let x = 0; x < grid_size; x++) {
       for (let z = 0; z < grid_size; z++) {
         for (let y = 0; y < grid_size; y++) {
@@ -950,7 +931,7 @@ export class AABBScene extends Scene {
         null,
         [],
         true,
-        EntityTransformFlags.IGNORE_PARENT_SCALE | EntityTransformFlags.NO_AABB_UPDATE
+        EntityFlags.IGNORE_PARENT_SCALE | EntityFlags.NO_AABB_UPDATE
       );
 
       this.entities.push(entity);
@@ -1041,7 +1022,7 @@ export class AABBScene extends Scene {
         StaticMeshFragment
       );
       if (static_mesh_fragment) {
-        static_mesh_fragment.material_slots = [this.default_material_id];
+        static_mesh_fragment.material_slots = [BigInt(this.default_material_id)];
       }
 
       this.selected_entity = null;
@@ -1070,7 +1051,7 @@ export class AABBScene extends Scene {
         StaticMeshFragment
       );
       if (static_mesh_fragment) {
-        static_mesh_fragment.material_slots = [this.selected_entity_material_id];
+        static_mesh_fragment.material_slots = [BigInt(this.selected_entity_material_id)];
       }
     }
 
@@ -1222,6 +1203,120 @@ export class AABBScene extends Scene {
 }
 
 // ------------------------------------------------------------------------------------
+// =============================== Solar ECS Test Scene ==============================
+// ------------------------------------------------------------------------------------
+
+export class SolarECSTestScene extends Scene {
+  name = "SolarECSTestScene";
+  entities = [];
+
+  init(parent_context) {
+    super.init(parent_context);
+
+    // Set the skybox for this scene.
+    SharedEnvironmentMapData.set_skybox("default_scene_skybox", [
+      "engine/textures/gradientbox/px.png",
+      "engine/textures/gradientbox/nx.png",
+      "engine/textures/gradientbox/ny.png",
+      "engine/textures/gradientbox/py.png",
+      "engine/textures/gradientbox/pz.png",
+      "engine/textures/gradientbox/nz.png",
+    ]);
+
+    // Set the skybox color to a subtle green
+    SharedEnvironmentMapData.set_skybox_color([0.7, 1.0, 0.8, 1]);
+
+    // Add the freeform arcball control processor to the scene
+    const freeform_arcball_control_processor = this.add_layer(FreeformArcballControlProcessor);
+    freeform_arcball_control_processor.set_scene(this);
+
+    // Set initial camera view
+    SharedViewBuffer.set_view_data(0, {
+      position: [10.0, 10.0, 15.0],
+      rotation: quat.fromEuler(quat.create(), -30, 45, 0), // Example rotation
+    });
+
+    // Create a light and add it to the scene
+    const light_entity = EntityManager.create_entity([LightFragment]);
+    this.entities.push(light_entity);
+
+    // Add a light fragment to the light entity
+    const light_fragment_view = EntityManager.get_fragment(light_entity, LightFragment);
+    light_fragment_view.type = LightType.DIRECTIONAL;
+    light_fragment_view.color = [1, 1, 1];
+    light_fragment_view.intensity = 2.5;
+    light_fragment_view.position = [10, 30, 10];
+    light_fragment_view.active = true;
+
+    // Get Exo-Medium font for potential text elements
+    const font_id = Name.from("Exo-Medium");
+    const font_object = FontCache.get_font_object(font_id);
+
+    // Add a title text entity
+    const text_entity = spawn_mesh_entity(
+      [0, 15, 0], // Position
+      [0, 0, 0, 1], // Rotation
+      [0.5, 0.5, 0.5], // Scale
+      Mesh.quad(),
+      font_object.material
+    );
+    const text_fragment_view = EntityManager.add_fragment(text_entity, TextFragment);
+    text_fragment_view.font = font_id;
+    text_fragment_view.text = "Solar ECS Test";
+    text_fragment_view.font_size = 32;
+    text_fragment_view.color = [0.8, 1, 0.8, 1];
+    text_fragment_view.emissive = 0.8;
+    this.entities.push(text_entity);
+
+    // Create a default material for test objects
+    const default_material = StandardMaterial.create("SolarTestMaterial");
+    const default_material_id = default_material.material_id;
+    default_material.set_albedo([0.6, 0.8, 0.6, 1.0]);
+    default_material.set_roughness(0.6);
+    default_material.set_metallic(0.2);
+
+    // Create a test mesh
+    const test_mesh = Mesh.cube();
+
+    // Spawn a few test entities
+    const num_test_entities = 5;
+    const spacing = 4.0;
+    for (let i = 0; i < num_test_entities; i++) {
+        const x_pos = (i - Math.floor(num_test_entities / 2)) * spacing;
+        const entity = spawn_mesh_entity(
+            [x_pos, 5, 0], // Position
+            quat.fromEuler(quat.create(), Math.random() * 360, Math.random() * 360, Math.random() * 360), // Random rotation
+            [1, 1, 1], // Scale
+            test_mesh,
+            default_material_id
+        );
+        this.entities.push(entity);
+    }
+
+    log(`[${this.name}] Initialized with ${this.entities.length} entities.`);
+  }
+
+  cleanup() {
+    log(`[${this.name}] Cleaning up...`);
+    for (let i = 0; i < this.entities.length; i++) {
+      delete_entity(this.entities[i]);
+    }
+    this.entities.length = 0;
+
+    this.remove_layer(FreeformArcballControlProcessor);
+
+    super.cleanup();
+    log(`[${this.name}] Cleanup complete.`);
+  }
+
+  update(delta_time) {
+    super.update(delta_time);
+
+    // Placeholder for future update logic specific to Solar ECS testing
+  }
+}
+
+// ------------------------------------------------------------------------------------
 // =============================== Scene Switcher ====================================
 // ------------------------------------------------------------------------------------
 
@@ -1269,9 +1364,11 @@ export class SceneSwitcher extends SimulationLayer {
   const rendering_scene = new RenderingScene("RenderingScene");
   const ml_scene = new MLScene("MLScene");
   const textures_scene = new TexturesScene("TexturesScene");
+  const solar_ecs_scene = new SolarECSTestScene("SolarECSTestScene");
 
   const scene_switcher = new SceneSwitcher("SceneSwitcher");
-  await scene_switcher.add_scene(textures_scene);
+  await scene_switcher.add_scene(solar_ecs_scene);
+  //await scene_switcher.add_scene(textures_scene);
   //await scene_switcher.add_scene(aabb_scene);
   //await scene_switcher.add_scene(rendering_scene);
   //await scene_switcher.add_scene(ml_scene);

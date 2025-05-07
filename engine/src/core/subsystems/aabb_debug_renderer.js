@@ -43,7 +43,7 @@ export class AABBTreeDebugRenderer extends SimulationLayer {
 
   _update_internal() {
     this.should_recreate_line_collection =
-      this.should_recreate_line_collection || AABB.data.modified;
+      this.should_recreate_line_collection || AABB.modified;
 
     if (!this.enabled) {
       this.clear_all();
@@ -63,11 +63,6 @@ export class AABBTreeDebugRenderer extends SimulationLayer {
 
   _collect_visible_nodes() {
     if (!this.should_recreate_line_collection) {
-      return;
-    }
-
-    const transforms = EntityManager.get_fragment_array(TransformFragment);
-    if (!transforms) {
       return;
     }
 

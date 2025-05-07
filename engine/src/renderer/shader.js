@@ -1,4 +1,5 @@
 import { Renderer } from "./renderer.js";
+import { EntityManager } from "../core/ecs/entity.js";
 import { ResourceCache } from "./resource_cache.js";
 import { WgslReflect, ResourceType } from "wgsl_reflect/wgsl_reflect.node.js";
 import { read_file } from "../utility/file_system.js";
@@ -19,6 +20,7 @@ import {
   r16uint_format,
   r16sint_format,
 } from "../utility/config_permutations.js";
+import { log, warn, error } from "../utility/logging.js";
 
 
 const include_string = "#include";
@@ -27,6 +29,8 @@ const else_string = "#else";
 const endif_string = "#endif";
 const precision_float_string = "precision_float";
 const has_precision_float_string = "HAS_PRECISION_FLOAT";
+const entity_compaction_string = "ENTITY_COMPACTION";
+const read_only_flags_string = "READ_ONLY_FLAGS";
 
 const f16_type_string = "f16";
 const f32_type_string = "f32";
@@ -86,7 +90,7 @@ export class Shader {
       this.file_path = file_path;
       this.reflection = this.reflect();
     } catch (error) {
-      console.error(`WebGPU shader error: could not create shader module at ${file_path}`, error);
+      error(`WebGPU shader error: could not create shader module at ${file_path}`, error);
     }
   }
 
@@ -106,7 +110,7 @@ export class Shader {
     }
 
     if (!asset) {
-      console.error(`WebGPU shader error: could not find shader at ${file_path}`);
+      error(`WebGPU shader error: could not find shader at ${file_path}`);
       return null;
     }
 
@@ -156,6 +160,8 @@ export class Shader {
       ? f16_type_string
       : f32_type_string;
     defines_map[has_precision_float_string] = Renderer.get().has_f16;
+    defines_map[entity_compaction_string] = EntityManager.is_entity_compaction_enabled();
+    defines_map[read_only_flags_string] = EntityManager.is_entity_compaction_enabled();
     return { defines_map, stripped_code };
   }
 
@@ -170,7 +176,7 @@ export class Shader {
       const end_index = code.indexOf(endif_string, start_index);
 
       if (end_index === -1) {
-        console.warn(`Unmatched #${directive} at position ${start_index}`);
+        warn(`Unmatched #${directive} at position ${start_index}`);
         continue;
       }
 

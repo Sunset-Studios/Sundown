@@ -1,3 +1,5 @@
+import { log, warn, error } from "../utility/logging.js";
+
 const info_name = 'info';
 const warn_name = 'warn';
 const error_name = 'error';
@@ -38,13 +40,13 @@ class Logger {
         if (this._console_enabled) {
             switch (level) {
                 case warn_name:
-                    console.warn(formatted_message);
+                    warn(formatted_message);
                     break;
                 case error_name:
-                    console.error(formatted_message);
+                    error(formatted_message);
                     break;
                 default:
-                    console.log(formatted_message);
+                    log(formatted_message);
             }
         }
         if (this._buffer_enabled) {

@@ -54,12 +54,7 @@ export class Font {
   y = null;
   texture_width = 0;
   texture_height = 0;
-
-  sizes_and_offsets_buffer = null;
-  positions_and_advance_and_page_buffer = null;
-
   page_textures = null;
-
   material = null;
 
   constructor(num_chars) {

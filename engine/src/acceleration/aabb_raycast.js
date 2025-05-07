@@ -90,7 +90,7 @@ export class AABBRaycast {
         const hit = new RaycastHit();
         
         profile_scope(raycast_scope, () => {
-            if (!AABB.data || AABB.root_node === 0) {
+            if (AABB.root_node === 0) {
                 return null;
             }
             
@@ -122,7 +122,7 @@ export class AABBRaycast {
         const hits = [];
         
         profile_scope(raycast_scope, () => {
-            if (!AABB.data || AABB.root_node === 0) {
+            if (AABB.root_node === 0) {
                 return [];
             }
             

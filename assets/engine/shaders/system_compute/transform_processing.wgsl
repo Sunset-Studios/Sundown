@@ -24,11 +24,9 @@ struct SceneGraphLayerData {
 @group(1) @binding(0) var<storage, read> entity_positions: array<vec4f>;
 @group(1) @binding(1) var<storage, read> entity_rotations: array<vec4f>;
 @group(1) @binding(2) var<storage, read> entity_scales: array<vec4f>;
-@group(1) @binding(3) var<storage, read> entity_flags: array<i32>;
-@group(1) @binding(4) var<storage, read_write> entity_dirty: array<u32>;
-@group(1) @binding(5) var<storage, read_write> entity_transforms: array<EntityTransform>;
-@group(1) @binding(6) var<storage, read> scene_graph: array<vec2<i32>>;
-@group(1) @binding(7) var<uniform> scene_graph_layer_data: SceneGraphLayerData;
+@group(1) @binding(3) var<storage, read_write> entity_transforms: array<EntityTransform>;
+@group(1) @binding(4) var<storage, read> scene_graph: array<vec2<i32>>;
+@group(1) @binding(5) var<uniform> scene_graph_layer_data: SceneGraphLayerData;
 
 // ------------------------------------------------------------------------------------
 // Compute Shader
@@ -48,11 +46,10 @@ fn cs(@builtin(global_invocation_id) global_id: vec3<u32>) {
         return;
     }
 
-    if (entity_dirty[entity_resolved] == 0 && entity_dirty[parent_resolved] == 0) {
+    if ((entity_flags[entity_resolved] & ET_DIRTY) == 0 &&
+        (entity_flags[parent_resolved] & ET_DIRTY) == 0) {
         return;
     }
-
-    entity_dirty[entity_resolved] += entity_dirty[parent_resolved];
 
     let position = entity_positions[entity_resolved];
     let rotation = entity_rotations[entity_resolved];
@@ -64,7 +61,7 @@ fn cs(@builtin(global_invocation_id) global_id: vec3<u32>) {
     if (parent_resolved >= 0) {
         parent_transform = entity_transforms[parent_resolved].transform;
 
-        if ((flag & ETF_IGNORE_PARENT_ROTATION) != 0) {
+        if ((flag & EF_IGNORE_PARENT_ROTATION) != 0) {
             // Extract translation from parent transform
             let parent_translation = vec3f(parent_transform[3].xyz);
             let parent_scale = vec3f(parent_transform[0].x, parent_transform[1].y, parent_transform[2].z);
@@ -76,7 +73,7 @@ fn cs(@builtin(global_invocation_id) global_id: vec3<u32>) {
                 parent_translation.x, parent_translation.y, parent_translation.z, 1.0
             );
         }
-        if ((flag & ETF_IGNORE_PARENT_SCALE) != 0) {
+        if ((flag & EF_IGNORE_PARENT_SCALE) != 0) {
             // Create a new parent transform that only has translation and rotation
             parent_transform[0] = parent_transform[0] / max(length(vec3f(parent_transform[0].xyz)), 1e-6);
             parent_transform[1] = parent_transform[1] / max(length(vec3f(parent_transform[1].xyz)), 1e-6);
@@ -155,4 +152,6 @@ fn cs(@builtin(global_invocation_id) global_id: vec3<u32>) {
         inverse_transform[0][2], inverse_transform[1][2], inverse_transform[2][2], inverse_transform[3][2],
         inverse_transform[0][3], inverse_transform[1][3], inverse_transform[2][3], inverse_transform[3][3]
     );
+
+    entity_flags[entity_resolved] |= entity_flags[parent_resolved] & ET_DIRTY;
 }

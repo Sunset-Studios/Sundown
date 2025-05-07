@@ -6,6 +6,7 @@ import { RenderPassOrganizer } from "./render_pass_organizer.js";
 import { MLStats } from "./ml_stats.js";
 import { CameraInfo } from "./camera_info.js";
 import { AABBDebug } from "./aabb_debug.js";
+import { log, warn, error } from "../utility/logging.js";
 
 // Constants for naming and key codes
 const input_name = "console_input";
@@ -289,7 +290,7 @@ export class DevConsole extends SimulationLayer {
     if (handler_index !== undefined) {
       this.command_handler_list[handler_index].execute(args);
     } else {
-      console.warn(`Unknown command: ${cmd}`);
+      warn(`Unknown command: ${cmd}`);
     }
   }
 

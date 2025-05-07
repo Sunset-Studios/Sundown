@@ -132,7 +132,7 @@ fn cs(@builtin(global_invocation_id) global_id: vec3<u32>) {
     if (g_id < u32(draw_cull_constants.draw_count)) {
         let entity_id = object_instances[g_id].entity;
         let entity_instance = object_instances[g_id].entity_instance;
-        let entity_resolved = entity_metadata[entity_id].offset + entity_instance;
+        let entity_resolved = get_entity_row(entity_id) + entity_instance;
         let aabb_node_index = entity_aabb_node_indices[entity_resolved];
 
         let aabb_node = aabb_bounds[aabb_node_index];

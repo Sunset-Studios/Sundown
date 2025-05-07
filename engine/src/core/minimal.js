@@ -12,17 +12,15 @@ export const LightType = {
   SPOT: 2,
 };
 
-export const EntityTransformFlags = {
-  VALID: 1 << 0,
-  IGNORE_PARENT_SCALE: 1 << 1,
-  IGNORE_PARENT_ROTATION: 1 << 2,
-  TRANSFORM_DIRTY: 1 << 3,
-  NO_AABB_UPDATE: 1 << 4,
-  AABB_DIRTY: 1 << 5,
-  BILLBOARD: 1 << 6,
-};
-
 export const EntityFlags = {
-  PENDING_DELETE: 1 << 0,
+  ALIVE: 1 << 0,
+  PENDING_DELETE: 1 << 1,
+  DIRTY: 1 << 2,
+  IGNORE_PARENT_SCALE: 1 << 3,
+  IGNORE_PARENT_ROTATION: 1 << 4,
+  TRANSFORM_DIRTY: 1 << 5,
+  NO_AABB_UPDATE: 1 << 6,
+  AABB_DIRTY: 1 << 7,
+  BILLBOARD: 1 << 8,
 };
 

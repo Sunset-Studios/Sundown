@@ -26,7 +26,7 @@ export class AABBTreeProcessor {
    */
   pre_update() {
     // Initialize AABB data if needed
-    if (!AABB.data) AABB.initialize();
+    if (!AABB.is_initialized) AABB.initialize();
   }
 
   /**

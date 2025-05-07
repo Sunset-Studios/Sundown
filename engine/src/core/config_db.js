@@ -1,3 +1,5 @@
+import { log, warn, error } from "../utility/logging.js";
+
 export class ConfigDB {
     static db_name = 'ConfigDatabase';
     static store_name = 'config_store';
@@ -199,7 +201,7 @@ export class ConfigSync {
                 }
             }
         } catch (err) {
-            console.error('Error saving config:', err);
+            error('Error saving config:', err);
             throw err;
         }
     }
@@ -226,7 +228,7 @@ export class ConfigSync {
                 await ConfigDB.set_config(file_name, config);
             }
         } catch (err) {
-            console.error('Error loading config:', err);
+            error('Error loading config:', err);
             throw err;
         }
     }

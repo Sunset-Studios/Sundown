@@ -1,5 +1,6 @@
 import application_state from "./application_state.js";
 import SimulationCore from "./simulation_core.js";
+import { EntityManager } from "./ecs/entity.js";
 import { Renderer } from "../renderer/renderer.js";
 import { BufferSync } from "../renderer/buffer.js";
 import { DeferredShadingStrategy } from "../renderer/strategies/deferred_shading.js";
@@ -8,6 +9,8 @@ import { MetaSystem } from "../meta/meta_system.js";
 import { profile_scope } from "../utility/performance.js";
 import { frame_runner } from "../utility/frame_runner.js";
 import { reset_ui, flush_ui } from "../ui/2d/immediate.js";
+
+import { ALL_FRAGMENT_CLASSES } from "./ecs/fragment_registry.js";
 
 export class Simulator {
   async init(gpu_canvas_name, ui_canvas_name = null) {
@@ -25,6 +28,12 @@ export class Simulator {
       pointer_lock: true,
       use_precision_float: true,
     });
+    
+    // Initialize entity manager fragment data
+    EntityManager.register_fragments(ALL_FRAGMENT_CLASSES);
+
+    // Refresh global shader bindings
+    Renderer.get().refresh_global_shader_bindings();
   }
 
   async add_sim_layer(sim_layer) {

@@ -1,6 +1,7 @@
 import { Renderer } from "./renderer.js";
 import { RandomAccessAllocator } from "../memory/allocator.js";
 import { Buffer } from "./buffer.js";
+import { log, warn, error } from "../utility/logging.js";
 import { vec3, vec4 } from "gl-matrix";
 
 // Constants
@@ -65,7 +66,7 @@ export class LineRenderer {
     if (this.active_collections.has(collection_id)) {
       this.current_collection_id = collection_id;
     } else {
-      console.warn(`Collection ID ${collection_id} does not exist`);
+      warn(`Collection ID ${collection_id} does not exist`);
     }
   }
 

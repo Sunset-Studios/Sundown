@@ -49,9 +49,8 @@ const transparency_reveal_location = 5;
 // ------------------------------------------------------------------------------------ 
 
 @group(1) @binding(0) var<storage, read> entity_transforms: array<EntityTransform>;
-@group(1) @binding(1) var<storage, read> entity_flags: array<i32>;
-@group(1) @binding(2) var<storage, read> compacted_object_instances: array<CompactedObjectInstance>;
-@group(1) @binding(3) var<storage, read> lights_buffer: array<Light>; // Used for forward shading if necessary
+@group(1) @binding(1) var<storage, read> compacted_object_instances: array<CompactedObjectInstance>;
+@group(1) @binding(2) var<storage, read> lights_buffer: array<Light>; // Used for forward shading if necessary
 
 // ------------------------------------------------------------------------------------
 // Vertex Shader
@@ -69,7 +68,7 @@ fn vertex(v_out: ptr<function, VertexOutput>) -> VertexOutput {
 ) -> VertexOutput {
     let instance_vertex = vertex_buffer[vi];
     let entity = compacted_object_instances[ii].entity;
-    let entity_resolved = entity_metadata[entity].offset + compacted_object_instances[ii].entity_instance;
+    let entity_resolved = get_entity_row(entity) + compacted_object_instances[ii].entity_instance;
 
     let entity_transform = entity_transforms[entity_resolved];
     let view_mat = view_buffer[0].view_matrix;
@@ -90,7 +89,7 @@ fn vertex(v_out: ptr<function, VertexOutput>) -> VertexOutput {
             output.uv,
             entity_transform.transform
         ),
-        (entity_flags[entity_resolved] & ETF_BILLBOARD) != 0
+        (entity_flags[entity_resolved] & EF_BILLBOARD) != 0
     );
 
     let n = normalize((entity_transform.transpose_inverse_model_matrix * vec4<f32>(instance_vertex.normal)).xyz);

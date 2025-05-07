@@ -1,14 +1,16 @@
 import { Renderer } from "../../renderer/renderer.js";
+import { FragmentGpuBuffer } from "../ecs/solar/memory.js";
 import { ComputeTaskQueue } from "../../renderer/compute_task_queue.js";
 import { SimulationLayer } from "../simulation_layer.js";
-import { EntityManager, EntityID } from "../ecs/entity.js";
-import { EntityMasks } from "../ecs/query.js";
-import { EntityTransformFlags } from "../minimal.js";
+import { EntityManager } from "../ecs/entity.js";
+import { EntityFlags } from "../minimal.js";
 import { TransformFragment } from "../ecs/fragments/transform_fragment.js";
 import { AABB, AABB_NODE_FLAGS } from "../../acceleration/aabb.js";
 import { AABBTreeProcessor } from "../../acceleration/aabb_tree_processor.js";
 import { profile_scope } from "../../utility/performance.js";
 
+const transforms_buffer_name = "transforms";
+const aabb_node_index_buffer_name = "aabb_node_index";
 const copy_aabb_data_to_buffer_name = "copy_aabb_data_to_buffer";
 const entity_adapter_update_name = "aabb_entity_adapter.update";
 const entity_bounds_update_task_name = "entity_bounds_update";
@@ -38,9 +40,7 @@ export class AABBEntityAdapter extends SimulationLayer {
    */
   init() {
     // Set up entity query for objects with transforms
-    this.entity_query = EntityManager.create_query({
-      fragment_requirements: [TransformFragment],
-    });
+    this.entity_query = EntityManager.create_query([TransformFragment]);
     this.on_post_render_callback = this._on_post_render.bind(this);
   }
 
@@ -75,13 +75,11 @@ export class AABBEntityAdapter extends SimulationLayer {
    * @param {bigint} entity - The entity to mark as dirty
    */
   mark_entity_dirty(entity) {
-    const transform_fragment = EntityManager.get_fragment(entity, TransformFragment);
-    if (!transform_fragment) return;
-
-    const entity_offset = EntityID.get_absolute_index(entity);
-    const entity_instances = EntityID.get_instance_count(entity);
+    const entity_instances = EntityManager.get_instance_count(entity);
     for (let i = 0; i < entity_instances; i++) {
-      this.tree_processor.mark_node_dirty(transform_fragment.aabb_node_index[entity_offset + i]);
+      const transform_fragment = EntityManager.get_fragment(entity, TransformFragment, i);
+      if (!transform_fragment) continue;
+      this.tree_processor.mark_node_dirty(transform_fragment.aabb_node_index);
     }
   }
 
@@ -135,25 +133,30 @@ export class AABBEntityAdapter extends SimulationLayer {
    * Dispatch bounds update
    */
   _dispatch_bounds_update() {
-    const transforms = EntityManager.get_fragment_array(TransformFragment);
-    if (!transforms) return;
+    const transforms = EntityManager.get_fragment_gpu_buffer(
+      TransformFragment,
+      transforms_buffer_name
+    );
+    const aabb_node_index = EntityManager.get_fragment_gpu_buffer(
+      TransformFragment,
+      aabb_node_index_buffer_name
+    );
 
-    this.bounds_update_input_list[0] = transforms.transforms_buffer;
-    this.bounds_update_input_list[1] = transforms.flags_buffer;
-    this.bounds_update_input_list[2] = transforms.dirty_buffer;
-    this.bounds_update_input_list[3] = AABB.data.node_data_buffer;
-    this.bounds_update_input_list[4] = AABB.data.node_bounds_buffer;
-    this.bounds_update_input_list[5] = transforms.aabb_node_index_buffer;
+    this.bounds_update_input_list[0] = transforms.buffer;
+    this.bounds_update_input_list[3] = AABB.node_bounds_buffer;
+    this.bounds_update_input_list[4] = aabb_node_index.buffer;
 
-    this.bounds_update_output_list[0] = transforms.flags_buffer;
-    this.bounds_update_output_list[1] = AABB.data.node_bounds_buffer;
+    this.bounds_update_output_list[0] = FragmentGpuBuffer.entity_flags_buffer.buffer;
+    this.bounds_update_output_list[1] = AABB.node_bounds_buffer;
+
+    const total_transforms = EntityManager.get_total_subscribed(TransformFragment);
 
     ComputeTaskQueue.get().new_task(
       entity_bounds_update_task_name,
       entity_bounds_update_wgsl_path,
       this.bounds_update_input_list,
       this.bounds_update_output_list,
-      Math.max(1, Math.floor((TransformFragment.size + 255) / 256))
+      Math.max(1, Math.floor((total_transforms + 255) / 256))
     );
 
     Renderer.get().enqueue_post_commands(
@@ -163,64 +166,86 @@ export class AABBEntityAdapter extends SimulationLayer {
   }
 
   /**
-   * Process changes to entities
+   * Process changes to entities, handling updates and pending deletions.
    */
   _process_entity_changes() {
-    const transforms = EntityManager.get_fragment_array(TransformFragment);
-    if (!transforms) return;
+    this.entity_query.for_each((chunk, slot, instance_count, archetype) => {
+      // Access fragment views and metadata
+      const frag_view = chunk.get_fragment_view(TransformFragment);
+      // Check if the fragment view exists (it should for this query)
+      if (!frag_view) return;
 
-    // Get all entities with transforms
-    const entities = this.entity_query.matching_entities.get_data();
-    const entity_offsets = this.entity_query.matching_entity_ids.get_data();
-    const entity_states = this.entity_query.entity_states.get_data();
-    const entity_instance_counts = this.entity_query.matching_entity_instance_counts.get_data();
+      const entity = EntityManager.get_entity_for(chunk, slot);
+      const entity_flags = EntityManager.get_entity_flags(entity);
 
-    // Process entities that need updating
-    for (let i = 0; i < this.entity_query.matching_entities.length; i++) {
-      const entity = entities[i];
-      const entity_state = entity_states[i];
-      const entity_offset = entity_offsets[i];
+      const no_aabb_update = (entity_flags & EntityFlags.NO_AABB_UPDATE) !== 0;
+      const is_pending_delete = (entity_flags & EntityFlags.PENDING_DELETE) !== 0;
+      const is_aabb_dirty = (entity_flags & EntityFlags.AABB_DIRTY) !== 0;
 
-      const node_index = transforms.aabb_node_index[entity_offset];
-      const no_aabb_update = (transforms.flags[entity_offset] & EntityTransformFlags.NO_AABB_UPDATE) !== 0;
+      const aabb_node_index_fragment = frag_view.aabb_node_index;
 
-      // Handle removed entities
-      if (entity_state === EntityMasks.Removed && node_index) {
-        // Make sure to remove all instances of the entity from the tree
-        const entity_count = entity_instance_counts[i];
-        for (let i = 0; i < entity_count; i++) {
-          const entity_instance_offset = entity_offset + i;
-          const aabb_instance_index = transforms.aabb_node_index[entity_instance_offset];
-          const is_free = AABB.is_node_free(aabb_instance_index);
+      // --- Handle Pending Deletion ---
+      if (is_pending_delete) {
+        const base_node_index = aabb_node_index_fragment[slot];
 
-          if (!no_aabb_update || is_free) {
-            this.tree_processor.remove_node_from_tree(aabb_instance_index);
+        // Only process if it had a valid node and wasn't flagged to skip AABB updates
+        if (base_node_index > 0 && !no_aabb_update) {
+          // Remove all instances from the tree
+          for (let i = 0; i < instance_count; i++) {
+            const entity_instance_offset = slot + i;
+            const aabb_instance_index = aabb_node_index_fragment[entity_instance_offset];
+
+            if (aabb_instance_index > 0) {
+              const is_free = AABB.is_node_free(aabb_instance_index);
+              if (!is_free) {
+                this.tree_processor.remove_node_from_tree(aabb_instance_index);
+                AABB.free_node(aabb_instance_index);
+              }
+              // Clear the index in the fragment data *after* processing
+              aabb_node_index_fragment[entity_instance_offset] = 0;
+            }
           }
-
-          if (!is_free) {
-            AABB.free_node(aabb_instance_index);
+        } else {
+          // Even if skipped or no node, clear the fragment data for all instances to be safe during deletion
+          for (let i = 0; i < instance_count; i++) {
+            const entity_instance_offset = slot + i;
+            aabb_node_index_fragment[entity_instance_offset] = 0;
           }
-
-          transforms.aabb_node_index[entity_instance_offset] = 0;
         }
       }
-      // Handle new or updated entities
-      else if (node_index > 0 && (transforms.flags[entity_offset] & EntityTransformFlags.AABB_DIRTY) !== 0 && !no_aabb_update) {
-        const entity_instances = EntityID.get_instance_count(entity);
-        for (let i = 0; i < entity_instances; i++) {
-          const entity_instance_offset = entity_offset + i;
-          const aabb_instance_index = transforms.aabb_node_index[entity_instance_offset];
-          this.tree_processor.mark_node_dirty(aabb_instance_index);
-          transforms.flags[entity_instance_offset] &= ~EntityTransformFlags.AABB_DIRTY;
+      // --- Handle Active, Dirty Entities ---
+      else if (is_aabb_dirty && !no_aabb_update) {
+        const base_node_index = aabb_node_index_fragment[slot];
+        // Check if the base instance has a node index (should generally be true if dirty)
+        if (base_node_index > 0) {
+          for (let i = 0; i < instance_count; i++) {
+            const entity_instance_offset = slot + i;
+            const aabb_instance_index = aabb_node_index_fragment[entity_instance_offset];
+            // Only mark dirty if the instance has a valid node index
+            if (aabb_instance_index > 0) {
+              this.tree_processor.mark_node_dirty(aabb_instance_index);
+              // Clear the dirty flag for the specific instance
+              EntityManager.set_entity_flags(entity, entity_flags & ~EntityFlags.AABB_DIRTY);
+            }
+          }
+        } else {
+          // Clear the dirty flag even if the node index is missing/zero to prevent re-processing
+          for (let i = 0; i < instance_count; i++) {
+            const entity_instance_offset = slot + i;
+            EntityManager.set_entity_flags(entity, entity_flags & ~EntityFlags.AABB_DIRTY);
+          }
+          warn(
+            `AABBEntityAdapter: Entity in slot ${slot} marked AABB_DIRTY but base_node_index is ${base_node_index}.`
+          );
         }
       }
-    }
+    });
   }
 
   _on_post_render(graph, frame_data, encoder) {
     const buffered_frame = Renderer.get().get_buffered_frame_number();
-    if (AABB.data.node_bounds_cpu_buffer[buffered_frame]?.buffer.mapState === unmapped_state) {
-      AABB.data.node_bounds_buffer.copy_buffer(encoder, 0, AABB.data.node_bounds_cpu_buffer[buffered_frame]);
+    if (AABB.node_bounds_cpu_buffer[buffered_frame]?.buffer.mapState === unmapped_state) {
+      AABB.node_bounds_buffer.copy_buffer(encoder, 0, AABB.node_bounds_cpu_buffer[buffered_frame]);
     }
   }
 }
