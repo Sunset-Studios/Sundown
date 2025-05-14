@@ -13,7 +13,7 @@ export class LightFragment extends Fragment {
   static fields = {
     position: {
       ctor: Float32Array,
-      elements: 3,
+      elements: 4,
       default: 0,
       gpu_buffer: false,
       buffer_name: "position",
@@ -22,10 +22,11 @@ export class LightFragment extends Fragment {
         GPUBufferUsage.STORAGE |
         GPUBufferUsage.COPY_DST |
         GPUBufferUsage.COPY_SRC,
+      cpu_readback: false,
     },
     direction: {
       ctor: Float32Array,
-      elements: 3,
+      elements: 4,
       default: 0,
       gpu_buffer: false,
       buffer_name: "direction",
@@ -34,10 +35,11 @@ export class LightFragment extends Fragment {
         GPUBufferUsage.STORAGE |
         GPUBufferUsage.COPY_DST |
         GPUBufferUsage.COPY_SRC,
+      cpu_readback: false,
     },
     color: {
       ctor: Float32Array,
-      elements: 3,
+      elements: 4,
       default: 0,
       gpu_buffer: false,
       buffer_name: "color",
@@ -46,9 +48,10 @@ export class LightFragment extends Fragment {
         GPUBufferUsage.STORAGE |
         GPUBufferUsage.COPY_DST |
         GPUBufferUsage.COPY_SRC,
+      cpu_readback: false,
     },
     type: {
-      ctor: Uint8Array,
+      ctor: Float32Array,
       elements: 1,
       default: 0,
       gpu_buffer: false,
@@ -58,6 +61,7 @@ export class LightFragment extends Fragment {
         GPUBufferUsage.STORAGE |
         GPUBufferUsage.COPY_DST |
         GPUBufferUsage.COPY_SRC,
+      cpu_readback: false,
     },
     intensity: {
       ctor: Float32Array,
@@ -70,6 +74,7 @@ export class LightFragment extends Fragment {
         GPUBufferUsage.STORAGE |
         GPUBufferUsage.COPY_DST |
         GPUBufferUsage.COPY_SRC,
+      cpu_readback: false,
     },
     radius: {
       ctor: Float32Array,
@@ -82,6 +87,7 @@ export class LightFragment extends Fragment {
         GPUBufferUsage.STORAGE |
         GPUBufferUsage.COPY_DST |
         GPUBufferUsage.COPY_SRC,
+      cpu_readback: false,
     },
     attenuation: {
       ctor: Float32Array,
@@ -94,6 +100,7 @@ export class LightFragment extends Fragment {
         GPUBufferUsage.STORAGE |
         GPUBufferUsage.COPY_DST |
         GPUBufferUsage.COPY_SRC,
+      cpu_readback: false,
     },
     outer_angle: {
       ctor: Float32Array,
@@ -106,9 +113,10 @@ export class LightFragment extends Fragment {
         GPUBufferUsage.STORAGE |
         GPUBufferUsage.COPY_DST |
         GPUBufferUsage.COPY_SRC,
+      cpu_readback: false,
     },
     active: {
-      ctor: Uint8Array,
+      ctor: Float32Array,
       elements: 1,
       default: 0,
       gpu_buffer: false,
@@ -118,6 +126,33 @@ export class LightFragment extends Fragment {
         GPUBufferUsage.STORAGE |
         GPUBufferUsage.COPY_DST |
         GPUBufferUsage.COPY_SRC,
+      cpu_readback: false,
+    },
+    padding1: {
+      ctor: Float32Array,
+      elements: 1,
+      default: 0,
+      gpu_buffer: false,
+      buffer_name: "padding1",
+      is_container: false,
+      usage:
+        GPUBufferUsage.STORAGE |
+        GPUBufferUsage.COPY_DST |
+        GPUBufferUsage.COPY_SRC,
+      cpu_readback: false,
+    },
+    padding2: {
+      ctor: Float32Array,
+      elements: 1,
+      default: 0,
+      gpu_buffer: false,
+      buffer_name: "padding2",
+      is_container: false,
+      usage:
+        GPUBufferUsage.STORAGE |
+        GPUBufferUsage.COPY_DST |
+        GPUBufferUsage.COPY_SRC,
+      cpu_readback: false,
     },
   };
   static buffer_data = new Map(); // key → { buffer: FragmentGpuBuffer, stride: number }
@@ -125,8 +160,9 @@ export class LightFragment extends Fragment {
   static gpu_buffers = {
     light_fragment: {
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-      stride: 54,
+      stride: 80,
       buffer_name: "light_fragment",
+      cpu_readback: false,
       fields: [
         "position",
         "direction",
@@ -137,6 +173,8 @@ export class LightFragment extends Fragment {
         "attenuation",
         "outer_angle",
         "active",
+        "padding1",
+        "padding2",
       ],
     },
   };
@@ -153,5 +191,9 @@ export class LightFragment extends Fragment {
 
   static is_valid() {
     return this.id && this.fields && this.view_allocator;
+  }
+
+  static get_buffer_name(field_name) {
+    return this.field_key_map.get(field_name);
   }
 }

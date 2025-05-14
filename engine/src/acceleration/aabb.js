@@ -179,6 +179,7 @@ class AABBNodeDataView {
 }
 
 const unmapped_state = "unmapped";
+const default_aabb_size = 1024;
 
 /**
  * Standalone AABB tree implementation optimized for cache access patterns
@@ -188,18 +189,20 @@ export class AABB {
   // Static properties
   static data_view_allocator = new RingBufferAllocator(1024, AABBNodeDataView);
   static is_initialized = false;
-  static size = 1024;
+  static size = default_aabb_size;
   static root_node = 0;
   static allocated_count = 0;
-  static free_nodes = new TypedStack(1024, Uint32Array);
-  static dirty_nodes = new TypedQueue(1024, 0, Uint32Array);
-  static node_data = new Float32Array(NODE_SIZE);
-  static node_bounds = new Float32Array(NODE_BOUNDS_SIZE);
-  static node_fat_bounds = new Float32Array(NODE_FAT_BOUNDS_SIZE);
-  static node_heights = new Float32Array(1);
+  static free_nodes = new TypedStack(default_aabb_size, Uint32Array);
+  static dirty_nodes = new TypedQueue(default_aabb_size, 0, Uint32Array);
+  static node_data = new Float32Array(NODE_SIZE * default_aabb_size);
+  static node_bounds = new Float32Array(NODE_BOUNDS_SIZE * default_aabb_size);
+  static node_fat_bounds = new Float32Array(NODE_FAT_BOUNDS_SIZE * default_aabb_size);
+  static node_heights = new Float32Array(default_aabb_size);
+
   static node_data_buffer = null;
   static node_bounds_buffer = null;
   static node_bounds_cpu_buffer = Array(MAX_BUFFERED_FRAMES).fill(null);
+
   static modified = true;
 
   /**
@@ -523,7 +526,7 @@ export class AABB {
   /**
    * Sync the AABB tree buffers
    */
-  static #temp_sync_buffer = new Float32Array(NODE_BOUNDS_SIZE);
+  static #temp_sync_buffer = new Float32Array(NODE_BOUNDS_SIZE * default_aabb_size);
   static async sync_buffers() {
     const buffered_frame = Renderer.get().get_buffered_frame_number();
     // Only do readbacks if the buffer is ready and not being modified

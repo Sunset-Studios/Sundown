@@ -22,7 +22,6 @@ import {
 } from "../utility/config_permutations.js";
 import { log, warn, error } from "../utility/logging.js";
 
-
 const include_string = "#include";
 const if_string = "#if";
 const else_string = "#else";
@@ -30,7 +29,6 @@ const endif_string = "#endif";
 const precision_float_string = "precision_float";
 const has_precision_float_string = "HAS_PRECISION_FLOAT";
 const entity_compaction_string = "ENTITY_COMPACTION";
-const read_only_flags_string = "READ_ONLY_FLAGS";
 
 const f16_type_string = "f16";
 const f32_type_string = "f32";
@@ -73,10 +71,10 @@ export class Shader {
     Shader.shader_paths.push(path);
   }
 
-  initialize(file_path) {
+  initialize(file_path, defines = {}) {
     const renderer = Renderer.get();
 
-    let asset = this._load_shader_text(file_path);
+    let asset = this._load_shader_text(file_path, defines);
     if (!asset) {
       return;
     }
@@ -99,7 +97,7 @@ export class Shader {
     return reflect;
   }
 
-  _load_shader_text(file_path, load_recursion_step = 0) {
+  _load_shader_text(file_path, defines = {}, load_recursion_step = 0) {
     let asset = null;
     for (const path of Shader.shader_paths) {
       const full_path = `${path}/${file_path}`;
@@ -114,10 +112,10 @@ export class Shader {
       return null;
     }
 
-    asset = this._parse_shader_includes(asset, load_recursion_step);
+    asset = this._parse_shader_includes(asset, defines, load_recursion_step);
 
     if (load_recursion_step === 0) {
-      const { defines_map, stripped_code } = this._build_defines_map_and_strip(asset);
+      const { defines_map, stripped_code } = this._build_defines_map_and_strip(asset, defines);
       asset = stripped_code;
       this.defines = defines_map;
       asset = this._parse_conditional_defines_and_types(asset);
@@ -126,7 +124,7 @@ export class Shader {
     return asset;
   }
 
-  _parse_shader_includes(code, load_recursion_step = 0) {
+  _parse_shader_includes(code, defines = {}, load_recursion_step = 0) {
     let include_positions = [];
 
     let pos = code.indexOf(include_string, 0);
@@ -141,7 +139,7 @@ export class Shader {
       const include_line = code.substring(start, end);
       const match = include_line.match(include_regex);
       if (match) {
-        const include_contents = this._load_shader_text(match[1], load_recursion_step + 1);
+        const include_contents = this._load_shader_text(match[1], defines, load_recursion_step + 1);
         code = code.slice(0, start) + include_contents + code.slice(end);
       }
     }
@@ -149,9 +147,8 @@ export class Shader {
     return code;
   }
 
-  _build_defines_map_and_strip(code) {
-    const defines_map = {};
-
+  _build_defines_map_and_strip(code, defines) {
+    const defines_map = Object.assign({}, defines);
     const stripped_code = code.replace(defines_regex, (match, key, value) => {
       defines_map[key] = value || true;
       return "";
@@ -161,7 +158,6 @@ export class Shader {
       : f32_type_string;
     defines_map[has_precision_float_string] = Renderer.get().has_f16;
     defines_map[entity_compaction_string] = EntityManager.is_entity_compaction_enabled();
-    defines_map[read_only_flags_string] = EntityManager.is_entity_compaction_enabled();
     return { defines_map, stripped_code };
   }
 
@@ -210,11 +206,11 @@ export class Shader {
     return result.trim();
   }
 
-  static create(file_path) {
+  static create(file_path, defines = {}) {
     let shader = ResourceCache.get().fetch(CacheTypes.SHADER, file_path);
     if (!shader) {
       shader = new Shader();
-      shader.initialize(file_path);
+      shader.initialize(file_path, defines);
       ResourceCache.get().store(CacheTypes.SHADER, file_path, shader);
     }
     return shader;
@@ -281,5 +277,4 @@ export class Shader {
         return rgba8unorm_format;
     }
   }
-
 }

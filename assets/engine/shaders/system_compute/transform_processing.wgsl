@@ -25,8 +25,9 @@ struct SceneGraphLayerData {
 @group(1) @binding(1) var<storage, read> entity_rotations: array<vec4f>;
 @group(1) @binding(2) var<storage, read> entity_scales: array<vec4f>;
 @group(1) @binding(3) var<storage, read_write> entity_transforms: array<EntityTransform>;
-@group(1) @binding(4) var<storage, read> scene_graph: array<vec2<i32>>;
-@group(1) @binding(5) var<uniform> scene_graph_layer_data: SceneGraphLayerData;
+@group(1) @binding(4) var<storage, read_write> entity_flags: array<u32>;
+@group(1) @binding(5) var<storage, read> scene_graph: array<vec2<i32>>;
+@group(1) @binding(6) var<uniform> scene_graph_layer_data: SceneGraphLayerData;
 
 // ------------------------------------------------------------------------------------
 // Compute Shader
@@ -39,15 +40,24 @@ fn cs(@builtin(global_invocation_id) global_id: vec3<u32>) {
     }
 
     let entity_id_offset = scene_graph_layer_data.offset + global_id.x;
-    let entity_resolved = u32(scene_graph[entity_id_offset].x);
-    let parent_resolved = scene_graph[entity_id_offset].y;
+
+    let entity_resolved = select(
+        MAX_UINT,
+        get_entity_row(u32(scene_graph[entity_id_offset].x)),
+        scene_graph[entity_id_offset].x != -1
+    );
+    let parent_resolved = select(
+        MAX_UINT,
+        get_entity_row(u32(scene_graph[entity_id_offset].y)),
+        scene_graph[entity_id_offset].y != -1
+    );
 
     if (entity_resolved >= arrayLength(&entity_flags)) {
         return;
     }
 
-    if ((entity_flags[entity_resolved] & ET_DIRTY) == 0 &&
-        (entity_flags[parent_resolved] & ET_DIRTY) == 0) {
+    if ((entity_flags[entity_resolved] & EF_DIRTY) == 0 &&
+        (entity_flags[parent_resolved] & EF_DIRTY) == 0) {
         return;
     }
 
@@ -58,7 +68,7 @@ fn cs(@builtin(global_invocation_id) global_id: vec3<u32>) {
 
     var parent_transform = identity_matrix;
 
-    if (parent_resolved >= 0) {
+    if (parent_resolved < MAX_UINT) {
         parent_transform = entity_transforms[parent_resolved].transform;
 
         if ((flag & EF_IGNORE_PARENT_ROTATION) != 0) {
@@ -153,5 +163,5 @@ fn cs(@builtin(global_invocation_id) global_id: vec3<u32>) {
         inverse_transform[0][3], inverse_transform[1][3], inverse_transform[2][3], inverse_transform[3][3]
     );
 
-    entity_flags[entity_resolved] |= entity_flags[parent_resolved] & ET_DIRTY;
+    entity_flags[entity_resolved] |= entity_flags[parent_resolved] & EF_DIRTY;
 }

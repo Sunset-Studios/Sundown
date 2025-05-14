@@ -456,7 +456,10 @@ export class RenderGraph {
     this.post_render_callbacks = [];
 
     this.image_resource_allocator = new FrameAllocator(max_image_resources, deep_clone(RGResource));
-    this.buffer_resource_allocator = new FrameAllocator(max_buffer_resources, deep_clone(RGResource));
+    this.buffer_resource_allocator = new FrameAllocator(
+      max_buffer_resources,
+      deep_clone(RGResource)
+    );
     this.render_pass_allocator = new FrameAllocator(max_render_passes, deep_clone(RGPass));
 
     this.resource_metadata_allocator = new FrameAllocator(
@@ -1521,13 +1524,22 @@ export class RenderGraph {
       (pass.pass_config.flags & RenderPassFlags.Compute) !== RenderPassFlags.None;
 
     if (is_compute_pass && shader_setup.pipeline_shaders.compute) {
-      pass.shaders.compute = Shader.create(shader_setup.pipeline_shaders.compute.path);
+      pass.shaders.compute = Shader.create(
+        shader_setup.pipeline_shaders.compute.path,
+        shader_setup.pipeline_shaders.compute.defines
+      );
     } else {
       if (shader_setup.pipeline_shaders.vertex) {
-        pass.shaders.vertex = Shader.create(shader_setup.pipeline_shaders.vertex.path);
+        pass.shaders.vertex = Shader.create(
+          shader_setup.pipeline_shaders.vertex.path,
+          shader_setup.pipeline_shaders.vertex.defines
+        );
       }
       if (shader_setup.pipeline_shaders.fragment) {
-        pass.shaders.fragment = Shader.create(shader_setup.pipeline_shaders.fragment.path);
+        pass.shaders.fragment = Shader.create(
+          shader_setup.pipeline_shaders.fragment.path,
+          shader_setup.pipeline_shaders.fragment.defines
+        );
       }
     }
   }
@@ -1543,7 +1555,10 @@ export class RenderGraph {
 
     this._setup_global_bind_group(pass, frame_data);
 
-    if (pass_binds.bind_groups[BindGroupType.Pass] || pass.parameters.b_skip_pass_bind_group_setup) {
+    if (
+      pass_binds.bind_groups[BindGroupType.Pass] ||
+      pass.parameters.b_skip_pass_bind_group_setup
+    ) {
       return;
     }
 
@@ -1552,7 +1567,7 @@ export class RenderGraph {
     let reflection_groups = [];
     if (is_compute_pass) {
       reflection_groups = pass.shaders.compute.reflection.getBindGroups();
-    } else if (pass.shaders.fragment){
+    } else if (pass.shaders.fragment) {
       const fragment_group = pass.shaders.fragment.reflection.getBindGroups();
       for (let i = 0; i < BindGroupType.Num; i++) {
         if (fragment_group[i]) {
@@ -1633,7 +1648,7 @@ export class RenderGraph {
         };
       });
     }
-    
+
     let entries = [];
     pass.parameters.pass_inputs.forEach((resource, index) => {
       const metadata = this.registry.resource_metadata.get(resource);
@@ -1641,7 +1656,8 @@ export class RenderGraph {
       if (resource_type === ResourceType.Image) {
         const image = ResourceCache.get().fetch(CacheTypes.IMAGE, metadata.physical_id);
         const image_view = image.get_view(pass.parameters.input_views[index]) || image.view;
-        const true_image_view = image.config.dimension === "cube" ? Texture.default_cube().view : image_view;
+        const true_image_view =
+          image.config.dimension === "cube" ? Texture.default_cube().view : image_view;
         if (!image_view) {
           entries.push({
             binding: index,
@@ -1665,7 +1681,7 @@ export class RenderGraph {
         });
       }
     });
-    
+
     if (entries.length > 0) {
       if (entries.length > layouts.length) {
         entries = entries.slice(0, layouts.length);

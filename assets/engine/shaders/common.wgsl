@@ -6,9 +6,9 @@ enable f16;
 // Data Structures
 // ------------------------------------------------------------------------------------ 
 
-// 32‑bit handle ─ 17 bits chunk index | 10 bits row_index | 4 bits generation | 1 flag
-const ENTITY_ROW_BITS = 27;
-const LOCAL_SLOT_BITS = 10;
+// 32‑bit handle ─ 21 bits chunk index | 7 bits row_index | 4 bits generation
+const ENTITY_ROW_BITS = 28;
+const LOCAL_SLOT_BITS = 7;
 const ENTITY_GEN_BITS = 4;
 const ENTITY_ROW_MASK = (1 << ENTITY_ROW_BITS) - 1;
 const ENTITY_GEN_MASK = (1 << ENTITY_GEN_BITS) - 1;
@@ -32,6 +32,7 @@ const AABB_NODE_TYPE_INTERNAL = 0;
 const AABB_NODE_TYPE_LEAF = 1;
 
 const LOG_DEPTH_C = 0.1; // Can adjust this value based on scene scale
+const MAX_UINT = 4294967295u;
 
 struct Vertex {
     position: vec4<precision_float>,
@@ -123,14 +124,8 @@ const one_over_float_max = 1.0 / 4294967296.0;
 @group(0) @binding(4) var clamped_sampler: sampler;
 @group(0) @binding(5) var<uniform> frame_info: FrameInfo;
 
-#if READ_ONLY_FLAGS
-@group(0) @binding(6) var<storage, read> entity_flags: array<u32>;
-#else
-@group(0) @binding(6) var<storage, read_write> entity_flags: array<u32>;
-#endif
-
 #if ENTITY_COMPACTION
-@group(0) @binding(7) var<storage, read> entity_index_lookup: array<u32>;
+@group(0) @binding(6) var<storage, read> entity_index_lookup: array<u32>;
 #endif
 
 // ------------------------------------------------------------------------------------

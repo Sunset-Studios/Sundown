@@ -12,7 +12,8 @@ struct VertexOutput {
 // ------------------------------------------------------------------------------------ 
 
 @group(1) @binding(0) var<storage, read> entity_transforms: array<EntityTransform>;
-@group(1) @binding(1) var<storage, read> compacted_object_instances: array<CompactedObjectInstance>;
+@group(1) @binding(1) var<storage, read> entity_flags: array<u32>;
+@group(1) @binding(2) var<storage, read> compacted_object_instances: array<CompactedObjectInstance>;
 
 // ------------------------------------------------------------------------------------
 // Vertex Shader

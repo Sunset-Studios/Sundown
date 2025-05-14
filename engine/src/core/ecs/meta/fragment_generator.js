@@ -55,12 +55,15 @@ export class FragmentGenerator {
             const gpu_buffer_flag = !!field.gpu;
             const is_container_flag = !!field.is_container;
             const usage = field.usage || BufferType.STORAGE_SRC;
+            const cpu_readback_flag = !!field.cpu_readback;
+
             const getter = field.getter
               ? `, getter(typed_array, element_offset) { ${field.getter} }`
               : "";
             const setter = field.setter
               ? `, setter(value, typed_array, element_offset) { ${field.setter} }`
               : "";
+
             return `${key}: {
               ctor: ${ctor},
               elements: ${elements},
@@ -68,7 +71,8 @@ export class FragmentGenerator {
               gpu_buffer: ${gpu_buffer_flag},
               buffer_name: "${key}",
               is_container: ${is_container_flag},
-              usage: ${usage}${getter}${setter}
+              usage: ${usage}${getter}${setter},
+              cpu_readback: ${cpu_readback_flag}
             }`;
           })
           .join(",\n        ")}
@@ -134,7 +138,14 @@ export class FragmentGenerator {
           }
 
           const escaped_buffer_key = JSON.stringify(buffer_key);
-          return `${escaped_buffer_key}: { usage: ${buffer_config.usage}, stride: ${buffer_stride}, buffer_name: "${buffer_key}"${fields_array_snippet}${gpu_data_snippet} }`;
+          return `${escaped_buffer_key}: {
+            usage: ${buffer_config.usage},
+            stride: ${buffer_stride},
+            buffer_name: "${buffer_key}",
+            cpu_readback: ${!!buffer_config.cpu_readback}
+            ${fields_array_snippet}
+            ${gpu_data_snippet}
+          }`;
         })
         .filter((entry) => entry !== null)
         .join(",\n            ");
@@ -173,6 +184,10 @@ export class ${fragment_name} extends Fragment {
     return this.id &&
       this.fields &&
       this.view_allocator
+  }
+
+  static get_buffer_name(field_name) {
+    return this.field_key_map.get(field_name);
   }
 
   ${Object.entries(constants)

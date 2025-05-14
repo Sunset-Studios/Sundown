@@ -634,4 +634,9 @@ export class Mesh {
 
     return mesh;
   }
+
+  static precrete_engine_primitives() {
+    Mesh.cube();
+    Mesh.quad();
+  }
 }

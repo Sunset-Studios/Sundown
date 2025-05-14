@@ -8,9 +8,9 @@
 // Data Structures
 //------------------------------------------------------------------------------------
 struct ElementData {
-    color: vec4f,
-    emissive: f32,
-    rounding: f32,
+    element_color: vec4f,
+    element_emissive: f32,
+    element_rounding: f32,
 };
 
 //------------------------------------------------------------------------------------
@@ -22,9 +22,9 @@ struct ElementData {
 // Fragment Shader
 //------------------------------------------------------------------------------------
 fn fragment(v_out: VertexOutput, f_out: ptr<function, FragmentOutput>) -> FragmentOutput {
-    let rounding = element_data[f_out.entity_id.y].rounding;
-    let emissive = element_data[f_out.entity_id.y].emissive;
-    var color = element_data[f_out.entity_id.y].color;
+    let element_rounding = element_data[f_out.entity_id.y].element_rounding;
+    let element_emissive = element_data[f_out.entity_id.y].element_emissive;
+    var element_color = element_data[f_out.entity_id.y].element_color;
     
     // Calculate distance from edges
     let uv = v_out.uv;
@@ -33,15 +33,15 @@ fn fragment(v_out: VertexOutput, f_out: ptr<function, FragmentOutput>) -> Fragme
     
     // Calculate corner distance in normalized space
     let corner_distance = length(vec2f(
-        max(0.0, rounding - dx),
-        max(0.0, rounding - dy)
+        max(0.0, element_rounding - dx),
+        max(0.0, element_rounding - dy)
     )); 
     
     // Apply smoothed alpha based on corner distance
-    color.a *= 1.0 - smoothstep(0.0, rounding, corner_distance);
+    element_color.a *= 1.0 - smoothstep(0.0, element_rounding, corner_distance);
     
-    f_out.albedo = color;
-    f_out.emissive = vec4f(emissive, emissive, emissive, 0.0);
+    f_out.albedo = element_color;
+    f_out.emissive = vec4f(element_emissive, element_emissive, element_emissive, 0.0);
 
     return *f_out;
 }

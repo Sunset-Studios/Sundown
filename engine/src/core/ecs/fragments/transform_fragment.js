@@ -22,6 +22,7 @@ export class TransformFragment extends Fragment {
         GPUBufferUsage.STORAGE |
         GPUBufferUsage.COPY_DST |
         GPUBufferUsage.COPY_SRC,
+      cpu_readback: false,
     },
     rotation: {
       ctor: Float32Array,
@@ -34,6 +35,7 @@ export class TransformFragment extends Fragment {
         GPUBufferUsage.STORAGE |
         GPUBufferUsage.COPY_DST |
         GPUBufferUsage.COPY_SRC,
+      cpu_readback: false,
     },
     scale: {
       ctor: Float32Array,
@@ -46,6 +48,7 @@ export class TransformFragment extends Fragment {
         GPUBufferUsage.STORAGE |
         GPUBufferUsage.COPY_DST |
         GPUBufferUsage.COPY_SRC,
+      cpu_readback: false,
     },
     aabb_node_index: {
       ctor: Uint32Array,
@@ -55,6 +58,7 @@ export class TransformFragment extends Fragment {
       buffer_name: "aabb_node_index",
       is_container: false,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+      cpu_readback: false,
     },
     transforms: {
       ctor: Float32Array,
@@ -67,18 +71,7 @@ export class TransformFragment extends Fragment {
         GPUBufferUsage.STORAGE |
         GPUBufferUsage.COPY_DST |
         GPUBufferUsage.COPY_SRC,
-    },
-    flags: {
-      ctor: Int32Array,
-      elements: 1,
-      default: 0,
-      gpu_buffer: true,
-      buffer_name: "flags",
-      is_container: false,
-      usage:
-        GPUBufferUsage.STORAGE |
-        GPUBufferUsage.COPY_DST |
-        GPUBufferUsage.COPY_SRC,
+      cpu_readback: true,
     },
   };
   static buffer_data = new Map(); // key → { buffer: FragmentGpuBuffer, stride: number }
@@ -95,6 +88,10 @@ export class TransformFragment extends Fragment {
 
   static is_valid() {
     return this.id && this.fields && this.view_allocator;
+  }
+
+  static get_buffer_name(field_name) {
+    return this.field_key_map.get(field_name);
   }
 
   static get_world_position(entity, instance = 0) {

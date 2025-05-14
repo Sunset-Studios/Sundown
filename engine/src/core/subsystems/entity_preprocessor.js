@@ -1,4 +1,5 @@
 import { Renderer } from "../../renderer/renderer.js";
+import { EntityFlags } from "../minimal.js";
 import { SimulationLayer } from "../simulation_layer.js";
 import { EntityManager } from "../ecs/entity.js";
 import { profile_scope } from "../../utility/performance.js";
@@ -6,6 +7,8 @@ import { profile_scope } from "../../utility/performance.js";
 const entity_preprocessor_pre_update_key = "entity_preprocessor_pre_update";
 const entity_preprocessor_post_update_key = "entity_preprocessor_post_update";
 const copy_gpu_to_cpu_buffers_key = "copy_gpu_to_cpu_buffers";
+
+const MAX_DIRTY_FLAG_RETAIN_FRAMES = 12;
 
 export class EntityPreprocessor extends SimulationLayer {
   entity_query = null;
@@ -53,12 +56,18 @@ export class EntityPreprocessor extends SimulationLayer {
 
   clear_dirty_flags() {
     ++this.dirty_flag_retain_frames;
-    if (this.dirty_flag_retain_frames >= this.MAX_DIRTY_FLAG_RETAIN_FRAMES) {
+    if (this.dirty_flag_retain_frames >= MAX_DIRTY_FLAG_RETAIN_FRAMES) {
       this.entity_query.for_each((chunk, slot, instance_count, archetype) => {
+        let changed = false;
         for (let i = 0; i < instance_count; i++) {
+          if ((chunk.flags_meta[slot + i] & EntityFlags.DIRTY) !== 0) {
+            changed = true;
+          }
           chunk.flags_meta[slot + i] &= ~EntityFlags.DIRTY;
         }
-        chunk.mark_dirty();
+        if (changed) {
+          chunk.mark_dirty();
+        }
       });
       this.dirty_flag_retain_frames = 0;
     }

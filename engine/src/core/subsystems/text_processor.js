@@ -1,3 +1,4 @@
+import { EntityFlags } from "../minimal.js";
 import { SimulationLayer } from "../simulation_layer.js";
 import { EntityManager } from "../ecs/entity.js";
 import { TextFragment } from "../ecs/fragments/text_fragment.js";
@@ -12,7 +13,11 @@ export class TextProcessor extends SimulationLayer {
   entity_query = null;
 
   init() {
-    this.entity_query = EntityManager.create_query([TextFragment, StaticMeshFragment, TransformFragment]);
+    this.entity_query = EntityManager.create_query([
+      TextFragment,
+      StaticMeshFragment,
+      TransformFragment,
+    ]);
     this._update_internal = this._update_internal.bind(this);
   }
 
@@ -20,49 +25,45 @@ export class TextProcessor extends SimulationLayer {
     profile_scope(text_processor_update_key, this._update_internal);
   }
 
-  #entity_to_segments = new Map();
+  #text_entities_set = new Set();
   _update_internal() {
     // 1) gather up every segment per entity
-    this.#entity_to_segments.clear();
-    this.entity_query.for_each((chunk, slot, instance_count) => {
+    this.#text_entities_set.clear();
+
+    this.entity_query.for_each((chunk, slot, instance_count, archetype) => {
       // lookup the original, stable entity ID from the allocator
-      const entity_id = EntityManager.get_entity_for(chunk, slot);
-      const entity_flags = EntityManager.get_entity_flags(entity_id);
+      const entity = EntityManager.get_entity_for(chunk, slot);
+      const entity_flags = EntityManager.get_entity_flags(entity);
       if ((entity_flags & EntityFlags.DIRTY) === 0) {
         return;
       }
-
-      let segments = this.#entity_to_segments.get(entity_id);
-      if (!segments) {
-        segments = [];
-        this.#entity_to_segments.set(entity_id, segments);
-      }
-      segments.push({ chunk, slot, instance_count });
+      this.#text_entities_set.add(entity);
     });
 
     // 2) process each entity exactly once
-    const entity_to_segment_entries = this.#entity_to_segments.entries();
-    for (let i = 0; i < entity_to_segment_entries.length; i++) {
-      const [entity_id, segments] = entity_to_segment_entries[i];
-
-      // check the dirty flag on the first segment only
-      const first = segments[0];
-      const text_views = first.chunk.get_fragment_view(TextFragment);
+    const text_entities = Array.from(this.#text_entities_set);
+    for (let i = 0; i < text_entities.length; i++) {
+      const entity = text_entities[i];
+      const segments = entity.segments;
 
       // 3) pull all code points across all segments into one array
       const code_points = [];
       for (let i = 0; i < segments.length; i++) {
-        const { chunk, slot, instance_count } = segments[i];
+        const { chunk, slot, count } = segments[i];
         const seg_text_views = chunk.get_fragment_view(TextFragment);
-        for (let j = 0; j < instance_count; j++) {
+        for (let j = 0; j < count; j++) {
           code_points.push(seg_text_views.text[slot + j]);
         }
       }
 
+      const first = segments[0];
+      const text_views = first.chunk.get_fragment_view(TextFragment);
+
       // 4) compute offsets for the full text
       const font_index = text_views.font[first.slot];
       const font_object = FontCache.get_font_object(font_index);
-      const font_scale = text_views.font_size[first.slot] / font_object.texture_height;
+      const font_size = text_views.font_size[first.slot];
+      const font_scale = font_size / font_object.texture_height;
 
       const offsets = new Array(code_points.length).fill(0);
       for (let i = 1; i < code_points.length; i++) {
@@ -80,48 +81,50 @@ export class TextProcessor extends SimulationLayer {
             kern) *
             font_scale;
       }
-      const total_width = offsets[offsets.length - 1];
 
       // 5) write back into each segment's transform chunk
       let global_index = 0;
+      let anchor_x = 0;
+      let anchor_y = 0;
+
       for (let i = 0; i < segments.length; i++) {
-        const { chunk, slot, instance_count } = segments[i];
+        const { chunk, slot, count } = segments[i];
 
         const transform_views = chunk.get_fragment_view(TransformFragment);
-        for (let j = 0; j < instance_count; j++) {
-          const idx = global_index + j;
-          const base_pos_index = (slot + j) * 3;
-          const base_scale_index = (slot + j) * 3;
+        for (let j = 0; j < count; j++) {
+          const base_pos_index = (slot + j) * 4;
+          const base_scale_index = (slot + j) * 4;
 
           // read current position
           const x = transform_views.position[base_pos_index + 0];
           const y = transform_views.position[base_pos_index + 1];
-          const z = transform_views.position[base_pos_index + 2];
 
           // write new position
-          transform_views.position[base_pos_index + 0] = x + (offsets[idx] - total_width * 0.5);
-          transform_views.position[base_pos_index + 1] =
-            y -
-            (font_object.y_offset[code_points[idx]] * 2 +
-              font_object.height[code_points[idx]] -
-              font_object.line_height) *
-              font_scale;
-          // z stays the same
+          if (global_index === 0) {
+            anchor_x = x;
+            anchor_y = y;
+          } else {
+            transform_views.position[base_pos_index + 0] = anchor_x + offsets[global_index];
+            transform_views.position[base_pos_index + 1] =
+              anchor_y -
+              (font_object.y_offset[code_points[global_index]] * 2 +
+                font_object.height[code_points[global_index]] -
+                font_object.line_height) *
+                font_scale;
+          }
 
           // write new scale
           transform_views.scale[base_scale_index + 0] =
-            (font_object.width[code_points[idx]] / font_object.texture_width) *
-            text_views.font_size[first.slot];
+            (font_object.width[code_points[global_index]] / font_object.texture_width) * font_size;
           transform_views.scale[base_scale_index + 1] =
-            (font_object.height[code_points[idx]] / font_object.texture_height) *
-            text_views.font_size[first.slot];
-          // scale[2] = 1.0
+            (font_object.height[code_points[global_index]] / font_object.texture_height) *
+            font_size;
           transform_views.scale[base_scale_index + 2] = 1.0;
+
+          ++global_index;
         }
 
         chunk.mark_dirty();
-
-        global_index += instance_count;
       }
     }
   }

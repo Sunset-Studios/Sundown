@@ -11,8 +11,9 @@ const bounds_padding = 1.0;
 // ------------------------------------------------------------------------------------ 
 
 @group(1) @binding(0) var<storage, read> entity_transforms: array<EntityTransform>;
-@group(1) @binding(1) var<storage, read_write> aabb_bounds: array<AABBNodeBounds>;
-@group(1) @binding(2) var<storage, read> entity_aabb_node_indices: array<u32>;
+@group(1) @binding(1) var<storage, read_write> entity_flags: array<u32>;
+@group(1) @binding(2) var<storage, read_write> aabb_bounds: array<AABBNodeBounds>;
+@group(1) @binding(3) var<storage, read> entity_aabb_node_indices: array<u32>;
 
 // ------------------------------------------------------------------------------------
 // Compute Shader

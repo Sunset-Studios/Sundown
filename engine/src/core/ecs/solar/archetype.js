@@ -1,8 +1,8 @@
 import { LOCAL_SLOT_BITS } from "./types.js";
 import { Chunk } from "./chunk.js";
+import { Query } from "./query.js";
 import { Name } from "../../../utility/names.js";
 import { npot } from "../../../utility/math.js";
-import { FragmentGpuBuffer } from "./memory.js";
 
 const max_chunk_capacity = 1 << LOCAL_SLOT_BITS; // = 1024
 
@@ -23,7 +23,7 @@ const max_chunk_capacity = 1 << LOCAL_SLOT_BITS; // = 1024
 export class Archetype {
   static archetype_cache = new Map();
 
-  constructor(fragments, default_capacity = 256) {
+  constructor(fragments, default_capacity = Chunk.default_chunk_capacity) {
     this.default_capacity = default_capacity;
     this.fragments = [...fragments];
     this.id = Archetype.get_id(fragments);
@@ -96,18 +96,31 @@ export class Archetype {
   }
 
   /**
+   * Check if the archetype fullfills the fragment requirements.
+   * @param {Fragment[]} fragment_requirements - The fragment requirements to check.
+   * @returns {boolean} True if the archetype fullfills the fragment requirements, false otherwise.
+   */
+  fullfills_fragment_requirements(fragment_requirements) {
+    return fragment_requirements.every((fragment) => this.fragments.includes(fragment));
+  }
+
+  /**
    * Create a new archetype with the given fragments.
    * @param {Fragment[]} fragments - The fragments to include in the archetype.
-   * @param {number} [default_capacity=256] - The default capacity of the archetype.
+   * @param {number} [default_capacity=128] - The default capacity of the archetype.
    * @returns {Archetype} The new archetype.
    */
-  static create(fragments, default_capacity = 256) {
+  static create(fragments, default_capacity = Chunk.default_chunk_capacity) {
     const id = this.get_id(fragments);
     if (this.archetype_cache.has(id)) {
       return this.archetype_cache.get(id);
     }
+
     const archetype = new Archetype(fragments, default_capacity);
     this.archetype_cache.set(id, archetype);
+
+    Query.update_archetypes(archetype);
+
     return archetype;
   }
 
@@ -131,7 +144,7 @@ export class Archetype {
    */
   static with(fragments) {
     if (fragments.length === 0) {
-      return this.archetype_cache.values();
+      return Array.from(this.archetype_cache.values());
     }
 
     // Get all archetypes that contain the specified fragments
@@ -149,7 +162,7 @@ export class Archetype {
         matching_archetypes.push(archetype);
       }
     }
-    
+
     return matching_archetypes;
   }
 

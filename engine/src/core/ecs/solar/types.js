@@ -3,8 +3,8 @@ import { FreeListAllocator } from "../../../memory/allocator.js";
 // 32-bit entity ID ─ 10 bits local slot | 18 bits chunk index | 4 bits generation
 // Maximum logical entity count = 2^ROW_BITS = 268,435,456
 export const ROW_BITS = 28;
-export const LOCAL_SLOT_BITS = 10;
-export const CHUNK_INDEX_BITS = ROW_BITS - LOCAL_SLOT_BITS; // = 17
+export const LOCAL_SLOT_BITS = 7;
+export const CHUNK_INDEX_BITS = ROW_BITS - LOCAL_SLOT_BITS; // = 21
 export const GEN_BITS = 4;
 export const ROW_MASK = (1 << ROW_BITS) - 1;
 export const LOCAL_SLOT_MASK = (1 << LOCAL_SLOT_BITS) - 1;
@@ -28,7 +28,7 @@ export class EntityID {
   }
 
   /**
-   * Compose the 26-bit row field from chunk_index and local_slot.
+   * Compose the 28-bit row field from chunk_index and local_slot.
    * Low LOCAL_SLOT_BITS bits = local_slot; next CHUNK_INDEX_BITS bits = chunk_index.
    */
   static make_row_field(local_slot, chunk_index) {
@@ -36,7 +36,7 @@ export class EntityID {
   }
 
   /**
-   * Extract the 26-bit row field (chunk_index+local_slot) from a full entity ID.
+   * Extract the 28-bit row field (chunk_index+local_slot) from a full entity ID.
    */
   static get_row_field(eid) {
     return eid & ROW_MASK;
@@ -49,7 +49,7 @@ export class EntityID {
    *   - GEN_BITS bits of generation.
    */
   static make(local_slot, chunk_index, generation) {
-    const row_field  = this.make_row_field(local_slot, chunk_index);
+    const row_field  = EntityID.make_row_field(local_slot, chunk_index);
     const gen_part   = (generation & GEN_MASK) << ROW_BITS;
     return row_field | gen_part;
   }
@@ -73,19 +73,48 @@ export class EntityID {
  * Callers hold onto this object; we can swap out its `.id` behind the scenes.
  */
 export class EntityHandle {
-  static handle_allocator = new FreeListAllocator(1024, new EntityHandle(0));
+  static handle_allocator = new FreeListAllocator(1024, new EntityHandle());
+  static id_to_handle_map = new Map();
 
   constructor(initial_id) {
     this._entity_id = initial_id;
+    this._archetype = null;
+    this._segments = [];
+    this._instance_count = 0;
   }
 
   get id() {
-    // Mask out the flag bit so id never includes it
     return this._entity_id;
   }
 
+  get archetype() {
+    return this._archetype;
+  }
+
+  get segments() {
+    return this._segments;
+  }
+
+  get instance_count() {
+    return this._instance_count;
+  }
+
   set id(new_id) {
+    EntityHandle.id_to_handle_map.set(this._entity_id, null);
     this._entity_id = new_id;
+    EntityHandle.id_to_handle_map.set(this._entity_id, this);
+  }
+
+  set archetype(new_archetype) {
+    this._archetype = new_archetype;
+  }
+
+  set segments(new_segments) {
+    this._segments = new_segments;
+  }
+
+  set instance_count(new_instance_count) {
+    this._instance_count = new_instance_count;
   }
 
   valueOf() {
@@ -96,13 +125,32 @@ export class EntityHandle {
     return `${this._entity_id}`;
   }
 
-  static create(id) {
+  static create(id = 0, archetype = null, segments = [], instance_count = 0) {
     const handle = this.handle_allocator.allocate();
     handle.id = id;
+    handle.archetype = archetype;
+    handle.segments = segments;
+    handle.instance_count = instance_count;
     return handle;
   }
 
   static destroy(handle) {
+    handle.id = 0;
+    handle.archetype = null;
+    handle.segments = [];
+    handle.instance_count = 0;
     this.handle_allocator.deallocate(handle);
+  }
+
+  static get(id) {
+    return EntityHandle.id_to_handle_map.get(id);
+  }
+
+  static get_or_create(id) {
+    const handle = EntityHandle.get(id);
+    if (!handle) {
+      return EntityHandle.create(id);
+    }
+    return handle;
   }
 }

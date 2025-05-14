@@ -1,4 +1,5 @@
 import { Sector } from "./solar/sector.js";
+import { Chunk } from "./solar/chunk.js";
 import { FragmentGpuBuffer } from "./solar/memory.js";
 import { SceneGraph } from "../scene_graph.js";
 import { TypedQueue } from "../../memory/container.js";
@@ -115,11 +116,11 @@ export class EntityManager {
       return;
     }
 
-    const instances = this.get_entity_instance_count(entity);
-    FragmentType.total_subscribed_instances -= instances;
-
     this.sector.remove_fragment(entity, FragmentType);
     this.entity_fragments.get(entity).delete(FragmentType);
+
+    const instances = this.get_entity_instance_count(entity);
+    FragmentType.total_subscribed_instances -= instances;
   }
 
   /**
@@ -192,6 +193,14 @@ export class EntityManager {
   }
 
   /**
+   * Retrieves the maximum number of rows allocated for the entity manager.
+   * @returns {number} The maximum number of rows.
+   */
+  static get_max_rows() {
+    return this.sector.get_max_rows();
+  }
+
+  /**
    * Retrieves the total instance count for an entity.
    * @param {number} entity - The entity handle to get the instance count for.
    * @returns {number}
@@ -226,13 +235,11 @@ export class EntityManager {
    * @returns {number} The flags for the entity.
    */
   static get_entity_flags(entity) {
-    const handle = this.sector.entity_map.get(entity.id);
-    if (!handle) {
-      warn(`Entity ${entity.id} not found in sector map.`);
-      return 0;
-    }
-    const { segments, slot } = handle;
-    return segments[0].chunk.flags_meta[slot];
+    const { segments } = entity;
+    const first_segment = segments[0];
+    const first_chunk = first_segment.chunk;
+    const first_slot = first_segment.slot;
+    return first_chunk.flags_meta[first_slot];
   }
 
   /**
@@ -241,35 +248,12 @@ export class EntityManager {
    * @param {number} flags - The flags to set for the entity.
    */
   static set_entity_flags(entity, flags) {
-    const handle = this.sector.entity_map.get(entity.id);
-    if (!handle) {
-      warn(`Entity ${entity.id} not found in sector map.`);
-      return;
-    }
-    const { segments, slot } = handle;
-
+    const { segments } = entity;
     for (let i = 0; i < segments.length; i++) {
       const segment = segments[i];
-      segment.chunk.flags_meta[segment.slot] = flags;
-      segment.chunk.mark_dirty();
-    }
-  }
-
-  /**
-   * Set the dirty flag for an entity.
-   * @param {EntityHandle} entity - The entity to set the dirty flag for.
-   */
-  static set_entity_dirty(entity) {
-    const handle = this.sector.entity_map.get(entity.id);
-    if (!handle) {
-      warn(`Entity ${entity.id} not found in sector map.`);
-      return;
-    }
-    const { segments, slot } = handle;
-
-    for (let i = 0; i < segments.length; i++) {
-      const segment = segments[i];
-      segment.chunk.flags_meta[segment.slot] |= EntityFlags.DIRTY;
+      for (let j = 0; j < segment.count; j++) {
+        segment.chunk.flags_meta[segment.slot + j] = flags;
+      }
       segment.chunk.mark_dirty();
     }
   }
@@ -280,13 +264,35 @@ export class EntityManager {
    * @returns {number} The dirty flag value.
    */
   static get_entity_dirty(entity) {
-    const handle = this.sector.entity_map.get(entity.id);
-    if (!handle) {
-      warn(`Entity ${entity.id} not found in sector map.`);
-      return 0;
+    const { segments } = entity;
+    const first_segment = segments[0];
+    const first_chunk = first_segment.chunk;
+    const first_slot = first_segment.slot;
+    return first_chunk.flags_meta[first_slot] & EntityFlags.DIRTY;
+  }
+
+  /**
+   * Set the dirty flag for an entity.
+   * @param {EntityHandle} entity - The entity to set the dirty flag for.
+   */
+  static set_entity_dirty(entity) {
+    const { segments } = entity;
+
+    for (let i = 0; i < segments.length; i++) {
+      const segment = segments[i];
+      for (let j = 0; j < segment.count; j++) {
+        segment.chunk.flags_meta[segment.slot + j] |= EntityFlags.DIRTY;
+      }
+      segment.chunk.mark_dirty();
     }
-    const { segments, slot } = handle;
-    return segments[0].chunk.flags_meta[slot];
+  }
+
+  /**
+   * Retrieves the maximum allocated row for the entity manager.
+   * @returns {number} The maximum allocated row.
+   */
+  static get_max_allocated_row() {
+    return Chunk.max_allocated_row();
   }
 
   /**

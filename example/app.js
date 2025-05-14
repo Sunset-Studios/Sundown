@@ -1,5 +1,6 @@
 import { Simulator } from "../engine/src/core/simulator.js";
 import SimulationCore from "../engine/src/core/simulation_core.js";
+import { FragmentGpuBuffer } from "../engine/src/core/ecs/solar/memory.js";
 import { SimulationLayer } from "../engine/src/core/simulation_layer.js";
 import { EntityManager } from "../engine/src/core/ecs/entity.js";
 import { Scene } from "../engine/src/core/scene.js";
@@ -36,7 +37,6 @@ import { Input } from "../engine/src/ml/layers/input.js";
 import { MasterMind } from "../engine/src/ml/mastermind.js";
 import { Tensor, TensorInitializer } from "../engine/src/ml/math/tensor.js";
 import { Adam } from "../engine/src/ml/optimizers/adam.js";
-
 
 // ------------------------------------------------------------------------------------
 // =============================== Rendering Scene ===============================
@@ -180,6 +180,7 @@ export class RenderingScene extends Scene {
   update(delta_time) {
     super.update(delta_time);
 
+    const flags = FragmentGpuBuffer.entity_flags_buffer.buffer;
     const positions = EntityManager.get_fragment_gpu_buffer(TransformFragment, positions_name);
 
     const total_transforms = EntityManager.get_total_subscribed(TransformFragment);
@@ -187,8 +188,8 @@ export class RenderingScene extends Scene {
     ComputeTaskQueue.get().new_task(
       ripples_name,
       ripples_shader,
-      [positions.buffer],
-      [positions.buffer],
+      [positions.buffer, flags.buffer],
+      [positions.buffer, flags.buffer],
       Math.ceil(total_transforms / 256)
     );
   }
@@ -365,11 +366,15 @@ export class MLScene extends Scene {
         batch_size: 16,
       });
 
-      const hidden1 = Layer.create(LayerType.FULLY_CONNECTED, {
-        input_size: 2,
-        output_size: 8,
-        initializer: TensorInitializer.GLOROT,
-      }, root);
+      const hidden1 = Layer.create(
+        LayerType.FULLY_CONNECTED,
+        {
+          input_size: 2,
+          output_size: 8,
+          initializer: TensorInitializer.GLOROT,
+        },
+        root
+      );
 
       const relu1 = Layer.create(LayerType.RELU, {}, hidden1);
 
@@ -1209,6 +1214,20 @@ export class AABBScene extends Scene {
 export class SolarECSTestScene extends Scene {
   name = "SolarECSTestScene";
   entities = [];
+  text_update_timer = 0;
+  text_update_interval = 2.0; // Time in seconds between text updates
+  random_texts = [
+    "Solar ECS Test",
+    "Hello World!",
+    "Random Text!",
+    "Dynamic Text",
+    "Changing Text",
+    "Cool Beans!",
+    "Woo Hoo!",
+    "Awesome!",
+    "Neat!",
+    "Sweet!",
+  ];
 
   init(parent_context) {
     super.init(parent_context);
@@ -1233,7 +1252,7 @@ export class SolarECSTestScene extends Scene {
     // Set initial camera view
     SharedViewBuffer.set_view_data(0, {
       position: [10.0, 10.0, 15.0],
-      rotation: quat.fromEuler(quat.create(), -30, 45, 0), // Example rotation
+      rotation: quat.fromEuler(quat.create(), 0, -180, 0), // Example rotation
     });
 
     // Create a light and add it to the scene
@@ -1262,36 +1281,15 @@ export class SolarECSTestScene extends Scene {
     );
     const text_fragment_view = EntityManager.add_fragment(text_entity, TextFragment);
     text_fragment_view.font = font_id;
-    text_fragment_view.text = "Solar ECS Test";
     text_fragment_view.font_size = 32;
-    text_fragment_view.color = [0.8, 1, 0.8, 1];
-    text_fragment_view.emissive = 0.8;
+    text_fragment_view.text_emissive = 0.8;
+    text_fragment_view.text_color = [0.8, 1, 0.8, 1];
+    text_fragment_view.text = "Solar ECS Test";
     this.entities.push(text_entity);
 
-    // Create a default material for test objects
-    const default_material = StandardMaterial.create("SolarTestMaterial");
-    const default_material_id = default_material.material_id;
-    default_material.set_albedo([0.6, 0.8, 0.6, 1.0]);
-    default_material.set_roughness(0.6);
-    default_material.set_metallic(0.2);
-
-    // Create a test mesh
-    const test_mesh = Mesh.cube();
-
-    // Spawn a few test entities
-    const num_test_entities = 5;
-    const spacing = 4.0;
-    for (let i = 0; i < num_test_entities; i++) {
-        const x_pos = (i - Math.floor(num_test_entities / 2)) * spacing;
-        const entity = spawn_mesh_entity(
-            [x_pos, 5, 0], // Position
-            quat.fromEuler(quat.create(), Math.random() * 360, Math.random() * 360, Math.random() * 360), // Random rotation
-            [1, 1, 1], // Scale
-            test_mesh,
-            default_material_id
-        );
-        this.entities.push(entity);
-    }
+    // Store reference to text entity and fragment for easy access
+    this.text_entity = text_entity;
+    this.text_fragment_view = text_fragment_view;
 
     log(`[${this.name}] Initialized with ${this.entities.length} entities.`);
   }
@@ -1312,7 +1310,23 @@ export class SolarECSTestScene extends Scene {
   update(delta_time) {
     super.update(delta_time);
 
-    // Placeholder for future update logic specific to Solar ECS testing
+    // Update text timer
+    this.text_update_timer += delta_time;
+
+    // Check if it's time to update the text
+    if (this.text_update_timer >= this.text_update_interval) {
+      // Reset timer
+      this.text_update_timer = 0;
+
+      // Get random text from array
+      const random_index = Math.floor(Math.random() * this.random_texts.length);
+      const new_text = this.random_texts[random_index];
+
+      // Update text fragment
+      if (this.text_fragment_view) {
+        this.text_fragment_view.text = new_text;
+      }
+    }
   }
 }
 
@@ -1372,7 +1386,7 @@ export class SceneSwitcher extends SimulationLayer {
   //await scene_switcher.add_scene(aabb_scene);
   //await scene_switcher.add_scene(rendering_scene);
   //await scene_switcher.add_scene(ml_scene);
- 
+
   await simulator.add_sim_layer(scene_switcher);
 
   simulator.run();

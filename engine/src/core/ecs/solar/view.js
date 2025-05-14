@@ -1,4 +1,5 @@
-import { ROW_BITS, GEN_BITS } from "./types.js";
+import { EntityManager } from "../entity.js";
+import { EntityFlags } from "../../minimal.js";
 import { Name } from "../../../utility/names.js";
 import { warn, error } from "../../../utility/logging.js";
 
@@ -143,8 +144,14 @@ export class SolarFragmentView {
         warn(`SolarFragmentView: Invalid value for '${field_name}'.`);
         return;
       }
+
       container.update(this.entity, data_array);
+
+      const entity_flags = EntityManager.get_entity_flags(this.entity);
+      EntityManager.set_entity_flags(this.entity, entity_flags | EntityFlags.DIRTY);
+
       this.chunk.mark_dirty();
+
       return;
     }
 
@@ -184,6 +191,10 @@ export class SolarFragmentView {
 
       typed_array.set(value, element_offset);
     }
+
+    const entity_flags = EntityManager.get_entity_flags(this.entity);
+    EntityManager.set_entity_flags(this.entity, entity_flags | EntityFlags.DIRTY);
+
     this.chunk.mark_dirty();
   }
 }

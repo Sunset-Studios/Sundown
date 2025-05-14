@@ -7,10 +7,9 @@
 // Data Structures
 //------------------------------------------------------------------------------------
 struct StringData {
+    text_color: vec4<precision_float>,
     page_texture_size: vec2<precision_float>,
-    color: vec4<precision_float>,
-    emissive: precision_float,
-
+    text_emissive: precision_float,
 };
 
 struct GlyphData {
@@ -85,8 +84,8 @@ fn fragment(v_out: VertexOutput, f_out: ptr<function, FragmentOutput>) -> Fragme
     let entity_row = get_entity_row(v_out.base_instance_id);
 
     let sample_color = vec4<precision_float>(textureSample(font_page_texture, global_sampler, vec2<f32>(v_out.uv)));
-    let string_color = string_data[entity_row].color;
-    let emissive = string_data[entity_row].emissive;
+    let string_color = string_data[entity_row].text_color;
+    let emissive = string_data[entity_row].text_emissive;
 
     let r = sample_color.r;
     let g = sample_color.g;

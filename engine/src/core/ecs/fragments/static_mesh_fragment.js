@@ -22,6 +22,7 @@ export class StaticMeshFragment extends Fragment {
         GPUBufferUsage.STORAGE |
         GPUBufferUsage.COPY_DST |
         GPUBufferUsage.COPY_SRC,
+      cpu_readback: false,
     },
     material_slots: {
       ctor: BigInt64Array,
@@ -34,6 +35,7 @@ export class StaticMeshFragment extends Fragment {
         GPUBufferUsage.STORAGE |
         GPUBufferUsage.COPY_DST |
         GPUBufferUsage.COPY_SRC,
+      cpu_readback: false,
     },
   };
   static buffer_data = new Map(); // key → { buffer: FragmentGpuBuffer, stride: number }
@@ -50,6 +52,10 @@ export class StaticMeshFragment extends Fragment {
 
   static is_valid() {
     return this.id && this.fields && this.view_allocator;
+  }
+
+  static get_buffer_name(field_name) {
+    return this.field_key_map.get(field_name);
   }
 
   static material_slot_stride = 16;

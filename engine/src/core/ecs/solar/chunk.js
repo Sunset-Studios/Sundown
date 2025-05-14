@@ -1,10 +1,11 @@
 import { EntityLinearDataContainer } from "./memory.js";
 import { Name } from "../../../utility/names.js";
+import { LOCAL_SLOT_MASK } from "./types.js";
 
 /**
  * Represents a memory chunk in the solar ECS system that stores entity fragment data.
  *
- *            ┌────── Archetype Chunk (fixed N, e.g. 256 logical entities) ──────┐
+ *            ┌────── Archetype Chunk (fixed N, e.g. 128 logical entities) ──────┐
  * SharedBuffer ──► [Position.x N] [Position.y N] … [Velocity.y N] … [Meta N]
  *                                                                  ▲
  * Component views (Float32Array, Int32Array…) slice this one SAB ──┘
@@ -49,12 +50,18 @@ export class Chunk {
   static all_chunks = [];
 
   /**
+   * Default chunk capacity.
+   * @type {number}
+   */
+  static default_chunk_capacity = LOCAL_SLOT_MASK + 1;
+
+  /**
    * Creates a new chunk with the specified fragments and capacity.
    *
    * @param {Fragments[]} fragments - The fragments to include in the chunk
-   * @param {number} [capacity=256] - The maximum number of rows the chunk can hold
+   * @param {number} [capacity=128] - The maximum number of rows the chunk can hold
    */
-  constructor(fragments, capacity = 256) {
+  constructor(fragments, capacity = Chunk.default_chunk_capacity) {
     this.fragments = fragments;
     this.capacity = capacity;
     this.free_ranges = [0, capacity]; 
@@ -93,8 +100,9 @@ export class Chunk {
       const range_start = this.free_ranges[range_index];
       const range_size = this.free_ranges[range_index + 1];
       if (range_size >= requested_row_count) {
+        const allocated_row_index = range_start;
+        this.free_ranges[range_index] += requested_row_count;
         this.free_ranges[range_index + 1] -= requested_row_count;
-        const allocated_row_index = range_start + range_size - requested_row_count;
         if (this.free_ranges[range_index + 1] === 0) this.free_ranges.splice(range_index, 2);
         return allocated_row_index;
       }
@@ -261,7 +269,7 @@ export class Chunk {
     }
     total_byte_count += buffer_capacity * 1; // generation byte per row
     total_byte_count += buffer_capacity * 4; // instance_count (Uint32) per row
-    total_byte_count += buffer_capacity * 2; // flags (Uint16) per row
+    total_byte_count += buffer_capacity * 4; // flags (Uint32) per row
 
     // 2. allocate a shared buffer for this chunk
     this.buffer = typeof SharedArrayBuffer === "function" ? new SharedArrayBuffer(total_byte_count) : new ArrayBuffer(total_byte_count);
@@ -305,6 +313,10 @@ export class Chunk {
     byte_offset += buffer_capacity * 4;
     this.gen_meta = new Uint8Array(this.buffer, byte_offset, buffer_capacity);
     byte_offset += buffer_capacity;
-    this.flags_meta = new Uint16Array(this.buffer, byte_offset, buffer_capacity);
+    this.flags_meta = new Uint32Array(this.buffer, byte_offset, buffer_capacity);
+  }
+
+  static max_allocated_row() {
+    return Chunk.next_chunk_index * Chunk.default_chunk_capacity;
   }
 }

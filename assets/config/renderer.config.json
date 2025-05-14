@@ -284,7 +284,10 @@
           "transform_processing0",
           "clear_g_buffer",
           "skybox_pass",
+          "compute_cull",
           "reset_g_buffer_targets",
+          "g_buffer_DefaultTextMaterial_2142317564",
+          "g_buffer_StandardMaterial_2595239684",
           "transparency_composite",
           "reduce_hzb_0",
           "reduce_hzb_1",
@@ -296,7 +299,6 @@
           "reduce_hzb_7",
           "reduce_hzb_8",
           "reduce_hzb_9",
-          "reduce_hzb_10",
           "lighting_pass",
           "bloom_downsample_pass_0",
           "bloom_downsample_pass_1",
@@ -308,9 +310,10 @@
           "bloom_resolve_pass",
           "fullscreen_present_pass",
           "reset_g_buffer_targets",
-          "copy_position_rotation_scale_to_buffer",
           "copy_aabb_data_to_buffer",
-          "copy_gpu_to_cpu_buffers"
+          "copy_gpu_to_cpu_buffers",
+          "reduce_hzb_10",
+          "copy_position_rotation_scale_to_buffer"
         ]
       },
       "custom": {

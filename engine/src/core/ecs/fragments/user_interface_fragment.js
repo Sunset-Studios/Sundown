@@ -22,6 +22,7 @@ export class UserInterfaceFragment extends Fragment {
         GPUBufferUsage.STORAGE |
         GPUBufferUsage.COPY_DST |
         GPUBufferUsage.COPY_SRC,
+      cpu_readback: false,
     },
     auto_size: {
       ctor: Uint8Array,
@@ -34,6 +35,7 @@ export class UserInterfaceFragment extends Fragment {
         GPUBufferUsage.STORAGE |
         GPUBufferUsage.COPY_DST |
         GPUBufferUsage.COPY_SRC,
+      cpu_readback: false,
     },
     was_cursor_inside: {
       ctor: Uint8Array,
@@ -46,6 +48,7 @@ export class UserInterfaceFragment extends Fragment {
         GPUBufferUsage.STORAGE |
         GPUBufferUsage.COPY_DST |
         GPUBufferUsage.COPY_SRC,
+      cpu_readback: false,
     },
     is_cursor_inside: {
       ctor: Uint8Array,
@@ -58,6 +61,7 @@ export class UserInterfaceFragment extends Fragment {
         GPUBufferUsage.STORAGE |
         GPUBufferUsage.COPY_DST |
         GPUBufferUsage.COPY_SRC,
+      cpu_readback: false,
     },
     was_clicked: {
       ctor: Uint8Array,
@@ -70,6 +74,7 @@ export class UserInterfaceFragment extends Fragment {
         GPUBufferUsage.STORAGE |
         GPUBufferUsage.COPY_DST |
         GPUBufferUsage.COPY_SRC,
+      cpu_readback: false,
     },
     is_clicked: {
       ctor: Uint8Array,
@@ -82,6 +87,7 @@ export class UserInterfaceFragment extends Fragment {
         GPUBufferUsage.STORAGE |
         GPUBufferUsage.COPY_DST |
         GPUBufferUsage.COPY_SRC,
+      cpu_readback: false,
     },
     is_pressed: {
       ctor: Uint8Array,
@@ -94,6 +100,7 @@ export class UserInterfaceFragment extends Fragment {
         GPUBufferUsage.STORAGE |
         GPUBufferUsage.COPY_DST |
         GPUBufferUsage.COPY_SRC,
+      cpu_readback: false,
     },
     was_pressed: {
       ctor: Uint8Array,
@@ -106,6 +113,7 @@ export class UserInterfaceFragment extends Fragment {
         GPUBufferUsage.STORAGE |
         GPUBufferUsage.COPY_DST |
         GPUBufferUsage.COPY_SRC,
+      cpu_readback: false,
     },
     consume_events: {
       ctor: Uint8Array,
@@ -118,42 +126,46 @@ export class UserInterfaceFragment extends Fragment {
         GPUBufferUsage.STORAGE |
         GPUBufferUsage.COPY_DST |
         GPUBufferUsage.COPY_SRC,
+      cpu_readback: false,
     },
-    color: {
+    element_color: {
       ctor: Float32Array,
       elements: 4,
       default: 0,
       gpu_buffer: true,
-      buffer_name: "color",
+      buffer_name: "element_color",
       is_container: false,
       usage:
         GPUBufferUsage.STORAGE |
         GPUBufferUsage.COPY_DST |
         GPUBufferUsage.COPY_SRC,
+      cpu_readback: false,
     },
-    emissive: {
+    element_emissive: {
       ctor: Float32Array,
       elements: 1,
       default: 0,
       gpu_buffer: true,
-      buffer_name: "emissive",
+      buffer_name: "element_emissive",
       is_container: false,
       usage:
         GPUBufferUsage.STORAGE |
         GPUBufferUsage.COPY_DST |
         GPUBufferUsage.COPY_SRC,
+      cpu_readback: false,
     },
-    rounding: {
+    element_rounding: {
       ctor: Float32Array,
       elements: 1,
       default: 0,
       gpu_buffer: true,
-      buffer_name: "rounding",
+      buffer_name: "element_rounding",
       is_container: false,
       usage:
         GPUBufferUsage.STORAGE |
         GPUBufferUsage.COPY_DST |
         GPUBufferUsage.COPY_SRC,
+      cpu_readback: false,
     },
   };
   static buffer_data = new Map(); // key → { buffer: FragmentGpuBuffer, stride: number }
@@ -170,5 +182,9 @@ export class UserInterfaceFragment extends Fragment {
 
   static is_valid() {
     return this.id && this.fields && this.view_allocator;
+  }
+
+  static get_buffer_name(field_name) {
+    return this.field_key_map.get(field_name);
   }
 }

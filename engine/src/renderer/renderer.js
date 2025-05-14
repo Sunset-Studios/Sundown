@@ -1,5 +1,6 @@
 import { RenderGraph } from "./render_graph.js";
 import { Texture, TextureSampler } from "./texture.js";
+import { Mesh } from "./mesh.js";
 import {
   SharedVertexBuffer,
   SharedViewBuffer,
@@ -112,6 +113,8 @@ export class Renderer {
     this._setup_builtin_material_templates();
 
     this._setup_resize_observer();
+
+    Mesh.precrete_engine_primitives();
   }
 
   render(delta_time) {
@@ -192,14 +195,6 @@ export class Renderer {
           size: SharedFrameInfoBuffer.size,
         },
       ];
-
-    if (FragmentGpuBuffer.entity_flags_buffer) {
-      global_bindings.push({
-        buffer: FragmentGpuBuffer.entity_flags_buffer.buffer,
-        offset: 0,
-        size: FragmentGpuBuffer.entity_flags_buffer.buffer.config.size,
-      });
-    }
 
     if (FragmentGpuBuffer.enable_entity_compaction) {
       global_bindings.push({

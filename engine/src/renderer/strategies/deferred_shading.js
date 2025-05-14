@@ -1,4 +1,5 @@
 import { Renderer } from "../renderer.js";
+import { FragmentGpuBuffer } from "../../core/ecs/solar/memory.js";
 import { Texture } from "../texture.js";
 import { RenderPassFlags, MaterialFamilyType } from "../renderer_types.js";
 import { EntityManager } from "../../core/ecs/entity.js";
@@ -358,6 +359,10 @@ export class DeferredShadingStrategy {
       MeshTaskQueue.get().sort_and_batch();
       ComputeTaskQueue.get().compile_rg_passes(render_graph);
 
+      const entity_flags_buffer = FragmentGpuBuffer.entity_flags_buffer;
+      const entity_flags = render_graph.register_buffer(
+        entity_flags_buffer.buffer.config.name
+      );
       
       const transforms_buffer = EntityManager.get_fragment_gpu_buffer(TransformFragment, transforms_name);
       const entity_transforms = render_graph.register_buffer(
@@ -607,7 +612,7 @@ export class DeferredShadingStrategy {
           depth_prepass_name,
           RenderPassFlags.Graphics,
           {
-            inputs: [entity_transforms, compacted_object_instance_buffer],
+            inputs: [entity_transforms, entity_flags, compacted_object_instance_buffer],
             outputs: [main_depth_image],
             shader_setup: depth_only_shader_setup,
           },
@@ -645,7 +650,7 @@ export class DeferredShadingStrategy {
             `g_buffer_${material.template.name}_${material_id}`,
             RenderPassFlags.Graphics,
             {
-              inputs: [entity_transforms, compacted_object_instance_buffer, lights],
+              inputs: [entity_transforms, entity_flags, compacted_object_instance_buffer, lights],
               outputs: [
                 material.family === MaterialFamilyType.Transparent
                   ? main_transparency_accum_image

@@ -1,5 +1,6 @@
 import { Texture } from "../../renderer/texture.js";
 import { Buffer } from "../../renderer/buffer.js";
+import { FragmentGpuBuffer } from "../../core/ecs/solar/memory.js";
 import { Material, MaterialTemplate } from "../../renderer/material.js";
 import { ResourceCache } from "../../renderer/resource_cache.js";
 import { Name } from "../../utility/names.js";
@@ -7,6 +8,7 @@ import { read_file } from "../../utility/file_system.js";
 import { no_cull_rasterizer_config } from "../../utility/config_permutations.js";
 import { CacheTypes, MaterialFamilyType } from "../../renderer/renderer_types.js";
 import { SquareAdjacencyMatrix } from "../../memory/container.js";
+import { TextFragment } from "../../core/ecs/fragments/text_fragment.js";
 
 const chars_key = "chars";
 const common_key = "common";
@@ -79,7 +81,7 @@ export class Font {
         default_text_material_template_key,
         default_text_shader_key,
         MaterialFamilyType.Opaque,
-        no_cull_rasterizer_config
+        no_cull_rasterizer_config,
       );
     }
 
@@ -172,8 +174,11 @@ export class Font {
     material_obj.set_storage_data(font_glyph_data_key, font.font_glyph_data_buffer);
     
     material_obj.listen_for_texture_data(font_page_texture_key);
-    material_obj.listen_for_storage_data(text_data_key);
-    material_obj.listen_for_storage_data(string_data_key);
+
+    const text_buffer = FragmentGpuBuffer.get_buffer_name(TextFragment, text_data_key);
+    material_obj.listen_for_storage_data(text_buffer);
+    const string_buffer = FragmentGpuBuffer.get_buffer_name(TextFragment, string_data_key);
+    material_obj.listen_for_storage_data(string_buffer);
 
     return font;
   }

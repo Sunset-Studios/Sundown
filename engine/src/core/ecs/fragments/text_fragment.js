@@ -4,6 +4,7 @@ import { RingBufferAllocator } from "../../../memory/allocator.js";
 import { Name } from "../../../utility/names.js";
 import { FontCache } from "../../../ui/text/font_cache.js";
 import { EntityManager } from "../entity.js";
+import { EntityFlags } from "../../minimal.js";
 
 /**
  * The Text fragment class.
@@ -43,13 +44,9 @@ export class TextFragment extends Fragment {
         );
 
         // 3) pull back the brand-new layout (one or more segments)
-        const entity_location = EntityManager.sector.get_entity_layout(
-          this.entity,
-        );
-
         let write_offset = 0;
-        for (let i = 0; i < entity_location.segments.length; i++) {
-          const { chunk, slot, count } = entity_location.segments[i];
+        for (let i = 0; i < this.entity.segments.length; i++) {
+          const { chunk, slot, count } = this.entity.segments[i];
 
           // grab the *fresh* views for this segment
           const frag_views = chunk.fragment_views[this.fragment_id];
@@ -62,12 +59,17 @@ export class TextFragment extends Fragment {
           // write into the correct slot
           text_array.set(slice, slot);
 
+          for (let j = 0; j < count; j++) {
+            chunk.flags_meta[slot + j] |= EntityFlags.DIRTY;
+          }
+
           // mark it so it ends up in the next GPU flush
           chunk.mark_dirty();
 
           write_offset += count;
         }
       },
+      cpu_readback: false,
     },
     font: {
       ctor: Int32Array,
@@ -80,6 +82,7 @@ export class TextFragment extends Fragment {
         GPUBufferUsage.STORAGE |
         GPUBufferUsage.COPY_DST |
         GPUBufferUsage.COPY_SRC,
+      cpu_readback: false,
     },
     font_size: {
       ctor: Uint32Array,
@@ -92,30 +95,33 @@ export class TextFragment extends Fragment {
         GPUBufferUsage.STORAGE |
         GPUBufferUsage.COPY_DST |
         GPUBufferUsage.COPY_SRC,
+      cpu_readback: false,
     },
-    color: {
+    text_color: {
       ctor: Float32Array,
       elements: 4,
       default: 0,
       gpu_buffer: true,
-      buffer_name: "color",
+      buffer_name: "text_color",
       is_container: false,
       usage:
         GPUBufferUsage.STORAGE |
         GPUBufferUsage.COPY_DST |
         GPUBufferUsage.COPY_SRC,
+      cpu_readback: false,
     },
-    emissive: {
+    text_emissive: {
       ctor: Float32Array,
       elements: 1,
       default: 0,
       gpu_buffer: true,
-      buffer_name: "emissive",
+      buffer_name: "text_emissive",
       is_container: false,
       usage:
         GPUBufferUsage.STORAGE |
         GPUBufferUsage.COPY_DST |
         GPUBufferUsage.COPY_SRC,
+      cpu_readback: false,
     },
   };
   static buffer_data = new Map(); // key → { buffer: FragmentGpuBuffer, stride: number }
@@ -123,8 +129,10 @@ export class TextFragment extends Fragment {
   static gpu_buffers = {
     string_data: {
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-      stride: 8,
+      stride: 32,
       buffer_name: "string_data",
+      cpu_readback: false,
+
       gpu_data(chunk, fragment) {
         const row_count = chunk.capacity;
         const fragment_views = chunk.fragment_views[fragment.id];
@@ -132,14 +140,16 @@ export class TextFragment extends Fragment {
         for (let row = 0; row < row_count; row++) {
           const gpu_data_offset = row * 8;
           const font = FontCache.get_font_object(fragment_views.font[row]);
-          const color = fragment_views.color[row];
-          packed_data[gpu_data_offset + 0] = font?.texture_width ?? 0;
-          packed_data[gpu_data_offset + 1] = font?.texture_height ?? 0;
-          packed_data[gpu_data_offset + 2] = color[0];
-          packed_data[gpu_data_offset + 3] = color[1];
-          packed_data[gpu_data_offset + 4] = color[2];
-          packed_data[gpu_data_offset + 5] = color[3];
-          packed_data[gpu_data_offset + 6] = fragment_views.emissive[row];
+          packed_data[gpu_data_offset + 0] = fragment_views.text_color[row * 4];
+          packed_data[gpu_data_offset + 1] =
+            fragment_views.text_color[row * 4 + 1];
+          packed_data[gpu_data_offset + 2] =
+            fragment_views.text_color[row * 4 + 2];
+          packed_data[gpu_data_offset + 3] =
+            fragment_views.text_color[row * 4 + 3];
+          packed_data[gpu_data_offset + 4] = font?.texture_width ?? 0;
+          packed_data[gpu_data_offset + 5] = font?.texture_height ?? 0;
+          packed_data[gpu_data_offset + 6] = fragment_views.text_emissive[row];
           packed_data[gpu_data_offset + 7] = 0; // padding
         }
         return { packed_data, row_count };
@@ -159,5 +169,9 @@ export class TextFragment extends Fragment {
 
   static is_valid() {
     return this.id && this.fields && this.view_allocator;
+  }
+
+  static get_buffer_name(field_name) {
+    return this.field_key_map.get(field_name);
   }
 }

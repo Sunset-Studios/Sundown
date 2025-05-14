@@ -19,6 +19,7 @@ export class VisibilityFragment extends Fragment {
       buffer_name: "visible",
       is_container: false,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+      cpu_readback: false,
     },
   };
   static buffer_data = new Map(); // key → { buffer: FragmentGpuBuffer, stride: number }
@@ -35,5 +36,9 @@ export class VisibilityFragment extends Fragment {
 
   static is_valid() {
     return this.id && this.fields && this.view_allocator;
+  }
+
+  static get_buffer_name(field_name) {
+    return this.field_key_map.get(field_name);
   }
 }

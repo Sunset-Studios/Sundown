@@ -22,16 +22,8 @@ export class Query {
    * @param {function} callback - The callback function to execute for each archetype.
    */
   for_each(callback) {
-    outer: for (let i = 0; i < this.archetypes.length; i++) {
+    for (let i = 0; i < this.archetypes.length; i++) {
       const archetype = this.archetypes[i];
-
-      if (this.fragment_requirements.length > 0)
-      {
-        for (let j = 0; j < this.fragment_requirements.length; j++) {
-          const required_id = this.fragment_requirements[j];
-          if (!archetype.fragments.some((fragment) => fragment.id === required_id)) continue outer;
-        }
-      }
 
       for (let k = 0; k < archetype.chunks.length; k++) {
         const target_chunk = archetype.chunks[k];
@@ -44,6 +36,19 @@ export class Query {
           }
           slot_index += instance_count > 0 ? instance_count : 1;
         }
+      }
+    }
+  }
+  
+  /**
+   * Updates the archetypes for the query.
+   * @param {Archetype} new_archetype - The new archetype to add to the query.
+   */
+  static update_archetypes(new_archetype) {
+    const query_cache_entries = this.query_cache.entries();
+    for (const [query_id, query] of query_cache_entries) {
+      if (new_archetype.fullfills_fragment_requirements(query.fragment_requirements)) {
+        query.archetypes.push(new_archetype);
       }
     }
   }

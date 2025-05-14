@@ -6,6 +6,7 @@ import { RenderPassOrganizer } from "./render_pass_organizer.js";
 import { MLStats } from "./ml_stats.js";
 import { CameraInfo } from "./camera_info.js";
 import { AABBDebug } from "./aabb_debug.js";
+import { PerformanceTrace } from "./performance_trace.js";
 import { log, warn, error } from "../utility/logging.js";
 
 // Constants for naming and key codes
@@ -67,6 +68,7 @@ export class DevConsole extends SimulationLayer {
     this.register_command("ml_stats", new MLStats());
     this.register_command("camera_info", new CameraInfo());
     this.register_command("aabb_debug", new AABBDebug());
+    this.register_command("performance_trace", new PerformanceTrace());
   }
 
   update(delta_time) {

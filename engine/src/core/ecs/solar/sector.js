@@ -32,8 +32,6 @@ const DEFAULT_CHUNK_CAPACITY = 1 << LOCAL_SLOT_BITS; // = 1024
 export class Sector {
   // EntityAllocator is a shared resource, so we don't need to create a new one for each sector
   alloc = new EntityAllocator();
-  // Entity ID → { archetype: Archetype, segments: { chunk: Chunk, slot: number, count: number }[] }
-  entity_map = new Map();
 
   /**
    * Create a new entity with the given fragments and instance count.
@@ -62,19 +60,12 @@ export class Sector {
       this.alloc.map_entity_chunk(entity_id, seg.chunk, seg.slot, seg.count);
     }
 
-    // Store archetype and chunk array for the entity
-    this.entity_map.set(entity_id, {
-      archetype,
-      segments,
-      total_instance_count: instance_count,
-    });
-
     // Mark all new chunks as dirty
     for (let i = 0; i < segments.length; i++) {
       segments[i].chunk.mark_dirty();
     }
 
-    return EntityHandle.create(entity_id);
+    return EntityHandle.create(entity_id, archetype, segments, instance_count);
   }
 
   /**
@@ -85,13 +76,7 @@ export class Sector {
   destroy_entity(handle) {
     const entity_id = handle.id;
 
-    const location = this.entity_map.get(entity_id);
-    if (!location) {
-      warn(`Entity ${entity_id} not found, cannot destroy.`);
-      return;
-    }
-
-    const { segments } = location;
+    const { segments } = handle;
 
     // Destroy tells the allocator to release the ID and associated resources (like the slot).
     // Allocator's destroy method handles freeing the row in the chunk.
@@ -104,11 +89,6 @@ export class Sector {
       // Finally destroy the entity using the first segment (also frees the first segment under the hood)
       this.alloc.destroy(entity_id, segments[0].chunk, segments[0].slot);
     }
-
-    // Remove from our map
-    this.entity_map.delete(entity_id);
-
-    handle.id = 0;
 
     EntityHandle.destroy(handle);
   }
@@ -141,14 +121,8 @@ export class Sector {
 
     const fragment_id_to_add = fragment_class.id;
 
-    // 2. Get Entity Location
-    const location = this.entity_map.get(entity_id);
-    if (!location) {
-      warn(`Sector.add_fragment: Entity ${entity_id} not found.`);
-      return null; // Entity doesn't exist
-    }
-
-    const { archetype: old_archetype } = location;
+    // 2. Get Entity Archetype
+    const { archetype: old_archetype } = handle;
 
     // 3. Check if Fragment Already Exists
     const already_has_fragment = old_archetype.fragments.some((f) => f.id === fragment_id_to_add);
@@ -179,14 +153,8 @@ export class Sector {
   remove_fragment(handle, fragment_class) {
     const entity_id = handle.id;
 
-    const location = this.entity_map.get(entity_id);
-    if (!location) {
-      warn(`Sector.remove_fragment: Entity ${entity_id} not found.`);
-      return; // Entity doesn't exist
-    }
-
     // Check if the entity actually has the fragment
-    const current_fragments = location.archetype.fragments;
+    const current_fragments = handle.archetype.fragments;
     const fragment_index = current_fragments.findIndex((f) => f.id === fragment_class.id);
 
     if (fragment_index === -1) {
@@ -237,13 +205,8 @@ export class Sector {
 
     const fragment_id = fragment_class.id;
 
-    // 2. Look up Entity Location
-    const location = this.entity_map.get(entity_id);
-    if (!location) {
-      return null;
-    }
-
-    const { archetype, segments, total_instance_count } = location;
+    // 2. Look up Entity Archetype
+    const { archetype, segments, instance_count } = handle;
 
     // 3. Check if Archetype contains the Fragment
     if (!archetype.fragments.some((f) => f.id === fragment_id)) {
@@ -251,9 +214,9 @@ export class Sector {
     }
 
     // 4. Validate Instance Index
-    if (instance_index < 0 || instance_index >= total_instance_count) {
+    if (instance_index < 0 || instance_index >= instance_count) {
       error(
-        `Sector.get_fragment: Invalid instance_index ${instance_index} for entity ${entity_id}. Count is ${total_instance_count}.`
+        `Sector.get_fragment: Invalid instance_index ${instance_index} for entity ${entity_id}. Count is ${instance_count}.`
       );
       return null;
     }
@@ -278,10 +241,18 @@ export class Sector {
    *
    * @param {Chunk} chunk - The chunk containing the entity
    * @param {number} slot - The slot index in the chunk
-   * @returns {number} The entity ID
+   * @returns {number} The entity handle
    */
   get_entity_for(chunk, slot) {
-    return EntityHandle.create(this.alloc.get_entity_id_for(chunk, slot));
+    return EntityHandle.get_or_create(this.alloc.get_entity_id_for(chunk, slot));
+  }
+
+  /**
+   * Retrieves the maximum number of rows allocated for the entity manager.
+   * @returns {number} The maximum number of rows.
+   */
+  get_max_rows() {
+    return (Chunk.next_chunk_index) * Chunk.default_chunk_capacity;
   }
 
   /**
@@ -298,13 +269,10 @@ export class Sector {
       throw new Error("New instance count must be positive.");
     }
 
-    const location = this.entity_map.get(entity_id);
-    if (!location) throw new Error(`Entity ${entity_id} not found`);
-
-    const { archetype, segments, total_instance_count } = location;
+    const { archetype, segments, instance_count } = handle;
 
     // no-op if unchanged
-    if (new_instance_count === total_instance_count) {
+    if (new_instance_count === instance_count) {
       return handle;
     }
 
@@ -312,14 +280,15 @@ export class Sector {
     let new_segments = archetype.claim_segments(new_instance_count);
 
     // Copy data from old segments to new segments
-    for (let i = 0; i < archetype.fragments.length; i++) {
-      const fragment = archetype.fragments[i];
-      const fragment_id = fragment.id;
-      const fragment_field_entries = Object.entries(fragment.fields);
+    for (let j = 0; j < segments.length; j++) {
+      const old_seg = segments[j];
+      const new_seg = new_segments[j];
 
-      for (let j = 0; j < segments.length; j++) {
-        const old_seg = segments[j];
-        const new_seg = new_segments[j];
+      for (let i = 0; i < archetype.fragments.length; i++) {
+        const fragment = archetype.fragments[i];
+        const fragment_id = fragment.id;
+        const fragment_field_entries = Object.entries(fragment.fields);
+
         const source_views = old_seg.chunk.fragment_views[fragment_id];
         const dest_views = new_seg.chunk.fragment_views[fragment_id];
 
@@ -339,12 +308,13 @@ export class Sector {
           );
         }
       }
-    }
 
-    // Inform allocator to release old segments and update tracking for the entity ID
-    for (let i = 1; i < segments.length; i++) {
-      const seg = segments[i];
-      this.alloc.free_segment(seg.chunk, seg.slot, seg.count);
+      for (let k = 0; k < old_seg.count; k++) {
+        // Copy metadata arrays (instance count, generation, flags)
+        new_seg.chunk.icnt_meta[new_seg.slot + k] = old_seg.chunk.icnt_meta[old_seg.slot + k];
+        new_seg.chunk.gen_meta[new_seg.slot + k] = old_seg.chunk.gen_meta[old_seg.slot + k];
+        new_seg.chunk.flags_meta[new_seg.slot + k] = old_seg.chunk.flags_meta[old_seg.slot + k];
+      }
     }
 
     // Update allocation tracking for the entity ID, to point to the new first chunk
@@ -357,13 +327,12 @@ export class Sector {
       new_segments[0].slot,
       chunk_instance_count
     );
-
-    // Update our map entry for the *same* entity ID
-    this.entity_map.set(new_entity_id, {
-      archetype,
-      segments: new_segments,
-      total_instance_count: new_instance_count,
-    });
+    
+    // Inform allocator to release old segments and update tracking for the entity ID
+    for (let i = 1; i < segments.length; i++) {
+      const seg = segments[i];
+      this.alloc.free_segment(seg.chunk, seg.slot, seg.count);
+    }
 
     // Mark the new chunks/slots as dirty for all relevant fragments (if tracked)
     for (let i = 0; i < new_segments.length; i++) {
@@ -372,6 +341,9 @@ export class Sector {
     }
 
     handle.id = new_entity_id;
+    handle.archetype = archetype;
+    handle.segments = new_segments;
+    handle.instance_count = new_instance_count;
 
     return handle; // Return the original, stable ID
   }
@@ -397,11 +369,7 @@ export class Sector {
   migrate(handle, new_fragments) {
     const entity_id = handle.id;
 
-    const location = this.entity_map.get(entity_id);
-    // Should always exist if called from public methods, but double-check
-    if (!location) throw new Error(`Entity ${entity_id} disappeared during migration`);
-
-    const { archetype: old_archetype, segments, total_instance_count } = location;
+    const { archetype: old_archetype, segments, instance_count } = handle;
 
     const new_archetype_key = Archetype.get_id(new_fragments);
 
@@ -413,17 +381,18 @@ export class Sector {
     // Create the new archetype
     let new_archetype = Archetype.create(new_fragments);
     // Claim space in the new archetype
-    let new_segments = new_archetype.claim_segments(total_instance_count);
+    let new_segments = new_archetype.claim_segments(instance_count);
 
     // Copy data from old segments to new segments
-    for (let i = 0; i < old_archetype.fragments.length; i++) {
-      const fragment = old_archetype.fragments[i];
-      const fragment_id = fragment.id;
-      const fragment_field_entries = Object.entries(fragment.fields);
+    for (let j = 0; j < segments.length; j++) {
+      const old_seg = segments[j];
+      const new_seg = new_segments[j];
 
-      for (let j = 0; j < segments.length; j++) {
-        const old_seg = segments[j];
-        const new_seg = new_segments[j];
+      for (let i = 0; i < old_archetype.fragments.length; i++) {
+        const fragment = old_archetype.fragments[i];
+        const fragment_id = fragment.id;
+        const fragment_field_entries = Object.entries(fragment.fields);
+
         const source_views = old_seg.chunk.fragment_views[fragment_id];
         const dest_views = new_seg.chunk.fragment_views[fragment_id];
 
@@ -443,16 +412,17 @@ export class Sector {
           );
         }
       }
-    }
 
-    // Update allocation: Release old segments, update tracking to new location
-    for (let i = 1; i < segments.length; i++) {
-      const seg = segments[i];
-      this.alloc.free_segment(seg.chunk, seg.slot, seg.count);
+      for (let k = 0; k < old_seg.count; k++) {
+        // Copy metadata arrays (instance count, generation, flags)
+        new_seg.chunk.icnt_meta[new_seg.slot + k] = old_seg.chunk.icnt_meta[old_seg.slot + k];
+        new_seg.chunk.gen_meta[new_seg.slot + k] = old_seg.chunk.gen_meta[old_seg.slot + k];
+        new_seg.chunk.flags_meta[new_seg.slot + k] = old_seg.chunk.flags_meta[old_seg.slot + k];
+      }
     }
 
     // Update allocation tracking for the entity ID, to point to the new first chunk
-    const chunk_instance_count = Math.min(total_instance_count, DEFAULT_CHUNK_CAPACITY);
+    const chunk_instance_count = Math.min(instance_count, DEFAULT_CHUNK_CAPACITY);
     const new_entity_id = this.alloc.update_allocation(
       entity_id,
       segments[0].chunk,
@@ -462,22 +432,25 @@ export class Sector {
       chunk_instance_count
     );
 
-    // Update the entity map entry for the *same* entity ID
-    this.entity_map.set(new_entity_id, {
-      archetype: new_archetype,
-      segments: new_segments,
-      total_instance_count: total_instance_count,
-    });
+    // Update allocation: Release old segments, update tracking to new location
+    for (let i = 1; i < segments.length; i++) {
+      const seg = segments[i];
+      this.alloc.free_segment(seg.chunk, seg.slot, seg.count);
+    }
 
     // Mark the new chunks/slots as dirty
-    for (const { chunk } of new_segments) {
-      chunk.mark_dirty();
+    for (let i = 0; i < new_segments.length; i++) {
+      const seg = new_segments[i];
+      seg.chunk.mark_dirty();
     }
 
     // Check if old_segments became empty and trigger archetype cleanup/compaction?
     // if (old_segments.length === 0) { old_archetype.release_segments(segments); }
 
     handle.id = new_entity_id;
+    handle.archetype = new_archetype;
+    handle.segments = new_segments;
+    handle.instance_count = instance_count;
 
     return handle; // Return the original, stable ID
   }
@@ -488,18 +461,6 @@ export class Sector {
    * @returns {number}
    */
   get_total_instance_count(handle) {
-    const entity_id = handle.id;
-    const loc = this.entity_map.get(entity_id);
-    return loc ? loc.total_instance_count : 0;
-  }
-
-  /**
-   * Get the layout of an entity.
-   * @param {EntityHandle} handle
-   * @returns {Object}
-   */
-  get_entity_layout(handle) {
-    const entity_id = handle.id;
-    return this.entity_map.get(entity_id);
+    return handle.instance_count;
   }
 }

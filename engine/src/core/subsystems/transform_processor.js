@@ -17,7 +17,6 @@ const transforms_buffer_name = "transforms";
 const transform_processor_update_scope_name = "TransformProcessor.update";
 const transform_processing_task_name = "transform_processing";
 const transform_processing_wgsl_path = "system_compute/transform_processing.wgsl";
-const copy_position_rotation_scale_to_buffer_name = "copy_position_rotation_scale_to_buffer";
 
 export class TransformProcessor extends SimulationLayer {
   transform_processing_input_lists = [];
@@ -57,9 +56,10 @@ export class TransformProcessor extends SimulationLayer {
       this.transform_processing_input_lists[i][0] = positions.buffer;
       this.transform_processing_input_lists[i][1] = rotations.buffer;
       this.transform_processing_input_lists[i][2] = scales.buffer;
-      this.transform_processing_input_lists[i][5] = transforms.buffer;
-      this.transform_processing_input_lists[i][6] = SceneGraph.scene_graph_buffer;
-      this.transform_processing_input_lists[i][7] = SceneGraph.scene_graph_uniforms[i];
+      this.transform_processing_input_lists[i][3] = transforms.buffer;
+      this.transform_processing_input_lists[i][4] = flags.buffer;
+      this.transform_processing_input_lists[i][5] = SceneGraph.scene_graph_buffer;
+      this.transform_processing_input_lists[i][6] = SceneGraph.scene_graph_uniforms[i];
 
       this.transform_processing_output_lists[i][0] = positions.buffer;
       this.transform_processing_output_lists[i][1] = rotations.buffer;
