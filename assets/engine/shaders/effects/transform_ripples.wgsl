@@ -1,7 +1,7 @@
 #include "common.wgsl"
 
 @group(1) @binding(0) var<storage, read_write> entity_positions: array<vec4f>;
-@group(1) @binding(1) var<storage, read_write> entity_flags: array<u32>;
+@group(1) @binding(1) var<storage, read_write> entity_flags: array<atomic<u32>>;
 
 @compute @workgroup_size(256)
 fn cs(@builtin(global_invocation_id) global_id: vec3<u32>) {
@@ -19,5 +19,5 @@ fn cs(@builtin(global_invocation_id) global_id: vec3<u32>) {
 
     entity_positions[entity] = entity_position;
 
-    entity_flags[entity] |= EF_TRANSFORM_DIRTY;
+    atomicOr(&entity_flags[entity], EF_TRANSFORM_DIRTY);
 }

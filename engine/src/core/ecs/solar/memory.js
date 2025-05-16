@@ -1,4 +1,4 @@
-import { EntityID, LOCAL_SLOT_BITS, LOCAL_SLOT_MASK } from "./types.js";
+import { EntityID, LOCAL_SLOT_BITS, LOCAL_SLOT_MASK, DEFAULT_CHUNK_CAPACITY } from "./types.js";
 import { MAX_BUFFERED_FRAMES } from "../../minimal.js";
 import { Chunk } from "./chunk.js";
 import { Renderer } from "../../../renderer/renderer.js";
@@ -366,13 +366,13 @@ export class FragmentGpuBuffer {
             continue;
         }
         
-        // Data for this chunk in cpu_buf starts at (chunk.chunk_index * chunk.capacity) *elements* of this buffer's type.
+        // Data for this chunk in cpu_buf starts at (chunk.chunk_index * DEFAULT_CHUNK_CAPACITY) *elements* of this buffer's type.
         // The `this.byte_stride` is for one row of *this* FragmentGpuBuffer.
         // The cpu_buf contains data laid out as [chunk0_data, chunk1_data, ...].
-        // Each chunk_data segment is `chunk.capacity * this.byte_stride` bytes.
-        const source_byte_offset = chunk.chunk_index * chunk.capacity * this.byte_stride;
+        // Each chunk_data segment is `DEFAULT_CHUNK_CAPACITY * this.byte_stride` bytes.
+        const source_byte_offset = chunk.chunk_index * DEFAULT_CHUNK_CAPACITY * this.byte_stride;
         // The target_view's byteLength should match the expected size for this chunk's segment in the source.
-        const bytes_to_copy_for_chunk = chunk.capacity * this.byte_stride;
+        const bytes_to_copy_for_chunk = DEFAULT_CHUNK_CAPACITY * this.byte_stride;
 
         if (target_view.byteLength !== bytes_to_copy_for_chunk) {
              warn(
@@ -465,8 +465,8 @@ export class FragmentGpuBuffer {
         continue;
       }
 
-      const source_byte_offset = chunk.chunk_index * chunk.capacity * this.byte_stride;
-      const bytes_to_copy_for_chunk = chunk.capacity * this.byte_stride;
+      const source_byte_offset = chunk.chunk_index * DEFAULT_CHUNK_CAPACITY * this.byte_stride;
+      const bytes_to_copy_for_chunk = DEFAULT_CHUNK_CAPACITY * this.byte_stride;
 
       if (target_view.byteLength !== bytes_to_copy_for_chunk) {
         warn(
@@ -769,7 +769,6 @@ export class FragmentGpuBuffer {
             fragment_types_set.add(fragment);
           }
         }
-        chunk.clear_dirty();
       }
       const fragment_types = Array.from(fragment_types_set);
 
@@ -818,7 +817,7 @@ export class FragmentGpuBuffer {
     } else {
       // 2) SPARSE PATH
       for (const chunk of Chunk.dirty) {
-        const chunk_base = chunk.chunk_index * chunk.capacity;
+        const chunk_base = chunk.chunk_index * DEFAULT_CHUNK_CAPACITY;
 
         for (let i = 0; i < chunk.fragments.length; i++) {
           const fragment = chunk.fragments[i];
@@ -860,9 +859,7 @@ export class FragmentGpuBuffer {
         }
 
         // update entity flags in sparse path
-        this.entity_flags_buffer.update_chunk(chunk_base, chunk.flags_meta, chunk.capacity);
-
-        chunk.clear_dirty();
+        this.entity_flags_buffer.update_chunk(chunk_base, chunk.flags_meta, DEFAULT_CHUNK_CAPACITY);
       }
     }
 
@@ -958,7 +955,7 @@ export class FragmentGpuBuffer {
       return null;
     }
     // The row count corresponds to the chunk's total capacity, as the view covers the whole chunk allocation
-    const row_count = chunk.capacity;
+    const row_count = DEFAULT_CHUNK_CAPACITY;
     // Return the existing TypedArray view directly - it's already in the correct type
     return { packed_data: field_view, row_count: row_count };
   }
@@ -983,7 +980,7 @@ export class FragmentGpuBuffer {
     }
 
     const field_names = buffer_config.fields;
-    const row_count = chunk.capacity;
+    const row_count = DEFAULT_CHUNK_CAPACITY;
     const field_details = []; // Store { view, byte_size, offset_in_stride, ctor }
 
     // Pre-calculate field strides and gather other field details

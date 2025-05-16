@@ -21,13 +21,13 @@ export class UI3DProcessor extends SimulationLayer {
 
   _update_internal() {
     this.entity_query.for_each((chunk, slot, instance_count, archetype) => {
-      const entity = EntityManager.get_entity_for(chunk, slot);
-      const entity_flags = EntityManager.get_entity_flags(entity);
-
+      const entity_flags = chunk.flags_meta[slot];
       if ((entity_flags & EntityFlags.PENDING_DELETE) !== 0) {
         return;
       }
-
+      
+      const entity = EntityManager.get_entity_for(chunk, slot);
+      
       for (let i = 0; i < instance_count; ++i) {
         const user_interfaces = chunk.get_fragment_view(UserInterfaceFragment);
         const index = slot + i;

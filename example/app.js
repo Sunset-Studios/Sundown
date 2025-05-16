@@ -81,9 +81,9 @@ export class RenderingScene extends Scene {
     // Add a light fragment to the light entity
     const light_fragment_view = EntityManager.get_fragment(light_entity, LightFragment);
     light_fragment_view.type = LightType.DIRECTIONAL;
-    light_fragment_view.color = [1, 1, 1];
+    light_fragment_view.color = [1, 1, 1, 1];
     light_fragment_view.intensity = 3;
-    light_fragment_view.position = [50, 0, 50];
+    light_fragment_view.position = [50, 0, 50, 1];
     light_fragment_view.active = true;
 
     // Create a sphere mesh and add it to the scene
@@ -99,14 +99,34 @@ export class RenderingScene extends Scene {
     const font_id = Name.from("Exo-Medium");
     const font_object = FontCache.get_font_object(font_id);
 
+    const text_entity = spawn_mesh_entity(
+      [0, 25, -5],
+      [0, 0, 0, 1],
+      [0.5, 0.5, 0.5],
+      Mesh.quad(),
+      font_object.material,
+      null /* parent */,
+      [] /* children */,
+      true /* start_visible */,
+      EntityFlags.NO_AABB_UPDATE | EntityFlags.IGNORE_PARENT_SCALE
+    );
+    const text_fragment_view = EntityManager.add_fragment(text_entity, TextFragment);
+    text_fragment_view.font = font_id;
+    text_fragment_view.font_size = 32;
+    text_fragment_view.text_color = [1, 1, 1, 1];
+    text_fragment_view.text_emissive = 1;
+    text_fragment_view.text = "Sundown Engine";
+
+    this.entities.push(text_entity);
+
     // Create a 3D grid of sphere entities
     const grid_size = 100; // 100x100x10 grid
-    const grid_layers = 10;
+    const grid_layers = 100;
     const spacing = 5; // 2 units apart
 
     const sphere = spawn_mesh_entity(
       [0, 0, 0],
-      [0, 0, 0, 1],
+      [0, 0, 0],
       [0.5, 0.5, 0.5],
       mesh,
       default_material_id,
@@ -128,33 +148,12 @@ export class RenderingScene extends Scene {
             (y - Math.floor(grid_layers / 2)) * spacing,
             (z - Math.floor(grid_size / 2)) * spacing,
           ];
-          EntityManager.get_fragment(sphere, TransformFragment, sphere_count).position = pos;
+          const view = EntityManager.get_fragment(sphere, TransformFragment, sphere_count);
+          view.position = pos;
           ++sphere_count;
         }
       }
     }
-
-    const text_entity = spawn_mesh_entity(
-      [0, 25, -5],
-      [0, 0, 0, 1],
-      [0.5, 0.5, 0.5],
-      Mesh.quad(),
-      font_object.material,
-      null /* parent */,
-      [] /* children */,
-      true /* start_visible */,
-      EntityFlags.NO_AABB_UPDATE | EntityFlags.IGNORE_PARENT_SCALE
-    );
-    const text_fragment_view = EntityManager.add_fragment(text_entity, TextFragment);
-    text_fragment_view.font = font_id;
-    text_fragment_view.text = "Sundown Engine";
-    text_fragment_view.font_size = 32;
-    text_fragment_view.color.r = 1;
-    text_fragment_view.color.g = 1;
-    text_fragment_view.color.b = 1;
-    text_fragment_view.color.a = 1;
-    text_fragment_view.emissive = 1;
-    this.entities.push(text_entity);
 
     PostProcessStack.register_pass(0, "crt", "effects/crt_post.wgsl", {
       curvature: 0.0,
@@ -180,7 +179,7 @@ export class RenderingScene extends Scene {
   update(delta_time) {
     super.update(delta_time);
 
-    const flags = FragmentGpuBuffer.entity_flags_buffer.buffer;
+    const flags = FragmentGpuBuffer.entity_flags_buffer;
     const positions = EntityManager.get_fragment_gpu_buffer(TransformFragment, positions_name);
 
     const total_transforms = EntityManager.get_total_subscribed(TransformFragment);
@@ -254,13 +253,10 @@ export class MLScene extends Scene {
     );
     const text_fragment_view = EntityManager.add_fragment(text_entity, TextFragment);
     text_fragment_view.font = font_id;
-    text_fragment_view.text = "ML Test";
     text_fragment_view.font_size = 32;
-    text_fragment_view.color.r = 1;
-    text_fragment_view.color.g = 1;
-    text_fragment_view.color.b = 1;
-    text_fragment_view.color.a = 1;
-    text_fragment_view.emissive = 1;
+    text_fragment_view.text_color = [1, 1, 1, 1];
+    text_fragment_view.text_emissive = 1;
+    text_fragment_view.text = "ML Test";
 
     this.scene_entities.push(light_entity);
     this.scene_entities.push(text_entity);
@@ -484,7 +480,7 @@ export class TexturesScene extends Scene {
     // Add a light fragment to the light entity
     const light_fragment_view = EntityManager.get_fragment(light_entity, LightFragment);
     light_fragment_view.type = LightType.DIRECTIONAL;
-    light_fragment_view.color = [1, 1, 1];
+    light_fragment_view.color = [1, 1, 1, 1];
     light_fragment_view.intensity = 2;
     light_fragment_view.position = [50, 20, -10];
     light_fragment_view.active = true;
@@ -503,13 +499,10 @@ export class TexturesScene extends Scene {
     );
     const text_fragment_view = EntityManager.add_fragment(text_entity, TextFragment);
     text_fragment_view.font = font_id;
-    text_fragment_view.text = "Textures Test Scene";
     text_fragment_view.font_size = 32;
-    text_fragment_view.color.r = 1;
-    text_fragment_view.color.g = 1;
-    text_fragment_view.color.b = 1;
-    text_fragment_view.color.a = 1;
-    text_fragment_view.emissive = 1;
+    text_fragment_view.text_color = [1, 1, 1, 1];
+    text_fragment_view.text_emissive = 1;
+    text_fragment_view.text = "Textures Test Scene";
     this.entities.push(text_entity);
 
     // Load metal plane material
@@ -802,7 +795,7 @@ export class AABBScene extends Scene {
 
     // Add a title text entity
     const text_entity = spawn_mesh_entity(
-      [25, 65, 25],
+      [10, 65, 25],
       [0, 0, 0, 1],
       [0.5, 0.5, 0.5],
       Mesh.quad(),
@@ -810,13 +803,10 @@ export class AABBScene extends Scene {
     );
     const text_fragment_view = EntityManager.add_fragment(text_entity, TextFragment);
     text_fragment_view.font = font_id;
-    text_fragment_view.text = "BVH Test Scene";
     text_fragment_view.font_size = 32;
-    text_fragment_view.color.r = 1;
-    text_fragment_view.color.g = 1;
-    text_fragment_view.color.b = 1;
-    text_fragment_view.color.a = 1;
-    text_fragment_view.emissive = 1;
+    text_fragment_view.text_color = [1, 1, 1, 1];
+    text_fragment_view.text_emissive = 1;
+    text_fragment_view.text = "BVH Test Scene";
     this.entities.push(text_entity);
 
     // Create a default material
@@ -873,7 +863,7 @@ export class AABBScene extends Scene {
 
   setup_entity_grid() {
     // Create a grid of entities for testing
-    const grid_size = 20;
+    const grid_size = 40;
     const spacing = 3.0;
 
     for (let x = 0; x < grid_size; x++) {
@@ -1213,21 +1203,38 @@ export class AABBScene extends Scene {
 
 export class SolarECSTestScene extends Scene {
   name = "SolarECSTestScene";
-  entities = [];
-  text_update_timer = 0;
-  text_update_interval = 2.0; // Time in seconds between text updates
-  random_texts = [
-    "Solar ECS Test",
-    "Hello World!",
-    "Random Text!",
-    "Dynamic Text",
-    "Changing Text",
-    "Cool Beans!",
-    "Woo Hoo!",
-    "Awesome!",
-    "Neat!",
-    "Sweet!",
+  entities = []; // Stores all entities in the scene
+  text_update_timer = 0; // Timer for text updates
+  text_update_interval = 0.2; // Time in seconds between text updates
+
+  grid_entity_counts = { x: 20, y: 20, z: 20 }; // Number of entities per dimension
+  grid_spacing = { x: 4.0, y: 4.0, z: 4.0 }; // Explicit spacing between entities
+
+  grid_text_entities = []; // Stores entities that are part of the text grid
+  num_entities_to_update_per_cycle = 250; // Number of entities to update each cycle
+
+  combined_text_presets = [
+    // Morse code
+    "...",
+    ".-",
+    "..",
+    "---",
+    ".-.",
+    ".-..",
+    "--",
+    "-.",
+    "..-",
+    ".-.-",
+    "---.",
+    "....-",
+    ".--",
+    "-",
+    "..-",
+    ".-.-",
+    "---.- .-",
+    "....",
   ];
+  random_texts = []; // Will be assigned in init
 
   init(parent_context) {
     super.init(parent_context);
@@ -1271,25 +1278,56 @@ export class SolarECSTestScene extends Scene {
     const font_id = Name.from("Exo-Medium");
     const font_object = FontCache.get_font_object(font_id);
 
-    // Add a title text entity
-    const text_entity = spawn_mesh_entity(
-      [0, 15, 0], // Position
-      [0, 0, 0, 1], // Rotation
-      [0.5, 0.5, 0.5], // Scale
-      Mesh.quad(),
-      font_object.material
-    );
-    const text_fragment_view = EntityManager.add_fragment(text_entity, TextFragment);
-    text_fragment_view.font = font_id;
-    text_fragment_view.font_size = 32;
-    text_fragment_view.text_emissive = 0.8;
-    text_fragment_view.text_color = [0.8, 1, 0.8, 1];
-    text_fragment_view.text = "Solar ECS Test";
-    this.entities.push(text_entity);
+    // Assign the combined presets to random_texts so the title can use them too
+    this.random_texts = this.combined_text_presets;
 
-    // Store reference to text entity and fragment for easy access
-    this.text_entity = text_entity;
-    this.text_fragment_view = text_fragment_view;
+    // Create the grid of text entities
+    const counts_x = this.grid_entity_counts.x;
+    const counts_y = this.grid_entity_counts.y;
+    const counts_z = this.grid_entity_counts.z;
+
+    const center_offset_x = (counts_x - 1) * 0.5;
+    const center_offset_y = (counts_y - 1) * 0.5;
+    const center_offset_z = (counts_z - 1) * 0.5;
+
+    for (let ix = 0; ix < counts_x; ix++) {
+      for (let iy = 0; iy < counts_y; iy++) {
+        for (let iz = 0; iz < counts_z; iz++) {
+          const pos = [
+            (ix - center_offset_x) * this.grid_spacing.x,
+            (iy - center_offset_y) * this.grid_spacing.y,
+            (iz - center_offset_z) * this.grid_spacing.z,
+          ];
+
+          const grid_entity = spawn_mesh_entity(
+            pos,
+            [0, 0, 0],
+            [1.0, 1.0, 1.0],
+            Mesh.quad(),
+            font_object.material,
+            null,
+            [],
+            true,
+            EntityFlags.NO_AABB_UPDATE | EntityFlags.IGNORE_PARENT_SCALE
+          );
+
+          const text_frag = EntityManager.add_fragment(grid_entity, TextFragment);
+          text_frag.font = font_id;
+          text_frag.font_size = 10; // Smaller font size for grid
+          text_frag.text_color = [
+            Math.random() * 0.5 + 0.5,
+            Math.random() * 0.5 + 0.5,
+            Math.random() * 0.5 + 0.5,
+            1.0,
+          ]; // Brighter random colors
+          text_frag.text_emissive = 0.7;
+          text_frag.text = this.random_texts[Math.floor(Math.random() * this.random_texts.length)]; // Initial random text
+
+          this.entities.push(grid_entity);
+          this.grid_text_entities.push(grid_entity);
+        }
+      }
+    }
 
     log(`[${this.name}] Initialized with ${this.entities.length} entities.`);
   }
@@ -1300,6 +1338,7 @@ export class SolarECSTestScene extends Scene {
       delete_entity(this.entities[i]);
     }
     this.entities.length = 0;
+    this.grid_text_entities = []; // Clear the specific list too
 
     this.remove_layer(FreeformArcballControlProcessor);
 
@@ -1307,24 +1346,40 @@ export class SolarECSTestScene extends Scene {
     log(`[${this.name}] Cleanup complete.`);
   }
 
-  update(delta_time) {
-    super.update(delta_time);
+  pre_update(delta_time) {
+    super.pre_update(delta_time);
 
-    // Update text timer
+    // Timer-based update for the grid entities
     this.text_update_timer += delta_time;
-
-    // Check if it's time to update the text
     if (this.text_update_timer >= this.text_update_interval) {
-      // Reset timer
-      this.text_update_timer = 0;
+      this.text_update_timer -= this.text_update_interval; // Carry over excess time
 
-      // Get random text from array
-      const random_index = Math.floor(Math.random() * this.random_texts.length);
-      const new_text = this.random_texts[random_index];
+      if (this.grid_text_entities && this.grid_text_entities.length > 0) {
+        const num_to_update = Math.min(
+          this.num_entities_to_update_per_cycle,
+          this.grid_text_entities.length
+        );
 
-      // Update text fragment
-      if (this.text_fragment_view) {
-        this.text_fragment_view.text = new_text;
+        // Create a Set of indices to update to ensure we update unique entities if num_to_update < total
+        const indices_to_update = new Set();
+        while (
+          indices_to_update.size < num_to_update &&
+          indices_to_update.size < this.grid_text_entities.length
+        ) {
+          indices_to_update.add(Math.floor(Math.random() * this.grid_text_entities.length));
+        }
+
+        for (const entity_index of indices_to_update) {
+          const entity_to_update = this.grid_text_entities[entity_index];
+
+          const random_text_index = Math.floor(Math.random() * this.random_texts.length);
+          const new_text = this.random_texts[random_text_index];
+
+          const tfv = EntityManager.get_fragment(entity_to_update, TextFragment);
+          if (tfv && new_text.length > 0) {
+            tfv.text = new_text;
+          }
+        }
       }
     }
   }

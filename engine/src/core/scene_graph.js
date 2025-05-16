@@ -39,6 +39,10 @@ export class SceneGraph {
     this.tree.remove(entity);
   }
 
+  static mark_dirty() {
+    this.dirty = true;
+  }
+
   static flush_gpu_buffers() {
     if (!this.dirty) {
       return;

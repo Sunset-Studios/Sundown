@@ -1,7 +1,8 @@
 import { EntityLinearDataContainer } from "./memory.js";
 import { Name } from "../../../utility/names.js";
-import { LOCAL_SLOT_MASK } from "./types.js";
-
+import { DEFAULT_CHUNK_CAPACITY } from "./types.js";
+import { clamp } from "../../../utility/math.js";
+import { EntityFlags } from "../../minimal.js";
 /**
  * Represents a memory chunk in the solar ECS system that stores entity fragment data.
  *
@@ -15,12 +16,12 @@ import { LOCAL_SLOT_MASK } from "./types.js";
  * - Manages memory in contiguous ranges for cache-friendly access
  * - Provides efficient allocation and deallocation of entity slots
  * - Contains typed array views for fast access to component data
- * - Supports metadata for entity generation and instance counts
+ * - Supports metadata for entity generation, instance counts, and flags
  *
  * Key responsibilities:
  * - Efficient memory management with free-list allocation
  * - Storage of fragment data in type-homogeneous arrays
- * - Tracking of entity metadata (generation, instance counts)
+ * - Tracking of entity metadata (generation, instance counts, flags)
  * - Defragmentation to optimize memory layout
  *
  * The chunk system enables cache-friendly iteration over entities with
@@ -50,23 +51,17 @@ export class Chunk {
   static all_chunks = [];
 
   /**
-   * Default chunk capacity.
-   * @type {number}
-   */
-  static default_chunk_capacity = LOCAL_SLOT_MASK + 1;
-
-  /**
    * Creates a new chunk with the specified fragments and capacity.
    *
    * @param {Fragments[]} fragments - The fragments to include in the chunk
    * @param {number} [capacity=128] - The maximum number of rows the chunk can hold
    */
-  constructor(fragments, capacity = Chunk.default_chunk_capacity) {
+  constructor(fragments) {
     this.fragments = fragments;
-    this.capacity = capacity;
-    this.free_ranges = [0, capacity]; 
+    this.free_ranges = [0, DEFAULT_CHUNK_CAPACITY];
     this.fragment_views = Object.create(null);
     this.variable_stores = new Map();
+    this.available_rows = DEFAULT_CHUNK_CAPACITY;
 
     this.chunk_index = Chunk.free_chunk_indices.length
       ? Chunk.free_chunk_indices.pop()
@@ -75,7 +70,7 @@ export class Chunk {
     Chunk.all_chunks.length = Math.max(Chunk.all_chunks.length, this.chunk_index + 1);
     Chunk.all_chunks[this.chunk_index] = this;
 
-    this._build_SAB(fragments, capacity);
+    this._build_SAB(fragments, DEFAULT_CHUNK_CAPACITY);
     this._initialize_variable_stores(fragments);
   }
 
@@ -88,6 +83,7 @@ export class Chunk {
     this.fragment_views = null;
     this.variable_stores = null;
     this.chunk_index = null;
+    this.available_rows = null;
   }
 
   /**
@@ -103,6 +99,7 @@ export class Chunk {
         const allocated_row_index = range_start;
         this.free_ranges[range_index] += requested_row_count;
         this.free_ranges[range_index + 1] -= requested_row_count;
+        this.available_rows = clamp(this.available_rows - requested_row_count, 0, DEFAULT_CHUNK_CAPACITY);
         if (this.free_ranges[range_index + 1] === 0) this.free_ranges.splice(range_index, 2);
         return allocated_row_index;
       }
@@ -116,7 +113,16 @@ export class Chunk {
    * @param {number} released_row_count - Number of rows to release
    */
   free_rows(released_row_index, released_row_count) {
+    this.available_rows = clamp(this.available_rows + released_row_count, 0, DEFAULT_CHUNK_CAPACITY);
     this.free_ranges.push(released_row_index, released_row_count);
+  }
+
+  /**
+   * Check if the chunk is empty (has no allocated rows)
+   * @returns {boolean} - True if the chunk is empty, false otherwise.
+   */
+  is_empty() {
+    return this.available_rows >= DEFAULT_CHUNK_CAPACITY;
   }
 
   /**
@@ -130,20 +136,19 @@ export class Chunk {
     const old_icnt_meta = this.icnt_meta.slice();
     const old_gen_meta = this.gen_meta.slice();
     const old_flags_meta = this.flags_meta.slice();
-    const old_capacity = this.capacity;
 
     // precompute non-container fields for each fragment
-    const fragment_field_entries = this.fragments.map(fragment => {
-      const entries = Object.entries(fragment.fields)
-        .filter(([, spec]) => !spec.is_container);
+    const fragment_field_entries = this.fragments.map((fragment) => {
+      const entries = Object.entries(fragment.fields).filter(([, spec]) => !spec.is_container);
       return { id: fragment.id, entries };
     });
 
     // rebuild the SharedArrayBuffer and views in-place
-    this._build_SAB(this.fragments, old_capacity);
+    this._build_SAB(this.fragments, DEFAULT_CHUNK_CAPACITY);
 
     // reset free_ranges; we'll re-add the trailing hole below
     this.free_ranges = [];
+    this.available_rows = DEFAULT_CHUNK_CAPACITY;
 
     // grab new views/metadata handles
     const new_fragment_views = this.fragment_views;
@@ -153,7 +158,7 @@ export class Chunk {
 
     let dest_row_index = 0;
     // walk old rows, copy any used blocks
-    for (let src_row_index = 0; src_row_index < old_capacity; ) {
+    for (let src_row_index = 0; src_row_index < DEFAULT_CHUNK_CAPACITY; ) {
       const block_count = old_icnt_meta[src_row_index];
       if (!block_count) {
         src_row_index++;
@@ -182,18 +187,18 @@ export class Chunk {
       }
 
       // copy the metadata (instance count, generation, flags) at block start
-      new_icnt_meta[dest_row_index]  = block_count;
-      new_gen_meta[dest_row_index]   = old_gen_meta[src_row_index];
+      new_icnt_meta[dest_row_index] = block_count;
+      new_gen_meta[dest_row_index] = old_gen_meta[src_row_index];
       new_flags_meta[dest_row_index] = old_flags_meta[src_row_index];
 
       // advance both pointers by the block size
-      src_row_index  += block_count;
+      src_row_index += block_count;
       dest_row_index += block_count;
     }
 
     // anything left at the end is a single free range
-    if (dest_row_index < old_capacity) {
-      this.free_ranges.push(dest_row_index, old_capacity - dest_row_index);
+    if (dest_row_index < DEFAULT_CHUNK_CAPACITY) {
+      this.free_rows(dest_row_index, DEFAULT_CHUNK_CAPACITY - dest_row_index);
     }
   }
 
@@ -211,6 +216,15 @@ export class Chunk {
   clear_dirty() {
     Chunk.dirty.delete(this);
     this.dirty = false;
+  }
+
+  /**
+   * Clears all dirty flags for all chunks.
+   */
+  clear_entity_dirty_flags() {
+    for (let i = 0; i < this.flags_meta.length; i++) {
+      this.flags_meta[i] &= ~EntityFlags.DIRTY;
+    }
   }
 
   /**
@@ -272,7 +286,10 @@ export class Chunk {
     total_byte_count += buffer_capacity * 4; // flags (Uint32) per row
 
     // 2. allocate a shared buffer for this chunk
-    this.buffer = typeof SharedArrayBuffer === "function" ? new SharedArrayBuffer(total_byte_count) : new ArrayBuffer(total_byte_count);
+    this.buffer =
+      typeof SharedArrayBuffer === "function"
+        ? new SharedArrayBuffer(total_byte_count)
+        : new ArrayBuffer(total_byte_count);
 
     // 3. build TypedArray views for fixed-size data ONLY
     let byte_offset = 0;
@@ -317,6 +334,6 @@ export class Chunk {
   }
 
   static max_allocated_row() {
-    return Chunk.next_chunk_index * Chunk.default_chunk_capacity;
+    return Chunk.next_chunk_index * DEFAULT_CHUNK_CAPACITY;
   }
 }

@@ -11,6 +11,8 @@ export const LOCAL_SLOT_MASK = (1 << LOCAL_SLOT_BITS) - 1;
 export const CHUNK_INDEX_MASK = ((1 << CHUNK_INDEX_BITS) - 1) << LOCAL_SLOT_BITS;
 export const GEN_MASK = (1 << GEN_BITS) - 1;
 
+export const DEFAULT_CHUNK_CAPACITY = LOCAL_SLOT_MASK + 1;
+
 /**
  * Manages entity IDs.
  * @class EntityID

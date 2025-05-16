@@ -1,10 +1,7 @@
-import { LOCAL_SLOT_BITS } from "./types.js";
+import { DEFAULT_CHUNK_CAPACITY } from "./types.js";
 import { Chunk } from "./chunk.js";
 import { Query } from "./query.js";
 import { Name } from "../../../utility/names.js";
-import { npot } from "../../../utility/math.js";
-
-const max_chunk_capacity = 1 << LOCAL_SLOT_BITS; // = 1024
 
 /**
  * Represents an archetype in the ECS system.
@@ -13,7 +10,7 @@ const max_chunk_capacity = 1 << LOCAL_SLOT_BITS; // = 1024
  * types of an entity. It is used to manage the storage and retrieval of
  * fragment data for a specific set of fragment types, to ensure uniform
  * memory layout for all entities with the same fragment types and
- * efficient GPU buffer allocation. Chunks are dynamically sizeable up to max_chunk_capacity.
+ * efficient GPU buffer allocation.
  *
  * Key responsibilities:
  * - Storage of fragment data in chunks
@@ -23,11 +20,10 @@ const max_chunk_capacity = 1 << LOCAL_SLOT_BITS; // = 1024
 export class Archetype {
   static archetype_cache = new Map();
 
-  constructor(fragments, default_capacity = Chunk.default_chunk_capacity) {
-    this.default_capacity = default_capacity;
+  constructor(fragments) {
     this.fragments = [...fragments];
     this.id = Archetype.get_id(fragments);
-    this.chunks = [new Chunk(this.fragments, default_capacity)];
+    this.chunks = [new Chunk(this.fragments)];
   }
 
   /**
@@ -50,13 +46,10 @@ export class Archetype {
 
     // 2. allocate new chunk
     if (!claimed) {
-      const new_chunk_capacity = Math.max(this.default_capacity, npot(instance_count));
-      if (new_chunk_capacity <= max_chunk_capacity) {
-        const chunk = new Chunk(this.fragments, new_chunk_capacity);
-        const slot = chunk.claim_rows(instance_count);
-        this.chunks.push(chunk);
-        claimed = { chunk, slot };
-      }
+      const chunk = new Chunk(this.fragments);
+      const slot = chunk.claim_rows(instance_count);
+      this.chunks.push(chunk);
+      claimed = { chunk, slot };
     }
 
     if (claimed) {
@@ -76,9 +69,10 @@ export class Archetype {
     const segments = [];
     let remaining = instance_count;
     while (remaining > 0) {
-      const { chunk, slot } = this.claim(remaining);
-      segments.push({ chunk, slot, count: remaining });
-      remaining -= remaining;
+      const max_chunk_size = Math.min(remaining, DEFAULT_CHUNK_CAPACITY);
+      const { chunk, slot } = this.claim(max_chunk_size);
+      segments.push({ chunk, slot, count: max_chunk_size });
+      remaining -= max_chunk_size;
     }
     return segments;
   }
@@ -107,16 +101,15 @@ export class Archetype {
   /**
    * Create a new archetype with the given fragments.
    * @param {Fragment[]} fragments - The fragments to include in the archetype.
-   * @param {number} [default_capacity=128] - The default capacity of the archetype.
    * @returns {Archetype} The new archetype.
    */
-  static create(fragments, default_capacity = Chunk.default_chunk_capacity) {
+  static create(fragments) {
     const id = this.get_id(fragments);
     if (this.archetype_cache.has(id)) {
       return this.archetype_cache.get(id);
     }
 
-    const archetype = new Archetype(fragments, default_capacity);
+    const archetype = new Archetype(fragments);
     this.archetype_cache.set(id, archetype);
 
     Query.update_archetypes(archetype);

@@ -40,6 +40,13 @@ async function create_window() {
     }
   });
 
+  // Enable SharedArrayBuffer
+  win.webContents.session.webRequest.onHeadersReceived((details, callback) => {
+      details.responseHeaders['Cross-Origin-Opener-Policy'] = ['same-origin'];
+      details.responseHeaders['Cross-Origin-Embedder-Policy'] = ['require-corp'];
+      callback({ responseHeaders: details.responseHeaders });
+  });
+
   if (is_dev) {
     // Load webgpu extension in third-party directory
     const extension_path = path.join(app.getAppPath(), 'electron/third_party/webgpu_inspector');

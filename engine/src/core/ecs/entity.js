@@ -100,6 +100,8 @@ export class EntityManager {
       FragmentType.total_subscribed_instances += instances;
     }
 
+    SceneGraph.mark_dirty(); // Because adding a fragment changes the entity's archetype, which causes a migration
+
     return fragment_view;
   }
 
@@ -121,6 +123,8 @@ export class EntityManager {
 
     const instances = this.get_entity_instance_count(entity);
     FragmentType.total_subscribed_instances -= instances;
+
+    SceneGraph.mark_dirty(); // Because removing a fragment changes the entity's archetype, which causes a migration
   }
 
   /**
@@ -226,6 +230,8 @@ export class EntityManager {
       }
     }
 
+    SceneGraph.mark_dirty();
+
     return handle;
   }
 
@@ -235,11 +241,8 @@ export class EntityManager {
    * @returns {number} The flags for the entity.
    */
   static get_entity_flags(entity) {
-    const { segments } = entity;
-    const first_segment = segments[0];
-    const first_chunk = first_segment.chunk;
-    const first_slot = first_segment.slot;
-    return first_chunk.flags_meta[first_slot];
+    const first_segment = entity.segments[0];
+    return first_segment.chunk.flags_meta[first_segment.slot];
   }
 
   /**
@@ -248,9 +251,8 @@ export class EntityManager {
    * @param {number} flags - The flags to set for the entity.
    */
   static set_entity_flags(entity, flags) {
-    const { segments } = entity;
-    for (let i = 0; i < segments.length; i++) {
-      const segment = segments[i];
+    for (let i = 0; i < entity.segments.length; i++) {
+      const segment = entity.segments[i];
       for (let j = 0; j < segment.count; j++) {
         segment.chunk.flags_meta[segment.slot + j] = flags;
       }
@@ -264,11 +266,8 @@ export class EntityManager {
    * @returns {number} The dirty flag value.
    */
   static get_entity_dirty(entity) {
-    const { segments } = entity;
-    const first_segment = segments[0];
-    const first_chunk = first_segment.chunk;
-    const first_slot = first_segment.slot;
-    return first_chunk.flags_meta[first_slot] & EntityFlags.DIRTY;
+    const first_segment = entity.segments[0];
+    return first_segment.chunk.flags_meta[first_segment.slot] & EntityFlags.DIRTY;
   }
 
   /**
@@ -276,10 +275,8 @@ export class EntityManager {
    * @param {EntityHandle} entity - The entity to set the dirty flag for.
    */
   static set_entity_dirty(entity) {
-    const { segments } = entity;
-
-    for (let i = 0; i < segments.length; i++) {
-      const segment = segments[i];
+    for (let i = 0; i < entity.segments.length; i++) {
+      const segment = entity.segments[i];
       for (let j = 0; j < segment.count; j++) {
         segment.chunk.flags_meta[segment.slot + j] |= EntityFlags.DIRTY;
       }

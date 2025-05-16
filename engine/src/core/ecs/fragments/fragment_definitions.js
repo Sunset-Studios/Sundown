@@ -106,6 +106,7 @@ const TransformFragment = {
       type: DataType.FLOAT32,
       stride: 4,
       gpu: true,
+      default: 1,
       usage: BufferType.STORAGE_SRC,
     },
     aabb_node_index: {
@@ -119,6 +120,27 @@ const TransformFragment = {
       stride: 32,
       gpu: true,
       usage: BufferType.STORAGE_SRC,
+    },
+    world_position: {
+      type: DataType.FLOAT32,
+      stride: 4,
+      gpu: true,
+      usage: BufferType.STORAGE_SRC,
+      cpu_readback: true,
+    },
+    world_rotation: {
+      type: DataType.FLOAT32,
+      stride: 4,
+      gpu: true,
+      usage: BufferType.STORAGE_SRC,
+      cpu_readback: true,
+    },
+    world_scale: {
+      type: DataType.FLOAT32,
+      stride: 4,
+      gpu: true,
+      default: 1,
+      usage: BufferType.STORAGE_SRC,
       cpu_readback: true,
     },
   },
@@ -126,102 +148,50 @@ const TransformFragment = {
     get_world_position: {
       params: `entity, instance = 0`,
       body: `
-      const transform_fragment = EntityManager.get_fragment(entity, TransformFragment, instance);
-      const transform = transform_fragment.transform;
-      
-      return [
-        transform[12],
-        transform[13],
-        transform[14]
-      ];
+      const transform_fragment = EntityManager.get_fragment(
+      entity,
+      TransformFragment,
+      instance,
+    );
+    return transform_fragment.world_position.slice(0, 3);
       `,
     },
     get_world_rotation: {
       params: `entity, instance = 0`,
       body: `
-      const transform_fragment = EntityManager.get_fragment(entity, TransformFragment, instance);
-      const transform = transform_fragment.transform;
-
-      const m00 = transform[0];
-      const m01 = transform[1];
-      const m02 = transform[2];
-      const m10 = transform[4];
-      const m11 = transform[5];
-      const m12 = transform[6];
-      const m20 = transform[8];
-      const m21 = transform[9];
-      const m22 = transform[10];
-      
-      const trace = m00 + m11 + m22;
-      let qx, qy, qz, qw;
-      
-      if (trace > 0) {
-        const s = 0.5 / Math.sqrt(trace + 1.0);
-        qw = 0.25 / s;
-        qx = (m21 - m12) * s;
-        qy = (m02 - m20) * s;
-        qz = (m10 - m01) * s;
-      } else if (m00 > m11 && m00 > m22) {
-        const s = 2.0 * Math.sqrt(1.0 + m00 - m11 - m22);
-        qw = (m21 - m12) / s;
-        qx = 0.25 * s;
-        qy = (m01 + m10) / s;
-        qz = (m02 + m20) / s;
-      } else if (m11 > m22) {
-        const s = 2.0 * Math.sqrt(1.0 + m11 - m00 - m22);
-        qw = (m02 - m20) / s;
-        qx = (m01 + m10) / s;
-        qy = 0.25 * s;
-        qz = (m12 + m21) / s;
-      } else {
-        const s = 2.0 * Math.sqrt(1.0 + m22 - m00 - m11);
-        qw = (m10 - m01) / s;
-        qx = (m02 + m20) / s;
-        qy = (m12 + m21) / s;
-        qz = 0.25 * s;
-      }
-      
-      return [qx, qy, qz, qw];
+      const transform_fragment = EntityManager.get_fragment(
+      entity,
+      TransformFragment,
+      instance,
+    );
+    return transform_fragment.world_rotation.slice();
       `,
     },
     get_world_scale: {
       params: `entity, instance = 0`,
       body: `
-      const transform_fragment = EntityManager.get_fragment(entity, TransformFragment, instance);
-      const transform = transform_fragment.transform;
-
-      const scale_x = Math.sqrt(
-        transform[0] * transform[0] +
-        transform[1] * transform[1] +
-        transform[2] * transform[2]
-      );
-      
-      const scale_y = Math.sqrt(
-        transform[4] * transform[4] +
-        transform[5] * transform[5] +
-        transform[6] * transform[6]
-      );
-      
-      const scale_z = Math.sqrt(
-        transform[8] * transform[8] +
-        transform[9] * transform[9] +
-        transform[10] * transform[10]
-      );
-      
-      return [scale_x, scale_y, scale_z];
+      const transform_fragment = EntityManager.get_fragment(
+      entity,
+      TransformFragment,
+      instance,
+    );
+    return transform_fragment.world_scale.slice(0, 3);
       `,
     },
     add_world_offset: {
       params: `entity, offset, instance = 0 `,
       body: `
-      const transform_fragment = EntityManager.get_fragment(entity, TransformFragment, instance);
-      const transform = transform_fragment.transform;
+      const local_transform_fragment = EntityManager.get_fragment(
+      entity,
+      TransformFragment,
+      instance,
+    );
 
-      transform[12] += offset[0];
-      transform[13] += offset[1];
-      transform[14] += offset[2];
+    local_transform_fragment.position[0] += offset[0];
+    local_transform_fragment.position[1] += offset[1];
+    local_transform_fragment.position[2] += offset[2];
 
-      transform_fragment.transform = transform;
+    EntityManager.set_entity_dirty(entity, true);
       `,
     },
   },
@@ -317,6 +287,7 @@ const TextFragment = {
     FontCache: "../../../ui/text/font_cache.js",
     EntityManager: "../entity.js",
     EntityFlags: "../../minimal.js",
+    DEFAULT_CHUNK_CAPACITY: "../solar/types.js",
   },
   fields: {
     text: {
@@ -324,42 +295,102 @@ const TextFragment = {
       stride: 1,
       gpu: true,
       setter: `
-  if (!value) return;
+       if (value === null || value === undefined) {
+          value = ""; // Treat null/undefined as a request to clear, equivalent to empty string.
+        }
 
-  const font_typed_array = this.chunk.fragment_views[this.fragment_id]?.font;
-  const font = FontCache.get_font_object(font_typed_array[this.slot]);
+        const text_value_as_string = String(value);
+        const target_instance_count = text_value_as_string.length;
 
-  // 1) turn string → array of code-point indices
-  const code_point_indexes = Array.from(value).map((char) => {
-    return font.code_point_index_map.get(char.codePointAt(0));
-  });
+        if (
+          !this.entity ||
+          !this.entity.segments ||
+          this.entity.segments.length === 0
+        ) {
+          if (this.entity) {
+            // Still try to set instance count if handle exists
+            EntityManager.set_entity_instance_count(
+              this.entity,
+              target_instance_count,
+            );
+          }
+          return;
+        }
 
-  // 2) re-allocate the entity to match the new length
-  EntityManager.set_entity_instance_count(this.entity, code_point_indexes.length);
+        // Get font ID from the entity's *current* primary segment's chunk and slot
+        const current_primary_segment = this.entity.segments[0];
+        const chunk_for_font_lookup = current_primary_segment.chunk;
+        const slot_for_font_lookup = current_primary_segment.slot; // This is the base slot for the entity in this chunk
 
-  // 3) pull back the brand-new layout (one or more segments)
-  let write_offset = 0;
-  for (let i = 0; i < this.entity.segments.length; i++) {
-    const { chunk, slot, count } = this.entity.segments[i];
+        const font_data_array =
+          chunk_for_font_lookup.fragment_views[this.fragment_id]?.font;
 
-    // grab the *fresh* views for this segment
-    const frag_views = chunk.fragment_views[this.fragment_id];
-    const text_array = frag_views.text;          // Uint32Array view for .text
-    const slice = code_point_indexes.slice(write_offset, write_offset + count);
+        if (!font_data_array) {
+          EntityManager.set_entity_instance_count(
+            this.entity,
+            target_instance_count,
+          );
+          return;
+        }
 
-    // write into the correct slot
-    text_array.set(slice, slot);
+        // The 'font' field is a single Int32, so use the entity's base slot in its current primary chunk
+        const font_id = font_data_array[slot_for_font_lookup];
+        const font = FontCache.get_font_object(font_id);
 
-    for (let j = 0; j < count; j++) {
-      chunk.flags_meta[slot + j] |= EntityFlags.DIRTY;
-    }
+        if (!font && target_instance_count > 0) {
+          EntityManager.set_entity_instance_count(
+            this.entity,
+            target_instance_count,
+          );
+          return;
+        }
 
-    // mark it so it ends up in the next GPU flush
-    chunk.mark_dirty();
+        let code_point_indexes = [];
+        if (target_instance_count > 0 && font) {
+          code_point_indexes = Array.from(text_value_as_string).map((char) => {
+            const code_point = char.codePointAt(0);
+            const index = font.code_point_index_map.get(code_point);
+            if (index === undefined) {
+              const fallback_index = font.code_point_index_map.get(
+                " ".codePointAt(0),
+              );
+              return fallback_index !== undefined ? fallback_index : 0;
+            }
+            return index;
+          });
+        }
 
-    write_offset += count;
-  }
-      `,
+        // Determine how many instances we had before and how many we want now:
+        EntityManager.set_entity_instance_count(
+          this.entity,
+          target_instance_count,
+        );
+
+        // Write data to the (now potentially new) segments stored in entity_handle.segments.
+        let write_offset = 0;
+        const segments_to_write = this.entity.segments || [];
+        for (let i = 0; i < segments_to_write.length; i++) {
+          const { chunk, slot, count } = segments_to_write[i];
+
+          const frag_views_in_current_chunk =
+            chunk.fragment_views[this.fragment_id];
+          const text_array_in_current_chunk = frag_views_in_current_chunk?.text;
+
+          const slice_to_write = code_point_indexes.slice(
+            write_offset,
+            write_offset + count,
+          );
+
+          text_array_in_current_chunk.set(slice_to_write, slot);
+
+          for (let j = 0; j < count; j++) {
+            // Ensure we don't write past flags_meta if count is unexpectedly large
+            chunk.flags_meta[slot + j] |= EntityFlags.DIRTY;
+          }
+          chunk.mark_dirty();
+
+          write_offset += count;
+        }`,
     },
     font: {
       type: DataType.INT32,
@@ -387,7 +418,7 @@ const TextFragment = {
       usage: BufferType.STORAGE,
       stride: 32,
       gpu_data(chunk, fragment) {
-        const row_count = chunk.capacity;
+        const row_count = DEFAULT_CHUNK_CAPACITY;
         const fragment_views = chunk.fragment_views[fragment.id];
         const packed_data = new Float32Array(Math.max(row_count * 8, 8));
         for (let row = 0; row < row_count; row++) {

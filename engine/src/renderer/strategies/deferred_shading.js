@@ -201,6 +201,27 @@ const hzb_reduce_shader_setup = {
   },
 };
 
+const dense_lights_buffer_config = {
+  name: "dense_lights",
+  size: 0,
+  usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+};
+
+const light_count_buffer_config = {
+  name: "light_count",
+  size: Uint32Array.BYTES_PER_ELEMENT,
+  usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+};
+
+const compact_lights_pass_name = "compact_lights";
+const compact_lights_shader_setup = {
+  pipeline_shaders: {
+    compute: {
+      path: "system_compute/compact_lights.wgsl",
+    },
+  },
+};
+
 const deferred_lighting_shader_setup = {
   pipeline_shaders: {
     vertex: {
@@ -294,6 +315,14 @@ const fullscreen_shader_setup = {
   },
 };
 
+const clear_dirty_flags_shader_setup = {
+  pipeline_shaders: {
+    compute: {
+      path: "system_compute/clear_dirty_flags.wgsl",
+    },
+  },
+};
+
 const hzb_image_config = {
   name: "hzb",
   format: r32float_format,
@@ -360,23 +389,31 @@ export class DeferredShadingStrategy {
       ComputeTaskQueue.get().compile_rg_passes(render_graph);
 
       const entity_flags_buffer = FragmentGpuBuffer.entity_flags_buffer;
-      const entity_flags = render_graph.register_buffer(
-        entity_flags_buffer.buffer.config.name
+      const entity_flags = render_graph.register_buffer(entity_flags_buffer.buffer.config.name);
+
+      const transforms_buffer = EntityManager.get_fragment_gpu_buffer(
+        TransformFragment,
+        transforms_name
       );
-      
-      const transforms_buffer = EntityManager.get_fragment_gpu_buffer(TransformFragment, transforms_name);
-      const entity_transforms = render_graph.register_buffer(
-        transforms_buffer.buffer.config.name
+      const entity_transforms = render_graph.register_buffer(transforms_buffer.buffer.config.name);
+      const aabb_node_index_buffer = EntityManager.get_fragment_gpu_buffer(
+        TransformFragment,
+        aabb_node_index_name
       );
-      const aabb_node_index_buffer = EntityManager.get_fragment_gpu_buffer(TransformFragment, aabb_node_index_name);
       const entity_aabb_node_indices = render_graph.register_buffer(
         aabb_node_index_buffer.buffer.config.name
       );
 
-      const light_fragment_buffer = EntityManager.get_fragment_gpu_buffer(LightFragment, light_fragment_name);
-      const lights = render_graph.register_buffer(
-        light_fragment_buffer.buffer.config.name
+      const light_fragment_buffer = EntityManager.get_fragment_gpu_buffer(
+        LightFragment,
+        light_fragment_name
       );
+      const lights = render_graph.register_buffer(light_fragment_buffer.buffer.config.name);
+
+      dense_lights_buffer_config.size = light_fragment_buffer.buffer.config.size;
+      const dense_lights = render_graph.create_buffer(dense_lights_buffer_config);
+
+      const light_count = render_graph.create_buffer(light_count_buffer_config);
 
       const aabb_gpu_data = AABB.to_gpu_data();
       const aabb_bounds = render_graph.register_buffer(
@@ -804,6 +841,29 @@ export class DeferredShadingStrategy {
         }
       }
 
+      // Compact lights pass
+      {
+        // Compute pass to compact active lights to dense buffer
+        render_graph.add_pass(
+          compact_lights_pass_name,
+          RenderPassFlags.Compute,
+          {
+            shader_setup: compact_lights_shader_setup,
+            inputs: [lights, dense_lights, light_count],
+            outputs: [dense_lights, light_count],
+          },
+          (graph, frame_data, encoder) => {
+            const pass = graph.get_physical_pass(frame_data.current_pass);
+            // Reset light count to zero
+            const count_buf = graph.get_physical_buffer(light_count);
+            count_buf.write(new Uint32Array([0]));
+            // Dispatch compute to compact lights
+            const max_light_count = EntityManager.get_max_rows();
+            pass.dispatch((max_light_count + 128 - 1) / 128, 1, 1);
+          }
+        );
+      }
+
       // Lighting Pass
       {
         post_lighting_image_config.width = image_extent.width;
@@ -823,7 +883,8 @@ export class DeferredShadingStrategy {
               main_normal_image,
               main_position_image,
               main_depth_image,
-              lights,
+              dense_lights,
+              light_count,
             ],
             outputs: [post_lighting_image_desc],
             shader_setup: deferred_lighting_shader_setup,
@@ -1050,6 +1111,23 @@ export class DeferredShadingStrategy {
                 frame_data.g_buffer_data.depth.config.load_op = load_op_clear;
               }
             }
+          }
+        );
+      }
+
+      // Clear dirty flags pass
+      {
+        render_graph.add_pass(
+          "clear_dirty_flags",
+          RenderPassFlags.Compute,
+          {
+            inputs: [entity_flags],
+            outputs: [entity_flags],
+            shader_setup: clear_dirty_flags_shader_setup,
+          },
+          (graph, frame_data, encoder) => {
+            const pass = graph.get_physical_pass(frame_data.current_pass);
+            pass.dispatch(Math.ceil(EntityManager.get_max_rows() / 128), 1, 1);
           }
         );
       }

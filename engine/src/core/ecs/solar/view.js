@@ -147,8 +147,7 @@ export class SolarFragmentView {
 
       container.update(this.entity, data_array);
 
-      const entity_flags = EntityManager.get_entity_flags(this.entity);
-      EntityManager.set_entity_flags(this.entity, entity_flags | EntityFlags.DIRTY);
+      this.chunk.flags_meta[this.slot + this.instance] |= EntityFlags.DIRTY;
 
       this.chunk.mark_dirty();
 
@@ -192,8 +191,7 @@ export class SolarFragmentView {
       typed_array.set(value, element_offset);
     }
 
-    const entity_flags = EntityManager.get_entity_flags(this.entity);
-    EntityManager.set_entity_flags(this.entity, entity_flags | EntityFlags.DIRTY);
+    this.chunk.flags_meta[this.slot + this.instance] |= EntityFlags.DIRTY;
 
     this.chunk.mark_dirty();
   }

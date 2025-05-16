@@ -145,6 +145,9 @@ fn fragment(v_out: VertexOutput, f_out: ptr<function, FragmentOutput>) -> Fragme
 
     for (var i = 0u; i < num_lights; i++) {
         var light = lights_buffer[i];
+        if (light.activated <= 0.0) {
+            continue;
+        }
         color += calculate_brdf(
             light,
             post_material_output.normal.xyz,

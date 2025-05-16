@@ -5,6 +5,7 @@ import { Name } from "../../../utility/names.js";
 import { FontCache } from "../../../ui/text/font_cache.js";
 import { EntityManager } from "../entity.js";
 import { EntityFlags } from "../../minimal.js";
+import { DEFAULT_CHUNK_CAPACITY } from "../solar/types.js";
 
 /**
  * The Text fragment class.
@@ -26,44 +27,98 @@ export class TextFragment extends Fragment {
         GPUBufferUsage.COPY_DST |
         GPUBufferUsage.COPY_SRC,
       setter(value, typed_array, element_offset) {
-        if (!value) return;
+        if (value === null || value === undefined) {
+          value = ""; // Treat null/undefined as a request to clear, equivalent to empty string.
+        }
 
-        const font_typed_array =
-          this.chunk.fragment_views[this.fragment_id]?.font;
-        const font = FontCache.get_font_object(font_typed_array[this.slot]);
+        const text_value_as_string = String(value);
+        const target_instance_count = text_value_as_string.length;
 
-        // 1) turn string → array of code-point indices
-        const code_point_indexes = Array.from(value).map((char) => {
-          return font.code_point_index_map.get(char.codePointAt(0));
-        });
+        if (
+          !this.entity ||
+          !this.entity.segments ||
+          this.entity.segments.length === 0
+        ) {
+          if (this.entity) {
+            // Still try to set instance count if handle exists
+            EntityManager.set_entity_instance_count(
+              this.entity,
+              target_instance_count,
+            );
+          }
+          return;
+        }
 
-        // 2) re-allocate the entity to match the new length
+        // Get font ID from the entity's *current* primary segment's chunk and slot
+        const current_primary_segment = this.entity.segments[0];
+        const chunk_for_font_lookup = current_primary_segment.chunk;
+        const slot_for_font_lookup = current_primary_segment.slot; // This is the base slot for the entity in this chunk
+
+        const font_data_array =
+          chunk_for_font_lookup.fragment_views[this.fragment_id]?.font;
+
+        if (!font_data_array) {
+          EntityManager.set_entity_instance_count(
+            this.entity,
+            target_instance_count,
+          );
+          return;
+        }
+
+        // The 'font' field is a single Int32, so use the entity's base slot in its current primary chunk
+        const font_id = font_data_array[slot_for_font_lookup];
+        const font = FontCache.get_font_object(font_id);
+
+        if (!font && target_instance_count > 0) {
+          EntityManager.set_entity_instance_count(
+            this.entity,
+            target_instance_count,
+          );
+          return;
+        }
+
+        let code_point_indexes = [];
+        if (target_instance_count > 0 && font) {
+          code_point_indexes = Array.from(text_value_as_string).map((char) => {
+            const code_point = char.codePointAt(0);
+            const index = font.code_point_index_map.get(code_point);
+            if (index === undefined) {
+              const fallback_index = font.code_point_index_map.get(
+                " ".codePointAt(0),
+              );
+              return fallback_index !== undefined ? fallback_index : 0;
+            }
+            return index;
+          });
+        }
+
+        // Determine how many instances we had before and how many we want now:
         EntityManager.set_entity_instance_count(
           this.entity,
-          code_point_indexes.length,
+          target_instance_count,
         );
 
-        // 3) pull back the brand-new layout (one or more segments)
+        // Write data to the (now potentially new) segments stored in entity_handle.segments.
         let write_offset = 0;
-        for (let i = 0; i < this.entity.segments.length; i++) {
-          const { chunk, slot, count } = this.entity.segments[i];
+        const segments_to_write = this.entity.segments || [];
+        for (let i = 0; i < segments_to_write.length; i++) {
+          const { chunk, slot, count } = segments_to_write[i];
 
-          // grab the *fresh* views for this segment
-          const frag_views = chunk.fragment_views[this.fragment_id];
-          const text_array = frag_views.text; // Uint32Array view for .text
-          const slice = code_point_indexes.slice(
+          const frag_views_in_current_chunk =
+            chunk.fragment_views[this.fragment_id];
+          const text_array_in_current_chunk = frag_views_in_current_chunk?.text;
+
+          const slice_to_write = code_point_indexes.slice(
             write_offset,
             write_offset + count,
           );
 
-          // write into the correct slot
-          text_array.set(slice, slot);
+          text_array_in_current_chunk.set(slice_to_write, slot);
 
           for (let j = 0; j < count; j++) {
+            // Ensure we don't write past flags_meta if count is unexpectedly large
             chunk.flags_meta[slot + j] |= EntityFlags.DIRTY;
           }
-
-          // mark it so it ends up in the next GPU flush
           chunk.mark_dirty();
 
           write_offset += count;
@@ -134,7 +189,7 @@ export class TextFragment extends Fragment {
       cpu_readback: false,
 
       gpu_data(chunk, fragment) {
-        const row_count = chunk.capacity;
+        const row_count = DEFAULT_CHUNK_CAPACITY;
         const fragment_views = chunk.fragment_views[fragment.id];
         const packed_data = new Float32Array(Math.max(row_count * 8, 8));
         for (let row = 0; row < row_count; row++) {

@@ -1,5 +1,6 @@
 import { Archetype } from "./archetype";
-
+import { DEFAULT_CHUNK_CAPACITY } from "./types";
+import { EntityFlags } from "../../minimal.js";
 /**
  * @typedef {Object} Query
  * @property {string[]} fragment_requirements - The fragment requirements for the query.
@@ -19,22 +20,28 @@ export class Query {
 
   /**
    * Hot iterator: no generators, no allocations
-   * @param {function} callback - The callback function to execute for each archetype.
+   * @param {function} callback - The callback function to execute for each matching entity.
+   * @param {boolean} [dirty_only=false] - If true, only invoke callback for dirty entities.
    */
-  for_each(callback) {
-    for (let i = 0; i < this.archetypes.length; i++) {
-      const archetype = this.archetypes[i];
+  for_each(callback, dirty_only = false) {
+    const archetypes = this.archetypes;
+    const archetype_count = archetypes.length;
 
-      for (let k = 0; k < archetype.chunks.length; k++) {
-        const target_chunk = archetype.chunks[k];
+    for (let i = 0; i < archetype_count; i++) {
+      const archetype = archetypes[i];
+      const chunk_count = archetype.chunks.length;
+      const chunks = archetype.chunks;
+
+      for (let k = 0; k < chunk_count; k++) {
+        const target_chunk = chunks[k];
         const instance_counts = target_chunk.icnt_meta;
 
-        for (let slot_index = 0; slot_index < target_chunk.capacity; ) {
+        for (let slot_index = 0; slot_index < DEFAULT_CHUNK_CAPACITY; ) {
           const instance_count = instance_counts[slot_index];
-          if (instance_count) {
+          if (instance_count > 0 && (!dirty_only || (target_chunk.flags_meta[slot_index] & EntityFlags.DIRTY))) {
             callback(target_chunk, slot_index, instance_count, archetype);
           }
-          slot_index += instance_count > 0 ? instance_count : 1;
+          slot_index += instance_count || 1;
         }
       }
     }

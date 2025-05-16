@@ -2,11 +2,10 @@ import { Archetype } from "./archetype.js";
 import { EntityAllocator } from "./memory.js";
 import { Query } from "./query.js";
 import { Chunk } from "./chunk.js";
-import { EntityHandle, LOCAL_SLOT_BITS } from "./types.js";
+import { EntityHandle, DEFAULT_CHUNK_CAPACITY } from "./types.js";
 import { warn, error } from "../../../utility/logging.js";
 import { Name } from "../../../utility/names.js";
-
-const DEFAULT_CHUNK_CAPACITY = 1 << LOCAL_SLOT_BITS; // = 1024
+import { EntityFlags } from "../../minimal.js";
 
 /**
  * Sector is the primary container for ECS data management.
@@ -252,7 +251,7 @@ export class Sector {
    * @returns {number} The maximum number of rows.
    */
   get_max_rows() {
-    return (Chunk.next_chunk_index) * Chunk.default_chunk_capacity;
+    return Chunk.next_chunk_index * DEFAULT_CHUNK_CAPACITY;
   }
 
   /**
@@ -269,83 +268,87 @@ export class Sector {
       throw new Error("New instance count must be positive.");
     }
 
-    const { archetype, segments, instance_count } = handle;
+    const {
+      archetype,
+      segments: old_segments_array,
+      instance_count: old_total_instances,
+    } = handle;
 
-    // no-op if unchanged
-    if (new_instance_count === instance_count) {
+    if (new_instance_count === old_total_instances) {
       return handle;
     }
 
-    // break the big count into N <= 1K-sized chunks
-    let new_segments = archetype.claim_segments(new_instance_count);
+    // --- General shrink/expand with potentially multiple segments ---
+    let new_segments_array = archetype.claim_segments(new_instance_count);
+    const new_total_instances = new_instance_count;
 
-    // Copy data from old segments to new segments
-    for (let j = 0; j < segments.length; j++) {
-      const old_seg = segments[j];
-      const new_seg = new_segments[j];
+    let new_instance_offset = 0;
+    for (let logical_index = 0; logical_index < new_total_instances; logical_index++) {
+      const src_logical =
+        logical_index < old_total_instances
+          ? logical_index
+          : old_total_instances - 1; // fallback to last old
+      const src_seg_index = Math.floor(src_logical / DEFAULT_CHUNK_CAPACITY);
+      const src_offset = src_logical % DEFAULT_CHUNK_CAPACITY;
+      const src_segment = old_segments_array[src_seg_index];
+      const src_abs_slot = src_segment.slot + src_offset;
 
-      for (let i = 0; i < archetype.fragments.length; i++) {
-        const fragment = archetype.fragments[i];
-        const fragment_id = fragment.id;
-        const fragment_field_entries = Object.entries(fragment.fields);
+      const dst_seg_index = Math.floor(new_instance_offset / DEFAULT_CHUNK_CAPACITY);
+      const dst_offset = new_instance_offset % DEFAULT_CHUNK_CAPACITY;
+      if (dst_seg_index >= new_segments_array.length) {
+        break;
+      }
+      const dst_segment = new_segments_array[dst_seg_index];
+      const dst_abs_slot = dst_segment.slot + dst_offset;
 
-        const source_views = old_seg.chunk.fragment_views[fragment_id];
-        const dest_views = new_seg.chunk.fragment_views[fragment_id];
-
-        for (let k = 0; k < fragment_field_entries.length; k++) {
-          const [field_name, field_spec] = fragment_field_entries[k];
-          // skip variable-sized/container fields here
+      // copy fixed-size fields
+      for (const fragment of archetype.fragments) {
+        const frag_id = fragment.id;
+        const src_views = src_segment.chunk.fragment_views[frag_id];
+        const dst_views = dst_segment.chunk.fragment_views[frag_id];
+        if (!src_views || !dst_views) {
+          warn(`Sector.update_instance_count: missing views for fragment ${Name.string(frag_id)}`);
+          continue;
+        }
+        for (const [field_name, field_spec] of Object.entries(fragment.fields)) {
           if (field_spec.is_container) continue;
-
-          const element_count = field_spec.elements;
-          const source_offset = old_seg.slot * element_count;
-          const copy_elements = old_seg.count * element_count;
-          const dest_offset = new_seg.slot * element_count;
-
-          dest_views[field_name].set(
-            source_views[field_name].subarray(source_offset, source_offset + copy_elements),
-            dest_offset
-          );
+          const el_count = field_spec.elements;
+          const src_typed = src_views[field_name];
+          const dst_typed = dst_views[field_name];
+          for (let i = 0; i < el_count; i++) {
+            dst_typed[dst_abs_slot * el_count + i] =
+              src_typed[src_abs_slot * el_count + i];
+          }
         }
       }
+      // copy metadata
+      dst_segment.chunk.icnt_meta[dst_abs_slot] = src_segment.chunk.icnt_meta[src_abs_slot];
+      dst_segment.chunk.gen_meta[dst_abs_slot] = src_segment.chunk.gen_meta[src_abs_slot];
+      dst_segment.chunk.flags_meta[dst_abs_slot] = src_segment.chunk.flags_meta[src_abs_slot];
 
-      for (let k = 0; k < old_seg.count; k++) {
-        // Copy metadata arrays (instance count, generation, flags)
-        new_seg.chunk.icnt_meta[new_seg.slot + k] = old_seg.chunk.icnt_meta[old_seg.slot + k];
-        new_seg.chunk.gen_meta[new_seg.slot + k] = old_seg.chunk.gen_meta[old_seg.slot + k];
-        new_seg.chunk.flags_meta[new_seg.slot + k] = old_seg.chunk.flags_meta[old_seg.slot + k];
-      }
+      new_instance_offset++;
     }
+    // --- End data copy ---
 
-    // Update allocation tracking for the entity ID, to point to the new first chunk
-    const chunk_instance_count = Math.min(new_instance_count, DEFAULT_CHUNK_CAPACITY);
+    // allocator update
+    const first_old_segment = old_segments_array[0];
+    const first_new_segment = new_segments_array[0];
     const new_entity_id = this.alloc.update_allocation(
       entity_id,
-      segments[0].chunk,
-      segments[0].slot,
-      new_segments[0].chunk,
-      new_segments[0].slot,
-      chunk_instance_count
+      first_old_segment.chunk,
+      first_old_segment.slot,
+      first_new_segment.chunk,
+      first_new_segment.slot,
+      first_new_segment.count
     );
-    
-    // Inform allocator to release old segments and update tracking for the entity ID
-    for (let i = 1; i < segments.length; i++) {
-      const seg = segments[i];
-      this.alloc.free_segment(seg.chunk, seg.slot, seg.count);
-    }
 
-    // Mark the new chunks/slots as dirty for all relevant fragments (if tracked)
-    for (let i = 0; i < new_segments.length; i++) {
-      const seg = new_segments[i];
-      seg.chunk.mark_dirty();
-    }
-
+    // update handle
     handle.id = new_entity_id;
     handle.archetype = archetype;
-    handle.segments = new_segments;
-    handle.instance_count = new_instance_count;
+    handle.segments = new_segments_array;
+    handle.instance_count = new_total_instances;
 
-    return handle; // Return the original, stable ID
+    return handle;
   }
 
   /**
@@ -431,21 +434,6 @@ export class Sector {
       new_segments[0].slot,
       chunk_instance_count
     );
-
-    // Update allocation: Release old segments, update tracking to new location
-    for (let i = 1; i < segments.length; i++) {
-      const seg = segments[i];
-      this.alloc.free_segment(seg.chunk, seg.slot, seg.count);
-    }
-
-    // Mark the new chunks/slots as dirty
-    for (let i = 0; i < new_segments.length; i++) {
-      const seg = new_segments[i];
-      seg.chunk.mark_dirty();
-    }
-
-    // Check if old_segments became empty and trigger archetype cleanup/compaction?
-    // if (old_segments.length === 0) { old_archetype.release_segments(segments); }
 
     handle.id = new_entity_id;
     handle.archetype = new_archetype;

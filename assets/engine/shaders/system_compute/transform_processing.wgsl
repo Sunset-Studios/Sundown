@@ -56,11 +56,6 @@ fn cs(@builtin(global_invocation_id) global_id: vec3<u32>) {
         return;
     }
 
-    if ((entity_flags[entity_resolved] & EF_DIRTY) == 0 &&
-        (entity_flags[parent_resolved] & EF_DIRTY) == 0) {
-        return;
-    }
-
     let position = entity_positions[entity_resolved];
     let rotation = entity_rotations[entity_resolved];
     let scale = entity_scales[entity_resolved];
