@@ -8,7 +8,7 @@ enable f16;
 
 // 32‑bit handle ─ 21 bits chunk index | 7 bits row_index | 4 bits generation
 const ENTITY_ROW_BITS = 28;
-const LOCAL_SLOT_BITS = 7;
+const LOCAL_SLOT_BITS = 8;
 const ENTITY_GEN_BITS = 4;
 const ENTITY_ROW_MASK = (1 << ENTITY_ROW_BITS) - 1;
 const ENTITY_GEN_MASK = (1 << ENTITY_GEN_BITS) - 1;

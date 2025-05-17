@@ -321,19 +321,6 @@ export class AABB {
       this.node_heights = new_node_heights;
     }
 
-    {
-      // Create a new array with the new size
-      const new_temp_sync_buffer = new Float32Array(this.size * NODE_BOUNDS_SIZE);
-
-      // Copy existing data
-      if (this.node_bounds_cpu_buffer[0]) {
-        new_temp_sync_buffer.set(this.node_bounds_cpu_buffer[0]);
-      }
-
-      // Replace the old array
-      this.#temp_sync_buffer = new_temp_sync_buffer;
-    }
-
     this.free_nodes.resize(this.size);
 
     // Initialize new nodes as free
@@ -526,42 +513,18 @@ export class AABB {
   /**
    * Sync the AABB tree buffers
    */
-  static #temp_sync_buffer = new Float32Array(NODE_BOUNDS_SIZE * default_aabb_size);
   static async sync_buffers() {
     const buffered_frame = Renderer.get().get_buffered_frame_number();
     // Only do readbacks if the buffer is ready and not being modified
     if (this.node_bounds_cpu_buffer[buffered_frame]?.buffer.mapState === unmapped_state) {
-      try {
-        // Do the readback
-        await this.node_bounds_cpu_buffer[buffered_frame].read(
-          this.#temp_sync_buffer,
-          this.#temp_sync_buffer.byteLength,
-          0,
-          0,
-          Float32Array
-        );
-      } finally {
-        for (let i = 0; i < this.size; i++) {
-          if (this.node_data[i * NODE_SIZE + 1] === AABB_NODE_TYPE.LEAF) {
-            this.node_bounds[i * NODE_BOUNDS_SIZE + 0] =
-              this.#temp_sync_buffer[i * NODE_BOUNDS_SIZE + 0];
-            this.node_bounds[i * NODE_BOUNDS_SIZE + 1] =
-              this.#temp_sync_buffer[i * NODE_BOUNDS_SIZE + 1];
-            this.node_bounds[i * NODE_BOUNDS_SIZE + 2] =
-              this.#temp_sync_buffer[i * NODE_BOUNDS_SIZE + 2];
-            this.node_bounds[i * NODE_BOUNDS_SIZE + 3] =
-              this.#temp_sync_buffer[i * NODE_BOUNDS_SIZE + 3];
-            this.node_bounds[i * NODE_BOUNDS_SIZE + 4] =
-              this.#temp_sync_buffer[i * NODE_BOUNDS_SIZE + 4];
-            this.node_bounds[i * NODE_BOUNDS_SIZE + 5] =
-              this.#temp_sync_buffer[i * NODE_BOUNDS_SIZE + 5];
-            this.node_bounds[i * NODE_BOUNDS_SIZE + 6] =
-              this.#temp_sync_buffer[i * NODE_BOUNDS_SIZE + 6];
-            this.node_bounds[i * NODE_BOUNDS_SIZE + 7] =
-              this.#temp_sync_buffer[i * NODE_BOUNDS_SIZE + 7];
-          }
-        }
-      }
+      // Do the readback
+      await this.node_bounds_cpu_buffer[buffered_frame].read(
+        this.node_bounds,
+        this.node_bounds.byteLength,
+        0,
+        0,
+        Float32Array
+      );
     }
   }
 

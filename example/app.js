@@ -87,37 +87,40 @@ export class RenderingScene extends Scene {
     light_fragment_view.active = true;
 
     // Create a sphere mesh and add it to the scene
-    const mesh = Mesh.from_gltf("engine/models/sphere/sphere.gltf");
+    const mesh = Mesh.from_gltf("engine/models/cube/cube.gltf");
 
     // Create a default material
     const default_material = StandardMaterial.create("MyMaterial");
     const default_material_id = default_material.material_id;
-    default_material.set_albedo([0.7, 0.7, 0.7, 1.0]);
-    default_material.set_emission(0.0);
+
+    {
+      let dirt_albedo = Texture.load(["engine/textures/voxel/dirt_albedo.jpg"], {
+        name: "dirt_albedo",
+        format: "rgba8unorm",
+        dimension: "2d",
+        usage:
+          GPUTextureUsage.TEXTURE_BINDING |
+          GPUTextureUsage.COPY_DST |
+          GPUTextureUsage.RENDER_ATTACHMENT,
+        material_notifier: "dirt_albedo",
+      });
+      let dirt_roughness = Texture.load(["engine/textures/voxel/dirt_roughness.jpg"], {
+        name: "dirt_roughness",
+        format: "rgba8unorm",
+        dimension: "2d",
+        usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT,
+        material_notifier: "dirt_roughness",
+      });
+  
+      default_material.set_albedo([0.7, 0.7, 0.7, 1.0], dirt_albedo);
+      default_material.set_roughness(0.5, dirt_roughness);
+      default_material.set_emission(0.2);
+      default_material.set_tiling(2.0, 2.0);
+    }
 
     // Get Exo-Medium font
     const font_id = Name.from("Exo-Medium");
     const font_object = FontCache.get_font_object(font_id);
-
-    const text_entity = spawn_mesh_entity(
-      [0, 25, -5],
-      [0, 0, 0, 1],
-      [0.5, 0.5, 0.5],
-      Mesh.quad(),
-      font_object.material,
-      null /* parent */,
-      [] /* children */,
-      true /* start_visible */,
-      EntityFlags.NO_AABB_UPDATE | EntityFlags.IGNORE_PARENT_SCALE
-    );
-    const text_fragment_view = EntityManager.add_fragment(text_entity, TextFragment);
-    text_fragment_view.font = font_id;
-    text_fragment_view.font_size = 32;
-    text_fragment_view.text_color = [1, 1, 1, 1];
-    text_fragment_view.text_emissive = 1;
-    text_fragment_view.text = "Sundown Engine";
-
-    this.entities.push(text_entity);
 
     // Create a 3D grid of sphere entities
     const grid_size = 100; // 100x100x10 grid
@@ -155,12 +158,12 @@ export class RenderingScene extends Scene {
       }
     }
 
-    PostProcessStack.register_pass(0, "crt", "effects/crt_post.wgsl", {
-      curvature: 0.0,
-      vignette: 0.2,
-      scan_brightness: 0.5,
-      rgb_offset: 0.2,
-      bloom_strength: 0.3,
+    PostProcessStack.register_pass(0, "vhs", "effects/vhs_post.wgsl", {
+      noise_intensity: 0.25,
+      scanline_intensity: 0.35,
+      color_bleeding: 0.25,
+      distortion_frequency: 0.75,
+      distortion_amplitude: 0.15,
     });
   }
 
@@ -1386,6 +1389,214 @@ export class SolarECSTestScene extends Scene {
 }
 
 // ------------------------------------------------------------------------------------
+// =============================== Voxel Terrain Scene ===============================
+// ------------------------------------------------------------------------------------
+
+export class VoxelTerrainScene extends Scene {
+  name = "VoxelTerrainScene";
+  entities = [];
+  terrain_material_id = null;
+  cube_mesh = null;
+
+  init(parent_context) {
+    super.init(parent_context);
+
+    const freeform_arcball = this.add_layer(FreeformArcballControlProcessor);
+    freeform_arcball.set_scene(this);
+
+    SharedEnvironmentMapData.set_skybox("default_scene_skybox", [
+      "engine/textures/gradientbox/px.png",
+      "engine/textures/gradientbox/nx.png",
+      "engine/textures/gradientbox/ny.png",
+      "engine/textures/gradientbox/py.png",
+      "engine/textures/gradientbox/pz.png",
+      "engine/textures/gradientbox/nz.png",
+    ]);
+    SharedEnvironmentMapData.set_skybox_color([0.5, 0.7, 0.5, 1]);
+
+    SharedViewBuffer.set_view_data(0, {
+      position: [20.7373, 54.0735, 68.58896],
+      rotation: [-0.036352589, 0.94788336, -0.25605953, -0.13457019],
+    });
+
+    // Create a light and add it to the scene
+    const light_entity = EntityManager.create_entity([LightFragment]);
+    this.entities.push(light_entity);
+
+    // Add a light fragment to the light entity
+    const light_fragment_view = EntityManager.get_fragment(light_entity, LightFragment);
+    light_fragment_view.type = LightType.DIRECTIONAL;
+    light_fragment_view.color = [1, 1, 1];
+    light_fragment_view.intensity = 2.5;
+    light_fragment_view.position = [10, 30, 10];
+    light_fragment_view.active = true;
+
+    // Create terrain material
+    const terrain_material = StandardMaterial.create("TerrainMaterial");
+    this.terrain_material_id = terrain_material.material_id;
+    terrain_material.set_albedo([0.4, 0.25, 0.1, 1]);
+    terrain_material.set_roughness(1.0);
+    terrain_material.set_metallic(0.8);
+    terrain_material.set_tiling(1.0);
+
+    // Create cube mesh for voxels
+    this.cube_mesh = Mesh.cube();
+
+    // Terrain parameters - Perlin-based fractal noise
+    const grid_width = 100;
+    const grid_depth = 100;
+    const block_size = 2.0;
+    const base_frequency = 0.05;
+    const height_scale = 20.0;
+    const height_offset = 10.0;
+    const octaves = 5;
+    const persistence = 0.5;
+
+    // Build permutation table for Perlin noise
+    const perlin_perm = new Array(512);
+    {
+      const p = new Array(256);
+      for (let i = 0; i < 256; i++) p[i] = i;
+      for (let i = 255; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [p[i], p[j]] = [p[j], p[i]];
+      }
+      for (let i = 0; i < 512; i++) perlin_perm[i] = p[i & 255];
+    }
+
+    const fade_function = t => t * t * t * (t * (t * 6 - 15) + 10);
+    const lerp_function = (a, b, t) => a + t * (b - a);
+    const grad_function = (hash, x, y) => {
+      switch (hash & 3) {
+        case 0: return x + y;
+        case 1: return -x + y;
+        case 2: return x - y;
+        case 3: return -x - y;
+      }
+    };
+
+    function perlin_noise(x, y) {
+      const xi = Math.floor(x) & 255;
+      const yi = Math.floor(y) & 255;
+      const xf = x - Math.floor(x);
+      const yf = y - Math.floor(y);
+      const u = fade_function(xf);
+      const v = fade_function(yf);
+
+      const aa = perlin_perm[xi + perlin_perm[yi]];
+      const ab = perlin_perm[xi + perlin_perm[yi + 1]];
+      const ba = perlin_perm[xi + 1 + perlin_perm[yi]];
+      const bb = perlin_perm[xi + 1 + perlin_perm[yi + 1]];
+
+      const x1 = lerp_function(grad_function(aa, xf, yf), grad_function(ba, xf - 1, yf), u);
+      const x2 = lerp_function(grad_function(ab, xf, yf - 1), grad_function(bb, xf - 1, yf - 1), u);
+      return lerp_function(x1, x2, v);
+    }
+
+    function fractal_noise(x, y) {
+      let total = 0;
+      let freq = base_frequency;
+      let amp = 1;
+      let max = 0;
+      for (let o = 0; o < octaves; o++) {
+        total += perlin_noise(x * freq, y * freq) * amp;
+        max += amp;
+        amp *= persistence;
+        freq *= 2;
+      }
+      return total / max;
+    }
+
+    // Precompute heights
+    const heights = new Array(grid_width);
+    let total_blocks = 0;
+    for (let xi = 0; xi < grid_width; xi++) {
+      heights[xi] = new Array(grid_depth);
+      for (let zi = 0; zi < grid_depth; zi++) {
+        const noise_val = fractal_noise(xi, zi) * height_scale + height_offset;
+        const height = Math.floor(noise_val);
+        heights[xi][zi] = height;
+        total_blocks += height;
+      }
+    }
+
+    // Spawn instanced cube entity for terrain
+    const terrain_entity = spawn_mesh_entity(
+      [0, 0, 0],
+      [0, 0, 0, 1],
+      [block_size, block_size, block_size],
+      this.cube_mesh,
+      this.terrain_material_id,
+      null,
+      [],
+      true,
+      EntityFlags.NO_AABB_UPDATE | EntityFlags.IGNORE_PARENT_SCALE
+    );
+    EntityManager.set_entity_instance_count(terrain_entity, total_blocks);
+    this.entities.push(terrain_entity);
+
+    // Assign transforms for each voxel
+    let block_index = 0;
+    for (let xi = 0; xi < grid_width; xi++) {
+      for (let zi = 0; zi < grid_depth; zi++) {
+        for (let yi = 0; yi < heights[xi][zi]; yi++) {
+          if (block_index >= total_blocks) {
+            break;
+          }
+
+          const pos = [
+            (xi - grid_width / 2) * block_size,
+            yi * block_size,
+            (zi - grid_depth / 2) * block_size,
+          ];
+          const view = EntityManager.get_fragment(
+            terrain_entity,
+            TransformFragment,
+            block_index
+          );
+          view.position = pos;
+          block_index++;
+        }
+      }
+    }
+
+    // Get Exo-Medium font
+    const font_id = Name.from("Exo-Medium");
+    const font_object = FontCache.get_font_object(font_id);
+
+    // Add a title text entity
+    const text_entity = spawn_mesh_entity(
+      [-10, 55, 0],
+      [0, 0, 0, 1],
+      [0.5, 0.5, 0.5],
+      Mesh.quad(),
+      font_object.material
+    );
+    const text_fragment_view = EntityManager.add_fragment(text_entity, TextFragment);
+    text_fragment_view.font = font_id;
+    text_fragment_view.font_size = 32;
+    text_fragment_view.text_color = [1, 1, 1, 1];
+    text_fragment_view.text_emissive = 1;
+    text_fragment_view.text = "Voxel Terrain Scene";
+    this.entities.push(text_entity);
+
+    log(`[${this.name}] Initialized with ${total_blocks} blocks.`);
+  }
+
+  cleanup() {
+    for (const entity of this.entities) {
+      delete_entity(entity);
+    }
+    this.remove_layer(FreeformArcballControlProcessor);
+    super.cleanup();
+  }
+
+  update(delta_time) {
+    super.update(delta_time);
+  }
+}
+
+// ------------------------------------------------------------------------------------
 // =============================== Scene Switcher ====================================
 // ------------------------------------------------------------------------------------
 
@@ -1434,13 +1645,15 @@ export class SceneSwitcher extends SimulationLayer {
   const ml_scene = new MLScene("MLScene");
   const textures_scene = new TexturesScene("TexturesScene");
   const solar_ecs_scene = new SolarECSTestScene("SolarECSTestScene");
+  const voxel_terrain_scene = new VoxelTerrainScene("VoxelTerrainScene");
 
   const scene_switcher = new SceneSwitcher("SceneSwitcher");
-  await scene_switcher.add_scene(solar_ecs_scene);
+  //await scene_switcher.add_scene(solar_ecs_scene);
   //await scene_switcher.add_scene(textures_scene);
   //await scene_switcher.add_scene(aabb_scene);
   //await scene_switcher.add_scene(rendering_scene);
   //await scene_switcher.add_scene(ml_scene);
+  await scene_switcher.add_scene(voxel_terrain_scene);
 
   await simulator.add_sim_layer(scene_switcher);
 

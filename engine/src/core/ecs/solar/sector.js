@@ -22,7 +22,7 @@ import { EntityFlags } from "../../minimal.js";
  * - GPU buffer synchronization for rendering (per-field, or per custom buffer definition)
  * - Query execution against entity data
  *
- * The Sector uses a flat memory layout with SharedArrayBuffers for efficient
+ * The Sector uses a flat memory layout with ArrayBuffers for efficient
  * data access and supports instance counts for entity instancing.
  *
  * Entity IDs are stable and remain consistent even when fragments are

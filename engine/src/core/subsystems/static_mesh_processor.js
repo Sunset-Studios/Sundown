@@ -18,6 +18,7 @@ export class StaticMeshProcessor extends SimulationLayer {
     this.entity_query = EntityManager.create_query([StaticMeshFragment, VisibilityFragment]);
     this._update_internal = this._update_internal.bind(this);
     this._update_internal_iter = this._update_internal_iter.bind(this);
+    this._mesh_task_queue = MeshTaskQueue.get();
   }
 
   update(delta_time) {
@@ -28,30 +29,25 @@ export class StaticMeshProcessor extends SimulationLayer {
     const entity_flags = chunk.flags_meta[slot];
     
     if ((entity_flags & EntityFlags.PENDING_DELETE) !== 0) {
-      MeshTaskQueue.get().remove(EntityManager.get_entity_for(chunk, slot));
+      this._mesh_task_queue.remove(EntityManager.get_entity_for(chunk, slot));
       return;
     }
-    
+
     const static_meshes = chunk.get_fragment_view(StaticMeshFragment);
     const visibilities = chunk.get_fragment_view(VisibilityFragment);
     
     const mesh_id = Number(static_meshes.mesh[slot]);
-    if (Mesh.loading_meshes.has(mesh_id)) {
-      return;
-    }
-
-    const mesh_task_queue = MeshTaskQueue.get();
 
     const material_id = Number(
       static_meshes.material_slots[slot * StaticMeshFragment.material_slot_stride]
     );
 
     const entity = EntityManager.get_entity_for(chunk, slot);
-    mesh_task_queue.remove(entity);
+    this._mesh_task_queue.remove(entity);
 
     const total_instance_count = EntityManager.get_entity_instance_count(entity);
     if (mesh_id && material_id && total_instance_count && visibilities.visible[slot]) {
-      mesh_task_queue.new_task(mesh_id, entity, material_id, total_instance_count);
+      this._mesh_task_queue.new_task(mesh_id, entity, material_id, total_instance_count);
     }
 
     chunk.mark_dirty();

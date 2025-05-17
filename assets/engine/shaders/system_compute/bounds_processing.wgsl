@@ -28,10 +28,6 @@ fn cs(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let entity_id_offset = global_id.x;
     let node_index = entity_aabb_node_indices[entity_id_offset];
 
-    if ((entity_flags[entity_id_offset] & EF_DIRTY) == 0) {
-        return;
-    }
-
     // Get the entity's world transform
     let transform = entity_transforms[entity_id_offset].transform;
     let position = transform[3].xyz;
@@ -65,6 +61,7 @@ fn cs(@builtin(global_invocation_id) global_id: vec3<u32>) {
       position[2] + half_size[2] + padding[2],
     );
 
+    // write to full array for other GPU consumers
     aabb_bounds[node_index].min_point = vec4f(min_point, 1.0);
     aabb_bounds[node_index].max_point = vec4f(max_point, 1.0);
 

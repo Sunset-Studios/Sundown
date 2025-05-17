@@ -24,29 +24,64 @@ export class Query {
    * @param {boolean} [dirty_only=false] - If true, only invoke callback for dirty entities.
    */
   for_each(callback, dirty_only = false) {
+    // --- hoist constants ---
+    const cap = DEFAULT_CHUNK_CAPACITY;
+    const dirty_flag = EntityFlags.DIRTY;
+    const cb = callback;
+
     const archetypes = this.archetypes;
     const archetype_count = archetypes.length;
 
-    for (let i = 0; i < archetype_count; i++) {
-      const archetype = archetypes[i];
-      const chunk_count = archetype.chunks.length;
-      const chunks = archetype.chunks;
+    if (!dirty_only) {
+      // --- “clean” path: no per-slot dirty check ---
+      for (let i = 0; i < archetype_count; i++) {
+        const archetype = archetypes[i];
+        const chunks = archetype.chunks;
+        const chunk_count = chunks.length;
 
-      for (let k = 0; k < chunk_count; k++) {
-        const target_chunk = chunks[k];
-        const instance_counts = target_chunk.icnt_meta;
+        for (let k = 0; k < chunk_count; k++) {
+          const chunk = chunks[k];
+          const counts = chunk.icnt_meta;
+          let slot_index = 0;
 
-        for (let slot_index = 0; slot_index < DEFAULT_CHUNK_CAPACITY; ) {
-          const instance_count = instance_counts[slot_index];
-          if (instance_count > 0 && (!dirty_only || (target_chunk.flags_meta[slot_index] & EntityFlags.DIRTY))) {
-            callback(target_chunk, slot_index, instance_count, archetype);
+          while (slot_index < cap) {
+            const cnt = counts[slot_index];
+            if (cnt > 0) {
+              cb(chunk, slot_index, cnt, archetype);
+              slot_index += cnt;
+            } else {
+              slot_index++;
+            }
           }
-          slot_index += instance_count || 1;
+        }
+      }
+    } else {
+      // --- “dirty‐only” path: includes the dirty‐flag check ---
+      for (let i = 0; i < archetype_count; i++) {
+        const archetype = archetypes[i];
+        const chunks = archetype.chunks;
+        const chunk_count = chunks.length;
+
+        for (let k = 0; k < chunk_count; k++) {
+          const chunk = chunks[k];
+          const counts = chunk.icnt_meta;
+          const flags = chunk.flags_meta;
+          let slot_index = 0;
+
+          while (slot_index < cap) {
+            const cnt = counts[slot_index];
+            if (cnt > 0 && (flags[slot_index] & dirty_flag)) {
+              cb(chunk, slot_index, cnt, archetype);
+              slot_index += cnt;
+            } else {
+              slot_index++;
+            }
+          }
         }
       }
     }
   }
-  
+
   /**
    * Updates the archetypes for the query.
    * @param {Archetype} new_archetype - The new archetype to add to the query.

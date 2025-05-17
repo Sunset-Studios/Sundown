@@ -1,4 +1,10 @@
-import { EntityID, LOCAL_SLOT_BITS, LOCAL_SLOT_MASK, DEFAULT_CHUNK_CAPACITY } from "./types.js";
+import {
+  EntityID,
+  LOCAL_SLOT_BITS,
+  LOCAL_SLOT_MASK,
+  DEFAULT_CHUNK_CAPACITY,
+  USE_SHARED_ARRAY_BUFFER,
+} from "./types.js";
 import { MAX_BUFFERED_FRAMES } from "../../minimal.js";
 import { Chunk } from "./chunk.js";
 import { Renderer } from "../../../renderer/renderer.js";
@@ -355,17 +361,23 @@ export class FragmentGpuBuffer {
         if (!chunk) continue;
 
         const target_view = this.sync_target_accessor(chunk);
-        if (!target_view || !target_view.buffer || !(target_view.buffer instanceof SharedArrayBuffer || target_view.buffer instanceof ArrayBuffer) ) {
+        const array_type =
+          USE_SHARED_ARRAY_BUFFER && typeof SharedArrayBuffer === "function"
+            ? SharedArrayBuffer
+            : ArrayBuffer;
+        if (!target_view || !target_view.buffer || !(target_view.buffer instanceof array_type)) {
           // Accessor might return null if chunk is not relevant or view is invalid
           continue;
         }
 
         const element_size_bytes = target_view.BYTES_PER_ELEMENT;
         if (!element_size_bytes || element_size_bytes <= 0) {
-            error(`FragmentGpuBuffer ${this.name}: Invalid BYTES_PER_ELEMENT for target_view from sync_target_accessor for chunk ${chunk.chunk_index}.`);
-            continue;
+          error(
+            `FragmentGpuBuffer ${this.name}: Invalid BYTES_PER_ELEMENT for target_view from sync_target_accessor for chunk ${chunk.chunk_index}.`
+          );
+          continue;
         }
-        
+
         // Data for this chunk in cpu_buf starts at (chunk.chunk_index * DEFAULT_CHUNK_CAPACITY) *elements* of this buffer's type.
         // The `this.byte_stride` is for one row of *this* FragmentGpuBuffer.
         // The cpu_buf contains data laid out as [chunk0_data, chunk1_data, ...].
@@ -375,29 +387,33 @@ export class FragmentGpuBuffer {
         const bytes_to_copy_for_chunk = DEFAULT_CHUNK_CAPACITY * this.byte_stride;
 
         if (target_view.byteLength !== bytes_to_copy_for_chunk) {
-             warn(
-                `FragmentGpuBuffer ${this.name}: Byte length mismatch for sync_target_accessor in chunk ${chunk.chunk_index}. TargetView: ${target_view.byteLength}, ExpectedFromSource: ${bytes_to_copy_for_chunk}. Skipping.`
-            );
-            continue;
+          warn(
+            `FragmentGpuBuffer ${this.name}: Byte length mismatch for sync_target_accessor in chunk ${chunk.chunk_index}. TargetView: ${target_view.byteLength}, ExpectedFromSource: ${bytes_to_copy_for_chunk}. Skipping.`
+          );
+          continue;
         }
 
-        if ( (source_byte_offset + bytes_to_copy_for_chunk) > cpu_buf.config.size) {
+        if (source_byte_offset + bytes_to_copy_for_chunk > cpu_buf.config.size) {
           warn(
             `Bounds check fail for ${this.name} (via accessor) in chunk ${chunk.chunk_index}. CPU buf size: ${cpu_buf.config.size}, required bytes: ${bytes_to_copy_for_chunk} at offset: ${source_byte_offset}. Skipping.`
           );
           continue;
         }
-        
+
         if (bytes_to_copy_for_chunk % element_size_bytes !== 0) {
-            warn(`Cannot sync ${this.name} (via accessor) to chunk ${chunk.chunk_index} SAB: total bytes ${bytes_to_copy_for_chunk} not multiple of target element size ${element_size_bytes}. Skipping.`);
-            continue;
+          warn(
+            `Cannot sync ${this.name} (via accessor) to chunk ${chunk.chunk_index} SAB: total bytes ${bytes_to_copy_for_chunk} not multiple of target element size ${element_size_bytes}. Skipping.`
+          );
+          continue;
         }
         const num_elements_to_copy = bytes_to_copy_for_chunk / element_size_bytes;
         const source_element_offset_for_read = source_byte_offset / element_size_bytes; // cpu_buf.read expects element offset
 
         if (target_view.length !== num_elements_to_copy) {
-            warn(`Logic error: Element count mismatch for ${this.name} (via accessor) in chunk ${chunk.chunk_index}. TargetViewElements: ${target_view.length}, CalculatedElements: ${num_elements_to_copy}. Skipping.`);
-            continue;
+          warn(
+            `Logic error: Element count mismatch for ${this.name} (via accessor) in chunk ${chunk.chunk_index}. TargetViewElements: ${target_view.length}, CalculatedElements: ${num_elements_to_copy}. Skipping.`
+          );
+          continue;
         }
 
         try {
@@ -488,7 +504,7 @@ export class FragmentGpuBuffer {
         );
         continue;
       }
-      
+
       const num_elements_to_copy = bytes_to_copy_for_chunk / element_size_bytes;
       const source_element_offset = source_byte_offset / element_size_bytes;
 

@@ -1,6 +1,6 @@
 import { EntityLinearDataContainer } from "./memory.js";
 import { Name } from "../../../utility/names.js";
-import { DEFAULT_CHUNK_CAPACITY } from "./types.js";
+import { DEFAULT_CHUNK_CAPACITY, USE_SHARED_ARRAY_BUFFER } from "./types.js";
 import { clamp } from "../../../utility/math.js";
 import { EntityFlags } from "../../minimal.js";
 /**
@@ -287,7 +287,7 @@ export class Chunk {
 
     // 2. allocate a shared buffer for this chunk
     this.buffer =
-      typeof SharedArrayBuffer === "function"
+      (USE_SHARED_ARRAY_BUFFER && typeof SharedArrayBuffer === "function")
         ? new SharedArrayBuffer(total_byte_count)
         : new ArrayBuffer(total_byte_count);
 

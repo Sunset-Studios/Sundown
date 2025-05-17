@@ -3,7 +3,7 @@ import { FreeListAllocator } from "../../../memory/allocator.js";
 // 32-bit entity ID ─ 10 bits local slot | 18 bits chunk index | 4 bits generation
 // Maximum logical entity count = 2^ROW_BITS = 268,435,456
 export const ROW_BITS = 28;
-export const LOCAL_SLOT_BITS = 7;
+export const LOCAL_SLOT_BITS = 8;
 export const CHUNK_INDEX_BITS = ROW_BITS - LOCAL_SLOT_BITS; // = 21
 export const GEN_BITS = 4;
 export const ROW_MASK = (1 << ROW_BITS) - 1;
@@ -12,6 +12,7 @@ export const CHUNK_INDEX_MASK = ((1 << CHUNK_INDEX_BITS) - 1) << LOCAL_SLOT_BITS
 export const GEN_MASK = (1 << GEN_BITS) - 1;
 
 export const DEFAULT_CHUNK_CAPACITY = LOCAL_SLOT_MASK + 1;
+export const USE_SHARED_ARRAY_BUFFER = false;
 
 /**
  * Manages entity IDs.

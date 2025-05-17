@@ -302,6 +302,9 @@ export class MeshTaskQueue {
             }
           } else {
             const mesh = ResourceCache.get().fetch(CacheTypes.MESH, task.mesh_id);
+            if (!mesh.index_buffer) {
+              continue;
+            }
 
             const batch = new IndirectDrawBatch();
             batch.mesh_id = task.mesh_id;
@@ -495,6 +498,7 @@ export class MeshTaskQueue {
     for (let i = 0; i < this.batches.length; ++i) {
       const batch = this.batches[i];
       const index_buffer = ResourceCache.get().fetch(CacheTypes.BUFFER, batch.index_buffer_id);
+
       const material = ResourceCache.get().fetch(CacheTypes.MATERIAL, batch.material_id);
 
       if (opaque_only && material.family !== MaterialFamilyType.Opaque) {
