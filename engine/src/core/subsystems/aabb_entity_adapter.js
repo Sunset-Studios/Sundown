@@ -155,7 +155,7 @@ export class AABBEntityAdapter extends SimulationLayer {
 
     const total_rows = EntityManager.get_max_rows();
 
-    ComputeTaskQueue.get().new_task(
+    ComputeTaskQueue.new_task(
       entity_bounds_update_task_name,
       entity_bounds_update_wgsl_path,
       this.bounds_update_input_list,

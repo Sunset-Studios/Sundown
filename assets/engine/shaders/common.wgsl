@@ -69,14 +69,11 @@ struct EntityTransform {
 
 struct ObjectInstance {
     batch: u32,
-    entity: u32,
-    entity_instance: u32
+    row: u32,
 };
 
 struct CompactedObjectInstance {
-    entity: u32,
-    entity_instance: u32,
-    base_instance: u32,
+    row: u32,
 };
 
 struct AABBTreeNode {
@@ -123,10 +120,7 @@ const one_over_float_max = 1.0 / 4294967296.0;
 @group(0) @binding(3) var non_filtering_sampler: sampler;
 @group(0) @binding(4) var clamped_sampler: sampler;
 @group(0) @binding(5) var<uniform> frame_info: FrameInfo;
-
-#if ENTITY_COMPACTION
 @group(0) @binding(6) var<storage, read> entity_index_lookup: array<u32>;
-#endif
 
 // ------------------------------------------------------------------------------------
 // Helper Functions
@@ -134,11 +128,8 @@ const one_over_float_max = 1.0 / 4294967296.0;
 
 fn get_entity_row(entity: u32) -> u32 {
     // row_field = (chunk_index << LOCAL_SLOT_BITS) | local_index 
-#if ENTITY_COMPACTION
-    return entity_index_lookup[entity];
-#else
-    return entity & ENTITY_ROW_MASK;
-#endif
+    let entity_row = entity & ENTITY_ROW_MASK;
+    return entity_index_lookup[entity_row];
 }
 
 fn cubemap_direction_to_uv(direction: vec3f) -> vec3f {

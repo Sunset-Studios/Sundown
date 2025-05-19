@@ -51,8 +51,8 @@ export class SceneGraph {
     const { result, layer_counts } = this.tree.flatten(
       Int32Array,
       (out, node, size) => {
-        const count = EntityManager.get_entity_instance_count(node.data);
         const entity_idx = node.data.id;
+        const count = node.data.instance_count;
         const parent_entity_idx = this.tree.get_parent(node)
           ? this.tree.get_parent(node).data.id
           : -1;

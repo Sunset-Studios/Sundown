@@ -4,6 +4,8 @@ import { TransformFragment } from "./fragments/transform_fragment.js";
 import { StaticMeshFragment } from "./fragments/static_mesh_fragment.js";
 import { VisibilityFragment } from "./fragments/visibility_fragment.js";
 import { Name } from "../../utility/names.js";
+import { EntityID } from "./solar/types.js";
+import { TypedVector } from "../../memory/container.js";
 import { WORLD_FORWARD, EntityFlags } from "../../core/minimal.js";
 import { quat } from "gl-matrix";
 
@@ -148,4 +150,22 @@ export function delete_entity_children_with_tag(entity, tag) {
       delete_entity(child);
     }
   }
+}
+
+/**
+ * Returns all entity rows of the specified entity.
+ *
+ * @param {EntityID} entity - The entity handle to get the rows of.
+ * @returns {EntityID[]} The rows of the specified entity, taken from all segments.
+ */
+const entity_rows = new TypedVector(1024, 0, Uint32Array);
+export function get_all_entity_rows(entity) {
+  entity_rows.clear();
+  for (let i = 0; i < entity.segments.length; i++) {
+    const segment = entity.segments[i];
+    for (let j = 0; j < segment.count; j++) {
+      rows.push(EntityID.make_row_field(segment.slot + j, segment.chunk.chunk_index));
+    }
+  }
+  return rows;
 }

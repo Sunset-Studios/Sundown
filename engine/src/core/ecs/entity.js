@@ -19,6 +19,14 @@ export class EntityManager {
   static pending_entity_deletes = new TypedQueue(256, Uint32Array);
 
   /**
+   * Initializes the entity compaction index map.
+   */
+  static setup(fragment_classes) {
+    FragmentGpuBuffer.init_entity_compaction_index_map();
+    this.register_fragments(fragment_classes);
+  }
+
+  /**
    * Registers fragments with the sector.
    * @param {typeof import('./fragment.js').Fragment[]} fragment_classes - The fragment classes to register.
    */
@@ -366,30 +374,6 @@ export class EntityManager {
    */
   static copy_gpu_to_cpu_buffers(encoder) {
     FragmentGpuBuffer.copy_to_cpu_buffers(encoder);
-  }
-
-  /**
-   * Enable or disable entity compaction.
-   * @param {boolean} flag - True to enable, false to disable.
-   */
-  static set_entity_compaction_enabled(flag) {
-    FragmentGpuBuffer.set_entity_compaction_enabled(flag);
-  }
-
-  /**
-   * Check if entity compaction is enabled.
-   * @returns {boolean} True if enabled, false otherwise.
-   */
-  static is_entity_compaction_enabled() {
-    return FragmentGpuBuffer.is_entity_compaction_enabled();
-  }
-
-  /**
-   * Get the entity index map buffer.
-   * @returns {GPUBuffer | null} The entity index map buffer, or null if not enabled.
-   */
-  static get_entity_index_map_buffer() {
-    return FragmentGpuBuffer.get_entity_index_map_buffer();
   }
 
   /**

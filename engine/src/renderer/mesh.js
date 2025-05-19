@@ -630,7 +630,7 @@ export class Mesh {
 
       Mesh.loading_meshes.delete(mesh_id);
 
-      MeshTaskQueue.get().mark_needs_sort();
+      MeshTaskQueue.mark_needs_sort();
     });
 
     ResourceCache.get().store(CacheTypes.MESH, mesh_id, mesh);

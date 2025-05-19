@@ -196,11 +196,11 @@ export class Renderer {
         },
       ];
 
-    if (FragmentGpuBuffer.enable_entity_compaction) {
+    if (FragmentGpuBuffer.entity_index_map_buffer) {
       global_bindings.push({
         buffer: FragmentGpuBuffer.entity_index_map_buffer.buffer,
         offset: 0,
-        size: FragmentGpuBuffer.entity_index_map_buffer.config.size,
+        size: FragmentGpuBuffer.entity_index_map_buffer.buffer.config.size,
       });
     }
 

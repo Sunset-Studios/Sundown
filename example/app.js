@@ -187,7 +187,7 @@ export class RenderingScene extends Scene {
 
     const total_transforms = EntityManager.get_total_subscribed(TransformFragment);
 
-    ComputeTaskQueue.get().new_task(
+    ComputeTaskQueue.new_task(
       ripples_name,
       ripples_shader,
       [positions.buffer, flags.buffer],
@@ -1443,9 +1443,9 @@ export class VoxelTerrainScene extends Scene {
     this.cube_mesh = Mesh.cube();
 
     // Terrain parameters - Perlin-based fractal noise
-    const grid_width = 100;
-    const grid_depth = 100;
-    const block_size = 2.0;
+    const grid_width = 400;
+    const grid_depth = 400;
+    const block_size = 1.0;
     const base_frequency = 0.05;
     const height_scale = 20.0;
     const height_offset = 10.0;
@@ -1570,7 +1570,11 @@ export class VoxelTerrainScene extends Scene {
       [0, 0, 0, 1],
       [0.5, 0.5, 0.5],
       Mesh.quad(),
-      font_object.material
+      font_object.material,
+      null,
+      [],
+      true,
+      EntityFlags.NO_AABB_UPDATE | EntityFlags.IGNORE_PARENT_SCALE
     );
     const text_fragment_view = EntityManager.add_fragment(text_entity, TextFragment);
     text_fragment_view.font = font_id;

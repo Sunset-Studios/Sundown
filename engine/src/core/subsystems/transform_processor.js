@@ -1,4 +1,3 @@
-import { Renderer } from "../../renderer/renderer.js";
 import { SimulationLayer } from "../simulation_layer.js";
 import { EntityManager } from "../ecs/entity.js";
 import { FragmentGpuBuffer } from "../ecs/solar/memory.js";
@@ -6,8 +5,6 @@ import { ComputeTaskQueue } from "../../renderer/compute_task_queue.js";
 import { TransformFragment } from "../ecs/fragments/transform_fragment.js";
 import { SceneGraph } from "../scene_graph.js";
 import { profile_scope } from "../../utility/performance.js";
-
-const unmapped_state = "unmapped";
 
 const position_buffer_name = "position";
 const rotation_buffer_name = "rotation";
@@ -101,7 +98,7 @@ export class TransformProcessor extends SimulationLayer {
 
       const dispatch_count = Math.max(1, Math.floor((SceneGraph.scene_graph_layer_counts[i] + 255) / 256));
 
-      ComputeTaskQueue.get().new_task(
+      ComputeTaskQueue.new_task(
         transform_processing_task_name + i,
         transform_processing_wgsl_path,
         this.transform_processing_input_lists[i],
@@ -109,7 +106,7 @@ export class TransformProcessor extends SimulationLayer {
         dispatch_count
       );
 
-      ComputeTaskQueue.get().new_task(
+      ComputeTaskQueue.new_task(
         decompose_transform_task_name + i,
         decompose_transform_wgsl_path,
         this.decompose_transform_input_lists[i],

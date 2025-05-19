@@ -1,10 +1,4 @@
-import {
-  EntityID,
-  LOCAL_SLOT_BITS,
-  LOCAL_SLOT_MASK,
-  DEFAULT_CHUNK_CAPACITY,
-  USE_SHARED_ARRAY_BUFFER,
-} from "./types.js";
+import { EntityID, DEFAULT_CHUNK_CAPACITY } from "./types.js";
 import { MAX_BUFFERED_FRAMES } from "../../minimal.js";
 import { Chunk } from "./chunk.js";
 import { Renderer } from "../../../renderer/renderer.js";
@@ -14,6 +8,8 @@ import { Name } from "../../../utility/names.js";
 import { log, warn, error } from "../../../utility/logging.js";
 
 const unmapped_state = "unmapped";
+const index_map_buffer_name = "entity_index_map";
+const entity_flags_buffer_name = "entity_flags";
 
 export class EntityAllocator {
   constructor() {
@@ -164,7 +160,7 @@ export class EntityAllocator {
       const row = EntityID.make_row_field(slot + i, chunk.chunk_index);
       this.row_to_entity_id.set(row, entity_id);
     }
-    // set per‐slot metadata
+    // set per-slot metadata
     chunk.gen_meta[slot] = generation;
     chunk.icnt_meta[slot] = count;
   }
@@ -223,9 +219,9 @@ export class EntityAllocator {
 
 export class FragmentGpuBuffer {
   static all_buffers = []; // FragmentGpuBuffer[]
-  static enable_entity_compaction = false;
   static entity_index_map_buffer = null;
   static entity_flags_buffer = null;
+  static initial_max_rows = 1024;
 
   /**
    * @param {string} name - base name for GPU and CPU buffers
@@ -247,7 +243,8 @@ export class FragmentGpuBuffer {
     usage = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
     fragment_class_ref = null,
     config_key_within_fragment = null,
-    sync_target_accessor = null
+    sync_target_accessor = null,
+    global_binding = false
   ) {
     this.name = name;
     this.max_rows = max_rows;
@@ -258,6 +255,7 @@ export class FragmentGpuBuffer {
     this.fragment_class_ref = fragment_class_ref;
     this.config_key_within_fragment = config_key_within_fragment;
     this.sync_target_accessor = sync_target_accessor;
+    this.global_binding = global_binding;
 
     // initial GPU buffer
     this.buffer = Buffer.create({
@@ -282,6 +280,8 @@ export class FragmentGpuBuffer {
         });
       }
     }
+
+    FragmentGpuBuffer.all_buffers.push(this);
   }
 
   /**
@@ -295,7 +295,7 @@ export class FragmentGpuBuffer {
 
     const byte_offset = base_row * this.byte_stride;
     const write_bytes = row_count * this.byte_stride; // Calculate bytes to write based on rows
-
+    
     // Ensure packed data size matches expected size
     if (packed_chunk_data.byteLength < write_bytes) {
       error(
@@ -305,8 +305,9 @@ export class FragmentGpuBuffer {
       // write_bytes = packed_chunk_data.byteLength; // Write only what's provided? Risky.
       return; // Prevent partial/incorrect write
     }
-
+    
     const required_end_byte = byte_offset + write_bytes;
+    const write_elements = row_count * (this.byte_stride / packed_chunk_data.BYTES_PER_ELEMENT);
 
     // Grow buffer if needed
     if (required_end_byte > this.buffer.config.size) {
@@ -315,9 +316,10 @@ export class FragmentGpuBuffer {
     }
 
     // Write the packed data
-    this.buffer.write(
-      packed_chunk_data, // Source ArrayBuffer
-      byte_offset // Destination offset in GPU buffer
+    this.buffer.write_raw(
+      packed_chunk_data, // Source ArrayBufferView
+      byte_offset,       // Destination offset in GPU buffer (bytes)
+      write_elements
     );
   }
 
@@ -328,7 +330,6 @@ export class FragmentGpuBuffer {
     if (!this.cpu_buffer_count) return;
 
     const buffered_frame = Renderer.get().get_buffered_frame_number();
-
     const cpu_buf = this.cpu_buffers[buffered_frame % this.cpu_buffer_count];
 
     if (cpu_buf.buffer.mapState === unmapped_state) {
@@ -344,183 +345,67 @@ export class FragmentGpuBuffer {
 
     const buffered_frame = Renderer.get().get_buffered_frame_number();
     const cpu_buf = this.cpu_buffers[buffered_frame % this.cpu_buffer_count];
-    if (cpu_buf.buffer.mapState !== unmapped_state) {
-      return;
-    }
 
-    if (FragmentGpuBuffer.is_entity_compaction_enabled()) {
-      warn(
-        `FragmentGpuBuffer ${this.name}: Compaction enabled. Direct chunk SAB write not feasible. Sync aborted. Data remains in CPU readback buffer ${cpu_buf.config.name}.`
-      );
-      return;
-    }
+    if (cpu_buf.buffer.mapState !== unmapped_state) return;
 
-    // --- Handling via sync_target_accessor (e.g., for global buffers like entity_flags) ---
+    // pull back the raw data of this buffer using the correct element type
+    let raw_elements;
+    let data_type;
+    if (this.sync_target_accessor) {
+      // For entity index map or flags, use Uint32Array for 32-bit values
+      const element_count = cpu_buf.config.size / Uint32Array.BYTES_PER_ELEMENT;
+      raw_elements = new Uint32Array(element_count);
+      data_type = Uint32Array;
+    } else {
+      // For fragment field buffers, use the field's element constructor
+      const spec = this.fragment_class_ref.fields[this.config_key_within_fragment];
+      const ctor = spec.ctor;
+      const element_count = cpu_buf.config.size / ctor.BYTES_PER_ELEMENT;
+      raw_elements = new ctor(element_count);
+      data_type = ctor;
+    }
+    await cpu_buf.read(raw_elements, raw_elements.length, 0, 0, data_type);
+
+    let dense_map = FragmentGpuBuffer.cpu_dense_map;
+
+    // 2a) If using sync_target_accessor (e.g. entity_flags)
     if (this.sync_target_accessor) {
       for (const chunk of Chunk.all_chunks) {
         if (!chunk) continue;
-
         const target_view = this.sync_target_accessor(chunk);
-        const array_type =
-          USE_SHARED_ARRAY_BUFFER && typeof SharedArrayBuffer === "function"
-            ? SharedArrayBuffer
-            : ArrayBuffer;
-        if (!target_view || !target_view.buffer || !(target_view.buffer instanceof array_type)) {
-          // Accessor might return null if chunk is not relevant or view is invalid
-          continue;
-        }
-
-        const element_size_bytes = target_view.BYTES_PER_ELEMENT;
-        if (!element_size_bytes || element_size_bytes <= 0) {
-          error(
-            `FragmentGpuBuffer ${this.name}: Invalid BYTES_PER_ELEMENT for target_view from sync_target_accessor for chunk ${chunk.chunk_index}.`
-          );
-          continue;
-        }
-
-        // Data for this chunk in cpu_buf starts at (chunk.chunk_index * DEFAULT_CHUNK_CAPACITY) *elements* of this buffer's type.
-        // The `this.byte_stride` is for one row of *this* FragmentGpuBuffer.
-        // The cpu_buf contains data laid out as [chunk0_data, chunk1_data, ...].
-        // Each chunk_data segment is `DEFAULT_CHUNK_CAPACITY * this.byte_stride` bytes.
-        const source_byte_offset = chunk.chunk_index * DEFAULT_CHUNK_CAPACITY * this.byte_stride;
-        // The target_view's byteLength should match the expected size for this chunk's segment in the source.
-        const bytes_to_copy_for_chunk = DEFAULT_CHUNK_CAPACITY * this.byte_stride;
-
-        if (target_view.byteLength !== bytes_to_copy_for_chunk) {
-          warn(
-            `FragmentGpuBuffer ${this.name}: Byte length mismatch for sync_target_accessor in chunk ${chunk.chunk_index}. TargetView: ${target_view.byteLength}, ExpectedFromSource: ${bytes_to_copy_for_chunk}. Skipping.`
-          );
-          continue;
-        }
-
-        if (source_byte_offset + bytes_to_copy_for_chunk > cpu_buf.config.size) {
-          warn(
-            `Bounds check fail for ${this.name} (via accessor) in chunk ${chunk.chunk_index}. CPU buf size: ${cpu_buf.config.size}, required bytes: ${bytes_to_copy_for_chunk} at offset: ${source_byte_offset}. Skipping.`
-          );
-          continue;
-        }
-
-        if (bytes_to_copy_for_chunk % element_size_bytes !== 0) {
-          warn(
-            `Cannot sync ${this.name} (via accessor) to chunk ${chunk.chunk_index} SAB: total bytes ${bytes_to_copy_for_chunk} not multiple of target element size ${element_size_bytes}. Skipping.`
-          );
-          continue;
-        }
-        const num_elements_to_copy = bytes_to_copy_for_chunk / element_size_bytes;
-        const source_element_offset_for_read = source_byte_offset / element_size_bytes; // cpu_buf.read expects element offset
-
-        if (target_view.length !== num_elements_to_copy) {
-          warn(
-            `Logic error: Element count mismatch for ${this.name} (via accessor) in chunk ${chunk.chunk_index}. TargetViewElements: ${target_view.length}, CalculatedElements: ${num_elements_to_copy}. Skipping.`
-          );
-          continue;
-        }
-
-        try {
-          // Assuming cpu_buf.read takes (targetView, elementsToRead, sourceElementOffsetInCpuBuf, targetElementOffsetInTargetView)
-          await cpu_buf.read(target_view, num_elements_to_copy, source_element_offset_for_read);
-        } catch (e) {
-          error(
-            `Error reading for ${this.name} (via accessor) for chunk ${chunk.chunk_index}: ${e}`
-          );
+        if (!target_view || !target_view.buffer) continue;
+        const elem_bytes = target_view.BYTES_PER_ELEMENT;
+        for (let i = 0; i < DEFAULT_CHUNK_CAPACITY; i++) {
+          const row = chunk.chunk_index * DEFAULT_CHUNK_CAPACITY + i;
+          const d = dense_map[row];
+          const byte_off = d * this.byte_stride;
+          const src_off = byte_off / elem_bytes;
+          target_view[i] = raw_elements[src_off];
         }
       }
-      return; // Handled by accessor
-    }
-
-    // --- Handling for fragment-specific buffers (individual fields) ---
-    if (!this.fragment_class_ref || !this.config_key_within_fragment) {
-      warn(
-        `FragmentGpuBuffer ${this.name}: No fragment_class_ref/config_key. Direct chunk SAB write not possible. Sync aborted. Data remains in CPU readback buffer ${cpu_buf.config.name}.`
-      );
       return;
     }
 
+    // 2b) Individual field buffers
     const fragment_id = this.fragment_class_ref.id;
-    const field_or_buffer_key = this.config_key_within_fragment;
-    const fragment_class = this.fragment_class_ref;
-
-    const field_spec = fragment_class.fields[field_or_buffer_key];
-    const is_individual_field_buffer =
-      field_spec &&
-      field_spec.gpu_buffer &&
-      (!fragment_class.gpu_buffers || !fragment_class.gpu_buffers[field_or_buffer_key]);
-
-    if (!is_individual_field_buffer) {
-      warn(
-        `FragmentGpuBuffer ${this.name} (key: ${field_or_buffer_key}) is not an individual field buffer. Direct chunk SAB write not feasible (e.g., it's a combined buffer). Sync aborted. Data remains in CPU readback buffer ${cpu_buf.config.name}.`
-      );
-      return;
-    }
-
-    // Proceed with direct SAB write for an individual field buffer
+    const field_key = this.config_key_within_fragment;
+    const spec = this.fragment_class_ref.fields[field_key];
     for (const chunk of Chunk.all_chunks) {
       if (!chunk) continue;
-
-      const fragment_views_for_chunk = chunk.fragment_views[fragment_id];
-      if (!fragment_views_for_chunk) continue;
-
-      const target_view = fragment_views_for_chunk[field_or_buffer_key];
-      if (
-        !target_view ||
-        target_view.buffer !== chunk.buffer ||
-        target_view.constructor !== field_spec.ctor
-      ) {
-        warn(
-          `Target view issue for ${Name.string(fragment_id)}.${field_or_buffer_key} in chunk ${chunk.chunk_index}. Skipping direct SAB sync for this chunk.`
-        );
-        continue;
-      }
-
-      const ctor = target_view.constructor;
-      const element_size_bytes = ctor.BYTES_PER_ELEMENT;
-      if (!element_size_bytes || element_size_bytes <= 0) {
-        error(
-          `Invalid element_size_bytes for target view ${Name.string(fragment_id)}.${field_or_buffer_key} in chunk ${chunk.chunk_index}.`
-        );
-        continue;
-      }
-
-      const source_byte_offset = chunk.chunk_index * DEFAULT_CHUNK_CAPACITY * this.byte_stride;
-      const bytes_to_copy_for_chunk = DEFAULT_CHUNK_CAPACITY * this.byte_stride;
-
-      if (target_view.byteLength !== bytes_to_copy_for_chunk) {
-        warn(
-          `Byte length mismatch for ${this.name} field ${field_or_buffer_key} in chunk ${chunk.chunk_index}. TargetSABView: ${target_view.byteLength}, CalcFromGPUSource: ${bytes_to_copy_for_chunk}. Skipping.`
-        );
-        continue;
-      }
-
-      if (source_byte_offset + bytes_to_copy_for_chunk > cpu_buf.config.size) {
-        warn(
-          `Bounds check fail for ${this.name} field ${field_or_buffer_key} in chunk ${chunk.chunk_index}. Required: ${source_byte_offset + bytes_to_copy_for_chunk}, CPU buf size: ${cpu_buf.config.size}. Skipping.`
-        );
-        continue;
-      }
-
-      if (bytes_to_copy_for_chunk % element_size_bytes !== 0) {
-        warn(
-          `Cannot sync ${this.name} to chunk ${chunk.chunk_index} SAB: total bytes ${bytes_to_copy_for_chunk} not multiple of element size ${element_size_bytes}. Skipping.`
-        );
-        continue;
-      }
-
-      const num_elements_to_copy = bytes_to_copy_for_chunk / element_size_bytes;
-      const source_element_offset = source_byte_offset / element_size_bytes;
-
-      if (target_view.length !== num_elements_to_copy) {
-        warn(
-          `Logic error: Element count mismatch for ${this.name} field ${field_or_buffer_key} in chunk ${chunk.chunk_index}. TargetViewElements: ${target_view.length}, CalculatedElements: ${num_elements_to_copy}. Skipping.`
-        );
-        continue;
-      }
-
-      try {
-        await cpu_buf.read(target_view, num_elements_to_copy, source_element_offset);
-      } catch (e) {
-        error(
-          `Error reading field ${field_or_buffer_key} for chunk ${chunk.chunk_index} from ${this.name}: ${e}`
-        );
+      const frag_views = chunk.fragment_views[fragment_id];
+      if (!frag_views) continue;
+      const target_view = frag_views[field_key];
+      if (!target_view) continue;
+      const elem_bytes = target_view.BYTES_PER_ELEMENT;
+      const elems_per_row = spec.elements;
+      for (let i = 0; i < DEFAULT_CHUNK_CAPACITY; i++) {
+        const row = chunk.chunk_index * DEFAULT_CHUNK_CAPACITY + i;
+        const d = dense_map[row];
+        const byte_off = d * this.byte_stride;
+        const src_off = byte_off / elem_bytes;
+        for (let e = 0; e < elems_per_row; e++) {
+          target_view[i * elems_per_row + e] = raw_elements[src_off + e];
+        }
       }
     }
   }
@@ -557,6 +442,29 @@ export class FragmentGpuBuffer {
         });
       }
     }
+
+    if (this.global_binding) {
+      Renderer.get().refresh_global_shader_bindings();
+    }
+  }
+
+  /**
+   * Initialize the entity index map buffer.
+   */
+  static init_entity_compaction_index_map() {
+    // Create as a FragmentGpuBuffer so we get .cpu_buffers for readback
+    this.entity_index_map_buffer = new FragmentGpuBuffer(
+      index_map_buffer_name, // name
+      this.initial_max_rows, // max_rows
+      4, // 4 bytes per row (Uint32)
+      0 , // cpu_buffer_count
+      true, // dispatch
+      GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC,
+      null, // fragment_class_ref
+      null, // config_key_within_fragment
+      null, // sync_target_accessor
+      true // global_binding
+    );
   }
 
   /**
@@ -566,13 +474,11 @@ export class FragmentGpuBuffer {
    *
    * @param {Array<typeof import('../fragment.js').Fragment>} fragment_classes - Array of fragment classes.
    * @param {object} [options={}] - Options for buffer creation.
-   * @param {number} [options.initial_max_rows=1024] - Initial capacity in rows for new buffers.
-   * @param {number} [options.cpu_buffer_count=0] - Number of CPU readback buffers.
    * @param {boolean} [options.dispatch=true] - Whether to dispatch global events.
    */
   static #processed_fields_init = new Set();
   static init_gpu_buffers(fragment_classes, options = {}) {
-    const { initial_max_rows = 1024, cpu_buffer_count = 0, dispatch = true } = options;
+    const { dispatch = true } = options;
 
     for (let i = 0; i < fragment_classes.length; i++) {
       const fragment_class = fragment_classes[i];
@@ -627,17 +533,16 @@ export class FragmentGpuBuffer {
             buffer_config.stride > 0 &&
             ((fields_in_buffer.length > 0 && !has_valid_gpu_data) || has_valid_gpu_data);
 
-          // use offline‐computed stride
+          // use offline-computed stride
           if (valid_buffer) {
             const actual_gpu_buffer_key = buffer_config.buffer_name;
             fragment_class.field_key_map.set(buffer_key, actual_gpu_buffer_key);
 
-            const use_cpu_buffer = buffer_config.cpu_readback;
             const flat_buf = new FragmentGpuBuffer(
               actual_gpu_buffer_key,
-              initial_max_rows,
+              FragmentGpuBuffer.initial_max_rows,
               buffer_config.stride,
-              use_cpu_buffer ? MAX_BUFFERED_FRAMES : 0,
+              buffer_config.cpu_readback ? MAX_BUFFERED_FRAMES : 0,
               dispatch,
               buffer_config.usage,
               fragment_class,
@@ -648,8 +553,6 @@ export class FragmentGpuBuffer {
               buffer: flat_buf,
               stride: buffer_config.stride,
             });
-
-            this.all_buffers.push(flat_buf);
           } else {
             warn(
               `Combined buffer '${buffer_key}' for fragment '${Name.string(frag_id)}' resulted in zero stride or no valid fields. Skipping.`
@@ -688,12 +591,11 @@ export class FragmentGpuBuffer {
         const actual_gpu_buffer_key = field_spec.buffer_name;
         fragment_class.field_key_map.set(field_name, actual_gpu_buffer_key);
 
-        const use_cpu_buffer = field_spec.cpu_readback;
         const flat_buf = new FragmentGpuBuffer(
           actual_gpu_buffer_key,
-          initial_max_rows,
+          FragmentGpuBuffer.initial_max_rows,
           byte_stride,
-          use_cpu_buffer ? MAX_BUFFERED_FRAMES : 0,
+          field_spec.cpu_readback ? MAX_BUFFERED_FRAMES : 0,
           dispatch,
           field_spec.usage,
           fragment_class,
@@ -704,27 +606,22 @@ export class FragmentGpuBuffer {
           buffer: flat_buf,
           stride: byte_stride,
         });
-
-        this.all_buffers.push(flat_buf);
       }
     }
 
-    {
+    if (this.entity_flags_buffer === null) {
       // Initialize global GPU buffer for entity flags
-      const entity_flags_buf = new FragmentGpuBuffer(
-        "entity_flags", // name
-        initial_max_rows, // max rows
+      this.entity_flags_buffer = new FragmentGpuBuffer(
+        entity_flags_buffer_name, // name
+        FragmentGpuBuffer.initial_max_rows, // max rows
         4, // 4 bytes per row (Uint32 flags)
-        MAX_BUFFERED_FRAMES, // CPU‐readback count
+        MAX_BUFFERED_FRAMES, // CPU-readback count
         dispatch, // dispatch events?
         GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC,
         null, // fragment_class_ref
         null, // config_key_within_fragment
         (chunk) => chunk.flags_meta // sync_target_accessor for entity_flags
       );
-      this.entity_flags_buffer = entity_flags_buf;
-
-      this.all_buffers.push(entity_flags_buf);
 
       Renderer.get().mark_bind_groups_dirty(true);
     }
@@ -732,178 +629,73 @@ export class FragmentGpuBuffer {
 
   /**
    * Flush all fragment SSBOs.
-   * - If compaction is OFF: sparse‐by‐chunk updates as before.
-   * - If compaction is ON: build a global row→dense_index table and
-   *   repack *every* buffer tightly by that index.
+   * - Build a global row→dense_index table and repack *every* buffer tightly by that index.
    */
   static async flush_gpu_buffers(allocator) {
     if (Chunk.dirty.size === 0) return;
 
-    // 1) COMPACTED PATH
-    if (this.enable_entity_compaction) {
-      // build row→dense_index map
-      const row_map = allocator.row_to_entity_id;
-      const total_rows = row_map.size;
-      const dense_map = new Uint32Array(total_rows);
+    // build row→dense_index map
+    const total_rows = Chunk.max_allocated_row();
+    const dense_map = (FragmentGpuBuffer.cpu_dense_map = new Uint32Array(total_rows));
+    const row_map = allocator.row_to_entity_id;
+    let next_dense = 0;
+    for (let r = 0; r < total_rows; r++) {
+      dense_map[r] = row_map.get(r) !== undefined ? next_dense++ : 0xffffffff;
+    }
+    // upload the lookup SSBO
+    this.entity_index_map_buffer.update_chunk(0, dense_map, total_rows);
 
-      let next_dense = 0;
-      for (let r = 0; r < total_rows; r++) {
-        dense_map[r] = row_map.get(r) !== 0 ? next_dense++ : 0xffffffff;
+    // instead of full repack, only update those chunks that were dirtied —
+    for (const chunk of Chunk.dirty) {
+      const chunk_base = dense_map[chunk.chunk_index * DEFAULT_CHUNK_CAPACITY];
+      if (chunk_base === 0xffffffff) continue;
+      
+      // pack & upload entity flags
+      const flags_packed = new Uint32Array(DEFAULT_CHUNK_CAPACITY);
+      let packed_size = 0;
+      for (let local_index = 0; local_index < DEFAULT_CHUNK_CAPACITY; local_index++) {
+        const row = chunk.chunk_index * DEFAULT_CHUNK_CAPACITY + local_index;
+        const di = dense_map[row];
+        if (di === 0xffffffff) continue;
+        flags_packed[packed_size++] = chunk.flags_meta[local_index];
       }
 
-      // upload the lookup SSBO
-      const byte_len = dense_map.byteLength;
-      if (!this.entity_index_map_buffer || this.entity_index_map_buffer.config.size < byte_len) {
-        this.entity_index_map_buffer = Buffer.create({
-          name: "entity_index_map",
-          raw_data: dense_map.buffer,
-          usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-          force: true,
-        });
-      } else {
-        this.entity_index_map_buffer.write_raw(dense_map.buffer);
-      }
+      this.entity_flags_buffer.update_chunk(chunk_base, flags_packed, packed_size);
 
-      // pack & upload entity flags for compacted path
-      const flags_packed = new Uint16Array(next_dense);
-      for (let row = 0; row < total_rows; row++) {
-        const dense_index = dense_map[row];
-        if (dense_index === 0xffffffff) continue;
-        const chunk_index = row >> LOCAL_SLOT_BITS;
-        const local_index = row & LOCAL_SLOT_MASK;
-        const chunk = Chunk.all_chunks[chunk_index];
-        if (!chunk) continue;
-        flags_packed[dense_index] = chunk.flags_meta[local_index];
-      }
-      this.entity_flags_buffer.update_chunk(0, flags_packed, next_dense);
+      // 1) combined buffers on this chunk
+      for (let i = 0; i < chunk.fragments.length; i++) {
+        const fragment = chunk.fragments[i];
+        if (!fragment) continue;
 
-      // Collect all unique fragments from dirty chunks
-      const fragment_types_set = new Set();
-      for (const chunk of Chunk.dirty) {
-        for (const fragment of Object.values(chunk.fragments)) {
-          if (fragment) {
-            fragment_types_set.add(fragment);
-          }
-        }
-      }
-      const fragment_types = Array.from(fragment_types_set);
-
-      // repack each fragment buffer
-      // (we do *all* rows for every frag, because compaction means we want a brand-new, tight array)
-      const packed_count = next_dense;
-      for (let i = 0; i < fragment_types.length; i++) {
-        const frag_cls = fragment_types[i];
-
-        const buffer_data = frag_cls.buffer_data;
-        for (let j = 0; j < buffer_data.length; j++) {
-          const [buffer_key, buf_info] = buffer_data[j];
-
-          const gpu_buf = buf_info.buffer;
-          const stride = buf_info.stride;
-          const packed = new Uint8Array(packed_count * stride);
-
-          // scatter-pack each live row
-          for (let row = 0; row < total_rows; row++) {
-            const dense_index = dense_map[row];
-            if (dense_index === 0xffffffff) continue; // skip dead rows
-
-            // decode chunk & local slot from the 28-bit row field
-            const chunk_index = row >> LOCAL_SLOT_BITS;
-            const local_index = row & LOCAL_SLOT_MASK;
-
-            // lookup chunk by index (you must maintain this map elsewhere)
-            const chunk = Chunk.all_chunks[chunk_index];
-            if (!chunk) continue;
-
-            // get the per-chunk packed data (Uint8Array) for this buffer
-            const chunk_packed = frag_cls.gpu_buffers?.[buffer_key]
-              ? this._pack_combined_chunk_data(chunk, frag_cls, buffer_key).packed_data
-              : this._pack_chunk_field_data(chunk, frag_cls.id, buffer_key).packed_data;
-
-            // copy just that one row into 'packed'
-            const src_off = local_index * stride;
-            const dst_off = dense_index * stride;
-            packed.set(chunk_packed.subarray(src_off, src_off + stride), dst_off);
-          }
-
-          // write the fully-packed block back
-          gpu_buf.buffer.write_raw(packed.buffer, 0, packed.byteLength, 0);
-        }
-      }
-    } else {
-      // 2) SPARSE PATH
-      for (const chunk of Chunk.dirty) {
-        const chunk_base = chunk.chunk_index * DEFAULT_CHUNK_CAPACITY;
-
-        for (let i = 0; i < chunk.fragments.length; i++) {
-          const fragment = chunk.fragments[i];
-          if (!fragment) continue;
-
-          // 1) combined buffers
-          if (fragment.gpu_buffers) {
-            const gpu_buffers = Object.entries(fragment.gpu_buffers);
-            for (let j = 0; j < gpu_buffers.length; j++) {
-              const [buffer_key, cfg] = gpu_buffers[j];
-
-              const combined_buf_data = fragment.buffer_data.get(cfg.buffer_name);
-              const packed =
-                typeof cfg.gpu_data === "function"
-                  ? cfg.gpu_data.call(this, chunk, fragment)
-                  : this._pack_combined_chunk_data(chunk, fragment, buffer_key);
-              if (packed?.packed_data.byteLength) {
-                combined_buf_data.buffer.update_chunk(
-                  chunk_base,
-                  packed.packed_data,
-                  packed.row_count
-                );
-              }
-            }
-          }
-
-          // 2) individual field buffers
-          const fields = Object.entries(fragment.fields);
-          for (let j = 0; j < fields.length; j++) {
-            const [field_name, spec] = fields[j];
-            if (!spec.gpu_buffer) continue;
-
-            const field_buf_data = fragment.buffer_data.get(spec.buffer_name);
-            const packed = this._pack_chunk_field_data(chunk, fragment.id, field_name);
+        if (fragment.gpu_buffers) {
+          for (const [buffer_key, cfg] of Object.entries(fragment.gpu_buffers)) {
+            const buf_data = fragment.buffer_data.get(cfg.buffer_name);
+            // either custom combined pack or field-wise pack
+            const packed =
+              typeof cfg.gpu_data === "function"
+                ? cfg.gpu_data.call(this, chunk, fragment)
+                : this._pack_combined_chunk_data(chunk, fragment, buffer_key);
             if (packed?.packed_data.byteLength) {
-              field_buf_data.buffer.update_chunk(chunk_base, packed.packed_data, packed.row_count);
+              buf_data.buffer.update_chunk(chunk_base, packed.packed_data, packed.row_count);
             }
           }
         }
 
-        // update entity flags in sparse path
-        this.entity_flags_buffer.update_chunk(chunk_base, chunk.flags_meta, DEFAULT_CHUNK_CAPACITY);
+        // 2) individual field buffers
+        for (const [field_name, spec] of Object.entries(fragment.fields)) {
+          if (!spec.gpu_buffer) continue;
+          const buf_data = fragment.buffer_data.get(spec.buffer_name);
+          const packed = this._pack_chunk_field_data(chunk, fragment.id, field_name);
+          if (packed?.packed_data.byteLength) {
+            buf_data.buffer.update_chunk(chunk_base, packed.packed_data, packed.row_count);
+          }
+        }
       }
+
+      chunk.clear_dirty();
     }
 
     Renderer.get().mark_bind_groups_dirty(true);
-  }
-
-  /**
-   * Enable or disable entity compaction.
-   * @param {boolean} flag - True to enable, false to disable.
-   */
-  static set_entity_compaction_enabled(flag) {
-    this.enable_entity_compaction = !!flag;
-  }
-
-  /**
-   * Check if entity compaction is enabled.
-   * @returns {boolean} True if enabled, false otherwise.
-   */
-  static is_entity_compaction_enabled() {
-    return this.enable_entity_compaction;
-  }
-
-  /**
-   * Returns the GPU buffer containing row->compact_index lookup, or null.
-   * @returns {GPUBuffer | null} The entity index map buffer, or null if not enabled.
-   */
-  static get_entity_index_map_buffer() {
-    return this.entity_index_map_buffer;
   }
 
   /**
@@ -970,10 +762,23 @@ export class FragmentGpuBuffer {
     if (!field_view) {
       return null;
     }
-    // The row count corresponds to the chunk's total capacity, as the view covers the whole chunk allocation
-    const row_count = DEFAULT_CHUNK_CAPACITY;
-    // Return the existing TypedArray view directly - it's already in the correct type
-    return { packed_data: field_view, row_count: row_count };
+    // Pack the field data based on dense mapping to avoid stale holes
+    const row_capacity = DEFAULT_CHUNK_CAPACITY;
+    const total_elements = field_view.length;
+    const elements_per_row = total_elements / row_capacity;
+    const packed_buffer = new field_view.constructor(total_elements);
+    const dense_map = FragmentGpuBuffer.cpu_dense_map;
+    let packed_index = 0;
+    for (let local_index = 0; local_index < row_capacity; local_index++) {
+      const row = chunk.chunk_index * row_capacity + local_index;
+      if (dense_map[row] === 0xffffffff) continue;
+      const src_start = local_index * elements_per_row;
+      const src_end = src_start + elements_per_row;
+      const dest_offset = packed_index * elements_per_row;
+      packed_buffer.set(field_view.subarray(src_start, src_end), dest_offset);
+      packed_index++;
+    }
+    return { packed_data: packed_buffer, row_count: packed_index };
   }
 
   /**
@@ -1038,20 +843,24 @@ export class FragmentGpuBuffer {
     const total_elements = row_count * num_buffer_elements;
     const packed_buffer = new first_field.ctor(total_elements);
 
-    // Iterate rows and pack
-    for (let row = 0; row < row_count; row++) {
-      const dest_row_base_offset = row * num_buffer_elements;
-      for (let i = 0; i < field_details.length; i++) {
-        const field_detail = field_details[i];
-        const field_start = row * field_detail.element_size;
-        const field_end = field_start + field_detail.element_size;
+    // Iterate rows and pack based on dense mapping to avoid stale holes
+    const dense_map = FragmentGpuBuffer.cpu_dense_map;
+    let packed_index = 0;
+    for (let local_index = 0; local_index < row_count; local_index++) {
+      const row = chunk.chunk_index * row_count + local_index;
+      if (dense_map[row] === 0xffffffff) continue;
+      const dest_row_base_offset = packed_index * num_buffer_elements;
+      for (let j = 0; j < field_details.length; j++) {
+        const field_detail = field_details[j];
+        const src_start = local_index * field_detail.element_size;
+        const src_end = src_start + field_detail.element_size;
         const dest_offset = dest_row_base_offset + field_detail.offset_in_stride;
-        // Copy the data using the appropriate TypedArray type
-        packed_buffer.set(field_detail.view.subarray(field_start, field_end), dest_offset);
+        packed_buffer.set(field_detail.view.subarray(src_start, src_end), dest_offset);
       }
+      packed_index++;
     }
 
-    return { packed_data: packed_buffer, row_count: row_count };
+    return { packed_data: packed_buffer, row_count: packed_index };
   }
 }
 

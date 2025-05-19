@@ -352,6 +352,8 @@
           "g_buffer_DefaultTextMaterial_2142317564",
           "g_buffer_StandardMaterial_2942380665",
           "transparency_composite",
+          "line_transform_processing",
+          "line_renderer_pass",
           "reduce_hzb_0",
           "reduce_hzb_1",
           "reduce_hzb_2",
@@ -362,7 +364,6 @@
           "reduce_hzb_7",
           "reduce_hzb_8",
           "reduce_hzb_9",
-          "reduce_hzb_10",
           "compact_lights",
           "lighting_pass",
           "bloom_downsample_pass_0",
@@ -377,7 +378,8 @@
           "reset_g_buffer_targets",
           "clear_dirty_flags",
           "copy_aabb_data_to_buffer",
-          "copy_gpu_to_cpu_buffers"
+          "copy_gpu_to_cpu_buffers",
+          "reduce_hzb_10"
         ]
       },
       "custom": {

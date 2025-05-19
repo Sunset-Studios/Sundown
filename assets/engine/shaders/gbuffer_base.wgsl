@@ -15,9 +15,8 @@ struct VertexOutput {
     @location(6) tangent: vec4<precision_float>,
     @location(7) bitangent: vec4<precision_float>,
     @location(8) @interpolate(flat) instance_index: u32,
-    @location(9) @interpolate(flat) base_instance_id: u32,
-    @location(10) @interpolate(flat) instance_id: u32,
-    @location(11) @interpolate(flat) vertex_index: u32,
+    @location(9) @interpolate(flat) instance_id: u32,
+    @location(10) @interpolate(flat) vertex_index: u32,
 };
 
 struct FragmentOutput {
@@ -68,8 +67,7 @@ fn vertex(v_out: ptr<function, VertexOutput>) -> VertexOutput {
     @builtin(instance_index) ii: u32
 ) -> VertexOutput {
     let instance_vertex = vertex_buffer[vi];
-    let entity = compacted_object_instances[ii].entity;
-    let entity_resolved = get_entity_row(entity) + compacted_object_instances[ii].entity_instance;
+    let entity_resolved = get_entity_row(compacted_object_instances[ii].row);
 
     let entity_transform = entity_transforms[entity_resolved];
     let view_mat = view_buffer[0].view_matrix;
@@ -79,7 +77,6 @@ fn vertex(v_out: ptr<function, VertexOutput>) -> VertexOutput {
 
     output.uv = instance_vertex.uv;
     output.instance_index = ii;
-    output.base_instance_id = entity;
     output.instance_id = entity_resolved;
     output.vertex_index = vi;
     output.local_position = instance_vertex.position;
@@ -129,7 +126,7 @@ fn fragment(v_out: VertexOutput, f_out: ptr<function, FragmentOutput>) -> Fragme
     output.normal = vec4<precision_float>(v_out.normal.xyz, 1.0);
 
 #ifndef SKIP_ENTITY_WRITES
-    output.entity_id = vec2<u32>(v_out.base_instance_id, v_out.instance_id);
+    output.entity_id = vec2<u32>(v_out.instance_id, v_out.instance_id);
 #endif
 
     var post_material_output = fragment(v_out, &output);

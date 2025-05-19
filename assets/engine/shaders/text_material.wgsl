@@ -39,14 +39,11 @@ struct GlyphData {
 //     3       | (1,1)
 //------------------------------------------------------------------------------------
 fn vertex(v_out: ptr<function, VertexOutput>) -> VertexOutput {
-    let entity               = v_out.base_instance_id;
-    let entity_row           = get_entity_row(entity);
-    let local_instance_index = compacted_object_instances[v_out.instance_index].entity_instance;
+    let entity_row           = v_out.instance_id;
 
     // Find which character in the text we are drawing
     let string = string_data[entity_row];
-    let text_index = entity_row + local_instance_index;
-    let ch         = text[text_index];
+    let ch         = text[entity_row];
     let glyph_data = font_glyph_data[ch];
 
     // Use the provided UV coordinates for corner offset
@@ -81,7 +78,7 @@ fn vertex(v_out: ptr<function, VertexOutput>) -> VertexOutput {
 //------------------------------------------------------------------------------------
 fn fragment(v_out: VertexOutput, f_out: ptr<function, FragmentOutput>) -> FragmentOutput {
     // Sample the MSDF texture
-    let entity_row = get_entity_row(v_out.base_instance_id);
+    let entity_row = v_out.instance_id;
 
     let sample_color = vec4<precision_float>(textureSample(font_page_texture, global_sampler, vec2<f32>(v_out.uv)));
     let string_color = string_data[entity_row].text_color;

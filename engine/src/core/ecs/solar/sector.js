@@ -282,6 +282,12 @@ export class Sector {
     let new_segments_array = archetype.claim_segments(new_instance_count);
     const new_total_instances = new_instance_count;
 
+    // register the rest of the segments (allocator side-effect mapping)
+    for (let i = 1; i < new_segments_array.length; i++) {
+      const seg = new_segments_array[i];
+      this.alloc.map_entity_chunk(entity_id, seg.chunk, seg.slot, seg.count);
+    }
+
     let new_instance_offset = 0;
     for (let logical_index = 0; logical_index < new_total_instances; logical_index++) {
       const src_logical =

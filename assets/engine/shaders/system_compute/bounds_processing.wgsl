@@ -25,7 +25,11 @@ fn cs(@builtin(global_invocation_id) global_id: vec3<u32>) {
         return;
     }
 
-    let entity_id_offset = global_id.x;
+    let entity_id_offset = get_entity_row(global_id.x);
+    if ((entity_flags[entity_id_offset] & EF_DIRTY) == 0) {
+      return;
+    }
+
     let node_index = entity_aabb_node_indices[entity_id_offset];
 
     // Get the entity's world transform

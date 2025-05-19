@@ -23,9 +23,7 @@ struct VertexOutput {
     @builtin(instance_index) ii: u32
 ) -> VertexOutput {
     let instance_vertex = vertex_buffer[vi];
-    let entity     = compacted_object_instances[ii].entity;
-    let instance_i = compacted_object_instances[ii].entity_instance;
-    let entity_resolved = get_entity_row(entity) + instance_i;
+    let entity_resolved = get_entity_row(compacted_object_instances[ii].row);
     let transform         = entity_transforms[entity_resolved].transform;
     let view_proj_mat     = view_buffer[0].view_projection_matrix;
 

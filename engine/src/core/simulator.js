@@ -20,7 +20,7 @@ export class Simulator {
     InputProvider.setup();
     // Initialize meta system
     MetaSystem.setup();
-
+    
     // Initialize renderer with document canvas
     const canvas = document.getElementById(gpu_canvas_name);
     const canvas_ui = ui_canvas_name ? document.getElementById(ui_canvas_name) : null;
@@ -29,8 +29,8 @@ export class Simulator {
       use_precision_float: true,
     });
     
-    // Initialize entity manager fragment data
-    EntityManager.register_fragments(ALL_FRAGMENT_CLASSES);
+    // Initialize entity manager
+    EntityManager.setup(ALL_FRAGMENT_CLASSES);
 
     // Refresh global shader bindings
     Renderer.get().refresh_global_shader_bindings();

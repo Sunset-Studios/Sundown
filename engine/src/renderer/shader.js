@@ -28,7 +28,6 @@ const else_string = "#else";
 const endif_string = "#endif";
 const precision_float_string = "precision_float";
 const has_precision_float_string = "HAS_PRECISION_FLOAT";
-const entity_compaction_string = "ENTITY_COMPACTION";
 
 const f16_type_string = "f16";
 const f32_type_string = "f32";
@@ -157,7 +156,6 @@ export class Shader {
       ? f16_type_string
       : f32_type_string;
     defines_map[has_precision_float_string] = Renderer.get().has_f16;
-    defines_map[entity_compaction_string] = EntityManager.is_entity_compaction_enabled();
     return { defines_map, stripped_code };
   }
 
