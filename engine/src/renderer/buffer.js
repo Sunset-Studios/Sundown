@@ -3,7 +3,6 @@ import { Renderer } from "./renderer.js";
 import { ResourceCache } from "./resource_cache.js";
 import { CacheTypes } from "./renderer_types.js";
 import { global_dispatcher } from "../core/dispatcher.js";
-import { profile_scope } from "../utility/performance.js";
 
 const process_syncs_profile_key = "BufferSync.process_syncs";
 
@@ -89,8 +88,8 @@ export class Buffer {
     await this.buffer.mapAsync(GPUMapMode.READ);
     if (this.buffer) {
       // Buffer could have been destroyed while waiting for the map
-      const buffer_data = new data_type(this.buffer.getMappedRange());
-      data.set(buffer_data.subarray(offset, offset + data_length), data_offset);
+      const mapped_range = this.buffer.getMappedRange(offset, data_length);
+      data.set(mapped_range, data_offset);
       this.buffer.unmap();
     }
   }
@@ -151,10 +150,6 @@ export class BufferSync {
   }
 
   static async process_syncs() {
-    profile_scope(process_syncs_profile_key, this._process_syncs_internal);
-  }
-
-  static async _process_syncs_internal() {
     try {
       for (const target of BufferSync.sync_targets) {
         await target.sync_buffers();

@@ -1,7 +1,6 @@
 import { MAX_BUFFERED_FRAMES } from "../core/minimal.js";
 import { Renderer } from "../renderer/renderer.js";
 import { Buffer, BufferSync } from "../renderer/buffer.js";
-import { TransformFragment } from "../core/ecs/fragments/transform_fragment.js";
 import { global_dispatcher } from "../core/dispatcher.js";
 import { RingBufferAllocator } from "../memory/allocator.js";
 import { TypedQueue, TypedStack } from "../memory/container.js";
@@ -9,7 +8,6 @@ import { TypedQueue, TypedStack } from "../memory/container.js";
 // Buffer names for GPU access
 const AABB_TREE_NODES_BUFFER_NAME = "aabb_tree_nodes_buffer";
 const AABB_TREE_NODES_BOUNDS_BUFFER_NAME = "aabb_tree_nodes_bounds_buffer";
-const AABB_TREE_NODES_CPU_BOUNDS_BUFFER_NAME = "aabb_tree_nodes_cpu_bounds_buffer";
 
 // Events for notifying systems about buffer updates
 const AABB_TREE_NODES_EVENT = "aabb_tree_nodes";
@@ -204,6 +202,11 @@ export class AABB {
   static node_bounds_cpu_buffer = Array(MAX_BUFFERED_FRAMES).fill(null);
 
   static modified = true;
+
+  // Maximum number of bytes to read back per frame
+  static sync_max_bytes_per_frame = 1024;
+  // Current byte offset into the node_bounds buffer
+  static sync_read_byte_offset = Array(MAX_BUFFERED_FRAMES).fill(0);
 
   /**
    * Initialize the AABB tree
@@ -511,21 +514,29 @@ export class AABB {
   }
 
   /**
-   * Sync the AABB tree buffers
+   * Sync the AABB tree buffers (throttled)
    */
   static async sync_buffers() {
     const buffered_frame = Renderer.get().get_buffered_frame_number();
-    // Only do readbacks if the buffer is ready and not being modified
-    if (this.node_bounds_cpu_buffer[buffered_frame]?.buffer.mapState === unmapped_state) {
-      // Do the readback
-      await this.node_bounds_cpu_buffer[buffered_frame].read(
-        this.node_bounds,
-        this.node_bounds.byteLength,
-        0,
-        0,
-        Float32Array
-      );
+    const cpu_buffer = this.node_bounds_cpu_buffer[buffered_frame];
+    if (!cpu_buffer || cpu_buffer.buffer.mapState !== unmapped_state) {
+      return;
     }
+
+    // Perform a single throttled chunk read
+    const total_bytes = cpu_buffer.config.size;
+    const byte_offset = this.sync_read_byte_offset[buffered_frame];
+    const element_offset = byte_offset / Float32Array.BYTES_PER_ELEMENT;
+    const read_bytes = Math.min(this.sync_max_bytes_per_frame, total_bytes - byte_offset);
+
+    await cpu_buffer.read(
+      this.node_bounds,
+      read_bytes,
+      byte_offset,
+      element_offset,
+    );
+
+    this.sync_read_byte_offset[buffered_frame] = (byte_offset + read_bytes) % total_bytes;
   }
 
   static async on_post_render() {
@@ -550,20 +561,6 @@ export class AABB {
     const depth = max_point[2] - min_point[2];
 
     return 2.0 * (width * height + width * depth + height * depth);
-  }
-
-  /**
-   * Calculate the volume of an AABB
-   * @param {Array<number>} min_point - The minimum point of the AABB
-   * @param {Array<number>} max_point - The maximum point of the AABB
-   * @returns {number} - The volume of the AABB
-   */
-  static calculate_aabb_volume(min_point, max_point) {
-    const width = max_point[0] - min_point[0];
-    const height = max_point[1] - min_point[1];
-    const depth = max_point[2] - min_point[2];
-
-    return width * height * depth;
   }
 
   /**
@@ -609,71 +606,5 @@ export class AABB {
       min: [min_point[0] - margin_x, min_point[1] - margin_y, min_point[2] - margin_z],
       max: [max_point[0] + margin_x, max_point[1] + margin_y, max_point[2] + margin_z],
     };
-  }
-
-  /**
-   * Compute the bounds of an entity
-   * @param {bigint} entity - The entity to compute bounds for
-   * @returns {Object} - The entity's bounds with min and max properties
-   */
-  static #bounds = { min: [0, 0, 0], max: [0, 0, 0] };
-  static compute_entity_bounds(entity, instance_index, bounds_padding = 0.0) {
-    // Get the entity's world transform
-    const position = TransformFragment.get_world_position(entity, instance_index);
-    const scale = TransformFragment.get_world_scale(entity, instance_index);
-
-    // Calculate bounds based on position and scale
-    // This is a simple axis-aligned box, but could be more sophisticated
-    // based on the entity's mesh or collider
-    const half_size = [
-      Math.abs(scale[0]) * 0.5,
-      Math.abs(scale[1]) * 0.5,
-      Math.abs(scale[2]) * 0.5,
-    ];
-
-    // Add padding
-    const padding = [
-      half_size[0] * bounds_padding,
-      half_size[1] * bounds_padding,
-      half_size[2] * bounds_padding,
-    ];
-
-    this.#bounds.min = [
-      position[0] - half_size[0] - padding[0],
-      position[1] - half_size[1] - padding[1],
-      position[2] - half_size[2] - padding[2],
-    ];
-
-    this.#bounds.max = [
-      position[0] + half_size[0] + padding[0],
-      position[1] + half_size[1] + padding[1],
-      position[2] + half_size[2] + padding[2],
-    ];
-
-    return this.#bounds;
-  }
-
-  /**
-   * Calculate the cost of combining two AABBs
-   * @param {Array<number>} node_min_point - The min point of the node AABB
-   * @param {Array<number>} node_max_point - The max point of the node AABB
-   * @param {Array<number>} other_min_point - The min point of the other AABB
-   * @param {Array<number>} other_max_point - The max point of the other AABB
-   * @returns {number} - The cost of combining the AABBs
-   */
-  static calculate_combination_cost(
-    node_min_point,
-    node_max_point,
-    other_min_point,
-    other_max_point
-  ) {
-    const combined = AABB.merge_aabbs(
-      node_min_point,
-      node_max_point,
-      other_min_point,
-      other_max_point
-    );
-
-    return AABB.calculate_aabb_surface_area(combined.min, combined.max);
   }
 }

@@ -281,6 +281,9 @@ export class FragmentGpuBuffer {
       }
     }
 
+    // track exact buffer segments (chunk + row range) needing CPU sync
+    this.pending_sync_segments = [];
+
     FragmentGpuBuffer.all_buffers.push(this);
   }
 
@@ -290,7 +293,7 @@ export class FragmentGpuBuffer {
    * @param {ArrayBufferView} packed_chunk_data - A TypedArray (e.g., Uint8Array) containing the packed data for all rows of this fragment type within the chunk.
    * @param {number} row_count - The number of rows included in packed_chunk_data.
    */
-  update_chunk(base_row, packed_chunk_data, row_count) {
+  update_chunk(base_row, packed_chunk_data, row_count, chunk_for_sync = null) {
     if (!packed_chunk_data) return;
 
     const byte_offset = base_row * this.byte_stride;
@@ -321,6 +324,11 @@ export class FragmentGpuBuffer {
       byte_offset,       // Destination offset in GPU buffer (bytes)
       write_elements
     );
+
+    // record exactly which rows need CPU readback
+    if (chunk_for_sync && row_count > 0) {
+      this.pending_sync_segments.push({ chunk: chunk_for_sync, base_row, row_count });
+    }
   }
 
   /**
@@ -341,73 +349,76 @@ export class FragmentGpuBuffer {
    * Read back the CPU buffer for the given frame into 'array'.
    */
   async sync_buffers() {
+    // Return early if no CPU readbacks or no pending segments
     if (!this.cpu_buffer_count) return;
 
+    const segments = this.pending_sync_segments;
+    if (segments.length === 0) return;
+
+    // Map the entire CPU buffer once for reading
     const buffered_frame = Renderer.get().get_buffered_frame_number();
     const cpu_buf = this.cpu_buffers[buffered_frame % this.cpu_buffer_count];
-
     if (cpu_buf.buffer.mapState !== unmapped_state) return;
 
-    // pull back the raw data of this buffer using the correct element type
-    let raw_elements;
-    let data_type;
-    if (this.sync_target_accessor) {
-      // For entity index map or flags, use Uint32Array for 32-bit values
-      const element_count = cpu_buf.config.size / Uint32Array.BYTES_PER_ELEMENT;
-      raw_elements = new Uint32Array(element_count);
-      data_type = Uint32Array;
-    } else {
-      // For fragment field buffers, use the field's element constructor
-      const spec = this.fragment_class_ref.fields[this.config_key_within_fragment];
-      const ctor = spec.ctor;
-      const element_count = cpu_buf.config.size / ctor.BYTES_PER_ELEMENT;
-      raw_elements = new ctor(element_count);
-      data_type = ctor;
-    }
-    await cpu_buf.read(raw_elements, raw_elements.length, 0, 0, data_type);
+    const gpu_buffer = cpu_buf.buffer;
+    await gpu_buffer.mapAsync(GPUMapMode.READ);
+    const mapped_range = gpu_buffer.getMappedRange();
 
-    let dense_map = FragmentGpuBuffer.cpu_dense_map;
-
-    // 2a) If using sync_target_accessor (e.g. entity_flags)
     if (this.sync_target_accessor) {
-      for (const chunk of Chunk.all_chunks) {
-        if (!chunk) continue;
+      // Flags-buffer sync
+      for (const { chunk, base_row, row_count } of segments) {
+        const offset_bytes = base_row * this.byte_stride;
+        const slice = new Uint32Array(mapped_range, offset_bytes, row_count);
         const target_view = this.sync_target_accessor(chunk);
-        if (!target_view || !target_view.buffer) continue;
-        const elem_bytes = target_view.BYTES_PER_ELEMENT;
-        for (let i = 0; i < DEFAULT_CHUNK_CAPACITY; i++) {
-          const row = chunk.chunk_index * DEFAULT_CHUNK_CAPACITY + i;
-          const d = dense_map[row];
-          const byte_off = d * this.byte_stride;
-          const src_off = byte_off / elem_bytes;
-          target_view[i] = raw_elements[src_off];
+        if (!target_view) continue;
+
+        let packed_idx = 0;
+        const global_base = chunk.chunk_index * DEFAULT_CHUNK_CAPACITY;
+        const dense_map = FragmentGpuBuffer.cpu_dense_map;
+        for (let local = 0; local < DEFAULT_CHUNK_CAPACITY; local++) {
+          const global_row = global_base + local;
+          if (dense_map[global_row] === 0xffffffff) continue;
+          target_view[local] = slice[packed_idx++];
         }
       }
-      return;
+    } else {
+      // Individual-field buffer sync
+      const frag_id = this.fragment_class_ref.id;
+      const field_key = this.config_key_within_fragment;
+      const spec = this.fragment_class_ref.fields[field_key];
+      const elems_per_row = spec.elements;
+      const dense_map = FragmentGpuBuffer.cpu_dense_map;
+
+      for (const { chunk, base_row, row_count } of segments) {
+        const frag_views = chunk.fragment_views[frag_id];
+        if (!frag_views) continue;
+        const target_view = frag_views[field_key];
+        if (!target_view) continue;
+
+        const global_base = chunk.chunk_index * DEFAULT_CHUNK_CAPACITY + base_row;
+        if (dense_map[global_base] === 0xffffffff) continue;
+
+        const offset_bytes = dense_map[global_base] * this.byte_stride;
+        const element_count = (row_count * this.byte_stride) / spec.ctor.BYTES_PER_ELEMENT;
+        const slice = new spec.ctor(mapped_range, offset_bytes, element_count);
+
+        let packed_idx = 0;
+        for (let local = 0; local < DEFAULT_CHUNK_CAPACITY; local++) {
+          const global_row = chunk.chunk_index * DEFAULT_CHUNK_CAPACITY + local;
+          if (dense_map[global_row] === 0xffffffff) continue;
+          for (let e = 0; e < elems_per_row; e++) {
+            target_view[local * elems_per_row + e] =
+              slice[packed_idx * elems_per_row + e];
+          }
+          packed_idx++;
+        }
+      }
     }
 
-    // 2b) Individual field buffers
-    const fragment_id = this.fragment_class_ref.id;
-    const field_key = this.config_key_within_fragment;
-    const spec = this.fragment_class_ref.fields[field_key];
-    for (const chunk of Chunk.all_chunks) {
-      if (!chunk) continue;
-      const frag_views = chunk.fragment_views[fragment_id];
-      if (!frag_views) continue;
-      const target_view = frag_views[field_key];
-      if (!target_view) continue;
-      const elem_bytes = target_view.BYTES_PER_ELEMENT;
-      const elems_per_row = spec.elements;
-      for (let i = 0; i < DEFAULT_CHUNK_CAPACITY; i++) {
-        const row = chunk.chunk_index * DEFAULT_CHUNK_CAPACITY + i;
-        const d = dense_map[row];
-        const byte_off = d * this.byte_stride;
-        const src_off = byte_off / elem_bytes;
-        for (let e = 0; e < elems_per_row; e++) {
-          target_view[i * elems_per_row + e] = raw_elements[src_off + e];
-        }
-      }
-    }
+    // Unmap and clear segments
+    gpu_buffer.unmap();
+
+    segments.length = 0;
   }
 
   _resize_buffer(new_max_rows) {
@@ -634,7 +645,7 @@ export class FragmentGpuBuffer {
   static async flush_gpu_buffers(allocator) {
     if (Chunk.dirty.size === 0) return;
 
-    // build row→dense_index map
+    // Build row→dense_index map
     const total_rows = Chunk.max_allocated_row();
     const dense_map = (FragmentGpuBuffer.cpu_dense_map = new Uint32Array(total_rows));
     const row_map = allocator.row_to_entity_id;
@@ -642,15 +653,15 @@ export class FragmentGpuBuffer {
     for (let r = 0; r < total_rows; r++) {
       dense_map[r] = row_map.get(r) !== undefined ? next_dense++ : 0xffffffff;
     }
-    // upload the lookup SSBO
+    // Upload the lookup SSBO
     this.entity_index_map_buffer.update_chunk(0, dense_map, total_rows);
 
-    // instead of full repack, only update those chunks that were dirtied —
+    // Instead of full repack, only update those chunks that were dirtied
     for (const chunk of Chunk.dirty) {
       const chunk_base = dense_map[chunk.chunk_index * DEFAULT_CHUNK_CAPACITY];
       if (chunk_base === 0xffffffff) continue;
-      
-      // pack & upload entity flags
+
+      // Pack & upload entity flags
       const flags_packed = new Uint32Array(DEFAULT_CHUNK_CAPACITY);
       let packed_size = 0;
       for (let local_index = 0; local_index < DEFAULT_CHUNK_CAPACITY; local_index++) {
@@ -659,10 +670,14 @@ export class FragmentGpuBuffer {
         if (di === 0xffffffff) continue;
         flags_packed[packed_size++] = chunk.flags_meta[local_index];
       }
+      this.entity_flags_buffer.update_chunk(
+        chunk_base,
+        flags_packed,
+        packed_size,
+        chunk
+      );
 
-      this.entity_flags_buffer.update_chunk(chunk_base, flags_packed, packed_size);
-
-      // 1) combined buffers on this chunk
+      // 1) Combined buffers on this chunk
       for (let i = 0; i < chunk.fragments.length; i++) {
         const fragment = chunk.fragments[i];
         if (!fragment) continue;
@@ -670,24 +685,33 @@ export class FragmentGpuBuffer {
         if (fragment.gpu_buffers) {
           for (const [buffer_key, cfg] of Object.entries(fragment.gpu_buffers)) {
             const buf_data = fragment.buffer_data.get(cfg.buffer_name);
-            // either custom combined pack or field-wise pack
             const packed =
-              typeof cfg.gpu_data === "function"
+              typeof cfg.gpu_data === 'function'
                 ? cfg.gpu_data.call(this, chunk, fragment)
                 : this._pack_combined_chunk_data(chunk, fragment, buffer_key);
             if (packed?.packed_data.byteLength) {
-              buf_data.buffer.update_chunk(chunk_base, packed.packed_data, packed.row_count);
+              buf_data.buffer.update_chunk(
+                chunk_base,
+                packed.packed_data,
+                packed.row_count,
+                chunk
+              );
             }
           }
         }
 
-        // 2) individual field buffers
+        // 2) Individual field buffers
         for (const [field_name, spec] of Object.entries(fragment.fields)) {
           if (!spec.gpu_buffer) continue;
           const buf_data = fragment.buffer_data.get(spec.buffer_name);
           const packed = this._pack_chunk_field_data(chunk, fragment.id, field_name);
           if (packed?.packed_data.byteLength) {
-            buf_data.buffer.update_chunk(chunk_base, packed.packed_data, packed.row_count);
+            buf_data.buffer.update_chunk(
+              chunk_base,
+              packed.packed_data,
+              packed.row_count,
+              chunk
+            );
           }
         }
       }
