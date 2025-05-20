@@ -200,13 +200,11 @@ class MeshTask {
   mesh_id = null;
   entity = null;
   material_id = null;
-  instance_count = 1;
 
-  static init(task, mesh_id, entity, material_id = null, instance_count = 1) {
+  static init(task, mesh_id, entity, material_id = null) {
     task.mesh_id = mesh_id;
     task.entity = entity;
     task.material_id = material_id;
-    task.instance_count = instance_count;
   }
 }
 
@@ -220,6 +218,7 @@ export class MeshTaskQueue {
   static object_instance_allocator = new RandomAccessAllocator(256, ObjectInstanceEntry); // TODO: This can potentially use a TypedVector depending on how it's structured. May need to split the fields out.
   static needs_sort = false;
   static initialized = false;
+  static entity_task_map = new Map();   // new: Map<Entity, Map<"meshId:materialId", Task>>
 
   static mark_needs_sort() {
     this.needs_sort = true;
@@ -234,17 +233,39 @@ export class MeshTaskQueue {
     this.tasks_allocator.reset();
   }
 
-  static new_task(mesh_id, entity, material_id = null, instance_count = 1, resort = true) {
+  static _get_task_key(mesh_id, material_id) {
+    const a = mesh_id;            // assume already BigInt
+    const b = material_id ?? 0n;  // also BigInt
+    // Szudzik's pairing:
+    if (a >= b) {
+      return a * a + a + b;
+    } else {
+      return b * b + a;
+    }
+  }
+
+  static new_task(mesh_id, entity, material_id = null, resort = true) {
+    const key = this._get_task_key(mesh_id, material_id);
+    let tasks_for_entity = this.entity_task_map.get(entity);
+    if (tasks_for_entity?.has(key)) {
+      return tasks_for_entity.get(key);
+    }
+
+    // 2) otherwise allocate & enqueue a brand-new task
     const task = this.tasks_allocator.allocate();
-
-    MeshTask.init(task, mesh_id, entity, material_id, instance_count);
-
+    MeshTask.init(task, mesh_id, entity, material_id);
     this.tasks.push(task);
+
+    // 3) record it in our per-entity map
+    if (!tasks_for_entity) {
+      tasks_for_entity = new Map();
+      this.entity_task_map.set(entity, tasks_for_entity);
+    }
+    tasks_for_entity.set(key, task);
 
     if (resort) {
       this.needs_sort = true;
     }
-
     return task;
   }
 
@@ -292,7 +313,7 @@ export class MeshTaskQueue {
             batch.base_instance = last_batch
               ? last_batch.base_instance + last_batch.instance_count
               : 0;
-            batch.instance_count = task.instance_count;
+            batch.instance_count = task.entity.instance_count;
 
             batch.first_index = 0;
             batch.index_count = mesh.index_count;
@@ -307,9 +328,9 @@ export class MeshTaskQueue {
 
             this.batches.push(batch);
           } else {
-            last_batch.instance_count += task.instance_count;
+            last_batch.instance_count += task.entity.instance_count;
             const start_index = last_batch.entities.length;
-            const new_length = last_batch.entities.length + task.instance_count;
+            const new_length = last_batch.entities.length + task.entity.instance_count;
             last_batch.entities.length = new_length;
             last_batch.entities.fill(task.entity, start_index, new_length);
           }
@@ -369,30 +390,23 @@ export class MeshTaskQueue {
   }
 
   static remove(entity, resort = true) {
-    // Use a single-pass, in-place removal algorithm
-    let write_index = 0;
-    for (let read_index = 0; read_index < this.tasks.length; read_index++) {
-      if (this.tasks[read_index].entity !== entity) {
-        this.tasks[write_index] = this.tasks[read_index];
-        write_index++;
-      }
-    }
+    const tasks_for_entity = this.entity_task_map.get(entity);
+    if (!tasks_for_entity) return;
 
-    // Trim the array to the new size
-    if (write_index < this.tasks.length) {
-      this.tasks.length = write_index;
-    }
+    // keep only those tasks whose key is NOT in tasks_for_entity
+    this.tasks = this.tasks.filter(task => {
+      if (task.entity !== entity) return true;
+      const key = this._get_task_key(task.mesh_id, task.material_id);
+      return !tasks_for_entity.has(key);
+    });
 
-    // Reset the batches and object instances if there are no tasks left
+    this.entity_task_map.delete(entity);
     if (this.tasks.length === 0) {
       this.batches.length = 0;
       this.object_instances.length = 0;
       this.material_buckets.length = 0;
     }
-
-    if (resort) {
-      this.needs_sort = true;
-    }
+    this.needs_sort |= resort;
   }
 
   static get_object_instance_buffer() {
@@ -433,7 +447,7 @@ export class MeshTaskQueue {
         last_material = material;
       }
 
-      render_pass.pass.draw(mesh.vertex_count, task.instance_count, mesh.vertex_buffer_offset);
+      render_pass.pass.draw(mesh.vertex_count, task.entity.instance_count, mesh.vertex_buffer_offset);
     });
     if (should_reset) {
       this.reset();
@@ -464,7 +478,7 @@ export class MeshTaskQueue {
       );
       render_pass.pass.drawIndexed(
         mesh.index_count,
-        task.instance_count,
+        task.entity.instance_count,
         0,
         mesh.vertex_buffer_offset
       );

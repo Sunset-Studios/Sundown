@@ -782,15 +782,13 @@ export class AABBScene extends Scene {
 
     // Create a light and add it to the scene
     const light_entity = EntityManager.create_entity([LightFragment]);
-    this.entities.push(light_entity);
-
-    // Add a light fragment to the light entity
     const light_fragment_view = EntityManager.get_fragment(light_entity, LightFragment);
     light_fragment_view.type = LightType.DIRECTIONAL;
     light_fragment_view.color = [1, 1, 1];
     light_fragment_view.intensity = 3;
     light_fragment_view.position = [50, 20, 50];
     light_fragment_view.active = true;
+    this.entities.push(light_entity);
 
     // Get Exo-Medium font
     const font_id = Name.from("Exo-Medium");
@@ -866,7 +864,7 @@ export class AABBScene extends Scene {
 
   setup_entity_grid() {
     // Create a grid of entities for testing
-    const grid_size = 40;
+    const grid_size = 100;
     const spacing = 3.0;
 
     for (let x = 0; x < grid_size; x++) {
@@ -890,7 +888,11 @@ export class AABBScene extends Scene {
             quat.fromEuler(quat.create(), 0, 0, 0),
             scale,
             mesh,
-            this.default_material_id
+            this.default_material_id,
+            null,
+            [],
+            true,
+            EntityFlags.IGNORE_PARENT_SCALE | EntityFlags.NO_AABB_UPDATE
           );
 
           this.entities.push(entity);
@@ -1443,8 +1445,8 @@ export class VoxelTerrainScene extends Scene {
     this.cube_mesh = Mesh.cube();
 
     // Terrain parameters - Perlin-based fractal noise
-    const grid_width = 400;
-    const grid_depth = 400;
+    const grid_width = 200;
+    const grid_depth = 200;
     const block_size = 1.0;
     const base_frequency = 0.05;
     const height_scale = 20.0;
@@ -1655,9 +1657,9 @@ export class SceneSwitcher extends SimulationLayer {
   //await scene_switcher.add_scene(solar_ecs_scene);
   //await scene_switcher.add_scene(textures_scene);
   //await scene_switcher.add_scene(aabb_scene);
-  await scene_switcher.add_scene(rendering_scene);
+  //await scene_switcher.add_scene(rendering_scene);
   //await scene_switcher.add_scene(ml_scene);
-  //await scene_switcher.add_scene(voxel_terrain_scene);
+  await scene_switcher.add_scene(voxel_terrain_scene);
 
   await simulator.add_sim_layer(scene_switcher);
 

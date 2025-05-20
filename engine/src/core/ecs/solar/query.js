@@ -70,7 +70,7 @@ export class Query {
 
           while (slot_index < cap) {
             const cnt = counts[slot_index];
-            if (cnt > 0 && (flags[slot_index] & dirty_flag)) {
+            if (cnt > 0 && flags[slot_index] & dirty_flag) {
               cb(chunk, slot_index, cnt, archetype);
               slot_index += cnt;
             } else {
@@ -78,6 +78,25 @@ export class Query {
             }
           }
         }
+      }
+    }
+  }
+
+  for_each_chunk(callback) {
+    const cb = callback;
+    const archetypes = this.archetypes;
+    const archetype_count = archetypes.length;
+
+    for (let i = 0; i < archetype_count; i++) {
+      const archetype = archetypes[i];
+      const chunks = archetype.chunks;
+      const chunk_count = chunks.length;
+
+      for (let k = 0; k < chunk_count; k++) {
+        const chunk = chunks[k];
+        const flags = chunk.flags_meta;
+        const counts = chunk.icnt_meta;
+        cb(chunk, flags, counts, archetype);
       }
     }
   }

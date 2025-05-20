@@ -1,4 +1,5 @@
 import { EntityFlags } from "../minimal.js";
+import { DEFAULT_CHUNK_CAPACITY } from "../ecs/solar/types.js";
 import { SimulationLayer } from "../simulation_layer.js";
 import { EntityManager } from "../ecs/entity.js";
 import { StaticMeshFragment } from "../ecs/fragments/static_mesh_fragment.js";
@@ -26,7 +27,7 @@ export class StaticMeshProcessor extends SimulationLayer {
 
   _update_internal_iter(chunk, slot, instance_count, archetype) {
     const entity_flags = chunk.flags_meta[slot];
-    
+
     if ((entity_flags & EntityFlags.PENDING_DELETE) !== 0) {
       MeshTaskQueue.remove(EntityManager.get_entity_for(chunk, slot));
       return;
@@ -34,7 +35,7 @@ export class StaticMeshProcessor extends SimulationLayer {
 
     const static_meshes = chunk.get_fragment_view(StaticMeshFragment);
     const visibilities = chunk.get_fragment_view(VisibilityFragment);
-    
+
     const mesh_id = Number(static_meshes.mesh[slot]);
 
     const material_id = Number(
@@ -42,6 +43,7 @@ export class StaticMeshProcessor extends SimulationLayer {
     );
 
     const entity = EntityManager.get_entity_for(chunk, slot);
+
     MeshTaskQueue.remove(entity);
 
     const total_instance_count = EntityManager.get_entity_instance_count(entity);
@@ -52,7 +54,51 @@ export class StaticMeshProcessor extends SimulationLayer {
     chunk.mark_dirty();
   }
 
+  _update_internal_iter_chunk(chunk, flags, counts, archetype) {
+    const dirty_flag = EntityFlags.DIRTY;
+    const pending_delete_flag = EntityFlags.PENDING_DELETE;
+    const static_meshes = chunk.get_fragment_view(StaticMeshFragment);
+    const visibilities = chunk.get_fragment_view(VisibilityFragment);
+    const material_slot_stride = StaticMeshFragment.material_slot_stride;
+
+    let should_dirty_chunk = false;
+    let slot = 0;
+    while (slot < DEFAULT_CHUNK_CAPACITY) {
+      const entity_flags = flags[slot];
+
+      if ((flags[slot] & dirty_flag) === 0) {
+        slot += counts[slot] || 1;
+        continue;
+      }
+
+      if ((entity_flags & pending_delete_flag) !== 0) {
+        MeshTaskQueue.remove(EntityManager.get_entity_for(chunk, slot));
+        slot += counts[slot] || 1;
+        continue;
+      }
+
+      const mesh_id = Number(static_meshes.mesh[slot]);
+
+      const material_id = Number(static_meshes.material_slots[slot * material_slot_stride]);
+
+      const entity = EntityManager.get_entity_for(chunk, slot);
+
+      if (mesh_id && material_id && entity.instance_count && visibilities.visible[slot]) {
+        MeshTaskQueue.new_task(mesh_id, entity, material_id);
+      }
+
+      slot += counts[slot] || 1;
+
+      should_dirty_chunk = true;
+    }
+
+    if (should_dirty_chunk) {
+      chunk.mark_dirty();
+    }
+  }
+
   _update_internal() {
-    this.entity_query.for_each(this._update_internal_iter, true /* dirty_only */);
+    //this.entity_query.for_each(this._update_internal_iter, true /* dirty_only */);
+    this.entity_query.for_each_chunk(this._update_internal_iter_chunk);
   }
 }
