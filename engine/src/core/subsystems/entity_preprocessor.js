@@ -3,14 +3,15 @@ import { Chunk } from "../ecs/solar/chunk.js";
 import { SimulationLayer } from "../simulation_layer.js";
 import { EntityManager } from "../ecs/entity.js";
 import { profile_scope } from "../../utility/performance.js";
+import { TypedQueue } from "../../memory/container.js";
 
 const entity_preprocessor_pre_update_key = "entity_preprocessor_pre_update";
 const entity_preprocessor_post_update_key = "entity_preprocessor_post_update";
 const copy_gpu_to_cpu_buffers_key = "copy_gpu_to_cpu_buffers";
-const max_dirty_flag_retain_frames = 16;
 
 export class EntityPreprocessor extends SimulationLayer {
   _dirty_flag_retain_frames = 0;
+  _deferred_dirty_clear_chunks = new TypedQueue(1024, 0, Uint32Array);
 
   init() {
     this._pre_update_internal = this._pre_update_internal.bind(this);
@@ -35,7 +36,6 @@ export class EntityPreprocessor extends SimulationLayer {
   
   _post_update_internal() {
     EntityManager.flush_gpu_buffers();
-    
     Renderer.get().enqueue_post_commands(
       copy_gpu_to_cpu_buffers_key,
       this._on_post_render_commands
@@ -52,9 +52,14 @@ export class EntityPreprocessor extends SimulationLayer {
   }
 
   clear_all_dirty() {
-    for (const dirty_chunk of Chunk.dirty) {
+    while (this._deferred_dirty_clear_chunks.length > 0) {
+      const dirty_chunk_index = this._deferred_dirty_clear_chunks.pop();
+      const dirty_chunk = Chunk.get(dirty_chunk_index);
       dirty_chunk.clear_entity_dirty_flags();
+    }
+    for (const dirty_chunk of Chunk.dirty) {
       dirty_chunk.clear_dirty();
+      this._deferred_dirty_clear_chunks.push(dirty_chunk.chunk_index);
     }
   }
 }

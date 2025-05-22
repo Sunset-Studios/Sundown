@@ -1,4 +1,3 @@
-import { EntityManager } from "../entity.js";
 import { EntityFlags } from "../../minimal.js";
 import { Name } from "../../../utility/names.js";
 import { warn, error } from "../../../utility/logging.js";
@@ -51,10 +50,10 @@ export class SolarFragmentView {
 
       Object.defineProperty(this, field_name, {
         get() {
-          return this._get_field(field_name, spec, custom_get)
+          return this._get_field(field_name, spec, custom_get);
         },
         set(value) {
-          this._set_field(field_name, spec, custom_set, value)
+          this._set_field(field_name, spec, custom_set, value);
         },
         enumerable: true,
         configurable: true,
@@ -145,6 +144,9 @@ export class SolarFragmentView {
         return;
       }
 
+      // TODO: Check if this new value is the same as the existing value.
+      // If so, skip the update.
+
       container.update(this.entity, data_array);
 
       this.chunk.flags_meta[this.slot + this.instance] |= EntityFlags.DIRTY;
@@ -173,6 +175,9 @@ export class SolarFragmentView {
     if (custom_set) {
       custom_set.call(this, value, typed_array, element_offset);
     } else if (spec.elements === 1) {
+      if (typed_array[element_offset] === value) {
+        return;
+      }
       typed_array[element_offset] = typed_array instanceof BigInt64Array ? BigInt(value) : value;
     } else {
       if (!Array.isArray(value) && !(value instanceof spec.ctor)) {
@@ -185,6 +190,13 @@ export class SolarFragmentView {
         warn(
           `Invalid value length for ${field_name}. Expected array of length ${spec.elements}, got ${value.length}`
         );
+        return;
+      }
+      if (
+        typed_array
+          .subarray(element_offset, element_offset + spec.elements)
+          .every((v, i) => v === value[i])
+      ) {
         return;
       }
 

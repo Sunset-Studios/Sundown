@@ -17,17 +17,15 @@ const CHUNK_INDEX_BITS = ENTITY_ROW_BITS - LOCAL_SLOT_BITS;
 const CHUNK_INDEX_MASK = ((1 << CHUNK_INDEX_BITS) - 1) << LOCAL_SLOT_BITS;
 
 const EF_ALIVE = 1u << 0;
-const EF_PENDING_DELETE = 1u << 1;
-const EF_DIRTY = 1u << 2;
-const EF_IGNORE_PARENT_SCALE = 1u << 3;
-const EF_IGNORE_PARENT_ROTATION = 1u << 4;
-const EF_TRANSFORM_DIRTY = 1u << 5;
-const EF_NO_AABB_UPDATE = 1u << 6;
-const EF_AABB_DIRTY = 1u << 7;
-const EF_BILLBOARD = 1u << 8;
+const EF_DIRTY = 1u << 1;
+const EF_IGNORE_PARENT_SCALE = 1u << 2;
+const EF_IGNORE_PARENT_ROTATION = 1u << 3;
+const EF_TRANSFORM_DIRTY = 1u << 4;
+const EF_NO_AABB_UPDATE = 1u << 5;
+const EF_AABB_DIRTY = 1u << 6;
+const EF_BILLBOARD = 1u << 7;
 
-const AABB_NODE_FLAGS_MOVED = 1u << 0;
-const AABB_NODE_FLAGS_FREE = 1u << 1;
+const AABB_NODE_FLAGS_FREE = 1u << 0;
 const AABB_NODE_TYPE_INTERNAL = 0u;
 const AABB_NODE_TYPE_LEAF = 1u;
 

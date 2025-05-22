@@ -22,7 +22,7 @@ export class UI3DProcessor extends SimulationLayer {
   _update_internal() {
     this.entity_query.for_each((chunk, slot, instance_count, archetype) => {
       const entity_flags = chunk.flags_meta[slot];
-      if ((entity_flags & EntityFlags.PENDING_DELETE) !== 0) {
+      if ((entity_flags & EntityFlags.ALIVE) === 0) {
         return;
       }
       

@@ -5,13 +5,13 @@ export function frame_runner(frame_callback, max_fps = 60) {
   var delta_time = 0;
   var previous_time = performance.now();
 
-  return (function loop() {
+  return (async function loop() {
     current_time = performance.now();
     delta_time = current_time - previous_time;
     
     if (delta_time > fps) {
       previous_time = current_time - (delta_time % fps);
-      frame_callback(delta_time / 1000.0);
+      await frame_callback(delta_time / 1000.0);
     }
 
     requestAnimationFrame(loop);

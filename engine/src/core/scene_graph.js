@@ -37,6 +37,7 @@ export class SceneGraph {
 
   static remove(entity) {
     this.tree.remove(entity);
+    this.dirty = true;
   }
 
   static mark_dirty() {
@@ -65,6 +66,11 @@ export class SceneGraph {
       (node) => EntityManager.get_entity_instance_count(node.data) * 2
     );
     this.scene_graph_layer_counts = layer_counts;
+
+    if (!result) {
+      this.dirty = false;
+      return;
+    }
 
     if (!this.scene_graph_buffer || this.scene_graph_buffer.config.size < result.byteLength) {
       this.scene_graph_buffer = Buffer.create({

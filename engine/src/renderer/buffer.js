@@ -89,7 +89,8 @@ export class Buffer {
     if (this.buffer) {
       // Buffer could have been destroyed while waiting for the map
       const mapped_range = this.buffer.getMappedRange(offset, data_length);
-      data.set(mapped_range, data_offset);
+      const view = new data_type(mapped_range);
+      data.set(view, data_offset);
       this.buffer.unmap();
     }
   }

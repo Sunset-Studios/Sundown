@@ -14,13 +14,12 @@ export const LightType = {
 
 export const EntityFlags = {
   ALIVE: 1 << 0,
-  PENDING_DELETE: 1 << 1,
-  DIRTY: 1 << 2,
-  IGNORE_PARENT_SCALE: 1 << 3,
-  IGNORE_PARENT_ROTATION: 1 << 4,
-  TRANSFORM_DIRTY: 1 << 5,
-  NO_AABB_UPDATE: 1 << 6,
-  AABB_DIRTY: 1 << 7,
-  BILLBOARD: 1 << 8,
+  DIRTY: 1 << 1,
+  IGNORE_PARENT_SCALE: 1 << 2,
+  IGNORE_PARENT_ROTATION: 1 << 3,
+  TRANSFORM_DIRTY: 1 << 4,
+  NO_AABB_UPDATE: 1 << 5,
+  AABB_DIRTY: 1 << 6,
+  BILLBOARD: 1 << 7,
 };
 

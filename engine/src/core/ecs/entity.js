@@ -2,7 +2,6 @@ import { Sector } from "./solar/sector.js";
 import { Chunk } from "./solar/chunk.js";
 import { FragmentGpuBuffer } from "./solar/memory.js";
 import { SceneGraph } from "../scene_graph.js";
-import { TypedQueue } from "../../memory/container.js";
 import { EntityFlags } from "../minimal.js";
 import { warn, error } from "../../utility/logging.js";
 
@@ -16,7 +15,8 @@ export class EntityManager {
   static sector = new Sector();
   static entity_fragments = new Map();
   static fragment_types = new Set();
-  static pending_entity_deletes = new TypedQueue(256, Uint32Array);
+  static pending_entity_deletes = [];
+  static on_delete_listeners = [];
 
   /**
    * Initializes the entity compaction index map.
@@ -66,8 +66,11 @@ export class EntityManager {
 
     this.pending_entity_deletes.push(entity);
 
-    const flags = this.get_entity_flags(entity);
-    this.set_entity_flags(entity, flags | EntityFlags.PENDING_DELETE);
+    this.set_entity_flags(entity, 0);
+
+    for (let i = 0; i < this.on_delete_listeners.length; i++) {
+      this.on_delete_listeners[i](entity);
+    }
   }
 
   /**
@@ -87,6 +90,24 @@ export class EntityManager {
    */
   static get_entity_for(chunk, slot) {
     return this.sector.get_entity_for(chunk, slot);
+  }
+
+  /**
+   * Retrieves the entity handle for a given entity ID.
+   * @param {number} id - The entity ID
+   * @returns {EntityHandle} The entity handle
+   */
+  static get_entity_from_id(id) {
+    return this.sector.get_entity_from_id(id);
+  }
+
+  /**
+   * Retrieves the chunk and slot for a given entity ID.
+   * @param {number} id - The entity ID
+   * @returns {Object} The chunk and slot
+   */
+  static get_chunk_and_slot(id) {
+    return this.sector.get_chunk_and_slot(id);
   }
 
   /**
@@ -300,18 +321,18 @@ export class EntityManager {
     return Chunk.max_allocated_row();
   }
 
+  static on_delete(listener) {
+    if (!this.on_delete_listeners.includes(listener)) {
+      this.on_delete_listeners.push(listener);
+    }
+  }
+
   /**
    * Processes pending entity deletes.
    */
   static process_pending_deletes() {
     while (this.pending_entity_deletes.length > 0) {
       const entity = this.pending_entity_deletes.pop();
-      const entity_flags = this.get_entity_flags(entity);
-      if ((entity_flags & EntityFlags.ALIVE) !== 0) {
-        this.pending_entity_deletes.push(entity);
-        this.set_entity_flags(entity, entity_flags & ~EntityFlags.ALIVE);
-        continue;
-      }
 
       // subtract this entity's instances from each fragment's counter
       const instances = this.get_entity_instance_count(entity);
@@ -320,8 +341,10 @@ export class EntityManager {
         FragmentType.remove_entity?.(entity);
       }
 
-      this.sector.destroy_entity(entity);
       SceneGraph.remove(entity);
+
+      this.sector.destroy_entity(entity);
+
       this.entity_fragments.delete(entity);
     }
   }

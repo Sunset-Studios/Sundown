@@ -333,7 +333,20 @@ export class Chunk {
     this.flags_meta = new Uint32Array(this.buffer, byte_offset, buffer_capacity);
   }
 
+  /**
+   * Get the maximum allocated row.
+   * @returns {number} - The maximum allocated row.
+   */
   static max_allocated_row() {
     return Chunk.next_chunk_index * DEFAULT_CHUNK_CAPACITY;
+  }
+
+  /**
+   * Get the chunk at the given index.
+   * @param {number} index - The index of the chunk to get.
+   * @returns {Chunk} - The chunk at the given index.
+   */
+  static get(index) {
+    return Chunk.all_chunks[index];
   }
 }

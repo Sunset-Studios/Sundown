@@ -2,10 +2,15 @@ import { Archetype } from "./archetype.js";
 import { EntityAllocator } from "./memory.js";
 import { Query } from "./query.js";
 import { Chunk } from "./chunk.js";
-import { EntityHandle, DEFAULT_CHUNK_CAPACITY } from "./types.js";
+import {
+  EntityHandle,
+  DEFAULT_CHUNK_CAPACITY,
+  LOCAL_SLOT_BITS,
+  LOCAL_SLOT_MASK,
+  ROW_MASK,
+} from "./types.js";
 import { warn, error } from "../../../utility/logging.js";
 import { Name } from "../../../utility/names.js";
-import { EntityFlags } from "../../minimal.js";
 
 /**
  * Sector is the primary container for ECS data management.
@@ -247,6 +252,28 @@ export class Sector {
   }
 
   /**
+   * Retrieves the entity handle for a given entity ID.
+   * @param {number} id - The entity ID
+   * @returns {EntityHandle} The entity handle
+   */
+  get_entity_from_id(id) {
+    return EntityHandle.get_or_create(id);
+  }
+
+  /**
+   * Retrieves the chunk and slot for a given entity ID.
+   * @param {number} id - The entity ID
+   * @returns {Object} The chunk and slot
+   */
+  get_chunk_and_slot(id) {
+    const row = id & ROW_MASK;
+    const slot = row & LOCAL_SLOT_MASK;
+    const chunk_index = row >> LOCAL_SLOT_BITS;
+    const chunk = Chunk.get(chunk_index);
+    return { chunk, slot };
+  }
+
+  /**
    * Retrieves the maximum number of rows allocated for the entity manager.
    * @returns {number} The maximum number of rows.
    */
@@ -268,11 +295,7 @@ export class Sector {
       throw new Error("New instance count must be positive.");
     }
 
-    const {
-      archetype,
-      segments: old_segments_array,
-      instance_count: old_total_instances,
-    } = handle;
+    const { archetype, segments: old_segments_array, instance_count: old_total_instances } = handle;
 
     if (new_instance_count === old_total_instances) {
       return handle;
@@ -291,9 +314,7 @@ export class Sector {
     let new_instance_offset = 0;
     for (let logical_index = 0; logical_index < new_total_instances; logical_index++) {
       const src_logical =
-        logical_index < old_total_instances
-          ? logical_index
-          : old_total_instances - 1; // fallback to last old
+        logical_index < old_total_instances ? logical_index : old_total_instances - 1; // fallback to last old
       const src_seg_index = Math.floor(src_logical / DEFAULT_CHUNK_CAPACITY);
       const src_offset = src_logical % DEFAULT_CHUNK_CAPACITY;
       const src_segment = old_segments_array[src_seg_index];
@@ -322,8 +343,7 @@ export class Sector {
           const src_typed = src_views[field_name];
           const dst_typed = dst_views[field_name];
           for (let i = 0; i < el_count; i++) {
-            dst_typed[dst_abs_slot * el_count + i] =
-              src_typed[src_abs_slot * el_count + i];
+            dst_typed[dst_abs_slot * el_count + i] = src_typed[src_abs_slot * el_count + i];
           }
         }
       }

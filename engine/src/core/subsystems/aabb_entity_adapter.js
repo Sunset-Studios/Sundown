@@ -1,4 +1,5 @@
 import { Renderer } from "../../renderer/renderer.js";
+import { DEFAULT_CHUNK_CAPACITY, ROW_MASK } from "../ecs/solar/types.js";
 import { FragmentGpuBuffer } from "../ecs/solar/memory.js";
 import { ComputeTaskQueue } from "../../renderer/compute_task_queue.js";
 import { SimulationLayer } from "../simulation_layer.js";
@@ -8,7 +9,6 @@ import { TransformFragment } from "../ecs/fragments/transform_fragment.js";
 import { AABB, AABB_NODE_FLAGS } from "../../acceleration/aabb.js";
 import { AABBTreeProcessor } from "../../acceleration/aabb_tree_processor.js";
 import { profile_scope } from "../../utility/performance.js";
-import { warn } from "../../utility/logging.js";
 
 const transforms_buffer_name = "transforms";
 const aabb_node_index_buffer_name = "aabb_node_index";
@@ -43,7 +43,8 @@ export class AABBEntityAdapter extends SimulationLayer {
     // Set up entity query for objects with transforms
     this.entity_query = EntityManager.create_query([TransformFragment]);
     this.on_post_render_callback = this._on_post_render.bind(this);
-    this._process_entity_changes_iter = this._process_entity_changes_iter.bind(this);
+    this._process_entity_changes_chunk_iter = this._process_entity_changes_chunk_iter.bind(this);
+    EntityManager.on_delete(this._on_delete.bind(this));
   }
 
   /**
@@ -60,7 +61,10 @@ export class AABBEntityAdapter extends SimulationLayer {
   update(delta_time) {
     profile_scope(entity_adapter_update_name, async () => {
       this._process_entity_changes();
-      this.tree_processor.update(delta_time);
+      {
+        const processed_node_indices = this.tree_processor.update(delta_time);
+        this._update_processed_node_flags(processed_node_indices);
+      }
       this._dispatch_bounds_update();
     });
   }
@@ -173,39 +177,46 @@ export class AABBEntityAdapter extends SimulationLayer {
    * Process changes to entities, handling updates and pending deletions.
    */
   _process_entity_changes() {
-    this.entity_query.for_each(this._process_entity_changes_iter, true /* dirty_only */);
+    this.entity_query.for_each_chunk(this._process_entity_changes_chunk_iter);
   }
 
-  _process_entity_changes_iter(chunk, slot, instance_count, archetype) {
-    // Access fragment views and metadata
-      const entity_current_flags = chunk.flags_meta[slot];
-      const no_aabb_update = (entity_current_flags & EntityFlags.NO_AABB_UPDATE) !== 0;
-      const is_pending_delete = (entity_current_flags & EntityFlags.PENDING_DELETE) !== 0;
+  _process_entity_changes_chunk_iter(chunk, flags, counts, archetype) {
+    const alive_flag = EntityFlags.ALIVE;
+    const no_aabb_update_flag = EntityFlags.NO_AABB_UPDATE;
+    const transform_views_for_chunk = chunk.get_fragment_view(TransformFragment);
+    const aabb_node_index_typed_array = transform_views_for_chunk.aabb_node_index;
 
-      const transform_views_for_chunk = chunk.get_fragment_view(TransformFragment);
-      const aabb_node_index_typed_array = transform_views_for_chunk.aabb_node_index;
+    let should_dirty_chunk = false;
+    let slot = 0;
+    while (slot < DEFAULT_CHUNK_CAPACITY) {
+      const instance_count = counts[slot] || 1;
+      const entity_current_flags = flags[slot];
+      const no_aabb_update = (entity_current_flags & no_aabb_update_flag) !== 0;
+      const is_alive = (entity_current_flags & alive_flag) !== 0;
 
-      if (is_pending_delete) {
-        this._handle_pending_deletion(
-          aabb_node_index_typed_array,
-          slot,
-          instance_count,
-          no_aabb_update
-        );
-      } else {
-        this._handle_active_entity(
-          entity_current_flags,
-          aabb_node_index_typed_array,
-          chunk,
-          slot,
-          instance_count,
-          no_aabb_update
-        );
+      // active entities: allocate or mark dirty
+      if (is_alive) {
+        should_dirty_chunk =
+          this._handle_active_entity(
+            entity_current_flags,
+            aabb_node_index_typed_array,
+            chunk,
+            slot,
+            instance_count,
+            no_aabb_update
+          ) || should_dirty_chunk;
       }
+
+      slot += instance_count;
+    }
+
+    if (should_dirty_chunk) {
+      chunk.mark_dirty();
+    }
   }
 
   /**
-   * Handles logic for entities marked as PENDING_DELETE.
+   * Handles logic for entities marked as pending deletione.
    * @param {bigint} entity
    * @param {TypedArray} aabb_node_index_typed_array
    * @param {number} slot
@@ -214,31 +225,28 @@ export class AABBEntityAdapter extends SimulationLayer {
    */
   _handle_pending_deletion(aabb_node_index_typed_array, slot, instance_count, no_aabb_update) {
     const base_node_idx_val = aabb_node_index_typed_array[slot];
+    const valid_aabb_update = base_node_idx_val > 0 && !no_aabb_update;
 
     // Only process if it had a valid node and wasn't flagged to skip AABB updates
-    if (base_node_idx_val > 0 && !no_aabb_update) {
-      // Remove all instances from the tree
-      for (let i = 0; i < instance_count; i++) {
-        const current_instance_offset = slot + i;
-        const aabb_instance_index = aabb_node_index_typed_array[current_instance_offset];
+    // Remove all instances from the tree
+    let modified = false;
+    for (let i = 0; i < instance_count; i++) {
+      const current_instance_offset = slot + i;
 
-        if (aabb_instance_index > 0) {
-          const is_free = AABB.is_node_free(aabb_instance_index);
-          if (!is_free) {
-            this.tree_processor.remove_node_from_tree(aabb_instance_index);
-            AABB.free_node(aabb_instance_index);
-          }
-          // Clear the index in the fragment data *after* processing
-          aabb_node_index_typed_array[current_instance_offset] = 0;
+      if (valid_aabb_update) {
+        const aabb_instance_index = aabb_node_index_typed_array[current_instance_offset];
+        if (aabb_instance_index > 0 && !AABB.is_node_free(aabb_instance_index)) {
+          this.tree_processor.remove_node_from_tree(aabb_instance_index);
+          AABB.free_node(aabb_instance_index);
+          modified = true;
         }
       }
-    } else {
-      // Even if skipped or no node, clear the fragment data for all instances to be safe during deletion
-      for (let i = 0; i < instance_count; i++) {
-        const current_instance_offset = slot + i;
-        aabb_node_index_typed_array[current_instance_offset] = 0;
-      }
+
+      // Clear the index in the fragment data *after* processing
+      aabb_node_index_typed_array[current_instance_offset] = 0;
     }
+
+    return modified;
   }
 
   /**
@@ -258,75 +266,107 @@ export class AABBEntityAdapter extends SimulationLayer {
     instance_count,
     no_aabb_update
   ) {
-    let entity_flags_were_updated = false; // To batch EntityManager.set_entity_flags calls
     let modifiable_entity_current_flags = entity_current_flags;
+    // Calculate aabb_dirty based on the flags *as they came in* for this slot
+    const aabb_dirty_from_gpu =
+      (entity_current_flags & EntityFlags.AABB_DIRTY) !== 0 && !no_aabb_update;
 
+    let new_node_allocated_in_slot = false;
     for (let i = 0; i < instance_count; i++) {
       const current_instance_offset = slot + i;
       let node_idx_for_instance = aabb_node_index_typed_array[current_instance_offset];
 
-      // 1. Allocate new AABB node if needed (and not skipping updates)
-      if (node_idx_for_instance === 0) {
-        const new_aabb_node = AABB.allocate_node(); // Using default user_data
-        aabb_node_index_typed_array[current_instance_offset] = new_aabb_node;
-        node_idx_for_instance = new_aabb_node;
-
-        // Entity needs its bounds calculated by GPU.
-        // Ensuring EntityFlags.DIRTY is set makes bounds_processing.wgsl run.
-        if ((modifiable_entity_current_flags & EntityFlags.DIRTY) === 0) {
-          modifiable_entity_current_flags |= EntityFlags.DIRTY;
-          entity_flags_were_updated = true;
-        }
+      if (node_idx_for_instance <= 0 && !no_aabb_update) {
+        // Added !no_aabb_update here too
+        const entity = EntityManager.get_entity_for(chunk, current_instance_offset);
+        node_idx_for_instance = AABB.allocate_node(entity.id); // entity.id needs to be storable/retrievable
+        aabb_node_index_typed_array[current_instance_offset] = node_idx_for_instance;
+        // Ensuring EntityFlags.DIRTY is set makes bounds_processing.wgsl run for this new node.
+        modifiable_entity_current_flags |= EntityFlags.DIRTY;
+        new_node_allocated_in_slot = true;
       }
 
-      // 2. Process if GPU indicated AABB data changed (via modifiable_entity_current_flags)
-      // This means bounds_processing.wgsl updated the AABB data for this node_idx_for_instance on GPU.
-      // The CPU-side tree_processor needs to be aware of this potential change.
-      if (
-        node_idx_for_instance > 0 &&
-        modifiable_entity_current_flags & EntityFlags.AABB_DIRTY &&
-        !no_aabb_update
-      ) {
+      // We use aabb_dirty_from_gpu here. If the GPU said it's dirty, we tell the tree processor.
+      // The tree processor will then gate on whether the bounds are actually synced.
+      if (new_node_allocated_in_slot && node_idx_for_instance > 0) {
         this.tree_processor.mark_node_dirty(node_idx_for_instance);
       }
     }
 
-    // Apply any accumulated flag changes to the entity
-    if (entity_flags_were_updated) {
-      chunk.flags_meta[slot] = modifiable_entity_current_flags;
-    }
+    // Write back flags to the chunk.
+    // If a new node was allocated, 'modifiable_entity_current_flags' will have the DIRTY bit set.
+    // AABB_DIRTY flag (if it was present in entity_current_flags) is preserved.
+    // It will be cleared by AABBTreeProcessor later.
+    chunk.flags_meta[slot] = modifiable_entity_current_flags;
 
-    // 3. Clear EntityFlags.AABB_DIRTY if it was set at the start of this function call and processed.
-    // This flag is set by bounds_processing.wgsl after it updates GPU AABB data. We consume it here.
-    if (modifiable_entity_current_flags & EntityFlags.AABB_DIRTY) {
-      // Re-fetch in case changed by set_entity_flags above or if no update was made initially
-      const latest_entity_flags = entity_flags_were_updated
-        ? modifiable_entity_current_flags
-        : chunk.flags_meta[slot];
+    return new_node_allocated_in_slot; // Indicate if chunk might need saving due to new DIRTY or AABB_DIRTY processing
+  }
 
-      if (!no_aabb_update) {
-        const base_node_idx_val = aabb_node_index_typed_array[slot]; // Check base slot's node index
-        if (base_node_idx_val > 0) {
-          // Successfully processed or had a node, clear the flag
-          chunk.flags_meta[slot] = latest_entity_flags & ~EntityFlags.AABB_DIRTY;
-        } else {
-          // Was AABB_DIRTY but no valid base node (even after potential alloc attempt). Clear to avoid re-processing.
-          chunk.flags_meta[slot] = latest_entity_flags & ~EntityFlags.AABB_DIRTY;
-          warn(
-            `AABBEntityAdapter: Entity in slot ${slot} was AABB_DIRTY, but its base_node_index is still 0 after processing. Flag cleared.`
-          );
+  _update_processed_node_flags(processed_node_indices) {
+    for (let i = 0; i < processed_node_indices.length; i++) {
+      const node_index = processed_node_indices[i];
+      if (node_index <= 0 || node_index >= AABB.size) continue;
+
+      const node_view = AABB.get_node_data(node_index); // This is cheap, views over shared array
+      // The user_data field in AABB.node_data is a float.
+      // Entity IDs are often integers or bigints. This mapping needs to be robust.
+      // For this example, assuming user_data can be resolved to entity_id.
+      const entity_id_float = node_view.user_data;
+      if (entity_id_float !== 0xffffffff && !isNaN(entity_id_float)) {
+        // 0xffffffff is often a sentinel for invalid/unused
+        const entity_id = Math.floor(entity_id_float);
+        const { chunk, slot } = EntityManager.get_chunk_and_slot(entity_id);
+        if (chunk) {
+          chunk.flags_meta[slot] &= ~EntityFlags.AABB_DIRTY;
         }
-      } else {
-        // AABB_DIRTY was set, but we're skipping AABB updates for this entity. Clear the flag.
-        chunk.flags_meta[slot] = latest_entity_flags & ~EntityFlags.AABB_DIRTY;
+      }
+    }
+  }
+
+  _on_delete(entity) {
+    if (!entity || !entity.segments) return;
+
+    const total_instance_count = entity.instance_count;
+    let instance = 0;
+
+    for (let i = 0; i < entity.segments.length; i++) {
+      const segment = entity.segments[i];
+
+      const chunk = segment.chunk;
+      const counts = chunk.icnt_meta;
+      const flags = chunk.flags_meta;
+      const transform_views_for_chunk = chunk.get_fragment_view(TransformFragment);
+      const aabb_node_index_typed_array = transform_views_for_chunk.aabb_node_index;
+
+      let slot = segment.slot;
+      let should_dirty_chunk = false;
+      while (slot < DEFAULT_CHUNK_CAPACITY && instance < total_instance_count) {
+        const no_aabb_update = (flags[slot] & EntityFlags.NO_AABB_UPDATE) !== 0;
+        const instance_count = counts[slot] || 1;
+
+        should_dirty_chunk =
+          this._handle_pending_deletion(
+            aabb_node_index_typed_array,
+            slot,
+            instance_count,
+            no_aabb_update
+          ) || should_dirty_chunk;
+
+        slot += instance_count;
+        instance += instance_count;
+      }
+
+      if (should_dirty_chunk) {
+        chunk.mark_dirty();
       }
     }
   }
 
   _on_post_render(graph, frame_data, encoder) {
     const buffered_frame = Renderer.get().get_buffered_frame_number();
-    if (AABB.node_bounds_cpu_buffer[buffered_frame]?.buffer.mapState === unmapped_state) {
-      AABB.node_bounds_buffer.copy_buffer(encoder, 0, AABB.node_bounds_cpu_buffer[buffered_frame]);
+    const buffer = AABB.node_bounds_cpu_buffer[buffered_frame];
+    if (buffer?.buffer.mapState === unmapped_state) {
+      AABB.node_bounds_buffer.copy_buffer(encoder, 0, buffer);
     }
   }
 }

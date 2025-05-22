@@ -108,10 +108,13 @@ export class RenderingScene extends Scene {
         name: "dirt_roughness",
         format: "rgba8unorm",
         dimension: "2d",
-        usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT,
+        usage:
+          GPUTextureUsage.TEXTURE_BINDING |
+          GPUTextureUsage.COPY_DST |
+          GPUTextureUsage.RENDER_ATTACHMENT,
         material_notifier: "dirt_roughness",
       });
-  
+
       default_material.set_albedo([0.7, 0.7, 0.7, 1.0], dirt_albedo);
       default_material.set_roughness(0.5, dirt_roughness);
       default_material.set_emission(0.2);
@@ -750,7 +753,6 @@ export class AABBScene extends Scene {
   ray_hits = [];
   last_ray_origin = null;
   last_ray_direction = null;
-  ray_line_collection = null;
 
   init(parent_context) {
     super.init(parent_context);
@@ -864,7 +866,7 @@ export class AABBScene extends Scene {
 
   setup_entity_grid() {
     // Create a grid of entities for testing
-    const grid_size = 100;
+    const grid_size = 20;
     const spacing = 3.0;
 
     for (let x = 0; x < grid_size; x++) {
@@ -892,13 +894,14 @@ export class AABBScene extends Scene {
             null,
             [],
             true,
-            EntityFlags.IGNORE_PARENT_SCALE | EntityFlags.NO_AABB_UPDATE
           );
 
           this.entities.push(entity);
         }
       }
     }
+
+    log(`[AABB] Spawned ${this.entities.length} entities`);
   }
 
   handle_input() {
@@ -961,7 +964,7 @@ export class AABBScene extends Scene {
     if (!cursor_world_position) return;
 
     // Use camera position as ray origin
-    this.last_ray_origin = cursor_world_position;
+    this.last_ray_origin = view_data.position;
 
     // Calculate ray direction from camera to cursor world position
     this.last_ray_direction = vec4.sub(vec4.create(), cursor_world_position, view_data.position);
@@ -1015,37 +1018,32 @@ export class AABBScene extends Scene {
     this.ray_hits = new_ray_hits;
 
     // Update selected entity highlighting
-    if (this.selected_entity !== null) {
-      // Reset previous selection
-      const static_mesh_fragment = EntityManager.get_fragment(
-        this.selected_entity,
-        StaticMeshFragment
-      );
-      if (static_mesh_fragment) {
-        static_mesh_fragment.material_slots = [BigInt(this.default_material_id)];
-      }
-
-      this.selected_entity = null;
-    }
+    const previous_selected_entity = this.selected_entity;
 
     // Select new entity if we hit something
     if (this.ray_hits.length > 0) {
       const hit = this.ray_hits[0];
 
-      // Update the line visualization
-      if (this.ray_line_collection) {
-        LineRenderer.clear_collection(this.ray_line_collection);
-      }
-
-      this.ray_line_collection = LineRenderer.start_collection();
-
-      // Draw the ray from camera to end point
-      LineRenderer.add_line(this.last_ray_origin, hit.point, [1, 0, 0, 1]);
-
-      LineRenderer.end_collection();
-
       // Highlight the selected entity by writing to the material buffer
-      this.selected_entity = hit.user_data;
+      this.selected_entity = EntityManager.get_entity_from_id(hit.user_data);
+    }
+
+    if (previous_selected_entity === this.selected_entity) {
+      return;
+    }
+
+    if (previous_selected_entity !== null) {
+      // Reset previous selection
+      const static_mesh_fragment = EntityManager.get_fragment(
+        previous_selected_entity,
+        StaticMeshFragment
+      );
+      if (static_mesh_fragment) {
+        static_mesh_fragment.material_slots = [BigInt(this.default_material_id)];
+      }
+    }
+
+    if (this.selected_entity !== null) {
       const static_mesh_fragment = EntityManager.get_fragment(
         this.selected_entity,
         StaticMeshFragment
@@ -1054,8 +1052,6 @@ export class AABBScene extends Scene {
         static_mesh_fragment.material_slots = [BigInt(this.selected_entity_material_id)];
       }
     }
-
-    this.default_material_buffer.write(this.default_material_data);
   }
 
   render_ui() {
@@ -1466,14 +1462,18 @@ export class VoxelTerrainScene extends Scene {
       for (let i = 0; i < 512; i++) perlin_perm[i] = p[i & 255];
     }
 
-    const fade_function = t => t * t * t * (t * (t * 6 - 15) + 10);
+    const fade_function = (t) => t * t * t * (t * (t * 6 - 15) + 10);
     const lerp_function = (a, b, t) => a + t * (b - a);
     const grad_function = (hash, x, y) => {
       switch (hash & 3) {
-        case 0: return x + y;
-        case 1: return -x + y;
-        case 2: return x - y;
-        case 3: return -x - y;
+        case 0:
+          return x + y;
+        case 1:
+          return -x + y;
+        case 2:
+          return x - y;
+        case 3:
+          return -x - y;
       }
     };
 
@@ -1551,11 +1551,7 @@ export class VoxelTerrainScene extends Scene {
             yi * block_size,
             (zi - grid_depth / 2) * block_size,
           ];
-          const view = EntityManager.get_fragment(
-            terrain_entity,
-            TransformFragment,
-            block_index
-          );
+          const view = EntityManager.get_fragment(terrain_entity, TransformFragment, block_index);
           view.position = pos;
           block_index++;
         }
@@ -1656,10 +1652,10 @@ export class SceneSwitcher extends SimulationLayer {
   const scene_switcher = new SceneSwitcher("SceneSwitcher");
   //await scene_switcher.add_scene(solar_ecs_scene);
   //await scene_switcher.add_scene(textures_scene);
-  //await scene_switcher.add_scene(aabb_scene);
+  await scene_switcher.add_scene(aabb_scene);
   //await scene_switcher.add_scene(rendering_scene);
   //await scene_switcher.add_scene(ml_scene);
-  await scene_switcher.add_scene(voxel_terrain_scene);
+  //await scene_switcher.add_scene(voxel_terrain_scene);
 
   await simulator.add_sim_layer(scene_switcher);
 

@@ -28,6 +28,11 @@ fn cs(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let entity_id_offset = get_entity_row(global_id.x);
     let node_index = entity_aabb_node_indices[entity_id_offset];
 
+    // if there's no valid AABB node, skip processing entirely
+    if (node_index == 0u) {
+        return;
+    }
+
     // Get the entity's world transform
     let transform = entity_transforms[entity_id_offset].transform;
     let position = transform[3].xyz;

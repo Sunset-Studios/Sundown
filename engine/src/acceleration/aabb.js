@@ -4,6 +4,7 @@ import { Buffer, BufferSync } from "../renderer/buffer.js";
 import { global_dispatcher } from "../core/dispatcher.js";
 import { RingBufferAllocator } from "../memory/allocator.js";
 import { TypedQueue, TypedStack } from "../memory/container.js";
+import { npot } from "../utility/math.js";
 
 // Buffer names for GPU access
 const AABB_TREE_NODES_BUFFER_NAME = "aabb_tree_nodes_buffer";
@@ -15,7 +16,7 @@ const AABB_TREE_NODES_UPDATE_EVENT = "aabb_tree_nodes_update";
 const AABB_NODE_BOUNDS_UPDATE_EVENT = "aabb_node_bounds_update";
 
 // Node structure in memory:
-// float4 flags_and_node_data (flags, node_type, padding, padding)
+// uint4 flags_and_node_data (flags, node_type, padding, padding)
 // uint4 node_data (left, right, parent, user_data)
 const NODE_SIZE = 8; // Size in float32 elements
 
@@ -35,8 +36,7 @@ export const AABB_NODE_TYPE = {
 
 // Node flags
 export const AABB_NODE_FLAGS = {
-  MOVED: 1 << 0,
-  FREE: 1 << 1,
+  FREE: 1 << 0,
 };
 
 /**
@@ -192,7 +192,7 @@ export class AABB {
   static allocated_count = 0;
   static free_nodes = new TypedStack(default_aabb_size, Uint32Array);
   static dirty_nodes = new TypedQueue(default_aabb_size, 0, Uint32Array);
-  static node_data = new Float32Array(NODE_SIZE * default_aabb_size);
+  static node_data = new Uint32Array(NODE_SIZE * default_aabb_size);
   static node_bounds = new Float32Array(NODE_BOUNDS_SIZE * default_aabb_size);
   static node_fat_bounds = new Float32Array(NODE_FAT_BOUNDS_SIZE * default_aabb_size);
   static node_heights = new Float32Array(default_aabb_size);
@@ -204,9 +204,11 @@ export class AABB {
   static modified = true;
 
   // Maximum number of bytes to read back per frame
-  static sync_max_bytes_per_frame = 1024;
+  static sync_max_bytes_per_frame = npot(1000 * 8 * 4);
   // Current byte offset into the node_bounds buffer
-  static sync_read_byte_offset = Array(MAX_BUFFERED_FRAMES).fill(0);
+  static sync_read_byte_offset = 0;
+  // Track sync status of node_bounds on CPU
+  static node_bounds_cpu_sync_status = new Uint8Array(default_aabb_size);
 
   /**
    * Initialize the AABB tree
@@ -225,7 +227,7 @@ export class AABB {
       node_view.max_point = [-Infinity, -Infinity, -Infinity];
       node_view.fat_min_point = [Infinity, Infinity, Infinity];
       node_view.fat_max_point = [-Infinity, -Infinity, -Infinity];
-      node_view.node_type = AABB_NODE_TYPE.LEAF;
+      node_view.node_type = AABB_NODE_TYPE.INTERNAL;
       node_view.flags = AABB_NODE_FLAGS.FREE;
       node_view.left = 0;
       node_view.right = 0;
@@ -269,59 +271,59 @@ export class AABB {
   static resize(new_size) {
     if (new_size <= this.size) return;
 
-    const old_size = this.size + 1;
+    const old_size = this.size + 1; // old_size was this.size, it should be this.size before update
+    // const old_size = this.size; // Correct variable to use for slicing old arrays
+
     this.size = new_size + 1;
 
     {
-      // Create a new array with the new size
-      const new_node_data = new Float32Array(this.size * NODE_SIZE);
+      const new_node_data = new Uint32Array(this.size * NODE_SIZE);
 
-      // Copy existing data
       if (this.node_data) {
         new_node_data.set(this.node_data);
       }
 
-      // Replace the old array
       this.node_data = new_node_data;
     }
 
     {
-      // Create a new array with the new size
       const new_node_bounds = new Float32Array(this.size * NODE_BOUNDS_SIZE);
 
-      // Copy existing bounds
       if (this.node_bounds) {
         new_node_bounds.set(this.node_bounds);
       }
 
-      // Replace the old array
       this.node_bounds = new_node_bounds;
     }
 
     {
-      // Create a new array with the new size
       const new_node_fat_bounds = new Float32Array(this.size * NODE_FAT_BOUNDS_SIZE);
 
-      // Copy existing bounds
       if (this.node_fat_bounds) {
         new_node_fat_bounds.set(this.node_fat_bounds);
       }
 
-      // Replace the old array
       this.node_fat_bounds = new_node_fat_bounds;
     }
 
     {
-      // Create a new array with the new size
       const new_node_heights = new Float32Array(this.size);
 
-      // Copy existing heights
       if (this.node_heights) {
         this.node_heights.set(this.node_heights);
       }
 
-      // Replace the old array
       this.node_heights = new_node_heights;
+    }
+
+    {
+      const new_sync_status = new Uint8Array(this.size);
+
+      if (this.node_bounds_cpu_sync_status) {
+        new_sync_status.set(this.node_bounds_cpu_sync_status);
+      }
+
+      this.node_bounds_cpu_sync_status = new_sync_status;
     }
 
     this.free_nodes.resize(this.size);
@@ -333,7 +335,7 @@ export class AABB {
       node_view.max_point = [-Infinity, -Infinity, -Infinity];
       node_view.fat_min_point = [Infinity, Infinity, Infinity];
       node_view.fat_max_point = [-Infinity, -Infinity, -Infinity];
-      node_view.node_type = AABB_NODE_TYPE.LEAF;
+      node_view.node_type = AABB_NODE_TYPE.INTERNAL;
       node_view.flags = AABB_NODE_FLAGS.FREE;
       node_view.left = 0;
       node_view.right = 0;
@@ -376,6 +378,10 @@ export class AABB {
 
     this.modified = true;
 
+    if (node_index < this.node_bounds_cpu_sync_status.length) {
+      this.node_bounds_cpu_sync_status[node_index] = 0; // New node, bounds not from GPU yet
+    }
+
     return node_index;
   }
 
@@ -397,7 +403,7 @@ export class AABB {
     node_view.max_point = [-Infinity, -Infinity, -Infinity];
     node_view.fat_min_point = [Infinity, Infinity, Infinity];
     node_view.fat_max_point = [-Infinity, -Infinity, -Infinity];
-    node_view.node_type = AABB_NODE_TYPE.LEAF;
+    node_view.node_type = AABB_NODE_TYPE.INTERNAL;
     node_view.flags = AABB_NODE_FLAGS.FREE;
     node_view.left = 0;
     node_view.right = 0;
@@ -436,9 +442,6 @@ export class AABB {
     if ((node_view.flags & AABB_NODE_FLAGS.FREE) === 0) {
       node_view.min_point = [min_point[0], min_point[1], min_point[2]];
       node_view.max_point = [max_point[0], max_point[1], max_point[2]];
-      let flags = node_view.flags;
-      flags |= AABB_NODE_FLAGS.MOVED;
-      node_view.flags = flags;
     }
   }
 
@@ -518,25 +521,52 @@ export class AABB {
    */
   static async sync_buffers() {
     const buffered_frame = Renderer.get().get_buffered_frame_number();
-    const cpu_buffer = this.node_bounds_cpu_buffer[buffered_frame];
+    const cpu_buffer = AABB.node_bounds_cpu_buffer[buffered_frame];
     if (!cpu_buffer || cpu_buffer.buffer.mapState !== unmapped_state) {
       return;
     }
 
-    // Perform a single throttled chunk read
-    const total_bytes = cpu_buffer.config.size;
-    const byte_offset = this.sync_read_byte_offset[buffered_frame];
-    const element_offset = byte_offset / Float32Array.BYTES_PER_ELEMENT;
-    const read_bytes = Math.min(this.sync_max_bytes_per_frame, total_bytes - byte_offset);
+    const total_bytes_in_buffer = cpu_buffer.config.size; // Total size of AABB.node_bounds buffer
+    const current_byte_offset = AABB.sync_read_byte_offset;
 
-    await cpu_buffer.read(
-      this.node_bounds,
-      read_bytes,
-      byte_offset,
-      element_offset,
+    if (current_byte_offset >= total_bytes_in_buffer && total_bytes_in_buffer > 0) {
+      // Ensure offset resets if it went past
+      AABB.sync_read_byte_offset = 0;
+      // current_byte_offset = 0; // No, use the reset value in next iteration. For now, just return if fully synced this cycle.
+      return; // Or handle wrap-around logic more gracefully if needed for continuous sync
+    }
+
+    const element_offset_in_cpu_array = current_byte_offset / Float32Array.BYTES_PER_ELEMENT;
+    const bytes_to_read_this_call = Math.min(
+      AABB.sync_max_bytes_per_frame,
+      total_bytes_in_buffer - current_byte_offset
     );
 
-    this.sync_read_byte_offset[buffered_frame] = (byte_offset + read_bytes) % total_bytes;
+    if (bytes_to_read_this_call <= 0) return;
+
+    await cpu_buffer.read(
+      AABB.node_bounds, // Target CPU array
+      bytes_to_read_this_call,
+      current_byte_offset, // Source offset in GPU buffer (implicit for copy_buffer, explicit for read command)
+      element_offset_in_cpu_array // Target offset in CPU array AABB.node_bounds
+    );
+
+    // Update sync status for the copied region
+    const num_elements_read = bytes_to_read_this_call / Float32Array.BYTES_PER_ELEMENT;
+    const start_node_index_synced = element_offset_in_cpu_array / NODE_BOUNDS_SIZE;
+    const num_nodes_synced = num_elements_read / NODE_BOUNDS_SIZE;
+
+    for (let i = 0; i < num_nodes_synced; i++) {
+      const synced_node_idx = Math.floor(start_node_index_synced) + i;
+      if (
+        synced_node_idx < AABB.size &&
+        synced_node_idx < AABB.node_bounds_cpu_sync_status.length
+      ) {
+        AABB.node_bounds_cpu_sync_status[synced_node_idx] = 1;
+      }
+    }
+
+    AABB.sync_read_byte_offset = (current_byte_offset + bytes_to_read_this_call) % total_bytes_in_buffer;
   }
 
   static async on_post_render() {

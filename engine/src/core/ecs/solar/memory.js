@@ -77,8 +77,9 @@ export class EntityAllocator {
     // The & 0x0f ensures it wraps around from 15 back to 0.
     // Consider implications if an entity ID lives longer than 16 destroy/create cycles at the same row_index.
     this.row_generation.set(old_row, (this.row_generation.get(old_row) + 1) & 0x0f);
-    // Clear the mapping for the row index.
-    this.row_to_entity_id.delete(old_row);
+
+    // Remove the old row from the row_to_entity_id map.
+    // this.row_to_entity_id.delete(old_row);
 
     // Get the new generation for the new row index.
     const new_row = EntityID.make_row_field(new_slot, new_chunk.chunk_index);
@@ -137,8 +138,8 @@ export class EntityAllocator {
     // Consider implications if an entity lives longer than 16 destroy/create cycles at the same row_index.
     this.row_generation.set(row_index, (this.row_generation.get(row_index) + 1) & 0x0f);
 
-    // Clear the mapping for the row index.
-    this.row_to_entity_id.delete(row_index);
+    // Remove the old row from the row_to_entity_id map.
+    // this.row_to_entity_id.delete(row_index);
 
     // Mark the chunk as dirty
     target_chunk.mark_dirty();
@@ -194,6 +195,15 @@ export class EntityAllocator {
   get_entity_id_for(chunk, slot) {
     const row_field = EntityID.make_row_field(slot, chunk.chunk_index);
     return this.row_to_entity_id.get(row_field);
+  }
+
+  /**
+   * Retrieves the entity ID for a given row index.
+   * @param {number} row - The row index
+   * @returns {number} The entity ID
+   */
+  get_base_entity_id(id) {
+    return this.row_to_entity_id.get(id & ROW_MASK);
   }
 }
 
@@ -352,25 +362,29 @@ export class FragmentGpuBuffer {
     // Return early if no CPU readbacks or no pending segments
     if (!this.cpu_buffer_count) return;
 
-    const segments = this.pending_sync_segments;
-    if (segments.length === 0) return;
-
     // Map the entire CPU buffer once for reading
     const buffered_frame = Renderer.get().get_buffered_frame_number();
     const cpu_buf = this.cpu_buffers[buffered_frame % this.cpu_buffer_count];
     if (cpu_buf.buffer.mapState !== unmapped_state) return;
-
+    
     const gpu_buffer = cpu_buf.buffer;
     await gpu_buffer.mapAsync(GPUMapMode.READ);
     const mapped_range = gpu_buffer.getMappedRange();
+    
+    const segments = this.pending_sync_segments;
+    if (segments.length === 0) return;
 
     if (this.sync_target_accessor) {
       // Flags-buffer sync
-      for (const { chunk, base_row, row_count } of segments) {
-        const offset_bytes = base_row * this.byte_stride;
-        const slice = new Uint32Array(mapped_range, offset_bytes, row_count);
+      for (const { chunk, count } of segments) {
+        const chunk_base = FragmentGpuBuffer._get_dense_chunk_base(chunk);
+        if (chunk_base === 0xffffffff) continue;  // truly empty chunk
+
         const target_view = this.sync_target_accessor(chunk);
         if (!target_view) continue;
+
+        const offset_bytes = chunk_base * this.byte_stride;
+        const slice = new Uint32Array(mapped_range, offset_bytes, count);
 
         let packed_idx = 0;
         const global_base = chunk.chunk_index * DEFAULT_CHUNK_CAPACITY;
@@ -389,17 +403,17 @@ export class FragmentGpuBuffer {
       const elems_per_row = spec.elements;
       const dense_map = FragmentGpuBuffer.cpu_dense_map;
 
-      for (const { chunk, base_row, row_count } of segments) {
+      for (const { chunk, count } of segments) {
         const frag_views = chunk.fragment_views[frag_id];
         if (!frag_views) continue;
         const target_view = frag_views[field_key];
         if (!target_view) continue;
 
-        const global_base = chunk.chunk_index * DEFAULT_CHUNK_CAPACITY + base_row;
-        if (dense_map[global_base] === 0xffffffff) continue;
+        const chunk_base = FragmentGpuBuffer._get_dense_chunk_base(chunk);
+        if (chunk_base === 0xffffffff) continue;  // truly empty chunk
 
-        const offset_bytes = dense_map[global_base] * this.byte_stride;
-        const element_count = (row_count * this.byte_stride) / spec.ctor.BYTES_PER_ELEMENT;
+        const offset_bytes = chunk_base * this.byte_stride;
+        const element_count = (count * this.byte_stride) / spec.ctor.BYTES_PER_ELEMENT;
         const slice = new spec.ctor(mapped_range, offset_bytes, element_count);
 
         let packed_idx = 0;
@@ -642,7 +656,7 @@ export class FragmentGpuBuffer {
    * Flush all fragment SSBOs.
    * - Build a global row→dense_index table and repack *every* buffer tightly by that index.
    */
-  static async flush_gpu_buffers(allocator) {
+  static flush_gpu_buffers(allocator) {
     if (Chunk.dirty.size === 0) return;
 
     // Build row→dense_index map
@@ -651,15 +665,15 @@ export class FragmentGpuBuffer {
     const row_map = allocator.row_to_entity_id;
     let next_dense = 0;
     for (let r = 0; r < total_rows; r++) {
-      dense_map[r] = row_map.get(r) !== undefined ? next_dense++ : 0xffffffff;
+      dense_map[r] = row_map.get(r) !== undefined && row_map.get(r) !== null ? next_dense++ : 0xffffffff;
     }
     // Upload the lookup SSBO
     this.entity_index_map_buffer.update_chunk(0, dense_map, total_rows);
 
     // Instead of full repack, only update those chunks that were dirtied
     for (const chunk of Chunk.dirty) {
-      const chunk_base = dense_map[chunk.chunk_index * DEFAULT_CHUNK_CAPACITY];
-      if (chunk_base === 0xffffffff) continue;
+      const chunk_base = this._get_dense_chunk_base(chunk);
+      if (chunk_base === 0xffffffff) continue;  // truly empty chunk
 
       // Pack & upload entity flags
       const flags_packed = new Uint32Array(DEFAULT_CHUNK_CAPACITY);
@@ -715,8 +729,6 @@ export class FragmentGpuBuffer {
           }
         }
       }
-
-      chunk.clear_dirty();
     }
 
     Renderer.get().mark_bind_groups_dirty(true);
@@ -885,6 +897,20 @@ export class FragmentGpuBuffer {
     }
 
     return { packed_data: packed_buffer, row_count: packed_index };
+  }
+
+  static _get_dense_chunk_base(chunk) {
+    const dense_map = FragmentGpuBuffer.cpu_dense_map;
+    const chunk_global_start = chunk.chunk_index * DEFAULT_CHUNK_CAPACITY;
+    let chunk_base = 0xffffffff;
+    for (let local = 0; local < DEFAULT_CHUNK_CAPACITY; local++) {
+      const g = chunk_global_start + local;
+      if (dense_map[g] !== 0xffffffff) {
+        chunk_base = dense_map[g];
+        break;
+      }
+    }
+    return chunk_base;
   }
 }
 

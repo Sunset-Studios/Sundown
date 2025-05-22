@@ -44,11 +44,11 @@ export class Simulator {
     SimulationCore.unregister_simulation_layer(sim_layer);
   }
 
-  _simulate(delta_time) {
+  async _simulate(delta_time) {
     if (application_state.is_running) {
-      profile_scope("frame_loop", async () => {
-        await BufferSync.process_syncs();
+      await BufferSync.process_syncs();
 
+      profile_scope("frame_loop", async () => {
         const renderer = Renderer.get();
         reset_ui(renderer.canvas_ui?.width ?? 0, renderer.canvas_ui?.height ?? 0);
         

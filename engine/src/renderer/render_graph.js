@@ -756,6 +756,10 @@ export class RenderGraph {
       });
     }
 
+    if (pass.pass_config.flags & RenderPassFlags.GraphLocal) {
+      pass.parameters.b_force_keep_pass = true;
+    }
+
     if (params) {
       this._update_reference_counts(pass);
       this._update_resource_param_producers_and_consumers(pass);

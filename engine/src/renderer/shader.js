@@ -86,8 +86,8 @@ export class Shader {
       });
       this.file_path = file_path;
       this.reflection = this.reflect();
-    } catch (error) {
-      error(`WebGPU shader error: could not create shader module at ${file_path}`, error);
+    } catch (err) {
+      error(`WebGPU shader error: could not create shader module at ${file_path}`, err);
     }
   }
 
