@@ -1884,8 +1884,8 @@ export class SceneSwitcher extends SimulationLayer {
   //await scene_switcher.add_scene(aabb_scene);
   //await scene_switcher.add_scene(rendering_scene);
   //await scene_switcher.add_scene(ml_scene);
-  //await scene_switcher.add_scene(voxel_terrain_scene);
-  await scene_switcher.add_scene(object_painting_scene);
+  await scene_switcher.add_scene(voxel_terrain_scene);
+  //await scene_switcher.add_scene(object_painting_scene);
 
   await simulator.add_sim_layer(scene_switcher);
 
