@@ -27,7 +27,7 @@ import { FontCache } from "../engine/src/ui/text/font_cache.js";
 import { Name } from "../engine/src/utility/names.js";
 import { profile_scope } from "../engine/src/utility/performance.js";
 import { log, warn, error } from "../engine/src/utility/logging.js";
-import { vec4, quat } from "gl-matrix";
+import { vec3, vec4, quat } from "gl-matrix";
 
 import * as UI from "../engine/src/ui/2d/immediate.js";
 
@@ -37,6 +37,7 @@ import { Input } from "../engine/src/ml/layers/input.js";
 import { MasterMind } from "../engine/src/ml/mastermind.js";
 import { Tensor, TensorInitializer } from "../engine/src/ml/math/tensor.js";
 import { Adam } from "../engine/src/ml/optimizers/adam.js";
+import { MaterialFamilyType } from "../engine/src/renderer/renderer_types.js";
 
 // ------------------------------------------------------------------------------------
 // =============================== Rendering Scene ===============================
@@ -1432,10 +1433,34 @@ export class VoxelTerrainScene extends Scene {
     // Create terrain material
     const terrain_material = StandardMaterial.create("TerrainMaterial");
     this.terrain_material_id = terrain_material.material_id;
-    terrain_material.set_albedo([0.4, 0.25, 0.1, 1]);
-    terrain_material.set_roughness(1.0);
-    terrain_material.set_metallic(0.8);
-    terrain_material.set_tiling(1.0);
+
+    {
+      let dirt_albedo = Texture.load(["engine/textures/voxel/dirt_albedo.jpg"], {
+        name: "dirt_albedo",
+        format: "rgba8unorm",
+        dimension: "2d",
+        usage:
+          GPUTextureUsage.TEXTURE_BINDING |
+          GPUTextureUsage.COPY_DST |
+          GPUTextureUsage.RENDER_ATTACHMENT,
+        material_notifier: "dirt_albedo",
+      });
+      let dirt_roughness = Texture.load(["engine/textures/voxel/dirt_roughness.jpg"], {
+        name: "dirt_roughness",
+        format: "rgba8unorm",
+        dimension: "2d",
+        usage:
+          GPUTextureUsage.TEXTURE_BINDING |
+          GPUTextureUsage.COPY_DST |
+          GPUTextureUsage.RENDER_ATTACHMENT,
+        material_notifier: "dirt_roughness",
+      });
+
+      terrain_material.set_albedo([0.7, 0.7, 0.7, 1.0], dirt_albedo);
+      terrain_material.set_roughness(0.5, dirt_roughness);
+      terrain_material.set_emission(0.2);
+      terrain_material.set_tiling(2.0, 2.0);
+    }
 
     // Create cube mesh for voxels
     this.cube_mesh = Mesh.cube();
@@ -1599,6 +1624,209 @@ export class VoxelTerrainScene extends Scene {
 }
 
 // ------------------------------------------------------------------------------------
+// =============================== ObjectPaintingScene ====================================
+// ------------------------------------------------------------------------------------
+const info_panel_config = {
+  layout: "column",
+  gap: 4,
+  y: 100,
+  anchor_y: "bottom",
+  dont_consume_cursor_events: true,
+  background_color: "rgba(0, 0, 0, 0.7)",
+  width: 600,
+  padding: 10,
+  border: "1px solid rgb(68, 68, 68)",
+  corner_radius: 5,
+};
+
+const info_label_config = {
+  text_color: "#fff",
+  x: 0,
+  y: 0,
+  wrap: true,
+  font: "16px monospace",
+  width: "100%",
+  height: "fit-content",
+  text_valign: "middle",
+  text_align: "left",
+  text_padding: 5,
+};
+
+export class ObjectPaintingScene extends Scene {
+  entities = [];
+  sphere_mesh = null;
+  brush_material_id = null;
+  brush_entity = null;
+
+  // --- Configurable parameters ---
+  brush_radius = 2.0;                  // radius of the sphere brush
+  brush_emit_intensity = 1.0;          // material emission
+  paint_rate = 0.25;                    // seconds between paint ticks
+  spawn_count = 256;                   // objects per tick
+  spawn_radius = 5.0;                  // radius of random paint sphere
+  // -------------------------------
+
+  last_paint_timer = 0;
+
+  init(parent_context) {
+    super.init(parent_context);
+
+    // Arcball camera control
+    const freeform_arcball_control_processor = this.add_layer(FreeformArcballControlProcessor);
+    freeform_arcball_control_processor.set_scene(this);
+
+    // Skybox + view
+    SharedEnvironmentMapData.set_skybox("default_scene_skybox", [
+      "engine/textures/simple_skybox/px.png",
+      "engine/textures/simple_skybox/nx.png",
+      "engine/textures/simple_skybox/ny.png",
+      "engine/textures/simple_skybox/py.png",
+      "engine/textures/simple_skybox/pz.png",
+      "engine/textures/simple_skybox/nz.png",
+    ]);
+    SharedEnvironmentMapData.set_skybox_color([1, 1, 1, 1]);
+    SharedViewBuffer.set_view_data(0, {
+      position: [0, 0, 10],
+      rotation: [0, 0, 0, 1],
+    });
+
+    // Create a light and add it to the scene
+    const light_entity = EntityManager.create_entity([LightFragment]);
+    this.entities.push(light_entity);
+
+    // Add a light fragment to the light entity
+    const light_fragment_view = EntityManager.get_fragment(light_entity, LightFragment);
+    light_fragment_view.type = LightType.DIRECTIONAL;
+    light_fragment_view.color = [1, 1, 1];
+    light_fragment_view.intensity = 2.5;
+    light_fragment_view.position = [10, 30, 10];
+    light_fragment_view.active = true;
+
+    // Load sphere mesh & create transparent/emissive brush material
+    this.sphere_mesh = Mesh.from_gltf("engine/models/sphere/sphere.gltf");
+
+    const object_material1 = StandardMaterial.create(
+      "ObjectPaintingObjectMaterial",
+    );
+    this.object_material1_id = object_material1.material_id;
+    const object_material2 = StandardMaterial.create(
+      "ObjectPaintingObjectMaterial2",
+    );
+    this.object_material2_id = object_material2.material_id;
+    const object_material3 = StandardMaterial.create(
+      "ObjectPaintingObjectMaterial3",
+    );
+    this.object_material3_id = object_material3.material_id;
+
+    object_material1.set_albedo([0.1, 0.1, 0.3, 1]);
+    object_material1.set_emission(0.3);
+    object_material1.set_roughness(0.5);
+    object_material1.set_tiling(2.0, 2.0);
+
+    object_material2.set_albedo([0.3, 0.0, 0.0, 1]);
+    object_material2.set_emission(0.3);
+    object_material2.set_roughness(0.5);
+    object_material2.set_tiling(2.0, 2.0);
+
+    object_material3.set_albedo([0.0, 0.3, 0.0, 1]);
+    object_material3.set_emission(0.3);
+    object_material3.set_roughness(0.5);
+    object_material3.set_tiling(2.0, 2.0);
+  }
+
+  update(delta_time) {
+    super.update(delta_time);
+
+    // Move brush to follow mouse
+    const world_pos = UI.UIContext.input_state.world_position;
+    const view = SharedViewBuffer.get_view_data(0);
+    const view_dir = view.view_forward;
+    const paint_pos = vec3.scaleAndAdd(vec3.create(), world_pos, view_dir, 50);
+
+    // While Space key is held, paint objects every paint_rate seconds
+    if (InputProvider.get_state(InputKey.K_Space)) {
+      this.last_paint_timer += delta_time;
+      if (this.last_paint_timer >= this.paint_rate) {
+        this.last_paint_timer -= this.paint_rate;
+        for (let i = 0; i < this.spawn_count; i++) {
+          // uniform random point in sphere
+          const r = this.spawn_radius * Math.cbrt(Math.random());
+          const theta = 2 * Math.PI * Math.random();
+          const phi = Math.acos(2 * Math.random() - 1);
+          const x = paint_pos[0] + r * Math.sin(phi) * Math.cos(theta);
+          const y = paint_pos[1] + r * Math.sin(phi) * Math.sin(theta);
+          const z = paint_pos[2] + r * Math.cos(phi);
+
+          // spawn a sphere instance
+          const entity = spawn_mesh_entity(
+            [x, y, z],
+            quat.create(),
+            [
+              0.1 + Math.random() * 0.3,
+              0.1 + Math.random() * 0.3,
+              0.1 + Math.random() * 0.3
+            ],
+            this.sphere_mesh,
+            [this.object_material1_id, this.object_material2_id, this.object_material3_id][Math.floor(Math.random() * 3)],
+            null,
+            [],
+            true,
+            EntityFlags.NO_AABB_UPDATE | EntityFlags.IGNORE_PARENT_SCALE
+          );
+          this.entities.push(entity);
+        }
+      }
+    } else {
+      // reset timer so we can paint immediately on next hold
+      this.last_paint_timer = this.paint_rate;
+    }
+
+    // show fixed center cursor
+    this.render_ui();
+  }
+
+  cleanup() {
+    for (const entity of this.entities) {
+      delete_entity(entity);
+    }
+    this.remove_layer(FreeformArcballControlProcessor);
+    super.cleanup();
+  }
+
+  // draw a fixed, 2D crosshair at screen center
+  render_ui() {
+    const { width, height } = UI.UIContext.canvas_size;
+    const cx = width * 0.5;
+    const cy = height * 0.5;
+
+    // vertical line
+    UI.panel({
+      x: cx - 1,
+      y: cy - 10,
+      width: 2,
+      height: 20,
+      background_color: "#FFFFFF",
+      dont_consume_cursor_events: true,
+    }, () => {});
+
+    // horizontal line
+    UI.panel({
+      x: cx - 10,
+      y: cy - 1,
+      width: 20,
+      height: 2,
+      background_color: "#FFFFFF",
+      dont_consume_cursor_events: true,
+    }, () => {});
+
+    // help text overlay
+    UI.panel(info_panel_config, () => {
+      UI.label("Hold [Space] to Paint objects", info_label_config);
+    });
+  }
+}
+
+// ------------------------------------------------------------------------------------
 // =============================== Scene Switcher ====================================
 // ------------------------------------------------------------------------------------
 
@@ -1648,14 +1876,16 @@ export class SceneSwitcher extends SimulationLayer {
   const textures_scene = new TexturesScene("TexturesScene");
   const solar_ecs_scene = new SolarECSTestScene("SolarECSTestScene");
   const voxel_terrain_scene = new VoxelTerrainScene("VoxelTerrainScene");
+  const object_painting_scene = new ObjectPaintingScene("ObjectPaintingScene");
 
   const scene_switcher = new SceneSwitcher("SceneSwitcher");
   //await scene_switcher.add_scene(solar_ecs_scene);
   //await scene_switcher.add_scene(textures_scene);
-  await scene_switcher.add_scene(aabb_scene);
+  //await scene_switcher.add_scene(aabb_scene);
   //await scene_switcher.add_scene(rendering_scene);
   //await scene_switcher.add_scene(ml_scene);
   //await scene_switcher.add_scene(voxel_terrain_scene);
+  await scene_switcher.add_scene(object_painting_scene);
 
   await simulator.add_sim_layer(scene_switcher);
 

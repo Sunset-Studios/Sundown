@@ -267,16 +267,13 @@ export class AABBEntityAdapter extends SimulationLayer {
     no_aabb_update
   ) {
     let modifiable_entity_current_flags = entity_current_flags;
-    // Calculate aabb_dirty based on the flags *as they came in* for this slot
-    const aabb_dirty_from_gpu =
-      (entity_current_flags & EntityFlags.AABB_DIRTY) !== 0 && !no_aabb_update;
 
     let new_node_allocated_in_slot = false;
     for (let i = 0; i < instance_count; i++) {
       const current_instance_offset = slot + i;
       let node_idx_for_instance = aabb_node_index_typed_array[current_instance_offset];
 
-      if (node_idx_for_instance <= 0 && !no_aabb_update) {
+      if (node_idx_for_instance <= 0) {
         // Added !no_aabb_update here too
         const entity = EntityManager.get_entity_for(chunk, current_instance_offset);
         node_idx_for_instance = AABB.allocate_node(entity.id); // entity.id needs to be storable/retrievable
@@ -288,7 +285,7 @@ export class AABBEntityAdapter extends SimulationLayer {
 
       // We use aabb_dirty_from_gpu here. If the GPU said it's dirty, we tell the tree processor.
       // The tree processor will then gate on whether the bounds are actually synced.
-      if (new_node_allocated_in_slot && node_idx_for_instance > 0) {
+      if (new_node_allocated_in_slot && node_idx_for_instance > 0 && !no_aabb_update) {
         this.tree_processor.mark_node_dirty(node_idx_for_instance);
       }
     }
@@ -336,6 +333,8 @@ export class AABBEntityAdapter extends SimulationLayer {
       const counts = chunk.icnt_meta;
       const flags = chunk.flags_meta;
       const transform_views_for_chunk = chunk.get_fragment_view(TransformFragment);
+      if (!transform_views_for_chunk) continue;
+
       const aabb_node_index_typed_array = transform_views_for_chunk.aabb_node_index;
 
       let slot = segment.slot;

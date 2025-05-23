@@ -9,7 +9,7 @@ import { profile_scope } from "../utility/performance.js";
 export class AABBTreeProcessor {
   // Configuration
   fat_margin_factor = 0.3; // 30% additional padding for fat AABBs
-  batch_size = 256; // Process nodes in batches for better performance
+  batch_size = Number.MAX_SAFE_INTEGER; // Process nodes in batches for better performance
 
   // Statistics
   leaf_nodes = 0;
