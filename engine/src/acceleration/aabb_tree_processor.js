@@ -9,7 +9,7 @@ import { profile_scope } from "../utility/performance.js";
 export class AABBTreeProcessor {
   // Configuration
   fat_margin_factor = 0.3; // 30% additional padding for fat AABBs
-  batch_size = 512; // Process nodes in batches for better performance
+  batch_size = Number.MAX_SAFE_INTEGER; // Process nodes in batches for better performance
 
   // Statistics
   leaf_nodes = 0;
@@ -21,12 +21,22 @@ export class AABBTreeProcessor {
   nodes_to_balance = new TypedQueue(1024);
   dirty_nodes_set = new Set();
 
+  // For reporting to AABBEntityAdapter which nodes were actually processed
+  _processed_nodes_this_frame_report = [];
+
+  constructor() {
+    // Ensure AABB static data is ready, especially AABB.dirty_nodes
+    if (!AABB.is_initialized) {
+      AABB.initialize(); // Or ensure it's initialized before processor is used
+    }
+  }
+
   /**
    * Called before the update cycle
    */
   pre_update() {
-    // Initialize AABB data if needed
-    if (!AABB.data) AABB.initialize();
+    if (!AABB.is_initialized) AABB.initialize();
+    this._processed_nodes_this_frame_report.length = 0; // Clear for current frame
   }
 
   /**
@@ -35,7 +45,7 @@ export class AABBTreeProcessor {
    */
   update(delta_time) {
     profile_scope("aabb_tree_processor.update", () => {
-      // Process node changes
+      // Process node changes based on dirty queue and sync status
       this._process_node_changes();
 
       // Perform incremental balancing
@@ -46,6 +56,8 @@ export class AABBTreeProcessor {
         this._calculate_stats();
       }
     });
+
+    return this._processed_nodes_this_frame_report;
   }
 
   /**
@@ -62,22 +74,34 @@ export class AABBTreeProcessor {
         return;
       }
 
-      const max_iterations = Math.min(AABB.dirty_nodes.length, this.batch_size);
+      const iterations = Math.min(AABB.dirty_nodes.length, this.batch_size);
 
-      for (let i = 0; i < max_iterations; i++) {
+      for (let i = 0; i < iterations; i++) {
         const node_index = AABB.dirty_nodes.pop();
-        this.dirty_nodes_set.delete(node_index);
-
-        const node_view = AABB.get_node_data(node_index);
-        let flags = node_view.flags;
-        flags &= ~AABB_NODE_FLAGS.MOVED;
-        node_view.flags = flags;
-
-        if ((flags & AABB_NODE_FLAGS.FREE) !== 0) {
+        if (!node_index || node_index < 0 || node_index >= AABB.size) {
           continue;
         }
 
-        this._process_leaf_check(node_index);
+        // Bounds are not synced to CPU yet for this node. Requeue it for a later frame.
+        if (AABB.node_bounds_cpu_sync_status[node_index] === 0) {
+          AABB.dirty_nodes.push(node_index);
+          continue;
+        }
+
+        // Bounds are synced to CPU, proceed with processing.
+        const node_view = AABB.get_node_data(node_index);
+        if ((node_view.flags & AABB_NODE_FLAGS.FREE) === 0) {
+          // Node is active, perform tree checks and updates using the synced CPU bounds.
+          this._process_leaf_check(node_index);
+        }
+
+        // Mark CPU bounds as "consumed" for this processing cycle.
+        // It will become 1 again when the next GPU->CPU sync for this node occurs.
+        AABB.node_bounds_cpu_sync_status[node_index] = 0;
+
+        this._processed_nodes_this_frame_report.push(node_index);
+
+        this.stats_dirty = true;
       }
     });
   }
@@ -248,7 +272,7 @@ export class AABBTreeProcessor {
       } else {
         // Store sibling's parent before any modifications
         const sibling_view = AABB.get_node_data(sibling);
-    
+
         // Connect sibling to grandparent
         if (grandparent === 0) {
           // Parent was the root, make sibling the new root
@@ -264,13 +288,13 @@ export class AABBTreeProcessor {
           }
           sibling_view.parent = grandparent;
         }
-    
+
         // Free the parent node
         AABB.free_node(parent);
-    
+
         // Refit AABBs up the tree
         this._refit_ancestors(sibling);
-    
+
         // Update the height of the sibling
         this._update_node_heights(sibling);
 

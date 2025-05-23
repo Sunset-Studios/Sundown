@@ -26,23 +26,10 @@ class ComputeTask {
 }
 
 export class ComputeTaskQueue {
-  constructor() {
-    if (ComputeTaskQueue.instance) {
-      return ComputeTaskQueue.instance;
-    }
-    this.tasks = [];
-    this.tasks_allocator = new RandomAccessAllocator(256, new ComputeTask());
-    ComputeTaskQueue.instance = this;
-  }
+  static tasks = [];
+  static tasks_allocator = new RandomAccessAllocator(256, new ComputeTask());
 
-  static get() {
-    if (!ComputeTaskQueue.instance) {
-      ComputeTaskQueue.instance = new ComputeTaskQueue();
-    }
-    return ComputeTaskQueue.instance;
-  }
-
-  new_task(
+  static new_task(
     name,
     shader,
     inputs,
@@ -69,7 +56,7 @@ export class ComputeTaskQueue {
     return task;
   }
 
-  compile_rg_passes(render_graph) {
+  static compile_rg_passes(render_graph) {
     profile_scope("ComputeTaskQueue.compile_rg_passes", () => {
       for (let i = 0; i < this.tasks.length; i++) {
         const task = this.tasks[i];
@@ -111,7 +98,7 @@ export class ComputeTaskQueue {
     });
   }
 
-  reset() {
+  static reset() {
     this.tasks_allocator.reset();
     this.tasks.length = 0;
   }

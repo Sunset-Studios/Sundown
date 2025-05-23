@@ -12,6 +12,14 @@ export default defineConfig({
   },
   publicDir: "assets",
   define: {
-    __DEV__: 'true',
-  }
+    __DEV__: "true",
+  },
+  server: {
+    // if you’re proxying through Express you may not need this;
+    // otherwise Vite itself must serve these headers.
+    headers: {
+      "Cross-Origin-Opener-Policy": "same-origin",
+      "Cross-Origin-Embedder-Policy": "require-corp",
+    },
+  },
 });

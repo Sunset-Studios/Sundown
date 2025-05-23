@@ -1,5 +1,6 @@
 import { Simulator } from "../engine/src/core/simulator.js";
 import SimulationCore from "../engine/src/core/simulation_core.js";
+import { FragmentGpuBuffer } from "../engine/src/core/ecs/solar/memory.js";
 import { SimulationLayer } from "../engine/src/core/simulation_layer.js";
 import { EntityManager } from "../engine/src/core/ecs/entity.js";
 import { Scene } from "../engine/src/core/scene.js";
@@ -15,10 +16,9 @@ import { FreeformArcballControlProcessor } from "../engine/src/core/subsystems/f
 import { LightFragment } from "../engine/src/core/ecs/fragments/light_fragment.js";
 import { TextFragment } from "../engine/src/core/ecs/fragments/text_fragment.js";
 import { StaticMeshFragment } from "../engine/src/core/ecs/fragments/static_mesh_fragment.js";
-import { LightType, EntityTransformFlags } from "../engine/src/core/minimal.js";
-import { Material, StandardMaterial } from "../engine/src/renderer/material.js";
+import { LightType, EntityFlags } from "../engine/src/core/minimal.js";
+import { StandardMaterial } from "../engine/src/renderer/material.js";
 import { Texture } from "../engine/src/renderer/texture.js";
-import { Buffer } from "../engine/src/renderer/buffer.js";
 import { Mesh } from "../engine/src/renderer/mesh.js";
 import { LineRenderer } from "../engine/src/renderer/line_renderer.js";
 import { SharedEnvironmentMapData, SharedViewBuffer } from "../engine/src/core/shared_data.js";
@@ -26,7 +26,8 @@ import { spawn_mesh_entity, delete_entity } from "../engine/src/core/ecs/entity_
 import { FontCache } from "../engine/src/ui/text/font_cache.js";
 import { Name } from "../engine/src/utility/names.js";
 import { profile_scope } from "../engine/src/utility/performance.js";
-import { vec4, quat } from "gl-matrix";
+import { log, warn, error } from "../engine/src/utility/logging.js";
+import { vec3, vec4, quat } from "gl-matrix";
 
 import * as UI from "../engine/src/ui/2d/immediate.js";
 
@@ -36,10 +37,15 @@ import { Input } from "../engine/src/ml/layers/input.js";
 import { MasterMind } from "../engine/src/ml/mastermind.js";
 import { Tensor, TensorInitializer } from "../engine/src/ml/math/tensor.js";
 import { Adam } from "../engine/src/ml/optimizers/adam.js";
+import { MaterialFamilyType } from "../engine/src/renderer/renderer_types.js";
 
 // ------------------------------------------------------------------------------------
 // =============================== Rendering Scene ===============================
 // ------------------------------------------------------------------------------------
+
+const positions_name = "position";
+const ripples_name = "ripples";
+const ripples_shader = "effects/transform_ripples.wgsl";
 
 export class RenderingScene extends Scene {
   entities = [];
@@ -70,29 +76,51 @@ export class RenderingScene extends Scene {
     SharedEnvironmentMapData.set_skybox_color([1, 1, 1, 1]);
 
     // Create a light and add it to the scene
-    const light_entity = EntityManager.create_entity();
+    const light_entity = EntityManager.create_entity([LightFragment]);
     this.entities.push(light_entity);
 
     // Add a light fragment to the light entity
-    const light_fragment_view = EntityManager.add_fragment(light_entity, LightFragment, false);
+    const light_fragment_view = EntityManager.get_fragment(light_entity, LightFragment);
     light_fragment_view.type = LightType.DIRECTIONAL;
-    light_fragment_view.color.r = 1;
-    light_fragment_view.color.g = 1;
-    light_fragment_view.color.b = 1;
+    light_fragment_view.color = [1, 1, 1, 1];
     light_fragment_view.intensity = 3;
-    light_fragment_view.position.x = 50;
-    light_fragment_view.position.y = 0;
-    light_fragment_view.position.z = 50;
+    light_fragment_view.position = [50, 0, 50, 1];
     light_fragment_view.active = true;
 
     // Create a sphere mesh and add it to the scene
-    const mesh = Mesh.from_gltf("engine/models/sphere/sphere.gltf");
+    const mesh = Mesh.from_gltf("engine/models/cube/cube.gltf");
 
     // Create a default material
     const default_material = StandardMaterial.create("MyMaterial");
     const default_material_id = default_material.material_id;
-    default_material.set_albedo([0.7, 0.7, 0.7, 1.0]);
-    default_material.set_emission(0.0);
+
+    {
+      let dirt_albedo = Texture.load(["engine/textures/voxel/dirt_albedo.jpg"], {
+        name: "dirt_albedo",
+        format: "rgba8unorm",
+        dimension: "2d",
+        usage:
+          GPUTextureUsage.TEXTURE_BINDING |
+          GPUTextureUsage.COPY_DST |
+          GPUTextureUsage.RENDER_ATTACHMENT,
+        material_notifier: "dirt_albedo",
+      });
+      let dirt_roughness = Texture.load(["engine/textures/voxel/dirt_roughness.jpg"], {
+        name: "dirt_roughness",
+        format: "rgba8unorm",
+        dimension: "2d",
+        usage:
+          GPUTextureUsage.TEXTURE_BINDING |
+          GPUTextureUsage.COPY_DST |
+          GPUTextureUsage.RENDER_ATTACHMENT,
+        material_notifier: "dirt_roughness",
+      });
+
+      default_material.set_albedo([0.7, 0.7, 0.7, 1.0], dirt_albedo);
+      default_material.set_roughness(0.5, dirt_roughness);
+      default_material.set_emission(0.2);
+      default_material.set_tiling(2.0, 2.0);
+    }
 
     // Get Exo-Medium font
     const font_id = Name.from("Exo-Medium");
@@ -100,25 +128,21 @@ export class RenderingScene extends Scene {
 
     // Create a 3D grid of sphere entities
     const grid_size = 100; // 100x100x10 grid
-    const grid_layers = 10;
+    const grid_layers = 100;
     const spacing = 5; // 2 units apart
-
-    EntityManager.reserve_entities(grid_size * grid_size * grid_layers);
 
     const sphere = spawn_mesh_entity(
       [0, 0, 0],
-      [0, 0, 0, 1],
+      [0, 0, 0],
       [0.5, 0.5, 0.5],
       mesh,
       default_material_id,
       null /* parent */,
       [] /* children */,
       true /* start_visible */,
-      EntityTransformFlags.NO_AABB_UPDATE | EntityTransformFlags.IGNORE_PARENT_SCALE
+      EntityFlags.NO_AABB_UPDATE | EntityFlags.IGNORE_PARENT_SCALE
     );
     EntityManager.set_entity_instance_count(sphere, grid_size * grid_size * grid_layers);
-
-    EntityManager.flush_instance_count_changes();
 
     this.entities.push(sphere);
 
@@ -131,40 +155,19 @@ export class RenderingScene extends Scene {
             (y - Math.floor(grid_layers / 2)) * spacing,
             (z - Math.floor(grid_size / 2)) * spacing,
           ];
-          EntityManager.get_fragment(sphere, TransformFragment, sphere_count).position = pos;
+          const view = EntityManager.get_fragment(sphere, TransformFragment, sphere_count);
+          view.position = pos;
           ++sphere_count;
         }
       }
     }
 
-    const text_entity = spawn_mesh_entity(
-      [0, 25, -5],
-      [0, 0, 0, 1],
-      [0.5, 0.5, 0.5],
-      Mesh.quad(),
-      font_object.material,
-      null /* parent */,
-      [] /* children */,
-      true /* start_visible */,
-      EntityTransformFlags.NO_AABB_UPDATE | EntityTransformFlags.IGNORE_PARENT_SCALE
-    );
-    const text_fragment_view = EntityManager.add_fragment(text_entity, TextFragment);
-    text_fragment_view.font = font_id;
-    text_fragment_view.text = "Sundown Engine";
-    text_fragment_view.font_size = 32;
-    text_fragment_view.color.r = 1;
-    text_fragment_view.color.g = 1;
-    text_fragment_view.color.b = 1;
-    text_fragment_view.color.a = 1;
-    text_fragment_view.emissive = 1;
-    this.entities.push(text_entity);
-
-    PostProcessStack.register_pass(0, "crt", "effects/crt_post.wgsl", {
-      curvature: 0.0,
-      vignette: 0.2,
-      scan_brightness: 0.5,
-      rgb_offset: 0.2,
-      bloom_strength: 0.3,
+    PostProcessStack.register_pass(0, "vhs", "effects/vhs_post.wgsl", {
+      noise_intensity: 0.25,
+      scanline_intensity: 0.35,
+      color_bleeding: 0.25,
+      distortion_frequency: 0.75,
+      distortion_amplitude: 0.15,
     });
   }
 
@@ -183,14 +186,17 @@ export class RenderingScene extends Scene {
   update(delta_time) {
     super.update(delta_time);
 
-    const transforms = EntityManager.get_fragment_array(TransformFragment);
+    const flags = FragmentGpuBuffer.entity_flags_buffer;
+    const positions = EntityManager.get_fragment_gpu_buffer(TransformFragment, positions_name);
 
-    ComputeTaskQueue.get().new_task(
-      "ripples",
-      "effects/transform_ripples.wgsl",
-      [transforms.position_buffer, transforms.flags_buffer, transforms.dirty_buffer],
-      [transforms.position_buffer, transforms.flags_buffer, transforms.dirty_buffer],
-      Math.ceil(transforms.flags.length / 256)
+    const total_transforms = EntityManager.get_total_subscribed(TransformFragment);
+
+    ComputeTaskQueue.new_task(
+      ripples_name,
+      ripples_shader,
+      [positions.buffer, flags.buffer],
+      [positions.buffer, flags.buffer],
+      Math.ceil(total_transforms / 256)
     );
   }
 }
@@ -228,25 +234,19 @@ export class MLScene extends Scene {
     SharedEnvironmentMapData.set_skybox_color([1, 1, 1, 1]);
 
     // Create a light and add it to the scene
-    const light_entity = EntityManager.create_entity();
+    const light_entity = EntityManager.create_entity([LightFragment]);
 
     // Add a light fragment to the light entity
-    const light_fragment_view = EntityManager.add_fragment(light_entity, LightFragment, false);
+    const light_fragment_view = EntityManager.get_fragment(light_entity, LightFragment);
     light_fragment_view.type = LightType.DIRECTIONAL;
-    light_fragment_view.color.r = 1;
-    light_fragment_view.color.g = 1;
-    light_fragment_view.color.b = 1;
+    light_fragment_view.color = [1, 1, 1];
     light_fragment_view.intensity = 3;
-    light_fragment_view.position.x = 50;
-    light_fragment_view.position.y = 0;
-    light_fragment_view.position.z = 0;
+    light_fragment_view.position = [50, 0, 0];
     light_fragment_view.active = true;
 
     // Get Exo-Medium font
     const font_id = Name.from("Exo-Medium");
     const font_object = FontCache.get_font_object(font_id);
-
-    EntityManager.reserve_entities(1);
 
     const text_entity = spawn_mesh_entity(
       [0, 25, -50],
@@ -260,13 +260,10 @@ export class MLScene extends Scene {
     );
     const text_fragment_view = EntityManager.add_fragment(text_entity, TextFragment);
     text_fragment_view.font = font_id;
-    text_fragment_view.text = "ML Test";
     text_fragment_view.font_size = 32;
-    text_fragment_view.color.r = 1;
-    text_fragment_view.color.g = 1;
-    text_fragment_view.color.b = 1;
-    text_fragment_view.color.a = 1;
-    text_fragment_view.emissive = 1;
+    text_fragment_view.text_color = [1, 1, 1, 1];
+    text_fragment_view.text_emissive = 1;
+    text_fragment_view.text = "ML Test";
 
     this.scene_entities.push(light_entity);
     this.scene_entities.push(text_entity);
@@ -372,11 +369,15 @@ export class MLScene extends Scene {
         batch_size: 16,
       });
 
-      const hidden1 = Layer.create(LayerType.FULLY_CONNECTED, {
-        input_size: 2,
-        output_size: 8,
-        initializer: TensorInitializer.GLOROT,
-      }, root);
+      const hidden1 = Layer.create(
+        LayerType.FULLY_CONNECTED,
+        {
+          input_size: 2,
+          output_size: 8,
+          initializer: TensorInitializer.GLOROT,
+        },
+        root
+      );
 
       const relu1 = Layer.create(LayerType.RELU, {}, hidden1);
 
@@ -480,19 +481,15 @@ export class TexturesScene extends Scene {
     });
 
     // Create a light and add it to the scene
-    const light_entity = EntityManager.create_entity();
+    const light_entity = EntityManager.create_entity([LightFragment]);
     this.entities.push(light_entity);
 
     // Add a light fragment to the light entity
-    const light_fragment_view = EntityManager.add_fragment(light_entity, LightFragment, false);
+    const light_fragment_view = EntityManager.get_fragment(light_entity, LightFragment);
     light_fragment_view.type = LightType.DIRECTIONAL;
-    light_fragment_view.color.r = 1;
-    light_fragment_view.color.g = 1;
-    light_fragment_view.color.b = 1;
+    light_fragment_view.color = [1, 1, 1, 1];
     light_fragment_view.intensity = 2;
-    light_fragment_view.position.x = 50;
-    light_fragment_view.position.y = 20;
-    light_fragment_view.position.z = -10;
+    light_fragment_view.position = [50, 20, -10];
     light_fragment_view.active = true;
 
     // Get Exo-Medium font
@@ -509,13 +506,10 @@ export class TexturesScene extends Scene {
     );
     const text_fragment_view = EntityManager.add_fragment(text_entity, TextFragment);
     text_fragment_view.font = font_id;
-    text_fragment_view.text = "Textures Test Scene";
     text_fragment_view.font_size = 32;
-    text_fragment_view.color.r = 1;
-    text_fragment_view.color.g = 1;
-    text_fragment_view.color.b = 1;
-    text_fragment_view.color.a = 1;
-    text_fragment_view.emissive = 1;
+    text_fragment_view.text_color = [1, 1, 1, 1];
+    text_fragment_view.text_emissive = 1;
+    text_fragment_view.text = "Textures Test Scene";
     this.entities.push(text_entity);
 
     // Load metal plane material
@@ -660,8 +654,6 @@ export class TexturesScene extends Scene {
     // Create a cube mesh
     this.cube_mesh = Mesh.cube();
 
-    EntityManager.reserve_entities(256);
-
     // Setup the world plane
     this.setup_world_plane();
 
@@ -762,7 +754,6 @@ export class AABBScene extends Scene {
   ray_hits = [];
   last_ray_origin = null;
   last_ray_direction = null;
-  ray_line_collection = null;
 
   init(parent_context) {
     super.init(parent_context);
@@ -793,20 +784,14 @@ export class AABBScene extends Scene {
     this.aabb_tree_debug_renderer = this.get_layer(AABBTreeDebugRenderer);
 
     // Create a light and add it to the scene
-    const light_entity = EntityManager.create_entity();
-    this.entities.push(light_entity);
-
-    // Add a light fragment to the light entity
-    const light_fragment_view = EntityManager.add_fragment(light_entity, LightFragment, false);
+    const light_entity = EntityManager.create_entity([LightFragment]);
+    const light_fragment_view = EntityManager.get_fragment(light_entity, LightFragment);
     light_fragment_view.type = LightType.DIRECTIONAL;
-    light_fragment_view.color.r = 1;
-    light_fragment_view.color.g = 1;
-    light_fragment_view.color.b = 1;
+    light_fragment_view.color = [1, 1, 1];
     light_fragment_view.intensity = 3;
-    light_fragment_view.position.x = 50;
-    light_fragment_view.position.y = 20;
-    light_fragment_view.position.z = 50;
+    light_fragment_view.position = [50, 20, 50];
     light_fragment_view.active = true;
+    this.entities.push(light_entity);
 
     // Get Exo-Medium font
     const font_id = Name.from("Exo-Medium");
@@ -814,7 +799,7 @@ export class AABBScene extends Scene {
 
     // Add a title text entity
     const text_entity = spawn_mesh_entity(
-      [25, 65, 25],
+      [10, 65, 25],
       [0, 0, 0, 1],
       [0.5, 0.5, 0.5],
       Mesh.quad(),
@@ -822,13 +807,10 @@ export class AABBScene extends Scene {
     );
     const text_fragment_view = EntityManager.add_fragment(text_entity, TextFragment);
     text_fragment_view.font = font_id;
-    text_fragment_view.text = "BVH Test Scene";
     text_fragment_view.font_size = 32;
-    text_fragment_view.color.r = 1;
-    text_fragment_view.color.g = 1;
-    text_fragment_view.color.b = 1;
-    text_fragment_view.color.a = 1;
-    text_fragment_view.emissive = 1;
+    text_fragment_view.text_color = [1, 1, 1, 1];
+    text_fragment_view.text_emissive = 1;
+    text_fragment_view.text = "BVH Test Scene";
     this.entities.push(text_entity);
 
     // Create a default material
@@ -888,8 +870,6 @@ export class AABBScene extends Scene {
     const grid_size = 20;
     const spacing = 3.0;
 
-    EntityManager.reserve_entities(grid_size * grid_size * grid_size);
-
     for (let x = 0; x < grid_size; x++) {
       for (let z = 0; z < grid_size; z++) {
         for (let y = 0; y < grid_size; y++) {
@@ -911,13 +891,18 @@ export class AABBScene extends Scene {
             quat.fromEuler(quat.create(), 0, 0, 0),
             scale,
             mesh,
-            this.default_material_id
+            this.default_material_id,
+            null,
+            [],
+            true,
           );
 
           this.entities.push(entity);
         }
       }
     }
+
+    log(`[AABB] Spawned ${this.entities.length} entities`);
   }
 
   handle_input() {
@@ -950,7 +935,7 @@ export class AABBScene extends Scene {
         null,
         [],
         true,
-        EntityTransformFlags.IGNORE_PARENT_SCALE | EntityTransformFlags.NO_AABB_UPDATE
+        EntityFlags.IGNORE_PARENT_SCALE | EntityFlags.NO_AABB_UPDATE
       );
 
       this.entities.push(entity);
@@ -980,7 +965,7 @@ export class AABBScene extends Scene {
     if (!cursor_world_position) return;
 
     // Use camera position as ray origin
-    this.last_ray_origin = cursor_world_position;
+    this.last_ray_origin = view_data.position;
 
     // Calculate ray direction from camera to cursor world position
     this.last_ray_direction = vec4.sub(vec4.create(), cursor_world_position, view_data.position);
@@ -1034,47 +1019,40 @@ export class AABBScene extends Scene {
     this.ray_hits = new_ray_hits;
 
     // Update selected entity highlighting
-    if (this.selected_entity !== null) {
-      // Reset previous selection
-      const static_mesh_fragment = EntityManager.get_fragment(
-        this.selected_entity,
-        StaticMeshFragment
-      );
-      if (static_mesh_fragment) {
-        static_mesh_fragment.material_slots = [this.default_material_id];
-      }
-
-      this.selected_entity = null;
-    }
+    const previous_selected_entity = this.selected_entity;
 
     // Select new entity if we hit something
     if (this.ray_hits.length > 0) {
       const hit = this.ray_hits[0];
 
-      // Update the line visualization
-      if (this.ray_line_collection) {
-        LineRenderer.clear_collection(this.ray_line_collection);
-      }
-
-      this.ray_line_collection = LineRenderer.start_collection();
-
-      // Draw the ray from camera to end point
-      LineRenderer.add_line(this.last_ray_origin, hit.point, [1, 0, 0, 1]);
-
-      LineRenderer.end_collection();
-
       // Highlight the selected entity by writing to the material buffer
-      this.selected_entity = hit.user_data;
+      this.selected_entity = EntityManager.get_entity_from_id(hit.user_data);
+    }
+
+    if (previous_selected_entity === this.selected_entity) {
+      return;
+    }
+
+    if (previous_selected_entity !== null) {
+      // Reset previous selection
+      const static_mesh_fragment = EntityManager.get_fragment(
+        previous_selected_entity,
+        StaticMeshFragment
+      );
+      if (static_mesh_fragment) {
+        static_mesh_fragment.material_slots = [BigInt(this.default_material_id)];
+      }
+    }
+
+    if (this.selected_entity !== null) {
       const static_mesh_fragment = EntityManager.get_fragment(
         this.selected_entity,
         StaticMeshFragment
       );
       if (static_mesh_fragment) {
-        static_mesh_fragment.material_slots = [this.selected_entity_material_id];
+        static_mesh_fragment.material_slots = [BigInt(this.selected_entity_material_id)];
       }
     }
-
-    this.default_material_buffer.write(this.default_material_data);
   }
 
   render_ui() {
@@ -1222,6 +1200,633 @@ export class AABBScene extends Scene {
 }
 
 // ------------------------------------------------------------------------------------
+// =============================== Solar ECS Test Scene ==============================
+// ------------------------------------------------------------------------------------
+
+export class SolarECSTestScene extends Scene {
+  name = "SolarECSTestScene";
+  entities = []; // Stores all entities in the scene
+  text_update_timer = 0; // Timer for text updates
+  text_update_interval = 0.2; // Time in seconds between text updates
+
+  grid_entity_counts = { x: 20, y: 20, z: 20 }; // Number of entities per dimension
+  grid_spacing = { x: 4.0, y: 4.0, z: 4.0 }; // Explicit spacing between entities
+
+  grid_text_entities = []; // Stores entities that are part of the text grid
+  num_entities_to_update_per_cycle = 250; // Number of entities to update each cycle
+
+  combined_text_presets = [
+    // Morse code
+    "...",
+    ".-",
+    "..",
+    "---",
+    ".-.",
+    ".-..",
+    "--",
+    "-.",
+    "..-",
+    ".-.-",
+    "---.",
+    "....-",
+    ".--",
+    "-",
+    "..-",
+    ".-.-",
+    "---.- .-",
+    "....",
+  ];
+  random_texts = []; // Will be assigned in init
+
+  init(parent_context) {
+    super.init(parent_context);
+
+    // Set the skybox for this scene.
+    SharedEnvironmentMapData.set_skybox("default_scene_skybox", [
+      "engine/textures/gradientbox/px.png",
+      "engine/textures/gradientbox/nx.png",
+      "engine/textures/gradientbox/ny.png",
+      "engine/textures/gradientbox/py.png",
+      "engine/textures/gradientbox/pz.png",
+      "engine/textures/gradientbox/nz.png",
+    ]);
+
+    // Set the skybox color to a subtle green
+    SharedEnvironmentMapData.set_skybox_color([0.7, 1.0, 0.8, 1]);
+
+    // Add the freeform arcball control processor to the scene
+    const freeform_arcball_control_processor = this.add_layer(FreeformArcballControlProcessor);
+    freeform_arcball_control_processor.set_scene(this);
+
+    // Set initial camera view
+    SharedViewBuffer.set_view_data(0, {
+      position: [10.0, 10.0, 15.0],
+      rotation: quat.fromEuler(quat.create(), 0, -180, 0), // Example rotation
+    });
+
+    // Create a light and add it to the scene
+    const light_entity = EntityManager.create_entity([LightFragment]);
+    this.entities.push(light_entity);
+
+    // Add a light fragment to the light entity
+    const light_fragment_view = EntityManager.get_fragment(light_entity, LightFragment);
+    light_fragment_view.type = LightType.DIRECTIONAL;
+    light_fragment_view.color = [1, 1, 1];
+    light_fragment_view.intensity = 2.5;
+    light_fragment_view.position = [10, 30, 10];
+    light_fragment_view.active = true;
+
+    // Get Exo-Medium font for potential text elements
+    const font_id = Name.from("Exo-Medium");
+    const font_object = FontCache.get_font_object(font_id);
+
+    // Assign the combined presets to random_texts so the title can use them too
+    this.random_texts = this.combined_text_presets;
+
+    // Create the grid of text entities
+    const counts_x = this.grid_entity_counts.x;
+    const counts_y = this.grid_entity_counts.y;
+    const counts_z = this.grid_entity_counts.z;
+
+    const center_offset_x = (counts_x - 1) * 0.5;
+    const center_offset_y = (counts_y - 1) * 0.5;
+    const center_offset_z = (counts_z - 1) * 0.5;
+
+    for (let ix = 0; ix < counts_x; ix++) {
+      for (let iy = 0; iy < counts_y; iy++) {
+        for (let iz = 0; iz < counts_z; iz++) {
+          const pos = [
+            (ix - center_offset_x) * this.grid_spacing.x,
+            (iy - center_offset_y) * this.grid_spacing.y,
+            (iz - center_offset_z) * this.grid_spacing.z,
+          ];
+
+          const grid_entity = spawn_mesh_entity(
+            pos,
+            [0, 0, 0],
+            [1.0, 1.0, 1.0],
+            Mesh.quad(),
+            font_object.material,
+            null,
+            [],
+            true,
+            EntityFlags.NO_AABB_UPDATE | EntityFlags.IGNORE_PARENT_SCALE
+          );
+
+          const text_frag = EntityManager.add_fragment(grid_entity, TextFragment);
+          text_frag.font = font_id;
+          text_frag.font_size = 10; // Smaller font size for grid
+          text_frag.text_color = [
+            Math.random() * 0.5 + 0.5,
+            Math.random() * 0.5 + 0.5,
+            Math.random() * 0.5 + 0.5,
+            1.0,
+          ]; // Brighter random colors
+          text_frag.text_emissive = 0.7;
+          text_frag.text = this.random_texts[Math.floor(Math.random() * this.random_texts.length)]; // Initial random text
+
+          this.entities.push(grid_entity);
+          this.grid_text_entities.push(grid_entity);
+        }
+      }
+    }
+
+    log(`[${this.name}] Initialized with ${this.entities.length} entities.`);
+  }
+
+  cleanup() {
+    log(`[${this.name}] Cleaning up...`);
+    for (let i = 0; i < this.entities.length; i++) {
+      delete_entity(this.entities[i]);
+    }
+    this.entities.length = 0;
+    this.grid_text_entities = []; // Clear the specific list too
+
+    this.remove_layer(FreeformArcballControlProcessor);
+
+    super.cleanup();
+    log(`[${this.name}] Cleanup complete.`);
+  }
+
+  pre_update(delta_time) {
+    super.pre_update(delta_time);
+
+    // Timer-based update for the grid entities
+    this.text_update_timer += delta_time;
+    if (this.text_update_timer >= this.text_update_interval) {
+      this.text_update_timer -= this.text_update_interval; // Carry over excess time
+
+      if (this.grid_text_entities && this.grid_text_entities.length > 0) {
+        const num_to_update = Math.min(
+          this.num_entities_to_update_per_cycle,
+          this.grid_text_entities.length
+        );
+
+        // Create a Set of indices to update to ensure we update unique entities if num_to_update < total
+        const indices_to_update = new Set();
+        while (
+          indices_to_update.size < num_to_update &&
+          indices_to_update.size < this.grid_text_entities.length
+        ) {
+          indices_to_update.add(Math.floor(Math.random() * this.grid_text_entities.length));
+        }
+
+        for (const entity_index of indices_to_update) {
+          const entity_to_update = this.grid_text_entities[entity_index];
+
+          const random_text_index = Math.floor(Math.random() * this.random_texts.length);
+          const new_text = this.random_texts[random_text_index];
+
+          const tfv = EntityManager.get_fragment(entity_to_update, TextFragment);
+          if (tfv && new_text.length > 0) {
+            tfv.text = new_text;
+          }
+        }
+      }
+    }
+  }
+}
+
+// ------------------------------------------------------------------------------------
+// =============================== Voxel Terrain Scene ===============================
+// ------------------------------------------------------------------------------------
+
+export class VoxelTerrainScene extends Scene {
+  name = "VoxelTerrainScene";
+  entities = [];
+  terrain_material_id = null;
+  cube_mesh = null;
+
+  init(parent_context) {
+    super.init(parent_context);
+
+    const freeform_arcball = this.add_layer(FreeformArcballControlProcessor);
+    freeform_arcball.set_scene(this);
+
+    SharedEnvironmentMapData.set_skybox("default_scene_skybox", [
+      "engine/textures/gradientbox/px.png",
+      "engine/textures/gradientbox/nx.png",
+      "engine/textures/gradientbox/ny.png",
+      "engine/textures/gradientbox/py.png",
+      "engine/textures/gradientbox/pz.png",
+      "engine/textures/gradientbox/nz.png",
+    ]);
+    SharedEnvironmentMapData.set_skybox_color([0.5, 0.7, 0.5, 1]);
+
+    SharedViewBuffer.set_view_data(0, {
+      position: [20.7373, 54.0735, 68.58896],
+      rotation: [-0.036352589, 0.94788336, -0.25605953, -0.13457019],
+    });
+
+    // Create a light and add it to the scene
+    const light_entity = EntityManager.create_entity([LightFragment]);
+    this.entities.push(light_entity);
+
+    // Add a light fragment to the light entity
+    const light_fragment_view = EntityManager.get_fragment(light_entity, LightFragment);
+    light_fragment_view.type = LightType.DIRECTIONAL;
+    light_fragment_view.color = [1, 1, 1];
+    light_fragment_view.intensity = 2.5;
+    light_fragment_view.position = [10, 30, 10];
+    light_fragment_view.active = true;
+
+    // Create terrain material
+    const terrain_material = StandardMaterial.create("TerrainMaterial");
+    this.terrain_material_id = terrain_material.material_id;
+
+    {
+      let dirt_albedo = Texture.load(["engine/textures/voxel/dirt_albedo.jpg"], {
+        name: "dirt_albedo",
+        format: "rgba8unorm",
+        dimension: "2d",
+        usage:
+          GPUTextureUsage.TEXTURE_BINDING |
+          GPUTextureUsage.COPY_DST |
+          GPUTextureUsage.RENDER_ATTACHMENT,
+        material_notifier: "dirt_albedo",
+      });
+      let dirt_roughness = Texture.load(["engine/textures/voxel/dirt_roughness.jpg"], {
+        name: "dirt_roughness",
+        format: "rgba8unorm",
+        dimension: "2d",
+        usage:
+          GPUTextureUsage.TEXTURE_BINDING |
+          GPUTextureUsage.COPY_DST |
+          GPUTextureUsage.RENDER_ATTACHMENT,
+        material_notifier: "dirt_roughness",
+      });
+
+      terrain_material.set_albedo([0.7, 0.7, 0.7, 1.0], dirt_albedo);
+      terrain_material.set_roughness(0.5, dirt_roughness);
+      terrain_material.set_emission(0.2);
+      terrain_material.set_tiling(2.0, 2.0);
+    }
+
+    // Create cube mesh for voxels
+    this.cube_mesh = Mesh.cube();
+
+    // Terrain parameters - Perlin-based fractal noise
+    const grid_width = 200;
+    const grid_depth = 200;
+    const block_size = 1.0;
+    const base_frequency = 0.05;
+    const height_scale = 20.0;
+    const height_offset = 10.0;
+    const octaves = 5;
+    const persistence = 0.5;
+
+    // Build permutation table for Perlin noise
+    const perlin_perm = new Array(512);
+    {
+      const p = new Array(256);
+      for (let i = 0; i < 256; i++) p[i] = i;
+      for (let i = 255; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [p[i], p[j]] = [p[j], p[i]];
+      }
+      for (let i = 0; i < 512; i++) perlin_perm[i] = p[i & 255];
+    }
+
+    const fade_function = (t) => t * t * t * (t * (t * 6 - 15) + 10);
+    const lerp_function = (a, b, t) => a + t * (b - a);
+    const grad_function = (hash, x, y) => {
+      switch (hash & 3) {
+        case 0:
+          return x + y;
+        case 1:
+          return -x + y;
+        case 2:
+          return x - y;
+        case 3:
+          return -x - y;
+      }
+    };
+
+    function perlin_noise(x, y) {
+      const xi = Math.floor(x) & 255;
+      const yi = Math.floor(y) & 255;
+      const xf = x - Math.floor(x);
+      const yf = y - Math.floor(y);
+      const u = fade_function(xf);
+      const v = fade_function(yf);
+
+      const aa = perlin_perm[xi + perlin_perm[yi]];
+      const ab = perlin_perm[xi + perlin_perm[yi + 1]];
+      const ba = perlin_perm[xi + 1 + perlin_perm[yi]];
+      const bb = perlin_perm[xi + 1 + perlin_perm[yi + 1]];
+
+      const x1 = lerp_function(grad_function(aa, xf, yf), grad_function(ba, xf - 1, yf), u);
+      const x2 = lerp_function(grad_function(ab, xf, yf - 1), grad_function(bb, xf - 1, yf - 1), u);
+      return lerp_function(x1, x2, v);
+    }
+
+    function fractal_noise(x, y) {
+      let total = 0;
+      let freq = base_frequency;
+      let amp = 1;
+      let max = 0;
+      for (let o = 0; o < octaves; o++) {
+        total += perlin_noise(x * freq, y * freq) * amp;
+        max += amp;
+        amp *= persistence;
+        freq *= 2;
+      }
+      return total / max;
+    }
+
+    // Precompute heights
+    const heights = new Array(grid_width);
+    let total_blocks = 0;
+    for (let xi = 0; xi < grid_width; xi++) {
+      heights[xi] = new Array(grid_depth);
+      for (let zi = 0; zi < grid_depth; zi++) {
+        const noise_val = fractal_noise(xi, zi) * height_scale + height_offset;
+        const height = Math.floor(noise_val);
+        heights[xi][zi] = height;
+        total_blocks += height;
+      }
+    }
+
+    // Spawn instanced cube entity for terrain
+    const terrain_entity = spawn_mesh_entity(
+      [0, 0, 0],
+      [0, 0, 0, 1],
+      [block_size, block_size, block_size],
+      this.cube_mesh,
+      this.terrain_material_id,
+      null,
+      [],
+      true,
+      EntityFlags.NO_AABB_UPDATE | EntityFlags.IGNORE_PARENT_SCALE
+    );
+    EntityManager.set_entity_instance_count(terrain_entity, total_blocks);
+    this.entities.push(terrain_entity);
+
+    // Assign transforms for each voxel
+    let block_index = 0;
+    for (let xi = 0; xi < grid_width; xi++) {
+      for (let zi = 0; zi < grid_depth; zi++) {
+        for (let yi = 0; yi < heights[xi][zi]; yi++) {
+          if (block_index >= total_blocks) {
+            break;
+          }
+
+          const pos = [
+            (xi - grid_width / 2) * block_size,
+            yi * block_size,
+            (zi - grid_depth / 2) * block_size,
+          ];
+          const view = EntityManager.get_fragment(terrain_entity, TransformFragment, block_index);
+          view.position = pos;
+          block_index++;
+        }
+      }
+    }
+
+    // Get Exo-Medium font
+    const font_id = Name.from("Exo-Medium");
+    const font_object = FontCache.get_font_object(font_id);
+
+    // Add a title text entity
+    const text_entity = spawn_mesh_entity(
+      [-10, 55, 0],
+      [0, 0, 0, 1],
+      [0.5, 0.5, 0.5],
+      Mesh.quad(),
+      font_object.material,
+      null,
+      [],
+      true,
+      EntityFlags.NO_AABB_UPDATE | EntityFlags.IGNORE_PARENT_SCALE
+    );
+    const text_fragment_view = EntityManager.add_fragment(text_entity, TextFragment);
+    text_fragment_view.font = font_id;
+    text_fragment_view.font_size = 32;
+    text_fragment_view.text_color = [1, 1, 1, 1];
+    text_fragment_view.text_emissive = 1;
+    text_fragment_view.text = "Voxel Terrain Scene";
+    this.entities.push(text_entity);
+
+    log(`[${this.name}] Initialized with ${total_blocks} blocks.`);
+  }
+
+  cleanup() {
+    for (const entity of this.entities) {
+      delete_entity(entity);
+    }
+    this.remove_layer(FreeformArcballControlProcessor);
+    super.cleanup();
+  }
+
+  update(delta_time) {
+    super.update(delta_time);
+  }
+}
+
+// ------------------------------------------------------------------------------------
+// =============================== ObjectPaintingScene ====================================
+// ------------------------------------------------------------------------------------
+const info_panel_config = {
+  layout: "column",
+  gap: 4,
+  y: 100,
+  anchor_y: "bottom",
+  dont_consume_cursor_events: true,
+  background_color: "rgba(0, 0, 0, 0.7)",
+  width: 600,
+  padding: 10,
+  border: "1px solid rgb(68, 68, 68)",
+  corner_radius: 5,
+};
+
+const info_label_config = {
+  text_color: "#fff",
+  x: 0,
+  y: 0,
+  wrap: true,
+  font: "16px monospace",
+  width: "100%",
+  height: "fit-content",
+  text_valign: "middle",
+  text_align: "left",
+  text_padding: 5,
+};
+
+export class ObjectPaintingScene extends Scene {
+  entities = [];
+  sphere_mesh = null;
+  brush_material_id = null;
+  brush_entity = null;
+
+  // --- Configurable parameters ---
+  brush_radius = 2.0;                  // radius of the sphere brush
+  brush_emit_intensity = 1.0;          // material emission
+  paint_rate = 0.25;                    // seconds between paint ticks
+  spawn_count = 256;                   // objects per tick
+  spawn_radius = 5.0;                  // radius of random paint sphere
+  // -------------------------------
+
+  last_paint_timer = 0;
+
+  init(parent_context) {
+    super.init(parent_context);
+
+    // Arcball camera control
+    const freeform_arcball_control_processor = this.add_layer(FreeformArcballControlProcessor);
+    freeform_arcball_control_processor.set_scene(this);
+
+    // Skybox + view
+    SharedEnvironmentMapData.set_skybox("default_scene_skybox", [
+      "engine/textures/simple_skybox/px.png",
+      "engine/textures/simple_skybox/nx.png",
+      "engine/textures/simple_skybox/ny.png",
+      "engine/textures/simple_skybox/py.png",
+      "engine/textures/simple_skybox/pz.png",
+      "engine/textures/simple_skybox/nz.png",
+    ]);
+    SharedEnvironmentMapData.set_skybox_color([1, 1, 1, 1]);
+    SharedViewBuffer.set_view_data(0, {
+      position: [0, 0, 10],
+      rotation: [0, 0, 0, 1],
+    });
+
+    // Create a light and add it to the scene
+    const light_entity = EntityManager.create_entity([LightFragment]);
+    this.entities.push(light_entity);
+
+    // Add a light fragment to the light entity
+    const light_fragment_view = EntityManager.get_fragment(light_entity, LightFragment);
+    light_fragment_view.type = LightType.DIRECTIONAL;
+    light_fragment_view.color = [1, 1, 1];
+    light_fragment_view.intensity = 2.5;
+    light_fragment_view.position = [10, 30, 10];
+    light_fragment_view.active = true;
+
+    // Load sphere mesh & create transparent/emissive brush material
+    this.sphere_mesh = Mesh.from_gltf("engine/models/sphere/sphere.gltf");
+
+    const object_material1 = StandardMaterial.create(
+      "ObjectPaintingObjectMaterial",
+    );
+    this.object_material1_id = object_material1.material_id;
+    const object_material2 = StandardMaterial.create(
+      "ObjectPaintingObjectMaterial2",
+    );
+    this.object_material2_id = object_material2.material_id;
+    const object_material3 = StandardMaterial.create(
+      "ObjectPaintingObjectMaterial3",
+    );
+    this.object_material3_id = object_material3.material_id;
+
+    object_material1.set_albedo([0.1, 0.1, 0.3, 1]);
+    object_material1.set_emission(0.3);
+    object_material1.set_roughness(0.5);
+    object_material1.set_tiling(2.0, 2.0);
+
+    object_material2.set_albedo([0.3, 0.0, 0.0, 1]);
+    object_material2.set_emission(0.3);
+    object_material2.set_roughness(0.5);
+    object_material2.set_tiling(2.0, 2.0);
+
+    object_material3.set_albedo([0.0, 0.3, 0.0, 1]);
+    object_material3.set_emission(0.3);
+    object_material3.set_roughness(0.5);
+    object_material3.set_tiling(2.0, 2.0);
+  }
+
+  update(delta_time) {
+    super.update(delta_time);
+
+    // Move brush to follow mouse
+    const world_pos = UI.UIContext.input_state.world_position;
+    const view = SharedViewBuffer.get_view_data(0);
+    const view_dir = view.view_forward;
+    const paint_pos = vec3.scaleAndAdd(vec3.create(), world_pos, view_dir, 50);
+
+    // While Space key is held, paint objects every paint_rate seconds
+    if (InputProvider.get_state(InputKey.K_Space)) {
+      this.last_paint_timer += delta_time;
+      if (this.last_paint_timer >= this.paint_rate) {
+        this.last_paint_timer -= this.paint_rate;
+        for (let i = 0; i < this.spawn_count; i++) {
+          // uniform random point in sphere
+          const r = this.spawn_radius * Math.cbrt(Math.random());
+          const theta = 2 * Math.PI * Math.random();
+          const phi = Math.acos(2 * Math.random() - 1);
+          const x = paint_pos[0] + r * Math.sin(phi) * Math.cos(theta);
+          const y = paint_pos[1] + r * Math.sin(phi) * Math.sin(theta);
+          const z = paint_pos[2] + r * Math.cos(phi);
+
+          // spawn a sphere instance
+          const entity = spawn_mesh_entity(
+            [x, y, z],
+            quat.create(),
+            [
+              0.1 + Math.random() * 0.3,
+              0.1 + Math.random() * 0.3,
+              0.1 + Math.random() * 0.3
+            ],
+            this.sphere_mesh,
+            [this.object_material1_id, this.object_material2_id, this.object_material3_id][Math.floor(Math.random() * 3)],
+            null,
+            [],
+            true,
+            EntityFlags.NO_AABB_UPDATE | EntityFlags.IGNORE_PARENT_SCALE
+          );
+          this.entities.push(entity);
+        }
+      }
+    } else {
+      // reset timer so we can paint immediately on next hold
+      this.last_paint_timer = this.paint_rate;
+    }
+
+    // show fixed center cursor
+    this.render_ui();
+  }
+
+  cleanup() {
+    for (const entity of this.entities) {
+      delete_entity(entity);
+    }
+    this.remove_layer(FreeformArcballControlProcessor);
+    super.cleanup();
+  }
+
+  // draw a fixed, 2D crosshair at screen center
+  render_ui() {
+    const { width, height } = UI.UIContext.canvas_size;
+    const cx = width * 0.5;
+    const cy = height * 0.5;
+
+    // vertical line
+    UI.panel({
+      x: cx - 1,
+      y: cy - 10,
+      width: 2,
+      height: 20,
+      background_color: "#FFFFFF",
+      dont_consume_cursor_events: true,
+    }, () => {});
+
+    // horizontal line
+    UI.panel({
+      x: cx - 10,
+      y: cy - 1,
+      width: 20,
+      height: 2,
+      background_color: "#FFFFFF",
+      dont_consume_cursor_events: true,
+    }, () => {});
+
+    // help text overlay
+    UI.panel(info_panel_config, () => {
+      UI.label("Hold [Space] to Paint objects", info_label_config);
+    });
+  }
+}
+
+// ------------------------------------------------------------------------------------
 // =============================== Scene Switcher ====================================
 // ------------------------------------------------------------------------------------
 
@@ -1269,13 +1874,19 @@ export class SceneSwitcher extends SimulationLayer {
   const rendering_scene = new RenderingScene("RenderingScene");
   const ml_scene = new MLScene("MLScene");
   const textures_scene = new TexturesScene("TexturesScene");
+  const solar_ecs_scene = new SolarECSTestScene("SolarECSTestScene");
+  const voxel_terrain_scene = new VoxelTerrainScene("VoxelTerrainScene");
+  const object_painting_scene = new ObjectPaintingScene("ObjectPaintingScene");
 
   const scene_switcher = new SceneSwitcher("SceneSwitcher");
-  await scene_switcher.add_scene(textures_scene);
+  //await scene_switcher.add_scene(solar_ecs_scene);
+  //await scene_switcher.add_scene(textures_scene);
   //await scene_switcher.add_scene(aabb_scene);
   //await scene_switcher.add_scene(rendering_scene);
   //await scene_switcher.add_scene(ml_scene);
- 
+  //await scene_switcher.add_scene(voxel_terrain_scene);
+  await scene_switcher.add_scene(object_painting_scene);
+
   await simulator.add_sim_layer(scene_switcher);
 
   simulator.run();

@@ -12,7 +12,8 @@
 @group(1) @binding(4) var normal_texture: texture_2d<f32>;
 @group(1) @binding(5) var position_texture: texture_2d<f32>;
 @group(1) @binding(6) var depth_texture: texture_depth_2d;
-@group(1) @binding(7) var<storage, read> lights_buffer: array<Light>;
+@group(1) @binding(7) var<storage, read> dense_lights_buffer: array<Light>;
+@group(1) @binding(8) var<storage, read> light_count_buffer: array<u32>;
 
 // ------------------------------------------------------------------------------------
 // Data Structures
@@ -79,9 +80,12 @@ struct FragmentOutput {
 
     var color = f32(unlit) * tex_sky.rgb * mix(vec3f(1.0), albedo, tex_albedo.a);
 
-    let num_lights = arrayLength(&lights_buffer) * (1u - unlit);
+    let num_lights = light_count_buffer[0] * (1u - unlit);
     for (var i = 0u; i < num_lights; i++) {
-        var light = lights_buffer[i];
+        var light = dense_lights_buffer[i];
+        if (light.activated <= 0.0) {
+            continue;
+        }
         color += calculate_brdf(
             light,
             normalized_normal,

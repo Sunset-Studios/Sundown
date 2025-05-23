@@ -6,22 +6,31 @@ enable f16;
 // Data Structures
 // ------------------------------------------------------------------------------------ 
 
-const ETF_VALID = 1 << 0;
-const ETF_IGNORE_PARENT_SCALE = 1 << 1;
-const ETF_IGNORE_PARENT_ROTATION = 1 << 2;
-const ETF_TRANSFORM_DIRTY = 1 << 3;
-const ETF_NO_AABB_UPDATE = 1 << 4;
-const ETF_AABB_DIRTY = 1 << 5;
-const ETF_BILLBOARD = 1 << 6;
+// 32‑bit handle ─ 21 bits chunk index | 7 bits row_index | 4 bits generation
+const ENTITY_ROW_BITS = 28;
+const LOCAL_SLOT_BITS = 8;
+const ENTITY_GEN_BITS = 4;
+const ENTITY_ROW_MASK = (1 << ENTITY_ROW_BITS) - 1;
+const ENTITY_GEN_MASK = (1 << ENTITY_GEN_BITS) - 1;
+const LOCAL_SLOT_MASK = (1 << LOCAL_SLOT_BITS) - 1;
+const CHUNK_INDEX_BITS = ENTITY_ROW_BITS - LOCAL_SLOT_BITS;
+const CHUNK_INDEX_MASK = ((1 << CHUNK_INDEX_BITS) - 1) << LOCAL_SLOT_BITS;
 
-const AABB_NODE_FLAGS_MOVED = 1 << 0;
-const AABB_NODE_FLAGS_FREE = 1 << 1;
+const EF_ALIVE = 1u << 0;
+const EF_DIRTY = 1u << 1;
+const EF_IGNORE_PARENT_SCALE = 1u << 2;
+const EF_IGNORE_PARENT_ROTATION = 1u << 3;
+const EF_TRANSFORM_DIRTY = 1u << 4;
+const EF_NO_AABB_UPDATE = 1u << 5;
+const EF_AABB_DIRTY = 1u << 6;
+const EF_BILLBOARD = 1u << 7;
 
-// Node types
-const AABB_NODE_TYPE_INTERNAL = 0;
-const AABB_NODE_TYPE_LEAF = 1;
+const AABB_NODE_FLAGS_FREE = 1u << 0;
+const AABB_NODE_TYPE_INTERNAL = 0u;
+const AABB_NODE_TYPE_LEAF = 1u;
 
 const LOG_DEPTH_C = 0.1; // Can adjust this value based on scene scale
+const MAX_UINT = 4294967295u;
 
 struct Vertex {
     position: vec4<precision_float>,
@@ -56,22 +65,13 @@ struct EntityTransform {
     transpose_inverse_model_matrix: mat4x4f,
 };
 
-struct EntityMetadata {
-    offset: u32,
-    count: u32,
-    flags: u32,
-};
-
 struct ObjectInstance {
     batch: u32,
-    entity: u32,
-    entity_instance: u32
+    row: u32,
 };
 
 struct CompactedObjectInstance {
-    entity: u32,
-    entity_instance: u32,
-    base_instance: u32,
+    row: u32,
 };
 
 struct AABBTreeNode {
@@ -118,11 +118,17 @@ const one_over_float_max = 1.0 / 4294967296.0;
 @group(0) @binding(3) var non_filtering_sampler: sampler;
 @group(0) @binding(4) var clamped_sampler: sampler;
 @group(0) @binding(5) var<uniform> frame_info: FrameInfo;
-@group(0) @binding(6) var<storage, read> entity_metadata: array<EntityMetadata>;
+@group(0) @binding(6) var<storage, read> entity_index_lookup: array<u32>;
 
 // ------------------------------------------------------------------------------------
 // Helper Functions
 // ------------------------------------------------------------------------------------ 
+
+fn get_entity_row(entity: u32) -> u32 {
+    // row_field = (chunk_index << LOCAL_SLOT_BITS) | local_index 
+    let entity_row = entity & ENTITY_ROW_MASK;
+    return entity_index_lookup[entity_row];
+}
 
 fn cubemap_direction_to_uv(direction: vec3f) -> vec3f {
     let abs_dir = abs(direction);
@@ -218,7 +224,6 @@ fn hash(x: u32) -> u32 {
 fn uint_to_normalized_float(x: u32) -> precision_float {
     return precision_float(f32(x) * one_over_float_max);
 }
-
 
 // Interpolate between two values
 fn interpolate(v0: precision_float, v1: precision_float, t: precision_float) -> precision_float {
@@ -338,5 +343,7 @@ fn rotate_hue(color: vec4f, hue_rotation: f32) -> vec4f {
     
     return vec4f(r, g, b, color.a);
 }
+
+
 
 

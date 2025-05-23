@@ -1,4 +1,5 @@
 import { Shader } from "./shader.js";
+import { FragmentGpuBuffer } from "../core/ecs/solar/memory.js";
 import { BindGroup } from "./bind_group.js";
 import { PipelineState } from "./pipeline_state.js";
 import { ResourceCache } from "./resource_cache.js";
@@ -7,6 +8,7 @@ import { hash_data, hash_value } from "../utility/hashing.js";
 import { Name } from "../utility/names.js";
 import { Texture } from "./texture.js";
 import { Buffer } from "./buffer.js";
+import { UserInterfaceFragment } from "../core/ecs/fragments/user_interface_fragment.js";
 import { global_dispatcher } from "../core/dispatcher.js";
 import {
   ShaderResourceType,
@@ -46,7 +48,8 @@ export class MaterialTemplate {
     shader_path,
     family = MaterialFamilyType.Opaque,
     pipeline_state_config = {},
-    parent_name = null
+    parent_name = null,
+    defines = {}
   ) {
     if (this.templates.has(name)) {
       return this.templates.get(name);
@@ -64,7 +67,7 @@ export class MaterialTemplate {
     }
 
     if (shader_path) {
-      shader = Shader.create(shader_path);
+      shader = Shader.create(shader_path, defines);
     }
     if (shader.defines["TRANSPARENT"]) {
       family = MaterialFamilyType.Transparent;
@@ -122,7 +125,7 @@ export class MaterialTemplate {
                 case ShaderResourceType.Storage:
                   binding_obj = {
                     buffer: {
-                      type: "read-only-storage",
+                      type: binding.access === "read" ? "read-only-storage" : "storage",
                     },
                   };
                   break;
@@ -501,7 +504,11 @@ export class Material {
   static #default_material = null;
   static default_material() {
     if (!this.#default_material) {
-      MaterialTemplate.create("DefaultMaterial", "standard_material.wgsl");
+      MaterialTemplate.create(
+        "DefaultMaterial",
+        "standard_material.wgsl",
+        MaterialFamilyType.Opaque,
+      );
       this.#default_material = Material.create("DefaultMaterial", "DefaultMaterial", {
         family: MaterialFamilyType.Opaque,
       });
@@ -521,14 +528,15 @@ export class Material {
           rasterizer_state: {
             cull_mode: "none",
           },
-        }
+        },
       );
       this.#default_ui_material = Material.create("DefaultUIMaterial", "DefaultUIMaterial", {
         family: MaterialFamilyType.Transparent,
       });
 
       const default_ui_material_object = Material.get(this.#default_ui_material);
-      default_ui_material_object.listen_for_storage_data("element_data");
+      const element_data_buffer = FragmentGpuBuffer.get_buffer_name(UserInterfaceFragment, "element_data");
+      default_ui_material_object.listen_for_storage_data(element_data_buffer);
     }
     return this.#default_ui_material;
   }
@@ -552,7 +560,7 @@ export class StandardMaterial {
       MaterialTemplate.create(
         "StandardMaterial",
         "standard_material.wgsl",
-        MaterialFamilyType.Opaque
+        MaterialFamilyType.Opaque,
       );
       template = "StandardMaterial";
     }

@@ -33,16 +33,17 @@ class FrameAllocator {
             }
         } else if (Object.keys(template).length === 0) {
             // Fast path for empty objects
-            const proto = Object.create(null);
+            const proto = Object.getPrototypeOf(template);
+            const prop_descriptors = Object.getOwnPropertyDescriptors(template);
             for (let i = 0; i < max_objects; i++) {
-                this.buffer[i] = Object.create(proto);
+                this.buffer[i] = Object.create(proto, prop_descriptors);
             }
         } else {
             // For non-empty plain objects, create a prototype once and use it for all allocations
-            const proto = Object.create(null);
-            Object.assign(proto, template);
+            const proto = Object.getPrototypeOf(template);
+            const prop_descriptors = Object.getOwnPropertyDescriptors(template);
             for (let i = 0; i < max_objects; i++) {
-                this.buffer[i] = Object.create(proto);
+                this.buffer[i] = Object.create(proto, prop_descriptors);
             }
         }
         this.offset = 0;
@@ -152,16 +153,17 @@ class FrameStackAllocator {
             }
         } else if (Object.keys(template).length === 0) {
             // Fast path for empty objects
-            const proto = Object.create(null);
+            const proto = Object.getPrototypeOf(template);
+            const prop_descriptors = Object.getOwnPropertyDescriptors(template);
             for (let i = 0; i < max_objects; i++) {
-                this.buffer[i] = Object.create(proto);
+                this.buffer[i] = Object.create(proto, prop_descriptors);
             }
         } else {
             // For non-empty plain objects, create a prototype once and use it for all allocations
-            const proto = Object.create(null);
-            Object.assign(proto, template);
+            const proto = Object.getPrototypeOf(template);
+            const prop_descriptors = Object.getOwnPropertyDescriptors(template);
             for (let i = 0; i < max_objects; i++) {
-                this.buffer[i] = Object.create(proto);
+                this.buffer[i] = Object.create(proto, prop_descriptors);
             }
         }
         this.offset = 0;
@@ -281,18 +283,18 @@ class RingBufferAllocator {
             }
         } else if (Object.keys(template).length === 0) {
             // Fast path for empty objects
-            const proto = Object.create(null);
+            const proto = Object.getPrototypeOf(template);
+            const prop_descriptors = Object.getOwnPropertyDescriptors(template);
             for (let i = 0; i < max_objects; i++) {
-                this.buffer[i] = Object.create(proto);
+                this.buffer[i] = Object.create(proto, prop_descriptors);
             }
         } else {
             // For non-empty plain objects, create a prototype once
-            const proto = Object.create(null);
-            Object.assign(proto, template);
-            
+            let proto = Object.getPrototypeOf(template);
             // Create objects sharing the same prototype
+            const prop_descriptors = Object.getOwnPropertyDescriptors(template);
             for (let i = 0; i < max_objects; i++) {
-                this.buffer[i] = Object.create(proto);
+                this.buffer[i] = Object.create(proto, prop_descriptors);
             }
         }
         this.head = 0;
@@ -448,16 +450,17 @@ class FreeListAllocator {
             }
         } else if (Object.keys(this.#template).length === 0) {
             // Fast path for empty objects
-            const proto = Object.create(null);
+            const proto = Object.getPrototypeOf(this.#template);
+            const prop_descriptors = Object.getOwnPropertyDescriptors(this.#template);
             for (let i = start; i < end; i++) {
-                this.buffer[i] = Object.create(proto);
+                this.buffer[i] = Object.create(proto, prop_descriptors);
             }
         } else {
             // For non-empty plain objects, create a prototype once and use it for all allocations
-            const proto = Object.create(null);
-            Object.assign(proto, this.#template);
+            const proto = Object.getPrototypeOf(this.#template);
+            const prop_descriptors = Object.getOwnPropertyDescriptors(this.#template);
             for (let i = start; i < end; i++) {
-                this.buffer[i] = Object.create(proto);
+                this.buffer[i] = Object.create(proto, prop_descriptors);
             }
         }
     }
@@ -674,16 +677,17 @@ class RandomAccessAllocator {
             }
         } else if (Object.keys(this.#template).length === 0) {
             // Fast path for empty objects
-            const proto = Object.create(null);
+            const proto = Object.getPrototypeOf(this.#template);
+            const prop_descriptors = Object.getOwnPropertyDescriptors(this.#template);
             for (let i = start; i < end; i++) {
-                this.#buffer[i] = Object.create(proto);
+                this.#buffer[i] = Object.create(proto, prop_descriptors);
             }
         } else {
             // For non-empty plain objects, create a prototype once and use it for all allocations
-            const proto = Object.create(null);
-            Object.assign(proto, this.#template);
+            const proto = Object.getPrototypeOf(this.#template);
+            const prop_descriptors = Object.getOwnPropertyDescriptors(this.#template);
             for (let i = start; i < end; i++) {
-                this.#buffer[i] = Object.create(proto);
+                this.#buffer[i] = Object.create(proto, prop_descriptors);
             }
         }
     }

@@ -1,12 +1,13 @@
 import { Renderer } from "../renderer.js";
+import { FragmentGpuBuffer } from "../../core/ecs/solar/memory.js";
 import { Texture } from "../texture.js";
 import { RenderPassFlags, MaterialFamilyType } from "../renderer_types.js";
+import { EntityManager } from "../../core/ecs/entity.js";
 import { AABB } from "../../acceleration/aabb.js";
 import { MeshTaskQueue } from "../mesh_task_queue.js";
 import { ComputeTaskQueue } from "../compute_task_queue.js";
 import { ComputeRasterTaskQueue } from "../compute_raster_task_queue.js";
 import { TransformFragment } from "../../core/ecs/fragments/transform_fragment.js";
-import { SceneGraphFragment } from "../../core/ecs/fragments/scene_graph_fragment.js";
 import { LightFragment } from "../../core/ecs/fragments/light_fragment.js";
 import { SharedViewBuffer, SharedEnvironmentMapData } from "../../core/shared_data.js";
 import { Material } from "../material.js";
@@ -32,6 +33,9 @@ const use_depth_prepass = false;
 
 const resolution_change_event_name = "resolution_change";
 const deferred_shading_profile_scope_name = "DeferredShadingStrategy.draw";
+const transforms_name = "transforms";
+const aabb_node_index_name = "aabb_node_index";
+const light_fragment_name = "light_fragment";
 
 const main_albedo_image_config = {
   name: "main_albedo",
@@ -197,6 +201,27 @@ const hzb_reduce_shader_setup = {
   },
 };
 
+const dense_lights_buffer_config = {
+  name: "dense_lights",
+  size: 0,
+  usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+};
+
+const light_count_buffer_config = {
+  name: "light_count",
+  size: Uint32Array.BYTES_PER_ELEMENT,
+  usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+};
+
+const compact_lights_pass_name = "compact_lights";
+const compact_lights_shader_setup = {
+  pipeline_shaders: {
+    compute: {
+      path: "system_compute/compact_lights.wgsl",
+    },
+  },
+};
+
 const deferred_lighting_shader_setup = {
   pipeline_shaders: {
     vertex: {
@@ -290,6 +315,14 @@ const fullscreen_shader_setup = {
   },
 };
 
+const clear_dirty_flags_shader_setup = {
+  pipeline_shaders: {
+    compute: {
+      path: "system_compute/clear_dirty_flags.wgsl",
+    },
+  },
+};
+
 const hzb_image_config = {
   name: "hzb",
   format: r32float_format,
@@ -352,29 +385,40 @@ export class DeferredShadingStrategy {
 
       const renderer = Renderer.get();
 
-      MeshTaskQueue.get().sort_and_batch();
-      ComputeTaskQueue.get().compile_rg_passes(render_graph);
+      MeshTaskQueue.sort_and_batch();
+      ComputeTaskQueue.compile_rg_passes(render_graph);
 
-      const transform_gpu_data = TransformFragment.to_gpu_data();
-      const entity_transforms = render_graph.register_buffer(
-        transform_gpu_data.transforms_buffer.config.name
+      const entity_flags_buffer = FragmentGpuBuffer.entity_flags_buffer;
+      const entity_flags = render_graph.register_buffer(entity_flags_buffer.buffer.config.name);
+
+      const transforms_buffer = EntityManager.get_fragment_gpu_buffer(
+        TransformFragment,
+        transforms_name
       );
-      const entity_flags = render_graph.register_buffer(
-        transform_gpu_data.flags_buffer.config.name
+      const entity_transforms = render_graph.register_buffer(transforms_buffer.buffer.config.name);
+      const aabb_node_index_buffer = EntityManager.get_fragment_gpu_buffer(
+        TransformFragment,
+        aabb_node_index_name
       );
       const entity_aabb_node_indices = render_graph.register_buffer(
-        transform_gpu_data.aabb_node_index_buffer.config.name
+        aabb_node_index_buffer.buffer.config.name
       );
 
-      const scene_graph_gpu_data = SceneGraphFragment.to_gpu_data();
+      const light_fragment_buffer = EntityManager.get_fragment_gpu_buffer(
+        LightFragment,
+        light_fragment_name
+      );
+      const lights = render_graph.register_buffer(light_fragment_buffer.buffer.config.name);
+
+      dense_lights_buffer_config.size = light_fragment_buffer.buffer.config.size;
+      const dense_lights = render_graph.create_buffer(dense_lights_buffer_config);
+
+      const light_count = render_graph.create_buffer(light_count_buffer_config);
 
       const aabb_gpu_data = AABB.to_gpu_data();
       const aabb_bounds = render_graph.register_buffer(
         aabb_gpu_data.node_bounds_buffer.config.name
       );
-
-      const light_gpu_data = LightFragment.to_gpu_data();
-      const lights = render_graph.register_buffer(light_gpu_data.light_fragment_buffer.config.name);
 
       let skybox_image = null;
       let post_lighting_image_desc = null;
@@ -490,25 +534,25 @@ export class DeferredShadingStrategy {
             },
             (graph, frame_data, encoder) => {
               const pass = graph.get_physical_pass(frame_data.current_pass);
-              MeshTaskQueue.get().draw_cube(pass);
+              MeshTaskQueue.draw_cube(pass);
             }
           );
         }
       }
 
-      const object_instance_buffer = MeshTaskQueue.get().get_object_instance_buffer();
+      const object_instance_buffer = MeshTaskQueue.get_object_instance_buffer();
       const object_instances = render_graph.register_buffer(object_instance_buffer.config.name);
 
-      const indirect_draw_buffer = MeshTaskQueue.get().get_indirect_draw_buffer();
+      const indirect_draw_buffer = MeshTaskQueue.get_indirect_draw_buffer();
       const indirect_draws = render_graph.register_buffer(indirect_draw_buffer.config.name);
 
-      const compacted_object_instances = MeshTaskQueue.get().get_compacted_object_instance_buffer();
+      const compacted_object_instances = MeshTaskQueue.get_compacted_object_instance_buffer();
       const compacted_object_instance_buffer = render_graph.register_buffer(
         compacted_object_instances.config.name
       );
 
       // Mesh cull pass
-      if (MeshTaskQueue.get().get_total_draw_count() > 0) {
+      if (MeshTaskQueue.get_total_draw_count() > 0) {
         // Compute cull pass
         draw_cull_data_config.data.fill(0);
         const draw_cull_data = render_graph.create_buffer(draw_cull_data_config);
@@ -534,7 +578,7 @@ export class DeferredShadingStrategy {
 
             const hzb = graph.get_physical_image(main_hzb_image);
             const draw_cull = graph.get_physical_buffer(draw_cull_data);
-            const draw_count = MeshTaskQueue.get().get_total_draw_count();
+            const draw_count = MeshTaskQueue.get_total_draw_count();
             const view_data = SharedViewBuffer.get_view_data(0);
 
             let p00 = view_data.projection_matrix[0];
@@ -611,7 +655,7 @@ export class DeferredShadingStrategy {
           },
           (graph, frame_data, encoder) => {
             const pass = graph.get_physical_pass(frame_data.current_pass);
-            MeshTaskQueue.get().submit_indexed_indirect_draws(
+            MeshTaskQueue.submit_indexed_indirect_draws(
               pass,
               frame_data,
               false /* should_reset */,
@@ -634,7 +678,7 @@ export class DeferredShadingStrategy {
 
       // GBuffer Base Pass
       {
-        const material_buckets = MeshTaskQueue.get().get_material_buckets();
+        const material_buckets = MeshTaskQueue.get_material_buckets();
         for (let i = 0; i < material_buckets.length; i++) {
           const material_id = material_buckets[i];
           const material = Material.get(material_id);
@@ -664,7 +708,7 @@ export class DeferredShadingStrategy {
             (graph, frame_data, encoder) => {
               const pass = graph.get_physical_pass(frame_data.current_pass);
 
-              MeshTaskQueue.get().submit_material_indexed_indirect_draws(
+              MeshTaskQueue.submit_material_indexed_indirect_draws(
                 pass,
                 frame_data,
                 material_id,
@@ -687,7 +731,7 @@ export class DeferredShadingStrategy {
         (graph, frame_data, encoder) => {
           const pass = graph.get_physical_pass(frame_data.current_pass);
 
-          MeshTaskQueue.get().draw_quad(pass);
+          MeshTaskQueue.draw_quad(pass);
         }
       );
 
@@ -733,7 +777,7 @@ export class DeferredShadingStrategy {
             },
             (graph, frame_data, encoder) => {
               const pass = graph.get_physical_pass(frame_data.current_pass);
-              MeshTaskQueue.get().draw_quad(pass, visible_line_count);
+              MeshTaskQueue.draw_quad(pass, visible_line_count);
             }
           );
         }
@@ -797,6 +841,29 @@ export class DeferredShadingStrategy {
         }
       }
 
+      // Compact lights pass
+      {
+        // Compute pass to compact active lights to dense buffer
+        render_graph.add_pass(
+          compact_lights_pass_name,
+          RenderPassFlags.Compute,
+          {
+            shader_setup: compact_lights_shader_setup,
+            inputs: [lights, dense_lights, light_count],
+            outputs: [dense_lights, light_count],
+          },
+          (graph, frame_data, encoder) => {
+            const pass = graph.get_physical_pass(frame_data.current_pass);
+            // Reset light count to zero
+            const count_buf = graph.get_physical_buffer(light_count);
+            count_buf.write(new Uint32Array([0]));
+            // Dispatch compute to compact lights
+            const max_light_count = EntityManager.get_max_rows();
+            pass.dispatch((max_light_count + 128 - 1) / 128, 1, 1);
+          }
+        );
+      }
+
       // Lighting Pass
       {
         post_lighting_image_config.width = image_extent.width;
@@ -816,14 +883,15 @@ export class DeferredShadingStrategy {
               main_normal_image,
               main_position_image,
               main_depth_image,
-              lights,
+              dense_lights,
+              light_count,
             ],
             outputs: [post_lighting_image_desc],
             shader_setup: deferred_lighting_shader_setup,
           },
           (graph, frame_data, encoder) => {
             const pass = graph.get_physical_pass(frame_data.current_pass);
-            MeshTaskQueue.get().draw_quad(pass);
+            MeshTaskQueue.draw_quad(pass);
           }
         );
       }
@@ -966,7 +1034,7 @@ export class DeferredShadingStrategy {
 
             bloom_resolve_params.write(bloom_params);
 
-            MeshTaskQueue.get().draw_quad(pass);
+            MeshTaskQueue.draw_quad(pass);
           }
         );
       }
@@ -1002,7 +1070,7 @@ export class DeferredShadingStrategy {
           },
           (graph, frame_data, encoder) => {
             const pass = graph.get_physical_pass(frame_data.current_pass);
-            MeshTaskQueue.get().draw_quad(pass);
+            MeshTaskQueue.draw_quad(pass);
           }
         );
       }
@@ -1047,9 +1115,26 @@ export class DeferredShadingStrategy {
         );
       }
 
+      // Clear dirty flags pass
+      {
+        render_graph.add_pass(
+          "clear_dirty_flags",
+          RenderPassFlags.Compute,
+          {
+            inputs: [entity_flags],
+            outputs: [entity_flags],
+            shader_setup: clear_dirty_flags_shader_setup,
+          },
+          (graph, frame_data, encoder) => {
+            const pass = graph.get_physical_pass(frame_data.current_pass);
+            pass.dispatch(Math.ceil(EntityManager.get_max_rows() / 128), 1, 1);
+          }
+        );
+      }
+
       this.force_recreate = false;
 
-      ComputeTaskQueue.get().reset();
+      ComputeTaskQueue.reset();
 
       render_graph.submit();
     });

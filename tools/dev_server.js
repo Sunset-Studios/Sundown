@@ -22,6 +22,12 @@ async function create_dev_server() {
     configFile: path.resolve(__dirname, "../vite.config.mjs"),
   });
 
+  app.use((req, res, next) => {
+    res.setHeader("Cross-Origin-Opener-Policy", "same-origin");
+    res.setHeader("Cross-Origin-Embedder-Policy", "require-corp");
+    next();
+  });
+
   // Use Vite's connect instance as middleware
   app.use(vite.middlewares);
 

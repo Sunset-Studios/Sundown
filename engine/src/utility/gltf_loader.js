@@ -1,4 +1,5 @@
 import { vec3, vec4, quat, mat4 } from "gl-matrix";
+import { log, warn, error } from "./logging.js";
 
 var MinimalGLTFLoader = MinimalGLTFLoader || {};
 
@@ -954,8 +955,8 @@ glTFLoader.prototype.load = function (uri, callback) {
   this.onload =
     callback ||
     function (glTF) {
-      console.log("glTF model loaded.");
-      console.log(glTF);
+      log("glTF model loaded.");
+      log(glTF);
     };
 
   this.baseUri = _getBaseUri(uri);

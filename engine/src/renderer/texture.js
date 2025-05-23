@@ -184,32 +184,60 @@ export class Texture {
 
     const textures = await Promise.all(paths.map(load_image_bitmap));
 
-    this.config.width = textures[0].width;
-    this.config.height = textures[0].height;
-    this.config.depth = textures.length;
+    // 1) compute how many mip‐levels we want
+    const base = textures[0];
+    const max_dim = Math.max(base.width, base.height);
+    const mip_count = Math.floor(Math.log2(max_dim)) + 1;
+    this.config = { ...this.config, ...config, mip_levels: mip_count };
+    this.config.width  = base.width;
+    this.config.height = base.height;
+    this.config.depth  = textures.length;
 
+    // 2) create the GPU texture with multiple mips
     this.image = renderer.device.createTexture({
       label: this.config.name,
       size: {
-        width: this.config.width,
-        height: this.config.height,
+        width:  base.width,
+        height: base.height,
         depthOrArrayLayers: this.config.depth,
       },
-      mipLevelCount: config.mip_levels,
-      sampleCount: config.sample_count,
-      format: config.format,
-      usage: config.usage,
-      dimension: Texture.texture_dimension_to_image_dimension(config.dimension),
+      mipLevelCount: this.config.mip_levels,
+      sampleCount:   this.config.sample_count,
+      format:        this.config.format,
+      usage: this.config.usage,
+      dimension:
+        Texture.texture_dimension_to_image_dimension(
+          this.config.dimension
+        ),
     });
 
-    textures.forEach((texture, layer) => {
+    for (let layer = 0; layer < textures.length; layer++) {
+      const texture = textures[layer];
+      // 3) copy the full-res image into mip 0
       renderer.device.queue.copyExternalImageToTexture(
         { source: texture, flipY: true },
-        { texture: this.image, origin: { x: 0, y: 0, z: layer } },
-        [texture.width, texture.height]
+        { texture: this.image, mipLevel: 0, origin: { x: 0, y: 0, z: layer } },
+        [ texture.width, texture.height ]
       );
-    });
 
+      // 4) for each subsequent level, use createImageBitmap to resize
+      for (let lvl = 1; lvl < this.config.mip_levels; lvl++) {
+        const w = Math.max(1, texture.width  >> lvl);
+        const h = Math.max(1, texture.height >> lvl);
+        const mip_bitmap = await createImageBitmap(texture, {
+        resizeWidth:  w,
+        resizeHeight: h,
+        resizeQuality: "high",
+      });
+      renderer.device.queue.copyExternalImageToTexture(
+        { source: mip_bitmap, flipY: true },
+        { texture: this.image, mipLevel: lvl, origin: { x: 0, y: 0, z: layer } },
+        [ w, h ]
+      );
+      }
+    }
+
+    // 5) rebuild all the texture views now that we've got new mips
     this._setup_views();
 
     if (this.config.material_notifier) {
@@ -317,7 +345,7 @@ export class Texture {
 
     const unpadded_bytes_per_row = cols * components;
 
-    // WebGPU requires bytesPerRow to be a multiple of 256 bytes
+    // WebGPU requires bytesPerRow to be a multiple of 256 bytes
     const align                  = 256;
     const padded_bytes_per_row   =
         Math.ceil(unpadded_bytes_per_row / align) * align;

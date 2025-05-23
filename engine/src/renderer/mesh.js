@@ -4,6 +4,7 @@ import { SharedVertexBuffer } from "../core/shared_data.js";
 import { Buffer } from "./buffer.js";
 import { Name } from "../utility/names.js";
 import { CacheTypes } from "./renderer_types.js";
+import { MeshTaskQueue } from "./mesh_task_queue.js";
 
 const discard_cpu_data = true;
 
@@ -628,10 +629,17 @@ export class Mesh {
       }
 
       Mesh.loading_meshes.delete(mesh_id);
+
+      MeshTaskQueue.mark_needs_sort();
     });
 
     ResourceCache.get().store(CacheTypes.MESH, mesh_id, mesh);
 
     return mesh;
+  }
+
+  static precrete_engine_primitives() {
+    Mesh.cube();
+    Mesh.quad();
   }
 }

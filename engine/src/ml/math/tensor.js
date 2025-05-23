@@ -1,5 +1,5 @@
 import { MLOps } from "../ops/ops.js";
-
+import { log, warn, error } from "../../utility/logging.js";
 /**
  * A tensor is a multi-dimensional array of floating-point numbers.
  * Tensors are used to store the weights, biases, and input/output data of a neural network.
@@ -546,7 +546,7 @@ export class Tensor {
   static debug_log_tensor(id, op_name) {
     if (Tensor.debug_tensor !== null && Tensor.debug_tensor === id && Tensor.pool[id]) {
       const tensor = Tensor.pool[id];
-      console.log(
+      log(
         `[Tensor ${tensor.id}]: (${op_name}) Data Length: ${tensor.data.length}, Batch Size: ${tensor.batch_size}, Data: ${tensor.data}, Data Shape: ${tensor.shape}`
       );
     }

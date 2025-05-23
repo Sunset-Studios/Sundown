@@ -135,13 +135,13 @@ export class AABBGPURaycast {
             this.uniforms_buffer.write(this.uniforms);
             
             // Submit compute task
-            ComputeTaskQueue.get().new_task(
+            ComputeTaskQueue.new_task(
                 "aabb_raycast",
                 "system_compute/aabb_raycast.wgsl",
                 [
                     this.uniforms_buffer,
-                    AABB.data.node_bounds_buffer,
-                    AABB.data.node_data_buffer,
+                    AABB.node_bounds_buffer,
+                    AABB.node_data_buffer,
                     this.ray_buffer,
                     this.hits_buffer
                 ],

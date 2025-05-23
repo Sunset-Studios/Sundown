@@ -471,24 +471,27 @@ export class Tree {
     while (queue_idx_tail !== queue_idx_head) {
       const current_idx = this.#flatten_queue[queue_idx_tail++];
       const current = this.nodes[current_idx];
-      if (result_generator_cb) {
-        result_size += result_generator_cb(result, current, result_size);
-      } else {
-        result[result_size++] = current.data;
-      }
-      nodes_remaining_in_layer--;
-
-      for (let i = 0; i < current.child_count; i++) {
-        this.#flatten_queue[queue_idx_head++] = current.children[i];
-        next_layer_count += this.#node_count_map.get(current.children[i]);
-        nodes_in_next_layer++;
-      }
-
-      if (nodes_remaining_in_layer === 0 && nodes_in_next_layer > 0) {
-        layer_counts.push(next_layer_count);
-        nodes_remaining_in_layer = nodes_in_next_layer;
-        next_layer_count = 0;
-        nodes_in_next_layer = 0;
+      if (current)
+      {
+        if (result_generator_cb) {
+          result_size += result_generator_cb(result, current, result_size);
+        } else {
+          result[result_size++] = current.data;
+        }
+        nodes_remaining_in_layer--;
+  
+        for (let i = 0; i < current.child_count; i++) {
+          this.#flatten_queue[queue_idx_head++] = current.children[i];
+          next_layer_count += this.#node_count_map.get(current.children[i]);
+          nodes_in_next_layer++;
+        }
+  
+        if (nodes_remaining_in_layer === 0 && nodes_in_next_layer > 0) {
+          layer_counts.push(next_layer_count);
+          nodes_remaining_in_layer = nodes_in_next_layer;
+          next_layer_count = 0;
+          nodes_in_next_layer = 0;
+        }
       }
     }
 

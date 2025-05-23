@@ -9,12 +9,6 @@ import { TransformProcessor } from "./subsystems/transform_processor.js";
 import { AABBEntityAdapter } from "./subsystems/aabb_entity_adapter.js";
 import { AABBTreeDebugRenderer } from "./subsystems/aabb_debug_renderer.js";
 
-import { TransformFragment } from "./ecs/fragments/transform_fragment.js";
-import { VisibilityFragment } from "./ecs/fragments/visibility_fragment.js";
-import { StaticMeshFragment } from "./ecs/fragments/static_mesh_fragment.js";
-import { TextFragment } from "./ecs/fragments/text_fragment.js";
-import { SceneGraphFragment } from "./ecs/fragments/scene_graph_fragment.js";
-
 import { cursor } from "../ui/2d/immediate.js";
 import { FontCache } from "../ui/text/font_cache.js";
 import { ViewProcessor } from "./subsystems/view_processor.js";
@@ -42,7 +36,6 @@ export class Scene extends SimulationLayer {
 
     FontCache.auto_load_fonts();
 
-    this.setup_default_fragments();
     this.setup_default_subsystems();
   }
 
@@ -98,17 +91,7 @@ export class Scene extends SimulationLayer {
     this.remove_layer(TransformProcessor);
     this.remove_layer(ViewProcessor);
   }
-
-  setup_default_fragments() {
-    EntityManager.preinit_fragments(
-      TransformFragment,
-      VisibilityFragment,
-      StaticMeshFragment,
-      TextFragment,
-      SceneGraphFragment
-    );
-  }
-
+  
   _update_dev_cursor() {
     if (!this.dev_cursor_enabled || !this.dev_cursor_visible) return;
 

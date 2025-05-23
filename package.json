@@ -51,7 +51,7 @@
   "dependencies": {
     "electron-squirrel-startup": "^1.0.1",
     "gl-matrix": "^3.4.3",
-    "vite": "^5.3.1",
+    "vite": "^6.3.5",
     "wgsl_reflect": "^1.0.8"
   },
   "devDependencies": {
@@ -64,7 +64,7 @@
     "@electron-forge/plugin-fuses": "^7.4.0",
     "@electron/fuses": "^1.8.0",
     "electron": "^31.1.0",
-    "electron-vite": "^2.3.0",
+    "electron-vite": "^3.1.0",
     "express": "^4.21.2",
     "msdf-bmfont-xml": "^2.5.4",
     "prettier": "^3.3.3"

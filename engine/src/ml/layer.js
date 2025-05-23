@@ -14,6 +14,7 @@ import { Sigmoid } from "./layers/sigmoid.js";
 import { Softmax } from "./layers/softmax.js";
 
 import { deep_clone } from "../utility/object.js";
+import { log, warn, error } from "../utility/logging.js";
 
 /**
  * Data structure for layer properties
@@ -194,7 +195,7 @@ export class Layer {
 
     // Validate that we have a handler for this type
     if (type && (!Layer.type_handlers.has(type) || !Layer.type_handlers.get(type).initialize)) {
-      console.warn(`No initializer handler registered for layer type: ${type}`);
+      warn(`No initializer handler registered for layer type: ${type}`);
     } else {
       const type_handler = Layer.type_handlers.get(type);
       type_handler.initialize(layer);

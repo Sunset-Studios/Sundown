@@ -83,7 +83,7 @@ export class UIProcessor extends SimulationLayer {
       UIContext.input_state.y,
       renderer.canvas.width,
       renderer.canvas.height,
-      500.0 
+      1.0 
     );
     SharedFrameInfoBuffer.set_cursor_world_position(UIContext.input_state.world_position);
 

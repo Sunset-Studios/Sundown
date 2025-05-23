@@ -1,9 +1,8 @@
 import { EntityManager } from "../../core/ecs/entity.js";
-import { EntityTransformFlags } from "../../core/minimal.js";
+import { EntityFlags } from "../../core/minimal.js";
 import { Mesh } from "../../renderer/mesh.js";
 import { Material } from "../../renderer/material.js";
 import { StaticMeshFragment } from "../../core/ecs/fragments/static_mesh_fragment.js";
-import { SceneGraphFragment } from "../../core/ecs/fragments/scene_graph_fragment.js";
 import { TransformFragment } from "../../core/ecs/fragments/transform_fragment.js";
 import { VisibilityFragment } from "../../core/ecs/fragments/visibility_fragment.js";
 import { UserInterfaceFragment } from "../../core/ecs/fragments/user_interface_fragment.js";
@@ -12,7 +11,7 @@ import { spawn_mesh_entity } from "../../core/ecs/entity_utils.js";
 export class Element3D {
   static events = {};
 
-  static create(config, material = null, parent = null, children = [], start_visible = true, flags = EntityTransformFlags.IGNORE_PARENT_SCALE) {
+  static create(config, material = null, parent = null, children = [], start_visible = true, flags = EntityFlags.IGNORE_PARENT_SCALE) {
     const entity = spawn_mesh_entity(
       [0, 0, 0],
       [0, 0, 0, 1],
@@ -34,10 +33,7 @@ export class Element3D {
     new_user_interface_view.is_clicked = 0;
     new_user_interface_view.is_pressed = 0;
     new_user_interface_view.was_pressed = 0;
-    new_user_interface_view.color.r = 0;
-    new_user_interface_view.color.g = 0;
-    new_user_interface_view.color.b = 0;
-    new_user_interface_view.color.a = 0;
+    new_user_interface_view.color = [0, 0, 0, 0];
 
     this.set_config(entity, config);
 
@@ -49,25 +45,17 @@ export class Element3D {
   }
 
   static add_child(entity, child) {
-    let this_scene_graph_data = EntityManager.get_fragment(entity, SceneGraphFragment);
-    let child_scene_graph_data = EntityManager.get_fragment(child.entity, SceneGraphFragment);
-    if (this_scene_graph_data && child_scene_graph_data) {
-      const children = this_scene_graph_data.children;
-      children.push(child.entity);
-      this_scene_graph_data.children = children;
-      child_scene_graph_data.parent = entity;
-    }
+    let children = EntityManager.get_entity_children(entity);
+    children.push(child.entity);
+    EntityManager.set_entity_children(entity, children);
+    EntityManager.set_entity_parent(child.entity, entity);
   }
 
   static remove_child(entity, child) {
-    let this_scene_graph_data = EntityManager.get_fragment(entity, SceneGraphFragment);
-    let child_scene_graph_data = EntityManager.get_fragment(child.entity, SceneGraphFragment);
-    if (this_scene_graph_data && child_scene_graph_data) {
-      this_scene_graph_data.children = this_scene_graph_data.children.filter(
-        (c) => c !== child.entity
-      );
-      child_scene_graph_data.parent = null;
-    }
+    let children = EntityManager.get_entity_children(entity);
+    children = children.filter((c) => c !== child.entity);
+    EntityManager.set_entity_children(entity, children);
+    EntityManager.set_entity_parent(child.entity, null);
   }
 
   static set_config(entity, config) {
@@ -105,47 +93,23 @@ export class Element3D {
     }
     
     if (material) {
-      mesh_data.material_slots = [material];
+      mesh_data.material_slots = [BigInt(material)];
     } else {
       mesh_data.material_slots = [];
     }
   }
 
   static set_parent(entity, parent) {
-    let this_scene_graph_data = EntityManager.get_fragment(entity, SceneGraphFragment);
-    if (!this_scene_graph_data) {
-      return;
-    }
-
-    if (EntityManager.has_fragment(parent, SceneGraphFragment)) {
-      this_scene_graph_data.parent = parent;
-    } else {
-      this_scene_graph_data.parent = null;
-    }
+    EntityManager.set_entity_parent(entity, parent);
   }
 
   static set_children(entity, children) {
-    let this_scene_graph_data = EntityManager.get_fragment(entity, SceneGraphFragment);
-    if (!this_scene_graph_data) {
-      return;
+    let old_children = EntityManager.get_entity_children(entity);
+    for (let i = 0; i < old_children.length; i++) {
+      EntityManager.set_entity_parent(old_children[i], null);
     }
-
-    for (let i = 0; i < this_scene_graph_data.children.length; i++) {
-      let child_scene_graph_data = EntityManager.get_fragment(
-        this_scene_graph_data.children[i],
-        SceneGraphFragment
-      );
-      if (child_scene_graph_data) {
-        child_scene_graph_data.parent = null;
-      }
-    }
-
     for (let i = 0; i < children.length; i++) {
-      let child = children[i];
-      let child_scene_graph_data = EntityManager.get_fragment(child.entity, SceneGraphFragment);
-      if (child_scene_graph_data) {
-        child_scene_graph_data.parent = entity;
-      }
+      EntityManager.set_entity_parent(children[i], entity);
     }
   }
 
@@ -202,10 +166,7 @@ export class Element3D {
     if (!user_interface_data) {
       return;
     }
-    user_interface_data.color.r = color.r;
-    user_interface_data.color.g = color.g;
-    user_interface_data.color.b = color.b;
-    user_interface_data.color.a = color.a;
+    user_interface_data.color = [color.r, color.g, color.b, color.a];
   }
 
   static on(entity, event, callback) {

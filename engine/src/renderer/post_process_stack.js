@@ -172,7 +172,7 @@ export class PostProcessStack {
                 pass.rg_config,
                 (graph, frame_data, encoder) => {
                     const physical_pass = graph.get_physical_pass(frame_data.current_pass);
-                    MeshTaskQueue.get().draw_quad(physical_pass);
+                    MeshTaskQueue.draw_quad(physical_pass);
                 }
             );
 

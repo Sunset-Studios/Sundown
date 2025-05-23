@@ -1,6 +1,7 @@
 import { Tensor } from "../math/tensor.js";
 import { Layer } from "../layer.js";
 import { InputType } from "../ml_types.js";
+import { log, warn, error } from "../../utility/logging.js";
 
 const number_name = "number";
 const input_layer_error = "InputLayer not initialized correctly.";
@@ -170,7 +171,7 @@ export class Input {
    */
   static add_sample_batch(layer, input_batch, target_batch, mark_persistent = true) {
     if (!layer.training_queue) {
-      console.error(input_layer_error);
+      error(input_layer_error);
       return;
     }
     // Ensure tensors passed in won't be disposed prematurely

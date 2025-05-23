@@ -3,12 +3,10 @@ import { Texture } from "../renderer/texture.js";
 import { Renderer } from "../renderer/renderer.js";
 import { mat4, vec4, quat, vec3, vec2 } from "gl-matrix";
 import { WORLD_UP, WORLD_FORWARD } from "./minimal.js";
-import { TypedVector } from "../memory/container.js";
 
 const vertex_buffer_name = "vertex_buffer";
 const view_buffer_name = "view_buffer";
 const frame_info_buffer_name = "frame_info_buffer";
-const entity_metadata_buffer_name = "entity_metadata_buffer";
 
 export class SharedVertexBuffer {
   static buffer = null;
@@ -31,18 +29,14 @@ export class SharedVertexBuffer {
   }
 
   static build() {
-    if (this.buffer) {
-      this.buffer.destroy();
-    }
-
     this.buffer = Buffer.create({
       name: vertex_buffer_name,
       data: this.vertex_data
         .map((v) => v.position.concat(v.normal, v.tangent, v.bitangent, v.uv))
         .flat(),
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+      force: true,
     });
-
     Renderer.get().refresh_global_shader_bindings();
   }
 }
@@ -410,139 +404,5 @@ export class SharedFrameInfoBuffer {
 
   static _get_gpu_type_layout(item) {
     return Array.of(item.view_index, item.time, ...item.resolution, ...item.cursor_world_position);
-  }
-}
-
-export class SharedEntityMetadataBuffer {
-  static entity_metadata = new TypedVector(256, 0, Uint32Array);
-  static num_entities = 0;
-  static buffer = null;
-  static buffer_size = 0;
-  static dirty = true;
-
-  static get_entity_offset(entity) {
-    return this.entity_metadata.get(entity * 3);
-  }
-
-  static set_entity_offset(entity, offset) {
-    this.entity_metadata.set(entity * 3, offset);
-  }
-
-  static get_entity_count(entity) {
-    return this.entity_metadata.get(entity * 3 + 1);
-  }
-
-  static get_absolute_entity_count() {
-    const adjusted_entity_count = this.num_entities - 1;
-    return (
-      this.entity_metadata.get(adjusted_entity_count * 3) +
-      this.entity_metadata.get(adjusted_entity_count * 3 + 1)
-    );
-  }
-
-  static set_entity_instance_count(entity, count) {
-    this.entity_metadata.set(entity * 3 + 1, count);
-    this.dirty = true;
-  }
-
-  static get_entity_flags(entity) {
-    return this.entity_metadata.get(entity * 3 + 2);
-  }
-
-  static set_entity_flags(entity, flags) {
-    this.entity_metadata.set(entity * 3 + 2, flags);
-  }
-
-  static update_offsets() {
-    for (let i = 0, offset = 0; i < this.num_entities; i++) {
-      this.set_entity_offset(i, offset);
-      offset += this.get_entity_count(i);
-    }
-    this.dirty = true;
-  }
-
-  static add_entity(entity, pending_instance_count_changes = null) {
-    const adjusted_entity = entity + 1;
-
-    this.resize(adjusted_entity);
-
-    // Calculate the correct offset based on sum of previous entity counts
-    let offset = 0;
-    if (entity > 0) {
-      const prev_entity = entity - 1;
-      offset =
-      this.entity_metadata.get(prev_entity * 3) + // Offset of previous entity
-      this.entity_metadata.get(prev_entity * 3 + 1); // Count of previous entity
-      
-      if (pending_instance_count_changes && pending_instance_count_changes.has(prev_entity)) {
-        const [old_count, new_count] = pending_instance_count_changes.get(prev_entity);
-        // Adjust offset based on the pending change
-        offset = offset - (new_count - old_count);
-      }
-    }
-
-    this.entity_metadata.set(entity * 3, offset);
-    this.entity_metadata.set(entity * 3 + 1, 1);
-    this.entity_metadata.set(entity * 3 + 2, 0);
-    if (this.num_entities < adjusted_entity) {
-      this.num_entities = adjusted_entity;
-    }
-  }
-
-  static remove_entity(entity) {
-    this.entity_metadata.set(entity * 3, 0);
-    this.entity_metadata.set(entity * 3 + 1, 0);
-    this.entity_metadata.set(entity * 3 + 2, 0);
-    this.num_entities = this.num_entities - 1;
-  }
-
-  static entity_exists(entity) {
-    return this.entity_metadata.get(entity * 3 + 1) > 0;
-  }
-
-  static resize(new_size) {
-    let should_rebuild = !this.buffer;
-    if (this.entity_metadata.capacity <= new_size * 3) {
-      this.entity_metadata.resize(Math.max(3, new_size * 6)); // Double the size of the buffer
-      should_rebuild = true;
-    }
-    if (should_rebuild) {
-      this.build();
-    }
-  }
-
-  static rebuild() {
-    if (!this.dirty) return;
-
-    if (!this.buffer || this.buffer_size < this.entity_metadata.get_data().byteLength) {
-      this.build();
-    } else {
-      this.write();
-    }
-
-    this.dirty = false;
-  }
-
-  static build() {
-    const gpu_layout = this._get_gpu_type_layout();
-
-    this.buffer_size = gpu_layout.byteLength;
-
-    this.buffer = Buffer.create({
-      name: entity_metadata_buffer_name,
-      raw_data: gpu_layout,
-      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-      force: true,
-    });
-
-    Renderer.get().refresh_global_shader_bindings();
-  }
-
-  static _get_gpu_type_layout() {
-    return this.entity_metadata.get_data();
-  }
-
-  static write() {
-    this.buffer.write(this._get_gpu_type_layout());
   }
 }

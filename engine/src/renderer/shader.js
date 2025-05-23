@@ -1,4 +1,5 @@
 import { Renderer } from "./renderer.js";
+import { EntityManager } from "../core/ecs/entity.js";
 import { ResourceCache } from "./resource_cache.js";
 import { WgslReflect, ResourceType } from "wgsl_reflect/wgsl_reflect.node.js";
 import { read_file } from "../utility/file_system.js";
@@ -19,7 +20,7 @@ import {
   r16uint_format,
   r16sint_format,
 } from "../utility/config_permutations.js";
-
+import { log, warn, error } from "../utility/logging.js";
 
 const include_string = "#include";
 const if_string = "#if";
@@ -69,10 +70,10 @@ export class Shader {
     Shader.shader_paths.push(path);
   }
 
-  initialize(file_path) {
+  initialize(file_path, defines = {}) {
     const renderer = Renderer.get();
 
-    let asset = this._load_shader_text(file_path);
+    let asset = this._load_shader_text(file_path, defines);
     if (!asset) {
       return;
     }
@@ -85,8 +86,8 @@ export class Shader {
       });
       this.file_path = file_path;
       this.reflection = this.reflect();
-    } catch (error) {
-      console.error(`WebGPU shader error: could not create shader module at ${file_path}`, error);
+    } catch (err) {
+      error(`WebGPU shader error: could not create shader module at ${file_path}`, err);
     }
   }
 
@@ -95,7 +96,7 @@ export class Shader {
     return reflect;
   }
 
-  _load_shader_text(file_path, load_recursion_step = 0) {
+  _load_shader_text(file_path, defines = {}, load_recursion_step = 0) {
     let asset = null;
     for (const path of Shader.shader_paths) {
       const full_path = `${path}/${file_path}`;
@@ -106,14 +107,14 @@ export class Shader {
     }
 
     if (!asset) {
-      console.error(`WebGPU shader error: could not find shader at ${file_path}`);
+      error(`WebGPU shader error: could not find shader at ${file_path}`);
       return null;
     }
 
-    asset = this._parse_shader_includes(asset, load_recursion_step);
+    asset = this._parse_shader_includes(asset, defines, load_recursion_step);
 
     if (load_recursion_step === 0) {
-      const { defines_map, stripped_code } = this._build_defines_map_and_strip(asset);
+      const { defines_map, stripped_code } = this._build_defines_map_and_strip(asset, defines);
       asset = stripped_code;
       this.defines = defines_map;
       asset = this._parse_conditional_defines_and_types(asset);
@@ -122,7 +123,7 @@ export class Shader {
     return asset;
   }
 
-  _parse_shader_includes(code, load_recursion_step = 0) {
+  _parse_shader_includes(code, defines = {}, load_recursion_step = 0) {
     let include_positions = [];
 
     let pos = code.indexOf(include_string, 0);
@@ -137,7 +138,7 @@ export class Shader {
       const include_line = code.substring(start, end);
       const match = include_line.match(include_regex);
       if (match) {
-        const include_contents = this._load_shader_text(match[1], load_recursion_step + 1);
+        const include_contents = this._load_shader_text(match[1], defines, load_recursion_step + 1);
         code = code.slice(0, start) + include_contents + code.slice(end);
       }
     }
@@ -145,9 +146,8 @@ export class Shader {
     return code;
   }
 
-  _build_defines_map_and_strip(code) {
-    const defines_map = {};
-
+  _build_defines_map_and_strip(code, defines) {
+    const defines_map = Object.assign({}, defines);
     const stripped_code = code.replace(defines_regex, (match, key, value) => {
       defines_map[key] = value || true;
       return "";
@@ -170,7 +170,7 @@ export class Shader {
       const end_index = code.indexOf(endif_string, start_index);
 
       if (end_index === -1) {
-        console.warn(`Unmatched #${directive} at position ${start_index}`);
+        warn(`Unmatched #${directive} at position ${start_index}`);
         continue;
       }
 
@@ -204,11 +204,11 @@ export class Shader {
     return result.trim();
   }
 
-  static create(file_path) {
+  static create(file_path, defines = {}) {
     let shader = ResourceCache.get().fetch(CacheTypes.SHADER, file_path);
     if (!shader) {
       shader = new Shader();
-      shader.initialize(file_path);
+      shader.initialize(file_path, defines);
       ResourceCache.get().store(CacheTypes.SHADER, file_path, shader);
     }
     return shader;
@@ -275,5 +275,4 @@ export class Shader {
         return rgba8unorm_format;
     }
   }
-
 }

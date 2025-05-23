@@ -4,14 +4,15 @@ const PI: f32 = 3.14159265359;
 // Data Structures
 // ------------------------------------------------------------------------------------ 
 struct Light {
-    position: vec3f,
+    position: vec4f,
     direction: vec4f,
-    color: vec3f,
+    color: vec4f,
     light_type: f32,
     intensity: f32,
     radius: f32,
     attenuation: f32,
     outer_angle: f32,
+    activated: f32,
 };
 
 // ------------------------------------------------------------------------------------
@@ -114,15 +115,15 @@ fn calculate_blinn_phong(
     var attenuation = 1.0;
 
     if (light.light_type == 0.0) { // Directional
-        light_dir = normalize(light.position);
+        light_dir = normalize(light.position.xyz);
     } else if (light.light_type == 1.0) { // Point
-        let light_to_frag = fragment_pos - light.position;
+        let light_to_frag = fragment_pos - light.position.xyz;
         light_dir = normalize(light_to_frag);
         let distance = length(light_to_frag);
         let falloff = 1.0 - smoothstep(0.0, light.radius, distance);
         attenuation = falloff / (1.0 + 0.09 * distance + 0.032 * distance * distance);
     } else if (light.light_type == 2.0) { // Spot
-        let light_to_frag = fragment_pos - light.position;
+        let light_to_frag = fragment_pos - light.position.xyz;
         light_dir = normalize(light_to_frag);
         let distance = length(light_to_frag);
         let spot_effect = dot(light_dir, light.direction.xyz);
@@ -176,9 +177,9 @@ fn calculate_brdf(
     var attenuation = 1.0;
 
     if (light.light_type == 0.0) { // Directional
-        light_dir = normalize(light.position);
+        light_dir = normalize(light.position.xyz);
     } else if (light.light_type == 1.0) { // Point
-        let light_to_frag = light.position - fragment_pos;
+        let light_to_frag = light.position.xyz - fragment_pos;
         light_dir = normalize(light_to_frag);
         let distance_squared = dot(light_to_frag, light_to_frag);
         let light_inv_radius = 1.0 / light.radius;
@@ -186,7 +187,7 @@ fn calculate_brdf(
         let smooth_factor = max(1.0 - factor * factor, 0.0);
         attenuation = (smooth_factor * smooth_factor) / max(distance_squared, 0.0001); 
     } else if (light.light_type == 2.0) { // Spot
-        let light_to_frag = light.position - fragment_pos;
+        let light_to_frag = light.position.xyz - fragment_pos;
         light_dir = normalize(light_to_frag);
         let cos_outer = cos(light.outer_angle);
         let spot_scale = 1.0 / max(cos(light.direction.w) - cos_outer, 0.0001);

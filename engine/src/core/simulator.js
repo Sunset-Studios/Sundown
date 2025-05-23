@@ -1,5 +1,6 @@
 import application_state from "./application_state.js";
 import SimulationCore from "./simulation_core.js";
+import { EntityManager } from "./ecs/entity.js";
 import { Renderer } from "../renderer/renderer.js";
 import { BufferSync } from "../renderer/buffer.js";
 import { DeferredShadingStrategy } from "../renderer/strategies/deferred_shading.js";
@@ -9,6 +10,8 @@ import { profile_scope } from "../utility/performance.js";
 import { frame_runner } from "../utility/frame_runner.js";
 import { reset_ui, flush_ui } from "../ui/2d/immediate.js";
 
+import { ALL_FRAGMENT_CLASSES } from "./ecs/fragment_registry.js";
+
 export class Simulator {
   async init(gpu_canvas_name, ui_canvas_name = null) {
     application_state.is_running = true;
@@ -17,7 +20,7 @@ export class Simulator {
     InputProvider.setup();
     // Initialize meta system
     MetaSystem.setup();
-
+    
     // Initialize renderer with document canvas
     const canvas = document.getElementById(gpu_canvas_name);
     const canvas_ui = ui_canvas_name ? document.getElementById(ui_canvas_name) : null;
@@ -25,6 +28,12 @@ export class Simulator {
       pointer_lock: true,
       use_precision_float: true,
     });
+    
+    // Initialize entity manager
+    EntityManager.setup(ALL_FRAGMENT_CLASSES);
+
+    // Refresh global shader bindings
+    Renderer.get().refresh_global_shader_bindings();
   }
 
   async add_sim_layer(sim_layer) {
@@ -35,11 +44,11 @@ export class Simulator {
     SimulationCore.unregister_simulation_layer(sim_layer);
   }
 
-  _simulate(delta_time) {
+  async _simulate(delta_time) {
     if (application_state.is_running) {
-      profile_scope("frame_loop", async () => {
-        await BufferSync.process_syncs();
+      await BufferSync.process_syncs();
 
+      profile_scope("frame_loop", async () => {
         const renderer = Renderer.get();
         reset_ui(renderer.canvas_ui?.width ?? 0, renderer.canvas_ui?.height ?? 0);
         
