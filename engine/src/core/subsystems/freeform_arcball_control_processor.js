@@ -31,27 +31,27 @@ export class FreeformArcballControlProcessor extends SimulationLayer {
         }
         
         const view_data = SharedViewBuffer.get_view_data(this.context.current_view);
-        let position = vec4.clone(view_data.position);
-        let rotation = quat.clone(view_data.rotation);
+        let position = vec4.clone(view_data.view_position);
+        let rotation = quat.clone(view_data.view_rotation);
         
         let moved = false;
         if (InputProvider.get_state(InputKey.K_w)) {
-            const forward = vec4.scale(vec4.create(), view_data.view_forward ?? WORLD_FORWARD, this.move_speed * delta_time);
+            const forward = vec4.scale(vec4.create(), view_data.forward ?? WORLD_FORWARD, this.move_speed * delta_time);
             vec4.add(position, position, forward);
             moved = true;
         }
         if (InputProvider.get_state(InputKey.K_s)) {
-            const backward = vec4.scale(vec4.create(), view_data.view_forward ?? WORLD_FORWARD, -this.move_speed * delta_time);
+            const backward = vec4.scale(vec4.create(), view_data.forward ?? WORLD_FORWARD, -this.move_speed * delta_time);
             vec4.add(position, position, backward);
             moved = true;
         }
         if (InputProvider.get_state(InputKey.K_a)) {
-            const left = vec4.scale(vec4.create(), view_data.view_right ?? WORLD_RIGHT, -this.move_speed * delta_time);
+            const left = vec4.scale(vec4.create(), view_data.right ?? WORLD_RIGHT, -this.move_speed * delta_time);
             vec4.add(position, position, left);
             moved = true;
         }
         if (InputProvider.get_state(InputKey.K_d)) {
-            const right = vec4.scale(vec4.create(), view_data.view_right ?? WORLD_RIGHT, this.move_speed * delta_time);
+            const right = vec4.scale(vec4.create(), view_data.right ?? WORLD_RIGHT, this.move_speed * delta_time);
             vec4.add(position, position, right);
             moved = true;
         }
@@ -71,11 +71,11 @@ export class FreeformArcballControlProcessor extends SimulationLayer {
         const y = InputProvider.get_range(InputRange.M_y);
 
         if ((x || y) && shift_held) {
-            const pivot_point = vec3.scaleAndAdd(vec3.create(), position, view_data.view_forward ?? WORLD_FORWARD, this.orbit_distance);
+            const pivot_point = vec3.scaleAndAdd(vec3.create(), position, view_data.forward ?? WORLD_FORWARD, this.orbit_distance);
 
             // Calculate rotation based on mouse movement
             const rotationX = quat.setAxisAngle(quat.create(), WORLD_UP, x * this.rotation_speed);
-            const rotationY = quat.setAxisAngle(quat.create(), vec3.cross(vec3.create(), WORLD_UP, view_data.view_forward), -y * this.rotation_speed);
+            const rotationY = quat.setAxisAngle(quat.create(), vec3.cross(vec3.create(), WORLD_UP, view_data.forward), -y * this.rotation_speed);
             
             // Combine rotations
             const delta_rotation = quat.multiply(quat.create(), rotationX, rotationY);
@@ -92,10 +92,9 @@ export class FreeformArcballControlProcessor extends SimulationLayer {
         }
 
         if (moved) {
-            SharedViewBuffer.set_view_data(this.context.current_view, {
-                position: position,
-                rotation: rotation
-            });
+            const view_data = SharedViewBuffer.get_view_data(this.context.current_view);
+            view_data.view_position = position;
+            view_data.view_rotation = rotation;
         }
         SharedViewBuffer.update_transforms(this.context.current_view);
     }
@@ -107,10 +106,9 @@ export class FreeformArcballControlProcessor extends SimulationLayer {
         const camera_position = vec4.fromValues(0, 0, 0, 1);
         const camera_rotation = quat.fromEuler(quat.create(), 0, 180.0, 0);
 
-        SharedViewBuffer.set_view_data(this.scene.context.current_view, {
-            position: camera_position,
-            rotation: camera_rotation,
-            fov: radians(75),
-        });
+        const view_data = SharedViewBuffer.get_view_data(this.scene.context.current_view);
+        view_data.view_position = camera_position;
+        view_data.view_rotation = camera_rotation;
+        view_data.fov = radians(75);
     }
 }

@@ -19,20 +19,19 @@ export class ViewProcessor extends SimulationLayer {
 
     update(delta_time) {
         super.update(delta_time);
-        SharedViewBuffer.update_transforms(this.context.current_view);
+        SharedViewBuffer.update_transforms();
     }
 
     set_scene(scene) {
         this.scene = scene;
         this.context.current_view = scene.context.current_view;
-        SharedViewBuffer.set_view_data(this.scene.context.current_view, {
-            aspect_ratio: Renderer.get().aspect_ratio,
-        });
+        
+        const view_data = SharedViewBuffer.get_view_data(this.scene.context.current_view);
+        view_data.aspect_ratio = Renderer.get().aspect_ratio;
     }
 
     on_resolution_change() {
-        SharedViewBuffer.set_view_data(this.scene.context.current_view, {
-            aspect_ratio: Renderer.get().aspect_ratio,
-        });
+        const view_data = SharedViewBuffer.get_view_data(this.scene.context.current_view);
+        view_data.aspect_ratio = Renderer.get().aspect_ratio;
     }
 }

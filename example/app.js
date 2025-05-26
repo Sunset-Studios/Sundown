@@ -57,10 +57,9 @@ export class RenderingScene extends Scene {
     const freeform_arcball_control_processor = this.add_layer(FreeformArcballControlProcessor);
     freeform_arcball_control_processor.set_scene(this);
 
-    SharedViewBuffer.set_view_data(0, {
-      position: [-1.0, 22.0, 26.0],
-      rotation: [-0.00061309, 0.9948077, -0.10095515, -0.00604141],
-    });
+    const view_data = SharedViewBuffer.get_view_data(0);
+    view_data.view_position = [-1.0, 22.0, 26.0];
+    view_data.view_rotation = [-0.00061309, 0.9948077, -0.10095515, -0.00604141];
 
     // Set the skybox for this scene.
     SharedEnvironmentMapData.set_skybox("default_scene_skybox", [
@@ -475,10 +474,9 @@ export class TexturesScene extends Scene {
     freeform_arcball_control_processor.set_scene(this);
 
     // Reset view to a good position for the BVH scene
-    SharedViewBuffer.set_view_data(0, {
-      position: [39.198, 14.0851, 78.60858],
-      rotation: [-0.0203683, 0.9771718, -0.179953, -0.110603],
-    });
+    const view_data = SharedViewBuffer.get_view_data(0);
+    view_data.view_position = [39.198, 14.0851, 78.60858];
+    view_data.view_rotation = [-0.0203683, 0.9771718, -0.179953, -0.110603];
 
     // Create a light and add it to the scene
     const light_entity = EntityManager.create_entity([LightFragment]);
@@ -776,10 +774,9 @@ export class AABBScene extends Scene {
     freeform_arcball_control_processor.set_scene(this);
 
     // Reset view to a good position for the BVH scene
-    SharedViewBuffer.set_view_data(0, {
-      position: [47.0751, 55.28902, 106.885414],
-      rotation: [-0.023805, 0.97379, -0.190533, -0.121665],
-    });
+    const view_data = SharedViewBuffer.get_view_data(0);
+    view_data.view_position = [47.0751, 55.28902, 106.885414];
+    view_data.view_rotation = [-0.023805, 0.97379, -0.190533, -0.121665];
 
     this.aabb_tree_debug_renderer = this.get_layer(AABBTreeDebugRenderer);
 
@@ -965,10 +962,10 @@ export class AABBScene extends Scene {
     if (!cursor_world_position) return;
 
     // Use camera position as ray origin
-    this.last_ray_origin = view_data.position;
+    this.last_ray_origin = view_data.view_position;
 
     // Calculate ray direction from camera to cursor world position
-    this.last_ray_direction = vec4.sub(vec4.create(), cursor_world_position, view_data.position);
+    this.last_ray_direction = vec4.sub(vec4.create(), cursor_world_position, view_data.view_position);
     // Normalize the direction vector
     const length = Math.sqrt(
       this.last_ray_direction[0] * this.last_ray_direction[0] +
@@ -1166,7 +1163,7 @@ export class AABBScene extends Scene {
     const view_data = SharedViewBuffer.get_view_data(0);
     if (!view_data) return;
 
-    const center = view_data.position;
+    const center = view_data.view_position;
     const radius = 50.0;
 
     for (let i = 0; i < count; i++) {
@@ -1259,10 +1256,9 @@ export class SolarECSTestScene extends Scene {
     freeform_arcball_control_processor.set_scene(this);
 
     // Set initial camera view
-    SharedViewBuffer.set_view_data(0, {
-      position: [10.0, 10.0, 15.0],
-      rotation: quat.fromEuler(quat.create(), 0, -180, 0), // Example rotation
-    });
+    const view_data = SharedViewBuffer.get_view_data(0);
+    view_data.view_position = [10.0, 10.0, 15.0];
+    view_data.view_rotation = quat.fromEuler(quat.create(), 0, -180, 0); // Example rotation
 
     // Create a light and add it to the scene
     const light_entity = EntityManager.create_entity([LightFragment]);
@@ -1413,10 +1409,9 @@ export class VoxelTerrainScene extends Scene {
     ]);
     SharedEnvironmentMapData.set_skybox_color([0.5, 0.7, 0.5, 1]);
 
-    SharedViewBuffer.set_view_data(0, {
-      position: [20.7373, 54.0735, 68.58896],
-      rotation: [-0.036352589, 0.94788336, -0.25605953, -0.13457019],
-    });
+    const view_data = SharedViewBuffer.get_view_data(0);
+    view_data.view_position = [20.7373, 54.0735, 68.58896];
+    view_data.view_rotation = [-0.036352589, 0.94788336, -0.25605953, -0.13457019];
 
     // Create a light and add it to the scene
     const light_entity = EntityManager.create_entity([LightFragment]);
@@ -1685,10 +1680,10 @@ export class ObjectPaintingScene extends Scene {
       "engine/textures/simple_skybox/nz.png",
     ]);
     SharedEnvironmentMapData.set_skybox_color([1, 1, 1, 1]);
-    SharedViewBuffer.set_view_data(0, {
-      position: [0, 0, 10],
-      rotation: [0, 0, 0, 1],
-    });
+
+    const view_data = SharedViewBuffer.get_view_data(0);
+    view_data.view_position = [0, 0, 10];
+    view_data.view_rotation = [0, 0, 0, 1];
 
     // Create a light and add it to the scene
     const light_entity = EntityManager.create_entity([LightFragment]);
@@ -1740,7 +1735,7 @@ export class ObjectPaintingScene extends Scene {
     // Move brush to follow mouse
     const world_pos = UI.UIContext.input_state.world_position;
     const view = SharedViewBuffer.get_view_data(0);
-    const view_dir = view.view_forward;
+    const view_dir = view.forward;
     const paint_pos = vec3.scaleAndAdd(vec3.create(), world_pos, view_dir, 50);
 
     // While Space key is held, paint objects every paint_rate seconds
@@ -1826,6 +1821,148 @@ export class ObjectPaintingScene extends Scene {
   }
 }
 
+// Simple Test Gym Scene - Cornell-box blockout for DDGI testing
+export class TestGymScene extends Scene {
+  name = "TestGymScene";
+  entities = [];
+
+  init(parent_context) {
+    super.init(parent_context);
+
+    // camera arcball
+    const freeform_arcball_control_processor = this.add_layer(FreeformArcballControlProcessor);
+    freeform_arcball_control_processor.set_scene(this);
+
+    // white skybox
+    SharedEnvironmentMapData.set_skybox("default_scene_skybox", [
+      "engine/textures/gradientbox/px.png",
+      "engine/textures/gradientbox/nx.png",
+      "engine/textures/gradientbox/ny.png",
+      "engine/textures/gradientbox/py.png",
+      "engine/textures/gradientbox/pz.png",
+      "engine/textures/gradientbox/nz.png",
+    ]);
+    SharedEnvironmentMapData.set_skybox_color([1, 1, 1, 1]);
+
+    // camera
+    const view_data = SharedViewBuffer.get_view_data(0);
+    view_data.view_position = [0, 13, 33];
+    view_data.view_rotation = [0.0005166, 0.9986818, -0.027326133, 0.0188794];
+
+    // directional light
+    const light_entity = EntityManager.create_entity([LightFragment]);
+    this.entities.push(light_entity);
+    
+    const light_fragment_view = EntityManager.get_fragment(light_entity, LightFragment);
+    light_fragment_view.type = LightType.DIRECTIONAL;
+    light_fragment_view.color = [1, 1, 1];
+    light_fragment_view.intensity = 0.5;
+    light_fragment_view.position = [15, 20, 5];
+    light_fragment_view.active = true;
+
+    // materials
+    const wall_material = StandardMaterial.create("testgym_wall_material");
+    const wall_material_id = wall_material.material_id;
+    wall_material.set_albedo([1, 1, 1, 1]);
+    wall_material.set_emission(0.1);
+    wall_material.set_roughness(1.0);
+
+    const red_material = StandardMaterial.create("testgym_red_material");
+    const red_material_id = red_material.material_id;
+    red_material.set_albedo([1, 0.2, 0.2, 1]);
+    red_material.set_emission(0.1);
+
+    const blue_material = StandardMaterial.create("testgym_blue_material");
+    const blue_material_id = blue_material.material_id;
+    blue_material.set_albedo([0.2, 0.2, 1, 1]);
+    blue_material.set_emission(0.1);
+
+    const gray_material = StandardMaterial.create("testgym_gray_material");
+    const gray_material_id = gray_material.material_id;
+    gray_material.set_albedo([0.5, 0.5, 0.5, 1]);
+    gray_material.set_emission(0.1);
+
+    // meshes
+    const cube_mesh   = Mesh.cube();
+    const sphere_mesh = Mesh.from_gltf("engine/models/sphere/sphere.gltf");
+
+    const room_size     = 10.0;
+    const wall_thickness = 0.1;
+
+    // Cornell-box walls (tight box)
+    // floor top at y=0
+    const floor = spawn_mesh_entity(
+      [0, -wall_thickness, 0], [0, 0, 0, 1], [room_size, wall_thickness, room_size], cube_mesh, wall_material_id
+    );
+    this.entities.push(floor);
+
+    // ceiling bottom at y=room_size
+    const ceiling = spawn_mesh_entity(
+      [0, room_size * 2.0 + wall_thickness, 0], [0, 0, 0, 1], [room_size, wall_thickness, room_size], cube_mesh, wall_material_id
+    );
+    this.entities.push(ceiling);
+
+    // back wall inner surface at z=-room_size/2
+    const back_wall = spawn_mesh_entity(
+      [0, room_size, -room_size - wall_thickness],
+      [0, 0, 0, 1],
+      [room_size, room_size, wall_thickness],
+      cube_mesh,
+      wall_material_id
+    );
+    this.entities.push(back_wall);
+
+    // left wall inner surface at x=-room_size/2
+    const left_wall = spawn_mesh_entity(
+      [-room_size - wall_thickness, room_size, 0],
+      [0, 0, 0, 1],
+      [wall_thickness, room_size, room_size],
+      cube_mesh,
+      red_material_id
+    );
+    this.entities.push(left_wall);
+
+    // right wall inner surface at x=+room_size/2
+    const right_wall = spawn_mesh_entity(
+      [room_size + wall_thickness, room_size, 0],
+      [0, 0, 0, 1],
+      [wall_thickness, room_size, room_size],
+      cube_mesh,
+      blue_material_id
+    );
+    this.entities.push(right_wall);
+
+    // blockout "buildings"
+    const building_data = [
+      { mesh: cube_mesh,   position: [-3, 2, -3], scale: [1, 2, 1], material_id: gray_material_id },
+      { mesh: cube_mesh,   position: [ 2, 3, -2], scale: [1, 3, 1], material_id: red_material_id  },
+      { mesh: sphere_mesh, position: [-1, 1.5,  2], scale: [1.5, 1.5, 1.5], material_id: blue_material_id },
+    ];
+    for (const item of building_data) {
+      const b = spawn_mesh_entity(
+        item.position,
+        [0, 0, 0, 1],
+        item.scale,
+        item.mesh,
+        item.material_id
+      );
+      this.entities.push(b);
+    }
+  }
+
+  cleanup() {
+    for (const e of this.entities) {
+      delete_entity(e);
+    }
+    this.remove_layer(FreeformArcballControlProcessor);
+    super.cleanup();
+  }
+
+  update(delta_time) {
+    super.update(delta_time);
+  }
+}
+
 // ------------------------------------------------------------------------------------
 // =============================== Scene Switcher ====================================
 // ------------------------------------------------------------------------------------
@@ -1877,6 +2014,7 @@ export class SceneSwitcher extends SimulationLayer {
   const solar_ecs_scene = new SolarECSTestScene("SolarECSTestScene");
   const voxel_terrain_scene = new VoxelTerrainScene("VoxelTerrainScene");
   const object_painting_scene = new ObjectPaintingScene("ObjectPaintingScene");
+  const test_gym_scene = new TestGymScene("TestGymScene");
 
   const scene_switcher = new SceneSwitcher("SceneSwitcher");
   //await scene_switcher.add_scene(solar_ecs_scene);
@@ -1884,8 +2022,9 @@ export class SceneSwitcher extends SimulationLayer {
   //await scene_switcher.add_scene(aabb_scene);
   //await scene_switcher.add_scene(rendering_scene);
   //await scene_switcher.add_scene(ml_scene);
-  await scene_switcher.add_scene(voxel_terrain_scene);
+  //await scene_switcher.add_scene(voxel_terrain_scene);
   //await scene_switcher.add_scene(object_painting_scene);
+  await scene_switcher.add_scene(test_gym_scene);
 
   await simulator.add_sim_layer(scene_switcher);
 

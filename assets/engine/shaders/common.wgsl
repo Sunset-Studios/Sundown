@@ -48,9 +48,14 @@ struct View {
     view_projection_matrix: mat4x4f,
     inverse_view_projection_matrix: mat4x4f,
     view_position: vec4f,
+    view_rotation: vec4f,
     view_direction: vec4f,
     view_right: vec4f,
     frustum: array<vec4f, 6>,
+    fov: f32,
+    aspect_ratio: f32,
+    near: f32,
+    far: f32,
 };
 
 struct FrameInfo {

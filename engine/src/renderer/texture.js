@@ -271,15 +271,25 @@ export class Texture {
   }
 
   create_view(view_config = {}) {
+    const view_dim = view_config.dimension ?? this.config.dimension;
+    let array_layer_count;
+    if (view_dim === "cube") {
+      array_layer_count = 6;
+    } else if (view_dim === "2d-array" || view_dim === "cube-array") {
+      array_layer_count = view_config.array_layers ?? this.config.depth;
+    } else {
+      // 1d, 2d or 3d textures all have exactly one array layer
+      array_layer_count = 1;
+    }
+
     const view_descriptor = {
       label: view_config.label ?? this.config.name,
       format: this.config.format,
-      dimension: view_config.dimension ?? this.config.dimension,
+      dimension: view_dim,
       aspect: view_config.aspect ?? "all",
       baseMipLevel: view_config.base_mip_level ?? 0,
       baseArrayLayer: view_config.base_array_layer ?? 0,
-      arrayLayerCount:
-        this.config.dimension === "cube" ? 6 : (view_config.array_layers ?? this.config.depth),
+      arrayLayerCount: array_layer_count,
     };
 
     if (view_config.mip_levels) {

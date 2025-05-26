@@ -15,6 +15,17 @@ struct Light {
     activated: f32,
 };
 
+struct GIParams {
+    origin: vec3<f32>,
+    _pad0: f32,
+    spacing: vec3<f32>,
+    _pad1: f32,
+    dims: vec3<u32>,
+    _pad2: u32,
+    current_index: u32,
+    _pad3: vec3<u32>,
+};
+
 // ------------------------------------------------------------------------------------
 // Microfacet Distribution
 // ------------------------------------------------------------------------------------

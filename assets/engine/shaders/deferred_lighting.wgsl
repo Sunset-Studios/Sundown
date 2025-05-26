@@ -14,6 +14,8 @@
 @group(1) @binding(6) var depth_texture: texture_depth_2d;
 @group(1) @binding(7) var<storage, read> dense_lights_buffer: array<Light>;
 @group(1) @binding(8) var<storage, read> light_count_buffer: array<u32>;
+@group(1) @binding(9) var<uniform> gi_params: GIParams;
+@group(1) @binding(10) var gi_irradiance: texture_3d<f32>;
 
 // ------------------------------------------------------------------------------------
 // Data Structures
@@ -28,6 +30,15 @@ struct FragmentOutput {
     @location(0) color: vec4<precision_float>,
 };
 
+// ------------------------------------------------------------------------------------
+// Helper Functions
+// ------------------------------------------------------------------------------------
+
+fn sample_probe_irradiance(world_pos: vec3<f32>) -> vec3<f32> {
+    let uvw = (world_pos - gi_params.origin) / gi_params.spacing;
+    let tex = textureSampleLevel(gi_irradiance, global_sampler, uvw, 0.0);
+    return tex.rgb;
+}
 
 // ------------------------------------------------------------------------------------
 // Vertex Shader
@@ -80,6 +91,8 @@ struct FragmentOutput {
 
     var color = f32(unlit) * tex_sky.rgb * mix(vec3f(1.0), albedo, tex_albedo.a);
 
+    let irradiance = sample_probe_irradiance(position);
+
     let num_lights = light_count_buffer[0] * (1u - unlit);
     for (var i = 0u; i < num_lights; i++) {
         var light = dense_lights_buffer[i];
@@ -98,7 +111,7 @@ struct FragmentOutput {
             0.0, // clear coat
             1.0, // clear coat roughness 
             ao,
-            vec3f(1.0, 1.0, 1.0), // irradiance
+            irradiance,
             vec3f(1.0, 1.0, 1.0), // prefilter color 
             vec2f(1.0, 1.0), // env brdf
             0, // shadow map index

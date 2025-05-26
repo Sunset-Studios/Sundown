@@ -88,15 +88,34 @@ export class ResizableBitArray {
   #capacity;
 
   /**
-   * @param {number} initialCapacity - The initial capacity of the array in bits.
+   * @param {number} initial_capacity - The initial capacity of the array in bits.
    */
   constructor(initial_capacity = 64) {
     if (!Number.isInteger(initial_capacity) || initial_capacity <= 0) {
       throw new Error("Initial capacity must be a positive integer.");
     }
-    this.#buffer = new Uint32Array(Math.ceil(initial_capacity / 32));
+
+    // round up to full 32-bit slots
+    const slots = Math.ceil(initial_capacity / 32);
+
+    this.#buffer = new Uint32Array(slots);
     this.#size = 0;
-    this.#capacity = initial_capacity;
+    this.#capacity = slots * 32;
+  }
+
+  /**
+   * Reset the bit array, clearing all bits and setting size to zero.
+   */
+  reset() {
+    this.#size = 0;
+    this.#buffer.fill(0);
+  }
+
+  /**
+   * Alias for reset()
+   */
+  clear() {
+    this.reset();
   }
 
   /**
@@ -134,27 +153,33 @@ export class ResizableBitArray {
     }
   }
 
-  /**
-   * Resize the bit array to accommodate the new size.
-   * @param {number} newSize - The new size of the array in bits.
-   */
   #resize(new_size) {
     if (new_size > this.#capacity) {
-      const new_capacity = Math.max(new_size, this.#buffer.length * 32 * 2);
-      const new_buffer = new Uint32Array(Math.ceil(new_capacity / 32));
+      // double buffer bits or grow just enough
+      const new_capacity = Math.max(new_size, this.#capacity * 2);
+      const new_slots = Math.ceil(new_capacity / 32);
+      const new_buffer = new Uint32Array(new_slots);
       new_buffer.set(this.#buffer);
       this.#buffer = new_buffer;
-      this.#capacity = new_capacity;
+      this.#capacity = new_slots * 32;
     }
     this.#size = new_size;
   }
 
   /**
    * Get the current size of the array in bits.
-   * @returns {number} The size of the array in bits.
+   * @returns {number}
    */
   get length() {
     return this.#size;
+  }
+
+  /**
+   * Get the current capacity of the array in bits.
+   * @returns {number}
+   */
+  get capacity() {
+    return this.#capacity;
   }
 }
 

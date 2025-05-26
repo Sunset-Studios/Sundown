@@ -42,7 +42,13 @@ struct DrawCullConstants {
 // ------------------------------------------------------------------------------------ 
 
 fn sphere_project(center: vec4<f32>, radius: f32, p00: f32, p11: f32, aabb: ptr<function, vec4<f32>>) -> bool {
+    // Transform center to view space and skip occlusion if inside bounding sphere
     var center_view = view_buffer[0].view_matrix * center;
+    let dist2 = dot(center_view.xyz, center_view.xyz);
+    if (dist2 <= radius * radius) {
+        // viewer is inside the sphere, always visible
+        return false;
+    }
 
     let cx = vec2f(center_view.x, -center_view.z);
     let vx = vec2f(sqrt(dot(cx, cx) - radius * radius), radius);
@@ -98,7 +104,7 @@ fn is_occluded(center: vec4<f32>, radius: f32) -> u32 {
     // Project to get NDC
     let proj_point = view_buffer[0].projection_matrix * view_space_point;
     var sphere_depth = proj_point.z / proj_point.w; 
-    sphere_depth = sphere_depth * 0.5 + 0.5;
+    sphere_depth = sphere_depth * 0.5 + 0.5; 
 
     // Distance-based bias
     let dist_bias = abs(view_space_point.z) * 0.0001;

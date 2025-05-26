@@ -1,5 +1,6 @@
 import { Renderer } from "../renderer.js";
 import { FragmentGpuBuffer } from "../../core/ecs/solar/memory.js";
+import { SharedEnvironmentMapData, SharedViewBuffer } from "../../core/shared_data.js";
 import { Texture } from "../texture.js";
 import { RenderPassFlags, MaterialFamilyType } from "../renderer_types.js";
 import { EntityManager } from "../../core/ecs/entity.js";
@@ -9,7 +10,6 @@ import { ComputeTaskQueue } from "../compute_task_queue.js";
 import { ComputeRasterTaskQueue } from "../compute_raster_task_queue.js";
 import { TransformFragment } from "../../core/ecs/fragments/transform_fragment.js";
 import { LightFragment } from "../../core/ecs/fragments/light_fragment.js";
-import { SharedViewBuffer, SharedEnvironmentMapData } from "../../core/shared_data.js";
 import { Material } from "../material.js";
 import { PostProcessStack } from "../post_process_stack.js";
 import { npot, ppot, clamp } from "../../utility/math.js";
@@ -28,6 +28,7 @@ import {
   load_op_clear,
 } from "../../utility/config_permutations.js";
 import { LineRenderer } from "../line_renderer.js";
+import { GIProbeVolume } from "../ddgi.js";
 
 const use_depth_prepass = false;
 
@@ -306,12 +307,8 @@ const bloom_params = [
 
 const fullscreen_shader_setup = {
   pipeline_shaders: {
-    vertex: {
-      path: "fullscreen.wgsl",
-    },
-    fragment: {
-      path: "fullscreen.wgsl",
-    },
+    vertex: { path: "fullscreen.wgsl" },
+    fragment: { path: "fullscreen.wgsl" },
   },
 };
 
@@ -342,6 +339,43 @@ const entity_id_image_config = {
     GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_SRC,
   force: false,
 };
+const gi_irradiance_config = {
+  name: "gi_irradiance_volume",
+  width: 0,
+  height: 0,
+  depth: 0,
+  mip_levels: 1,
+  dimension: "3d",
+  format: "rgba16float",
+  usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
+  force: false,
+};
+
+const gi_depth_config = {
+  name: "gi_depth_volume",
+  width: 0,
+  height: 0,
+  depth: 0,
+  mip_levels: 1,
+  dimension: "3d",
+  format: "r32float",
+  usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
+  force: false,
+};
+
+const probe_resolution = 16;
+const probe_cubemap_image_config = {
+  name: "ddgi_probe_cubemap",
+  width: probe_resolution,
+  height: probe_resolution,
+  dimension: "2d-array",
+  array_layer_count: 6,
+  format: rgba16float_format,
+  usage:
+    GPUTextureUsage.RENDER_ATTACHMENT |
+    GPUTextureUsage.TEXTURE_BINDING,
+  force: false,
+};
 
 const swapchain_name = "swapchain";
 
@@ -362,6 +396,8 @@ export class DeferredShadingStrategy {
   force_recreate = false;
 
   setup(render_graph) {
+    this.gi_probe_volume = new GIProbeVolume();
+
     global_dispatcher.on(
       resolution_change_event_name,
       this._recreate_persistent_resources.bind(this)
@@ -466,6 +502,16 @@ export class DeferredShadingStrategy {
         main_transparency_reveal_image_config
       );
       let main_depth_image = render_graph.create_image(main_depth_image_config);
+
+      const gi_irradiance_image = render_graph.register_image(
+        this.gi_irradiance_volume.config.name
+      );
+      const gi_depth_image = render_graph.register_image(this.gi_depth_volume.config.name);
+      const gi_params_buffer = render_graph.create_buffer({
+        name: "gi_params",
+        size: 16 * 4,
+        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+      });
 
       if (this.force_recreate) {
         render_graph.mark_pass_cache_bind_groups_dirty(true /* pass_only */);
@@ -579,10 +625,12 @@ export class DeferredShadingStrategy {
             const hzb = graph.get_physical_image(main_hzb_image);
             const draw_cull = graph.get_physical_buffer(draw_cull_data);
             const draw_count = MeshTaskQueue.get_total_draw_count();
-            const view_data = SharedViewBuffer.get_view_data(0);
 
-            let p00 = view_data.projection_matrix[0];
-            let p11 = view_data.projection_matrix[5];
+            const view_data = SharedViewBuffer.get_view_data(0);
+            const proj = view_data.projection_matrix;
+            let p00 = proj[0];
+            let p11 = proj[5];
+
             draw_cull.write([
               draw_count,
               1 /* culling_enabled */,
@@ -864,6 +912,18 @@ export class DeferredShadingStrategy {
         );
       }
 
+      // DDGI pass
+      // this.gi_probe_volume.update(render_graph, {
+      //   gi_params_buffer,
+      //   gi_irradiance_image,
+      //   gi_depth_image,
+      //   entity_transforms,
+      //   entity_flags,
+      //   compacted_object_instance_buffer,
+      //   lights,
+      //   probe_cubemap: this.probe_cubemap.config.name,
+      // });
+
       // Lighting Pass
       {
         post_lighting_image_config.width = image_extent.width;
@@ -885,6 +945,8 @@ export class DeferredShadingStrategy {
               main_depth_image,
               dense_lights,
               light_count,
+              gi_params_buffer,
+              gi_irradiance_image,
             ],
             outputs: [post_lighting_image_desc],
             shader_setup: deferred_lighting_shader_setup,
@@ -1162,5 +1224,24 @@ export class DeferredShadingStrategy {
 
     this.hzb_image = Texture.create(hzb_image_config);
     this.entity_id_image = Texture.create(entity_id_image_config);
+
+    // Use global GIProbeVolume from Renderer
+    const gi_dims = this.gi_probe_volume.dims;
+
+    gi_irradiance_config.width = gi_dims[0];
+    gi_irradiance_config.height = gi_dims[1];
+    gi_irradiance_config.depth = gi_dims[2];
+    gi_irradiance_config.force = this.force_recreate;
+    this.gi_irradiance_volume = Texture.create(gi_irradiance_config);
+
+    gi_depth_config.width = gi_dims[0];
+    gi_depth_config.height = gi_dims[1];
+    gi_depth_config.depth = gi_dims[2];
+    gi_depth_config.force = this.force_recreate;
+    this.gi_depth_volume = Texture.create(gi_depth_config);
+
+    // Create a reusable cubemap-array target for DDGI probes
+    probe_cubemap_image_config.force = this.force_recreate;
+    this.probe_cubemap = Texture.create(probe_cubemap_image_config);
   }
 }

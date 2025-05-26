@@ -60,11 +60,11 @@ export class CameraInfo extends DevConsoleTool {
       for (let i = 0; i < count; i++) {
         const view_data = SharedViewBuffer.get_view_data(i);
         label(
-          `Camera ${i} Position: ${view_data.position[0]}, ${view_data.position[1]}, ${view_data.position[2]}`,
+          `Camera ${i} Position: ${view_data.view_position[0]}, ${view_data.view_position[1]}, ${view_data.view_position[2]}`,
           stats_label_config
         );
         label(
-          `Camera ${i} Rotation: ${view_data.rotation[0]}, ${view_data.rotation[1]}, ${view_data.rotation[2]}, ${view_data.rotation[3]}`,
+          `Camera ${i} Rotation: ${view_data.view_rotation[0]}, ${view_data.view_rotation[1]}, ${view_data.view_rotation[2]}, ${view_data.view_rotation[3]}`,
           stats_label_config
         );
         label(`Camera ${i} FOV: ${view_data.fov}`, stats_label_config);

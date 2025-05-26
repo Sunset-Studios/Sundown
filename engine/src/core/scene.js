@@ -32,7 +32,8 @@ export class Scene extends SimulationLayer {
 
     Renderer.get().set_scene_id(this.name);
 
-    this.context.current_view = SharedViewBuffer.add_view_data();
+    const view = SharedViewBuffer.add_view_data();
+    this.context.current_view = view.get_index();
 
     FontCache.auto_load_fonts();
 

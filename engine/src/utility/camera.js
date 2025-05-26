@@ -24,8 +24,8 @@ export function screen_pos_to_world_pos(view_data, screen_x, screen_y, width, he
     vec3.normalize(ray_direction, ray_direction);
     
     // Calculate intersection with plane at specified depth
-    const camera_pos = view_data.position;
-    const t = depth / vec3.dot(ray_direction, view_data.view_forward);
+    const camera_pos = view_data.view_position;
+    const t = depth / vec3.dot(ray_direction, view_data.forward);
     
     // Calculate final world position
     const world_pos = vec3.create();
