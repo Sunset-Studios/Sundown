@@ -76,7 +76,6 @@ struct EntityTransform {
 struct ObjectInstance {
     batch: u32,
     row: u32,
-    view_index: u32,
 };
 
 struct CompactedObjectInstance {

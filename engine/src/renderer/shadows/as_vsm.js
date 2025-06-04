@@ -189,6 +189,8 @@ export class AdaptiveSparseVirtualShadowMaps {
       force_recreate |= true;
     }
 
+    const adjusted_light_count = Math.max(this.cached_light_count, 1);
+
     // Create Histogram buffer
     histogram_buf_config.size = HISTOGRAM_BINS * 4;
     histogram_buf_config.force = force_recreate;
@@ -206,14 +208,14 @@ export class AdaptiveSparseVirtualShadowMaps {
 
     // Create Requested Tiles buffer
     this.max_tile_requests = MAX_TILE_REQUESTS_PER_VIEW;
-    requested_tiles_buf_config.size = this.cached_light_count * this.max_tile_requests * 3 * 4 + 4; // 64 tile requests per view (3 u32 per request);
+    requested_tiles_buf_config.size = adjusted_light_count * this.max_tile_requests * 3 * 4 + 4; // 64 tile requests per view (3 u32 per request);
     requested_tiles_buf_config.force = force_recreate;
     this.requested_tiles_buf = render_graph.create_buffer(requested_tiles_buf_config);
 
     // Create Physical Shadow Atlas texture array
     atlas_config.width = this.atlas_size;
     atlas_config.height = this.atlas_size;
-    atlas_config.depth = this.cached_light_count;
+    atlas_config.depth = adjusted_light_count;
     atlas_config.force = force_recreate;
     atlas_config.b_one_view_per_layer = true;
     this.shadow_atlas = render_graph.create_image(atlas_config);
@@ -221,7 +223,7 @@ export class AdaptiveSparseVirtualShadowMaps {
     // Create Page Table storage texture
     page_table_config.width = this.virtual_tiles_per_row;
     page_table_config.height = this.virtual_tiles_per_row;
-    page_table_config.depth = this.cached_light_count;
+    page_table_config.depth = adjusted_light_count;
     page_table_config.force = force_recreate;
     this.page_table = render_graph.create_image(page_table_config);
 
@@ -230,7 +232,7 @@ export class AdaptiveSparseVirtualShadowMaps {
       this.physical_tiles_per_row * this.physical_tiles_per_row * this.max_lods;
     // Store per-view physical tile count
     this.total_physical_tiles = physical_tiles_per_view;
-    physical_to_virtual_map_buf_config.size = this.cached_light_count * physical_tiles_per_view * 4;
+    physical_to_virtual_map_buf_config.size = adjusted_light_count * physical_tiles_per_view * 4;
     physical_to_virtual_map_buf_config.force = force_recreate;
     this.physical_to_virtual_map_buf = render_graph.create_buffer(
       physical_to_virtual_map_buf_config
@@ -239,9 +241,9 @@ export class AdaptiveSparseVirtualShadowMaps {
     // Create LRU ring buffer
     if (force_recreate) {
       const lru_per_light = physical_tiles_per_view;
-      const total_lru_entries = this.cached_light_count * (lru_per_light + 1);
+      const total_lru_entries = adjusted_light_count * (lru_per_light + 1);
       const lru_raw = new Uint32Array(total_lru_entries);
-      for (let light_idx = 0; light_idx < this.cached_light_count; light_idx++) {
+      for (let light_idx = 0; light_idx < adjusted_light_count; light_idx++) {
         const offset = light_idx * (lru_per_light + 1);
         lru_raw[offset] = 0;
         for (let i = 1; i <= lru_per_light; i++) {
@@ -361,7 +363,7 @@ export class AdaptiveSparseVirtualShadowMaps {
       (graph, frame_data, encoder) => {
         const pass = graph.get_physical_pass(frame_data.current_pass);
         const bitmask_groups = Math.ceil(this.bitmask_u32_count / 8);
-        const light_groups = Math.ceil(this.cached_light_count / 4);
+        const light_groups = Math.ceil(adjusted_light_count / 4);
         pass.dispatch(1, bitmask_groups, light_groups);
       }
     );
@@ -385,7 +387,7 @@ export class AdaptiveSparseVirtualShadowMaps {
       (graph, frame_data, encoder) => {
         const pass = graph.get_physical_pass(frame_data.current_pass);
         const requested_tiles_groups = Math.ceil(MAX_TILE_REQUESTS_PER_VIEW / 64);
-        const light_count_groups = Math.ceil(this.cached_light_count / 4);
+        const light_count_groups = Math.ceil(adjusted_light_count / 4);
         pass.dispatch(requested_tiles_groups, light_count_groups, 1);
       }
     );
@@ -450,7 +452,7 @@ export class AdaptiveSparseVirtualShadowMaps {
       CacheTypes.BUFFER,
       Name.from(requested_tiles_buf_config.name)
     );
-    await requested_tiles_buffer.read(
+     await requested_tiles_buffer.read(
       this.cpu_requested_tiles,
       this.cpu_requested_tiles.byteLength,
       0,

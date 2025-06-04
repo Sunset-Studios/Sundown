@@ -148,6 +148,7 @@ export class AABBGPURaycast {
         // Read hit data from GPU
         await this.hits_buffer.read(
             this.hits,
+            this.last_ray_count * 8 * 4,
             0,
             0,
             Uint32Array

@@ -1420,8 +1420,6 @@ export class VoxelTerrainScene extends Scene {
     // Create a light and add it to the scene
     const light_entity = EntityManager.create_entity([LightFragment]);
     this.entities.push(light_entity);
-
-    // Add a light fragment to the light entity
     const light_fragment_view = EntityManager.get_fragment(light_entity, LightFragment);
     light_fragment_view.type = LightType.DIRECTIONAL;
     light_fragment_view.color = [1, 1, 1];
@@ -2062,7 +2060,7 @@ export class GITestScene extends Scene {
 
       const right_wall_material_third = StandardMaterial.create("testgym_right_material_third", {}, { family: MaterialFamilyType.Transparent });
       const right_wall_material_third_id = right_wall_material_third.material_id;
-      right_wall_material_third.set_albedo([0.5, 0, 0.5, 0.2]);
+      right_wall_material_third.set_albedo([0.5, 0, 0.5, 0.3]);
       right_wall_material_third.set_emission(ambient_emissive);
 
       const floor_third = spawn_mesh_entity(

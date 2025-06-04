@@ -54,6 +54,8 @@ export class Buffer {
         });
       }
 
+      this.write_cpu(buffer_data);
+
       Renderer.get().enqueue_post_commands(
         this.config.name,
         this._post_render_command,
@@ -110,13 +112,48 @@ export class Buffer {
     }
   }
 
+  write_cpu(data, offset = 0, size = null, data_offset = 0, data_type = Float32Array) {
+    const renderer = Renderer.get();
+    const is_array_buffer = ArrayBuffer.isView(data);
+    const raw_data = is_array_buffer ? data : data.flat();
+    const buffer_data = is_array_buffer ? raw_data : new data_type(raw_data);
+    for (let i = 0; i < MAX_BUFFERED_FRAMES; i++) {
+      renderer.device.queue.writeBuffer(
+        this.cpu_buffers[i],
+        offset,
+        buffer_data,
+        data_offset,
+        size ?? buffer_data.length
+      );
+    }
+
+    if (this.config.dispatch) {
+      global_dispatcher.dispatch(this.config.name, this);
+    }
+  }
+
+  write_raw_cpu(data, offset = 0, size = null, data_offset = 0) {
+    const renderer = Renderer.get();
+    for (let i = 0; i < MAX_BUFFERED_FRAMES; i++) {
+      renderer.device.queue.writeBuffer(
+        this.cpu_buffers[i],
+        offset,
+        data,
+        data_offset,
+        size ?? data.length
+      );
+    if (this.config.dispatch) {
+        global_dispatcher.dispatch(this.config.name, this);
+      }
+    }
+  }
+
   async read(data, data_length, offset = 0, data_offset = 0, data_type = Float32Array) {
     const buffered_frame = Renderer.get().get_buffered_frame_number();
     const source_buffer = this.cpu_buffers ? this.cpu_buffers[buffered_frame] : this.buffer;
     if (!source_buffer || source_buffer.mapState !== unmapped_state) {
       return;
     }
-
     await source_buffer.mapAsync(GPUMapMode.READ);
     if (source_buffer) {
       const mapped_range = source_buffer.getMappedRange(offset, data_length);
@@ -129,12 +166,11 @@ export class Buffer {
   sync(encoder) {
     if (!this.cpu_buffers || !this.buffer) return;
     const buffered_frame = Renderer.get().get_buffered_frame_number();
-    const source_buffer = this.cpu_buffers[buffered_frame];
-    if (!source_buffer || source_buffer.mapState !== unmapped_state) {
+    const destination_buffer = this.cpu_buffers[buffered_frame];
+    if (!destination_buffer || destination_buffer.mapState !== unmapped_state) {
       return;
     }
-
-    encoder.copyBufferToBuffer(this.buffer, 0, source_buffer, 0, this.config.size);
+    encoder.copyBufferToBuffer(this.buffer, 0, destination_buffer, 0, this.config.size);
   }
 
   copy_texture(encoder, texture, bytes_per_row) {

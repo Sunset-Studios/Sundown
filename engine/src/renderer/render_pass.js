@@ -14,24 +14,20 @@ export class RenderPass {
 
   begin(encoder, pipeline) {
     if (this.config.flags & RenderPassFlags.Graphics) {
-      const attachments = this.config.attachments
-        .map((attachment) => {
-          const image = ResourceCache.get().fetch(
-            CacheTypes.IMAGE,
-            attachment.image
-          );
-          return {
-            view: image.get_view(attachment.view_index) || image.view,
-            clearValue: image.config.clear_value ?? { r: 0, g: 0, b: 0, a: 1 },
-            loadOp: image.config.load_op ?? 'clear',
-            storeOp: image.config.store_op ?? 'store',
-          };
-        });
-
-        const pass_desc = {
-          label: this.config.name,
-          colorAttachments: attachments,
+      const attachments = this.config.attachments.map((attachment) => {
+        const image = ResourceCache.get().fetch(CacheTypes.IMAGE, attachment.image);
+        return {
+          view: image.get_view(attachment.view_index) || image.view,
+          clearValue: image.config.clear_value ?? { r: 0, g: 0, b: 0, a: 1 },
+          loadOp: image.config.load_op ?? "clear",
+          storeOp: image.config.store_op ?? "store",
         };
+      });
+
+      const pass_desc = {
+        label: this.config.name,
+        colorAttachments: attachments,
+      };
 
       if (this.config.depth_stencil_attachment) {
         const depth_stencil_image = ResourceCache.get().fetch(
@@ -39,7 +35,9 @@ export class RenderPass {
           this.config.depth_stencil_attachment.image
         );
         pass_desc.depthStencilAttachment = {
-          view: depth_stencil_image.get_view(this.config.depth_stencil_attachment.view_index) || depth_stencil_image.view,
+          view:
+            depth_stencil_image.get_view(this.config.depth_stencil_attachment.view_index) ||
+            depth_stencil_image.view,
           depthClearValue: depth_stencil_image.config.clear_value ?? 0.0,
           depthLoadOp: depth_stencil_image.config.load_op ?? "load",
           depthStoreOp: depth_stencil_image.config.store_op ?? "store",
@@ -52,12 +50,24 @@ export class RenderPass {
         label: this.config.name,
       });
     }
-    
+
     if (this.config.viewport) {
-      this.pass.setViewport(this.config.viewport);
+      this.pass.setViewport(
+        this.config.viewport.x,
+        this.config.viewport.y,
+        this.config.viewport.width,
+        this.config.viewport.height,
+        this.config.viewport.min_depth,
+        this.config.viewport.max_depth
+      );
     }
     if (this.config.scissor_rect) {
-      this.pass.setScissorRect(this.config.scissor_rect);
+      this.pass.setScissorRect(
+        this.config.scissor_rect.x,
+        this.config.scissor_rect.y,
+        this.config.scissor_rect.width,
+        this.config.scissor_rect.height
+      );
     }
     if (this.config.vertex_buffer) {
       this.pass.setVertexBuffer(this.config.vertex_buffer);
@@ -83,6 +93,14 @@ export class RenderPass {
     this.config.depth_stencil_attachment = attachment;
   }
 
+  set_viewport(viewport) {
+    this.config.viewport = viewport;
+  }
+
+  set_scissor_rect(scissor_rect) {
+    this.config.scissor_rect = scissor_rect;
+  }
+
   dispatch(x, y, z) {
     if (this.config.flags & RenderPassFlags.Compute) {
       this.pass.dispatchWorkgroups(x, y, z);
@@ -96,18 +114,11 @@ export class RenderPass {
   }
 
   static create(config) {
-    let render_pass = ResourceCache.get().fetch(
-      CacheTypes.PASS,
-      Name.from(config.name)
-    );
+    let render_pass = ResourceCache.get().fetch(CacheTypes.PASS, Name.from(config.name));
     if (!render_pass) {
       render_pass = new RenderPass();
       render_pass.init(config);
-      ResourceCache.get().store(
-        CacheTypes.PASS,
-        Name.from(config.name),
-        render_pass
-      );
+      ResourceCache.get().store(CacheTypes.PASS, Name.from(config.name), render_pass);
     }
     return render_pass;
   }

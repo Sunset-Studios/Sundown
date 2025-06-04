@@ -773,8 +773,8 @@ class RandomAccessAllocator {
      * @throws {Error} If the index is out of bounds
      */
     allocate_at(index) {
-        if (this.#size >= this.#capacity) {
-            this._resize(this.#capacity * 2);
+        if (index >= this.#capacity) {
+            this._resize(index * 2);
         }
         
         // Shift elements to make room for the new element

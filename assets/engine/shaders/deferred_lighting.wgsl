@@ -15,12 +15,20 @@
 @group(1) @binding(7) var<storage, read> dense_lights_buffer: array<Light>;
 @group(1) @binding(8) var<storage, read> dense_shadow_casting_lights_buffer: array<u32>;
 @group(1) @binding(9) var<storage, read> light_count_buffer: array<u32>;
+
+#if GI_ENABLED
 @group(1) @binding(10) var<uniform> gi_params: GIParams;
 @group(1) @binding(11) var gi_irradiance: texture_3d<f32>;
-@group(1) @binding(12) var shadow_atlas: texture_depth_2d_array;
-@group(1) @binding(13) var page_table: texture_storage_2d_array<r32uint, read>;
-@group(1) @binding(14) var<storage, read> vsm_settings: ASVSMSettings;
+const shadow_buffers_binding_start = 12;
+#else
+const shadow_buffers_binding_start = 10;
+#endif
 
+#if SHADOWS_ENABLED
+@group(1) @binding(shadow_buffers_binding_start) var shadow_atlas: texture_depth_2d_array;
+@group(1) @binding(shadow_buffers_binding_start + 1) var page_table: texture_storage_2d_array<r32uint, read>;
+@group(1) @binding(shadow_buffers_binding_start + 2) var<storage, read> vsm_settings: ASVSMSettings;
+#endif
 // ------------------------------------------------------------------------------------
 // Data Structures
 // ------------------------------------------------------------------------------------ 
@@ -39,18 +47,23 @@ struct FragmentOutput {
 // ------------------------------------------------------------------------------------
 
 fn sample_probe_irradiance(world_pos: vec3<f32>) -> vec3<f32> {
+#if GI_ENABLED
     let uvw = (world_pos - gi_params.origin) / gi_params.spacing;
     let tex = textureSampleLevel(gi_irradiance, global_sampler, uvw, 0.0);
     return tex.rgb;
+#else
+    return vec3<f32>(0.0);
+#endif
 }
 
 // PCF sample with page table lookup
 fn sample_shadow(world_pos: vec3<f32>, view_idx: u32, light_idx: u32) -> f32 {
+#if SHADOWS_ENABLED
   // unpack AS-VSM settings
   let tile_size = vsm_settings.tile_size;
   let virtual_dim = vsm_settings.virtual_dim;
   let atlas_size = textureDimensions(shadow_atlas, 0).xy;
-  
+
   let one_over_tile_size = 1.0 / f32(tile_size);
   let one_over_atlas_size = 1.0 / vec2<f32>(atlas_size);
   let phys_tiles_per_row = u32(f32(atlas_size.x) * one_over_tile_size);
@@ -101,6 +114,9 @@ fn sample_shadow(world_pos: vec3<f32>, view_idx: u32, light_idx: u32) -> f32 {
     }
   }
   return sum / 9.0;
+#else
+  return 1.0;
+#endif
 }
 
 // ------------------------------------------------------------------------------------

@@ -17,6 +17,8 @@ import {
   BindGroupType,
 } from "./renderer_types.js";
 
+const enable_depth_on_transparency = true;
+
 export class MaterialTemplate {
   static templates = new Map();
 
@@ -67,7 +69,7 @@ export class MaterialTemplate {
       shader = parent.shader;
     }
 
-    if (family ===MaterialFamilyType.Transparent ) {
+    if (family === MaterialFamilyType.Transparent) {
       defines["TRANSPARENT"] = true;
     }
     if (shader_path) {
@@ -363,7 +365,9 @@ export class Material {
         .map((bind_group) => bind_group.layout),
       output_targets,
       {
-        depth_write_enabled: this.family === MaterialFamilyType.Opaque,
+        depth_write_enabled:
+          this.family === MaterialFamilyType.Opaque ||
+          (this.family === MaterialFamilyType.Transparent && enable_depth_on_transparency),
       }
     );
   }
@@ -480,7 +484,10 @@ export class Material {
   }
 
   static create(name, template_name, options = {}, parent_id = null) {
-    const template = MaterialTemplate.get_template(template_name, options.family || MaterialFamilyType.Opaque);
+    const template = MaterialTemplate.get_template(
+      template_name,
+      options.family || MaterialFamilyType.Opaque
+    );
     if (!template) {
       throw new Error(`Material template '${template_name}' not found`);
     }
@@ -565,11 +572,7 @@ export class StandardMaterial {
   static create(name, params = {}, options = {}, template = null) {
     if (!template) {
       const family = options.family !== undefined ? options.family : MaterialFamilyType.Opaque;
-      MaterialTemplate.create(
-        "StandardMaterial",
-        "standard_material.wgsl",
-        family
-      );
+      MaterialTemplate.create("StandardMaterial", "standard_material.wgsl", family);
       template = `StandardMaterial`;
     }
 

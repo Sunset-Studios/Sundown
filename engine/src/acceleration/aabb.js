@@ -517,7 +517,7 @@ export class AABB {
       return;
     }
 
-    const total_bytes_in_buffer = cpu_buffer.size; // Total size of AABB.node_bounds buffer
+    const total_bytes_in_buffer = AABB.node_bounds_buffer.config.size; // Total size of AABB.node_bounds buffer
     const current_byte_offset = AABB.sync_read_byte_offset;
 
     if (current_byte_offset >= total_bytes_in_buffer && total_bytes_in_buffer > 0) {

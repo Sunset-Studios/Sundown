@@ -46,7 +46,7 @@ export class Simulator {
 
   async _simulate(delta_time) {
     if (application_state.is_running) {
-      await BufferSync.process_readbacks();
+      BufferSync.process_readbacks();
 
       profile_scope("frame_loop", () => {
         const renderer = Renderer.get();

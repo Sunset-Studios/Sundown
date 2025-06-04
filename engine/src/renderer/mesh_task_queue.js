@@ -25,10 +25,9 @@ class IndirectDrawBatch {
 }
 
 class ObjectInstanceEntry {
-  constructor(batch_index, row_field, view_index = 0) {
+  constructor(batch_index, row_field) {
     this.batch_index = batch_index;
     this.row = row_field;
-    this.view_index = view_index;
   }
 }
 
@@ -53,16 +52,16 @@ class ObjectInstanceBuffer {
 
   update_buffers(object_instances, force_update = false) {
     profile_scope("update_object_instance_buffer", () => {
-      const object_instance_entries_count = object_instances.length * 3;
+      const object_instance_entries_count = object_instances.length * 2;
       if (object_instance_entries_count !== this.last_object_instance_count || force_update) {
         this.last_object_instance_count = object_instance_entries_count;
         this.current_object_instance_write_offset = 0;
       }
 
       // Resize object instance buffer if needed
-      const required_object_instance_size = object_instances.length * 3 * 4; // 3 uint32 per instance, 4 bytes per uint32
+      const required_object_instance_size = object_instances.length * 2 * 4; // 2 uint32 per instance, 4 bytes per uint32
       if (this.object_instance_buffer.config.size < required_object_instance_size) {
-        const new_object_instance_data = new Uint32Array(object_instances.length * 3 * 2);
+        const new_object_instance_data = new Uint32Array(object_instances.length * 2 * 2);
         new_object_instance_data.set(this.object_instance_data);
         this.object_instance_data = new_object_instance_data;
 
@@ -87,18 +86,17 @@ class ObjectInstanceBuffer {
           // Update object instance buffer
           const write_count_obj = Math.min(
             total_obj_entries - actual_write_offset,
-            max_frame_buffer_writes * 3
+            max_frame_buffer_writes
           );
           if (write_count_obj > 0) {
-            for (let i = actual_write_offset; i < actual_write_offset + write_count_obj; i += 3) {
-              const offset = Math.floor(i / 3);
+            for (let i = actual_write_offset; i < actual_write_offset + write_count_obj; i += 2) {
+              const offset = Math.floor(i / 2);
               this.object_instance_data[i] = object_instances[offset].batch_index;
               this.object_instance_data[i + 1] = object_instances[offset].row;
-              this.object_instance_data[i + 2] = object_instances[offset].view_index;
             }
             this.object_instance_buffer.write_raw(
               this.object_instance_data,
-              actual_write_offset * 3,
+              actual_write_offset * 4,
               write_count_obj,
               actual_write_offset
             );
@@ -175,7 +173,7 @@ class IndirectDrawObject {
       }
 
       // Resize object instance buffer if needed
-      const required_object_instance_size = object_instances.length * 3 * 4; // 3 uint32 per instance, 4 bytes per uint32
+      const required_object_instance_size = object_instances.length * 2 * 4; // 2 uint32 per instance, 4 bytes per uint32
       if (this.compacted_object_instance_buffer.config.size < required_object_instance_size) {
         this.compacted_object_instance_buffer = Buffer.create({
           name: `compacted_object_instance_buffer${suffix}`,
@@ -400,7 +398,6 @@ export class MeshTaskQueue {
                 const entry = this.object_instance_allocator.allocate();
                 entry.batch_index = i;
                 entry.row = EntityID.make_row_field(start + l, cidx);
-                entry.view_index = 0;
                 this.object_instances.push(entry);
               }
             }

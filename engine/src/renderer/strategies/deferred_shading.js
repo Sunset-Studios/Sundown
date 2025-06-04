@@ -1,24 +1,33 @@
-import { Renderer } from "../renderer.js";
+// Core imports
+import { global_dispatcher } from "../../core/dispatcher.js";
+import { EntityManager } from "../../core/ecs/entity.js";
 import { FragmentGpuBuffer } from "../../core/ecs/solar/memory.js";
 import {
   SharedEnvironmentMapData,
   SharedViewBuffer,
   SharedFrameInfoBuffer,
 } from "../../core/shared_data.js";
+
+// ECS fragments
+import { TransformFragment } from "../../core/ecs/fragments/transform_fragment.js";
+import { LightFragment } from "../../core/ecs/fragments/light_fragment.js";
+
+// Renderer components
+import { Renderer } from "../renderer.js";
 import { Texture } from "../texture.js";
-import { RenderPassFlags, MaterialFamilyType, DebugView } from "../renderer_types.js";
-import { EntityManager } from "../../core/ecs/entity.js";
-import { AABB } from "../../acceleration/aabb.js";
+import { Material } from "../material.js";
+import { DebugOverlay } from "../debug_overlay.js";
+import { LineRenderer } from "../line_renderer.js";
+import { PostProcessStack } from "../post_process_stack.js";
 import { MeshTaskQueue } from "../mesh_task_queue.js";
 import { ComputeTaskQueue } from "../compute_task_queue.js";
 import { ComputeRasterTaskQueue } from "../compute_raster_task_queue.js";
-import { TransformFragment } from "../../core/ecs/fragments/transform_fragment.js";
-import { LightFragment } from "../../core/ecs/fragments/light_fragment.js";
-import { Material } from "../material.js";
-import { PostProcessStack } from "../post_process_stack.js";
+
+// Types and utilities
+import { RenderPassFlags, MaterialFamilyType, DebugView } from "../renderer_types.js";
+import { AABB } from "../../acceleration/aabb.js";
 import { npot, ppot, clamp } from "../../utility/math.js";
 import { profile_scope } from "../../utility/performance.js";
-import { global_dispatcher } from "../../core/dispatcher.js";
 import {
   rgba8unorm_format,
   rgba16float_format,
@@ -31,11 +40,14 @@ import {
   load_op_load,
   load_op_clear,
 } from "../../utility/config_permutations.js";
-import { LineRenderer } from "../line_renderer.js";
+
+// Specialized renderer components
 import { GIProbeVolume } from "../global_illumination/ddgi.js";
 import { AdaptiveSparseVirtualShadowMaps } from "../shadows/as_vsm.js";
 
 const use_depth_prepass = false;
+const shadows_enabled = false;
+const gi_enabled = false;
 
 const resolution_change_event_name = "resolution_change";
 const deferred_shading_profile_scope_name = "DeferredShadingStrategy.draw";
@@ -387,7 +399,6 @@ const probe_cubemap_image_config = {
 };
 
 const swapchain_name = "swapchain";
-
 const clear_g_buffer_pass_name = "clear_g_buffer";
 const skybox_pass_name = "skybox_pass";
 const depth_prepass_name = "depth_prepass";
@@ -407,9 +418,11 @@ export class DeferredShadingStrategy {
   gi_probe_volume = null;
   as_vsm = null;
   debug_view = DebugView.None;
+  debug_overlay = null;
 
   setup(render_graph) {
     this.gi_probe_volume = new GIProbeVolume();
+    this.debug_overlay = new DebugOverlay();
 
     global_dispatcher.on(
       resolution_change_event_name,
@@ -662,13 +675,7 @@ export class DeferredShadingStrategy {
               const p00 = proj[0];
               const p11 = proj[5];
 
-              draw_cull.write([
-                draw_count,
-                p00,
-                p11,
-                hzb.config.width,
-                hzb.config.height,
-              ]);
+              draw_cull.write([draw_count, p00, p11, hzb.config.width, hzb.config.height]);
 
               pass.dispatch((draw_count + 255) / 256, 1, 1);
             }
@@ -888,7 +895,7 @@ export class DeferredShadingStrategy {
       }
 
       // Add AS-VSM shadow mapping passes
-      {
+      if (shadows_enabled) {
         // Add AS-VSM passes with mapping
         if (!this.as_vsm) {
           this.as_vsm = new AdaptiveSparseVirtualShadowMaps({
@@ -969,50 +976,64 @@ export class DeferredShadingStrategy {
       }
 
       // DDGI pass
-      // this.gi_probe_volume.update(render_graph, {
-      //   gi_params_buffer,
-      //   gi_irradiance_image,
-      //   gi_depth_image,
-      //   entity_transforms,
-      //   entity_flags,
-      //   MeshTaskQueue.get_compacted_object_instance_buffer(0),
-      //   lights,
-      //   probe_cubemap: this.probe_cubemap.config.name,
-      // });
+      if (gi_enabled) {
+        const compacted_instance_buffer = MeshTaskQueue.get_compacted_object_instance_buffer(0);
+        this.gi_probe_volume.update(render_graph, {
+          gi_params_buffer,
+          gi_irradiance_image,
+          gi_depth_image,
+          entity_transforms,
+          entity_flags,
+          compacted_instance_buffer,
+          lights,
+          probe_cubemap: this.probe_cubemap.config.name,
+        });
+      }
 
       // Lighting Pass
       {
-        // Register AS-VSM shadow resources for lighting
-        const shadow_atlas = this.as_vsm.shadow_atlas;
-        const vsm_page_table = this.as_vsm.page_table;
-        const asvsm_settings = this.as_vsm.settings_buf;
-
         post_lighting_image_config.width = image_extent.width;
         post_lighting_image_config.height = image_extent.height;
         post_lighting_image_config.force = this.force_recreate;
         post_lighting_image_desc = render_graph.create_image(post_lighting_image_config);
 
+        const lighting_inputs = [
+          skybox_image,
+          main_albedo_image,
+          main_emissive_image,
+          main_smra_image,
+          main_normal_image,
+          main_position_image,
+          main_depth_image,
+          dense_lights,
+          dense_shadow_casting_lights,
+          light_count,
+        ];
+
+        if (gi_enabled) {
+          deferred_lighting_shader_setup.pipeline_shaders.vertex.defines = ["GI_ENABLED"];
+          deferred_lighting_shader_setup.pipeline_shaders.fragment.defines = ["GI_ENABLED"];
+
+          lighting_inputs.push(gi_irradiance_image, gi_depth_image);
+        }
+
+        if (shadows_enabled) {
+          // Register AS-VSM shadow resources for lighting
+          const shadow_atlas = this.as_vsm.shadow_atlas;
+          const vsm_page_table = this.as_vsm.page_table;
+          const asvsm_settings = this.as_vsm.settings_buf;
+
+          deferred_lighting_shader_setup.pipeline_shaders.vertex.defines = ["SHADOWS_ENABLED"];
+          deferred_lighting_shader_setup.pipeline_shaders.fragment.defines = ["SHADOWS_ENABLED"];
+
+          lighting_inputs.push(shadow_atlas, vsm_page_table, asvsm_settings);
+        }
+
         render_graph.add_pass(
           lighting_pass_name,
           RenderPassFlags.Graphics,
           {
-            inputs: [
-              skybox_image,
-              main_albedo_image,
-              main_emissive_image,
-              main_smra_image,
-              main_normal_image,
-              main_position_image,
-              main_depth_image,
-              dense_lights,
-              dense_shadow_casting_lights,
-              light_count,
-              gi_params_buffer,
-              gi_irradiance_image,
-              shadow_atlas,
-              vsm_page_table,
-              asvsm_settings,
-            ],
+            inputs: lighting_inputs,
             outputs: [post_lighting_image_desc],
             shader_setup: deferred_lighting_shader_setup,
           },
@@ -1188,12 +1209,12 @@ export class DeferredShadingStrategy {
         const rg_output_image = render_graph.register_image(swapchain_image.config.name);
 
         // Choose final output based on debug_view
-        const final_output_image =
-          this.debug_view === DebugView.ShadowAtlas
-            ? this.as_vsm.debug_shadow_atlas_image
-            : this.debug_view === DebugView.ShadowPageTable
-              ? this.as_vsm.debug_page_table_image
-              : post_processed_image;
+        let final_output_image = post_processed_image;
+        if (shadows_enabled && this.debug_view === DebugView.ShadowAtlas) {
+          final_output_image = this.as_vsm.debug_shadow_atlas_image;
+        } else if (shadows_enabled && this.debug_view === DebugView.ShadowPageTable) {
+          final_output_image = this.as_vsm.debug_page_table_image;
+        }
 
         render_graph.add_pass(
           fullscreen_present_pass_name,

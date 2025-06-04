@@ -96,6 +96,9 @@ const RG_VERSION_BITS = 4;
 const RG_TYPE_BITS = 8;
 const RG_INDEX_BITS = 20;
 
+// [Experimental] feature to allow custom pass ordering based on user-configurable pass order config.
+const custom_graph_sort = false;
+
 /**
  * Creates a unique handle for a graph resource.
  * @param {number} index - The index of the resource.
@@ -472,7 +475,9 @@ export class RenderGraph {
     this._execute_post_render_callbacks = this._execute_post_render_callbacks.bind(this);
     this._execute_pre_render_callbacks = this._execute_pre_render_callbacks.bind(this);
 
-    this._init_pass_order_info();
+    if (custom_graph_sort) {
+      this._init_pass_order_info();
+    }
   }
 
   /**
@@ -1073,7 +1078,7 @@ export class RenderGraph {
   _sort_graph_passes() {
     // Skip if current_pass_order is empty
     const current_pass_order = this.stored_pass_order.custom[this.registry.current_scene_id] || [];
-    if (!current_pass_order || current_pass_order.length === 0) {
+    if (!custom_graph_sort || !current_pass_order || current_pass_order.length === 0) {
       return;
     }
 
@@ -1294,6 +1299,15 @@ export class RenderGraph {
     );
     await ConfigSync.save_to_server("renderer.config");
     this._update_pass_order_map();
+  }
+
+  /**
+   * Checks if the custom graph sort is enabled.
+   *
+   * @returns {boolean} True if the custom graph sort is enabled, false otherwise.
+   */
+  is_custom_graph_sort_enabled() {
+    return custom_graph_sort;
   }
 
   /**

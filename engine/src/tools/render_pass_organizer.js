@@ -149,6 +149,9 @@ export class RenderPassOrganizer extends DevConsoleTool {
     super.update();
 
     const render_graph = Renderer.get().render_graph;
+    if (!render_graph.is_custom_graph_sort_enabled()) {
+      return;
+    }
 
     if (render_graph.is_default_pass_order_ready()) {
       const registered_pass_names = render_graph.registry.render_passes.map(
