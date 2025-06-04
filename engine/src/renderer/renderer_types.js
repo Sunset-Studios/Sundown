@@ -103,6 +103,16 @@ export const BindGroupType = Object.freeze({
 });
 
 /**
+ * Debug views for the render graph.
+ * @enum {number}
+ */
+export const DebugView = Object.freeze({
+    None: 0,
+    ShadowAtlas: 1,
+    ShadowPageTable: 2,
+});
+
+/**
  * Converts render pass flags to a string.
  * @param {number} flags - The flags to convert.
  * @returns {string} The string representation of the flags.

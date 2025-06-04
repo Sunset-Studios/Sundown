@@ -5,6 +5,7 @@ import { Renderer } from "../renderer/renderer.js";
 import { profile_scope } from "../utility/performance.js";
 
 const input_provider_update_scope_name = "InputProvider.update";
+const number_string = "number";
 
 export class InputProvider {
   static default_context_instance = null;
@@ -65,7 +66,7 @@ export class InputProvider {
   static get_state(name) {
     return this.current_dirty_states.some(
       (state) =>
-        (typeof name === "number" ? state.raw_input === name : state.mapped_name === name) &&
+        (typeof name === number_string ? state.raw_input === name : state.mapped_name === name) &&
         state.input_type === InputType.State
     );
   }
@@ -73,14 +74,14 @@ export class InputProvider {
   static consume_state(name) {
     let index = this.current_dirty_states.findIndex(
       (state) =>
-        (typeof name === "number" ? state.raw_input === name : state.mapped_name === name) &&
+        (typeof name === number_string ? state.raw_input === name : state.mapped_name === name) &&
         state.input_type === InputType.State
     );
     while (index !== -1) {
       this.current_dirty_states.splice(index, 1);
       index = this.current_dirty_states.findIndex(
         (state) =>
-          (typeof name === "number" ? state.raw_input === name : state.mapped_name === name) &&
+          (typeof name === number_string ? state.raw_input === name : state.mapped_name === name) &&
           state.input_type === InputType.State
       );
     }
@@ -89,7 +90,7 @@ export class InputProvider {
   static get_action(name) {
     return this.current_dirty_states.some(
       (state) =>
-        (typeof name === "number" ? state.raw_input === name : state.mapped_name === name) &&
+        (typeof name === number_string ? state.raw_input === name : state.mapped_name === name) &&
         state.input_type === InputType.Action
     );
   }
@@ -97,14 +98,14 @@ export class InputProvider {
   static consume_action(name) {
     let index = this.current_dirty_states.findIndex(
       (state) =>
-        (typeof name === "number" ? state.raw_input === name : state.mapped_name === name) &&
+        (typeof name === number_string ? state.raw_input === name : state.mapped_name === name) &&
         state.input_type === InputType.Action
     );
     while (index !== -1) {
       this.current_dirty_states.splice(index, 1);
       index = this.current_dirty_states.findIndex(
         (state) =>
-          (typeof name === "number" ? state.raw_input === name : state.mapped_name === name) &&
+          (typeof name === number_string ? state.raw_input === name : state.mapped_name === name) &&
           state.input_type === InputType.Action
       );
     }
@@ -113,7 +114,7 @@ export class InputProvider {
   static get_range(name) {
     const index = this.current_dirty_states.findIndex(
       (state) =>
-        (typeof name === "number" ? state.raw_range === name : state.mapped_name === name) &&
+        (typeof name === number_string ? state.raw_range === name : state.mapped_name === name) &&
         state.input_type === InputType.Range
     );
     return index !== -1 ? this.current_dirty_states[index].range_value : 0.0;
@@ -122,14 +123,14 @@ export class InputProvider {
   static consume_range(name) {
     let index = this.current_dirty_states.findIndex(
       (state) =>
-        (typeof name === "number" ? state.raw_range === name : state.mapped_name === name) &&
+        (typeof name === number_string ? state.raw_range === name : state.mapped_name === name) &&
         state.input_type === InputType.Range
     );
     while (index !== -1) {
       this.current_dirty_states.splice(index, 1);
       index = this.current_dirty_states.findIndex(
         (state) =>
-          (typeof name === "number" ? state.raw_range === name : state.mapped_name === name) &&
+          (typeof name === number_string ? state.raw_range === name : state.mapped_name === name) &&
           state.input_type === InputType.Range
       );
     }

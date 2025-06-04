@@ -6,6 +6,7 @@ export class FragmentGenerator {
       name,
       imports = {},
       constants = {},
+      members = {},
       fields = {},
       gpu_buffers = null,
       custom_methods = {},
@@ -38,6 +39,14 @@ export class FragmentGenerator {
     const import_statements = Object.entries(adjusted_imports)
       .map(([name, path]) => `import { ${name} } from "${path}";`)
       .join("\n");
+
+    const members_definition = `
+      ${Object.entries(members)
+        .map(([key, member]) => {
+          return `static ${key} = ${member};`;
+        })
+        .join("\n        ")}
+    `;
 
     const fields_definition = `{
         ${Object.entries(fields)
@@ -171,6 +180,7 @@ export class ${fragment_name} extends Fragment {
   static fields = ${fields_definition};
   static buffer_data = new Map(); // key → { buffer: FragmentGpuBuffer, stride: number }
 
+  ${members_definition}
   ${gpu_buffers_definition}
 
   static get view_allocator() {

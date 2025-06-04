@@ -12,11 +12,9 @@ import { profile_scope } from "../../utility/performance.js";
 
 const transforms_buffer_name = "transforms";
 const aabb_node_index_buffer_name = "aabb_node_index";
-const copy_aabb_data_to_buffer_name = "copy_aabb_data_to_buffer";
 const entity_adapter_update_name = "aabb_entity_adapter.update";
 const entity_bounds_update_task_name = "entity_bounds_update";
 const entity_bounds_update_wgsl_path = "system_compute/bounds_processing.wgsl";
-const unmapped_state = "unmapped";
 
 /**
  * Adapter that connects the entity system to the AABB tree
@@ -42,7 +40,6 @@ export class AABBEntityAdapter extends SimulationLayer {
   init() {
     // Set up entity query for objects with transforms
     this.entity_query = EntityManager.create_query([TransformFragment]);
-    this.on_post_render_callback = this._on_post_render.bind(this);
     this._process_entity_changes_chunk_iter = this._process_entity_changes_chunk_iter.bind(this);
     EntityManager.on_delete(this._on_delete.bind(this));
   }
@@ -165,11 +162,6 @@ export class AABBEntityAdapter extends SimulationLayer {
       this.bounds_update_input_list,
       this.bounds_update_output_list,
       Math.max(1, Math.floor((total_rows + 255) / 256))
-    );
-
-    Renderer.get().enqueue_post_commands(
-      copy_aabb_data_to_buffer_name,
-      this.on_post_render_callback
     );
   }
 
@@ -358,14 +350,6 @@ export class AABBEntityAdapter extends SimulationLayer {
       if (should_dirty_chunk) {
         chunk.mark_dirty();
       }
-    }
-  }
-
-  _on_post_render(graph, frame_data, encoder) {
-    const buffered_frame = Renderer.get().get_buffered_frame_number();
-    const buffer = AABB.node_bounds_cpu_buffer[buffered_frame];
-    if (buffer?.buffer.mapState === unmapped_state) {
-      AABB.node_bounds_buffer.copy_buffer(encoder, 0, buffer);
     }
   }
 }

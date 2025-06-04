@@ -21,6 +21,7 @@ import {
   r16sint_format,
 } from "../utility/config_permutations.js";
 import { log, warn, error } from "../utility/logging.js";
+import { hash_data_object } from "../utility/hashing.js";
 
 const include_string = "#include";
 const if_string = "#if";
@@ -204,12 +205,13 @@ export class Shader {
     return result.trim();
   }
 
-  static create(file_path, defines = {}) {
-    let shader = ResourceCache.get().fetch(CacheTypes.SHADER, file_path);
+  static create(file_path, defines = null) {
+    let key = defines ? hash_data_object(defines, file_path) : file_path;
+    let shader = ResourceCache.get().fetch(CacheTypes.SHADER, key);
     if (!shader) {
       shader = new Shader();
       shader.initialize(file_path, defines);
-      ResourceCache.get().store(CacheTypes.SHADER, file_path, shader);
+      ResourceCache.get().store(CacheTypes.SHADER, key, shader);
     }
     return shader;
   }

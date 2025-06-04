@@ -43,6 +43,7 @@ export class TextureSampler {
       magFilter: this.config.mag_filter,
       minFilter: this.config.min_filter,
       mipmapFilter: this.config.mipmap_filter,
+      compare: this.config.compare,
     });
   }
 
@@ -432,6 +433,7 @@ export class Texture {
   static get_default_sampler() {
     return TextureSampler.create({
       name: "default_sampler",
+      type: "filtering",
     });
   }
 

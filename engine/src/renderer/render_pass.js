@@ -1,10 +1,12 @@
 import { Name } from "../utility/names.js";
 import { ResourceCache } from "./resource_cache.js";
-import { RenderPassFlags, CacheTypes } from "./renderer_types.js";
+import { RenderPassFlags, CacheTypes, BindGroupType } from "./renderer_types.js";
 
 export class RenderPass {
   pass = null;
   config = null;
+  frame_attachments = [];
+  frame_bind_groups = Array(BindGroupType.Num).fill(null);
 
   init(config) {
     this.config = config;

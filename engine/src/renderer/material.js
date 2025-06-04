@@ -4,7 +4,7 @@ import { BindGroup } from "./bind_group.js";
 import { PipelineState } from "./pipeline_state.js";
 import { ResourceCache } from "./resource_cache.js";
 import { profile_scope } from "../utility/performance.js";
-import { hash_data, hash_value } from "../utility/hashing.js";
+import { hash_data_map, hash_value } from "../utility/hashing.js";
 import { Name } from "../utility/names.js";
 import { Texture } from "./texture.js";
 import { Buffer } from "./buffer.js";
@@ -51,8 +51,9 @@ export class MaterialTemplate {
     parent_name = null,
     defines = {}
   ) {
-    if (this.templates.has(name)) {
-      return this.templates.get(name);
+    const key = `${name}-${family}`;
+    if (this.templates.has(key)) {
+      return this.templates.get(key);
     }
 
     let parent = null;
@@ -66,14 +67,14 @@ export class MaterialTemplate {
       shader = parent.shader;
     }
 
+    if (family ===MaterialFamilyType.Transparent ) {
+      defines["TRANSPARENT"] = true;
+    }
     if (shader_path) {
       shader = Shader.create(shader_path, defines);
     }
-    if (shader.defines["TRANSPARENT"]) {
-      family = MaterialFamilyType.Transparent;
-    }
 
-    const template = new MaterialTemplate(name, shader, family, pipeline_state_config, parent);
+    const template = new MaterialTemplate(key, shader, family, pipeline_state_config, parent);
 
     if (parent) {
       template.resources = [...parent.resources];
@@ -94,7 +95,7 @@ export class MaterialTemplate {
       }
     }
 
-    this.templates.set(name, template);
+    this.templates.set(key, template);
 
     return template;
   }
@@ -140,6 +141,12 @@ export class MaterialTemplate {
                 case ShaderResourceType.StorageTexture:
                   binding_obj = {
                     storageTexture: {
+                      access:
+                        binding.type.access === "write"
+                          ? "write-only"
+                          : binding.type.access === "read"
+                            ? "read-only"
+                            : "read-write",
                       viewDimension: Texture.dimension_from_type_name(binding.type.name),
                       sampleType: "float",
                       format: Shader.get_optimal_texture_format(binding.type.name),
@@ -256,8 +263,9 @@ export class MaterialTemplate {
     return PipelineState.create_render(this.name, pipeline_descriptor);
   }
 
-  static get_template(name) {
-    return this.templates.get(name);
+  static get_template(name, family = MaterialFamilyType.Opaque) {
+    const key = `${name}-${family}`;
+    return this.templates.get(key);
   }
 
   get_all_resources() {
@@ -298,10 +306,10 @@ export class Material {
   _update_state_hash() {
     profile_scope("Material._update_state_hash", () => {
       let hash = hash_value(this.template.name);
-      hash = hash_data(this.uniform_data, hash);
-      hash = hash_data(this.storage_data, hash);
-      hash = hash_data(this.texture_data, hash);
-      hash = hash_data(this.sampler_data, hash);
+      hash = hash_data_map(this.uniform_data, hash);
+      hash = hash_data_map(this.storage_data, hash);
+      hash = hash_data_map(this.texture_data, hash);
+      hash = hash_data_map(this.sampler_data, hash);
       this.state_hash = hash;
     });
   }
@@ -472,7 +480,7 @@ export class Material {
   }
 
   static create(name, template_name, options = {}, parent_id = null) {
-    const template = MaterialTemplate.get_template(template_name);
+    const template = MaterialTemplate.get_template(template_name, options.family || MaterialFamilyType.Opaque);
     if (!template) {
       throw new Error(`Material template '${template_name}' not found`);
     }
@@ -488,10 +496,8 @@ export class Material {
 
     if (!material) {
       material = new Material(name, template, parent_id);
-      if (options.family) {
-        material.family = options.family;
-      }
-      if (options.writes_entity_id !== undefined) {
+      material.family = template.family;
+      if (options.writes_entity_id !== undefined && options.writes_entity_id !== null) {
         material.writes_entity_id = options.writes_entity_id;
       }
       ResourceCache.get().store(CacheTypes.MATERIAL, material_id, material);
@@ -507,7 +513,7 @@ export class Material {
       MaterialTemplate.create(
         "DefaultMaterial",
         "standard_material.wgsl",
-        MaterialFamilyType.Opaque,
+        MaterialFamilyType.Opaque
       );
       this.#default_material = Material.create("DefaultMaterial", "DefaultMaterial", {
         family: MaterialFamilyType.Opaque,
@@ -528,14 +534,15 @@ export class Material {
           rasterizer_state: {
             cull_mode: "none",
           },
-        },
+        }
       );
-      this.#default_ui_material = Material.create("DefaultUIMaterial", "DefaultUIMaterial", {
-        family: MaterialFamilyType.Transparent,
-      });
+      this.#default_ui_material = Material.create("DefaultUIMaterial", "DefaultUIMaterial");
 
       const default_ui_material_object = Material.get(this.#default_ui_material);
-      const element_data_buffer = FragmentGpuBuffer.get_buffer_name(UserInterfaceFragment, "element_data");
+      const element_data_buffer = FragmentGpuBuffer.get_buffer_name(
+        UserInterfaceFragment,
+        "element_data"
+      );
       default_ui_material_object.listen_for_storage_data(element_data_buffer);
     }
     return this.#default_ui_material;
@@ -557,12 +564,13 @@ export class StandardMaterial {
 
   static create(name, params = {}, options = {}, template = null) {
     if (!template) {
+      const family = options.family !== undefined ? options.family : MaterialFamilyType.Opaque;
       MaterialTemplate.create(
         "StandardMaterial",
         "standard_material.wgsl",
-        MaterialFamilyType.Opaque,
+        family
       );
-      template = "StandardMaterial";
+      template = `StandardMaterial`;
     }
 
     let standard_material = new StandardMaterial();

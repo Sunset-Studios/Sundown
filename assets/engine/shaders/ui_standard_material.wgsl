@@ -1,8 +1,6 @@
 #define CUSTOM_FS
-#define TRANSPARENT
 
 #include "gbuffer_base.wgsl"
-
 
 //------------------------------------------------------------------------------------
 // Data Structures

@@ -16,21 +16,22 @@ struct HZBParams {
 @group(1) @binding(1) var output_texture: texture_storage_2d<r32float, write>;
 @group(1) @binding(2) var<uniform> params: HZBParams;
 
-@compute @workgroup_size(16, 16, 1)
+@compute @workgroup_size(8, 8, 1)
 fn cs(@builtin(global_invocation_id) global_id: vec3<u32>) {
-    let output_texel_size = 1.0 / params.output_image_size;
-    let input_texel_size = 1.0 / params.input_image_size;
-
-    let output_width = params.output_image_size.x;
-    let output_height = params.output_image_size.y;
-
-    if (global_id.x >= u32(output_width) || global_id.y >= u32(output_height)) {
+    if (global_id.x >= u32(params.output_image_size.x) || global_id.y >= u32(params.output_image_size.y)) {
         return;
     }
 
+    let input_texel_size = 1.0 / params.input_image_size;
+    let output_texel_size = 1.0 / params.output_image_size;
     let base_uv = (vec2f(global_id.xy) + vec2f(0.5)) * output_texel_size;
 
-    var depth = textureSampleLevel(input_texture, non_filtering_sampler, base_uv, 0).r;
+    var d00 = textureSampleLevel(input_texture, non_filtering_sampler, base_uv, 0).r;
+    var d10 = textureSampleLevel(input_texture, non_filtering_sampler, base_uv + vec2f(input_texel_size.x, 0.0), 0).r;
+    var d01 = textureSampleLevel(input_texture, non_filtering_sampler, base_uv + vec2f(0.0, input_texel_size.y), 0).r;
+    var d11 = textureSampleLevel(input_texture, non_filtering_sampler, base_uv + vec2f(input_texel_size.x, input_texel_size.y), 0).r;
 
-    textureStore(output_texture, global_id.xy, vec4<f32>(depth));
+    let min_depth = min(min(d00, d10), min(d01, d11));
+
+    textureStore(output_texture, global_id.xy, vec4<f32>(min_depth));
 }

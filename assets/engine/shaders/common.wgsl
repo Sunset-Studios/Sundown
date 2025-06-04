@@ -47,15 +47,18 @@ struct View {
     prev_projection_matrix: mat4x4f,
     view_projection_matrix: mat4x4f,
     inverse_view_projection_matrix: mat4x4f,
-    view_position: vec4f,
-    view_rotation: vec4f,
     view_direction: vec4f,
-    view_right: vec4f,
-    frustum: array<vec4f, 6>,
-    fov: f32,
-    aspect_ratio: f32,
     near: f32,
     far: f32,
+    culling_enabled: f32,
+    occlusion_enabled: f32,
+    frustum: array<vec4f, 6>,
+    view_position: vec4f,
+    view_rotation: vec4f,
+    view_right: vec4f,
+    fov: f32,
+    aspect_ratio: f32,
+    distance_check_enabled: f32,
 };
 
 struct FrameInfo {
@@ -73,6 +76,7 @@ struct EntityTransform {
 struct ObjectInstance {
     batch: u32,
     row: u32,
+    view_index: u32,
 };
 
 struct CompactedObjectInstance {
@@ -122,8 +126,9 @@ const one_over_float_max = 1.0 / 4294967296.0;
 @group(0) @binding(2) var global_sampler: sampler;
 @group(0) @binding(3) var non_filtering_sampler: sampler;
 @group(0) @binding(4) var clamped_sampler: sampler;
-@group(0) @binding(5) var<uniform> frame_info: FrameInfo;
-@group(0) @binding(6) var<storage, read> entity_index_lookup: array<u32>;
+@group(0) @binding(5) var comparison_sampler: sampler_comparison;
+@group(0) @binding(6) var<uniform> frame_info: FrameInfo;
+@group(0) @binding(7) var<storage, read> entity_index_lookup: array<u32>;
 
 // ------------------------------------------------------------------------------------
 // Helper Functions
@@ -239,7 +244,8 @@ fn interpolate(v0: precision_float, v1: precision_float, t: precision_float) -> 
 // Uses model-view matrix manipulation for robust billboarding
 fn billboard_vertex_local(uv: vec2f, entity_transform: mat4x4f) -> vec4f {
     // Get view and projection matrices
-    let view = view_buffer[0].view_matrix;
+    let view_index = frame_info.view_index;
+    let view = view_buffer[view_index].view_matrix;
     // Extract translation from the entity transform (4th column)
     let world_position = vec3f(
         entity_transform[3][0],
@@ -279,12 +285,35 @@ fn billboard_vertex_local(uv: vec2f, entity_transform: mat4x4f) -> vec4f {
 }
 
 fn log_depth(view_space_z: f32) -> f32 {
-    let far_plane = -view_buffer[0].frustum[5].w;
-    let near_plane = -view_buffer[0].frustum[4].w;
+    let view_index = frame_info.view_index;
+    let far_plane = -view_buffer[view_index].frustum[5].w;
+    let near_plane = -view_buffer[view_index].frustum[4].w;
     let z = -view_space_z;
     return
     (log(LOG_DEPTH_C * z + 1.0) - log(LOG_DEPTH_C * near_plane + 1.0)) 
         / (log(LOG_DEPTH_C * far_plane + 1.0) - log(LOG_DEPTH_C * near_plane + 1.0));
+}
+
+fn normalized_view_depth(uv: vec2f, depth: f32) -> f32 {
+    // Reconstruct view-space depth using inverse view projection matrix
+    let view_index = frame_info.view_index;
+    let view = view_buffer[view_index];
+    let inv_vp = view.inverse_view_projection_matrix;
+    let view_matrix = view.view_matrix;
+    // NDC XY in [-1,1]
+    let ndc_xy = uv * 2.0 - vec2<f32>(1.0);
+    // NDC Z in [-1,1]
+    let ndc_z = depth * 2.0 - 1.0;
+    // Reconstruct clip-space position
+    let clip_pos = vec4<f32>(ndc_xy.x, ndc_xy.y, ndc_z, 1.0);
+    // Transform to world-view space, then divide by w
+    var world_pos = inv_vp * clip_pos;
+    world_pos /= world_pos.w;
+    // Transform to view space
+    let view_pos = view_matrix * world_pos;
+    let view_z = -view_pos.z;
+    // Normalize view-space depth to [0,1]
+    return clamp((view_z - view.near) / (view.far - view.near), 0.0, 1.0);
 }
 
 fn rotate_hue(color: vec4f, hue_rotation: f32) -> vec4f {

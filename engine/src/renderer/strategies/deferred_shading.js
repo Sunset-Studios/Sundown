@@ -1,8 +1,12 @@
 import { Renderer } from "../renderer.js";
 import { FragmentGpuBuffer } from "../../core/ecs/solar/memory.js";
-import { SharedEnvironmentMapData, SharedViewBuffer } from "../../core/shared_data.js";
+import {
+  SharedEnvironmentMapData,
+  SharedViewBuffer,
+  SharedFrameInfoBuffer,
+} from "../../core/shared_data.js";
 import { Texture } from "../texture.js";
-import { RenderPassFlags, MaterialFamilyType } from "../renderer_types.js";
+import { RenderPassFlags, MaterialFamilyType, DebugView } from "../renderer_types.js";
 import { EntityManager } from "../../core/ecs/entity.js";
 import { AABB } from "../../acceleration/aabb.js";
 import { MeshTaskQueue } from "../mesh_task_queue.js";
@@ -28,7 +32,8 @@ import {
   load_op_clear,
 } from "../../utility/config_permutations.js";
 import { LineRenderer } from "../line_renderer.js";
-import { GIProbeVolume } from "../ddgi.js";
+import { GIProbeVolume } from "../global_illumination/ddgi.js";
+import { AdaptiveSparseVirtualShadowMaps } from "../shadows/as_vsm.js";
 
 const use_depth_prepass = false;
 
@@ -208,9 +213,15 @@ const dense_lights_buffer_config = {
   usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
 };
 
+const dense_shadow_casting_lights_buffer_config = {
+  name: "dense_shadow_casting_lights",
+  size: 0,
+  usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+};
+
 const light_count_buffer_config = {
   name: "light_count",
-  size: Uint32Array.BYTES_PER_ELEMENT,
+  size: Uint32Array.BYTES_PER_ELEMENT * 2, // [total_lights, total_shadow_casting_lights]
   usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
 };
 
@@ -371,9 +382,7 @@ const probe_cubemap_image_config = {
   dimension: "2d-array",
   array_layer_count: 6,
   format: rgba16float_format,
-  usage:
-    GPUTextureUsage.RENDER_ATTACHMENT |
-    GPUTextureUsage.TEXTURE_BINDING,
+  usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
   force: false,
 };
 
@@ -389,11 +398,15 @@ const lighting_pass_name = "lighting_pass";
 const bloom_resolve_pass_name = "bloom_resolve_pass";
 const fullscreen_present_pass_name = "fullscreen_present_pass";
 
+// Debug shader setups for AS-VSM debug views
 export class DeferredShadingStrategy {
   initialized = false;
   hzb_image = null;
   entity_id_image = null;
   force_recreate = false;
+  gi_probe_volume = null;
+  as_vsm = null;
+  debug_view = DebugView.None;
 
   setup(render_graph) {
     this.gi_probe_volume = new GIProbeVolume();
@@ -419,6 +432,8 @@ export class DeferredShadingStrategy {
         this.initialized = true;
       }
 
+      const current_view = SharedFrameInfoBuffer.get_view_index();
+
       const renderer = Renderer.get();
 
       MeshTaskQueue.sort_and_batch();
@@ -440,6 +455,10 @@ export class DeferredShadingStrategy {
         aabb_node_index_buffer.buffer.config.name
       );
 
+      const compacted_instance_buffer = render_graph.register_buffer(
+        MeshTaskQueue.get_compacted_object_instance_buffer(current_view).config.name
+      );
+
       const light_fragment_buffer = EntityManager.get_fragment_gpu_buffer(
         LightFragment,
         light_fragment_name
@@ -448,6 +467,12 @@ export class DeferredShadingStrategy {
 
       dense_lights_buffer_config.size = light_fragment_buffer.buffer.config.size;
       const dense_lights = render_graph.create_buffer(dense_lights_buffer_config);
+
+      dense_shadow_casting_lights_buffer_config.size =
+        light_fragment_buffer.max_rows * Uint32Array.BYTES_PER_ELEMENT;
+      const dense_shadow_casting_lights = render_graph.create_buffer(
+        dense_shadow_casting_lights_buffer_config
+      );
 
       const light_count = render_graph.create_buffer(light_count_buffer_config);
 
@@ -589,62 +614,87 @@ export class DeferredShadingStrategy {
       const object_instance_buffer = MeshTaskQueue.get_object_instance_buffer();
       const object_instances = render_graph.register_buffer(object_instance_buffer.config.name);
 
-      const indirect_draw_buffer = MeshTaskQueue.get_indirect_draw_buffer();
-      const indirect_draws = render_graph.register_buffer(indirect_draw_buffer.config.name);
-
-      const compacted_object_instances = MeshTaskQueue.get_compacted_object_instance_buffer();
-      const compacted_object_instance_buffer = render_graph.register_buffer(
-        compacted_object_instances.config.name
-      );
-
-      // Mesh cull pass
+      // Mesh cull pass: dispatch cull compute per view that requested it
       if (MeshTaskQueue.get_total_draw_count() > 0) {
-        // Compute cull pass
-        draw_cull_data_config.data.fill(0);
-        const draw_cull_data = render_graph.create_buffer(draw_cull_data_config);
+        const total_views = SharedViewBuffer.get_view_data_count();
+        for (let view_index = 0; view_index < total_views; ++view_index) {
+          if (!SharedViewBuffer.is_render_active(view_index)) continue;
 
+          // Reset per-view indirect and object instance buffers
+          const draw_count = MeshTaskQueue.get_total_draw_count();
+
+          // Prepare cull constants buffer
+          draw_cull_data_config.name = `draw_cull_data_view_${view_index}`;
+          const draw_cull_data = render_graph.create_buffer(draw_cull_data_config);
+
+          // Register per-view buffers
+          const compacted_buf = render_graph.register_buffer(
+            MeshTaskQueue.get_compacted_object_instance_buffer(view_index).config.name
+          );
+          const indirect_buf = render_graph.register_buffer(
+            MeshTaskQueue.get_indirect_draw_buffer(view_index).config.name
+          );
+
+          render_graph.add_pass(
+            `${compute_cull_pass_name}_view_${view_index}`,
+            RenderPassFlags.Compute,
+            {
+              shader_setup: compute_cull_shader_setup,
+              inputs: [
+                main_hzb_image,
+                aabb_bounds,
+                object_instances,
+                compacted_buf,
+                indirect_buf,
+                entity_aabb_node_indices,
+                draw_cull_data,
+              ],
+              outputs: [indirect_buf],
+            },
+            (graph, frame_data, encoder) => {
+              const pass = graph.get_physical_pass(frame_data.current_pass);
+
+              const hzb = graph.get_physical_image(main_hzb_image);
+              const draw_cull = graph.get_physical_buffer(draw_cull_data);
+
+              const view_data = SharedViewBuffer.get_view_data(view_index);
+              const proj = view_data.projection_matrix;
+              const p00 = proj[0];
+              const p11 = proj[5];
+
+              draw_cull.write([
+                draw_count,
+                p00,
+                p11,
+                hzb.config.width,
+                hzb.config.height,
+              ]);
+
+              pass.dispatch((draw_count + 255) / 256, 1, 1);
+            }
+          );
+        }
+      }
+
+      // Compact lights pass
+      {
+        // Compute pass to compact active lights to dense buffer
         render_graph.add_pass(
-          compute_cull_pass_name,
+          compact_lights_pass_name,
           RenderPassFlags.Compute,
           {
-            shader_setup: compute_cull_shader_setup,
-            inputs: [
-              main_hzb_image,
-              aabb_bounds,
-              object_instances,
-              compacted_object_instance_buffer,
-              indirect_draws,
-              entity_aabb_node_indices,
-              draw_cull_data,
-            ],
-            outputs: [indirect_draws],
+            shader_setup: compact_lights_shader_setup,
+            inputs: [lights, light_count, dense_shadow_casting_lights, dense_lights],
+            outputs: [light_count, dense_shadow_casting_lights, dense_lights],
           },
           (graph, frame_data, encoder) => {
             const pass = graph.get_physical_pass(frame_data.current_pass);
-
-            const hzb = graph.get_physical_image(main_hzb_image);
-            const draw_cull = graph.get_physical_buffer(draw_cull_data);
-            const draw_count = MeshTaskQueue.get_total_draw_count();
-
-            const view_data = SharedViewBuffer.get_view_data(0);
-            const proj = view_data.projection_matrix;
-            let p00 = proj[0];
-            let p11 = proj[5];
-
-            draw_cull.write([
-              draw_count,
-              1 /* culling_enabled */,
-              1 /* occlusion_enabled */,
-              1 /* distance_check */,
-              view_data.near,
-              view_data.far,
-              p00,
-              p11,
-              hzb.config.width,
-              hzb.config.height,
-            ]);
-
-            pass.dispatch((draw_count + 255) / 256, 1, 1);
+            // Reset light count to zero
+            const count_buf = graph.get_physical_buffer(light_count);
+            count_buf.write(new Uint32Array([0, 0]));
+            // Dispatch compute to compact lights
+            const max_light_count = EntityManager.get_max_rows();
+            pass.dispatch((max_light_count + 128 - 1) / 128, 1, 1);
           }
         );
       }
@@ -697,7 +747,7 @@ export class DeferredShadingStrategy {
           depth_prepass_name,
           RenderPassFlags.Graphics,
           {
-            inputs: [entity_transforms, entity_flags, compacted_object_instance_buffer],
+            inputs: [entity_transforms, entity_flags, compacted_instance_buffer],
             outputs: [main_depth_image],
             shader_setup: depth_only_shader_setup,
           },
@@ -708,7 +758,9 @@ export class DeferredShadingStrategy {
               frame_data,
               false /* should_reset */,
               true /* skip_material_bind */,
-              true /* opaque_only */
+              true /* opaque_only */,
+              null,
+              current_view
             );
           }
         );
@@ -731,25 +783,27 @@ export class DeferredShadingStrategy {
           const material_id = material_buckets[i];
           const material = Material.get(material_id);
 
+          const outputs = [
+            material.family === MaterialFamilyType.Transparent
+              ? main_transparency_accum_image
+              : main_albedo_image,
+            main_emissive_image,
+            main_smra_image,
+            main_position_image,
+            main_normal_image,
+            material.writes_entity_id ? main_entity_id_image : null,
+            material.family === MaterialFamilyType.Transparent
+              ? main_transparency_reveal_image
+              : null,
+            main_depth_image,
+          ];
+
           render_graph.add_pass(
             `g_buffer_${material.template.name}_${material_id}`,
             RenderPassFlags.Graphics,
             {
-              inputs: [entity_transforms, entity_flags, compacted_object_instance_buffer, lights],
-              outputs: [
-                material.family === MaterialFamilyType.Transparent
-                  ? main_transparency_accum_image
-                  : main_albedo_image,
-                main_emissive_image,
-                main_smra_image,
-                main_position_image,
-                main_normal_image,
-                material.writes_entity_id ? main_entity_id_image : null,
-                material.family === MaterialFamilyType.Transparent
-                  ? main_transparency_reveal_image
-                  : null,
-                main_depth_image,
-              ],
+              inputs: [entity_transforms, entity_flags, compacted_instance_buffer, lights],
+              outputs: outputs,
               shader_setup: g_buffer_shader_setup,
               b_skip_pass_pipeline_setup: true,
             },
@@ -760,7 +814,9 @@ export class DeferredShadingStrategy {
                 pass,
                 frame_data,
                 material_id,
-                false /* should_reset */
+                false /* should_reset */,
+                null,
+                current_view
               );
             }
           );
@@ -831,6 +887,29 @@ export class DeferredShadingStrategy {
         }
       }
 
+      // Add AS-VSM shadow mapping passes
+      {
+        // Add AS-VSM passes with mapping
+        if (!this.as_vsm) {
+          this.as_vsm = new AdaptiveSparseVirtualShadowMaps({
+            atlas_size: 2048,
+            tile_size: 32,
+            virtual_dim: 4096,
+            max_lods: 1,
+            histogram_bins: 64,
+          });
+        }
+        this.as_vsm.add_passes(render_graph, {
+          depth_texture: main_depth_image,
+          lights_buffer: dense_lights,
+          dense_shadow_casting_lights_buffer: dense_shadow_casting_lights,
+          light_count_buffer: light_count,
+          transforms_buffer: entity_transforms,
+          force_recreate: this.force_recreate,
+          debug_view: this.debug_view,
+        });
+      }
+
       // HZB generation pass
       {
         let hzb_params_chain = [];
@@ -883,33 +962,10 @@ export class DeferredShadingStrategy {
 
               hzb_params.write([src_mip_width, src_mip_height, dst_mip_width, dst_mip_height]);
 
-              pass.dispatch((dst_mip_width + 15) / 16, (dst_mip_height + 15) / 16, 1);
+              pass.dispatch((dst_mip_width + 7) / 8, (dst_mip_height + 7) / 8, 1);
             }
           );
         }
-      }
-
-      // Compact lights pass
-      {
-        // Compute pass to compact active lights to dense buffer
-        render_graph.add_pass(
-          compact_lights_pass_name,
-          RenderPassFlags.Compute,
-          {
-            shader_setup: compact_lights_shader_setup,
-            inputs: [lights, dense_lights, light_count],
-            outputs: [dense_lights, light_count],
-          },
-          (graph, frame_data, encoder) => {
-            const pass = graph.get_physical_pass(frame_data.current_pass);
-            // Reset light count to zero
-            const count_buf = graph.get_physical_buffer(light_count);
-            count_buf.write(new Uint32Array([0]));
-            // Dispatch compute to compact lights
-            const max_light_count = EntityManager.get_max_rows();
-            pass.dispatch((max_light_count + 128 - 1) / 128, 1, 1);
-          }
-        );
       }
 
       // DDGI pass
@@ -919,13 +975,18 @@ export class DeferredShadingStrategy {
       //   gi_depth_image,
       //   entity_transforms,
       //   entity_flags,
-      //   compacted_object_instance_buffer,
+      //   MeshTaskQueue.get_compacted_object_instance_buffer(0),
       //   lights,
       //   probe_cubemap: this.probe_cubemap.config.name,
       // });
 
       // Lighting Pass
       {
+        // Register AS-VSM shadow resources for lighting
+        const shadow_atlas = this.as_vsm.shadow_atlas;
+        const vsm_page_table = this.as_vsm.page_table;
+        const asvsm_settings = this.as_vsm.settings_buf;
+
         post_lighting_image_config.width = image_extent.width;
         post_lighting_image_config.height = image_extent.height;
         post_lighting_image_config.force = this.force_recreate;
@@ -944,9 +1005,13 @@ export class DeferredShadingStrategy {
               main_position_image,
               main_depth_image,
               dense_lights,
+              dense_shadow_casting_lights,
               light_count,
               gi_params_buffer,
               gi_irradiance_image,
+              shadow_atlas,
+              vsm_page_table,
+              asvsm_settings,
             ],
             outputs: [post_lighting_image_desc],
             shader_setup: deferred_lighting_shader_setup,
@@ -1122,11 +1187,19 @@ export class DeferredShadingStrategy {
 
         const rg_output_image = render_graph.register_image(swapchain_image.config.name);
 
+        // Choose final output based on debug_view
+        const final_output_image =
+          this.debug_view === DebugView.ShadowAtlas
+            ? this.as_vsm.debug_shadow_atlas_image
+            : this.debug_view === DebugView.ShadowPageTable
+              ? this.as_vsm.debug_page_table_image
+              : post_processed_image;
+
         render_graph.add_pass(
           fullscreen_present_pass_name,
           RenderPassFlags.Graphics | RenderPassFlags.Present,
           {
-            inputs: [post_processed_image],
+            inputs: [final_output_image],
             outputs: [rg_output_image],
             shader_setup: fullscreen_shader_setup,
           },

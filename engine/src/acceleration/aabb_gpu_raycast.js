@@ -1,4 +1,3 @@
-import { MAX_BUFFERED_FRAMES } from "../core/minimal.js";
 import { Renderer } from "../renderer/renderer.js";
 import { Buffer, BufferSync } from "../renderer/buffer.js";
 import { ComputeTaskQueue } from "../renderer/compute_task_queue.js";
@@ -8,18 +7,15 @@ import { Ray, RaycastHit } from "./aabb_raycast.js";
 
 const MAX_RAYS = 1024;
 const gpu_raycast_scope = "AABBGPURaycast";
-const unmapped_state = "unmapped";
 
 export class AABBGPURaycast {
     static ray_buffer = null;
     static hits_buffer = null;
-    static hits_cpu_buffer = Array(MAX_BUFFERED_FRAMES).fill(null);
     static uniforms = null;
     static uniforms_buffer = null;
     static rays = [];
     static hits = [];
     static pending_callback = null;
-    static copy_hits_to_cpu_callback = null;
     static is_initialized = false;
     
     /**
@@ -39,17 +35,9 @@ export class AABBGPURaycast {
         this.hits_buffer = Buffer.create({
             name: "aabb_raycast_hits",
             usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC,
-            size: MAX_RAYS * 8 // Hit structure is 8 floats
+            size: MAX_RAYS * 8, // Hit structure is 8 floats
+            cpu_readback: true,
         });
-
-        // Create a hits cpu buffer
-        for (let i = 0; i < MAX_BUFFERED_FRAMES; i++) {
-            this.hits_cpu_buffer[i] = Buffer.create({
-                name: `aabb_raycast_hits_cpu_${i}`,
-                usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
-                size: MAX_RAYS * 8 // Hit structure is 8 floats
-            });
-        }
         
         // Create uniforms buffer
         this.uniforms_buffer = Buffer.create({
@@ -71,8 +59,6 @@ export class AABBGPURaycast {
         
         this.is_initialized = true;
         this.last_ray_count = 0;
-
-        this.copy_hits_to_cpu_callback = this._copy_hits_to_cpu.bind(this);
 
         Renderer.get().on_post_render(this._on_post_render.bind(this));
     }
@@ -148,46 +134,24 @@ export class AABBGPURaycast {
                 [this.hits_buffer],
                 Math.ceil(this.last_ray_count / 64), // Work groups of 64 threads
             );
-
-            Renderer.get().enqueue_post_commands(
-                "aabb_raycast_copy_hits_to_cpu",
-                this.copy_hits_to_cpu_callback
-            );
         });
     }
 
     /**
-     * Copy the hits to the CPU
-     * @param {GPUCommandEncoder} encoder - The command encoder
-     */
-    static _copy_hits_to_cpu(graph, frame_data, encoder) {
-        if (!this.pending_callback) return;
-
-        const buffered_frame = Renderer.get().get_buffered_frame_number();
-        if (this.hits_cpu_buffer[buffered_frame].buffer.mapState === unmapped_state) {
-            this.hits_buffer.copy_buffer(encoder, 0, this.hits_cpu_buffer[buffered_frame]);
-        }
-    }
-    
-    /**
      * Called when the GPU raycast is complete
      */
     static async _on_post_render() {
-        BufferSync.request_sync(this);
+        BufferSync.request_readback(this);
     }
 
-    static async sync_buffers() {
-        const buffered_frame = Renderer.get().get_buffered_frame_number();
+    static async readback_buffers() {
         // Read hit data from GPU
-        if (this.hits_cpu_buffer[buffered_frame].buffer.mapState === unmapped_state) {
-            await this.hits_cpu_buffer[buffered_frame].read(
-                this.hits,
-                this.last_ray_count * 8 * 4,
-                0,
-                0,
-                Uint32Array
-            );
-        }
+        await this.hits_buffer.read(
+            this.hits,
+            0,
+            0,
+            Uint32Array
+        );
         
         if (!this.pending_callback) return;
 
@@ -241,12 +205,6 @@ export class AABBGPURaycast {
             this.hits_buffer = null;
         }
 
-        for (let i = 0; i < MAX_BUFFERED_FRAMES; i++) {
-            if (this.hits_cpu_buffer[i]) {
-                this.hits_cpu_buffer[i].destroy();
-                this.hits_cpu_buffer[i] = null;
-            }
-        }
         if (this.uniforms_buffer) {
             this.uniforms_buffer.destroy();
             this.uniforms_buffer = null;

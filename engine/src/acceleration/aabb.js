@@ -199,7 +199,6 @@ export class AABB {
 
   static node_data_buffer = null;
   static node_bounds_buffer = null;
-  static node_bounds_cpu_buffer = Array(MAX_BUFFERED_FRAMES).fill(null);
 
   static modified = true;
 
@@ -477,16 +476,8 @@ export class AABB {
         usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC,
         raw_data: this.node_bounds,
         force: true,
+        cpu_readback: true,
       });
-
-      for (let i = 0; i < MAX_BUFFERED_FRAMES; i++) {
-        this.node_bounds_cpu_buffer[i] = Buffer.create({
-          name: `AABB_TREE_NODES_CPU_BOUNDS_BUFFER_${i}`,
-          usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
-          raw_data: this.node_bounds,
-          force: true,
-        });
-      }
 
       global_dispatcher.dispatch(AABB_TREE_NODES_UPDATE_EVENT);
     } else {
@@ -519,14 +510,14 @@ export class AABB {
   /**
    * Sync the AABB tree buffers (throttled)
    */
-  static async sync_buffers() {
+  static async readback_buffers() {
     const buffered_frame = Renderer.get().get_buffered_frame_number();
-    const cpu_buffer = AABB.node_bounds_cpu_buffer[buffered_frame];
-    if (!cpu_buffer || cpu_buffer.buffer.mapState !== unmapped_state) {
+    const cpu_buffer = AABB.node_bounds_buffer.cpu_buffers[buffered_frame];
+    if (!cpu_buffer || cpu_buffer.mapState !== unmapped_state) {
       return;
     }
 
-    const total_bytes_in_buffer = cpu_buffer.config.size; // Total size of AABB.node_bounds buffer
+    const total_bytes_in_buffer = cpu_buffer.size; // Total size of AABB.node_bounds buffer
     const current_byte_offset = AABB.sync_read_byte_offset;
 
     if (current_byte_offset >= total_bytes_in_buffer && total_bytes_in_buffer > 0) {
@@ -544,7 +535,7 @@ export class AABB {
 
     if (bytes_to_read_this_call <= 0) return;
 
-    await cpu_buffer.read(
+    await AABB.node_bounds_buffer.read(
       AABB.node_bounds, // Target CPU array
       bytes_to_read_this_call,
       current_byte_offset, // Source offset in GPU buffer (implicit for copy_buffer, explicit for read command)
@@ -570,7 +561,7 @@ export class AABB {
   }
 
   static async on_post_render() {
-    BufferSync.request_sync(this);
+    BufferSync.request_readback(this);
   }
 
   static is_node_free(node_index) {

@@ -1,5 +1,5 @@
-import { SharedViewBuffer } from "../core/shared_data.js";
-import { RenderPassFlags } from "./renderer_types.js";
+import { SharedViewBuffer } from "../../core/shared_data.js";
+import { RenderPassFlags } from "../renderer_types.js";
 import { quat } from "gl-matrix";
 
 export class GIProbeVolume {
@@ -33,13 +33,10 @@ export class GIProbeVolume {
     const probe_view_count = this.probes_per_frame * 6;
     this.probe_view_indices = new Uint32Array(probe_view_count);
     for (let i = 0; i < probe_view_count; ++i) {
-      const view_idx = SharedViewBuffer.add_view_data({
-        fov: 90,
-        aspect_ratio: 1,
-        near: 0.1,
-        far: 1000,
-      });
-      this.probe_view_indices[i] = view_idx;
+      const view = SharedViewBuffer.add_view_data();
+      //view.renderable_state = 1;
+      view.occlusion_enabled = 0;
+      this.probe_view_indices[i] = view.get_index();
     }
   }
 
@@ -118,13 +115,10 @@ export class GIProbeVolume {
 
     this.probe_view_indices = new Uint32Array(this.probe_count);
     for (let i = 0; i < this.probe_count; ++i) {
-      const view_idx = SharedViewBuffer.add_view_data({
-        fov: 90,
-        aspect_ratio: 1,
-        near: 0.1,
-        far: 1000,
-      });
-      this.probe_view_indices[i] = view_idx;
+      const view = SharedViewBuffer.add_view_data();
+      //view.renderable_state = 1;
+      view.occlusion_enabled = 0;
+      this.probe_view_indices[i] = view.get_index();
     }
   }
 
@@ -181,9 +175,6 @@ export class GIProbeVolume {
         const q = quat.rotationTo(quat.create(), [0,0,1], dir);
 
         view_data.view_rotation = q;
-
-        SharedViewBuffer.update_transforms([view_idx]);
-        SharedViewBuffer.build();
 
         render_graph.add_pass(
           `ddgi_raster_${idx}_face_${face}`,

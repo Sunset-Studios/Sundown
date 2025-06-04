@@ -392,14 +392,6 @@ export class EntityManager {
   }
 
   /**
-   * Copies the GPU buffers to the CPU.
-   * @param {GPUCommandEncoder} encoder - The command encoder.
-   */
-  static copy_gpu_to_cpu_buffers(encoder) {
-    FragmentGpuBuffer.copy_to_cpu_buffers(encoder);
-  }
-
-  /**
    * Creates an image buffer for storing entity images.
    * @returns {import('./buffer.js').Buffer} The created image buffer.
    */

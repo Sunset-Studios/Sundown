@@ -1,17 +1,21 @@
+import { MAX_BUFFERED_FRAMES } from "../core/minimal.js";
 import { Name } from "../utility/names.js";
 import { Renderer } from "./renderer.js";
 import { ResourceCache } from "./resource_cache.js";
 import { CacheTypes } from "./renderer_types.js";
 import { global_dispatcher } from "../core/dispatcher.js";
 
-const process_syncs_profile_key = "BufferSync.process_syncs";
+const unmapped_state = "unmapped";
 
 export class Buffer {
   config = null;
   buffer = null;
+  cpu_buffers = null;
 
   // Create a GPU buffer to store the data
   init(config) {
+    this._post_render_command = this._post_render_command.bind(this);
+
     const renderer = Renderer.get();
 
     this.config = config;
@@ -38,10 +42,32 @@ export class Buffer {
     });
 
     this.write(buffer_data);
+
+    if (this.config.cpu_readback) {
+      this.cpu_buffers = new Array(MAX_BUFFERED_FRAMES);
+      for (let i = 0; i < MAX_BUFFERED_FRAMES; ++i) {
+        const cpu_buf_name = `${this.config.name}_cpu_${i}`;
+        this.cpu_buffers[i] = renderer.device.createBuffer({
+          label: cpu_buf_name,
+          size: this.config.size,
+          usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
+        });
+      }
+
+      Renderer.get().enqueue_post_commands(
+        this.config.name,
+        this._post_render_command,
+        true /*persistent*/
+      );
+    }
   }
 
   destroy() {
+    if (this.config.cpu_readback) {
+      Renderer.get().unqueue_post_commands(this.config.name);
+    }
     ResourceCache.get().remove(CacheTypes.BUFFER, Name.from(this.config.name));
+    this.cpu_buffer = null;
     this.buffer = null;
   }
 
@@ -85,14 +111,30 @@ export class Buffer {
   }
 
   async read(data, data_length, offset = 0, data_offset = 0, data_type = Float32Array) {
-    await this.buffer.mapAsync(GPUMapMode.READ);
-    if (this.buffer) {
-      // Buffer could have been destroyed while waiting for the map
-      const mapped_range = this.buffer.getMappedRange(offset, data_length);
+    const buffered_frame = Renderer.get().get_buffered_frame_number();
+    const source_buffer = this.cpu_buffers ? this.cpu_buffers[buffered_frame] : this.buffer;
+    if (!source_buffer || source_buffer.mapState !== unmapped_state) {
+      return;
+    }
+
+    await source_buffer.mapAsync(GPUMapMode.READ);
+    if (source_buffer) {
+      const mapped_range = source_buffer.getMappedRange(offset, data_length);
       const view = new data_type(mapped_range);
       data.set(view, data_offset);
-      this.buffer.unmap();
+      source_buffer.unmap();
     }
+  }
+
+  sync(encoder) {
+    if (!this.cpu_buffers || !this.buffer) return;
+    const buffered_frame = Renderer.get().get_buffered_frame_number();
+    const source_buffer = this.cpu_buffers[buffered_frame];
+    if (!source_buffer || source_buffer.mapState !== unmapped_state) {
+      return;
+    }
+
+    encoder.copyBufferToBuffer(this.buffer, 0, source_buffer, 0, this.config.size);
   }
 
   copy_texture(encoder, texture, bytes_per_row) {
@@ -116,8 +158,13 @@ export class Buffer {
       size ?? this.config.size
     );
   }
+
   bind_vertex(encoder, slot = 0) {
     encoder.setVertexBuffer(slot, this.buffer);
+  }
+
+  _post_render_command(graph, frame_data, encoder) {
+    this.sync(encoder);
   }
 
   get physical_id() {
@@ -146,14 +193,14 @@ export class Buffer {
 export class BufferSync {
   static sync_targets = new Set();
 
-  static request_sync(target) {
+  static request_readback(target) {
     this.sync_targets.add(target);
   }
 
-  static async process_syncs() {
+  static async process_readbacks() {
     try {
       for (const target of BufferSync.sync_targets) {
-        await target.sync_buffers();
+        await target.readback_buffers();
       }
     } finally {
       BufferSync.sync_targets.clear();

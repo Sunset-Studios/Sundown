@@ -1,4 +1,9 @@
+// ------------------------------------------------------------------------------------
+// Constants
+// ------------------------------------------------------------------------------------
 const PI: f32 = 3.14159265359;
+const MAX_SHADOW_VIEWS: u32 = 16;
+const MAX_TILE_REQUESTS_PER_VIEW: u32 = 128;
 
 // ------------------------------------------------------------------------------------
 // Data Structures
@@ -12,7 +17,9 @@ struct Light {
     radius: f32,
     attenuation: f32,
     outer_angle: f32,
+    shadow_casting: f32,
     activated: f32,
+    view_index: f32,
 };
 
 struct GIParams {
@@ -24,6 +31,17 @@ struct GIParams {
     _pad2: u32,
     current_index: u32,
     _pad3: vec3<u32>,
+};
+
+struct ASVSMSettings {
+  split_depth: f32,
+  tile_size: f32,
+  virtual_dim: f32,
+  virtual_tiles_per_row: f32,
+  physical_dim: f32,
+  physical_tiles_per_row: f32,
+  max_lods: f32,
+  max_tile_requests: f32,
 };
 
 // ------------------------------------------------------------------------------------
@@ -262,4 +280,28 @@ fn calculate_brdf(
     // account for energy loss in the base layer
     let brdf = ((fd + fr * (1.0 - fc)) * (1.0 - fc) + frc);
     return brdf * lluminance;
+}
+
+// ------------------------------------------------------------------------------------
+// Shadows 
+// ------------------------------------------------------------------------------------
+fn vsm_pte_is_valid(pte: u32) -> bool {
+    // Check if the most significant bit is set
+    return (pte & 0x80000000u) != 0u;
+}
+
+fn vsm_pte_get_physical_id(pte: u32) -> u32 {
+    // Mask out the most significant bit to get the physical tile id
+    return pte & 0x7FFFFFFFu;
+}
+
+fn vsm_pte_get_tile_coords(virtual_tile_id: u32, settings: ASVSMSettings) -> vec3<u32> {
+    // Decode virtual tile coordinates
+    let tile_per_row = u32(settings.virtual_tiles_per_row);
+    let tiles_per_lod = tile_per_row * tile_per_row;
+    let local_index = virtual_tile_id % tiles_per_lod;
+    let tile_x = local_index % tile_per_row;
+    let tile_y = local_index / tile_per_row;
+    let tile_lod = virtual_tile_id / tiles_per_lod;
+    return vec3<u32>(tile_x, tile_y, tile_lod);
 }

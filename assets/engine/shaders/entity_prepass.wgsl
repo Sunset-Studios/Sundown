@@ -32,7 +32,8 @@ struct FragmentOutput {
     let entity_resolved = get_entity_row(compacted_object_instances[ii].row);
 
     let model_matrix = entity_transforms[entity_resolved].transform;
-    let mvp = view_buffer[0].view_projection_matrix * model_matrix;
+    let view_index = frame_info.view_index;
+    let mvp = view_buffer[view_index].view_projection_matrix * model_matrix;
 
     var output : VertexOutput;
 

@@ -38,7 +38,8 @@ fn vs(input: VertexInput) -> VertexOutput {
     let color_and_width = line_data[input.instance_index].color_and_width;
     let model_transform = transform_data[input.instance_index].transform;
 
-    let model_view_transform = view_buffer[0].view_matrix * model_transform;
+    let view_index = frame_info.view_index;
+    let model_view_transform = view_buffer[view_index].view_matrix * model_transform;
     
     // Calculate line direction in view space
     let view_start = (model_view_transform * vec4<f32>(0.0, 0.0, 0.0, 1.0)).xyz;
@@ -67,9 +68,9 @@ fn vs(input: VertexInput) -> VertexOutput {
     
     // Final position in view space
     let final_view_pos = pos_along_line + offset;
-    
+
     // Convert directly to clip space from view space
-    output.position = view_buffer[0].projection_matrix * vec4<f32>(final_view_pos, 1.0);
+    output.position = view_buffer[view_index].projection_matrix * vec4<f32>(final_view_pos, 1.0);
     
     // Pass color and UV to fragment shader
     output.color = vec4<f32>(color_and_width.x, color_and_width.y, color_and_width.z, 1.0);

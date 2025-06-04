@@ -70,8 +70,9 @@ fn vertex(v_out: ptr<function, VertexOutput>) -> VertexOutput {
     let entity_resolved = get_entity_row(compacted_object_instances[ii].row);
 
     let entity_transform = entity_transforms[entity_resolved];
-    let view_mat = view_buffer[0].view_matrix;
-    let view_proj_mat = view_buffer[0].view_projection_matrix;
+    let view_index = frame_info.view_index;
+    let view_mat = view_buffer[view_index].view_matrix;
+    let view_proj_mat = view_buffer[view_index].view_projection_matrix;
 
     var output : VertexOutput;
 
@@ -136,7 +137,8 @@ fn fragment(v_out: VertexOutput, f_out: ptr<function, FragmentOutput>) -> Fragme
         discard;
     } 
 
-    var view_dir = normalize(-view_buffer[0].view_direction.xyz);
+    let view_index = frame_info.view_index;
+    var view_dir = normalize(-view_buffer[view_index].view_direction.xyz);
     var color = vec3f(0.0);
     let num_lights = arrayLength(&lights_buffer) * min(1u, u32(post_material_output.normal.w));
 

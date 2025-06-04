@@ -238,7 +238,7 @@ export class FragmentGpuBuffer {
    * @param {string} name - base name for GPU and CPU buffers
    * @param {number} max_rows - initial number of rows
    * @param {number} byte_stride - bytes per row
-   * @param {number} [cpu_buffer_count=0] - number of CPU readback buffers to create
+   * @param {boolean} [cpu_readback=false] - whether to create CPU readback buffers
    * @param {boolean} [dispatch=true] - whether to dispatch events when buffer changes
    * @param {number} [usage=GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST] - GPU buffer usage flags
    * @param {typeof import('../fragment.js').Fragment | null} [fragment_class_ref=null] - Reference to the fragment class
@@ -249,7 +249,7 @@ export class FragmentGpuBuffer {
     name,
     max_rows,
     byte_stride,
-    cpu_buffer_count = 0,
+    cpu_readback = false,
     dispatch = true,
     usage = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
     fragment_class_ref = null,
@@ -262,7 +262,7 @@ export class FragmentGpuBuffer {
     this.byte_stride = byte_stride;
     this.usage = usage;
     this.dispatch = dispatch;
-    this.cpu_buffer_count = cpu_buffer_count;
+    this.cpu_readback = cpu_readback;
     this.fragment_class_ref = fragment_class_ref;
     this.config_key_within_fragment = config_key_within_fragment;
     this.sync_target_accessor = sync_target_accessor;
@@ -275,22 +275,8 @@ export class FragmentGpuBuffer {
       usage: this.usage,
       force: true,
       dispatch: this.dispatch,
+      cpu_readback: this.cpu_readback,
     });
-
-    // allocate CPU readback buffers if requested
-    if (this.cpu_buffer_count > 0) {
-      this.cpu_buffers = new Array(this.cpu_buffer_count);
-      for (let i = 0; i < this.cpu_buffer_count; ++i) {
-        const cpu_buf_name = `${this.name}_cpu_${i}`;
-        this.cpu_buffers[i] = Buffer.create({
-          name: cpu_buf_name,
-          usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
-          size: this.max_rows * this.byte_stride,
-          force: true,
-          dispatch: this.dispatch,
-        });
-      }
-    }
 
     // track exact buffer segments (chunk + row range) needing CPU sync
     this.pending_sync_segments = [];
@@ -321,7 +307,7 @@ export class FragmentGpuBuffer {
     }
 
     const required_end_byte = byte_offset + write_bytes;
-    const write_elements = row_count * (this.byte_stride / packed_chunk_data.BYTES_PER_ELEMENT);
+    const write_elements = Math.ceil(row_count * (this.byte_stride / packed_chunk_data.BYTES_PER_ELEMENT));
 
     // Grow buffer if needed
     if (required_end_byte > this.buffer.config.size) {
@@ -343,34 +329,19 @@ export class FragmentGpuBuffer {
   }
 
   /**
-   * Enqueue GPU→CPU copies for all CPU-readback buffers via the given encoder.
-   */
-  copy_to_cpu_buffers(encoder) {
-    if (!this.cpu_buffer_count) return;
-
-    const buffered_frame = Renderer.get().get_buffered_frame_number();
-    const cpu_buf = this.cpu_buffers[buffered_frame % this.cpu_buffer_count];
-
-    if (cpu_buf.buffer.mapState === unmapped_state) {
-      this.buffer.copy_buffer(encoder, 0, cpu_buf);
-    }
-  }
-
-  /**
    * Read back the CPU buffer for the given frame into 'array'.
    */
-  async sync_buffers() {
+  async readback_buffers() {
     // Return early if no CPU readbacks or no pending segments
-    if (!this.cpu_buffer_count) return;
+    if (!this.cpu_readback) return;
 
     // Map the entire CPU buffer once for reading
     const buffered_frame = Renderer.get().get_buffered_frame_number();
-    const cpu_buf = this.cpu_buffers[buffered_frame % this.cpu_buffer_count];
-    if (cpu_buf.buffer.mapState !== unmapped_state) return;
+    const cpu_buf = this.buffer.cpu_buffers[buffered_frame];
+    if (cpu_buf.mapState !== unmapped_state) return;
 
-    const gpu_buffer = cpu_buf.buffer;
-    await gpu_buffer.mapAsync(GPUMapMode.READ);
-    const mapped_range = gpu_buffer.getMappedRange();
+    await cpu_buf.mapAsync(GPUMapMode.READ);
+    const mapped_range = cpu_buf.getMappedRange();
 
     const segments = this.pending_sync_segments;
     if (segments.length === 0) return;
@@ -430,7 +401,7 @@ export class FragmentGpuBuffer {
     }
 
     // Unmap and clear segments
-    gpu_buffer.unmap();
+    cpu_buf.unmap();
 
     segments.length = 0;
   }
@@ -448,25 +419,13 @@ export class FragmentGpuBuffer {
       usage: this.usage,
       force: true,
       dispatch: this.dispatch,
+      cpu_readback: this.cpu_readback,
     });
     // NOTE: Data from the old buffer is NOT automatically copied here.
     // If resizing needs to preserve existing data, a GPU copy operation
     // from old_buffer to the new this.buffer would be needed before
     // releasing the old_buffer. For simplicity, assuming buffers are
     // fully updated after resize or that data preservation isn't needed here.
-
-    // resize CPU buffers as well
-    if (this.cpu_buffer_count > 0) {
-      for (let i = 0; i < this.cpu_buffer_count; ++i) {
-        this.cpu_buffers[i] = Buffer.create({
-          name: `${this.name}_cpu_${i}`,
-          usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
-          size: new_size,
-          force: true,
-          dispatch: this.dispatch,
-        });
-      }
-    }
 
     if (this.global_binding) {
       Renderer.get().refresh_global_shader_bindings();
@@ -485,7 +444,7 @@ export class FragmentGpuBuffer {
       index_map_buffer_name, // name
       this.initial_max_rows, // max_rows
       4, // 4 bytes per row (Uint32)
-      0, // cpu_buffer_count
+      false, // cpu_readback
       true, // dispatch
       GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC,
       null, // fragment_class_ref
@@ -570,7 +529,7 @@ export class FragmentGpuBuffer {
               actual_gpu_buffer_key,
               FragmentGpuBuffer.initial_max_rows,
               buffer_config.stride,
-              buffer_config.cpu_readback ? MAX_BUFFERED_FRAMES : 0,
+              buffer_config.cpu_readback,
               dispatch,
               buffer_config.usage,
               fragment_class,
@@ -623,7 +582,7 @@ export class FragmentGpuBuffer {
           actual_gpu_buffer_key,
           FragmentGpuBuffer.initial_max_rows,
           byte_stride,
-          field_spec.cpu_readback ? MAX_BUFFERED_FRAMES : 0,
+          field_spec.cpu_readback,
           dispatch,
           field_spec.usage,
           fragment_class,
@@ -643,7 +602,7 @@ export class FragmentGpuBuffer {
         entity_flags_buffer_name, // name
         FragmentGpuBuffer.initial_max_rows, // max rows
         4, // 4 bytes per row (Uint32 flags)
-        MAX_BUFFERED_FRAMES, // CPU-readback count
+        true, // CPU-readback
         dispatch, // dispatch events?
         GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC,
         null, // fragment_class_ref
@@ -810,22 +769,12 @@ export class FragmentGpuBuffer {
   }
 
   /**
-   * Copies all GPU buffers to the CPU.
-   * @param {GPUCommandEncoder} encoder - The command encoder.
-   */
-  static copy_to_cpu_buffers(encoder) {
-    for (let i = 0; i < this.all_buffers.length; i++) {
-      this.all_buffers[i].copy_to_cpu_buffers(encoder);
-    }
-  }
-
-  /**
    * Sync all GPU buffers down to the CPU.
    */
   static async sync_all_buffers() {
     for (let i = 0; i < this.all_buffers.length; i++) {
       const buffer = this.all_buffers[i];
-      BufferSync.request_sync(buffer);
+      BufferSync.request_readback(buffer);
     }
   }
 

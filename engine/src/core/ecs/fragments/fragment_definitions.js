@@ -2,6 +2,9 @@ import { DataType, BufferType } from "../meta/fragment_generator_types.js";
 
 const LightFragment = {
   name: "Light",
+  members: {
+    total_shadow_casting_lights: '0'
+  },
   fields: {
     position: {
       type: DataType.FLOAT32,
@@ -35,15 +38,16 @@ const LightFragment = {
       type: DataType.FLOAT32,
       stride: 1,
     },
+    shadow_casting: {
+      type: DataType.UINT8,
+      default: 1,
+      stride: 1,
+    },
     active: {
       type: DataType.FLOAT32,
       stride: 1,
     },
-    padding1: {
-      type: DataType.FLOAT32,
-      stride: 1,
-    },
-    padding2: {
+    view_index: {
       type: DataType.FLOAT32,
       stride: 1,
     },
@@ -59,9 +63,9 @@ const LightFragment = {
         "radius",
         "attenuation",
         "outer_angle",
+        "shadow_casting",
         "active",
-        "padding1",
-        "padding2",
+        "view_index",
       ],
       usage: BufferType.STORAGE,
     },

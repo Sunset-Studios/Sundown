@@ -2,7 +2,8 @@ import { Buffer } from "../renderer/buffer.js";
 import { Texture } from "../renderer/texture.js";
 import { Renderer } from "../renderer/renderer.js";
 import { RingBufferAllocator } from "../memory/allocator.js";
-import { ResizableBitArray } from "../memory/container.js";
+import { ResizableBitArray, TypedStack } from "../memory/container.js";
+import { MeshTaskQueue } from "../renderer/mesh_task_queue.js";
 import { mat4, vec4, vec3, vec2 } from "gl-matrix";
 import { WORLD_FORWARD, WORLD_UP } from "./minimal.js";
 import { radians } from "../utility/math.js";
@@ -53,15 +54,18 @@ export class SharedViewBuffer {
     prev_projection_matrix: 48,
     view_projection_matrix: 64,
     inverse_view_projection_matrix: 80,
-    view_position: 96,
-    view_rotation: 100,
-    view_direction: 104,
-    view_right: 108,
-    frustum: 112,
-    fov: 136,
-    aspect_ratio: 137,
-    near: 138,
-    far: 139,
+    view_direction: 96,
+    near: 100,
+    far: 101,
+    culling_enabled: 102,
+    occlusion_enabled: 103,
+    frustum: 104,
+    view_position: 128,
+    view_rotation: 132,
+    view_right: 136,
+    fov: 140,
+    aspect_ratio: 141,
+    distance_check_enabled: 142,
   };
 
   // --- Per-view Access Wrapper ---
@@ -223,6 +227,45 @@ export class SharedViewBuffer {
         SharedViewBuffer.dirty_states.set(this.idx, 1);
       }
     }
+    get culling_enabled() {
+      const f = SharedViewBuffer.offsets.culling_enabled;
+      return SharedViewBuffer.raw_data[this.base + f];
+    }
+    set culling_enabled(enabled) {
+      const f = SharedViewBuffer.offsets.culling_enabled;
+      if (SharedViewBuffer.raw_data[this.base + f] !== enabled) {
+        SharedViewBuffer.raw_data[this.base + f] = enabled;
+        SharedViewBuffer.dirty_states.set(this.idx, 1);
+      }
+    }
+    get occlusion_enabled() {
+      const f = SharedViewBuffer.offsets.occlusion_enabled;
+      return SharedViewBuffer.raw_data[this.base + f];
+    }
+    set occlusion_enabled(enabled) {
+      const f = SharedViewBuffer.offsets.occlusion_enabled;
+      if (SharedViewBuffer.raw_data[this.base + f] !== enabled) {
+        SharedViewBuffer.raw_data[this.base + f] = enabled;
+        SharedViewBuffer.dirty_states.set(this.idx, 1);
+      }
+    }
+    get distance_check_enabled() {
+      const f = SharedViewBuffer.offsets.distance_check_enabled;
+      return SharedViewBuffer.raw_data[this.base + f];
+    }
+    set distance_check_enabled(enabled) {
+      const f = SharedViewBuffer.offsets.distance_check_enabled;
+      if (SharedViewBuffer.raw_data[this.base + f] !== enabled) {
+        SharedViewBuffer.raw_data[this.base + f] = enabled;
+        SharedViewBuffer.dirty_states.set(this.idx, 1);
+      }
+    }
+    get renderable_state() {
+      return SharedViewBuffer.is_render_active(this.idx);
+    }
+    set renderable_state(state) {
+      SharedViewBuffer.set_render_active(this.idx, state);
+    }
     set_index(index) {
       this.idx = index;
       return this;
@@ -237,12 +280,14 @@ export class SharedViewBuffer {
 
   // --- Layout Configuration ---
   // floats per view: 6×16 matrix + 4×4 vector + 6×4 frustum + 4 floats = 140
-  static floats_per_view = 140;
+  static floats_per_view = 144;
   static type_size_bytes = SharedViewBuffer.floats_per_view * 4;
 
   // --- Raw Data & Dirty Flags ---
   static raw_data = new Float32Array(0);
   static dirty_states = new ResizableBitArray(256);
+  static renderable_states = new ResizableBitArray(256);
+  static free_list = new TypedStack(16, Uint32Array);
 
   // --- View Pool & GPU Resources ---
   static buffer = null;
@@ -252,34 +297,60 @@ export class SharedViewBuffer {
   // --- Data Management Methods ---
   /** Allocate a new view record (identity/default) and return its wrapper */
   static add_view_data() {
-    const idx = SharedViewBuffer.raw_data.length / SharedViewBuffer.floats_per_view;
-    const old = SharedViewBuffer.raw_data;
+    let idx;
+
+    // reuse a freed slot if available
+    if (!SharedViewBuffer.free_list.is_empty()) {
+      idx = SharedViewBuffer.free_list.pop();
+    } else {
+      // append new slot
+      const old = SharedViewBuffer.raw_data;
+      idx = old.length / SharedViewBuffer.floats_per_view;
+      const new_data = new Float32Array(old.length + SharedViewBuffer.floats_per_view);
+      new_data.set(old, 0);
+      SharedViewBuffer.raw_data = new_data;
+    }
+
     const base = idx * SharedViewBuffer.floats_per_view;
 
-    const new_data = new Float32Array(old.length + SharedViewBuffer.floats_per_view);
-    new_data.set(old, 0);
-    new_data.set(mat4.create(), base + SharedViewBuffer.offsets.view_matrix);
-    new_data.set(mat4.create(), base + SharedViewBuffer.offsets.prev_view_matrix);
-    new_data.set(mat4.create(), base + SharedViewBuffer.offsets.projection_matrix);
-    new_data.set(mat4.create(), base + SharedViewBuffer.offsets.prev_projection_matrix);
-    new_data.set(mat4.create(), base + SharedViewBuffer.offsets.view_projection_matrix);
-    new_data.set(mat4.create(), base + SharedViewBuffer.offsets.inverse_view_projection_matrix);
-    new_data.set(vec4.fromValues(0, 0, 0, 1), base + SharedViewBuffer.offsets.view_position);
-    new_data.set(vec4.fromValues(0, 0, 0, 0), base + SharedViewBuffer.offsets.view_rotation);
-    new_data.set(
-      WORLD_FORWARD,
-      base + SharedViewBuffer.offsets.view_direction
+    SharedViewBuffer.raw_data.set(mat4.create(), base + SharedViewBuffer.offsets.view_matrix);
+    SharedViewBuffer.raw_data.set(mat4.create(), base + SharedViewBuffer.offsets.prev_view_matrix);
+    SharedViewBuffer.raw_data.set(mat4.create(), base + SharedViewBuffer.offsets.projection_matrix);
+    SharedViewBuffer.raw_data.set(
+      mat4.create(),
+      base + SharedViewBuffer.offsets.prev_projection_matrix
     );
-    new_data.set(vec4.fromValues(1, 0, 0, 0), base + SharedViewBuffer.offsets.view_right);
-    new_data.set(Array(24).fill(0), base + SharedViewBuffer.offsets.frustum);
-    new_data.set([radians(90.0)], base + SharedViewBuffer.offsets.fov);
-    new_data.set([1.0], base + SharedViewBuffer.offsets.aspect_ratio);
-    new_data.set([0.001], base + SharedViewBuffer.offsets.near);
-    new_data.set([1000.0], base + SharedViewBuffer.offsets.far);
-
-    SharedViewBuffer.raw_data = new_data;
-
+    SharedViewBuffer.raw_data.set(
+      mat4.create(),
+      base + SharedViewBuffer.offsets.view_projection_matrix
+    );
+    SharedViewBuffer.raw_data.set(
+      mat4.create(),
+      base + SharedViewBuffer.offsets.inverse_view_projection_matrix
+    );
+    SharedViewBuffer.raw_data.set(
+      vec4.fromValues(0, 0, 0, 1),
+      base + SharedViewBuffer.offsets.view_position
+    );
+    SharedViewBuffer.raw_data.set(
+      vec4.fromValues(0, 0, 0, 0),
+      base + SharedViewBuffer.offsets.view_rotation
+    );
+    SharedViewBuffer.raw_data.set(WORLD_FORWARD, base + SharedViewBuffer.offsets.view_direction);
+    SharedViewBuffer.raw_data.set(
+      vec4.fromValues(1, 0, 0, 0),
+      base + SharedViewBuffer.offsets.view_right
+    );
+    SharedViewBuffer.raw_data.set(Array(24).fill(0), base + SharedViewBuffer.offsets.frustum);
+    SharedViewBuffer.raw_data.set([radians(90.0)], base + SharedViewBuffer.offsets.fov);
+    SharedViewBuffer.raw_data.set([1.0], base + SharedViewBuffer.offsets.aspect_ratio);
+    SharedViewBuffer.raw_data.set([0.001], base + SharedViewBuffer.offsets.near);
+    SharedViewBuffer.raw_data.set([1000.0], base + SharedViewBuffer.offsets.far);
+    SharedViewBuffer.raw_data.set([1], base + SharedViewBuffer.offsets.culling_enabled);
+    SharedViewBuffer.raw_data.set([1], base + SharedViewBuffer.offsets.occlusion_enabled);
+    SharedViewBuffer.raw_data.set([1], base + SharedViewBuffer.offsets.distance_check_enabled);
     SharedViewBuffer.dirty_states.set(idx, 1);
+    SharedViewBuffer.renderable_states.set(idx, 0);
 
     if (
       !SharedViewBuffer.buffer ||
@@ -289,26 +360,51 @@ export class SharedViewBuffer {
     }
 
     const view = SharedViewBuffer.views.allocate();
+
     return view.set_index(idx);
   }
 
   /** Remove a view, compact raw_data, and rebuild GPU buffer */
-  static remove_view_data(idx) {
+  static remove_view_data(idx, compact = false) {
     const length = SharedViewBuffer.raw_data.length / SharedViewBuffer.floats_per_view;
-    const last = length - 1;
 
-    if (idx !== last) {
-      const src = last * SharedViewBuffer.floats_per_view;
-      const dst = idx * SharedViewBuffer.floats_per_view;
-      SharedViewBuffer.raw_data.copyWithin(dst, src, src + SharedViewBuffer.floats_per_view);
+    if (compact) {
+      const last = length - 1;
+      const last_dirty_state = SharedViewBuffer.dirty_states.get(last);
+      const last_renderable_state = SharedViewBuffer.is_render_active(last);
+
+      SharedViewBuffer.set_render_active(idx, false);
+
+      // Swap with last view if not the last view
+      if (idx !== last) {
+        SharedViewBuffer.set_render_active(last, false);
+
+        const src = last * SharedViewBuffer.floats_per_view;
+        const dst = idx * SharedViewBuffer.floats_per_view;
+        SharedViewBuffer.raw_data.copyWithin(dst, src, src + SharedViewBuffer.floats_per_view);
+
+        SharedViewBuffer.dirty_states.set(idx, last_dirty_state);
+        SharedViewBuffer.set_render_active(idx, last_renderable_state);
+      }
+
+      SharedViewBuffer.raw_data = SharedViewBuffer.raw_data.subarray(
+        0,
+        last * SharedViewBuffer.floats_per_view
+      );
+    } else {
+      SharedViewBuffer.dirty_states.set(idx, 0);
+      if (SharedViewBuffer.is_render_active(idx)) {
+        MeshTaskQueue.deallocate_view_data(idx);
+      }
+      SharedViewBuffer.set_render_active(idx, false);
+      SharedViewBuffer.fill(
+        0,
+        idx * SharedViewBuffer.floats_per_view,
+        SharedViewBuffer.floats_per_view
+      );
+      // recycle this index for future allocations
+      SharedViewBuffer.free_list.push(idx);
     }
-
-    SharedViewBuffer.raw_data = SharedViewBuffer.raw_data.subarray(
-      0,
-      length * SharedViewBuffer.floats_per_view
-    );
-
-    SharedViewBuffer.dirty_states.set(idx, 0);
   }
 
   /** Get a view by index */
@@ -320,6 +416,26 @@ export class SharedViewBuffer {
   /** Get the number of views */
   static get_view_data_count() {
     return SharedViewBuffer.raw_data.length / SharedViewBuffer.floats_per_view;
+  }
+
+  /** Check if a specific view is active. */
+  static is_render_active(view_index) {
+    return !!SharedViewBuffer.renderable_states.get(view_index);
+  }
+
+  /** Request cull update for a specific view index. */
+  static set_render_active(view_index, active = true) {
+    const old_state = SharedViewBuffer.renderable_states.get(view_index);
+    const new_state = active ? 1 : 0;
+    if (old_state === new_state) return;
+
+    if (active) {
+      MeshTaskQueue.allocate_view_data(view_index);
+    } else {
+      MeshTaskQueue.deallocate_view_data(view_index);
+    }
+
+    SharedViewBuffer.renderable_states.set(view_index, new_state);
   }
 
   /** Recompute view_projection/inverse/frustum for all or selected views */
@@ -483,7 +599,10 @@ export class SharedViewBuffer {
       SharedViewBuffer.raw_data.set(fr, base + SharedViewBuffer.offsets.frustum);
 
       // upload full view block using element-count write
-      const view_slice = SharedViewBuffer.raw_data.subarray(base, base + SharedViewBuffer.floats_per_view);
+      const view_slice = SharedViewBuffer.raw_data.subarray(
+        base,
+        base + SharedViewBuffer.floats_per_view
+      );
       SharedViewBuffer.buffer.write(view_slice, base * 4);
 
       SharedViewBuffer.dirty_states.set(idx, 0);

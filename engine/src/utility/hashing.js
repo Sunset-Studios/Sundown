@@ -1,6 +1,16 @@
-export function hash_data(data_map, initial_hash) {
+export function hash_data_map(data_map, initial_hash) {
   let hash = initial_hash;
   for (const [key, value] of data_map) {
+    hash = (hash << 5) - hash + hash_value(key);
+    hash = (hash << 5) - hash + hash_value(value);
+    hash |= 0; // Convert to 32-bit integer
+  }
+  return hash;
+}
+
+export function hash_data_object(data_object, initial_hash) {
+  let hash = initial_hash;
+  for (const [key, value] of Object.entries(data_object)) {
     hash = (hash << 5) - hash + hash_value(key);
     hash = (hash << 5) - hash + hash_value(value);
     hash |= 0; // Convert to 32-bit integer

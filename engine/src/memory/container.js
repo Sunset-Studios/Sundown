@@ -96,11 +96,11 @@ export class ResizableBitArray {
     }
 
     // round up to full 32-bit slots
-    const slots = Math.ceil(initial_capacity / 32);
+    const slots = Math.ceil(initial_capacity >> 5); // initial_capacity / 32
 
     this.#buffer = new Uint32Array(slots);
     this.#size = 0;
-    this.#capacity = slots * 32;
+    this.#capacity = slots << 5; // slots * 32
   }
 
   /**
@@ -127,8 +127,8 @@ export class ResizableBitArray {
     if (!Number.isInteger(index) || index < 0 || index >= this.#size) {
       return false;
     }
-    const array_index = Math.floor(index / 32);
-    const bit_index = index % 32;
+    const array_index = (index >> 5); // index / 32
+    const bit_index = index & 31; // index % 32
     return (this.#buffer[array_index] & (1 << bit_index)) !== 0;
   }
 
@@ -144,8 +144,8 @@ export class ResizableBitArray {
     if (index >= this.#size) {
       this.#resize(index + 1);
     }
-    const array_index = Math.floor(index / 32);
-    const bit_index = index % 32;
+    const array_index = (index >> 5); // index / 32
+    const bit_index = index & 31; // index % 32
     if (value) {
       this.#buffer[array_index] |= 1 << bit_index;
     } else {
@@ -157,11 +157,11 @@ export class ResizableBitArray {
     if (new_size > this.#capacity) {
       // double buffer bits or grow just enough
       const new_capacity = Math.max(new_size, this.#capacity * 2);
-      const new_slots = Math.ceil(new_capacity / 32);
+      const new_slots = Math.ceil(new_capacity >> 5); // new_capacity / 32
       const new_buffer = new Uint32Array(new_slots);
       new_buffer.set(this.#buffer);
       this.#buffer = new_buffer;
-      this.#capacity = new_slots * 32;
+      this.#capacity = new_slots << 5; // new_slots * 32
     }
     this.#size = new_size;
   }

@@ -14,11 +14,6 @@ struct DrawCommand {
 
 struct DrawCullConstants {
     draw_count: f32,
-    culling_enabled: f32,
-    occlusion_enabled: f32,
-    distance_check: f32,
-    z_near: f32,
-    z_far: f32,
     p00: f32,
     p11: f32,
     hzb_width: f32,
@@ -41,9 +36,9 @@ struct DrawCullConstants {
 // Occlusion Helper Functions
 // ------------------------------------------------------------------------------------ 
 
-fn sphere_project(center: vec4<f32>, radius: f32, p00: f32, p11: f32, aabb: ptr<function, vec4<f32>>) -> bool {
+fn sphere_project(center: vec4<f32>, radius: f32, p00: f32, p11: f32, aabb: ptr<function, vec4<f32>>, view: ptr<function, View>) -> bool {
     // Transform center to view space and skip occlusion if inside bounding sphere
-    var center_view = view_buffer[0].view_matrix * center;
+    var center_view = view.view_matrix * center;
     let dist2 = dot(center_view.xyz, center_view.xyz);
     if (dist2 <= radius * radius) {
         // viewer is inside the sphere, always visible
@@ -51,42 +46,44 @@ fn sphere_project(center: vec4<f32>, radius: f32, p00: f32, p11: f32, aabb: ptr<
     }
 
     let cx = vec2f(center_view.x, -center_view.z);
-    let vx = vec2f(sqrt(dot(cx, cx) - radius * radius), radius);
+    let vx = vec2f(sqrt(max(dot(cx, cx) - radius * radius, 0.0)), radius);
     let min_x = mat2x2f(vx.x, vx.y, -vx.y, vx.x) * cx;
     let max_x = mat2x2f(vx.x, -vx.y, vx.y, vx.x) * cx;
 
     let cy = vec2f(center_view.y, -center_view.z);
-    let vy = vec2f(sqrt(dot(cy, cy) - radius * radius), radius);
+    let vy = vec2f(sqrt(max(dot(cy, cy) - radius * radius, 0.0)), radius);
     let min_y = mat2x2f(vy.x, vy.y, -vy.y, vy.x) * cy;
     let max_y = mat2x2f(vy.x, -vy.y, vy.y, vy.x) * cy;
 
     // Compute AABB in NDC ([-1,1] range)
     *aabb = vec4f(
-        (min_x.x / min_x.y) * p00,
-        -(min_y.x / min_y.y) * p11,
-        (max_x.x / max_x.y) * p00,
-        -(max_y.x / max_y.y) * p11
+        (select(0.0, min_x.x / min_x.y, min_x.y != 0.0)) * p00,
+        -(select(0.0, min_y.x / min_y.y, min_y.y != 0.0)) * p11,
+        (select(0.0, max_x.x / max_x.y, max_x.y != 0.0)) * p00,
+        -(select(0.0, max_y.x / max_y.y, max_y.y != 0.0)) * p11
     );
 
     // Map from NDC [-1,1] to UV [0,1]
     *aabb = (*aabb * 0.5) + 0.5;
+    *aabb = clamp(*aabb, vec4f(0.0), vec4f(1.0));
 
     return true;
 }
 
-fn is_occluded(center: vec4<f32>, radius: f32) -> u32 {
-    if (draw_cull_constants.occlusion_enabled == 0.0) {
+fn is_occluded(center: vec4<f32>, radius: f32, view: ptr<function, View>) -> u32 {
+    if (view.occlusion_enabled == 0.0) {
         return 0u;
     }
 
     var aabb: vec4<f32>;
-    if (!sphere_project(center, radius, draw_cull_constants.p00, draw_cull_constants.p11, &aabb)) {
+    if (!sphere_project(center, radius, draw_cull_constants.p00, draw_cull_constants.p11, &aabb, view)) {
         return 0u;
     }
 
     let width = (aabb.z - aabb.x) * draw_cull_constants.hzb_width;
     let height = (aabb.w - aabb.y) * draw_cull_constants.hzb_height;
-    let level = floor(log2(max(width, height)));
+    let non_negative_size = max(1.0, max(width, height));
+    let level = max(floor(log2(non_negative_size)), 0.0);
 
     let uv = (aabb.xy + aabb.zw) * 0.5;
 
@@ -96,36 +93,34 @@ fn is_occluded(center: vec4<f32>, radius: f32) -> u32 {
     depth = max(depth, textureSampleLevel(input_texture, non_filtering_sampler, vec2(aabb.x, aabb.w), level).r);
     depth = max(depth, textureSampleLevel(input_texture, non_filtering_sampler, vec2(aabb.z, aabb.y), level).r);
 
-    // Calculate sphere's closest point to camera in view space
-    let view_matrix = view_buffer[0].view_matrix;
-    let closest_point = center.xyz + (-view_buffer[0].view_direction.xyz * radius);
-    let view_space_point = (view_matrix * vec4<f32>(closest_point, 1.0));
+    let view_matrix = view.view_matrix;
+    let projection_matrix = view.projection_matrix;
 
-    // Project to get NDC
-    let proj_point = view_buffer[0].projection_matrix * view_space_point;
+    let closest_point_ws = center.xyz - (view.view_direction.xyz * radius);
+    let view_space_point = (view_matrix * vec4<f32>(closest_point_ws, 1.0));
+
+    let proj_point = projection_matrix * view_space_point;
     var sphere_depth = proj_point.z / proj_point.w; 
-    sphere_depth = sphere_depth * 0.5 + 0.5; 
 
-    // Distance-based bias
-    let dist_bias = abs(view_space_point.z) * 0.0001;
-    let bias = max(0.001, dist_bias);
+    let dist_bias_val = abs(view_space_point.z) * 0.000001;
+    let final_bias = max(0.000001, dist_bias_val);
 
-    let visible = u32(sphere_depth < depth + bias);
-    return (1u - visible) * u32(draw_cull_constants.culling_enabled);
+    let visible_u32 = u32(sphere_depth < depth + final_bias);
+    return (1u - visible_u32) * u32(view.culling_enabled);
 }
 
-fn is_in_frustum(center: vec4<f32>, radius: f32) -> u32 {
+fn is_in_frustum(center: vec4<f32>, radius: f32, view: ptr<function, View>) -> u32 {
     var visible = 1u;
 
     // Check all frustum planes
-    visible *= u32(dot(view_buffer[0].frustum[0], center) > -radius);
-    visible *= u32(dot(view_buffer[0].frustum[1], center) > -radius);
-    visible *= u32(dot(view_buffer[0].frustum[2], center) > -radius);
-    visible *= u32(dot(view_buffer[0].frustum[3], center) > -radius);
-    visible *= u32(dot(view_buffer[0].frustum[4], center) > -radius);
-    visible *= u32(dot(view_buffer[0].frustum[5], center) > -radius);
+    visible *= u32(dot(view.frustum[0], center) > -radius);
+    visible *= u32(dot(view.frustum[1], center) > -radius);
+    visible *= u32(dot(view.frustum[2], center) > -radius);
+    visible *= u32(dot(view.frustum[3], center) > -radius);
+    visible *= u32(dot(view.frustum[4], center) > -radius);
+    visible *= u32(dot(view.frustum[5], center) > -radius);
 
-    return visible * u32(draw_cull_constants.culling_enabled) + u32(1u - u32(draw_cull_constants.culling_enabled));
+    return visible * u32(view.culling_enabled) + u32(1u - u32(view.culling_enabled));
 }
 
 // ------------------------------------------------------------------------------------
@@ -145,8 +140,9 @@ fn cs(@builtin(global_invocation_id) global_id: vec3<u32>) {
         var radius = length(aabb_node.max_point.xyz - aabb_node.min_point.xyz) * 0.5;
         radius *= 1.05; // Inflate bounds conservatively
 
-        let in_frustum = is_in_frustum(center, radius);
-        let occluded = is_occluded(center, radius);
+        var view = view_buffer[frame_info.view_index];
+        let in_frustum = is_in_frustum(center, radius, &view);
+        let occluded = is_occluded(center, radius, &view);
 
         if ((in_frustum * (1u - occluded)) > 0u) {
             let batch_index = object_instances[g_id].batch;

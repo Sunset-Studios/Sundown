@@ -96,7 +96,6 @@ export class FreeformArcballControlProcessor extends SimulationLayer {
             view_data.view_position = position;
             view_data.view_rotation = rotation;
         }
-        SharedViewBuffer.update_transforms(this.context.current_view);
     }
 
     set_scene(scene) {

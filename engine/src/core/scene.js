@@ -2,6 +2,7 @@ import { EntityManager } from "./ecs/entity.js";
 import { SimulationLayer } from "./simulation_layer.js";
 import { DevConsole } from "../tools/dev_console.js";
 
+import { LightViewProcessor } from "./subsystems/light_view_processor.js";
 import { EntityPreprocessor } from "./subsystems/entity_preprocessor.js";
 import { TextProcessor } from "./subsystems/text_processor.js";
 import { StaticMeshProcessor } from "./subsystems/static_mesh_processor.js";
@@ -14,7 +15,7 @@ import { FontCache } from "../ui/text/font_cache.js";
 import { ViewProcessor } from "./subsystems/view_processor.js";
 import { UI3DProcessor } from "./subsystems/ui_3d_processor.js";
 import { UIProcessor } from "./subsystems/ui_processor.js";
-import { SharedViewBuffer } from "./shared_data.js";
+import { SharedViewBuffer, SharedFrameInfoBuffer } from "./shared_data.js";
 import { Renderer } from "../renderer/renderer.js";
 
 export class Scene extends SimulationLayer {
@@ -33,7 +34,10 @@ export class Scene extends SimulationLayer {
     Renderer.get().set_scene_id(this.name);
 
     const view = SharedViewBuffer.add_view_data();
+    view.renderable_state = 1;
+
     this.context.current_view = view.get_index();
+    SharedFrameInfoBuffer.set_view_index(this.context.current_view);
 
     FontCache.auto_load_fonts();
 
@@ -58,6 +62,7 @@ export class Scene extends SimulationLayer {
     const view_processor = this.add_layer(ViewProcessor);
     view_processor.set_scene(this);
 
+    this.add_layer(LightViewProcessor);
     this.add_layer(UIProcessor);
     this.add_layer(TextProcessor);
     this.add_layer(StaticMeshProcessor);
@@ -90,6 +95,7 @@ export class Scene extends SimulationLayer {
     this.remove_layer(TextProcessor);
     this.remove_layer(StaticMeshProcessor);
     this.remove_layer(TransformProcessor);
+    this.remove_layer(LightViewProcessor);
     this.remove_layer(ViewProcessor);
   }
   

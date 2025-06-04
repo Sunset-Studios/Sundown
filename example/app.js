@@ -891,7 +891,7 @@ export class AABBScene extends Scene {
             this.default_material_id,
             null,
             [],
-            true,
+            true
           );
 
           this.entities.push(entity);
@@ -965,7 +965,11 @@ export class AABBScene extends Scene {
     this.last_ray_origin = view_data.view_position;
 
     // Calculate ray direction from camera to cursor world position
-    this.last_ray_direction = vec4.sub(vec4.create(), cursor_world_position, view_data.view_position);
+    this.last_ray_direction = vec4.sub(
+      vec4.create(),
+      cursor_world_position,
+      view_data.view_position
+    );
     // Normalize the direction vector
     const length = Math.sqrt(
       this.last_ray_direction[0] * this.last_ray_direction[0] +
@@ -1654,11 +1658,11 @@ export class ObjectPaintingScene extends Scene {
   brush_entity = null;
 
   // --- Configurable parameters ---
-  brush_radius = 2.0;                  // radius of the sphere brush
-  brush_emit_intensity = 1.0;          // material emission
-  paint_rate = 0.25;                    // seconds between paint ticks
-  spawn_count = 256;                   // objects per tick
-  spawn_radius = 5.0;                  // radius of random paint sphere
+  brush_radius = 2.0; // radius of the sphere brush
+  brush_emit_intensity = 1.0; // material emission
+  paint_rate = 0.25; // seconds between paint ticks
+  spawn_count = 256; // objects per tick
+  spawn_radius = 5.0; // radius of random paint sphere
   // -------------------------------
 
   last_paint_timer = 0;
@@ -1700,17 +1704,11 @@ export class ObjectPaintingScene extends Scene {
     // Load sphere mesh & create transparent/emissive brush material
     this.sphere_mesh = Mesh.from_gltf("engine/models/sphere/sphere.gltf");
 
-    const object_material1 = StandardMaterial.create(
-      "ObjectPaintingObjectMaterial",
-    );
+    const object_material1 = StandardMaterial.create("ObjectPaintingObjectMaterial");
     this.object_material1_id = object_material1.material_id;
-    const object_material2 = StandardMaterial.create(
-      "ObjectPaintingObjectMaterial2",
-    );
+    const object_material2 = StandardMaterial.create("ObjectPaintingObjectMaterial2");
     this.object_material2_id = object_material2.material_id;
-    const object_material3 = StandardMaterial.create(
-      "ObjectPaintingObjectMaterial3",
-    );
+    const object_material3 = StandardMaterial.create("ObjectPaintingObjectMaterial3");
     this.object_material3_id = object_material3.material_id;
 
     object_material1.set_albedo([0.1, 0.1, 0.3, 1]);
@@ -1756,13 +1754,11 @@ export class ObjectPaintingScene extends Scene {
           const entity = spawn_mesh_entity(
             [x, y, z],
             quat.create(),
-            [
-              0.1 + Math.random() * 0.3,
-              0.1 + Math.random() * 0.3,
-              0.1 + Math.random() * 0.3
-            ],
+            [0.1 + Math.random() * 0.3, 0.1 + Math.random() * 0.3, 0.1 + Math.random() * 0.3],
             this.sphere_mesh,
-            [this.object_material1_id, this.object_material2_id, this.object_material3_id][Math.floor(Math.random() * 3)],
+            [this.object_material1_id, this.object_material2_id, this.object_material3_id][
+              Math.floor(Math.random() * 3)
+            ],
             null,
             [],
             true,
@@ -1795,24 +1791,30 @@ export class ObjectPaintingScene extends Scene {
     const cy = height * 0.5;
 
     // vertical line
-    UI.panel({
-      x: cx - 1,
-      y: cy - 10,
-      width: 2,
-      height: 20,
-      background_color: "#FFFFFF",
-      dont_consume_cursor_events: true,
-    }, () => {});
+    UI.panel(
+      {
+        x: cx - 1,
+        y: cy - 10,
+        width: 2,
+        height: 20,
+        background_color: "#FFFFFF",
+        dont_consume_cursor_events: true,
+      },
+      () => {}
+    );
 
     // horizontal line
-    UI.panel({
-      x: cx - 10,
-      y: cy - 1,
-      width: 20,
-      height: 2,
-      background_color: "#FFFFFF",
-      dont_consume_cursor_events: true,
-    }, () => {});
+    UI.panel(
+      {
+        x: cx - 10,
+        y: cy - 1,
+        width: 20,
+        height: 2,
+        background_color: "#FFFFFF",
+        dont_consume_cursor_events: true,
+      },
+      () => {}
+    );
 
     // help text overlay
     UI.panel(info_panel_config, () => {
@@ -1822,12 +1824,16 @@ export class ObjectPaintingScene extends Scene {
 }
 
 // Simple Test Gym Scene - Cornell-box blockout for DDGI testing
-export class TestGymScene extends Scene {
-  name = "TestGymScene";
+export class GITestScene extends Scene {
+  name = "GITestScene";
   entities = [];
 
   init(parent_context) {
     super.init(parent_context);
+
+    const room_size = 10.0;
+    const wall_thickness = 0.1;
+    const ambient_emissive = 0.03;
 
     // camera arcball
     const freeform_arcball_control_processor = this.add_layer(FreeformArcballControlProcessor);
@@ -1852,101 +1858,282 @@ export class TestGymScene extends Scene {
     // directional light
     const light_entity = EntityManager.create_entity([LightFragment]);
     this.entities.push(light_entity);
-    
+
     const light_fragment_view = EntityManager.get_fragment(light_entity, LightFragment);
     light_fragment_view.type = LightType.DIRECTIONAL;
     light_fragment_view.color = [1, 1, 1];
     light_fragment_view.intensity = 0.5;
-    light_fragment_view.position = [15, 20, 5];
+    light_fragment_view.position = [15, 20, 15];
     light_fragment_view.active = true;
 
     // materials
     const wall_material = StandardMaterial.create("testgym_wall_material");
     const wall_material_id = wall_material.material_id;
     wall_material.set_albedo([1, 1, 1, 1]);
-    wall_material.set_emission(0.1);
+    wall_material.set_emission(ambient_emissive);
     wall_material.set_roughness(1.0);
 
     const red_material = StandardMaterial.create("testgym_red_material");
     const red_material_id = red_material.material_id;
     red_material.set_albedo([1, 0.2, 0.2, 1]);
-    red_material.set_emission(0.1);
+    red_material.set_emission(ambient_emissive);
 
     const blue_material = StandardMaterial.create("testgym_blue_material");
     const blue_material_id = blue_material.material_id;
     blue_material.set_albedo([0.2, 0.2, 1, 1]);
-    blue_material.set_emission(0.1);
+    blue_material.set_emission(ambient_emissive);
 
     const gray_material = StandardMaterial.create("testgym_gray_material");
     const gray_material_id = gray_material.material_id;
     gray_material.set_albedo([0.5, 0.5, 0.5, 1]);
-    gray_material.set_emission(0.1);
+    gray_material.set_emission(ambient_emissive);
 
     // meshes
-    const cube_mesh   = Mesh.cube();
+    const cube_mesh = Mesh.cube();
     const sphere_mesh = Mesh.from_gltf("engine/models/sphere/sphere.gltf");
 
-    const room_size     = 10.0;
-    const wall_thickness = 0.1;
-
     // Cornell-box walls (tight box)
-    // floor top at y=0
-    const floor = spawn_mesh_entity(
-      [0, -wall_thickness, 0], [0, 0, 0, 1], [room_size, wall_thickness, room_size], cube_mesh, wall_material_id
-    );
-    this.entities.push(floor);
-
-    // ceiling bottom at y=room_size
-    const ceiling = spawn_mesh_entity(
-      [0, room_size * 2.0 + wall_thickness, 0], [0, 0, 0, 1], [room_size, wall_thickness, room_size], cube_mesh, wall_material_id
-    );
-    this.entities.push(ceiling);
-
-    // back wall inner surface at z=-room_size/2
-    const back_wall = spawn_mesh_entity(
-      [0, room_size, -room_size - wall_thickness],
-      [0, 0, 0, 1],
-      [room_size, room_size, wall_thickness],
-      cube_mesh,
-      wall_material_id
-    );
-    this.entities.push(back_wall);
-
-    // left wall inner surface at x=-room_size/2
-    const left_wall = spawn_mesh_entity(
-      [-room_size - wall_thickness, room_size, 0],
-      [0, 0, 0, 1],
-      [wall_thickness, room_size, room_size],
-      cube_mesh,
-      red_material_id
-    );
-    this.entities.push(left_wall);
-
-    // right wall inner surface at x=+room_size/2
-    const right_wall = spawn_mesh_entity(
-      [room_size + wall_thickness, room_size, 0],
-      [0, 0, 0, 1],
-      [wall_thickness, room_size, room_size],
-      cube_mesh,
-      blue_material_id
-    );
-    this.entities.push(right_wall);
-
-    // blockout "buildings"
-    const building_data = [
-      { mesh: cube_mesh,   position: [-3, 2, -3], scale: [1, 2, 1], material_id: gray_material_id },
-      { mesh: cube_mesh,   position: [ 2, 3, -2], scale: [1, 3, 1], material_id: red_material_id  },
-      { mesh: sphere_mesh, position: [-1, 1.5,  2], scale: [1.5, 1.5, 1.5], material_id: blue_material_id },
-    ];
-    for (const item of building_data) {
-      const b = spawn_mesh_entity(
-        item.position,
+    {
+      // floor top at y=0
+      const floor = spawn_mesh_entity(
+        [0, -wall_thickness, 0],
         [0, 0, 0, 1],
-        item.scale,
-        item.mesh,
-        item.material_id
+        [room_size, wall_thickness, room_size],
+        cube_mesh,
+        wall_material_id
       );
-      this.entities.push(b);
+      this.entities.push(floor);
+
+      // ceiling bottom at y=room_size
+      const ceiling = spawn_mesh_entity(
+        [0, room_size * 2.0 + wall_thickness, 0],
+        [0, 0, 0, 1],
+        [room_size, wall_thickness, room_size],
+        cube_mesh,
+        wall_material_id
+      );
+      this.entities.push(ceiling);
+
+      // back wall inner surface at z=-room_size/2
+      const back_wall = spawn_mesh_entity(
+        [0, room_size, -room_size - wall_thickness],
+        [0, 0, 0, 1],
+        [room_size, room_size, wall_thickness],
+        cube_mesh,
+        wall_material_id
+      );
+      this.entities.push(back_wall);
+
+      // left wall inner surface at x=-room_size/2
+      const left_wall = spawn_mesh_entity(
+        [-room_size - wall_thickness, room_size, 0],
+        [0, 0, 0, 1],
+        [wall_thickness, room_size, room_size],
+        cube_mesh,
+        red_material_id
+      );
+      this.entities.push(left_wall);
+
+      // right wall inner surface at x=+room_size/2
+      const right_wall = spawn_mesh_entity(
+        [room_size + wall_thickness, room_size, 0],
+        [0, 0, 0, 1],
+        [wall_thickness, room_size, room_size],
+        cube_mesh,
+        blue_material_id
+      );
+      this.entities.push(right_wall);
+
+      // blockout "buildings"
+      const building_data = [
+        { mesh: cube_mesh, position: [-3, 2, -3], scale: [1, 2, 1], material_id: gray_material_id },
+        { mesh: cube_mesh, position: [2, 3, -2], scale: [1, 3, 1], material_id: red_material_id },
+        {
+          mesh: sphere_mesh,
+          position: [-1, 1.5, 2],
+          scale: [1.5, 1.5, 1.5],
+          material_id: blue_material_id,
+        },
+      ];
+      for (const item of building_data) {
+        const b = spawn_mesh_entity(
+          item.position,
+          [0, 0, 0, 1],
+          item.scale,
+          item.mesh,
+          item.material_id
+        );
+        this.entities.push(b);
+      }
+    }
+    // Additional Cornell box with different wall colors at x = -30
+    {
+      const offset_x = -30.0;
+
+      const left_wall_material_second = StandardMaterial.create("testgym_left_material_second");
+      const left_wall_material_second_id = left_wall_material_second.material_id;
+      left_wall_material_second.set_albedo([0, 1, 0, 1]);
+      left_wall_material_second.set_emission(ambient_emissive);
+
+      const right_wall_material_second = StandardMaterial.create("testgym_right_material_second");
+      const right_wall_material_second_id = right_wall_material_second.material_id;
+      right_wall_material_second.set_albedo([1, 0, 1, 1]);
+      right_wall_material_second.set_emission(ambient_emissive);
+
+      // spawn elements for second box
+      const floor_second = spawn_mesh_entity(
+        [offset_x, -wall_thickness, 0],
+        [0, 0, 0, 1],
+        [room_size, wall_thickness, room_size],
+        cube_mesh,
+        wall_material_id 
+      );
+      this.entities.push(floor_second);
+
+      const ceiling_second = spawn_mesh_entity(
+        [offset_x, room_size * 2.0 + wall_thickness, 0],
+        [0, 0, 0, 1],
+        [room_size, wall_thickness, room_size],
+        cube_mesh,
+        wall_material_id
+      );
+      this.entities.push(ceiling_second);
+
+      const back_wall_second = spawn_mesh_entity(
+        [offset_x, room_size, -room_size - wall_thickness],
+        [0, 0, 0, 1],
+        [room_size, room_size, wall_thickness],
+        cube_mesh,
+        wall_material_id
+      );
+      this.entities.push(back_wall_second);
+
+      const left_wall_second = spawn_mesh_entity(
+        [offset_x - (room_size + wall_thickness), room_size, 0],
+        [0, 0, 0, 1],
+        [wall_thickness, room_size, room_size],
+        cube_mesh,
+        left_wall_material_second_id
+      );
+      this.entities.push(left_wall_second);
+
+      const right_wall_second = spawn_mesh_entity(
+        [offset_x + room_size + wall_thickness, room_size, 0],
+        [0, 0, 0, 1],
+        [wall_thickness, room_size, room_size],
+        cube_mesh,
+        right_wall_material_second_id
+      );
+      this.entities.push(right_wall_second);
+
+      const building_data_second = [
+        {
+          mesh: cube_mesh,
+          position: [offset_x - 3, 2, -3],
+          scale: [1, 2, 1],
+          material_id: left_wall_material_second_id,
+        },
+        {
+          mesh: sphere_mesh,
+          position: [offset_x + 2, 1.5, 2],
+          scale: [1.5, 1.5, 1.5],
+          material_id: right_wall_material_second_id,
+        },
+      ];
+      for (const item of building_data_second) {
+        const b = spawn_mesh_entity(
+          item.position,
+          [0, 0, 0, 1],
+          item.scale,
+          item.mesh,
+          item.material_id
+        );
+        this.entities.push(b);
+      }
+    }
+    // Additional Cornell box with different wall colors at x = 30
+    {
+      const offset_x = 30.0;
+
+      const left_wall_material_third = StandardMaterial.create("testgym_left_material_third");
+      const left_wall_material_third_id = left_wall_material_third.material_id;
+      left_wall_material_third.set_albedo([1, 0.5, 0, 1]);
+      left_wall_material_third.set_emission(ambient_emissive);
+
+      const right_wall_material_third = StandardMaterial.create("testgym_right_material_third", {}, { family: MaterialFamilyType.Transparent });
+      const right_wall_material_third_id = right_wall_material_third.material_id;
+      right_wall_material_third.set_albedo([0.5, 0, 0.5, 0.2]);
+      right_wall_material_third.set_emission(ambient_emissive);
+
+      const floor_third = spawn_mesh_entity(
+        [offset_x, -wall_thickness, 0],
+        [0, 0, 0, 1],
+        [room_size, wall_thickness, room_size],
+        cube_mesh,
+        wall_material_id
+      );
+      this.entities.push(floor_third);
+
+      const ceiling_third = spawn_mesh_entity(
+        [offset_x, room_size * 2.0 + wall_thickness, 0],
+        [0, 0, 0, 1],
+        [room_size, wall_thickness, room_size],
+        cube_mesh,
+        wall_material_id
+      );
+      this.entities.push(ceiling_third);
+
+      const back_wall_third = spawn_mesh_entity(
+        [offset_x, room_size, -room_size - wall_thickness],
+        [0, 0, 0, 1],
+        [room_size, room_size, wall_thickness],
+        cube_mesh,
+        wall_material_id
+      );
+      this.entities.push(back_wall_third);
+
+      const left_wall_third = spawn_mesh_entity(
+        [offset_x - (room_size + wall_thickness), room_size, 0],
+        [0, 0, 0, 1],
+        [wall_thickness, room_size, room_size],
+        cube_mesh,
+        left_wall_material_third_id
+      );
+      this.entities.push(left_wall_third);
+
+      const right_wall_third = spawn_mesh_entity(
+        [offset_x + room_size + wall_thickness, room_size, 0],
+        [0, 0, 0, 1],
+        [wall_thickness, room_size, room_size],
+        cube_mesh,
+        right_wall_material_third_id
+      );
+      this.entities.push(right_wall_third);
+
+      const building_data_third = [
+        {
+          mesh: sphere_mesh,
+          position: [offset_x - 2, 1.5, -2],
+          scale: [1.5, 1.5, 1.5],
+          material_id: left_wall_material_third_id,
+        },
+        {
+          mesh: cube_mesh,
+          position: [offset_x + 3, 2, 3],
+          scale: [2, 1, 2],
+          material_id: right_wall_material_third_id,
+        },
+      ];
+      for (const item of building_data_third) {
+        const b = spawn_mesh_entity(
+          item.position,
+          [0, 0, 0, 1],
+          item.scale,
+          item.mesh,
+          item.material_id
+        );
+        this.entities.push(b);
+      }
     }
   }
 
@@ -2014,7 +2201,7 @@ export class SceneSwitcher extends SimulationLayer {
   const solar_ecs_scene = new SolarECSTestScene("SolarECSTestScene");
   const voxel_terrain_scene = new VoxelTerrainScene("VoxelTerrainScene");
   const object_painting_scene = new ObjectPaintingScene("ObjectPaintingScene");
-  const test_gym_scene = new TestGymScene("TestGymScene");
+  const gi_test_scene = new GITestScene("GITestScene");
 
   const scene_switcher = new SceneSwitcher("SceneSwitcher");
   //await scene_switcher.add_scene(solar_ecs_scene);
@@ -2024,7 +2211,7 @@ export class SceneSwitcher extends SimulationLayer {
   //await scene_switcher.add_scene(ml_scene);
   //await scene_switcher.add_scene(voxel_terrain_scene);
   //await scene_switcher.add_scene(object_painting_scene);
-  await scene_switcher.add_scene(test_gym_scene);
+  await scene_switcher.add_scene(gi_test_scene);
 
   await simulator.add_sim_layer(scene_switcher);
 

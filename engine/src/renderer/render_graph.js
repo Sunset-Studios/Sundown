@@ -88,9 +88,13 @@ import { profile_scope } from "../utility/performance.js";
 import { read_file } from "../utility/file_system.js";
 import { deep_clone } from "../utility/object.js";
 
-const max_image_resources = 128;
-const max_buffer_resources = 128;
-const max_render_passes = 128;
+const max_image_resources = 1024;
+const max_buffer_resources = 1024;
+const max_render_passes = 1024;
+
+const RG_VERSION_BITS = 4;
+const RG_TYPE_BITS = 8;
+const RG_INDEX_BITS = 20;
 
 /**
  * Creates a unique handle for a graph resource.
@@ -100,7 +104,12 @@ const max_render_passes = 128;
  * @returns {number} A unique handle for the graph resource.
  */
 function create_graph_resource_handle(index, type, version) {
-  return (index << 24) | (type << 16) | version;
+  // Lower 4 bits for version, middle 8 bits for type, high 20 bits for index
+  return (
+    ((index & ((1 << RG_INDEX_BITS) - 1)) << (RG_VERSION_BITS + RG_TYPE_BITS)) |
+    ((type & ((1 << RG_TYPE_BITS) - 1)) << RG_VERSION_BITS) |
+    (version & ((1 << RG_VERSION_BITS) - 1))
+  );
 }
 
 /**
@@ -109,7 +118,7 @@ function create_graph_resource_handle(index, type, version) {
  * @returns {number} The index of the graph resource.
  */
 function get_graph_resource_index(handle) {
-  return (handle >> 24) & 0x00ffffff;
+  return (handle >> (RG_VERSION_BITS + RG_TYPE_BITS)) & ((1 << RG_INDEX_BITS) - 1);
 }
 
 /**
@@ -118,7 +127,7 @@ function get_graph_resource_index(handle) {
  * @returns {number} The type of the graph resource.
  */
 function get_graph_resource_type(handle) {
-  return (handle >> 16) & 0x000000ff;
+  return (handle >> RG_VERSION_BITS) & ((1 << RG_TYPE_BITS) - 1);
 }
 
 /**
@@ -127,7 +136,7 @@ function get_graph_resource_type(handle) {
  * @returns {number} The version of the graph resource.
  */
 function get_graph_resource_version(handle) {
-  return handle & 0xffff;
+  return handle & ((1 << RG_VERSION_BITS) - 1);
 }
 
 /**
@@ -136,7 +145,8 @@ function get_graph_resource_version(handle) {
  * @returns {boolean} Whether the handle is valid.
  */
 function is_valid_graph_resource(handle) {
-  return handle >> 32 !== -1;
+  // Assuming that an invalid handle is represented as 0xFFFFFFFF.
+  return handle !== 0xffffffff;
 }
 
 /**
@@ -209,21 +219,13 @@ const RGGBufferData = Object.freeze({
  * Frame-specific data for the render graph.
  * @typedef {Object} RGFrameData
  * @property {number} current_pass - Index of the current pass being processed.
- * @property {Object|null} global_bind_group - The global bind group.
- * @property {Object|null} pass_bind_group - The pass-specific bind group.
- * @property {number} pass_pipeline_state - The current pipeline state for the pass.
  * @property {Object|null} resource_deletion_queue - Queue for resources to be deleted.
  * @property {Array} pass_bindless_resources - Array of bindless resources for the current pass.
  */
 const RGFrameData = Object.freeze({
   current_pass: 0,
-  global_bind_group: null,
-  pass_bind_group: null,
-  pass_bind_groups: Array(BindGroupType.Num).fill(null),
-  pass_pipeline_state: 0,
   resource_deletion_queue: null,
   pass_bindless_resources: [],
-  pass_attachments: [],
   g_buffer_data: null,
 });
 
@@ -732,6 +734,8 @@ export class RenderGraph {
       encoded_name: Name.from(name),
       flags: pass_type,
       attachments: [],
+      viewport: params?.viewport ?? null,
+      scissor_rect: params?.scissor_rect ?? null,
     };
     pass.parameters = { ...deep_clone(RGPassParameters), ...params };
     pass.executor = execution_callback;
@@ -808,6 +812,16 @@ export class RenderGraph {
   }
 
   /**
+   * Sets the scene ID for the render graph, used to set and get the current pass order.
+   *
+   * @param {string} scene_id - The ID of the scene to set.
+   * @returns {void}
+   */
+  set_scene_id(scene_id) {
+    this.registry.current_scene_id = scene_id;
+  }
+
+  /**
    * Queues global bind group writes to be processed later in the render graph.
    *
    * @param {Array} writes - An array of write operations to be queued.
@@ -841,25 +855,32 @@ export class RenderGraph {
    *   encoder.drawUI();
    * });
    */
-  queue_pre_commands(name, commands_callback) {
-    this.queued_pre_commands.push({ name, commands_callback });
+  queue_pre_commands(name, commands_callback, persistent = false) {
+    this.queued_pre_commands.push({ name, commands_callback, persistent });
   }
 
   /**
-   * Sets the scene ID for the render graph, used to set and get the current pass order.
+   * Removes a pre-command from the queue.
    *
-   * @param {string} scene_id - The ID of the scene to set.
+   * @param {string} name - The name of the pre-command to remove.
    * @returns {void}
    */
-  set_scene_id(scene_id) {
-    this.registry.current_scene_id = scene_id;
+  unqueue_pre_commands(name) {
+    for (let i = this.queued_pre_commands.length - 1; i >= 0; i--) {
+      if (this.queued_pre_commands[i].name === name) {
+        this.queued_pre_commands.splice(i, 1);
+      }
+    }
   }
 
   _add_queued_pre_commands() {
-    for (const command of this.queued_pre_commands) {
+    for (let i = this.queued_pre_commands.length - 1; i >= 0; i--) {
+      const command = this.queued_pre_commands[i];
       this.add_pass(command.name, RenderPassFlags.GraphLocal, {}, command.commands_callback);
+      if (!command.persistent) {
+        this.queued_pre_commands.splice(i, 1);
+      }
     }
-    this.queued_pre_commands.length = 0;
   }
 
   /**
@@ -875,15 +896,32 @@ export class RenderGraph {
    *   encoder.drawUI();
    * });
    */
-  queue_post_commands(name, commands_callback) {
-    this.queued_post_commands.push({ name, commands_callback });
+  queue_post_commands(name, commands_callback, persistent = false) {
+    this.queued_post_commands.push({ name, commands_callback, persistent });
+  }
+
+  /**
+   * Removes a post-command from the queue.
+   *
+   * @param {string} name - The name of the post-command to remove.
+   * @returns {void}
+   */
+  unqueue_post_commands(name) {
+    for (let i = this.queued_post_commands.length - 1; i >= 0; i--) {
+      if (this.queued_post_commands[i].name === name) {
+        this.queued_post_commands.splice(i, 1);
+      }
+    }
   }
 
   _add_queued_post_commands() {
-    for (const command of this.queued_post_commands) {
+    for (let i = this.queued_post_commands.length - 1; i >= 0; i--) {
+      const command = this.queued_post_commands[i];
       this.add_pass(command.name, RenderPassFlags.GraphLocal, {}, command.commands_callback);
+      if (!command.persistent) {
+        this.queued_post_commands.splice(i, 1);
+      }
     }
-    this.queued_post_commands.length = 0;
   }
 
   _init_pass_order_info() {
@@ -1167,6 +1205,13 @@ export class RenderGraph {
       const frame_data = deep_clone(RGFrameData);
       frame_data.resource_deletion_queue = this.registry.resource_deletion_queue;
 
+      // Setup passes and pass resources
+      for (let i = 0; i < this.non_culled_passes.length; i++) {
+        const pass_handle = this.non_culled_passes[i];
+        this._setup_physical_pass_and_resources(this.registry.render_passes[pass_handle]);
+      }
+
+      // Execute passes
       for (let i = 0; i < this.non_culled_passes.length; i++) {
         const pass_handle = this.non_culled_passes[i];
         this._execute_pass(this.registry.render_passes[pass_handle], frame_data, encoder);
@@ -1342,10 +1387,6 @@ export class RenderGraph {
       throw new Error("Cannot execute null pass");
     }
 
-    frame_data.pass_attachments.length = 0;
-
-    this._setup_physical_pass_and_resources(pass, frame_data, encoder);
-
     if ((pass.pass_config.flags & RenderPassFlags.GraphLocal) !== RenderPassFlags.None) {
       pass.executor(this, frame_data, encoder);
     } else {
@@ -1361,7 +1402,7 @@ export class RenderGraph {
 
       encoder.pushDebugGroup(pass.pass_config.name);
       physical_pass.begin(encoder, pipeline);
-      this._bind_pass_bind_groups(pass, frame_data);
+      this._bind_pass_bind_groups(pass);
       pass.executor(this, frame_data, encoder);
       physical_pass.end();
       encoder.popDebugGroup();
@@ -1370,11 +1411,13 @@ export class RenderGraph {
     }
   }
 
-  _setup_physical_pass_and_resources(pass, frame_data, encoder) {
+  _setup_physical_pass_and_resources(pass) {
     const is_compute_pass =
       (pass.pass_config.flags & RenderPassFlags.Compute) !== RenderPassFlags.None;
     const is_graph_local_pass =
       (pass.pass_config.flags & RenderPassFlags.GraphLocal) !== RenderPassFlags.None;
+
+    let pass_attachments = [];
 
     const setup_resource = (resource, resource_params_index, is_input_resource) => {
       if (this.registry.resource_metadata.has(resource)) {
@@ -1385,7 +1428,7 @@ export class RenderGraph {
             pass,
             resource_params_index,
             is_input_resource,
-            frame_data
+            pass_attachments
           );
         }
         if (is_input_resource) {
@@ -1401,11 +1444,12 @@ export class RenderGraph {
 
     if (!is_graph_local_pass) {
       pass.physical_id = pass.pass_config.encoded_name;
-      RenderPass.create(pass.pass_config);
+      const physical_pass = RenderPass.create(pass.pass_config);
+      physical_pass.frame_attachments = pass_attachments;
 
-      this._setup_pass_shaders(pass, frame_data);
-      this._setup_pass_bind_groups(pass, frame_data);
-      this._setup_pass_pipeline_state(pass, frame_data);
+      this._setup_pass_shaders(pass);
+      this._setup_pass_bind_groups(pass);
+      this._setup_pass_pipeline_state(pass);
     }
   }
 
@@ -1463,7 +1507,7 @@ export class RenderGraph {
     pass,
     resource_params_index,
     is_input_resource,
-    frame_data
+    pass_attachments
   ) {
     const resource_type = get_graph_resource_type(resource);
     const resource_index = get_graph_resource_index(resource);
@@ -1493,7 +1537,7 @@ export class RenderGraph {
           });
         }
       }
-      frame_data.pass_attachments.push(image);
+      pass_attachments.push(image);
     }
   }
 
@@ -1518,7 +1562,7 @@ export class RenderGraph {
     }
   }
 
-  _setup_pass_shaders(pass, frame_data) {
+  _setup_pass_shaders(pass) {
     const shader_setup = pass.parameters.shader_setup;
     if (!shader_setup.pipeline_shaders) {
       return;
@@ -1548,7 +1592,7 @@ export class RenderGraph {
     }
   }
 
-  _setup_pass_bind_groups(pass, frame_data) {
+  _setup_pass_bind_groups(pass) {
     const is_compute_pass =
       (pass.pass_config.flags & RenderPassFlags.Compute) !== RenderPassFlags.None;
 
@@ -1557,7 +1601,7 @@ export class RenderGraph {
     };
     this.pass_cache.bind_groups.set(pass.pass_config.name, pass_binds);
 
-    this._setup_global_bind_group(pass, frame_data);
+    this._setup_global_bind_group(pass);
 
     if (
       pass_binds.bind_groups[BindGroupType.Pass] ||
@@ -1635,6 +1679,12 @@ export class RenderGraph {
             break;
           case ShaderResourceType.StorageTexture:
             binding_obj.storageTexture = {
+              access:
+                binding.type.access === "write"
+                  ? "write-only"
+                  : binding.type.access === "read"
+                    ? "read-only"
+                    : "read-write",
               viewDimension: resource_obj.config.dimension,
               sampleType: Texture.filter_type_from_format(resource_obj.config.format),
               format: resource_obj.config.format || "rgba8unorm",
@@ -1703,10 +1753,9 @@ export class RenderGraph {
     }
   }
 
-  _setup_pass_pipeline_state(pass, frame_data) {
+  _setup_pass_pipeline_state(pass) {
     if (this.pass_cache.pipeline_states.get(pass.pass_config.name)) {
       pass.pipeline_state_id = this.pass_cache.pipeline_states.get(pass.pass_config.name);
-      frame_data.pass_pipeline_state = pass.pipeline_state_id;
       return;
     }
 
@@ -1803,8 +1852,6 @@ export class RenderGraph {
       }
 
       this.pass_cache.pipeline_states.set(pass.pass_config.name, pass.pipeline_state_id);
-
-      frame_data.pass_pipeline_state = pass.pipeline_state_id;
     }
   }
 
@@ -1820,7 +1867,7 @@ export class RenderGraph {
     this.pass_cache_full_needs_reset = false;
   }
 
-  _setup_global_bind_group(pass, frame_data) {
+  _setup_global_bind_group(pass) {
     const pass_binds = this.pass_cache.bind_groups.get(pass.pass_config.name);
 
     pass_binds.bind_groups[BindGroupType.Global] = this.pass_cache.global_bind_group;
@@ -1868,7 +1915,7 @@ export class RenderGraph {
             write.visibility ||
             GPUShaderStage.FRAGMENT | GPUShaderStage.VERTEX | GPUShaderStage.COMPUTE,
           sampler: {
-            type: write.sampler.config.mag_filter === "nearest" ? "non-filtering" : "filtering",
+            type: write.sampler.config.type || "filtering",
           },
         });
       } else if (write.texture_view) {
@@ -1902,7 +1949,7 @@ export class RenderGraph {
     }
   }
 
-  _bind_pass_bind_groups(pass, frame_data) {
+  _bind_pass_bind_groups(pass) {
     const physical_pass = ResourceCache.get().fetch(CacheTypes.PASS, pass.physical_id);
     const pass_bind_groups = this.pass_cache.bind_groups.get(pass.pass_config.name);
 
@@ -1914,9 +1961,9 @@ export class RenderGraph {
         pass_bind_groups.bind_groups[BindGroupType.Pass].bind(physical_pass);
       }
 
-      frame_data.pass_bind_groups[BindGroupType.Global] =
+      physical_pass.frame_bind_groups[BindGroupType.Global] =
         pass_bind_groups.bind_groups[BindGroupType.Global];
-      frame_data.pass_bind_groups[BindGroupType.Pass] =
+      physical_pass.frame_bind_groups[BindGroupType.Pass] =
         pass_bind_groups.bind_groups[BindGroupType.Pass];
     }
   }

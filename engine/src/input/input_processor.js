@@ -74,7 +74,7 @@ export class InputProcessor {
   };
 
   key_map = new Map();
-  ranges_array = new Array(InputRange.NumRanges).fill(0.0);
+  ranges_array = new Float32Array(InputRange.NumRanges);
   mouse_wheel = 0;
   mouse_x = 0;
   mouse_y = 0;

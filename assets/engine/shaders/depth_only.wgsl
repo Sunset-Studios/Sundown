@@ -25,7 +25,8 @@ struct VertexOutput {
     let instance_vertex = vertex_buffer[vi];
     let entity_resolved = get_entity_row(compacted_object_instances[ii].row);
     let transform         = entity_transforms[entity_resolved].transform;
-    let view_proj_mat     = view_buffer[0].view_projection_matrix;
+    let view_index = frame_info.view_index;
+    let view_proj_mat     = view_buffer[view_index].view_projection_matrix;
 
     let is_bill    = (entity_flags[entity_resolved] & EF_BILLBOARD) != 0;
 

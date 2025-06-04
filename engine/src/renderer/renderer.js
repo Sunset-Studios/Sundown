@@ -1,3 +1,4 @@
+import { MAX_BUFFERED_FRAMES } from "../core/minimal.js";
 import { RenderGraph } from "./render_graph.js";
 import { Texture, TextureSampler } from "./texture.js";
 import { Mesh } from "./mesh.js";
@@ -8,15 +9,14 @@ import {
 } from "../core/shared_data.js";
 import { MaterialTemplate } from "./material.js";
 import { global_dispatcher } from "../core/dispatcher.js";
-import { vec2 } from "gl-matrix";
 import { profile_scope } from "../utility/performance.js";
 import ExecutionQueue from "../utility/execution_queue.js";
 import { MaterialFamilyType } from "./renderer_types.js";
 import { FragmentGpuBuffer } from "../core/ecs/solar/memory.js";
 import { log, warn, error } from "../utility/logging.js";
+import { vec2 } from "gl-matrix";
 
 const frame_render_event_name = "frame_render";
-const MAX_BUFFERED_FRAMES = 2;
 
 export class Renderer {
   canvas = null;
@@ -131,12 +131,20 @@ export class Renderer {
     this.render_graph.on_pre_render(callback);
   }
 
-  enqueue_pre_commands(name, commands_callback) {
-    this.render_graph.queue_pre_commands(name, commands_callback);
+  enqueue_pre_commands(name, commands_callback, persistent = false) {
+    this.render_graph.queue_pre_commands(name, commands_callback, persistent);
   }
 
-  enqueue_post_commands(name, commands_callback) {
-    this.render_graph.queue_post_commands(name, commands_callback);
+  unqueue_pre_commands(name) {
+    this.render_graph.unqueue_pre_commands(name);
+  }
+
+  enqueue_post_commands(name, commands_callback, persistent = false) {
+    this.render_graph.queue_post_commands(name, commands_callback, persistent);
+  }
+
+  unqueue_post_commands(name) {
+    this.render_graph.unqueue_post_commands(name);
   }
 
   on_post_render(callback) {
@@ -176,6 +184,7 @@ export class Renderer {
             mag_filter: "nearest",
             min_filter: "nearest",
             mipmap_filter: "nearest",
+            type: "non-filtering",
           }),
         },
         {
@@ -187,6 +196,17 @@ export class Renderer {
             mag_filter: "nearest",
             min_filter: "nearest",
             mipmap_filter: "nearest",
+            type: "non-filtering",
+          }),
+        },
+        {
+          sampler: TextureSampler.create({
+            name: "comparison_sampler",
+            mag_filter: "nearest",
+            min_filter: "nearest",
+            mipmap_filter: "nearest",
+            compare: "less-equal",
+            type: "comparison",
           }),
         },
         {

@@ -30,17 +30,18 @@ struct FragmentOutput {
     var output : VertexOutput;
     
     // Extract the rotation part of the view matrix (3x3 upper-left part)
+    let view_index = frame_info.view_index;
     var rotation_view = mat3x3f(
-        view_buffer[0].view_matrix[0].xyz,
-        view_buffer[0].view_matrix[1].xyz,
-        view_buffer[0].view_matrix[2].xyz
+        view_buffer[view_index].view_matrix[0].xyz,
+        view_buffer[view_index].view_matrix[1].xyz,
+        view_buffer[view_index].view_matrix[2].xyz
     );
     
     // Apply rotation to the vertex position
     var rotated_pos = rotation_view * vec3<f32>(vertex_buffer[vi].position.xyz);
     
     // Apply projection matrix
-    output.position = view_buffer[0].projection_matrix * vec4f(rotated_pos, 1.0);
+    output.position = view_buffer[view_index].projection_matrix * vec4f(rotated_pos, 1.0);
     
     // Store the rotated position for fragment shader
     output.pos = 0.5 * (vec4<f32>(vertex_buffer[vi].position) + vec4<f32>(1.0, 1.0, 1.0, 1.0)); 

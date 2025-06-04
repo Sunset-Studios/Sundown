@@ -1,3 +1,5 @@
+import { ResizableBitArray } from './container';
+
 const function_string = 'function'
 const out_of_memory_error = 'Out of memory on allocator';
 const invalid_allocator_index_error = 'Invalid allocator index';
@@ -771,10 +773,6 @@ class RandomAccessAllocator {
      * @throws {Error} If the index is out of bounds
      */
     allocate_at(index) {
-        if (index < 0 || index > this.#size) {
-            throw new Error("Index out of bounds");
-        }
-        
         if (this.#size >= this.#capacity) {
             this._resize(this.#capacity * 2);
         }
@@ -874,671 +872,149 @@ class RandomAccessAllocator {
     }
 }
 
-
-// ================================================
-// SOA Allocators
-// ================================================
-
 /**
- * A frame allocator using the Structure-of-Arrays (SOA) approach with a persistent data view.
- * This implementation allocates only the required typed arrays and one view object.
+ * A sparse random access allocator that uses a bitmask to track allocated slots.
+ * Prevents object reallocations or re-creations unless resizing is necessary.
  */
-class FrameAllocatorSOA {
-    constructor(max_objects, template) {
-        this.max_objects = max_objects;
-        this.offset = 0;
-        this.arrays = {};
-        this.element_sizes = {};
-        // For each field in the template, allocate a typed array of size (max_objects * element_size)
-        for (const key in template) {
-            if (Object.prototype.hasOwnProperty.call(template, key)) {
-                const config = template[key];
-                let element_size = 1;
-                let array_type = Float32Array;
-                if (typeof config === 'object' && config !== null) {
-                    element_size = config.element_size || 1;
-                    array_type = config.array_type || Float32Array;
-                } else if (typeof config === 'function') {
-                    array_type = config;
-                }
-                this.arrays[key] = new array_type(max_objects * element_size);
-                this.element_sizes[key] = element_size;
-            }
-        }
-        // Create a persistent view object that will be used to provide dot-notation access.
-        this._view = Object.create(null);
-        for (const key in this.arrays) {
-            let element_size = this.element_sizes[key];
-            Object.defineProperty(this._view, key, {
-                get: () => {
-                    if (element_size === 1) {
-                        return this.arrays[key][this._current_index];
-                    } else {
-                        let start = this._current_index * element_size;
-                        return this.arrays[key].subarray(start, start + element_size);
-                    }
-                },
-                set: (value) => {
-                    if (element_size === 1) {
-                        this.arrays[key][this._current_index] = value;
-                    } else {
-                        let start = this._current_index * element_size;
-                        for (let i = 0; i < element_size; i++) {
-                            this.arrays[key][start + i] = value[i];
-                        }
-                    }
-                },
-                enumerable: true
-            });
-        }
-    }
-    
-    // Allocates an index, returning the allocated index.
-    allocate() {
-        if (this.offset >= this.max_objects) {
-            throw new Error(out_of_memory_error);
-        }
-        return this.offset++;
-    }
-    
-    // Returns the persistent view for the allocated object at the given index.
-    // Note: This view is reused, so you must use or copy its data immediately.
-    get_view(index) {
-        if (index < 0 || index >= this.offset) {
-            throw new Error(invalid_allocator_index_error);
-        }
-        this._current_index = index;
-        return this._view;
-    }
-    
-    // Returns the underlying typed array for a given key.
-    get_array(key) {
-        return this.arrays[key];
-    }
-    
-    // Appends another FrameAllocatorSOA into this one.
-    append(other) {
-        if (this.offset + other.offset > this.max_objects) {
-            throw new Error(out_of_memory_error);
-        }
-        for (const key in this.arrays) {
-            if (!other.arrays[key]) continue;
-            let element_size = this.element_sizes[key];
-            let dest_start = this.offset * element_size;
-            let src_start = 0;
-            let length = other.offset * element_size;
-            for (let i = 0; i < length; i++) {
-                this.arrays[key][dest_start + i] = other.arrays[key][src_start + i];
-            }
-        }
-        this.offset += other.offset;
-    }
-    
-    reset() {
-        this.offset = 0;
-    }
-    
-    get length() {
-        return this.offset;
-    }
-    
-    get data() {
-        return this.arrays;
-    }
-    
-    [Symbol.iterator]() {
-        let index = 0;
-        return {
-            next: () => {
-                if (index < this.offset) {
-                    return { value: index++, done: false };
-                }
-                return { done: true };
-            }
-        };
-    }
-}
+class SparseRandomAccessAllocator {
+    #size = 0;
+    #capacity = 0;
+    #template = null;
+    #buffer = null;
+    #mask = null;
 
-/**
- * A frame stack allocator using the SOA approach.
- * Provides push/pop/peek operations and uses a persistent view for dot notation.
- */
-class FrameStackAllocatorSOA {
-    constructor(max_objects, template) {
-        this.max_objects = max_objects;
-        this.offset = 0;
-        this.arrays = {};
-        this.element_sizes = {};
-        for (const key in template) {
-            if (Object.prototype.hasOwnProperty.call(template, key)) {
-                const config = template[key];
-                let element_size = 1;
-                let array_type = Float32Array;
-                if (typeof config === 'object' && config !== null) {
-                    element_size = config.element_size || 1;
-                    array_type = config.array_type || Float32Array;
-                } else if (typeof config === 'function') {
-                    array_type = config;
-                }
-                this.arrays[key] = new array_type(max_objects * element_size);
-                this.element_sizes[key] = element_size;
-            }
-        }
-        this._view = Object.create(null);
-        for (const key in this.arrays) {
-            let element_size = this.element_sizes[key];
-            Object.defineProperty(this._view, key, {
-                get: () => {
-                    if (element_size === 1) {
-                        return this.arrays[key][this._current_index];
-                    } else {
-                        let start = this._current_index * element_size;
-                        return this.arrays[key].subarray(start, start + element_size);
-                    }
-                },
-                set: (value) => {
-                    if (element_size === 1) {
-                        this.arrays[key][this._current_index] = value;
-                    } else {
-                        let start = this._current_index * element_size;
-                        for (let i = 0; i < element_size; i++) {
-                            this.arrays[key][start + i] = value[i];
-                        }
-                    }
-                },
-                enumerable: true
-            });
+    /**
+     * @param {number} initial_capacity - The initial capacity of the allocator
+     * @param {object|Function|number|string|boolean} template - Template for allocated objects
+     */
+    constructor(initial_capacity = 16, template = null) {
+        this.#capacity = initial_capacity;
+        this.#size = 0;
+        this.#template = template;
+        this.#buffer = new Array(this.#capacity);
+        this.#mask = new ResizableBitArray(this.#capacity);
+        if (template !== null) {
+            this._initialize_buffer(0, this.#capacity);
         }
     }
-    
-    push() {
-        if (this.offset >= this.max_objects) {
-            throw new Error(out_of_memory_error);
-        }
-        return this.get_view(this.offset++);
-    }
-    
-    pop() {
-        if (this.offset <= 0) {
-            throw new Error(out_of_memory_error);
-        }
-        this.offset--;
-    }
-    
-    peek() {
-        if (this.offset > 0) {
-            return this.get_view(this.offset - 1);
-        }
-        return null;
-    }
-    
-    append(other) {
-        if (this.offset + other.offset > this.max_objects) {
-            throw new Error(out_of_memory_error);
-        }
-        for (const key in this.arrays) {
-            if (!other.arrays[key]) continue;
-            let element_size = this.element_sizes[key];
-            let dest_start = this.offset * element_size;
-            let src_start = 0;
-            let length = other.offset * element_size;
-            for (let i = 0; i < length; i++) {
-                this.arrays[key][dest_start + i] = other.arrays[key][src_start + i];
-            }
-        }
-        this.offset += other.offset;
-    }
-    
-    reset() {
-        this.offset = 0;
-    }
-    
-    get length() {
-        return this.offset;
-    }
-    
-    get data() {
-        return this.arrays;
-    }
-    
-    get_view(index) {
-        if (index < 0 || index >= this.offset) {
-            throw new Error(invalid_allocator_index_error);
-        }
-        this._current_index = index;
-        return this._view;
-    }
-    
-    [Symbol.iterator]() {
-        let index = 0;
-        return {
-            next: () => {
-                if (index < this.offset) {
-                    return { value: index++, done: false };
-                }
-                return { done: true };
-            }
-        };
-    }
-}
 
-/**
- * A ring buffer allocator using the SOA approach.
- * Objects are allocated in a circular buffer.
- */
-class RingBufferAllocatorSOA {
-    constructor(max_objects, template) {
-        this.max_objects = max_objects;
-        this.head = 0;
-        this.tail = 0;
-        this.arrays = {};
-        this.element_sizes = {};
-        for (const key in template) {
-            if (Object.prototype.hasOwnProperty.call(template, key)) {
-                const config = template[key];
-                let element_size = 1;
-                let array_type = Float32Array;
-                if (typeof config === 'object' && config !== null) {
-                    element_size = config.element_size || 1;
-                    array_type = config.array_type || Float32Array;
-                } else if (typeof config === 'function') {
-                    array_type = config;
-                }
-                this.arrays[key] = new array_type(max_objects * element_size);
-                this.element_sizes[key] = element_size;
+    /** Initializes buffer elements in the specified range @private */
+    _initialize_buffer(start, end) {
+        const function_string = 'function';
+        if (typeof this.#template !== function_string && typeof this.#template !== 'object') {
+            for (let i = start; i < end; i++) {
+                this.#buffer[i] = { value: this.#template };
             }
-        }
-        this._view = Object.create(null);
-        for (const key in this.arrays) {
-            let element_size = this.element_sizes[key];
-            Object.defineProperty(this._view, key, {
-                get: () => {
-                    if (element_size === 1) {
-                        return this.arrays[key][this._current_index];
-                    } else {
-                        let start = this._current_index * element_size;
-                        return this.arrays[key].subarray(start, start + element_size);
-                    }
-                },
-                set: (value) => {
-                    if (element_size === 1) {
-                        this.arrays[key][this._current_index] = value;
-                    } else {
-                        let start = this._current_index * element_size;
-                        for (let i = 0; i < element_size; i++) {
-                            this.arrays[key][start + i] = value[i];
-                        }
-                    }
-                },
-                enumerable: true
-            });
-        }
-    }
-    
-    // Allocates by returning the index at the tail, then advances tail (wrapping around).
-    allocate() {
-        let index = this.tail;
-        this.tail = (this.tail + 1) % this.max_objects;
-        return index;
-    }
-    
-    // Deallocates the oldest object and advances head.
-    deallocate() {
-        let index = this.head;
-        this.head = (this.head + 1) % this.max_objects;
-        return index;
-    }
-    
-    // Returns the persistent view corresponding to a given index.
-    get_view(index) {
-        let actual_index = index % this.max_objects;
-        this._current_index = actual_index;
-        return this._view;
-    }
-    
-    append(other) {
-        if ((this.tail + other.offset) > this.max_objects) {
-            throw new Error(out_of_memory_error);
-        }
-        for (const key in this.arrays) {
-            if (!other.arrays[key]) continue;
-            let element_size = this.element_sizes[key];
-            let dest_start = this.tail * element_size;
-            let src_start = 0;
-            let length = other.offset * element_size;
-            for (let i = 0; i < length; i++) {
-                this.arrays[key][dest_start + i] = other.arrays[key][src_start + i];
+        } else if (typeof this.#template === function_string) {
+            for (let i = start; i < end; i++) {
+                this.#buffer[i] = new this.#template();
             }
-        }
-        this.tail = (this.tail + other.offset) % this.max_objects;
-    }
-    
-    reset() {
-        this.head = 0;
-        this.tail = 0;
-    }
-    
-    get length() {
-        return (this.tail + this.max_objects - this.head) % this.max_objects;
-    }
-    
-    get data() {
-        return this.arrays;
-    }
-    
-    [Symbol.iterator]() {
-        let index = 0;
-        const len = this.length;
-        return {
-            next: () => {
-                if (index < len) {
-                    let actual_index = (this.head + index) % this.max_objects;
-                    this._current_index = actual_index;
-                    index++;
-                    return { value: this._view, done: false };
-                }
-                return { done: true };
+        } else if (Object.keys(this.#template).length === 0) {
+            const proto = Object.getPrototypeOf(this.#template);
+            const prop_descriptors = Object.getOwnPropertyDescriptors(this.#template);
+            for (let i = start; i < end; i++) {
+                this.#buffer[i] = Object.create(proto, prop_descriptors);
             }
-        };
-    }
-}
-
-/**
- * A free list allocator using the SOA approach.
- * Uses a free list (stored in a Uint32Array) to manage indices.
- * This version assumes a fixed capacity.
- */
-class FreeListAllocatorSOA {
-    constructor(max_objects, template) {
-        this.max_objects = max_objects;
-        this.arrays = {};
-        this.element_sizes = {};
-        for (const key in template) {
-            if (Object.prototype.hasOwnProperty.call(template, key)) {
-                const config = template[key];
-                let element_size = 1;
-                let array_type = Float32Array;
-                if (typeof config === 'object' && config !== null) {
-                    element_size = config.element_size || 1;
-                    array_type = config.array_type || Float32Array;
-                } else if (typeof config === 'function') {
-                    array_type = config;
-                }
-                this.arrays[key] = new array_type(max_objects * element_size);
-                this.element_sizes[key] = element_size;
-            }
-        }
-        // Initialize free list as a Uint32Array and set free_count.
-        this.free_list = new Uint32Array(max_objects);
-        for (let i = 0; i < max_objects; i++) {
-            this.free_list[i] = i;
-        }
-        this.free_count = max_objects;
-        this._view = Object.create(null);
-        for (const key in this.arrays) {
-            let element_size = this.element_sizes[key];
-            Object.defineProperty(this._view, key, {
-                get: () => {
-                    if (element_size === 1) {
-                        return this.arrays[key][this._current_index];
-                    } else {
-                        let start = this._current_index * element_size;
-                        return this.arrays[key].subarray(start, start + element_size);
-                    }
-                },
-                set: (value) => {
-                    if (element_size === 1) {
-                        this.arrays[key][this._current_index] = value;
-                    } else {
-                        let start = this._current_index * element_size;
-                        for (let i = 0; i < element_size; i++) {
-                            this.arrays[key][start + i] = value[i];
-                        }
-                    }
-                },
-                enumerable: true
-            });
-        }
-    }
-    
-    allocate() {
-        if (this.free_count === 0) {
-            throw new Error(out_of_memory_error);
-        }
-        let index = this.free_list[this.free_count - 1];
-        this.free_count--;
-        return index;
-    }
-    
-    deallocate(index) {
-        if (index < 0 || index >= this.max_objects) {
-            throw new Error(invalid_allocator_index_error);
-        }
-        // (Optionally check for duplicates.)
-        this.free_list[this.free_count] = index;
-        this.free_count++;
-    }
-    
-    get_view(index) {
-        // For external usage, index should refer to an allocated object via your own bookkeeping.
-        // Here we assume index is valid.
-        this._current_index = index;
-        return this._view;
-    }
-    
-    get_array(key) {
-        return this.arrays[key];
-    }
-    
-    reset() {
-        for (let i = 0; i < this.max_objects; i++) {
-            this.free_list[i] = i;
-        }
-        this.free_count = this.max_objects;
-    }
-    
-    get length() {
-        return this.max_objects - this.free_count;
-    }
-    
-    get data() {
-        return this.arrays;
-    }
-    
-    [Symbol.iterator]() {
-        let allocated = this.length;
-        let index = 0;
-        return {
-            next: () => {
-                if (index < allocated) {
-                    this._current_index = index;
-                    index++;
-                    return { value: this._view, done: false };
-                }
-                return { done: true };
-            }
-        };
-    }
-}
-
-/**
- * A random access allocator using the SOA approach with dynamic resizing.
- * Supports random access, insertion, and removal.
- */
-class RandomAccessAllocatorSOA {
-    constructor(initial_capacity, template) {
-        this.capacity = initial_capacity;
-        this.size = 0;
-        this.template = template;
-        this.arrays = {};
-        this.element_sizes = {};
-        for (const key in template) {
-            if (Object.prototype.hasOwnProperty.call(template, key)) {
-                const config = template[key];
-                let element_size = 1;
-                let array_type = Float32Array;
-                if (typeof config === 'object' && config !== null) {
-                    element_size = config.element_size || 1;
-                    array_type = config.array_type || Float32Array;
-                } else if (typeof config === 'function') {
-                    array_type = config;
-                }
-                this.arrays[key] = new array_type(this.capacity * element_size);
-                this.element_sizes[key] = element_size;
-            }
-        }
-        this._view = Object.create(null);
-        for (const key in this.arrays) {
-            let element_size = this.element_sizes[key];
-            Object.defineProperty(this._view, key, {
-                get: () => {
-                    if (element_size === 1) {
-                        return this.arrays[key][this._current_index];
-                    } else {
-                        let start = this._current_index * element_size;
-                        return this.arrays[key].subarray(start, start + element_size);
-                    }
-                },
-                set: (value) => {
-                    if (element_size === 1) {
-                        this.arrays[key][this._current_index] = value;
-                    } else {
-                        let start = this._current_index * element_size;
-                        for (let i = 0; i < element_size; i++) {
-                            this.arrays[key][start + i] = value[i];
-                        }
-                    }
-                },
-                enumerable: true
-            });
-        }
-    }
-    
-    _resize(new_capacity) {
-        for (const key in this.arrays) {
-            let element_size = this.element_sizes[key];
-            let ArrayType = this.arrays[key].constructor;
-            let new_array = new ArrayType(new_capacity * element_size);
-            new_array.set(this.arrays[key]);
-            this.arrays[key] = new_array;
-        }
-        this.capacity = new_capacity;
-    }
-    
-    allocate() {
-        if (this.size >= this.capacity) {
-            this._resize(this.capacity * 2);
-        }
-        return this.size++;
-    }
-    
-    deallocate() {
-        if (this.size <= 0) {
-            throw new Error("Cannot deallocate from an empty allocator");
-        }
-        // For simplicity, just decrease size (caller should handle copying data if needed)
-        this.size--;
-    }
-    
-    get(index) {
-        if (index < 0 || index >= this.size) {
-            throw new Error("Index out of range");
-        }
-        this._current_index = index;
-        return this._view;
-    }
-    
-    set(index, value, key) {
-        if (index < 0 || index >= this.size) {
-            throw new Error("Index out of range");
-        }
-        let element_size = this.element_sizes[key];
-        if (element_size === 1) {
-            this.arrays[key][index] = value;
         } else {
-            let start = index * element_size;
-            for (let i = 0; i < element_size; i++) {
-                this.arrays[key][start + i] = value[i];
+            const proto = Object.getPrototypeOf(this.#template);
+            const prop_descriptors = Object.getOwnPropertyDescriptors(this.#template);
+            for (let i = start; i < end; i++) {
+                this.#buffer[i] = Object.create(proto, prop_descriptors);
             }
         }
     }
-    
+
+    /** Resizes the buffer and mask to the new capacity @private */
+    _resize(new_capacity) {
+        const old_buffer = this.#buffer;
+        const old_mask = this.#mask;
+        const old_capacity = this.#capacity;
+        this.#buffer = new Array(new_capacity);
+        for (let i = 0; i < old_capacity; i++) {
+            this.#buffer[i] = old_buffer[i];
+        }
+        if (this.#template !== null) {
+            this._initialize_buffer(old_capacity, new_capacity);
+        }
+
+        this.#capacity = new_capacity;
+    }
+
+    /** Allocates an object, reusing free slots or resizing if needed. */
+    allocate() {
+        for (let i = 0; i < this.#capacity; i++) {
+            if (!this.#mask.get(i)) {
+                this.#mask.set(i, true);
+                this.#size++;
+                return this.#buffer[i];
+            }
+        }
+        this._resize(this.#capacity * 2);
+        this.#mask.set(this.#size, true);
+        this.#size++;
+        return this.#buffer[this.#size - 1];
+    }
+
+    /** Allocates an object at the specified index. */
     allocate_at(index) {
-        if (index < 0 || index > this.size) {
-            throw new Error("Index out of range");
+        if (index >= this.#capacity) {
+            this._resize(index * 2);
         }
-        if (this.size >= this.capacity) {
-            this._resize(this.capacity * 2);
+        if (this.#mask.get(index)) {
+            throw new Error('Index already allocated');
         }
-        // Shift elements to the right to create space at index.
-        for (let i = this.size; i > index; i--) {
-            for (const key in this.arrays) {
-                let element_size = this.element_sizes[key];
-                let dest = i * element_size;
-                let src = (i - 1) * element_size;
-                for (let j = 0; j < element_size; j++) {
-                    this.arrays[key][dest + j] = this.arrays[key][src + j];
-                }
-            }
-        }
-        this.size++;
-        return this.get(index);
+        this.#mask.set(index, true);
+        this.#size++;
+        return this.#buffer[index];
     }
-    
+
+    /** Deallocates the object at the specified index. */
+    deallocate(index) {
+        if (index < 0 || index >= this.#capacity || !this.#mask.get(index)) {
+            throw new Error('Index out of bounds or slot not allocated');
+        }
+        this.#mask.set(index, false);
+        this.#size--;
+    }
+
+    /** Deallocates the object at the specified index. */
     deallocate_at(index) {
-        if (index < 0 || index >= this.size) {
-            throw new Error("Index out of range");
+        if (index < 0 || index >= this.#capacity || !this.#mask.get(index)) {
+            throw new Error('Index out of bounds or slot not allocated');
         }
-        // Shift elements left from index+1 to end.
-        for (let i = index; i < this.size - 1; i++) {
-            for (const key in this.arrays) {
-                let element_size = this.element_sizes[key];
-                let dest = i * element_size;
-                let src = (i + 1) * element_size;
-                for (let j = 0; j < element_size; j++) {
-                    this.arrays[key][dest + j] = this.arrays[key][src + j];
-                }
-            }
+        this.#mask.set(index, false);
+        this.#size--;
+    }
+
+    /** Retrieves the object at the index if allocated. */
+    get(index) {
+        if (index < 0 || index >= this.#capacity || !this.#mask.get(index)) {
+            throw new Error('Index out of bounds or slot not allocated');
         }
-        this.size--;
+        return this.#buffer[index];
     }
-    
-    reset() {
-        this.size = 0;
+
+    /** Sets the object at the index if allocated. */
+    set(index, value) {
+        if (index < 0 || index >= this.#capacity || !this.#mask.get(index)) {
+            throw new Error('Index out of bounds or slot not allocated');
+        }
+        this.#buffer[index] = value;
     }
-    
-    get data() {
-        return this.arrays;
-    }
-    
+
+    /** Number of currently allocated slots. */
     get length() {
-        return this.size;
+        return this.#size;
     }
-    
-    get capacity_value() {
-        return this.capacity;
+
+    /** Total capacity of allocator. */
+    get capacity() {
+        return this.#capacity;
     }
-    
-    get_view(index) {
-        if (index < 0 || index >= this.size) {
-            throw new Error("Index out of range");
-        }
-        this._current_index = index;
-        return this._view;
-    }
-    
-    [Symbol.iterator]() {
-        let index = 0;
-        let size = this.size;
-        return {
-            next: () => {
-                if (index < size) {
-                    this._current_index = index++;
-                    return { value: this._view, done: false };
-                }
-                return { done: true };
-            }
-        };
+
+    /** Underlying buffer array. */
+    get data() {
+        return this.#buffer;
     }
 }
 
@@ -1548,9 +1024,5 @@ export {
     RingBufferAllocator,
     FreeListAllocator,
     RandomAccessAllocator,
-    FrameAllocatorSOA,
-    FrameStackAllocatorSOA,
-    RingBufferAllocatorSOA,
-    FreeListAllocatorSOA,
-    RandomAccessAllocatorSOA
+    SparseRandomAccessAllocator,
 }
