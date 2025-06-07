@@ -45,10 +45,6 @@ import {
 import { GIProbeVolume } from "../global_illumination/ddgi.js";
 import { AdaptiveSparseVirtualShadowMaps } from "../shadows/as_vsm.js";
 
-const use_depth_prepass = false;
-const shadows_enabled = false;
-const gi_enabled = false;
-
 const resolution_change_event_name = "resolution_change";
 const deferred_shading_profile_scope_name = "DeferredShadingStrategy.draw";
 const transforms_name = "transforms";
@@ -163,16 +159,39 @@ const skybox_output_image_config = {
   force: false,
 };
 
-const compute_cull_shader_setup = {
+const clear_visibility_data_shader_setup = {
   pipeline_shaders: {
     compute: {
-      path: "cull.wgsl",
+      path: "visibility/clear_visibility_data.wgsl",
+    },
+  },
+};
+
+const clear_indirect_instance_counts_shader_setup = {
+  pipeline_shaders: {
+    compute: {
+      path: "visibility/clear_indirect_instance_counts.wgsl",
+    },
+  },
+};
+
+const compute_cull_frustum_shader_setup = {
+  pipeline_shaders: {
+    compute: {
+      path: "visibility/cull_frustum.wgsl",
+    },
+  },
+};
+const compute_cull_occlusion_shader_setup = {
+  pipeline_shaders: {
+    compute: {
+      path: "visibility/cull_occlusion.wgsl",
     },
   },
 };
 const draw_cull_data_config = {
   name: `draw_cull_data`,
-  data: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+  data: [0, 0, 0],
   usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
 };
 
@@ -183,7 +202,7 @@ const depth_only_shader_setup = {
     },
   },
   depth_write_enabled: true,
-  depth_compare: "less",
+  depth_stencil_compare_op: "less",
 };
 
 const g_buffer_shader_setup = {
@@ -195,8 +214,8 @@ const g_buffer_shader_setup = {
       path: "gbuffer_base.wgsl",
     },
   },
-  depth_write_enabled: !use_depth_prepass,
-  depth_compare: use_depth_prepass ? "less-equal" : "less",
+  depth_write_enabled: false,
+  depth_stencil_compare_op: "less-equal",
 };
 
 const transparency_composite_shader_setup = {
@@ -214,7 +233,7 @@ const transparency_composite_shader_setup = {
 const hzb_reduce_shader_setup = {
   pipeline_shaders: {
     compute: {
-      path: "hzb_reduce.wgsl",
+      path: "visibility/hzb_reduce.wgsl",
     },
   },
 };
@@ -404,7 +423,8 @@ const skybox_pass_name = "skybox_pass";
 const depth_prepass_name = "depth_prepass";
 const transparency_composite_pass_name = "transparency_composite";
 const reset_g_buffer_targets_pass_name = "reset_g_buffer_targets";
-const compute_cull_pass_name = "compute_cull";
+const compute_cull_pass_name1 = "compute_cull_frustum";
+const compute_cull_pass_name2 = "compute_cull_occlusion";
 const lighting_pass_name = "lighting_pass";
 const bloom_resolve_pass_name = "bloom_resolve_pass";
 const fullscreen_present_pass_name = "fullscreen_present_pass";
@@ -445,13 +465,27 @@ export class DeferredShadingStrategy {
         this.initialized = true;
       }
 
-      const current_view = SharedFrameInfoBuffer.get_view_index();
-
-      const renderer = Renderer.get();
-
+      // ═══════════════════════════════════════════════════════════════════════════════
+      // ⚙️  SETUP & INITIALIZATION PHASE
+      // ═══════════════════════════════════════════════════════════════════════════════
       MeshTaskQueue.sort_and_batch();
       ComputeTaskQueue.compile_rg_passes(render_graph);
 
+      const renderer = Renderer.get();
+
+      const current_view = SharedFrameInfoBuffer.get_view_index();
+      const shadows_enabled = renderer.is_shadows_enabled();
+      const gi_enabled = renderer.is_gi_enabled();
+      const total_views = SharedViewBuffer.get_view_data_count();
+      const draw_count = MeshTaskQueue.get_total_draw_count();
+
+      if (this.force_recreate) {
+        render_graph.mark_pass_cache_bind_groups_dirty(true /* pass_only */);
+      }
+
+      // ┌─────────────────────────────────────────────────────────────────────────────┐
+      // │ 📋 Register Core Entity & Transform Buffers                                │
+      // └─────────────────────────────────────────────────────────────────────────────┘
       const entity_flags_buffer = FragmentGpuBuffer.entity_flags_buffer;
       const entity_flags = render_graph.register_buffer(entity_flags_buffer.buffer.config.name);
 
@@ -468,10 +502,45 @@ export class DeferredShadingStrategy {
         aabb_node_index_buffer.buffer.config.name
       );
 
-      const compacted_instance_buffer = render_graph.register_buffer(
-        MeshTaskQueue.get_compacted_object_instance_buffer(current_view).config.name
+      // ┌─────────────────────────────────────────────────────────────────────────────┐
+      // │ 🎯 Register Mesh & Instance Buffers                                        │
+      // └─────────────────────────────────────────────────────────────────────────────┘
+      const object_instances = render_graph.register_buffer(
+        MeshTaskQueue.get_object_instance_buffer().config.name
       );
 
+      // ┌─────────────────────────────────────────────────────────────────────────────┐
+      // │ 📋 Register Per-View Visibility Data                                       │
+      // └─────────────────────────────────────────────────────────────────────────────┘
+      const per_view_visible_no_occlusion_buffers = [];
+      const per_view_visible_buffers = [];
+      const per_view_indirect_draw_buffers = [];
+      const per_view_draw_cull_data = [];
+      for (let view_index = 0; view_index < total_views; ++view_index) {
+        if (!SharedViewBuffer.is_render_active(view_index)) continue;
+
+        const visible_buf_no_occlusion = render_graph.register_buffer(
+          MeshTaskQueue.get_visible_instance_buffer_no_occlusion(view_index).config.name
+        );
+        const visible_buf = render_graph.register_buffer(
+          MeshTaskQueue.get_visible_instance_buffer(view_index).config.name
+        );
+        const indirect_draw_buf = render_graph.register_buffer(
+          MeshTaskQueue.get_indirect_draw_buffer(view_index).config.name
+        );
+
+        draw_cull_data_config.name = `draw_cull_data_view_${view_index}`;
+        const draw_cull_data = render_graph.create_buffer(draw_cull_data_config);
+
+        per_view_visible_no_occlusion_buffers.push(visible_buf_no_occlusion);
+        per_view_visible_buffers.push(visible_buf);
+        per_view_indirect_draw_buffers.push(indirect_draw_buf);
+        per_view_draw_cull_data.push(draw_cull_data);
+      }
+
+      // ┌─────────────────────────────────────────────────────────────────────────────┐
+      // │ 💡 Setup Lighting System                                                   │
+      // └─────────────────────────────────────────────────────────────────────────────┘
       const light_fragment_buffer = EntityManager.get_fragment_gpu_buffer(
         LightFragment,
         light_fragment_name
@@ -489,6 +558,9 @@ export class DeferredShadingStrategy {
 
       const light_count = render_graph.create_buffer(light_count_buffer_config);
 
+      // ┌─────────────────────────────────────────────────────────────────────────────┐
+      // │ 📦 Setup Acceleration Structures & Bounds                                  │
+      // └─────────────────────────────────────────────────────────────────────────────┘
       const aabb_gpu_data = AABB.to_gpu_data();
       const aabb_bounds = render_graph.register_buffer(
         aabb_gpu_data.node_bounds_buffer.config.name
@@ -498,6 +570,9 @@ export class DeferredShadingStrategy {
       let post_lighting_image_desc = null;
       let post_bloom_color_desc = null;
 
+      // ┌─────────────────────────────────────────────────────────────────────────────┐
+      // │ 🖼️  Create G-Buffer & Main Render Targets                                  │
+      // └─────────────────────────────────────────────────────────────────────────────┘
       const image_extent = renderer.get_canvas_resolution();
 
       let main_hzb_image = render_graph.register_image(this.hzb_image.config.name);
@@ -541,6 +616,9 @@ export class DeferredShadingStrategy {
       );
       let main_depth_image = render_graph.create_image(main_depth_image_config);
 
+      // ┌─────────────────────────────────────────────────────────────────────────────┐
+      // │ 🌟 Setup Global Illumination Resources                                     │
+      // └─────────────────────────────────────────────────────────────────────────────┘
       const gi_irradiance_image = render_graph.register_image(
         this.gi_irradiance_volume.config.name
       );
@@ -551,11 +629,14 @@ export class DeferredShadingStrategy {
         usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
       });
 
-      if (this.force_recreate) {
-        render_graph.mark_pass_cache_bind_groups_dirty(true /* pass_only */);
-      }
+      // ═══════════════════════════════════════════════════════════════════════════════
+      // 🎨 RENDERING PIPELINE BEGINS
+      // ═══════════════════════════════════════════════════════════════════════════════
 
-      // Clear G-Buffer Pass
+      // ┌─────────────────────────────────────────────────────────────────────────────┐
+      // │ 🧹 PASS: Clear G-Buffer Targets                                            │
+      // │    Initialize all render targets to a clean slate                          │
+      // └─────────────────────────────────────────────────────────────────────────────┘
       {
         render_graph.add_pass(
           clear_g_buffer_pass_name,
@@ -594,13 +675,42 @@ export class DeferredShadingStrategy {
         );
       }
 
-      // Skybox Pass
-      skybox_output_image_config.width = image_extent.width;
-      skybox_output_image_config.height = image_extent.height;
-      skybox_output_image_config.force = this.force_recreate;
-      skybox_image = render_graph.create_image(skybox_output_image_config);
-
+      // ┌─────────────────────────────────────────────────────────────────────────────┐
+      // │ 💡 PASS: Compact Active Lights                                             │
+      // │    Pack sparse light data into dense buffers for efficient access         │
+      // └─────────────────────────────────────────────────────────────────────────────┘
       {
+        // Compute pass to compact active lights to dense buffer
+        render_graph.add_pass(
+          compact_lights_pass_name,
+          RenderPassFlags.Compute,
+          {
+            shader_setup: compact_lights_shader_setup,
+            inputs: [lights, light_count, dense_shadow_casting_lights, dense_lights],
+            outputs: [light_count, dense_shadow_casting_lights, dense_lights],
+          },
+          (graph, frame_data, encoder) => {
+            const pass = graph.get_physical_pass(frame_data.current_pass);
+            // Reset light count to zero
+            const count_buf = graph.get_physical_buffer(light_count);
+            count_buf.write(new Uint32Array([0, 0]));
+            // Dispatch compute to compact lights
+            const max_light_count = EntityManager.get_max_rows();
+            pass.dispatch((max_light_count + 128 - 1) / 128, 1, 1);
+          }
+        );
+      }
+
+      // ┌─────────────────────────────────────────────────────────────────────────────┐
+      // │ 🌌 PASS: Skybox Rendering                                                  │
+      // │    Render the environment skybox to provide distant lighting context      │
+      // └─────────────────────────────────────────────────────────────────────────────┘
+      {
+        skybox_output_image_config.width = image_extent.width;
+        skybox_output_image_config.height = image_extent.height;
+        skybox_output_image_config.force = this.force_recreate;
+        skybox_image = render_graph.create_image(skybox_output_image_config);
+
         const skybox = SharedEnvironmentMapData.get_skybox();
         const skybox_data = SharedEnvironmentMapData.get_skybox_data();
 
@@ -624,91 +734,10 @@ export class DeferredShadingStrategy {
         }
       }
 
-      const object_instance_buffer = MeshTaskQueue.get_object_instance_buffer();
-      const object_instances = render_graph.register_buffer(object_instance_buffer.config.name);
-
-      // Mesh cull pass: dispatch cull compute per view that requested it
-      if (MeshTaskQueue.get_total_draw_count() > 0) {
-        const total_views = SharedViewBuffer.get_view_data_count();
-        for (let view_index = 0; view_index < total_views; ++view_index) {
-          if (!SharedViewBuffer.is_render_active(view_index)) continue;
-
-          // Reset per-view indirect and object instance buffers
-          const draw_count = MeshTaskQueue.get_total_draw_count();
-
-          // Prepare cull constants buffer
-          draw_cull_data_config.name = `draw_cull_data_view_${view_index}`;
-          const draw_cull_data = render_graph.create_buffer(draw_cull_data_config);
-
-          // Register per-view buffers
-          const compacted_buf = render_graph.register_buffer(
-            MeshTaskQueue.get_compacted_object_instance_buffer(view_index).config.name
-          );
-          const indirect_buf = render_graph.register_buffer(
-            MeshTaskQueue.get_indirect_draw_buffer(view_index).config.name
-          );
-
-          render_graph.add_pass(
-            `${compute_cull_pass_name}_view_${view_index}`,
-            RenderPassFlags.Compute,
-            {
-              shader_setup: compute_cull_shader_setup,
-              inputs: [
-                main_hzb_image,
-                aabb_bounds,
-                object_instances,
-                compacted_buf,
-                indirect_buf,
-                entity_aabb_node_indices,
-                draw_cull_data,
-              ],
-              outputs: [indirect_buf],
-            },
-            (graph, frame_data, encoder) => {
-              const pass = graph.get_physical_pass(frame_data.current_pass);
-
-              const hzb = graph.get_physical_image(main_hzb_image);
-              const draw_cull = graph.get_physical_buffer(draw_cull_data);
-
-              const view_data = SharedViewBuffer.get_view_data(view_index);
-              const proj = view_data.projection_matrix;
-              const p00 = proj[0];
-              const p11 = proj[5];
-
-              draw_cull.write([draw_count, p00, p11, hzb.config.width, hzb.config.height]);
-
-              pass.dispatch((draw_count + 255) / 256, 1, 1);
-            }
-          );
-        }
-      }
-
-      // Compact lights pass
-      {
-        // Compute pass to compact active lights to dense buffer
-        render_graph.add_pass(
-          compact_lights_pass_name,
-          RenderPassFlags.Compute,
-          {
-            shader_setup: compact_lights_shader_setup,
-            inputs: [lights, light_count, dense_shadow_casting_lights, dense_lights],
-            outputs: [light_count, dense_shadow_casting_lights, dense_lights],
-          },
-          (graph, frame_data, encoder) => {
-            const pass = graph.get_physical_pass(frame_data.current_pass);
-            // Reset light count to zero
-            const count_buf = graph.get_physical_buffer(light_count);
-            count_buf.write(new Uint32Array([0, 0]));
-            // Dispatch compute to compact lights
-            const max_light_count = EntityManager.get_max_rows();
-            pass.dispatch((max_light_count + 128 - 1) / 128, 1, 1);
-          }
-        );
-      }
-
-      // TODO: Meshlet cull pass
-
-      // G-Buffer set load pass
+      // ┌─────────────────────────────────────────────────────────────────────────────┐
+      // │ 🔄 PASS: G-Buffer Load State Configuration                                 │
+      // │    Configure render targets to preserve existing content for next passes  │
+      // └─────────────────────────────────────────────────────────────────────────────┘
       {
         render_graph.add_pass(
           reset_g_buffer_targets_pass_name,
@@ -748,13 +777,89 @@ export class DeferredShadingStrategy {
         );
       }
 
-      // Depth prepass
-      if (use_depth_prepass) {
+      // ┌─────────────────────────────────────────────────────────────────────────────┐
+      // │ 🔍 PASS: Reset Visibility Buffers                                          │
+      // │    Clear per-view visibility data before frustum culling                  │
+      // └─────────────────────────────────────────────────────────────────────────────┘
+      {
+        for (let view_index = 0; view_index < total_views; ++view_index) {
+          if (!SharedViewBuffer.is_render_active(view_index)) continue;
+
+          const visible_buf_no_occlusion = per_view_visible_no_occlusion_buffers[view_index];
+          const visible_buf = per_view_visible_buffers[view_index];
+
+          render_graph.add_pass(
+            `clear_visibility_data_view_${view_index}`,
+            RenderPassFlags.Compute,
+            {
+              shader_setup: clear_visibility_data_shader_setup,
+              inputs: [visible_buf, visible_buf_no_occlusion],
+              outputs: [visible_buf, visible_buf_no_occlusion],
+            },
+            (graph, frame_data, encoder) => {
+              const pass = graph.get_physical_pass(frame_data.current_pass);
+              pass.dispatch((draw_count + 255) / 256, 1, 1);
+            }
+          );
+        }
+      }
+
+      // ┌─────────────────────────────────────────────────────────────────────────────┐
+      // │ 🎯 PASS: Frustum Culling (Phase 1 of 2-Pass Occlusion)                    │
+      // │    Eliminate objects outside the camera's view frustum                     │
+      // └─────────────────────────────────────────────────────────────────────────────┘
+      if (draw_count > 0) {
+        for (let view_index = 0; view_index < total_views; ++view_index) {
+          if (!SharedViewBuffer.is_render_active(view_index)) continue;
+
+          const visible_buf_no_occlusion = per_view_visible_no_occlusion_buffers[view_index];
+          const indirect_buf = per_view_indirect_draw_buffers[view_index];
+          const draw_cull_data = per_view_draw_cull_data[view_index];
+
+          render_graph.add_pass(
+            `${compute_cull_pass_name1}_view_${view_index}`,
+            RenderPassFlags.Compute,
+            {
+              shader_setup: compute_cull_frustum_shader_setup,
+              inputs: [
+                aabb_bounds,
+                object_instances,
+                visible_buf_no_occlusion,
+                indirect_buf,
+                entity_aabb_node_indices,
+                draw_cull_data,
+              ],
+              outputs: [indirect_buf, visible_buf_no_occlusion],
+            },
+            (graph, frame_data, encoder) => {
+              const pass = graph.get_physical_pass(frame_data.current_pass);
+
+              const hzb = graph.get_physical_image(main_hzb_image);
+              const draw_cull = graph.get_physical_buffer(draw_cull_data);
+
+              draw_cull.write([draw_count, hzb.config.width, hzb.config.height]);
+
+              pass.dispatch((draw_count + 255) / 256, 1, 1);
+            }
+          );
+        }
+      }
+
+      // ┌─────────────────────────────────────────────────────────────────────────────┐
+      // │ 🏔️  PASS: Depth Pre-Pass                                                   │
+      // │    Fill depth buffer early for better GPU efficiency and HZB generation   │
+      // └─────────────────────────────────────────────────────────────────────────────┘
+      if (renderer.is_depth_prepass_enabled()) {
         render_graph.add_pass(
           depth_prepass_name,
           RenderPassFlags.Graphics,
           {
-            inputs: [entity_transforms, entity_flags, compacted_instance_buffer],
+            inputs: [
+              entity_transforms,
+              entity_flags,
+              object_instances,
+              per_view_visible_no_occlusion_buffers[current_view],
+            ],
             outputs: [main_depth_image],
             shader_setup: depth_only_shader_setup,
           },
@@ -773,151 +878,10 @@ export class DeferredShadingStrategy {
         );
       }
 
-      // Compute rasterization passes
-      // TODO: Automatically run software rasterization over triangle clusters that fall within some maximum screen size
-      {
-        // Rasterize particle positions into the G-Buffer (albedo & depth)
-        ComputeRasterTaskQueue.compile_rg_passes(render_graph, [
-          main_albedo_image,
-          main_depth_image,
-        ]);
-      }
-
-      // GBuffer Base Pass
-      {
-        const material_buckets = MeshTaskQueue.get_material_buckets();
-        for (let i = 0; i < material_buckets.length; i++) {
-          const material_id = material_buckets[i];
-          const material = Material.get(material_id);
-
-          const outputs = [
-            material.family === MaterialFamilyType.Transparent
-              ? main_transparency_accum_image
-              : main_albedo_image,
-            main_emissive_image,
-            main_smra_image,
-            main_position_image,
-            main_normal_image,
-            material.writes_entity_id ? main_entity_id_image : null,
-            material.family === MaterialFamilyType.Transparent
-              ? main_transparency_reveal_image
-              : null,
-            main_depth_image,
-          ];
-
-          render_graph.add_pass(
-            `g_buffer_${material.template.name}_${material_id}`,
-            RenderPassFlags.Graphics,
-            {
-              inputs: [entity_transforms, entity_flags, compacted_instance_buffer, lights],
-              outputs: outputs,
-              shader_setup: g_buffer_shader_setup,
-              b_skip_pass_pipeline_setup: true,
-            },
-            (graph, frame_data, encoder) => {
-              const pass = graph.get_physical_pass(frame_data.current_pass);
-
-              MeshTaskQueue.submit_material_indexed_indirect_draws(
-                pass,
-                frame_data,
-                material_id,
-                false /* should_reset */,
-                null,
-                current_view
-              );
-            }
-          );
-        }
-      }
-
-      // Transparency Composite Pass
-      render_graph.add_pass(
-        transparency_composite_pass_name,
-        RenderPassFlags.Graphics,
-        {
-          inputs: [main_transparency_accum_image, main_transparency_reveal_image],
-          outputs: [main_albedo_image],
-          shader_setup: transparency_composite_shader_setup,
-        },
-        (graph, frame_data, encoder) => {
-          const pass = graph.get_physical_pass(frame_data.current_pass);
-
-          MeshTaskQueue.draw_quad(pass);
-        }
-      );
-
-      // Add line renderer pass
-      if (LineRenderer.enabled && LineRenderer.line_positions.length > 0) {
-        const { position_buffer, line_data_buffer, transform_buffer, visible_line_count } =
-          LineRenderer.to_gpu_data();
-        if (visible_line_count > 0) {
-          const line_position_buffer_rg = render_graph.register_buffer(position_buffer.config.name);
-          const line_data_buffer_rg = render_graph.register_buffer(line_data_buffer.config.name);
-          const line_transform_buffer_rg = render_graph.register_buffer(
-            transform_buffer.config.name
-          );
-
-          render_graph.add_pass(
-            "line_transform_processing",
-            RenderPassFlags.Compute,
-            {
-              inputs: [line_transform_buffer_rg, line_position_buffer_rg],
-              outputs: [line_transform_buffer_rg],
-              shader_setup: line_transform_processing_shader_setup,
-            },
-            (graph, frame_data, encoder) => {
-              const pass = graph.get_physical_pass(frame_data.current_pass);
-              pass.dispatch((visible_line_count + 63) / 64, 1, 1);
-            }
-          );
-
-          render_graph.add_pass(
-            "line_renderer_pass",
-            RenderPassFlags.Graphics,
-            {
-              inputs: [line_transform_buffer_rg, line_data_buffer_rg],
-              outputs: [
-                main_albedo_image,
-                main_emissive_image,
-                main_smra_image,
-                main_position_image,
-                main_normal_image,
-                main_depth_image,
-              ],
-              shader_setup: line_draw_shader_setup,
-            },
-            (graph, frame_data, encoder) => {
-              const pass = graph.get_physical_pass(frame_data.current_pass);
-              MeshTaskQueue.draw_quad(pass, visible_line_count);
-            }
-          );
-        }
-      }
-
-      // Add AS-VSM shadow mapping passes
-      if (shadows_enabled) {
-        // Add AS-VSM passes with mapping
-        if (!this.as_vsm) {
-          this.as_vsm = new AdaptiveSparseVirtualShadowMaps({
-            atlas_size: 2048,
-            tile_size: 32,
-            virtual_dim: 4096,
-            max_lods: 1,
-            histogram_bins: 64,
-          });
-        }
-        this.as_vsm.add_passes(render_graph, {
-          depth_texture: main_depth_image,
-          lights_buffer: dense_lights,
-          dense_shadow_casting_lights_buffer: dense_shadow_casting_lights,
-          light_count_buffer: light_count,
-          transforms_buffer: entity_transforms,
-          force_recreate: this.force_recreate,
-          debug_view: this.debug_view,
-        });
-      }
-
-      // HZB generation pass
+      // ┌─────────────────────────────────────────────────────────────────────────────┐
+      // │ 🗻 PASS: Hierarchical Z-Buffer Generation                                  │
+      // │    Create multi-level depth pyramid for efficient occlusion culling      │
+      // └─────────────────────────────────────────────────────────────────────────────┘
       {
         let hzb_params_chain = [];
         for (let i = 0; i < this.hzb_image.config.mip_levels; i++) {
@@ -975,22 +939,263 @@ export class DeferredShadingStrategy {
         }
       }
 
-      // DDGI pass
+      // TODO: Meshlet cull pass
+
+      // ┌─────────────────────────────────────────────────────────────────────────────┐
+      // │ 🔄 PASS: Reset Instance Counts                                             │
+      // │    Reset instance counts for each view                                   │
+      // └─────────────────────────────────────────────────────────────────────────────┘
+      {
+        for (let view_index = 0; view_index < total_views; ++view_index) {
+          if (!SharedViewBuffer.is_render_active(view_index)) continue;
+
+          render_graph.add_pass(
+            `reset_instance_counts_view_${view_index}`,
+            RenderPassFlags.Compute,
+            {
+              shader_setup: clear_indirect_instance_counts_shader_setup,
+              inputs: [per_view_indirect_draw_buffers[view_index]],
+              outputs: [per_view_indirect_draw_buffers[view_index]],
+            },
+            (graph, frame_data, encoder) => {
+              const pass = graph.get_physical_pass(frame_data.current_pass);
+              pass.dispatch((draw_count + 7) / 8, 1, 1);
+            }
+          );
+        }
+      }
+
+      // ┌─────────────────────────────────────────────────────────────────────────────┐
+      // │ 🌫️  PASS: Occlusion Culling (Phase 2 of 2-Pass Occlusion)                 │
+      // │    Use HZB to eliminate objects hidden behind other geometry               │
+      // └─────────────────────────────────────────────────────────────────────────────┘
+      if (draw_count > 0) {
+        for (let view_index = 0; view_index < total_views; ++view_index) {
+          if (!SharedViewBuffer.is_render_active(view_index)) continue;
+
+          const draw_cull_data = per_view_draw_cull_data[view_index];
+          const visible_buf_no_occlusion = per_view_visible_no_occlusion_buffers[view_index];
+          const visible_buf = per_view_visible_buffers[view_index];
+          const indirect_buf = per_view_indirect_draw_buffers[view_index];
+
+          render_graph.add_pass(
+            `${compute_cull_pass_name2}_view_${view_index}`,
+            RenderPassFlags.Compute,
+            {
+              shader_setup: compute_cull_occlusion_shader_setup,
+              inputs: [
+                main_hzb_image,
+                aabb_bounds,
+                visible_buf_no_occlusion,
+                visible_buf,
+                object_instances,
+                entity_aabb_node_indices,
+                draw_cull_data,
+                indirect_buf,
+              ],
+              outputs: [visible_buf, indirect_buf],
+            },
+            (graph, frame_data, encoder) => {
+              const pass = graph.get_physical_pass(frame_data.current_pass);
+              pass.dispatch((draw_count + 255) / 256, 1, 1);
+            }
+          );
+        }
+      }
+
+      // ┌─────────────────────────────────────────────────────────────────────────────┐
+      // │ 🖥️  PASS: Compute Rasterization                                            │
+      // │    Software rasterization for particles and small geometry                │
+      // └─────────────────────────────────────────────────────────────────────────────┘
+      // TODO: Automatically run software rasterization over triangle clusters that fall within some maximum screen size
+      {
+        // Rasterize particle positions into the G-Buffer (albedo & depth)
+        ComputeRasterTaskQueue.compile_rg_passes(render_graph, [
+          main_albedo_image,
+          main_depth_image,
+        ]);
+      }
+
+      // ┌─────────────────────────────────────────────────────────────────────────────┐
+      // │ 🎨 PASS: G-Buffer Base Rendering                                           │
+      // │    Fill G-Buffer with geometry data (albedo, normals, material props)     │
+      // └─────────────────────────────────────────────────────────────────────────────┘
+      {
+        g_buffer_shader_setup.depth_write_enabled = !renderer.is_depth_prepass_enabled();
+        g_buffer_shader_setup.depth_stencil_compare_op = !renderer.is_depth_prepass_enabled()
+          ? "less"
+          : "less-equal";
+
+        const material_buckets = MeshTaskQueue.get_material_buckets();
+        for (let i = 0; i < material_buckets.length; i++) {
+          const material_id = material_buckets[i];
+          const material = Material.get(material_id);
+
+          const outputs = [
+            material.family === MaterialFamilyType.Transparent
+              ? main_transparency_accum_image
+              : main_albedo_image,
+            main_emissive_image,
+            main_smra_image,
+            main_position_image,
+            main_normal_image,
+            material.writes_entity_id ? main_entity_id_image : null,
+            material.family === MaterialFamilyType.Transparent
+              ? main_transparency_reveal_image
+              : null,
+            main_depth_image,
+          ];
+
+          render_graph.add_pass(
+            `g_buffer_${material.template.name}_${material_id}`,
+            RenderPassFlags.Graphics,
+            {
+              inputs: [
+                entity_transforms,
+                entity_flags,
+                object_instances,
+                per_view_visible_buffers[current_view],
+              ],
+              outputs: outputs,
+              shader_setup: g_buffer_shader_setup,
+              b_skip_pass_pipeline_setup: true,
+            },
+            (graph, frame_data, encoder) => {
+              const pass = graph.get_physical_pass(frame_data.current_pass);
+
+              MeshTaskQueue.submit_material_indexed_indirect_draws(
+                pass,
+                frame_data,
+                material_id,
+                false /* should_reset */,
+                null,
+                current_view
+              );
+            }
+          );
+        }
+      }
+
+      // ┌─────────────────────────────────────────────────────────────────────────────┐
+      // │ 🌊 PASS: Transparency Composite                                            │
+      // │    Blend transparent objects using weighted-blended order-independent     │
+      // └─────────────────────────────────────────────────────────────────────────────┘
+      render_graph.add_pass(
+        transparency_composite_pass_name,
+        RenderPassFlags.Graphics,
+        {
+          inputs: [main_transparency_accum_image, main_transparency_reveal_image],
+          outputs: [main_albedo_image],
+          shader_setup: transparency_composite_shader_setup,
+        },
+        (graph, frame_data, encoder) => {
+          const pass = graph.get_physical_pass(frame_data.current_pass);
+
+          MeshTaskQueue.draw_quad(pass);
+        }
+      );
+
+      // ┌─────────────────────────────────────────────────────────────────────────────┐
+      // │ 📏 PASS: Line Renderer                                                     │
+      // │    Render debug lines and wireframes for visualization                    │
+      // └─────────────────────────────────────────────────────────────────────────────┘
+      if (LineRenderer.enabled && LineRenderer.line_positions.length > 0) {
+        const { position_buffer, line_data_buffer, transform_buffer, visible_line_count } =
+          LineRenderer.to_gpu_data();
+        if (visible_line_count > 0) {
+          const line_position_buffer_rg = render_graph.register_buffer(position_buffer.config.name);
+          const line_data_buffer_rg = render_graph.register_buffer(line_data_buffer.config.name);
+          const line_transform_buffer_rg = render_graph.register_buffer(
+            transform_buffer.config.name
+          );
+
+          render_graph.add_pass(
+            "line_transform_processing",
+            RenderPassFlags.Compute,
+            {
+              inputs: [line_transform_buffer_rg, line_position_buffer_rg],
+              outputs: [line_transform_buffer_rg],
+              shader_setup: line_transform_processing_shader_setup,
+            },
+            (graph, frame_data, encoder) => {
+              const pass = graph.get_physical_pass(frame_data.current_pass);
+              pass.dispatch((visible_line_count + 63) / 64, 1, 1);
+            }
+          );
+
+          render_graph.add_pass(
+            "line_renderer_pass",
+            RenderPassFlags.Graphics,
+            {
+              inputs: [line_transform_buffer_rg, line_data_buffer_rg],
+              outputs: [
+                main_albedo_image,
+                main_emissive_image,
+                main_smra_image,
+                main_position_image,
+                main_normal_image,
+                main_depth_image,
+              ],
+              shader_setup: line_draw_shader_setup,
+            },
+            (graph, frame_data, encoder) => {
+              const pass = graph.get_physical_pass(frame_data.current_pass);
+              MeshTaskQueue.draw_quad(pass, visible_line_count);
+            }
+          );
+        }
+      }
+
+      // ┌─────────────────────────────────────────────────────────────────────────────┐
+      // │ 🌚 PASS: Adaptive Sparse Virtual Shadow Maps                               │
+      // │    High-quality, efficient shadow mapping with virtual memory management  │
+      // └─────────────────────────────────────────────────────────────────────────────┘
+      if (shadows_enabled) {
+        // Add AS-VSM passes with mapping
+        if (!this.as_vsm) {
+          this.as_vsm = new AdaptiveSparseVirtualShadowMaps({
+            atlas_size: 2048,
+            tile_size: 32,
+            virtual_dim: 4096,
+            max_lods: 1,
+            histogram_bins: 64,
+          });
+        }
+        this.as_vsm.add_passes(render_graph, {
+          depth_texture: main_depth_image,
+          lights_buffer: dense_lights,
+          dense_shadow_casting_lights_buffer: dense_shadow_casting_lights,
+          light_count_buffer: light_count,
+          transforms_buffer: entity_transforms,
+          object_instances: object_instances,
+          view_visibility_buffers: per_view_visible_buffers,
+          force_recreate: this.force_recreate,
+          debug_view: this.debug_view,
+        });
+      }
+
+      // ┌─────────────────────────────────────────────────────────────────────────────┐
+      // │ 🌟 PASS: Dynamic Diffuse Global Illumination (DDGI)                       │
+      // │    Real-time global illumination using probe-based irradiance volumes    │
+      // └─────────────────────────────────────────────────────────────────────────────┘
       if (gi_enabled) {
-        const compacted_instance_buffer = MeshTaskQueue.get_compacted_object_instance_buffer(0);
+        const visible_instance_buffer = per_view_visible_buffers[current_view];
         this.gi_probe_volume.update(render_graph, {
           gi_params_buffer,
           gi_irradiance_image,
           gi_depth_image,
           entity_transforms,
           entity_flags,
-          compacted_instance_buffer,
+          visible_instance_buffer,
           lights,
           probe_cubemap: this.probe_cubemap.config.name,
         });
       }
 
-      // Lighting Pass
+      // ┌─────────────────────────────────────────────────────────────────────────────┐
+      // │ 💡 PASS: Deferred Lighting                                                 │
+      // │    Combine G-Buffer data with lights to produce final shaded results      │
+      // └─────────────────────────────────────────────────────────────────────────────┘
       {
         post_lighting_image_config.width = image_extent.width;
         post_lighting_image_config.height = image_extent.height;
@@ -1044,7 +1249,10 @@ export class DeferredShadingStrategy {
         );
       }
 
-      // Bloom pass
+      // ┌─────────────────────────────────────────────────────────────────────────────┐
+      // │ ✨ PASS: Bloom Post-Processing                                             │
+      // │    Multi-pass gaussian blur to create beautiful light bleeding effects    │
+      // └─────────────────────────────────────────────────────────────────────────────┘
       const num_iterations = 4;
       if (num_iterations > 0) {
         const image_extent = renderer.get_canvas_resolution();
@@ -1189,7 +1397,10 @@ export class DeferredShadingStrategy {
 
       const antialiased_scene_color_desc = post_bloom_color_desc;
 
-      // Post Process Pass
+      // ┌─────────────────────────────────────────────────────────────────────────────┐
+      // │ 🎭 PASS: Post-Processing Stack                                              │
+      // │    Apply final image enhancements (tone mapping, color grading, etc.)     │
+      // └─────────────────────────────────────────────────────────────────────────────┘
       const post_processed_image = PostProcessStack.compile_passes(
         0,
         render_graph,
@@ -1199,7 +1410,10 @@ export class DeferredShadingStrategy {
         main_normal_image
       );
 
-      // Fullscreen Present Pass
+      // ┌─────────────────────────────────────────────────────────────────────────────┐
+      // │ 🖼️  PASS: Final Presentation                                               │
+      // │    Present the final rendered image to the screen swapchain               │
+      // └─────────────────────────────────────────────────────────────────────────────┘
       {
         const swapchain_image = Texture.create_from_texture(
           renderer.context.getCurrentTexture(),
@@ -1231,7 +1445,10 @@ export class DeferredShadingStrategy {
         );
       }
 
-      // G-Buffer set clear pass
+      // ┌─────────────────────────────────────────────────────────────────────────────┐
+      // │ 🧽 PASS: G-Buffer Clear State Reset                                        │
+      // │    Reset render targets to clear state for next frame                     │
+      // └─────────────────────────────────────────────────────────────────────────────┘
       {
         render_graph.add_pass(
           reset_g_buffer_targets_pass_name,
@@ -1271,7 +1488,10 @@ export class DeferredShadingStrategy {
         );
       }
 
-      // Clear dirty flags pass
+      // ┌─────────────────────────────────────────────────────────────────────────────┐
+      // │ 🚩 PASS: Clear Entity Dirty Flags                                          │
+      // │    Reset entity modification flags for next frame's change detection      │
+      // └─────────────────────────────────────────────────────────────────────────────┘
       {
         render_graph.add_pass(
           "clear_dirty_flags",
@@ -1287,6 +1507,10 @@ export class DeferredShadingStrategy {
           }
         );
       }
+
+      // ═══════════════════════════════════════════════════════════════════════════════
+      // 🏁 PIPELINE FINALIZATION
+      // ═══════════════════════════════════════════════════════════════════════════════
 
       this.force_recreate = false;
 

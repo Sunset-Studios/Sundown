@@ -177,6 +177,8 @@ export class AdaptiveSparseVirtualShadowMaps {
       dense_shadow_casting_lights_buffer,
       light_count_buffer,
       transforms_buffer,
+      object_instances,
+      view_visibility_buffers,
       force_recreate = false,
       debug_view = null,
     }
@@ -402,11 +404,7 @@ export class AdaptiveSparseVirtualShadowMaps {
       // For simplicity, we set view index to 0. In a complete implementation, derive this from the tile request data.
       const request_index = 1 + i * 3;
       const view_index = this.cpu_requested_tiles[request_index + 2];
-
-      const compacted_instance_buffer = MeshTaskQueue.get_compacted_object_instance_buffer(view_index);
-      const compacted_object_instances = render_graph.register_buffer(
-        compacted_instance_buffer.config.name
-      );
+      const visible_object_instances = view_visibility_buffers[view_index];
 
       render_graph.add_pass(
         `as_vsm_render_tile_${i}`,
@@ -414,7 +412,8 @@ export class AdaptiveSparseVirtualShadowMaps {
         {
           inputs: [
             transforms_buffer,
-            compacted_object_instances,
+            object_instances,
+            visible_object_instances,
             this.requested_tiles_buf,
             dense_shadow_casting_lights_buffer,
             this.settings_buf,

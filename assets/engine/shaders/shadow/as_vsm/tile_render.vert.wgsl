@@ -9,12 +9,13 @@ struct ShadowCasterDrawIndexUniform {
 };
 
 @group(1) @binding(0) var<storage, read> entity_transforms: array<EntityTransform>;
-@group(1) @binding(1) var<storage, read> compacted_object_instances: array<CompactedObjectInstance>;
-@group(1) @binding(2) var<storage, read> requested_tiles: array<u32>; // Format: [count, vt_id, view_mask, ...]
-@group(1) @binding(3) var<storage, read> dense_shadow_casting_lights_buffer: array<u32>;
-@group(1) @binding(4) var<storage, read> settings: ASVSMSettings;
-@group(1) @binding(5) var page_table: texture_storage_2d_array<r32uint, read>; // PTE format: Bit31=Valid, Bits30-27=LOD, Bits26-0=PhysID
-@group(1) @binding(6) var<uniform> shadow_caster_draw_index_ub: ShadowCasterDrawIndexUniform;
+@group(1) @binding(1) var<storage, read> object_instances: array<ObjectInstance>;
+@group(1) @binding(2) var<storage, read> visible_object_instances: array<i32>;
+@group(1) @binding(3) var<storage, read> requested_tiles: array<u32>; // Format: [count, vt_id, view_mask, ...]
+@group(1) @binding(4) var<storage, read> dense_shadow_casting_lights_buffer: array<u32>;
+@group(1) @binding(5) var<storage, read> settings: ASVSMSettings;
+@group(1) @binding(6) var page_table: texture_storage_2d_array<r32uint, read>; // PTE format: Bit31=Valid, Bits30-27=LOD, Bits26-0=PhysID
+@group(1) @binding(7) var<uniform> shadow_caster_draw_index_ub: ShadowCasterDrawIndexUniform;
 
 struct VertexOutput {
   @builtin(position) position: vec4<f32>,
@@ -24,6 +25,8 @@ struct VertexOutput {
 fn vs(@builtin(vertex_index) vertex_index: u32,
         @builtin(instance_index) instance_index: u32) -> VertexOutput {
   var out: VertexOutput;
+
+  let object_instance_index = visible_object_instances[instance_index];
 
   // Pull per-draw metadata using draw index uniform
   let request_index = 1 + shadow_caster_draw_index_ub.request_index * 3u;
@@ -49,7 +52,7 @@ fn vs(@builtin(vertex_index) vertex_index: u32,
   let offset_y        = (2.0 * f32(phys_y) + 1.0) * one_over_phys - 1.0;
 
   // Lookup model transform for this mesh instance
-  let row_field = compacted_object_instances[instance_index].row; // Assuming 'row' contains info to get transform
+  let row_field = object_instances[object_instance_index].row; // Assuming 'row' contains info to get transform
   let true_row = get_entity_row(row_field); // Helper to decode row_field
   let transform = entity_transforms[true_row].transform;
 

@@ -49,8 +49,8 @@ const transparency_reveal_location = 5;
 
 @group(1) @binding(0) var<storage, read> entity_transforms: array<EntityTransform>;
 @group(1) @binding(1) var<storage, read> entity_flags: array<u32>;
-@group(1) @binding(2) var<storage, read> compacted_object_instances: array<CompactedObjectInstance>;
-@group(1) @binding(3) var<storage, read> lights_buffer: array<Light>; // Used for forward shading if necessary
+@group(1) @binding(2) var<storage, read> object_instances: array<ObjectInstance>;
+@group(1) @binding(3) var<storage, read> visible_object_instances: array<i32>;
 
 // ------------------------------------------------------------------------------------
 // Vertex Shader
@@ -67,7 +67,8 @@ fn vertex(v_out: ptr<function, VertexOutput>) -> VertexOutput {
     @builtin(instance_index) ii: u32
 ) -> VertexOutput {
     let instance_vertex = vertex_buffer[vi];
-    let entity_resolved = get_entity_row(compacted_object_instances[ii].row);
+    let object_instance_index = visible_object_instances[ii];
+    let entity_resolved = get_entity_row(object_instances[object_instance_index].row);
 
     let entity_transform = entity_transforms[entity_resolved];
     let view_index = frame_info.view_index;
@@ -137,36 +138,7 @@ fn fragment(v_out: VertexOutput, f_out: ptr<function, FragmentOutput>) -> Fragme
         discard;
     } 
 
-    let view_index = frame_info.view_index;
-    var view_dir = normalize(-view_buffer[view_index].view_direction.xyz);
-    var color = vec3f(0.0);
-    let num_lights = arrayLength(&lights_buffer) * min(1u, u32(post_material_output.normal.w));
-
-    for (var i = 0u; i < num_lights; i++) {
-        var light = lights_buffer[i];
-        if (light.activated <= 0.0) {
-            continue;
-        }
-        color += calculate_brdf(
-            light,
-            post_material_output.normal.xyz,
-            view_dir,
-            post_material_output.position.xyz,
-            post_material_output.albedo.rgb,
-            post_material_output.smra.r * 0.0009765625 /* 1.0f / 1024 */,
-            post_material_output.smra.g,
-            post_material_output.smra.b,
-            0.0, // clear coat
-            1.0, // clear coat roughness 
-            post_material_output.smra.a,
-            vec3f(1.0, 1.0, 1.0), // irradiance
-            vec3f(1.0, 1.0, 1.0), // prefilter color 
-            vec2f(1.0, 1.0), // env brdf
-            0, // shadow map index
-        );
-    }
-
-    color += (post_material_output.emissive.r * post_material_output.albedo.rgb);
+    let color = (post_material_output.emissive.r * post_material_output.albedo.rgb);
 
     let weight = clamp(pow(min(1.0, post_material_output.albedo.a * 10.0) + 0.01, 3.0) * 1e8 * pow(1.0 - v_out.position.z * 0.9, 3.0), 1e-2, 3e3); 
     post_material_output.transparency_reveal = post_material_output.albedo.a;

@@ -1,3 +1,4 @@
+import { Renderer } from "./renderer.js";
 import { Shader } from "./shader.js";
 import { FragmentGpuBuffer } from "../core/ecs/solar/memory.js";
 import { BindGroup } from "./bind_group.js";
@@ -16,8 +17,6 @@ import {
   CacheTypes,
   BindGroupType,
 } from "./renderer_types.js";
-
-const enable_depth_on_transparency = true;
 
 export class MaterialTemplate {
   static templates = new Map();
@@ -242,23 +241,23 @@ export class MaterialTemplate {
         depthWriteEnabled:
           this.pipeline_state_config.depth_stencil_target.depth_write_enabled ??
           depth_stencil_options.depth_write_enabled ??
-          true,
+          false,
         depthCompare:
           this.pipeline_state_config.depth_stencil_target.depth_compare ??
           depth_stencil_options.depth_compare ??
-          "less",
-        depthBias: this.pipeline_state_config.depth_stencil_target.depth_bias ?? 0,
-        depthBiasClamp: this.pipeline_state_config.depth_stencil_target.depth_bias_clamp ?? 0,
-        depthBiasSlopeScale: this.pipeline_state_config.depth_stencil_target.depth_slope_scale ?? 0,
+          "less-equal",
+        depthBias: this.pipeline_state_config.depth_stencil_target.depth_bias ?? 0.0,
+        depthBiasClamp: this.pipeline_state_config.depth_stencil_target.depth_bias_clamp ?? 0.0,
+        depthBiasSlopeScale: this.pipeline_state_config.depth_stencil_target.depth_slope_scale ?? 0.0,
       };
     } else if (depth_target) {
       pipeline_descriptor.depthStencil = {
         format: depth_target.config.format,
-        depthWriteEnabled: depth_stencil_options.depth_write_enabled ?? true,
-        depthCompare: depth_stencil_options.depth_compare ?? "less",
-        depthBias: depth_stencil_options.depth_bias ?? 0,
-        depthBiasClamp: depth_stencil_options.depth_bias_clamp ?? 0,
-        depthBiasSlopeScale: depth_stencil_options.depth_slope_scale ?? 0,
+        depthWriteEnabled: depth_stencil_options.depth_write_enabled ?? false,
+        depthCompare: depth_stencil_options.depth_compare ?? "less-equal",
+        depthBias: depth_stencil_options.depth_bias ?? 0.0,
+        depthBiasClamp: depth_stencil_options.depth_bias_clamp ?? 0.0,
+        depthBiasSlopeScale: depth_stencil_options.depth_slope_scale ?? 0.0,
       };
     }
 
@@ -359,15 +358,15 @@ export class Material {
   }
 
   update_pipeline_state(bind_groups, output_targets = []) {
+    const renderer = Renderer.get();
+    const depth_prepass_enabled = renderer.is_depth_prepass_enabled();
     this.pipeline_state = this.template.create_pipeline_state(
       bind_groups
         .filter((bind_group) => bind_group !== null)
         .map((bind_group) => bind_group.layout),
       output_targets,
       {
-        depth_write_enabled:
-          this.family === MaterialFamilyType.Opaque ||
-          (this.family === MaterialFamilyType.Transparent && enable_depth_on_transparency),
+        depth_write_enabled: depth_prepass_enabled ? false : this.family === MaterialFamilyType.Opaque,
       }
     );
   }

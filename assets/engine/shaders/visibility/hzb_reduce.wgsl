@@ -31,7 +31,7 @@ fn cs(@builtin(global_invocation_id) global_id: vec3<u32>) {
     var d01 = textureSampleLevel(input_texture, non_filtering_sampler, base_uv + vec2f(0.0, input_texel_size.y), 0).r;
     var d11 = textureSampleLevel(input_texture, non_filtering_sampler, base_uv + vec2f(input_texel_size.x, input_texel_size.y), 0).r;
 
-    let min_depth = min(min(d00, d10), min(d01, d11));
+    let min_depth = min(d00, min(d10, min(d01, d11)));
 
     textureStore(output_texture, global_id.xy, vec4<f32>(min_depth));
 }

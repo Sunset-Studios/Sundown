@@ -66,6 +66,7 @@ export class SharedViewBuffer {
     fov: 140,
     aspect_ratio: 141,
     distance_check_enabled: 142,
+    velocity: 143,
   };
 
   // --- Per-view Access Wrapper ---
@@ -260,6 +261,15 @@ export class SharedViewBuffer {
         SharedViewBuffer.dirty_states.set(this.idx, 1);
       }
     }
+    get velocity() {
+      const f = SharedViewBuffer.offsets.velocity;
+      return SharedViewBuffer.raw_data.subarray(this.base + f, this.base + f + 4);
+    }
+    set velocity(v) {
+      const f = SharedViewBuffer.offsets.velocity;
+      SharedViewBuffer.raw_data.set(v, this.base + f);
+      SharedViewBuffer.dirty_states.set(this.idx, 1);
+    }
     get renderable_state() {
       return SharedViewBuffer.is_render_active(this.idx);
     }
@@ -280,7 +290,7 @@ export class SharedViewBuffer {
 
   // --- Layout Configuration ---
   // floats per view: 6×16 matrix + 4×4 vector + 6×4 frustum + 4 floats = 140
-  static floats_per_view = 144;
+  static floats_per_view = 148;
   static type_size_bytes = SharedViewBuffer.floats_per_view * 4;
 
   // --- Raw Data & Dirty Flags ---
@@ -349,6 +359,7 @@ export class SharedViewBuffer {
     SharedViewBuffer.raw_data.set([1], base + SharedViewBuffer.offsets.culling_enabled);
     SharedViewBuffer.raw_data.set([1], base + SharedViewBuffer.offsets.occlusion_enabled);
     SharedViewBuffer.raw_data.set([1], base + SharedViewBuffer.offsets.distance_check_enabled);
+    SharedViewBuffer.raw_data.set([0, 0, 0, 0], base + SharedViewBuffer.offsets.velocity);
     SharedViewBuffer.dirty_states.set(idx, 1);
     SharedViewBuffer.renderable_states.set(idx, 0);
 
@@ -597,6 +608,29 @@ export class SharedViewBuffer {
       fr[22] = tmpv[2] / l;
       fr[23] = (view_projection_matrix[15] - view_projection_matrix[14]) / l;
       SharedViewBuffer.raw_data.set(fr, base + SharedViewBuffer.offsets.frustum);
+
+      // Compute view velocity as the difference between camera positions
+      // extracted from the previous and current view matrices.
+      const prev_view_matrix = SharedViewBuffer.raw_data.subarray(
+          base + SharedViewBuffer.offsets.prev_view_matrix,
+          base + SharedViewBuffer.offsets.prev_view_matrix + 16
+      );
+
+      // Invert both matrices to get the camera transform (whose translation is the camera position)
+      const inv_prev_view = mat4.invert(mat4.create(), prev_view_matrix);
+      const inv_new_view = mat4.invert(mat4.create(), view_matrix);
+
+      // Extract camera positions (translation components are at indices 12, 13, 14)
+      const prev_camera_position = vec3.fromValues(
+          inv_prev_view[12], inv_prev_view[13], inv_prev_view[14]
+      );
+      const new_camera_position = vec3.fromValues(
+          inv_new_view[12], inv_new_view[13], inv_new_view[14]
+      );
+
+      // Compute velocity as difference (optionally divide by delta time if available)
+      const velocity = vec3.subtract(vec3.create(), new_camera_position, prev_camera_position);
+      SharedViewBuffer.raw_data.set(velocity, base + SharedViewBuffer.offsets.velocity);
 
       // upload full view block using element-count write
       const view_slice = SharedViewBuffer.raw_data.subarray(

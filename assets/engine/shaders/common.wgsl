@@ -59,6 +59,7 @@ struct View {
     fov: f32,
     aspect_ratio: f32,
     distance_check_enabled: f32,
+    velocity: vec4f,
 };
 
 struct FrameInfo {
@@ -78,10 +79,6 @@ struct ObjectInstance {
     row: u32,
 };
 
-struct CompactedObjectInstance {
-    row: u32,
-};
-
 struct AABBTreeNode {
     flags_and_node_data: vec4f,
     left_right_parent_ud: vec4f,
@@ -90,6 +87,14 @@ struct AABBTreeNode {
 struct AABBNodeBounds {
     min_point: vec4f,
     max_point: vec4f,
+};
+
+struct DrawCommand {
+    index_count: u32,
+    instance_count: atomic<u32>,
+    first_index: u32,
+    vertex_offset: i32,
+    first_instance: u32,
 };
 
 // ------------------------------------------------------------------------------------
@@ -291,6 +296,11 @@ fn log_depth(view_space_z: f32) -> f32 {
     return
     (log(LOG_DEPTH_C * z + 1.0) - log(LOG_DEPTH_C * near_plane + 1.0)) 
         / (log(LOG_DEPTH_C * far_plane + 1.0) - log(LOG_DEPTH_C * near_plane + 1.0));
+}
+
+fn linearize_depth(d: f32, near_plane: f32, far_plane: f32) -> f32 {
+    // Standard perspective projection linearization.
+    return (2.0 * near_plane * far_plane) / (far_plane + near_plane - d * (far_plane - near_plane));
 }
 
 fn normalized_view_depth(uv: vec2f, depth: f32) -> f32 {

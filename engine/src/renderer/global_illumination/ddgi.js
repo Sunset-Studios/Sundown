@@ -20,11 +20,7 @@ export class GIProbeVolume {
     this.origin = origin;
     this.dims = dims;
     this.volume_size = volume_size;
-    this.spacing = [
-      volume_size[0] / dims[0],
-      volume_size[1] / dims[1],
-      volume_size[2] / dims[2],
-    ];
+    this.spacing = [volume_size[0] / dims[0], volume_size[1] / dims[1], volume_size[2] / dims[2]];
     this.probe_count = dims[0] * dims[1] * dims[2];
     this.probes_per_frame = probes_per_frame;
     this.blend_factor = blend_factor;
@@ -126,7 +122,7 @@ export class GIProbeVolume {
    * Update and dispatch the DDGI probes via the selected strategy.
    * @param render_graph
    * @param resources { gi_params_buffer, gi_irradiance_image, gi_depth_image,
-   *                    entity_transforms, entity_flags, compacted_object_instance_buffer, lights, probe_cubemap }
+   *                    entity_transforms, entity_flags, object_instances, visible_object_instances, lights, probe_cubemap }
    */
   update(render_graph, resources) {
     // only 'raster' is supported currently
@@ -137,15 +133,23 @@ export class GIProbeVolume {
    * Raster-based probe update: renders each probe's 6 faces and convolve.
    */
   static _raster_update(vol, render_graph, resources) {
-    const { gi_params_buffer, gi_irradiance_image, gi_depth_image,
-            entity_transforms, entity_flags,
-            compacted_object_instance_buffer, lights, probe_cubemap } = resources;
+    const {
+      gi_params_buffer,
+      gi_irradiance_image,
+      gi_depth_image,
+      entity_transforms,
+      entity_flags,
+      object_instances,
+      visible_object_instances,
+      lights,
+      probe_cubemap,
+    } = resources;
     const probes = vol.probes_per_frame;
     const dims = vol.dims;
     for (let i = 0; i < probes; ++i) {
       const idx = vol.current_probe_index;
-      const z = Math.floor(idx / (dims[0]*dims[1]));
-      const rem = idx % (dims[0]*dims[1]);
+      const z = Math.floor(idx / (dims[0] * dims[1]));
+      const rem = idx % (dims[0] * dims[1]);
       const y = Math.floor(rem / dims[0]);
       const x = rem % dims[0];
 
@@ -154,25 +158,42 @@ export class GIProbeVolume {
       const o = vol.origin;
       const s = vol.spacing;
       buf.write([
-        o[0] + x*s[0], o[1] + y*s[1], o[2] + z*s[2], 0,
-        s[0], s[1], s[2], 0,
-        dims[0], dims[1], dims[2], 0,
-        idx, 0, 0, 0,
+        o[0] + x * s[0],
+        o[1] + y * s[1],
+        o[2] + z * s[2],
+        0,
+        s[0],
+        s[1],
+        s[2],
+        0,
+        dims[0],
+        dims[1],
+        dims[2],
+        0,
+        idx,
+        0,
+        0,
+        0,
       ]);
 
       // prepare world position
-      const worldPos = [o[0]+x*s[0], o[1]+y*s[1], o[2]+z*s[2], 1];
+      const worldPos = [o[0] + x * s[0], o[1] + y * s[1], o[2] + z * s[2], 1];
       const view_idx = vol.probe_view_indices[idx];
       const view_data = SharedViewBuffer.get_view_data(view_idx);
       view_data.view_position = worldPos;
 
       // 6 cubemap faces
       const dirs = [
-        [1,0,0],[-1,0,0],[0,1,0],[0,-1,0],[0,0,1],[0,0,-1]
+        [1, 0, 0],
+        [-1, 0, 0],
+        [0, 1, 0],
+        [0, -1, 0],
+        [0, 0, 1],
+        [0, 0, -1],
       ];
-      for (let face=0; face<6; ++face) {
+      for (let face = 0; face < 6; ++face) {
         const dir = dirs[face];
-        const q = quat.rotationTo(quat.create(), [0,0,1], dir);
+        const q = quat.rotationTo(quat.create(), [0, 0, 1], dir);
 
         view_data.view_rotation = q;
 
@@ -180,14 +201,20 @@ export class GIProbeVolume {
           `ddgi_raster_${idx}_face_${face}`,
           RenderPassFlags.Graphics,
           {
-            inputs: [entity_transforms, entity_flags, compacted_object_instance_buffer, lights],
+            inputs: [
+              entity_transforms,
+              entity_flags,
+              object_instances,
+              visible_object_instances,
+              lights,
+            ],
             outputs: [{ name: probe_cubemap, array_layer: face }],
             shader_setup: vol.raster_setup,
           },
           (g, fd, encoder) => {
             const pass = g.get_physical_pass(fd.current_pass);
-            pass.setViewport(0,0,vol.resolution,vol.resolution,0,1);
-            pass.setScissorRect(0,0,vol.resolution,vol.resolution);
+            pass.setViewport(0, 0, vol.resolution, vol.resolution, 0, 1);
+            pass.setScissorRect(0, 0, vol.resolution, vol.resolution);
             MeshTaskQueue.draw_scene_direct(pass);
           }
         );
@@ -198,13 +225,13 @@ export class GIProbeVolume {
         `ddgi_accum_${idx}`,
         RenderPassFlags.Compute,
         {
-          shader_setup: { pipeline_shaders:{ compute:{ path: vol.accum_shader } } },
+          shader_setup: { pipeline_shaders: { compute: { path: vol.accum_shader } } },
           inputs: [probe_cubemap, gi_params_buffer],
           outputs: [gi_irradiance_image, gi_depth_image],
         },
         (g, fd, encoder) => {
           const pass = g.get_physical_pass(fd.current_pass);
-          pass.dispatch(1,1,1);
+          pass.dispatch(1, 1, 1);
         }
       );
     }

@@ -86,7 +86,7 @@ class ObjectInstanceBuffer {
           // Update object instance buffer
           const write_count_obj = Math.min(
             total_obj_entries - actual_write_offset,
-            max_frame_buffer_writes
+            max_frame_buffer_writes * 2
           );
           if (write_count_obj > 0) {
             for (let i = actual_write_offset; i < actual_write_offset + write_count_obj; i += 2) {
@@ -117,7 +117,8 @@ class ObjectInstanceBuffer {
 class IndirectDrawObject {
   view_index = 0;
   indirect_draw_buffer = null;
-  compacted_object_instance_buffer = null;
+  visible_instance_buffer_no_occlusion = null;
+  visible_instance_buffer = null;
   indirect_draw_data = null;
   current_indirect_draw_write_offset = 0;
   last_indirect_draw_count = 0;
@@ -135,10 +136,18 @@ class IndirectDrawObject {
         });
       }
 
-      if (!this.compacted_object_instance_buffer) {
-        this.compacted_object_instance_buffer = Buffer.create({
-          name: `compacted_object_instance_buffer${suffix}`,
-          raw_data: new Uint32Array(initial_buffer_size),
+      if (!this.visible_instance_buffer_no_occlusion) {
+        this.visible_instance_buffer_no_occlusion = Buffer.create({
+          name: `visible_instance_buffer_no_occlusion${suffix}`,
+          raw_data: new Int32Array(initial_buffer_size),
+          usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+        });
+      }
+
+      if (!this.visible_instance_buffer) {
+        this.visible_instance_buffer = Buffer.create({
+          name: `visible_instance_buffer${suffix}`,
+          raw_data: new Int32Array(initial_buffer_size),
           usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
         });
       }
@@ -173,11 +182,21 @@ class IndirectDrawObject {
       }
 
       // Resize object instance buffer if needed
-      const required_object_instance_size = object_instances.length * 2 * 4; // 2 uint32 per instance, 4 bytes per uint32
-      if (this.compacted_object_instance_buffer.config.size < required_object_instance_size) {
-        this.compacted_object_instance_buffer = Buffer.create({
-          name: `compacted_object_instance_buffer${suffix}`,
-          raw_data: new Uint32Array(object_instances.length * 2),
+      const required_object_instance_size = object_instances.length * 4; // 4 bytes per instance
+      if (this.visible_instance_buffer_no_occlusion.config.size < required_object_instance_size) {
+        this.visible_instance_buffer_no_occlusion = Buffer.create({
+          name: `visible_instance_buffer_no_occlusion${suffix}`,
+          raw_data: new Int32Array(object_instances.length * 2),
+          usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+          force: true,
+        });
+
+        Renderer.get().mark_bind_groups_dirty(true);
+      }
+      if (this.visible_instance_buffer.config.size < required_object_instance_size) {
+        this.visible_instance_buffer = Buffer.create({
+          name: `visible_instance_buffer${suffix}`,
+          raw_data: new Int32Array(object_instances.length * 2),
           usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
           force: true,
         });
@@ -186,7 +205,6 @@ class IndirectDrawObject {
       }
 
       profile_scope("write_indirect_draw_buffer", () => {
-        // only write up to the last indirect-draw entries once
         const total_indirect_entries = this.last_indirect_draw_count;
         if (
           total_indirect_entries > 0 &&
@@ -202,8 +220,8 @@ class IndirectDrawObject {
           if (write_count > 0) {
             for (let i = actual_write_offset; i < actual_write_offset + write_count; i += 5) {
               const offset = Math.floor(i / 5);
-              this.indirect_draw_data[i] = batches[offset].index_count;
-              this.indirect_draw_data[i + 1] = 0;
+              this.indirect_draw_data[i + 0] = batches[offset].index_count;
+              this.indirect_draw_data[i + 1] = 0; // Regular draw uses 0 instance count until updated
               this.indirect_draw_data[i + 2] = batches[offset].first_index;
               this.indirect_draw_data[i + 3] = batches[offset].base_vertex;
               this.indirect_draw_data[i + 4] = batches[offset].base_instance;
@@ -214,6 +232,7 @@ class IndirectDrawObject {
               write_count,
               actual_write_offset
             );
+
             this.current_indirect_draw_write_offset += write_count;
             if (
               this.current_indirect_draw_write_offset >=
@@ -227,11 +246,22 @@ class IndirectDrawObject {
     });
   }
 
+  reset_instance_counts() {
+    for (let i = 0; i < this.last_indirect_draw_count; i += 5) {
+      this.indirect_draw_data[i + 1] = 0; // Reset instance count to 0
+    }
+    this.indirect_draw_buffer.write_raw(
+      this.indirect_draw_data,
+    );
+  }
+
   destroy() {
     this.indirect_draw_buffer.destroy();
-    this.compacted_object_instance_buffer.destroy();
+    this.visible_instance_buffer_no_occlusion.destroy();
+    this.visible_instance_buffer.destroy();
     this.indirect_draw_buffer = null;
-    this.compacted_object_instance_buffer = null;
+    this.visible_instance_buffer_no_occlusion = null;
+    this.visible_instance_buffer = null;
     this.indirect_draw_data = null;
   }
 }
@@ -423,10 +453,7 @@ export class MeshTaskQueue {
         }
       }
 
-      this.object_instance_buffer.update_buffers(
-        this.object_instances,
-        this.needs_sort
-      );
+      this.object_instance_buffer.update_buffers(this.object_instances, this.needs_sort);
 
       for (let i = 0; i < this.indirect_draw_objects.length; i++) {
         const obj = this.indirect_draw_objects.get(i);
@@ -467,10 +494,17 @@ export class MeshTaskQueue {
   }
 
   /**
-   * Get the compacted object instance buffer.
+   * Get the visible object instance buffer without occlusion.
    */
-  static get_compacted_object_instance_buffer(view_index = 0) {
-    return this.get_indirect_draw_object(view_index).compacted_object_instance_buffer;
+  static get_visible_instance_buffer_no_occlusion(view_index = 0) {
+    return this.get_indirect_draw_object(view_index).visible_instance_buffer_no_occlusion;
+  }
+
+  /**
+   * Get the visible object instance buffer.
+   */
+  static get_visible_instance_buffer(view_index = 0) {
+    return this.get_indirect_draw_object(view_index).visible_instance_buffer;
   }
 
   /**
@@ -600,7 +634,9 @@ export class MeshTaskQueue {
     view_index = 0
   ) {
     let last_material = null;
-    const indirect_buffer = indirect_draw_buffer ?? this.get_indirect_draw_object(view_index).indirect_draw_buffer;
+
+    const indirect_draw_object = this.get_indirect_draw_object(view_index);
+    const indirect_buffer = indirect_draw_buffer ?? indirect_draw_object.indirect_draw_buffer;
 
     for (let i = 0; i < this.batches.length; ++i) {
       const batch = this.batches[i];
@@ -656,7 +692,9 @@ export class MeshTaskQueue {
       }
     }
 
-    const indirect_buffer = indirect_draw_buffer ?? this.get_indirect_draw_object(view_index).indirect_draw_buffer;
+    const indirect_draw_object = this.get_indirect_draw_object(view_index);
+    const indirect_buffer = indirect_draw_buffer ?? indirect_draw_object.indirect_draw_buffer;
+
     for (let i = 0; i < this.batches.length; ++i) {
       if (this.batches[i].material_id !== material_id) {
         continue;

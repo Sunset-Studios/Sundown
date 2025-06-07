@@ -19,7 +19,8 @@ struct FragmentOutput {
 // ------------------------------------------------------------------------------------ 
 
 @group(1) @binding(0) var<storage, read> entity_transforms: array<EntityTransform>;
-@group(1) @binding(1) var<storage, read> compacted_object_instances: array<CompactedObjectInstance>;
+@group(1) @binding(1) var<storage, read> object_instances: array<ObjectInstance>;
+@group(1) @binding(2) var<storage, read> visible_object_instances: array<i32>;
 
 // ------------------------------------------------------------------------------------
 // Vertex Shader
@@ -29,7 +30,8 @@ struct FragmentOutput {
     @builtin(vertex_index) vi : u32,
     @builtin(instance_index) ii: u32
 ) -> VertexOutput {
-    let entity_resolved = get_entity_row(compacted_object_instances[ii].row);
+    let object_instance_index = visible_object_instances[ii];
+    let entity_resolved = get_entity_row(object_instances[object_instance_index].row);
 
     let model_matrix = entity_transforms[entity_resolved].transform;
     let view_index = frame_info.view_index;

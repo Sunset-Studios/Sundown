@@ -26,12 +26,17 @@ export class Renderer {
   canvas_format = null;
   frame_number = 0;
   aspect_ratio = 1.0;
-  has_f16 = false;
   execution_queue = new ExecutionQueue();
   render_strategy = null;
   render_graph = null;
   post_render_callbacks = [];
   pre_render_callbacks = [];
+  
+  // Renderer features
+  has_f16 = false;
+  use_depth_prepass = true;
+  shadows_enabled = false;
+  gi_enabled = false;
 
   static renderers = [];
 
@@ -181,6 +186,9 @@ export class Renderer {
         {
           sampler: TextureSampler.create({
             name: "non_filtering_sampler",
+            address_mode_u: "clamp-to-edge",
+            address_mode_v: "clamp-to-edge",
+            address_mode_w: "clamp-to-edge",
             mag_filter: "nearest",
             min_filter: "nearest",
             mipmap_filter: "nearest",
@@ -247,6 +255,30 @@ export class Renderer {
       width: this.canvas.width,
       height: this.canvas.height,
     };
+  }
+
+  is_shadows_enabled() {
+    return this.shadows_enabled;
+  }
+
+  set_shadows_enabled(enabled) {
+    this.shadows_enabled = enabled;
+  }
+
+  is_gi_enabled() {
+    return this.gi_enabled;
+  }
+
+  set_gi_enabled(enabled) {
+    this.gi_enabled = enabled;
+  }
+
+  is_depth_prepass_enabled() {
+    return this.use_depth_prepass;
+  }
+
+  set_depth_prepass_enabled(enabled) {
+    this.use_depth_prepass = enabled;
   }
 
   draw_pass(render_pass, triangles, instance_count = 1) {
