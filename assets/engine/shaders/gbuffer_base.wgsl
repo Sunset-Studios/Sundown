@@ -16,11 +16,7 @@ struct VertexOutput {
     @location(10) @interpolate(flat) vertex_index: u32,
 };
 
-#if DEPTH_ONLY
-
-#include "depth_only.wgsl"
-
-#else
+#ifndef DEPTH_ONLY
 
 struct FragmentOutput {
     @location(0) albedo: vec4<precision_float>,
@@ -42,6 +38,6 @@ const transparency_reveal_location = 6;
 const transparency_reveal_location = 5;
 #endif
 
-#include "gbuffer_pipeline.wgsl"
-
 #endif
+
+#include "gbuffer_pipeline.wgsl"

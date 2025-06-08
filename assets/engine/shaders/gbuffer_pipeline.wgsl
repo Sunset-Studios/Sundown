@@ -78,7 +78,21 @@ fn fragment(v_out: VertexOutput, f_out: ptr<function, FragmentOutput>) -> Fragme
 }
 #endif
 
+#if DEPTH_ONLY
+@fragment fn fs(v_out: VertexOutput) {
+#else
 @fragment fn fs(v_out: VertexOutput) -> FragmentOutput {
+#endif
+
+#if MASKED 
+    let mask = fragment_mask(v_out);
+    if (mask <= 0.0) {
+        discard;
+    } 
+#endif
+
+#ifndef DEPTH_ONLY
+
     var output : FragmentOutput;
 
     output.position = v_out.world_position;
@@ -105,4 +119,6 @@ fn fragment(v_out: VertexOutput, f_out: ptr<function, FragmentOutput>) -> Fragme
 #endif
 
     return post_material_output;
+
+#endif // DEPTH_ONLY
 }

@@ -79,9 +79,6 @@ fn vertex(v_out: ptr<function, VertexOutput>) -> VertexOutput {
 //------------------------------------------------------------------------------------
 fn fragment(v_out: VertexOutput, f_out: ptr<function, FragmentOutput>) -> FragmentOutput {
     let mask = fragment_mask(v_out);
-    if (mask <= 0.0) {
-        discard;
-    }
 
     let entity_row = v_out.instance_id;
     let string_color = string_data[entity_row].text_color;
