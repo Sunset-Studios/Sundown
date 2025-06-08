@@ -1,5 +1,6 @@
 #define CUSTOM_FS
 #define CUSTOM_VS
+#define MASKED
 
 #include "gbuffer_base.wgsl"
 
@@ -77,6 +78,31 @@ fn vertex(v_out: ptr<function, VertexOutput>) -> VertexOutput {
 // how you blend or store this in the g-buffer pipeline.
 //------------------------------------------------------------------------------------
 fn fragment(v_out: VertexOutput, f_out: ptr<function, FragmentOutput>) -> FragmentOutput {
+    let mask = fragment_mask(v_out);
+    if (mask <= 0.0) {
+        discard;
+    }
+
+    let entity_row = v_out.instance_id;
+    let string_color = string_data[entity_row].text_color;
+    let emissive = string_data[entity_row].text_emissive;
+
+    f_out.albedo = vec4<precision_float>(string_color.rgb, mask);
+    f_out.emissive = vec4<precision_float>(emissive, emissive, emissive, 0.0);
+
+    f_out.smra.r = 2555.0;
+    f_out.smra.g = 0.5;
+    f_out.smra.b = 0.3;
+    f_out.smra.a = 0.0;
+
+    return *f_out;
+}
+
+//------------------------------------------------------------------------------------
+// MASK FUNCTION
+//------------------------------------------------------------------------------------
+
+fn fragment_mask(v_out: VertexOutput) -> precision_float {
     // Sample the MSDF texture
     let entity_row = v_out.instance_id;
 
@@ -99,18 +125,5 @@ fn fragment(v_out: VertexOutput, f_out: ptr<function, FragmentOutput>) -> Fragme
 
     // Anti-aliased alpha
     let alpha = smoothstep(-w, w, sd);
-    if (alpha <= 0.0) {
-        discard;
-    }
-
-    f_out.albedo = vec4<precision_float>(string_color.rgb, precision_float(alpha));
-    f_out.emissive = vec4<precision_float>(emissive, emissive, emissive, 0.0);
-
-
-    f_out.smra.r = 2555.0;
-    f_out.smra.g = 0.5;
-    f_out.smra.b = 0.3;
-    f_out.smra.a = 0.0;
-
-    return *f_out;
+    return alpha;
 }

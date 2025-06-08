@@ -198,7 +198,12 @@ const draw_cull_data_config = {
 const depth_only_shader_setup = {
   pipeline_shaders: {
     vertex: {
-      path: "depth_only.wgsl",
+      path: "gbuffer_base.wgsl",
+      defines: ["DEPTH_ONLY"],
+    },
+    fragment: {
+      path: "gbuffer_base.wgsl",
+      defines: ["DEPTH_ONLY"],
     },
   },
   depth_write_enabled: true,
@@ -781,7 +786,7 @@ export class DeferredShadingStrategy {
       // │ 🔍 PASS: Reset Visibility Buffers                                          │
       // │    Clear per-view visibility data before frustum culling                  │
       // └─────────────────────────────────────────────────────────────────────────────┘
-      {
+      if (draw_count > 0) {
         for (let view_index = 0; view_index < total_views; ++view_index) {
           if (!SharedViewBuffer.is_render_active(view_index)) continue;
 
@@ -862,24 +867,24 @@ export class DeferredShadingStrategy {
             ],
             outputs: [main_depth_image],
             shader_setup: depth_only_shader_setup,
+            b_skip_pass_pipeline_setup: true,
           },
           (graph, frame_data, encoder) => {
             const pass = graph.get_physical_pass(frame_data.current_pass);
+            // bind_depth = true to use per-material depth-only pipelines
             MeshTaskQueue.submit_indexed_indirect_draws(
               pass,
-              frame_data,
-              false /* should_reset */,
-              true /* skip_material_bind */,
-              true /* opaque_only */,
-              null,
-              current_view
+              current_view,
+              false,/* skip_material_bind */
+              true, /* opaque_only */
+              true, /* depth_only */
             );
           }
         );
       }
 
       // ┌─────────────────────────────────────────────────────────────────────────────┐
-      // │ 🗻 PASS: Hierarchical Z-Buffer Generation                                  │
+      // │ 🎯 PASS: Hierarchical Z-Buffer Generation                                  │
       // │    Create multi-level depth pyramid for efficient occlusion culling      │
       // └─────────────────────────────────────────────────────────────────────────────┘
       {
@@ -945,7 +950,7 @@ export class DeferredShadingStrategy {
       // │ 🔄 PASS: Reset Instance Counts                                             │
       // │    Reset instance counts for each view                                   │
       // └─────────────────────────────────────────────────────────────────────────────┘
-      {
+      if (draw_count > 0) {
         for (let view_index = 0; view_index < total_views; ++view_index) {
           if (!SharedViewBuffer.is_render_active(view_index)) continue;
 
@@ -959,7 +964,7 @@ export class DeferredShadingStrategy {
             },
             (graph, frame_data, encoder) => {
               const pass = graph.get_physical_pass(frame_data.current_pass);
-              pass.dispatch((draw_count + 7) / 8, 1, 1);
+              pass.dispatch((draw_count + 255) / 256, 1, 1);
             }
           );
         }
@@ -1065,10 +1070,7 @@ export class DeferredShadingStrategy {
 
               MeshTaskQueue.submit_material_indexed_indirect_draws(
                 pass,
-                frame_data,
                 material_id,
-                false /* should_reset */,
-                null,
                 current_view
               );
             }

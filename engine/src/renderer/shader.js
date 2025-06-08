@@ -116,9 +116,12 @@ export class Shader {
 
     if (load_recursion_step === 0) {
       const { defines_map, stripped_code } = this._build_defines_map_and_strip(asset, defines);
-      asset = stripped_code;
       this.defines = defines_map;
-      asset = this._parse_conditional_defines_and_types(asset);
+      asset = this._parse_conditional_defines_and_types(stripped_code);
+
+      if (defines_map.DEPTH_ONLY) {
+        asset = this._strip_custom_fragment_functions(asset);
+      }
     }
 
     return asset;
@@ -161,48 +164,71 @@ export class Shader {
   }
 
   _parse_conditional_defines_and_types(code) {
-    let result = "";
-    let last_index = 0;
-    let match;
+    // cross-platform split: handles Windows (\r\n), old Mac (\r) and Unix (\n)
+    const lines = code.split(/\r\n|\r|\n/);
+    const output_lines = [];
+    const stack = [];
+    const if_regex = /#if\s+(\S+)(?:\s+(\S+))?/;
+    const ifndef_regex = /#ifndef\s+(\S+)(?:\s+(\S+))?/;
+    const else_regex = /#else/;
+    const endif_regex = /#endif/;
 
-    while ((match = conditional_defines_regex.exec(code)) !== null) {
-      const [full_match, directive, condition, value] = match;
-      const start_index = match.index;
-      const end_index = code.indexOf(endif_string, start_index);
+    for (let i = 0; i < lines.length; ++i) {
+      const line = lines[i];
 
-      if (end_index === -1) {
-        warn(`Unmatched #${directive} at position ${start_index}`);
+      let match;
+      if ((match = if_regex.exec(line))) {
+        const [, condition, value] = match;
+        const should_include = this.defines[condition] === (value || true);
+        stack.push({ include: should_include });
+      } else if ((match = ifndef_regex.exec(line))) {
+        const [, condition] = match;
+        const should_include = !this.defines[condition];
+        stack.push({ include: should_include });
+      } else if (else_regex.test(line)) {
+        const frame = stack[stack.length - 1];
+        frame.include = !frame.include;
+      } else if (endif_regex.test(line)) {
+        stack.pop();
+      } else {
+        if (stack.every((frame) => frame.include)) {
+          output_lines.push(line);
+        }
+      }
+    }
+
+    let result = output_lines.join("\n");
+    result = result.replace(precision_float_regex, this.defines[precision_float_string]);
+    return result.trim();
+  }
+
+  _strip_custom_fragment_functions(code) {
+    const lines = code.split(/\r\n|\r|\n/);
+    const out = [];
+    let skipping = false;
+    let brace_depth = 0;
+
+    for (let i = 0; i < lines.length; ++i) {
+      const ln = lines[i];
+      if (!skipping && /^\s*fn\s+fragment\s*\(/.test(ln)) {
+        skipping = true;
+        brace_depth = (ln.match(/\{/g) || []).length - (ln.match(/\}/g) || []).length;
         continue;
       }
 
-      result += code.slice(last_index, start_index);
-
-      const should_include =
-        directive === "if" ? this.defines[condition] === (value || true) : !this.defines[condition];
-
-      const else_index = code.indexOf(else_string, start_index);
-
-      if (else_index !== -1 && else_index < end_index) {
-        if (should_include) {
-          result += code.slice(start_index + full_match.length, else_index).trim();
-        } else {
-          result += code.slice(else_index + else_string.length, end_index).trim();
+      if (skipping) {
+        brace_depth += (ln.match(/\{/g) || []).length;
+        brace_depth -= (ln.match(/\}/g) || []).length;
+        if (brace_depth <= 0) {
+          skipping = false;
         }
-      } else {
-        if (should_include) {
-          const block_content = code.slice(start_index + full_match.length, end_index).trim();
-          result += block_content;
-        }
+        continue;
       }
 
-      last_index = end_index + endif_string.length;
+      out.push(ln);
     }
 
-    result += code.slice(last_index);
-
-    result = result.replace(precision_float_regex, this.defines[precision_float_string]);
-
-    return result.trim();
+    return out.join("\n");
   }
 
   static create(file_path, defines = null) {

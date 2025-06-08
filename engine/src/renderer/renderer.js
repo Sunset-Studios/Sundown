@@ -7,13 +7,11 @@ import {
   SharedViewBuffer,
   SharedFrameInfoBuffer,
 } from "../core/shared_data.js";
-import { MaterialTemplate } from "./material.js";
 import { global_dispatcher } from "../core/dispatcher.js";
 import { profile_scope } from "../utility/performance.js";
 import ExecutionQueue from "../utility/execution_queue.js";
-import { MaterialFamilyType } from "./renderer_types.js";
 import { FragmentGpuBuffer } from "../core/ecs/solar/memory.js";
-import { log, warn, error } from "../utility/logging.js";
+import { log, error } from "../utility/logging.js";
 import { vec2 } from "gl-matrix";
 
 const frame_render_event_name = "frame_render";
@@ -114,8 +112,6 @@ export class Renderer {
     this.render_graph = RenderGraph.create(this.max_bind_groups());
 
     this.render_strategy = new render_strategy();
-
-    this._setup_builtin_material_templates();
 
     this._setup_resize_observer();
 
@@ -299,15 +295,6 @@ export class Renderer {
     this.canvas_ui.width = this.canvas_ui.clientWidth;
     this.canvas_ui.height = this.canvas_ui.clientHeight;
     this.aspect_ratio = this.canvas.width / this.canvas.height;
-  }
-
-  _setup_builtin_material_templates() {
-    MaterialTemplate.create("DebugLineMaterial", "line.wgsl", MaterialFamilyType.Opaque, {
-      primitive_topology_type: "line-list",
-      rasterizer_state: {
-        cull_mode: "none",
-      },
-    });
   }
 
   _setup_resize_observer() {

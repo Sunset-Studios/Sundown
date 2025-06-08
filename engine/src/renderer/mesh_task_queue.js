@@ -626,14 +626,15 @@ export class MeshTaskQueue {
 
   static submit_indexed_indirect_draws(
     render_pass,
-    rg_frame_data,
-    should_reset = false,
+    view_index = 0,
     skip_material_bind = true,
     opaque_only = false,
+    depth_only = false,
+    should_reset = false,
     indirect_draw_buffer = null,
-    view_index = 0
   ) {
     let last_material = null;
+    let last_depth_only = false;
 
     const indirect_draw_object = this.get_indirect_draw_object(view_index);
     const indirect_buffer = indirect_draw_buffer ?? indirect_draw_object.indirect_draw_buffer;
@@ -648,9 +649,9 @@ export class MeshTaskQueue {
       }
 
       if (!skip_material_bind) {
-        if (material && material !== last_material) {
-          // Material binds will rebind a pipeline state, so we need to rebind the bind groups here
-          material.bind(render_pass, render_pass.frame_bind_groups, render_pass.frame_attachments);
+        if (material && (material !== last_material || last_depth_only !== depth_only)) {
+          // Material binds will rebind a pipeline state; choose depth or normal
+          material.bind(render_pass, render_pass.frame_bind_groups, render_pass.frame_attachments, depth_only);
           if (render_pass.frame_bind_groups[BindGroupType.Global]) {
             render_pass.frame_bind_groups[BindGroupType.Global].bind(render_pass);
           }
@@ -658,6 +659,7 @@ export class MeshTaskQueue {
             render_pass.frame_bind_groups[BindGroupType.Pass].bind(render_pass);
           }
           last_material = material;
+          last_depth_only = depth_only;
         }
       }
 
@@ -674,16 +676,16 @@ export class MeshTaskQueue {
 
   static submit_material_indexed_indirect_draws(
     render_pass,
-    rg_frame_data,
     material_id,
-    should_reset = false,
+    view_index = 0,
+    depth_only = false,
     indirect_draw_buffer = null,
-    view_index = 0
+    should_reset = false,
   ) {
     const material = ResourceCache.get().fetch(CacheTypes.MATERIAL, material_id);
     if (material) {
       // Material binds will rebind a pipeline state, so we need to rebind the bind groups here
-      material.bind(render_pass, render_pass.frame_bind_groups, render_pass.frame_attachments);
+      material.bind(render_pass, render_pass.frame_bind_groups, render_pass.frame_attachments, depth_only);
       if (render_pass.frame_bind_groups[BindGroupType.Global]) {
         render_pass.frame_bind_groups[BindGroupType.Global].bind(render_pass);
       }

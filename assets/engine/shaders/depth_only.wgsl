@@ -1,11 +1,5 @@
 #include "common.wgsl"
-
-// ------------------------------------------------------------------------------------
-// Data Structures
-// ------------------------------------------------------------------------------------ 
-struct VertexOutput {
-    @builtin(position) @invariant position: vec4f,
-};
+#include "lighting_common.wgsl"
 
 // ------------------------------------------------------------------------------------
 // Buffers
@@ -19,6 +13,12 @@ struct VertexOutput {
 // ------------------------------------------------------------------------------------
 // Vertex Shader
 // ------------------------------------------------------------------------------------ 
+#ifndef CUSTOM_VS
+fn vertex(v_out: ptr<function, VertexOutput>) -> VertexOutput {
+    return *v_out;
+}
+#endif
+
 @vertex fn vs(
     @builtin(vertex_index) vi : u32,
     @builtin(instance_index) ii: u32
@@ -40,6 +40,25 @@ struct VertexOutput {
     );
 
     var output : VertexOutput;
-    output.position = view_proj_mat * world_position;
+    output.uv = instance_vertex.uv;
+    output.instance_id = entity_resolved;
+    output.world_position = world_position;
+
+    output = vertex(&output);
+
+#ifndef FINAL_POSITION_WRITE
+    output.position = view_proj_mat * output.world_position;
+#endif
+
     return output;
+}
+
+@fragment
+fn fs(input: VertexOutput) {
+#if MASKED
+    let mask = fragment_mask(input);
+    if (mask <= 0.0) {
+        discard;
+    } 
+#endif
 }

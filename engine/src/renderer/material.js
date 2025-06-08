@@ -21,17 +21,28 @@ import {
 export class MaterialTemplate {
   static templates = new Map();
 
+  name = null;
+  shader = null;
+  depth_shader = null;
+  pipeline_state_config = null;
+  resources = [];
+  parent = null;
+  family = null;
+  pipeline_state = null;
+  depth_pipeline_state = null;
+
   constructor(
     name,
     shader,
+    depth_shader = null,
     family = MaterialFamilyType.Opaque,
     pipeline_state_config = {},
     parent = null
   ) {
     this.name = name;
     this.shader = shader;
+    this.depth_shader = depth_shader;
     this.pipeline_state_config = pipeline_state_config;
-    this.resources = [];
     this.parent = parent;
     this.family = family;
   }
@@ -40,8 +51,12 @@ export class MaterialTemplate {
     this.resources.push(resource);
   }
 
-  get reflection() {
+  get base_reflection() {
     return this.shader.reflection;
+  }
+
+  get depth_reflection() {
+    return this.depth_shader.reflection;
   }
 
   static create(
@@ -59,6 +74,7 @@ export class MaterialTemplate {
 
     let parent = null;
     let shader = null;
+    let depth_shader = null;
 
     if (parent_name) {
       parent = this.get_template(parent_name);
@@ -73,16 +89,24 @@ export class MaterialTemplate {
     }
     if (shader_path) {
       shader = Shader.create(shader_path, defines);
+      depth_shader = Shader.create(shader_path, { ...defines, DEPTH_ONLY: true });
     }
 
-    const template = new MaterialTemplate(key, shader, family, pipeline_state_config, parent);
+    const template = new MaterialTemplate(
+      key,
+      shader,
+      depth_shader,
+      family,
+      pipeline_state_config,
+      parent
+    );
 
     if (parent) {
       template.resources = [...parent.resources];
     }
 
     // Reflect on shader and add resources
-    const groups = template.reflection ? template.reflection.getBindGroups() : [];
+    const groups = template.base_reflection ? template.base_reflection.getBindGroups() : [];
     if (BindGroupType.Material < groups.length) {
       const material_group = groups[BindGroupType.Material];
       for (let i = 0; i < material_group.length; i++) {
@@ -101,18 +125,26 @@ export class MaterialTemplate {
     return template;
   }
 
-  create_pipeline_state(bind_group_layouts, output_targets = [], depth_stencil_options = {}) {
+  create_pipeline_state(
+    bind_group_layouts,
+    output_targets = [],
+    depth_stencil_options = {},
+    is_depth_only = false
+  ) {
+    const pipeline_name = is_depth_only ? `${this.name}_depth` : this.name;
+    const shader_module = is_depth_only ? this.depth_shader.module : this.shader.module;
     let all_bind_group_layouts = [bind_group_layouts[0]];
+    let ref = is_depth_only ? this.depth_reflection : this.base_reflection;
 
     // Set material binding group inputs
-    const groups = this.reflection.getBindGroups();
+    const groups = ref.getBindGroups();
     if (BindGroupType.Pass < groups.length) {
       for (let i = BindGroupType.Pass; i < groups.length; i++) {
         const bind_group = groups[i];
 
         all_bind_group_layouts.push(
           BindGroup.create_layout(
-            this.name,
+            pipeline_name,
             bind_group.map((binding) => {
               let binding_obj = {};
               const binding_type = Shader.resource_type_from_reflection_type(binding.resourceType);
@@ -187,14 +219,14 @@ export class MaterialTemplate {
         return t;
       });
 
-    const fragment_outputs = this.reflection.entry.fragment[0].outputs;
+    const fragment_outputs = ref.entry.fragment[0].outputs;
     fragment_outputs.forEach((output, i) => {
       if (targets[i]) {
         return;
       }
 
       const target = {
-        format: Shader.get_optimal_texture_format(output.type.name),
+        format: Shader.get_optimal_texture_format(output.type.format.name),
       };
 
       if (this.pipeline_state_config.targets && i < this.pipeline_state_config.targets.length) {
@@ -211,17 +243,17 @@ export class MaterialTemplate {
 
     // Create pipeline state based on shader, pipeline state config and targets
     let pipeline_descriptor = {
-      label: this.name,
+      label: pipeline_name,
       bind_layouts: all_bind_group_layouts.filter((layout) => layout !== null),
       vertex: {
-        module: this.shader.module,
+        module: shader_module,
         entryPoint:
           (this.pipeline_state_config.vertex && this.pipeline_state_config.vertex.entry_point) ||
           "vs",
         buffers: [],
       },
       fragment: {
-        module: this.shader.module,
+        module: shader_module,
         entryPoint:
           (this.pipeline_state_config.fragment &&
             this.pipeline_state_config.fragment.entry_point) ||
@@ -248,7 +280,8 @@ export class MaterialTemplate {
           "less-equal",
         depthBias: this.pipeline_state_config.depth_stencil_target.depth_bias ?? 0.0,
         depthBiasClamp: this.pipeline_state_config.depth_stencil_target.depth_bias_clamp ?? 0.0,
-        depthBiasSlopeScale: this.pipeline_state_config.depth_stencil_target.depth_slope_scale ?? 0.0,
+        depthBiasSlopeScale:
+          this.pipeline_state_config.depth_stencil_target.depth_slope_scale ?? 0.0,
       };
     } else if (depth_target) {
       pipeline_descriptor.depthStencil = {
@@ -261,7 +294,7 @@ export class MaterialTemplate {
       };
     }
 
-    return PipelineState.create_render(this.name, pipeline_descriptor);
+    return PipelineState.create_render(pipeline_name, pipeline_descriptor);
   }
 
   static get_template(name, family = MaterialFamilyType.Opaque) {
@@ -284,7 +317,9 @@ export class Material {
     this.name = name;
     this.template = template;
     this.pipeline_state = null;
+    this.depth_pipeline_state = null;
     this.bind_group = null;
+    this.depth_bind_group = null;
     this.parent = parent_id;
     this.uniform_data = new Map();
     this.storage_data = new Map();
@@ -292,7 +327,7 @@ export class Material {
     this.sampler_data = new Map();
     this.data_listeners = new Set();
     this.state_hash = 0;
-    this.needs_bind_group_update = false;
+    this.bind_group_update_flags = 0;
     // Depending on behaviors based on the family, it might be useful to have it exposed like this for derived materials.
     // Otherwise, TODO so we only use the family from the template.
     this.family = this.template.family;
@@ -302,6 +337,10 @@ export class Material {
     this.set_texture_data.bind(this);
     this.set_sampler_data.bind(this);
     this._update_state_hash();
+  }
+
+  set needs_bind_group_update(value) {
+    this.bind_group_update_flags = value ? 3 : 0;
   }
 
   _update_state_hash() {
@@ -315,7 +354,11 @@ export class Material {
     });
   }
 
-  _refresh_bind_group() {
+  _refresh_bind_group(is_depth_only = false) {
+    if (this.bind_group_update_flags === 0) {
+      return;
+    }
+
     const entries = this.template.get_all_resources().map((resource) => {
       switch (resource.type) {
         case ShaderResourceType.Uniform:
@@ -348,27 +391,55 @@ export class Material {
       }
     }
 
-    this.bind_group = BindGroup.create(
-      this.name,
-      this.pipeline_state,
-      BindGroupType.Material,
-      entries,
-      true /* force */
-    );
+    if (is_depth_only && (this.bind_group_update_flags & 1) !== 0 && this.depth_pipeline_state) {
+      this.depth_bind_group = BindGroup.create(
+        `${this.name}_depth`,
+        this.depth_pipeline_state,
+        BindGroupType.Material,
+        entries,
+        true /* force */
+      );
+      this.bind_group_update_flags = this.bind_group_update_flags & ~1;
+    }
+
+    if (!is_depth_only && (this.bind_group_update_flags & 2) !== 0 && this.pipeline_state) {
+      this.bind_group = BindGroup.create(
+        this.name,
+        this.pipeline_state,
+        BindGroupType.Material,
+        entries,
+        true /* force */
+      );
+      this.bind_group_update_flags = this.bind_group_update_flags & ~2;
+    }
   }
 
-  update_pipeline_state(bind_groups, output_targets = []) {
+  update_pipeline_state(bind_groups, output_targets = [], is_depth_only = false) {
     const renderer = Renderer.get();
     const depth_prepass_enabled = renderer.is_depth_prepass_enabled();
-    this.pipeline_state = this.template.create_pipeline_state(
-      bind_groups
-        .filter((bind_group) => bind_group !== null)
-        .map((bind_group) => bind_group.layout),
-      output_targets,
-      {
-        depth_write_enabled: depth_prepass_enabled ? false : this.family === MaterialFamilyType.Opaque,
-      }
-    );
+
+    // Build the main pipeline state
+    const layouts = bind_groups.filter((bg) => bg !== null).map((bg) => bg.layout);
+    if (is_depth_only) {
+      this.depth_pipeline_state = this.template.create_pipeline_state(
+        layouts,
+        output_targets,
+        { depth_write_enabled: true, depth_compare: "less" },
+        true /* is_depth_only */
+      );
+    } else {
+      this.pipeline_state = this.template.create_pipeline_state(
+        layouts,
+        output_targets,
+        {
+          depth_write_enabled: depth_prepass_enabled
+            ? false
+            : this.family === MaterialFamilyType.Opaque,
+          depth_compare: "less-equal",
+        },
+        false /* is_depth_only */
+      );
+    }
   }
 
   set_uniform_data(name, data) {
@@ -439,14 +510,10 @@ export class Material {
     }
   }
 
-  bind(render_pass, bind_groups = [], output_targets = []) {
-    if (
-      !this.pipeline_state &&
-      !this.parent &&
-      bind_groups.length > 0 &&
-      output_targets.length > 0
-    ) {
-      this.update_pipeline_state(bind_groups, output_targets);
+  bind(render_pass, bind_groups = [], output_targets = [], is_depth_only = false) {
+    let pso = is_depth_only ? this.depth_pipeline_state : this.pipeline_state;
+    if (!pso && !this.parent && bind_groups.length > 0 && output_targets.length > 0) {
+      this.update_pipeline_state(bind_groups, output_targets, is_depth_only);
       for (let i = 0; i < bind_groups.length; i++) {
         if (bind_groups[i]) {
           bind_groups[i].bind(render_pass);
@@ -454,23 +521,21 @@ export class Material {
       }
     }
 
-    let pso = this.pipeline_state;
+    pso = is_depth_only ? this.depth_pipeline_state : this.pipeline_state;
     const parent_material = Material.get(this.parent);
     if (parent_material) {
-      pso = parent_material.pipeline_state;
+      pso = is_depth_only ? parent_material.depth_pipeline_state : parent_material.pipeline_state;
     }
 
-    if (this.needs_bind_group_update) {
-      this._refresh_bind_group();
-      this.needs_bind_group_update = false;
-    }
+    this._refresh_bind_group(is_depth_only);
 
     if (pso) {
       render_pass.set_pipeline(pso);
     }
 
-    if (this.bind_group) {
-      this.bind_group.bind(render_pass);
+    const bind_group = is_depth_only ? this.depth_bind_group : this.bind_group;
+    if (bind_group) {
+      bind_group.bind(render_pass);
     }
   }
 

@@ -427,12 +427,8 @@ export class AdaptiveSparseVirtualShadowMaps {
           const pass = graph.get_physical_pass(frame_data.current_pass);
           MeshTaskQueue.submit_indexed_indirect_draws(
             pass,
-            frame_data,
-            false,
-            true,
-            false,
-            null,
-            view_index
+            view_index, /* view_index */
+            true, /* skip_material_bind */
           );
         }
       );

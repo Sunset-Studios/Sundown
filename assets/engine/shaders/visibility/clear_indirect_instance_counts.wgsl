@@ -10,7 +10,7 @@
 // Compute Shader
 // ------------------------------------------------------------------------------------ 
 
-@compute @workgroup_size(8)
+@compute @workgroup_size(256)
 fn cs(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let g_id = global_id.x;
     let length = arrayLength(&draw_indirect_buffer);
