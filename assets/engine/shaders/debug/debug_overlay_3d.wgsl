@@ -6,7 +6,7 @@ struct VertexOutput {
     @location(1) @interpolate(flat) instance_index: u32,
 };
 
-@group(1) @binding(0) var debug_texture: texture_2d<f32>;
+@group(1) @binding(0) var debug_texture: texture_3d<f32>;
 
 @fragment
 fn fs(input: VertexOutput) -> @location(0) vec4<f32> {

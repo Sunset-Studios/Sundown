@@ -226,7 +226,7 @@ export class MaterialTemplate {
       }
 
       const target = {
-        format: Shader.get_optimal_texture_format(output.type.format.name),
+        format: Shader.get_optimal_texture_format(output.type.format ? output.type.format.name : output.type.name),
       };
 
       if (this.pipeline_state_config.targets && i < this.pipeline_state_config.targets.length) {
@@ -331,7 +331,6 @@ export class Material {
     // Depending on behaviors based on the family, it might be useful to have it exposed like this for derived materials.
     // Otherwise, TODO so we only use the family from the template.
     this.family = this.template.family;
-    this.writes_entity_id = true;
     this.set_uniform_data.bind(this);
     this.set_storage_data.bind(this);
     this.set_texture_data.bind(this);
@@ -568,9 +567,6 @@ export class Material {
     if (!material) {
       material = new Material(name, template, parent_id);
       material.family = template.family;
-      if (options.writes_entity_id !== undefined && options.writes_entity_id !== null) {
-        material.writes_entity_id = options.writes_entity_id;
-      }
       ResourceCache.get().store(CacheTypes.MATERIAL, material_id, material);
       Material.materials.set(material_id, material);
     }

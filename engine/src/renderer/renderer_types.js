@@ -103,13 +103,20 @@ export const BindGroupType = Object.freeze({
 });
 
 /**
- * Debug views for the render graph.
+ * Types of debug draw in the render graph.
  * @enum {number}
  */
-export const DebugView = Object.freeze({
+export const DebugDrawType = Object.freeze({
     None: 0,
-    ShadowAtlas: 1,
-    ShadowPageTable: 2,
+    Wireframe: 1,
+    Depth: 2,
+    Normal: 3,
+    EntityId: 4,
+    HZB: 5,
+    GIProbeVolume: 6,
+    ASVSM_ShadowAtlas: 8,
+    ASVSM_ShadowPageTable: 9,
+    Bloom: 10,
 });
 
 /**

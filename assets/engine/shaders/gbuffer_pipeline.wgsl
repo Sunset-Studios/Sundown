@@ -78,11 +78,7 @@ fn fragment(v_out: VertexOutput, f_out: ptr<function, FragmentOutput>) -> Fragme
 }
 #endif
 
-#if DEPTH_ONLY
-@fragment fn fs(v_out: VertexOutput) {
-#else
 @fragment fn fs(v_out: VertexOutput) -> FragmentOutput {
-#endif
 
 #if MASKED 
     let mask = fragment_mask(v_out);
@@ -91,17 +87,16 @@ fn fragment(v_out: VertexOutput, f_out: ptr<function, FragmentOutput>) -> Fragme
     } 
 #endif
 
-#ifndef DEPTH_ONLY
-
     var output : FragmentOutput;
 
+#if DEPTH_ONLY
+    output.entity_id = v_out.instance_id;
+#endif
+
+#ifndef DEPTH_ONLY
     output.position = v_out.world_position;
     // Last component of normal is deferred standard lighting factor. Set to 0 if custom lighting is used when using custom FS / VS.
     output.normal = vec4<precision_float>(v_out.normal.xyz, 1.0);
-
-#ifndef SKIP_ENTITY_WRITES
-    output.entity_id = vec2<u32>(v_out.instance_id, v_out.instance_id);
-#endif
 
     var post_material_output = fragment(v_out, &output);
 
@@ -120,5 +115,10 @@ fn fragment(v_out: VertexOutput, f_out: ptr<function, FragmentOutput>) -> Fragme
 
     return post_material_output;
 
+#else
+
+    return output;
+
 #endif // DEPTH_ONLY
+
 }

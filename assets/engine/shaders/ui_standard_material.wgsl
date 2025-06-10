@@ -20,9 +20,9 @@ struct ElementData {
 // Fragment Shader
 //------------------------------------------------------------------------------------
 fn fragment(v_out: VertexOutput, f_out: ptr<function, FragmentOutput>) -> FragmentOutput {
-    let element_rounding = element_data[f_out.entity_id.y].element_rounding;
-    let element_emissive = element_data[f_out.entity_id.y].element_emissive;
-    var element_color = element_data[f_out.entity_id.y].element_color;
+    let element_rounding = element_data[f_out.entity_id].element_rounding;
+    let element_emissive = element_data[f_out.entity_id].element_emissive;
+    var element_color = element_data[f_out.entity_id].element_color;
     
     // Calculate distance from edges
     let uv = v_out.uv;

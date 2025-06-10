@@ -16,17 +16,17 @@ import { FreeformArcballControlProcessor } from "../engine/src/core/subsystems/f
 import { LightFragment } from "../engine/src/core/ecs/fragments/light_fragment.js";
 import { TextFragment } from "../engine/src/core/ecs/fragments/text_fragment.js";
 import { StaticMeshFragment } from "../engine/src/core/ecs/fragments/static_mesh_fragment.js";
+import { VisibilityFragment } from "../engine/src/core/ecs/fragments/visibility_fragment.js";
 import { LightType, EntityFlags } from "../engine/src/core/minimal.js";
 import { StandardMaterial } from "../engine/src/renderer/material.js";
 import { Texture } from "../engine/src/renderer/texture.js";
 import { Mesh } from "../engine/src/renderer/mesh.js";
-import { LineRenderer } from "../engine/src/renderer/line_renderer.js";
 import { SharedEnvironmentMapData, SharedViewBuffer } from "../engine/src/core/shared_data.js";
 import { spawn_mesh_entity, delete_entity } from "../engine/src/core/ecs/entity_utils.js";
 import { FontCache } from "../engine/src/ui/text/font_cache.js";
 import { Name } from "../engine/src/utility/names.js";
 import { profile_scope } from "../engine/src/utility/performance.js";
-import { log, warn, error } from "../engine/src/utility/logging.js";
+import { log } from "../engine/src/utility/logging.js";
 import { vec3, vec4, quat } from "gl-matrix";
 
 import * as UI from "../engine/src/ui/2d/immediate.js";
@@ -1463,8 +1463,8 @@ export class VoxelTerrainScene extends Scene {
     this.cube_mesh = Mesh.cube();
 
     // Terrain parameters - Perlin-based fractal noise
-    const grid_width = 200;
-    const grid_depth = 200;
+    const grid_width = 150;
+    const grid_depth = 150;
     const block_size = 1.0;
     const base_frequency = 0.05;
     const height_scale = 20.0;
@@ -1569,9 +1569,9 @@ export class VoxelTerrainScene extends Scene {
           }
 
           const pos = [
-            (xi - grid_width / 2) * block_size,
-            yi * block_size,
-            (zi - grid_depth / 2) * block_size,
+            (xi - grid_width / 2) * block_size * 2.0,
+            (yi) * block_size * 2.0,
+            (zi - grid_depth / 2) * block_size * 2.0,
           ];
           const view = EntityManager.get_fragment(terrain_entity, TransformFragment, block_index);
           view.position = pos;
@@ -2207,9 +2207,9 @@ export class SceneSwitcher extends SimulationLayer {
   //await scene_switcher.add_scene(aabb_scene);
   //await scene_switcher.add_scene(rendering_scene);
   //await scene_switcher.add_scene(ml_scene);
-  //await scene_switcher.add_scene(voxel_terrain_scene);
+  await scene_switcher.add_scene(voxel_terrain_scene);
   //await scene_switcher.add_scene(object_painting_scene);
-  await scene_switcher.add_scene(gi_test_scene);
+  //await scene_switcher.add_scene(gi_test_scene);
 
   await simulator.add_sim_layer(scene_switcher);
 

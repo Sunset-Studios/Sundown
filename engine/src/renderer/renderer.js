@@ -1,4 +1,5 @@
 import { MAX_BUFFERED_FRAMES } from "../core/minimal.js";
+import { DebugDrawType } from "./renderer_types.js";
 import { RenderGraph } from "./render_graph.js";
 import { Texture, TextureSampler } from "./texture.js";
 import { Mesh } from "./mesh.js";
@@ -35,6 +36,7 @@ export class Renderer {
   use_depth_prepass = true;
   shadows_enabled = false;
   gi_enabled = false;
+  debug_draw_type = DebugDrawType.None;
 
   static renderers = [];
 
@@ -283,6 +285,14 @@ export class Renderer {
 
   set_scene_id(scene_id) {
     this.render_graph.set_scene_id(scene_id);
+  }
+
+  get_debug_draw_type() {
+    return this.debug_draw_type;
+  }
+  
+  set_debug_draw_type(debug_draw_type) {
+    this.debug_draw_type = debug_draw_type;
   }
 
   max_bind_groups() {

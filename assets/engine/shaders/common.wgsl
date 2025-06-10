@@ -299,8 +299,11 @@ fn log_depth(view_space_z: f32) -> f32 {
 }
 
 fn linearize_depth(d: f32, near_plane: f32, far_plane: f32) -> f32 {
-    // Standard perspective projection linearization.
-    return (2.0 * near_plane * far_plane) / (far_plane + near_plane - d * (far_plane - near_plane));
+    // Convert non-linear [0,1] depth buffer to linear view-space Z
+    // z_eye = (n*f) / (f – d*(f–n))
+    let depth = (d * 0.5) + 0.5;
+    return (near_plane * far_plane) 
+         / (far_plane - depth * (far_plane - near_plane));
 }
 
 fn normalized_view_depth(uv: vec2f, depth: f32) -> f32 {

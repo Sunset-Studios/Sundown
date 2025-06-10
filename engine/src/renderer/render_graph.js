@@ -143,16 +143,6 @@ function get_graph_resource_version(handle) {
 }
 
 /**
- * Checks if a graph resource handle is valid.
- * @param {number} handle - The handle of the graph resource.
- * @returns {boolean} Whether the handle is valid.
- */
-function is_valid_graph_resource(handle) {
-  // Assuming that an invalid handle is represented as 0xFFFFFFFF.
-  return handle !== 0xffffffff;
-}
-
-/**
  * Enumeration of resource types in the render graph.
  * @enum {number}
  */
@@ -553,6 +543,7 @@ export class RenderGraph {
     );
 
     const resource_metadata = this.registry.resource_metadata.get(new_resource.handle);
+    resource_metadata.config = new_resource.config;
     resource_metadata.b_is_bindless = config.b_is_bindless;
     resource_metadata.b_is_persistent = (new_resource.config.flags & ImageFlags.Transient) === 0;
     resource_metadata.max_frame_lifetime = config.max_frame_lifetime || 0;
@@ -602,6 +593,7 @@ export class RenderGraph {
     );
 
     const resource_metadata = this.registry.resource_metadata.get(new_resource.handle);
+    resource_metadata.config = new_resource.config;
     resource_metadata.physical_id = physical_id;
     resource_metadata.b_is_persistent = true;
     resource_metadata.b_is_bindless = new_resource.config.b_is_bindless;
@@ -650,6 +642,7 @@ export class RenderGraph {
     );
 
     const resource_metadata = this.registry.resource_metadata.get(new_resource.handle);
+    resource_metadata.config = new_resource.config;
     resource_metadata.b_is_bindless = config.b_is_bindless;
     resource_metadata.b_is_persistent = (new_resource.config.flags & BufferFlags.Transient) === 0;
     resource_metadata.max_frame_lifetime = config.max_frame_lifetime;
@@ -699,6 +692,7 @@ export class RenderGraph {
     );
 
     const resource_metadata = this.registry.resource_metadata.get(new_resource.handle);
+    resource_metadata.config = new_resource.config;
     resource_metadata.physical_id = physical_id;
     resource_metadata.b_is_persistent = true;
     resource_metadata.b_is_bindless = new_resource.config.b_is_bindless;
@@ -814,6 +808,16 @@ export class RenderGraph {
       CacheTypes.BUFFER,
       this.registry.resource_metadata.get(handle).physical_id
     );
+  }
+
+  /**
+   * Retrieves the configuration of an image resource from the render graph.
+   *
+   * @param {number} handle - The handle of the resource to retrieve.
+   * @returns {Object|null} The configuration object if found, or null if not found.
+   */
+  get_resource_config(handle) {
+    return this.registry.resource_metadata.get(handle).config;
   }
 
   /**

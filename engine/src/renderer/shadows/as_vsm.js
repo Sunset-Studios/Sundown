@@ -3,7 +3,7 @@ import { LightFragment } from "../../core/ecs/fragments/light_fragment.js";
 import { Renderer } from "../renderer.js";
 import { BufferSync } from "../buffer.js";
 import { ResourceCache } from "../resource_cache.js";
-import { RenderPassFlags, DebugView, CacheTypes } from "../renderer_types.js";
+import { RenderPassFlags, DebugDrawType, CacheTypes } from "../renderer_types.js";
 import { MeshTaskQueue } from "../mesh_task_queue.js";
 import {
   rgba8unorm_format,
@@ -435,7 +435,7 @@ export class AdaptiveSparseVirtualShadowMaps {
     }
     
     // Debug AS-VSM views
-    if (debug_view !== DebugView.None) {
+    if (debug_view !== DebugDrawType.None) {
       this.add_debug_passes(render_graph, force_recreate, debug_view);
     }
 
@@ -479,7 +479,7 @@ export class AdaptiveSparseVirtualShadowMaps {
     const renderer = Renderer.get();
     const image_extent = renderer.get_canvas_resolution();
     // Debug AS-VSM views
-    if (debug_view === DebugView.ShadowAtlas) {
+    if (debug_view === DebugDrawType.ASVSM_ShadowAtlas) {
       debug_shadow_atlas_config.width = image_extent.width;
       debug_shadow_atlas_config.height = image_extent.height;
       debug_shadow_atlas_config.force = force_recreate;
@@ -498,7 +498,7 @@ export class AdaptiveSparseVirtualShadowMaps {
         }
       );
     }
-    if (debug_view === DebugView.ShadowPageTable) {
+    if (debug_view === DebugDrawType.ASVSM_ShadowPageTable) {
       debug_page_table_config.width = image_extent.width;
       debug_page_table_config.height = image_extent.height;
       debug_page_table_config.force = force_recreate;

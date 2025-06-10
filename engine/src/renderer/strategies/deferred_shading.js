@@ -10,6 +10,7 @@ import {
 
 // ECS fragments
 import { TransformFragment } from "../../core/ecs/fragments/transform_fragment.js";
+import { VisibilityFragment } from "../../core/ecs/fragments/visibility_fragment.js";
 import { LightFragment } from "../../core/ecs/fragments/light_fragment.js";
 
 // Renderer components
@@ -24,7 +25,7 @@ import { ComputeTaskQueue } from "../compute_task_queue.js";
 import { ComputeRasterTaskQueue } from "../compute_raster_task_queue.js";
 
 // Types and utilities
-import { RenderPassFlags, MaterialFamilyType, DebugView } from "../renderer_types.js";
+import { RenderPassFlags, MaterialFamilyType, DebugDrawType } from "../renderer_types.js";
 import { AABB } from "../../acceleration/aabb.js";
 import { npot, ppot, clamp } from "../../utility/math.js";
 import { profile_scope } from "../../utility/performance.js";
@@ -34,7 +35,7 @@ import {
   r8unorm_format,
   depth32float_format,
   r32float_format,
-  rg32uint_format,
+  r32uint_format,
   one_one_blend_config,
   src_alpha_one_minus_src_alpha_blend_config,
   load_op_load,
@@ -49,6 +50,7 @@ const resolution_change_event_name = "resolution_change";
 const deferred_shading_profile_scope_name = "DeferredShadingStrategy.draw";
 const transforms_name = "transforms";
 const aabb_node_index_name = "aabb_node_index";
+const occluder_name = "occluder";
 const light_fragment_name = "light_fragment";
 
 const main_albedo_image_config = {
@@ -379,7 +381,7 @@ const hzb_image_config = {
 };
 const entity_id_image_config = {
   name: "entity_id",
-  format: rg32uint_format,
+  format: r32uint_format,
   width: 0,
   height: 0,
   usage:
@@ -405,7 +407,7 @@ const gi_depth_config = {
   depth: 0,
   mip_levels: 1,
   dimension: "3d",
-  format: "r32float",
+  format: r32float_format,
   usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
   force: false,
 };
@@ -442,7 +444,6 @@ export class DeferredShadingStrategy {
   force_recreate = false;
   gi_probe_volume = null;
   as_vsm = null;
-  debug_view = DebugView.None;
   debug_overlay = null;
 
   setup(render_graph) {
@@ -483,6 +484,7 @@ export class DeferredShadingStrategy {
       const gi_enabled = renderer.is_gi_enabled();
       const total_views = SharedViewBuffer.get_view_data_count();
       const draw_count = MeshTaskQueue.get_total_draw_count();
+      const debug_view = renderer.get_debug_draw_type();
 
       if (this.force_recreate) {
         render_graph.mark_pass_cache_bind_groups_dirty(true /* pass_only */);
@@ -505,6 +507,13 @@ export class DeferredShadingStrategy {
       );
       const entity_aabb_node_indices = render_graph.register_buffer(
         aabb_node_index_buffer.buffer.config.name
+      );
+      const occluder_buffer = EntityManager.get_fragment_gpu_buffer(
+        VisibilityFragment,
+        occluder_name
+      );
+      const entity_occluders = render_graph.register_buffer(
+        occluder_buffer.buffer.config.name
       );
 
       // ┌─────────────────────────────────────────────────────────────────────────────┐
@@ -707,6 +716,30 @@ export class DeferredShadingStrategy {
       }
 
       // ┌─────────────────────────────────────────────────────────────────────────────┐
+      // │ 🔄 PASS: Reset Instance Counts                                             │
+      // │    Reset instance counts for each view                                   │
+      // └─────────────────────────────────────────────────────────────────────────────┘
+      if (draw_count > 0) {
+        for (let view_index = 0; view_index < total_views; ++view_index) {
+          if (!SharedViewBuffer.is_render_active(view_index)) continue;
+
+          render_graph.add_pass(
+            `reset_instance_counts_view_${view_index}`,
+            RenderPassFlags.Compute,
+            {
+              shader_setup: clear_indirect_instance_counts_shader_setup,
+              inputs: [per_view_indirect_draw_buffers[view_index]],
+              outputs: [per_view_indirect_draw_buffers[view_index]],
+            },
+            (graph, frame_data, encoder) => {
+              const pass = graph.get_physical_pass(frame_data.current_pass);
+              pass.dispatch((draw_count + 255) / 256, 1, 1);
+            }
+          );
+        }
+      }
+
+      // ┌─────────────────────────────────────────────────────────────────────────────┐
       // │ 🌌 PASS: Skybox Rendering                                                  │
       // │    Render the environment skybox to provide distant lighting context      │
       // └─────────────────────────────────────────────────────────────────────────────┘
@@ -783,8 +816,8 @@ export class DeferredShadingStrategy {
       }
 
       // ┌─────────────────────────────────────────────────────────────────────────────┐
-      // │ 🔍 PASS: Reset Visibility Buffers                                          │
-      // │    Clear per-view visibility data before frustum culling                  │
+      // │ 🔍 PASS: Reset Visibility Buffers and HZB Parameters                       │
+      // │    Clear per-view visibility data before frustum culling                    │
       // └─────────────────────────────────────────────────────────────────────────────┘
       if (draw_count > 0) {
         for (let view_index = 0; view_index < total_views; ++view_index) {
@@ -792,6 +825,7 @@ export class DeferredShadingStrategy {
 
           const visible_buf_no_occlusion = per_view_visible_no_occlusion_buffers[view_index];
           const visible_buf = per_view_visible_buffers[view_index];
+          const draw_cull_data = per_view_draw_cull_data[view_index];
 
           render_graph.add_pass(
             `clear_visibility_data_view_${view_index}`,
@@ -802,6 +836,11 @@ export class DeferredShadingStrategy {
               outputs: [visible_buf, visible_buf_no_occlusion],
             },
             (graph, frame_data, encoder) => {
+              const hzb = graph.get_physical_image(main_hzb_image);
+              const draw_cull = graph.get_physical_buffer(draw_cull_data);
+
+              draw_cull.write([draw_count, hzb.config.width, hzb.config.height]);
+
               const pass = graph.get_physical_pass(frame_data.current_pass);
               pass.dispatch((draw_count + 255) / 256, 1, 1);
             }
@@ -838,12 +877,6 @@ export class DeferredShadingStrategy {
             },
             (graph, frame_data, encoder) => {
               const pass = graph.get_physical_pass(frame_data.current_pass);
-
-              const hzb = graph.get_physical_image(main_hzb_image);
-              const draw_cull = graph.get_physical_buffer(draw_cull_data);
-
-              draw_cull.write([draw_count, hzb.config.width, hzb.config.height]);
-
               pass.dispatch((draw_count + 255) / 256, 1, 1);
             }
           );
@@ -855,29 +888,25 @@ export class DeferredShadingStrategy {
       // │    Fill depth buffer early for better GPU efficiency and HZB generation   │
       // └─────────────────────────────────────────────────────────────────────────────┘
       if (renderer.is_depth_prepass_enabled()) {
+        const visible_buf_no_occlusion = per_view_visible_no_occlusion_buffers[current_view];
+
         render_graph.add_pass(
           depth_prepass_name,
           RenderPassFlags.Graphics,
           {
-            inputs: [
-              entity_transforms,
-              entity_flags,
-              object_instances,
-              per_view_visible_no_occlusion_buffers[current_view],
-            ],
-            outputs: [main_depth_image],
+            inputs: [entity_transforms, entity_flags, object_instances, visible_buf_no_occlusion],
+            outputs: [main_entity_id_image, main_depth_image],
             shader_setup: depth_only_shader_setup,
             b_skip_pass_pipeline_setup: true,
           },
           (graph, frame_data, encoder) => {
             const pass = graph.get_physical_pass(frame_data.current_pass);
-            // bind_depth = true to use per-material depth-only pipelines
             MeshTaskQueue.submit_indexed_indirect_draws(
               pass,
               current_view,
-              false,/* skip_material_bind */
-              true, /* opaque_only */
-              true, /* depth_only */
+              false /* skip_material_bind */,
+              true /* opaque_only */,
+              true /* depth_only */
             );
           }
         );
@@ -997,6 +1026,8 @@ export class DeferredShadingStrategy {
                 entity_aabb_node_indices,
                 draw_cull_data,
                 indirect_buf,
+                main_entity_id_image,
+                entity_occluders,
               ],
               outputs: [visible_buf, indirect_buf],
             },
@@ -1044,7 +1075,6 @@ export class DeferredShadingStrategy {
             main_smra_image,
             main_position_image,
             main_normal_image,
-            material.writes_entity_id ? main_entity_id_image : null,
             material.family === MaterialFamilyType.Transparent
               ? main_transparency_reveal_image
               : null,
@@ -1068,11 +1098,7 @@ export class DeferredShadingStrategy {
             (graph, frame_data, encoder) => {
               const pass = graph.get_physical_pass(frame_data.current_pass);
 
-              MeshTaskQueue.submit_material_indexed_indirect_draws(
-                pass,
-                material_id,
-                current_view
-              );
+              MeshTaskQueue.submit_material_indexed_indirect_draws(pass, material_id, current_view);
             }
           );
         }
@@ -1172,7 +1198,7 @@ export class DeferredShadingStrategy {
           object_instances: object_instances,
           view_visibility_buffers: per_view_visible_buffers,
           force_recreate: this.force_recreate,
-          debug_view: this.debug_view,
+          debug_view: debug_view,
         });
       }
 
@@ -1256,12 +1282,12 @@ export class DeferredShadingStrategy {
       // │    Multi-pass gaussian blur to create beautiful light bleeding effects    │
       // └─────────────────────────────────────────────────────────────────────────────┘
       const num_iterations = 4;
+      let bloom_blur_chain = [];
       if (num_iterations > 0) {
         const image_extent = renderer.get_canvas_resolution();
         const extent_x = ppot(image_extent.width);
         const extent_y = ppot(image_extent.height);
 
-        let bloom_blur_chain = [];
         let bloom_blur_params_chain = [];
         for (let i = 0; i < num_iterations; i++) {
           bloom_blur_chain.push(
@@ -1413,6 +1439,101 @@ export class DeferredShadingStrategy {
       );
 
       // ┌─────────────────────────────────────────────────────────────────────────────┐
+      // │ 🎭 PASS: Debug Overlay                                                     │
+      // │    Draw debug overlay on the final output image                            │
+      // └─────────────────────────────────────────────────────────────────────────────┘
+      if (debug_view !== DebugDrawType.None) {
+        switch (debug_view) {
+          case DebugDrawType.Wireframe:
+            break;
+          case DebugDrawType.Depth:
+            this.debug_overlay.set_properties(
+              main_depth_image,
+              0,
+              0,
+              image_extent.width,
+              image_extent.height,
+              DebugDrawType.Depth
+            );
+            break;
+          case DebugDrawType.Normal:
+            this.debug_overlay.set_properties(
+              main_normal_image,
+              0,
+              0,
+              image_extent.width,
+              image_extent.height,
+              DebugDrawType.Normal
+            );
+            break;
+          case DebugDrawType.EntityId:
+            this.debug_overlay.set_properties(
+              main_entity_id_image,
+              0,
+              0,
+              image_extent.width,
+              image_extent.height,
+              DebugDrawType.EntityId
+            );
+            break;
+          case DebugDrawType.HZB:
+            this.debug_overlay.set_properties(
+              main_hzb_image,
+              0,
+              0,
+              image_extent.width,
+              image_extent.height,
+              DebugDrawType.HZB,
+              5
+            );
+            break;
+          case DebugDrawType.GIProbeVolume:
+            this.debug_overlay.set_properties(
+              gi_irradiance_image,
+              0,
+              0,
+              image_extent.width,
+              image_extent.height,
+              DebugDrawType.GIProbeVolume
+            );
+            break;
+          case DebugDrawType.ASVSM_ShadowAtlas:
+            this.debug_overlay.set_properties(
+              this.as_vsm.debug_shadow_atlas_image,
+              0,
+              0,
+              image_extent.width,
+              image_extent.height,
+              DebugDrawType.ASVSM_ShadowAtlas
+            );
+            break;
+          case DebugDrawType.ASVSM_ShadowPageTable:
+            this.debug_overlay.set_properties(
+              this.as_vsm.debug_page_table_image,
+              0,
+              0,
+              image_extent.width,
+              image_extent.height,
+              DebugDrawType.ASVSM_ShadowPageTable
+            );
+            break;
+          case DebugDrawType.Bloom:
+            this.debug_overlay.set_properties(
+              bloom_blur_chain[0],
+              0,
+              0,
+              image_extent.width,
+              image_extent.height,
+              DebugDrawType.Bloom
+            );
+            break;
+          default:
+            break;
+        }
+        this.debug_overlay.add_pass(render_graph, post_processed_image);
+      }
+
+      // ┌─────────────────────────────────────────────────────────────────────────────┐
       // │ 🖼️  PASS: Final Presentation                                               │
       // │    Present the final rendered image to the screen swapchain               │
       // └─────────────────────────────────────────────────────────────────────────────┘
@@ -1424,19 +1545,11 @@ export class DeferredShadingStrategy {
 
         const rg_output_image = render_graph.register_image(swapchain_image.config.name);
 
-        // Choose final output based on debug_view
-        let final_output_image = post_processed_image;
-        if (shadows_enabled && this.debug_view === DebugView.ShadowAtlas) {
-          final_output_image = this.as_vsm.debug_shadow_atlas_image;
-        } else if (shadows_enabled && this.debug_view === DebugView.ShadowPageTable) {
-          final_output_image = this.as_vsm.debug_page_table_image;
-        }
-
         render_graph.add_pass(
           fullscreen_present_pass_name,
           RenderPassFlags.Graphics | RenderPassFlags.Present,
           {
-            inputs: [final_output_image],
+            inputs: [post_processed_image],
             outputs: [rg_output_image],
             shader_setup: fullscreen_shader_setup,
           },

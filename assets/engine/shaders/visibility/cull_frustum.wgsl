@@ -58,7 +58,7 @@ fn cs(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let aabb_node = aabb_bounds[aabb_node_index];
     let center = vec4f((aabb_node.min_point.xyz + aabb_node.max_point.xyz) * 0.5, 1.0);
     var radius = length(aabb_node.max_point.xyz - aabb_node.min_point.xyz) * 0.5;
-    radius *= 1.1; // Inflate bounds conservatively
+    radius *= 1.2; // Inflate bounds conservatively
 
     var view = view_buffer[frame_info.view_index];
     let in_frustum = is_in_frustum(center, radius, &view);

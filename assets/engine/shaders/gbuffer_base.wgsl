@@ -24,19 +24,16 @@ struct FragmentOutput {
     @location(2) smra: vec4<precision_float>,
     @location(3) position: vec4<f32>,
     @location(4) normal: vec4<precision_float>,
-#ifndef SKIP_ENTITY_WRITES
-    @location(5) entity_id: vec2<u32>,
-#endif
 #if TRANSPARENT
-    @location(transparency_reveal_location) transparency_reveal: f32,
+    @location(5) transparency_reveal: f32,
 #endif
 }
 
-#ifndef SKIP_ENTITY_WRITES
-const transparency_reveal_location = 6;
 #else
-const transparency_reveal_location = 5;
-#endif
+
+struct FragmentOutput {
+    @location(0) entity_id: u32,
+}
 
 #endif
 

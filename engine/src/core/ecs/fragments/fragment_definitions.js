@@ -210,6 +210,13 @@ const VisibilityFragment = {
       gpu: true,
       usage: BufferType.STORAGE,
     },
+    occluder: {
+      type: DataType.UINT32,
+      stride: 1,
+      default: 1,
+      gpu: true,
+      usage: BufferType.STORAGE,
+    },
   },
 };
 
