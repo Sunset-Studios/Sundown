@@ -17,8 +17,7 @@ fn cs(@builtin(global_invocation_id) id: vec3<u32>) {
 
   // Reconstruct view-space depth from depth buffer
   let d = textureLoad(camera_depth, vec2<i32>(id.xy), 0).r;
-  let uv = (vec2<f32>(id.xy) + vec2<f32>(0.5)) / vec2<f32>(dims);
-  let t = normalized_view_depth(uv, d);
+  let t = normalized_view_depth(d);
 
   // Choose LOD based on split depth threshold
   let lod = select(0u, 1u, t > settings.split_depth);

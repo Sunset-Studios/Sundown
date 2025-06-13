@@ -116,7 +116,8 @@ export const DebugDrawType = Object.freeze({
     GIProbeVolume: 6,
     ASVSM_ShadowAtlas: 8,
     ASVSM_ShadowPageTable: 9,
-    Bloom: 10,
+    ASVSM_TileOverlay: 10,
+    Bloom: 11,
 });
 
 /**

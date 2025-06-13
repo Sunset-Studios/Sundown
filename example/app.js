@@ -27,6 +27,7 @@ import { FontCache } from "../engine/src/ui/text/font_cache.js";
 import { Name } from "../engine/src/utility/names.js";
 import { profile_scope } from "../engine/src/utility/performance.js";
 import { log } from "../engine/src/utility/logging.js";
+import { radians } from "../engine/src/utility/math.js";
 import { vec3, vec4, quat } from "gl-matrix";
 
 import * as UI from "../engine/src/ui/2d/immediate.js";
@@ -1424,7 +1425,7 @@ export class VoxelTerrainScene extends Scene {
     light_fragment_view.type = LightType.DIRECTIONAL;
     light_fragment_view.color = [1, 1, 1];
     light_fragment_view.intensity = 2.5;
-    light_fragment_view.position = [10, 30, 10];
+    light_fragment_view.position = [10, 30, 70];
     light_fragment_view.active = true;
 
     // Create terrain material
@@ -1850,7 +1851,7 @@ export class GITestScene extends Scene {
 
     // camera
     const view_data = SharedViewBuffer.get_view_data(0);
-    view_data.view_position = [0, 13, 33];
+    view_data.view_position = [0, 13, 40];
     view_data.view_rotation = [0.0005166, 0.9986818, -0.027326133, 0.0188794];
 
     // directional light
@@ -1861,7 +1862,7 @@ export class GITestScene extends Scene {
     light_fragment_view.type = LightType.DIRECTIONAL;
     light_fragment_view.color = [1, 1, 1];
     light_fragment_view.intensity = 0.5;
-    light_fragment_view.position = [15, 20, 15];
+    light_fragment_view.position = [25, 45, 15];
     light_fragment_view.active = true;
 
     // materials
@@ -2185,6 +2186,134 @@ export class SceneSwitcher extends SimulationLayer {
 }
 
 // ------------------------------------------------------------------------------------
+// =============================== Shadow Test Scene ==================================
+// ------------------------------------------------------------------------------------
+
+export class ShadowTestScene extends Scene {
+  name = "ShadowTestScene";
+  entities = [];
+
+  init(parent_context) {
+    super.init(parent_context);
+
+    // Add arcball camera control
+    const freeform_arcball_control_processor = this.add_layer(FreeformArcballControlProcessor);
+    freeform_arcball_control_processor.move_speed = 75.0;
+    freeform_arcball_control_processor.set_scene(this);
+
+    // Configure skybox
+    SharedEnvironmentMapData.set_skybox("default_scene_skybox", [
+      "engine/textures/gradientbox/px.png",
+      "engine/textures/gradientbox/nx.png",
+      "engine/textures/gradientbox/ny.png",
+      "engine/textures/gradientbox/py.png",
+      "engine/textures/gradientbox/pz.png",
+      "engine/textures/gradientbox/nz.png",
+    ]);
+    SharedEnvironmentMapData.set_skybox_color([1, 1, 1, 1]);
+
+    // Position the camera high above the city
+    const view_data = SharedViewBuffer.get_view_data(0);
+    view_data.view_position = [47, 352, 770];
+    view_data.view_rotation = [0.0, 0.967463, -0.23873913, 0.0];
+    view_data.far = 4000.0;
+
+    // Create a sun-like directional light
+    const light_entity = EntityManager.create_entity([LightFragment]);
+    this.entities.push(light_entity);
+
+    const light_fragment_view = EntityManager.get_fragment(light_entity, LightFragment);
+    light_fragment_view.type = LightType.DIRECTIONAL;
+    light_fragment_view.color = [1, 1, 1];
+    light_fragment_view.intensity = 5.0;
+    light_fragment_view.position = [100, 300, 100];
+    light_fragment_view.active = true;
+
+    // Ground material
+    const ground_material = StandardMaterial.create("shadow_ground_material");
+    const ground_material_id = ground_material.material_id;
+    ground_material.set_albedo([0.5, 0.5, 0.5, 1]);
+    ground_material.set_roughness(1.0);
+
+    // Building material
+    const building_material = StandardMaterial.create("shadow_building_material");
+    const building_material_id = building_material.material_id;
+    building_material.set_albedo([0.35, 0.35, 0.35, 1]);
+    building_material.set_roughness(0.8);
+
+    // Shared cube mesh
+    const cube_mesh = Mesh.cube();
+    const quad_mesh = Mesh.quad();
+
+    // Create an expansive ground plane
+    const ground_plane_size = 1000.0;
+    const ground_entity = spawn_mesh_entity(
+      [0.0, 0.0, 0.0],
+      quat.fromEuler(quat.create(), -90.0, 0.0, 0.0),
+      [ground_plane_size, 1.0, ground_plane_size],
+      quad_mesh,
+      ground_material_id
+    );
+    this.entities.push(ground_entity);
+
+    // Procedurally generate a dense grid of buildings
+    const grid_size = 80;           // 80 × 80 buildings
+    const building_spacing = 20.0;  // distance between building centres
+    const building_base_size = 6.0; // footprint of each building
+
+    const building_entity = spawn_mesh_entity(
+      [0.0, 0.0, 0.0, 1.0],
+      quat.fromEuler(quat.create(), 0.0, 0.0, 0.0),
+      [0.0, 0.0, 0.0],
+      cube_mesh,
+      building_material_id
+    );
+    EntityManager.set_entity_instance_count(building_entity, grid_size * grid_size);
+    this.entities.push(building_entity);
+
+    const half_grid = (grid_size - 1) * building_spacing * 0.5;
+
+    let instance_index = 0;
+    for (let gx = 0; gx < grid_size; gx++) {
+      for (let gz = 0; gz < grid_size; gz++) {
+        // Randomised height to create varied skyline
+        const height = 10.0 + Math.random() * 90.0; // between 10 and 100 units
+
+        const position = [
+          gx * building_spacing - half_grid,
+          height * 0.5,
+          gz * building_spacing - half_grid,
+        ];
+        const scale = [building_base_size, height, building_base_size];
+
+        const transform_fragment = EntityManager.get_fragment(building_entity, TransformFragment, instance_index);
+        transform_fragment.position = position;
+        transform_fragment.scale = scale;
+
+        const visibility_fragment = EntityManager.get_fragment(building_entity, VisibilityFragment, instance_index);
+        visibility_fragment.occluder = 0;
+
+        instance_index++;
+      }
+    }
+
+    log(`[${this.name}] Spawned ${this.entities.length} entities.`);
+  }
+
+  cleanup() {
+    for (const entity of this.entities) {
+      delete_entity(entity);
+    }
+    this.remove_layer(FreeformArcballControlProcessor);
+    super.cleanup();
+  }
+
+  update(delta_time) {
+    super.update(delta_time);
+  }
+}
+
+// ------------------------------------------------------------------------------------
 // =============================== Main ==============================================
 // ------------------------------------------------------------------------------------
 
@@ -2200,6 +2329,7 @@ export class SceneSwitcher extends SimulationLayer {
   const voxel_terrain_scene = new VoxelTerrainScene("VoxelTerrainScene");
   const object_painting_scene = new ObjectPaintingScene("ObjectPaintingScene");
   const gi_test_scene = new GITestScene("GITestScene");
+  const shadow_test_scene = new ShadowTestScene("ShadowTestScene");
 
   const scene_switcher = new SceneSwitcher("SceneSwitcher");
   //await scene_switcher.add_scene(solar_ecs_scene);
@@ -2207,9 +2337,10 @@ export class SceneSwitcher extends SimulationLayer {
   //await scene_switcher.add_scene(aabb_scene);
   //await scene_switcher.add_scene(rendering_scene);
   //await scene_switcher.add_scene(ml_scene);
-  await scene_switcher.add_scene(voxel_terrain_scene);
+  //await scene_switcher.add_scene(voxel_terrain_scene);
   //await scene_switcher.add_scene(object_painting_scene);
-  //await scene_switcher.add_scene(gi_test_scene);
+  await scene_switcher.add_scene(gi_test_scene);
+  //await scene_switcher.add_scene(shadow_test_scene);
 
   await simulator.add_sim_layer(scene_switcher);
 

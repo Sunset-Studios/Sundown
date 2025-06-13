@@ -25,8 +25,17 @@ export class DebugDrawPicker extends DevConsoleTool {
         case "hzb":
           Renderer.get().set_debug_draw_type(DebugDrawType.HZB);
           break;
-        case "gi_probe_volume":
+        case "gi-probe-volume":
           Renderer.get().set_debug_draw_type(DebugDrawType.GIProbeVolume);
+          break;
+        case "shadow-atlas":
+          Renderer.get().set_debug_draw_type(DebugDrawType.ASVSM_ShadowAtlas);
+          break;
+        case "shadow-page-table":
+          Renderer.get().set_debug_draw_type(DebugDrawType.ASVSM_ShadowPageTable);
+          break;
+        case "shadow-virtual-tiles":
+          Renderer.get().set_debug_draw_type(DebugDrawType.ASVSM_TileOverlay);
           break;
         case "bloom":
           Renderer.get().set_debug_draw_type(DebugDrawType.Bloom);

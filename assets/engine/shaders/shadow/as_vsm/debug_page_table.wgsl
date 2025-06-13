@@ -16,7 +16,8 @@ struct VertexOutput {
     i32(in.uv.y * f32(dims.y))
   );
   let e = textureLoad(page_table, coord, 0).r;
-  let lod = f32((e >> 31u) & 1u);
-  let phys = f32(e & 0x7FFFFFFFu) / 2048.0; // normalize by max expected phys count
-  return vec4<f32>(phys, lod, 0.0, 1.0);
+  let valid = f32((e >> 31u) & 1u);
+  let lod   = f32((e >> 27u) & 0xFu) * 0.2;      // 4‐bit LOD
+  let phys  = f32(e & 0x07FFFFFFu) / 2048.0;        // 27‐bit PhysID
+  return vec4<f32>(phys, lod, 0.0, valid);
 } 

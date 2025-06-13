@@ -67,6 +67,7 @@ export class SharedViewBuffer {
     aspect_ratio: 141,
     distance_check_enabled: 142,
     velocity: 143,
+    zoom: 147,
   };
 
   // --- Per-view Access Wrapper ---
@@ -190,7 +191,7 @@ export class SharedViewBuffer {
     }
     set fov(fo) {
       const f = SharedViewBuffer.offsets.fov;
-      if (fo && SharedViewBuffer.raw_data[this.base + f] !== fo) {
+      if (fo !== undefined && fo !== null && SharedViewBuffer.raw_data[this.base + f] !== fo) {
         SharedViewBuffer.raw_data[this.base + f] = fo;
         SharedViewBuffer.dirty_states.set(this.idx, 1);
       }
@@ -270,6 +271,15 @@ export class SharedViewBuffer {
       SharedViewBuffer.raw_data.set(v, this.base + f);
       SharedViewBuffer.dirty_states.set(this.idx, 1);
     }
+    get zoom() {
+      const f = SharedViewBuffer.offsets.zoom;
+      return SharedViewBuffer.raw_data[this.base + f];
+    }
+    set zoom(z) {
+      const f = SharedViewBuffer.offsets.zoom;
+      SharedViewBuffer.raw_data[this.base + f] = z;
+      SharedViewBuffer.dirty_states.set(this.idx, 1);
+    }
     get renderable_state() {
       return SharedViewBuffer.is_render_active(this.idx);
     }
@@ -290,7 +300,7 @@ export class SharedViewBuffer {
 
   // --- Layout Configuration ---
   // floats per view: 6×16 matrix + 4×4 vector + 6×4 frustum + 4 floats = 140
-  static floats_per_view = 148;
+  static floats_per_view = 152;
   static type_size_bytes = SharedViewBuffer.floats_per_view * 4;
 
   // --- Raw Data & Dirty Flags ---
@@ -354,12 +364,13 @@ export class SharedViewBuffer {
     SharedViewBuffer.raw_data.set(Array(24).fill(0), base + SharedViewBuffer.offsets.frustum);
     SharedViewBuffer.raw_data.set([radians(90.0)], base + SharedViewBuffer.offsets.fov);
     SharedViewBuffer.raw_data.set([1.0], base + SharedViewBuffer.offsets.aspect_ratio);
-    SharedViewBuffer.raw_data.set([0.001], base + SharedViewBuffer.offsets.near);
+    SharedViewBuffer.raw_data.set([0.5], base + SharedViewBuffer.offsets.near);
     SharedViewBuffer.raw_data.set([1000.0], base + SharedViewBuffer.offsets.far);
     SharedViewBuffer.raw_data.set([1], base + SharedViewBuffer.offsets.culling_enabled);
     SharedViewBuffer.raw_data.set([1], base + SharedViewBuffer.offsets.occlusion_enabled);
     SharedViewBuffer.raw_data.set([1], base + SharedViewBuffer.offsets.distance_check_enabled);
     SharedViewBuffer.raw_data.set([0, 0, 0, 0], base + SharedViewBuffer.offsets.velocity);
+    SharedViewBuffer.raw_data.set([1.0], base + SharedViewBuffer.offsets.zoom);
     SharedViewBuffer.dirty_states.set(idx, 1);
     SharedViewBuffer.renderable_states.set(idx, 0);
 
@@ -477,13 +488,32 @@ export class SharedViewBuffer {
 
       // Compute projection matrix
       const projection_matrix = mat4.create();
-      mat4.perspective(
+
+      if (SharedViewBuffer.raw_data[base + SharedViewBuffer.offsets.fov] > 0.0) {
+        mat4.perspective(
         projection_matrix,
         SharedViewBuffer.raw_data[base + SharedViewBuffer.offsets.fov],
         SharedViewBuffer.raw_data[base + SharedViewBuffer.offsets.aspect_ratio],
-        SharedViewBuffer.raw_data[base + SharedViewBuffer.offsets.near],
-        SharedViewBuffer.raw_data[base + SharedViewBuffer.offsets.far]
-      );
+          SharedViewBuffer.raw_data[base + SharedViewBuffer.offsets.near],
+          SharedViewBuffer.raw_data[base + SharedViewBuffer.offsets.far]
+        );
+      } else {
+        const far = SharedViewBuffer.raw_data[base + SharedViewBuffer.offsets.far];
+        const zoom = SharedViewBuffer.raw_data[base + SharedViewBuffer.offsets.zoom];
+        const aspect_ratio = SharedViewBuffer.raw_data[base + SharedViewBuffer.offsets.aspect_ratio];
+        const height = far * zoom;
+        const width = height * aspect_ratio;
+        mat4.ortho(
+          projection_matrix,
+          -width,
+          width,
+          -height,
+          height,
+          -far,
+          far
+        );
+      }
+
       SharedViewBuffer.raw_data.set(
         projection_matrix,
         base + SharedViewBuffer.offsets.projection_matrix

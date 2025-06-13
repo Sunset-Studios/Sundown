@@ -15,8 +15,7 @@ fn cs(@builtin(global_invocation_id) gid : vec3<u32>) {
 
   // Get normalized view space depth based on depth texture
   let d = textureLoad(camera_depth, vec2<i32>(gid.xy), 0).r;
-  let uv = (vec2<f32>(gid.xy) + vec2<f32>(0.5)) / vec2<f32>(dims);
-  let t = normalized_view_depth(uv, d);
+  let t = normalized_view_depth(d);
 
   // Compute bin index
   let bin_count = arrayLength(&histogram);

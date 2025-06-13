@@ -19,18 +19,41 @@ export function screen_pos_to_world_pos(view_data, screen_x, screen_y, width, he
     vec4.scale(world_near, world_near, 1 / world_near[3]);
     vec4.scale(world_far, world_far, 1 / world_far[3]);
     
-    // Calculate ray direction
-    const ray_direction = vec3.subtract(vec3.create(), world_far, world_near);
-    vec3.normalize(ray_direction, ray_direction);
-    
-    // Calculate intersection with plane at specified depth
-    const camera_pos = view_data.view_position;
-    const t = depth / vec3.dot(ray_direction, view_data.forward);
-    
-    // Calculate final world position
-    const world_pos = vec3.create();
-    vec3.scaleAndAdd(world_pos, camera_pos, ray_direction, t);
-    
+    // ------------------------------------------------------------------
+    // Build a picking ray that works for both perspective and ortho cameras
+    // ------------------------------------------------------------------
+    // Orthographic projection matrices have m33 == 1, perspective have 0
+    const is_orthographic = Math.abs(view_data.projection_matrix[15] - 1.0) < 1e-5;
+
+    const view_forward = view_data.forward; // unit-length forward vector
+
+    let ray_origin;
+    const ray_direction = vec3.create();
+
+    if (is_orthographic) {
+        // Ray starts at the pixel position on the near plane and moves forward
+        ray_origin = vec3.fromValues(world_near[0], world_near[1], world_near[2]);
+        vec3.copy(ray_direction, view_forward);
+    } else {
+        // Perspective: ray originates from the camera position
+        ray_origin = view_data.view_position;
+        vec3.sub(
+            ray_direction,
+            vec3.fromValues(world_far[0], world_far[1], world_far[2]),
+            ray_origin
+        );
+        vec3.normalize(ray_direction, ray_direction);
+    }
+
+    // Intersect the ray with a plane perpendicular to the camera forward axis
+    const numerator = depth - vec3.dot(
+        vec3.sub(vec3.create(), ray_origin, view_data.view_position),
+        view_forward
+    );
+    const denominator = vec3.dot(ray_direction, view_forward);
+    const t = denominator !== 0 ? numerator / denominator : 0.0;
+
+    const world_pos = vec3.scaleAndAdd(vec3.create(), ray_origin, ray_direction, t);
     return world_pos;
 }
 

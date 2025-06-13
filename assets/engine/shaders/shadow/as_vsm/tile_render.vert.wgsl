@@ -43,11 +43,11 @@ fn vs(@builtin(vertex_index) vertex_index: u32,
   let phys_id = vsm_pte_get_physical_id(pte_val);
 
   // now remap into the *physical* atlas
-  let atlas_tile_cnt  = u32(settings.physical_dim / settings.tile_size); // float from settings
-  let phys_x          = phys_id % atlas_tile_cnt;
-  let phys_y          = phys_id / atlas_tile_cnt;
+  let phys_tiles_per_row  = u32(settings.physical_tiles_per_row); // float from settings
+  let phys_x          = phys_id % phys_tiles_per_row;
+  let phys_y          = phys_id / phys_tiles_per_row;
 
-  let one_over_phys   = 1.0 / f32(atlas_tile_cnt);
+  let one_over_phys   = 1.0 / f32(phys_tiles_per_row);
   let offset_x        = (2.0 * f32(phys_x) + 1.0) * one_over_phys - 1.0;
   let offset_y        = (2.0 * f32(phys_y) + 1.0) * one_over_phys - 1.0;
 
@@ -69,10 +69,19 @@ fn vs(@builtin(vertex_index) vertex_index: u32,
   // Transform into light clip space
   var clip = light_vp * world_pos;
 
-  // Apply atlas sub-region transform
+  // Calculate tile viewport transform
+  // Each tile should represent a portion of the light's view frustum
+  // We only apply offsets to position the viewport, no scaling
+  let tile_size = 2.0 / f32(phys_tiles_per_row);  // Size of each tile in clip space
+  let tile_offset_x = f32(phys_x) * tile_size - 1.0;  // Offset from left edge of viewport
+  let tile_offset_y = f32(phys_y) * tile_size - 1.0;  // Offset from bottom edge of viewport
+
+  // Only apply the offset to position the viewport
   clip = vec4<f32>(
-    clip.xy * one_over_phys + vec2<f32>(offset_x, offset_y) * clip.w,
-    clip.zw
+    clip.x + tile_offset_x,
+    clip.y + tile_offset_y,
+    clip.z,
+    clip.w
   );
 
   out.position = clip;

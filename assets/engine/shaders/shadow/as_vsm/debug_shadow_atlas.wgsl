@@ -16,20 +16,10 @@ struct VertexOutput {
       i32(in.uv.y * f32(dims.y))
   );
   // sample the correct array slice
-  let d_nl = textureLoad(shadow_atlas, coord, i32(in.instance_index), 0);
+  let depth = textureLoad(shadow_atlas, coord, i32(in.instance_index), 0);
 
-  // 1) NDC z in [-1,1]
-  let z_ndc = d_nl * 2.0 - 1.0;
+  let view = view_buffer[frame_info.view_index];
+  let lin_depth = linearize_depth(depth, view.near, view.far) / 100.0;
 
-  // 2) view-space z
-  let view_index = frame_info.view_index;
-  let view = view_buffer[view_index];
-  let near = view.near;
-  let far = view.far;
-  let linear_z = (2.0 * near * far) / (far + near - z_ndc * (far - near));
-
-  // 3) normalize to [0,1] for display
-  let norm_z = (linear_z - near) / (far - near);
-
-  return vec4<f32>(norm_z, norm_z, norm_z, 1.0);
+  return vec4<f32>(lin_depth, lin_depth, lin_depth, 1.0);
 } 

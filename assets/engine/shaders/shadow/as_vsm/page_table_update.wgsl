@@ -13,9 +13,9 @@
 // Constant for an invalid packed virtual coordinate, assuming 0,0 is valid.
 // Max virtual coord is (tile_count-1, tile_count-1). If tile_count is e.g. 4096 (2^12),
 // then max packed value is ((2^12-1)<<16) | (2^12-1) which is < 2^28. So 0xFFFFFFFF is safe.
-const INVALID_PACKED_VIRT_COORD = 0xFFFFFFFFu;
+const INVALID_PACKED_VIRT_COORD = 0x00000000u;
 
-@compute @workgroup_size(64, 4)
+@compute @workgroup_size(64)
 fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let idx = gid.x;
     let count = requested_tiles[0u]; // Total number of requests
@@ -51,7 +51,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
 
     if (packed_old_vx_vy != INVALID_PACKED_VIRT_COORD) { // Check if the physical tile was actually mapped
         let old_vx = packed_old_vx_vy & 0xFFFFu;
-        let old_vy = (packed_old_vx_vy >> 16u) & 0xFFFFu;
+        let old_vy = (packed_old_vx_vy >> 15u) & 0xFFFFu;
         let old_pte_coords = vec2<i32>(i32(old_vx), i32(old_vy));
 
         // Sanity check: ensure the old PTE indeed points to the physical_id_to_reuse
@@ -69,6 +69,6 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     textureStore(page_table, new_pte_coords.xy, dense_shadow_casting_light_idx, vec4<u32>(new_pte_value));
 
     // Update Reverse Map
-    let new_packed_vx_vy = (new_pte_coords.y << 16u) | new_pte_coords.x;
+    let new_packed_vx_vy = (new_pte_coords.y << 15u) | new_pte_coords.x;
     physical_to_virtual_map[physical_id_to_reuse] = new_packed_vx_vy;
 } 

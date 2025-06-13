@@ -37,14 +37,16 @@ struct FragmentOutput {
         view_buffer[view_index].view_matrix[2].xyz
     );
     
-    // Apply rotation to the vertex position
+    // Apply rotation to the cube vertex so we get
+    // a direction vector that follows the camera
     var rotated_pos = rotation_view * vec3<f32>(vertex_buffer[vi].position.xyz);
     
-    // Apply projection matrix
-    output.position = view_buffer[view_index].projection_matrix * vec4f(rotated_pos, 1.0);
-    
-    // Store the rotated position for fragment shader
-    output.pos = 0.5 * (vec4<f32>(vertex_buffer[vi].position) + vec4<f32>(1.0, 1.0, 1.0, 1.0)); 
+    // Full-screen quad in clip-space, pushed to the far plane
+    output.position = vec4f(vertex_buffer[vi].position.xy, 1.0, 1.0);
+    output.position.z = 1.0;               // (= far plane)
+
+    // Pass the rotated direction to the fragment stage
+    output.pos = vec4f(rotated_pos, 0.0);
     
     return output;
 }
@@ -53,8 +55,8 @@ struct FragmentOutput {
 // Fragment Shader
 // ------------------------------------------------------------------------------------ 
 @fragment fn fs(v_out: VertexOutput) -> FragmentOutput {
-    var dir = v_out.pos.xyz - vec3(0.5);
-    dir.z *= -1;
-    var color = textureSample(skybox_texture, global_sampler, dir) * skybox_data.color;
+    let dir   = normalize(v_out.pos.xyz);            // view-space direction
+    let color = textureSample(skybox_texture, global_sampler, dir) *
+                skybox_data.color;
     return FragmentOutput(vec4<precision_float>(color));
 }

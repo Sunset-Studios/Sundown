@@ -1,5 +1,4 @@
 import { Renderer } from "./renderer.js";
-import { EntityManager } from "../core/ecs/entity.js";
 import { ResourceCache } from "./resource_cache.js";
 import { WgslReflect, ResourceType } from "wgsl_reflect/wgsl_reflect.node.js";
 import { read_file } from "../utility/file_system.js";
@@ -24,9 +23,6 @@ import { log, warn, error } from "../utility/logging.js";
 import { hash_data_object } from "../utility/hashing.js";
 
 const include_string = "#include";
-const if_string = "#if";
-const else_string = "#else";
-const endif_string = "#endif";
 const precision_float_string = "precision_float";
 const has_precision_float_string = "HAS_PRECISION_FLOAT";
 
@@ -55,7 +51,6 @@ const vec4_i8_type_string = "vec4i8";
 
 const include_regex = /^#include\s+"(\S+)".*$/m;
 const defines_regex = /#define\s+(\S+)(?:\s+(\S*))?$/gm;
-const conditional_defines_regex = /#(if|ifndef)\s+(\S+)(?:\s+(\S+))?$/gm;
 const precision_float_regex = /precision_float/g;
 
 export class Shader {
@@ -88,6 +83,7 @@ export class Shader {
       this.file_path = file_path;
       this.reflection = this.reflect();
     } catch (err) {
+      console.log(this.code);
       error(`WebGPU shader error: could not create shader module at ${file_path}`, err);
     }
   }

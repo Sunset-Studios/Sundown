@@ -127,6 +127,92 @@ fn get_normal_from_normal_map(normal_map: texture_2d<f32>, uv: vec2<f32>, tbn_ma
 }
 
 // ------------------------------------------------------------------------------------
+// Shadows
+// ------------------------------------------------------------------------------------
+fn vsm_pte_is_valid(pte: u32) -> bool {
+    // Check if the most significant bit is set
+    return (pte & 0x80000000u) != 0u;
+}
+
+fn vsm_pte_get_physical_id(pte: u32) -> u32 {
+    // Mask out the most significant bit to get the physical tile id
+    return pte & 0x7FFFFFFFu;
+}
+
+fn vsm_pte_get_tile_coords(virtual_tile_id: u32, settings: ASVSMSettings) -> vec3<u32> {
+    // Decode virtual tile coordinates
+    let tile_per_row = u32(settings.virtual_tiles_per_row);
+    let tiles_per_lod = tile_per_row * tile_per_row;
+    let local_index = virtual_tile_id % tiles_per_lod;
+    let tile_x = local_index % tile_per_row;
+    let tile_y = local_index / tile_per_row;
+    let tile_lod = virtual_tile_id / tiles_per_lod;
+    return vec3<u32>(tile_x, tile_y, tile_lod);
+}
+
+fn sample_shadow_vsm(world_pos: vec3<f32>, view_idx: u32, light_idx: u32) -> f32 {
+#if SHADOWS_ENABLED
+  // unpack AS-VSM settings
+  let tile_size = vsm_settings.tile_size;
+  let virtual_dim = vsm_settings.virtual_dim;
+  let atlas_size = textureDimensions(shadow_atlas, 0).xy;
+  let one_over_tile_size = 1.0 / f32(tile_size);
+  let one_over_atlas_size = 1.0 / vec2<f32>(atlas_size);
+  let phys_tiles_per_row  = u32(vsm_settings.physical_tiles_per_row);
+
+  // -------- Virtual to physical tile mapping --------
+  // project into light clip space
+  let clip = view_buffer[view_idx].view_projection_matrix * vec4<f32>(world_pos, 1.0);
+  let ndc = clip.xyz / clip.w;
+  let depth_ref = ndc.z;
+
+  // compute virtual UV.
+  let virtual_pixel = (ndc.xy * vec2<f32>(0.5) + vec2<f32>(0.5)) * virtual_dim;
+  // virtual tile coords
+  let tile_xy = (virtual_pixel + 0.5) * one_over_tile_size;
+
+  // Map dense shadow casting light index to atlas array layer
+  let layer = dense_shadow_casting_lights_buffer[light_idx];
+
+  // fetch page table entry
+  let entry = textureLoad(page_table, vec2<u32>(tile_xy), layer).x;
+  if (entry == 0u) {
+    return 0.0;
+  }
+  // -------- Virtual to physical tile mapping --------
+
+  // -------- Physical tile UV coords --------
+  // physical tile coords
+  let phys_id = vsm_pte_get_physical_id(entry);
+  let phys_tile_x = phys_id % phys_tiles_per_row;
+  let phys_tile_y = phys_id / phys_tiles_per_row;
+
+  // base UV in atlas
+  let base_uv = (vec2<f32>(f32(phys_tile_x), f32(phys_tile_y)) * tile_size) * one_over_atlas_size;
+  // local UV within tile
+  let local_uv = fract(tile_xy) * (tile_size * one_over_atlas_size);
+  // final UV
+  var final_uv = base_uv + local_uv;
+  // -------- Physical tile UV coords --------
+
+  // ------------ PCF 3x3 ------------
+  var sum: f32 = 0.0;
+  for (var oy: i32 = -1; oy <= 1; oy = oy + 1) {
+    for (var ox: i32 = -1; ox <= 1; ox = ox + 1) {
+      let offset_uv = final_uv + vec2<f32>(f32(ox), f32(oy)) * one_over_atlas_size;
+      let sample = textureSampleLevel(shadow_atlas, non_filtering_sampler, offset_uv, layer, 0);
+      sum += select(0.0, 1.0, depth_ref < sample + 0.005);
+    }
+  }
+
+  return 1.0 - sum / 9.0;
+  // ------------ PCF 3x3 ------------
+#else
+  return 0.0;
+#endif
+}
+
+// ------------------------------------------------------------------------------------
 // Lighting
 // ------------------------------------------------------------------------------------
 fn calculate_blinn_phong(
@@ -184,6 +270,7 @@ fn calculate_blinn_phong(
 // BRDF
 // ------------------------------------------------------------------------------------
 fn calculate_brdf(
+    light_index: u32,
     light: Light,
     normal: vec3<f32>,
     view_dir: vec3<f32>,
@@ -198,7 +285,6 @@ fn calculate_brdf(
     irradiance: vec3<f32>,
     prefiltered_color: vec3<f32>,
     env_brdf: vec2<f32>,
-    shadow_map_index: i32
 ) -> vec3<f32> {
     var light_dir: vec3<f32>;
     var attenuation = 1.0;
@@ -255,14 +341,13 @@ fn calculate_brdf(
 
     let env_f = f_schlick_roughness(n_dot_v, f0, a);
 
-    // shadow
-    //let shadow_factor = select(0.0, calculate_csm_shadow(fragment_pos, normal, light_dir, shadow_map_index), light.b_csm_caster > 0u && shadow_map_index != -1);
-    let shadow_factor = 0.0;
+    // Shadow factor
+    let shadow_factor = sample_shadow_vsm(fragment_pos, u32(light.view_index), light_index);
 
     // diffuse BRDF
     let diffuse_color = (1.0 - metallic) * albedo * irradiance * ao;
     let env_specular = prefiltered_color * (f0 * env_brdf.x + f90 * env_brdf.y);
-    let fd = diffuse_color * (1.0 - shadow_factor) * fd_lambert() + env_specular * env_f;
+    let fd = diffuse_color * fd_lambert() + env_specular * env_f;
 
     // remapping and linearization of clear coat roughness
     let clamped_clear_coat_roughness = clamp(clear_coat_roughness, 0.089, 1.0);
@@ -277,29 +362,6 @@ fn calculate_brdf(
 
     // account for energy loss in the base layer
     let brdf = ((fd + fr * (1.0 - fc)) * (1.0 - fc) + frc);
-    return brdf * lluminance;
+    return brdf * lluminance * (1.0 - shadow_factor);
 }
 
-// ------------------------------------------------------------------------------------
-// Shadows 
-// ------------------------------------------------------------------------------------
-fn vsm_pte_is_valid(pte: u32) -> bool {
-    // Check if the most significant bit is set
-    return (pte & 0x80000000u) != 0u;
-}
-
-fn vsm_pte_get_physical_id(pte: u32) -> u32 {
-    // Mask out the most significant bit to get the physical tile id
-    return pte & 0x7FFFFFFFu;
-}
-
-fn vsm_pte_get_tile_coords(virtual_tile_id: u32, settings: ASVSMSettings) -> vec3<u32> {
-    // Decode virtual tile coordinates
-    let tile_per_row = u32(settings.virtual_tiles_per_row);
-    let tiles_per_lod = tile_per_row * tile_per_row;
-    let local_index = virtual_tile_id % tiles_per_lod;
-    let tile_x = local_index % tile_per_row;
-    let tile_y = local_index / tile_per_row;
-    let tile_lod = virtual_tile_id / tiles_per_lod;
-    return vec3<u32>(tile_x, tile_y, tile_lod);
-}

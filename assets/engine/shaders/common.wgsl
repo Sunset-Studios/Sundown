@@ -60,6 +60,7 @@ struct View {
     aspect_ratio: f32,
     distance_check_enabled: f32,
     velocity: vec4f,
+    zoom: f32,
 };
 
 struct FrameInfo {
@@ -299,33 +300,31 @@ fn log_depth(view_space_z: f32) -> f32 {
 }
 
 fn linearize_depth(d: f32, near_plane: f32, far_plane: f32) -> f32 {
-    // Convert non-linear [0,1] depth buffer to linear view-space Z
-    // z_eye = (n*f) / (f – d*(f–n))
-    let depth = (d * 0.5) + 0.5;
-    return (near_plane * far_plane) 
-         / (far_plane - depth * (far_plane - near_plane));
+    // Works for both perspective and orthographic projections.
+    // Depth coming from the texture is in the [-1,1] clip-space range.
+    let depth01 = (d * 0.5) + 0.5;               // -> [0,1]
+
+    // Orthographic matrices have projection[3][3] == 1, perspective == 0
+    let view_index = frame_info.view_index;
+    let proj_33    = view_buffer[view_index].projection_matrix[3][3];
+    let is_ortho   = proj_33 > 0.5;
+
+    // Perspective: z_eye = (n f) / (f – depth01·(f – n))
+    let persp_z = (near_plane * far_plane) /
+                  (far_plane - depth01 * (far_plane - near_plane));
+
+    // Orthographic: z_eye = n + depth01·(f – n)
+    let ortho_z = near_plane + depth01 * (far_plane - near_plane);
+
+    // `select(a, b, cond)` chooses b when cond is true
+    return select(persp_z, ortho_z, is_ortho);
 }
 
-fn normalized_view_depth(uv: vec2f, depth: f32) -> f32 {
-    // Reconstruct view-space depth using inverse view projection matrix
+fn normalized_view_depth(depth: f32) -> f32 {
     let view_index = frame_info.view_index;
     let view = view_buffer[view_index];
-    let inv_vp = view.inverse_view_projection_matrix;
-    let view_matrix = view.view_matrix;
-    // NDC XY in [-1,1]
-    let ndc_xy = uv * 2.0 - vec2<f32>(1.0);
-    // NDC Z in [-1,1]
-    let ndc_z = depth * 2.0 - 1.0;
-    // Reconstruct clip-space position
-    let clip_pos = vec4<f32>(ndc_xy.x, ndc_xy.y, ndc_z, 1.0);
-    // Transform to world-view space, then divide by w
-    var world_pos = inv_vp * clip_pos;
-    world_pos /= world_pos.w;
-    // Transform to view space
-    let view_pos = view_matrix * world_pos;
-    let view_z = -view_pos.z;
-    // Normalize view-space depth to [0,1]
-    return clamp((view_z - view.near) / (view.far - view.near), 0.0, 1.0);
+    let lin_depth = linearize_depth(depth, view.near, view.far);
+    return clamp((lin_depth - view.near) / (view.far - view.near), 0.0, 1.0);
 }
 
 fn rotate_hue(color: vec4f, hue_rotation: f32) -> vec4f {

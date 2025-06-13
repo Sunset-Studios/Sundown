@@ -1283,6 +1283,15 @@ export function label(text, config = {}) {
       text_x = x + width / 2;
     }
 
+    let text_y;
+    if (text_valign === top) {
+      text_y = y + text_padding;
+    } else if (text_valign === bottom) {
+      text_y = y + height - text_padding;
+    } else {
+      text_y = y + height / 2;
+    }
+
     if (config.wrap) {
       // Estimate a line height by extracting the font size (assumes font in px).
       const font_size_match = font.match(/(\d+)px/);
@@ -1305,17 +1314,25 @@ export function label(text, config = {}) {
       }
     } else {
       // Fall-back: no wrapping, single-line text.
-      let text_y;
-      if (text_valign === top) {
-        text_y = y + text_padding;
-      } else if (text_valign === bottom) {
-        text_y = y + height - text_padding;
-      } else {
-        text_y = y + height / 2;
-      }
       ctx.textAlign = text_align;
       ctx.textBaseline = text_valign === center ? middle : text_valign;
       ctx.fillText(text, text_x, text_y);
+    }
+
+    // ------------------------------
+    // Underline on Hover (optional)
+    // ------------------------------
+    if (config.underline_on_hover && is_input_within(x, y, width, height)) {
+      const measure_ctx = UIContext.get_measure_context();
+      measure_ctx.font = font;
+      const underline_width = measure_ctx.measureText(text).width;
+      ctx.beginPath();
+      ctx.strokeStyle = config.underline_color || "#4eaaff";
+      ctx.lineWidth = 2;
+      // Position the underline a couple pixels below the text baseline.
+      ctx.moveTo(text_x, text_y + height / 2);
+      ctx.lineTo(text_x + underline_width, text_y + height / 2);
+      ctx.stroke();
     }
 
     ctx.restore();

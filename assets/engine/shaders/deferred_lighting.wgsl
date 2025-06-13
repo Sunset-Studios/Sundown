@@ -19,16 +19,24 @@
 #if GI_ENABLED
 @group(1) @binding(10) var<uniform> gi_params: GIParams;
 @group(1) @binding(11) var gi_irradiance: texture_3d<f32>;
-const shadow_buffers_binding_start = 12;
-#else
-const shadow_buffers_binding_start = 10;
-#endif
 
 #if SHADOWS_ENABLED
-@group(1) @binding(shadow_buffers_binding_start) var shadow_atlas: texture_depth_2d_array;
-@group(1) @binding(shadow_buffers_binding_start + 1) var page_table: texture_storage_2d_array<r32uint, read>;
-@group(1) @binding(shadow_buffers_binding_start + 2) var<storage, read> vsm_settings: ASVSMSettings;
+@group(1) @binding(12) var shadow_atlas: texture_depth_2d_array;
+@group(1) @binding(13) var page_table: texture_storage_2d_array<r32uint, read>;
+@group(1) @binding(14) var<storage, read> vsm_settings: ASVSMSettings;
 #endif
+
+#else
+
+#if SHADOWS_ENABLED
+@group(1) @binding(10) var shadow_atlas: texture_depth_2d_array;
+@group(1) @binding(11) var page_table: texture_storage_2d_array<r32uint, read>;
+@group(1) @binding(12) var<storage, read> vsm_settings: ASVSMSettings;
+#endif
+
+#endif
+
+
 // ------------------------------------------------------------------------------------
 // Data Structures
 // ------------------------------------------------------------------------------------ 
@@ -56,68 +64,7 @@ fn sample_probe_irradiance(world_pos: vec3<f32>) -> vec3<f32> {
 #endif
 }
 
-// PCF sample with page table lookup
-fn sample_shadow(world_pos: vec3<f32>, view_idx: u32, light_idx: u32) -> f32 {
-#if SHADOWS_ENABLED
-  // unpack AS-VSM settings
-  let tile_size = vsm_settings.tile_size;
-  let virtual_dim = vsm_settings.virtual_dim;
-  let atlas_size = textureDimensions(shadow_atlas, 0).xy;
 
-  let one_over_tile_size = 1.0 / f32(tile_size);
-  let one_over_atlas_size = 1.0 / vec2<f32>(atlas_size);
-  let phys_tiles_per_row = u32(f32(atlas_size.x) * one_over_tile_size);
-
-  // project into light clip space
-  let clip = view_buffer[view_idx].view_projection_matrix * vec4<f32>(world_pos, 1.0);
-  let ndc = clip.xyz / clip.w;
-  let depth_ref = ndc.z;
-
-  // compute virtual UV
-  let virtual_uv = (ndc.xy * 0.5 + vec2<f32>(0.5)) * virtual_dim;
-  // virtual tile coords
-  let tile_xy = virtual_uv * one_over_tile_size;
-
-  // Map dense shadow casting light index to atlas array layer
-  let layer = dense_shadow_casting_lights_buffer[light_idx];
-
-  // fetch page table entry
-  let entry = textureLoad(page_table, vec2<u32>(tile_xy), layer).x;
-  if (entry == 0u) {
-    return 1.0;
-  }
-
-  let phys_id = vsm_pte_get_physical_id(entry);
-  // physical tile coords
-  let phys_x = phys_id % phys_tiles_per_row;
-  let phys_y = phys_id / phys_tiles_per_row;
-
-  // base UV in atlas
-  let base_uv = (vec2<f32>(f32(phys_x), f32(phys_y)) * tile_size) * one_over_atlas_size;
-  // local UV within tile
-  let local_uv = fract(tile_xy) * (tile_size * one_over_atlas_size);
-  // final UV
-  let final_uv = base_uv + local_uv;
-
-  // PCF 3x3
-  var sum: f32 = 0.0;
-  for (var oy: i32 = -1; oy <= 1; oy = oy + 1) {
-    for (var ox: i32 = -1; ox <= 1; ox = ox + 1) {
-      let offset_uv = final_uv + one_over_atlas_size * vec2<f32>(f32(ox), f32(oy));
-      sum += textureSampleCompareLevel(
-          shadow_atlas,
-          comparison_sampler,
-          offset_uv,
-          layer,
-          depth_ref
-      );
-    }
-  }
-  return sum / 9.0;
-#else
-  return 1.0;
-#endif
-}
 
 // ------------------------------------------------------------------------------------
 // Vertex Shader
@@ -176,10 +123,10 @@ fn sample_shadow(world_pos: vec3<f32>, view_idx: u32, light_idx: u32) -> f32 {
     let irradiance = sample_probe_irradiance(position);
 
     let num_lights = light_count_buffer[0] * (1u - unlit);
-    for (var i = 0u; i < num_lights; i++) {
-        var light = dense_lights_buffer[i];
-        let shadow_visible = sample_shadow(position, u32(light.view_index), i);
-        let brdf = calculate_brdf(
+    for (var light_index = 0u; light_index < num_lights; light_index++) {
+        var light = dense_lights_buffer[light_index];
+        color += calculate_brdf(
+            light_index,
             light,
             normalized_normal,
             view_dir,
@@ -194,9 +141,7 @@ fn sample_shadow(world_pos: vec3<f32>, view_idx: u32, light_idx: u32) -> f32 {
             irradiance,
             vec3f(1.0, 1.0, 1.0), // prefilter color 
             vec2f(1.0, 1.0), // env brdf
-            0, // shadow map index
         );
-        color = color + brdf * shadow_visible;
     }
 
     color += (emissive * albedo);

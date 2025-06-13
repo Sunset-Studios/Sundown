@@ -1,11 +1,10 @@
-import { LightType } from "../minimal.js";
+import { LightType, EntityFlags, WORLD_UP } from "../minimal.js";
 import { DEFAULT_CHUNK_CAPACITY } from "../ecs/solar/types.js";
 import { SimulationLayer } from "../simulation_layer.js";
 import { EntityManager } from "../ecs/entity.js";
 import { LightFragment } from "../ecs/fragments/light_fragment.js";
-import { SharedViewBuffer } from "../shared_data.js";
-import { EntityFlags } from "../minimal.js";
-import { quat, vec4 } from "gl-matrix";
+import { SharedViewBuffer, SharedFrameInfoBuffer } from "../shared_data.js";
+import { quat, vec4, vec3, mat4 } from "gl-matrix";
 
 export class LightViewProcessor extends SimulationLayer {
   entity_query = null;
@@ -39,39 +38,103 @@ export class LightViewProcessor extends SimulationLayer {
 
       LightFragment.total_shadow_casting_lights += lights.shadow_casting[slot];
 
+      const light_type = lights.type[slot];
+
       if (!lights.view_index[slot] || lights.view_index[slot] < 0) {
         const view = SharedViewBuffer.add_view_data();
         view.renderable_state = lights.shadow_casting[slot];
         view.occlusion_enabled = 0;
-
-        lights.view_index[slot] = view.get_index();
-
+        
         const position = [
           lights.position[slot * 4 + 0],
           lights.position[slot * 4 + 1],
           lights.position[slot * 4 + 2],
           1.0,
         ];
-        view.view_position = position;
-        
-        const rotation = quat.fromValues(0, 0, 0, 1);
-        if (lights.type[slot] === LightType.DIRECTIONAL) {
+
+        if (light_type === LightType.DIRECTIONAL) {
+          const camera_view_index = SharedFrameInfoBuffer.get_view_index();
+          const camera_view = SharedViewBuffer.get_view_data(camera_view_index);
+
+          view.fov = 0.0;
+          view.zoom = 0.05;
+          view.far = camera_view.far;
+
           const direction = vec4.negate(vec4.create(), position);
-          quat.rotationTo(rotation, [0, 0, 1], direction);
+          const rotation = quat.rotationTo(quat.create(), [0, 0, 1], direction);
+
+          view.view_position = position;
+          view.view_rotation = rotation;
         } else {
+          view.fov = 90.0;
+
           const direction = vec4.fromValues(
             lights.direction[slot * 4 + 0],
             lights.direction[slot * 4 + 1],
             lights.direction[slot * 4 + 2],
             lights.direction[slot * 4 + 3]
           );
-          quat.rotationTo(rotation, [0, 0, 1], direction);
-        }
+          const rotation = quat.rotationTo(quat.create(), [0, 0, 1], direction);
 
-        view.view_rotation = rotation;
+          view.view_position = position;
+          view.view_rotation = rotation;
+        }
+        
+        lights.view_index[slot] = view.get_index();
 
         chunk.mark_dirty();
       } else {
+        // Update existing view each frame – particularly important for directional lights so that
+        // their orthographic projection follows the camera. We recompute the light-aligned
+        // orthographic projection and dependent matrices here rather than relying on
+        // SharedViewBuffer.update_transforms (which uses fixed −1..1 extents for orthographic
+        // projections).
+        if (light_type === LightType.DIRECTIONAL) {
+          const view_index = lights.view_index[slot];
+          if (view_index < 0) {
+            slot += counts[slot] || 1;
+            continue;
+          }
+          
+          // Retrieve the active camera view to build a camera-relative projection.
+          const camera_view_index = SharedFrameInfoBuffer.get_view_index();
+          const camera_view = SharedViewBuffer.get_view_data(camera_view_index);
+          
+          // Guard against invalid indices (e.g. when no camera yet available).
+          if (!camera_view) {
+            slot += counts[slot] || 1;
+            continue;
+          }
+
+          // --- Compute bounding sphere based on the camera far plane ---
+          const camera_position = camera_view.view_position;
+          const camera_far = camera_view.far || 100.0;
+
+          const light_view = SharedViewBuffer.get_view_data(view_index);
+          const light_forward = light_view.forward;
+          const light_zoom = light_view.zoom;
+
+          // Center the light volume around the camera position and move it backwards along
+          // the light direction so the camera is roughly centred within the depth range.
+          const light_position = vec3.scaleAndAdd(
+            vec3.create(),
+            camera_position,
+            light_forward,
+            -camera_far * light_zoom
+          );
+
+          const direction = vec4.negate(vec4.create(), light_position);
+          const rotation = quat.rotationTo(quat.create(), [0, 0, 1], direction);
+
+          // light_view.view_position = vec4.fromValues(
+          //   light_position[0],
+          //   light_position[1],
+          //   light_position[2],
+          //   1.0
+          // );
+          //light_view.view_rotation = rotation;
+        }
+
         // TODO: Frustum-frustum intersection tests to cull lights?
       }
 

@@ -201,11 +201,11 @@ const depth_only_shader_setup = {
   pipeline_shaders: {
     vertex: {
       path: "gbuffer_base.wgsl",
-      defines: ["DEPTH_ONLY"],
+      defines: { DEPTH_ONLY: true },
     },
     fragment: {
       path: "gbuffer_base.wgsl",
-      defines: ["DEPTH_ONLY"],
+      defines: { DEPTH_ONLY: true },
     },
   },
   depth_write_enabled: true,
@@ -1183,7 +1183,7 @@ export class DeferredShadingStrategy {
         if (!this.as_vsm) {
           this.as_vsm = new AdaptiveSparseVirtualShadowMaps({
             atlas_size: 2048,
-            tile_size: 32,
+            tile_size: 64,
             virtual_dim: 4096,
             max_lods: 1,
             histogram_bins: 64,
@@ -1191,6 +1191,7 @@ export class DeferredShadingStrategy {
         }
         this.as_vsm.add_passes(render_graph, {
           depth_texture: main_depth_image,
+          position_texture: main_position_image,
           lights_buffer: dense_lights,
           dense_shadow_casting_lights_buffer: dense_shadow_casting_lights,
           light_count_buffer: light_count,
@@ -1244,8 +1245,8 @@ export class DeferredShadingStrategy {
         ];
 
         if (gi_enabled) {
-          deferred_lighting_shader_setup.pipeline_shaders.vertex.defines = ["GI_ENABLED"];
-          deferred_lighting_shader_setup.pipeline_shaders.fragment.defines = ["GI_ENABLED"];
+          deferred_lighting_shader_setup.pipeline_shaders.vertex.defines = { GI_ENABLED: true };
+          deferred_lighting_shader_setup.pipeline_shaders.fragment.defines = { GI_ENABLED: true };
 
           lighting_inputs.push(gi_irradiance_image, gi_depth_image);
         }
@@ -1256,8 +1257,8 @@ export class DeferredShadingStrategy {
           const vsm_page_table = this.as_vsm.page_table;
           const asvsm_settings = this.as_vsm.settings_buf;
 
-          deferred_lighting_shader_setup.pipeline_shaders.vertex.defines = ["SHADOWS_ENABLED"];
-          deferred_lighting_shader_setup.pipeline_shaders.fragment.defines = ["SHADOWS_ENABLED"];
+          deferred_lighting_shader_setup.pipeline_shaders.vertex.defines = { SHADOWS_ENABLED: true };
+          deferred_lighting_shader_setup.pipeline_shaders.fragment.defines = { SHADOWS_ENABLED: true };
 
           lighting_inputs.push(shadow_atlas, vsm_page_table, asvsm_settings);
         }
@@ -1502,8 +1503,8 @@ export class DeferredShadingStrategy {
               this.as_vsm.debug_shadow_atlas_image,
               0,
               0,
-              image_extent.width,
-              image_extent.height,
+              image_extent.width * 0.25,
+              image_extent.height * 0.25,
               DebugDrawType.ASVSM_ShadowAtlas
             );
             break;
@@ -1512,9 +1513,19 @@ export class DeferredShadingStrategy {
               this.as_vsm.debug_page_table_image,
               0,
               0,
+              image_extent.width * 0.25,
+              image_extent.height * 0.25,
+              DebugDrawType.ASVSM_ShadowPageTable
+            );
+            break;
+          case DebugDrawType.ASVSM_TileOverlay:
+            this.debug_overlay.set_properties(
+              this.as_vsm.debug_tile_overlay_image,
+              0,
+              0,
               image_extent.width,
               image_extent.height,
-              DebugDrawType.ASVSM_ShadowPageTable
+              DebugDrawType.ASVSM_TileOverlay
             );
             break;
           case DebugDrawType.Bloom:

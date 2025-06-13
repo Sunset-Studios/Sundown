@@ -24,6 +24,7 @@ const atlas_config = {
   height: 0,
   depth: 0,
   usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+  load_op: load_op_load,
 };
 
 const page_table_config = {
@@ -90,6 +91,14 @@ const debug_page_table_config = {
   usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
 };
 
+const debug_tile_overlay_config = {
+  name: "debug_tile_overlay",
+  format: rgba8unorm_format,
+  width: 0,
+  height: 0,
+  usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+};
+
 const tile_request_uniform_configs = [];
 // ============ Shader Setup ============
 
@@ -143,6 +152,13 @@ const debug_page_table_shader_setup = {
   },
 };
 
+const debug_tile_overlay_shader_setup = {
+  pipeline_shaders: {
+    vertex: { path: "fullscreen.wgsl" },
+    fragment: { path: "shadow/as_vsm/debug_tile_overlay.wgsl" },
+  },
+};
+
 const HISTOGRAM_BINS = 64;
 const MAX_TILE_REQUESTS_PER_VIEW = 64;
 
@@ -151,6 +167,8 @@ const MAX_TILE_REQUESTS_PER_VIEW = 64;
  * Scaffolding: allocates GPU resources and adds stub passes.
  */
 export class AdaptiveSparseVirtualShadowMaps {
+  static all_instances = [];
+
   constructor({ atlas_size, tile_size, virtual_dim, max_lods }) {
     this.tile_size = tile_size;
     this.virtual_dim = virtual_dim;
@@ -167,12 +185,15 @@ export class AdaptiveSparseVirtualShadowMaps {
 
     const num_elements = 1 + MAX_TILE_REQUESTS_PER_VIEW * 3;
     this.cpu_requested_tiles = new Uint32Array(num_elements);
+
+    AdaptiveSparseVirtualShadowMaps.all_instances.push(this);
   }
 
   add_passes(
     render_graph,
     {
       depth_texture,
+      position_texture,
       lights_buffer,
       dense_shadow_casting_lights_buffer,
       light_count_buffer,
@@ -260,6 +281,10 @@ export class AdaptiveSparseVirtualShadowMaps {
     // Can discard lru_raw now that buffer is created
     lru_buf_config.raw_data = null;
 
+    // Store references for debug passes
+    this.position_texture = position_texture;
+    this.lights_buffer = lights_buffer;
+
     // Stage 0: Clear buffers
     render_graph.add_pass(
       "as_vsm_init",
@@ -306,8 +331,9 @@ export class AdaptiveSparseVirtualShadowMaps {
       },
       (graph, frame_data, encoder) => {
         const pass = graph.get_physical_pass(frame_data.current_pass);
-        const w = this.virtual_tiles_per_row * this.max_lods;
-        const h = this.physical_tiles_per_row * this.max_lods;
+        const depth_img = graph.get_physical_image(depth_texture);
+        const w = depth_img.config.width;
+        const h = depth_img.config.height;
         pass.dispatch(Math.ceil(w / 16), Math.ceil(h / 16), 1);
       }
     );
@@ -389,8 +415,7 @@ export class AdaptiveSparseVirtualShadowMaps {
       (graph, frame_data, encoder) => {
         const pass = graph.get_physical_pass(frame_data.current_pass);
         const requested_tiles_groups = Math.ceil(MAX_TILE_REQUESTS_PER_VIEW / 64);
-        const light_count_groups = Math.ceil(adjusted_light_count / 4);
-        pass.dispatch(requested_tiles_groups, light_count_groups, 1);
+        pass.dispatch(requested_tiles_groups, 1, 1);
       }
     );
 
@@ -427,13 +452,13 @@ export class AdaptiveSparseVirtualShadowMaps {
           const pass = graph.get_physical_pass(frame_data.current_pass);
           MeshTaskQueue.submit_indexed_indirect_draws(
             pass,
-            view_index, /* view_index */
-            true, /* skip_material_bind */
+            view_index /* view_index */,
+            true /* skip_material_bind */
           );
         }
       );
     }
-    
+
     // Debug AS-VSM views
     if (debug_view !== DebugDrawType.None) {
       this.add_debug_passes(render_graph, force_recreate, debug_view);
@@ -447,7 +472,7 @@ export class AdaptiveSparseVirtualShadowMaps {
       CacheTypes.BUFFER,
       Name.from(requested_tiles_buf_config.name)
     );
-     await requested_tiles_buffer.read(
+    await requested_tiles_buffer.read(
       this.cpu_requested_tiles,
       this.cpu_requested_tiles.byteLength,
       0,
@@ -458,6 +483,8 @@ export class AdaptiveSparseVirtualShadowMaps {
 
   #tile_request_uniforms = [];
   _setup_tile_request_uniforms(render_graph, active_tile_count) {
+    this.#tile_request_uniforms.length = 0;
+
     if (tile_request_uniform_configs.length < active_tile_count) {
       tile_request_uniform_configs.length = active_tile_count;
       for (let i = 0; i < active_tile_count; i++) {
@@ -472,6 +499,7 @@ export class AdaptiveSparseVirtualShadowMaps {
       const buffer = render_graph.create_buffer(tile_request_uniform_configs[i]);
       this.#tile_request_uniforms.push(buffer);
     }
+
     return this.#tile_request_uniforms;
   }
 
@@ -499,8 +527,8 @@ export class AdaptiveSparseVirtualShadowMaps {
       );
     }
     if (debug_view === DebugDrawType.ASVSM_ShadowPageTable) {
-      debug_page_table_config.width = image_extent.width;
-      debug_page_table_config.height = image_extent.height;
+      debug_page_table_config.width = page_table_config.width;
+      debug_page_table_config.height = page_table_config.height;
       debug_page_table_config.force = force_recreate;
       this.debug_page_table_image = render_graph.create_image(debug_page_table_config);
       render_graph.add_pass(
@@ -510,6 +538,37 @@ export class AdaptiveSparseVirtualShadowMaps {
           inputs: [this.page_table],
           outputs: [this.debug_page_table_image],
           shader_setup: debug_page_table_shader_setup,
+        },
+        (graph, frame_data, encoder) => {
+          const pass = graph.get_physical_pass(frame_data.current_pass);
+          // make sure we cover the full image before drawing the quad
+          pass.pass.setViewport(
+            0, 0,
+            page_table_config.width,
+            page_table_config.height,
+            0, 1
+          );
+          MeshTaskQueue.draw_quad(pass);
+        }
+      );
+    }
+    if (debug_view === DebugDrawType.ASVSM_TileOverlay) {
+      debug_tile_overlay_config.width = image_extent.width;
+      debug_tile_overlay_config.height = image_extent.height;
+      debug_tile_overlay_config.force = force_recreate;
+      this.debug_tile_overlay_image = render_graph.create_image(debug_tile_overlay_config);
+
+      render_graph.add_pass(
+        "debug_tile_overlay_pass",
+        RenderPassFlags.Graphics,
+        {
+          inputs: [
+            this.position_texture,
+            this.settings_buf,
+            this.lights_buffer,
+          ],
+          outputs: [this.debug_tile_overlay_image],
+          shader_setup: debug_tile_overlay_shader_setup,
         },
         (graph, frame_data, encoder) => {
           const pass = graph.get_physical_pass(frame_data.current_pass);

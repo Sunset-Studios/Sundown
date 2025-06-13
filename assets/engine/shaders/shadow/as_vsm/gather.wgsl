@@ -55,14 +55,31 @@ fn cs(@builtin(global_invocation_id) id: vec3<u32>) {
       // If not valid, request it
       if (!pte_is_valid) {
         let max_tile_requests = u32(settings.max_tile_requests);
-        let current_tile_request_count = atomicLoad(&requested_tiles[0]);
-        if (current_tile_request_count < max_tile_requests) {
-          // Each request takes 3 uints: [tile_id, light_index, view_index]
-          let slot = atomicAdd(&requested_tiles[0], 1u);
-          let base = 1u + slot * 3u;
-          atomicStore(&requested_tiles[base], tile_id);
-          atomicStore(&requested_tiles[base + 1u], dense_light_index);
-          atomicStore(&requested_tiles[base + 2u], view_index);
+
+        // try to reserve one slot, but never go past max_tile_requests
+        var slot: u32;
+        loop {
+          let current_count = atomicLoad(&requested_tiles[0]);
+          // no more slots available?
+          if (current_count >= max_tile_requests) {
+            break;
+          }
+          // attempt to bump current_count → current_count+1
+          let compare_result = atomicCompareExchangeWeak(
+            &requested_tiles[0],
+            current_count,
+            current_count + 1u
+          );
+          if (compare_result.exchanged) {
+            slot = current_count;
+            // we successfully reserved slot "slot"
+            let base = 1u + slot * 3u;
+            atomicStore(&requested_tiles[base],        tile_id);
+            atomicStore(&requested_tiles[base + 1u], dense_light_index);
+            atomicStore(&requested_tiles[base + 2u], view_index);
+            break;
+          }
+          // else: another thread won the race, retry
         }
       }
 
