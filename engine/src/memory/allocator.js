@@ -989,7 +989,7 @@ class SparseRandomAccessAllocator {
     /** Retrieves the object at the index if allocated. */
     get(index) {
         if (index < 0 || index >= this.#capacity || !this.#mask.get(index)) {
-            throw new Error('Index out of bounds or slot not allocated');
+            return null;
         }
         return this.#buffer[index];
     }

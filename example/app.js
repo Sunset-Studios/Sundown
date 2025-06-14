@@ -2196,6 +2196,8 @@ export class ShadowTestScene extends Scene {
   init(parent_context) {
     super.init(parent_context);
 
+    const ambient_emissive = 0.2; 
+
     // Add arcball camera control
     const freeform_arcball_control_processor = this.add_layer(FreeformArcballControlProcessor);
     freeform_arcball_control_processor.move_speed = 75.0;
@@ -2216,7 +2218,7 @@ export class ShadowTestScene extends Scene {
     const view_data = SharedViewBuffer.get_view_data(0);
     view_data.view_position = [47, 352, 770];
     view_data.view_rotation = [0.0, 0.967463, -0.23873913, 0.0];
-    view_data.far = 4000.0;
+    view_data.far = 2000.0;
 
     // Create a sun-like directional light
     const light_entity = EntityManager.create_entity([LightFragment]);
@@ -2225,33 +2227,50 @@ export class ShadowTestScene extends Scene {
     const light_fragment_view = EntityManager.get_fragment(light_entity, LightFragment);
     light_fragment_view.type = LightType.DIRECTIONAL;
     light_fragment_view.color = [1, 1, 1];
-    light_fragment_view.intensity = 5.0;
+    light_fragment_view.intensity = 1.0;
     light_fragment_view.position = [100, 300, 100];
     light_fragment_view.active = true;
+
+    // Create a point light
+    const point_light_entity = EntityManager.create_entity([LightFragment]);
+    this.entities.push(point_light_entity);
+
+    const point_light_fragment_view = EntityManager.get_fragment(point_light_entity, LightFragment);
+    point_light_fragment_view.type = LightType.POINT;
+    point_light_fragment_view.color = [1, 1, 0];
+    point_light_fragment_view.intensity = 5.0;
+    point_light_fragment_view.position = [0, 20, 0];
+    point_light_fragment_view.radius = 20.0;
+    point_light_fragment_view.active = true;
+    point_light_fragment_view.shadow_casting = false;
+
+    const num_point_lights = 1000;
+    EntityManager.set_entity_instance_count(point_light_entity, num_point_lights);
 
     // Ground material
     const ground_material = StandardMaterial.create("shadow_ground_material");
     const ground_material_id = ground_material.material_id;
     ground_material.set_albedo([0.5, 0.5, 0.5, 1]);
-    ground_material.set_roughness(1.0);
+    ground_material.set_roughness(0.8);
+    ground_material.set_emission(ambient_emissive);
 
     // Building material
     const building_material = StandardMaterial.create("shadow_building_material");
     const building_material_id = building_material.material_id;
     building_material.set_albedo([0.35, 0.35, 0.35, 1]);
     building_material.set_roughness(0.8);
+    building_material.set_emission(ambient_emissive);
 
     // Shared cube mesh
     const cube_mesh = Mesh.cube();
-    const quad_mesh = Mesh.quad();
 
     // Create an expansive ground plane
     const ground_plane_size = 1000.0;
     const ground_entity = spawn_mesh_entity(
       [0.0, 0.0, 0.0],
-      quat.fromEuler(quat.create(), -90.0, 0.0, 0.0),
+      quat.fromEuler(quat.create(), 0.0, 0.0, 0.0),
       [ground_plane_size, 1.0, ground_plane_size],
-      quad_mesh,
+      cube_mesh,
       ground_material_id
     );
     this.entities.push(ground_entity);
@@ -2298,6 +2317,193 @@ export class ShadowTestScene extends Scene {
     }
 
     log(`[${this.name}] Spawned ${this.entities.length} entities.`);
+
+    // --- Neon Signs ---------------------------------------------------------
+    // Create several vibrant emissive materials for different neon colours.
+    const neon_colours = [
+      { name: "neon_cyan",    color: [0.0, 1.0, 1.0, 1.0] },
+      { name: "neon_magenta", color: [1.0, 0.0, 1.0, 1.0] },
+      { name: "neon_yellow",  color: [1.0, 1.0, 0.0, 1.0] },
+      { name: "neon_orange",  color: [1.0, 0.5, 0.0, 1.0] },
+      { name: "neon_green",   color: [0.0, 1.0, 0.0, 1.0] },
+    ];
+
+    const neon_material_ids = neon_colours.map((c) => {
+      const m = StandardMaterial.create(`shadow_${c.name}`);
+      m.set_albedo(c.color);
+      m.set_emission(100.0); // extremely bright
+      m.set_roughness(0.1);
+      return m.material_id;
+    });
+
+    const neon_sign_transforms = [];
+    const neon_sign_material_indices = [];
+
+    // Decide which buildings receive signs and where they go.
+    for (let i = 0; i < instance_index; i++) {
+      // Roughly 30 % of buildings receive a sign.
+      if (Math.random() < 0.3) {
+        const building_tf = EntityManager.get_fragment(building_entity, TransformFragment, i);
+        if (!building_tf) continue;
+
+        const bp = building_tf.position;
+        const bs = building_tf.scale;
+
+        // Choose a random face: 0 = +z front, 1 = -z back, 2 = -x left, 3 = +x right
+        const face = Math.floor(Math.random() * 4);
+
+        // Sign parameters
+        const sign_depth = 0.25;
+        const sign_height = 2.0;
+
+        let sign_pos;
+        let sign_scale;
+
+        const vertical_offset = 0.2 + Math.random() * 0.6; // between 20 % and 80 % up the wall
+
+        switch (face) {
+          case 0: // +z (front)
+            sign_scale = [bs[0] * 0.8, sign_height, sign_depth];
+            sign_pos = [
+              bp[0],
+              bp[1] + bs[1] * vertical_offset,
+              bp[2] + bs[2] + sign_depth * 0.5 + 0.05,
+            ];
+            break;
+          case 1: // -z (back)
+            sign_scale = [bs[0] * 0.8, sign_height, sign_depth];
+            sign_pos = [
+              bp[0],
+              bp[1] + bs[1] * vertical_offset,
+              bp[2] - bs[2] - sign_depth * 0.5 - 0.05,
+            ];
+            break;
+          case 2: // -x (left)
+            sign_scale = [sign_depth, sign_height, bs[2] * 0.8];
+            sign_pos = [
+              bp[0] - bs[0] - sign_depth * 0.5 - 0.05,
+              bp[1] + bs[1] * vertical_offset,
+              bp[2],
+            ];
+            break;
+          case 3: // +x (right)
+          default:
+            sign_scale = [sign_depth, sign_height, bs[2] * 0.8];
+            sign_pos = [
+              bp[0] + bs[0] + sign_depth * 0.5 + 0.05,
+              bp[1] + bs[1] * vertical_offset,
+              bp[2],
+            ];
+            break;
+        }
+
+        neon_sign_transforms.push({ position: sign_pos, scale: sign_scale });
+        neon_sign_material_indices.push(Math.floor(Math.random() * neon_material_ids.length));
+      }
+    }
+
+    // Spawn instanced entities grouped by material for efficiency.
+    if (neon_sign_transforms.length > 0) {
+      // Group transforms by selected material.
+      const grouped = new Map();
+      neon_sign_transforms.forEach((t, idx) => {
+        const mat_idx = neon_sign_material_indices[idx];
+        if (!grouped.has(mat_idx)) grouped.set(mat_idx, []);
+        grouped.get(mat_idx).push(t);
+      });
+
+      // Create one entity per material.
+      grouped.forEach((transforms, mat_idx) => {
+        const neon_entity = spawn_mesh_entity(
+          [0, 0, 0],
+          [0, 0, 0, 1],
+          [0, 0, 0],
+          cube_mesh,
+          neon_material_ids[mat_idx],
+          null,
+          [],
+          true,
+          EntityFlags.NO_AABB_UPDATE | EntityFlags.IGNORE_PARENT_SCALE
+        );
+
+        EntityManager.set_entity_instance_count(neon_entity, transforms.length);
+
+        transforms.forEach((tr, i) => {
+          const tf = EntityManager.get_fragment(neon_entity, TransformFragment, i);
+          tf.position = tr.position;
+          tf.scale = tr.scale;
+        });
+
+        this.entities.push(neon_entity);
+      });
+    }
+
+    // ------------------------------------------------------------------
+    // Scatter 100 point-lights around the generated city.
+    // Each light is attached to a random building, either on a façade or
+    // on the rooftop, with some colour variation for extra visual flavour.
+    // ------------------------------------------------------------------
+    const point_light_colours = [
+      [1.0, 0.8, 0.6], // warm
+      [0.6, 0.8, 1.0], // cool
+      [1.0, 1.0, 0.8], // neutral
+    ];
+
+    for (let i = 0; i < num_point_lights; i++) {
+      const p_view = EntityManager.get_fragment(point_light_entity, LightFragment, i);
+
+      // Pick a random building instance.
+      const b_index = Math.floor(Math.random() * instance_index);
+      const b_tf    = EntityManager.get_fragment(building_entity, TransformFragment, b_index);
+      if (!b_tf) continue;
+
+      const bp = b_tf.position; // building position (centre)
+      const bs = b_tf.scale;    // building half-extents in each axis
+
+      // Decide whether this light goes on the rooftop or at street level.
+      const rooftop = Math.random() < 0.4; // 40 % roof, 60 % façade
+
+      let lx, ly, lz;
+
+      if (rooftop) {
+        // Place it slightly above the rooftop centre.
+        lx = bp[0];
+        ly = bp[1] + bs[1] + 4.0;
+        lz = bp[2];
+      } else {
+        // Attach to a random side of the building.
+        const face = Math.floor(Math.random() * 4); // 0 ±z, 1 ±x
+        const height = bp[1] + Math.random() * bs[1]; // random height along wall
+
+        switch (face) {
+          case 0: // +z front
+            lx = bp[0];
+            lz = bp[2] + bs[2] + 1.5;
+            break;
+          case 1: // -z back
+            lx = bp[0];
+            lz = bp[2] - bs[2] - 1.5;
+            break;
+          case 2: // -x left
+            lx = bp[0] - bs[0] - 1.5;
+            lz = bp[2];
+            break;
+          case 3: // +x right
+          default:
+            lx = bp[0] + bs[0] + 1.5;
+            lz = bp[2];
+            break;
+        }
+
+        ly = height;
+      }
+
+      p_view.position  = [lx, ly, lz];
+      p_view.radius    = 30.0 + Math.random() * 40.0; // 30–70 units reach
+      p_view.intensity = 3.0 + Math.random() * 2.0;  // 3–5 brightness
+      p_view.color     = point_light_colours[Math.floor(Math.random() * point_light_colours.length)];
+    }
+    // ------------------------------------------------------------------------
   }
 
   cleanup() {
@@ -2339,8 +2545,8 @@ export class ShadowTestScene extends Scene {
   //await scene_switcher.add_scene(ml_scene);
   //await scene_switcher.add_scene(voxel_terrain_scene);
   //await scene_switcher.add_scene(object_painting_scene);
-  await scene_switcher.add_scene(gi_test_scene);
-  //await scene_switcher.add_scene(shadow_test_scene);
+  //await scene_switcher.add_scene(gi_test_scene);
+  await scene_switcher.add_scene(shadow_test_scene);
 
   await simulator.add_sim_layer(scene_switcher);
 

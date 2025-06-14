@@ -66,7 +66,7 @@ const main_albedo_image_config = {
 };
 const main_emissive_image_config = {
   name: "main_emissive",
-  format: rgba8unorm_format,
+  format: rgba16float_format,
   width: 0,
   height: 0,
   usage:
@@ -343,15 +343,15 @@ const bloom_resolve_params_config = {
 };
 const post_bloom_color_image_config = {
   name: "post_bloom_color",
-  format: rgba8unorm_format,
+  format: rgba16float_format,
   width: 0,
   height: 0,
   usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
   force: false,
 };
 const bloom_params = [
-  1.5 /* final exposure */, 0.3 /* bloom intensity */, 0.001 /* bloom threshold */,
-  0.0 /* bloom knee */,
+  1.2 /* final exposure */, 0.2 /* bloom intensity */, 0.1 /* bloom threshold */,
+  0.4 /* bloom knee */,
 ];
 
 const fullscreen_shader_setup = {
@@ -1388,7 +1388,7 @@ export class DeferredShadingStrategy {
                 src_mip_height,
                 dst_mip_width,
                 dst_mip_height,
-                0.005,
+                6.0,
                 i,
               ]);
 
@@ -1465,6 +1465,16 @@ export class DeferredShadingStrategy {
               image_extent.width,
               image_extent.height,
               DebugDrawType.Normal
+            );
+            break;
+          case DebugDrawType.Emissive:
+            this.debug_overlay.set_properties(
+              main_emissive_image,
+              0,
+              0,
+              image_extent.width,
+              image_extent.height,
+              DebugDrawType.Emissive
             );
             break;
           case DebugDrawType.EntityId:

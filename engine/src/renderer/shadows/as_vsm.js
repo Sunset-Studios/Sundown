@@ -419,14 +419,16 @@ export class AdaptiveSparseVirtualShadowMaps {
       }
     );
 
-    // Stage E: Process active tile requests and submit draw calls per request
-    const active_tile_count = this.cpu_requested_tiles[0];
+    // Stage E: Process tile requests using data read back from the GPU in the *previous* frame.
+    const active_tile_count = Math.min(this.cpu_requested_tiles[0], MAX_TILE_REQUESTS_PER_VIEW);
+
+    // Allocate / reuse uniform buffers for each active tile request.
     const tile_request_uniforms = this._setup_tile_request_uniforms(
       render_graph,
       active_tile_count
     );
+
     for (let i = 0; i < active_tile_count; i++) {
-      // For simplicity, we set view index to 0. In a complete implementation, derive this from the tile request data.
       const request_index = 1 + i * 3;
       const view_index = this.cpu_requested_tiles[request_index + 2];
       const visible_object_instances = view_visibility_buffers[view_index];
@@ -446,13 +448,13 @@ export class AdaptiveSparseVirtualShadowMaps {
             tile_request_uniforms[i],
           ],
           outputs: [this.shadow_atlas],
-          shader_setup: render_shader_setup, // ensure shader reads the tile index from the uniform
+          shader_setup: render_shader_setup,
         },
         (graph, frame_data, encoder) => {
           const pass = graph.get_physical_pass(frame_data.current_pass);
           MeshTaskQueue.submit_indexed_indirect_draws(
             pass,
-            view_index /* view_index */,
+            view_index,
             true /* skip_material_bind */
           );
         }
@@ -464,6 +466,7 @@ export class AdaptiveSparseVirtualShadowMaps {
       this.add_debug_passes(render_graph, force_recreate, debug_view);
     }
 
+    // Schedule an asynchronous readback so the next frame has up-to-date request data.
     BufferSync.request_readback(this);
   }
 

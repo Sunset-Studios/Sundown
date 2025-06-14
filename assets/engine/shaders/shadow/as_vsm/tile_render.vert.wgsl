@@ -26,10 +26,20 @@ fn vs(@builtin(vertex_index) vertex_index: u32,
         @builtin(instance_index) instance_index: u32) -> VertexOutput {
   var out: VertexOutput;
 
+  // Total number of active tile requests is stored at requested_tiles[0]
+  let active_request_count = requested_tiles[0];
+
+  // Skip rendering if this draw's request index is out of range
+  if (shadow_caster_draw_index_ub.request_index >= active_request_count) {
+    // Position the vertex outside the clip space to effectively discard it
+    out.position = vec4<f32>(0.0, 0.0, 0.0, 0.0);
+    return out;
+  }
+
   let object_instance_index = visible_object_instances[instance_index];
 
   // Pull per-draw metadata using draw index uniform
-  let request_index = 1 + shadow_caster_draw_index_ub.request_index * 3u;
+  let request_index = 1u + shadow_caster_draw_index_ub.request_index * 3u;
   let tile_id = requested_tiles[request_index];
   let light_index = requested_tiles[request_index + 1u];
   let view_index = requested_tiles[request_index + 2u];

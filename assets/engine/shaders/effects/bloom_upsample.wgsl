@@ -4,7 +4,7 @@ struct BloomBlurConstants {
     input_texture_size: vec2<f32>,
     output_texture_size: vec2<f32>,
     bloom_filter_radius: f32,
-    mip_index: u32,
+    mip_index: f32,
 }
 
 @group(1) @binding(0) var input_texture: texture_2d<f32>;
@@ -27,8 +27,8 @@ fn cs(@builtin(global_invocation_id) global_id: vec3<u32>) {
         global_id.y < u32(bloom_blur_constants.output_texture_size.y)) {
         // The filter kernel is applied with a radius, specified in texture
         // coordinates, so that the radius will vary across mip resolutions.
-        let x = bloom_blur_constants.bloom_filter_radius;
-        let y = bloom_blur_constants.bloom_filter_radius;
+        let x = bloom_blur_constants.bloom_filter_radius * target_texel_size.x;
+        let y = bloom_blur_constants.bloom_filter_radius * target_texel_size.y;
 
         // Take 9 samples around current texel:
         // a - b - c

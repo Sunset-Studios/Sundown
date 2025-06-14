@@ -39,7 +39,7 @@ const LightFragment = {
       stride: 1,
     },
     shadow_casting: {
-      type: DataType.UINT8,
+      type: DataType.FLOAT32,
       default: 1,
       stride: 1,
     },

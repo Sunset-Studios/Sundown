@@ -116,7 +116,7 @@ export class LightFragment extends Fragment {
       cpu_readback: false,
     },
     shadow_casting: {
-      ctor: Uint8Array,
+      ctor: Float32Array,
       elements: 1,
       default: 1,
       gpu_buffer: false,
@@ -162,7 +162,7 @@ export class LightFragment extends Fragment {
   static gpu_buffers = {
     light_fragment: {
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-      stride: 77,
+      stride: 80,
       buffer_name: "light_fragment",
       cpu_readback: false,
       fields: [

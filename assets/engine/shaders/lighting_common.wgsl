@@ -127,6 +127,23 @@ fn get_normal_from_normal_map(normal_map: texture_2d<f32>, uv: vec2<f32>, tbn_ma
 }
 
 // ------------------------------------------------------------------------------------
+// Attenuation Helpers
+// ------------------------------------------------------------------------------------
+fn compute_distance_attenuation(distance_squared: f32, radius: f32) -> f32 {
+    // If radius is zero or negative, skip attenuation (treat as infinite reach).
+    let fade = max(1.0 - distance_squared / (radius * radius), 0.0);
+    // Square for a smoother fall-off.
+    return fade * fade;
+}
+
+fn compute_spot_angle_attenuation(cos_theta: f32, cos_inner: f32, cos_outer: f32) -> f32 {
+    // Smooth Hermite blend between inner and outer cone.
+    let scale = 1.0 / max(cos_inner - cos_outer, 0.0001);
+    let att = clamp((cos_theta - cos_outer) * scale, 0.0, 1.0);
+    return att * att;
+}
+
+// ------------------------------------------------------------------------------------
 // Shadows
 // ------------------------------------------------------------------------------------
 fn vsm_pte_is_valid(pte: u32) -> bool {
@@ -150,19 +167,26 @@ fn vsm_pte_get_tile_coords(virtual_tile_id: u32, settings: ASVSMSettings) -> vec
     return vec3<u32>(tile_x, tile_y, tile_lod);
 }
 
-fn sample_shadow_vsm(world_pos: vec3<f32>, view_idx: u32, light_idx: u32) -> f32 {
+fn sample_shadow_vsm(world_pos: vec3<f32>, light_idx: u32) -> f32 {
 #if SHADOWS_ENABLED
-  // unpack AS-VSM settings
-  let tile_size = vsm_settings.tile_size;
-  let virtual_dim = vsm_settings.virtual_dim;
-  let atlas_size = textureDimensions(shadow_atlas, 0).xy;
+  // Unpack AS-VSM settings
+  let tile_size          = vsm_settings.tile_size;
+  let virtual_dim        = vsm_settings.virtual_dim;
+  let atlas_size         = textureDimensions(shadow_atlas, 0).xy;
   let one_over_tile_size = 1.0 / f32(tile_size);
   let one_over_atlas_size = 1.0 / vec2<f32>(atlas_size);
-  let phys_tiles_per_row  = u32(vsm_settings.physical_tiles_per_row);
+  let phys_tiles_per_row = u32(vsm_settings.physical_tiles_per_row);
 
-  // -------- Virtual to physical tile mapping --------
-  // project into light clip space
-  let clip = view_buffer[view_idx].view_projection_matrix * vec4<f32>(world_pos, 1.0);
+  // ------------------------------------------------------------------
+  // Virtual-to-physical mapping
+  // ------------------------------------------------------------------
+  // Use the LIGHT'S view-projection matrix, not the camera's. The light's
+  // view index is stored in the Light struct (populated on the CPU side).
+  let light               = dense_lights_buffer[light_idx];
+  let light_view_index    = u32(light.view_index);
+
+  // Project the world position into the light's clip space.
+  let clip = view_buffer[light_view_index].view_projection_matrix * vec4<f32>(world_pos, 1.0);
   let ndc = clip.xyz / clip.w;
   let depth_ref = ndc.z;
 
@@ -230,28 +254,31 @@ fn calculate_blinn_phong(
     if (light.light_type == 0.0) { // Directional
         light_dir = normalize(light.position.xyz);
     } else if (light.light_type == 1.0) { // Point
-        let light_to_frag = fragment_pos - light.position.xyz;
-        light_dir = normalize(light_to_frag);
-        let distance = length(light_to_frag);
-        let falloff = 1.0 - smoothstep(0.0, light.radius, distance);
-        attenuation = falloff / (1.0 + 0.09 * distance + 0.032 * distance * distance);
+        let light_vec = light.position.xyz - fragment_pos;
+        light_dir = normalize(light_vec);
+        let distance_sq = dot(light_vec, light_vec);
+        attenuation = compute_distance_attenuation(distance_sq, light.radius);
     } else if (light.light_type == 2.0) { // Spot
-        let light_to_frag = fragment_pos - light.position.xyz;
-        light_dir = normalize(light_to_frag);
-        let distance = length(light_to_frag);
-        let spot_effect = dot(light_dir, light.direction.xyz);
-        let falloff = pow(spot_effect, 180.0 / max(1.0, light.outer_angle));
-        attenuation = falloff / (1.0 + 0.09 * distance + 0.032 * distance * distance);
+        let light_vec = light.position.xyz - fragment_pos;
+        light_dir = normalize(light_vec);
+        let distance_sq = dot(light_vec, light_vec);
+        let dist_att = compute_distance_attenuation(distance_sq, light.radius);
+
+        let cos_theta = dot(-light_dir, normalize(light.direction.xyz));
+        let cos_inner = cos(light.direction.w);
+        let cos_outer = cos(light.outer_angle);
+        let angle_att = compute_spot_angle_attenuation(cos_theta, cos_inner, cos_outer);
+
+        attenuation = dist_att * angle_att;
     }
 
-    attenuation = clamp(attenuation, 0.0, 255.0);
+    attenuation = clamp(attenuation, 0.0, 1.0);
 
     // Ambient
     let ambient_color = albedo * ambient;
 
     // Diffuse
-    let wrap_factor = 0.01;
-    let n_dot_l = max((dot(normal, light_dir) + wrap_factor) / (1.0 + wrap_factor), 0.0);
+    let n_dot_l = max(dot(normal, light_dir), 0.0);
     let diffuse_color = light.color.rgb * albedo * n_dot_l;
 
     // Specular
@@ -292,22 +319,22 @@ fn calculate_brdf(
     if (light.light_type == 0.0) { // Directional
         light_dir = normalize(light.position.xyz);
     } else if (light.light_type == 1.0) { // Point
-        let light_to_frag = light.position.xyz - fragment_pos;
-        light_dir = normalize(light_to_frag);
-        let distance_squared = dot(light_to_frag, light_to_frag);
-        let light_inv_radius = 1.0 / light.radius;
-        let factor = distance_squared * light_inv_radius * light_inv_radius;
-        let smooth_factor = max(1.0 - factor * factor, 0.0);
-        attenuation = (smooth_factor * smooth_factor) / max(distance_squared, 0.0001); 
+        let light_vec = light.position.xyz - fragment_pos;
+        light_dir = normalize(light_vec);
+        let distance_sq = dot(light_vec, light_vec);
+        attenuation = compute_distance_attenuation(distance_sq, light.radius);
     } else if (light.light_type == 2.0) { // Spot
-        let light_to_frag = light.position.xyz - fragment_pos;
-        light_dir = normalize(light_to_frag);
+        let light_vec = light.position.xyz - fragment_pos;
+        light_dir = normalize(light_vec);
+        let distance_sq = dot(light_vec, light_vec);
+        let dist_att = compute_distance_attenuation(distance_sq, light.radius);
+
+        let cos_theta = dot(-light_dir, normalize(light.direction.xyz));
+        let cos_inner = cos(light.direction.w);
         let cos_outer = cos(light.outer_angle);
-        let spot_scale = 1.0 / max(cos(light.direction.w) - cos_outer, 0.0001);
-        let spot_offset = -cos_outer * spot_scale;
-        let cd = dot(normalize(-light_dir), normalize(light.direction.xyz));
-        attenuation = clamp(cd * spot_scale + spot_offset, 0.0, 1.0);
-        attenuation = attenuation * attenuation;
+        let angle_att = compute_spot_angle_attenuation(cos_theta, cos_inner, cos_outer);
+
+        attenuation = dist_att * angle_att;
     }
 
     attenuation = clamp(attenuation, 0.0, 255.0);
@@ -342,7 +369,7 @@ fn calculate_brdf(
     let env_f = f_schlick_roughness(n_dot_v, f0, a);
 
     // Shadow factor
-    let shadow_factor = sample_shadow_vsm(fragment_pos, u32(light.view_index), light_index);
+    let shadow_factor = sample_shadow_vsm(fragment_pos, light_index);
 
     // diffuse BRDF
     let diffuse_color = (1.0 - metallic) * albedo * irradiance * ao;

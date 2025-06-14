@@ -19,6 +19,9 @@ export class DebugDrawPicker extends DevConsoleTool {
         case "normal":
           Renderer.get().set_debug_draw_type(DebugDrawType.Normal);
           break;
+        case "emissive":
+          Renderer.get().set_debug_draw_type(DebugDrawType.Emissive);
+          break;
         case "entity":
           Renderer.get().set_debug_draw_type(DebugDrawType.EntityId);
           break;

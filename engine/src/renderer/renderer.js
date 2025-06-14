@@ -34,7 +34,7 @@ export class Renderer {
   // Renderer features
   has_f16 = false;
   use_depth_prepass = true;
-  shadows_enabled = true;
+  shadows_enabled = false;
   gi_enabled = false;
   debug_draw_type = DebugDrawType.None;
 
@@ -199,10 +199,9 @@ export class Renderer {
             address_mode_u: "clamp-to-edge",
             address_mode_v: "clamp-to-edge",
             address_mode_w: "clamp-to-edge",
-            mag_filter: "nearest",
-            min_filter: "nearest",
-            mipmap_filter: "nearest",
-            type: "non-filtering",
+            mag_filter: "linear",
+            min_filter: "linear",
+            mipmap_filter: "linear",
           }),
         },
         {

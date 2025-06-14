@@ -4,7 +4,7 @@ struct BloomBlurConstants {
     input_texture_size: vec2<f32>,
     output_texture_size: vec2<f32>,
     blur_radius: f32,
-    mip_index: u32,
+    mip_index: f32,
 }
 
 @group(1) @binding(0) var input_texture: texture_2d<f32>;

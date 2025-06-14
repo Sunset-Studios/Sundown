@@ -24,7 +24,6 @@ fn luminance(color: vec3<f32>) -> f32 {
 
 fn apply_bloom(scene: vec3<f32>, bloom: vec3<f32>, intensity: f32, threshold: f32, knee: f32) -> vec3<f32> {
     let scene_luminance = luminance(scene);
-    let bloom_luminance = luminance(bloom);
     
     // Soft threshold
     let soft_threshold = smoothstep(threshold - knee, threshold + knee, scene_luminance);
