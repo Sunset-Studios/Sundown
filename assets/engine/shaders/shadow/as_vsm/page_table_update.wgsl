@@ -2,13 +2,15 @@
 // Updates the page table with new (lod, physicalID) for each requested tile.
 #include "common.wgsl"
 #include "lighting_common.wgsl"
+#include "shadow/shadows_common.wgsl"
 
 @group(1) @binding(0) var<storage, read> requested_tiles: array<u32>;
-@group(1) @binding(1) var<storage, read_write> lru: array<atomic<u32>>;
-@group(1) @binding(2) var page_table: texture_storage_2d_array<r32uint, read_write>;
-@group(1) @binding(3) var<storage, read> dense_shadow_casting_lights_buffer: array<u32>;
-@group(1) @binding(4) var<storage, read> settings: ASVSMSettings;
-@group(1) @binding(5) var<storage, read_write> physical_to_virtual_map: array<u32>;
+@group(1) @binding(1) var shadow_atlas: texture_depth_2d_array;
+@group(1) @binding(2) var<storage, read_write> lru: array<atomic<u32>>;
+@group(1) @binding(3) var page_table: texture_storage_2d_array<r32uint, read_write>;
+@group(1) @binding(4) var<storage, read> dense_shadow_casting_lights_buffer: array<u32>;
+@group(1) @binding(5) var<storage, read> vsm_settings: ASVSMSettings;
+@group(1) @binding(6) var<storage, read_write> physical_to_virtual_map: array<u32>;
 
 // Constant for an invalid packed virtual coordinate, assuming 0,0 is valid.
 // Max virtual coord is (tile_count-1, tile_count-1). If tile_count is e.g. 4096 (2^12),
@@ -17,6 +19,7 @@ const INVALID_PACKED_VIRT_COORD = 0x00000000u;
 
 @compute @workgroup_size(64)
 fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
+#if SHADOWS_ENABLED
     let idx = gid.x;
     let count = requested_tiles[0u]; // Total number of requests
     if (idx >= count) {
@@ -29,7 +32,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
 
     let dense_shadow_casting_light_idx = dense_shadow_casting_lights_buffer[light_idx];
 
-    let new_pte_coords = vsm_pte_get_tile_coords(tile_id_new, settings);
+    let new_pte_coords = vsm_pte_get_tile_coords(tile_id_new, vsm_settings);
 
     let current_pte_val_at_new_coords = textureLoad(page_table, new_pte_coords.xy, dense_shadow_casting_light_idx).r;
     let current_pte_is_valid = vsm_pte_is_valid(current_pte_val_at_new_coords);
@@ -37,9 +40,9 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         return; // Already mapped by a concurrent thread or previous pass
     }
 
-    let lru_per_light = u32(settings.physical_tiles_per_row
-      * settings.physical_tiles_per_row
-      * settings.max_lods);
+    let lru_per_light = u32(vsm_settings.physical_tiles_per_row
+      * vsm_settings.physical_tiles_per_row
+      * vsm_settings.max_lods);
     let lru_offset = dense_shadow_casting_light_idx * (lru_per_light + 1u);
 
     let lru_head = atomicAdd(&lru[lru_offset], 1u);
@@ -56,7 +59,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
 
         // Sanity check: ensure the old PTE indeed points to the physical_id_to_reuse
         let old_pte_val_check = textureLoad(page_table, old_pte_coords, dense_shadow_casting_light_idx).r;
-        let old_pte_phys_id_check = old_pte_val_check & 0x07FFFFFFu; // Assuming 27 bits for physical ID
+        let old_pte_phys_id_check = vsm_pte_get_physical_id(old_pte_val_check, vsm_settings);
         let old_pte_valid_check = vsm_pte_is_valid(old_pte_val_check);
 
         if (old_pte_valid_check && old_pte_phys_id_check == physical_id_to_reuse) {
@@ -64,11 +67,23 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         }
     }
 
-    // Update New PTE
-    let new_pte_value = 0x80000000u | (new_pte_coords.z << 27u) | (physical_id_to_reuse & 0x07FFFFFFu);
+    // Update New PTE – build entry with new format
+    let phys_tiles_per_row = u32(vsm_settings.physical_tiles_per_row);
+    let phys_x = physical_id_to_reuse % phys_tiles_per_row;
+    let phys_y = physical_id_to_reuse / phys_tiles_per_row;
+
+    let new_pte_value =
+        (phys_x << pte_phys_x_shift) |
+        (phys_y << pte_phys_y_shift) |
+        // pool_id = 0 (single atlas)
+        (1u     << pte_residency_shift) | // resident
+        (0u     << pte_dirty_shift)     | // clean after render
+        (0u     << pte_frame_age_shift);
+
     textureStore(page_table, new_pte_coords.xy, dense_shadow_casting_light_idx, vec4<u32>(new_pte_value));
 
     // Update Reverse Map
     let new_packed_vx_vy = (new_pte_coords.y << 16u) | new_pte_coords.x;
     physical_to_virtual_map[physical_id_to_reuse] = new_packed_vx_vy;
+#endif
 } 

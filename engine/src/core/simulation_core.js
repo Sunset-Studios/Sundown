@@ -6,9 +6,9 @@ const simulation_core_update_event_name = "simulation_core_update";
 export default class SimulationCore {
   static simulation_layers = [];
 
-  static async register_simulation_layer(layer) {
+  static register_simulation_layer(layer) {
     this.simulation_layers.push(layer);
-    await layer.init();
+    layer.init();
   }
 
   static unregister_simulation_layer(layer) {

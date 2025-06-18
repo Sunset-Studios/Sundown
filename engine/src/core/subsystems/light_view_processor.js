@@ -1,10 +1,10 @@
-import { LightType, EntityFlags, WORLD_UP } from "../minimal.js";
+import { LightType, EntityFlags, WORLD_FORWARD, WORLD_UP, WORLD_RIGHT } from "../minimal.js";
 import { DEFAULT_CHUNK_CAPACITY } from "../ecs/solar/types.js";
 import { SimulationLayer } from "../simulation_layer.js";
 import { EntityManager } from "../ecs/entity.js";
 import { LightFragment } from "../ecs/fragments/light_fragment.js";
 import { SharedViewBuffer, SharedFrameInfoBuffer } from "../shared_data.js";
-import { quat, vec4, vec3, mat4 } from "gl-matrix";
+import { quat, vec4, vec3, mat4, mat3 } from "gl-matrix";
 
 export class LightViewProcessor extends SimulationLayer {
   entity_query = null;
@@ -44,8 +44,8 @@ export class LightViewProcessor extends SimulationLayer {
         const view = SharedViewBuffer.add_view_data();
         view.renderable_state = lights.shadow_casting[slot];
         view.occlusion_enabled = 0;
-        
-        const position = [
+
+        const light_position = [
           lights.position[slot * 4 + 0],
           lights.position[slot * 4 + 1],
           lights.position[slot * 4 + 2],
@@ -56,14 +56,60 @@ export class LightViewProcessor extends SimulationLayer {
           const camera_view_index = SharedFrameInfoBuffer.get_view_index();
           const camera_view = SharedViewBuffer.get_view_data(camera_view_index);
 
+          const clip0_extent = 8.0;
+
           view.fov = 0.0;
-          view.zoom = 0.05;
           view.far = camera_view.far;
+          view.custom_projection_enabled = 1;
+          view.custom_view_matrix_enabled = 1;
 
-          const direction = vec4.negate(vec4.create(), position);
-          const rotation = quat.rotationTo(quat.create(), [0, 0, 1], direction);
+          // ---------------------------------------------------------------------------
+          // build a *stable* world→light rotation -------------------------------------
+          const light_forward = vec3.normalize(vec3.create(), vec3.negate(vec3.create(), light_position));
 
-          view.view_position = position;
+          // X axis = cross(forward , up)  -----------------------------
+          let x_axis = vec3.cross(vec3.create(), light_forward, WORLD_UP);
+          if (vec3.length(x_axis) < 1e-4)            // poles: pick any stable axis
+              x_axis = vec3.clone(WORLD_RIGHT);
+          vec3.normalize(x_axis, x_axis);
+
+          // *** make its sign deterministic (here: always point +X) ***
+          if (x_axis[0] < 0.0) vec3.negate(x_axis, x_axis);
+
+          // Y axis, basis, quaternion --------------------------------
+          const y_axis = vec3.cross(vec3.create(), light_forward, x_axis);
+          vec3.normalize(y_axis, y_axis);
+
+          const rot_rows = mat3.fromValues(
+              x_axis[0], x_axis[1], x_axis[2],
+              y_axis[0], y_axis[1], y_axis[2],
+              light_forward[0], light_forward[1], light_forward[2]
+          );
+          const rotation = quat.fromMat3(quat.create(), rot_rows);
+          // ---------------------------------------------------------------------------
+
+          view.projection_matrix = mat4.fromValues(
+            2.0 / clip0_extent,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            2.0 / clip0_extent,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            1.0 / camera_view.far,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          );
+          view.view_matrix = mat4.fromRotationTranslation(mat4.create(),
+                                                          rotation,
+                                                          camera_view.view_position);
+          view.view_position = camera_view.view_position;
           view.view_rotation = rotation;
         } else {
           view.fov = 90.0;
@@ -76,10 +122,10 @@ export class LightViewProcessor extends SimulationLayer {
           );
           const rotation = quat.rotationTo(quat.create(), [0, 0, 1], direction);
 
-          view.view_position = position;
+          view.view_position = light_position;
           view.view_rotation = rotation;
         }
-        
+
         lights.view_index[slot] = view.get_index();
 
         chunk.mark_dirty();
@@ -95,50 +141,83 @@ export class LightViewProcessor extends SimulationLayer {
             slot += counts[slot] || 1;
             continue;
           }
-          
+
           // Retrieve the active camera view to build a camera-relative projection.
           const camera_view_index = SharedFrameInfoBuffer.get_view_index();
           const camera_view = SharedViewBuffer.get_view_data(camera_view_index);
-          
+
           // Guard against invalid indices (e.g. when no camera yet available).
           if (!camera_view) {
             slot += counts[slot] || 1;
             continue;
           }
 
-          // --- Compute bounding sphere based on the camera far plane ---
-          const camera_position = camera_view.view_position;
-          const camera_far = camera_view.far || 100.0;
+          const clip0_extent = 8.0;
+
+          const light_position = [
+            lights.position[slot * 4 + 0],
+            lights.position[slot * 4 + 1],
+            lights.position[slot * 4 + 2],
+            1.0,
+          ];
+
+          // ---------------------------------------------------------------------------
+          // build a *stable* world→light rotation -------------------------------------
+          const light_forward = vec3.normalize(vec3.create(), vec3.negate(vec3.create(), light_position));
+
+          // X axis = cross(forward , up)  -----------------------------
+          let x_axis = vec3.cross(vec3.create(), light_forward, WORLD_UP);
+          if (vec3.length(x_axis) < 1e-4)            // poles: pick any stable axis
+              x_axis = vec3.clone(WORLD_RIGHT);
+          vec3.normalize(x_axis, x_axis);
+
+          // *** make its sign deterministic (here: always point +X) ***
+          if (x_axis[0] < 0.0) vec3.negate(x_axis, x_axis);
+
+          // Y axis, basis, quaternion --------------------------------
+          const y_axis = vec3.cross(vec3.create(), light_forward, x_axis);
+          vec3.normalize(y_axis, y_axis);
+
+          const rot_rows = mat3.fromValues(
+              x_axis[0], x_axis[1], x_axis[2],
+              y_axis[0], y_axis[1], y_axis[2],
+              light_forward[0], light_forward[1], light_forward[2]
+          );
+          const rotation = quat.fromMat3(quat.create(), rot_rows);
+          // ---------------------------------------------------------------------------
 
           const light_view = SharedViewBuffer.get_view_data(view_index);
-          const light_forward = light_view.forward;
-          const light_zoom = light_view.zoom;
 
-          // Center the light volume around the camera position and move it backwards along
-          // the light direction so the camera is roughly centred within the depth range.
-          const light_position = vec3.scaleAndAdd(
-            vec3.create(),
-            camera_position,
-            light_forward,
-            -camera_far * light_zoom
+          // Orthographic projection centred on the origin (stable virtual address).
+          light_view.projection_matrix = mat4.fromValues(
+            2.0 / clip0_extent,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            2.0 / clip0_extent,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            1.0 / camera_view.far,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            1.0
           );
-
-          const direction = vec4.negate(vec4.create(), light_position);
-          const rotation = quat.rotationTo(quat.create(), [0, 0, 1], direction);
-
-          // light_view.view_position = vec4.fromValues(
-          //   light_position[0],
-          //   light_position[1],
-          //   light_position[2],
-          //   1.0
-          // );
-          //light_view.view_rotation = rotation;
+          light_view.view_matrix = mat4.fromRotationTranslation(mat4.create(),
+                                                                  rotation,
+                                                                  camera_view.view_position);
+          light_view.view_position = camera_view.view_position;
+          light_view.view_rotation = rotation;
         }
-
-        // TODO: Frustum-frustum intersection tests to cull lights?
       }
 
       slot += counts[slot] || 1;
     }
+
+    // After SharedViewBuffer.update_transforms has run
   }
 }

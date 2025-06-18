@@ -81,7 +81,7 @@ export function spawn_plane_entity(
 
   const new_transform_view = EntityManager.get_fragment(entity, TransformFragment);
   new_transform_view.position = position;
-  new_transform_view.rotation = quat.rotationTo(WORLD_FORWARD, normal);
+  new_transform_view.rotation = quat.rotationTo(quat.create(), WORLD_FORWARD, normal);
   new_transform_view.scale = scale;
 
   EntityManager.set_entity_parent(entity, parent);

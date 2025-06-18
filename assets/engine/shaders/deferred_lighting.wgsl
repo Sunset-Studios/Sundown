@@ -1,5 +1,6 @@
 #include "common.wgsl"
 #include "lighting_common.wgsl"
+#include "shadow/shadows_common.wgsl"
 
 // ------------------------------------------------------------------------------------
 // Buffers
@@ -64,7 +65,77 @@ fn sample_probe_irradiance(world_pos: vec3<f32>) -> vec3<f32> {
 #endif
 }
 
+#if SHADOWS_ENABLED
+fn sample_shadow_vsm(
+    world_pos: vec3<f32>,
+    light_view_idx: u32,
+) -> f32 {
+  // Unpack useful constants
+  let tile_size              = vsm_settings.tile_size;
+  let phys_tiles_per_row_u32 = u32(vsm_settings.physical_tiles_per_row);
+  let one_over_atlas_size    = 1.0 / vec2<f32>(vsm_settings.physical_dim);
 
+  // --------------------------------------------------
+  // Select clip-map level & compute virtual-texture coords
+  // --------------------------------------------------
+  let clipmap_index = clamp(
+    vsm_calculate_clipmap_index_from_world_pos(
+      world_pos,
+      view_buffer[frame_info.view_index].view_projection_matrix,
+    ),
+    0u,
+    u32(vsm_settings.max_lods) - 1u,
+  );
+
+  // Clip-space position relative to clipmap
+  let sample_clip = vsm_calculate_sample_clip_value_from_world_pos(
+    world_pos,
+    clipmap_index,
+    view_buffer[light_view_idx].view_projection_matrix,
+  );
+
+  // UV in [0,1] of virtual texture 0
+  let uv              = sample_clip.xy * 0.5 + 0.5;
+  let virtual_pixel   = uv * vsm_settings.virtual_dim;
+
+  // Virtual-tile integer coords
+  let tile_xy_f       = (virtual_pixel + vec2<f32>(0.5)) / tile_size;
+  let tile_xy_u       = vec2<u32>(floor(tile_xy_f));
+
+  // Resolve PTE for this virtual tile (single-light slice assumption)
+  let entry = textureLoad(page_table, tile_xy_u, 0u).r;
+  if (!vsm_pte_is_valid(entry)) {
+    return 0.0;
+  }
+
+  let clip_pos  = view_buffer[light_view_idx].view_projection_matrix * vec4<f32>(world_pos, 1.0);
+  let depth_ref = clip_pos.z / clip_pos.w;
+
+  // Decode physical tile & pool
+  let phys_id           = vsm_pte_get_physical_id(entry, vsm_settings);
+  let memory_pool_index = vsm_pte_get_memory_pool_index(entry);
+
+  let phys_x = phys_id % phys_tiles_per_row_u32;
+  let phys_y = phys_id / phys_tiles_per_row_u32;
+
+  // Build atlas UV
+  let base_uv  = (vec2<f32>(f32(phys_x), f32(phys_y)) * tile_size) * one_over_atlas_size;
+  let local_uv = fract(tile_xy_f) * (tile_size * one_over_atlas_size);
+  let final_uv = base_uv + local_uv;
+
+  // 3×3 PCF
+  var sum: f32 = 0.0;
+  for (var oy: i32 = -1; oy <= 1; oy = oy + 1) {
+    for (var ox: i32 = -1; ox <= 1; ox = ox + 1) {
+      let offset_uv = final_uv + vec2<f32>(f32(ox), f32(oy)) * one_over_atlas_size;
+      let sample_d  = textureSampleLevel(shadow_atlas, non_filtering_sampler, offset_uv, i32(memory_pool_index), 0u);
+      sum += select(0.0, 1.0, depth_ref < sample_d + 0.005);
+    }
+  }
+
+  return 1.0 - sum / 9.0;
+}
+#endif
 
 // ------------------------------------------------------------------------------------
 // Vertex Shader
@@ -125,8 +196,16 @@ fn sample_probe_irradiance(world_pos: vec3<f32>) -> vec3<f32> {
     let num_lights = light_count_buffer[0] * (1u - unlit);
     for (var light_index = 0u; light_index < num_lights; light_index++) {
         var light = dense_lights_buffer[light_index];
+        let light_view_index = u32(light.view_index);
+
+#if SHADOWS_ENABLED
+        let shadow_factor = sample_shadow_vsm(position, light_view_index);
+#else
+        let shadow_factor = 0.0;
+#endif
+
         color += calculate_brdf(
-            light_index,
+            light_view_index,
             light,
             normalized_normal,
             view_dir,
@@ -141,6 +220,7 @@ fn sample_probe_irradiance(world_pos: vec3<f32>) -> vec3<f32> {
             irradiance,
             vec3f(1.0, 1.0, 1.0), // prefilter color 
             vec2f(1.0, 1.0), // env brdf
+            shadow_factor,
         );
     }
 

@@ -31,17 +31,6 @@ struct GIParams {
     _pad3: vec3<u32>,
 };
 
-struct ASVSMSettings {
-  split_depth: f32,
-  tile_size: f32,
-  virtual_dim: f32,
-  virtual_tiles_per_row: f32,
-  physical_dim: f32,
-  physical_tiles_per_row: f32,
-  max_lods: f32,
-  max_tile_requests: f32,
-};
-
 // ------------------------------------------------------------------------------------
 // Microfacet Distribution
 // ------------------------------------------------------------------------------------
@@ -144,101 +133,9 @@ fn compute_spot_angle_attenuation(cos_theta: f32, cos_inner: f32, cos_outer: f32
 }
 
 // ------------------------------------------------------------------------------------
-// Shadows
-// ------------------------------------------------------------------------------------
-fn vsm_pte_is_valid(pte: u32) -> bool {
-    // Check if the most significant bit is set
-    return (pte & 0x80000000u) != 0u;
-}
-
-fn vsm_pte_get_physical_id(pte: u32) -> u32 {
-    // Mask out the most significant bit to get the physical tile id
-    return pte & 0x7FFFFFFFu;
-}
-
-fn vsm_pte_get_tile_coords(virtual_tile_id: u32, settings: ASVSMSettings) -> vec3<u32> {
-    // Decode virtual tile coordinates
-    let tile_per_row = u32(settings.virtual_tiles_per_row);
-    let tiles_per_lod = tile_per_row * tile_per_row;
-    let local_index = virtual_tile_id % tiles_per_lod;
-    let tile_x = local_index % tile_per_row;
-    let tile_y = local_index / tile_per_row;
-    let tile_lod = virtual_tile_id / tiles_per_lod;
-    return vec3<u32>(tile_x, tile_y, tile_lod);
-}
-
-fn sample_shadow_vsm(world_pos: vec3<f32>, light_idx: u32) -> f32 {
-#if SHADOWS_ENABLED
-  // Unpack AS-VSM settings
-  let tile_size          = vsm_settings.tile_size;
-  let virtual_dim        = vsm_settings.virtual_dim;
-  let atlas_size         = textureDimensions(shadow_atlas, 0).xy;
-  let one_over_tile_size = 1.0 / f32(tile_size);
-  let one_over_atlas_size = 1.0 / vec2<f32>(atlas_size);
-  let phys_tiles_per_row = u32(vsm_settings.physical_tiles_per_row);
-
-  // ------------------------------------------------------------------
-  // Virtual-to-physical mapping
-  // ------------------------------------------------------------------
-  // Use the LIGHT'S view-projection matrix, not the camera's. The light's
-  // view index is stored in the Light struct (populated on the CPU side).
-  let light               = dense_lights_buffer[light_idx];
-  let light_view_index    = u32(light.view_index);
-
-  // Project the world position into the light's clip space.
-  let clip = view_buffer[light_view_index].view_projection_matrix * vec4<f32>(world_pos, 1.0);
-  let ndc = clip.xyz / clip.w;
-  let depth_ref = ndc.z;
-
-  // compute virtual UV.
-  let virtual_pixel = (ndc.xy * vec2<f32>(0.5) + vec2<f32>(0.5)) * virtual_dim;
-  // virtual tile coords
-  let tile_xy = (virtual_pixel + 0.5) * one_over_tile_size;
-
-  // Map dense shadow casting light index to atlas array layer
-  let layer = dense_shadow_casting_lights_buffer[light_idx];
-
-  // fetch page table entry
-  let entry = textureLoad(page_table, vec2<u32>(tile_xy), layer).x;
-  if (entry == 0u) {
-    return 0.0;
-  }
-  // -------- Virtual to physical tile mapping --------
-
-  // -------- Physical tile UV coords --------
-  // physical tile coords
-  let phys_id = vsm_pte_get_physical_id(entry);
-  let phys_tile_x = phys_id % phys_tiles_per_row;
-  let phys_tile_y = phys_id / phys_tiles_per_row;
-
-  // base UV in atlas
-  let base_uv = (vec2<f32>(f32(phys_tile_x), f32(phys_tile_y)) * tile_size) * one_over_atlas_size;
-  // local UV within tile
-  let local_uv = fract(tile_xy) * (tile_size * one_over_atlas_size);
-  // final UV
-  var final_uv = base_uv + local_uv;
-  // -------- Physical tile UV coords --------
-
-  // ------------ PCF 3x3 ------------
-  var sum: f32 = 0.0;
-  for (var oy: i32 = -1; oy <= 1; oy = oy + 1) {
-    for (var ox: i32 = -1; ox <= 1; ox = ox + 1) {
-      let offset_uv = final_uv + vec2<f32>(f32(ox), f32(oy)) * one_over_atlas_size;
-      let sample = textureSampleLevel(shadow_atlas, non_filtering_sampler, offset_uv, layer, 0);
-      sum += select(0.0, 1.0, depth_ref < sample + 0.005);
-    }
-  }
-
-  return 1.0 - sum / 9.0;
-  // ------------ PCF 3x3 ------------
-#else
-  return 0.0;
-#endif
-}
-
-// ------------------------------------------------------------------------------------
 // Lighting
 // ------------------------------------------------------------------------------------
+
 fn calculate_blinn_phong(
     light: Light,
     normal: vec3<f32>,
@@ -246,7 +143,8 @@ fn calculate_blinn_phong(
     fragment_pos: vec3<f32>,
     albedo: vec3<f32>,
     shininess: f32,
-    ambient: vec3<f32>
+    ambient: vec3<f32>,
+    shadow_factor: f32,
 ) -> vec3<f32> {
     var light_dir: vec3<f32>;
     var attenuation = 1.0;
@@ -288,7 +186,7 @@ fn calculate_blinn_phong(
     let specular_color = light.color.rgb * specular;
 
     // Attenuation
-    let final_color = ambient_color + (diffuse_color + specular_color) * light.intensity * attenuation;
+    let final_color = ambient_color + (diffuse_color + specular_color) * light.intensity * attenuation * (1.0 - shadow_factor);
 
     return final_color;
 }
@@ -297,7 +195,7 @@ fn calculate_blinn_phong(
 // BRDF
 // ------------------------------------------------------------------------------------
 fn calculate_brdf(
-    light_index: u32,
+    light_view_index: u32,
     light: Light,
     normal: vec3<f32>,
     view_dir: vec3<f32>,
@@ -312,6 +210,7 @@ fn calculate_brdf(
     irradiance: vec3<f32>,
     prefiltered_color: vec3<f32>,
     env_brdf: vec2<f32>,
+    shadow_factor: f32,
 ) -> vec3<f32> {
     var light_dir: vec3<f32>;
     var attenuation = 1.0;
@@ -367,9 +266,6 @@ fn calculate_brdf(
     let fr = (d * v) * f;
 
     let env_f = f_schlick_roughness(n_dot_v, f0, a);
-
-    // Shadow factor
-    let shadow_factor = sample_shadow_vsm(fragment_pos, light_index);
 
     // diffuse BRDF
     let diffuse_color = (1.0 - metallic) * albedo * irradiance * ao;

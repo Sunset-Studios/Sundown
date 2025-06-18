@@ -36,8 +36,8 @@ export class Simulator {
     Renderer.get().refresh_global_shader_bindings();
   }
 
-  async add_sim_layer(sim_layer) {
-    await SimulationCore.register_simulation_layer(sim_layer);
+  add_sim_layer(sim_layer) {
+    SimulationCore.register_simulation_layer(sim_layer);
   }
 
   remove_sim_layer(sim_layer) {

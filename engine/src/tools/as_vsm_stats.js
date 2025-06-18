@@ -97,7 +97,6 @@ export class ASVSMStats extends DevConsoleTool {
         label(`Bitmask U32 Count: ${vsm.bitmask_u32_count}`, stats_label_config);
         label(`Max Tile Requests: ${vsm.max_tile_requests} tiles`, stats_label_config);
         stat_row("Requested Tiles Buffer", `${vsm.requested_tiles_buf} *`);
-        stat_row("Histogram Buffer", `${vsm.histogram_buf} *`);
         stat_row("Settings Buffer", `${vsm.settings_buf} *`);
         stat_row("Page Table Buffer", `${vsm.page_table} *`);
         stat_row("Bitmask Buffer", `${vsm.bitmask_buf} *`);

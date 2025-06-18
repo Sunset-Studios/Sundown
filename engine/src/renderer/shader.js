@@ -111,7 +111,7 @@ export class Shader {
     asset = this._parse_shader_includes(asset, defines, load_recursion_step);
 
     if (load_recursion_step === 0) {
-      const { defines_map, stripped_code } = this._build_defines_map_and_strip(asset, defines);
+      const { defines_map, stripped_code } = this._build_defines_map_and_strip(file_path, asset, defines);
       this.defines = defines_map;
       asset = this._parse_conditional_defines_and_types(stripped_code);
 
@@ -146,7 +146,7 @@ export class Shader {
     return code;
   }
 
-  _build_defines_map_and_strip(code, defines) {
+  _build_defines_map_and_strip(file_path, code, defines) {
     const defines_map = Object.assign({}, defines);
     const stripped_code = code.replace(defines_regex, (match, key, value) => {
       defines_map[key] = value || true;

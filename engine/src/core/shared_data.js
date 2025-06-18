@@ -280,6 +280,24 @@ export class SharedViewBuffer {
       SharedViewBuffer.raw_data[this.base + f] = z;
       SharedViewBuffer.dirty_states.set(this.idx, 1);
     }
+    get custom_projection_enabled() {
+      return SharedViewBuffer.custom_projection_matrix_enabled.get(this.idx);
+    }
+    set custom_projection_enabled(enabled) {
+      if (SharedViewBuffer.custom_projection_matrix_enabled.get(this.idx) !== enabled) {
+        SharedViewBuffer.custom_projection_matrix_enabled.set(this.idx, enabled);
+        SharedViewBuffer.dirty_states.set(this.idx, 1);
+      }
+    }
+    get custom_view_matrix_enabled() {
+      return SharedViewBuffer.custom_view_matrix_enabled.get(this.idx);
+    }
+    set custom_view_matrix_enabled(enabled) {
+      if (SharedViewBuffer.custom_view_matrix_enabled.get(this.idx) !== enabled) {
+        SharedViewBuffer.custom_view_matrix_enabled.set(this.idx, enabled);
+        SharedViewBuffer.dirty_states.set(this.idx, 1);
+      }
+    }
     get renderable_state() {
       return SharedViewBuffer.is_render_active(this.idx);
     }
@@ -307,6 +325,8 @@ export class SharedViewBuffer {
   static raw_data = new Float32Array(0);
   static dirty_states = new ResizableBitArray(256);
   static renderable_states = new ResizableBitArray(256);
+  static custom_projection_matrix_enabled = new ResizableBitArray(256);
+  static custom_view_matrix_enabled = new ResizableBitArray(256);
   static free_list = new TypedStack(16, Uint32Array);
 
   // --- View Pool & GPU Resources ---
@@ -371,6 +391,9 @@ export class SharedViewBuffer {
     SharedViewBuffer.raw_data.set([1], base + SharedViewBuffer.offsets.distance_check_enabled);
     SharedViewBuffer.raw_data.set([0, 0, 0, 0], base + SharedViewBuffer.offsets.velocity);
     SharedViewBuffer.raw_data.set([1.0], base + SharedViewBuffer.offsets.zoom);
+
+    SharedViewBuffer.custom_projection_matrix_enabled.set(idx, 0);
+    SharedViewBuffer.custom_view_matrix_enabled.set(idx, 0);
     SharedViewBuffer.dirty_states.set(idx, 1);
     SharedViewBuffer.renderable_states.set(idx, 0);
 
@@ -486,38 +509,49 @@ export class SharedViewBuffer {
         base + SharedViewBuffer.offsets.projection_matrix + 16
       );
 
-      // Compute projection matrix
-      const projection_matrix = mat4.create();
+      let projection_matrix;
 
-      if (SharedViewBuffer.raw_data[base + SharedViewBuffer.offsets.fov] > 0.0) {
-        mat4.perspective(
-        projection_matrix,
-        SharedViewBuffer.raw_data[base + SharedViewBuffer.offsets.fov],
-        SharedViewBuffer.raw_data[base + SharedViewBuffer.offsets.aspect_ratio],
-          SharedViewBuffer.raw_data[base + SharedViewBuffer.offsets.near],
-          SharedViewBuffer.raw_data[base + SharedViewBuffer.offsets.far]
+      if (SharedViewBuffer.custom_projection_matrix_enabled.get(idx)) {
+        // Use the projection matrix supplied by the user
+        projection_matrix = SharedViewBuffer.raw_data.subarray(
+          base + SharedViewBuffer.offsets.projection_matrix,
+          base + SharedViewBuffer.offsets.projection_matrix + 16
         );
       } else {
-        const far = SharedViewBuffer.raw_data[base + SharedViewBuffer.offsets.far];
-        const zoom = SharedViewBuffer.raw_data[base + SharedViewBuffer.offsets.zoom];
-        const aspect_ratio = SharedViewBuffer.raw_data[base + SharedViewBuffer.offsets.aspect_ratio];
-        const height = far * zoom;
-        const width = height * aspect_ratio;
-        mat4.ortho(
+        // Compute projection matrix (perspective or orthographic)
+        projection_matrix = mat4.create();
+
+        if (SharedViewBuffer.raw_data[base + SharedViewBuffer.offsets.fov] > 0.0) {
+          mat4.perspective(
+            projection_matrix,
+            SharedViewBuffer.raw_data[base + SharedViewBuffer.offsets.fov],
+            SharedViewBuffer.raw_data[base + SharedViewBuffer.offsets.aspect_ratio],
+            SharedViewBuffer.raw_data[base + SharedViewBuffer.offsets.near],
+            SharedViewBuffer.raw_data[base + SharedViewBuffer.offsets.far]
+          );
+        } else {
+          const far = SharedViewBuffer.raw_data[base + SharedViewBuffer.offsets.far];
+          const zoom = SharedViewBuffer.raw_data[base + SharedViewBuffer.offsets.zoom];
+          const aspect_ratio = SharedViewBuffer.raw_data[base + SharedViewBuffer.offsets.aspect_ratio];
+          const height = far * zoom;
+          const width = height * aspect_ratio;
+          mat4.ortho(
+            projection_matrix,
+            -width,
+            width,
+            -height,
+            height,
+            -far,
+            far
+          );
+        }
+
+        // Store computed projection back to raw_data
+        SharedViewBuffer.raw_data.set(
           projection_matrix,
-          -width,
-          width,
-          -height,
-          height,
-          -far,
-          far
+          base + SharedViewBuffer.offsets.projection_matrix
         );
       }
-
-      SharedViewBuffer.raw_data.set(
-        projection_matrix,
-        base + SharedViewBuffer.offsets.projection_matrix
-      );
 
       // Compute view direction vector
       const view_rotation = SharedViewBuffer.raw_data.subarray(
@@ -543,10 +577,19 @@ export class SharedViewBuffer {
       const view_target = vec4.create();
       vec4.scaleAndAdd(view_target, view_position, view_direction, 1.0);
 
-      // Compute view matrix
-      const view_matrix = mat4.create();
-      mat4.lookAt(view_matrix, view_position, view_target, WORLD_UP);
-      SharedViewBuffer.raw_data.set(view_matrix, base + SharedViewBuffer.offsets.view_matrix);
+      let view_matrix;
+      if (SharedViewBuffer.custom_view_matrix_enabled.get(idx)) {
+        // Use the view matrix supplied by the user
+        view_matrix = SharedViewBuffer.raw_data.subarray( 
+          base + SharedViewBuffer.offsets.view_matrix,
+          base + SharedViewBuffer.offsets.view_matrix + 16
+        );
+      } else {
+        // Compute view matrix
+        view_matrix = mat4.create();
+        mat4.lookAt(view_matrix, view_position, view_target, WORLD_UP);
+        SharedViewBuffer.raw_data.set(view_matrix, base + SharedViewBuffer.offsets.view_matrix);
+      }
 
       // Compute view projection matrix and inverse
       const view_projection_matrix = mat4.create();

@@ -1425,7 +1425,7 @@ export class VoxelTerrainScene extends Scene {
     light_fragment_view.type = LightType.DIRECTIONAL;
     light_fragment_view.color = [1, 1, 1];
     light_fragment_view.intensity = 2.5;
-    light_fragment_view.position = [10, 30, 70];
+    light_fragment_view.position = [45, 30, 70];
     light_fragment_view.active = true;
 
     // Create terrain material
@@ -1862,7 +1862,7 @@ export class GITestScene extends Scene {
     light_fragment_view.type = LightType.DIRECTIONAL;
     light_fragment_view.color = [1, 1, 1];
     light_fragment_view.intensity = 0.5;
-    light_fragment_view.position = [25, 45, 15];
+    light_fragment_view.position = [-25, 45, 15];
     light_fragment_view.active = true;
 
     // materials
@@ -2244,7 +2244,7 @@ export class ShadowTestScene extends Scene {
     point_light_fragment_view.active = true;
     point_light_fragment_view.shadow_casting = false;
 
-    const num_point_lights = 1000;
+    const num_point_lights = 12;
     EntityManager.set_entity_instance_count(point_light_entity, num_point_lights);
 
     // Ground material
@@ -2545,10 +2545,10 @@ export class ShadowTestScene extends Scene {
   //await scene_switcher.add_scene(ml_scene);
   //await scene_switcher.add_scene(voxel_terrain_scene);
   //await scene_switcher.add_scene(object_painting_scene);
-  //await scene_switcher.add_scene(gi_test_scene);
-  await scene_switcher.add_scene(shadow_test_scene);
+  await scene_switcher.add_scene(gi_test_scene);
+  //await scene_switcher.add_scene(shadow_test_scene);
 
-  await simulator.add_sim_layer(scene_switcher);
+  simulator.add_sim_layer(scene_switcher);
 
   simulator.run();
 })();

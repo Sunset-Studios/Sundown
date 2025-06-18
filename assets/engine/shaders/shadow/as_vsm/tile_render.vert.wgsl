@@ -2,6 +2,7 @@
 // Renders geometry into each requested tile viewport.
 #include "common.wgsl"
 #include "lighting_common.wgsl"
+#include "shadow/shadows_common.wgsl"
 
 // Add draw index uniform buffer for per-draw metadata indexing
 struct ShadowCasterDrawIndexUniform {
@@ -13,7 +14,7 @@ struct ShadowCasterDrawIndexUniform {
 @group(1) @binding(2) var<storage, read> visible_object_instances: array<i32>;
 @group(1) @binding(3) var<storage, read> requested_tiles: array<u32>; // Format: [count, vt_id, view_mask, ...]
 @group(1) @binding(4) var<storage, read> dense_shadow_casting_lights_buffer: array<u32>;
-@group(1) @binding(5) var<storage, read> settings: ASVSMSettings;
+@group(1) @binding(5) var<storage, read> vsm_settings: ASVSMSettings;
 @group(1) @binding(6) var page_table: texture_storage_2d_array<r32uint, read>; // PTE format: Bit31=Valid, Bits30-27=LOD, Bits26-0=PhysID
 @group(1) @binding(7) var<uniform> shadow_caster_draw_index_ub: ShadowCasterDrawIndexUniform;
 
@@ -25,6 +26,8 @@ struct VertexOutput {
 fn vs(@builtin(vertex_index) vertex_index: u32,
         @builtin(instance_index) instance_index: u32) -> VertexOutput {
   var out: VertexOutput;
+
+#if SHADOWS_ENABLED
 
   // Total number of active tile requests is stored at requested_tiles[0]
   let active_request_count = requested_tiles[0];
@@ -46,14 +49,14 @@ fn vs(@builtin(vertex_index) vertex_index: u32,
   let shadow_casting_light_index = dense_shadow_casting_lights_buffer[light_index];
 
   // decode virtual tile coords from the virtual tile_id
-  let pte_coords = vsm_pte_get_tile_coords(tile_id, settings);
+  let pte_coords = vsm_pte_get_tile_coords(tile_id, vsm_settings);
 
   // Fetch the PTE
   let pte_val = textureLoad(page_table, pte_coords.xy, shadow_casting_light_index).r;
-  let phys_id = vsm_pte_get_physical_id(pte_val);
+  let phys_id = vsm_pte_get_physical_id(pte_val, vsm_settings);
 
   // now remap into the *physical* atlas
-  let phys_tiles_per_row  = u32(settings.physical_tiles_per_row); // float from settings
+  let phys_tiles_per_row  = u32(vsm_settings.physical_tiles_per_row); // float from settings
   let phys_x          = phys_id % phys_tiles_per_row;
   let phys_y          = phys_id / phys_tiles_per_row;
 
@@ -95,6 +98,7 @@ fn vs(@builtin(vertex_index) vertex_index: u32,
   );
 
   out.position = clip;
+#endif
 
   return out;
 }

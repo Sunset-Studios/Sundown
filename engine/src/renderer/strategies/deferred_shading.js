@@ -1182,11 +1182,11 @@ export class DeferredShadingStrategy {
         // Add AS-VSM passes with mapping
         if (!this.as_vsm) {
           this.as_vsm = new AdaptiveSparseVirtualShadowMaps({
-            atlas_size: 2048,
-            tile_size: 64,
-            virtual_dim: 4096,
-            max_lods: 1,
-            histogram_bins: 64,
+            atlas_size: 8192,
+            tile_size: 128,
+            virtual_dim: 16384,
+            max_lods: 10,
+            clip0_extent: 16.0,
           });
         }
         this.as_vsm.add_passes(render_graph, {

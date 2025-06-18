@@ -34,7 +34,7 @@ export class Renderer {
   // Renderer features
   has_f16 = false;
   use_depth_prepass = true;
-  shadows_enabled = false;
+  shadows_enabled = true;
   gi_enabled = false;
   debug_draw_type = DebugDrawType.None;
 

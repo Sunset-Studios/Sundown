@@ -1,4 +1,3 @@
-import { EntityManager } from "../../core/ecs/entity.js";
 import { LightFragment } from "../../core/ecs/fragments/light_fragment.js";
 import { Renderer } from "../renderer.js";
 import { BufferSync } from "../buffer.js";
@@ -51,12 +50,6 @@ const requested_tiles_buf_config = {
   cpu_readback: true,
 };
 
-const histogram_buf_config = {
-  name: "shadow_histogram_buf",
-  size: 0,
-  usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-};
-
 const settings_buf_config = {
   name: "shadow_settings_buf",
   raw_data: new Float32Array([0, 0, 0, 0, 0, 0, 0, 0]),
@@ -93,7 +86,7 @@ const debug_page_table_config = {
 
 const debug_tile_overlay_config = {
   name: "debug_tile_overlay",
-  format: rgba8unorm_format,
+  format: rgba16float_format,
   width: 0,
   height: 0,
   usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
@@ -102,65 +95,113 @@ const debug_tile_overlay_config = {
 const tile_request_uniform_configs = [];
 // ============ Shader Setup ============
 
-const histogram_shader_setup = {
-  pipeline_shaders: {
-    compute: { path: "shadow/as_vsm/histogram.wgsl" },
-  },
-};
-
-const prefix_shader_setup = {
-  pipeline_shaders: {
-    compute: { path: "shadow/as_vsm/split_depth_sum.wgsl" },
-  },
-};
-
 const feedback_shader_setup = {
   pipeline_shaders: {
-    compute: { path: "shadow/as_vsm/feedback.wgsl" },
+    compute: { path: "shadow/as_vsm/feedback.wgsl", defines: { SHADOWS_ENABLED: true } },
   },
 };
 
 const gather_shader_setup = {
   pipeline_shaders: {
-    compute: { path: "shadow/as_vsm/gather.wgsl" },
+    compute: { path: "shadow/as_vsm/gather.wgsl", defines: { SHADOWS_ENABLED: true } },
   },
 };
 
 const page_table_update_shader_setup = {
   pipeline_shaders: {
-    compute: { path: "shadow/as_vsm/page_table_update.wgsl" },
+    compute: { path: "shadow/as_vsm/page_table_update.wgsl", defines: { SHADOWS_ENABLED: true } },
   },
 };
 
 const render_shader_setup = {
   pipeline_shaders: {
-    vertex: { path: "shadow/as_vsm/tile_render.vert.wgsl" },
+    vertex: { path: "shadow/as_vsm/tile_render.vert.wgsl", defines: { SHADOWS_ENABLED: true } },
   },
 };
 
 const debug_shadow_atlas_shader_setup = {
   pipeline_shaders: {
     vertex: { path: "fullscreen.wgsl" },
-    fragment: { path: "shadow/as_vsm/debug_shadow_atlas.wgsl" },
+    fragment: { path: "shadow/as_vsm/debug_shadow_atlas.wgsl", defines: { SHADOWS_ENABLED: true } },
   },
 };
 
 const debug_page_table_shader_setup = {
   pipeline_shaders: {
     vertex: { path: "fullscreen.wgsl" },
-    fragment: { path: "shadow/as_vsm/debug_page_table.wgsl" },
+    fragment: { path: "shadow/as_vsm/debug_page_table.wgsl", defines: { SHADOWS_ENABLED: true } },
   },
 };
 
 const debug_tile_overlay_shader_setup = {
   pipeline_shaders: {
     vertex: { path: "fullscreen.wgsl" },
-    fragment: { path: "shadow/as_vsm/debug_tile_overlay.wgsl" },
+    fragment: { path: "shadow/as_vsm/debug_tile_overlay.wgsl", defines: { SHADOWS_ENABLED: true } },
   },
 };
 
-const HISTOGRAM_BINS = 64;
 const MAX_TILE_REQUESTS_PER_VIEW = 64;
+const MAX_NUM_TEXTURE_POOLS = 1;
+
+// =============================================================
+//  Page-table entry (32-bit) bit-field layout
+//  [0 – 6]   : physical page X index   (7 bits)  (0-127)
+//  [7 – 13]  : physical page Y index   (7 bits)  (0-127)
+//  [14 – 16] : atlas / memory-pool id  (3 bits)  (0-7)
+//  [17]      : residency flag          (1 bit)   (1 = resident)
+//  [18]      : dirty flag              (1 bit)   (1 = needs update)
+//  [19 – 26] : frame age / marker      (8 bits)  (wraps every 256 frames)
+//  [27 – 31] : reserved / unused
+// =============================================================
+
+// Masks & shifts (snake_case as per project style guide)
+const phys_x_shift = 0;
+const phys_x_mask  = 0x7f << phys_x_shift; // 7 bits
+const phys_y_shift = 7;
+const phys_y_mask  = 0x7f << phys_y_shift;
+const pool_id_shift = 14;
+const pool_id_mask  = 0x7 << pool_id_shift; // 3 bits
+const residency_shift = 17;
+const residency_mask  = 0x1 << residency_shift;
+const dirty_shift = 18;
+const dirty_mask  = 0x1 << dirty_shift;
+const frame_age_shift = 19;
+const frame_age_mask  = 0xff << frame_age_shift; // 8 bits
+
+export function encode_page_table_entry({
+  physical_x = 0,
+  physical_y = 0,
+  pool_id = 0,
+  resident = 0,
+  dirty = 1,
+  frame_age = 0,
+} = {}) {
+  // Clamp inputs to valid ranges
+  physical_x &= 0x7f;
+  physical_y &= 0x7f;
+  pool_id    &= 0x7;
+  frame_age  &= 0xff;
+
+  return (
+    (physical_x << phys_x_shift) |
+    (physical_y << phys_y_shift) |
+    (pool_id    << pool_id_shift) |
+    (resident   ? residency_mask : 0) |
+    (dirty      ? dirty_mask     : 0) |
+    (frame_age  << frame_age_shift)
+  ) >>> 0; // ensure unsigned 32-bit
+}
+
+export function decode_page_table_entry(entry) {
+  return {
+    physical_x : (entry & phys_x_mask)  >>> phys_x_shift,
+    physical_y : (entry & phys_y_mask)  >>> phys_y_shift,
+    pool_id    : (entry & pool_id_mask) >>> pool_id_shift,
+    resident   : (entry & residency_mask) !== 0,
+    dirty      : (entry & dirty_mask)     !== 0,
+    frame_age  : (entry & frame_age_mask) >>> frame_age_shift,
+  };
+}
 
 /**
  * Adaptive Sparse Virtual Shadow Maps (AS-VSM)
@@ -169,18 +210,18 @@ const MAX_TILE_REQUESTS_PER_VIEW = 64;
 export class AdaptiveSparseVirtualShadowMaps {
   static all_instances = [];
 
-  constructor({ atlas_size, tile_size, virtual_dim, max_lods }) {
+  constructor({ atlas_size, tile_size, virtual_dim, max_lods, clip0_extent }) {
     this.tile_size = tile_size;
     this.virtual_dim = virtual_dim;
     this.atlas_size = atlas_size;
     this.max_lods = max_lods;
+    this.clip0_extent = clip0_extent;
     this.virtual_tiles_per_row = Math.ceil(this.virtual_dim / this.tile_size);
     this.total_virtual_tiles =
       this.virtual_tiles_per_row * this.virtual_tiles_per_row * this.max_lods;
     this.physical_tiles_per_row = Math.ceil(this.atlas_size / this.tile_size);
     this.total_physical_tiles =
       this.physical_tiles_per_row * this.physical_tiles_per_row * this.max_lods;
-    this.lights_query = EntityManager.create_query([LightFragment]);
     this.cached_light_count = null;
 
     const num_elements = 1 + MAX_TILE_REQUESTS_PER_VIEW * 3;
@@ -214,11 +255,6 @@ export class AdaptiveSparseVirtualShadowMaps {
 
     const adjusted_light_count = Math.max(this.cached_light_count, 1);
 
-    // Create Histogram buffer
-    histogram_buf_config.size = HISTOGRAM_BINS * 4;
-    histogram_buf_config.force = force_recreate;
-    this.histogram_buf = render_graph.create_buffer(histogram_buf_config);
-
     settings_buf_config.force = force_recreate;
     this.settings_buf = render_graph.create_buffer(settings_buf_config);
 
@@ -238,7 +274,7 @@ export class AdaptiveSparseVirtualShadowMaps {
     // Create Physical Shadow Atlas texture array
     atlas_config.width = this.atlas_size;
     atlas_config.height = this.atlas_size;
-    atlas_config.depth = adjusted_light_count;
+    atlas_config.depth = MAX_NUM_TEXTURE_POOLS;
     atlas_config.force = force_recreate;
     atlas_config.b_one_view_per_layer = true;
     this.shadow_atlas = render_graph.create_image(atlas_config);
@@ -246,13 +282,13 @@ export class AdaptiveSparseVirtualShadowMaps {
     // Create Page Table storage texture
     page_table_config.width = this.virtual_tiles_per_row;
     page_table_config.height = this.virtual_tiles_per_row;
-    page_table_config.depth = adjusted_light_count;
+    page_table_config.depth = adjusted_light_count * this.max_lods;
     page_table_config.force = force_recreate;
     this.page_table = render_graph.create_image(page_table_config);
 
     // Create Physical to Virtual map buffer
     const physical_tiles_per_view =
-      this.physical_tiles_per_row * this.physical_tiles_per_row * this.max_lods;
+      this.physical_tiles_per_row * this.physical_tiles_per_row;
     // Store per-view physical tile count
     this.total_physical_tiles = physical_tiles_per_view;
     physical_to_virtual_map_buf_config.size = adjusted_light_count * physical_tiles_per_view * 4;
@@ -291,15 +327,10 @@ export class AdaptiveSparseVirtualShadowMaps {
       RenderPassFlags.GraphLocal,
       {},
       (graph, frame_data, encoder) => {
-        // Clear histogram buffer
-        const histogram = graph.get_physical_buffer(this.histogram_buf);
-        histogram.write_raw(new Float32Array(HISTOGRAM_BINS * 4));
-
         // Clear settings buffer
         const settings = graph.get_physical_buffer(this.settings_buf);
         settings.write_raw(
           new Float32Array([
-            0, // split_depth
             this.tile_size, // tile_size
             this.virtual_dim, // virtual_dim
             this.virtual_tiles_per_row, // virtual_tiles_per_row
@@ -307,6 +338,7 @@ export class AdaptiveSparseVirtualShadowMaps {
             this.physical_tiles_per_row, // physical_tiles_per_row
             this.max_lods, // max_lod
             this.max_tile_requests, // max_tile_requests
+            this.clip0_extent, // clip0_extent
           ])
         );
 
@@ -320,45 +352,21 @@ export class AdaptiveSparseVirtualShadowMaps {
       }
     );
 
-    // Stage A: Depth Histogram
-    render_graph.add_pass(
-      "as_vsm_histogram",
-      RenderPassFlags.Compute,
-      {
-        inputs: [depth_texture, this.histogram_buf],
-        outputs: [this.histogram_buf],
-        shader_setup: histogram_shader_setup,
-      },
-      (graph, frame_data, encoder) => {
-        const pass = graph.get_physical_pass(frame_data.current_pass);
-        const depth_img = graph.get_physical_image(depth_texture);
-        const w = depth_img.config.width;
-        const h = depth_img.config.height;
-        pass.dispatch(Math.ceil(w / 16), Math.ceil(h / 16), 1);
-      }
-    );
-
-    // Stage A.5: Prefix-sum → compute split_depth (writes to settings_buf)
-    render_graph.add_pass(
-      "as_vsm_split_depth_sum",
-      RenderPassFlags.Compute,
-      {
-        inputs: [this.histogram_buf, this.settings_buf],
-        outputs: [this.settings_buf],
-        shader_setup: prefix_shader_setup,
-      },
-      (graph, frame_data, encoder) => {
-        const pass = graph.get_physical_pass(frame_data.current_pass);
-        pass.dispatch(1, 1, 1);
-      }
-    );
-
-    // Stage B: Screen-space Feedback
+    // Stage A: Screen-space Feedback
     render_graph.add_pass(
       "as_vsm_feedback",
       RenderPassFlags.Compute,
       {
-        inputs: [depth_texture, this.settings_buf, this.bitmask_buf],
+        inputs: [
+          depth_texture,
+          this.shadow_atlas,
+          this.page_table,
+          this.settings_buf,
+          this.bitmask_buf,
+          lights_buffer,
+          dense_shadow_casting_lights_buffer,
+          light_count_buffer,
+        ],
         outputs: [this.bitmask_buf],
         shader_setup: feedback_shader_setup,
       },
@@ -367,17 +375,19 @@ export class AdaptiveSparseVirtualShadowMaps {
         const depth_img = graph.get_physical_image(depth_texture);
         const w = depth_img.config.width;
         const h = depth_img.config.height;
-        pass.dispatch(Math.ceil(w / 8), Math.ceil(h / 8), 1);
+        const light_groups = Math.ceil(adjusted_light_count / 4);
+        pass.dispatch(Math.ceil(w / 8), Math.ceil(h / 8), light_groups);
       }
     );
 
-    // Stage C: New Tile Gather
+    // Stage B: New Tile Gather
     render_graph.add_pass(
       "as_vsm_gather",
       RenderPassFlags.Compute,
       {
         inputs: [
           this.bitmask_buf,
+          this.shadow_atlas,
           this.page_table,
           this.requested_tiles_buf,
           lights_buffer,
@@ -396,13 +406,14 @@ export class AdaptiveSparseVirtualShadowMaps {
       }
     );
 
-    // Stage D: Update Page Table
+    // Stage C: Update Page Table
     render_graph.add_pass(
       "as_vsm_update_page_table",
       RenderPassFlags.Compute,
       {
         inputs: [
           this.requested_tiles_buf,
+          this.shadow_atlas,
           this.lru_buf,
           this.page_table,
           dense_shadow_casting_lights_buffer,
@@ -419,7 +430,7 @@ export class AdaptiveSparseVirtualShadowMaps {
       }
     );
 
-    // Stage E: Process tile requests using data read back from the GPU in the *previous* frame.
+    // Stage D: Process tile requests using data read back from the GPU in the *previous* frame.
     const active_tile_count = Math.min(this.cpu_requested_tiles[0], MAX_TILE_REQUESTS_PER_VIEW);
 
     // Allocate / reuse uniform buffers for each active tile request.
@@ -538,7 +549,7 @@ export class AdaptiveSparseVirtualShadowMaps {
         "debug_page_table_pass",
         RenderPassFlags.Graphics,
         {
-          inputs: [this.page_table],
+          inputs: [this.page_table, this.settings_buf],
           outputs: [this.debug_page_table_image],
           shader_setup: debug_page_table_shader_setup,
         },
@@ -566,6 +577,7 @@ export class AdaptiveSparseVirtualShadowMaps {
         RenderPassFlags.Graphics,
         {
           inputs: [
+            this.page_table,
             this.position_texture,
             this.settings_buf,
             this.lights_buffer,
