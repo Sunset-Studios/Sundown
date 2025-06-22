@@ -10,8 +10,8 @@ struct VertexOutput {
 
 @group(1) @binding(0) var page_table: texture_storage_2d_array<r32uint, read>;
 @group(1) @binding(1) var world_position_tex: texture_2d<f32>;
-@group(1) @binding(2) var<storage, read> settings: ASVSMSettings;
-@group(1) @binding(3) var<storage, read> dense_lights_buffer: array<Light>;
+@group(1) @binding(2) var<uniform> vsm_settings: ASVSMSettings;
+@group(1) @binding(3) var<storage, read> light_view_buffer: array<u32>;
 
 // Simple hash function to generate pseudo random colors from tile id
 fn hash_u32(val: u32) -> vec3<f32> {
@@ -29,8 +29,8 @@ fn hash_u32(val: u32) -> vec3<f32> {
 @fragment
 fn fs(input: VertexOutput) -> @location(0) vec4<f32> {
 #if SHADOWS_ENABLED
-  let tile_size = u32(settings.tile_size);
-  let virtual_dim = u32(settings.virtual_dim);
+  let tile_size = u32(vsm_settings.tile_size);
+  let virtual_dim = u32(vsm_settings.virtual_dim);
   if (tile_size == 0u || virtual_dim == 0u) {
     return vec4<f32>(0.0);
   }
@@ -41,52 +41,19 @@ fn fs(input: VertexOutput) -> @location(0) vec4<f32> {
     return vec4<f32>(0.0);
   }
 
-  let world_pos = world_pos_sample.xyz;
+  let view_idx        = light_view_buffer[0u];
+  let camera_vp       = view_buffer[frame_info.view_index].view_projection_matrix;
+  let clipmap0_vp     = view_buffer[view_idx].view_projection_matrix;
+  let world_pos       = vec4<f32>(world_pos_sample.xyz, 1.0);
 
-  let light     = dense_lights_buffer[0u];
-  let view_idx  = u32(light.view_index);
+  let vtile_info      = vsm_world_to_virtual_tile(world_pos, camera_vp, clipmap0_vp, vsm_settings);
 
-  // Determine clip-map level using new helper
-  let camera_view_index = frame_info.view_index;
-  let clipmap_index = clamp(
-    vsm_calculate_clipmap_index_from_world_pos(
-      world_pos,
-      view_buffer[camera_view_index].view_projection_matrix,
-    ),
-    0u,
-    u32(settings.max_lods) - 1u,
-  );
-
-  // Transform world position into clip-space for that clip-map
-  let sample_clip = vsm_calculate_sample_clip_value_from_world_pos(
-    world_pos,
-    clipmap_index,
-    view_buffer[view_idx].view_projection_matrix,
-  );
-
-  // Virtual-texture pixel coords in clip-map 0 space
-  var uv              = sample_clip.xy * 0.5 + 0.5;            // [-1,1] → [0,1]
-  let virtual_pixel   = uv * settings.virtual_dim;
-
-  // Compute virtual-tile coordinates
-  let tile_xy_f       = (virtual_pixel + vec2<f32>(0.5)) / settings.tile_size;
-  let tile_xy_i       = vec2<i32>(floor(tile_xy_f));
-
-  // wrap
-  let vtr_i           = i32(settings.virtual_tiles_per_row);
-  let tcx_i           = ((tile_xy_i.x % vtr_i) + vtr_i) % vtr_i;
-  let tcy_i           = ((tile_xy_i.y % vtr_i) + vtr_i) % vtr_i;
-
-  let vtr             = u32(settings.virtual_tiles_per_row);
-  let tcx             = u32(tcx_i);
-  let tcy             = u32(tcy_i);
-
-  let base_index      = clipmap_index * vtr * vtr;
-  let tile_id         = base_index + tcy * vtr + tcx;
+  let vtr             = u32(vsm_settings.virtual_tiles_per_row);
+  let tile_id         = vtile_info.clipmap_index * vtr * vtr + vtile_info.tile_coords.y * vtr + vtile_info.tile_coords.x;
 
   // Hash colour encodes tile id & lod (mix into value)
   let base_color     = hash_u32(tile_id);
-  let lod_factor     = f32(clipmap_index) / f32(settings.max_lods - 1.0);
+  let lod_factor     = f32(vtile_info.clipmap_index) / f32(vsm_settings.max_lods - 1.0);
   let color          = mix(base_color, vec3<f32>(lod_factor, 0.0, 1.0 - lod_factor), 0.35);
 
   return vec4<f32>(color, 1.0);

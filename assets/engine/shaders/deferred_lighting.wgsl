@@ -14,25 +14,24 @@
 @group(1) @binding(5) var position_texture: texture_2d<f32>;
 @group(1) @binding(6) var depth_texture: texture_depth_2d;
 @group(1) @binding(7) var<storage, read> dense_lights_buffer: array<Light>;
-@group(1) @binding(8) var<storage, read> dense_shadow_casting_lights_buffer: array<u32>;
-@group(1) @binding(9) var<storage, read> light_count_buffer: array<u32>;
+@group(1) @binding(8) var<storage, read> light_count_buffer: array<u32>;
 
 #if GI_ENABLED
-@group(1) @binding(10) var<uniform> gi_params: GIParams;
-@group(1) @binding(11) var gi_irradiance: texture_3d<f32>;
+@group(1) @binding(9) var<uniform> gi_params: GIParams;
+@group(1) @binding(10) var gi_irradiance: texture_3d<f32>;
 
 #if SHADOWS_ENABLED
-@group(1) @binding(12) var shadow_atlas: texture_depth_2d_array;
-@group(1) @binding(13) var page_table: texture_storage_2d_array<r32uint, read>;
-@group(1) @binding(14) var<storage, read> vsm_settings: ASVSMSettings;
+@group(1) @binding(11) var<storage, read> shadow_atlas_depth: array<u32>;
+@group(1) @binding(12) var page_table: texture_storage_2d_array<r32uint, read>;
+@group(1) @binding(13) var<uniform> vsm_settings: ASVSMSettings;
 #endif
 
 #else
 
 #if SHADOWS_ENABLED
-@group(1) @binding(10) var shadow_atlas: texture_depth_2d_array;
-@group(1) @binding(11) var page_table: texture_storage_2d_array<r32uint, read>;
-@group(1) @binding(12) var<storage, read> vsm_settings: ASVSMSettings;
+@group(1) @binding(9) var<storage, read> shadow_atlas_depth: array<u32>;
+@group(1) @binding(10) var page_table: texture_storage_2d_array<r32uint, read>;
+@group(1) @binding(11) var<uniform> vsm_settings: ASVSMSettings;
 #endif
 
 #endif
@@ -67,73 +66,70 @@ fn sample_probe_irradiance(world_pos: vec3<f32>) -> vec3<f32> {
 
 #if SHADOWS_ENABLED
 fn sample_shadow_vsm(
-    world_pos: vec3<f32>,
-    light_view_idx: u32,
+    world_pos: vec4<f32>,
+    view_idx: u32,
+    shadow_idx: u32,
 ) -> f32 {
   // Unpack useful constants
   let tile_size              = vsm_settings.tile_size;
-  let phys_tiles_per_row_u32 = u32(vsm_settings.physical_tiles_per_row);
+  let phys_tiles_per_row     = u32(vsm_settings.physical_tiles_per_row);
   let one_over_atlas_size    = 1.0 / vec2<f32>(vsm_settings.physical_dim);
+  let camera_vp              = view_buffer[frame_info.view_index].view_projection_matrix;
+  let light_vp               = view_buffer[view_idx].view_projection_matrix;
 
   // --------------------------------------------------
   // Select clip-map level & compute virtual-texture coords
   // --------------------------------------------------
-  let clipmap_index = clamp(
-    vsm_calculate_clipmap_index_from_world_pos(
-      world_pos,
-      view_buffer[frame_info.view_index].view_projection_matrix,
-    ),
-    0u,
-    u32(vsm_settings.max_lods) - 1u,
-  );
-
-  // Clip-space position relative to clipmap
-  let sample_clip = vsm_calculate_sample_clip_value_from_world_pos(
-    world_pos,
-    clipmap_index,
-    view_buffer[light_view_idx].view_projection_matrix,
-  );
-
-  // UV in [0,1] of virtual texture 0
-  let uv              = sample_clip.xy * 0.5 + 0.5;
-  let virtual_pixel   = uv * vsm_settings.virtual_dim;
-
-  // Virtual-tile integer coords
-  let tile_xy_f       = (virtual_pixel + vec2<f32>(0.5)) / tile_size;
-  let tile_xy_u       = vec2<u32>(floor(tile_xy_f));
+  let vtile_info = vsm_world_to_virtual_tile(world_pos, camera_vp, light_vp, vsm_settings);
 
   // Resolve PTE for this virtual tile (single-light slice assumption)
-  let entry = textureLoad(page_table, tile_xy_u, 0u).r;
+  let entry = textureLoad(page_table, vtile_info.tile_coords, vtile_info.clipmap_index + shadow_idx * u32(vsm_settings.max_lods)).r;
   if (!vsm_pte_is_valid(entry)) {
-    return 0.0;
+    return 1.0;
   }
 
-  let clip_pos  = view_buffer[light_view_idx].view_projection_matrix * vec4<f32>(world_pos, 1.0);
-  let depth_ref = clip_pos.z / clip_pos.w;
+  let clip_pos  = vsm_calculate_render_clip_value_from_world_pos(world_pos, vtile_info.clipmap_index, light_vp);
+  // Convert NDC depth [-1,1] to [0,1] for comparison
+  let depth_ndc = clip_pos.z;
+  let depth_ref = depth_ndc * 0.5 + 0.5;
 
   // Decode physical tile & pool
-  let phys_id           = vsm_pte_get_physical_id(entry, vsm_settings);
+  let physical_xy_offset = vsm_pte_get_phys_xy(entry);
   let memory_pool_index = vsm_pte_get_memory_pool_index(entry);
 
-  let phys_x = phys_id % phys_tiles_per_row_u32;
-  let phys_y = phys_id / phys_tiles_per_row_u32;
-
   // Build atlas UV
-  let base_uv  = (vec2<f32>(f32(phys_x), f32(phys_y)) * tile_size) * one_over_atlas_size;
-  let local_uv = fract(tile_xy_f) * (tile_size * one_over_atlas_size);
-  let final_uv = base_uv + local_uv;
+  let local_pixel_f = fract(vtile_info.tile_xy_f) * tile_size;
+  let local_pixel = vec2<u32>(local_pixel_f);
+  let physical_pixel = physical_xy_offset * u32(tile_size) + local_pixel;
+  let base_pixel = vec2<i32>(physical_pixel);
 
-  // 3×3 PCF
-  var sum: f32 = 0.0;
-  for (var oy: i32 = -1; oy <= 1; oy = oy + 1) {
-    for (var ox: i32 = -1; ox <= 1; ox = ox + 1) {
-      let offset_uv = final_uv + vec2<f32>(f32(ox), f32(oy)) * one_over_atlas_size;
-      let sample_d  = textureSampleLevel(shadow_atlas, non_filtering_sampler, offset_uv, i32(memory_pool_index), 0u);
-      sum += select(0.0, 1.0, depth_ref < sample_d + 0.005);
-    }
-  }
+  let phys_dim_u32 = u32(vsm_settings.physical_dim);
 
-  return 1.0 - sum / 9.0;
+  // 3×3 PCF sampling via storage buffer
+  // var sum_visible = 0.0;
+  // for (var oy: i32 = -1; oy <= 1; oy = oy + 1) {
+  //   for (var ox: i32 = -1; ox <= 1; ox = ox + 1) {
+  //     let sx = clamp(base_pixel.x + ox, 0, i32(phys_dim_u32) - 1);
+  //     let sy = clamp(base_pixel.y + oy, 0, i32(phys_dim_u32) - 1);
+
+  //     let sample_index = memory_pool_index * phys_dim_u32 * phys_dim_u32 + 
+  //                        u32(sy) * phys_dim_u32 + u32(sx);
+  //     let depth_bits      = shadow_atlas_depth[sample_index];
+  //     let depth_sample    = unpack_depth(depth_bits);
+
+  //     sum_visible += select(0.0, 1.0, depth_ref < depth_sample);
+  //   }
+  // }
+
+  let sample_index = memory_pool_index * phys_dim_u32 * phys_dim_u32 + 
+                 u32(base_pixel.y) * phys_dim_u32 + u32(base_pixel.x);
+  let depth_bits      = shadow_atlas_depth[sample_index];
+  let depth_sample    = unpack_depth(depth_bits);
+
+  let sum_visible = select(0.0, 1.0, depth_ref < depth_sample);
+
+
+  return 1.0 - sum_visible / 9.0;
 }
 #endif
 
@@ -199,7 +195,7 @@ fn sample_shadow_vsm(
         let light_view_index = u32(light.view_index);
 
 #if SHADOWS_ENABLED
-        let shadow_factor = sample_shadow_vsm(position, light_view_index);
+        let shadow_factor = sample_shadow_vsm(vec4<f32>(position, 1.0), light_view_index, u32(light.shadow_index));
 #else
         let shadow_factor = 0.0;
 #endif

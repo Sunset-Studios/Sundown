@@ -1,10 +1,17 @@
-import { LightType, EntityFlags, WORLD_FORWARD, WORLD_UP, WORLD_RIGHT } from "../minimal.js";
+import { LightType, EntityFlags } from "../minimal.js";
 import { DEFAULT_CHUNK_CAPACITY } from "../ecs/solar/types.js";
 import { SimulationLayer } from "../simulation_layer.js";
 import { EntityManager } from "../ecs/entity.js";
 import { LightFragment } from "../ecs/fragments/light_fragment.js";
 import { SharedViewBuffer, SharedFrameInfoBuffer } from "../shared_data.js";
-import { quat, vec4, vec3, mat4, mat3 } from "gl-matrix";
+import {
+  compute_directional_light_rotation,
+  build_directional_light_projection_matrix,
+  DEFAULT_DIRECTIONAL_LIGHT_CLIP_EXTENT as DEFAULT_DIRECTIONAL_LIGHT_CLIP0_EXTENT,
+  compute_directional_light_position_for_clip,
+  ShadowAllocator,
+} from "../../renderer/shadows/shadow_utils.js";
+import { quat, vec4, mat4 } from "gl-matrix";
 
 export class LightViewProcessor extends SimulationLayer {
   entity_query = null;
@@ -56,60 +63,27 @@ export class LightViewProcessor extends SimulationLayer {
           const camera_view_index = SharedFrameInfoBuffer.get_view_index();
           const camera_view = SharedViewBuffer.get_view_data(camera_view_index);
 
-          const clip0_extent = 8.0;
-
           view.fov = 0.0;
           view.far = camera_view.far;
           view.custom_projection_enabled = 1;
           view.custom_view_matrix_enabled = 1;
 
           // ---------------------------------------------------------------------------
-          // build a *stable* world→light rotation -------------------------------------
-          const light_forward = vec3.normalize(vec3.create(), vec3.negate(vec3.create(), light_position));
-
-          // X axis = cross(forward , up)  -----------------------------
-          let x_axis = vec3.cross(vec3.create(), light_forward, WORLD_UP);
-          if (vec3.length(x_axis) < 1e-4)            // poles: pick any stable axis
-              x_axis = vec3.clone(WORLD_RIGHT);
-          vec3.normalize(x_axis, x_axis);
-
-          // *** make its sign deterministic (here: always point +X) ***
-          if (x_axis[0] < 0.0) vec3.negate(x_axis, x_axis);
-
-          // Y axis, basis, quaternion --------------------------------
-          const y_axis = vec3.cross(vec3.create(), light_forward, x_axis);
-          vec3.normalize(y_axis, y_axis);
-
-          const rot_rows = mat3.fromValues(
-              x_axis[0], x_axis[1], x_axis[2],
-              y_axis[0], y_axis[1], y_axis[2],
-              light_forward[0], light_forward[1], light_forward[2]
+          // Use centralized utilities for stable rotation & projection ----------------
+          const rotation = compute_directional_light_rotation(light_position);
+          const position = compute_directional_light_position_for_clip(
+            camera_view.view_position,
+            rotation,
+            camera_view.far
           );
-          const rotation = quat.fromMat3(quat.create(), rot_rows);
-          // ---------------------------------------------------------------------------
 
-          view.projection_matrix = mat4.fromValues(
-            2.0 / clip0_extent,
-            0.0,
-            0.0,
-            0.0,
-            0.0,
-            2.0 / clip0_extent,
-            0.0,
-            0.0,
-            0.0,
-            0.0,
-            1.0 / camera_view.far,
-            0.0,
-            0.0,
-            0.0,
-            0.0,
-            1.0
+          view.projection_matrix = build_directional_light_projection_matrix(
+            camera_view.far,
+            DEFAULT_DIRECTIONAL_LIGHT_CLIP0_EXTENT
           );
-          view.view_matrix = mat4.fromRotationTranslation(mat4.create(),
-                                                          rotation,
-                                                          camera_view.view_position);
-          view.view_position = camera_view.view_position;
+
+          view.view_matrix = mat4.fromRotationTranslation(mat4.create(), rotation, position);
+          view.view_position = position;
           view.view_rotation = rotation;
         } else {
           view.fov = 90.0;
@@ -152,8 +126,6 @@ export class LightViewProcessor extends SimulationLayer {
             continue;
           }
 
-          const clip0_extent = 8.0;
-
           const light_position = [
             lights.position[slot * 4 + 0],
             lights.position[slot * 4 + 1],
@@ -161,63 +133,37 @@ export class LightViewProcessor extends SimulationLayer {
             1.0,
           ];
 
-          // ---------------------------------------------------------------------------
-          // build a *stable* world→light rotation -------------------------------------
-          const light_forward = vec3.normalize(vec3.create(), vec3.negate(vec3.create(), light_position));
-
-          // X axis = cross(forward , up)  -----------------------------
-          let x_axis = vec3.cross(vec3.create(), light_forward, WORLD_UP);
-          if (vec3.length(x_axis) < 1e-4)            // poles: pick any stable axis
-              x_axis = vec3.clone(WORLD_RIGHT);
-          vec3.normalize(x_axis, x_axis);
-
-          // *** make its sign deterministic (here: always point +X) ***
-          if (x_axis[0] < 0.0) vec3.negate(x_axis, x_axis);
-
-          // Y axis, basis, quaternion --------------------------------
-          const y_axis = vec3.cross(vec3.create(), light_forward, x_axis);
-          vec3.normalize(y_axis, y_axis);
-
-          const rot_rows = mat3.fromValues(
-              x_axis[0], x_axis[1], x_axis[2],
-              y_axis[0], y_axis[1], y_axis[2],
-              light_forward[0], light_forward[1], light_forward[2]
+          const rotation = compute_directional_light_rotation(light_position);
+          const position = compute_directional_light_position_for_clip(
+            camera_view.view_position,
+            rotation,
+            camera_view.far
           );
-          const rotation = quat.fromMat3(quat.create(), rot_rows);
-          // ---------------------------------------------------------------------------
 
           const light_view = SharedViewBuffer.get_view_data(view_index);
 
           // Orthographic projection centred on the origin (stable virtual address).
-          light_view.projection_matrix = mat4.fromValues(
-            2.0 / clip0_extent,
-            0.0,
-            0.0,
-            0.0,
-            0.0,
-            2.0 / clip0_extent,
-            0.0,
-            0.0,
-            0.0,
-            0.0,
-            1.0 / camera_view.far,
-            0.0,
-            0.0,
-            0.0,
-            0.0,
-            1.0
+          light_view.projection_matrix = build_directional_light_projection_matrix(
+            camera_view.far,
+            DEFAULT_DIRECTIONAL_LIGHT_CLIP0_EXTENT
           );
-          light_view.view_matrix = mat4.fromRotationTranslation(mat4.create(),
-                                                                  rotation,
-                                                                  camera_view.view_position);
-          light_view.view_position = camera_view.view_position;
+          light_view.view_matrix = mat4.fromRotationTranslation(mat4.create(), rotation, position);
+          light_view.view_position = position;
           light_view.view_rotation = rotation;
         }
       }
 
+      // Shadow index management
+      if (lights.shadow_index[slot] < 0 && lights.shadow_casting[slot] > 0) {
+        lights.shadow_index[slot] = ShadowAllocator.allocate();
+        chunk.mark_dirty();
+      } else if (lights.shadow_index[slot] >= 0 && lights.shadow_casting[slot] === 0) {
+        ShadowAllocator.free(lights.shadow_index[slot]);
+        lights.shadow_index[slot] = -1;
+        chunk.mark_dirty();
+      }
+
       slot += counts[slot] || 1;
     }
-
-    // After SharedViewBuffer.update_transforms has run
   }
 }

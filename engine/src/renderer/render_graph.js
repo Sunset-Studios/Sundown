@@ -1629,34 +1629,66 @@ export class RenderGraph {
     }
 
     // Setup pass-specific bind group
-    let layouts = [];
-    let reflection_groups = [];
-    if (is_compute_pass) {
-      reflection_groups = pass.shaders.compute.reflection.getBindGroups();
-    } else if (pass.shaders.fragment) {
-      const fragment_group = pass.shaders.fragment.reflection.getBindGroups();
-      for (let i = 0; i < BindGroupType.Num; i++) {
-        if (fragment_group[i]) {
-          reflection_groups.push(fragment_group[i]);
-        }
-      }
-    } else {
-      const vertex_group = pass.shaders.vertex.reflection.getBindGroups();
-      for (let i = 0; i < BindGroupType.Num; i++) {
-        if (vertex_group[i]) {
-          reflection_groups.push(vertex_group[i]);
-        }
+    let binding_stage_masks = new Map();
+
+    let compute_reflection_groups = is_compute_pass
+      ? pass.shaders.compute.reflection.getBindGroups()
+      : [];
+    let fragment_reflection_groups = pass.shaders.fragment
+      ? pass.shaders.fragment.reflection.getBindGroups()
+      : [];
+    let vertex_reflection_groups = pass.shaders.vertex
+      ? pass.shaders.vertex.reflection.getBindGroups()
+      : [];
+    let reflection_groups = is_compute_pass
+      ? compute_reflection_groups
+      : pass.shaders.fragment
+        ? fragment_reflection_groups
+        : vertex_reflection_groups;
+
+    if (compute_reflection_groups[BindGroupType.Pass]) {
+      for (let i = 0; i < compute_reflection_groups[BindGroupType.Pass].length; i++) {
+        const binding = compute_reflection_groups[BindGroupType.Pass][i];
+        if (!binding) continue;
+        let binding_stage_mask =
+          binding_stage_masks.get(binding.name) || 0;
+        binding_stage_masks.set(
+          binding.name,
+          binding_stage_mask | GPUShaderStage.COMPUTE
+        );
       }
     }
 
+    if (fragment_reflection_groups[BindGroupType.Pass]) {
+      for (let i = 0; i < fragment_reflection_groups[BindGroupType.Pass].length; i++) {
+        const binding = fragment_reflection_groups[BindGroupType.Pass][i];
+        if (!binding) continue;
+        let binding_stage_mask = binding_stage_masks.get(binding.name) || 0;
+        binding_stage_masks.set(
+          binding.name,
+          binding_stage_mask | GPUShaderStage.FRAGMENT
+        );
+      }
+    }
+    if (vertex_reflection_groups[BindGroupType.Pass]) {
+      for (let i = 0; i < vertex_reflection_groups[BindGroupType.Pass].length; i++) {
+        const binding = vertex_reflection_groups[BindGroupType.Pass][i];
+        if (!binding) continue;
+        let binding_stage_mask = binding_stage_masks.get(binding.name) || 0;
+        binding_stage_masks.set(
+          binding.name,
+          binding_stage_mask | GPUShaderStage.VERTEX
+        );
+      }
+    }
+
+    let layouts = [];
     if (BindGroupType.Pass < reflection_groups.length) {
       const pass_group = reflection_groups[BindGroupType.Pass];
       layouts = pass_group.map((binding) => {
         let binding_obj = {
           binding: binding.binding,
-          visibility: is_compute_pass
-            ? GPUShaderStage.COMPUTE
-            : GPUShaderStage.FRAGMENT | GPUShaderStage.VERTEX,
+          visibility: binding_stage_masks.get(binding.name) || 0,
         };
 
         const binding_type = Shader.resource_type_from_reflection_type(binding.resourceType);
@@ -1715,7 +1747,7 @@ export class RenderGraph {
 
         return {
           binding: binding.binding,
-          visibility: GPUShaderStage.FRAGMENT | GPUShaderStage.VERTEX,
+          visibility: binding_stage_masks.get(binding.name) || 0,
           ...binding_obj,
         };
       });

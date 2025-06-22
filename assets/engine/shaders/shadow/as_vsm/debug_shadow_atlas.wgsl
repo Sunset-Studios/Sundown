@@ -1,5 +1,6 @@
 // Debug view for AS-VSM shadow atlas (first layer)
 #include "common.wgsl"
+#include "shadow/shadows_common.wgsl"
 
 struct VertexOutput {
     @builtin(position) position: vec4f,
@@ -7,19 +8,22 @@ struct VertexOutput {
     @location(1) @interpolate(flat) instance_index: u32,
 };
 
-@group(1) @binding(0) var shadow_atlas: texture_depth_2d_array;
+@group(1) @binding(0) var<storage, read> shadow_atlas_depth: array<u32>;
+@group(1) @binding(1) var<uniform> vsm_settings: ASVSMSettings;
 
 @fragment fn fs(in: VertexOutput) -> @location(0) vec4<f32> {
-  let dims = textureDimensions(shadow_atlas, 0);
-  let coord = vec2<i32>(
-      i32(in.uv.x * f32(dims.x)),
-      i32(in.uv.y * f32(dims.y))
+  let dims = u32(vsm_settings.physical_dim);
+  let coord = vec2<u32>(
+      u32(in.uv.x * f32(dims)),
+      u32(in.uv.y * f32(dims))
   );
-  // sample the correct array slice
-  let depth = textureLoad(shadow_atlas, coord, i32(in.instance_index), 0);
+
+  let pool_index = 0u;
+  let linear_index = pool_index * dims * dims + coord.y * dims + coord.x;
+  let packed_depth = shadow_atlas_depth[linear_index];
+  let depth_clip = unpack_depth(packed_depth);
 
   let view = view_buffer[frame_info.view_index];
-  let lin_depth = linearize_depth(depth, view.near, view.far) / 100.0;
 
-  return vec4<f32>(lin_depth, lin_depth, lin_depth, 1.0);
+  return vec4<f32>(depth_clip, depth_clip, depth_clip, 1.0);
 } 

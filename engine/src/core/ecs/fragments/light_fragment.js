@@ -154,6 +154,19 @@ export class LightFragment extends Fragment {
         GPUBufferUsage.COPY_SRC,
       cpu_readback: false,
     },
+    shadow_index: {
+      ctor: Float32Array,
+      elements: 1,
+      default: -1,
+      gpu_buffer: false,
+      buffer_name: "shadow_index",
+      is_container: false,
+      usage:
+        GPUBufferUsage.STORAGE |
+        GPUBufferUsage.COPY_DST |
+        GPUBufferUsage.COPY_SRC,
+      cpu_readback: false,
+    },
   };
   static buffer_data = new Map(); // key → { buffer: FragmentGpuBuffer, stride: number }
 
@@ -162,7 +175,7 @@ export class LightFragment extends Fragment {
   static gpu_buffers = {
     light_fragment: {
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-      stride: 80,
+      stride: 84,
       buffer_name: "light_fragment",
       cpu_readback: false,
       fields: [
@@ -177,6 +190,7 @@ export class LightFragment extends Fragment {
         "shadow_casting",
         "active",
         "view_index",
+        "shadow_index",
       ],
     },
   };

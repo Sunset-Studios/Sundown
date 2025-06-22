@@ -51,6 +51,11 @@ const LightFragment = {
       type: DataType.FLOAT32,
       stride: 1,
     },
+    shadow_index: {
+      type: DataType.FLOAT32,
+      default: -1,
+      stride: 1,
+    },
   },
   gpu_buffers: {
     light_fragment: {
@@ -66,6 +71,7 @@ const LightFragment = {
         "shadow_casting",
         "active",
         "view_index",
+        "shadow_index",
       ],
       usage: BufferType.STORAGE,
     },

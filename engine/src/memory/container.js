@@ -909,7 +909,7 @@ export class TypedStack {
 
   /**
    * Create a new TypedStack with the specified capacity and array type.
-   * @param {number} capacity - The maximum capacity of the stack.
+   * @param {number} capacity - The initial capacity of the stack.
    * @param {TypedArrayConstructor} array_type - The type of TypedArray to use (e.g. Int32Array).
    */
   constructor(capacity, array_type = Int32Array) {
@@ -1112,14 +1112,13 @@ export class TypedFreeList {
   free(index) {
     console.assert(index >= 0 && index < this.#buffer.length, "Index out of bounds");
     
-    // Optionally: check if this index is already in the free list
+    // Check if this index is already in the free list
     // This is more expensive but prevents double-freeing
-    // for (let i = 0; i < this.#free_count; i++) {
-    //     if (this.#free_indices[i] === index) {
-    //         console.warn("Attempted to free an already freed index:", index);
-    //         return;
-    //     }
-    // }
+    for (let i = 0; i < this.#free_count; i++) {
+        if (this.#free_indices[i] === index) {
+            return;
+        }
+    }
     
     this.#free_indices[this.#free_count++] = index;
     this.#size--;

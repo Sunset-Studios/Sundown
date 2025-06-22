@@ -45,6 +45,7 @@ import {
 // Specialized renderer components
 import { GIProbeVolume } from "../global_illumination/ddgi.js";
 import { AdaptiveSparseVirtualShadowMaps } from "../shadows/as_vsm.js";
+import { DEFAULT_DIRECTIONAL_LIGHT_CLIP_EXTENT } from "../shadows/shadow_utils.js";
 
 const resolution_change_event_name = "resolution_change";
 const deferred_shading_profile_scope_name = "DeferredShadingStrategy.draw";
@@ -247,12 +248,6 @@ const hzb_reduce_shader_setup = {
 
 const dense_lights_buffer_config = {
   name: "dense_lights",
-  size: 0,
-  usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-};
-
-const dense_shadow_casting_lights_buffer_config = {
-  name: "dense_shadow_casting_lights",
   size: 0,
   usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
 };
@@ -564,12 +559,6 @@ export class DeferredShadingStrategy {
       dense_lights_buffer_config.size = light_fragment_buffer.buffer.config.size;
       const dense_lights = render_graph.create_buffer(dense_lights_buffer_config);
 
-      dense_shadow_casting_lights_buffer_config.size =
-        light_fragment_buffer.max_rows * Uint32Array.BYTES_PER_ELEMENT;
-      const dense_shadow_casting_lights = render_graph.create_buffer(
-        dense_shadow_casting_lights_buffer_config
-      );
-
       const light_count = render_graph.create_buffer(light_count_buffer_config);
 
       // ┌─────────────────────────────────────────────────────────────────────────────┐
@@ -700,8 +689,8 @@ export class DeferredShadingStrategy {
           RenderPassFlags.Compute,
           {
             shader_setup: compact_lights_shader_setup,
-            inputs: [lights, light_count, dense_shadow_casting_lights, dense_lights],
-            outputs: [light_count, dense_shadow_casting_lights, dense_lights],
+            inputs: [lights, light_count, dense_lights],
+            outputs: [light_count, dense_lights],
           },
           (graph, frame_data, encoder) => {
             const pass = graph.get_physical_pass(frame_data.current_pass);
@@ -1182,18 +1171,16 @@ export class DeferredShadingStrategy {
         // Add AS-VSM passes with mapping
         if (!this.as_vsm) {
           this.as_vsm = new AdaptiveSparseVirtualShadowMaps({
-            atlas_size: 8192,
+            atlas_size: 4096,
             tile_size: 128,
             virtual_dim: 16384,
             max_lods: 10,
-            clip0_extent: 16.0,
+            clip0_extent: DEFAULT_DIRECTIONAL_LIGHT_CLIP_EXTENT,
           });
         }
         this.as_vsm.add_passes(render_graph, {
           depth_texture: main_depth_image,
           position_texture: main_position_image,
-          lights_buffer: dense_lights,
-          dense_shadow_casting_lights_buffer: dense_shadow_casting_lights,
           light_count_buffer: light_count,
           transforms_buffer: entity_transforms,
           object_instances: object_instances,
@@ -1240,7 +1227,6 @@ export class DeferredShadingStrategy {
           main_position_image,
           main_depth_image,
           dense_lights,
-          dense_shadow_casting_lights,
           light_count,
         ];
 
@@ -1253,14 +1239,10 @@ export class DeferredShadingStrategy {
 
         if (shadows_enabled) {
           // Register AS-VSM shadow resources for lighting
-          const shadow_atlas = this.as_vsm.shadow_atlas;
-          const vsm_page_table = this.as_vsm.page_table;
-          const asvsm_settings = this.as_vsm.settings_buf;
-
           deferred_lighting_shader_setup.pipeline_shaders.vertex.defines = { SHADOWS_ENABLED: true };
           deferred_lighting_shader_setup.pipeline_shaders.fragment.defines = { SHADOWS_ENABLED: true };
 
-          lighting_inputs.push(shadow_atlas, vsm_page_table, asvsm_settings);
+          lighting_inputs.push(this.as_vsm.shadow_atlas_buf, this.as_vsm.page_table, this.as_vsm.settings_buf);
         }
 
         render_graph.add_pass(

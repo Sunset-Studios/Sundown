@@ -1,89 +1,92 @@
-// AS-VSM Stage E: Update Page Table
+// AS-VSM Stage C: Update Page Table
 // Updates the page table with new (lod, physicalID) for each requested tile.
 #include "common.wgsl"
 #include "lighting_common.wgsl"
 #include "shadow/shadows_common.wgsl"
 
-@group(1) @binding(0) var<storage, read> requested_tiles: array<u32>;
-@group(1) @binding(1) var shadow_atlas: texture_depth_2d_array;
-@group(1) @binding(2) var<storage, read_write> lru: array<atomic<u32>>;
-@group(1) @binding(3) var page_table: texture_storage_2d_array<r32uint, read_write>;
-@group(1) @binding(4) var<storage, read> dense_shadow_casting_lights_buffer: array<u32>;
-@group(1) @binding(5) var<storage, read> vsm_settings: ASVSMSettings;
-@group(1) @binding(6) var<storage, read_write> physical_to_virtual_map: array<u32>;
+@group(1) @binding(0) var<storage, read_write> lru: array<atomic<u32>>;
+@group(1) @binding(1) var page_table: texture_storage_2d_array<r32uint, read_write>;
+@group(1) @binding(2) var<storage, read> light_shadow_idx_buffer: array<u32>;
+@group(1) @binding(3) var<uniform> vsm_settings: ASVSMSettings;
+@group(1) @binding(4) var<storage, read> bitmask: array<u32>;
+@group(1) @binding(5) var<storage, read> light_count_buffer: array<u32>;
 
-// Constant for an invalid packed virtual coordinate, assuming 0,0 is valid.
-// Max virtual coord is (tile_count-1, tile_count-1). If tile_count is e.g. 4096 (2^12),
-// then max packed value is ((2^12-1)<<16) | (2^12-1) which is < 2^28. So 0xFFFFFFFF is safe.
-const INVALID_PACKED_VIRT_COORD = 0x00000000u;
-
-@compute @workgroup_size(64)
-fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
+@compute @workgroup_size(8, 8, 4)
+fn cs(@builtin(global_invocation_id) id: vec3<u32>) {
 #if SHADOWS_ENABLED
-    let idx = gid.x;
-    let count = requested_tiles[0u]; // Total number of requests
-    if (idx >= count) {
+    // ------------------------------------------------------------------
+    // Calculate per-light stride inside the bitmask buffer
+    // ------------------------------------------------------------------
+    let vtpr = u32(vsm_settings.virtual_tiles_per_row);
+    let stride_words = ((vtpr * vtpr * u32(vsm_settings.max_lods) + 31u) >> 5u);
+
+    // Compute linear index *within* the bitmask for this light
+    let index_in_stride = id.y * 8u + id.x; // 8×8 x/y work-group → 64 indices
+    if (index_in_stride >= stride_words) {
         return;
     }
 
-    let base_idx = 1u + idx * 3u;
-    let tile_id_new = requested_tiles[base_idx];
-    let light_idx = requested_tiles[base_idx + 1u];
-
-    let dense_shadow_casting_light_idx = dense_shadow_casting_lights_buffer[light_idx];
-
-    let new_pte_coords = vsm_pte_get_tile_coords(tile_id_new, vsm_settings);
-
-    let current_pte_val_at_new_coords = textureLoad(page_table, new_pte_coords.xy, dense_shadow_casting_light_idx).r;
-    let current_pte_is_valid = vsm_pte_is_valid(current_pte_val_at_new_coords);
-    if (current_pte_is_valid) {
-        return; // Already mapped by a concurrent thread or previous pass
+    let light_count = light_count_buffer[0u];
+    if (id.z >= light_count) {
+        return;
     }
 
-    let lru_per_light = u32(vsm_settings.physical_tiles_per_row
-      * vsm_settings.physical_tiles_per_row
-      * vsm_settings.max_lods);
-    let lru_offset = dense_shadow_casting_light_idx * (lru_per_light + 1u);
+    // Capture the light/view index from the dispatch.z
+    let dense_light_index = id.z;
 
-    let lru_head = atomicAdd(&lru[lru_offset], 1u);
-    let lru_slot_index = lru_offset + (lru_head % lru_per_light);
-    let physical_id_to_reuse = atomicLoad(&lru[lru_slot_index]);
+    // Fetch the shadow index for this light
+    let shadow_index = light_shadow_idx_buffer[dense_light_index];
 
-    // Evict Old PTE using the reverse map
-    let packed_old_vx_vy = physical_to_virtual_map[physical_id_to_reuse];
-
-    if (packed_old_vx_vy != INVALID_PACKED_VIRT_COORD) { // Check if the physical tile was actually mapped
-        let old_vx = packed_old_vx_vy & 0xFFFFu;
-        let old_vy = (packed_old_vx_vy >> 16u) & 0xFFFFu;
-        let old_pte_coords = vec2<i32>(i32(old_vx), i32(old_vy));
-
-        // Sanity check: ensure the old PTE indeed points to the physical_id_to_reuse
-        let old_pte_val_check = textureLoad(page_table, old_pte_coords, dense_shadow_casting_light_idx).r;
-        let old_pte_phys_id_check = vsm_pte_get_physical_id(old_pte_val_check, vsm_settings);
-        let old_pte_valid_check = vsm_pte_is_valid(old_pte_val_check);
-
-        if (old_pte_valid_check && old_pte_phys_id_check == physical_id_to_reuse) {
-            textureStore(page_table, old_pte_coords, dense_shadow_casting_light_idx, vec4<u32>(0u)); // Invalidate old PTE
-        }
+    // Skip inactive lights (shadow_index == 0xFFFFFFFF sentinel)
+    if (shadow_index == 0xffffffffu) {
+        return;
     }
 
-    // Update New PTE – build entry with new format
-    let phys_tiles_per_row = u32(vsm_settings.physical_tiles_per_row);
-    let phys_x = physical_id_to_reuse % phys_tiles_per_row;
-    let phys_y = physical_id_to_reuse / phys_tiles_per_row;
+    // Global word index into the shared buffer
+    let global_index = shadow_index * stride_words + index_in_stride;
 
-    let new_pte_value =
-        (phys_x << pte_phys_x_shift) |
-        (phys_y << pte_phys_y_shift) |
-        // pool_id = 0 (single atlas)
-        (1u     << pte_residency_shift) | // resident
-        (0u     << pte_dirty_shift)     | // clean after render
-        (0u     << pte_frame_age_shift);
+    // Fetch mask of virtual tiles for *this* light
+    var bits = bitmask[global_index];
 
-    textureStore(page_table, new_pte_coords.xy, dense_shadow_casting_light_idx, vec4<u32>(new_pte_value));
+    while(bits != 0u) {
+      // Find least significant set bit
+      let shift = countTrailingZeros(bits);
+      bits = bits & (bits - 1u);    
 
-    // Update Reverse Map
-    let new_packed_vx_vy = (new_pte_coords.y << 16u) | new_pte_coords.x;
-    physical_to_virtual_map[physical_id_to_reuse] = new_packed_vx_vy;
+      let tile_id = index_in_stride * 32u + shift;
+
+      let new_pte_coords = vsm_pte_get_tile_coords(tile_id, vsm_settings);
+      let page_table_index = shadow_index * u32(vsm_settings.max_lods) + new_pte_coords.z;
+
+      let current_pte_val_at_new_coords = textureLoad(page_table, new_pte_coords.xy, page_table_index).r;
+      let current_pte_is_valid = vsm_pte_is_valid(current_pte_val_at_new_coords);
+      if (current_pte_is_valid) {
+        continue; // Already mapped by a concurrent thread or previous pass
+      }
+
+      let total_lru_entries = u32(vsm_settings.physical_tiles_per_row
+        * vsm_settings.physical_tiles_per_row) * u32(vsm_settings.max_physical_pools);
+
+      let lru_head = atomicAdd(&lru[0u], 1u);
+      let lru_slot_index = 1u + lru_head % total_lru_entries;
+      let physical_id = atomicLoad(&lru[lru_slot_index]);
+
+      // Update New PTE – build entry with new format
+      let ptpr = u32(vsm_settings.physical_tiles_per_row);
+      let pool_id = physical_id / (ptpr * ptpr);
+      let local_physical_id = physical_id - pool_id * (ptpr * ptpr);
+      let phys_x = local_physical_id % ptpr;
+      let phys_y = local_physical_id / ptpr;
+
+      let new_pte_value =
+        (phys_x  << pte_phys_x_shift)    |
+        (phys_y  << pte_phys_y_shift)    |
+        (pool_id << pte_pool_id_shift)   |
+        (1u      << pte_residency_shift) | // resident
+        (1u      << pte_dirty_shift)     | // dirty, needs clearing
+        (0u      << pte_frame_age_shift);
+
+      textureStore(page_table, new_pte_coords.xy, page_table_index, vec4<u32>(new_pte_value));
+    }    
 #endif
 } 

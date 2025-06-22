@@ -95,14 +95,11 @@ export class ASVSMStats extends DevConsoleTool {
         label(`Total Physical Tiles: ${vsm.total_physical_tiles} tiles`, stats_label_config);
         label(`Cached Light Count: ${vsm.cached_light_count} lights`, stats_label_config);
         label(`Bitmask U32 Count: ${vsm.bitmask_u32_count}`, stats_label_config);
-        label(`Max Tile Requests: ${vsm.max_tile_requests} tiles`, stats_label_config);
-        stat_row("Requested Tiles Buffer", `${vsm.requested_tiles_buf} *`);
         stat_row("Settings Buffer", `${vsm.settings_buf} *`);
         stat_row("Page Table Buffer", `${vsm.page_table} *`);
         stat_row("Bitmask Buffer", `${vsm.bitmask_buf} *`);
         stat_row("LRU Buffer", `${vsm.lru_buf} *`);
-        stat_row("Physical to Virtual Map Buffer", `${vsm.physical_to_virtual_map_buf} *`);
-        stat_row("Shadow Atlas", `${vsm.shadow_atlas} *`);
+        stat_row("Shadow Atlas Depth Buffer", `${vsm.shadow_atlas_buf} *`);
 
         label("--------------------------------", stats_label_config);
       }

@@ -1,30 +1,18 @@
+import { EntityFlags } from "../../core/minimal.js";
+import { EntityManager } from "../../core/ecs/entity.js";
+import { DEFAULT_CHUNK_CAPACITY } from "../../core/ecs/solar/types.js";
 import { LightFragment } from "../../core/ecs/fragments/light_fragment.js";
 import { Renderer } from "../renderer.js";
-import { BufferSync } from "../buffer.js";
-import { ResourceCache } from "../resource_cache.js";
-import { RenderPassFlags, DebugDrawType, CacheTypes } from "../renderer_types.js";
+import { RenderPassFlags, DebugDrawType } from "../renderer_types.js";
 import { MeshTaskQueue } from "../mesh_task_queue.js";
 import {
   rgba8unorm_format,
   rgba16float_format,
   r32uint_format,
-  depth24plus_format,
   load_op_load,
 } from "../../utility/config_permutations.js";
-import { Name } from "../../utility/names.js";
 
 // ============ GPU Resource Configs ============
-
-const atlas_config = {
-  name: "shadow_atlas",
-  format: depth24plus_format,
-  dimension: "2d-array",
-  width: 0,
-  height: 0,
-  depth: 0,
-  usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
-  load_op: load_op_load,
-};
 
 const page_table_config = {
   name: "shadow_page_table",
@@ -43,17 +31,10 @@ const bitmask_buf_config = {
   usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
 };
 
-const requested_tiles_buf_config = {
-  name: "shadow_requested_tiles_buf",
-  size: 0,
-  usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC,
-  cpu_readback: true,
-};
-
 const settings_buf_config = {
   name: "shadow_settings_buf",
   raw_data: new Float32Array([0, 0, 0, 0, 0, 0, 0, 0]),
-  usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+  usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
 };
 
 const lru_buf_config = {
@@ -62,9 +43,16 @@ const lru_buf_config = {
   usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
 };
 
-const physical_to_virtual_map_buf_config = {
-  name: "shadow_physical_to_virtual_map_buf",
-  size: 0,
+// ========== NEW: per-light view & shadow index buffers ==========
+const light_view_buf_config = {
+  name: "shadow_light_view_buf",
+  size: 0, // filled at runtime
+  usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+};
+
+const light_shadow_idx_buf_config = {
+  name: "shadow_light_shadow_idx_buf",
+  size: 0, // filled at runtime
   usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
 };
 
@@ -92,18 +80,28 @@ const debug_tile_overlay_config = {
   usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
 };
 
-const tile_request_uniform_configs = [];
+// Shadow atlas depth data stored in a GPUBuffer instead of a texture to access atomics
+const shadow_atlas_buf_config = {
+  name: "shadow_atlas_buf",
+  size: 0, // filled at runtime (atlas_size^2 * pools * 4)
+  usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC,
+};
+
+const dummy_output_image_config = {
+  name: "shadow_dummy_output",
+  format: rgba8unorm_format,
+  width: 0, // filled at runtime
+  height: 0, // filled at runtime
+  usage: GPUTextureUsage.RENDER_ATTACHMENT,
+  load_op: load_op_load,
+};
+
+const light_draw_uniform_configs = [];
 // ============ Shader Setup ============
 
 const feedback_shader_setup = {
   pipeline_shaders: {
     compute: { path: "shadow/as_vsm/feedback.wgsl", defines: { SHADOWS_ENABLED: true } },
-  },
-};
-
-const gather_shader_setup = {
-  pipeline_shaders: {
-    compute: { path: "shadow/as_vsm/gather.wgsl", defines: { SHADOWS_ENABLED: true } },
   },
 };
 
@@ -113,9 +111,16 @@ const page_table_update_shader_setup = {
   },
 };
 
+const tile_clear_shader_setup = {
+  pipeline_shaders: {
+    compute: { path: "shadow/as_vsm/tile_clear.wgsl", defines: { SHADOWS_ENABLED: true } },
+  },
+};
+
 const render_shader_setup = {
   pipeline_shaders: {
     vertex: { path: "shadow/as_vsm/tile_render.vert.wgsl", defines: { SHADOWS_ENABLED: true } },
+    fragment: { path: "shadow/as_vsm/tile_render.frag.wgsl", defines: { SHADOWS_ENABLED: true } },
   },
 };
 
@@ -140,68 +145,7 @@ const debug_tile_overlay_shader_setup = {
   },
 };
 
-const MAX_TILE_REQUESTS_PER_VIEW = 64;
 const MAX_NUM_TEXTURE_POOLS = 1;
-
-// =============================================================
-//  Page-table entry (32-bit) bit-field layout
-//  [0 – 6]   : physical page X index   (7 bits)  (0-127)
-//  [7 – 13]  : physical page Y index   (7 bits)  (0-127)
-//  [14 – 16] : atlas / memory-pool id  (3 bits)  (0-7)
-//  [17]      : residency flag          (1 bit)   (1 = resident)
-//  [18]      : dirty flag              (1 bit)   (1 = needs update)
-//  [19 – 26] : frame age / marker      (8 bits)  (wraps every 256 frames)
-//  [27 – 31] : reserved / unused
-// =============================================================
-
-// Masks & shifts (snake_case as per project style guide)
-const phys_x_shift = 0;
-const phys_x_mask  = 0x7f << phys_x_shift; // 7 bits
-const phys_y_shift = 7;
-const phys_y_mask  = 0x7f << phys_y_shift;
-const pool_id_shift = 14;
-const pool_id_mask  = 0x7 << pool_id_shift; // 3 bits
-const residency_shift = 17;
-const residency_mask  = 0x1 << residency_shift;
-const dirty_shift = 18;
-const dirty_mask  = 0x1 << dirty_shift;
-const frame_age_shift = 19;
-const frame_age_mask  = 0xff << frame_age_shift; // 8 bits
-
-export function encode_page_table_entry({
-  physical_x = 0,
-  physical_y = 0,
-  pool_id = 0,
-  resident = 0,
-  dirty = 1,
-  frame_age = 0,
-} = {}) {
-  // Clamp inputs to valid ranges
-  physical_x &= 0x7f;
-  physical_y &= 0x7f;
-  pool_id    &= 0x7;
-  frame_age  &= 0xff;
-
-  return (
-    (physical_x << phys_x_shift) |
-    (physical_y << phys_y_shift) |
-    (pool_id    << pool_id_shift) |
-    (resident   ? residency_mask : 0) |
-    (dirty      ? dirty_mask     : 0) |
-    (frame_age  << frame_age_shift)
-  ) >>> 0; // ensure unsigned 32-bit
-}
-
-export function decode_page_table_entry(entry) {
-  return {
-    physical_x : (entry & phys_x_mask)  >>> phys_x_shift,
-    physical_y : (entry & phys_y_mask)  >>> phys_y_shift,
-    pool_id    : (entry & pool_id_mask) >>> pool_id_shift,
-    resident   : (entry & residency_mask) !== 0,
-    dirty      : (entry & dirty_mask)     !== 0,
-    frame_age  : (entry & frame_age_mask) >>> frame_age_shift,
-  };
-}
 
 /**
  * Adaptive Sparse Virtual Shadow Maps (AS-VSM)
@@ -221,11 +165,12 @@ export class AdaptiveSparseVirtualShadowMaps {
       this.virtual_tiles_per_row * this.virtual_tiles_per_row * this.max_lods;
     this.physical_tiles_per_row = Math.ceil(this.atlas_size / this.tile_size);
     this.total_physical_tiles =
-      this.physical_tiles_per_row * this.physical_tiles_per_row * this.max_lods;
+      this.physical_tiles_per_row * this.physical_tiles_per_row * MAX_NUM_TEXTURE_POOLS;
     this.cached_light_count = null;
+    this.active_view_indices = [];
+    this.active_shadow_indices = [];
 
-    const num_elements = 1 + MAX_TILE_REQUESTS_PER_VIEW * 3;
-    this.cpu_requested_tiles = new Uint32Array(num_elements);
+    this.lights_query = EntityManager.create_query([LightFragment]);
 
     AdaptiveSparseVirtualShadowMaps.all_instances.push(this);
   }
@@ -235,8 +180,6 @@ export class AdaptiveSparseVirtualShadowMaps {
     {
       depth_texture,
       position_texture,
-      lights_buffer,
-      dense_shadow_casting_lights_buffer,
       light_count_buffer,
       transforms_buffer,
       object_instances,
@@ -255,29 +198,59 @@ export class AdaptiveSparseVirtualShadowMaps {
 
     const adjusted_light_count = Math.max(this.cached_light_count, 1);
 
+    // ────────────────────────────────────────────────────────────────
+    // Build per-light view & shadow index buffers (active, shadow-casting only)
+    // ────────────────────────────────────────────────────────────────
+    if (force_recreate) {
+      this.active_view_indices.length = 0;
+      this.active_shadow_indices.length = 0;
+
+      this.lights_query.for_each_chunk((chunk, flags, counts, archetype) => {
+        const lights = chunk.get_fragment_view(LightFragment);
+        for (let i = 0; i < DEFAULT_CHUNK_CAPACITY; ++i) {
+          const flag = flags[i];
+          if (
+            (flag & EntityFlags.ALIVE) === 0 ||
+            lights.shadow_casting[i] === 0 ||
+            lights.active[i] === 0
+          ) {
+            continue;
+          }
+
+          const v_idx = lights.view_index[i];
+          const s_idx = lights.shadow_index[i];
+          if (v_idx >= 0 && s_idx >= 0) {
+            this.active_view_indices.push(v_idx);
+            this.active_shadow_indices.push(s_idx);
+          }
+        }
+      });
+
+      light_view_buf_config.raw_data = new Uint32Array(this.active_view_indices);
+      light_shadow_idx_buf_config.raw_data = new Uint32Array(this.active_shadow_indices);
+    }
+
+    // Create / resize per-light view buffer
+    light_view_buf_config.size = adjusted_light_count * Uint32Array.BYTES_PER_ELEMENT;
+    light_view_buf_config.force = force_recreate;
+    this.light_view_buf = render_graph.create_buffer(light_view_buf_config);
+
+    // Create / resize per-light shadow index buffer
+    light_shadow_idx_buf_config.size = adjusted_light_count * Uint32Array.BYTES_PER_ELEMENT;
+    light_shadow_idx_buf_config.force = force_recreate;
+    this.light_shadow_idx_buf = render_graph.create_buffer(light_shadow_idx_buf_config);
+
     settings_buf_config.force = force_recreate;
     this.settings_buf = render_graph.create_buffer(settings_buf_config);
 
-    // Create Bitmask buffer
-    const bitmask_u32_count = Math.ceil(this.total_virtual_tiles) >> 5; // total_tiles / 32
-    bitmask_buf_config.size = bitmask_u32_count * 4;
+    // Allocate one bitmask per light so tiles are tracked independently per-light
+    const bitmask_u32_stride = Math.ceil(this.total_virtual_tiles / 32); // words per light (includes all LODs)
+    const total_bitmask_u32 = bitmask_u32_stride * adjusted_light_count;
+
+    bitmask_buf_config.size = total_bitmask_u32 * 4;
     bitmask_buf_config.force = force_recreate;
     this.bitmask_buf = render_graph.create_buffer(bitmask_buf_config);
-    this.bitmask_u32_count = bitmask_u32_count;
-
-    // Create Requested Tiles buffer
-    this.max_tile_requests = MAX_TILE_REQUESTS_PER_VIEW;
-    requested_tiles_buf_config.size = adjusted_light_count * this.max_tile_requests * 3 * 4 + 4; // 64 tile requests per view (3 u32 per request);
-    requested_tiles_buf_config.force = force_recreate;
-    this.requested_tiles_buf = render_graph.create_buffer(requested_tiles_buf_config);
-
-    // Create Physical Shadow Atlas texture array
-    atlas_config.width = this.atlas_size;
-    atlas_config.height = this.atlas_size;
-    atlas_config.depth = MAX_NUM_TEXTURE_POOLS;
-    atlas_config.force = force_recreate;
-    atlas_config.b_one_view_per_layer = true;
-    this.shadow_atlas = render_graph.create_image(atlas_config);
+    this.bitmask_u32_stride = bitmask_u32_stride;
 
     // Create Page Table storage texture
     page_table_config.width = this.virtual_tiles_per_row;
@@ -286,42 +259,44 @@ export class AdaptiveSparseVirtualShadowMaps {
     page_table_config.force = force_recreate;
     this.page_table = render_graph.create_image(page_table_config);
 
-    // Create Physical to Virtual map buffer
-    const physical_tiles_per_view =
-      this.physical_tiles_per_row * this.physical_tiles_per_row;
-    // Store per-view physical tile count
-    this.total_physical_tiles = physical_tiles_per_view;
-    physical_to_virtual_map_buf_config.size = adjusted_light_count * physical_tiles_per_view * 4;
-    physical_to_virtual_map_buf_config.force = force_recreate;
-    this.physical_to_virtual_map_buf = render_graph.create_buffer(
-      physical_to_virtual_map_buf_config
-    );
+    // Create / update the dummy render-target image
+    dummy_output_image_config.width = this.tile_size;
+    dummy_output_image_config.height = this.tile_size;
+    dummy_output_image_config.force = force_recreate;
+    this.dummy_output_image = render_graph.create_image(dummy_output_image_config);
+
+    // Create storage-buffer version of the atlas for race-free depth updates
+    const total_pixels = this.atlas_size * this.atlas_size * MAX_NUM_TEXTURE_POOLS;
+    shadow_atlas_buf_config.size = total_pixels * Uint32Array.BYTES_PER_ELEMENT;
+    shadow_atlas_buf_config.force = force_recreate;
+    if (force_recreate) {
+      const shadow_atlas_raw = new Uint32Array(total_pixels);
+      // Initialise with max uint so atomicMin writes first real depth.
+      shadow_atlas_raw.fill(0xffffffff);
+      shadow_atlas_buf_config.raw_data = shadow_atlas_raw;
+    }
+    this.shadow_atlas_buf = render_graph.create_buffer(shadow_atlas_buf_config);
 
     // Create LRU ring buffer
     if (force_recreate) {
-      const lru_per_light = physical_tiles_per_view;
-      const total_lru_entries = adjusted_light_count * (lru_per_light + 1);
-      const lru_raw = new Uint32Array(total_lru_entries);
-      for (let light_idx = 0; light_idx < adjusted_light_count; light_idx++) {
-        const offset = light_idx * (lru_per_light + 1);
-        lru_raw[offset] = 0;
-        for (let i = 1; i <= lru_per_light; i++) {
-          lru_raw[offset + i] = i - 1;
-        }
+      const total_lru_entries =
+        this.physical_tiles_per_row * this.physical_tiles_per_row * MAX_NUM_TEXTURE_POOLS;
+      // Slot 0 is used as the head pointer for the atomic ring-buffer.
+      const lru_raw = new Uint32Array(total_lru_entries + 1);
+      lru_raw[0] = 0; // head pointer starts at 0
+      for (let i = 0; i < total_lru_entries; i++) {
+        lru_raw[i + 1] = i; // physical page id
       }
       lru_buf_config.raw_data = lru_raw;
     }
-
     lru_buf_config.force = force_recreate;
     this.lru_buf = render_graph.create_buffer(lru_buf_config);
     // Can discard lru_raw now that buffer is created
     lru_buf_config.raw_data = null;
 
-    // Store references for debug passes
-    this.position_texture = position_texture;
-    this.lights_buffer = lights_buffer;
-
+    // ────────────────────────────────────────────────────────────────
     // Stage 0: Clear buffers
+    // ────────────────────────────────────────────────────────────────
     render_graph.add_pass(
       "as_vsm_init",
       RenderPassFlags.GraphLocal,
@@ -337,34 +312,31 @@ export class AdaptiveSparseVirtualShadowMaps {
             this.atlas_size, // atlas_size
             this.physical_tiles_per_row, // physical_tiles_per_row
             this.max_lods, // max_lod
-            this.max_tile_requests, // max_tile_requests
+            MAX_NUM_TEXTURE_POOLS, // max_physical_pools
             this.clip0_extent, // clip0_extent
           ])
         );
 
-        // Clear bitmask buffer
+        // Clear bitmask buffer – zero all words for every light
         const bitmask = graph.get_physical_buffer(this.bitmask_buf);
-        bitmask.write_raw(new Uint32Array(this.bitmask_u32_count));
-
-        // Clear requested tiles buffer
-        const requested_tiles = graph.get_physical_buffer(this.requested_tiles_buf);
-        requested_tiles.write_raw(new Uint32Array([0]));
+        const total_words = this.bitmask_u32_stride * adjusted_light_count;
+        bitmask.write_raw(new Uint32Array(total_words));
       }
     );
 
+    // ────────────────────────────────────────────────────────────────
     // Stage A: Screen-space Feedback
+    // ────────────────────────────────────────────────────────────────
     render_graph.add_pass(
       "as_vsm_feedback",
       RenderPassFlags.Compute,
       {
         inputs: [
           depth_texture,
-          this.shadow_atlas,
-          this.page_table,
           this.settings_buf,
           this.bitmask_buf,
-          lights_buffer,
-          dense_shadow_casting_lights_buffer,
+          this.light_view_buf,
+          this.light_shadow_idx_buf,
           light_count_buffer,
         ],
         outputs: [this.bitmask_buf],
@@ -380,85 +352,31 @@ export class AdaptiveSparseVirtualShadowMaps {
       }
     );
 
-    // Stage B: New Tile Gather
-    render_graph.add_pass(
-      "as_vsm_gather",
-      RenderPassFlags.Compute,
-      {
-        inputs: [
-          this.bitmask_buf,
-          this.shadow_atlas,
-          this.page_table,
-          this.requested_tiles_buf,
-          lights_buffer,
-          dense_shadow_casting_lights_buffer,
-          light_count_buffer,
-          this.settings_buf,
-        ],
-        outputs: [this.requested_tiles_buf],
-        shader_setup: gather_shader_setup,
-      },
-      (graph, frame_data, encoder) => {
-        const pass = graph.get_physical_pass(frame_data.current_pass);
-        const bitmask_groups = Math.ceil(this.bitmask_u32_count / 8);
-        const light_groups = Math.ceil(adjusted_light_count / 4);
-        pass.dispatch(1, bitmask_groups, light_groups);
-      }
-    );
-
-    // Stage C: Update Page Table
-    render_graph.add_pass(
-      "as_vsm_update_page_table",
-      RenderPassFlags.Compute,
-      {
-        inputs: [
-          this.requested_tiles_buf,
-          this.shadow_atlas,
-          this.lru_buf,
-          this.page_table,
-          dense_shadow_casting_lights_buffer,
-          this.settings_buf,
-          this.physical_to_virtual_map_buf,
-        ],
-        outputs: [this.page_table, this.physical_to_virtual_map_buf],
-        shader_setup: page_table_update_shader_setup,
-      },
-      (graph, frame_data, encoder) => {
-        const pass = graph.get_physical_pass(frame_data.current_pass);
-        const requested_tiles_groups = Math.ceil(MAX_TILE_REQUESTS_PER_VIEW / 64);
-        pass.dispatch(requested_tiles_groups, 1, 1);
-      }
-    );
-
-    // Stage D: Process tile requests using data read back from the GPU in the *previous* frame.
-    const active_tile_count = Math.min(this.cpu_requested_tiles[0], MAX_TILE_REQUESTS_PER_VIEW);
-
-    // Allocate / reuse uniform buffers for each active tile request.
-    const tile_request_uniforms = this._setup_tile_request_uniforms(
-      render_graph,
-      active_tile_count
-    );
-
-    for (let i = 0; i < active_tile_count; i++) {
-      const request_index = 1 + i * 3;
-      const view_index = this.cpu_requested_tiles[request_index + 2];
+    // ────────────────────────────────────────────────────────────────
+    // Stage B: Raster shadow casters for each requested tile
+    // ────────────────────────────────────────────────────────────────
+    const light_uniforms = this._setup_light_draw_uniforms(render_graph, adjusted_light_count);
+    for (let i = 0; i < this.active_view_indices.length; i++) {
+      const view_index = this.active_view_indices[i];
       const visible_object_instances = view_visibility_buffers[view_index];
 
       render_graph.add_pass(
-        `as_vsm_render_tile_${i}`,
+        `as_vsm_render_light_${i}`,
         RenderPassFlags.Graphics,
         {
           inputs: [
             transforms_buffer,
             object_instances,
             visible_object_instances,
-            this.requested_tiles_buf,
-            dense_shadow_casting_lights_buffer,
             this.settings_buf,
             this.page_table,
-            tile_request_uniforms[i],
+            light_uniforms[i],
+            this.bitmask_buf,
+            this.light_view_buf,
+            this.light_shadow_idx_buf,
+            this.shadow_atlas_buf,
           ],
-          outputs: [this.shadow_atlas],
+          outputs: [this.shadow_atlas_buf, this.dummy_output_image],
           shader_setup: render_shader_setup,
         },
         (graph, frame_data, encoder) => {
@@ -472,52 +390,82 @@ export class AdaptiveSparseVirtualShadowMaps {
       );
     }
 
+    // ────────────────────────────────────────────────────────────────
+    // Stage C: Page-table update (allocate physical pages for requested tiles)
+    //   Must run BEFORE raster passes so they render into up-to-date atlas pages.
+    // ────────────────────────────────────────────────────────────────
+    render_graph.add_pass(
+      "as_vsm_update_page_table",
+      RenderPassFlags.Compute,
+      {
+        inputs: [
+          this.lru_buf,
+          this.page_table,
+          this.light_shadow_idx_buf,
+          this.settings_buf,
+          this.bitmask_buf,
+          light_count_buffer,
+        ],
+        outputs: [this.page_table],
+        shader_setup: page_table_update_shader_setup,
+      },
+      (graph, frame_data, encoder) => {
+        const pass = graph.get_physical_pass(frame_data.current_pass);
+        const bitmask_groups = Math.ceil(this.bitmask_u32_stride / 8);
+        const light_groups   = Math.ceil(adjusted_light_count / 4);
+        pass.dispatch(1, bitmask_groups, light_groups);
+      }
+    );
+
+    // ────────────────────────────────────────────────────────────────
+    // Stage C.5: Clear newly allocated physical tiles
+    // ────────────────────────────────────────────────────────────────
+    render_graph.add_pass(
+      "as_vsm_clear_dirty_tiles",
+      RenderPassFlags.Compute,
+      {
+        inputs: [this.page_table, this.shadow_atlas_buf, this.settings_buf],
+        outputs: [this.page_table, this.shadow_atlas_buf],
+        shader_setup: tile_clear_shader_setup,
+      },
+      (graph, frame_data, encoder) => {
+        const pass = graph.get_physical_pass(frame_data.current_pass);
+        const pt_image = graph.get_physical_image(this.page_table);
+        // Dispatch one workgroup per virtual tile in the page table.
+        pass.dispatch(pt_image.config.width, pt_image.config.height, pt_image.config.depth);
+      }
+    );
+
     // Debug AS-VSM views
     if (debug_view !== DebugDrawType.None) {
-      this.add_debug_passes(render_graph, force_recreate, debug_view);
+      this.add_debug_passes(render_graph, force_recreate, debug_view, position_texture);
     }
-
-    // Schedule an asynchronous readback so the next frame has up-to-date request data.
-    BufferSync.request_readback(this);
   }
 
-  async readback_buffers() {
-    const requested_tiles_buffer = ResourceCache.get().fetch(
-      CacheTypes.BUFFER,
-      Name.from(requested_tiles_buf_config.name)
-    );
-    await requested_tiles_buffer.read(
-      this.cpu_requested_tiles,
-      this.cpu_requested_tiles.byteLength,
-      0,
-      0,
-      Uint32Array
-    );
-  }
+  #light_draw_uniforms = [];
+  _setup_light_draw_uniforms(render_graph, shadows_count) {
+    this.#light_draw_uniforms.length = 0;
 
-  #tile_request_uniforms = [];
-  _setup_tile_request_uniforms(render_graph, active_tile_count) {
-    this.#tile_request_uniforms.length = 0;
-
-    if (tile_request_uniform_configs.length < active_tile_count) {
-      tile_request_uniform_configs.length = active_tile_count;
-      for (let i = 0; i < active_tile_count; i++) {
-        tile_request_uniform_configs[i] = {
-          name: `tile_request_index_uniform_${i}`,
-          raw_data: new Uint32Array([i]),
-          usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-        };
-      }
-    }
-    for (let i = 0; i < active_tile_count; i++) {
-      const buffer = render_graph.create_buffer(tile_request_uniform_configs[i]);
-      this.#tile_request_uniforms.push(buffer);
+    // Ensure configs array is large enough and update raw_data per frame
+    if (light_draw_uniform_configs.length < shadows_count) {
+      light_draw_uniform_configs.length = shadows_count;
     }
 
-    return this.#tile_request_uniforms;
+    for (let i = 0; i < shadows_count; i++) {
+      light_draw_uniform_configs[i] = {
+        name: `light_draw_uniform_${i}`,
+        raw_data: new Uint32Array([i]),
+        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+      };
+
+      const buffer = render_graph.create_buffer(light_draw_uniform_configs[i]);
+      this.#light_draw_uniforms.push(buffer);
+    }
+
+    return this.#light_draw_uniforms;
   }
 
-  add_debug_passes(render_graph, force_recreate, debug_view) {
+  add_debug_passes(render_graph, force_recreate, debug_view, position_texture) {
     const renderer = Renderer.get();
     const image_extent = renderer.get_canvas_resolution();
     // Debug AS-VSM views
@@ -530,7 +478,7 @@ export class AdaptiveSparseVirtualShadowMaps {
         "debug_shadow_atlas_pass",
         RenderPassFlags.Graphics,
         {
-          inputs: [this.shadow_atlas],
+          inputs: [this.shadow_atlas_buf, this.settings_buf],
           outputs: [this.debug_shadow_atlas_image],
           shader_setup: debug_shadow_atlas_shader_setup,
         },
@@ -556,12 +504,7 @@ export class AdaptiveSparseVirtualShadowMaps {
         (graph, frame_data, encoder) => {
           const pass = graph.get_physical_pass(frame_data.current_pass);
           // make sure we cover the full image before drawing the quad
-          pass.pass.setViewport(
-            0, 0,
-            page_table_config.width,
-            page_table_config.height,
-            0, 1
-          );
+          pass.pass.setViewport(0, 0, page_table_config.width, page_table_config.height, 0, 1);
           MeshTaskQueue.draw_quad(pass);
         }
       );
@@ -576,12 +519,7 @@ export class AdaptiveSparseVirtualShadowMaps {
         "debug_tile_overlay_pass",
         RenderPassFlags.Graphics,
         {
-          inputs: [
-            this.page_table,
-            this.position_texture,
-            this.settings_buf,
-            this.lights_buffer,
-          ],
+          inputs: [this.page_table, position_texture, this.settings_buf, this.light_view_buf],
           outputs: [this.debug_tile_overlay_image],
           shader_setup: debug_tile_overlay_shader_setup,
         },

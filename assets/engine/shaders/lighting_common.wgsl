@@ -18,6 +18,7 @@ struct Light {
     shadow_casting: f32,
     activated: f32,
     view_index: f32,
+    shadow_index: f32,
 };
 
 struct GIParams {
