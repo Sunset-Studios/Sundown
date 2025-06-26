@@ -24,11 +24,15 @@ import { Mesh } from "../engine/src/renderer/mesh.js";
 import { SharedEnvironmentMapData, SharedViewBuffer } from "../engine/src/core/shared_data.js";
 import { spawn_mesh_entity, delete_entity } from "../engine/src/core/ecs/entity_utils.js";
 import { FontCache } from "../engine/src/ui/text/font_cache.js";
+import {
+  compute_directional_light_rotation,
+  compute_directional_light_position_for_clip,
+  build_directional_light_projection_matrix,
+} from "../engine/src/renderer/shadows/shadow_utils.js";
 import { Name } from "../engine/src/utility/names.js";
 import { profile_scope } from "../engine/src/utility/performance.js";
 import { log } from "../engine/src/utility/logging.js";
-import { radians } from "../engine/src/utility/math.js";
-import { vec3, vec4, quat } from "gl-matrix";
+import { vec3, vec4, quat, mat4 } from "gl-matrix";
 
 import * as UI from "../engine/src/ui/2d/immediate.js";
 
@@ -1571,7 +1575,7 @@ export class VoxelTerrainScene extends Scene {
 
           const pos = [
             (xi - grid_width / 2) * block_size * 2.0,
-            (yi) * block_size * 2.0,
+            yi * block_size * 2.0,
             (zi - grid_depth / 2) * block_size * 2.0,
           ];
           const view = EntityManager.get_fragment(terrain_entity, TransformFragment, block_index);
@@ -1854,6 +1858,24 @@ export class GITestScene extends Scene {
     view_data.view_position = [0, 13, 40];
     view_data.view_rotation = [0.0005166, 0.9986818, -0.027326133, 0.0188794];
 
+    // ------------------------------------------------------------
+    // Directional light view test
+    // ------------------------------------------------------------
+    // view_data.view_position = [-25, 45, 15];
+    // view_data.custom_projection_enabled = 1;
+
+    // const rotation = compute_directional_light_rotation(view_data.view_position);
+
+    // view_data.projection_matrix = build_directional_light_projection_matrix(
+    //   view_data.far,
+    //   view_data.aspect_ratio,
+    //   view_data.far * 0.02
+    // );
+
+    // view_data.view_rotation = rotation;
+    // view_data.view_position = view_data.view_position;
+    // ------------------------------------------------------------
+
     // directional light
     const light_entity = EntityManager.create_entity([LightFragment]);
     this.entities.push(light_entity);
@@ -1985,7 +2007,7 @@ export class GITestScene extends Scene {
         [0, 0, 0, 1],
         [room_size, wall_thickness, room_size],
         cube_mesh,
-        wall_material_id 
+        wall_material_id
       );
       this.entities.push(floor_second);
 
@@ -2059,7 +2081,11 @@ export class GITestScene extends Scene {
       left_wall_material_third.set_albedo([1, 0.5, 0, 1]);
       left_wall_material_third.set_emission(ambient_emissive);
 
-      const right_wall_material_third = StandardMaterial.create("testgym_right_material_third", {}, { family: MaterialFamilyType.Transparent });
+      const right_wall_material_third = StandardMaterial.create(
+        "testgym_right_material_third",
+        {},
+        { family: MaterialFamilyType.Transparent }
+      );
       const right_wall_material_third_id = right_wall_material_third.material_id;
       right_wall_material_third.set_albedo([0.5, 0, 0.5, 0.3]);
       right_wall_material_third.set_emission(ambient_emissive);
@@ -2196,7 +2222,7 @@ export class ShadowTestScene extends Scene {
   init(parent_context) {
     super.init(parent_context);
 
-    const ambient_emissive = 0.2; 
+    const ambient_emissive = 0.2;
 
     // Add arcball camera control
     const freeform_arcball_control_processor = this.add_layer(FreeformArcballControlProcessor);
@@ -2276,8 +2302,8 @@ export class ShadowTestScene extends Scene {
     this.entities.push(ground_entity);
 
     // Procedurally generate a dense grid of buildings
-    const grid_size = 80;           // 80 × 80 buildings
-    const building_spacing = 20.0;  // distance between building centres
+    const grid_size = 80; // 80 × 80 buildings
+    const building_spacing = 20.0; // distance between building centres
     const building_base_size = 6.0; // footprint of each building
 
     const building_entity = spawn_mesh_entity(
@@ -2305,11 +2331,19 @@ export class ShadowTestScene extends Scene {
         ];
         const scale = [building_base_size, height, building_base_size];
 
-        const transform_fragment = EntityManager.get_fragment(building_entity, TransformFragment, instance_index);
+        const transform_fragment = EntityManager.get_fragment(
+          building_entity,
+          TransformFragment,
+          instance_index
+        );
         transform_fragment.position = position;
         transform_fragment.scale = scale;
 
-        const visibility_fragment = EntityManager.get_fragment(building_entity, VisibilityFragment, instance_index);
+        const visibility_fragment = EntityManager.get_fragment(
+          building_entity,
+          VisibilityFragment,
+          instance_index
+        );
         visibility_fragment.occluder = 0;
 
         instance_index++;
@@ -2321,11 +2355,11 @@ export class ShadowTestScene extends Scene {
     // --- Neon Signs ---------------------------------------------------------
     // Create several vibrant emissive materials for different neon colours.
     const neon_colours = [
-      { name: "neon_cyan",    color: [0.0, 1.0, 1.0, 1.0] },
+      { name: "neon_cyan", color: [0.0, 1.0, 1.0, 1.0] },
       { name: "neon_magenta", color: [1.0, 0.0, 1.0, 1.0] },
-      { name: "neon_yellow",  color: [1.0, 1.0, 0.0, 1.0] },
-      { name: "neon_orange",  color: [1.0, 0.5, 0.0, 1.0] },
-      { name: "neon_green",   color: [0.0, 1.0, 0.0, 1.0] },
+      { name: "neon_yellow", color: [1.0, 1.0, 0.0, 1.0] },
+      { name: "neon_orange", color: [1.0, 0.5, 0.0, 1.0] },
+      { name: "neon_green", color: [0.0, 1.0, 0.0, 1.0] },
     ];
 
     const neon_material_ids = neon_colours.map((c) => {
@@ -2454,11 +2488,11 @@ export class ShadowTestScene extends Scene {
 
       // Pick a random building instance.
       const b_index = Math.floor(Math.random() * instance_index);
-      const b_tf    = EntityManager.get_fragment(building_entity, TransformFragment, b_index);
+      const b_tf = EntityManager.get_fragment(building_entity, TransformFragment, b_index);
       if (!b_tf) continue;
 
       const bp = b_tf.position; // building position (centre)
-      const bs = b_tf.scale;    // building half-extents in each axis
+      const bs = b_tf.scale; // building half-extents in each axis
 
       // Decide whether this light goes on the rooftop or at street level.
       const rooftop = Math.random() < 0.4; // 40 % roof, 60 % façade
@@ -2498,10 +2532,10 @@ export class ShadowTestScene extends Scene {
         ly = height;
       }
 
-      p_view.position  = [lx, ly, lz];
-      p_view.radius    = 30.0 + Math.random() * 40.0; // 30–70 units reach
-      p_view.intensity = 3.0 + Math.random() * 2.0;  // 3–5 brightness
-      p_view.color     = point_light_colours[Math.floor(Math.random() * point_light_colours.length)];
+      p_view.position = [lx, ly, lz];
+      p_view.radius = 30.0 + Math.random() * 40.0; // 30–70 units reach
+      p_view.intensity = 3.0 + Math.random() * 2.0; // 3–5 brightness
+      p_view.color = point_light_colours[Math.floor(Math.random() * point_light_colours.length)];
     }
     // ------------------------------------------------------------------------
   }

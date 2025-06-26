@@ -320,20 +320,6 @@ fn linearize_depth(d: f32, near_plane: f32, far_plane: f32) -> f32 {
     return select(persp_z, ortho_z, is_ortho);
 }
 
-// Packs clip-space depth (range [-1,1]) into an unsigned 32-bit integer such that
-// smaller integers correspond to *nearer* fragments.  This makes it compatible
-// with atomicMin for closest-depth selection.
-fn pack_depth(clip_depth: f32) -> u32 {
-    // Map [0,1] → [0,4294967295]
-    return u32(clip_depth * 4294967295.0);
-}
-
-// Converts a packed depth integer back to clip-space depth in [0,1].
-// The caller can further convert to linear eye-space depth via linearize_depth.
-fn unpack_depth(packed_depth: u32) -> f32 {
-    return uint_to_normalized_float(packed_depth);
-}
-
 fn rotate_hue(color: vec4f, hue_rotation: f32) -> vec4f {
     // Convert RGB to HSV
     let rgb = color.rgb;

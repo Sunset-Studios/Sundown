@@ -4,7 +4,7 @@
 #include "lighting_common.wgsl"
 #include "shadow/shadows_common.wgsl"
 
-@group(1) @binding(0) var camera_depth: texture_2d<f32>;
+@group(1) @binding(0) var position_texture: texture_2d<f32>;
 @group(1) @binding(1) var<uniform> vsm_settings: ASVSMSettings;
 @group(1) @binding(2) var<storage, read_write> bitmask: array<atomic<u32>>;
 @group(1) @binding(3) var<storage, read> light_view_buffer: array<u32>;
@@ -17,7 +17,7 @@ fn cs(@builtin(global_invocation_id) id: vec3<u32>) {
   // ------------------------------------------------------------------
   // Screen bounds check
   // ------------------------------------------------------------------
-  let dims = textureDimensions(camera_depth);
+  let dims = textureDimensions(position_texture);
   if (id.x >= u32(dims.x) || id.y >= u32(dims.y)) {
     return;
   }
@@ -30,65 +30,34 @@ fn cs(@builtin(global_invocation_id) id: vec3<u32>) {
   // ------------------------------------------------------------------
   // Per-light processing
   // ------------------------------------------------------------------
-  let light_index       = id.z;
-
-  let light_view_index  = light_view_buffer[light_index];
+  let light_view_index  = light_view_buffer[id.z];
   if (light_view_index == 0xffffffffu) {
     return;
   }
 
-  let shadow_index = light_shadow_idx_buffer[light_index];
+  let shadow_index = light_shadow_idx_buffer[id.z];
   if (shadow_index == 0xffffffffu) {
     return;
   }
 
-  // ------------------------------------------------------------------
-  // Depth reconstruction → world position
-  // ------------------------------------------------------------------
-  let depth_sample = textureLoad(camera_depth, vec2<i32>(id.xy), 0).r;
-  if (depth_sample == 1.0) {
-    return; // Far plane, skip
-  }
+  let uv = vec2<f32>(id.xy) / vec2<f32>(dims.xy);
 
-  // Pixel → NDC
-  let ndc_xy = ((vec2<f32>(id.xy) + 0.5) / vec2<f32>(dims.xy)) * 2.0 - 1.0;
-  let clip_pos = vec4<f32>(ndc_xy, depth_sample, 1.0);
+  let texture_pos = textureSampleLevel(position_texture, global_sampler, uv, 0.0).xyz;
+  let world_pos = vec4<f32>(texture_pos, 1.0);
 
-  let inv_vp   = view_buffer[frame_info.view_index].inverse_view_projection_matrix;
-  var world_pos = inv_vp * clip_pos;
-  world_pos /= world_pos.w;
+  let clipmap0_vp = view_buffer[light_view_index].view_projection_matrix;
+  let camera_vp   = view_buffer[frame_info.view_index].view_projection_matrix;
 
-  // ------------------------------------------------------------------
-  // Use VSM helpers to choose clip-map and translate coordinates
-  // ------------------------------------------------------------------
-  let clipmap_index = clamp(
-    vsm_calculate_clipmap_index_from_world_pos(
-      world_pos,
-      view_buffer[frame_info.view_index].view_projection_matrix,
-    ),
-    0u,
-    u32(vsm_settings.max_lods) - 1u,
-  );
-
-  // Clip-space position for this clip-map (already accounting for camera translation)
-  let sample_clip = vsm_calculate_sample_clip_value_from_world_pos(
+  let vtile_info = vsm_world_to_virtual_tile(
     world_pos,
-    clipmap_index,
-    view_buffer[light_view_index].view_projection_matrix,
+    camera_vp,
+    clipmap0_vp,
+    vsm_settings
   );
-
-  // Convert to virtual-texture pixel coordinates
-  let uv              = sample_clip.xy * 0.5 + 0.5;
-  let wrapped_uv      = fract(uv);
-  let virtual_pixel   = wrapped_uv * vsm_settings.virtual_dim;           // pixel units in virtual texture
-
-  // Derive virtual-tile coordinates using signed integers to handle negatives correctly.
-  let tile_xy_f     = (virtual_pixel + vec2<f32>(0.5)) / vsm_settings.tile_size;
-  let tile_coords     = vec2<u32>(floor(tile_xy_f));
 
   let word_and_mask = vsm_get_virtual_tile_word_and_mask(
-    tile_coords,
-    clipmap_index,
+    vtile_info.tile_coords,
+    vtile_info.clipmap_index,
     shadow_index,
     vsm_settings
   );

@@ -1,4 +1,5 @@
 import { EntityFlags } from "../../core/minimal.js";
+import { SharedViewBuffer } from "../../core/shared_data.js";
 import { EntityManager } from "../../core/ecs/entity.js";
 import { DEFAULT_CHUNK_CAPACITY } from "../../core/ecs/solar/types.js";
 import { LightFragment } from "../../core/ecs/fragments/light_fragment.js";
@@ -9,7 +10,9 @@ import {
   rgba8unorm_format,
   rgba16float_format,
   r32uint_format,
+  depth24plus_format,
   load_op_load,
+  load_op_clear,
 } from "../../utility/config_permutations.js";
 
 // ============ GPU Resource Configs ============
@@ -80,6 +83,14 @@ const debug_tile_overlay_config = {
   usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
 };
 
+const debug_tile_render_output_config = {
+  name: "debug_tile_render_output",
+  format: rgba16float_format,
+  width: 0,
+  height: 0,
+  usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+};
+
 // Shadow atlas depth data stored in a GPUBuffer instead of a texture to access atomics
 const shadow_atlas_buf_config = {
   name: "shadow_atlas_buf",
@@ -87,13 +98,20 @@ const shadow_atlas_buf_config = {
   usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC,
 };
 
-const dummy_output_image_config = {
-  name: "shadow_dummy_output",
-  format: rgba8unorm_format,
+const dummy_depth_image_config = {
+  name: "shadow_dummy_depth",
+  format: depth24plus_format,
   width: 0, // filled at runtime
   height: 0, // filled at runtime
-  usage: GPUTextureUsage.RENDER_ATTACHMENT,
-  load_op: load_op_load,
+  usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+};
+
+const dummy_color_image_config = {
+  name: "shadow_dummy_color",
+  format: rgba16float_format,
+  width: 0,
+  height: 0,
+  usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
 };
 
 const light_draw_uniform_configs = [];
@@ -145,6 +163,13 @@ const debug_tile_overlay_shader_setup = {
   },
 };
 
+const debug_tile_render_output_shader_setup = {
+  pipeline_shaders: {
+    vertex: { path: "fullscreen.wgsl" },
+    fragment: { path: "shadow/as_vsm/debug_tile_render.wgsl", defines: { SHADOWS_ENABLED: true } },
+  },
+};
+
 const MAX_NUM_TEXTURE_POOLS = 1;
 
 /**
@@ -172,13 +197,14 @@ export class AdaptiveSparseVirtualShadowMaps {
 
     this.lights_query = EntityManager.create_query([LightFragment]);
 
+    this.prev_grid = new Map();
+
     AdaptiveSparseVirtualShadowMaps.all_instances.push(this);
   }
 
   add_passes(
     render_graph,
     {
-      depth_texture,
       position_texture,
       light_count_buffer,
       transforms_buffer,
@@ -260,10 +286,15 @@ export class AdaptiveSparseVirtualShadowMaps {
     this.page_table = render_graph.create_image(page_table_config);
 
     // Create / update the dummy render-target image
-    dummy_output_image_config.width = this.tile_size;
-    dummy_output_image_config.height = this.tile_size;
-    dummy_output_image_config.force = force_recreate;
-    this.dummy_output_image = render_graph.create_image(dummy_output_image_config);
+    dummy_depth_image_config.width = this.atlas_size;
+    dummy_depth_image_config.height = this.atlas_size;
+    dummy_depth_image_config.force = force_recreate;
+    this.dummy_depth_image = render_graph.create_image(dummy_depth_image_config);
+
+    dummy_color_image_config.width = this.atlas_size;
+    dummy_color_image_config.height = this.atlas_size;
+    dummy_color_image_config.force = force_recreate;
+    this.dummy_color_image = render_graph.create_image(dummy_color_image_config);
 
     // Create storage-buffer version of the atlas for race-free depth updates
     const total_pixels = this.atlas_size * this.atlas_size * MAX_NUM_TEXTURE_POOLS;
@@ -295,7 +326,21 @@ export class AdaptiveSparseVirtualShadowMaps {
     lru_buf_config.raw_data = null;
 
     // ────────────────────────────────────────────────────────────────
-    // Stage 0: Clear buffers
+    // Clear Shadow Atlas Targets
+    // ────────────────────────────────────────────────────────────────
+    render_graph.add_pass(
+      "as_vsm_clear_shadow_atlas",
+      RenderPassFlags.Graphics,
+      {
+        outputs: [this.dummy_depth_image],
+        b_skip_pass_pipeline_setup: true,
+        b_skip_pass_bind_group_setup: true,
+      },
+      (graph, frame_data, encoder) => {}
+    );
+
+    // ────────────────────────────────────────────────────────────────
+    // VSM Setup Pass 
     // ────────────────────────────────────────────────────────────────
     render_graph.add_pass(
       "as_vsm_init",
@@ -321,18 +366,22 @@ export class AdaptiveSparseVirtualShadowMaps {
         const bitmask = graph.get_physical_buffer(this.bitmask_buf);
         const total_words = this.bitmask_u32_stride * adjusted_light_count;
         bitmask.write_raw(new Uint32Array(total_words));
+
+        // Set dummy depth image to load_op_load
+        const depth_dummy_image = graph.get_physical_image(this.dummy_depth_image);
+        depth_dummy_image.config.load_op = load_op_load;
       }
     );
 
     // ────────────────────────────────────────────────────────────────
-    // Stage A: Screen-space Feedback
+    // Screen-space Feedback
     // ────────────────────────────────────────────────────────────────
     render_graph.add_pass(
       "as_vsm_feedback",
       RenderPassFlags.Compute,
       {
         inputs: [
-          depth_texture,
+          position_texture,
           this.settings_buf,
           this.bitmask_buf,
           this.light_view_buf,
@@ -344,54 +393,16 @@ export class AdaptiveSparseVirtualShadowMaps {
       },
       (graph, frame_data, encoder) => {
         const pass = graph.get_physical_pass(frame_data.current_pass);
-        const depth_img = graph.get_physical_image(depth_texture);
-        const w = depth_img.config.width;
-        const h = depth_img.config.height;
+        const position_img = graph.get_physical_image(position_texture);
+        const w = position_img.config.width;
+        const h = position_img.config.height;
         const light_groups = Math.ceil(adjusted_light_count / 4);
         pass.dispatch(Math.ceil(w / 8), Math.ceil(h / 8), light_groups);
       }
     );
 
     // ────────────────────────────────────────────────────────────────
-    // Stage B: Raster shadow casters for each requested tile
-    // ────────────────────────────────────────────────────────────────
-    const light_uniforms = this._setup_light_draw_uniforms(render_graph, adjusted_light_count);
-    for (let i = 0; i < this.active_view_indices.length; i++) {
-      const view_index = this.active_view_indices[i];
-      const visible_object_instances = view_visibility_buffers[view_index];
-
-      render_graph.add_pass(
-        `as_vsm_render_light_${i}`,
-        RenderPassFlags.Graphics,
-        {
-          inputs: [
-            transforms_buffer,
-            object_instances,
-            visible_object_instances,
-            this.settings_buf,
-            this.page_table,
-            light_uniforms[i],
-            this.bitmask_buf,
-            this.light_view_buf,
-            this.light_shadow_idx_buf,
-            this.shadow_atlas_buf,
-          ],
-          outputs: [this.shadow_atlas_buf, this.dummy_output_image],
-          shader_setup: render_shader_setup,
-        },
-        (graph, frame_data, encoder) => {
-          const pass = graph.get_physical_pass(frame_data.current_pass);
-          MeshTaskQueue.submit_indexed_indirect_draws(
-            pass,
-            view_index,
-            true /* skip_material_bind */
-          );
-        }
-      );
-    }
-
-    // ────────────────────────────────────────────────────────────────
-    // Stage C: Page-table update (allocate physical pages for requested tiles)
+    // Page-table update (allocate physical pages for requested tiles)
     //   Must run BEFORE raster passes so they render into up-to-date atlas pages.
     // ────────────────────────────────────────────────────────────────
     render_graph.add_pass(
@@ -418,7 +429,7 @@ export class AdaptiveSparseVirtualShadowMaps {
     );
 
     // ────────────────────────────────────────────────────────────────
-    // Stage C.5: Clear newly allocated physical tiles
+    // Clear newly allocated physical tiles
     // ────────────────────────────────────────────────────────────────
     render_graph.add_pass(
       "as_vsm_clear_dirty_tiles",
@@ -436,10 +447,83 @@ export class AdaptiveSparseVirtualShadowMaps {
       }
     );
 
+    // ────────────────────────────────────────────────────────────────
+    // Raster shadow casters for each requested tile
+    // ────────────────────────────────────────────────────────────────
+    const light_uniforms = this._setup_light_draw_uniforms(render_graph, adjusted_light_count);
+    let snapped_this_frame = false;
+    for (let i = 0; i < this.active_view_indices.length; i++) {
+      const view_index = this.active_view_indices[i];
+      const shadow_idx = this.active_shadow_indices[i];
+
+      const light_view = SharedViewBuffer.get_view_data(view_index);
+      // ------------------- snap detection -------------------
+      const snap = this.clip0_extent / this.virtual_dim;   // texel size
+      const gx = Math.round(light_view.view_position[0] / snap);
+      const gz = Math.round(light_view.view_position[2] / snap);
+
+      const prev = this.prev_grid.get(shadow_idx);
+      if (!prev || prev.gx !== gx || prev.gz !== gz) {
+        this.prev_grid.set(shadow_idx, { gx, gz });
+        snapped_this_frame = true;               // some light moved ≥ 1 texel
+      }
+
+      // Use camera view visibility buffer to ensure objects are drawn
+      const visible_object_instances = view_visibility_buffers[view_index];
+
+      render_graph.add_pass(
+        `as_vsm_render_light_${i}`,
+        RenderPassFlags.Graphics,
+        {
+          inputs: [
+            transforms_buffer,
+            object_instances,
+            visible_object_instances,
+            this.settings_buf,
+            this.page_table,
+            light_uniforms[i],
+            this.bitmask_buf,
+            this.light_view_buf,
+            this.light_shadow_idx_buf,
+            this.shadow_atlas_buf,
+          ],
+          outputs: [this.shadow_atlas_buf, this.dummy_depth_image, this.dummy_color_image],
+          shader_setup: render_shader_setup,
+        },
+        (graph, frame_data, encoder) => {
+          const pass = graph.get_physical_pass(frame_data.current_pass);
+          MeshTaskQueue.submit_indexed_indirect_draws(
+            pass,
+            view_index,
+            true, /* skip_material_bind */
+            false, /* opaque_only */
+            true, /* depth_only */
+          );
+        }
+      );
+    }
+
+    // ────────────────────────────────────────────────────────────────
+    // VSM post-update pass 
+    // ────────────────────────────────────────────────────────────────
+    render_graph.add_pass(
+      "as_vsm_post_update",
+      RenderPassFlags.GraphLocal,
+      {},
+      (graph, frame_data, encoder) => {
+        const depth_dummy_image = graph.get_physical_image(this.dummy_depth_image);
+        depth_dummy_image.config.load_op = load_op_clear;
+      }
+    );
+
     // Debug AS-VSM views
     if (debug_view !== DebugDrawType.None) {
       this.add_debug_passes(render_graph, force_recreate, debug_view, position_texture);
     }
+
+    page_table_config.force = force_recreate || snapped_this_frame;
+    shadow_atlas_buf_config.force = force_recreate || snapped_this_frame;
+    bitmask_buf_config.force = force_recreate || snapped_this_frame;
   }
 
   #light_draw_uniforms = [];
@@ -519,9 +603,29 @@ export class AdaptiveSparseVirtualShadowMaps {
         "debug_tile_overlay_pass",
         RenderPassFlags.Graphics,
         {
-          inputs: [this.page_table, position_texture, this.settings_buf, this.light_view_buf],
+          inputs: [this.page_table, position_texture, this.settings_buf, this.light_view_buf, this.shadow_atlas_buf],
           outputs: [this.debug_tile_overlay_image],
           shader_setup: debug_tile_overlay_shader_setup,
+        },
+        (graph, frame_data, encoder) => {
+          const pass = graph.get_physical_pass(frame_data.current_pass);
+          MeshTaskQueue.draw_quad(pass);
+        }
+      );
+    }
+    if (debug_view === DebugDrawType.ASVSM_TileRenderOutput) {
+      debug_tile_render_output_config.width = image_extent.width;
+      debug_tile_render_output_config.height = image_extent.height;
+      debug_tile_render_output_config.force = force_recreate;
+      this.debug_tile_render_output_image = render_graph.create_image(debug_tile_render_output_config);
+
+      render_graph.add_pass(
+        "debug_tile_render_output_pass",
+        RenderPassFlags.Graphics,
+        {
+          inputs: [this.dummy_depth_image],
+          outputs: [this.debug_tile_render_output_image],
+          shader_setup: debug_tile_render_output_shader_setup,
         },
         (graph, frame_data, encoder) => {
           const pass = graph.get_physical_pass(frame_data.current_pass);

@@ -40,6 +40,9 @@ export class DebugDrawPicker extends DevConsoleTool {
         case "shadow-virtual-tiles":
           Renderer.get().set_debug_draw_type(DebugDrawType.ASVSM_TileOverlay);
           break;
+        case "shadow-tile-render":
+          Renderer.get().set_debug_draw_type(DebugDrawType.ASVSM_TileRenderOutput);
+          break;
         case "bloom":
           Renderer.get().set_debug_draw_type(DebugDrawType.Bloom);
           break;

@@ -8,7 +8,7 @@
 @group(1) @binding(1) var page_table: texture_storage_2d_array<r32uint, read_write>;
 @group(1) @binding(2) var<storage, read> light_shadow_idx_buffer: array<u32>;
 @group(1) @binding(3) var<uniform> vsm_settings: ASVSMSettings;
-@group(1) @binding(4) var<storage, read> bitmask: array<u32>;
+@group(1) @binding(4) var<storage, read_write> bitmask: array<atomic<u32>>;
 @group(1) @binding(5) var<storage, read> light_count_buffer: array<u32>;
 
 @compute @workgroup_size(8, 8, 4)
@@ -31,13 +31,8 @@ fn cs(@builtin(global_invocation_id) id: vec3<u32>) {
         return;
     }
 
-    // Capture the light/view index from the dispatch.z
-    let dense_light_index = id.z;
-
     // Fetch the shadow index for this light
-    let shadow_index = light_shadow_idx_buffer[dense_light_index];
-
-    // Skip inactive lights (shadow_index == 0xFFFFFFFF sentinel)
+    let shadow_index = light_shadow_idx_buffer[id.z];
     if (shadow_index == 0xffffffffu) {
         return;
     }
@@ -46,12 +41,12 @@ fn cs(@builtin(global_invocation_id) id: vec3<u32>) {
     let global_index = shadow_index * stride_words + index_in_stride;
 
     // Fetch mask of virtual tiles for *this* light
-    var bits = bitmask[global_index];
+    var bits = atomicLoad(&bitmask[global_index]);
 
     while(bits != 0u) {
-      // Find least significant set bit
       let shift = countTrailingZeros(bits);
-      bits = bits & (bits - 1u);    
+      let shift_amount = select(shift, 1u, shift == 0u);
+      bits = bits >> shift_amount;
 
       let tile_id = index_in_stride * 32u + shift;
 
@@ -64,24 +59,23 @@ fn cs(@builtin(global_invocation_id) id: vec3<u32>) {
         continue; // Already mapped by a concurrent thread or previous pass
       }
 
-      let total_lru_entries = u32(vsm_settings.physical_tiles_per_row
-        * vsm_settings.physical_tiles_per_row) * u32(vsm_settings.max_physical_pools);
+      let ptpr = u32(vsm_settings.physical_tiles_per_row);
+      let total_lru_entries = ptpr * ptpr * u32(vsm_settings.max_physical_pools);
 
       let lru_head = atomicAdd(&lru[0u], 1u);
       let lru_slot_index = 1u + lru_head % total_lru_entries;
       let physical_id = atomicLoad(&lru[lru_slot_index]);
 
       // Update New PTE – build entry with new format
-      let ptpr = u32(vsm_settings.physical_tiles_per_row);
       let pool_id = physical_id / (ptpr * ptpr);
       let local_physical_id = physical_id - pool_id * (ptpr * ptpr);
       let phys_x = local_physical_id % ptpr;
       let phys_y = local_physical_id / ptpr;
 
       let new_pte_value =
-        (phys_x  << pte_phys_x_shift)    |
-        (phys_y  << pte_phys_y_shift)    |
-        (pool_id << pte_pool_id_shift)   |
+        ((phys_x  << pte_phys_x_shift) & pte_phys_x_mask)    |
+        ((phys_y  << pte_phys_y_shift) & pte_phys_y_mask)    |
+        ((pool_id << pte_pool_id_shift) & pte_pool_id_mask)   |
         (1u      << pte_residency_shift) | // resident
         (1u      << pte_dirty_shift)     | // dirty, needs clearing
         (0u      << pte_frame_age_shift);

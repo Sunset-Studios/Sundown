@@ -64,75 +64,6 @@ fn sample_probe_irradiance(world_pos: vec3<f32>) -> vec3<f32> {
 #endif
 }
 
-#if SHADOWS_ENABLED
-fn sample_shadow_vsm(
-    world_pos: vec4<f32>,
-    view_idx: u32,
-    shadow_idx: u32,
-) -> f32 {
-  // Unpack useful constants
-  let tile_size              = vsm_settings.tile_size;
-  let phys_tiles_per_row     = u32(vsm_settings.physical_tiles_per_row);
-  let one_over_atlas_size    = 1.0 / vec2<f32>(vsm_settings.physical_dim);
-  let camera_vp              = view_buffer[frame_info.view_index].view_projection_matrix;
-  let light_vp               = view_buffer[view_idx].view_projection_matrix;
-
-  // --------------------------------------------------
-  // Select clip-map level & compute virtual-texture coords
-  // --------------------------------------------------
-  let vtile_info = vsm_world_to_virtual_tile(world_pos, camera_vp, light_vp, vsm_settings);
-
-  // Resolve PTE for this virtual tile (single-light slice assumption)
-  let entry = textureLoad(page_table, vtile_info.tile_coords, vtile_info.clipmap_index + shadow_idx * u32(vsm_settings.max_lods)).r;
-  if (!vsm_pte_is_valid(entry)) {
-    return 1.0;
-  }
-
-  let clip_pos  = vsm_calculate_render_clip_value_from_world_pos(world_pos, vtile_info.clipmap_index, light_vp);
-  // Convert NDC depth [-1,1] to [0,1] for comparison
-  let depth_ndc = clip_pos.z;
-  let depth_ref = depth_ndc * 0.5 + 0.5;
-
-  // Decode physical tile & pool
-  let physical_xy_offset = vsm_pte_get_phys_xy(entry);
-  let memory_pool_index = vsm_pte_get_memory_pool_index(entry);
-
-  // Build atlas UV
-  let local_pixel_f = fract(vtile_info.tile_xy_f) * tile_size;
-  let local_pixel = vec2<u32>(local_pixel_f);
-  let physical_pixel = physical_xy_offset * u32(tile_size) + local_pixel;
-  let base_pixel = vec2<i32>(physical_pixel);
-
-  let phys_dim_u32 = u32(vsm_settings.physical_dim);
-
-  // 3×3 PCF sampling via storage buffer
-  // var sum_visible = 0.0;
-  // for (var oy: i32 = -1; oy <= 1; oy = oy + 1) {
-  //   for (var ox: i32 = -1; ox <= 1; ox = ox + 1) {
-  //     let sx = clamp(base_pixel.x + ox, 0, i32(phys_dim_u32) - 1);
-  //     let sy = clamp(base_pixel.y + oy, 0, i32(phys_dim_u32) - 1);
-
-  //     let sample_index = memory_pool_index * phys_dim_u32 * phys_dim_u32 + 
-  //                        u32(sy) * phys_dim_u32 + u32(sx);
-  //     let depth_bits      = shadow_atlas_depth[sample_index];
-  //     let depth_sample    = unpack_depth(depth_bits);
-
-  //     sum_visible += select(0.0, 1.0, depth_ref < depth_sample);
-  //   }
-  // }
-
-  let sample_index = memory_pool_index * phys_dim_u32 * phys_dim_u32 + 
-                 u32(base_pixel.y) * phys_dim_u32 + u32(base_pixel.x);
-  let depth_bits      = shadow_atlas_depth[sample_index];
-  let depth_sample    = unpack_depth(depth_bits);
-
-  let sum_visible = select(0.0, 1.0, depth_ref < depth_sample);
-
-
-  return 1.0 - sum_visible / 9.0;
-}
-#endif
-
 // ------------------------------------------------------------------------------------
 // Vertex Shader
 // ------------------------------------------------------------------------------------ 
@@ -193,9 +124,24 @@ fn sample_shadow_vsm(
     for (var light_index = 0u; light_index < num_lights; light_index++) {
         var light = dense_lights_buffer[light_index];
         let light_view_index = u32(light.view_index);
+        let light_shadow_index = u32(light.shadow_index);
 
 #if SHADOWS_ENABLED
-        let shadow_factor = sample_shadow_vsm(vec4<f32>(position, 1.0), light_view_index, u32(light.shadow_index));
+        // Compute depth and sample index; sample_idx < 0 means invalid tile (no shadow)
+        let ds = vsm_shadow_depth_sample_index_and_valid(
+            vec4<f32>(position, 1.0),
+            light_view_index,
+            light_shadow_index,
+            page_table,
+            vsm_settings,
+        );
+        let depth = ds.x;
+        let sample_idx = u32(ds.y);
+        let valid_sample = ds.z > 0.0;
+        let unpacked_depth = unpack_depth(shadow_atlas_depth[sample_idx]);
+        let depth_sample   = select(1.0, unpacked_depth, valid_sample);
+        let lit            = select(0.0, 1.0, depth < depth_sample);
+        let shadow_factor  = 1.0 - select(1.0, f32(lit), valid_sample && light.shadow_casting > 0.0);
 #else
         let shadow_factor = 0.0;
 #endif

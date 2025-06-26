@@ -45,7 +45,11 @@ import {
 // Specialized renderer components
 import { GIProbeVolume } from "../global_illumination/ddgi.js";
 import { AdaptiveSparseVirtualShadowMaps } from "../shadows/as_vsm.js";
-import { DEFAULT_DIRECTIONAL_LIGHT_CLIP_EXTENT } from "../shadows/shadow_utils.js";
+import {
+  DEFAULT_LIGHT_CLIP_EXTENT,
+  MAX_CLIPMAP_LEVELS,
+  VSM_VIRTUAL_DIM,
+} from "../shadows/shadow_utils.js";
 
 const resolution_change_event_name = "resolution_change";
 const deferred_shading_profile_scope_name = "DeferredShadingStrategy.draw";
@@ -507,9 +511,7 @@ export class DeferredShadingStrategy {
         VisibilityFragment,
         occluder_name
       );
-      const entity_occluders = render_graph.register_buffer(
-        occluder_buffer.buffer.config.name
-      );
+      const entity_occluders = render_graph.register_buffer(occluder_buffer.buffer.config.name);
 
       // ┌─────────────────────────────────────────────────────────────────────────────┐
       // │ 🎯 Register Mesh & Instance Buffers                                        │
@@ -1173,9 +1175,9 @@ export class DeferredShadingStrategy {
           this.as_vsm = new AdaptiveSparseVirtualShadowMaps({
             atlas_size: 4096,
             tile_size: 128,
-            virtual_dim: 16384,
-            max_lods: 10,
-            clip0_extent: DEFAULT_DIRECTIONAL_LIGHT_CLIP_EXTENT,
+            virtual_dim: VSM_VIRTUAL_DIM,
+            max_lods: MAX_CLIPMAP_LEVELS,
+            clip0_extent: DEFAULT_LIGHT_CLIP_EXTENT,
           });
         }
         this.as_vsm.add_passes(render_graph, {
@@ -1239,10 +1241,18 @@ export class DeferredShadingStrategy {
 
         if (shadows_enabled) {
           // Register AS-VSM shadow resources for lighting
-          deferred_lighting_shader_setup.pipeline_shaders.vertex.defines = { SHADOWS_ENABLED: true };
-          deferred_lighting_shader_setup.pipeline_shaders.fragment.defines = { SHADOWS_ENABLED: true };
+          deferred_lighting_shader_setup.pipeline_shaders.vertex.defines = {
+            SHADOWS_ENABLED: true,
+          };
+          deferred_lighting_shader_setup.pipeline_shaders.fragment.defines = {
+            SHADOWS_ENABLED: true,
+          };
 
-          lighting_inputs.push(this.as_vsm.shadow_atlas_buf, this.as_vsm.page_table, this.as_vsm.settings_buf);
+          lighting_inputs.push(
+            this.as_vsm.shadow_atlas_buf,
+            this.as_vsm.page_table,
+            this.as_vsm.settings_buf
+          );
         }
 
         render_graph.add_pass(
@@ -1518,6 +1528,16 @@ export class DeferredShadingStrategy {
               image_extent.width,
               image_extent.height,
               DebugDrawType.ASVSM_TileOverlay
+            );
+            break;
+          case DebugDrawType.ASVSM_TileRenderOutput:
+            this.debug_overlay.set_properties(
+              this.as_vsm.debug_tile_render_output_image,
+              0,
+              0,
+              image_extent.width * 0.3,
+              image_extent.height * 0.3,
+              DebugDrawType.ASVSM_TileRenderOutput
             );
             break;
           case DebugDrawType.Bloom:

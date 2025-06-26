@@ -384,8 +384,8 @@ export class SharedViewBuffer {
     SharedViewBuffer.raw_data.set(Array(24).fill(0), base + SharedViewBuffer.offsets.frustum);
     SharedViewBuffer.raw_data.set([radians(90.0)], base + SharedViewBuffer.offsets.fov);
     SharedViewBuffer.raw_data.set([1.0], base + SharedViewBuffer.offsets.aspect_ratio);
-    SharedViewBuffer.raw_data.set([0.5], base + SharedViewBuffer.offsets.near);
-    SharedViewBuffer.raw_data.set([1000.0], base + SharedViewBuffer.offsets.far);
+    SharedViewBuffer.raw_data.set([0.1], base + SharedViewBuffer.offsets.near);
+    SharedViewBuffer.raw_data.set([10000.0], base + SharedViewBuffer.offsets.far);
     SharedViewBuffer.raw_data.set([1], base + SharedViewBuffer.offsets.culling_enabled);
     SharedViewBuffer.raw_data.set([1], base + SharedViewBuffer.offsets.occlusion_enabled);
     SharedViewBuffer.raw_data.set([1], base + SharedViewBuffer.offsets.distance_check_enabled);

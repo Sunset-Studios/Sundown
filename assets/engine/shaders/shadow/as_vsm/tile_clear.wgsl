@@ -38,7 +38,7 @@ fn cs(@builtin(workgroup_id) wg_id: vec3<u32>, @builtin(local_invocation_id) loc
 
             let slice_offset = pool_idx * phys_dim * phys_dim;
             let linear_index = slice_offset + target_pixel.y * phys_dim + target_pixel.x;
-            shadow_atlas_depth[linear_index] = 0xffffffffu;
+            shadow_atlas_depth[linear_index] = 4294967295u;
         }
     }
 
@@ -46,7 +46,7 @@ fn cs(@builtin(workgroup_id) wg_id: vec3<u32>, @builtin(local_invocation_id) loc
     workgroupBarrier();
 
     // One invocation clears the dirty bit.
-    if (vsm_pte_is_dirty(pte.r) && all(local_id.xyz == vec3<u32>(0u))) {
+    if (vsm_pte_is_dirty(pte.r) && dot(local_id.xyz, local_id.xyz) == 0u) {
         let new_pte_val = pte.r & ~pte_dirty_mask;
         textureStore(page_table, pte_coords, slice_idx, vec4<u32>(new_pte_val));
     }

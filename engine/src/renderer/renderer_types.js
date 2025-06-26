@@ -118,7 +118,8 @@ export const DebugDrawType = Object.freeze({
     ASVSM_ShadowAtlas: 8,
     ASVSM_ShadowPageTable: 9,
     ASVSM_TileOverlay: 10,
-    Bloom: 11,
+    ASVSM_TileRenderOutput: 11,
+    Bloom: 12,
 });
 
 /**

@@ -1,4 +1,4 @@
-import { LightType, EntityFlags } from "../minimal.js";
+import { LightType, EntityFlags, WORLD_FORWARD, WORLD_UP } from "../minimal.js";
 import { DEFAULT_CHUNK_CAPACITY } from "../ecs/solar/types.js";
 import { SimulationLayer } from "../simulation_layer.js";
 import { EntityManager } from "../ecs/entity.js";
@@ -7,7 +7,6 @@ import { SharedViewBuffer, SharedFrameInfoBuffer } from "../shared_data.js";
 import {
   compute_directional_light_rotation,
   build_directional_light_projection_matrix,
-  DEFAULT_DIRECTIONAL_LIGHT_CLIP_EXTENT as DEFAULT_DIRECTIONAL_LIGHT_CLIP0_EXTENT,
   compute_directional_light_position_for_clip,
   ShadowAllocator,
 } from "../../renderer/shadows/shadow_utils.js";
@@ -63,26 +62,21 @@ export class LightViewProcessor extends SimulationLayer {
           const camera_view_index = SharedFrameInfoBuffer.get_view_index();
           const camera_view = SharedViewBuffer.get_view_data(camera_view_index);
 
-          view.fov = 0.0;
-          view.far = camera_view.far;
           view.custom_projection_enabled = 1;
-          view.custom_view_matrix_enabled = 1;
 
           // ---------------------------------------------------------------------------
           // Use centralized utilities for stable rotation & projection ----------------
           const rotation = compute_directional_light_rotation(light_position);
           const position = compute_directional_light_position_for_clip(
-            camera_view.view_position,
             rotation,
-            camera_view.far
+            camera_view.view_position,
+            camera_view.inverse_view_projection_matrix
           );
 
           view.projection_matrix = build_directional_light_projection_matrix(
             camera_view.far,
-            DEFAULT_DIRECTIONAL_LIGHT_CLIP0_EXTENT
           );
 
-          view.view_matrix = mat4.fromRotationTranslation(mat4.create(), rotation, position);
           view.view_position = position;
           view.view_rotation = rotation;
         } else {
@@ -132,24 +126,21 @@ export class LightViewProcessor extends SimulationLayer {
             lights.position[slot * 4 + 2],
             1.0,
           ];
+          const light_view = SharedViewBuffer.get_view_data(view_index);
 
           const rotation = compute_directional_light_rotation(light_position);
           const position = compute_directional_light_position_for_clip(
-            camera_view.view_position,
             rotation,
-            camera_view.far
+            camera_view.view_position,
+            camera_view.inverse_view_projection_matrix
           );
-
-          const light_view = SharedViewBuffer.get_view_data(view_index);
 
           // Orthographic projection centred on the origin (stable virtual address).
           light_view.projection_matrix = build_directional_light_projection_matrix(
             camera_view.far,
-            DEFAULT_DIRECTIONAL_LIGHT_CLIP0_EXTENT
           );
-          light_view.view_matrix = mat4.fromRotationTranslation(mat4.create(), rotation, position);
-          light_view.view_position = position;
           light_view.view_rotation = rotation;
+          light_view.view_position = position;
         }
       }
 

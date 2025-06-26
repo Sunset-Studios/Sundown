@@ -122,6 +122,8 @@ export class DebugOverlay {
         return "debug/debug_overlay_2d.wgsl";
       case DebugDrawType.ASVSM_TileOverlay:
         return "debug/debug_overlay_2d.wgsl";
+      case DebugDrawType.ASVSM_TileRenderOutput:
+        return "debug/debug_overlay_2d.wgsl";
       default:
         return "debug/debug_overlay_2d.wgsl";
     }

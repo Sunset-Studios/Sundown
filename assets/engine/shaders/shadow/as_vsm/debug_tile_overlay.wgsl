@@ -12,6 +12,7 @@ struct VertexOutput {
 @group(1) @binding(1) var world_position_tex: texture_2d<f32>;
 @group(1) @binding(2) var<uniform> vsm_settings: ASVSMSettings;
 @group(1) @binding(3) var<storage, read> light_view_buffer: array<u32>;
+@group(1) @binding(4) var<storage, read> shadow_atlas_depth: array<u32>;
 
 // Simple hash function to generate pseudo random colors from tile id
 fn hash_u32(val: u32) -> vec3<f32> {
@@ -42,21 +43,36 @@ fn fs(input: VertexOutput) -> @location(0) vec4<f32> {
   }
 
   let view_idx        = light_view_buffer[0u];
-  let camera_vp       = view_buffer[frame_info.view_index].view_projection_matrix;
   let clipmap0_vp     = view_buffer[view_idx].view_projection_matrix;
+  let camera_vp       = view_buffer[frame_info.view_index].view_projection_matrix;
   let world_pos       = vec4<f32>(world_pos_sample.xyz, 1.0);
 
   let vtile_info      = vsm_world_to_virtual_tile(world_pos, camera_vp, clipmap0_vp, vsm_settings);
 
-  let vtr             = u32(vsm_settings.virtual_tiles_per_row);
-  let tile_id         = vtile_info.clipmap_index * vtr * vtr + vtile_info.tile_coords.y * vtr + vtile_info.tile_coords.x;
-
   // Hash colour encodes tile id & lod (mix into value)
-  let base_color     = hash_u32(tile_id);
+  let base_color     = hash_u32(vtile_info.tile_id);
   let lod_factor     = f32(vtile_info.clipmap_index) / f32(vsm_settings.max_lods - 1.0);
   let color          = mix(base_color, vec3<f32>(lod_factor, 0.0, 1.0 - lod_factor), 0.35);
 
-  return vec4<f32>(color, 1.0);
+  // Compute depth and sample index; sample_idx < 0 means invalid tile (no shadow)
+  let ds = vsm_shadow_depth_sample_index_and_valid(
+      vec4<f32>(world_pos_sample.xyz, 1.0),
+      view_idx,
+      0u,
+      page_table,
+      vsm_settings,
+  );
+  let depth = ds.x;
+  let sample_idx = u32(ds.y);
+  let valid_sample = ds.z > 0.0;
+
+  let unpacked_depth = unpack_depth(shadow_atlas_depth[sample_idx]);
+  let depth_sample = select(1.0, unpacked_depth, valid_sample);
+  let lit          = depth < depth_sample + 0.0005;
+  let shadow_factor = select(1.0, max(f32(lit), 0.3), valid_sample);
+
+  return vec4<f32>(color * shadow_factor, 1.0);
+  //return vec4<f32>(depth, depth_sample, 0.0, 1.0);
 #else
   return vec4<f32>(0.0);
 #endif
