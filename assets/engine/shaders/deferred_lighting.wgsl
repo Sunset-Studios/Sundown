@@ -1,6 +1,6 @@
 #include "common.wgsl"
 #include "lighting_common.wgsl"
-#include "shadow/shadows_common.wgsl"
+#include "shadow/shadows_sampling.wgsl"
 
 // ------------------------------------------------------------------------------------
 // Buffers
@@ -110,6 +110,7 @@ fn sample_probe_irradiance(world_pos: vec3<f32>) -> vec3<f32> {
 
     var tex_position = textureSample(position_texture, global_sampler, uv);
     var position = tex_position.xyz;
+    var position4 = vec4<f32>(position, 1.0);
 
     let view_index = frame_info.view_index;
     var view_dir = normalize(view_buffer[view_index].view_position.xyz - position);
@@ -127,21 +128,20 @@ fn sample_probe_irradiance(world_pos: vec3<f32>) -> vec3<f32> {
         let light_shadow_index = u32(light.shadow_index);
 
 #if SHADOWS_ENABLED
-        // Compute depth and sample index; sample_idx < 0 means invalid tile (no shadow)
-        let ds = vsm_shadow_depth_sample_index_and_valid(
-            vec4<f32>(position, 1.0),
-            light_view_index,
-            light_shadow_index,
-            page_table,
-            vsm_settings,
-        );
-        let depth = ds.x;
-        let sample_idx = u32(ds.y);
-        let valid_sample = ds.z > 0.0;
-        let unpacked_depth = unpack_depth(shadow_atlas_depth[sample_idx]);
-        let depth_sample   = select(1.0, unpacked_depth, valid_sample);
-        let lit            = select(0.0, 1.0, depth < depth_sample);
-        let shadow_factor  = 1.0 - select(1.0, f32(lit), valid_sample && light.shadow_casting > 0.0);
+        let depth         = vsm_shadow_depth(
+                                position4,
+                                light_view_index,
+                                vsm_settings,
+                            );
+        let filter_res    = vsm_sample_shadow_bilinear(
+                              position4,
+                              light_view_index,
+                              light_shadow_index,
+                              page_table,
+                              vsm_settings);
+
+        let lit           = depth < filter_res.depth + 0.00001;
+        let shadow_factor = 1.0 - select(1.0, f32(lit), filter_res.valid);
 #else
         let shadow_factor = 0.0;
 #endif

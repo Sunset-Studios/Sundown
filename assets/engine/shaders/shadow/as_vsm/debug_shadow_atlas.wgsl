@@ -13,9 +13,10 @@ struct VertexOutput {
 
 @fragment fn fs(in: VertexOutput) -> @location(0) vec4<f32> {
   let dims = u32(vsm_settings.physical_dim);
+  let uv = in.uv * 0.5 + 0.5;
   let coord = vec2<u32>(
-      u32(in.uv.x * f32(dims)),
-      u32(in.uv.y * f32(dims))
+      u32(uv.x * f32(dims)),
+      u32(uv.y * f32(dims))
   );
 
   let pool_index = 0u;

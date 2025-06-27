@@ -8,13 +8,17 @@ import { WORLD_FORWARD, WORLD_RIGHT } from "../../core/minimal.js";
 import { TypedStack } from "../../memory/container.js";
 import { quat, vec3, mat3, mat4, vec4 } from "gl-matrix";
 
+// Shadow atlas size.
+export const ATLAS_SIZE = 4096;
+// Tile size for both virtual and physical tiles.
+export const TILE_SIZE = 128;
 // Default orthographic extent (±extent) for directional lights in clip-space.
 // Used when constructing stable light-aligned view/projection matrices.
-export const DEFAULT_LIGHT_CLIP_EXTENT = 512.0;
+export const DEFAULT_LIGHT_CLIP_EXTENT = 4.0;
 // virtual_dim has to match the AS-VSM instance you create (16384 by default).
-export const VSM_VIRTUAL_DIM = 16384.0;
+export const VSM_VIRTUAL_DIM = 128.0 * TILE_SIZE;
 // Maximum number of clipmap levels.
-export const MAX_CLIPMAP_LEVELS = 1;
+export const MAX_CLIPMAP_LEVELS = 12;
 // Size (world units) of one virtual-shadow-map texel in clip-map level 0.
 export const VSM_WORLD_UNITS_PER_TEXEL = DEFAULT_LIGHT_CLIP_EXTENT / VSM_VIRTUAL_DIM;
 
@@ -107,7 +111,7 @@ export function compute_directional_light_position_for_clip(light_rotation, worl
   // from the light's point of view.
 
   // Rotation matrix that transforms a world-space vector into light-space.
-  const world_to_light = mat3.fromQuat(mat3.create(), light_rotation);
+  const world_to_light = mat4.fromQuat(mat4.create(), light_rotation);
 
   const aabb_min = vec3.fromValues(Infinity, Infinity, Infinity);
   const aabb_max = vec3.fromValues(-Infinity, -Infinity, -Infinity);
@@ -117,7 +121,7 @@ export function compute_directional_light_position_for_clip(light_rotation, worl
     const corner_ws = vec4.transformMat4(vec4.create(), ndc[i], inv_view_projection);
     // Light-space position (rotation only – directional lights have no
     // translation component).
-    const corner_ls = vec3.transformMat3(vec3.create(), corner_ws, world_to_light);
+    const corner_ls = vec4.transformMat4(vec4.create(), corner_ws, world_to_light);
 
     // Expand light-space AABB.
     vec3.min(aabb_min, aabb_min, corner_ls);

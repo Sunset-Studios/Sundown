@@ -8,7 +8,7 @@
 @group(1) @binding(1) var page_table: texture_storage_2d_array<r32uint, read_write>;
 @group(1) @binding(2) var<storage, read> light_shadow_idx_buffer: array<u32>;
 @group(1) @binding(3) var<uniform> vsm_settings: ASVSMSettings;
-@group(1) @binding(4) var<storage, read_write> bitmask: array<atomic<u32>>;
+@group(1) @binding(4) var<storage, read_write> bitmask: array<u32>;
 @group(1) @binding(5) var<storage, read> light_count_buffer: array<u32>;
 
 @compute @workgroup_size(8, 8, 4)
@@ -41,12 +41,11 @@ fn cs(@builtin(global_invocation_id) id: vec3<u32>) {
     let global_index = shadow_index * stride_words + index_in_stride;
 
     // Fetch mask of virtual tiles for *this* light
-    var bits = atomicLoad(&bitmask[global_index]);
+    var bits = bitmask[global_index];
 
     while(bits != 0u) {
       let shift = countTrailingZeros(bits);
-      let shift_amount = select(shift, 1u, shift == 0u);
-      bits = bits >> shift_amount;
+      bits = bits & (bits - 1u);
 
       let tile_id = index_in_stride * 32u + shift;
 
@@ -54,7 +53,7 @@ fn cs(@builtin(global_invocation_id) id: vec3<u32>) {
       let page_table_index = shadow_index * u32(vsm_settings.max_lods) + new_pte_coords.z;
 
       let current_pte_val_at_new_coords = textureLoad(page_table, new_pte_coords.xy, page_table_index).r;
-      let current_pte_is_valid = vsm_pte_is_valid(current_pte_val_at_new_coords);
+      let current_pte_is_valid = vsm_pte_is_resident(current_pte_val_at_new_coords);
       if (current_pte_is_valid) {
         continue; // Already mapped by a concurrent thread or previous pass
       }

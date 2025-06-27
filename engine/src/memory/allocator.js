@@ -368,7 +368,7 @@ class RingBufferAllocator {
      * @returns {number} The number of allocated objects in the ring buffer.
      */
     get length() {
-        return this.tail - this.head;
+        return (this.tail + this.max_objects - this.head) % this.max_objects;
     }
 
     /**

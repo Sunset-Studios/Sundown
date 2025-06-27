@@ -1855,7 +1855,7 @@ export class GITestScene extends Scene {
 
     // camera
     const view_data = SharedViewBuffer.get_view_data(0);
-    view_data.view_position = [0, 13, 40];
+    view_data.view_position = [0, 23, 40];
     view_data.view_rotation = [0.0005166, 0.9986818, -0.027326133, 0.0188794];
 
     // ------------------------------------------------------------

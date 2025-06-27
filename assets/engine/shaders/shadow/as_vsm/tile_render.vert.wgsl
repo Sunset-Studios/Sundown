@@ -27,6 +27,7 @@ fn vs(@builtin(vertex_index) vi: u32,
   var out: VertexOutput;
 
 #if SHADOWS_ENABLED
+
   let light_idx             = light_ub.light_index;
   let view_index            = light_view_buffer[light_idx];
   let shadow_idx            = light_shadow_idx_buffer[light_idx];
@@ -67,7 +68,7 @@ fn vs(@builtin(vertex_index) vi: u32,
   //   return out;
   // }
 
-  var clip_pos = vsm_calculate_render_clip_value_from_world_pos(
+  let clip_pos = vsm_calculate_render_clip_value_from_world_pos(
     world_pos,
     vtile_info.clipmap_index,
     clipmap0_vp,
@@ -78,11 +79,14 @@ fn vs(@builtin(vertex_index) vi: u32,
   out.world_pos = world_pos;
   out.shadow_index = shadow_idx;
   out.view_index = view_index;
+
 #else
+
   out.position = vec4<f32>(0.0);
   out.world_pos = vec4<f32>(0.0);
   out.shadow_index = 0u;
   out.view_index = 0u;
+
 #endif
 
   return out;

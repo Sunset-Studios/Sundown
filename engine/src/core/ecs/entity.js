@@ -246,7 +246,7 @@ export class EntityManager {
    * Sets the instance count for an entity.
    * @param {number} entity - The entity to set the instance count for.
    * @param {number} instance_count - The new instance count for the entity.
-   * @returns {number} The entity ID.
+   * @returns {number} The entity handle.
    */
   static set_entity_instance_count(entity, instance_count) {
     const old_count = this.get_entity_instance_count(entity);

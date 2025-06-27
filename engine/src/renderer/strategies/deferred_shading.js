@@ -49,6 +49,8 @@ import {
   DEFAULT_LIGHT_CLIP_EXTENT,
   MAX_CLIPMAP_LEVELS,
   VSM_VIRTUAL_DIM,
+  ATLAS_SIZE,
+  TILE_SIZE,
 } from "../shadows/shadow_utils.js";
 
 const resolution_change_event_name = "resolution_change";
@@ -1173,15 +1175,14 @@ export class DeferredShadingStrategy {
         // Add AS-VSM passes with mapping
         if (!this.as_vsm) {
           this.as_vsm = new AdaptiveSparseVirtualShadowMaps({
-            atlas_size: 4096,
-            tile_size: 128,
+            atlas_size: ATLAS_SIZE,
+            tile_size: TILE_SIZE,
             virtual_dim: VSM_VIRTUAL_DIM,
             max_lods: MAX_CLIPMAP_LEVELS,
             clip0_extent: DEFAULT_LIGHT_CLIP_EXTENT,
           });
         }
         this.as_vsm.add_passes(render_graph, {
-          depth_texture: main_depth_image,
           position_texture: main_position_image,
           light_count_buffer: light_count,
           transforms_buffer: entity_transforms,

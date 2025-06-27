@@ -14,9 +14,10 @@ struct VertexOutput {
 @fragment fn fs(in: VertexOutput) -> @location(0) vec4<f32> {
 #if SHADOWS_ENABLED
   let dims = textureDimensions(page_table);
+  let uv = in.uv * 0.5 + 0.5;
   let coord = vec2<i32>(
-    i32(in.uv.x * f32(dims.x)),
-    i32(in.uv.y * f32(dims.y))
+    i32(uv.x * f32(dims.x)),
+    i32(uv.y * f32(dims.y))
   );
 
   let clipmap_index = 0u;

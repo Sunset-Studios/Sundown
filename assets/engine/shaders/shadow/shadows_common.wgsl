@@ -19,9 +19,9 @@ struct ShadowCasterLight {
 
 struct VirtualTileInfo {
     tile_coords: vec2<u32>,
-    tile_xy_f: vec2<f32>,
-    clipmap_index: u32,
     virtual_pixel: vec2<f32>,
+    virtual_uv: vec2<f32>,
+    clipmap_index: u32,
     tile_id: u32,
 };
 
@@ -29,8 +29,14 @@ struct PhysicalTileInfo {
     local_pixel: vec2<f32>,
     physical_pixel: vec2<f32>,
     physical_xy: vec2<u32>,
+    physical_id: u32,
     memory_pool_index: u32,
-    physical_uv: vec2<f32>,
+    pixel_ratio: f32,
+};
+
+struct ShadowFilterResult {
+    depth: f32, // bilinear-filtered depth sample (range 0-1)
+    valid: bool, // whether the underlying physical page is resident & clean
 };
 
 // ------------------------------------------------------------------------------------
@@ -88,24 +94,6 @@ fn unpack_depth(packed_depth: u32) -> f32 {
 
 fn bitmask_pow2(shift: u32) -> u32 {
     return 1u << shift;
-}
-
-fn vsm_get_virtual_tile_word_and_mask(tile_coords: vec2<u32>, clipmap_index: u32, shadow_index: u32, settings: ASVSMSettings) -> vec2<u32> {
-  let vtr             = u32(settings.virtual_tiles_per_row);
-  let tiles_per_light = vtr * vtr * u32(settings.max_lods);
-  let words_per_light = ((tiles_per_light + 31u) >> 5u);
-
-  let base_index      = clipmap_index * vtr * vtr;
-  let tile_id         = base_index + tile_coords.y * vtr + tile_coords.x;
-
-  let word_index      = tile_id >> 5u;
-  let bit_index       = tile_id & 31u;
-  let mask            = 1u << bit_index;
-
-  // Compute per-light stride so each light writes to its own range
-  let global_word_index = shadow_index * words_per_light + word_index;
-  
-  return vec2<u32>(global_word_index, mask);
 }
 
 fn vsm_pte_is_resident(pte: u32) -> bool {
@@ -173,35 +161,14 @@ fn vsm_calculate_sample_clip_value_from_world_pos(
     clipmap0_projection_view: mat4x4<f32>,
     settings: ASVSMSettings
 ) -> vec4<f32> {
-    let result =  vsm_calculate_render_clip_value_from_world_pos(
+    var vp_no_translate = clipmap0_projection_view;
+    vp_no_translate[3] = vec4<f32>(0.0, 0.0, 0.0, 1.0);
+    return vsm_calculate_render_clip_value_from_world_pos(
         world_pos,
         clip_map_index,
-        clipmap0_projection_view,
+        vp_no_translate,
         settings
     );
-    let clip_result = vsm_convert_clip0_to_clipn(
-        vec4<f32>(clipmap0_projection_view[3].xyz, 1.0),
-        clip_map_index,
-        settings
-    );
-    return result - clip_result;
-}
-
-// Virtual-tile → Physical-tile
-fn vsm_vtile_to_ptile(
-    vtile_info: VirtualTileInfo,
-    settings: ASVSMSettings,
-    shadow_index: u32,
-    page_table: texture_storage_2d_array<r32uint, read>,
-) -> PhysicalTileInfo {
-    var info: PhysicalTileInfo;
-    let entry = textureLoad(page_table, vtile_info.tile_coords, vtile_info.clipmap_index + shadow_index * u32(settings.max_lods)).r;
-    info.physical_xy       = vsm_pte_get_phys_xy(entry);
-    info.memory_pool_index = vsm_pte_get_memory_pool_index(entry);
-    info.local_pixel       = fract(vtile_info.tile_xy_f) * settings.tile_size;
-    info.physical_pixel    = vec2<f32>(info.physical_xy) * settings.tile_size + info.local_pixel;
-    info.physical_uv       = info.physical_pixel / settings.physical_dim;
-    return info;
 }
 
 fn vsm_calculate_clipmap_index_from_world_pos(
@@ -238,50 +205,57 @@ fn vsm_world_to_virtual_tile(
                             settings
                         );
     let uv_full        = sample_clip.xy * 0.5 + 0.5;
-    info.virtual_pixel = uv_full * settings.virtual_dim;
-    info.tile_xy_f     = info.virtual_pixel / settings.tile_size;
-    info.tile_coords   = vec2<u32>(u32(floor(info.tile_xy_f.x)), u32(floor(info.tile_xy_f.y)));
+    // Wrap to the clipmap range and offset by half a texel for stable mapping
+    info.virtual_uv    = fract(uv_full);
+    info.virtual_pixel = info.virtual_uv * settings.virtual_dim;
+    info.tile_coords   = vec2<u32>(floor(info.virtual_uv * settings.virtual_tiles_per_row));
     info.tile_id       = info.clipmap_index * vtr * vtr + info.tile_coords.y * vtr + info.tile_coords.x;
 
     return info;
 }
 
-fn vsm_shadow_depth_sample_index_and_valid(
-    world_pos: vec4<f32>,
-    view_idx: u32,
-    shadow_idx: u32,
+fn vsm_vtile_to_ptile(
+    vtile_info: VirtualTileInfo,
+    settings: ASVSMSettings,
+    shadow_index: u32,
     page_table: texture_storage_2d_array<r32uint, read>,
-    vsm_settings: ASVSMSettings,
-) -> vec3<f32> {
-  let camera_vp           = view_buffer[frame_info.view_index].view_projection_matrix;
-  let light_vp            = view_buffer[view_idx].view_projection_matrix;
-  let vtile_info          = vsm_world_to_virtual_tile(world_pos, camera_vp, light_vp, vsm_settings);
-  // ======================================
-  // =============== Depth ================
-  // ======================================
-  let light_clip_pos      = vsm_calculate_render_clip_value_from_world_pos(
-                                world_pos,
-                                vtile_info.clipmap_index,
-                                light_vp,
-                                vsm_settings
-                            );
-  let depth_ndc           = light_clip_pos.z;
-  // ======================================
-  // ============ Sample Index ============
-  // ======================================
-  let ptile_info          = vsm_vtile_to_ptile(vtile_info, vsm_settings, shadow_idx, page_table);
-  let phys_dim_u32        = u32(vsm_settings.physical_dim);
-  let sample_index_u32    = ptile_info.memory_pool_index * phys_dim_u32 * phys_dim_u32
-    + u32(ptile_info.physical_pixel.y) * phys_dim_u32 + u32(ptile_info.physical_pixel.x);
-  let sample_index_f32    = f32(sample_index_u32);
-  // ======================================
-  // ================ Valid ===============
-  // ======================================
-  let page_index          = vtile_info.clipmap_index + shadow_idx * u32(vsm_settings.max_lods);
-  let entry               = textureLoad(page_table, vtile_info.tile_coords, page_index).r;
-  let valid               = select(0.0, 1.0, vsm_pte_is_valid(entry));
+) -> PhysicalTileInfo {
+    var info: PhysicalTileInfo;
+    let entry              = textureLoad(page_table, vtile_info.tile_coords, vtile_info.clipmap_index + shadow_index * u32(settings.max_lods)).r;
+    info.physical_xy       = vsm_pte_get_phys_xy(entry);
+    info.memory_pool_index = vsm_pte_get_memory_pool_index(entry);
+    // Pixel inside the virtual tile (range 0..tile_size)                       
+    let local_pixel_raw    = vtile_info.virtual_pixel - vec2<f32>(vtile_info.tile_coords) * settings.tile_size;
+    // Ratio of virtual-tiles to physical-tiles per row (e.g. 128 / 16 = 8).    
+    // Each physical tile therefore aggregates this many virtual-tile "sub-spans"
+    // along both X and Y.  The raster pass renders one virtual tile into a     
+    // region that is `tile_size / ratio` pixels wide in the dummy render target
+    // so we have to scale the local pixel coordinates down by the same ratio   
+    // to obtain the correct physical-pixel inside the atlas buffer.            
+    info.pixel_ratio       = settings.physical_tiles_per_row / settings.virtual_tiles_per_row;
+    info.local_pixel       = local_pixel_raw * info.pixel_ratio;
+    info.physical_pixel    = vec2<f32>(info.physical_xy) * settings.tile_size + info.local_pixel;
+    info.physical_id       = info.memory_pool_index * u32(settings.physical_dim * settings.physical_dim)
+        + u32(info.physical_pixel.y) * u32(settings.physical_dim) + u32(info.physical_pixel.x);
+    return info;
+}
 
-  return vec3<f32>(depth_ndc, sample_index_f32, valid);
+fn vsm_get_virtual_tile_word_and_mask(tile_coords: vec2<u32>, clipmap_index: u32, shadow_index: u32, settings: ASVSMSettings) -> vec2<u32> {
+  let vtr             = u32(settings.virtual_tiles_per_row);
+  let tiles_per_light = vtr * vtr * u32(settings.max_lods);
+  let words_per_light = ((tiles_per_light + 31u) >> 5u);
+
+  let base_index      = clipmap_index * vtr * vtr;
+  let tile_id         = base_index + tile_coords.y * vtr + tile_coords.x;
+
+  let word_index      = tile_id >> 5u;
+  let bit_index       = tile_id & 31u;
+  let mask            = 1u << bit_index;
+
+  // Compute per-light stride so each light writes to its own range
+  let global_word_index = shadow_index * words_per_light + word_index;
+  
+  return vec2<u32>(global_word_index, mask);
 }
 
 #endif

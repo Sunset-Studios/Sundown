@@ -2,7 +2,7 @@
 #include "shadow/shadows_common.wgsl"
 
 @group(1) @binding(0) var page_table: texture_storage_2d_array<r32uint, read_write>;
-@group(1) @binding(1) var<storage, read_write> shadow_atlas_depth: array<u32>;
+@group(1) @binding(1) var<storage, read_write> shadow_atlas_depth: array<atomic<u32>>;
 @group(1) @binding(2) var<uniform> vsm_settings: ASVSMSettings;
 
 // Each workgroup clears one tile if it's dirty.
@@ -38,7 +38,7 @@ fn cs(@builtin(workgroup_id) wg_id: vec3<u32>, @builtin(local_invocation_id) loc
 
             let slice_offset = pool_idx * phys_dim * phys_dim;
             let linear_index = slice_offset + target_pixel.y * phys_dim + target_pixel.x;
-            shadow_atlas_depth[linear_index] = 4294967295u;
+            atomicStore(&shadow_atlas_depth[linear_index], 16777215u);
         }
     }
 

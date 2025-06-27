@@ -140,7 +140,7 @@ export class LightViewProcessor extends SimulationLayer {
             camera_view.far,
           );
           light_view.view_rotation = rotation;
-          light_view.view_position = position;
+          //light_view.view_position = position;
         }
       }
 

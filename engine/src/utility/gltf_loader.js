@@ -171,7 +171,7 @@ var Camera = (MinimalGLTFLoader.Camera = function (c) {
   this.name = c.name !== undefined ? c.name : null;
   this.type = c.type; // required
 
-  this.othographic = c.othographic === undefined ? null : c.othographic; // every attribute inside is required (excluding extensions)
+  this.orthographic = c.orthographic === undefined ? null : c.orthographic; // every attribute inside is required (excluding extensions)
   this.perspective =
     c.perspective === undefined
       ? null

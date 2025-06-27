@@ -1,6 +1,6 @@
 #include "common.wgsl"
 #include "lighting_common.wgsl"
-#include "shadow/shadows_common.wgsl"
+#include "shadow/shadows_sampling.wgsl"
 
 struct VertexOutput {
     @builtin(position) position: vec4f,
@@ -54,25 +54,24 @@ fn fs(input: VertexOutput) -> @location(0) vec4<f32> {
   let lod_factor     = f32(vtile_info.clipmap_index) / f32(vsm_settings.max_lods - 1.0);
   let color          = mix(base_color, vec3<f32>(lod_factor, 0.0, 1.0 - lod_factor), 0.35);
 
-  // Compute depth and sample index; sample_idx < 0 means invalid tile (no shadow)
-  let ds = vsm_shadow_depth_sample_index_and_valid(
+  // Compute depth
+  let depth = vsm_shadow_depth(
       vec4<f32>(world_pos_sample.xyz, 1.0),
       view_idx,
-      0u,
-      page_table,
       vsm_settings,
   );
-  let depth = ds.x;
-  let sample_idx = u32(ds.y);
-  let valid_sample = ds.z > 0.0;
 
-  let unpacked_depth = unpack_depth(shadow_atlas_depth[sample_idx]);
-  let depth_sample = select(1.0, unpacked_depth, valid_sample);
-  let lit          = depth < depth_sample + 0.0005;
-  let shadow_factor = select(1.0, max(f32(lit), 0.3), valid_sample);
+  let filter_res    = vsm_sample_shadow_bilinear(
+                              vec4<f32>(world_pos_sample.xyz, 1.0),
+                              view_idx,
+                              0u,
+                              page_table,
+                              vsm_settings);
+
+  let lit            = depth < filter_res.depth + 0.00001;
+  let shadow_factor  = select(1.0, max(f32(lit), 0.3), filter_res.valid);
 
   return vec4<f32>(color * shadow_factor, 1.0);
-  //return vec4<f32>(depth, depth_sample, 0.0, 1.0);
 #else
   return vec4<f32>(0.0);
 #endif

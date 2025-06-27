@@ -257,15 +257,14 @@ export class AdaptiveSparseVirtualShadowMaps {
     }
 
     // Create / resize per-light view buffer
-    light_view_buf_config.size = adjusted_light_count * Uint32Array.BYTES_PER_ELEMENT;
     light_view_buf_config.force = force_recreate;
     this.light_view_buf = render_graph.create_buffer(light_view_buf_config);
 
     // Create / resize per-light shadow index buffer
-    light_shadow_idx_buf_config.size = adjusted_light_count * Uint32Array.BYTES_PER_ELEMENT;
     light_shadow_idx_buf_config.force = force_recreate;
     this.light_shadow_idx_buf = render_graph.create_buffer(light_shadow_idx_buf_config);
 
+    // Create / resize settings buffer
     settings_buf_config.force = force_recreate;
     this.settings_buf = render_graph.create_buffer(settings_buf_config);
 
@@ -277,6 +276,7 @@ export class AdaptiveSparseVirtualShadowMaps {
     bitmask_buf_config.force = force_recreate;
     this.bitmask_buf = render_graph.create_buffer(bitmask_buf_config);
     this.bitmask_u32_stride = bitmask_u32_stride;
+    this.bitmask_u32_count = total_bitmask_u32;
 
     // Create Page Table storage texture
     page_table_config.width = this.virtual_tiles_per_row;
@@ -302,8 +302,8 @@ export class AdaptiveSparseVirtualShadowMaps {
     shadow_atlas_buf_config.force = force_recreate;
     if (force_recreate) {
       const shadow_atlas_raw = new Uint32Array(total_pixels);
-      // Initialise with max uint so atomicMin writes first real depth.
-      shadow_atlas_raw.fill(0xffffffff);
+      // Doing atomic min in shader so we need to fill with max uint
+      shadow_atlas_raw.fill(16777215);
       shadow_atlas_buf_config.raw_data = shadow_atlas_raw;
     }
     this.shadow_atlas_buf = render_graph.create_buffer(shadow_atlas_buf_config);
@@ -332,7 +332,7 @@ export class AdaptiveSparseVirtualShadowMaps {
       "as_vsm_clear_shadow_atlas",
       RenderPassFlags.Graphics,
       {
-        outputs: [this.dummy_depth_image],
+        outputs: [this.dummy_depth_image, this.dummy_color_image],
         b_skip_pass_pipeline_setup: true,
         b_skip_pass_bind_group_setup: true,
       },
@@ -364,8 +364,8 @@ export class AdaptiveSparseVirtualShadowMaps {
 
         // Clear bitmask buffer – zero all words for every light
         const bitmask = graph.get_physical_buffer(this.bitmask_buf);
-        const total_words = this.bitmask_u32_stride * adjusted_light_count;
-        bitmask.write_raw(new Uint32Array(total_words));
+        const bitmask_raw = new Uint32Array(this.bitmask_u32_count);
+        bitmask.write_raw(bitmask_raw);
 
         // Set dummy depth image to load_op_load
         const depth_dummy_image = graph.get_physical_image(this.dummy_depth_image);
@@ -424,26 +424,7 @@ export class AdaptiveSparseVirtualShadowMaps {
         const pass = graph.get_physical_pass(frame_data.current_pass);
         const bitmask_groups = Math.ceil(this.bitmask_u32_stride / 8);
         const light_groups   = Math.ceil(adjusted_light_count / 4);
-        pass.dispatch(1, bitmask_groups, light_groups);
-      }
-    );
-
-    // ────────────────────────────────────────────────────────────────
-    // Clear newly allocated physical tiles
-    // ────────────────────────────────────────────────────────────────
-    render_graph.add_pass(
-      "as_vsm_clear_dirty_tiles",
-      RenderPassFlags.Compute,
-      {
-        inputs: [this.page_table, this.shadow_atlas_buf, this.settings_buf],
-        outputs: [this.page_table, this.shadow_atlas_buf],
-        shader_setup: tile_clear_shader_setup,
-      },
-      (graph, frame_data, encoder) => {
-        const pass = graph.get_physical_pass(frame_data.current_pass);
-        const pt_image = graph.get_physical_image(this.page_table);
-        // Dispatch one workgroup per virtual tile in the page table.
-        pass.dispatch(pt_image.config.width, pt_image.config.height, pt_image.config.depth);
+        pass.dispatch(bitmask_groups, bitmask_groups, light_groups);
       }
     );
 
@@ -502,6 +483,25 @@ export class AdaptiveSparseVirtualShadowMaps {
         }
       );
     }
+
+    // ────────────────────────────────────────────────────────────────
+    // Clear newly allocated physical tiles
+    // ────────────────────────────────────────────────────────────────
+    render_graph.add_pass(
+      "as_vsm_clear_dirty_tiles",
+      RenderPassFlags.Compute,
+      {
+        inputs: [this.page_table, this.shadow_atlas_buf, this.settings_buf],
+        outputs: [this.page_table, this.shadow_atlas_buf],
+        shader_setup: tile_clear_shader_setup,
+      },
+      (graph, frame_data, encoder) => {
+        const pass = graph.get_physical_pass(frame_data.current_pass);
+        const pt_image = graph.get_physical_image(this.page_table);
+        // Dispatch one workgroup per virtual tile in the page table.
+        pass.dispatch(pt_image.config.width, pt_image.config.height, pt_image.config.depth);
+      }
+    );
 
     // ────────────────────────────────────────────────────────────────
     // VSM post-update pass 
