@@ -133,7 +133,7 @@ fn sample_probe_irradiance(world_pos: vec3<f32>) -> vec3<f32> {
                                 light_view_index,
                                 vsm_settings,
                             );
-        let filter_res    = vsm_sample_shadow_bilinear(
+        let filter_res    = vsm_sample_shadow(
                               position4,
                               light_view_index,
                               light_shadow_index,

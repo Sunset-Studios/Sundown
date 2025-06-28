@@ -31,6 +31,16 @@ export class VisibilityFragment extends Fragment {
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
       cpu_readback: false,
     },
+    got_shadow_feedback: {
+      ctor: Uint32Array,
+      elements: 1,
+      default: 0,
+      gpu_buffer: true,
+      buffer_name: "got_shadow_feedback",
+      is_container: false,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+      cpu_readback: false,
+    },
   };
   static buffer_data = new Map(); // key → { buffer: FragmentGpuBuffer, stride: number }
 

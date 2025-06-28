@@ -3,6 +3,7 @@ import { SharedViewBuffer } from "../../core/shared_data.js";
 import { EntityManager } from "../../core/ecs/entity.js";
 import { DEFAULT_CHUNK_CAPACITY } from "../../core/ecs/solar/types.js";
 import { LightFragment } from "../../core/ecs/fragments/light_fragment.js";
+import { VisibilityFragment } from "../../core/ecs/fragments/visibility_fragment.js";
 import { Renderer } from "../renderer.js";
 import { RenderPassFlags, DebugDrawType } from "../renderer_types.js";
 import { MeshTaskQueue } from "../mesh_task_queue.js";
@@ -115,7 +116,14 @@ const dummy_color_image_config = {
 };
 
 const light_draw_uniform_configs = [];
+
 // ============ Shader Setup ============
+
+const lru_unpin_shader_setup = {
+  pipeline_shaders: {
+    compute: { path: "shadow/as_vsm/lru_unpin.wgsl", defines: { SHADOWS_ENABLED: true } },
+  },
+};
 
 const feedback_shader_setup = {
   pipeline_shaders: {
@@ -172,6 +180,8 @@ const debug_tile_render_output_shader_setup = {
 
 const MAX_NUM_TEXTURE_POOLS = 1;
 
+const got_shadow_feedback_name = "got_shadow_feedback";
+
 /**
  * Adaptive Sparse Virtual Shadow Maps (AS-VSM)
  * Scaffolding: allocates GPU resources and adds stub passes.
@@ -206,6 +216,7 @@ export class AdaptiveSparseVirtualShadowMaps {
     render_graph,
     {
       position_texture,
+      entity_id_texture,
       light_count_buffer,
       transforms_buffer,
       object_instances,
@@ -310,12 +321,10 @@ export class AdaptiveSparseVirtualShadowMaps {
 
     // Create LRU ring buffer
     if (force_recreate) {
-      const total_lru_entries =
-        this.physical_tiles_per_row * this.physical_tiles_per_row * MAX_NUM_TEXTURE_POOLS;
       // Slot 0 is used as the head pointer for the atomic ring-buffer.
-      const lru_raw = new Uint32Array(total_lru_entries + 1);
+      const lru_raw = new Uint32Array(this.total_physical_tiles + 1);
       lru_raw[0] = 0; // head pointer starts at 0
-      for (let i = 0; i < total_lru_entries; i++) {
+      for (let i = 0; i < this.total_physical_tiles; i++) {
         lru_raw[i + 1] = i; // physical page id
       }
       lru_buf_config.raw_data = lru_raw;
@@ -325,11 +334,19 @@ export class AdaptiveSparseVirtualShadowMaps {
     // Can discard lru_raw now that buffer is created
     lru_buf_config.raw_data = null;
 
+    const got_shadow_feedback_buffer = EntityManager.get_fragment_gpu_buffer(
+      VisibilityFragment,
+      got_shadow_feedback_name
+    );
+    this.got_shadow_feedback_buffer = render_graph.register_buffer(
+      got_shadow_feedback_buffer.buffer.config.name
+    );
+
     // ────────────────────────────────────────────────────────────────
     // Clear Shadow Atlas Targets
     // ────────────────────────────────────────────────────────────────
     render_graph.add_pass(
-      "as_vsm_clear_shadow_atlas",
+      "as_vsm_clear_shadow_atlas_dummy_targets",
       RenderPassFlags.Graphics,
       {
         outputs: [this.dummy_depth_image, this.dummy_color_image],
@@ -340,7 +357,7 @@ export class AdaptiveSparseVirtualShadowMaps {
     );
 
     // ────────────────────────────────────────────────────────────────
-    // VSM Setup Pass 
+    // VSM Setup Pass
     // ────────────────────────────────────────────────────────────────
     render_graph.add_pass(
       "as_vsm_init",
@@ -374,6 +391,24 @@ export class AdaptiveSparseVirtualShadowMaps {
     );
 
     // ────────────────────────────────────────────────────────────────
+    // Unpin all pages in the LRU ring buffer
+    // ────────────────────────────────────────────────────────────────
+    render_graph.add_pass(
+      "as_vsm_unpin_lru_ring",
+      RenderPassFlags.Compute,
+      {
+        inputs: [this.lru_buf],
+        outputs: [this.lru_buf],
+        shader_setup: lru_unpin_shader_setup,
+      },
+      (graph, frame_data, encoder) => {
+        const pass = graph.get_physical_pass(frame_data.current_pass);
+        const total = this.total_physical_tiles;
+        pass.dispatch(Math.ceil(total / 64), 1, 1);
+      }
+    );
+
+    // ────────────────────────────────────────────────────────────────
     // Screen-space Feedback
     // ────────────────────────────────────────────────────────────────
     render_graph.add_pass(
@@ -382,11 +417,13 @@ export class AdaptiveSparseVirtualShadowMaps {
       {
         inputs: [
           position_texture,
+          entity_id_texture,
           this.settings_buf,
           this.bitmask_buf,
           this.light_view_buf,
           this.light_shadow_idx_buf,
           light_count_buffer,
+          this.got_shadow_feedback_buffer,
         ],
         outputs: [this.bitmask_buf],
         shader_setup: feedback_shader_setup,
@@ -423,66 +460,10 @@ export class AdaptiveSparseVirtualShadowMaps {
       (graph, frame_data, encoder) => {
         const pass = graph.get_physical_pass(frame_data.current_pass);
         const bitmask_groups = Math.ceil(this.bitmask_u32_stride / 8);
-        const light_groups   = Math.ceil(adjusted_light_count / 4);
-        pass.dispatch(bitmask_groups, bitmask_groups, light_groups);
+        const light_groups = Math.ceil(adjusted_light_count / 4);
+        pass.dispatch(bitmask_groups, 1, light_groups);
       }
     );
-
-    // ────────────────────────────────────────────────────────────────
-    // Raster shadow casters for each requested tile
-    // ────────────────────────────────────────────────────────────────
-    const light_uniforms = this._setup_light_draw_uniforms(render_graph, adjusted_light_count);
-    let snapped_this_frame = false;
-    for (let i = 0; i < this.active_view_indices.length; i++) {
-      const view_index = this.active_view_indices[i];
-      const shadow_idx = this.active_shadow_indices[i];
-
-      const light_view = SharedViewBuffer.get_view_data(view_index);
-      // ------------------- snap detection -------------------
-      const snap = this.clip0_extent / this.virtual_dim;   // texel size
-      const gx = Math.round(light_view.view_position[0] / snap);
-      const gz = Math.round(light_view.view_position[2] / snap);
-
-      const prev = this.prev_grid.get(shadow_idx);
-      if (!prev || prev.gx !== gx || prev.gz !== gz) {
-        this.prev_grid.set(shadow_idx, { gx, gz });
-        snapped_this_frame = true;               // some light moved ≥ 1 texel
-      }
-
-      // Use camera view visibility buffer to ensure objects are drawn
-      const visible_object_instances = view_visibility_buffers[view_index];
-
-      render_graph.add_pass(
-        `as_vsm_render_light_${i}`,
-        RenderPassFlags.Graphics,
-        {
-          inputs: [
-            transforms_buffer,
-            object_instances,
-            visible_object_instances,
-            this.settings_buf,
-            this.page_table,
-            light_uniforms[i],
-            this.bitmask_buf,
-            this.light_view_buf,
-            this.light_shadow_idx_buf,
-            this.shadow_atlas_buf,
-          ],
-          outputs: [this.shadow_atlas_buf, this.dummy_depth_image, this.dummy_color_image],
-          shader_setup: render_shader_setup,
-        },
-        (graph, frame_data, encoder) => {
-          const pass = graph.get_physical_pass(frame_data.current_pass);
-          MeshTaskQueue.submit_indexed_indirect_draws(
-            pass,
-            view_index,
-            true, /* skip_material_bind */
-            false, /* opaque_only */
-            true, /* depth_only */
-          );
-        }
-      );
-    }
 
     // ────────────────────────────────────────────────────────────────
     // Clear newly allocated physical tiles
@@ -504,7 +485,68 @@ export class AdaptiveSparseVirtualShadowMaps {
     );
 
     // ────────────────────────────────────────────────────────────────
-    // VSM post-update pass 
+    // Raster shadow casters for each requested tile
+    // ────────────────────────────────────────────────────────────────
+    const light_uniforms = this._setup_light_draw_uniforms(render_graph, adjusted_light_count);
+    let snapped_this_frame = false;
+    for (let i = 0; i < this.active_view_indices.length; i++) {
+      const view_index = this.active_view_indices[i];
+      const shadow_idx = this.active_shadow_indices[i];
+
+      const light_view = SharedViewBuffer.get_view_data(view_index);
+      // ------------------- snap detection -------------------
+      const snap = this.clip0_extent / this.virtual_dim; // texel size
+      const gx = Math.round(light_view.view_position[0] / snap);
+      const gz = Math.round(light_view.view_position[2] / snap);
+
+      const prev = this.prev_grid.get(shadow_idx);
+      if (!prev || prev.gx !== gx || prev.gz !== gz) {
+        this.prev_grid.set(shadow_idx, { gx, gz });
+        snapped_this_frame = true; // some light moved ≥ 1 texel
+      }
+
+      // Use camera view visibility buffer to ensure objects are drawn
+      const visible_object_instances = view_visibility_buffers[view_index];
+
+      render_graph.add_pass(
+        `as_vsm_render_light_${i}`,
+        RenderPassFlags.Graphics,
+        {
+          inputs: [
+            transforms_buffer,
+            object_instances,
+            visible_object_instances,
+            this.settings_buf,
+            this.page_table,
+            light_uniforms[i],
+            this.light_view_buf,
+            this.light_shadow_idx_buf,
+            this.got_shadow_feedback_buffer,
+            this.shadow_atlas_buf,
+          ],
+          outputs: [
+            this.shadow_atlas_buf,
+            this.got_shadow_feedback_buffer,
+            this.dummy_depth_image,
+            this.dummy_color_image,
+          ],
+          shader_setup: render_shader_setup,
+        },
+        (graph, frame_data, encoder) => {
+          const pass = graph.get_physical_pass(frame_data.current_pass);
+          MeshTaskQueue.submit_indexed_indirect_draws(
+            pass,
+            view_index,
+            true /* skip_material_bind */,
+            false /* opaque_only */,
+            true /* depth_only */
+          );
+        }
+      );
+    }
+
+    // ────────────────────────────────────────────────────────────────
+    // VSM post-update pass
     // ────────────────────────────────────────────────────────────────
     render_graph.add_pass(
       "as_vsm_post_update",
@@ -603,7 +645,13 @@ export class AdaptiveSparseVirtualShadowMaps {
         "debug_tile_overlay_pass",
         RenderPassFlags.Graphics,
         {
-          inputs: [this.page_table, position_texture, this.settings_buf, this.light_view_buf, this.shadow_atlas_buf],
+          inputs: [
+            this.page_table,
+            position_texture,
+            this.settings_buf,
+            this.light_view_buf,
+            this.shadow_atlas_buf,
+          ],
           outputs: [this.debug_tile_overlay_image],
           shader_setup: debug_tile_overlay_shader_setup,
         },
@@ -617,7 +665,9 @@ export class AdaptiveSparseVirtualShadowMaps {
       debug_tile_render_output_config.width = image_extent.width;
       debug_tile_render_output_config.height = image_extent.height;
       debug_tile_render_output_config.force = force_recreate;
-      this.debug_tile_render_output_image = render_graph.create_image(debug_tile_render_output_config);
+      this.debug_tile_render_output_image = render_graph.create_image(
+        debug_tile_render_output_config
+      );
 
       render_graph.add_pass(
         "debug_tile_render_output_pass",

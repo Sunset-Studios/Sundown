@@ -8,6 +8,7 @@ struct DrawCullData {
     draw_count: u32,
     hzb_width: u32,
     hzb_height: u32,
+    view_index: u32,
 }
 
 // ------------------------------------------------------------------------------------
@@ -167,7 +168,7 @@ fn cs(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let aabb_node_index = entity_aabb_node_indices[entity_resolved];
     var aabb_node = aabb_bounds[aabb_node_index];
 
-    var view = view_buffer[frame_info.view_index];
+    var view = view_buffer[draw_cull_data.view_index];
     let occluded = is_occluded(&aabb_node, &view);
 
     if (occluded > 0u) {

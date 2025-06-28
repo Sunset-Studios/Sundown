@@ -41,14 +41,14 @@ fn vertex(v_out: ptr<function, VertexOutput>) -> VertexOutput {
     output.vertex_index = vi;
     output.local_position = instance_vertex.position;
 
-    output.world_position = select(
+    output.world_position = vec4<f32>(select(
         entity_transform.transform * vec4<f32>(output.local_position),
         billboard_vertex_local(
             output.uv,
             entity_transform.transform
         ),
         (entity_flags[entity_resolved] & EF_BILLBOARD) != 0
-    );
+    ).xyz, 1.0);
 
     let n = normalize((entity_transform.transpose_inverse_model_matrix * vec4<f32>(instance_vertex.normal)).xyz);
     let t = normalize((entity_transform.transform * vec4<f32>(instance_vertex.tangent.xyz, 0.0)).xyz);

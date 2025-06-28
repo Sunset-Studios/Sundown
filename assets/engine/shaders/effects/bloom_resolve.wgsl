@@ -12,11 +12,14 @@ struct BloomResolveConstants {
     bloom_intensity: f32,
     bloom_threshold: f32,
     bloom_knee: f32,
+    near_plane: f32,
+    far_plane: f32,
 }
 
 @group(1) @binding(0) var scene_color: texture_2d<f32>;
 @group(1) @binding(1) var bloom_brightness: texture_2d<f32>;
-@group(1) @binding(2) var<uniform> bloom_resolve_constants: BloomResolveConstants;
+@group(1) @binding(2) var scene_depth: texture_2d<f32>;
+@group(1) @binding(3) var<uniform> bloom_resolve_constants: BloomResolveConstants;
 
 fn luminance(color: vec3<f32>) -> f32 {
     return dot(color, vec3<f32>(0.2126, 0.7152, 0.0722));
@@ -40,12 +43,22 @@ fn fs(in: VertexOutput) -> @location(0) vec4<precision_float> {
     var color = textureSample(scene_color, global_sampler, uv).rgb;
     let bloom_color = textureSample(bloom_brightness, global_sampler, uv).rgb;
 
+    // Distance-based bloom attenuation
+    let d            = bloom_resolve_constants.far_plane - bloom_resolve_constants.near_plane;
+    let depth        = textureSample(scene_depth, non_filtering_sampler, uv).r;
+    let scaled_depth = pow(depth, d * 10.0);
+    let atten        = clamp(
+        scaled_depth,
+        0.0,
+        1.0,
+    ); // 0 when close, 1 when far
+
     color = apply_bloom(
-        color, 
-        bloom_color, 
-        bloom_resolve_constants.bloom_intensity,
+        color,
+        bloom_color,
+        bloom_resolve_constants.bloom_intensity * atten,
         bloom_resolve_constants.bloom_threshold,
-        bloom_resolve_constants.bloom_knee
+        bloom_resolve_constants.bloom_knee,
     );
     
     color = reinhard_tonemapping(color, bloom_resolve_constants.exposure);

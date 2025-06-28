@@ -200,7 +200,7 @@ const compute_cull_occlusion_shader_setup = {
 };
 const draw_cull_data_config = {
   name: `draw_cull_data`,
-  data: [0, 0, 0],
+  data: [0, 0, 0, 0],
   usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
 };
 
@@ -339,7 +339,7 @@ const bloom_resolve_shader_setup = {
 };
 const bloom_resolve_params_config = {
   name: "bloom_resolve_params",
-  data: [0.0, 0.0, 0.0, 0.0],
+  data: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
   usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
 };
 const post_bloom_color_image_config = {
@@ -351,8 +351,12 @@ const post_bloom_color_image_config = {
   force: false,
 };
 const bloom_params = [
-  1.2 /* final exposure */, 0.2 /* bloom intensity */, 0.1 /* bloom threshold */,
+  1.2 /* final exposure */,
+  0.2 /* bloom intensity */,
+  0.1 /* bloom threshold */,
   0.4 /* bloom knee */,
+  0.0 /* near plane (attenuation starts) */,
+  50.0 /* far plane (full bloom) */,
 ];
 
 const fullscreen_shader_setup = {
@@ -832,7 +836,7 @@ export class DeferredShadingStrategy {
               const hzb = graph.get_physical_image(main_hzb_image);
               const draw_cull = graph.get_physical_buffer(draw_cull_data);
 
-              draw_cull.write([draw_count, hzb.config.width, hzb.config.height]);
+              draw_cull.write([draw_count, hzb.config.width, hzb.config.height, view_index]);
 
               const pass = graph.get_physical_pass(frame_data.current_pass);
               pass.dispatch((draw_count + 255) / 256, 1, 1);
@@ -1184,6 +1188,7 @@ export class DeferredShadingStrategy {
         }
         this.as_vsm.add_passes(render_graph, {
           position_texture: main_position_image,
+          entity_id_texture: main_entity_id_image,
           light_count_buffer: light_count,
           transforms_buffer: entity_transforms,
           object_instances: object_instances,
@@ -1401,7 +1406,7 @@ export class DeferredShadingStrategy {
           bloom_resolve_pass_name,
           RenderPassFlags.Graphics,
           {
-            inputs: [post_lighting_image_desc, bloom_blur_chain[0], bloom_resolve_params_desc],
+            inputs: [post_lighting_image_desc, bloom_blur_chain[0], main_depth_image, bloom_resolve_params_desc],
             outputs: [post_bloom_color_desc],
             shader_setup: bloom_resolve_shader_setup,
           },
@@ -1506,8 +1511,8 @@ export class DeferredShadingStrategy {
               this.as_vsm.debug_shadow_atlas_image,
               0,
               0,
-              image_extent.width * 0.25,
-              image_extent.height * 0.25,
+              Math.min(image_extent.width, image_extent.height) * 0.35,
+              Math.min(image_extent.width, image_extent.height) * 0.35,
               DebugDrawType.ASVSM_ShadowAtlas
             );
             break;
@@ -1516,8 +1521,8 @@ export class DeferredShadingStrategy {
               this.as_vsm.debug_page_table_image,
               0,
               0,
-              image_extent.width * 0.25,
-              image_extent.height * 0.25,
+              Math.min(image_extent.width, image_extent.height) * 0.25,
+              Math.min(image_extent.width, image_extent.height) * 0.25,
               DebugDrawType.ASVSM_ShadowPageTable
             );
             break;
@@ -1536,8 +1541,8 @@ export class DeferredShadingStrategy {
               this.as_vsm.debug_tile_render_output_image,
               0,
               0,
-              image_extent.width * 0.3,
-              image_extent.height * 0.3,
+              Math.min(image_extent.width, image_extent.height) * 0.3,
+              Math.min(image_extent.width, image_extent.height) * 0.3,
               DebugDrawType.ASVSM_TileRenderOutput
             );
             break;

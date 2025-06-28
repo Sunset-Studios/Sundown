@@ -17,7 +17,6 @@ fn cs(@builtin(workgroup_id) wg_id: vec3<u32>, @builtin(local_invocation_id) loc
     let pte = textureLoad(page_table, pte_coords, slice_idx);
 
     // Only perform the memory write if the tile is dirty.
-    // The barrier must be in uniform control flow, so we can't early exit.
     if (vsm_pte_is_dirty(pte.r)) {
         // This is a dirty tile, so the workgroup will clear it.
         let phys_page_xy = vsm_pte_get_phys_xy(pte.r);

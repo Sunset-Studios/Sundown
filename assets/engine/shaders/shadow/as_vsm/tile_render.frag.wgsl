@@ -10,14 +10,14 @@
 @group(1) @binding(3) var<uniform> vsm_settings: ASVSMSettings;
 @group(1) @binding(4) var page_table: texture_storage_2d_array<r32uint, read>; // PTE format: Bit31=Valid, Bits30-27=LOD, Bits26-0=PhysID
 @group(1) @binding(5) var<uniform> light_ub: ShadowCasterLight;
-@group(1) @binding(6) var<storage, read> bitmask: array<u32>;
-@group(1) @binding(7) var<storage, read> light_view_buffer: array<u32>;
-@group(1) @binding(8) var<storage, read> light_shadow_idx_buffer: array<u32>;
+@group(1) @binding(6) var<storage, read> light_view_buffer: array<u32>;
+@group(1) @binding(7) var<storage, read> light_shadow_idx_buffer: array<u32>;
+@group(1) @binding(8) var<storage, read> got_shadow_feedback_buffer: array<u32>;
 @group(1) @binding(9) var<storage, read_write> shadow_atlas_depth: array<atomic<u32>>;
 
 struct VertexOutput {
   @builtin(position) position: vec4<f32>,
-  @location(0) world_pos: vec4<f32>,
+  @location(0) world_pos: vec3<f32>,
   @location(1) @interpolate(flat) shadow_index: u32,
   @location(2) @interpolate(flat) view_index: u32,
 };
@@ -35,14 +35,14 @@ fn fs(input: VertexOutput) -> FragmentOutput {
   let light_vp   = view_buffer[input.view_index].view_projection_matrix;
   let camera_vp  = view_buffer[frame_info.view_index].view_projection_matrix;
 
-  let vtile_info = vsm_world_to_virtual_tile(input.world_pos, camera_vp, light_vp, vsm_settings);
+  let vtile_info = vsm_world_to_virtual_tile(vec4<f32>(input.world_pos, 1.0), camera_vp, light_vp, vsm_settings);
   let ptile_info = vsm_vtile_to_ptile(vtile_info, vsm_settings, input.shadow_index, page_table);
 
   let depth_clip = input.position.z;
   let depth_bits = pack_depth(depth_clip);
 
   output.depth   = depth_clip;
-  output.color   = vec4<f32>(input.world_pos.xyz, 1.0);
+  output.color   = vec4<f32>(input.world_pos, 1.0);
 
   atomicMin(&shadow_atlas_depth[ptile_info.physical_id], depth_bits);
 #endif

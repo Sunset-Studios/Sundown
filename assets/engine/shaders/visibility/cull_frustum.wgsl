@@ -8,6 +8,7 @@ struct DrawCullData {
     draw_count: u32,
     hzb_width: u32,
     hzb_height: u32,
+    view_index: u32,
 }
 
 // ------------------------------------------------------------------------------------
@@ -60,7 +61,7 @@ fn cs(@builtin(global_invocation_id) global_id: vec3<u32>) {
     var radius = length(aabb_node.max_point.xyz - aabb_node.min_point.xyz) * 0.5;
     radius *= 1.2; // Inflate bounds conservatively
 
-    var view = view_buffer[frame_info.view_index];
+    var view = view_buffer[draw_cull_data.view_index];
     let in_frustum = is_in_frustum(center, radius, &view);
 
     if (in_frustum == 0u) {

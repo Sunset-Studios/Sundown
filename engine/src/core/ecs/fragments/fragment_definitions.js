@@ -223,6 +223,13 @@ const VisibilityFragment = {
       gpu: true,
       usage: BufferType.STORAGE,
     },
+    got_shadow_feedback: {
+      type: DataType.UINT32,
+      stride: 1,
+      default: 0,
+      gpu: true,
+      usage: BufferType.STORAGE,
+    },
   },
 };
 

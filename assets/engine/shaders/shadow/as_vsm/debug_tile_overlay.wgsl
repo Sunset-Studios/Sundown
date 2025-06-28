@@ -42,31 +42,32 @@ fn fs(input: VertexOutput) -> @location(0) vec4<f32> {
     return vec4<f32>(0.0);
   }
 
-  let view_idx        = light_view_buffer[0u];
-  let clipmap0_vp     = view_buffer[view_idx].view_projection_matrix;
-  let camera_vp       = view_buffer[frame_info.view_index].view_projection_matrix;
-  let world_pos       = vec4<f32>(world_pos_sample.xyz, 1.0);
+  let view_idx      = light_view_buffer[0u];
+  let clipmap0_vp   = view_buffer[view_idx].view_projection_matrix;
+  let camera_vp     = view_buffer[frame_info.view_index].view_projection_matrix;
+  let world_pos     = vec4<f32>(world_pos_sample.xyz, 1.0);
 
-  let vtile_info      = vsm_world_to_virtual_tile(world_pos, camera_vp, clipmap0_vp, vsm_settings);
+  let vtile_info    = vsm_world_to_virtual_tile(world_pos, camera_vp, clipmap0_vp, vsm_settings);
 
   // Hash colour encodes tile id & lod (mix into value)
-  let base_color     = hash_u32(vtile_info.tile_id);
-  let lod_factor     = f32(vtile_info.clipmap_index) / f32(vsm_settings.max_lods - 1.0);
-  let color          = mix(base_color, vec3<f32>(lod_factor, 0.0, 1.0 - lod_factor), 0.35);
+  let base_color    = hash_u32(vtile_info.tile_id);
+  let lod_factor    = f32(vtile_info.clipmap_index) / f32(vsm_settings.max_lods);
+  let color         = mix(base_color, vec3<f32>(lod_factor, 0.0, 1.0 - lod_factor), 0.35);
 
   // Compute depth
-  let depth = vsm_shadow_depth(
-      vec4<f32>(world_pos_sample.xyz, 1.0),
-      view_idx,
-      vsm_settings,
-  );
+  let depth         = vsm_shadow_depth(
+                          vec4<f32>(world_pos_sample.xyz, 1.0),
+                          view_idx,
+                          vsm_settings
+                      );
 
-  let filter_res    = vsm_sample_shadow_bilinear(
-                              vec4<f32>(world_pos_sample.xyz, 1.0),
-                              view_idx,
-                              0u,
-                              page_table,
-                              vsm_settings);
+  let filter_res    = vsm_sample_shadow(
+                          vec4<f32>(world_pos_sample.xyz, 1.0),
+                          view_idx,
+                          0u,
+                          page_table,
+                          vsm_settings
+                      );
 
   let lit            = depth < filter_res.depth + 0.00001;
   let shadow_factor  = select(1.0, max(f32(lit), 0.3), filter_res.valid);

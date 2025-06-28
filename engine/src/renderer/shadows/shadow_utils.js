@@ -8,17 +8,17 @@ import { WORLD_FORWARD, WORLD_RIGHT } from "../../core/minimal.js";
 import { TypedStack } from "../../memory/container.js";
 import { quat, vec3, mat3, mat4, vec4 } from "gl-matrix";
 
-// Shadow atlas size.
-export const ATLAS_SIZE = 4096;
 // Tile size for both virtual and physical tiles.
 export const TILE_SIZE = 128;
+// Shadow atlas size.
+export const ATLAS_SIZE = 32 * TILE_SIZE;
+// virtual_dim has to match the AS-VSM instance you create (16384 by default).
+export const VSM_VIRTUAL_DIM = 128 * TILE_SIZE;
 // Default orthographic extent (±extent) for directional lights in clip-space.
 // Used when constructing stable light-aligned view/projection matrices.
-export const DEFAULT_LIGHT_CLIP_EXTENT = 4.0;
-// virtual_dim has to match the AS-VSM instance you create (16384 by default).
-export const VSM_VIRTUAL_DIM = 128.0 * TILE_SIZE;
+export const DEFAULT_LIGHT_CLIP_EXTENT = 256;
 // Maximum number of clipmap levels.
-export const MAX_CLIPMAP_LEVELS = 12;
+export const MAX_CLIPMAP_LEVELS = 1;
 // Size (world units) of one virtual-shadow-map texel in clip-map level 0.
 export const VSM_WORLD_UNITS_PER_TEXEL = DEFAULT_LIGHT_CLIP_EXTENT / VSM_VIRTUAL_DIM;
 

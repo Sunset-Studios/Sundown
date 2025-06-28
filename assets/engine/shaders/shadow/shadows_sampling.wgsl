@@ -20,7 +20,7 @@ fn vsm_shadow_depth(
                                 light_vp,
                                 vsm_settings
                             );
-  let depth_ndc           = light_clip_pos.z;
+  let depth_ndc           = light_clip_pos.z / light_clip_pos.w;
 
   return depth_ndc;
 }
@@ -28,7 +28,7 @@ fn vsm_shadow_depth(
 // Performs a 3×3 PCF (percentage-closer filter) from the shadow atlas for the fragment at
 // world_pos. It uses the same virtual-→physical mapping logic as the regular
 // sample helper and falls back to 1.0 when the page is not resident.
-fn vsm_sample_shadow_bilinear(
+fn vsm_sample_shadow(
     world_pos: vec4<f32>,
     view_idx: u32,
     shadow_idx: u32,
@@ -48,8 +48,8 @@ fn vsm_sample_shadow_bilinear(
     // let pool_stride = phys_dim * phys_dim;
     // let pool_idx    = ptile_info.memory_pool_index;
 
-    // let pixel_f     = ptile_info.physical_pixel;
-    // let base        = vec2<u32>(pixel_f);
+    // let pixel     = ptile_info.physical_pixel;
+    // let base        = vec2<u32>(pixel);
 
     // let x0          = base.x;
     // let y0          = base.y;
