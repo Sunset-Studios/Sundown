@@ -133,6 +133,27 @@ fn vsm_pte_get_tile_coords(virtual_tile_id: u32, settings: ASVSMSettings) -> vec
     return vec3<u32>(tile_x, tile_y, tile_clip);
 }
 
+// Physical ID helpers – convert between physical IDs and XY pool IDs.
+fn vsm_physical_id_to_xy_pool(physical_id: u32, settings: ASVSMSettings) -> vec3<u32> {
+  let ptpr = u32(settings.physical_tiles_per_row);
+  let atlas_size = ptpr * ptpr;
+  let pool_id = physical_id / atlas_size;
+  let local_physical_id = physical_id % atlas_size;
+  let phys_x = local_physical_id % ptpr;
+  let phys_y = local_physical_id / ptpr;
+  return vec3<u32>(phys_x, phys_y, pool_id);
+}
+
+// PTE helpers – convert between PTE values and physical IDs.
+fn vsm_pte_to_physical_id(pte_entry: u32, settings: ASVSMSettings) -> u32 {
+  let ptpr = u32(settings.physical_tiles_per_row);
+  let atlas_size = ptpr * ptpr;
+  let pool_id = (pte_entry & pte_pool_id_mask) >> pte_pool_id_shift;
+  let phys_x = (pte_entry & pte_phys_x_mask) >> pte_phys_x_shift;
+  let phys_y = (pte_entry & pte_phys_y_mask) >> pte_phys_y_shift;
+  return pool_id * atlas_size + phys_y * ptpr + phys_x;
+}
+
 fn vsm_convert_clip0_to_clipn(original : vec4<f32>,
                               clip_map_index : u32,
                               settings: ASVSMSettings) -> vec4<f32> {
@@ -181,12 +202,9 @@ fn vsm_calculate_clipmap_index_from_world_pos(
     camera_vp: mat4x4<f32>,
     settings: ASVSMSettings
 ) -> u32 {
-    let clip      = camera_vp * world_pos;
-    let uv01      = clip.xy * 0.5 + vec2<f32>(0.5);
-    let scaled_uv = vec3<f32>(uv01.x, uv01.y, clip.z);
-
-    let radius    = length(scaled_uv);
-    let lod       = ceil(log2(max(radius, 1.0)));
+    var clip      = camera_vp * world_pos;
+    let radius    = length(clip.xyz);
+    let lod       = floor(log2(max(radius, 1.0)));
 
     return u32(clamp(lod, 0.0, f32(settings.max_lods) - 1.0));
 }

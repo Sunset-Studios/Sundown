@@ -299,13 +299,12 @@ fn log_depth(view_space_z: f32) -> f32 {
         / (log(LOG_DEPTH_C * far_plane + 1.0) - log(LOG_DEPTH_C * near_plane + 1.0));
 }
 
-fn linearize_depth(d: f32, near_plane: f32, far_plane: f32) -> f32 {
+fn linearize_depth(d: f32, near_plane: f32, far_plane: f32, view_index: u32) -> f32 {
     // Works for both perspective and orthographic projections.
     // Depth coming from the texture is in the [-1,1] clip-space range.
     let depth01 = (d * 0.5) + 0.5;               // -> [0,1]
 
     // Orthographic matrices have projection[3][3] == 1, perspective == 0
-    let view_index = frame_info.view_index;
     let proj_33    = view_buffer[view_index].projection_matrix[3][3];
     let is_ortho   = proj_33 > 0.5;
 

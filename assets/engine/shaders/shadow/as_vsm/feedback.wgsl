@@ -44,9 +44,9 @@ fn cs(@builtin(global_invocation_id) id: vec3<u32>) {
 
   let uv = vec2<f32>(id.xy) / vec2<f32>(dims.xy);
 
-  let texture_pos = textureSampleLevel(position_texture, global_sampler, uv, 0.0).xyz;
-  let world_pos = vec4<f32>(texture_pos, 1.0);
-  if (all(world_pos == vec4<f32>(0.0))) {
+  let texture_pos = textureSampleLevel(position_texture, global_sampler, uv, 0.0);
+  let world_pos = vec4<f32>(texture_pos.xyz, 1.0);
+  if (texture_pos.w == 0.0) {
     return;
   }
 
@@ -77,6 +77,6 @@ fn cs(@builtin(global_invocation_id) id: vec3<u32>) {
   let mask = word_and_mask.y;
 
   atomicOr(&bitmask[word], mask);
-  atomicOr(&got_shadow_feedback[entity_id], 1u);
+  atomicStore(&got_shadow_feedback[entity_id], 1u);
 #endif
 } 

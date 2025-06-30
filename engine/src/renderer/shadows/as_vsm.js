@@ -119,15 +119,21 @@ const light_draw_uniform_configs = [];
 
 // ============ Shader Setup ============
 
-const lru_unpin_shader_setup = {
+const clear_resources_shader_setup = {
   pipeline_shaders: {
-    compute: { path: "shadow/as_vsm/lru_unpin.wgsl", defines: { SHADOWS_ENABLED: true } },
+    compute: { path: "shadow/as_vsm/clear_resources.wgsl", defines: { SHADOWS_ENABLED: true } },
   },
 };
 
 const feedback_shader_setup = {
   pipeline_shaders: {
     compute: { path: "shadow/as_vsm/feedback.wgsl", defines: { SHADOWS_ENABLED: true } },
+  },
+};
+
+const evict_unused_tiles_shader_setup = {
+  pipeline_shaders: {
+    compute: { path: "shadow/as_vsm/evict_unused_pages.wgsl", defines: { SHADOWS_ENABLED: true } },
   },
 };
 
@@ -280,14 +286,12 @@ export class AdaptiveSparseVirtualShadowMaps {
     this.settings_buf = render_graph.create_buffer(settings_buf_config);
 
     // Allocate one bitmask per light so tiles are tracked independently per-light
-    const bitmask_u32_stride = Math.ceil(this.total_virtual_tiles / 32); // words per light (includes all LODs)
-    const total_bitmask_u32 = bitmask_u32_stride * adjusted_light_count;
+    this.bitmask_u32_stride = Math.ceil(this.total_virtual_tiles / 32); // words tper light (includes all LODs)
+    this.bitmask_u32_count = this.bitmask_u32_stride * adjusted_light_count;
 
-    bitmask_buf_config.size = total_bitmask_u32 * 4;
+    bitmask_buf_config.size = this.bitmask_u32_count * 4;
     bitmask_buf_config.force = force_recreate;
     this.bitmask_buf = render_graph.create_buffer(bitmask_buf_config);
-    this.bitmask_u32_stride = bitmask_u32_stride;
-    this.bitmask_u32_count = total_bitmask_u32;
 
     // Create Page Table storage texture
     page_table_config.width = this.virtual_tiles_per_row;
@@ -391,20 +395,21 @@ export class AdaptiveSparseVirtualShadowMaps {
     );
 
     // ────────────────────────────────────────────────────────────────
-    // Unpin all pages in the LRU ring buffer
+    // Clear VSM resources
     // ────────────────────────────────────────────────────────────────
     render_graph.add_pass(
-      "as_vsm_unpin_lru_ring",
+      "as_vsm_clear_resources",
       RenderPassFlags.Compute,
       {
-        inputs: [this.lru_buf],
-        outputs: [this.lru_buf],
-        shader_setup: lru_unpin_shader_setup,
+        inputs: [this.got_shadow_feedback_buffer],
+        outputs: [this.got_shadow_feedback_buffer],
+        shader_setup: clear_resources_shader_setup,
       },
       (graph, frame_data, encoder) => {
         const pass = graph.get_physical_pass(frame_data.current_pass);
-        const total = this.total_physical_tiles;
-        pass.dispatch(Math.ceil(total / 64), 1, 1);
+        const got_shadow_feedback_buffer = graph.get_physical_buffer(this.got_shadow_feedback_buffer);
+        const elements = got_shadow_feedback_buffer.config.size / 4;
+        pass.dispatch(elements / 64, 1, 1);
       }
     );
 
@@ -439,6 +444,34 @@ export class AdaptiveSparseVirtualShadowMaps {
     );
 
     // ────────────────────────────────────────────────────────────────
+    // Evict tiles that were not referenced this frame
+    // ────────────────────────────────────────────────────────────────
+    render_graph.add_pass(
+      "as_vsm_evict_unused_tiles",
+      RenderPassFlags.Compute,
+      {
+        inputs: [
+          this.page_table,
+          this.lru_buf,
+          this.settings_buf,
+          this.bitmask_buf,
+          this.light_shadow_idx_buf,
+          light_count_buffer,
+        ],
+        outputs: [this.page_table],
+        shader_setup: evict_unused_tiles_shader_setup,
+      },
+      (graph, frame_data, encoder) => {
+        const pass = graph.get_physical_pass(frame_data.current_pass);
+        const pt_image = graph.get_physical_image(this.page_table);
+        const x_groups = Math.ceil(pt_image.config.width / 8);
+        const y_groups = Math.ceil(pt_image.config.height / 8);
+        const z_groups = Math.ceil(pt_image.config.depth / 4);
+        pass.dispatch(x_groups, y_groups, z_groups);
+      }
+    );
+
+    // ────────────────────────────────────────────────────────────────
     // Page-table update (allocate physical pages for requested tiles)
     //   Must run BEFORE raster passes so they render into up-to-date atlas pages.
     // ────────────────────────────────────────────────────────────────
@@ -459,7 +492,7 @@ export class AdaptiveSparseVirtualShadowMaps {
       },
       (graph, frame_data, encoder) => {
         const pass = graph.get_physical_pass(frame_data.current_pass);
-        const bitmask_groups = Math.ceil(this.bitmask_u32_stride / 8);
+        const bitmask_groups = Math.ceil(this.bitmask_u32_count / 64);
         const light_groups = Math.ceil(adjusted_light_count / 4);
         pass.dispatch(bitmask_groups, 1, light_groups);
       }

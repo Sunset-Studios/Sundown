@@ -16,7 +16,7 @@ fn fs(input: VertexOutput) -> @location(0) vec4<f32> {
   let depth_sample = textureSample(dummy_depth_image, non_filtering_sampler, input.uv);
   let near = view_buffer[frame_info.view_index].near;
   let far = view_buffer[frame_info.view_index].far;
-  let lin_depth = linearize_depth(depth_sample, near, far);
+  let lin_depth = linearize_depth(depth_sample, near, far, frame_info.view_index);
   return vec4<f32>(lin_depth, lin_depth, lin_depth, 1.0);
 #else
   return vec4<f32>(0.0);

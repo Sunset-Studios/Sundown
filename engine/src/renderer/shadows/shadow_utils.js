@@ -14,11 +14,11 @@ export const TILE_SIZE = 128;
 export const ATLAS_SIZE = 32 * TILE_SIZE;
 // virtual_dim has to match the AS-VSM instance you create (16384 by default).
 export const VSM_VIRTUAL_DIM = 128 * TILE_SIZE;
-// Default orthographic extent (±extent) for directional lights in clip-space.
+// Default orthographic extent (±extent) for directional lights in clip-space 0.
 // Used when constructing stable light-aligned view/projection matrices.
-export const DEFAULT_LIGHT_CLIP_EXTENT = 256;
+export const DEFAULT_LIGHT_CLIP_EXTENT = 20;
 // Maximum number of clipmap levels.
-export const MAX_CLIPMAP_LEVELS = 1;
+export const MAX_CLIPMAP_LEVELS = 12;
 // Size (world units) of one virtual-shadow-map texel in clip-map level 0.
 export const VSM_WORLD_UNITS_PER_TEXEL = DEFAULT_LIGHT_CLIP_EXTENT / VSM_VIRTUAL_DIM;
 
@@ -128,15 +128,12 @@ export function compute_directional_light_position_for_clip(light_rotation, worl
     vec3.max(aabb_max, aabb_max, corner_ls);
   }
 
-  // Light-space centre of the frustum AABB, **snapped** to the virtual-page grid.
-  const radius = vec3.distance(aabb_min, aabb_max);
   const centre_ls_raw =
       vec3.scale(vec3.create(), vec3.add(vec3.create(), aabb_min, aabb_max), 0.5);
-  const snap = VSM_WORLD_UNITS_PER_TEXEL;
   const centre_ls = vec3.fromValues(
-      Math.round(centre_ls_raw[0] / snap) * snap,
-      Math.round(centre_ls_raw[1] / snap) * snap,
-      Math.round(centre_ls_raw[2] / snap) * snap,
+      Math.round(centre_ls_raw[0] / VSM_WORLD_UNITS_PER_TEXEL) * VSM_WORLD_UNITS_PER_TEXEL,
+      Math.round(centre_ls_raw[1] / VSM_WORLD_UNITS_PER_TEXEL) * VSM_WORLD_UNITS_PER_TEXEL,
+      Math.round(centre_ls_raw[2] / VSM_WORLD_UNITS_PER_TEXEL) * VSM_WORLD_UNITS_PER_TEXEL,
   );
 
   // Convert the centre back to world-space so that it can be used directly as
@@ -145,9 +142,9 @@ export function compute_directional_light_position_for_clip(light_rotation, worl
   const centre_ws = vec3.transformQuat(vec3.create(), centre_ls, light_to_world_rot);
 
   const light_forward = vec3.transformQuat(vec3.create(), WORLD_FORWARD, light_rotation);
-  const center_adjusted = vec3.scaleAndAdd(vec3.create(), centre_ws, light_forward, -radius);
+  const center_adjusted = vec3.scaleAndAdd(vec3.create(), centre_ws, light_forward, -1.0);
 
-  return vec4.fromValues(center_adjusted[0], center_adjusted[1], center_adjusted[2], 1.0);
+  return { position: vec4.fromValues(center_adjusted[0], center_adjusted[1], center_adjusted[2], 1.0) };
 }
 
 /**

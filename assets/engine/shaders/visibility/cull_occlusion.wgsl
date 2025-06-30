@@ -135,7 +135,7 @@ fn is_occluded(aabb_node: ptr<function, AABBNodeBounds>, view: ptr<function, Vie
             let id = textureLoad(entity_id_texture, vec2<i32>(pixel), 0).x;
             let occ = occluder_buffer[id] != 0u;
             let d = select(far_depth, raw_d, occ);
-            let lin_d = linearize_depth(d, view.near, view.far);
+            let lin_d = linearize_depth(d, view.near, view.far, draw_cull_data.view_index);
             max_depth = max(max_depth, lin_d);
         }
     }

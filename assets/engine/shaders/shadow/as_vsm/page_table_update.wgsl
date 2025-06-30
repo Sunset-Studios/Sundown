@@ -12,31 +12,6 @@
 @group(1) @binding(5) var<storage, read> light_count_buffer: array<u32>;
 
 // ------------------------------------------------------------------
-// Physical ID helpers – convert between physical IDs and XY pool IDs.
-// ------------------------------------------------------------------
-fn get_physical_id_xy_pool(physical_id: u32) -> vec3<u32> {
-  let ptpr = u32(vsm_settings.physical_tiles_per_row);
-  let atlas_size = ptpr * ptpr;
-  let pool_id = physical_id / atlas_size;
-  let local_physical_id = physical_id % atlas_size;
-  let phys_x = local_physical_id % ptpr;
-  let phys_y = local_physical_id / ptpr;
-  return vec3<u32>(phys_x, phys_y, pool_id);
-}
-
-// ------------------------------------------------------------------
-// PTE helpers – convert between PTE values and physical IDs.
-// ------------------------------------------------------------------
-fn pte_to_physical_id(pte_entry: u32) -> u32 {
-  let ptpr = u32(vsm_settings.physical_tiles_per_row);
-  let atlas_size = ptpr * ptpr;
-  let pool_id = (pte_entry & pte_pool_id_mask) >> pte_pool_id_shift;
-  let phys_x = (pte_entry & pte_phys_x_mask) >> pte_phys_x_shift;
-  let phys_y = (pte_entry & pte_phys_y_mask) >> pte_phys_y_shift;
-  return pool_id * atlas_size + phys_y * ptpr + phys_x;
-}
-
-// ------------------------------------------------------------------
 // LRU helpers – the MSB of each physical_id entry is treated as a
 // "pinned" flag.  A pinned page is considered in-use and therefore
 // ineligible for eviction.
@@ -71,24 +46,23 @@ fn lru_acquire_free_page(total_lru_entries: u32) -> u32 {
   }
 }
 
-@compute @workgroup_size(8, 8, 4)
+@compute @workgroup_size(64, 1, 4)
 fn cs(
     @builtin(global_invocation_id) id: vec3<u32>,
-    @builtin(local_invocation_id) local_id: vec3<u32>,
-    @builtin(workgroup_id) group_id: vec3<u32>
 ) {
 #if SHADOWS_ENABLED
     // ------------------------------------------------------------------
     // Calculate per-light stride inside the bitmask buffer
     // ------------------------------------------------------------------
-    let vtpr = u32(vsm_settings.virtual_tiles_per_row);
-    let stride_words = ((vtpr * vtpr * u32(vsm_settings.max_lods) + 31u) >> 5u);
+    let vtpr         = u32(vsm_settings.virtual_tiles_per_row);
+    let max_lods     = u32(vsm_settings.max_lods);
+    let stride_words = ((vtpr * vtpr * max_lods + 31u) >> 5u);
 
     // Compute linear index *within* the bitmask for this light.
     // Each 8×8 work-group covers 64 consecutive 32-bit words.
     // Combine the work-group offset (group_id.x) with the local thread offset
     // to obtain a unique word index for the entire dispatch.
-    let index_in_stride = group_id.x * 64u + local_id.y * 8u + local_id.x;
+    let index_in_stride = id.x;
     if (index_in_stride >= stride_words) {
         return;
     }
@@ -117,14 +91,19 @@ fn cs(
       let tile_id = index_in_stride * 32u + shift;
 
       let pte_coords = vsm_pte_get_tile_coords(tile_id, vsm_settings);
-      let page_table_index = shadow_index * u32(vsm_settings.max_lods) + pte_coords.z;
+      let page_table_index = shadow_index * max_lods + pte_coords.z;
 
       let pte = textureLoad(page_table, pte_coords.xy, page_table_index).r;
       let pte_is_valid = vsm_pte_is_valid(pte);
+
       if (pte_is_valid) {
-        let current_physical_id = pte_to_physical_id(pte);
+        let current_physical_id = vsm_pte_to_physical_id(pte, vsm_settings);
         let lru_slot = 1u + current_physical_id;
         atomicOr(&lru[lru_slot], lru_pinned_flag);
+
+        let new_pte_value = pte | (1u << pte_dirty_shift);
+        textureStore(page_table, pte_coords.xy, page_table_index, vec4<u32>(new_pte_value));
+
         continue; // Already mapped by a concurrent thread or previous pass
       }
 
@@ -133,12 +112,12 @@ fn cs(
 
       // Acquire a free (unpinned) physical page from the LRU ring.
       let physical_id = lru_acquire_free_page(total_lru_entries);
-      if (physical_id == 0u) {
+      if (physical_id == 0xffffffffu) {
         continue;
       }
 
       // Update New PTE – build entry with new format
-      let physical_id_xy_pool = get_physical_id_xy_pool(physical_id);
+      let physical_id_xy_pool = vsm_physical_id_to_xy_pool(physical_id, vsm_settings);
 
       let new_pte_value =
         ((physical_id_xy_pool.x << pte_phys_x_shift) & pte_phys_x_mask)    |

@@ -50,6 +50,7 @@ export class LightViewProcessor extends SimulationLayer {
         const view = SharedViewBuffer.add_view_data();
         view.renderable_state = lights.shadow_casting[slot];
         view.occlusion_enabled = 0;
+        view.culling_enabled = 0;
 
         const light_position = [
           lights.position[slot * 4 + 0],
@@ -67,7 +68,7 @@ export class LightViewProcessor extends SimulationLayer {
           // ---------------------------------------------------------------------------
           // Use centralized utilities for stable rotation & projection ----------------
           const rotation = compute_directional_light_rotation(light_position);
-          const position = compute_directional_light_position_for_clip(
+          const { position: light_pos } = compute_directional_light_position_for_clip(
             rotation,
             camera_view.view_position,
             camera_view.inverse_view_projection_matrix
@@ -77,7 +78,7 @@ export class LightViewProcessor extends SimulationLayer {
             camera_view.far,
           );
 
-          view.view_position = position;
+          view.view_position = light_pos;
           view.view_rotation = rotation;
         } else {
           view.fov = 90.0;
@@ -129,7 +130,7 @@ export class LightViewProcessor extends SimulationLayer {
           const light_view = SharedViewBuffer.get_view_data(view_index);
 
           const rotation = compute_directional_light_rotation(light_position);
-          const position = compute_directional_light_position_for_clip(
+          const { position: light_pos2 } = compute_directional_light_position_for_clip(
             rotation,
             camera_view.view_position,
             camera_view.inverse_view_projection_matrix
@@ -140,7 +141,7 @@ export class LightViewProcessor extends SimulationLayer {
             camera_view.far,
           );
           light_view.view_rotation = rotation;
-          //light_view.view_position = position;
+          light_view.view_position = light_pos2;
         }
       }
 

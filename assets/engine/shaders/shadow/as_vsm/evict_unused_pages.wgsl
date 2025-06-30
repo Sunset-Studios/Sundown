@@ -1,0 +1,66 @@
+#include "common.wgsl"
+#include "lighting_common.wgsl"
+#include "shadow/shadows_common.wgsl"
+
+@group(1) @binding(0) var page_table: texture_storage_2d_array<r32uint, read_write>;
+@group(1) @binding(1) var<storage, read_write> lru: array<atomic<u32>>;
+@group(1) @binding(2) var<uniform> vsm_settings: ASVSMSettings;
+@group(1) @binding(3) var<storage, read> bitmask: array<u32>;
+@group(1) @binding(4) var<storage, read> light_shadow_idx_buffer: array<u32>;
+@group(1) @binding(5) var<storage, read> light_count_buffer: array<u32>;
+
+@compute @workgroup_size(8, 8, 4)
+fn cs(@builtin(global_invocation_id) id: vec3<u32>) {
+#if SHADOWS_ENABLED
+  let vtpr = u32(vsm_settings.virtual_tiles_per_row);
+  let max_lods = u32(vsm_settings.max_lods);
+
+  if (id.x >= vtpr || id.y >= vtpr) {
+    return;
+  }
+
+  let light_idx = id.z / max_lods;
+  let clipmap_idx = id.z % max_lods;
+
+  let light_count = light_count_buffer[0u];
+  if (light_idx >= light_count) {
+    return;
+  }
+
+  let shadow_index = light_shadow_idx_buffer[light_idx];
+  if (shadow_index == 0xffffffffu) {
+    return;
+  }
+
+  let tile_coords = vec2<u32>(id.xy);
+  let word_and_mask = vsm_get_virtual_tile_word_and_mask(
+    tile_coords,
+    clipmap_idx,
+    shadow_index,
+    vsm_settings,
+  );
+  let word = word_and_mask.x;
+  let mask = word_and_mask.y;
+  let not_visible = (bitmask[word] & mask) == 0u;
+
+  let slice = shadow_index * max_lods + clipmap_idx;
+  let entry = textureLoad(page_table, tile_coords, slice).r;
+  let current_physical_id = vsm_pte_to_physical_id(entry, vsm_settings);
+
+  // TODO: Evicting pages the moment tiles become invisible like this is a bit too aggressive.
+  // Need to change this to only evict non-feedback pages when another tile request needs this LRU entry.
+  // Otherwise, we'll always be evicting pages for ofscreen objects, which will prevent shadowing from offscreen objects, which we don't want.
+
+  if (vsm_pte_is_valid(entry)) {
+    if (not_visible) {
+      atomicAnd(&lru[1u + current_physical_id], ~lru_pinned_flag);
+    } else {
+      atomicOr(&lru[1u + current_physical_id], lru_pinned_flag);
+    }
+  }
+
+  if (not_visible) {
+    textureStore(page_table, tile_coords, slice, vec4<u32>(0u));
+  }
+#endif
+}

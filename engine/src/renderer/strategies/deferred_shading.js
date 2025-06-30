@@ -645,6 +645,29 @@ export class DeferredShadingStrategy {
       // ═══════════════════════════════════════════════════════════════════════════════
 
       // ┌─────────────────────────────────────────────────────────────────────────────┐
+      // │ 🧹 PASS: Init Views                                                         │
+      // │    Initialize all views to a clean slate                                    │
+      // └─────────────────────────────────────────────────────────────────────────────┘
+      if (draw_count > 0) {
+        for (let view_index = 0; view_index < total_views; ++view_index) {
+          if (!SharedViewBuffer.is_render_active(view_index)) continue;
+
+          const draw_cull_data = per_view_draw_cull_data[view_index];
+
+          render_graph.add_pass(
+            "init_views",
+            RenderPassFlags.GraphLocal,
+            {},
+            (graph, frame_data, encoder) => {
+              const hzb = graph.get_physical_image(main_hzb_image);
+              const draw_cull = graph.get_physical_buffer(draw_cull_data);
+              draw_cull.write(new Uint32Array([draw_count, hzb.config.width, hzb.config.height, view_index]));
+            }
+          );
+        }
+      }
+
+      // ┌─────────────────────────────────────────────────────────────────────────────┐
       // │ 🧹 PASS: Clear G-Buffer Targets                                            │
       // │    Initialize all render targets to a clean slate                          │
       // └─────────────────────────────────────────────────────────────────────────────┘
@@ -822,7 +845,6 @@ export class DeferredShadingStrategy {
 
           const visible_buf_no_occlusion = per_view_visible_no_occlusion_buffers[view_index];
           const visible_buf = per_view_visible_buffers[view_index];
-          const draw_cull_data = per_view_draw_cull_data[view_index];
 
           render_graph.add_pass(
             `clear_visibility_data_view_${view_index}`,
@@ -833,11 +855,6 @@ export class DeferredShadingStrategy {
               outputs: [visible_buf, visible_buf_no_occlusion],
             },
             (graph, frame_data, encoder) => {
-              const hzb = graph.get_physical_image(main_hzb_image);
-              const draw_cull = graph.get_physical_buffer(draw_cull_data);
-
-              draw_cull.write([draw_count, hzb.config.width, hzb.config.height, view_index]);
-
               const pass = graph.get_physical_pass(frame_data.current_pass);
               pass.dispatch((draw_count + 255) / 256, 1, 1);
             }
