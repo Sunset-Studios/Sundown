@@ -40,14 +40,5 @@ fn cs(@builtin(workgroup_id) wg_id: vec3<u32>, @builtin(local_invocation_id) loc
             atomicStore(&shadow_atlas_depth[linear_index], 16777215u);
         }
     }
-
-    // Barrier to ensure all invocations in the workgroup have finished clearing.
-    workgroupBarrier();
-
-    // One invocation clears the dirty bit.
-    if (vsm_pte_is_dirty(pte.r) && dot(local_id.xyz, local_id.xyz) == 0u) {
-        let new_pte_val = pte.r & ~pte_dirty_mask;
-        textureStore(page_table, pte_coords, slice_idx, vec4<u32>(new_pte_val));
-    }
     #endif
 } 

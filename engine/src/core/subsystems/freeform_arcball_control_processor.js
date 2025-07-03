@@ -3,11 +3,16 @@ import { SimulationLayer } from '../simulation_layer.js';
 import { SharedViewBuffer } from '../shared_data.js';
 import { InputProvider } from '../../input/input_provider.js';
 import { InputKey, InputRange } from '../../input/input_types.js';
-import { radians } from '../../utility/math.js';
+import { radians, clamp, near_zero } from '../../utility/math.js';
 import { vec4, quat, vec3 } from 'gl-matrix';
 import { WORLD_FORWARD, WORLD_UP } from '../minimal.js';
 
 export class FreeformArcballControlProcessor extends SimulationLayer {
+    max_move_speed = 100.0;
+    min_move_speed = 1.0;
+    max_rotation_speed = 10.0;
+    min_rotation_speed = 0.1;
+
     move_speed = 10.0;
     rotation_speed = 3.0; // Adjusted for smoother rotation
     orbit_distance = 20; // Fixed distance from pivot point
@@ -33,6 +38,11 @@ export class FreeformArcballControlProcessor extends SimulationLayer {
         const view_data = SharedViewBuffer.get_view_data(this.context.current_view);
         let position = vec4.clone(view_data.view_position);
         let rotation = quat.clone(view_data.view_rotation);
+
+        const move_speed_delta = InputProvider.get_range(InputRange.M_wheel) / 100.0;
+        if (!near_zero(move_speed_delta)) {
+            this.move_speed = clamp(this.move_speed + move_speed_delta, this.min_move_speed, this.max_move_speed);
+        }
         
         let moved = false;
         if (InputProvider.get_state(InputKey.K_w)) {

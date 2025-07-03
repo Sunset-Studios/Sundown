@@ -108,7 +108,7 @@ fn sample_probe_irradiance(world_pos: vec3<f32>) -> vec3<f32> {
     var roughness = tex_smra.b;
     var ao = tex_smra.a;
 
-    var tex_position = textureSample(position_texture, global_sampler, uv);
+    var tex_position = textureSample(position_texture, non_filtering_sampler, uv);
     var position = tex_position.xyz;
     var position4 = vec4<f32>(position, 1.0);
 
@@ -126,6 +126,7 @@ fn sample_probe_irradiance(world_pos: vec3<f32>) -> vec3<f32> {
         var light = dense_lights_buffer[light_index];
         let light_view_index = u32(light.view_index);
         let light_shadow_index = u32(light.shadow_index);
+        let light_dir = get_light_dir(light, position);
 
 #if SHADOWS_ENABLED
         let depth         = vsm_shadow_depth(
@@ -134,14 +135,16 @@ fn sample_probe_irradiance(world_pos: vec3<f32>) -> vec3<f32> {
                                 vsm_settings,
                             );
         let filter_res    = vsm_sample_shadow(
+                              depth,
                               position4,
+                              normalized_normal,
+                              light_dir,
                               light_view_index,
                               light_shadow_index,
                               page_table,
                               vsm_settings);
 
-        let lit           = depth < filter_res.depth + 0.00001;
-        let shadow_factor = 1.0 - select(1.0, f32(lit), filter_res.valid);
+        let shadow_factor = 1.0 - select(1.0, filter_res.depth, filter_res.valid);
 #else
         let shadow_factor = 0.0;
 #endif
@@ -151,6 +154,7 @@ fn sample_probe_irradiance(world_pos: vec3<f32>) -> vec3<f32> {
             light,
             normalized_normal,
             view_dir,
+            light_dir,
             position,
             albedo,
             roughness,

@@ -8,16 +8,13 @@ struct VertexOutput {
     @location(1) @interpolate(flat) instance_index: u32,
 };
 
-@group(1) @binding(0) var dummy_depth_image: texture_depth_2d;
+@group(1) @binding(0) var dummy_depth_image: texture_2d<f32>;
 
 @fragment
 fn fs(input: VertexOutput) -> @location(0) vec4<f32> {
 #if SHADOWS_ENABLED
-  let depth_sample = textureSample(dummy_depth_image, non_filtering_sampler, input.uv);
-  let near = view_buffer[frame_info.view_index].near;
-  let far = view_buffer[frame_info.view_index].far;
-  let lin_depth = linearize_depth(depth_sample, near, far, frame_info.view_index);
-  return vec4<f32>(lin_depth, lin_depth, lin_depth, 1.0);
+  let depth_sample = textureSample(dummy_depth_image, non_filtering_sampler, input.uv).r;
+  return vec4<f32>(depth_sample, depth_sample, depth_sample, 1.0);
 #else
   return vec4<f32>(0.0);
 #endif

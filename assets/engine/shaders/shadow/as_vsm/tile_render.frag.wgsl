@@ -24,7 +24,6 @@ struct VertexOutput {
 
 struct FragmentOutput {
   @builtin(frag_depth) depth: f32,
-  @location(0) color: vec4<f32>,
 };
 
 @fragment
@@ -32,17 +31,24 @@ fn fs(input: VertexOutput) -> FragmentOutput {
   var output: FragmentOutput;
 
 #if SHADOWS_ENABLED
-  let light_vp   = view_buffer[input.view_index].view_projection_matrix;
-  let camera_vp  = view_buffer[frame_info.view_index].view_projection_matrix;
+  let light_vp        = view_buffer[input.view_index].view_projection_matrix;
+  let camera_vp       = view_buffer[frame_info.view_index].view_projection_matrix;
 
-  let vtile_info = vsm_world_to_virtual_tile(vec4<f32>(input.world_pos, 1.0), camera_vp, light_vp, vsm_settings);
+  let clip_index      = light_ub.clip_index;
+  let clipmap0_vp     = view_buffer[input.view_index].view_projection_matrix;
+
+  let vtile_info = vsm_world_to_virtual_tile_for_clip(
+    vec4<f32>(input.world_pos, 1.0),
+    clipmap0_vp,
+    vsm_settings,
+    clip_index,
+  );
   let ptile_info = vsm_vtile_to_ptile(vtile_info, vsm_settings, input.shadow_index, page_table);
 
   let depth_clip = input.position.z;
   let depth_bits = pack_depth(depth_clip);
 
   output.depth   = depth_clip;
-  output.color   = vec4<f32>(input.world_pos, 1.0);
 
   atomicMin(&shadow_atlas_depth[ptile_info.physical_id], depth_bits);
 #endif

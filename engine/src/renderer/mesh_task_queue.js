@@ -5,7 +5,7 @@ import { ResourceCache } from "./resource_cache.js";
 import { Mesh } from "./mesh.js";
 import { Buffer } from "./buffer.js";
 import { Name } from "../utility/names.js";
-import { RandomAccessAllocator, SparseRandomAccessAllocator } from "../memory/allocator.js";
+import { RandomAccessAllocator, Sparse2DRandomAccessAllocator } from "../memory/allocator.js";
 import { profile_scope } from "../utility/performance.js";
 import { CacheTypes, MaterialFamilyType, BindGroupType } from "./renderer_types.js";
 
@@ -116,6 +116,7 @@ class ObjectInstanceBuffer {
 
 class IndirectDrawObject {
   view_index = 0;
+  clipmap_index = 0;
   indirect_draw_buffer = null;
   visible_instance_buffer_no_occlusion = null;
   visible_instance_buffer = null;
@@ -127,7 +128,7 @@ class IndirectDrawObject {
     profile_scope("init_indirect_draw_object", () => {
       this.indirect_draw_data = new Uint32Array(initial_buffer_size * 5);
 
-      const suffix = this.view_index === 0 ? "" : `_view_${this.view_index}`;
+      const suffix = `_view_${this.view_index}_clipmap_${this.clipmap_index}`;
       if (!this.indirect_draw_buffer) {
         this.indirect_draw_buffer = Buffer.create({
           name: `indirect_draw_buffer${suffix}`,
@@ -157,7 +158,7 @@ class IndirectDrawObject {
   // We assume this gets called once per frame
   update_buffers(batches, object_instances, force_update = false) {
     profile_scope("update_indirect_buffers", () => {
-      const suffix = this.view_index === 0 ? "" : `_view_${this.view_index}`;
+      const suffix = `_view_${this.view_index}_clipmap_${this.clipmap_index}`;
       const indirect_draw_entries_count = batches.length * 5;
       if (indirect_draw_entries_count !== this.last_indirect_draw_count || force_update) {
         this.last_indirect_draw_count = indirect_draw_entries_count;
@@ -284,7 +285,7 @@ export class MeshTaskQueue {
   static object_instances = [];
   static material_buckets = [];
   static object_instance_buffer = new ObjectInstanceBuffer();
-  static indirect_draw_objects = new SparseRandomAccessAllocator(256, IndirectDrawObject); // Per-view indirect draw objects
+  static indirect_draw_objects = new Sparse2DRandomAccessAllocator(16, 4, IndirectDrawObject); // Per-view indirect draw objects
   static tasks_allocator = new RandomAccessAllocator(256, MeshTask); // TODO: This can potentially use a TypedVector depending on how it's structured. May need to split the fields out.
   static object_instance_allocator = new RandomAccessAllocator(256, ObjectInstanceEntry); // TODO: This can potentially use a TypedVector depending on how it's structured. May need to split the fields out.
   static needs_sort = false;
@@ -445,20 +446,24 @@ export class MeshTaskQueue {
         if (this.object_instances.length <= 0 && this.object_instance_buffer.object_instance_data) {
           this.object_instance_buffer.object_instance_data.fill(0);
         }
-        for (let i = 0; i < this.indirect_draw_objects.length; i++) {
-          const obj = this.indirect_draw_objects.get(i);
-          if (obj && obj.indirect_draw_data) {
-            obj.indirect_draw_data.fill(0);
+        for (let i = 0; i < this.indirect_draw_objects.x_capacity; i++) {
+          for (let j = 0; j < this.indirect_draw_objects.y_capacity; j++) {
+            const obj = this.indirect_draw_objects.get(i, j);
+            if (obj && obj.indirect_draw_data) {
+              obj.indirect_draw_data.fill(0);
+            }
           }
         }
       }
 
       this.object_instance_buffer.update_buffers(this.object_instances, this.needs_sort);
 
-      for (let i = 0; i < this.indirect_draw_objects.length; i++) {
-        const obj = this.indirect_draw_objects.get(i);
-        if (obj && obj.indirect_draw_data) {
-          obj.update_buffers(this.batches, this.object_instances, this.needs_sort);
+      for (let i = 0; i < this.indirect_draw_objects.x_capacity; i++) {
+        for (let j = 0; j < this.indirect_draw_objects.y_capacity; j++) {
+          const obj = this.indirect_draw_objects.get(i, j);
+          if (obj && obj.indirect_draw_data) {
+            obj.update_buffers(this.batches, this.object_instances, this.needs_sort);
+          }
         }
       }
 
@@ -496,22 +501,22 @@ export class MeshTaskQueue {
   /**
    * Get the visible object instance buffer without occlusion.
    */
-  static get_visible_instance_buffer_no_occlusion(view_index = 0) {
-    return this.get_indirect_draw_object(view_index).visible_instance_buffer_no_occlusion;
+  static get_visible_instance_buffer_no_occlusion(view_index = 0, clipmap_index = 0) {
+    return this.get_indirect_draw_object(view_index, clipmap_index).visible_instance_buffer_no_occlusion;
   }
 
   /**
    * Get the visible object instance buffer.
    */
-  static get_visible_instance_buffer(view_index = 0) {
-    return this.get_indirect_draw_object(view_index).visible_instance_buffer;
+  static get_visible_instance_buffer(view_index = 0, clipmap_index = 0) {
+    return this.get_indirect_draw_object(view_index, clipmap_index).visible_instance_buffer;
   }
 
   /**
    * Get the indirect draw buffer for a specific view.
    */
-  static get_indirect_draw_buffer(view_index = 0) {
-    return this.get_indirect_draw_object(view_index).indirect_draw_buffer;
+  static get_indirect_draw_buffer(view_index = 0, clipmap_index = 0) {
+    return this.get_indirect_draw_object(view_index, clipmap_index).indirect_draw_buffer;
   }
 
   /**
@@ -529,35 +534,36 @@ export class MeshTaskQueue {
   }
 
   /**
-   * Get or create the IndirectDrawObject for a given view.
+   * Get or create the IndirectDrawObject for a given view and clipmap index.
    */
-  static get_indirect_draw_object(view_index = 0) {
-    let obj = this.indirect_draw_objects.get(view_index);
+  static get_indirect_draw_object(view_index = 0, clipmap_index = 0) {
+    let obj = this.indirect_draw_objects.get(view_index, clipmap_index);
     if (!obj) {
-      obj = this.allocate_view_data(view_index);
+      obj = this.allocate_view_data(view_index, clipmap_index);
     }
     return obj;
   }
 
   /**
-   * Allocate view data for a given view index.
+   * Allocate view data for a given view index and clipmap index.
    */
-  static allocate_view_data(view_index = 0) {
-    const obj = this.indirect_draw_objects.allocate_at(view_index);
+  static allocate_view_data(view_index = 0, clipmap_index = 0) {
+    const obj = this.indirect_draw_objects.allocate_at(view_index, clipmap_index);
     obj.view_index = view_index;
+    obj.clipmap_index = clipmap_index;
     obj.init();
     this.needs_sort = true;
     return obj;
   }
 
   /**
-   * Deallocate view data for a given view index.
+   * Deallocate view data for a given view index and clipmap index.
    */
-  static deallocate_view_data(view_index) {
-    const obj = this.indirect_draw_objects.get(view_index);
+  static deallocate_view_data(view_index, clipmap_index = 0) {
+    const obj = this.indirect_draw_objects.get(view_index, clipmap_index);
     if (obj) {
       obj.destroy();
-      this.indirect_draw_objects.deallocate_at(view_index);
+      this.indirect_draw_objects.deallocate_at(view_index, clipmap_index);
     }
   }
 
@@ -627,6 +633,7 @@ export class MeshTaskQueue {
   static submit_indexed_indirect_draws(
     render_pass,
     view_index = 0,
+    clipmap_index = 0,
     skip_material_bind = true,
     opaque_only = false,
     depth_only = false,
@@ -636,7 +643,7 @@ export class MeshTaskQueue {
     let last_material = null;
     let last_depth_only = false;
 
-    const indirect_draw_object = this.get_indirect_draw_object(view_index);
+    const indirect_draw_object = this.get_indirect_draw_object(view_index, clipmap_index);
     const indirect_buffer = indirect_draw_buffer ?? indirect_draw_object.indirect_draw_buffer;
 
     for (let i = 0; i < this.batches.length; ++i) {
@@ -678,6 +685,7 @@ export class MeshTaskQueue {
     render_pass,
     material_id,
     view_index = 0,
+    clipmap_index = 0,
     depth_only = false,
     indirect_draw_buffer = null,
     should_reset = false,
@@ -694,7 +702,7 @@ export class MeshTaskQueue {
       }
     }
 
-    const indirect_draw_object = this.get_indirect_draw_object(view_index);
+    const indirect_draw_object = this.get_indirect_draw_object(view_index, clipmap_index);
     const indirect_buffer = indirect_draw_buffer ?? indirect_draw_object.indirect_draw_buffer;
 
     for (let i = 0; i < this.batches.length; ++i) {

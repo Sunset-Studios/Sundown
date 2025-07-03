@@ -61,6 +61,7 @@ struct View {
     distance_check_enabled: f32,
     velocity: vec4f,
     zoom: f32,
+    clipmap_count: u32,
 };
 
 struct FrameInfo {
@@ -381,6 +382,10 @@ fn rotate_hue(color: vec4f, hue_rotation: f32) -> vec4f {
     return vec4f(r, g, b, color.a);
 }
 
-
-
-
+fn convert_clip0_to_clipn(original : vec4<f32>, clip_map_index : u32) -> vec4<f32> {
+    let one_over_pow2 = 1.0 / f32(1u << clip_map_index);
+    return vec4<f32>(original.x * one_over_pow2,
+                     original.y * one_over_pow2,
+                     original.z,
+                     original.w);
+}

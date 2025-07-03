@@ -167,6 +167,19 @@ export class LightFragment extends Fragment {
         GPUBufferUsage.COPY_SRC,
       cpu_readback: false,
     },
+    shadow_clipmaps: {
+      ctor: Float32Array,
+      elements: 1,
+      default: 1,
+      gpu_buffer: false,
+      buffer_name: "shadow_clipmaps",
+      is_container: false,
+      usage:
+        GPUBufferUsage.STORAGE |
+        GPUBufferUsage.COPY_DST |
+        GPUBufferUsage.COPY_SRC,
+      cpu_readback: false,
+    },
   };
   static buffer_data = new Map(); // key → { buffer: FragmentGpuBuffer, stride: number }
 

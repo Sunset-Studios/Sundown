@@ -29,6 +29,7 @@ fn vs(@builtin(vertex_index) vi: u32,
 #if SHADOWS_ENABLED
 
   let light_idx             = light_ub.light_index;
+  let clip_index            = light_ub.clip_index;
   let view_index            = light_view_buffer[light_idx];
   let shadow_idx            = light_shadow_idx_buffer[light_idx];
 
@@ -43,13 +44,24 @@ fn vs(@builtin(vertex_index) vi: u32,
   let clipmap0_vp           = view_buffer[view_index].view_projection_matrix;
   let camera_vp             = view_buffer[frame_info.view_index].view_projection_matrix;
 
-  let vtile_info = vsm_world_to_virtual_tile(
+  // Compute virtual-tile info using the *forced* clipmap index so all vertices in
+  // this draw call map to the same clipmap level and avoid cross-clipmap
+  // distortion.
+  let vtile_info = vsm_world_to_virtual_tile_for_clip(
     world_pos,
-    camera_vp,
     clipmap0_vp,
-    vsm_settings
+    vsm_settings,
+    clip_index,
+  );
+  let ptile_info = vsm_vtile_to_ptile(
+    vtile_info,
+    vsm_settings,
+    shadow_idx,
+    page_table
   );
 
+  // TODO: Because we're evicting pages as soon as they're no longer in the feedback bitmask, this will act
+  // as a sort of primitive culler, which we don't want happening right away if the shadows should still be visible for that primitive.
   let got_shadow_feedback = got_shadow_feedback_buffer[entity_row];
   if (got_shadow_feedback == 0u) {
     out.position    = vec4<f32>(2.0, 2.0, 2.0, 1.0);
@@ -58,7 +70,16 @@ fn vs(@builtin(vertex_index) vi: u32,
     out.view_index = 0u;
     return out;
   }
+  // if (!ptile_info.is_dirty) {
+  //   out.position    = vec4<f32>(2.0, 2.0, 2.0, 1.0);
+  //   out.world_pos = vec3<f32>(0.0);
+  //   out.shadow_index = 0u;
+  //   out.view_index = 0u;
+  //   return out;
+  // }
 
+  // Use the dedicated VP matrix for this clipmap. Standard clip-space output;
+  // perspective divide happens automatically after the vertex stage.
   let clip_pos = vsm_calculate_render_clip_value_from_world_pos(
     world_pos,
     vtile_info.clipmap_index,

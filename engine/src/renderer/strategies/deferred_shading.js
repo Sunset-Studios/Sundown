@@ -7,6 +7,7 @@ import {
   SharedViewBuffer,
   SharedFrameInfoBuffer,
 } from "../../core/shared_data.js";
+import { Typed2DFrameArray } from "../../memory/container.js";
 
 // ECS fragments
 import { TransformFragment } from "../../core/ecs/fragments/transform_fragment.js";
@@ -34,6 +35,7 @@ import {
   rgba16float_format,
   r8unorm_format,
   depth32float_format,
+  rgba32float_format,
   r32float_format,
   r32uint_format,
   one_one_blend_config,
@@ -106,7 +108,7 @@ const main_normal_image_config = {
 };
 const main_position_image_config = {
   name: "main_position",
-  format: rgba16float_format,
+  format: rgba32float_format,
   width: 0,
   height: 0,
   usage:
@@ -200,7 +202,7 @@ const compute_cull_occlusion_shader_setup = {
 };
 const draw_cull_data_config = {
   name: `draw_cull_data`,
-  data: [0, 0, 0, 0],
+  data: [0, 0, 0, 0, 0],
   usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
 };
 
@@ -351,11 +353,8 @@ const post_bloom_color_image_config = {
   force: false,
 };
 const bloom_params = [
-  1.2 /* final exposure */,
-  0.2 /* bloom intensity */,
-  0.1 /* bloom threshold */,
-  0.4 /* bloom knee */,
-  0.0 /* near plane (attenuation starts) */,
+  1.2 /* final exposure */, 0.2 /* bloom intensity */, 0.1 /* bloom threshold */,
+  0.4 /* bloom knee */, 0.0 /* near plane (attenuation starts) */,
   50.0 /* far plane (full bloom) */,
 ];
 
@@ -450,10 +449,21 @@ export class DeferredShadingStrategy {
   gi_probe_volume = null;
   as_vsm = null;
   debug_overlay = null;
+  per_view_clipmap_visible_no_occlusion_buffers = new Typed2DFrameArray(16, 4, Uint32Array);
+  per_view_clipmap_visible_buffers = new Typed2DFrameArray(16, 4, Uint32Array);
+  per_view_clipmap_indirect_draw_buffers = new Typed2DFrameArray(16, 4, Uint32Array);
+  per_view_clipmap_draw_cull_data = new Typed2DFrameArray(16, 4, Uint32Array);
 
   setup(render_graph) {
     this.gi_probe_volume = new GIProbeVolume();
     this.debug_overlay = new DebugOverlay();
+    this.as_vsm = new AdaptiveSparseVirtualShadowMaps({
+      atlas_size: ATLAS_SIZE,
+      tile_size: TILE_SIZE,
+      virtual_dim: VSM_VIRTUAL_DIM,
+      max_lods: MAX_CLIPMAP_LEVELS,
+      clip0_extent: DEFAULT_LIGHT_CLIP_EXTENT,
+    });
 
     global_dispatcher.on(
       resolution_change_event_name,
@@ -529,30 +539,31 @@ export class DeferredShadingStrategy {
       // ┌─────────────────────────────────────────────────────────────────────────────┐
       // │ 📋 Register Per-View Visibility Data                                       │
       // └─────────────────────────────────────────────────────────────────────────────┘
-      const per_view_visible_no_occlusion_buffers = [];
-      const per_view_visible_buffers = [];
-      const per_view_indirect_draw_buffers = [];
-      const per_view_draw_cull_data = [];
       for (let view_index = 0; view_index < total_views; ++view_index) {
         if (!SharedViewBuffer.is_render_active(view_index)) continue;
 
-        const visible_buf_no_occlusion = render_graph.register_buffer(
-          MeshTaskQueue.get_visible_instance_buffer_no_occlusion(view_index).config.name
-        );
-        const visible_buf = render_graph.register_buffer(
-          MeshTaskQueue.get_visible_instance_buffer(view_index).config.name
-        );
-        const indirect_draw_buf = render_graph.register_buffer(
-          MeshTaskQueue.get_indirect_draw_buffer(view_index).config.name
-        );
+        const view_data = SharedViewBuffer.get_view_data(view_index);
+        const clipmap_count = view_data.clipmap_count || 1;
+        for (let clipmap_index = 0; clipmap_index < clipmap_count; ++clipmap_index) {
+          const visible_buf_no_occlusion = render_graph.register_buffer(
+            MeshTaskQueue.get_visible_instance_buffer_no_occlusion(view_index, clipmap_index).config
+              .name
+          );
+          const visible_buf = render_graph.register_buffer(
+            MeshTaskQueue.get_visible_instance_buffer(view_index, clipmap_index).config.name
+          );
+          const indirect_draw_buf = render_graph.register_buffer(
+            MeshTaskQueue.get_indirect_draw_buffer(view_index, clipmap_index).config.name
+          );
 
-        draw_cull_data_config.name = `draw_cull_data_view_${view_index}`;
-        const draw_cull_data = render_graph.create_buffer(draw_cull_data_config);
+          draw_cull_data_config.name = `draw_cull_data_view_${view_index}_clipmap_${clipmap_index}`;
+          const draw_cull_data = render_graph.create_buffer(draw_cull_data_config);
 
-        per_view_visible_no_occlusion_buffers.push(visible_buf_no_occlusion);
-        per_view_visible_buffers.push(visible_buf);
-        per_view_indirect_draw_buffers.push(indirect_draw_buf);
-        per_view_draw_cull_data.push(draw_cull_data);
+          this.per_view_clipmap_visible_no_occlusion_buffers.set(view_index, clipmap_index, visible_buf_no_occlusion);
+          this.per_view_clipmap_visible_buffers.set(view_index, clipmap_index, visible_buf);
+          this.per_view_clipmap_indirect_draw_buffers.set(view_index, clipmap_index, indirect_draw_buf);
+          this.per_view_clipmap_draw_cull_data.set(view_index, clipmap_index, draw_cull_data);
+        }
       }
 
       // ┌─────────────────────────────────────────────────────────────────────────────┐
@@ -652,7 +663,8 @@ export class DeferredShadingStrategy {
         for (let view_index = 0; view_index < total_views; ++view_index) {
           if (!SharedViewBuffer.is_render_active(view_index)) continue;
 
-          const draw_cull_data = per_view_draw_cull_data[view_index];
+          const view_data = SharedViewBuffer.get_view_data(view_index);
+          const clipmap_count = view_data.clipmap_count || 1;
 
           render_graph.add_pass(
             "init_views",
@@ -660,8 +672,20 @@ export class DeferredShadingStrategy {
             {},
             (graph, frame_data, encoder) => {
               const hzb = graph.get_physical_image(main_hzb_image);
-              const draw_cull = graph.get_physical_buffer(draw_cull_data);
-              draw_cull.write(new Uint32Array([draw_count, hzb.config.width, hzb.config.height, view_index]));
+
+              for (let clipmap_index = 0; clipmap_index < clipmap_count; ++clipmap_index) {
+                const draw_cull_data = this.per_view_clipmap_draw_cull_data.get(view_index, clipmap_index);
+                const draw_cull = graph.get_physical_buffer(draw_cull_data);
+                draw_cull.write(
+                  new Uint32Array([
+                    draw_count,
+                    hzb.config.width,
+                    hzb.config.height,
+                    view_index,
+                    clipmap_index,
+                  ])
+                );
+              }
             }
           );
         }
@@ -743,19 +767,27 @@ export class DeferredShadingStrategy {
         for (let view_index = 0; view_index < total_views; ++view_index) {
           if (!SharedViewBuffer.is_render_active(view_index)) continue;
 
-          render_graph.add_pass(
-            `reset_instance_counts_view_${view_index}`,
-            RenderPassFlags.Compute,
-            {
-              shader_setup: clear_indirect_instance_counts_shader_setup,
-              inputs: [per_view_indirect_draw_buffers[view_index]],
-              outputs: [per_view_indirect_draw_buffers[view_index]],
-            },
-            (graph, frame_data, encoder) => {
-              const pass = graph.get_physical_pass(frame_data.current_pass);
-              pass.dispatch((draw_count + 255) / 256, 1, 1);
-            }
-          );
+          const view_data = SharedViewBuffer.get_view_data(view_index);
+          const clipmap_count = view_data.clipmap_count || 1;
+
+          for (let clipmap_index = 0; clipmap_index < clipmap_count; ++clipmap_index) {
+            const indirect_draw_buf =
+              this.per_view_clipmap_indirect_draw_buffers.get(view_index, clipmap_index);
+
+            render_graph.add_pass(
+              `reset_instance_counts_view_${view_index}_clipmap_${clipmap_index}`,
+              RenderPassFlags.Compute,
+              {
+                shader_setup: clear_indirect_instance_counts_shader_setup,
+                inputs: [indirect_draw_buf],
+                outputs: [indirect_draw_buf],
+              },
+              (graph, frame_data, encoder) => {
+                const pass = graph.get_physical_pass(frame_data.current_pass);
+                pass.dispatch((draw_count + 255) / 256, 1, 1);
+              }
+            );
+          }
         }
       }
 
@@ -836,29 +868,34 @@ export class DeferredShadingStrategy {
       }
 
       // ┌─────────────────────────────────────────────────────────────────────────────┐
-      // │ 🔍 PASS: Reset Visibility Buffers and HZB Parameters                       │
+      // │ 🔍 PASS: Reset Visibility Buffers                                          │
       // │    Clear per-view visibility data before frustum culling                    │
       // └─────────────────────────────────────────────────────────────────────────────┘
       if (draw_count > 0) {
         for (let view_index = 0; view_index < total_views; ++view_index) {
           if (!SharedViewBuffer.is_render_active(view_index)) continue;
 
-          const visible_buf_no_occlusion = per_view_visible_no_occlusion_buffers[view_index];
-          const visible_buf = per_view_visible_buffers[view_index];
+          const view_data = SharedViewBuffer.get_view_data(view_index);
+          const clipmap_count = view_data.clipmap_count || 1;
+          for (let clipmap_index = 0; clipmap_index < clipmap_count; ++clipmap_index) {
+            const visible_buf_no_occlusion =
+              this.per_view_clipmap_visible_no_occlusion_buffers.get(view_index, clipmap_index);
+            const visible_buf = this.per_view_clipmap_visible_buffers.get(view_index, clipmap_index);
 
-          render_graph.add_pass(
-            `clear_visibility_data_view_${view_index}`,
-            RenderPassFlags.Compute,
-            {
-              shader_setup: clear_visibility_data_shader_setup,
-              inputs: [visible_buf, visible_buf_no_occlusion],
-              outputs: [visible_buf, visible_buf_no_occlusion],
-            },
-            (graph, frame_data, encoder) => {
-              const pass = graph.get_physical_pass(frame_data.current_pass);
-              pass.dispatch((draw_count + 255) / 256, 1, 1);
-            }
-          );
+            render_graph.add_pass(
+              `clear_visibility_data_view_${view_index}_clipmap_${clipmap_index}`,
+              RenderPassFlags.Compute,
+              {
+                shader_setup: clear_visibility_data_shader_setup,
+                inputs: [visible_buf, visible_buf_no_occlusion],
+                outputs: [visible_buf, visible_buf_no_occlusion],
+              },
+              (graph, frame_data, encoder) => {
+                const pass = graph.get_physical_pass(frame_data.current_pass);
+                pass.dispatch((draw_count + 255) / 256, 1, 1);
+              }
+            );
+          }
         }
       }
 
@@ -870,30 +907,50 @@ export class DeferredShadingStrategy {
         for (let view_index = 0; view_index < total_views; ++view_index) {
           if (!SharedViewBuffer.is_render_active(view_index)) continue;
 
-          const visible_buf_no_occlusion = per_view_visible_no_occlusion_buffers[view_index];
-          const indirect_buf = per_view_indirect_draw_buffers[view_index];
-          const draw_cull_data = per_view_draw_cull_data[view_index];
+          const view_data = SharedViewBuffer.get_view_data(view_index);
+          const clipmap_count = view_data.clipmap_count || 1;
 
-          render_graph.add_pass(
-            `${compute_cull_pass_name1}_view_${view_index}`,
-            RenderPassFlags.Compute,
-            {
-              shader_setup: compute_cull_frustum_shader_setup,
-              inputs: [
-                aabb_bounds,
-                object_instances,
-                visible_buf_no_occlusion,
-                indirect_buf,
-                entity_aabb_node_indices,
-                draw_cull_data,
-              ],
-              outputs: [indirect_buf, visible_buf_no_occlusion],
-            },
-            (graph, frame_data, encoder) => {
-              const pass = graph.get_physical_pass(frame_data.current_pass);
-              pass.dispatch((draw_count + 255) / 256, 1, 1);
-            }
-          );
+          for (let clipmap_index = 0; clipmap_index < clipmap_count; ++clipmap_index) {
+            draw_cull_data_config.name = `draw_cull_data_view_${view_index}_clipmap_${clipmap_index}`;
+            const draw_cull_data = render_graph.create_buffer(draw_cull_data_config);
+
+            const visible_buf_no_occlusion =
+              this.per_view_clipmap_visible_no_occlusion_buffers.get(view_index, clipmap_index);
+            const indirect_buf = this.per_view_clipmap_indirect_draw_buffers.get(view_index, clipmap_index);
+
+            render_graph.add_pass(
+              `cull_frustum_view_${view_index}_clipmap_${clipmap_index}`,
+              RenderPassFlags.Compute,
+              {
+                shader_setup: compute_cull_frustum_shader_setup,
+                inputs: [
+                  aabb_bounds,
+                  object_instances,
+                  visible_buf_no_occlusion,
+                  indirect_buf,
+                  entity_aabb_node_indices,
+                  draw_cull_data,
+                ],
+                outputs: [indirect_buf, visible_buf_no_occlusion],
+              },
+              (graph, frame_data, encoder) => {
+                const pass = graph.get_physical_pass(frame_data.current_pass);
+                const hzb = graph.get_physical_image(main_hzb_image);
+                const draw_cull_data_buf = graph.get_physical_buffer(draw_cull_data);
+
+                draw_cull_data_buf.write(
+                  new Uint32Array([
+                    draw_count,
+                    hzb.config.width,
+                    hzb.config.height,
+                    view_index,
+                    clipmap_index,
+                  ])
+                );
+                pass.dispatch((draw_count + 255) / 256, 1, 1);
+              }
+            );
+          }
         }
       }
 
@@ -902,7 +959,7 @@ export class DeferredShadingStrategy {
       // │    Fill depth buffer early for better GPU efficiency and HZB generation   │
       // └─────────────────────────────────────────────────────────────────────────────┘
       if (renderer.is_depth_prepass_enabled()) {
-        const visible_buf_no_occlusion = per_view_visible_no_occlusion_buffers[current_view];
+        const visible_buf_no_occlusion = this.per_view_clipmap_visible_no_occlusion_buffers.get(current_view, 0);
 
         render_graph.add_pass(
           depth_prepass_name,
@@ -918,6 +975,7 @@ export class DeferredShadingStrategy {
             MeshTaskQueue.submit_indexed_indirect_draws(
               pass,
               current_view,
+              0 /* clipmap_index */,
               false /* skip_material_bind */,
               true /* opaque_only */,
               true /* depth_only */
@@ -990,26 +1048,34 @@ export class DeferredShadingStrategy {
       // TODO: Meshlet cull pass
 
       // ┌─────────────────────────────────────────────────────────────────────────────┐
-      // │ 🔄 PASS: Reset Instance Counts                                             │
-      // │    Reset instance counts for each view                                   │
+      // │ 🔄 PASS: Reset Instance Counts                                              │
+      // │    Reset instance counts for each view                                      │
       // └─────────────────────────────────────────────────────────────────────────────┘
       if (draw_count > 0) {
         for (let view_index = 0; view_index < total_views; ++view_index) {
           if (!SharedViewBuffer.is_render_active(view_index)) continue;
 
-          render_graph.add_pass(
-            `reset_instance_counts_view_${view_index}`,
-            RenderPassFlags.Compute,
-            {
-              shader_setup: clear_indirect_instance_counts_shader_setup,
-              inputs: [per_view_indirect_draw_buffers[view_index]],
-              outputs: [per_view_indirect_draw_buffers[view_index]],
-            },
-            (graph, frame_data, encoder) => {
-              const pass = graph.get_physical_pass(frame_data.current_pass);
-              pass.dispatch((draw_count + 255) / 256, 1, 1);
-            }
-          );
+          const view_data = SharedViewBuffer.get_view_data(view_index);
+          const clipmap_count = view_data.clipmap_count || 1;
+
+          for (let clipmap_index = 0; clipmap_index < clipmap_count; ++clipmap_index) {
+            const indirect_draw_buf =
+              this.per_view_clipmap_indirect_draw_buffers.get(view_index, clipmap_index);
+
+            render_graph.add_pass(
+              `reset_instance_counts_view_${view_index}_clipmap_${clipmap_index}`,
+              RenderPassFlags.Compute,
+              {
+                shader_setup: clear_indirect_instance_counts_shader_setup,
+                inputs: [indirect_draw_buf],
+                outputs: [indirect_draw_buf],
+              },
+              (graph, frame_data, encoder) => {
+                const pass = graph.get_physical_pass(frame_data.current_pass);
+                pass.dispatch((draw_count + 255) / 256, 1, 1);
+              }
+            );
+          }
         }
       }
 
@@ -1021,35 +1087,41 @@ export class DeferredShadingStrategy {
         for (let view_index = 0; view_index < total_views; ++view_index) {
           if (!SharedViewBuffer.is_render_active(view_index)) continue;
 
-          const draw_cull_data = per_view_draw_cull_data[view_index];
-          const visible_buf_no_occlusion = per_view_visible_no_occlusion_buffers[view_index];
-          const visible_buf = per_view_visible_buffers[view_index];
-          const indirect_buf = per_view_indirect_draw_buffers[view_index];
+          const view_data = SharedViewBuffer.get_view_data(view_index);
+          const clipmap_count = view_data.clipmap_count || 1;
 
-          render_graph.add_pass(
-            `${compute_cull_pass_name2}_view_${view_index}`,
-            RenderPassFlags.Compute,
-            {
-              shader_setup: compute_cull_occlusion_shader_setup,
-              inputs: [
-                main_hzb_image,
-                aabb_bounds,
-                visible_buf_no_occlusion,
-                visible_buf,
-                object_instances,
-                entity_aabb_node_indices,
-                draw_cull_data,
-                indirect_buf,
-                main_entity_id_image,
-                entity_occluders,
-              ],
-              outputs: [visible_buf, indirect_buf],
-            },
-            (graph, frame_data, encoder) => {
-              const pass = graph.get_physical_pass(frame_data.current_pass);
-              pass.dispatch((draw_count + 255) / 256, 1, 1);
-            }
-          );
+          for (let clipmap_index = 0; clipmap_index < clipmap_count; ++clipmap_index) {
+            const draw_cull_data = this.per_view_clipmap_draw_cull_data.get(view_index, clipmap_index);
+            const visible_buf_no_occlusion =
+              this.per_view_clipmap_visible_no_occlusion_buffers.get(view_index, clipmap_index);
+            const visible_buf = this.per_view_clipmap_visible_buffers.get(view_index, clipmap_index);
+            const indirect_buf = this.per_view_clipmap_indirect_draw_buffers.get(view_index, clipmap_index);
+
+            render_graph.add_pass(
+              `${compute_cull_pass_name2}_view_${view_index}_clipmap_${clipmap_index}`,
+              RenderPassFlags.Compute,
+              {
+                shader_setup: compute_cull_occlusion_shader_setup,
+                inputs: [
+                  main_hzb_image,
+                  aabb_bounds,
+                  visible_buf_no_occlusion,
+                  visible_buf,
+                  object_instances,
+                  entity_aabb_node_indices,
+                  draw_cull_data,
+                  indirect_buf,
+                  main_entity_id_image,
+                  entity_occluders,
+                ],
+                outputs: [visible_buf, indirect_buf],
+              },
+              (graph, frame_data, encoder) => {
+                const pass = graph.get_physical_pass(frame_data.current_pass);
+                pass.dispatch((draw_count + 255) / 256, 1, 1);
+              }
+            );
+          }
         }
       }
 
@@ -1103,7 +1175,7 @@ export class DeferredShadingStrategy {
                 entity_transforms,
                 entity_flags,
                 object_instances,
-                per_view_visible_buffers[current_view],
+                this.per_view_clipmap_visible_buffers.get(current_view, 0),
               ],
               outputs: outputs,
               shader_setup: g_buffer_shader_setup,
@@ -1193,34 +1265,24 @@ export class DeferredShadingStrategy {
       // │    High-quality, efficient shadow mapping with virtual memory management  │
       // └─────────────────────────────────────────────────────────────────────────────┘
       if (shadows_enabled) {
-        // Add AS-VSM passes with mapping
-        if (!this.as_vsm) {
-          this.as_vsm = new AdaptiveSparseVirtualShadowMaps({
-            atlas_size: ATLAS_SIZE,
-            tile_size: TILE_SIZE,
-            virtual_dim: VSM_VIRTUAL_DIM,
-            max_lods: MAX_CLIPMAP_LEVELS,
-            clip0_extent: DEFAULT_LIGHT_CLIP_EXTENT,
-          });
-        }
         this.as_vsm.add_passes(render_graph, {
           position_texture: main_position_image,
           entity_id_texture: main_entity_id_image,
           light_count_buffer: light_count,
           transforms_buffer: entity_transforms,
           object_instances: object_instances,
-          view_visibility_buffers: per_view_visible_buffers,
+          view_visibility_buffers: this.per_view_clipmap_visible_no_occlusion_buffers,
           force_recreate: this.force_recreate,
           debug_view: debug_view,
         });
       }
 
       // ┌─────────────────────────────────────────────────────────────────────────────┐
-      // │ 🌟 PASS: Dynamic Diffuse Global Illumination (DDGI)                       │
-      // │    Real-time global illumination using probe-based irradiance volumes    │
+      // │ 🌟 PASS: Dynamic Diffuse Global Illumination (DDGI)                        │
+      // │    Real-time global illumination using probe-based irradiance volumes       │
       // └─────────────────────────────────────────────────────────────────────────────┘
       if (gi_enabled) {
-        const visible_instance_buffer = per_view_visible_buffers[current_view];
+        const visible_instance_buffer = this.per_view_clipmap_visible_buffers.get(current_view, 0);
         this.gi_probe_volume.update(render_graph, {
           gi_params_buffer,
           gi_irradiance_image,
@@ -1423,7 +1485,12 @@ export class DeferredShadingStrategy {
           bloom_resolve_pass_name,
           RenderPassFlags.Graphics,
           {
-            inputs: [post_lighting_image_desc, bloom_blur_chain[0], main_depth_image, bloom_resolve_params_desc],
+            inputs: [
+              post_lighting_image_desc,
+              bloom_blur_chain[0],
+              main_depth_image,
+              bloom_resolve_params_desc,
+            ],
             outputs: [post_bloom_color_desc],
             shader_setup: bloom_resolve_shader_setup,
           },

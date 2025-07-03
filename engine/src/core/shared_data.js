@@ -68,6 +68,7 @@ export class SharedViewBuffer {
     distance_check_enabled: 142,
     velocity: 143,
     zoom: 147,
+    clipmap_count: 148,
   };
 
   // --- Per-view Access Wrapper ---
@@ -304,6 +305,17 @@ export class SharedViewBuffer {
     set renderable_state(state) {
       SharedViewBuffer.set_render_active(this.idx, state);
     }
+    get clipmap_count() {
+      const f = SharedViewBuffer.offsets.clipmap_count;
+      return SharedViewBuffer.raw_data[this.base + f];
+    }
+    set clipmap_count(count) {
+      const f = SharedViewBuffer.offsets.clipmap_count;
+      if (SharedViewBuffer.raw_data[this.base + f] !== count) {
+        SharedViewBuffer.raw_data[this.base + f] = count;
+        SharedViewBuffer.dirty_states.set(this.idx, 1);
+      }
+    }
     set_index(index) {
       this.idx = index;
       return this;
@@ -391,6 +403,7 @@ export class SharedViewBuffer {
     SharedViewBuffer.raw_data.set([1], base + SharedViewBuffer.offsets.distance_check_enabled);
     SharedViewBuffer.raw_data.set([0, 0, 0, 0], base + SharedViewBuffer.offsets.velocity);
     SharedViewBuffer.raw_data.set([1.0], base + SharedViewBuffer.offsets.zoom);
+    SharedViewBuffer.raw_data.set([1], base + SharedViewBuffer.offsets.clipmap_count);
 
     SharedViewBuffer.custom_projection_matrix_enabled.set(idx, 0);
     SharedViewBuffer.custom_view_matrix_enabled.set(idx, 0);
@@ -439,7 +452,12 @@ export class SharedViewBuffer {
     } else {
       SharedViewBuffer.dirty_states.set(idx, 0);
       if (SharedViewBuffer.is_render_active(idx)) {
-        MeshTaskQueue.deallocate_view_data(idx);
+        const clipmap_count = SharedViewBuffer.raw_data[
+          idx * SharedViewBuffer.floats_per_view + SharedViewBuffer.offsets.clipmap_count
+        ];
+        for (let i = 0; i < clipmap_count; i++) {
+          MeshTaskQueue.deallocate_view_data(idx, i);
+        }
       }
       SharedViewBuffer.set_render_active(idx, false);
       SharedViewBuffer.fill(
@@ -474,10 +492,16 @@ export class SharedViewBuffer {
     const new_state = active ? 1 : 0;
     if (old_state === new_state) return;
 
-    if (active) {
-      MeshTaskQueue.allocate_view_data(view_index);
+    const clipmap_count = SharedViewBuffer.raw_data[
+      view_index * SharedViewBuffer.floats_per_view + SharedViewBuffer.offsets.clipmap_count
+    ];
+
+    for (let i = 0; i < clipmap_count; i++) {
+      if (active) {
+        MeshTaskQueue.allocate_view_data(view_index, i);
     } else {
-      MeshTaskQueue.deallocate_view_data(view_index);
+        MeshTaskQueue.deallocate_view_data(view_index, i);
+      }
     }
 
     SharedViewBuffer.renderable_states.set(view_index, new_state);

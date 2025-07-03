@@ -9,6 +9,7 @@ struct DrawCullData {
     hzb_width: u32,
     hzb_height: u32,
     view_index: u32,
+    clipmap_index: u32,
 }
 
 // ------------------------------------------------------------------------------------
@@ -30,13 +31,23 @@ struct DrawCullData {
 fn is_in_frustum(center: vec4<f32>, radius: f32, view: ptr<function, View>) -> u32 {
     var visible = 1u;
 
+    var clip_scaling = f32(1u << draw_cull_data.clipmap_index);
+
+    var new_frustum = view.frustum;
+    new_frustum[0] = vec4f(view.frustum[0].xyz / clip_scaling, view.frustum[0].w / clip_scaling);
+    new_frustum[1] = vec4f(view.frustum[1].xyz / clip_scaling, view.frustum[1].w / clip_scaling);
+    new_frustum[2] = vec4f(view.frustum[2].xyz / clip_scaling, view.frustum[2].w / clip_scaling);
+    new_frustum[3] = vec4f(view.frustum[3].xyz / clip_scaling, view.frustum[3].w / clip_scaling);
+    new_frustum[4] = vec4f(view.frustum[4].xyz / clip_scaling, view.frustum[4].w / clip_scaling);
+    new_frustum[5] = vec4f(view.frustum[5].xyz / clip_scaling, view.frustum[5].w / clip_scaling);
+
     // Check all frustum planes
-    visible *= u32(dot(view.frustum[0], center) > -radius);
-    visible *= u32(dot(view.frustum[1], center) > -radius);
-    visible *= u32(dot(view.frustum[2], center) > -radius);
-    visible *= u32(dot(view.frustum[3], center) > -radius);
-    visible *= u32(dot(view.frustum[4], center) > -radius);
-    visible *= u32(dot(view.frustum[5], center) > -radius);
+    visible *= u32(dot(new_frustum[0], center) > -radius);
+    visible *= u32(dot(new_frustum[1], center) > -radius);
+    visible *= u32(dot(new_frustum[2], center) > -radius);
+    visible *= u32(dot(new_frustum[3], center) > -radius);
+    visible *= u32(dot(new_frustum[4], center) > -radius);
+    visible *= u32(dot(new_frustum[5], center) > -radius);
 
     return visible * u32(view.culling_enabled) + u32(1u - u32(view.culling_enabled));
 }

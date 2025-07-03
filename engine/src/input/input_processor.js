@@ -161,7 +161,7 @@ export class InputProcessor {
     this.ranges_array[InputRange.M_wheel] = this.mouse_wheel;
 
     // Apply exponential decay to mouse wheel motion
-    this.mouse_wheel *= Math.exp(-0.5 * 0.5);
+    this.mouse_wheel *= Math.exp(-1000.0 * 0.5);
 
     if (this.ranges_array[InputRange.M_xabs] == null) {
       this.ranges_array[InputRange.M_xabs] = this.abs_mouse_x;

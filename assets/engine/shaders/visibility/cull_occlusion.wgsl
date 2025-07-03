@@ -9,6 +9,7 @@ struct DrawCullData {
     hzb_width: u32,
     hzb_height: u32,
     view_index: u32,
+    clipmap_index: u32,
 }
 
 // ------------------------------------------------------------------------------------
@@ -156,6 +157,8 @@ fn cs(@builtin(global_invocation_id) global_id: vec3<u32>) {
     if (g_id >= u32(draw_cull_data.draw_count)) {
         return;
     }
+    
+    //let vp_matrix = compute_clipmap_vp_matrix(draw_cull_data.view_index, clipmap);
 
     let object_instance_index = visible_object_instances_no_occlusion[g_id];
     if (object_instance_index == -1) {

@@ -1678,6 +1678,7 @@ export class TypedQueue {
 }
 
 
+
 export class SquareAdjacencyMatrix {
   /**
    * @param {number} size - The dimension of the matrix (size x size).
@@ -1785,5 +1786,134 @@ export class SquareAdjacencyMatrix {
    */
   _validate_indices(i, j) {
     console.assert(i >= 0 && i < this.size && j >= 0 && j < this.size, `Index i out of range [0, ${this.size - 1}], index j out of range [0, ${this.size - 1}]`);
+  }
+}
+
+/**
+ * A 2D frame array for numbers, using a flat TypedArray and a bit matrix for allocation tracking.
+ * Allows resetting all allocations each frame.
+ */
+export class Typed2DFrameArray {
+  #x_capacity = 0;
+  #y_capacity = 0;
+  #size = 0;
+  #array_type = null;
+  #buffer = null;
+  #bit_matrix = null;
+
+  /**
+   * @param {number} initial_x_capacity - Initial X dimension
+   * @param {number} initial_y_capacity - Initial Y dimension
+   * @param {TypedArrayConstructor} array_type - The type of TypedArray to use (e.g. Float32Array)
+   */
+  constructor(initial_x_capacity = 16, initial_y_capacity = 4, array_type = Float32Array) {
+    this.#x_capacity = initial_x_capacity;
+    this.#y_capacity = initial_y_capacity;
+    this.#size = 0;
+    this.#array_type = array_type;
+    this.#buffer = new array_type(this.#x_capacity * this.#y_capacity);
+    this.#bit_matrix = new Uint8Array(this.#x_capacity * this.#y_capacity);
+  }
+
+  _resize(new_x_capacity, new_y_capacity) {
+    const old_x_capacity = this.#x_capacity;
+    const old_y_capacity = this.#y_capacity;
+    const old_buffer = this.#buffer;
+    const old_bit_matrix = this.#bit_matrix;
+
+    this.#x_capacity = new_x_capacity;
+    this.#y_capacity = new_y_capacity;
+    this.#buffer = new this.#array_type(this.#x_capacity * this.#y_capacity);
+    this.#bit_matrix = new Uint8Array(this.#x_capacity * this.#y_capacity);
+
+    // Copy old data
+    for (let x = 0; x < old_x_capacity; x++) {
+      for (let y = 0; y < old_y_capacity; y++) {
+        const old_idx = x * old_y_capacity + y;
+        const new_idx = x * this.#y_capacity + y;
+        this.#buffer[new_idx] = old_buffer[old_idx];
+        this.#bit_matrix[new_idx] = old_bit_matrix[old_idx];
+      }
+    }
+  }
+
+  set(x, y, value = 0) {
+    let resize_needed = false;
+    let new_x_capacity = this.#x_capacity;
+    let new_y_capacity = this.#y_capacity;
+    if (x >= this.#x_capacity) {
+      new_x_capacity = Math.max(this.#x_capacity * 2, x + 1);
+      resize_needed = true;
+    }
+    if (y >= this.#y_capacity) {
+      new_y_capacity = Math.max(this.#y_capacity * 2, y + 1);
+      resize_needed = true;
+    }
+    if (resize_needed) {
+      this._resize(new_x_capacity, new_y_capacity);
+    }
+    const idx = x * this.#y_capacity + y;
+    if (!this.#bit_matrix[idx]) {
+      this.#size++;
+    }
+    this.#bit_matrix[idx] = 1;
+    this.#buffer[idx] = value;
+    return idx;
+  }
+
+  get(x, y) {
+    if (x < 0 || x >= this.#x_capacity || y < 0 || y >= this.#y_capacity) {
+      return undefined;
+    }
+    const idx = x * this.#y_capacity + y;
+    return this.#bit_matrix[idx] ? this.#buffer[idx] : undefined;
+  }
+
+  remove(x, y) {
+    if (x < 0 || x >= this.#x_capacity || y < 0 || y >= this.#y_capacity) {
+      return;
+    }
+    const idx = x * this.#y_capacity + y;
+    if (this.#bit_matrix[idx]) {
+      this.#bit_matrix[idx] = 0;
+      this.#buffer[idx] = 0;
+      this.#size--;
+    }
+  }
+
+  /**
+   * Resets all allocations for the frame, but does not reduce capacity or reinitialize the buffer.
+   */
+  reset() {
+    this.#bit_matrix.fill(0);
+    this.#size = 0;
+    this.#buffer.fill(0);
+  }
+
+  get length() {
+    return this.#size;
+  }
+
+  get x_capacity() {
+    return this.#x_capacity;
+  }
+
+  get y_capacity() {
+    return this.#y_capacity;
+  }
+
+  get data() {
+    return this.#buffer;
+  }
+
+  *allocated_entries() {
+    for (let x = 0; x < this.#x_capacity; x++) {
+      for (let y = 0; y < this.#y_capacity; y++) {
+        const idx = x * this.#y_capacity + y;
+        if (this.#bit_matrix[idx]) {
+          yield { x, y, value: this.#buffer[idx] };
+        }
+      }
+    }
   }
 }

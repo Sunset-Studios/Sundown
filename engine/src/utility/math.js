@@ -181,3 +181,19 @@ export function halton(index, base) {
   }
   return result;
 }
+
+export function near_zero(value) {
+  return Math.abs(value) < 1e-6;
+}
+
+export function near_equal(a, b) {
+  return Math.abs(a - b) < 1e-6;
+}
+
+export function vec_near_zero(v) {
+  return near_zero(v[0]) && near_zero(v[1]) && near_zero(v[2]);
+}
+
+export function vec_near_equal(a, b) {
+  return near_equal(a[0], b[0]) && near_equal(a[1], b[1]) && near_equal(a[2], b[2]);
+}

@@ -11,6 +11,7 @@ body, html {
     background-color: #000;
     overflow: hidden;
     font-family: 'Poppins', sans-serif;
+    overscroll-behavior-x: none;
 }
 
 canvas {

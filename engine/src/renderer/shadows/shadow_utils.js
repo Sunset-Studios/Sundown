@@ -4,7 +4,7 @@
 // Utilities shared by the shadow-mapping pipeline (directional light setup, etc.)
 // -----------------------------------------------------------------------------
 
-import { WORLD_FORWARD, WORLD_RIGHT } from "../../core/minimal.js";
+import { WORLD_FORWARD, WORLD_RIGHT, WORLD_UP } from "../../core/minimal.js";
 import { TypedStack } from "../../memory/container.js";
 import { quat, vec3, mat3, mat4, vec4 } from "gl-matrix";
 
@@ -13,14 +13,15 @@ export const TILE_SIZE = 128;
 // Shadow atlas size.
 export const ATLAS_SIZE = 32 * TILE_SIZE;
 // virtual_dim has to match the AS-VSM instance you create (16384 by default).
-export const VSM_VIRTUAL_DIM = 128 * TILE_SIZE;
+export const VSM_VIRTUAL_DIM = 32 * TILE_SIZE;
 // Default orthographic extent (±extent) for directional lights in clip-space 0.
 // Used when constructing stable light-aligned view/projection matrices.
-export const DEFAULT_LIGHT_CLIP_EXTENT = 20;
+export const DEFAULT_LIGHT_CLIP_EXTENT = 4;
 // Maximum number of clipmap levels.
 export const MAX_CLIPMAP_LEVELS = 12;
 // Size (world units) of one virtual-shadow-map texel in clip-map level 0.
-export const VSM_WORLD_UNITS_PER_TEXEL = DEFAULT_LIGHT_CLIP_EXTENT / VSM_VIRTUAL_DIM;
+export const VSM_WORLD_UNITS_PER_TEXEL =
+  DEFAULT_LIGHT_CLIP_EXTENT * (1 << MAX_CLIPMAP_LEVELS) / ATLAS_SIZE;
 
 /**
  * Compute a *stable* rotation quaternion that aligns the light's –Z axis with the
@@ -33,10 +34,7 @@ export const VSM_WORLD_UNITS_PER_TEXEL = DEFAULT_LIGHT_CLIP_EXTENT / VSM_VIRTUAL
  */
 export function compute_directional_light_rotation(light_position) {
   // Forward towards the scene (i.e. towards the origin).
-  const light_forward = vec3.normalize(
-    vec3.create(),
-    vec3.negate(vec3.create(), light_position)
-  );
+  const light_forward = vec3.normalize(vec3.create(), vec3.negate(vec3.create(), light_position));
 
   // Right (X) axis = cross(world_up, forward). Pick a stable fallback axis if they're nearly colinear.
   let x_axis = vec3.cross(vec3.create(), WORLD_FORWARD, light_forward);
@@ -65,86 +63,72 @@ export function compute_directional_light_rotation(light_position) {
 }
 
 /**
- * Build an orthographic projection matrix centred on the origin with extents
- * ±clip_extent and the provided far plane distance. Near plane is fixed at 0.
- *
- * Layout matches WebGPU / gl-matrix column-major expectations.
- *
- * @param {number} far – Far plane distance (camera view far).
- * @param {number} [clip_extent=DEFAULT_DIRECTIONAL_LIGHT_CLIP_EXTENT] – Half-width/height of the ortho volume.
- * @returns {mat4} 4×4 projection matrix.
+ * Computes the light's view and projection matrices for the first clipmap.
+ * Ensures the ortho projection is square and centered on the frustum in light space.
+ * @param {mat4} cam_inverse_view_projection - Inverse of the camera's view-projection matrix.
+ * @param {vec3} light_dir - Light direction (normalized).
+ * @param {number} far - Far plane for the shadow map.
+ * @returns {{view: mat4, proj: mat4}}
  */
-export function build_directional_light_projection_matrix(
-  far,
-  aspect = 1.0,
-  clip_extent = DEFAULT_LIGHT_CLIP_EXTENT
+export function compute_directional_light_view_projection(
+  cam_inverse_view_projection,
+  light_dir,
+  far
 ) {
-  const s = 2.0 / clip_extent;
-  const projection_matrix = mat4.fromValues(
-    s / aspect, 0.0, 0.0, 0.0,
-    0.0, s, 0.0, 0.0,
-    0.0, 0.0, 1.0 / -far, 0.0,
-    0.0, 0.0, 0.0, 1.0
-  );
-  return projection_matrix;
-}
-
-/**
- * Compute the clip-space position for a directional-light view that encloses the camera frustum.
- * It snaps the cascade origin to a virtual-page grid for stability and centers the light camera
- * over the frustum's bounding box in light-space.
- *
- * @param {vec4} world_position – The camera's world position (unused directly when computing frustum).
- * @param {quat} light_rotation – Quaternion representing world→light rotation.
- * @param {number} far – Camera far plane distance.
- * @param {mat4} inv_view_projection – Inverse of the camera's view-projection matrix.
- * @returns {vec4} The page-aligned translation for the light view matrix.
- */
-const ndc = [
-  [-1, -1, 0, 1], [-1, -1, 1, 1], [-1, 1, 0, 1], [-1, 1, 1, 1],
-  [1, -1, 0, 1], [1, -1, 1, 1], [1, 1, 0, 1], [1, 1, 1, 1],
-];
-export function compute_directional_light_position_for_clip(light_rotation, world_position, inv_view_projection) {
-  // Transform the eight NDC frustum corners into world-space (divide by w) and
-  // then into light-space (apply light rotation). While doing so, track the AABB
-  // extents in light-space so that we can determine the centre of the frustum
-  // from the light's point of view.
-
-  // Rotation matrix that transforms a world-space vector into light-space.
-  const world_to_light = mat4.fromQuat(mat4.create(), light_rotation);
-
-  const aabb_min = vec3.fromValues(Infinity, Infinity, Infinity);
-  const aabb_max = vec3.fromValues(-Infinity, -Infinity, -Infinity);
-
-  for (let i = 0; i < ndc.length; i++) {
-    // World-space position of the current NDC corner.
-    const corner_ws = vec4.transformMat4(vec4.create(), ndc[i], inv_view_projection);
-    // Light-space position (rotation only – directional lights have no
-    // translation component).
-    const corner_ls = vec4.transformMat4(vec4.create(), corner_ws, world_to_light);
-
-    // Expand light-space AABB.
-    vec3.min(aabb_min, aabb_min, corner_ls);
-    vec3.max(aabb_max, aabb_max, corner_ls);
+  // 1. Compute light rotation (world -> light space)
+  // Light "forward" is -light_dir
+  const world_up = vec3.dot(light_dir, WORLD_UP) > 0.99 ? WORLD_FORWARD : WORLD_UP;
+  let light_right = vec3.cross(vec3.create(), world_up, light_dir);
+  if (vec3.length(light_right) < 1e-4) {
+    light_right = vec3.clone(WORLD_RIGHT);
   }
+  vec3.normalize(light_right, light_right);
+  const light_up = vec3.cross(vec3.create(), light_dir, light_right);
+  vec3.normalize(light_up, light_up);
 
-  const centre_ls_raw =
-      vec3.scale(vec3.create(), vec3.add(vec3.create(), aabb_min, aabb_max), 0.5);
-  const centre_ls = vec3.fromValues(
-      Math.round(centre_ls_raw[0] / VSM_WORLD_UNITS_PER_TEXEL) * VSM_WORLD_UNITS_PER_TEXEL,
-      Math.round(centre_ls_raw[1] / VSM_WORLD_UNITS_PER_TEXEL) * VSM_WORLD_UNITS_PER_TEXEL,
-      Math.round(centre_ls_raw[2] / VSM_WORLD_UNITS_PER_TEXEL) * VSM_WORLD_UNITS_PER_TEXEL,
+  const rot_rows = mat3.fromValues(
+    light_right[0], light_right[1], light_right[2],
+    light_up[0],    light_up[1],    light_up[2],
+    light_dir[0], light_dir[1], light_dir[2]
+  );
+  const light_rot = mat4.fromQuat(mat4.create(), quat.fromMat3(quat.create(), rot_rows));
+
+  // 2. Center of AABB in light space
+  const center_ws = vec4.transformMat4(vec4.create(), vec4.fromValues(0.0, 0.0, 0.0, 1.0), cam_inverse_view_projection);
+  center_ws[0] /= center_ws[3];
+  center_ws[1] /= center_ws[3];
+  center_ws[2] /= center_ws[3];
+  center_ws[3] = 1.0;
+
+  const center_ls_raw = vec4.transformMat4(vec4.create(), center_ws, light_rot);
+
+  // 3. Snap center to virtual texel grid
+  const center_ls = vec3.fromValues(
+    Math.round(center_ls_raw[0] / VSM_WORLD_UNITS_PER_TEXEL) * VSM_WORLD_UNITS_PER_TEXEL,
+    Math.round(center_ls_raw[1] / VSM_WORLD_UNITS_PER_TEXEL) * VSM_WORLD_UNITS_PER_TEXEL,
+    Math.round(center_ls_raw[2] / VSM_WORLD_UNITS_PER_TEXEL) * VSM_WORLD_UNITS_PER_TEXEL
   );
 
-  // Convert the centre back to world-space so that it can be used directly as
-  // the view's translation component.
-  const light_to_world_rot = quat.invert(quat.create(), light_rotation);
-  const centre_ws = vec3.transformQuat(vec3.create(), centre_ls, light_to_world_rot);
+  // 4. Convert snapped center back to world space
+  const inv_light_rot = mat4.invert(mat4.create(), light_rot);
+  const center_ws_adjusted = vec4.transformMat4(
+    vec4.create(),
+    vec4.fromValues(center_ls[0], center_ls[1], center_ls[2], 1.0),
+    inv_light_rot
+  );
+  // 5. Build light view matrix (look at snapped center from light direction)
+  const eye = vec3.scaleAndAdd(vec3.create(), center_ws_adjusted, light_dir, far * 0.5);
+  const light_view = mat4.lookAt(mat4.create(), eye, center_ws_adjusted, light_up);
 
-  const light_forward = vec3.transformQuat(vec3.create(), WORLD_FORWARD, light_rotation);
-  const center_adjusted = vec3.scaleAndAdd(vec3.create(), centre_ws, light_forward, -1.0);
-
-  return { position: vec4.fromValues(center_adjusted[0], center_adjusted[1], center_adjusted[2], 1.0) };
+  // 6. Fixed ortho projection
+  const extent = DEFAULT_LIGHT_CLIP_EXTENT;
+  const light_proj = mat4.ortho(mat4.create(),
+    -extent, extent,
+    -extent, extent,
+    -far, far
+  );
+ 
+  return { view: light_view, proj: light_proj };
 }
 
 /**
@@ -185,3 +169,4 @@ export class ShadowAllocator {
     return ShadowAllocator.current_size;
   }
 }
+

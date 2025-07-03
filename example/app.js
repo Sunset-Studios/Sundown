@@ -22,17 +22,13 @@ import { StandardMaterial } from "../engine/src/renderer/material.js";
 import { Texture } from "../engine/src/renderer/texture.js";
 import { Mesh } from "../engine/src/renderer/mesh.js";
 import { SharedEnvironmentMapData, SharedViewBuffer } from "../engine/src/core/shared_data.js";
+import { MAX_CLIPMAP_LEVELS } from "../engine/src/renderer/shadows/shadow_utils.js";
 import { spawn_mesh_entity, delete_entity } from "../engine/src/core/ecs/entity_utils.js";
 import { FontCache } from "../engine/src/ui/text/font_cache.js";
-import {
-  compute_directional_light_rotation,
-  compute_directional_light_position_for_clip,
-  build_directional_light_projection_matrix,
-} from "../engine/src/renderer/shadows/shadow_utils.js";
 import { Name } from "../engine/src/utility/names.js";
 import { profile_scope } from "../engine/src/utility/performance.js";
 import { log } from "../engine/src/utility/logging.js";
-import { vec3, vec4, quat, mat4 } from "gl-matrix";
+import { vec3, vec4, quat } from "gl-matrix";
 
 import * as UI from "../engine/src/ui/2d/immediate.js";
 
@@ -90,6 +86,7 @@ export class RenderingScene extends Scene {
     light_fragment_view.intensity = 3;
     light_fragment_view.position = [50, 0, 50, 1];
     light_fragment_view.active = true;
+    light_fragment_view.shadow_clipmaps = MAX_CLIPMAP_LEVELS;
 
     // Create a sphere mesh and add it to the scene
     const mesh = Mesh.from_gltf("engine/models/cube/cube.gltf");
@@ -247,6 +244,7 @@ export class MLScene extends Scene {
     light_fragment_view.intensity = 3;
     light_fragment_view.position = [50, 0, 0];
     light_fragment_view.active = true;
+    light_fragment_view.shadow_clipmaps = MAX_CLIPMAP_LEVELS;
 
     // Get Exo-Medium font
     const font_id = Name.from("Exo-Medium");
@@ -494,6 +492,7 @@ export class TexturesScene extends Scene {
     light_fragment_view.intensity = 2;
     light_fragment_view.position = [50, 20, -10];
     light_fragment_view.active = true;
+    light_fragment_view.shadow_clipmaps = MAX_CLIPMAP_LEVELS;
 
     // Get Exo-Medium font
     const font_id = Name.from("Exo-Medium");
@@ -793,6 +792,7 @@ export class AABBScene extends Scene {
     light_fragment_view.intensity = 3;
     light_fragment_view.position = [50, 20, 50];
     light_fragment_view.active = true;
+    light_fragment_view.shadow_clipmaps = MAX_CLIPMAP_LEVELS;
     this.entities.push(light_entity);
 
     // Get Exo-Medium font
@@ -1280,6 +1280,7 @@ export class SolarECSTestScene extends Scene {
     light_fragment_view.intensity = 2.5;
     light_fragment_view.position = [10, 30, 10];
     light_fragment_view.active = true;
+    light_fragment_view.shadow_clipmaps = MAX_CLIPMAP_LEVELS;
 
     // Get Exo-Medium font for potential text elements
     const font_id = Name.from("Exo-Medium");
@@ -1429,8 +1430,9 @@ export class VoxelTerrainScene extends Scene {
     light_fragment_view.type = LightType.DIRECTIONAL;
     light_fragment_view.color = [1, 1, 1];
     light_fragment_view.intensity = 2.5;
-    light_fragment_view.position = [45, 30, 70];
+    light_fragment_view.position = [45, 20, 70];
     light_fragment_view.active = true;
+    light_fragment_view.shadow_clipmaps = MAX_CLIPMAP_LEVELS;
 
     // Create terrain material
     const terrain_material = StandardMaterial.create("TerrainMaterial");
@@ -1468,12 +1470,13 @@ export class VoxelTerrainScene extends Scene {
     this.cube_mesh = Mesh.cube();
 
     // Terrain parameters - Perlin-based fractal noise
-    const grid_width = 150;
-    const grid_depth = 150;
+    // Modified: Flatter and more expansive terrain, similar total voxels
+    const grid_width = 600;   // was 150
+    const grid_depth = 600;   // was 150
     const block_size = 1.0;
     const base_frequency = 0.05;
-    const height_scale = 20.0;
-    const height_offset = 10.0;
+    const height_scale = 4.0; // was 20.0
+    const height_offset = 2.0; // was 10.0
     const octaves = 5;
     const persistence = 0.5;
 
@@ -1703,6 +1706,7 @@ export class ObjectPaintingScene extends Scene {
     light_fragment_view.intensity = 2.5;
     light_fragment_view.position = [10, 30, 10];
     light_fragment_view.active = true;
+    light_fragment_view.shadow_clipmaps = MAX_CLIPMAP_LEVELS;
 
     // Load sphere mesh & create transparent/emissive brush material
     this.sphere_mesh = Mesh.from_gltf("engine/models/sphere/sphere.gltf");
@@ -1836,7 +1840,7 @@ export class GITestScene extends Scene {
 
     const room_size = 10.0;
     const wall_thickness = 0.1;
-    const ambient_emissive = 0.03;
+    const ambient_emissive = 0.05;
 
     // camera arcball
     const freeform_arcball_control_processor = this.add_layer(FreeformArcballControlProcessor);
@@ -1858,24 +1862,6 @@ export class GITestScene extends Scene {
     view_data.view_position = [0, 23, 40];
     view_data.view_rotation = [0.0005166, 0.9986818, -0.027326133, 0.0188794];
 
-    // ------------------------------------------------------------
-    // Directional light view test
-    // ------------------------------------------------------------
-    // view_data.view_position = [-25, 45, 15];
-    // view_data.custom_projection_enabled = 1;
-
-    // const rotation = compute_directional_light_rotation(view_data.view_position);
-
-    // view_data.projection_matrix = build_directional_light_projection_matrix(
-    //   view_data.far,
-    //   view_data.aspect_ratio,
-    //   view_data.far * 0.02
-    // );
-
-    // view_data.view_rotation = rotation;
-    // view_data.view_position = view_data.view_position;
-    // ------------------------------------------------------------
-
     // directional light
     const light_entity = EntityManager.create_entity([LightFragment]);
     this.entities.push(light_entity);
@@ -1884,8 +1870,9 @@ export class GITestScene extends Scene {
     light_fragment_view.type = LightType.DIRECTIONAL;
     light_fragment_view.color = [1, 1, 1];
     light_fragment_view.intensity = 0.5;
-    light_fragment_view.position = [-25, 45, 15];
+    light_fragment_view.position = [25, 45, 15];
     light_fragment_view.active = true;
+    light_fragment_view.shadow_clipmaps = MAX_CLIPMAP_LEVELS;
 
     // materials
     const wall_material = StandardMaterial.create("testgym_wall_material");
@@ -2256,22 +2243,23 @@ export class ShadowTestScene extends Scene {
     light_fragment_view.intensity = 1.0;
     light_fragment_view.position = [100, 300, 100];
     light_fragment_view.active = true;
+    light_fragment_view.shadow_clipmaps = MAX_CLIPMAP_LEVELS;
 
     // Create a point light
-    const point_light_entity = EntityManager.create_entity([LightFragment]);
-    this.entities.push(point_light_entity);
+    // const point_light_entity = EntityManager.create_entity([LightFragment]);
+    // this.entities.push(point_light_entity);
 
-    const point_light_fragment_view = EntityManager.get_fragment(point_light_entity, LightFragment);
-    point_light_fragment_view.type = LightType.POINT;
-    point_light_fragment_view.color = [1, 1, 0];
-    point_light_fragment_view.intensity = 5.0;
-    point_light_fragment_view.position = [0, 20, 0];
-    point_light_fragment_view.radius = 20.0;
-    point_light_fragment_view.active = true;
-    point_light_fragment_view.shadow_casting = false;
+    // const point_light_fragment_view = EntityManager.get_fragment(point_light_entity, LightFragment);
+    // point_light_fragment_view.type = LightType.POINT;
+    // point_light_fragment_view.color = [1, 1, 0];
+    // point_light_fragment_view.intensity = 5.0;
+    // point_light_fragment_view.position = [0, 20, 0];
+    // point_light_fragment_view.radius = 20.0;
+    // point_light_fragment_view.active = true;
+    // point_light_fragment_view.shadow_casting = false;
 
-    const num_point_lights = 12;
-    EntityManager.set_entity_instance_count(point_light_entity, num_point_lights);
+    // const num_point_lights = 12;
+    // EntityManager.set_entity_instance_count(point_light_entity, num_point_lights);
 
     // Ground material
     const ground_material = StandardMaterial.create("shadow_ground_material");
@@ -2477,66 +2465,66 @@ export class ShadowTestScene extends Scene {
     // Each light is attached to a random building, either on a façade or
     // on the rooftop, with some colour variation for extra visual flavour.
     // ------------------------------------------------------------------
-    const point_light_colours = [
-      [1.0, 0.8, 0.6], // warm
-      [0.6, 0.8, 1.0], // cool
-      [1.0, 1.0, 0.8], // neutral
-    ];
+    // const point_light_colours = [
+    //   [1.0, 0.8, 0.6], // warm
+    //   [0.6, 0.8, 1.0], // cool
+    //   [1.0, 1.0, 0.8], // neutral
+    // ];
 
-    for (let i = 0; i < num_point_lights; i++) {
-      const p_view = EntityManager.get_fragment(point_light_entity, LightFragment, i);
+    // for (let i = 0; i < num_point_lights; i++) {
+    //   const p_view = EntityManager.get_fragment(point_light_entity, LightFragment, i);
 
-      // Pick a random building instance.
-      const b_index = Math.floor(Math.random() * instance_index);
-      const b_tf = EntityManager.get_fragment(building_entity, TransformFragment, b_index);
-      if (!b_tf) continue;
+    //   // Pick a random building instance.
+    //   const b_index = Math.floor(Math.random() * instance_index);
+    //   const b_tf = EntityManager.get_fragment(building_entity, TransformFragment, b_index);
+    //   if (!b_tf) continue;
 
-      const bp = b_tf.position; // building position (centre)
-      const bs = b_tf.scale; // building half-extents in each axis
+    //   const bp = b_tf.position; // building position (centre)
+    //   const bs = b_tf.scale; // building half-extents in each axis
 
-      // Decide whether this light goes on the rooftop or at street level.
-      const rooftop = Math.random() < 0.4; // 40 % roof, 60 % façade
+    //   // Decide whether this light goes on the rooftop or at street level.
+    //   const rooftop = Math.random() < 0.4; // 40 % roof, 60 % façade
 
-      let lx, ly, lz;
+    //   let lx, ly, lz;
 
-      if (rooftop) {
-        // Place it slightly above the rooftop centre.
-        lx = bp[0];
-        ly = bp[1] + bs[1] + 4.0;
-        lz = bp[2];
-      } else {
-        // Attach to a random side of the building.
-        const face = Math.floor(Math.random() * 4); // 0 ±z, 1 ±x
-        const height = bp[1] + Math.random() * bs[1]; // random height along wall
+    //   if (rooftop) {
+    //     // Place it slightly above the rooftop centre.
+    //     lx = bp[0];
+    //     ly = bp[1] + bs[1] + 4.0;
+    //     lz = bp[2];
+    //   } else {
+    //     // Attach to a random side of the building.
+    //     const face = Math.floor(Math.random() * 4); // 0 ±z, 1 ±x
+    //     const height = bp[1] + Math.random() * bs[1]; // random height along wall
 
-        switch (face) {
-          case 0: // +z front
-            lx = bp[0];
-            lz = bp[2] + bs[2] + 1.5;
-            break;
-          case 1: // -z back
-            lx = bp[0];
-            lz = bp[2] - bs[2] - 1.5;
-            break;
-          case 2: // -x left
-            lx = bp[0] - bs[0] - 1.5;
-            lz = bp[2];
-            break;
-          case 3: // +x right
-          default:
-            lx = bp[0] + bs[0] + 1.5;
-            lz = bp[2];
-            break;
-        }
+    //     switch (face) {
+    //       case 0: // +z front
+    //         lx = bp[0];
+    //         lz = bp[2] + bs[2] + 1.5;
+    //         break;
+    //       case 1: // -z back
+    //         lx = bp[0];
+    //         lz = bp[2] - bs[2] - 1.5;
+    //         break;
+    //       case 2: // -x left
+    //         lx = bp[0] - bs[0] - 1.5;
+    //         lz = bp[2];
+    //         break;
+    //       case 3: // +x right
+    //       default:
+    //         lx = bp[0] + bs[0] + 1.5;
+    //         lz = bp[2];
+    //         break;
+    //     }
 
-        ly = height;
-      }
+    //     ly = height;
+    //   }
 
-      p_view.position = [lx, ly, lz];
-      p_view.radius = 30.0 + Math.random() * 40.0; // 30–70 units reach
-      p_view.intensity = 3.0 + Math.random() * 2.0; // 3–5 brightness
-      p_view.color = point_light_colours[Math.floor(Math.random() * point_light_colours.length)];
-    }
+    //   p_view.position = [lx, ly, lz];
+    //   p_view.radius = 30.0 + Math.random() * 40.0; // 30–70 units reach
+    //   p_view.intensity = 3.0 + Math.random() * 2.0; // 3–5 brightness
+    //   p_view.color = point_light_colours[Math.floor(Math.random() * point_light_colours.length)];
+    // }
     // ------------------------------------------------------------------------
   }
 

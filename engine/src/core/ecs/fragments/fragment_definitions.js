@@ -56,6 +56,11 @@ const LightFragment = {
       default: -1,
       stride: 1,
     },
+    shadow_clipmaps: {
+      type: DataType.FLOAT32,
+      stride: 1,
+      default: 1,
+    },
   },
   gpu_buffers: {
     light_fragment: {

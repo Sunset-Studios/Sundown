@@ -100,10 +100,6 @@ fn cs(
         let current_physical_id = vsm_pte_to_physical_id(pte, vsm_settings);
         let lru_slot = 1u + current_physical_id;
         atomicOr(&lru[lru_slot], lru_pinned_flag);
-
-        let new_pte_value = pte | (1u << pte_dirty_shift);
-        textureStore(page_table, pte_coords.xy, page_table_index, vec4<u32>(new_pte_value));
-
         continue; // Already mapped by a concurrent thread or previous pass
       }
 

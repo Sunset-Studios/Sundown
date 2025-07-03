@@ -24,9 +24,5 @@ struct VertexOutput {
   let packed_depth = shadow_atlas_depth[linear_index];
   let depth_clip = unpack_depth(packed_depth);
 
-  let near = view_buffer[frame_info.view_index].near;
-  let far = view_buffer[frame_info.view_index].far;
-  let lin_depth = linearize_depth(depth_clip, near, far, frame_info.view_index);
-
   return vec4<f32>(depth_clip, depth_clip, depth_clip, 1.0);
 } 

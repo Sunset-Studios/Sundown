@@ -11,7 +11,7 @@ import {
   rgba8unorm_format,
   rgba16float_format,
   r32uint_format,
-  depth24plus_format,
+  depth32float_format,
   load_op_load,
   load_op_clear,
 } from "../../utility/config_permutations.js";
@@ -101,17 +101,9 @@ const shadow_atlas_buf_config = {
 
 const dummy_depth_image_config = {
   name: "shadow_dummy_depth",
-  format: depth24plus_format,
+  format: depth32float_format,
   width: 0, // filled at runtime
   height: 0, // filled at runtime
-  usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
-};
-
-const dummy_color_image_config = {
-  name: "shadow_dummy_color",
-  format: rgba16float_format,
-  width: 0,
-  height: 0,
   usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
 };
 
@@ -153,6 +145,9 @@ const render_shader_setup = {
   pipeline_shaders: {
     vertex: { path: "shadow/as_vsm/tile_render.vert.wgsl", defines: { SHADOWS_ENABLED: true } },
     fragment: { path: "shadow/as_vsm/tile_render.frag.wgsl", defines: { SHADOWS_ENABLED: true } },
+  },
+  rasterizer_state: {
+    cull_mode: "front",
   },
 };
 
@@ -212,8 +207,6 @@ export class AdaptiveSparseVirtualShadowMaps {
     this.active_shadow_indices = [];
 
     this.lights_query = EntityManager.create_query([LightFragment]);
-
-    this.prev_grid = new Map();
 
     AdaptiveSparseVirtualShadowMaps.all_instances.push(this);
   }
@@ -306,11 +299,6 @@ export class AdaptiveSparseVirtualShadowMaps {
     dummy_depth_image_config.force = force_recreate;
     this.dummy_depth_image = render_graph.create_image(dummy_depth_image_config);
 
-    dummy_color_image_config.width = this.atlas_size;
-    dummy_color_image_config.height = this.atlas_size;
-    dummy_color_image_config.force = force_recreate;
-    this.dummy_color_image = render_graph.create_image(dummy_color_image_config);
-
     // Create storage-buffer version of the atlas for race-free depth updates
     const total_pixels = this.atlas_size * this.atlas_size * MAX_NUM_TEXTURE_POOLS;
     shadow_atlas_buf_config.size = total_pixels * Uint32Array.BYTES_PER_ELEMENT;
@@ -353,7 +341,7 @@ export class AdaptiveSparseVirtualShadowMaps {
       "as_vsm_clear_shadow_atlas_dummy_targets",
       RenderPassFlags.Graphics,
       {
-        outputs: [this.dummy_depth_image, this.dummy_color_image],
+        outputs: [this.dummy_depth_image],
         b_skip_pass_pipeline_setup: true,
         b_skip_pass_bind_group_setup: true,
       },
@@ -520,62 +508,53 @@ export class AdaptiveSparseVirtualShadowMaps {
     // ────────────────────────────────────────────────────────────────
     // Raster shadow casters for each requested tile
     // ────────────────────────────────────────────────────────────────
-    const light_uniforms = this._setup_light_draw_uniforms(render_graph, adjusted_light_count);
-    let snapped_this_frame = false;
-    for (let i = 0; i < this.active_view_indices.length; i++) {
-      const view_index = this.active_view_indices[i];
-      const shadow_idx = this.active_shadow_indices[i];
+    const light_uniforms = this._setup_light_draw_uniforms(render_graph, adjusted_light_count, this.max_lods);
 
-      const light_view = SharedViewBuffer.get_view_data(view_index);
-      // ------------------- snap detection -------------------
-      const snap = this.clip0_extent / this.virtual_dim; // texel size
-      const gx = Math.round(light_view.view_position[0] / snap);
-      const gz = Math.round(light_view.view_position[2] / snap);
+    let uniform_idx = 0;
+    for (let light_idx = 0; light_idx < adjusted_light_count; light_idx++) {
+      const view_index = this.active_view_indices[light_idx];
+      
+      for (let c = 0; c < this.max_lods; c++) {
+        const visible_object_instances = view_visibility_buffers.get(view_index, c);
 
-      const prev = this.prev_grid.get(shadow_idx);
-      if (!prev || prev.gx !== gx || prev.gz !== gz) {
-        this.prev_grid.set(shadow_idx, { gx, gz });
-        snapped_this_frame = true; // some light moved ≥ 1 texel
+        render_graph.add_pass(
+          `as_vsm_render_light_${light_idx}_c${c}`,
+          RenderPassFlags.Graphics,
+          {
+            inputs: [
+              transforms_buffer,
+              object_instances,
+              visible_object_instances,
+              this.settings_buf,
+              this.page_table,
+              light_uniforms[uniform_idx],
+              this.light_view_buf,
+              this.light_shadow_idx_buf,
+              this.got_shadow_feedback_buffer,
+              this.shadow_atlas_buf,
+            ],
+            outputs: [
+              this.shadow_atlas_buf,
+              this.got_shadow_feedback_buffer,
+              this.dummy_depth_image,
+            ],
+            shader_setup: render_shader_setup,
+          },
+          (graph, frame_data, encoder) => {
+            const pass = graph.get_physical_pass(frame_data.current_pass);
+            MeshTaskQueue.submit_indexed_indirect_draws(
+              pass,
+              view_index,
+              c,   /* clipmap_index */
+              true /* skip_material_bind */,
+              false /* opaque_only */,
+              true /* depth_only */
+            );
+          }
+        );
+
+        uniform_idx++;
       }
-
-      // Use camera view visibility buffer to ensure objects are drawn
-      const visible_object_instances = view_visibility_buffers[view_index];
-
-      render_graph.add_pass(
-        `as_vsm_render_light_${i}`,
-        RenderPassFlags.Graphics,
-        {
-          inputs: [
-            transforms_buffer,
-            object_instances,
-            visible_object_instances,
-            this.settings_buf,
-            this.page_table,
-            light_uniforms[i],
-            this.light_view_buf,
-            this.light_shadow_idx_buf,
-            this.got_shadow_feedback_buffer,
-            this.shadow_atlas_buf,
-          ],
-          outputs: [
-            this.shadow_atlas_buf,
-            this.got_shadow_feedback_buffer,
-            this.dummy_depth_image,
-            this.dummy_color_image,
-          ],
-          shader_setup: render_shader_setup,
-        },
-        (graph, frame_data, encoder) => {
-          const pass = graph.get_physical_pass(frame_data.current_pass);
-          MeshTaskQueue.submit_indexed_indirect_draws(
-            pass,
-            view_index,
-            true /* skip_material_bind */,
-            false /* opaque_only */,
-            true /* depth_only */
-          );
-        }
-      );
     }
 
     // ────────────────────────────────────────────────────────────────
@@ -595,30 +574,32 @@ export class AdaptiveSparseVirtualShadowMaps {
     if (debug_view !== DebugDrawType.None) {
       this.add_debug_passes(render_graph, force_recreate, debug_view, position_texture);
     }
-
-    page_table_config.force = force_recreate || snapped_this_frame;
-    shadow_atlas_buf_config.force = force_recreate || snapped_this_frame;
-    bitmask_buf_config.force = force_recreate || snapped_this_frame;
   }
 
   #light_draw_uniforms = [];
-  _setup_light_draw_uniforms(render_graph, shadows_count) {
+  _setup_light_draw_uniforms(render_graph, lights_count, clipmap_levels) {
     this.#light_draw_uniforms.length = 0;
 
-    // Ensure configs array is large enough and update raw_data per frame
-    if (light_draw_uniform_configs.length < shadows_count) {
-      light_draw_uniform_configs.length = shadows_count;
+    const total = lights_count * clipmap_levels;
+
+    if (light_draw_uniform_configs.length < total) {
+      light_draw_uniform_configs.length = total;
     }
 
-    for (let i = 0; i < shadows_count; i++) {
-      light_draw_uniform_configs[i] = {
-        name: `light_draw_uniform_${i}`,
-        raw_data: new Uint32Array([i]),
-        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-      };
+    for (let light_idx = 0; light_idx < lights_count; light_idx++) {
+      for (let c = 0; c < clipmap_levels; c++) {
+        const idx = light_idx * clipmap_levels + c;
 
-      const buffer = render_graph.create_buffer(light_draw_uniform_configs[i]);
-      this.#light_draw_uniforms.push(buffer);
+        // Light index uniform (binding 5)
+        light_draw_uniform_configs[idx] = {
+          name: `light_draw_uniform_${light_idx}_${c}`,
+          raw_data: new Uint32Array([light_idx, c]),
+          usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+        };
+
+        const light_buf = render_graph.create_buffer(light_draw_uniform_configs[idx]);
+        this.#light_draw_uniforms.push(light_buf);
+      }
     }
 
     return this.#light_draw_uniforms;

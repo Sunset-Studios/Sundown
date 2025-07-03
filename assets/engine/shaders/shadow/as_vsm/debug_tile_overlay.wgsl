@@ -37,7 +37,7 @@ fn fs(input: VertexOutput) -> @location(0) vec4<f32> {
   }
 
   // Sample world position; if w == 0 (no geometry), discard
-  let world_pos_sample = textureSample(world_position_tex, global_sampler, input.uv);
+  let world_pos_sample = textureSample(world_position_tex, non_filtering_sampler, input.uv);
   if (all(world_pos_sample.xyz == vec3<f32>(0.0))) {
     return vec4<f32>(0.0);
   }
@@ -62,15 +62,17 @@ fn fs(input: VertexOutput) -> @location(0) vec4<f32> {
                       );
 
   let filter_res    = vsm_sample_shadow(
+                          depth,
                           vec4<f32>(world_pos_sample.xyz, 1.0),
+                          vec3<f32>(0.0, 0.0, 0.0),
+                          vec3<f32>(0.0, 0.0, 0.0),
                           view_idx,
                           0u,
                           page_table,
                           vsm_settings
                       );
 
-  let lit            = depth < filter_res.depth + 0.00001;
-  let shadow_factor  = select(1.0, max(f32(lit), 0.3), filter_res.valid);
+  let shadow_factor  = select(1.0, max(f32(filter_res.depth), 0.3), filter_res.valid);
 
   return vec4<f32>(color * shadow_factor, 1.0);
 #else

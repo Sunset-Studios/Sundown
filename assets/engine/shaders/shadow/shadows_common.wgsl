@@ -15,13 +15,13 @@ struct ASVSMSettings {
 
 struct ShadowCasterLight {
     light_index: u32,
+    clip_index: u32,
 };
 
 struct VirtualTileInfo {
     tile_coords: vec2<u32>,
     virtual_pixel: vec2<u32>,
-    virtual_uv: vec2<f32>,
-    local_pixel: vec2<f32>,
+    local_pixel: vec2<u32>,
     clipmap_index: u32,
     tile_id: u32,
 };
@@ -31,6 +31,8 @@ struct PhysicalTileInfo {
     physical_xy: vec2<u32>,
     physical_id: u32,
     memory_pool_index: u32,
+    is_resident: bool,
+    is_dirty: bool,
 };
 
 struct ShadowFilterResult {
@@ -78,19 +80,34 @@ const pte_frame_age_mask        : u32 = 0x07F80000u;
 
 const lru_pinned_flag           : u32 = 0x80000000u;
 
+// C is a constant that controls the log depth curve; try 1000.0 or scene far/near ratio
+const LOG_C = 1000.0;
+
+// Pack log depth
+fn pack_log_depth(depth: f32) -> f32 {
+    return log(depth * LOG_C + 1.0) / log(LOG_C + 1.0);
+}
+
+// Unpack log depth
+fn unpack_log_depth(packed: f32) -> f32 {
+    return (exp(packed * log(LOG_C + 1.0)) - 1.0) / LOG_C;
+}
+
 // ------------------------------------------------------------------
 // Packs clip-space depth (range [0,1]) into an unsigned 32-bit integer such that
 // smaller integers correspond to *nearer* fragments.  This makes it compatible
 // with atomicMin for closest-depth selection.
 fn pack_depth(clip_depth: f32) -> u32 {
-    return u32(clip_depth * 16777215.0);
+    let packed = pack_log_depth(clip_depth);
+    return u32(packed * 16777215.0);
 }
 
 // Converts a packed depth integer back to clip-space depth in [0,1].
 // The caller can further convert to linear eye-space depth via linearize_depth.
 // Returns a vec2<f32> with the depth in the first component and the clipmap index that passed depth testing in the second component.
 fn unpack_depth(packed_depth: u32) -> f32 {
-    return f32(packed_depth) / 16777215.0;
+    let packed = f32(packed_depth) / (16777215.0);
+    return unpack_log_depth(packed);
 }
 
 fn bitmask_pow2(shift: u32) -> u32 {
@@ -107,7 +124,7 @@ fn vsm_pte_is_dirty(pte: u32) -> bool {
 
 // A page is "valid" when it is resident *and* not marked dirty
 fn vsm_pte_is_valid(pte: u32) -> bool {
-    return vsm_pte_is_resident(pte) && !vsm_pte_is_dirty(pte);
+    return vsm_pte_is_resident(pte);
 }
 
 // Extract (phys_x, phys_y) from the entry
@@ -173,6 +190,7 @@ fn vsm_calculate_render_clip_value_from_world_pos(
 ) -> vec4<f32> {
     // Project to clip space and perform perspective divide to get normalized device coordinates
     var clip = clipmap0_projection_view_render * world_pos;
+    clip /= clip.w;
     return vsm_convert_clip0_to_clipn(clip, clip_map_index, settings);
 }
 
@@ -220,6 +238,7 @@ fn vsm_world_to_virtual_tile(
     info.clipmap_index = vsm_calculate_clipmap_index_from_world_pos(world_pos, camera_vp, settings);
 
     let vtr = u32(settings.virtual_tiles_per_row);
+    let tile_size = u32(settings.tile_size);
 
     var sample_clip    = vsm_calculate_sample_clip_value_from_world_pos(
                             world_pos,
@@ -227,17 +246,51 @@ fn vsm_world_to_virtual_tile(
                             clipmap0_vp,
                             settings
                         );
+    let virtual_uv        = fract(sample_clip.xy * 0.5 + 0.5);
+                        
     // Wrap to the clipmap range and offset by half a texel for stable mapping
-    info.virtual_uv       = fract(sample_clip.xy * 0.5 + 0.5);
-    info.virtual_pixel    = vec2<u32>(info.virtual_uv * settings.virtual_dim);
-
-    let tile_coords_f     = (info.virtual_uv * settings.virtual_dim) / settings.tile_size;
-    info.local_pixel      = fract(tile_coords_f) * settings.tile_size;
-    info.tile_coords      = vec2<u32>(floor(tile_coords_f));
+    info.virtual_pixel    = vec2<u32>(floor(virtual_uv * settings.virtual_dim));
+    info.local_pixel      = info.virtual_pixel % tile_size;
+    info.tile_coords      = info.virtual_pixel / tile_size;
     info.tile_id          = info.clipmap_index * vtr * vtr + info.tile_coords.y * vtr + info.tile_coords.x;
 
     return info;
 }
+
+// Variant of vsm_world_to_virtual_tile that uses a caller-supplied
+// clipmap_index. This is used when the clipmap being rendered is known a-priori
+// (e.g. when doing one render pass per clipmap level) so we avoid per-vertex
+// divergence and ensure all vertices of a primitive map to the same clipmap.
+fn vsm_world_to_virtual_tile_for_clip(
+    world_pos: vec4<f32>,
+    clipmap0_vp: mat4x4<f32>,
+    settings: ASVSMSettings,
+    clipmap_index: u32,
+) -> VirtualTileInfo {
+    var info: VirtualTileInfo;
+
+    info.clipmap_index = clipmap_index;
+
+    let vtr = u32(settings.virtual_tiles_per_row);
+    let tile_size = u32(settings.tile_size);
+
+    var sample_clip = vsm_calculate_sample_clip_value_from_world_pos(
+        world_pos,
+        clipmap_index,
+        clipmap0_vp,
+        settings,
+    );
+    let virtual_uv        = fract(sample_clip.xy * 0.5 + 0.5);
+
+    // Wrap to the clipmap range and offset by half a texel for stable mapping
+    info.virtual_pixel    = vec2<u32>(floor(virtual_uv * settings.virtual_dim));
+    info.local_pixel      = info.virtual_pixel % tile_size;
+    info.tile_coords      = info.virtual_pixel / tile_size;
+    info.tile_id          = info.clipmap_index * vtr * vtr + info.tile_coords.y * vtr + info.tile_coords.x;
+
+    return info;
+}
+
 
 fn vsm_vtile_to_ptile(
     vtile_info: VirtualTileInfo,
@@ -246,17 +299,23 @@ fn vsm_vtile_to_ptile(
     page_table: texture_storage_2d_array<r32uint, read>,
 ) -> PhysicalTileInfo {
     var info: PhysicalTileInfo;
+
     let entry              = textureLoad(
         page_table,
         vtile_info.tile_coords,
         vtile_info.clipmap_index + shadow_index * u32(settings.max_lods)
     ).r;
+    let phys_dim = u32(settings.physical_dim);
+    let tile_size = u32(settings.tile_size);
+
+    info.is_resident       = vsm_pte_is_resident(entry);
+    info.is_dirty          = vsm_pte_is_dirty(entry);
     info.physical_xy       = vsm_pte_get_phys_xy(entry);
     info.memory_pool_index = vsm_pte_get_memory_pool_index(entry);
-    info.physical_pixel    = info.physical_xy * u32(settings.tile_size)
-                                + vec2<u32>(vtile_info.local_pixel * (settings.physical_dim / settings.virtual_dim));
-    info.physical_id       = info.memory_pool_index * u32(settings.physical_dim * settings.physical_dim)
-        + info.physical_pixel.y * u32(settings.physical_dim) + info.physical_pixel.x;
+
+    info.physical_pixel    = info.physical_xy * tile_size + vtile_info.local_pixel;
+    info.physical_id       = info.memory_pool_index * phys_dim * phys_dim
+        + info.physical_pixel.y * phys_dim + info.physical_pixel.x;
     return info;
 }
 

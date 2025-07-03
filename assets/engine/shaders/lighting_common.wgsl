@@ -33,6 +33,25 @@ struct GIParams {
 };
 
 // ------------------------------------------------------------------------------------
+// Light Helpers
+// ------------------------------------------------------------------------------------
+const SLOPE_SCALE_BIAS: f32 = 0.00001;
+fn get_light_dir(light: Light, fragment_pos: vec3<f32>) -> vec3<f32> {
+    var light_dir: vec3<f32>;
+
+    if (light.light_type == 0.0) { // Directional
+        light_dir = normalize(light.position.xyz);
+    } else if (light.light_type == 1.0) { // Point
+        let light_vec = light.position.xyz - fragment_pos;
+        light_dir = normalize(light_vec);
+    } else if (light.light_type == 2.0) { // Spot
+        let light_vec = light.position.xyz - fragment_pos;
+        light_dir = normalize(light_vec);
+    }
+    return light_dir;
+}
+
+// ------------------------------------------------------------------------------------
 // Microfacet Distribution
 // ------------------------------------------------------------------------------------
 fn d_ggx(n_dot_h: f32, roughness: f32) -> f32 {
@@ -141,25 +160,21 @@ fn calculate_blinn_phong(
     light: Light,
     normal: vec3<f32>,
     view_dir: vec3<f32>,
+    light_dir: vec3<f32>,
     fragment_pos: vec3<f32>,
     albedo: vec3<f32>,
     shininess: f32,
     ambient: vec3<f32>,
     shadow_factor: f32,
 ) -> vec3<f32> {
-    var light_dir: vec3<f32>;
     var attenuation = 1.0;
 
-    if (light.light_type == 0.0) { // Directional
-        light_dir = normalize(light.position.xyz);
-    } else if (light.light_type == 1.0) { // Point
+    if (light.light_type == 1.0) { // Point
         let light_vec = light.position.xyz - fragment_pos;
-        light_dir = normalize(light_vec);
         let distance_sq = dot(light_vec, light_vec);
         attenuation = compute_distance_attenuation(distance_sq, light.radius);
     } else if (light.light_type == 2.0) { // Spot
         let light_vec = light.position.xyz - fragment_pos;
-        light_dir = normalize(light_vec);
         let distance_sq = dot(light_vec, light_vec);
         let dist_att = compute_distance_attenuation(distance_sq, light.radius);
 
@@ -200,6 +215,7 @@ fn calculate_brdf(
     light: Light,
     normal: vec3<f32>,
     view_dir: vec3<f32>,
+    light_dir: vec3<f32>,
     fragment_pos: vec3<f32>,
     albedo: vec3<f32>,
     roughness: f32,
@@ -213,19 +229,14 @@ fn calculate_brdf(
     env_brdf: vec2<f32>,
     shadow_factor: f32,
 ) -> vec3<f32> {
-    var light_dir: vec3<f32>;
     var attenuation = 1.0;
 
-    if (light.light_type == 0.0) { // Directional
-        light_dir = normalize(light.position.xyz);
-    } else if (light.light_type == 1.0) { // Point
+    if (light.light_type == 1.0) { // Point
         let light_vec = light.position.xyz - fragment_pos;
-        light_dir = normalize(light_vec);
         let distance_sq = dot(light_vec, light_vec);
         attenuation = compute_distance_attenuation(distance_sq, light.radius);
     } else if (light.light_type == 2.0) { // Spot
         let light_vec = light.position.xyz - fragment_pos;
-        light_dir = normalize(light_vec);
         let distance_sq = dot(light_vec, light_vec);
         let dist_att = compute_distance_attenuation(distance_sq, light.radius);
 

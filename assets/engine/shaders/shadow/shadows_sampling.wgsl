@@ -5,6 +5,10 @@
 // ------------------------------------------------------------------------------------
 #if SHADOWS_ENABLED
 
+const constant_bias = 0.000001;
+const slope_scale = 0.000001;
+const cam_dist_bias_scale = 0.0000005;
+
 fn vsm_shadow_depth(
     world_pos: vec4<f32>,
     view_idx: u32,
@@ -29,7 +33,10 @@ fn vsm_shadow_depth(
 // world_pos. It uses the same virtual-→physical mapping logic as the regular
 // sample helper and falls back to 1.0 when the page is not resident.
 fn vsm_sample_shadow(
+    ref_depth: f32,
     world_pos: vec4<f32>,
+    normal: vec3<f32>,
+    light_dir: vec3<f32>,
     view_idx: u32,
     shadow_idx: u32,
     page_table: texture_storage_2d_array<r32uint, read>,
@@ -44,44 +51,61 @@ fn vsm_sample_shadow(
     let ptile_info  = vsm_vtile_to_ptile(vtile_info, settings, shadow_idx, page_table);
 
     // 3×3 PCF gather inside the atlas
-    // let phys_dim    = u32(settings.physical_dim);
-    // let pool_stride = phys_dim * phys_dim;
-    // let pool_idx    = ptile_info.memory_pool_index;
+    let mem_pool    = ptile_info.memory_pool_index;
+    let phys_dim    = u32(settings.physical_dim);
+    let tile_size   = u32(settings.tile_size);
 
-    // let pixel     = ptile_info.physical_pixel;
-    // let base        = vec2<u32>(pixel);
+    // Calculate slope scaled bias
+    let ndotl = abs(dot(normal, light_dir));
+    let slope_scaled_bias = constant_bias + slope_scale * (1.0 - ndotl);
+    let cam_dist_scale = camera_vp * world_pos;
+    let cam_dist = cam_dist_scale.z;
+    let cam_dist_bias = cam_dist * cam_dist_bias_scale;
+    let true_bias = slope_scaled_bias + cam_dist_bias; // Optionally scale by distance
 
-    // let x0          = base.x;
-    // let y0          = base.y;
-    // let x1          = max(x0 - 1u, 0u);
-    // let y1          = max(y0 - 1u, 0u);
-    // let x2          = min(x0 + 1u, phys_dim - 1u);
-    // let y2          = min(y0 + 1u, phys_dim - 1u);
+    let pixel       = ptile_info.physical_pixel;
 
-    // let base_index  = pool_idx * pool_stride;
-    // let idx00       = base_index + y0 * phys_dim + x0;
-    // let idx10       = base_index + y0 * phys_dim + x1;
-    // let idx01       = base_index + y1 * phys_dim + x0;
-    // let idx11       = base_index + y1 * phys_dim + x1;
-    // let idx02       = base_index + y2 * phys_dim + x0;
-    // let idx12       = base_index + y2 * phys_dim + x1;
-    // let idx20       = base_index + y0 * phys_dim + x2;
-    // let idx21       = base_index + y1 * phys_dim + x2;
-    // let idx22       = base_index + y2 * phys_dim + x2;
+    let tile_origin_x = ptile_info.physical_xy.x * tile_size + 1u;
+    let tile_origin_y = ptile_info.physical_xy.y * tile_size + 1u;
 
-    // let d00         = unpack_depth(shadow_atlas_depth[idx00]);
-    // let d10         = unpack_depth(shadow_atlas_depth[idx10]);
-    // let d01         = unpack_depth(shadow_atlas_depth[idx01]);
-    // let d11         = unpack_depth(shadow_atlas_depth[idx11]);
-    // let d02         = unpack_depth(shadow_atlas_depth[idx02]);
-    // let d12         = unpack_depth(shadow_atlas_depth[idx12]);
-    // let d20         = unpack_depth(shadow_atlas_depth[idx20]);
-    // let d21         = unpack_depth(shadow_atlas_depth[idx21]);
-    // let d22         = unpack_depth(shadow_atlas_depth[idx22]);
+    let tile_final_x  = tile_origin_x + tile_size - 2u;
+    let tile_final_y  = tile_origin_y + tile_size - 2u;
 
-    // // Average the nine sampled depths (simple PCF)
-    // let filtered    = (d00 + d10 + d01 + d11 + d02 + d12 + d20 + d21 + d22) / 9.0;
-    let filtered    = unpack_depth(shadow_atlas_depth[ptile_info.physical_id]);
+    let base_index   = mem_pool * phys_dim * phys_dim;
+    let is_on_border = pixel.x <= tile_origin_x
+        || pixel.x >= tile_final_x
+        || pixel.y <= tile_origin_y
+        || pixel.y >= tile_final_y;
+
+    let x0 = clamp(pixel.x, tile_origin_x - 1u, tile_final_x + 2u);
+    let y0 = clamp(pixel.y, tile_origin_y - 1u, tile_final_y + 2u);
+    let x1 = select(clamp(pixel.x - 1u, tile_origin_x - 1u, tile_final_x + 2u), x0, is_on_border);
+    let y1 = select(clamp(pixel.y - 1u, tile_origin_y - 1u, tile_final_y + 2u), y0, is_on_border);
+    let x2 = select(clamp(pixel.x + 1u, tile_origin_x - 1u, tile_final_x + 2u), x1, is_on_border);
+    let y2 = select(clamp(pixel.y + 1u, tile_origin_y - 1u, tile_final_y + 2u), y1, is_on_border);
+
+    let idx00       = base_index + y0 * phys_dim + x0;
+    let idx10       = base_index + y0 * phys_dim + x1;
+    let idx01       = base_index + y1 * phys_dim + x0;
+    let idx11       = base_index + y1 * phys_dim + x1;
+    let idx02       = base_index + y2 * phys_dim + x0;
+    let idx12       = base_index + y2 * phys_dim + x1;
+    let idx20       = base_index + y0 * phys_dim + x2;
+    let idx21       = base_index + y1 * phys_dim + x2;
+    let idx22       = base_index + y2 * phys_dim + x2;
+
+    let d00         = select(0.0, 1.0, ref_depth <= unpack_depth(shadow_atlas_depth[idx00]) + true_bias);
+    let d10         = select(0.0, 1.0, ref_depth <= unpack_depth(shadow_atlas_depth[idx10]) + true_bias);
+    let d01         = select(0.0, 1.0, ref_depth <= unpack_depth(shadow_atlas_depth[idx01]) + true_bias);
+    let d11         = select(0.0, 1.0, ref_depth <= unpack_depth(shadow_atlas_depth[idx11]) + true_bias);
+    let d02         = select(0.0, 1.0, ref_depth <= unpack_depth(shadow_atlas_depth[idx02]) + true_bias);
+    let d12         = select(0.0, 1.0, ref_depth <= unpack_depth(shadow_atlas_depth[idx12]) + true_bias);
+    let d20         = select(0.0, 1.0, ref_depth <= unpack_depth(shadow_atlas_depth[idx20]) + true_bias);
+    let d21         = select(0.0, 1.0, ref_depth <= unpack_depth(shadow_atlas_depth[idx21]) + true_bias);
+    let d22         = select(0.0, 1.0, ref_depth <= unpack_depth(shadow_atlas_depth[idx22]) + true_bias);
+
+    // Average the nine sampled depths (simple PCF)
+    let filtered = (d00 + d10 + d01 + d11 + d02 + d12 + d20 + d21 + d22) / 9.0;
 
     // Validate residency for this virtual tile
     let page_index  = vtile_info.clipmap_index + shadow_idx * u32(settings.max_lods);
@@ -90,6 +114,7 @@ fn vsm_sample_shadow(
 
     out.depth = filtered;
     out.valid = page_valid;
+
     return out;
 }
 

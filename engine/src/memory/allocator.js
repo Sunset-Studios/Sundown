@@ -1018,6 +1018,360 @@ class SparseRandomAccessAllocator {
     }
 }
 
+
+
+/**
+ * A sparse 2D random access allocator that uses a bit matrix to track allocated slots.
+ * Uses a flat array for storage, and resizes X or Y as needed.
+ */
+class Sparse2DRandomAccessAllocator {
+    #x_capacity = 0;
+    #y_capacity = 0;
+    #size = 0;
+    #template = null;
+    #buffer = null;
+    #bit_matrix = null; // Flat array of bits, length = x_capacity * y_capacity
+
+    /**
+     * @param {number} initial_x_capacity - Initial X dimension (e.g., views)
+     * @param {number} initial_y_capacity - Initial Y dimension (e.g., clipmaps)
+     * @param {object|Function|number|string|boolean} template - Template for allocated objects
+     */
+    constructor(initial_x_capacity = 16, initial_y_capacity = 4, template = null) {
+        this.#x_capacity = initial_x_capacity;
+        this.#y_capacity = initial_y_capacity;
+        this.#size = 0;
+        this.#template = template;
+        this.#buffer = new Array(this.#x_capacity * this.#y_capacity);
+        this.#bit_matrix = new Uint8Array(this.#x_capacity * this.#y_capacity);
+        if (template !== null) {
+            this._initialize_buffer(0, this.#x_capacity, 0, this.#y_capacity);
+        }
+    }
+
+    /** Initializes buffer elements in the specified range @private */
+    _initialize_buffer(x_start, x_end, y_start, y_end) {
+        const function_string = 'function';
+        for (let x = x_start; x < x_end; x++) {
+            for (let y = y_start; y < y_end; y++) {
+                const idx = x * this.#y_capacity + y;
+                if (typeof this.#template !== function_string && typeof this.#template !== 'object') {
+                    this.#buffer[idx] = { value: this.#template };
+                } else if (typeof this.#template === function_string) {
+                    this.#buffer[idx] = new this.#template();
+                } else if (Object.keys(this.#template).length === 0) {
+                    const proto = Object.getPrototypeOf(this.#template);
+                    const prop_descriptors = Object.getOwnPropertyDescriptors(this.#template);
+                    this.#buffer[idx] = Object.create(proto, prop_descriptors);
+                } else {
+                    const proto = Object.getPrototypeOf(this.#template);
+                    const prop_descriptors = Object.getOwnPropertyDescriptors(this.#template);
+                    this.#buffer[idx] = Object.create(proto, prop_descriptors);
+                }
+            }
+        }
+    }
+
+    /** Resizes the buffer and bit matrix to fit at least (x+1, y+1) */
+    _resize(new_x_capacity, new_y_capacity) {
+        const old_x_capacity = this.#x_capacity;
+        const old_y_capacity = this.#y_capacity;
+        const old_buffer = this.#buffer;
+        const old_bit_matrix = this.#bit_matrix;
+
+        this.#x_capacity = new_x_capacity;
+        this.#y_capacity = new_y_capacity;
+        this.#buffer = new Array(this.#x_capacity * this.#y_capacity);
+        this.#bit_matrix = new Uint8Array(this.#x_capacity * this.#y_capacity);
+
+        // Copy old data
+        for (let x = 0; x < old_x_capacity; x++) {
+            for (let y = 0; y < old_y_capacity; y++) {
+                const old_idx = x * old_y_capacity + y;
+                const new_idx = x * this.#y_capacity + y;
+                this.#buffer[new_idx] = old_buffer[old_idx];
+                this.#bit_matrix[new_idx] = old_bit_matrix[old_idx];
+            }
+        }
+        // Initialize new slots
+        if (this.#template !== null) {
+            // New X rows
+            if (new_x_capacity > old_x_capacity) {
+                this._initialize_buffer(old_x_capacity, new_x_capacity, 0, new_y_capacity);
+            }
+            // New Y columns for all X
+            if (new_y_capacity > old_y_capacity) {
+                for (let x = 0; x < old_x_capacity; x++) {
+                    this._initialize_buffer(x, x + 1, old_y_capacity, new_y_capacity);
+                }
+            }
+        }
+    }
+
+    /** Allocates an object at (x, y), resizing if needed. */
+    allocate_at(x, y) {
+        let resize_needed = false;
+        let new_x_capacity = this.#x_capacity;
+        let new_y_capacity = this.#y_capacity;
+        if (x >= this.#x_capacity) {
+            new_x_capacity = Math.max(this.#x_capacity * 2, x + 1);
+            resize_needed = true;
+        }
+        if (y >= this.#y_capacity) {
+            new_y_capacity = Math.max(this.#y_capacity * 2, y + 1);
+            resize_needed = true;
+        }
+        if (resize_needed) {
+            this._resize(new_x_capacity, new_y_capacity);
+        }
+        const idx = x * this.#y_capacity + y;
+        if (this.#bit_matrix[idx]) {
+            throw new Error('Index already allocated');
+        }
+        this.#bit_matrix[idx] = 1;
+        this.#size++;
+        return this.#buffer[idx];
+    }
+
+    /** Deallocates the object at (x, y). */
+    deallocate_at(x, y) {
+        if (x < 0 || x >= this.#x_capacity || y < 0 || y >= this.#y_capacity) {
+            throw new Error('Index out of bounds');
+        }
+        const idx = x * this.#y_capacity + y;
+        if (this.#bit_matrix[idx]) {
+            this.#bit_matrix[idx] = 0;
+            this.#size--;
+        }
+    }
+
+    /** Retrieves the object at (x, y) if allocated, else null. */
+    get(x, y) {
+        if (x < 0 || x >= this.#x_capacity || y < 0 || y >= this.#y_capacity) {
+            return null;
+        }
+        const idx = x * this.#y_capacity + y;
+        return !this.#bit_matrix[idx] ? null : this.#buffer[idx];
+    }
+
+    /** Sets the object at (x, y) if allocated. */
+    set(x, y, value) {
+        if (x < 0 || x >= this.#x_capacity || y < 0 || y >= this.#y_capacity) {
+            throw new Error('Index out of bounds');
+        }
+        const idx = x * this.#y_capacity + y;
+        if (this.#bit_matrix[idx]) {
+            this.#buffer[idx] = value;
+        }
+    }
+
+    /** Number of currently allocated slots. */
+    get length() {
+        return this.#size;
+    }
+
+    /** Current X capacity. */
+    get x_capacity() {
+        return this.#x_capacity;
+    }
+
+    /** Current Y capacity. */
+    get y_capacity() {
+        return this.#y_capacity;
+    }
+
+    /** Underlying buffer array. */
+    get data() {
+        return this.#buffer;
+    }
+
+    /**
+     * Iterates over all allocated (x, y, value) triples.
+     * @returns {Iterable<{x: number, y: number, value: any}>}
+     */
+    *allocated_entries() {
+        for (let x = 0; x < this.#x_capacity; x++) {
+            for (let y = 0; y < this.#y_capacity; y++) {
+                const idx = x * this.#y_capacity + y;
+                if (this.#bit_matrix[idx]) {
+                    yield { x, y, value: this.#buffer[idx] };
+                }
+            }
+        }
+    }
+}
+
+/**
+ * A sparse 2D frame allocator that allows resetting all allocations each frame without reducing capacity.
+ * Uses a flat array for storage and a bit matrix for allocation tracking.
+ */
+class Sparse2DFrameAllocator {
+    #x_capacity = 0;
+    #y_capacity = 0;
+    #size = 0;
+    #template = null;
+    #buffer = null;
+    #bit_matrix = null;
+
+    /**
+     * @param {number} initial_x_capacity - Initial X dimension
+     * @param {number} initial_y_capacity - Initial Y dimension
+     * @param {object|Function|number|string|boolean} template - Template for allocated objects
+     */
+    constructor(initial_x_capacity = 16, initial_y_capacity = 4, template = null) {
+        this.#x_capacity = initial_x_capacity;
+        this.#y_capacity = initial_y_capacity;
+        this.#size = 0;
+        this.#template = template;
+        this.#buffer = new Array(this.#x_capacity * this.#y_capacity);
+        this.#bit_matrix = new Uint8Array(this.#x_capacity * this.#y_capacity);
+        if (template !== null) {
+            this._initialize_buffer(0, this.#x_capacity, 0, this.#y_capacity);
+        }
+    }
+
+    _initialize_buffer(x_start, x_end, y_start, y_end) {
+        const function_string = 'function';
+        for (let x = x_start; x < x_end; x++) {
+            for (let y = y_start; y < y_end; y++) {
+                const idx = x * this.#y_capacity + y;
+                if (typeof this.#template !== function_string && typeof this.#template !== 'object') {
+                    this.#buffer[idx] = { value: this.#template };
+                } else if (typeof this.#template === function_string) {
+                    this.#buffer[idx] = new this.#template();
+                } else if (Object.keys(this.#template).length === 0) {
+                    const proto = Object.getPrototypeOf(this.#template);
+                    const prop_descriptors = Object.getOwnPropertyDescriptors(this.#template);
+                    this.#buffer[idx] = Object.create(proto, prop_descriptors);
+                } else {
+                    const proto = Object.getPrototypeOf(this.#template);
+                    const prop_descriptors = Object.getOwnPropertyDescriptors(this.#template);
+                    this.#buffer[idx] = Object.create(proto, prop_descriptors);
+                }
+            }
+        }
+    }
+
+    _resize(new_x_capacity, new_y_capacity) {
+        const old_x_capacity = this.#x_capacity;
+        const old_y_capacity = this.#y_capacity;
+        const old_buffer = this.#buffer;
+        const old_bit_matrix = this.#bit_matrix;
+
+        this.#x_capacity = new_x_capacity;
+        this.#y_capacity = new_y_capacity;
+        this.#buffer = new Array(this.#x_capacity * this.#y_capacity);
+        this.#bit_matrix = new Uint8Array(this.#x_capacity * this.#y_capacity);
+
+        for (let x = 0; x < old_x_capacity; x++) {
+            for (let y = 0; y < old_y_capacity; y++) {
+                const old_idx = x * old_y_capacity + y;
+                const new_idx = x * this.#y_capacity + y;
+                this.#buffer[new_idx] = old_buffer[old_idx];
+                this.#bit_matrix[new_idx] = old_bit_matrix[old_idx];
+            }
+        }
+        if (this.#template !== null) {
+            if (new_x_capacity > old_x_capacity) {
+                this._initialize_buffer(old_x_capacity, new_x_capacity, 0, new_y_capacity);
+            }
+            if (new_y_capacity > old_y_capacity) {
+                for (let x = 0; x < old_x_capacity; x++) {
+                    this._initialize_buffer(x, x + 1, old_y_capacity, new_y_capacity);
+                }
+            }
+        }
+    }
+
+    allocate_at(x, y) {
+        let resize_needed = false;
+        let new_x_capacity = this.#x_capacity;
+        let new_y_capacity = this.#y_capacity;
+        if (x >= this.#x_capacity) {
+            new_x_capacity = Math.max(this.#x_capacity * 2, x + 1);
+            resize_needed = true;
+        }
+        if (y >= this.#y_capacity) {
+            new_y_capacity = Math.max(this.#y_capacity * 2, y + 1);
+            resize_needed = true;
+        }
+        if (resize_needed) {
+            this._resize(new_x_capacity, new_y_capacity);
+        }
+        const idx = x * this.#y_capacity + y;
+        if (this.#bit_matrix[idx]) {
+            throw new Error('Index already allocated');
+        }
+        this.#bit_matrix[idx] = 1;
+        this.#size++;
+        return this.#buffer[idx];
+    }
+
+    deallocate_at(x, y) {
+        if (x < 0 || x >= this.#x_capacity || y < 0 || y >= this.#y_capacity) {
+            return;
+        }
+        const idx = x * this.#y_capacity + y;
+        if (this.#bit_matrix[idx]) {
+            this.#bit_matrix[idx] = 0;
+            this.#size--;
+        }
+    }
+
+    get(x, y) {
+        if (x < 0 || x >= this.#x_capacity || y < 0 || y >= this.#y_capacity) {
+            return null;
+        }
+        const idx = x * this.#y_capacity + y;
+        return !this.#bit_matrix[idx] ? null : this.#buffer[idx];
+    }
+
+    set(x, y, value) {
+        if (x < 0 || x >= this.#x_capacity || y < 0 || y >= this.#y_capacity) {
+            return;
+        }
+        const idx = x * this.#y_capacity + y;
+        if (this.#bit_matrix[idx]) {
+            this.#buffer[idx] = value;
+        }
+    }
+
+    /**
+     * Resets all allocations for the frame, but does not reduce capacity or reinitialize the buffer.
+     */
+    reset() {
+        this.#bit_matrix.fill(0);
+        this.#size = 0;
+    }
+
+    get length() {
+        return this.#size;
+    }
+
+    get x_capacity() {
+        return this.#x_capacity;
+    }
+
+    get y_capacity() {
+        return this.#y_capacity;
+    }
+
+    get data() {
+        return this.#buffer;
+    }
+
+    *allocated_entries() {
+        for (let x = 0; x < this.#x_capacity; x++) {
+            for (let y = 0; y < this.#y_capacity; y++) {
+                const idx = x * this.#y_capacity + y;
+                if (this.#bit_matrix[idx]) {
+                    yield { x, y, value: this.#buffer[idx] };
+                }
+            }
+        }
+    }
+}
+
 export {
     FrameAllocator,
     FrameStackAllocator,
@@ -1025,4 +1379,6 @@ export {
     FreeListAllocator,
     RandomAccessAllocator,
     SparseRandomAccessAllocator,
+    Sparse2DRandomAccessAllocator,
+    Sparse2DFrameAllocator,
 }
