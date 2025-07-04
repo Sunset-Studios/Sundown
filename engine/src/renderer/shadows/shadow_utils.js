@@ -8,15 +8,17 @@ import { WORLD_FORWARD, WORLD_RIGHT, WORLD_UP } from "../../core/minimal.js";
 import { TypedStack } from "../../memory/container.js";
 import { quat, vec3, mat3, mat4, vec4 } from "gl-matrix";
 
+// Shadow map resolution
+export const SHADOW_MAP_TILES = 32;
 // Tile size for both virtual and physical tiles.
 export const TILE_SIZE = 128;
 // Shadow atlas size.
-export const ATLAS_SIZE = 32 * TILE_SIZE;
+export const ATLAS_SIZE = SHADOW_MAP_TILES * TILE_SIZE;
 // virtual_dim has to match the AS-VSM instance you create (16384 by default).
-export const VSM_VIRTUAL_DIM = 32 * TILE_SIZE;
+export const VSM_VIRTUAL_DIM = SHADOW_MAP_TILES * TILE_SIZE;
 // Default orthographic extent (±extent) for directional lights in clip-space 0.
 // Used when constructing stable light-aligned view/projection matrices.
-export const DEFAULT_LIGHT_CLIP_EXTENT = 4;
+export const DEFAULT_LIGHT_CLIP_EXTENT = 8;
 // Maximum number of clipmap levels.
 export const MAX_CLIPMAP_LEVELS = 12;
 // Size (world units) of one virtual-shadow-map texel in clip-map level 0.
@@ -125,10 +127,10 @@ export function compute_directional_light_view_projection(
   const light_proj = mat4.ortho(mat4.create(),
     -extent, extent,
     -extent, extent,
-    -far, far
+    -far * 2.0, far * 2.0
   );
  
-  return { view: light_view, proj: light_proj };
+  return { view: light_view, proj: light_proj, position: eye };
 }
 
 /**

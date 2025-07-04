@@ -911,8 +911,7 @@ export class DeferredShadingStrategy {
           const clipmap_count = view_data.clipmap_count || 1;
 
           for (let clipmap_index = 0; clipmap_index < clipmap_count; ++clipmap_index) {
-            draw_cull_data_config.name = `draw_cull_data_view_${view_index}_clipmap_${clipmap_index}`;
-            const draw_cull_data = render_graph.create_buffer(draw_cull_data_config);
+            const draw_cull_data = this.per_view_clipmap_draw_cull_data.get(view_index, clipmap_index);
 
             const visible_buf_no_occlusion =
               this.per_view_clipmap_visible_no_occlusion_buffers.get(view_index, clipmap_index);
@@ -1048,7 +1047,7 @@ export class DeferredShadingStrategy {
       // TODO: Meshlet cull pass
 
       // ┌─────────────────────────────────────────────────────────────────────────────┐
-      // │ 🔄 PASS: Reset Instance Counts                                              │
+      // │ 🔄 PASS: Reset Instance Counts for Occlusion Culling                        │
       // │    Reset instance counts for each view                                      │
       // └─────────────────────────────────────────────────────────────────────────────┘
       if (draw_count > 0) {
@@ -1056,6 +1055,8 @@ export class DeferredShadingStrategy {
           if (!SharedViewBuffer.is_render_active(view_index)) continue;
 
           const view_data = SharedViewBuffer.get_view_data(view_index);
+          if (!view_data.occlusion_enabled) continue; 
+
           const clipmap_count = view_data.clipmap_count || 1;
 
           for (let clipmap_index = 0; clipmap_index < clipmap_count; ++clipmap_index) {
@@ -1088,6 +1089,8 @@ export class DeferredShadingStrategy {
           if (!SharedViewBuffer.is_render_active(view_index)) continue;
 
           const view_data = SharedViewBuffer.get_view_data(view_index);
+          if (!view_data.occlusion_enabled) continue; 
+
           const clipmap_count = view_data.clipmap_count || 1;
 
           for (let clipmap_index = 0; clipmap_index < clipmap_count; ++clipmap_index) {
@@ -1271,6 +1274,8 @@ export class DeferredShadingStrategy {
           light_count_buffer: light_count,
           transforms_buffer: entity_transforms,
           object_instances: object_instances,
+          aabb_bounds_buffer: aabb_bounds,
+          entity_aabb_node_indices_buffer: entity_aabb_node_indices,
           view_visibility_buffers: this.per_view_clipmap_visible_no_occlusion_buffers,
           force_recreate: this.force_recreate,
           debug_view: debug_view,

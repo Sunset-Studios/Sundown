@@ -163,6 +163,21 @@ export class Buffer {
     }
   }
 
+  async read_previous(data, data_length, offset = 0, data_offset = 0, data_type = Float32Array) {
+    const buffered_frame = (Renderer.get().get_frame_number() + MAX_BUFFERED_FRAMES - 1) % MAX_BUFFERED_FRAMES;
+    const source_buffer = this.cpu_buffers ? this.cpu_buffers[buffered_frame] : this.buffer;
+    if (!source_buffer || source_buffer.mapState !== unmapped_state) {
+      return;
+    }
+    await source_buffer.mapAsync(GPUMapMode.READ);
+    if (source_buffer) {
+      const mapped_range = source_buffer.getMappedRange(offset, data_length);
+      const view = new data_type(mapped_range);
+      data.set(view, data_offset);
+      source_buffer.unmap();
+    }
+  }
+
   sync(encoder) {
     if (!this.cpu_buffers || !this.buffer) return;
     const buffered_frame = Renderer.get().get_buffered_frame_number();
@@ -201,6 +216,13 @@ export class Buffer {
 
   _post_render_command(graph, frame_data, encoder) {
     this.sync(encoder);
+    if (this.config.own_readback) {
+      BufferSync.request_readback(this);
+    }
+  }
+
+  async readback_buffers() {
+    await this.read(this.config.raw_data, this.config.size, 0, 0, Uint32Array);
   }
 
   get physical_id() {

@@ -7,7 +7,6 @@
 
 const constant_bias = 0.000001;
 const slope_scale = 0.000001;
-const cam_dist_bias_scale = 0.0000005;
 
 fn vsm_shadow_depth(
     world_pos: vec4<f32>,
@@ -58,10 +57,7 @@ fn vsm_sample_shadow(
     // Calculate slope scaled bias
     let ndotl = abs(dot(normal, light_dir));
     let slope_scaled_bias = constant_bias + slope_scale * (1.0 - ndotl);
-    let cam_dist_scale = camera_vp * world_pos;
-    let cam_dist = cam_dist_scale.z;
-    let cam_dist_bias = cam_dist * cam_dist_bias_scale;
-    let true_bias = slope_scaled_bias + cam_dist_bias; // Optionally scale by distance
+    let true_bias = slope_scaled_bias; // Optionally scale by distance
 
     let pixel       = ptile_info.physical_pixel;
 

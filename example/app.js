@@ -1430,7 +1430,7 @@ export class VoxelTerrainScene extends Scene {
     light_fragment_view.type = LightType.DIRECTIONAL;
     light_fragment_view.color = [1, 1, 1];
     light_fragment_view.intensity = 2.5;
-    light_fragment_view.position = [45, 20, 70];
+    light_fragment_view.position = [-45, 50, 70];
     light_fragment_view.active = true;
     light_fragment_view.shadow_clipmaps = MAX_CLIPMAP_LEVELS;
 
@@ -1471,12 +1471,12 @@ export class VoxelTerrainScene extends Scene {
 
     // Terrain parameters - Perlin-based fractal noise
     // Modified: Flatter and more expansive terrain, similar total voxels
-    const grid_width = 600;   // was 150
-    const grid_depth = 600;   // was 150
+    const grid_width = 600;
+    const grid_depth = 600;
     const block_size = 1.0;
     const base_frequency = 0.05;
-    const height_scale = 4.0; // was 20.0
-    const height_offset = 2.0; // was 10.0
+    const height_scale = 4.0;
+    const height_offset = 2.0;
     const octaves = 5;
     const persistence = 0.5;
 
@@ -2241,7 +2241,7 @@ export class ShadowTestScene extends Scene {
     light_fragment_view.type = LightType.DIRECTIONAL;
     light_fragment_view.color = [1, 1, 1];
     light_fragment_view.intensity = 1.0;
-    light_fragment_view.position = [100, 300, 100];
+    light_fragment_view.position = [10, 10, 10];
     light_fragment_view.active = true;
     light_fragment_view.shadow_clipmaps = MAX_CLIPMAP_LEVELS;
 

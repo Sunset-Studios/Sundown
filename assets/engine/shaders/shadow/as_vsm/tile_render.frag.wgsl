@@ -31,9 +31,6 @@ fn fs(input: VertexOutput) -> FragmentOutput {
   var output: FragmentOutput;
 
 #if SHADOWS_ENABLED
-  let light_vp        = view_buffer[input.view_index].view_projection_matrix;
-  let camera_vp       = view_buffer[frame_info.view_index].view_projection_matrix;
-
   let clip_index      = light_ub.clip_index;
   let clipmap0_vp     = view_buffer[input.view_index].view_projection_matrix;
 
@@ -43,6 +40,7 @@ fn fs(input: VertexOutput) -> FragmentOutput {
     vsm_settings,
     clip_index,
   );
+
   let ptile_info = vsm_vtile_to_ptile(vtile_info, vsm_settings, input.shadow_index, page_table);
 
   let depth_clip = input.position.z;

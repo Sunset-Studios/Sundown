@@ -1,11 +1,11 @@
 import { EntityFlags } from "../../core/minimal.js";
-import { SharedViewBuffer } from "../../core/shared_data.js";
 import { EntityManager } from "../../core/ecs/entity.js";
 import { DEFAULT_CHUNK_CAPACITY } from "../../core/ecs/solar/types.js";
 import { LightFragment } from "../../core/ecs/fragments/light_fragment.js";
 import { VisibilityFragment } from "../../core/ecs/fragments/visibility_fragment.js";
 import { Renderer } from "../renderer.js";
 import { RenderPassFlags, DebugDrawType } from "../renderer_types.js";
+import { Buffer } from "../buffer.js";
 import { MeshTaskQueue } from "../mesh_task_queue.js";
 import {
   rgba8unorm_format,
@@ -47,7 +47,6 @@ const lru_buf_config = {
   usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
 };
 
-// ========== NEW: per-light view & shadow index buffers ==========
 const light_view_buf_config = {
   name: "shadow_light_view_buf",
   size: 0, // filled at runtime
@@ -56,6 +55,12 @@ const light_view_buf_config = {
 
 const light_shadow_idx_buf_config = {
   name: "shadow_light_shadow_idx_buf",
+  size: 0, // filled at runtime
+  usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+};
+
+const eviction_counter_buf_config = {
+  name: "shadow_eviction_counter_buf",
   size: 0, // filled at runtime
   usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
 };
@@ -108,6 +113,7 @@ const dummy_depth_image_config = {
 };
 
 const light_draw_uniform_configs = [];
+const osi_uniform_configs = [];
 
 // ============ Shader Setup ============
 
@@ -179,7 +185,17 @@ const debug_tile_render_output_shader_setup = {
   },
 };
 
+const object_shadow_influence_shader_setup = {
+  pipeline_shaders: {
+    compute: {
+      path: "shadow/as_vsm/object_shadow_influence.wgsl",
+      defines: { SHADOWS_ENABLED: true },
+    },
+  },
+};
+
 const MAX_NUM_TEXTURE_POOLS = 1;
+const MAX_DISPATCH_X = 65535;
 
 const got_shadow_feedback_name = "got_shadow_feedback";
 
@@ -219,6 +235,8 @@ export class AdaptiveSparseVirtualShadowMaps {
       light_count_buffer,
       transforms_buffer,
       object_instances,
+      aabb_bounds_buffer,
+      entity_aabb_node_indices_buffer,
       view_visibility_buffers,
       force_recreate = false,
       debug_view = null,
@@ -280,6 +298,7 @@ export class AdaptiveSparseVirtualShadowMaps {
 
     // Allocate one bitmask per light so tiles are tracked independently per-light
     this.bitmask_u32_stride = Math.ceil(this.total_virtual_tiles / 32); // words tper light (includes all LODs)
+    this.bitmask_u32_lod_stride = this.bitmask_u32_stride / this.max_lods;
     this.bitmask_u32_count = this.bitmask_u32_stride * adjusted_light_count;
 
     bitmask_buf_config.size = this.bitmask_u32_count * 4;
@@ -292,6 +311,10 @@ export class AdaptiveSparseVirtualShadowMaps {
     page_table_config.depth = adjusted_light_count * this.max_lods;
     page_table_config.force = force_recreate;
     this.page_table = render_graph.create_image(page_table_config);
+
+    eviction_counter_buf_config.size = 4; // 1 atomic u32
+    eviction_counter_buf_config.force = force_recreate;
+    this.eviction_counter_buf = render_graph.create_buffer(eviction_counter_buf_config);
 
     // Create / update the dummy render-target image
     dummy_depth_image_config.width = this.atlas_size;
@@ -334,6 +357,17 @@ export class AdaptiveSparseVirtualShadowMaps {
       got_shadow_feedback_buffer.buffer.config.name
     );
 
+    const num_entities = EntityManager.get_total_subscribed(VisibilityFragment);
+    const total_entity_dispatches = Math.ceil(((num_entities + 31) / 32) / MAX_DISPATCH_X);
+
+    const osi_uniforms = this._setup_osi_uniforms(render_graph, total_entity_dispatches);
+
+    const light_uniforms = this._setup_light_draw_uniforms(
+      render_graph,
+      adjusted_light_count,
+      this.max_lods
+    );
+
     // ────────────────────────────────────────────────────────────────
     // Clear Shadow Atlas Targets
     // ────────────────────────────────────────────────────────────────
@@ -371,14 +405,22 @@ export class AdaptiveSparseVirtualShadowMaps {
           ])
         );
 
-        // Clear bitmask buffer – zero all words for every light
-        const bitmask = graph.get_physical_buffer(this.bitmask_buf);
-        const bitmask_raw = new Uint32Array(this.bitmask_u32_count);
-        bitmask.write_raw(bitmask_raw);
-
         // Set dummy depth image to load_op_load
         const depth_dummy_image = graph.get_physical_image(this.dummy_depth_image);
         depth_dummy_image.config.load_op = load_op_load;
+
+        for (let i = 0; i < osi_uniforms.length; i++) {
+          const osi_uniform = graph.get_physical_buffer(osi_uniforms[i]);
+          osi_uniform.write_raw(new Uint32Array([i]));
+        }
+
+        let offset = 0;
+        for (let i = 0; i < total_entity_dispatches; i++) {
+          const dispatch_x = Math.min(Math.ceil((num_entities - offset + 31) / 32), MAX_DISPATCH_X);
+          const osi_uniform = graph.get_physical_buffer(osi_uniforms[i]);
+          osi_uniform.write_raw(new Uint32Array([offset]));
+          offset += dispatch_x * 32;
+        }
       }
     );
 
@@ -395,7 +437,9 @@ export class AdaptiveSparseVirtualShadowMaps {
       },
       (graph, frame_data, encoder) => {
         const pass = graph.get_physical_pass(frame_data.current_pass);
-        const got_shadow_feedback_buffer = graph.get_physical_buffer(this.got_shadow_feedback_buffer);
+        const got_shadow_feedback_buffer = graph.get_physical_buffer(
+          this.got_shadow_feedback_buffer
+        );
         const elements = got_shadow_feedback_buffer.config.size / 4;
         pass.dispatch(elements / 64, 1, 1);
       }
@@ -410,15 +454,14 @@ export class AdaptiveSparseVirtualShadowMaps {
       {
         inputs: [
           position_texture,
-          entity_id_texture,
           this.settings_buf,
           this.bitmask_buf,
           this.light_view_buf,
           this.light_shadow_idx_buf,
           light_count_buffer,
-          this.got_shadow_feedback_buffer,
+          this.page_table,
         ],
-        outputs: [this.bitmask_buf],
+        outputs: [this.bitmask_buf, this.page_table],
         shader_setup: feedback_shader_setup,
       },
       (graph, frame_data, encoder) => {
@@ -445,8 +488,9 @@ export class AdaptiveSparseVirtualShadowMaps {
           this.bitmask_buf,
           this.light_shadow_idx_buf,
           light_count_buffer,
+          this.eviction_counter_buf,
         ],
-        outputs: [this.page_table],
+        outputs: [this.page_table, this.eviction_counter_buf],
         shader_setup: evict_unused_tiles_shader_setup,
       },
       (graph, frame_data, encoder) => {
@@ -474,8 +518,9 @@ export class AdaptiveSparseVirtualShadowMaps {
           this.settings_buf,
           this.bitmask_buf,
           light_count_buffer,
+          this.eviction_counter_buf,
         ],
-        outputs: [this.page_table],
+        outputs: [this.page_table, this.eviction_counter_buf],
         shader_setup: page_table_update_shader_setup,
       },
       (graph, frame_data, encoder) => {
@@ -485,6 +530,45 @@ export class AdaptiveSparseVirtualShadowMaps {
         pass.dispatch(bitmask_groups, 1, light_groups);
       }
     );
+
+    // ────────────────────────────────────────────────────────────────
+    // Object Shadow Influence Pass
+    // ────────────────────────────────────────────────────────────────
+
+    const workgroups_y = (this.max_lods + 7) / 8;
+    const workgroups_z = adjusted_light_count;
+
+    let offset = 0;
+    for (let i = 0; i < total_entity_dispatches; i++) {
+      const dispatch_x = Math.min((num_entities - offset + 31) / 32, MAX_DISPATCH_X);
+
+      render_graph.add_pass(
+        `as_vsm_object_shadow_influence_${i}`,
+        RenderPassFlags.Compute,
+        {
+          inputs: [
+            aabb_bounds_buffer,
+            entity_aabb_node_indices_buffer,
+            this.settings_buf,
+            osi_uniforms[i],
+            this.bitmask_buf,
+            this.light_view_buf,
+            this.light_shadow_idx_buf,
+            light_count_buffer,
+            this.got_shadow_feedback_buffer,
+            this.page_table,
+          ],
+          outputs: [this.got_shadow_feedback_buffer],
+          shader_setup: object_shadow_influence_shader_setup,
+        },
+        (graph, frame_data, encoder) => {
+          const pass = graph.get_physical_pass(frame_data.current_pass);
+          pass.dispatch(dispatch_x, workgroups_y, workgroups_z);
+        }
+      );
+
+      offset += dispatch_x * 32;
+    }
 
     // ────────────────────────────────────────────────────────────────
     // Clear newly allocated physical tiles
@@ -508,14 +592,13 @@ export class AdaptiveSparseVirtualShadowMaps {
     // ────────────────────────────────────────────────────────────────
     // Raster shadow casters for each requested tile
     // ────────────────────────────────────────────────────────────────
-    const light_uniforms = this._setup_light_draw_uniforms(render_graph, adjusted_light_count, this.max_lods);
 
-    let uniform_idx = 0;
     for (let light_idx = 0; light_idx < adjusted_light_count; light_idx++) {
       const view_index = this.active_view_indices[light_idx];
-      
+
       for (let c = 0; c < this.max_lods; c++) {
-        const visible_object_instances = view_visibility_buffers.get(view_index, c);
+        const visibility_buffer = view_visibility_buffers.get(view_index, c);
+        const light_uniform = light_uniforms[light_idx * this.max_lods + c];
 
         render_graph.add_pass(
           `as_vsm_render_light_${light_idx}_c${c}`,
@@ -524,20 +607,16 @@ export class AdaptiveSparseVirtualShadowMaps {
             inputs: [
               transforms_buffer,
               object_instances,
-              visible_object_instances,
+              visibility_buffer,
               this.settings_buf,
               this.page_table,
-              light_uniforms[uniform_idx],
+              light_uniform,
               this.light_view_buf,
               this.light_shadow_idx_buf,
               this.got_shadow_feedback_buffer,
               this.shadow_atlas_buf,
             ],
-            outputs: [
-              this.shadow_atlas_buf,
-              this.got_shadow_feedback_buffer,
-              this.dummy_depth_image,
-            ],
+            outputs: [this.shadow_atlas_buf, this.dummy_depth_image],
             shader_setup: render_shader_setup,
           },
           (graph, frame_data, encoder) => {
@@ -545,15 +624,13 @@ export class AdaptiveSparseVirtualShadowMaps {
             MeshTaskQueue.submit_indexed_indirect_draws(
               pass,
               view_index,
-              c,   /* clipmap_index */
+              c /* clipmap_index */,
               true /* skip_material_bind */,
               false /* opaque_only */,
               true /* depth_only */
             );
           }
         );
-
-        uniform_idx++;
       }
     }
 
@@ -565,6 +642,11 @@ export class AdaptiveSparseVirtualShadowMaps {
       RenderPassFlags.GraphLocal,
       {},
       (graph, frame_data, encoder) => {
+        // Clear bitmask buffer – zero all words for every light
+        const bitmask = graph.get_physical_buffer(this.bitmask_buf);
+        const bitmask_raw = new Uint32Array(this.bitmask_u32_count);
+        bitmask.write_raw(bitmask_raw);
+
         const depth_dummy_image = graph.get_physical_image(this.dummy_depth_image);
         depth_dummy_image.config.load_op = load_op_clear;
       }
@@ -603,6 +685,27 @@ export class AdaptiveSparseVirtualShadowMaps {
     }
 
     return this.#light_draw_uniforms;
+  }
+
+  #osi_uniforms = [];
+  _setup_osi_uniforms(render_graph, num_uniforms) {
+    this.#osi_uniforms.length = 0;
+    const total = num_uniforms;
+    if (osi_uniform_configs.length < total) {
+      osi_uniform_configs.length = total;
+    }
+    for (let idx = 0; idx < num_uniforms; idx++) {
+      // Light index uniform (binding 5)
+      osi_uniform_configs[idx] = {
+        name: `osi_uniform_${idx}`,
+        raw_data: new Uint32Array([idx]),
+        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+      };
+
+      const osi_buf = render_graph.create_buffer(osi_uniform_configs[idx]);
+      this.#osi_uniforms.push(osi_buf);
+    }
+    return this.#osi_uniforms;
   }
 
   add_debug_passes(render_graph, force_recreate, debug_view, position_texture) {

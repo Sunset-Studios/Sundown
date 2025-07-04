@@ -37,6 +37,15 @@ fn vs(@builtin(vertex_index) vi: u32,
   let row_field             = object_instances[object_instance_index].row;
   let entity_row            = get_entity_row(row_field);
 
+  let got_shadow_feedback = got_shadow_feedback_buffer[entity_row];
+  if ((got_shadow_feedback & (1u << clip_index)) == 0u) {
+    out.position    = vec4<f32>(2.0, 2.0, 2.0, 1.0);
+    out.world_pos = vec3<f32>(0.0);
+    out.shadow_index = 0u;
+    out.view_index = 0u;
+    return out;
+  }
+
   let model_matrix          = entity_transforms[entity_row].transform;
   let local_pos             = vertex_buffer[vi].position;
   let world_pos             = vec4<f32>((model_matrix * local_pos).xyz, 1.0);
@@ -44,42 +53,13 @@ fn vs(@builtin(vertex_index) vi: u32,
   let clipmap0_vp           = view_buffer[view_index].view_projection_matrix;
   let camera_vp             = view_buffer[frame_info.view_index].view_projection_matrix;
 
-  // Compute virtual-tile info using the *forced* clipmap index so all vertices in
-  // this draw call map to the same clipmap level and avoid cross-clipmap
-  // distortion.
   let vtile_info = vsm_world_to_virtual_tile_for_clip(
     world_pos,
     clipmap0_vp,
     vsm_settings,
     clip_index,
   );
-  let ptile_info = vsm_vtile_to_ptile(
-    vtile_info,
-    vsm_settings,
-    shadow_idx,
-    page_table
-  );
 
-  // TODO: Because we're evicting pages as soon as they're no longer in the feedback bitmask, this will act
-  // as a sort of primitive culler, which we don't want happening right away if the shadows should still be visible for that primitive.
-  let got_shadow_feedback = got_shadow_feedback_buffer[entity_row];
-  if (got_shadow_feedback == 0u) {
-    out.position    = vec4<f32>(2.0, 2.0, 2.0, 1.0);
-    out.world_pos = vec3<f32>(0.0);
-    out.shadow_index = 0u;
-    out.view_index = 0u;
-    return out;
-  }
-  // if (!ptile_info.is_dirty) {
-  //   out.position    = vec4<f32>(2.0, 2.0, 2.0, 1.0);
-  //   out.world_pos = vec3<f32>(0.0);
-  //   out.shadow_index = 0u;
-  //   out.view_index = 0u;
-  //   return out;
-  // }
-
-  // Use the dedicated VP matrix for this clipmap. Standard clip-space output;
-  // perspective divide happens automatically after the vertex stage.
   let clip_pos = vsm_calculate_render_clip_value_from_world_pos(
     world_pos,
     vtile_info.clipmap_index,

@@ -10,6 +10,7 @@
 @group(1) @binding(3) var<uniform> vsm_settings: ASVSMSettings;
 @group(1) @binding(4) var<storage, read_write> bitmask: array<u32>;
 @group(1) @binding(5) var<storage, read> light_count_buffer: array<u32>;
+@group(1) @binding(6) var<storage, read_write> eviction_counter: array<atomic<u32>>;
 
 // ------------------------------------------------------------------
 // LRU helpers – the MSB of each physical_id entry is treated as a
@@ -84,6 +85,7 @@ fn cs(
     // Fetch mask of virtual tiles for *this* light
     var bits = bitmask[global_index];
 
+    // Go over all virtual tiles that are currently visible for this light
     while(bits != 0u) {
       let shift = countTrailingZeros(bits);
       bits = bits & (bits - 1u);
@@ -100,7 +102,7 @@ fn cs(
         let current_physical_id = vsm_pte_to_physical_id(pte, vsm_settings);
         let lru_slot = 1u + current_physical_id;
         atomicOr(&lru[lru_slot], lru_pinned_flag);
-        continue; // Already mapped by a concurrent thread or previous pass
+        continue;
       }
 
       let ptpr = u32(vsm_settings.physical_tiles_per_row);
@@ -109,6 +111,7 @@ fn cs(
       // Acquire a free (unpinned) physical page from the LRU ring.
       let physical_id = lru_acquire_free_page(total_lru_entries);
       if (physical_id == 0xffffffffu) {
+        atomicAdd(&eviction_counter[0], 1u);
         continue;
       }
 

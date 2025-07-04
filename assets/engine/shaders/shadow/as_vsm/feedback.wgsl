@@ -5,13 +5,12 @@
 #include "shadow/shadows_common.wgsl"
 
 @group(1) @binding(0) var position_texture: texture_2d<f32>;
-@group(1) @binding(1) var entity_id_texture: texture_2d<u32>;
-@group(1) @binding(2) var<uniform> vsm_settings: ASVSMSettings;
-@group(1) @binding(3) var<storage, read_write> bitmask: array<atomic<u32>>;
-@group(1) @binding(4) var<storage, read> light_view_buffer: array<u32>;
-@group(1) @binding(5) var<storage, read> light_shadow_idx_buffer: array<u32>;
-@group(1) @binding(6) var<storage, read> light_count_buffer: array<u32>;
-@group(1) @binding(7) var<storage, read_write> got_shadow_feedback: array<atomic<u32>>;
+@group(1) @binding(1) var<uniform> vsm_settings: ASVSMSettings;
+@group(1) @binding(2) var<storage, read_write> bitmask: array<atomic<u32>>;
+@group(1) @binding(3) var<storage, read> light_view_buffer: array<u32>;
+@group(1) @binding(4) var<storage, read> light_shadow_idx_buffer: array<u32>;
+@group(1) @binding(5) var<storage, read> light_count_buffer: array<u32>;
+@group(1) @binding(6) var page_table: texture_storage_2d_array<r32uint, read_write>;
 
 @compute @workgroup_size(8, 8, 4)
 fn cs(@builtin(global_invocation_id) id: vec3<u32>) {
@@ -50,12 +49,6 @@ fn cs(@builtin(global_invocation_id) id: vec3<u32>) {
     return;
   }
 
-  let entity_image_dims = vec2<u32>(textureDimensions(entity_id_texture));
-  let entity_id = textureLoad(entity_id_texture, vec2<i32>(uv * vec2<f32>(entity_image_dims)), 0).x;
-  if (entity_id == 0u) {
-    return;
-  }
-
   let clipmap0_vp = view_buffer[light_view_index].view_projection_matrix;
   let camera_vp   = view_buffer[frame_info.view_index].view_projection_matrix;
 
@@ -72,11 +65,9 @@ fn cs(@builtin(global_invocation_id) id: vec3<u32>) {
     shadow_index,
     vsm_settings
   );
-
   let word = word_and_mask.x;
   let mask = word_and_mask.y;
 
   atomicOr(&bitmask[word], mask);
-  atomicStore(&got_shadow_feedback[entity_id], 1u);
 #endif
 } 

@@ -20,7 +20,6 @@ struct ShadowCasterLight {
 
 struct VirtualTileInfo {
     tile_coords: vec2<u32>,
-    virtual_pixel: vec2<u32>,
     local_pixel: vec2<u32>,
     clipmap_index: u32,
     tile_id: u32,
@@ -81,7 +80,7 @@ const pte_frame_age_mask        : u32 = 0x07F80000u;
 const lru_pinned_flag           : u32 = 0x80000000u;
 
 // C is a constant that controls the log depth curve; try 1000.0 or scene far/near ratio
-const LOG_C = 1000.0;
+const LOG_C = 2000.0;
 
 // Pack log depth
 fn pack_log_depth(depth: f32) -> f32 {
@@ -233,25 +232,26 @@ fn vsm_world_to_virtual_tile(
     clipmap0_vp: mat4x4<f32>,
     settings: ASVSMSettings
 ) -> VirtualTileInfo {
-    var info: VirtualTileInfo;
-
-    info.clipmap_index = vsm_calculate_clipmap_index_from_world_pos(world_pos, camera_vp, settings);
+    let clipmap_index = vsm_calculate_clipmap_index_from_world_pos(world_pos, camera_vp, settings);
 
     let vtr = u32(settings.virtual_tiles_per_row);
     let tile_size = u32(settings.tile_size);
 
     var sample_clip    = vsm_calculate_sample_clip_value_from_world_pos(
                             world_pos,
-                            info.clipmap_index,
+                            clipmap_index,
                             clipmap0_vp,
                             settings
                         );
     let virtual_uv        = fract(sample_clip.xy * 0.5 + 0.5);
-                        
     // Wrap to the clipmap range and offset by half a texel for stable mapping
-    info.virtual_pixel    = vec2<u32>(floor(virtual_uv * settings.virtual_dim));
-    info.local_pixel      = info.virtual_pixel % tile_size;
-    info.tile_coords      = info.virtual_pixel / tile_size;
+    let virtual_pixel    = vec2<u32>(floor(virtual_uv * settings.virtual_dim));
+
+    var info: VirtualTileInfo;
+                        
+    info.clipmap_index    = clipmap_index;
+    info.local_pixel      = virtual_pixel % tile_size;
+    info.tile_coords      = virtual_pixel / tile_size;
     info.tile_id          = info.clipmap_index * vtr * vtr + info.tile_coords.y * vtr + info.tile_coords.x;
 
     return info;
@@ -267,10 +267,6 @@ fn vsm_world_to_virtual_tile_for_clip(
     settings: ASVSMSettings,
     clipmap_index: u32,
 ) -> VirtualTileInfo {
-    var info: VirtualTileInfo;
-
-    info.clipmap_index = clipmap_index;
-
     let vtr = u32(settings.virtual_tiles_per_row);
     let tile_size = u32(settings.tile_size);
 
@@ -281,11 +277,14 @@ fn vsm_world_to_virtual_tile_for_clip(
         settings,
     );
     let virtual_uv        = fract(sample_clip.xy * 0.5 + 0.5);
-
     // Wrap to the clipmap range and offset by half a texel for stable mapping
-    info.virtual_pixel    = vec2<u32>(floor(virtual_uv * settings.virtual_dim));
-    info.local_pixel      = info.virtual_pixel % tile_size;
-    info.tile_coords      = info.virtual_pixel / tile_size;
+    let virtual_pixel    = vec2<u32>(floor(virtual_uv * settings.virtual_dim));
+
+    var info: VirtualTileInfo;
+
+    info.clipmap_index = clipmap_index;
+    info.local_pixel      = virtual_pixel % tile_size;
+    info.tile_coords      = virtual_pixel / tile_size;
     info.tile_id          = info.clipmap_index * vtr * vtr + info.tile_coords.y * vtr + info.tile_coords.x;
 
     return info;
@@ -335,6 +334,19 @@ fn vsm_get_virtual_tile_word_and_mask(tile_coords: vec2<u32>, clipmap_index: u32
   let global_word_index = shadow_index * words_per_light + word_index;
   
   return vec2<u32>(global_word_index, mask);
+}
+
+fn vsm_is_tile_dirty(tile_coords: vec2<u32>, clipmap_index: u32, shadow_index: u32, settings: ASVSMSettings, page_table: texture_storage_2d_array<r32uint, read>) -> bool {
+  let pte = textureLoad(page_table, tile_coords, clipmap_index + shadow_index * u32(settings.max_lods)).r;
+  return vsm_pte_is_dirty(pte);
+}
+
+fn vsm_clear_tile_dirty(tile_coords: vec2<u32>, clipmap_index: u32, shadow_index: u32, settings: ASVSMSettings, page_table: texture_storage_2d_array<r32uint, read_write>) {
+  let pte = textureLoad(page_table, tile_coords, clipmap_index + shadow_index * u32(settings.max_lods)).r;
+  if (vsm_pte_is_dirty(pte)) {
+    let new_pte_val = pte & ~pte_dirty_mask;
+    textureStore(page_table, tile_coords, clipmap_index + shadow_index * u32(settings.max_lods), vec4<u32>(new_pte_val));
+  }
 }
 
 #endif
