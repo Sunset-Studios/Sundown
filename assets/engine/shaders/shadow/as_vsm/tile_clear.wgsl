@@ -40,5 +40,13 @@ fn cs(@builtin(workgroup_id) wg_id: vec3<u32>, @builtin(local_invocation_id) loc
             atomicStore(&shadow_atlas_depth[linear_index], 16777215u);
         }
     }
+
+    // workgroupBarrier();
+
+    // // Clear the tile in the page table
+    // if (all(local_id == vec3<u32>(0u, 0u, 0u))) {
+    //     let entry = pte.r & ~pte_dirty_mask;
+    //     textureStore(page_table, pte_coords, slice_idx, vec4<u32>(entry));
+    // }
     #endif
 } 

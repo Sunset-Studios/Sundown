@@ -219,7 +219,6 @@ const RGFrameData = Object.freeze({
   current_pass: 0,
   resource_deletion_queue: null,
   pass_bindless_resources: [],
-  g_buffer_data: null,
 });
 
 /**

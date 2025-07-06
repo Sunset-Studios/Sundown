@@ -26,8 +26,6 @@ export class StaticMeshProcessor extends SimulationLayer {
   }
 
   _update_internal_iter_chunk(chunk, flags, counts, archetype) {
-    const dirty_flag = EntityFlags.DIRTY;
-    const is_alive_flag = EntityFlags.ALIVE;
     const static_meshes = chunk.get_fragment_view(StaticMeshFragment);
     const visibilities = chunk.get_fragment_view(VisibilityFragment);
     const material_slot_stride = StaticMeshFragment.material_slot_stride;
@@ -37,12 +35,12 @@ export class StaticMeshProcessor extends SimulationLayer {
     while (slot < DEFAULT_CHUNK_CAPACITY) {
       const entity_flags = flags[slot];
 
-      if ((flags[slot] & dirty_flag) === 0) {
+      if ((flags[slot] & EntityFlags.DIRTY) === 0) {
         slot += counts[slot] || 1;
         continue;
       }
 
-      if ((entity_flags & is_alive_flag) === 0) {
+      if ((entity_flags & EntityFlags.ALIVE) === 0) {
         slot += counts[slot] || 1;
         continue;
       }

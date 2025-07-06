@@ -5,20 +5,15 @@
 #include "lighting_common.wgsl"
 #include "shadow/shadows_common.wgsl"
 
-struct ObjectShadowInfluenceParams {
-    entity_offset: u32,
-}
-
 @group(1) @binding(0) var<storage, read> aabb_bounds: array<AABBNodeBounds>;
 @group(1) @binding(1) var<storage, read> entity_aabb_node_indices: array<u32>;
 @group(1) @binding(2) var<uniform> vsm_settings: ASVSMSettings;
-@group(1) @binding(3) var<uniform> osi_params: ObjectShadowInfluenceParams;
-@group(1) @binding(4) var<storage, read> bitmask: array<u32>;
-@group(1) @binding(5) var<storage, read> light_view_buffer: array<u32>;
-@group(1) @binding(6) var<storage, read> light_shadow_idx_buffer: array<u32>;
-@group(1) @binding(7) var<storage, read> light_count_buffer: array<u32>;
-@group(1) @binding(8) var<storage, read_write> got_shadow_feedback_buffer: array<atomic<u32>>;
-@group(1) @binding(9) var page_table: texture_storage_2d_array<r32uint, read>;
+@group(1) @binding(3) var<storage, read_write> got_shadow_feedback_buffer: array<atomic<u32>>;
+@group(1) @binding(4) var<storage, read> light_view_buffer: array<u32>;
+@group(1) @binding(5) var<storage, read> light_shadow_idx_buffer: array<u32>;
+@group(1) @binding(6) var<storage, read> light_count_buffer: array<u32>;
+@group(1) @binding(7) var page_table: texture_storage_2d_array<r32uint, read>;
+@group(1) @binding(8) var<storage, read> bitmask: array<u32>;
 
 // Returns a swept AABB (min, max) along the light direction
 fn compute_swept_aabb(min_point: vec3<f32>, max_point: vec3<f32>, light_dir: vec3<f32>, sweep_dist: f32) -> array<vec3<f32>, 2> {
@@ -28,16 +23,16 @@ fn compute_swept_aabb(min_point: vec3<f32>, max_point: vec3<f32>, light_dir: vec
     return array<vec3<f32>, 2>(swept_min, swept_max);
 }
 
-@compute @workgroup_size(32, 8, 1)
+@compute @workgroup_size(64, 1, 1)
 fn cs(@builtin(global_invocation_id) global_id: vec3<u32>) {
 #if SHADOWS_ENABLED
-    let clipmap_index = global_id.y;
-    if (clipmap_index >= u32(vsm_settings.max_lods)) {
+    let entity_index = global_id.x;
+    if (entity_index >= arrayLength(&got_shadow_feedback_buffer)) {
         return;
     }
 
-    let entity_index = osi_params.entity_offset + global_id.x;
-    if (entity_index >= arrayLength(&got_shadow_feedback_buffer)) {
+    let clipmap_index = global_id.y;
+    if (clipmap_index >= u32(vsm_settings.max_lods)) {
         return;
     }
 
@@ -66,21 +61,25 @@ fn cs(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let view      = view_buffer[view_idx];
 
     // Compute all 8 corners of the swept AABB (replaced by center + conservative radius approach)
-    let swept = compute_swept_aabb(min_point, max_point, -view.view_position.xyz, 100.0);
+    let swept = compute_swept_aabb(min_point, max_point, -view.view_position.xyz, 500.0);
     let swept_min = swept[0];
     let swept_max = swept[1];
 
-    // Project 4 extreme corners of the swept AABB into tile space
-    let swept_corners = array<vec3<f32>, 4>(
+    // Project 8 extreme corners of the swept AABB into tile space
+    let swept_corners = array<vec3<f32>, 8>(
         vec3<f32>(swept_min.x, swept_min.y, swept_min.z),
         vec3<f32>(swept_min.x, swept_max.y, swept_max.z),
         vec3<f32>(swept_max.x, swept_min.y, swept_min.z),
-        vec3<f32>(swept_max.x, swept_max.y, swept_max.z)
+        vec3<f32>(swept_max.x, swept_max.y, swept_max.z),
+        vec3<f32>(swept_min.x, swept_min.y, swept_max.z),
+        vec3<f32>(swept_min.x, swept_max.y, swept_min.z),
+        vec3<f32>(swept_max.x, swept_min.y, swept_max.z),
+        vec3<f32>(swept_max.x, swept_max.y, swept_min.z)
     );
 
     var min_tile = vec2<u32>(0xffffffffu, 0xffffffffu);
     var max_tile = vec2<u32>(0u, 0u);
-    for (var i = 0u; i < 4u; i = i + 1u) {
+    for (var i = 0u; i < 8u; i = i + 1u) {
         let tile_info = vsm_world_to_virtual_tile_for_clip(
             vec4<f32>(swept_corners[i], 1.0),
             view.view_projection_matrix,
@@ -109,6 +108,13 @@ fn cs(@builtin(global_invocation_id) global_id: vec3<u32>) {
             let word_index = word_and_mask.x;
             let mask = word_and_mask.y;
             let word = bitmask[word_index];
+
+            let slice_idx = shadow_idx * u32(vsm_settings.max_lods) + clipmap_index;
+            let pte = textureLoad(page_table, tile_coords, slice_idx);
+            let is_dirty = vsm_pte_is_dirty(pte.r);
+            if (!is_dirty) {
+                continue;
+            }
 
             if ((word & mask) != 0u) {
                 atomicOr(&got_shadow_feedback_buffer[entity_index], u32(1u) << clipmap_index);

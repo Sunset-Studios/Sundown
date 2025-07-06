@@ -27,12 +27,7 @@ fn vs(@builtin(vertex_index) vi: u32,
   var out: VertexOutput;
 
 #if SHADOWS_ENABLED
-
-  let light_idx             = light_ub.light_index;
   let clip_index            = light_ub.clip_index;
-  let view_index            = light_view_buffer[light_idx];
-  let shadow_idx            = light_shadow_idx_buffer[light_idx];
-
   let object_instance_index = visible_object_instances[ii];
   let row_field             = object_instances[object_instance_index].row;
   let entity_row            = get_entity_row(row_field);
@@ -45,6 +40,10 @@ fn vs(@builtin(vertex_index) vi: u32,
     out.view_index = 0u;
     return out;
   }
+
+  let light_idx             = light_ub.light_index;
+  let view_index            = light_view_buffer[light_idx];
+  let shadow_idx            = light_shadow_idx_buffer[light_idx];
 
   let model_matrix          = entity_transforms[entity_row].transform;
   let local_pos             = vertex_buffer[vi].position;

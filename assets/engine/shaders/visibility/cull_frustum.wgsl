@@ -6,8 +6,6 @@
 
 struct DrawCullData {
     draw_count: u32,
-    hzb_width: u32,
-    hzb_height: u32,
     view_index: u32,
     clipmap_index: u32,
 }

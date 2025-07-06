@@ -44,11 +44,11 @@ fn cs(@builtin(global_invocation_id) id: vec3<u32>) {
   let uv = vec2<f32>(id.xy) / vec2<f32>(dims.xy);
 
   let texture_pos = textureSampleLevel(position_texture, non_filtering_sampler, uv, 0.0);
-  let world_pos = vec4<f32>(texture_pos.xyz, 1.0);
   if (texture_pos.w == 0.0) {
     return;
   }
 
+  let world_pos = vec4<f32>(texture_pos.xyz, 1.0);
   let clipmap0_vp = view_buffer[light_view_index].view_projection_matrix;
   let camera_vp   = view_buffer[frame_info.view_index].view_projection_matrix;
 

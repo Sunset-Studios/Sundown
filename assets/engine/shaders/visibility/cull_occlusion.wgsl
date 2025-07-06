@@ -6,8 +6,6 @@
 
 struct DrawCullData {
     draw_count: u32,
-    hzb_width: u32,
-    hzb_height: u32,
     view_index: u32,
     clipmap_index: u32,
 }
@@ -101,8 +99,9 @@ fn is_occluded(aabb_node: ptr<function, AABBNodeBounds>, view: ptr<function, Vie
     let center = vec4f((aabb_node.min_point.xyz + aabb_node.max_point.xyz) * 0.5, 1.0);
     var radius = length(aabb_node.max_point.xyz - aabb_node.min_point.xyz) * 0.5;
 
-    let width  = (uv_rect.z - uv_rect.x) * f32(draw_cull_data.hzb_width);
-    let height = (uv_rect.w - uv_rect.y) * f32(draw_cull_data.hzb_height);
+    let hzb_dims = textureDimensions(input_texture);
+    let width  = (uv_rect.z - uv_rect.x) * f32(hzb_dims.x);
+    let height = (uv_rect.w - uv_rect.y) * f32(hzb_dims.y);
     let non_negative_size = max(width, height);
 
     let level_floor = floor(log2(non_negative_size));

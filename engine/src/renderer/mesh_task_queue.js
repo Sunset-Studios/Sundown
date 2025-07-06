@@ -118,8 +118,6 @@ class IndirectDrawObject {
   view_index = 0;
   clipmap_index = 0;
   indirect_draw_buffer = null;
-  visible_instance_buffer_no_occlusion = null;
-  visible_instance_buffer = null;
   indirect_draw_data = null;
   current_indirect_draw_write_offset = 0;
   last_indirect_draw_count = 0;
@@ -134,22 +132,6 @@ class IndirectDrawObject {
           name: `indirect_draw_buffer${suffix}`,
           raw_data: this.indirect_draw_data,
           usage: GPUBufferUsage.INDIRECT | GPUBufferUsage.COPY_DST | GPUBufferUsage.STORAGE,
-        });
-      }
-
-      if (!this.visible_instance_buffer_no_occlusion) {
-        this.visible_instance_buffer_no_occlusion = Buffer.create({
-          name: `visible_instance_buffer_no_occlusion${suffix}`,
-          raw_data: new Int32Array(initial_buffer_size),
-          usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-        });
-      }
-
-      if (!this.visible_instance_buffer) {
-        this.visible_instance_buffer = Buffer.create({
-          name: `visible_instance_buffer${suffix}`,
-          raw_data: new Int32Array(initial_buffer_size),
-          usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
         });
       }
     });
@@ -176,29 +158,6 @@ class IndirectDrawObject {
           name: `indirect_draw_buffer${suffix}`,
           raw_data: this.indirect_draw_data,
           usage: GPUBufferUsage.INDIRECT | GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-          force: true,
-        });
-
-        Renderer.get().mark_bind_groups_dirty(true);
-      }
-
-      // Resize object instance buffer if needed
-      const required_object_instance_size = object_instances.length * 4; // 4 bytes per instance
-      if (this.visible_instance_buffer_no_occlusion.config.size < required_object_instance_size) {
-        this.visible_instance_buffer_no_occlusion = Buffer.create({
-          name: `visible_instance_buffer_no_occlusion${suffix}`,
-          raw_data: new Int32Array(object_instances.length * 2),
-          usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-          force: true,
-        });
-
-        Renderer.get().mark_bind_groups_dirty(true);
-      }
-      if (this.visible_instance_buffer.config.size < required_object_instance_size) {
-        this.visible_instance_buffer = Buffer.create({
-          name: `visible_instance_buffer${suffix}`,
-          raw_data: new Int32Array(object_instances.length * 2),
-          usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
           force: true,
         });
 
@@ -258,11 +217,7 @@ class IndirectDrawObject {
 
   destroy() {
     this.indirect_draw_buffer.destroy();
-    this.visible_instance_buffer_no_occlusion.destroy();
-    this.visible_instance_buffer.destroy();
     this.indirect_draw_buffer = null;
-    this.visible_instance_buffer_no_occlusion = null;
-    this.visible_instance_buffer = null;
     this.indirect_draw_data = null;
   }
 }
@@ -496,20 +451,6 @@ export class MeshTaskQueue {
    */
   static get_object_instance_buffer() {
     return this.object_instance_buffer.object_instance_buffer;
-  }
-
-  /**
-   * Get the visible object instance buffer without occlusion.
-   */
-  static get_visible_instance_buffer_no_occlusion(view_index = 0, clipmap_index = 0) {
-    return this.get_indirect_draw_object(view_index, clipmap_index).visible_instance_buffer_no_occlusion;
-  }
-
-  /**
-   * Get the visible object instance buffer.
-   */
-  static get_visible_instance_buffer(view_index = 0, clipmap_index = 0) {
-    return this.get_indirect_draw_object(view_index, clipmap_index).visible_instance_buffer;
   }
 
   /**
