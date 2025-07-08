@@ -24,6 +24,7 @@ const EF_TRANSFORM_DIRTY = 1u << 4;
 const EF_NO_AABB_UPDATE = 1u << 5;
 const EF_AABB_DIRTY = 1u << 6;
 const EF_BILLBOARD = 1u << 7;
+const EF_MOVED = 1u << 8;
 
 const AABB_NODE_FLAGS_FREE = 1u << 0;
 const AABB_NODE_TYPE_INTERNAL = 0u;

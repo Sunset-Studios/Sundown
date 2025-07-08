@@ -1045,13 +1045,10 @@ export class DeferredShadingStrategy {
       if (shadows_enabled && draw_count > 0) {
         this.as_vsm.add_passes(render_graph, {
           position_texture: main_position_image,
-          entity_id_texture: main_entity_id_image,
+          entity_flags: entity_flags,
           light_count_buffer: light_count,
           transforms_buffer: entity_transforms,
           object_instances: object_instances,
-          aabb_bounds: aabb_bounds,
-          aabb_nodes: aabb_nodes,
-          entity_aabb_node_indices: entity_aabb_node_indices,
           frustum_culler: this.frustum_culler,
           force_recreate: this.force_recreate,
           debug_view: debug_view,

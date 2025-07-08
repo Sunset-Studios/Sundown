@@ -248,7 +248,7 @@ export class AdaptiveSparseVirtualShadowMaps {
         light_view_buffer: 0,
         light_shadow_idx_buffer: 0,
         page_table: 0,
-        bitmask: 0,
+        entity_flags: 0,
       }
     );
 
@@ -259,13 +259,10 @@ export class AdaptiveSparseVirtualShadowMaps {
     render_graph,
     {
       position_texture,
-      entity_id_texture,
+      entity_flags,
       light_count_buffer,
       transforms_buffer,
       object_instances,
-      aabb_bounds,
-      aabb_nodes,
-      entity_aabb_node_indices,
       frustum_culler,
       force_recreate = false,
       debug_view = null,
@@ -544,13 +541,14 @@ export class AdaptiveSparseVirtualShadowMaps {
         }
       }
 
-      this.shadow_culler.additional_data.aabb_bounds = aabb_bounds;
+      this.shadow_culler.additional_data.entity_transforms = transforms_buffer;
       this.shadow_culler.additional_data.object_instances = object_instances;
-      this.shadow_culler.additional_data.entity_aabb_node_indices = entity_aabb_node_indices;
       this.shadow_culler.additional_data.vsm_settings = this.settings_buf;
-      this.shadow_culler.additional_data.light_shadow_idx_buffer = this.light_shadow_idx_buf;
       this.shadow_culler.additional_data.page_table = this.page_table;
+      this.shadow_culler.additional_data.page_offset = this.page_offset;
       this.shadow_culler.additional_data.light_count = adjusted_light_count;
+      this.shadow_culler.additional_data.entity_flags = entity_flags;
+      this.shadow_culler.additional_data.bitmask = this.bitmask_buf;
 
       this.shadow_culler.init_views(render_graph, draw_count);
       this.shadow_culler.init_visibility(render_graph, draw_count);

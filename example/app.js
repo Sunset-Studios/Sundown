@@ -2205,6 +2205,9 @@ export class SceneSwitcher extends SimulationLayer {
 export class ShadowTestScene extends Scene {
   name = "ShadowTestScene";
   entities = [];
+  swaying_ball_entity = null;
+  swaying_ball_index = 0;
+  swaying_ball_base_pos = [0, 160, 350];
 
   init(parent_context) {
     super.init(parent_context);
@@ -2229,8 +2232,8 @@ export class ShadowTestScene extends Scene {
 
     // Position the camera high above the city
     const view_data = SharedViewBuffer.get_view_data(0);
-    view_data.view_position = [47, 352, 770];
-    view_data.view_rotation = [0.0, 0.967463, -0.23873913, 0.0];
+    view_data.view_position = [205.515, 40.4267, 273.94];
+    view_data.view_rotation = [0.04745, 0.57238, 0.03344, -0.81212];
     view_data.far = 3000.0;
 
     // Create a sun-like directional light
@@ -2241,7 +2244,7 @@ export class ShadowTestScene extends Scene {
     light_fragment_view.type = LightType.DIRECTIONAL;
     light_fragment_view.color = [1, 1, 0.9];
     light_fragment_view.intensity = 1.0;
-    light_fragment_view.position = [30, 15, 50];
+    light_fragment_view.position = [30, 45, 50];
     light_fragment_view.active = true;
     light_fragment_view.shadow_clipmaps = MAX_CLIPMAP_LEVELS;
 
@@ -2277,6 +2280,7 @@ export class ShadowTestScene extends Scene {
 
     // Shared cube mesh
     const cube_mesh = Mesh.cube();
+    const sphere_mesh = Mesh.from_gltf("engine/models/sphere/sphere.gltf");
 
     // Create an expansive ground plane
     const ground_plane_size = 2000.0;
@@ -2288,6 +2292,29 @@ export class ShadowTestScene extends Scene {
       ground_material_id
     );
     this.entities.push(ground_entity);
+
+
+    // --- Swaying Ball ---
+    // Create a large sphere in front of the city
+    const ball_position = [...this.swaying_ball_base_pos];
+    const ball_scale = [10, 10, 10];
+    const ball_material = StandardMaterial.create("swaying_ball_material");
+    ball_material.set_albedo([0.9, 0.9, 0.2, 1]);
+    ball_material.set_emission(0.2);
+    ball_material.set_roughness(0.5);
+
+    this.swaying_ball_entity = spawn_mesh_entity(
+      ball_position,
+      [0, 0, 0, 1],
+      ball_scale,
+      sphere_mesh,
+      ball_material.material_id,
+      null,
+      [],
+      true,
+      EntityFlags.NO_AABB_UPDATE | EntityFlags.IGNORE_PARENT_SCALE
+    );
+    this.entities.push(this.swaying_ball_entity);
 
     // Procedurally generate a dense grid of buildings
     const grid_size = 80; // 80 × 80 buildings
@@ -2342,6 +2369,7 @@ export class ShadowTestScene extends Scene {
     }
 
     log(`[${this.name}] Spawned ${this.entities.length} entities.`);
+
 
     // --- Neon Signs ---------------------------------------------------------
     // Create several vibrant emissive materials for different neon colours.
@@ -2541,6 +2569,25 @@ export class ShadowTestScene extends Scene {
 
   update(delta_time) {
     super.update(delta_time);
+
+    // Animate the swaying ball
+    if (this.swaying_ball_entity) {
+      // Sway parameters
+      const sway_amplitude = 120; // units left/right
+      const sway_frequency = 0.15; // Hz (cycles per second, so period ~6.7s)
+      const t = performance.now() * 0.001; // seconds
+
+      // Calculate new x position
+      const x = this.swaying_ball_base_pos[0] + Math.sin(t * Math.PI * 2 * sway_frequency) * sway_amplitude;
+      const y = this.swaying_ball_base_pos[1];
+      const z = this.swaying_ball_base_pos[2];
+
+      // Update transform
+      const tf = EntityManager.get_fragment(this.swaying_ball_entity, TransformFragment);
+      if (tf) {
+        tf.position = [x, y, z];
+      }
+    }
   }
 }
 

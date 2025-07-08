@@ -15,27 +15,32 @@ struct DrawCullData {
 // Buffers
 // ------------------------------------------------------------------------------------ 
 
-@group(1) @binding(0) var<storage, read> aabb_bounds: array<AABBNodeBounds>;
+@group(1) @binding(0) var<storage, read> entity_transforms: array<EntityTransform>;
 @group(1) @binding(1) var<storage, read> visible_object_instances_no_occlusion: array<i32>;
 @group(1) @binding(2) var<storage, read_write> visible_object_instances: array<i32>;
 @group(1) @binding(3) var<storage, read> object_instances: array<ObjectInstance>;
-@group(1) @binding(4) var<storage, read> entity_aabb_node_indices: array<u32>;
-@group(1) @binding(5) var<uniform> draw_cull_data: DrawCullData;
-@group(1) @binding(6) var<storage, read_write> draw_indirect_buffer: array<DrawCommand>;
-@group(1) @binding(7) var<uniform> vsm_settings: ASVSMSettings;
-@group(1) @binding(8) var<storage, read> light_shadow_idx_buffer: array<u32>;
-@group(1) @binding(9) var page_table: texture_storage_2d_array<r32uint, read>;
+@group(1) @binding(4) var<uniform> draw_cull_data: DrawCullData;
+@group(1) @binding(5) var<storage, read_write> draw_indirect_buffer: array<DrawCommand>;
+@group(1) @binding(6) var<uniform> vsm_settings: ASVSMSettings;
+@group(1) @binding(7) var<storage, read> entity_flags: array<u32>;
+@group(1) @binding(8) var<storage, read> bitmask: array<u32>;
+@group(1) @binding(9) var page_table: texture_storage_2d_array<r32uint, read_write>;
+@group(1) @binding(10) var page_offset: texture_storage_2d_array<rgba32float, write>;
 
 // ------------------------------------------------------------------------------------
 // Helper Functions
 // ------------------------------------------------------------------------------------ 
 
 // Returns a swept AABB (min, max) along the light direction
-fn compute_swept_aabb(min_point: vec3<f32>, max_point: vec3<f32>, light_dir: vec3<f32>, sweep_dist: f32) -> array<vec3<f32>, 2> {
-    let sweep_vec = light_dir * sweep_dist;
-    let swept_min = min_point + sweep_vec;
-    let swept_max = max_point + sweep_vec;
-    return array<vec3<f32>, 2>(swept_min, swept_max);
+fn compute_swept_aabb(
+    min_point : vec3<f32>,
+    max_point : vec3<f32>,
+    light_dir : vec3<f32>,
+    sweep_dist: f32
+) -> array<vec3<f32>, 2> {
+    let min_swept = min(min_point, min_point + light_dir * sweep_dist);
+    let max_swept = max(max_point, max_point + light_dir * sweep_dist);
+    return array<vec3<f32>, 2>(min_swept, max_swept);
 }
 
 // ------------------------------------------------------------------------------------
@@ -50,89 +55,103 @@ fn cs(@builtin(global_invocation_id) global_id: vec3<u32>) {
         return;
     }
     
+    // Early-out for invalid clip-level
     let clipmap_index = draw_cull_data.clipmap_index;
     if (clipmap_index >= u32(vsm_settings.max_lods)) {
         return;
     }
 
+    // Resolve the visible instance
     let object_instance_index = visible_object_instances_no_occlusion[g_id];
     if (object_instance_index == -1) {
         return;
     }
 
-    let light_index = global_id.y;
-    let shadow_idx = light_shadow_idx_buffer[light_index];
-    if (shadow_idx == 0xffffffffu) {
-        return;
-    }
+    let light_shadow_idx = global_id.y;
+    let object_instance  = object_instances[object_instance_index];
+    let entity_index     = get_entity_row(object_instance.row);
 
-    let object_instance = object_instances[object_instance_index];
-    let entity_index = get_entity_row(object_instance.row);
-    let node_index = entity_aabb_node_indices[entity_index];
-    if (node_index == 0u) {
-        return;
-    }
+    // ────────────────────────────────────────────────────────────────
+    // Derive position & radius from the entity's transform
+    // ────────────────────────────────────────────────────────────────
+    let entity_transform = entity_transforms[entity_index].transform;
 
-    let bounds = aabb_bounds[node_index];
-    let min_point = bounds.min_point.xyz;
-    let max_point = bounds.max_point.xyz;
+    // World-space translation
+    let position = entity_transform[3].xyz;
 
-    // Get light direction (assume directional for now)
+    // Largest axis-scale → conservative sphere radius
+    let scale_x = length(entity_transform[0].xyz);
+    let scale_y = length(entity_transform[1].xyz);
+    let scale_z = length(entity_transform[2].xyz);
+    let radius  = max(max(scale_x, scale_y), scale_z);
+
+    // Re-use existing swept-AABB logic by constructing a box around the sphere
+    var min_point = position - vec3<f32>(radius);
+    var max_point = position + vec3<f32>(radius);
+
+    // ────────────────────────────────────────────────────────────────
+    // Project bounds into virtual-tile space
+    // ────────────────────────────────────────────────────────────────
     let view      = view_buffer[draw_cull_data.view_index];
     let vp_matrix = view.view_projection_matrix;
 
-    // Compute all 8 corners of the swept AABB (replaced by center + conservative radius approach)
-    let swept = compute_swept_aabb(min_point, max_point, normalize(view.view_direction.xyz), 1000.0);
-    let swept_min = swept[0];
-    let swept_max = swept[1];
+    let swept          = compute_swept_aabb(min_point, max_point, normalize(view.view_direction.xyz), 100.0);
+    let swept_min      = swept[0];
+    let swept_max      = swept[1];
 
-    // Project 8 extreme corners of the swept AABB into tile space
-    let swept_corners = array<vec3<f32>, 8>(
-        vec3<f32>(swept_min.x, swept_min.y, swept_min.z),
-        vec3<f32>(swept_min.x, swept_max.y, swept_max.z),
-        vec3<f32>(swept_max.x, swept_min.y, swept_min.z),
-        vec3<f32>(swept_max.x, swept_max.y, swept_max.z),
-        vec3<f32>(swept_min.x, swept_min.y, swept_max.z),
-        vec3<f32>(swept_min.x, swept_max.y, swept_min.z),
-        vec3<f32>(swept_max.x, swept_min.y, swept_max.z),
-        vec3<f32>(swept_max.x, swept_max.y, swept_min.z)
-    );
+    let first_tile_info  = vsm_world_to_virtual_tile_for_clip(vec4<f32>(min_point, 1.0),  vp_matrix, vsm_settings, clipmap_index);
+    let second_tile_info = vsm_world_to_virtual_tile_for_clip(vec4<f32>(max_point, 1.0), vp_matrix, vsm_settings, clipmap_index);
+    let third_tile_info  = vsm_world_to_virtual_tile_for_clip(vec4<f32>(swept_min, 1.0),  vp_matrix, vsm_settings, clipmap_index);
+    let fourth_tile_info = vsm_world_to_virtual_tile_for_clip(vec4<f32>(swept_max, 1.0), vp_matrix, vsm_settings, clipmap_index);
 
-    var min_tile = vec2<u32>(0xffffffffu, 0xffffffffu);
-    var max_tile = vec2<u32>(0u, 0u);
-    for (var i = 0u; i < 8u; i = i + 1u) {
-        let tile_info = vsm_world_to_virtual_tile_for_clip(
-            vec4<f32>(swept_corners[i], 1.0),
-            vp_matrix,
-            vsm_settings,
-            clipmap_index
-        );
-        min_tile = min(min_tile, tile_info.tile_coords);
-        max_tile = max(max_tile, tile_info.tile_coords);
+    var min_tile = min(first_tile_info.tile_coords, second_tile_info.tile_coords);
+    min_tile     = min(min_tile, third_tile_info.tile_coords);
+    min_tile     = min(min_tile, fourth_tile_info.tile_coords);
+
+    var max_tile = max(first_tile_info.tile_coords, second_tile_info.tile_coords);
+    max_tile     = max(max_tile, third_tile_info.tile_coords);
+    max_tile     = max(max_tile, fourth_tile_info.tile_coords);
+
+    let slice_idx = light_shadow_idx * u32(vsm_settings.max_lods) + clipmap_index;
+
+    // ────────────────────────────────────────────────────────────────
+    // Dirty-page tracking (wrap-aware)
+    // ────────────────────────────────────────────────────────────────
+    var dirty = false;
+    let flag  = entity_flags[entity_index];
+    let vtr   = u32(vsm_settings.virtual_tiles_per_row);   // tiles-per-row
+
+    if ((flag & EF_MOVED) != 0u) {
+        for (var y_off = min_tile.y; y_off <= max_tile.y; y_off = y_off + 1u) {
+            for (var x_off = min_tile.x; x_off <= max_tile.x; x_off = x_off + 1u) {
+                let tile_coords = vec2<u32>(x_off, y_off);
+
+                let word_and_mask = vsm_get_virtual_tile_word_and_mask(
+                    tile_coords,
+                    clipmap_index,
+                    light_shadow_idx,
+                    vsm_settings
+                );
+                let word = word_and_mask.x;
+                let mask = word_and_mask.y;
+                let not_visible = (bitmask[word] & mask) == 0u; 
+                if (not_visible) {
+                    continue;
+                }
+
+                let pte      = textureLoad(page_table, tile_coords, slice_idx).r;
+                textureStore(page_table, tile_coords, slice_idx, vec4<u32>(pte | pte_dirty_mask));
+
+                textureStore(page_offset, tile_coords, slice_idx, vec4<f32>(view.view_matrix[3]));
+
+                dirty = true;
+            }
+        }
     }
 
-    let vtr = u32(vsm_settings.virtual_tiles_per_row);
-    let unclamped_min_x = min(min_tile.x, max_tile.x);
-    let unclamped_max_x = max(min_tile.x, max_tile.x);
-    let unclamped_min_y = min(min_tile.y, max_tile.y);
-    let unclamped_max_y = max(min_tile.y, max_tile.y);
-
-    // let min_x = clamp(unclamped_min_x, 0u, vtr);
-    // let max_x = clamp(unclamped_max_x, 0u, vtr - 1u);
-    // let min_y = clamp(unclamped_min_y, 0u, vtr - 1u);
-    // let max_y = clamp(unclamped_max_y, 0u, vtr - 1u);
-    // TODO: Remove this once we have a proper way to handle some edge cases, namely
-    // Getting the proper tile coords for the swept AABB such that they catch dirty pages properly. 
-    let min_x = 0u;
-    let max_x = vtr - 1u;
-    let min_y = 0u;
-    let max_y = vtr - 1u;
-
-    let slice_idx = shadow_idx * u32(vsm_settings.max_lods) + clipmap_index;
-
-    var dirty = false;
-    for (var y = min_y; y <= max_y; y = y + 1u) {
-        for (var x = min_x; x <= max_x; x = x + 1u) {
+    // Fallback scan (temporary workaround for any remaining edge-cases)
+    for (var y = 0u; y < vtr; y = y + 1u) {
+        for (var x = 0u; x < vtr; x = x + 1u) {
             let tile_coords = vec2<u32>(x, y);
             dirty = dirty || vsm_pte_is_dirty(textureLoad(page_table, tile_coords, slice_idx).r);
         }
@@ -142,9 +161,12 @@ fn cs(@builtin(global_invocation_id) global_id: vec3<u32>) {
         return;
     }
 
-    let batch_index = object_instance.batch;
+    // ────────────────────────────────────────────────────────────────
+    // Append visible instance to the indirect draw buffer
+    // ────────────────────────────────────────────────────────────────
+    let batch_index    = object_instance.batch;
     let first_instance = draw_indirect_buffer[batch_index].first_instance;
-    let count_index = atomicAdd(&draw_indirect_buffer[batch_index].instance_count, 1u);
+    let count_index    = atomicAdd(&draw_indirect_buffer[batch_index].instance_count, 1u);
     let instance_index = first_instance + count_index;
     visible_object_instances[instance_index] = object_instance_index;
 #endif

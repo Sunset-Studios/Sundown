@@ -21,5 +21,6 @@ export const EntityFlags = {
   NO_AABB_UPDATE: 1 << 5,
   AABB_DIRTY: 1 << 6,
   BILLBOARD: 1 << 7,
+  MOVED: 1 << 8,
 };
 
