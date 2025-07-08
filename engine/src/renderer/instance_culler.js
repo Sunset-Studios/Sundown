@@ -161,6 +161,11 @@ export class InstanceCuller {
     return this.visible_buffers;
   }
 
+  // Returns the indirect draw buffer for a given view and clipmap
+  get_indirect_draw_buffer(view_index, clipmap_index) {
+    return this.indirect_draw_buffers.get(view_index, clipmap_index);
+  }
+
   // Sets the previous culler for operations that require chained visibility buffers
   set_previous_culler(prev_culler) {
     this.prev_culler = prev_culler;

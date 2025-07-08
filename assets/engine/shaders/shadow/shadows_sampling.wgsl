@@ -11,16 +11,31 @@ const slope_scale = 0.000001;
 fn vsm_shadow_depth(
     world_pos: vec4<f32>,
     view_idx: u32,
+    shadow_idx: u32,
+    page_offset: texture_storage_2d_array<rgba32float, read>,
     vsm_settings: ASVSMSettings,
 ) -> f32 {
   let camera_vp           = view_buffer[frame_info.view_index].view_projection_matrix;
   let light_vp            = view_buffer[view_idx].view_projection_matrix;
   let vtile_info          = vsm_world_to_virtual_tile(world_pos, camera_vp, light_vp, vsm_settings);
 
+  let page_index          = vtile_info.clipmap_index + shadow_idx * u32(vsm_settings.max_lods);
+  let offset              = textureLoad(page_offset, vtile_info.tile_coords, page_index);
+
+  let light_projection      = view_buffer[view_idx].projection_matrix;
+  var adjusted_light_view   = view_buffer[view_idx].view_matrix;
+
+  adjusted_light_view[3].x  = offset.x;
+  adjusted_light_view[3].y  = offset.y;
+  adjusted_light_view[3].z  = offset.z;
+  adjusted_light_view[3].w  = 1.0;
+
+  let new_light_vp          = light_projection * adjusted_light_view;
+
   let light_clip_pos      = vsm_calculate_render_clip_value_from_world_pos(
                                 world_pos,
                                 vtile_info.clipmap_index,
-                                light_vp,
+                                new_light_vp,
                                 vsm_settings
                             );
   let depth_ndc           = light_clip_pos.z / light_clip_pos.w;

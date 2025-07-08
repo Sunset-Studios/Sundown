@@ -23,7 +23,8 @@
 #if SHADOWS_ENABLED
 @group(1) @binding(11) var<storage, read> shadow_atlas_depth: array<u32>;
 @group(1) @binding(12) var page_table: texture_storage_2d_array<r32uint, read>;
-@group(1) @binding(13) var<uniform> vsm_settings: ASVSMSettings;
+@group(1) @binding(13) var page_offset: texture_storage_2d_array<rgba32float, read>;
+@group(1) @binding(14) var<uniform> vsm_settings: ASVSMSettings;
 #endif
 
 #else
@@ -31,7 +32,8 @@
 #if SHADOWS_ENABLED
 @group(1) @binding(9) var<storage, read> shadow_atlas_depth: array<u32>;
 @group(1) @binding(10) var page_table: texture_storage_2d_array<r32uint, read>;
-@group(1) @binding(11) var<uniform> vsm_settings: ASVSMSettings;
+@group(1) @binding(11) var page_offset: texture_storage_2d_array<rgba32float, read>;
+@group(1) @binding(12) var<uniform> vsm_settings: ASVSMSettings;
 #endif
 
 #endif
@@ -132,6 +134,8 @@ fn sample_probe_irradiance(world_pos: vec3<f32>) -> vec3<f32> {
         let depth         = vsm_shadow_depth(
                                 position4,
                                 light_view_index,
+                                light_shadow_index,
+                                page_offset,
                                 vsm_settings,
                             );
         let filter_res    = vsm_sample_shadow(

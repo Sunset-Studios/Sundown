@@ -49,11 +49,16 @@ fn fs(input: VertexOutput) -> @location(0) vec4<f32> {
   let world_pos     = vec4<f32>(world_pos_sample.xyz, 1.0);
 
   let vtile_info    = vsm_world_to_virtual_tile(world_pos, camera_vp, clipmap0_vp, vsm_settings);
+  let ptile_info    = vsm_vtile_to_ptile(vtile_info, vsm_settings, 0u, page_table);
 
   // Hash colour encodes tile id & lod (mix into value)
   let base_color    = hash_u32(vtile_info.tile_id);
   let lod_factor    = f32(vtile_info.clipmap_index) / f32(vsm_settings.max_lods);
-  let color         = mix(base_color, vec3<f32>(lod_factor, 0.0, 1.0 - lod_factor), 0.35);
+
+  // Color logic: gray if not dirty, red if dirty
+  let gray = mix(vec3<f32>(0.7), vec3<f32>(1.0), base_color.x * 0.2 + 0.1); // random gray shade
+  let red = mix(vec3<f32>(1.0, 0.2, 0.2), vec3<f32>(1.0, 0.5, 0.5), base_color.x * 0.2 + 0.1); // random red shade
+  let color = select(gray, red, ptile_info.is_dirty);
 
   // Compute depth
   let depth         = vsm_shadow_depth(

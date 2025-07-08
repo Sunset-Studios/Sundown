@@ -119,7 +119,8 @@ export const DebugDrawType = Object.freeze({
     ASVSM_ShadowPageTable: 9,
     ASVSM_TileOverlay: 10,
     ASVSM_TileRenderOutput: 11,
-    Bloom: 12,
+    ASVSM_DirtyTiles: 12,
+    Bloom: 13,
 });
 
 /**

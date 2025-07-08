@@ -18,12 +18,12 @@ export const ATLAS_SIZE = SHADOW_MAP_TILES * TILE_SIZE;
 export const VSM_VIRTUAL_DIM = SHADOW_MAP_TILES * TILE_SIZE;
 // Default orthographic extent (±extent) for directional lights in clip-space 0.
 // Used when constructing stable light-aligned view/projection matrices.
-export const DEFAULT_LIGHT_CLIP_EXTENT = 8;
+export const DEFAULT_LIGHT_CLIP_EXTENT = 4;
 // Maximum number of clipmap levels.
 export const MAX_CLIPMAP_LEVELS = 12;
 // Size (world units) of one virtual-shadow-map texel in clip-map level 0.
-export const VSM_WORLD_UNITS_PER_TEXEL =
-  DEFAULT_LIGHT_CLIP_EXTENT * (1 << MAX_CLIPMAP_LEVELS) / ATLAS_SIZE;
+export const VSM_WORLD_UNITS_PER_PAGE =
+  (DEFAULT_LIGHT_CLIP_EXTENT) / VSM_VIRTUAL_DIM;
 
 /**
  * Compute a *stable* rotation quaternion that aligns the light's –Z axis with the
@@ -106,9 +106,9 @@ export function compute_directional_light_view_projection(
 
   // 3. Snap center to virtual texel grid
   const center_ls = vec3.fromValues(
-    Math.round(center_ls_raw[0] / VSM_WORLD_UNITS_PER_TEXEL) * VSM_WORLD_UNITS_PER_TEXEL,
-    Math.round(center_ls_raw[1] / VSM_WORLD_UNITS_PER_TEXEL) * VSM_WORLD_UNITS_PER_TEXEL,
-    Math.round(center_ls_raw[2] / VSM_WORLD_UNITS_PER_TEXEL) * VSM_WORLD_UNITS_PER_TEXEL
+    Math.round(center_ls_raw[0] / VSM_WORLD_UNITS_PER_PAGE) * VSM_WORLD_UNITS_PER_PAGE,
+    Math.round(center_ls_raw[1] / VSM_WORLD_UNITS_PER_PAGE) * VSM_WORLD_UNITS_PER_PAGE,
+    Math.round(center_ls_raw[2] / VSM_WORLD_UNITS_PER_PAGE) * VSM_WORLD_UNITS_PER_PAGE
   );
 
   // 4. Convert snapped center back to world space
@@ -130,7 +130,7 @@ export function compute_directional_light_view_projection(
     -far * 2.0, far * 2.0
   );
  
-  return { view: light_view, proj: light_proj, position: eye };
+  return { view: light_view, proj: light_proj, position: eye, snapped_center: center_ls };
 }
 
 /**

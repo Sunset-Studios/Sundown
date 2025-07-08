@@ -48,11 +48,9 @@ fn cs(@builtin(global_invocation_id) id: vec3<u32>) {
   let entry = textureLoad(page_table, tile_coords, slice).r;
   let current_physical_id = vsm_pte_to_physical_id(entry, vsm_settings);
 
-  if (vsm_pte_is_valid(entry)) {
-    if (not_visible) {
-      atomicAnd(&lru[1u + current_physical_id], ~lru_pinned_flag);
-      textureStore(page_table, tile_coords, slice, vec4<u32>(0u));
-    }
+  if (vsm_pte_is_valid(entry) && not_visible) {
+    atomicAnd(&lru[1u + current_physical_id], ~lru_pinned_flag);
+    textureStore(page_table, tile_coords, slice, vec4<u32>(0u));
   }
 #endif
 }

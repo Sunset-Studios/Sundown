@@ -12,8 +12,7 @@
 @group(1) @binding(5) var<uniform> light_ub: ShadowCasterLight;
 @group(1) @binding(6) var<storage, read> light_view_buffer: array<u32>;
 @group(1) @binding(7) var<storage, read> light_shadow_idx_buffer: array<u32>;
-@group(1) @binding(8) var<storage, read> got_shadow_feedback_buffer: array<u32>;
-@group(1) @binding(9) var<storage, read_write> shadow_atlas_depth: array<atomic<u32>>;
+@group(1) @binding(8) var<storage, read_write> shadow_atlas_depth: array<atomic<u32>>;
 
 struct VertexOutput {
   @builtin(position) position: vec4<f32>,
@@ -40,8 +39,16 @@ fn fs(input: VertexOutput) -> FragmentOutput {
     vsm_settings,
     clip_index,
   );
+  let ptile_info = vsm_vtile_to_ptile(
+    vtile_info,
+    vsm_settings,
+    input.shadow_index,
+    page_table
+  );
 
-  let ptile_info = vsm_vtile_to_ptile(vtile_info, vsm_settings, input.shadow_index, page_table);
+  if (!ptile_info.is_dirty) {
+    discard;
+  }
 
   let depth_clip = input.position.z;
   let depth_bits = pack_depth(depth_clip);

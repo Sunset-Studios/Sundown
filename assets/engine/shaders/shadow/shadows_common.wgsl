@@ -121,6 +121,10 @@ fn vsm_pte_is_dirty(pte: u32) -> bool {
     return (pte & pte_dirty_mask) != 0u;
 }
 
+fn vsm_pte_get_frame_age(pte: u32) -> u32 {
+    return ((pte & pte_frame_age_mask) >> pte_frame_age_shift) & 0x000000FFu;
+}
+
 // A page is "valid" when it is resident *and* not marked dirty
 fn vsm_pte_is_valid(pte: u32) -> bool {
     return vsm_pte_is_resident(pte);
@@ -170,21 +174,6 @@ fn vsm_pte_to_physical_id(pte_entry: u32, settings: ASVSMSettings) -> u32 {
   return pool_id * atlas_size + phys_y * ptpr + phys_x;
 }
 
-// Check if pte for a tile is dirty
-fn vsm_is_tile_dirty(tile_coords: vec2<u32>, clipmap_index: u32, shadow_index: u32, settings: ASVSMSettings, page_table: texture_storage_2d_array<r32uint, read>) -> bool {
-  let pte = textureLoad(page_table, tile_coords, clipmap_index + shadow_index * u32(settings.max_lods)).r;
-  return vsm_pte_is_dirty(pte);
-}
-
-// Clear dirty flag for a tile's pte
-fn vsm_clear_tile_dirty(tile_coords: vec2<u32>, clipmap_index: u32, shadow_index: u32, settings: ASVSMSettings, page_table: texture_storage_2d_array<r32uint, read_write>) {
-  let pte = textureLoad(page_table, tile_coords, clipmap_index + shadow_index * u32(settings.max_lods)).r;
-  if (vsm_pte_is_dirty(pte)) {
-    let new_pte_val = pte & ~pte_dirty_mask;
-    textureStore(page_table, tile_coords, clipmap_index + shadow_index * u32(settings.max_lods), vec4<u32>(new_pte_val));
-  }
-}
-
 // Convert clip0 to clipn
 fn vsm_convert_clip0_to_clipn(original : vec4<f32>,
                               clip_map_index : u32,
@@ -216,18 +205,17 @@ fn vsm_calculate_sample_clip_value_from_world_pos(
     clipmap0_projection_view: mat4x4<f32>,
     settings: ASVSMSettings
 ) -> vec4<f32> {
+    var sample_vp = clipmap0_projection_view;
+    sample_vp[3] = vec4<f32>(0.0, 0.0, 0.0, 1.0);
+
     let result = vsm_calculate_render_clip_value_from_world_pos(
         world_pos,
         clip_map_index,
-        clipmap0_projection_view,
+        sample_vp,
         settings
     );
-    let clip_result = vsm_convert_clip0_to_clipn(
-        vec4<f32>(clipmap0_projection_view[3].xyz, 1.0),
-        clip_map_index,
-        settings
-    );
-    return result - clip_result;
+
+    return result;
 }
 
 fn vsm_calculate_clipmap_index_from_world_pos(
@@ -298,7 +286,7 @@ fn vsm_world_to_virtual_tile_for_clip(
 
     var info: VirtualTileInfo;
 
-    info.clipmap_index = clipmap_index;
+    info.clipmap_index    = clipmap_index;
     info.local_pixel      = virtual_pixel % tile_size;
     info.tile_coords      = virtual_pixel / tile_size;
     info.tile_id          = info.clipmap_index * vtr * vtr + info.tile_coords.y * vtr + info.tile_coords.x;
@@ -351,25 +339,6 @@ fn vsm_get_virtual_tile_word_and_mask(tile_coords: vec2<u32>, clipmap_index: u32
   let global_word_index = shadow_index * words_per_light + word_index;
   
   return vec2<u32>(global_word_index, mask);
-}
-
-// Unprojects a tile corner in NDC [-1,1] to world space using the inverse view-projection matrix
-// Used for object shadow influence
-fn tile_corner_to_world(
-    tile_coords: vec2<u32>,
-    corner: vec2<u32>,
-    clipmap_index: u32,
-    clipmap0_vp: mat4x4<f32>,
-    settings: ASVSMSettings
-) -> vec3<f32> {
-    let ndc_min   = (vec2<f32>(tile_coords) * settings.tile_size) / settings.virtual_dim * 2.0 - 1.0;
-    let ndc_max   = (vec2<f32>(tile_coords + vec2<u32>(1u, 1u)) * settings.tile_size) / settings.virtual_dim * 2.0 - 1.0;
-    let ndc       = mix(ndc_min, ndc_max, vec2<f32>(corner));
-    let ndc4      = vec4<f32>(ndc, 0.0, 1.0);
-    let inv_vp    = clipmap0_vp; // TODO: Invert;
-    var world     = inv_vp * ndc4;
-    world         /= world.w;
-    return world.xyz;
 }
 
 #endif

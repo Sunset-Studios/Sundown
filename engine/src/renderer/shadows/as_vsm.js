@@ -2,10 +2,11 @@ import { EntityFlags } from "../../core/minimal.js";
 import { EntityManager } from "../../core/ecs/entity.js";
 import { DEFAULT_CHUNK_CAPACITY } from "../../core/ecs/solar/types.js";
 import { LightFragment } from "../../core/ecs/fragments/light_fragment.js";
-import { VisibilityFragment } from "../../core/ecs/fragments/visibility_fragment.js";
+import { SharedViewBuffer } from "../../core/shared_data.js";
 import { Renderer } from "../renderer.js";
 import { RenderPassFlags, DebugDrawType } from "../renderer_types.js";
 import { MeshTaskQueue } from "../mesh_task_queue.js";
+import { ShadowCuller } from "../cull/shadow_culler.js";
 import {
   rgba8unorm_format,
   rgba16float_format,
@@ -13,6 +14,7 @@ import {
   depth32float_format,
   load_op_load,
   load_op_clear,
+  rgba32float_format,
 } from "../../utility/config_permutations.js";
 
 // ============ GPU Resource Configs ============
@@ -20,6 +22,17 @@ import {
 const page_table_config = {
   name: "shadow_page_table",
   format: r32uint_format,
+  dimension: "2d-array",
+  width: 0,
+  height: 0,
+  depth: 0,
+  usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.COPY_DST,
+  load_op: load_op_load,
+};
+
+const page_offset_config = {
+  name: "shadow_page_offset",
+  format: rgba32float_format,
   dimension: "2d-array",
   width: 0,
   height: 0,
@@ -96,6 +109,14 @@ const debug_tile_render_output_config = {
   usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
 };
 
+const debug_dirty_tiles_config = {
+  name: "debug_dirty_tiles",
+  format: rgba16float_format,
+  width: 0,
+  height: 0,
+  usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+};
+
 // Shadow atlas depth data stored in a GPUBuffer instead of a texture to access atomics
 const shadow_atlas_buf_config = {
   name: "shadow_atlas_buf",
@@ -114,12 +135,6 @@ const dummy_depth_image_config = {
 const light_draw_uniform_configs = [];
 
 // ============ Shader Setup ============
-
-const clear_resources_shader_setup = {
-  pipeline_shaders: {
-    compute: { path: "shadow/as_vsm/clear_resources.wgsl", defines: { SHADOWS_ENABLED: true } },
-  },
-};
 
 const feedback_shader_setup = {
   pipeline_shaders: {
@@ -142,6 +157,12 @@ const page_table_update_shader_setup = {
 const tile_clear_shader_setup = {
   pipeline_shaders: {
     compute: { path: "shadow/as_vsm/tile_clear.wgsl", defines: { SHADOWS_ENABLED: true } },
+  },
+};
+
+const clear_tile_flags_shader_setup = {
+  pipeline_shaders: {
+    compute: { path: "shadow/as_vsm/clear_tile_flags.wgsl", defines: { SHADOWS_ENABLED: true } },
   },
 };
 
@@ -183,18 +204,14 @@ const debug_tile_render_output_shader_setup = {
   },
 };
 
-const object_shadow_influence_shader_setup = {
+const debug_dirty_tiles_shader_setup = {
   pipeline_shaders: {
-    compute: {
-      path: "shadow/as_vsm/object_shadow_influence.wgsl",
-      defines: { SHADOWS_ENABLED: true },
-    },
+    vertex: { path: "fullscreen.wgsl" },
+    fragment: { path: "shadow/as_vsm/debug_dirty_tiles.wgsl", defines: { SHADOWS_ENABLED: true } },
   },
 };
 
 const MAX_NUM_TEXTURE_POOLS = 1;
-
-const got_shadow_feedback_name = "got_shadow_feedback";
 
 /**
  * Adaptive Sparse Virtual Shadow Maps (AS-VSM)
@@ -221,6 +238,20 @@ export class AdaptiveSparseVirtualShadowMaps {
 
     this.lights_query = EntityManager.create_query([LightFragment]);
 
+    this.shadow_culler = new ShadowCuller(
+      null,
+      /* additional_data */ {
+        aabb_bounds: 0,
+        object_instances: 0,
+        entity_aabb_node_indices: 0,
+        vsm_settings: 0,
+        light_view_buffer: 0,
+        light_shadow_idx_buffer: 0,
+        page_table: 0,
+        bitmask: 0,
+      }
+    );
+
     AdaptiveSparseVirtualShadowMaps.all_instances.push(this);
   }
 
@@ -232,12 +263,13 @@ export class AdaptiveSparseVirtualShadowMaps {
       light_count_buffer,
       transforms_buffer,
       object_instances,
-      aabb_bounds_buffer,
-      aabb_nodes_buffer,
-      entity_aabb_node_indices_buffer,
-      view_visibility_buffers,
+      aabb_bounds,
+      aabb_nodes,
+      entity_aabb_node_indices,
+      frustum_culler,
       force_recreate = false,
       debug_view = null,
+      draw_count,
     }
   ) {
     const max_light_count = LightFragment.total_shadow_casting_lights;
@@ -310,6 +342,13 @@ export class AdaptiveSparseVirtualShadowMaps {
     page_table_config.force = force_recreate;
     this.page_table = render_graph.create_image(page_table_config);
 
+    // Create Page Offset storage texture (same dims as page table)
+    page_offset_config.width = this.virtual_tiles_per_row;
+    page_offset_config.height = this.virtual_tiles_per_row;
+    page_offset_config.depth = adjusted_light_count * this.max_lods;
+    page_offset_config.force = force_recreate;
+    this.page_offset = render_graph.create_image(page_offset_config);
+
     eviction_counter_buf_config.size = 4; // 1 atomic u32
     eviction_counter_buf_config.force = force_recreate;
     this.eviction_counter_buf = render_graph.create_buffer(eviction_counter_buf_config);
@@ -346,17 +385,6 @@ export class AdaptiveSparseVirtualShadowMaps {
     this.lru_buf = render_graph.create_buffer(lru_buf_config);
     // Can discard lru_raw now that buffer is created
     lru_buf_config.raw_data = null;
-
-    const got_shadow_feedback_buffer = EntityManager.get_fragment_gpu_buffer(
-      VisibilityFragment,
-      got_shadow_feedback_name
-    );
-    this.got_shadow_feedback_buffer = render_graph.register_buffer(
-      got_shadow_feedback_buffer.buffer.config.name
-    );
-
-    const num_entities = EntityManager.get_total_subscribed(VisibilityFragment);
-    
 
     const light_uniforms = this._setup_light_draw_uniforms(
       render_graph,
@@ -404,27 +432,6 @@ export class AdaptiveSparseVirtualShadowMaps {
         // Set dummy depth image to load_op_load
         const depth_dummy_image = graph.get_physical_image(this.dummy_depth_image);
         depth_dummy_image.config.load_op = load_op_load;
-      }
-    );
-
-    // ────────────────────────────────────────────────────────────────
-    // Clear VSM resources
-    // ────────────────────────────────────────────────────────────────
-    render_graph.add_pass(
-      "as_vsm_clear_resources",
-      RenderPassFlags.Compute,
-      {
-        inputs: [this.got_shadow_feedback_buffer],
-        outputs: [this.got_shadow_feedback_buffer],
-        shader_setup: clear_resources_shader_setup,
-      },
-      (graph, frame_data, encoder) => {
-        const pass = graph.get_physical_pass(frame_data.current_pass);
-        const got_shadow_feedback_buffer = graph.get_physical_buffer(
-          this.got_shadow_feedback_buffer
-        );
-        const elements = got_shadow_feedback_buffer.config.size / 4;
-        pass.dispatch(elements / 64, 1, 1);
       }
     );
 
@@ -498,52 +505,57 @@ export class AdaptiveSparseVirtualShadowMaps {
           this.lru_buf,
           this.page_table,
           this.light_shadow_idx_buf,
+          this.light_view_buf,
           this.settings_buf,
           this.bitmask_buf,
           light_count_buffer,
           this.eviction_counter_buf,
+          this.page_offset,
         ],
-        outputs: [this.page_table, this.eviction_counter_buf],
+        outputs: [this.page_table, this.page_offset, this.eviction_counter_buf],
         shader_setup: page_table_update_shader_setup,
       },
       (graph, frame_data, encoder) => {
         const pass = graph.get_physical_pass(frame_data.current_pass);
-        const bitmask_groups = Math.ceil(this.bitmask_u32_count / 64);
-        const light_groups = Math.ceil(adjusted_light_count / 4);
-        pass.dispatch(bitmask_groups, 1, light_groups);
+        pass.dispatch(Math.ceil(this.bitmask_u32_count / 256), 1, 1);
       }
     );
 
     // ────────────────────────────────────────────────────────────────
-    // Object Shadow Influence Pass
+    // Shadow Culling Pass
     // ────────────────────────────────────────────────────────────────
 
-    render_graph.add_pass(
-      `as_vsm_object_shadow_influence`,
-      RenderPassFlags.Compute,
-      {
-        inputs: [
-          aabb_bounds_buffer,
-          entity_aabb_node_indices_buffer,
-          this.settings_buf,
-          this.got_shadow_feedback_buffer,
-          this.light_view_buf,
-          this.light_shadow_idx_buf,
-          light_count_buffer,
-          this.page_table,
-          this.bitmask_buf
-        ],
-        outputs: [this.got_shadow_feedback_buffer],
-        shader_setup: object_shadow_influence_shader_setup,
-      },
-      (graph, frame_data, encoder) => {
-        const pass = graph.get_physical_pass(frame_data.current_pass);
-        const dispatch_x = Math.ceil((num_entities + 63) / 64);
-        const dispatch_y = this.max_lods;
-        const dispatch_z = adjusted_light_count * this.max_lods;
-        pass.dispatch(dispatch_x, dispatch_y, dispatch_z);
+    {
+      this.shadow_culler.reset();
+      this.shadow_culler.set_previous_culler(frustum_culler);
+
+      for (
+        let active_view_index = 0;
+        active_view_index < this.active_view_indices.length;
+        ++active_view_index
+      ) {
+        const view_index = this.active_view_indices[active_view_index];
+
+        const view_data = SharedViewBuffer.get_view_data(view_index);
+        const clipmap_count = view_data.clipmap_count || 1;
+
+        for (let clipmap_index = 0; clipmap_index < clipmap_count; ++clipmap_index) {
+          this.shadow_culler.register_view(render_graph, draw_count, view_index, clipmap_index);
+        }
       }
-    );
+
+      this.shadow_culler.additional_data.aabb_bounds = aabb_bounds;
+      this.shadow_culler.additional_data.object_instances = object_instances;
+      this.shadow_culler.additional_data.entity_aabb_node_indices = entity_aabb_node_indices;
+      this.shadow_culler.additional_data.vsm_settings = this.settings_buf;
+      this.shadow_culler.additional_data.light_shadow_idx_buffer = this.light_shadow_idx_buf;
+      this.shadow_culler.additional_data.page_table = this.page_table;
+      this.shadow_culler.additional_data.light_count = adjusted_light_count;
+
+      this.shadow_culler.init_views(render_graph, draw_count);
+      this.shadow_culler.init_visibility(render_graph, draw_count);
+      this.shadow_culler.submit_cull(render_graph, draw_count);
+    }
 
     // ────────────────────────────────────────────────────────────────
     // Clear newly allocated physical tiles
@@ -572,7 +584,7 @@ export class AdaptiveSparseVirtualShadowMaps {
       const view_index = this.active_view_indices[light_idx];
 
       for (let c = 0; c < this.max_lods; c++) {
-        const visibility_buffer = view_visibility_buffers.get(view_index, c);
+        const visibility_buffer = this.shadow_culler.get_visibility_buffer(view_index, c);
         const light_uniform = light_uniforms[light_idx * this.max_lods + c];
 
         render_graph.add_pass(
@@ -588,7 +600,6 @@ export class AdaptiveSparseVirtualShadowMaps {
               light_uniform,
               this.light_view_buf,
               this.light_shadow_idx_buf,
-              this.got_shadow_feedback_buffer,
               this.shadow_atlas_buf,
             ],
             outputs: [this.shadow_atlas_buf, this.dummy_depth_image],
@@ -602,12 +613,37 @@ export class AdaptiveSparseVirtualShadowMaps {
               c /* clipmap_index */,
               true /* skip_material_bind */,
               false /* opaque_only */,
-              true /* depth_only */
+              true /* depth_only */,
             );
           }
         );
       }
     }
+
+    // Debug AS-VSM views
+    if (debug_view !== DebugDrawType.None) {
+      this.add_debug_passes(render_graph, force_recreate, debug_view, position_texture);
+    }
+
+    // ────────────────────────────────────────────────────────────────
+    // Clear dirty tile flags
+    // ────────────────────────────────────────────────────────────────
+    render_graph.add_pass(
+      "as_vsm_clear_dirty_tile_flags",
+      RenderPassFlags.Compute,
+      {
+        inputs: [this.page_table],
+        outputs: [this.page_table],
+        shader_setup: clear_tile_flags_shader_setup,
+      },
+      (graph, frame_data, encoder) => {
+        const pass = graph.get_physical_pass(frame_data.current_pass);
+        const pt_image = graph.get_physical_image(this.page_table);
+        const dispatch_x = Math.ceil(pt_image.config.width / 16);
+        const dispatch_y = Math.ceil(pt_image.config.height / 16);
+        pass.dispatch(dispatch_x, dispatch_y, pt_image.config.depth);
+      }
+    );
 
     // ────────────────────────────────────────────────────────────────
     // VSM post-update pass
@@ -626,11 +662,6 @@ export class AdaptiveSparseVirtualShadowMaps {
         depth_dummy_image.config.load_op = load_op_clear;
       }
     );
-
-    // Debug AS-VSM views
-    if (debug_view !== DebugDrawType.None) {
-      this.add_debug_passes(render_graph, force_recreate, debug_view, position_texture);
-    }
   }
 
   #light_draw_uniforms = [];
@@ -722,6 +753,7 @@ export class AdaptiveSparseVirtualShadowMaps {
             this.settings_buf,
             this.light_view_buf,
             this.shadow_atlas_buf,
+            this.page_offset,
           ],
           outputs: [this.debug_tile_overlay_image],
           shader_setup: debug_tile_overlay_shader_setup,
@@ -747,6 +779,27 @@ export class AdaptiveSparseVirtualShadowMaps {
           inputs: [this.dummy_depth_image],
           outputs: [this.debug_tile_render_output_image],
           shader_setup: debug_tile_render_output_shader_setup,
+        },
+        (graph, frame_data, encoder) => {
+          const pass = graph.get_physical_pass(frame_data.current_pass);
+          MeshTaskQueue.draw_quad(pass);
+        }
+      );
+    }
+    if (debug_view === DebugDrawType.ASVSM_DirtyTiles) {
+      debug_dirty_tiles_config.width = image_extent.width;
+      debug_dirty_tiles_config.height = image_extent.height;
+      debug_dirty_tiles_config.force = force_recreate;
+      this.debug_dirty_tiles_image = render_graph.create_image(debug_dirty_tiles_config);
+
+      render_graph.add_pass(
+        "debug_dirty_tiles_pass",
+        RenderPassFlags.Graphics,
+        {
+          inputs: [
+            this.page_table, position_texture, this.settings_buf, this.light_view_buf, this.shadow_atlas_buf, this.page_offset],
+          outputs: [this.debug_dirty_tiles_image],
+          shader_setup: debug_dirty_tiles_shader_setup,
         },
         (graph, frame_data, encoder) => {
           const pass = graph.get_physical_pass(frame_data.current_pass);

@@ -2209,7 +2209,7 @@ export class ShadowTestScene extends Scene {
   init(parent_context) {
     super.init(parent_context);
 
-    const ambient_emissive = 0.2;
+    const ambient_emissive = 0.3;
 
     // Add arcball camera control
     const freeform_arcball_control_processor = this.add_layer(FreeformArcballControlProcessor);
@@ -2218,12 +2218,12 @@ export class ShadowTestScene extends Scene {
 
     // Configure skybox
     SharedEnvironmentMapData.set_skybox("default_scene_skybox", [
-      "engine/textures/gradientbox/px.png",
-      "engine/textures/gradientbox/nx.png",
-      "engine/textures/gradientbox/ny.png",
-      "engine/textures/gradientbox/py.png",
-      "engine/textures/gradientbox/pz.png",
-      "engine/textures/gradientbox/nz.png",
+      "engine/textures/simple_skybox/px.png",
+      "engine/textures/simple_skybox/nx.png",
+      "engine/textures/simple_skybox/ny.png",
+      "engine/textures/simple_skybox/py.png",
+      "engine/textures/simple_skybox/pz.png",
+      "engine/textures/simple_skybox/nz.png",
     ]);
     SharedEnvironmentMapData.set_skybox_color([1, 1, 1, 1]);
 
@@ -2231,7 +2231,7 @@ export class ShadowTestScene extends Scene {
     const view_data = SharedViewBuffer.get_view_data(0);
     view_data.view_position = [47, 352, 770];
     view_data.view_rotation = [0.0, 0.967463, -0.23873913, 0.0];
-    view_data.far = 2000.0;
+    view_data.far = 3000.0;
 
     // Create a sun-like directional light
     const light_entity = EntityManager.create_entity([LightFragment]);
@@ -2239,9 +2239,9 @@ export class ShadowTestScene extends Scene {
 
     const light_fragment_view = EntityManager.get_fragment(light_entity, LightFragment);
     light_fragment_view.type = LightType.DIRECTIONAL;
-    light_fragment_view.color = [1, 1, 1];
+    light_fragment_view.color = [1, 1, 0.9];
     light_fragment_view.intensity = 1.0;
-    light_fragment_view.position = [10, 10, 10];
+    light_fragment_view.position = [30, 15, 50];
     light_fragment_view.active = true;
     light_fragment_view.shadow_clipmaps = MAX_CLIPMAP_LEVELS;
 
@@ -2279,7 +2279,7 @@ export class ShadowTestScene extends Scene {
     const cube_mesh = Mesh.cube();
 
     // Create an expansive ground plane
-    const ground_plane_size = 1000.0;
+    const ground_plane_size = 2000.0;
     const ground_entity = spawn_mesh_entity(
       [0.0, 0.0, 0.0],
       quat.fromEuler(quat.create(), 0.0, 0.0, 0.0),
@@ -2291,7 +2291,7 @@ export class ShadowTestScene extends Scene {
 
     // Procedurally generate a dense grid of buildings
     const grid_size = 80; // 80 × 80 buildings
-    const building_spacing = 20.0; // distance between building centres
+    const building_spacing = 35.0; // distance between building centres (was 20.0)
     const building_base_size = 6.0; // footprint of each building
 
     const building_entity = spawn_mesh_entity(
@@ -2309,8 +2309,11 @@ export class ShadowTestScene extends Scene {
     let instance_index = 0;
     for (let gx = 0; gx < grid_size; gx++) {
       for (let gz = 0; gz < grid_size; gz++) {
-        // Randomised height to create varied skyline
-        const height = 10.0 + Math.random() * 90.0; // between 10 and 100 units
+        // More randomized height: most buildings short, few very tall
+        const base = 8.0;
+        const max = 180.0;
+        const exponent = 4.0; // Higher = more short buildings
+        const height = base + Math.pow(Math.random(), exponent) * (max - base);
 
         const position = [
           gx * building_spacing - half_grid,
@@ -2565,10 +2568,10 @@ export class ShadowTestScene extends Scene {
   //await scene_switcher.add_scene(aabb_scene);
   //await scene_switcher.add_scene(rendering_scene);
   //await scene_switcher.add_scene(ml_scene);
-  await scene_switcher.add_scene(voxel_terrain_scene);
+  //await scene_switcher.add_scene(voxel_terrain_scene);
   //await scene_switcher.add_scene(object_painting_scene);
   //await scene_switcher.add_scene(gi_test_scene);
-  //await scene_switcher.add_scene(shadow_test_scene);
+  await scene_switcher.add_scene(shadow_test_scene);
 
   simulator.add_sim_layer(scene_switcher);
 

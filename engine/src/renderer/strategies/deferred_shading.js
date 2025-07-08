@@ -601,13 +601,10 @@ export class DeferredShadingStrategy {
 
         const view_data = SharedViewBuffer.get_view_data(view_index);
         const clipmap_count = view_data.clipmap_count || 1;
-        const culling_enabled = view_data.culling_enabled;
         const occlusion_enabled = view_data.occlusion_enabled;
 
         for (let clipmap_index = 0; clipmap_index < clipmap_count; ++clipmap_index) {
-          if (culling_enabled) {
-            this.frustum_culler.register_view(render_graph, draw_count, view_index, clipmap_index);
-          }
+          this.frustum_culler.register_view(render_graph, draw_count, view_index, clipmap_index);
           if (occlusion_enabled) {
             this.occlusion_culler.register_view(render_graph, draw_count, view_index, clipmap_index);
           }
@@ -1045,19 +1042,20 @@ export class DeferredShadingStrategy {
       // │ 🌚 PASS: Adaptive Sparse Virtual Shadow Maps                               │
       // │    High-quality, efficient shadow mapping with virtual memory management  │
       // └─────────────────────────────────────────────────────────────────────────────┘
-      if (shadows_enabled) {
+      if (shadows_enabled && draw_count > 0) {
         this.as_vsm.add_passes(render_graph, {
           position_texture: main_position_image,
           entity_id_texture: main_entity_id_image,
           light_count_buffer: light_count,
           transforms_buffer: entity_transforms,
           object_instances: object_instances,
-          aabb_bounds_buffer: aabb_bounds,
-          aabb_nodes_buffer: aabb_nodes,
-          entity_aabb_node_indices_buffer: entity_aabb_node_indices,
-          view_visibility_buffers: this.frustum_culler.get_visibility_buffers(),
+          aabb_bounds: aabb_bounds,
+          aabb_nodes: aabb_nodes,
+          entity_aabb_node_indices: entity_aabb_node_indices,
+          frustum_culler: this.frustum_culler,
           force_recreate: this.force_recreate,
           debug_view: debug_view,
+          draw_count: draw_count,
         });
       }
 
@@ -1120,6 +1118,7 @@ export class DeferredShadingStrategy {
           lighting_inputs.push(
             this.as_vsm.shadow_atlas_buf,
             this.as_vsm.page_table,
+            this.as_vsm.page_offset,
             this.as_vsm.settings_buf
           );
         }
@@ -1412,6 +1411,16 @@ export class DeferredShadingStrategy {
               Math.min(image_extent.width, image_extent.height) * 0.3,
               Math.min(image_extent.width, image_extent.height) * 0.3,
               DebugDrawType.ASVSM_TileRenderOutput
+            );
+            break;
+          case DebugDrawType.ASVSM_DirtyTiles:
+            this.debug_overlay.set_properties(
+              this.as_vsm.debug_dirty_tiles_image,
+              0,
+              0,
+              image_extent.width,
+              image_extent.height,
+              DebugDrawType.ASVSM_DirtyTiles
             );
             break;
           case DebugDrawType.Bloom:

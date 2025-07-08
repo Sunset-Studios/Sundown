@@ -12,7 +12,6 @@
 @group(1) @binding(5) var<uniform> light_ub: ShadowCasterLight;
 @group(1) @binding(6) var<storage, read> light_view_buffer: array<u32>;
 @group(1) @binding(7) var<storage, read> light_shadow_idx_buffer: array<u32>;
-@group(1) @binding(8) var<storage, read> got_shadow_feedback_buffer: array<u32>;
 
 struct VertexOutput {
   @builtin(position) position: vec4<f32>,
@@ -28,20 +27,12 @@ fn vs(@builtin(vertex_index) vi: u32,
 
 #if SHADOWS_ENABLED
   let clip_index            = light_ub.clip_index;
+  let light_idx             = light_ub.light_index;
+
   let object_instance_index = visible_object_instances[ii];
   let row_field             = object_instances[object_instance_index].row;
   let entity_row            = get_entity_row(row_field);
 
-  let got_shadow_feedback = got_shadow_feedback_buffer[entity_row];
-  if ((got_shadow_feedback & (1u << clip_index)) == 0u) {
-    out.position    = vec4<f32>(2.0, 2.0, 2.0, 1.0);
-    out.world_pos = vec3<f32>(0.0);
-    out.shadow_index = 0u;
-    out.view_index = 0u;
-    return out;
-  }
-
-  let light_idx             = light_ub.light_index;
   let view_index            = light_view_buffer[light_idx];
   let shadow_idx            = light_shadow_idx_buffer[light_idx];
 
@@ -50,7 +41,6 @@ fn vs(@builtin(vertex_index) vi: u32,
   let world_pos             = vec4<f32>((model_matrix * local_pos).xyz, 1.0);
 
   let clipmap0_vp           = view_buffer[view_index].view_projection_matrix;
-  let camera_vp             = view_buffer[frame_info.view_index].view_projection_matrix;
 
   let vtile_info = vsm_world_to_virtual_tile_for_clip(
     world_pos,
