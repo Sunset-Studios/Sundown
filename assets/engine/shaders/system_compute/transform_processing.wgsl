@@ -163,7 +163,6 @@ fn cs(@builtin(global_invocation_id) global_id: vec3<u32>) {
         }
     }
 
-    entity_transforms[entity_resolved].prev_transform = prev_transform;
     entity_transforms[entity_resolved].transform = transform;
 
     entity_transforms[entity_resolved].transpose_inverse_model_matrix = mat4x4f(

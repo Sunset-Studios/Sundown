@@ -2243,7 +2243,7 @@ export class ShadowTestScene extends Scene {
   entities = [];
   swaying_ball_entity = null;
   swaying_ball_index = 0;
-  swaying_ball_base_pos = [90, 160, 950];
+  swaying_ball_base_pos = [-90, 100, -950];
 
   init(parent_context) {
     super.init(parent_context);
@@ -2280,7 +2280,7 @@ export class ShadowTestScene extends Scene {
     light_fragment_view.type = LightType.DIRECTIONAL;
     light_fragment_view.color = [1, 1, 0.9];
     light_fragment_view.intensity = 1.0;
-    light_fragment_view.position = [30, 35, 30];
+    light_fragment_view.position = [-30, 65, 50];
     light_fragment_view.active = true;
     light_fragment_view.shadow_clipmaps = MAX_CLIPMAP_LEVELS;
 
@@ -2647,14 +2647,14 @@ export class ShadowTestScene extends Scene {
 
   const scene_switcher = new SceneSwitcher("SceneSwitcher");
   //await scene_switcher.add_scene(solar_ecs_scene);
-  //await scene_switcher.add_scene(textures_scene);
+  await scene_switcher.add_scene(textures_scene);
   //await scene_switcher.add_scene(aabb_scene);
   //await scene_switcher.add_scene(rendering_scene);
   //await scene_switcher.add_scene(ml_scene);
   //await scene_switcher.add_scene(voxel_terrain_scene);
   //await scene_switcher.add_scene(object_painting_scene);
   //await scene_switcher.add_scene(gi_test_scene);
-  await scene_switcher.add_scene(shadow_test_scene);
+  //await scene_switcher.add_scene(shadow_test_scene);
 
   simulator.add_sim_layer(scene_switcher);
 

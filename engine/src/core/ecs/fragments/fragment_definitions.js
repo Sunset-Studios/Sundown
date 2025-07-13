@@ -132,7 +132,7 @@ const TransformFragment = {
     },
     transforms: {
       type: DataType.FLOAT32,
-      stride: 48,
+      stride: 32,
       gpu: true,
       usage: BufferType.STORAGE_SRC,
     },

@@ -68,6 +68,7 @@ fn cs(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let vp_matrix = view.view_projection_matrix;
     let slice_idx = light_shadow_idx * u32(vsm_settings.max_lods) + clipmap_index;
     let vtr_i = i32(vsm_settings.virtual_tiles_per_row);
+    let light_direction = normalize(view.view_direction.xyz);
     let vp_clip = vsm_projection_translation_clip(vp_matrix, clipmap_index, vsm_settings);
 
     // Derive position & radius from the entity's transform
@@ -87,23 +88,9 @@ fn cs(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let curr_min = position - half_size;
     let curr_max = position + half_size;
 
-    // Previous world-space translation and per-axis scales
-    let prev_transform = entity_transform.prev_transform;
-    let prev_position = prev_transform[3].xyz;
-    let prev_scale = vec3f(
-        length(prev_transform[0].xyz),
-        length(prev_transform[1].xyz),
-        length(prev_transform[2].xyz)
-    ) / 100.0;
-
-    // Compute previous AABB
-    let prev_half_size = prev_scale * 0.5;
-    let prev_min = prev_position - prev_half_size;
-    let prev_max = prev_position + prev_half_size;
-
     // Swept AABB covering previous and current positions
-    let swept_min = min(prev_min, curr_min);
-    let swept_max = max(prev_max, curr_max);
+    let swept_min = min(curr_min + light_direction * 100.0, curr_min);
+    let swept_max = max(curr_max + light_direction * 100.0, curr_max);
 
     // Project swept AABB into clipmap NDC space
     let corners = array<vec4<f32>, 8>(
