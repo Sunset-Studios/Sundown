@@ -133,6 +133,8 @@ fn sample_probe_irradiance(world_pos: vec3<f32>) -> vec3<f32> {
 #if SHADOWS_ENABLED
         let depth         = vsm_shadow_depth(
                                 position4,
+                                normalized_normal,
+                                light_dir,
                                 light_view_index,
                                 light_shadow_index,
                                 page_offset,
