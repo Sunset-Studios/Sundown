@@ -53,7 +53,7 @@ fn fs(input: VertexOutput) -> @location(0) vec4<f32> {
   // Hash colour encodes tile id & lod (mix into value)
   let base_color    = hash_u32(vtile_info.tile_id);
   let lod_factor    = f32(vtile_info.clipmap_index) / f32(vsm_settings.max_lods);
-  let color         = mix(base_color, vec3<f32>(lod_factor, 0.0, 1.0 - lod_factor), 0.35);
+  var color         = mix(base_color, vec3<f32>(lod_factor, 0.0, 1.0 - lod_factor), 0.35);
 
   // Compute depth
   let depth         = vsm_shadow_depth(
@@ -76,6 +76,26 @@ fn fs(input: VertexOutput) -> @location(0) vec4<f32> {
                       );
 
   let shadow_factor  = select(1.0, max(f32(filter_res.depth), 0.3), filter_res.valid);
+
+  let tile_coords = vtile_info.tile_coords.xy;
+  let tile_size_f = f32(vsm_settings.tile_size);
+
+  // Compute local UV within the tile (range [0, 1])
+  let tile_uv = fract(vec2<f32>(vtile_info.local_pixel) / tile_size_f);
+
+  // Compute distance to nearest edge in texels
+  let edge_dist = min(min(tile_uv.x, 1.0 - tile_uv.x), min(tile_uv.y, 1.0 - tile_uv.y)) * tile_size_f;
+
+  // Outline thickness in texels
+  let outline_thickness = 1.5;
+
+  // Visualise physical id (x & y) combined
+  let e = textureLoad(page_table, vtile_info.tile_coords, vtile_info.clipmap_index).r;
+  let is_dirty = (e & pte_dirty_mask) != 0u;
+
+  // If dirty and near edge, blend in white
+  let outline = select(0.0, 1.0, is_dirty && (edge_dist < outline_thickness));
+  color = mix(color, vec3<f32>(1.0), outline);
 
   return vec4<f32>(color * shadow_factor, 1.0);
 #else

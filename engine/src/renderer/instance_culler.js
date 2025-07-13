@@ -45,14 +45,16 @@ export class InstanceCuller {
 
   // Registers the per-view/clipmap buffers
   register_view(render_graph, draw_count, view_index, clipmap_index = 0) {
+    let adjusted_draw_count = Math.max(draw_count, 1);
+
     this.registered_views.push(view_index);
     this.registered_clipmaps.push(clipmap_index);
 
     visible_buf_config.name = `visible_instances_${this.name}_view_${view_index}_clipmap_${clipmap_index}`;
-    visible_buf_config.force = draw_count !== this.last_draw_count;
+    visible_buf_config.force = adjusted_draw_count !== this.last_draw_count;
     if (visible_buf_config.force) {
-      visible_buf_config.raw_data = new Int32Array(draw_count * 2);
-      this.last_draw_count = draw_count;
+      visible_buf_config.raw_data = new Int32Array(adjusted_draw_count * 2);
+      this.last_draw_count = adjusted_draw_count;
     }
     const visible_buf = render_graph.create_buffer(visible_buf_config);
 
@@ -70,6 +72,8 @@ export class InstanceCuller {
 
   // Initializes the view buffers
   init_views(render_graph, draw_count) {
+    let adjusted_draw_count = Math.max(draw_count, 1);
+
     render_graph.add_pass(
       `${this.name}_init_views`,
       RenderPassFlags.GraphLocal,
@@ -81,7 +85,7 @@ export class InstanceCuller {
 
           const draw_cull_data = this.cull_data_buffers.get(view_index, clipmap_index);
           const draw_cull = graph.get_physical_buffer(draw_cull_data);
-          draw_cull.write(new Uint32Array([draw_count, view_index, clipmap_index]));
+          draw_cull.write(new Uint32Array([adjusted_draw_count, view_index, clipmap_index]));
         }
       }
     );
@@ -89,6 +93,8 @@ export class InstanceCuller {
 
   // Resets the corresponding visibility buffers
   init_visibility(render_graph, draw_count) {
+    let adjusted_draw_count = Math.max(draw_count, 1);
+
     for (let i = 0; i < this.registered_views.length; ++i) {
       const view_index = this.registered_views.get(i);
       const clipmap_index = this.registered_clipmaps.get(i);
@@ -105,7 +111,7 @@ export class InstanceCuller {
         },
         (graph, frame_data, encoder) => {
           const pass = graph.get_physical_pass(frame_data.current_pass);
-          pass.dispatch((draw_count + 255) / 256, 1, 1);
+          pass.dispatch((adjusted_draw_count + 255) / 256, 1, 1);
         }
       );
     }
@@ -113,6 +119,8 @@ export class InstanceCuller {
 
   // Resets the indirect draw instance counts
   reset_instances(render_graph, draw_count) {
+    let adjusted_draw_count = Math.max(draw_count, 1);
+
     for (let i = 0; i < this.registered_views.length; ++i) {
       const view_index = this.registered_views.get(i);
       const clipmap_index = this.registered_clipmaps.get(i);
@@ -128,7 +136,7 @@ export class InstanceCuller {
         },
         (graph, frame_data, encoder) => {
           const pass = graph.get_physical_pass(frame_data.current_pass);
-          pass.dispatch((draw_count + 255) / 256, 1, 1);
+          pass.dispatch((adjusted_draw_count + 255) / 256, 1, 1);
         }
       );
     }
@@ -147,8 +155,10 @@ export class InstanceCuller {
 
   // Calls reset_instances and then dispatch_culling
   submit_cull(render_graph, draw_count) {
-    this.reset_instances(render_graph, draw_count);
-    this.dispatch_culling(render_graph, draw_count);
+    let adjusted_draw_count = Math.max(draw_count, 1);
+
+    this.reset_instances(render_graph, adjusted_draw_count);
+    this.dispatch_culling(render_graph, adjusted_draw_count);
   }
 
   // Returns the visibility buffer for a given view and clipmap

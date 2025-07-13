@@ -86,7 +86,7 @@ export class RenderingScene extends Scene {
     light_fragment_view.intensity = 3;
     light_fragment_view.position = [50, 0, 50, 1];
     light_fragment_view.active = true;
-    light_fragment_view.shadow_clipmaps = MAX_CLIPMAP_LEVELS;
+    light_fragment_view.shadow_casting = 0;
 
     // Create a sphere mesh and add it to the scene
     const mesh = Mesh.from_gltf("engine/models/cube/cube.gltf");
@@ -455,6 +455,8 @@ export class MLScene extends Scene {
 export class TexturesScene extends Scene {
   name = "TexturesScene";
   entities = [];
+  swaying_cube_entity = null;
+  swaying_cube_base_pos = [0, 10, 50];
 
   init(parent_context) {
     super.init(parent_context);
@@ -661,6 +663,26 @@ export class TexturesScene extends Scene {
 
     // Setup sphere entity
     this.setup_sphere_entity();
+
+    // --- Swaying Cube ---
+    // Create a visually distinct material for the swaying cube
+    const swaying_cube_material = StandardMaterial.create("swaying_cube_material");
+    swaying_cube_material.set_albedo([0.2, 0.8, 1.0, 1.0]);
+    swaying_cube_material.set_emission(0.3);
+    swaying_cube_material.set_roughness(0.4);
+    swaying_cube_material.set_tiling(1.0);
+
+    // Create the swaying cube entity
+    const swaying_cube_position = [...this.swaying_cube_base_pos];
+    const swaying_cube_scale = [6, 6, 6];
+    this.swaying_cube_entity = spawn_mesh_entity(
+      swaying_cube_position,
+      quat.fromEuler(quat.create(), 0, 0, 0),
+      swaying_cube_scale,
+      this.cube_mesh,
+      swaying_cube_material.material_id
+    );
+    this.entities.push(this.swaying_cube_entity);
   }
 
   cleanup() {
@@ -676,6 +698,20 @@ export class TexturesScene extends Scene {
 
   update(delta_time) {
     super.update(delta_time);
+
+    // Animate the swaying cube
+    if (this.swaying_cube_entity) {
+      const sway_amplitude = 12; // units left/right
+      const sway_frequency = 0.25; // Hz
+      const t = performance.now() * 0.001; // seconds
+      const x = this.swaying_cube_base_pos[0] + Math.sin(t * Math.PI * 2 * sway_frequency) * sway_amplitude;
+      const y = this.swaying_cube_base_pos[1];
+      const z = this.swaying_cube_base_pos[2];
+      const tf = EntityManager.get_fragment(this.swaying_cube_entity, TransformFragment);
+      if (tf) {
+        tf.position = [x, y, z];
+      }
+    }
   }
 
   setup_world_plane() {
@@ -2207,7 +2243,7 @@ export class ShadowTestScene extends Scene {
   entities = [];
   swaying_ball_entity = null;
   swaying_ball_index = 0;
-  swaying_ball_base_pos = [0, 160, 350];
+  swaying_ball_base_pos = [90, 160, 950];
 
   init(parent_context) {
     super.init(parent_context);
@@ -2234,7 +2270,7 @@ export class ShadowTestScene extends Scene {
     const view_data = SharedViewBuffer.get_view_data(0);
     view_data.view_position = [205.515, 40.4267, 273.94];
     view_data.view_rotation = [0.04745, 0.57238, 0.03344, -0.81212];
-    view_data.far = 3000.0;
+    view_data.far = 10000.0;
 
     // Create a sun-like directional light
     const light_entity = EntityManager.create_entity([LightFragment]);
@@ -2244,7 +2280,7 @@ export class ShadowTestScene extends Scene {
     light_fragment_view.type = LightType.DIRECTIONAL;
     light_fragment_view.color = [1, 1, 0.9];
     light_fragment_view.intensity = 1.0;
-    light_fragment_view.position = [30, 45, 50];
+    light_fragment_view.position = [30, 35, 30];
     light_fragment_view.active = true;
     light_fragment_view.shadow_clipmaps = MAX_CLIPMAP_LEVELS;
 
@@ -2283,7 +2319,7 @@ export class ShadowTestScene extends Scene {
     const sphere_mesh = Mesh.from_gltf("engine/models/sphere/sphere.gltf");
 
     // Create an expansive ground plane
-    const ground_plane_size = 2000.0;
+    const ground_plane_size = 3000.0;
     const ground_entity = spawn_mesh_entity(
       [0.0, 0.0, 0.0],
       quat.fromEuler(quat.create(), 0.0, 0.0, 0.0),
@@ -2297,7 +2333,7 @@ export class ShadowTestScene extends Scene {
     // --- Swaying Ball ---
     // Create a large sphere in front of the city
     const ball_position = [...this.swaying_ball_base_pos];
-    const ball_scale = [10, 10, 10];
+    const ball_scale = [50, 50, 50];
     const ball_material = StandardMaterial.create("swaying_ball_material");
     ball_material.set_albedo([0.9, 0.9, 0.2, 1]);
     ball_material.set_emission(0.2);

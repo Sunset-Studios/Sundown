@@ -62,7 +62,7 @@ export class TransformFragment extends Fragment {
     },
     transforms: {
       ctor: Float32Array,
-      elements: 32,
+      elements: 48,
       default: 0,
       gpu_buffer: true,
       buffer_name: "transforms",

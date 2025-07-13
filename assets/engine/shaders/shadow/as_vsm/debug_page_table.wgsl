@@ -20,7 +20,7 @@ struct VertexOutput {
     i32(uv.y * f32(dims.y))
   );
 
-  let clipmap_index = 0u;
+  let clipmap_index = 8u;
 
   let e = textureLoad(page_table, coord, clipmap_index).r;
   let resident = (e & pte_residency_mask) != 0u;

@@ -185,6 +185,18 @@ fn vsm_convert_clip0_to_clipn(original : vec4<f32>,
                      original.w);
 }
 
+fn vsm_projection_translation_clip(
+    clipmap0_projection_view: mat4x4<f32>,
+    clip_map_index: u32,
+    settings: ASVSMSettings
+) -> vec4<f32> {
+    return vsm_convert_clip0_to_clipn(
+        vec4<f32>(clipmap0_projection_view[3].xyz, 1.0),
+        clip_map_index,
+        settings
+    );
+}
+
 // Returns values on the range of [-1, 1]
 fn vsm_calculate_render_clip_value_from_world_pos(
     world_pos: vec4<f32>,
@@ -205,17 +217,13 @@ fn vsm_calculate_sample_clip_value_from_world_pos(
     clipmap0_projection_view: mat4x4<f32>,
     settings: ASVSMSettings
 ) -> vec4<f32> {
-    var sample_vp = clipmap0_projection_view;
-    sample_vp[3] = vec4<f32>(0.0, 0.0, 0.0, 1.0);
-
     let result = vsm_calculate_render_clip_value_from_world_pos(
         world_pos,
         clip_map_index,
-        sample_vp,
+        clipmap0_projection_view,
         settings
     );
-
-    return result;
+    return result - vsm_projection_translation_clip(clipmap0_projection_view, clip_map_index, settings);
 }
 
 fn vsm_calculate_clipmap_index_from_world_pos(
@@ -226,8 +234,7 @@ fn vsm_calculate_clipmap_index_from_world_pos(
     var clip      = camera_vp * world_pos;
     let radius    = length(clip.xyz);
     let lod       = floor(log2(max(radius, 1.0)));
-
-    return u32(clamp(lod, 0.0, f32(settings.max_lods) - 1.0));
+    return u32(lod);
 }
 
 fn vsm_world_to_virtual_tile(
@@ -236,7 +243,8 @@ fn vsm_world_to_virtual_tile(
     clipmap0_vp: mat4x4<f32>,
     settings: ASVSMSettings
 ) -> VirtualTileInfo {
-    let clipmap_index = vsm_calculate_clipmap_index_from_world_pos(world_pos, camera_vp, settings);
+    var clipmap_index = vsm_calculate_clipmap_index_from_world_pos(world_pos, camera_vp, settings);
+    clipmap_index = clamp(clipmap_index, 0u, u32(settings.max_lods) - 1u);
 
     let vtr = u32(settings.virtual_tiles_per_row);
     let tile_size = u32(settings.tile_size);
@@ -249,7 +257,7 @@ fn vsm_world_to_virtual_tile(
                         );
     let virtual_uv        = fract(sample_clip.xy * 0.5 + 0.5);
     // Wrap to the clipmap range and offset by half a texel for stable mapping
-    let virtual_pixel    = vec2<u32>(floor(virtual_uv * settings.virtual_dim));
+    let virtual_pixel    = vec2<u32>(virtual_uv * settings.virtual_dim);
 
     var info: VirtualTileInfo;
                         
@@ -282,7 +290,7 @@ fn vsm_world_to_virtual_tile_for_clip(
     );
     let virtual_uv        = fract(sample_clip.xy * 0.5 + 0.5);
     // Wrap to the clipmap range and offset by half a texel for stable mapping
-    let virtual_pixel    = vec2<u32>(floor(virtual_uv * settings.virtual_dim));
+    let virtual_pixel    = vec2<u32>(virtual_uv * settings.virtual_dim);
 
     var info: VirtualTileInfo;
 
@@ -292,6 +300,26 @@ fn vsm_world_to_virtual_tile_for_clip(
     info.tile_id          = info.clipmap_index * vtr * vtr + info.tile_coords.y * vtr + info.tile_coords.x;
 
     return info;
+}
+
+// Fetches the tile coords for a world position without wrapping.
+// Specifically useful for the cull_shadows compute shader.
+fn vsm_world_to_unwrapped_tile_coords(
+    world_pos: vec4<f32>,
+    clipmap0_vp: mat4x4<f32>,
+    settings: ASVSMSettings,
+    clipmap_index: u32,
+) -> vec2<i32> {
+    var sample_clip = vsm_calculate_sample_clip_value_from_world_pos(
+        world_pos,
+        clipmap_index,
+        clipmap0_vp,
+        settings,
+    );
+    let virtual_uv     = sample_clip.xy * 0.5 + 0.5;
+    let tile_coords    = vec2<i32>((virtual_uv * settings.virtual_dim) / settings.tile_size);
+
+    return tile_coords;
 }
 
 // Convert virtual tile to physical tile

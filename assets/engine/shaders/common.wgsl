@@ -74,6 +74,7 @@ struct FrameInfo {
 
 struct EntityTransform {
     transform: mat4x4f,
+    prev_transform: mat4x4f,
     transpose_inverse_model_matrix: mat4x4f,
 };
 
@@ -119,7 +120,7 @@ const identity_matrix = mat4x4f(
     0.0, 0.0, 0.0, 1.0
 );
 
-const epsilon = 1e-5;
+const epsilon = 1e-6;
 const world_up = vec3f(0.0, 1.0, 0.0);
 
 const one_over_float_max = 1.0 / 4294967295.0;
@@ -383,10 +384,72 @@ fn rotate_hue(color: vec4f, hue_rotation: f32) -> vec4f {
     return vec4f(r, g, b, color.a);
 }
 
-fn convert_clip0_to_clipn(original : vec4<f32>, clip_map_index : u32) -> vec4<f32> {
-    let one_over_pow2 = 1.0 / f32(1u << clip_map_index);
-    return vec4<f32>(original.x * one_over_pow2,
-                     original.y * one_over_pow2,
-                     original.z,
-                     original.w);
+// Computes the inverse of a 4x4 matrix using Cramer's rule.
+// Returns the inverse matrix. If the matrix is not invertible, the result is undefined.
+fn inverse4x4(m: mat4x4<f32>) -> mat4x4<f32> {
+    let m00 = m[0][0]; let m01 = m[0][1]; let m02 = m[0][2]; let m03 = m[0][3];
+    let m10 = m[1][0]; let m11 = m[1][1]; let m12 = m[1][2]; let m13 = m[1][3];
+    let m20 = m[2][0]; let m21 = m[2][1]; let m22 = m[2][2]; let m23 = m[2][3];
+    let m30 = m[3][0]; let m31 = m[3][1]; let m32 = m[3][2]; let m33 = m[3][3];
+
+    let coef00 = m22 * m33 - m32 * m23;
+    let coef02 = m12 * m33 - m32 * m13;
+    let coef03 = m12 * m23 - m22 * m13;
+
+    let coef04 = m21 * m33 - m31 * m23;
+    let coef06 = m11 * m33 - m31 * m13;
+    let coef07 = m11 * m23 - m21 * m13;
+
+    let coef08 = m21 * m32 - m31 * m22;
+    let coef10 = m11 * m32 - m31 * m12;
+    let coef11 = m11 * m22 - m21 * m12;
+
+    let coef12 = m20 * m33 - m30 * m23;
+    let coef14 = m10 * m33 - m30 * m13;
+    let coef15 = m10 * m23 - m20 * m13;
+
+    let coef16 = m20 * m32 - m30 * m22;
+    let coef18 = m10 * m32 - m30 * m12;
+    let coef19 = m10 * m22 - m20 * m12;
+
+    let coef20 = m20 * m31 - m30 * m21;
+    let coef22 = m10 * m31 - m30 * m11;
+    let coef23 = m10 * m21 - m20 * m11;
+
+    let fac0 = vec4<f32>(coef00, coef00, coef02, coef03);
+    let fac1 = vec4<f32>(coef04, coef04, coef06, coef07);
+    let fac2 = vec4<f32>(coef08, coef08, coef10, coef11);
+    let fac3 = vec4<f32>(coef12, coef12, coef14, coef15);
+    let fac4 = vec4<f32>(coef16, coef16, coef18, coef19);
+    let fac5 = vec4<f32>(coef20, coef20, coef22, coef23);
+
+    let v0 = vec4<f32>(m10, m00, m00, m00);
+    let v1 = vec4<f32>(m11, m01, m01, m01);
+    let v2 = vec4<f32>(m12, m02, m02, m02);
+    let v3 = vec4<f32>(m13, m03, m03, m03);
+
+    let inv0 =  v1 * fac0 - v2 * fac1 + v3 * fac2;
+    let inv1 = -v0 * fac0 + v2 * fac3 - v3 * fac4;
+    let inv2 =  v0 * fac1 - v1 * fac3 + v3 * fac5;
+    let inv3 = -v0 * fac2 + v1 * fac4 - v2 * fac5;
+
+    let sign_a = vec4<f32>( 1.0, -1.0,  1.0, -1.0);
+    let sign_b = vec4<f32>(1.0, -1.0, 1.0, -1.0);
+
+    let col1 = inv0 * sign_a;
+    let col2 = inv1 * sign_b;
+    let col3 = inv2 * sign_a;
+    let col4 = inv3 * sign_b;
+
+    let row0 = vec4<f32>(col1[0], col2[0], col3[0], col4[0]);
+    let det = dot(vec4<f32>(m00, m01, m02, m03), row0);
+
+    let inverse = mat4x4<f32>(
+        col1 / det,
+        col2 / det,
+        col3 / det,
+        col4 / det
+    );
+
+    return inverse;
 }

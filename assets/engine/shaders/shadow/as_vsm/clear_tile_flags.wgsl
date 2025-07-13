@@ -10,6 +10,7 @@ fn cs(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let slice_idx = global_id.z;
     let pte = textureLoad(page_table, pte_coords, slice_idx).r;
     let entry = pte & ~pte_dirty_mask;
+
     textureStore(page_table, pte_coords, slice_idx, vec4<u32>(entry));
     #endif
 } 

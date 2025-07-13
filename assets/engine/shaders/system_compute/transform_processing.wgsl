@@ -151,16 +151,8 @@ fn cs(@builtin(global_invocation_id) global_id: vec3<u32>) {
 
     let prev_transform = entity_transforms[entity_resolved].transform;
 
-    entity_transforms[entity_resolved].transform = transform;
-
-    entity_transforms[entity_resolved].transpose_inverse_model_matrix = mat4x4f(
-        inverse_transform[0][0], inverse_transform[1][0], inverse_transform[2][0], inverse_transform[3][0],
-        inverse_transform[0][1], inverse_transform[1][1], inverse_transform[2][1], inverse_transform[3][1],
-        inverse_transform[0][2], inverse_transform[1][2], inverse_transform[2][2], inverse_transform[3][2],
-        inverse_transform[0][3], inverse_transform[1][3], inverse_transform[2][3], inverse_transform[3][3]
-    );
-
-    var new_flag = entity_flags[entity_resolved] & ~EF_MOVED;
+    var new_flag = entity_flags[entity_resolved] | (entity_flags[parent_resolved] & EF_DIRTY);
+    new_flag &= ~EF_MOVED;
 
     for (var i = 0; i < 4; i = i + 1) {
         for (var j = 0; j < 4; j = j + 1) {
@@ -171,7 +163,16 @@ fn cs(@builtin(global_invocation_id) global_id: vec3<u32>) {
         }
     }
 
-    new_flag |= entity_flags[parent_resolved] & EF_DIRTY;
+    entity_transforms[entity_resolved].prev_transform = prev_transform;
+    entity_transforms[entity_resolved].transform = transform;
+
+    entity_transforms[entity_resolved].transpose_inverse_model_matrix = mat4x4f(
+        inverse_transform[0][0], inverse_transform[1][0], inverse_transform[2][0], inverse_transform[3][0],
+        inverse_transform[0][1], inverse_transform[1][1], inverse_transform[2][1], inverse_transform[3][1],
+        inverse_transform[0][2], inverse_transform[1][2], inverse_transform[2][2], inverse_transform[3][2],
+        inverse_transform[0][3], inverse_transform[1][3], inverse_transform[2][3], inverse_transform[3][3]
+    );
+
 
     entity_flags[entity_resolved] = new_flag;
 }

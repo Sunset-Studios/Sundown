@@ -307,8 +307,13 @@ export class AdaptiveSparseVirtualShadowMaps {
         }
       });
 
-      light_view_buf_config.raw_data = new Uint32Array(this.active_view_indices);
-      light_shadow_idx_buf_config.raw_data = new Uint32Array(this.active_shadow_indices);
+      if (this.active_view_indices.length > 0) {
+        light_view_buf_config.raw_data = new Uint32Array(this.active_view_indices);
+        light_shadow_idx_buf_config.raw_data = new Uint32Array(this.active_shadow_indices);
+      } else {
+        light_view_buf_config.raw_data = new Uint32Array([0xffffffff]);
+        light_shadow_idx_buf_config.raw_data = new Uint32Array([0xffffffff]);
+      }
     }
 
     // Create / resize per-light view buffer
@@ -388,6 +393,10 @@ export class AdaptiveSparseVirtualShadowMaps {
       adjusted_light_count,
       this.max_lods
     );
+
+    if (this.cached_light_count === 0) {
+      return;
+    }
 
     // ────────────────────────────────────────────────────────────────
     // Clear Shadow Atlas Targets

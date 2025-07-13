@@ -8,8 +8,8 @@ import { vec4, quat, vec3 } from 'gl-matrix';
 import { WORLD_FORWARD, WORLD_UP } from '../minimal.js';
 
 export class FreeformArcballControlProcessor extends SimulationLayer {
-    max_move_speed = 100.0;
-    min_move_speed = 1.0;
+    max_move_speed = 1000.0;
+    min_move_speed = 10.0;
     max_rotation_speed = 10.0;
     min_rotation_speed = 0.1;
 
@@ -39,7 +39,7 @@ export class FreeformArcballControlProcessor extends SimulationLayer {
         let position = vec4.clone(view_data.view_position);
         let rotation = quat.clone(view_data.view_rotation);
 
-        const move_speed_delta = InputProvider.get_range(InputRange.M_wheel) / 100.0;
+        const move_speed_delta = InputProvider.get_range(InputRange.M_wheel);
         if (!near_zero(move_speed_delta)) {
             this.move_speed = clamp(this.move_speed + move_speed_delta, this.min_move_speed, this.max_move_speed);
         }
