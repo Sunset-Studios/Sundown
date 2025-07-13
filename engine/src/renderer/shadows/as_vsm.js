@@ -130,6 +130,7 @@ const dummy_depth_image_config = {
   width: 0, // filled at runtime
   height: 0, // filled at runtime
   usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+  depth_clear: 0.0,
 };
 
 const light_draw_uniform_configs = [];
@@ -174,6 +175,7 @@ const render_shader_setup = {
   rasterizer_state: {
     cull_mode: "front",
   },
+  depth_stencil_compare_op: "greater-equal",
 };
 
 const debug_shadow_atlas_shader_setup = {
@@ -368,7 +370,7 @@ export class AdaptiveSparseVirtualShadowMaps {
     if (force_recreate) {
       const shadow_atlas_raw = new Uint32Array(total_pixels);
       // Doing atomic min in shader so we need to fill with max uint
-      shadow_atlas_raw.fill(16777215);
+      shadow_atlas_raw.fill(0);
       shadow_atlas_buf_config.raw_data = shadow_atlas_raw;
     }
     this.shadow_atlas_buf = render_graph.create_buffer(shadow_atlas_buf_config);

@@ -113,7 +113,7 @@ export class Texture {
     this.config.type = config.format.includes("depth") ? "depth" : "color";
 
     if (this.config.type === "depth") {
-      this.config.clear_value = 1.0;
+      this.config.clear_value = (this.config.depth_clear !== undefined) ? this.config.depth_clear : 1.0;
       this.config.load_op = "clear";
     }
 
@@ -146,7 +146,7 @@ export class Texture {
     this.config.type = config.format.includes("depth") ? "depth" : "color";
 
     if (this.config.type === "depth") {
-      this.config.clear_value = 1.0;
+      this.config.clear_value = (this.config.depth_clear !== undefined) ? this.config.depth_clear : 1.0;
       this.config.load_op = "clear";
     }
 
@@ -261,7 +261,7 @@ export class Texture {
     this.config.type = this.config.format.includes("depth") ? "depth" : "color";
 
     if (this.config.type === "depth") {
-      this.config.clear_value = 1.0;
+      this.config.clear_value = (this.config.depth_clear !== undefined) ? this.config.depth_clear : 1.0;
       this.config.load_op = "clear";
     } else {
       this.config.clear_value = { r: 0, g: 0, b: 0, a: 0 };

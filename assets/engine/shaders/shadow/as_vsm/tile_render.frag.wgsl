@@ -55,7 +55,7 @@ fn fs(input: VertexOutput) -> FragmentOutput {
 
   output.depth   = depth_clip;
 
-  atomicMin(&shadow_atlas_depth[ptile_info.physical_id], depth_bits);
+  atomicMax(&shadow_atlas_depth[ptile_info.physical_id], depth_bits);
 #endif
 
   return output;

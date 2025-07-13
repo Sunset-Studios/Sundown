@@ -20,7 +20,7 @@ export const VSM_VIRTUAL_DIM = SHADOW_MAP_TILES * TILE_SIZE;
 // Used when constructing stable light-aligned view/projection matrices.
 export const DEFAULT_LIGHT_CLIP_EXTENT = 4;
 // Maximum number of clipmap levels.
-export const MAX_CLIPMAP_LEVELS = 12;
+export const MAX_CLIPMAP_LEVELS = 16;
 // Size (world units) of one virtual-shadow-map texel in clip-map level 0.
 export const VSM_WORLD_UNITS_PER_PAGE =
   (DEFAULT_LIGHT_CLIP_EXTENT) / VSM_VIRTUAL_DIM;
@@ -122,15 +122,23 @@ export function compute_directional_light_view_projection(
   const eye = vec3.scaleAndAdd(vec3.create(), center_ws_adjusted, light_dir, far * 0.5);
   const light_view = mat4.lookAt(mat4.create(), eye, center_ws_adjusted, light_up);
 
-  // 6. Fixed ortho projection
+  // 6. Fixed ortho projection with reverse Z (near=far*2.0, far=-far*2.0)
   const extent = DEFAULT_LIGHT_CLIP_EXTENT;
   const light_proj = mat4.ortho(mat4.create(),
     -extent, extent,
     -extent, extent,
-    -far * 2.0, far * 2.0
+    -far * 2.0, far * 2.0  // Swapped for reverse Z
   );
+
+  // Remap depth range to [0,1] for reverse Z
+  const depth_range_remap_matrix = mat4.identity(mat4.create());
+  depth_range_remap_matrix[10] = -1;
+  depth_range_remap_matrix[14] = 1;
+
+  // Apply depth range remapping
+  const light_proj_remapped = mat4.multiply(mat4.create(), depth_range_remap_matrix, light_proj);
  
-  return { view: light_view, proj: light_proj, position: eye, snapped_center: center_ls };
+  return { view: light_view, proj: light_proj_remapped, position: eye, snapped_center: center_ls };
 }
 
 /**

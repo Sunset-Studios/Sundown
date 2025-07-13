@@ -37,7 +37,7 @@ fn cs(@builtin(workgroup_id) wg_id: vec3<u32>, @builtin(local_invocation_id) loc
 
             let slice_offset = pool_idx * phys_dim * phys_dim;
             let linear_index = slice_offset + target_pixel.y * phys_dim + target_pixel.x;
-            atomicStore(&shadow_atlas_depth[linear_index], 16777215u);
+            atomicStore(&shadow_atlas_depth[linear_index], 0u);
         }
     }
     #endif

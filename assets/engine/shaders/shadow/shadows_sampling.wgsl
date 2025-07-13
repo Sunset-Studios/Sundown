@@ -6,7 +6,7 @@
 #if SHADOWS_ENABLED
 
 const constant_bias = 0.000001;
-const slope_scale = 0.000001;
+const slope_scale   = 0.0005;
 
 fn vsm_shadow_depth(
     world_pos: vec4<f32>,
@@ -22,15 +22,12 @@ fn vsm_shadow_depth(
   let page_index          = vtile_info.clipmap_index + shadow_idx * u32(vsm_settings.max_lods);
   let offset              = textureLoad(page_offset, vtile_info.tile_coords, page_index);
 
-  let light_projection      = view_buffer[view_idx].projection_matrix;
-  var adjusted_light_view   = view_buffer[view_idx].view_matrix;
+  let light_projection    = view_buffer[view_idx].projection_matrix;
 
-  adjusted_light_view[3].x  = offset.x;
-  adjusted_light_view[3].y  = offset.y;
-  adjusted_light_view[3].z  = offset.z;
-  adjusted_light_view[3].w  = 1.0;
+  var adjusted_light_view = view_buffer[view_idx].view_matrix;
+  adjusted_light_view[3]  = offset;
 
-  let new_light_vp          = light_projection * adjusted_light_view;
+  let new_light_vp        = light_projection * adjusted_light_view;
 
   let light_clip_pos      = vsm_calculate_render_clip_value_from_world_pos(
                                 world_pos,
@@ -69,10 +66,19 @@ fn vsm_sample_shadow(
     let phys_dim    = u32(settings.physical_dim);
     let tile_size   = u32(settings.tile_size);
 
-    // Calculate slope scaled bias
-    let ndotl = abs(dot(normal, light_dir));
-    let slope_scaled_bias = constant_bias + slope_scale * (1.0 - ndotl);
-    let true_bias = slope_scaled_bias; // Optionally scale by distance
+    // --- per-fragment bias calculation ----------------------------------------------------
+    let ndotl = abs(dot(normal, light_dir));   // receiver‐plane slope
+    let bias_in_world =
+        (constant_bias + slope_scale * (1.0 - ndotl)) *
+        // world-units per texel doubles every LOD:
+        f32(1u << vtile_info.clipmap_index) *
+        // size of one texel in clip-map level 0
+        (settings.clip0_extent * 2.0 / settings.virtual_dim);
+
+    // convert the world-space bias into the clip-space depth units
+    let proj      = view_buffer[view_idx].projection_matrix;
+    let depth_fac = 1.0 - proj[2][2];           // –2/(far-near) for an ortho light
+    let true_bias = bias_in_world * depth_fac;
 
     let pixel       = ptile_info.physical_pixel;
 
@@ -105,26 +111,27 @@ fn vsm_sample_shadow(
     let idx21       = base_index + y1 * phys_dim + x2;
     let idx22       = base_index + y2 * phys_dim + x2;
 
-    let d00         = select(0.0, 1.0, ref_depth <= unpack_depth(shadow_atlas_depth[idx00]) + true_bias);
-    let d10         = select(0.0, 1.0, ref_depth <= unpack_depth(shadow_atlas_depth[idx10]) + true_bias);
-    let d01         = select(0.0, 1.0, ref_depth <= unpack_depth(shadow_atlas_depth[idx01]) + true_bias);
-    let d11         = select(0.0, 1.0, ref_depth <= unpack_depth(shadow_atlas_depth[idx11]) + true_bias);
-    let d02         = select(0.0, 1.0, ref_depth <= unpack_depth(shadow_atlas_depth[idx02]) + true_bias);
-    let d12         = select(0.0, 1.0, ref_depth <= unpack_depth(shadow_atlas_depth[idx12]) + true_bias);
-    let d20         = select(0.0, 1.0, ref_depth <= unpack_depth(shadow_atlas_depth[idx20]) + true_bias);
-    let d21         = select(0.0, 1.0, ref_depth <= unpack_depth(shadow_atlas_depth[idx21]) + true_bias);
-    let d22         = select(0.0, 1.0, ref_depth <= unpack_depth(shadow_atlas_depth[idx22]) + true_bias);
+    let d00         = select(0.0, 1.0, ref_depth >= unpack_depth(shadow_atlas_depth[idx00]) - true_bias);
+    let d10         = select(0.0, 1.0, ref_depth >= unpack_depth(shadow_atlas_depth[idx10]) - true_bias);
+    let d01         = select(0.0, 1.0, ref_depth >= unpack_depth(shadow_atlas_depth[idx01]) - true_bias);
+    let d11         = select(0.0, 1.0, ref_depth >= unpack_depth(shadow_atlas_depth[idx11]) - true_bias);
+    let d02         = select(0.0, 1.0, ref_depth >= unpack_depth(shadow_atlas_depth[idx02]) - true_bias);
+    let d12         = select(0.0, 1.0, ref_depth >= unpack_depth(shadow_atlas_depth[idx12]) - true_bias);
+    let d20         = select(0.0, 1.0, ref_depth >= unpack_depth(shadow_atlas_depth[idx20]) - true_bias);
+    let d21         = select(0.0, 1.0, ref_depth >= unpack_depth(shadow_atlas_depth[idx21]) - true_bias);
+    let d22         = select(0.0, 1.0, ref_depth >= unpack_depth(shadow_atlas_depth[idx22]) - true_bias);
 
     // Average the nine sampled depths (simple PCF)
     let filtered = (d00 + d10 + d01 + d11 + d02 + d12 + d20 + d21 + d22) / 9.0;
 
-    // Validate residency for this virtual tile
-    let page_index  = vtile_info.clipmap_index + shadow_idx * u32(settings.max_lods);
-    let entry       = textureLoad(page_table, vtile_info.tile_coords, page_index).r;
-    let page_valid  = vsm_pte_is_valid(entry);
+    if (!ptile_info.is_resident) {
+        out.depth = 1.0;   // fully lit
+        out.valid = false;
+        return out;
+    }
 
     out.depth = filtered;
-    out.valid = page_valid;
+    out.valid = true;
 
     return out;
 }

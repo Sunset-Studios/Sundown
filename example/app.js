@@ -663,26 +663,6 @@ export class TexturesScene extends Scene {
 
     // Setup sphere entity
     this.setup_sphere_entity();
-
-    // --- Swaying Cube ---
-    // Create a visually distinct material for the swaying cube
-    const swaying_cube_material = StandardMaterial.create("swaying_cube_material");
-    swaying_cube_material.set_albedo([0.2, 0.8, 1.0, 1.0]);
-    swaying_cube_material.set_emission(0.3);
-    swaying_cube_material.set_roughness(0.4);
-    swaying_cube_material.set_tiling(1.0);
-
-    // Create the swaying cube entity
-    const swaying_cube_position = [...this.swaying_cube_base_pos];
-    const swaying_cube_scale = [6, 6, 6];
-    this.swaying_cube_entity = spawn_mesh_entity(
-      swaying_cube_position,
-      quat.fromEuler(quat.create(), 0, 0, 0),
-      swaying_cube_scale,
-      this.cube_mesh,
-      swaying_cube_material.material_id
-    );
-    this.entities.push(this.swaying_cube_entity);
   }
 
   cleanup() {
@@ -2647,13 +2627,13 @@ export class ShadowTestScene extends Scene {
 
   const scene_switcher = new SceneSwitcher("SceneSwitcher");
   //await scene_switcher.add_scene(solar_ecs_scene);
-  await scene_switcher.add_scene(textures_scene);
+  //await scene_switcher.add_scene(textures_scene);
   //await scene_switcher.add_scene(aabb_scene);
   //await scene_switcher.add_scene(rendering_scene);
   //await scene_switcher.add_scene(ml_scene);
   //await scene_switcher.add_scene(voxel_terrain_scene);
   //await scene_switcher.add_scene(object_painting_scene);
-  //await scene_switcher.add_scene(gi_test_scene);
+  await scene_switcher.add_scene(gi_test_scene);
   //await scene_switcher.add_scene(shadow_test_scene);
 
   simulator.add_sim_layer(scene_switcher);
