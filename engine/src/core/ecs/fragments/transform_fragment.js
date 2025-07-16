@@ -2,6 +2,7 @@ import { Fragment } from "../fragment.js";
 import { SolarFragmentView } from "../solar/view.js";
 import { RingBufferAllocator } from "../../../memory/allocator.js";
 import { Name } from "../../../utility/names.js";
+import { EntityFlags } from "../../minimal.js";
 
 /**
  * The Transform fragment class.
@@ -22,6 +23,19 @@ export class TransformFragment extends Fragment {
         GPUBufferUsage.STORAGE |
         GPUBufferUsage.COPY_DST |
         GPUBufferUsage.COPY_SRC,
+      setter(value, typed_array, element_offset) {
+        if (
+          typed_array
+            .subarray(element_offset, element_offset + 4)
+            .every((v, i) => v === value[i])
+        ) {
+          return;
+        }
+
+        this.chunk.flags_meta[this.slot + this.instance] |= EntityFlags.MOVED;
+
+        typed_array.set(value, element_offset);
+      },
       cpu_readback: false,
     },
     rotation: {
@@ -35,6 +49,19 @@ export class TransformFragment extends Fragment {
         GPUBufferUsage.STORAGE |
         GPUBufferUsage.COPY_DST |
         GPUBufferUsage.COPY_SRC,
+      setter(value, typed_array, element_offset) {
+        if (
+          typed_array
+            .subarray(element_offset, element_offset + 4)
+            .every((v, i) => v === value[i])
+        ) {
+          return;
+        }
+
+        this.chunk.flags_meta[this.slot + this.instance] |= EntityFlags.MOVED;
+
+        typed_array.set(value, element_offset);
+      },
       cpu_readback: false,
     },
     scale: {
@@ -48,6 +75,19 @@ export class TransformFragment extends Fragment {
         GPUBufferUsage.STORAGE |
         GPUBufferUsage.COPY_DST |
         GPUBufferUsage.COPY_SRC,
+      setter(value, typed_array, element_offset) {
+        if (
+          typed_array
+            .subarray(element_offset, element_offset + 4)
+            .every((v, i) => v === value[i])
+        ) {
+          return;
+        }
+
+        this.chunk.flags_meta[this.slot + this.instance] |= EntityFlags.MOVED;
+
+        typed_array.set(value, element_offset);
+      },
       cpu_readback: false,
     },
     aabb_node_index: {

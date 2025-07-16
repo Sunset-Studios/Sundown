@@ -29,6 +29,7 @@ import { Name } from "../engine/src/utility/names.js";
 import { profile_scope } from "../engine/src/utility/performance.js";
 import { log } from "../engine/src/utility/logging.js";
 import { vec3, vec4, quat } from "gl-matrix";
+import { radians } from "../engine/src/utility/math.js";
 
 import * as UI from "../engine/src/ui/2d/immediate.js";
 
@@ -482,6 +483,7 @@ export class TexturesScene extends Scene {
     const view_data = SharedViewBuffer.get_view_data(0);
     view_data.view_position = [39.198, 14.0851, 78.60858];
     view_data.view_rotation = [-0.0203683, 0.9771718, -0.179953, -0.110603];
+    view_data.far = 10000.0;
 
     // Create a light and add it to the scene
     const light_entity = EntityManager.create_entity([LightFragment]);
@@ -684,7 +686,8 @@ export class TexturesScene extends Scene {
       const sway_amplitude = 12; // units left/right
       const sway_frequency = 0.25; // Hz
       const t = performance.now() * 0.001; // seconds
-      const x = this.swaying_cube_base_pos[0] + Math.sin(t * Math.PI * 2 * sway_frequency) * sway_amplitude;
+      const x =
+        this.swaying_cube_base_pos[0] + Math.sin(t * Math.PI * 2 * sway_frequency) * sway_amplitude;
       const y = this.swaying_cube_base_pos[1];
       const z = this.swaying_cube_base_pos[2];
       const tf = EntityManager.get_fragment(this.swaying_cube_entity, TransformFragment);
@@ -698,9 +701,9 @@ export class TexturesScene extends Scene {
     // Create a plane entity
     const plane = spawn_mesh_entity(
       [0, 0, 0],
-      quat.fromEuler(quat.create(), 0, 0, 0),
-      [500, 0.1, 500],
-      Mesh.cube(),
+      quat.fromEuler(quat.create(), 0.0, 0, 0),
+      [1000, 5.0, 1000],
+      this.cube_mesh,
       this.default_plane_material_id
     );
     this.entities.push(plane);
@@ -2221,9 +2224,8 @@ export class SceneSwitcher extends SimulationLayer {
 export class ShadowTestScene extends Scene {
   name = "ShadowTestScene";
   entities = [];
-  swaying_ball_entity = null;
-  swaying_ball_index = 0;
-  swaying_ball_base_pos = [-90, 100, -950];
+  swaying_balls = [];
+  swaying_ball_base_positions = [];
 
   init(parent_context) {
     super.init(parent_context);
@@ -2244,7 +2246,7 @@ export class ShadowTestScene extends Scene {
       "engine/textures/simple_skybox/pz.png",
       "engine/textures/simple_skybox/nz.png",
     ]);
-    SharedEnvironmentMapData.set_skybox_color([1, 1, 1, 1]);
+    SharedEnvironmentMapData.set_skybox_color([0.1, 0.1, 0.11, 1]);
 
     // Position the camera high above the city
     const view_data = SharedViewBuffer.get_view_data(0);
@@ -2259,26 +2261,26 @@ export class ShadowTestScene extends Scene {
     const light_fragment_view = EntityManager.get_fragment(light_entity, LightFragment);
     light_fragment_view.type = LightType.DIRECTIONAL;
     light_fragment_view.color = [1, 1, 0.9];
-    light_fragment_view.intensity = 1.0;
-    light_fragment_view.position = [-30, 65, 50];
+    light_fragment_view.intensity = 0.1;
+    light_fragment_view.position = [30, 55, 40];
     light_fragment_view.active = true;
     light_fragment_view.shadow_clipmaps = MAX_CLIPMAP_LEVELS;
 
-    // Create a point light
-    // const point_light_entity = EntityManager.create_entity([LightFragment]);
-    // this.entities.push(point_light_entity);
+    // // Create a point light
+    const point_light_entity = EntityManager.create_entity([LightFragment]);
+    this.entities.push(point_light_entity);
 
-    // const point_light_fragment_view = EntityManager.get_fragment(point_light_entity, LightFragment);
-    // point_light_fragment_view.type = LightType.POINT;
-    // point_light_fragment_view.color = [1, 1, 0];
-    // point_light_fragment_view.intensity = 5.0;
-    // point_light_fragment_view.position = [0, 20, 0];
-    // point_light_fragment_view.radius = 20.0;
-    // point_light_fragment_view.active = true;
-    // point_light_fragment_view.shadow_casting = false;
+    const point_light_fragment_view = EntityManager.get_fragment(point_light_entity, LightFragment);
+    point_light_fragment_view.type = LightType.POINT;
+    point_light_fragment_view.color = [1, 1, 0];
+    point_light_fragment_view.intensity = 5.0;
+    point_light_fragment_view.position = [0, 20, 0];
+    point_light_fragment_view.radius = 20.0;
+    point_light_fragment_view.active = true;
+    point_light_fragment_view.shadow_casting = false;
 
-    // const num_point_lights = 12;
-    // EntityManager.set_entity_instance_count(point_light_entity, num_point_lights);
+    const num_point_lights = 12;
+    EntityManager.set_entity_instance_count(point_light_entity, num_point_lights);
 
     // Ground material
     const ground_material = StandardMaterial.create("shadow_ground_material");
@@ -2298,44 +2300,56 @@ export class ShadowTestScene extends Scene {
     const cube_mesh = Mesh.cube();
     const sphere_mesh = Mesh.from_gltf("engine/models/sphere/sphere.gltf");
 
+    const grid_size = 80; // 80 × 80 buildings
+    const building_spacing = 35.0; // distance between building centres (was 20.0)
+    const building_base_size = 6.0; // footprint of each building
+    const half_grid = (grid_size - 1) * building_spacing * 0.5;
+
     // Create an expansive ground plane
     const ground_plane_size = 3000.0;
-    const ground_entity = spawn_mesh_entity(
+    this.ground_entity = spawn_mesh_entity(
       [0.0, 0.0, 0.0],
       quat.fromEuler(quat.create(), 0.0, 0.0, 0.0),
       [ground_plane_size, 1.0, ground_plane_size],
       cube_mesh,
       ground_material_id
     );
-    this.entities.push(ground_entity);
+    this.entities.push(this.ground_entity);
 
+    // Compute corner positions using half_grid
+    const offset = half_grid * 0.9; // Slightly inset from absolute corners to avoid clipping buildings
 
-    // --- Swaying Ball ---
-    // Create a large sphere in front of the city
-    const ball_position = [...this.swaying_ball_base_pos];
-    const ball_scale = [50, 50, 50];
+    this.swaying_ball_base_positions = [
+      [offset, 350, offset],
+      [offset, 350, -offset],
+      [-offset, 350, offset],
+      [-offset, 350, -offset],
+    ];
+
+    // Create ball material
     const ball_material = StandardMaterial.create("swaying_ball_material");
     ball_material.set_albedo([0.9, 0.9, 0.2, 1]);
-    ball_material.set_emission(0.2);
+    ball_material.set_emission(0.3);
     ball_material.set_roughness(0.5);
 
-    this.swaying_ball_entity = spawn_mesh_entity(
-      ball_position,
-      [0, 0, 0, 1],
-      ball_scale,
-      sphere_mesh,
-      ball_material.material_id,
-      null,
-      [],
-      true,
-      EntityFlags.NO_AABB_UPDATE | EntityFlags.IGNORE_PARENT_SCALE
-    );
-    this.entities.push(this.swaying_ball_entity);
-
-    // Procedurally generate a dense grid of buildings
-    const grid_size = 80; // 80 × 80 buildings
-    const building_spacing = 35.0; // distance between building centres (was 20.0)
-    const building_base_size = 6.0; // footprint of each building
+    // Create spheres
+    for (const base_pos of this.swaying_ball_base_positions) {
+      const ball_position = [...base_pos];
+      const ball_scale = [40, 40, 40];
+      const entity = spawn_mesh_entity(
+        ball_position,
+        [0, 0, 0, 1],
+        ball_scale,
+        sphere_mesh,
+        ball_material.material_id,
+        null,
+        [],
+        true,
+        EntityFlags.NO_AABB_UPDATE | EntityFlags.IGNORE_PARENT_SCALE
+      );
+      this.swaying_balls.push(entity);
+      this.entities.push(entity);
+    }
 
     const building_entity = spawn_mesh_entity(
       [0.0, 0.0, 0.0, 1.0],
@@ -2346,8 +2360,6 @@ export class ShadowTestScene extends Scene {
     );
     EntityManager.set_entity_instance_count(building_entity, grid_size * grid_size);
     this.entities.push(building_entity);
-
-    const half_grid = (grid_size - 1) * building_spacing * 0.5;
 
     let instance_index = 0;
     for (let gx = 0; gx < grid_size; gx++) {
@@ -2386,8 +2398,7 @@ export class ShadowTestScene extends Scene {
 
     log(`[${this.name}] Spawned ${this.entities.length} entities.`);
 
-
-    // --- Neon Signs ---------------------------------------------------------
+    // // --- Neon Signs ---------------------------------------------------------
     // Create several vibrant emissive materials for different neon colours.
     const neon_colours = [
       { name: "neon_cyan", color: [0.0, 1.0, 1.0, 1.0] },
@@ -2512,66 +2523,39 @@ export class ShadowTestScene extends Scene {
     // Each light is attached to a random building, either on a façade or
     // on the rooftop, with some colour variation for extra visual flavour.
     // ------------------------------------------------------------------
-    // const point_light_colours = [
-    //   [1.0, 0.8, 0.6], // warm
-    //   [0.6, 0.8, 1.0], // cool
-    //   [1.0, 1.0, 0.8], // neutral
-    // ];
+    const point_light_colours = [
+      [1.0, 0.8, 0.6], // warm
+      [0.6, 0.8, 1.0], // cool
+      [1.0, 1.0, 0.8], // neutral
+    ];
 
-    // for (let i = 0; i < num_point_lights; i++) {
-    //   const p_view = EntityManager.get_fragment(point_light_entity, LightFragment, i);
+    // Create a uniform grid of point lights with better distribution
+    const light_grid_size = Math.ceil(Math.sqrt(num_point_lights));
+    const grid_spacing = 300.0;
+    const grid_offset = (light_grid_size - 1) * grid_spacing * 0.5;
+    
+    for (let i = 0; i < num_point_lights; i++) {
+      const p_view = EntityManager.get_fragment(point_light_entity, LightFragment, i);
 
-    //   // Pick a random building instance.
-    //   const b_index = Math.floor(Math.random() * instance_index);
-    //   const b_tf = EntityManager.get_fragment(building_entity, TransformFragment, b_index);
-    //   if (!b_tf) continue;
+      // Configure each light instance
+      p_view.type = LightType.POINT;
+      p_view.active = true;
+      p_view.shadow_casting = false;
 
-    //   const bp = b_tf.position; // building position (centre)
-    //   const bs = b_tf.scale; // building half-extents in each axis
-
-    //   // Decide whether this light goes on the rooftop or at street level.
-    //   const rooftop = Math.random() < 0.4; // 40 % roof, 60 % façade
-
-    //   let lx, ly, lz;
-
-    //   if (rooftop) {
-    //     // Place it slightly above the rooftop centre.
-    //     lx = bp[0];
-    //     ly = bp[1] + bs[1] + 4.0;
-    //     lz = bp[2];
-    //   } else {
-    //     // Attach to a random side of the building.
-    //     const face = Math.floor(Math.random() * 4); // 0 ±z, 1 ±x
-    //     const height = bp[1] + Math.random() * bs[1]; // random height along wall
-
-    //     switch (face) {
-    //       case 0: // +z front
-    //         lx = bp[0];
-    //         lz = bp[2] + bs[2] + 1.5;
-    //         break;
-    //       case 1: // -z back
-    //         lx = bp[0];
-    //         lz = bp[2] - bs[2] - 1.5;
-    //         break;
-    //       case 2: // -x left
-    //         lx = bp[0] - bs[0] - 1.5;
-    //         lz = bp[2];
-    //         break;
-    //       case 3: // +x right
-    //       default:
-    //         lx = bp[0] + bs[0] + 1.5;
-    //         lz = bp[2];
-    //         break;
-    //     }
-
-    //     ly = height;
-    //   }
-
-    //   p_view.position = [lx, ly, lz];
-    //   p_view.radius = 30.0 + Math.random() * 40.0; // 30–70 units reach
-    //   p_view.intensity = 3.0 + Math.random() * 2.0; // 3–5 brightness
-    //   p_view.color = point_light_colours[Math.floor(Math.random() * point_light_colours.length)];
-    // }
+      // Calculate grid position for uniform distribution
+      const grid_x = i % light_grid_size;
+      const grid_z = Math.floor(i / light_grid_size);
+      
+      // Position lights in a centered grid pattern
+      const x = grid_x * grid_spacing - grid_offset;
+      const z = grid_z * grid_spacing - grid_offset;
+      const y = 60.0 + Math.sin(i * 0.5) * 20.0; // Vary height slightly for visual interest
+      
+      p_view.position = [x, y, z];
+      p_view.radius = 100.0;
+      p_view.intensity = 4.0 + Math.sin(i * 0.3) * 1.0; // Vary intensity slightly
+      p_view.color = point_light_colours[i % point_light_colours.length];
+    }
     // ------------------------------------------------------------------------
   }
 
@@ -2586,20 +2570,21 @@ export class ShadowTestScene extends Scene {
   update(delta_time) {
     super.update(delta_time);
 
-    // Animate the swaying ball
-    if (this.swaying_ball_entity) {
-      // Sway parameters
-      const sway_amplitude = 120; // units left/right
-      const sway_frequency = 0.15; // Hz (cycles per second, so period ~6.7s)
-      const t = performance.now() * 0.001; // seconds
+    // Animate the swaying balls
+    for (let i = 0; i < this.swaying_balls.length; i++) {
+      const entity = this.swaying_balls[i];
+      const base_pos = this.swaying_ball_base_positions[i];
 
-      // Calculate new x position
-      const x = this.swaying_ball_base_pos[0] + Math.sin(t * Math.PI * 2 * sway_frequency) * sway_amplitude;
-      const y = this.swaying_ball_base_pos[1];
-      const z = this.swaying_ball_base_pos[2];
+      const sway_amplitude = 120;
+      const sway_frequency = 0.15;
+      const t = performance.now() * 0.001;
+      const phase = i * Math.PI * 0.5; // Offset phase for variety
 
-      // Update transform
-      const tf = EntityManager.get_fragment(this.swaying_ball_entity, TransformFragment);
+      const x = base_pos[0] + Math.sin(t * Math.PI * 2 * sway_frequency + phase) * sway_amplitude;
+      const y = base_pos[1];
+      const z = base_pos[2];
+
+      const tf = EntityManager.get_fragment(entity, TransformFragment);
       if (tf) {
         tf.position = [x, y, z];
       }

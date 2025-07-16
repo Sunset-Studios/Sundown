@@ -224,7 +224,7 @@ fn vsm_calculate_sample_clip_value_from_world_pos(
         clipmap0_projection_view,
         settings
     );
-    return result - vsm_projection_translation_clip(clipmap0_projection_view, clip_map_index, settings);
+    return result - vsm_snapped_translation_for_lod(clipmap0_projection_view, clip_map_index, settings);
 }
 
 fn vsm_calculate_clipmap_index_from_world_pos(
@@ -368,6 +368,16 @@ fn vsm_get_virtual_tile_word_and_mask(tile_coords: vec2<u32>, clipmap_index: u32
   let global_word_index = shadow_index * words_per_light + word_index;
   
   return vec2<u32>(global_word_index, mask);
+}
+
+// Example usage inside vsm_snapped_translation_for_lod (or elsewhere):
+fn vsm_snapped_translation_for_lod(
+    clipmap0_vp : mat4x4<f32>,
+    lod          : u32,
+    settings     : ASVSMSettings
+) -> vec4<f32> {
+    // TODO: This might be a spot to try and properly snap the translation to the nearest page table size
+    return vsm_projection_translation_clip(clipmap0_vp, lod, settings);
 }
 
 #endif

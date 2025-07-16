@@ -151,17 +151,8 @@ fn cs(@builtin(global_invocation_id) global_id: vec3<u32>) {
 
     let prev_transform = entity_transforms[entity_resolved].transform;
 
-    var new_flag = entity_flags[entity_resolved] | (entity_flags[parent_resolved] & EF_DIRTY);
-    new_flag &= ~EF_MOVED;
-
-    for (var i = 0; i < 4; i = i + 1) {
-        for (var j = 0; j < 4; j = j + 1) {
-            if (!approx(prev_transform[i][j], transform[i][j])) {
-                new_flag |= EF_MOVED;
-                break;
-            }
-        }
-    }
+    let parent_dirty = select(0u, entity_flags[parent_resolved] & EF_DIRTY, parent_resolved < MAX_UINT);
+    let new_flag = entity_flags[entity_resolved] | parent_dirty;
 
     entity_transforms[entity_resolved].transform = transform;
 

@@ -10,5 +10,5 @@ fn cs(@builtin(global_invocation_id) global_id: vec3<u32>) {
     return;
   }
 
-  atomicAnd(&flags_meta[entity_index], ~EF_DIRTY);
+  atomicAnd(&flags_meta[entity_index], (~EF_DIRTY & ~EF_MOVED));
 } 

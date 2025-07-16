@@ -31,8 +31,6 @@ fn vsm_shadow_depth(
   // ------------------------------------------------------------------
   // Normal-offset bias (see ‘normal offset shadows’, Holbert GDC 2011)
   // We move the receiver along its own normal by <normal_offset> texels.
-  // The resulting depth change along the light direction is:
-  //   Δz = (n · L) * normal_offset * texel_world
   // ------------------------------------------------------------------
 
   // texel size in world units for current clip map level

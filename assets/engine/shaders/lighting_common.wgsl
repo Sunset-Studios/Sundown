@@ -19,6 +19,7 @@ struct Light {
     activated: f32,
     view_index: f32,
     shadow_index: f32,
+    shadow_clipmaps: f32,
 };
 
 struct GIParams {

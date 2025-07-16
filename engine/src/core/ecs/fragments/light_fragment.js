@@ -180,6 +180,32 @@ export class LightFragment extends Fragment {
         GPUBufferUsage.COPY_SRC,
       cpu_readback: false,
     },
+    padding1: {
+      ctor: Float32Array,
+      elements: 1,
+      default: 0,
+      gpu_buffer: false,
+      buffer_name: "padding1",
+      is_container: false,
+      usage:
+        GPUBufferUsage.STORAGE |
+        GPUBufferUsage.COPY_DST |
+        GPUBufferUsage.COPY_SRC,
+      cpu_readback: false,
+    },
+    padding2: {
+      ctor: Float32Array,
+      elements: 1,
+      default: 0,
+      gpu_buffer: false,
+      buffer_name: "padding2",
+      is_container: false,
+      usage:
+        GPUBufferUsage.STORAGE |
+        GPUBufferUsage.COPY_DST |
+        GPUBufferUsage.COPY_SRC,
+      cpu_readback: false,
+    },
   };
   static buffer_data = new Map(); // key → { buffer: FragmentGpuBuffer, stride: number }
 
@@ -188,7 +214,7 @@ export class LightFragment extends Fragment {
   static gpu_buffers = {
     light_fragment: {
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-      stride: 84,
+      stride: 96,
       buffer_name: "light_fragment",
       cpu_readback: false,
       fields: [
@@ -204,6 +230,9 @@ export class LightFragment extends Fragment {
         "active",
         "view_index",
         "shadow_index",
+        "shadow_clipmaps",
+        "padding1",
+        "padding2",
       ],
     },
   };

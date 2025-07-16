@@ -52,6 +52,18 @@ fn fs(input: VertexOutput) -> @location(0) vec4<f32> {
 
   // Hash colour encodes tile id & lod (mix into value)
   let base_color    = hash_u32(vtile_info.tile_id);
+
+  // let virtual_tiles_per_row = u32(vsm_settings.virtual_tiles_per_row);
+  // let tile_coords_for_color = vtile_info.tile_coords;
+  // // Map tile_id to a color that increases monotonically with tile_id, wrapping in a visually distinct way
+  // let col = tile_coords_for_color.x % virtual_tiles_per_row;
+  // let row = tile_coords_for_color.y % virtual_tiles_per_row;
+  // let base_color = vec3<f32>(
+  //   f32(col) / f32(virtual_tiles_per_row), 
+  //   f32(row) / f32(virtual_tiles_per_row), 
+  //   0.0
+  // );
+
   let lod_factor    = f32(vtile_info.clipmap_index) / f32(vsm_settings.max_lods);
   var color         = mix(base_color, vec3<f32>(lod_factor, 0.0, 1.0 - lod_factor), 0.35);
 

@@ -119,7 +119,7 @@ const identity_matrix = mat4x4f(
     0.0, 0.0, 0.0, 1.0
 );
 
-const epsilon = 1e-6;
+const epsilon = 1e-4;
 const world_up = vec3f(0.0, 1.0, 0.0);
 
 const one_over_float_max = 1.0 / 4294967295.0;
@@ -199,7 +199,7 @@ fn dither_mask(uv: vec2f, resolution: vec2f) -> f32 {
 }
 
 fn approx(a: f32, b: f32) -> bool {
-    return abs(a - b) <= select(abs(b), abs(a), abs(a) < abs(b)) * epsilon; 
+    return abs(a - b) <= epsilon; 
 }
 
 // get the max value between three values

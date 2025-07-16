@@ -61,6 +61,16 @@ const LightFragment = {
       stride: 1,
       default: 1,
     },
+    padding1: {
+      type: DataType.FLOAT32,
+      stride: 1,
+      default: 0,
+    },
+    padding2: {
+      type: DataType.FLOAT32,
+      stride: 1,
+      default: 0,
+    },
   },
   gpu_buffers: {
     light_fragment: {
@@ -77,6 +87,9 @@ const LightFragment = {
         "active",
         "view_index",
         "shadow_index",
+        "shadow_clipmaps",
+        "padding1",
+        "padding2",
       ],
       usage: BufferType.STORAGE,
     },
@@ -104,18 +117,47 @@ const StaticMeshFragment = {
 
 const TransformFragment = {
   name: "Transform",
+  imports: {
+    EntityFlags: "../../minimal.js",
+  },
   fields: {
     position: {
       type: DataType.FLOAT32,
       stride: 4,
       gpu: true,
       usage: BufferType.STORAGE_SRC,
+      setter: `
+      if (
+        typed_array
+          .subarray(element_offset, element_offset + 4)
+          .every((v, i) => v === value[i])
+      ) {
+        return;
+      }
+
+      this.chunk.flags_meta[this.slot + this.instance] |= EntityFlags.MOVED;
+
+      typed_array.set(value, element_offset);
+      `
     },
     rotation: {
       type: DataType.FLOAT32,
       stride: 4,
       gpu: true,
       usage: BufferType.STORAGE_SRC,
+      setter: `
+      if (
+        typed_array
+          .subarray(element_offset, element_offset + 4)
+          .every((v, i) => v === value[i])
+      ) {
+        return;
+      }
+
+      this.chunk.flags_meta[this.slot + this.instance] |= EntityFlags.MOVED;
+
+      typed_array.set(value, element_offset);
+      `
     },
     scale: {
       type: DataType.FLOAT32,
@@ -123,6 +165,19 @@ const TransformFragment = {
       gpu: true,
       default: 1,
       usage: BufferType.STORAGE_SRC,
+      setter: `
+      if (
+        typed_array
+          .subarray(element_offset, element_offset + 4)
+          .every((v, i) => v === value[i])
+      ) {
+        return;
+      }
+
+      this.chunk.flags_meta[this.slot + this.instance] |= EntityFlags.MOVED;
+
+      typed_array.set(value, element_offset);
+      `
     },
     aabb_node_index: {
       type: DataType.UINT32,

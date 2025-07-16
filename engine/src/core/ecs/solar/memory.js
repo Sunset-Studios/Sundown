@@ -736,9 +736,9 @@ export class FragmentGpuBuffer {
       }
       // clear our full-flush set
       FragmentGpuBuffer.need_full_flush = false;
-    }
 
-    Renderer.get().mark_bind_groups_dirty(true);
+      Renderer.get().mark_bind_groups_dirty(true);
+    }
   }
 
   /**
