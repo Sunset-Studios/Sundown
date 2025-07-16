@@ -20,6 +20,8 @@ struct Light {
     view_index: f32,
     shadow_index: f32,
     shadow_clipmaps: f32,
+    is_primary_sun: f32,
+    padding: f32,
 };
 
 struct GIParams {

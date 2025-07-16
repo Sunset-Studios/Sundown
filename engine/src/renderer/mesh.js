@@ -497,6 +497,10 @@ export class Mesh {
     return mesh;
   }
 
+  static sphere() {
+    return this.from_gltf("engine/models/sphere/sphere.gltf");
+  }
+
   static from_gltf(gltf) {
     let mesh = ResourceCache.get().fetch(CacheTypes.MESH, Name.from(gltf));
     if (mesh) {

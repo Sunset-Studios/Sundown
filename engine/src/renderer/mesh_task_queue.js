@@ -681,4 +681,13 @@ export class MeshTaskQueue {
     );
     render_pass.pass.drawIndexed(mesh.index_count, instance_count, 0, mesh.vertex_buffer_offset);
   }
+
+  static draw_sphere(render_pass, instance_count = 1) {
+    const mesh = Mesh.sphere();
+    render_pass.pass.setIndexBuffer(
+      mesh.index_buffer.buffer,
+      mesh.index_buffer.config.element_type
+    );
+    render_pass.pass.drawIndexed(mesh.index_count, instance_count, 0, mesh.vertex_buffer_offset);
+  }
 }

@@ -21,7 +21,7 @@ import { LightType, EntityFlags } from "../engine/src/core/minimal.js";
 import { StandardMaterial } from "../engine/src/renderer/material.js";
 import { Texture } from "../engine/src/renderer/texture.js";
 import { Mesh } from "../engine/src/renderer/mesh.js";
-import { SharedEnvironmentMapData, SharedViewBuffer } from "../engine/src/core/shared_data.js";
+import { SharedEnvironmentData, SharedViewBuffer } from "../engine/src/core/shared_data.js";
 import { MAX_CLIPMAP_LEVELS } from "../engine/src/renderer/shadows/shadow_utils.js";
 import { spawn_mesh_entity, delete_entity } from "../engine/src/core/ecs/entity_utils.js";
 import { FontCache } from "../engine/src/ui/text/font_cache.js";
@@ -64,7 +64,7 @@ export class RenderingScene extends Scene {
     view_data.view_rotation = [-0.00061309, 0.9948077, -0.10095515, -0.00604141];
 
     // Set the skybox for this scene.
-    SharedEnvironmentMapData.set_skybox("default_scene_skybox", [
+    SharedEnvironmentData.set_skybox("default_scene_skybox", [
       "engine/textures/gradientbox/px.png",
       "engine/textures/gradientbox/nx.png",
       "engine/textures/gradientbox/ny.png",
@@ -74,7 +74,7 @@ export class RenderingScene extends Scene {
     ]);
 
     // Set the skybox color to white.
-    SharedEnvironmentMapData.set_skybox_color([1, 1, 1, 1]);
+    SharedEnvironmentData.set_skybox_color([1, 1, 1, 1]);
 
     // Create a light and add it to the scene
     const light_entity = EntityManager.create_entity([LightFragment]);
@@ -223,7 +223,7 @@ export class MLScene extends Scene {
     freeform_arcball_control_processor.set_scene(this);
 
     // Set the skybox for this scene.
-    SharedEnvironmentMapData.set_skybox("default_scene_skybox", [
+    SharedEnvironmentData.set_skybox("default_scene_skybox", [
       "engine/textures/gradientbox/px.png",
       "engine/textures/gradientbox/nx.png",
       "engine/textures/gradientbox/ny.png",
@@ -233,7 +233,7 @@ export class MLScene extends Scene {
     ]);
 
     // Set the skybox color to white.
-    SharedEnvironmentMapData.set_skybox_color([1, 1, 1, 1]);
+    SharedEnvironmentData.set_skybox_color([1, 1, 1, 1]);
 
     // Create a light and add it to the scene
     const light_entity = EntityManager.create_entity([LightFragment]);
@@ -463,7 +463,7 @@ export class TexturesScene extends Scene {
     super.init(parent_context);
 
     // Set the skybox for this scene.
-    SharedEnvironmentMapData.set_skybox("default_scene_skybox", [
+    SharedEnvironmentData.set_skybox("default_scene_skybox", [
       "engine/textures/gradientbox/px.png",
       "engine/textures/gradientbox/nx.png",
       "engine/textures/gradientbox/ny.png",
@@ -473,7 +473,7 @@ export class TexturesScene extends Scene {
     ]);
 
     // Set the skybox color to a subtle blue
-    SharedEnvironmentMapData.set_skybox_color([0.7, 0.8, 1.0, 1]);
+    SharedEnvironmentData.set_skybox_color([0.7, 0.8, 1.0, 1]);
 
     // Add the freeform arcball control processor to the scene
     const freeform_arcball_control_processor = this.add_layer(FreeformArcballControlProcessor);
@@ -655,7 +655,7 @@ export class TexturesScene extends Scene {
     }
 
     // Create a sphere mesh
-    this.sphere_mesh = Mesh.from_gltf("engine/models/sphere/sphere.gltf");
+    this.sphere_mesh = Mesh.sphere();
 
     // Create a cube mesh
     this.cube_mesh = Mesh.cube();
@@ -780,7 +780,7 @@ export class AABBScene extends Scene {
     super.init(parent_context);
 
     // Set the skybox for this scene.
-    SharedEnvironmentMapData.set_skybox("default_scene_skybox", [
+    SharedEnvironmentData.set_skybox("default_scene_skybox", [
       "engine/textures/gradientbox/px.png",
       "engine/textures/gradientbox/nx.png",
       "engine/textures/gradientbox/ny.png",
@@ -790,7 +790,7 @@ export class AABBScene extends Scene {
     ]);
 
     // Set the skybox color to a subtle blue
-    SharedEnvironmentMapData.set_skybox_color([0.7, 0.8, 1.0, 1]);
+    SharedEnvironmentData.set_skybox_color([0.7, 0.8, 1.0, 1]);
 
     // Add the freeform arcball control processor to the scene
     const freeform_arcball_control_processor = this.add_layer(FreeformArcballControlProcessor);
@@ -851,7 +851,7 @@ export class AABBScene extends Scene {
     selected_entity_material.set_emission(1.0);
 
     // Create a sphere mesh
-    this.sphere_mesh = Mesh.from_gltf("engine/models/sphere/sphere.gltf");
+    this.sphere_mesh = Mesh.sphere();
 
     // Create a cube mesh
     this.cube_mesh = Mesh.cube();
@@ -1267,7 +1267,7 @@ export class SolarECSTestScene extends Scene {
     super.init(parent_context);
 
     // Set the skybox for this scene.
-    SharedEnvironmentMapData.set_skybox("default_scene_skybox", [
+    SharedEnvironmentData.set_skybox("default_scene_skybox", [
       "engine/textures/gradientbox/px.png",
       "engine/textures/gradientbox/nx.png",
       "engine/textures/gradientbox/ny.png",
@@ -1277,7 +1277,7 @@ export class SolarECSTestScene extends Scene {
     ]);
 
     // Set the skybox color to a subtle green
-    SharedEnvironmentMapData.set_skybox_color([0.7, 1.0, 0.8, 1]);
+    SharedEnvironmentData.set_skybox_color([0.7, 1.0, 0.8, 1]);
 
     // Add the freeform arcball control processor to the scene
     const freeform_arcball_control_processor = this.add_layer(FreeformArcballControlProcessor);
@@ -1428,7 +1428,7 @@ export class VoxelTerrainScene extends Scene {
     const freeform_arcball = this.add_layer(FreeformArcballControlProcessor);
     freeform_arcball.set_scene(this);
 
-    SharedEnvironmentMapData.set_skybox("default_scene_skybox", [
+    SharedEnvironmentData.set_skybox("default_scene_skybox", [
       "engine/textures/gradientbox/px.png",
       "engine/textures/gradientbox/nx.png",
       "engine/textures/gradientbox/ny.png",
@@ -1436,7 +1436,7 @@ export class VoxelTerrainScene extends Scene {
       "engine/textures/gradientbox/pz.png",
       "engine/textures/gradientbox/nz.png",
     ]);
-    SharedEnvironmentMapData.set_skybox_color([0.5, 0.7, 0.5, 1]);
+    SharedEnvironmentData.set_skybox_color([0.5, 0.7, 0.5, 1]);
 
     const view_data = SharedViewBuffer.get_view_data(0);
     view_data.view_position = [20.7373, 54.0735, 68.58896];
@@ -1700,7 +1700,7 @@ export class ObjectPaintingScene extends Scene {
     freeform_arcball_control_processor.set_scene(this);
 
     // Skybox + view
-    SharedEnvironmentMapData.set_skybox("default_scene_skybox", [
+    SharedEnvironmentData.set_skybox("default_scene_skybox", [
       "engine/textures/simple_skybox/px.png",
       "engine/textures/simple_skybox/nx.png",
       "engine/textures/simple_skybox/ny.png",
@@ -1708,7 +1708,7 @@ export class ObjectPaintingScene extends Scene {
       "engine/textures/simple_skybox/pz.png",
       "engine/textures/simple_skybox/nz.png",
     ]);
-    SharedEnvironmentMapData.set_skybox_color([1, 1, 1, 1]);
+    SharedEnvironmentData.set_skybox_color([1, 1, 1, 1]);
 
     const view_data = SharedViewBuffer.get_view_data(0);
     view_data.view_position = [0, 0, 10];
@@ -1728,7 +1728,7 @@ export class ObjectPaintingScene extends Scene {
     light_fragment_view.shadow_clipmaps = MAX_CLIPMAP_LEVELS;
 
     // Load sphere mesh & create transparent/emissive brush material
-    this.sphere_mesh = Mesh.from_gltf("engine/models/sphere/sphere.gltf");
+    this.sphere_mesh = Mesh.sphere();
 
     const object_material1 = StandardMaterial.create("ObjectPaintingObjectMaterial");
     this.object_material1_id = object_material1.material_id;
@@ -1866,7 +1866,7 @@ export class GITestScene extends Scene {
     freeform_arcball_control_processor.set_scene(this);
 
     // white skybox
-    SharedEnvironmentMapData.set_skybox("default_scene_skybox", [
+    SharedEnvironmentData.set_skybox("default_scene_skybox", [
       "engine/textures/gradientbox/px.png",
       "engine/textures/gradientbox/nx.png",
       "engine/textures/gradientbox/ny.png",
@@ -1874,7 +1874,7 @@ export class GITestScene extends Scene {
       "engine/textures/gradientbox/pz.png",
       "engine/textures/gradientbox/nz.png",
     ]);
-    SharedEnvironmentMapData.set_skybox_color([1, 1, 1, 1]);
+    SharedEnvironmentData.set_skybox_color([1, 1, 1, 1]);
 
     // camera
     const view_data = SharedViewBuffer.get_view_data(0);
@@ -1917,7 +1917,7 @@ export class GITestScene extends Scene {
 
     // meshes
     const cube_mesh = Mesh.cube();
-    const sphere_mesh = Mesh.from_gltf("engine/models/sphere/sphere.gltf");
+    const sphere_mesh = Mesh.sphere();
 
     // Cornell-box walls (tight box)
     {
@@ -2238,21 +2238,22 @@ export class ShadowTestScene extends Scene {
     freeform_arcball_control_processor.set_scene(this);
 
     // Configure skybox
-    SharedEnvironmentMapData.set_skybox("default_scene_skybox", [
-      "engine/textures/simple_skybox/px.png",
-      "engine/textures/simple_skybox/nx.png",
-      "engine/textures/simple_skybox/ny.png",
-      "engine/textures/simple_skybox/py.png",
-      "engine/textures/simple_skybox/pz.png",
-      "engine/textures/simple_skybox/nz.png",
-    ]);
-    SharedEnvironmentMapData.set_skybox_color([0.1, 0.1, 0.11, 1]);
+    // SharedEnvironmentData.set_skybox("default_scene_skybox", [
+    //   "engine/textures/simple_skybox/px.png",
+    //   "engine/textures/simple_skybox/nx.png",
+    //   "engine/textures/simple_skybox/ny.png",
+    //   "engine/textures/simple_skybox/py.png",
+    //   "engine/textures/simple_skybox/pz.png",
+    //   "engine/textures/simple_skybox/nz.png",
+    // ]);
+    // SharedEnvironmentData.set_skybox_color([0.1, 0.1, 0.11, 1]);
+    SharedEnvironmentData.set_skydome("default_scene_skydome");
 
     // Position the camera high above the city
     const view_data = SharedViewBuffer.get_view_data(0);
     view_data.view_position = [205.515, 40.4267, 273.94];
     view_data.view_rotation = [0.04745, 0.57238, 0.03344, -0.81212];
-    view_data.far = 10000.0;
+    view_data.far = 100000.0;
 
     // Create a sun-like directional light
     const light_entity = EntityManager.create_entity([LightFragment]);
@@ -2264,6 +2265,7 @@ export class ShadowTestScene extends Scene {
     light_fragment_view.intensity = 0.1;
     light_fragment_view.position = [30, 55, 40];
     light_fragment_view.active = true;
+    light_fragment_view.is_primary_sun = 1;
     light_fragment_view.shadow_clipmaps = MAX_CLIPMAP_LEVELS;
 
     // // Create a point light
@@ -2298,7 +2300,7 @@ export class ShadowTestScene extends Scene {
 
     // Shared cube mesh
     const cube_mesh = Mesh.cube();
-    const sphere_mesh = Mesh.from_gltf("engine/models/sphere/sphere.gltf");
+    const sphere_mesh = Mesh.sphere();
 
     const grid_size = 80; // 80 × 80 buildings
     const building_spacing = 35.0; // distance between building centres (was 20.0)

@@ -763,13 +763,28 @@ export class SharedViewBuffer {
   }
 }
 
-export class SharedEnvironmentMapData {
+export class SharedEnvironmentData {
   static skybox = null;
+
   static skybox_data = null;
-  static skybox_data_buffer = new Float32Array([1, 1, 1, 1]);
+  static skybox_data_buffer = new Float32Array([
+    1, 1, 1, 1, // color
+  ]);
+
+  static skydome_data = null;
+  static skydome_data_buffer = new Float32Array([
+    2.99, // sunlight_intensity
+    0.9997966769, // sunlight_angular_radius
+    0.9, // atmospheric_rayleigh
+    2.542, // atmospheric_turbidity
+    0.002, // mie_coefficient
+    0.8, // mie_directional_g
+    0, // view index 
+    0, // padding2
+  ]);
 
   static set_skybox(name, texture_paths) {
-    const skybox = Texture.load(texture_paths, {
+    this.skybox = Texture.load(texture_paths, {
       name: name,
       format: "rgba8unorm",
       dimension: "cube",
@@ -780,22 +795,39 @@ export class SharedEnvironmentMapData {
       force: true,
     });
 
-    const skybox_data = Buffer.create({
+    this.skybox_data = Buffer.create({
       name: name + "_data",
       raw_data: this.skybox_data_buffer,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
       force: true,
     });
 
-    this.skybox = skybox;
-    this.skybox_data = skybox_data;
+    this.skydome_data = null;
 
-    return skybox;
+    return this.skybox;
+  }
+
+  static set_skydome(name) {
+    // Null skybox means skydome is enabled
+    this.skydome_data = Buffer.create({
+      name: name + "_skydome_data",
+      raw_data: this.skydome_data_buffer,
+      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+      force: true,
+    });
+    
+    this.skybox = null;
+    this.skybox_data = null;
   }
 
   static set_skybox_color(color) {
     this.skybox_data_buffer.set(color);
     this.skybox_data.write(this.skybox_data_buffer);
+  }
+
+  static set_skydome_view(view_index) {
+    this.skydome_data_buffer[6] = view_index;
+    this.skydome_data.write(this.skydome_data_buffer);
   }
 
   static get_skybox() {
@@ -804,6 +836,14 @@ export class SharedEnvironmentMapData {
 
   static get_skybox_data() {
     return this.skybox_data;
+  }
+
+  static get_skydome_view() {
+    return this.skydome_data_buffer[6];
+  }
+
+  static get_skydome_data() {
+    return this.skydome_data;
   }
 }
 

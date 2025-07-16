@@ -180,12 +180,12 @@ export class LightFragment extends Fragment {
         GPUBufferUsage.COPY_SRC,
       cpu_readback: false,
     },
-    padding1: {
+    is_primary_sun: {
       ctor: Float32Array,
       elements: 1,
       default: 0,
       gpu_buffer: false,
-      buffer_name: "padding1",
+      buffer_name: "is_primary_sun",
       is_container: false,
       usage:
         GPUBufferUsage.STORAGE |
@@ -231,7 +231,7 @@ export class LightFragment extends Fragment {
         "view_index",
         "shadow_index",
         "shadow_clipmaps",
-        "padding1",
+        "is_primary_sun",
         "padding2",
       ],
     },

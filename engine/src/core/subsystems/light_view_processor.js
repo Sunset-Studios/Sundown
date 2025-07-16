@@ -3,7 +3,7 @@ import { DEFAULT_CHUNK_CAPACITY } from "../ecs/solar/types.js";
 import { SimulationLayer } from "../simulation_layer.js";
 import { EntityManager } from "../ecs/entity.js";
 import { LightFragment } from "../ecs/fragments/light_fragment.js";
-import { SharedViewBuffer, SharedFrameInfoBuffer } from "../shared_data.js";
+import { SharedViewBuffer, SharedFrameInfoBuffer, SharedEnvironmentData } from "../shared_data.js";
 import {
   compute_directional_light_rotation,
   compute_directional_light_view_projection,
@@ -97,6 +97,11 @@ export class LightViewProcessor extends SimulationLayer {
 
           view.view_position = light_position;
           view.view_rotation = rotation;
+
+        }
+
+        if (lights.is_primary_sun[slot] > 0) {
+          SharedEnvironmentData.set_skydome_view(view.get_index());
         }
 
         lights.view_index[slot] = view.get_index();
@@ -151,7 +156,7 @@ export class LightViewProcessor extends SimulationLayer {
           light_view.view_position = light_position;
         }
       }
-
+      
       // Shadow index management
       if (lights.shadow_index[slot] < 0 && lights.shadow_casting[slot] > 0) {
         lights.shadow_index[slot] = ShadowAllocator.allocate();
@@ -159,6 +164,12 @@ export class LightViewProcessor extends SimulationLayer {
       } else if (lights.shadow_index[slot] >= 0 && lights.shadow_casting[slot] === 0) {
         ShadowAllocator.free(lights.shadow_index[slot]);
         lights.shadow_index[slot] = -1;
+        chunk.mark_dirty();
+      }
+      
+      let light_view_index = lights.view_index[slot];
+      if (lights.is_primary_sun[slot] > 0 && light_view_index !== SharedEnvironmentData.get_skydome_view()) {
+        SharedEnvironmentData.set_skydome_view(light_view_index);
         chunk.mark_dirty();
       }
 

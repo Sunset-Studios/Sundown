@@ -3,7 +3,7 @@ import { global_dispatcher } from "../../core/dispatcher.js";
 import { EntityManager } from "../../core/ecs/entity.js";
 import { FragmentGpuBuffer } from "../../core/ecs/solar/memory.js";
 import {
-  SharedEnvironmentMapData,
+  SharedEnvironmentData,
   SharedViewBuffer,
   SharedFrameInfoBuffer,
 } from "../../core/shared_data.js";
@@ -155,6 +155,20 @@ const skybox_shader_setup = {
     },
     fragment: {
       path: "skybox.wgsl",
+    },
+  },
+  rasterizer_state: {
+    cull_mode: "none",
+  },
+  depth_write_enabled: false,
+};
+const skydome_shader_setup = {
+  pipeline_shaders: {
+    vertex: {
+      path: "analytic_sky.wgsl",
+    },
+    fragment: {
+      path: "analytic_sky.wgsl",
     },
   },
   rasterizer_state: {
@@ -396,6 +410,7 @@ const probe_cubemap_image_config = {
 const swapchain_name = "swapchain";
 const clear_g_buffer_pass_name = "clear_g_buffer";
 const skybox_pass_name = "skybox_pass";
+const skydome_pass_name = "skydome_pass";
 const depth_prepass_name = "depth_prepass";
 const transparency_composite_pass_name = "transparency_composite";
 const reset_g_buffer_targets_pass_name = "reset_g_buffer_targets";
@@ -711,9 +726,10 @@ export class DeferredShadingStrategy {
         skybox_output_image_config.force = this.force_recreate;
         skybox_image = render_graph.create_image(skybox_output_image_config);
 
-        const skybox = SharedEnvironmentMapData.get_skybox();
-        const skybox_data = SharedEnvironmentMapData.get_skybox_data();
-
+        const skybox = SharedEnvironmentData.get_skybox();
+        const skybox_data = SharedEnvironmentData.get_skybox_data();
+        const skydome_data = SharedEnvironmentData.get_skydome_data();
+        
         if (skybox) {
           const skybox_data_buffer = render_graph.register_buffer(skybox_data.config.name);
           const skybox_texture = render_graph.register_image(skybox.config.name);
@@ -729,6 +745,22 @@ export class DeferredShadingStrategy {
             (graph, frame_data, encoder) => {
               const pass = graph.get_physical_pass(frame_data.current_pass);
               MeshTaskQueue.draw_cube(pass);
+            }
+          );
+        } else if (skydome_data) {
+          const skydome_data_buffer = render_graph.register_buffer(skydome_data.config.name);
+
+          render_graph.add_pass(
+            skydome_pass_name,
+            RenderPassFlags.Graphics,
+            {
+              inputs: [skydome_data_buffer],
+              outputs: [skybox_image],
+              shader_setup: skydome_shader_setup,
+            },
+            (graph, frame_data, encoder) => {
+              const pass = graph.get_physical_pass(frame_data.current_pass);
+              MeshTaskQueue.draw_sphere(pass);
             }
           );
         }

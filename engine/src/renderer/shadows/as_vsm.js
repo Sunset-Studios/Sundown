@@ -367,6 +367,7 @@ export class AdaptiveSparseVirtualShadowMaps {
     const total_pixels = this.atlas_size * this.atlas_size * MAX_NUM_TEXTURE_POOLS;
     shadow_atlas_buf_config.size = total_pixels * Uint32Array.BYTES_PER_ELEMENT;
     shadow_atlas_buf_config.force = force_recreate;
+    shadow_atlas_buf_config.raw_data = null;
     if (force_recreate) {
       const shadow_atlas_raw = new Uint32Array(total_pixels);
       // Doing atomic min in shader so we need to fill with max uint
@@ -376,6 +377,7 @@ export class AdaptiveSparseVirtualShadowMaps {
     this.shadow_atlas_buf = render_graph.create_buffer(shadow_atlas_buf_config);
 
     // Create LRU ring buffer
+    lru_buf_config.raw_data = null;
     if (force_recreate) {
       // Slot 0 is used as the head pointer for the atomic ring-buffer.
       const lru_raw = new Uint32Array(this.total_physical_tiles + 1);
@@ -387,8 +389,6 @@ export class AdaptiveSparseVirtualShadowMaps {
     }
     lru_buf_config.force = force_recreate;
     this.lru_buf = render_graph.create_buffer(lru_buf_config);
-    // Can discard lru_raw now that buffer is created
-    lru_buf_config.raw_data = null;
 
     const light_uniforms = this._setup_light_draw_uniforms(
       render_graph,

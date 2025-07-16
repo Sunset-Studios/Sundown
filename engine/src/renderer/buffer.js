@@ -62,6 +62,11 @@ export class Buffer {
         true /*persistent*/
       );
     }
+
+    let keep_on_cpu = !!this.config.keep_cpu_data || !!this.config.own_readback;
+    if (!keep_on_cpu && this.config.raw_data) {
+      this.config.raw_data = null;
+    }
   }
 
   destroy() {

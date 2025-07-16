@@ -61,7 +61,7 @@ const LightFragment = {
       stride: 1,
       default: 1,
     },
-    padding1: {
+    is_primary_sun: {
       type: DataType.FLOAT32,
       stride: 1,
       default: 0,
@@ -88,7 +88,7 @@ const LightFragment = {
         "view_index",
         "shadow_index",
         "shadow_clipmaps",
-        "padding1",
+        "is_primary_sun",
         "padding2",
       ],
       usage: BufferType.STORAGE,
