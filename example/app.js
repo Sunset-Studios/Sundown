@@ -64,17 +64,7 @@ export class RenderingScene extends Scene {
     view_data.view_rotation = [-0.00061309, 0.9948077, -0.10095515, -0.00604141];
 
     // Set the skybox for this scene.
-    SharedEnvironmentData.set_skybox("default_scene_skybox", [
-      "engine/textures/gradientbox/px.png",
-      "engine/textures/gradientbox/nx.png",
-      "engine/textures/gradientbox/ny.png",
-      "engine/textures/gradientbox/py.png",
-      "engine/textures/gradientbox/pz.png",
-      "engine/textures/gradientbox/nz.png",
-    ]);
-
-    // Set the skybox color to white.
-    SharedEnvironmentData.set_skybox_color([1, 1, 1, 1]);
+    SharedEnvironmentData.set_skydome("default_scene_skydome");
 
     // Create a light and add it to the scene
     const light_entity = EntityManager.create_entity([LightFragment]);
@@ -85,8 +75,9 @@ export class RenderingScene extends Scene {
     light_fragment_view.type = LightType.DIRECTIONAL;
     light_fragment_view.color = [1, 1, 1, 1];
     light_fragment_view.intensity = 3;
-    light_fragment_view.position = [50, 0, 50, 1];
+    light_fragment_view.position = [50, 15, 50, 1];
     light_fragment_view.active = true;
+    light_fragment_view.is_primary_sun = 1;
     light_fragment_view.shadow_casting = 0;
 
     // Create a sphere mesh and add it to the scene
@@ -462,18 +453,8 @@ export class TexturesScene extends Scene {
   init(parent_context) {
     super.init(parent_context);
 
-    // Set the skybox for this scene.
-    SharedEnvironmentData.set_skybox("default_scene_skybox", [
-      "engine/textures/gradientbox/px.png",
-      "engine/textures/gradientbox/nx.png",
-      "engine/textures/gradientbox/ny.png",
-      "engine/textures/gradientbox/py.png",
-      "engine/textures/gradientbox/pz.png",
-      "engine/textures/gradientbox/nz.png",
-    ]);
-
-    // Set the skybox color to a subtle blue
-    SharedEnvironmentData.set_skybox_color([0.7, 0.8, 1.0, 1]);
+    // Set the skydome for this scene.
+    SharedEnvironmentData.set_skydome("default_scene_skydome");
 
     // Add the freeform arcball control processor to the scene
     const freeform_arcball_control_processor = this.add_layer(FreeformArcballControlProcessor);
@@ -496,6 +477,7 @@ export class TexturesScene extends Scene {
     light_fragment_view.intensity = 2;
     light_fragment_view.position = [50, 20, -10];
     light_fragment_view.active = true;
+    light_fragment_view.is_primary_sun = 1;
     light_fragment_view.shadow_clipmaps = MAX_CLIPMAP_LEVELS;
 
     // Get Exo-Medium font
@@ -1428,15 +1410,7 @@ export class VoxelTerrainScene extends Scene {
     const freeform_arcball = this.add_layer(FreeformArcballControlProcessor);
     freeform_arcball.set_scene(this);
 
-    SharedEnvironmentData.set_skybox("default_scene_skybox", [
-      "engine/textures/gradientbox/px.png",
-      "engine/textures/gradientbox/nx.png",
-      "engine/textures/gradientbox/ny.png",
-      "engine/textures/gradientbox/py.png",
-      "engine/textures/gradientbox/pz.png",
-      "engine/textures/gradientbox/nz.png",
-    ]);
-    SharedEnvironmentData.set_skybox_color([0.5, 0.7, 0.5, 1]);
+    SharedEnvironmentData.set_skydome("default_scene_skydome");
 
     const view_data = SharedViewBuffer.get_view_data(0);
     view_data.view_position = [20.7373, 54.0735, 68.58896];
@@ -1449,8 +1423,9 @@ export class VoxelTerrainScene extends Scene {
     light_fragment_view.type = LightType.DIRECTIONAL;
     light_fragment_view.color = [1, 1, 1];
     light_fragment_view.intensity = 2.5;
-    light_fragment_view.position = [-45, 50, 70];
+    light_fragment_view.position = [-45, 30, 70];
     light_fragment_view.active = true;
+    light_fragment_view.is_primary_sun = 1;
     light_fragment_view.shadow_clipmaps = MAX_CLIPMAP_LEVELS;
 
     // Create terrain material
@@ -1865,16 +1840,8 @@ export class GITestScene extends Scene {
     const freeform_arcball_control_processor = this.add_layer(FreeformArcballControlProcessor);
     freeform_arcball_control_processor.set_scene(this);
 
-    // white skybox
-    SharedEnvironmentData.set_skybox("default_scene_skybox", [
-      "engine/textures/gradientbox/px.png",
-      "engine/textures/gradientbox/nx.png",
-      "engine/textures/gradientbox/ny.png",
-      "engine/textures/gradientbox/py.png",
-      "engine/textures/gradientbox/pz.png",
-      "engine/textures/gradientbox/nz.png",
-    ]);
-    SharedEnvironmentData.set_skybox_color([1, 1, 1, 1]);
+    // Set the skydome for this scene.
+    SharedEnvironmentData.set_skydome("default_scene_skydome");
 
     // camera
     const view_data = SharedViewBuffer.get_view_data(0);
@@ -1891,7 +1858,77 @@ export class GITestScene extends Scene {
     light_fragment_view.intensity = 0.5;
     light_fragment_view.position = [25, 45, 15];
     light_fragment_view.active = true;
+    light_fragment_view.is_primary_sun = 1;
     light_fragment_view.shadow_clipmaps = MAX_CLIPMAP_LEVELS;
+    
+    // Load worn panel textures for metallic floor
+    let worn_panel_albedo = Texture.load(["engine/textures/worn_panel/worn_panel_albedo.png"], {
+      name: "worn_panel_albedo",
+      format: "rgba8unorm",
+      dimension: "2d",
+      usage:
+        GPUTextureUsage.TEXTURE_BINDING |
+        GPUTextureUsage.COPY_DST |
+        GPUTextureUsage.RENDER_ATTACHMENT,
+      material_notifier: "worn_panel_albedo",
+    });
+    let worn_panel_normal = Texture.load(["engine/textures/worn_panel/worn_panel_normal.png"], {
+      name: "worn_panel_normal",
+      format: "rgba8unorm",
+      dimension: "2d",
+      usage:
+        GPUTextureUsage.TEXTURE_BINDING |
+        GPUTextureUsage.COPY_DST |
+        GPUTextureUsage.RENDER_ATTACHMENT,
+      material_notifier: "worn_panel_normal",
+    });
+    let worn_panel_roughness = Texture.load(
+      ["engine/textures/worn_panel/worn_panel_roughness.png"],
+      {
+        name: "worn_panel_roughness",
+        format: "rgba8unorm",
+        dimension: "2d",
+        usage:
+          GPUTextureUsage.TEXTURE_BINDING |
+          GPUTextureUsage.COPY_DST |
+          GPUTextureUsage.RENDER_ATTACHMENT,
+        material_notifier: "worn_panel_roughness",
+      }
+    );
+    let worn_panel_metallic = Texture.load(
+      ["engine/textures/worn_panel/worn_panel_metallic.png"],
+      {
+        name: "worn_panel_metallic",
+        format: "rgba8unorm",
+        dimension: "2d",
+        usage:
+          GPUTextureUsage.TEXTURE_BINDING |
+          GPUTextureUsage.COPY_DST |
+          GPUTextureUsage.RENDER_ATTACHMENT,
+        material_notifier: "worn_panel_metallic",
+      }
+    );
+    let worn_panel_ao = Texture.load(["engine/textures/worn_panel/worn_panel_ao.png"], {
+      name: "worn_panel_ao",
+      format: "rgba8unorm",
+      dimension: "2d",
+      usage:
+        GPUTextureUsage.TEXTURE_BINDING |
+        GPUTextureUsage.COPY_DST |
+        GPUTextureUsage.RENDER_ATTACHMENT,
+      material_notifier: "worn_panel_ao",
+    });
+
+    // Create metallic floor material
+    const metallic_floor_material = StandardMaterial.create("testgym_metallic_floor_material");
+    const metallic_floor_material_id = metallic_floor_material.material_id;
+    metallic_floor_material.set_albedo([0.5, 0.5, 0.5, 1], worn_panel_albedo);
+    metallic_floor_material.set_normal([0, 1, 0, 1], worn_panel_normal);
+    metallic_floor_material.set_roughness(0.5, worn_panel_roughness);
+    metallic_floor_material.set_metallic(0.5, worn_panel_metallic);
+    metallic_floor_material.set_ao(0.5, worn_panel_ao);
+    metallic_floor_material.set_emission(0.1);
+    metallic_floor_material.set_tiling(30.0);
 
     // materials
     const wall_material = StandardMaterial.create("testgym_wall_material");
@@ -1918,6 +1955,16 @@ export class GITestScene extends Scene {
     // meshes
     const cube_mesh = Mesh.cube();
     const sphere_mesh = Mesh.sphere();
+
+    // Create large metallic floor plane
+    const floor_plane = spawn_mesh_entity(
+      [0, -5, 0],
+      quat.fromEuler(quat.create(), 0.0, 0, 0),
+      [1000, 1.0, 1000],
+      cube_mesh,
+      metallic_floor_material_id
+    );
+    this.entities.push(floor_plane);
 
     // Cornell-box walls (tight box)
     {
@@ -2238,15 +2285,6 @@ export class ShadowTestScene extends Scene {
     freeform_arcball_control_processor.set_scene(this);
 
     // Configure skybox
-    // SharedEnvironmentData.set_skybox("default_scene_skybox", [
-    //   "engine/textures/simple_skybox/px.png",
-    //   "engine/textures/simple_skybox/nx.png",
-    //   "engine/textures/simple_skybox/ny.png",
-    //   "engine/textures/simple_skybox/py.png",
-    //   "engine/textures/simple_skybox/pz.png",
-    //   "engine/textures/simple_skybox/nz.png",
-    // ]);
-    // SharedEnvironmentData.set_skybox_color([0.1, 0.1, 0.11, 1]);
     SharedEnvironmentData.set_skydome("default_scene_skydome");
 
     // Position the camera high above the city
@@ -2620,8 +2658,8 @@ export class ShadowTestScene extends Scene {
   //await scene_switcher.add_scene(ml_scene);
   //await scene_switcher.add_scene(voxel_terrain_scene);
   //await scene_switcher.add_scene(object_painting_scene);
-  //await scene_switcher.add_scene(gi_test_scene);
-  await scene_switcher.add_scene(shadow_test_scene);
+  await scene_switcher.add_scene(gi_test_scene);
+  //await scene_switcher.add_scene(shadow_test_scene);
 
   simulator.add_sim_layer(scene_switcher);
 

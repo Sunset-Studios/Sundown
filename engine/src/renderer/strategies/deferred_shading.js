@@ -760,7 +760,7 @@ export class DeferredShadingStrategy {
             },
             (graph, frame_data, encoder) => {
               const pass = graph.get_physical_pass(frame_data.current_pass);
-              MeshTaskQueue.draw_sphere(pass);
+              MeshTaskQueue.draw_cube(pass);
             }
           );
         }
