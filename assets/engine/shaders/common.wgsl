@@ -66,8 +66,9 @@ struct View {
 };
 
 struct FrameInfo {
-    view_index: u32,
+    view_index: f32,
     time: f32,
+    frame_index: f32,
     resolution: vec2f,
     cursor_world_position: vec4f,
 };
@@ -121,6 +122,8 @@ const identity_matrix = mat4x4f(
 
 const epsilon = 1e-4;
 const world_up = vec3f(0.0, 1.0, 0.0);
+const world_right = vec3f(1.0, 0.0, 0.0);
+const world_forward = vec3f(0.0, 0.0, 1.0);
 
 const one_over_float_max = 1.0 / 4294967295.0;
 
@@ -251,7 +254,7 @@ fn interpolate(v0: precision_float, v1: precision_float, t: precision_float) -> 
 // Uses model-view matrix manipulation for robust billboarding
 fn billboard_vertex_local(uv: vec2f, entity_transform: mat4x4f) -> vec4f {
     // Get view and projection matrices
-    let view_index = frame_info.view_index;
+    let view_index = u32(frame_info.view_index);
     let view = view_buffer[view_index].view_matrix;
     // Extract translation from the entity transform (4th column)
     let world_position = vec3f(
@@ -292,7 +295,7 @@ fn billboard_vertex_local(uv: vec2f, entity_transform: mat4x4f) -> vec4f {
 }
 
 fn log_depth(view_space_z: f32) -> f32 {
-    let view_index = frame_info.view_index;
+    let view_index = u32(frame_info.view_index);
     let far_plane = -view_buffer[view_index].frustum[5].w;
     let near_plane = -view_buffer[view_index].frustum[4].w;
     let z = -view_space_z;

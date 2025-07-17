@@ -111,7 +111,7 @@ fn vs(input: VertexInput) -> VertexOutput {
     var output: VertexOutput;
     
     // Get camera position (fallback if camera_data is not available)
-    let camera_pos = view_buffer[frame_info.view_index].view_position.xyz;
+    let camera_pos = view_buffer[u32(frame_info.view_index)].view_position.xyz;
     let light_view = view_buffer[u32(scene_lighting_data.view_index)];
     
     // Create model matrix positioned at camera
@@ -137,7 +137,7 @@ fn vs(input: VertexInput) -> VertexOutput {
     output.beta_m = total_mie(scene_lighting_data.atmospheric_turbidity) * scene_lighting_data.mie_coefficient;
 
     // Project to clip space
-    let view_proj = view_buffer[frame_info.view_index].view_projection_matrix;
+    let view_proj = view_buffer[u32(frame_info.view_index)].view_projection_matrix;
 
     output.position = view_proj * output.world_position;
     output.position.z = output.position.w;
@@ -153,7 +153,7 @@ fn fs(input: VertexOutput) -> FragmentOutput {
     var output: FragmentOutput;
     
     // Get camera position and calculate view direction
-    let camera_pos = view_buffer[frame_info.view_index].view_position.xyz;
+    let camera_pos = view_buffer[u32(frame_info.view_index)].view_position.xyz;
     let view_dir = normalize(input.world_position.xyz - camera_pos);
     
     // Calculate optical length through atmosphere

@@ -47,6 +47,7 @@ import {
 
 // Specialized renderer components
 import { GIProbeVolume } from "../global_illumination/ddgi.js";
+import { GTAO } from "../global_illumination/gtao.js";
 import { AdaptiveSparseVirtualShadowMaps } from "../shadows/as_vsm.js";
 import {
   DEFAULT_LIGHT_CLIP_EXTENT,
@@ -87,7 +88,7 @@ const main_emissive_image_config = {
 };
 const main_smra_image_config = {
   name: "main_smra",
-  format: rgba8unorm_format,
+  format: rgba16float_format,
   width: 0,
   height: 0,
   usage:
@@ -258,9 +259,19 @@ const deferred_lighting_shader_setup = {
   pipeline_shaders: {
     vertex: {
       path: "deferred_lighting.wgsl",
+      defines: {
+        GI_ENABLED: false,
+        SHADOWS_ENABLED: false,
+        GTAO_ENABLED: false,
+      },
     },
     fragment: {
       path: "deferred_lighting.wgsl",
+      defines: {
+        GI_ENABLED: false,
+        SHADOWS_ENABLED: false,
+        GTAO_ENABLED: false,
+      },
     },
   },
 };
@@ -425,6 +436,7 @@ export class DeferredShadingStrategy {
   entity_id_image = null;
   force_recreate = false;
   gi_probe_volume = null;
+  gtao = null;
   as_vsm = null;
   debug_overlay = null;
   frustum_culler = null;
@@ -432,7 +444,7 @@ export class DeferredShadingStrategy {
 
   setup(render_graph) {
     this.gi_probe_volume = new GIProbeVolume();
-
+    this.gtao = new GTAO();
     this.debug_overlay = new DebugOverlay();
 
     this.as_vsm = new AdaptiveSparseVirtualShadowMaps({
@@ -443,21 +455,27 @@ export class DeferredShadingStrategy {
       clip0_extent: DEFAULT_LIGHT_CLIP_EXTENT,
     });
 
-    this.frustum_culler = new FrustumCuller(null, /* additional_data */ {
-      aabb_bounds: 0,
-      object_instances: 0,
-      entity_aabb_node_indices: 0,
-      main_entity_id_image: 0,
-    });
+    this.frustum_culler = new FrustumCuller(
+      null,
+      /* additional_data */ {
+        aabb_bounds: 0,
+        object_instances: 0,
+        entity_aabb_node_indices: 0,
+        main_entity_id_image: 0,
+      }
+    );
 
-    this.occlusion_culler = new OcclusionCuller(this.frustum_culler, /* additional_data */ {
-      aabb_bounds: 0,
-      object_instances: 0,
-      entity_aabb_node_indices: 0,
-      main_hzb_image: 0,
-      main_entity_id_image: 0,
-      entity_occluders: 0,
-    });
+    this.occlusion_culler = new OcclusionCuller(
+      this.frustum_culler,
+      /* additional_data */ {
+        aabb_bounds: 0,
+        object_instances: 0,
+        entity_aabb_node_indices: 0,
+        main_hzb_image: 0,
+        main_entity_id_image: 0,
+        entity_occluders: 0,
+      }
+    );
 
     global_dispatcher.on(
       resolution_change_event_name,
@@ -492,11 +510,13 @@ export class DeferredShadingStrategy {
       const renderer = Renderer.get();
 
       const current_view = SharedFrameInfoBuffer.get_view_index();
-      const shadows_enabled = renderer.is_shadows_enabled();
-      const gi_enabled = renderer.is_gi_enabled();
       const total_views = SharedViewBuffer.get_view_data_count();
       const draw_count = MeshTaskQueue.get_total_draw_count();
       const debug_view = renderer.get_debug_draw_type();
+
+      const shadows_enabled = renderer.is_shadows_enabled();
+      const gi_enabled = renderer.is_gi_enabled();
+      const gtao_enabled = renderer.is_gtao_enabled();
 
       if (this.force_recreate) {
         render_graph.mark_pass_cache_bind_groups_dirty(true /* pass_only */);
@@ -554,9 +574,7 @@ export class DeferredShadingStrategy {
       const aabb_bounds = render_graph.register_buffer(
         aabb_gpu_data.node_bounds_buffer.config.name
       );
-      const aabb_nodes = render_graph.register_buffer(
-        aabb_gpu_data.node_data_buffer.config.name
-      );
+      const aabb_nodes = render_graph.register_buffer(aabb_gpu_data.node_data_buffer.config.name);
 
       // ┌─────────────────────────────────────────────────────────────────────────────┐
       // │ 🖼️  Create G-Buffer & Main Render Targets                                  │
@@ -621,7 +639,12 @@ export class DeferredShadingStrategy {
         for (let clipmap_index = 0; clipmap_index < clipmap_count; ++clipmap_index) {
           this.frustum_culler.register_view(render_graph, draw_count, view_index, clipmap_index);
           if (occlusion_enabled) {
-            this.occlusion_culler.register_view(render_graph, draw_count, view_index, clipmap_index);
+            this.occlusion_culler.register_view(
+              render_graph,
+              draw_count,
+              view_index,
+              clipmap_index
+            );
           }
         }
 
@@ -686,7 +709,7 @@ export class DeferredShadingStrategy {
             b_skip_pass_pipeline_setup: true,
             b_skip_pass_bind_group_setup: true,
           },
-          (graph, frame_data, encoder) => { }
+          (graph, frame_data, encoder) => {}
         );
       }
 
@@ -729,7 +752,7 @@ export class DeferredShadingStrategy {
         const skybox = SharedEnvironmentData.get_skybox();
         const skybox_data = SharedEnvironmentData.get_skybox_data();
         const skydome_data = SharedEnvironmentData.get_skydome_data();
-        
+
         if (skybox) {
           const skybox_data_buffer = render_graph.register_buffer(skybox_data.config.name);
           const skybox_texture = render_graph.register_image(skybox.config.name);
@@ -1093,7 +1116,10 @@ export class DeferredShadingStrategy {
       // │    Real-time global illumination using probe-based irradiance volumes       │
       // └─────────────────────────────────────────────────────────────────────────────┘
       if (gi_enabled) {
-        const visible_instance_buffer = this.occlusion_culler.get_visibility_buffer(current_view, 0);
+        const visible_instance_buffer = this.occlusion_culler.get_visibility_buffer(
+          current_view,
+          0
+        );
         this.gi_probe_volume.update(render_graph, {
           gi_params_buffer,
           gi_irradiance_image,
@@ -1103,6 +1129,21 @@ export class DeferredShadingStrategy {
           visible_instance_buffer,
           lights,
           probe_cubemap: this.probe_cubemap.config.name,
+        });
+      }
+
+      // ┌─────────────────────────────────────────────────────────────────────────────┐
+      // │ 🌟 PASS: GTAO                                                              │
+      // │    Ground Truth Ambient Occlusion                                           │
+      // └─────────────────────────────────────────────────────────────────────────────┘
+      if (gtao_enabled) {
+        this.gtao.add_passes(render_graph, {
+          depth_texture: main_depth_image,
+          normal_texture: main_normal_image,
+          position_texture: main_position_image,
+          width: image_extent.width,
+          height: image_extent.height,
+          force_recreate: this.force_recreate,
         });
       }
 
@@ -1129,20 +1170,16 @@ export class DeferredShadingStrategy {
         ];
 
         if (gi_enabled) {
-          deferred_lighting_shader_setup.pipeline_shaders.vertex.defines = { GI_ENABLED: true };
-          deferred_lighting_shader_setup.pipeline_shaders.fragment.defines = { GI_ENABLED: true };
+          deferred_lighting_shader_setup.pipeline_shaders.vertex.defines.GI_ENABLED = true;
+          deferred_lighting_shader_setup.pipeline_shaders.fragment.defines.GI_ENABLED = true;
 
           lighting_inputs.push(gi_irradiance_image, gi_depth_image);
         }
 
         if (shadows_enabled) {
           // Register AS-VSM shadow resources for lighting
-          deferred_lighting_shader_setup.pipeline_shaders.vertex.defines = {
-            SHADOWS_ENABLED: true,
-          };
-          deferred_lighting_shader_setup.pipeline_shaders.fragment.defines = {
-            SHADOWS_ENABLED: true,
-          };
+          deferred_lighting_shader_setup.pipeline_shaders.vertex.defines.SHADOWS_ENABLED = true;
+          deferred_lighting_shader_setup.pipeline_shaders.fragment.defines.SHADOWS_ENABLED = true;
 
           lighting_inputs.push(
             this.as_vsm.shadow_atlas_buf,
@@ -1150,6 +1187,13 @@ export class DeferredShadingStrategy {
             this.as_vsm.page_offset,
             this.as_vsm.settings_buf
           );
+        }
+
+        if (gtao_enabled) {
+          deferred_lighting_shader_setup.pipeline_shaders.vertex.defines.GTAO_ENABLED = true;
+          deferred_lighting_shader_setup.pipeline_shaders.fragment.defines.GTAO_ENABLED = true;
+
+          lighting_inputs.push(this.gtao.ao_texture, this.gtao.bent_normal_texture);
         }
 
         render_graph.add_pass(
@@ -1460,6 +1504,26 @@ export class DeferredShadingStrategy {
               image_extent.width,
               image_extent.height,
               DebugDrawType.Bloom
+            );
+            break;
+          case DebugDrawType.GTAO:
+            this.debug_overlay.set_properties(
+              this.gtao.ao_texture,
+              0,
+              0,
+              image_extent.width,
+              image_extent.height,
+              DebugDrawType.GTAO
+            );
+            break;
+          case DebugDrawType.BentNormal:
+            this.debug_overlay.set_properties(
+              this.gtao.bent_normal_texture,
+              0,
+              0,
+              image_extent.width,
+              image_extent.height,
+              DebugDrawType.BentNormal
             );
             break;
           default:

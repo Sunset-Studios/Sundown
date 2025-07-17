@@ -1,3 +1,4 @@
+import { Renderer } from "../renderer/renderer.js";
 import { SharedFrameInfoBuffer } from "../core/shared_data.js";
 import { profile_scope } from "../utility/performance.js";
 
@@ -22,7 +23,9 @@ export default class SimulationCore {
   static update(delta_time) {
     profile_scope(simulation_core_update_event_name, () => {
       const time = SharedFrameInfoBuffer.get_time();
+      
       SharedFrameInfoBuffer.set_time(time + delta_time);
+      SharedFrameInfoBuffer.set_frame_index(Renderer.get().get_frame_number());
 
       for (const layer of this.simulation_layers) {
         layer.pre_update(delta_time);

@@ -1856,7 +1856,7 @@ export class GITestScene extends Scene {
     light_fragment_view.type = LightType.DIRECTIONAL;
     light_fragment_view.color = [1, 1, 1];
     light_fragment_view.intensity = 0.5;
-    light_fragment_view.position = [25, 45, 15];
+    light_fragment_view.position = [5, 5, 25];
     light_fragment_view.active = true;
     light_fragment_view.is_primary_sun = 1;
     light_fragment_view.shadow_clipmaps = MAX_CLIPMAP_LEVELS;
@@ -1960,7 +1960,7 @@ export class GITestScene extends Scene {
     const floor_plane = spawn_mesh_entity(
       [0, -5, 0],
       quat.fromEuler(quat.create(), 0.0, 0, 0),
-      [1000, 1.0, 1000],
+      [1000, 4.5, 1000],
       cube_mesh,
       metallic_floor_material_id
     );
@@ -2134,11 +2134,7 @@ export class GITestScene extends Scene {
       left_wall_material_third.set_albedo([1, 0.5, 0, 1]);
       left_wall_material_third.set_emission(ambient_emissive);
 
-      const right_wall_material_third = StandardMaterial.create(
-        "testgym_right_material_third",
-        {},
-        { family: MaterialFamilyType.Transparent }
-      );
+      const right_wall_material_third = StandardMaterial.create("testgym_right_material_third");
       const right_wall_material_third_id = right_wall_material_third.material_id;
       right_wall_material_third.set_albedo([0.5, 0, 0.5, 0.3]);
       right_wall_material_third.set_emission(ambient_emissive);
@@ -2197,7 +2193,7 @@ export class GITestScene extends Scene {
         },
         {
           mesh: cube_mesh,
-          position: [offset_x + 3, 2, 3],
+          position: [offset_x + 3, 2, 5],
           scale: [2, 1, 2],
           material_id: right_wall_material_third_id,
         },

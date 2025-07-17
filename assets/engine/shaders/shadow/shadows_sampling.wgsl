@@ -14,7 +14,7 @@ fn vsm_shadow_depth(
     page_offset: texture_storage_2d_array<rgba32float, read>,
     vsm_settings: ASVSMSettings,
 ) -> f32 {
-  let camera_vp           = view_buffer[frame_info.view_index].view_projection_matrix;
+  let camera_vp           = view_buffer[u32(frame_info.view_index)].view_projection_matrix;
   let light_vp            = view_buffer[view_idx].view_projection_matrix;
   let vtile_info          = vsm_world_to_virtual_tile(world_pos, camera_vp, light_vp, vsm_settings);
 
@@ -67,7 +67,7 @@ fn vsm_sample_shadow(
     var out: ShadowFilterResult;
 
     // Build tile mappings
-    let camera_vp   = view_buffer[frame_info.view_index].view_projection_matrix;
+    let camera_vp   = view_buffer[u32(frame_info.view_index)].view_projection_matrix;
     let light_vp    = view_buffer[view_idx].view_projection_matrix;
     let vtile_info  = vsm_world_to_virtual_tile(world_pos, camera_vp, light_vp, settings);
     let ptile_info  = vsm_vtile_to_ptile(vtile_info, settings, shadow_idx, page_table);

@@ -30,7 +30,7 @@ struct FragmentOutput {
     var output : VertexOutput;
     
     // Extract the rotation part of the view matrix (3x3 upper-left part)
-    let view_index = frame_info.view_index;
+    let view_index = u32(frame_info.view_index);
     var rotation_view = mat3x3f(
         view_buffer[view_index].view_matrix[0].xyz,
         view_buffer[view_index].view_matrix[1].xyz,

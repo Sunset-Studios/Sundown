@@ -29,7 +29,7 @@ fn vertex(v_out: ptr<function, VertexOutput>) -> VertexOutput {
     let entity_resolved = get_entity_row(object_instances[object_instance_index].row);
 
     let entity_transform = entity_transforms[entity_resolved];
-    let view_index = frame_info.view_index;
+    let view_index = u32(frame_info.view_index);
     let view_mat = view_buffer[view_index].view_matrix;
     let view_proj_mat = view_buffer[view_index].view_projection_matrix;
 

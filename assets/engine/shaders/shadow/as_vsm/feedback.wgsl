@@ -50,7 +50,7 @@ fn cs(@builtin(global_invocation_id) id: vec3<u32>) {
 
   let world_pos = vec4<f32>(texture_pos.xyz, 1.0);
   let clipmap0_vp = view_buffer[light_view_index].view_projection_matrix;
-  let camera_vp   = view_buffer[frame_info.view_index].view_projection_matrix;
+  let camera_vp   = view_buffer[u32(frame_info.view_index)].view_projection_matrix;
 
   let vtile_info = vsm_world_to_virtual_tile(
     world_pos,

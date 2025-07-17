@@ -851,8 +851,12 @@ export class SharedFrameInfoBuffer {
   static frame_info = {
     view_index: 0,
     time: 0,
+    frame_index: 0,
     resolution: vec2.create(),
     cursor_world_position: vec4.create(),
+    padding0: 0,
+    padding1: 0,
+    padding2: 0,
   };
   static buffer = null;
   static size = 0;
@@ -881,6 +885,19 @@ export class SharedFrameInfoBuffer {
     } else {
       this.buffer.write(this._get_gpu_type_layout(this.frame_info));
     }
+  }
+
+  static set_frame_index(frame_index) {
+    this.frame_info.frame_index = frame_index;
+    if (!this.buffer) {
+      this.build();
+    } else {
+      this.buffer.write(this._get_gpu_type_layout(this.frame_info));
+    }
+  }
+
+  static get_frame_index() {
+    return this.frame_info.frame_index;
   }
 
   static set_cursor_world_position(cursor_world_position) {
@@ -920,6 +937,15 @@ export class SharedFrameInfoBuffer {
   }
 
   static _get_gpu_type_layout(item) {
-    return Array.of(item.view_index, item.time, ...item.resolution, ...item.cursor_world_position);
+    return Array.of(
+      item.view_index,
+      item.time,
+      item.frame_index,
+      ...item.resolution,
+      ...item.cursor_world_position,
+      item.padding0,
+      item.padding1,
+      item.padding2,
+    );
   }
 }

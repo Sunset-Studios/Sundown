@@ -36,6 +36,7 @@ export class Renderer {
   use_depth_prepass = true;
   shadows_enabled = true;
   gi_enabled = false;
+  gtao_enabled = true;
   debug_draw_type = DebugDrawType.None;
 
   static renderers = [];
@@ -268,6 +269,14 @@ export class Renderer {
 
   set_gi_enabled(enabled) {
     this.gi_enabled = enabled;
+  }
+
+  is_gtao_enabled() {
+    return this.gtao_enabled;
+  }
+
+  set_gtao_enabled(enabled) {
+    this.gtao_enabled = enabled;
   }
 
   is_depth_prepass_enabled() {

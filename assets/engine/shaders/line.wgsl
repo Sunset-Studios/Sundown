@@ -38,7 +38,7 @@ fn vs(input: VertexInput) -> VertexOutput {
     let color_and_width = line_data[input.instance_index].color_and_width;
     let model_transform = transform_data[input.instance_index].transform;
 
-    let view_index = frame_info.view_index;
+    let view_index = u32(frame_info.view_index);
     let model_view_transform = view_buffer[view_index].view_matrix * model_transform;
     
     // Calculate line direction in view space

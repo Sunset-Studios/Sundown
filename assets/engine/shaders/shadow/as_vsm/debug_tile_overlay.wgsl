@@ -45,7 +45,7 @@ fn fs(input: VertexOutput) -> @location(0) vec4<f32> {
 
   let view_idx      = light_view_buffer[0u];
   let clipmap0_vp   = view_buffer[view_idx].view_projection_matrix;
-  let camera_vp     = view_buffer[frame_info.view_index].view_projection_matrix;
+  let camera_vp     = view_buffer[u32(frame_info.view_index)].view_projection_matrix;
   let world_pos     = vec4<f32>(world_pos_sample.xyz, 1.0);
 
   let vtile_info    = vsm_world_to_virtual_tile(world_pos, camera_vp, clipmap0_vp, vsm_settings);

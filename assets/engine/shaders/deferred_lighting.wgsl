@@ -17,27 +17,54 @@
 @group(1) @binding(8) var<storage, read> light_count_buffer: array<u32>;
 
 #if GI_ENABLED
-@group(1) @binding(9) var<uniform> gi_params: GIParams;
-@group(1) @binding(10) var gi_irradiance: texture_3d<f32>;
 
-#if SHADOWS_ENABLED
-@group(1) @binding(11) var<storage, read> shadow_atlas_depth: array<u32>;
-@group(1) @binding(12) var page_table: texture_storage_2d_array<r32uint, read>;
-@group(1) @binding(13) var page_offset: texture_storage_2d_array<rgba32float, read>;
-@group(1) @binding(14) var<uniform> vsm_settings: ASVSMSettings;
-#endif
+  @group(1) @binding(9) var<uniform> gi_params: GIParams;
+  @group(1) @binding(10) var gi_irradiance: texture_3d<f32>;
+
+  #if SHADOWS_ENABLED
+    @group(1) @binding(11) var<storage, read> shadow_atlas_depth: array<u32>;
+    @group(1) @binding(12) var page_table: texture_storage_2d_array<r32uint, read>;
+    @group(1) @binding(13) var page_offset: texture_storage_2d_array<rgba32float, read>;
+    @group(1) @binding(14) var<uniform> vsm_settings: ASVSMSettings;
+
+    #if GTAO_ENABLED
+      @group(1) @binding(15) var ao_texture: texture_2d<f32>;
+      @group(1) @binding(16) var bent_normal_texture: texture_2d<f32>;
+    #endif
+
+  #else
+
+    #if GTAO_ENABLED
+      @group(1) @binding(11) var ao_texture: texture_2d<f32>;
+      @group(1) @binding(12) var bent_normal_texture: texture_2d<f32>;
+    #endif
+
+  #endif
 
 #else
 
-#if SHADOWS_ENABLED
-@group(1) @binding(9) var<storage, read> shadow_atlas_depth: array<u32>;
-@group(1) @binding(10) var page_table: texture_storage_2d_array<r32uint, read>;
-@group(1) @binding(11) var page_offset: texture_storage_2d_array<rgba32float, read>;
-@group(1) @binding(12) var<uniform> vsm_settings: ASVSMSettings;
-#endif
+  #if SHADOWS_ENABLED
+
+    @group(1) @binding(9) var<storage, read> shadow_atlas_depth: array<u32>;
+    @group(1) @binding(10) var page_table: texture_storage_2d_array<r32uint, read>;
+    @group(1) @binding(11) var page_offset: texture_storage_2d_array<rgba32float, read>;
+    @group(1) @binding(12) var<uniform> vsm_settings: ASVSMSettings;
+
+    #if GTAO_ENABLED
+      @group(1) @binding(13) var ao_texture: texture_2d<f32>;
+      @group(1) @binding(14) var bent_normal_texture: texture_2d<f32>;
+    #endif
+
+  #else
+
+    #if GTAO_ENABLED
+      @group(1) @binding(9) var ao_texture: texture_2d<f32>;
+      @group(1) @binding(10) var bent_normal_texture: texture_2d<f32>;
+    #endif
+
+  #endif
 
 #endif
-
 
 // ------------------------------------------------------------------------------------
 // Data Structures
@@ -110,11 +137,17 @@ fn sample_probe_irradiance(world_pos: vec3<f32>) -> vec3<f32> {
     var roughness = tex_smra.b;
     var ao = tex_smra.a;
 
+#if GTAO_ENABLED
+    ao = textureSample(ao_texture, non_filtering_sampler, uv).r;
+    let bent_normal = textureSample(bent_normal_texture, non_filtering_sampler, uv).xyz;
+    //normalized_normal = normalize(mix(normalized_normal, bent_normal, ao));
+#endif
+
     var tex_position = textureSample(position_texture, non_filtering_sampler, uv);
     var position = tex_position.xyz;
     var position4 = vec4<f32>(position, 1.0);
 
-    let view_index = frame_info.view_index;
+    let view_index = u32(frame_info.view_index);
     var view_dir = normalize(view_buffer[view_index].view_position.xyz - position);
 
     let unlit = min(1u, u32(normal_length <= 0.0) + u32(1.0 - deferred_standard_lighting));

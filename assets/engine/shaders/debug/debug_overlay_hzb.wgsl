@@ -10,8 +10,8 @@ struct VertexOutput {
 
 @fragment
 fn fs(input: VertexOutput) -> @location(0) vec4<f32> {
-  let view = view_buffer[frame_info.view_index];
+  let view = view_buffer[u32(frame_info.view_index)];
   let depth = textureSample(debug_texture, non_filtering_sampler, input.uv).r;
-  let linear_depth = linearize_depth(depth, view.near, view.far, frame_info.view_index) / 100.0;
+  let linear_depth = linearize_depth(depth, view.near, view.far, u32(frame_info.view_index)) / 100.0;
   return vec4<f32>(linear_depth, linear_depth, linear_depth, 1.0);
 } 

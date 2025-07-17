@@ -121,6 +121,8 @@ export const DebugDrawType = Object.freeze({
     ASVSM_TileRenderOutput: 11,
     ASVSM_DirtyTiles: 12,
     Bloom: 13,
+    GTAO: 14,
+    BentNormal: 15,
 });
 
 /**
