@@ -167,6 +167,10 @@ export class Renderer {
     this.render_graph.mark_pass_cache_bind_groups_dirty(passes_only);
   }
 
+  recreate_pipeline_states() {
+    this.render_graph.recreate_pipeline_states();
+  }
+
   refresh_global_shader_bindings() {
     const global_bindings = [
         {
@@ -261,6 +265,10 @@ export class Renderer {
 
   set_shadows_enabled(enabled) {
     this.shadows_enabled = enabled;
+    if (this.render_strategy) {
+      this.render_strategy.refresh(this.render_graph);
+      this.recreate_pipeline_states();
+    }
   }
 
   is_gi_enabled() {
@@ -269,6 +277,10 @@ export class Renderer {
 
   set_gi_enabled(enabled) {
     this.gi_enabled = enabled;
+    if (this.render_strategy) {
+      this.render_strategy.refresh(this.render_graph);
+      this.recreate_pipeline_states();
+    }
   }
 
   is_gtao_enabled() {
@@ -277,6 +289,10 @@ export class Renderer {
 
   set_gtao_enabled(enabled) {
     this.gtao_enabled = enabled;
+    if (this.render_strategy) {
+      this.render_strategy.refresh(this.render_graph);
+      this.recreate_pipeline_states();
+    }
   }
 
   is_depth_prepass_enabled() {

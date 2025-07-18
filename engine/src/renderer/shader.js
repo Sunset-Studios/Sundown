@@ -227,14 +227,20 @@ export class Shader {
     return out.join("\n");
   }
 
-  static create(file_path, defines = null) {
+  static create(file_path, defines = null, force_recreate = false) {
     let key = defines ? hash_data_object(defines, file_path) : file_path;
     let shader = ResourceCache.get().fetch(CacheTypes.SHADER, key);
+
+    if (shader && force_recreate) {
+      shader = null;
+    }
+
     if (!shader) {
       shader = new Shader();
       shader.initialize(file_path, defines);
       ResourceCache.get().store(CacheTypes.SHADER, key, shader);
     }
+
     return shader;
   }
 

@@ -42,22 +42,34 @@ export class PipelineState {
     static create_render(name, config) {
         let name_hash = Name.from(name);
         let pipeline_state = ResourceCache.get().fetch(CacheTypes.PIPELINE_STATE, name_hash);
+
+        if (pipeline_state && config.force) {
+            pipeline_state = null;
+        }
+
         if (!pipeline_state) {
             pipeline_state = new PipelineState();
             pipeline_state.init_render_pipeline(name_hash, config);
             ResourceCache.get().store(CacheTypes.PIPELINE_STATE, name_hash, pipeline_state);
         }
+
         return pipeline_state;
     }
 
     static create_compute(name, config) {
         let name_hash = Name.from(name);
         let pipeline_state = ResourceCache.get().fetch(CacheTypes.PIPELINE_STATE, name_hash);
+
+        if (pipeline_state && config.force) {
+            pipeline_state = null;
+        }
+
         if (!pipeline_state) {
             pipeline_state = new PipelineState();
             pipeline_state.init_compute_pipeline(name_hash, config);
             ResourceCache.get().store(CacheTypes.PIPELINE_STATE, name_hash, pipeline_state);
         }
+
         return pipeline_state;
     }
 }

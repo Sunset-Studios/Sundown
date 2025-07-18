@@ -9,6 +9,7 @@ import { AABBDebug } from "./aabb_debug.js";
 import { PerformanceTrace } from "./performance_trace.js";
 import { DebugDrawPicker } from "./debug_draw_picker.js";
 import { ASVSMStats } from "./as_vsm_stats.js";
+import { RenderToggle } from "./render_toggle.js";
 import { log, warn, error } from "../utility/logging.js";
 
 // Constants for naming and key codes
@@ -72,9 +73,8 @@ export class DevConsole extends SimulationLayer {
     this.register_command("aabb_debug", new AABBDebug());
     this.register_command("performance_trace", new PerformanceTrace());
     this.register_command("as_vsm_stats", new ASVSMStats());
-
-    // Register debug rendering command handlers.
     this.register_command("debug_draw", new DebugDrawPicker());
+    this.register_command("render_toggle", new RenderToggle());
   }
 
   update(delta_time) {

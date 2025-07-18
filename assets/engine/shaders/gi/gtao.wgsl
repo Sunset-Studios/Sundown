@@ -32,12 +32,11 @@ struct GTAOSettings {
 // -----------------------------------------------------------------------------
 // Bindings
 // -----------------------------------------------------------------------------
-@group(1) @binding(0) var depth_tex:    texture_2d<f32>;                  // bound; unused in base path
-@group(1) @binding(1) var position_tex: texture_2d<f32>;                  // world position G-buffer
-@group(1) @binding(2) var normal_tex:   texture_2d<f32>;                  // world normal G-buffer
-@group(1) @binding(3) var ao_texture:   texture_storage_2d<r32float, write>;
-@group(1) @binding(4) var bent_output:  texture_storage_2d<rgba16float, write>;
-@group(1) @binding(5) var<uniform> settings: GTAOSettings;
+@group(1) @binding(0) var position_tex: texture_2d<f32>;                  // world position G-buffer
+@group(1) @binding(1) var normal_tex:   texture_2d<f32>;                  // world normal G-buffer
+@group(1) @binding(2) var ao_texture:   texture_storage_2d<r32float, write>;
+@group(1) @binding(3) var bent_output:  texture_storage_2d<rgba16float, write>;
+@group(1) @binding(4) var<uniform> settings: GTAOSettings;
 
 // -----------------------------------------------------------------------------
 // Tunables
@@ -88,105 +87,85 @@ fn make_tbn(n_in: vec3<f32>) -> mat3x3<f32> {
 }
 
 // -----------------------------------------------------------------------------
-// Integrate slice visibility from two horizon elevation angles.
-// Angles are measured downward from N toward +/- slice axis in [0, π/2].
-// Result ~fraction (0..1) of cosine-weighted hemisphere visible in this slice.
-// This is a simplified analytic fit that behaves well for common ranges.
+// Fast acos approximation used by XeGTAO. Good enough for our purposes.
 // -----------------------------------------------------------------------------
-fn integrate_slice(h_neg: f32, h_pos: f32) -> f32 {
-    // Clamp
-    let hn = clamp(h_neg, 0.0, HALF_PI);
-    let hp = clamp(h_pos, 0.0, HALF_PI);
-
-    // Cosine-weighted visibility for each side approximated by cos(h)
-    // (cos(0)=1 open, cos(π/2)=0 blocked). Average two sides.
-    // Empirically scale slightly toward open to reduce over-occlusion.
-    let v_neg = cos(hn);
-    let v_pos = cos(hp);
-    let v = 0.5 * (v_neg + v_pos);
-
-    // Gentle contrast curve (empirical)
-    return pow(v, 1.0); // change exponent to taste ( <1 brightens, >1 darkens )
+fn fast_acos(x: f32) -> f32 {
+    let ax = abs(x);
+    var res = -0.156583 * ax + HALF_PI;
+    res *= sqrt(max(0.0, 1.0 - ax));
+    return select(PI - res, res, x >= 0.0);
 }
 
 // -----------------------------------------------------------------------------
-// Bent-normal contribution from slice horizons.
-// We choose the midpoint of the open cone on each side and weight by visibility.
-// For +D side: open elev range = [0, π/2 - h_pos]; midpoint elev = half that.
-// For -D side: open elev range = [0, π/2 - h_neg]; midpoint elev = half that.
-// Direction = N*cos(mid) + +/-slice_dir*sin(mid).
+// Construct rotation matrix that rotates `v1` vector to `v2` vector.
+// Adapted from XeGTAO reference implementation.
 // -----------------------------------------------------------------------------
-fn bent_dir_for_side(n: vec3<f32>, slice_dir: vec3<f32>, h: f32, sign_dir: f32) -> vec3<f32> {
-    let h_clamped = clamp(h, 0.0, HALF_PI);
-    let open_elev = HALF_PI - h_clamped;
-    let mid_elev = 0.5 * open_elev;
-    // Build direction in the slice plane
-    let sdir = normalize(slice_dir * sign_dir);
-    let d = normalize(n * cos(mid_elev) + sdir * sin(mid_elev));
-    return d;
-}
-
-// -----------------------------------------------------------------------------
-// Horizon search along a slice direction.
-// We march N steps out to radius along WORLD-space slice_dir and sample
-// the G-buffer to estimate the maximum elevation angle of occluders on that side.
-//
-// Returns elevation angle in [0, π/2], measured downward from N toward slice_dir.
-// -----------------------------------------------------------------------------
-fn search_horizon_side(
-    slice_dir: vec3<f32>,
-    normal: vec3<f32>,
-    world_pos: vec3<f32>,
-    view: ptr<function, View>,
-    max_radius: f32,
-    steps: u32,
-    sign_dir: f32                 // +1 for +slice_dir, -1 for -slice_dir
-) -> f32 {
-
-    let sdir = normalize(slice_dir * sign_dir);
-    let step_count_f = f32(steps);
-
-    var max_angle: f32 = 0.0;
-
-    // Step distances (world). Uniform spacing; could switch to quadratic for QoL.
-    for (var i:u32 = 1u; i <= steps; i = i + 1u) {
-        let t = f32(i) / step_count_f;
-        let dist = t * max_radius;
-
-        let sample_world = world_pos + sdir * dist;
-        let sample_view  = (view.view_matrix * vec4f(sample_world, 1.0)).xyz;
-        let clip         = view.projection_matrix * vec4f(sample_view, 1.0);
-        let uv           = (clip.xy / clip.w) * 0.5 + 0.5;
-
-        // Off-screen -> treat as open; continue
-        if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) {
-            continue;
-        }
-
-        // Fetch scene sample at that screen location
-        let scene_world  = textureSampleLevel(position_tex, non_filtering_sampler, uv, 0.0).xyz;
-        let v            = scene_world - world_pos;
-
-        // Project v into slice plane components
-        let dist_along   = dot(v, sdir);         // signed along slice side (should be >=0 to matter)
-        if (dist_along <= 0.0) {
-            continue;
-        }
-
-        let height       = dot(v, normal);            // height above surface plane
-        if (height <= -settings.bias) {
-            // Occluder below the plane; ignore (prevents self-darkening slopes)
-            continue;
-        }
-
-        // Elevation angle downward from N toward slice_dir (0=open, π/2=horizon at 90° down)
-        // Actually, if height < dist_along, angle < 45°, etc. Use atan2(height, dist).
-        let ang = atan2(height, dist_along);     // 0..π/2+ (should clamp)
-        max_angle = max(max_angle, ang);
+fn rot_from_to_matrix(v1: vec3<f32>, v2: vec3<f32>) -> mat3x3<f32> {
+    let e = dot(v1, v2);
+    let f = abs(e);
+    if (f > 1.0 - 0.0003) {
+        return mat3x3<f32>(
+            vec3<f32>(1.0, 0.0, 0.0),
+            vec3<f32>(0.0, 1.0, 0.0),
+            vec3<f32>(0.0, 0.0, 1.0),
+        );
     }
 
-    // Clamp to hemisphere
-    return clamp(max_angle, 0.0, HALF_PI);
+    let v = cross(v1, v2);
+    let h = 1.0 / (1.0 + e);
+    let hvx = h * v.x;
+    let hvz = h * v.z;
+    let hvxy = hvx * v.y;
+    let hvxz = hvx * v.z;
+    let hvyz = hvz * v.y;
+
+    return mat3x3<f32>(
+        vec3<f32>(e + hvx * v.x, hvxy - v.z, hvxz + v.y),
+        vec3<f32>(hvxy + v.z, e + h * v.y * v.y, hvyz - v.x),
+        vec3<f32>(hvxz - v.y, hvyz + v.x, e + hvz * v.z),
+    );
+}
+
+// -----------------------------------------------------------------------------
+// Integrate visibility using XeGTAO analytic formulation. Also used for bent
+// normal computation so returns both visibility contribution and bent normal
+// contribution in a vec4 (xyz=bent, w=visibility).
+// h0/h1 are signed horizon angles around the slice normal as described in the
+// XeGTAO paper.
+// -----------------------------------------------------------------------------
+fn integrate_slice(
+    dir2: vec2<f32>,
+    n_angle: f32,
+    cos_norm: f32,
+    h0: f32,
+    h1: f32,
+    proj_len: f32,
+    view_vec: vec3<f32>,
+) -> vec4<f32> {
+    let iarc0 = (cos_norm + 2.0 * h0 * sin(n_angle) - cos(2.0 * h0 - n_angle)) *
+        0.25;
+    let iarc1 = (cos_norm + 2.0 * h1 * sin(n_angle) - cos(2.0 * h1 - n_angle)) *
+        0.25;
+    let vis = proj_len * (iarc0 + iarc1);
+
+    // Bent normal contribution (Algorithm 2 in XeGTAO paper)
+    let t0 = (
+        6.0 * sin(h0 - n_angle) - sin(3.0 * h0 - n_angle) +
+        6.0 * sin(h1 - n_angle) - sin(3.0 * h1 - n_angle) +
+        16.0 * sin(n_angle) -
+        3.0 * (sin(h0 + n_angle) + sin(h1 + n_angle))
+    ) / 12.0;
+    let t1 = (
+        -cos(3.0 * h0 - n_angle) - cos(3.0 * h1 - n_angle) +
+        8.0 * cos(n_angle) -
+        3.0 * (cos(h0 + n_angle) + cos(h1 + n_angle))
+    ) / 12.0;
+
+    var local_bent = vec3<f32>(dir2.x * t0, dir2.y * t0, -t1);
+    local_bent = rot_from_to_matrix(vec3f(0.0, 0.0, -1.0), view_vec) * local_bent;
+    local_bent *= proj_len;
+
+    return vec4<f32>(local_bent, vis);
 }
 
 // -----------------------------------------------------------------------------
@@ -194,7 +173,7 @@ fn search_horizon_side(
 // -----------------------------------------------------------------------------
 @compute @workgroup_size(8,8,1)
 fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
-    let dims = textureDimensions(depth_tex);
+    let dims = textureDimensions(position_tex);
     if (gid.x >= dims.x || gid.y >= dims.y) { return; }
 
     let xy   = gid.xy;
@@ -239,44 +218,101 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     // Guarantee at least 1
     let steps_final = max(1u, steps_per_slice);
 
-    // Horizon search per slice
+    // View direction for this pixel
+    let view_vec = normalize(view.view_position.xyz - world_pos);
+
+    // Horizon search per slice using XeGTAO analytic model
     var vis_accum: f32 = 0.0;
     var bent_accum = vec3<f32>(0.0);
-    var weight_accum: f32 = 0.0;
 
     for (var s = 0u; s < NUM_SLICES; s = s + 1u) {
         let dir_s = slice_dirs[s];
 
-        // +side and -side horizon elevation angles
-        let h_pos = search_horizon_side(dir_s, normal, world_pos, &view, settings.radius, steps_final,  1.0);
-        let h_neg = search_horizon_side(dir_s, normal, world_pos, &view, settings.radius, steps_final, -1.0);
+        // Basis vectors relative to the view direction
+        let ortho_dir = dir_s - dot(dir_s, view_vec) * view_vec;
+        let axis_vec = normalize(cross(ortho_dir, view_vec));
+        let proj_norm = normal - axis_vec * dot(normal, axis_vec);
 
-        // Slice visibility (cosine-weighted approx)
-        let v_slice = integrate_slice(h_neg, h_pos);
-        vis_accum += v_slice;
+        var sign_norm: f32 = 1.0;
+        if (dot(ortho_dir, proj_norm) < 0.0) { sign_norm = -1.0; }
 
-        // Bent-normal contribution: midpoint directions for +/- sides, weight by each side's vis
-        let side_weight_pos = cos(clamp(h_pos, 0.0, HALF_PI)); // same weighting as slice vis
-        let side_weight_neg = cos(clamp(h_neg, 0.0, HALF_PI));
+        let proj_len = max(length(proj_norm), 1e-4);
+        let cos_norm = clamp(dot(proj_norm, view_vec) / proj_len, -1.0, 1.0);
+        let n_angle = sign_norm * fast_acos(cos_norm);
 
-        let bent_pos = bent_dir_for_side(normal, dir_s, h_pos,  1.0);
-        let bent_neg = bent_dir_for_side(normal, dir_s, h_neg, -1.0);
+        var horizon_cos0 = cos(n_angle + HALF_PI);
+        var horizon_cos1 = cos(n_angle - HALF_PI);
 
-        bent_accum += bent_pos * side_weight_pos;
-        bent_accum += bent_neg * side_weight_neg;
-        weight_accum += (side_weight_pos + side_weight_neg);
+        // search samples along this slice (+/- directions)
+        let step_count_f = f32(steps_final);
+        let sdir = normalize(dir_s);
+        for (var i:u32 = 1u; i <= steps_final; i = i + 1u) {
+            let t = f32(i) / step_count_f;
+            let dist = t * settings.radius;
+
+            let sample_w0 = world_pos + sdir * dist;
+            let sample_view0 = (view.view_matrix * vec4f(sample_w0, 1.0)).xyz;
+            let clip0 = view.projection_matrix * vec4f(sample_view0, 1.0);
+            var uv0 = (clip0.xy / clip0.w) * 0.5 + 0.5;
+            uv0.y = 1.0 - uv0.y;
+            if (uv0.x >= 0.0 && uv0.x <= 1.0 && uv0.y >= 0.0 && uv0.y <= 1.0) {
+                let scene0 = textureSampleLevel(position_tex, non_filtering_sampler, uv0, 0.0).xyz;
+                let delta0 = scene0 - world_pos;
+                if (dot(delta0, sdir) > 0.0) {
+                    let shv0 = normalize(delta0);
+                    let shc0 = dot(shv0, view_vec);
+                    horizon_cos0 = max(horizon_cos0, shc0);
+                }
+            }
+
+            let sample_w1 = world_pos - sdir * dist;
+            let sample_view1 = (view.view_matrix * vec4f(sample_w1, 1.0)).xyz;
+            let clip1 = view.projection_matrix * vec4f(sample_view1, 1.0);
+            var uv1 = (clip1.xy / clip1.w) * 0.5 + 0.5;
+            uv1.y = 1.0 - uv1.y;
+            if (uv1.x >= 0.0 && uv1.x <= 1.0 && uv1.y >= 0.0 && uv1.y <= 1.0) {
+                let scene1 = textureSampleLevel(position_tex, non_filtering_sampler, uv1, 0.0).xyz;
+                let delta1 = scene1 - world_pos;
+                if (dot(delta1, -sdir) > 0.0) {
+                    let shv1 = normalize(delta1);
+                    let shc1 = dot(shv1, view_vec);
+                    horizon_cos1 = max(horizon_cos1, shc1);
+                }
+            }
+        }
+
+        let h0 = -fast_acos(horizon_cos1);
+        let h1 = fast_acos(horizon_cos0);
+        let contrib = integrate_slice(dir_s.xy, n_angle, cos_norm, h0, h1, proj_len, view_vec);
+        vis_accum += contrib.w;
+        bent_accum += contrib.xyz;
     }
 
-    // Final AO accessibility
-    let ao_vis = vis_accum / f32(NUM_SLICES);
+    // after slice loop
+    let ao_vis = clamp(vis_accum / f32(NUM_SLICES), 0.0, 1.0);
 
-    // Final bent normal
-    var bent = normal;
-    if (weight_accum > 1e-5) {
-        bent = normalize(bent_accum / weight_accum);
+    // Get a non-normalized mean bent direction
+    var bent_dir = vec3<f32>(0.0);
+    if (vis_accum > 0.0) {
+        bent_dir = bent_accum / vis_accum;
     }
 
-    // Write outputs
+    // Precompute some epsilons
+    let len2 = dot(bent_dir, bent_dir);
+    let eps_dir2 = 1e-6;        // squared-length threshold
+    let eps_vis  = 0.05;       // require at least 5% “openness” for bent to be meaningful
+
+    // Start with fallback = the surface normal
+    var final_bent = normal;
+
+    // If there is *enough* open hemisphere AND the integrated bent has non-zero length...
+    if (ao_vis > eps_vis && len2 > eps_dir2) {
+        final_bent = bent_dir / sqrt(len2);  // stable normalize
+    }
+
+    // Optional: you can blend fallback+ bent so it doesn’t snap harshly
+    final_bent = mix(normal, final_bent, smoothstep(eps_vis, 1.0, ao_vis));
+
     textureStore(ao_texture, vec2<i32>(xy), vec4f(ao_vis, ao_vis, ao_vis, 1.0));
-    textureStore(bent_output, vec2<i32>(xy), vec4f(bent, 1.0));
+    textureStore(bent_output, vec2<i32>(xy), vec4f(final_bent, 1.0));
 }

@@ -89,12 +89,12 @@ export class BindGroup {
         this.binding_table = new GroupBindingTable();
     }
 
-    init_with_layout(name, layout, index, bindings) {
+    init_with_layout(name, layout, index, bindings, force = false) {
         const renderer = Renderer.get();
 
         this.name = name;
         this.index = index;
-        this.layout = BindGroup.create_layout(name, layout);
+        this.layout = BindGroup.create_layout(name, layout, force);
         this.bind_group = renderer.device.createBindGroup({
             label: name,
             layout: this.layout,
@@ -144,7 +144,7 @@ export class BindGroup {
 
         if (!bind_group) {
             bind_group = new BindGroup();
-            bind_group.init_with_layout(name, layout, index, bindings);
+            bind_group.init_with_layout(name, layout, index, bindings, force);
             ResourceCache.get().store(CacheTypes.BIND_GROUP, Name.from(name), bind_group);
         }
 

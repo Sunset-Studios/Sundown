@@ -491,6 +491,10 @@ export class DeferredShadingStrategy {
     );
   }
 
+  refresh(render_graph) {
+    this.force_recreate = true;
+  }
+
   _draw_internal(render_graph) {
     profile_scope(deferred_shading_profile_scope_name, () => {
       if (!this.initialized) {
@@ -1138,7 +1142,6 @@ export class DeferredShadingStrategy {
       // └─────────────────────────────────────────────────────────────────────────────┘
       if (gtao_enabled) {
         this.gtao.add_passes(render_graph, {
-          depth_texture: main_depth_image,
           normal_texture: main_normal_image,
           position_texture: main_position_image,
           width: image_extent.width,
@@ -1152,6 +1155,8 @@ export class DeferredShadingStrategy {
       // │    Combine G-Buffer data with lights to produce final shaded results      │
       // └─────────────────────────────────────────────────────────────────────────────┘
       {
+        deferred_lighting_shader_setup.force_recreate = this.force_recreate;
+
         post_lighting_image_config.width = image_extent.width;
         post_lighting_image_config.height = image_extent.height;
         post_lighting_image_config.force = this.force_recreate;
@@ -1169,18 +1174,17 @@ export class DeferredShadingStrategy {
           light_count,
         ];
 
-        if (gi_enabled) {
-          deferred_lighting_shader_setup.pipeline_shaders.vertex.defines.GI_ENABLED = true;
-          deferred_lighting_shader_setup.pipeline_shaders.fragment.defines.GI_ENABLED = true;
+        deferred_lighting_shader_setup.pipeline_shaders.vertex.defines.GI_ENABLED = gi_enabled;
+        deferred_lighting_shader_setup.pipeline_shaders.fragment.defines.GI_ENABLED = gi_enabled;
 
+        if (gi_enabled) {
           lighting_inputs.push(gi_irradiance_image, gi_depth_image);
         }
 
-        if (shadows_enabled) {
-          // Register AS-VSM shadow resources for lighting
-          deferred_lighting_shader_setup.pipeline_shaders.vertex.defines.SHADOWS_ENABLED = true;
-          deferred_lighting_shader_setup.pipeline_shaders.fragment.defines.SHADOWS_ENABLED = true;
+        deferred_lighting_shader_setup.pipeline_shaders.vertex.defines.SHADOWS_ENABLED = shadows_enabled;
+        deferred_lighting_shader_setup.pipeline_shaders.fragment.defines.SHADOWS_ENABLED = shadows_enabled;
 
+        if (shadows_enabled) {
           lighting_inputs.push(
             this.as_vsm.shadow_atlas_buf,
             this.as_vsm.page_table,
@@ -1189,11 +1193,11 @@ export class DeferredShadingStrategy {
           );
         }
 
-        if (gtao_enabled) {
-          deferred_lighting_shader_setup.pipeline_shaders.vertex.defines.GTAO_ENABLED = true;
-          deferred_lighting_shader_setup.pipeline_shaders.fragment.defines.GTAO_ENABLED = true;
+        deferred_lighting_shader_setup.pipeline_shaders.vertex.defines.GTAO_ENABLED = gtao_enabled;
+        deferred_lighting_shader_setup.pipeline_shaders.fragment.defines.GTAO_ENABLED = gtao_enabled;
 
-          lighting_inputs.push(this.gtao.ao_texture, this.gtao.bent_normal_texture);
+        if (gtao_enabled) {
+          lighting_inputs.push(this.gtao.ao_blur_texture, this.gtao.bent_normal_texture);
         }
 
         render_graph.add_pass(
@@ -1508,7 +1512,7 @@ export class DeferredShadingStrategy {
             break;
           case DebugDrawType.GTAO:
             this.debug_overlay.set_properties(
-              this.gtao.ao_texture,
+              this.gtao.ao_blur_texture,
               0,
               0,
               image_extent.width,

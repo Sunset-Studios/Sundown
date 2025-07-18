@@ -279,6 +279,7 @@ const RGShaderDataSetup = Object.freeze({
   viewport: null,
   depth_write_enabled: null,
   depth_stencil_compare_op: null,
+  force_recreate: false,
 });
 
 /**
@@ -1167,6 +1168,17 @@ export class RenderGraph {
   }
 
   /**
+   * Recreates the pipeline states for all passes in the render graph.
+   * This function is used to recreate the pipeline states for all passes in the render graph.
+   *
+   * @returns {void}
+   */
+  recreate_pipeline_states() {
+    this.pass_cache.pipeline_states.clear();
+    this.pass_cache_full_needs_reset = true;
+  }
+
+  /**
    * Adds a callback to be executed before the render graph is submitted.
    *
    * @param {Function} callback - The callback function to be executed.
@@ -1226,6 +1238,9 @@ export class RenderGraph {
       }
 
       CommandQueue.submit(encoder, this._execute_post_render_callbacks);
+
+      this.pass_cache_passes_needs_reset = false;
+      this.pass_cache_full_needs_reset = false;
     });
   }
 
@@ -1593,19 +1608,22 @@ export class RenderGraph {
     if (is_compute_pass && shader_setup.pipeline_shaders.compute) {
       pass.shaders.compute = Shader.create(
         shader_setup.pipeline_shaders.compute.path,
-        shader_setup.pipeline_shaders.compute.defines
+        shader_setup.pipeline_shaders.compute.defines,
+        shader_setup.force_recreate
       );
     } else {
       if (shader_setup.pipeline_shaders.vertex) {
         pass.shaders.vertex = Shader.create(
           shader_setup.pipeline_shaders.vertex.path,
-          shader_setup.pipeline_shaders.vertex.defines
+          shader_setup.pipeline_shaders.vertex.defines,
+          shader_setup.force_recreate
         );
       }
       if (shader_setup.pipeline_shaders.fragment) {
         pass.shaders.fragment = Shader.create(
           shader_setup.pipeline_shaders.fragment.path,
-          shader_setup.pipeline_shaders.fragment.defines
+          shader_setup.pipeline_shaders.fragment.defines,
+          shader_setup.force_recreate
         );
       }
     }
@@ -1831,10 +1849,11 @@ export class RenderGraph {
             module: pass.shaders.compute.module,
             entryPoint: shader_setup.pipeline_shaders.compute.entry_point || "cs",
           },
+          force: this.pass_cache_full_needs_reset
         };
 
         pass.pipeline_state_id = pass.pass_config.encoded_name;
-        const pipeline = PipelineState.create_compute(pass.pass_config.name, pipeline_descriptor);
+        PipelineState.create_compute(pass.pass_config.name, pipeline_descriptor);
       } else {
         const targets = pass.pass_config.attachments
           .filter((attachment) => {
@@ -1884,6 +1903,7 @@ export class RenderGraph {
             topology: shader_setup.primitive_topology_type || "triangle-list",
             cullMode: shader_setup.rasterizer_state?.cull_mode || "back",
           },
+          force: this.pass_cache_full_needs_reset
         };
 
         if (pass.shaders.fragment) {
@@ -1899,7 +1919,7 @@ export class RenderGraph {
         }
 
         pass.pipeline_state_id = pass.pass_config.encoded_name;
-        const pipeline = PipelineState.create_render(pass.pass_config.name, pipeline_descriptor);
+        PipelineState.create_render(pass.pass_config.name, pipeline_descriptor);
       }
 
       this.pass_cache.pipeline_states.set(pass.pass_config.name, pass.pipeline_state_id);
@@ -1914,8 +1934,6 @@ export class RenderGraph {
     } else if (this.pass_cache_full_needs_reset) {
       this.pass_cache.bind_groups = new Map();
     }
-    this.pass_cache_passes_needs_reset = false;
-    this.pass_cache_full_needs_reset = false;
   }
 
   _setup_global_bind_group(pass) {

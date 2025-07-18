@@ -140,7 +140,7 @@ fn sample_probe_irradiance(world_pos: vec3<f32>) -> vec3<f32> {
 #if GTAO_ENABLED
     ao = textureSample(ao_texture, non_filtering_sampler, uv).r;
     let bent_normal = textureSample(bent_normal_texture, non_filtering_sampler, uv).xyz;
-    //normalized_normal = normalize(mix(normalized_normal, bent_normal, ao));
+    //normalized_normal = normalize(bent_normal);
 #endif
 
     var tex_position = textureSample(position_texture, non_filtering_sampler, uv);
