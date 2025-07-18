@@ -1101,7 +1101,7 @@ export class DeferredShadingStrategy {
       // │ 🌚 PASS: Adaptive Sparse Virtual Shadow Maps                               │
       // │    High-quality, efficient shadow mapping with virtual memory management  │
       // └─────────────────────────────────────────────────────────────────────────────┘
-      if (shadows_enabled && draw_count > 0) {
+      if (shadows_enabled) {
         this.as_vsm.add_passes(render_graph, {
           position_texture: main_position_image,
           entity_flags: entity_flags,

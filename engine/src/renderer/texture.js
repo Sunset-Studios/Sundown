@@ -216,7 +216,7 @@ export class Texture {
       const texture = textures[layer];
       // 3) copy the full-res image into mip 0
       renderer.device.queue.copyExternalImageToTexture(
-        { source: texture, flipY: true },
+        { source: texture, flipY: config.flip_y !== undefined ? config.flip_y : true },
         { texture: this.image, mipLevel: 0, origin: { x: 0, y: 0, z: layer } },
         [ texture.width, texture.height ]
       );
@@ -231,7 +231,7 @@ export class Texture {
         resizeQuality: "high",
       });
       renderer.device.queue.copyExternalImageToTexture(
-        { source: mip_bitmap, flipY: true },
+        { source: mip_bitmap, flipY: config.flip_y !== undefined ? config.flip_y : true },
         { texture: this.image, mipLevel: lvl, origin: { x: 0, y: 0, z: layer } },
         [ w, h ]
       );

@@ -18,6 +18,7 @@ const ao_image_config = {
   width: 0,
   height: 0,
   usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
+  clear_value: { r: 1.0, g: 1.0, b: 1.0, a: 1.0 },
   force: false,
 };
 const ao_blur_image_config = {
@@ -26,6 +27,7 @@ const ao_blur_image_config = {
   width: 0,
   height: 0,
   usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
+  clear_value: { r: 1.0, g: 1.0, b: 1.0, a: 1.0 },
   force: false,
 };
 const bent_image_config = {
@@ -51,10 +53,10 @@ const gtao_bilateral_params_config = {
 
 export class GTAO {
   constructor(
-    radius = 0.25,
+    radius = 0.5,
     bias = 0.01,
     sample_count = 8,
-    radius_bilateral = 3,
+    radius_bilateral = 4,
     normal_power = 32,
     sigma_ao = 0.25
   ) {

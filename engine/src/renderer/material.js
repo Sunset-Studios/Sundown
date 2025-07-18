@@ -658,7 +658,7 @@ export class StandardMaterial {
       // texture flags 1: vec4 (albedo, normal, roughness, metallic)
       0.0, 0.0, 0.0, 0.0,
       // texture flags 2: vec4 (ao, height, specular, emission)
-      0.0, 0.0, 0.0, 0.0,
+      1.0, 0.0, 0.0, 0.0,
     ]);
 
     standard_material.material_params_buffer = Buffer.create({
@@ -685,7 +685,7 @@ export class StandardMaterial {
       params.emission !== undefined ? params.emission : 0.2,
       params.emission_texture || null
     );
-    standard_material.set_ao(params.ao !== undefined ? params.ao : 0.1, params.ao_texture || null);
+    standard_material.set_ao(params.ao !== undefined ? params.ao : 1.0, params.ao_texture || null);
     standard_material.set_height(
       params.height !== undefined ? params.height : 0.0,
       params.height_texture || null

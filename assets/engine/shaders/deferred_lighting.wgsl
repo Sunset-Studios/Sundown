@@ -203,7 +203,7 @@ fn sample_probe_irradiance(world_pos: vec3<f32>) -> vec3<f32> {
             1.0, // clear coat roughness 
             ao,
             irradiance,
-            vec3f(1.0, 1.0, 1.0), // prefilter color 
+            vec3f(0.01, 0.01, 0.01), // prefilter color 
             vec2f(1.0, 1.0), // env brdf
             shadow_factor,
         );

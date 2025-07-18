@@ -162,7 +162,7 @@ fn integrate_slice(
     ) / 12.0;
 
     var local_bent = vec3<f32>(dir2.x * t0, dir2.y * t0, -t1);
-    local_bent = rot_from_to_matrix(vec3f(0.0, 0.0, -1.0), view_vec) * local_bent;
+    local_bent = rot_from_to_matrix(-world_forward, view_vec) * local_bent;
     local_bent *= proj_len;
 
     return vec4<f32>(local_bent, vis);
@@ -284,6 +284,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         let h0 = -fast_acos(horizon_cos1);
         let h1 = fast_acos(horizon_cos0);
         let contrib = integrate_slice(dir_s.xy, n_angle, cos_norm, h0, h1, proj_len, view_vec);
+        
         vis_accum += contrib.w;
         bent_accum += contrib.xyz;
     }
@@ -310,8 +311,8 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         final_bent = bent_dir / sqrt(len2);  // stable normalize
     }
 
-    // Optional: you can blend fallback+ bent so it doesn’t snap harshly
-    final_bent = mix(normal, final_bent, smoothstep(eps_vis, 1.0, ao_vis));
+    // Blend fallback + bent so it doesn't snap harshly
+    final_bent = mix(normal, final_bent, smoothstep(0.0, 1.0, 1.0 - ao_vis));
 
     textureStore(ao_texture, vec2<i32>(xy), vec4f(ao_vis, ao_vis, ao_vis, 1.0));
     textureStore(bent_output, vec2<i32>(xy), vec4f(final_bent, 1.0));

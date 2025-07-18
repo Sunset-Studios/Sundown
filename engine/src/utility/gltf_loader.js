@@ -1211,7 +1211,7 @@ var ComponentType2ByteSize = {
   5126: 4, // FLOAT
 };
 
-var Type2NumOfComponent = {
+export var Type2NumOfComponent = {
   SCALAR: 1,
   VEC2: 2,
   VEC3: 3,

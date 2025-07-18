@@ -5,6 +5,8 @@ import { Buffer } from "./buffer.js";
 import { Name } from "../utility/names.js";
 import { CacheTypes } from "./renderer_types.js";
 import { MeshTaskQueue } from "./mesh_task_queue.js";
+import { vec3 } from "gl-matrix";
+import { Type2NumOfComponent } from "../utility/gltf_loader.js";
 
 const discard_cpu_data = true;
 
@@ -508,99 +510,176 @@ export class Mesh {
     }
 
     const parse_node_mesh = (gltf_obj, node) => {
+      let all_indices = [];
+      let vertex_offset = 0;
+
       for (const primitive of node.mesh.primitives) {
-        if (primitive.indices) {
-          if (primitive.indicesComponentType === 5122 || primitive.indicesComponentType === 5123) {
-            mesh.indices = new Uint16Array(gltf_obj.accessors[primitive.indices].bufferView.data);
-          } else if (primitive.indicesComponentType === 5125) {
-            mesh.indices = new Uint32Array(gltf_obj.accessors[primitive.indices].bufferView.data);
-          }
-        }
         let positions = [];
-        if (primitive.attributes.POSITION) {
-          positions = new Float32Array(primitive.attributes.POSITION.bufferView.data);
+        let position_accessor = null;
+        if (primitive.attributes.POSITION !== undefined) {
+          position_accessor = primitive.attributes.POSITION;
+          positions = new Float32Array(position_accessor.bufferView.data);
         }
+        
         let normals = [];
-        if (primitive.attributes.NORMAL) {
-          normals = new Float32Array(primitive.attributes.NORMAL.bufferView.data);
+        let normal_accessor = null;
+        if (primitive.attributes.NORMAL !== undefined) {
+          normal_accessor = primitive.attributes.NORMAL;
+          normals = new Float32Array(normal_accessor.bufferView.data);
         }
+        
         let tangents = [];
-        if (primitive.attributes.TANGENT) {
-          tangents = new Float32Array(primitive.attributes.TANGENT.bufferView.data);
+        let tangent_accessor = null;
+        if (primitive.attributes.TANGENT !== undefined) {
+          tangent_accessor = primitive.attributes.TANGENT;
+          tangents = new Float32Array(tangent_accessor.bufferView.data);
         }
+        
         let bitangents = [];
-        if (primitive.attributes.BITANGENT) {
-          bitangents = new Float32Array(primitive.attributes.BITANGENT.bufferView.data);
+        let bitangent_accessor = null;
+        if (primitive.attributes.BITANGENT !== undefined) {
+          bitangent_accessor = primitive.attributes.BITANGENT;
+          bitangents = new Float32Array(bitangent_accessor.bufferView.data);
         }
+        
         let colors = [];
-        if (primitive.attributes.COLOR_0) {
-          colors = new Float32Array(primitive.attributes.COLOR_0.bufferView.data);
+        let color_components = 0;
+        let color_accessor = null;
+        if (primitive.attributes.COLOR_0 !== undefined) {
+          color_accessor = primitive.attributes.COLOR_0;
+          colors = new Float32Array(color_accessor.bufferView.data);
+          color_components = Type2NumOfComponent[color_accessor.type];
         }
+        
         let uvs = [];
-        if (primitive.attributes.TEXCOORD_0) {
-          switch (primitive.attributes.TEXCOORD_0.componentType) {
-            case 5126: // FLOAT
-              uvs = new Float32Array(primitive.attributes.TEXCOORD_0.bufferView.data);
-              break;
-            case 5121: // UNSIGNED_BYTE
-              uvs = new Uint8Array(primitive.attributes.TEXCOORD_0.bufferView.data);
-              break;
-            case 5123: // UNSIGNED_SHORT
-              uvs = new Uint16Array(primitive.attributes.TEXCOORD_0.bufferView.data);
-              break;
-          }
-
-          if (primitive.attributes.TEXCOORD_0.normalized) {
-            uvs = uvs.map(
-              (v) =>
-                v /
-                ((1 << (8 * primitive.attributes.TEXCOORD_0.componentType.BYTES_PER_ELEMENT)) - 1)
-            );
-          }
+        let uv_accessor = null;
+        if (primitive.attributes.TEXCOORD_0 !== undefined) {
+          uv_accessor = primitive.attributes.TEXCOORD_0;
+          
+          // Extract UV data - the accessor has already been processed by GLTF loader
+          uvs = new Float32Array(uv_accessor.bufferView.data, uv_accessor.byteOffset || 0, uv_accessor.count * 2);
         }
 
-        if (bitangents.length === 0 && tangents.length > 0 && normals.length > 0) {
-          // Compute bitangents using the cross product of normal and tangent
-          for (let i = 0; i < tangents.length; i += 3) {
-            const t = [tangents[i], tangents[i + 1], tangents[i + 2]];
-            const n = [normals[i], normals[i + 1], normals[i + 2]];
-
-            // Cross product: B = N × T (ensuring right-handed coordinate system)
-            const b = [
-              n[1] * t[2] - n[2] * t[1],
-              n[2] * t[0] - n[0] * t[2],
-              n[0] * t[1] - n[1] * t[0],
+        // Compute tangents/bitangents if not provided
+        if (tangents.length === 0 && positions.length > 0 && uvs.length > 0) {
+          let computed = Mesh._get_tangents_and_bitangents(positions, uvs);
+          tangents = computed.t; // flat VEC3
+          bitangents = computed.b; // flat VEC3
+        } else if (bitangents.length === 0 && tangents.length > 0 && normals.length > 0) {
+          bitangents = new Array((tangents.length / 4) * 3);
+          for (let vi = 0; vi < tangents.length / 4; vi++) {
+            let tangent_start = vi * 4;
+            let normal_start = vi * 3;
+            let t = [
+              tangents[tangent_start],
+              tangents[tangent_start + 1],
+              tangents[tangent_start + 2],
             ];
-
-            // Normalize the bitangent
-            const length = Math.sqrt(b[0] * b[0] + b[1] * b[1] + b[2] * b[2]);
-            if (length > 1e-6) {
-              b[0] /= length;
-              b[1] /= length;
-              b[2] /= length;
-            }
-
-            bitangents.push(b[0], b[1], b[2]);
+            let handedness = tangents[tangent_start + 3] || 1;
+            let n = [normals[normal_start], normals[normal_start + 1], normals[normal_start + 2]];
+            let b = vec3.cross(vec3.create(), n, t);
+            vec3.scale(b, b, handedness);
+            vec3.normalize(b, b);
+            let bitangent_start = vi * 3;
+            bitangents[bitangent_start] = b[0];
+            bitangents[bitangent_start + 1] = b[1];
+            bitangents[bitangent_start + 2] = b[2];
           }
         }
 
-        let uv_index = 0;
-        for (let i = 0; i < positions.length; i += 3) {
+        // Number of unique vertices
+        const num_verts = positions.length / 3;
+
+        // Build vertices for this primitive
+        for (let k = 0; k < num_verts; k++) {
+          let pos_index = k * 3;
+          let normal_index = k * 3;
+          let uv_index = k * 2;
+          let tangent_index = tangents.length % 4 === 0 ? k * 4 : k * 3; // VEC4 if original, VEC3 if computed
+          let bitangent_index = k * 3;
+          let color_index = k * color_components;
+
+          let color = [1, 1, 1, 1];
+          if (colors.length > 0) {
+            if (color_components === 3) {
+              color = [colors[color_index], colors[color_index + 1], colors[color_index + 2], 1];
+            } else {
+              color = [
+                colors[color_index],
+                colors[color_index + 1],
+                colors[color_index + 2],
+                colors[color_index + 3],
+              ];
+            }
+          }
+
+          let tangent_w = 1.0;
+          if (tangents.length % 4 === 0) {
+            // Original tangent VEC4
+            tangent_w = tangents[tangent_index + 3] ?? 1.0;
+          }
+
           mesh.vertices.push({
-            position: [positions[i] ?? 0.0, positions[i + 1] ?? 0.0, positions[i + 2] ?? 0.0, 1.0],
-            normal: [normals[i] ?? 0.0, normals[i + 1] ?? 0.0, normals[i + 2] ?? 0.0, 0.0],
+            position: [
+              positions[pos_index] ?? 0.0,
+              positions[pos_index + 1] ?? 0.0,
+              positions[pos_index + 2] ?? 0.0,
+              1.0,
+            ],
+            normal: [
+              normals[normal_index] ?? 0.0,
+              normals[normal_index + 1] ?? 0.0,
+              normals[normal_index + 2] ?? 0.0,
+              0.0,
+            ],
+            color: color,
             uv: [uvs[uv_index] ?? 0.0, uvs[uv_index + 1] ?? 0.0, 0.0, 0.0],
-            tangent: [tangents[i] ?? 0.0, tangents[i + 1] ?? 0.0, tangents[i + 2] ?? 0.0, 0.0],
+            tangent: [
+              tangents[tangent_index] ?? 0.0,
+              tangents[tangent_index + 1] ?? 0.0,
+              tangents[tangent_index + 2] ?? 0.0,
+              tangent_w,
+            ],
             bitangent: [
-              bitangents[i] ?? 0.0,
-              bitangents[i + 1] ?? 0.0,
-              bitangents[i + 2] ?? 0.0,
+              bitangents[bitangent_index] ?? 0.0,
+              bitangents[bitangent_index + 1] ?? 0.0,
+              bitangents[bitangent_index + 2] ?? 0.0,
               0.0,
             ],
           });
-          uv_index += 2;
         }
+
+        // Handle indices
+        let local_indices = [];
+        if (primitive.indices !== undefined) {
+          const index_accessor = gltf_obj.accessors[primitive.indices];
+          if (index_accessor.componentType === 5123) {
+            // UNSIGNED_SHORT
+            local_indices = new Uint16Array(index_accessor.bufferView.data, index_accessor.byteOffset || 0, index_accessor.count);
+          } else if (index_accessor.componentType === 5125) {
+            // UNSIGNED_INT
+            local_indices = new Uint32Array(index_accessor.bufferView.data, index_accessor.byteOffset || 0, index_accessor.count);
+          } else if (index_accessor.componentType === 5121) {
+            // UNSIGNED_BYTE
+            local_indices = new Uint8Array(index_accessor.bufferView.data, index_accessor.byteOffset || 0, index_accessor.count);
+          }
+        } else {
+          // No indices, generate sequential
+          let count = num_verts;
+          local_indices = new Uint32Array(count);
+          for (let k = 0; k < count; k++) {
+            local_indices[k] = k;
+          }
+        }
+
+        for (let idx of local_indices) {
+          all_indices.push(idx + vertex_offset);
+        }
+
+        vertex_offset += num_verts;
       }
+
+      mesh.indices = new Uint32Array(all_indices);
     };
 
     mesh = new Mesh();

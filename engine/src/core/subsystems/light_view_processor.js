@@ -100,7 +100,7 @@ export class LightViewProcessor extends SimulationLayer {
 
         }
 
-        if (lights.is_primary_sun[slot] > 0) {
+        if (lights.is_primary_sun[slot] > 0 && SharedEnvironmentData.get_skydome_data() !== null) {
           SharedEnvironmentData.set_skydome_view(view.get_index());
         }
 
@@ -168,7 +168,9 @@ export class LightViewProcessor extends SimulationLayer {
       }
       
       let light_view_index = lights.view_index[slot];
-      if (lights.is_primary_sun[slot] > 0 && light_view_index !== SharedEnvironmentData.get_skydome_view()) {
+      if (lights.is_primary_sun[slot] > 0
+          && light_view_index !== SharedEnvironmentData.get_skydome_view()
+          && SharedEnvironmentData.get_skydome_data() !== null) {
         SharedEnvironmentData.set_skydome_view(light_view_index);
         chunk.mark_dirty();
       }

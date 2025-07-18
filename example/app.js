@@ -111,7 +111,6 @@ export class RenderingScene extends Scene {
 
       default_material.set_albedo([0.7, 0.7, 0.7, 1.0], dirt_albedo);
       default_material.set_roughness(0.5, dirt_roughness);
-      default_material.set_emission(0.2);
       default_material.set_tiling(2.0, 2.0);
     }
 
@@ -474,7 +473,7 @@ export class TexturesScene extends Scene {
     const light_fragment_view = EntityManager.get_fragment(light_entity, LightFragment);
     light_fragment_view.type = LightType.DIRECTIONAL;
     light_fragment_view.color = [1, 1, 1, 1];
-    light_fragment_view.intensity = 2;
+    light_fragment_view.intensity = 7;
     light_fragment_view.position = [50, 20, -10];
     light_fragment_view.active = true;
     light_fragment_view.is_primary_sun = 1;
@@ -565,8 +564,7 @@ export class TexturesScene extends Scene {
       default_plane_material.set_albedo([0.5, 0.5, 0.5, 1], worn_panel_albedo);
       default_plane_material.set_normal([0, 1, 0, 1], worn_panel_normal);
       default_plane_material.set_roughness(0.5, worn_panel_roughness);
-      default_plane_material.set_metallic(0.5, worn_panel_metallic);
-      default_plane_material.set_ao(0.5, worn_panel_ao);
+      default_plane_material.set_metallic(0.2);
       default_plane_material.set_emission(0.1);
       default_plane_material.set_tiling(30.0);
     }
@@ -630,7 +628,7 @@ export class TexturesScene extends Scene {
       wall_material.set_albedo([0.5, 0.5, 0.5, 1], wall_albedo);
       wall_material.set_normal([0, 1, 0, 1], wall_normal);
       wall_material.set_roughness(0.5, wall_roughness);
-      wall_material.set_metallic(0.5, wall_metallic);
+      wall_material.set_metallic(0.9);
       wall_material.set_ao(0.5, wall_ao);
       wall_material.set_emission(0.1);
       wall_material.set_tiling(2.0);
@@ -761,18 +759,8 @@ export class AABBScene extends Scene {
   init(parent_context) {
     super.init(parent_context);
 
-    // Set the skybox for this scene.
-    SharedEnvironmentData.set_skybox("default_scene_skybox", [
-      "engine/textures/gradientbox/px.png",
-      "engine/textures/gradientbox/nx.png",
-      "engine/textures/gradientbox/ny.png",
-      "engine/textures/gradientbox/py.png",
-      "engine/textures/gradientbox/pz.png",
-      "engine/textures/gradientbox/nz.png",
-    ]);
-
-    // Set the skybox color to a subtle blue
-    SharedEnvironmentData.set_skybox_color([0.7, 0.8, 1.0, 1]);
+    // Set the skydome
+    SharedEnvironmentData.set_skydome("default_scene_skydome");
 
     // Add the freeform arcball control processor to the scene
     const freeform_arcball_control_processor = this.add_layer(FreeformArcballControlProcessor);
@@ -790,7 +778,7 @@ export class AABBScene extends Scene {
     const light_fragment_view = EntityManager.get_fragment(light_entity, LightFragment);
     light_fragment_view.type = LightType.DIRECTIONAL;
     light_fragment_view.color = [1, 1, 1];
-    light_fragment_view.intensity = 3;
+    light_fragment_view.intensity = 10;
     light_fragment_view.position = [50, 20, 50];
     light_fragment_view.active = true;
     light_fragment_view.shadow_clipmaps = MAX_CLIPMAP_LEVELS;
@@ -823,7 +811,6 @@ export class AABBScene extends Scene {
     default_material.set_normal([0, 1, 0, 1]);
     default_material.set_roughness(0.5);
     default_material.set_metallic(0.5);
-    default_material.set_ao(0.5);
     default_material.set_emission(0.1);
 
     // Create a default material for the selected entity
@@ -1422,7 +1409,7 @@ export class VoxelTerrainScene extends Scene {
     const light_fragment_view = EntityManager.get_fragment(light_entity, LightFragment);
     light_fragment_view.type = LightType.DIRECTIONAL;
     light_fragment_view.color = [1, 1, 1];
-    light_fragment_view.intensity = 2.5;
+    light_fragment_view.intensity = 15.0;
     light_fragment_view.position = [-45, 30, 70];
     light_fragment_view.active = true;
     light_fragment_view.is_primary_sun = 1;
@@ -1443,21 +1430,11 @@ export class VoxelTerrainScene extends Scene {
           GPUTextureUsage.RENDER_ATTACHMENT,
         material_notifier: "dirt_albedo",
       });
-      let dirt_roughness = Texture.load(["engine/textures/voxel/dirt_roughness.jpg"], {
-        name: "dirt_roughness",
-        format: "rgba8unorm",
-        dimension: "2d",
-        usage:
-          GPUTextureUsage.TEXTURE_BINDING |
-          GPUTextureUsage.COPY_DST |
-          GPUTextureUsage.RENDER_ATTACHMENT,
-        material_notifier: "dirt_roughness",
-      });
 
       terrain_material.set_albedo([0.7, 0.7, 0.7, 1.0], dirt_albedo);
-      terrain_material.set_roughness(0.5, dirt_roughness);
-      terrain_material.set_emission(0.2);
-      terrain_material.set_tiling(2.0, 2.0);
+      terrain_material.set_roughness(0.8);
+      terrain_material.set_emission(0.0);
+      terrain_material.set_metallic(0.9);
     }
 
     // Create cube mesh for voxels
@@ -1549,7 +1526,7 @@ export class VoxelTerrainScene extends Scene {
     // Spawn instanced cube entity for terrain
     const terrain_entity = spawn_mesh_entity(
       [0, 0, 0],
-      [0, 0, 0, 1],
+      quat.fromEuler(quat.create(), 0, 0, 0),
       [block_size, block_size, block_size],
       this.cube_mesh,
       this.terrain_material_id,
@@ -1697,9 +1674,10 @@ export class ObjectPaintingScene extends Scene {
     const light_fragment_view = EntityManager.get_fragment(light_entity, LightFragment);
     light_fragment_view.type = LightType.DIRECTIONAL;
     light_fragment_view.color = [1, 1, 1];
-    light_fragment_view.intensity = 2.5;
-    light_fragment_view.position = [10, 30, 10];
+    light_fragment_view.intensity = 10.0;
+    light_fragment_view.position = [10, 30, 20];
     light_fragment_view.active = true;
+    light_fragment_view.is_primary_sun = 1;
     light_fragment_view.shadow_clipmaps = MAX_CLIPMAP_LEVELS;
 
     // Load sphere mesh & create transparent/emissive brush material
@@ -1713,19 +1691,16 @@ export class ObjectPaintingScene extends Scene {
     this.object_material3_id = object_material3.material_id;
 
     object_material1.set_albedo([0.1, 0.1, 0.3, 1]);
-    object_material1.set_emission(0.3);
     object_material1.set_roughness(0.5);
-    object_material1.set_tiling(2.0, 2.0);
+    object_material1.set_metallic(0.9);
 
     object_material2.set_albedo([0.3, 0.0, 0.0, 1]);
-    object_material2.set_emission(0.3);
     object_material2.set_roughness(0.5);
-    object_material2.set_tiling(2.0, 2.0);
+    object_material2.set_metallic(0.9);
 
     object_material3.set_albedo([0.0, 0.3, 0.0, 1]);
-    object_material3.set_emission(0.3);
     object_material3.set_roughness(0.5);
-    object_material3.set_tiling(2.0, 2.0);
+    object_material3.set_metallic(0.9);
   }
 
   update(delta_time) {
@@ -1754,8 +1729,8 @@ export class ObjectPaintingScene extends Scene {
           // spawn a sphere instance
           const entity = spawn_mesh_entity(
             [x, y, z],
-            quat.create(),
-            [0.1 + Math.random() * 0.3, 0.1 + Math.random() * 0.3, 0.1 + Math.random() * 0.3],
+            [0, 0, 0, 1],
+            [0.3 + Math.random() * 0.3, 0.3 + Math.random() * 0.3, 0.3 + Math.random() * 0.3],
             this.sphere_mesh,
             [this.object_material1_id, this.object_material2_id, this.object_material3_id][
               Math.floor(Math.random() * 3)
@@ -1834,7 +1809,7 @@ export class GITestScene extends Scene {
 
     const room_size = 10.0;
     const wall_thickness = 0.1;
-    const ambient_emissive = 0.05;
+    const ambient_emissive = 0.0;
 
     // camera arcball
     const freeform_arcball_control_processor = this.add_layer(FreeformArcballControlProcessor);
@@ -1855,7 +1830,7 @@ export class GITestScene extends Scene {
     const light_fragment_view = EntityManager.get_fragment(light_entity, LightFragment);
     light_fragment_view.type = LightType.DIRECTIONAL;
     light_fragment_view.color = [1, 1, 1];
-    light_fragment_view.intensity = 0.5;
+    light_fragment_view.intensity = 5.5;
     light_fragment_view.position = [5, 15, 25];
     light_fragment_view.active = true;
     light_fragment_view.is_primary_sun = 1;
@@ -1925,9 +1900,9 @@ export class GITestScene extends Scene {
     metallic_floor_material.set_albedo([0.5, 0.5, 0.5, 1], worn_panel_albedo);
     metallic_floor_material.set_normal([0, 1, 0, 1], worn_panel_normal);
     metallic_floor_material.set_roughness(0.5, worn_panel_roughness);
-    metallic_floor_material.set_metallic(0.5, worn_panel_metallic);
+    metallic_floor_material.set_metallic(0.2);
     metallic_floor_material.set_ao(0.5, worn_panel_ao);
-    metallic_floor_material.set_emission(0.1);
+    metallic_floor_material.set_emission(0.0);
     metallic_floor_material.set_tiling(30.0);
 
     // materials
@@ -1936,21 +1911,25 @@ export class GITestScene extends Scene {
     wall_material.set_albedo([1, 1, 1, 1]);
     wall_material.set_emission(ambient_emissive);
     wall_material.set_roughness(1.0);
+    wall_material.set_metallic(0.75);
 
     const red_material = StandardMaterial.create("testgym_red_material");
     const red_material_id = red_material.material_id;
     red_material.set_albedo([1, 0.2, 0.2, 1]);
     red_material.set_emission(ambient_emissive);
+    red_material.set_metallic(0.75);
 
     const blue_material = StandardMaterial.create("testgym_blue_material");
     const blue_material_id = blue_material.material_id;
     blue_material.set_albedo([0.2, 0.2, 1, 1]);
     blue_material.set_emission(ambient_emissive);
+    blue_material.set_metallic(0.75);
 
     const gray_material = StandardMaterial.create("testgym_gray_material");
     const gray_material_id = gray_material.material_id;
     gray_material.set_albedo([0.5, 0.5, 0.5, 1]);
     gray_material.set_emission(ambient_emissive);
+    gray_material.set_metallic(0.75);
 
     // meshes
     const cube_mesh = Mesh.cube();
@@ -2048,11 +2027,13 @@ export class GITestScene extends Scene {
       const left_wall_material_second_id = left_wall_material_second.material_id;
       left_wall_material_second.set_albedo([0, 1, 0, 1]);
       left_wall_material_second.set_emission(ambient_emissive);
+      left_wall_material_second.set_metallic(0.9);
 
       const right_wall_material_second = StandardMaterial.create("testgym_right_material_second");
       const right_wall_material_second_id = right_wall_material_second.material_id;
       right_wall_material_second.set_albedo([1, 0, 1, 1]);
       right_wall_material_second.set_emission(ambient_emissive);
+      right_wall_material_second.set_metallic(0.9);
 
       // spawn elements for second box
       const floor_second = spawn_mesh_entity(
@@ -2133,11 +2114,13 @@ export class GITestScene extends Scene {
       const left_wall_material_third_id = left_wall_material_third.material_id;
       left_wall_material_third.set_albedo([1, 0.5, 0, 1]);
       left_wall_material_third.set_emission(ambient_emissive);
+      left_wall_material_third.set_metallic(0.9);
 
       const right_wall_material_third = StandardMaterial.create("testgym_right_material_third");
       const right_wall_material_third_id = right_wall_material_third.material_id;
       right_wall_material_third.set_albedo([0.5, 0, 0.5, 0.3]);
       right_wall_material_third.set_emission(ambient_emissive);
+      right_wall_material_third.set_metallic(0.9);
 
       const floor_third = spawn_mesh_entity(
         [offset_x, -wall_thickness, 0],
@@ -2273,7 +2256,7 @@ export class ShadowTestScene extends Scene {
   init(parent_context) {
     super.init(parent_context);
 
-    const ambient_emissive = 0.3;
+    const ambient_emissive = 0.0;
 
     // Add arcball camera control
     const freeform_arcball_control_processor = this.add_layer(FreeformArcballControlProcessor);
@@ -2296,7 +2279,7 @@ export class ShadowTestScene extends Scene {
     const light_fragment_view = EntityManager.get_fragment(light_entity, LightFragment);
     light_fragment_view.type = LightType.DIRECTIONAL;
     light_fragment_view.color = [1, 1, 0.9];
-    light_fragment_view.intensity = 0.1;
+    light_fragment_view.intensity = 2.0;
     light_fragment_view.position = [30, 55, 40];
     light_fragment_view.active = true;
     light_fragment_view.is_primary_sun = 1;
@@ -2324,6 +2307,7 @@ export class ShadowTestScene extends Scene {
     ground_material.set_albedo([0.5, 0.5, 0.5, 1]);
     ground_material.set_roughness(0.8);
     ground_material.set_emission(ambient_emissive);
+    ground_material.set_metallic(0.9);
 
     // Building material
     const building_material = StandardMaterial.create("shadow_building_material");
@@ -2331,6 +2315,7 @@ export class ShadowTestScene extends Scene {
     building_material.set_albedo([0.35, 0.35, 0.35, 1]);
     building_material.set_roughness(0.8);
     building_material.set_emission(ambient_emissive);
+    building_material.set_metallic(0.9);
 
     // Shared cube mesh
     const cube_mesh = Mesh.cube();
@@ -2367,6 +2352,7 @@ export class ShadowTestScene extends Scene {
     ball_material.set_albedo([0.9, 0.9, 0.2, 1]);
     ball_material.set_emission(0.3);
     ball_material.set_roughness(0.5);
+    ball_material.set_metallic(0.9);
 
     // Create spheres
     for (const base_pos of this.swaying_ball_base_positions) {
@@ -2449,6 +2435,7 @@ export class ShadowTestScene extends Scene {
       m.set_albedo(c.color);
       m.set_emission(100.0); // extremely bright
       m.set_roughness(0.1);
+      m.set_metallic(0.9);
       return m.material_id;
     });
 
@@ -2629,6 +2616,123 @@ export class ShadowTestScene extends Scene {
 }
 
 // ------------------------------------------------------------------------------------
+// =============================== GLTF Model Scene ==================================
+// ------------------------------------------------------------------------------------
+
+export class GLTFModelScene extends Scene {
+  name = "GLTFModelScene";
+  entities = [];
+
+  init(parent_context) {
+    super.init(parent_context);
+
+    // Add arcball camera control
+    const freeform_arcball_control_processor = this.add_layer(FreeformArcballControlProcessor);
+    freeform_arcball_control_processor.set_scene(this);
+
+    // Set skybox
+    SharedEnvironmentData.set_skydome("default_scene_skydome");
+
+    // Camera setup
+    const view_data = SharedViewBuffer.get_view_data(0);
+    view_data.view_position = [21, 2, 30];
+    view_data.view_rotation = quat.fromEuler(quat.create(), 0, 180, 0);
+
+    // Add a directional light
+    const light_entity = EntityManager.create_entity([LightFragment]);
+    this.entities.push(light_entity);
+
+    const light_fragment_view = EntityManager.get_fragment(light_entity, LightFragment);
+    light_fragment_view.type = LightType.DIRECTIONAL;
+    light_fragment_view.color = [1, 1, 1];
+    light_fragment_view.intensity = 5.0;
+    light_fragment_view.position = [10, 20, 10];
+    light_fragment_view.active = true;
+    light_fragment_view.is_primary_sun = 1;
+    light_fragment_view.shadow_clipmaps = MAX_CLIPMAP_LEVELS;
+
+    // Load a GLTF model (e.g., barrel)
+    const model_mesh = Mesh.from_gltf("engine/models/barrel/Barrel.gltf");
+
+    // Create a default material
+    const barrel_material = StandardMaterial.create("GLTFModelMaterial");
+    {
+      let barrel_albedo = Texture.load(["engine/models/barrel/barrel_BaseColor.png"], {
+        name: "barrel_albedo",
+        format: "rgba8unorm",
+        dimension: "2d",
+        usage:
+          GPUTextureUsage.TEXTURE_BINDING |
+          GPUTextureUsage.COPY_DST |
+          GPUTextureUsage.RENDER_ATTACHMENT,
+        material_notifier: "barrel_albedo",
+        flip_y: false,
+      });
+      let barrel_metallic = Texture.load(["engine/models/barrel/barrel_Metallic-barrel_Roughness.png"], {
+        name: "barrel_metallic",
+        format: "rgba8unorm",
+        dimension: "2d",
+        usage:
+          GPUTextureUsage.TEXTURE_BINDING |
+          GPUTextureUsage.COPY_DST |
+          GPUTextureUsage.RENDER_ATTACHMENT,
+        material_notifier: "barrel_metallic",
+      });
+
+      // Create a default material
+      barrel_material.set_albedo([1, 1, 1, 1], barrel_albedo);
+      barrel_material.set_roughness([0.5, 0.5, 0.5, 1], barrel_metallic);
+      barrel_material.set_metallic(0.5);
+      barrel_material.set_tiling(1.0);
+    }
+
+    // Spawn the model entity
+    const model_entity = spawn_mesh_entity(
+      [20, -10, 0],
+      [0, 0, 0, 1],
+      [10, 10, 10],
+      model_mesh,
+      barrel_material.material_id
+    );
+    this.entities.push(model_entity);
+
+    // Add a title text entity
+    const font_id = Name.from("Exo-Medium");
+    const font_object = FontCache.get_font_object(font_id);
+    const text_entity = spawn_mesh_entity(
+      [0, 10, 0],
+      [0, 0, 0, 1],
+      [0.5, 0.5, 0.5],
+      Mesh.quad(),
+      font_object.material
+    );
+    const text_fragment_view = EntityManager.add_fragment(text_entity, TextFragment);
+    text_fragment_view.font = font_id;
+    text_fragment_view.font_size = 32;
+    text_fragment_view.text_color = [1, 1, 1, 1];
+    text_fragment_view.text_emissive = 1;
+    text_fragment_view.text = "GLTF Model Scene";
+    this.entities.push(text_entity);
+  }
+
+  cleanup() {
+    for (const entity of this.entities) {
+      delete_entity(entity);
+    }
+    this.remove_layer(FreeformArcballControlProcessor);
+    super.cleanup();
+  }
+
+  update(delta_time) {
+    super.update(delta_time);
+    // const tf = EntityManager.get_fragment(this.entities[1], TransformFragment);
+    // if (tf) {
+    //   tf.rotation = quat.fromEuler(quat.create(), 0, performance.now() * 0.05, 0);
+    // }
+  }
+}
+
+// ------------------------------------------------------------------------------------
 // =============================== Main ==============================================
 // ------------------------------------------------------------------------------------
 
@@ -2645,6 +2749,7 @@ export class ShadowTestScene extends Scene {
   const object_painting_scene = new ObjectPaintingScene("ObjectPaintingScene");
   const gi_test_scene = new GITestScene("GITestScene");
   const shadow_test_scene = new ShadowTestScene("ShadowTestScene");
+  const gltf_model_scene = new GLTFModelScene("GLTFModelScene");
 
   const scene_switcher = new SceneSwitcher("SceneSwitcher");
   //await scene_switcher.add_scene(solar_ecs_scene);
@@ -2654,10 +2759,12 @@ export class ShadowTestScene extends Scene {
   //await scene_switcher.add_scene(ml_scene);
   //await scene_switcher.add_scene(voxel_terrain_scene);
   //await scene_switcher.add_scene(object_painting_scene);
-  await scene_switcher.add_scene(gi_test_scene);
+  //await scene_switcher.add_scene(gi_test_scene);
   //await scene_switcher.add_scene(shadow_test_scene);
+  await scene_switcher.add_scene(gltf_model_scene);
 
   simulator.add_sim_layer(scene_switcher);
 
   simulator.run();
 })();
+

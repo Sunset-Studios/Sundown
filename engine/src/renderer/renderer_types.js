@@ -123,6 +123,7 @@ export const DebugDrawType = Object.freeze({
     Bloom: 13,
     GTAO: 14,
     BentNormal: 15,
+    UV: 16,
 });
 
 /**
