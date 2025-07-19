@@ -171,6 +171,10 @@ export class Renderer {
     this.render_graph.recreate_pipeline_states();
   }
 
+  refresh_render_graph() {
+    this.render_strategy.refresh(this.render_graph);
+  }
+
   refresh_global_shader_bindings() {
     const global_bindings = [
         {
@@ -266,7 +270,7 @@ export class Renderer {
   set_shadows_enabled(enabled) {
     this.shadows_enabled = enabled;
     if (this.render_strategy) {
-      this.render_strategy.refresh(this.render_graph);
+      this.refresh_render_graph();
       this.recreate_pipeline_states();
     }
   }
@@ -278,7 +282,7 @@ export class Renderer {
   set_gi_enabled(enabled) {
     this.gi_enabled = enabled;
     if (this.render_strategy) {
-      this.render_strategy.refresh(this.render_graph);
+      this.refresh_render_graph();
       this.recreate_pipeline_states();
     }
   }
@@ -290,7 +294,7 @@ export class Renderer {
   set_gtao_enabled(enabled) {
     this.gtao_enabled = enabled;
     if (this.render_strategy) {
-      this.render_strategy.refresh(this.render_graph);
+      this.refresh_render_graph();
       this.recreate_pipeline_states();
     }
   }

@@ -548,7 +548,7 @@ export class AdaptiveSparseVirtualShadowMaps {
         const clipmap_count = view_data.clipmap_count || 1;
 
         for (let clipmap_index = 0; clipmap_index < clipmap_count; ++clipmap_index) {
-          this.shadow_culler.register_view(render_graph, draw_count, view_index, clipmap_index);
+          this.shadow_culler.register_view(render_graph, draw_count, view_index, clipmap_index, force_recreate);
         }
       }
 

@@ -29,7 +29,6 @@ import { Name } from "../engine/src/utility/names.js";
 import { profile_scope } from "../engine/src/utility/performance.js";
 import { log } from "../engine/src/utility/logging.js";
 import { vec3, vec4, quat } from "gl-matrix";
-import { radians } from "../engine/src/utility/math.js";
 
 import * as UI from "../engine/src/ui/2d/immediate.js";
 
@@ -39,7 +38,7 @@ import { Input } from "../engine/src/ml/layers/input.js";
 import { MasterMind } from "../engine/src/ml/mastermind.js";
 import { Tensor, TensorInitializer } from "../engine/src/ml/math/tensor.js";
 import { Adam } from "../engine/src/ml/optimizers/adam.js";
-import { MaterialFamilyType } from "../engine/src/renderer/renderer_types.js";
+import { TextureChannel } from "../engine/src/renderer/renderer_types.js";
 
 // ------------------------------------------------------------------------------------
 // =============================== Rendering Scene ===============================
@@ -547,16 +546,6 @@ export class TexturesScene extends Scene {
           material_notifier: "worn_panel_metallic",
         }
       );
-      let worn_panel_ao = Texture.load(["engine/textures/worn_panel/worn_panel_ao.png"], {
-        name: "worn_panel_ao",
-        format: "rgba8unorm",
-        dimension: "2d",
-        usage:
-          GPUTextureUsage.TEXTURE_BINDING |
-          GPUTextureUsage.COPY_DST |
-          GPUTextureUsage.RENDER_ATTACHMENT,
-        material_notifier: "worn_panel_ao",
-      });
 
       // Create a default material
       const default_plane_material = StandardMaterial.create("TexturesDefaultMaterial");
@@ -639,12 +628,15 @@ export class TexturesScene extends Scene {
 
     // Create a cube mesh
     this.cube_mesh = Mesh.cube();
-
+    
     // Setup the world plane
     this.setup_world_plane();
-
+    
     // Setup sphere entity
     this.setup_sphere_entity();
+
+    // Setup the barrels
+    this.setup_barrels();
   }
 
   cleanup() {
@@ -684,7 +676,7 @@ export class TexturesScene extends Scene {
       quat.fromEuler(quat.create(), 0.0, 0, 0),
       [1000, 5.0, 1000],
       this.cube_mesh,
-      this.default_plane_material_id
+      this.default_plane_material_id,
     );
     this.entities.push(plane);
   }
@@ -699,6 +691,66 @@ export class TexturesScene extends Scene {
       this.wall_material_id
     );
     this.entities.push(sphere);
+  }
+
+  setup_barrels() {
+    const barrel_mesh = Mesh.from_gltf("engine/models/barrel/Barrel.gltf");
+
+    const barrel_material = StandardMaterial.create("BarrelMaterial");
+    {
+      let barrel_albedo = Texture.load(["engine/models/barrel/barrel_BaseColor.png"], {
+        name: "barrel_albedo",
+        format: "rgba8unorm",
+        dimension: "2d",
+        usage:
+          GPUTextureUsage.TEXTURE_BINDING |
+          GPUTextureUsage.COPY_DST |
+          GPUTextureUsage.RENDER_ATTACHMENT,
+        material_notifier: "barrel_albedo",
+        flip_y: false,
+      });
+      let barrel_metallic = Texture.load(["engine/models/barrel/barrel_Metallic-barrel_Roughness.png"], {
+        name: "barrel_metallic",
+        format: "rgba8unorm",
+        dimension: "2d",
+        usage:
+          GPUTextureUsage.TEXTURE_BINDING |
+          GPUTextureUsage.COPY_DST |
+          GPUTextureUsage.RENDER_ATTACHMENT,
+        material_notifier: "barrel_metallic",
+        flip_y: false,
+      });
+
+      barrel_material.set_albedo([1, 1, 1, 1], barrel_albedo);
+      barrel_material.set_metallic(0.5, barrel_metallic, TextureChannel.G);
+      barrel_material.set_roughness(0.5, barrel_metallic, TextureChannel.B);
+    }
+
+    const num_barrels = 500;
+    const barrel_spawn_range = 1000; // spread barrels across the entire ground plane
+    const barrel_entity = spawn_mesh_entity(
+      [0, 0, 0],
+      [0, 0, 0, 1],
+      [1, 1, 1],
+      barrel_mesh,
+      barrel_material.material_id,
+    );
+    this.entities.push(barrel_entity);
+
+    // Set the instance count
+    EntityManager.set_entity_instance_count(barrel_entity, num_barrels);
+
+    // Set the instance data
+    for (let i = 0; i < num_barrels; i++) {
+      const x = (Math.random() - 0.5) * barrel_spawn_range;
+      const z = (Math.random() - 0.5) * barrel_spawn_range;
+      const y = 5.0; // Place on top of the plane
+      const scale = 4 + Math.random() * 1.5 ;
+      const view = EntityManager.get_fragment(barrel_entity, TransformFragment, i);
+      view.position = [x, y, z];
+      view.scale = [scale, scale, scale];
+      view.rotation = quat.fromEuler(quat.create(), 0, Math.random() * 360, 0);
+    }
   }
 }
 
@@ -1831,7 +1883,7 @@ export class GITestScene extends Scene {
     light_fragment_view.type = LightType.DIRECTIONAL;
     light_fragment_view.color = [1, 1, 1];
     light_fragment_view.intensity = 5.5;
-    light_fragment_view.position = [5, 15, 25];
+    light_fragment_view.position = [5, 35, 25];
     light_fragment_view.active = true;
     light_fragment_view.is_primary_sun = 1;
     light_fragment_view.shadow_clipmaps = MAX_CLIPMAP_LEVELS;
@@ -1959,7 +2011,7 @@ export class GITestScene extends Scene {
 
       // ceiling bottom at y=room_size
       const ceiling = spawn_mesh_entity(
-        [0, room_size * 2.0 + wall_thickness, 0],
+        [0, room_size * 2.0 + wall_thickness, 0.0],
         [0, 0, 0, 1],
         [room_size, wall_thickness, room_size],
         cube_mesh,
@@ -2279,7 +2331,7 @@ export class ShadowTestScene extends Scene {
     const light_fragment_view = EntityManager.get_fragment(light_entity, LightFragment);
     light_fragment_view.type = LightType.DIRECTIONAL;
     light_fragment_view.color = [1, 1, 0.9];
-    light_fragment_view.intensity = 2.0;
+    light_fragment_view.intensity = 0.3;
     light_fragment_view.position = [30, 55, 40];
     light_fragment_view.active = true;
     light_fragment_view.is_primary_sun = 1;
@@ -2576,7 +2628,7 @@ export class ShadowTestScene extends Scene {
       
       p_view.position = [x, y, z];
       p_view.radius = 100.0;
-      p_view.intensity = 4.0 + Math.sin(i * 0.3) * 1.0; // Vary intensity slightly
+      p_view.intensity = 15.0 + Math.sin(i * 0.3) * 1.0; // Vary intensity slightly
       p_view.color = point_light_colours[i % point_light_colours.length];
     }
     // ------------------------------------------------------------------------
@@ -2622,6 +2674,8 @@ export class ShadowTestScene extends Scene {
 export class GLTFModelScene extends Scene {
   name = "GLTFModelScene";
   entities = [];
+  barrel_entities = [];
+  barrel_offsets = [];
 
   init(parent_context) {
     super.init(parent_context);
@@ -2677,24 +2731,36 @@ export class GLTFModelScene extends Scene {
           GPUTextureUsage.COPY_DST |
           GPUTextureUsage.RENDER_ATTACHMENT,
         material_notifier: "barrel_metallic",
+        flip_y: false,
       });
 
       // Create a default material
       barrel_material.set_albedo([1, 1, 1, 1], barrel_albedo);
-      barrel_material.set_roughness([0.5, 0.5, 0.5, 1], barrel_metallic);
-      barrel_material.set_metallic(0.5);
-      barrel_material.set_tiling(1.0);
+      barrel_material.set_metallic(0.5, barrel_metallic, TextureChannel.G);
+      barrel_material.set_roughness(0.5, barrel_metallic, TextureChannel.B);
     }
 
-    // Spawn the model entity
-    const model_entity = spawn_mesh_entity(
+    // Spawn three barrels at positions offset by 15 units on x-axis
+    const barrel_positions = [
+      [5, -10, 0],
       [20, -10, 0],
-      [0, 0, 0, 1],
-      [10, 10, 10],
-      model_mesh,
-      barrel_material.material_id
-    );
-    this.entities.push(model_entity);
+      [35, -10, 0]
+    ];
+    this.barrel_entities = [];
+    this.barrel_offsets = [];
+    for (let i = 0; i < barrel_positions.length; i++) {
+      const pos = barrel_positions[i];
+      const entity = spawn_mesh_entity(
+        pos,
+        [0, 0, 0, 1],
+        [10, 10, 10],
+        model_mesh,
+        barrel_material.material_id
+      );
+      this.barrel_entities.push(entity);
+      this.entities.push(entity);
+      this.barrel_offsets.push(Math.random() * Math.PI * 2);
+    }
 
     // Add a title text entity
     const font_id = Name.from("Exo-Medium");
@@ -2725,10 +2791,14 @@ export class GLTFModelScene extends Scene {
 
   update(delta_time) {
     super.update(delta_time);
-    // const tf = EntityManager.get_fragment(this.entities[1], TransformFragment);
-    // if (tf) {
-    //   tf.rotation = quat.fromEuler(quat.create(), 0, performance.now() * 0.05, 0);
-    // }
+    const t = performance.now() * 0.01;
+    for (let i = 0; i < this.barrel_entities.length; i++) {
+      const entity = this.barrel_entities[i];
+      const tf = EntityManager.get_fragment(entity, TransformFragment);
+      if (tf) {
+        tf.rotation = quat.fromEuler(quat.create(), 0, t + this.barrel_offsets[i], 0);
+      }
+    }
   }
 }
 
@@ -2753,7 +2823,7 @@ export class GLTFModelScene extends Scene {
 
   const scene_switcher = new SceneSwitcher("SceneSwitcher");
   //await scene_switcher.add_scene(solar_ecs_scene);
-  //await scene_switcher.add_scene(textures_scene);
+  await scene_switcher.add_scene(textures_scene);
   //await scene_switcher.add_scene(aabb_scene);
   //await scene_switcher.add_scene(rendering_scene);
   //await scene_switcher.add_scene(ml_scene);
@@ -2761,7 +2831,7 @@ export class GLTFModelScene extends Scene {
   //await scene_switcher.add_scene(object_painting_scene);
   //await scene_switcher.add_scene(gi_test_scene);
   //await scene_switcher.add_scene(shadow_test_scene);
-  await scene_switcher.add_scene(gltf_model_scene);
+  //await scene_switcher.add_scene(gltf_model_scene);
 
   simulator.add_sim_layer(scene_switcher);
 

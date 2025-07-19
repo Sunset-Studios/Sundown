@@ -11,8 +11,6 @@ import { Type2NumOfComponent } from "../utility/gltf_loader.js";
 const discard_cpu_data = true;
 
 export class Mesh {
-  static loading_meshes = new Map();
-
   name = "";
   vertices = [];
   indices = [];
@@ -687,8 +685,6 @@ export class Mesh {
 
     const mesh_id = Name.from(gltf);
 
-    Mesh.loading_meshes.set(mesh_id, true);
-
     mesh.pending_loader = new glTFLoader();
     mesh.pending_loader.load(gltf, (gltf_obj) => {
       for (const node of gltf_obj.nodes) {
@@ -710,8 +706,6 @@ export class Mesh {
         mesh.vertices = null;
         mesh.indices = null;
       }
-
-      Mesh.loading_meshes.delete(mesh_id);
 
       MeshTaskQueue.mark_needs_sort();
     });

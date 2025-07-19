@@ -35,7 +35,7 @@ fn vsm_shadow_depth(
 
   // texel size in world units for current clip map level
   let texel_world         = f32(1u << vtile_info.clipmap_index) * vsm_settings.clip0_extent / vsm_settings.virtual_dim;
-  let ndotl               = max(dot(normal, light_dir), 0.0);
+  let ndotl               = abs(dot(normal, light_dir));
   let bias_scale          = vsm_settings.clip0_extent * (0.5 + 2.0 * (1.0 - ndotl)); 
   let normal_offset       = texel_world * bias_scale;
   let normal_shifted_pos  = world_pos + vec4<f32>(normal * normal_offset, 0.0);

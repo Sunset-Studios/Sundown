@@ -16,6 +16,7 @@ import {
   MaterialFamilyType,
   CacheTypes,
   BindGroupType,
+  TextureChannel,
 } from "./renderer_types.js";
 
 export class MaterialTemplate {
@@ -624,6 +625,7 @@ export class Material {
  * Standard material is a material helper class that has a color, normal, roughness, metallic, and emission.
  * It is the default material for the engine.
  */
+
 export class StandardMaterial {
   material_id = null;
   material_params_data = null;
@@ -644,27 +646,30 @@ export class StandardMaterial {
     // Get the material
     const material = Material.get(standard_material.material_id);
 
-    // Create a combined uniform buffer for the default material
-    // Contains: color (vec4) and emission (float, aligned to vec4)
-    standard_material.material_params_data = new Float32Array([
-      // color: vec4 (RGBA)
+    // Create a combined uniform buffer for the material params
+    standard_material.params_buffer = new ArrayBuffer(96);
+    standard_material.float_params = new Float32Array(standard_material.params_buffer, 0, 16);
+    standard_material.texture_flags1 = new Uint32Array(standard_material.params_buffer, 64, 4);
+    standard_material.texture_flags2 = new Uint32Array(standard_material.params_buffer, 80, 4);
+
+    // Set initial values
+    standard_material.float_params.set([
+      // albedo: vec4
       0.5, 0.5, 0.5, 1.0,
-      // normal: vec4 (RGBA)
+      // normal: vec4
       0.0, 0.0, 1.0, 1.0,
-      // emission_roughness_metallic_tiling
+      // emission_roughness_metallic_tiling: vec4
       0.2, 0.7, 0.3, 1.0,
-      // ao_height_specular_padding
-      0.1, 0.0, 0.1, 0.0,
-      // texture flags 1: vec4 (albedo, normal, roughness, metallic)
-      0.0, 0.0, 0.0, 0.0,
-      // texture flags 2: vec4 (ao, height, specular, emission)
-      1.0, 0.0, 0.0, 0.0,
+      // ao_height_specular: vec4 (ao, height, specular, padding)
+      1.0, 0.0, 0.1, 0.0
     ]);
+    standard_material.texture_flags1.set([0, 0, 0, 0]);
+    standard_material.texture_flags2.set([0, 0, 0, 0]);
 
     standard_material.material_params_buffer = Buffer.create({
       name: `${name}_material_params_buffer`,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-      raw_data: standard_material.material_params_data,
+      raw_data: new Uint8Array(standard_material.params_buffer),
     });
 
     // Set the uniform buffer for the material
@@ -675,24 +680,33 @@ export class StandardMaterial {
     standard_material.set_normal(params.normal || [0, 0, 1, 1], params.normal_texture || null);
     standard_material.set_roughness(
       params.roughness !== undefined ? params.roughness : 0.7,
-      params.roughness_texture || null
+      params.roughness_texture || null,
+      params.roughness_channel ?? TextureChannel.R
     );
     standard_material.set_metallic(
       params.metallic !== undefined ? params.metallic : 0.3,
-      params.metallic_texture || null
+      params.metallic_texture || null,
+      params.metallic_channel ?? TextureChannel.R
     );
     standard_material.set_emission(
       params.emission !== undefined ? params.emission : 0.2,
-      params.emission_texture || null
+      params.emission_texture || null,
+      params.emission_channel ?? TextureChannel.R
     );
-    standard_material.set_ao(params.ao !== undefined ? params.ao : 1.0, params.ao_texture || null);
+    standard_material.set_ao(
+      params.ao !== undefined ? params.ao : 1.0,
+      params.ao_texture || null,
+      params.ao_channel ?? TextureChannel.R
+    );
     standard_material.set_height(
       params.height !== undefined ? params.height : 0.0,
-      params.height_texture || null
+      params.height_texture || null,
+      params.height_channel ?? TextureChannel.R
     );
     standard_material.set_specular(
       params.specular !== undefined ? params.specular : 0.1,
-      params.specular_texture || null
+      params.specular_texture || null,
+      params.specular_channel ?? TextureChannel.R
     );
 
     return standard_material;
@@ -708,13 +722,13 @@ export class StandardMaterial {
       }
     }
 
-    this.material_params_data[0] = color[0];
-    this.material_params_data[1] = color[1];
-    this.material_params_data[2] = color[2];
-    this.material_params_data[3] = color[3];
-    this.material_params_data[16] = texture ? 1 : 0;
+    this.float_params[0] = color[0];
+    this.float_params[1] = color[1];
+    this.float_params[2] = color[2];
+    this.float_params[3] = color[3];
+    this.texture_flags1[0] = texture ? 1 : 0;
 
-    this.update_texture_flags();
+    this.update_params();
   }
 
   set_normal(normal, texture = null) {
@@ -727,16 +741,16 @@ export class StandardMaterial {
       }
     }
 
-    this.material_params_data[4] = normal[0];
-    this.material_params_data[5] = normal[1];
-    this.material_params_data[6] = normal[2];
-    this.material_params_data[7] = normal[3];
-    this.material_params_data[17] = texture ? 1 : 0;
+    this.float_params[4] = normal[0];
+    this.float_params[5] = normal[1];
+    this.float_params[6] = normal[2];
+    this.float_params[7] = normal[3];
+    this.texture_flags1[1] = texture ? 1 : 0;
 
-    this.update_texture_flags();
+    this.update_params();
   }
 
-  set_roughness(roughness, texture = null) {
+  set_roughness(roughness, texture = null, channel = TextureChannel.R) {
     const material = Material.get(this.material_id);
 
     if (texture) {
@@ -746,13 +760,17 @@ export class StandardMaterial {
       }
     }
 
-    this.material_params_data[9] = roughness;
-    this.material_params_data[18] = texture ? 1 : 0;
+    this.float_params[9] = roughness;
+    let flag = texture ? 1 : 0;
+    if (texture && channel >= 0 && channel <= 3) {
+      flag |= (channel << 1);
+    }
+    this.texture_flags1[2] = flag;
 
-    this.update_texture_flags();
+    this.update_params();
   }
 
-  set_metallic(metallic, texture = null) {
+  set_metallic(metallic, texture = null, channel = TextureChannel.R) {
     const material = Material.get(this.material_id);
 
     if (texture) {
@@ -762,13 +780,17 @@ export class StandardMaterial {
       }
     }
 
-    this.material_params_data[10] = metallic;
-    this.material_params_data[19] = texture ? 1 : 0;
+    this.float_params[10] = metallic;
+    let flag = texture ? 1 : 0;
+    if (texture && channel >= 0 && channel <= 3) {
+      flag |= (channel << 1);
+    }
+    this.texture_flags1[3] = flag;
 
-    this.update_texture_flags();
+    this.update_params();
   }
 
-  set_ao(ao, texture = null) {
+  set_ao(ao, texture = null, channel = TextureChannel.R) {
     const material = Material.get(this.material_id);
 
     if (texture) {
@@ -778,13 +800,17 @@ export class StandardMaterial {
       }
     }
 
-    this.material_params_data[12] = ao;
-    this.material_params_data[20] = texture ? 1 : 0;
+    this.float_params[12] = ao;
+    let flag = texture ? 1 : 0;
+    if (texture && channel >= 0 && channel <= 3) {
+      flag |= (channel << 1);
+    }
+    this.texture_flags2[0] = flag;
 
-    this.update_texture_flags();
+    this.update_params();
   }
 
-  set_height(height, texture = null) {
+  set_height(height, texture = null, channel = TextureChannel.R) {
     const material = Material.get(this.material_id);
 
     if (texture) {
@@ -794,13 +820,17 @@ export class StandardMaterial {
       }
     }
 
-    this.material_params_data[13] = height;
-    this.material_params_data[21] = texture ? 1 : 0;
+    this.float_params[13] = height;
+    let flag = texture ? 1 : 0;
+    if (texture && channel >= 0 && channel <= 3) {
+      flag |= (channel << 1);
+    }
+    this.texture_flags2[1] = flag;
 
-    this.update_texture_flags();
+    this.update_params();
   }
 
-  set_specular(specular, texture = null) {
+  set_specular(specular, texture = null, channel = TextureChannel.R) {
     const material = Material.get(this.material_id);
 
     if (texture) {
@@ -810,13 +840,17 @@ export class StandardMaterial {
       }
     }
 
-    this.material_params_data[14] = specular;
-    this.material_params_data[22] = texture ? 1 : 0;
+    this.float_params[14] = specular;
+    let flag = texture ? 1 : 0;
+    if (texture && channel >= 0 && channel <= 3) {
+      flag |= (channel << 1);
+    }
+    this.texture_flags2[2] = flag;
 
-    this.update_texture_flags();
+    this.update_params();
   }
 
-  set_emission(emission, texture = null) {
+  set_emission(emission, texture = null, channel = TextureChannel.R) {
     const material = Material.get(this.material_id);
 
     if (texture) {
@@ -826,19 +860,22 @@ export class StandardMaterial {
       }
     }
 
-    this.material_params_data[8] = emission;
-    this.material_params_data[23] = texture ? 1 : 0;
+    this.float_params[8] = emission;
+    let flag = texture ? 1 : 0;
+    if (texture && channel >= 0 && channel <= 3) {
+      flag |= (channel << 1);
+    }
+    this.texture_flags2[3] = flag;
 
-    this.update_texture_flags();
+    this.update_params();
   }
 
   set_tiling(tiling) {
-    this.material_params_data[11] = tiling;
-
-    this.update_texture_flags();
+    this.float_params[11] = tiling;
+    this.update_params();
   }
 
-  update_texture_flags() {
-    this.material_params_buffer.write_raw(this.material_params_data);
+  update_params() {
+    this.material_params_buffer.write_raw(this.params_buffer);
   }
 }

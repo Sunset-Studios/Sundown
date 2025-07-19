@@ -138,7 +138,7 @@ class IndirectDrawObject {
   }
 
   // We assume this gets called once per frame
-  update_buffers(batches, object_instances, force_update = false) {
+  update_buffers(batches, force_update = false) {
     profile_scope("update_indirect_buffers", () => {
       const suffix = `_view_${this.view_index}_clipmap_${this.clipmap_index}`;
       const indirect_draw_entries_count = batches.length * 5;
@@ -417,7 +417,7 @@ export class MeshTaskQueue {
         for (let j = 0; j < this.indirect_draw_objects.y_capacity; j++) {
           const obj = this.indirect_draw_objects.get(i, j);
           if (obj && obj.indirect_draw_data) {
-            obj.update_buffers(this.batches, this.object_instances, this.needs_sort);
+            obj.update_buffers(this.batches, this.needs_sort);
           }
         }
       }

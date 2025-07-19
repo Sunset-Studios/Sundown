@@ -127,6 +127,17 @@ export const DebugDrawType = Object.freeze({
 });
 
 /**
+ * Channels for texture sampling.
+ * @enum {number}
+ */
+export const TextureChannel = {
+  R: 0,
+  G: 1,
+  B: 2,
+  A: 3,
+};
+
+/**
  * Converts render pass flags to a string.
  * @param {number} flags - The flags to convert.
  * @returns {string} The string representation of the flags.

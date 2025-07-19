@@ -232,7 +232,7 @@ export class FragmentGpuBuffer {
   static entity_index_map_buffer = null;
   static entity_flags_buffer = null;
   static initial_max_rows = 1024;
-  static need_full_flush = false;
+  static need_full_flush = true;
 
   /**
    * @param {string} name - base name for GPU and CPU buffers
@@ -738,6 +738,7 @@ export class FragmentGpuBuffer {
       FragmentGpuBuffer.need_full_flush = false;
 
       Renderer.get().mark_bind_groups_dirty(true);
+
     }
   }
 

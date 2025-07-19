@@ -28,6 +28,7 @@ const visible_buf_config = {
   name: `visible_instances`,
   raw_data: null,
   usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+  force: true,
 };
 
 export class InstanceCuller {
@@ -44,17 +45,16 @@ export class InstanceCuller {
   }
 
   // Registers the per-view/clipmap buffers
-  register_view(render_graph, draw_count, view_index, clipmap_index = 0) {
+  register_view(render_graph, draw_count, view_index, clipmap_index = 0, force = false) {
     let adjusted_draw_count = Math.max(draw_count, 1);
 
     this.registered_views.push(view_index);
     this.registered_clipmaps.push(clipmap_index);
 
     visible_buf_config.name = `visible_instances_${this.name}_view_${view_index}_clipmap_${clipmap_index}`;
-    visible_buf_config.force = adjusted_draw_count !== this.last_draw_count;
+    visible_buf_config.force = adjusted_draw_count !== this.last_draw_count || force;
     if (visible_buf_config.force) {
       visible_buf_config.raw_data = new Int32Array(adjusted_draw_count * 2);
-      this.last_draw_count = adjusted_draw_count;
     }
     const visible_buf = render_graph.create_buffer(visible_buf_config);
 
@@ -159,6 +159,8 @@ export class InstanceCuller {
 
     this.reset_instances(render_graph, adjusted_draw_count);
     this.dispatch_culling(render_graph, adjusted_draw_count);
+
+    this.last_draw_count = adjusted_draw_count;
   }
 
   // Returns the visibility buffer for a given view and clipmap

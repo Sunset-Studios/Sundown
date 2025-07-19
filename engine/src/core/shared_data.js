@@ -42,6 +42,7 @@ export class SharedVertexBuffer {
       force: true,
     });
     Renderer.get().refresh_global_shader_bindings();
+    Renderer.get().mark_bind_groups_dirty(true);
   }
 }
 
