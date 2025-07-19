@@ -193,12 +193,12 @@ export class LightFragment extends Fragment {
         GPUBufferUsage.COPY_SRC,
       cpu_readback: false,
     },
-    padding2: {
+    shadows_dirty: {
       ctor: Float32Array,
       elements: 1,
       default: 0,
       gpu_buffer: false,
-      buffer_name: "padding2",
+      buffer_name: "shadows_dirty",
       is_container: false,
       usage:
         GPUBufferUsage.STORAGE |
@@ -232,7 +232,7 @@ export class LightFragment extends Fragment {
         "shadow_index",
         "shadow_clipmaps",
         "is_primary_sun",
-        "padding2",
+        "shadows_dirty",
       ],
     },
   };

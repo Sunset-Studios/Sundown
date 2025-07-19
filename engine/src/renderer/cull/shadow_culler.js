@@ -25,44 +25,49 @@ export class ShadowCuller extends InstanceCuller {
     this.name = "shadow";
   }
 
-  dispatch_culling(render_graph, draw_count) {
-    for (let i = 0; i < this.registered_views.length; ++i) {
-      const view_index = this.registered_views.get(i);
-      const clipmap_index = this.registered_clipmaps.get(i);
+  dispatch_culling(render_graph, draw_count, lights_dirtied) {
+    // If no lights were dirtied (moved or explicitly marked dirty),
+    // we can check for movable entities to dirty tiles more granularly.
+    if (!lights_dirtied) {
+      for (let i = 0; i < this.registered_views.length; ++i) {
+        const view_index = this.registered_views.get(i);
+        const clipmap_index = this.registered_clipmaps.get(i);
 
-      const visible_buf_no_occlusion = this.prev_culler.get_visibility_buffer(
-        view_index,
-        clipmap_index
-      );
-      const visible_buf = this.visible_buffers.get(view_index, clipmap_index);
-      const draw_cull_data = this.cull_data_buffers.get(view_index, clipmap_index);
+        const visible_buf_no_occlusion = this.prev_culler.get_visibility_buffer(
+          view_index,
+          clipmap_index
+        );
+        const visible_buf = this.visible_buffers.get(view_index, clipmap_index);
+        const draw_cull_data = this.cull_data_buffers.get(view_index, clipmap_index);
 
-      render_graph.add_pass(
-        `dirty_movable_entities_${view_index}_clipmap_${clipmap_index}`,
-        RenderPassFlags.Compute,
-        {
-          shader_setup: compute_dirty_movable_entities_shader_setup,
-          inputs: [
-            this.additional_data.entity_transforms,
-            visible_buf_no_occlusion,
-            visible_buf,
-            this.additional_data.object_instances,
-            draw_cull_data,
-            this.additional_data.vsm_settings,
-            this.additional_data.entity_flags,
-            this.additional_data.bitmask,
-            this.additional_data.page_table,
-            this.additional_data.page_offset,
-          ],
-          outputs: [visible_buf],
-        },
-        (graph, frame_data, encoder) => {
-          const pass = graph.get_physical_pass(frame_data.current_pass);
-          pass.dispatch((draw_count + 255) / 256, this.additional_data.light_count, 1);
-        }
-      );
+        render_graph.add_pass(
+          `dirty_movable_entities_${view_index}_clipmap_${clipmap_index}`,
+          RenderPassFlags.Compute,
+          {
+            shader_setup: compute_dirty_movable_entities_shader_setup,
+            inputs: [
+              this.additional_data.entity_transforms,
+              visible_buf_no_occlusion,
+              visible_buf,
+              this.additional_data.object_instances,
+              draw_cull_data,
+              this.additional_data.vsm_settings,
+              this.additional_data.entity_flags,
+              this.additional_data.bitmask,
+              this.additional_data.page_table,
+              this.additional_data.page_offset,
+            ],
+            outputs: [visible_buf],
+          },
+          (graph, frame_data, encoder) => {
+            const pass = graph.get_physical_pass(frame_data.current_pass);
+            pass.dispatch((draw_count + 255) / 256, this.additional_data.light_count, 1);
+          }
+        );
+      }
     }
 
+    // Cull shadow casters for all registered views
     for (let i = 0; i < this.registered_views.length; ++i) {
       const view_index = this.registered_views.get(i);
       const clipmap_index = this.registered_clipmaps.get(i);

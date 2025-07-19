@@ -47,6 +47,12 @@ export class LightViewProcessor extends SimulationLayer {
       const camera_view_index = SharedFrameInfoBuffer.get_view_index();
       const camera_view = SharedViewBuffer.get_view_data(camera_view_index);
 
+      // Reset shadow dirty flag if set
+      if (lights.shadows_dirty[slot] > 0) {
+        lights.shadows_dirty[slot] = 0;
+        chunk.mark_dirty();
+      }
+
       if (!lights.view_index[slot] || lights.view_index[slot] < 0) {
         const view = SharedViewBuffer.add_view_data();
         view.clipmap_count = lights.shadow_clipmaps[slot];
@@ -62,7 +68,6 @@ export class LightViewProcessor extends SimulationLayer {
         ];
 
         if (light_type === LightType.DIRECTIONAL) {
-
           view.custom_projection_enabled = 1;
           view.custom_view_matrix_enabled = 1;
 
@@ -70,15 +75,19 @@ export class LightViewProcessor extends SimulationLayer {
           // Use centralized utilities for stable rotation & projection ----------------
 
           const rotation = compute_directional_light_rotation(light_position);
-          const light_dir = vec3.negate(vec3.create(), vec3.normalize(
-            vec3.create(), vec3.transformQuat(vec3.create(), WORLD_FORWARD, rotation))
+          const light_dir = vec3.negate(
+            vec3.create(),
+            vec3.normalize(
+              vec3.create(),
+              vec3.transformQuat(vec3.create(), WORLD_FORWARD, rotation)
+            )
           );
-          
+
           let { view: light_view, proj: light_proj } = compute_directional_light_view_projection(
             camera_view.inverse_view_projection_matrix,
             light_dir,
-            view.far 
-          )
+            view.far
+          );
           view.view_matrix = light_view;
           view.projection_matrix = light_proj;
 
@@ -97,7 +106,6 @@ export class LightViewProcessor extends SimulationLayer {
 
           view.view_position = light_position;
           view.view_rotation = rotation;
-
         }
 
         if (lights.is_primary_sun[slot] > 0 && SharedEnvironmentData.get_skydome_data() !== null) {
@@ -113,50 +121,71 @@ export class LightViewProcessor extends SimulationLayer {
         // orthographic projection and dependent matrices here rather than relying on
         // SharedViewBuffer.update_transforms (which uses fixed −1..1 extents for orthographic
         // projections).
+        const view_index = lights.view_index[slot];
+        if (view_index < 0) {
+          slot += counts[slot] || 1;
+          continue;
+        }
+
+        // Retrieve the active camera view to build a camera-relative projection.
+        const camera_view_index = SharedFrameInfoBuffer.get_view_index();
+        const camera_view = SharedViewBuffer.get_view_data(camera_view_index);
+
+        // Guard against invalid indices (e.g. when no camera yet available).
+        if (!camera_view) {
+          slot += counts[slot] || 1;
+          continue;
+        }
+
+        const light_position = [
+          lights.position[slot * 4 + 0],
+          lights.position[slot * 4 + 1],
+          lights.position[slot * 4 + 2],
+          1.0,
+        ];
+        const light_view = SharedViewBuffer.get_view_data(view_index);
+
         if (light_type === LightType.DIRECTIONAL) {
-          const view_index = lights.view_index[slot];
-          if (view_index < 0) {
-            slot += counts[slot] || 1;
-            continue;
-          }
-
-          // Retrieve the active camera view to build a camera-relative projection.
-          const camera_view_index = SharedFrameInfoBuffer.get_view_index();
-          const camera_view = SharedViewBuffer.get_view_data(camera_view_index);
-
-          // Guard against invalid indices (e.g. when no camera yet available).
-          if (!camera_view) {
-            slot += counts[slot] || 1;
-            continue;
-          }
-
-          const light_position = [
-            lights.position[slot * 4 + 0],
-            lights.position[slot * 4 + 1],
-            lights.position[slot * 4 + 2],
-            1.0,
-          ];
-          const light_view = SharedViewBuffer.get_view_data(view_index);
-
           const rotation = compute_directional_light_rotation(light_position);
-          const light_dir = vec3.negate(vec3.create(), vec3.normalize(
-            vec3.create(), vec3.transformQuat(vec3.create(), [0, 0, 1], rotation)
-          ));
+          const light_dir = vec3.negate(
+            vec3.create(),
+            vec3.normalize(vec3.create(), vec3.transformQuat(vec3.create(), [0, 0, 1], rotation))
+          );
 
-          let { view: light_view_mat, proj: light_proj_mat } = compute_directional_light_view_projection(
-            camera_view.inverse_view_projection_matrix,
-            light_dir,
-            light_view.far 
-          )
+          let { view: light_view_mat, proj: light_proj_mat } =
+            compute_directional_light_view_projection(
+              camera_view.inverse_view_projection_matrix,
+              light_dir,
+              light_view.far
+            );
           light_view.projection_matrix = light_proj_mat;
           light_view.view_matrix = light_view_mat;
 
-          // Orthographic projection centred on the origin (stable virtual address).
+          // If the light rotation has changed, mark the light as dirty so we can re-render all tiles
+          let prev_light_rotation = light_view.view_rotation;
+          if (!quat.equals(prev_light_rotation, rotation)) {
+            lights.shadows_dirty[slot] = 1;
+            chunk.mark_dirty();
+          }
+
           light_view.view_rotation = rotation;
+          light_view.view_position = light_position;
+        } else {
+          // If the light position or rotation has changed, mark the light as dirty so we can re-render all tiles
+          let prev_light_position = light_view.view_position;
+          let prev_light_rotation = light_view.view_rotation;
+          if (
+            !vec3.equals(prev_light_position, light_position) ||
+            !quat.equals(prev_light_rotation, rotation)
+          ) {
+            lights.shadows_dirty[slot] = 1;
+            chunk.mark_dirty();
+          }
+
           light_view.view_position = light_position;
         }
       }
-      
+
       // Shadow index management
       if (lights.shadow_index[slot] < 0 && lights.shadow_casting[slot] > 0) {
         lights.shadow_index[slot] = ShadowAllocator.allocate();
@@ -166,11 +195,14 @@ export class LightViewProcessor extends SimulationLayer {
         lights.shadow_index[slot] = -1;
         chunk.mark_dirty();
       }
-      
+
+      // Sky dome light management (if it's the primary sun)
       let light_view_index = lights.view_index[slot];
-      if (lights.is_primary_sun[slot] > 0
-          && light_view_index !== SharedEnvironmentData.get_skydome_view()
-          && SharedEnvironmentData.get_skydome_data() !== null) {
+      if (
+        lights.is_primary_sun[slot] > 0 &&
+        light_view_index !== SharedEnvironmentData.get_skydome_view() &&
+        SharedEnvironmentData.get_skydome_data() !== null
+      ) {
         SharedEnvironmentData.set_skydome_view(light_view_index);
         chunk.mark_dirty();
       }

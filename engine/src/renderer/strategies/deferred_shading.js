@@ -1105,6 +1105,7 @@ export class DeferredShadingStrategy {
         this.as_vsm.add_passes(render_graph, {
           position_texture: main_position_image,
           entity_flags: entity_flags,
+          lights: lights,
           light_count_buffer: light_count,
           transforms_buffer: entity_transforms,
           object_instances: object_instances,

@@ -66,7 +66,7 @@ const LightFragment = {
       stride: 1,
       default: 0,
     },
-    padding2: {
+    shadows_dirty: {
       type: DataType.FLOAT32,
       stride: 1,
       default: 0,
@@ -89,7 +89,7 @@ const LightFragment = {
         "shadow_index",
         "shadow_clipmaps",
         "is_primary_sun",
-        "padding2",
+        "shadows_dirty",
       ],
       usage: BufferType.STORAGE,
     },

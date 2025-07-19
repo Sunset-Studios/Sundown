@@ -143,7 +143,7 @@ export class InstanceCuller {
   }
 
   // Abstract: Subclasses should implement this to submit custom culling dispatches
-  dispatch_culling(render_graph, draw_count) {
+  dispatch_culling(render_graph, draw_count, ...args) {
     throw new Error("dispatch_culling must be implemented by subclass");
   }
 
@@ -154,11 +154,11 @@ export class InstanceCuller {
   }
 
   // Calls reset_instances and then dispatch_culling
-  submit_cull(render_graph, draw_count) {
+  submit_cull(render_graph, draw_count, ...args) {
     let adjusted_draw_count = Math.max(draw_count, 1);
 
     this.reset_instances(render_graph, adjusted_draw_count);
-    this.dispatch_culling(render_graph, adjusted_draw_count);
+    this.dispatch_culling(render_graph, adjusted_draw_count, ...args);
 
     this.last_draw_count = adjusted_draw_count;
   }

@@ -71,6 +71,12 @@ const light_shadow_idx_buf_config = {
   usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
 };
 
+const light_idx_buf_config = {
+  name: "shadow_light_dirty_buf",
+  size: 0, // filled at runtime
+  usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+};
+
 const eviction_counter_buf_config = {
   name: "shadow_eviction_counter_buf",
   size: 0, // filled at runtime
@@ -167,6 +173,15 @@ const clear_tile_flags_shader_setup = {
   },
 };
 
+const dirty_visible_light_tiles_shader_setup = {
+  pipeline_shaders: {
+    compute: {
+      path: "shadow/as_vsm/dirty_visible_light_tiles.wgsl",
+      defines: { SHADOWS_ENABLED: true },
+    },
+  },
+};
+
 const render_shader_setup = {
   pipeline_shaders: {
     vertex: { path: "shadow/as_vsm/tile_render.vert.wgsl", defines: { SHADOWS_ENABLED: true } },
@@ -235,8 +250,10 @@ export class AdaptiveSparseVirtualShadowMaps {
     this.total_physical_tiles =
       this.physical_tiles_per_row * this.physical_tiles_per_row * MAX_NUM_TEXTURE_POOLS;
     this.cached_light_count = null;
+
     this.active_view_indices = [];
     this.active_shadow_indices = [];
+    this.active_light_indices = [];
 
     this.lights_query = EntityManager.create_query([LightFragment]);
 
@@ -262,6 +279,7 @@ export class AdaptiveSparseVirtualShadowMaps {
     {
       position_texture,
       entity_flags,
+      lights,
       light_count_buffer,
       transforms_buffer,
       object_instances,
@@ -284,9 +302,11 @@ export class AdaptiveSparseVirtualShadowMaps {
     // ────────────────────────────────────────────────────────────────
     // Build per-light view & shadow index buffers (active, shadow-casting only)
     // ────────────────────────────────────────────────────────────────
+    let lights_dirtied = false;
     if (force_recreate) {
       this.active_view_indices.length = 0;
       this.active_shadow_indices.length = 0;
+      this.active_light_indices.length = 0;
 
       this.lights_query.for_each_chunk((chunk, flags, counts, archetype) => {
         const lights = chunk.get_fragment_view(LightFragment);
@@ -302,20 +322,42 @@ export class AdaptiveSparseVirtualShadowMaps {
 
           const v_idx = lights.view_index[i];
           const s_idx = lights.shadow_index[i];
+          const dirty = lights.shadows_dirty[i];
           if (v_idx >= 0 && s_idx >= 0) {
             this.active_view_indices.push(v_idx);
             this.active_shadow_indices.push(s_idx);
+            this.active_light_indices.push(i);
           }
+
+          lights_dirtied |= dirty > 0;
         }
       });
 
       if (this.active_view_indices.length > 0) {
         light_view_buf_config.raw_data = new Uint32Array(this.active_view_indices);
         light_shadow_idx_buf_config.raw_data = new Uint32Array(this.active_shadow_indices);
+        light_idx_buf_config.raw_data = new Uint32Array(this.active_light_indices);
       } else {
         light_view_buf_config.raw_data = new Uint32Array([0xffffffff]);
         light_shadow_idx_buf_config.raw_data = new Uint32Array([0xffffffff]);
+        light_idx_buf_config.raw_data = new Uint32Array([0x00000000]);
       }
+    } else {
+      this.lights_query.for_each_chunk((chunk, flags, counts, archetype) => {
+        const lights = chunk.get_fragment_view(LightFragment);
+        for (let i = 0; i < DEFAULT_CHUNK_CAPACITY; ++i) {
+          const flag = flags[i];
+          if (
+            (flag & EntityFlags.ALIVE) === 0 ||
+            lights.shadow_casting[i] === 0 ||
+            lights.active[i] === 0
+          ) {
+            continue;
+          }
+
+          lights_dirtied |= lights.shadows_dirty[i] > 0;
+        }
+      });
     }
 
     // Create / resize per-light view buffer
@@ -325,6 +367,10 @@ export class AdaptiveSparseVirtualShadowMaps {
     // Create / resize per-light shadow index buffer
     light_shadow_idx_buf_config.force = force_recreate;
     this.light_shadow_idx_buf = render_graph.create_buffer(light_shadow_idx_buf_config);
+
+    // Create / resize per-light shadows dirty buffer
+    light_idx_buf_config.force = force_recreate;
+    this.light_idx_buf = render_graph.create_buffer(light_idx_buf_config);
 
     // Create / resize settings buffer
     settings_buf_config.force = force_recreate;
@@ -530,6 +576,35 @@ export class AdaptiveSparseVirtualShadowMaps {
     );
 
     // ────────────────────────────────────────────────────────────────
+    // Requested shadows dirty update pass (for each light)
+    // ────────────────────────────────────────────────────────────────
+    if (lights_dirtied) {
+      render_graph.add_pass(
+        "as_vsm_dirty_visible_light_tiles",
+        RenderPassFlags.Compute,
+        {
+          inputs: [
+            this.settings_buf,
+            this.bitmask_buf,
+            this.page_table,
+            this.page_offset,
+            this.light_idx_buf,
+            lights
+          ],
+          outputs: [this.page_table, this.page_offset],
+          shader_setup: dirty_visible_light_tiles_shader_setup,
+        },
+        (graph, frame_data, encoder) => {
+          const pass = graph.get_physical_pass(frame_data.current_pass);
+          const pt_image = graph.get_physical_image(this.page_table);
+          const x_groups = Math.ceil(pt_image.config.width / 8);
+          const y_groups = Math.ceil(pt_image.config.height / 8);
+          const z_groups = Math.ceil(pt_image.config.depth / 4);
+          pass.dispatch(x_groups, y_groups, z_groups);
+        }
+      );
+    }
+    // ────────────────────────────────────────────────────────────────
     // Shadow Culling Pass
     // ────────────────────────────────────────────────────────────────
 
@@ -548,7 +623,13 @@ export class AdaptiveSparseVirtualShadowMaps {
         const clipmap_count = view_data.clipmap_count || 1;
 
         for (let clipmap_index = 0; clipmap_index < clipmap_count; ++clipmap_index) {
-          this.shadow_culler.register_view(render_graph, draw_count, view_index, clipmap_index, force_recreate);
+          this.shadow_culler.register_view(
+            render_graph,
+            draw_count,
+            view_index,
+            clipmap_index,
+            force_recreate
+          );
         }
       }
 
@@ -563,7 +644,7 @@ export class AdaptiveSparseVirtualShadowMaps {
 
       this.shadow_culler.init_views(render_graph, draw_count);
       this.shadow_culler.init_visibility(render_graph, draw_count);
-      this.shadow_culler.submit_cull(render_graph, draw_count);
+      this.shadow_culler.submit_cull(render_graph, draw_count, lights_dirtied);
     }
 
     // ────────────────────────────────────────────────────────────────
@@ -622,7 +703,7 @@ export class AdaptiveSparseVirtualShadowMaps {
               c /* clipmap_index */,
               true /* skip_material_bind */,
               false /* opaque_only */,
-              true /* depth_only */,
+              true /* depth_only */
             );
           }
         );
@@ -806,7 +887,13 @@ export class AdaptiveSparseVirtualShadowMaps {
         RenderPassFlags.Graphics,
         {
           inputs: [
-            this.page_table, position_texture, this.settings_buf, this.light_view_buf, this.shadow_atlas_buf, this.page_offset],
+            this.page_table,
+            position_texture,
+            this.settings_buf,
+            this.light_view_buf,
+            this.shadow_atlas_buf,
+            this.page_offset,
+          ],
           outputs: [this.debug_dirty_tiles_image],
           shader_setup: debug_dirty_tiles_shader_setup,
         },
