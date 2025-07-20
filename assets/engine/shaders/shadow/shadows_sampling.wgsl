@@ -5,6 +5,9 @@
 // ------------------------------------------------------------------------------------
 #if SHADOWS_ENABLED
 
+const constant_bias = 1.5;
+const slope_bias    = 1.75;
+
 fn vsm_shadow_depth(
     world_pos: vec4<f32>,
     normal: vec3<f32>,
@@ -33,12 +36,20 @@ fn vsm_shadow_depth(
   // We move the receiver along its own normal by <normal_offset> texels.
   // ------------------------------------------------------------------
 
-  // texel size in world units for current clip map level
-  let texel_world         = f32(1u << vtile_info.clipmap_index) * vsm_settings.clip0_extent / vsm_settings.virtual_dim;
-  let ndotl               = abs(dot(normal, light_dir));
-  let bias_scale          = vsm_settings.clip0_extent * (0.5 + 2.0 * (1.0 - ndotl)); 
-  let normal_offset       = texel_world * bias_scale;
-  let normal_shifted_pos  = world_pos + vec4<f32>(normal * normal_offset, 0.0);
+  // texel size in world units for current clip-map level
+  let clip_extent  = f32(1u << vtile_info.clipmap_index) * vsm_settings.clip0_extent;
+  let texel_world  = clip_extent / vsm_settings.virtual_dim;
+
+  // ------------------------------------------------------------------
+  // Hybrid constant-and-slope bias   (see Holbert 2011 + Epic notes)
+  // ------------------------------------------------------------------
+  let ndotl        = dot(normal, light_dir);
+  let eps          = 0.04;
+  let bias_texels  = constant_bias + slope_bias / max(abs(ndotl), eps);
+
+  let normal_offset      = texel_world * bias_texels;
+
+  let normal_shifted_pos = world_pos + vec4<f32>(normal * normal_offset, 0.0);
 
   let light_clip_pos      = vsm_calculate_render_clip_value_from_world_pos(
                                 normal_shifted_pos,
@@ -108,15 +119,16 @@ fn vsm_sample_shadow(
     let idx21       = base_index + y1 * phys_dim + x2;
     let idx22       = base_index + y2 * phys_dim + x2;
 
-    let d00         = select(0.0, 1.0, ref_depth >= unpack_depth(shadow_atlas_depth[idx00]));
-    let d10         = select(0.0, 1.0, ref_depth >= unpack_depth(shadow_atlas_depth[idx10]));
-    let d01         = select(0.0, 1.0, ref_depth >= unpack_depth(shadow_atlas_depth[idx01]));
-    let d11         = select(0.0, 1.0, ref_depth >= unpack_depth(shadow_atlas_depth[idx11]));
-    let d02         = select(0.0, 1.0, ref_depth >= unpack_depth(shadow_atlas_depth[idx02]));
-    let d12         = select(0.0, 1.0, ref_depth >= unpack_depth(shadow_atlas_depth[idx12]));
-    let d20         = select(0.0, 1.0, ref_depth >= unpack_depth(shadow_atlas_depth[idx20]));
-    let d21         = select(0.0, 1.0, ref_depth >= unpack_depth(shadow_atlas_depth[idx21]));
-    let d22         = select(0.0, 1.0, ref_depth >= unpack_depth(shadow_atlas_depth[idx22]));
+    let bias        = 0.000001;
+    let d00         = select(0.0, 1.0, ref_depth >= unpack_depth(shadow_atlas_depth[idx00]) + bias);
+    let d10         = select(0.0, 1.0, ref_depth >= unpack_depth(shadow_atlas_depth[idx10]) + bias);
+    let d01         = select(0.0, 1.0, ref_depth >= unpack_depth(shadow_atlas_depth[idx01]) + bias);
+    let d11         = select(0.0, 1.0, ref_depth >= unpack_depth(shadow_atlas_depth[idx11]) + bias);
+    let d02         = select(0.0, 1.0, ref_depth >= unpack_depth(shadow_atlas_depth[idx02]) + bias);
+    let d12         = select(0.0, 1.0, ref_depth >= unpack_depth(shadow_atlas_depth[idx12]) + bias);
+    let d20         = select(0.0, 1.0, ref_depth >= unpack_depth(shadow_atlas_depth[idx20]) + bias);
+    let d21         = select(0.0, 1.0, ref_depth >= unpack_depth(shadow_atlas_depth[idx21]) + bias);
+    let d22         = select(0.0, 1.0, ref_depth >= unpack_depth(shadow_atlas_depth[idx22]) + bias);
 
     // Average the nine sampled depths (simple PCF)
     let filtered = (d00 + d10 + d01 + d11 + d02 + d12 + d20 + d21 + d22) / 9.0;

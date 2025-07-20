@@ -190,7 +190,7 @@ const render_shader_setup = {
   rasterizer_state: {
     cull_mode: "front",
   },
-  depth_stencil_compare_op: "greater-equal",
+  depth_stencil_compare_op: "greater",
 };
 
 const debug_shadow_atlas_shader_setup = {

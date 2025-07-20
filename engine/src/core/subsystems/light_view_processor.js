@@ -143,6 +143,13 @@ export class LightViewProcessor extends SimulationLayer {
           lights.position[slot * 4 + 2],
           1.0,
         ];
+        const light_direction = [
+          lights.direction[slot * 4 + 0],
+          lights.direction[slot * 4 + 1],
+          lights.direction[slot * 4 + 2],
+          lights.direction[slot * 4 + 3],
+        ];
+
         const light_view = SharedViewBuffer.get_view_data(view_index);
 
         if (light_type === LightType.DIRECTIONAL) {
@@ -173,11 +180,7 @@ export class LightViewProcessor extends SimulationLayer {
         } else {
           // If the light position or rotation has changed, mark the light as dirty so we can re-render all tiles
           let prev_light_position = light_view.view_position;
-          let prev_light_rotation = light_view.view_rotation;
-          if (
-            !vec3.equals(prev_light_position, light_position) ||
-            !quat.equals(prev_light_rotation, rotation)
-          ) {
+          if (!vec3.equals(prev_light_position, light_position)) {
             lights.shadows_dirty[slot] = 1;
             chunk.mark_dirty();
           }
