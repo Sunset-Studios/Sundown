@@ -93,8 +93,11 @@ const max_buffer_resources = 1024;
 const max_render_passes = 1024;
 
 const RG_VERSION_BITS = 4;
+const RG_VERSION_MASK = (1 << RG_VERSION_BITS) - 1;
 const RG_TYPE_BITS = 8;
+const RG_TYPE_MASK = (1 << RG_TYPE_BITS) - 1;
 const RG_INDEX_BITS = 20;
+const RG_INDEX_MASK = (1 << RG_INDEX_BITS) - 1;
 
 // [Experimental] feature to allow custom pass ordering based on user-configurable pass order config.
 const custom_graph_sort = false;
@@ -109,9 +112,9 @@ const custom_graph_sort = false;
 function create_graph_resource_handle(index, type, version) {
   // Lower 4 bits for version, middle 8 bits for type, high 20 bits for index
   return (
-    ((index & ((1 << RG_INDEX_BITS) - 1)) << (RG_VERSION_BITS + RG_TYPE_BITS)) |
-    ((type & ((1 << RG_TYPE_BITS) - 1)) << RG_VERSION_BITS) |
-    (version & ((1 << RG_VERSION_BITS) - 1))
+    ((index & RG_INDEX_MASK) << (RG_VERSION_BITS + RG_TYPE_BITS)) |
+    ((type & RG_TYPE_MASK) << RG_VERSION_BITS) |
+    (version & RG_VERSION_MASK)
   );
 }
 
@@ -121,7 +124,7 @@ function create_graph_resource_handle(index, type, version) {
  * @returns {number} The index of the graph resource.
  */
 function get_graph_resource_index(handle) {
-  return (handle >> (RG_VERSION_BITS + RG_TYPE_BITS)) & ((1 << RG_INDEX_BITS) - 1);
+  return (handle >> (RG_VERSION_BITS + RG_TYPE_BITS)) & RG_INDEX_MASK;
 }
 
 /**
@@ -130,7 +133,7 @@ function get_graph_resource_index(handle) {
  * @returns {number} The type of the graph resource.
  */
 function get_graph_resource_type(handle) {
-  return (handle >> RG_VERSION_BITS) & ((1 << RG_TYPE_BITS) - 1);
+  return (handle >> RG_VERSION_BITS) & RG_TYPE_MASK;
 }
 
 /**
@@ -139,7 +142,7 @@ function get_graph_resource_type(handle) {
  * @returns {number} The version of the graph resource.
  */
 function get_graph_resource_version(handle) {
-  return handle & ((1 << RG_VERSION_BITS) - 1);
+  return handle & RG_VERSION_MASK;
 }
 
 /**

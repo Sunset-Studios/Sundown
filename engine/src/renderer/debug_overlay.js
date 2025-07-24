@@ -116,8 +116,6 @@ export class DebugOverlay {
         return "debug/debug_overlay_entity.wgsl";
       case DebugDrawType.HZB:
         return "debug/debug_overlay_hzb.wgsl";
-      case DebugDrawType.GIProbeVolume:
-        return "debug/debug_overlay_2d.wgsl";
       case DebugDrawType.Bloom:
         return "debug/debug_overlay_2d.wgsl";
       case DebugDrawType.ASVSM_TileOverlay:
@@ -129,6 +127,8 @@ export class DebugOverlay {
       case DebugDrawType.GTAO:
         return "debug/debug_overlay_2d_single_comp.wgsl";
       case DebugDrawType.BentNormal:
+        return "debug/debug_overlay_2d.wgsl";
+      case DebugDrawType.GI_Irradiance:
         return "debug/debug_overlay_2d.wgsl";
       default:
         return "debug/debug_overlay_2d.wgsl";

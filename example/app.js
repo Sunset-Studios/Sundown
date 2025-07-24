@@ -473,7 +473,7 @@ export class TexturesScene extends Scene {
     light_fragment_view.type = LightType.DIRECTIONAL;
     light_fragment_view.color = [1, 1, 1, 1];
     light_fragment_view.intensity = 7;
-    light_fragment_view.position = [50, 20, -10];
+    light_fragment_view.position = [50, 20, 30];
     light_fragment_view.active = true;
     light_fragment_view.is_primary_sun = 1;
     light_fragment_view.shadow_clipmaps = MAX_CLIPMAP_LEVELS;

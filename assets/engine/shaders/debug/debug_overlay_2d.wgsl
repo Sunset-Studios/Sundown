@@ -10,5 +10,6 @@ struct VertexOutput {
 
 @fragment
 fn fs(input: VertexOutput) -> @location(0) vec4<f32> {
-  return textureSample(debug_texture, non_filtering_sampler, input.uv);
+  var color = textureSample(debug_texture, non_filtering_sampler, input.uv);
+  return vec4f(color.rgb, 1.0);
 } 

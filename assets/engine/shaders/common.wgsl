@@ -188,6 +188,11 @@ fn random_seed(seed: u32) -> u32 {
     return y * 2654435769u;
 }
 
+// Converts a 32-bit seed to a uniform float in the range [0,1).
+fn rand_float(seed: u32) -> f32 {
+  return f32(random_seed(seed)) * one_over_float_max;
+}
+
 fn dither_mask(uv: vec2f, resolution: vec2f) -> f32 {
     // Scale UV coordinates to the size of the screen
     let scaled_uv = uv * resolution;
@@ -248,6 +253,12 @@ fn uint_to_normalized_float(x: u32) -> precision_float {
 // Interpolate between two values
 fn interpolate(v0: precision_float, v1: precision_float, t: precision_float) -> precision_float {
     return v0 * (1.0 - t) + v1 * t;
+}
+
+// Helper function to safely normalize a vector
+fn safe_normalize(v: vec3f) -> vec3f {
+  let len = length(v);
+  return select(normalize(v), vec3f(0.0), len < 1e-6);
 }
 
 // A billboard function that works with local position and entity transform

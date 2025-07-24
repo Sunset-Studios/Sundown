@@ -50,9 +50,9 @@ fn vertex(v_out: ptr<function, VertexOutput>) -> VertexOutput {
         (entity_flags[entity_resolved] & EF_BILLBOARD) != 0
     ).xyz, 1.0);
 
-    let n = normalize((entity_transform.transpose_inverse_model_matrix * vec4<f32>(instance_vertex.normal)).xyz);
-    let t = normalize((entity_transform.transform * vec4<f32>(instance_vertex.tangent.xyz, 0.0)).xyz);
-    let b = normalize((entity_transform.transform * vec4<f32>(instance_vertex.bitangent.xyz, 0.0)).xyz);
+    let n = safe_normalize((entity_transform.transpose_inverse_model_matrix * vec4<f32>(instance_vertex.normal)).xyz);
+    let t = safe_normalize((entity_transform.transform * vec4<f32>(instance_vertex.tangent.xyz, 0.0)).xyz);
+    let b = safe_normalize((entity_transform.transform * vec4<f32>(instance_vertex.bitangent.xyz, 0.0)).xyz);
 
     output.normal = vec4<precision_float>(n, 0.0);
     output.tangent = vec4<precision_float>(t, 0.0);

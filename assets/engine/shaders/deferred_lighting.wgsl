@@ -17,26 +17,24 @@
 @group(1) @binding(8) var<storage, read> light_count_buffer: array<u32>;
 
 #if GI_ENABLED
-
-  @group(1) @binding(9) var<uniform> gi_params: GIParams;
-  @group(1) @binding(10) var gi_irradiance: texture_3d<f32>;
+  @group(1) @binding(9) var gi_texture: texture_2d<f32>;
 
   #if SHADOWS_ENABLED
-    @group(1) @binding(11) var<storage, read> shadow_atlas_depth: array<u32>;
-    @group(1) @binding(12) var page_table: texture_storage_2d_array<r32uint, read>;
-    @group(1) @binding(13) var page_offset: texture_storage_2d_array<rgba32float, read>;
-    @group(1) @binding(14) var<uniform> vsm_settings: ASVSMSettings;
+    @group(1) @binding(10) var<storage, read> shadow_atlas_depth: array<u32>;
+    @group(1) @binding(11) var page_table: texture_storage_2d_array<r32uint, read>;
+    @group(1) @binding(12) var page_offset: texture_storage_2d_array<rgba32float, read>;
+    @group(1) @binding(13) var<uniform> vsm_settings: ASVSMSettings;
 
     #if GTAO_ENABLED
-      @group(1) @binding(15) var ao_texture: texture_2d<f32>;
-      @group(1) @binding(16) var bent_normal_texture: texture_2d<f32>;
+      @group(1) @binding(14) var ao_texture: texture_2d<f32>;
+      @group(1) @binding(15) var bent_normal_texture: texture_2d<f32>;
     #endif
 
   #else
 
     #if GTAO_ENABLED
-      @group(1) @binding(11) var ao_texture: texture_2d<f32>;
-      @group(1) @binding(12) var bent_normal_texture: texture_2d<f32>;
+      @group(1) @binding(10) var ao_texture: texture_2d<f32>;
+      @group(1) @binding(11) var bent_normal_texture: texture_2d<f32>;
     #endif
 
   #endif
@@ -82,16 +80,6 @@ struct FragmentOutput {
 // ------------------------------------------------------------------------------------
 // Helper Functions
 // ------------------------------------------------------------------------------------
-
-fn sample_probe_irradiance(world_pos: vec3<f32>) -> vec3<f32> {
-#if GI_ENABLED
-    let uvw = (world_pos - gi_params.origin) / gi_params.spacing;
-    let tex = textureSampleLevel(gi_irradiance, global_sampler, uvw, 0.0);
-    return tex.rgb;
-#else
-    return vec3<f32>(0.0);
-#endif
-}
 
 // ------------------------------------------------------------------------------------
 // Vertex Shader
@@ -154,7 +142,10 @@ fn sample_probe_irradiance(world_pos: vec3<f32>) -> vec3<f32> {
 
     var color = f32(unlit) * tex_sky.rgb * mix(vec3f(1.0), albedo, tex_albedo.a);
 
-    let irradiance = sample_probe_irradiance(position);
+    var irradiance = vec3f(0.0);
+#if GI_ENABLED
+    irradiance = textureSample(gi_texture, global_sampler, uv).rgb;
+#endif
 
     let num_lights = light_count_buffer[0] * (1u - unlit);
     for (var light_index = 0u; light_index < num_lights; light_index++) {

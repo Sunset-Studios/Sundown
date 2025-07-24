@@ -46,7 +46,7 @@ import {
 } from "../../utility/config_permutations.js";
 
 // Specialized renderer components
-import { GIProbeVolume } from "../global_illumination/ddgi.js";
+import { GI } from "../global_illumination/gi.js";
 import { GTAO } from "../global_illumination/gtao.js";
 import { AdaptiveSparseVirtualShadowMaps } from "../shadows/as_vsm.js";
 import {
@@ -339,7 +339,8 @@ const post_bloom_color_image_config = {
   format: rgba16float_format,
   width: 0,
   height: 0,
-  usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+  usage:
+    GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_SRC,
   force: false,
 };
 const bloom_params = [
@@ -382,40 +383,17 @@ const entity_id_image_config = {
     GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_SRC,
   force: false,
 };
-const gi_irradiance_config = {
-  name: "gi_irradiance_volume",
-  width: 0,
-  height: 0,
-  depth: 0,
-  mip_levels: 1,
-  dimension: "3d",
-  format: "rgba16float",
-  usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
-  force: false,
-};
 
-const gi_depth_config = {
-  name: "gi_depth_volume",
-  width: 0,
-  height: 0,
-  depth: 0,
-  mip_levels: 1,
-  dimension: "3d",
-  format: r32float_format,
-  usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
-  force: false,
-};
-
-const probe_resolution = 16;
-const probe_cubemap_image_config = {
-  name: "ddgi_probe_cubemap",
-  width: probe_resolution,
-  height: probe_resolution,
-  dimension: "2d-array",
-  array_layer_count: 6,
+const prev_lighting_image_config = {
+  name: "prev_lighting",
   format: rgba16float_format,
-  usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
-  force: false,
+  width: 0,
+  height: 0,
+  usage:
+    GPUTextureUsage.RENDER_ATTACHMENT |
+    GPUTextureUsage.TEXTURE_BINDING |
+    GPUTextureUsage.STORAGE_BINDING |
+    GPUTextureUsage.COPY_DST,
 };
 
 const swapchain_name = "swapchain";
@@ -432,10 +410,11 @@ const fullscreen_present_pass_name = "fullscreen_present_pass";
 // Debug shader setups for AS-VSM debug views
 export class DeferredShadingStrategy {
   initialized = false;
+  force_recreate = false;
   hzb_image = null;
   entity_id_image = null;
-  force_recreate = false;
-  gi_probe_volume = null;
+  prev_lighting_image = null;
+  gi = null;
   gtao = null;
   as_vsm = null;
   debug_overlay = null;
@@ -443,10 +422,10 @@ export class DeferredShadingStrategy {
   occlusion_culler = null;
 
   setup(render_graph) {
-    this.gi_probe_volume = new GIProbeVolume();
-    this.gtao = new GTAO();
     this.debug_overlay = new DebugOverlay();
 
+    this.gi = new GI();
+    this.gtao = new GTAO();
     this.as_vsm = new AdaptiveSparseVirtualShadowMaps({
       atlas_size: ATLAS_SIZE,
       tile_size: TILE_SIZE,
@@ -517,6 +496,7 @@ export class DeferredShadingStrategy {
       const total_views = SharedViewBuffer.get_view_data_count();
       const draw_count = MeshTaskQueue.get_total_draw_count();
       const debug_view = renderer.get_debug_draw_type();
+      const image_extent = renderer.get_canvas_resolution();
 
       const shadows_enabled = renderer.is_shadows_enabled();
       const gi_enabled = renderer.is_gi_enabled();
@@ -525,6 +505,8 @@ export class DeferredShadingStrategy {
       if (this.force_recreate) {
         render_graph.mark_pass_cache_bind_groups_dirty(true /* pass_only */);
       }
+
+      const prev_lighting = render_graph.register_image(this.prev_lighting_image.config.name);
 
       // ┌─────────────────────────────────────────────────────────────────────────────┐
       // │ 📋 Register Core Entity & Transform Buffers                                │
@@ -583,7 +565,6 @@ export class DeferredShadingStrategy {
       // ┌─────────────────────────────────────────────────────────────────────────────┐
       // │ 🖼️  Create G-Buffer & Main Render Targets                                  │
       // └─────────────────────────────────────────────────────────────────────────────┘
-      const image_extent = renderer.get_canvas_resolution();
 
       let main_hzb_image = render_graph.register_image(this.hzb_image.config.name);
       let main_entity_id_image = render_graph.register_image(this.entity_id_image.config.name);
@@ -628,7 +609,6 @@ export class DeferredShadingStrategy {
 
       let skybox_image = null;
       let post_lighting_image_desc = null;
-      let post_bloom_color_desc = null;
 
       // ┌─────────────────────────────────────────────────────────────────────────────┐
       // │ 📋 Register Per-View Visibility Data                                       │
@@ -663,19 +643,6 @@ export class DeferredShadingStrategy {
         this.occlusion_culler.additional_data.entity_occluders = entity_occluders;
         this.occlusion_culler.additional_data.main_entity_id_image = main_entity_id_image;
       }
-
-      // ┌─────────────────────────────────────────────────────────────────────────────┐
-      // │ 🌟 Setup Global Illumination Resources                                     │
-      // └─────────────────────────────────────────────────────────────────────────────┘
-      const gi_irradiance_image = render_graph.register_image(
-        this.gi_irradiance_volume.config.name
-      );
-      const gi_depth_image = render_graph.register_image(this.gi_depth_volume.config.name);
-      const gi_params_buffer = render_graph.create_buffer({
-        name: "gi_params",
-        size: 16 * 4,
-        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-      });
 
       // ═══════════════════════════════════════════════════════════════════════════════
       // 🎨 RENDERING PIPELINE BEGINS
@@ -1117,24 +1084,16 @@ export class DeferredShadingStrategy {
       }
 
       // ┌─────────────────────────────────────────────────────────────────────────────┐
-      // │ 🌟 PASS: Dynamic Diffuse Global Illumination (DDGI)                        │
-      // │    Real-time global illumination using probe-based irradiance volumes       │
+      // │ 🌟 PASS: Radiance Cascades                                                 │
+      // │    Real-time global illumination using radiance cascades                    │
       // └─────────────────────────────────────────────────────────────────────────────┘
       if (gi_enabled) {
-        const visible_instance_buffer = this.occlusion_culler.get_visibility_buffer(
-          current_view,
-          0
+        this.gi.add_passes(
+          render_graph,
+          image_extent.width,
+          image_extent.height,
+          this.force_recreate
         );
-        this.gi_probe_volume.update(render_graph, {
-          gi_params_buffer,
-          gi_irradiance_image,
-          gi_depth_image,
-          entity_transforms,
-          entity_flags,
-          visible_instance_buffer,
-          lights,
-          probe_cubemap: this.probe_cubemap.config.name,
-        });
       }
 
       // ┌─────────────────────────────────────────────────────────────────────────────┐
@@ -1179,11 +1138,13 @@ export class DeferredShadingStrategy {
         deferred_lighting_shader_setup.pipeline_shaders.fragment.defines.GI_ENABLED = gi_enabled;
 
         if (gi_enabled) {
-          lighting_inputs.push(gi_irradiance_image, gi_depth_image);
+          lighting_inputs.push(this.gi.final_gi_texture);
         }
 
-        deferred_lighting_shader_setup.pipeline_shaders.vertex.defines.SHADOWS_ENABLED = shadows_enabled;
-        deferred_lighting_shader_setup.pipeline_shaders.fragment.defines.SHADOWS_ENABLED = shadows_enabled;
+        deferred_lighting_shader_setup.pipeline_shaders.vertex.defines.SHADOWS_ENABLED =
+          shadows_enabled;
+        deferred_lighting_shader_setup.pipeline_shaders.fragment.defines.SHADOWS_ENABLED =
+          shadows_enabled;
 
         if (shadows_enabled) {
           lighting_inputs.push(
@@ -1195,7 +1156,8 @@ export class DeferredShadingStrategy {
         }
 
         deferred_lighting_shader_setup.pipeline_shaders.vertex.defines.GTAO_ENABLED = gtao_enabled;
-        deferred_lighting_shader_setup.pipeline_shaders.fragment.defines.GTAO_ENABLED = gtao_enabled;
+        deferred_lighting_shader_setup.pipeline_shaders.fragment.defines.GTAO_ENABLED =
+          gtao_enabled;
 
         if (gtao_enabled) {
           lighting_inputs.push(this.gtao.ao_blur_texture, this.gtao.bent_normal_texture);
@@ -1220,6 +1182,12 @@ export class DeferredShadingStrategy {
       // │ ✨ PASS: Bloom Post-Processing                                             │
       // │    Multi-pass gaussian blur to create beautiful light bleeding effects    │
       // └─────────────────────────────────────────────────────────────────────────────┘
+
+      post_bloom_color_image_config.width = image_extent.width;
+      post_bloom_color_image_config.height = image_extent.height;
+      post_bloom_color_image_config.force = this.force_recreate;
+      const curr_post_bloom = render_graph.create_image(post_bloom_color_image_config);
+
       const num_iterations = 4;
       let bloom_blur_chain = [];
       if (num_iterations > 0) {
@@ -1335,11 +1303,6 @@ export class DeferredShadingStrategy {
           );
         }
 
-        post_bloom_color_image_config.width = image_extent.width;
-        post_bloom_color_image_config.height = image_extent.height;
-        post_bloom_color_image_config.force = this.force_recreate;
-        post_bloom_color_desc = render_graph.create_image(post_bloom_color_image_config);
-
         let bloom_resolve_params_desc = render_graph.create_buffer(bloom_resolve_params_config);
 
         render_graph.add_pass(
@@ -1352,7 +1315,7 @@ export class DeferredShadingStrategy {
               main_depth_image,
               bloom_resolve_params_desc,
             ],
-            outputs: [post_bloom_color_desc],
+            outputs: [curr_post_bloom],
             shader_setup: bloom_resolve_shader_setup,
           },
           (graph, frame_data, encoder) => {
@@ -1367,7 +1330,20 @@ export class DeferredShadingStrategy {
         );
       }
 
-      const antialiased_scene_color_desc = post_bloom_color_desc;
+      // Copy current bloom result into prev_lighting for the next frame
+      render_graph.add_pass(
+        "copy_prev_lighting",
+        RenderPassFlags.GraphLocal,
+        {},
+        (graph, frame_data, encoder) => {
+          const curr = graph.get_physical_image(curr_post_bloom);
+          const prev = graph.get_physical_image(prev_lighting);
+          prev.copy_texture(encoder, curr);
+        }
+      );
+
+      // Use post-bloom color for antialiased_scene_color_desc
+      const antialiased_scene_color_desc = curr_post_bloom;
 
       // ┌─────────────────────────────────────────────────────────────────────────────┐
       // │ 🎭 PASS: Post-Processing Stack                                              │
@@ -1439,16 +1415,6 @@ export class DeferredShadingStrategy {
               image_extent.height,
               DebugDrawType.HZB,
               5
-            );
-            break;
-          case DebugDrawType.GIProbeVolume:
-            this.debug_overlay.set_properties(
-              gi_irradiance_image,
-              0,
-              0,
-              image_extent.width,
-              image_extent.height,
-              DebugDrawType.GIProbeVolume
             );
             break;
           case DebugDrawType.ASVSM_ShadowAtlas:
@@ -1529,6 +1495,16 @@ export class DeferredShadingStrategy {
               image_extent.width,
               image_extent.height,
               DebugDrawType.BentNormal
+            );
+            break;
+          case DebugDrawType.GI_Irradiance:
+            this.debug_overlay.set_properties(
+              this.gi.final_gi_texture,
+              0,
+              0,
+              image_extent.width,
+              image_extent.height,
+              DebugDrawType.GI_Irradiance
             );
             break;
           default:
@@ -1667,26 +1643,12 @@ export class DeferredShadingStrategy {
     entity_id_image_config.height = image_extent.height;
     entity_id_image_config.force = this.force_recreate;
 
+    prev_lighting_image_config.width = image_extent.width;
+    prev_lighting_image_config.height = image_extent.height;
+    prev_lighting_image_config.force = this.force_recreate;
+
     this.hzb_image = Texture.create(hzb_image_config);
     this.entity_id_image = Texture.create(entity_id_image_config);
-
-    // Use global GIProbeVolume from Renderer
-    const gi_dims = this.gi_probe_volume.dims;
-
-    gi_irradiance_config.width = gi_dims[0];
-    gi_irradiance_config.height = gi_dims[1];
-    gi_irradiance_config.depth = gi_dims[2];
-    gi_irradiance_config.force = this.force_recreate;
-    this.gi_irradiance_volume = Texture.create(gi_irradiance_config);
-
-    gi_depth_config.width = gi_dims[0];
-    gi_depth_config.height = gi_dims[1];
-    gi_depth_config.depth = gi_dims[2];
-    gi_depth_config.force = this.force_recreate;
-    this.gi_depth_volume = Texture.create(gi_depth_config);
-
-    // Create a reusable cubemap-array target for DDGI probes
-    probe_cubemap_image_config.force = this.force_recreate;
-    this.probe_cubemap = Texture.create(probe_cubemap_image_config);
+    this.prev_lighting_image = Texture.create(prev_lighting_image_config);
   }
 }

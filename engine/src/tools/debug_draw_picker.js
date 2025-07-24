@@ -28,9 +28,6 @@ export class DebugDrawPicker extends DevConsoleTool {
         case "hzb":
           Renderer.get().set_debug_draw_type(DebugDrawType.HZB);
           break;
-        case "gi-probe-volume":
-          Renderer.get().set_debug_draw_type(DebugDrawType.GIProbeVolume);
-          break;
         case "shadow-atlas":
           Renderer.get().set_debug_draw_type(DebugDrawType.ASVSM_ShadowAtlas);
           break;
@@ -54,6 +51,9 @@ export class DebugDrawPicker extends DevConsoleTool {
           break;
         case "bent-normal":
           Renderer.get().set_debug_draw_type(DebugDrawType.BentNormal);
+          break;
+        case "gi":
+          Renderer.get().set_debug_draw_type(DebugDrawType.GI_Irradiance);
           break;
         default:
           Renderer.get().set_debug_draw_type(DebugDrawType.None);

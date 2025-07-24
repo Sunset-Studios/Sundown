@@ -160,7 +160,7 @@ export class PostProcessStack {
 
             pass.rg_config.inputs.length = 0;
             pass.rg_config.inputs.push(uniforms_buffer);
-            pass.rg_config.inputs.push(input_image);
+            pass.rg_config.inputs.push(current_input);
             pass.rg_config.inputs.push(depth_image);
             pass.rg_config.inputs.push(normal_image);
             pass.rg_config.outputs.length = 0;
