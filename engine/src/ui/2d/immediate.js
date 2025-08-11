@@ -22,6 +22,30 @@ const column = "column";
 const row_reversed = "row_reversed";
 const column_reversed = "column_reversed";
 
+const shift_char_map = {
+  1: "!",
+  2: "@",
+  3: "#",
+  4: "$",
+  5: "%",
+  6: "^",
+  7: "&",
+  8: "*",
+  9: "(",
+  0: ")",
+  "-": "_",
+  "=": "+",
+  "[": "{",
+  "]": "}",
+  "\\": "|",
+  ";": ":",
+  "'": '"',
+  ",": "<",
+  ".": ">",
+  "/": "?",
+  "`": "~",
+};
+
 class LayoutStackContainer {
   x = 0;
   y = 0;
@@ -81,7 +105,7 @@ export const UIContext = {
   /**
    * Global layout allocator.
    */
-  layout_allocator: new FrameAllocator(100, LayoutStackContainer),
+  layout_allocator: new FrameAllocator(256, LayoutStackContainer),
   /**
    * Global layout stack.
    */
@@ -471,7 +495,7 @@ function child_container_layout_update(container, x, y, width, height) {
         // For reversed row, track the minimum (leftmost) x position
         container.content_max_x = Math.max(
           container.content_max_x,
-          (container.x + container.width + container.padding_right) - container.cursor.x
+          container.x + container.width + container.padding_right - container.cursor.x
         );
       } else {
         container.content_max_x = Math.max(
@@ -485,7 +509,7 @@ function child_container_layout_update(container, x, y, width, height) {
         // For reversed column, track the minimum (topmost) y position
         container.content_max_y = Math.max(
           container.content_max_y,
-          (container.y + container.height + container.padding_bottom) - container.cursor.y
+          container.y + container.height + container.padding_bottom - container.cursor.y
         );
       } else {
         container.content_max_y = Math.max(
@@ -732,28 +756,28 @@ export function begin_container(config = {}) {
   container.padding_top = padding_top;
   container.padding_right = padding_right;
   container.padding_bottom = padding_bottom;
-  
+
   // Set initial cursor position based on layout type
   if (layout === row_reversed) {
     // For reversed row, start from the right side
-    container.cursor = { 
-      x: x + width - padding_right, 
-      y: y + padding_top 
+    container.cursor = {
+      x: x + width - padding_right,
+      y: y + padding_top,
     };
   } else if (layout === column_reversed) {
     // For reversed column, start from the bottom
-    container.cursor = { 
-      x: x + padding_left, 
-      y: y + height - padding_bottom 
+    container.cursor = {
+      x: x + padding_left,
+      y: y + height - padding_bottom,
     };
   } else {
     // Default cursor position (top-left corner)
-    container.cursor = { 
-      x: x + padding_left, 
-      y: y + padding_top 
+    container.cursor = {
+      x: x + padding_left,
+      y: y + padding_top,
     };
   }
-  
+
   container.config = config;
 
   container._has_clip = false;
@@ -821,7 +845,8 @@ export function end_container() {
     // calculate the content_max_x from the current cursor.
     // (This assumes that container.cursor.x represents the maximum X coordinate reached by its children.)
     if (container.layout === row_reversed) {
-      container.content_max_x = (container.x + container.width + container.padding_right) - container.cursor.x;
+      container.content_max_x =
+        container.x + container.width + container.padding_right - container.cursor.x;
     } else {
       container.content_max_x = container.cursor.x - (container.x + container.padding_left);
     }
@@ -834,7 +859,8 @@ export function end_container() {
     // calculate the content_max_y from the current cursor.
     // (This assumes that container.cursor.y represents the maximum Y coordinate reached by its children.)
     if (container.layout === column_reversed) {
-      container.content_max_y = (container.y + container.height + container.padding_bottom) - container.cursor.y;
+      container.content_max_y =
+        container.y + container.height + container.padding_bottom - container.cursor.y;
     } else {
       container.content_max_y = container.cursor.y - (container.y + container.padding_top);
     }
@@ -873,8 +899,11 @@ export function end_container() {
       } else if (parent.layout === row_reversed) {
         parent.cursor.x -= container.width + parent.gap;
         if (parent.auto_width) {
-          const rel_x = (parent.x + parent.width + parent.padding_right) - 
-                        (container.x + container.width + container.padding_right);
+          const rel_x =
+            parent.x +
+            parent.width +
+            parent.padding_right -
+            (container.x + container.width + container.padding_right);
           parent.content_max_x = Math.max(
             parent.content_max_x,
             rel_x + container.width + container.padding_left + container.padding_right
@@ -892,8 +921,11 @@ export function end_container() {
       } else if (parent.layout === column_reversed) {
         parent.cursor.y -= container.height + parent.gap;
         if (parent.auto_height) {
-          const rel_y = (parent.y + parent.height + parent.padding_bottom) - 
-                        (container.y + container.height + container.padding_bottom);
+          const rel_y =
+            parent.y +
+            parent.height +
+            parent.padding_bottom -
+            (container.y + container.height + container.padding_bottom);
           parent.content_max_y = Math.max(
             parent.content_max_y,
             rel_y + container.height + container.padding_top + container.padding_bottom
@@ -982,12 +1014,6 @@ export function button(label, config = {}) {
   const font = config.font || "16px sans-serif";
   const text_padding = config.text_padding || 0;
 
-  let lines = [label];
-  if (config.wrap) {
-    const max_text_width = container.width - text_padding * 2;
-    lines = wrap_text(label, font, max_text_width);
-  }
-
   // ------------------------------
   // Compute Dimensions: fit-content vs. fixed
   // ------------------------------
@@ -1001,6 +1027,12 @@ export function button(label, config = {}) {
     width = metrics.width + text_padding * 2;
   } else {
     width = parse_dimension(config.width, container.width);
+  }
+
+  let lines = [label];
+  if (config.wrap) {
+    const max_text_width = width - text_padding * 2;
+    lines = wrap_text(label, font, max_text_width);
   }
 
   if (config.height === "fit-content") {
@@ -1195,12 +1227,6 @@ export function label(text, config = {}) {
   const font = config.font || "16px sans-serif";
   const text_padding = config.text_padding || 0;
 
-  let lines = [text];
-  if (config.wrap) {
-    const max_text_width = container.width - text_padding * 2;
-    lines = wrap_text(text, font, max_text_width);
-  }
-
   // ------------------------------
   // Compute Dimensions: fit-content vs. fixed
   // ------------------------------
@@ -1214,6 +1240,12 @@ export function label(text, config = {}) {
     width = metrics.width + text_padding * 2;
   } else {
     width = parse_dimension(config.width, container.width);
+  }
+
+  let lines = [text];
+  if (config.wrap) {
+    const max_text_width = width - text_padding * 2;
+    lines = wrap_text(text, font, max_text_width);
   }
 
   if (config.height === "fit-content") {
@@ -1544,6 +1576,14 @@ export function input(name, config = {}) {
   if (field_state.is_focused) {
     const now = performance.now();
     const repeat_delay = config.repeat_delay || 500;
+    // Detect modifier keys and set up Shift transformations
+    const shift_down =
+      InputProvider.get_state(InputKey.K_LShift) || InputProvider.get_state(InputKey.K_RShift);
+    const ctrl_down =
+      InputProvider.get_state(InputKey.K_LControl) || InputProvider.get_state(InputKey.K_RControl);
+    const alt_down =
+      InputProvider.get_state(InputKey.K_LAlt) || InputProvider.get_state(InputKey.K_RAlt);
+
     for (let i = 0; i < UIContext.keyboard_events.length; i++) {
       const key = UIContext.keyboard_events.get(i);
       if (key.consumed) continue;
@@ -1555,7 +1595,18 @@ export function input(name, config = {}) {
         };
       } else if (InputKeyToPrintableString[key.key]) {
         action_callback = () => {
-          field_state.value += InputKeyToPrintableString[key.key];
+          const base_str = InputKeyToPrintableString[key.key];
+          if (!base_str) return;
+
+          // Avoid inserting characters when ctrl/alt are held (reserved for shortcuts)
+          if (ctrl_down || alt_down) return;
+
+          let out = base_str;
+          if (out.length === 1 && shift_down) {
+            out = shift_char_map[out] || out.toUpperCase();
+          }
+
+          field_state.value += out;
         };
       }
 

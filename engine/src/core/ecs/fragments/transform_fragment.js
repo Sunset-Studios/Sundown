@@ -3,6 +3,9 @@ import { SolarFragmentView } from "../solar/view.js";
 import { RingBufferAllocator } from "../../../memory/allocator.js";
 import { Name } from "../../../utility/names.js";
 import { EntityFlags } from "../../minimal.js";
+import { EntityManager } from "../entity.js";
+import { DEFAULT_CHUNK_CAPACITY } from "../solar/types.js";
+import { BVH } from "../../../acceleration/bvh.js";
 
 /**
  * The Transform fragment class.
@@ -212,5 +215,28 @@ export class TransformFragment extends Fragment {
     local_transform_fragment.position[2] += offset[2];
 
     EntityManager.set_entity_dirty(entity, true);
+  }
+
+  static on_entity_change(entity, new_count, old_count) {
+    // TODO: Look into making some sort of BoundsUpdateRequest object that we can queue up
+    // and process in the post-update phase to collate this processing in one place (for i-cache reasons)
+    for (let i = 0; i < old_count; ++i) {
+      const transform_fragment = EntityManager.get_fragment(
+        entity,
+        TransformFragment,
+        i,
+      );
+      BVH.free_node(transform_fragment.aabb_node_index);
+      transform_fragment.aabb_node_index = 0;
+    }
+
+    for (let i = 0; i < new_count; ++i) {
+      const transform_fragment = EntityManager.get_fragment(
+        entity,
+        TransformFragment,
+        i,
+      );
+      transform_fragment.aabb_node_index = BVH.allocate_node();
+    }
   }
 }

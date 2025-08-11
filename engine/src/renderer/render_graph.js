@@ -85,6 +85,7 @@ import {
 import { Name } from "../utility/names.js";
 import { StaticIntArray } from "../memory/container.js";
 import { profile_scope } from "../utility/performance.js";
+import { GPUTimeQuery } from "./query.js";
 import { read_file } from "../utility/file_system.js";
 import { deep_clone } from "../utility/object.js";
 
@@ -1240,6 +1241,10 @@ export class RenderGraph {
         this._execute_pass(this.registry.render_passes[pass_handle], frame_data, encoder);
       }
 
+      if (__DEV__) {
+        GPUTimeQuery.resolve(encoder);
+      }
+
       CommandQueue.submit(encoder, this._execute_post_render_callbacks);
 
       this.pass_cache_passes_needs_reset = false;
@@ -1289,6 +1294,10 @@ export class RenderGraph {
     this.buffer_resource_allocator.reset();
     this.render_pass_allocator.reset();
     this.resource_metadata_allocator.reset();
+
+    if (__DEV__) {
+      GPUTimeQuery.reset();
+    }
   }
 
   /**
@@ -1408,6 +1417,9 @@ export class RenderGraph {
   async _execute_post_render_callbacks() {
     for (let i = 0; i < this.post_render_callbacks.length; i++) {
       await this.post_render_callbacks[i]();
+    }
+    if (__DEV__) {
+      await GPUTimeQuery.read();
     }
   }
 
@@ -1672,12 +1684,8 @@ export class RenderGraph {
       for (let i = 0; i < compute_reflection_groups[BindGroupType.Pass].length; i++) {
         const binding = compute_reflection_groups[BindGroupType.Pass][i];
         if (!binding) continue;
-        let binding_stage_mask =
-          binding_stage_masks.get(binding.name) || 0;
-        binding_stage_masks.set(
-          binding.name,
-          binding_stage_mask | GPUShaderStage.COMPUTE
-        );
+        let binding_stage_mask = binding_stage_masks.get(binding.name) || 0;
+        binding_stage_masks.set(binding.name, binding_stage_mask | GPUShaderStage.COMPUTE);
       }
     }
 
@@ -1686,10 +1694,7 @@ export class RenderGraph {
         const binding = fragment_reflection_groups[BindGroupType.Pass][i];
         if (!binding) continue;
         let binding_stage_mask = binding_stage_masks.get(binding.name) || 0;
-        binding_stage_masks.set(
-          binding.name,
-          binding_stage_mask | GPUShaderStage.FRAGMENT
-        );
+        binding_stage_masks.set(binding.name, binding_stage_mask | GPUShaderStage.FRAGMENT);
       }
     }
     if (vertex_reflection_groups[BindGroupType.Pass]) {
@@ -1697,10 +1702,7 @@ export class RenderGraph {
         const binding = vertex_reflection_groups[BindGroupType.Pass][i];
         if (!binding) continue;
         let binding_stage_mask = binding_stage_masks.get(binding.name) || 0;
-        binding_stage_masks.set(
-          binding.name,
-          binding_stage_mask | GPUShaderStage.VERTEX
-        );
+        binding_stage_masks.set(binding.name, binding_stage_mask | GPUShaderStage.VERTEX);
       }
     }
 
@@ -1852,7 +1854,7 @@ export class RenderGraph {
             module: pass.shaders.compute.module,
             entryPoint: shader_setup.pipeline_shaders.compute.entry_point || "cs",
           },
-          force: this.pass_cache_full_needs_reset
+          force: this.pass_cache_full_needs_reset,
         };
 
         pass.pipeline_state_id = pass.pass_config.encoded_name;
@@ -1906,7 +1908,7 @@ export class RenderGraph {
             topology: shader_setup.primitive_topology_type || "triangle-list",
             cullMode: shader_setup.rasterizer_state?.cull_mode || "back",
           },
-          force: this.pass_cache_full_needs_reset
+          force: this.pass_cache_full_needs_reset,
         };
 
         if (pass.shaders.fragment) {

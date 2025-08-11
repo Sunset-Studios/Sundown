@@ -323,7 +323,7 @@ export class FragmentGpuBuffer {
     );
 
     // record exactly which rows need CPU readback
-    if (chunk_for_sync && row_count > 0) {
+    if (this.cpu_readback && chunk_for_sync && row_count > 0) {
       this.pending_sync_segments.push({ chunk: chunk_for_sync, base_row, row_count });
     }
   }
@@ -343,12 +343,11 @@ export class FragmentGpuBuffer {
     await cpu_buf.mapAsync(GPUMapMode.READ);
     const mapped_range = cpu_buf.getMappedRange();
 
-    const segments = this.pending_sync_segments;
-    if (segments.length === 0) return;
+    if (this.pending_sync_segments.length === 0) return;
 
     if (this.sync_target_accessor) {
       // Flags-buffer sync
-      for (const { chunk, count } of segments) {
+      for (const { chunk, count } of this.pending_sync_segments) {
         const chunk_base = FragmentGpuBuffer._get_dense_chunk_base(chunk);
         if (chunk_base === 0xffffffff) continue; // truly empty chunk
 
@@ -375,7 +374,7 @@ export class FragmentGpuBuffer {
       const elems_per_row = spec.elements;
       const dense_map = FragmentGpuBuffer.cpu_dense_map;
 
-      for (const { chunk, count } of segments) {
+      for (const { chunk, count } of this.pending_sync_segments) {
         const frag_views = chunk.fragment_views[frag_id];
         if (!frag_views) continue;
         const target_view = frag_views[field_key];
@@ -403,7 +402,7 @@ export class FragmentGpuBuffer {
     // Unmap and clear segments
     cpu_buf.unmap();
 
-    segments.length = 0;
+    this.pending_sync_segments.length = 0;
   }
 
   _resize_buffer(new_max_rows) {

@@ -1,7 +1,7 @@
 import { EntityManager } from "../core/ecs/entity.js";
 import { DevConsoleTool } from "./dev_console_tool.js";
-import { AABBEntityAdapter } from "../core/subsystems/aabb_entity_adapter.js";
-import { AABBTreeDebugRenderer } from "../core/subsystems/aabb_debug_renderer.js";
+import { BVHEntityAdapter } from "../core/subsystems/bvh_entity_adapter.js";
+import { BVHDebugRenderer } from "../core/subsystems/bvh_debug_renderer.js";
 import { InputProvider } from "../input/input_provider.js";
 import { InputKey } from "../input/input_types.js";
 import { panel, label, button, begin_container, end_container } from "../ui/2d/immediate.js";
@@ -49,12 +49,12 @@ const button_config = {
  * CameraInfo displays camera information using the
  * immediate mode UI framework.
  */
-export class AABBDebug extends DevConsoleTool {
+export class BVHDebug extends DevConsoleTool {
   is_open = false;
   scene = null;
-  aabb_entity_adapter = null;
-  aabb_tree_debug_renderer = null;
-  show_aabb_tree_debug = false;
+  bvh_entity_adapter = null;
+  bvh_tree_debug_renderer = null;
+  show_bvh_tree_debug = false;
   debug_max_depth = 20;
 
   /**
@@ -71,13 +71,13 @@ export class AABBDebug extends DevConsoleTool {
    * This method should be called every frame as part of the render loop.
    */
   render() {
-    if (!this.aabb_entity_adapter || !this.aabb_tree_debug_renderer) return;
+    if (!this.bvh_entity_adapter || !this.bvh_tree_debug_renderer) return;
 
-    const stats = this.aabb_entity_adapter.get_stats();
+    const stats = this.bvh_entity_adapter.get_stats();
 
     // Use immediate mode UI panel instead of window
     let panel_state = panel(stats_panel_config, () => {
-      // AABB tree stats
+      // BVH stats
       label(`Allocated Nodes: ${stats.allocated_nodes}`, stats_label_config);
       label(`Tree Leaf Nodes: ${stats.leaf_nodes}`, stats_label_config);
       label(`Tree Internal Nodes: ${stats.internal_nodes}`, stats_label_config);
@@ -94,17 +94,17 @@ export class AABBDebug extends DevConsoleTool {
         padding_top: 10,
       });
 
-      // Add a button to toggle AABB tree debug visualization
-      const debug_vis_text = `AABB Debug: ${this.show_aabb_tree_debug ? "ON" : "OFF"}`;
+      // Add a button to toggle BVH debug visualization
+      const debug_vis_text = `BVH Debug: ${this.show_bvh_tree_debug ? "ON" : "OFF"}`;
       const debug_vis_button = button(debug_vis_text, button_config);
       if (debug_vis_button.clicked) {
-        this.show_aabb_tree_debug = this.aabb_tree_debug_renderer.toggle_visualization();
+        this.show_bvh_tree_debug = this.bvh_tree_debug_renderer.toggle_visualization();
       }
 
       end_container();
 
-      // AABB tree Debug visualization options (only show when debug is enabled)
-      if (this.show_aabb_tree_debug) {
+      // BVH Debug visualization options (only show when debug is enabled)
+      if (this.show_bvh_tree_debug) {
         // Node type toggles
         begin_container({
           layout: "row",
@@ -115,22 +115,22 @@ export class AABBDebug extends DevConsoleTool {
           padding_bottom: 10,
         });
 
-        const bounds_text = `Bounds: ${this.aabb_tree_debug_renderer.show_bounds ? "ON" : "OFF"}`;
+        const bounds_text = `Bounds: ${this.bvh_tree_debug_renderer.show_bounds ? "ON" : "OFF"}`;
         const bounds_button = button(bounds_text, button_config);
         if (bounds_button.clicked) {
-          this.aabb_tree_debug_renderer.toggle_bounds();
+          this.bvh_tree_debug_renderer.toggle_bounds();
         }
 
-        const leaf_nodes_text = `Leaf Nodes: ${this.aabb_tree_debug_renderer.show_leaf_nodes ? "ON" : "OFF"}`;
+        const leaf_nodes_text = `Leaf Nodes: ${this.bvh_tree_debug_renderer.show_leaf_nodes ? "ON" : "OFF"}`;
         const leaf_nodes_button = button(leaf_nodes_text, button_config);
         if (leaf_nodes_button.clicked) {
-          this.aabb_tree_debug_renderer.toggle_leaf_nodes();
+          this.bvh_tree_debug_renderer.toggle_leaf_nodes();
         }
 
-        const internal_nodes_text = `Internal Nodes: ${this.aabb_tree_debug_renderer.show_internal_nodes ? "ON" : "OFF"}`;
+        const internal_nodes_text = `Internal Nodes: ${this.bvh_tree_debug_renderer.show_internal_nodes ? "ON" : "OFF"}`;
         const internal_nodes_button = button(internal_nodes_text, button_config);
         if (internal_nodes_button.clicked) {
-          this.aabb_tree_debug_renderer.toggle_internal_nodes();
+          this.bvh_tree_debug_renderer.toggle_internal_nodes();
         }
 
         end_container();
@@ -179,7 +179,7 @@ export class AABBDebug extends DevConsoleTool {
 
   set_scene(scene) {
     this.scene = scene;
-    this.aabb_entity_adapter = this.scene.get_layer(AABBEntityAdapter);
-    this.aabb_tree_debug_renderer = this.scene.get_layer(AABBTreeDebugRenderer);
+    this.bvh_entity_adapter = this.scene.get_layer(BVHEntityAdapter);
+    this.bvh_tree_debug_renderer = this.scene.get_layer(BVHDebugRenderer);
   }
 }

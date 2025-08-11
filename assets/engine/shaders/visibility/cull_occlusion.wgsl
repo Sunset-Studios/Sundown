@@ -1,4 +1,5 @@
 #include "common.wgsl"
+#include "acceleration_common.wgsl"
 
 // ------------------------------------------------------------------------------------
 // Data Structures
@@ -15,7 +16,7 @@ struct DrawCullData {
 // ------------------------------------------------------------------------------------ 
 
 @group(1) @binding(0) var input_texture: texture_2d<f32>;
-@group(1) @binding(1) var<storage, read> aabb_bounds: array<AABBNodeBounds>;
+@group(1) @binding(1) var<storage, read> aabb_bounds: array<AABB>;
 @group(1) @binding(2) var<storage, read> visible_object_instances_no_occlusion: array<i32>;
 @group(1) @binding(3) var<storage, read_write> visible_object_instances: array<i32>;
 @group(1) @binding(4) var<storage, read> object_instances: array<ObjectInstance>;
@@ -80,13 +81,13 @@ fn aabb_project(
     return true;
 }
 
-fn is_occluded(aabb_node: ptr<function, AABBNodeBounds>, view: ptr<function, View>) -> u32 {
+fn is_occluded(aabb_node: ptr<function, AABB>, view: ptr<function, View>) -> u32 {
     if (view.occlusion_enabled == 0.0) {
         return 0u;
     }
 
     var uv_rect: vec4<f32>;
-    if (!aabb_project(aabb_node.min_point.xyz, aabb_node.max_point.xyz, &uv_rect, view)) {
+    if (!aabb_project(aabb_node.min.xyz, aabb_node.max.xyz, &uv_rect, view)) {
         // if the AABB is completely off-screen, skip occlusion
         return 0u;
     }
@@ -96,8 +97,8 @@ fn is_occluded(aabb_node: ptr<function, AABBNodeBounds>, view: ptr<function, Vie
         return 0u;
     }
 
-    let center = vec4f((aabb_node.min_point.xyz + aabb_node.max_point.xyz) * 0.5, 1.0);
-    var radius = length(aabb_node.max_point.xyz - aabb_node.min_point.xyz) * 0.5;
+    let center = vec4f((aabb_node.min.xyz + aabb_node.max.xyz) * 0.5, 1.0);
+    var radius = length(aabb_node.max.xyz - aabb_node.min.xyz) * 0.5;
 
     let hzb_dims = textureDimensions(input_texture);
     let width  = (uv_rect.z - uv_rect.x) * f32(hzb_dims.x);

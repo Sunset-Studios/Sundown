@@ -5,12 +5,14 @@ import { panel, input, label, UIContext } from "../ui/2d/immediate.js";
 import { RenderPassOrganizer } from "./render_pass_organizer.js";
 import { MLStats } from "./ml_stats.js";
 import { CameraInfo } from "./camera_info.js";
-import { AABBDebug } from "./aabb_debug.js";
+import { BVHDebug } from "./bvh_debug.js";
 import { PerformanceTrace } from "./performance_trace.js";
 import { DebugDrawPicker } from "./debug_draw_picker.js";
 import { ASVSMStats } from "./as_vsm_stats.js";
 import { RenderToggle } from "./render_toggle.js";
-import { log, warn, error } from "../utility/logging.js";
+import { DebugMemory } from "./debug_memory.js";
+import { GPUTimerView } from "./gpu_timer_view.js";
+import { warn } from "../utility/logging.js";
 
 // Constants for naming and key codes
 const input_name = "console_input";
@@ -70,11 +72,13 @@ export class DevConsole extends SimulationLayer {
     this.register_command("render_pass_organizer", new RenderPassOrganizer());
     this.register_command("ml_stats", new MLStats());
     this.register_command("camera_info", new CameraInfo());
-    this.register_command("aabb_debug", new AABBDebug());
+    this.register_command("aabb_debug", new BVHDebug());
     this.register_command("performance_trace", new PerformanceTrace());
     this.register_command("as_vsm_stats", new ASVSMStats());
     this.register_command("debug_draw", new DebugDrawPicker());
     this.register_command("render_toggle", new RenderToggle());
+    this.register_command("debug_memory", new DebugMemory());
+    this.register_command("gpu_timer", new GPUTimerView());
   }
 
   update(delta_time) {
@@ -158,10 +162,9 @@ export class DevConsole extends SimulationLayer {
 
       if (consume) {
         key.consumed = true;
+        InputProvider.consume_action(key.key);
+        InputProvider.consume_state(key.key);
       }
-
-      InputProvider.consume_action(key.key);
-      InputProvider.consume_state(key.key);
     }
   }
 

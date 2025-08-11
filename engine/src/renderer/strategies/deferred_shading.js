@@ -28,7 +28,7 @@ import { OcclusionCuller } from "../cull/occlusion_culler.js";
 
 // Types and utilities
 import { RenderPassFlags, MaterialFamilyType, DebugDrawType } from "../renderer_types.js";
-import { AABB } from "../../acceleration/aabb.js";
+import { BVH } from "../../acceleration/bvh.js";
 import { npot, ppot, clamp } from "../../utility/math.js";
 import { profile_scope } from "../../utility/performance.js";
 import {
@@ -556,11 +556,10 @@ export class DeferredShadingStrategy {
       // ┌─────────────────────────────────────────────────────────────────────────────┐
       // │ 📦 Setup Acceleration Structures & Bounds                                  │
       // └─────────────────────────────────────────────────────────────────────────────┘
-      const aabb_gpu_data = AABB.to_gpu_data();
+      const aabb_gpu_data = BVH.to_gpu_data();
       const aabb_bounds = render_graph.register_buffer(
-        aabb_gpu_data.node_bounds_buffer.config.name
+        aabb_gpu_data.bounds_buffer.config.name
       );
-      const aabb_nodes = render_graph.register_buffer(aabb_gpu_data.node_data_buffer.config.name);
 
       // ┌─────────────────────────────────────────────────────────────────────────────┐
       // │ 🖼️  Create G-Buffer & Main Render Targets                                  │
@@ -1092,6 +1091,10 @@ export class DeferredShadingStrategy {
           render_graph,
           image_extent.width,
           image_extent.height,
+          main_position_image,
+          aabb_bounds,
+          object_instances,
+          entity_aabb_node_indices,
           this.force_recreate
         );
       }

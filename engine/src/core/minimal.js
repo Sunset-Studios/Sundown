@@ -18,9 +18,8 @@ export const EntityFlags = {
   IGNORE_PARENT_SCALE: 1 << 2,
   IGNORE_PARENT_ROTATION: 1 << 3,
   TRANSFORM_DIRTY: 1 << 4,
-  NO_AABB_UPDATE: 1 << 5,
-  AABB_DIRTY: 1 << 6,
-  BILLBOARD: 1 << 7,
-  MOVED: 1 << 8,
+  AABB_DIRTY: 1 << 5,
+  BILLBOARD: 1 << 6,
+  MOVED: 1 << 7,
 };
 

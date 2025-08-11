@@ -12,6 +12,7 @@ import { global_dispatcher } from "../core/dispatcher.js";
 import { profile_scope } from "../utility/performance.js";
 import ExecutionQueue from "../utility/execution_queue.js";
 import { FragmentGpuBuffer } from "../core/ecs/solar/memory.js";
+import { GPUTimeQuery } from "./query.js";
 import { log, error } from "../utility/logging.js";
 import { vec2 } from "gl-matrix";
 
@@ -30,7 +31,7 @@ export class Renderer {
   render_graph = null;
   post_render_callbacks = [];
   pre_render_callbacks = [];
-  
+
   // Renderer features
   has_f16 = false;
   use_depth_prepass = true;
@@ -41,6 +42,13 @@ export class Renderer {
 
   static renderers = [];
 
+  /**
+   * Setup the renderer
+   * @param {HTMLCanvasElement} canvas - The canvas to render to
+   * @param {HTMLCanvasElement} canvas_ui - The canvas to render UI to
+   * @param {RenderStrategy} render_strategy - The render strategy to use
+   * @param {Object} options - The options for the renderer
+   */
   async setup(canvas, canvas_ui, render_strategy, options = {}) {
     if (!navigator.gpu) {
       throw Error("WebGPU is not supported");
@@ -67,6 +75,9 @@ export class Renderer {
     let required_features = ["indirect-first-instance"];
     if (this.has_f16) {
       required_features.push("shader-f16");
+    }
+    if (__DEV__) {
+      required_features.push("timestamp-query");
     }
 
     try {
@@ -116,11 +127,19 @@ export class Renderer {
 
     this.render_strategy = new render_strategy();
 
+    if (__DEV__) {
+      GPUTimeQuery.init(this.device);
+    }
+
     this._setup_resize_observer();
 
     Mesh.precrete_engine_primitives();
   }
 
+  /**
+   * Render the scene
+   * @param {number} delta_time - The time since the last frame
+   */
   render(delta_time) {
     profile_scope(frame_render_event_name, () => {
       this.advance_frame();
@@ -131,104 +150,153 @@ export class Renderer {
     });
   }
 
+  /**
+   * Add a callback to be called before the render graph is executed
+   * @param {Function} callback - The callback to add
+   */
   on_pre_render(callback) {
     this.render_graph.on_pre_render(callback);
   }
 
+  /**
+   * Enqueue a render graph command to be called before all other passes during any given render graph execution
+   * @param {string} name - The name of the command
+   * @param {Function} commands_callback - The callback to enqueue
+   * @param {boolean} persistent - If true, the command will be called every frame
+   */
   enqueue_pre_commands(name, commands_callback, persistent = false) {
     this.render_graph.queue_pre_commands(name, commands_callback, persistent);
   }
 
+  /**
+   * Unqueue a pre render graph command
+   * @param {string} name - The name of the command
+   */
   unqueue_pre_commands(name) {
     this.render_graph.unqueue_pre_commands(name);
   }
 
+  /**
+   * Enqueue a render graph command to be called after all other passes during any given render graph execution
+   * @param {string} name - The name of the command
+   * @param {Function} commands_callback - The callback to enqueue
+   * @param {boolean} persistent - If true, the command will be called every frame
+   */
   enqueue_post_commands(name, commands_callback, persistent = false) {
     this.render_graph.queue_post_commands(name, commands_callback, persistent);
   }
 
+  /**
+   * Unqueue a post render graph command
+   * @param {string} name - The name of the command
+   */
   unqueue_post_commands(name) {
     this.render_graph.unqueue_post_commands(name);
   }
 
+  /**
+   * Add a callback to be called after GPU work is completed for this frame
+   * @param {Function} callback - The callback to add
+   */
   on_post_render(callback) {
     this.render_graph.on_post_render(callback);
   }
 
+  /**
+   * Remove a callback from being called before the render graph is executed
+   * @param {Function} callback - The callback to remove
+   */
   remove_pre_render(callback) {
     this.render_graph.remove_pre_render(callback);
   }
 
+  /**
+   * Remove a callback from being called after GPU work is completed for this frame
+   * @param {Function} callback - The callback to remove
+   */
   remove_post_render(callback) {
     this.render_graph.remove_post_render(callback);
   }
 
+  /**
+   * Mark the bind groups for the passes as dirty
+   * @param {boolean} passes_only - If true, only mark the bind groups for the passes as dirty, otherwise mark all bind groups as dirty
+   */
   mark_bind_groups_dirty(passes_only = false) {
     this.render_graph.mark_pass_cache_bind_groups_dirty(passes_only);
   }
 
+  /**
+   * Force recreates all pipeline states in the render graph
+   */
   recreate_pipeline_states() {
     this.render_graph.recreate_pipeline_states();
   }
 
+  /**
+   * Force recreates all resources in the render graph
+   */
   refresh_render_graph() {
     this.render_strategy.refresh(this.render_graph);
   }
 
+  /**
+   * Only refresh the global shader bindings
+   */
   refresh_global_shader_bindings() {
     const global_bindings = [
-        {
-          buffer: SharedVertexBuffer.buffer,
-          offset: 0,
-          size: SharedVertexBuffer.size,
-        },
-        {
-          buffer: SharedViewBuffer.buffer,
-          offset: 0,
-          size: SharedViewBuffer.buffer_size,
-        },
-        {
-          sampler: Texture.get_default_sampler(),
-        },
-        {
-          sampler: TextureSampler.create({
-            name: "non_filtering_sampler",
-            address_mode_u: "clamp-to-edge",
-            address_mode_v: "clamp-to-edge",
-            address_mode_w: "clamp-to-edge",
-            mag_filter: "nearest",
-            min_filter: "nearest",
-            mipmap_filter: "nearest",
-            type: "non-filtering",
-          }),
-        },
-        {
-          sampler: TextureSampler.create({
-            name: "clamped_sampler",
-            address_mode_u: "clamp-to-edge",
-            address_mode_v: "clamp-to-edge",
-            address_mode_w: "clamp-to-edge",
-            mag_filter: "linear",
-            min_filter: "linear",
-            mipmap_filter: "linear",
-          }),
-        },
-        {
-          sampler: TextureSampler.create({
-            name: "comparison_sampler",
-            mag_filter: "nearest",
-            min_filter: "nearest",
-            mipmap_filter: "nearest",
-            compare: "less-equal",
-            type: "comparison",
-          }),
-        },
-        {
-          buffer: SharedFrameInfoBuffer.buffer,
-          offset: 0,
-          size: SharedFrameInfoBuffer.size,
-        },
-      ];
+      {
+        buffer: SharedVertexBuffer.buffer,
+        offset: 0,
+        size: SharedVertexBuffer.size,
+      },
+      {
+        buffer: SharedViewBuffer.buffer,
+        offset: 0,
+        size: SharedViewBuffer.buffer_size,
+      },
+      {
+        sampler: Texture.get_default_sampler(),
+      },
+      {
+        sampler: TextureSampler.create({
+          name: "non_filtering_sampler",
+          address_mode_u: "clamp-to-edge",
+          address_mode_v: "clamp-to-edge",
+          address_mode_w: "clamp-to-edge",
+          mag_filter: "nearest",
+          min_filter: "nearest",
+          mipmap_filter: "nearest",
+          type: "non-filtering",
+        }),
+      },
+      {
+        sampler: TextureSampler.create({
+          name: "clamped_sampler",
+          address_mode_u: "clamp-to-edge",
+          address_mode_v: "clamp-to-edge",
+          address_mode_w: "clamp-to-edge",
+          mag_filter: "linear",
+          min_filter: "linear",
+          mipmap_filter: "linear",
+        }),
+      },
+      {
+        sampler: TextureSampler.create({
+          name: "comparison_sampler",
+          mag_filter: "nearest",
+          min_filter: "nearest",
+          mipmap_filter: "nearest",
+          compare: "less-equal",
+          type: "comparison",
+        }),
+      },
+      {
+        buffer: SharedFrameInfoBuffer.buffer,
+        offset: 0,
+        size: SharedFrameInfoBuffer.size,
+      },
+    ];
 
     if (FragmentGpuBuffer.entity_index_map_buffer) {
       global_bindings.push({
@@ -238,24 +306,36 @@ export class Renderer {
       });
     }
 
-    this.render_graph.queue_global_bind_group_write(
-      global_bindings,
-      true /* overwrite */
-    );
+    this.render_graph.queue_global_bind_group_write(global_bindings, true /* overwrite */);
   }
 
+  /**
+   * Advance the frame number
+   */
   advance_frame() {
     this.frame_number++;
   }
 
+  /**
+   * Get the current frame number
+   * @returns {number} - The current frame number
+   */
   get_frame_number() {
     return this.frame_number;
   }
 
+  /**
+   * Get the buffered frame number
+   * @returns {number} - The buffered frame number
+   */
   get_buffered_frame_number() {
     return this.frame_number % MAX_BUFFERED_FRAMES;
   }
 
+  /**
+   * Get the canvas resolution
+   * @returns {Object} - The canvas resolution
+   */
   get_canvas_resolution() {
     return {
       width: this.canvas.width,
@@ -263,10 +343,18 @@ export class Renderer {
     };
   }
 
+  /**
+   * Check if shadows are enabled
+   * @returns {boolean} - True if shadows are enabled, false otherwise
+   */
   is_shadows_enabled() {
     return this.shadows_enabled;
   }
 
+  /**
+   * Set the shadows enabled state
+   * @param {boolean} enabled - True if shadows should be enabled, false otherwise
+   */
   set_shadows_enabled(enabled) {
     this.shadows_enabled = enabled;
     if (this.render_strategy) {
@@ -275,10 +363,18 @@ export class Renderer {
     }
   }
 
+  /**
+   * Check if global illumination is enabled
+   * @returns {boolean} - True if global illumination is enabled, false otherwise
+   */
   is_gi_enabled() {
     return this.gi_enabled;
   }
 
+  /**
+   * Set the global illumination enabled state
+   * @param {boolean} enabled - True if global illumination should be enabled, false otherwise
+   */
   set_gi_enabled(enabled) {
     this.gi_enabled = enabled;
     if (this.render_strategy) {
@@ -287,10 +383,18 @@ export class Renderer {
     }
   }
 
+  /**
+   * Check if GTAO is enabled
+   * @returns {boolean} - True if GTAO is enabled, false otherwise
+   */
   is_gtao_enabled() {
     return this.gtao_enabled;
   }
 
+  /**
+   * Set the GTAO enabled state
+   * @param {boolean} enabled - True if GTAO should be enabled, false otherwise
+   */
   set_gtao_enabled(enabled) {
     this.gtao_enabled = enabled;
     if (this.render_strategy) {
@@ -299,34 +403,67 @@ export class Renderer {
     }
   }
 
+  /**
+   * Check if the depth prepass is enabled
+   * @returns {boolean} - True if the depth prepass is enabled, false otherwise
+   */
   is_depth_prepass_enabled() {
     return this.use_depth_prepass;
   }
 
+  /**
+   * Set the depth prepass enabled state
+   * @param {boolean} enabled - True if the depth prepass should be enabled, false otherwise
+   */
   set_depth_prepass_enabled(enabled) {
     this.use_depth_prepass = enabled;
   }
 
+  /**
+   * Draw a render pass
+   * @param {RenderPass} render_pass - The render pass to draw
+   * @param {number} triangles - The number of triangles to draw
+   * @param {number} instance_count - The number of instances to draw
+   */
   draw_pass(render_pass, triangles, instance_count = 1) {
     render_pass.pass.draw(triangles, instance_count);
   }
 
+  /**
+   * Set the scene ID
+   * @param {number} scene_id - The scene ID
+   */
   set_scene_id(scene_id) {
     this.render_graph.set_scene_id(scene_id);
   }
 
+  /**
+   * Get the debug draw type
+   * @returns {DebugDrawType} - The debug draw type
+   */
   get_debug_draw_type() {
     return this.debug_draw_type;
   }
-  
+
+  /**
+   * Set the debug draw type
+   * @param {DebugDrawType} debug_draw_type - The debug draw type
+   */
   set_debug_draw_type(debug_draw_type) {
     this.debug_draw_type = debug_draw_type;
   }
 
+  /**
+   * Get the maximum number of bind groups
+   * @returns {number} - The maximum number of bind groups
+   */
   max_bind_groups() {
     return this.adapter.limits.maxBindGroups;
   }
 
+  /**
+   * Handle the canvas being resized
+   */
   on_resize() {
     this.canvas.width = this.canvas.clientWidth;
     this.canvas.height = this.canvas.clientHeight;
@@ -335,6 +472,9 @@ export class Renderer {
     this.aspect_ratio = this.canvas.width / this.canvas.height;
   }
 
+  /**
+   * Setup the resize observer
+   */
   _setup_resize_observer() {
     const observer = new ResizeObserver((entries) => {
       this.on_resize();
@@ -346,14 +486,30 @@ export class Renderer {
     this._set_shared_frame_resolution();
   }
 
+  /**
+   * Set the shared frame resolution
+   */
   _set_shared_frame_resolution() {
     SharedFrameInfoBuffer.set_resolution(vec2.fromValues(this.canvas.width, this.canvas.height));
   }
 
+  /**
+   * Get the renderer
+   * @param {number} index - The index of the renderer
+   * @returns {Renderer} - The renderer
+   */
   static get(index = 0) {
     return this.renderers[index];
   }
 
+  /**
+   * Create a new renderer
+   * @param {HTMLCanvasElement} canvas - The canvas to render to
+   * @param {HTMLCanvasElement} canvas_ui - The canvas to render UI to
+   * @param {RenderStrategy} render_strategy - The render strategy to use
+   * @param {Object} options - The options for the renderer
+   * @returns {number} - The index of the renderer
+   */
   static async create(canvas, canvas_ui, render_strategy, options = {}) {
     const renderer = new Renderer();
     this.renderers.push(renderer);

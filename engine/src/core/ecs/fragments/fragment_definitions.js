@@ -3,7 +3,7 @@ import { DataType, BufferType } from "../meta/fragment_generator_types.js";
 const LightFragment = {
   name: "Light",
   members: {
-    total_shadow_casting_lights: '0'
+    total_shadow_casting_lights: "0",
   },
   fields: {
     position: {
@@ -119,6 +119,9 @@ const TransformFragment = {
   name: "Transform",
   imports: {
     EntityFlags: "../../minimal.js",
+    EntityManager: "../entity.js",
+    DEFAULT_CHUNK_CAPACITY: "../solar/types.js",
+    BVH: "../../../acceleration/bvh.js",
   },
   fields: {
     position: {
@@ -138,7 +141,7 @@ const TransformFragment = {
       this.chunk.flags_meta[this.slot + this.instance] |= EntityFlags.MOVED;
 
       typed_array.set(value, element_offset);
-      `
+      `,
     },
     rotation: {
       type: DataType.FLOAT32,
@@ -157,7 +160,7 @@ const TransformFragment = {
       this.chunk.flags_meta[this.slot + this.instance] |= EntityFlags.MOVED;
 
       typed_array.set(value, element_offset);
-      `
+      `,
     },
     scale: {
       type: DataType.FLOAT32,
@@ -177,7 +180,7 @@ const TransformFragment = {
       this.chunk.flags_meta[this.slot + this.instance] |= EntityFlags.MOVED;
 
       typed_array.set(value, element_offset);
-      `
+      `,
     },
     aabb_node_index: {
       type: DataType.UINT32,
@@ -263,6 +266,33 @@ const TransformFragment = {
 
     EntityManager.set_entity_dirty(entity, true);
       `,
+    },
+    on_entity_change: {
+      params: `entity, new_count, old_count`,
+      body: `
+      
+
+    // TODO: Look into making some sort of BoundsUpdateRequest object that we can queue up
+    // and process in the post-update phase to collate this processing in one place (for i-cache reasons)
+    for (let i = 0; i < old_count; ++i) {
+        const transform_fragment = EntityManager.get_fragment(
+          entity,
+          TransformFragment,
+          i,
+        );
+        BVH.free_node(transform_fragment.aabb_node_index);
+        transform_fragment.aabb_node_index = 0;
+    }
+
+    for (let i = 0; i < new_count; ++i) {
+        const transform_fragment = EntityManager.get_fragment(
+          entity,
+          TransformFragment,
+          i,
+        );
+        transform_fragment.aabb_node_index = BVH.allocate_node();
+    }
+    `,
     },
   },
 };

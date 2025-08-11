@@ -50,6 +50,9 @@ export class EntityManager {
 
     for (let i = 0; i < fragments.length; i++) {
       fragments[i].total_subscribed_instances += instance_count;
+      if (fragments[i].on_entity_change) {
+        fragments[i].on_entity_change(entity, instance_count /* new_count */, 0 /* old_count */);
+      }
     }
 
     return entity;
@@ -63,6 +66,9 @@ export class EntityManager {
     if (!this.entity_fragments.has(entity)) {
       return;
     }
+
+    let fragments = Array.from(this.entity_fragments.get(entity));
+    const instances = this.get_entity_instance_count(entity);
 
     this.pending_entity_deletes.push(entity);
 
@@ -129,6 +135,10 @@ export class EntityManager {
       FragmentType.total_subscribed_instances += instances;
     }
 
+    if (FragmentType.on_entity_change) {
+      FragmentType.on_entity_change(entity, instances /* new_count */, 0 /* old_count */);
+    }
+
     SceneGraph.mark_dirty(); // Because adding a fragment changes the entity's archetype, which causes a migration
 
     return fragment_view;
@@ -145,6 +155,10 @@ export class EntityManager {
       !this.entity_fragments.get(entity).has(FragmentType)
     ) {
       return;
+    }
+
+    if (FragmentType.on_entity_change) {
+      FragmentType.on_entity_change(entity, 0 /* new_count */, instances /* old_count */);
     }
 
     this.sector.remove_fragment(entity, FragmentType);
@@ -250,12 +264,35 @@ export class EntityManager {
    */
   static set_entity_instance_count(entity, instance_count) {
     const old_count = this.get_entity_instance_count(entity);
-    const handle = this.sector.update_instance_count(entity, instance_count);
     const delta = instance_count - old_count;
 
-    if (delta !== 0) {
+    // Update removed instances before the instance count has been updated
+    if (delta < 0) {
       for (const fragment_class of this.entity_fragments.get(entity)) {
         fragment_class.total_subscribed_instances += delta;
+        if (fragment_class.on_entity_change) {
+          fragment_class.on_entity_change(
+            entity,
+            instance_count /* new_count */,
+            old_count /* old_count */
+          );
+        }
+      }
+    }
+
+    const handle = this.sector.update_instance_count(entity, instance_count);
+
+    // Update added instances after the instance count has been updated
+    if (delta > 0) {
+      for (const fragment_class of this.entity_fragments.get(entity)) {
+        fragment_class.total_subscribed_instances += delta;
+        if (fragment_class.on_entity_change) {
+          fragment_class.on_entity_change(
+            entity,
+            instance_count /* new_count */,
+            old_count /* old_count */
+          );
+        }
       }
     }
 
@@ -338,7 +375,9 @@ export class EntityManager {
       const instances = this.get_entity_instance_count(entity);
       for (const FragmentType of this.entity_fragments.get(entity)) {
         FragmentType.total_subscribed_instances -= instances;
-        FragmentType.remove_entity?.(entity);
+        if (FragmentType.on_entity_change) {
+          FragmentType.on_entity_change(entity, 0 /* new_count */, instances /* old_count */);
+        }
       }
 
       SceneGraph.remove(entity);
@@ -398,7 +437,7 @@ export class EntityManager {
   static get_entity_image_buffer() {
     return Buffer.create({
       name: entity_image_buffer_name,
-      raw_data: this.get_entity_count() * 4,
+      size: this.get_entity_count() * 4,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
     });
   }

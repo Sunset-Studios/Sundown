@@ -13,7 +13,8 @@ class ComputeTask {
     outputs,
     dispatch_x,
     dispatch_y,
-    dispatch_z
+    dispatch_z,
+    entry_point = "cs"
   ) {
     task.name = name;
     task.shader = shader;
@@ -22,6 +23,7 @@ class ComputeTask {
     task.dispatch_x = dispatch_x;
     task.dispatch_y = dispatch_y;
     task.dispatch_z = dispatch_z;
+    task.entry_point = entry_point;
   }
 }
 
@@ -36,7 +38,8 @@ export class ComputeTaskQueue {
     outputs,
     dispatch_x,
     dispatch_y = 1,
-    dispatch_z = 1
+    dispatch_z = 1,
+    entry_point = "cs"
   ) {
     const task = this.tasks_allocator.allocate();
 
@@ -48,7 +51,8 @@ export class ComputeTaskQueue {
       outputs,
       dispatch_x,
       dispatch_y,
-      dispatch_z
+      dispatch_z,
+      entry_point
     );
 
     this.tasks.push(task);
@@ -81,17 +85,15 @@ export class ComputeTaskQueue {
           task.name,
           RenderPassFlags.Compute,
           {
-            shader_setup: { pipeline_shaders: { compute: { path: task.shader } } },
+            shader_setup: {
+              pipeline_shaders: { compute: { path: task.shader, entry_point: task.entry_point } },
+            },
             inputs: task.inputs,
             outputs: task.outputs,
           },
           (graph, frame_data, encoder) => {
             const pass = graph.get_physical_pass(frame_data.current_pass);
-            pass.dispatch(
-              task.dispatch_x,
-              task.dispatch_y,
-              task.dispatch_z
-            );
+            pass.dispatch(task.dispatch_x, task.dispatch_y, task.dispatch_z);
           }
         );
       }

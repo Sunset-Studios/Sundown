@@ -1,4 +1,5 @@
 #include "common.wgsl"
+#include "acceleration_common.wgsl"
 
 // ------------------------------------------------------------------------------------
 // Constants
@@ -12,8 +13,10 @@ const bounds_padding = 1.0;
 
 @group(1) @binding(0) var<storage, read> entity_transforms: array<EntityTransform>;
 @group(1) @binding(1) var<storage, read_write> entity_flags: array<u32>;
-@group(1) @binding(2) var<storage, read_write> aabb_bounds: array<AABBNodeBounds>;
-@group(1) @binding(3) var<storage, read> entity_aabb_node_indices: array<u32>;
+@group(1) @binding(2) var<storage, read_write> aabb_bounds: array<AABB>;
+@group(1) @binding(3) var<storage, read_write> aabb_user_data: array<u32>;
+@group(1) @binding(4) var<storage, read> entity_aabb_node_indices: array<u32>;
+@group(1) @binding(5) var<storage, read_write> scene_aabb: array<atomic<i32>, 8>;
 
 // ------------------------------------------------------------------------------------
 // Compute Shader
@@ -67,8 +70,16 @@ fn cs(@builtin(global_invocation_id) global_id: vec3<u32>) {
     );
 
     // write to full array for other GPU consumers
-    aabb_bounds[node_index].min_point = vec4f(min_point, 1.0);
-    aabb_bounds[node_index].max_point = vec4f(max_point, 1.0);
+    aabb_bounds[node_index].min = vec4f(min_point, 1.0);
+    aabb_bounds[node_index].max = vec4f(max_point, 1.0);
+    aabb_user_data[node_index] = entity_id_offset;
+
+    atomicMin(&scene_aabb[0], i32(min_point.x));
+    atomicMin(&scene_aabb[1], i32(min_point.y));
+    atomicMin(&scene_aabb[2], i32(min_point.z));
+    atomicMax(&scene_aabb[3], i32(max_point.x));
+    atomicMax(&scene_aabb[4], i32(max_point.y));
+    atomicMax(&scene_aabb[5], i32(max_point.z));
 
     entity_flags[entity_id_offset] |= EF_AABB_DIRTY;
 }

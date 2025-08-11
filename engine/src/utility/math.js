@@ -197,3 +197,7 @@ export function vec_near_zero(v) {
 export function vec_near_equal(a, b) {
   return near_equal(a[0], b[0]) && near_equal(a[1], b[1]) && near_equal(a[2], b[2]);
 }
+
+export function bytes_to_mb(bytes) {
+  return (bytes / (1024.0 * 1024.0)).toFixed(2);
+}

@@ -1,12 +1,17 @@
 import { Name } from "../utility/names.js";
 import { ResourceCache } from "./resource_cache.js";
 import { RenderPassFlags, CacheTypes, BindGroupType } from "./renderer_types.js";
+import { GPUTimeQuery } from "./query.js";
+import { TypedVector } from "../memory/container.js";
 
 export class RenderPass {
+  static all_passes = new TypedVector(256, 0, BigInt64Array);
+
   pass = null;
   config = null;
   frame_attachments = [];
   frame_bind_groups = Array(BindGroupType.Num).fill(null);
+  timer_query_indices = [0, 0];
 
   init(config) {
     this.config = config;
@@ -24,10 +29,20 @@ export class RenderPass {
         };
       });
 
-      const pass_desc = {
+      let pass_desc = {
         label: this.config.name,
         colorAttachments: attachments,
       };
+
+      if (__DEV__ && GPUTimeQuery.query_set) {
+        this.timer_query_indices[0] = GPUTimeQuery.allocate();
+        this.timer_query_indices[1] = GPUTimeQuery.allocate();
+        pass_desc.timestampWrites = {
+          querySet: GPUTimeQuery.query_set,
+          beginningOfPassWriteIndex: this.timer_query_indices[0],
+          endOfPassWriteIndex: this.timer_query_indices[1],
+        };
+      }
 
       if (this.config.depth_stencil_attachment) {
         const depth_stencil_image = ResourceCache.get().fetch(
@@ -46,9 +61,19 @@ export class RenderPass {
 
       this.pass = encoder.beginRenderPass(pass_desc);
     } else if (this.config.flags & RenderPassFlags.Compute) {
-      this.pass = encoder.beginComputePass({
-        label: this.config.name,
-      });
+      const compute_pass_desc = { label: this.config.name };
+
+      if (__DEV__ && GPUTimeQuery.query_set) {
+        this.timer_query_indices[0] = GPUTimeQuery.allocate();
+        this.timer_query_indices[1] = GPUTimeQuery.allocate();
+        compute_pass_desc.timestampWrites = {
+          querySet: GPUTimeQuery.query_set,
+          beginningOfPassWriteIndex: this.timer_query_indices[0],
+          endOfPassWriteIndex: this.timer_query_indices[1],
+        };
+      }
+
+      this.pass = encoder.beginComputePass(compute_pass_desc);
     }
 
     if (this.config.viewport) {
@@ -114,11 +139,13 @@ export class RenderPass {
   }
 
   static create(config) {
-    let render_pass = ResourceCache.get().fetch(CacheTypes.PASS, Name.from(config.name));
+    let name_hash = Name.from(config.name);
+    let render_pass = ResourceCache.get().fetch(CacheTypes.PASS, name_hash);
     if (!render_pass) {
       render_pass = new RenderPass();
       render_pass.init(config);
-      ResourceCache.get().store(CacheTypes.PASS, Name.from(config.name), render_pass);
+      ResourceCache.get().store(CacheTypes.PASS, name_hash, render_pass);
+      RenderPass.all_passes.push(BigInt(name_hash));
     }
     return render_pass;
   }

@@ -95,7 +95,7 @@ export function compute_directional_light_view_projection(
   );
   const light_rot = mat4.fromQuat(mat4.create(), quat.fromMat3(quat.create(), rot_rows));
 
-  // 2. Center of AABB in light space
+  // 2. Center of bounds in light space
   const center_ws = vec4.transformMat4(vec4.create(), vec4.fromValues(0.0, 0.0, 0.0, 1.0), cam_inverse_view_projection);
   center_ws[0] /= center_ws[3];
   center_ws[1] /= center_ws[3];

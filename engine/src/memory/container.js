@@ -1213,7 +1213,7 @@ export class TypedVector {
     this.#uniqueness_set = new Set();
     this.#array_type = array_type;
     for (let i = 0; i < initial_capacity; i++) {
-      this.#buffer[i] = default_value;
+      this.#buffer[i] = array_type === BigInt64Array ? BigInt(default_value) : default_value;
     }
   }
 
