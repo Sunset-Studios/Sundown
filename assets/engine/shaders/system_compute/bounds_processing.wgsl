@@ -14,13 +14,38 @@ const bounds_padding = 1.0;
 @group(1) @binding(0) var<storage, read> entity_transforms: array<EntityTransform>;
 @group(1) @binding(1) var<storage, read_write> entity_flags: array<u32>;
 @group(1) @binding(2) var<storage, read_write> aabb_bounds: array<AABB>;
-@group(1) @binding(3) var<storage, read_write> aabb_user_data: array<u32>;
-@group(1) @binding(4) var<storage, read> entity_aabb_node_indices: array<u32>;
-@group(1) @binding(5) var<storage, read_write> scene_aabb: array<atomic<i32>, 8>;
+@group(1) @binding(3) var<storage, read> entity_aabb_node_indices: array<u32>;
+@group(1) @binding(4) var<storage, read_write> scene_aabb: array<atomic<u32>, 8>;
 
 // ------------------------------------------------------------------------------------
 // Compute Shader
 // ------------------------------------------------------------------------------------ 
+
+fn atomic_min_f32(target_val: ptr<storage, atomic<u32>, read_write>, value: f32) {
+	var old_bits = atomicLoad(target_val);
+	loop {
+		let old_f = bitcast<f32>(old_bits);
+		let new_f = min(old_f, value);
+		if (new_f == old_f) { break; }
+		let new_bits = bitcast<u32>(new_f);
+		let result = atomicCompareExchangeWeak(target_val, old_bits, new_bits);
+		if (result.exchanged) { break; }
+		old_bits = result.old_value;
+	}
+}
+
+fn atomic_max_f32(target_val: ptr<storage, atomic<u32>, read_write>, value: f32) {
+	var old_bits = atomicLoad(target_val);
+	loop {
+		let old_f = bitcast<f32>(old_bits);
+		let new_f = max(old_f, value);
+		if (new_f == old_f) { break; }
+		let new_bits = bitcast<u32>(new_f);
+		let result = atomicCompareExchangeWeak(target_val, old_bits, new_bits);
+		if (result.exchanged) { break; }
+		old_bits = result.old_value;
+	}
+}
 
 @compute @workgroup_size(256)
 fn cs(@builtin(global_invocation_id) global_id: vec3<u32>) {
@@ -70,16 +95,15 @@ fn cs(@builtin(global_invocation_id) global_id: vec3<u32>) {
     );
 
     // write to full array for other GPU consumers
-    aabb_bounds[node_index].min = vec4f(min_point, 1.0);
-    aabb_bounds[node_index].max = vec4f(max_point, 1.0);
-    aabb_user_data[node_index] = entity_id_offset;
+    aabb_bounds[node_index].min = vec4f(min_point, f32(entity_id_offset));
+    aabb_bounds[node_index].max = vec4f(max_point, 1.0 /* can be used for other purposes */);
 
-    atomicMin(&scene_aabb[0], i32(min_point.x));
-    atomicMin(&scene_aabb[1], i32(min_point.y));
-    atomicMin(&scene_aabb[2], i32(min_point.z));
-    atomicMax(&scene_aabb[3], i32(max_point.x));
-    atomicMax(&scene_aabb[4], i32(max_point.y));
-    atomicMax(&scene_aabb[5], i32(max_point.z));
+	  atomic_min_f32(&scene_aabb[0], min_point.x);
+	  atomic_min_f32(&scene_aabb[1], min_point.y);
+	  atomic_min_f32(&scene_aabb[2], min_point.z);
+	  atomic_max_f32(&scene_aabb[4], max_point.x);
+	  atomic_max_f32(&scene_aabb[5], max_point.y);
+	  atomic_max_f32(&scene_aabb[6], max_point.z);
 
     entity_flags[entity_id_offset] |= EF_AABB_DIRTY;
 }

@@ -2,6 +2,12 @@
 enable f16;
 #endif
 
+#if HAS_SUBGROUPS
+#include "subgroup_warp.wgsl"
+#else
+#include "logical_warp.wgsl"
+#endif
+
 // ------------------------------------------------------------------------------------
 // Data Structures
 // ------------------------------------------------------------------------------------ 
@@ -128,6 +134,15 @@ const one_over_float_max = 1.0 / 4294967295.0;
 // ------------------------------------------------------------------------------------
 // Helper Functions
 // ------------------------------------------------------------------------------------ 
+
+fn mat4_from_scaling(scale: vec3f) -> mat4x4f {
+    return mat4x4f(
+        vec4f(scale.x, 0.0, 0.0, 0.0),
+        vec4f(0.0, scale.y, 0.0, 0.0),
+        vec4f(0.0, 0.0, scale.z, 0.0),
+        vec4f(0.0, 0.0, 0.0, 1.0),
+    );
+}
 
 fn get_entity_row(entity: u32) -> u32 {
     // row_field = (chunk_index << LOCAL_SLOT_BITS) | local_index 

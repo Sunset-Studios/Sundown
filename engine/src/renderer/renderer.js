@@ -34,6 +34,7 @@ export class Renderer {
 
   // Renderer features
   has_f16 = false;
+  has_subgroups = false;
   use_depth_prepass = true;
   shadows_enabled = true;
   gi_enabled = true;
@@ -71,10 +72,14 @@ export class Renderer {
     }
 
     this.has_f16 = this.adapter.features.has("shader-f16") && !options.use_precision_float;
+    this.has_subgroups = this.adapter.features.has("subgroups");
 
     let required_features = ["indirect-first-instance"];
     if (this.has_f16) {
       required_features.push("shader-f16");
+    }
+    if (this.has_subgroups) {
+      required_features.push("subgroups");
     }
     if (__DEV__) {
       required_features.push("timestamp-query");
@@ -86,8 +91,10 @@ export class Renderer {
         requiredLimits: {
           maxColorAttachmentBytesPerSample: 64,
           maxStorageBuffersPerShaderStage: 10,
-          maxStorageBufferBindingSize: 256 * 1024 * 1024,
+          maxStorageBufferBindingSize: this.adapter.limits.maxStorageBufferBindingSize,
+          maxComputeWorkgroupStorageSize: this.adapter.limits.maxComputeWorkgroupStorageSize,
           maxTextureArrayLayers: 2048,
+          maxBufferSize: this.adapter.limits.maxBufferSize,
         },
       });
     } catch (e) {

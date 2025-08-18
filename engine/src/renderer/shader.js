@@ -25,6 +25,7 @@ import { hash_data_object } from "../utility/hashing.js";
 const include_string = "#include";
 const precision_float_string = "precision_float";
 const has_precision_float_string = "HAS_PRECISION_FLOAT";
+const has_subgroups_string = "HAS_SUBGROUPS";
 
 const f16_type_string = "f16";
 const f32_type_string = "f32";
@@ -110,8 +111,18 @@ export class Shader {
 
     asset = this._parse_shader_includes(asset, defines, load_recursion_step);
 
+    // Step 2: parse and expand WGSL macros before defines/conditionals on top-level load
     if (load_recursion_step === 0) {
-      const { defines_map, stripped_code } = this._build_defines_map_and_strip(file_path, asset, defines);
+      const { code: code_without_macros, macros } = this._parse_and_strip_macros(asset);
+      asset = this._expand_macros(code_without_macros, macros);
+    }
+
+    if (load_recursion_step === 0) {
+      const { defines_map, stripped_code } = this._build_defines_map_and_strip(
+        file_path,
+        asset,
+        defines
+      );
       this.defines = defines_map;
       asset = this._parse_conditional_defines_and_types(stripped_code);
 
@@ -123,6 +134,261 @@ export class Shader {
     return asset;
   }
 
+  // ----------------------------------------------
+  // WGSL Macro System
+  // ----------------------------------------------
+  _parse_and_strip_macros(code) {
+    // Collect parameterized #define macros and #macro/#endmacro blocks
+    const macros = new Map(); // name -> { args: string[], body: string }
+
+    // 1) Parameterized single-line defines: #define NAME(arg1, arg2, ...) expansion
+    const lines = code.split(/\r\n|\r|\n/);
+    const out_lines = [];
+    const param_define_regex = /^\s*#define\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(([^)]*)\)\s*(.*)$/;
+
+    // 2) Multi-line macros: #macro NAME(args?) ... #endmacro
+    let i = 0;
+    while (i < lines.length) {
+      const line = lines[i];
+      const trimmed = line.trimStart();
+      if (trimmed.startsWith("#macro")) {
+        // Parse header
+        const header = trimmed;
+        const match = header.match(/^#macro\s+([A-Za-z_][A-Za-z0-9_]*)\s*(?:\(([^)]*)\))?\s*$/);
+        if (match) {
+          const name = match[1];
+          const args = (match[2] || "")
+            .split(",")
+            .map((s) => s.trim())
+            .filter((s) => s.length > 0);
+          // Collect until #endmacro
+          const body_lines = [];
+          i++;
+          let found_end = false;
+          while (i < lines.length) {
+            const l = lines[i];
+            if (l.trimStart().startsWith("#endmacro")) {
+              found_end = true;
+              break;
+            }
+            body_lines.push(l);
+            i++;
+          }
+          if (!found_end) {
+            // Malformed macro; keep original text
+            out_lines.push(line);
+          } else {
+            const body = body_lines.join("\n");
+            macros.set(name, { args, body });
+          }
+          // Skip the #endmacro line
+          i++;
+          continue;
+        }
+      }
+
+      // Check param define
+      const m = line.match(param_define_regex);
+      if (m) {
+        const name = m[1];
+        const args = m[2]
+          .split(",")
+          .map((s) => s.trim())
+          .filter((s) => s.length > 0);
+        const body = m[3] || "";
+        macros.set(name, { args, body });
+        i++;
+        continue; // strip this line
+      }
+
+      out_lines.push(line);
+      i++;
+    }
+
+    return { code: out_lines.join("\n"), macros };
+  }
+
+  _expand_macros(code, macros, max_depth = 16) {
+    if (!macros || macros.size === 0) return code;
+    const macro_names = Array.from(macros.keys());
+    const name_set = new Set(macro_names);
+    let cur = code;
+    for (let pass = 0; pass < max_depth; pass++) {
+      const { out, changed } = this._expand_once(cur, macros, name_set);
+      cur = out;
+      if (!changed) break;
+    }
+    return cur;
+  }
+
+  _split_args(s) {
+    const args = [];
+    let depth = 0;
+    let start = 0;
+    for (let i = 0; i < s.length; i++) {
+      const ch = s[i];
+      if (ch === "(" || ch === "[" || ch === "{") depth++;
+      else if (ch === ")" || ch === "]" || ch === "}") depth--;
+      else if (ch === "," && depth === 0) {
+        args.push(s.slice(start, i).trim());
+        start = i + 1;
+      }
+    }
+    const last = s.slice(start).trim();
+    if (last.length) args.push(last);
+    return args;
+  }
+
+  _expand_once(src, macros, name_set) {
+    let i = 0;
+    let out = "";
+    let changed = false;
+
+    let in_line_comment = false;
+    let in_block_comment = false;
+    let in_string = false;
+    let directive_line = false;
+
+    const is_ident_start = (c) => /[A-Za-z_]/.test(c);
+    const is_ident_char = (c) => /[A-Za-z0-9_]/.test(c);
+    const flush_char = (c) => {
+      out += c;
+    };
+
+    while (i < src.length) {
+      const c = src[i];
+
+      // Newline resets line-based states
+      if (c === "\n") {
+        in_line_comment = false;
+        directive_line = false;
+        flush_char(c);
+        i++;
+        continue;
+      }
+
+      if (in_line_comment) {
+        flush_char(c);
+        i++;
+        continue;
+      }
+      if (in_block_comment) {
+        if (c === "*" && src[i + 1] === "/") {
+          flush_char("*/");
+          i += 2;
+          in_block_comment = false;
+          continue;
+        }
+        flush_char(c);
+        i++;
+        continue;
+      }
+      if (in_string) {
+        if (c === "\\") {
+          // escape
+          flush_char(src.substr(i, 2));
+          i += 2;
+          continue;
+        }
+        flush_char(c);
+        if (c === '"') {
+          in_string = false;
+        }
+        i++;
+        continue;
+      }
+
+      // Check comment/string/directive starts
+      if (c === "/" && src[i + 1] === "/") {
+        flush_char("//");
+        i += 2;
+        in_line_comment = true;
+        continue;
+      }
+      if (c === "/" && src[i + 1] === "*") {
+        flush_char("/*");
+        i += 2;
+        in_block_comment = true;
+        continue;
+      }
+      if (c === '"') {
+        in_string = true;
+        flush_char(c);
+        i++;
+        continue;
+      }
+      if ((c === "#" && (i === 0 || src[i - 1] === "\n")) || (directive_line && c !== "\n")) {
+        // treat whole directive token as literal until EOL
+        directive_line = true;
+        flush_char(c);
+        i++;
+        continue;
+      }
+
+      // Try macro match
+      if (is_ident_start(c)) {
+        let j = i + 1;
+        while (j < src.length && is_ident_char(src[j])) j++;
+        const ident = src.slice(i, j);
+        if (name_set.has(ident)) {
+          // Skip whitespace to see if followed by '('
+          let k = j;
+          while (k < src.length && /\s/.test(src[k])) k++;
+          if (src[k] === "(") {
+            // Parse balanced parentheses
+            let p = k + 1;
+            let depth = 1;
+            while (p < src.length && depth > 0) {
+              if (src[p] === "(") depth++;
+              else if (src[p] === ")") depth--;
+              else if (src[p] === '"') {
+                // Skip strings in arguments
+                p++;
+                while (p < src.length) {
+                  if (src[p] === '"' && src[p - 1] !== "\\") {
+                    p++;
+                    break;
+                  }
+                  p++;
+                }
+                continue;
+              }
+              p++;
+            }
+            const call_end = p; // position after ')'
+            const raw_args = src.slice(k + 1, call_end - 1);
+            const actuals = this._split_args(raw_args);
+            const { args: formals, body } = macros.get(ident);
+            let replacement = body;
+            for (let ai = 0; ai < formals.length; ai++) {
+              const formal = formals[ai];
+              const actual = actuals[ai] !== undefined ? actuals[ai] : "";
+              const wrapped = `(${actual})`;
+              const re = new RegExp(`\\b${formal}\\b`, "g");
+              replacement = replacement.replace(re, wrapped);
+            }
+            out += replacement;
+            i = call_end;
+            changed = true;
+            continue;
+          }
+        }
+        // Not a macro call
+        out += ident;
+        i = j;
+        continue;
+      }
+
+      // Default copy
+      flush_char(c);
+      i++;
+    }
+    return { out, changed };
+  }
+
+  // ----------------------------------------------
+  // WGSL Include System
+  // ----------------------------------------------
   _parse_shader_includes(code, defines = {}, load_recursion_step = 0) {
     let include_positions = [];
 
@@ -146,6 +412,9 @@ export class Shader {
     return code;
   }
 
+  // ----------------------------------------------
+  // WGSL Define System
+  // ----------------------------------------------
   _build_defines_map_and_strip(file_path, code, defines) {
     const defines_map = Object.assign({}, defines);
     const stripped_code = code.replace(defines_regex, (match, key, value) => {
@@ -156,6 +425,7 @@ export class Shader {
       ? f16_type_string
       : f32_type_string;
     defines_map[has_precision_float_string] = Renderer.get().has_f16;
+    defines_map[has_subgroups_string] = Renderer.get().has_subgroups;
     return { defines_map, stripped_code };
   }
 
@@ -198,6 +468,9 @@ export class Shader {
     return result.trim();
   }
 
+  // ----------------------------------------------
+  // WGSL Fragment System
+  // ----------------------------------------------
   _strip_custom_fragment_functions(code) {
     const lines = code.split(/\r\n|\r|\n/);
     const out = [];

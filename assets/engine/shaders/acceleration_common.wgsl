@@ -2,7 +2,7 @@
 // Constants
 // ------------------------------------------------------------------------------------
 
-const WAVE_SIZE = 64u;
+const HPLOC_WAVE_SIZE = 64u;
 const QUANT_BITS = 10u;
 const QUANT_MAX = (1u << QUANT_BITS) - 1u;
 
@@ -70,6 +70,11 @@ fn decode_quant_aabb(base_min: vec3<f32>, base_extent: vec3<f32>, qmin: u32, qma
         vec4<f32>(base_min + base_extent * qmin_v, 0.0),
         vec4<f32>(base_min + base_extent * qmax_v, 0.0),
     );
+}
+
+// Check if a node is a leaf
+fn is_leaf(node: BVH2Node) -> bool {
+    return (node.children[0] & 0x80000000u) != 0u;
 }
 
 // Ray-AABB intersection (slab method)

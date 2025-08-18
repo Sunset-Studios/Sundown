@@ -163,14 +163,13 @@ export class DebugMemory extends DevConsoleTool {
 
     push_buf("Scene Bounds", BVH.scene_bounds_buffer);
     push_buf("Node Bounds", BVH.bounds_buffer);
-    push_buf("User Data", BVH.user_data_buffer);
     push_buf("Morton Codes", BVH.morton_codes_buffer);
     push_buf("Temp Morton Codes", BVH.temp_morton_codes_buffer);
     push_buf("Sorted Indices", BVH.sorted_indices_buffer);
     push_buf("Temp Sorted Indices", BVH.temp_sorted_indices_buffer);
     push_buf("BVH2 Nodes", BVH.bvh2_nodes_buffer);
     push_buf("BVH4 Nodes", BVH.bvh4_nodes_buffer);
-    push_buf("Histogram", BVH.histogram_buffer);
+    push_buf("Onesweep Data", BVH.onesweep_data_buffer);
     push_buf("Node Counters", BVH.node_counters_buffer);
     push_buf("Clusters In", BVH.clusters_in_buffer);
     push_buf("Clusters Out", BVH.clusters_out_buffer);

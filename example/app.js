@@ -148,6 +148,8 @@ export class RenderingScene extends Scene {
       }
     }
 
+    log(`[${this.name}] Initialized with ${sphere_count} cubes.`);
+
     PostProcessStack.register_pass(0, "vhs", "effects/vhs_post.wgsl", {
       noise_intensity: 0.25,
       scanline_intensity: 0.35,
@@ -2718,13 +2720,13 @@ export class GLTFModelScene extends Scene {
 
   const scene_switcher = new SceneSwitcher("SceneSwitcher");
   //await scene_switcher.add_scene(solar_ecs_scene);
-  await scene_switcher.add_scene(textures_scene);
+  //await scene_switcher.add_scene(textures_scene);
   //await scene_switcher.add_scene(bvh_scene);
   //await scene_switcher.add_scene(rendering_scene);
   //await scene_switcher.add_scene(ml_scene);
   //await scene_switcher.add_scene(voxel_terrain_scene);
   //await scene_switcher.add_scene(object_painting_scene);
-  //await scene_switcher.add_scene(gi_test_scene);
+  await scene_switcher.add_scene(gi_test_scene);
   //await scene_switcher.add_scene(shadow_test_scene);
   //await scene_switcher.add_scene(gltf_model_scene);
 

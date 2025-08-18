@@ -11,7 +11,7 @@
  */
 
 import { ComputeTaskQueue } from "../renderer/compute_task_queue.js";
-import { BVH } from "./bvh.js";
+import { BVH, WORKGROUP_SIZE, TILE_SIZE, RADIX_PASSES } from "./bvh.js";
 import { EntityManager } from "../core/ecs/entity.js";
 import { TransformFragment } from "../core/ecs/fragments/transform_fragment.js";
 import { FragmentGpuBuffer } from "../core/ecs/solar/memory.js";
@@ -19,31 +19,57 @@ import { Buffer } from "../renderer/buffer.js";
 
 const bounds_processing_task_name = "bounds_processing";
 const bounds_processing_wgsl_path = "system_compute/bounds_processing.wgsl";
+const hploc_compute_morton_codes_task_name = "hploc_compute_morton_codes";
+const hploc_init_leaf_clusters_task_name = "hploc_init_leaf_clusters";
+const hploc_build_bvh2_task_name = "hploc_build_bvh2";
+const hploc_convert_parallel_single_pass_task_name = "hploc_convert_parallel_single_pass";
+
+const bvh_sorting_wgsl_path = "acceleration/bvh_sorting.wgsl";
+const bvh_morton_wgsl_path = "acceleration/bvh_morton.wgsl";
+const bvh_processing_wgsl_path = "acceleration/bvh_processing.wgsl";
+const bvh4_processing_wgsl_path = "acceleration/bvh4_processing.wgsl";
+
+const compute_morton_codes_cs_entry_point = "compute_morton_codes";
+const onesweep_init_cs_entry_point = "onesweep_init";
+const onesweep_histogram_cs_entry_point = "onesweep_global_histogram";
+const onesweep_scan_cs_entry_point = "onesweep_scan";
+const onesweep_digit_binning_cs_entry_point = "onesweep_digit_binning";
+const initialize_leaf_clusters_cs_entry_point = "initialize_leaf_clusters";
+const build_bvh2_hploc_cs_entry_point = "build_bvh2_hploc";
+const convert_bvh2_to_bvh4_cs_entry_point = "convert_bvh2_to_bvh4";
+
 const transforms_name = "transforms";
 const aabb_node_index_name = "aabb_node_index";
-
-const WORKGROUP_SIZE = 256;
-const RADIX_BITS = 4;
-const MORTON_CODE_BITS = 30;
 
 export class BVHProcessor {
   is_initialised = false;
   max_primitives = 256;
   sort_uniforms_buffer = null;
+  radix_uniforms_data = new Uint32Array(4);
+  bvh2_uniforms = new Uint32Array(2);
+  counter_zeros = new Uint32Array(2);
   bounds_processing_inputs = [null, null, null, null, null, null];
   bounds_processing_outputs = [null, null, null, null, null];
+  morton_code_inputs = [null, null, null, null, null, null, null, null];
+  morton_code_outputs = [null, null];
+  radix_sort_inputs = [null, null, null, null, null, null, null, null];
+  radix_sort_outputs = [null, null];
+  bvh2_inputs = [null, null, null, null, null, null, null, null, null];
+  bvh2_outputs = [null, null, null];
+  bvh4_inputs = [null, null, null, null, null, null, null, null, null];
+  bvh4_outputs = [null, null];
 
   constructor() {
     BVH.initialize(this.max_primitives);
     this.sort_uniforms_buffer = Buffer.create({
       name: "sort_uniforms",
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-      size: 8,
+      size: 16,
     });
   }
 
   build() {
-    const primitive_count = EntityManager.get_entity_count();
+    const primitive_count = EntityManager.get_max_rows();
     if (primitive_count === 0) return;
 
     if (this.max_primitives < primitive_count) {
@@ -51,10 +77,11 @@ export class BVHProcessor {
     }
 
     this.update_bounds();
-    // this.compute_morton_codes(primitive_count);
-    // this.radix_sort(primitive_count);
-    // this.build_bvh2(primitive_count);
-    // this.convert_bvh2_to_bvh4(primitive_count);
+    this.compute_morton_codes(primitive_count);
+    this.clear_onesweep(primitive_count);
+    this.radix_sort(primitive_count);
+    //this.build_bvh2(primitive_count);
+    //this.convert_bvh2_to_bvh4(primitive_count);
   }
 
   update_bounds() {
@@ -72,18 +99,15 @@ export class BVHProcessor {
     );
     const entity_flags_buffer = FragmentGpuBuffer.entity_flags_buffer;
 
-
     this.bounds_processing_inputs[0] = transforms_buffer.buffer;
     this.bounds_processing_inputs[1] = entity_flags_buffer.buffer;
     this.bounds_processing_inputs[2] = tlas_buffers.bounds_buffer;
-    this.bounds_processing_inputs[3] = tlas_buffers.user_data_buffer;
-    this.bounds_processing_inputs[4] = aabb_node_index_buffer.buffer;
-    this.bounds_processing_inputs[5] = tlas_buffers.scene_bounds_buffer;
+    this.bounds_processing_inputs[3] = aabb_node_index_buffer.buffer;
+    this.bounds_processing_inputs[4] = tlas_buffers.scene_bounds_buffer;
 
     this.bounds_processing_outputs[0] = tlas_buffers.bounds_buffer;
     this.bounds_processing_outputs[1] = entity_flags_buffer.buffer;
-    this.bounds_processing_outputs[2] = tlas_buffers.user_data_buffer;
-    this.bounds_processing_outputs[3] = tlas_buffers.scene_bounds_buffer;
+    this.bounds_processing_outputs[2] = tlas_buffers.scene_bounds_buffer;
 
     ComputeTaskQueue.new_task(
       bounds_processing_task_name,
@@ -98,146 +122,140 @@ export class BVHProcessor {
     const bvh = BVH.to_gpu_data();
     const workgroups = Math.ceil(primitive_count / WORKGROUP_SIZE);
 
-    // Write element count into uniforms (bit_start = 0)
-    const uniforms_data = new Uint32Array(2);
-    uniforms_data[0] = 0;
-    uniforms_data[1] = primitive_count;
-    this.sort_uniforms_buffer.write(uniforms_data);
+    this.morton_code_inputs[0] = bvh.bounds_buffer;
+    this.morton_code_inputs[1] = bvh.morton_codes_buffer;
+    this.morton_code_inputs[2] = bvh.sorted_indices_buffer;
+    this.morton_code_inputs[3] = bvh.scene_bounds_buffer;
 
-    // Bindings order must match acceleration/bvh_sorting.wgsl group(1):
-    // 0 bounds, 1 in_morton, 2 in_sorted, 3 out_morton, 4 out_sorted, 5 histogram, 6 scene_aabb, 7 sort_uniforms
-    const bindings = [
-      bvh.bounds_buffer,
-      bvh.morton_codes_buffer,
-      bvh.sorted_indices_buffer,
-      bvh.temp_morton_codes_buffer,
-      bvh.temp_sorted_indices_buffer,
-      bvh.histogram_buffer,
-      bvh.scene_bounds_buffer,
-      this.sort_uniforms_buffer,
-    ];
+    this.morton_code_outputs[0] = bvh.morton_codes_buffer;
+    this.morton_code_outputs[1] = bvh.sorted_indices_buffer;
 
     ComputeTaskQueue.new_task(
-      `hploc_compute_morton_codes`,
-      "acceleration/bvh_sorting.wgsl",
-      bindings,
-      [bvh.morton_codes_buffer, bvh.sorted_indices_buffer],
+      hploc_compute_morton_codes_task_name,
+      bvh_morton_wgsl_path,
+      this.morton_code_inputs,
+      this.morton_code_outputs,
       workgroups,
       1,
       1,
-      "compute_morton_codes"
+      compute_morton_codes_cs_entry_point
+    );
+  }
+
+  clear_onesweep(element_count) {
+    const bvh = BVH.to_gpu_data();
+    const thread_blocks = Math.max(1, Math.ceil(element_count / TILE_SIZE));
+
+    this.radix_uniforms_data[0] = element_count;
+    this.radix_uniforms_data[1] = 0; // radix_shift
+    this.radix_uniforms_data[2] = thread_blocks;
+    this.radix_uniforms_data[3] = 0; // _padding
+    this.sort_uniforms_buffer.write(this.radix_uniforms_data);
+
+    // Initialize pass/global histograms and tile indices
+    ComputeTaskQueue.new_task(
+      "onesweep_init",
+      bvh_sorting_wgsl_path,
+      [
+        bvh.morton_codes_buffer, // keys_buffer (layout compatibility)
+        bvh.temp_morton_codes_buffer, // scatter_out (layout compatibility)
+        bvh.sorted_indices_buffer, // values_buffer
+        bvh.temp_sorted_indices_buffer, // values_scatter_out
+        bvh.onesweep_global_hist_buffer, // global_historgram
+        bvh.onesweep_pass_hist_buffer, // pass_histogram
+        bvh.onesweep_tile_indices_buffer, // tile_indices
+        this.sort_uniforms_buffer, // params
+      ],
+      [
+        bvh.onesweep_global_hist_buffer,
+        bvh.onesweep_pass_hist_buffer,
+        bvh.onesweep_tile_indices_buffer,
+      ],
+      256,
+      1,
+      1,
+      onesweep_init_cs_entry_point
     );
   }
 
   radix_sort(element_count) {
     const bvh = BVH.to_gpu_data();
-    const radix_sort_workgroups = Math.ceil(element_count / WORKGROUP_SIZE);
+    const thread_blocks = Math.max(1, Math.ceil(element_count / TILE_SIZE));
 
-    let input_keys = bvh.morton_codes_buffer;
-    let input_values = bvh.sorted_indices_buffer;
-    let output_keys = bvh.temp_morton_codes_buffer;
-    let output_values = bvh.temp_sorted_indices_buffer;
+    // Phase 1: build global histograms (per pass, but kernel accumulates per-digit halves)
+    ComputeTaskQueue.new_task(
+      `onesweep_histogram`,
+      bvh_sorting_wgsl_path,
+      [
+        bvh.morton_codes_buffer, // keys_buffer
+        bvh.temp_morton_codes_buffer, // scatter_out (unused in this kernel)
+        bvh.sorted_indices_buffer, // values_buffer
+        bvh.temp_sorted_indices_buffer, // values_scatter_out
+        bvh.onesweep_global_hist_buffer, // global_historgram
+        bvh.onesweep_pass_hist_buffer, // pass_histogram
+        bvh.onesweep_tile_indices_buffer, // tile_indices
+        this.sort_uniforms_buffer, // params
+      ],
+      [bvh.onesweep_global_hist_buffer],
+      thread_blocks,
+      1,
+      1,
+      onesweep_histogram_cs_entry_point
+    );
 
-    const num_passes = Math.ceil(MORTON_CODE_BITS / RADIX_BITS);
+    // Phase 2: scan global histogram per radix pass
+    ComputeTaskQueue.new_task(
+      `onesweep_scan`,
+      bvh_sorting_wgsl_path,
+      [
+        bvh.morton_codes_buffer,
+        bvh.temp_morton_codes_buffer,
+        bvh.sorted_indices_buffer,
+        bvh.temp_sorted_indices_buffer,
+        bvh.onesweep_global_hist_buffer,
+        bvh.onesweep_pass_hist_buffer,
+        bvh.onesweep_tile_indices_buffer,
+        this.sort_uniforms_buffer,
+      ],
+      [bvh.onesweep_pass_hist_buffer],
+      RADIX_PASSES,
+      1,
+      1,
+      onesweep_scan_cs_entry_point
+    );
 
-    const uniforms_data = new Uint32Array(2);
-    uniforms_data[1] = element_count;
+    // Phase 3: digit binning (4 passes with ping-pong buffers)
+    const passes = [0, 8, 16, 24];
+    for (let i = 0; i < passes.length; i++) {
+      const shift = passes[i];
+      const src_is_morton = i % 2 === 0; // 0->codes, 8->alt, 16->codes, 24->alt
+      const src_buffer = src_is_morton ? bvh.morton_codes_buffer : bvh.temp_morton_codes_buffer;
+      const dst_buffer = src_is_morton ? bvh.temp_morton_codes_buffer : bvh.morton_codes_buffer;
+      const src_vals = src_is_morton ? bvh.sorted_indices_buffer : bvh.temp_sorted_indices_buffer;
+      const dst_vals = src_is_morton ? bvh.temp_sorted_indices_buffer : bvh.sorted_indices_buffer;
 
-    for (let pass = 0; pass < num_passes; pass++) {
-      uniforms_data[0] = pass * RADIX_BITS;
-      this.sort_uniforms_buffer.write(uniforms_data);
+      this.radix_uniforms_data[1] = shift;
+      this.sort_uniforms_buffer.write(this.radix_uniforms_data);
 
-      // Prepare uniforms
       ComputeTaskQueue.new_task(
-        `hploc_radix_clear_hist_${pass}`,
-        "acceleration/bvh_sorting.wgsl",
+        `onesweep_digit_binning_${shift}`,
+        bvh_sorting_wgsl_path,
         [
-          bvh.bounds_buffer,
-          input_keys,
-          input_values,
-          output_keys,
-          output_values,
-          bvh.histogram_buffer,
-          bvh.scene_bounds_buffer,
-          this.sort_uniforms_buffer,
+          src_buffer, // keys_buffer
+          dst_buffer, // scatter_out
+          src_vals, // values_buffer
+          dst_vals, // values_scatter_out
+          bvh.onesweep_global_hist_buffer, // global_historgram
+          bvh.onesweep_pass_hist_buffer, // pass_histogram
+          bvh.onesweep_tile_indices_buffer, // tile_indices
+          this.sort_uniforms_buffer, // params
         ],
-        [bvh.histogram_buffer],
+        [dst_buffer, dst_vals, bvh.onesweep_pass_hist_buffer],
+        thread_blocks,
         1,
         1,
-        1,
-        "clear_histogram"
+        onesweep_digit_binning_cs_entry_point
       );
-
-      // Compute histogram
-      ComputeTaskQueue.new_task(
-        `hploc_radix_histogram_${pass}`,
-        "acceleration/bvh_sorting.wgsl",
-        [
-          bvh.bounds_buffer,
-          input_keys,
-          input_values,
-          output_keys,
-          output_values,
-          bvh.histogram_buffer,
-          bvh.scene_bounds_buffer,
-          this.sort_uniforms_buffer,
-        ],
-        [bvh.histogram_buffer],
-        radix_sort_workgroups,
-        1,
-        1,
-        "compute_histogram"
-      );
-
-      // Prefix sum
-      ComputeTaskQueue.new_task(
-        `hploc_radix_prefix_${pass}`,
-        "acceleration/bvh_sorting.wgsl",
-        [
-          bvh.bounds_buffer,
-          input_keys,
-          input_values,
-          output_keys,
-          output_values,
-          bvh.histogram_buffer,
-          bvh.scene_bounds_buffer,
-          this.sort_uniforms_buffer,
-        ],
-        [bvh.histogram_buffer],
-        1,
-        1,
-        1,
-        "prefix_sum"
-      );
-
-      // Scatter
-      ComputeTaskQueue.new_task(
-        `hploc_radix_scatter_${pass}`,
-        "acceleration/bvh_sorting.wgsl",
-        [
-          bvh.bounds_buffer,
-          input_keys,
-          input_values,
-          output_keys,
-          output_values,
-          bvh.histogram_buffer,
-          bvh.scene_bounds_buffer,
-          this.sort_uniforms_buffer,
-        ],
-        [output_keys, output_values],
-        radix_sort_workgroups,
-        1,
-        1,
-        "scatter"
-      );
-
-      // Swap
-      let swap = input_keys;
-      input_keys = output_keys;
-      output_keys = swap;
-      swap = input_values;
-      input_values = output_values;
-      output_values = swap;
     }
   }
 
@@ -245,52 +263,53 @@ export class BVHProcessor {
     const bvh = BVH.to_gpu_data();
     const bvh2_workgroups = Math.ceil(primitive_count / 64);
 
-    // Initialize leaf clusters
-    const hploc_uniforms = new Uint32Array(2);
-    hploc_uniforms[0] = primitive_count; // primitive_count
-    hploc_uniforms[1] = 0; // pass_num
-    this.sort_uniforms_buffer.write(hploc_uniforms);
+    const aabb_node_index_buffer = EntityManager.get_fragment_gpu_buffer(
+      TransformFragment,
+      aabb_node_index_name
+    );
 
+    // Initialize leaf clusters
+    this.bvh2_uniforms[0] = primitive_count; // primitive_count
+    this.bvh2_uniforms[1] = 0; // pass_num
+    this.sort_uniforms_buffer.write(this.bvh2_uniforms);
     // Reset combined node counters: [bvh2_count, bvh4_count]
-    const zeros = new Uint32Array(2);
-    zeros[0] = 0;
-    zeros[1] = 0;
-    bvh.node_counters_buffer.write(zeros);
+    bvh.node_counters_buffer.write(this.counter_zeros);
 
     // Bind order must match acceleration/bvh_processing.wgsl group(1)
-    const base_bindings = [
-      bvh.bounds_buffer,
-      bvh.sorted_indices_buffer,
-      bvh.bvh2_nodes_buffer,
-      bvh.bvh4_nodes_buffer,
-      bvh.node_counters_buffer,
-      this.sort_uniforms_buffer, // reuse buffer for HPLOCUniforms
-      bvh.clusters_in_buffer,
-      bvh.clusters_out_buffer,
-      bvh.scene_bounds_buffer,
-    ];
+    this.bvh2_inputs[0] = bvh.bounds_buffer;
+    this.bvh2_inputs[1] = aabb_node_index_buffer.buffer;
+    this.bvh2_inputs[2] = bvh.sorted_indices_buffer;
+    this.bvh2_inputs[3] = bvh.bvh2_nodes_buffer;
+    this.bvh2_inputs[4] = bvh.node_counters_buffer;
+    this.bvh2_inputs[5] = bvh.clusters_in_buffer;
+    this.bvh2_inputs[6] = bvh.clusters_out_buffer;
+    this.bvh2_inputs[7] = this.sort_uniforms_buffer;
+
+    this.bvh2_outputs[0] = bvh.bvh2_nodes_buffer;
+    this.bvh2_outputs[1] = bvh.clusters_in_buffer;
+    this.bvh2_outputs[2] = bvh.node_counters_buffer;
 
     ComputeTaskQueue.new_task(
-      `hploc_init_leaf_clusters`,
-      "acceleration/bvh_processing.wgsl",
-      base_bindings,
-      [bvh.bvh2_nodes_buffer, bvh.clusters_in_buffer, bvh.node_counters_buffer],
-      Math.ceil(primitive_count / 1),
+      hploc_init_leaf_clusters_task_name,
+      bvh_processing_wgsl_path,
+      this.bvh2_inputs,
+      this.bvh2_outputs,
+      Math.ceil(primitive_count / 256),
       1,
       1,
-      "initialize_leaf_clusters"
+      initialize_leaf_clusters_cs_entry_point
     );
 
     // For now, skip the complex wave reduction kernel and depend on later conversion
     ComputeTaskQueue.new_task(
-      `hploc_build_bvh2`,
-      "acceleration/bvh_processing.wgsl",
-      base_bindings,
-      [bvh.bvh2_nodes_buffer],
+      hploc_build_bvh2_task_name,
+      bvh_processing_wgsl_path,
+      this.bvh2_inputs,
+      this.bvh2_outputs,
       bvh2_workgroups,
       1,
       1,
-      "build_bvh2_hploc"
+      build_bvh2_hploc_cs_entry_point
     );
   }
 
@@ -298,27 +317,26 @@ export class BVHProcessor {
     const bvh = BVH.to_gpu_data();
     // Parallel conversion: each thread converts a top-level BVH2 root using a local stack
 
+    this.bvh4_inputs[0] = bvh.bvh2_nodes_buffer;
+    this.bvh4_inputs[1] = bvh.bvh4_nodes_buffer;
+    this.bvh4_inputs[2] = bvh.bvh4_parents_buffer;
+    this.bvh4_inputs[3] = bvh.node_counters_buffer;
+    this.bvh4_inputs[4] = bvh.scene_bounds_buffer;
+
+    this.bvh4_outputs[0] = bvh.bvh4_nodes_buffer;
+    this.bvh4_outputs[1] = bvh.node_counters_buffer;
+
     const total_nodes_estimate = primitive_count * 2 - 1;
     const workgroups = Math.max(1, Math.ceil(total_nodes_estimate / WORKGROUP_SIZE));
     ComputeTaskQueue.new_task(
-      `hploc_convert_parallel_single_pass`,
-      "acceleration/bvh_processing.wgsl",
-      [
-        bvh.bounds_buffer,
-        bvh.sorted_indices_buffer,
-        bvh.bvh2_nodes_buffer,
-        bvh.bvh4_nodes_buffer,
-        bvh.node_counters_buffer,
-        this.sort_uniforms_buffer,
-        bvh.clusters_in_buffer,
-        bvh.clusters_out_buffer,
-        bvh.scene_bounds_buffer,
-      ],
-      [bvh.bvh4_nodes_buffer, bvh.node_counters_buffer],
+      hploc_convert_parallel_single_pass_task_name,
+      bvh4_processing_wgsl_path,
+      this.bvh4_inputs,
+      this.bvh4_outputs,
       workgroups,
       1,
       1,
-      "convert_bvh2_to_bvh4"
+      convert_bvh2_to_bvh4_cs_entry_point
     );
   }
 

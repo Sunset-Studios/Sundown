@@ -123,6 +123,8 @@ export const DebugDrawType = Object.freeze({
     GTAO: 13,
     BentNormal: 14,
     GI_Irradiance: 15,
+    EntityBounds: 16,
+    BVH: 17,
 });
 
 /**

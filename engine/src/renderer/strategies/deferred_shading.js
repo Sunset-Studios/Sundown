@@ -305,6 +305,21 @@ const line_draw_shader_setup = {
   },
 };
 
+const debug_emit_entity_bounds_shader_setup = {
+  pipeline_shaders: {
+    compute: {
+      path: "debug/debug_emit_entity_bounds_lines.wgsl",
+    },
+  },
+};
+const debug_emit_bvh_nodes_shader_setup = {
+  pipeline_shaders: {
+    compute: {
+      path: "debug/debug_emit_bvh_nodes_lines.wgsl",
+    },
+  },
+};
+
 const bloom_downsample_shader_setup = {
   pipeline_shaders: {
     compute: {
@@ -557,9 +572,7 @@ export class DeferredShadingStrategy {
       // │ 📦 Setup Acceleration Structures & Bounds                                  │
       // └─────────────────────────────────────────────────────────────────────────────┘
       const aabb_gpu_data = BVH.to_gpu_data();
-      const aabb_bounds = render_graph.register_buffer(
-        aabb_gpu_data.bounds_buffer.config.name
-      );
+      const aabb_bounds = render_graph.register_buffer(aabb_gpu_data.bounds_buffer.config.name);
 
       // ┌─────────────────────────────────────────────────────────────────────────────┐
       // │ 🖼️  Create G-Buffer & Main Render Targets                                  │
@@ -1061,6 +1074,100 @@ export class DeferredShadingStrategy {
             }
           );
         }
+      }
+
+      // ┌─────────────────────────────────────────────────────────────────────────────┐
+      // │ 📏 PASS: Debug Entity Bounds and BVH                                        │
+      // │    Render entity bounds and BVH for visualization                           │
+      // └─────────────────────────────────────────────────────────────────────────────┘
+      if (debug_view === DebugDrawType.EntityBounds || debug_view === DebugDrawType.BVH) {
+        const aabb_gpu_data = BVH.to_gpu_data();
+        const max_nodes_debug = BVH.bvh_size * 2; // accommodate BVH4 nodes
+        const max_lines = max_nodes_debug * 12;
+
+        const debug_line_transform_buf = render_graph.create_buffer({
+          name: "debug_line_transforms",
+          size: max_lines * 16,
+          usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+        });
+        const debug_line_data_buf = render_graph.create_buffer({
+          name: "debug_line_data",
+          size: max_lines * 4,
+          usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+        });
+
+        // BVH debug inputs
+        const bvh4_nodes = render_graph.register_buffer(
+          aabb_gpu_data.bvh4_nodes_buffer.config.name
+        );
+        const bvh4_parents = render_graph.register_buffer(
+          aabb_gpu_data.bvh4_parents_buffer.config.name
+        );
+        const bvh_counters = render_graph.register_buffer(
+          aabb_gpu_data.node_counters_buffer.config.name
+        );
+        const scene_bounds = render_graph.register_buffer(
+          aabb_gpu_data.scene_bounds_buffer.config.name
+        );
+
+        if (debug_view === DebugDrawType.EntityBounds) {
+          render_graph.add_pass(
+            "debug_emit_bounds_lines",
+            RenderPassFlags.Compute,
+            {
+              inputs: [debug_line_transform_buf, debug_line_data_buf, aabb_bounds],
+              outputs: [debug_line_transform_buf, debug_line_data_buf],
+              shader_setup: debug_emit_entity_bounds_shader_setup,
+            },
+            (graph, frame_data, encoder) => {
+              const pass = graph.get_physical_pass(frame_data.current_pass);
+              pass.dispatch(Math.ceil(BVH.bvh_size / 64), 1, 1);
+            }
+          );
+        } else {
+          // Debug BVH: emit lines from BVH4 nodes
+          render_graph.add_pass(
+            "debug_emit_bvh_lines",
+            RenderPassFlags.Compute,
+            {
+              inputs: [
+                debug_line_transform_buf,
+                debug_line_data_buf,
+                bvh4_nodes,
+                bvh4_parents,
+                bvh_counters,
+                scene_bounds,
+              ],
+              outputs: [debug_line_transform_buf, debug_line_data_buf],
+              shader_setup: debug_emit_bvh_nodes_shader_setup,
+            },
+            (graph, frame_data, encoder) => {
+              const pass = graph.get_physical_pass(frame_data.current_pass);
+              pass.dispatch(Math.ceil(max_nodes_debug / 64), 1, 1);
+            }
+          );
+        }
+
+        render_graph.add_pass(
+          "debug_line_draw",
+          RenderPassFlags.Graphics,
+          {
+            inputs: [debug_line_transform_buf, debug_line_data_buf],
+            outputs: [
+              main_albedo_image,
+              main_emissive_image,
+              main_smra_image,
+              main_position_image,
+              main_normal_image,
+              main_depth_image,
+            ],
+            shader_setup: line_draw_shader_setup,
+          },
+          (graph, frame_data, encoder) => {
+            const pass = graph.get_physical_pass(frame_data.current_pass);
+            MeshTaskQueue.draw_quad(pass, max_lines);
+          }
+        );
       }
 
       // ┌─────────────────────────────────────────────────────────────────────────────┐

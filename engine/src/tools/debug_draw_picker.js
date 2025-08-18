@@ -55,6 +55,12 @@ export class DebugDrawPicker extends DevConsoleTool {
         case "gi":
           Renderer.get().set_debug_draw_type(DebugDrawType.GI_Irradiance);
           break;
+        case "bounds":
+          Renderer.get().set_debug_draw_type(DebugDrawType.EntityBounds);
+          break;
+        case "bvh":
+          Renderer.get().set_debug_draw_type(DebugDrawType.BVH);
+          break;
         default:
           Renderer.get().set_debug_draw_type(DebugDrawType.None);
           break;

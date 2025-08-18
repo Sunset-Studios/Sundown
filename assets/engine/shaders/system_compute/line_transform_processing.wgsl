@@ -13,24 +13,6 @@ struct LinePosition {
 @group(1) @binding(0) var<storage, read_write> transforms: array<mat4x4f>;
 @group(1) @binding(1) var<storage, read> line_positions: array<LinePosition>;
 
-fn mat4_identity() -> mat4x4f {
-    return mat4x4f(
-        vec4f(1.0, 0.0, 0.0, 0.0),
-        vec4f(0.0, 1.0, 0.0, 0.0),
-        vec4f(0.0, 0.0, 1.0, 0.0),
-        vec4f(0.0, 0.0, 0.0, 1.0)
-    );
-}
-
-fn mat4_from_scaling(scale: vec3f) -> mat4x4f {
-    return mat4x4f(
-        vec4f(scale.x, 0.0, 0.0, 0.0),
-        vec4f(0.0, scale.y, 0.0, 0.0),
-        vec4f(0.0, 0.0, scale.z, 0.0),
-        vec4f(0.0, 0.0, 0.0, 1.0)
-    );
-}
-
 // Main function to create a line transform
 fn create_line_transform(start: vec4f, end: vec4f) -> mat4x4f {
     // Calculate direction vector from start to end
@@ -41,7 +23,7 @@ fn create_line_transform(start: vec4f, end: vec4f) -> mat4x4f {
     
     if (line_length < 0.0001) {
         // Handle degenerate case (zero-length line)
-        return mat4_identity();
+        return identity_matrix;
     }
     
     // Normalized direction
