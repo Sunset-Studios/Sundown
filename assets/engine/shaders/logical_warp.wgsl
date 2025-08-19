@@ -1,6 +1,6 @@
 const LOGICAL_WORKGROUP_SIZE   : u32 = 256u;
 const LOGICAL_WARP_SIZE        : u32 = 32u;
-const NUM_WARPS_256            : u32 = 256u / LOGICAL_WARP_SIZE;
+const NUM_WARPS_256            : u32 = 8u; // LOGICAL_WORKGROUP_SIZE / LOGICAL_WARP_SIZE
 
 struct WarpCtx {
   thread_id : u32,   // local_invocation_id.x
@@ -13,6 +13,11 @@ struct WarpCtx {
 // Scratch (one slot per thread in the workgroup)
 var<workgroup> warp_tmp_u32 : array<u32, LOGICAL_WORKGROUP_SIZE>;
 var<workgroup> warp_tmp_f32 : array<f32, LOGICAL_WORKGROUP_SIZE>;
+// Workgroup-wide reduction helpers (atomic-based)
+var<workgroup> wg_reduce_min_flag  : atomic<u32>;
+var<workgroup> wg_reduce_max_flag  : atomic<u32>;
+var<workgroup> wg_reduce_min_value : atomic<u32>;
+var<workgroup> wg_reduce_max_value : atomic<u32>;
 
 fn make_warp_ctx(local_tid: u32, lane: u32, warp_size: u32) -> WarpCtx {
   let wid  = local_tid / warp_size;
@@ -37,13 +42,13 @@ fn warp_broadcast_f32(c: WarpCtx, value: f32, lane: u32) -> f32 {
   return warp_tmp_f32[c.warp_base + lane];
 }
 
-fn warp_shuffle_index_u32(c: WarpCtx, value: u32, lane: u32) -> u32 {
+fn warp_shuffle_u32(c: WarpCtx, value: u32, lane: u32) -> u32 {
   warp_tmp_u32[c.thread_id] = value;
   workgroupBarrier();
   return warp_tmp_u32[c.warp_base + lane];
 }
 
-fn warp_shuffle_index_f32(c: WarpCtx, value: f32, lane: u32) -> f32 {
+fn warp_shuffle_f32(c: WarpCtx, value: f32, lane: u32) -> f32 {
   warp_tmp_f32[c.thread_id] = value;
   workgroupBarrier();
   return warp_tmp_f32[c.warp_base + lane];
@@ -92,32 +97,33 @@ fn warp_ballot_u32(c: WarpCtx, predicate: bool) -> vec4<u32> {
   );
 }
 
-fn warp_any(c: WarpCtx, predicate: bool) -> bool {
-  return any(warp_ballot_u32(c, predicate) != 0u);
+fn warp_any(warp_ctx: WarpCtx, predicate: bool) -> bool {
+  return any(warp_ballot_u32(warp_ctx, predicate) != vec4<u32>(0u, 0u, 0u, 0u));
 }
 
-fn warp_all(c: WarpCtx, predicate: bool) -> bool {
-  let mask0 = select(0u, 0xFFFFFFFFu, c.warp_size == 32u);
-  let mask1 = select(0u, 0xFFFFFFFFu, c.warp_size == 64u);
-  let mask2 = select(0u, 0xFFFFFFFFu, c.warp_size == 128u);
-  let mask3 = select(0u, 0xFFFFFFFFu, c.warp_size == 256u);
-  return warp_ballot_u32(c, predicate) == vec4<u32>(mask0, mask1, mask2, mask3);
+fn warp_all(warp_ctx: WarpCtx, predicate: bool) -> bool {
+  let mask0 = select(0u, 0xFFFFFFFFu, warp_ctx.warp_size == 32u);
+  let mask1 = select(0u, 0xFFFFFFFFu, warp_ctx.warp_size == 64u);
+  let mask2 = select(0u, 0xFFFFFFFFu, warp_ctx.warp_size == 128u);
+  let mask3 = select(0u, 0xFFFFFFFFu, warp_ctx.warp_size == 256u);
+  return all(warp_ballot_u32(warp_ctx, predicate) == vec4<u32>(mask0, mask1, mask2, mask3));
 }
 
 // -------- Reductions (sum) --------
 fn warp_reduce_add_u32(c: WarpCtx, value: u32) -> u32 {
   warp_tmp_u32[c.thread_id] = value;
   workgroupBarrier();
-
-  var step = c.warp_size / 2u;
-  loop {
-    if (c.lane_id < step) {
-      warp_tmp_u32[c.thread_id] = warp_tmp_u32[c.thread_id] + warp_tmp_u32[c.thread_id + step];
-    }
-    workgroupBarrier();
-    if (step == 1u) { break; }
-    step = step / 2u;
-  }
+  // Unrolled for LOGICAL_WARP_SIZE == 32
+  if (c.lane_id < 16u) { warp_tmp_u32[c.thread_id] = warp_tmp_u32[c.thread_id] + warp_tmp_u32[c.thread_id + 16u]; }
+  workgroupBarrier();
+  if (c.lane_id < 8u)  { warp_tmp_u32[c.thread_id] = warp_tmp_u32[c.thread_id] + warp_tmp_u32[c.thread_id + 8u]; }
+  workgroupBarrier();
+  if (c.lane_id < 4u)  { warp_tmp_u32[c.thread_id] = warp_tmp_u32[c.thread_id] + warp_tmp_u32[c.thread_id + 4u]; }
+  workgroupBarrier();
+  if (c.lane_id < 2u)  { warp_tmp_u32[c.thread_id] = warp_tmp_u32[c.thread_id] + warp_tmp_u32[c.thread_id + 2u]; }
+  workgroupBarrier();
+  if (c.lane_id < 1u)  { warp_tmp_u32[c.thread_id] = warp_tmp_u32[c.thread_id] + warp_tmp_u32[c.thread_id + 1u]; }
+  workgroupBarrier();
   // Broadcast final sum from lane 0 (stored at warp_base).
   return warp_tmp_u32[c.warp_base];
 }
@@ -125,16 +131,17 @@ fn warp_reduce_add_u32(c: WarpCtx, value: u32) -> u32 {
 fn warp_reduce_add_f32(c: WarpCtx, value: f32) -> f32 {
   warp_tmp_f32[c.thread_id] = value;
   workgroupBarrier();
-
-  var step = c.warp_size / 2u;
-  loop {
-    if (c.lane_id < step) {
-      warp_tmp_f32[c.thread_id] = warp_tmp_f32[c.thread_id] + warp_tmp_f32[c.thread_id + step];
-    }
-    workgroupBarrier();
-    if (step == 1u) { break; }
-    step = step / 2u;
-  }
+  // Unrolled for LOGICAL_WARP_SIZE == 32
+  if (c.lane_id < 16u) { warp_tmp_f32[c.thread_id] = warp_tmp_f32[c.thread_id] + warp_tmp_f32[c.thread_id + 16u]; }
+  workgroupBarrier();
+  if (c.lane_id < 8u)  { warp_tmp_f32[c.thread_id] = warp_tmp_f32[c.thread_id] + warp_tmp_f32[c.thread_id + 8u]; }
+  workgroupBarrier();
+  if (c.lane_id < 4u)  { warp_tmp_f32[c.thread_id] = warp_tmp_f32[c.thread_id] + warp_tmp_f32[c.thread_id + 4u]; }
+  workgroupBarrier();
+  if (c.lane_id < 2u)  { warp_tmp_f32[c.thread_id] = warp_tmp_f32[c.thread_id] + warp_tmp_f32[c.thread_id + 2u]; }
+  workgroupBarrier();
+  if (c.lane_id < 1u)  { warp_tmp_f32[c.thread_id] = warp_tmp_f32[c.thread_id] + warp_tmp_f32[c.thread_id + 1u]; }
+  workgroupBarrier();
   return warp_tmp_f32[c.warp_base];
 }
 
@@ -142,19 +149,18 @@ fn warp_reduce_add_f32(c: WarpCtx, value: f32) -> f32 {
 fn warp_scan_inclusive_add_u32(c: WarpCtx, value: u32) -> u32 {
   warp_tmp_u32[c.thread_id] = value;
   workgroupBarrier();
-
-  var offset = 1u;
-  loop {
-    if (offset >= c.warp_size) { break; }
-    var addend: u32 = 0u;
-    if (c.lane_id >= offset) {
-      addend = warp_tmp_u32[c.thread_id - offset];
-    }
-    workgroupBarrier();
-    warp_tmp_u32[c.thread_id] = warp_tmp_u32[c.thread_id] + addend;
-    workgroupBarrier();
-    offset = offset * 2u;
-  }
+  // Unrolled offsets for LOGICAL_WARP_SIZE == 32
+  var addend: u32;
+  addend = select(0u, warp_tmp_u32[c.thread_id - 1u],  c.lane_id >= 1u);  workgroupBarrier();
+  warp_tmp_u32[c.thread_id] = warp_tmp_u32[c.thread_id] + addend;        workgroupBarrier();
+  addend = select(0u, warp_tmp_u32[c.thread_id - 2u],  c.lane_id >= 2u);  workgroupBarrier();
+  warp_tmp_u32[c.thread_id] = warp_tmp_u32[c.thread_id] + addend;        workgroupBarrier();
+  addend = select(0u, warp_tmp_u32[c.thread_id - 4u],  c.lane_id >= 4u);  workgroupBarrier();
+  warp_tmp_u32[c.thread_id] = warp_tmp_u32[c.thread_id] + addend;        workgroupBarrier();
+  addend = select(0u, warp_tmp_u32[c.thread_id - 8u],  c.lane_id >= 8u);  workgroupBarrier();
+  warp_tmp_u32[c.thread_id] = warp_tmp_u32[c.thread_id] + addend;        workgroupBarrier();
+  addend = select(0u, warp_tmp_u32[c.thread_id - 16u], c.lane_id >= 16u); workgroupBarrier();
+  warp_tmp_u32[c.thread_id] = warp_tmp_u32[c.thread_id] + addend;        workgroupBarrier();
   return warp_tmp_u32[c.thread_id];
 }
 
@@ -166,23 +172,102 @@ fn warp_scan_exclusive_add_u32(c: WarpCtx, value: u32) -> u32 {
 fn warp_scan_inclusive_add_f32(c: WarpCtx, value: f32) -> f32 {
   warp_tmp_f32[c.thread_id] = value;
   workgroupBarrier();
-
-  var offset = 1u;
-  loop {
-    if (offset >= c.warp_size) { break; }
-    var addend: f32 = 0.0;
-    if (c.lane_id >= offset) {
-      addend = warp_tmp_f32[c.thread_id - offset];
-    }
-    workgroupBarrier();
-    warp_tmp_f32[c.thread_id] = warp_tmp_f32[c.thread_id] + addend;
-    workgroupBarrier();
-    offset = offset * 2u;
-  }
+  // Unrolled offsets for LOGICAL_WARP_SIZE == 32
+  var addend: f32;
+  addend = select(0.0, warp_tmp_f32[c.thread_id - 1u],  c.lane_id >= 1u);  workgroupBarrier();
+  warp_tmp_f32[c.thread_id] = warp_tmp_f32[c.thread_id] + addend;         workgroupBarrier();
+  addend = select(0.0, warp_tmp_f32[c.thread_id - 2u],  c.lane_id >= 2u);  workgroupBarrier();
+  warp_tmp_f32[c.thread_id] = warp_tmp_f32[c.thread_id] + addend;         workgroupBarrier();
+  addend = select(0.0, warp_tmp_f32[c.thread_id - 4u],  c.lane_id >= 4u);  workgroupBarrier();
+  warp_tmp_f32[c.thread_id] = warp_tmp_f32[c.thread_id] + addend;         workgroupBarrier();
+  addend = select(0.0, warp_tmp_f32[c.thread_id - 8u],  c.lane_id >= 8u);  workgroupBarrier();
+  warp_tmp_f32[c.thread_id] = warp_tmp_f32[c.thread_id] + addend;         workgroupBarrier();
+  addend = select(0.0, warp_tmp_f32[c.thread_id - 16u], c.lane_id >= 16u); workgroupBarrier();
+  warp_tmp_f32[c.thread_id] = warp_tmp_f32[c.thread_id] + addend;         workgroupBarrier();
   return warp_tmp_f32[c.thread_id];
 }
 
 fn warp_scan_exclusive_add_f32(c: WarpCtx, value: f32) -> f32 {
   let inc = warp_scan_inclusive_add_f32(c, value);
   return inc - value;
+}
+
+fn warp_min_u32(c: WarpCtx, value: u32) -> u32 {
+  // Elect a leader to initialize the accumulator once per call
+  let leader = atomicCompareExchangeWeak(&wg_reduce_min_flag, 0u, 1u);
+  if (leader.exchanged) {
+    atomicStore(&wg_reduce_min_value, value);
+  }
+  // Ensure accumulator is initialized before updates
+  workgroupBarrier();
+  // Contribute this lane's value
+  atomicMin(&wg_reduce_min_value, value);
+  workgroupBarrier();
+  let result = atomicLoad(&wg_reduce_min_value);
+  // Reset for reuse (only the elected leader clears the flag)
+  if (leader.exchanged) {
+    atomicStore(&wg_reduce_min_flag, 0u);
+  }
+  workgroupBarrier();
+  return result;
+}
+
+fn warp_min_f32(c: WarpCtx, value: f32) -> f32 {
+  // Elect a leader to initialize the accumulator once per call
+  let leader = atomicCompareExchangeWeak(&wg_reduce_min_flag, 0u, 1u);
+  if (leader.exchanged) {
+    atomicStore(&wg_reduce_min_value, bitcast<u32>(value));
+  }
+  // Ensure accumulator is initialized before updates
+  workgroupBarrier();
+  // Contribute this lane's value
+  atomicMin(&wg_reduce_min_value, bitcast<u32>(value));
+  workgroupBarrier();
+  let result = bitcast<f32>(atomicLoad(&wg_reduce_min_value));
+  // Reset for reuse (only the elected leader clears the flag)
+  if (leader.exchanged) {
+    atomicStore(&wg_reduce_min_flag, 0u);
+  }
+  workgroupBarrier();
+  return result;
+}
+
+fn warp_max_u32(c: WarpCtx, value: u32) -> u32 {
+  // Elect a leader to initialize the accumulator once per call
+  let leader = atomicCompareExchangeWeak(&wg_reduce_max_flag, 0u, 1u);
+  if (leader.exchanged) {
+    atomicStore(&wg_reduce_max_value, value);
+  }
+  // Ensure accumulator is initialized before updates
+  workgroupBarrier();
+  // Contribute this lane's value
+  atomicMax(&wg_reduce_max_value, value);
+  workgroupBarrier();
+  let result = atomicLoad(&wg_reduce_max_value);
+  // Reset for reuse (only the elected leader clears the flag)
+  if (leader.exchanged) {
+    atomicStore(&wg_reduce_max_flag, 0u);
+  }
+  workgroupBarrier();
+  return result;
+}
+
+fn warp_max_f32(c: WarpCtx, value: f32) -> f32 {
+  // Elect a leader to initialize the accumulator once per call
+  let leader = atomicCompareExchangeWeak(&wg_reduce_max_flag, 0u, 1u);
+  if (leader.exchanged) {
+    atomicStore(&wg_reduce_max_value, bitcast<u32>(value));
+  }
+  // Ensure accumulator is initialized before updates
+  workgroupBarrier();
+  // Contribute this lane's value
+  atomicMax(&wg_reduce_max_value, bitcast<u32>(value));
+  workgroupBarrier();
+  let result = bitcast<f32>(atomicLoad(&wg_reduce_max_value));
+  // Reset for reuse (only the elected leader clears the flag)
+  if (leader.exchanged) {
+    atomicStore(&wg_reduce_max_flag, 0u);
+  }
+  workgroupBarrier();
+  return result;
 }

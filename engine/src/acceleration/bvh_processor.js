@@ -44,7 +44,7 @@ const aabb_node_index_name = "aabb_node_index";
 export class BVHProcessor {
   is_initialised = false;
   max_primitives = 256;
-  sort_uniforms_buffer = null;
+  sort_uniforms_buffers = [];
   radix_uniforms_data = new Uint32Array(4);
   bvh2_uniforms = new Uint32Array(2);
   counter_zeros = new Uint32Array(2);
@@ -61,11 +61,13 @@ export class BVHProcessor {
 
   constructor() {
     BVH.initialize(this.max_primitives);
-    this.sort_uniforms_buffer = Buffer.create({
-      name: "sort_uniforms",
-      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-      size: 16,
-    });
+    for (let i = 0; i < RADIX_PASSES; i++) {
+      this.sort_uniforms_buffers[i] = Buffer.create({
+        name: `sort_uniforms_${i}`,
+        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+        size: 16,
+      });
+    }
   }
 
   build() {
@@ -150,7 +152,7 @@ export class BVHProcessor {
     this.radix_uniforms_data[1] = 0; // radix_shift
     this.radix_uniforms_data[2] = thread_blocks;
     this.radix_uniforms_data[3] = 0; // _padding
-    this.sort_uniforms_buffer.write(this.radix_uniforms_data);
+    this.sort_uniforms_buffers[0].write(this.radix_uniforms_data);
 
     // Initialize pass/global histograms and tile indices
     ComputeTaskQueue.new_task(
@@ -164,7 +166,7 @@ export class BVHProcessor {
         bvh.onesweep_global_hist_buffer, // global_historgram
         bvh.onesweep_pass_hist_buffer, // pass_histogram
         bvh.onesweep_tile_indices_buffer, // tile_indices
-        this.sort_uniforms_buffer, // params
+        this.sort_uniforms_buffers[0], // params
       ],
       [
         bvh.onesweep_global_hist_buffer,
@@ -194,7 +196,7 @@ export class BVHProcessor {
         bvh.onesweep_global_hist_buffer, // global_historgram
         bvh.onesweep_pass_hist_buffer, // pass_histogram
         bvh.onesweep_tile_indices_buffer, // tile_indices
-        this.sort_uniforms_buffer, // params
+        this.sort_uniforms_buffers[0], // params
       ],
       [bvh.onesweep_global_hist_buffer],
       thread_blocks,
@@ -215,7 +217,7 @@ export class BVHProcessor {
         bvh.onesweep_global_hist_buffer,
         bvh.onesweep_pass_hist_buffer,
         bvh.onesweep_tile_indices_buffer,
-        this.sort_uniforms_buffer,
+        this.sort_uniforms_buffers[0],
       ],
       [bvh.onesweep_pass_hist_buffer],
       RADIX_PASSES,
@@ -235,7 +237,7 @@ export class BVHProcessor {
       const dst_vals = src_is_morton ? bvh.temp_sorted_indices_buffer : bvh.sorted_indices_buffer;
 
       this.radix_uniforms_data[1] = shift;
-      this.sort_uniforms_buffer.write(this.radix_uniforms_data);
+      this.sort_uniforms_buffers[i].write(this.radix_uniforms_data);
 
       ComputeTaskQueue.new_task(
         `onesweep_digit_binning_${shift}`,
@@ -248,7 +250,7 @@ export class BVHProcessor {
           bvh.onesweep_global_hist_buffer, // global_historgram
           bvh.onesweep_pass_hist_buffer, // pass_histogram
           bvh.onesweep_tile_indices_buffer, // tile_indices
-          this.sort_uniforms_buffer, // params
+          this.sort_uniforms_buffers[i], // params
         ],
         [dst_buffer, dst_vals, bvh.onesweep_pass_hist_buffer],
         thread_blocks,
@@ -271,7 +273,7 @@ export class BVHProcessor {
     // Initialize leaf clusters
     this.bvh2_uniforms[0] = primitive_count; // primitive_count
     this.bvh2_uniforms[1] = 0; // pass_num
-    this.sort_uniforms_buffer.write(this.bvh2_uniforms);
+    this.sort_uniforms_buffers[0].write(this.bvh2_uniforms);
     // Reset combined node counters: [bvh2_count, bvh4_count]
     bvh.node_counters_buffer.write(this.counter_zeros);
 
@@ -283,7 +285,7 @@ export class BVHProcessor {
     this.bvh2_inputs[4] = bvh.node_counters_buffer;
     this.bvh2_inputs[5] = bvh.clusters_in_buffer;
     this.bvh2_inputs[6] = bvh.clusters_out_buffer;
-    this.bvh2_inputs[7] = this.sort_uniforms_buffer;
+    this.bvh2_inputs[7] = this.sort_uniforms_buffers[0];
 
     this.bvh2_outputs[0] = bvh.bvh2_nodes_buffer;
     this.bvh2_outputs[1] = bvh.clusters_in_buffer;
@@ -347,8 +349,10 @@ export class BVHProcessor {
 
   destroy() {
     BVH.destroy();
-    if (this.sort_uniforms_buffer) {
-      this.sort_uniforms_buffer.destroy();
+    for (let i = 0; i < RADIX_PASSES; i++) {
+      if (this.sort_uniforms_buffers[i]) {
+        this.sort_uniforms_buffers[i].destroy();
+      }
     }
   }
 }

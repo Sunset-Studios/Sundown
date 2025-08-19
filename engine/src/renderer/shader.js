@@ -19,7 +19,7 @@ import {
   r16uint_format,
   r16sint_format,
 } from "../utility/config_permutations.js";
-import { log, warn, error } from "../utility/logging.js";
+import { error } from "../utility/logging.js";
 import { hash_data_object } from "../utility/hashing.js";
 
 const include_string = "#include";
@@ -109,14 +109,10 @@ export class Shader {
       return null;
     }
 
+    // Step 0: parse shader includes
     asset = this._parse_shader_includes(asset, defines, load_recursion_step);
-
-    // Step 2: parse and expand WGSL macros before defines/conditionals on top-level load
-    if (load_recursion_step === 0) {
-      const { code: code_without_macros, macros } = this._parse_and_strip_macros(asset);
-      asset = this._expand_macros(code_without_macros, macros);
-    }
-
+    
+    // Step 1: parse defines and conditionals
     if (load_recursion_step === 0) {
       const { defines_map, stripped_code } = this._build_defines_map_and_strip(
         file_path,
@@ -129,6 +125,12 @@ export class Shader {
       if (defines_map.DEPTH_ONLY) {
         asset = this._strip_custom_fragment_functions(asset);
       }
+    }
+    
+    // Step 2: parse and expand WGSL macros
+    if (load_recursion_step === 0) {
+      const { code: code_without_macros, macros } = this._parse_and_strip_macros(asset);
+      asset = this._expand_macros(code_without_macros, macros);
     }
 
     return asset;

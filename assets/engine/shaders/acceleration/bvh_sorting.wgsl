@@ -8,21 +8,42 @@
 // Original: HLSL by Thomas Smith (2024-03-14)
 // Based on research by Adinets & Merrill (NVIDIA) - OneSweep (2022)
 //
+// High-level overview:
+// - Stable radix binning/scatter using 8-bit digits (4 passes for 32-bit keys).
+// - Avoids global sync by using a decoupled look-back buffer that publishes
+//   per-tile reductions and inclusive prefixes, allowing later tiles to derive
+//   their global base without a device-wide barrier.
+// - Per pass, the algorithm builds per-tile histograms, computes tile-exclusive
+//   bases, performs a look-back to add prior tiles, and scatters keys/values.
+//
+// Memory overview:
+// - pass_histogram (device): per-tile/per-digit entries storing either an
+//   inclusive prefix (FLAG_INCLUSIVE) or a reduction payload (FLAG_REDUCTION).
+// - global_historgram (device): per-pass histogram (all tiles) used to seed
+//   the scan kernel (onesweep_scan) which writes inclusive prefixes to
+//   pass_histogram in a circular pattern.
+// - pass_hist (workgroup): per-tile scratch for counters, staging, and per-digit
+//   tile bases used during scatter.
+//
 // Note: Requires minimum workgroup storage size of 32KB.
 ////////////////////////////////////////////////////////////////////////////////
 
 // ==================================
 // Tunables / Constants
 // ==================================
+// Controls how work is partitioned across the GPU and how many keys each
+// workgroup processes per tile (TILE_SIZE). Adjust PASS_DIM and G_HIST_DIM
+// for hardware occupancy tradeoffs; TILE_SIZE must be KEYS_PER_THREAD * PASS_DIM.
 const PASS_DIM            : u32 = 256u;    // threads in DigitBinningPass workgroup
 const G_HIST_DIM          : u32 = 128u;    // threads in GlobalHistogram workgroup
-const PART_SIZE           : u32 = 4096u;   // size of a partition tile (KEYS_PER_THREAD * PASS_DIM)
+const TILE_SIZE           : u32 = 4096u;   // size of a tile (KEYS_PER_THREAD * PASS_DIM)
 
+// 8-bit radix parameters (RADIX_LOG = 8) → 4 passes for 32-bit keys.
 const RADIX               : u32 = 256u;
 const RADIX_MASK          : u32 = 255u;
 const RADIX_LOG           : u32 = 8u;
 const RADIX_PASSES        : u32 = 4u;
-const HALF_RADIX          : u32 = RADIX >> 1u;
+const HALF_RADIX          : u32 = 128u;
 
 const SEC_RADIX_START     : u32 = 256u;
 const THIRD_RADIX_START   : u32 = 512u;
@@ -30,7 +51,8 @@ const FOURTH_RADIX_START  : u32 = 768u;
 
 const KEYS_PER_THREAD     : u32 = 16u;
 
-// decoupled look-back flags
+// Decoupled look-back flags used in pass_histogram (2 LSBs are flags).
+// Upper 30 bits carry payload (inclusive prefix or reduction amount).
 const FLAG_NOT_READY      : u32 = 0u;
 const FLAG_REDUCTION      : u32 = 1u;
 const FLAG_INCLUSIVE      : u32 = 2u;
@@ -39,6 +61,7 @@ const FLAG_MASK           : u32 = 3u;
 // ==================================
 // Data Structures 
 // ==================================
+// Parameters are shared across kernels for the current pass.
 struct Params {
   key_count: u32,
   radix_shift: u32,
@@ -57,6 +80,7 @@ struct BufA32 {
 // ==================================
 // Bindings
 // ==================================
+// Resources for keys/values, intermediate histogram/flags and control.
 @group(1) @binding(0) var<storage, read_write>  keys_buffer        : BufU32;
 @group(1) @binding(1) var<storage, read_write>  scatter_out        : BufU32;
 @group(1) @binding(2) var<storage, read_write>  values_buffer      : BufU32;
@@ -69,19 +93,17 @@ struct BufA32 {
 // ==================================
 // Workgroup (shared) memory
 // ==================================
-// Packed per-tile local histograms: 4 components (x,y,z,w) * RADIX bins.
-// Each u32 packs two 16-bit halves: low 16 for lanes <64, high 16 for lanes >=64.
-var<workgroup> global_hist_packed : array<atomic<u32>, RADIX * 4u>;
-// Per-tile local reduction values
-var<workgroup> pass_hist          : array<atomic<u32>, PART_SIZE>;
-// Per-warp scan values
+// Per-tile scratch for per-digit counts and staging during scatter.
+var<workgroup> pass_hist          : array<u32, TILE_SIZE + RADIX>;
+// Local accumulation of the per-digit global histogram (two halves), then reduced.
+var<workgroup> global_hist        : array<atomic<u32>, RADIX * 2u * 4u>;
+// Temporary storage for scan of the global histogram per pass plane.
 var<workgroup> scan               : array<u32, RADIX>;
-// Per-digit global base for this tile (computed by decoupled look-back)
-var<workgroup> digit_base         : array<u32, RADIX>;
 
 // ==================================
-// Helpers Functions
+// Helper Functions
 // ==================================
+// Digit extraction and packed helpers used by the binning/scatter.
 fn extract_digit(key: u32, shift: u32) -> u32 {
   return (key >> shift) & RADIX_MASK;
 }
@@ -100,10 +122,12 @@ fn extract_packed_value(word: u32, key: u32, shift: u32) -> u32 {
   return (word >> s) & 0xFFFFu;
 }
 
+// Current radix pass index in [0, RADIX_PASSES).
 fn current_pass() -> u32 {
   return (params.radix_shift >> 3u); // shift / RADIX_LOG
 }
 
+// Base offset into pass_histogram for a given tile index at the current pass.
 fn pass_hist_offset(tile_index: u32) -> u32 {
   return ((current_pass() * params.thread_blocks) + tile_index) << RADIX_LOG; 
 }
@@ -113,7 +137,7 @@ fn wave_hists_size_ge16(_c: WarpCtx) -> u32 {
 }
 
 fn wave_hists_size_lt16(_c: WarpCtx) -> u32 {
-  return PART_SIZE;
+  return TILE_SIZE;
 }
 
 fn subpart_size_ge16(_c: WarpCtx) -> u32
@@ -149,7 +173,7 @@ fn shared_offset(_c: WarpCtx, local_id: u32, serial_iters: u32) -> u32
 
 fn device_offset(_c: WarpCtx, local_id: u32, tile_idx: u32, serial_iters: u32) -> u32
 {
-    return shared_offset(_c, local_id, serial_iters) + tile_idx * PART_SIZE;
+    return shared_offset(_c, local_id, serial_iters) + tile_idx * TILE_SIZE;
 }
 
 fn global_hist_offset(pass_idx: u32) -> u32 {
@@ -159,87 +183,86 @@ fn global_hist_offset(pass_idx: u32) -> u32 {
 // ==================================
 // Kernels
 // ==================================
-// InitOneSweep: clears passHist, globalHist, and tile index counters.
+// InitOneSweep: clears pass_histogram, global_historgram, and per-pass tile indices.
 @compute @workgroup_size(256)
 fn onesweep_init(@builtin(global_invocation_id) gid: vec3<u32>) {
   let id = gid.x;
 
+  // Grid-strided clear of per-pass/per-tile histogram flags and payloads.
   // Clear pass_histogram: e_threadBlocks * RADIX * RADIX_PASSES
   let clear_end = params.thread_blocks * RADIX * RADIX_PASSES;
   for (var i: u32 = id; i < clear_end; i += 65536u) {
     atomicStore(&pass_histogram.data[i], 0u);
   }
+  // Clear device-wide per-pass global histogram planes.
   // Clear global_historgram: RADIX * RADIX_PASSES
   if (id < RADIX * RADIX_PASSES) {
     atomicStore(&global_historgram.data[id], 0u);
   }
-  // Reset per-pass tile indices
+  // Reset per-pass tile indices so each workgroup can atomically claim tiles.
   if (id < RADIX_PASSES) {
     atomicStore(&tile_indices.data[id], 0u);
   }
 }
 
-// GlobalHistogram: per-tile histogram (4 bytes per key)
+// GlobalHistogram: Accumulate counts for each 8-bit digit across tiles.
+// We write into two local halves to reduce contention, then merge and add to
+// the device-wide per-pass histogram planes.
 @compute @workgroup_size(G_HIST_DIM)
 fn onesweep_global_histogram(
   @builtin(local_invocation_id)  lid: vec3<u32>,
   @builtin(workgroup_id)         wid: vec3<u32>
 ) {
   let tile_ix = wid.x;
-
-  // zero local hist (packed halves for x,y,z,w)
-  for (var j: u32 = lid.x; j < RADIX * 4u; j += G_HIST_DIM) {
-    atomicStore(&global_hist_packed[j], 0u);
+  // 1) Clear shared accumulation buffer used by this workgroup
+  let hist_end = RADIX * 2u * 4u;
+  for (var i: u32 = lid.x; i < hist_end; i += G_HIST_DIM) {
+    atomicStore(&global_hist[i], 0u);
   }
   workgroupBarrier();
 
-  // choose half by lane range
-  let half_inc = select(1u, (1u << 16u), lid.x >= 64u);
-  // tile range
-  let start = tile_ix * PART_SIZE;
-  let end   = select((tile_ix + 1u) * PART_SIZE, params.key_count, tile_ix == (params.thread_blocks - 1u));
+  // 2) Pick which half we write to (0..63 first half, 64..127 second half)
+  let hist_offset = (lid.x / 64u) * RADIX;
+  //    Compute the end of the range for this tile (last tile may be partial)
+  let tile_end    = select((tile_ix + 1u) * TILE_SIZE, params.key_count, tile_ix == (params.thread_blocks - 1u));
 
-  // strided loop over this tile
-  for (var idx: u32 = start + lid.x; idx < end; idx += G_HIST_DIM) {
+  // 3) For each key assigned to this workgroup, increment the digit buckets
+  //    for all four 8-bit digits (0, 8, 16, 24 bit shifts)
+  for (var idx: u32 = lid.x + tile_ix * TILE_SIZE; idx < tile_end; idx += G_HIST_DIM) {
     let t = keys_buffer.data[idx];
     let d0 = extract_digit(t, 0u);
     let d1 = extract_digit(t, 8u);
     let d2 = extract_digit(t, 16u);
     let d3 = extract_digit(t, 24u);
-
-    let o0 = d0 + RADIX * 0u;
-    let o1 = d1 + RADIX * 1u;
-    let o2 = d2 + RADIX * 2u;
-    let o3 = d3 + RADIX * 3u;
-
-    atomicAdd(&global_hist_packed[o0], half_inc);
-    atomicAdd(&global_hist_packed[o1], half_inc);
-    atomicAdd(&global_hist_packed[o2], half_inc);
-    atomicAdd(&global_hist_packed[o3], half_inc);
+    let b0 = (d0 + hist_offset) * 4u;
+    let b1 = (d1 + hist_offset) * 4u;
+    let b2 = (d2 + hist_offset) * 4u;
+    let b3 = (d3 + hist_offset) * 4u;
+    atomicAdd(&global_hist[b0 + 0u], 1u);
+    atomicAdd(&global_hist[b1 + 1u], 1u);
+    atomicAdd(&global_hist[b2 + 2u], 1u);
+    atomicAdd(&global_hist[b3 + 3u], 1u);
   }
-
   workgroupBarrier();
 
-  // reduce packed halves to global hist (atomic adds)
-  for (var k: u32 = lid.x; k < RADIX; k += G_HIST_DIM) {
-    let px = atomicLoad(&global_hist_packed[k + RADIX * 0u]);
-    let py = atomicLoad(&global_hist_packed[k + RADIX * 1u]);
-    let pz = atomicLoad(&global_hist_packed[k + RADIX * 2u]);
-    let pw = atomicLoad(&global_hist_packed[k + RADIX * 3u]);
-    let gx = (px & 0xFFFFu) + (px >> 16u);
-    let gy = (py & 0xFFFFu) + (py >> 16u);
-    let gz = (pz & 0xFFFFu) + (pz >> 16u);
-    let gw = (pw & 0xFFFFu) + (pw >> 16u);
-
-    atomicAdd(&global_historgram.data[k],                      gx);
-    atomicAdd(&global_historgram.data[k + SEC_RADIX_START],    gy);
-    atomicAdd(&global_historgram.data[k + THIRD_RADIX_START],  gz);
-    atomicAdd(&global_historgram.data[k + FOURTH_RADIX_START], gw);
+  // 4) Merge the two halves and add to the device-wide pass planes
+  for (var i: u32 = lid.x; i < RADIX; i += G_HIST_DIM) {
+    let base0 = i * 4u;
+    let base1 = (i + RADIX) * 4u;
+    let x_sum = atomicLoad(&global_hist[base0 + 0u]) + atomicLoad(&global_hist[base1 + 0u]);
+    let y_sum = atomicLoad(&global_hist[base0 + 1u]) + atomicLoad(&global_hist[base1 + 1u]);
+    let z_sum = atomicLoad(&global_hist[base0 + 2u]) + atomicLoad(&global_hist[base1 + 2u]);
+    let w_sum = atomicLoad(&global_hist[base0 + 3u]) + atomicLoad(&global_hist[base1 + 3u]);
+    atomicAdd(&global_historgram.data[i],                      x_sum);
+    atomicAdd(&global_historgram.data[i + SEC_RADIX_START],    y_sum);
+    atomicAdd(&global_historgram.data[i + THIRD_RADIX_START],  z_sum);
+    atomicAdd(&global_historgram.data[i + FOURTH_RADIX_START], w_sum);
   }
 }
 
-// Scan: block-wide version matching HLSL semantics (>=16-lane path),
-// using logical warps (32) and circular write into tile 0 plane.
+// Scan: block-wide exclusive scan of per-digit global histograms (one pass plane).
+// Results are written back as inclusive prefixes using a circular index pattern
+// with FLAG_INCLUSIVE to seed decoupled look-back in the binning stage.
 @compute @workgroup_size(RADIX)
 fn onesweep_scan(
   @builtin(local_invocation_id)  lid: vec3<u32>,
@@ -262,96 +285,38 @@ fn onesweep_scan(
   let warp_ctx = make_warp_ctx(l, li, LOGICAL_WARP_SIZE);
 #endif
 
-  // Load per-bin counts for THIS PASS from global histogram
-  let gh_base = global_hist_offset(current_pass());
-  let my_val  = atomicLoad(&global_historgram.data[gh_base + l]);
-
-  // Intra-warp inclusive scan (g_scan += WavePrefixSum(g_scan))
-  var incl = warp_scan_exclusive_add_u32(warp_ctx, my_val);
-  scan[l] = incl;
-
-  // We assume warp sizes that are generally 16 or larger. Very rare to get warp sizes that are smaller than that.
-  //if (warp_ctx.warp_size >= 16u) {
+  // 1) Load per-digit counts for this pass plane and compute warp-exclusive scan
+  scan[l] = atomicLoad(&global_historgram.data[l + wid.x * RADIX]);
+  scan[l] += warp_scan_exclusive_add_u32(warp_ctx, scan[l]);
+    
+  // 2) Accumulate across warp boundaries to get block-wide exclusive scan
   workgroupBarrier();
-
-  // Prefix over per-warp end elements using first (RADIX / warp_size) threads
-  var end_idx: u32 = 0u;
-  var end_val: u32 = 0u;
-  let in_range_end = l < (RADIX / warp_ctx.warp_size);
-  if (in_range_end) {
-    end_idx = ((l + 1u) * warp_ctx.warp_size) - 1u;
-    end_val = scan[end_idx];
-  }
-  let end_psum_excl = warp_scan_exclusive_add_u32(warp_ctx, end_val);
-  if (in_range_end) {
-    scan[end_idx] = end_val + end_psum_excl;
+  let next_lane = (l + 1u) * warp_ctx.warp_size - 1u;
+  let prefix_sum = warp_scan_exclusive_add_u32(warp_ctx, scan[next_lane]);
+  if (l < (RADIX / warp_ctx.warp_size)) {
+    scan[next_lane] += prefix_sum;
   }
   workgroupBarrier();
 
-  // Circular scatter with previous-warp sum
+  // 3) Write inclusive prefixes into pass_histogram using circular indexing
+  //    to seed decoupled look-back in the binning kernel
   let lane_mask = warp_ctx.warp_size - 1u;
-  let index = ((li + 1u) & lane_mask) + (l & ~lane_mask);
-  let left_val = select(0u, scan[l], li != lane_mask);
-  // broadcast previous-warp last element from lane 0 uniformly
-  var prev_warp_src: u32 = 0u;
-  if (li == 0u && l >= warp_ctx.warp_size) {
-    prev_warp_src = scan[l - 1u];
-  }
-  let prev_warp = warp_broadcast_u32(warp_ctx, prev_warp_src, 0u);
-  let write_val = left_val + prev_warp;
-  let out_addr = wid.x * params.thread_blocks * RADIX + index;
-  atomicStore(&pass_histogram.data[out_addr], (write_val << 2u) | FLAG_INCLUSIVE);
-  //}
-  
-//   if (warp_ctx.warp_size < 16u) {
-//     // Fallback hierarchical path for very small wave sizes (<16)
-//     let pass_offs = wid.x * params.thread_blocks * RADIX;
-//     if (l < warp_ctx.warp_size) {
-//       let circular_lane_shift = (li + 1u) & (warp_ctx.warp_size - 1u);
-//       let v0 = select(0u, scan[l], circular_lane_shift != 0u);
-//       atomicStore(&pass_histogram.data[pass_offs + circular_lane_shift], (v0 << 2u) | FLAG_INCLUSIVE);
-//     }
-//     workgroupBarrier();
-
-//     let lane_log = countOneBits(warp_ctx.warp_size - 1u);
-//     var offset = lane_log;
-//     var j = warp_ctx.warp_size;
-//     for (var j = warp_ctx.warp_size; j < (RADIX >> 1u); j = j << lane_log) {
-//       if (l < (RADIX >> offset)) {
-//         let idx2 = ((l + 1u) << offset) - 1u;
-//         let v2 = scan[idx2];
-//         let p2_excl = warp_scan_exclusive_add_u32(warp_ctx, v2);
-//         scan[idx2] = v2 + p2_excl;
-//       }
-//       workgroupBarrier();
-
-//       let base_idx = ((l >> offset) << offset) - 1u;
-//       let base_sum = warp_broadcast_u32(warp_ctx, scan[base_idx], 0u);
-//       if ((l & ((j << lane_log) - 1u)) >= j) {
-//         if (l < (j << lane_log)) {
-//           let addend = select(0u, scan[l - 1u], (l & (j - 1u)) != 0u);
-//           atomicStore(&pass_histogram.data[pass_offs + l], ((base_sum + addend) << 2u) | FLAG_INCLUSIVE);
-//         } else {
-//           if (((l + 1u) & (j - 1u)) != 0u) {
-//             scan[l] = scan[l] + base_sum;
-//           }
-//         }
-//       }
-//       offset = offset + lane_log;
-//     }
-//     workgroupBarrier();
-
-//     let index2 = l + j;
-//     let base_idx3 = ((index2 >> offset) << offset) - 1u;
-//     let base_sum3 = warp_broadcast_u32(warp_ctx, scan[base_idx3], 0u);
-//     if (index2 < RADIX) {
-//       let addend3 = select(0u, scan[index2 - 1u], (index2 & (j - 1u)) != 0u);
-//       atomicStore(&pass_histogram.data[pass_offs + index2], ((base_sum3 + addend3) << 2u) | FLAG_INCLUSIVE);
-//     }
-//   }
+  let index = ((warp_ctx.lane_id + 1u) & lane_mask) + (l & ~lane_mask);
+  let inclusive_scan = ((select(0u, scan[l], warp_ctx.lane_id != lane_mask) +
+        select(0u, warp_broadcast_u32(warp_ctx, scan[l - 1u], 0u), l >= warp_ctx.warp_size)
+    ) << 2u) | FLAG_INCLUSIVE;
+  atomicStore(&pass_histogram.data[index + wid.x * RADIX * params.thread_blocks], inclusive_scan);
 }
 
-// DigitBinningPass: chained scan w/ decoupled look-back, logical warps (32)
+// DigitBinningPass: chained scan with decoupled look-back using logical warps (32)
+// Steps per tile:
+//  (1) Claim tile index, clear tile-local histogram region.
+//  (2) Load keys/values for this tile (pad last tile if partial).
+//  (3) Build per-digit offsets per lane using ballots (branchless).
+//  (4) Reduce to tile-exclusive digit prefixes across the workgroup.
+//  (5) Publish reductions and inclusive prefixes for look-back consumption.
+//  (6) Perform look-back to compute the global base for each digit.
+//  (7) Scatter keys/values directly to the global destinations (stable order).
 @compute @workgroup_size(PASS_DIM)
 fn onesweep_digit_binning(
   @builtin(local_invocation_id)  lid: vec3<u32>,
@@ -369,51 +334,34 @@ fn onesweep_digit_binning(
   let li = lane_id(l, LOGICAL_WARP_SIZE);
   let warp_ctx = make_warp_ctx(l, li, LOGICAL_WARP_SIZE);
 #endif
+ 
+  // We assume warp sizes that are generally 16 or larger.
+  // Very rare to get warp sizes that are smaller than that.
 
-  // serial iterations following HLSL: (PASS_DIM / WaveSize + 31) / 32
-  let serial_iterations: u32 = (PASS_DIM / warp_ctx.warp_size + 31u) / 32u;
-
-  // determine partition index and clear shared memory
-  var tile_idx: u32;
-  // We assume warp sizes that are generally 16 or larger. Very rare to get warp sizes that are smaller than that.
-  //if (warp_ctx.warp_size > 16u) {
-    // clear only wave-hists region
-  let hist_area = wave_hists_size_ge16(warp_ctx);
-  for (var i: u32 = l; i < hist_area; i += PASS_DIM) {
-    atomicStore(&pass_hist[i], 0u);
+  // (1) Clear tile-local wave histogram region used for reductions
+  let hist_end = wave_hists_size_ge16(warp_ctx);
+  for (var i: u32 = l; i < hist_end; i += PASS_DIM) {
+    pass_hist[i] = 0u;
   }
+  // Claim a unique tile index for this workgroup in the current pass
   if (l == 0u) {
-    atomicStore(&pass_hist[PART_SIZE - 1u], atomicAdd(&tile_indices.data[current_pass()], 1u));
+    pass_hist[TILE_SIZE - 1u] = atomicAdd(&tile_indices.data[current_pass()], 1u);
   }
   workgroupBarrier();
-  tile_idx = atomicLoad(&pass_hist[PART_SIZE - 1u]);
-  //}
-  
-//   if (warp_ctx.warp_size <= 16u) {
-//     if (l == 0u) {
-//       atomicStore(&pass_hist[0u], atomicAdd(&tile_indices.data[current_pass()], 1u));
-//     }
-//     workgroupBarrier();
-//     tile_idx = atomicLoad(&pass_hist[0u]);
-//     workgroupBarrier();
-//     // clear full shared pass buffer (bounded by allocation)
-//     for (var j: u32 = l; j < PART_SIZE; j += PASS_DIM) {
-//       atomicStore(&pass_hist[j], 0u);
-//     }
-//     workgroupBarrier();
-//   }
 
-  // load keys assigned to this workgroup/tile
+  let tile_idx = pass_hist[TILE_SIZE - 1u];
+  
+  // (2) Load keys/values for this tile; offs[] holds tile-local scatter indices
   var keys: array<u32, KEYS_PER_THREAD>;
   var vals: array<u32, KEYS_PER_THREAD>;
   var offs: array<u32, KEYS_PER_THREAD>;
 
-  let serial_iters: u32 = serial_iterations; // matches HLSL formula, typically 1
+  let serial_iters: u32 = (PASS_DIM / warp_ctx.warp_size + 31u) / 32u;
   let base = device_offset(warp_ctx, l, tile_idx, serial_iters);
 
   if (tile_idx < (params.thread_blocks - 1u)) {
     var t: u32 = base;
-    for (var j0: u32 = 0u; j0 < KEYS_PER_THREAD; j0 = j0 + 1u) {
+    for (var j0: u32 = 0u; j0 < KEYS_PER_THREAD; j0 = j0 + 1) {
       keys[j0] = keys_buffer.data[t];
       vals[j0] = values_buffer.data[t];
       t += warp_ctx.warp_size * serial_iters;
@@ -421,7 +369,7 @@ fn onesweep_digit_binning(
   }
   
   if (tile_idx == (params.thread_blocks - 1u)) {
-    // last (possibly partial) tile
+    // Last tile may be partial; pad with sentinel values outside range
     var t2: u32 = base;
     for (var j1: u32 = 0u; j1 < KEYS_PER_THREAD; j1 = j1 + 1u) {
       let in_range = t2 < params.key_count;
@@ -431,247 +379,120 @@ fn onesweep_digit_binning(
     }
   }
 
-  // -------- Tile-exclusive prefix per digit and per-lane base (>=16 lanes) --------
+  // (3) For each thread's KEYS_PER_THREAD, compute per-digit lane-local offsets
+  //     using ballots to count preceding lanes with the same digit
   var exclusive_hist_reduction: u32 = 0u;
-  // We assume warp sizes that are generally 16 or larger. Very rare to get warp sizes that are smaller than that.
-  //if (warp_ctx.warp_size >= 16u) {
   let wave_parts = (warp_ctx.warp_size + 31u) / 32u;
-
-  // Calculate wave flags for each digit (4 parts)
   for (var i: u32 = 0u; i < KEYS_PER_THREAD; i = i + 1u) {
-    var wave_flags = vec4<u32>(
-        select(0u, 0xFFFFFFFFu, warp_ctx.warp_size > 0u),
-        select(0u, 0xFFFFFFFFu, warp_ctx.warp_size > 32u),
-        select(0u, 0xFFFFFFFFu, warp_ctx.warp_size > 64u),
-        select(0u, 0xFFFFFFFFu, warp_ctx.warp_size > 96u)
-    );
+    // Start with all bits set for each 32-lane part
+    var wave_flags = vec4<u32>(0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu);
 
-    // 1. Calculate wave flags for each digit
+    // Intersect ballots across the 8 bits of the digit to isolate lanes
+    // whose digit equals this lane's digit
     for (var j: u32 = 0u; j < RADIX_LOG; j = j + 1u) {
-        let t = ((keys[i] >> (j + params.radix_shift)) & 1u) != 0u;
-        let ballot = warp_ballot_u32(warp_ctx, t);
-        for (var k: u32 = 0u; k < wave_parts; k = k + 1u) {
-            let ballot_flag = select(0xFFFFFFFFu, 0u, t) ^ ballot[k];
-            wave_flags[k] = wave_flags[k] & ballot_flag;
-        }
+      let t = ((keys[i] >> (j + params.radix_shift)) & 1u) != 0u;
+      let ballot = warp_ballot_u32(warp_ctx, t);
+      for (var k: u32 = 0u; k < wave_parts; k = k + 1u) {
+        let mask = (select(0xFFFFFFFFu, 0u, t) ^ ballot[k]);
+        wave_flags[k] = wave_flags[k] & mask;
+      }
     }
 
-    // 2. Count bits in wave flags
+    // Count matching lanes strictly before this lane (branchless across parts)
     var bits: u32 = 0u;
     for (var k: u32 = 0u; k < wave_parts; k = k + 1u) {
-        if (warp_ctx.lane_id < k * 32u) {
-            bits = bits + countOneBits(wave_flags[k]);
-        }
+      if (warp_ctx.lane_id >= (k * 32u)) {
+        let lt_mask = select(
+          (1u << (warp_ctx.lane_id & 31u)) - 1u,
+          0xFFFFFFFFu,
+          warp_ctx.lane_id >= ((k + 1u) * 32u)
+        );
+        bits = bits + countOneBits(wave_flags[k] & lt_mask);
+      }
     }
 
-    // 3. Calculate index
     let index = extract_digit(keys[i], params.radix_shift) + (warp_ctx.warp_id * RADIX);
-    offs[i] = atomicLoad(&pass_hist[index]) + bits;
-   
+    offs[i] = pass_hist[index] + bits;
+
     workgroupBarrier();
 
-    // 3. Add bits to pass if no bits are set
     if (bits == 0u) {
-        for (var k: u32 = 0u; k < wave_parts; k = k + 1u) {
-            let add_bits = countOneBits(wave_flags[k]);
-            atomicAdd(&pass_hist[index], add_bits);
-        }
+      for (var k: u32 = 0u; k < wave_parts; k = k + 1u) {
+        pass_hist[index] = pass_hist[index] + countOneBits(wave_flags[k]);
+      }
     }
-
     workgroupBarrier();
   }
 
+  // (4) Reduce per-digit counts across the wave-hists region to get tile-exclusive prefixes
   var hist_reduction: u32 = 0u;
   if (l < RADIX) {
-    hist_reduction = atomicLoad(&pass_hist[l]);
+    hist_reduction = pass_hist[l];
     let wave_hist_size = wave_hists_size_ge16(warp_ctx);
     for (var i: u32 = l + RADIX; i < wave_hist_size; i = i + RADIX) {
-      let hist_i = atomicLoad(&pass_hist[i]);
-      hist_reduction = hist_reduction + hist_i;
-      atomicStore(&pass_hist[i], hist_reduction - hist_i);
+      let hist_i = pass_hist[i];
+      hist_reduction += hist_i;
+      pass_hist[i] = hist_reduction - hist_i;
     }
 
     if (tile_idx < (params.thread_blocks - 1u)) {
-      atomicAdd(&pass_histogram.data[l + pass_hist_offset(tile_idx + 1u)], (FLAG_REDUCTION | (hist_reduction << 2u)));
+      // Publish reduction payload (no flag bit overlap) to look-back buffer of next tile
+      let value = (hist_reduction << 2u) | FLAG_REDUCTION;
+      atomicAdd(&pass_histogram.data[l + pass_hist_offset(tile_idx + 1u)], value);
     }
   }
-  hist_reduction = hist_reduction + warp_scan_exclusive_add_u32(warp_ctx, hist_reduction);
+  hist_reduction = select(hist_reduction, hist_reduction + warp_scan_exclusive_add_u32(warp_ctx, hist_reduction), l < RADIX);
 
   workgroupBarrier();
 
-  // Within-warp inclusive prefix of total per digit then circular scatter
+  // (5) Circularly scatter per-digit inclusive prefixes to pass_hist
   if (l < RADIX) {
-    // circular scatter
     let lane_mask = warp_ctx.warp_size - 1u;
-    let dst = ((li + 1u) & lane_mask) + (l & ~lane_mask);
-    atomicStore(&pass_hist[dst], hist_reduction);
+    let dst = ((warp_ctx.lane_id + 1u) & lane_mask) + (l & ~lane_mask);
+    pass_hist[dst] = hist_reduction;
   }
   workgroupBarrier();
 
-  // prefix at warp boundaries for each digit (uniform call with masking)
-  let in_range_boundaries = l < (RADIX / warp_ctx.warp_size);
-  var idx0: u32 = 0u;
-  var boundary_val: u32 = 0u;
-  if (in_range_boundaries) {
-    idx0 = l * warp_ctx.warp_size;
-    boundary_val = atomicLoad(&pass_hist[idx0]);
-  }
+  // Stitch warp boundaries by scanning warp leaders and broadcasting
+  let idx = l * warp_ctx.warp_size;
+  let boundary_val = pass_hist[idx];
   let boundary_excl = warp_scan_exclusive_add_u32(warp_ctx, boundary_val);
-  if (in_range_boundaries) {
-    atomicStore(&pass_hist[idx0], boundary_excl);
+  if (l < (RADIX / warp_ctx.warp_size)) {
+    pass_hist[idx] = boundary_excl;
   }
   workgroupBarrier();
 
-  // add lane-1 broadcast to non-zero lanes (uniform call with masking)
-  var lane1_prev: u32 = 0u;
-  if (li == 1u && l < RADIX) {
-    lane1_prev = atomicLoad(&pass_hist[l - 1u]);
-  }
-  let prev_from_lane1 = warp_broadcast_u32(warp_ctx, lane1_prev, 1u);
+  let prev_from_lane1 = warp_shuffle_u32(warp_ctx, pass_hist[l - 1u], 1u);
   if (l < RADIX && li != 0u) {
-    atomicAdd(&pass_hist[l], prev_from_lane1);
+    pass_hist[l] += prev_from_lane1;
   }
   workgroupBarrier();
 
-  // add per-lane base to offsets
+  // (6) Add per-lane base to each thread's pending offsets
   if (l >= warp_ctx.warp_size) {
     let t = warp_ctx.warp_id * RADIX;
-    for (var j2: u32 = 0u; j2 < KEYS_PER_THREAD; j2 = j2 + 1u) {
-      let d = extract_digit(keys[j2], params.radix_shift);
-      offs[j2] = offs[j2] + atomicLoad(&pass_hist[d + t]) + atomicLoad(&pass_hist[d]);
+    for (var i: u32 = 0u; i < KEYS_PER_THREAD; i = i + 1u) {
+      let d = extract_digit(keys[i], params.radix_shift);
+      offs[i] += pass_hist[d + t] + pass_hist[d];
     }
   } else {
-    for (var j3: u32 = 0u; j3 < KEYS_PER_THREAD; j3 = j3 + 1u) {
-      let d = extract_digit(keys[j3], params.radix_shift);
-      offs[j3] = offs[j3] + atomicLoad(&pass_hist[d]);
+    for (var i: u32 = 0u; i < KEYS_PER_THREAD; i = i + 1u) {
+      let d = extract_digit(keys[i], params.radix_shift);
+      offs[i] += pass_hist[d];
     }
   }
 
   if (l < RADIX) {
-    exclusive_hist_reduction = atomicLoad(&pass_hist[l]);
+    exclusive_hist_reduction = pass_hist[l];
   }
   workgroupBarrier();
-  //}
+
+  // Stage keys at their tile-local destination so each thread can scatter contiguously
+  for (var i: u32 = 0u; i < KEYS_PER_THREAD; i = i + 1u) {
+    pass_hist[offs[i]] = keys[i];
+  }
   
-//   if (warp_ctx.warp_size < 16u) {
-//     // -------- WaveGetLaneCount() < 16 path --------
-//     let lt_mask = (1u << warp_ctx.lane_id) - 1u;
-
-//     // Per-key waveFlag accumulation and offsets with serial iterations
-//     for (var ii: u32 = 0u; ii < KEYS_PER_THREAD; ii = ii + 1u) {
-//       var wave_flag: u32 = (1u << warp_ctx.warp_size) - 1u;
-
-//       for (var kb: u32 = 0u; kb < RADIX_LOG; kb = kb + 1u) {
-//         let t = ((keys[ii] >> (kb + params.radix_shift)) & 1u) != 0u;
-//         let ballot_scalar = warp_ballot_u32(warp_ctx, t).x;
-//         let inv_mask = select(0xFFFFFFFFu, 0u, t);
-//         wave_flag = wave_flag & (inv_mask ^ ballot_scalar);
-//       }
-
-//       let bits = countOneBits(wave_flag & lt_mask);
-//       let index = extract_packed_index(keys[ii], params.radix_shift) +
-//                   ((warp_ctx.warp_id / serial_iters) * HALF_RADIX);
-
-//       for (var kk: u32 = 0u; kk < serial_iters; kk = kk + 1u) {
-//         let is_my_iter = (warp_ctx.warp_id % serial_iters) == kk;
-//         if (is_my_iter) {
-//           offs[ii] = extract_packed_value(atomicLoad(&pass_hist[index]), keys[ii], params.radix_shift) + bits;
-//         }
-
-//         workgroupBarrier();
-
-//         if (is_my_iter && bits == 0u) {
-//           let add_bits = countOneBits(wave_flag) << extract_packed_shift(keys[ii], params.radix_shift);
-//           atomicAdd(&pass_hist[index], add_bits);
-//         }
-
-//         workgroupBarrier();
-//       }
-//     }
-
-//     // Histogram reduction over HALF_RADIX stripes
-//     if (l < HALF_RADIX) {
-//       var hist_reduction2: u32 = atomicLoad(&pass_hist[l]);
-//       let h_end = wave_hists_size_lt16(warp_ctx);
-//       for (var i: u32 = l + HALF_RADIX; i < h_end; i = i + HALF_RADIX) {
-//         hist_reduction2 = hist_reduction2 + atomicLoad(&pass_hist[i]);
-//         atomicStore(&pass_hist[i], hist_reduction2 - atomicLoad(&pass_hist[i]));
-//       }
-//       atomicStore(&pass_hist[l], hist_reduction2 + (hist_reduction2 << 16u));
-
-//       if (tile_idx < (params.thread_blocks - 1u)) {
-//         atomicAdd(
-//             &pass_histogram.data[(l << 1u) + pass_hist_offset(tile_idx + 1u)],
-//             (FLAG_REDUCTION | ((hist_reduction2 & 0xFFFFu) << 2u))
-//         );
-//         atomicAdd(
-//             &pass_histogram.data[(l << 1u) + 1u + pass_hist_offset(tile_idx + 1u)],
-//             (FLAG_REDUCTION | (((hist_reduction2 >> 16u) & 0xFFFFu) << 2u))
-//         );
-//       }
-//     }
-
-//     var shift_val: u32 = 1u;
-//     for (var jv: u32 = RADIX >> 2u; jv > 0; jv = jv >> 1u) {
-//       workgroupBarrier();
-//       if (l < jv) {
-//         let a_idx = (((((l << 1u) + 2u) << shift_val) - 1u) >> 1u);
-//         let b_idx = (((((l << 1u) + 1u) << shift_val) - 1u) >> 1u);
-//         atomicAdd(&pass_hist[a_idx], atomicLoad(&pass_hist[b_idx]) & 0xFFFF0000u);
-//       }
-//       shift_val = shift_val + 1u;
-//     }
-//     workgroupBarrier();
-
-//     if (l == 0u) {
-//       atomicAnd(&pass_hist[HALF_RADIX - 1u], 0xFFFFu);
-//     }
-
-//     for (var jv: u32 = 1u; jv < (RADIX >> 1u); jv = jv << 1u) {
-//       shift_val = shift_val - 1u;
-//       workgroupBarrier();
-//       if (l < jv) {
-//         let t = (((((l << 1u) + 1u) << shift_val) - 1u) >> 1u);
-//         let t2 = (((((l << 1u) + 2u) << shift_val) - 1u) >> 1u);
-//         let t3 = atomicLoad(&pass_hist[t]);
-//         let t4 = atomicLoad(&pass_hist[t2]);
-//         atomicStore(&pass_hist[t], (t3 & 0xFFFFu) | (t4 & 0xFFFF0000u));
-//         atomicAdd(&pass_hist[t2], (t3 & 0xFFFF0000u));
-//       }
-//     }
-
-//     workgroupBarrier();
-
-//     if (l < HALF_RADIX) {
-//       let tv = atomicLoad(&pass_hist[l]);
-//       atomicStore(&pass_hist[l], (tv >> 16u) + (tv << 16u) + (tv & 0xFFFF0000u));
-//     }
-//     workgroupBarrier();
-
-//     // Offsets accumulation for packed lanes
-//     if (l >= warp_ctx.warp_size * serial_iters) {
-//       let tbase = (warp_ctx.warp_id / serial_iters) * HALF_RADIX;
-//       for (var ii2: u32 = 0u; ii2 < KEYS_PER_THREAD; ii2 = ii2 + 1u) {
-//         let d2 = extract_packed_index(keys[ii2], params.radix_shift);
-//         let packed = atomicLoad(&pass_hist[d2 + tbase]) + atomicLoad(&pass_hist[d2]);
-//         offs[ii2] = offs[ii2] + extract_packed_value(packed, keys[ii2], params.radix_shift);
-//       }
-//     } else {
-//       for (var ii3: u32 = 0u; ii3 < KEYS_PER_THREAD; ii3 = ii3 + 1u) {
-//         let d3 = extract_packed_index(keys[ii3], params.radix_shift);
-//         offs[ii3] = offs[ii3] + extract_packed_value(atomicLoad(&pass_hist[d3]), keys[ii3], params.radix_shift);
-//       }
-//     }
-
-//     if (l < RADIX) {
-//       let shift_sel = select(0u, 16u, (l & 1u) != 0u);
-//       exclusive_hist_reduction = (atomicLoad(&pass_hist[l >> 1u]) >> shift_sel) & 0xFFFFu;
-//     }
-
-//     workgroupBarrier();
-//   }
-
-  // -------- Decoupled look-back to get global base per digit --------
+  // (7) Decoupled look-back: accumulate prior tiles' totals to form the global base
   if (l < RADIX) {
     var lookback: u32 = 0u;
     for (var k: i32 = i32(tile_idx); k >= 0;) {
@@ -680,46 +501,48 @@ fn onesweep_digit_binning(
       let payload = flag_payload >> 2u;
 
       if (flag == FLAG_INCLUSIVE) {
-        lookback = lookback + payload;
+        // Inclusive prefix published by onesweep_scan or a prior tile
+        lookback += payload;
         if (tile_idx < (params.thread_blocks - 1u)) {
-          // publish REDUCTION to next tile
-          let pub_reduction = (FLAG_REDUCTION | (lookback << 2u));
-          atomicAdd(&pass_histogram.data[pass_hist_offset(tile_idx + 1u) + l], pub_reduction);
+          // Publish total through this tile so later tiles can stop early
+          let val = (lookback << 2u) | FLAG_REDUCTION;
+          atomicAdd(&pass_histogram.data[pass_hist_offset(tile_idx + 1u) + l], val);
         }
-        // store global base (tile prefix - exclusive local)
-        digit_base[l] = lookback - exclusive_hist_reduction;
+        // Global base for this digit = prefix up to prev tile(s)
+        pass_hist[l + TILE_SIZE] = lookback - exclusive_hist_reduction;
         break;
       }
       
       if (flag == FLAG_REDUCTION) {
-        lookback = lookback + payload;
+        lookback += payload;
+        k--;
       }
-      k = k - 1;
     }
   }
   workgroupBarrier();
 
-  // -------- Direct write-out: each thread writes its own items --------
+  // (8) Direct scatter using per-thread offsets and tile-digit bases
   if (tile_idx < (params.thread_blocks - 1u)) {
-    for (var j: u32 = 0u; j < KEYS_PER_THREAD; j = j + 1u) {
-      let key = keys[j];
-      let val = vals[j];
-      let d   = extract_digit(key, params.radix_shift);
-      let dst = digit_base[d] + offs[j];
-      scatter_out.data[dst] = key;
-      values_scatter_out.data[dst] = val;
+    for (var i: u32 = 0u; i < KEYS_PER_THREAD; i = i + 1u) {
+      let d = extract_digit(keys[i], params.radix_shift);
+      let base_idx = pass_hist[d + TILE_SIZE] + offs[i];
+      scatter_out.data[base_idx] = keys[i];
+      values_scatter_out.data[base_idx] = vals[i];
     }
-  } else {
-    // last (partial) tile: skip padded entries
-    for (var j: u32 = 0u; j < KEYS_PER_THREAD; j = j + 1u) {
-      let key = keys[j];
-      if (key != 0xFFFFFFFFu) {
-        let val = vals[j];
-        let d   = extract_digit(key, params.radix_shift);
-        let dst = digit_base[d] + offs[j];
-        scatter_out.data[dst] = key;
-        values_scatter_out.data[dst] = val;
+  }
+
+  // Last (partial) tile: guard scatter by source index in range
+  if (tile_idx == (params.thread_blocks - 1u)) {
+    let stride = warp_ctx.warp_size * serial_iters;
+    var t_src: u32 = base;
+    for (var i: u32 = 0u; i < KEYS_PER_THREAD; i = i + 1u) {
+      if (t_src < params.key_count) {
+        let d = extract_digit(keys[i], params.radix_shift);
+        let base_idx = pass_hist[d + TILE_SIZE] + offs[i];
+        scatter_out.data[base_idx] = keys[i];
+        values_scatter_out.data[base_idx] = vals[i];
       }
+      t_src = t_src + stride;
     }
   }
 }

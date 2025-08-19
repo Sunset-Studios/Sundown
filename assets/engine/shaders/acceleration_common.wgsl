@@ -4,7 +4,7 @@
 
 const HPLOC_WAVE_SIZE = 64u;
 const QUANT_BITS = 10u;
-const QUANT_MAX = (1u << QUANT_BITS) - 1u;
+const QUANT_MAX = 1023u;
 
 // ------------------------------------------------------------------------------------
 // Data Structures 

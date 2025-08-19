@@ -47,63 +47,141 @@ fn atomic_max_f32(target_val: ptr<storage, atomic<u32>, read_write>, value: f32)
 	}
 }
 
+var<workgroup> wg_min_points: array<vec3<f32>, 256>;
+var<workgroup> wg_max_points: array<vec3<f32>, 256>;
+var<workgroup> wg_valid_counts: array<u32, 256>;
+var<workgroup> wg_scene_min: vec3<f32>;
+var<workgroup> wg_scene_max: vec3<f32>;
+
 @compute @workgroup_size(256)
-fn cs(@builtin(global_invocation_id) global_id: vec3<u32>) {
-    if (global_id.x >= arrayLength(&entity_aabb_node_indices)) {
-        return;
-    }
+fn cs(
+  @builtin(global_invocation_id) global_id: vec3<u32>,
+  @builtin(local_invocation_id) local_id: vec3<u32>,
+#if HAS_SUBGROUPS
+  @builtin(subgroup_invocation_id) sid: u32,
+  @builtin(subgroup_size) ss: u32
+#endif
+) {
+	let pos_inf = 3.402823466e+38;
+	let neg_inf = -3.402823466e+38;
 
-    let entity_id_offset = get_entity_row(global_id.x);
-    let node_index = entity_aabb_node_indices[entity_id_offset];
+	let idx = global_id.x;
+	let lid = local_id.x;
 
-    // if there's no valid AABB node, skip processing entirely
-    if (node_index == 0u) {
-        return;
-    }
+	let num_rows = arrayLength(&entity_aabb_node_indices);
+	let is_active = idx < num_rows;
 
-    // Get the entity's world transform
-    let transform = entity_transforms[entity_id_offset].transform;
-    let position = transform[3].xyz;
-    let scale = vec3f(length(transform[0].xyz), length(transform[1].xyz), length(transform[2].xyz));
+	var min_point = vec3f(pos_inf, pos_inf, pos_inf);
+	var max_point = vec3f(neg_inf, neg_inf, neg_inf);
+	var is_valid = false;
 
-    // Calculate bounds based on position and scale
-    // This is a simple axis-aligned box, but could be more sophisticated
-    // based on the entity's mesh or collider
-    let half_size = vec3f(
-      abs(scale[0]) * 0.5,
-      abs(scale[1]) * 0.5,
-      abs(scale[2]) * 0.5,
-    );
+  let entity_id_offset = get_entity_row(idx);
+  let node_index = entity_aabb_node_indices[entity_id_offset];
 
-    // Add padding
-    let padding = vec3f(
-      half_size[0] * bounds_padding,
-      half_size[1] * bounds_padding,
-      half_size[2] * bounds_padding,
-    );
+	if (is_active && node_index != 0u) {
+		let transform = entity_transforms[entity_id_offset].transform;
+		let position = transform[3].xyz;
+		let scale = vec3f(length(transform[0].xyz), length(transform[1].xyz), length(transform[2].xyz));
 
-    let min_point = vec3f(
-      position[0] - half_size[0] - padding[0],
-      position[1] - half_size[1] - padding[1],
-      position[2] - half_size[2] - padding[2],
-    );
+		let half_size = vec3f(
+		  abs(scale[0]) * 0.5,
+		  abs(scale[1]) * 0.5,
+		  abs(scale[2]) * 0.5,
+		);
 
-    let max_point = vec3f(
-      position[0] + half_size[0] + padding[0],
-      position[1] + half_size[1] + padding[1],
-      position[2] + half_size[2] + padding[2],
-    );
+		let padding = vec3f(
+		  half_size[0] * bounds_padding,
+		  half_size[1] * bounds_padding,
+		  half_size[2] * bounds_padding,
+		);
 
-    // write to full array for other GPU consumers
-    aabb_bounds[node_index].min = vec4f(min_point, f32(entity_id_offset));
-    aabb_bounds[node_index].max = vec4f(max_point, 1.0 /* can be used for other purposes */);
+		min_point = vec3f(
+		  position[0] - half_size[0] - padding[0],
+		  position[1] - half_size[1] - padding[1],
+		  position[2] - half_size[2] - padding[2],
+		);
 
-	  atomic_min_f32(&scene_aabb[0], min_point.x);
-	  atomic_min_f32(&scene_aabb[1], min_point.y);
-	  atomic_min_f32(&scene_aabb[2], min_point.z);
-	  atomic_max_f32(&scene_aabb[4], max_point.x);
-	  atomic_max_f32(&scene_aabb[5], max_point.y);
-	  atomic_max_f32(&scene_aabb[6], max_point.z);
+		max_point = vec3f(
+		  position[0] + half_size[0] + padding[0],
+		  position[1] + half_size[1] + padding[1],
+		  position[2] + half_size[2] + padding[2],
+		);
 
-    entity_flags[entity_id_offset] |= EF_AABB_DIRTY;
+		aabb_bounds[node_index].min = vec4f(min_point, f32(entity_id_offset));
+		aabb_bounds[node_index].max = vec4f(max_point, 1.0);
+
+		entity_flags[entity_id_offset] |= EF_AABB_DIRTY;
+
+	  is_valid = true;
+	}
+
+	wg_min_points[lid] = min_point;
+	wg_max_points[lid] = max_point;
+	wg_valid_counts[lid] = select(0u, 1u, is_valid);
+	workgroupBarrier();
+
+	if (lid == 0u) {
+		wg_scene_min = vec3f(
+			bitcast<f32>(atomicLoad(&scene_aabb[0])),
+			bitcast<f32>(atomicLoad(&scene_aabb[1])),
+			bitcast<f32>(atomicLoad(&scene_aabb[2]))
+		);
+		wg_scene_max = vec3f(
+			bitcast<f32>(atomicLoad(&scene_aabb[4])),
+			bitcast<f32>(atomicLoad(&scene_aabb[5])),
+			bitcast<f32>(atomicLoad(&scene_aabb[6]))
+		);
+		wg_min_points[0u] = min(wg_min_points[0u], wg_scene_min);
+		wg_max_points[0u] = max(wg_max_points[0u], wg_scene_max);
+	}
+	workgroupBarrier();
+
+#if HAS_SUBGROUPS
+  let warp_ctx = make_warp_ctx(lid, lid, ss);
+#else
+  let warp_ctx = make_warp_ctx(lid, lid, LOGICAL_WARP_SIZE);
+#endif
+
+	let sub_min = vec3f(
+		warp_min_f32(warp_ctx, wg_min_points[lid].x),
+		warp_min_f32(warp_ctx, wg_min_points[lid].y),
+		warp_min_f32(warp_ctx, wg_min_points[lid].z)
+	);
+	let sub_max = vec3f(
+		warp_max_f32(warp_ctx, wg_max_points[lid].x),
+		warp_max_f32(warp_ctx, wg_max_points[lid].y),
+		warp_max_f32(warp_ctx, wg_max_points[lid].z)
+	);
+	let sub_valid: u32 = warp_reduce_add_u32(warp_ctx, wg_valid_counts[lid]);
+
+	if (warp_ctx.lane_id == 0u) {
+		wg_min_points[warp_ctx.warp_id] = sub_min;
+		wg_max_points[warp_ctx.warp_id] = sub_max;
+		wg_valid_counts[warp_ctx.warp_id] = sub_valid;
+	}
+	workgroupBarrier();
+
+	if (lid == 0u) {
+		var gmin = wg_min_points[0u];
+		var gmax = wg_max_points[0u];
+		var gvalid = wg_valid_counts[0u];
+
+		var i: u32 = 1u;
+		loop {
+			if (i >= warp_ctx.warp_size) { break; }
+			gmin = min(gmin, wg_min_points[i]);
+			gmax = max(gmax, wg_max_points[i]);
+			gvalid = gvalid + wg_valid_counts[i];
+			i = i + 1u;
+		}
+
+		if (gvalid > 0u) {
+			atomic_min_f32(&scene_aabb[0], gmin.x);
+			atomic_min_f32(&scene_aabb[1], gmin.y);
+			atomic_min_f32(&scene_aabb[2], gmin.z);
+			atomic_max_f32(&scene_aabb[4], gmax.x);
+			atomic_max_f32(&scene_aabb[5], gmax.y);
+			atomic_max_f32(&scene_aabb[6], gmax.z);
+		}
+	}
 }
