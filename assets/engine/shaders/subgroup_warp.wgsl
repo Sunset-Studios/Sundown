@@ -43,14 +43,5 @@ fn make_warp_ctx(local_tid: u32, lane: u32, warp_size: u32) -> WarpCtx {
 #define warp_min_f32(warp_ctx, value) subgroupMin(value)
 #define warp_max_f32(warp_ctx, value) subgroupMax(value)
 
-fn warp_any(warp_ctx: WarpCtx, predicate: bool) -> bool {
-  return any(warp_ballot_u32(warp_ctx, predicate) != vec4<u32>(0u, 0u, 0u, 0u));
-}
-
-fn warp_all(warp_ctx: WarpCtx, predicate: bool) -> bool {
-  let mask0 = select(0u, 0xFFFFFFFFu, warp_ctx.warp_size == 32u);
-  let mask1 = select(0u, 0xFFFFFFFFu, warp_ctx.warp_size == 64u);
-  let mask2 = select(0u, 0xFFFFFFFFu, warp_ctx.warp_size == 128u);
-  let mask3 = select(0u, 0xFFFFFFFFu, warp_ctx.warp_size == 256u);
-  return all(warp_ballot_u32(warp_ctx, predicate) == vec4<u32>(mask0, mask1, mask2, mask3));
-}
+#define warp_any(warp_ctx, predicate) subgroupAny(predicate)
+#define warp_all(warp_ctx, predicate) subgroupAll(predicate)

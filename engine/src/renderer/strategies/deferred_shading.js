@@ -1100,9 +1100,6 @@ export class DeferredShadingStrategy {
         const bvh4_nodes = render_graph.register_buffer(
           aabb_gpu_data.bvh4_nodes_buffer.config.name
         );
-        const bvh4_parents = render_graph.register_buffer(
-          aabb_gpu_data.bvh4_parents_buffer.config.name
-        );
         const bvh_counters = render_graph.register_buffer(
           aabb_gpu_data.node_counters_buffer.config.name
         );
@@ -1134,7 +1131,6 @@ export class DeferredShadingStrategy {
                 debug_line_transform_buf,
                 debug_line_data_buf,
                 bvh4_nodes,
-                bvh4_parents,
                 bvh_counters,
                 scene_bounds,
               ],

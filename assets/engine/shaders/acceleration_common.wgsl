@@ -16,20 +16,17 @@ struct AABB {
     max: vec4<f32>,
 };
 
-// BVH2 (binary) node with quantised children (2-wide)
+// BVH2 (binary) node
 struct BVH2Node {
-    // packed quantised min & max of THIS node relative to its parent
-    q_min_max: vec2<u32>,
-    // indices of the two children; high-bit indicates leaf
-    children: vec2<u32>,
+    min_and_left_child: vec4<f32>,
+    max_and_right_child: vec4<f32>,
 };
 
-// BVH4 (4-wide) node with quantised children
+// BVH4 (4-wide) node
 struct BVH4Node {
-    // packed quantised min & max of THIS node relative to its parent
-    q_min_max: vec2<u32>,
-    // indices of the four children; high-bit indicates leaf
-    children: vec4<u32>,
+    min: vec4<f32>,
+    max: vec4<f32>,
+    children: vec4<f32>,
 };
 
 // Ray structure for intersection tests
@@ -74,7 +71,8 @@ fn decode_quant_aabb(base_min: vec3<f32>, base_extent: vec3<f32>, qmin: u32, qma
 
 // Check if a node is a leaf
 fn is_leaf(node: BVH2Node) -> bool {
-    return (node.children[0] & 0x80000000u) != 0u;
+    let first_child = u32(node.min_and_left_child.w);
+    return (first_child & 0x80000000u) != 0u;
 }
 
 // Ray-AABB intersection (slab method)

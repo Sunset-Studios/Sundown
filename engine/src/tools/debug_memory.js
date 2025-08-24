@@ -171,8 +171,8 @@ export class DebugMemory extends DevConsoleTool {
     push_buf("BVH4 Nodes", BVH.bvh4_nodes_buffer);
     push_buf("Onesweep Data", BVH.onesweep_data_buffer);
     push_buf("Node Counters", BVH.node_counters_buffer);
-    push_buf("Clusters In", BVH.clusters_in_buffer);
-    push_buf("Clusters Out", BVH.clusters_out_buffer);
+    push_buf("Clusters", BVH.clusters_buffer);
+    push_buf("Parent Indices", BVH.parent_idx_buffer);
 
     let total_bytes = 0;
     for (let i = 0; i < entries.length; i++) {

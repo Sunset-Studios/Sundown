@@ -9,10 +9,9 @@ const SORTED_INDICES_BUFFER_NAME = "sorted_indices_buffer";
 const TEMP_SORTED_INDICES_BUFFER_NAME = "temp_sorted_indices_buffer";
 const BVH2_NODES_BUFFER_NAME = "bvh2_nodes_buffer";
 const BVH4_NODES_BUFFER_NAME = "bvh4_nodes_buffer";
-const BVH4_PARENTS_BUFFER_NAME = "bvh4_parents_buffer";
+const PARENT_IDX_BUFFER_NAME = "bvh_parent_idx";
 const SCENE_BVH_BUFFER_NAME = "scene_bvh_buffer";
-const CLUSTERS_IN_BUFFER_NAME = "bvh_clusters_in";
-const CLUSTERS_OUT_BUFFER_NAME = "bvh_clusters_out";
+const CLUSTERS_BUFFER_NAME = "bvh_clusters";
 const ONESWEEP_GLOBAL_HIST_BUFFER_NAME = "onesweep_global_histogram";
 const ONESWEEP_PASS_HIST_BUFFER_NAME = "onesweep_pass_histogram";
 const ONESWEEP_TILE_INDICES_BUFFER_NAME = "onesweep_tile_indices";
@@ -28,10 +27,10 @@ export const TILE_SIZE = WORKGROUP_SIZE * ITEMS_PER_TILE;
 
 // float4 min_point (xyz + additional_data as w)
 // float4 max_point (xyz + additional_data as w)
-const NODE_BOUNDS_SIZE = 8; // Size in float32 elements
+const NODE_BOUNDS_SIZE = 32; // Size in float32 elements
 const SCENE_BVH_BYTE_SIZE = 32;
-const BVH2_NODE_BYTE_SIZE = 16;
-const BVH4_NODE_BYTE_SIZE = 24;
+const BVH2_NODE_BYTE_SIZE = 32;
+const BVH4_NODE_BYTE_SIZE = 48;
 const DEFAULT_BVH_SIZE = 1024;
 
 const storage_usage = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC;
@@ -71,10 +70,9 @@ export class BVH {
   static onesweep_error_count_buffer = null;
   static bvh2_nodes_buffer = null;
   static bvh4_nodes_buffer = null;
-  static bvh4_parents_buffer = null;
   static node_counters_buffer = null;
-  static clusters_in_buffer = null;
-  static clusters_out_buffer = null;
+  static clusters_buffer = null;
+  static parent_idx_buffer = null;
 
   static modified = true;
 
@@ -132,7 +130,7 @@ export class BVH {
    */
   static allocate_node() {
     if (this.free_nodes.length === 0) {
-      this.resize(this.bvh_size * 2 + 1);
+      this.resize(Math.ceil(this.bvh_size * 1.25) + 1);
     }
 
     const node_index = this.free_nodes.pop();
@@ -299,7 +297,7 @@ export class BVH {
       });
     }
 
-    const required_bvh2_size = this.bvh_size * 2 * BVH2_NODE_BYTE_SIZE;
+    const required_bvh2_size = this.bvh_size * BVH2_NODE_BYTE_SIZE;
 
     if (!this.bvh2_nodes_buffer || this.bvh2_nodes_buffer.config.size < required_bvh2_size) {
       this.bvh2_nodes_buffer = Buffer.create({
@@ -312,30 +310,13 @@ export class BVH {
       Renderer.get().mark_bind_groups_dirty(true);
     }
 
-    const required_bvh4_size = this.bvh_size * 2 * BVH4_NODE_BYTE_SIZE;
+    const required_bvh4_size = this.bvh_size * BVH4_NODE_BYTE_SIZE;
 
     if (!this.bvh4_nodes_buffer || this.bvh4_nodes_buffer.config.size < required_bvh4_size) {
       this.bvh4_nodes_buffer = Buffer.create({
         name: BVH4_NODES_BUFFER_NAME,
         usage: storage_usage,
         size: required_bvh4_size,
-        force: true,
-      });
-
-      Renderer.get().mark_bind_groups_dirty(true);
-    }
-
-    // BVH4 parent indices buffer (u32 per BVH4 node)
-    const estimated_bvh4_nodes = this.bvh_size * 2;
-    const required_bvh4_parents_size = estimated_bvh4_nodes * 4;
-    if (
-      !this.bvh4_parents_buffer ||
-      this.bvh4_parents_buffer.config.size < required_bvh4_parents_size
-    ) {
-      this.bvh4_parents_buffer = Buffer.create({
-        name: BVH4_PARENTS_BUFFER_NAME,
-        usage: storage_usage,
-        size: required_bvh4_parents_size,
         force: true,
       });
 
@@ -354,23 +335,22 @@ export class BVH {
     }
 
     const cluster_stride = 8 * 4; // 2x vec4<f32>
-    const clusters_required_size = Math.max(this.bvh_size, DEFAULT_BVH_SIZE) * cluster_stride;
-    if (!this.clusters_in_buffer || this.clusters_in_buffer.config.size < clusters_required_size) {
-      this.clusters_in_buffer = Buffer.create({
-        name: CLUSTERS_IN_BUFFER_NAME,
+    const clusters_required_size = this.bvh_size * cluster_stride;
+    if (!this.clusters_buffer || this.clusters_buffer.config.size < clusters_required_size) {
+      this.clusters_buffer = Buffer.create({
+        name: CLUSTERS_BUFFER_NAME,
         usage: storage_usage,
         size: clusters_required_size,
         force: true,
       });
     }
-    if (
-      !this.clusters_out_buffer ||
-      this.clusters_out_buffer.config.size < clusters_required_size
-    ) {
-      this.clusters_out_buffer = Buffer.create({
-        name: CLUSTERS_OUT_BUFFER_NAME,
+
+    // Parent index buffer (u32 per boundary)
+    if (!this.parent_idx_buffer || this.parent_idx_buffer.config.size < required_primitive_size) {
+      this.parent_idx_buffer = Buffer.create({
+        name: PARENT_IDX_BUFFER_NAME,
         usage: storage_usage,
-        size: clusters_required_size,
+        size: required_primitive_size,
         force: true,
       });
     }
@@ -406,11 +386,11 @@ export class BVH {
     temp_sorted_indices_buffer: null,
     bvh2_nodes_buffer: null,
     bvh4_nodes_buffer: null,
-    bvh4_parents_buffer: null,
     onesweep_global_hist_buffer: null,
     onesweep_pass_hist_buffer: null,
     onesweep_tile_indices_buffer: null,
     onesweep_error_count_buffer: null,
+    parent_idx_buffer: null,
   };
 
   /**
@@ -434,8 +414,8 @@ export class BVH {
     this.#data_buffers.onesweep_tile_indices_buffer = this.onesweep_tile_indices_buffer;
     this.#data_buffers.onesweep_error_count_buffer = this.onesweep_error_count_buffer;
     this.#data_buffers.node_counters_buffer = this.node_counters_buffer;
-    this.#data_buffers.clusters_in_buffer = this.clusters_in_buffer;
-    this.#data_buffers.clusters_out_buffer = this.clusters_out_buffer;
+    this.#data_buffers.clusters_buffer = this.clusters_buffer;
+    this.#data_buffers.parent_idx_buffer = this.parent_idx_buffer;
 
     return this.#data_buffers;
   }

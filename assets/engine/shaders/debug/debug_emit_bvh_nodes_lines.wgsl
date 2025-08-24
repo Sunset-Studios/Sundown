@@ -79,9 +79,8 @@ fn corner(min_p: vec3f, max_p: vec3f, idx: u32) -> vec3f {
 @group(1) @binding(0) var<storage, read_write> out_transforms: array<mat4x4f>;
 @group(1) @binding(1) var<storage, read_write> out_line_data: array<LineData>;
 @group(1) @binding(2) var<storage, read> bvh4_nodes: array<BVH4Node>;
-@group(1) @binding(3) var<storage, read> bvh4_parents: array<u32>;
-@group(1) @binding(4) var<storage, read_write> counters: Counters;
-@group(1) @binding(5) var<uniform> scene_aabb: AABB;
+@group(1) @binding(3) var<storage, read_write> counters: Counters;
+@group(1) @binding(4) var<uniform> scene_aabb: AABB;
 
 // ========================================================================================
 // Main (root-down traversal emitting world-space AABBs for BVH2)
@@ -114,32 +113,10 @@ fn cs(@builtin(global_invocation_id) gid: vec3u) {
     // One thread per BVH4 node: reconstruct parent chain to decode world bounds
     let target_idx = gid.x;
 
-    let scene_min = scene_aabb.min.xyz;
-    let scene_ext = scene_aabb.max.xyz - scene_min;
+    let node = bvh4_nodes[target_idx];
 
-    // Build path from target up to root via parent pointers
-    var path: array<u32, MAX_STACK>;
-    var depth = 0u;
-    var cur = target_idx;
-    loop {
-        if (cur == 0xffffffffu || cur >= total_bvh4 || depth + 1u >= MAX_STACK) { break; }
-        path[depth] = cur;
-        depth = depth + 1u;
-        cur = bvh4_parents[cur];
-    }
-
-    // Walk down the path decoding relative bounds
-    var base_min = scene_min;
-    var base_ext = scene_ext;
-    for (var d = depth; d > 0; d = d - 1) {
-        let idx = path[d - 1u];
-        let node = bvh4_nodes[idx];
-        let decoded = decode_quant_aabb(base_min, base_ext, node.q_min_max.x, node.q_min_max.y);
-        base_min = decoded.min.xyz;
-        base_ext = decoded.max.xyz - base_min;
-    }
-    let min_ws = base_min;
-    let max_ws = base_min + base_ext;
+    let min_ws = node.min.xyz;
+    let max_ws = node.max.xyz;
     let has_volume = all(max_ws > min_ws);
     emit_box_lines(min_ws, max_ws, target_idx, has_volume);
 }

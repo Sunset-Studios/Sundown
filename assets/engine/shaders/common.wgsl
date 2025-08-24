@@ -33,6 +33,7 @@ const EF_MOVED = 1u << 7;
 
 const LOG_DEPTH_C = 0.1; // Can adjust this value based on scene scale
 const MAX_UINT = 4294967295u;
+const INVALID_IDX = 0xffffffffu;
 
 struct Vertex {
     position: vec4<precision_float>,
@@ -112,6 +113,7 @@ const identity_matrix = mat4x4f(
 );
 
 const epsilon = 1e-4;
+const zero_vec4 = vec4f(0.0, 0.0, 0.0, 0.0);
 const world_up = vec3f(0.0, 1.0, 0.0);
 const world_right = vec3f(1.0, 0.0, 0.0);
 const world_forward = vec3f(0.0, 0.0, 1.0);
