@@ -14,8 +14,7 @@ const bounds_padding = 1.0;
 @group(1) @binding(0) var<storage, read> entity_transforms: array<EntityTransform>;
 @group(1) @binding(1) var<storage, read_write> entity_flags: array<u32>;
 @group(1) @binding(2) var<storage, read_write> aabb_bounds: array<AABB>;
-@group(1) @binding(3) var<storage, read> entity_aabb_node_indices: array<u32>;
-@group(1) @binding(4) var<storage, read_write> scene_aabb: array<atomic<u32>, 8>;
+@group(1) @binding(3) var<storage, read_write> scene_aabb: array<atomic<u32>, 8>;
 
 // ------------------------------------------------------------------------------------
 // Compute Shader
@@ -62,27 +61,24 @@ fn cs(
   @builtin(subgroup_size) ss: u32
 #endif
 ) {
-	let pos_inf = 3.402823466e+38;
-	let neg_inf = -3.402823466e+38;
-
 	let idx = global_id.x;
 	let lid = local_id.x;
 
-	let num_rows = arrayLength(&entity_aabb_node_indices);
-	let is_active = idx < num_rows;
+	let num_rows = arrayLength(&aabb_bounds);
 
 	var min_point = vec3f(pos_inf, pos_inf, pos_inf);
 	var max_point = vec3f(neg_inf, neg_inf, neg_inf);
-	var is_valid = false;
 
-  let entity_id_offset = get_entity_row(idx);
-  let node_index = entity_aabb_node_indices[entity_id_offset];
+	var min_node_bounds = vec4f(0.0, 0.0, 0.0, -1.0);
+	var max_node_bounds = vec4f(0.0, 0.0, 0.0, -1.0);
 
-	if (is_active && node_index != 0u) {
-		let transform = entity_transforms[entity_id_offset].transform;
-		let position = transform[3].xyz;
-		let scale = vec3f(length(transform[0].xyz), length(transform[1].xyz), length(transform[2].xyz));
+    let entity_id_offset = idx;
+    let transform = entity_transforms[entity_id_offset].transform;
+    let position = transform[3].xyz;
+	let scale = vec3f(length(transform[0].xyz), length(transform[1].xyz), length(transform[2].xyz));
 
+	let is_active = idx < num_rows && transform[3].w != 0.0;
+	if (is_active) {
 		let half_size = vec3f(
 		  abs(scale[0]) * 0.5,
 		  abs(scale[1]) * 0.5,
@@ -107,17 +103,18 @@ fn cs(
 		  position[2] + half_size[2] + padding[2],
 		);
 
-		aabb_bounds[node_index].min = vec4f(min_point, f32(entity_id_offset));
-		aabb_bounds[node_index].max = vec4f(max_point, 1.0);
+		min_node_bounds = vec4f(min_point, f32(entity_id_offset));
+		max_node_bounds = vec4f(max_point, -1.0);
 
 		entity_flags[entity_id_offset] |= EF_AABB_DIRTY;
-
-	  is_valid = true;
 	}
+
+	aabb_bounds[entity_id_offset].min = min_node_bounds;
+	aabb_bounds[entity_id_offset].max = max_node_bounds;
 
 	wg_min_points[lid] = min_point;
 	wg_max_points[lid] = max_point;
-	wg_valid_counts[lid] = select(0u, 1u, is_valid);
+	wg_valid_counts[lid] = select(0u, 1u, is_active);
 	workgroupBarrier();
 
 	if (lid == 0u) {

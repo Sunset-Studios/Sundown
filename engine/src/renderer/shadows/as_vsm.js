@@ -262,7 +262,6 @@ export class AdaptiveSparseVirtualShadowMaps {
       /* additional_data */ {
         aabb_bounds: 0,
         object_instances: 0,
-        entity_aabb_node_indices: 0,
         vsm_settings: 0,
         light_view_buffer: 0,
         light_shadow_idx_buffer: 0,

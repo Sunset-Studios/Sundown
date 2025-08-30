@@ -23,9 +23,11 @@ struct LineData {
     color_and_width: vec4f,
 };
 
-struct Counters {
-    bvh2_count: atomic<u32>,
-    bvh4_count: atomic<u32>,
+struct BVHData {
+    leaf_count: u32,
+    bvh2_count: u32,
+    root_index: u32,
+    prim_count: u32,
 };
 
 // ========================================================================================
@@ -79,7 +81,7 @@ fn corner(min_p: vec3f, max_p: vec3f, idx: u32) -> vec3f {
 @group(1) @binding(0) var<storage, read_write> out_transforms: array<mat4x4f>;
 @group(1) @binding(1) var<storage, read_write> out_line_data: array<LineData>;
 @group(1) @binding(2) var<storage, read> bvh4_nodes: array<BVH4Node>;
-@group(1) @binding(3) var<storage, read_write> counters: Counters;
+@group(1) @binding(3) var<storage, read_write> bvh_data: BVHData;
 @group(1) @binding(4) var<uniform> scene_aabb: AABB;
 
 // ========================================================================================
@@ -107,7 +109,7 @@ fn emit_box_lines(min_p: vec3f, max_p: vec3f, node_index: u32, is_active: bool) 
 
 @compute @workgroup_size(64)
 fn cs(@builtin(global_invocation_id) gid: vec3u) {
-    let total_bvh4 = atomicLoad(&counters.bvh4_count);
+    let total_bvh4 = bvh_data.prim_count;
     if (gid.x >= total_bvh4) { return; }
 
     // One thread per BVH4 node: reconstruct parent chain to decode world bounds

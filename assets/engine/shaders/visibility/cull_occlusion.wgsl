@@ -20,11 +20,10 @@ struct DrawCullData {
 @group(1) @binding(2) var<storage, read> visible_object_instances_no_occlusion: array<i32>;
 @group(1) @binding(3) var<storage, read_write> visible_object_instances: array<i32>;
 @group(1) @binding(4) var<storage, read> object_instances: array<ObjectInstance>;
-@group(1) @binding(5) var<storage, read> entity_aabb_node_indices: array<u32>;
-@group(1) @binding(6) var<uniform> draw_cull_data: DrawCullData;
-@group(1) @binding(7) var<storage, read_write> draw_indirect_buffer: array<DrawCommand>;
-@group(1) @binding(8) var entity_id_texture: texture_2d<u32>;
-@group(1) @binding(9) var<storage, read> occluder_buffer: array<u32>;
+@group(1) @binding(5) var<uniform> draw_cull_data: DrawCullData;
+@group(1) @binding(6) var<storage, read_write> draw_indirect_buffer: array<DrawCommand>;
+@group(1) @binding(7) var entity_id_texture: texture_2d<u32>;
+@group(1) @binding(8) var<storage, read> occluder_buffer: array<u32>;
 
 
 // ------------------------------------------------------------------------------------
@@ -168,8 +167,7 @@ fn cs(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let object_instance = object_instances[object_instance_index];
     let entity_resolved = get_entity_row(object_instance.row);
 
-    let aabb_node_index = entity_aabb_node_indices[entity_resolved];
-    var aabb_node = aabb_bounds[aabb_node_index];
+    var aabb_node = aabb_bounds[entity_resolved];
 
     var view = view_buffer[draw_cull_data.view_index];
     let occluded = is_occluded(&aabb_node, &view);

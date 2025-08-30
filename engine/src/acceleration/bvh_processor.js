@@ -40,7 +40,7 @@ const build_bvh2_hploc_cs_entry_point = "build_bvh2_hploc";
 const convert_bvh2_to_bvh4_cs_entry_point = "convert_bvh2_to_bvh4";
 
 const transforms_name = "transforms";
-const aabb_node_index_name = "aabb_node_index";
+const bounds_name = "bounds";
 
 export class BVHProcessor {
   is_initialised = false;
@@ -48,7 +48,7 @@ export class BVHProcessor {
   sort_uniforms_buffers = [];
   radix_uniforms_data = new Uint32Array(4);
   bvh2_uniforms = new Uint32Array(2);
-  counter_zeros = new Uint32Array(2);
+  bvh2_data = new Uint32Array(4);
   bounds_processing_inputs = [null, null, null, null, null, null];
   bounds_processing_outputs = [null, null, null, null, null];
   morton_code_inputs = [null, null, null, null, null, null, null, null];
@@ -57,8 +57,8 @@ export class BVHProcessor {
   radix_sort_outputs = [null, null];
   bvh2_inputs = [null, null, null, null, null, null, null, null, null, null];
   bvh2_outputs = [null, null, null];
-  bvh4_inputs = [null, null, null, null, null, null, null, null, null];
-  bvh4_outputs = [null, null];
+  bvh4_inputs = [null, null, null, null, null];
+  bvh4_outputs = [null, null, null, null];
 
   constructor() {
     BVH.initialize(this.max_primitives);
@@ -85,7 +85,7 @@ export class BVHProcessor {
     this.clear_onesweep();
     this.radix_sort();
     this.build_bvh2();
-    this.convert_bvh2_to_bvh4(primitive_count);
+    this.convert_bvh2_to_bvh4();
   }
 
   update_bounds() {
@@ -97,19 +97,18 @@ export class BVHProcessor {
       TransformFragment,
       transforms_name
     );
-    const aabb_node_index_buffer = EntityManager.get_fragment_gpu_buffer(
+    const bounds_buffer = EntityManager.get_fragment_gpu_buffer(
       TransformFragment,
-      aabb_node_index_name
+      bounds_name
     );
     const entity_flags_buffer = FragmentGpuBuffer.entity_flags_buffer;
 
     this.bounds_processing_inputs[0] = transforms_buffer.buffer;
     this.bounds_processing_inputs[1] = entity_flags_buffer.buffer;
-    this.bounds_processing_inputs[2] = tlas_buffers.bounds_buffer;
-    this.bounds_processing_inputs[3] = aabb_node_index_buffer.buffer;
-    this.bounds_processing_inputs[4] = tlas_buffers.scene_bounds_buffer;
+    this.bounds_processing_inputs[2] = bounds_buffer.buffer;
+    this.bounds_processing_inputs[3] = tlas_buffers.scene_bounds_buffer;
 
-    this.bounds_processing_outputs[0] = tlas_buffers.bounds_buffer;
+    this.bounds_processing_outputs[0] = bounds_buffer.buffer;
     this.bounds_processing_outputs[1] = entity_flags_buffer.buffer;
     this.bounds_processing_outputs[2] = tlas_buffers.scene_bounds_buffer;
 
@@ -123,11 +122,16 @@ export class BVHProcessor {
   }
 
   compute_morton_codes() {
-    const primitive_count = BVH.bvh_size;
+    const primitive_count = EntityManager.get_max_rows();
     const bvh = BVH.to_gpu_data();
     const workgroups = Math.ceil(primitive_count / WORKGROUP_SIZE);
 
-    this.morton_code_inputs[0] = bvh.bounds_buffer;
+    const bounds_buffer = EntityManager.get_fragment_gpu_buffer(
+      TransformFragment,
+      bounds_name
+    );
+
+    this.morton_code_inputs[0] = bounds_buffer.buffer;
     this.morton_code_inputs[1] = bvh.morton_codes_buffer;
     this.morton_code_inputs[2] = bvh.sorted_indices_buffer;
     this.morton_code_inputs[3] = bvh.scene_bounds_buffer;
@@ -148,7 +152,7 @@ export class BVHProcessor {
   }
 
   clear_onesweep() {
-    const element_count = BVH.bvh_size;
+    const element_count = EntityManager.get_max_rows();
     const bvh = BVH.to_gpu_data();
     const thread_blocks = Math.max(1, Math.ceil(element_count / TILE_SIZE));
 
@@ -185,7 +189,7 @@ export class BVHProcessor {
   }
 
   radix_sort() {
-    const element_count = BVH.bvh_size;
+    const element_count = EntityManager.get_max_rows();
     const bvh = BVH.to_gpu_data();
     const thread_blocks = Math.max(1, Math.ceil(element_count / TILE_SIZE));
 
@@ -271,25 +275,27 @@ export class BVHProcessor {
     const bvh = BVH.to_gpu_data();
     const bvh2_workgroups = Math.ceil(primitive_count / 64);
 
-    // Initialize leaf clusters
-    this.bvh2_uniforms[0] = primitive_count; // primitive_count
-    this.bvh2_uniforms[1] = 0; // pass_num
-    this.sort_uniforms_buffers[0].write(this.bvh2_uniforms);
-    // Reset combined node counters: [bvh2_count, bvh4_count]
-    bvh.node_counters_buffer.write(this.counter_zeros);
+    const bounds_buffer = EntityManager.get_fragment_gpu_buffer(
+      TransformFragment,
+      bounds_name
+    );
 
-    // Bind order must match acceleration/bvh_processing.wgsl group(1)
-    this.bvh2_inputs[0] = bvh.bounds_buffer;
+    // Reset counters for this frame
+    this.bvh2_data[0] = 0; // leaf_count
+    this.bvh2_data[1] = 0; // bvh2_count
+    this.bvh2_data[2] = 0xffffffff; // root_index
+    this.bvh2_data[3] = primitive_count; // prim_count
+    bvh.bvh_info_buffer.write(this.bvh2_data);
+
+    this.bvh2_inputs[0] = bounds_buffer.buffer;
     this.bvh2_inputs[1] = bvh.sorted_indices_buffer;
-    this.bvh2_inputs[2] = bvh.bvh2_nodes_buffer;
-    this.bvh2_inputs[3] = bvh.node_counters_buffer;
-    this.bvh2_inputs[4] = bvh.clusters_buffer;
-    this.bvh2_inputs[5] = bvh.morton_codes_buffer;
-    this.bvh2_inputs[6] = bvh.parent_idx_buffer;  // parent_idx (atomic)
+    this.bvh2_inputs[2] = bvh.bvh_info_buffer;
+    this.bvh2_inputs[3] = bvh.morton_codes_buffer;
+    this.bvh2_inputs[4] = bvh.parent_idx_buffer;
+    this.bvh2_inputs[5] = bvh.bvh4_index_pairs_buffer;
 
-    this.bvh2_outputs[0] = bvh.bvh2_nodes_buffer;
-    this.bvh2_outputs[1] = bvh.clusters_buffer;
-    this.bvh2_outputs[2] = bvh.node_counters_buffer;
+    this.bvh2_outputs[0] = bounds_buffer.buffer;
+    this.bvh2_outputs[1] = bvh.bvh_info_buffer;
 
     ComputeTaskQueue.new_task(
       hploc_init_leaf_clusters_task_name,
@@ -318,18 +324,34 @@ export class BVHProcessor {
   convert_bvh2_to_bvh4() {
     const primitive_count = EntityManager.get_max_rows();
     const bvh = BVH.to_gpu_data();
-    // Parallel conversion: each thread converts a top-level BVH2 root using a local stack
 
-    this.bvh4_inputs[0] = bvh.bvh2_nodes_buffer;
+    const bounds_buffer = EntityManager.get_fragment_gpu_buffer(
+      TransformFragment,
+      bounds_name
+    );
+    
+    // Initialize build state for CUDA-style algorithm
+    const build_state_data = new Uint32Array(5);
+    build_state_data[0] = 0; // work_counter
+    build_state_data[1] = 1; // node_counter (start at 1, root allocated separately)
+    build_state_data[2] = 0; // leaf_counter  
+    build_state_data[3] = 0; // work_alloc_counter
+    build_state_data[4] = primitive_count; // prim_count
+    bvh.bvh4_build_state_buffer.write(build_state_data);
+
+    this.bvh4_inputs[0] = bounds_buffer.buffer;
     this.bvh4_inputs[1] = bvh.bvh4_nodes_buffer;
-    this.bvh4_inputs[2] = bvh.node_counters_buffer;
-    this.bvh4_inputs[3] = bvh.scene_bounds_buffer;
+    this.bvh4_inputs[2] = bvh.bvh4_build_state_buffer;
+    this.bvh4_inputs[3] = bvh.bvh4_index_pairs_buffer;
+    this.bvh4_inputs[4] = bvh.bvh4_prim_indices_buffer;
+    this.bvh4_inputs[5] = bvh.bvh_info_buffer;
 
     this.bvh4_outputs[0] = bvh.bvh4_nodes_buffer;
-    this.bvh4_outputs[1] = bvh.node_counters_buffer;
+    this.bvh4_outputs[1] = bvh.bvh4_build_state_buffer;
+    this.bvh4_outputs[2] = bvh.bvh4_index_pairs_buffer;
+    this.bvh4_outputs[3] = bvh.bvh4_prim_indices_buffer;
 
-    const total_nodes_estimate = primitive_count * 2 - 1;
-    const workgroups = Math.max(1, Math.ceil(total_nodes_estimate / WORKGROUP_SIZE));
+    const workgroups = Math.max(1, Math.ceil(primitive_count / 32));
     ComputeTaskQueue.new_task(
       hploc_convert_parallel_single_pass_task_name,
       bvh4_processing_wgsl_path,

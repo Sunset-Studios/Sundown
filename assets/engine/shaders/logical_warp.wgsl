@@ -42,6 +42,70 @@ fn warp_broadcast_f32(c: WarpCtx, value: f32, lane: u32) -> f32 {
   return warp_tmp_f32[c.warp_base + lane];
 }
 
+fn warp_broadcast_first_u32(c: WarpCtx, value: u32) -> u32 {
+  // Zero per-warp active flags
+  if (is_warp_leader(c)) {
+    for (var i: u32 = 0u; i < c.warp_size; i = i + 1u) {
+      warp_tmp_f32[c.warp_base + i] = 0.0;
+    }
+  }
+  workgroupBarrier();
+
+  // Mark active lanes and stash values
+  warp_tmp_u32[c.thread_id] = value;
+  warp_tmp_f32[c.thread_id] = 1.0;
+  workgroupBarrier();
+
+  // Elect the lowest active lane
+  if (is_warp_leader(c)) {
+    var first_lane: u32 = 0u;
+    for (var i: u32 = 0u; i < c.warp_size; i = i + 1u) {
+      if (warp_tmp_f32[c.warp_base + i] != 0.0) {
+        first_lane = i;
+        break;
+      }
+    }
+    // Share elected lane id via u32 scratch header
+    warp_tmp_u32[c.warp_base] = first_lane;
+  }
+  workgroupBarrier();
+
+  let src_lane = warp_tmp_u32[c.warp_base];
+  return warp_tmp_u32[c.warp_base + src_lane];
+}
+
+fn warp_broadcast_first_f32(c: WarpCtx, value: f32) -> f32 {
+  // Zero per-warp active flags
+  if (is_warp_leader(c)) {
+    for (var i: u32 = 0u; i < c.warp_size; i = i + 1u) {
+      warp_tmp_u32[c.warp_base + i] = 0u;
+    }
+  }
+  workgroupBarrier();
+
+  // Mark active lanes and stash values
+  warp_tmp_f32[c.thread_id] = value;
+  warp_tmp_u32[c.thread_id] = 1u;
+  workgroupBarrier();
+
+  // Elect the lowest active lane
+  if (is_warp_leader(c)) {
+    var first_lane: u32 = 0u;
+    for (var i: u32 = 0u; i < c.warp_size; i = i + 1u) {
+      if (warp_tmp_u32[c.warp_base + i] != 0u) {
+        first_lane = i;
+        break;
+      }
+    }
+    // Share elected lane id via u32 scratch header
+    warp_tmp_u32[c.warp_base] = first_lane;
+  }
+  workgroupBarrier();
+
+  let src_lane = warp_tmp_u32[c.warp_base];
+  return warp_tmp_f32[c.warp_base + src_lane];
+}
+
 fn warp_shuffle_u32(c: WarpCtx, value: u32, lane: u32) -> u32 {
   warp_tmp_u32[c.thread_id] = value;
   workgroupBarrier();

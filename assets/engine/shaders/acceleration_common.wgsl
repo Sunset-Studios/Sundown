@@ -16,12 +16,6 @@ struct AABB {
     max: vec4<f32>,
 };
 
-// BVH2 (binary) node
-struct BVH2Node {
-    min_and_left_child: vec4<f32>,
-    max_and_right_child: vec4<f32>,
-};
-
 // BVH4 (4-wide) node
 struct BVH4Node {
     min: vec4<f32>,
@@ -70,9 +64,8 @@ fn decode_quant_aabb(base_min: vec3<f32>, base_extent: vec3<f32>, qmin: u32, qma
 }
 
 // Check if a node is a leaf
-fn is_leaf(node: BVH2Node) -> bool {
-    let first_child = u32(node.min_and_left_child.w);
-    return (first_child & 0x80000000u) != 0u;
+fn is_leaf(node: AABB) -> bool {
+    return node.min.w != -1.0;
 }
 
 // Ray-AABB intersection (slab method)

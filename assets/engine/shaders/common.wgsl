@@ -117,6 +117,8 @@ const zero_vec4 = vec4f(0.0, 0.0, 0.0, 0.0);
 const world_up = vec3f(0.0, 1.0, 0.0);
 const world_right = vec3f(1.0, 0.0, 0.0);
 const world_forward = vec3f(0.0, 0.0, 1.0);
+const pos_inf = 3.402823466e+38;
+const neg_inf = -3.402823466e+38;
 
 const one_over_float_max = 1.0 / 4294967295.0;
 

@@ -1,298 +1,430 @@
+diagnostic(off,subgroup_uniformity);
+
 #include "common.wgsl"
 #include "acceleration_common.wgsl"
 
-// H-PLOC Step 2: GPU-based acceleration structure construction.
-// This kernel converts a binary BVH (BVH2) into a wide-branching BVH (BVH4).
-// High-level:
-// - Traverse the BVH2 top-down using a small local stack.
-// - Build each BVH4 node by gathering up to four BVH2 children via a tiny frontier that expands
-//   inner BVH2 nodes while capacity remains.
-// - Order gathered children into four slots with an auction-based assignment heuristic
-//   to improve spatial coherence for traversal.
-// - Emit leaves as encoded handles; allocate BVH4 inner nodes for internal children and push them.
+// Based on "Efficient BVH8 construction for GPU ray tracing" by Vinkler et al.
+// Adapted from BVH8 to BVH4 while maintaining the exact algorithm structure
+
+// -----------------------------------------------------------------------------
+// Constants
+// -----------------------------------------------------------------------------
+const INVALID_ASSIGNMENT: u32 = 0xFu;
+const NQ: u32 = 8u; 
+const THETA: f32 = 8.0;
+const INV_THETA: f32 = 1.0 / 8.0;
+const MAX_COST: f32 = 10.0;
+const QUANT_STEP: f32 = 1.0 / 255.0; // 1.0 / ((1 << NQ) - 1)
+const WARP_SIZE: u32 = 32u;
 
 // -----------------------------------------------------------------------------
 // Data Structures
 // -----------------------------------------------------------------------------
-// Node allocation counters used during conversion. The BVH4 index space grows monotonically via
-// atomic increments to avoid write hazards while maintaining deterministic indexing.
-struct Counters {
-    bvh2_count: atomic<u32>,
-    bvh4_count: atomic<u32>,
+struct BuildState {
+    work_counter: atomic<u32>,
+    node_counter: atomic<u32>,
+    leaf_counter: atomic<u32>, 
+    work_alloc_counter: atomic<u32>,
+    prim_count: u32,
+};
+
+struct BVHData {
+    leaf_count: u32,
+    bvh2_count: u32,
+    root_index: u32,
+    prim_count: u32,
+};
+
+struct IndexPair {
+    hi: atomic<u32>,
+    lo: atomic<u32>,
 };
 
 //------------------------------------------------------------------------------
 // Bindings & Uniforms
 //------------------------------------------------------------------------------
-// bvh2_nodes: input linear array of BVH2 nodes (built by previous construction stage).
-@group(1) @binding(0) var<storage, read_write> bvh2_nodes: array<BVH2Node>;
-// bvh4_nodes: output linear array of BVH4 nodes produced by this conversion.
+@group(1) @binding(0) var<storage, read_write> bounds: array<AABB>;
 @group(1) @binding(1) var<storage, read_write> bvh4_nodes: array<BVH4Node>;
-// counters: atomic counters used to allocate BVH4 node indices deterministically.
-@group(1) @binding(2) var<storage, read_write> counters: Counters;
-// scene_aabb: world-space bounds for initializing the root stack state.
-@group(1) @binding(3) var<uniform> scene_aabb: AABB;
+@group(1) @binding(2) var<storage, read_write> build_state: BuildState;
+@group(1) @binding(3) var<storage, read_write> index_pairs: array<IndexPair>;
+@group(1) @binding(4) var<storage, read_write> prim_indices: array<u32>;
+@group(1) @binding(5) var<storage, read_write> bvh_data: BVHData;
 
 //------------------------------------------------------------------------------
-// Kernel 1: BVH2 -> BVH4 Conversion
+// Utility Functions
 //------------------------------------------------------------------------------
 
-// -----------------------------------------------------------------------------
-// Helpers adapted from CUDA BVH8 converter (ported for BVH4)
-// -----------------------------------------------------------------------------
-// Assignment packing and cost/epsilon schedule parameters for child-slot ordering.
-
-const INVALID_ASSIGNMENT: u32 = 0xFu;
-const THETA: f32 = 8.0;
-const INV_THETA: f32 = 1.0 / THETA;
-const MAX_COST: f32 = 10.0;
-
-// Packed 4-bit-per-slot utilities to encode child index per slot [0..3].
+// Get nibble (4-bit value) from packed assignments
 fn get_nibble(assignments: u32, slot: u32) -> u32 {
     return (assignments >> (slot * 4u)) & 0xFu;
 }
 
+// Set nibble (4-bit value) in packed assignments
 fn set_nibble(assignments: ptr<function, u32>, slot: u32, value: u32) {
     let shift = slot * 4u;
     let clear_mask = ~(0xFu << shift);
     *assignments = (*assignments & clear_mask) | ((value & 0xFu) << shift);
 }
 
-// Cost of placing a child at slot s (s in [0,3]) using 3-bit sign encoding
-// The fixed sign pattern approximates consistent octants, encouraging coherent child placement.
+// Count bits below position in a mask
+fn count_bits_below(mask: u32, pos: u32) -> u32 {
+    let shifted_mask = mask & ((1u << pos) - 1u);
+    return countOneBits(shifted_mask);
+}
+
+// Ceiling of log2
+fn ceil_log2(x: f32) -> u32 {
+    if (x <= 1.0) { return 0u; }
+    let bits = bitcast<u32>(x);
+    let exponent = (bits >> 23u) & 0xFFu;
+    let mantissa = bits & 0x7FFFFFu;
+    let result = exponent - 127u;
+    return select(result, result + 1u, mantissa != 0u);
+}
+
+// Inverse power of 2
+fn inv_pow2(exp: u32) -> f32 {
+    if (exp == 0u) { return 1.0; }
+    return 1.0 / pow(2.0, f32(exp));
+}
+
+// Cost function for placing child at slot s with given offset
 fn get_cost(slot: u32, offset: vec3<f32>) -> f32 {
-    // Map 4 slots to 4 distinct sign combinations across xyz:
-    // s=0: (+,+,+), s=1: (-,+,-), s=2: (+,-,-), s=3: (-,-,+)
-    let sx = select(1.0, -1.0, (slot & 2u) != 0u);
-    let sy = select(1.0, -1.0, (slot & 1u) != 0u);
-    let parity = ((slot & 1u) ^ ((slot >> 1u) & 1u)) != 0u;
-    let sz = select(1.0, -1.0, parity);
+    let sx = select(1.0, -1.0, ((slot >> 2u) & 1u) != 0u);
+    let sy = select(1.0, -1.0, ((slot >> 1u) & 1u) != 0u);
+    let sz = select(1.0, -1.0, (slot & 1u) != 0u);
     return sx * offset.x + sy * offset.y + sz * offset.z;
 }
 
-// AABB centroid helpers used for computing offsets relative to the parent.
-fn aabb_centroid2x(aabb: AABB) -> vec3<f32> {
-    return aabb.min.xyz + aabb.max.xyz;
+// Cost of placing child c in slot s
+fn get_cost_for_child(child_idx: u32, slot: u32, offsets: array<vec3<f32>, 4>) -> f32 {
+    return get_cost(slot, offsets[child_idx]);
 }
 
-fn aabb_centroid(aabb: AABB) -> vec3<f32> {
-    return 0.5 * (aabb.min.xyz + aabb.max.xyz);
+// Load index pair from array
+fn load_index_pair(idx: u32) -> vec2<u32> {
+    let hi = atomicLoad(&index_pairs[idx].hi);
+    let lo = atomicLoad(&index_pairs[idx].lo);
+    return vec2<u32>(hi, lo);
 }
 
-// Auction assignment (maximization) for up to 4 slots/children
-// Maximizes sum over children of (cost(slot, child) - price[slot]) by iteratively raising prices
-// to resolve conflicts. Returns a nibble-packed map: slot -> child_index.
+// Store index pair to array
+fn store_index_pair(idx: u32, hi: u32, lo: u32) {
+    atomicStore(&index_pairs[idx].hi, hi);
+    atomicStore(&index_pairs[idx].lo, lo);
+}
+
+// Auction algorithm for optimal assignment
 fn auction_assignment(offsets: array<vec3<f32>, 4>, max_cost: f32, n: u32) -> u32 {
     var prices: array<f32, 4>;
-    for (var i = 0u; i < 4u; i = i + 1u) { prices[i] = 0.0; }
+    for (var i = 0u; i < 4u; i = i + 1u) { 
+        prices[i] = 0.0; 
+    }
 
-    var assignments: u32 = 0xffffffffu; // per-slot nibble → child index
-
-    // Epsilon initialization per literature (prevents stalling for small n and sets scale).
-    let threshold = 1.0 / f32(max(n, 1u));
+    // Initialize epsilon (perfect port of CUDA logic)
+    let threshold = 1.0 / f32(n);
     var epsilon = max(max_cost, threshold);
 
+    var assignments: u32 = INVALID_IDX;
     while (epsilon >= threshold) {
-        // Reset assignments and bidders (encode bidders as nibble stream 0..n-1)
-        assignments = 0xffffffffu;
-        var bidders: u32 = 0xffffffffu;
-        for (var i = 0u; i < n; i = i + 1u) { set_nibble(&bidders, i, i); }
+        // Reset assignments
+        assignments = INVALID_IDX;
+
+        // Reset bidders with slots ranging from 0 to 3 (0x3210 = packed nibbles)
+        var bidders: u32 = 0x3210u;
         var bidder_count = n;
 
-        // main loop
         while (bidder_count > 0u) {
             bidder_count = bidder_count - 1u;
             let c = get_nibble(bidders, bidder_count);
 
-            var winning_reward = -3.4e38;
-            var second_reward = -3.4e38;
+            var winning_reward = -3.402823e+38; // -FLT_MAX
+            var second_winning_reward = -3.402823e+38;
             var winning_slot: u32 = INVALID_ASSIGNMENT;
 
             for (var s = 0u; s < 4u; s = s + 1u) {
                 let reward = get_cost(s, offsets[c]) - prices[s];
                 if (reward > winning_reward) {
-                    second_reward = winning_reward;
+                    second_winning_reward = winning_reward;
                     winning_reward = reward;
                     winning_slot = s;
-                } else if (reward > second_reward) {
-                    second_reward = reward;
+                } else if (reward > second_winning_reward) {
+                    second_winning_reward = reward;
                 }
             }
 
-            // Raise price so the winner becomes only epsilon better than its second-best option.
-            prices[winning_slot] = prices[winning_slot] + (winning_reward - second_reward) + epsilon;
+            prices[winning_slot] = prices[winning_slot] + (winning_reward - second_winning_reward) + epsilon;
 
-            let prev = get_nibble(assignments, winning_slot);
+            let previous_assignment = get_nibble(assignments, winning_slot);
             set_nibble(&assignments, winning_slot, c);
-            if (prev != INVALID_ASSIGNMENT) {
-                set_nibble(&bidders, bidder_count, prev);
+
+            if (previous_assignment != INVALID_ASSIGNMENT) {
+                set_nibble(&bidders, bidder_count, previous_assignment);
                 bidder_count = bidder_count + 1u;
             }
         }
 
-        epsilon = epsilon * INV_THETA; // shrink epsilon to tighten optimality
+        // Epsilon scaling
+        epsilon *= INV_THETA;
     }
-
     return assignments;
 }
 
-// One-pass, no extra global buffers: each thread picks a top-level BVH2 root and converts its subtree using a local stack
-// Strategy:
-// - Deterministic single-thread conversion to avoid races and ensure stable node ordering.
-// - Local stack stores (bvh2_index, bvh4_index, parent ws AABB) tuples for depth-first processing.
-// - Per-node, gather up to 4 children from a frontier that expands BVH2 inners while capacity
-//   remains, preferring smaller surface-area first for better packing.
-@compute @workgroup_size(256)
-fn convert_bvh2_to_bvh4(@builtin(global_invocation_id) gid: vec3<u32>) {
-    let idx = gid.x;
-    // Single-thread conversion for determinism and simplicity
-    if (idx != 0u) { return; }
+// BVH4 Node Creation
+fn create_bvh4_node(
+    bounds_arg: AABB,
+    child_nodes: array<u32, 4>,
+    child_base_idx: u32,
+    prim_base_idx: u32,
+    assignments: u32,
+    inner_mask: u32,
+    leaf_mask: u32
+) -> BVH4Node {
+    var node: BVH4Node;
 
-    let scene_min = scene_aabb.min.xyz;
-    let scene_ext = scene_aabb.max.xyz - scene_min;
-    // Note: world-space coordinates are used directly to preserve BVH2 frame and bounds.
+    // Write world-space bounds directly
+    node.min = bounds_arg.min;
+    node.max = bounds_arg.max;
 
-    // Local stacks (keep modest to avoid excessive private memory per thread)
-    const MAX_STACK: u32 = 256u;
-    // Stack of BVH2 node indices to be processed.
-    var stack_bvh2: array<u32, MAX_STACK>;
-    // Parallel stack of corresponding BVH4 node indices where results are written.
-    var stack_bvh4: array<u32, MAX_STACK>;
-    // Parent AABB min and extent in world-space to carry context if needed by heuristics.
-    var stack_min: array<vec3<f32>, MAX_STACK>;
-    var stack_ext: array<vec3<f32>, MAX_STACK>;
-    var sp = 0u;
+    // Encode per-slot children directly into BVH4Node.children
+    // Convention:
+    // - If slot i is inner: children[i] = f32(child_base_idx + rank among inner slots)
+    // - If slot i is leaf:  children[i] = f32(0x80000000 | (prim_base_idx + rank among leaf slots))
+    node.children = vec4<f32>(-1.0, -1.0, -1.0, -1.0);
 
-    // Allocate BVH4 node for this root
-    let root4 = atomicAdd(&counters.bvh4_count, 1u);
-    // Push root onto stack
-    stack_bvh2[sp] = idx;
-    stack_bvh4[sp] = root4;
-    stack_min[sp] = scene_min;
-    stack_ext[sp] = scene_ext;
-    sp = sp + 1u;
-
-    while (sp > 0u) {
-        sp = sp - 1u;
-
-        let node2_idx = stack_bvh2[sp];
-        let node4_idx = stack_bvh4[sp];
-        let parent_min = stack_min[sp];
-        let parent_extent = stack_ext[sp];
-
-        let node2 = bvh2_nodes[node2_idx];
-        let decoded_min = node2.min_and_left_child.xyz;
-        let decoded_max = node2.max_and_right_child.xyz;
-
-        // Gather up to four children using a small frontier (top-down), adapted for BVH4
-        // Expand an inner node only if there is capacity to add both of its children; otherwise,
-        // take it as a whole child to respect the BVH4 fan-out limit.
-        var child_indices: array<u32, 4>;
-        var child_aabbs: array<AABB, 4>;
-        var child_count = 0u;
-
-        var frontier: array<u32, 8>;
-        var frontier_size = 0u;
-
-        let c0 = u32(node2.min_and_left_child.w);
-        let c1 = u32(node2.max_and_right_child.w);
-        if (c0 != 0xffffffffu) { frontier[frontier_size] = c0; frontier_size = frontier_size + 1u; }
-        if (c1 != 0xffffffffu) { frontier[frontier_size] = c1; frontier_size = frontier_size + 1u; }
-
-        while (child_count < 4u && frontier_size > 0u) {
-            frontier_size = frontier_size - 1u;
-            let ci = frontier[frontier_size];
-            let cn = bvh2_nodes[ci];
-            let decoded_child = AABB(vec4<f32>(cn.min_and_left_child.xyz, 0.0), vec4<f32>(cn.max_and_right_child.xyz, 0.0));
-
-            if (!is_leaf(cn) && (child_count + frontier_size + 1u) < 4u) {
-                // Expand this inner node if we still have room to add both children
-                let l = u32(cn.min_and_left_child.w);
-                let r = u32(cn.max_and_right_child.w);
-                // Prefer expanding the child with smaller area first (like the original)
-                let l_node = bvh2_nodes[l];
-                let r_node = bvh2_nodes[r];
-                let l_dec = AABB(vec4<f32>(l_node.min_and_left_child.xyz, 0.0), vec4<f32>(l_node.max_and_right_child.xyz, 0.0));
-                let r_dec = AABB(vec4<f32>(r_node.min_and_left_child.xyz, 0.0), vec4<f32>(r_node.max_and_right_child.xyz, 0.0));
-                let l_size = max(vec3<f32>(0.0), l_dec.max.xyz - l_dec.min.xyz);
-                let r_size = max(vec3<f32>(0.0), r_dec.max.xyz - r_dec.min.xyz);
-                let l_area = 2.0 * (l_size.x * l_size.y + l_size.x * l_size.z + l_size.y * l_size.z);
-                let r_area = 2.0 * (r_size.x * r_size.y + r_size.x * r_size.z + r_size.y * r_size.z);
-                let expand_right_first = r_area < l_area;
-                // Push larger area last so smaller expands first
-                frontier[frontier_size] = select(l, r, expand_right_first); frontier_size = frontier_size + 1u;
-                frontier[frontier_size] = select(r, l, expand_right_first); frontier_size = frontier_size + 1u;
-            } else {
-                child_indices[child_count] = ci;
-                child_aabbs[child_count] = decoded_child;
-                child_count = child_count + 1u;
-            }
-        }
-
-        // If nothing was gathered (defensive), skip this node
-        if (child_count == 0u) {
+    for (var i = 0u; i < 4u; i = i + 1u) {
+        if (get_nibble(assignments, i) == INVALID_ASSIGNMENT) {
             continue;
         }
 
-        // Use the BVH2 node's world AABB for the BVH4 node
-        let node_min_ws = decoded_min;
-        let node_max_ws = decoded_max;
+        let is_inner = (inner_mask & (1u << i)) != 0u;
+        let inner_rank = count_bits_below(inner_mask, i);
+        let leaf_rank = count_bits_below(leaf_mask, i);
 
-        var out_node: BVH4Node;
-        out_node.min = vec4<f32>(node_min_ws, 0.0);
-        out_node.max = vec4<f32>(node_max_ws, 0.0);
-        // Children indices/handles are initialized to 0xffffffff to mark unused slots.
-        out_node.children = vec4<f32>(-1.0, -1.0, -1.0, -1.0);
+        let encoded = select(
+            // leaf
+            f32(0x80000000u | (prim_base_idx + leaf_rank)),
+            // inner
+            f32(child_base_idx + inner_rank),
+            is_inner
+        );
 
-        // Reorder children via auction assignment and emit in slot order [0..3]
-        // Resolves slot conflicts globally by raising prices to maximize total reward.
-        var assignments: u32 = 0xffffffffu;
-        let parent_centroid = 0.5 * (decoded_min + decoded_max);
+        node.children[i] = encoded;
+    }
+
+    return node;
+}
+
+//------------------------------------------------------------------------------
+// Single Leaf Handling (perfect CUDA port)
+//------------------------------------------------------------------------------
+
+fn create_bvh4_single_leaf(work_id: u32) {
+    if (work_id == 0u) {
+        var child_nodes: array<u32, 4>;
+        child_nodes[0] = 0u;
+        let assignments = 0xffffff0u;
+        let bvh2_node = bounds[0];
+        atomicAdd(&build_state.leaf_counter, 1u);
+        prim_indices[0] = 0u;
+
+        bvh4_nodes[0] = create_bvh4_node(bvh2_node, child_nodes, 0u, 0u, assignments, 0x0u, 0x1u);
+    }
+}
+
+//------------------------------------------------------------------------------
+// Main Kernel (perfect CUDA port with BVH4 adaptations)
+//------------------------------------------------------------------------------
+
+@compute @workgroup_size(WARP_SIZE)
+fn convert_bvh2_to_bvh4(
+    @builtin(local_invocation_id) local_id: vec3<u32>,
+    @builtin(workgroup_id) group_id: vec3<u32>,
+#if HAS_SUBGROUPS
+    @builtin(subgroup_invocation_id)  subgroup_id: u32,
+    @builtin(subgroup_size) subgroup_size: u32
+#endif
+) {
+    let size = bvh_data.bvh2_count;
+
+    // Limit to first warp per workgroup for deterministic behavior
+#if HAS_SUBGROUPS
+    let lane = subgroup_id;
+    let warp_ctx = make_warp_ctx(local_id.x, lane, subgroup_size);
+#else
+    let lane = lane_id(local_id.x, LOGICAL_WARP_SIZE);
+    let warp_ctx = make_warp_ctx(local_id.x, lane, LOGICAL_WARP_SIZE);
+#endif
+
+    // Atomic work allocation
+    var work_id = 0u;
+    if (is_warp_leader(warp_ctx)) {
+        work_id = atomicAdd(&build_state.work_counter, warp_ctx.warp_size);
+    }
+    work_id = warp_shuffle_u32(warp_ctx, work_id, 0u) + warp_ctx.lane_id;
+
+    var lane_active = work_id < build_state.prim_count;
+
+    // Handle single leaf case
+    if (build_state.prim_count == 1u) {
+        create_bvh4_single_leaf(work_id);
+        return;
+    }
+
+    // Main processing loop
+    while (warp_any(warp_ctx, lane_active)) {
+        if (!lane_active) {
+            continue;
+        }
+
+        // Load index pair
+        let index_pair = load_index_pair(work_id);
+        let bvh2_node_idx = index_pair.x;
+        let bvh4_node_idx = index_pair.y;
+
+        // If no work assigned, skip
+        if (bvh2_node_idx == INVALID_IDX || bvh2_node_idx >= size) {
+            lane_active = false;
+            continue;
+        }
+
+        let bvh2_node = bounds[bvh2_node_idx];
+        // If leaf node, create BVH4 leaf
+        if (is_leaf(bvh2_node)) {
+            prim_indices[bvh4_node_idx] = u32(bvh2_node.min.w);
+            lane_active = false;
+            continue;
+        }
+
+        // Gather children using top-down traversal
+        var inner_mask: u32 = 0u;
+        var child_count: u32 = 0u;
+        var child_nodes: array<u32, 4>;
+
+        var child_bounds: array<AABB, 2>;
+        var left_child = u32(bvh2_node.min.w);
+        var right_child = u32(bvh2_node.max.w);
+        var msb: i32 = 0;
+
+        // Top-down traversal to collect up to 4 nodes
+        loop {
+            child_bounds[0] = bounds[left_child];
+            child_bounds[1] = bounds[right_child];
+
+            // Push both children
+            let area0 = calculate_aabb_surface_area(child_bounds[0].min.xyz, child_bounds[0].max.xyz);
+            let area1 = calculate_aabb_surface_area(child_bounds[1].min.xyz, child_bounds[1].max.xyz);
+            let first = !(area0 < area1);
+
+            // Order children by 'first'
+            let ordered_0 = select(right_child, left_child, first);
+            let ordered_1 = select(left_child, right_child, first);
+
+            // Push ordered_0 at next slot
+            let idx0 = child_count;
+            if (!is_leaf(bounds[ordered_0])) {
+                inner_mask = inner_mask | (1u << idx0);
+            }
+            child_nodes[idx0] = ordered_0;
+            child_count = child_count + 1u;
+
+            // Push ordered_1 at next slot
+            let idx1 = child_count;
+            if (!is_leaf(bounds[ordered_1])) {
+                inner_mask = inner_mask | (1u << idx1);
+            }
+            child_nodes[idx1] = ordered_1;
+            child_count = child_count + 1u;
+
+            // Pop the last inner node from the stack
+            msb = 31 - i32(countLeadingZeros(inner_mask));
+
+            if (msb < 0 || child_count == 4u) {
+                break;
+            }
+
+            // Set the msb to 0
+            inner_mask = inner_mask & ~(1u << u32(msb));
+            child_count -= 1u;
+
+            let new_idx = child_nodes[u32(msb)];
+            let expanded_node = bounds[new_idx];
+            left_child = u32(expanded_node.min.w);
+            right_child = u32(expanded_node.max.w);
+        }
+
+        let parent_centroid = bvh2_node.min.xyz + bvh2_node.max.xyz;
+
+        // Reorder children using Auction assignment
+        let diagonal = bvh2_node.max.xyz - bvh2_node.min.xyz;
+        let max_dim = max(max(diagonal.x, diagonal.y), diagonal.z);
+        var cost_scale = select(MAX_COST / max_dim, 0.0, max_dim == 0.0);
+        cost_scale *= 0.5;
 
         var offsets: array<vec3<f32>, 4>;
-        var max_cost = -3.4e38;
-        let max_dim = max(max(node_max_ws.x - node_min_ws.x, node_max_ws.y - node_min_ws.y), node_max_ws.z - node_min_ws.z);
-        var cost_scale = select(MAX_COST / max_dim, 0.0, max_dim == 0.0);
-        cost_scale = cost_scale * 0.5;
+        var max_cost = -3.402823e+38;
+
         for (var c = 0u; c < child_count; c = c + 1u) {
-            let centroid = aabb_centroid(child_aabbs[c]);
+            let child_bounds_local = bounds[child_nodes[c]];
+            let centroid = child_bounds_local.min.xyz + child_bounds_local.max.xyz;
             offsets[c] = (parent_centroid - centroid) * cost_scale;
-            let abssum = abs(offsets[c].x) + abs(offsets[c].y) + abs(offsets[c].z);
-            max_cost = select(max_cost, abssum, abssum > max_cost);
-        }
-        assignments = auction_assignment(offsets, max_cost, child_count);
 
-        // Emit in slot order and push internal children
-        for (var s = 0u; s < 4u; s = s + 1u) {
-            let asg = get_nibble(assignments, s);
-            if (asg == INVALID_ASSIGNMENT) { continue; }
-
-            let ci = child_indices[asg];
-            let cn = bvh2_nodes[ci];
-            let child_min_ws = child_aabbs[asg].min.xyz;
-            let child_max_ws = child_aabbs[asg].max.xyz;
-
-            if (is_leaf(cn)) {
-                // Encode leaf: high bit set | primitive index from BVH2 leaf
-                // Leaves are distinguishable from internal node indices at traversal time.
-                let leaf_word = u32(cn.min_and_left_child.w);
-                let prim_idx = leaf_word & 0x7fffffffu;
-                let leaf_handle = 0x80000000u | prim_idx;
-                out_node.children[s] = f32(leaf_handle);
-            } else {
-                let child4 = atomicAdd(&counters.bvh4_count, 1u);
-                out_node.children[s] = f32(child4);
-                if (sp + 1u < MAX_STACK) {
-                    stack_bvh2[sp] = ci;
-                    stack_bvh4[sp] = child4;
-                    stack_min[sp] = child_min_ws;
-                    stack_ext[sp] = child_max_ws - child_min_ws;
-                    sp = sp + 1u;
-                }
+            let cost_mag = abs(offsets[c].x) + abs(offsets[c].y) + abs(offsets[c].z);
+            if (cost_mag > max_cost) {
+                max_cost = cost_mag;
             }
         }
 
-        // Store the completed BVH4 node into the output array at the reserved index.
-        bvh4_nodes[node4_idx] = out_node;
+        let assignments = auction_assignment(offsets, max_cost, child_count);
+
+        // Compute new masks after reordering (perfect CUDA port)
+        var new_inner_mask: u32 = 0u;
+        var leaf_mask: u32 = 0u;
+        for (var i = 0u; i < 4u; i = i + 1u) {
+            if (get_nibble(assignments, i) == INVALID_ASSIGNMENT) {
+                continue;
+            }
+
+            let bit = (inner_mask >> get_nibble(assignments, i)) & 1u;
+            new_inner_mask = new_inner_mask | (bit << i);
+            leaf_mask = leaf_mask | ((1u - bit) << i);
+        }
+        inner_mask = new_inner_mask;
+
+        let inner_count = countOneBits(inner_mask);
+        let leaf_count = child_count - inner_count;
+
+        // Allocate new inner nodes, leaf nodes and work items
+        let child_base_idx = atomicAdd(&build_state.node_counter, inner_count);
+        let work_base_idx = atomicAdd(&build_state.work_alloc_counter, child_count - 1u);
+
+        var prim_base_idx: u32 = 0u;
+        if (leaf_count > 0u) {
+            prim_base_idx = atomicAdd(&build_state.leaf_counter, leaf_count);
+        }
+
+        // Add new work in the index pair list
+        for (var i = 0u; i < 4u; i = i + 1u) {
+            if (get_nibble(assignments, i) == INVALID_ASSIGNMENT) {
+                continue;
+            }
+
+            var pair_hi = child_nodes[get_nibble(assignments, i)];
+            var pair_lo = select(
+                prim_base_idx + count_bits_below(leaf_mask, i),
+                child_base_idx + count_bits_below(inner_mask, i),
+                (inner_mask & (1u << i)) != 0u
+            );
+
+            let c = count_bits_below(inner_mask | leaf_mask, i);
+            let idx = select(work_base_idx + c - 1u, work_id, c == 0u);
+            store_index_pair(idx, pair_hi, pair_lo);
+        }
+
+        // Create and store the new BVH4 node
+        bvh4_nodes[bvh4_node_idx] = create_bvh4_node(
+            bvh2_node, child_nodes, child_base_idx, prim_base_idx, 
+            assignments, inner_mask, leaf_mask
+        );
     }
 }

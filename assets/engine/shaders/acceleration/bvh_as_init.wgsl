@@ -6,14 +6,16 @@
 // -----------------------------------------------------------------------------
 // Data Structures
 // -----------------------------------------------------------------------------
-struct Cluster {
-    aabb_min_and_node_idx: vec4<f32>,
-    aabb_max_and_is_active: vec4<f32>,
+struct BVHData {
+    leaf_count: atomic<u32>,
+    bvh2_count: atomic<u32>,
+    root_index: u32,
+    prim_count: u32,
 };
 
-struct Counters {
-    bvh2_count: atomic<u32>,
-    bvh4_count: atomic<u32>,
+struct IndexPair {
+    hi: u32,
+    lo: u32,
 };
 
 //------------------------------------------------------------------------------
@@ -21,17 +23,16 @@ struct Counters {
 //------------------------------------------------------------------------------
 @group(1) @binding(0) var<storage, read> bounds: array<AABB>;
 @group(1) @binding(1) var<storage, read_write> cluster_idx: array<u32>;
-@group(1) @binding(2) var<storage, read_write> bvh2_nodes: array<BVH2Node>;
-@group(1) @binding(3) var<storage, read_write> counters: Counters;
-@group(1) @binding(4) var<storage, read_write> clusters: array<Cluster>;
-@group(1) @binding(5) var<storage, read> morton_codes: array<u32>;
-@group(1) @binding(6) var<storage, read_write> parent_idx: array<u32>;
+@group(1) @binding(2) var<storage, read_write> counters: BVHData;
+@group(1) @binding(3) var<storage, read> morton_codes: array<u32>;
+@group(1) @binding(4) var<storage, read_write> parent_idx: array<u32>;
+@group(1) @binding(5) var<storage, read_write> index_pairs: array<IndexPair>;
 
 //------------------------------------------------------------------------------
 // HPLOC Kernels 
 //------------------------------------------------------------------------------
 
-@compute @workgroup_size(256)
+@compute @workgroup_size(64)
 fn initialize_leaf_clusters(
     @builtin(global_invocation_id) gid: vec3<u32>,
     @builtin(local_invocation_id) local_id: vec3<u32>,
@@ -51,30 +52,22 @@ fn initialize_leaf_clusters(
 #endif
 
     // 1) Warp-aggregate the increment amount
-    let warp_sum = warp_reduce_add_u32(warp_ctx, 1u);
-
+    let is_valid_leaf = select(0u, 1u, is_leaf(bounds[prim_idx]));
+    let warp_sum = warp_reduce_add_u32(warp_ctx, is_valid_leaf);
     // 2) One atomicAdd per warp
-    var base = 0u;
     if (is_warp_leader(warp_ctx)) {
-      base = atomicAdd(&counters.bvh2_count, warp_sum);
+      atomicAdd(&counters.leaf_count, warp_sum);
     }
-    base = warp_broadcast_u32(warp_ctx, base, 0u);
 
-    // 3) Per-lane exclusive prefix to get unique index
-    let offset = warp_scan_exclusive_add_u32(warp_ctx, 1u);
-    let leaf_node_idx = base + offset;
-
-    let sorted_prim_idx = cluster_idx[prim_idx];
-    let bound = bounds[sorted_prim_idx];
-
-    // min and max will be filled later when this leaf is attached to a parent
-    bvh2_nodes[leaf_node_idx].min_and_left_child.w = f32(0x80000000u | sorted_prim_idx);
-    bvh2_nodes[leaf_node_idx].max_and_right_child.w = f32(0xffffffffu);
-
-    clusters[leaf_node_idx].aabb_min_and_node_idx = bound.min;
-    clusters[leaf_node_idx].aabb_max_and_is_active = bound.max;
-
-    // Seed cluster_idx with the leaf mapping in sorted order
+    // parent_idx is set to INVALID_IDX because this leaf is not attached to a parent yet
     parent_idx[prim_idx] = INVALID_IDX;
-    cluster_idx[prim_idx] = leaf_node_idx;
+    index_pairs[prim_idx].hi = INVALID_IDX;
+    index_pairs[prim_idx].lo = INVALID_IDX;
+
+    workgroupBarrier();
+
+    if (local_id.x == 0u) {
+        let leaf_count = atomicLoad(&counters.leaf_count);
+        atomicStore(&counters.bvh2_count, leaf_count);
+    }
 }

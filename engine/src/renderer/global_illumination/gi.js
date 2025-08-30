@@ -19,7 +19,6 @@ class GI {
     position_texture,
     aabb_bounds,
     object_instances,
-    entity_aabb_node_indices,
     force_recreate = false
   ) {
     this.restir.add_passes(render_graph, { width, height, force_recreate });

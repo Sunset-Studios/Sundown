@@ -5,6 +5,10 @@ import { InputKey } from "../input/input_types.js";
 import { FragmentGpuBuffer } from "../core/ecs/solar/memory.js";
 import { BVH } from "../acceleration/bvh.js";
 import { bytes_to_mb } from "../utility/math.js";
+import { EntityManager } from "../core/ecs/entity.js";
+import { TransformFragment } from "../core/ecs/fragments/transform_fragment.js";
+
+const bounds_name = "bounds";
 
 // Panel configuration
 const stats_panel_config = {
@@ -154,6 +158,11 @@ export class DebugMemory extends DevConsoleTool {
       // Do not auto-initialize; just show empty if not used yet
     }
 
+    const bounds_buffer = EntityManager.get_fragment_gpu_buffer(
+      TransformFragment,
+      bounds_name
+    );
+
     const entries = [];
     const push_buf = (display_name, buf) => {
       if (!buf) return;
@@ -162,15 +171,14 @@ export class DebugMemory extends DevConsoleTool {
     };
 
     push_buf("Scene Bounds", BVH.scene_bounds_buffer);
-    push_buf("Node Bounds", BVH.bounds_buffer);
+    push_buf("Node Bounds", bounds_buffer.buffer);
     push_buf("Morton Codes", BVH.morton_codes_buffer);
     push_buf("Temp Morton Codes", BVH.temp_morton_codes_buffer);
     push_buf("Sorted Indices", BVH.sorted_indices_buffer);
     push_buf("Temp Sorted Indices", BVH.temp_sorted_indices_buffer);
-    push_buf("BVH2 Nodes", BVH.bvh2_nodes_buffer);
     push_buf("BVH4 Nodes", BVH.bvh4_nodes_buffer);
     push_buf("Onesweep Data", BVH.onesweep_data_buffer);
-    push_buf("Node Counters", BVH.node_counters_buffer);
+    push_buf("BVH Info", BVH.bvh_info_buffer);
     push_buf("Clusters", BVH.clusters_buffer);
     push_buf("Parent Indices", BVH.parent_idx_buffer);
 

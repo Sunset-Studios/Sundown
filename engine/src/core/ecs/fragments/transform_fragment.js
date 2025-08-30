@@ -93,12 +93,12 @@ export class TransformFragment extends Fragment {
       },
       cpu_readback: false,
     },
-    aabb_node_index: {
-      ctor: Uint32Array,
-      elements: 1,
+    bounds: {
+      ctor: Float32Array,
+      elements: 8,
       default: 0,
       gpu_buffer: true,
-      buffer_name: "aabb_node_index",
+      buffer_name: "bounds",
       is_container: false,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
       cpu_readback: false,
@@ -215,28 +215,5 @@ export class TransformFragment extends Fragment {
     local_transform_fragment.position[2] += offset[2];
 
     EntityManager.set_entity_dirty(entity, true);
-  }
-
-  static on_entity_change(entity, new_count, old_count) {
-    // TODO: Look into making some sort of BoundsUpdateRequest object that we can queue up
-    // and process in the post-update phase to collate this processing in one place (for i-cache reasons)
-    for (let i = 0; i < old_count; ++i) {
-      const transform_fragment = EntityManager.get_fragment(
-        entity,
-        TransformFragment,
-        i,
-      );
-      BVH.free_node(transform_fragment.aabb_node_index);
-      transform_fragment.aabb_node_index = 0;
-    }
-
-    for (let i = 0; i < new_count; ++i) {
-      const transform_fragment = EntityManager.get_fragment(
-        entity,
-        TransformFragment,
-        i,
-      );
-      transform_fragment.aabb_node_index = BVH.allocate_node();
-    }
   }
 }

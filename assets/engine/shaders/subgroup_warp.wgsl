@@ -25,6 +25,9 @@ fn make_warp_ctx(local_tid: u32, lane: u32, warp_size: u32) -> WarpCtx {
 #define warp_broadcast_u32(warp_ctx, value, lane) subgroupBroadcast(value, lane)
 #define warp_broadcast_f32(warp_ctx, value, lane) subgroupBroadcast(value, lane)
 
+#define warp_broadcast_first_u32(warp_ctx, value) subgroupBroadcastFirst(value)
+#define warp_broadcast_first_f32(warp_ctx, value) subgroupBroadcastFirst(value)
+
 #define warp_shuffle_u32(warp_ctx, value, lane) subgroupShuffle(value, lane)
 #define warp_shuffle_f32(warp_ctx, value, lane) subgroupShuffle(value, lane)
 

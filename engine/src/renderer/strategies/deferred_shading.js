@@ -60,7 +60,7 @@ import {
 const resolution_change_event_name = "resolution_change";
 const deferred_shading_profile_scope_name = "DeferredShadingStrategy.draw";
 const transforms_name = "transforms";
-const aabb_node_index_name = "aabb_node_index";
+const bounds_name = "bounds";
 const occluder_name = "occluder";
 const light_fragment_name = "light_fragment";
 
@@ -454,7 +454,6 @@ export class DeferredShadingStrategy {
       /* additional_data */ {
         aabb_bounds: 0,
         object_instances: 0,
-        entity_aabb_node_indices: 0,
         main_entity_id_image: 0,
       }
     );
@@ -464,7 +463,6 @@ export class DeferredShadingStrategy {
       /* additional_data */ {
         aabb_bounds: 0,
         object_instances: 0,
-        entity_aabb_node_indices: 0,
         main_hzb_image: 0,
         main_entity_id_image: 0,
         entity_occluders: 0,
@@ -533,14 +531,13 @@ export class DeferredShadingStrategy {
         TransformFragment,
         transforms_name
       );
-      const entity_transforms = render_graph.register_buffer(transforms_buffer.buffer.config.name);
-      const aabb_node_index_buffer = EntityManager.get_fragment_gpu_buffer(
+      const bounds_buffer = EntityManager.get_fragment_gpu_buffer(
         TransformFragment,
-        aabb_node_index_name
+        bounds_name
       );
-      const entity_aabb_node_indices = render_graph.register_buffer(
-        aabb_node_index_buffer.buffer.config.name
-      );
+      const entity_transforms = render_graph.register_buffer(transforms_buffer.buffer.config.name);
+      const aabb_bounds = render_graph.register_buffer(bounds_buffer.buffer.config.name);
+
       const occluder_buffer = EntityManager.get_fragment_gpu_buffer(
         VisibilityFragment,
         occluder_name
@@ -567,12 +564,6 @@ export class DeferredShadingStrategy {
       const dense_lights = render_graph.create_buffer(dense_lights_buffer_config);
 
       const light_count = render_graph.create_buffer(light_count_buffer_config);
-
-      // ┌─────────────────────────────────────────────────────────────────────────────┐
-      // │ 📦 Setup Acceleration Structures & Bounds                                  │
-      // └─────────────────────────────────────────────────────────────────────────────┘
-      const aabb_gpu_data = BVH.to_gpu_data();
-      const aabb_bounds = render_graph.register_buffer(aabb_gpu_data.bounds_buffer.config.name);
 
       // ┌─────────────────────────────────────────────────────────────────────────────┐
       // │ 🖼️  Create G-Buffer & Main Render Targets                                  │
@@ -646,12 +637,10 @@ export class DeferredShadingStrategy {
 
         this.frustum_culler.additional_data.aabb_bounds = aabb_bounds;
         this.frustum_culler.additional_data.object_instances = object_instances;
-        this.frustum_culler.additional_data.entity_aabb_node_indices = entity_aabb_node_indices;
 
         this.occlusion_culler.additional_data.main_hzb_image = main_hzb_image;
         this.occlusion_culler.additional_data.aabb_bounds = aabb_bounds;
         this.occlusion_culler.additional_data.object_instances = object_instances;
-        this.occlusion_culler.additional_data.entity_aabb_node_indices = entity_aabb_node_indices;
         this.occlusion_culler.additional_data.entity_occluders = entity_occluders;
         this.occlusion_culler.additional_data.main_entity_id_image = main_entity_id_image;
       }
@@ -1082,7 +1071,7 @@ export class DeferredShadingStrategy {
       // └─────────────────────────────────────────────────────────────────────────────┘
       if (debug_view === DebugDrawType.EntityBounds || debug_view === DebugDrawType.BVH) {
         const aabb_gpu_data = BVH.to_gpu_data();
-        const max_nodes_debug = BVH.bvh_size * 2; // accommodate BVH4 nodes
+        const max_nodes_debug = BVH.bvh_size;
         const max_lines = max_nodes_debug * 12;
 
         const debug_line_transform_buf = render_graph.create_buffer({
@@ -1100,8 +1089,8 @@ export class DeferredShadingStrategy {
         const bvh4_nodes = render_graph.register_buffer(
           aabb_gpu_data.bvh4_nodes_buffer.config.name
         );
-        const bvh_counters = render_graph.register_buffer(
-          aabb_gpu_data.node_counters_buffer.config.name
+        const bvh_info = render_graph.register_buffer(
+          aabb_gpu_data.bvh_info_buffer.config.name
         );
         const scene_bounds = render_graph.register_buffer(
           aabb_gpu_data.scene_bounds_buffer.config.name
@@ -1131,7 +1120,7 @@ export class DeferredShadingStrategy {
                 debug_line_transform_buf,
                 debug_line_data_buf,
                 bvh4_nodes,
-                bvh_counters,
+                bvh_info,
                 scene_bounds,
               ],
               outputs: [debug_line_transform_buf, debug_line_data_buf],
@@ -1197,7 +1186,6 @@ export class DeferredShadingStrategy {
           main_position_image,
           aabb_bounds,
           object_instances,
-          entity_aabb_node_indices,
           this.force_recreate
         );
       }

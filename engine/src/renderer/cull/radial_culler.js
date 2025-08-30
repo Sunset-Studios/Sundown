@@ -46,7 +46,6 @@ export class RadialCuller extends InstanceCuller {
             this.additional_data.object_instances,
             visible_buf,
             indirect_buf,
-            this.additional_data.entity_aabb_node_indices,
             draw_cull_data,
             clip0_extent_buf,
           ],
