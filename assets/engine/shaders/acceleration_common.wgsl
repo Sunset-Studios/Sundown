@@ -65,7 +65,7 @@ fn decode_quant_aabb(base_min: vec3<f32>, base_extent: vec3<f32>, qmin: u32, qma
 
 // Check if a node is a leaf
 fn is_leaf(node: AABB) -> bool {
-    return node.min.w != -1.0;
+    return node.min.w != -1.0 && node.max.w == -1.0;
 }
 
 // Ray-AABB intersection (slab method)

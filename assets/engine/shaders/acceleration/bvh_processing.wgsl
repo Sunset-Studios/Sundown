@@ -369,13 +369,6 @@ fn ploc_merge(
         num_prim = merge_clusters_create_bvh2_node(warp_ctx, num_prim, nearest_neighbor, &cluster_index, &cmin, &cmax);
     }
 
-    if (sync_final && (lane_id == lane_id_selected)) {
-        let final_cluster_index = cluster_index;
-        bvh_data.root_index = final_cluster_index;
-        index_pairs[0].hi = final_cluster_index;
-        index_pairs[0].lo = 0u;
-    }
-
     store_indices(warp_ctx, num_left + num_right, cluster_index, l_start);
 }
 

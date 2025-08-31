@@ -59,15 +59,14 @@ fn initialize_leaf_clusters(
       atomicAdd(&counters.leaf_count, warp_sum);
     }
 
+    if (is_valid_leaf == 1u) {
+        atomicMax(&counters.bvh2_count, prim_idx + 1u);
+    }
+
     // parent_idx is set to INVALID_IDX because this leaf is not attached to a parent yet
     parent_idx[prim_idx] = INVALID_IDX;
     index_pairs[prim_idx].hi = INVALID_IDX;
     index_pairs[prim_idx].lo = INVALID_IDX;
 
     workgroupBarrier();
-
-    if (local_id.x == 0u) {
-        let leaf_count = atomicLoad(&counters.leaf_count);
-        atomicStore(&counters.bvh2_count, leaf_count);
-    }
 }

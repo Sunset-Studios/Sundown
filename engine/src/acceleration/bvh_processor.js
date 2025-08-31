@@ -335,7 +335,7 @@ export class BVHProcessor {
     build_state_data[0] = 0; // work_counter
     build_state_data[1] = 1; // node_counter (start at 1, root allocated separately)
     build_state_data[2] = 0; // leaf_counter  
-    build_state_data[3] = 0; // work_alloc_counter
+    build_state_data[3] = 1; // work_alloc_counter
     build_state_data[4] = primitive_count; // prim_count
     bvh.bvh4_build_state_buffer.write(build_state_data);
 
@@ -351,7 +351,7 @@ export class BVHProcessor {
     this.bvh4_outputs[2] = bvh.bvh4_index_pairs_buffer;
     this.bvh4_outputs[3] = bvh.bvh4_prim_indices_buffer;
 
-    const workgroups = Math.max(1, Math.ceil(primitive_count / 32));
+    const workgroups = Math.max(1, Math.ceil(primitive_count / 256));
     ComputeTaskQueue.new_task(
       hploc_convert_parallel_single_pass_task_name,
       bvh4_processing_wgsl_path,

@@ -3,6 +3,8 @@ diagnostic(off,subgroup_uniformity);
 #include "common.wgsl"
 #include "acceleration_common.wgsl"
 
+#define USE_AUCTION 1
+
 // Based on "Efficient BVH8 construction for GPU ray tracing" by Vinkler et al.
 // Adapted from BVH8 to BVH4 while maintaining the exact algorithm structure
 
@@ -14,8 +16,6 @@ const NQ: u32 = 8u;
 const THETA: f32 = 8.0;
 const INV_THETA: f32 = 1.0 / 8.0;
 const MAX_COST: f32 = 10.0;
-const QUANT_STEP: f32 = 1.0 / 255.0; // 1.0 / ((1 << NQ) - 1)
-const WARP_SIZE: u32 = 32u;
 
 // -----------------------------------------------------------------------------
 // Data Structures
@@ -121,7 +121,7 @@ fn auction_assignment(offsets: array<vec3<f32>, 4>, max_cost: f32, n: u32) -> u3
         prices[i] = 0.0; 
     }
 
-    // Initialize epsilon (perfect port of CUDA logic)
+    // Initialize epsilon
     let threshold = 1.0 / f32(n);
     var epsilon = max(max_cost, threshold);
 
@@ -131,7 +131,7 @@ fn auction_assignment(offsets: array<vec3<f32>, 4>, max_cost: f32, n: u32) -> u3
         assignments = INVALID_IDX;
 
         // Reset bidders with slots ranging from 0 to 3 (0x3210 = packed nibbles)
-        var bidders: u32 = 0x3210u;
+        var bidders = 0x3210u;
         var bidder_count = n;
 
         while (bidder_count > 0u) {
@@ -140,7 +140,7 @@ fn auction_assignment(offsets: array<vec3<f32>, 4>, max_cost: f32, n: u32) -> u3
 
             var winning_reward = -3.402823e+38; // -FLT_MAX
             var second_winning_reward = -3.402823e+38;
-            var winning_slot: u32 = INVALID_ASSIGNMENT;
+            var winning_slot = INVALID_ASSIGNMENT;
 
             for (var s = 0u; s < 4u; s = s + 1u) {
                 let reward = get_cost(s, offsets[c]) - prices[s];
@@ -167,6 +167,39 @@ fn auction_assignment(offsets: array<vec3<f32>, 4>, max_cost: f32, n: u32) -> u3
         // Epsilon scaling
         epsilon *= INV_THETA;
     }
+    return assignments;
+}
+
+// Greedy assignment. Assigns each child to the
+// best available slot independently, using the cost function and skipping
+// already-assigned slots.
+fn greedy_assignment(parent_centroid: vec3<f32>, child_nodes: array<u32, 4>, n: u32) -> u32 {
+    var assignments: u32 = INVALID_IDX;
+
+    for (var c = 0u; c < n; c = c + 1u) {
+        var max_cost = -3.402823e+38;
+        var best_slot = INVALID_ASSIGNMENT;
+
+        let child_bounds = bounds[child_nodes[c]];
+        let child_centroid = child_bounds.max.xyz + child_bounds.min.xyz;
+        let offset = parent_centroid - child_centroid;
+
+        for (var s = 0u; s < 4u; s = s + 1u) {
+            // If slot already assigned, skip
+            if (get_nibble(assignments, s) != INVALID_ASSIGNMENT) {
+                continue;
+            }
+
+            let cost = get_cost(s, offset);
+            if (cost > max_cost) {
+                max_cost = cost;
+                best_slot = s;
+            }
+        }
+
+        set_nibble(&assignments, best_slot, c);
+    }
+
     return assignments;
 }
 
@@ -216,7 +249,7 @@ fn create_bvh4_node(
 }
 
 //------------------------------------------------------------------------------
-// Single Leaf Handling (perfect CUDA port)
+// Single Leaf Handling
 //------------------------------------------------------------------------------
 
 fn create_bvh4_single_leaf(work_id: u32) {
@@ -233,10 +266,10 @@ fn create_bvh4_single_leaf(work_id: u32) {
 }
 
 //------------------------------------------------------------------------------
-// Main Kernel (perfect CUDA port with BVH4 adaptations)
+// Main Kernel
 //------------------------------------------------------------------------------
 
-@compute @workgroup_size(WARP_SIZE)
+@compute @workgroup_size(256)
 fn convert_bvh2_to_bvh4(
     @builtin(local_invocation_id) local_id: vec3<u32>,
     @builtin(workgroup_id) group_id: vec3<u32>,
@@ -245,7 +278,14 @@ fn convert_bvh2_to_bvh4(
     @builtin(subgroup_size) subgroup_size: u32
 #endif
 ) {
-    let size = bvh_data.bvh2_count;
+    let leaf_count = bvh_data.leaf_count;
+    let bvh2_count = bvh_data.bvh2_count;
+
+    if (group_id.x == 0u && local_id.x == 0u) {
+        store_index_pair(0u, bvh2_count - 1u, 0u);
+        bvh_data.root_index = bvh2_count - 1u;
+    }
+    workgroupBarrier();
 
     // Limit to first warp per workgroup for deterministic behavior
 #if HAS_SUBGROUPS
@@ -263,16 +303,17 @@ fn convert_bvh2_to_bvh4(
     }
     work_id = warp_shuffle_u32(warp_ctx, work_id, 0u) + warp_ctx.lane_id;
 
-    var lane_active = work_id < build_state.prim_count;
+    //var lane_active = work_id < build_state.prim_count;
+    var lane_active = work_id < leaf_count;
 
     // Handle single leaf case
-    if (build_state.prim_count == 1u) {
+    if (leaf_count == 1u) {
         create_bvh4_single_leaf(work_id);
         return;
     }
 
     // Main processing loop
-    while (warp_any(warp_ctx, lane_active)) {
+    while(warp_any(warp_ctx, lane_active)) {
         if (!lane_active) {
             continue;
         }
@@ -282,9 +323,8 @@ fn convert_bvh2_to_bvh4(
         let bvh2_node_idx = index_pair.x;
         let bvh4_node_idx = index_pair.y;
 
-        // If no work assigned, skip
-        if (bvh2_node_idx == INVALID_IDX || bvh2_node_idx >= size) {
-            lane_active = false;
+        // If no work assigned, skip (keep lane active to poll until assigned)
+        if (bvh2_node_idx == INVALID_IDX) {
             continue;
         }
 
@@ -297,44 +337,41 @@ fn convert_bvh2_to_bvh4(
         }
 
         // Gather children using top-down traversal
-        var inner_mask: u32 = 0u;
-        var child_count: u32 = 0u;
+        var inner_mask = 0u;
+        var child_count = 0u;
         var child_nodes: array<u32, 4>;
 
         var child_bounds: array<AABB, 2>;
         var left_child = u32(bvh2_node.min.w);
         var right_child = u32(bvh2_node.max.w);
-        var msb: i32 = 0;
+        var msb = 0;
 
         // Top-down traversal to collect up to 4 nodes
         loop {
             child_bounds[0] = bounds[left_child];
             child_bounds[1] = bounds[right_child];
 
-            // Push both children
+            // Choose the child with smaller area first
             let area0 = calculate_aabb_surface_area(child_bounds[0].min.xyz, child_bounds[0].max.xyz);
             let area1 = calculate_aabb_surface_area(child_bounds[1].min.xyz, child_bounds[1].max.xyz);
-            let first = !(area0 < area1);
+            var first = select(1u, 0u, area0 < area1);
 
-            // Order children by 'first'
-            let ordered_0 = select(right_child, left_child, first);
-            let ordered_1 = select(left_child, right_child, first);
+            // Push both children; the first goes at index msb (or 0 initially), second at child_count
+            for (var i = 0u; i < 2u; i = i + 1u) {
+                let idx = select(child_count, u32(msb), i == 0u);
+                let chosen = select(right_child, left_child, first == 1u);
 
-            // Push ordered_0 at next slot
-            let idx0 = child_count;
-            if (!is_leaf(bounds[ordered_0])) {
-                inner_mask = inner_mask | (1u << idx0);
+                if (!is_leaf(bounds[chosen])) {
+                    inner_mask = inner_mask | (1u << idx);
+                }
+
+                child_nodes[idx] = chosen;
+
+                child_count = child_count + 1u;
+
+                // Toggle to the other child for the second push
+                first = 1u - first;
             }
-            child_nodes[idx0] = ordered_0;
-            child_count = child_count + 1u;
-
-            // Push ordered_1 at next slot
-            let idx1 = child_count;
-            if (!is_leaf(bounds[ordered_1])) {
-                inner_mask = inner_mask | (1u << idx1);
-            }
-            child_nodes[idx1] = ordered_1;
-            child_count = child_count + 1u;
 
             // Pop the last inner node from the stack
             msb = 31 - i32(countLeadingZeros(inner_mask));
@@ -343,9 +380,9 @@ fn convert_bvh2_to_bvh4(
                 break;
             }
 
-            // Set the msb to 0
+            // Clear msb and overwrite that slot next iteration
             inner_mask = inner_mask & ~(1u << u32(msb));
-            child_count -= 1u;
+            child_count = child_count - 1u;
 
             let new_idx = child_nodes[u32(msb)];
             let expanded_node = bounds[new_idx];
@@ -355,7 +392,10 @@ fn convert_bvh2_to_bvh4(
 
         let parent_centroid = bvh2_node.min.xyz + bvh2_node.max.xyz;
 
-        // Reorder children using Auction assignment
+        // Reorder the child nodes (greedy by default, optional auction)
+        var assignments: u32 = INVALID_IDX;
+#if USE_AUCTION
+        // Auction requires cost scaling independent of dimensions
         let diagonal = bvh2_node.max.xyz - bvh2_node.min.xyz;
         let max_dim = max(max(diagonal.x, diagonal.y), diagonal.z);
         var cost_scale = select(MAX_COST / max_dim, 0.0, max_dim == 0.0);
@@ -375,9 +415,12 @@ fn convert_bvh2_to_bvh4(
             }
         }
 
-        let assignments = auction_assignment(offsets, max_cost, child_count);
+        assignments = auction_assignment(offsets, max_cost, child_count);
+#else
+        assignments = greedy_assignment(parent_centroid, child_nodes, child_count);
+#endif
 
-        // Compute new masks after reordering (perfect CUDA port)
+        // Compute new masks after reordering
         var new_inner_mask: u32 = 0u;
         var leaf_mask: u32 = 0u;
         for (var i = 0u; i < 4u; i = i + 1u) {
@@ -428,3 +471,4 @@ fn convert_bvh2_to_bvh4(
         );
     }
 }
+
