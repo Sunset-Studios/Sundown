@@ -2,7 +2,7 @@
 // Constants
 // ------------------------------------------------------------------------------------
 
-const HPLOC_WAVE_SIZE = 64u;
+const HPLOC_WAVE_SIZE = 32u;
 const QUANT_BITS = 10u;
 const QUANT_MAX = 1023u;
 

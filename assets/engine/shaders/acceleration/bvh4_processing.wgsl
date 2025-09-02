@@ -3,8 +3,6 @@ diagnostic(off,subgroup_uniformity);
 #include "common.wgsl"
 #include "acceleration_common.wgsl"
 
-#define USE_AUCTION 0
-
 // Based on "Efficient BVH8 construction for GPU ray tracing" by Vinkler et al.
 // Adapted from BVH8 to BVH4 while maintaining the exact algorithm structure
 
@@ -102,8 +100,8 @@ fn get_cost_for_child(child_idx: u32, slot: u32, offsets: array<vec3<f32>, 4>) -
 
 // Load index pair from array
 fn load_index_pair(idx: u32) -> vec2<u32> {
-    let hi = atomicLoad(&index_pairs[idx].hi);
     let lo = atomicLoad(&index_pairs[idx].lo);
+    let hi = atomicLoad(&index_pairs[idx].hi);
     return vec2<u32>(hi, lo);
 }
 
@@ -128,62 +126,6 @@ fn syncthreads_count(warp_ctx: WarpCtx, pred: bool) -> u32 {
     workgroupBarrier();
 
     return workgroupUniformLoad(&wg_sync_count);
-}
-
-// Auction algorithm for optimal assignment
-fn auction_assignment(offsets: array<vec3<f32>, 4>, max_cost: f32, n: u32) -> u32 {
-    var prices: array<f32, 4>;
-    for (var i = 0u; i < 4u; i = i + 1u) { 
-        prices[i] = 0.0; 
-    }
-
-    // Initialize epsilon
-    let threshold = 1.0 / f32(n);
-    var epsilon = max(max_cost, threshold);
-
-    var assignments: u32 = INVALID_IDX;
-    while (epsilon >= threshold) {
-        // Reset assignments
-        assignments = INVALID_IDX;
-
-        // Reset bidders with slots ranging from 0 to 3 (0x3210 = packed nibbles)
-        var bidders = 0x3210u;
-        var bidder_count = n;
-
-        while (bidder_count > 0u) {
-            bidder_count = bidder_count - 1u;
-            let c = get_nibble(bidders, bidder_count);
-
-            var winning_reward = -3.402823e+38; // -FLT_MAX
-            var second_winning_reward = -3.402823e+38;
-            var winning_slot = INVALID_ASSIGNMENT;
-
-            for (var s = 0u; s < 4u; s = s + 1u) {
-                let reward = get_cost(s, offsets[c]) - prices[s];
-                if (reward > winning_reward) {
-                    second_winning_reward = winning_reward;
-                    winning_reward = reward;
-                    winning_slot = s;
-                } else if (reward > second_winning_reward) {
-                    second_winning_reward = reward;
-                }
-            }
-
-            prices[winning_slot] = prices[winning_slot] + (winning_reward - second_winning_reward) + epsilon;
-
-            let previous_assignment = get_nibble(assignments, winning_slot);
-            set_nibble(&assignments, winning_slot, c);
-
-            if (previous_assignment != INVALID_ASSIGNMENT) {
-                set_nibble(&bidders, bidder_count, previous_assignment);
-                bidder_count = bidder_count + 1u;
-            }
-        }
-
-        // Epsilon scaling
-        epsilon *= INV_THETA;
-    }
-    return assignments;
 }
 
 // Greedy assignment. Assigns each child to the
@@ -284,7 +226,7 @@ fn create_bvh4_single_leaf(work_id: u32) {
 //------------------------------------------------------------------------------
 // Main Kernel
 //------------------------------------------------------------------------------
-@compute @workgroup_size(256)
+@compute @workgroup_size(32)
 fn convert_bvh2_to_bvh4(
     @builtin(global_invocation_id) gid: vec3<u32>,
     @builtin(local_invocation_id) local_id: vec3<u32>,
@@ -321,16 +263,23 @@ fn convert_bvh2_to_bvh4(
     var lane_active = work_id < leaf_count; 
 
     loop {
-        let count = syncthreads_count(warp_ctx, lane_active);
-        if (local_id.x == 0u) {
-            wg_break_uniform = select(0u, 1u, count == 0u);
-        }
-        let should_break = workgroupUniformLoad(&wg_break_uniform) != 0u;
-        if (should_break) {
+        // let count = syncthreads_count(warp_ctx, lane_active);
+        // if (local_id.x == 0u) {
+        //     wg_break_uniform = select(0u, 1u, count == 0u);
+        // }
+        // let should_break = workgroupUniformLoad(&wg_break_uniform) != 0u;
+        // if (should_break) {
+        //     break;
+        // }
+        if (!warp_any(warp_ctx, lane_active)) {
             break;
         }
 
-        let produced = atomicLoad(&build_state.work_alloc_counter);
+        var produced = 0u;
+        if (is_warp_leader(warp_ctx)) {
+            produced = atomicLoad(&build_state.work_alloc_counter);
+        }
+        produced = warp_broadcast_u32(warp_ctx, produced, 0u);
         let do_work = lane_active && (work_id < produced);
 
         if (do_work) {
@@ -342,17 +291,11 @@ fn convert_bvh2_to_bvh4(
             // If no work assigned to this slot yet, skip (keep lane active to poll until assigned)
             var has_work = (bvh2_node_idx != INVALID_IDX) && (bvh4_node_idx != INVALID_IDX);
 
-            var bvh2_node = AABB(
-                vec4f(0.0, 0.0, 0.0, -1.0),
-                vec4f(0.0, 0.0, 0.0, -1.0)
-            );
-            if (has_work) {
-                bvh2_node = bounds[bvh2_node_idx];
-                if (is_leaf(bvh2_node)) {
-                    prim_indices[bvh4_node_idx] = u32(bvh2_node.min.w);
-                    lane_active = false;
-                    has_work = false;
-                }
+            let bvh2_node = bounds[bvh2_node_idx];
+            if (is_leaf(bvh2_node)) {
+                prim_indices[bvh4_node_idx] = u32(bvh2_node.min.w);
+                lane_active = false;
+                has_work = false;
             }
 
             if (has_work) {
@@ -413,32 +356,7 @@ fn convert_bvh2_to_bvh4(
                 let parent_centroid = bvh2_node.min.xyz + bvh2_node.max.xyz;
 
                 // Reorder the child nodes (greedy by default, optional auction)
-                var assignments: u32 = INVALID_IDX;
-#if USE_AUCTION
-                // Auction requires cost scaling independent of dimensions
-                let diagonal = bvh2_node.max.xyz - bvh2_node.min.xyz;
-                let max_dim = max(max(diagonal.x, diagonal.y), diagonal.z);
-                var cost_scale = select(MAX_COST / max_dim, 0.0, max_dim == 0.0);
-                cost_scale *= 0.5;
-
-                var offsets: array<vec3<f32>, 4>;
-                var max_cost = -3.402823e+38;
-
-                for (var c = 0u; c < child_count; c = c + 1u) {
-                    let child_bounds_local = bounds[child_nodes[c]];
-                    let centroid = child_bounds_local.min.xyz + child_bounds_local.max.xyz;
-                    offsets[c] = (parent_centroid - centroid) * cost_scale;
-
-                    let cost_mag = abs(offsets[c].x) + abs(offsets[c].y) + abs(offsets[c].z);
-                    if (cost_mag > max_cost) {
-                        max_cost = cost_mag;
-                    }
-                }
-
-                assignments = auction_assignment(offsets, max_cost, child_count);
-#else
-                assignments = greedy_assignment(parent_centroid, child_nodes, child_count);
-#endif
+                var assignments = greedy_assignment(parent_centroid, child_nodes, child_count);
 
                 // Compute new masks after reordering
                 var new_inner_mask: u32 = 0u;

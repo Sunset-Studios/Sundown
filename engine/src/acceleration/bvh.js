@@ -95,7 +95,7 @@ export class BVH {
    */
   static resize(new_size) {
     if (new_size <= this.bvh_size) return;
-    this.bvh_size = new_size * 2;
+    this.bvh_size = new_size;
     this.modified = true;
   }
 

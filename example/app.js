@@ -117,8 +117,8 @@ export class RenderingScene extends Scene {
     const font_object = FontCache.get_font_object(font_id);
 
     // Create a 3D grid of sphere entities
-    const grid_size = 100; // 100x100x10 grid
-    const grid_layers = 100;
+    const grid_size = 45; // 100x100x10 grid
+    const grid_layers = 45;
     const spacing = 5; // 2 units apart
 
     const sphere = spawn_mesh_entity(
@@ -2722,12 +2722,12 @@ export class GLTFModelScene extends Scene {
   //await scene_switcher.add_scene(solar_ecs_scene);
   //await scene_switcher.add_scene(textures_scene);
   //await scene_switcher.add_scene(bvh_scene);
-  await scene_switcher.add_scene(rendering_scene);
+  //await scene_switcher.add_scene(rendering_scene);
   //await scene_switcher.add_scene(ml_scene);
   //await scene_switcher.add_scene(voxel_terrain_scene);
   //await scene_switcher.add_scene(object_painting_scene);
   //await scene_switcher.add_scene(gi_test_scene);
-  //await scene_switcher.add_scene(shadow_test_scene);
+  await scene_switcher.add_scene(shadow_test_scene);
   //await scene_switcher.add_scene(gltf_model_scene);
 
   simulator.add_sim_layer(scene_switcher);

@@ -32,7 +32,7 @@ struct IndexPair {
 // HPLOC Kernels 
 //------------------------------------------------------------------------------
 
-@compute @workgroup_size(64)
+@compute @workgroup_size(HPLOC_WAVE_SIZE)
 fn initialize_leaf_clusters(
     @builtin(global_invocation_id) gid: vec3<u32>,
     @builtin(local_invocation_id) local_id: vec3<u32>,
