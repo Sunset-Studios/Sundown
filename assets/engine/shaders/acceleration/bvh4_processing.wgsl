@@ -3,7 +3,7 @@ diagnostic(off,subgroup_uniformity);
 #include "common.wgsl"
 #include "acceleration_common.wgsl"
 
-#define USE_AUCTION 1
+#define USE_AUCTION 0
 
 // Based on "Efficient BVH8 construction for GPU ray tracing" by Vinkler et al.
 // Adapted from BVH8 to BVH4 while maintaining the exact algorithm structure
@@ -50,6 +50,8 @@ struct IndexPair {
 @group(1) @binding(4) var<storage, read_write> prim_indices: array<u32>;
 @group(1) @binding(5) var<storage, read_write> bvh_data: BVHData;
 
+var<workgroup> wg_sync_count : atomic<u32>;
+var<workgroup> wg_break_uniform : u32;
 //------------------------------------------------------------------------------
 // Utility Functions
 //------------------------------------------------------------------------------
@@ -63,7 +65,7 @@ fn get_nibble(assignments: u32, slot: u32) -> u32 {
 fn set_nibble(assignments: ptr<function, u32>, slot: u32, value: u32) {
     let shift = slot * 4u;
     let clear_mask = ~(0xFu << shift);
-    *assignments = (*assignments & clear_mask) | ((value & 0xFu) << shift);
+    *assignments = (*assignments & clear_mask) | (value << shift);
 }
 
 // Count bits below position in a mask
@@ -74,18 +76,15 @@ fn count_bits_below(mask: u32, pos: u32) -> u32 {
 
 // Ceiling of log2
 fn ceil_log2(x: f32) -> u32 {
-    if (x <= 1.0) { return 0u; }
     let bits = bitcast<u32>(x);
     let exponent = (bits >> 23u) & 0xFFu;
-    let mantissa = bits & 0x7FFFFFu;
-    let result = exponent - 127u;
-    return select(result, result + 1u, mantissa != 0u);
+    let is_pow_2 = (bits & ((1u << 23u) - 1u)) == 0u;
+    return exponent + u32(!is_pow_2);
 }
 
 // Inverse power of 2
 fn inv_pow2(exp: u32) -> f32 {
-    if (exp == 0u) { return 1.0; }
-    return 1.0 / pow(2.0, f32(exp));
+    return bitcast<f32>((254u - exp) << 23u);
 }
 
 // Cost function for placing child at slot s with given offset
@@ -112,6 +111,23 @@ fn load_index_pair(idx: u32) -> vec2<u32> {
 fn store_index_pair(idx: u32, hi: u32, lo: u32) {
     atomicStore(&index_pairs[idx].hi, hi);
     atomicStore(&index_pairs[idx].lo, lo);
+}
+
+fn syncthreads_count(warp_ctx: WarpCtx, pred: bool) -> u32 {
+    let m = warp_ballot_u32(warp_ctx, pred);
+    let subgroup_true = mask_popcount(m);
+
+    if (warp_ctx.lane_id == 0u) {
+      atomicStore(&wg_sync_count, 0u);
+    }
+    workgroupBarrier();
+
+    if (warp_ctx.lane_id == 0u) {
+      atomicAdd(&wg_sync_count, subgroup_true);
+    }
+    workgroupBarrier();
+
+    return workgroupUniformLoad(&wg_sync_count);
 }
 
 // Auction algorithm for optimal assignment
@@ -268,9 +284,9 @@ fn create_bvh4_single_leaf(work_id: u32) {
 //------------------------------------------------------------------------------
 // Main Kernel
 //------------------------------------------------------------------------------
-
 @compute @workgroup_size(256)
 fn convert_bvh2_to_bvh4(
+    @builtin(global_invocation_id) gid: vec3<u32>,
     @builtin(local_invocation_id) local_id: vec3<u32>,
     @builtin(workgroup_id) group_id: vec3<u32>,
 #if HAS_SUBGROUPS
@@ -287,7 +303,6 @@ fn convert_bvh2_to_bvh4(
     }
     workgroupBarrier();
 
-    // Limit to first warp per workgroup for deterministic behavior
 #if HAS_SUBGROUPS
     let lane = subgroup_id;
     let warp_ctx = make_warp_ctx(local_id.x, lane, subgroup_size);
@@ -303,172 +318,179 @@ fn convert_bvh2_to_bvh4(
     }
     work_id = warp_shuffle_u32(warp_ctx, work_id, 0u) + warp_ctx.lane_id;
 
-    //var lane_active = work_id < build_state.prim_count;
-    var lane_active = work_id < leaf_count;
+    var lane_active = work_id < leaf_count; 
 
-    // Handle single leaf case
-    if (leaf_count == 1u) {
-        create_bvh4_single_leaf(work_id);
-        return;
-    }
-
-    // Main processing loop
-    while(warp_any(warp_ctx, lane_active)) {
-        if (!lane_active) {
-            continue;
+    loop {
+        let count = syncthreads_count(warp_ctx, lane_active);
+        if (local_id.x == 0u) {
+            wg_break_uniform = select(0u, 1u, count == 0u);
+        }
+        let should_break = workgroupUniformLoad(&wg_break_uniform) != 0u;
+        if (should_break) {
+            break;
         }
 
-        // Load index pair
-        let index_pair = load_index_pair(work_id);
-        let bvh2_node_idx = index_pair.x;
-        let bvh4_node_idx = index_pair.y;
+        let produced = atomicLoad(&build_state.work_alloc_counter);
+        let do_work = lane_active && (work_id < produced);
 
-        // If no work assigned, skip (keep lane active to poll until assigned)
-        if (bvh2_node_idx == INVALID_IDX) {
-            continue;
-        }
+        if (do_work) {
+            // Load index pair
+            let index_pair = load_index_pair(work_id);
+            let bvh2_node_idx = index_pair.x;
+            let bvh4_node_idx = index_pair.y;
 
-        let bvh2_node = bounds[bvh2_node_idx];
-        // If leaf node, create BVH4 leaf
-        if (is_leaf(bvh2_node)) {
-            prim_indices[bvh4_node_idx] = u32(bvh2_node.min.w);
-            lane_active = false;
-            continue;
-        }
+            // If no work assigned to this slot yet, skip (keep lane active to poll until assigned)
+            var has_work = (bvh2_node_idx != INVALID_IDX) && (bvh4_node_idx != INVALID_IDX);
 
-        // Gather children using top-down traversal
-        var inner_mask = 0u;
-        var child_count = 0u;
-        var child_nodes: array<u32, 4>;
+            var bvh2_node = AABB(
+                vec4f(0.0, 0.0, 0.0, -1.0),
+                vec4f(0.0, 0.0, 0.0, -1.0)
+            );
+            if (has_work) {
+                bvh2_node = bounds[bvh2_node_idx];
+                if (is_leaf(bvh2_node)) {
+                    prim_indices[bvh4_node_idx] = u32(bvh2_node.min.w);
+                    lane_active = false;
+                    has_work = false;
+                }
+            }
 
-        var child_bounds: array<AABB, 2>;
-        var left_child = u32(bvh2_node.min.w);
-        var right_child = u32(bvh2_node.max.w);
-        var msb = 0;
+            if (has_work) {
+                // Gather children using top-down traversal
+                var inner_mask = 0u;
+                var child_count = 0u;
+                var child_nodes: array<u32, 4>;
 
-        // Top-down traversal to collect up to 4 nodes
-        loop {
-            child_bounds[0] = bounds[left_child];
-            child_bounds[1] = bounds[right_child];
+                var child_bounds: array<AABB, 2>;
+                var left_child = u32(bvh2_node.min.w);
+                var right_child = u32(bvh2_node.max.w);
+                var msb = 0;
 
-            // Choose the child with smaller area first
-            let area0 = calculate_aabb_surface_area(child_bounds[0].min.xyz, child_bounds[0].max.xyz);
-            let area1 = calculate_aabb_surface_area(child_bounds[1].min.xyz, child_bounds[1].max.xyz);
-            var first = select(1u, 0u, area0 < area1);
+                // Top-down traversal to collect up to 4 nodes
+                loop {
+                    child_bounds[0] = bounds[left_child];
+                    child_bounds[1] = bounds[right_child];
 
-            // Push both children; the first goes at index msb (or 0 initially), second at child_count
-            for (var i = 0u; i < 2u; i = i + 1u) {
-                let idx = select(child_count, u32(msb), i == 0u);
-                let chosen = select(right_child, left_child, first == 1u);
+                    // Choose the child with smaller area first
+                    let area0 = calculate_aabb_surface_area(child_bounds[0].min.xyz, child_bounds[0].max.xyz);
+                    let area1 = calculate_aabb_surface_area(child_bounds[1].min.xyz, child_bounds[1].max.xyz);
+                    var first = select(1u, 0u, area0 < area1);
 
-                if (!is_leaf(bounds[chosen])) {
-                    inner_mask = inner_mask | (1u << idx);
+                    // Push both children; the first goes at index msb (or 0 initially), second at child_count
+                    for (var i = 0u; i < 2u; i = i + 1u) {
+                        let idx = select(child_count, u32(msb), i == 0u);
+                        let chosen = select(right_child, left_child, first == 0u);
+
+                        if (bounds[chosen].max.w != -1.0) {
+                            inner_mask = inner_mask | (1u << idx);
+                        }
+
+                        child_nodes[idx] = chosen;
+
+                        child_count = child_count + 1u;
+
+                        // Toggle to the other child for the second push
+                        first = 1u - first;
+                    }
+
+                    // Pop the last inner node from the stack
+                    msb = 31 - i32(countLeadingZeros(inner_mask));
+
+                    if (msb < 0 || child_count == 4u) {
+                       break;
+                    }
+
+                    // Clear msb and overwrite that slot next iteration
+                    inner_mask = inner_mask & ~(1u << u32(msb));
+                    child_count = child_count - 1u;
+ 
+                    let new_idx = child_nodes[u32(msb)];
+                    let expanded_node = bounds[new_idx];
+                    left_child = u32(expanded_node.min.w);
+                    right_child = u32(expanded_node.max.w);
                 }
 
-                child_nodes[idx] = chosen;
+                let parent_centroid = bvh2_node.min.xyz + bvh2_node.max.xyz;
 
-                child_count = child_count + 1u;
-
-                // Toggle to the other child for the second push
-                first = 1u - first;
-            }
-
-            // Pop the last inner node from the stack
-            msb = 31 - i32(countLeadingZeros(inner_mask));
-
-            if (msb < 0 || child_count == 4u) {
-                break;
-            }
-
-            // Clear msb and overwrite that slot next iteration
-            inner_mask = inner_mask & ~(1u << u32(msb));
-            child_count = child_count - 1u;
-
-            let new_idx = child_nodes[u32(msb)];
-            let expanded_node = bounds[new_idx];
-            left_child = u32(expanded_node.min.w);
-            right_child = u32(expanded_node.max.w);
-        }
-
-        let parent_centroid = bvh2_node.min.xyz + bvh2_node.max.xyz;
-
-        // Reorder the child nodes (greedy by default, optional auction)
-        var assignments: u32 = INVALID_IDX;
+                // Reorder the child nodes (greedy by default, optional auction)
+                var assignments: u32 = INVALID_IDX;
 #if USE_AUCTION
-        // Auction requires cost scaling independent of dimensions
-        let diagonal = bvh2_node.max.xyz - bvh2_node.min.xyz;
-        let max_dim = max(max(diagonal.x, diagonal.y), diagonal.z);
-        var cost_scale = select(MAX_COST / max_dim, 0.0, max_dim == 0.0);
-        cost_scale *= 0.5;
+                // Auction requires cost scaling independent of dimensions
+                let diagonal = bvh2_node.max.xyz - bvh2_node.min.xyz;
+                let max_dim = max(max(diagonal.x, diagonal.y), diagonal.z);
+                var cost_scale = select(MAX_COST / max_dim, 0.0, max_dim == 0.0);
+                cost_scale *= 0.5;
 
-        var offsets: array<vec3<f32>, 4>;
-        var max_cost = -3.402823e+38;
+                var offsets: array<vec3<f32>, 4>;
+                var max_cost = -3.402823e+38;
 
-        for (var c = 0u; c < child_count; c = c + 1u) {
-            let child_bounds_local = bounds[child_nodes[c]];
-            let centroid = child_bounds_local.min.xyz + child_bounds_local.max.xyz;
-            offsets[c] = (parent_centroid - centroid) * cost_scale;
+                for (var c = 0u; c < child_count; c = c + 1u) {
+                    let child_bounds_local = bounds[child_nodes[c]];
+                    let centroid = child_bounds_local.min.xyz + child_bounds_local.max.xyz;
+                    offsets[c] = (parent_centroid - centroid) * cost_scale;
 
-            let cost_mag = abs(offsets[c].x) + abs(offsets[c].y) + abs(offsets[c].z);
-            if (cost_mag > max_cost) {
-                max_cost = cost_mag;
-            }
-        }
+                    let cost_mag = abs(offsets[c].x) + abs(offsets[c].y) + abs(offsets[c].z);
+                    if (cost_mag > max_cost) {
+                        max_cost = cost_mag;
+                    }
+                }
 
-        assignments = auction_assignment(offsets, max_cost, child_count);
+                assignments = auction_assignment(offsets, max_cost, child_count);
 #else
-        assignments = greedy_assignment(parent_centroid, child_nodes, child_count);
+                assignments = greedy_assignment(parent_centroid, child_nodes, child_count);
 #endif
 
-        // Compute new masks after reordering
-        var new_inner_mask: u32 = 0u;
-        var leaf_mask: u32 = 0u;
-        for (var i = 0u; i < 4u; i = i + 1u) {
-            if (get_nibble(assignments, i) == INVALID_ASSIGNMENT) {
-                continue;
+                // Compute new masks after reordering
+                var new_inner_mask: u32 = 0u;
+                var leaf_mask: u32 = 0u;
+                for (var i = 0u; i < 4u; i = i + 1u) {
+                    if (get_nibble(assignments, i) == INVALID_ASSIGNMENT) {
+                        continue;
+                    }
+
+                    let bit = (inner_mask >> get_nibble(assignments, i)) & 1u;
+                    new_inner_mask = new_inner_mask | (bit << i);
+                    leaf_mask = leaf_mask | ((1u - bit) << i);
+                }
+                inner_mask = new_inner_mask;
+
+                let inner_count = countOneBits(inner_mask);
+                let leaf_children = child_count - inner_count;
+
+                // Allocate new inner nodes, leaf nodes and work items
+                let child_base_idx = atomicAdd(&build_state.node_counter, inner_count);
+                let work_base_idx = atomicAdd(&build_state.work_alloc_counter, child_count - 1u);
+
+                var prim_base_idx: u32 = 0u;
+                if (leaf_children > 0u) {
+                    prim_base_idx = atomicAdd(&build_state.leaf_counter, leaf_children);
+                }
+
+                // Add new work in the index pair list
+                for (var i = 0u; i < 4u; i = i + 1u) {
+                    if (get_nibble(assignments, i) == INVALID_ASSIGNMENT) {
+                        continue;
+                    }
+
+                    var pair_hi = child_nodes[get_nibble(assignments, i)];
+                    var pair_lo = select(
+                        prim_base_idx + count_bits_below(leaf_mask, i),
+                        child_base_idx + count_bits_below(inner_mask, i),
+                        (inner_mask & (1u << i)) != 0u
+                    );
+
+                    let c = count_bits_below(inner_mask | leaf_mask, i);
+                    let idx = select(work_base_idx + c - 1u, work_id, c == 0u);
+                    store_index_pair(idx, pair_hi, pair_lo);
+                }
+
+                // Create and store the new BVH4 node
+                bvh4_nodes[bvh4_node_idx] = create_bvh4_node(
+                    bvh2_node, child_nodes, child_base_idx, prim_base_idx, 
+                    assignments, inner_mask, leaf_mask
+                );
             }
-
-            let bit = (inner_mask >> get_nibble(assignments, i)) & 1u;
-            new_inner_mask = new_inner_mask | (bit << i);
-            leaf_mask = leaf_mask | ((1u - bit) << i);
         }
-        inner_mask = new_inner_mask;
-
-        let inner_count = countOneBits(inner_mask);
-        let leaf_count = child_count - inner_count;
-
-        // Allocate new inner nodes, leaf nodes and work items
-        let child_base_idx = atomicAdd(&build_state.node_counter, inner_count);
-        let work_base_idx = atomicAdd(&build_state.work_alloc_counter, child_count - 1u);
-
-        var prim_base_idx: u32 = 0u;
-        if (leaf_count > 0u) {
-            prim_base_idx = atomicAdd(&build_state.leaf_counter, leaf_count);
-        }
-
-        // Add new work in the index pair list
-        for (var i = 0u; i < 4u; i = i + 1u) {
-            if (get_nibble(assignments, i) == INVALID_ASSIGNMENT) {
-                continue;
-            }
-
-            var pair_hi = child_nodes[get_nibble(assignments, i)];
-            var pair_lo = select(
-                prim_base_idx + count_bits_below(leaf_mask, i),
-                child_base_idx + count_bits_below(inner_mask, i),
-                (inner_mask & (1u << i)) != 0u
-            );
-
-            let c = count_bits_below(inner_mask | leaf_mask, i);
-            let idx = select(work_base_idx + c - 1u, work_id, c == 0u);
-            store_index_pair(idx, pair_hi, pair_lo);
-        }
-
-        // Create and store the new BVH4 node
-        bvh4_nodes[bvh4_node_idx] = create_bvh4_node(
-            bvh2_node, child_nodes, child_base_idx, prim_base_idx, 
-            assignments, inner_mask, leaf_mask
-        );
     }
 }
 

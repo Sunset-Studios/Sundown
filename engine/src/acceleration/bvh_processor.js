@@ -72,7 +72,6 @@ export class BVHProcessor {
   }
 
   build() {
-    //const primitive_count = BVH.bvh_size;
     const primitive_count = EntityManager.get_max_rows();
     if (primitive_count === 0) return;
 

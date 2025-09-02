@@ -23,6 +23,7 @@ export class UserInterfaceFragment extends Fragment {
         GPUBufferUsage.COPY_DST |
         GPUBufferUsage.COPY_SRC,
       cpu_readback: false,
+      buffer_multiplier: 1,
     },
     auto_size: {
       ctor: Uint8Array,
@@ -36,6 +37,7 @@ export class UserInterfaceFragment extends Fragment {
         GPUBufferUsage.COPY_DST |
         GPUBufferUsage.COPY_SRC,
       cpu_readback: false,
+      buffer_multiplier: 1,
     },
     was_cursor_inside: {
       ctor: Uint8Array,
@@ -49,6 +51,7 @@ export class UserInterfaceFragment extends Fragment {
         GPUBufferUsage.COPY_DST |
         GPUBufferUsage.COPY_SRC,
       cpu_readback: false,
+      buffer_multiplier: 1,
     },
     is_cursor_inside: {
       ctor: Uint8Array,
@@ -62,6 +65,7 @@ export class UserInterfaceFragment extends Fragment {
         GPUBufferUsage.COPY_DST |
         GPUBufferUsage.COPY_SRC,
       cpu_readback: false,
+      buffer_multiplier: 1,
     },
     was_clicked: {
       ctor: Uint8Array,
@@ -75,6 +79,7 @@ export class UserInterfaceFragment extends Fragment {
         GPUBufferUsage.COPY_DST |
         GPUBufferUsage.COPY_SRC,
       cpu_readback: false,
+      buffer_multiplier: 1,
     },
     is_clicked: {
       ctor: Uint8Array,
@@ -88,6 +93,7 @@ export class UserInterfaceFragment extends Fragment {
         GPUBufferUsage.COPY_DST |
         GPUBufferUsage.COPY_SRC,
       cpu_readback: false,
+      buffer_multiplier: 1,
     },
     is_pressed: {
       ctor: Uint8Array,
@@ -101,6 +107,7 @@ export class UserInterfaceFragment extends Fragment {
         GPUBufferUsage.COPY_DST |
         GPUBufferUsage.COPY_SRC,
       cpu_readback: false,
+      buffer_multiplier: 1,
     },
     was_pressed: {
       ctor: Uint8Array,
@@ -114,6 +121,7 @@ export class UserInterfaceFragment extends Fragment {
         GPUBufferUsage.COPY_DST |
         GPUBufferUsage.COPY_SRC,
       cpu_readback: false,
+      buffer_multiplier: 1,
     },
     consume_events: {
       ctor: Uint8Array,
@@ -127,6 +135,7 @@ export class UserInterfaceFragment extends Fragment {
         GPUBufferUsage.COPY_DST |
         GPUBufferUsage.COPY_SRC,
       cpu_readback: false,
+      buffer_multiplier: 1,
     },
     element_color: {
       ctor: Float32Array,
@@ -140,6 +149,7 @@ export class UserInterfaceFragment extends Fragment {
         GPUBufferUsage.COPY_DST |
         GPUBufferUsage.COPY_SRC,
       cpu_readback: false,
+      buffer_multiplier: 1,
     },
     element_emissive: {
       ctor: Float32Array,
@@ -153,6 +163,7 @@ export class UserInterfaceFragment extends Fragment {
         GPUBufferUsage.COPY_DST |
         GPUBufferUsage.COPY_SRC,
       cpu_readback: false,
+      buffer_multiplier: 1,
     },
     element_rounding: {
       ctor: Float32Array,
@@ -166,6 +177,7 @@ export class UserInterfaceFragment extends Fragment {
         GPUBufferUsage.COPY_DST |
         GPUBufferUsage.COPY_SRC,
       cpu_readback: false,
+      buffer_multiplier: 1,
     },
   };
   static buffer_data = new Map(); // key → { buffer: FragmentGpuBuffer, stride: number }

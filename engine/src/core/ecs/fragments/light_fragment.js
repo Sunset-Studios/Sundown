@@ -23,6 +23,7 @@ export class LightFragment extends Fragment {
         GPUBufferUsage.COPY_DST |
         GPUBufferUsage.COPY_SRC,
       cpu_readback: false,
+      buffer_multiplier: 1,
     },
     direction: {
       ctor: Float32Array,
@@ -36,6 +37,7 @@ export class LightFragment extends Fragment {
         GPUBufferUsage.COPY_DST |
         GPUBufferUsage.COPY_SRC,
       cpu_readback: false,
+      buffer_multiplier: 1,
     },
     color: {
       ctor: Float32Array,
@@ -49,6 +51,7 @@ export class LightFragment extends Fragment {
         GPUBufferUsage.COPY_DST |
         GPUBufferUsage.COPY_SRC,
       cpu_readback: false,
+      buffer_multiplier: 1,
     },
     type: {
       ctor: Float32Array,
@@ -62,6 +65,7 @@ export class LightFragment extends Fragment {
         GPUBufferUsage.COPY_DST |
         GPUBufferUsage.COPY_SRC,
       cpu_readback: false,
+      buffer_multiplier: 1,
     },
     intensity: {
       ctor: Float32Array,
@@ -75,6 +79,7 @@ export class LightFragment extends Fragment {
         GPUBufferUsage.COPY_DST |
         GPUBufferUsage.COPY_SRC,
       cpu_readback: false,
+      buffer_multiplier: 1,
     },
     radius: {
       ctor: Float32Array,
@@ -88,6 +93,7 @@ export class LightFragment extends Fragment {
         GPUBufferUsage.COPY_DST |
         GPUBufferUsage.COPY_SRC,
       cpu_readback: false,
+      buffer_multiplier: 1,
     },
     attenuation: {
       ctor: Float32Array,
@@ -101,6 +107,7 @@ export class LightFragment extends Fragment {
         GPUBufferUsage.COPY_DST |
         GPUBufferUsage.COPY_SRC,
       cpu_readback: false,
+      buffer_multiplier: 1,
     },
     outer_angle: {
       ctor: Float32Array,
@@ -114,6 +121,7 @@ export class LightFragment extends Fragment {
         GPUBufferUsage.COPY_DST |
         GPUBufferUsage.COPY_SRC,
       cpu_readback: false,
+      buffer_multiplier: 1,
     },
     shadow_casting: {
       ctor: Float32Array,
@@ -127,6 +135,7 @@ export class LightFragment extends Fragment {
         GPUBufferUsage.COPY_DST |
         GPUBufferUsage.COPY_SRC,
       cpu_readback: false,
+      buffer_multiplier: 1,
     },
     active: {
       ctor: Float32Array,
@@ -140,6 +149,7 @@ export class LightFragment extends Fragment {
         GPUBufferUsage.COPY_DST |
         GPUBufferUsage.COPY_SRC,
       cpu_readback: false,
+      buffer_multiplier: 1,
     },
     view_index: {
       ctor: Float32Array,
@@ -153,6 +163,7 @@ export class LightFragment extends Fragment {
         GPUBufferUsage.COPY_DST |
         GPUBufferUsage.COPY_SRC,
       cpu_readback: false,
+      buffer_multiplier: 1,
     },
     shadow_index: {
       ctor: Float32Array,
@@ -166,6 +177,7 @@ export class LightFragment extends Fragment {
         GPUBufferUsage.COPY_DST |
         GPUBufferUsage.COPY_SRC,
       cpu_readback: false,
+      buffer_multiplier: 1,
     },
     shadow_clipmaps: {
       ctor: Float32Array,
@@ -179,6 +191,7 @@ export class LightFragment extends Fragment {
         GPUBufferUsage.COPY_DST |
         GPUBufferUsage.COPY_SRC,
       cpu_readback: false,
+      buffer_multiplier: 1,
     },
     is_primary_sun: {
       ctor: Float32Array,
@@ -192,6 +205,7 @@ export class LightFragment extends Fragment {
         GPUBufferUsage.COPY_DST |
         GPUBufferUsage.COPY_SRC,
       cpu_readback: false,
+      buffer_multiplier: 1,
     },
     shadows_dirty: {
       ctor: Float32Array,
@@ -205,6 +219,7 @@ export class LightFragment extends Fragment {
         GPUBufferUsage.COPY_DST |
         GPUBufferUsage.COPY_SRC,
       cpu_readback: false,
+      buffer_multiplier: 1,
     },
   };
   static buffer_data = new Map(); // key → { buffer: FragmentGpuBuffer, stride: number }

@@ -58,7 +58,6 @@ fn initialize_leaf_clusters(
     if (is_warp_leader(warp_ctx)) {
       atomicAdd(&counters.leaf_count, warp_sum);
     }
-
     if (is_valid_leaf == 1u) {
         atomicMax(&counters.bvh2_count, prim_idx + 1u);
     }

@@ -59,11 +59,6 @@ fn find_parent_id(left: u32, right: u32, prim_count: u32) -> u32 {
     return select(left - 1u, right, cond);
 }
 
-fn mask_popcount(mask: vec4<u32>) -> u32 {
-    let ones = countOneBits(mask);
-    return ones.x + ones.y + ones.z + ones.w;
-}
-
 fn first_set_lane(mask: vec4<u32>) -> u32 {
     let ctz = countTrailingZeros(mask);
     let has_x = ctz.x < 32u;

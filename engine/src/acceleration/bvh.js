@@ -1,6 +1,5 @@
 import { Renderer } from "../renderer/renderer.js";
 import { Buffer } from "../renderer/buffer.js";
-import { ResizableBitArray, TypedStack } from "../memory/container.js";
 
 const MORTON_CODES_BUFFER_NAME = "morton_codes_buffer";
 const TEMP_MORTON_CODES_BUFFER_NAME = "temp_morton_codes_buffer";
@@ -27,7 +26,6 @@ export const TILE_SIZE = WORKGROUP_SIZE * ITEMS_PER_TILE;
 
 // float4 min_point (xyz + additional_data as w)
 // float4 max_point (xyz + additional_data as w)
-const NODE_BOUNDS_SIZE = 32; // Size in float32 elements
 const SCENE_BVH_BYTE_SIZE = 32;
 const BVH4_NODE_BYTE_SIZE = 48;
 const DEFAULT_BVH_SIZE = 1024;
@@ -42,9 +40,6 @@ export class BVH {
   // Static properties
   static is_initialized = false;
   static bvh_size = DEFAULT_BVH_SIZE;
-  static allocated_count = 0;
-  static free_nodes = new TypedStack(DEFAULT_BVH_SIZE, Uint32Array);
-  static free_nodes_bitmask = new ResizableBitArray(DEFAULT_BVH_SIZE);
 
   static scene_bounds = new Float32Array([
     Number.POSITIVE_INFINITY,
@@ -88,14 +83,6 @@ export class BVH {
       force: true,
     });
 
-    this.free_nodes.resize(this.bvh_size);
-
-    // Initialize new nodes as free
-    for (let i = this.bvh_size; i > 0; i--) {
-      this.free_nodes.push(i);
-      this.free_nodes_bitmask.set(i, true);
-    }
-
     // Set up the root node
     this.rebuild_buffers();
 
@@ -108,57 +95,7 @@ export class BVH {
    */
   static resize(new_size) {
     if (new_size <= this.bvh_size) return;
-
-    const old_size = this.bvh_size; // old_size was this.size, it should be this.size before update
-    this.bvh_size = new_size;
-
-    this.free_nodes.resize(this.bvh_size);
-
-    // Initialize new nodes as free
-    for (let i = this.bvh_size; i >= old_size; i--) {
-      this.free_nodes.push(i);
-      this.free_nodes_bitmask.set(i, true);
-    }
-
-    this.modified = true;
-  }
-
-  /**
-   * Allocate a new node
-   * @returns {number} - The index of the new node
-   */
-  static allocate_node() {
-    if (this.free_nodes.length === 0) {
-      this.resize(Math.ceil(this.bvh_size * 1.25) + 1);
-    }
-
-    const node_index = this.free_nodes.pop();
-    this.free_nodes_bitmask.set(node_index, false);
-
-    ++this.allocated_count;
-
-    this.modified = true;
-
-    return node_index;
-  }
-
-  /**
-   * Free a node
-   * @param {number} node_index - The index of the node to free
-   */
-  static free_node(node_index) {
-    if (node_index < 0 || node_index >= this.bvh_size) return;
-
-    // Check if the node is already free
-    if (this.free_nodes_bitmask.get(node_index)) {
-      return;
-    }
-
-    this.free_nodes.push(node_index);
-    this.free_nodes_bitmask.set(node_index, true);
-
-    --this.allocated_count;
-
+    this.bvh_size = new_size * 2;
     this.modified = true;
   }
 
@@ -167,7 +104,7 @@ export class BVH {
    */
   static rebuild_buffers() {
     if (!this.modified) return;
-
+    
     const required_primitive_size = this.bvh_size * 4;
 
     if (

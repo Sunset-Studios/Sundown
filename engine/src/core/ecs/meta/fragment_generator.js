@@ -65,6 +65,9 @@ export class FragmentGenerator {
             const is_container_flag = !!field.is_container;
             const usage = field.usage || BufferType.STORAGE_SRC;
             const cpu_readback_flag = !!field.cpu_readback;
+            const buffer_multiplier_lit = JSON.stringify(
+              field.buffer_multiplier !== undefined ? field.buffer_multiplier : 1
+            );
 
             const getter = field.getter
               ? `, getter(typed_array, element_offset) { ${field.getter} }`
@@ -81,7 +84,8 @@ export class FragmentGenerator {
               buffer_name: "${key}",
               is_container: ${is_container_flag},
               usage: ${usage}${getter}${setter},
-              cpu_readback: ${cpu_readback_flag}
+              cpu_readback: ${cpu_readback_flag},
+              buffer_multiplier: ${buffer_multiplier_lit}
             }`;
           })
           .join(",\n        ")}

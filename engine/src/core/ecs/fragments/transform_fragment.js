@@ -40,6 +40,7 @@ export class TransformFragment extends Fragment {
         typed_array.set(value, element_offset);
       },
       cpu_readback: false,
+      buffer_multiplier: 1,
     },
     rotation: {
       ctor: Float32Array,
@@ -66,6 +67,7 @@ export class TransformFragment extends Fragment {
         typed_array.set(value, element_offset);
       },
       cpu_readback: false,
+      buffer_multiplier: 1,
     },
     scale: {
       ctor: Float32Array,
@@ -92,6 +94,7 @@ export class TransformFragment extends Fragment {
         typed_array.set(value, element_offset);
       },
       cpu_readback: false,
+      buffer_multiplier: 1,
     },
     bounds: {
       ctor: Float32Array,
@@ -102,6 +105,7 @@ export class TransformFragment extends Fragment {
       is_container: false,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
       cpu_readback: false,
+      buffer_multiplier: 2,
     },
     transforms: {
       ctor: Float32Array,
@@ -115,6 +119,7 @@ export class TransformFragment extends Fragment {
         GPUBufferUsage.COPY_DST |
         GPUBufferUsage.COPY_SRC,
       cpu_readback: false,
+      buffer_multiplier: 1,
     },
     world_position: {
       ctor: Float32Array,
@@ -128,6 +133,7 @@ export class TransformFragment extends Fragment {
         GPUBufferUsage.COPY_DST |
         GPUBufferUsage.COPY_SRC,
       cpu_readback: true,
+      buffer_multiplier: 1,
     },
     world_rotation: {
       ctor: Float32Array,
@@ -141,6 +147,7 @@ export class TransformFragment extends Fragment {
         GPUBufferUsage.COPY_DST |
         GPUBufferUsage.COPY_SRC,
       cpu_readback: true,
+      buffer_multiplier: 1,
     },
     world_scale: {
       ctor: Float32Array,
@@ -154,6 +161,7 @@ export class TransformFragment extends Fragment {
         GPUBufferUsage.COPY_DST |
         GPUBufferUsage.COPY_SRC,
       cpu_readback: true,
+      buffer_multiplier: 1,
     },
   };
   static buffer_data = new Map(); // key → { buffer: FragmentGpuBuffer, stride: number }

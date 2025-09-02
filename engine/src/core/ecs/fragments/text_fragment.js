@@ -125,6 +125,7 @@ export class TextFragment extends Fragment {
         }
       },
       cpu_readback: false,
+      buffer_multiplier: 1,
     },
     font: {
       ctor: Int32Array,
@@ -138,6 +139,7 @@ export class TextFragment extends Fragment {
         GPUBufferUsage.COPY_DST |
         GPUBufferUsage.COPY_SRC,
       cpu_readback: false,
+      buffer_multiplier: 1,
     },
     font_size: {
       ctor: Uint32Array,
@@ -151,6 +153,7 @@ export class TextFragment extends Fragment {
         GPUBufferUsage.COPY_DST |
         GPUBufferUsage.COPY_SRC,
       cpu_readback: false,
+      buffer_multiplier: 1,
     },
     text_color: {
       ctor: Float32Array,
@@ -164,6 +167,7 @@ export class TextFragment extends Fragment {
         GPUBufferUsage.COPY_DST |
         GPUBufferUsage.COPY_SRC,
       cpu_readback: false,
+      buffer_multiplier: 1,
     },
     text_emissive: {
       ctor: Float32Array,
@@ -177,6 +181,7 @@ export class TextFragment extends Fragment {
         GPUBufferUsage.COPY_DST |
         GPUBufferUsage.COPY_SRC,
       cpu_readback: false,
+      buffer_multiplier: 1,
     },
   };
   static buffer_data = new Map(); // key → { buffer: FragmentGpuBuffer, stride: number }

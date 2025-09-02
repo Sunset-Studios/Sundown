@@ -244,6 +244,8 @@ export class FragmentGpuBuffer {
    * @param {typeof import('../fragment.js').Fragment | null} [fragment_class_ref=null] - Reference to the fragment class
    * @param {string | null} [config_key_within_fragment=null] - Key for buffer/field config within the fragment class
    * @param {function | null} [sync_target_accessor=null] - Function to get target view for sync operation
+   * @param {boolean} [global_binding=false] - Whether this buffer is bound globally
+   * @param {number} [capacity_multiplier=1] - Multiplier applied to capacity on resize
    */
   constructor(
     name,
@@ -255,7 +257,8 @@ export class FragmentGpuBuffer {
     fragment_class_ref = null,
     config_key_within_fragment = null,
     sync_target_accessor = null,
-    global_binding = false
+    global_binding = false,
+    capacity_multiplier = 1
   ) {
     this.name = name;
     this.max_rows = max_rows;
@@ -267,11 +270,12 @@ export class FragmentGpuBuffer {
     this.config_key_within_fragment = config_key_within_fragment;
     this.sync_target_accessor = sync_target_accessor;
     this.global_binding = global_binding;
+    this.capacity_multiplier = Math.max(1, Number(capacity_multiplier) || 1);
 
     // initial GPU buffer
     this.buffer = Buffer.create({
       name: this.name,
-      size: this.max_rows * this.byte_stride,
+      size: this.max_rows * this.byte_stride * this.capacity_multiplier,
       usage: this.usage,
       force: true,
       dispatch: this.dispatch,
@@ -306,13 +310,13 @@ export class FragmentGpuBuffer {
       return; // Prevent partial/incorrect write
     }
 
-    const required_end_byte = byte_offset + write_bytes;
+    const required_end_byte = (byte_offset + write_bytes) * this.capacity_multiplier;
     const write_elements = Math.ceil(row_count * (this.byte_stride / packed_chunk_data.BYTES_PER_ELEMENT));
 
     // Grow buffer if needed
     if (required_end_byte > this.buffer.config.size) {
       const needed_rows = Math.ceil(required_end_byte / this.byte_stride);
-      this._resize_buffer(npot(needed_rows)); // Resize based on rows
+      this._resize_buffer(npot(needed_rows)); // Resize based on rows with multiplier
     }
 
     // Write the packed data
@@ -524,6 +528,15 @@ export class FragmentGpuBuffer {
             const actual_gpu_buffer_key = buffer_config.buffer_name;
             fragment_class.field_key_map.set(buffer_key, actual_gpu_buffer_key);
 
+            // Determine initial row capacity using max buffer_multiplier across included fields
+            let effective_multiplier = 1;
+            for (let j = 0; j < fields_in_buffer.length; j++) {
+              const fname = fields_in_buffer[j];
+              const fspec = fragment_class.fields[fname];
+              const m = typeof fspec?.buffer_multiplier === "number" ? fspec.buffer_multiplier : 1;
+              if (m > effective_multiplier) effective_multiplier = m;
+            }
+
             const flat_buf = new FragmentGpuBuffer(
               actual_gpu_buffer_key,
               FragmentGpuBuffer.initial_max_rows,
@@ -532,7 +545,10 @@ export class FragmentGpuBuffer {
               dispatch,
               buffer_config.usage,
               fragment_class,
-              buffer_key
+              buffer_key,
+              null,
+              false,
+              effective_multiplier
             );
 
             fragment_class.buffer_data.set(buffer_config.buffer_name, {
@@ -577,6 +593,8 @@ export class FragmentGpuBuffer {
         const actual_gpu_buffer_key = field_spec.buffer_name;
         fragment_class.field_key_map.set(field_name, actual_gpu_buffer_key);
 
+        const multiplier = typeof field_spec.buffer_multiplier === "number" ? field_spec.buffer_multiplier : 1;
+
         const flat_buf = new FragmentGpuBuffer(
           actual_gpu_buffer_key,
           FragmentGpuBuffer.initial_max_rows,
@@ -585,7 +603,10 @@ export class FragmentGpuBuffer {
           dispatch,
           field_spec.usage,
           fragment_class,
-          field_name
+          field_name,
+          null,
+          false,
+          multiplier
         );
 
         fragment_class.buffer_data.set(field_spec.buffer_name, {

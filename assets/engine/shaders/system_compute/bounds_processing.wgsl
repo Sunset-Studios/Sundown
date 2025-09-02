@@ -64,7 +64,7 @@ fn cs(
 	let idx = global_id.x;
 	let lid = local_id.x;
 
-	let num_rows = arrayLength(&aabb_bounds);
+	let num_rows = arrayLength(&entity_transforms);
 
 	var min_point = vec3f(pos_inf, pos_inf, pos_inf);
 	var max_point = vec3f(neg_inf, neg_inf, neg_inf);

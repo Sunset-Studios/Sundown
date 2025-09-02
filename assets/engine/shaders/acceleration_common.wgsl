@@ -68,6 +68,11 @@ fn is_leaf(node: AABB) -> bool {
     return node.min.w != -1.0 && node.max.w == -1.0;
 }
 
+// Check if a node is valid
+fn is_valid_node(node: AABB) -> bool {
+    return node.min.w != -1.0;
+}
+
 // Ray-AABB intersection (slab method)
 fn intersect_aabb(ray: Ray, min_point: vec3<f32>, max_point: vec3<f32>) -> f32 {
     var tmin = ray.origin_and_tmin.w;

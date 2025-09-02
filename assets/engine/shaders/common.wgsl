@@ -470,3 +470,8 @@ fn inverse4x4(m: mat4x4<f32>) -> mat4x4<f32> {
 
     return inverse;
 }
+
+fn mask_popcount(mask: vec4<u32>) -> u32 {
+    let ones = countOneBits(mask);
+    return ones.x + ones.y + ones.z + ones.w;
+}
