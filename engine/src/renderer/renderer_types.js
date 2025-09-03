@@ -125,6 +125,7 @@ export const DebugDrawType = Object.freeze({
     GI_Irradiance: 15,
     EntityBounds: 16,
     BVH: 17,
+    BVH4: 18,
 });
 
 /**

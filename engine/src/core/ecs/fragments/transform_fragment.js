@@ -105,7 +105,7 @@ export class TransformFragment extends Fragment {
       is_container: false,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
       cpu_readback: false,
-      buffer_multiplier: 2,
+      buffer_multiplier: 2.1,
     },
     transforms: {
       ctor: Float32Array,

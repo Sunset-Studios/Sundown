@@ -19,7 +19,7 @@ export class SharedVertexBuffer {
 
   static add_vertex_data(data) {
     const offset = this.vertex_data.length;
-    this.vertex_data.push(...data);
+    this.vertex_data = this.vertex_data.concat(data);
     this.size = this._get_byte_size();
     this.build();
     return offset;

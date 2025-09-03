@@ -16,14 +16,16 @@ import { warn } from "../utility/logging.js";
 
 // Constants for naming and key codes
 const input_name = "console_input";
-const bottom = "bottom";
+const panel_offset_base = 50;
 
 // These configurations roughly mirror the previous style settings
 const console_panel_config = {
   layout: "column",
   gap: 4,
-  y: "20%",
-  anchor_y: bottom,
+  y: 10,
+  x: 20,
+  anchor_y: "bottom",
+  anchor_x: "right",
   width: 600,
   background_color: "rgba(0, 0, 0, 0.8)",
   padding: 8,
@@ -65,6 +67,7 @@ export class DevConsole extends SimulationLayer {
   current_suggestions = [];
   suggestion_index = -1;
   scene = null;
+  y_offset = panel_offset_base;
 
   init() {
     super.init();
@@ -176,6 +179,7 @@ export class DevConsole extends SimulationLayer {
     if (!this.is_open) return;
 
     // Render the console panel.
+    console_panel_config.y = this.y_offset;
     const panel_state = panel(console_panel_config, () => {
       // Render the input field.
       const input_state = input(input_name, input_config);
@@ -198,6 +202,7 @@ export class DevConsole extends SimulationLayer {
         }
       }
 
+      this.y_offset = this.current_suggestions.length * 40 + panel_offset_base;
       if (this.current_suggestions.length > 0) {
         panel(console_suggestions_config, () => {
           for (let index = 0; index < this.current_suggestions.length; index++) {

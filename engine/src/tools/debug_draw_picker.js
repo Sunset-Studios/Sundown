@@ -61,6 +61,9 @@ export class DebugDrawPicker extends DevConsoleTool {
         case "bvh":
           Renderer.get().set_debug_draw_type(DebugDrawType.BVH);
           break;
+        case "bvh4":
+          Renderer.get().set_debug_draw_type(DebugDrawType.BVH4);
+          break;
         default:
           Renderer.get().set_debug_draw_type(DebugDrawType.None);
           break;

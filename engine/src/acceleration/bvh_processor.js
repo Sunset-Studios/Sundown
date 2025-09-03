@@ -272,7 +272,7 @@ export class BVHProcessor {
   build_bvh2() {
     const primitive_count = EntityManager.get_total_subscribed(TransformFragment);
     const bvh = BVH.to_gpu_data();
-    const bvh2_workgroups = Math.ceil(primitive_count / 32);
+    const bvh2_workgroups = Math.ceil(primitive_count / 128);
 
     const bounds_buffer = EntityManager.get_fragment_gpu_buffer(
       TransformFragment,
@@ -344,12 +344,17 @@ export class BVHProcessor {
     this.bvh4_inputs[3] = bvh.bvh4_index_pairs_buffer;
     this.bvh4_inputs[4] = bvh.bvh4_prim_indices_buffer;
     this.bvh4_inputs[5] = bvh.bvh_info_buffer;
+    this.bvh4_inputs[6] = bvh.bvh4_debug_watchdog_buffer;
 
     this.bvh4_outputs[0] = bvh.bvh4_nodes_buffer;
     this.bvh4_outputs[1] = bvh.bvh4_build_state_buffer;
     this.bvh4_outputs[2] = bvh.bvh4_index_pairs_buffer;
     this.bvh4_outputs[3] = bvh.bvh4_prim_indices_buffer;
+    this.bvh4_outputs[4] = bvh.bvh4_debug_watchdog_buffer;
 
+    // Zero watchdog before dispatch
+    bvh.bvh4_debug_watchdog_buffer.write_raw(new Uint32Array(4));
+    
     const workgroups = Math.max(1, Math.ceil(primitive_count / 32));
     ComputeTaskQueue.new_task(
       hploc_convert_parallel_single_pass_task_name,

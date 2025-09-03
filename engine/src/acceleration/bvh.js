@@ -15,6 +15,7 @@ const ONESWEEP_ERROR_COUNT_BUFFER_NAME = "onesweep_error_count";
 const BVH4_BUILD_STATE_BUFFER_NAME = "bvh4_build_state";
 const BVH4_INDEX_PAIRS_BUFFER_NAME = "bvh4_index_pairs";
 const BVH4_PRIM_INDICES_BUFFER_NAME = "bvh4_prim_indices";
+const BVH4_DEBUG_WATCHDOG_BUFFER_NAME = "bvh4_debug_watchdog";
 
 // Onesweep configuration
 const RADIX_BITS = 8;
@@ -67,6 +68,7 @@ export class BVH {
   static bvh4_build_state_buffer = null;
   static bvh4_index_pairs_buffer = null;
   static bvh4_prim_indices_buffer = null;
+  static bvh4_debug_watchdog_buffer = null;
   
   static modified = true;
 
@@ -285,6 +287,18 @@ export class BVH {
       });
     }
 
+    // BVH4 debug watchdog buffer (3 u32 counters, padded to 16 bytes)
+    if (!this.bvh4_debug_watchdog_buffer) {
+      this.bvh4_debug_watchdog_buffer = Buffer.create({
+        name: BVH4_DEBUG_WATCHDOG_BUFFER_NAME,
+        usage: storage_usage,
+        size: 16,
+        force: true,
+        cpu_readback: true,
+        raw_data: new Uint32Array(4),
+      });
+    }
+
     this.modified = false;
   }
 
@@ -345,6 +359,7 @@ export class BVH {
     this.#data_buffers.bvh4_build_state_buffer = this.bvh4_build_state_buffer;
     this.#data_buffers.bvh4_index_pairs_buffer = this.bvh4_index_pairs_buffer;
     this.#data_buffers.bvh4_prim_indices_buffer = this.bvh4_prim_indices_buffer;
+    this.#data_buffers.bvh4_debug_watchdog_buffer = this.bvh4_debug_watchdog_buffer;
 
     return this.#data_buffers;
   }

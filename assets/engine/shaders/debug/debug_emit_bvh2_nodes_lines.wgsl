@@ -85,7 +85,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3u) {
     let b = aabb_bounds[node];
     let min_p = b.min.xyz;
     let max_p = b.max.xyz;
-    let valid = is_leaf(b);
+    let valid = !is_leaf(b);
 
     let has_volume = all(max_p > min_p);
     let is_active = valid && has_volume;
@@ -108,5 +108,6 @@ fn cs(@builtin(global_invocation_id) gid: vec3u) {
         out_line_data[base].color_and_width = vec4f(BOUNDS_COLOR.rgb, width);
     }
 }
+
 
 

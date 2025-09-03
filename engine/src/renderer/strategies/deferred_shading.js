@@ -312,10 +312,17 @@ const debug_emit_entity_bounds_shader_setup = {
     },
   },
 };
-const debug_emit_bvh_nodes_shader_setup = {
+const debug_emit_bvh2_nodes_shader_setup = {
   pipeline_shaders: {
     compute: {
-      path: "debug/debug_emit_bvh_nodes_lines.wgsl",
+      path: "debug/debug_emit_bvh2_nodes_lines.wgsl",
+    },
+  },
+};
+const debug_emit_bvh4_nodes_shader_setup = {
+  pipeline_shaders: {
+    compute: {
+      path: "debug/debug_emit_bvh4_nodes_lines.wgsl",
     },
   },
 };
@@ -1069,7 +1076,10 @@ export class DeferredShadingStrategy {
       // │ 📏 PASS: Debug Entity Bounds and BVH                                        │
       // │    Render entity bounds and BVH for visualization                           │
       // └─────────────────────────────────────────────────────────────────────────────┘
-      if (debug_view === DebugDrawType.EntityBounds || debug_view === DebugDrawType.BVH) {
+      if (debug_view === DebugDrawType.EntityBounds
+            || debug_view === DebugDrawType.BVH
+            || debug_view === DebugDrawType.BVH4
+          ) {
         const aabb_gpu_data = BVH.to_gpu_data();
         const max_nodes_debug = BVH.bvh_size;
         const max_lines = max_nodes_debug * 12;
@@ -1110,10 +1120,10 @@ export class DeferredShadingStrategy {
               pass.dispatch(Math.ceil(BVH.bvh_size / 64), 1, 1);
             }
           );
-        } else {
+        } else if (debug_view === DebugDrawType.BVH4) {
           // Debug BVH: emit lines from BVH4 nodes
           render_graph.add_pass(
-            "debug_emit_bvh_lines",
+            "debug_emit_bvh4_lines",
             RenderPassFlags.Compute,
             {
               inputs: [
@@ -1124,7 +1134,22 @@ export class DeferredShadingStrategy {
                 scene_bounds,
               ],
               outputs: [debug_line_transform_buf, debug_line_data_buf],
-              shader_setup: debug_emit_bvh_nodes_shader_setup,
+              shader_setup: debug_emit_bvh4_nodes_shader_setup,
+            },
+            (graph, frame_data, encoder) => {
+              const pass = graph.get_physical_pass(frame_data.current_pass);
+              pass.dispatch(Math.ceil(max_nodes_debug / 64), 1, 1);
+            }
+          );
+        } else {
+          // Debug BVH: emit lines from BVH4 nodes
+          render_graph.add_pass(
+            "debug_emit_bvh2_lines",
+            RenderPassFlags.Compute,
+            {
+              inputs: [debug_line_transform_buf, debug_line_data_buf, aabb_bounds],
+              outputs: [debug_line_transform_buf, debug_line_data_buf],
+              shader_setup: debug_emit_bvh2_nodes_shader_setup,
             },
             (graph, frame_data, encoder) => {
               const pass = graph.get_physical_pass(frame_data.current_pass);

@@ -19,6 +19,15 @@ const compute_dirty_movable_entities_shader_setup = {
   },
 };
 
+const compute_dirty_slice_reducer_shader_setup = {
+  pipeline_shaders: {
+    compute: {
+      path: "shadow/as_vsm/dirty_slice_reducer.wgsl",
+      defines: { SHADOWS_ENABLED: true },
+    },
+  },
+};
+
 export class ShadowCuller extends InstanceCuller {
   constructor(prev_culler = null, additional_data = null) {
     super(prev_culler, additional_data);
@@ -67,6 +76,29 @@ export class ShadowCuller extends InstanceCuller {
       }
     }
 
+    // Reduce dirty slices to check if any tiles are dirty within each slice
+    render_graph.add_pass(
+      "dirty_slice_reducer",
+      RenderPassFlags.Compute,
+      {
+        shader_setup: compute_dirty_slice_reducer_shader_setup,
+        inputs: [
+          this.additional_data.vsm_settings,
+          this.additional_data.page_table,
+          this.additional_data.dirty_slices,
+        ],
+        outputs: [this.additional_data.dirty_slices],
+      },
+      (graph, frame_data, encoder) => {
+        const pass = graph.get_physical_pass(frame_data.current_pass);
+        const pt_image = graph.get_physical_image(this.additional_data.page_table);
+        const x_groups = Math.ceil(pt_image.config.width / 8);
+        const y_groups = Math.ceil(pt_image.config.height / 8);
+        const z_groups = Math.ceil(pt_image.config.depth / 4);
+        pass.dispatch(x_groups, y_groups, z_groups);
+      }
+    );
+
     // Cull shadow casters for all registered views
     for (let i = 0; i < this.registered_views.length; ++i) {
       const view_index = this.registered_views.get(i);
@@ -93,6 +125,7 @@ export class ShadowCuller extends InstanceCuller {
             indirect_buf,
             this.additional_data.vsm_settings,
             this.additional_data.page_table,
+            this.additional_data.dirty_slices,
           ],
           outputs: [visible_buf, indirect_buf],
         },

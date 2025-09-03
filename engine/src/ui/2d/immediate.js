@@ -768,7 +768,7 @@ export function begin_container(config = {}) {
     // For reversed column, start from the bottom
     container.cursor = {
       x: x + padding_left,
-      y: y + height - padding_bottom,
+      y: y + padding_bottom,
     };
   } else {
     // Default cursor position (top-left corner)

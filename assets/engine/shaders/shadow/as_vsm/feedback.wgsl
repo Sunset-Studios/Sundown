@@ -12,7 +12,7 @@
 @group(1) @binding(5) var<storage, read> light_count_buffer: array<u32>;
 @group(1) @binding(6) var page_table: texture_storage_2d_array<r32uint, read_write>;
 
-@compute @workgroup_size(8, 8, 4)
+@compute @workgroup_size(8, 8, 1)
 fn cs(@builtin(global_invocation_id) id: vec3<u32>) {
 #if SHADOWS_ENABLED
   // ------------------------------------------------------------------
@@ -68,6 +68,11 @@ fn cs(@builtin(global_invocation_id) id: vec3<u32>) {
   let word = word_and_mask.x;
   let mask = word_and_mask.y;
 
-  atomicOr(&bitmask[word], mask);
+  // Skip RMW if the bit is already set
+  let prev = atomicLoad(&bitmask[word]);
+  let already_set = (prev & mask) != 0u;
+  if (!already_set) {
+    atomicOr(&bitmask[word], mask);
+  }
 #endif
 } 

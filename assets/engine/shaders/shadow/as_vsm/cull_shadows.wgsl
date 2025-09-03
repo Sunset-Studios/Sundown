@@ -22,6 +22,7 @@ struct DrawCullData {
 @group(1) @binding(4) var<storage, read_write> draw_indirect_buffer: array<DrawCommand>;
 @group(1) @binding(5) var<uniform> vsm_settings: ASVSMSettings;
 @group(1) @binding(6) var page_table: texture_storage_2d_array<r32uint, read_write>;
+@group(1) @binding(7) var<storage, read_write> dirty_slices: array<u32>;
 
 // ------------------------------------------------------------------------------------
 // Compute Shader
@@ -56,16 +57,9 @@ fn cs(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let slice_idx = light_shadow_idx * u32(vsm_settings.max_lods) + clipmap_index;
     let vtr_i = i32(vsm_settings.virtual_tiles_per_row);
 
-    var dirty = false;
-
-    for (var i = 0; i < vtr_i; i = i + 1) {
-        for (var j = 0; j < vtr_i; j = j + 1) {
-            let tile_coords = vec2<u32>(u32(i), u32(j));
-            dirty = dirty || vsm_pte_is_dirty(textureLoad(page_table, tile_coords, slice_idx).r);
-        }
-    }
-
-    if (!dirty) {
+    let slice_frame = dirty_slices[slice_idx];
+    if (slice_frame != u32(frame_info.frame_index)) {
+        // Slice not dirtied at all this frame, so we can skip
         return;
     }
 

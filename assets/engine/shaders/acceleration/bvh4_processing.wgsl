@@ -14,6 +14,12 @@ const NQ: u32 = 8u;
 const THETA: f32 = 8.0;
 const INV_THETA: f32 = 1.0 / 8.0;
 const MAX_COST: f32 = 10.0;
+const SPIN_THRESHOLD: u32 = 1u << 16u; // tune as needed
+const WATCHDOG_ABORT: u32 = 1u; // set to 1u to force-deactivate lanes when tripped
+const invalid_bounds: AABB = AABB(
+    vec4<f32>(0.0, 0.0, 0.0, -1.0), 
+    vec4<f32>(0.0, 0.0, 0.0, -1.0)
+);
 
 // -----------------------------------------------------------------------------
 // Data Structures
@@ -47,6 +53,8 @@ struct IndexPair {
 @group(1) @binding(3) var<storage, read_write> index_pairs: array<IndexPair>;
 @group(1) @binding(4) var<storage, read_write> prim_indices: array<u32>;
 @group(1) @binding(5) var<storage, read_write> bvh_data: BVHData;
+// Debug watchdog: [0]=stuck_event_count, [1]=last_stuck_work_id, [2]=max_spin_count
+@group(1) @binding(6) var<storage, read_write> debug_watchdog: array<atomic<u32>>;
 
 var<workgroup> wg_sync_count : atomic<u32>;
 var<workgroup> wg_break_uniform : u32;
@@ -100,15 +108,16 @@ fn get_cost_for_child(child_idx: u32, slot: u32, offsets: array<vec3<f32>, 4>) -
 
 // Load index pair from array
 fn load_index_pair(idx: u32) -> vec2<u32> {
-    let lo = atomicLoad(&index_pairs[idx].lo);
+    // Load hi last; writer stores hi last as the "ready" flag.
     let hi = atomicLoad(&index_pairs[idx].hi);
+    let lo = atomicLoad(&index_pairs[idx].lo);
     return vec2<u32>(hi, lo);
 }
-
 // Store index pair to array
 fn store_index_pair(idx: u32, hi: u32, lo: u32) {
-    atomicStore(&index_pairs[idx].hi, hi);
+    // Publish lo first, then hi as the ready flag.
     atomicStore(&index_pairs[idx].lo, lo);
+    atomicStore(&index_pairs[idx].hi, hi);
 }
 
 fn syncthreads_count(warp_ctx: WarpCtx, pred: bool) -> u32 {
@@ -131,16 +140,13 @@ fn syncthreads_count(warp_ctx: WarpCtx, pred: bool) -> u32 {
 // Greedy assignment. Assigns each child to the
 // best available slot independently, using the cost function and skipping
 // already-assigned slots.
-fn greedy_assignment(parent_centroid: vec3<f32>, child_nodes: array<u32, 4>, n: u32) -> u32 {
+fn greedy_assignment(offsets: array<vec3<f32>, 4>, n: u32) -> u32 {
     var assignments: u32 = INVALID_IDX;
 
     for (var c = 0u; c < n; c = c + 1u) {
         var max_cost = -3.402823e+38;
         var best_slot = INVALID_ASSIGNMENT;
-
-        let child_bounds = bounds[child_nodes[c]];
-        let child_centroid = child_bounds.max.xyz + child_bounds.min.xyz;
-        let offset = parent_centroid - child_centroid;
+        let offset = offsets[c];
 
         for (var s = 0u; s < 4u; s = s + 1u) {
             // If slot already assigned, skip
@@ -260,18 +266,16 @@ fn convert_bvh2_to_bvh4(
     }
     work_id = warp_shuffle_u32(warp_ctx, work_id, 0u) + warp_ctx.lane_id;
 
-    var lane_active = work_id < leaf_count; 
+    var lane_active = work_id < leaf_count;
+    var spin_count: u32 = 0u;
 
     loop {
-        // let count = syncthreads_count(warp_ctx, lane_active);
-        // if (local_id.x == 0u) {
-        //     wg_break_uniform = select(0u, 1u, count == 0u);
-        // }
-        // let should_break = workgroupUniformLoad(&wg_break_uniform) != 0u;
-        // if (should_break) {
-        //     break;
-        // }
-        if (!warp_any(warp_ctx, lane_active)) {
+        let count = syncthreads_count(warp_ctx, lane_active);
+        if (local_id.x == 0u) {
+            wg_break_uniform = select(0u, 1u, count == 0u);
+        }
+        let should_break = workgroupUniformLoad(&wg_break_uniform) != 0u;
+        if (should_break) {
             break;
         }
 
@@ -281,6 +285,7 @@ fn convert_bvh2_to_bvh4(
         }
         produced = warp_broadcast_u32(warp_ctx, produced, 0u);
         let do_work = lane_active && (work_id < produced);
+        var has_work = false;
 
         if (do_work) {
             // Load index pair
@@ -289,13 +294,19 @@ fn convert_bvh2_to_bvh4(
             let bvh4_node_idx = index_pair.y;
 
             // If no work assigned to this slot yet, skip (keep lane active to poll until assigned)
-            var has_work = (bvh2_node_idx != INVALID_IDX) && (bvh4_node_idx != INVALID_IDX);
+            has_work = (bvh2_node_idx != INVALID_IDX) && (bvh4_node_idx != INVALID_IDX);
+            has_work = has_work && (bvh2_node_idx < bvh2_count);
 
-            let bvh2_node = bounds[bvh2_node_idx];
+            var bvh2_node = invalid_bounds;
+            if (has_work) {
+                bvh2_node = bounds[bvh2_node_idx];
+            }
+
             if (is_leaf(bvh2_node)) {
                 prim_indices[bvh4_node_idx] = u32(bvh2_node.min.w);
                 lane_active = false;
                 has_work = false;
+                spin_count = 0u;
             }
 
             if (has_work) {
@@ -304,31 +315,39 @@ fn convert_bvh2_to_bvh4(
                 var child_count = 0u;
                 var child_nodes: array<u32, 4>;
 
-                var child_bounds: array<AABB, 2>;
+                var child_bounds_local: array<AABB, 2>;
+                var child_bounds_cached: array<AABB, 4>;
                 var left_child = u32(bvh2_node.min.w);
                 var right_child = u32(bvh2_node.max.w);
                 var msb = 0;
 
                 // Top-down traversal to collect up to 4 nodes
                 loop {
-                    child_bounds[0] = bounds[left_child];
-                    child_bounds[1] = bounds[right_child];
+                    child_bounds_local[0] = invalid_bounds;
+                    child_bounds_local[1] = invalid_bounds;
+
+                    child_bounds_local[0].min = select(invalid_bounds.min, bounds[left_child].min, left_child != INVALID_IDX);
+                    child_bounds_local[1].min = select(invalid_bounds.min, bounds[right_child].min, right_child != INVALID_IDX);
+                    child_bounds_local[0].max = select(invalid_bounds.max, bounds[left_child].max, left_child != INVALID_IDX);
+                    child_bounds_local[1].max = select(invalid_bounds.max, bounds[right_child].max, right_child != INVALID_IDX);
 
                     // Choose the child with smaller area first
-                    let area0 = calculate_aabb_surface_area(child_bounds[0].min.xyz, child_bounds[0].max.xyz);
-                    let area1 = calculate_aabb_surface_area(child_bounds[1].min.xyz, child_bounds[1].max.xyz);
-                    var first = select(1u, 0u, area0 < area1);
+                    let smaller = calculate_aabb_surface_area(child_bounds_local[0].min.xyz, child_bounds_local[0].max.xyz) <
+                                  calculate_aabb_surface_area(child_bounds_local[1].min.xyz, child_bounds_local[1].max.xyz);
+                    var first = select(1u, 0u, smaller);
 
                     // Push both children; the first goes at index msb (or 0 initially), second at child_count
                     for (var i = 0u; i < 2u; i = i + 1u) {
                         let idx = select(child_count, u32(msb), i == 0u);
                         let chosen = select(right_child, left_child, first == 0u);
+                        let chosen_bounds = child_bounds_local[first];
 
-                        if (bounds[chosen].max.w != -1.0) {
+                        if (chosen_bounds.max.w != -1.0) {
                             inner_mask = inner_mask | (1u << idx);
                         }
 
                         child_nodes[idx] = chosen;
+                        child_bounds_cached[idx] = chosen_bounds;
 
                         child_count = child_count + 1u;
 
@@ -347,8 +366,7 @@ fn convert_bvh2_to_bvh4(
                     inner_mask = inner_mask & ~(1u << u32(msb));
                     child_count = child_count - 1u;
  
-                    let new_idx = child_nodes[u32(msb)];
-                    let expanded_node = bounds[new_idx];
+                    let expanded_node = child_bounds_cached[u32(msb)];
                     left_child = u32(expanded_node.min.w);
                     right_child = u32(expanded_node.max.w);
                 }
@@ -356,7 +374,12 @@ fn convert_bvh2_to_bvh4(
                 let parent_centroid = bvh2_node.min.xyz + bvh2_node.max.xyz;
 
                 // Reorder the child nodes (greedy by default, optional auction)
-                var assignments = greedy_assignment(parent_centroid, child_nodes, child_count);
+                var offsets: array<vec3<f32>, 4>;
+                for (var c = 0u; c < child_count; c = c + 1u) {
+                    let centroid = child_bounds_cached[c].min.xyz + child_bounds_cached[c].max.xyz;
+                    offsets[c] = parent_centroid - centroid;
+                }
+                var assignments = greedy_assignment(offsets, child_count);
 
                 // Compute new masks after reordering
                 var new_inner_mask: u32 = 0u;
@@ -407,6 +430,21 @@ fn convert_bvh2_to_bvh4(
                     bvh2_node, child_nodes, child_base_idx, prim_base_idx, 
                     assignments, inner_mask, leaf_mask
                 );
+            }
+        }
+
+        // Watchdog: if we are continually selected for work but never complete a leaf,
+        // and also did not have valid work this iteration, count it toward spin.
+        if (lane_active) {
+            spin_count += 1u;
+            if (spin_count > SPIN_THRESHOLD) {
+                atomicAdd(&debug_watchdog[0], 1u);
+                if (WATCHDOG_ABORT == 1u) {
+                    lane_active = false;
+                } else {
+                    // Reset counter so we do not overflow and can count multiple events
+                    spin_count = 0u;
+                }
             }
         }
     }

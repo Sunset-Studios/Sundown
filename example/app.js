@@ -117,8 +117,8 @@ export class RenderingScene extends Scene {
     const font_object = FontCache.get_font_object(font_id);
 
     // Create a 3D grid of sphere entities
-    const grid_size = 45; // 100x100x10 grid
-    const grid_layers = 45;
+    const grid_size = 105; // 100x100x10 grid
+    const grid_layers = 105;
     const spacing = 5; // 2 units apart
 
     const sphere = spawn_mesh_entity(
@@ -2153,6 +2153,21 @@ export class GITestScene extends Scene {
         this.entities.push(b);
       }
     }
+    // Load and place the station behind the three Cornell boxes (large scale)
+    // const station_mesh = Mesh.from_gltf("engine/models/station/station.glb");
+
+    // // Create a default material
+    // const default_material = StandardMaterial.create("MyMaterial");
+    // const default_material_id = default_material.material_id;
+
+    // const station_entity = spawn_mesh_entity(
+    //   [0, 50, -200],
+    //   [0, 0, 0, 1],
+    //   [50, 50, 50],
+    //   station_mesh,
+    //   default_material_id
+    // );
+    // this.entities.push(station_entity);
   }
 
   cleanup() {
@@ -2726,8 +2741,8 @@ export class GLTFModelScene extends Scene {
   //await scene_switcher.add_scene(ml_scene);
   //await scene_switcher.add_scene(voxel_terrain_scene);
   //await scene_switcher.add_scene(object_painting_scene);
-  //await scene_switcher.add_scene(gi_test_scene);
-  await scene_switcher.add_scene(shadow_test_scene);
+  await scene_switcher.add_scene(gi_test_scene);
+  //await scene_switcher.add_scene(shadow_test_scene);
   //await scene_switcher.add_scene(gltf_model_scene);
 
   simulator.add_sim_layer(scene_switcher);

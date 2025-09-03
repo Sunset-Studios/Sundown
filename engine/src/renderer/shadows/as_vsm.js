@@ -83,6 +83,12 @@ const eviction_counter_buf_config = {
   usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
 };
 
+const dirty_slices_buf_config = {
+  name: "shadow_dirty_slices_buf",
+  size: 0, // filled at runtime
+  usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+};
+
 const debug_shadow_atlas_config = {
   name: "debug_shadow_atlas",
   format: rgba16float_format,
@@ -267,6 +273,7 @@ export class AdaptiveSparseVirtualShadowMaps {
         light_shadow_idx_buffer: 0,
         page_table: 0,
         entity_flags: 0,
+        dirty_slices: 0,
       }
     );
 
@@ -421,6 +428,11 @@ export class AdaptiveSparseVirtualShadowMaps {
     }
     this.shadow_atlas_buf = render_graph.create_buffer(shadow_atlas_buf_config);
 
+    // Create dirty slices buffer
+    dirty_slices_buf_config.size = adjusted_light_count * this.max_lods * 4;
+    dirty_slices_buf_config.force = force_recreate;
+    this.dirty_slices = render_graph.create_buffer(dirty_slices_buf_config);
+
     // Create LRU ring buffer
     lru_buf_config.raw_data = null;
     if (force_recreate) {
@@ -512,8 +524,7 @@ export class AdaptiveSparseVirtualShadowMaps {
         const position_img = graph.get_physical_image(position_texture);
         const w = position_img.config.width;
         const h = position_img.config.height;
-        const light_groups = Math.ceil(adjusted_light_count / 4);
-        pass.dispatch(Math.ceil(w / 8), Math.ceil(h / 8), light_groups);
+        pass.dispatch(Math.ceil(w / 8), Math.ceil(h / 8), adjusted_light_count);
       }
     );
 
@@ -640,6 +651,7 @@ export class AdaptiveSparseVirtualShadowMaps {
       this.shadow_culler.additional_data.light_count = adjusted_light_count;
       this.shadow_culler.additional_data.entity_flags = entity_flags;
       this.shadow_culler.additional_data.bitmask = this.bitmask_buf;
+      this.shadow_culler.additional_data.dirty_slices = this.dirty_slices;
 
       this.shadow_culler.init_views(render_graph, draw_count);
       this.shadow_culler.init_visibility(render_graph, draw_count);
