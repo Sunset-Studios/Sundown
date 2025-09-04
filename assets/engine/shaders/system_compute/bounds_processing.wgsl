@@ -15,6 +15,8 @@ const bounds_padding = 1.0;
 @group(1) @binding(1) var<storage, read_write> entity_flags: array<u32>;
 @group(1) @binding(2) var<storage, read_write> aabb_bounds: array<AABB>;
 @group(1) @binding(3) var<storage, read_write> scene_aabb: array<atomic<u32>, 8>;
+@group(1) @binding(4) var<storage, read> entity_mesh_ids: array<u32>;
+@group(1) @binding(5) var<storage, read> mesh_local_bounds: array<AABB>;
 
 // ------------------------------------------------------------------------------------
 // Compute Shader
@@ -79,29 +81,50 @@ fn cs(
 
 	let is_active = idx < num_rows && transform[3].w != 0.0;
 	if (is_active) {
-		let half_size = vec3f(
-		  abs(scale[0]) * 0.5,
-		  abs(scale[1]) * 0.5,
-		  abs(scale[2]) * 0.5,
-		);
+		// Prefer mesh-local bounds via shared mesh data if mesh id is valid; otherwise fall back to scale-based cube.
+		let mesh_id = entity_mesh_ids[entity_id_offset];
+		let has_mesh_bounds = mesh_id != INVALID_IDX;
 
-		let padding = vec3f(
-		  half_size[0] * bounds_padding,
-		  half_size[1] * bounds_padding,
-		  half_size[2] * bounds_padding,
-		);
+		if (has_mesh_bounds) {
+			let mesh_min_local = mesh_local_bounds[mesh_id].min.xyz;
+			let mesh_max_local = mesh_local_bounds[mesh_id].max.xyz;
+			let center_local = 0.5 * (mesh_min_local + mesh_max_local);
+			let half_local = 0.5 * (mesh_max_local - mesh_min_local);
 
-		min_point = vec3f(
-		  position[0] - half_size[0] - padding[0],
-		  position[1] - half_size[1] - padding[1],
-		  position[2] - half_size[2] - padding[2],
-		);
-
-		max_point = vec3f(
-		  position[0] + half_size[0] + padding[0],
-		  position[1] + half_size[1] + padding[1],
-		  position[2] + half_size[2] + padding[2],
-		);
+			let world_center = (transform * vec4f(center_local, 1.0)).xyz;
+			let r0 = abs(transform[0].xyz) * 0.5;
+			let r1 = abs(transform[1].xyz) * 0.5;
+			let r2 = abs(transform[2].xyz) * 0.5;
+			let world_half = vec3f(
+				dot(r0, half_local),
+				dot(r1, half_local),
+				dot(r2, half_local),
+			);
+			let padding = world_half * bounds_padding;
+			min_point = world_center - (world_half + padding);
+			max_point = world_center + (world_half + padding);
+		} else {
+			let half_size = vec3f(
+			  abs(scale[0]) * 0.5,
+			  abs(scale[1]) * 0.5,
+			  abs(scale[2]) * 0.5,
+			);
+			let padding = vec3f(
+			  half_size[0] * bounds_padding,
+			  half_size[1] * bounds_padding,
+			  half_size[2] * bounds_padding,
+			);
+			min_point = vec3f(
+			  position[0] - half_size[0] - padding[0],
+			  position[1] - half_size[1] - padding[1],
+			  position[2] - half_size[2] - padding[2],
+			);
+			max_point = vec3f(
+			  position[0] + half_size[0] + padding[0],
+			  position[1] + half_size[1] + padding[1],
+			  position[2] + half_size[2] + padding[2],
+			);
+		}
 
 		min_node_bounds = vec4f(min_point, f32(entity_id_offset));
 		max_node_bounds = vec4f(max_point, -1.0);

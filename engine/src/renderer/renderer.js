@@ -4,10 +4,10 @@ import { RenderGraph } from "./render_graph.js";
 import { Texture, TextureSampler } from "./texture.js";
 import { Mesh } from "./mesh.js";
 import {
-  SharedVertexBuffer,
   SharedViewBuffer,
   SharedFrameInfoBuffer,
 } from "../core/shared_data.js";
+import { MeshData } from "./mesh_data.js";
 import { global_dispatcher } from "../core/dispatcher.js";
 import { profile_scope } from "../utility/performance.js";
 import ExecutionQueue from "../utility/execution_queue.js";
@@ -253,9 +253,9 @@ export class Renderer {
   refresh_global_shader_bindings() {
     const global_bindings = [
       {
-        buffer: SharedVertexBuffer.buffer,
+        buffer: MeshData.vertex_buffer,
         offset: 0,
-        size: SharedVertexBuffer.size,
+        size: MeshData.vertex_data ? MeshData.vertex_data.length * 4 : 0,
       },
       {
         buffer: SharedViewBuffer.buffer,

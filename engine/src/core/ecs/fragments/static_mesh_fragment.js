@@ -39,6 +39,17 @@ export class StaticMeshFragment extends Fragment {
       cpu_readback: false,
       buffer_multiplier: 1,
     },
+    mesh_asset_id: {
+      ctor: Uint32Array,
+      elements: 1,
+      default: 0,
+      gpu_buffer: true,
+      buffer_name: "mesh_asset_id",
+      is_container: false,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+      cpu_readback: false,
+      buffer_multiplier: 1,
+    },
   };
   static buffer_data = new Map(); // key → { buffer: FragmentGpuBuffer, stride: number }
 

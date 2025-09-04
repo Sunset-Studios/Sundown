@@ -1900,7 +1900,7 @@ export class GITestScene extends Scene {
     const floor_plane = spawn_mesh_entity(
       [0, -5, 0],
       quat.fromEuler(quat.create(), 0.0, 0, 0),
-      [1000, 4.5, 1000],
+      [2000, 4.5, 2000],
       cube_mesh,
       metallic_floor_material_id
     );
@@ -2154,20 +2154,20 @@ export class GITestScene extends Scene {
       }
     }
     // Load and place the station behind the three Cornell boxes (large scale)
-    // const station_mesh = Mesh.from_gltf("engine/models/station/station.glb");
+    const station_mesh = Mesh.from_gltf("engine/models/station/station.gltf");
 
-    // // Create a default material
-    // const default_material = StandardMaterial.create("MyMaterial");
-    // const default_material_id = default_material.material_id;
+    // Create a default material
+    const default_material = StandardMaterial.create("MyMaterial");
+    const default_material_id = default_material.material_id;
 
-    // const station_entity = spawn_mesh_entity(
-    //   [0, 50, -200],
-    //   [0, 0, 0, 1],
-    //   [50, 50, 50],
-    //   station_mesh,
-    //   default_material_id
-    // );
-    // this.entities.push(station_entity);
+    const station_entity = spawn_mesh_entity(
+      [0, 0, -100],
+      [0, 0, 0, 1],
+      [10, 10, 10],
+      station_mesh,
+      default_material_id
+    );
+    this.entities.push(station_entity);
   }
 
   cleanup() {

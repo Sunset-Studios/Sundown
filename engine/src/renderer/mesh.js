@@ -1,11 +1,11 @@
 import { glTFLoader } from "../utility/gltf_loader.js";
 import { ResourceCache } from "./resource_cache.js";
-import { SharedVertexBuffer } from "../core/shared_data.js";
+import { MeshData } from "./mesh_data.js";
 import { Buffer } from "./buffer.js";
 import { Name } from "../utility/names.js";
 import { CacheTypes } from "./renderer_types.js";
 import { MeshTaskQueue } from "./mesh_task_queue.js";
-import { vec3 } from "gl-matrix";
+import { vec3, mat3, mat4 } from "gl-matrix";
 import { Type2NumOfComponent } from "../utility/gltf_loader.js";
 
 const discard_cpu_data = true;
@@ -15,9 +15,10 @@ export class Mesh {
   vertices = [];
   indices = [];
   bounds_min_and_max = [0, 0, 0, 0, 0, 0];
-  vertex_buffer_offset = 0;
+  vertex_buffer_offset = -1;
   vertex_count = 0;
   index_count = 0;
+  mesh_data_index = -1;
 
   index_buffer = null;
   pending_loader = null;
@@ -37,27 +38,18 @@ export class Mesh {
     });
   }
 
-  _get_vertex_bounds(vertices) {
-    let min_x = Infinity;
-    let min_y = Infinity;
-    let min_z = Infinity;
-    let max_x = -Infinity;
-    let max_y = -Infinity;
-    let max_z = -Infinity;
+  _recreate_vertex_bounds() {
+    this.bounds_min_and_max = [Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity];
 
-    for (const vertex of vertices) {
-      const position = vertex.position;
-
-      min_x = Math.min(min_x, position[0]);
-      min_y = Math.min(min_y, position[1]);
-      min_z = Math.min(min_z, position[2]);
-
-      max_x = Math.max(max_x, position[0]);
-      max_y = Math.max(max_y, position[1]);
-      max_z = Math.max(max_z, position[2]);
+    for (let i = 0; i < this.vertices.length; i += 3) {
+      const vertex = this.vertices[i];
+      this.bounds_min_and_max[0] = Math.min(this.bounds_min_and_max[0], vertex.position[0]);
+      this.bounds_min_and_max[1] = Math.min(this.bounds_min_and_max[1], vertex.position[1]);
+      this.bounds_min_and_max[2] = Math.min(this.bounds_min_and_max[2], vertex.position[2]);
+      this.bounds_min_and_max[3] = Math.max(this.bounds_min_and_max[3], vertex.position[0]);
+      this.bounds_min_and_max[4] = Math.max(this.bounds_min_and_max[4], vertex.position[1]);
+      this.bounds_min_and_max[5] = Math.max(this.bounds_min_and_max[5], vertex.position[2]);
     }
-
-    return [min_x, min_y, min_z, max_x, max_y, max_z];
   }
 
   static _get_tangents_and_bitangents(positions, uvs) {
@@ -164,15 +156,17 @@ export class Mesh {
     mesh.name = name;
     mesh.vertices = vertices;
     mesh.indices = new Uint16Array(indices);
-    mesh.bounds_min_and_max = mesh._get_vertex_bounds(vertices);
     mesh.triangle_bvh = new TriangleBVH(vertices, indices);
-
-    mesh.vertex_buffer_offset = SharedVertexBuffer.add_vertex_data(mesh.vertices);
 
     mesh.vertex_count = mesh.vertices.length;
     mesh.index_count = mesh.indices.length;
 
+    mesh._recreate_vertex_bounds();
     mesh._recreate_index_buffer();
+
+    // Register shared mesh data (bounds)
+    MeshData.register(mesh);
+    MeshData.update(mesh);
 
     if (discard_cpu_data) {
       mesh.vertices = null;
@@ -238,14 +232,16 @@ export class Mesh {
       0, // max x, max y, max z
     ];
 
-    mesh.vertex_buffer_offset = SharedVertexBuffer.add_vertex_data(mesh.vertices);
-
     mesh.vertex_count = mesh.vertices.length;
     mesh.index_count = mesh.indices.length;
 
     mesh.triangle_bvh = new TriangleBVH(mesh.vertices, mesh.indices);
 
     mesh._recreate_index_buffer();
+
+    // Register shared mesh data (bounds)
+    MeshData.register(mesh);
+    MeshData.update(mesh);
 
     if (discard_cpu_data) {
       mesh.vertices = null;
@@ -484,8 +480,6 @@ export class Mesh {
       1, // max x, max y, max z
     ];
 
-    mesh.vertex_buffer_offset = SharedVertexBuffer.add_vertex_data(mesh.vertices);
-
     mesh.vertex_count = mesh.vertices.length;
     mesh.index_count = mesh.indices.length;
 
@@ -493,6 +487,10 @@ export class Mesh {
 
     mesh._recreate_index_buffer();
 
+    // Register shared mesh data (bounds)
+    MeshData.register(mesh);
+    MeshData.update(mesh);
+    
     if (discard_cpu_data) {
       mesh.vertices = null;
       mesh.indices = null;
@@ -514,36 +512,51 @@ export class Mesh {
     }
 
     const parse_node_mesh = (gltf_obj, node) => {
-      let all_indices = [];
-      let vertex_offset = 0;
+      let vertex_offset = mesh.vertices.length;
 
       for (const primitive of node.mesh.primitives) {
         let positions = [];
         let position_accessor = null;
         if (primitive.attributes.POSITION !== undefined) {
           position_accessor = primitive.attributes.POSITION;
-          positions = new Float32Array(position_accessor.bufferView.data);
+          positions = new Float32Array(
+            position_accessor.bufferView.data,
+            position_accessor.byteOffset || 0,
+            position_accessor.count * 3
+          );
         }
 
         let normals = [];
         let normal_accessor = null;
         if (primitive.attributes.NORMAL !== undefined) {
           normal_accessor = primitive.attributes.NORMAL;
-          normals = new Float32Array(normal_accessor.bufferView.data);
+          normals = new Float32Array(
+            normal_accessor.bufferView.data,
+            normal_accessor.byteOffset || 0,
+            normal_accessor.count * 3
+          );
         }
 
         let tangents = [];
         let tangent_accessor = null;
         if (primitive.attributes.TANGENT !== undefined) {
           tangent_accessor = primitive.attributes.TANGENT;
-          tangents = new Float32Array(tangent_accessor.bufferView.data);
+          tangents = new Float32Array(
+            tangent_accessor.bufferView.data,
+            tangent_accessor.byteOffset || 0,
+            tangent_accessor.count * 4
+          );
         }
 
         let bitangents = [];
         let bitangent_accessor = null;
         if (primitive.attributes.BITANGENT !== undefined) {
           bitangent_accessor = primitive.attributes.BITANGENT;
-          bitangents = new Float32Array(bitangent_accessor.bufferView.data);
+          bitangents = new Float32Array(
+            bitangent_accessor.bufferView.data,
+            bitangent_accessor.byteOffset || 0,
+            bitangent_accessor.count * 3
+          );
         }
 
         let colors = [];
@@ -551,8 +564,12 @@ export class Mesh {
         let color_accessor = null;
         if (primitive.attributes.COLOR_0 !== undefined) {
           color_accessor = primitive.attributes.COLOR_0;
-          colors = new Float32Array(color_accessor.bufferView.data);
           color_components = Type2NumOfComponent[color_accessor.type];
+          colors = new Float32Array(
+            color_accessor.bufferView.data,
+            color_accessor.byteOffset || 0,
+            color_accessor.count * color_components
+          );
         }
 
         let uvs = [];
@@ -598,6 +615,18 @@ export class Mesh {
         // Number of unique vertices
         const num_verts = positions.length / 3;
 
+        // Precompute linear (world3) and normal matrices for this node
+        const world3 = mat3.create();
+        mat3.fromMat4(world3, node._world || node.matrix);
+        const normal_matrix = mat3.create();
+        mat3.copy(normal_matrix, world3);
+        if (mat3.invert(normal_matrix, normal_matrix)) {
+          mat3.transpose(normal_matrix, normal_matrix);
+        } else {
+          mat3.identity(normal_matrix);
+        }
+        const world_det_sign = mat3.determinant(world3) < 0 ? -1 : 1;
+
         // Build vertices for this primitive
         for (let k = 0; k < num_verts; k++) {
           let pos_index = k * 3;
@@ -627,33 +656,44 @@ export class Mesh {
             tangent_w = tangents[tangent_index + 3] ?? 1.0;
           }
 
+          // apply node transform to position
+          const src_pos_x = positions[pos_index] ?? 0.0;
+          const src_pos_y = positions[pos_index + 1] ?? 0.0;
+          const src_pos_z = positions[pos_index + 2] ?? 0.0;
+          const node_matrix = node._world || node.matrix;
+          const transformed_pos = vec3.transformMat4(
+            vec3.create(),
+            vec3.fromValues(src_pos_x, src_pos_y, src_pos_z),
+            node_matrix
+          );
+
+          // transform normal
+          let nx = normals[normal_index] ?? 0.0;
+          let ny = normals[normal_index + 1] ?? 0.0;
+          let nz = normals[normal_index + 2] ?? 0.0;
+
+          // transform tangent (3-vector) and orthonormalize against normal
+          let tx = tangents[tangent_index] ?? 0.0;
+          let ty = tangents[tangent_index + 1] ?? 0.0;
+          let tz = tangents[tangent_index + 2] ?? 0.0;
+
+          // compute bitangent using handedness w and account for mirrored transforms
+          const bx = bitangents[bitangent_index] ?? 0.0;
+          const by = bitangents[bitangent_index + 1] ?? 0.0;
+          const bz = bitangents[bitangent_index + 2] ?? 0.0;
+
           mesh.vertices.push({
             position: [
-              positions[pos_index] ?? 0.0,
-              positions[pos_index + 1] ?? 0.0,
-              positions[pos_index + 2] ?? 0.0,
+              transformed_pos[0] ?? 0.0,
+              transformed_pos[1] ?? 0.0,
+              transformed_pos[2] ?? 0.0,
               1.0,
             ],
-            normal: [
-              normals[normal_index] ?? 0.0,
-              normals[normal_index + 1] ?? 0.0,
-              normals[normal_index + 2] ?? 0.0,
-              0.0,
-            ],
+            normal: [nx, ny, nz, 0.0],
             color: color,
             uv: [uvs[uv_index] ?? 0.0, uvs[uv_index + 1] ?? 0.0, 0.0, 0.0],
-            tangent: [
-              tangents[tangent_index] ?? 0.0,
-              tangents[tangent_index + 1] ?? 0.0,
-              tangents[tangent_index + 2] ?? 0.0,
-              tangent_w,
-            ],
-            bitangent: [
-              bitangents[bitangent_index] ?? 0.0,
-              bitangents[bitangent_index + 1] ?? 0.0,
-              bitangents[bitangent_index + 2] ?? 0.0,
-              0.0,
-            ],
+            tangent: [tx, ty, tz, 0.0],
+            bitangent: [bx, by, bz, 0.0],
           });
         }
 
@@ -692,39 +732,89 @@ export class Mesh {
           }
         }
 
-        for (let idx of local_indices) {
-          all_indices.push(idx + vertex_offset);
+        // Flip winding if node has a mirrored (negative determinant) transform
+        const world3_for_det = mat3.create();
+        mat3.fromMat4(world3_for_det, node._world || node.matrix);
+        const is_mirrored = mat3.determinant(world3_for_det) < 0;
+        if (is_mirrored) {
+          for (let i = 0; i + 2 < local_indices.length; i += 3) {
+            const i0 = local_indices[i] + vertex_offset;
+            const i1 = local_indices[i + 1] + vertex_offset;
+            const i2 = local_indices[i + 2] + vertex_offset;
+            mesh._tmp_indices.push(i0, i2, i1);
+          }
+        } else {
+          for (let idx of local_indices) {
+            mesh._tmp_indices.push(idx + vertex_offset);
+          }
         }
 
         vertex_offset += num_verts;
       }
-
-      mesh.indices = new Uint32Array(all_indices);
     };
 
     mesh = new Mesh();
     mesh.name = gltf;
+    mesh._tmp_indices = [];
+
+    MeshData.register(mesh);
 
     const mesh_id = Name.from(gltf);
-
     mesh.pending_loader = new glTFLoader();
     mesh.pending_loader.load(gltf, (gltf_obj) => {
+      // Build parent links and world matrices
+      for (const n of gltf_obj.nodes) {
+        for (const c of n.children) {
+          c._parent = n;
+        }
+        n._world = null;
+      }
+
+      const get_world_matrix = (n) => {
+        if (n._world) return n._world;
+        const out = mat4.create();
+        if (n._parent) {
+          mat4.mul(out, get_world_matrix(n._parent), n.matrix);
+        } else {
+          mat4.copy(out, n.matrix);
+        }
+        n._world = out;
+        return out;
+      };
+
       for (const node of gltf_obj.nodes) {
         if (node.mesh) {
+          // ensure world matrix is computed
+          node._world = get_world_matrix(node);
           parse_node_mesh(gltf_obj, node);
         }
       }
 
-      mesh.bounds_min_and_max = mesh._get_vertex_bounds(mesh.vertices);
-
-      mesh.vertex_buffer_offset = SharedVertexBuffer.add_vertex_data(mesh.vertices);
+      // finalize indices
+      if (mesh._tmp_indices.length > 0) {
+        let max_index = 0;
+        for (let i = 0; i < mesh._tmp_indices.length; i++) {
+          if (mesh._tmp_indices[i] > max_index) max_index = mesh._tmp_indices[i];
+        }
+        if (max_index > 65535) {
+          mesh.indices = new Uint32Array(mesh._tmp_indices);
+        } else {
+          mesh.indices = new Uint16Array(mesh._tmp_indices);
+        }
+      } else {
+        mesh.indices = new Uint16Array(0);
+      }
 
       mesh.vertex_count = mesh.vertices.length;
       mesh.index_count = mesh.indices.length;
-
+      
       mesh.triangle_bvh = new TriangleBVH(mesh.vertices, mesh.indices);
-
+      
+      mesh._recreate_vertex_bounds();
       mesh._recreate_index_buffer();
+
+      // Register shared mesh data (bounds)
+      MeshData.update(mesh);
 
       if (discard_cpu_data) {
         mesh.vertices = null;
@@ -766,10 +856,8 @@ export class TriangleBVH {
   constructor(vertices, indices) {
     // Convert vertices/indices to the internal `triangles` representation
     // this.triangles = [];
-
     // const vertex_count = vertices.length;
     // const index_count = indices.length;
-
     // // Helper to extract a vec3 position from a vertex entry. Supports either
     // // raw position arrays ([x, y, z, ...]) or objects with a `position` field.
     // const get_pos = (v) => {
@@ -783,24 +871,19 @@ export class TriangleBVH {
     //   // Fallback – zero vector (should not happen in valid meshes).
     //   return [0, 0, 0];
     // };
-
     // for (let i = 0; i + 2 < index_count; i += 3) {
     //   const i0 = indices[i];
     //   const i1 = indices[i + 1];
     //   const i2 = indices[i + 2];
-
     //   if (i0 >= vertex_count || i1 >= vertex_count || i2 >= vertex_count) {
     //     // Skip degenerate/out-of-range triangles.
     //     continue;
     //   }
-
     //   const v0 = get_pos(vertices[i0]);
     //   const v1 = get_pos(vertices[i1]);
     //   const v2 = get_pos(vertices[i2]);
-
     //   this.triangles.push([v0, v1, v2]);
     // }
-
     // this.root = this._build(0, this.triangles.length);
   }
 

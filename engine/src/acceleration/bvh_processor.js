@@ -16,6 +16,8 @@ import { EntityManager } from "../core/ecs/entity.js";
 import { TransformFragment } from "../core/ecs/fragments/transform_fragment.js";
 import { FragmentGpuBuffer } from "../core/ecs/solar/memory.js";
 import { Buffer } from "../renderer/buffer.js";
+import { StaticMeshFragment } from "../core/ecs/fragments/static_mesh_fragment.js";
+import { MeshData } from "../renderer/mesh_data.js";
 
 const bounds_processing_task_name = "bounds_processing";
 const bounds_processing_wgsl_path = "system_compute/bounds_processing.wgsl";
@@ -41,6 +43,7 @@ const convert_bvh2_to_bvh4_cs_entry_point = "convert_bvh2_to_bvh4";
 
 const transforms_name = "transforms";
 const bounds_name = "bounds";
+const mesh_asset_id_name = "mesh_asset_id";
 
 export class BVHProcessor {
   is_initialised = false;
@@ -100,12 +103,20 @@ export class BVHProcessor {
       TransformFragment,
       bounds_name
     );
+    const static_mesh_ids_buffer = EntityManager.get_fragment_gpu_buffer(
+      StaticMeshFragment,
+      mesh_asset_id_name
+    );
     const entity_flags_buffer = FragmentGpuBuffer.entity_flags_buffer;
+
+    const mesh_data = MeshData.to_gpu_data();
 
     this.bounds_processing_inputs[0] = transforms_buffer.buffer;
     this.bounds_processing_inputs[1] = entity_flags_buffer.buffer;
     this.bounds_processing_inputs[2] = bounds_buffer.buffer;
     this.bounds_processing_inputs[3] = tlas_buffers.scene_bounds_buffer;
+    this.bounds_processing_inputs[4] = static_mesh_ids_buffer.buffer;
+    this.bounds_processing_inputs[5] = mesh_data.mesh_bounds_buffer;
 
     this.bounds_processing_outputs[0] = bounds_buffer.buffer;
     this.bounds_processing_outputs[1] = entity_flags_buffer.buffer;

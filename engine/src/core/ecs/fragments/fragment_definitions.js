@@ -112,6 +112,12 @@ const StaticMeshFragment = {
       stride: 16,
       gpu: false,
     },
+    mesh_asset_id: {
+      type: DataType.UINT32,
+      stride: 1,
+      gpu: true,
+      usage: BufferType.STORAGE,
+    },
   },
 };
 

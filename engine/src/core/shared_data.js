@@ -8,43 +8,8 @@ import { mat4, vec4, vec3, vec2 } from "gl-matrix";
 import { WORLD_FORWARD, WORLD_UP } from "./minimal.js";
 import { radians } from "../utility/math.js";
 
-const vertex_buffer_name = "vertex_buffer";
 const view_buffer_name = "view_buffer";
 const frame_info_buffer_name = "frame_info_buffer";
-
-export class SharedVertexBuffer {
-  static buffer = null;
-  static vertex_data = [];
-  static size = 0;
-
-  static add_vertex_data(data) {
-    const offset = this.vertex_data.length;
-    this.vertex_data = this.vertex_data.concat(data);
-    this.size = this._get_byte_size();
-    this.build();
-    return offset;
-  }
-
-  static _get_byte_size() {
-    return (
-      this.vertex_data.map((v) => v.position.concat(v.normal, v.tangent, v.bitangent, v.uv)).flat()
-        .length * 4
-    );
-  }
-
-  static build() {
-    this.buffer = Buffer.create({
-      name: vertex_buffer_name,
-      data: this.vertex_data
-        .map((v) => v.position.concat(v.normal, v.tangent, v.bitangent, v.uv))
-        .flat(),
-      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-      force: true,
-    });
-    Renderer.get().refresh_global_shader_bindings();
-    Renderer.get().mark_bind_groups_dirty(true);
-  }
-}
 
 export class SharedViewBuffer {
   // --- Field Offsets (in floats) ---

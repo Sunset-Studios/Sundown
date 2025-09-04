@@ -6,6 +6,7 @@ import { VisibilityFragment } from "./fragments/visibility_fragment.js";
 import { Name } from "../../utility/names.js";
 import { EntityID } from "./solar/types.js";
 import { TypedVector } from "../../memory/container.js";
+import { MeshData } from "../../renderer/mesh_data.js";
 import { WORLD_FORWARD, EntityFlags } from "../../core/minimal.js";
 import { quat } from "gl-matrix";
 
@@ -52,6 +53,7 @@ export function spawn_mesh_entity(
   const new_static_mesh_view = EntityManager.get_fragment(entity, StaticMeshFragment);
   new_static_mesh_view.mesh = BigInt(Name.from(mesh.name));
   new_static_mesh_view.material_slots = [BigInt(material)];
+  new_static_mesh_view.mesh_asset_id = MeshData.get_index_by_name_hash(Name.from(mesh.name));
 
   const new_visibility_view = EntityManager.get_fragment(entity, VisibilityFragment);
   new_visibility_view.visible = start_visible;
@@ -93,6 +95,7 @@ export function spawn_plane_entity(
   const new_static_mesh_view = EntityManager.get_fragment(entity, StaticMeshFragment);
   new_static_mesh_view.mesh = BigInt(Name.from(mesh.name));
   new_static_mesh_view.material_slots = [BigInt(material)];
+  new_static_mesh_view.mesh_asset_id = MeshData.get_index_by_name_hash(Name.from(mesh.name));
 
   const new_visibility_view = EntityManager.get_fragment(entity, VisibilityFragment);
   new_visibility_view.visible = true;
