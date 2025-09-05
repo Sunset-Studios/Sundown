@@ -72,7 +72,7 @@ fn compute_morton_codes(@builtin(global_invocation_id) gid: vec3<u32>) {
     let bound = bounds[gid.x];
     let center = (bound.min + bound.max) * 0.5;
     let extent = bound.max - bound.min;
-    let is_invalid = all(extent.xyz == vec3<f32>(0.0));
+    let is_invalid = all(bound.min.xyz == vec3<f32>(0.0)) && all(bound.max.xyz == vec3<f32>(0.0));
     morton_codes[gid.x] = select(morton_code(center.xyz), INVALID_IDX, is_invalid);
     bound_indices[gid.x] = gid.x;
 }

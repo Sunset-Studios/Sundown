@@ -12,9 +12,9 @@ diagnostic(off,subgroup_uniformity);
 const INVALID_ASSIGNMENT: u32 = 0xFu;
 const NQ: u32 = 8u; 
 const THETA: f32 = 8.0;
-const INV_THETA: f32 = 1.0 / 8.0;
+const INV_THETA: f32 = 0.125; // 1.0 / 8.0;
 const MAX_COST: f32 = 10.0;
-const SPIN_THRESHOLD: u32 = 1u << 16u; // tune as needed
+const SPIN_THRESHOLD: u32 = 65536u; // 1u << 16u; // tune as needed
 const WATCHDOG_ABORT: u32 = 1u; // set to 1u to force-deactivate lanes when tripped
 const invalid_bounds: AABB = AABB(
     vec4<f32>(0.0, 0.0, 0.0, -1.0), 
@@ -284,9 +284,8 @@ fn convert_bvh2_to_bvh4(
             produced = atomicLoad(&build_state.work_alloc_counter);
         }
         produced = warp_broadcast_u32(warp_ctx, produced, 0u);
-        let do_work = lane_active && (work_id < produced);
-        var has_work = false;
 
+        let do_work = lane_active && (work_id < produced);
         if (do_work) {
             // Load index pair
             let index_pair = load_index_pair(work_id);
@@ -294,8 +293,7 @@ fn convert_bvh2_to_bvh4(
             let bvh4_node_idx = index_pair.y;
 
             // If no work assigned to this slot yet, skip (keep lane active to poll until assigned)
-            has_work = (bvh2_node_idx != INVALID_IDX) && (bvh4_node_idx != INVALID_IDX);
-            has_work = has_work && (bvh2_node_idx < bvh2_count);
+            var has_work = (bvh2_node_idx != INVALID_IDX);
 
             var bvh2_node = invalid_bounds;
             if (has_work) {

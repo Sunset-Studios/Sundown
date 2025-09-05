@@ -285,6 +285,7 @@ export class AdaptiveSparseVirtualShadowMaps {
     {
       position_texture,
       entity_flags,
+      aabb_bounds,
       lights,
       light_count_buffer,
       transforms_buffer,
@@ -643,7 +644,7 @@ export class AdaptiveSparseVirtualShadowMaps {
         }
       }
 
-      this.shadow_culler.additional_data.entity_transforms = transforms_buffer;
+      this.shadow_culler.additional_data.aabb_bounds = aabb_bounds;
       this.shadow_culler.additional_data.object_instances = object_instances;
       this.shadow_culler.additional_data.vsm_settings = this.settings_buf;
       this.shadow_culler.additional_data.page_table = this.page_table;

@@ -226,10 +226,10 @@ export class Mesh {
     mesh.bounds_min_and_max = [
       -1,
       -1,
-      0, // min x, min y, min z
+      -1, // min x, min y, min z
       1,
       1,
-      0, // max x, max y, max z
+      1, // max x, max y, max z
     ];
 
     mesh.vertex_count = mesh.vertices.length;
@@ -490,7 +490,7 @@ export class Mesh {
     // Register shared mesh data (bounds)
     MeshData.register(mesh);
     MeshData.update(mesh);
-    
+
     if (discard_cpu_data) {
       mesh.vertices = null;
       mesh.indices = null;
@@ -511,6 +511,26 @@ export class Mesh {
       return mesh;
     }
 
+    // Respect interleaved vertex data (byteStride) when reading attributes
+    const read_accessor_f32 = (accessor) => {
+      const comps = Type2NumOfComponent[accessor.type];
+      const stride_bytes = accessor.byteStride || comps * 4;
+      const byte_offset = accessor.byteOffset || 0;
+      const buffer = accessor.bufferView.data;
+      if (stride_bytes === comps * 4) {
+        return new Float32Array(buffer, byte_offset, accessor.count * comps);
+      }
+      const out = new Float32Array(accessor.count * comps);
+      const dv = new DataView(buffer);
+      for (let i = 0; i < accessor.count; i++) {
+        const base = byte_offset + i * stride_bytes;
+        for (let c = 0; c < comps; c++) {
+          out[i * comps + c] = dv.getFloat32(base + c * 4, true);
+        }
+      }
+      return out;
+    };
+
     const parse_node_mesh = (gltf_obj, node) => {
       let vertex_offset = mesh.vertices.length;
 
@@ -519,44 +539,28 @@ export class Mesh {
         let position_accessor = null;
         if (primitive.attributes.POSITION !== undefined) {
           position_accessor = primitive.attributes.POSITION;
-          positions = new Float32Array(
-            position_accessor.bufferView.data,
-            position_accessor.byteOffset || 0,
-            position_accessor.count * 3
-          );
+          positions = read_accessor_f32(position_accessor);
         }
 
         let normals = [];
         let normal_accessor = null;
         if (primitive.attributes.NORMAL !== undefined) {
           normal_accessor = primitive.attributes.NORMAL;
-          normals = new Float32Array(
-            normal_accessor.bufferView.data,
-            normal_accessor.byteOffset || 0,
-            normal_accessor.count * 3
-          );
+          normals = read_accessor_f32(normal_accessor);
         }
 
         let tangents = [];
         let tangent_accessor = null;
         if (primitive.attributes.TANGENT !== undefined) {
           tangent_accessor = primitive.attributes.TANGENT;
-          tangents = new Float32Array(
-            tangent_accessor.bufferView.data,
-            tangent_accessor.byteOffset || 0,
-            tangent_accessor.count * 4
-          );
+          tangents = read_accessor_f32(tangent_accessor);
         }
 
         let bitangents = [];
         let bitangent_accessor = null;
         if (primitive.attributes.BITANGENT !== undefined) {
           bitangent_accessor = primitive.attributes.BITANGENT;
-          bitangents = new Float32Array(
-            bitangent_accessor.bufferView.data,
-            bitangent_accessor.byteOffset || 0,
-            bitangent_accessor.count * 3
-          );
+          bitangents = read_accessor_f32(bitangent_accessor);
         }
 
         let colors = [];
@@ -565,24 +569,14 @@ export class Mesh {
         if (primitive.attributes.COLOR_0 !== undefined) {
           color_accessor = primitive.attributes.COLOR_0;
           color_components = Type2NumOfComponent[color_accessor.type];
-          colors = new Float32Array(
-            color_accessor.bufferView.data,
-            color_accessor.byteOffset || 0,
-            color_accessor.count * color_components
-          );
+          colors = read_accessor_f32(color_accessor);
         }
 
         let uvs = [];
         let uv_accessor = null;
         if (primitive.attributes.TEXCOORD_0 !== undefined) {
           uv_accessor = primitive.attributes.TEXCOORD_0;
-
-          // Extract UV data - the accessor has already been processed by GLTF loader
-          uvs = new Float32Array(
-            uv_accessor.bufferView.data,
-            uv_accessor.byteOffset || 0,
-            uv_accessor.count * 2
-          );
+          uvs = read_accessor_f32(uv_accessor);
         }
 
         // Compute tangents/bitangents if not provided
@@ -612,20 +606,14 @@ export class Mesh {
           }
         }
 
+        // Precompute transform helpers
+        const node_matrix = node._world || node.matrix;
+        const normal_matrix = mat3.normalFromMat4(mat3.create(), node_matrix);
+        const world3_for_det = mat3.fromMat4(mat3.create(), node_matrix);
+        const is_mirrored = mat3.determinant(world3_for_det) < 0;
+
         // Number of unique vertices
         const num_verts = positions.length / 3;
-
-        // Precompute linear (world3) and normal matrices for this node
-        const world3 = mat3.create();
-        mat3.fromMat4(world3, node._world || node.matrix);
-        const normal_matrix = mat3.create();
-        mat3.copy(normal_matrix, world3);
-        if (mat3.invert(normal_matrix, normal_matrix)) {
-          mat3.transpose(normal_matrix, normal_matrix);
-        } else {
-          mat3.identity(normal_matrix);
-        }
-        const world_det_sign = mat3.determinant(world3) < 0 ? -1 : 1;
 
         // Build vertices for this primitive
         for (let k = 0; k < num_verts; k++) {
@@ -633,7 +621,6 @@ export class Mesh {
           let normal_index = k * 3;
           let uv_index = k * 2;
           let tangent_index = tangents.length % 4 === 0 ? k * 4 : k * 3; // VEC4 if original, VEC3 if computed
-          let bitangent_index = k * 3;
           let color_index = k * color_components;
 
           let color = [1, 1, 1, 1];
@@ -652,35 +639,45 @@ export class Mesh {
 
           let tangent_w = 1.0;
           if (tangents.length % 4 === 0) {
-            // Original tangent VEC4
             tangent_w = tangents[tangent_index + 3] ?? 1.0;
           }
 
-          // apply node transform to position
+          // position
           const src_pos_x = positions[pos_index] ?? 0.0;
           const src_pos_y = positions[pos_index + 1] ?? 0.0;
           const src_pos_z = positions[pos_index + 2] ?? 0.0;
-          const node_matrix = node._world || node.matrix;
           const transformed_pos = vec3.transformMat4(
             vec3.create(),
             vec3.fromValues(src_pos_x, src_pos_y, src_pos_z),
             node_matrix
           );
 
-          // transform normal
-          let nx = normals[normal_index] ?? 0.0;
-          let ny = normals[normal_index + 1] ?? 0.0;
-          let nz = normals[normal_index + 2] ?? 0.0;
+          // normal (transform by normal matrix)
+          const n = vec3.fromValues(
+            normals[normal_index] ?? 0.0,
+            normals[normal_index + 1] ?? 0.0,
+            normals[normal_index + 2] ?? 0.0
+          );
+          vec3.transformMat3(n, n, normal_matrix);
+          vec3.normalize(n, n);
 
-          // transform tangent (3-vector) and orthonormalize against normal
-          let tx = tangents[tangent_index] ?? 0.0;
-          let ty = tangents[tangent_index + 1] ?? 0.0;
-          let tz = tangents[tangent_index + 2] ?? 0.0;
+          // tangent (transform by normal matrix and orthonormalize against normal)
+          const t = vec3.fromValues(
+            tangents[tangent_index] ?? 0.0,
+            tangents[tangent_index + 1] ?? 0.0,
+            tangents[tangent_index + 2] ?? 0.0
+          );
+          vec3.transformMat3(t, t, normal_matrix);
+          // Gram-Schmidt
+          const nt_dot_t = vec3.dot(n, t);
+          const t_ortho = vec3.subtract(vec3.create(), t, vec3.scale(vec3.create(), n, nt_dot_t));
+          vec3.normalize(t_ortho, t_ortho);
 
-          // compute bitangent using handedness w and account for mirrored transforms
-          const bx = bitangents[bitangent_index] ?? 0.0;
-          const by = bitangents[bitangent_index + 1] ?? 0.0;
-          const bz = bitangents[bitangent_index + 2] ?? 0.0;
+          // bitangent from cross with handedness, accounting for mirrored transforms
+          const handedness_sign = tangent_w * (is_mirrored ? -1.0 : 1.0);
+          const b = vec3.cross(vec3.create(), n, t_ortho);
+          vec3.scale(b, b, handedness_sign);
+          vec3.normalize(b, b);
 
           mesh.vertices.push({
             position: [
@@ -689,11 +686,11 @@ export class Mesh {
               transformed_pos[2] ?? 0.0,
               1.0,
             ],
-            normal: [nx, ny, nz, 0.0],
+            normal: [n[0], n[1], n[2], 0.0],
             color: color,
             uv: [uvs[uv_index] ?? 0.0, uvs[uv_index + 1] ?? 0.0, 0.0, 0.0],
-            tangent: [tx, ty, tz, 0.0],
-            bitangent: [bx, by, bz, 0.0],
+            tangent: [t_ortho[0], t_ortho[1], t_ortho[2], tangent_w],
+            bitangent: [b[0], b[1], b[2], 0.0],
           });
         }
 
@@ -733,9 +730,6 @@ export class Mesh {
         }
 
         // Flip winding if node has a mirrored (negative determinant) transform
-        const world3_for_det = mat3.create();
-        mat3.fromMat4(world3_for_det, node._world || node.matrix);
-        const is_mirrored = mat3.determinant(world3_for_det) < 0;
         if (is_mirrored) {
           for (let i = 0; i + 2 < local_indices.length; i += 3) {
             const i0 = local_indices[i] + vertex_offset;
@@ -807,9 +801,9 @@ export class Mesh {
 
       mesh.vertex_count = mesh.vertices.length;
       mesh.index_count = mesh.indices.length;
-      
+
       mesh.triangle_bvh = new TriangleBVH(mesh.vertices, mesh.indices);
-      
+
       mesh._recreate_vertex_bounds();
       mesh._recreate_index_buffer();
 

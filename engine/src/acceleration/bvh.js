@@ -235,8 +235,7 @@ export class BVH {
       Renderer.get().mark_bind_groups_dirty(true);
     }
 
-    // H-PLOC counters and cluster buffers
-    // Combined counters: two u32 values (bvh2_count, bvh4_count)
+    // BVH2 info buffer (u32 values: leaf_count, bvh2_count, root_index, prim_count)
     if (!this.bvh_info_buffer) {
       this.bvh_info_buffer = Buffer.create({
         name: "bvh_info",

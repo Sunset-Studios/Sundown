@@ -725,7 +725,7 @@ export class TexturesScene extends Scene {
     const barrel_entity = spawn_mesh_entity(
       [0, 0, 0],
       [0, 0, 0, 1],
-      [1, 1, 1],
+      [0.1, 0.1, 0.1],
       barrel_mesh,
       barrel_material.material_id,
     );
@@ -739,7 +739,7 @@ export class TexturesScene extends Scene {
       const x = (Math.random() - 0.5) * barrel_spawn_range;
       const z = (Math.random() - 0.5) * barrel_spawn_range;
       const y = 5.0; // Place on top of the plane
-      const scale = 4 + Math.random() * 1.5 ;
+      const scale = 0.02 + Math.random() * 0.05 ;
       const view = EntityManager.get_fragment(barrel_entity, TransformFragment, i);
       view.position = [x, y, z];
       view.scale = [scale, scale, scale];
@@ -1532,7 +1532,7 @@ export class VoxelTerrainScene extends Scene {
     const font_id = Name.from("Exo-Medium");
     const font_object = FontCache.get_font_object(font_id);
 
-    // Add a title text entity
+    // // Add a title text entity
     const text_entity = spawn_mesh_entity(
       [-10, 55, 0],
       [0, 0, 0, 1],
@@ -1792,7 +1792,7 @@ export class GITestScene extends Scene {
     light_fragment_view.type = LightType.DIRECTIONAL;
     light_fragment_view.color = [1, 1, 1];
     light_fragment_view.intensity = 5.5;
-    light_fragment_view.position = [5, 35, 25];
+    light_fragment_view.position = [25, 35, 25];
     light_fragment_view.active = true;
     light_fragment_view.is_primary_sun = 1;
     light_fragment_view.shadow_clipmaps = MAX_CLIPMAP_LEVELS;
@@ -1900,7 +1900,7 @@ export class GITestScene extends Scene {
     const floor_plane = spawn_mesh_entity(
       [0, -5, 0],
       quat.fromEuler(quat.create(), 0.0, 0, 0),
-      [2000, 4.5, 2000],
+      [4000, 4.5, 4000],
       cube_mesh,
       metallic_floor_material_id
     );
@@ -2153,12 +2153,15 @@ export class GITestScene extends Scene {
         this.entities.push(b);
       }
     }
+
     // Load and place the station behind the three Cornell boxes (large scale)
     const station_mesh = Mesh.from_gltf("engine/models/station/station.gltf");
 
     // Create a default material
     const default_material = StandardMaterial.create("MyMaterial");
     const default_material_id = default_material.material_id;
+    default_material.set_albedo([1.0, 1.0, 1.0, 1.0]);
+    default_material.set_metallic(0.9);
 
     const station_entity = spawn_mesh_entity(
       [0, 0, -100],
@@ -2617,6 +2620,24 @@ export class GLTFModelScene extends Scene {
     light_fragment_view.is_primary_sun = 1;
     light_fragment_view.shadow_clipmaps = MAX_CLIPMAP_LEVELS;
 
+    // Add a title text entity
+    const font_id = Name.from("Exo-Medium");
+    const font_object = FontCache.get_font_object(font_id);
+    const text_entity = spawn_mesh_entity(
+      [0, 10, 0],
+      [0, 0, 0, 1],
+      [0.5, 0.5, 0.5],
+      Mesh.quad(),
+      font_object.material
+    );
+    const text_fragment_view = EntityManager.add_fragment(text_entity, TextFragment);
+    text_fragment_view.font = font_id;
+    text_fragment_view.font_size = 32;
+    text_fragment_view.text_color = [1, 1, 1, 1];
+    text_fragment_view.text_emissive = 1;
+    text_fragment_view.text = "GLTF Model Scene";
+    this.entities.push(text_entity);
+
     // Load a GLTF model (e.g., barrel)
     const model_mesh = Mesh.from_gltf("engine/models/barrel/Barrel.gltf");
 
@@ -2665,7 +2686,7 @@ export class GLTFModelScene extends Scene {
       const entity = spawn_mesh_entity(
         pos,
         [0, 0, 0, 1],
-        [10, 10, 10],
+        [0.1, 0.1, 0.1],
         model_mesh,
         barrel_material.material_id
       );
@@ -2673,24 +2694,6 @@ export class GLTFModelScene extends Scene {
       this.entities.push(entity);
       this.barrel_offsets.push(Math.random() * Math.PI * 2);
     }
-
-    // Add a title text entity
-    const font_id = Name.from("Exo-Medium");
-    const font_object = FontCache.get_font_object(font_id);
-    const text_entity = spawn_mesh_entity(
-      [0, 10, 0],
-      [0, 0, 0, 1],
-      [0.5, 0.5, 0.5],
-      Mesh.quad(),
-      font_object.material
-    );
-    const text_fragment_view = EntityManager.add_fragment(text_entity, TextFragment);
-    text_fragment_view.font = font_id;
-    text_fragment_view.font_size = 32;
-    text_fragment_view.text_color = [1, 1, 1, 1];
-    text_fragment_view.text_emissive = 1;
-    text_fragment_view.text = "GLTF Model Scene";
-    this.entities.push(text_entity);
   }
 
   cleanup() {

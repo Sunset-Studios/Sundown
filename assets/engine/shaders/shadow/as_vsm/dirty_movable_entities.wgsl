@@ -1,4 +1,5 @@
 #include "common.wgsl"
+#include "acceleration_common.wgsl"
 #include "shadow/shadows_common.wgsl"
 
 // ------------------------------------------------------------------------------------
@@ -15,7 +16,7 @@ struct DrawCullData {
 // Buffers
 // ------------------------------------------------------------------------------------ 
 
-@group(1) @binding(0) var<storage, read> entity_transforms: array<EntityTransform>;
+@group(1) @binding(0) var<storage, read> bounds: array<AABB>;
 @group(1) @binding(1) var<storage, read> visible_object_instances_no_occlusion: array<i32>;
 @group(1) @binding(2) var<storage, read_write> visible_object_instances: array<i32>;
 @group(1) @binding(3) var<storage, read> object_instances: array<ObjectInstance>;
@@ -92,16 +93,11 @@ fn cs(@builtin(global_invocation_id) global_id: vec3<u32>) {
 
     // Derive position & radius from the entity's transform
     let entity_moved = (entity_flags[entity_index] & EF_MOVED) != 0u;
-    let entity_transform = entity_transforms[entity_index];
+    let entity_bounds = bounds[entity_index];
 
     // Current world-space translation and per-axis scales
-    let transform = entity_transform.transform;
-    let position = transform[3].xyz;
-    let scale = vec3f(
-        length(transform[0].xyz),
-        length(transform[1].xyz),
-        length(transform[2].xyz)
-    );
+    let position = (entity_bounds.min.xyz + entity_bounds.max.xyz) * 0.5;
+    let scale = (entity_bounds.max.xyz - entity_bounds.min.xyz) * 0.5;
 
     // Replace projection of corners and min/max computation with world-to-tile mapping
     if (entity_moved) {
@@ -116,7 +112,7 @@ fn cs(@builtin(global_invocation_id) global_id: vec3<u32>) {
             let sy = select(-1.0, 1.0, (i & 2u) != 0u);
             let sz = select(-1.0, 1.0, (i & 4u) != 0u);
 
-            let world = position + transform[0].xyz * sx + transform[1].xyz * sy + transform[2].xyz * sz;
+            let world = position + scale.xyz * vec3f(sx, sy, sz);
 
             let render_clip = vsm_calculate_render_clip_value_from_world_pos(
                 vec4<f32>(world, 1.0),
