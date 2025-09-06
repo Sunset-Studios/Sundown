@@ -139,15 +139,14 @@ export class Archetype {
     if (fragments.length === 0) {
       return Array.from(this.archetype_cache.values());
     }
-
+    
     // Get all archetypes that contain the specified fragments
     const fragment_ids = fragments.map((fragment) => fragment.id);
     // Filter the cache to find archetypes containing all the requested fragments
     const matching_archetypes = [];
     // Iterate over all archetypes in the cache
     const cache_entries = this.archetype_cache.values();
-    for (let i = 0; i < cache_entries.length; i++) {
-      const archetype = cache_entries[i];
+    for (const archetype of cache_entries) {
       const archetype_fragment_ids = archetype.fragments.map((fragment) => fragment.id);
       // Check if all requested fragments are present in this archetype
       const has_all_fragments = fragment_ids.every((id) => archetype_fragment_ids.includes(id));

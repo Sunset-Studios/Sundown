@@ -31968,17 +31968,41 @@
 		{
 			"doubleSided":true,
 			"name":"[Color_008]1",
-			"pbrMetallicRoughness":{}
+			"pbrMetallicRoughness":{
+				"baseColorFactor":[
+					0.20780470967292786,
+					0.20780470967292786,
+					0.20780470967292786,
+					1
+				],
+				"metallicFactor":0,
+				"roughnessFactor":0
+			}
 		},
 		{
 			"doubleSided":true,
 			"name":"5567",
-			"pbrMetallicRoughness":{}
+			"pbrMetallicRoughness":{
+				"baseColorTexture":{
+					"index":0
+				},
+				"metallicFactor":0,
+				"roughnessFactor":0
+			}
 		},
 		{
 			"doubleSided":true,
 			"name":"Color_B13",
-			"pbrMetallicRoughness":{}
+			"pbrMetallicRoughness":{
+				"baseColorFactor":[
+					0.265401154756546,
+					0.03519969806075096,
+					0.021098654717206955,
+					1
+				],
+				"metallicFactor":0,
+				"roughnessFactor":0
+			}
 		},
 		{
 			"doubleSided":true,
@@ -31993,17 +32017,44 @@
 		{
 			"doubleSided":true,
 			"name":"Color_002",
-			"pbrMetallicRoughness":{}
+			"pbrMetallicRoughness":{
+				"baseColorFactor":[
+					0.800000011920929,
+					0.800000011920929,
+					0.800000011920929,
+					1
+				],
+				"metallicFactor":0,
+				"roughnessFactor":0
+			}
 		},
 		{
 			"doubleSided":true,
 			"name":"Color_006",
-			"pbrMetallicRoughness":{}
+			"pbrMetallicRoughness":{
+				"baseColorFactor":[
+					0.800000011920929,
+					0.800000011920929,
+					0.800000011920929,
+					1
+				],
+				"metallicFactor":0,
+				"roughnessFactor":0
+			}
 		},
 		{
 			"doubleSided":true,
 			"name":"Color_C01",
-			"pbrMetallicRoughness":{}
+			"pbrMetallicRoughness":{
+				"baseColorFactor":[
+					0.8002911806106567,
+					0.48390328884124756,
+					0.016316767781972885,
+					1
+				],
+				"metallicFactor":0,
+				"roughnessFactor":0
+			}
 		},
 		{
 			"doubleSided":true,
@@ -32013,7 +32064,16 @@
 		{
 			"doubleSided":true,
 			"name":"[Color_A01]1",
-			"pbrMetallicRoughness":{}
+			"pbrMetallicRoughness":{
+				"baseColorFactor":[
+					0.8002434968948364,
+					0.001105181872844696,
+					0.006340804975479841,
+					1
+				],
+				"metallicFactor":0,
+				"roughnessFactor":0
+			}
 		},
 		{
 			"doubleSided":true,
@@ -32023,12 +32083,30 @@
 		{
 			"doubleSided":true,
 			"name":"Color_007",
-			"pbrMetallicRoughness":{}
+			"pbrMetallicRoughness":{
+				"baseColorFactor":[
+					0.800000011920929,
+					0.800000011920929,
+					0.800000011920929,
+					1
+				],
+				"metallicFactor":0,
+				"roughnessFactor":0
+			}
 		},
 		{
 			"doubleSided":true,
 			"name":"Translucent_Glass_Blue",
-			"pbrMetallicRoughness":{}
+			"pbrMetallicRoughness":{
+				"baseColorFactor":[
+					0.2122579962015152,
+					0.4528483748435974,
+					0.9193951487541199,
+					1
+				],
+				"metallicFactor":0,
+				"roughnessFactor":0
+			}
 		},
 		{
 			"doubleSided":true,
@@ -32058,7 +32136,16 @@
 		{
 			"doubleSided":true,
 			"name":"Color_B15",
-			"pbrMetallicRoughness":{}
+			"pbrMetallicRoughness":{
+				"baseColorFactor":[
+					0.8001810312271118,
+					0.6760477423667908,
+					0.6125504374504089,
+					1
+				],
+				"metallicFactor":0,
+				"roughnessFactor":0
+			}
 		},
 		{
 			"doubleSided":true,
@@ -37116,6 +37203,19 @@
 					"material":13
 				}
 			]
+		}
+	],
+	"textures":[
+		{
+			"sampler":0,
+			"source":0
+		}
+	],
+	"images":[
+		{
+			"mimeType":"image/png",
+			"name":"5567.jpg",
+			"uri":"5567_jpg.png"
 		}
 	],
 	"accessors":[
@@ -56388,6 +56488,12 @@
 			"byteLength":48,
 			"byteOffset":3568964,
 			"target":34962
+		}
+	],
+	"samplers":[
+		{
+			"magFilter":9729,
+			"minFilter":9987
 		}
 	],
 	"buffers":[

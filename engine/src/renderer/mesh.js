@@ -3,10 +3,12 @@ import { ResourceCache } from "./resource_cache.js";
 import { MeshData } from "./mesh_data.js";
 import { Buffer } from "./buffer.js";
 import { Name } from "../utility/names.js";
-import { CacheTypes } from "./renderer_types.js";
+import { CacheTypes, TextureChannel, MaterialFamilyType } from "./renderer_types.js";
 import { MeshTaskQueue } from "./mesh_task_queue.js";
 import { vec3, mat3, mat4 } from "gl-matrix";
 import { Type2NumOfComponent } from "../utility/gltf_loader.js";
+import { StandardMaterial } from "./material.js";
+import { Texture } from "./texture.js";
 
 const discard_cpu_data = true;
 
@@ -18,11 +20,15 @@ export class Mesh {
   vertex_buffer_offset = -1;
   vertex_count = 0;
   index_count = 0;
+  sections = [];
   mesh_data_index = -1;
 
   index_buffer = null;
   pending_loader = null;
   triangle_bvh = null;
+
+  _tmp_indices = [];
+  _section_groups = new Map();
 
   _recreate_index_buffer() {
     let element_type = "uint16";
@@ -163,6 +169,7 @@ export class Mesh {
 
     mesh._recreate_vertex_bounds();
     mesh._recreate_index_buffer();
+    mesh.sections = [{ first_index: 0, index_count: mesh.index_count }];
 
     // Register shared mesh data (bounds)
     MeshData.register(mesh);
@@ -171,6 +178,8 @@ export class Mesh {
     if (discard_cpu_data) {
       mesh.vertices = null;
       mesh.indices = null;
+      mesh._tmp_indices = null;
+      mesh._section_groups = null;
     }
 
     ResourceCache.get().store(CacheTypes.MESH, Name.from(name), mesh);
@@ -238,6 +247,7 @@ export class Mesh {
     mesh.triangle_bvh = new TriangleBVH(mesh.vertices, mesh.indices);
 
     mesh._recreate_index_buffer();
+    mesh.sections = [{ first_index: 0, index_count: mesh.index_count }];
 
     // Register shared mesh data (bounds)
     MeshData.register(mesh);
@@ -246,6 +256,8 @@ export class Mesh {
     if (discard_cpu_data) {
       mesh.vertices = null;
       mesh.indices = null;
+      mesh._tmp_indices = null;
+      mesh._section_groups = null;
     }
 
     ResourceCache.get().store(CacheTypes.MESH, Name.from("engine_quad"), mesh);
@@ -486,6 +498,7 @@ export class Mesh {
     mesh.triangle_bvh = new TriangleBVH(mesh.vertices, mesh.indices);
 
     mesh._recreate_index_buffer();
+    mesh.sections = [{ first_index: 0, index_count: mesh.index_count }];
 
     // Register shared mesh data (bounds)
     MeshData.register(mesh);
@@ -494,6 +507,8 @@ export class Mesh {
     if (discard_cpu_data) {
       mesh.vertices = null;
       mesh.indices = null;
+      mesh._tmp_indices = null;
+      mesh._section_groups = null;
     }
 
     ResourceCache.get().store(CacheTypes.MESH, Name.from("engine_cube"), mesh);
@@ -535,6 +550,15 @@ export class Mesh {
       let vertex_offset = mesh.vertices.length;
 
       for (const primitive of node.mesh.primitives) {
+        // Group by material assignment
+        const material_index = primitive.material
+          ? gltf_obj.materials.indexOf(primitive.material)
+          : -1;
+        let group = mesh._section_groups.get(material_index);
+        if (!group) {
+          group = { key: material_index, indices: [] };
+          mesh._section_groups.set(material_index, group);
+        }
         let positions = [];
         let position_accessor = null;
         if (primitive.attributes.POSITION !== undefined) {
@@ -735,11 +759,11 @@ export class Mesh {
             const i0 = local_indices[i] + vertex_offset;
             const i1 = local_indices[i + 1] + vertex_offset;
             const i2 = local_indices[i + 2] + vertex_offset;
-            mesh._tmp_indices.push(i0, i2, i1);
+            group.indices.push(i0, i2, i1);
           }
         } else {
           for (let idx of local_indices) {
-            mesh._tmp_indices.push(idx + vertex_offset);
+            group.indices.push(idx + vertex_offset);
           }
         }
 
@@ -749,7 +773,6 @@ export class Mesh {
 
     mesh = new Mesh();
     mesh.name = gltf;
-    mesh._tmp_indices = [];
 
     MeshData.register(mesh);
 
@@ -784,7 +807,35 @@ export class Mesh {
         }
       }
 
-      // finalize indices
+      // Build sections by material groups and finalize indices
+      mesh.sections = [];
+      mesh._tmp_indices.length = 0;
+
+      const material_cache = new Map();
+      {
+        let running_first_index = 0;
+        for (const [, group] of mesh._section_groups) {
+          if (group.indices.length === 0) continue;
+          let new_section = {
+            first_index: running_first_index,
+            index_count: group.indices.length,
+            material_id: null,
+          };
+          if (group.key >= 0) {
+            const gltf_mat = gltf_obj.materials[group.key];
+            new_section.material_id = Mesh.make_engine_material_from_gltf(
+              gltf_obj,
+              gltf_mat,
+              group.key,
+              material_cache
+            );
+          }
+          mesh.sections.push(new_section);
+          mesh._tmp_indices = mesh._tmp_indices.concat(group.indices);
+          running_first_index += group.indices.length;
+        }
+      }
+
       if (mesh._tmp_indices.length > 0) {
         let max_index = 0;
         for (let i = 0; i < mesh._tmp_indices.length; i++) {
@@ -813,9 +864,11 @@ export class Mesh {
       if (discard_cpu_data) {
         mesh.vertices = null;
         mesh.indices = null;
+        mesh._tmp_indices = null;
+        mesh._section_groups = null;
       }
 
-      MeshTaskQueue.mark_needs_sort();
+      MeshTaskQueue.invalidate_mesh(mesh_id);
     });
 
     ResourceCache.get().store(CacheTypes.MESH, mesh_id, mesh);
@@ -826,6 +879,131 @@ export class Mesh {
   static precrete_engine_primitives() {
     Mesh.cube();
     Mesh.quad();
+  }
+
+  static make_engine_material_from_gltf(gltf, mat, mat_index, material_cache) {
+    if (material_cache && material_cache.has(mat_index)) {
+      return material_cache.get(mat_index);
+    }
+
+    const mat_name = mat.name || `${mesh.name}_mat_${mat_index}`;
+    const alpha_mode = mat.alphaMode || "OPAQUE";
+    const family =
+      alpha_mode === "BLEND" ? MaterialFamilyType.Transparent : MaterialFamilyType.Opaque;
+
+    const std = StandardMaterial.create(mat_name, {}, { family });
+
+    // Base color
+    const base = mat.pbrMetallicRoughness;
+    const base_color = base?.baseColorFactor || [1, 1, 1, 1];
+    let albedo_tex = null;
+    if (base?.baseColorTexture) {
+      const tex = gltf.textures[base.baseColorTexture.index];
+      const src = tex?.source?.src;
+      if (src) {
+        albedo_tex = Texture.load([src], {
+          name: `${mat_name}_albedo`,
+          format: "rgba8unorm",
+          dimension: "2d",
+          usage:
+            GPUTextureUsage.TEXTURE_BINDING |
+            GPUTextureUsage.COPY_DST |
+            GPUTextureUsage.RENDER_ATTACHMENT,
+          flip_y: false,
+        });
+      }
+    }
+    std.set_albedo(base_color, albedo_tex);
+
+    // Normal map
+    let normal_tex = null;
+    if (mat.normalTexture) {
+      const tex = gltf.textures[mat.normalTexture.index];
+      const src = tex?.source?.src;
+      if (src) {
+        normal_tex = Texture.load([src], {
+          name: `${mat_name}_normal`,
+          format: "rgba8unorm",
+          usage:
+            GPUTextureUsage.TEXTURE_BINDING |
+            GPUTextureUsage.COPY_DST |
+            GPUTextureUsage.RENDER_ATTACHMENT,
+          flip_y: false,
+        });
+      }
+    }
+    std.set_normal([0, 0, 1, 1], normal_tex);
+
+    // Metallic-Roughness texture: G=roughness, B=metallic
+    const roughness_val = base?.roughnessFactor ?? 1.0;
+    const metallic_val = base?.metallicFactor ?? 1.0;
+    let mr_tex = null;
+    if (base?.metallicRoughnessTexture) {
+      const tex = gltf.textures[base.metallicRoughnessTexture.index];
+      const src = tex?.source?.src;
+      if (src) {
+        mr_tex = Texture.load([src], {
+          name: `${mat_name}_metallic_roughness`,
+          format: "rgba8unorm",
+          usage:
+            GPUTextureUsage.TEXTURE_BINDING |
+            GPUTextureUsage.COPY_DST |
+            GPUTextureUsage.RENDER_ATTACHMENT,
+          flip_y: false,
+        });
+      }
+    }
+    // glTF convention: roughness in G, metallic in B
+    std.set_roughness(roughness_val, mr_tex, TextureChannel.G);
+    std.set_metallic(metallic_val, mr_tex, TextureChannel.B);
+
+    // Ambient occlusion (R channel), strength scales AO value
+    let ao_tex = null;
+    let ao_strength = 1.0;
+    if (mat.occlusionTexture) {
+      const tex = gltf.textures[mat.occlusionTexture.index];
+      const src = tex?.source?.src;
+      if (src) {
+        ao_tex = Texture.load([src], {
+          name: `${mat_name}_ao`,
+          format: "rgba8unorm",
+          usage:
+            GPUTextureUsage.TEXTURE_BINDING |
+            GPUTextureUsage.COPY_DST |
+            GPUTextureUsage.RENDER_ATTACHMENT,
+          flip_y: false,
+        });
+      }
+      ao_strength = mat.occlusionTexture.strength ?? 1.0;
+    }
+    std.set_ao(ao_strength, ao_tex, TextureChannel.R);
+
+    // Emissive: approximate scalar intensity from factor; texture sampled R channel
+    let emissive_tex = null;
+    const ef = mat.emissiveFactor || [0, 0, 0];
+    const emissive_scalar = (ef[0] + ef[1] + ef[2]) / 3.0;
+    if (mat.emissiveTexture) {
+      const tex = gltf.textures[mat.emissiveTexture.index];
+      const src = tex?.source?.src;
+      if (src) {
+        emissive_tex = Texture.load([src], {
+          name: `${mat_name}_emissive`,
+          format: "rgba8unorm",
+          usage:
+            GPUTextureUsage.TEXTURE_BINDING |
+            GPUTextureUsage.COPY_DST |
+            GPUTextureUsage.RENDER_ATTACHMENT,
+          flip_y: false,
+        });
+      }
+    }
+    std.set_emission(emissive_scalar, emissive_tex, TextureChannel.R);
+
+    if (material_cache) {
+      material_cache.set(mat_index, std.material_id);
+    }
+
+    return std.material_id;
   }
 }
 

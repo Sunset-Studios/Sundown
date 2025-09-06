@@ -1,5 +1,5 @@
-import { MAX_BUFFERED_FRAMES } from "../core/minimal.js";
-import { EntityID } from "../core/ecs/solar/types.js";
+import { MAX_BUFFERED_FRAMES, EntityFlags } from "../core/minimal.js";
+import { EntityID, DEFAULT_CHUNK_CAPACITY } from "../core/ecs/solar/types.js";
 import { Renderer } from "./renderer.js";
 import { ResourceCache } from "./resource_cache.js";
 import { Mesh } from "./mesh.js";
@@ -8,12 +8,15 @@ import { Name } from "../utility/names.js";
 import { RandomAccessAllocator, Sparse2DRandomAccessAllocator } from "../memory/allocator.js";
 import { profile_scope } from "../utility/performance.js";
 import { CacheTypes, MaterialFamilyType, BindGroupType } from "./renderer_types.js";
+import { EntityManager } from "../core/ecs/entity.js";
+import { StaticMeshFragment } from "../core/ecs/fragments/static_mesh_fragment.js";
 
 const initial_buffer_size = 1024;
 const max_frame_buffer_writes = 100000;
 
 class IndirectDrawBatch {
   mesh_id = 0;
+  section = 0;
   material_id = 0;
   entities = [];
   index_buffer_id = null;
@@ -226,11 +229,13 @@ class MeshTask {
   mesh_id = null;
   entity = null;
   material_id = null;
+  section = 0;
 
-  static init(task, mesh_id, entity, material_id = null) {
+  static init(task, mesh_id, entity, material_id = null, section = 0) {
     task.mesh_id = mesh_id;
     task.entity = entity;
     task.material_id = material_id;
+    task.section = section;
   }
 }
 
@@ -246,6 +251,7 @@ export class MeshTaskQueue {
   static needs_sort = false;
   static initialized = false;
   static entity_task_map = new Map(); // new: Map<Entity, Map<"meshId:materialId", Task>>
+  static static_mesh_query = null;
 
   static mark_needs_sort() {
     this.needs_sort = true;
@@ -260,19 +266,16 @@ export class MeshTaskQueue {
     this.tasks_allocator.reset();
   }
 
-  static _get_task_key(mesh_id, material_id) {
-    const a = mesh_id; // assume already BigInt
-    const b = material_id ?? 0n; // also BigInt
-    // Szudzik's pairing:
-    if (a >= b) {
-      return a * a + a + b;
-    } else {
-      return b * b + a;
-    }
+  static _get_task_key(mesh_id, section, material_id) {
+    const a = BigInt(mesh_id);
+    const b = BigInt(section);
+    const c = BigInt(material_id ?? 0);
+    const ab = a >= b ? a * a + a + b : b * b + a;
+    return ab >= c ? ab * ab + ab + c : c * c + ab;
   }
 
-  static new_task(mesh_id, entity, material_id = null, resort = true) {
-    const key = this._get_task_key(mesh_id, material_id);
+  static new_task(mesh_id, entity, material_id = null, section = 0, resort = true) {
+    const key = this._get_task_key(mesh_id, section, material_id);
     let tasks_for_entity = this.entity_task_map.get(entity);
     if (tasks_for_entity?.has(key)) {
       return tasks_for_entity.get(key);
@@ -280,7 +283,7 @@ export class MeshTaskQueue {
 
     // 2) otherwise allocate & enqueue a brand-new task
     const task = this.tasks_allocator.allocate();
-    MeshTask.init(task, mesh_id, entity, material_id);
+    MeshTask.init(task, mesh_id, entity, material_id, section);
     this.tasks.push(task);
 
     // 3) record it in our per-entity map
@@ -315,7 +318,14 @@ export class MeshTaskQueue {
         this.material_buckets.length = 0;
         this.object_instance_allocator.reset();
 
-        this.tasks.sort((a, b) => a.mesh_id - b.mesh_id - (a.material_id - b.material_id));
+        this.tasks.sort((a, b) => {
+          let diff = a.material_id - b.material_id;
+          if (diff !== 0) return diff;
+          diff = a.mesh_id - b.mesh_id;
+          if (diff !== 0) return diff;
+          diff = a.section - b.section;
+          return diff;
+        });
 
         let last_batch = null;
         for (let i = 0; i < this.tasks.length; i++) {
@@ -324,6 +334,7 @@ export class MeshTaskQueue {
           const last_batch_matches =
             last_batch &&
             last_batch.mesh_id === task.mesh_id &&
+            last_batch.section === task.section &&
             last_batch.material_id === task.material_id;
 
           if (!last_batch_matches) {
@@ -334,6 +345,7 @@ export class MeshTaskQueue {
 
             const batch = new IndirectDrawBatch();
             batch.mesh_id = task.mesh_id;
+            batch.section = task.section;
             batch.material_id = task.material_id;
             batch.index_buffer_id = Name.from(mesh.index_buffer.config.name);
 
@@ -342,8 +354,12 @@ export class MeshTaskQueue {
               : 0;
             batch.instance_count = task.entity.instance_count;
 
-            batch.first_index = 0;
-            batch.index_count = mesh.index_count;
+            const section = mesh.sections?.[task.section] || {
+              first_index: 0,
+              index_count: mesh.index_count,
+            };
+            batch.first_index = section.first_index;
+            batch.index_count = section.index_count;
             batch.base_vertex = mesh.vertex_buffer_offset;
 
             batch.entities.length = batch.instance_count;
@@ -426,6 +442,10 @@ export class MeshTaskQueue {
     });
   }
 
+  static contains(entity) {
+    return this.entity_task_map.has(entity) && this.entity_task_map.get(entity).size > 0;
+  }
+
   static remove(entity, resort = true) {
     const tasks_for_entity = this.entity_task_map.get(entity);
     if (!tasks_for_entity) return;
@@ -433,7 +453,7 @@ export class MeshTaskQueue {
     // keep only those tasks whose key is NOT in tasks_for_entity
     this.tasks = this.tasks.filter((task) => {
       if (task.entity !== entity) return true;
-      const key = this._get_task_key(task.mesh_id, task.material_id);
+      const key = this._get_task_key(task.mesh_id, task.section, task.material_id);
       return !tasks_for_entity.has(key);
     });
 
@@ -444,6 +464,33 @@ export class MeshTaskQueue {
       this.material_buckets.length = 0;
     }
     this.needs_sort |= resort;
+  }
+
+  /**
+   * Invalidate a mesh by removing all tasks associated with it and letting them requeue in the static mesh processor
+   */
+  static invalidate_mesh(mesh_id) {
+    if (!this.static_mesh_query) {
+      this.static_mesh_query = EntityManager.create_query([StaticMeshFragment]);
+    }
+    this.static_mesh_query.for_each_chunk((chunk, flags, counts, archetype) => {
+      const static_meshes = chunk.get_fragment_view(StaticMeshFragment);
+      let slot = 0;
+      while (slot < DEFAULT_CHUNK_CAPACITY) {
+        const entity_flags = flags[slot];
+        if ((entity_flags & EntityFlags.ALIVE) === 0) {
+          slot += counts[slot] || 1;
+          continue;
+        }
+        if (Number(static_meshes.mesh[slot]) === mesh_id) {
+          const entity = EntityManager.get_entity_for(chunk, slot);
+          MeshTaskQueue.remove(entity, false);
+          EntityManager.set_entity_dirty(entity);
+        }
+        slot += counts[slot] || 1;
+      }
+    });
+    this.needs_sort = true;
   }
 
   /**

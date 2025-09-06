@@ -6,6 +6,8 @@ import { StaticMeshFragment } from "../ecs/fragments/static_mesh_fragment.js";
 import { VisibilityFragment } from "../ecs/fragments/visibility_fragment.js";
 import { MeshTaskQueue } from "../../renderer/mesh_task_queue.js";
 import { profile_scope } from "../../utility/performance.js";
+import { ResourceCache } from "../../renderer/resource_cache.js";
+import { CacheTypes } from "../../renderer/renderer_types.js";
 
 export class StaticMeshProcessor extends SimulationLayer {
   entity_query = null;
@@ -35,28 +37,44 @@ export class StaticMeshProcessor extends SimulationLayer {
     while (slot < DEFAULT_CHUNK_CAPACITY) {
       const entity_flags = flags[slot];
 
-      if ((flags[slot] & EntityFlags.DIRTY) === 0) {
-        slot += counts[slot] || 1;
-        continue;
-      }
-
-      if ((entity_flags & EntityFlags.ALIVE) === 0) {
+      if ((entity_flags & EntityFlags.DIRTY) === 0 || (entity_flags & EntityFlags.ALIVE) === 0) {
         slot += counts[slot] || 1;
         continue;
       }
 
       const mesh_id = Number(static_meshes.mesh[slot]);
-      const material_id = Number(static_meshes.material_slots[slot * material_slot_stride]);
-
       const entity = EntityManager.get_entity_for(chunk, slot);
 
-      if (mesh_id && material_id && entity.instance_count && visibilities.visible[slot]) {
-        MeshTaskQueue.new_task(mesh_id, entity, material_id);
+      if (mesh_id && entity.instance_count && visibilities.visible[slot]) {
+        MeshTaskQueue.remove(entity);
+
+        const mesh = ResourceCache.get().fetch(CacheTypes.MESH, mesh_id);
+        const section_count = mesh?.sections?.length || 1;
+        const first_mat = Number(static_meshes.material_slots[slot * material_slot_stride]);
+        for (let si = 0; si < section_count; si++) {
+          const section = mesh?.sections[si] ?? null;
+
+          let material_id = Number(static_meshes.material_slots[slot * material_slot_stride + si]);
+
+          if (section?.material_id) {
+            static_meshes.material_slots[slot * material_slot_stride + si] = BigInt(
+              section.material_id
+            );
+            material_id = section.material_id;
+          } else if (first_mat) {
+            static_meshes.material_slots[slot * material_slot_stride + si] = BigInt(first_mat);
+            material_id = first_mat;
+          }
+
+          if (material_id) {
+            MeshTaskQueue.new_task(mesh_id, entity, material_id, si);
+          }
+        }
+
+        should_dirty_chunk = true;
       }
 
       slot += counts[slot] || 1;
-
-      should_dirty_chunk = true;
     }
 
     if (should_dirty_chunk) {
