@@ -415,6 +415,7 @@ var Texture = (MinimalGLTFLoader.Texture = function (t) {
   this.sampler =
     t.sampler !== undefined ? curLoader.glTF.samplers[t.sampler] : null;
   this.source = t.source !== undefined ? curLoader.glTF.images[t.source] : null;
+  this.base = t.source !== undefined ? curLoader.glTF.image_bases[t.source] : null;
 
   this.extensions = t.extensions !== undefined ? t.extensions : null;
   this.extras = t.extras !== undefined ? t.extras : null;
@@ -867,6 +868,7 @@ var glTFModel = (MinimalGLTFLoader.glTFModel = function (gltf) {
 
   if (gltf.images) {
     this.images = new Array(gltf.images.length);
+    this.image_bases = new Array(gltf.images.length);
   }
 
   if (gltf.skins) {
@@ -987,7 +989,6 @@ glTFLoader.prototype.load = function (uri, callback) {
     if (json.buffers) {
       for (bid in json.buffers) {
         loader._bufferRequested++;
-
         _loadArrayBuffer(
           loader.baseUri + json.buffers[bid].uri,
           loadArrayBufferCallback
@@ -996,9 +997,10 @@ glTFLoader.prototype.load = function (uri, callback) {
     }
 
     // load images
-    var loadImageCallback = function (img, iid) {
+    var loadImageCallback = function (img, iid, url) {
       loader._imageLoaded++;
       loader.glTF.images[iid] = img;
+      loader.glTF.image_bases[iid] = url;
       loader._checkComplete();
     };
 
@@ -1311,7 +1313,7 @@ function _loadImage(url, iid, onload) {
   img.crossOrigin = "Anonymous";
   img.src = url;
   img.onload = function () {
-    onload(img, iid);
+    onload(img, iid, url);
   };
 }
 

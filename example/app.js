@@ -2718,6 +2718,124 @@ export class GLTFModelScene extends Scene {
 }
 
 // ------------------------------------------------------------------------------------
+// =============================== Sponza Scene ======================================
+// ------------------------------------------------------------------------------------
+
+export class SponzaScene extends Scene {
+  name = "SponzaScene";
+  entities = [];
+  sway_light_enabled = false;
+  sway_period_sec = 35.0;
+  sway_angle_deg = 120.0;
+  sun_light_entity = null;
+  sun_light_base_dir = [0, 0, 0];
+  time_elapsed_sec = 0;
+
+  init(parent_context) {
+    super.init(parent_context);
+
+    const freeform_arcball_control_processor = this.add_layer(FreeformArcballControlProcessor);
+    freeform_arcball_control_processor.set_scene(this);
+
+    SharedEnvironmentData.set_skydome("default_scene_skydome");
+
+    const view_data = SharedViewBuffer.get_view_data(0);
+    view_data.view_position = [0, 8, 28];
+    view_data.view_rotation = quat.fromEuler(quat.create(), -5, 180, 0);
+
+    const light_entity = EntityManager.create_entity([LightFragment]);
+    this.entities.push(light_entity);
+
+    const light_fragment_view = EntityManager.get_fragment(light_entity, LightFragment);
+    light_fragment_view.type = LightType.DIRECTIONAL;
+    light_fragment_view.color = [1, 1, 1];
+    light_fragment_view.intensity = 5.0;
+    light_fragment_view.position = [5, 20, 2.5];
+    light_fragment_view.active = true;
+    light_fragment_view.is_primary_sun = 1;
+    light_fragment_view.shadow_clipmaps = MAX_CLIPMAP_LEVELS;
+
+    this.sun_light_entity = light_entity;
+    this.sun_light_base_dir = [
+      light_fragment_view.position[0],
+      light_fragment_view.position[1],
+      light_fragment_view.position[2],
+    ];
+
+    const ground_material = StandardMaterial.create("sponza_ground_material");
+    const ground_material_id = ground_material.material_id;
+    ground_material.set_albedo([0.75, 0.75, 0.75, 1.0]);
+    ground_material.set_roughness(0.9);
+    ground_material.set_metallic(1.0);
+
+    const cube_mesh = Mesh.cube();
+    const ground_entity = spawn_mesh_entity(
+      [0, 0, 0],
+      [0, 0, 0, 1],
+      [4000, 1.0, 4000],
+      cube_mesh,
+      ground_material_id
+    );
+    this.entities.push(ground_entity);
+
+    const sponza_mesh = Mesh.from_gltf("engine/models/sponza/Sponza.gltf");
+
+    const default_material = StandardMaterial.create("sponza_default_material");
+    const default_material_id = default_material.material_id;
+    default_material.set_albedo([1.0, 1.0, 1.0, 1.0]);
+    default_material.set_roughness(0.8);
+    default_material.set_metallic(0.0);
+
+    const sponza_entity = spawn_mesh_entity(
+      [0, 2.0, 0],
+      [0, 0, 0, 1],
+      [1, 1, 1],
+      sponza_mesh,
+      default_material_id
+    );
+    this.entities.push(sponza_entity);
+  }
+
+  update(delta_time) {
+    super.update(delta_time);
+    this.time_elapsed_sec += delta_time;
+
+    // Toggle light sway with 'T'
+    if (InputProvider.get_action(InputKey.K_t)) {
+      this.sway_light_enabled = !this.sway_light_enabled;
+    }
+
+    if (!this.sway_light_enabled || !this.sun_light_entity) return;
+
+    const base_x = this.sun_light_base_dir[0];
+    const base_y = this.sun_light_base_dir[1];
+    const base_z = this.sun_light_base_dir[2];
+
+    const two_pi = Math.PI * 2.0;
+    const phase = (this.time_elapsed_sec / this.sway_period_sec) * two_pi;
+    const angle_rad = Math.sin(phase) * (this.sway_angle_deg * Math.PI / 180.0);
+
+    const cos_a = Math.cos(angle_rad);
+    const sin_a = Math.sin(angle_rad);
+    const rot_x = base_x * cos_a + base_z * sin_a;
+    const rot_z = -base_x * sin_a + base_z * cos_a;
+
+    const light_fragment_view = EntityManager.get_fragment(this.sun_light_entity, LightFragment);
+    if (light_fragment_view) {
+      light_fragment_view.position = [rot_x, base_y, rot_z];
+      light_fragment_view.shadows_dirty = 1;
+    }
+  }
+
+  cleanup() {
+    for (const e of this.entities) {
+      delete_entity(e);
+    }
+    this.entities.length = 0;
+  }
+}
+
+// ------------------------------------------------------------------------------------
 // =============================== Main ==============================================
 // ------------------------------------------------------------------------------------
 
@@ -2735,6 +2853,7 @@ export class GLTFModelScene extends Scene {
   const gi_test_scene = new GITestScene("GITestScene");
   const shadow_test_scene = new ShadowTestScene("ShadowTestScene");
   const gltf_model_scene = new GLTFModelScene("GLTFModelScene");
+  const sponza_scene = new SponzaScene("SponzaScene");
 
   const scene_switcher = new SceneSwitcher("SceneSwitcher");
   //await scene_switcher.add_scene(solar_ecs_scene);
@@ -2744,9 +2863,10 @@ export class GLTFModelScene extends Scene {
   //await scene_switcher.add_scene(ml_scene);
   //await scene_switcher.add_scene(voxel_terrain_scene);
   //await scene_switcher.add_scene(object_painting_scene);
-  await scene_switcher.add_scene(gi_test_scene);
+  //await scene_switcher.add_scene(gi_test_scene);
   //await scene_switcher.add_scene(shadow_test_scene);
   //await scene_switcher.add_scene(gltf_model_scene);
+  await scene_switcher.add_scene(sponza_scene);
 
   simulator.add_sim_layer(scene_switcher);
 

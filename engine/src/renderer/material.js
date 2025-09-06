@@ -634,8 +634,19 @@ export class StandardMaterial {
   static create(name, params = {}, options = {}, template = null) {
     if (!template) {
       const family = options.family !== undefined ? options.family : MaterialFamilyType.Opaque;
-      MaterialTemplate.create("StandardMaterial", "standard_material.wgsl", family);
-      template = `StandardMaterial`;
+
+      // TODO: Need a better way to handle these kinds of template permutations.
+      if (options.raster_state?.cull_mode == "none") {
+        MaterialTemplate.create("StandardMaterial_NoCull", "standard_material.wgsl", family, {
+          rasterizer_state: {
+            cull_mode: "none",
+          },
+        });
+        template = `StandardMaterial_NoCull`;
+      } else {
+        MaterialTemplate.create("StandardMaterial", "standard_material.wgsl", family);
+        template = `StandardMaterial`;
+      }
     }
 
     let standard_material = new StandardMaterial();

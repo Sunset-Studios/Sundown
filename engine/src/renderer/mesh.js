@@ -825,6 +825,7 @@ export class Mesh {
             const gltf_mat = gltf_obj.materials[group.key];
             new_section.material_id = Mesh.make_engine_material_from_gltf(
               gltf_obj,
+              mesh,
               gltf_mat,
               group.key,
               material_cache
@@ -881,7 +882,7 @@ export class Mesh {
     Mesh.quad();
   }
 
-  static make_engine_material_from_gltf(gltf, mat, mat_index, material_cache) {
+  static make_engine_material_from_gltf(gltf, mesh, mat, mat_index, material_cache) {
     if (material_cache && material_cache.has(mat_index)) {
       return material_cache.get(mat_index);
     }
@@ -891,7 +892,7 @@ export class Mesh {
     const family =
       alpha_mode === "BLEND" ? MaterialFamilyType.Transparent : MaterialFamilyType.Opaque;
 
-    const std = StandardMaterial.create(mat_name, {}, { family });
+    const std = StandardMaterial.create(mat_name, {}, { family, raster_state: { cull_mode: "none" } });
 
     // Base color
     const base = mat.pbrMetallicRoughness;
@@ -899,7 +900,7 @@ export class Mesh {
     let albedo_tex = null;
     if (base?.baseColorTexture) {
       const tex = gltf.textures[base.baseColorTexture.index];
-      const src = tex?.source?.src;
+      const src = tex?.base;
       if (src) {
         albedo_tex = Texture.load([src], {
           name: `${mat_name}_albedo`,
@@ -910,6 +911,7 @@ export class Mesh {
             GPUTextureUsage.COPY_DST |
             GPUTextureUsage.RENDER_ATTACHMENT,
           flip_y: false,
+          material_notifier: `${mat_name}_albedo`,
         });
       }
     }
@@ -919,7 +921,7 @@ export class Mesh {
     let normal_tex = null;
     if (mat.normalTexture) {
       const tex = gltf.textures[mat.normalTexture.index];
-      const src = tex?.source?.src;
+      const src = tex?.base;
       if (src) {
         normal_tex = Texture.load([src], {
           name: `${mat_name}_normal`,
@@ -929,10 +931,11 @@ export class Mesh {
             GPUTextureUsage.COPY_DST |
             GPUTextureUsage.RENDER_ATTACHMENT,
           flip_y: false,
+          material_notifier: `${mat_name}_normal`,
         });
       }
     }
-    std.set_normal([0, 0, 1, 1], normal_tex);
+    std.set_normal([0, 1, 0, 1], normal_tex);
 
     // Metallic-Roughness texture: G=roughness, B=metallic
     const roughness_val = base?.roughnessFactor ?? 1.0;
@@ -940,7 +943,7 @@ export class Mesh {
     let mr_tex = null;
     if (base?.metallicRoughnessTexture) {
       const tex = gltf.textures[base.metallicRoughnessTexture.index];
-      const src = tex?.source?.src;
+      const src = tex?.base;
       if (src) {
         mr_tex = Texture.load([src], {
           name: `${mat_name}_metallic_roughness`,
@@ -950,19 +953,20 @@ export class Mesh {
             GPUTextureUsage.COPY_DST |
             GPUTextureUsage.RENDER_ATTACHMENT,
           flip_y: false,
+          material_notifier: `${mat_name}_metallic_roughness`,
         });
       }
     }
-    // glTF convention: roughness in G, metallic in B
-    std.set_roughness(roughness_val, mr_tex, TextureChannel.G);
-    std.set_metallic(metallic_val, mr_tex, TextureChannel.B);
+    // glTF convention: roughness in B, metallic in G
+    std.set_metallic(metallic_val, mr_tex, TextureChannel.G);
+    std.set_roughness(roughness_val, mr_tex, TextureChannel.B);
 
     // Ambient occlusion (R channel), strength scales AO value
     let ao_tex = null;
-    let ao_strength = 1.0;
+    let ao_strength = 0.0;
     if (mat.occlusionTexture) {
       const tex = gltf.textures[mat.occlusionTexture.index];
-      const src = tex?.source?.src;
+      const src = tex?.base;
       if (src) {
         ao_tex = Texture.load([src], {
           name: `${mat_name}_ao`,
@@ -972,6 +976,7 @@ export class Mesh {
             GPUTextureUsage.COPY_DST |
             GPUTextureUsage.RENDER_ATTACHMENT,
           flip_y: false,
+          material_notifier: `${mat_name}_ao`,
         });
       }
       ao_strength = mat.occlusionTexture.strength ?? 1.0;
@@ -980,11 +985,12 @@ export class Mesh {
 
     // Emissive: approximate scalar intensity from factor; texture sampled R channel
     let emissive_tex = null;
-    const ef = mat.emissiveFactor || [0, 0, 0];
-    const emissive_scalar = (ef[0] + ef[1] + ef[2]) / 3.0;
+    const ef = mat.emissiveFactor || [0.0, 0.0, 0.0];
+    let emissive_scalar = (ef[0] + ef[1] + ef[2]) / 3.0;
+    emissive_scalar = Math.max(emissive_scalar, 0.02);
     if (mat.emissiveTexture) {
       const tex = gltf.textures[mat.emissiveTexture.index];
-      const src = tex?.source?.src;
+      const src = tex?.base;
       if (src) {
         emissive_tex = Texture.load([src], {
           name: `${mat_name}_emissive`,
@@ -994,10 +1000,11 @@ export class Mesh {
             GPUTextureUsage.COPY_DST |
             GPUTextureUsage.RENDER_ATTACHMENT,
           flip_y: false,
+          material_notifier: `${mat_name}_emissive`,
         });
       }
     }
-    std.set_emission(emissive_scalar, emissive_tex, TextureChannel.R);
+    std.set_emission(emissive_scalar, emissive_tex);
 
     if (material_cache) {
       material_cache.set(mat_index, std.material_id);
