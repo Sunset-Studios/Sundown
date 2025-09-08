@@ -9,8 +9,9 @@
 struct BVHData {
     leaf_count: atomic<u32>,
     bvh2_count: atomic<u32>,
-    root_index: u32,
     prim_count: u32,
+    prim_base: u32,
+    node_base: u32,
 };
 
 struct IndexPair {
@@ -52,7 +53,8 @@ fn initialize_leaf_clusters(
 #endif
 
     // 1) Warp-aggregate the increment amount
-    let is_valid_leaf = select(0u, 1u, is_leaf(bounds[prim_idx]));
+    let base = counters.prim_base;
+    let is_valid_leaf = select(0u, 1u, is_leaf(bounds[base + prim_idx]));
     let warp_sum = warp_reduce_add_u32(warp_ctx, is_valid_leaf);
     // 2) One atomicAdd per warp
     if (is_warp_leader(warp_ctx)) {

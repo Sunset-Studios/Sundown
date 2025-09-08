@@ -37,17 +37,16 @@ export class StaticMeshProcessor extends SimulationLayer {
     while (slot < DEFAULT_CHUNK_CAPACITY) {
       const entity_flags = flags[slot];
 
-      if ((entity_flags & EntityFlags.DIRTY) === 0 || (entity_flags & EntityFlags.ALIVE) === 0) {
+      if ((entity_flags & EntityFlags.ALIVE) === 0) {
         slot += counts[slot] || 1;
         continue;
       }
 
       const mesh_id = Number(static_meshes.mesh[slot]);
       const entity = EntityManager.get_entity_for(chunk, slot);
+      const has_mesh_tasks = MeshTaskQueue.contains(entity);
 
-      if (mesh_id && entity.instance_count && visibilities.visible[slot]) {
-        MeshTaskQueue.remove(entity);
-
+      if (mesh_id && entity.instance_count && visibilities.visible[slot] && !has_mesh_tasks) {
         const mesh = ResourceCache.get().fetch(CacheTypes.MESH, mesh_id);
         const section_count = mesh?.sections?.length || 1;
         const first_mat = Number(static_meshes.material_slots[slot * material_slot_stride]);
@@ -83,7 +82,13 @@ export class StaticMeshProcessor extends SimulationLayer {
   }
 
   _update_internal() {
+    if (!MeshTaskQueue.has_dirty_meshes()) {
+      return;
+    }
+
     this.entity_query.for_each_chunk(this._update_internal_iter_chunk);
+
+    MeshTaskQueue.mark_meshes_dirty(false);
   }
 
   _on_delete(entity) {

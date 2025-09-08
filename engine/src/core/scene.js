@@ -9,6 +9,7 @@ import { StaticMeshProcessor } from "./subsystems/static_mesh_processor.js";
 import { TransformProcessor } from "./subsystems/transform_processor.js";
 import { BVHEntityAdapter } from "./subsystems/bvh_entity_adapter.js";
 import { BVHDebugRenderer } from "./subsystems/bvh_debug_renderer.js";
+import { MeshBLASProcessor } from "../acceleration/mesh_blas_processor.js";
 
 import { cursor } from "../ui/2d/immediate.js";
 import { FontCache } from "../ui/text/font_cache.js";
@@ -68,6 +69,7 @@ export class Scene extends SimulationLayer {
     this.add_layer(StaticMeshProcessor);
     this.add_layer(TransformProcessor);
     this.add_layer(BVHEntityAdapter);
+    this.add_layer(MeshBLASProcessor);
     if (__DEV__) {
       this.add_layer(BVHDebugRenderer);
     }
@@ -86,8 +88,9 @@ export class Scene extends SimulationLayer {
   teardown_default_subsystems() {
     if (__DEV__) {
       this.remove_layer(DevConsole);
-      this.remove_layer(BVHDebugRenderer);
+      this.remove_layer(MeshBLASProcessor);
     }
+    this.remove_layer(BVHDebugRenderer);
     this.remove_layer(UI3DProcessor);
     this.remove_layer(BVHEntityAdapter);
     this.remove_layer(EntityPreprocessor);

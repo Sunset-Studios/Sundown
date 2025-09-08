@@ -12,6 +12,9 @@ export const LightType = {
   SPOT: 2,
 };
 
+// TODO: Many of these flags are mostly communicated to the GPU, and the GPU will clear them,
+// so it is unreliable to use them for CPU-side logic. We may want to add a separate flags
+// entity array to Solar for CPU-only logic.
 export const EntityFlags = {
   ALIVE: 1 << 0,
   DIRTY: 1 << 1,

@@ -21,8 +21,9 @@ struct Cluster {
 struct BVHData {
     leaf_count: u32,
     bvh2_count: atomic<u32>,
-    root_index: u32,
     prim_count: u32,
+    prim_base: u32,
+    node_base: u32,
 };
 
 struct IndexPair {
@@ -294,19 +295,19 @@ fn merge_clusters_create_bvh2_node(
 
     var merged_min = vec4<f32>(
         min(cmin_in.x, nb_min_x), min(cmin_in.y, nb_min_y), min(cmin_in.z, nb_min_z),
-        f32(*cluster_index)
+        f32(bvh_data.prim_base + *cluster_index)
     );
     var merged_max = vec4<f32>(
         max(cmax_in.x, nb_max_x), max(cmax_in.y, nb_max_y), max(cmax_in.z, nb_max_z),
-        f32(neighbor_cluster_index)
+        f32(bvh_data.prim_base + neighbor_cluster_index)
     );
     if (do_merge) {
         *cmin_in = merged_min.xyz;
         *cmax_in = merged_max.xyz;
         *cluster_index = node_index;
         // Grow the current cluster to include the neighbor
-        bounds[node_index].min = merged_min;
-        bounds[node_index].max = merged_max;
+        bounds[bvh_data.prim_base + node_index].min = merged_min;
+        bounds[bvh_data.prim_base + node_index].max = merged_max;
     }
 
     // Compaction
@@ -352,7 +353,7 @@ fn ploc_merge(
     var num_prim = num_left + num_right;
 
     let valid_lane = lane_id < num_prim;
-    let node_bounds = bounds[cluster_index];
+    let node_bounds = bounds[bvh_data.prim_base + cluster_index];
     var cmin = select(zero_vec4.xyz, node_bounds.min.xyz, valid_lane);
     var cmax = select(zero_vec4.xyz, node_bounds.max.xyz, valid_lane);
 

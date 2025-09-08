@@ -252,6 +252,7 @@ export class MeshTaskQueue {
   static initialized = false;
   static entity_task_map = new Map(); // new: Map<Entity, Map<"meshId:materialId", Task>>
   static static_mesh_query = null;
+  static meshes_dirty = false;
 
   static mark_needs_sort() {
     this.needs_sort = true;
@@ -467,6 +468,20 @@ export class MeshTaskQueue {
   }
 
   /**
+   * Mark .
+   */
+  static mark_meshes_dirty(dirty = true) {
+    this.meshes_dirty = dirty;
+  }
+
+  /**
+   * Check if the meshes are dirty.
+   */
+  static has_dirty_meshes() {
+    return this.meshes_dirty;
+  }
+
+  /**
    * Invalidate a mesh by removing all tasks associated with it and letting them requeue in the static mesh processor
    */
   static invalidate_mesh(mesh_id) {
@@ -485,7 +500,7 @@ export class MeshTaskQueue {
         if (Number(static_meshes.mesh[slot]) === mesh_id) {
           const entity = EntityManager.get_entity_for(chunk, slot);
           MeshTaskQueue.remove(entity, false);
-          EntityManager.set_entity_dirty(entity);
+          MeshTaskQueue.mark_meshes_dirty();
         }
         slot += counts[slot] || 1;
       }

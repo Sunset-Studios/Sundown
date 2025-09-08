@@ -35,8 +35,9 @@ struct BuildState {
 struct BVHData {
     leaf_count: u32,
     bvh2_count: u32,
-    root_index: u32,
     prim_count: u32,
+    prim_base: u32,
+    node_base: u32,
 };
 
 struct IndexPair {
@@ -246,8 +247,8 @@ fn convert_bvh2_to_bvh4(
     let bvh2_count = bvh_data.bvh2_count;
 
     if (group_id.x == 0u && local_id.x == 0u) {
-        store_index_pair(0u, bvh2_count - 1u, 0u);
-        bvh_data.root_index = bvh2_count - 1u;
+        let base = bvh_data.prim_base;
+        store_index_pair(0u, base + bvh2_count - 1u, 0u);
     }
     workgroupBarrier();
 
@@ -424,8 +425,10 @@ fn convert_bvh2_to_bvh4(
                 }
 
                 // Create and store the new BVH4 node
-                bvh4_nodes[bvh4_node_idx] = create_bvh4_node(
-                    bvh2_node, child_nodes, child_base_idx, prim_base_idx, 
+                let child_base_abs = bvh_data.node_base + child_base_idx;
+                let prim_base_abs = bvh_data.prim_base + prim_base_idx;
+                bvh4_nodes[bvh_data.node_base + bvh4_node_idx] = create_bvh4_node(
+                    bvh2_node, child_nodes, child_base_abs, prim_base_abs, 
                     assignments, inner_mask, leaf_mask
                 );
             }

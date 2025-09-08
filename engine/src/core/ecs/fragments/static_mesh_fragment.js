@@ -2,6 +2,7 @@ import { Fragment } from "../fragment.js";
 import { SolarFragmentView } from "../solar/view.js";
 import { RingBufferAllocator } from "../../../memory/allocator.js";
 import { Name } from "../../../utility/names.js";
+import { MeshTaskQueue } from "../../../renderer/mesh_task_queue.js";
 
 /**
  * The StaticMesh fragment class.
@@ -22,6 +23,10 @@ export class StaticMeshFragment extends Fragment {
         GPUBufferUsage.STORAGE |
         GPUBufferUsage.COPY_DST |
         GPUBufferUsage.COPY_SRC,
+      setter(value, typed_array, element_offset) {
+        typed_array[element_offset] = BigInt(value);
+        MeshTaskQueue.mark_meshes_dirty(true);
+      },
       cpu_readback: false,
       buffer_multiplier: 1,
     },
@@ -36,6 +41,10 @@ export class StaticMeshFragment extends Fragment {
         GPUBufferUsage.STORAGE |
         GPUBufferUsage.COPY_DST |
         GPUBufferUsage.COPY_SRC,
+      setter(value, typed_array, element_offset) {
+        typed_array[element_offset] = BigInt(value);
+        MeshTaskQueue.mark_meshes_dirty(true);
+      },
       cpu_readback: false,
       buffer_multiplier: 1,
     },
@@ -47,6 +56,10 @@ export class StaticMeshFragment extends Fragment {
       buffer_name: "mesh_asset_id",
       is_container: false,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+      setter(value, typed_array, element_offset) {
+        typed_array[element_offset] = value;
+        MeshTaskQueue.mark_meshes_dirty(true);
+      },
       cpu_readback: false,
       buffer_multiplier: 1,
     },

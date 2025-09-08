@@ -1,12 +1,8 @@
 #include "common.wgsl"
 #include "acceleration_common.wgsl"
 
-// ========================================================================================
-// Constants
-// ========================================================================================
-
 const LINES_PER_BOX = 12u;
-const BVH_COLOR = vec4f(1.0, 0.65, 0.0, 1.0);
+const BVH_COLOR = vec4f(0.0, 0.8, 1.0, 1.0);
 const MAX_STACK = 256u;
 
 const EDGES: array<vec2<u32>, 12> = array<vec2<u32>, 12>(
@@ -15,11 +11,7 @@ const EDGES: array<vec2<u32>, 12> = array<vec2<u32>, 12>(
     vec2u(0, 4), vec2u(1, 5), vec2u(2, 6), vec2u(3, 7),
 );
 
-// ========================================================================================
-// Data Structures
-// ========================================================================================
-
-struct LineData { 
+struct LineData {
     color_and_width: vec4f,
 };
 
@@ -30,10 +22,6 @@ struct BVHData {
     prim_base: u32,
     node_base: u32,
 };
-
-// ========================================================================================
-// Helper Functions
-// ========================================================================================
 
 fn create_line_transform(start: vec3f, end: vec3f) -> mat4x4f {
     let dir = end - start;
@@ -74,20 +62,11 @@ fn corner(min_p: vec3f, max_p: vec3f, idx: u32) -> vec3f {
     return vec3f(x_sel, y_sel, z_sel);
 }
 
-// ========================================================================================
-// Buffers 
-// ========================================================================================
-
-// Outputs
 @group(1) @binding(0) var<storage, read_write> out_transforms: array<mat4x4f>;
 @group(1) @binding(1) var<storage, read_write> out_line_data: array<LineData>;
-@group(1) @binding(2) var<storage, read> bvh4_nodes: array<BVH4Node>;
-@group(1) @binding(3) var<storage, read_write> bvh_data: BVHData;
+@group(1) @binding(2) var<storage, read> blas_nodes: array<BVH4Node>;
+@group(1) @binding(3) var<storage, read_write> blas_data: BVHData;
 @group(1) @binding(4) var<uniform> scene_aabb: AABB;
-
-// ========================================================================================
-// Main (root-down traversal emitting world-space AABBs for BVH2)
-// ========================================================================================
 
 fn emit_box_lines(min_p: vec3f, max_p: vec3f, node_index: u32, is_active: bool) {
     let width = select(0.04, 0.0, !is_active);
@@ -110,18 +89,13 @@ fn emit_box_lines(min_p: vec3f, max_p: vec3f, node_index: u32, is_active: bool) 
 
 @compute @workgroup_size(64)
 fn cs(@builtin(global_invocation_id) gid: vec3u) {
-    let total_bvh4 = bvh_data.prim_count;
-    if (gid.x >= total_bvh4) { return; }
+    let total_blas = blas_data.prim_count;
+    if (gid.x >= total_blas) { return; }
 
-    // One thread per BVH4 node: reconstruct parent chain to decode world bounds
-    let target_idx = bvh_data.node_base + gid.x;
-
-    let node = bvh4_nodes[target_idx];
-
+    let target_idx = gid.x;
+    let node = blas_nodes[target_idx];
     let min_ws = node.min.xyz;
     let max_ws = node.max.xyz;
     let has_volume = all(max_ws > min_ws);
     emit_box_lines(min_ws, max_ws, target_idx, has_volume);
 }
-
-

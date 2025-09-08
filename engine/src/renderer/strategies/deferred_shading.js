@@ -29,6 +29,7 @@ import { OcclusionCuller } from "../cull/occlusion_culler.js";
 // Types and utilities
 import { RenderPassFlags, MaterialFamilyType, DebugDrawType } from "../renderer_types.js";
 import { BVH } from "../../acceleration/bvh.js";
+import { MeshBLAS } from "../../acceleration/mesh_blas.js";
 import { npot, ppot, clamp } from "../../utility/math.js";
 import { profile_scope } from "../../utility/performance.js";
 import {
@@ -323,6 +324,13 @@ const debug_emit_bvh4_nodes_shader_setup = {
   pipeline_shaders: {
     compute: {
       path: "debug/debug_emit_bvh4_nodes_lines.wgsl",
+    },
+  },
+};
+const debug_emit_blas_nodes_shader_setup = {
+  pipeline_shaders: {
+    compute: {
+      path: "debug/debug_emit_blas_nodes_lines.wgsl",
     },
   },
 };
@@ -1079,9 +1087,11 @@ export class DeferredShadingStrategy {
       if (debug_view === DebugDrawType.EntityBounds
             || debug_view === DebugDrawType.BVH
             || debug_view === DebugDrawType.BVH4
+            || debug_view === DebugDrawType.BLAS
           ) {
         const aabb_gpu_data = BVH.to_gpu_data();
-        const max_nodes_debug = BVH.bvh_size;
+        const blas_gpu_data = MeshBLAS.to_gpu_data();
+        const max_nodes_debug = debug_view === DebugDrawType.BLAS ? MeshBLAS.blas_size : BVH.bvh_size;
         const max_lines = max_nodes_debug * 12;
 
         const debug_line_transform_buf = render_graph.create_buffer({
@@ -1105,6 +1115,12 @@ export class DeferredShadingStrategy {
         const scene_bounds = render_graph.register_buffer(
           aabb_gpu_data.scene_bounds_buffer.config.name
         );
+        const blas_nodes = render_graph.register_buffer(
+          blas_gpu_data.nodes_buffer.config.name
+        );
+        const blas_info = render_graph.register_buffer(
+          blas_gpu_data.info_buffer.config.name
+        );
 
         if (debug_view === DebugDrawType.EntityBounds) {
           render_graph.add_pass(
@@ -1118,6 +1134,26 @@ export class DeferredShadingStrategy {
             (graph, frame_data, encoder) => {
               const pass = graph.get_physical_pass(frame_data.current_pass);
               pass.dispatch(Math.ceil(BVH.bvh_size / 64), 1, 1);
+            }
+          );
+        } else if (debug_view === DebugDrawType.BLAS) {
+          render_graph.add_pass(
+            "debug_emit_blas_lines",
+            RenderPassFlags.Compute,
+            {
+              inputs: [
+                debug_line_transform_buf,
+                debug_line_data_buf,
+                blas_nodes,
+                blas_info,
+                scene_bounds,
+              ],
+              outputs: [debug_line_transform_buf, debug_line_data_buf],
+              shader_setup: debug_emit_blas_nodes_shader_setup,
+            },
+            (graph, frame_data, encoder) => {
+              const pass = graph.get_physical_pass(frame_data.current_pass);
+              pass.dispatch(Math.ceil(max_nodes_debug / 64), 1, 1);
             }
           );
         } else if (debug_view === DebugDrawType.BVH4) {

@@ -98,6 +98,9 @@ const LightFragment = {
 
 const StaticMeshFragment = {
   name: "StaticMesh",
+  imports: {
+    MeshTaskQueue: "../../../renderer/mesh_task_queue.js",
+  },
   constants: {
     material_slot_stride: 16,
   },
@@ -106,17 +109,29 @@ const StaticMeshFragment = {
       type: DataType.BIGINT64,
       stride: 1,
       gpu: false,
+      setter: `
+      typed_array[element_offset] = BigInt(value);
+      MeshTaskQueue.mark_meshes_dirty(true);
+      `,
     },
     material_slots: {
       type: DataType.BIGINT64,
       stride: 16,
       gpu: false,
+      setter: `
+      typed_array[element_offset] = BigInt(value);
+      MeshTaskQueue.mark_meshes_dirty(true);
+      `,
     },
     mesh_asset_id: {
       type: DataType.UINT32,
       stride: 1,
       gpu: true,
       usage: BufferType.STORAGE,
+      setter: `
+      typed_array[element_offset] = value;
+      MeshTaskQueue.mark_meshes_dirty(true);
+      `,
     },
   },
 };

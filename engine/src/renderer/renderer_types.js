@@ -126,6 +126,7 @@ export const DebugDrawType = Object.freeze({
     EntityBounds: 16,
     BVH: 17,
     BVH4: 18,
+    BLAS: 19,
 });
 
 /**

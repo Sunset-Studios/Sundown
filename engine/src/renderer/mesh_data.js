@@ -1,6 +1,7 @@
 import { Renderer } from "./renderer.js";
 import { Buffer } from "./buffer.js";
 import { Name } from "../utility/names.js";
+import { MeshBLAS } from "../acceleration/mesh_blas.js";
 
 const vertex_buffer_name = "vertex_buffer";
 const mesh_bounds_buffer_name = "mesh_bounds_buffer";
@@ -25,10 +26,10 @@ const mesh_bounds_size = 8;
 export class MeshData {
   static is_initialized = false;
   static name_to_index = new Map();
-  
+
   static bounds = null;
   static mesh_bounds_buffer = null;
-  
+
   static mesh_count = 0;
   static vertex_buffer_head = 0;
   static vertex_data = null;
@@ -76,13 +77,15 @@ export class MeshData {
     if (!this.is_initialized) {
       this.initialize();
     }
-    
-    if (mesh.bounds_min_and_max) {
-      this._set_bounds(mesh.mesh_data_index, mesh.bounds_min_and_max);
-    }
 
+    // Ensure vertex data is uploaded first so BLAS leaf builder knows vertex offsets
     if (mesh.vertices && mesh.vertex_buffer_offset === -1) {
       mesh.vertex_buffer_offset = this._add_vertex_data(mesh);
+    }
+
+    if (mesh.bounds_min_and_max) {
+      this._set_bounds(mesh.mesh_data_index, mesh.bounds_min_and_max);
+      MeshBLAS.build_from_mesh(mesh, mesh.index_buffer);
     }
   }
 
@@ -96,6 +99,8 @@ export class MeshData {
     if (index === undefined) return;
 
     this._set_bounds(index, [0, 0, 0, 0, 0, 0]);
+
+    MeshBLAS.release(index);
 
     // TODO: Remove and recycle vertex data, potentially using a fixed chunk free list
 
@@ -115,6 +120,7 @@ export class MeshData {
     if (!b) return;
 
     this._set_bounds(index, b);
+    MeshBLAS.build_from_mesh(mesh, mesh.index_buffer);
   }
 
   static _set_bounds(index, b) {

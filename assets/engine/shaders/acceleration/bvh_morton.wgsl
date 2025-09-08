@@ -1,6 +1,18 @@
 #include "common.wgsl"
 #include "acceleration_common.wgsl"
 
+// -----------------------------------------------------------------------------
+// Data Structures
+// -----------------------------------------------------------------------------
+
+struct BVHData {
+    leaf_count: u32,
+    bvh2_count: u32,
+    prim_count: u32,
+    prim_base: u32,
+    node_base: u32,
+};
+
 // ==================================
 // Bindings
 // ==================================
@@ -9,6 +21,7 @@
 @group(1) @binding(1) var<storage, read_write>  morton_codes      : array<u32>;
 @group(1) @binding(2) var<storage, read_write>  bound_indices     : array<u32>;
 @group(1) @binding(3) var<storage, read>        scene_aabb        : AABB;
+@group(1) @binding(4) var<storage, read>        bvh_info          : BVHData;
 
 // ==================================
 // Helpers Functions
@@ -69,7 +82,9 @@ fn morton_code(p: vec3<f32>) -> u32 {
 @compute @workgroup_size(256)
 fn compute_morton_codes(@builtin(global_invocation_id) gid: vec3<u32>) {
     if (gid.x >= arrayLength(&bounds)) { return; }
-    let bound = bounds[gid.x];
+    // bvh_info layout compatibility: [leaf_count, bvh2_count, prim_count, prim_base]
+    let prim_base = bvh_info.prim_base;
+    let bound = bounds[prim_base + gid.x];
     let center = (bound.min + bound.max) * 0.5;
     let extent = bound.max - bound.min;
     let is_invalid = all(bound.min.xyz == vec3<f32>(0.0)) && all(bound.max.xyz == vec3<f32>(0.0));

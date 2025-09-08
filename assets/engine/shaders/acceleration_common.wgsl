@@ -23,6 +23,8 @@ struct BVH4Node {
     children: vec4<f32>,
 };
 
+
+
 // Ray structure for intersection tests
 struct Ray {
     origin_and_tmin: vec4<f32>,

@@ -39,7 +39,7 @@ export class Mesh {
     this.index_buffer = Buffer.create({
       name: `${this.name}_index_buffer`,
       raw_data: this.indices,
-      usage: GPUBufferUsage.INDEX | GPUBufferUsage.COPY_DST,
+      usage: GPUBufferUsage.INDEX | GPUBufferUsage.COPY_DST | GPUBufferUsage.STORAGE,
       element_type: element_type,
     });
   }
@@ -162,7 +162,6 @@ export class Mesh {
     mesh.name = name;
     mesh.vertices = vertices;
     mesh.indices = new Uint16Array(indices);
-    mesh.triangle_bvh = new TriangleBVH(vertices, indices);
 
     mesh.vertex_count = mesh.vertices.length;
     mesh.index_count = mesh.indices.length;
@@ -183,6 +182,8 @@ export class Mesh {
     }
 
     ResourceCache.get().store(CacheTypes.MESH, Name.from(name), mesh);
+
+    MeshTaskQueue.invalidate_mesh(Name.from(name));
 
     return mesh;
   }
@@ -244,7 +245,6 @@ export class Mesh {
     mesh.vertex_count = mesh.vertices.length;
     mesh.index_count = mesh.indices.length;
 
-    mesh.triangle_bvh = new TriangleBVH(mesh.vertices, mesh.indices);
 
     mesh._recreate_index_buffer();
     mesh.sections = [{ first_index: 0, index_count: mesh.index_count }];
@@ -261,6 +261,8 @@ export class Mesh {
     }
 
     ResourceCache.get().store(CacheTypes.MESH, Name.from("engine_quad"), mesh);
+
+    MeshTaskQueue.invalidate_mesh(Name.from("engine_quad"));
 
     return mesh;
   }
@@ -495,7 +497,6 @@ export class Mesh {
     mesh.vertex_count = mesh.vertices.length;
     mesh.index_count = mesh.indices.length;
 
-    mesh.triangle_bvh = new TriangleBVH(mesh.vertices, mesh.indices);
 
     mesh._recreate_index_buffer();
     mesh.sections = [{ first_index: 0, index_count: mesh.index_count }];
@@ -512,6 +513,8 @@ export class Mesh {
     }
 
     ResourceCache.get().store(CacheTypes.MESH, Name.from("engine_cube"), mesh);
+
+    MeshTaskQueue.invalidate_mesh(Name.from("engine_cube"));
 
     return mesh;
   }
@@ -854,7 +857,6 @@ export class Mesh {
       mesh.vertex_count = mesh.vertices.length;
       mesh.index_count = mesh.indices.length;
 
-      mesh.triangle_bvh = new TriangleBVH(mesh.vertices, mesh.indices);
 
       mesh._recreate_vertex_bounds();
       mesh._recreate_index_buffer();
@@ -1011,149 +1013,5 @@ export class Mesh {
     }
 
     return std.material_id;
-  }
-}
-
-export class TriangleBVHNode {
-  constructor() {
-    this.min = [Infinity, Infinity, Infinity];
-    this.max = [-Infinity, -Infinity, -Infinity];
-    this.left = null;
-    this.right = null;
-    this.start = 0; // start index into triangle array
-    this.count = 0; // number of triangles
-  }
-}
-
-export class TriangleBVH {
-  // The BVH accepts a flat list of vertices and an index buffer that defines the triangle ordering.
-  // Internally we transform this into an array of triangles (each triangle is an array of three vec3 positions)
-  // so that the rest of the implementation can utilize triangles directly.
-
-  // vertices  - Array of vertex objects OR vec3/vec4 position arrays. If the vertex is an object it must expose a `position` field.
-  // indices   - TypedArray/Array containing indices that reference the `vertices` list. Every consecutive triplet forms one triangle.
-  constructor(vertices, indices) {
-    // Convert vertices/indices to the internal `triangles` representation
-    // this.triangles = [];
-    // const vertex_count = vertices.length;
-    // const index_count = indices.length;
-    // // Helper to extract a vec3 position from a vertex entry. Supports either
-    // // raw position arrays ([x, y, z, ...]) or objects with a `position` field.
-    // const get_pos = (v) => {
-    //   if (Array.isArray(v)) {
-    //     // If the array has more than 3 components (e.g. vec4) slice the first 3.
-    //     return [v[0], v[1], v[2]];
-    //   }
-    //   if (v && v.position) {
-    //     return [v.position[0], v.position[1], v.position[2]];
-    //   }
-    //   // Fallback – zero vector (should not happen in valid meshes).
-    //   return [0, 0, 0];
-    // };
-    // for (let i = 0; i + 2 < index_count; i += 3) {
-    //   const i0 = indices[i];
-    //   const i1 = indices[i + 1];
-    //   const i2 = indices[i + 2];
-    //   if (i0 >= vertex_count || i1 >= vertex_count || i2 >= vertex_count) {
-    //     // Skip degenerate/out-of-range triangles.
-    //     continue;
-    //   }
-    //   const v0 = get_pos(vertices[i0]);
-    //   const v1 = get_pos(vertices[i1]);
-    //   const v2 = get_pos(vertices[i2]);
-    //   this.triangles.push([v0, v1, v2]);
-    // }
-    // this.root = this._build(0, this.triangles.length);
-  }
-
-  // Axis aligned bounding box for triangle range
-  _get_bounds(start, end) {
-    const min = [Infinity, Infinity, Infinity];
-    const max = [-Infinity, -Infinity, -Infinity];
-    // for (let i = start; i < end; i++) {
-    //   const t = this.triangles[i];
-    //   for (let j = 0; j < 3; j++) {
-    //     min[0] = Math.min(min[0], t[j][0]);
-    //     min[1] = Math.min(min[1], t[j][1]);
-    //     min[2] = Math.min(min[2], t[j][2]);
-    //     max[0] = Math.max(max[0], t[j][0]);
-    //     max[1] = Math.max(max[1], t[j][1]);
-    //     max[2] = Math.max(max[2], t[j][2]);
-    //   }
-    // }
-    return { min, max };
-  }
-
-  _build(start, end) {
-    const node = new TriangleBVHNode();
-    // node.start = start;
-    // node.count = end - start;
-
-    // const bounds = this._get_bounds(start, end);
-    // node.min = bounds.min;
-    // node.max = bounds.max;
-
-    // if (end - start <= 4) {
-    //   return node; // leaf
-    // }
-
-    // // choose split axis
-    // const size = [
-    //   bounds.max[0] - bounds.min[0],
-    //   bounds.max[1] - bounds.min[1],
-    //   bounds.max[2] - bounds.min[2],
-    // ];
-    // let axis = 0;
-    // if (size[1] > size[0]) axis = 1;
-    // if (size[2] > size[axis]) axis = 2;
-
-    // // sort triangles by centroid along axis
-    // const mid = (start + end) >> 1;
-    // this.triangles
-    //   .slice(start, end)
-    //   .sort((a, b) => {
-    //     const ca = (a[0][axis] + a[1][axis] + a[2][axis]) / 3;
-    //     const cb = (b[0][axis] + b[1][axis] + b[2][axis]) / 3;
-    //     return ca - cb;
-    //   })
-    //   .forEach((t, i) => {
-    //     this.triangles[start + i] = t;
-    //   });
-
-    // node.left = this._build(start, mid);
-    // node.right = this._build(mid, end);
-
-    return node;
-  }
-
-  // flatten BVH into arrays for GPU consumption
-  flatten() {
-    const nodes = [];
-    // const stack = [{ node: this.root, parent: -1 }];
-    // while (stack.length) {
-    //   const { node, parent } = stack.pop();
-    //   const index = nodes.length;
-    //   nodes.push({
-    //     min: node.min,
-    //     max: node.max,
-    //     left: -1,
-    //     right: -1,
-    //     start: node.start,
-    //     count: node.count,
-    //     parent,
-    //   });
-    //   if (node.right) stack.push({ node: node.right, parent: index });
-    //   if (node.left) stack.push({ node: node.left, parent: index });
-    // }
-    // // update child indices
-    // for (let i = 0; i < nodes.length; i++) {
-    //   const n = nodes[i];
-    //   if (n.left !== -1) continue; // already set
-    //   const left_child = nodes.findIndex((x) => x.parent === i && x !== n);
-    //   const right_child = nodes.findIndex((x, idx) => x.parent === i && idx !== left_child);
-    //   n.left = left_child;
-    //   n.right = right_child;
-    // }
-    return nodes;
   }
 }

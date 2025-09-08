@@ -51,7 +51,7 @@ export class BVHProcessor {
   sort_uniforms_buffers = [];
   radix_uniforms_data = new Uint32Array(4);
   bvh2_uniforms = new Uint32Array(2);
-  bvh2_data = new Uint32Array(4);
+  bvh2_data = new Uint32Array(6);
   bounds_processing_inputs = [null, null, null, null, null, null];
   bounds_processing_outputs = [null, null, null, null, null];
   morton_code_inputs = [null, null, null, null, null, null, null, null];
@@ -145,6 +145,7 @@ export class BVHProcessor {
     this.morton_code_inputs[1] = bvh.morton_codes_buffer;
     this.morton_code_inputs[2] = bvh.sorted_indices_buffer;
     this.morton_code_inputs[3] = bvh.scene_bounds_buffer;
+    this.morton_code_inputs[4] = bvh.bvh_info_buffer;
 
     this.morton_code_outputs[0] = bvh.morton_codes_buffer;
     this.morton_code_outputs[1] = bvh.sorted_indices_buffer;
@@ -293,8 +294,9 @@ export class BVHProcessor {
     // Reset counters for this frame
     this.bvh2_data[0] = 0; // leaf_count
     this.bvh2_data[1] = 0; // bvh2_count
-    this.bvh2_data[2] = 0xffffffff; // root_index
-    this.bvh2_data[3] = primitive_count; // prim_count
+    this.bvh2_data[2] = primitive_count; // prim_count
+    this.bvh2_data[3] = 0; // prim_base
+    this.bvh2_data[4] = 0; // node_base
     bvh.bvh_info_buffer.write(this.bvh2_data);
 
     this.bvh2_inputs[0] = bounds_buffer.buffer;

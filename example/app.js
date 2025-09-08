@@ -691,34 +691,6 @@ export class TexturesScene extends Scene {
     const barrel_mesh = Mesh.from_gltf("engine/models/barrel/Barrel.gltf");
 
     const barrel_material = StandardMaterial.create("BarrelMaterial");
-    {
-      let barrel_albedo = Texture.load(["engine/models/barrel/barrel_BaseColor.png"], {
-        name: "barrel_albedo",
-        format: "rgba8unorm",
-        dimension: "2d",
-        usage:
-          GPUTextureUsage.TEXTURE_BINDING |
-          GPUTextureUsage.COPY_DST |
-          GPUTextureUsage.RENDER_ATTACHMENT,
-        material_notifier: "barrel_albedo",
-        flip_y: false,
-      });
-      let barrel_metallic = Texture.load(["engine/models/barrel/barrel_Metallic-barrel_Roughness.png"], {
-        name: "barrel_metallic",
-        format: "rgba8unorm",
-        dimension: "2d",
-        usage:
-          GPUTextureUsage.TEXTURE_BINDING |
-          GPUTextureUsage.COPY_DST |
-          GPUTextureUsage.RENDER_ATTACHMENT,
-        material_notifier: "barrel_metallic",
-        flip_y: false,
-      });
-
-      barrel_material.set_albedo([1, 1, 1, 1], barrel_albedo);
-      barrel_material.set_metallic(0.5, barrel_metallic, TextureChannel.G);
-      barrel_material.set_roughness(0.5, barrel_metallic, TextureChannel.B);
-    }
 
     const num_barrels = 500;
     const barrel_spawn_range = 1000; // spread barrels across the entire ground plane
@@ -2740,8 +2712,8 @@ export class SponzaScene extends Scene {
     SharedEnvironmentData.set_skydome("default_scene_skydome");
 
     const view_data = SharedViewBuffer.get_view_data(0);
-    view_data.view_position = [0, 8, 28];
-    view_data.view_rotation = quat.fromEuler(quat.create(), -5, 180, 0);
+    view_data.view_position = [5.78, 6.92, 0.98];
+    view_data.view_rotation = [-0.1072285, 0.7414748, -0.12231449, -0.650023400];
 
     const light_entity = EntityManager.create_entity([LightFragment]);
     this.entities.push(light_entity);
