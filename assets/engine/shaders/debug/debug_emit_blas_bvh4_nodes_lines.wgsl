@@ -2,8 +2,10 @@
 #include "acceleration_common.wgsl"
 
 const LINES_PER_BOX = 12u;
-const BVH_COLOR = vec4f(0.0, 0.8, 1.0, 1.0);
+const BVH4_COLOR = vec4f(1.0, 0.6, 0.2, 1.0);
 const MAX_STACK = 256u;
+const EPS = 0.0001;
+const MAX_NODES_DEBUG = 8096u;
 
 const EDGES: array<vec2<u32>, 12> = array<vec2<u32>, 12>(
     vec2u(0, 1), vec2u(1, 3), vec2u(3, 2), vec2u(2, 0),
@@ -65,50 +67,84 @@ fn corner(min_p: vec3f, max_p: vec3f, idx: u32) -> vec3f {
 }
 
 @group(1) @binding(0) var<storage, read_write> out_line_data: array<LineData>;
-@group(1) @binding(1) var<storage, read> blas_nodes: array<BVH4Node>;
-@group(1) @binding(2) var<storage, read_write> blas_data: array<MeshDirectoryEntry>;
-@group(1) @binding(3) var<uniform> scene_aabb: AABB;
-@group(1) @binding(4) var<storage, read> mesh_asset_ids: array<u32>;
-@group(1) @binding(5) var<storage, read> object_instances: array<ObjectInstance>;
-@group(1) @binding(6) var<storage, read> visible_object_instances: array<i32>;
-@group(1) @binding(7) var<storage, read> entity_transforms: array<EntityTransform>;
+@group(1) @binding(1) var<storage, read> bvh4_nodes: array<BVH4Node>;
+@group(1) @binding(2) var<storage, read> blas_directory: array<MeshDirectoryEntry>;
+@group(1) @binding(3) var<storage, read> entity_transforms: array<EntityTransform>;
+@group(1) @binding(4) var<storage, read> closest_entities_per_mesh: array<u32>;
 
-fn emit_box_lines(min_p: vec3f, max_p: vec3f, node_index: u32, is_active: bool) {
-    let width = select(0.04, 0.0, !is_active);
+@compute @workgroup_size(16, 16)
+fn cs(
+    @builtin(global_invocation_id) gid: vec3<u32>
+) {
+    let mesh_asset_id = gid.y;
+    let node_idx = gid.x;
+    
+    // ============================================================================
+    // BOUNDS CHECKING - Early exit for invalid threads
+    // ============================================================================
+    
+    // Check if this mesh has a closest entity assigned
+    let entity_resolved = closest_entities_per_mesh[mesh_asset_id];
+    if (entity_resolved == 0u) { return; } // No entity assigned for this mesh
+    
+    let mesh_directory_entry = blas_directory[mesh_asset_id];
+    
+    // Check if this node index is valid for this mesh
+    if (node_idx >= mesh_directory_entry.bvh4_capacity) { return; }
+    
+    // ============================================================================
+    // UNIQUE LINEAR INDEX CALCULATION - Create unique index per (mesh, node)
+    // ============================================================================
+    
+    // Calculate a unique linear index for this (mesh_asset_id, node_idx) pair
+    // We need to ensure this doesn't exceed the allocated line buffer size
+    let max_nodes_per_mesh = (MAX_NODES_DEBUG + 15u) / 16u * 16u; // Round up to workgroup size
+    let unique_linear_index = mesh_asset_id * max_nodes_per_mesh + node_idx;
+    
+    // ============================================================================
+    // MESH DATA RETRIEVAL & TRANSFORMATION
+    // ============================================================================
+    
+    let entity_transform = entity_transforms[entity_resolved].transform;
+    let global_node_index = mesh_directory_entry.bvh4_base + node_idx;
+    let bvh4_node = bvh4_nodes[global_node_index];
+    var node = AABB(bvh4_node.min, bvh4_node.max);
+    node.min -= vec4f(EPS, EPS, EPS, 0.0);
+    node.max += vec4f(EPS, EPS, EPS, 0.0);
+    
+    // Transform BLAS node bounds to world space using entity transform
+    let transformed_node = transform_aabb(node, entity_transform);
+    let min_ws = transformed_node.min.xyz;
+    let max_ws = transformed_node.max.xyz;
+    
+    // ============================================================================
+    // VALIDITY CHECKS & LINE GENERATION
+    // ============================================================================
+    
+    let has_volume = all(max_ws > min_ws);
+    let is_valid_node = is_valid_node(node);
+    let is_active = has_volume && is_valid_node;
+    let width = select(0.0, 0.004, is_active);
+    
+    // Generate lines for this box using the unique linear index
     for (var e: u32 = 0u; e < LINES_PER_BOX; e = e + 1u) {
-        let base = node_index * LINES_PER_BOX + e;
+        let line_index = unique_linear_index * LINES_PER_BOX + e;
+        
         let idx0 = EDGES[e].x;
         let idx1 = EDGES[e].y;
-        let p0 = corner(min_p, max_p, idx0);
-        let p1 = corner(min_p, max_p, idx1);
+        let p0 = corner(min_ws, max_ws, idx0);
+        let p1 = corner(min_ws, max_ws, idx1);
 
-        let transform = create_line_transform(p0, p1);
-        out_line_data[base].transform[0] = select(transform[0], identity_matrix[0], !is_active);
-        out_line_data[base].transform[1] = select(transform[1], identity_matrix[1], !is_active);
-        out_line_data[base].transform[2] = select(transform[2], identity_matrix[2], !is_active);
-        out_line_data[base].transform[3] = select(transform[3], identity_matrix[3], !is_active);
-        out_line_data[base].color_and_width = vec4f(BVH_COLOR.rgb, width);
+        var transform = create_line_transform(p0, p1);
+        
+        // Zero out transform for inactive nodes (makes them invisible)
+        transform[0] = select(transform[0], identity_matrix[0], !is_active);
+        transform[1] = select(transform[1], identity_matrix[1], !is_active);
+        transform[2] = select(transform[2], identity_matrix[2], !is_active);
+        transform[3] = select(transform[3], identity_matrix[3], !is_active);
+
+        out_line_data[line_index].transform = transform;
+        out_line_data[line_index].color_and_width = vec4f(BVH4_COLOR.rgb, width);
     }
 }
 
-@compute @workgroup_size(16, 16)
-fn cs(@builtin(global_invocation_id) gid: vec3u) {
-    let instance = gid.y;
-    let instance_index = visible_object_instances[instance];
-    let entity_resolved = get_entity_row(object_instances[instance_index].row);
-
-    let entity_transform = entity_transforms[entity_resolved];
-    let mesh_asset_id = mesh_asset_ids[entity_resolved];
-    let mesh_directory_entry = blas_directory[mesh_asset_id];
-
-    let total_blas = mesh_directory_entry.leaf_count;
-    if (gid.x >= total_blas) { return; }
-
-    let target_idx = gid.x;
-    let node = blas_nodes[mesh_directory_entry.bvh4_base + target_idx];
-    let transformed_node = transform_aabb(node, entity_transform.transform);
-    let min_ws = transformed_node.min.xyz;
-    let max_ws = transformed_node.max.xyz;
-    let has_volume = all(max_ws > min_ws);
-    emit_box_lines(min_ws, max_ws, target_idx, has_volume);
-}

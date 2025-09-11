@@ -1048,12 +1048,17 @@ export class DeferredShadingStrategy {
         const aabb_gpu_data = BVH.to_gpu_data();
         const blas_gpu_data = MeshBLAS.to_gpu_data();
 
-        const max_nodes_debug =
-          debug_view === DebugDrawType.BLAS_Bounds
-            ? MeshBLAS.bounds_size
-            : debug_view === DebugDrawType.BLAS_BVH4
-              ? MeshBLAS.bvh4_size
-              : BVH.bvh_size;
+        let max_nodes_debug = BVH.bvh_size;
+        switch (debug_view) {
+          case DebugDrawType.BLAS_Bounds:
+            max_nodes_debug = MeshBLAS.bounds_size;
+            break;
+          case DebugDrawType.BLAS_BVH4:
+            max_nodes_debug = MeshBLAS.bvh4_size;
+            break;
+          default:
+            break;
+        }
         const max_lines = Math.min(max_nodes_debug * 12 * 20, 256000 * 12 * 20);
 
         const debug_line_data_buf = render_graph.create_buffer({
@@ -1175,12 +1180,13 @@ export class DeferredShadingStrategy {
             }
           );
         } else if (debug_view === DebugDrawType.BLAS_BVH4) {
-          const blas_bvh4_nodes = render_graph.register_buffer(
+          const blas_nodes = render_graph.register_buffer(
             blas_gpu_data.bvh4_nodes_buffer.config.name
           );
           const blas_directory = render_graph.register_buffer(
             blas_gpu_data.directory_buffer.config.name
           );
+
           const mesh_asset_ids = EntityManager.get_fragment_gpu_buffer(
             StaticMeshFragment,
             mesh_asset_id_name
@@ -1189,19 +1195,72 @@ export class DeferredShadingStrategy {
             mesh_asset_ids.buffer.config.name
           );
 
+          // Calculate mesh directory size (directory buffer size / bytes per entry / 4 bytes per u32)
+          const directory_buffer_size = blas_gpu_data.directory_buffer.config.size;
+          const directory_entry_size = 6; // [bvh2_base, bvh2_cap, bvh4_base, bvh4_cap, leaf_count, first_vertex]
+          const mesh_count = Math.floor(directory_buffer_size / (directory_entry_size * 4));
+
+          // Compact per-mesh preprocessing buffers
+          const closest_entities_per_mesh_buf = render_graph.create_buffer({
+            name: "closest_entities_per_mesh",
+            size: mesh_count * 4, // u32 per mesh
+            usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+          });
+
+          const closest_distances_per_mesh_buf = render_graph.create_buffer({
+            name: "closest_distances_per_mesh",
+            size: mesh_count * 4, // f32 per mesh
+            usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+          });
+
+          // ┌─────────────────────────────────────────────────────────────────────────────┐
+          // │ 🔍 PASS: Find Closest Mesh Instances                                       │
+          // │    Compact preprocessing to find closest entity per mesh asset              │
+          // └─────────────────────────────────────────────────────────────────────────────┘
+          render_graph.add_pass(
+            "debug_init_closest_distances",
+            RenderPassFlags.GraphLocal,
+            {},
+            (graph, frame_data, encoder) => {
+              // Initialize distances to infinity
+              const distances_buf = graph.get_physical_buffer(closest_distances_per_mesh_buf);
+              const infinity_array = new Float32Array(mesh_count);
+              infinity_array.fill(Number.MAX_VALUE);
+              distances_buf.write(infinity_array);
+            }
+          );
+
+          render_graph.add_pass(
+            "debug_find_closest_instances",
+            RenderPassFlags.Compute,
+            {
+              inputs: [
+                closest_entities_per_mesh_buf,
+                closest_distances_per_mesh_buf,
+                object_instances,
+                this.frustum_culler.get_visibility_buffer(current_view, 0),
+                entity_transforms,
+                mesh_asset_ids_buffer,
+              ],
+              outputs: [closest_entities_per_mesh_buf, closest_distances_per_mesh_buf],
+              shader_setup: debug_find_closest_mesh_instances_shader_setup,
+            },
+            (graph, frame_data, encoder) => {
+              const pass = graph.get_physical_pass(frame_data.current_pass);
+              pass.dispatch(Math.ceil(mesh_count / 64), 1, 1);
+            }
+          );
+
           render_graph.add_pass(
             "debug_emit_blas_bvh4_lines",
             RenderPassFlags.Compute,
             {
               inputs: [
                 debug_line_data_buf,
-                blas_bvh4_nodes,
+                blas_nodes,
                 blas_directory,
-                scene_bounds,
-                mesh_asset_ids_buffer,
-                object_instances,
-                this.frustum_culler.get_visibility_buffer(current_view, 0),
                 entity_transforms,
+                closest_entities_per_mesh_buf,
               ],
               outputs: [debug_line_data_buf],
               shader_setup: debug_emit_blas_bvh4_nodes_shader_setup,
@@ -1209,7 +1268,7 @@ export class DeferredShadingStrategy {
             (graph, frame_data, encoder) => {
               const pass = graph.get_physical_pass(frame_data.current_pass);
               const x_dispatch = Math.ceil(max_nodes_debug / 16);
-              const y_dispatch = Math.ceil(draw_count / 16);
+              const y_dispatch = Math.ceil(mesh_count / 16);
               pass.dispatch(x_dispatch, y_dispatch, 1);
             }
           );

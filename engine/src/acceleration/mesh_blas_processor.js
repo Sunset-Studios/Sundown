@@ -176,6 +176,15 @@ export class MeshBLASProcessor extends SimulationLayer {
     // BVH4 Conversion Phase Bindings
     this.bvh4_inputs = new Array(7); // [bvh2_bounds, bvh4_nodes, build_state, index_pairs, prim_indices, build_info, debug_watchdog]
     this.bvh4_outputs = new Array(5); // [bvh4_nodes, build_state, index_pairs, prim_indices, debug_watchdog]
+
+    // ┌─────────────────────────────────────────────────────────────────────────────────────────┐
+    // │                          📋 BUILD QUEUE MANAGEMENT SYSTEM                               │
+    // │                                                                                          │
+    // │  Queue system to process only one mesh BVH build per frame, preventing frame rate      │
+    // │  drops from multiple simultaneous builds while maintaining steady progress through      │
+    // │  all dirty meshes.                                                                      │
+    // └─────────────────────────────────────────────────────────────────────────────────────────┘
+    this.build_queue = []; // Queue of pending mesh builds: [{mesh_id, leaf_count, mesh_info_buffer, mesh_selector_buffer}]
   }
 
   // ╔════════════════════════════════════════════════════════════════════════════════════════════╗
@@ -187,15 +196,20 @@ export class MeshBLASProcessor extends SimulationLayer {
    * │                            🕰️ SIMULATION LAYER UPDATE                                   │
    * └─────────────────────────────────────────────────────────────────────────────────────────┘
    *
-   * Called each frame to process any meshes marked as dirty and requiring BVH reconstruction.
-   * This method maintains the asynchronous nature of the build pipeline by processing all
-   * pending mesh updates on the GPU without blocking the main thread.
+   * Called each frame to manage mesh BVH construction queue. This method maintains optimal
+   * frame rates by queuing dirty meshes and processing only one mesh build per frame,
+   * ensuring consistent performance while making steady progress through all builds.
    *
    * @param {number} delta_time - Frame delta time (inherited from SimulationLayer)
    */
   update(delta_time) {
     super.update(delta_time);
-    this.build_dirty_meshes();
+    
+    // Queue any newly dirty meshes for processing
+    this.queue_dirty_meshes();
+    
+    // Process one queued build per frame to maintain performance
+    this.process_queued_build();
   }
 
   /**
@@ -245,16 +259,18 @@ export class MeshBLASProcessor extends SimulationLayer {
     // │  enabling efficient clustering during BVH construction.                                 │
     // └─────────────────────────────────────────────────────────────────────────────────────────┘
 
-    // Acquire shared scratch buffers from the MeshBLAS system
-    const morton_codes_buffer = MeshBLAS.morton_codes_buffer;
-    const sorted_indices_buffer = MeshBLAS.sorted_indices_buffer;
-    const bvh2_bounds_buffer = MeshBLAS.bvh2_bounds_buffer;
-
+    
     // Setup Morton code generation compute dispatch
     const tlas_gpu_data = BVH.to_gpu_data();
+    const blas_gpu_data = MeshBLAS.to_gpu_data();
+
+    // Acquire shared scratch buffers from the MeshBLAS system
+    const morton_codes_buffer = blas_gpu_data.morton_codes_buffer;
+    const sorted_indices_buffer = blas_gpu_data.sorted_indices_buffer;
+    const bvh2_nodes_buffer = blas_gpu_data.bvh2_nodes_buffer;
 
     // Input Bindings: [bvh2_bounds, morton_codes, sorted_indices, scene_aabb, mesh_build_info]
-    this.morton_code_inputs[0] = bvh2_bounds_buffer; // Triangle bounding boxes (input)
+    this.morton_code_inputs[0] = bvh2_nodes_buffer; // Triangle bounding boxes (input)
     this.morton_code_inputs[1] = morton_codes_buffer; // Morton codes output buffer
     this.morton_code_inputs[2] = sorted_indices_buffer; // Triangle indices output buffer
     this.morton_code_inputs[3] = tlas_gpu_data.scene_bounds_buffer; // Global scene AABB for normalization
@@ -296,11 +312,11 @@ export class MeshBLASProcessor extends SimulationLayer {
     this.sort_uniforms_buffers[0].write(this.radix_uniforms);
 
     // Acquire OneSweep algorithm infrastructure buffers
-    const temp_morton_codes_buffer = MeshBLAS.temp_morton_codes_buffer; // Ping-pong buffer for codes
-    const temp_sorted_indices_buffer = MeshBLAS.temp_sorted_indices_buffer; // Ping-pong buffer for indices
-    const onesweep_global_hist_buffer = MeshBLAS.onesweep_global_hist_buffer; // Global histogram (256×4 entries)
-    const onesweep_pass_hist_buffer = MeshBLAS.onesweep_pass_hist_buffer; // Per-pass histogram data
-    const onesweep_tile_indices_buffer = MeshBLAS.onesweep_tile_indices_buffer; // Tile boundary management
+    const temp_morton_codes_buffer = blas_gpu_data.temp_morton_codes_buffer; // Ping-pong buffer for codes
+    const temp_sorted_indices_buffer = blas_gpu_data.temp_sorted_indices_buffer; // Ping-pong buffer for indices
+    const onesweep_global_hist_buffer = blas_gpu_data.onesweep_global_hist_buffer; // Global histogram (256×4 entries)
+    const onesweep_pass_hist_buffer = blas_gpu_data.onesweep_pass_hist_buffer; // Per-pass histogram data
+    const onesweep_tile_indices_buffer = blas_gpu_data.onesweep_tile_indices_buffer; // Tile boundary management
 
     // Setup comprehensive input bindings for OneSweep phases
     this.radix_sort_inputs[0] = morton_codes_buffer; // Source Morton codes
@@ -420,14 +436,14 @@ export class MeshBLASProcessor extends SimulationLayer {
     // └─────────────────────────────────────────────────────────────────────────────────────────┘
 
     // Calculate workgroup distribution for BVH2 construction
-    const bvh2_workgroups = Math.ceil(primitive_count / 128); // 128 threads per workgroup for BVH ops
+    const bvh2_workgroups = Math.max(1, Math.ceil(primitive_count / 128)); // 128 threads per workgroup for BVH ops
 
     // Acquire additional scratch buffers for hierarchy construction
-    const parent_idx_buffer = MeshBLAS.parent_idx_buffer; // Parent node index tracking
-    const bvh4_index_pairs_buffer = MeshBLAS.bvh4_index_pairs_buffer; // Child-parent relationships
+    const parent_idx_buffer = blas_gpu_data.parent_idx_buffer; // Parent node index tracking
+    const bvh4_index_pairs_buffer = blas_gpu_data.bvh4_index_pairs_buffer; // Child-parent relationships
 
     // Configure BVH2 construction input bindings
-    this.bvh2_inputs[0] = bvh2_bounds_buffer; // BVH2 node storage (input/output)
+    this.bvh2_inputs[0] = bvh2_nodes_buffer; // BVH2 node storage (input/output)
     this.bvh2_inputs[1] = sorted_indices_buffer; // Morton-sorted triangle indices
     this.bvh2_inputs[2] = mesh_info_buffer; // Per-mesh build parameters
     this.bvh2_inputs[3] = morton_codes_buffer; // Sorted Morton codes for clustering
@@ -435,8 +451,8 @@ export class MeshBLASProcessor extends SimulationLayer {
     this.bvh2_inputs[5] = bvh4_index_pairs_buffer; // Index pairs for BVH4 conversion prep
 
     // Configure BVH2 construction output bindings
-    this.bvh2_outputs[0] = bvh2_bounds_buffer; // Updated BVH2 nodes with computed bounds
-    this.bvh2_outputs[1] = bvh2_bounds_buffer; // Reused binding for efficiency
+    this.bvh2_outputs[0] = bvh2_nodes_buffer; // Updated BVH2 nodes with computed bounds
+    this.bvh2_outputs[1] = bvh2_nodes_buffer; // Reused binding for efficiency
 
     // ┌─────────────────────────────────────────────────────────────────────────────────────────┐
     // │                           🌱 LEAF CLUSTER INITIALIZATION                                │
@@ -484,17 +500,17 @@ export class MeshBLASProcessor extends SimulationLayer {
     build_state[4] = primitive_count; // primitive_count: Total triangles for validation
 
     // Acquire BVH4 conversion infrastructure buffers
-    const bvh4_build_state_buffer = MeshBLAS.bvh4_build_state_buffer; // Build state machine
-    const bvh4_nodes_buffer = MeshBLAS.bvh4_nodes_buffer; // Final BVH4 nodes
-    const bvh4_prim_indices_buffer = MeshBLAS.bvh4_prim_indices_buffer; // Primitive assignments
-    const bvh4_debug_watchdog_buffer = MeshBLAS.bvh4_debug_watchdog_buffer; // Debug/safety monitoring
+    const bvh4_build_state_buffer = blas_gpu_data.bvh4_build_state_buffer; // Build state machine
+    const bvh4_nodes_buffer = blas_gpu_data.bvh4_nodes_buffer; // Final BVH4 nodes
+    const bvh4_prim_indices_buffer = blas_gpu_data.bvh4_prim_indices_buffer; // Primitive assignments
+    const bvh4_debug_watchdog_buffer = blas_gpu_data.bvh4_debug_watchdog_buffer; // Debug/safety monitoring
 
     // Initialize build state and reset debug counters
     bvh4_build_state_buffer.write(build_state);
     bvh4_debug_watchdog_buffer.write_raw(new Uint32Array(4)); // Clear debug state
 
     // Configure BVH4 conversion input bindings
-    this.bvh4_inputs[0] = bvh2_bounds_buffer; // Source BVH2 tree for conversion
+    this.bvh4_inputs[0] = bvh2_nodes_buffer; // Source BVH2 tree for conversion
     this.bvh4_inputs[1] = bvh4_nodes_buffer; // Destination BVH4 node buffer
     this.bvh4_inputs[2] = bvh4_build_state_buffer; // Conversion state machine
     this.bvh4_inputs[3] = bvh4_index_pairs_buffer; // Child-parent relationship tracking
@@ -532,26 +548,27 @@ export class MeshBLASProcessor extends SimulationLayer {
 
   /**
    * ┌─────────────────────────────────────────────────────────────────────────────────────────┐
-   * │                     🏭 DIRTY MESH PROCESSING ORCHESTRATOR                               │
+   * │                        🏭 DIRTY MESH QUEUE ORCHESTRATOR                                 │
    * └─────────────────────────────────────────────────────────────────────────────────────────┘
    *
-   * Processes all meshes marked as dirty and requiring BVH reconstruction. This method
-   * coordinates the complete pipeline from leaf bounds generation through final BVH4
-   * optimization, managing temporary resources and ensuring optimal batch processing.
+   * Queues all meshes marked as dirty and requiring BVH reconstruction for processing.
+   * This method prepares the necessary resources and adds builds to the processing queue
+   * instead of executing them immediately, enabling frame-rate-friendly single-build-per-frame
+   * processing.
    *
-   * 🔄 PROCESSING WORKFLOW:
+   * 🔄 QUEUING WORKFLOW:
    *    Step 1: Dirty Mesh Detection    → Query MeshBLAS system for pending builds
    *    Step 2: Resource Preparation    → Auto-resize scratch buffers for largest mesh
-   *    Step 3: Leaf Bounds Generation  → Compute triangle AABBs from geometry
-   *    Step 4: Complete Pipeline       → Execute 5-phase BVH construction pipeline
-   *    Step 5: State Management        → Clear dirty flags after successful builds
+   *    Step 3: Buffer Creation         → Create per-mesh parameter buffers
+   *    Step 4: Queue Addition          → Add prepared build to processing queue
+   *    Step 5: State Management        → Clear dirty flags after queuing
    *
    * 🚀 PERFORMANCE OPTIMIZATIONS:
-   *    • Batch Processing: All dirty meshes processed in single frame
-   *    • Resource Reuse: Shared scratch buffers across all mesh builds
-   *    • Automatic Scaling: Scratch buffers sized for largest mesh complexity
+   *    • Deferred Processing: Builds queued for later single-per-frame execution
+   *    • Resource Pre-allocation: Buffers created during queuing phase
+   *    • Queue Management: FIFO processing maintains build order consistency
    */
-  build_dirty_meshes() {
+  queue_dirty_meshes() {
     const dirty_meshes = MeshBLAS.dirty_meshes;
     if (!dirty_meshes || dirty_meshes.size === 0) return;
 
@@ -559,9 +576,7 @@ export class MeshBLASProcessor extends SimulationLayer {
     // │                           📋 BATCH PROCESSING SETUP                                     │
     // └─────────────────────────────────────────────────────────────────────────────────────────┘
 
-    const blas_data = MeshBLAS.to_gpu_data(); // Acquire dual-buffer system references
-
-    // Process each dirty mesh through the complete acceleration structure pipeline
+    // Process each dirty mesh and add to build queue
     for (const mesh_id of dirty_meshes) {
       const mesh_meta = MeshBLAS.get_mesh_meta(mesh_id);
       if (!mesh_meta) continue; // Skip meshes without valid metadata
@@ -591,44 +606,88 @@ export class MeshBLASProcessor extends SimulationLayer {
       mesh_selector_buffer.write_raw(new Uint32Array([mesh_id >>> 0]));
 
       // ┌─────────────────────────────────────────────────────────────────────────────────────────┐
-      // │                        🔢 PHASE 0: LEAF BOUNDS GENERATION                               │
+      // │                              📋 ADD BUILD TO QUEUE                                      │
       // └─────────────────────────────────────────────────────────────────────────────────────────┘
 
-      // Generate triangle bounding boxes from mesh geometry
-      const leaf_workgroups = Math.max(1, Math.ceil(leaf_count / 64)); // 64 triangles per workgroup
-      ComputeTaskQueue.new_task(
-        `mesh_${mesh_id}_generate_leaf_bounds`,
-        "acceleration/blas_leaf_bounds.wgsl",
-        [
-          blas_data.bvh2_nodes_buffer, // Destination: BVH2 leaf node storage
-          blas_data.directory_buffer, // Mesh allocation directory
-          mesh_selector_buffer, // Current mesh identifier
-          mesh_meta.index_buffer, // Triangle index data
-        ],
-        [blas_data.bvh2_nodes_buffer], // Updated leaf bounds
-        leaf_workgroups,
-        1,
-        1,
-        "write_leaf_bounds"
-      );
-
-      // ┌─────────────────────────────────────────────────────────────────────────────────────────┐
-      // │                      🚀 COMPLETE 5-PHASE PIPELINE EXECUTION                             │
-      // └─────────────────────────────────────────────────────────────────────────────────────────┘
-
-      // Execute the complete compute pipeline: Morton → Sort → H-PLOC → BVH4
-      // this.build(
-      //   mesh_id,
-      //   leaf_count, // Triangle count
-      //   mesh_info_buffer // Build parameters
-      // );
+      // Add prepared build to processing queue for frame-rate-friendly execution
+      this.build_queue.push({
+        mesh_id: mesh_id,
+        leaf_count: leaf_count,
+        mesh_info_buffer: mesh_info_buffer,
+        mesh_selector_buffer: mesh_selector_buffer,
+        mesh_meta: mesh_meta
+      });
     }
 
     // ┌─────────────────────────────────────────────────────────────────────────────────────────┐
-    // │                          🏁 BATCH COMPLETION & STATE CLEANUP                            │
+    // │                          🏁 QUEUING COMPLETION & STATE CLEANUP                          │
     // └─────────────────────────────────────────────────────────────────────────────────────────┘
 
-    // Clear dirty mesh flags after successful batch processing
+    // Clear dirty mesh flags after successful queuing (builds will be processed later)
     dirty_meshes.clear();
+  }
+
+  /**
+   * ┌─────────────────────────────────────────────────────────────────────────────────────────┐
+   * │                           🔄 SINGLE BUILD PROCESSOR                                      │
+   * └─────────────────────────────────────────────────────────────────────────────────────────┘
+   *
+   * Processes one queued mesh BVH build per frame to maintain optimal performance.
+   * This method executes the complete 5-phase pipeline for a single mesh, including
+   * leaf bounds generation, Morton code computation, OneSweep sorting, H-PLOC BVH2
+   * construction, and BVH4 conversion.
+   *
+   * 🎯 FRAME-RATE OPTIMIZATION:
+   *    • Single Build Processing: Only one mesh build executed per frame
+   *    • FIFO Queue Management: Maintains consistent build order
+   *    • Resource Cleanup: Automatic buffer cleanup after build completion
+   *    • Progressive Processing: Steady advancement through all queued builds
+   */
+  process_queued_build() {
+    // Return early if no builds are queued
+    if (this.build_queue.length === 0) return;
+
+    // ┌─────────────────────────────────────────────────────────────────────────────────────────┐
+    // │                           📋 DEQUEUE NEXT BUILD                                         │
+    // └─────────────────────────────────────────────────────────────────────────────────────────┘
+
+    // Get the next build from queue (FIFO order)
+    const build_item = this.build_queue.shift();
+    const { mesh_id, leaf_count, mesh_info_buffer, mesh_selector_buffer, mesh_meta } = build_item;
+
+    // ┌─────────────────────────────────────────────────────────────────────────────────────────┐
+    // │                        🔢 PHASE 0: LEAF BOUNDS GENERATION                               │
+    // └─────────────────────────────────────────────────────────────────────────────────────────┘
+
+    const blas_data = MeshBLAS.to_gpu_data();
+
+    // Generate triangle bounding boxes from mesh geometry
+    const leaf_workgroups = Math.max(1, Math.ceil(leaf_count / 64)); // 64 triangles per workgroup
+    ComputeTaskQueue.new_task(
+      `mesh_${mesh_id}_generate_leaf_bounds`,
+      "acceleration/blas_leaf_bounds.wgsl",
+      [
+        blas_data.bvh2_nodes_buffer, // Destination: BVH2 leaf node storage
+        blas_data.directory_buffer, // Mesh allocation directory
+        mesh_selector_buffer, // Current mesh identifier
+        mesh_meta.index_buffer, // Triangle index data
+      ],
+      [blas_data.bvh2_nodes_buffer], // Updated leaf bounds
+      leaf_workgroups,
+      1,
+      1,
+      "write_leaf_bounds"
+    );
+
+    // ┌─────────────────────────────────────────────────────────────────────────────────────────┐
+    // │                      🚀 COMPLETE 5-PHASE PIPELINE EXECUTION                             │
+    // └─────────────────────────────────────────────────────────────────────────────────────────┘
+
+    // Execute the complete compute pipeline: Morton → Sort → H-PLOC → BVH4
+    this.build(
+      mesh_id,
+      leaf_count, // Triangle count
+      mesh_info_buffer // Build parameters
+    );
   }
 }

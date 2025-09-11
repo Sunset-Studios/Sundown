@@ -997,12 +997,36 @@ export class MeshBLAS {
     bvh2_nodes_buffer: null,
     bvh4_nodes_buffer: null,
     directory_buffer: null,
+    morton_codes_buffer: null,
+    sorted_indices_buffer: null,
+    temp_morton_codes_buffer: null,
+    temp_sorted_indices_buffer: null,
+    onesweep_global_hist_buffer: null,
+    onesweep_pass_hist_buffer: null,
+    onesweep_tile_indices_buffer: null,
+    parent_idx_buffer: null,
+    bvh4_build_state_buffer: null,
+    bvh4_index_pairs_buffer: null,
+    bvh4_prim_indices_buffer: null,
+    bvh4_debug_watchdog_buffer: null,
   };
   static to_gpu_data() {
     this.initialize();
     this.#gpu_data_cache.bvh2_nodes_buffer = this.#bvh2_nodes_buffer;
     this.#gpu_data_cache.bvh4_nodes_buffer = this.#bvh4_nodes_buffer;
     this.#gpu_data_cache.directory_buffer = this.#directory_buffer;
+    this.#gpu_data_cache.morton_codes_buffer = this.#morton_codes_buffer;
+    this.#gpu_data_cache.sorted_indices_buffer = this.#sorted_indices_buffer;
+    this.#gpu_data_cache.temp_morton_codes_buffer = this.#temp_morton_codes_buffer;
+    this.#gpu_data_cache.temp_sorted_indices_buffer = this.#temp_sorted_indices_buffer;
+    this.#gpu_data_cache.onesweep_global_hist_buffer = this.#onesweep_global_hist_buffer;
+    this.#gpu_data_cache.onesweep_pass_hist_buffer = this.#onesweep_pass_hist_buffer;
+    this.#gpu_data_cache.onesweep_tile_indices_buffer = this.#onesweep_tile_indices_buffer;
+    this.#gpu_data_cache.parent_idx_buffer = this.#parent_indices_buffer;
+    this.#gpu_data_cache.bvh4_build_state_buffer = this.#bvh4_build_state_buffer;
+    this.#gpu_data_cache.bvh4_index_pairs_buffer = this.#bvh4_index_pairs_buffer;
+    this.#gpu_data_cache.bvh4_prim_indices_buffer = this.#bvh4_prim_indices_buffer;
+    this.#gpu_data_cache.bvh4_debug_watchdog_buffer = this.#bvh4_debug_watchdog_buffer;
     return this.#gpu_data_cache;
   }
 }

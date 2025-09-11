@@ -1,3 +1,4 @@
+import { Renderer } from "../renderer/renderer.js";
 import { DevConsoleTool } from "./dev_console_tool.js";
 import { panel, label } from "../ui/2d/immediate.js";
 import { GPUTimeQuery } from "../renderer/query.js";
@@ -132,9 +133,11 @@ export class GPUTimerView extends DevConsoleTool {
 
         // collect and sort pass timings by averaged duration (descending)
         const pass_entries = [];
-        for (let i = 0; i < RenderPass.all_passes.length; i++) {
-          const pass_name = Number(RenderPass.all_passes.get(i));
-          const pass = ResourceCache.get().fetch(CacheTypes.PASS, pass_name);
+        const resolved_passes = Renderer.get().render_graph.get_resolved_non_culled_passes();
+        for (let i = 0; i < resolved_passes.length; i++) {
+          const pass_id = resolved_passes[i];
+          const pass = ResourceCache.get().fetch(CacheTypes.PASS, pass_id);
+          if (!pass) continue;
 
           const pass_timer_idx1 = pass.timer_query_indices[0];
           const pass_timer_idx2 = pass.timer_query_indices[1];

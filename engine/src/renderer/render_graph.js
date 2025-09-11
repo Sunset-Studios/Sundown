@@ -1301,6 +1301,15 @@ export class RenderGraph {
   }
 
   /**
+   * Returns the resolved non-culled passes from the most recent frame
+   *
+   * @returns {Array} The resolved non-culled passes.
+   */
+  get_resolved_non_culled_passes() {
+    return this.non_culled_passes.map((pass) => this.registry.render_passes[pass].physical_id);
+  }
+
+  /**
    * Records the default pass order in the configuration database.
    * This method is used to save the default pass order for future reference.
    *
