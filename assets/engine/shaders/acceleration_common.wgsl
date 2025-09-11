@@ -75,6 +75,44 @@ fn is_valid_node(node: AABB) -> bool {
     return node.min.w >= 0.0;
 }
 
+// Transform an AABB - properly handles rotation/scaling by transforming all 8 corners
+fn transform_aabb(node: AABB, transform: mat4x4<f32>) -> AABB {
+    // Define all 8 corners of the AABB
+    let min_pt = node.min.xyz;
+    let max_pt = node.max.xyz;
+    
+    // Transform all 8 corners of the bounding box
+    let corner_0 = (transform * vec4<f32>(min_pt.x, min_pt.y, min_pt.z, 1.0)).xyz;
+    let corner_1 = (transform * vec4<f32>(max_pt.x, min_pt.y, min_pt.z, 1.0)).xyz;
+    let corner_2 = (transform * vec4<f32>(min_pt.x, max_pt.y, min_pt.z, 1.0)).xyz;
+    let corner_3 = (transform * vec4<f32>(max_pt.x, max_pt.y, min_pt.z, 1.0)).xyz;
+    let corner_4 = (transform * vec4<f32>(min_pt.x, min_pt.y, max_pt.z, 1.0)).xyz;
+    let corner_5 = (transform * vec4<f32>(max_pt.x, min_pt.y, max_pt.z, 1.0)).xyz;
+    let corner_6 = (transform * vec4<f32>(min_pt.x, max_pt.y, max_pt.z, 1.0)).xyz;
+    let corner_7 = (transform * vec4<f32>(max_pt.x, max_pt.y, max_pt.z, 1.0)).xyz;
+    
+    // Find actual min/max from all transformed corners
+    var result_min = corner_0;
+    var result_max = corner_0;
+    
+    result_min = min(result_min, corner_1);
+    result_max = max(result_max, corner_1);
+    result_min = min(result_min, corner_2);
+    result_max = max(result_max, corner_2);
+    result_min = min(result_min, corner_3);
+    result_max = max(result_max, corner_3);
+    result_min = min(result_min, corner_4);
+    result_max = max(result_max, corner_4);
+    result_min = min(result_min, corner_5);
+    result_max = max(result_max, corner_5);
+    result_min = min(result_min, corner_6);
+    result_max = max(result_max, corner_6);
+    result_min = min(result_min, corner_7);
+    result_max = max(result_max, corner_7);
+
+    return AABB(vec4<f32>(result_min, node.min.w), vec4<f32>(result_max, node.max.w));
+}
+
 // Ray-AABB intersection (slab method)
 fn intersect_aabb(ray: Ray, min_point: vec3<f32>, max_point: vec3<f32>) -> f32 {
     var tmin = ray.origin_and_tmin.w;

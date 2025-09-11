@@ -161,7 +161,7 @@ export class Mesh {
     mesh = new Mesh();
     mesh.name = name;
     mesh.vertices = vertices;
-    mesh.indices = new Uint16Array(indices);
+    mesh.indices = new Uint32Array(indices);
 
     mesh.vertex_count = mesh.vertices.length;
     mesh.index_count = mesh.indices.length;
@@ -231,7 +231,7 @@ export class Mesh {
       },
     ];
 
-    mesh.indices = new Uint16Array([0, 1, 2, 0, 2, 3]);
+    mesh.indices = new Uint32Array([0, 1, 2, 0, 2, 3]);
 
     mesh.bounds_min_and_max = [
       -1,
@@ -481,7 +481,7 @@ export class Mesh {
       },
     ];
 
-    mesh.indices = new Uint16Array([
+    mesh.indices = new Uint32Array([
       0, 1, 2, 2, 3, 0, 4, 5, 6, 6, 7, 4, 8, 9, 10, 10, 11, 8, 12, 13, 14, 14, 15, 12, 16, 17, 18,
       18, 19, 16, 20, 21, 22, 22, 23, 20,
     ]);
@@ -725,30 +725,33 @@ export class Mesh {
         let local_indices = [];
         if (primitive.indices !== undefined) {
           const index_accessor = gltf_obj.accessors[primitive.indices];
+          
           if (index_accessor.componentType === 5123) {
-            // UNSIGNED_SHORT
-            local_indices = new Uint16Array(
+            // UNSIGNED_SHORT - read as Uint16Array then convert to Uint32Array
+            const temp_indices = new Uint16Array(
               index_accessor.bufferView.data,
               index_accessor.byteOffset || 0,
               index_accessor.count
             );
+            local_indices = new Uint32Array(temp_indices);
           } else if (index_accessor.componentType === 5125) {
-            // UNSIGNED_INT
+            // UNSIGNED_INT - already Uint32Array, keep as is
             local_indices = new Uint32Array(
               index_accessor.bufferView.data,
               index_accessor.byteOffset || 0,
               index_accessor.count
             );
           } else if (index_accessor.componentType === 5121) {
-            // UNSIGNED_BYTE
-            local_indices = new Uint8Array(
+            // UNSIGNED_BYTE - read as Uint8Array then convert to Uint32Array
+            const temp_indices = new Uint8Array(
               index_accessor.bufferView.data,
               index_accessor.byteOffset || 0,
               index_accessor.count
             );
+            local_indices = new Uint32Array(temp_indices);
           }
         } else {
-          // No indices, generate sequential
+          // No indices, generate sequential (already Uint32Array)
           let count = num_verts;
           local_indices = new Uint32Array(count);
           for (let k = 0; k < count; k++) {
@@ -845,13 +848,7 @@ export class Mesh {
         for (let i = 0; i < mesh._tmp_indices.length; i++) {
           if (mesh._tmp_indices[i] > max_index) max_index = mesh._tmp_indices[i];
         }
-        if (max_index > 65535) {
-          mesh.indices = new Uint32Array(mesh._tmp_indices);
-        } else {
-          mesh.indices = new Uint16Array(mesh._tmp_indices);
-        }
-      } else {
-        mesh.indices = new Uint16Array(0);
+        mesh.indices = new Uint32Array(mesh._tmp_indices);
       }
 
       mesh.vertex_count = mesh.vertices.length;

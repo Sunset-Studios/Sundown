@@ -132,14 +132,23 @@ export class BVHProcessor {
   }
 
   compute_morton_codes() {
-    const primitive_count = EntityManager.get_max_rows();
+    const true_primitive_count = EntityManager.get_total_subscribed(TransformFragment);
+    const conservative_primitive_count = EntityManager.get_max_rows();
     const bvh = BVH.to_gpu_data();
-    const workgroups = Math.ceil(primitive_count / WORKGROUP_SIZE);
+    const workgroups = Math.ceil(conservative_primitive_count / WORKGROUP_SIZE);
 
     const bounds_buffer = EntityManager.get_fragment_gpu_buffer(
       TransformFragment,
       bounds_name
     );
+
+    // Reset counters for this frame
+    this.bvh2_data[0] = 0; // leaf_count
+    this.bvh2_data[1] = 0; // bvh2_count
+    this.bvh2_data[2] = true_primitive_count; // prim_count
+    this.bvh2_data[3] = 0; // prim_base
+    this.bvh2_data[4] = 0; // node_base
+    bvh.bvh_info_buffer.write(this.bvh2_data);
 
     this.morton_code_inputs[0] = bounds_buffer.buffer;
     this.morton_code_inputs[1] = bvh.morton_codes_buffer;
@@ -290,14 +299,6 @@ export class BVHProcessor {
       TransformFragment,
       bounds_name
     );
-
-    // Reset counters for this frame
-    this.bvh2_data[0] = 0; // leaf_count
-    this.bvh2_data[1] = 0; // bvh2_count
-    this.bvh2_data[2] = primitive_count; // prim_count
-    this.bvh2_data[3] = 0; // prim_base
-    this.bvh2_data[4] = 0; // node_base
-    bvh.bvh_info_buffer.write(this.bvh2_data);
 
     this.bvh2_inputs[0] = bounds_buffer.buffer;
     this.bvh2_inputs[1] = bvh.sorted_indices_buffer;

@@ -19,24 +19,21 @@ struct FragmentOutput {
     @location(4) normal: vec4<precision_float>,
 }
 
-struct TransformData {
+struct LineData {
+    color_and_width: vec4f,
     transform: mat4x4f,
 };
 
-struct LineData {
-    color_and_width: vec4f,
-};
-
-@group(1) @binding(0) var<storage, read> transform_data: array<TransformData>;
-@group(1) @binding(1) var<storage, read> line_data: array<LineData>;
+@group(1) @binding(0) var<storage, read> line_data: array<LineData>;
 
 @vertex
 fn vs(input: VertexInput) -> VertexOutput {
     var output: VertexOutput;
 
     let vertex = vertex_buffer[input.vertex_index];
-    let color_and_width = line_data[input.instance_index].color_and_width;
-    let model_transform = transform_data[input.instance_index].transform;
+    let line_datum = line_data[input.instance_index];
+    let color_and_width = line_datum.color_and_width;
+    let model_transform = line_datum.transform;
 
     let view_index = u32(frame_info.view_index);
     let model_view_transform = view_buffer[view_index].view_matrix * model_transform;
@@ -73,7 +70,7 @@ fn vs(input: VertexInput) -> VertexOutput {
     output.position = view_buffer[view_index].projection_matrix * vec4<f32>(final_view_pos, 1.0);
     
     // Pass color and UV to fragment shader
-    output.color = vec4<f32>(color_and_width.x, color_and_width.y, color_and_width.z, 1.0);
+    output.color = vec4<f32>(line_datum.color_and_width.x, line_datum.color_and_width.y, line_datum.color_and_width.z, 1.0);
     output.uv = uv;
     
     return output;

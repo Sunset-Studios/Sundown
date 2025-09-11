@@ -20,6 +20,7 @@ const EDGES: array<vec2<u32>, 12> = array<vec2<u32>, 12>(
 
 struct LineData { 
     color_and_width: vec4f,
+    transform: mat4x4f,
 };
 
 // ========================================================================================
@@ -69,9 +70,8 @@ fn corner(min_p: vec3f, max_p: vec3f, idx: u32) -> vec3f {
 // Buffers 
 // ========================================================================================
 
-@group(1) @binding(0) var<storage, read_write> out_transforms: array<mat4x4f>;
-@group(1) @binding(1) var<storage, read_write> out_line_data: array<LineData>;
-@group(1) @binding(2) var<storage, read> aabb_bounds: array<AABB>;
+@group(1) @binding(0) var<storage, read_write> out_line_data: array<LineData>;
+@group(1) @binding(1) var<storage, read> aabb_bounds: array<AABB>;
 
 // ========================================================================================
 // Main
@@ -100,11 +100,10 @@ fn cs(@builtin(global_invocation_id) gid: vec3u) {
         let p1 = corner(min_p, max_p, idx1);
 
         let transform = create_line_transform(p0, p1);
-        out_transforms[base][0] = select(transform[0], identity_matrix[0], !is_active);
-        out_transforms[base][1] = select(transform[1], identity_matrix[1], !is_active);
-        out_transforms[base][2] = select(transform[2], identity_matrix[2], !is_active);
-        out_transforms[base][3] = select(transform[3], identity_matrix[3], !is_active);
-
+        out_line_data[base].transform[0] = select(transform[0], identity_matrix[0], !is_active);
+        out_line_data[base].transform[1] = select(transform[1], identity_matrix[1], !is_active);
+        out_line_data[base].transform[2] = select(transform[2], identity_matrix[2], !is_active);
+        out_line_data[base].transform[3] = select(transform[3], identity_matrix[3], !is_active);
         out_line_data[base].color_and_width = vec4f(BOUNDS_COLOR.rgb, width);
     }
 }

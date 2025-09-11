@@ -12,13 +12,13 @@ import {
 import { TransformFragment } from "../../core/ecs/fragments/transform_fragment.js";
 import { VisibilityFragment } from "../../core/ecs/fragments/visibility_fragment.js";
 import { LightFragment } from "../../core/ecs/fragments/light_fragment.js";
+import { StaticMeshFragment } from "../../core/ecs/fragments/static_mesh_fragment.js";
 
 // Renderer components
 import { Renderer } from "../renderer.js";
 import { Texture } from "../texture.js";
 import { Material } from "../material.js";
 import { DebugOverlay } from "../debug_overlay.js";
-import { LineRenderer } from "../line_renderer.js";
 import { PostProcessStack } from "../post_process_stack.js";
 import { MeshTaskQueue } from "../mesh_task_queue.js";
 import { ComputeTaskQueue } from "../compute_task_queue.js";
@@ -64,6 +64,7 @@ const transforms_name = "transforms";
 const bounds_name = "bounds";
 const occluder_name = "occluder";
 const light_fragment_name = "light_fragment";
+const mesh_asset_id_name = "mesh_asset_id";
 
 const main_albedo_image_config = {
   name: "main_albedo",
@@ -285,13 +286,6 @@ const post_lighting_image_config = {
   force: false,
 };
 
-const line_transform_processing_shader_setup = {
-  pipeline_shaders: {
-    compute: {
-      path: "system_compute/line_transform_processing.wgsl",
-    },
-  },
-};
 const line_draw_shader_setup = {
   pipeline_shaders: {
     vertex: {
@@ -331,6 +325,20 @@ const debug_emit_blas_nodes_shader_setup = {
   pipeline_shaders: {
     compute: {
       path: "debug/debug_emit_blas_nodes_lines.wgsl",
+    },
+  },
+};
+const debug_emit_blas_bvh4_nodes_shader_setup = {
+  pipeline_shaders: {
+    compute: {
+      path: "debug/debug_emit_blas_bvh4_nodes_lines.wgsl",
+    },
+  },
+};
+const debug_find_closest_mesh_instances_shader_setup = {
+  pipeline_shaders: {
+    compute: {
+      path: "debug/debug_find_closest_mesh_instances.wgsl",
     },
   },
 };
@@ -546,10 +554,7 @@ export class DeferredShadingStrategy {
         TransformFragment,
         transforms_name
       );
-      const bounds_buffer = EntityManager.get_fragment_gpu_buffer(
-        TransformFragment,
-        bounds_name
-      );
+      const bounds_buffer = EntityManager.get_fragment_gpu_buffer(TransformFragment, bounds_name);
       const entity_transforms = render_graph.register_buffer(transforms_buffer.buffer.config.name);
       const aabb_bounds = render_graph.register_buffer(bounds_buffer.buffer.config.name);
 
@@ -1030,75 +1035,27 @@ export class DeferredShadingStrategy {
       );
 
       // ┌─────────────────────────────────────────────────────────────────────────────┐
-      // │ 📏 PASS: Line Renderer                                                     │
-      // │    Render debug lines and wireframes for visualization                    │
-      // └─────────────────────────────────────────────────────────────────────────────┘
-      if (LineRenderer.enabled && LineRenderer.line_positions.length > 0) {
-        const { position_buffer, line_data_buffer, transform_buffer, visible_line_count } =
-          LineRenderer.to_gpu_data();
-        if (visible_line_count > 0) {
-          const line_position_buffer_rg = render_graph.register_buffer(position_buffer.config.name);
-          const line_data_buffer_rg = render_graph.register_buffer(line_data_buffer.config.name);
-          const line_transform_buffer_rg = render_graph.register_buffer(
-            transform_buffer.config.name
-          );
-
-          render_graph.add_pass(
-            "line_transform_processing",
-            RenderPassFlags.Compute,
-            {
-              inputs: [line_transform_buffer_rg, line_position_buffer_rg],
-              outputs: [line_transform_buffer_rg],
-              shader_setup: line_transform_processing_shader_setup,
-            },
-            (graph, frame_data, encoder) => {
-              const pass = graph.get_physical_pass(frame_data.current_pass);
-              pass.dispatch((visible_line_count + 63) / 64, 1, 1);
-            }
-          );
-
-          render_graph.add_pass(
-            "line_renderer_pass",
-            RenderPassFlags.Graphics,
-            {
-              inputs: [line_transform_buffer_rg, line_data_buffer_rg],
-              outputs: [
-                main_albedo_image,
-                main_emissive_image,
-                main_smra_image,
-                main_position_image,
-                main_normal_image,
-                main_depth_image,
-              ],
-              shader_setup: line_draw_shader_setup,
-            },
-            (graph, frame_data, encoder) => {
-              const pass = graph.get_physical_pass(frame_data.current_pass);
-              MeshTaskQueue.draw_quad(pass, visible_line_count);
-            }
-          );
-        }
-      }
-
-      // ┌─────────────────────────────────────────────────────────────────────────────┐
       // │ 📏 PASS: Debug Entity Bounds and BVH                                        │
       // │    Render entity bounds and BVH for visualization                           │
       // └─────────────────────────────────────────────────────────────────────────────┘
-      if (debug_view === DebugDrawType.EntityBounds
-            || debug_view === DebugDrawType.BVH
-            || debug_view === DebugDrawType.BVH4
-            || debug_view === DebugDrawType.BLAS
-          ) {
+      if (
+        debug_view === DebugDrawType.EntityBounds ||
+        debug_view === DebugDrawType.BVH ||
+        debug_view === DebugDrawType.BVH4 ||
+        debug_view === DebugDrawType.BLAS_Bounds ||
+        debug_view === DebugDrawType.BLAS_BVH4
+      ) {
         const aabb_gpu_data = BVH.to_gpu_data();
         const blas_gpu_data = MeshBLAS.to_gpu_data();
-        const max_nodes_debug = debug_view === DebugDrawType.BLAS ? MeshBLAS.blas_size : BVH.bvh_size;
-        const max_lines = max_nodes_debug * 12;
 
-        const debug_line_transform_buf = render_graph.create_buffer({
-          name: "debug_line_transforms",
-          size: max_lines * 16,
-          usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-        });
+        const max_nodes_debug =
+          debug_view === DebugDrawType.BLAS_Bounds
+            ? MeshBLAS.bounds_size
+            : debug_view === DebugDrawType.BLAS_BVH4
+              ? MeshBLAS.bvh4_size
+              : BVH.bvh_size;
+        const max_lines = Math.min(max_nodes_debug * 12 * 20, 256000 * 12 * 20);
+
         const debug_line_data_buf = render_graph.create_buffer({
           name: "debug_line_data",
           size: max_lines * 4,
@@ -1106,20 +1063,8 @@ export class DeferredShadingStrategy {
         });
 
         // BVH debug inputs
-        const bvh4_nodes = render_graph.register_buffer(
-          aabb_gpu_data.bvh4_nodes_buffer.config.name
-        );
-        const bvh_info = render_graph.register_buffer(
-          aabb_gpu_data.bvh_info_buffer.config.name
-        );
         const scene_bounds = render_graph.register_buffer(
           aabb_gpu_data.scene_bounds_buffer.config.name
-        );
-        const blas_nodes = render_graph.register_buffer(
-          blas_gpu_data.nodes_buffer.config.name
-        );
-        const blas_info = render_graph.register_buffer(
-          blas_gpu_data.info_buffer.config.name
         );
 
         if (debug_view === DebugDrawType.EntityBounds) {
@@ -1127,8 +1072,8 @@ export class DeferredShadingStrategy {
             "debug_emit_bounds_lines",
             RenderPassFlags.Compute,
             {
-              inputs: [debug_line_transform_buf, debug_line_data_buf, aabb_bounds],
-              outputs: [debug_line_transform_buf, debug_line_data_buf],
+              inputs: [debug_line_data_buf, aabb_bounds],
+              outputs: [debug_line_data_buf],
               shader_setup: debug_emit_entity_bounds_shader_setup,
             },
             (graph, frame_data, encoder) => {
@@ -1136,40 +1081,150 @@ export class DeferredShadingStrategy {
               pass.dispatch(Math.ceil(BVH.bvh_size / 64), 1, 1);
             }
           );
-        } else if (debug_view === DebugDrawType.BLAS) {
+        } else if (debug_view === DebugDrawType.BLAS_Bounds) {
+          const blas_nodes = render_graph.register_buffer(
+            blas_gpu_data.bvh2_nodes_buffer.config.name
+          );
+          const blas_directory = render_graph.register_buffer(
+            blas_gpu_data.directory_buffer.config.name
+          );
+
+          const mesh_asset_ids = EntityManager.get_fragment_gpu_buffer(
+            StaticMeshFragment,
+            mesh_asset_id_name
+          );
+          const mesh_asset_ids_buffer = render_graph.register_buffer(
+            mesh_asset_ids.buffer.config.name
+          );
+
+          // Calculate mesh directory size (directory buffer size / bytes per entry / 4 bytes per u32)
+          const directory_buffer_size = blas_gpu_data.directory_buffer.config.size;
+          const directory_entry_size = 6; // [bvh2_base, bvh2_cap, bvh4_base, bvh4_cap, leaf_count, first_vertex]
+          const mesh_count = Math.floor(directory_buffer_size / (directory_entry_size * 4));
+
+          // Compact per-mesh preprocessing buffers
+          const closest_entities_per_mesh_buf = render_graph.create_buffer({
+            name: "closest_entities_per_mesh",
+            size: mesh_count * 4, // u32 per mesh
+            usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+          });
+
+          const closest_distances_per_mesh_buf = render_graph.create_buffer({
+            name: "closest_distances_per_mesh",
+            size: mesh_count * 4, // f32 per mesh
+            usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+          });
+
+          // ┌─────────────────────────────────────────────────────────────────────────────┐
+          // │ 🔍 PASS: Find Closest Mesh Instances                                       │
+          // │    Compact preprocessing to find closest entity per mesh asset              │
+          // └─────────────────────────────────────────────────────────────────────────────┘
           render_graph.add_pass(
-            "debug_emit_blas_lines",
+            "debug_init_closest_distances",
+            RenderPassFlags.GraphLocal,
+            {},
+            (graph, frame_data, encoder) => {
+              // Initialize distances to infinity
+              const distances_buf = graph.get_physical_buffer(closest_distances_per_mesh_buf);
+              const infinity_array = new Float32Array(mesh_count);
+              infinity_array.fill(Number.MAX_VALUE);
+              distances_buf.write(infinity_array);
+            }
+          );
+
+          render_graph.add_pass(
+            "debug_find_closest_instances",
             RenderPassFlags.Compute,
             {
               inputs: [
-                debug_line_transform_buf,
+                closest_entities_per_mesh_buf,
+                closest_distances_per_mesh_buf,
+                object_instances,
+                this.frustum_culler.get_visibility_buffer(current_view, 0),
+                entity_transforms,
+                mesh_asset_ids_buffer,
+              ],
+              outputs: [closest_entities_per_mesh_buf, closest_distances_per_mesh_buf],
+              shader_setup: debug_find_closest_mesh_instances_shader_setup,
+            },
+            (graph, frame_data, encoder) => {
+              const pass = graph.get_physical_pass(frame_data.current_pass);
+              pass.dispatch(Math.ceil(draw_count / 64), 1, 1);
+            }
+          );
+
+          render_graph.add_pass(
+            "debug_emit_blas_bounds_lines",
+            RenderPassFlags.Compute,
+            {
+              inputs: [
                 debug_line_data_buf,
                 blas_nodes,
-                blas_info,
-                scene_bounds,
+                blas_directory,
+                entity_transforms,
+                closest_entities_per_mesh_buf,
               ],
-              outputs: [debug_line_transform_buf, debug_line_data_buf],
+              outputs: [debug_line_data_buf],
               shader_setup: debug_emit_blas_nodes_shader_setup,
             },
             (graph, frame_data, encoder) => {
               const pass = graph.get_physical_pass(frame_data.current_pass);
-              pass.dispatch(Math.ceil(max_nodes_debug / 64), 1, 1);
+              const x_dispatch = Math.ceil(max_nodes_debug / 16);
+              const y_dispatch = Math.ceil(mesh_count / 16);
+              pass.dispatch(x_dispatch, y_dispatch, 1);
+            }
+          );
+        } else if (debug_view === DebugDrawType.BLAS_BVH4) {
+          const blas_bvh4_nodes = render_graph.register_buffer(
+            blas_gpu_data.bvh4_nodes_buffer.config.name
+          );
+          const blas_directory = render_graph.register_buffer(
+            blas_gpu_data.directory_buffer.config.name
+          );
+          const mesh_asset_ids = EntityManager.get_fragment_gpu_buffer(
+            StaticMeshFragment,
+            mesh_asset_id_name
+          );
+          const mesh_asset_ids_buffer = render_graph.register_buffer(
+            mesh_asset_ids.buffer.config.name
+          );
+
+          render_graph.add_pass(
+            "debug_emit_blas_bvh4_lines",
+            RenderPassFlags.Compute,
+            {
+              inputs: [
+                debug_line_data_buf,
+                blas_bvh4_nodes,
+                blas_directory,
+                scene_bounds,
+                mesh_asset_ids_buffer,
+                object_instances,
+                this.frustum_culler.get_visibility_buffer(current_view, 0),
+                entity_transforms,
+              ],
+              outputs: [debug_line_data_buf],
+              shader_setup: debug_emit_blas_bvh4_nodes_shader_setup,
+            },
+            (graph, frame_data, encoder) => {
+              const pass = graph.get_physical_pass(frame_data.current_pass);
+              const x_dispatch = Math.ceil(max_nodes_debug / 16);
+              const y_dispatch = Math.ceil(draw_count / 16);
+              pass.dispatch(x_dispatch, y_dispatch, 1);
             }
           );
         } else if (debug_view === DebugDrawType.BVH4) {
-          // Debug BVH: emit lines from BVH4 nodes
+          const bvh4_nodes = render_graph.register_buffer(
+            aabb_gpu_data.bvh4_nodes_buffer.config.name
+          );
+          const bvh_info = render_graph.register_buffer(aabb_gpu_data.bvh_info_buffer.config.name);
+
           render_graph.add_pass(
             "debug_emit_bvh4_lines",
             RenderPassFlags.Compute,
             {
-              inputs: [
-                debug_line_transform_buf,
-                debug_line_data_buf,
-                bvh4_nodes,
-                bvh_info,
-                scene_bounds,
-              ],
-              outputs: [debug_line_transform_buf, debug_line_data_buf],
+              inputs: [debug_line_data_buf, bvh4_nodes, bvh_info, scene_bounds],
+              outputs: [debug_line_data_buf],
               shader_setup: debug_emit_bvh4_nodes_shader_setup,
             },
             (graph, frame_data, encoder) => {
@@ -1183,8 +1238,8 @@ export class DeferredShadingStrategy {
             "debug_emit_bvh2_lines",
             RenderPassFlags.Compute,
             {
-              inputs: [debug_line_transform_buf, debug_line_data_buf, aabb_bounds],
-              outputs: [debug_line_transform_buf, debug_line_data_buf],
+              inputs: [debug_line_data_buf, aabb_bounds],
+              outputs: [debug_line_data_buf],
               shader_setup: debug_emit_bvh2_nodes_shader_setup,
             },
             (graph, frame_data, encoder) => {
@@ -1198,7 +1253,7 @@ export class DeferredShadingStrategy {
           "debug_line_draw",
           RenderPassFlags.Graphics,
           {
-            inputs: [debug_line_transform_buf, debug_line_data_buf],
+            inputs: [debug_line_data_buf],
             outputs: [
               main_albedo_image,
               main_emissive_image,
@@ -1211,7 +1266,7 @@ export class DeferredShadingStrategy {
           },
           (graph, frame_data, encoder) => {
             const pass = graph.get_physical_pass(frame_data.current_pass);
-            MeshTaskQueue.draw_quad(pass, max_lines);
+            MeshTaskQueue.draw_quad(pass, max_lines / 12);
           }
         );
       }

@@ -85,7 +85,7 @@ export class MeshData {
 
     if (mesh.bounds_min_and_max) {
       this._set_bounds(mesh.mesh_data_index, mesh.bounds_min_and_max);
-      MeshBLAS.build_from_mesh(mesh, mesh.index_buffer);
+      MeshBLAS.build_from_mesh(mesh);
     }
   }
 
@@ -120,7 +120,7 @@ export class MeshData {
     if (!b) return;
 
     this._set_bounds(index, b);
-    MeshBLAS.build_from_mesh(mesh, mesh.index_buffer);
+    MeshBLAS.build_from_mesh(mesh);
   }
 
   static _set_bounds(index, b) {

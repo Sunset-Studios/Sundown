@@ -1,12 +1,8 @@
 #include "common.wgsl"
 #include "acceleration_common.wgsl"
 
-// ========================================================================================
-// Constants
-// ========================================================================================
-
 const LINES_PER_BOX = 12u;
-const BVH_COLOR = vec4f(1.0, 0.65, 0.0, 1.0);
+const BVH_COLOR = vec4f(0.0, 0.8, 1.0, 1.0);
 const MAX_STACK = 256u;
 
 const EDGES: array<vec2<u32>, 12> = array<vec2<u32>, 12>(
@@ -15,26 +11,19 @@ const EDGES: array<vec2<u32>, 12> = array<vec2<u32>, 12>(
     vec2u(0, 4), vec2u(1, 5), vec2u(2, 6), vec2u(3, 7),
 );
 
-// ========================================================================================
-// Data Structures
-// ========================================================================================
-
-struct LineData { 
+struct LineData {
     color_and_width: vec4f,
     transform: mat4x4f,
 };
 
-struct BVHData {
+struct MeshDirectoryEntry {
+    bvh2_base: u32,
+    bvh2_capacity: u32,
+    bvh4_base: u32,
+    bvh4_capacity: u32,
     leaf_count: u32,
-    bvh2_count: u32,
-    prim_count: u32,
-    prim_base: u32,
-    node_base: u32,
+    first_vertex: u32,
 };
-
-// ========================================================================================
-// Helper Functions
-// ========================================================================================
 
 fn create_line_transform(start: vec3f, end: vec3f) -> mat4x4f {
     let dir = end - start;
@@ -75,19 +64,14 @@ fn corner(min_p: vec3f, max_p: vec3f, idx: u32) -> vec3f {
     return vec3f(x_sel, y_sel, z_sel);
 }
 
-// ========================================================================================
-// Buffers 
-// ========================================================================================
-
-// Outputs
 @group(1) @binding(0) var<storage, read_write> out_line_data: array<LineData>;
-@group(1) @binding(1) var<storage, read> bvh4_nodes: array<BVH4Node>;
-@group(1) @binding(2) var<storage, read_write> bvh_data: BVHData;
+@group(1) @binding(1) var<storage, read> blas_nodes: array<BVH4Node>;
+@group(1) @binding(2) var<storage, read_write> blas_data: array<MeshDirectoryEntry>;
 @group(1) @binding(3) var<uniform> scene_aabb: AABB;
-
-// ========================================================================================
-// Main (root-down traversal emitting world-space AABBs for BVH2)
-// ========================================================================================
+@group(1) @binding(4) var<storage, read> mesh_asset_ids: array<u32>;
+@group(1) @binding(5) var<storage, read> object_instances: array<ObjectInstance>;
+@group(1) @binding(6) var<storage, read> visible_object_instances: array<i32>;
+@group(1) @binding(7) var<storage, read> entity_transforms: array<EntityTransform>;
 
 fn emit_box_lines(min_p: vec3f, max_p: vec3f, node_index: u32, is_active: bool) {
     let width = select(0.04, 0.0, !is_active);
@@ -107,20 +91,24 @@ fn emit_box_lines(min_p: vec3f, max_p: vec3f, node_index: u32, is_active: bool) 
     }
 }
 
-@compute @workgroup_size(64)
+@compute @workgroup_size(16, 16)
 fn cs(@builtin(global_invocation_id) gid: vec3u) {
-    let total_bvh4 = bvh_data.prim_count;
-    if (gid.x >= total_bvh4) { return; }
+    let instance = gid.y;
+    let instance_index = visible_object_instances[instance];
+    let entity_resolved = get_entity_row(object_instances[instance_index].row);
 
-    // One thread per BVH4 node: reconstruct parent chain to decode world bounds
-    let target_idx = bvh_data.node_base + gid.x;
+    let entity_transform = entity_transforms[entity_resolved];
+    let mesh_asset_id = mesh_asset_ids[entity_resolved];
+    let mesh_directory_entry = blas_directory[mesh_asset_id];
 
-    let node = bvh4_nodes[target_idx];
+    let total_blas = mesh_directory_entry.leaf_count;
+    if (gid.x >= total_blas) { return; }
 
-    let min_ws = node.min.xyz;
-    let max_ws = node.max.xyz;
+    let target_idx = gid.x;
+    let node = blas_nodes[mesh_directory_entry.bvh4_base + target_idx];
+    let transformed_node = transform_aabb(node, entity_transform.transform);
+    let min_ws = transformed_node.min.xyz;
+    let max_ws = transformed_node.max.xyz;
     let has_volume = all(max_ws > min_ws);
     emit_box_lines(min_ws, max_ws, target_idx, has_volume);
 }
-
-
