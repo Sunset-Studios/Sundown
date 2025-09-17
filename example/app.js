@@ -8,7 +8,7 @@ import { InputProvider } from "../engine/src/input/input_provider.js";
 import { InputKey } from "../engine/src/input/input_types.js";
 import { PostProcessStack } from "../engine/src/renderer/post_process_stack.js";
 import { BVHDebugRenderer } from "../engine/src/core/subsystems/bvh_debug_renderer.js";
-import { BVHRaycast, Ray } from "../engine/src/acceleration/bvh_raycast.js";
+import { BVHRaycast } from "../engine/src/acceleration/bvh_raycast.js";
 import { ComputeTaskQueue } from "../engine/src/renderer/compute_task_queue.js";
 import { TransformFragment } from "../engine/src/core/ecs/fragments/transform_fragment.js";
 import { FreeformArcballControlProcessor } from "../engine/src/core/subsystems/freeform_arcball_control_processor.js";
@@ -16,7 +16,7 @@ import { LightFragment } from "../engine/src/core/ecs/fragments/light_fragment.j
 import { TextFragment } from "../engine/src/core/ecs/fragments/text_fragment.js";
 import { StaticMeshFragment } from "../engine/src/core/ecs/fragments/static_mesh_fragment.js";
 import { VisibilityFragment } from "../engine/src/core/ecs/fragments/visibility_fragment.js";
-import { LightType, EntityFlags } from "../engine/src/core/minimal.js";
+import { LightType } from "../engine/src/core/minimal.js";
 import { StandardMaterial } from "../engine/src/renderer/material.js";
 import { Texture } from "../engine/src/renderer/texture.js";
 import { Mesh } from "../engine/src/renderer/mesh.js";
@@ -86,8 +86,9 @@ export class RenderingScene extends Scene {
     const default_material_id = default_material.material_id;
 
     {
-      let dirt_albedo = Texture.load(["engine/textures/voxel/dirt_albedo.jpg"], {
+      let dirt_albedo = {
         name: "dirt_albedo",
+        paths: ["engine/textures/voxel/dirt_albedo.jpg"],
         format: "rgba8unorm",
         dimension: "2d",
         usage:
@@ -95,9 +96,10 @@ export class RenderingScene extends Scene {
           GPUTextureUsage.COPY_DST |
           GPUTextureUsage.RENDER_ATTACHMENT,
         material_notifier: "dirt_albedo",
-      });
-      let dirt_roughness = Texture.load(["engine/textures/voxel/dirt_roughness.jpg"], {
+      };
+      let dirt_roughness = {
         name: "dirt_roughness",
+        paths: ["engine/textures/voxel/dirt_roughness.jpg"],
         format: "rgba8unorm",
         dimension: "2d",
         usage:
@@ -105,10 +107,10 @@ export class RenderingScene extends Scene {
           GPUTextureUsage.COPY_DST |
           GPUTextureUsage.RENDER_ATTACHMENT,
         material_notifier: "dirt_roughness",
-      });
+      };
 
-      default_material.set_albedo([0.7, 0.7, 0.7, 1.0], dirt_albedo);
-      default_material.set_roughness(0.5, dirt_roughness);
+      default_material.sample_albedo(dirt_albedo);
+      default_material.sample_roughness(dirt_roughness);
       default_material.set_tiling(2.0, 2.0);
     }
 
@@ -126,7 +128,7 @@ export class RenderingScene extends Scene {
       [0, 0, 0],
       [0.5, 0.5, 0.5],
       mesh,
-      default_material_id,
+      default_material_id
     );
     EntityManager.set_entity_instance_count(sphere, grid_size * grid_size * grid_layers);
 
@@ -210,12 +212,12 @@ export class MLScene extends Scene {
 
     // Set the skybox for this scene.
     SharedEnvironmentData.set_skybox("default_scene_skybox", [
-      "engine/textures/gradientbox/px.png",
-      "engine/textures/gradientbox/nx.png",
-      "engine/textures/gradientbox/ny.png",
-      "engine/textures/gradientbox/py.png",
-      "engine/textures/gradientbox/pz.png",
-      "engine/textures/gradientbox/nz.png",
+      "engine/textures/gradientbox/px.jpg",
+      "engine/textures/gradientbox/nx.jpg",
+      "engine/textures/gradientbox/ny.jpg",
+      "engine/textures/gradientbox/py.jpg",
+      "engine/textures/gradientbox/pz.jpg",
+      "engine/textures/gradientbox/nz.jpg",
     ]);
 
     // Set the skybox color to white.
@@ -242,7 +244,7 @@ export class MLScene extends Scene {
       [0, 0, 0, 1],
       [0.5, 0.5, 0.5],
       Mesh.quad(),
-      font_object.material,
+      font_object.material
     );
     const text_fragment_view = EntityManager.add_fragment(text_entity, TextFragment);
     text_fragment_view.font = font_id;
@@ -494,8 +496,9 @@ export class TexturesScene extends Scene {
 
     // Load metal plane material
     {
-      let worn_panel_albedo = Texture.load(["engine/textures/worn_panel/worn_panel_albedo.png"], {
+      let worn_panel_albedo = {
         name: "worn_panel_albedo",
+        paths: ["engine/textures/worn_panel/worn_panel_albedo.jpg"],
         format: "rgba8unorm",
         dimension: "2d",
         usage:
@@ -503,9 +506,10 @@ export class TexturesScene extends Scene {
           GPUTextureUsage.COPY_DST |
           GPUTextureUsage.RENDER_ATTACHMENT,
         material_notifier: "worn_panel_albedo",
-      });
-      let worn_panel_normal = Texture.load(["engine/textures/worn_panel/worn_panel_normal.png"], {
+      };
+      let worn_panel_normal = {
         name: "worn_panel_normal",
+        paths: ["engine/textures/worn_panel/worn_panel_normal.jpg"],
         format: "rgba8unorm",
         dimension: "2d",
         usage:
@@ -513,40 +517,25 @@ export class TexturesScene extends Scene {
           GPUTextureUsage.COPY_DST |
           GPUTextureUsage.RENDER_ATTACHMENT,
         material_notifier: "worn_panel_normal",
-      });
-      let worn_panel_roughness = Texture.load(
-        ["engine/textures/worn_panel/worn_panel_roughness.png"],
-        {
-          name: "worn_panel_roughness",
-          format: "rgba8unorm",
-          dimension: "2d",
-          usage:
-            GPUTextureUsage.TEXTURE_BINDING |
-            GPUTextureUsage.COPY_DST |
-            GPUTextureUsage.RENDER_ATTACHMENT,
-          material_notifier: "worn_panel_roughness",
-        }
-      );
-      let worn_panel_metallic = Texture.load(
-        ["engine/textures/worn_panel/worn_panel_metallic.png"],
-        {
-          name: "worn_panel_metallic",
-          format: "rgba8unorm",
-          dimension: "2d",
-          usage:
-            GPUTextureUsage.TEXTURE_BINDING |
-            GPUTextureUsage.COPY_DST |
-            GPUTextureUsage.RENDER_ATTACHMENT,
-          material_notifier: "worn_panel_metallic",
-        }
-      );
+      };
+      let worn_panel_roughness = {
+        name: "worn_panel_roughness",
+        paths: ["engine/textures/worn_panel/worn_panel_roughness.jpg"],
+        format: "rgba8unorm",
+        dimension: "2d",
+        usage:
+          GPUTextureUsage.TEXTURE_BINDING |
+          GPUTextureUsage.COPY_DST |
+          GPUTextureUsage.RENDER_ATTACHMENT,
+        material_notifier: "worn_panel_roughness",
+      };
 
       // Create a default material
       const default_plane_material = StandardMaterial.create("TexturesDefaultMaterial");
       this.default_plane_material_id = default_plane_material.material_id;
-      default_plane_material.set_albedo([0.5, 0.5, 0.5, 1], worn_panel_albedo);
-      default_plane_material.set_normal([0, 1, 0, 1], worn_panel_normal);
-      default_plane_material.set_roughness(0.5, worn_panel_roughness);
+      default_plane_material.sample_albedo(worn_panel_albedo);
+      default_plane_material.sample_normal(worn_panel_normal);
+      default_plane_material.sample_roughness(worn_panel_roughness);
       default_plane_material.set_metallic(0.2);
       default_plane_material.set_emission(0.1);
       default_plane_material.set_tiling(30.0);
@@ -554,8 +543,9 @@ export class TexturesScene extends Scene {
 
     // Load wall material
     {
-      let wall_albedo = Texture.load(["engine/textures/wall/wall_albedo.png"], {
+      let wall_albedo = {
         name: "wall_albedo",
+        paths: ["engine/textures/wall/wall_albedo.jpg"],
         format: "rgba8unorm",
         dimension: "2d",
         usage:
@@ -563,9 +553,10 @@ export class TexturesScene extends Scene {
           GPUTextureUsage.COPY_DST |
           GPUTextureUsage.RENDER_ATTACHMENT,
         material_notifier: "wall_albedo",
-      });
-      let wall_normal = Texture.load(["engine/textures/wall/wall_normal.png"], {
+      };
+      let wall_normal = {
         name: "wall_normal",
+        paths: ["engine/textures/wall/wall_normal.jpg"],
         format: "rgba8unorm",
         dimension: "2d",
         usage:
@@ -573,9 +564,10 @@ export class TexturesScene extends Scene {
           GPUTextureUsage.COPY_DST |
           GPUTextureUsage.RENDER_ATTACHMENT,
         material_notifier: "wall_normal",
-      });
-      let wall_roughness = Texture.load(["engine/textures/wall/wall_roughness.png"], {
+      };
+      let wall_roughness = {
         name: "wall_roughness",
+        paths: ["engine/textures/wall/wall_roughness.jpg"],
         format: "rgba8unorm",
         dimension: "2d",
         usage:
@@ -583,18 +575,10 @@ export class TexturesScene extends Scene {
           GPUTextureUsage.COPY_DST |
           GPUTextureUsage.RENDER_ATTACHMENT,
         material_notifier: "wall_roughness",
-      });
-      let wall_metallic = Texture.load(["engine/textures/wall/wall_metallic.png"], {
-        name: "wall_metallic",
-        format: "rgba8unorm",
-        dimension: "2d",
-        usage:
-          GPUTextureUsage.TEXTURE_BINDING |
-          GPUTextureUsage.COPY_DST |
-          GPUTextureUsage.RENDER_ATTACHMENT,
-        material_notifier: "wall_metallic",
-      });
-      let wall_ao = Texture.load(["engine/textures/wall/wall_ao.png"], {
+      };
+      let wall_ao = {
+        name: "wall_ao",
+        paths: ["engine/textures/wall/wall_ao.jpg"],
         name: "wall_ao",
         format: "rgba8unorm",
         dimension: "2d",
@@ -603,16 +587,16 @@ export class TexturesScene extends Scene {
           GPUTextureUsage.COPY_DST |
           GPUTextureUsage.RENDER_ATTACHMENT,
         material_notifier: "wall_ao",
-      });
+      };
 
       // Create a default material
       const wall_material = StandardMaterial.create("TexturesWallMaterial");
       this.wall_material_id = wall_material.material_id;
-      wall_material.set_albedo([0.5, 0.5, 0.5, 1], wall_albedo);
-      wall_material.set_normal([0, 1, 0, 1], wall_normal);
-      wall_material.set_roughness(0.5, wall_roughness);
+      wall_material.sample_albedo(wall_albedo);
+      wall_material.sample_normal(wall_normal);
+      wall_material.sample_roughness(wall_roughness);
+      wall_material.sample_ao(wall_ao);
       wall_material.set_metallic(0.9);
-      wall_material.set_ao(0.5, wall_ao);
       wall_material.set_emission(0.1);
       wall_material.set_tiling(2.0);
     }
@@ -622,10 +606,10 @@ export class TexturesScene extends Scene {
 
     // Create a cube mesh
     this.cube_mesh = Mesh.cube();
-    
+
     // Setup the world plane
     this.setup_world_plane();
-    
+
     // Setup sphere entity
     this.setup_sphere_entity();
 
@@ -670,7 +654,7 @@ export class TexturesScene extends Scene {
       quat.fromEuler(quat.create(), 0.0, 0, 0),
       [1000, 5.0, 1000],
       this.cube_mesh,
-      this.default_plane_material_id,
+      this.default_plane_material_id
     );
     this.entities.push(plane);
   }
@@ -690,8 +674,6 @@ export class TexturesScene extends Scene {
   setup_barrels() {
     const barrel_mesh = Mesh.from_gltf("engine/models/barrel/Barrel.gltf");
 
-    const barrel_material = StandardMaterial.create("BarrelMaterial");
-
     const num_barrels = 500;
     const barrel_spawn_range = 1000; // spread barrels across the entire ground plane
     const barrel_entity = spawn_mesh_entity(
@@ -699,7 +681,7 @@ export class TexturesScene extends Scene {
       [0, 0, 0, 1],
       [0.1, 0.1, 0.1],
       barrel_mesh,
-      barrel_material.material_id,
+      0 // GLTF sets the material id
     );
     this.entities.push(barrel_entity);
 
@@ -711,7 +693,7 @@ export class TexturesScene extends Scene {
       const x = (Math.random() - 0.5) * barrel_spawn_range;
       const z = (Math.random() - 0.5) * barrel_spawn_range;
       const y = 5.0; // Place on top of the plane
-      const scale = 0.02 + Math.random() * 0.05 ;
+      const scale = 0.02 + Math.random() * 0.05;
       const view = EntityManager.get_fragment(barrel_entity, TransformFragment, i);
       view.position = [x, y, z];
       view.scale = [scale, scale, scale];
@@ -898,7 +880,7 @@ export class BVHScene extends Scene {
             quat.fromEuler(quat.create(), 0, 0, 0),
             scale,
             mesh,
-            this.default_material_id,
+            this.default_material_id
           );
 
           this.entities.push(entity);
@@ -930,7 +912,7 @@ export class BVHScene extends Scene {
         [0, 0, 0, 1],
         [0.5, 0.5, 0.5],
         Math.random() > 0.5 ? this.cube_mesh : this.sphere_mesh,
-        this.default_material_id,
+        this.default_material_id
       );
 
       this.entities.push(entity);
@@ -1134,7 +1116,7 @@ export class BVHScene extends Scene {
         [0, 0, 0, 1],
         [scale, scale, scale],
         Math.random() > 0.5 ? this.cube_mesh : this.sphere_mesh,
-        this.default_material_id,
+        this.default_material_id
       );
 
       this.entities.push(entity);
@@ -1186,12 +1168,12 @@ export class SolarECSTestScene extends Scene {
 
     // Set the skybox for this scene.
     SharedEnvironmentData.set_skybox("default_scene_skybox", [
-      "engine/textures/gradientbox/px.png",
-      "engine/textures/gradientbox/nx.png",
-      "engine/textures/gradientbox/ny.png",
-      "engine/textures/gradientbox/py.png",
-      "engine/textures/gradientbox/pz.png",
-      "engine/textures/gradientbox/nz.png",
+      "engine/textures/gradientbox/px.jpg",
+      "engine/textures/gradientbox/nx.jpg",
+      "engine/textures/gradientbox/ny.jpg",
+      "engine/textures/gradientbox/py.jpg",
+      "engine/textures/gradientbox/pz.jpg",
+      "engine/textures/gradientbox/nz.jpg",
     ]);
 
     // Set the skybox color to a subtle green
@@ -1249,7 +1231,7 @@ export class SolarECSTestScene extends Scene {
             [0, 0, 0],
             [1.0, 1.0, 1.0],
             Mesh.quad(),
-            font_object.material,
+            font_object.material
           );
 
           const text_frag = EntityManager.add_fragment(grid_entity, TextFragment);
@@ -1365,8 +1347,9 @@ export class VoxelTerrainScene extends Scene {
     this.terrain_material_id = terrain_material.material_id;
 
     {
-      let dirt_albedo = Texture.load(["engine/textures/voxel/dirt_albedo.jpg"], {
+      let dirt_albedo = {
         name: "dirt_albedo",
+        paths: ["engine/textures/voxel/dirt_albedo.jpg"],
         format: "rgba8unorm",
         dimension: "2d",
         usage:
@@ -1374,9 +1357,9 @@ export class VoxelTerrainScene extends Scene {
           GPUTextureUsage.COPY_DST |
           GPUTextureUsage.RENDER_ATTACHMENT,
         material_notifier: "dirt_albedo",
-      });
+      };
 
-      terrain_material.set_albedo([0.7, 0.7, 0.7, 1.0], dirt_albedo);
+      terrain_material.sample_albedo(dirt_albedo);
       terrain_material.set_roughness(0.8);
       terrain_material.set_emission(0.0);
       terrain_material.set_metallic(0.9);
@@ -1474,7 +1457,7 @@ export class VoxelTerrainScene extends Scene {
       quat.fromEuler(quat.create(), 0, 0, 0),
       [block_size, block_size, block_size],
       this.cube_mesh,
-      this.terrain_material_id,
+      this.terrain_material_id
     );
     EntityManager.set_entity_instance_count(terrain_entity, total_blocks);
     this.entities.push(terrain_entity);
@@ -1510,7 +1493,7 @@ export class VoxelTerrainScene extends Scene {
       [0, 0, 0, 1],
       [0.5, 0.5, 0.5],
       Mesh.quad(),
-      font_object.material,
+      font_object.material
     );
     const text_fragment_view = EntityManager.add_fragment(text_entity, TextFragment);
     text_fragment_view.font = font_id;
@@ -1590,12 +1573,12 @@ export class ObjectPaintingScene extends Scene {
 
     // Skybox + view
     SharedEnvironmentData.set_skybox("default_scene_skybox", [
-      "engine/textures/simple_skybox/px.png",
-      "engine/textures/simple_skybox/nx.png",
-      "engine/textures/simple_skybox/ny.png",
-      "engine/textures/simple_skybox/py.png",
-      "engine/textures/simple_skybox/pz.png",
-      "engine/textures/simple_skybox/nz.png",
+      "engine/textures/simple_skybox/px.jpg",
+      "engine/textures/simple_skybox/nx.jpg",
+      "engine/textures/simple_skybox/ny.jpg",
+      "engine/textures/simple_skybox/py.jpg",
+      "engine/textures/simple_skybox/pz.jpg",
+      "engine/textures/simple_skybox/nz.jpg",
     ]);
     SharedEnvironmentData.set_skybox_color([1, 1, 1, 1]);
 
@@ -1671,7 +1654,7 @@ export class ObjectPaintingScene extends Scene {
             this.sphere_mesh,
             [this.object_material1_id, this.object_material2_id, this.object_material3_id][
               Math.floor(Math.random() * 3)
-            ],
+            ]
           );
           this.entities.push(entity);
         }
@@ -1768,10 +1751,11 @@ export class GITestScene extends Scene {
     light_fragment_view.active = true;
     light_fragment_view.is_primary_sun = 1;
     light_fragment_view.shadow_clipmaps = MAX_CLIPMAP_LEVELS;
-    
+
     // Load worn panel textures for metallic floor
-    let worn_panel_albedo = Texture.load(["engine/textures/worn_panel/worn_panel_albedo.png"], {
+    let worn_panel_albedo = {
       name: "worn_panel_albedo",
+      paths: ["engine/textures/worn_panel/worn_panel_albedo.jpg"],
       format: "rgba8unorm",
       dimension: "2d",
       usage:
@@ -1779,9 +1763,10 @@ export class GITestScene extends Scene {
         GPUTextureUsage.COPY_DST |
         GPUTextureUsage.RENDER_ATTACHMENT,
       material_notifier: "worn_panel_albedo",
-    });
-    let worn_panel_normal = Texture.load(["engine/textures/worn_panel/worn_panel_normal.png"], {
+    };
+    let worn_panel_normal = {
       name: "worn_panel_normal",
+      paths: ["engine/textures/worn_panel/worn_panel_normal.jpg"],
       format: "rgba8unorm",
       dimension: "2d",
       usage:
@@ -1789,35 +1774,21 @@ export class GITestScene extends Scene {
         GPUTextureUsage.COPY_DST |
         GPUTextureUsage.RENDER_ATTACHMENT,
       material_notifier: "worn_panel_normal",
-    });
-    let worn_panel_roughness = Texture.load(
-      ["engine/textures/worn_panel/worn_panel_roughness.png"],
-      {
-        name: "worn_panel_roughness",
-        format: "rgba8unorm",
-        dimension: "2d",
-        usage:
-          GPUTextureUsage.TEXTURE_BINDING |
-          GPUTextureUsage.COPY_DST |
-          GPUTextureUsage.RENDER_ATTACHMENT,
-        material_notifier: "worn_panel_roughness",
-      }
-    );
-    let worn_panel_metallic = Texture.load(
-      ["engine/textures/worn_panel/worn_panel_metallic.png"],
-      {
-        name: "worn_panel_metallic",
-        format: "rgba8unorm",
-        dimension: "2d",
-        usage:
-          GPUTextureUsage.TEXTURE_BINDING |
-          GPUTextureUsage.COPY_DST |
-          GPUTextureUsage.RENDER_ATTACHMENT,
-        material_notifier: "worn_panel_metallic",
-      }
-    );
-    let worn_panel_ao = Texture.load(["engine/textures/worn_panel/worn_panel_ao.png"], {
+    };
+    let worn_panel_roughness = {
+      name: "worn_panel_roughness",
+      paths: ["engine/textures/worn_panel/worn_panel_roughness.jpg"],
+      format: "rgba8unorm",
+      dimension: "2d",
+      usage:
+        GPUTextureUsage.TEXTURE_BINDING |
+        GPUTextureUsage.COPY_DST |
+        GPUTextureUsage.RENDER_ATTACHMENT,
+      material_notifier: "worn_panel_roughness",
+    };
+    let worn_panel_ao = {
       name: "worn_panel_ao",
+      paths: ["engine/textures/worn_panel/worn_panel_ao.jpg"],
       format: "rgba8unorm",
       dimension: "2d",
       usage:
@@ -1825,16 +1796,16 @@ export class GITestScene extends Scene {
         GPUTextureUsage.COPY_DST |
         GPUTextureUsage.RENDER_ATTACHMENT,
       material_notifier: "worn_panel_ao",
-    });
+    };
 
     // Create metallic floor material
     const metallic_floor_material = StandardMaterial.create("testgym_metallic_floor_material");
     const metallic_floor_material_id = metallic_floor_material.material_id;
-    metallic_floor_material.set_albedo([0.5, 0.5, 0.5, 1], worn_panel_albedo);
-    metallic_floor_material.set_normal([0, 1, 0, 1], worn_panel_normal);
-    metallic_floor_material.set_roughness(0.5, worn_panel_roughness);
+    metallic_floor_material.sample_albedo(worn_panel_albedo);
+    metallic_floor_material.sample_normal(worn_panel_normal);
+    metallic_floor_material.sample_roughness(worn_panel_roughness);
+    metallic_floor_material.sample_ao(worn_panel_ao);
     metallic_floor_material.set_metallic(0.2);
-    metallic_floor_material.set_ao(0.5, worn_panel_ao);
     metallic_floor_material.set_emission(0.0);
     metallic_floor_material.set_tiling(30.0);
 
@@ -2129,18 +2100,12 @@ export class GITestScene extends Scene {
     // Load and place the station behind the three Cornell boxes (large scale)
     const station_mesh = Mesh.from_gltf("engine/models/station/station.gltf");
 
-    // Create a default material
-    const default_material = StandardMaterial.create("MyMaterial");
-    const default_material_id = default_material.material_id;
-    default_material.set_albedo([1.0, 1.0, 1.0, 1.0]);
-    default_material.set_metallic(0.9);
-
     const station_entity = spawn_mesh_entity(
       [0, 0, -100],
       [0, 0, 0, 1],
       [10, 10, 10],
       station_mesh,
-      default_material_id
+      0 // GLTF sets the material id
     );
     this.entities.push(station_entity);
   }
@@ -2310,7 +2275,7 @@ export class ShadowTestScene extends Scene {
         [0, 0, 0, 1],
         ball_scale,
         sphere_mesh,
-        ball_material.material_id,
+        ball_material.material_id
       );
       this.swaying_balls.push(entity);
       this.entities.push(entity);
@@ -2465,7 +2430,7 @@ export class ShadowTestScene extends Scene {
           [0, 0, 0, 1],
           [0, 0, 0],
           cube_mesh,
-          neon_material_ids[mat_idx],
+          neon_material_ids[mat_idx]
         );
 
         EntityManager.set_entity_instance_count(neon_entity, transforms.length);
@@ -2495,7 +2460,7 @@ export class ShadowTestScene extends Scene {
     const light_grid_size = Math.ceil(Math.sqrt(num_point_lights));
     const grid_spacing = 300.0;
     const grid_offset = (light_grid_size - 1) * grid_spacing * 0.5;
-    
+
     for (let i = 0; i < num_point_lights; i++) {
       const p_view = EntityManager.get_fragment(point_light_entity, LightFragment, i);
 
@@ -2507,12 +2472,12 @@ export class ShadowTestScene extends Scene {
       // Calculate grid position for uniform distribution
       const grid_x = i % light_grid_size;
       const grid_z = Math.floor(i / light_grid_size);
-      
+
       // Position lights in a centered grid pattern
       const x = grid_x * grid_spacing - grid_offset;
       const z = grid_z * grid_spacing - grid_offset;
       const y = 60.0 + Math.sin(i * 0.5) * 20.0; // Vary height slightly for visual interest
-      
+
       p_view.position = [x, y, z];
       p_view.radius = 100.0;
       p_view.intensity = 15.0 + Math.sin(i * 0.3) * 1.0; // Vary intensity slightly
@@ -2613,43 +2578,11 @@ export class GLTFModelScene extends Scene {
     // Load a GLTF model (e.g., barrel)
     const model_mesh = Mesh.from_gltf("engine/models/barrel/Barrel.gltf");
 
-    // Create a default material
-    const barrel_material = StandardMaterial.create("GLTFModelMaterial");
-    {
-      let barrel_albedo = Texture.load(["engine/models/barrel/barrel_BaseColor.png"], {
-        name: "barrel_albedo",
-        format: "rgba8unorm",
-        dimension: "2d",
-        usage:
-          GPUTextureUsage.TEXTURE_BINDING |
-          GPUTextureUsage.COPY_DST |
-          GPUTextureUsage.RENDER_ATTACHMENT,
-        material_notifier: "barrel_albedo",
-        flip_y: false,
-      });
-      let barrel_metallic = Texture.load(["engine/models/barrel/barrel_Metallic-barrel_Roughness.png"], {
-        name: "barrel_metallic",
-        format: "rgba8unorm",
-        dimension: "2d",
-        usage:
-          GPUTextureUsage.TEXTURE_BINDING |
-          GPUTextureUsage.COPY_DST |
-          GPUTextureUsage.RENDER_ATTACHMENT,
-        material_notifier: "barrel_metallic",
-        flip_y: false,
-      });
-
-      // Create a default material
-      barrel_material.set_albedo([1, 1, 1, 1], barrel_albedo);
-      barrel_material.set_metallic(0.5, barrel_metallic, TextureChannel.G);
-      barrel_material.set_roughness(0.5, barrel_metallic, TextureChannel.B);
-    }
-
     // Spawn three barrels at positions offset by 15 units on x-axis
     const barrel_positions = [
       [5, -10, 0],
       [20, -10, 0],
-      [35, -10, 0]
+      [35, -10, 0],
     ];
     this.barrel_entities = [];
     this.barrel_offsets = [];
@@ -2660,7 +2593,7 @@ export class GLTFModelScene extends Scene {
         [0, 0, 0, 1],
         [0.1, 0.1, 0.1],
         model_mesh,
-        barrel_material.material_id
+        0 // GLTF sets the material id
       );
       this.barrel_entities.push(entity);
       this.entities.push(entity);
@@ -2713,7 +2646,7 @@ export class SponzaScene extends Scene {
 
     const view_data = SharedViewBuffer.get_view_data(0);
     view_data.view_position = [5.78, 6.92, 0.98];
-    view_data.view_rotation = [-0.1072285, 0.7414748, -0.12231449, -0.650023400];
+    view_data.view_rotation = [-0.1072285, 0.7414748, -0.12231449, -0.6500234];
 
     const light_entity = EntityManager.create_entity([LightFragment]);
     this.entities.push(light_entity);
@@ -2752,18 +2685,12 @@ export class SponzaScene extends Scene {
 
     const sponza_mesh = Mesh.from_gltf("engine/models/sponza/Sponza.gltf");
 
-    const default_material = StandardMaterial.create("sponza_default_material");
-    const default_material_id = default_material.material_id;
-    default_material.set_albedo([1.0, 1.0, 1.0, 1.0]);
-    default_material.set_roughness(0.8);
-    default_material.set_metallic(0.0);
-
     const sponza_entity = spawn_mesh_entity(
       [0, 2.0, 0],
       [0, 0, 0, 1],
       [1, 1, 1],
       sponza_mesh,
-      default_material_id
+      0 // GLTF sets the material id
     );
     this.entities.push(sponza_entity);
   }
@@ -2785,7 +2712,7 @@ export class SponzaScene extends Scene {
 
     const two_pi = Math.PI * 2.0;
     const phase = (this.time_elapsed_sec / this.sway_period_sec) * two_pi;
-    const angle_rad = Math.sin(phase) * (this.sway_angle_deg * Math.PI / 180.0);
+    const angle_rad = Math.sin(phase) * ((this.sway_angle_deg * Math.PI) / 180.0);
 
     const cos_a = Math.cos(angle_rad);
     const sin_a = Math.sin(angle_rad);
@@ -2844,4 +2771,3 @@ export class SponzaScene extends Scene {
 
   simulator.run();
 })();
-

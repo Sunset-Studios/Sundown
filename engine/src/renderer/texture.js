@@ -4,6 +4,7 @@ import { ResourceCache } from "./resource_cache.js";
 import { ImageFlags } from "./renderer_types.js";
 import { CacheTypes } from "./renderer_types.js";
 import { global_dispatcher } from "../core/dispatcher.js";
+import { TextureArrayPools } from "./texture_pool.js";
 
 /**
  * Configuration for a texture sampler.
@@ -72,7 +73,7 @@ export class TextureSampler {
  * @property {string} format - Format of the image (e.g., "rgba8unorm").
  * @property {number} usage - Usage flags for the image (e.g., GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.SAMPLED).
  * @property {number} sample_count - Number of samples for multisampling.
- * @property {boolean} b_is_bindless - Whether the image is bindless.
+ * @property {string} pool_key - Key for the texture pool, if one should be used.
  * @property {number} flags - Additional flags for the image (see ImageFlags enum).
  * @property {Object} clear_value - Clear value for the image (e.g., { r: 0, g: 0, b: 0, a: 1 }).
  * @property {Object} blend - Blend configuration for the image if used as a render target (e.g., { src_factor: "one", dst_factor: "zero" }).
@@ -89,7 +90,7 @@ class TextureConfig {
   usage = GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.SAMPLED;
   sample_count = 1;
   dimension = "2d";
-  b_is_bindless = false;
+  pool_key = null;
   flags = ImageFlags.None;
   clear_value = { r: 0, g: 0, b: 0, a: 0 };
   blend = null;
@@ -104,6 +105,7 @@ export class Texture {
   image = null;
   views = [];
   current_view = 0;
+  bindless_handle = -1;
 
   // Create a GPU buffer to store the data
   init(config) {
@@ -113,25 +115,32 @@ export class Texture {
     this.config.type = config.format.includes("depth") ? "depth" : "color";
 
     if (this.config.type === "depth") {
-      this.config.clear_value = (this.config.depth_clear !== undefined) ? this.config.depth_clear : 1.0;
+      this.config.clear_value =
+        this.config.depth_clear !== undefined ? this.config.depth_clear : 1.0;
       this.config.load_op = "clear";
     }
 
-    this.image = renderer.device.createTexture({
-      label: config.name,
-      size: {
-        width: config.width,
-        height: config.height,
-        depthOrArrayLayers: config.dimension === "cube" ? 6 : config.depth,
-      },
-      mipLevelCount: config.mip_levels,
-      sampleCount: config.sample_count,
-      format: config.format,
-      usage: config.usage,
-      dimension: Texture.texture_dimension_to_image_dimension(config.dimension),
-    });
-
-    this._setup_views();
+    if (this.config.pool_key) {
+      const allocation = TextureArrayPools.allocate(this.config);
+      this.image = allocation.texture.image;
+      this.views = allocation.texture.views;
+      this.bindless_handle = allocation.index;
+    } else {
+      this.image = renderer.device.createTexture({
+        label: config.name,
+        size: {
+          width: config.width,
+          height: config.height,
+          depthOrArrayLayers: config.dimension === "cube" ? 6 : config.depth,
+        },
+        mipLevelCount: config.mip_levels,
+        sampleCount: config.sample_count,
+        format: config.format,
+        usage: config.usage,
+        dimension: Texture.texture_dimension_to_image_dimension(config.dimension),
+      });
+      this._setup_views();
+    }
   }
 
   destroy() {
@@ -139,16 +148,8 @@ export class Texture {
     this.image = null;
   }
 
-  async load(paths, config) {
-    const renderer = Renderer.get();
-
-    this.config = { ...this.config, ...config };
-    this.config.type = config.format.includes("depth") ? "depth" : "color";
-
-    if (this.config.type === "depth") {
-      this.config.clear_value = (this.config.depth_clear !== undefined) ? this.config.depth_clear : 1.0;
-      this.config.load_op = "clear";
-    }
+  async load(config) {
+    if (!config.paths || config.paths.length === 0) return;
 
     async function load_image_bitmap(path) {
       const resolved_img = await new Promise((resolve, reject) => {
@@ -161,6 +162,17 @@ export class Texture {
       return await createImageBitmap(resolved_img, {
         colorSpaceConversion: "none",
       });
+    }
+    
+    const renderer = Renderer.get();
+
+    this.config = { ...this.config, ...config };
+    this.config.type = config.format.includes("depth") ? "depth" : "color";
+
+    if (this.config.type === "depth") {
+      this.config.clear_value =
+        this.config.depth_clear !== undefined ? this.config.depth_clear : 1.0;
+      this.config.load_op = "clear";
     }
 
     // Create a default texture while we wait for the images to load
@@ -181,74 +193,87 @@ export class Texture {
         GPUTextureUsage.SAMPLED,
     });
 
-    this._setup_views();
-
-    const textures = await Promise.all(paths.map(load_image_bitmap));
+    const textures = await Promise.all(config.paths.map(load_image_bitmap));
 
     // 1) compute how many mip‐levels we want
     const base = textures[0];
     const max_dim = Math.max(base.width, base.height);
     const mip_count = Math.floor(Math.log2(max_dim)) + 1;
     this.config = { ...this.config, ...config, mip_levels: mip_count };
-    this.config.width  = base.width;
+    this.config.width = base.width;
     this.config.height = base.height;
-    this.config.depth  = textures.length;
+    this.config.depth = textures.length;
 
-    // 2) create the GPU texture with multiple mips
-    this.image = renderer.device.createTexture({
-      label: this.config.name,
-      size: {
-        width:  base.width,
-        height: base.height,
-        depthOrArrayLayers: this.config.depth,
-      },
-      mipLevelCount: this.config.mip_levels,
-      sampleCount:   this.config.sample_count,
-      format:        this.config.format,
-      usage: this.config.usage,
-      dimension:
-        Texture.texture_dimension_to_image_dimension(
-          this.config.dimension
-        ),
-    });
+    // 2) create or allocate the GPU texture with multiple mips
+    if (this.config.pool_key) {
+      const allocation = TextureArrayPools.allocate(this.config);
+      this.image = allocation.texture.image;
+      this.views = allocation.texture.views;
+      this.bindless_handle = allocation.index;
+    } else {
+      this.image = renderer.device.createTexture({
+        label: this.config.name,
+        size: {
+          width: base.width,
+          height: base.height,
+          depthOrArrayLayers: this.config.depth,
+        },
+        mipLevelCount: this.config.mip_levels,
+        sampleCount: this.config.sample_count,
+        format: this.config.format,
+        usage: this.config.usage,
+        dimension: Texture.texture_dimension_to_image_dimension(this.config.dimension),
+      });
+    }
 
     for (let layer = 0; layer < textures.length; layer++) {
       const texture = textures[layer];
       // 3) copy the full-res image into mip 0
+      const targetLayer = this.config.pool_key ? this.bindless_handle + layer : layer;
       renderer.device.queue.copyExternalImageToTexture(
         { source: texture, flipY: config.flip_y !== undefined ? config.flip_y : true },
-        { texture: this.image, mipLevel: 0, origin: { x: 0, y: 0, z: layer } },
-        [ texture.width, texture.height ]
+        { texture: this.image, mipLevel: 0, origin: { x: 0, y: 0, z: targetLayer } },
+        [texture.width, texture.height]
       );
 
       // 4) for each subsequent level, use createImageBitmap to resize
       for (let lvl = 1; lvl < this.config.mip_levels; lvl++) {
-        const w = Math.max(1, texture.width  >> lvl);
+        const w = Math.max(1, texture.width >> lvl);
         const h = Math.max(1, texture.height >> lvl);
         const mip_bitmap = await createImageBitmap(texture, {
-        resizeWidth:  w,
-        resizeHeight: h,
-        resizeQuality: "high",
-      });
-      renderer.device.queue.copyExternalImageToTexture(
-        { source: mip_bitmap, flipY: config.flip_y !== undefined ? config.flip_y : true },
-        { texture: this.image, mipLevel: lvl, origin: { x: 0, y: 0, z: layer } },
-        [ w, h ]
-      );
+          resizeWidth: w,
+          resizeHeight: h,
+          resizeQuality: "high",
+        });
+        renderer.device.queue.copyExternalImageToTexture(
+          { source: mip_bitmap, flipY: config.flip_y !== undefined ? config.flip_y : true },
+          { texture: this.image, mipLevel: lvl, origin: { x: 0, y: 0, z: targetLayer } },
+          [w, h]
+        );
       }
     }
 
     // 5) rebuild all the texture views now that we've got new mips
-    this._setup_views();
+    if (!this.config.pool_key) {
+      this._setup_views();
+    }
 
     if (this.config.material_notifier) {
       global_dispatcher.dispatch(this.config.material_notifier, this);
+    }
+    if (this.config.pool_key) {
+      const key = `texture_pool_${this.config.pool_key}`;
+      global_dispatcher.dispatch(key, this);
     }
 
     Renderer.get().mark_bind_groups_dirty(true /* pass_only */);
   }
 
   set_image(image) {
+    // We should not be able to set an image for a pooled (bindless-style) texture, as that breaks
+    // part of the pooling invariant.
+    if (this.config.pool_key) return;
+
     this.image = image;
     this.config.width = image.width;
     this.config.height = image.height;
@@ -261,7 +286,8 @@ export class Texture {
     this.config.type = this.config.format.includes("depth") ? "depth" : "color";
 
     if (this.config.type === "depth") {
-      this.config.clear_value = (this.config.depth_clear !== undefined) ? this.config.depth_clear : 1.0;
+      this.config.clear_value =
+        this.config.depth_clear !== undefined ? this.config.depth_clear : 1.0;
       this.config.load_op = "clear";
     } else {
       this.config.clear_value = { r: 0, g: 0, b: 0, a: 0 };
@@ -309,33 +335,53 @@ export class Texture {
   }
 
   copy_buffer(encoder, buffer) {
+    const origin = {
+      x: 0,
+      y: 0,
+      z: this.config.pool_key ? this.bindless_handle : 0,
+    };
     encoder.copyBufferToTexture(
       { buffer: buffer.buffer },
-      { texture: this.image },
+      { texture: this.image, origin },
       {
         width: this.config.width,
         height: this.config.height,
-        depthOrArrayLayers: this.config.depth,
+        depthOrArrayLayers: 1,
       }
     );
   }
 
   copy_texture(encoder, texture) {
-    encoder.copyTextureToTexture(
-      { texture: texture.image },
-      { texture: this.image },
-      {
-        width: texture.config.width,
-        height: texture.config.height,
-        depthOrArrayLayers: this.config.depth,
-      }
-    );
+    const src_origin = {
+      x: 0,
+      y: 0,
+      z: texture.config.pool_key ? texture.bindless_handle : 0,
+    };
+    const dst_origin = {
+      x: 0,
+      y: 0,
+      z: this.config.pool_key ? this.bindless_handle : 0,
+    };
+    const mip_levels = Math.max(texture.config.mip_levels, 1);
+    for (let mip = 0; mip < mip_levels; mip++) {
+      const w = Math.max(1, texture.config.width >> mip);
+      const h = Math.max(1, texture.config.height >> mip);
+      encoder.copyTextureToTexture(
+        { texture: texture.image, mipLevel: mip, origin: src_origin },
+        { texture: this.image, mipLevel: mip, origin: dst_origin },
+        { width: w, height: h, depthOrArrayLayers: texture.config.depth }
+      );
+    }
   }
 
-  copy_external(encoder, image, origin = [0, 0, 0], cols = 0, rows = 0, flip_y = false) {
+  copy_external(encoder, image, origin = { x: 0, y: 0, z: 0 }, cols = 0, rows = 0, flip_y = false) {
+    const dest_origin = { ...origin };
+    if (this.config.pool_key) {
+      dest_origin.z = this.bindless_handle;
+    }
     encoder.copyExternalImageToTexture(
       { source: image, flipY: flip_y },
-      { texture: this.image, origin: origin },
+      { texture: this.image, origin: dest_origin },
       [cols, rows]
     );
   }
@@ -357,9 +403,8 @@ export class Texture {
     const unpadded_bytes_per_row = cols * components;
 
     // WebGPU requires bytesPerRow to be a multiple of 256 bytes
-    const align                  = 256;
-    const padded_bytes_per_row   =
-        Math.ceil(unpadded_bytes_per_row / align) * align;
+    const align = 256;
+    const padded_bytes_per_row = Math.ceil(unpadded_bytes_per_row / align) * align;
 
     // If the row length is already aligned we can upload directly,
     // otherwise we copy each row into a padded buffer.
@@ -379,7 +424,7 @@ export class Texture {
     }
 
     renderer.device.queue.writeTexture(
-      { texture: this.image, origin: origin },
+      { texture: this.image, origin: dest_origin },
       upload_array,
       {
         offset: data_offset,
@@ -388,6 +433,12 @@ export class Texture {
       },
       { width: cols, height: rows }
     );
+  }
+
+  rename(new_name) {
+    ResourceCache.get().remove(CacheTypes.IMAGE, Name.from(this.config.name));
+    this.config.name = new_name;
+    ResourceCache.get().store(CacheTypes.IMAGE, Name.from(this.config.name), this);
   }
 
   get physical_id() {
@@ -476,7 +527,7 @@ export class Texture {
     return cached_image;
   }
 
-  static load(paths, config) {
+  static load(config) {
     let image = ResourceCache.get().fetch(CacheTypes.IMAGE, Name.from(config.name));
 
     if (image && config.force) {
@@ -486,7 +537,7 @@ export class Texture {
 
     if (!image) {
       image = new Texture();
-      image.load(paths, config);
+      image.load(config);
       ResourceCache.get().store(CacheTypes.IMAGE, Name.from(config.name), image);
     }
 
@@ -509,6 +560,25 @@ export class Texture {
       });
     }
     return Texture.#default;
+  }
+
+  static #default_array = null;
+  static default_array() {
+    if (!Texture.#default_array) {
+      Texture.#default_array = Texture.create({
+        name: "default",
+        width: 1,
+        height: 1,
+        format: "rgba8unorm",
+        dimension: "2d-array",
+        usage:
+          GPUTextureUsage.TEXTURE_BINDING |
+          GPUTextureUsage.RENDER_ATTACHMENT |
+          GPUTextureUsage.SAMPLED,
+        clear_value: { r: 0, g: 0, b: 0, a: 0 },
+      });
+    }
+    return Texture.#default_array;
   }
 
   static #default_cube = null;

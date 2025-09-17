@@ -2006,12 +2006,23 @@ export class RenderGraph {
           binding: index,
           resource: write.texture_view,
         });
+
+        const tex_layout = {};
+        if (write.view_dimension) {
+          tex_layout.viewDimension = write.view_dimension;
+        }
+        if (write.sample_type) {
+          tex_layout.sampleType = write.sample_type;
+        }
+        if (write.multisampled !== undefined) {
+          tex_layout.multisampled = write.multisampled;
+        }
         layouts.push({
           binding: index,
           visibility:
             write.visibility ||
             GPUShaderStage.FRAGMENT | GPUShaderStage.VERTEX | GPUShaderStage.COMPUTE,
-          texture: {},
+          texture: tex_layout,
         });
       }
     });

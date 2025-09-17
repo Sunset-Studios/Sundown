@@ -10,6 +10,7 @@ import { profile_scope } from "../utility/performance.js";
 import { CacheTypes, MaterialFamilyType, BindGroupType } from "./renderer_types.js";
 import { EntityManager } from "../core/ecs/entity.js";
 import { StaticMeshFragment } from "../core/ecs/fragments/static_mesh_fragment.js";
+import { MaterialAllocationTable } from "./material_allocation_table.js";
 
 const initial_buffer_size = 1024;
 const max_frame_buffer_writes = 100000;
@@ -438,6 +439,8 @@ export class MeshTaskQueue {
           }
         }
       }
+
+      MaterialAllocationTable.upload_buffers();
 
       this.needs_sort = false;
     });

@@ -72,19 +72,19 @@
     ],
     "images" : [
         {
-            "mimeType" : "image/png",
+            "mimeType" : "image/jpeg",
             "name" : "barrel_Normal",
-            "uri" : "barrel_Normal.png"
+            "uri" : "barrel_Normal.jpg"
         },
         {
-            "mimeType" : "image/png",
+            "mimeType" : "image/jpeg",
             "name" : "barrel_BaseColor",
-            "uri" : "barrel_BaseColor.png"
+            "uri" : "barrel_BaseColor.jpg"
         },
         {
-            "mimeType" : "image/png",
+            "mimeType" : "image/jpeg",
             "name" : "barrel_Metallic-barrel_Roughness",
-            "uri" : "barrel_Metallic-barrel_Roughness.png"
+            "uri" : "barrel_Metallic-barrel_Roughness.jpg"
         }
     ],
     "accessors" : [

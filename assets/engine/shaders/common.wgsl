@@ -93,6 +93,23 @@ struct DrawCommand {
     first_instance: u32,
 };
 
+struct StandardMaterialParams {
+    albedo: vec4<precision_float>,
+    normal: vec4<precision_float>,
+    emission_roughness_metallic_tiling: vec4<precision_float>,
+    ao_height_specular: vec4<precision_float>,
+    texture_flags1: vec4<u32>, // x: albedo, y: normal, z: roughness, w: metallic
+    texture_flags2: vec4<u32>, // x: ao, y: height, z: specular, w: emission 
+    albedo_handle: u32,
+    normal_handle: u32,
+    roughness_handle: u32,
+    metallic_handle: u32,
+    ao_handle: u32,
+    height_handle: u32,
+    specular_handle: u32,
+    emission_handle: u32,
+};
+
 // ------------------------------------------------------------------------------------
 // Constants
 // ------------------------------------------------------------------------------------ 
@@ -257,6 +274,14 @@ fn uint_to_normalized_float(x: u32) -> precision_float {
 // Interpolate between two values
 fn interpolate(v0: precision_float, v1: precision_float, t: precision_float) -> precision_float {
     return v0 * (1.0 - t) + v1 * t;
+}
+
+// ------------------------------------------------------------------------------------
+// Bindless pool sampling helpers
+// ------------------------------------------------------------------------------------
+fn sample_handle_rgba(tex_handle: u32, uv: vec2<precision_float>, pool: texture_2d_array<f32>) -> vec4<precision_float> {
+    let result = textureSample(pool, global_sampler, uv, tex_handle);
+    return result;
 }
 
 // Helper function to safely normalize a vector

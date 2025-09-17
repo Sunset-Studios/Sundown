@@ -117,6 +117,7 @@ export class MaterialTemplate {
           type: binding_type,
           name: binding.name,
           binding: i,
+          is_array: binding.type.name.includes("array"),
         });
       }
     }
@@ -227,7 +228,9 @@ export class MaterialTemplate {
       }
 
       const target = {
-        format: Shader.get_optimal_texture_format(output.type.format ? output.type.format.name : output.type.name),
+        format: Shader.get_optimal_texture_format(
+          output.type.format ? output.type.format.name : output.type.name
+        ),
       };
 
       if (this.pipeline_state_config.targets && i < this.pipeline_state_config.targets.length) {
@@ -359,31 +362,37 @@ export class Material {
       return;
     }
 
-    const entries = this.template.get_all_resources().map((resource) => {
-      switch (resource.type) {
-        case ShaderResourceType.Uniform:
-          return {
-            binding: resource.binding,
-            resource: { buffer: this.uniform_data.get(resource.name).buffer },
-          };
-        case ShaderResourceType.Storage:
-          return {
-            binding: resource.binding,
-            resource: { buffer: this.storage_data.get(resource.name).buffer },
-          };
-        case ShaderResourceType.Texture:
-          const texture = this.texture_data.get(resource.name) ?? Texture.default();
-          return {
-            binding: resource.binding,
-            resource: texture.view,
-          };
-        case ShaderResourceType.Sampler:
-          return {
-            binding: resource.binding,
-            resource: this.sampler_data.get(resource.name),
-          };
-      }
-    });
+    const entries = this.template
+      .get_all_resources()
+      .map((resource) => {
+        switch (resource.type) {
+          case ShaderResourceType.Uniform:
+            return {
+              binding: resource.binding,
+              resource: { buffer: this.uniform_data.get(resource.name).buffer },
+            };
+          case ShaderResourceType.Storage:
+            return {
+              binding: resource.binding,
+              resource: { buffer: this.storage_data.get(resource.name).buffer },
+            };
+          case ShaderResourceType.Texture:
+            let texture = this.texture_data.get(resource.name);
+            if (!texture) {
+              texture = resource.is_array ? Texture.default_array() : Texture.default();
+            }
+            return  {
+              binding: resource.binding,
+              resource: texture.view,
+            };
+          case ShaderResourceType.Sampler:
+            return {
+              binding: resource.binding,
+              resource: this.sampler_data.get(resource.name),
+            };
+        }
+      })
+      .filter((entry) => entry !== null);
 
     for (let i = 0; i < entries.length; i++) {
       if (!entries[i].resource) {
@@ -448,12 +457,15 @@ export class Material {
     this.needs_bind_group_update = true;
   }
 
-  listen_for_uniform_data(name) {
+  listen_for_uniform_data(name, cb = null) {
     if (!this.data_listeners.has(name)) {
       this.data_listeners.add(name);
       global_dispatcher.on(name, (data) => {
         if (data) {
           this.set_uniform_data(name, data);
+          if (cb) {
+            cb(name, data);
+          }
         }
       });
     }
@@ -465,12 +477,15 @@ export class Material {
     this.needs_bind_group_update = true;
   }
 
-  listen_for_storage_data(name) {
+  listen_for_storage_data(name, cb = null) {
     if (!this.data_listeners.has(name)) {
       this.data_listeners.add(name);
       global_dispatcher.on(name, (data) => {
         if (data) {
           this.set_storage_data(name, data);
+          if (cb) {
+            cb(name, data);
+          }
         }
       });
     }
@@ -482,12 +497,15 @@ export class Material {
     this.needs_bind_group_update = true;
   }
 
-  listen_for_texture_data(name) {
+  listen_for_texture_data(name, cb = null) {
     if (!this.data_listeners.has(name)) {
       this.data_listeners.add(name);
       global_dispatcher.on(name, (data) => {
         if (data) {
           this.set_texture_data(name, data);
+          if (cb) {
+            cb(name, data);
+          }
         }
       });
     }
@@ -499,12 +517,15 @@ export class Material {
     this.needs_bind_group_update = true;
   }
 
-  listen_for_sampler_data(name) {
+  listen_for_sampler_data(name, cb = null) {
     if (!this.data_listeners.has(name)) {
       this.data_listeners.add(name);
       global_dispatcher.on(name, (data) => {
         if (data) {
           this.set_sampler_data(name, data);
+          if (cb) {
+            cb(name, data);
+          }
         }
       });
     }
@@ -658,10 +679,11 @@ export class StandardMaterial {
     const material = Material.get(standard_material.material_id);
 
     // Create a combined uniform buffer for the material params
-    standard_material.params_buffer = new ArrayBuffer(96);
+    standard_material.params_buffer = new ArrayBuffer(128);
     standard_material.float_params = new Float32Array(standard_material.params_buffer, 0, 16);
     standard_material.texture_flags1 = new Uint32Array(standard_material.params_buffer, 64, 4);
     standard_material.texture_flags2 = new Uint32Array(standard_material.params_buffer, 80, 4);
+    standard_material.texture_handles = new Uint32Array(standard_material.params_buffer, 96, 8);
 
     // Set initial values
     standard_material.float_params.set([
@@ -672,10 +694,11 @@ export class StandardMaterial {
       // emission_roughness_metallic_tiling: vec4
       0.2, 0.7, 0.3, 1.0,
       // ao_height_specular: vec4 (ao, height, specular, padding)
-      1.0, 0.0, 0.1, 0.0
+      1.0, 0.0, 0.1, 0.0,
     ]);
     standard_material.texture_flags1.set([0, 0, 0, 0]);
     standard_material.texture_flags2.set([0, 0, 0, 0]);
+    standard_material.texture_handles.set([0, 0, 0, 0, 0, 0, 0, 0]);
 
     standard_material.material_params_buffer = Buffer.create({
       name: `${name}_material_params_buffer`,
@@ -687,197 +710,470 @@ export class StandardMaterial {
     material.set_uniform_data("material_params", standard_material.material_params_buffer);
 
     // Set default parameter values
-    standard_material.set_albedo(params.albedo || [1, 1, 1, 1], params.albedo_texture || null);
-    standard_material.set_normal(params.normal || [0, 0, 1, 1], params.normal_texture || null);
-    standard_material.set_roughness(
-      params.roughness !== undefined ? params.roughness : 0.7,
-      params.roughness_texture || null,
-      params.roughness_channel ?? TextureChannel.R
-    );
-    standard_material.set_metallic(
-      params.metallic !== undefined ? params.metallic : 0.3,
-      params.metallic_texture || null,
-      params.metallic_channel ?? TextureChannel.R
-    );
-    standard_material.set_emission(
-      params.emission !== undefined ? params.emission : 0.2,
-      params.emission_texture || null,
-      params.emission_channel ?? TextureChannel.R
-    );
-    standard_material.set_ao(
-      params.ao !== undefined ? params.ao : 1.0,
-      params.ao_texture || null,
-      params.ao_channel ?? TextureChannel.R
-    );
-    standard_material.set_height(
-      params.height !== undefined ? params.height : 0.0,
-      params.height_texture || null,
-      params.height_channel ?? TextureChannel.R
-    );
-    standard_material.set_specular(
-      params.specular !== undefined ? params.specular : 0.1,
-      params.specular_texture || null,
-      params.specular_channel ?? TextureChannel.R
-    );
+    if (params.albedo_texture) {
+      standard_material.sample_albedo(params.albedo_texture);
+    } else {
+      standard_material.set_albedo(params.albedo || [1, 1, 1, 1]);
+    }
+
+    if (params.normal_texture) {
+      standard_material.sample_normal(params.normal_texture);
+    } else {
+      standard_material.set_normal(params.normal || [0, 0, 1, 1]);
+    }
+
+    if (params.roughness_texture) {
+      standard_material.sample_roughness(
+        params.roughness_texture,
+        params.roughness_channel ?? TextureChannel.R
+      );
+    } else {
+      standard_material.set_roughness(params.roughness || 0.7);
+    }
+
+    if (params.metallic_texture) {
+      standard_material.sample_metallic(
+        params.metallic_texture,
+        params.metallic_channel ?? TextureChannel.R
+      );
+    } else {
+      standard_material.set_metallic(params.metallic || 0.3);
+    }
+
+    if (params.emission_texture) {
+      standard_material.sample_emission(
+        params.emission_texture,
+        params.emission_channel ?? TextureChannel.R
+      );
+    } else {
+      standard_material.set_emission(params.emission || 0.2);
+    }
+
+    if (params.ao_texture) {
+      standard_material.sample_ao(params.ao_texture, params.ao_channel ?? TextureChannel.R);
+    } else {
+      standard_material.set_ao(params.ao || 1.0);
+    }
+
+    if (params.height_texture) {
+      standard_material.sample_height(
+        params.height_texture,
+        params.height_channel ?? TextureChannel.R
+      );
+    } else {
+      standard_material.set_height(params.height || 0.0);
+    }
+
+    if (params.specular_texture) {
+      standard_material.sample_specular(
+        params.specular_texture,
+        params.specular_channel ?? TextureChannel.R
+      );
+    } else {
+      standard_material.set_specular(params.specular || 0.1);
+    }
+
+    standard_material._update_albedo_bindless_handle =
+      standard_material._update_albedo_bindless_handle.bind(standard_material);
+    standard_material._update_normal_bindless_handle =
+      standard_material._update_normal_bindless_handle.bind(standard_material);
+    standard_material._update_roughness_bindless_handle =
+      standard_material._update_roughness_bindless_handle.bind(standard_material);
+    standard_material._update_metallic_bindless_handle =
+      standard_material._update_metallic_bindless_handle.bind(standard_material);
+    standard_material._update_ao_bindless_handle =
+      standard_material._update_ao_bindless_handle.bind(standard_material);
+    standard_material._update_height_bindless_handle =
+      standard_material._update_height_bindless_handle.bind(standard_material);
+    standard_material._update_specular_bindless_handle =
+      standard_material._update_specular_bindless_handle.bind(standard_material);
+    standard_material._update_emission_bindless_handle =
+      standard_material._update_emission_bindless_handle.bind(standard_material);
 
     return standard_material;
   }
 
-  set_albedo(color, texture = null) {
-    const material = Material.get(this.material_id);
-
-    if (texture) {
-      material.set_texture_data("albedo", texture);
-      if (texture.config.material_notifier) {
-        material.listen_for_texture_data(texture.config.material_notifier);
-      }
-    }
-
+  set_albedo(color) {
     this.float_params[0] = color[0];
     this.float_params[1] = color[1];
     this.float_params[2] = color[2];
     this.float_params[3] = color[3];
-    this.texture_flags1[0] = texture ? 1 : 0;
+    this.texture_flags1[0] = 0;
 
     this.update_params();
   }
 
-  set_normal(normal, texture = null) {
+  sample_albedo(texture_config) {
+    if (!texture_config) return;
+
+    // Standard materials only support bindless-style texture sampling which is why we
+    // set this pool key and create the material internally (so we can catch relevant texture events
+    // in order to get the proper bindless handle)
+    texture_config.pool_key = "albedo";
+
     const material = Material.get(this.material_id);
 
-    if (texture) {
-      material.set_texture_data("normal", texture);
-      if (texture.config.material_notifier) {
-        material.listen_for_texture_data(texture.config.material_notifier);
-      }
-    }
+    const is_external_load = texture_config.paths && texture_config.paths.length > 0;
+    const texture = is_external_load
+      ? Texture.load(texture_config)
+      : Texture.create(texture_config);
 
+    material.set_texture_data("albedo", texture);
+    if (texture.config.material_notifier) {
+      material.listen_for_texture_data(
+        texture.config.material_notifier,
+        this._update_albedo_bindless_handle
+      );
+    }
+    material.listen_for_texture_data(
+      `texture_pool_${texture_config.pool_key}`
+    );
+    this.texture_handles[0] = texture.bindless_handle;
+
+    this.texture_flags1[0] = 1;
+
+    this.update_params();
+  }
+
+  _update_albedo_bindless_handle(name, texture) {
+    this.texture_handles[0] = texture.bindless_handle;
+    this.texture_flags1[0] |= 1;
+    this.update_params();
+  }
+
+  set_normal(normal) {
     this.float_params[4] = normal[0];
     this.float_params[5] = normal[1];
     this.float_params[6] = normal[2];
     this.float_params[7] = normal[3];
-    this.texture_flags1[1] = texture ? 1 : 0;
+    this.texture_flags1[1] = 0;
 
     this.update_params();
   }
 
-  set_roughness(roughness, texture = null, channel = TextureChannel.R) {
+  sample_normal(texture_config) {
+    if (!texture_config) return;
+
+    // Standard materials only support bindless-style texture sampling which is why we
+    // set this pool key and create the material internally (so we can catch relevant texture events
+    // in order to get the proper bindless handle)
+    texture_config.pool_key = "normal";
+
     const material = Material.get(this.material_id);
 
-    if (texture) {
-      material.set_texture_data("roughness", texture);
-      if (texture.config.material_notifier) {
-        material.listen_for_texture_data(texture.config.material_notifier);
-      }
-    }
+    const is_external_load = texture_config.paths && texture_config.paths.length > 0;
+    const texture = is_external_load
+      ? Texture.load(texture_config)
+      : Texture.create(texture_config);
 
+    material.set_texture_data("normal", texture);
+    if (texture.config.material_notifier) {
+      material.listen_for_texture_data(
+        texture.config.material_notifier,
+        this._update_normal_bindless_handle
+      );
+    }
+    material.listen_for_texture_data(
+      `texture_pool_${texture_config.pool_key}`
+    );
+    this.texture_handles[1] = texture.bindless_handle;
+
+    this.texture_flags1[1] = 1;
+
+    this.update_params();
+  }
+
+  _update_normal_bindless_handle(name, texture) {
+    this.texture_handles[1] = texture.bindless_handle;
+    this.texture_flags1[1] |= 1;
+    this.update_params();
+  }
+
+  set_roughness(roughness) {
     this.float_params[9] = roughness;
-    let flag = texture ? 1 : 0;
-    if (texture && channel >= 0 && channel <= 3) {
-      flag |= (channel << 1);
+    this.texture_flags1[2] = 0;
+    this.update_params();
+  }
+
+  sample_roughness(texture_config, channel = TextureChannel.R) {
+    if (!texture_config) return;
+
+    // Standard materials only support bindless-style texture sampling which is why we
+    // set this pool key and create the material internally (so we can catch relevant texture events
+    // in order to get the proper bindless handle)
+    texture_config.pool_key = "roughness";
+
+    const material = Material.get(this.material_id);
+
+    const is_external_load = texture_config.paths && texture_config.paths.length > 0;
+    const texture = is_external_load
+      ? Texture.load(texture_config)
+      : Texture.create(texture_config);
+
+    material.set_texture_data("roughness", texture);
+    if (texture.config.material_notifier) {
+      material.listen_for_texture_data(
+        texture.config.material_notifier,
+        this._update_roughness_bindless_handle
+      );
+    }
+    material.listen_for_texture_data(
+      `texture_pool_${texture_config.pool_key}`
+    );
+    this.texture_handles[2] = texture.bindless_handle;
+
+    let flag = 1;
+    if (channel >= 0 && channel <= 3) {
+      flag |= channel << 1;
     }
     this.texture_flags1[2] = flag;
 
     this.update_params();
   }
 
-  set_metallic(metallic, texture = null, channel = TextureChannel.R) {
+  _update_roughness_bindless_handle(name, texture) {
+    this.texture_handles[2] = texture.bindless_handle;
+    this.texture_flags1[2] |= 1;
+    this.update_params();
+  }
+
+  set_metallic(metallic) {
+    this.float_params[10] = metallic;
+    this.texture_flags1[3] = 0;
+    this.update_params();
+  }
+
+  sample_metallic(texture_config, channel = TextureChannel.R) {
+    if (!texture_config) return;
+
+    // Standard materials only support bindless-style texture sampling which is why we
+    // set this pool key and create the material internally (so we can catch relevant texture events
+    // in order to get the proper bindless handle)
+    texture_config.pool_key = "metallic";
+
     const material = Material.get(this.material_id);
 
-    if (texture) {
-      material.set_texture_data("metallic", texture);
-      if (texture.config.material_notifier) {
-        material.listen_for_texture_data(texture.config.material_notifier);
-      }
-    }
+    const is_external_load = texture_config.paths && texture_config.paths.length > 0;
+    const texture = is_external_load
+      ? Texture.load(texture_config)
+      : Texture.create(texture_config);
 
-    this.float_params[10] = metallic;
-    let flag = texture ? 1 : 0;
-    if (texture && channel >= 0 && channel <= 3) {
-      flag |= (channel << 1);
+    material.set_texture_data("metallic", texture);
+    if (texture.config.material_notifier) {
+      material.listen_for_texture_data(
+        texture.config.material_notifier,
+        this._update_metallic_bindless_handle
+      );
+    }
+    material.listen_for_texture_data(
+      `texture_pool_${texture_config.pool_key}`
+    );
+    this.texture_handles[3] = texture.bindless_handle;
+
+    let flag = 1;
+    if (channel >= 0 && channel <= 3) {
+      flag |= channel << 1;
     }
     this.texture_flags1[3] = flag;
 
     this.update_params();
   }
 
-  set_ao(ao, texture = null, channel = TextureChannel.R) {
+  _update_metallic_bindless_handle(name, texture) {
+    this.texture_handles[3] = texture.bindless_handle;
+    this.texture_flags1[3] |= 1;
+    this.update_params();
+  }
+
+  set_ao(ao) {
+    this.float_params[12] = ao;
+    this.texture_flags2[0] = 0;
+    this.update_params();
+  }
+
+  sample_ao(texture_config, channel = TextureChannel.R) {
+    if (!texture_config) return;
+
+    // Standard materials only support bindless-style texture sampling which is why we
+    // set this flag and create the material internally (so we can catch relevatn texture events
+    // in order to get the proper bindless handle)
+    texture_config.pool_key = "ao";
+
     const material = Material.get(this.material_id);
 
-    if (texture) {
-      material.set_texture_data("ao", texture);
-      if (texture.config.material_notifier) {
-        material.listen_for_texture_data(texture.config.material_notifier);
-      }
-    }
+    const is_external_load = texture_config.paths && texture_config.paths.length > 0;
+    const texture = is_external_load
+      ? Texture.load(texture_config)
+      : Texture.create(texture_config);
 
-    this.float_params[12] = ao;
-    let flag = texture ? 1 : 0;
-    if (texture && channel >= 0 && channel <= 3) {
-      flag |= (channel << 1);
+    material.set_texture_data("ao", texture);
+    if (texture.config.material_notifier) {
+      material.listen_for_texture_data(
+        texture.config.material_notifier,
+        this._update_ao_bindless_handle
+      );
+    }
+    material.listen_for_texture_data(
+      `texture_pool_${texture_config.pool_key}`
+    );
+    this.texture_handles[4] = texture.bindless_handle;
+
+    let flag = 1;
+    if (channel >= 0 && channel <= 3) {
+      flag |= channel << 1;
     }
     this.texture_flags2[0] = flag;
 
     this.update_params();
   }
 
-  set_height(height, texture = null, channel = TextureChannel.R) {
+  _update_ao_bindless_handle(name, texture) {
+    this.texture_handles[4] = texture.bindless_handle;
+    this.texture_flags2[0] |= 1;
+    this.update_params();
+  }
+
+  set_height(height) {
+    this.float_params[13] = height;
+    this.texture_flags2[1] = 0;
+    this.update_params();
+  }
+
+  sample_height(texture_config, channel = TextureChannel.R) {
+    if (!texture_config) return;
+
+    // Standard materials only support bindless-style texture sampling which is why we
+    // set this pool key and create the material internally (so we can catch relevant texture events
+    // in order to get the proper bindless handle)
+    texture_config.pool_key = "height";
+
     const material = Material.get(this.material_id);
 
-    if (texture) {
-      material.set_texture_data("height", texture);
-      if (texture.config.material_notifier) {
-        material.listen_for_texture_data(texture.config.material_notifier);
-      }
-    }
+    const is_external_load = texture_config.paths && texture_config.paths.length > 0;
+    const texture = is_external_load
+      ? Texture.load(texture_config)
+      : Texture.create(texture_config);
 
-    this.float_params[13] = height;
-    let flag = texture ? 1 : 0;
-    if (texture && channel >= 0 && channel <= 3) {
-      flag |= (channel << 1);
+    material.set_texture_data("height", texture);
+    if (texture.config.material_notifier) {
+      material.listen_for_texture_data(
+        texture.config.material_notifier,
+        this._update_height_bindless_handle
+      );
+    }
+    material.listen_for_texture_data(
+      `texture_pool_${texture_config.pool_key}`
+    );
+    this.texture_handles[4] = texture.bindless_handle;
+
+    let flag = 1;
+    if (channel >= 0 && channel <= 3) {
+      flag |= channel << 1;
     }
     this.texture_flags2[1] = flag;
 
     this.update_params();
   }
 
-  set_specular(specular, texture = null, channel = TextureChannel.R) {
+  _update_height_bindless_handle(name, texture) {
+    this.texture_handles[4] = texture.bindless_handle;
+    this.texture_flags2[1] |= 1;
+    this.update_params();
+  }
+
+  set_specular(specular) {
+    this.float_params[14] = specular;
+    this.texture_flags2[2] = 0;
+    this.update_params();
+  }
+
+  sample_specular(texture_config, channel = TextureChannel.R) {
+    if (!texture_config) return;
+
+    // Standard materials only support bindless-style texture sampling which is why we
+    // set this pool key and create the material internally (so we can catch relevant texture events
+    // in order to get the proper bindless handle)
+    texture_config.pool_key = "specular";
+
     const material = Material.get(this.material_id);
 
-    if (texture) {
-      material.set_texture_data("specular", texture);
-      if (texture.config.material_notifier) {
-        material.listen_for_texture_data(texture.config.material_notifier);
-      }
-    }
+    const is_external_load = texture_config.paths && texture_config.paths.length > 0;
+    const texture = is_external_load
+      ? Texture.load(texture_config)
+      : Texture.create(texture_config);
 
-    this.float_params[14] = specular;
-    let flag = texture ? 1 : 0;
-    if (texture && channel >= 0 && channel <= 3) {
-      flag |= (channel << 1);
+    material.set_texture_data("specular", texture);
+    if (texture.config.material_notifier) {
+      material.listen_for_texture_data(
+        texture.config.material_notifier,
+        this._update_specular_bindless_handle
+      );
+    }
+    material.listen_for_texture_data(
+      `texture_pool_${texture_config.pool_key}`
+    );
+    this.texture_handles[6] = texture.bindless_handle;
+
+    let flag = 1;
+    if (channel >= 0 && channel <= 3) {
+      flag |= channel << 1;
     }
     this.texture_flags2[2] = flag;
 
     this.update_params();
   }
 
-  set_emission(emission, texture = null, channel = TextureChannel.R) {
+  _update_specular_bindless_handle(name, texture) {
+    this.texture_handles[6] = texture.bindless_handle;
+    this.texture_flags2[2] |= 1;
+    this.update_params();
+  }
+
+  set_emission(emission) {
+    this.float_params[8] = emission;
+    this.texture_flags2[3] = 0;
+    this.update_params();
+  }
+
+  sample_emission(texture_config, channel = TextureChannel.R) {
+    if (!texture_config) return;
+
+    // Standard materials only support bindless-style texture sampling which is why we
+    // set this pool key and create the material internally (so we can catch relevant texture events
+    // in order to get the proper bindless handle)
+    texture_config.pool_key = "emission";
+
     const material = Material.get(this.material_id);
 
-    if (texture) {
-      material.set_texture_data("emission", texture);
-      if (texture.config.material_notifier) {
-        material.listen_for_texture_data(texture.config.material_notifier);
-      }
-    }
+    const is_external_load = texture_config.paths && texture_config.paths.length > 0;
+    const texture = is_external_load
+      ? Texture.load(texture_config)
+      : Texture.create(texture_config);
 
-    this.float_params[8] = emission;
-    let flag = texture ? 1 : 0;
-    if (texture && channel >= 0 && channel <= 3) {
-      flag |= (channel << 1);
+    material.set_texture_data("emission", texture);
+    if (texture.config.material_notifier) {
+      material.listen_for_texture_data(
+        texture.config.material_notifier,
+        this._update_emission_bindless_handle
+      );
+    }
+    material.listen_for_texture_data(
+      `texture_pool_${texture_config.pool_key}`
+    );
+    this.texture_handles[7] = texture.bindless_handle;
+
+    let flag = 1;
+    if (channel >= 0 && channel <= 3) {
+      flag |= channel << 1;
     }
     this.texture_flags2[3] = flag;
 
+    this.update_params();
+  }
+
+  _update_emission_bindless_handle(name, texture) {
+    this.texture_handles[7] = texture.bindless_handle;
+    this.texture_flags2[3] |= 1;
     this.update_params();
   }
 

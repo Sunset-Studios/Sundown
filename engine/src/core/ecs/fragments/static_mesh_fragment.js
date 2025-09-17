@@ -63,6 +63,21 @@ export class StaticMeshFragment extends Fragment {
       cpu_readback: false,
       buffer_multiplier: 1,
     },
+    material_table_offset: {
+      ctor: Uint32Array,
+      elements: 1,
+      default: 0,
+      gpu_buffer: true,
+      buffer_name: "material_table_offset",
+      is_container: false,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+      setter(value, typed_array, element_offset) {
+        typed_array[element_offset] = value;
+        MeshTaskQueue.mark_meshes_dirty(true);
+      },
+      cpu_readback: false,
+      buffer_multiplier: 1,
+    },
   };
   static buffer_data = new Map(); // key → { buffer: FragmentGpuBuffer, stride: number }
 

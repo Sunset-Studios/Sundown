@@ -8,7 +8,6 @@ import { MeshTaskQueue } from "./mesh_task_queue.js";
 import { vec3, mat3, mat4 } from "gl-matrix";
 import { Type2NumOfComponent } from "../utility/gltf_loader.js";
 import { StandardMaterial } from "./material.js";
-import { Texture } from "./texture.js";
 
 const discard_cpu_data = true;
 
@@ -901,7 +900,8 @@ export class Mesh {
       const tex = gltf.textures[base.baseColorTexture.index];
       const src = tex?.base;
       if (src) {
-        albedo_tex = Texture.load([src], {
+        albedo_tex = {
+          paths: [src],
           name: `${mat_name}_albedo`,
           format: "rgba8unorm",
           dimension: "2d",
@@ -911,10 +911,15 @@ export class Mesh {
             GPUTextureUsage.RENDER_ATTACHMENT,
           flip_y: false,
           material_notifier: `${mat_name}_albedo`,
-        });
+        };
       }
     }
-    std.set_albedo(base_color, albedo_tex);
+
+    if (albedo_tex) {
+      std.sample_albedo(albedo_tex);
+    } else {
+      std.set_albedo(base_color);
+    }
 
     // Normal map
     let normal_tex = null;
@@ -922,7 +927,8 @@ export class Mesh {
       const tex = gltf.textures[mat.normalTexture.index];
       const src = tex?.base;
       if (src) {
-        normal_tex = Texture.load([src], {
+        normal_tex = {
+          paths: [src],
           name: `${mat_name}_normal`,
           format: "rgba8unorm",
           usage:
@@ -931,34 +937,60 @@ export class Mesh {
             GPUTextureUsage.RENDER_ATTACHMENT,
           flip_y: false,
           material_notifier: `${mat_name}_normal`,
-        });
+        };
       }
     }
-    std.set_normal([0, 1, 0, 1], normal_tex);
+
+    if (normal_tex) {
+      std.sample_normal(normal_tex);
+    } else {
+      std.set_normal([0, 1, 0, 1]);
+    }
 
     // Metallic-Roughness texture: G=roughness, B=metallic
     const roughness_val = base?.roughnessFactor ?? 1.0;
     const metallic_val = base?.metallicFactor ?? 1.0;
-    let mr_tex = null;
+    let r_tex = null;
+    let m_tex = null;
     if (base?.metallicRoughnessTexture) {
       const tex = gltf.textures[base.metallicRoughnessTexture.index];
       const src = tex?.base;
       if (src) {
-        mr_tex = Texture.load([src], {
-          name: `${mat_name}_metallic_roughness`,
+        r_tex = {
+          paths: [src],
+          name: `${mat_name}_roughness`,
           format: "rgba8unorm",
           usage:
             GPUTextureUsage.TEXTURE_BINDING |
             GPUTextureUsage.COPY_DST |
             GPUTextureUsage.RENDER_ATTACHMENT,
           flip_y: false,
-          material_notifier: `${mat_name}_metallic_roughness`,
-        });
+          material_notifier: `${mat_name}_roughness`,
+        };
+        m_tex = {
+          paths: [src],
+          name: `${mat_name}_metallic`,
+          format: "rgba8unorm",
+          usage:
+            GPUTextureUsage.TEXTURE_BINDING |
+            GPUTextureUsage.COPY_DST |
+            GPUTextureUsage.RENDER_ATTACHMENT,
+          flip_y: false,
+          material_notifier: `${mat_name}_metallic`,
+        };
       }
     }
     // glTF convention: roughness in B, metallic in G
-    std.set_metallic(metallic_val, mr_tex, TextureChannel.G);
-    std.set_roughness(roughness_val, mr_tex, TextureChannel.B);
+    if (r_tex) {
+      std.sample_roughness(r_tex, TextureChannel.B);
+    } else {
+      std.set_roughness(roughness_val);
+    }
+    if (m_tex) {
+      std.sample_metallic(m_tex, TextureChannel.G);
+    } else {
+      std.set_metallic(metallic_val);
+    }
 
     // Ambient occlusion (R channel), strength scales AO value
     let ao_tex = null;
@@ -967,7 +999,8 @@ export class Mesh {
       const tex = gltf.textures[mat.occlusionTexture.index];
       const src = tex?.base;
       if (src) {
-        ao_tex = Texture.load([src], {
+        ao_tex = {
+          paths: [src],
           name: `${mat_name}_ao`,
           format: "rgba8unorm",
           usage:
@@ -976,11 +1009,16 @@ export class Mesh {
             GPUTextureUsage.RENDER_ATTACHMENT,
           flip_y: false,
           material_notifier: `${mat_name}_ao`,
-        });
+        };
       }
       ao_strength = mat.occlusionTexture.strength ?? 1.0;
     }
-    std.set_ao(ao_strength, ao_tex, TextureChannel.R);
+
+    if (ao_tex) {
+      std.sample_ao(ao_tex, TextureChannel.R);
+    } else {
+      std.set_ao(ao_strength);
+    }
 
     // Emissive: approximate scalar intensity from factor; texture sampled R channel
     let emissive_tex = null;
@@ -991,7 +1029,8 @@ export class Mesh {
       const tex = gltf.textures[mat.emissiveTexture.index];
       const src = tex?.base;
       if (src) {
-        emissive_tex = Texture.load([src], {
+        emissive_tex = {
+          paths: [src],
           name: `${mat_name}_emissive`,
           format: "rgba8unorm",
           usage:
@@ -1000,10 +1039,15 @@ export class Mesh {
             GPUTextureUsage.RENDER_ATTACHMENT,
           flip_y: false,
           material_notifier: `${mat_name}_emissive`,
-        });
+        };
       }
     }
-    std.set_emission(emissive_scalar, emissive_tex);
+
+    if (emissive_tex) {
+      std.sample_emission(emissive_tex);
+    } else {
+      std.set_emission(emissive_scalar);
+    }
 
     if (material_cache) {
       material_cache.set(mat_index, std.material_id);

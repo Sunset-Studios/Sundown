@@ -750,8 +750,9 @@ export class SharedEnvironmentData {
   ]);
 
   static set_skybox(name, texture_paths) {
-    this.skybox = Texture.load(texture_paths, {
+    this.skybox = Texture.load({
       name: name,
+      paths: texture_paths,
       format: "rgba8unorm",
       dimension: "cube",
       usage:

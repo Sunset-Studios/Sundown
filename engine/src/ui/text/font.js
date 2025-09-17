@@ -142,8 +142,9 @@ export class Font {
       const page_location =
         font_data_file.substring(0, font_data_file.lastIndexOf(path_sep) + 1) + page;
       const page_name = page.substring(0, page.lastIndexOf(extension_sep));
-      Texture.load([page_location], {
+      Texture.load({
         name: page_name,
+        paths: [page_location],
         format: page_format,
         dimension: page_dimension,
         usage:

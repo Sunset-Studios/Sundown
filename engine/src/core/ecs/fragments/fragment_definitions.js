@@ -133,6 +133,16 @@ const StaticMeshFragment = {
       MeshTaskQueue.mark_meshes_dirty(true);
       `,
     },
+    material_table_offset: {
+      type: DataType.UINT32,
+      stride: 1,
+      gpu: true,
+      usage: BufferType.STORAGE,
+      setter: `
+      typed_array[element_offset] = value;
+      MeshTaskQueue.mark_meshes_dirty(true);
+      `,
+    },
   },
 };
 
