@@ -531,7 +531,7 @@ export class TexturesScene extends Scene {
       };
 
       // Create a default material
-      const default_plane_material = StandardMaterial.create("TexturesDefaultMaterial");
+      const default_plane_material = StandardMaterial.create("TexturesPlaneMaterial");
       this.default_plane_material_id = default_plane_material.material_id;
       default_plane_material.sample_albedo(worn_panel_albedo);
       default_plane_material.sample_normal(worn_panel_normal);

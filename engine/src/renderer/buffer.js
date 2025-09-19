@@ -67,6 +67,10 @@ export class Buffer {
     if (!keep_on_cpu && this.config.raw_data) {
       this.config.raw_data = null;
     }
+
+    if (this.config.dispatch) {
+      global_dispatcher.dispatch(this.config.name, this);
+    }
   }
 
   destroy() {

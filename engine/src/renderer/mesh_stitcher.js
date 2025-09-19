@@ -73,9 +73,10 @@ export async function stitch_scene_meshes() {
           position: [pos[0], pos[1], pos[2], 1],
           normal: [normal[0], normal[1], normal[2], 0],
           color: vert.color ? vert.color.slice() : [1,1,1,1],
-          uv: vert.uv ? vert.uv.slice() : [0,0,0,0],
+          uv: vert.uv ? vert.uv.slice() : [0,0],
           tangent: [tangent[0], tangent[1], tangent[2], vert.tangent ? vert.tangent[3] : 1],
           bitangent: [bitangent[0], bitangent[1], bitangent[2], 0],
+          extra_data: vert.extra_data ? vert.extra_data.slice() : [0,0],
         };
         all_vertices.push(out_vert);
       }

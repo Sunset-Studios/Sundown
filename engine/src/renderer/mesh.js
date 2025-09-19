@@ -200,33 +200,37 @@ export class Mesh {
         position: [-1, 1, 0, 1],
         normal: [0, 0, -1, 0],
         color: [1, 1, 1, 1],
-        uv: [0, 0, 0, 0],
+        uv: [0, 0],
         tangent: [1, 0, 0, 0],
         bitangent: [0, -1, 0, 0],
+        extra_data: [0, 0],
       },
       {
         position: [-1, -1, 0, 1],
         normal: [0, 0, -1, 0],
         color: [1, 1, 1, 1],
-        uv: [0, 1, 0, 0],
+        uv: [0, 1],
         tangent: [1, 0, 0, 0],
         bitangent: [0, -1, 0, 0],
+        extra_data: [0, 0],
       },
       {
         position: [1, -1, 0, 1],
         normal: [0, 0, -1, 0],
         color: [1, 1, 1, 1],
-        uv: [1, 1, 0, 0],
+        uv: [1, 1],
         tangent: [1, 0, 0, 0],
         bitangent: [0, -1, 0, 0],
+        extra_data: [0, 0],
       },
       {
         position: [1, 1, 0, 1],
         normal: [0, 0, -1, 0],
         color: [1, 1, 1, 1],
-        uv: [1, 0, 0, 0],
+        uv: [1, 0],
         tangent: [1, 0, 0, 0],
         bitangent: [0, -1, 0, 0],
+        extra_data: [0, 0],
       },
     ];
 
@@ -280,33 +284,37 @@ export class Mesh {
         position: [-1, -1, 1, 1],
         normal: [0, 0, 1, 0],
         color: [1, 1, 1, 1],
-        uv: [0, 0, 0, 0],
+        uv: [0, 0],
         tangent: [1, 0, 0, 0],
         bitangent: [0, 1, 0, 0],
+        extra_data: [0, 0],
       },
       {
         position: [1, -1, 1, 1],
         normal: [0, 0, 1, 0],
         color: [1, 1, 1, 1],
-        uv: [1, 0, 0, 0],
+        uv: [1, 0],
         tangent: [1, 0, 0, 0],
         bitangent: [0, 1, 0, 0],
+        extra_data: [0, 0],
       },
       {
         position: [1, 1, 1, 1],
         normal: [0, 0, 1, 0],
         color: [1, 1, 1, 1],
-        uv: [1, 1, 0, 0],
+        uv: [1, 1],
         tangent: [1, 0, 0, 0],
         bitangent: [0, 1, 0, 0],
+        extra_data: [0, 0],
       },
       {
         position: [-1, 1, 1, 1],
         normal: [0, 0, 1, 0],
         color: [1, 1, 1, 1],
-        uv: [0, 1, 0, 0],
+        uv: [0, 1],
         tangent: [1, 0, 0, 0],
         bitangent: [0, 1, 0, 0],
+        extra_data: [0, 0],
       },
 
       // Back face
@@ -314,33 +322,37 @@ export class Mesh {
         position: [1, -1, -1, 1],
         normal: [0, 0, -1, 0],
         color: [1, 1, 1, 1],
-        uv: [0, 0, 0, 0],
+        uv: [0, 0],
         tangent: [-1, 0, 0, 0],
         bitangent: [0, 1, 0, 0],
+        extra_data: [0, 0],
       },
       {
         position: [-1, -1, -1, 1],
         normal: [0, 0, -1, 0],
         color: [1, 1, 1, 1],
-        uv: [1, 0, 0, 0],
+        uv: [1, 0],
         tangent: [-1, 0, 0, 0],
         bitangent: [0, 1, 0, 0],
+        extra_data: [0, 0],
       },
       {
         position: [-1, 1, -1, 1],
         normal: [0, 0, -1, 0],
         color: [1, 1, 1, 1],
-        uv: [1, 1, 0, 0],
+        uv: [1, 1],
         tangent: [-1, 0, 0, 0],
         bitangent: [0, 1, 0, 0],
+        extra_data: [0, 0],
       },
       {
         position: [1, 1, -1, 1],
         normal: [0, 0, -1, 0],
         color: [1, 1, 1, 1],
-        uv: [0, 1, 0, 0],
+        uv: [0, 1],
         tangent: [-1, 0, 0, 0],
         bitangent: [0, 1, 0, 0],
+        extra_data: [0, 0],
       },
 
       // Top face
@@ -348,33 +360,37 @@ export class Mesh {
         position: [-1, 1, 1, 1],
         normal: [0, 1, 0, 0],
         color: [1, 1, 1, 1],
-        uv: [0, 0, 0, 0],
+        uv: [0, 0],
         tangent: [1, 0, 0, 0],
         bitangent: [0, 0, 1, 0],
+        extra_data: [0, 0],
       },
       {
         position: [1, 1, 1, 1],
         normal: [0, 1, 0, 0],
         color: [1, 1, 1, 1],
-        uv: [1, 0, 0, 0],
+        uv: [1, 0],
         tangent: [1, 0, 0, 0],
         bitangent: [0, 0, 1, 0],
+        extra_data: [0, 0],
       },
       {
         position: [1, 1, -1, 1],
         normal: [0, 1, 0, 0],
         color: [1, 1, 1, 1],
-        uv: [1, 1, 0, 0],
+        uv: [1, 1],
         tangent: [1, 0, 0, 0],
         bitangent: [0, 0, 1, 0],
+        extra_data: [0, 0],
       },
       {
         position: [-1, 1, -1, 1],
         normal: [0, 1, 0, 0],
         color: [1, 1, 1, 1],
-        uv: [0, 1, 0, 0],
+        uv: [0, 1],
         tangent: [1, 0, 0, 0],
         bitangent: [0, 0, 1, 0],
+        extra_data: [0, 0],
       },
 
       // Bottom face
@@ -382,33 +398,37 @@ export class Mesh {
         position: [-1, -1, -1, 1],
         normal: [0, -1, 0, 0],
         color: [1, 1, 1, 1],
-        uv: [0, 0, 0, 0],
+        uv: [0, 0],
         tangent: [1, 0, 0, 0],
         bitangent: [0, 0, -1, 0],
+        extra_data: [0, 0],
       },
       {
         position: [1, -1, -1, 1],
         normal: [0, -1, 0, 0],
         color: [1, 1, 1, 1],
-        uv: [1, 0, 0, 0],
+        uv: [1, 0],
         tangent: [1, 0, 0, 0],
         bitangent: [0, 0, -1, 0],
+        extra_data: [0, 0],
       },
       {
         position: [1, -1, 1, 1],
         normal: [0, -1, 0, 0],
         color: [1, 1, 1, 1],
-        uv: [1, 1, 0, 0],
+        uv: [1, 1],
         tangent: [1, 0, 0, 0],
         bitangent: [0, 0, -1, 0],
+        extra_data: [0, 0],
       },
       {
         position: [-1, -1, 1, 1],
         normal: [0, -1, 0, 0],
         color: [1, 1, 1, 1],
-        uv: [0, 1, 0, 0],
+        uv: [0, 1],
         tangent: [1, 0, 0, 0],
         bitangent: [0, 0, -1, 0],
+        extra_data: [0, 0],
       },
 
       // Right face
@@ -416,33 +436,37 @@ export class Mesh {
         position: [1, -1, 1, 1],
         normal: [1, 0, 0, 0],
         color: [1, 1, 1, 1],
-        uv: [0, 0, 0, 0],
+        uv: [0, 0],
         tangent: [0, 0, -1, 0],
         bitangent: [0, 1, 0, 0],
+        extra_data: [0, 0],
       },
       {
         position: [1, -1, -1, 1],
         normal: [1, 0, 0, 0],
         color: [1, 1, 1, 1],
-        uv: [1, 0, 0, 0],
+        uv: [1, 0],
         tangent: [0, 0, -1, 0],
         bitangent: [0, 1, 0, 0],
+        extra_data: [0, 0],
       },
       {
         position: [1, 1, -1, 1],
         normal: [1, 0, 0, 0],
         color: [1, 1, 1, 1],
-        uv: [1, 1, 0, 0],
+        uv: [1, 1],
         tangent: [0, 0, -1, 0],
         bitangent: [0, 1, 0, 0],
+        extra_data: [0, 0],
       },
       {
         position: [1, 1, 1, 1],
         normal: [1, 0, 0, 0],
         color: [1, 1, 1, 1],
-        uv: [0, 1, 0, 0],
+        uv: [0, 1],
         tangent: [0, 0, -1, 0],
         bitangent: [0, 1, 0, 0],
+        extra_data: [0, 0],
       },
 
       // Left face
@@ -450,33 +474,37 @@ export class Mesh {
         position: [-1, -1, -1, 1],
         normal: [-1, 0, 0, 0],
         color: [1, 1, 1, 1],
-        uv: [0, 0, 0, 0],
+        uv: [0, 0],
         tangent: [0, 0, 1, 0],
         bitangent: [0, 1, 0, 0],
+        extra_data: [0, 0],
       },
       {
         position: [-1, -1, 1, 1],
         normal: [-1, 0, 0, 0],
         color: [1, 1, 1, 1],
-        uv: [1, 0, 0, 0],
+        uv: [1, 0],
         tangent: [0, 0, 1, 0],
         bitangent: [0, 1, 0, 0],
+        extra_data: [0, 0],
       },
       {
         position: [-1, 1, 1, 1],
         normal: [-1, 0, 0, 0],
         color: [1, 1, 1, 1],
-        uv: [1, 1, 0, 0],
+        uv: [1, 1],
         tangent: [0, 0, 1, 0],
         bitangent: [0, 1, 0, 0],
+        extra_data: [0, 0],
       },
       {
         position: [-1, 1, -1, 1],
         normal: [-1, 0, 0, 0],
         color: [1, 1, 1, 1],
-        uv: [0, 1, 0, 0],
+        uv: [0, 1],
         tangent: [0, 0, 1, 0],
         bitangent: [0, 1, 0, 0],
+        extra_data: [0, 0],
       },
     ];
 
@@ -714,9 +742,10 @@ export class Mesh {
             ],
             normal: [n[0], n[1], n[2], 0.0],
             color: color,
-            uv: [uvs[uv_index] ?? 0.0, uvs[uv_index + 1] ?? 0.0, 0.0, 0.0],
+            uv: [uvs[uv_index] ?? 0.0, uvs[uv_index + 1] ?? 0.0],
             tangent: [t_ortho[0], t_ortho[1], t_ortho[2], tangent_w],
             bitangent: [b[0], b[1], b[2], 0.0],
+            extra_data: [0, 0], // Section index and padding
           });
         }
 
@@ -816,11 +845,21 @@ export class Mesh {
       mesh.sections = [];
       mesh._tmp_indices.length = 0;
 
+      // Map each vertex index to the section index it belongs to (by material group)
+      const vertex_section_map = new Int32Array(mesh.vertices.length).fill(-1);
+
       const material_cache = new Map();
       {
         let running_first_index = 0;
         for (const [, group] of mesh._section_groups) {
           if (group.indices.length === 0) continue;
+          const section_index = mesh.sections.length;
+          // Mark all vertices referenced by this group's indices as belonging to this section
+          for (let i = 0; i < group.indices.length; i++) {
+            const v = group.indices[i];
+            vertex_section_map[v] = section_index;
+          }
+
           let new_section = {
             first_index: running_first_index,
             index_count: group.indices.length,
@@ -842,6 +881,12 @@ export class Mesh {
         }
       }
 
+      // Write the computed section index into each vertex's extra_data[0]
+      for (let vi = 0; vi < mesh.vertices.length; vi++) {
+        const s = vertex_section_map[vi] >= 0 ? vertex_section_map[vi] : 0;
+        mesh.vertices[vi].extra_data[0] = s;
+      }
+
       if (mesh._tmp_indices.length > 0) {
         let max_index = 0;
         for (let i = 0; i < mesh._tmp_indices.length; i++) {
@@ -852,7 +897,6 @@ export class Mesh {
 
       mesh.vertex_count = mesh.vertices.length;
       mesh.index_count = mesh.indices.length;
-
 
       mesh._recreate_vertex_bounds();
       mesh._recreate_index_buffer();

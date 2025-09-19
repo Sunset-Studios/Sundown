@@ -501,8 +501,6 @@ export class MeshTaskQueue {
           continue;
         }
         if (Number(static_meshes.mesh[slot]) === mesh_id) {
-          const entity = EntityManager.get_entity_for(chunk, slot);
-          MeshTaskQueue.remove(entity, false);
           MeshTaskQueue.mark_meshes_dirty();
         }
         slot += counts[slot] || 1;

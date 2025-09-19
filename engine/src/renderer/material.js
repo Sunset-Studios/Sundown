@@ -1,5 +1,6 @@
 import { Renderer } from "./renderer.js";
 import { Shader } from "./shader.js";
+import { EntityManager } from "../core/ecs/entity.js";
 import { FragmentGpuBuffer } from "../core/ecs/solar/memory.js";
 import { BindGroup } from "./bind_group.js";
 import { PipelineState } from "./pipeline_state.js";
@@ -8,8 +9,8 @@ import { profile_scope } from "../utility/performance.js";
 import { hash_data_map, hash_value } from "../utility/hashing.js";
 import { Name } from "../utility/names.js";
 import { Texture } from "./texture.js";
-import { Buffer } from "./buffer.js";
 import { UserInterfaceFragment } from "../core/ecs/fragments/user_interface_fragment.js";
+import { StaticMeshFragment } from "../core/ecs/fragments/static_mesh_fragment.js";
 import { global_dispatcher } from "../core/dispatcher.js";
 import {
   ShaderResourceType,
@@ -18,6 +19,9 @@ import {
   BindGroupType,
   TextureChannel,
 } from "./renderer_types.js";
+import { MaterialAllocationTable, MATERIAL_PARAMS_SIZE } from "./material_allocation_table.js";
+
+const material_offsets_name = "material_table_offset";
 
 export class MaterialTemplate {
   static templates = new Map();
@@ -381,7 +385,7 @@ export class Material {
             if (!texture) {
               texture = resource.is_array ? Texture.default_array() : Texture.default();
             }
-            return  {
+            return {
               binding: resource.binding,
               resource: texture.view,
             };
@@ -646,11 +650,14 @@ export class Material {
  * Standard material is a material helper class that has a color, normal, roughness, metallic, and emission.
  * It is the default material for the engine.
  */
+const float_params_offset = 0;
+const texture_flags1_offset = 16;
+const texture_flags2_offset = 20;
+const texture_handles_offset = 24;
 
 export class StandardMaterial {
   material_id = null;
-  material_params_data = null;
-  material_params_buffer = null;
+  material_allocation_index = null;
 
   static create(name, params = {}, options = {}, template = null) {
     if (!template) {
@@ -678,36 +685,62 @@ export class StandardMaterial {
     // Get the material
     const material = Material.get(standard_material.material_id);
 
-    // Create a combined uniform buffer for the material params
-    standard_material.params_buffer = new ArrayBuffer(128);
-    standard_material.float_params = new Float32Array(standard_material.params_buffer, 0, 16);
-    standard_material.texture_flags1 = new Uint32Array(standard_material.params_buffer, 64, 4);
-    standard_material.texture_flags2 = new Uint32Array(standard_material.params_buffer, 80, 4);
-    standard_material.texture_handles = new Uint32Array(standard_material.params_buffer, 96, 8);
+    // Allocate the material params in the allocation table
+    standard_material.material_allocation_index = MaterialAllocationTable.find_or_allocate(
+      standard_material.material_id
+    );
+    const offset = standard_material.material_allocation_index * MATERIAL_PARAMS_SIZE;
+    const params_buffer = MaterialAllocationTable.params_data;
+    const params_gpu_buffer = MaterialAllocationTable.params_buffer;
+    const material_palette_buffer = MaterialAllocationTable.palette_buffer;
+
+    const material_palette_offsets_buffer = EntityManager.get_fragment_gpu_buffer(
+      StaticMeshFragment,
+      material_offsets_name
+    );
+
+    // Set the material storage buffers for the material
+    material.listen_for_storage_data("material_params");
+    material.listen_for_storage_data("material_table_offset");
+    material.listen_for_storage_data("material_palette");
+    material.set_storage_data("material_params", params_gpu_buffer);
+    material.set_storage_data("material_table_offset", material_palette_offsets_buffer.buffer);
+    material.set_storage_data("material_palette", material_palette_buffer);
 
     // Set initial values
-    standard_material.float_params.set([
-      // albedo: vec4
-      0.5, 0.5, 0.5, 1.0,
-      // normal: vec4
-      0.0, 0.0, 1.0, 1.0,
-      // emission_roughness_metallic_tiling: vec4
-      0.2, 0.7, 0.3, 1.0,
-      // ao_height_specular: vec4 (ao, height, specular, padding)
-      1.0, 0.0, 0.1, 0.0,
-    ]);
-    standard_material.texture_flags1.set([0, 0, 0, 0]);
-    standard_material.texture_flags2.set([0, 0, 0, 0]);
-    standard_material.texture_handles.set([0, 0, 0, 0, 0, 0, 0, 0]);
-
-    standard_material.material_params_buffer = Buffer.create({
-      name: `${name}_material_params_buffer`,
-      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-      raw_data: new Uint8Array(standard_material.params_buffer),
-    });
-
-    // Set the uniform buffer for the material
-    material.set_uniform_data("material_params", standard_material.material_params_buffer);
+    params_buffer.set(
+      [
+        // albedo: vec4
+        0.5, 0.5, 0.5, 1.0,
+        // normal: vec4
+        0.0, 0.0, 1.0, 1.0,
+        // emission_roughness_metallic_tiling: vec4
+        0.2, 0.7, 0.3, 1.0,
+        // ao_height_specular: vec4 (ao, height, specular, padding)
+        1.0, 0.0, 0.1, 0.0,
+        // texture flags 1: vec4 (albedo, normal, roughness, metallic)
+        0, 0, 0, 0,
+        // texture flags 2: vec4 (ao, height, specular, emission)
+        0, 0, 0, 0,
+        // albedo_handle: u32
+        0,
+        // normal_handle: u32
+        0,
+        // roughness_handle: u32
+        0,
+        // metallic_handle: u32
+        0,
+        // ao_handle: u32
+        0,
+        // height_handle: u32
+        0,
+        // specular_handle: u32
+        0,
+        // emission_handle: u32
+        0,
+      ],
+      offset
+    );
 
     // Set default parameter values
     if (params.albedo_texture) {
@@ -794,17 +827,21 @@ export class StandardMaterial {
   }
 
   set_albedo(color) {
-    this.float_params[0] = color[0];
-    this.float_params[1] = color[1];
-    this.float_params[2] = color[2];
-    this.float_params[3] = color[3];
-    this.texture_flags1[0] = 0;
-
-    this.update_params();
+    const params_buffer = MaterialAllocationTable.params_data;
+    const offset = this.material_allocation_index * MATERIAL_PARAMS_SIZE;
+    params_buffer[float_params_offset + offset + 0] = color[0];
+    params_buffer[float_params_offset + offset + 1] = color[1];
+    params_buffer[float_params_offset + offset + 2] = color[2];
+    params_buffer[float_params_offset + offset + 3] = color[3];
+    params_buffer[texture_flags1_offset + offset + 0] = 0;
+    this.mark_params_dirty();
   }
 
   sample_albedo(texture_config) {
     if (!texture_config) return;
+
+    const params_buffer = MaterialAllocationTable.params_data;
+    const offset = this.material_allocation_index * MATERIAL_PARAMS_SIZE;
 
     // Standard materials only support bindless-style texture sampling which is why we
     // set this pool key and create the material internally (so we can catch relevant texture events
@@ -825,34 +862,38 @@ export class StandardMaterial {
         this._update_albedo_bindless_handle
       );
     }
-    material.listen_for_texture_data(
-      `texture_pool_${texture_config.pool_key}`
-    );
-    this.texture_handles[0] = texture.bindless_handle;
+    material.listen_for_texture_data(`texture_pool_${texture_config.pool_key}`);
+    params_buffer[offset + texture_handles_offset + 0] = texture.bindless_handle;
 
-    this.texture_flags1[0] = 1;
+    params_buffer[offset + texture_flags1_offset + 0] = 1;
 
-    this.update_params();
+    this.mark_params_dirty();
   }
 
   _update_albedo_bindless_handle(name, texture) {
-    this.texture_handles[0] = texture.bindless_handle;
-    this.texture_flags1[0] |= 1;
-    this.update_params();
+    const params_buffer = MaterialAllocationTable.params_data;
+    const offset = this.material_allocation_index * MATERIAL_PARAMS_SIZE;
+    params_buffer[offset + texture_handles_offset + 0] = texture.bindless_handle;
+    params_buffer[offset + texture_flags1_offset + 0] |= 1;
+    this.mark_params_dirty();
   }
 
   set_normal(normal) {
-    this.float_params[4] = normal[0];
-    this.float_params[5] = normal[1];
-    this.float_params[6] = normal[2];
-    this.float_params[7] = normal[3];
-    this.texture_flags1[1] = 0;
-
-    this.update_params();
+    const params_buffer = MaterialAllocationTable.params_data;
+    const offset = this.material_allocation_index * MATERIAL_PARAMS_SIZE;
+    params_buffer[offset + float_params_offset + 4] = normal[0];
+    params_buffer[offset + float_params_offset + 5] = normal[1];
+    params_buffer[offset + float_params_offset + 6] = normal[2];
+    params_buffer[offset + float_params_offset + 7] = normal[3];
+    params_buffer[offset + texture_flags1_offset + 1] = 0;
+    this.mark_params_dirty();
   }
 
   sample_normal(texture_config) {
     if (!texture_config) return;
+
+    const params_buffer = MaterialAllocationTable.params_data;
+    const offset = this.material_allocation_index * MATERIAL_PARAMS_SIZE;
 
     // Standard materials only support bindless-style texture sampling which is why we
     // set this pool key and create the material internally (so we can catch relevant texture events
@@ -873,30 +914,35 @@ export class StandardMaterial {
         this._update_normal_bindless_handle
       );
     }
-    material.listen_for_texture_data(
-      `texture_pool_${texture_config.pool_key}`
-    );
-    this.texture_handles[1] = texture.bindless_handle;
+    material.listen_for_texture_data(`texture_pool_${texture_config.pool_key}`);
+    params_buffer[offset + texture_handles_offset + 1] = texture.bindless_handle;
 
-    this.texture_flags1[1] = 1;
+    params_buffer[offset + texture_flags1_offset + 1] = 1;
 
-    this.update_params();
+    this.mark_params_dirty();
   }
 
   _update_normal_bindless_handle(name, texture) {
-    this.texture_handles[1] = texture.bindless_handle;
-    this.texture_flags1[1] |= 1;
-    this.update_params();
+    const params_buffer = MaterialAllocationTable.params_data;
+    const offset = this.material_allocation_index * MATERIAL_PARAMS_SIZE;
+    params_buffer[offset + texture_handles_offset + 1] = texture.bindless_handle;
+    params_buffer[offset + texture_flags1_offset + 1] |= 1;
+    this.mark_params_dirty();
   }
 
   set_roughness(roughness) {
-    this.float_params[9] = roughness;
-    this.texture_flags1[2] = 0;
-    this.update_params();
+    const params_buffer = MaterialAllocationTable.params_data;
+    const offset = this.material_allocation_index * MATERIAL_PARAMS_SIZE;
+    params_buffer[offset + float_params_offset + 9] = roughness;
+    params_buffer[offset + texture_flags1_offset + 2] = 0;
+    this.mark_params_dirty();
   }
 
   sample_roughness(texture_config, channel = TextureChannel.R) {
     if (!texture_config) return;
+
+    const params_buffer = MaterialAllocationTable.params_data;
+    const offset = this.material_allocation_index * MATERIAL_PARAMS_SIZE;
 
     // Standard materials only support bindless-style texture sampling which is why we
     // set this pool key and create the material internally (so we can catch relevant texture events
@@ -917,34 +963,39 @@ export class StandardMaterial {
         this._update_roughness_bindless_handle
       );
     }
-    material.listen_for_texture_data(
-      `texture_pool_${texture_config.pool_key}`
-    );
-    this.texture_handles[2] = texture.bindless_handle;
+    material.listen_for_texture_data(`texture_pool_${texture_config.pool_key}`);
+    params_buffer[offset + texture_handles_offset + 2] = texture.bindless_handle;
 
     let flag = 1;
     if (channel >= 0 && channel <= 3) {
       flag |= channel << 1;
     }
-    this.texture_flags1[2] = flag;
+    params_buffer[offset + texture_flags1_offset + 2] = flag;
 
-    this.update_params();
+    this.mark_params_dirty();
   }
 
   _update_roughness_bindless_handle(name, texture) {
-    this.texture_handles[2] = texture.bindless_handle;
-    this.texture_flags1[2] |= 1;
-    this.update_params();
+    const params_buffer = MaterialAllocationTable.params_data;
+    const offset = this.material_allocation_index * MATERIAL_PARAMS_SIZE;
+    params_buffer[offset + texture_handles_offset + 2] = texture.bindless_handle;
+    params_buffer[offset + texture_flags1_offset + 2] |= 1;
+    this.mark_params_dirty();
   }
 
   set_metallic(metallic) {
-    this.float_params[10] = metallic;
-    this.texture_flags1[3] = 0;
-    this.update_params();
+    const params_buffer = MaterialAllocationTable.params_data;
+    const offset = this.material_allocation_index * MATERIAL_PARAMS_SIZE;
+    params_buffer[offset + float_params_offset + 10] = metallic;
+    params_buffer[offset + texture_flags1_offset + 3] = 0;
+    this.mark_params_dirty();
   }
 
   sample_metallic(texture_config, channel = TextureChannel.R) {
     if (!texture_config) return;
+
+    const params_buffer = MaterialAllocationTable.params_data;
+    const offset = this.material_allocation_index * MATERIAL_PARAMS_SIZE;
 
     // Standard materials only support bindless-style texture sampling which is why we
     // set this pool key and create the material internally (so we can catch relevant texture events
@@ -965,34 +1016,39 @@ export class StandardMaterial {
         this._update_metallic_bindless_handle
       );
     }
-    material.listen_for_texture_data(
-      `texture_pool_${texture_config.pool_key}`
-    );
-    this.texture_handles[3] = texture.bindless_handle;
+    material.listen_for_texture_data(`texture_pool_${texture_config.pool_key}`);
+    params_buffer[offset + texture_handles_offset + 3] = texture.bindless_handle;
 
     let flag = 1;
     if (channel >= 0 && channel <= 3) {
       flag |= channel << 1;
     }
-    this.texture_flags1[3] = flag;
+    params_buffer[offset + texture_flags1_offset + 3] = flag;
 
-    this.update_params();
+    this.mark_params_dirty();
   }
 
   _update_metallic_bindless_handle(name, texture) {
-    this.texture_handles[3] = texture.bindless_handle;
-    this.texture_flags1[3] |= 1;
-    this.update_params();
+    const params_buffer = MaterialAllocationTable.params_data;
+    const offset = this.material_allocation_index * MATERIAL_PARAMS_SIZE;
+    params_buffer[offset + texture_handles_offset + 3] = texture.bindless_handle;
+    params_buffer[offset + texture_flags1_offset + 3] |= 1;
+    this.mark_params_dirty();
   }
 
   set_ao(ao) {
-    this.float_params[12] = ao;
-    this.texture_flags2[0] = 0;
-    this.update_params();
+    const params_buffer = MaterialAllocationTable.params_data;
+    const offset = this.material_allocation_index * MATERIAL_PARAMS_SIZE;
+    params_buffer[offset + float_params_offset + 12] = ao;
+    params_buffer[offset + texture_flags2_offset + 0] = 0;
+    this.mark_params_dirty();
   }
 
   sample_ao(texture_config, channel = TextureChannel.R) {
     if (!texture_config) return;
+
+    const params_buffer = MaterialAllocationTable.params_data;
+    const offset = this.material_allocation_index * MATERIAL_PARAMS_SIZE;
 
     // Standard materials only support bindless-style texture sampling which is why we
     // set this flag and create the material internally (so we can catch relevatn texture events
@@ -1013,34 +1069,39 @@ export class StandardMaterial {
         this._update_ao_bindless_handle
       );
     }
-    material.listen_for_texture_data(
-      `texture_pool_${texture_config.pool_key}`
-    );
-    this.texture_handles[4] = texture.bindless_handle;
+    material.listen_for_texture_data(`texture_pool_${texture_config.pool_key}`);
+    params_buffer[offset + texture_handles_offset + 4] = texture.bindless_handle;
 
     let flag = 1;
     if (channel >= 0 && channel <= 3) {
       flag |= channel << 1;
     }
-    this.texture_flags2[0] = flag;
+    params_buffer[offset + texture_flags2_offset + 0] = flag;
 
-    this.update_params();
+    this.mark_params_dirty();
   }
 
   _update_ao_bindless_handle(name, texture) {
-    this.texture_handles[4] = texture.bindless_handle;
-    this.texture_flags2[0] |= 1;
-    this.update_params();
+    const params_buffer = MaterialAllocationTable.params_data;
+    const offset = this.material_allocation_index * MATERIAL_PARAMS_SIZE;
+    params_buffer[offset + texture_handles_offset + 4] = texture.bindless_handle;
+    params_buffer[offset + texture_flags2_offset + 0] |= 1;
+    this.mark_params_dirty();
   }
 
   set_height(height) {
-    this.float_params[13] = height;
-    this.texture_flags2[1] = 0;
-    this.update_params();
+    const params_buffer = MaterialAllocationTable.params_data;
+    const offset = this.material_allocation_index * MATERIAL_PARAMS_SIZE;
+    params_buffer[offset + float_params_offset + 13] = height;
+    params_buffer[offset + texture_flags2_offset + 1] = 0;
+    this.mark_params_dirty();
   }
 
   sample_height(texture_config, channel = TextureChannel.R) {
     if (!texture_config) return;
+
+    const params_buffer = MaterialAllocationTable.params_data;
+    const offset = this.material_allocation_index * MATERIAL_PARAMS_SIZE;
 
     // Standard materials only support bindless-style texture sampling which is why we
     // set this pool key and create the material internally (so we can catch relevant texture events
@@ -1061,34 +1122,39 @@ export class StandardMaterial {
         this._update_height_bindless_handle
       );
     }
-    material.listen_for_texture_data(
-      `texture_pool_${texture_config.pool_key}`
-    );
-    this.texture_handles[4] = texture.bindless_handle;
+    material.listen_for_texture_data(`texture_pool_${texture_config.pool_key}`);
+    params_buffer[offset + texture_handles_offset + 4] = texture.bindless_handle;
 
     let flag = 1;
     if (channel >= 0 && channel <= 3) {
       flag |= channel << 1;
     }
-    this.texture_flags2[1] = flag;
+    params_buffer[offset + texture_flags2_offset + 1] = flag;
 
-    this.update_params();
+    this.mark_params_dirty();
   }
 
   _update_height_bindless_handle(name, texture) {
-    this.texture_handles[4] = texture.bindless_handle;
-    this.texture_flags2[1] |= 1;
-    this.update_params();
+    const params_buffer = MaterialAllocationTable.params_data;
+    const offset = this.material_allocation_index * MATERIAL_PARAMS_SIZE;
+    params_buffer[offset + texture_handles_offset + 4] = texture.bindless_handle;
+    params_buffer[offset + texture_flags2_offset + 1] |= 1;
+    this.mark_params_dirty();
   }
 
   set_specular(specular) {
-    this.float_params[14] = specular;
-    this.texture_flags2[2] = 0;
-    this.update_params();
+    const params_buffer = MaterialAllocationTable.params_data;
+    const offset = this.material_allocation_index * MATERIAL_PARAMS_SIZE;
+    params_buffer[offset + float_params_offset + 14] = specular;
+    params_buffer[offset + texture_flags2_offset + 2] = 0;
+    this.mark_params_dirty();
   }
 
   sample_specular(texture_config, channel = TextureChannel.R) {
     if (!texture_config) return;
+
+    const params_buffer = MaterialAllocationTable.params_data;
+    const offset = this.material_allocation_index * MATERIAL_PARAMS_SIZE;
 
     // Standard materials only support bindless-style texture sampling which is why we
     // set this pool key and create the material internally (so we can catch relevant texture events
@@ -1109,34 +1175,39 @@ export class StandardMaterial {
         this._update_specular_bindless_handle
       );
     }
-    material.listen_for_texture_data(
-      `texture_pool_${texture_config.pool_key}`
-    );
-    this.texture_handles[6] = texture.bindless_handle;
+    material.listen_for_texture_data(`texture_pool_${texture_config.pool_key}`);
+    params_buffer[offset + texture_handles_offset + 6] = texture.bindless_handle;
 
     let flag = 1;
     if (channel >= 0 && channel <= 3) {
       flag |= channel << 1;
     }
-    this.texture_flags2[2] = flag;
+    params_buffer[offset + texture_flags2_offset + 2] = flag;
 
-    this.update_params();
+    this.mark_params_dirty();
   }
 
   _update_specular_bindless_handle(name, texture) {
-    this.texture_handles[6] = texture.bindless_handle;
-    this.texture_flags2[2] |= 1;
-    this.update_params();
+    const params_buffer = MaterialAllocationTable.params_data;
+    const offset = this.material_allocation_index * MATERIAL_PARAMS_SIZE;
+    params_buffer[offset + texture_handles_offset + 6] = texture.bindless_handle;
+    params_buffer[offset + texture_flags2_offset + 2] |= 1;
+    this.mark_params_dirty();
   }
 
   set_emission(emission) {
-    this.float_params[8] = emission;
-    this.texture_flags2[3] = 0;
-    this.update_params();
+    const params_buffer = MaterialAllocationTable.params_data;
+    const offset = this.material_allocation_index * MATERIAL_PARAMS_SIZE;
+    params_buffer[offset + float_params_offset + 8] = emission;
+    params_buffer[offset + texture_flags2_offset + 3] = 0;
+    this.mark_params_dirty();
   }
 
   sample_emission(texture_config, channel = TextureChannel.R) {
     if (!texture_config) return;
+
+    const params_buffer = MaterialAllocationTable.params_data;
+    const offset = this.material_allocation_index * MATERIAL_PARAMS_SIZE;
 
     // Standard materials only support bindless-style texture sampling which is why we
     // set this pool key and create the material internally (so we can catch relevant texture events
@@ -1157,32 +1228,34 @@ export class StandardMaterial {
         this._update_emission_bindless_handle
       );
     }
-    material.listen_for_texture_data(
-      `texture_pool_${texture_config.pool_key}`
-    );
-    this.texture_handles[7] = texture.bindless_handle;
+    material.listen_for_texture_data(`texture_pool_${texture_config.pool_key}`);
+    params_buffer[offset + texture_handles_offset + 7] = texture.bindless_handle;
 
     let flag = 1;
     if (channel >= 0 && channel <= 3) {
       flag |= channel << 1;
     }
-    this.texture_flags2[3] = flag;
+    params_buffer[offset + texture_flags2_offset + 3] = flag;
 
-    this.update_params();
+    this.mark_params_dirty();
   }
 
   _update_emission_bindless_handle(name, texture) {
-    this.texture_handles[7] = texture.bindless_handle;
-    this.texture_flags2[3] |= 1;
-    this.update_params();
+    const params_buffer = MaterialAllocationTable.params_data;
+    const offset = this.material_allocation_index * MATERIAL_PARAMS_SIZE;
+    params_buffer[offset + texture_handles_offset + 7] = texture.bindless_handle;
+    params_buffer[offset + texture_flags2_offset + 3] |= 1;
+    this.mark_params_dirty();
   }
 
   set_tiling(tiling) {
-    this.float_params[11] = tiling;
-    this.update_params();
+    const params_buffer = MaterialAllocationTable.params_data;
+    const offset = this.material_allocation_index * MATERIAL_PARAMS_SIZE;
+    params_buffer[offset + float_params_offset + 11] = tiling;
+    this.mark_params_dirty();
   }
 
-  update_params() {
-    this.material_params_buffer.write_raw(this.params_buffer);
+  mark_params_dirty() {
+    MaterialAllocationTable.mark_params_dirty(this.material_allocation_index);
   }
 }

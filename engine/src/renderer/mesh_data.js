@@ -9,18 +9,6 @@ const mesh_bounds_buffer_name = "mesh_bounds_buffer";
 const initial_max_meshes = 256;
 const initial_vertex_buffer_size = 1024;
 
-const vertex_position_size = 4;
-const vertex_normal_size = 4;
-const vertex_tangent_size = 4;
-const vertex_bitangent_size = 4;
-const vertex_uv_size = 2;
-const vertex_data_size =
-  vertex_position_size +
-  vertex_normal_size +
-  vertex_tangent_size +
-  vertex_bitangent_size +
-  vertex_uv_size;
-
 const mesh_bounds_size = 8;
 
 export class MeshData {
@@ -169,7 +157,7 @@ export class MeshData {
 
   static _add_vertex_data(mesh) {
     const packed = mesh.vertices.flatMap((v) =>
-      v.position.concat(v.normal, v.tangent, v.bitangent, v.uv)
+      v.position.concat(v.normal, v.tangent, v.bitangent, v.uv, v.extra_data)
     );
 
     const floats_per_vertex = packed.length / mesh.vertices.length;

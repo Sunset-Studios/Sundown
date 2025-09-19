@@ -41,6 +41,8 @@ struct Vertex {
     tangent: vec4<precision_float>,
     bitangent: vec4<precision_float>,
     uv: vec2<precision_float>,
+    section_index: f32,
+    _padding: f32,
 };
 
 struct View {
@@ -98,16 +100,16 @@ struct StandardMaterialParams {
     normal: vec4<precision_float>,
     emission_roughness_metallic_tiling: vec4<precision_float>,
     ao_height_specular: vec4<precision_float>,
-    texture_flags1: vec4<u32>, // x: albedo, y: normal, z: roughness, w: metallic
-    texture_flags2: vec4<u32>, // x: ao, y: height, z: specular, w: emission 
-    albedo_handle: u32,
-    normal_handle: u32,
-    roughness_handle: u32,
-    metallic_handle: u32,
-    ao_handle: u32,
-    height_handle: u32,
-    specular_handle: u32,
-    emission_handle: u32,
+    texture_flags1: vec4<f32>, // x: albedo, y: normal, z: roughness, w: metallic
+    texture_flags2: vec4<f32>, // x: ao, y: height, z: specular, w: emission 
+    albedo_handle: f32,
+    normal_handle: f32,
+    roughness_handle: f32,
+    metallic_handle: f32,
+    ao_handle: f32,
+    height_handle: f32,
+    specular_handle: f32,
+    emission_handle: f32,
 };
 
 // ------------------------------------------------------------------------------------
@@ -279,8 +281,32 @@ fn interpolate(v0: precision_float, v1: precision_float, t: precision_float) -> 
 // ------------------------------------------------------------------------------------
 // Bindless pool sampling helpers
 // ------------------------------------------------------------------------------------
-fn sample_handle_rgba(tex_handle: u32, uv: vec2<precision_float>, pool: texture_2d_array<f32>) -> vec4<precision_float> {
-    let result = textureSample(pool, global_sampler, uv, tex_handle);
+// Computes a mip level (LOD) for a given UV and texture size using screen-space
+// derivatives. Intended for fragment stages where dpdx/dpdy are defined.
+// - uv: normalized texture coordinates in [0,1]
+// - tex_size: texture dimensions in pixels (width, height)
+// Returns: log2 of the max gradient magnitude in texel space.
+// Notes:
+//   • For compute stages, derivatives are undefined; approximate via shared-memory
+//     neighborhood gradients and feed them into a custom variant if needed.
+fn compute_lod_from_uv(uv: vec2f, tex_size: vec2f) -> f32 {
+    // Convert to texel space so gradients are measured in pixels
+    let uv_texel = uv * tex_size;
+
+    // Screen-space gradients of the texel-space coordinates
+    let d_uv_dx = dpdx(uv_texel);
+    let d_uv_dy = dpdy(uv_texel);
+
+    // Max length across axes gives the footprint scale (rho)
+    let rho = max(length(d_uv_dx), length(d_uv_dy));
+
+    // Guard against log2(0). Negative LODs (minification < 1) are fine; clamp input only.
+    let safe_rho = max(rho, 1e-8);
+    return log2(safe_rho);
+}
+
+fn sample_handle_rgba(tex_handle: u32, uv: vec2<precision_float>, pool: texture_2d_array<f32>, lod: f32) -> vec4<precision_float> {
+    let result = textureSampleLevel(pool, global_sampler, uv, tex_handle, lod);
     return result;
 }
 
@@ -500,3 +526,4 @@ fn mask_popcount(mask: vec4<u32>) -> u32 {
     let ones = countOneBits(mask);
     return ones.x + ones.y + ones.z + ones.w;
 }
+
