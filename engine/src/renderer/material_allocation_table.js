@@ -119,10 +119,10 @@ export class MaterialAllocationTable {
           this.params_buffer.write_raw(this.params_data, page_offset * 4, page_size, page_offset);
         }
       }
-
+      
       this.dirty_params_pages.clear();
     }
-
+    
     if (this.dirty_palette_pages.length > 0) {
       if (!this.palette_buffer || this.palette_buffer.config.size < this.local_palette.byteLength) {
         this.palette_buffer = Buffer.create({

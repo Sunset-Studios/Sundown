@@ -303,6 +303,7 @@ export class SharedViewBuffer {
   static raw_data = new Float32Array(0);
   static dirty_states = new ResizableBitArray(256);
   static renderable_states = new ResizableBitArray(256);
+  static moved_states = new ResizableBitArray(256);
   static custom_projection_matrix_enabled = new ResizableBitArray(256);
   static custom_view_matrix_enabled = new ResizableBitArray(256);
   static free_list = new TypedStack(16, Uint32Array);
@@ -375,6 +376,7 @@ export class SharedViewBuffer {
     SharedViewBuffer.custom_view_matrix_enabled.set(idx, 0);
     SharedViewBuffer.dirty_states.set(idx, 1);
     SharedViewBuffer.renderable_states.set(idx, 0);
+    SharedViewBuffer.moved_states.set(idx, 0);
 
     if (
       !SharedViewBuffer.buffer ||
@@ -396,6 +398,7 @@ export class SharedViewBuffer {
       const last = length - 1;
       const last_dirty_state = SharedViewBuffer.dirty_states.get(last);
       const last_renderable_state = SharedViewBuffer.is_render_active(last);
+      const last_moved_state = SharedViewBuffer.moved_states.get(last);
 
       SharedViewBuffer.set_render_active(idx, false);
 
@@ -409,6 +412,7 @@ export class SharedViewBuffer {
 
         SharedViewBuffer.dirty_states.set(idx, last_dirty_state);
         SharedViewBuffer.set_render_active(idx, last_renderable_state);
+        SharedViewBuffer.moved_states.set(idx, last_moved_state);
       }
 
       SharedViewBuffer.raw_data = SharedViewBuffer.raw_data.subarray(
@@ -417,6 +421,7 @@ export class SharedViewBuffer {
       );
     } else {
       SharedViewBuffer.dirty_states.set(idx, 0);
+      SharedViewBuffer.moved_states.set(idx, 0);
       if (SharedViewBuffer.is_render_active(idx)) {
         const clipmap_count = SharedViewBuffer.raw_data[
           idx * SharedViewBuffer.floats_per_view + SharedViewBuffer.offsets.clipmap_count
@@ -452,6 +457,11 @@ export class SharedViewBuffer {
     return !!SharedViewBuffer.renderable_states.get(view_index);
   }
 
+  /** Check if a specific view was moved. */
+  static was_moved(view_index) {
+    return !!SharedViewBuffer.moved_states.get(view_index);
+  }
+
   /** Request cull update for a specific view index. */
   static set_render_active(view_index, active = true) {
     const old_state = SharedViewBuffer.renderable_states.get(view_index);
@@ -482,6 +492,7 @@ export class SharedViewBuffer {
       const idx = list[i];
 
       if (!SharedViewBuffer.dirty_states.get(idx)) {
+        SharedViewBuffer.moved_states.set(idx, 0);
         continue;
       }
 
@@ -703,6 +714,7 @@ export class SharedViewBuffer {
       SharedViewBuffer.buffer.write(view_slice, base * 4);
 
       SharedViewBuffer.dirty_states.set(idx, 0);
+      SharedViewBuffer.moved_states.set(idx, 1);
     }
   }
 

@@ -1,5 +1,6 @@
 import { Buffer } from "../renderer/buffer.js";
 import { Renderer } from "../renderer/renderer.js";
+import { MeshData } from "../renderer/mesh_data.js";
 
 // ═══════════════════════════════════════════════════════════════════════════════════════════════
 // ██╗     ██╗███████╗███████╗██╗  ██╗██████╗ ██╗      █████╗ ███████╗    ███╗   ███╗ ██████╗ ██████╗ 
@@ -42,7 +43,7 @@ const BVH4_NODE_BYTE_SIZE = 48;        // BVH4 node: 4 children + bounds + primi
 const INITIAL_MAX_PAGES = 256;         // Conservative initial allocation (16K nodes)
 const PAGE_SIZE = 64;                  // Nodes per page (optimal for GPU workgroup size)
 const UINT32_BYTES = 4;                // Standard 32-bit integer size
-const DIRECTORY_ENTRY_SIZE = 6;        // Per-mesh metadata: [bvh2_base, bvh2_cap, bvh4_base, bvh4_cap, leaf_count, first_vertex]
+const DIRECTORY_ENTRY_SIZE = 8;        // Per-mesh metadata: [bvh2_base, bvh2_cap, bvh4_base, bvh4_cap, leaf_count, first_vertex, first_index, padding]
 
 // ┌─────────────────────────────────────────────────────────────────────────────────────────────┐
 // │                         🔧 COMPUTE SHADER BUILD CONFIGURATION                                │
@@ -292,14 +293,15 @@ export class MeshBLAS {
     if (!mesh || mesh.mesh_data_index === undefined) return;
 
     const mesh_id = mesh.mesh_data_index;
-    const triangle_count = mesh.indices?.length ? Math.floor(mesh.indices.length / 3) : 0;
+    const triangle_count = Math.floor(mesh.index_count / 3);
     if (triangle_count <= 0) return;
 
     const first_vertex = mesh.vertex_buffer_offset || 0;
+    const first_index = mesh.index_buffer_offset || 0;
 
     // Ensure system capacity and update allocations for both buffer types
     this.#ensure_directory_capacity_for_mesh(mesh_id);
-    this.#update_mesh_allocation(mesh_id, triangle_count, first_vertex, mesh);
+    this.#update_mesh_allocation(mesh_id, triangle_count, first_vertex, first_index);
 
     this.#dirty_meshes.add(mesh_id);
   }
@@ -421,10 +423,12 @@ export class MeshBLAS {
    * @param {number} mesh_id - Unique mesh identifier
    * @param {number} triangle_count - Number of triangles in the mesh
    * @param {number} first_vertex - Vertex buffer offset for this mesh
-   * @param {object} mesh - Original mesh object for buffer references
+   * @param {object} first_index - Index buffer offset for this mesh
    * @private
    */
-  static #update_mesh_allocation(mesh_id, triangle_count, first_vertex, mesh) {
+  static #update_mesh_allocation(mesh_id, triangle_count, first_vertex, first_index) {
+    const index_buffer = MeshData.index_buffer;
+
     // Allocate BVH2 nodes (2N - 1)
     let bvh2_base_index = 0;
     const existing_bvh2 = this.#bvh2_allocations.get(mesh_id);
@@ -449,7 +453,7 @@ export class MeshBLAS {
       bvh4_base_index = existing_bvh4.base_node_index;
     }
 
-    // Update directory entry: [bvh2_base, bvh2_capacity, bvh4_base, bvh4_capacity, leaf_count, first_vertex]
+    // Update directory entry: [bvh2_base, bvh2_capacity, bvh4_base, bvh4_capacity, leaf_count, first_vertex, first_index]
     const bvh2_allocation = this.#bvh2_allocations.get(mesh_id);
     const bvh4_allocation = this.#bvh4_allocations.get(mesh_id);
     const directory_offset = mesh_id * DIRECTORY_ENTRY_SIZE;
@@ -460,6 +464,7 @@ export class MeshBLAS {
     this.#directory[directory_offset + 3] = bvh4_allocation.node_capacity >>> 0;
     this.#directory[directory_offset + 4] = triangle_count >>> 0;
     this.#directory[directory_offset + 5] = first_vertex >>> 0;
+    this.#directory[directory_offset + 6] = first_index >>> 0;
 
     // Write directory entry to GPU
     this.#directory_buffer.write_raw(
@@ -471,12 +476,13 @@ export class MeshBLAS {
     // Store mesh metadata for build pipeline
     this.#mesh_metadata.set(mesh_id, {
       first_vertex: first_vertex,
+      first_index: first_index,
       leaf_count: triangle_count,
       bvh2_base_node_index: bvh2_base_index,
       bvh4_base_node_index: bvh4_base_index,
       bvh2_node_count: bvh2_nodes_required,
       bvh4_node_count: bvh4_nodes_required,
-      index_buffer: mesh.index_buffer || this.#dummy_index_buffer,
+      index_buffer: index_buffer || this.#dummy_index_buffer,
     });
   }
 

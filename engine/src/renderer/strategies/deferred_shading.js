@@ -48,6 +48,7 @@ import {
 
 // Specialized renderer components
 import { GI } from "../global_illumination/gi.js";
+import { PathTracer } from "../raytracing/path_tracer.js";
 import { GTAO } from "../global_illumination/gtao.js";
 import { AdaptiveSparseVirtualShadowMaps } from "../shadows/as_vsm.js";
 import {
@@ -455,6 +456,7 @@ export class DeferredShadingStrategy {
   gi = null;
   gtao = null;
   as_vsm = null;
+  path_tracer = null;
   debug_overlay = null;
   frustum_culler = null;
   occlusion_culler = null;
@@ -471,6 +473,7 @@ export class DeferredShadingStrategy {
       max_lods: MAX_CLIPMAP_LEVELS,
       clip0_extent: DEFAULT_LIGHT_CLIP_EXTENT,
     });
+    this.path_tracer = new PathTracer();
 
     this.frustum_culler = new FrustumCuller(
       null,
@@ -564,12 +567,37 @@ export class DeferredShadingStrategy {
       );
       const entity_occluders = render_graph.register_buffer(occluder_buffer.buffer.config.name);
 
+      const aabb_gpu_data = BVH.to_gpu_data();
+      const tlas_bvh4_nodes = render_graph.register_buffer(
+        aabb_gpu_data.bvh4_nodes_buffer.config.name
+      );
+      const scene_bounds = render_graph.register_buffer(
+        aabb_gpu_data.scene_bounds_buffer.config.name
+      );
+
+      const blas_gpu_data = MeshBLAS.to_gpu_data();
+      const blas_bvh2_nodes = render_graph.register_buffer(
+        blas_gpu_data.bvh2_nodes_buffer.config.name
+      );
+      const blas_bvh4_nodes = render_graph.register_buffer(
+        blas_gpu_data.bvh4_nodes_buffer.config.name
+      );
+      const blas_directory = render_graph.register_buffer(
+        blas_gpu_data.directory_buffer.config.name
+      );
+
       // ┌─────────────────────────────────────────────────────────────────────────────┐
       // │ 🎯 Register Mesh & Instance Buffers                                        │
       // └─────────────────────────────────────────────────────────────────────────────┘
       const object_instances = render_graph.register_buffer(
         MeshTaskQueue.get_object_instance_buffer().config.name
       );
+
+      const mesh_asset_ids = EntityManager.get_fragment_gpu_buffer(
+        StaticMeshFragment,
+        mesh_asset_id_name
+      );
+      const mesh_asset_ids_buffer = render_graph.register_buffer(mesh_asset_ids.buffer.config.name);
 
       // ┌─────────────────────────────────────────────────────────────────────────────┐
       // │ 💡 Setup Lighting System                                                   │
@@ -1045,9 +1073,6 @@ export class DeferredShadingStrategy {
         debug_view === DebugDrawType.BLAS_Bounds ||
         debug_view === DebugDrawType.BLAS_BVH4
       ) {
-        const aabb_gpu_data = BVH.to_gpu_data();
-        const blas_gpu_data = MeshBLAS.to_gpu_data();
-
         let max_nodes_debug = BVH.bvh_size;
         switch (debug_view) {
           case DebugDrawType.BLAS_Bounds:
@@ -1067,11 +1092,6 @@ export class DeferredShadingStrategy {
           usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
         });
 
-        // BVH debug inputs
-        const scene_bounds = render_graph.register_buffer(
-          aabb_gpu_data.scene_bounds_buffer.config.name
-        );
-
         if (debug_view === DebugDrawType.EntityBounds) {
           render_graph.add_pass(
             "debug_emit_bounds_lines",
@@ -1087,24 +1107,9 @@ export class DeferredShadingStrategy {
             }
           );
         } else if (debug_view === DebugDrawType.BLAS_Bounds) {
-          const blas_nodes = render_graph.register_buffer(
-            blas_gpu_data.bvh2_nodes_buffer.config.name
-          );
-          const blas_directory = render_graph.register_buffer(
-            blas_gpu_data.directory_buffer.config.name
-          );
-
-          const mesh_asset_ids = EntityManager.get_fragment_gpu_buffer(
-            StaticMeshFragment,
-            mesh_asset_id_name
-          );
-          const mesh_asset_ids_buffer = render_graph.register_buffer(
-            mesh_asset_ids.buffer.config.name
-          );
-
           // Calculate mesh directory size (directory buffer size / bytes per entry / 4 bytes per u32)
           const directory_buffer_size = blas_gpu_data.directory_buffer.config.size;
-          const directory_entry_size = 6; // [bvh2_base, bvh2_cap, bvh4_base, bvh4_cap, leaf_count, first_vertex]
+          const directory_entry_size = 8; // [bvh2_base, bvh2_cap, bvh4_base, bvh4_cap, leaf_count, first_vertex, first_index, padding]
           const mesh_count = Math.floor(directory_buffer_size / (directory_entry_size * 4));
 
           // Compact per-mesh preprocessing buffers
@@ -1164,7 +1169,7 @@ export class DeferredShadingStrategy {
             {
               inputs: [
                 debug_line_data_buf,
-                blas_nodes,
+                blas_bvh2_nodes,
                 blas_directory,
                 entity_transforms,
                 closest_entities_per_mesh_buf,
@@ -1180,24 +1185,9 @@ export class DeferredShadingStrategy {
             }
           );
         } else if (debug_view === DebugDrawType.BLAS_BVH4) {
-          const blas_nodes = render_graph.register_buffer(
-            blas_gpu_data.bvh4_nodes_buffer.config.name
-          );
-          const blas_directory = render_graph.register_buffer(
-            blas_gpu_data.directory_buffer.config.name
-          );
-
-          const mesh_asset_ids = EntityManager.get_fragment_gpu_buffer(
-            StaticMeshFragment,
-            mesh_asset_id_name
-          );
-          const mesh_asset_ids_buffer = render_graph.register_buffer(
-            mesh_asset_ids.buffer.config.name
-          );
-
           // Calculate mesh directory size (directory buffer size / bytes per entry / 4 bytes per u32)
           const directory_buffer_size = blas_gpu_data.directory_buffer.config.size;
-          const directory_entry_size = 6; // [bvh2_base, bvh2_cap, bvh4_base, bvh4_cap, leaf_count, first_vertex]
+          const directory_entry_size = 8; // [bvh2_base, bvh2_cap, bvh4_base, bvh4_cap, leaf_count, first_vertex, first_index, padding]
           const mesh_count = Math.floor(directory_buffer_size / (directory_entry_size * 4));
 
           // Compact per-mesh preprocessing buffers
@@ -1257,7 +1247,7 @@ export class DeferredShadingStrategy {
             {
               inputs: [
                 debug_line_data_buf,
-                blas_nodes,
+                blas_bvh4_nodes,
                 blas_directory,
                 entity_transforms,
                 closest_entities_per_mesh_buf,
@@ -1273,16 +1263,13 @@ export class DeferredShadingStrategy {
             }
           );
         } else if (debug_view === DebugDrawType.BVH4) {
-          const bvh4_nodes = render_graph.register_buffer(
-            aabb_gpu_data.bvh4_nodes_buffer.config.name
-          );
           const bvh_info = render_graph.register_buffer(aabb_gpu_data.bvh_info_buffer.config.name);
 
           render_graph.add_pass(
             "debug_emit_bvh4_lines",
             RenderPassFlags.Compute,
             {
-              inputs: [debug_line_data_buf, bvh4_nodes, bvh_info, scene_bounds],
+              inputs: [debug_line_data_buf, tlas_bvh4_nodes, bvh_info, scene_bounds],
               outputs: [debug_line_data_buf],
               shader_setup: debug_emit_bvh4_nodes_shader_setup,
             },
@@ -1634,6 +1621,33 @@ export class DeferredShadingStrategy {
       // └─────────────────────────────────────────────────────────────────────────────┘
       if (debug_view !== DebugDrawType.None) {
         switch (debug_view) {
+          case DebugDrawType.PathTracing: {
+            // Ensure path tracer output exists for current resolution and bind G-Buffer + BVH inputs
+            this.path_tracer.add_passes(
+              render_graph,
+              image_extent.width,
+              image_extent.height,
+              4, // max_bounces
+              1, // spp_per_frame
+              main_position_image,
+              main_normal_image,
+              tlas_bvh4_nodes,
+              blas_bvh4_nodes,
+              blas_directory,
+              entity_transforms,
+              mesh_asset_ids_buffer,
+              this.force_recreate,
+            );
+            this.debug_overlay.set_properties(
+              this.path_tracer.output_texture,
+              0,
+              0,
+              image_extent.width,
+              image_extent.height,
+              DebugDrawType.PathTracing
+            );
+            break;
+          }
           case DebugDrawType.Wireframe:
             break;
           case DebugDrawType.Depth:

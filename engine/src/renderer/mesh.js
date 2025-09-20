@@ -17,31 +17,17 @@ export class Mesh {
   indices = [];
   bounds_min_and_max = [0, 0, 0, 0, 0, 0];
   vertex_buffer_offset = -1;
+  index_buffer_offset = -1;
   vertex_count = 0;
   index_count = 0;
   sections = [];
   mesh_data_index = -1;
 
-  index_buffer = null;
   pending_loader = null;
   triangle_bvh = null;
 
   _tmp_indices = [];
   _section_groups = new Map();
-
-  _recreate_index_buffer() {
-    let element_type = "uint16";
-    if (this.indices.constructor.name === "Uint32Array") {
-      element_type = "uint32";
-    }
-
-    this.index_buffer = Buffer.create({
-      name: `${this.name}_index_buffer`,
-      raw_data: this.indices,
-      usage: GPUBufferUsage.INDEX | GPUBufferUsage.COPY_DST | GPUBufferUsage.STORAGE,
-      element_type: element_type,
-    });
-  }
 
   _recreate_vertex_bounds() {
     this.bounds_min_and_max = [Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity];
@@ -166,7 +152,6 @@ export class Mesh {
     mesh.index_count = mesh.indices.length;
 
     mesh._recreate_vertex_bounds();
-    mesh._recreate_index_buffer();
     mesh.sections = [{ first_index: 0, index_count: mesh.index_count }];
 
     // Register shared mesh data (bounds)
@@ -248,8 +233,7 @@ export class Mesh {
     mesh.vertex_count = mesh.vertices.length;
     mesh.index_count = mesh.indices.length;
 
-
-    mesh._recreate_index_buffer();
+    mesh._recreate_vertex_bounds();
     mesh.sections = [{ first_index: 0, index_count: mesh.index_count }];
 
     // Register shared mesh data (bounds)
@@ -524,8 +508,7 @@ export class Mesh {
     mesh.vertex_count = mesh.vertices.length;
     mesh.index_count = mesh.indices.length;
 
-
-    mesh._recreate_index_buffer();
+    mesh._recreate_vertex_bounds();
     mesh.sections = [{ first_index: 0, index_count: mesh.index_count }];
 
     // Register shared mesh data (bounds)
@@ -843,6 +826,7 @@ export class Mesh {
 
       // Build sections by material groups and finalize indices
       mesh.sections = [];
+      mesh.index_count = 0;
       mesh._tmp_indices.length = 0;
 
       // Map each vertex index to the section index it belongs to (by material group)
@@ -899,7 +883,6 @@ export class Mesh {
       mesh.index_count = mesh.indices.length;
 
       mesh._recreate_vertex_bounds();
-      mesh._recreate_index_buffer();
 
       // Register shared mesh data (bounds)
       MeshData.update(mesh);

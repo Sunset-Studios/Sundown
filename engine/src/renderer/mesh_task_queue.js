@@ -3,8 +3,8 @@ import { EntityID, DEFAULT_CHUNK_CAPACITY } from "../core/ecs/solar/types.js";
 import { Renderer } from "./renderer.js";
 import { ResourceCache } from "./resource_cache.js";
 import { Mesh } from "./mesh.js";
+import { MeshData } from "./mesh_data.js";
 import { Buffer } from "./buffer.js";
-import { Name } from "../utility/names.js";
 import { RandomAccessAllocator, Sparse2DRandomAccessAllocator } from "../memory/allocator.js";
 import { profile_scope } from "../utility/performance.js";
 import { CacheTypes, MaterialFamilyType, BindGroupType } from "./renderer_types.js";
@@ -20,7 +20,6 @@ class IndirectDrawBatch {
   section = 0;
   material_id = 0;
   entities = [];
-  index_buffer_id = null;
   instance_count = 0;
   first_index = 0;
   index_count = 0;
@@ -186,7 +185,7 @@ class IndirectDrawObject {
               const offset = Math.floor(i / 5);
               this.indirect_draw_data[i + 0] = batches[offset].index_count;
               this.indirect_draw_data[i + 1] = 0; // Regular draw uses 0 instance count until updated
-              this.indirect_draw_data[i + 2] = batches[offset].first_index;
+              this.indirect_draw_data[i + 2] = 0; // Index buffer is global, so we don't need to offset it
               this.indirect_draw_data[i + 3] = batches[offset].base_vertex;
               this.indirect_draw_data[i + 4] = batches[offset].base_instance;
             }
@@ -214,9 +213,7 @@ class IndirectDrawObject {
     for (let i = 0; i < this.last_indirect_draw_count; i += 5) {
       this.indirect_draw_data[i + 1] = 0; // Reset instance count to 0
     }
-    this.indirect_draw_buffer.write_raw(
-      this.indirect_draw_data,
-    );
+    this.indirect_draw_buffer.write_raw(this.indirect_draw_data);
   }
 
   destroy() {
@@ -341,7 +338,7 @@ export class MeshTaskQueue {
 
           if (!last_batch_matches) {
             const mesh = ResourceCache.get().fetch(CacheTypes.MESH, task.mesh_id);
-            if (!mesh || !mesh.index_buffer) {
+            if (!mesh) {
               continue;
             }
 
@@ -349,7 +346,6 @@ export class MeshTaskQueue {
             batch.mesh_id = task.mesh_id;
             batch.section = task.section;
             batch.material_id = task.material_id;
-            batch.index_buffer_id = Name.from(mesh.index_buffer.config.name);
 
             batch.base_instance = last_batch
               ? last_batch.base_instance + last_batch.instance_count
@@ -600,40 +596,6 @@ export class MeshTaskQueue {
     }
   }
 
-  static submit_indexed_draws(render_pass, rg_frame_data, should_reset = false) {
-    let last_material = null;
-    this.tasks.forEach((task) => {
-      const mesh = ResourceCache.get().fetch(CacheTypes.MESH, task.mesh_id);
-
-      const material = ResourceCache.get().fetch(CacheTypes.MATERIAL, task.material_id);
-      if (material && material !== last_material) {
-        // Material binds will rebind a pipeline state, so we need to rebind the bind groups here
-        material.bind(render_pass, render_pass.frame_bind_groups, render_pass.frame_attachments);
-        if (render_pass.frame_bind_groups[BindGroupType.Global]) {
-          render_pass.frame_bind_groups[BindGroupType.Global].bind(render_pass);
-        }
-        if (render_pass.frame_bind_groups[BindGroupType.Pass]) {
-          render_pass.frame_bind_groups[BindGroupType.Pass].bind(render_pass);
-        }
-        last_material = material;
-      }
-
-      render_pass.pass.setIndexBuffer(
-        mesh.index_buffer.buffer,
-        mesh.index_buffer.config.element_type
-      );
-      render_pass.pass.drawIndexed(
-        mesh.index_count,
-        task.entity.instance_count,
-        0,
-        mesh.vertex_buffer_offset
-      );
-    });
-    if (should_reset) {
-      this.reset();
-    }
-  }
-
   static submit_indexed_indirect_draws(
     render_pass,
     view_index = 0,
@@ -642,8 +604,11 @@ export class MeshTaskQueue {
     opaque_only = false,
     depth_only = false,
     should_reset = false,
-    indirect_draw_buffer = null,
+    indirect_draw_buffer = null
   ) {
+    const index_buffer = MeshData.index_buffer;
+    const index_buffer_multiplier = index_buffer.config.element_type === "uint16" ? 2 : 4;
+
     let last_material = null;
     let last_depth_only = false;
 
@@ -652,7 +617,7 @@ export class MeshTaskQueue {
 
     for (let i = 0; i < this.batches.length; ++i) {
       const batch = this.batches[i];
-      const index_buffer = ResourceCache.get().fetch(CacheTypes.BUFFER, batch.index_buffer_id);
+      const mesh = ResourceCache.get().fetch(CacheTypes.MESH, batch.mesh_id);
 
       const material = ResourceCache.get().fetch(CacheTypes.MATERIAL, batch.material_id);
       if (opaque_only && material.family !== MaterialFamilyType.Opaque) {
@@ -662,7 +627,12 @@ export class MeshTaskQueue {
       if (!skip_material_bind) {
         if (material && (material !== last_material || last_depth_only !== depth_only)) {
           // Material binds will rebind a pipeline state; choose depth or normal
-          material.bind(render_pass, render_pass.frame_bind_groups, render_pass.frame_attachments, depth_only);
+          material.bind(
+            render_pass,
+            render_pass.frame_bind_groups,
+            render_pass.frame_attachments,
+            depth_only
+          );
           if (render_pass.frame_bind_groups[BindGroupType.Global]) {
             render_pass.frame_bind_groups[BindGroupType.Global].bind(render_pass);
           }
@@ -674,7 +644,12 @@ export class MeshTaskQueue {
         }
       }
 
-      render_pass.pass.setIndexBuffer(index_buffer.buffer, index_buffer.config.element_type);
+      render_pass.pass.setIndexBuffer(
+        index_buffer.buffer,
+        index_buffer.config.element_type,
+        (mesh.index_buffer_offset + batch.first_index) * index_buffer_multiplier,
+        batch.index_count * index_buffer_multiplier
+      );
       render_pass.pass.drawIndexedIndirect(
         indirect_buffer.buffer,
         i * 20 // 5 * 4 bytes per draw call
@@ -692,12 +667,20 @@ export class MeshTaskQueue {
     clipmap_index = 0,
     depth_only = false,
     indirect_draw_buffer = null,
-    should_reset = false,
+    should_reset = false
   ) {
+    const index_buffer = MeshData.index_buffer;
+    const index_buffer_multiplier = index_buffer.config.element_type === "uint16" ? 2 : 4;
+
     const material = ResourceCache.get().fetch(CacheTypes.MATERIAL, material_id);
     if (material) {
       // Material binds will rebind a pipeline state, so we need to rebind the bind groups here
-      material.bind(render_pass, render_pass.frame_bind_groups, render_pass.frame_attachments, depth_only);
+      material.bind(
+        render_pass,
+        render_pass.frame_bind_groups,
+        render_pass.frame_attachments,
+        depth_only
+      );
       if (render_pass.frame_bind_groups[BindGroupType.Global]) {
         render_pass.frame_bind_groups[BindGroupType.Global].bind(render_pass);
       }
@@ -714,9 +697,14 @@ export class MeshTaskQueue {
         continue;
       }
       const batch = this.batches[i];
-      const index_buffer = ResourceCache.get().fetch(CacheTypes.BUFFER, batch.index_buffer_id);
+      const mesh = ResourceCache.get().fetch(CacheTypes.MESH, batch.mesh_id);
 
-      render_pass.pass.setIndexBuffer(index_buffer.buffer, index_buffer.config.element_type);
+      render_pass.pass.setIndexBuffer(
+        index_buffer.buffer,
+        index_buffer.config.element_type,
+        (mesh.index_buffer_offset + batch.first_index) * index_buffer_multiplier,
+        batch.index_count * index_buffer_multiplier
+      );
       render_pass.pass.drawIndexedIndirect(
         indirect_buffer.buffer,
         i * 20 // 5 * 4 bytes per draw call
@@ -728,28 +716,43 @@ export class MeshTaskQueue {
   }
 
   static draw_quad(render_pass, instance_count = 1) {
+    const index_buffer = MeshData.index_buffer;
+    const index_buffer_multiplier = index_buffer.config.element_type === "uint16" ? 2 : 4;
+
     const mesh = Mesh.quad();
     render_pass.pass.setIndexBuffer(
-      mesh.index_buffer.buffer,
-      mesh.index_buffer.config.element_type
+      index_buffer.buffer,
+      index_buffer.config.element_type,
+      mesh.index_buffer_offset * index_buffer_multiplier,
+      mesh.index_count * index_buffer_multiplier
     );
     render_pass.pass.drawIndexed(mesh.index_count, instance_count, 0, mesh.vertex_buffer_offset);
   }
 
   static draw_cube(render_pass, instance_count = 1) {
+    const index_buffer = MeshData.index_buffer;
+    const index_buffer_multiplier = index_buffer.config.element_type === "uint16" ? 2 : 4;
+
     const mesh = Mesh.cube();
     render_pass.pass.setIndexBuffer(
-      mesh.index_buffer.buffer,
-      mesh.index_buffer.config.element_type
+      index_buffer.buffer,
+      index_buffer.config.element_type,
+      mesh.index_buffer_offset * index_buffer_multiplier,
+      mesh.index_count * index_buffer_multiplier
     );
     render_pass.pass.drawIndexed(mesh.index_count, instance_count, 0, mesh.vertex_buffer_offset);
   }
 
   static draw_sphere(render_pass, instance_count = 1) {
+    const index_buffer = MeshData.index_buffer;
+    const index_buffer_multiplier = index_buffer.config.element_type === "uint16" ? 2 : 4;
+
     const mesh = Mesh.sphere();
     render_pass.pass.setIndexBuffer(
-      mesh.index_buffer.buffer,
-      mesh.index_buffer.config.element_type
+      index_buffer.buffer,
+      index_buffer.config.element_type,
+      mesh.index_buffer_offset * index_buffer_multiplier,
+      mesh.index_count * index_buffer_multiplier
     );
     render_pass.pass.drawIndexed(mesh.index_count, instance_count, 0, mesh.vertex_buffer_offset);
   }

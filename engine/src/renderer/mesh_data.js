@@ -4,10 +4,12 @@ import { Name } from "../utility/names.js";
 import { MeshBLAS } from "../acceleration/mesh_blas.js";
 
 const vertex_buffer_name = "vertex_buffer";
+const index_buffer_name = "index_buffer";
 const mesh_bounds_buffer_name = "mesh_bounds_buffer";
 
 const initial_max_meshes = 256;
 const initial_vertex_buffer_size = 1024;
+const initial_index_buffer_size = 1024 * 3;
 
 const mesh_bounds_size = 8;
 
@@ -20,8 +22,11 @@ export class MeshData {
 
   static mesh_count = 0;
   static vertex_buffer_head = 0;
+  static index_buffer_head = 0;
   static vertex_data = null;
   static vertex_buffer = null;
+  static index_data = null;
+  static index_buffer = null;
 
   static initialize() {
     if (this.is_initialized) return;
@@ -39,6 +44,15 @@ export class MeshData {
       name: vertex_buffer_name,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
       size: initial_vertex_buffer_size * 4,
+      force: true,
+    });
+
+    this.index_data = new Uint32Array(initial_index_buffer_size);
+    this.index_buffer = Buffer.create({
+      name: index_buffer_name,
+      usage: GPUBufferUsage.INDEX | GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+      size: initial_index_buffer_size * 4,
+      element_type: "uint32",
       force: true,
     });
 
@@ -69,6 +83,7 @@ export class MeshData {
     // Ensure vertex data is uploaded first so BLAS leaf builder knows vertex offsets
     if (mesh.vertices && mesh.vertex_buffer_offset === -1) {
       mesh.vertex_buffer_offset = this._add_vertex_data(mesh);
+      mesh.index_buffer_offset = this._add_index_data(mesh);
     }
 
     if (mesh.bounds_min_and_max) {
@@ -200,16 +215,59 @@ export class MeshData {
     Renderer.get().mark_bind_groups_dirty(true);
   }
 
+  static _add_index_data(mesh) {
+    const packed = mesh.indices;
+
+    const write_offset = this.index_buffer_head; // float index
+    const required = write_offset + packed.length;
+    if (required > this.index_data.length) {
+      this._resize_index_data(required * 2);
+    }
+
+    this.index_data.set(packed, write_offset);
+
+    this._upload_index_data();
+
+    const old_index_offset = write_offset; // index index
+    this.index_buffer_head = write_offset + packed.length;
+    return old_index_offset;
+  }
+
+  static _upload_index_data() {
+    // Write whole index buffer for now
+    this.index_buffer.write_raw(this.index_data);
+  }
+
+  static _resize_index_data(new_size) {
+    if (new_size <= this.index_data.length) return;
+
+    const next_index_data = new Uint32Array(new_size);
+    next_index_data.set(this.index_data);
+    this.index_data = next_index_data;
+
+    this.index_buffer = Buffer.create({
+      name: index_buffer_name,
+      usage: GPUBufferUsage.INDEX | GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+      size: this.index_data.length * 4,
+      element_type: "uint32",
+      force: true,
+    });
+
+    Renderer.get().refresh_global_shader_bindings();
+    Renderer.get().mark_bind_groups_dirty(true);
+  }
+
   static get_index_by_name_hash(name_hash) {
     const index = this.name_to_index.get(name_hash) ?? 0xffffffff;
     return index;
   }
 
-  static #gpu_data = { mesh_bounds_buffer: null, vertex_buffer: null };
+  static #gpu_data = { mesh_bounds_buffer: null, vertex_buffer: null, index_buffer: null };
   static to_gpu_data() {
     if (!this.is_initialized) this.initialize();
     this.#gpu_data.mesh_bounds_buffer = this.mesh_bounds_buffer;
     this.#gpu_data.vertex_buffer = this.vertex_buffer;
+    this.#gpu_data.index_buffer = this.index_buffer;
     return this.#gpu_data;
   }
 }

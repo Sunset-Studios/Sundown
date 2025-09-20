@@ -98,7 +98,7 @@ export class RenderPass {
       this.pass.setVertexBuffer(this.config.vertex_buffer);
     }
     if (this.config.index_buffer) {
-      this.pass.setIndexBuffer(this.config.index_buffer);
+      this.pass.setIndexBuffer(this.config.index_buffer, this.config.index_buffer.element_type);
     }
 
     if (pipeline) {

@@ -95,6 +95,17 @@ struct DrawCommand {
     first_instance: u32,
 };
 
+struct MeshDirectoryEntry {
+    bvh2_base: u32,
+    bvh2_capacity: u32,
+    bvh4_base: u32,
+    bvh4_capacity: u32,
+    leaf_count: u32,
+    first_vertex: u32,
+    first_index: u32,
+    padding: u32,
+};
+
 struct StandardMaterialParams {
     albedo: vec4<precision_float>,
     normal: vec4<precision_float>,

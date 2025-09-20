@@ -1,15 +1,6 @@
 #include "common.wgsl"
 #include "acceleration_common.wgsl"
 
-struct MeshDirectoryEntry {
-    bvh2_base: u32,
-    bvh2_capacity: u32,
-    bvh4_base: u32,
-    bvh4_capacity: u32,
-    leaf_count: u32,
-    first_vertex: u32,
-};
-
 struct MeshSelector { mesh_id: u32 };
 
 @group(1) @binding(0) var<storage, read_write> out_bounds: array<AABB>;
@@ -30,12 +21,13 @@ fn write_leaf_bounds(@builtin(global_invocation_id) gid: vec3u) {
     if (tri_id >= total) { return; }
 
     let first_vertex = entry.first_vertex;
+    let first_index = entry.first_index;
     let base_node = entry.bvh2_base;
 
     // Load triangle indices from packed 16-bit buffer
-    let i0 = index_buffer[tri_id * 3u + 0u];
-    let i1 = index_buffer[tri_id * 3u + 1u];
-    let i2 = index_buffer[tri_id * 3u + 2u];
+    let i0 = index_buffer[first_index + tri_id * 3u + 0u];
+    let i1 = index_buffer[first_index + tri_id * 3u + 1u];
+    let i2 = index_buffer[first_index + tri_id * 3u + 2u];
 
     let v0 = load_position(first_vertex + i0);
     let v1 = load_position(first_vertex + i1);

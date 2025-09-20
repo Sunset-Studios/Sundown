@@ -1,5 +1,4 @@
 import { EntityManager } from "./ecs/entity.js";
-import { EntityID } from "./ecs/solar/types.js";
 import { Buffer } from "../renderer/buffer.js";
 import { Tree } from "../memory/container.js";
 import { Renderer } from "../renderer/renderer.js";
@@ -79,6 +78,7 @@ export class SceneGraph {
         raw_data: result,
         force: true,
       });
+      Renderer.get().mark_bind_groups_dirty(true);
     } else {
       this.scene_graph_buffer.write_raw(result);
     }
@@ -94,8 +94,6 @@ export class SceneGraph {
       offset += count;
       return uni;
     });
-
-    Renderer.get().mark_bind_groups_dirty(true);
 
     this.dirty = false;
   }

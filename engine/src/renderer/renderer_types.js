@@ -128,6 +128,7 @@ export const DebugDrawType = Object.freeze({
     BVH4: 18,
     BLAS_Bounds: 19,
     BLAS_BVH4: 20,
+    PathTracing: 21,
 });
 
 /**

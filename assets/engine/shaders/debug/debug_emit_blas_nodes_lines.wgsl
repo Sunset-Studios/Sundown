@@ -18,15 +18,6 @@ struct LineData {
     transform: mat4x4f,
 };
 
-struct MeshDirectoryEntry {
-    bvh2_base: u32,
-    bvh2_capacity: u32,
-    bvh4_base: u32,
-    bvh4_capacity: u32,
-    leaf_count: u32,
-    first_vertex: u32,
-};
-
 fn create_line_transform(start: vec3f, end: vec3f) -> mat4x4f {
     let dir = end - start;
     let len = length(dir);

@@ -70,6 +70,9 @@ export class DebugDrawPicker extends DevConsoleTool {
         case "blas-bvh4":
           Renderer.get().set_debug_draw_type(DebugDrawType.BLAS_BVH4);
           break;
+        case "pathtracing":
+          Renderer.get().set_debug_draw_type(DebugDrawType.PathTracing);
+          break;
         default:
           Renderer.get().set_debug_draw_type(DebugDrawType.None);
           break;
