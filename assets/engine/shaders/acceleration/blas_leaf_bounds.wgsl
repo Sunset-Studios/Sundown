@@ -22,7 +22,6 @@ fn write_leaf_bounds(@builtin(global_invocation_id) gid: vec3u) {
 
     let first_vertex = entry.first_vertex;
     let first_index = entry.first_index;
-    let base_node = entry.bvh2_base;
 
     // Load triangle indices from packed 16-bit buffer
     let i0 = index_buffer[first_index + tri_id * 3u + 0u];

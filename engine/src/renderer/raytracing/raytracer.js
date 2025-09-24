@@ -1,6 +1,3 @@
-import { Buffer } from "../buffer.js";
-import { ComputeTaskQueue } from "../compute_task_queue.js";
-
 const output_config = {
   name: "rt_output",
   format: "rgba16float",
@@ -10,7 +7,7 @@ const output_config = {
   force: false,
 }
 
-// TODO: Make this a base class for anything that needs to raytrace.
+// This is a base class for anything that needs to raytrace.
 // Dispatch function should be overridable. Raytracer base should
 // Pull global triangle buffer / TLAS / BLAS / etc. on its own so it's included by default.
 // Raytracing backend should split into separate dispatches: one for TLAS, which populates per ray TLAS hits,

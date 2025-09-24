@@ -18,6 +18,7 @@ import { StaticMeshFragment } from "../../core/ecs/fragments/static_mesh_fragmen
 import { Renderer } from "../renderer.js";
 import { Texture } from "../texture.js";
 import { Material } from "../material.js";
+import { MeshData } from "../mesh_data.js";
 import { DebugOverlay } from "../debug_overlay.js";
 import { PostProcessStack } from "../post_process_stack.js";
 import { MeshTaskQueue } from "../mesh_task_queue.js";
@@ -576,7 +577,7 @@ export class DeferredShadingStrategy {
       );
 
       const blas_gpu_data = MeshBLAS.to_gpu_data();
-      const blas_bvh2_nodes = render_graph.register_buffer(
+      const blas_bvh2_bounds = render_graph.register_buffer(
         blas_gpu_data.bvh2_nodes_buffer.config.name
       );
       const blas_bvh4_nodes = render_graph.register_buffer(
@@ -598,6 +599,10 @@ export class DeferredShadingStrategy {
         mesh_asset_id_name
       );
       const mesh_asset_ids_buffer = render_graph.register_buffer(mesh_asset_ids.buffer.config.name);
+
+      const index_buffer = render_graph.register_buffer(
+        MeshData.index_buffer.config.name
+      );
 
       // ┌─────────────────────────────────────────────────────────────────────────────┐
       // │ 💡 Setup Lighting System                                                   │
@@ -1169,7 +1174,7 @@ export class DeferredShadingStrategy {
             {
               inputs: [
                 debug_line_data_buf,
-                blas_bvh2_nodes,
+                blas_bvh2_bounds,
                 blas_directory,
                 entity_transforms,
                 closest_entities_per_mesh_buf,
@@ -1631,11 +1636,14 @@ export class DeferredShadingStrategy {
               1, // spp_per_frame
               main_position_image,
               main_normal_image,
+              aabb_bounds,
               tlas_bvh4_nodes,
+              blas_bvh2_bounds,
               blas_bvh4_nodes,
               blas_directory,
               entity_transforms,
               mesh_asset_ids_buffer,
+              index_buffer,
               this.force_recreate,
             );
             this.debug_overlay.set_properties(

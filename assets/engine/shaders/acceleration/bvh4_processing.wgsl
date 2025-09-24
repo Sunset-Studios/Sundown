@@ -173,7 +173,6 @@ fn create_bvh4_node(
     bounds_arg: AABB,
     child_nodes: array<u32, 4>,
     child_base_idx: u32,
-    prim_base_idx: u32,
     assignments: u32,
     inner_mask: u32,
     leaf_mask: u32
@@ -187,7 +186,7 @@ fn create_bvh4_node(
     // Encode per-slot children directly into BVH4Node.children
     // Convention:
     // - If slot i is inner: children[i] = f32(child_base_idx + rank among inner slots)
-    // - If slot i is leaf:  children[i] = f32(0x80000000 | (prim_base_idx + rank among leaf slots))
+    // - If slot i is leaf:  children[i] = f32(bvh2 leaf node index)
     node.children = vec4<f32>(-1.0, -1.0, -1.0, -1.0);
 
     for (var i = 0u; i < 4u; i = i + 1u) {
@@ -200,9 +199,9 @@ fn create_bvh4_node(
         let leaf_rank = count_bits_below(leaf_mask, i);
 
         let encoded = select(
-            // leaf
-            f32(0x80000000u | (prim_base_idx + leaf_rank)),
-            // inner
+            // leaf: store BVH2 leaf node index directly from gathered children
+            f32(child_nodes[get_nibble(assignments, i)]),
+            // inner: store absolute child node index
             f32(child_base_idx + inner_rank),
             is_inner
         );
@@ -210,24 +209,11 @@ fn create_bvh4_node(
         node.children[i] = encoded;
     }
 
+    // Store masks in w-components (bitcast to/from f32)
+    node.min.w = bitcast<f32>(leaf_mask);
+    node.max.w = bitcast<f32>(inner_mask);
+
     return node;
-}
-
-//------------------------------------------------------------------------------
-// Single Leaf Handling
-//------------------------------------------------------------------------------
-
-fn create_bvh4_single_leaf(work_id: u32) {
-    if (work_id == 0u) {
-        var child_nodes: array<u32, 4>;
-        child_nodes[0] = 0u;
-        let assignments = 0xffffff0u;
-        let bvh2_node = bounds[0];
-        atomicAdd(&build_state.leaf_counter, 1u);
-        prim_indices[0] = 0u;
-
-        bvh4_nodes[0] = create_bvh4_node(bvh2_node, child_nodes, 0u, 0u, assignments, 0x0u, 0x1u);
-    }
 }
 
 //------------------------------------------------------------------------------
@@ -426,9 +412,8 @@ fn convert_bvh2_to_bvh4(
 
                 // Create and store the new BVH4 node
                 let child_base_abs = bvh_data.node_base + child_base_idx;
-                let prim_base_abs = bvh_data.prim_base + prim_base_idx;
                 bvh4_nodes[bvh_data.node_base + bvh4_node_idx] = create_bvh4_node(
-                    bvh2_node, child_nodes, child_base_abs, prim_base_abs, 
+                    bvh2_node, child_nodes, child_base_abs, 
                     assignments, inner_mask, leaf_mask
                 );
             }

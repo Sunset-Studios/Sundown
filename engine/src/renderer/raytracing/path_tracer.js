@@ -3,15 +3,23 @@ import { RayTracer } from "./raytracer.js";
 import { SharedFrameInfoBuffer, SharedViewBuffer } from "../../core/shared_data.js";
 
 const PIXEL_INFO_SIZE = 12;
+const TLAS_HIT_SIZE_U32 = 4;
+const TLAS_CANDIDATES = 4;
 
-const path_tracer_shader_setup = {
+const path_tracer_tlas_shader_setup = {
   pipeline_shaders: {
-    compute: { path: "raytracing/path_tracer.wgsl" },
+    compute: { path: "raytracing/path_tracer_tlas.wgsl" },
+  },
+};
+
+const path_tracer_blas_shader_setup = {
+  pipeline_shaders: {
+    compute: { path: "raytracing/path_tracer_blas.wgsl" },
   },
 };
 
 export class PathTracer extends RayTracer {
-  params = new Float32Array([0, 0, 0, 0]);
+  params = new Uint32Array([0, 0, 0, 0]);
 
   constructor() {
     super();
@@ -25,12 +33,15 @@ export class PathTracer extends RayTracer {
     spp_per_frame = 1,
     position_texture = null,
     normal_texture = null,
+    tlas_bvh2_bounds = null,
     tlas_bvh4_nodes = null,
+    blas_bvh2_bounds = null,
     blas_bvh4_nodes = null,
     blas_directory = null,
     entity_transforms = null,
     mesh_asset_ids = null,
-    force_recreate = false,
+    index_buffer = null,
+    force_recreate = false
   ) {
     super.setup(render_graph, width, height, force_recreate);
 
@@ -40,6 +51,12 @@ export class PathTracer extends RayTracer {
     const pixel_info = render_graph.create_buffer({
       name: "pt_pixel_info",
       size: width * height * PIXEL_INFO_SIZE * 4,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+      force: force_recreate,
+    });
+    const tlas_hits = render_graph.create_buffer({
+      name: "pt_tlas_hits",
+      size: width * height * TLAS_CANDIDATES * TLAS_HIT_SIZE_U32 * 4,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
       force: force_recreate,
     });
@@ -59,29 +76,55 @@ export class PathTracer extends RayTracer {
         this.params[0] = max_bounces; // max_bounces
         this.params[1] = spp_per_frame; // spp_per_frame
         this.params[2] = view_moved ? 1 : 0; // reset_accum_flag
-        this.params[3] = 0; // unused
+        this.params[3] = 32; // max_spp
         params_buffer.write_raw(this.params);
       }
     );
 
+    // Pass 1: TLAS
     render_graph.add_pass(
-      "path_trace",
+      "path_trace_tlas",
       RenderPassFlags.Compute,
       {
         inputs: [
           pt_params,
           pixel_info,
+          tlas_bvh2_bounds,
           tlas_bvh4_nodes,
+          tlas_hits,
+          mesh_asset_ids,
+          position_texture,
+          normal_texture,
+        ],
+        outputs: [pixel_info, tlas_hits],
+        shader_setup: path_tracer_tlas_shader_setup,
+      },
+      (graph, frame_data, encoder) => {
+        const pass = graph.get_physical_pass(frame_data.current_pass);
+        pass.dispatch(Math.ceil(width / 8), Math.ceil(height / 8), 1);
+      }
+    );
+
+    // Pass 2: BLAS + shading
+    render_graph.add_pass(
+      "path_trace_blas",
+      RenderPassFlags.Compute,
+      {
+        inputs: [
+          pt_params,
+          pixel_info,
+          blas_bvh2_bounds,
           blas_bvh4_nodes,
+          tlas_hits,
           blas_directory,
           entity_transforms,
-          mesh_asset_ids,
+          index_buffer,
           position_texture,
           normal_texture,
           this.output_texture,
         ],
         outputs: [pixel_info, this.output_texture],
-        shader_setup: path_tracer_shader_setup,
+        shader_setup: path_tracer_blas_shader_setup,
       },
       (graph, frame_data, encoder) => {
         const pass = graph.get_physical_pass(frame_data.current_pass);

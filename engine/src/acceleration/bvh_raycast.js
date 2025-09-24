@@ -1,18 +1,24 @@
 import { BVH } from "./bvh.js";
+import { EntityManager } from "../core/ecs/entity.js";
+import { TransformFragment } from "../core/ecs/fragments/transform_fragment.js";
 import { ComputeTaskQueue } from "../renderer/compute_task_queue.js";
 import { Buffer } from "../renderer/buffer.js";
 import { RandomAccessAllocator, RingBufferAllocator } from "../memory/allocator.js";
 
 const EPSILON = 0.0001;
+const bounds_name = "bounds";
 
 export class Ray {
   constructor(origin, direction, t_min = 0.0, t_max = Infinity, user_data = 0) {
-    this.origin = origin ? [...origin] : [0, 0, 0];
     this.t_min = t_min;
     this.t_max = t_max;
     this.user_data = user_data;
     this.index = 0;
-
+    this.setup(origin, direction);  
+  }
+  
+  setup(origin, direction) {
+    this.origin = origin ? [...origin] : [0, 0, 0];
     if (direction) {
       this.set_direction(direction);
     } else {
@@ -149,22 +155,30 @@ export class BVHRaycast {
       this.ray_data[off + 10] = r.inv_direction[2];
       this.ray_data[off + 11] = 0.0;
     }
-    this.rays_buffer.write(this.ray_data);
+    this.rays_buffer.write_raw(this.ray_data);
 
     // -------------------------------------------------------------------
     // GPU dispatch
     // -------------------------------------------------------------------
     const bvh_buffers = BVH.to_gpu_data();
+
+    const bounds_gpu = EntityManager.get_fragment_gpu_buffer(
+      TransformFragment,
+      bounds_name
+    );
+
     ComputeTaskQueue.new_task(
       "bvh_raycast",
       "acceleration/bvh_traversal.wgsl",
       [
         bvh_buffers.bvh4_nodes_buffer,
+        bvh_buffers.bvh4_prim_indices_buffer,
         bvh_buffers.scene_bounds_buffer,
         this.rays_buffer,
         this.hits_buffer,
+        bounds_gpu.buffer,
       ],
-      [],
+      [this.hits_buffer],
       Math.ceil(this.pending_rays.length / 256), 1, 1,
       "traverse_tlas_bvh"
     );
@@ -182,7 +196,7 @@ export class BVHRaycast {
     if (!this.hits_buffer || this.last_dispatch_count === 0) {
       return [];
     }
-    await this.hits_buffer.read(this.last_hit_results, this.last_dispatch_count * 8);
+    await this.hits_buffer.read(this.last_hit_results, this.last_dispatch_count * 8 * 4);
   }
 
   static get_hit_result(ray) {

@@ -233,7 +233,6 @@ export class Mesh {
     mesh.vertex_count = mesh.vertices.length;
     mesh.index_count = mesh.indices.length;
 
-    mesh._recreate_vertex_bounds();
     mesh.sections = [{ first_index: 0, index_count: mesh.index_count }];
 
     // Register shared mesh data (bounds)
@@ -508,7 +507,6 @@ export class Mesh {
     mesh.vertex_count = mesh.vertices.length;
     mesh.index_count = mesh.indices.length;
 
-    mesh._recreate_vertex_bounds();
     mesh.sections = [{ first_index: 0, index_count: mesh.index_count }];
 
     // Register shared mesh data (bounds)

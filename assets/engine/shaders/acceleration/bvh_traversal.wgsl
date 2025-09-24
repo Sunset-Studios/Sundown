@@ -3,9 +3,11 @@
 
 // Bindings for BVH traversal
 @group(1) @binding(0) var<storage, read> bvh4_nodes: array<BVH4Node>;
-@group(1) @binding(1) var<uniform> scene_bounds: array<vec4<f32>, 2>;
-@group(1) @binding(2) var<storage, read> rays: array<Ray>; // The mesh's vertex buffer
-@group(1) @binding(3) var<storage, read_write> hits: array<RayHit>;
+@group(1) @binding(1) var<storage, read> bvh4_prim_indices: array<u32>;
+@group(1) @binding(2) var<uniform> scene_bounds: array<vec4<f32>, 2>;
+@group(1) @binding(3) var<storage, read> rays: array<Ray>; // The mesh's vertex buffer
+@group(1) @binding(4) var<storage, read_write> hits: array<RayHit>;
+@group(1) @binding(5) var<storage, read> bvh2_bounds: array<AABB>;
 
 @compute @workgroup_size(256)
 fn traverse_tlas_bvh(@builtin(global_invocation_id) global_id: vec3<u32>) {
@@ -20,107 +22,62 @@ fn traverse_tlas_bvh(@builtin(global_invocation_id) global_id: vec3<u32>) {
 
     // Traversal stacks
     var node_stack: array<u32, 32>;
-    var min_stack:  array<vec3<f32>, 32>;
-    var extent_stack: array<vec3<f32>, 32>;
-
-    // Scene-root bounding box
-    let scene_min   = scene_bounds[0].xyz;
-    let scene_max   = scene_bounds[1].xyz;
-    let scene_extent = scene_max - scene_min;
-
     // Seed the stack with the root node (index 0)
     node_stack[0]   = 0u;
-    min_stack[0]    = scene_min;
-    extent_stack[0] = scene_extent;
     var stack_size  = 1u;
 
     loop {
         if (stack_size == 0u) { break; }
         stack_size = stack_size - 1u;
 
-        let node_idx      = node_stack[stack_size];
-        if (node_idx == 0xffffffffu) { continue; }
+        var node_idx = node_stack[stack_size];
+        if (node_idx == INVALID_IDX) { continue; }
 
-        let parent_min    = min_stack[stack_size];
-        let parent_extent = extent_stack[stack_size];
         let node = bvh4_nodes[node_idx];
+        let t_aabb = intersect_aabb(ray, node.min.xyz, node.max.xyz);
 
-        let decoded    = decode_quant_aabb(parent_min, parent_extent,
-                                              node.q_min_max.x,
-                                              node.q_min_max.y);
-        let t_aabb    = intersect_aabb(ray, decoded.min.xyz, decoded.max.xyz);
+        if (t_aabb >= ray.origin_and_tmin.w && t_aabb < hit.position_and_t.w) {
+            if (stack_size < 32u) {
+                var min_index = 0u;
+                var min_t = 1e38;
 
-        if (t_aabb > 0.0 && t_aabb < hit.position_and_t.w) {
-            if ((node_idx & 0x80000000u) != 0u) { // leaf
-                hit.position_and_t = vec4<f32>(
-                    ray.origin_and_tmin.xyz + ray.direction_and_tmax.xyz * t_aabb,
-                    t_aabb
-                );
-                hit.normal_and_user_data = vec4<f32>(0.0, 0.0, 0.0, f32(node_idx));
-            } else { // internal → push
-                if (stack_size < 32u) {
-                    // Check all 4 children against each other to find the closest one, and swap the closest one to the front
-                    var node_idx = node.children[0];
-                    var node = bvh4_nodes[node_idx];
-                    var decoded    = decode_quant_aabb(parent_min, parent_extent,
-                                              node.q_min_max.x,
-                                              node.q_min_max.y);
-                    let t_aabb1    = intersect_aabb(ray, decoded.min.xyz, decoded.max.xyz);
-                    node_stack[stack_size] = node_idx;
-                    min_stack[stack_size] = decoded.min.xyz;
-                    extent_stack[stack_size] = decoded.max.xyz - decoded.min.xyz;
-                    stack_size = stack_size + 1u;
+                let leaf_mask = bitcast<u32>(node.min.w);
 
-                    var min_index = 0u;
-                    var min_t = t_aabb1;
+                for (var i = 0u; i < 4u; i = i + 1u) {
+                    let child_raw = node.children[i];
+                    if (child_raw < 0.0) { continue; }
 
-                    node_idx = node.children[1];
-                    node = bvh4_nodes[node_idx];
-                    decoded    = decode_quant_aabb(parent_min, parent_extent,
-                                              node.q_min_max.x,
-                                              node.q_min_max.y);
-                    let t_aabb2    = intersect_aabb(ray, decoded.min.xyz, decoded.max.xyz);
-                    node_stack[stack_size] = node_idx;
-                    min_stack[stack_size] = decoded.min.xyz;
-                    extent_stack[stack_size] = decoded.max.xyz - decoded.min.xyz;
-                    stack_size = stack_size + 1u;
+                    let is_leaf_child = ((leaf_mask >> i) & 1u) != 0u;
+                    let child_idx = u32(child_raw);
 
-                    min_index = select(min_index, 1u, t_aabb2 < min_t);
-                    min_t = select(min_t, t_aabb2, t_aabb2 < min_t);
+                    if (is_leaf_child) {
+                        let leaf_bounds = bvh2_bounds[child_idx];
+                        let t_leaf = intersect_aabb(ray, leaf_bounds.min.xyz, leaf_bounds.max.xyz);
+                        if (t_leaf >= ray.origin_and_tmin.w && t_leaf < hit.position_and_t.w) {
+                            let prim = u32(leaf_bounds.min.w);
+                            hit.position_and_t = vec4<f32>(
+                                ray.origin_and_tmin.xyz + ray.direction_and_tmax.xyz * t_leaf,
+                                t_leaf
+                            );
+                            hit.normal_and_user_data = vec4<f32>(0.0, 0.0, 0.0, f32(prim));
+                        }
+                    } else {
+                        node_stack[stack_size] = child_idx;
 
-                    node_idx = node.children[2];
-                    node = bvh4_nodes[node_idx];
-                    decoded    = decode_quant_aabb(parent_min, parent_extent,
-                                              node.q_min_max.x,
-                                              node.q_min_max.y);
-                    let t_aabb3    = intersect_aabb(ray, decoded.min.xyz, decoded.max.xyz);
-                    node_stack[stack_size] = node_idx;
-                    min_stack[stack_size] = decoded.min.xyz;
-                    extent_stack[stack_size] = decoded.max.xyz - decoded.min.xyz;
-                    stack_size = stack_size + 1u;
+                        let child_node = bvh4_nodes[child_idx];
+                        let t_aabb_child = intersect_aabb(ray, child_node.min.xyz, child_node.max.xyz);
 
-                    min_index = select(min_index, 2u, t_aabb3 < min_t);
-                    min_t = select(min_t, t_aabb3, t_aabb3 < min_t);
+                        min_index = select(min_index, stack_size, t_aabb_child < min_t);
+                        min_t = select(min_t, t_aabb_child, t_aabb_child < min_t);
 
-                    node_idx = node.children[3];
-                    node = bvh4_nodes[node_idx];
-                    decoded    = decode_quant_aabb(parent_min, parent_extent,
-                                              node.q_min_max.x,
-                                              node.q_min_max.y);
-                    let t_aabb4    = intersect_aabb(ray, decoded.min.xyz, decoded.max.xyz);
-                    node_stack[stack_size] = node_idx;
-                    min_stack[stack_size] = decoded.min.xyz;
-                    extent_stack[stack_size] = decoded.max.xyz - decoded.min.xyz;
-                    stack_size = stack_size + 1u;
-
-                    min_index = select(min_index, 3u, t_aabb4 < min_t);
-                    min_t = select(min_t, t_aabb4, t_aabb4 < min_t);
-
-                    // Swap closest node to the front of the stack
-                    let tmp_node = node_stack[min_index];
-                    node_stack[min_index] = node_stack[stack_size - 1u];
-                    node_stack[stack_size - 1u] = tmp_node;
+                        stack_size = stack_size + 1u;
+                    }
                 }
+
+                // Swap closest node to the front of the stack
+                let tmp_node = node_stack[min_index];
+                node_stack[min_index] = node_stack[stack_size - 1u];
+                node_stack[stack_size - 1u] = tmp_node;
             }
         }
     }
@@ -161,7 +118,7 @@ fn traverse_tlas_bvh(@builtin(global_invocation_id) global_id: vec3<u32>) {
 //         stack_size = stack_size - 1u;
 
 //         let node_idx      = node_stack[stack_size];
-//         if (node_idx == 0xffffffffu) { continue; }
+//         if (node_idx == INVALID_IDX) { continue; }
 
 //         let parent_min    = min_stack[stack_size];
 //         let parent_extent = extent_stack[stack_size];
