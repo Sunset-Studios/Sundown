@@ -2,8 +2,7 @@ import { RenderPassFlags } from "../renderer_types.js";
 import { RayTracer } from "./raytracer.js";
 import { SharedFrameInfoBuffer, SharedViewBuffer } from "../../core/shared_data.js";
 
-const PIXEL_INFO_SIZE = 12;
-const TLAS_HIT_SIZE_U32 = 4;
+const PIXEL_INFO_SIZE = 8;
 const TLAS_CANDIDATES = 4;
 
 const path_tracer_tlas_shader_setup = {
@@ -50,13 +49,7 @@ export class PathTracer extends RayTracer {
 
     const pixel_info = render_graph.create_buffer({
       name: "pt_pixel_info",
-      size: width * height * PIXEL_INFO_SIZE * 4,
-      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-      force: force_recreate,
-    });
-    const tlas_hits = render_graph.create_buffer({
-      name: "pt_tlas_hits",
-      size: width * height * TLAS_CANDIDATES * TLAS_HIT_SIZE_U32 * 4,
+      size: width * height * PIXEL_INFO_SIZE * TLAS_CANDIDATES * 4,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
       force: force_recreate,
     });
@@ -91,12 +84,11 @@ export class PathTracer extends RayTracer {
           pixel_info,
           tlas_bvh2_bounds,
           tlas_bvh4_nodes,
-          tlas_hits,
           mesh_asset_ids,
           position_texture,
           normal_texture,
         ],
-        outputs: [pixel_info, tlas_hits],
+        outputs: [pixel_info],
         shader_setup: path_tracer_tlas_shader_setup,
       },
       (graph, frame_data, encoder) => {
@@ -115,7 +107,6 @@ export class PathTracer extends RayTracer {
           pixel_info,
           blas_bvh2_bounds,
           blas_bvh4_nodes,
-          tlas_hits,
           blas_directory,
           entity_transforms,
           index_buffer,

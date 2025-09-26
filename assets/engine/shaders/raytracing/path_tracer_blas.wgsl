@@ -16,23 +16,12 @@ struct PathTracerParams {
     max_spp: u32,
 };
 
-struct PixelInfo {
-    position_and_rng: vec4<f32>,
-    normal_and_sample_count: vec4<f32>,
+struct PixelHitInfo {
+    rng: f32,
+    sample_count: f32,
+    prim_id: f32,
+    mesh_asset_id: f32,
     accum_color: vec4<f32>,
-};
-
-// ----------------------------------------------------------------------------
-// TLAS Candidate Record (input for BLAS pass)
-//  - t_bits:       ieee-754 bits of t (bitcast from f32)
-//  - prim_id:      resolved entity index (TLAS leaf payload)
-//  - mesh_asset_id: mesh id for the primitive
-// ----------------------------------------------------------------------------
-struct TlasHit {
-    t_bits: u32,
-    prim_id: u32,
-    mesh_asset_id: u32,
-    pad1: u32,
 };
 
 // Number of TLAS candidates to consider per pixel
@@ -42,16 +31,15 @@ const TLAS_CANDIDATES: u32 = 4u;
 // Bindings (group 1)
 // ----------------------------------------------------------------------------
 @group(1) @binding(0) var<uniform> pt_params: PathTracerParams;              // Path tracer control params
-@group(1) @binding(1) var<storage, read_write> pixel_info: array<PixelInfo>;   // Per-pixel accumulation
+@group(1) @binding(1) var<storage, read_write> pixel_info: array<PixelHitInfo>;   // Per-pixel accumulation
 @group(1) @binding(2) var<storage, read> blas_bvh2_bounds: array<AABB>;        // BLAS leaf bounds
 @group(1) @binding(3) var<storage, read> blas_bvh4_nodes: array<BVH4Node>;     // BLAS BVH4 nodes
-@group(1) @binding(4) var<storage, read> tlas_hits: array<TlasHit>;            // TLAS candidates (from TLAS pass)
-@group(1) @binding(5) var<storage, read> blas_directory: array<MeshDirectoryEntry>; // Mesh directory
-@group(1) @binding(6) var<storage, read> entity_transforms: array<EntityTransform>; // Per-entity transforms
-@group(1) @binding(7) var<storage, read> index_buffer: array<u32>;             // Triangle index buffer
-@group(1) @binding(8) var position_tex: texture_2d<f32>;                       // GBuffer world position
-@group(1) @binding(9) var normal_tex: texture_2d<f32>;                          // GBuffer world normal
-@group(1) @binding(10) var output_tex: texture_storage_2d<rgba16float, write>;  // Output accumulation
+@group(1) @binding(4) var<storage, read> blas_directory: array<MeshDirectoryEntry>; // Mesh directory
+@group(1) @binding(5) var<storage, read> entity_transforms: array<EntityTransform>; // Per-entity transforms
+@group(1) @binding(6) var<storage, read> index_buffer: array<u32>;             // Triangle index buffer
+@group(1) @binding(7) var position_tex: texture_2d<f32>;                       // GBuffer world position
+@group(1) @binding(8) var normal_tex: texture_2d<f32>;                          // GBuffer world normal
+@group(1) @binding(9) var output_tex: texture_storage_2d<rgba16float, write>;  // Output accumulation
 
 // ----------------------------------------------------------------------------
 // Debug: generate a stable color per primitive id
@@ -184,16 +172,16 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let res = textureDimensions(position_tex);
     if (gid.x >= res.x || gid.y >= res.y) { return; }
 
-    let pixel_index = gid.y * res.x + gid.x;
+    let pixel_index = (gid.y * res.x + gid.x) * TLAS_CANDIDATES;
 
     if (pt_params.reset_accum_flag != 0u) {
         pixel_info[pixel_index].accum_color = vec4f(0.0);
-        pixel_info[pixel_index].normal_and_sample_count.w = 0.0;
+        pixel_info[pixel_index].sample_count = 0.0;
         textureStore(output_tex, vec2<i32>(gid.xy), vec4f(0.0, 0.0, 0.0, 1.0));
         return;
     }
 
-    let prev_count = pixel_info[pixel_index].normal_and_sample_count.w;
+    let prev_count = pixel_info[pixel_index].sample_count;
 
     if (pt_params.max_spp != 0u && prev_count >= f32(pt_params.max_spp)) {
         let prev_sum = pixel_info[pixel_index].accum_color;
@@ -221,11 +209,11 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let original_tmin = ray.origin_and_tmin.w;
     for (var k = 0u; k < TLAS_CANDIDATES; k = k + 1u) {
         ray.origin_and_tmin.w = original_tmin;
-        let hit_rec = tlas_hits[base + k];
-        let entity_resolved = hit_rec.prim_id;
+        let hit_rec = pixel_info[pixel_index + k];
+        let entity_resolved = u32(hit_rec.prim_id);
         if (entity_resolved == INVALID_IDX) { break; }
         
-        let mesh_asset_id = hit_rec.mesh_asset_id;
+        let mesh_asset_id = u32(hit_rec.mesh_asset_id);
 
         var entity_transform = entity_transforms[entity_resolved].transform;
         let hit = trace_blas(&ray, &entity_transform, mesh_asset_id);
@@ -240,10 +228,10 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let new_count = prev_count + 1.0;
     let accum = prev_sum + vec4f(sample_rgb, 1.0);
     pixel_info[pixel_index].accum_color = accum;
-    pixel_info[pixel_index].normal_and_sample_count.w = new_count;
-
+    pixel_info[pixel_index].sample_count = new_count;
     let inv = 1.0 / max(new_count, 1.0);
     let avg = vec4f(accum.xyz * inv, 1.0);
+
     textureStore(output_tex, vec2<i32>(gid.xy), avg);
 }
 

@@ -170,17 +170,19 @@ export class DebugMemory extends DevConsoleTool {
       entries.push({ name: display_name, bytes: size_bytes });
     };
 
-    push_buf("Scene Bounds", BVH.scene_bounds_buffer);
+    const bvh_data = BVH.to_gpu_data();
+
+    push_buf("Scene Bounds", bvh_data.scene_bounds_buffer);
     push_buf("Node Bounds", bounds_buffer.buffer);
-    push_buf("Morton Codes", BVH.morton_codes_buffer);
-    push_buf("Temp Morton Codes", BVH.temp_morton_codes_buffer);
-    push_buf("Sorted Indices", BVH.sorted_indices_buffer);
-    push_buf("Temp Sorted Indices", BVH.temp_sorted_indices_buffer);
-    push_buf("BVH4 Nodes", BVH.bvh4_nodes_buffer);
-    push_buf("Onesweep Data", BVH.onesweep_data_buffer);
-    push_buf("BVH Info", BVH.bvh_info_buffer);
-    push_buf("Clusters", BVH.clusters_buffer);
-    push_buf("Parent Indices", BVH.parent_idx_buffer);
+    push_buf("Morton Codes", bvh_data.morton_codes_buffer);
+    push_buf("Temp Morton Codes", bvh_data.temp_morton_codes_buffer);
+    push_buf("Sorted Indices", bvh_data.sorted_indices_buffer);
+    push_buf("Temp Sorted Indices", bvh_data.temp_sorted_indices_buffer);
+    push_buf("BVH4 Nodes", bvh_data.bvh4_nodes_buffer);
+    push_buf("Onesweep Data", bvh_data.onesweep_data_buffer);
+    push_buf("BVH Info", bvh_data.bvh_info_buffer);
+    push_buf("Clusters", bvh_data.clusters_buffer);
+    push_buf("Parent Indices", bvh_data.parent_idx_buffer);
 
     let total_bytes = 0;
     for (let i = 0; i < entries.length; i++) {

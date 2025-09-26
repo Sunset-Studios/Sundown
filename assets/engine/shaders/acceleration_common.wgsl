@@ -23,8 +23,6 @@ struct BVH4Node {
     children: vec4<f32>,
 };
 
-
-
 // Ray structure for intersection tests
 struct Ray {
     origin_and_tmin: vec4<f32>,
@@ -41,29 +39,6 @@ struct RayHit {
 // ------------------------------------------------------------------------------------
 // Functions
 // ------------------------------------------------------------------------------------
-
-// Packing and unpacking quantised AABBs
-fn pack_quant3(x: u32, y: u32, z: u32) -> u32 {
-    return (x & 0x3ffu) | ((y & 0x3ffu) << 10u) | ((z & 0x3ffu) << 20u);
-}
-
-// Unpacking quantised AABBs
-fn unpack_quant3(packed: u32) -> vec3<u32> {
-    let x = packed & 0x3ffu;
-    let y = (packed >> 10u) & 0x3ffu;
-    let z = (packed >> 20u) & 0x3ffu;
-    return vec3<u32>(x, y, z);
-}
-
-// Decoding quantised AABBs
-fn decode_quant_aabb(base_min: vec3<f32>, base_extent: vec3<f32>, qmin: u32, qmax: u32) -> AABB {
-    let qmin_v = vec3<f32>(unpack_quant3(qmin)) / f32(QUANT_MAX);
-    let qmax_v = vec3<f32>(unpack_quant3(qmax)) / f32(QUANT_MAX);
-    return AABB(
-        vec4<f32>(base_min + base_extent * qmin_v, 0.0),
-        vec4<f32>(base_min + base_extent * qmax_v, 0.0),
-    );
-}
 
 // Check if a node is a leaf
 fn is_leaf(node: AABB) -> bool {
