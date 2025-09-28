@@ -1,5 +1,6 @@
 #include "common.wgsl"
 #include "acceleration_common.wgsl"
+#include "blas_common.wgsl"
 
 const LINES_PER_BOX = 12u;
 const BVH4_COLOR = vec4f(1.0, 0.6, 0.2, 1.0);
@@ -58,10 +59,9 @@ fn corner(min_p: vec3f, max_p: vec3f, idx: u32) -> vec3f {
 }
 
 @group(1) @binding(0) var<storage, read_write> out_line_data: array<LineData>;
-@group(1) @binding(1) var<storage, read> bvh4_nodes: array<BVH4Node>;
-@group(1) @binding(2) var<storage, read> blas_directory: array<MeshDirectoryEntry>;
-@group(1) @binding(3) var<storage, read> entity_transforms: array<EntityTransform>;
-@group(1) @binding(4) var<storage, read> closest_entities_per_mesh: array<u32>;
+@group(1) @binding(1) var<storage, read> blas_atlas: BLASAtlas;
+@group(1) @binding(2) var<storage, read> entity_transforms: array<EntityTransform>;
+@group(1) @binding(3) var<storage, read> closest_entities_per_mesh: array<u32>;
 
 @compute @workgroup_size(16, 16)
 fn cs(
@@ -78,10 +78,10 @@ fn cs(
     let entity_resolved = closest_entities_per_mesh[mesh_asset_id];
     if (entity_resolved == 0u) { return; } // No entity assigned for this mesh
     
-    let mesh_directory_entry = blas_directory[mesh_asset_id];
+    let mesh_directory_entry = atlas_load_directory_entry(mesh_asset_id);
     
     // Check if this node index is valid for this mesh
-    if (node_idx >= mesh_directory_entry.bvh4_capacity) { return; }
+    if (node_idx >= u32(mesh_directory_entry.bvh4_capacity)) { return; }
     
     // ============================================================================
     // UNIQUE LINEAR INDEX CALCULATION - Create unique index per (mesh, node)
@@ -97,8 +97,8 @@ fn cs(
     // ============================================================================
     
     let entity_transform = entity_transforms[entity_resolved].transform;
-    let global_node_index = mesh_directory_entry.bvh4_base + node_idx;
-    let bvh4_node = bvh4_nodes[global_node_index];
+    let global_node_index = u32(mesh_directory_entry.bvh4_base) + node_idx;
+    let bvh4_node = atlas_load_bvh4_node(global_node_index);
     var node = AABB(bvh4_node.min, bvh4_node.max);
     node.min -= vec4f(EPS, EPS, EPS, 0.0);
     node.max += vec4f(EPS, EPS, EPS, 0.0);

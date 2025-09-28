@@ -577,15 +577,7 @@ export class DeferredShadingStrategy {
       );
 
       const blas_gpu_data = MeshBLAS.to_gpu_data();
-      const blas_bvh2_bounds = render_graph.register_buffer(
-        blas_gpu_data.bvh2_nodes_buffer.config.name
-      );
-      const blas_bvh4_nodes = render_graph.register_buffer(
-        blas_gpu_data.bvh4_nodes_buffer.config.name
-      );
-      const blas_directory = render_graph.register_buffer(
-        blas_gpu_data.directory_buffer.config.name
-      );
+      const blas_atlas = render_graph.register_buffer(blas_gpu_data.atlas_buffer.config.name)
 
       // ┌─────────────────────────────────────────────────────────────────────────────┐
       // │ 🎯 Register Mesh & Instance Buffers                                        │
@@ -1174,8 +1166,7 @@ export class DeferredShadingStrategy {
             {
               inputs: [
                 debug_line_data_buf,
-                blas_bvh2_bounds,
-                blas_directory,
+                blas_atlas,
                 entity_transforms,
                 closest_entities_per_mesh_buf,
               ],
@@ -1252,8 +1243,7 @@ export class DeferredShadingStrategy {
             {
               inputs: [
                 debug_line_data_buf,
-                blas_bvh4_nodes,
-                blas_directory,
+                blas_atlas,
                 entity_transforms,
                 closest_entities_per_mesh_buf,
               ],
@@ -1638,9 +1628,7 @@ export class DeferredShadingStrategy {
               main_normal_image,
               aabb_bounds,
               tlas_bvh4_nodes,
-              blas_bvh2_bounds,
-              blas_bvh4_nodes,
-              blas_directory,
+              blas_atlas,
               entity_transforms,
               mesh_asset_ids_buffer,
               index_buffer,

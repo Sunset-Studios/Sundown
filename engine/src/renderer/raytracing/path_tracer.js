@@ -7,13 +7,7 @@ const TLAS_CANDIDATES = 4;
 
 const path_tracer_tlas_shader_setup = {
   pipeline_shaders: {
-    compute: { path: "raytracing/path_tracer_tlas.wgsl" },
-  },
-};
-
-const path_tracer_blas_shader_setup = {
-  pipeline_shaders: {
-    compute: { path: "raytracing/path_tracer_blas.wgsl" },
+    compute: { path: "raytracing/path_trace.wgsl" },
   },
 };
 
@@ -34,9 +28,7 @@ export class PathTracer extends RayTracer {
     normal_texture = null,
     tlas_bvh2_bounds = null,
     tlas_bvh4_nodes = null,
-    blas_bvh2_bounds = null,
-    blas_bvh4_nodes = null,
-    blas_directory = null,
+    blas_atlas = null,
     entity_transforms = null,
     mesh_asset_ids = null,
     index_buffer = null,
@@ -74,9 +66,8 @@ export class PathTracer extends RayTracer {
       }
     );
 
-    // Pass 1: TLAS
     render_graph.add_pass(
-      "path_trace_tlas",
+      "path_trace",
       RenderPassFlags.Compute,
       {
         inputs: [
@@ -84,38 +75,16 @@ export class PathTracer extends RayTracer {
           pixel_info,
           tlas_bvh2_bounds,
           tlas_bvh4_nodes,
-          mesh_asset_ids,
-          position_texture,
-          normal_texture,
-        ],
-        outputs: [pixel_info],
-        shader_setup: path_tracer_tlas_shader_setup,
-      },
-      (graph, frame_data, encoder) => {
-        const pass = graph.get_physical_pass(frame_data.current_pass);
-        pass.dispatch(Math.ceil(width / 8), Math.ceil(height / 8), 1);
-      }
-    );
-
-    // Pass 2: BLAS + shading
-    render_graph.add_pass(
-      "path_trace_blas",
-      RenderPassFlags.Compute,
-      {
-        inputs: [
-          pt_params,
-          pixel_info,
-          blas_bvh2_bounds,
-          blas_bvh4_nodes,
-          blas_directory,
+          blas_atlas,
           entity_transforms,
           index_buffer,
+          mesh_asset_ids,
           position_texture,
           normal_texture,
           this.output_texture,
         ],
-        outputs: [pixel_info, this.output_texture],
-        shader_setup: path_tracer_blas_shader_setup,
+        outputs: [pixel_info],
+        shader_setup: path_tracer_tlas_shader_setup,
       },
       (graph, frame_data, encoder) => {
         const pass = graph.get_physical_pass(frame_data.current_pass);
