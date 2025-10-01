@@ -2073,13 +2073,13 @@ export class GITestScene extends Scene {
       const building_data_third = [
         {
           mesh: sphere_mesh,
-          position: [offset_x - 2, 1.5, -2],
+          position: [offset_x - 2, 2.5, -2],
           scale: [1.5, 1.5, 1.5],
           material_id: left_wall_material_third_id,
         },
         {
           mesh: cube_mesh,
-          position: [offset_x + 3, 2, 5],
+          position: [offset_x + 3, 1, 5],
           scale: [2, 1, 2],
           material_id: right_wall_material_third_id,
         },

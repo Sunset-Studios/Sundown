@@ -1617,15 +1617,13 @@ export class DeferredShadingStrategy {
       if (debug_view !== DebugDrawType.None) {
         switch (debug_view) {
           case DebugDrawType.PathTracing: {
-            // Ensure path tracer output exists for current resolution and bind G-Buffer + BVH inputs
+            // Ensure path tracer output exists for current resolution and bind BVH inputs
             this.path_tracer.add_passes(
               render_graph,
               image_extent.width,
               image_extent.height,
-              4, // max_bounces
+              2, // max_bounces
               1, // spp_per_frame
-              main_position_image,
-              main_normal_image,
               aabb_bounds,
               tlas_bvh4_nodes,
               blas_atlas,

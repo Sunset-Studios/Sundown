@@ -1,5 +1,0 @@
----
-description: For containers and related data structures try to only use containers from our own container.js and allocator.js classes, since javascript arrays, objects and maps tend to be slow and non-contiguous.
-globs:
-alwaysApply: true
----

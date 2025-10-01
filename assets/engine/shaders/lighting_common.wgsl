@@ -314,3 +314,57 @@ fn calculate_brdf(
 
     return color;
 }
+
+// ------------------------------------------------------------------------------------
+// BRDF - Ray Tracing Step Variant
+// - Light-agnostic evaluation for a sampled direction `light_dir`
+// - Returns (diffuse + specular [+ clear coat]) * n_dot_l
+// ------------------------------------------------------------------------------------
+fn calculate_brdf_rt(
+    normal: vec3<f32>,
+    view_dir: vec3<f32>,
+    light_dir: vec3<f32>,
+    albedo: vec3<f32>,
+    roughness: f32,
+    metallic: f32,
+    reflectance: f32,
+    clear_coat: f32,
+    clear_coat_roughness: f32,
+) -> vec3<f32> {
+    // Halfway vector and dot products
+    let halfway = normalize(light_dir + view_dir);
+    let n_dot_v = max(dot(normal, view_dir), 0.0001);
+    let n_dot_l = max(dot(normal, light_dir), 0.0001);
+    let n_dot_h = max(dot(normal, halfway), 0.0001);
+    let v_dot_h = max(dot(view_dir, halfway), 0.0001);
+    let l_dot_h = max(dot(light_dir, halfway), 0.0001);
+
+    // Base layer Fresnel term
+    let dielectric_f0 = 0.16 * reflectance * reflectance;
+    let f0 = mix(vec3<f32>(dielectric_f0), albedo, metallic);
+    let f = f_schlick_vec3(f0, 1.0, v_dot_h);
+
+    // Microfacet terms (GGX)
+    let r = max(roughness, 0.089);
+    let d = d_ggx(n_dot_h, r);
+    let v = v_smith_ggx_height_correlated_fast(n_dot_v, n_dot_l, r);
+    let specular_brdf = (d * v) * f;
+
+    // Diffuse (energy conserving)
+    let kd = (1.0 - metallic) * (vec3<f32>(1.0) - f);
+    let diffuse_brdf = kd * albedo * (1.0 / PI);
+
+    // Optional clear coat lobe
+    let cc_r_clamped = clamp(clear_coat_roughness, 0.089, 1.0);
+    let dc = d_ggx(n_dot_h, cc_r_clamped * cc_r_clamped);
+    let vc = v_kelemen(l_dot_h);
+    let fc = f_schlick_scalar(0.04, 1.0, v_dot_h);
+    let clear_coat_brdf = dc * vc * fc * clear_coat;
+    let clear_coat_energy_loss = fc * clear_coat;
+
+    // Layered combination: base scaled by energy loss + clear coat lobe
+    let base = (diffuse_brdf + specular_brdf) * (1.0 - clear_coat_energy_loss);
+    let layered = base + clear_coat_brdf;
+
+    return layered * n_dot_l;
+}
