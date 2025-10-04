@@ -85,7 +85,10 @@ fn transform_aabb(node: AABB, transform: mat4x4<f32>) -> AABB {
     result_min = min(result_min, corner_7);
     result_max = max(result_max, corner_7);
 
-    return AABB(vec4<f32>(result_min, node.min.w), vec4<f32>(result_max, node.max.w));
+    let final_min = min(result_min, result_max);
+    let final_max = max(result_min, result_max);
+
+    return AABB(vec4<f32>(final_min, node.min.w), vec4<f32>(final_max, node.max.w));
 }
 
 // Ray-AABB intersection (slab method)

@@ -526,7 +526,7 @@ export class TexturesScene extends Scene {
           GPUTextureUsage.TEXTURE_BINDING |
           GPUTextureUsage.COPY_DST |
           GPUTextureUsage.RENDER_ATTACHMENT,
-      material_notifier: "floor_roughness",
+        material_notifier: "floor_roughness",
       };
 
       // Create a default material
@@ -537,7 +537,7 @@ export class TexturesScene extends Scene {
       default_plane_material.sample_roughness(floor_roughness, TextureChannel.G);
       default_plane_material.set_metallic(0.2);
       default_plane_material.set_emission(0.1);
-      default_plane_material.set_tiling(30.0);
+      default_plane_material.set_tiling(150.0);
     }
 
     // Load wall material
@@ -1335,7 +1335,7 @@ export class VoxelTerrainScene extends Scene {
     light_fragment_view.type = LightType.DIRECTIONAL;
     light_fragment_view.color = [1, 1, 1];
     light_fragment_view.intensity = 15.0;
-    light_fragment_view.position = [-45, 30, 70];
+    light_fragment_view.position = [-45, 20, 5];
     light_fragment_view.active = true;
     light_fragment_view.is_primary_sun = 1;
     light_fragment_view.shadow_clipmaps = MAX_CLIPMAP_LEVELS;
@@ -1360,22 +1360,22 @@ export class VoxelTerrainScene extends Scene {
       terrain_material.sample_albedo(dirt_albedo);
       terrain_material.set_roughness(0.8);
       terrain_material.set_emission(0.0);
-      terrain_material.set_metallic(0.9);
+      terrain_material.set_metallic(0.2);
     }
 
     // Create cube mesh for voxels
     this.cube_mesh = Mesh.cube();
 
     // Terrain parameters - Perlin-based fractal noise
-    // Modified: Flatter and more expansive terrain, similar total voxels
+    // Modified: Much more dramatic height variation for mountainous terrain
     const grid_width = 600;
     const grid_depth = 600;
     const block_size = 1.0;
-    const base_frequency = 0.05;
-    const height_scale = 4.0;
-    const height_offset = 2.0;
-    const octaves = 5;
-    const persistence = 0.5;
+    const base_frequency = 0.03;
+    const height_scale = 25.0;
+    const height_offset = 5.0;
+    const octaves = 6;
+    const persistence = 0.55;
 
     // Build permutation table for Perlin noise
     const perlin_perm = new Array(512);
@@ -1500,6 +1500,23 @@ export class VoxelTerrainScene extends Scene {
     text_fragment_view.text_emissive = 1;
     text_fragment_view.text = "Voxel Terrain Scene";
     this.entities.push(text_entity);
+
+    // Create sandy ground plane material
+    const sandy_material = StandardMaterial.create("SandyGroundMaterial");
+    sandy_material.set_albedo([0.94, 0.87, 0.69, 1.0]); // Sandy beige color
+    sandy_material.set_roughness(0.9);
+    sandy_material.set_metallic(0.95);
+    sandy_material.set_emission(0.0);
+
+    // Create large ground plane entity
+    const plane_entity = spawn_mesh_entity(
+      [0, -4, 0], // Position slightly below terrain base
+      quat.fromEuler(quat.create(), 0, 0, 0), // Rotate to be horizontal
+      [800, 5, 800], // Large scale to cover the terrain area
+      Mesh.cube(),
+      sandy_material.material_id
+    );
+    this.entities.push(plane_entity);
 
     log(`[${this.name}] Initialized with ${total_blocks} blocks.`);
   }
@@ -1744,7 +1761,7 @@ export class GITestScene extends Scene {
     const light_fragment_view = EntityManager.get_fragment(light_entity, LightFragment);
     light_fragment_view.type = LightType.DIRECTIONAL;
     light_fragment_view.color = [1, 1, 1];
-    light_fragment_view.intensity = 10.0;
+    light_fragment_view.intensity = 5.0;
     light_fragment_view.position = [5, 35, 25];
     light_fragment_view.active = true;
     light_fragment_view.is_primary_sun = 1;

@@ -75,7 +75,7 @@ fn importance_sample_ggx(xi: vec2<f32>, n: vec3<f32>, roughness: f32) -> vec3<f3
         cos_theta
     );
 
-    let up = select(vec3<f32>(0.0, 0.0, 1.0), vec3<f32>(1.0, 0.0, 0.0), abs(n.z) < 0.999);
+    let up = select(vec3<f32>(0.0, 1.0, 0.0), vec3<f32>(1.0, 0.0, 0.0), abs(n.z) < 0.999);
     let tangent = normalize(cross(up, n));
     let bitangent = cross(n, tangent);
 
@@ -345,7 +345,7 @@ fn calculate_brdf_rt(
     let f = f_schlick_vec3(f0, 1.0, v_dot_h);
 
     // Microfacet terms (GGX)
-    let r = max(roughness, 0.089);
+    let r = clamp(roughness, 0.001, 1.0);
     let d = d_ggx(n_dot_h, r);
     let v = v_smith_ggx_height_correlated_fast(n_dot_v, n_dot_l, r);
     let specular_brdf = (d * v) * f;

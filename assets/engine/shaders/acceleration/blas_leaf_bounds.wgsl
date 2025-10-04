@@ -32,8 +32,8 @@ fn write_leaf_bounds(@builtin(global_invocation_id) gid: vec3u) {
     let v1 = load_position(first_vertex + i1);
     let v2 = load_position(first_vertex + i2);
 
-    var mn = min(v0, min(v1, v2));
-    var mx = max(v0, max(v1, v2));
+    let mn = min(v0, min(v1, v2));
+    let mx = max(v0, max(v1, v2));
 
     let write_index = entry.bvh2_base + tri_id;
     out_bounds[write_index].min = vec4f(mn, f32(tri_id));

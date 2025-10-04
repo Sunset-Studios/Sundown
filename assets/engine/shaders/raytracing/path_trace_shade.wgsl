@@ -247,43 +247,109 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
             info.shadow_radiance = vec4f(light_contrib, 1.0); // a=1.0 means active shadow ray
         }
 
-        // === Continue with indirect bounce sampling ===
-        // Sample a cosine-weighted direction for bounce and evaluate BRDF
+        // === RUSSIAN ROULETTE ===
         var rng = u32(info.rng);
         if (rng == 0u) { rng = hash(pixel_index ^ u32(frame_info.frame_index)); }
         else { rng = random_seed(rng); }
+
+        // Probabilistically terminate paths based on throughput
+        let path_throughput = (info.path_weight.x + info.path_weight.y + info.path_weight.z) / 3.0;
+        let survival_prob = clamp(path_throughput, 0.05, 0.95);
+
+        var rng_rr = random_seed(rng);
+        let rr_sample = rand_float(rng_rr);
+        info.rng = f32(rng_rr);
+
+        if (rr_sample > survival_prob) {
+            // Terminate path
+            info.state_u32.y = 0u;
+            path_state[pixel_index] = info;
+            return;
+        }
+
+        // Boost surviving paths to maintain unbiased estimate
+        info.path_weight = vec4f(info.path_weight.xyz / survival_prob, 0.0);
+
+        // === BRDF Importance Sampling Strategy ===
+        // Choose between diffuse and specular sampling based on material properties
         let r1 = rand_float(rng);
         rng = random_seed(rng);
         let r2 = rand_float(rng);
+        rng = random_seed(rng);
+        let r3 = rand_float(rng);
         info.rng = f32(rng);
 
-        let phi = 2.0 * 3.14159265359 * r1;
-        let cos_theta = sqrt(1.0 - r2);
-        let sin_theta = sqrt(r2);
+        // Clamp roughness to match what calculate_brdf_rt uses
+        let clamped_roughness = clamp(roughness, 0.001, 1.0);
 
-        // Choose a robust up vector: default z-up, fallback to x-axis when nearly parallel
-        let up = select(vec3f(0.0, 0.0, 1.0), vec3f(1.0, 0.0, 0.0), abs(n.z) > 0.999);
-        let tangent = normalize(cross(up, n));
-        let bitangent = normalize(cross(n, tangent));
-        let dir_local = vec3f(cos(phi) * sin_theta, sin(phi) * sin_theta, cos_theta);
-        let l = normalize(tangent * dir_local.x + bitangent * dir_local.y + n * dir_local.z);
+        // Compute F0 for Fresnel term
+        let dielectric_f0 = 0.16 * reflectance * reflectance;
+        let f0 = mix(vec3<f32>(dielectric_f0), albedo, metallic);
 
-        // === Update path weight for indirect bounce ===
-        // Evaluate BRDF for the sampled direction
+        // Schlick fresnel approximation to determine specular probability
+        let n_dot_v = max(dot(n, v_dir), 0.0001);
+        let fresnel = f0 + (vec3<f32>(1.0) - f0) * pow(1.0 - n_dot_v, 5.0);
+        let fresnel_luminance = (fresnel.x + fresnel.y + fresnel.z) / 3.0;
+        
+        // Simple, robust sampling strategy to avoid variance explosion:
+        // - Only use GGX sampling for smooth materials or metals
+        // - For rough dielectrics, always use cosine sampling
+        // This prevents rare high-weight specular samples from dominating on rough surfaces
+        
+        let use_ggx = (clamped_roughness < 0.3) || (metallic > 0.5);
+        let specular_prob_if_ggx = clamp(fresnel_luminance, 0.01, 0.99);
+
+        var pdf: f32;
+        var brdf_weight: vec3<f32>;
+        var l: vec3<f32>;
+
+        // === COSINE-WEIGHTED HEMISPHERE SAMPLING (Diffuse) ===
+        if (use_ggx && r3 < specular_prob_if_ggx) {
+            let h = importance_sample_ggx(vec2<f32>(r1, r2), n, clamped_roughness);
+            l = normalize(reflect(-v_dir, h));
+        } else {
+            let phi = 2.0 * PI * r1;
+            let cos_theta = sqrt(1.0 - r2);
+            let sin_theta = sqrt(r2);
+            
+            let up = select(vec3f(0.0, 1.0, 0.0), vec3f(1.0, 0.0, 0.0), abs(n.z) > 0.999);
+            let tangent = normalize(cross(up, n));
+            let bitangent = normalize(cross(n, tangent));
+            let dir_local = vec3f(cos(phi) * sin_theta, sin(phi) * sin_theta, cos_theta);
+            l = normalize(tangent * dir_local.x + bitangent * dir_local.y + n * dir_local.z);
+        }
+        
+        // ALWAYS compute GGX PDF for MIS, even for rough materials
+        // This prevents huge weights when cosine accidentally samples near specular peak
+        let h = normalize(v_dir + l);
         let n_dot_l = max(dot(n, l), 0.0001);
-        let indirect_brdf = calculate_brdf_rt(
+        let n_dot_h = max(dot(n, h), 0.0001);
+        let v_dot_h = max(dot(v_dir, h), 0.0001);
+        let d = d_ggx(n_dot_h, clamped_roughness);
+        let cosine_pdf = n_dot_l / PI;
+        let ggx_pdf = d * n_dot_h / max(4.0 * v_dot_h, 0.0001);
+        
+        // Balance heuristic MIS: Always account for both PDFs
+        // Even for rough materials where we never sample GGX, we still compute its PDF
+        // When cosine accidentally samples near specular peak, GGX PDF will be high, increasing total PDF
+        // This prevents the weight from exploding at grazing angles
+        // Use a small minimum probability to ensure GGX PDF always contributes
+        let min_ggx_prob = 0.05; // Always consider at least 5% chance of GGX sampling
+        let mis_specular_prob = select(min_ggx_prob, specular_prob_if_ggx, use_ggx);
+        pdf = mis_specular_prob * ggx_pdf + (1.0 - mis_specular_prob) * cosine_pdf;
+        
+        // Evaluate full BRDF
+        let brdf_value = calculate_brdf_rt(
             n, v_dir, l,
             albedo, roughness, metallic,
             reflectance, clear_coat, clear_coat_roughness
         );
         
-        // For cosine-weighted hemisphere sampling: PDF = cos(theta)/pi = n_dot_l/pi
-        // The rendering equation weight is: BRDF * cos(theta) / PDF = BRDF * n_dot_l / (n_dot_l/pi) = BRDF * pi
-        // calculate_brdf_rt returns BRDF * n_dot_l, so we need to divide out n_dot_l then multiply by pi
-        let bounce_weight = (indirect_brdf / n_dot_l) * PI;
+        // Weight = BRDF * cos(theta) / PDF
+        brdf_weight = brdf_value / max(pdf, 0.0001);
         
         // Update path weight for next bounce (multiply accumulated weight by this bounce's BRDF contribution)
-        info.path_weight = vec4f(info.path_weight.xyz * bounce_weight, 0.0);
+        info.path_weight = vec4f(info.path_weight.xyz * brdf_weight, 0.0);
 
         let alive_next = select(0u, 1u, (info.state_u32.x + 1u) < pt_params.max_bounces);
         // Spawn next ray from hit position along sampled direction
