@@ -153,3 +153,38 @@ fn intersect_triangle(ray: Ray, v0: vec3<f32>, v1: vec3<f32>, v2: vec3<f32>) -> 
     let t = dot(e2, qvec) * inv_det;
     return select(-1.0, t, t > 0.0001); // Epsilon check
 }
+
+fn aabb_entry_exit_for_ray(ray: ptr<function, Ray>, bounds: AABB) -> vec2<f32> {
+    var tmin_local = (*ray).origin_and_tmin.w;
+    var tmax_local = (*ray).direction_and_tmax.w;
+    for (var axis = 0u; axis < 3u; axis = axis + 1u) {
+        let inv_d = (*ray).inv_direction.xyz[i32(axis)];
+        var t1 = (bounds.min.xyz[i32(axis)] - (*ray).origin_and_tmin.xyz[i32(axis)]) * inv_d;
+        var t2 = (bounds.max.xyz[i32(axis)] - (*ray).origin_and_tmin.xyz[i32(axis)]) * inv_d;
+        if (inv_d < 0.0) {
+            let tmp = t1; t1 = t2; t2 = tmp;
+        }
+        tmin_local = max(tmin_local, t1);
+        tmax_local = min(tmax_local, t2);
+    }
+    return vec2<f32>(tmin_local, tmax_local);
+}
+
+fn build_local_ray(ray_world: ptr<function, Ray>, entity_transform: mat4x4f) -> Ray {
+    let inv_m = inverse4x4(entity_transform);
+    let ro_world = (*ray_world).origin_and_tmin.xyz;
+    let rd_world = (*ray_world).direction_and_tmax.xyz;
+
+    var ray_local: Ray;
+    ray_local.origin_and_tmin = vec4f((inv_m * vec4f(ro_world, 1.0)).xyz, (*ray_world).origin_and_tmin.w);
+    ray_local.direction_and_tmax = vec4f((inv_m * vec4f(rd_world, 0.0)).xyz, (*ray_world).direction_and_tmax.w);
+
+    let d = ray_local.direction_and_tmax.xyz;
+    ray_local.inv_direction = vec4f(
+        1.0 / max(abs(d.x), 1e-8) * select(1.0, -1.0, d.x < 0.0),
+        1.0 / max(abs(d.y), 1e-8) * select(1.0, -1.0, d.y < 0.0),
+        1.0 / max(abs(d.z), 1e-8) * select(1.0, -1.0, d.z < 0.0),
+        0.0
+    );
+    return ray_local;
+}

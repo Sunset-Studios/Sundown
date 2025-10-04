@@ -1,7 +1,6 @@
 import { glTFLoader } from "../utility/gltf_loader.js";
 import { ResourceCache } from "./resource_cache.js";
 import { MeshData } from "./mesh_data.js";
-import { Buffer } from "./buffer.js";
 import { Name } from "../utility/names.js";
 import { CacheTypes, TextureChannel, MaterialFamilyType } from "./renderer_types.js";
 import { MeshTaskQueue } from "./mesh_task_queue.js";
@@ -1007,12 +1006,12 @@ export class Mesh {
     }
     // glTF convention: roughness in B, metallic in G
     if (r_tex) {
-      std.sample_roughness(r_tex, TextureChannel.B);
+      std.sample_roughness(r_tex, TextureChannel.G);
     } else {
       std.set_roughness(roughness_val);
     }
     if (m_tex) {
-      std.sample_metallic(m_tex, TextureChannel.G);
+      std.sample_metallic(m_tex, TextureChannel.B);
     } else {
       std.set_metallic(metallic_val);
     }

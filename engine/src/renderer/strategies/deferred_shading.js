@@ -1630,6 +1630,8 @@ export class DeferredShadingStrategy {
               entity_transforms,
               mesh_asset_ids_buffer,
               index_buffer,
+              dense_lights,
+              light_count,
               this.force_recreate,
             );
             this.debug_overlay.set_properties(

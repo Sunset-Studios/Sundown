@@ -121,8 +121,8 @@ struct FragmentOutput {
 
     var tex_smra = textureSample(smra_texture, global_sampler, uv);
     var reflectance = tex_smra.r * 0.0009765625 /* 1.0f / 1024 */;
-    var metallic = tex_smra.g;
-    var roughness = tex_smra.b;
+    var roughness = tex_smra.g;
+    var metallic = tex_smra.b;
     var ao = tex_smra.a;
 
 #if GTAO_ENABLED
@@ -191,7 +191,7 @@ struct FragmentOutput {
             metallic,
             reflectance,
             0.0, // clear coat
-            1.0, // clear coat roughness 
+            0.0, // clear coat roughness 
             ao,
             irradiance, // irradiance
             vec3f(0.01, 0.01, 0.01), // prefilter color 

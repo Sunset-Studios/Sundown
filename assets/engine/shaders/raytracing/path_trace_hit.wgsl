@@ -21,12 +21,20 @@ struct PathTracerParams {
 struct PathState {
     origin_tmin: vec4<f32>,      // xyz = origin, w = tmin
     direction_tmax: vec4<f32>,   // xyz = direction, w = tmax
-    normal: vec4<f32>,           // xyz = normal, w = unused
+    normal_section_index: vec4<f32>, // xyz = normal, w = section_index
     throughput: vec4<f32>,       // rgb = throughput, a unused or prim_store
     state_u32: vec4<u32>,        // x=bounce, y=alive(0/1), z=mesh_id, w=tri_id
     hit_attr0: vec4<f32>,        // xyz = world_tangent, w = uv.x
     hit_attr1: vec4<f32>,        // xyz = world_bitangent, w = uv.y
-    padding: vec4<f32>,
+    rng: f32,
+    sample_count: f32,
+    prim_id: f32,
+    frame_stamp: f32,
+    // Shadow ray state for Next Event Estimation
+    shadow_origin: vec4<f32>,      // xyz = origin, w = tmin
+    shadow_direction: vec4<f32>,    // xyz = direction, w = tmax
+    shadow_radiance: vec4<f32>,     // rgb = light contribution, a = needs_trace flag
+    path_weight: vec4<f32>,         // rgb = cumulative BRDF weight along path, a = unused
 };
 
 // Packed TLAS hit per pixel
@@ -42,46 +50,11 @@ struct PathState {
 @group(1) @binding(7) var<storage, read> mesh_asset_ids: array<u32>;
 @group(1) @binding(8) var output_tex: texture_storage_2d<rgba16float, write>; // for dimensions only
 
-fn aabb_entry_exit_for_ray(ray: ptr<function, Ray>, bounds: AABB) -> vec2<f32> {
-    var tmin_local = (*ray).origin_and_tmin.w;
-    var tmax_local = (*ray).direction_and_tmax.w;
-    for (var axis = 0u; axis < 3u; axis = axis + 1u) {
-        let inv_d = (*ray).inv_direction.xyz[i32(axis)];
-        var t1 = (bounds.min.xyz[i32(axis)] - (*ray).origin_and_tmin.xyz[i32(axis)]) * inv_d;
-        var t2 = (bounds.max.xyz[i32(axis)] - (*ray).origin_and_tmin.xyz[i32(axis)]) * inv_d;
-        if (inv_d < 0.0) {
-            let tmp = t1; t1 = t2; t2 = tmp;
-        }
-        tmin_local = max(tmin_local, t1);
-        tmax_local = min(tmax_local, t2);
-    }
-    return vec2<f32>(tmin_local, tmax_local);
-}
-
-fn build_local_ray(ray_world: ptr<function, Ray>, entity_transform: mat4x4f) -> Ray {
-    let inv_m = inverse4x4(entity_transform);
-    let ro_world = (*ray_world).origin_and_tmin.xyz;
-    let rd_world = (*ray_world).direction_and_tmax.xyz;
-
-    var ray_local: Ray;
-    ray_local.origin_and_tmin = vec4f((inv_m * vec4f(ro_world, 1.0)).xyz, (*ray_world).origin_and_tmin.w);
-    ray_local.direction_and_tmax = vec4f((inv_m * vec4f(rd_world, 0.0)).xyz, (*ray_world).direction_and_tmax.w);
-
-    let d = ray_local.direction_and_tmax.xyz;
-    ray_local.inv_direction = vec4f(
-        1.0 / max(abs(d.x), 1e-8) * select(1.0, -1.0, d.x < 0.0),
-        1.0 / max(abs(d.y), 1e-8) * select(1.0, -1.0, d.y < 0.0),
-        1.0 / max(abs(d.z), 1e-8) * select(1.0, -1.0, d.z < 0.0),
-        0.0
-    );
-    return ray_local;
-}
-
 fn trace_tlas(ray: ptr<function, Ray>) -> vec4<f32> {
     // Returns: vec4(prim_index as f32, hit_flag, t_entry, t_exit)
     var result = vec4<f32>(-1.0, 0.0, 0.0, 0.0);
 
-    var node_stack: array<u32, 32>;
+    var node_stack: array<u32, 24>;
     node_stack[0] = 0u;
     var stack_size = 1u;
 
@@ -98,7 +71,7 @@ fn trace_tlas(ray: ptr<function, Ray>) -> vec4<f32> {
         let t_aabb = intersect_aabb(*ray, current_node.min.xyz, current_node.max.xyz);
 
         if (t_aabb >= (*ray).origin_and_tmin.w && t_aabb < (*ray).direction_and_tmax.w) {
-            if (stack_size < 32u) {
+            if (stack_size < 24u) {
                 var min_index = 0u;
                 var min_t = 1e38;
                 let leaf_mask = bitcast<u32>(current_node.min.w);
@@ -153,7 +126,7 @@ fn trace_blas(ray_world: ptr<function, Ray>, ray_local: ptr<function, Ray>, enti
     hit.position_and_t = vec4f((*ray_world).origin_and_tmin.xyz, (*ray_world).direction_and_tmax.w);
     hit.normal_and_user_data = vec4f(0.0, 0.0, 0.0, -1.0);
 
-    var node_stack: array<u32, 32>;
+    var node_stack: array<u32, 24>;
     node_stack[0] = bvh4_base;
     var stack_size = 1u;
 
@@ -168,7 +141,7 @@ fn trace_blas(ray_world: ptr<function, Ray>, ray_local: ptr<function, Ray>, enti
         let t_aabb = intersect_aabb(*ray_local, node.min.xyz, node.max.xyz);
 
         if (t_aabb >= ray_local.origin_and_tmin.w && t_aabb < hit.position_and_t.w) {
-            if (stack_size < 32u) {
+            if (stack_size < 24u) {
                 var min_index = 0u;
                 var min_t = 1e38;
 
@@ -229,14 +202,24 @@ fn trace_blas(ray_world: ptr<function, Ray>, ray_local: ptr<function, Ray>, enti
 }
 
 @compute @workgroup_size(8, 8)
-fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn cs(
+    @builtin(global_invocation_id) gid: vec3<u32>,
+    @builtin(local_invocation_id) lid: vec3<u32>,
+    @builtin(workgroup_id) wid: vec3<u32>
+) {
     let res = textureDimensions(output_tex);
     if (gid.x >= res.x || gid.y >= res.y) { return; }
 
-    let pixel_index = gid.y * res.x + gid.x;
+    // Tiled indexing: compute which 8x8 tile, then offset within tile
+    // This keeps workgroup threads accessing a contiguous 64-element block
+    let tiles_per_row = (res.x + 7u) / 8u;
+    let tile_index = wid.y * tiles_per_row + wid.x;
+    let tile_base = tile_index * 64u; // 8x8 = 64 threads per tile
+    let local_index = lid.y * 8u + lid.x;
+    let pixel_index = tile_base + local_index;
 
     // Read path state
-    let ps = path_state[pixel_index];
+    var ps = path_state[pixel_index];
     let alive = ps.state_u32.y;
     if (alive == 0u) {
         // mark as miss
@@ -333,19 +316,21 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
             world_n = select(world_n, -world_n, dot(world_n, ray_dir) > 0.0);
 
             // Store world-space hit position with small offset along normal to avoid self-intersection
-            path_state[pixel_index].origin_tmin = vec4f(p_world + world_n * 0.001, 0.0001);
+            ps.origin_tmin = vec4f(p_world + world_n * 0.001, 0.0001);
             // Store world-space hit normal directly
-            path_state[pixel_index].direction_tmax = vec4f(ray_dir, f32(prim_store));
+            ps.direction_tmax = vec4f(ray_dir, f32(prim_store));
             // Store world-space hit normal directly
-            path_state[pixel_index].normal = vec4f(world_n, 0.0);
+            ps.normal_section_index = vec4f(world_n, f32(vertex0.section_index));
             // Write world tangent
-            path_state[pixel_index].hit_attr0 = vec4f(world_t, uv_hit.x);
+            ps.hit_attr0 = vec4f(world_t, uv_hit.x);
             // Write world bitangent
-            path_state[pixel_index].hit_attr1 = vec4f(world_b, uv_hit.y);
+            ps.hit_attr1 = vec4f(world_b, uv_hit.y);
             // Mesh and triangle ids for shading
-            path_state[pixel_index].state_u32.z = mesh_id;
+            ps.state_u32.z = mesh_id;
             // Pack triangle id in state_u32.w
-            path_state[pixel_index].state_u32.w = tri_id_local;
+            ps.state_u32.w = tri_id_local;
+
+            path_state[pixel_index] = ps;
 
             break;
         }

@@ -273,8 +273,9 @@ fn calculate_brdf(
     let f = f_schlick_vec3(f0, 1.0, v_dot_h);
 
     // D and V for GGX
-    let d = d_ggx(n_dot_h, roughness);
-    let v = v_smith_ggx_height_correlated_fast(n_dot_v, n_dot_l, roughness);
+    let r = max(roughness, 0.089);
+    let d = d_ggx(n_dot_h, r);
+    let v = v_smith_ggx_height_correlated_fast(n_dot_v, n_dot_l, r);
 
     // Specular BRDF (Cook-Torrance)
     let specular_brdf = (d * v) * f;
@@ -283,20 +284,19 @@ fn calculate_brdf(
     let kd = (1.0 - metallic) * (vec3<f32>(1.0) - f);
     let diffuse_brdf = kd * albedo / 3.14159265359;
 
-    // Direct lighting
-    let direct_light = (diffuse_brdf + specular_brdf) * light.intensity * n_dot_l * attenuation * light.color.rgb;
-
     // ---- Clear Coat Layer (Disney 2015 style) ----
     // Single specular lobe (GGX or GTR1), usually IOR ~1.5, F0 = 0.04
     let dc = d_ggx(n_dot_h, cc_roughness);
     let vc = v_kelemen(l_dot_h); // Kelemen visibility
     let fc = f_schlick_scalar(0.04, 1.0, v_dot_h);
     let clear_coat_brdf = dc * vc * fc * clear_coat;
-    // Energy compensation for base layer
     let clear_coat_energy_loss = fc * clear_coat;
 
+    // Direct lighting
+    let direct_light = (diffuse_brdf + specular_brdf) * (1.0 - clear_coat_energy_loss) * light.intensity * n_dot_l * attenuation * light.color.rgb;
+
     // Layered composition: base * (1 - clear_coat_energy_loss) + clear_coat
-    let direct_brdf = (direct_light * (1.0 - clear_coat_energy_loss)) + clear_coat_brdf * light.intensity * n_dot_l * attenuation * light.color.rgb;
+    let direct_brdf = direct_light + clear_coat_brdf * light.intensity * n_dot_l * attenuation * light.color.rgb;
 
     // ---- Image-Based Lighting (Environment) ----
     // Diffuse (irradiance): only AO, only affects non-metal, energy conserve with (1-F)

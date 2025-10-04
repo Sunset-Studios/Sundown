@@ -40,6 +40,12 @@ const path_tracer_shade_shader_setup = {
   },
 };
 
+const path_tracer_shadow_shader_setup = {
+  pipeline_shaders: {
+    compute: { path: "raytracing/path_trace_shadow.wgsl" },
+  },
+};
+
 export class PathTracer extends RayTracer {
   params = new Uint32Array([0, 0, 0, 0]);
 
@@ -59,6 +65,8 @@ export class PathTracer extends RayTracer {
     entity_transforms = null,
     mesh_asset_ids = null,
     index_buffer = null,
+    dense_lights = null,
+    light_count = null,
     force_recreate = false
   ) {
     super.setup(render_graph, width, height, force_recreate);
@@ -115,15 +123,9 @@ export class PathTracer extends RayTracer {
       ? render_graph.register_image(emission_pool.config.name)
       : default_texture_buffer;
 
-    const pixel_info = render_graph.create_buffer({
-      name: "pt_pixel_info",
-      size: width * height * PIXEL_INFO_SIZE * TLAS_CANDIDATES * 4,
-      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-      force: force_recreate,
-    });
     const path_state = render_graph.create_buffer({
       name: "pt_path_state",
-      size: width * height * 32 * 4, // 8 vec4<f32> ≈ PathState
+      size: width * height * 48 * 4, // 12 vec4<f32> ≈ PathState (includes shadow ray fields + path_weight)
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
       force: force_recreate,
     });
@@ -144,7 +146,7 @@ export class PathTracer extends RayTracer {
         this.params[0] = max_bounces; // max_bounces
         this.params[1] = spp_per_frame; // spp_per_frame
         this.params[2] = view_moved ? 1 : 0; // reset_accum_flag
-        this.params[3] = 102400; // max_spp
+        this.params[3] = 100000000; // max_spp
         params_buffer.write_raw(this.params);
       }
     );
@@ -159,10 +161,9 @@ export class PathTracer extends RayTracer {
           inputs: [
             pt_params,
             path_state,
-            pixel_info,
             this.output_texture,
           ],
-          outputs: [path_state, pixel_info],
+          outputs: [path_state],
           shader_setup: path_tracer_init_shader_setup,
         },
         (graph, frame_data, encoder) => {
@@ -203,12 +204,11 @@ export class PathTracer extends RayTracer {
             inputs: [
               pt_params,
               path_state,
-              pixel_info,
-              blas_atlas,
               params_gpu_buffer,
               material_palette_offsets_buffer,
               material_palette_buffer,
-              index_buffer,
+              dense_lights,
+              light_count,
               albedo_pool_buffer,
               normal_pool_buffer,
               roughness_pool_buffer,
@@ -219,8 +219,33 @@ export class PathTracer extends RayTracer {
               emission_pool_buffer,
               this.output_texture,
             ],
-            outputs: [path_state, pixel_info],
+            outputs: [path_state],
             shader_setup: path_tracer_shade_shader_setup,
+          },
+          (graph, frame_data, encoder) => {
+            const pass = graph.get_physical_pass(frame_data.current_pass);
+            pass.dispatch(Math.ceil(width / 8), Math.ceil(height / 8), 1);
+          }
+        );
+
+        // Shadow tracing pass for Next Event Estimation
+        render_graph.add_pass(
+          `path_trace_shadow_${s}_${b}`,
+          RenderPassFlags.Compute,
+          {
+            inputs: [
+              pt_params,
+              path_state,
+              tlas_bvh2_bounds,
+              tlas_bvh4_nodes,
+              blas_atlas,
+              entity_transforms,
+              index_buffer,
+              mesh_asset_ids,
+              this.output_texture,
+            ],
+            outputs: [path_state],
+            shader_setup: path_tracer_shadow_shader_setup,
           },
           (graph, frame_data, encoder) => {
             const pass = graph.get_physical_pass(frame_data.current_pass);

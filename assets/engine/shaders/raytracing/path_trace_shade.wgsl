@@ -6,7 +6,6 @@
 // =============================================================================
 #include "common.wgsl"
 #include "acceleration_common.wgsl"
-#include "blas_common.wgsl"
 #include "lighting_common.wgsl"
 
 struct PathTracerParams {
@@ -19,39 +18,38 @@ struct PathTracerParams {
 struct PathState {
     origin_tmin: vec4<f32>,
     direction_tmax: vec4<f32>,
-    normal: vec4<f32>,
+    normal_section_index: vec4<f32>,
     throughput: vec4<f32>,
     state_u32: vec4<u32>, // x=bounce, y=alive(0/1)
     hit_attr0: vec4<f32>, // xyz = world_tangent, w = uv.x
     hit_attr1: vec4<f32>, // xyz = world_bitangent, w = uv.y
-    padding: vec4<f32>,
-};
-
-struct PixelHitInfo {
     rng: f32,
     sample_count: f32,
     prim_id: f32,
     frame_stamp: f32,
-    accum_color: vec4<f32>,
+    // Shadow ray state for Next Event Estimation
+    shadow_origin: vec4<f32>,      // xyz = origin, w = tmin
+    shadow_direction: vec4<f32>,    // xyz = direction, w = tmax
+    shadow_radiance: vec4<f32>,     // rgb = light contribution, a = needs_trace flag
+    path_weight: vec4<f32>,         // rgb = cumulative BRDF weight along path, a = unused
 };
 
 @group(1) @binding(0) var<uniform> pt_params: PathTracerParams;
 @group(1) @binding(1) var<storage, read_write> path_state: array<PathState>;
-@group(1) @binding(2) var<storage, read_write> pixel_info: array<PixelHitInfo>;
-@group(1) @binding(3) var<storage, read> blas_atlas: BLASAtlas;
-@group(1) @binding(4) var<storage, read> material_params: array<StandardMaterialParams>;
-@group(1) @binding(5) var<storage, read> material_table_offset: array<u32>;
-@group(1) @binding(6) var<storage, read> material_palette: array<u32>;
-@group(1) @binding(7) var<storage, read> index_buffer: array<u32>;
-@group(1) @binding(8) var texture_pool_albedo: texture_2d_array<f32>;
-@group(1) @binding(9) var texture_pool_normal: texture_2d_array<f32>;
-@group(1) @binding(10) var texture_pool_roughness: texture_2d_array<f32>;
-@group(1) @binding(11) var texture_pool_metallic: texture_2d_array<f32>;
-@group(1) @binding(12) var texture_pool_ao: texture_2d_array<f32>;
-@group(1) @binding(13) var texture_pool_height: texture_2d_array<f32>;
-@group(1) @binding(14) var texture_pool_specular: texture_2d_array<f32>;
-@group(1) @binding(15) var texture_pool_emission: texture_2d_array<f32>;
-@group(1) @binding(16) var output_tex: texture_storage_2d<rgba16float, write>;
+@group(1) @binding(2) var<storage, read> material_params: array<StandardMaterialParams>;
+@group(1) @binding(3) var<storage, read> material_table_offset: array<u32>;
+@group(1) @binding(4) var<storage, read> material_palette: array<u32>;
+@group(1) @binding(5) var<storage, read> dense_lights_buffer: array<Light>;
+@group(1) @binding(6) var<storage, read> light_count_buffer: array<u32>;
+@group(1) @binding(7) var texture_pool_albedo: texture_2d_array<f32>;
+@group(1) @binding(8) var texture_pool_normal: texture_2d_array<f32>;
+@group(1) @binding(9) var texture_pool_roughness: texture_2d_array<f32>;
+@group(1) @binding(10) var texture_pool_metallic: texture_2d_array<f32>;
+@group(1) @binding(11) var texture_pool_ao: texture_2d_array<f32>;
+@group(1) @binding(12) var texture_pool_height: texture_2d_array<f32>;
+@group(1) @binding(13) var texture_pool_specular: texture_2d_array<f32>;
+@group(1) @binding(14) var texture_pool_emission: texture_2d_array<f32>;
+@group(1) @binding(15) var output_tex: texture_storage_2d<rgba16float, write>;
 
 fn sample_texture_or_vec4_param_handle(
     tex_handle: u32,
@@ -90,31 +88,26 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
 
     let pixel_index = gid.y * res.x + gid.x;
 
-    var info = pixel_info[pixel_index];
+    var info = path_state[pixel_index];
     if (pt_params.max_spp != 0u && info.sample_count >= f32(pt_params.max_spp)) {
         let denom = max(info.sample_count, 1.0);
-        let avg = vec4f(info.accum_color.xyz / denom, 1.0);
+        let avg = vec4f(info.throughput.xyz / denom, 1.0);
         textureStore(output_tex, vec2<i32>(gid.xy), avg);
         return;
     }
 
-    let ps = path_state[pixel_index];
     var sample_rgb = vec3f(0.0);
+    
+    // Initialize shadow ray as inactive
+    info.shadow_radiance = vec4f(0.0, 0.0, 0.0, 0.0);
 
-    if (ps.state_u32.w != 0xffffffffu) {
-        let tri_id = ps.state_u32.w;
-        let mesh_id = ps.state_u32.z;
-
+    if (info.state_u32.w != 0xffffffffu) {
         // Lookup entity row (stored in direction_tmax.w as f32) -> resolve to entity index
-        let prim_store = u32(ps.direction_tmax.w);
+        let prim_store = u32(info.direction_tmax.w);
         let entity_palette_base = material_table_offset[prim_store];
 
         // Derive section_index by reading any triangle vertex's section from vertex_buffer
-        let mesh_entry = atlas_load_directory_entry(mesh_id);
-        let first_vertex = mesh_entry.first_vertex;
-        let first_index = mesh_entry.first_index;
-        let i0 = index_buffer[first_index + tri_id * 3u + 0u];
-        let section_index = u32(vertex_buffer[first_vertex + i0].section_index);
+        let section_index = u32(info.normal_section_index.w);
 
         // Resolve material
         let mat_params_index = material_palette[entity_palette_base + section_index];
@@ -122,7 +115,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
 
         // Use interpolated UVs produced by hit stage
         let tiling = material.emission_roughness_metallic_tiling.w;
-        let base_uv = vec2f(ps.hit_attr0.w, ps.hit_attr1.w) * tiling;
+        let base_uv = vec2f(info.hit_attr0.w, info.hit_attr1.w) * tiling;
 
         let albedo = sample_texture_or_vec4_param_handle(
             u32(material.albedo_handle),
@@ -148,11 +141,30 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
             texture_pool_metallic,
             0.0
         );
+        let emissive = sample_texture_or_float_param_handle(
+            u32(material.emission_handle),
+            base_uv,
+            material.emission_roughness_metallic_tiling.x,
+            u32(material.texture_flags2.w),
+            texture_pool_emission,
+            0.0
+        );
+        let specular = sample_texture_or_float_param_handle(
+            u32(material.specular_handle),
+            base_uv,
+            material.ao_height_specular.z,
+            u32(material.texture_flags2.z),
+            texture_pool_specular,
+            0.0
+        );
+        let reflectance = specular * 0.0009765625 /* 1.0f / 1024 */;
+        let clear_coat = 0.0;
+        let clear_coat_roughness = 0.0;
 
         // Build world-space TBN and derive normal from normal map if enabled
-        let world_t = normalize(ps.hit_attr0.xyz);
-        let world_b = normalize(ps.hit_attr1.xyz);
-        let world_n = normalize(ps.normal.xyz);
+        let world_t = normalize(info.hit_attr0.xyz);
+        let world_b = normalize(info.hit_attr1.xyz);
+        let world_n = normalize(info.normal_section_index.xyz);
         var n = world_n;
         if ((u32(material.texture_flags1.y) & 1u) != 0u) {
             let tbn = mat3x3<precision_float>(world_t, world_b, world_n);
@@ -166,12 +178,76 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         }
 
         // PBR BRDF evaluation for irradiance accumulation
-        let hit_pos = ps.origin_tmin.xyz;
+        let hit_pos = info.origin_tmin.xyz;
         // The incoming ray direction was stored in direction_tmax.xyz by the hit pass
-        let v_dir = -normalize(ps.direction_tmax.xyz);
+        let v_dir = -normalize(info.direction_tmax.xyz);
 
-        let current_throughput = ps.throughput.xyz;
+        // === EMISSIVE CONTRIBUTION ===
+        // Emissive surfaces contribute light directly when hit
+        // Weighted by the path throughput accumulated so far
+        if (emissive > 0.0) {
+            let emissive_contribution = emissive * albedo * info.path_weight.xyz;
+            info.throughput += vec4f(emissive_contribution, 0.0);
+        }
 
+        // === NEXT EVENT ESTIMATION: Sample Light for Direct Lighting ===
+        let num_lights = light_count_buffer[0];
+        if (num_lights > 0u) {
+            // Sample random light
+            var rng_light = u32(info.rng);
+            if (rng_light == 0u) { rng_light = hash(pixel_index ^ u32(frame_info.frame_index)); }
+            else { rng_light = random_seed(rng_light); }
+            let light_idx = u32(rand_float(rng_light) * f32(num_lights)) % num_lights;
+            let light = dense_lights_buffer[light_idx];
+            
+            let light_dir = get_light_dir(light, hit_pos);
+
+            // Compute attenuation for point/spot lights
+            var attenuation = 1.0;
+            if (light.light_type == 1.0) { // Point
+                let light_vec = light.position.xyz - hit_pos;
+                let distance_sq = dot(light_vec, light_vec);
+                attenuation = compute_distance_attenuation(distance_sq, light.radius);
+            } else if (light.light_type == 2.0) { // Spot
+                let light_vec = light.position.xyz - hit_pos;
+                let distance_sq = dot(light_vec, light_vec);
+                let dist_att = compute_distance_attenuation(distance_sq, light.radius);
+                
+                let cos_theta = dot(-light_dir, normalize(light.direction.xyz));
+                let cos_inner = cos(light.direction.w);
+                let cos_outer = cos(light.outer_angle);
+                let angle_att = compute_spot_angle_attenuation(cos_theta, cos_inner, cos_outer);
+                
+                attenuation = dist_att * angle_att;
+            }
+            attenuation = clamp(attenuation, 0.0, 1.0);
+            
+            // Compute direct lighting contribution (BRDF * light)
+            let direct_brdf = calculate_brdf_rt(
+                n, v_dir, light_dir,
+                albedo, roughness, metallic,
+                reflectance, clear_coat, clear_coat_roughness
+            );
+            
+            // Account for light selection probability (1/num_lights) and light properties
+            // Multiply by path_weight to properly accumulate weighted contributions
+            let light_contrib = direct_brdf
+                * light.color.rgb
+                * light.intensity
+                * attenuation
+                * f32(num_lights)
+                * info.path_weight.xyz;
+            
+            // Write shadow ray for visibility test
+            info.shadow_origin = vec4f(hit_pos + light_dir * 0.001, 0.0001);
+            
+            // For directional light, use large tmax; for point/spot, compute distance to light
+            let light_dist = select(1e30, length(light.position.xyz - hit_pos), light.light_type != 0.0);
+            info.shadow_direction = vec4f(light_dir, light_dist * 0.999);
+            info.shadow_radiance = vec4f(light_contrib, 1.0); // a=1.0 means active shadow ray
+        }
+
+        // === Continue with indirect bounce sampling ===
         // Sample a cosine-weighted direction for bounce and evaluate BRDF
         var rng = u32(info.rng);
         if (rng == 0u) { rng = hash(pixel_index ^ u32(frame_info.frame_index)); }
@@ -192,51 +268,47 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         let dir_local = vec3f(cos(phi) * sin_theta, sin(phi) * sin_theta, cos_theta);
         let l = normalize(tangent * dir_local.x + bitangent * dir_local.y + n * dir_local.z);
 
-        // Evaluate BRDF for RT step (no direct light struct)
-        let reflectance = 0.5; // dielectric sqrt(f0/0.16)
-        let clear_coat = 0.0;
-        let clear_coat_roughness = 0.5;
-        let brdf_result = calculate_brdf_rt(
-            n,
-            v_dir,
-            l,
-            albedo,
-            roughness,
-            metallic,
-            reflectance,
-            clear_coat,
-            clear_coat_roughness
+        // === Update path weight for indirect bounce ===
+        // Evaluate BRDF for the sampled direction
+        let n_dot_l = max(dot(n, l), 0.0001);
+        let indirect_brdf = calculate_brdf_rt(
+            n, v_dir, l,
+            albedo, roughness, metallic,
+            reflectance, clear_coat, clear_coat_roughness
         );
-        // For cosine-weighted sampling: BRDF already includes n_dot_l, PDF = n_dot_l/PI
-        // So contribution = BRDF * n_dot_l / PDF = BRDF * PI
-        sample_rgb = brdf_result * PI * current_throughput;
+        
+        // For cosine-weighted hemisphere sampling: PDF = cos(theta)/pi = n_dot_l/pi
+        // The rendering equation weight is: BRDF * cos(theta) / PDF = BRDF * n_dot_l / (n_dot_l/pi) = BRDF * pi
+        // calculate_brdf_rt returns BRDF * n_dot_l, so we need to divide out n_dot_l then multiply by pi
+        let bounce_weight = (indirect_brdf / n_dot_l) * PI;
+        
+        // Update path weight for next bounce (multiply accumulated weight by this bounce's BRDF contribution)
+        info.path_weight = vec4f(info.path_weight.xyz * bounce_weight, 0.0);
 
-        let alive_next = select(0u, 1u, (ps.state_u32.x + 1u) < pt_params.max_bounces);
+        let alive_next = select(0u, 1u, (info.state_u32.x + 1u) < pt_params.max_bounces);
         // Spawn next ray from hit position along sampled direction
         // Offset along surface normal to avoid self-intersection
-        path_state[pixel_index].origin_tmin = vec4f(hit_pos + n * 0.001, 0.0001);
+        info.origin_tmin = vec4f(hit_pos + l * 0.001, 0.0001);
         // Store direction for next bounce and reset tmax
-        path_state[pixel_index].direction_tmax = vec4f(l, 1e30);
-        // Restore throughput for next bounce (will be overwritten by hit pass with ray direction)
-        path_state[pixel_index].throughput = vec4f(current_throughput, 0.0);
+        info.direction_tmax = vec4f(l, 1e30);
         // Store bounce count
-        path_state[pixel_index].state_u32.x = ps.state_u32.x + 1u;
+        info.state_u32.x = info.state_u32.x + 1u;
         // Store alive flag
-        path_state[pixel_index].state_u32.y = alive_next;
+        info.state_u32.y = alive_next;
         // Clear mesh id for next stage
-        path_state[pixel_index].state_u32.z = 0u;
+        info.state_u32.z = 0u;
         // Clear triangle id for next stage
-        path_state[pixel_index].state_u32.w = 0xffffffffu;
+        info.state_u32.w = 0xffffffffu;
 
-        info.sample_count = info.sample_count + 1.0;
+        info.sample_count += 1.0;
     }
 
-    // Accumulate contribution from this bounce
-    let accum = info.accum_color + vec4f(sample_rgb, 1.0);
-    info.accum_color = accum;
-    pixel_info[pixel_index] = info;
+    // Write updated path state (shadow ray will be processed by shadow pass)
+    path_state[pixel_index] = info;
+    
+    // Display current accumulated result
     let denom = max(info.sample_count, 1.0);
-    let avg = vec4f(accum.xyz / denom, 1.0);
+    let avg = vec4f(info.throughput.xyz / denom, 1.0);
     textureStore(output_tex, vec2<i32>(gid.xy), avg);
 }
 

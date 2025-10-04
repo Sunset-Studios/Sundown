@@ -18,13 +18,13 @@ import { StaticMeshFragment } from "../engine/src/core/ecs/fragments/static_mesh
 import { VisibilityFragment } from "../engine/src/core/ecs/fragments/visibility_fragment.js";
 import { LightType } from "../engine/src/core/minimal.js";
 import { StandardMaterial } from "../engine/src/renderer/material.js";
-import { Texture } from "../engine/src/renderer/texture.js";
 import { Mesh } from "../engine/src/renderer/mesh.js";
 import { SharedEnvironmentData, SharedViewBuffer } from "../engine/src/core/shared_data.js";
 import { MAX_CLIPMAP_LEVELS } from "../engine/src/renderer/shadows/shadow_utils.js";
 import { spawn_mesh_entity, delete_entity } from "../engine/src/core/ecs/entity_utils.js";
 import { FontCache } from "../engine/src/ui/text/font_cache.js";
 import { Name } from "../engine/src/utility/names.js";
+import { TextureChannel } from "../engine/src/renderer/renderer_types.js";
 import { profile_scope } from "../engine/src/utility/performance.js";
 import { log } from "../engine/src/utility/logging.js";
 import { vec3, vec4, quat } from "gl-matrix";
@@ -37,7 +37,6 @@ import { Input } from "../engine/src/ml/layers/input.js";
 import { MasterMind } from "../engine/src/ml/mastermind.js";
 import { Tensor, TensorInitializer } from "../engine/src/ml/math/tensor.js";
 import { Adam } from "../engine/src/ml/optimizers/adam.js";
-import { TextureChannel } from "../engine/src/renderer/renderer_types.js";
 
 // ------------------------------------------------------------------------------------
 // =============================== Rendering Scene ===============================
@@ -496,46 +495,46 @@ export class TexturesScene extends Scene {
 
     // Load metal plane material
     {
-      let worn_panel_albedo = {
-        name: "worn_panel_albedo",
-        paths: ["engine/textures/worn_panel/worn_panel_albedo.jpg"],
+      let floor_albedo = {
+        name: "floor_albedo",
+        paths: ["engine/textures/rubber_floor/Diffuse.jpg"],
         format: "rgba8unorm",
         dimension: "2d",
         usage:
           GPUTextureUsage.TEXTURE_BINDING |
           GPUTextureUsage.COPY_DST |
           GPUTextureUsage.RENDER_ATTACHMENT,
-        material_notifier: "worn_panel_albedo",
+        material_notifier: "floor_albedo",
       };
-      let worn_panel_normal = {
-        name: "worn_panel_normal",
-        paths: ["engine/textures/worn_panel/worn_panel_normal.jpg"],
+      let floor_normal = {
+        name: "floor_normal",
+          paths: ["engine/textures/rubber_floor/Normal.jpg"],
         format: "rgba8unorm",
         dimension: "2d",
         usage:
           GPUTextureUsage.TEXTURE_BINDING |
           GPUTextureUsage.COPY_DST |
           GPUTextureUsage.RENDER_ATTACHMENT,
-        material_notifier: "worn_panel_normal",
+        material_notifier: "floor_normal",
       };
-      let worn_panel_roughness = {
-        name: "worn_panel_roughness",
-        paths: ["engine/textures/worn_panel/worn_panel_roughness.jpg"],
+      let floor_roughness = {
+        name: "floor_roughness",
+        paths: ["engine/textures/rubber_floor/ARM.jpg"],
         format: "rgba8unorm",
         dimension: "2d",
         usage:
           GPUTextureUsage.TEXTURE_BINDING |
           GPUTextureUsage.COPY_DST |
           GPUTextureUsage.RENDER_ATTACHMENT,
-        material_notifier: "worn_panel_roughness",
+      material_notifier: "floor_roughness",
       };
 
       // Create a default material
       const default_plane_material = StandardMaterial.create("TexturesPlaneMaterial");
       this.default_plane_material_id = default_plane_material.material_id;
-      default_plane_material.sample_albedo(worn_panel_albedo);
-      default_plane_material.sample_normal(worn_panel_normal);
-      default_plane_material.sample_roughness(worn_panel_roughness);
+      default_plane_material.sample_albedo(floor_albedo);
+      default_plane_material.sample_normal(floor_normal);
+      default_plane_material.sample_roughness(floor_roughness, TextureChannel.G);
       default_plane_material.set_metallic(0.2);
       default_plane_material.set_emission(0.1);
       default_plane_material.set_tiling(30.0);
@@ -1745,94 +1744,89 @@ export class GITestScene extends Scene {
     const light_fragment_view = EntityManager.get_fragment(light_entity, LightFragment);
     light_fragment_view.type = LightType.DIRECTIONAL;
     light_fragment_view.color = [1, 1, 1];
-    light_fragment_view.intensity = 5.5;
+    light_fragment_view.intensity = 10.0;
     light_fragment_view.position = [5, 35, 25];
     light_fragment_view.active = true;
     light_fragment_view.is_primary_sun = 1;
     light_fragment_view.shadow_clipmaps = MAX_CLIPMAP_LEVELS;
 
     // Load worn panel textures for metallic floor
-    let worn_panel_albedo = {
-      name: "worn_panel_albedo",
-      paths: ["engine/textures/worn_panel/worn_panel_albedo.jpg"],
+    let floor_albedo = {
+      name: "floor_albedo",
+      paths: ["engine/textures/rubber_floor/Diffuse.jpg"],
       format: "rgba8unorm",
       dimension: "2d",
       usage:
         GPUTextureUsage.TEXTURE_BINDING |
         GPUTextureUsage.COPY_DST |
         GPUTextureUsage.RENDER_ATTACHMENT,
-      material_notifier: "worn_panel_albedo",
+      material_notifier: "floor_albedo",
     };
-    let worn_panel_normal = {
-      name: "worn_panel_normal",
-      paths: ["engine/textures/worn_panel/worn_panel_normal.jpg"],
+    let floor_normal = {
+      name: "floor_normal",
+      paths: ["engine/textures/rubber_floor/Normal.jpg"],
       format: "rgba8unorm",
       dimension: "2d",
       usage:
         GPUTextureUsage.TEXTURE_BINDING |
         GPUTextureUsage.COPY_DST |
         GPUTextureUsage.RENDER_ATTACHMENT,
-      material_notifier: "worn_panel_normal",
+      material_notifier: "floor_normal",
     };
-    let worn_panel_roughness = {
-      name: "worn_panel_roughness",
-      paths: ["engine/textures/worn_panel/worn_panel_roughness.jpg"],
+    let floor_arm = {
+      name: "floor_metallic",
+      paths: ["engine/textures/rubber_floor/ARM.jpg"],
       format: "rgba8unorm",
       dimension: "2d",
       usage:
         GPUTextureUsage.TEXTURE_BINDING |
         GPUTextureUsage.COPY_DST |
         GPUTextureUsage.RENDER_ATTACHMENT,
-      material_notifier: "worn_panel_roughness",
+      material_notifier: "floor_metallic",
     };
-    let worn_panel_ao = {
-      name: "worn_panel_ao",
-      paths: ["engine/textures/worn_panel/worn_panel_ao.jpg"],
-      format: "rgba8unorm",
-      dimension: "2d",
-      usage:
-        GPUTextureUsage.TEXTURE_BINDING |
-        GPUTextureUsage.COPY_DST |
-        GPUTextureUsage.RENDER_ATTACHMENT,
-      material_notifier: "worn_panel_ao",
-    };
-
+    
     // Create metallic floor material
     const metallic_floor_material = StandardMaterial.create("testgym_metallic_floor_material");
     const metallic_floor_material_id = metallic_floor_material.material_id;
-    metallic_floor_material.sample_albedo(worn_panel_albedo);
-    metallic_floor_material.sample_normal(worn_panel_normal);
-    metallic_floor_material.sample_roughness(worn_panel_roughness);
-    metallic_floor_material.sample_ao(worn_panel_ao);
-    metallic_floor_material.set_metallic(0.2);
+    metallic_floor_material.sample_albedo(floor_albedo);
+    metallic_floor_material.sample_normal(floor_normal);
+    metallic_floor_material.sample_ao(floor_arm, TextureChannel.R);
+    metallic_floor_material.sample_roughness(floor_arm, TextureChannel.G);
+    metallic_floor_material.sample_metallic(floor_arm, TextureChannel.B);
     metallic_floor_material.set_emission(0.0);
-    metallic_floor_material.set_tiling(30.0);
+    metallic_floor_material.set_tiling(150.0);
 
     // materials
     const wall_material = StandardMaterial.create("testgym_wall_material");
     const wall_material_id = wall_material.material_id;
     wall_material.set_albedo([1, 1, 1, 1]);
     wall_material.set_emission(ambient_emissive);
-    wall_material.set_roughness(1.0);
-    wall_material.set_metallic(0.75);
+    wall_material.set_roughness(0.8);
+    wall_material.set_metallic(0.35);
 
     const red_material = StandardMaterial.create("testgym_red_material");
     const red_material_id = red_material.material_id;
     red_material.set_albedo([1, 0.2, 0.2, 1]);
     red_material.set_emission(ambient_emissive);
-    red_material.set_metallic(0.75);
+    red_material.set_metallic(0.9);
+    red_material.set_roughness(0.8);
+    red_material.set_specular(0.5);
 
     const blue_material = StandardMaterial.create("testgym_blue_material");
     const blue_material_id = blue_material.material_id;
     blue_material.set_albedo([0.2, 0.2, 1, 1]);
     blue_material.set_emission(ambient_emissive);
-    blue_material.set_metallic(0.75);
-
+    blue_material.set_metallic(0.9);
+    blue_material.set_roughness(0.8);
+    blue_material.set_specular(0.5);
+    
     const gray_material = StandardMaterial.create("testgym_gray_material");
     const gray_material_id = gray_material.material_id;
     gray_material.set_albedo([0.5, 0.5, 0.5, 1]);
     gray_material.set_emission(ambient_emissive);
-    gray_material.set_metallic(0.75);
+    gray_material.set_metallic(0.9);
+    gray_material.set_roughness(0.8);
+    gray_material.set_specular(0.5);
 
     // meshes
     const cube_mesh = Mesh.cube();
@@ -2653,7 +2647,7 @@ export class SponzaScene extends Scene {
     const light_fragment_view = EntityManager.get_fragment(light_entity, LightFragment);
     light_fragment_view.type = LightType.DIRECTIONAL;
     light_fragment_view.color = [1, 1, 1];
-    light_fragment_view.intensity = 5.0;
+    light_fragment_view.intensity = 15.0;
     light_fragment_view.position = [5, 20, 2.5];
     light_fragment_view.active = true;
     light_fragment_view.is_primary_sun = 1;
