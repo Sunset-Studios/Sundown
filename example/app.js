@@ -2745,6 +2745,78 @@ export class SponzaScene extends Scene {
 }
 
 // ------------------------------------------------------------------------------------
+// =============================== City Scene ==============================
+// ------------------------------------------------------------------------------------
+
+export class CityScene extends Scene {
+  name = "CityScene";
+  entities = [];
+
+  init(parent_context) {
+    super.init(parent_context);
+
+    const freeform_arcball_control_processor = this.add_layer(FreeformArcballControlProcessor);
+    freeform_arcball_control_processor.set_scene(this);
+
+    SharedEnvironmentData.set_skydome("default_scene_skydome");
+
+    const view_data = SharedViewBuffer.get_view_data(0);
+    view_data.view_position = [1443.306, 880.005, 1363.9818];
+    view_data.view_rotation = [-0.122922606, 0.844215, -0.224311, -0.4626290];
+
+    const light_entity = EntityManager.create_entity([LightFragment]);
+    this.entities.push(light_entity);
+
+    const light_fragment_view = EntityManager.get_fragment(light_entity, LightFragment);
+    light_fragment_view.type = LightType.DIRECTIONAL;
+    light_fragment_view.color = [1, 1, 1];
+    light_fragment_view.intensity = 15.0;
+    light_fragment_view.position = [-25, 20, 20];
+    light_fragment_view.active = true;
+    light_fragment_view.is_primary_sun = 1;
+    light_fragment_view.shadow_clipmaps = MAX_CLIPMAP_LEVELS;
+
+    const ground_material = StandardMaterial.create("city_ground_material");
+    const ground_material_id = ground_material.material_id;
+    ground_material.set_albedo([0.75, 0.75, 0.75, 1.0]);
+    ground_material.set_roughness(0.9);
+    ground_material.set_metallic(1.0);
+
+    const cube_mesh = Mesh.cube();
+    const ground_entity = spawn_mesh_entity(
+      [0, 0, 0],
+      [0, 0, 0, 1],
+      [4000, 5.0, 4000],
+      cube_mesh,
+      ground_material_id
+    );
+    this.entities.push(ground_entity);
+
+    const city_mesh = Mesh.from_gltf("engine/models/city/city.gltf");
+
+    const city_entity = spawn_mesh_entity(
+      [0, 35.0, 0],
+      [0, 0, 0, 1],
+      [1, 1, 1],
+      city_mesh,
+      0 // GLTF sets the material id
+    );
+    this.entities.push(city_entity);
+  }
+
+  update(delta_time) {
+    super.update(delta_time);
+  }
+
+  cleanup() {
+    for (const e of this.entities) {
+      delete_entity(e);
+    }
+    this.entities.length = 0;
+  }
+}
+
+// ------------------------------------------------------------------------------------
 // =============================== Main ==============================================
 // ------------------------------------------------------------------------------------
 
@@ -2763,6 +2835,7 @@ export class SponzaScene extends Scene {
   const shadow_test_scene = new ShadowTestScene("ShadowTestScene");
   const gltf_model_scene = new GLTFModelScene("GLTFModelScene");
   const sponza_scene = new SponzaScene("SponzaScene");
+  const city_scene = new CityScene("CityScene");
 
   const scene_switcher = new SceneSwitcher("SceneSwitcher");
   //await scene_switcher.add_scene(solar_ecs_scene);
@@ -2772,10 +2845,11 @@ export class SponzaScene extends Scene {
   //await scene_switcher.add_scene(ml_scene);
   //await scene_switcher.add_scene(voxel_terrain_scene);
   //await scene_switcher.add_scene(object_painting_scene);
-  await scene_switcher.add_scene(gi_test_scene);
+  //await scene_switcher.add_scene(gi_test_scene);
   //await scene_switcher.add_scene(shadow_test_scene);
   //await scene_switcher.add_scene(gltf_model_scene);
-  //await scene_switcher.add_scene(sponza_scene);
+  await scene_switcher.add_scene(sponza_scene);
+  //await scene_switcher.add_scene(city_scene);
 
   simulator.add_sim_layer(scene_switcher);
 

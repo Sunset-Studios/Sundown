@@ -214,9 +214,10 @@ export class MeshBLAS {
     this.#atlas_buffer = Buffer.create({
       name: "mesh_blas_atlas",
       usage: STORAGE_USAGE,
-      size: this.#bvh2_blas_size * BVH2_NODE_BYTE_SIZE
-        + this.#bvh4_blas_size * BVH4_NODE_BYTE_SIZE
-        + this.#directory.length * UINT32_BYTES,
+      size:
+        this.#bvh2_blas_size * BVH2_NODE_BYTE_SIZE +
+        this.#bvh4_blas_size * BVH4_NODE_BYTE_SIZE +
+        this.#directory.length * UINT32_BYTES,
       force: true,
     });
 
@@ -371,7 +372,7 @@ export class MeshBLAS {
    * 📦 ATLAS STRUCTURE:
    *    • Header (32 bytes): Base offsets and counts for each section in vec4 units
    *    • BVH2 Section: Binary BVH nodes for fast traversal
-   *    • BVH4 Section: Quaternary BVH nodes for SIMD-optimized traversal  
+   *    • BVH4 Section: Quaternary BVH nodes for SIMD-optimized traversal
    *    • Directory Section: Per-mesh metadata (bounds, node ranges, vertex/index offsets)
    *
    * 🔄 DYNAMIC REBUILDING:
@@ -396,15 +397,19 @@ export class MeshBLAS {
 
     // Compute vec4 counts for each section
     const header_bytes = 8 * 4; // 8 u32
-    const bvh2_vec4_count = Math.floor((this.#bvh2_nodes_buffer.config.size || 0) / 16);
-    const bvh4_vec4_count = Math.floor((this.#bvh4_nodes_buffer.config.size || 0) / 16);
-    const dir_vec4_count = Math.floor((this.#directory_buffer.config.size || 0) / 16);
-    const total_bytes = header_bytes + (bvh2_vec4_count + bvh4_vec4_count + dir_vec4_count) * 16;
+    const bvh2_count = Math.floor((this.#bvh2_nodes_buffer.config.size || 0) / BVH2_NODE_BYTE_SIZE);
+    const bvh4_count = Math.floor((this.#bvh4_nodes_buffer.config.size || 0) / BVH4_NODE_BYTE_SIZE);
+    const dir_count = Math.floor((this.#directory_buffer.config.size || 0) / DIRECTORY_ENTRY_SIZE);
+    const total_entries =
+      (header_bytes +
+      (bvh2_count * BVH2_NODE_BYTE_SIZE +
+        bvh4_count * BVH4_NODE_BYTE_SIZE +
+        dir_count * DIRECTORY_ENTRY_SIZE)) / 4;
 
-    if (!this.#atlas_buffer || this.#atlas_buffer.config.size < total_bytes) {
+    if (!this.#atlas_buffer || this.#atlas_buffer.config.size < total_entries * 4) {
       this.#atlas_buffer = Buffer.create({
         name: "mesh_blas_atlas",
-        size: total_bytes,
+        size: total_entries,
         usage: STORAGE_USAGE,
         force: true,
       });
@@ -413,17 +418,17 @@ export class MeshBLAS {
 
     // Dispatch compute shader to pack atlas
     const bvh2_base_v4 = 0;
-    const bvh4_base_v4 = bvh2_base_v4 + bvh2_vec4_count;
-    const dir_base_v4 = bvh4_base_v4 + bvh4_vec4_count;
+    const bvh4_base_v4 = bvh2_base_v4 + bvh2_count * 2;
+    const dir_base_v4 = bvh4_base_v4 + bvh4_count * 3;
 
     // Write atlas header directly (CPU-side) into first 32 bytes of atlas
     const header = new Uint32Array(8);
     header[0] = bvh2_base_v4 >>> 0;
-    header[1] = bvh2_vec4_count >>> 0;
+    header[1] = (bvh2_count * 2) >>> 0;
     header[2] = bvh4_base_v4 >>> 0;
-    header[3] = bvh4_vec4_count >>> 0;
+    header[3] = (bvh4_count * 3) >>> 0;
     header[4] = dir_base_v4 >>> 0;
-    header[5] = dir_vec4_count >>> 0;
+    header[5] = (dir_count * 2) >>> 0;
     header[6] = 0;
     header[7] = 0;
     this.#atlas_buffer.write_raw(header, 0, header.length);
@@ -431,14 +436,14 @@ export class MeshBLAS {
     ComputeTaskQueue.new_task(
       "blas_pack_atlas_bvh2",
       "acceleration/blas_atlas_pack.wgsl",
-      [ 
+      [
         this.#atlas_buffer,
         this.#bvh2_nodes_buffer,
         this.#bvh4_nodes_buffer,
         this.#directory_buffer,
       ],
       [this.#atlas_buffer],
-      Math.ceil(bvh2_vec4_count / 256),
+      Math.ceil(bvh2_count / 256),
       1,
       1,
       "pack_bvh2"
@@ -447,14 +452,14 @@ export class MeshBLAS {
     ComputeTaskQueue.new_task(
       "blas_pack_atlas_bvh4",
       "acceleration/blas_atlas_pack.wgsl",
-      [ 
+      [
         this.#atlas_buffer,
         this.#bvh2_nodes_buffer,
         this.#bvh4_nodes_buffer,
         this.#directory_buffer,
       ],
       [this.#atlas_buffer],
-      Math.ceil(bvh4_vec4_count / 256),
+      Math.ceil(bvh4_count / 256),
       1,
       1,
       "pack_bvh4"
@@ -463,14 +468,14 @@ export class MeshBLAS {
     ComputeTaskQueue.new_task(
       "blas_pack_atlas_dir",
       "acceleration/blas_atlas_pack.wgsl",
-      [ 
+      [
         this.#atlas_buffer,
         this.#bvh2_nodes_buffer,
         this.#bvh4_nodes_buffer,
         this.#directory_buffer,
       ],
       [this.#atlas_buffer],
-      Math.ceil(dir_vec4_count / 256),
+      Math.ceil(dir_count / 256),
       1,
       1,
       "pack_directory"

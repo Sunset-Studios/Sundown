@@ -254,7 +254,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
 
         // Probabilistically terminate paths based on throughput
         let path_throughput = (info.path_weight.x + info.path_weight.y + info.path_weight.z) / 3.0;
-        let survival_prob = clamp(path_throughput, 0.05, 0.95);
+        let survival_prob = clamp(path_throughput, 0.01, 0.99);
 
         var rng_rr = random_seed(rng);
         let rr_sample = rand_float(rng_rr);
