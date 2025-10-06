@@ -12,7 +12,7 @@ struct PathTracerParams {
     max_bounces: u32,
     spp_per_frame: u32,
     reset_accum_flag: u32,
-    max_spp: u32,
+    use_gbuffer: u32,
 };
 
 struct PathState {
@@ -27,7 +27,6 @@ struct PathState {
     sample_count: f32,
     prim_id: f32,
     frame_stamp: f32,
-    // Shadow ray state for Next Event Estimation
     shadow_origin: vec4<f32>,      // xyz = origin, w = tmin
     shadow_direction: vec4<f32>,    // xyz = direction, w = tmax
     shadow_radiance: vec4<f32>,     // rgb = light contribution, a = needs_trace flag
@@ -81,7 +80,7 @@ fn sample_texture_or_float_param_handle(
     return param_val;
 }
 
-@compute @workgroup_size(8, 8)
+@compute @workgroup_size(16, 16)
 fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let res = textureDimensions(output_tex);
     if (gid.x >= res.x || gid.y >= res.y) { return; }
@@ -89,98 +88,116 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let pixel_index = gid.y * res.x + gid.x;
 
     var info = path_state[pixel_index];
-    if (pt_params.max_spp != 0u && info.sample_count >= f32(pt_params.max_spp)) {
-        let denom = max(info.sample_count, 1.0);
-        let avg = vec4f(info.throughput.xyz / denom, 1.0);
-        textureStore(output_tex, vec2<i32>(gid.xy), avg);
-        return;
-    }
-
     var sample_rgb = vec3f(0.0);
     
-    // Initialize shadow ray as inactive
-    info.shadow_radiance = vec4f(0.0, 0.0, 0.0, 0.0);
-
     if (info.state_u32.w != 0xffffffffu) {
-        // Lookup entity row (stored in direction_tmax.w as f32) -> resolve to entity index
-        let prim_store = u32(info.direction_tmax.w);
-        let entity_palette_base = material_table_offset[prim_store];
+        var albedo: vec3<f32>;
+        var roughness: f32;
+        var metallic: f32;
+        var emissive: f32;
+        var reflectance: f32;
+        var n: vec3<f32>;
+        
+        let hit_pos = info.origin_tmin.xyz;
+        let world_n = normalize(info.normal_section_index.xyz);
+        
+        // Check if this is a G-buffer hit (tri_id=0x0 means G-buffer mode on first bounce)
+        let is_gbuffer_hit = (pt_params.use_gbuffer != 0u) && (info.state_u32.w == 0x0u);
+        
+        if (is_gbuffer_hit) {
+            // G-buffer mode: Read pre-computed material properties from hit_attr fields
+            // hit_attr0: rgb = albedo, w = roughness
+            albedo = info.hit_attr0.rgb;
+            roughness = info.hit_attr0.w;
+            
+            // hit_attr1: x = metallic, y = specular/reflectance, z = emissive, w = ao
+            metallic = info.hit_attr1.x;
+            reflectance = info.hit_attr1.y;
+            emissive = info.hit_attr1.z;
+            
+            // Normal is already computed with normal mapping in G-buffer
+            n = world_n;
+        } else {
+            // Regular ray tracing mode: Sample textures and compute material properties
+            // Lookup entity row (stored in direction_tmax.w as f32) -> resolve to entity index
+            let prim_store = u32(info.direction_tmax.w);
+            let entity_palette_base = material_table_offset[prim_store];
 
-        // Derive section_index by reading any triangle vertex's section from vertex_buffer
-        let section_index = u32(info.normal_section_index.w);
+            // Derive section_index by reading any triangle vertex's section from vertex_buffer
+            let section_index = u32(info.normal_section_index.w);
 
-        // Resolve material
-        let mat_params_index = material_palette[entity_palette_base + section_index];
-        let material = material_params[mat_params_index];
+            // Resolve material
+            let mat_params_index = material_palette[entity_palette_base + section_index];
+            let material = material_params[mat_params_index];
 
-        // Use interpolated UVs produced by hit stage
-        let tiling = material.emission_roughness_metallic_tiling.w;
-        let base_uv = vec2f(info.hit_attr0.w, info.hit_attr1.w) * tiling;
+            // Use interpolated UVs produced by hit stage
+            let tiling = material.emission_roughness_metallic_tiling.w;
+            let base_uv = vec2f(info.hit_attr0.w, info.hit_attr1.w) * tiling;
 
-        let albedo = sample_texture_or_vec4_param_handle(
-            u32(material.albedo_handle),
-            base_uv,
-            material.albedo,
-            u32(material.texture_flags1.x),
-            texture_pool_albedo,
-            0.0
-        ).xyz;
-        let roughness = sample_texture_or_float_param_handle(
-            u32(material.roughness_handle),
-            base_uv,
-            material.emission_roughness_metallic_tiling.y,
-            u32(material.texture_flags1.z),
-            texture_pool_roughness,
-            0.0
-        );
-        let metallic = sample_texture_or_float_param_handle(
-            u32(material.metallic_handle),
-            base_uv,
-            material.emission_roughness_metallic_tiling.z,
-            u32(material.texture_flags1.w),
-            texture_pool_metallic,
-            0.0
-        );
-        let emissive = sample_texture_or_float_param_handle(
-            u32(material.emission_handle),
-            base_uv,
-            material.emission_roughness_metallic_tiling.x,
-            u32(material.texture_flags2.w),
-            texture_pool_emission,
-            0.0
-        );
-        let specular = sample_texture_or_float_param_handle(
-            u32(material.specular_handle),
-            base_uv,
-            material.ao_height_specular.z,
-            u32(material.texture_flags2.z),
-            texture_pool_specular,
-            0.0
-        );
-        let reflectance = specular * 0.0009765625 /* 1.0f / 1024 */;
+            albedo = sample_texture_or_vec4_param_handle(
+                u32(material.albedo_handle),
+                base_uv,
+                material.albedo,
+                u32(material.texture_flags1.x),
+                texture_pool_albedo,
+                0.0
+            ).xyz;
+            roughness = sample_texture_or_float_param_handle(
+                u32(material.roughness_handle),
+                base_uv,
+                material.emission_roughness_metallic_tiling.y,
+                u32(material.texture_flags1.z),
+                texture_pool_roughness,
+                0.0
+            );
+            metallic = sample_texture_or_float_param_handle(
+                u32(material.metallic_handle),
+                base_uv,
+                material.emission_roughness_metallic_tiling.z,
+                u32(material.texture_flags1.w),
+                texture_pool_metallic,
+                0.0
+            );
+            emissive = sample_texture_or_float_param_handle(
+                u32(material.emission_handle),
+                base_uv,
+                material.emission_roughness_metallic_tiling.x,
+                u32(material.texture_flags2.w),
+                texture_pool_emission,
+                0.0
+            );
+            let specular = sample_texture_or_float_param_handle(
+                u32(material.specular_handle),
+                base_uv,
+                material.ao_height_specular.z,
+                u32(material.texture_flags2.z),
+                texture_pool_specular,
+                0.0
+            );
+            reflectance = specular * 0.0009765625 /* 1.0f / 1024 */;
+
+            // Build world-space TBN and derive normal from normal map if enabled
+            let world_t = normalize(info.hit_attr0.xyz);
+            let world_b = normalize(info.hit_attr1.xyz);
+            n = world_n;
+            if ((u32(material.texture_flags1.y) & 1u) != 0u) {
+                let tbn = mat3x3<precision_float>(world_t, world_b, world_n);
+                let nm = sample_handle_rgba(
+                    u32(material.normal_handle),
+                    base_uv,
+                    texture_pool_normal,
+                    0.0
+                ).xyz * 2.0 - 1.0;
+                n = normalize(tbn * nm);
+            }
+        }
+
         let clear_coat = 0.0;
         let clear_coat_roughness = 0.0;
 
-        // Build world-space TBN and derive normal from normal map if enabled
-        let world_t = normalize(info.hit_attr0.xyz);
-        let world_b = normalize(info.hit_attr1.xyz);
-        let world_n = normalize(info.normal_section_index.xyz);
-        var n = world_n;
-        if ((u32(material.texture_flags1.y) & 1u) != 0u) {
-            let tbn = mat3x3<precision_float>(world_t, world_b, world_n);
-            let nm = sample_handle_rgba(
-                u32(material.normal_handle),
-                base_uv,
-                texture_pool_normal,
-                0.0
-            ).xyz * 2.0 - 1.0;
-            n = normalize(tbn * nm);
-        }
-
         // PBR BRDF evaluation for irradiance accumulation
-        let hit_pos = info.origin_tmin.xyz;
-        // The incoming ray direction was stored in direction_tmax.xyz by the hit pass
-        let v_dir = -normalize(info.direction_tmax.xyz);
+        // The view direction is stored in direction_tmax.xyz (from init pass for G-buffer, hit pass for ray tracing)
+        let v_dir = select(-normalize(info.direction_tmax.xyz), normalize(info.direction_tmax.xyz), is_gbuffer_hit);
 
         // === EMISSIVE CONTRIBUTION ===
         // Emissive surfaces contribute light directly when hit
@@ -353,7 +370,6 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
 
         let alive_next = select(0u, 1u, (info.state_u32.x + 1u) < pt_params.max_bounces);
         // Spawn next ray from hit position along sampled direction
-        // Offset along surface normal to avoid self-intersection
         info.origin_tmin = vec4f(hit_pos + l * 0.001, 0.0001);
         // Store direction for next bounce and reset tmax
         info.direction_tmax = vec4f(l, 1e30);
@@ -375,6 +391,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     // Display current accumulated result
     let denom = max(info.sample_count, 1.0);
     let avg = vec4f(info.throughput.xyz / denom, 1.0);
+    
     textureStore(output_tex, vec2<i32>(gid.xy), avg);
 }
 

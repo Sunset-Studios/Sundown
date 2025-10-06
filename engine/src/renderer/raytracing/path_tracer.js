@@ -47,7 +47,7 @@ const path_tracer_shadow_shader_setup = {
 };
 
 export class PathTracer extends RayTracer {
-  params = new Uint32Array([0, 0, 0, 0]);
+  params = new Uint32Array([0, 0, 0, 0]); // max_bounces, spp_per_frame, reset_accum_flag, use_gbuffer
 
   constructor() {
     super();
@@ -67,7 +67,13 @@ export class PathTracer extends RayTracer {
     index_buffer = null,
     dense_lights = null,
     light_count = null,
-    force_recreate = false
+    use_gbuffer = false,
+    gbuffer_position = null,
+    gbuffer_normal = null,
+    gbuffer_albedo = null,
+    gbuffer_smra = null,
+    gbuffer_emissive = null,
+    force_recreate = false,
   ) {
     super.setup(render_graph, width, height, force_recreate);
 
@@ -146,7 +152,7 @@ export class PathTracer extends RayTracer {
         this.params[0] = max_bounces; // max_bounces
         this.params[1] = spp_per_frame; // spp_per_frame
         this.params[2] = view_moved ? 1 : 0; // reset_accum_flag
-        this.params[3] = 100000000; // max_spp
+        this.params[3] = use_gbuffer ? 1 : 0; // use_gbuffer
         params_buffer.write_raw(this.params);
       }
     );
@@ -161,6 +167,11 @@ export class PathTracer extends RayTracer {
           inputs: [
             pt_params,
             path_state,
+            gbuffer_position,
+            gbuffer_normal,
+            gbuffer_albedo,
+            gbuffer_smra,
+            gbuffer_emissive,
             this.output_texture,
           ],
           outputs: [path_state],
@@ -168,11 +179,13 @@ export class PathTracer extends RayTracer {
         },
         (graph, frame_data, encoder) => {
           const pass = graph.get_physical_pass(frame_data.current_pass);
-          pass.dispatch(Math.ceil(width / 8), Math.ceil(height / 8), 1);
+          pass.dispatch(Math.ceil(width / 16), Math.ceil(height / 16), 1);
         }
       );
 
-      for (let b = 0; b < max_bounces; b++) {
+      // Additional bounce here to make sure we resolve final shadow rays.
+      // Will not affect regular hit path since deactivated paths are not processed past the shadow radiance evaluation.
+      for (let b = 0; b < max_bounces + 1; b++) {
         render_graph.add_pass(
           `path_trace_hit_${s}_${b}`,
           RenderPassFlags.Compute,
@@ -193,10 +206,10 @@ export class PathTracer extends RayTracer {
           },
           (graph, frame_data, encoder) => {
             const pass = graph.get_physical_pass(frame_data.current_pass);
-            pass.dispatch(Math.ceil(width / 8), Math.ceil(height / 8), 1);
+            pass.dispatch(Math.ceil(width / 16), Math.ceil(height / 16), 1);
           }
         );
-
+        
         render_graph.add_pass(
           `path_trace_shade_${s}_${b}`,
           RenderPassFlags.Compute,
@@ -224,34 +237,34 @@ export class PathTracer extends RayTracer {
           },
           (graph, frame_data, encoder) => {
             const pass = graph.get_physical_pass(frame_data.current_pass);
-            pass.dispatch(Math.ceil(width / 8), Math.ceil(height / 8), 1);
+            pass.dispatch(Math.ceil(width / 16), Math.ceil(height / 16), 1);
           }
         );
 
         // Shadow tracing pass for Next Event Estimation
-        render_graph.add_pass(
-          `path_trace_shadow_${s}_${b}`,
-          RenderPassFlags.Compute,
-          {
-            inputs: [
-              pt_params,
-              path_state,
-              tlas_bvh2_bounds,
-              tlas_bvh4_nodes,
-              blas_atlas,
-              entity_transforms,
-              index_buffer,
-              mesh_asset_ids,
-              this.output_texture,
-            ],
-            outputs: [path_state],
-            shader_setup: path_tracer_shadow_shader_setup,
-          },
-          (graph, frame_data, encoder) => {
-            const pass = graph.get_physical_pass(frame_data.current_pass);
-            pass.dispatch(Math.ceil(width / 8), Math.ceil(height / 8), 1);
-          }
-        );
+        // render_graph.add_pass(
+        //   `path_trace_shadow_${s}_${b}`,
+        //   RenderPassFlags.Compute,
+        //   {
+        //     inputs: [
+        //       pt_params,
+        //       path_state,
+        //       tlas_bvh2_bounds,
+        //       tlas_bvh4_nodes,
+        //       blas_atlas,
+        //       entity_transforms,
+        //       index_buffer,
+        //       mesh_asset_ids,
+        //       this.output_texture,
+        //     ],
+        //     outputs: [path_state],
+        //     shader_setup: path_tracer_shadow_shader_setup,
+        //   },
+        //   (graph, frame_data, encoder) => {
+        //     const pass = graph.get_physical_pass(frame_data.current_pass);
+        //     pass.dispatch(Math.ceil(width / 16), Math.ceil(height / 16), 1);
+        //   }
+        // );
       }
     }
   }

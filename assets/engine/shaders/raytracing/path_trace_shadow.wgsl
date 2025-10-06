@@ -13,7 +13,7 @@ struct PathTracerParams {
     max_bounces: u32,
     spp_per_frame: u32,
     reset_accum_flag: u32,
-    max_spp: u32,
+    use_gbuffer: u32,
 };
 
 struct PathState {
@@ -28,7 +28,6 @@ struct PathState {
     sample_count: f32,
     prim_id: f32,
     frame_stamp: f32,
-    // Shadow ray state for Next Event Estimation
     shadow_origin: vec4<f32>,      // xyz = origin, w = tmin
     shadow_direction: vec4<f32>,    // xyz = direction, w = tmax
     shadow_radiance: vec4<f32>,     // rgb = light contribution, a = needs_trace flag
@@ -179,7 +178,7 @@ fn trace_blas_any_hit(ray_world: ptr<function, Ray>, ray_local: ptr<function, Ra
 }
 
 
-@compute @workgroup_size(8, 8)
+@compute @workgroup_size(16, 16)
 fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let res = textureDimensions(output_tex);
     if (gid.x >= res.x || gid.y >= res.y) { return; }

@@ -618,6 +618,9 @@ export class MeshTaskQueue {
     for (let i = 0; i < this.batches.length; ++i) {
       const batch = this.batches[i];
       const mesh = ResourceCache.get().fetch(CacheTypes.MESH, batch.mesh_id);
+      if (mesh.index_buffer_offset === -1) {
+        continue;
+      }
 
       const material = ResourceCache.get().fetch(CacheTypes.MATERIAL, batch.material_id);
       if (opaque_only && material.family !== MaterialFamilyType.Opaque) {
@@ -698,6 +701,9 @@ export class MeshTaskQueue {
       }
       const batch = this.batches[i];
       const mesh = ResourceCache.get().fetch(CacheTypes.MESH, batch.mesh_id);
+      if (mesh.index_buffer_offset === -1) {
+        continue;
+      }
 
       render_pass.pass.setIndexBuffer(
         index_buffer.buffer,

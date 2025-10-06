@@ -57,6 +57,11 @@ async function create_window() {
   }
 }
 
+console.log('Electron Version:', process.versions.electron);
+console.log('Chrome Version:', process.versions.chrome);
+console.log('V8 Version:', process.versions.v8);
+console.log('Node Version:', process.versions.node);
+
 app.whenReady().then(async () => {
   await create_window();
   app.on('activate', async () => {

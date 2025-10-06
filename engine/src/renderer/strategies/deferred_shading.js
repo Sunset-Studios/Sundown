@@ -1632,6 +1632,12 @@ export class DeferredShadingStrategy {
               index_buffer,
               dense_lights,
               light_count,
+              true, // use_gbuffer - enable G-buffer mode for hybrid rendering
+              main_position_image,
+              main_normal_image,
+              main_albedo_image,
+              main_smra_image,
+              main_emissive_image,
               this.force_recreate,
             );
             this.debug_overlay.set_properties(

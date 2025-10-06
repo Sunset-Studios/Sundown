@@ -385,9 +385,10 @@ export class Material {
             if (!texture) {
               texture = resource.is_array ? Texture.default_array() : Texture.default();
             }
+            let view = texture.view;
             return {
               binding: resource.binding,
-              resource: texture.view,
+              resource: view,
             };
           case ShaderResourceType.Sampler:
             return {

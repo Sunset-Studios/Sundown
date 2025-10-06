@@ -74,6 +74,11 @@ export class Renderer {
     this.has_f16 = this.adapter.features.has("shader-f16") && !options.use_precision_float;
     this.has_subgroups = this.adapter.features.has("subgroups");
 
+    let features = this.adapter.features.values();
+    for (let feature of features) {
+      console.log(feature);
+    }
+
     let required_features = ["indirect-first-instance"];
     if (this.has_f16) {
       required_features.push("shader-f16");
@@ -90,7 +95,7 @@ export class Renderer {
         requiredFeatures: required_features,
         requiredLimits: {
           maxColorAttachmentBytesPerSample: 64,
-          maxStorageBuffersPerShaderStage: 10,
+          maxStorageBuffersPerShaderStage: this.adapter.limits.maxStorageBuffersPerShaderStage,
           maxStorageBufferBindingSize: this.adapter.limits.maxStorageBufferBindingSize,
           maxComputeWorkgroupStorageSize: this.adapter.limits.maxComputeWorkgroupStorageSize,
           maxTextureArrayLayers: 2048,
