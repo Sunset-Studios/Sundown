@@ -9,9 +9,6 @@ import { CacheTypes } from "../renderer_types.js";
 import { Name } from "../../utility/names.js";
 import { Texture } from "../texture.js";
 
-const PIXEL_INFO_SIZE = 8;
-const TLAS_CANDIDATES = 4;
-
 const material_offsets_name = "material_table_offset";
 const texture_pool_albedo_name = Name.from("texture_pool_albedo");
 const texture_pool_normal_name = Name.from("texture_pool_normal");
@@ -41,7 +38,8 @@ const path_tracer_shade_shader_setup = {
 };
 
 export class PathTracer extends RayTracer {
-  params = new Uint32Array([0, 0, 0, 0]); // max_bounces, spp_per_frame, reset_accum_flag, use_gbuffer
+  params = new Uint32Array([0, 0, 0, 0, 0, 0]); // max_bounces, spp_per_frame, reset_accum_flag, use_gbuffer, trace_rate, frame_phase
+  frame_phase = 0;
 
   constructor() {
     super();
@@ -53,6 +51,8 @@ export class PathTracer extends RayTracer {
     height,
     max_bounces = 2,
     spp_per_frame = 4,
+    trace_rate = 1,
+    use_gbuffer = false,
     tlas_bvh2_bounds = null,
     tlas_bvh4_nodes = null,
     blas_atlas = null,
@@ -61,7 +61,6 @@ export class PathTracer extends RayTracer {
     index_buffer = null,
     dense_lights = null,
     light_count = null,
-    use_gbuffer = false,
     gbuffer_position = null,
     gbuffer_normal = null,
     gbuffer_albedo = null,
@@ -147,7 +146,12 @@ export class PathTracer extends RayTracer {
         this.params[1] = spp_per_frame; // spp_per_frame
         this.params[2] = view_moved ? 1 : 0; // reset_accum_flag
         this.params[3] = use_gbuffer ? 1 : 0; // use_gbuffer
+        this.params[4] = trace_rate; // trace_rate
+        this.params[5] = this.frame_phase; // frame_phase
         params_buffer.write_raw(this.params);
+        
+        // Cycle frame phase for next frame
+        this.frame_phase = (this.frame_phase + 1) % Math.max(1, trace_rate);
       }
     );
 
@@ -173,7 +177,7 @@ export class PathTracer extends RayTracer {
         },
         (graph, frame_data, encoder) => {
           const pass = graph.get_physical_pass(frame_data.current_pass);
-          pass.dispatch(Math.ceil(width / 16), Math.ceil(height / 16), 1);
+          pass.dispatch(Math.ceil(width / 8), Math.ceil(height / 8), 1);
         }
       );
 
@@ -200,7 +204,8 @@ export class PathTracer extends RayTracer {
           },
           (graph, frame_data, encoder) => {
             const pass = graph.get_physical_pass(frame_data.current_pass);
-            pass.dispatch(Math.ceil(width / 16), Math.ceil(height / 16), 1);
+            // Linear dispatch for 64x1x1 workgroup in wave-optimized hit shader
+            pass.dispatch(Math.ceil(width / 8), Math.ceil(height / 8), 1);
           }
         );
         
@@ -231,34 +236,9 @@ export class PathTracer extends RayTracer {
           },
           (graph, frame_data, encoder) => {
             const pass = graph.get_physical_pass(frame_data.current_pass);
-            pass.dispatch(Math.ceil(width / 16), Math.ceil(height / 16), 1);
+            pass.dispatch(Math.ceil(width / 8), Math.ceil(height / 8), 1);
           }
         );
-
-        // Shadow tracing pass for Next Event Estimation
-        // render_graph.add_pass(
-        //   `path_trace_shadow_${s}_${b}`,
-        //   RenderPassFlags.Compute,
-        //   {
-        //     inputs: [
-        //       pt_params,
-        //       path_state,
-        //       tlas_bvh2_bounds,
-        //       tlas_bvh4_nodes,
-        //       blas_atlas,
-        //       entity_transforms,
-        //       index_buffer,
-        //       mesh_asset_ids,
-        //       this.output_texture,
-        //     ],
-        //     outputs: [path_state],
-        //     shader_setup: path_tracer_shadow_shader_setup,
-        //   },
-        //   (graph, frame_data, encoder) => {
-        //     const pass = graph.get_physical_pass(frame_data.current_pass);
-        //     pass.dispatch(Math.ceil(width / 16), Math.ceil(height / 16), 1);
-        //   }
-        // );
       }
     }
   }

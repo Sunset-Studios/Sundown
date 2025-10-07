@@ -155,16 +155,37 @@ fn intersect_triangle(ray: Ray, v0: vec3<f32>, v1: vec3<f32>, v2: vec3<f32>) -> 
     return select(-1.0, t, t > 0.0001); // Epsilon check
 }
 
-fn build_local_ray(ray_world: ptr<function, Ray>, entity_transform: mat4x4f) -> Ray {
-    let inv_m = inverse4x4(entity_transform);
+fn build_local_ray(
+    ray_world: ptr<function, Ray>,
+    model: mat4x4f,
+    transpose_inverse_model: mat4x4f
+) -> Ray {
     let ro_world = (*ray_world).origin_and_tmin.xyz;
     let rd_world = (*ray_world).direction_and_tmax.xyz;
 
-    var ray_local: Ray;
-    ray_local.origin_and_tmin = vec4f((inv_m * vec4f(ro_world, 1.0)).xyz, (*ray_world).origin_and_tmin.w);
-    ray_local.direction_and_tmax = vec4f((inv_m * vec4f(rd_world, 0.0)).xyz, (*ray_world).direction_and_tmax.w);
+    let t_col0 = transpose_inverse_model[0].xyz;
+    let t_col1 = transpose_inverse_model[1].xyz;
+    let t_col2 = transpose_inverse_model[2].xyz;
 
-    let d = ray_local.direction_and_tmax.xyz;
+    let trans = model[3].xyz;
+    let ro_rel = ro_world - trans;
+
+    let rd_local = vec3f(
+        dot(rd_world, t_col0),
+        dot(rd_world, t_col1),
+        dot(rd_world, t_col2)
+    );
+    let ro_local = vec3f(
+        dot(ro_rel, t_col0),
+        dot(ro_rel, t_col1),
+        dot(ro_rel, t_col2)
+    );
+
+    var ray_local: Ray;
+    ray_local.origin_and_tmin = vec4f(ro_local, (*ray_world).origin_and_tmin.w);
+    ray_local.direction_and_tmax = vec4f(rd_local, (*ray_world).direction_and_tmax.w);
+
+    let d = rd_local;
     ray_local.inv_direction = vec4f(
         1.0 / max(abs(d.x), 1e-8) * select(1.0, -1.0, d.x < 0.0),
         1.0 / max(abs(d.y), 1e-8) * select(1.0, -1.0, d.y < 0.0),

@@ -1624,6 +1624,8 @@ export class DeferredShadingStrategy {
               image_extent.height,
               2, // max_bounces
               1, // spp_per_frame
+              1, // trace_rate - 1=full res, 2=half, 4=quarter, etc.
+              true, // use_gbuffer - enable G-buffer mode for hybrid rendering
               aabb_bounds,
               tlas_bvh4_nodes,
               blas_atlas,
@@ -1632,7 +1634,6 @@ export class DeferredShadingStrategy {
               index_buffer,
               dense_lights,
               light_count,
-              true, // use_gbuffer - enable G-buffer mode for hybrid rendering
               main_position_image,
               main_normal_image,
               main_albedo_image,

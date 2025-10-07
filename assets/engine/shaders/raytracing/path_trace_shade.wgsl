@@ -13,6 +13,8 @@ struct PathTracerParams {
     spp_per_frame: u32,
     reset_accum_flag: u32,
     use_gbuffer: u32,
+    trace_rate: u32,      // 1=full res, 2=half res, 4=quarter res, etc.
+    frame_phase: u32,     // cycles 0 to trace_rate-1
 };
 
 struct PathState {
@@ -80,10 +82,16 @@ fn sample_texture_or_float_param_handle(
     return param_val;
 }
 
-@compute @workgroup_size(16, 16)
+@compute @workgroup_size(8, 8)
 fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let res = textureDimensions(output_tex);
     if (gid.x >= res.x || gid.y >= res.y) { return; }
+    
+    // Temporal ray tracing: only trace a subset of pixels this frame
+    if (pt_params.trace_rate > 1u) {
+        let pixel_pattern = (gid.x + gid.y * 2u) % pt_params.trace_rate;
+        if (pixel_pattern != pt_params.frame_phase) { return; }
+    }
 
     let pixel_index = gid.y * res.x + gid.x;
 

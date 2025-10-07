@@ -74,11 +74,6 @@ export class Renderer {
     this.has_f16 = this.adapter.features.has("shader-f16") && !options.use_precision_float;
     this.has_subgroups = this.adapter.features.has("subgroups");
 
-    let features = this.adapter.features.values();
-    for (let feature of features) {
-      console.log(feature);
-    }
-
     let required_features = ["indirect-first-instance"];
     if (this.has_f16) {
       required_features.push("shader-f16");
