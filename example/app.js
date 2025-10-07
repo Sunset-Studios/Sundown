@@ -1819,7 +1819,8 @@ export class GITestScene extends Scene {
     wall_material.set_albedo([1, 1, 1, 1]);
     wall_material.set_emission(ambient_emissive);
     wall_material.set_roughness(0.8);
-    wall_material.set_metallic(0.35);
+    wall_material.set_metallic(0.9);
+    wall_material.set_specular(0.5);
 
     const red_material = StandardMaterial.create("testgym_red_material");
     const red_material_id = red_material.material_id;
@@ -1844,6 +1845,14 @@ export class GITestScene extends Scene {
     gray_material.set_metallic(0.9);
     gray_material.set_roughness(0.8);
     gray_material.set_specular(0.5);
+
+    // White emissive material for ceiling lights
+    const emissive_white_material = StandardMaterial.create("testgym_emissive_white_material");
+    const emissive_white_material_id = emissive_white_material.material_id;
+    emissive_white_material.set_albedo([1, 1, 1, 1]);
+    emissive_white_material.set_emission(15.0);
+    emissive_white_material.set_metallic(0.01);
+    emissive_white_material.set_roughness(0.9);
 
     // meshes
     const cube_mesh = Mesh.cube();
@@ -1880,6 +1889,16 @@ export class GITestScene extends Scene {
         wall_material_id
       );
       this.entities.push(ceiling);
+
+      // White emissive rectangle on ceiling (light)
+      const emissive_light = spawn_mesh_entity(
+        [0, room_size * 2.0 - 0.1, 0.0],
+        [0, 0, 0, 1],
+        [4.0, 0.1, 4.0],
+        cube_mesh,
+        emissive_white_material_id
+      );
+      this.entities.push(emissive_light);
 
       // back wall inner surface at z=-room_size/2
       const back_wall = spawn_mesh_entity(
@@ -1968,6 +1987,16 @@ export class GITestScene extends Scene {
       );
       this.entities.push(ceiling_second);
 
+      // White emissive rectangle on ceiling (light)
+      const emissive_light_second = spawn_mesh_entity(
+        [offset_x, room_size * 2.0 - 0.1, 0.0],
+        [0, 0, 0, 1],
+        [4.0, 0.1, 4.0],
+        cube_mesh,
+        emissive_white_material_id
+      );
+      this.entities.push(emissive_light_second);
+
       const back_wall_second = spawn_mesh_entity(
         [offset_x, room_size, -room_size - wall_thickness],
         [0, 0, 0, 1],
@@ -2053,6 +2082,16 @@ export class GITestScene extends Scene {
         wall_material_id
       );
       this.entities.push(ceiling_third);
+
+      // White emissive rectangle on ceiling (light)
+      const emissive_light_third = spawn_mesh_entity(
+        [offset_x, room_size * 2.0 - 0.1, 0.0],
+        [0, 0, 0, 1],
+        [4.0, 0.1, 4.0],
+        cube_mesh,
+        emissive_white_material_id
+      );
+      this.entities.push(emissive_light_third);
 
       const back_wall_third = spawn_mesh_entity(
         [offset_x, room_size, -room_size - wall_thickness],
@@ -2664,7 +2703,7 @@ export class SponzaScene extends Scene {
     const light_fragment_view = EntityManager.get_fragment(light_entity, LightFragment);
     light_fragment_view.type = LightType.DIRECTIONAL;
     light_fragment_view.color = [1, 1, 1];
-    light_fragment_view.intensity = 15.0;
+    light_fragment_view.intensity = 1.0;
     light_fragment_view.position = [5, 20, 2.5];
     light_fragment_view.active = true;
     light_fragment_view.is_primary_sun = 1;
@@ -2681,17 +2720,36 @@ export class SponzaScene extends Scene {
     const ground_material_id = ground_material.material_id;
     ground_material.set_albedo([0.75, 0.75, 0.75, 1.0]);
     ground_material.set_roughness(0.9);
-    ground_material.set_metallic(1.0);
+    ground_material.set_metallic(0.2);
+
+    // White emissive material for cube
+    const emissive_white_material = StandardMaterial.create("sponza_emissive_white_material");
+    const emissive_white_material_id = emissive_white_material.material_id;
+    emissive_white_material.set_albedo([1, 1, 1, 1]);
+    emissive_white_material.set_emission(25.0);
+    emissive_white_material.set_metallic(0.2);
+    emissive_white_material.set_roughness(0.9);
+    emissive_white_material.set_specular(0.5);
 
     const cube_mesh = Mesh.cube();
     const ground_entity = spawn_mesh_entity(
       [0, 0, 0],
-      [0, 0, 0, 1],
+      quat.fromEuler(quat.create(), 0, 0, 0),
       [4000, 1.0, 4000],
       cube_mesh,
       ground_material_id
     );
     this.entities.push(ground_entity);
+
+    // Emissive white cube in center of Sponza atrium
+    const emissive_cube = spawn_mesh_entity(
+      [0, 10.0, 0],
+      quat.fromEuler(quat.create(), 0, 0, 0),
+      [4.5, 0.2, 0.7],
+      cube_mesh,
+      emissive_white_material_id
+    );
+    this.entities.push(emissive_cube);
 
     const sponza_mesh = Mesh.from_gltf("engine/models/sponza/Sponza.gltf");
 

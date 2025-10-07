@@ -211,7 +211,8 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         // Emissive surfaces contribute light directly when hit
         // Weighted by the path throughput accumulated so far
         if (emissive > 0.0) {
-            let emissive_contribution = emissive * albedo * info.path_weight.xyz;
+            let weight = select(vec3f(1.0), info.path_weight.xyz, info.state_u32.x > 0u);
+            let emissive_contribution = emissive * albedo * weight;
             info.throughput += vec4f(emissive_contribution, 0.0);
         }
 
@@ -378,7 +379,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
 
         let alive_next = select(0u, 1u, (info.state_u32.x + 1u) < pt_params.max_bounces);
         // Spawn next ray from hit position along sampled direction
-        info.origin_tmin = vec4f(hit_pos + l * 0.001, 0.0001);
+        info.origin_tmin = vec4f(hit_pos + n * 0.001, 0.0001);
         // Store direction for next bounce and reset tmax
         info.direction_tmax = vec4f(l, 1e30);
         // Store bounce count

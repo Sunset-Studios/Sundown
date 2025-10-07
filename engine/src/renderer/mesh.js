@@ -1048,7 +1048,7 @@ export class Mesh {
     let emissive_tex = null;
     const ef = mat.emissiveFactor || [0.0, 0.0, 0.0];
     let emissive_scalar = (ef[0] + ef[1] + ef[2]) / 3.0;
-    emissive_scalar = Math.max(emissive_scalar, 0.02);
+    emissive_scalar = Math.max(emissive_scalar, 0.0);
     if (mat.emissiveTexture) {
       const tex = gltf.textures[mat.emissiveTexture.index];
       const src = tex?.base;

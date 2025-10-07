@@ -51,7 +51,7 @@ struct PathState {
 @group(1) @binding(8) var output_tex: texture_storage_2d<rgba16float, write>;
 
 // WAVE OPTIMIZATION #1: Early exit for shadow rays (massive win!)
-fn trace_blas_any_hit_wave(
+fn trace_blas_any_hit(
     ray_world: ptr<function, Ray>,
     ray_local: ptr<function, Ray>,
     entity_transform: mat4x4f,
@@ -150,81 +150,6 @@ fn trace_blas_any_hit_wave(
     return found_hit;
 }
 
-// Keep original trace_tlas (no wave ops - benefit too small vs overhead)
-fn trace_tlas(ray: ptr<function, Ray>) -> vec4<f32> {
-    var result = vec4<f32>(-1.0, 0.0, 0.0, 0.0);
-    var node_stack: array<u32, NODE_STACK_SIZE>;
-    node_stack[0] = 0u;
-    var stack_size = 1u;
-    var t_entry_min = 1e38;
-
-    loop {
-        if (stack_size == 0u) { break; }
-        stack_size = stack_size - 1u;
-
-        var node_idx = node_stack[stack_size];
-        if (node_idx == INVALID_IDX) { continue; }
-
-        let current_node = tlas_bvh4_nodes[node_idx];
-        let t_aabb = intersect_aabb(*ray, current_node.min.xyz, current_node.max.xyz);
-
-        if (t_aabb.x <= t_aabb.y && t_aabb.x >= (*ray).origin_and_tmin.w && t_aabb.x < (*ray).direction_and_tmax.w) {
-            if (stack_size < NODE_STACK_SIZE) {
-                let leaf_mask = bitcast<u32>(current_node.min.w);
-                var child_data: array<vec2<f32>, 4>;
-                var valid_children = 0u;
-
-                for (var i = 0u; i < 4u; i = i + 1u) {
-                    let child_raw = current_node.children[i];
-                    if (child_raw < 0.0) { continue; }
-
-                    let is_leaf_child = ((leaf_mask >> i) & 1u) != 0u;
-                    let child_idx = u32(child_raw);
-
-                    if (is_leaf_child) {
-                        let leaf_bounds = tlas_bvh2_bounds[child_idx];
-                        let t_leaf = intersect_aabb(*ray, leaf_bounds.min.xyz, leaf_bounds.max.xyz);
-
-                        if (t_leaf.x <= t_leaf.y && t_leaf.x >= (*ray).origin_and_tmin.w && t_leaf.x < t_entry_min) {
-                            t_entry_min = t_leaf.x;
-                            result = vec4<f32>(f32(u32(leaf_bounds.min.w)), 1.0, t_leaf.x, t_leaf.y);
-                        }
-                    } else {
-                        let child_node = tlas_bvh4_nodes[child_idx];
-                        let t_aabb_child = intersect_aabb(*ray, child_node.min.xyz, child_node.max.xyz);
-
-                        if (t_aabb_child.x <= t_aabb_child.y && t_aabb_child.x >= (*ray).origin_and_tmin.w && t_aabb_child.x < t_entry_min) {
-                            child_data[valid_children] = vec2<f32>(f32(child_idx), t_aabb_child.x);
-                            valid_children = valid_children + 1u;
-                        }
-                    }
-                }
-
-                for (var i = 0u; i < valid_children; i = i + 1u) {
-                    for (var j = i + 1u; j < valid_children; j = j + 1u) {
-                        if (child_data[j].y < child_data[i].y) {
-                            let temp = child_data[i];
-                            child_data[i] = child_data[j];
-                            child_data[j] = temp;
-                        }
-                    }
-                }
-
-                for (var i = 0u; i < valid_children; i = i + 1u) {
-                    if (stack_size < NODE_STACK_SIZE) {
-                        let idx = valid_children - 1u - i;
-                        node_stack[stack_size] = u32(child_data[idx].x);
-                        stack_size = stack_size + 1u;
-                    }
-                }
-            }
-        }
-    }
-
-    return result;
-}
-
-// Keep original trace_blas (no wave ops)
 fn trace_blas(
     ray_world: ptr<function, Ray>,
     ray_local: ptr<function, Ray>,
@@ -322,6 +247,217 @@ fn trace_blas(
     return hit;
 }
 
+fn trace_hit(ray: ptr<function, Ray>) -> RayHit {
+    var hit = RayHit(
+        vec4f(0.0, 0.0, 0.0, 0.0),
+        vec4f(0.0, 0.0, 0.0, -1.0),
+        vec4f(0.0, 0.0, 0.0, 0.0),
+        *ray
+    );
+
+    var node_stack: array<u32, NODE_STACK_SIZE>;
+    node_stack[0] = 0u;
+    var stack_size = 1u;
+
+    var t_min = 1e38;
+
+    var original_ray = *ray;
+
+    loop {
+        if (stack_size == 0u) { break; }
+        stack_size = stack_size - 1u;
+
+        var node_idx = node_stack[stack_size];
+        if (node_idx == INVALID_IDX) { continue; }
+
+        let current_node = tlas_bvh4_nodes[node_idx];
+        let t_aabb = intersect_aabb(*ray, current_node.min.xyz, current_node.max.xyz);
+
+        if (t_aabb.x <= t_aabb.y && t_aabb.x >= (*ray).origin_and_tmin.w && t_aabb.x < (*ray).direction_and_tmax.w) {
+            if (stack_size < NODE_STACK_SIZE) {
+                let leaf_mask = bitcast<u32>(current_node.min.w);
+                var child_data: array<vec2<f32>, 4>;
+                var valid_children = 0u;
+
+                for (var i = 0u; i < 4u; i = i + 1u) {
+                    let child_raw = current_node.children[i];
+                    if (child_raw < 0.0) { continue; }
+
+                    let is_leaf_child = ((leaf_mask >> i) & 1u) != 0u;
+                    let child_idx = u32(child_raw);
+
+                    if (is_leaf_child) {
+                        let leaf_bounds = tlas_bvh2_bounds[child_idx];
+                        let t_leaf = intersect_aabb(*ray, leaf_bounds.min.xyz, leaf_bounds.max.xyz);
+
+                        if (t_leaf.x <= t_leaf.y && t_leaf.x >= (*ray).origin_and_tmin.w && t_leaf.x < t_min) {
+                            t_min = t_leaf.x;
+
+                            let prim_store = u32(leaf_bounds.min.w);
+                            let mesh_id = mesh_asset_ids[prim_store];
+                            var entity_transform = entity_transforms[prim_store];
+
+                            var ray_local = build_local_ray(
+                                &original_ray,
+                                entity_transform.transform,
+                                entity_transform.transpose_inverse_model_matrix
+                            );
+                            
+                            let blas_hit = trace_blas(
+                                &original_ray,
+                                &ray_local,
+                                entity_transform.transform,
+                                entity_transform.transpose_inverse_model_matrix,
+                                mesh_id
+                            );
+
+                            if (blas_hit.normal_and_user_data.w >= 0.0) {
+                                hit = blas_hit;
+                                hit.prim_meshid_padding = vec4f(f32(prim_store), f32(mesh_id), 0.0, 0.0);
+                                hit.ray_local = ray_local;
+                            }
+                        }
+                    } else {
+                        let child_node = tlas_bvh4_nodes[child_idx];
+                        let t_aabb_child = intersect_aabb(*ray, child_node.min.xyz, child_node.max.xyz);
+
+                        if (t_aabb_child.x <= t_aabb_child.y && t_aabb_child.x >= (*ray).origin_and_tmin.w && t_aabb_child.x < t_min) {
+                            child_data[valid_children] = vec2<f32>(f32(child_idx), t_aabb_child.x);
+                            valid_children = valid_children + 1u;
+                        }
+                    }
+                }
+
+                for (var i = 0u; i < valid_children; i = i + 1u) {
+                    for (var j = i + 1u; j < valid_children; j = j + 1u) {
+                        if (child_data[j].y < child_data[i].y) {
+                            let temp = child_data[i];
+                            child_data[i] = child_data[j];
+                            child_data[j] = temp;
+                        }
+                    }
+                }
+
+                for (var i = 0u; i < valid_children; i = i + 1u) {
+                    if (stack_size < NODE_STACK_SIZE) {
+                        let idx = valid_children - 1u - i;
+                        node_stack[stack_size] = u32(child_data[idx].x);
+                        stack_size = stack_size + 1u;
+                    }
+                }
+            }
+        }
+    }
+
+    return hit;
+}
+
+fn trace_hit_any(ray: ptr<function, Ray>, warp_ctx: WarpCtx) -> RayHit {
+    var node_stack: array<u32, NODE_STACK_SIZE>;
+    node_stack[0] = 0u;
+    var stack_size = 1u;
+
+    var t_min = 1e38;
+
+    var original_ray = *ray;
+
+    loop {
+        if (stack_size == 0u) { break; }
+        stack_size = stack_size - 1u;
+
+        var node_idx = node_stack[stack_size];
+        if (node_idx == INVALID_IDX) { continue; }
+
+        let current_node = tlas_bvh4_nodes[node_idx];
+        let t_aabb = intersect_aabb(*ray, current_node.min.xyz, current_node.max.xyz);
+
+        if (t_aabb.x <= t_aabb.y && t_aabb.x >= (*ray).origin_and_tmin.w && t_aabb.x < (*ray).direction_and_tmax.w) {
+            if (stack_size < NODE_STACK_SIZE) {
+                let leaf_mask = bitcast<u32>(current_node.min.w);
+                var child_data: array<vec2<f32>, 4>;
+                var valid_children = 0u;
+
+                for (var i = 0u; i < 4u; i = i + 1u) {
+                    let child_raw = current_node.children[i];
+                    if (child_raw < 0.0) { continue; }
+
+                    let is_leaf_child = ((leaf_mask >> i) & 1u) != 0u;
+                    let child_idx = u32(child_raw);
+
+                    if (is_leaf_child) {
+                        let leaf_bounds = tlas_bvh2_bounds[child_idx];
+                        let t_leaf = intersect_aabb(*ray, leaf_bounds.min.xyz, leaf_bounds.max.xyz);
+
+                        if (t_leaf.x <= t_leaf.y && t_leaf.x >= (*ray).origin_and_tmin.w && t_leaf.x < t_min) {
+                            t_min = t_leaf.x;
+
+                            let prim_store = u32(leaf_bounds.min.w);
+                            let mesh_id = mesh_asset_ids[prim_store];
+                            let entity_transform = entity_transforms[prim_store];
+
+                            var ray_local = build_local_ray(
+                                &original_ray,
+                                entity_transform.transform,
+                                entity_transform.transpose_inverse_model_matrix
+                            );
+                            
+                            // Wave-optimized shadow ray test (massive win here!)
+                            if (trace_blas_any_hit(
+                                &original_ray,
+                                &ray_local,
+                                entity_transform.transform,
+                                mesh_id,
+                                warp_ctx
+                            )) {
+                                return RayHit(
+                                    vec4f(0.0, 0.0, 0.0, 0.0),
+                                    vec4f(0.0, 0.0, 0.0, 1.0),
+                                    vec4f(f32(prim_store), f32(mesh_id), 0.0, 0.0),
+                                    original_ray
+                                );
+                            }
+                        }
+                    } else {
+                        let child_node = tlas_bvh4_nodes[child_idx];
+                        let t_aabb_child = intersect_aabb(*ray, child_node.min.xyz, child_node.max.xyz);
+
+                        if (t_aabb_child.x <= t_aabb_child.y && t_aabb_child.x >= (*ray).origin_and_tmin.w && t_aabb_child.x < t_min) {
+                            child_data[valid_children] = vec2<f32>(f32(child_idx), t_aabb_child.x);
+                            valid_children = valid_children + 1u;
+                        }
+                    }
+                }
+
+                for (var i = 0u; i < valid_children; i = i + 1u) {
+                    for (var j = i + 1u; j < valid_children; j = j + 1u) {
+                        if (child_data[j].y < child_data[i].y) {
+                            let temp = child_data[i];
+                            child_data[i] = child_data[j];
+                            child_data[j] = temp;
+                        }
+                    }
+                }
+
+                for (var i = 0u; i < valid_children; i = i + 1u) {
+                    if (stack_size < NODE_STACK_SIZE) {
+                        let idx = valid_children - 1u - i;
+                        node_stack[stack_size] = u32(child_data[idx].x);
+                        stack_size = stack_size + 1u;
+                    }
+                }
+            }
+        }
+    }
+
+    return RayHit(
+        vec4f(0.0, 0.0, 0.0, 0.0),
+        vec4f(0.0, 0.0, 0.0, -1.0),
+        vec4f(0.0, 0.0, 0.0, 0.0),
+        original_ray
+    );
+}
+
+
 @compute @workgroup_size(8, 8)  // Keep 8x8 for cache locality!
 fn cs(
     @builtin(global_invocation_id) gid: vec3<u32>,
@@ -369,34 +505,9 @@ fn cs(
             1.0 / max(abs(d.z), 1e-8) * select(1.0, -1.0, d.z < 0.0),
             0.0
         );
-
-        var original_ray = ray;
-        var shadow_visible = true;
         
-        for (var k = 0u; k < TLAS_CANDIDATES; k = k + 1u) {
-            let tlas_result = trace_tlas(&ray);
-            if (tlas_result.y == 0.0) { break; }
-
-            let prim_store = u32(tlas_result.x);
-            let mesh_id = mesh_asset_ids[prim_store];
-            let entity_transform = entity_transforms[prim_store];
-
-            var ray_local = build_local_ray(
-                &original_ray,
-                entity_transform.transform,
-                entity_transform.transpose_inverse_model_matrix
-            );
-            
-            // Wave-optimized shadow ray test (massive win here!)
-            if (trace_blas_any_hit_wave(&original_ray, &ray_local, entity_transform.transform, mesh_id, warp_ctx)) {
-                shadow_visible = false;
-                break;
-            }
-
-            ray.origin_and_tmin.w = tlas_result.w + 0.001;
-        }
-
-        if (shadow_visible) {
+        // Wave-optimized shadow ray test (massive win here!)
+        if (trace_hit_any(&ray, warp_ctx).normal_and_user_data.w < 0.0) {
             ps.throughput += vec4f(ps.shadow_radiance.rgb, 0.0);
         }
 
@@ -415,99 +526,77 @@ fn cs(
             0.0
         );
 
-        var original_ray = ray;
+        let hit_result = trace_hit(&ray);
+        
+        if (hit_result.normal_and_user_data.w >= 0.0) {
+            let tri_id_local = u32(hit_result.normal_and_user_data.w);
+            let prim_store = u32(hit_result.prim_meshid_padding.x);
+            let mesh_id = u32(hit_result.prim_meshid_padding.y);
 
-        for (var k = 0u; k < TLAS_CANDIDATES; k = k + 1u) {
-            let tlas_result = trace_tlas(&ray);
-            if (tlas_result.y == 0.0) { break; }
+            let entity_transform = entity_transforms[prim_store];
 
-            let prim_store = u32(tlas_result.x);
-            let mesh_id = mesh_asset_ids[prim_store];
-            var entity_transform = entity_transforms[prim_store];
+            let mesh_entry = atlas_load_directory_entry(mesh_id);
+            let first_vertex = mesh_entry.first_vertex;
+            let first_index = mesh_entry.first_index;
 
-            var ray_local = build_local_ray(
-                &original_ray,
-                entity_transform.transform,
-                entity_transform.transpose_inverse_model_matrix
-            );
-            
-            let blas_hit = trace_blas(
-                &original_ray,
-                &ray_local,
-                entity_transform.transform,
-                entity_transform.transpose_inverse_model_matrix,
-                mesh_id
-            );
-            
-            if (blas_hit.normal_and_user_data.w >= 0.0) {
-                let tri_id_local = u32(blas_hit.normal_and_user_data.w);
-                let mesh_entry = atlas_load_directory_entry(mesh_id);
-                let first_vertex = mesh_entry.first_vertex;
-                let first_index = mesh_entry.first_index;
+            let i0 = index_buffer[first_index + tri_id_local * 3u + 0u];
+            let i1 = index_buffer[first_index + tri_id_local * 3u + 1u];
+            let i2 = index_buffer[first_index + tri_id_local * 3u + 2u];
+            let vertex0 = vertex_buffer[first_vertex + i0];
+            let vertex1 = vertex_buffer[first_vertex + i1];
+            let vertex2 = vertex_buffer[first_vertex + i2];
 
-                let i0 = index_buffer[first_index + tri_id_local * 3u + 0u];
-                let i1 = index_buffer[first_index + tri_id_local * 3u + 1u];
-                let i2 = index_buffer[first_index + tri_id_local * 3u + 2u];
-                let vertex0 = vertex_buffer[first_vertex + i0];
-                let vertex1 = vertex_buffer[first_vertex + i1];
-                let vertex2 = vertex_buffer[first_vertex + i2];
+            let v0 = vertex0.position.xyz;
+            let v1 = vertex1.position.xyz;
+            let v2 = vertex2.position.xyz;
+            let uv0 = vertex0.uv.xy;
+            let uv1 = vertex1.uv.xy;
+            let uv2 = vertex2.uv.xy;
+            let n0 = vertex0.normal.xyz;
+            let n1 = vertex1.normal.xyz;
+            let n2 = vertex2.normal.xyz;
+            let t0 = vertex0.tangent.xyz;
+            let t1 = vertex1.tangent.xyz;
+            let t2 = vertex2.tangent.xyz;
+            let b0 = vertex0.bitangent.xyz;
+            let b1 = vertex1.bitangent.xyz;
+            let b2 = vertex2.bitangent.xyz;
 
-                let v0 = vertex0.position.xyz;
-                let v1 = vertex1.position.xyz;
-                let v2 = vertex2.position.xyz;
-                let uv0 = vertex0.uv.xy;
-                let uv1 = vertex1.uv.xy;
-                let uv2 = vertex2.uv.xy;
-                let n0 = vertex0.normal.xyz;
-                let n1 = vertex1.normal.xyz;
-                let n2 = vertex2.normal.xyz;
-                let t0 = vertex0.tangent.xyz;
-                let t1 = vertex1.tangent.xyz;
-                let t2 = vertex2.tangent.xyz;
-                let b0 = vertex0.bitangent.xyz;
-                let b1 = vertex1.bitangent.xyz;
-                let b2 = vertex2.bitangent.xyz;
+            let t_tri = hit_result.position_and_t.w;
+            let p_local = hit_result.ray_local.origin_and_tmin.xyz + hit_result.ray_local.direction_and_tmax.xyz * t_tri;
+            let p_world = (entity_transform.transform * vec4f(p_local, 1.0)).xyz;
 
-                let t_tri = blas_hit.position_and_t.w;
-                let p_local = ray_local.origin_and_tmin.xyz + ray_local.direction_and_tmax.xyz * t_tri;
-                let p_world = (entity_transform.transform * vec4f(p_local, 1.0)).xyz;
+            let e0 = v1 - v0;
+            let e1 = v2 - v0;
+            let vp = p_local - v0;
+            let d00 = dot(e0, e0);
+            let d01 = dot(e0, e1);
+            let d11 = dot(e1, e1);
+            let d20 = dot(vp, e0);
+            let d21 = dot(vp, e1);
+            let denom = max(d00 * d11 - d01 * d01, 1e-8);
+            let v_bc = (d00 * d21 - d01 * d20) / denom;
+            let u_bc = (d11 * d20 - d01 * d21) / denom;
 
-                let e0 = v1 - v0;
-                let e1 = v2 - v0;
-                let vp = p_local - v0;
-                let d00 = dot(e0, e0);
-                let d01 = dot(e0, e1);
-                let d11 = dot(e1, e1);
-                let d20 = dot(vp, e0);
-                let d21 = dot(vp, e1);
-                let denom = max(d00 * d11 - d01 * d01, 1e-8);
-                let v_bc = (d00 * d21 - d01 * d20) / denom;
-                let u_bc = (d11 * d20 - d01 * d21) / denom;
+            let uv_hit = uv0 * (1.0 - u_bc - v_bc) + uv1 * u_bc + uv2 * v_bc;
+            let t_local = (t0 * (1.0 - u_bc - v_bc) + t1 * u_bc + t2 * v_bc);
+            let b_local = (b0 * (1.0 - u_bc - v_bc) + b1 * u_bc + b2 * v_bc);
+            let n_local = (n0 * (1.0 - u_bc - v_bc) + n1 * u_bc + n2 * v_bc);
 
-                let uv_hit = uv0 * (1.0 - u_bc - v_bc) + uv1 * u_bc + uv2 * v_bc;
-                let t_local = (t0 * (1.0 - u_bc - v_bc) + t1 * u_bc + t2 * v_bc);
-                let b_local = (b0 * (1.0 - u_bc - v_bc) + b1 * u_bc + b2 * v_bc);
-                let n_local = (n0 * (1.0 - u_bc - v_bc) + n1 * u_bc + n2 * v_bc);
+            var world_n = safe_normalize((entity_transform.transpose_inverse_model_matrix * vec4<f32>(n_local, 0.0)).xyz);
+            let world_t = safe_normalize((entity_transform.transform * vec4<f32>(t_local, 0.0)).xyz);
+            let world_b = safe_normalize((entity_transform.transform * vec4<f32>(b_local, 0.0)).xyz);
 
-                var world_n = safe_normalize((entity_transform.transpose_inverse_model_matrix * vec4<f32>(n_local, 0.0)).xyz);
-                let world_t = safe_normalize((entity_transform.transform * vec4<f32>(t_local, 0.0)).xyz);
-                let world_b = safe_normalize((entity_transform.transform * vec4<f32>(b_local, 0.0)).xyz);
+            let ray_dir = ray.direction_and_tmax.xyz;
+            world_n = select(world_n, -world_n, dot(world_n, ray_dir) > 0.0);
 
-                let ray_dir = ray.direction_and_tmax.xyz;
-                world_n = select(world_n, -world_n, dot(world_n, ray_dir) > 0.0);
-
-                ps.origin_tmin = vec4f(p_world + world_n * 0.001, 0.0001);
-                ps.direction_tmax = vec4f(ray_dir, f32(prim_store));
-                ps.normal_section_index = vec4f(world_n, f32(vertex0.section_index));
-                ps.hit_attr0 = vec4f(world_t, uv_hit.x);
-                ps.hit_attr1 = vec4f(world_b, uv_hit.y);
-                ps.state_u32.z = mesh_id;
-                ps.state_u32.w = tri_id_local;
-
-                break;
-            }
-
-            ray.origin_and_tmin.w = tlas_result.w + 0.001;
+            ps.origin_tmin = vec4f(p_world + world_n * 0.001, 0.0001);
+            ps.direction_tmax = vec4f(ray_dir, hit_result.prim_meshid_padding.x);
+            ps.normal_section_index = vec4f(world_n, f32(vertex0.section_index));
+            ps.hit_attr0 = vec4f(world_t, uv_hit.x);
+            ps.hit_attr1 = vec4f(world_b, uv_hit.y);
+            ps.state_u32.z = u32(hit_result.prim_meshid_padding.y);
+            ps.state_u32.w = tri_id_local;
         }
     }
 

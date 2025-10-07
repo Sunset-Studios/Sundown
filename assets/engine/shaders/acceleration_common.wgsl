@@ -34,6 +34,8 @@ struct Ray {
 struct RayHit {
     position_and_t: vec4<f32>,
     normal_and_user_data: vec4<f32>,
+    prim_meshid_padding: vec4<f32>,
+    ray_local: Ray,
 };
 
 // ------------------------------------------------------------------------------------
