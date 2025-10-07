@@ -12,11 +12,11 @@
     "prebuild": "npm run cook",
     "build": "vite build",
     "predevtop": "npm run cook",
-    "devtop": "vite build && electron-vite dev",
+    "devtop": "vite build && tauri dev",
     "prebuildtop": "npm run cook",
-    "buildtop": "vite build && electron-vite build",
+    "buildtop": "vite build && tauri build",
     "premake": "npm run cook",
-    "make": "vite build && electron-vite build && electron-forge make"
+    "make": "vite build && tauri build && tauri package"
   },
   "build": {
     "appId": "com.sunsetstudios.sundown",
@@ -49,21 +49,12 @@
   "author": "Adrian Sanchez",
   "license": "MIT",
   "dependencies": {
-    "electron": "^38.2.1",
     "gl-matrix": "^3.4.3",
     "vite": "^6.3.5",
     "wgsl_reflect": "^1.0.8"
   },
   "devDependencies": {
-    "@electron-forge/cli": "^7.4.0",
-    "@electron-forge/maker-deb": "^7.4.0",
-    "@electron-forge/maker-rpm": "^7.4.0",
-    "@electron-forge/maker-squirrel": "^7.4.0",
-    "@electron-forge/maker-zip": "^7.4.0",
-    "@electron-forge/plugin-auto-unpack-natives": "^7.4.0",
-    "@electron-forge/plugin-fuses": "^7.4.0",
-    "@electron/fuses": "^1.8.0",
-    "electron-vite": "^3.1.0",
+    "@tauri-apps/cli": "^2", 
     "express": "^4.21.2",
     "msdf-bmfont-xml": "^2.5.4",
     "prettier": "^3.3.3"

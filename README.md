@@ -55,7 +55,7 @@ To run the development project in a browser, use the npm `dev` command
 ```
 
 
-To run the development project in an electron instance, use the npm `devtop` command
+To run the development project in a Tauri instance, use the npm `devtop` command
 ```bash
 > npm run devtop
 ```
@@ -64,7 +64,7 @@ To run the development project in an electron instance, use the npm `devtop` com
 ### Packaging
 
 
-You can package and distribute builds for the web or for desktop with the help of [Electron Forge](https://www.electronforge.io/).
+You can package and distribute builds for the web or for desktop with the help of [Tauri](https://v2.tauri.app/).
 
 
 To package for the web, just run the npm `build` command.
@@ -76,7 +76,7 @@ To package for the web, just run the npm `build` command.
 Then copy the resulting **index.html** file and **assets** and **engine** directories into your site's root.
 
 
-To build executable electron packages, use the provided npm `make` command. This will create executable outputs in a top level *executables* directory.
+To build executable Tauri packages, use the provided npm `make` command. This will create executable outputs in a top level *executables* directory.
 ```bash
 > npm run make
 ```

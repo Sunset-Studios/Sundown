@@ -40,12 +40,6 @@ const path_tracer_shade_shader_setup = {
   },
 };
 
-const path_tracer_shadow_shader_setup = {
-  pipeline_shaders: {
-    compute: { path: "raytracing/path_trace_shadow.wgsl" },
-  },
-};
-
 export class PathTracer extends RayTracer {
   params = new Uint32Array([0, 0, 0, 0]); // max_bounces, spp_per_frame, reset_accum_flag, use_gbuffer
 

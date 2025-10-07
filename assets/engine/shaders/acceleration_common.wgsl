@@ -92,22 +92,20 @@ fn transform_aabb(node: AABB, transform: mat4x4<f32>) -> AABB {
 }
 
 // Ray-AABB intersection (slab method)
-fn intersect_aabb(ray: Ray, min_point: vec3<f32>, max_point: vec3<f32>) -> f32 {
+fn intersect_aabb(ray: Ray, min_point: vec3<f32>, max_point: vec3<f32>) -> vec2<f32> {
     var tmin = ray.origin_and_tmin.w;
     var tmax = ray.direction_and_tmax.w;
     for (var i = 0; i < 3; i++) {
         let inv_d = ray.inv_direction.xyz[i];
-        var t1 = (min_point[i] - ray.origin_and_tmin.xyz[i]) * inv_d;
-        var t2 = (max_point[i] - ray.origin_and_tmin.xyz[i]) * inv_d;
-        if (inv_d < 0.0) {
-            let temp = t1;
-            t1 = t2;
-            t2 = temp;
-        }
+        let inv_less_than_zero = inv_d < 0.0;
+        let min_p = select(min_point[i], max_point[i], inv_less_than_zero);
+        let max_p = select(max_point[i], min_point[i], inv_less_than_zero);
+        var t1 = (min_p - ray.origin_and_tmin.xyz[i]) * inv_d;
+        var t2 = (max_p - ray.origin_and_tmin.xyz[i]) * inv_d;
         tmin = max(tmin, t1);
         tmax = min(tmax, t2);
     }
-    return select(-1.0, tmin, tmin <= tmax);
+    return vec2<f32>(tmin, tmax);
 }
 
 // Calculate the surface area of an AABB
@@ -155,22 +153,6 @@ fn intersect_triangle(ray: Ray, v0: vec3<f32>, v1: vec3<f32>, v2: vec3<f32>) -> 
 
     let t = dot(e2, qvec) * inv_det;
     return select(-1.0, t, t > 0.0001); // Epsilon check
-}
-
-fn aabb_entry_exit_for_ray(ray: ptr<function, Ray>, bounds: AABB) -> vec2<f32> {
-    var tmin_local = (*ray).origin_and_tmin.w;
-    var tmax_local = (*ray).direction_and_tmax.w;
-    for (var axis = 0u; axis < 3u; axis = axis + 1u) {
-        let inv_d = (*ray).inv_direction.xyz[i32(axis)];
-        var t1 = (bounds.min.xyz[i32(axis)] - (*ray).origin_and_tmin.xyz[i32(axis)]) * inv_d;
-        var t2 = (bounds.max.xyz[i32(axis)] - (*ray).origin_and_tmin.xyz[i32(axis)]) * inv_d;
-        if (inv_d < 0.0) {
-            let tmp = t1; t1 = t2; t2 = tmp;
-        }
-        tmin_local = max(tmin_local, t1);
-        tmax_local = min(tmax_local, t2);
-    }
-    return vec2<f32>(tmin_local, tmax_local);
 }
 
 fn build_local_ray(ray_world: ptr<function, Ray>, entity_transform: mat4x4f) -> Ray {
