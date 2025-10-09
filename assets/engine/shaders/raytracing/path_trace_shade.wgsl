@@ -15,42 +15,52 @@ struct PathTracerParams {
     use_gbuffer: u32,
     trace_rate: u32,      // 1=full res, 2=half res, 4=quarter res, etc.
     frame_phase: u32,     // cycles 0 to trace_rate-1
+    ris_light_candidates: u32,    // Number of light candidates for RIS (M)
+    ris_brdf_candidates: u32,     // Number of BRDF candidates for RIS (M)
 };
 
 struct PathState {
     origin_tmin: vec4<f32>,
     direction_tmax: vec4<f32>,
     normal_section_index: vec4<f32>,
-    throughput: vec4<f32>,
-    state_u32: vec4<u32>, // x=bounce, y=alive(0/1)
+    state_u32: vec4<u32>, // x=bounce, y=alive(0/1), z=shadow_flag(0/1)
     hit_attr0: vec4<f32>, // xyz = world_tangent, w = uv.x
     hit_attr1: vec4<f32>, // xyz = world_bitangent, w = uv.y
-    rng: f32,
-    sample_count: f32,
-    prim_id: f32,
-    frame_stamp: f32,
     shadow_origin: vec4<f32>,      // xyz = origin, w = tmin
     shadow_direction: vec4<f32>,    // xyz = direction, w = tmax
     shadow_radiance: vec4<f32>,     // rgb = light contribution, a = needs_trace flag
-    path_weight: vec4<f32>,         // rgb = cumulative BRDF weight along path, a = unused
+};
+
+struct PathShade {
+    path_weight: vec4<f32>,
+    rng_sample_count_frame_stamp: vec4<f32>,
+    throughput: vec4<f32>,
+}
+
+struct RISReservoir {
+    selected_index: u32,
+    weight_sum: f32,
+    m: u32,              // Number of samples seen
+    w: f32,              // Final weight for selected sample
 };
 
 @group(1) @binding(0) var<uniform> pt_params: PathTracerParams;
 @group(1) @binding(1) var<storage, read_write> path_state: array<PathState>;
-@group(1) @binding(2) var<storage, read> material_params: array<StandardMaterialParams>;
-@group(1) @binding(3) var<storage, read> material_table_offset: array<u32>;
-@group(1) @binding(4) var<storage, read> material_palette: array<u32>;
-@group(1) @binding(5) var<storage, read> dense_lights_buffer: array<Light>;
-@group(1) @binding(6) var<storage, read> light_count_buffer: array<u32>;
-@group(1) @binding(7) var texture_pool_albedo: texture_2d_array<f32>;
-@group(1) @binding(8) var texture_pool_normal: texture_2d_array<f32>;
-@group(1) @binding(9) var texture_pool_roughness: texture_2d_array<f32>;
-@group(1) @binding(10) var texture_pool_metallic: texture_2d_array<f32>;
-@group(1) @binding(11) var texture_pool_ao: texture_2d_array<f32>;
-@group(1) @binding(12) var texture_pool_height: texture_2d_array<f32>;
-@group(1) @binding(13) var texture_pool_specular: texture_2d_array<f32>;
-@group(1) @binding(14) var texture_pool_emission: texture_2d_array<f32>;
-@group(1) @binding(15) var output_tex: texture_storage_2d<rgba16float, write>;
+@group(1) @binding(2) var<storage, read_write> path_shade: array<PathShade>;
+@group(1) @binding(3) var<storage, read> material_params: array<StandardMaterialParams>;
+@group(1) @binding(4) var<storage, read> material_table_offset: array<u32>;
+@group(1) @binding(5) var<storage, read> material_palette: array<u32>;
+@group(1) @binding(6) var<storage, read> dense_lights_buffer: array<Light>;
+@group(1) @binding(7) var<storage, read> light_count_buffer: array<u32>;
+@group(1) @binding(8) var texture_pool_albedo: texture_2d_array<f32>;
+@group(1) @binding(9) var texture_pool_normal: texture_2d_array<f32>;
+@group(1) @binding(10) var texture_pool_roughness: texture_2d_array<f32>;
+@group(1) @binding(11) var texture_pool_metallic: texture_2d_array<f32>;
+@group(1) @binding(12) var texture_pool_ao: texture_2d_array<f32>;
+@group(1) @binding(13) var texture_pool_height: texture_2d_array<f32>;
+@group(1) @binding(14) var texture_pool_specular: texture_2d_array<f32>;
+@group(1) @binding(15) var texture_pool_emission: texture_2d_array<f32>;
+@group(1) @binding(16) var output_tex: texture_storage_2d<rgba16float, write>;
 
 fn sample_texture_or_vec4_param_handle(
     tex_handle: u32,
@@ -82,6 +92,58 @@ fn sample_texture_or_float_param_handle(
     return param_val;
 }
 
+// =============================================================================
+// RIS (Resampled Importance Sampling) Helper Functions
+// =============================================================================
+fn ris_reservoir_init() -> RISReservoir {
+    var reservoir: RISReservoir;
+    reservoir.selected_index = 0u;
+    reservoir.weight_sum = 0.0;
+    reservoir.m = 0u;
+    reservoir.w = 0.0;
+    return reservoir;
+}
+
+// Update reservoir with a new candidate sample
+// weight = target_pdf / source_pdf (unnormalized)
+// rng_state: pointer to RNG state that will be updated
+fn ris_reservoir_update(
+    reservoir: ptr<function, RISReservoir>,
+    candidate_index: u32,
+    weight: f32,
+    rng_state: ptr<function, u32>
+) {
+    (*reservoir).weight_sum += weight;
+    (*reservoir).m += 1u;
+    
+    // Weighted reservoir sampling: accept with probability weight / weight_sum
+    *rng_state = random_seed(*rng_state);
+    let xi = rand_float(*rng_state);
+    if (xi * (*reservoir).weight_sum < weight) {
+        (*reservoir).selected_index = candidate_index;
+    }
+}
+
+// Finalize reservoir and compute final weight
+fn ris_reservoir_finalize(
+    reservoir: ptr<function, RISReservoir>,
+    selected_target_pdf: f32
+) {
+    // W = (1/M) * (weight_sum / selected_target_pdf)
+    // This ensures unbiased estimation
+    let contributes = (*reservoir).m > 0u && selected_target_pdf > 0.0;
+    let unclamped_weight = (*reservoir).weight_sum / (f32((*reservoir).m) * max(selected_target_pdf, 0.0001));
+    
+    // Clamp RIS weight to prevent fireflies from extreme variance
+    // This introduces a small bias but dramatically reduces fireflies
+    let max_ris_weight = 100.0;
+    (*reservoir).w = select(
+        0.0,
+        min(max_ris_weight, unclamped_weight),
+        contributes
+    );
+}
+
 @compute @workgroup_size(8, 8)
 fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let res = textureDimensions(output_tex);
@@ -96,7 +158,16 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let pixel_index = gid.y * res.x + gid.x;
 
     var info = path_state[pixel_index];
+    var shade = path_shade[pixel_index];
     var sample_rgb = vec3f(0.0);
+
+    // === SHADOW CONTRIBUTION ===
+    // Shadow contribution is added directly to the throughput if there is no shadow hit
+    if (info.state_u32.z == 1u) {
+        shade.throughput += vec4f(info.shadow_radiance.rgb, 0.0);
+        info.shadow_radiance = vec4f(0.0);
+        info.state_u32.z = 0u;
+    }
     
     if (info.state_u32.w != 0xffffffffu) {
         var albedo: vec3<f32>;
@@ -205,86 +276,147 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
 
         // PBR BRDF evaluation for irradiance accumulation
         // The view direction is stored in direction_tmax.xyz (from init pass for G-buffer, hit pass for ray tracing)
-        let v_dir = select(-normalize(info.direction_tmax.xyz), normalize(info.direction_tmax.xyz), is_gbuffer_hit);
+        let v_dir = select(
+            -normalize(info.direction_tmax.xyz),
+            normalize(info.direction_tmax.xyz),
+            is_gbuffer_hit
+        );
 
         // === EMISSIVE CONTRIBUTION ===
         // Emissive surfaces contribute light directly when hit
         // Weighted by the path throughput accumulated so far
         if (emissive > 0.0) {
-            let weight = select(vec3f(1.0), info.path_weight.xyz, info.state_u32.x > 0u);
-            let emissive_contribution = emissive * albedo * weight;
-            info.throughput += vec4f(emissive_contribution, 0.0);
+            let emissive_contribution = emissive * albedo * shade.path_weight.xyz;
+            shade.throughput += vec4f(emissive_contribution, 0.0);
         }
 
-        // === NEXT EVENT ESTIMATION: Sample Light for Direct Lighting ===
+        // === NEXT EVENT ESTIMATION: RIS for Direct Lighting ===
         let num_lights = light_count_buffer[0];
         if (num_lights > 0u) {
-            // Sample random light
-            var rng_light = u32(info.rng);
+            var rng_light = u32(shade.rng_sample_count_frame_stamp.x);
             if (rng_light == 0u) { rng_light = hash(pixel_index ^ u32(frame_info.frame_index)); }
             else { rng_light = random_seed(rng_light); }
-            let light_idx = u32(rand_float(rng_light) * f32(num_lights)) % num_lights;
-            let light = dense_lights_buffer[light_idx];
             
-            let light_dir = get_light_dir(light, hit_pos);
-
-            // Compute attenuation for point/spot lights
-            var attenuation = 1.0;
-            if (light.light_type == 1.0) { // Point
-                let light_vec = light.position.xyz - hit_pos;
-                let distance_sq = dot(light_vec, light_vec);
-                attenuation = compute_distance_attenuation(distance_sq, light.radius);
-            } else if (light.light_type == 2.0) { // Spot
-                let light_vec = light.position.xyz - hit_pos;
-                let distance_sq = dot(light_vec, light_vec);
-                let dist_att = compute_distance_attenuation(distance_sq, light.radius);
+            // RIS: Generate M light candidates and resample
+            let m_light_candidates = max(1u, pt_params.ris_light_candidates);
+            var light_reservoir = ris_reservoir_init();
+            
+            // Store candidate light data for selected light
+            var candidate_lights: array<Light, 8>; // Support up to 8 candidates
+            var candidate_dirs: array<vec3<f32>, 8>;
+            var candidate_attenuations: array<f32, 8>;
+            var candidate_distances: array<f32, 8>;
+            
+            // Generate M candidate lights and evaluate their contributions
+            for (var i = 0u; i < min(m_light_candidates, 8u); i = i + 1u) {
+                rng_light = random_seed(rng_light);
+                let light_idx = u32(rand_float(rng_light) * f32(num_lights)) % num_lights;
+                let candidate_light = dense_lights_buffer[light_idx];
                 
-                let cos_theta = dot(-light_dir, normalize(light.direction.xyz));
-                let cos_inner = cos(light.direction.w);
-                let cos_outer = cos(light.outer_angle);
-                let angle_att = compute_spot_angle_attenuation(cos_theta, cos_inner, cos_outer);
+                let candidate_light_dir = get_light_dir(candidate_light, hit_pos);
                 
-                attenuation = dist_att * angle_att;
+                // Compute attenuation for point/spot lights
+                var candidate_attenuation = 1.0;
+                if (candidate_light.light_type == 1.0) { // Point
+                    let light_vec = candidate_light.position.xyz - hit_pos;
+                    let distance_sq = dot(light_vec, light_vec);
+                    candidate_attenuation = compute_distance_attenuation(distance_sq, candidate_light.radius);
+                } else if (candidate_light.light_type == 2.0) { // Spot
+                    let light_vec = candidate_light.position.xyz - hit_pos;
+                    let distance_sq = dot(light_vec, light_vec);
+                    let dist_att = compute_distance_attenuation(distance_sq, candidate_light.radius);
+                    
+                    let cos_theta = dot(-candidate_light_dir, normalize(candidate_light.direction.xyz));
+                    let cos_inner = cos(candidate_light.direction.w);
+                    let cos_outer = cos(candidate_light.outer_angle);
+                    let angle_att = compute_spot_angle_attenuation(cos_theta, cos_inner, cos_outer);
+                    
+                    candidate_attenuation = dist_att * angle_att;
+                }
+                candidate_attenuation = clamp(candidate_attenuation, 0.0, 1.0);
+                
+                // Compute unshadowed contribution (target function)
+                let candidate_brdf = calculate_brdf_rt(
+                    n, v_dir, candidate_light_dir,
+                    albedo, roughness, metallic,
+                    reflectance, clear_coat, clear_coat_roughness
+                );
+                
+                // Target PDF: unshadowed contribution = BRDF * L_e * attenuation
+                // Use luminance for better stability than simple average
+                let brdf_luminance = max(0.0, candidate_brdf.x * 0.2126 + candidate_brdf.y * 0.7152 + candidate_brdf.z * 0.0722);
+                let target_weight = brdf_luminance
+                    * candidate_light.intensity
+                    * candidate_attenuation;
+                
+                // Source PDF: uniform light selection = 1/num_lights
+                // RIS weight = target / source = target * num_lights
+                let ris_weight = max(0.0, target_weight * f32(num_lights));
+                
+                // Store candidate data
+                candidate_lights[i] = candidate_light;
+                candidate_dirs[i] = candidate_light_dir;
+                candidate_attenuations[i] = candidate_attenuation;
+                candidate_distances[i] = select(1e30, length(candidate_light.position.xyz - hit_pos), candidate_light.light_type != 0.0);
+                
+                // Update reservoir (only if weight is valid and positive)
+                if (ris_weight > 0.0 && !isinf(ris_weight)) {
+                    ris_reservoir_update(&light_reservoir, i, ris_weight, &rng_light);
+                }
             }
-            attenuation = clamp(attenuation, 0.0, 1.0);
             
-            // Compute direct lighting contribution (BRDF * light)
-            let direct_brdf = calculate_brdf_rt(
-                n, v_dir, light_dir,
-                albedo, roughness, metallic,
-                reflectance, clear_coat, clear_coat_roughness
-            );
-            
-            // Account for light selection probability (1/num_lights) and light properties
-            // Multiply by path_weight to properly accumulate weighted contributions
-            let light_contrib = direct_brdf
-                * light.color.rgb
-                * light.intensity
-                * attenuation
-                * f32(num_lights)
-                * info.path_weight.xyz;
-            
-            // Write shadow ray for visibility test
-            info.shadow_origin = vec4f(hit_pos + light_dir * 0.001, 0.0001);
-            
-            // For directional light, use large tmax; for point/spot, compute distance to light
-            let light_dist = select(1e30, length(light.position.xyz - hit_pos), light.light_type != 0.0);
-            info.shadow_direction = vec4f(light_dir, light_dist * 0.999);
-            info.shadow_radiance = vec4f(light_contrib, 1.0); // a=1.0 means active shadow ray
+            // Only process if we have valid candidates
+            if (light_reservoir.m > 0u) {
+                // Retrieve selected light from reservoir
+                let selected_idx = light_reservoir.selected_index;
+                let selected_light = candidate_lights[selected_idx];
+                let selected_light_dir = candidate_dirs[selected_idx];
+                let selected_attenuation = candidate_attenuations[selected_idx];
+                let selected_distance = candidate_distances[selected_idx];
+                
+                // Compute final contribution with RIS weight
+                let selected_brdf = calculate_brdf_rt(
+                    n, v_dir, selected_light_dir,
+                    albedo, roughness, metallic,
+                    reflectance, clear_coat, clear_coat_roughness
+                );
+                
+                // Recompute target PDF for selected sample (must match candidate computation)
+                let selected_brdf_luminance = max(0.0, selected_brdf.x * 0.2126 + selected_brdf.y * 0.7152 + selected_brdf.z * 0.0722);
+                let selected_target_pdf = selected_brdf_luminance
+                    * selected_light.intensity
+                    * selected_attenuation;
+                
+                // Finalize reservoir to get final weight
+                ris_reservoir_finalize(&light_reservoir, selected_target_pdf);
+                
+                // Final contribution = BRDF * L_e * attenuation * RIS_weight * path_weight
+                let light_contrib = selected_brdf
+                    * selected_light.color.rgb
+                    * selected_light.intensity
+                    * selected_attenuation
+                    * light_reservoir.w
+                    * shade.path_weight.xyz;
+                
+                // Write shadow ray for visibility test
+                info.shadow_origin = vec4f(hit_pos + selected_light_dir * 0.001, 0.0001);
+                info.shadow_direction = vec4f(selected_light_dir, selected_distance * 0.999);
+                info.shadow_radiance = vec4f(light_contrib, 1.0); // a=1.0 means active shadow ray
+            }
         }
 
         // === RUSSIAN ROULETTE ===
-        var rng = u32(info.rng);
+        var rng = u32(shade.rng_sample_count_frame_stamp.x);
         if (rng == 0u) { rng = hash(pixel_index ^ u32(frame_info.frame_index)); }
         else { rng = random_seed(rng); }
 
         // Probabilistically terminate paths based on throughput
-        let path_throughput = (info.path_weight.x + info.path_weight.y + info.path_weight.z) / 3.0;
-        let survival_prob = clamp(path_throughput, 0.01, 0.99);
+        // Use luminance for better color-aware termination
+        let survival_prob = max(shade.path_weight.x, max(shade.path_weight.y, shade.path_weight.z));
 
         var rng_rr = random_seed(rng);
         let rr_sample = rand_float(rng_rr);
-        info.rng = f32(rng_rr);
+        shade.rng_sample_count_frame_stamp.x = f32(rng_rr);
 
         if (rr_sample > survival_prob) {
             // Terminate path
@@ -294,17 +426,9 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         }
 
         // Boost surviving paths to maintain unbiased estimate
-        info.path_weight = vec4f(info.path_weight.xyz / survival_prob, 0.0);
+        shade.path_weight = vec4f(shade.path_weight.xyz / survival_prob, 0.0);
 
-        // === BRDF Importance Sampling Strategy ===
-        // Choose between diffuse and specular sampling based on material properties
-        let r1 = rand_float(rng);
-        rng = random_seed(rng);
-        let r2 = rand_float(rng);
-        rng = random_seed(rng);
-        let r3 = rand_float(rng);
-        info.rng = f32(rng);
-
+        // === RIS for BRDF Importance Sampling ===
         // Clamp roughness to match what calculate_brdf_rt uses
         let clamped_roughness = clamp(roughness, 0.001, 1.0);
 
@@ -317,89 +441,126 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         let fresnel = f0 + (vec3<f32>(1.0) - f0) * pow(1.0 - n_dot_v, 5.0);
         let fresnel_luminance = (fresnel.x + fresnel.y + fresnel.z) / 3.0;
         
-        // Simple, robust sampling strategy to avoid variance explosion:
-        // - Only use GGX sampling for smooth materials or metals
-        // - For rough dielectrics, always use cosine sampling
-        // This prevents rare high-weight specular samples from dominating on rough surfaces
-        
         let use_ggx = (clamped_roughness < 0.3) || (metallic > 0.5);
         let specular_prob_if_ggx = clamp(fresnel_luminance, 0.01, 0.99);
+        let min_ggx_prob = 0.0;
+        let mis_specular_prob = select(min_ggx_prob, specular_prob_if_ggx, use_ggx);
 
-        var pdf: f32;
-        var brdf_weight: vec3<f32>;
-        var l: vec3<f32>;
-
-        // === COSINE-WEIGHTED HEMISPHERE SAMPLING (Diffuse) ===
-        if (use_ggx && r3 < specular_prob_if_ggx) {
-            let h = importance_sample_ggx(vec2<f32>(r1, r2), n, clamped_roughness);
-            l = normalize(reflect(-v_dir, h));
-        } else {
-            let phi = 2.0 * PI * r1;
-            let cos_theta = sqrt(1.0 - r2);
-            let sin_theta = sqrt(r2);
+        // RIS: Generate M BRDF direction candidates and resample
+        let m_brdf_candidates = max(1u, pt_params.ris_brdf_candidates);
+        var brdf_reservoir = ris_reservoir_init();
+        
+        // Store candidate directions and their properties
+        var candidate_dirs: array<vec3<f32>, 8>; // Support up to 8 candidates
+        var candidate_pdfs: array<f32, 8>;
+        
+        for (var i = 0u; i < min(m_brdf_candidates, 8u); i = i + 1u) {
+            let r1 = rand_float(rng);
+            rng = random_seed(rng);
+            let r2 = rand_float(rng);
+            rng = random_seed(rng);
+            let r3 = rand_float(rng);
+            rng = random_seed(rng);
             
-            let up = select(vec3f(0.0, 1.0, 0.0), vec3f(1.0, 0.0, 0.0), abs(n.z) > 0.999);
-            let tangent = normalize(cross(up, n));
-            let bitangent = normalize(cross(n, tangent));
-            let dir_local = vec3f(cos(phi) * sin_theta, sin(phi) * sin_theta, cos_theta);
-            l = normalize(tangent * dir_local.x + bitangent * dir_local.y + n * dir_local.z);
+            var candidate_dir: vec3<f32>;
+            
+            // Sample direction using same strategy as before
+            if (use_ggx && r3 < specular_prob_if_ggx) {
+                let h = importance_sample_ggx(vec2<f32>(r1, r2), n, clamped_roughness);
+                candidate_dir = normalize(reflect(-v_dir, h));
+            } else {
+                let phi = 2.0 * PI * r1;
+                let cos_theta = sqrt(1.0 - r2);
+                let sin_theta = sqrt(r2);
+                
+                let up = select(vec3f(0.0, 1.0, 0.0), vec3f(1.0, 0.0, 0.0), abs(n.z) > 0.999);
+                let tangent = normalize(cross(up, n));
+                let bitangent = normalize(cross(n, tangent));
+                let dir_local = vec3f(cos(phi) * sin_theta, sin(phi) * sin_theta, cos_theta);
+                candidate_dir = normalize(tangent * dir_local.x + bitangent * dir_local.y + n * dir_local.z);
+            }
+            
+            // Compute PDF for this candidate
+            let h = normalize(v_dir + candidate_dir);
+            let n_dot_l = max(dot(n, candidate_dir), 0.0001);
+            let n_dot_h = max(dot(n, h), 0.0001);
+            let v_dot_h = max(dot(v_dir, h), 0.0001);
+            let d = d_ggx(n_dot_h, clamped_roughness);
+            let cosine_pdf = n_dot_l / PI;
+            let ggx_pdf = d * n_dot_h / max(4.0 * v_dot_h, 0.0001);
+            let candidate_pdf = mis_specular_prob * ggx_pdf + (1.0 - mis_specular_prob) * cosine_pdf;
+            
+            // Evaluate BRDF for this candidate (target function)
+            let candidate_brdf = calculate_brdf_rt(
+                n, v_dir, candidate_dir,
+                albedo, roughness, metallic,
+                reflectance, clear_coat, clear_coat_roughness
+            );
+            
+            // Target: BRDF * cos(theta)
+            // Use luminance for better stability
+            let candidate_brdf_luminance = max(0.0, candidate_brdf.x * 0.2126 + candidate_brdf.y * 0.7152 + candidate_brdf.z * 0.0722);
+            let target_value = candidate_brdf_luminance * n_dot_l;
+            
+            // RIS weight = target / source_pdf
+            let ris_weight = max(0.0, target_value / max(candidate_pdf, 0.0001));
+            
+            // Store candidate data
+            candidate_dirs[i] = candidate_dir;
+            candidate_pdfs[i] = candidate_pdf;
+            
+            // Update reservoir (only if weight is valid and positive)
+            if (ris_weight > 0.0 && !isinf(ris_weight)) {
+                ris_reservoir_update(&brdf_reservoir, i, ris_weight, &rng);
+            }
         }
         
-        // ALWAYS compute GGX PDF for MIS, even for rough materials
-        // This prevents huge weights when cosine accidentally samples near specular peak
-        let h = normalize(v_dir + l);
-        let n_dot_l = max(dot(n, l), 0.0001);
-        let n_dot_h = max(dot(n, h), 0.0001);
-        let v_dot_h = max(dot(v_dir, h), 0.0001);
-        let d = d_ggx(n_dot_h, clamped_roughness);
-        let cosine_pdf = n_dot_l / PI;
-        let ggx_pdf = d * n_dot_h / max(4.0 * v_dot_h, 0.0001);
+        shade.rng_sample_count_frame_stamp.x = f32(rng);
         
-        // Balance heuristic MIS: Always account for both PDFs
-        // Even for rough materials where we never sample GGX, we still compute its PDF
-        // When cosine accidentally samples near specular peak, GGX PDF will be high, increasing total PDF
-        // This prevents the weight from exploding at grazing angles
-        // Use a small minimum probability to ensure GGX PDF always contributes
-        let min_ggx_prob = 0.05; // Always consider at least 5% chance of GGX sampling
-        let mis_specular_prob = select(min_ggx_prob, specular_prob_if_ggx, use_ggx);
-        pdf = mis_specular_prob * ggx_pdf + (1.0 - mis_specular_prob) * cosine_pdf;
+        // Retrieve selected direction from reservoir
+        let selected_idx = brdf_reservoir.selected_index;
+        let l = candidate_dirs[selected_idx];
+        let pdf = candidate_pdfs[selected_idx];
         
-        // Evaluate full BRDF
+        // Recompute target for selected sample (must match candidate computation)
         let brdf_value = calculate_brdf_rt(
             n, v_dir, l,
             albedo, roughness, metallic,
             reflectance, clear_coat, clear_coat_roughness
         );
+        let brdf_value_luminance = max(0.0, brdf_value.x * 0.2126 + brdf_value.y * 0.7152 + brdf_value.z * 0.0722);
+        let selected_target = brdf_value_luminance;
         
-        // Weight = BRDF * cos(theta) / PDF
-        brdf_weight = brdf_value / max(pdf, 0.0001);
+        // Finalize reservoir
+        ris_reservoir_finalize(&brdf_reservoir, selected_target);
         
-        // Update path weight for next bounce (multiply accumulated weight by this bounce's BRDF contribution)
-        info.path_weight = vec4f(info.path_weight.xyz * brdf_weight, 0.0);
-
+        // Weight = (BRDF * cos(theta)) * RIS_weight
+        let brdf_weight = brdf_value * brdf_reservoir.w;
+        
         let alive_next = select(0u, 1u, (info.state_u32.x + 1u) < pt_params.max_bounces);
         // Spawn next ray from hit position along sampled direction
-        info.origin_tmin = vec4f(hit_pos + n * 0.001, 0.0001);
+        info.origin_tmin = vec4f(hit_pos + l * 0.001, 0.0001);
         // Store direction for next bounce and reset tmax
         info.direction_tmax = vec4f(l, 1e30);
         // Store bounce count
         info.state_u32.x = info.state_u32.x + 1u;
         // Store alive flag
         info.state_u32.y = alive_next;
-        // Clear mesh id for next stage
-        info.state_u32.z = 0u;
         // Clear triangle id for next stage
         info.state_u32.w = 0xffffffffu;
-
-        info.sample_count += 1.0;
+        // Increment sample count
+        shade.rng_sample_count_frame_stamp.y += 1.0;
+        // Update path weight for next bounce
+        shade.path_weight = vec4f(shade.path_weight.xyz * brdf_weight, 0.0);
     }
 
     // Write updated path state (shadow ray will be processed by shadow pass)
     path_state[pixel_index] = info;
+    path_shade[pixel_index] = shade;
     
     // Display current accumulated result
-    let denom = max(info.sample_count, 1.0);
-    let avg = vec4f(info.throughput.xyz / denom, 1.0);
+    let denom = max(shade.rng_sample_count_frame_stamp.y, 1.0);
+    let avg = vec4f(shade.throughput.xyz / denom, 1.0);
     
     textureStore(output_tex, vec2<i32>(gid.xy), avg);
 }

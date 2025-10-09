@@ -38,7 +38,7 @@ const path_tracer_shade_shader_setup = {
 };
 
 export class PathTracer extends RayTracer {
-  params = new Uint32Array([0, 0, 0, 0, 0, 0]); // max_bounces, spp_per_frame, reset_accum_flag, use_gbuffer, trace_rate, frame_phase
+  params = new Uint32Array([0, 0, 0, 0, 0, 0, 0, 0, 0]); // max_bounces, spp_per_frame, reset_accum_flag, use_gbuffer, trace_rate, frame_phase, ris_light_candidates, ris_brdf_candidates
   frame_phase = 0;
 
   constructor() {
@@ -53,6 +53,8 @@ export class PathTracer extends RayTracer {
     spp_per_frame = 4,
     trace_rate = 1,
     use_gbuffer = false,
+    ris_light_candidates = 8,
+    ris_brdf_candidates = 4,
     tlas_bvh2_bounds = null,
     tlas_bvh4_nodes = null,
     blas_atlas = null,
@@ -66,7 +68,7 @@ export class PathTracer extends RayTracer {
     gbuffer_albedo = null,
     gbuffer_smra = null,
     gbuffer_emissive = null,
-    force_recreate = false,
+    force_recreate = false
   ) {
     super.setup(render_graph, width, height, force_recreate);
 
@@ -124,7 +126,13 @@ export class PathTracer extends RayTracer {
 
     const path_state = render_graph.create_buffer({
       name: "pt_path_state",
-      size: width * height * 48 * 4, // 12 vec4<f32> ≈ PathState (includes shadow ray fields + path_weight)
+      size: width * height * 36 * 4, // 9 vec4<f32> ≈ PathState
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+      force: force_recreate,
+    });
+    const path_shade = render_graph.create_buffer({
+      name: "pt_path_shade",
+      size: width * height * 12 * 4, // 3 vec4<f32> ≈ PathShade
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
       force: force_recreate,
     });
@@ -148,15 +156,18 @@ export class PathTracer extends RayTracer {
         this.params[3] = use_gbuffer ? 1 : 0; // use_gbuffer
         this.params[4] = trace_rate; // trace_rate
         this.params[5] = this.frame_phase; // frame_phase
+        this.params[6] = ris_light_candidates; // ris_light_candidates
+        this.params[7] = ris_brdf_candidates; // ris_brdf_candidates
         params_buffer.write_raw(this.params);
-        
+
         // Cycle frame phase for next frame
         this.frame_phase = (this.frame_phase + 1) % Math.max(1, trace_rate);
       }
     );
 
-    // For spp_per_frame > 1, schedule multiple (init + per-bounce hit/shade) sequences.
+    const num_bounce_passes = max_bounces + 1;
     const spp = Math.max(1, spp_per_frame | 0);
+
     for (let s = 0; s < spp; s++) {
       render_graph.add_pass(
         `path_trace_init_${s}`,
@@ -165,6 +176,7 @@ export class PathTracer extends RayTracer {
           inputs: [
             pt_params,
             path_state,
+            path_shade,
             gbuffer_position,
             gbuffer_normal,
             gbuffer_albedo,
@@ -181,9 +193,7 @@ export class PathTracer extends RayTracer {
         }
       );
 
-      // Additional bounce here to make sure we resolve final shadow rays.
-      // Will not affect regular hit path since deactivated paths are not processed past the shadow radiance evaluation.
-      for (let b = 0; b < max_bounces + 1; b++) {
+      for (let b = 0; b < num_bounce_passes; b++) {
         render_graph.add_pass(
           `path_trace_hit_${s}_${b}`,
           RenderPassFlags.Compute,
@@ -208,7 +218,7 @@ export class PathTracer extends RayTracer {
             pass.dispatch(Math.ceil(width / 8), Math.ceil(height / 8), 1);
           }
         );
-        
+
         render_graph.add_pass(
           `path_trace_shade_${s}_${b}`,
           RenderPassFlags.Compute,
@@ -216,6 +226,7 @@ export class PathTracer extends RayTracer {
             inputs: [
               pt_params,
               path_state,
+              path_shade,
               params_gpu_buffer,
               material_palette_offsets_buffer,
               material_palette_buffer,

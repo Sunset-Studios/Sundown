@@ -12,34 +12,37 @@ struct PathTracerParams {
     use_gbuffer: u32,
     trace_rate: u32,      // 1=full res, 2=half res, 4=quarter res, etc.
     frame_phase: u32,     // cycles 0 to trace_rate-1
+    ris_light_candidates: u32,    // Number of light candidates for RIS (M)
+    ris_brdf_candidates: u32,     // Number of BRDF candidates for RIS (M)
 };
 
 struct PathState {
     origin_tmin: vec4<f32>,
     direction_tmax: vec4<f32>,
     normal_section_index: vec4<f32>,
-    throughput: vec4<f32>,
-    state_u32: vec4<u32>,
+    state_u32: vec4<u32>, // x=bounce, y=alive(0/1), z=shadow_flag(0/1)
     hit_attr0: vec4<f32>,
     hit_attr1: vec4<f32>,
-    rng: f32,
-    sample_count: f32,
-    prim_id: f32,
-    frame_stamp: f32,
     shadow_origin: vec4<f32>,      // xyz = origin, w = tmin
     shadow_direction: vec4<f32>,    // xyz = direction, w = tmax
     shadow_radiance: vec4<f32>,     // rgb = light contribution, a = needs_trace flag
-    path_weight: vec4<f32>,         // rgb = cumulative BRDF weight along path, a = unused
 };
+
+struct PathShade {
+    path_weight: vec4<f32>,
+    rng_sample_count_frame_stamp: vec4<f32>,
+    throughput: vec4<f32>,
+}
 
 @group(1) @binding(0) var<uniform> pt_params: PathTracerParams;
 @group(1) @binding(1) var<storage, read_write> path_state: array<PathState>;
-@group(1) @binding(2) var gbuffer_position: texture_2d<f32>;
-@group(1) @binding(3) var gbuffer_normal: texture_2d<f32>;
-@group(1) @binding(4) var gbuffer_albedo: texture_2d<f32>;
-@group(1) @binding(5) var gbuffer_smra: texture_2d<f32>;
-@group(1) @binding(6) var gbuffer_emissive: texture_2d<f32>;
-@group(1) @binding(7) var output_tex: texture_storage_2d<rgba16float, write>;
+@group(1) @binding(2) var<storage, read_write> path_shade: array<PathShade>;
+@group(1) @binding(3) var gbuffer_position: texture_2d<f32>;
+@group(1) @binding(4) var gbuffer_normal: texture_2d<f32>;
+@group(1) @binding(5) var gbuffer_albedo: texture_2d<f32>;
+@group(1) @binding(6) var gbuffer_smra: texture_2d<f32>;
+@group(1) @binding(7) var gbuffer_emissive: texture_2d<f32>;
+@group(1) @binding(8) var output_tex: texture_storage_2d<rgba16float, write>;
 
 @compute @workgroup_size(8, 8)
 fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
@@ -57,7 +60,8 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
 
     let view_index = u32(frame_info.view_index);
     let view = view_buffer[view_index];
-
+    
+    // Start a new path
     if (pt_params.use_gbuffer != 0u) {
         // G-buffer mode: Read from rasterized G-buffer instead of shooting primary rays
         let pixel_coord = vec2<i32>(i32(gid.x), i32(gid.y));
@@ -99,13 +103,8 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         path_state[pixel_index].hit_attr1 = vec4f(smra_data.b, specular, emissive_data.r, smra_data.a);
         
         // Mark as having a valid G-buffer hit (state_u32.w = 0x0 for G-buffer mode)
-        // bounce=0, alive=1, mesh_id=0, tri_id=0x0 (special marker for G-buffer hit)
+        // bounce=0, alive=1, shadow_flag=0, tri_id=0x0 (special marker for G-buffer hit)
         path_state[pixel_index].state_u32 = vec4<u32>(0u, 1u, 0u, 0x0u);
-        
-        path_state[pixel_index].shadow_origin = vec4f(0.0);
-        path_state[pixel_index].shadow_direction = vec4f(0.0);
-        path_state[pixel_index].shadow_radiance = vec4f(0.0);
-        path_state[pixel_index].path_weight = vec4f(1.0, 1.0, 1.0, 0.0);
     } else {
         // Traditional ray tracing mode: Generate primary rays from camera
         let dims = vec2<f32>(f32(res.x), f32(res.y));
@@ -126,27 +125,28 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         path_state[pixel_index].origin_tmin = vec4f(ray_origin + ray_dir * 0.001, 0.0001);
         path_state[pixel_index].direction_tmax = vec4f(ray_dir, 1e30);
         path_state[pixel_index].normal_section_index = vec4f(0.0, 0.0, 0.0, 0.0);
-        path_state[pixel_index].state_u32 = vec4<u32>(0u, 1u, 0u, 0xffffffffu);
         path_state[pixel_index].hit_attr0 = vec4f(0.0, 0.0, 0.0, 0.0);
         path_state[pixel_index].hit_attr1 = vec4f(0.0, 0.0, 0.0, 0.0);
-        path_state[pixel_index].shadow_origin = vec4f(0.0, 0.0, 0.0, 0.0);
-        path_state[pixel_index].shadow_direction = vec4f(0.0, 0.0, 0.0, 0.0);
-        path_state[pixel_index].shadow_radiance = vec4f(0.0, 0.0, 0.0, 0.0);
-        path_state[pixel_index].path_weight = vec4f(1.0, 1.0, 1.0, 0.0);
+        path_state[pixel_index].state_u32 = vec4<u32>(0u, 1u, 0u, 0xffffffffu);
     }
 
+    // Reset accumulation only when camera moves (view changed)
     // Only reset accumulation-related state once per frame when requested
     if (pt_params.reset_accum_flag != 0u) {
-        let frame_id = f32(u32(frame_info.frame_index));
-        if (path_state[pixel_index].frame_stamp != frame_id) {
-            let rng_seed = hash(pixel_index ^ u32(frame_info.frame_index));
-            path_state[pixel_index].rng = f32(rng_seed);
-            path_state[pixel_index].sample_count = 0.0;
-            path_state[pixel_index].prim_id = -1.0;
-            path_state[pixel_index].frame_stamp = frame_id; // stamp to avoid multiple resets in same frame
-            path_state[pixel_index].throughput = vec4f(0.0);
+        let frame_id = u32(frame_info.frame_index);
+        if (u32(path_shade[pixel_index].rng_sample_count_frame_stamp.z) != frame_id) {
+            let rng_seed = hash(pixel_index ^ frame_id);
+            path_shade[pixel_index].rng_sample_count_frame_stamp = vec4f(
+                f32(rng_seed), 0.0, f32(frame_id), 0.0
+            );
+            path_shade[pixel_index].throughput = vec4f(0.0);
         }
     }
+
+    path_state[pixel_index].shadow_origin = vec4f(0.0, 0.0, 0.0, 0.0);
+    path_state[pixel_index].shadow_direction = vec4f(0.0, 0.0, 0.0, 0.0);
+    path_state[pixel_index].shadow_radiance = vec4f(0.0, 0.0, 0.0, 0.0);
+    path_shade[pixel_index].path_weight = vec4f(1.0, 1.0, 1.0, 0.0);
 }
 
 
