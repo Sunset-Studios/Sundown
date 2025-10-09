@@ -1628,6 +1628,7 @@ export class DeferredShadingStrategy {
               true, // use_gbuffer - enable G-buffer mode for hybrid rendering
               4, // ris_light_candidates
               6, // ris_brdf_candidates
+              1.0, // indirect_boost
               aabb_bounds,
               tlas_bvh4_nodes,
               blas_atlas,

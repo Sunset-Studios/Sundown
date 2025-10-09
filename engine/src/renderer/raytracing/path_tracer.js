@@ -38,7 +38,18 @@ const path_tracer_shade_shader_setup = {
 };
 
 export class PathTracer extends RayTracer {
-  params = new Uint32Array([0, 0, 0, 0, 0, 0, 0, 0, 0]); // max_bounces, spp_per_frame, reset_accum_flag, use_gbuffer, trace_rate, frame_phase, ris_light_candidates, ris_brdf_candidates
+  params = new Uint32Array([
+    0, // max_bounces
+    0, // spp_per_frame
+    0, // reset_accum_flag
+    0, // use_gbuffer
+    0, // trace_rate
+    0, // frame_phase
+    0, // ris_light_candidates
+    0, // ris_brdf_candidates
+    0, // indirect_boost
+    0, // padding
+  ]); 
   frame_phase = 0;
 
   constructor() {
@@ -55,6 +66,7 @@ export class PathTracer extends RayTracer {
     use_gbuffer = false,
     ris_light_candidates = 8,
     ris_brdf_candidates = 4,
+    indirect_boost = 2.0,
     tlas_bvh2_bounds = null,
     tlas_bvh4_nodes = null,
     blas_atlas = null,
@@ -132,7 +144,7 @@ export class PathTracer extends RayTracer {
     });
     const path_shade = render_graph.create_buffer({
       name: "pt_path_shade",
-      size: width * height * 12 * 4, // 3 vec4<f32> ≈ PathShade
+      size: width * height * 20 * 4, // 5 vec4<f32> ≈ PathShade (3 original + 2 for reservoir)
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
       force: force_recreate,
     });
@@ -158,6 +170,8 @@ export class PathTracer extends RayTracer {
         this.params[5] = this.frame_phase; // frame_phase
         this.params[6] = ris_light_candidates; // ris_light_candidates
         this.params[7] = ris_brdf_candidates; // ris_brdf_candidates
+        this.params[8] = indirect_boost; // indirect_boost
+        this.params[9] = 0; // padding
         params_buffer.write_raw(this.params);
 
         // Cycle frame phase for next frame
@@ -189,7 +203,10 @@ export class PathTracer extends RayTracer {
         },
         (graph, frame_data, encoder) => {
           const pass = graph.get_physical_pass(frame_data.current_pass);
-          pass.dispatch(Math.ceil(width / 8), Math.ceil(height / 8), 1);
+          // Optimize dispatch based on trace_rate
+          const active_pixel_count = Math.ceil((width * height) / Math.max(1, trace_rate));
+          const workgroup_size = 128; // 128x1x1 workgroup
+          pass.dispatch(Math.ceil(active_pixel_count / workgroup_size), 1, 1);
         }
       );
 
@@ -214,8 +231,10 @@ export class PathTracer extends RayTracer {
           },
           (graph, frame_data, encoder) => {
             const pass = graph.get_physical_pass(frame_data.current_pass);
-            // Linear dispatch for 64x1x1 workgroup in wave-optimized hit shader
-            pass.dispatch(Math.ceil(width / 8), Math.ceil(height / 8), 1);
+            // Optimize dispatch based on trace_rate
+            const active_pixel_count = Math.ceil((width * height) / Math.max(1, trace_rate));
+            const workgroup_size = 128; // 128x1x1 workgroup
+            pass.dispatch(Math.ceil(active_pixel_count / workgroup_size), 1, 1);
           }
         );
 
@@ -242,12 +261,15 @@ export class PathTracer extends RayTracer {
               emission_pool_buffer,
               this.output_texture,
             ],
-            outputs: [path_state],
+            outputs: [path_state, path_shade],
             shader_setup: path_tracer_shade_shader_setup,
           },
           (graph, frame_data, encoder) => {
             const pass = graph.get_physical_pass(frame_data.current_pass);
-            pass.dispatch(Math.ceil(width / 8), Math.ceil(height / 8), 1);
+            // Optimize dispatch based on trace_rate
+            const active_pixel_count = Math.ceil((width * height) / Math.max(1, trace_rate));
+            const workgroup_size = 128; // 128x1x1 workgroup
+            pass.dispatch(Math.ceil(active_pixel_count / workgroup_size), 1, 1);
           }
         );
       }

@@ -1334,8 +1334,8 @@ export class VoxelTerrainScene extends Scene {
     const light_fragment_view = EntityManager.get_fragment(light_entity, LightFragment);
     light_fragment_view.type = LightType.DIRECTIONAL;
     light_fragment_view.color = [1, 1, 1];
-    light_fragment_view.intensity = 15.0;
-    light_fragment_view.position = [-45, 20, 5];
+    light_fragment_view.intensity = 5.0;
+    light_fragment_view.position = [-15, 20, 5];
     light_fragment_view.active = true;
     light_fragment_view.is_primary_sun = 1;
     light_fragment_view.shadow_clipmaps = MAX_CLIPMAP_LEVELS;
@@ -1360,7 +1360,8 @@ export class VoxelTerrainScene extends Scene {
       terrain_material.sample_albedo(dirt_albedo);
       terrain_material.set_roughness(0.8);
       terrain_material.set_emission(0.0);
-      terrain_material.set_metallic(0.2);
+      terrain_material.set_metallic(0.1);
+      terrain_material.set_specular(0.5);
     }
 
     // Create cube mesh for voxels
@@ -1368,8 +1369,8 @@ export class VoxelTerrainScene extends Scene {
 
     // Terrain parameters - Perlin-based fractal noise
     // Modified: Much more dramatic height variation for mountainous terrain
-    const grid_width = 600;
-    const grid_depth = 600;
+    const grid_width = 300;
+    const grid_depth = 300;
     const block_size = 1.0;
     const base_frequency = 0.03;
     const height_scale = 25.0;
@@ -1505,12 +1506,13 @@ export class VoxelTerrainScene extends Scene {
     const sandy_material = StandardMaterial.create("SandyGroundMaterial");
     sandy_material.set_albedo([0.94, 0.87, 0.69, 1.0]); // Sandy beige color
     sandy_material.set_roughness(0.9);
-    sandy_material.set_metallic(0.95);
     sandy_material.set_emission(0.0);
+    sandy_material.set_metallic(0.99);
+    sandy_material.set_specular(0.5);
 
     // Create large ground plane entity
     const plane_entity = spawn_mesh_entity(
-      [0, -4, 0], // Position slightly below terrain base
+      [0, -10, 0], // Position slightly below terrain base
       quat.fromEuler(quat.create(), 0, 0, 0), // Rotate to be horizontal
       [800, 5, 800], // Large scale to cover the terrain area
       Mesh.cube(),
@@ -2240,7 +2242,7 @@ export class ShadowTestScene extends Scene {
     const light_fragment_view = EntityManager.get_fragment(light_entity, LightFragment);
     light_fragment_view.type = LightType.DIRECTIONAL;
     light_fragment_view.color = [1, 1, 0.9];
-    light_fragment_view.intensity = 3.0;
+    light_fragment_view.intensity = 2.0;
     light_fragment_view.position = [30, 55, 40];
     light_fragment_view.active = true;
     light_fragment_view.is_primary_sun = 1;
