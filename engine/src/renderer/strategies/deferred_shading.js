@@ -1626,8 +1626,7 @@ export class DeferredShadingStrategy {
               1, // spp_per_frame
               1, // trace_rate - 1=full res, 2=half, 4=quarter, etc.
               true, // use_gbuffer - enable G-buffer mode for hybrid rendering
-              4, // ris_light_candidates
-              6, // ris_brdf_candidates
+              1, // ris_brdf_candidates
               1.0, // indirect_boost
               aabb_bounds,
               tlas_bvh4_nodes,

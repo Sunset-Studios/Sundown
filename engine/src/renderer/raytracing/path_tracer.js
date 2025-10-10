@@ -45,10 +45,8 @@ export class PathTracer extends RayTracer {
     0, // use_gbuffer
     0, // trace_rate
     0, // frame_phase
-    0, // ris_light_candidates
     0, // ris_brdf_candidates
     0, // indirect_boost
-    0, // padding
   ]); 
   frame_phase = 0;
 
@@ -64,7 +62,6 @@ export class PathTracer extends RayTracer {
     spp_per_frame = 4,
     trace_rate = 1,
     use_gbuffer = false,
-    ris_light_candidates = 8,
     ris_brdf_candidates = 4,
     indirect_boost = 2.0,
     tlas_bvh2_bounds = null,
@@ -168,10 +165,8 @@ export class PathTracer extends RayTracer {
         this.params[3] = use_gbuffer ? 1 : 0; // use_gbuffer
         this.params[4] = trace_rate; // trace_rate
         this.params[5] = this.frame_phase; // frame_phase
-        this.params[6] = ris_light_candidates; // ris_light_candidates
-        this.params[7] = ris_brdf_candidates; // ris_brdf_candidates
-        this.params[8] = indirect_boost; // indirect_boost
-        this.params[9] = 0; // padding
+        this.params[6] = ris_brdf_candidates; // ris_brdf_candidates
+        this.params[7] = indirect_boost; // indirect_boost
         params_buffer.write_raw(this.params);
 
         // Cycle frame phase for next frame

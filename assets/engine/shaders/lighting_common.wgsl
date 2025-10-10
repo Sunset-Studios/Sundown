@@ -54,6 +54,25 @@ fn get_light_dir(light: Light, fragment_pos: vec3<f32>) -> vec3<f32> {
     return light_dir;
 }
 
+fn get_light_attenuation(light: Light, fragment_pos: vec3<f32>) -> f32 {
+    var attenuation = 1.0;
+    if (light.light_type == 1.0) { // Point
+        let light_vec = light.position.xyz - fragment_pos;
+        let distance_sq = dot(light_vec, light_vec);
+        attenuation = compute_distance_attenuation(distance_sq, light.radius);
+    } else if (light.light_type == 2.0) { // Spot
+        let light_vec = light.position.xyz - fragment_pos;
+        let distance_sq = dot(light_vec, light_vec);
+        let dist_att = compute_distance_attenuation(distance_sq, light.radius);
+        let cos_theta = dot(-light_vec, normalize(light.direction.xyz));
+        let cos_inner = cos(light.direction.w);
+        let cos_outer = cos(light.outer_angle);
+        let angle_att = compute_spot_angle_attenuation(cos_theta, cos_inner, cos_outer);
+        attenuation = dist_att * angle_att;
+    }
+    return clamp(attenuation, 0.0, 1.0);
+}
+
 // ------------------------------------------------------------------------------------
 // Microfacet Distribution
 // ------------------------------------------------------------------------------------
@@ -156,6 +175,20 @@ fn compute_spot_angle_attenuation(cos_theta: f32, cos_inner: f32, cos_outer: f32
 }
 
 // ------------------------------------------------------------------------------------
+// PDF Sampling 
+// ------------------------------------------------------------------------------------
+fn brdf_pdf(normal: vec3<f32>, view_dir: vec3<f32>, sample_dir: vec3<f32>, roughness: f32, mis_specular_prob: f32) -> f32 {
+    let h = normalize(view_dir + sample_dir);
+    let n_dot_l = max(dot(normal, sample_dir), 0.0001);
+    let n_dot_h = max(dot(normal, h), 0.0001);
+    let v_dot_h = max(dot(view_dir, h), 0.0001);
+    let d = d_ggx(n_dot_h, roughness);
+    let cosine_pdf = n_dot_l / PI;
+    let ggx_pdf = d * n_dot_h / max(4.0 * v_dot_h, 0.0001);
+    return mis_specular_prob * ggx_pdf + (1.0 - mis_specular_prob) * cosine_pdf;
+}
+
+// ------------------------------------------------------------------------------------
 // Lighting
 // ------------------------------------------------------------------------------------
 
@@ -170,26 +203,8 @@ fn calculate_blinn_phong(
     ambient: vec3<f32>,
     shadow_factor: f32,
 ) -> vec3<f32> {
-    var attenuation = 1.0;
-
-    if (light.light_type == 1.0) { // Point
-        let light_vec = light.position.xyz - fragment_pos;
-        let distance_sq = dot(light_vec, light_vec);
-        attenuation = compute_distance_attenuation(distance_sq, light.radius);
-    } else if (light.light_type == 2.0) { // Spot
-        let light_vec = light.position.xyz - fragment_pos;
-        let distance_sq = dot(light_vec, light_vec);
-        let dist_att = compute_distance_attenuation(distance_sq, light.radius);
-
-        let cos_theta = dot(-light_dir, normalize(light.direction.xyz));
-        let cos_inner = cos(light.direction.w);
-        let cos_outer = cos(light.outer_angle);
-        let angle_att = compute_spot_angle_attenuation(cos_theta, cos_inner, cos_outer);
-
-        attenuation = dist_att * angle_att;
-    }
-
-    attenuation = clamp(attenuation, 0.0, 1.0);
+    // Attenuation
+    let attenuation = get_light_attenuation(light, fragment_pos);
 
     // Ambient
     let ambient_color = albedo * ambient;
@@ -204,7 +219,7 @@ fn calculate_blinn_phong(
     let specular = pow(n_dot_h, shininess);
     let specular_color = light.color.rgb * specular;
 
-    // Attenuation
+    // Final color
     let final_color = ambient_color + (diffuse_color + specular_color) * light.intensity * attenuation * (1.0 - shadow_factor);
 
     return final_color;
@@ -233,24 +248,7 @@ fn calculate_brdf(
     shadow_factor: f32,
 ) -> vec3<f32> {
     // Compute attenuation for point/spot
-    var attenuation = 1.0;
-    if (light.light_type == 1.0) { // Point
-        let light_vec = light.position.xyz - fragment_pos;
-        let distance_sq = dot(light_vec, light_vec);
-        attenuation = compute_distance_attenuation(distance_sq, light.radius);
-    } else if (light.light_type == 2.0) { // Spot
-        let light_vec = light.position.xyz - fragment_pos;
-        let distance_sq = dot(light_vec, light_vec);
-        let dist_att = compute_distance_attenuation(distance_sq, light.radius);
-
-        let cos_theta = dot(-light_dir, normalize(light.direction.xyz));
-        let cos_inner = cos(light.direction.w);
-        let cos_outer = cos(light.outer_angle);
-        let angle_att = compute_spot_angle_attenuation(cos_theta, cos_inner, cos_outer);
-
-        attenuation = dist_att * angle_att;
-    }
-    attenuation = clamp(attenuation, 0.0, 255.0); // Clamp to [0,1]
+    let attenuation = get_light_attenuation(light, fragment_pos);
 
     // Halfway vector and dot products
     let halfway = normalize(light_dir + view_dir);

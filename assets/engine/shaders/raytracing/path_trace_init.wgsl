@@ -12,7 +12,6 @@ struct PathTracerParams {
     use_gbuffer: u32,
     trace_rate: u32,      // 1=full res, 2=half res, 4=quarter res, etc.
     frame_phase: u32,     // cycles 0 to trace_rate-1
-    ris_light_candidates: u32,    // Number of light candidates for RIS (M)
     ris_brdf_candidates: u32,     // Number of BRDF candidates for RIS (M)
     indirect_boost: u32,          // Multiplier for indirect bounces
 };
@@ -29,12 +28,13 @@ struct PathState {
     shadow_radiance: vec4<f32>,     // rgb = light contribution, a = needs_trace flag
 };
 
+// ReSTIR GI Reservoir - stores DIRECTION ONLY (unbiased)
 struct PathShade {
     path_weight: vec4<f32>,
     rng_sample_count_frame_stamp: vec4<f32>,
     throughput: vec4<f32>,
-    reservoir_light_index_m_w: vec4<f32>,  // x=light_idx, y=m, z=w, w=last_brdf_pdf
-    reservoir_data: vec4<f32>,              // xyz=light_dir, w=attenuation
+    reservoir_radiance_m: vec4<f32>,       // xyz=BRDF estimate (importance hint), w=m (sample count)
+    reservoir_direction_w: vec4<f32>,      // xyz=next bounce direction, w=final weight
 }
 
 @group(1) @binding(0) var<uniform> pt_params: PathTracerParams;
@@ -176,8 +176,8 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
                 f32(rng_seed), 0.0, f32(frame_id), 0.0
             );
             path_shade[pixel_index].throughput = vec4f(0.0);
-            path_shade[pixel_index].reservoir_light_index_m_w = vec4f(0.0);
-            path_shade[pixel_index].reservoir_data = vec4f(0.0);
+            path_shade[pixel_index].reservoir_radiance_m = vec4f(0.0);
+            path_shade[pixel_index].reservoir_direction_w = vec4f(0.0);
         }
     }
 
