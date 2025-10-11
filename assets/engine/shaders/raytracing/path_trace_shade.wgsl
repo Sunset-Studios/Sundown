@@ -42,7 +42,7 @@ struct PathState {
 
 // ReSTIR GI Reservoir - stores DIRECTION ONLY (unbiased)
 struct PathShade {
-    path_weight: vec4<f32>,
+    path_weight: vec4<f32>,                // xyz=throughput weight, w=source_pdf of current ray
     rng_sample_count_frame_stamp: vec4<f32>,
     throughput: vec4<f32>,
     reservoir_radiance_m: vec4<f32>,       // xyz=BRDF estimate (importance hint), w=m (sample count)
@@ -151,8 +151,9 @@ fn gi_reservoir_finalize(
     let contributes = (*reservoir).m > 0u && selected_target_pdf > 0.0;
     let unclamped_weight = (*reservoir).weight_sum / (f32((*reservoir).m) * max(selected_target_pdf, 0.0001));
     
-    // Reasonable clamping to handle extreme variance (unbiased approach doesn't accumulate fireflies)
-    let max_weight = 100.0;
+    // Reasonable clamping to handle extreme variance
+    // With proper MIS, variance should be much lower, but still cap to prevent numerical issues
+    let max_weight = 200.0;
     (*reservoir).w = select(
         0.0,
         min(max_weight, unclamped_weight),
@@ -169,6 +170,33 @@ fn compute_gi_target_pdf(
     let contribution = sample_radiance * brdf_value;
     let luminance = contribution.x * 0.2126 + contribution.y * 0.7152 + contribution.z * 0.0722;
     return max(luminance, 0.0);
+}
+
+// Sample a uniform direction within a cone (for sun disk sampling)
+fn sample_cone_uniform(u1: f32, u2: f32, cos_theta_max: f32, tangent: vec3<f32>, bitangent: vec3<f32>, normal: vec3<f32>) -> vec3<f32> {
+    let cos_theta = (1.0 - u1) + u1 * cos_theta_max;
+    let sin_theta = sqrt(max(0.0, 1.0 - cos_theta * cos_theta));
+    let phi = u2 * 2.0 * PI;
+    
+    let local_dir = vec3<f32>(
+        cos(phi) * sin_theta,
+        sin(phi) * sin_theta,
+        cos_theta
+    );
+    
+    return normalize(tangent * local_dir.x + bitangent * local_dir.y + normal * local_dir.z);
+}
+
+// Compute PDF for uniform cone sampling
+fn cone_pdf(cos_theta_max: f32) -> f32 {
+    return 1.0 / (2.0 * PI * (1.0 - cos_theta_max));
+}
+
+// Power heuristic for MIS (balance heuristic with power=2)
+fn mis_weight(pdf_a: f32, pdf_b: f32) -> f32 {
+    let a = pdf_a * pdf_a;
+    let b = pdf_b * pdf_b;
+    return a / max(a + b, 0.0001);
 }
 
 // Helper function to compute pixel coordinates from linear index
@@ -238,8 +266,31 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
             skybox_texture,
         );
         
-        // Add sky contribution weighted by path throughput
-        shade.throughput += vec4f(sky_radiance * shade.path_weight.xyz, 0.0);
+        // Apply MIS if the ray hit near the sun disk (this is a BRDF-generated ray hitting the environment)
+        // We need to weight it properly since we also explicitly sample the sun
+        var sky_contribution = sky_radiance;
+        
+        // Check if ray hit sun disk region
+        let sun_angular_radius = scene_lighting_data.sunlight_angular_radius;
+        let cos_theta_max = cos(sun_angular_radius);
+        let angle_to_sun = dot(ray_dir, sun_dir);
+        
+        if (angle_to_sun > cos_theta_max && current_bounce > 0u) {
+            // This BRDF sample hit the sun - apply proper MIS weight
+            // Retrieve the source PDF that was stored when we spawned this ray
+            let ray_source_pdf = shade.path_weight.w;
+            
+            // PDF for sampling this direction via sun sampling
+            let sun_sample_pdf = cone_pdf(cos_theta_max);
+            
+            // Compute MIS weight using the actual source PDF
+            let mis_w = mis_weight(ray_source_pdf, sun_sample_pdf);
+            
+            sky_contribution *= mis_w;
+        }
+        
+        // Add sky contribution weighted by path throughput (unbiased with MIS)
+        shade.throughput += vec4f(sky_contribution * shade.path_weight.xyz, 0.0);
         
         // Mark path as dead
         info.state_u32.y = 0u;
@@ -383,6 +434,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         }
         
         // Generate BRDF sampling candidates (indirect lighting)
+        // Apply MIS if BRDF sample happens to be near the sun
         for (var i = 0u; i < num_ris_samples; i = i + 1u) {
             rng = random_seed(rng);
             let r1 = rand_float(rng);
@@ -414,59 +466,85 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
                 reflectance, clear_coat, clear_coat_roughness
             );
             
-            // Compute PDF
-            let pdf = brdf_pdf(n, v_dir, dir, clamped_roughness, mis_specular_prob);
+            // Compute PDF for BRDF sampling
+            let brdf_sample_pdf = brdf_pdf(n, v_dir, dir, clamped_roughness, mis_specular_prob);
+            
+            // Check if this direction is close to sun disk (for MIS weighting)
+            let sun_angular_radius = scene_lighting_data.sunlight_angular_radius;
+            let cos_theta_max = cos(sun_angular_radius);
+            let angle_to_sun = dot(dir, sun_dir);
+            
+            // If BRDF sample is within sun cone, apply MIS to reduce variance
+            var mis_w = 1.0;
+            if (angle_to_sun > cos_theta_max) {
+                // This BRDF sample could have been generated by sun sampling
+                let sun_sample_pdf = cone_pdf(cos_theta_max);
+                mis_w = mis_weight(brdf_sample_pdf, sun_sample_pdf);
+            }
             
             // For BRDF samples, we don't know the radiance yet (would need to trace)
-            // So we use the BRDF value as an estimate
-            let brdf_lum = max(0.0, brdf.x * 0.2126 + brdf.y * 0.7152 + brdf.z * 0.0722);
+            // So we use the BRDF value as an estimate, weighted by MIS
+            let brdf_estimate = brdf * mis_w;
+            let brdf_lum = max(0.0, brdf_estimate.x * 0.2126 + brdf_estimate.y * 0.7152 + brdf_estimate.z * 0.0722);
             
-            candidate_samples[num_candidates].radiance_and_target_pdf = vec4f(brdf, brdf_lum); // Will be scaled by path weight
-            candidate_samples[num_candidates].direction_and_source_pdf = vec4f(dir, pdf);
+            candidate_samples[num_candidates].radiance_and_target_pdf = vec4f(brdf_estimate, brdf_lum);
+            candidate_samples[num_candidates].direction_and_source_pdf = vec4f(dir, brdf_sample_pdf);
             num_candidates += 1u;
         }
         
-        // === Environment Sampling Candidates (for better sky convergence) ===
-        // Sample the environment directly and add as candidates
-        // Add 2-3 environment samples (cosine-weighted hemisphere)
+        // === Sun Disk Importance Sampling (MIS for low-variance environment lighting) ===
+        // Explicitly sample the sun disk to avoid fireflies from random BRDF samples hitting it
+        // Use MIS to combine with BRDF sampling for unbiased estimation
         for (var i = 0u; i < num_env_samples; i = i + 1u) {
             rng = random_seed(rng);
             let r1 = rand_float(rng);
             rng = random_seed(rng);
             let r2 = rand_float(rng);
             
-            // Cosine-weighted hemisphere sampling
-            let phi = 2.0 * PI * r1;
-            let cos_theta = sqrt(1.0 - r2);
-            let sin_theta = sqrt(r2);
+            // Build TBN frame around sun direction
+            let up = select(vec3f(0.0, 1.0, 0.0), vec3f(1.0, 0.0, 0.0), abs(sun_dir.y) > 0.999);
+            let tangent = normalize(cross(up, sun_dir));
+            let bitangent = normalize(cross(sun_dir, tangent));
             
-            // Build TBN frame
-            let up = select(vec3f(0.0, 1.0, 0.0), vec3f(1.0, 0.0, 0.0), abs(n.z) > 0.999);
-            let tangent = normalize(cross(up, n));
-            let bitangent = normalize(cross(n, tangent));
-            let dir_local = vec3f(cos(phi) * sin_theta, sin(phi) * sin_theta, cos_theta);
-            let env_dir = normalize(tangent * dir_local.x + bitangent * dir_local.y + n * dir_local.z);
+            // Sample within sun's angular radius (convert from scene parameter to cos)
+            let sun_angular_radius = scene_lighting_data.sunlight_angular_radius;
+            let cos_theta_max = cos(sun_angular_radius);
             
-            // Evaluate environment radiance
-            let env_radiance = evaluate_environment(env_dir, sun_dir, scene_lighting_data, skybox_texture);
+            // Sample direction within cone around sun
+            let sun_sample_dir = sample_cone_uniform(r1, r2, cos_theta_max, tangent, bitangent, sun_dir);
             
-            // Compute BRDF for this direction
-            let env_brdf = calculate_brdf_rt(
-                n, v_dir, env_dir, albedo, roughness, metallic,
-                reflectance, clear_coat, clear_coat_roughness
-            );
-            
-            // Compute target PDF (importance of this sample)
-            let target_pdf = compute_gi_target_pdf(env_radiance, env_brdf);
-            
-            // Source PDF for cosine-weighted hemisphere sampling
-            let source_pdf = cos_theta / PI;
-            
-            if (num_candidates < num_max_samples && target_pdf > 0.0) {
-                // Store actual environment radiance (not just BRDF estimate!)
-                candidate_samples[num_candidates].radiance_and_target_pdf = vec4f(env_radiance, target_pdf);
-                candidate_samples[num_candidates].direction_and_source_pdf = vec4f(env_dir, source_pdf);
-                num_candidates += 1u;
+            // Check if sample is above horizon
+            let sun_cos_theta = dot(sun_sample_dir, n);
+            if (sun_cos_theta > 0.0) {
+                // Evaluate environment at this direction (will get sun contribution)
+                let sun_radiance = evaluate_environment(sun_sample_dir, sun_dir, scene_lighting_data, skybox_texture);
+                
+                // Compute BRDF for this direction
+                let sun_brdf = calculate_brdf_rt(
+                    n, v_dir, sun_sample_dir, albedo, roughness, metallic,
+                    reflectance, clear_coat, clear_coat_roughness
+                );
+                
+                // PDF for sun sampling (uniform cone)
+                let sun_pdf = cone_pdf(cos_theta_max);
+                
+                // PDF if we had sampled this via BRDF
+                let brdf_pdf_for_sun = brdf_pdf(n, v_dir, sun_sample_dir, clamped_roughness, mis_specular_prob);
+                
+                // MIS weight (power heuristic)
+                let mis_w = mis_weight(sun_pdf, brdf_pdf_for_sun);
+                
+                // Weighted radiance contribution
+                let weighted_radiance = sun_radiance * mis_w;
+                
+                // Compute target PDF
+                let target_pdf = compute_gi_target_pdf(weighted_radiance, sun_brdf);
+                
+                if (num_candidates < num_max_samples && target_pdf > 0.0) {
+                    candidate_samples[num_candidates].radiance_and_target_pdf = vec4f(weighted_radiance, target_pdf);
+                    candidate_samples[num_candidates].direction_and_source_pdf = vec4f(sun_sample_dir, sun_pdf);
+                    num_candidates += 1u;
+                }
             }
         }
         
@@ -589,7 +667,10 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
             // Update path weight and spawn next ray
             // DO NOT add to throughput here - that happens when the ray hits something
             let brdf_weight = selected_brdf * gi_reservoir.w;
-            shade.path_weight = vec4f(shade.path_weight.xyz * brdf_weight, 0.0);
+            
+            // Store the source PDF of the spawned ray in path_weight.w for future MIS
+            let selected_source_pdf = selected_sample.direction_and_source_pdf.w;
+            shade.path_weight = vec4f(shade.path_weight.xyz * brdf_weight, selected_source_pdf);
         
             let alive_next = select(0u, 1u, (info.state_u32.x + 1u) < pt_params.max_bounces);
             info.origin_tmin = vec4f(hit_pos + n * 0.001, 0.0001);

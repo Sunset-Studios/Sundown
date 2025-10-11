@@ -173,6 +173,29 @@ const light_count_buffer_config = {
   usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
 };
 
+const skybox_shader_setup = {
+  pipeline_shaders: {
+    vertex: {
+      path: "skybox.wgsl",
+    },
+    fragment: {
+      path: "skybox.wgsl",
+    },
+  },
+  rasterizer_state: {
+    cull_mode: "none",
+  },
+  depth_write_enabled: false,
+};
+
+const path_trace_composite_shader_setup = {
+  pipeline_shaders: {
+    compute: {
+      path: "path_trace_composite.wgsl",
+    },
+  },
+};
+
 const fullscreen_shader_setup = {
   pipeline_shaders: {
     vertex: { path: "fullscreen.wgsl" },
@@ -209,6 +232,15 @@ const entity_id_image_config = {
   force: false,
 };
 
+const skybox_output_image_config = {
+  name: "skybox_output",
+  format: rgba16float_format,
+  width: 0,
+  height: 0,
+  usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+  force: false,
+};
+
 const post_lighting_image_config = {
   name: "post_lighting",
   format: rgba16float_format,
@@ -220,6 +252,7 @@ const post_lighting_image_config = {
 
 const swapchain_name = "swapchain";
 const clear_g_buffer_pass_name = "clear_g_buffer";
+const skybox_pass_name = "skybox_pass";
 const depth_prepass_name = "depth_prepass";
 const reset_g_buffer_targets_pass_name = "reset_g_buffer_targets";
 const fullscreen_present_pass_name = "fullscreen_present_pass";
@@ -516,6 +549,38 @@ export class PathTracingStrategy {
       }
 
       // ┌─────────────────────────────────────────────────────────────────────────────┐
+      // │ 🌌 PASS: Skybox Rendering                                                  │
+      // │    Render the environment skybox to provide background                     │
+      // └─────────────────────────────────────────────────────────────────────────────┘
+      let skybox_image = null;
+      {
+        skybox_output_image_config.width = image_extent.width;
+        skybox_output_image_config.height = image_extent.height;
+        skybox_output_image_config.force = this.force_recreate;
+        skybox_image = render_graph.create_image(skybox_output_image_config);
+
+        const skydome_data = SharedEnvironmentData.get_skydome_data();
+        const skydome_data_buffer = render_graph.register_buffer(skydome_data.config.name);
+
+        const skybox = SharedEnvironmentData.get_skybox();
+        const skybox_texture = render_graph.register_image(skybox.config.name);
+
+        render_graph.add_pass(
+          skybox_pass_name,
+          RenderPassFlags.Graphics,
+          {
+            inputs: [skybox_texture, skydome_data_buffer],
+            outputs: [skybox_image],
+            shader_setup: skybox_shader_setup,
+          },
+          (graph, frame_data, encoder) => {
+            const pass = graph.get_physical_pass(frame_data.current_pass);
+            MeshTaskQueue.draw_cube(pass);
+          }
+        );
+      }
+
+      // ┌─────────────────────────────────────────────────────────────────────────────┐
       // │ 🔄 PASS: G-Buffer Load State Configuration                                 │
       // └─────────────────────────────────────────────────────────────────────────────┘
       {
@@ -737,6 +802,41 @@ export class PathTracingStrategy {
       }
 
       // ┌─────────────────────────────────────────────────────────────────────────────┐
+      // │ 🎨 PASS: Composite Path Trace over Skybox                                  │
+      // │    Blend path traced output with skybox background                         │
+      // └─────────────────────────────────────────────────────────────────────────────┘
+      let composited_image = null;
+      {
+        const composited_image_config = {
+          name: "path_trace_composited",
+          format: rgba16float_format,
+          width: image_extent.width,
+          height: image_extent.height,
+          usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
+          force: this.force_recreate,
+        };
+        composited_image = render_graph.create_image(composited_image_config);
+
+        render_graph.add_pass(
+          "path_trace_composite",
+          RenderPassFlags.Compute,
+          {
+            inputs: [skybox_image, this.path_tracer.output_texture, main_normal_image, composited_image],
+            outputs: [composited_image],
+            shader_setup: path_trace_composite_shader_setup,
+          },
+          (graph, frame_data, encoder) => {
+            const pass = graph.get_physical_pass(frame_data.current_pass);
+            pass.dispatch(
+              Math.ceil(image_extent.width / 8),
+              Math.ceil(image_extent.height / 8),
+              1
+            );
+          }
+        );
+      }
+
+      // ┌─────────────────────────────────────────────────────────────────────────────┐
       // │ 🎭 PASS: Post-Processing Stack                                             │
       // └─────────────────────────────────────────────────────────────────────────────┘
       post_lighting_image_config.width = image_extent.width;
@@ -747,7 +847,7 @@ export class PathTracingStrategy {
         0,
         render_graph,
         post_lighting_image_config,
-        this.path_tracer.output_texture,
+        composited_image, // Use composited image instead of raw path tracer output
         main_depth_image,
         main_normal_image
       );
