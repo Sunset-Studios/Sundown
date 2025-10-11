@@ -7,10 +7,13 @@
 #include "common.wgsl"
 #include "acceleration_common.wgsl"
 #include "lighting_common.wgsl"
+#include "postprocess_common.wgsl"
+#include "sky_common.wgsl"
 
 const num_spatial_samples = 3u;
 const num_temporal_samples = 1u;
-const num_ris_samples = 3u;
+const num_ris_samples = 2u;
+const num_env_samples = 2u;
 const num_max_samples = 8u;
 const spatial_radius = 20.0;
 
@@ -61,22 +64,24 @@ struct GISample {
 };
 
 @group(1) @binding(0) var<uniform> pt_params: PathTracerParams;
-@group(1) @binding(1) var<storage, read_write> path_state: array<PathState>;
-@group(1) @binding(2) var<storage, read_write> path_shade: array<PathShade>;
-@group(1) @binding(3) var<storage, read> material_params: array<StandardMaterialParams>;
-@group(1) @binding(4) var<storage, read> material_table_offset: array<u32>;
-@group(1) @binding(5) var<storage, read> material_palette: array<u32>;
-@group(1) @binding(6) var<storage, read> dense_lights_buffer: array<Light>;
-@group(1) @binding(7) var<storage, read> light_count_buffer: array<u32>;
-@group(1) @binding(8) var texture_pool_albedo: texture_2d_array<f32>;
-@group(1) @binding(9) var texture_pool_normal: texture_2d_array<f32>;
-@group(1) @binding(10) var texture_pool_roughness: texture_2d_array<f32>;
-@group(1) @binding(11) var texture_pool_metallic: texture_2d_array<f32>;
-@group(1) @binding(12) var texture_pool_ao: texture_2d_array<f32>;
-@group(1) @binding(13) var texture_pool_height: texture_2d_array<f32>;
-@group(1) @binding(14) var texture_pool_specular: texture_2d_array<f32>;
-@group(1) @binding(15) var texture_pool_emission: texture_2d_array<f32>;
-@group(1) @binding(16) var output_tex: texture_storage_2d<rgba16float, write>;
+@group(1) @binding(1) var<uniform> scene_lighting_data: SceneLightingData;
+@group(1) @binding(2) var<storage, read_write> path_state: array<PathState>;
+@group(1) @binding(3) var<storage, read_write> path_shade: array<PathShade>;
+@group(1) @binding(4) var<storage, read> material_params: array<StandardMaterialParams>;
+@group(1) @binding(5) var<storage, read> material_table_offset: array<u32>;
+@group(1) @binding(6) var<storage, read> material_palette: array<u32>;
+@group(1) @binding(7) var<storage, read> dense_lights_buffer: array<Light>;
+@group(1) @binding(8) var<storage, read> light_count_buffer: array<u32>;
+@group(1) @binding(9) var texture_pool_albedo: texture_2d_array<f32>;
+@group(1) @binding(10) var texture_pool_normal: texture_2d_array<f32>;
+@group(1) @binding(11) var texture_pool_roughness: texture_2d_array<f32>;
+@group(1) @binding(12) var texture_pool_metallic: texture_2d_array<f32>;
+@group(1) @binding(13) var texture_pool_ao: texture_2d_array<f32>;
+@group(1) @binding(14) var texture_pool_height: texture_2d_array<f32>;
+@group(1) @binding(15) var texture_pool_specular: texture_2d_array<f32>;
+@group(1) @binding(16) var texture_pool_emission: texture_2d_array<f32>;
+@group(1) @binding(17) var skybox_texture: texture_cube<f32>;
+@group(1) @binding(18) var output_tex: texture_storage_2d<rgba16float, write>;
 
 fn sample_texture_or_vec4_param_handle(
     tex_handle: u32,
@@ -215,6 +220,30 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         info.shadow_radiance = vec4f(0.0);
         info.state_u32.z = 0u;
     }
+
+    let light_view_index = u32(scene_lighting_data.view_index);
+    let light_view = view_buffer[light_view_index];
+    let sun_dir = normalize(-light_view.view_direction.xyz);
+    
+    // === SKY MISS HANDLING ===
+    // If ray didn't hit anything (miss), evaluate the environment (skybox or skydome)
+    if (info.state_u32.w == 0xffffffffu && info.state_u32.y != 0u) {
+        let ray_dir = normalize(info.direction_tmax.xyz);
+        
+        // Evaluate environment radiance (chooses skybox or skydome based on sky_type)
+        let sky_radiance = evaluate_environment(
+            ray_dir, 
+            sun_dir, 
+            scene_lighting_data,
+            skybox_texture,
+        );
+        
+        // Add sky contribution weighted by path throughput
+        shade.throughput += vec4f(sky_radiance * shade.path_weight.xyz, 0.0);
+        
+        // Mark path as dead
+        info.state_u32.y = 0u;
+    }
     
     // Only shade if we have a valid hit
     if (info.state_u32.w != 0xffffffffu) {
@@ -294,7 +323,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         let clear_coat = 0.0;
         let clear_coat_roughness = 0.0;
         let v_dir = -normalize(info.direction_tmax.xyz);
-        let v_dot_h = max(dot(v_dir, n), 0.0001);
+        let n_dot_v = max(dot(v_dir, n), 0.0001);
 
         // === EMISSIVE CONTRIBUTION ===
         if (emissive > 0.0) {
@@ -315,7 +344,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         let dielectric_f0 = 0.16 * reflectance * reflectance;
         let f0 = mix(vec3<f32>(dielectric_f0), albedo, metallic);
 
-        let f = f_schlick_vec3(f0, 1.0, v_dot_h);
+        let f = f_schlick_vec3(f0, 1.0, n_dot_v);
         let fresnel_luminance = (f.x + f.y + f.z) / 3.0;
         let use_ggx = (clamped_roughness < 0.3) || (metallic > 0.5);
         let specular_prob_if_ggx = clamp(fresnel_luminance, 0.001, 0.99);
@@ -372,7 +401,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
                 let phi = 2.0 * PI * r1;
                 let cos_theta = sqrt(1.0 - r2);
                 let sin_theta = sqrt(r2);
-                let up = select(vec3f(0.0, 1.0, 0.0), vec3f(1.0, 0.0, 0.0), abs(n.z) > 0.999);
+                let up = select(vec3f(0.0, 1.0, 0.0), vec3f(1.0, 0.0, 0.0), abs(n.y) > 0.999);
                 let tangent = normalize(cross(up, n));
                 let bitangent = normalize(cross(n, tangent));
                 let dir_local = vec3f(cos(phi) * sin_theta, sin(phi) * sin_theta, cos_theta);
@@ -395,6 +424,50 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
             candidate_samples[num_candidates].radiance_and_target_pdf = vec4f(brdf, brdf_lum); // Will be scaled by path weight
             candidate_samples[num_candidates].direction_and_source_pdf = vec4f(dir, pdf);
             num_candidates += 1u;
+        }
+        
+        // === Environment Sampling Candidates (for better sky convergence) ===
+        // Sample the environment directly and add as candidates
+        // Add 2-3 environment samples (cosine-weighted hemisphere)
+        for (var i = 0u; i < num_env_samples; i = i + 1u) {
+            rng = random_seed(rng);
+            let r1 = rand_float(rng);
+            rng = random_seed(rng);
+            let r2 = rand_float(rng);
+            
+            // Cosine-weighted hemisphere sampling
+            let phi = 2.0 * PI * r1;
+            let cos_theta = sqrt(1.0 - r2);
+            let sin_theta = sqrt(r2);
+            
+            // Build TBN frame
+            let up = select(vec3f(0.0, 1.0, 0.0), vec3f(1.0, 0.0, 0.0), abs(n.z) > 0.999);
+            let tangent = normalize(cross(up, n));
+            let bitangent = normalize(cross(n, tangent));
+            let dir_local = vec3f(cos(phi) * sin_theta, sin(phi) * sin_theta, cos_theta);
+            let env_dir = normalize(tangent * dir_local.x + bitangent * dir_local.y + n * dir_local.z);
+            
+            // Evaluate environment radiance
+            let env_radiance = evaluate_environment(env_dir, sun_dir, scene_lighting_data, skybox_texture);
+            
+            // Compute BRDF for this direction
+            let env_brdf = calculate_brdf_rt(
+                n, v_dir, env_dir, albedo, roughness, metallic,
+                reflectance, clear_coat, clear_coat_roughness
+            );
+            
+            // Compute target PDF (importance of this sample)
+            let target_pdf = compute_gi_target_pdf(env_radiance, env_brdf);
+            
+            // Source PDF for cosine-weighted hemisphere sampling
+            let source_pdf = cos_theta / PI;
+            
+            if (num_candidates < num_max_samples && target_pdf > 0.0) {
+                // Store actual environment radiance (not just BRDF estimate!)
+                candidate_samples[num_candidates].radiance_and_target_pdf = vec4f(env_radiance, target_pdf);
+                candidate_samples[num_candidates].direction_and_source_pdf = vec4f(env_dir, source_pdf);
+                num_candidates += 1u;
+            }
         }
         
         // === STEP 2: Temporal Reuse - UNBIASED approach ===

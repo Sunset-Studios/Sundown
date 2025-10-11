@@ -743,14 +743,10 @@ export class SharedViewBuffer {
 
 export class SharedEnvironmentData {
   static skybox = null;
-
-  static skybox_data = null;
-  static skybox_data_buffer = new Float32Array([
-    1, 1, 1, 1, // color
-  ]);
-
   static skydome_data = null;
+
   static skydome_data_buffer = new Float32Array([
+    1, 1, 1, 1, // color (for regular skybox)
     2.99, // sunlight_intensity
     0.9997966769, // sunlight_angular_radius
     0.9, // atmospheric_rayleigh
@@ -758,7 +754,7 @@ export class SharedEnvironmentData {
     0.002, // mie_coefficient
     0.8, // mie_directional_g
     0, // view index 
-    0, // padding2
+    1, // sky_type (0 = skybox, 1 = skydome)
   ]);
 
   static set_skybox(name, texture_paths) {
@@ -771,41 +767,51 @@ export class SharedEnvironmentData {
         GPUTextureUsage.TEXTURE_BINDING |
         GPUTextureUsage.COPY_DST |
         GPUTextureUsage.RENDER_ATTACHMENT,
-      force: true,
     });
 
-    this.skybox_data = Buffer.create({
-      name: name + "_data",
-      raw_data: this.skybox_data_buffer,
-      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-      force: true,
-    });
-
-    this.skydome_data = null;
-
+    // Update skydome buffer to indicate skybox mode
+    this.skydome_data_buffer[11] = 0; // sky_type = 0 (skybox)
+    if (!this.skydome_data) {
+      this.skydome_data = Buffer.create({
+        name: name + "_skydome_data",
+        raw_data: this.skydome_data_buffer,
+        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+        force: true,
+      });
+    } else {
+      this.skydome_data.write(this.skydome_data_buffer);
+    }
+    
     return this.skybox;
   }
 
   static set_skydome(name) {
-    // Null skybox means skydome is enabled
-    this.skydome_data = Buffer.create({
-      name: name + "_skydome_data",
-      raw_data: this.skydome_data_buffer,
-      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-      force: true,
-    });
-    
-    this.skybox = null;
-    this.skybox_data = null;
+    this.skybox = Texture.default_cube();
+
+    // Skydome is enabled - update sky_type flag
+    this.skydome_data_buffer[11] = 1; // sky_type = 1 (skydome)
+    if (!this.skydome_data) {
+      this.skydome_data = Buffer.create({
+        name: name + "_skydome_data",
+        raw_data: this.skydome_data_buffer,
+        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+        force: true,
+      });
+    } else {
+      this.skydome_data.write(this.skydome_data_buffer);
+    }
   }
 
   static set_skybox_color(color) {
-    this.skybox_data_buffer.set(color);
-    this.skybox_data.write(this.skybox_data_buffer);
+    this.skydome_data_buffer[0] = color[0];
+    this.skydome_data_buffer[1] = color[1];
+    this.skydome_data_buffer[2] = color[2];
+    this.skydome_data_buffer[3] = color[3];
+    this.skydome_data.write(this.skydome_data_buffer);
   }
 
   static set_skydome_view(view_index) {
-    this.skydome_data_buffer[6] = view_index;
+    this.skydome_data_buffer[10] = view_index;
     this.skydome_data.write(this.skydome_data_buffer);
   }
 
@@ -813,12 +819,8 @@ export class SharedEnvironmentData {
     return this.skybox;
   }
 
-  static get_skybox_data() {
-    return this.skybox_data;
-  }
-
   static get_skydome_view() {
-    return this.skydome_data_buffer[6];
+    return this.skydome_data_buffer[10];
   }
 
   static get_skydome_data() {

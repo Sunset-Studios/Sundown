@@ -581,11 +581,15 @@ fn cs(
             let n_local = (n0 * (1.0 - u_bc - v_bc) + n1 * u_bc + n2 * v_bc);
 
             var world_n = safe_normalize((entity_transform.transpose_inverse_model_matrix * vec4<f32>(n_local, 0.0)).xyz);
-            let world_t = safe_normalize((entity_transform.transform * vec4<f32>(t_local, 0.0)).xyz);
-            let world_b = safe_normalize((entity_transform.transform * vec4<f32>(b_local, 0.0)).xyz);
+            var world_t = safe_normalize((entity_transform.transform * vec4<f32>(t_local, 0.0)).xyz);
+            var world_b = safe_normalize((entity_transform.transform * vec4<f32>(b_local, 0.0)).xyz);
 
             let ray_dir = ray.direction_and_tmax.xyz;
-            world_n = select(world_n, -world_n, dot(world_n, ray_dir) > 0.0);
+            if (dot(world_n, ray_dir) > 0.0) {
+                world_n = -world_n;
+                world_t = -world_t;
+                world_b = -world_b;
+            }
 
             ps.origin_tmin = vec4f(p_world, 0.0001);
             ps.direction_tmax = vec4f(ray_dir, hit_result.prim_meshid_padding.x);

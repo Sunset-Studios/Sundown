@@ -1,6 +1,6 @@
 import { RenderPassFlags } from "../renderer_types.js";
 import { RayTracer } from "./raytracer.js";
-import { SharedFrameInfoBuffer, SharedViewBuffer } from "../../core/shared_data.js";
+import { SharedFrameInfoBuffer, SharedViewBuffer, SharedEnvironmentData } from "../../core/shared_data.js";
 import { MaterialAllocationTable } from "../material_allocation_table.js";
 import { EntityManager } from "../../core/ecs/entity.js";
 import { StaticMeshFragment } from "../../core/ecs/fragments/static_mesh_fragment.js";
@@ -133,6 +133,13 @@ export class PathTracer extends RayTracer {
       ? render_graph.register_image(emission_pool.config.name)
       : default_texture_buffer;
 
+    // === Environment Sky Setup (Skybox or Skydome) ===
+    const skydome_data = SharedEnvironmentData.get_skydome_data();
+    const skydome_data_buffer = render_graph.register_buffer(skydome_data.config.name);
+
+    const skybox = SharedEnvironmentData.get_skybox();
+    const skybox_texture_buffer = render_graph.register_image(skybox.config.name);
+
     const path_state = render_graph.create_buffer({
       name: "pt_path_state",
       size: width * height * 36 * 4, // 9 vec4<f32> ≈ PathState
@@ -233,29 +240,34 @@ export class PathTracer extends RayTracer {
           }
         );
 
+        // Build shader inputs
+        const shade_inputs_list = [
+          pt_params,
+          skydome_data_buffer,
+          path_state,
+          path_shade,
+          params_gpu_buffer,
+          material_palette_offsets_buffer,
+          material_palette_buffer,
+          dense_lights,
+          light_count,
+          albedo_pool_buffer,
+          normal_pool_buffer,
+          roughness_pool_buffer,
+          metallic_pool_buffer,
+          ao_pool_buffer,
+          height_pool_buffer,
+          specular_pool_buffer,
+          emission_pool_buffer,
+          skybox_texture_buffer,
+          this.output_texture,
+        ];
+
         render_graph.add_pass(
           `path_trace_shade_${s}_${b}`,
           RenderPassFlags.Compute,
           {
-            inputs: [
-              pt_params,
-              path_state,
-              path_shade,
-              params_gpu_buffer,
-              material_palette_offsets_buffer,
-              material_palette_buffer,
-              dense_lights,
-              light_count,
-              albedo_pool_buffer,
-              normal_pool_buffer,
-              roughness_pool_buffer,
-              metallic_pool_buffer,
-              ao_pool_buffer,
-              height_pool_buffer,
-              specular_pool_buffer,
-              emission_pool_buffer,
-              this.output_texture,
-            ],
+            inputs: shade_inputs_list,
             outputs: [path_state, path_shade],
             shader_setup: path_tracer_shade_shader_setup,
           },

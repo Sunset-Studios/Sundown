@@ -1334,7 +1334,7 @@ export class VoxelTerrainScene extends Scene {
     const light_fragment_view = EntityManager.get_fragment(light_entity, LightFragment);
     light_fragment_view.type = LightType.DIRECTIONAL;
     light_fragment_view.color = [1, 1, 1];
-    light_fragment_view.intensity = 5.0;
+    light_fragment_view.intensity = 3.0;
     light_fragment_view.position = [-15, 20, 5];
     light_fragment_view.active = true;
     light_fragment_view.is_primary_sun = 1;
@@ -1507,7 +1507,7 @@ export class VoxelTerrainScene extends Scene {
     sandy_material.set_albedo([0.94, 0.87, 0.69, 1.0]); // Sandy beige color
     sandy_material.set_roughness(0.9);
     sandy_material.set_emission(0.0);
-    sandy_material.set_metallic(0.99);
+    sandy_material.set_metallic(0.1);
     sandy_material.set_specular(0.5);
 
     // Create large ground plane entity
@@ -2242,7 +2242,7 @@ export class ShadowTestScene extends Scene {
     const light_fragment_view = EntityManager.get_fragment(light_entity, LightFragment);
     light_fragment_view.type = LightType.DIRECTIONAL;
     light_fragment_view.color = [1, 1, 0.9];
-    light_fragment_view.intensity = 2.0;
+    light_fragment_view.intensity = 4.0;
     light_fragment_view.position = [30, 55, 40];
     light_fragment_view.active = true;
     light_fragment_view.is_primary_sun = 1;
@@ -2905,10 +2905,10 @@ export class CityScene extends Scene {
   //await scene_switcher.add_scene(ml_scene);
   //await scene_switcher.add_scene(voxel_terrain_scene);
   //await scene_switcher.add_scene(object_painting_scene);
-  //await scene_switcher.add_scene(gi_test_scene);
+  await scene_switcher.add_scene(gi_test_scene);
   //await scene_switcher.add_scene(shadow_test_scene);
   //await scene_switcher.add_scene(gltf_model_scene);
-  await scene_switcher.add_scene(sponza_scene);
+  //await scene_switcher.add_scene(sponza_scene);
   //await scene_switcher.add_scene(city_scene);
 
   simulator.add_sim_layer(scene_switcher);

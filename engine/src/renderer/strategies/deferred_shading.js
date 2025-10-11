@@ -167,20 +167,6 @@ const skybox_shader_setup = {
   },
   depth_write_enabled: false,
 };
-const skydome_shader_setup = {
-  pipeline_shaders: {
-    vertex: {
-      path: "analytic_sky.wgsl",
-    },
-    fragment: {
-      path: "analytic_sky.wgsl",
-    },
-  },
-  rasterizer_state: {
-    cull_mode: "none",
-  },
-  depth_write_enabled: false,
-};
 const skybox_output_image_config = {
   name: "skybox_output",
   format: rgba8unorm_format,
@@ -758,7 +744,8 @@ export class DeferredShadingStrategy {
 
       // ┌─────────────────────────────────────────────────────────────────────────────┐
       // │ 🌌 PASS: Skybox Rendering                                                  │
-      // │    Render the environment skybox to provide distant lighting context      │
+      // │    Render the environment skybox (or analytic skydome) to provide           |
+      // |    distant lighting context                                                 │
       // └─────────────────────────────────────────────────────────────────────────────┘
       {
         skybox_output_image_config.width = image_extent.width;
@@ -766,44 +753,25 @@ export class DeferredShadingStrategy {
         skybox_output_image_config.force = this.force_recreate;
         skybox_image = render_graph.create_image(skybox_output_image_config);
 
-        const skybox = SharedEnvironmentData.get_skybox();
-        const skybox_data = SharedEnvironmentData.get_skybox_data();
         const skydome_data = SharedEnvironmentData.get_skydome_data();
+        const skydome_data_buffer = render_graph.register_buffer(skydome_data.config.name);
 
-        if (skybox) {
-          const skybox_data_buffer = render_graph.register_buffer(skybox_data.config.name);
-          const skybox_texture = render_graph.register_image(skybox.config.name);
+        const skybox = SharedEnvironmentData.get_skybox();
+        const skybox_texture = render_graph.register_image(skybox.config.name);
 
-          render_graph.add_pass(
-            skybox_pass_name,
-            RenderPassFlags.Graphics,
-            {
-              inputs: [skybox_texture, skybox_data_buffer],
-              outputs: [skybox_image],
-              shader_setup: skybox_shader_setup,
-            },
-            (graph, frame_data, encoder) => {
-              const pass = graph.get_physical_pass(frame_data.current_pass);
-              MeshTaskQueue.draw_cube(pass);
-            }
-          );
-        } else if (skydome_data) {
-          const skydome_data_buffer = render_graph.register_buffer(skydome_data.config.name);
-
-          render_graph.add_pass(
-            skydome_pass_name,
-            RenderPassFlags.Graphics,
-            {
-              inputs: [skydome_data_buffer],
-              outputs: [skybox_image],
-              shader_setup: skydome_shader_setup,
-            },
-            (graph, frame_data, encoder) => {
-              const pass = graph.get_physical_pass(frame_data.current_pass);
-              MeshTaskQueue.draw_cube(pass);
-            }
-          );
-        }
+        render_graph.add_pass(
+          skydome_pass_name,
+          RenderPassFlags.Graphics,
+          {
+            inputs: [skybox_texture, skydome_data_buffer],
+            outputs: [skybox_image],
+            shader_setup: skybox_shader_setup,
+          },
+          (graph, frame_data, encoder) => {
+            const pass = graph.get_physical_pass(frame_data.current_pass);
+            MeshTaskQueue.draw_cube(pass);
+          }
+        );
       }
 
       // ┌─────────────────────────────────────────────────────────────────────────────┐
