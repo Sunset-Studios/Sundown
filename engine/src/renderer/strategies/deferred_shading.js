@@ -49,7 +49,6 @@ import {
 
 // Specialized renderer components
 import { GI } from "../global_illumination/gi.js";
-import { PathTracer } from "../raytracing/path_tracer.js";
 import { GTAO } from "../global_illumination/gtao.js";
 import { AdaptiveSparseVirtualShadowMaps } from "../shadows/as_vsm.js";
 import {
@@ -443,7 +442,6 @@ export class DeferredShadingStrategy {
   gi = null;
   gtao = null;
   as_vsm = null;
-  path_tracer = null;
   debug_overlay = null;
   frustum_culler = null;
   occlusion_culler = null;
@@ -460,7 +458,6 @@ export class DeferredShadingStrategy {
       max_lods: MAX_CLIPMAP_LEVELS,
       clip0_extent: DEFAULT_LIGHT_CLIP_EXTENT,
     });
-    this.path_tracer = new PathTracer();
 
     this.frustum_culler = new FrustumCuller(
       null,
@@ -544,8 +541,9 @@ export class DeferredShadingStrategy {
         TransformFragment,
         transforms_name
       );
-      const bounds_buffer = EntityManager.get_fragment_gpu_buffer(TransformFragment, bounds_name);
       const entity_transforms = render_graph.register_buffer(transforms_buffer.buffer.config.name);
+
+      const bounds_buffer = EntityManager.get_fragment_gpu_buffer(TransformFragment, bounds_name);
       const aabb_bounds = render_graph.register_buffer(bounds_buffer.buffer.config.name);
 
       const occluder_buffer = EntityManager.get_fragment_gpu_buffer(
@@ -1584,43 +1582,6 @@ export class DeferredShadingStrategy {
       // └─────────────────────────────────────────────────────────────────────────────┘
       if (debug_view !== DebugDrawType.None) {
         switch (debug_view) {
-          case DebugDrawType.PathTracing: {
-            // Ensure path tracer output exists for current resolution and bind BVH inputs
-            this.path_tracer.add_passes(
-              render_graph,
-              image_extent.width,
-              image_extent.height,
-              2, // max_bounces
-              1, // spp_per_frame
-              1, // trace_rate - 1=full res, 2=half, 4=quarter, etc.
-              true, // use_gbuffer - enable G-buffer mode for hybrid rendering
-              1, // ris_brdf_candidates
-              1.0, // indirect_boost
-              aabb_bounds,
-              tlas_bvh4_nodes,
-              blas_atlas,
-              entity_transforms,
-              mesh_asset_ids_buffer,
-              index_buffer,
-              dense_lights,
-              light_count,
-              main_position_image,
-              main_normal_image,
-              main_albedo_image,
-              main_smra_image,
-              main_emissive_image,
-              this.force_recreate,
-            );
-            this.debug_overlay.set_properties(
-              this.path_tracer.output_texture,
-              0,
-              0,
-              image_extent.width,
-              image_extent.height,
-              DebugDrawType.PathTracing
-            );
-            break;
-          }
           case DebugDrawType.Wireframe:
             break;
           case DebugDrawType.Depth:

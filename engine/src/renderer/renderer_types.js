@@ -103,6 +103,15 @@ export const BindGroupType = Object.freeze({
 });
 
 /**
+ * Types of rendering strategies.
+ * @enum {number}
+ */
+export const RenderStrategyType = Object.freeze({
+    Deferred: 0,
+    PathTracing: 1,
+});
+
+/**
  * Types of debug draw in the render graph.
  * @enum {number}
  */
@@ -128,7 +137,6 @@ export const DebugDrawType = Object.freeze({
     BVH4: 18,
     BLAS_Bounds: 19,
     BLAS_BVH4: 20,
-    PathTracing: 21,
 });
 
 /**

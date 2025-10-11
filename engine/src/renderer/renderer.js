@@ -1,5 +1,7 @@
 import { MAX_BUFFERED_FRAMES } from "../core/minimal.js";
-import { DebugDrawType } from "./renderer_types.js";
+import { DebugDrawType, RenderStrategyType } from "./renderer_types.js";
+import { DeferredShadingStrategy } from "./strategies/deferred_shading.js";
+import { PathTracingStrategy } from "./strategies/path_tracing.js";
 import { RenderGraph } from "./render_graph.js";
 import { Texture, TextureSampler } from "./texture.js";
 import { Mesh } from "./mesh.js";
@@ -28,6 +30,8 @@ export class Renderer {
   aspect_ratio = 1.0;
   execution_queue = new ExecutionQueue();
   render_strategy = null;
+  render_strategy_type = RenderStrategyType.Deferred;
+  render_strategy_class = null;
   render_graph = null;
   post_render_callbacks = [];
   pre_render_callbacks = [];
@@ -132,6 +136,7 @@ export class Renderer {
 
     this.render_graph = RenderGraph.create(this.max_bind_groups());
 
+    this.render_strategy_class = render_strategy;
     this.render_strategy = new render_strategy();
 
     if (__DEV__) {
@@ -458,6 +463,65 @@ export class Renderer {
    */
   set_debug_draw_type(debug_draw_type) {
     this.debug_draw_type = debug_draw_type;
+  }
+
+  /**
+   * Get the current rendering strategy type
+   * @returns {RenderStrategyType} - The rendering strategy type
+   */
+  get_render_strategy_type() {
+    return this.render_strategy_type;
+  }
+
+  /**
+   * Set the rendering strategy type
+   * @param {RenderStrategyType} strategy_type - The rendering strategy type
+   * @param {RenderStrategy} strategy_class - The rendering strategy class (optional, uses default for type if not provided)
+   */
+  set_render_strategy_type(strategy_type, strategy_class = null) {
+    // If switching to the same strategy type, do nothing
+    if (this.render_strategy_type === strategy_type && !strategy_class) {
+      return;
+    }
+
+    this.render_strategy_type = strategy_type;
+
+    // If a specific strategy class is provided, use it
+    if (strategy_class) {
+      this.render_strategy_class = strategy_class;
+      this.render_strategy = new strategy_class();
+      this.render_strategy.refresh(this.render_graph);
+      return;
+    }
+
+    // Otherwise, use the default strategy for the type
+    // Import default strategies dynamically to avoid circular dependencies
+    switch (strategy_type) {
+      case RenderStrategyType.Deferred:
+        this.render_strategy_class = DeferredShadingStrategy;
+        this.render_strategy = new DeferredShadingStrategy();
+        break;
+      case RenderStrategyType.PathTracing:
+        this.render_strategy_class = PathTracingStrategy;
+        this.render_strategy = new PathTracingStrategy();
+        this.render_strategy.refresh(this.render_graph);
+        break;
+      default:
+        log(`Unknown render strategy type: ${strategy_type}, falling back to Deferred`);
+        this.render_strategy_class = DeferredShadingStrategy;
+        this.render_strategy = new DeferredShadingStrategy();
+        break;
+    }
+    
+    this.render_strategy.refresh(this.render_graph);
+  }
+
+  /**
+   * Get the current rendering strategy instance
+   * @returns {RenderStrategy} - The rendering strategy instance
+   */
+  get_render_strategy() {
+    return this.render_strategy;
   }
 
   /**
