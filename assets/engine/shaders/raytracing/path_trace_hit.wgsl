@@ -591,7 +591,9 @@ fn cs(
                 world_b = -world_b;
             }
 
-            ps.origin_tmin = vec4f(p_world, 0.0001);
+            // Store hit distance in origin_tmin.w for use in shade pass (for emissive attenuation)
+            // This will be overwritten when we spawn the next ray, but shade pass reads it first
+            ps.origin_tmin = vec4f(p_world, t_tri);
             ps.direction_tmax = vec4f(ray_dir, hit_result.prim_meshid_padding.x);
             ps.normal_section_index = vec4f(world_n, f32(vertex0.section_index));
             ps.hit_attr0 = vec4f(world_t, uv_hit.x);

@@ -376,12 +376,6 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         let v_dir = -normalize(info.direction_tmax.xyz);
         let n_dot_v = max(dot(v_dir, n), 0.0001);
 
-        // === EMISSIVE CONTRIBUTION ===
-        if (emissive > 0.0) {
-            let emissive_contribution = emissive * albedo * shade.path_weight.xyz;
-            shade.throughput += vec4f(emissive_contribution, 0.0);
-        }
-
         // =============================================================================
         // === ReSTIR GI: Generate candidates + temporal/spatial reuse ===
         // =============================================================================
@@ -405,6 +399,36 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         var candidate_samples: array<GISample, num_max_samples>;
         var num_candidates = 0u;
         let num_lights = light_count_buffer[0];
+        
+        // === EMISSIVE CONTRIBUTION (if we hit an emissive surface) ===
+        // Add emissive with variance reduction - but keep temporal stability
+        if (emissive > 0.0) {
+            let emissive_radiance = emissive * albedo;
+            
+            if (current_bounce > 0u) {
+                // Indirect hit: Apply distance-aware attenuation with temporal stability
+                // The formula is deterministic: same distance + PDF -> same result every frame
+                let hit_distance = max(info.origin_tmin.w, 0.01); // Clamp to avoid division by zero
+                let ray_source_pdf = shade.path_weight.w;
+                let raw_contribution = emissive_radiance * shade.path_weight.xyz;
+                let contribution_luminance = raw_contribution.x * 0.2126 + raw_contribution.y * 0.7152 + raw_contribution.z * 0.0722;
+                
+                // Distance-based maximum: closer emissives can contribute more
+                // This naturally reduces fireflies from distant small emissives
+                let distance_factor = 1.0 / hit_distance;
+                let max_contribution = emissive * PI * distance_factor;
+                
+                // Compute stable scale factor (deterministic for same inputs)
+                let scale = min(1.0, (max_contribution * ray_source_pdf) / max(contribution_luminance, 0.001));
+                
+                let emissive_contribution = raw_contribution * scale;
+                shade.throughput += vec4f(emissive_contribution, 0.0);
+            } else {
+                // Direct camera hit: full contribution always
+                let emissive_contribution = emissive_radiance * shade.path_weight.xyz;
+                shade.throughput += vec4f(emissive_contribution, 0.0);
+            }
+        }
         
         // === Direct Lighting with Shadow Rays (NEE) ===
         if (num_lights > 0u) {
@@ -553,6 +577,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         // Evaluate contribution fresh each frame - this is unbiased!
         let prev_direction = shade.reservoir_direction_w.xyz;
         let prev_m = u32(shade.reservoir_radiance_m.w);
+        let prev_importance_hint = shade.reservoir_radiance_m.xyz; // Stores BRDF from previous frame
         
         if (prev_m > 0u && length(prev_direction) > 0.01) {
             // Evaluate THIS FRAME's BRDF for the previous direction
@@ -564,11 +589,14 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
             // Compute PDF for this direction
             let prev_pdf = brdf_pdf(n, v_dir, prev_direction, clamped_roughness, mis_specular_prob);
             
-            // Use BRDF as radiance estimate (indirect lighting is unknown until we trace)
-            let brdf_lum = max(0.0, prev_brdf.x * 0.2126 + prev_brdf.y * 0.7152 + prev_brdf.z * 0.0722);
+            // Use BRDF as radiance estimate, but boost if previous frame had high contribution
+            // This helps propagate emissive hits through temporal reuse
+            let prev_hint_lum = max(0.0, prev_importance_hint.x * 0.2126 + prev_importance_hint.y * 0.7152 + prev_importance_hint.z * 0.0722);
+            let temporal_boost = min(2.0, 1.0 + prev_hint_lum * 0.5); // Boost up to 2x for very bright samples
+            let brdf_lum = max(0.0, prev_brdf.x * 0.2126 + prev_brdf.y * 0.7152 + prev_brdf.z * 0.0722) * temporal_boost;
             
             if (num_candidates < num_max_samples && brdf_lum > 0.0) {
-                candidate_samples[num_candidates].radiance_and_target_pdf = vec4f(prev_brdf, brdf_lum);
+                candidate_samples[num_candidates].radiance_and_target_pdf = vec4f(prev_brdf * temporal_boost, brdf_lum);
                 candidate_samples[num_candidates].direction_and_source_pdf = vec4f(prev_direction, prev_pdf);
                 num_candidates += 1u;
             }
@@ -658,8 +686,21 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
             
             // Store only the DIRECTION for temporal reuse - UNBIASED!
             // We don't store radiance, just the direction and sample count
-            // The BRDF estimate is stored just as a hint for importance sampling
-            let selected_brdf_estimate = selected_sample.radiance_and_target_pdf.xyz;
+            // The BRDF estimate is stored as a hint for importance sampling
+            // If we hit an emissive, boost the hint so temporal reuse favors this direction
+            var selected_brdf_estimate = selected_sample.radiance_and_target_pdf.xyz;
+            
+            // Boost importance hint if we hit an emissive with this direction
+            // Closer emissives get stronger boost (more relevant for local lighting)
+            if (emissive > 0.0) {
+                let hit_distance = max(info.origin_tmin.w, 0.1);
+                // Proximity boost: nearby emissives are more important to cache
+                // 1.0 at distance=0, 0.5 at distance=1, 0.33 at distance=2, etc.
+                let proximity_boost = 1.0 / (1.0 + hit_distance);
+                let emissive_importance = emissive * albedo.x * 0.2126 + emissive * albedo.y * 0.7152 + emissive * albedo.z * 0.0722;
+                let boost_factor = emissive_importance * 10.0 * proximity_boost;
+                selected_brdf_estimate = selected_brdf_estimate * (1.0 + boost_factor);
+            }
             
             shade.reservoir_radiance_m = vec4f(selected_brdf_estimate, f32(gi_reservoir.m));
             shade.reservoir_direction_w = vec4f(selected_dir, gi_reservoir.w);
@@ -672,7 +713,13 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
             let selected_source_pdf = selected_sample.direction_and_source_pdf.w;
             shade.path_weight = vec4f(shade.path_weight.xyz * brdf_weight, selected_source_pdf);
         
-            let alive_next = select(0u, 1u, (info.state_u32.x + 1u) < pt_params.max_bounces);
+            // Kill path if we hit an emissive on first bounce (camera direct hit)
+            // Emissive surfaces are light sources - they don't need indirect lighting accumulation
+            // This prevents temporal instability from varying indirect contributions
+            let is_first_bounce_emissive = (current_bounce == 0u) && (emissive > 0.1);
+            let should_continue = (info.state_u32.x + 1u) < pt_params.max_bounces && !is_first_bounce_emissive;
+            let alive_next = select(0u, 1u, should_continue);
+            
             info.origin_tmin = vec4f(hit_pos + n * 0.001, 0.0001);
             info.direction_tmax = vec4f(selected_dir, 1e30);
             info.state_u32.x = info.state_u32.x + 1u;

@@ -2242,7 +2242,7 @@ export class ShadowTestScene extends Scene {
     const light_fragment_view = EntityManager.get_fragment(light_entity, LightFragment);
     light_fragment_view.type = LightType.DIRECTIONAL;
     light_fragment_view.color = [1, 1, 0.9];
-    light_fragment_view.intensity = 4.0;
+    light_fragment_view.intensity = 1.0;
     light_fragment_view.position = [30, 55, 40];
     light_fragment_view.active = true;
     light_fragment_view.is_primary_sun = 1;
@@ -2705,9 +2705,9 @@ export class SponzaScene extends Scene {
     const light_fragment_view = EntityManager.get_fragment(light_entity, LightFragment);
     light_fragment_view.type = LightType.DIRECTIONAL;
     light_fragment_view.color = [1, 1, 1];
-    light_fragment_view.intensity = 25.0;
+    light_fragment_view.intensity = 10.0;
     light_fragment_view.position = [5, 20, 2.5];
-    light_fragment_view.active = true;
+    light_fragment_view.active = false;
     light_fragment_view.is_primary_sun = 1;
     light_fragment_view.shadow_clipmaps = MAX_CLIPMAP_LEVELS;
 
@@ -2722,13 +2722,13 @@ export class SponzaScene extends Scene {
     const ground_material_id = ground_material.material_id;
     ground_material.set_albedo([0.75, 0.75, 0.75, 1.0]);
     ground_material.set_roughness(0.9);
-    ground_material.set_metallic(0.2);
+    ground_material.set_metallic(0.8);
 
     // White emissive material for cube
     const emissive_white_material = StandardMaterial.create("sponza_emissive_white_material");
     const emissive_white_material_id = emissive_white_material.material_id;
     emissive_white_material.set_albedo([1, 1, 1, 1]);
-    emissive_white_material.set_emission(25.0);
+    emissive_white_material.set_emission(100.0);
     emissive_white_material.set_metallic(0.2);
     emissive_white_material.set_roughness(0.9);
     emissive_white_material.set_specular(0.5);
@@ -2737,21 +2737,21 @@ export class SponzaScene extends Scene {
     const ground_entity = spawn_mesh_entity(
       [0, 0, 0],
       quat.fromEuler(quat.create(), 0, 0, 0),
-      [4000, 1.0, 4000],
+      [2000, 1.0, 2000],
       cube_mesh,
       ground_material_id
     );
     this.entities.push(ground_entity);
 
     // Emissive white cube in center of Sponza atrium
-    // const emissive_cube = spawn_mesh_entity(
-    //   [0.0, 12.0, -0.25],
-    //   quat.fromEuler(quat.create(), 0, 0, 0),
-    //   [4.5, 0.2, 0.7],
-    //   cube_mesh,
-    //   emissive_white_material_id
-    // );
-    // this.entities.push(emissive_cube);
+    const emissive_cube = spawn_mesh_entity(
+      [0.0, 10.0, -0.25],
+      quat.fromEuler(quat.create(), 0, 0, 0),
+      [4.5, 0.2, 0.7],
+      cube_mesh,
+      emissive_white_material_id
+    );
+    this.entities.push(emissive_cube);
 
     const sponza_mesh = Mesh.from_gltf("engine/models/sponza/Sponza.gltf");
 
@@ -2906,9 +2906,9 @@ export class CityScene extends Scene {
   //await scene_switcher.add_scene(voxel_terrain_scene);
   //await scene_switcher.add_scene(object_painting_scene);
   //await scene_switcher.add_scene(gi_test_scene);
-  await scene_switcher.add_scene(shadow_test_scene);
+  //await scene_switcher.add_scene(shadow_test_scene);
   //await scene_switcher.add_scene(gltf_model_scene);
-  //await scene_switcher.add_scene(sponza_scene);
+  await scene_switcher.add_scene(sponza_scene);
   //await scene_switcher.add_scene(city_scene);
 
   simulator.add_sim_layer(scene_switcher);
