@@ -24,8 +24,8 @@ struct PathTracerParams {
     use_gbuffer: u32,
     trace_rate: u32,      // 1=full res, 2=half res, 4=quarter res, etc.
     frame_phase: u32,     // cycles 0 to trace_rate-1
-    ris_brdf_candidates: u32,     // Number of BRDF candidates for RIS (M)
     indirect_boost: u32,          // Multiplier for indirect bounces
+    padding: u32,
 };
 
 struct PathState {

@@ -2707,7 +2707,7 @@ export class SponzaScene extends Scene {
     light_fragment_view.color = [1, 1, 1];
     light_fragment_view.intensity = 10.0;
     light_fragment_view.position = [5, 20, 2.5];
-    light_fragment_view.active = false;
+    light_fragment_view.active = true;
     light_fragment_view.is_primary_sun = 1;
     light_fragment_view.shadow_clipmaps = MAX_CLIPMAP_LEVELS;
 
@@ -2744,14 +2744,14 @@ export class SponzaScene extends Scene {
     this.entities.push(ground_entity);
 
     // Emissive white cube in center of Sponza atrium
-    const emissive_cube = spawn_mesh_entity(
-      [0.0, 10.0, -0.25],
-      quat.fromEuler(quat.create(), 0, 0, 0),
-      [4.5, 0.2, 0.7],
-      cube_mesh,
-      emissive_white_material_id
-    );
-    this.entities.push(emissive_cube);
+    // const emissive_cube = spawn_mesh_entity(
+    //   [0.0, 10.0, -0.25],
+    //   quat.fromEuler(quat.create(), 0, 0, 0),
+    //   [4.5, 0.2, 0.7],
+    //   cube_mesh,
+    //   emissive_white_material_id
+    // );
+    // this.entities.push(emissive_cube);
 
     const sponza_mesh = Mesh.from_gltf("engine/models/sponza/Sponza.gltf");
 
@@ -2906,9 +2906,9 @@ export class CityScene extends Scene {
   //await scene_switcher.add_scene(voxel_terrain_scene);
   //await scene_switcher.add_scene(object_painting_scene);
   //await scene_switcher.add_scene(gi_test_scene);
-  //await scene_switcher.add_scene(shadow_test_scene);
+  await scene_switcher.add_scene(shadow_test_scene);
   //await scene_switcher.add_scene(gltf_model_scene);
-  await scene_switcher.add_scene(sponza_scene);
+  //await scene_switcher.add_scene(sponza_scene);
   //await scene_switcher.add_scene(city_scene);
 
   simulator.add_sim_layer(scene_switcher);
