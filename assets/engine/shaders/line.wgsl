@@ -13,7 +13,7 @@ struct VertexOutput {
 
 struct FragmentOutput {
     @location(0) color: vec4<precision_float>,
-    @location(1) emissive: vec4<precision_float>,
+    @location(1) motion_emissive: vec4<precision_float>,
     @location(2) smra: vec4<precision_float>,
     @location(3) position: vec4<f32>,
     @location(4) normal: vec4<precision_float>,
@@ -90,7 +90,7 @@ fn fs(input: VertexOutput) -> FragmentOutput {
 
     output.color = input.color;
     output.position = input.position;
-    output.emissive = vec4f(2.0, 0.0, 0.0, 0.0);
+    output.motion_emissive.a = 2.0;
     //output.smra = vec4f(0.0, 0.0, 0.0, 0.0);
     output.normal = vec4f(0.0, 0.0, 0.0, 0.0);
     

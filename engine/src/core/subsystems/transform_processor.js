@@ -69,7 +69,7 @@ export class TransformProcessor extends SimulationLayer {
       if (this.transform_processing_input_lists.length <= i) {
         this.transform_processing_input_lists.push(new Array(7));
         this.transform_processing_output_lists.push(new Array(2));
-        this.decompose_transform_input_lists.push(new Array(4));
+        this.decompose_transform_input_lists.push(new Array(7));
         this.decompose_transform_output_lists.push(new Array(3));
       }
 
@@ -96,14 +96,17 @@ export class TransformProcessor extends SimulationLayer {
       this.decompose_transform_output_lists[i][1] = world_rotations.buffer;
       this.decompose_transform_output_lists[i][2] = world_scales.buffer;
 
-      const dispatch_count = Math.max(1, Math.floor((SceneGraph.scene_graph_layer_counts[i] + 255) / 256));
+      const transform_dispatch_count = Math.max(
+        1,
+        Math.floor((SceneGraph.scene_graph_layer_counts[i] + 255) / 256)
+      );
 
       ComputeTaskQueue.new_task(
         transform_processing_task_name + i,
         transform_processing_wgsl_path,
         this.transform_processing_input_lists[i],
         this.transform_processing_output_lists[i],
-        dispatch_count
+        transform_dispatch_count
       );
 
       ComputeTaskQueue.new_task(
@@ -111,7 +114,7 @@ export class TransformProcessor extends SimulationLayer {
         decompose_transform_wgsl_path,
         this.decompose_transform_input_lists[i],
         this.decompose_transform_output_lists[i],
-        dispatch_count
+        transform_dispatch_count
       );
     }
   }

@@ -78,17 +78,6 @@ const main_albedo_image_config = {
     GPUTextureUsage.STORAGE_BINDING,
   force: false,
 };
-const main_emissive_image_config = {
-  name: "main_emissive",
-  format: rgba16float_format,
-  width: 0,
-  height: 0,
-  usage:
-    GPUTextureUsage.RENDER_ATTACHMENT |
-    GPUTextureUsage.TEXTURE_BINDING |
-    GPUTextureUsage.STORAGE_BINDING,
-  force: false,
-};
 const main_smra_image_config = {
   name: "main_smra",
   format: rgba16float_format,
@@ -122,6 +111,17 @@ const main_position_image_config = {
     GPUTextureUsage.STORAGE_BINDING,
   force: false,
 };
+const main_motion_emissive_image_config = {
+  name: "main_motion_emissive",
+  format: rgba16float_format,
+  width: 0,
+  height: 0,
+  usage:
+    GPUTextureUsage.RENDER_ATTACHMENT |
+    GPUTextureUsage.TEXTURE_BINDING |
+    GPUTextureUsage.STORAGE_BINDING,
+  force: false,
+};
 const main_transparency_accum_image_config = {
   name: "main_transparency_accum",
   format: rgba16float_format,
@@ -132,15 +132,6 @@ const main_transparency_accum_image_config = {
     GPUTextureUsage.TEXTURE_BINDING |
     GPUTextureUsage.STORAGE_BINDING,
   blend: one_one_blend_config,
-  force: false,
-};
-const main_transparency_reveal_image_config = {
-  name: "main_transparency_reveal",
-  format: r8unorm_format,
-  width: 0,
-  height: 0,
-  usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
-  clear_value: { r: 0.0, g: 0.0, b: 0.0, a: 0.0 },
   force: false,
 };
 const main_depth_image_config = {
@@ -508,7 +499,7 @@ export class DeferredShadingStrategy {
       // ⚙️  SETUP & INITIALIZATION PHASE
       // ═══════════════════════════════════════════════════════════════════════════════
       MeshTaskQueue.sort_and_batch();
-      ComputeTaskQueue.compile_rg_passes(render_graph);
+      ComputeTaskQueue.compile_pre_rg_passes(render_graph);
 
       this.frustum_culler.reset();
       this.occlusion_culler.reset();
@@ -604,9 +595,6 @@ export class DeferredShadingStrategy {
       main_albedo_image_config.width = image_extent.width;
       main_albedo_image_config.height = image_extent.height;
       main_albedo_image_config.force = this.force_recreate;
-      main_emissive_image_config.width = image_extent.width;
-      main_emissive_image_config.height = image_extent.height;
-      main_emissive_image_config.force = this.force_recreate;
       main_smra_image_config.width = image_extent.width;
       main_smra_image_config.height = image_extent.height;
       main_smra_image_config.force = this.force_recreate;
@@ -616,26 +604,23 @@ export class DeferredShadingStrategy {
       main_position_image_config.width = image_extent.width;
       main_position_image_config.height = image_extent.height;
       main_position_image_config.force = this.force_recreate;
+      main_motion_emissive_image_config.width = image_extent.width;
+      main_motion_emissive_image_config.height = image_extent.height;
+      main_motion_emissive_image_config.force = this.force_recreate;
       main_transparency_accum_image_config.width = image_extent.width;
       main_transparency_accum_image_config.height = image_extent.height;
       main_transparency_accum_image_config.force = this.force_recreate;
-      main_transparency_reveal_image_config.width = image_extent.width;
-      main_transparency_reveal_image_config.height = image_extent.height;
-      main_transparency_reveal_image_config.force = this.force_recreate;
       main_depth_image_config.width = image_extent.width;
       main_depth_image_config.height = image_extent.height;
       main_depth_image_config.force = this.force_recreate;
 
       let main_albedo_image = render_graph.create_image(main_albedo_image_config);
-      let main_emissive_image = render_graph.create_image(main_emissive_image_config);
       let main_smra_image = render_graph.create_image(main_smra_image_config);
       let main_normal_image = render_graph.create_image(main_normal_image_config);
       let main_position_image = render_graph.create_image(main_position_image_config);
+      let main_motion_emissive_image = render_graph.create_image(main_motion_emissive_image_config);
       let main_transparency_accum_image = render_graph.create_image(
         main_transparency_accum_image_config
-      );
-      let main_transparency_reveal_image = render_graph.create_image(
-        main_transparency_reveal_image_config
       );
       let main_depth_image = render_graph.create_image(main_depth_image_config);
 
@@ -698,13 +683,12 @@ export class DeferredShadingStrategy {
           {
             outputs: [
               main_albedo_image,
-              main_emissive_image,
               main_smra_image,
               main_position_image,
               main_normal_image,
+              main_motion_emissive_image,
               main_entity_id_image,
               main_transparency_accum_image,
-              main_transparency_reveal_image,
               main_depth_image,
             ],
             b_skip_pass_pipeline_setup: true,
@@ -783,20 +767,16 @@ export class DeferredShadingStrategy {
           {},
           (graph, frame_data, encoder) => {
             const albedo = graph.get_physical_image(main_albedo_image);
-            const emissive = graph.get_physical_image(main_emissive_image);
             const smra = graph.get_physical_image(main_smra_image);
             const position = graph.get_physical_image(main_position_image);
             const normal = graph.get_physical_image(main_normal_image);
+            const motion_emissive = graph.get_physical_image(main_motion_emissive_image);
             const entity_id = graph.get_physical_image(main_entity_id_image);
             const transparency_accum = graph.get_physical_image(main_transparency_accum_image);
-            const transparency_reveal = graph.get_physical_image(main_transparency_reveal_image);
             const depth = graph.get_physical_image(main_depth_image);
 
             if (albedo) {
               albedo.config.load_op = load_op_load;
-            }
-            if (emissive) {
-              emissive.config.load_op = load_op_load;
             }
             if (smra) {
               smra.config.load_op = load_op_load;
@@ -807,14 +787,14 @@ export class DeferredShadingStrategy {
             if (normal) {
               normal.config.load_op = load_op_load;
             }
+            if (motion_emissive) {
+              motion_emissive.config.load_op = load_op_load;
+            }
             if (entity_id) {
               entity_id.config.load_op = load_op_load;
             }
             if (transparency_accum) {
               transparency_accum.config.load_op = load_op_load;
-            }
-            if (transparency_reveal) {
-              transparency_reveal.config.load_op = load_op_load;
             }
             if (depth) {
               depth.config.load_op = load_op_load;
@@ -973,13 +953,10 @@ export class DeferredShadingStrategy {
             material.family === MaterialFamilyType.Transparent
               ? main_transparency_accum_image
               : main_albedo_image,
-            main_emissive_image,
             main_smra_image,
             main_position_image,
             main_normal_image,
-            material.family === MaterialFamilyType.Transparent
-              ? main_transparency_reveal_image
-              : null,
+            main_motion_emissive_image,
             main_depth_image,
           ];
 
@@ -1014,7 +991,7 @@ export class DeferredShadingStrategy {
         transparency_composite_pass_name,
         RenderPassFlags.Graphics,
         {
-          inputs: [main_transparency_accum_image, main_transparency_reveal_image],
+          inputs: [main_transparency_accum_image],
           outputs: [main_albedo_image],
           shader_setup: transparency_composite_shader_setup,
         },
@@ -1263,10 +1240,10 @@ export class DeferredShadingStrategy {
             inputs: [debug_line_data_buf],
             outputs: [
               main_albedo_image,
-              main_emissive_image,
               main_smra_image,
               main_position_image,
               main_normal_image,
+              main_motion_emissive_image,
               main_depth_image,
             ],
             shader_setup: line_draw_shader_setup,
@@ -1308,8 +1285,18 @@ export class DeferredShadingStrategy {
           image_extent.width,
           image_extent.height,
           main_position_image,
+          main_normal_image,
+          main_albedo_image,
+          main_smra_image,
+          main_motion_emissive_image,
           aabb_bounds,
-          object_instances,
+          tlas_bvh4_nodes,
+          blas_atlas,
+          entity_transforms,
+          mesh_asset_ids_buffer,
+          index_buffer,
+          dense_lights,
+          light_count,
           this.force_recreate
         );
       }
@@ -1343,10 +1330,10 @@ export class DeferredShadingStrategy {
         const lighting_inputs = [
           skybox_image,
           main_albedo_image,
-          main_emissive_image,
           main_smra_image,
           main_normal_image,
           main_position_image,
+          main_motion_emissive_image,
           main_depth_image,
           dense_lights,
           light_count,
@@ -1606,12 +1593,25 @@ export class DeferredShadingStrategy {
             break;
           case DebugDrawType.Emissive:
             this.debug_overlay.set_properties(
-              main_emissive_image,
+              main_motion_emissive_image,
               0,
               0,
               image_extent.width,
               image_extent.height,
-              DebugDrawType.Emissive
+              DebugDrawType.Emissive,
+              0, // texture_level
+              [0.0, 0.0, 0.0, 1.0], // channel_mask (alpha only)
+              1 // Use channels 
+            );
+            break;
+          case DebugDrawType.Motion:
+            this.debug_overlay.set_properties(
+              main_motion_emissive_image,
+              0,
+              0,
+              image_extent.width,
+              image_extent.height,
+              DebugDrawType.Motion
             );
             break;
           case DebugDrawType.EntityId:
@@ -1769,20 +1769,16 @@ export class DeferredShadingStrategy {
           {},
           (graph, frame_data, encoder) => {
             const albedo = graph.get_physical_image(main_albedo_image);
-            const emissive = graph.get_physical_image(main_emissive_image);
             const smra = graph.get_physical_image(main_smra_image);
             const position = graph.get_physical_image(main_position_image);
             const normal = graph.get_physical_image(main_normal_image);
+            const motion_emissive = graph.get_physical_image(main_motion_emissive_image);
             const entity_id = graph.get_physical_image(main_entity_id_image);
             const transparency_accum = graph.get_physical_image(main_transparency_accum_image);
-            const transparency_reveal = graph.get_physical_image(main_transparency_reveal_image);
             const depth = graph.get_physical_image(main_depth_image);
 
             if (albedo) {
               albedo.config.load_op = load_op_clear;
-            }
-            if (emissive) {
-              emissive.config.load_op = load_op_clear;
             }
             if (smra) {
               smra.config.load_op = load_op_clear;
@@ -1793,14 +1789,14 @@ export class DeferredShadingStrategy {
             if (normal) {
               normal.config.load_op = load_op_clear;
             }
+            if (motion_emissive) {
+              motion_emissive.config.load_op = load_op_clear;
+            }
             if (entity_id) {
               entity_id.config.load_op = load_op_clear;
             }
             if (transparency_accum) {
               transparency_accum.config.load_op = load_op_clear;
-            }
-            if (transparency_reveal) {
-              transparency_reveal.config.load_op = load_op_clear;
             }
             if (depth) {
               depth.config.load_op = load_op_clear;
@@ -1834,6 +1830,8 @@ export class DeferredShadingStrategy {
       // ═══════════════════════════════════════════════════════════════════════════════
 
       this.force_recreate = false;
+
+      ComputeTaskQueue.compile_post_rg_passes(render_graph);
 
       ComputeTaskQueue.reset();
 

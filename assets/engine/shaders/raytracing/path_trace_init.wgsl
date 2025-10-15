@@ -44,7 +44,7 @@ struct PathShade {
 @group(1) @binding(4) var gbuffer_normal: texture_2d<f32>;
 @group(1) @binding(5) var gbuffer_albedo: texture_2d<f32>;
 @group(1) @binding(6) var gbuffer_smra: texture_2d<f32>;
-@group(1) @binding(7) var gbuffer_emissive: texture_2d<f32>;
+@group(1) @binding(7) var gbuffer_motion_emissive: texture_2d<f32>;
 @group(1) @binding(8) var output_tex: texture_storage_2d<rgba16float, write>;
 
 // Helper function to compute the Nth pixel that matches the frame_phase pattern
@@ -115,7 +115,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
             // Read pre-computed material properties from G-buffer
             let albedo_data = textureLoad(gbuffer_albedo, pixel_coord, 0);
             let smra_data = textureLoad(gbuffer_smra, pixel_coord, 0);
-            let emissive_data = textureLoad(gbuffer_emissive, pixel_coord, 0);
+            let emissive_data = textureLoad(gbuffer_motion_emissive, pixel_coord, 0).w;
             
             // Store view direction in direction_tmax (for BRDF evaluation)
             let view_dir = normalize(view.view_position.xyz - gbuffer_pos);
@@ -139,7 +139,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
             
             // hit_attr1: x = metallic, y = specular, z = emissive, w = ao
             let specular = smra_data.r * 0.0009765625; // 1.0f / 1024
-            path_state[pixel_index].hit_attr1 = vec4f(smra_data.b, specular, emissive_data.r, smra_data.a);
+            path_state[pixel_index].hit_attr1 = vec4f(smra_data.b, specular, emissive_data, smra_data.a);
             
             // Mark as having a valid G-buffer hit (state_u32.w = 0x0 for G-buffer mode)
             // bounce=0, alive=1, shadow_flag=0, tri_id=0x0 (special marker for G-buffer hit)

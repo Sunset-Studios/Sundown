@@ -340,13 +340,13 @@ export class EntityManager {
    * Set the dirty flag for an entity.
    * @param {EntityHandle} entity - The entity to set the dirty flag for.
    */
-  static set_entity_dirty(entity) {
+  static set_entity_dirty(entity, field = null) {
     for (let i = 0; i < entity.segments.length; i++) {
       const segment = entity.segments[i];
       for (let j = 0; j < segment.count; j++) {
         segment.chunk.flags_meta[segment.slot + j] |= EntityFlags.DIRTY;
       }
-      segment.chunk.mark_dirty();
+      segment.chunk.mark_dirty(field);
     }
   }
 

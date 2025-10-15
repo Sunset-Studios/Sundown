@@ -149,19 +149,23 @@ fn cs(@builtin(global_invocation_id) global_id: vec3<u32>) {
         1.0
     );
 
-    let prev_transform = entity_transforms[entity_resolved].transform;
-
     let parent_dirty = select(0u, entity_flags[parent_resolved] & EF_DIRTY, parent_resolved < MAX_UINT);
     let new_flag = entity_flags[entity_resolved] | parent_dirty;
 
-    entity_transforms[entity_resolved].transform = transform;
+    var entity_transform = entity_transforms[entity_resolved];
 
-    entity_transforms[entity_resolved].transpose_inverse_model_matrix = mat4x4f(
+    // Always save current transform as previous before updating
+    // On first frame, both will be the same (acceptable for motion vectors on spawn)
+    entity_transform.prev_transform = entity_transform.transform;
+    entity_transform.transform = transform;
+
+    entity_transform.transpose_inverse_model_matrix = mat4x4f(
         inverse_transform[0][0], inverse_transform[1][0], inverse_transform[2][0], inverse_transform[3][0],
         inverse_transform[0][1], inverse_transform[1][1], inverse_transform[2][1], inverse_transform[3][1],
         inverse_transform[0][2], inverse_transform[1][2], inverse_transform[2][2], inverse_transform[3][2],
         inverse_transform[0][3], inverse_transform[1][3], inverse_transform[2][3], inverse_transform[3][3]
     );
 
+    entity_transforms[entity_resolved] = entity_transform;
     entity_flags[entity_resolved] = new_flag;
 }

@@ -8,41 +8,33 @@
 
 @group(1) @binding(0) var skybox_texture: texture_2d<f32>;
 @group(1) @binding(1) var albedo_texture: texture_2d<f32>;
-@group(1) @binding(2) var emissive_texture: texture_2d<f32>;
-@group(1) @binding(3) var smra_texture: texture_2d<f32>;
-@group(1) @binding(4) var normal_texture: texture_2d<f32>;
-@group(1) @binding(5) var position_texture: texture_2d<f32>;
+@group(1) @binding(2) var smra_texture: texture_2d<f32>;
+@group(1) @binding(3) var normal_texture: texture_2d<f32>;
+@group(1) @binding(4) var position_texture: texture_2d<f32>;
+@group(1) @binding(5) var motion_emissive_texture: texture_2d<f32>;
 @group(1) @binding(6) var depth_texture: texture_depth_2d;
 @group(1) @binding(7) var<storage, read> dense_lights_buffer: array<Light>;
 @group(1) @binding(8) var<storage, read> light_count_buffer: array<u32>;
 
 #if GI_ENABLED
   @group(1) @binding(9) var gi_texture: texture_2d<f32>;
-
   #if SHADOWS_ENABLED
     @group(1) @binding(10) var<storage, read> shadow_atlas_depth: array<u32>;
     @group(1) @binding(11) var page_table: texture_storage_2d_array<r32uint, read>;
     @group(1) @binding(12) var page_offset: texture_storage_2d_array<rgba32float, read>;
     @group(1) @binding(13) var<uniform> vsm_settings: ASVSMSettings;
-
     #if GTAO_ENABLED
       @group(1) @binding(14) var ao_texture: texture_2d<f32>;
       @group(1) @binding(15) var bent_normal_texture: texture_2d<f32>;
     #endif
-
   #else
-
     #if GTAO_ENABLED
       @group(1) @binding(10) var ao_texture: texture_2d<f32>;
       @group(1) @binding(11) var bent_normal_texture: texture_2d<f32>;
     #endif
-
   #endif
-
 #else
-
   #if SHADOWS_ENABLED
-
     @group(1) @binding(9) var<storage, read> shadow_atlas_depth: array<u32>;
     @group(1) @binding(10) var page_table: texture_storage_2d_array<r32uint, read>;
     @group(1) @binding(11) var page_offset: texture_storage_2d_array<rgba32float, read>;
@@ -52,16 +44,12 @@
       @group(1) @binding(13) var ao_texture: texture_2d<f32>;
       @group(1) @binding(14) var bent_normal_texture: texture_2d<f32>;
     #endif
-
   #else
-
     #if GTAO_ENABLED
       @group(1) @binding(9) var ao_texture: texture_2d<f32>;
       @group(1) @binding(10) var bent_normal_texture: texture_2d<f32>;
     #endif
-
   #endif
-
 #endif
 
 // ------------------------------------------------------------------------------------
@@ -110,13 +98,13 @@ struct FragmentOutput {
     var tex_albedo = textureSample(albedo_texture, global_sampler, uv);
     var albedo = tex_albedo.rgb;
 
-    var tex_emissive = textureSample(emissive_texture, global_sampler, uv);
-    var emissive = tex_emissive.r;
+    var tex_motion = textureSample(motion_emissive_texture, global_sampler, uv);
+    var emissive = tex_motion.w;
 
-	var tex_normal = textureSample(normal_texture, global_sampler, uv);
+	  var tex_normal = textureSample(normal_texture, global_sampler, uv);
     var normal = tex_normal.xyz;
-	var normal_length = length(normal);
-	var normalized_normal = normal / normal_length;
+	  var normal_length = length(normal);
+	  var normalized_normal = normal / normal_length;
     var deferred_standard_lighting = tex_normal.w;
 
     var tex_smra = textureSample(smra_texture, global_sampler, uv);

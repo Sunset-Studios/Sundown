@@ -108,7 +108,6 @@ export class DevConsole extends SimulationLayer {
    */
   _update_input() {
     const keys = UIContext.keyboard_events;
-    console.log(keys);
 
     // Check for the toggle key ("=") to open/close the console.
     for (let i = 0; i < keys.length; i++) {

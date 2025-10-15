@@ -222,7 +222,7 @@ const TransformFragment = {
     },
     transforms: {
       type: DataType.FLOAT32,
-      stride: 32,
+      stride: 48,
       gpu: true,
       usage: BufferType.STORAGE_SRC,
     },
@@ -292,11 +292,11 @@ const TransformFragment = {
       instance,
     );
 
-    local_transform_fragment.position[0] += offset[0];
-    local_transform_fragment.position[1] += offset[1];
-    local_transform_fragment.position[2] += offset[2];
-
-    EntityManager.set_entity_dirty(entity, true);
+    let position = local_transform_fragment.position;
+    position[0] += offset[0];
+    position[1] += offset[1];
+    position[2] += offset[2];
+    local_transform_fragment.position = position;
       `,
     },
   },
@@ -506,7 +506,7 @@ const TextFragment = {
             // Ensure we don't write past flags_meta if count is unexpectedly large
             chunk.flags_meta[slot + j] |= EntityFlags.DIRTY;
           }
-          chunk.mark_dirty();
+          chunk.mark_dirty('text');
 
           write_offset += count;
         }`,

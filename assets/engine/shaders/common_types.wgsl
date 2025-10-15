@@ -80,6 +80,7 @@ struct FrameInfo {
 struct EntityTransform {
     transform: mat4x4f,
     transpose_inverse_model_matrix: mat4x4f,
+    prev_transform: mat4x4f,
 };
 
 struct ObjectInstance {

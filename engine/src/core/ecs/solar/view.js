@@ -151,7 +151,7 @@ export class SolarFragmentView {
 
       this.chunk.flags_meta[this.slot + this.instance] |= EntityFlags.DIRTY;
 
-      this.chunk.mark_dirty();
+      this.chunk.mark_dirty(field_name);
 
       return;
     }
@@ -205,6 +205,6 @@ export class SolarFragmentView {
 
     this.chunk.flags_meta[this.slot + this.instance] |= EntityFlags.DIRTY;
 
-    this.chunk.mark_dirty();
+    this.chunk.mark_dirty(field_name);
   }
 }

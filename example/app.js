@@ -1852,7 +1852,7 @@ export class GITestScene extends Scene {
     const emissive_white_material = StandardMaterial.create("testgym_emissive_white_material");
     const emissive_white_material_id = emissive_white_material.material_id;
     emissive_white_material.set_albedo([1, 1, 1, 1]);
-    emissive_white_material.set_emission(15.0);
+    emissive_white_material.set_emission(25.0);
     emissive_white_material.set_metallic(0.01);
     emissive_white_material.set_roughness(0.9);
 
@@ -2293,7 +2293,7 @@ export class ShadowTestScene extends Scene {
     const ground_plane_size = 3000.0;
     this.ground_entity = spawn_mesh_entity(
       [0.0, 0.0, 0.0],
-      quat.fromEuler(quat.create(), 0.0, 0.0, 0.0),
+      [0, 0, 0, 1],
       [ground_plane_size, 1.0, ground_plane_size],
       cube_mesh,
       ground_material_id
@@ -2379,7 +2379,7 @@ export class ShadowTestScene extends Scene {
 
     log(`[${this.name}] Spawned ${this.entities.length} entities.`);
 
-    // // --- Neon Signs ---------------------------------------------------------
+    // --- Neon Signs ---------------------------------------------------------
     // Create several vibrant emissive materials for different neon colours.
     const neon_colours = [
       { name: "neon_cyan", color: [0.0, 1.0, 1.0, 1.0] },
@@ -2553,7 +2553,7 @@ export class ShadowTestScene extends Scene {
       const entity = this.swaying_balls[i];
       const base_pos = this.swaying_ball_base_positions[i];
 
-      const sway_amplitude = 120;
+      const sway_amplitude = 1200;
       const sway_frequency = 0.15;
       const t = performance.now() * 0.001;
       const phase = i * Math.PI * 0.5; // Offset phase for variety
@@ -2905,8 +2905,8 @@ export class CityScene extends Scene {
   //await scene_switcher.add_scene(ml_scene);
   //await scene_switcher.add_scene(voxel_terrain_scene);
   //await scene_switcher.add_scene(object_painting_scene);
-  //await scene_switcher.add_scene(gi_test_scene);
-  await scene_switcher.add_scene(shadow_test_scene);
+  await scene_switcher.add_scene(gi_test_scene);
+  //await scene_switcher.add_scene(shadow_test_scene);
   //await scene_switcher.add_scene(gltf_model_scene);
   //await scene_switcher.add_scene(sponza_scene);
   //await scene_switcher.add_scene(city_scene);

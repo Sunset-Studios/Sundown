@@ -13,22 +13,22 @@ struct VertexOutput {
     @location(5) normal: vec4<precision_float>,
     @location(6) tangent: vec4<precision_float>,
     @location(7) bitangent: vec4<precision_float>,
-    @location(8) @interpolate(flat) instance_index: u32,
-    @location(9) @interpolate(flat) instance_id: u32,
-    @location(10) @interpolate(flat) vertex_index: u32,
+    @location(8) prev_clip_pos: vec4<f32>,
+    @location(9) current_clip_pos: vec4<f32>,
+    @location(10) prev_world_position: vec4<f32>,
+    @location(11) @interpolate(flat) instance_index: u32,
+    @location(12) @interpolate(flat) instance_id: u32,
+    @location(13) @interpolate(flat) vertex_index: u32,
 };
 
 #ifndef DEPTH_ONLY
 
 struct FragmentOutput {
     @location(0) albedo: vec4<precision_float>,
-    @location(1) emissive: vec4<precision_float>,
-    @location(2) smra: vec4<precision_float>,
-    @location(3) position: vec4<f32>,
-    @location(4) normal: vec4<precision_float>,
-#if TRANSPARENT
-    @location(5) transparency_reveal: f32,
-#endif
+    @location(1) smra: vec4<precision_float>,
+    @location(2) position: vec4<f32>,
+    @location(3) normal: vec4<precision_float>,
+    @location(4) motion_emissive: vec4<precision_float>,
 }
 
 #else

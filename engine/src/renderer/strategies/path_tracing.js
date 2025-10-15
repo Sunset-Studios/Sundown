@@ -64,17 +64,6 @@ const main_albedo_image_config = {
     GPUTextureUsage.STORAGE_BINDING,
   force: false,
 };
-const main_emissive_image_config = {
-  name: "main_emissive",
-  format: rgba16float_format,
-  width: 0,
-  height: 0,
-  usage:
-    GPUTextureUsage.RENDER_ATTACHMENT |
-    GPUTextureUsage.TEXTURE_BINDING |
-    GPUTextureUsage.STORAGE_BINDING,
-  force: false,
-};
 const main_smra_image_config = {
   name: "main_smra",
   format: rgba16float_format,
@@ -100,6 +89,17 @@ const main_normal_image_config = {
 const main_position_image_config = {
   name: "main_position",
   format: rgba32float_format,
+  width: 0,
+  height: 0,
+  usage:
+    GPUTextureUsage.RENDER_ATTACHMENT |
+    GPUTextureUsage.TEXTURE_BINDING |
+    GPUTextureUsage.STORAGE_BINDING,
+  force: false,
+};
+const main_motion_emissive_image_config = {
+  name: "main_motion_emissive",
+  format: rgba16float_format,
   width: 0,
   height: 0,
   usage:
@@ -350,7 +350,7 @@ export class PathTracingStrategy {
       // ⚙️  SETUP & INITIALIZATION PHASE
       // ═══════════════════════════════════════════════════════════════════════════════
       MeshTaskQueue.sort_and_batch();
-      ComputeTaskQueue.compile_rg_passes(render_graph);
+      ComputeTaskQueue.compile_pre_rg_passes(render_graph);
 
       this.frustum_culler.reset();
       this.occlusion_culler.reset();
@@ -432,9 +432,6 @@ export class PathTracingStrategy {
       main_albedo_image_config.width = image_extent.width;
       main_albedo_image_config.height = image_extent.height;
       main_albedo_image_config.force = this.force_recreate;
-      main_emissive_image_config.width = image_extent.width;
-      main_emissive_image_config.height = image_extent.height;
-      main_emissive_image_config.force = this.force_recreate;
       main_smra_image_config.width = image_extent.width;
       main_smra_image_config.height = image_extent.height;
       main_smra_image_config.force = this.force_recreate;
@@ -444,15 +441,18 @@ export class PathTracingStrategy {
       main_position_image_config.width = image_extent.width;
       main_position_image_config.height = image_extent.height;
       main_position_image_config.force = this.force_recreate;
+      main_motion_emissive_image_config.width = image_extent.width;
+      main_motion_emissive_image_config.height = image_extent.height;
+      main_motion_emissive_image_config.force = this.force_recreate;
       main_depth_image_config.width = image_extent.width;
       main_depth_image_config.height = image_extent.height;
       main_depth_image_config.force = this.force_recreate;
 
       let main_albedo_image = render_graph.create_image(main_albedo_image_config);
-      let main_emissive_image = render_graph.create_image(main_emissive_image_config);
       let main_smra_image = render_graph.create_image(main_smra_image_config);
       let main_normal_image = render_graph.create_image(main_normal_image_config);
       let main_position_image = render_graph.create_image(main_position_image_config);
+      let main_motion_emissive_image = render_graph.create_image(main_motion_emissive_image_config);
       let main_depth_image = render_graph.create_image(main_depth_image_config);
 
       // ┌─────────────────────────────────────────────────────────────────────────────┐
@@ -509,10 +509,10 @@ export class PathTracingStrategy {
           {
             outputs: [
               main_albedo_image,
-              main_emissive_image,
               main_smra_image,
               main_position_image,
               main_normal_image,
+              main_motion_emissive_image,
               main_entity_id_image,
               main_depth_image,
             ],
@@ -587,18 +587,18 @@ export class PathTracingStrategy {
           {},
           (graph, frame_data, encoder) => {
             const albedo = graph.get_physical_image(main_albedo_image);
-            const emissive = graph.get_physical_image(main_emissive_image);
             const smra = graph.get_physical_image(main_smra_image);
             const position = graph.get_physical_image(main_position_image);
             const normal = graph.get_physical_image(main_normal_image);
+            const motion = graph.get_physical_image(main_motion_emissive_image);
             const entity_id = graph.get_physical_image(main_entity_id_image);
             const depth = graph.get_physical_image(main_depth_image);
 
             if (albedo) albedo.config.load_op = load_op_load;
-            if (emissive) emissive.config.load_op = load_op_load;
             if (smra) smra.config.load_op = load_op_load;
             if (position) position.config.load_op = load_op_load;
             if (normal) normal.config.load_op = load_op_load;
+            if (motion) motion.config.load_op = load_op_load;
             if (entity_id) entity_id.config.load_op = load_op_load;
             if (depth) depth.config.load_op = load_op_load;
           }
@@ -736,11 +736,10 @@ export class PathTracingStrategy {
 
           const outputs = [
             main_albedo_image,
-            main_emissive_image,
             main_smra_image,
             main_position_image,
             main_normal_image,
-            null,
+            main_motion_emissive_image,
             main_depth_image,
           ];
 
@@ -792,7 +791,7 @@ export class PathTracingStrategy {
           main_normal_image,   // G-buffer normal
           main_albedo_image,   // G-buffer albedo
           main_smra_image,     // G-buffer SMRA
-          main_emissive_image, // G-buffer emissive
+          main_motion_emissive_image,   // G-buffer motion and emissive
           this.force_recreate
         );
       }
@@ -884,18 +883,18 @@ export class PathTracingStrategy {
           {},
           (graph, frame_data, encoder) => {
             const albedo = graph.get_physical_image(main_albedo_image);
-            const emissive = graph.get_physical_image(main_emissive_image);
             const smra = graph.get_physical_image(main_smra_image);
             const position = graph.get_physical_image(main_position_image);
             const normal = graph.get_physical_image(main_normal_image);
+            const motion = graph.get_physical_image(main_motion_emissive_image);
             const entity_id = graph.get_physical_image(main_entity_id_image);
             const depth = graph.get_physical_image(main_depth_image);
 
             if (albedo) albedo.config.load_op = load_op_clear;
-            if (emissive) emissive.config.load_op = load_op_clear;
             if (smra) smra.config.load_op = load_op_clear;
             if (position) position.config.load_op = load_op_clear;
             if (normal) normal.config.load_op = load_op_clear;
+            if (motion) motion.config.load_op = load_op_clear;
             if (entity_id) entity_id.config.load_op = load_op_clear;
             if (depth) depth.config.load_op = load_op_clear;
           }
@@ -927,6 +926,7 @@ export class PathTracingStrategy {
 
       this.force_recreate = false;
 
+      ComputeTaskQueue.compile_post_rg_passes(render_graph);
       ComputeTaskQueue.reset();
 
       render_graph.submit();

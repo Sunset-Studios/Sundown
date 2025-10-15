@@ -31,6 +31,7 @@ fn vertex(v_out: ptr<function, VertexOutput>) -> VertexOutput {
     let view_index = u32(frame_info.view_index);
     let view_mat = view_buffer[view_index].view_matrix;
     let view_proj_mat = view_buffer[view_index].view_projection_matrix;
+    let prev_view_proj_mat = view_buffer[view_index].prev_projection_matrix * view_buffer[view_index].prev_view_matrix;
 
     var output : VertexOutput;
 
@@ -49,6 +50,15 @@ fn vertex(v_out: ptr<function, VertexOutput>) -> VertexOutput {
         (entity_flags[entity_resolved] & EF_BILLBOARD) != 0
     ).xyz, 1.0);
 
+    output.prev_world_position = vec4<f32>(select(
+        entity_transform.prev_transform * vec4<f32>(output.local_position),
+        billboard_vertex_local(
+            output.uv,
+            entity_transform.prev_transform
+        ),
+        (entity_flags[entity_resolved] & EF_BILLBOARD) != 0
+    ).xyz, 1.0);
+
     let n = safe_normalize((entity_transform.transpose_inverse_model_matrix * vec4<f32>(instance_vertex.normal)).xyz);
     let t = safe_normalize((entity_transform.transform * vec4<f32>(instance_vertex.tangent.xyz, 0.0)).xyz);
     let b = safe_normalize((entity_transform.transform * vec4<f32>(instance_vertex.bitangent.xyz, 0.0)).xyz);
@@ -63,6 +73,9 @@ fn vertex(v_out: ptr<function, VertexOutput>) -> VertexOutput {
     output.view_position = view_mat * output.world_position;
     output.position = view_proj_mat * output.world_position;
 #endif
+
+    output.current_clip_pos = output.position;
+    output.prev_clip_pos = prev_view_proj_mat * output.prev_world_position;
 
     return output;
 }
@@ -96,6 +109,9 @@ fn fragment(v_out: VertexOutput, f_out: ptr<function, FragmentOutput>) -> Fragme
     output.position = v_out.world_position;
     // Last component of normal is deferred standard lighting factor. Set to 0 if custom lighting is used when using custom FS / VS.
     output.normal = vec4<precision_float>(v_out.normal.xyz, 1.0);
+    // Compute motion vectors: convert clip space to NDC and compute the difference
+    let motion_vector = v_out.current_clip_pos.xy - v_out.prev_clip_pos.xy;
+    output.motion_emissive = vec4<precision_float>(motion_vector, 0.0, 0.0);
 
     var post_material_output = fragment(v_out, &output);
 
@@ -104,11 +120,12 @@ fn fragment(v_out: VertexOutput, f_out: ptr<function, FragmentOutput>) -> Fragme
         discard;
     } 
 
-    let color = (post_material_output.emissive.r * post_material_output.albedo.rgb);
+    let color = (post_material_output.motion_emissive.a * post_material_output.albedo.rgb);
+    let alpha = post_material_output.albedo.a;
 
-    let weight = clamp(pow(min(1.0, post_material_output.albedo.a * 10.0) + 0.01, 3.0) * 1e8 * pow(1.0 - v_out.position.z * 0.9, 3.0), 1e-2, 3e3); 
-    post_material_output.transparency_reveal = post_material_output.albedo.a;
-    post_material_output.albedo = vec4f(color * post_material_output.albedo.a, post_material_output.albedo.a) * weight;
+    let weight = clamp(pow(min(1.0, alpha * 10.0) + 0.01, 3.0) * 1e8 * pow(1.0 - v_out.position.z * 0.9, 3.0), 1e-2, 3e3); 
+    // Store weighted color in RGB and reveal (alpha) in A
+    post_material_output.albedo = vec4f(color * alpha * weight, alpha * weight);
     post_material_output.normal = vec4f(0.0); // Treat transparency as unlit in deferred lighting pass; We've already done lighting here
 #endif
 

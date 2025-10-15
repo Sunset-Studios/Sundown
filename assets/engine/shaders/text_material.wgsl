@@ -85,7 +85,7 @@ fn fragment(v_out: VertexOutput, f_out: ptr<function, FragmentOutput>) -> Fragme
     let emissive = string_data[entity_row].text_emissive;
 
     f_out.albedo = vec4<precision_float>(string_color.rgb, mask);
-    f_out.emissive = vec4<precision_float>(emissive, emissive, emissive, 0.0);
+    f_out.motion_emissive.a = emissive;
 
     f_out.smra.r = 2555.0;
     f_out.smra.g = 0.5;

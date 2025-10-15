@@ -62,6 +62,7 @@ export class Chunk {
     this.fragment_views = Object.create(null);
     this.variable_stores = new Map();
     this.available_rows = DEFAULT_CHUNK_CAPACITY;
+    this.dirty_buffers = new Set(); // Track which specific buffers are dirty
 
     this.chunk_index = Chunk.free_chunk_indices.length
       ? Chunk.free_chunk_indices.pop()
@@ -82,6 +83,7 @@ export class Chunk {
     this.free_ranges = null;
     this.fragment_views = null;
     this.variable_stores = null;
+    this.dirty_buffers = null;
     this.chunk_index = null;
     this.available_rows = null;
   }
@@ -203,19 +205,29 @@ export class Chunk {
   }
 
   /**
-   * Marks this chunk as dirty.
+   * Marks this chunk as dirty. If a buffer_name is provided, only that buffer
+   * is marked dirty. If no buffer_name is provided, all buffers in the archetype
+   * are marked dirty (backwards compatible behavior).
+   * @param {string} [buffer_name] - Optional name of the specific buffer to mark dirty
    */
-  mark_dirty() {
+  mark_dirty(buffer_name = null) {
     Chunk.dirty.add(this);
     this.dirty = true;
+    
+    if (buffer_name) {
+      this.dirty_buffers.add(buffer_name);
+    } else {
+      this._mark_all_buffers_dirty();
+    }
   }
-
+  
   /**
    * Clears the dirty flag for this chunk. Called after flushing.
    */
   clear_dirty() {
     Chunk.dirty.delete(this);
     this.dirty = false;
+    this.dirty_buffers.clear();
   }
 
   /**
@@ -234,6 +246,30 @@ export class Chunk {
    */
   get_fragment_view(fragment_class) {
     return this.fragment_views[fragment_class.id];
+  }
+
+  /**
+   * Marks all buffers in this chunk's archetype as dirty.
+   * @private
+   */
+  _mark_all_buffers_dirty() {
+    // Add all combined buffers
+    for (let i = 0; i < this.fragments.length; i++) {
+      const fragment = this.fragments[i];
+      if (!fragment) continue;
+      
+      // Mark combined buffers
+      if (fragment.gpu_buffers) {
+        for (const [buffer_key, cfg] of Object.entries(fragment.gpu_buffers)) {
+          this.dirty_buffers.add(buffer_key);
+        }
+      }
+      
+      // Mark individual field buffers
+      for (const [field_name, spec] of Object.entries(fragment.fields)) {
+        this.dirty_buffers.add(field_name);
+      }
+    }
   }
 
   /**

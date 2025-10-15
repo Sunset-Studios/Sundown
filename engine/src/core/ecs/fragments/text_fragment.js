@@ -119,7 +119,7 @@ export class TextFragment extends Fragment {
             // Ensure we don't write past flags_meta if count is unexpectedly large
             chunk.flags_meta[slot + j] |= EntityFlags.DIRTY;
           }
-          chunk.mark_dirty();
+          chunk.mark_dirty("text");
 
           write_offset += count;
         }

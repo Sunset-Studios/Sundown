@@ -167,7 +167,8 @@ export class TextProcessor extends SimulationLayer {
           ++global_index;
         }
 
-        chunk.mark_dirty();
+        chunk.mark_dirty('position');
+        chunk.mark_dirty('scale');
       }
     }
   }

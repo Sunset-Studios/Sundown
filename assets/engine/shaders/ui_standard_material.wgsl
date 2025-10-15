@@ -39,7 +39,7 @@ fn fragment(v_out: VertexOutput, f_out: ptr<function, FragmentOutput>) -> Fragme
     element_color.a *= 1.0 - smoothstep(0.0, element_rounding, corner_distance);
     
     f_out.albedo = element_color;
-    f_out.emissive = vec4f(element_emissive, element_emissive, element_emissive, 0.0);
+    f_out.motion_emissive.a = element_emissive;
 
     return *f_out;
 }

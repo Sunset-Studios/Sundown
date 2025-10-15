@@ -92,7 +92,8 @@ export class StaticMeshProcessor extends SimulationLayer {
     }
 
     if (should_dirty_chunk) {
-      chunk.mark_dirty();
+      chunk.mark_dirty('material_slots');
+      chunk.mark_dirty('material_table_offset');
     }
   }
 

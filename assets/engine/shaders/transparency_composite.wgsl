@@ -1,7 +1,6 @@
 #include "common.wgsl"
 
 @group(1) @binding(0) var accumulation_texture: texture_2d<f32>;
-@group(1) @binding(1) var reveal_texture: texture_2d<f32>;
 
 // ------------------------------------------------------------------------------------
 // Data Structures
@@ -35,9 +34,8 @@ struct FragmentOutput {
 // Fragment Shader
 // ------------------------------------------------------------------------------------ 
 @fragment fn fs(v_out: VertexOutput) -> FragmentOutput {
-    var reveal = vec4<precision_float>(textureSample(reveal_texture, global_sampler, vec2<f32>(v_out.uv)));
-    var accum = vec4<precision_float>(textureSample(accumulation_texture, global_sampler, vec2<f32>(v_out.uv)));
+    let accum = vec4<precision_float>(textureSample(accumulation_texture, global_sampler, vec2<f32>(v_out.uv)));
     var average_color = accum.rgb / max(accum.a, epsilon);
-    return FragmentOutput(vec4<precision_float>(average_color, reveal.r));
+    return FragmentOutput(vec4<precision_float>(average_color, accum.a));
 
 }

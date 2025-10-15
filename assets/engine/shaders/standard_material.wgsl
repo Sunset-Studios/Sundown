@@ -150,7 +150,7 @@ fn fragment(v_out: VertexOutput, f_out: ptr<function, FragmentOutput>) -> Fragme
     f_out.smra.g = roughness;
     f_out.smra.b = metallic;
     f_out.smra.a = ao;
-    f_out.emissive.r = emissive;
+    f_out.motion_emissive.a = emissive;
     
     return *f_out;
 }

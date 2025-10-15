@@ -25,6 +25,9 @@ export class DebugOverlay {
   enabled = false; // flag to enable/disable the overlay pass
   debug_type = DebugDrawType.None; // the type of debug to draw
   viewport = null; // the viewport to be used for the overlay
+  channel_mask = [1.0, 1.0, 1.0, 1.0]; // RGBA channel mask
+  visualize_mode = 0; // 0 = RGB, 1 = single channel grayscale
+  channel_config_buffer = null; // uniform buffer for channel configuration
 
   // Allows updating the overlay texture and its rectangle
   set_properties(
@@ -34,7 +37,9 @@ export class DebugOverlay {
     width,
     height,
     debug_type = DebugDrawType.None,
-    texture_level = 0
+    texture_level = 0,
+    channel_mask = [1.0, 1.0, 1.0, 1.0],
+    visualize_mode = 0
   ) {
     this.viewport = {
       x: x,
@@ -46,11 +51,16 @@ export class DebugOverlay {
     };
     this.debug_texture = debug_texture;
     this.texture_level = texture_level;
+    this.channel_mask = channel_mask;
+    this.visualize_mode = visualize_mode;
     if (this.debug_type !== debug_type) {
       this.enabled = debug_type !== DebugDrawType.None;
       this.debug_type = debug_type;
       Renderer.get().mark_bind_groups_dirty(true);
     }
+    this.channel_config = this.visualize_mode === 1
+      ? new Uint32Array(this.channel_mask)
+      : null;
   }
 
   // Adds a debug overlay pass to the render graph.
@@ -76,12 +86,26 @@ export class DebugOverlay {
       }
     );
 
+    // Create channel config buffer if using channel shader
+    let channel_config_buf = null;
+    if (this.channel_config) {
+      channel_config_buf = render_graph.create_buffer({
+        name: `debug_channel_config_${this.debug_type}`,
+        raw_data: this.channel_config,
+        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+      });
+    }
+
+    const inputs = this.channel_config 
+      ? [this.debug_texture, channel_config_buf]
+      : [this.debug_texture];
+
     overlay_shader_setup.pipeline_shaders.fragment.path = shader_path;
     render_graph.add_pass(
       `debug_overlay_pass_${this.debug_type}`,
       RenderPassFlags.Graphics,
       {
-        inputs: [this.debug_texture],
+        inputs: inputs,
         outputs: [base_output_image],
         input_views: [this.texture_level],
         shader_setup: overlay_shader_setup,
@@ -112,6 +136,10 @@ export class DebugOverlay {
         return "debug/debug_overlay_depth.wgsl";
       case DebugDrawType.Normal:
         return "debug/debug_overlay_2d.wgsl";
+      case DebugDrawType.Emissive:
+        return "debug/debug_overlay_channel.wgsl";
+      case DebugDrawType.Motion:
+        return "debug/debug_overlay_motion.wgsl";
       case DebugDrawType.EntityId:
         return "debug/debug_overlay_entity.wgsl";
       case DebugDrawType.HZB:

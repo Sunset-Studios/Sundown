@@ -71,7 +71,12 @@ export class UI3DProcessor extends SimulationLayer {
             }
           }
 
-          chunk.mark_dirty();
+          chunk.mark_dirty('was_cursor_inside');
+          chunk.mark_dirty('is_cursor_inside');
+          chunk.mark_dirty('was_clicked');
+          chunk.mark_dirty('is_clicked');
+          chunk.mark_dirty('was_pressed');
+          chunk.mark_dirty('is_pressed');
         }
       }
     });

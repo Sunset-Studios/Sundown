@@ -659,7 +659,7 @@ export class FragmentGpuBuffer {
       const chunk_base = this._get_dense_chunk_base(chunk);
       if (chunk_base === 0xffffffff) continue; // truly empty chunk
 
-      // Pack & upload entity flags
+      // Pack & upload entity flags (always uploaded since it's small and frequently changes)
       const flags_packed = new Uint32Array(DEFAULT_CHUNK_CAPACITY);
       let packed_size = 0;
       for (let local_index = 0; local_index < DEFAULT_CHUNK_CAPACITY; local_index++) {
@@ -677,6 +677,10 @@ export class FragmentGpuBuffer {
 
         if (fragment.gpu_buffers) {
           for (const [buffer_key, cfg] of Object.entries(fragment.gpu_buffers)) {
+            // Skip if this buffer isn't dirty
+            if (!chunk.dirty_buffers.has(buffer_key)) {
+              continue;
+            }
             const buf_data = fragment.buffer_data.get(cfg.buffer_name);
             const packed =
               typeof cfg.gpu_data === "function"
@@ -691,6 +695,10 @@ export class FragmentGpuBuffer {
         // 2) Individual field buffers
         for (const [field_name, spec] of Object.entries(fragment.fields)) {
           if (!spec.gpu_buffer) continue;
+          // Skip if this buffer isn't dirty
+          if (!chunk.dirty_buffers.has(field_name)) {
+            continue;
+          }
           const buf_data = fragment.buffer_data.get(spec.buffer_name);
           const packed = this._pack_chunk_field_data(chunk, fragment.id, field_name);
           if (packed?.packed_data.byteLength) {
@@ -700,7 +708,7 @@ export class FragmentGpuBuffer {
       }
     }
 
-    // If we need a full flush, repack all chunks
+    // If we need a full flush, repack all chunks (ignoring dirty buffer tracking)
     if (FragmentGpuBuffer.need_full_flush) {
       for (let i = 0; i < Chunk.all_chunks.length; i++) {
         const chunk = Chunk.all_chunks[i];
@@ -720,7 +728,7 @@ export class FragmentGpuBuffer {
         }
         this.entity_flags_buffer.update_chunk(chunk_base, flags_packed, packed_size, chunk);
 
-        // 1) Combined buffers on this chunk
+        // 1) Combined buffers on this chunk (upload all regardless of dirty state)
         for (let i = 0; i < chunk.fragments.length; i++) {
           const fragment = chunk.fragments[i];
           if (!fragment) continue;
@@ -743,7 +751,7 @@ export class FragmentGpuBuffer {
             }
           }
 
-          // 2) Individual field buffers
+          // 2) Individual field buffers (upload all regardless of dirty state)
           for (const [field_name, spec] of Object.entries(fragment.fields)) {
             if (!spec.gpu_buffer) continue;
             const buf_data = fragment.buffer_data.get(spec.buffer_name);

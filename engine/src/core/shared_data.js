@@ -490,13 +490,15 @@ export class SharedViewBuffer {
 
     for (let i = 0; i < list.length; ++i) {
       const idx = list[i];
+      const base = idx * SharedViewBuffer.floats_per_view;
 
-      if (!SharedViewBuffer.dirty_states.get(idx)) {
-        SharedViewBuffer.moved_states.set(idx, 0);
+      if (!SharedViewBuffer.dirty_states.get(idx) && !SharedViewBuffer.moved_states.get(idx)) {
         continue;
       }
-
-      const base = idx * SharedViewBuffer.floats_per_view;
+      
+      if (!SharedViewBuffer.dirty_states.get(idx)) {
+        SharedViewBuffer.moved_states.set(idx, 0);
+      }
 
       // Copy previous view and projection matrices
       SharedViewBuffer.raw_data.copyWithin(
@@ -713,8 +715,10 @@ export class SharedViewBuffer {
       );
       SharedViewBuffer.buffer.write(view_slice, base * 4);
 
-      SharedViewBuffer.dirty_states.set(idx, 0);
-      SharedViewBuffer.moved_states.set(idx, 1);
+      if (SharedViewBuffer.dirty_states.get(idx)) {
+        SharedViewBuffer.dirty_states.set(idx, 0);
+        SharedViewBuffer.moved_states.set(idx, 1);
+      }
     }
   }
 
