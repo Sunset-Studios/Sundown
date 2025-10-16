@@ -481,10 +481,10 @@ fn cs(
     let pixel_index = pixel_coords.y * res.x + pixel_coords.x;
     var ps = path_state[pixel_index];
 
-    // Early exit for G-buffer mode on first bounce
-    if (pt_params.use_gbuffer != 0u && ps.state_u32.x == 0u && ps.state_u32.w == 0x0u) {
-        return;
-    }
+    // For G-buffer first bounce, we still want to process shadow rays in this pass
+    // so direct lighting can contribute within the same frame. We'll skip only the
+    // main hit traversal below for that specific case.
+    let skip_main_hit = (pt_params.use_gbuffer != 0u) && (ps.state_u32.x == 0u) && (ps.state_u32.w == 0x0u);
 
     var ray: Ray;
 
@@ -506,8 +506,8 @@ fn cs(
         }
     }
 
-    // Is ray alive?
-    if (ps.state_u32.y != 0u) {
+    // Is ray alive? (skip main hit for G-buffer first bounce)
+    if (ps.state_u32.y != 0u && !skip_main_hit) {
         ray.origin_and_tmin = ps.origin_tmin;
         ray.direction_and_tmax = ps.direction_tmax;
         let d = ray.direction_and_tmax.xyz;

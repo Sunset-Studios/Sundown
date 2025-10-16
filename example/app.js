@@ -1792,7 +1792,7 @@ export class GITestScene extends Scene {
         GPUTextureUsage.RENDER_ATTACHMENT,
       material_notifier: "floor_normal",
     };
-    let floor_arm = {
+    let floor_arm_metallic = {
       name: "floor_metallic",
       paths: ["engine/textures/rubber_floor/ARM.jpg"],
       format: "rgba8unorm",
@@ -1803,56 +1803,69 @@ export class GITestScene extends Scene {
         GPUTextureUsage.RENDER_ATTACHMENT,
       material_notifier: "floor_metallic",
     };
-    
+    let floor_arm_roughness = {
+      name: "floor_roughness",
+      paths: ["engine/textures/rubber_floor/ARM.jpg"],
+      format: "rgba8unorm",
+      dimension: "2d",
+      usage:
+        GPUTextureUsage.TEXTURE_BINDING |
+        GPUTextureUsage.COPY_DST |
+        GPUTextureUsage.RENDER_ATTACHMENT,
+      material_notifier: "floor_roughness",
+    };
+    let floor_arm_ao = {
+      name: "floor_ao",
+      paths: ["engine/textures/rubber_floor/ARM.jpg"],
+      format: "rgba8unorm",
+      dimension: "2d",
+      usage:
+        GPUTextureUsage.TEXTURE_BINDING |
+        GPUTextureUsage.COPY_DST |
+        GPUTextureUsage.RENDER_ATTACHMENT,
+      material_notifier: "floor_ao",
+    };
+
     // Create metallic floor material
     const metallic_floor_material = StandardMaterial.create("testgym_metallic_floor_material");
     const metallic_floor_material_id = metallic_floor_material.material_id;
     metallic_floor_material.sample_albedo(floor_albedo);
     metallic_floor_material.sample_normal(floor_normal);
-    metallic_floor_material.sample_ao(floor_arm, TextureChannel.R);
-    metallic_floor_material.sample_roughness(floor_arm, TextureChannel.G);
-    metallic_floor_material.sample_metallic(floor_arm, TextureChannel.B);
-    metallic_floor_material.set_emission(0.0);
-    metallic_floor_material.set_tiling(150.0);
+    metallic_floor_material.sample_ao(floor_arm_ao, TextureChannel.R);
+    metallic_floor_material.sample_roughness(floor_arm_roughness, TextureChannel.G);
+    metallic_floor_material.sample_metallic(floor_arm_metallic, TextureChannel.B);
+    metallic_floor_material.set_tiling(250.0);
 
     // materials
     const wall_material = StandardMaterial.create("testgym_wall_material");
     const wall_material_id = wall_material.material_id;
     wall_material.set_albedo([1, 1, 1, 1]);
-    wall_material.set_emission(ambient_emissive);
     wall_material.set_roughness(0.8);
-    wall_material.set_metallic(0.9);
-    wall_material.set_specular(0.5);
+    wall_material.set_metallic(0.01);
 
     const red_material = StandardMaterial.create("testgym_red_material");
     const red_material_id = red_material.material_id;
     red_material.set_albedo([1, 0.2, 0.2, 1]);
-    red_material.set_emission(ambient_emissive);
-    red_material.set_metallic(0.9);
+    red_material.set_metallic(0.01);
     red_material.set_roughness(0.8);
-    red_material.set_specular(0.5);
 
     const blue_material = StandardMaterial.create("testgym_blue_material");
     const blue_material_id = blue_material.material_id;
     blue_material.set_albedo([0.2, 0.2, 1, 1]);
-    blue_material.set_emission(ambient_emissive);
-    blue_material.set_metallic(0.9);
+    blue_material.set_metallic(0.01);
     blue_material.set_roughness(0.8);
-    blue_material.set_specular(0.5);
     
     const gray_material = StandardMaterial.create("testgym_gray_material");
     const gray_material_id = gray_material.material_id;
     gray_material.set_albedo([0.5, 0.5, 0.5, 1]);
-    gray_material.set_emission(ambient_emissive);
-    gray_material.set_metallic(0.9);
+    gray_material.set_metallic(0.01);
     gray_material.set_roughness(0.8);
-    gray_material.set_specular(0.5);
 
     // White emissive material for ceiling lights
     const emissive_white_material = StandardMaterial.create("testgym_emissive_white_material");
     const emissive_white_material_id = emissive_white_material.material_id;
     emissive_white_material.set_albedo([1, 1, 1, 1]);
-    emissive_white_material.set_emission(25.0);
+    emissive_white_material.set_emission(100.0);
     emissive_white_material.set_metallic(0.01);
     emissive_white_material.set_roughness(0.9);
 
@@ -1863,8 +1876,8 @@ export class GITestScene extends Scene {
     // Create large metallic floor plane
     const floor_plane = spawn_mesh_entity(
       [0, -5, 0],
-      quat.fromEuler(quat.create(), 0.0, 0, 0),
-      [4000, 4.5, 4000],
+      [0, 0, 0, 1],
+      [3000, 4.5, 3000],
       cube_mesh,
       metallic_floor_material_id
     );
@@ -2219,8 +2232,6 @@ export class ShadowTestScene extends Scene {
   init(parent_context) {
     super.init(parent_context);
 
-    const ambient_emissive = 0.0;
-
     // Add arcball camera control
     const freeform_arcball_control_processor = this.add_layer(FreeformArcballControlProcessor);
     freeform_arcball_control_processor.move_speed = 75.0;
@@ -2268,17 +2279,15 @@ export class ShadowTestScene extends Scene {
     const ground_material = StandardMaterial.create("shadow_ground_material");
     const ground_material_id = ground_material.material_id;
     ground_material.set_albedo([0.5, 0.5, 0.5, 1]);
-    ground_material.set_roughness(0.8);
-    ground_material.set_emission(ambient_emissive);
-    ground_material.set_metallic(0.9);
+    ground_material.set_roughness(0.9);
+    ground_material.set_metallic(0.0);
 
     // Building material
     const building_material = StandardMaterial.create("shadow_building_material");
     const building_material_id = building_material.material_id;
     building_material.set_albedo([0.35, 0.35, 0.35, 1]);
-    building_material.set_roughness(0.8);
-    building_material.set_emission(ambient_emissive);
-    building_material.set_metallic(0.9);
+    building_material.set_roughness(0.9);
+    building_material.set_metallic(0.0);
 
     // Shared cube mesh
     const cube_mesh = Mesh.cube();
@@ -2314,7 +2323,7 @@ export class ShadowTestScene extends Scene {
     const ball_material = StandardMaterial.create("swaying_ball_material");
     ball_material.set_albedo([0.9, 0.9, 0.2, 1]);
     ball_material.set_emission(0.3);
-    ball_material.set_roughness(0.5);
+    ball_material.set_roughness(0.2);
     ball_material.set_metallic(0.9);
 
     // Create spheres
@@ -2705,7 +2714,7 @@ export class SponzaScene extends Scene {
     const light_fragment_view = EntityManager.get_fragment(light_entity, LightFragment);
     light_fragment_view.type = LightType.DIRECTIONAL;
     light_fragment_view.color = [1, 1, 1];
-    light_fragment_view.intensity = 10.0;
+    light_fragment_view.intensity = 20.0;
     light_fragment_view.position = [5, 20, 2.5];
     light_fragment_view.active = true;
     light_fragment_view.is_primary_sun = 1;

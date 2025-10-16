@@ -108,7 +108,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         let gbuffer_norm_length = length(gbuffer_norm);
         
         // Check if this pixel has valid geometry (normal length > 0 means geometry was rasterized)
-        if (gbuffer_norm_length > 0.01) {
+        if (gbuffer_norm_length > 0.0) {
             // Valid geometry in G-buffer
             var normalized_normal = safe_normalize(gbuffer_norm);
 
@@ -117,31 +117,13 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
             let smra_data = textureLoad(gbuffer_smra, pixel_coord, 0);
             let emissive_data = textureLoad(gbuffer_motion_emissive, pixel_coord, 0).w;
             
-            // Store view direction in direction_tmax (for BRDF evaluation)
-            let view_dir = normalize(view.view_position.xyz - gbuffer_pos);
-            // Ensure normal faces the camera's incoming view direction (similar to path_trace_hit.wgsl)
-            // Ray direction is from camera towards surface (opposite of view_dir)
-            let ray_dir = -view_dir;
-            normalized_normal = select(normalized_normal, -normalized_normal, dot(normalized_normal, ray_dir) > 0.0);
-            
-            // Store G-buffer hit data in path state
-            // Use origin_tmin to store world position with small normal offset
+            let ray_dir = normalize(gbuffer_pos - view.view_position.xyz);
             path_state[pixel_index].origin_tmin = vec4f(gbuffer_pos + normalized_normal * 0.001, 0.0001);
-            
-            path_state[pixel_index].direction_tmax = vec4f(-view_dir, 0.0);
-            
-            // Store world-space normal
+            path_state[pixel_index].direction_tmax = vec4f(ray_dir, 0.0);
             path_state[pixel_index].normal_section_index = vec4f(normalized_normal, 0.0);
-            
-            // Pack material properties into hit_attr fields for shade pass to read
-            // hit_attr0: rgb = albedo, w = roughness
             path_state[pixel_index].hit_attr0 = vec4f(albedo_data.rgb, smra_data.g);
-            
-            // hit_attr1: x = metallic, y = specular, z = emissive, w = ao
             let specular = smra_data.r * 0.0009765625; // 1.0f / 1024
             path_state[pixel_index].hit_attr1 = vec4f(smra_data.b, specular, emissive_data, smra_data.a);
-            
-            // Mark as having a valid G-buffer hit (state_u32.w = 0x0 for G-buffer mode)
             // bounce=0, alive=1, shadow_flag=0, tri_id=0x0 (special marker for G-buffer hit)
             path_state[pixel_index].state_u32 = vec4<u32>(0u, 1u, 0u, 0x0u);
         } else {
