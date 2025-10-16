@@ -110,7 +110,9 @@ fn fragment(v_out: VertexOutput, f_out: ptr<function, FragmentOutput>) -> Fragme
     // Last component of normal is deferred standard lighting factor. Set to 0 if custom lighting is used when using custom FS / VS.
     output.normal = vec4<precision_float>(v_out.normal.xyz, 1.0);
     // Compute motion vectors: convert clip space to NDC and compute the difference
-    let motion_vector = v_out.current_clip_pos.xy - v_out.prev_clip_pos.xy;
+    let current_clip_pos = v_out.current_clip_pos.xy / v_out.current_clip_pos.w;
+    let prev_clip_pos = v_out.prev_clip_pos.xy / v_out.prev_clip_pos.w;
+    let motion_vector = current_clip_pos - prev_clip_pos;
     output.motion_emissive = vec4<precision_float>(motion_vector, 0.0, 0.0);
 
     var post_material_output = fragment(v_out, &output);

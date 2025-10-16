@@ -716,7 +716,7 @@ export class StandardMaterial {
         // normal: vec4
         0.0, 0.0, 1.0, 1.0,
         // emission_roughness_metallic_tiling: vec4
-        0.2, 0.7, 0.3, 1.0,
+        0.0, 0.7, 0.3, 1.0,
         // ao_height_specular: vec4 (ao, height, specular, padding)
         1.0, 0.0, 0.1, 0.0,
         // texture flags 1: vec4 (albedo, normal, roughness, metallic)
@@ -780,7 +780,7 @@ export class StandardMaterial {
         params.emission_channel ?? TextureChannel.R
       );
     } else {
-      standard_material.set_emission(params.emission || 0.2);
+      standard_material.set_emission(params.emission || 0.0);
     }
 
     if (params.ao_texture) {

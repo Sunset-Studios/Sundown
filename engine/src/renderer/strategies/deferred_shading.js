@@ -1606,7 +1606,7 @@ export class DeferredShadingStrategy {
             break;
           case DebugDrawType.Motion:
             this.debug_overlay.set_properties(
-              main_motion_emissive_image,
+              [main_motion_emissive_image, main_depth_image, post_lighting_image_desc],
               0,
               0,
               image_extent.width,

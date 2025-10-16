@@ -58,7 +58,7 @@ fn trace_blas(
     let first_index = mesh_directory_entry.first_index;
 
     var hit: RayHit;
-    hit.position_and_t = vec4f((*ray_world).origin_and_tmin.xyz, (*ray_world).direction_and_tmax.w);
+    hit.position_and_t = vec4f((*ray_world).origin_and_tmin.xyz, (*ray_local).direction_and_tmax.w);
     hit.normal_and_user_data = vec4f(0.0, 0.0, 0.0, -1.0);
 
     var current_ray = *ray_local;
@@ -104,7 +104,7 @@ fn trace_blas(
                             let v2 = vertex_buffer[first_vertex + i2].position.xyz;
 
                             let t_tri = intersect_triangle(current_ray, v0, v1, v2);
-                            if (t_tri >= current_ray.origin_and_tmin.w && t_tri < hit.position_and_t.w) {
+                            if (t_tri >= current_ray.origin_and_tmin.w && t_tri < current_ray.direction_and_tmax.w) {
                                 hit.position_and_t.w = t_tri;
                                 hit.normal_and_user_data.w = f32(tri_id_local);
                             }
@@ -299,9 +299,7 @@ fn trace_hit(ray: ptr<function, Ray>) -> RayHit {
                                 hit = blas_hit;
                                 hit.prim_meshid_padding = vec4f(f32(prim_store), f32(mesh_id), 0.0, 0.0);
                                 hit.ray_local = ray_local;
-                            }
-                            else {
-                                current_ray.origin_and_tmin.w += t_leaf.y;
+                                current_ray.direction_and_tmax.w = min(current_ray.direction_and_tmax.w, hit.position_and_t.w);
                             }
                         }
                     } else {
@@ -393,9 +391,6 @@ fn trace_hit_any(ray: ptr<function, Ray>) -> bool {
                             )) {
                                 return true;
                             } 
-                            else {
-                                current_ray.origin_and_tmin.w += t_leaf.y;
-                            }
                         }
                     } else {
                         let child_node = tlas_bvh4_nodes[child_idx];

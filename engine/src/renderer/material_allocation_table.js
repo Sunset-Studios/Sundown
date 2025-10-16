@@ -124,7 +124,7 @@ export class MaterialAllocationTable {
     }
     
     if (this.dirty_palette_pages.length > 0) {
-      if (!this.palette_buffer || this.palette_buffer.config.size < this.local_palette.byteLength) {
+      if (!this.palette_buffer || this.palette_buffer.config.size < this.local_palette.buffer.byteLength) {
         this.palette_buffer = Buffer.create({
           name: "material_palette",
           raw_data: this.local_palette.buffer,

@@ -16,7 +16,7 @@ const overlay_shader_setup = {
 // (with x, y, width, height specified in pixels) and a texture (any debug output)
 // to be drawn over the final output.
 export class DebugOverlay {
-  debug_texture = null; // the texture to be overlaid
+  debug_textures = null; // array of textures
   x = 0; // horizontal offset in pixels
   y = 0; // vertical offset in pixels
   width = 0; // overlay width in pixels
@@ -31,7 +31,7 @@ export class DebugOverlay {
 
   // Allows updating the overlay texture and its rectangle
   set_properties(
-    debug_texture,
+    debug_textures,
     x,
     y,
     width,
@@ -49,7 +49,7 @@ export class DebugOverlay {
       min_depth: 0,
       max_depth: 1,
     };
-    this.debug_texture = debug_texture;
+    this.debug_textures = debug_textures;
     this.texture_level = texture_level;
     this.channel_mask = channel_mask;
     this.visualize_mode = visualize_mode;
@@ -67,7 +67,7 @@ export class DebugOverlay {
   // The pass takes the overlay texture (from this.debug_texture) and composites it
   // over the provided base_output_image by drawing a quad within the specified viewport.
   add_pass(render_graph, base_output_image) {
-    if (!this.enabled || !this.debug_texture) {
+    if (!this.enabled || !this.debug_textures) {
       return;
     }
 
@@ -96,9 +96,17 @@ export class DebugOverlay {
       });
     }
 
-    const inputs = this.channel_config 
-      ? [this.debug_texture, channel_config_buf]
-      : [this.debug_texture];
+    // Build inputs array based on single texture or multiple textures
+    let inputs;
+    if (Array.isArray(this.debug_textures)) {
+      inputs = [...this.debug_textures];
+    } else { 
+      inputs = [this.debug_textures];
+    }
+
+    if (channel_config_buf) {
+      inputs.push(channel_config_buf);
+    }
 
     overlay_shader_setup.pipeline_shaders.fragment.path = shader_path;
     render_graph.add_pass(
@@ -139,7 +147,7 @@ export class DebugOverlay {
       case DebugDrawType.Emissive:
         return "debug/debug_overlay_channel.wgsl";
       case DebugDrawType.Motion:
-        return "debug/debug_overlay_motion.wgsl";
+        return "debug/debug_overlay_motion_lines.wgsl";
       case DebugDrawType.EntityId:
         return "debug/debug_overlay_entity.wgsl";
       case DebugDrawType.HZB:

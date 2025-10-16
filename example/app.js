@@ -1627,17 +1627,17 @@ export class ObjectPaintingScene extends Scene {
     const object_material3 = StandardMaterial.create("ObjectPaintingObjectMaterial3");
     this.object_material3_id = object_material3.material_id;
 
-    object_material1.set_albedo([0.1, 0.1, 0.3, 1]);
-    object_material1.set_roughness(0.5);
-    object_material1.set_metallic(0.9);
+    object_material1.set_albedo([1.0, 1.0, 1.0, 1]);
+    object_material1.set_roughness(0.001);
+    object_material1.set_metallic(0.999);
 
     object_material2.set_albedo([0.3, 0.0, 0.0, 1]);
-    object_material2.set_roughness(0.5);
-    object_material2.set_metallic(0.9);
+    object_material2.set_roughness(0.9);
+    object_material2.set_metallic(0.1);
 
     object_material3.set_albedo([0.0, 0.3, 0.0, 1]);
-    object_material3.set_roughness(0.5);
-    object_material3.set_metallic(0.9);
+    object_material3.set_roughness(0.9);
+    object_material3.set_metallic(0.1);
   }
 
   update(delta_time) {
@@ -2905,10 +2905,10 @@ export class CityScene extends Scene {
   //await scene_switcher.add_scene(ml_scene);
   //await scene_switcher.add_scene(voxel_terrain_scene);
   //await scene_switcher.add_scene(object_painting_scene);
-  await scene_switcher.add_scene(gi_test_scene);
+  //await scene_switcher.add_scene(gi_test_scene);
   //await scene_switcher.add_scene(shadow_test_scene);
   //await scene_switcher.add_scene(gltf_model_scene);
-  //await scene_switcher.add_scene(sponza_scene);
+  await scene_switcher.add_scene(sponza_scene);
   //await scene_switcher.add_scene(city_scene);
 
   simulator.add_sim_layer(scene_switcher);
