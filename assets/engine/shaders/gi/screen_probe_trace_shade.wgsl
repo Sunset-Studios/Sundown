@@ -250,24 +250,8 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
             skybox_texture
         );
         
-        // Apply MIS if ray hit near sun disk (BRDF-generated ray hitting environment)
-        var sky_contribution = sky_radiance;
-        
-        if (bounce > 0u) {
-            let sun_angular_radius = scene_lighting_data.sunlight_angular_radius;
-            let cos_theta_max = cos(sun_angular_radius);
-            let angle_to_sun = dot(ray_dir, sun_dir);
-            
-            if (angle_to_sun > cos_theta_max) {
-                let ray_source_pdf = shade.path_weight.w;
-                let sun_sample_pdf = cone_pdf(cos_theta_max);
-                let mis_w = mis_weight(ray_source_pdf, sun_sample_pdf);
-                sky_contribution *= mis_w;
-            }
-        }
-        
         // Add sky contribution weighted by path throughput
-        shade.throughput += vec4<f32>(sky_contribution * shade.path_weight.xyz, 0.0);
+        shade.throughput += vec4<f32>(sky_radiance * shade.path_weight.xyz, 0.0);
         
         // Mark path as dead
         path.state_u32.y = 0u;
@@ -464,62 +448,11 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
             
             let brdf_sample_pdf = brdf_pdf(n, v_dir, dir, clamped_roughness, mis_specular_prob);
             
-            // Check for sun disk MIS
-            let sun_angular_radius = scene_lighting_data.sunlight_angular_radius;
-            let cos_theta_max = cos(sun_angular_radius);
-            let angle_to_sun = dot(dir, sun_dir);
+            let brdf_lum = max(0.0, brdf.x * 0.2126 + brdf.y * 0.7152 + brdf.z * 0.0722);
             
-            var mis_w = 1.0;
-            if (angle_to_sun > cos_theta_max) {
-                let sun_sample_pdf = cone_pdf(cos_theta_max);
-                mis_w = mis_weight(brdf_sample_pdf, sun_sample_pdf);
-            }
-            
-            let brdf_estimate = brdf * mis_w;
-            let brdf_lum = max(0.0, brdf_estimate.x * 0.2126 + brdf_estimate.y * 0.7152 + brdf_estimate.z * 0.0722);
-            
-            candidate_samples[num_candidates].radiance_and_target_pdf = vec4f(brdf_estimate, brdf_lum);
+            candidate_samples[num_candidates].radiance_and_target_pdf = vec4f(brdf, brdf_lum);
             candidate_samples[num_candidates].direction_and_source_pdf = vec4f(dir, brdf_sample_pdf);
             num_candidates += 1u;
-        }
-        
-        // === Sun Disk Importance Sampling ===
-        for (var i = 0u; i < num_env_samples; i = i + 1u) {
-            rng_state = random_seed(rng_state);
-            let r1 = rand_float(rng_state);
-            rng_state = random_seed(rng_state);
-            let r2 = rand_float(rng_state);
-            
-            let up = select(vec3f(0.0, 1.0, 0.0), vec3f(1.0, 0.0, 0.0), abs(sun_dir.y) > 0.999);
-            let tangent = normalize(cross(up, sun_dir));
-            let bitangent = normalize(cross(sun_dir, tangent));
-            
-            let sun_angular_radius = scene_lighting_data.sunlight_angular_radius;
-            let cos_theta_max = cos(sun_angular_radius);
-            let sun_sample_dir = sample_cone_uniform(r1, r2, cos_theta_max, tangent, bitangent, sun_dir);
-            
-            let sun_cos_theta = dot(sun_sample_dir, n);
-            if (sun_cos_theta > 0.0) {
-                let sun_radiance = evaluate_environment(sun_sample_dir, sun_dir, scene_lighting_data, skybox_texture);
-                
-                let sun_brdf = calculate_brdf_rt(
-                    n, v_dir, sun_sample_dir, albedo, roughness, metallic,
-                    reflectance, clear_coat, clear_coat_roughness
-                );
-                
-                let sun_pdf = cone_pdf(cos_theta_max);
-                let brdf_pdf_for_sun = brdf_pdf(n, v_dir, sun_sample_dir, clamped_roughness, mis_specular_prob);
-                let mis_w = mis_weight(sun_pdf, brdf_pdf_for_sun);
-                
-                let weighted_radiance = sun_radiance * mis_w;
-                let target_pdf = compute_gi_target_pdf(weighted_radiance, sun_brdf);
-                
-                if (num_candidates < 8u && target_pdf > 0.0) {
-                    candidate_samples[num_candidates].radiance_and_target_pdf = vec4f(weighted_radiance, target_pdf);
-                    candidate_samples[num_candidates].direction_and_source_pdf = vec4f(sun_sample_dir, sun_pdf);
-                    num_candidates += 1u;
-                }
-            }
         }
         
         // === Perform RIS on all candidates ===
