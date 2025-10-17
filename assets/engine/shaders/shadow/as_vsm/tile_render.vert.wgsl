@@ -12,6 +12,7 @@
 @group(1) @binding(5) var<uniform> light_ub: ShadowCasterLight;
 @group(1) @binding(6) var<storage, read> light_view_buffer: array<u32>;
 @group(1) @binding(7) var<storage, read> light_shadow_idx_buffer: array<u32>;
+@group(1) @binding(8) var<storage, read> entity_index_lookup: array<u32>;
 
 struct VertexOutput {
   @builtin(position) position: vec4<f32>,
@@ -31,7 +32,7 @@ fn vs(@builtin(vertex_index) vi: u32,
 
   let object_instance_index = visible_object_instances[ii];
   let row_field             = object_instances[object_instance_index].row;
-  let entity_row            = get_entity_row(row_field);
+  let entity_row            = entity_index_lookup[get_entity_row(row_field)];
 
   let view_index            = light_view_buffer[light_idx];
   let shadow_idx            = light_shadow_idx_buffer[light_idx];

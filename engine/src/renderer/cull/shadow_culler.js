@@ -63,6 +63,7 @@ export class ShadowCuller extends InstanceCuller {
               this.additional_data.vsm_settings,
               this.additional_data.entity_flags,
               this.additional_data.bitmask,
+              this.additional_data.entity_index_lookup,
               this.additional_data.page_table,
               this.additional_data.page_offset,
             ],

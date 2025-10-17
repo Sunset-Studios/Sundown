@@ -290,6 +290,7 @@ export class AdaptiveSparseVirtualShadowMaps {
       light_count_buffer,
       transforms_buffer,
       object_instances,
+      entity_index_lookup,
       frustum_culler,
       force_recreate = false,
       debug_view = null,
@@ -653,6 +654,7 @@ export class AdaptiveSparseVirtualShadowMaps {
       this.shadow_culler.additional_data.entity_flags = entity_flags;
       this.shadow_culler.additional_data.bitmask = this.bitmask_buf;
       this.shadow_culler.additional_data.dirty_slices = this.dirty_slices;
+      this.shadow_culler.additional_data.entity_index_lookup = entity_index_lookup;
 
       this.shadow_culler.init_views(render_graph, draw_count);
       this.shadow_culler.init_visibility(render_graph, draw_count);
@@ -702,6 +704,7 @@ export class AdaptiveSparseVirtualShadowMaps {
               light_uniform,
               this.light_view_buf,
               this.light_shadow_idx_buf,
+              entity_index_lookup,
               this.shadow_atlas_buf,
             ],
             outputs: [this.shadow_atlas_buf, this.dummy_depth_image],

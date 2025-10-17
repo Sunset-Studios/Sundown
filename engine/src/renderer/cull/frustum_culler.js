@@ -35,6 +35,7 @@ export class FrustumCuller extends InstanceCuller {
             visible_buf,
             indirect_buf,
             draw_cull_data,
+            this.additional_data.entity_index_lookup,
           ],
           outputs: [indirect_buf, visible_buf],
         },

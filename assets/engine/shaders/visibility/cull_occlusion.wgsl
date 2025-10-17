@@ -24,6 +24,7 @@ struct DrawCullData {
 @group(1) @binding(6) var<storage, read_write> draw_indirect_buffer: array<DrawCommand>;
 @group(1) @binding(7) var entity_id_texture: texture_2d<u32>;
 @group(1) @binding(8) var<storage, read> occluder_buffer: array<u32>;
+@group(1) @binding(9) var<storage, read> entity_index_lookup: array<u32>;
 
 
 // ------------------------------------------------------------------------------------
@@ -165,7 +166,7 @@ fn cs(@builtin(global_invocation_id) global_id: vec3<u32>) {
     }
 
     let object_instance = object_instances[object_instance_index];
-    let entity_resolved = get_entity_row(object_instance.row);
+    let entity_resolved = entity_index_lookup[get_entity_row(object_instance.row)];
 
     var aabb_node = aabb_bounds[entity_resolved];
 

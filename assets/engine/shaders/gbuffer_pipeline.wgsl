@@ -8,6 +8,7 @@
 @group(1) @binding(1) var<storage, read> entity_flags: array<u32>;
 @group(1) @binding(2) var<storage, read> object_instances: array<ObjectInstance>;
 @group(1) @binding(3) var<storage, read> visible_object_instances: array<i32>;
+@group(1) @binding(4) var<storage, read> entity_index_lookup: array<u32>;
 
 // ------------------------------------------------------------------------------------
 // Vertex Shader
@@ -25,7 +26,7 @@ fn vertex(v_out: ptr<function, VertexOutput>) -> VertexOutput {
 ) -> VertexOutput {
     let instance_vertex = vertex_buffer[vi];
     let object_instance_index = visible_object_instances[ii];
-    let entity_resolved = get_entity_row(object_instances[object_instance_index].row);
+    let entity_resolved = entity_index_lookup[get_entity_row(object_instances[object_instance_index].row)];
 
     let entity_transform = entity_transforms[entity_resolved];
     let view_index = u32(frame_info.view_index);

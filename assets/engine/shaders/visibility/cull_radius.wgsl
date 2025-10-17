@@ -27,6 +27,7 @@ struct RadiusCullParams {
 @group(1) @binding(3) var<storage, read_write> draw_indirect_buffer: array<DrawCommand>;
 @group(1) @binding(4) var<uniform> draw_cull_data: DrawCullData;
 @group(1) @binding(5) var<uniform> radius_cull_params: RadiusCullParams;
+@group(1) @binding(6) var<storage, read> entity_index_lookup: array<u32>;
 
 
 // ------------------------------------------------------------------------------------
@@ -87,7 +88,7 @@ fn cs(@builtin(global_invocation_id) global_id: vec3<u32>) {
     }
 
     let row = object_instances[g_id].row;
-    let entity_resolved = get_entity_row(row);
+    let entity_resolved = entity_index_lookup[get_entity_row(row)];
 
     let aabb_node = aabb_bounds[entity_resolved];
     let center = vec4f((aabb_node.min.xyz + aabb_node.max.xyz) * 0.5, 1.0);

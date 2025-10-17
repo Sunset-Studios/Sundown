@@ -24,8 +24,9 @@ struct DrawCullData {
 @group(1) @binding(5) var<uniform> vsm_settings: ASVSMSettings;
 @group(1) @binding(6) var<storage, read> entity_flags: array<u32>;
 @group(1) @binding(7) var<storage, read> bitmask: array<u32>;
-@group(1) @binding(8) var page_table: texture_storage_2d_array<r32uint, read_write>;
-@group(1) @binding(9) var page_offset: texture_storage_2d_array<rgba32float, write>;
+@group(1) @binding(8) var<storage, read> entity_index_lookup: array<u32>;
+@group(1) @binding(9) var page_table: texture_storage_2d_array<r32uint, read_write>;
+@group(1) @binding(10) var page_offset: texture_storage_2d_array<rgba32float, write>;
 
 // ------------------------------------------------------------------------------------
 // Helper Functions
@@ -77,7 +78,7 @@ fn cs(@builtin(global_invocation_id) global_id: vec3<u32>) {
 
     let light_shadow_idx = global_id.y;
     let object_instance  = object_instances[object_instance_index];
-    let entity_index     = get_entity_row(object_instance.row);
+    let entity_index     = entity_index_lookup[get_entity_row(object_instance.row)];
     if (entity_index >= arrayLength(&entity_flags)) {
         return;
     }

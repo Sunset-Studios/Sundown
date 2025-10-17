@@ -48,6 +48,7 @@ export class RadialCuller extends InstanceCuller {
             indirect_buf,
             draw_cull_data,
             clip0_extent_buf,
+            this.additional_data.entity_index_lookup,
           ],
           outputs: [indirect_buf, visible_buf],
         },

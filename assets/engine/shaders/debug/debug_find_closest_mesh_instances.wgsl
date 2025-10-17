@@ -16,6 +16,7 @@
 @group(1) @binding(3) var<storage, read> visible_object_instances: array<i32>;
 @group(1) @binding(4) var<storage, read> entity_transforms: array<EntityTransform>;
 @group(1) @binding(5) var<storage, read> mesh_asset_ids: array<u32>;
+@group(1) @binding(4) var<storage, read> entity_index_lookup: array<u32>;
 
 @compute @workgroup_size(64)
 fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
@@ -36,7 +37,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         return; 
     }
     
-    let entity_resolved = get_entity_row(object_instances[instance_index].row);
+    let entity_resolved = entity_index_lookup[get_entity_row(object_instances[instance_index].row)];
     
     // Bounds check for mesh_asset_ids and entity_transforms arrays
     if (entity_resolved >= arrayLength(&mesh_asset_ids) || 

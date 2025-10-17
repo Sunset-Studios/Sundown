@@ -528,6 +528,9 @@ export class DeferredShadingStrategy {
       const entity_flags_buffer = FragmentGpuBuffer.entity_flags_buffer;
       const entity_flags = render_graph.register_buffer(entity_flags_buffer.buffer.config.name);
 
+      const entity_index_map_buffer = FragmentGpuBuffer.entity_index_map_buffer;
+      const entity_index_lookup = render_graph.register_buffer(entity_index_map_buffer.buffer.config.name);
+
       const transforms_buffer = EntityManager.get_fragment_gpu_buffer(
         TransformFragment,
         transforms_name
@@ -651,12 +654,14 @@ export class DeferredShadingStrategy {
 
         this.frustum_culler.additional_data.aabb_bounds = aabb_bounds;
         this.frustum_culler.additional_data.object_instances = object_instances;
+        this.frustum_culler.additional_data.entity_index_lookup = entity_index_lookup;
 
         this.occlusion_culler.additional_data.main_hzb_image = main_hzb_image;
         this.occlusion_culler.additional_data.aabb_bounds = aabb_bounds;
         this.occlusion_culler.additional_data.object_instances = object_instances;
         this.occlusion_culler.additional_data.entity_occluders = entity_occluders;
         this.occlusion_culler.additional_data.main_entity_id_image = main_entity_id_image;
+        this.occlusion_culler.additional_data.entity_index_lookup = entity_index_lookup;
       }
 
       // ═══════════════════════════════════════════════════════════════════════════════
@@ -831,7 +836,13 @@ export class DeferredShadingStrategy {
           depth_prepass_name,
           RenderPassFlags.Graphics,
           {
-            inputs: [entity_transforms, entity_flags, object_instances, visible_buf_no_occlusion],
+            inputs: [
+              entity_transforms,
+              entity_flags,
+              object_instances,
+              visible_buf_no_occlusion,
+              entity_index_lookup,
+            ],
             outputs: [main_entity_id_image, main_depth_image],
             shader_setup: depth_only_shader_setup,
             b_skip_pass_pipeline_setup: true,
@@ -969,6 +980,7 @@ export class DeferredShadingStrategy {
                 entity_flags,
                 object_instances,
                 this.occlusion_culler.get_visibility_buffer(current_view, 0),
+                entity_index_lookup,
               ],
               outputs: outputs,
               shader_setup: g_buffer_shader_setup,
@@ -1093,6 +1105,7 @@ export class DeferredShadingStrategy {
                 this.frustum_culler.get_visibility_buffer(current_view, 0),
                 entity_transforms,
                 mesh_asset_ids_buffer,
+                entity_index_lookup,
               ],
               outputs: [closest_entities_per_mesh_buf, closest_distances_per_mesh_buf],
               shader_setup: debug_find_closest_mesh_instances_shader_setup,
@@ -1268,6 +1281,7 @@ export class DeferredShadingStrategy {
           light_count_buffer: light_count,
           transforms_buffer: entity_transforms,
           object_instances: object_instances,
+          entity_index_lookup: entity_index_lookup,
           frustum_culler: this.frustum_culler,
           force_recreate: this.force_recreate,
           debug_view: debug_view,

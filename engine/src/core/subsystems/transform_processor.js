@@ -36,6 +36,8 @@ export class TransformProcessor extends SimulationLayer {
   }
 
   _update_internal() {
+    const entity_index_map_buffer = FragmentGpuBuffer.entity_index_map_buffer;
+
     const positions = EntityManager.get_fragment_gpu_buffer(
       TransformFragment,
       position_buffer_name
@@ -80,6 +82,7 @@ export class TransformProcessor extends SimulationLayer {
       this.transform_processing_input_lists[i][4] = flags.buffer;
       this.transform_processing_input_lists[i][5] = SceneGraph.scene_graph_buffer;
       this.transform_processing_input_lists[i][6] = SceneGraph.scene_graph_uniforms[i];
+      this.transform_processing_input_lists[i][7] = entity_index_map_buffer.buffer;
 
       this.transform_processing_output_lists[i][0] = transforms.buffer;
       this.transform_processing_output_lists[i][1] = flags.buffer;
@@ -91,6 +94,7 @@ export class TransformProcessor extends SimulationLayer {
       this.decompose_transform_input_lists[i][4] = world_positions.buffer;
       this.decompose_transform_input_lists[i][5] = world_rotations.buffer;
       this.decompose_transform_input_lists[i][6] = world_scales.buffer;
+      this.decompose_transform_input_lists[i][7] = entity_index_map_buffer.buffer;
 
       this.decompose_transform_output_lists[i][0] = world_positions.buffer;
       this.decompose_transform_output_lists[i][1] = world_rotations.buffer;

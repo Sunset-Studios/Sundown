@@ -11,7 +11,6 @@
 @group(0) @binding(4) var clamped_sampler: sampler;
 @group(0) @binding(5) var comparison_sampler: sampler_comparison;
 @group(0) @binding(6) var<uniform> frame_info: FrameInfo;
-@group(0) @binding(7) var<storage, read> entity_index_lookup: array<u32>;
 
 // ------------------------------------------------------------------------------------
 // Helper Functions
@@ -28,8 +27,7 @@ fn mat4_from_scaling(scale: vec3f) -> mat4x4f {
 
 fn get_entity_row(entity: u32) -> u32 {
     // row_field = (chunk_index << LOCAL_SLOT_BITS) | local_index 
-    let entity_row = entity & ENTITY_ROW_MASK;
-    return entity_index_lookup[entity_row];
+    return entity & ENTITY_ROW_MASK;
 }
 
 fn cubemap_direction_to_uv(direction: vec3f) -> vec3f {

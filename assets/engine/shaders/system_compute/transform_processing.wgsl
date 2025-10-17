@@ -28,6 +28,7 @@ struct SceneGraphLayerData {
 @group(1) @binding(4) var<storage, read_write> entity_flags: array<u32>;
 @group(1) @binding(5) var<storage, read> scene_graph: array<vec2<i32>>;
 @group(1) @binding(6) var<uniform> scene_graph_layer_data: SceneGraphLayerData;
+@group(1) @binding(7) var<storage, read> entity_index_lookup: array<u32>;
 
 // ------------------------------------------------------------------------------------
 // Compute Shader
@@ -43,12 +44,12 @@ fn cs(@builtin(global_invocation_id) global_id: vec3<u32>) {
 
     let entity_resolved = select(
         MAX_UINT,
-        get_entity_row(u32(scene_graph[entity_id_offset].x)),
+        entity_index_lookup[get_entity_row(u32(scene_graph[entity_id_offset].x))],
         scene_graph[entity_id_offset].x != -1
     );
     let parent_resolved = select(
         MAX_UINT,
-        get_entity_row(u32(scene_graph[entity_id_offset].y)),
+        entity_index_lookup[get_entity_row(u32(scene_graph[entity_id_offset].y))],
         scene_graph[entity_id_offset].y != -1
     );
 

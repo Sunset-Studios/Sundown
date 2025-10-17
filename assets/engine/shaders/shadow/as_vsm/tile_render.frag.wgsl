@@ -12,7 +12,8 @@
 @group(1) @binding(5) var<uniform> light_ub: ShadowCasterLight;
 @group(1) @binding(6) var<storage, read> light_view_buffer: array<u32>;
 @group(1) @binding(7) var<storage, read> light_shadow_idx_buffer: array<u32>;
-@group(1) @binding(8) var<storage, read_write> shadow_atlas_depth: array<atomic<u32>>;
+@group(1) @binding(8) var<storage, read> entity_index_lookup: array<u32>;
+@group(1) @binding(9) var<storage, read_write> shadow_atlas_depth: array<atomic<u32>>;
 
 struct VertexOutput {
   @builtin(position) position: vec4<f32>,

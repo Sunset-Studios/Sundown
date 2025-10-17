@@ -310,14 +310,6 @@ export class Renderer {
       },
     ];
 
-    if (FragmentGpuBuffer.entity_index_map_buffer) {
-      global_bindings.push({
-        buffer: FragmentGpuBuffer.entity_index_map_buffer.buffer,
-        offset: 0,
-        size: FragmentGpuBuffer.entity_index_map_buffer.buffer.config.size,
-      });
-    }
-
     this.render_graph.queue_global_bind_group_write(global_bindings, true /* overwrite */);
   }
 
