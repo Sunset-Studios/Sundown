@@ -35,15 +35,9 @@ const path_tracer_hit_shader_setup = {
   },
 };
 
-const path_tracer_hit_binned_shader_setup = {
+const path_tracer_hit_visibility_shader_setup = {
   pipeline_shaders: {
-    compute: { path: "raytracing/path_trace_hit_binned.wgsl" },
-  },
-};
-
-const ray_bin_combined_shader_setup = {
-  pipeline_shaders: {
-    compute: { path: "raytracing/path_trace_bin_and_sort.wgsl", entry: "count_and_bin_combined" },
+    compute: { path: "raytracing/path_trace_hit_visibility.wgsl" },
   },
 };
 
@@ -199,16 +193,6 @@ export class PathTracer extends RayTracer {
     const num_bounce_passes = max_bounces + 1;
     const spp = Math.max(1, spp_per_frame | 0);
 
-    // Create consolidated ray binning buffer if enabled
-    // Layout: [8 u32 counts][8 u32 offsets][width*height u32 indices]
-    const bin_info_size = (8 + 8 + width * height) * 4; // All in one buffer
-    const bin_info_buffer = render_graph.create_buffer({
-      name: "pt_bin_info",
-      size: bin_info_size,
-      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-      force: force_recreate,
-    });
-
     for (let s = 0; s < spp; s++) {
       render_graph.add_pass(
         `path_trace_init_${s}`,
@@ -232,60 +216,39 @@ export class PathTracer extends RayTracer {
           const pass = graph.get_physical_pass(frame_data.current_pass);
           // Optimize dispatch based on trace_rate
           const active_pixel_count = Math.ceil((width * height) / Math.max(1, trace_rate));
-          const workgroup_size = 128; // 128x1x1 workgroup
+          const workgroup_size = 64; // 64x1x1 workgroup
           pass.dispatch(Math.ceil(active_pixel_count / workgroup_size), 1, 1);
         }
       );
 
       for (let b = 0; b < num_bounce_passes; b++) {
-        // Count and bin rays (wave-optimized)
-        // render_graph.add_pass(
-        //   `path_trace_count_bins_${s}_${b}`,
-        //   RenderPassFlags.Compute,
-        //   {
-        //     inputs: [pt_params, path_state, bin_info_buffer, this.output_texture],
-        //     outputs: [bin_info_buffer],
-        //     shader_setup: ray_bin_combined_shader_setup,
-        //   },
-        //   (graph, frame_data, encoder) => {
-        //     const pass = graph.get_physical_pass(frame_data.current_pass);
-        //     const active_pixel_count = Math.ceil((width * height) / Math.max(1, trace_rate));
-        //     const workgroup_size = 128;
-        //     pass.dispatch(Math.ceil(active_pixel_count / workgroup_size), 1, 1);
-        //   }
-        // );
+        render_graph.add_pass(
+          `path_trace_hit_visibility_${s}_${b}`,
+          RenderPassFlags.Compute,
+          {
+            inputs: [
+              pt_params,
+              path_state,
+              tlas_bvh2_bounds,
+              tlas_bvh4_nodes,
+              blas_atlas,
+              entity_transforms,
+              index_buffer,
+              mesh_asset_ids,
+              this.output_texture,
+            ],
+            outputs: [path_state],
+            shader_setup: path_tracer_hit_visibility_shader_setup,
+          },
+          (graph, frame_data, encoder) => {
+            const pass = graph.get_physical_pass(frame_data.current_pass);
+            // Optimize dispatch based on trace_rate
+            const active_pixel_count = Math.ceil((width * height) / Math.max(1, trace_rate));
+            const workgroup_size = 64; // 64x1x1 workgroup
+            pass.dispatch(Math.ceil(active_pixel_count / workgroup_size), 1, 1);
+          }
+        );
 
-        // Process binned rays (one bin per Z-slice for maximum coherence)
-        // render_graph.add_pass(
-        //   `path_trace_hit_binned_${s}_${b}`,
-        //   RenderPassFlags.Compute,
-        //   {
-        //     inputs: [
-        //       pt_params,
-        //       path_state,
-        //       tlas_bvh2_bounds,
-        //       tlas_bvh4_nodes,
-        //       blas_atlas,
-        //       entity_transforms,
-        //       index_buffer,
-        //       mesh_asset_ids,
-        //       bin_info_buffer,
-        //       this.output_texture,
-        //     ],
-        //     outputs: [path_state],
-        //     shader_setup: path_tracer_hit_binned_shader_setup,
-        //   },
-        //   (graph, frame_data, encoder) => {
-        //     const pass = graph.get_physical_pass(frame_data.current_pass);
-        //     const active_pixel_count = Math.ceil((width * height) / Math.max(1, trace_rate));
-        //     const workgroup_size = 128;
-        //     const workgroups_per_bin = Math.ceil(active_pixel_count / workgroup_size / 8);
-        //     // Dispatch with Z dimension for bins (X for threads, Z for bin ID)
-        //     pass.dispatch(Math.max(1, workgroups_per_bin), 1, 8);
-        //   }
-        // );
-
-        // === STANDARD PATH (No Binning) ===
         render_graph.add_pass(
           `path_trace_hit_${s}_${b}`,
           RenderPassFlags.Compute,
@@ -308,7 +271,7 @@ export class PathTracer extends RayTracer {
             const pass = graph.get_physical_pass(frame_data.current_pass);
             // Optimize dispatch based on trace_rate
             const active_pixel_count = Math.ceil((width * height) / Math.max(1, trace_rate));
-            const workgroup_size = 128; // 128x1x1 workgroup
+            const workgroup_size = 64; // 64x1x1 workgroup
             pass.dispatch(Math.ceil(active_pixel_count / workgroup_size), 1, 1);
           }
         );
@@ -348,7 +311,7 @@ export class PathTracer extends RayTracer {
             const pass = graph.get_physical_pass(frame_data.current_pass);
             // Optimize dispatch based on trace_rate
             const active_pixel_count = Math.ceil((width * height) / Math.max(1, trace_rate));
-            const workgroup_size = 128; // 128x1x1 workgroup
+            const workgroup_size = 64; // 64x1x1 workgroup
             pass.dispatch(Math.ceil(active_pixel_count / workgroup_size), 1, 1);
           }
         );

@@ -82,7 +82,7 @@ fn compute_pixel_coords(linear_index: u32, res: vec2<u32>, trace_rate: u32, fram
     return vec2<u32>(0xFFFFFFFFu, 0xFFFFFFFFu);
 }
 
-@compute @workgroup_size(128, 1, 1)
+@compute @workgroup_size(64, 1, 1)
 fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let res = textureDimensions(output_tex);
     

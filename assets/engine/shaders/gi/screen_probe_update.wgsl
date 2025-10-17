@@ -84,7 +84,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         let radiance = shade.throughput.rgb;
         
         // Only accumulate if radiance is valid (not NaN or inf)
-        if (!any(isnan(radiance)) && !any(isinf(radiance)) && length(radiance) < 1000.0) {
+        if (!any(isinf(radiance)) && length(radiance) < 1000.0) {
             accumulated_radiance += radiance;
             valid_ray_count += 1u;
         }
@@ -103,7 +103,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
             let outgoing_radiance = radiance / max(shade.path_weight.w, 0.001);
             
             // Validate before inserting
-            if (!any(isnan(outgoing_radiance)) && !any(isinf(outgoing_radiance)) && length(outgoing_radiance) < 100.0) {
+            if (!any(isinf(outgoing_radiance)) && length(outgoing_radiance) < 100.0) {
                 let inserted = insert_world_cache(
                     hit_pos,
                     hit_normal,
