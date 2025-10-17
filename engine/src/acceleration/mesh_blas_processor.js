@@ -151,7 +151,7 @@ export class MeshBLASProcessor extends SimulationLayer {
     // └─────────────────────────────────────────────────────────────────────────────────────────┘
 
     this.radix_uniforms = new Uint32Array(4); // OneSweep parameters: [count, shift, blocks, pad]
-    this.bvh_build_data = new Uint32Array(5); // BVH build state: [leaf_count, bvh2_count, prim_count, bvh2_base, bvh4_base]
+    this.bvh_build_data = new Uint32Array(6); // BVH build state: [leaf_count, bvh2_count, prim_count, bvh2_base, bvh4_base, is_blas]
 
     // ┌─────────────────────────────────────────────────────────────────────────────────────────┐
     // │                     🔗 PRE-ALLOCATED BINDING ARRAY INFRASTRUCTURE                       │
@@ -243,12 +243,13 @@ export class MeshBLASProcessor extends SimulationLayer {
     if (!mesh_meta) return;
 
     // Initialize per-mesh build state for GPU compute shaders
-    // BVHData structure: [leaf_count, bvh2_count, primitive_count, bvh2_base_index, bvh4_base_index]
+    // BVHData structure: [leaf_count, bvh2_count, primitive_count, bvh2_base_index, bvh4_base_index, is_blas]
     this.bvh_build_data[0] = 0; // leaf_count (updated by shaders)
     this.bvh_build_data[1] = 0; // bvh2_count (updated by shaders)
     this.bvh_build_data[2] = primitive_count; // primitive_count (input parameter)
     this.bvh_build_data[3] = mesh_meta.bvh2_base_node_index >>> 0; // bvh2_base_index (allocation offset)
     this.bvh_build_data[4] = mesh_meta.bvh4_base_node_index >>> 0; // bvh4_base_index (allocation offset)
+    this.bvh_build_data[5] = 1; // is_blas - 1 for BLAS (store triangle IDs directly)
     mesh_info_buffer.write(this.bvh_build_data);
 
     // ┌─────────────────────────────────────────────────────────────────────────────────────────┐
@@ -601,7 +602,7 @@ export class MeshBLASProcessor extends SimulationLayer {
       const mesh_info_buffer = Buffer.create({
         name: `mesh_${mesh_id}_build_info`,
         usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-        size: 5 * 4, // BVHData structure: [leaf_count, bvh2_count, prim_count, bvh2_base, bvh4_base]
+        size: 6 * 4, // BVHData structure: [leaf_count, bvh2_count, prim_count, bvh2_base, bvh4_base, is_blas]
       });
 
       const mesh_selector_buffer = Buffer.create({

@@ -91,23 +91,20 @@ fn trace_blas(
                     let child_idx = u32(child_raw);
 
                     if (is_leaf_child) {
-                        let leaf_bounds = atlas_load_aabb(child_idx);
-                        let t_leaf = intersect_aabb(current_ray, leaf_bounds.min.xyz, leaf_bounds.max.xyz);
-                        if (t_leaf.x <= t_leaf.y && t_leaf.x >= current_ray.origin_and_tmin.w && t_leaf.x < hit.position_and_t.w) {
-                            let tri_id_local = u32(leaf_bounds.min.w);
-                            let i0 = index_buffer[first_index + tri_id_local * 3u + 0u];
-                            let i1 = index_buffer[first_index + tri_id_local * 3u + 1u];
-                            let i2 = index_buffer[first_index + tri_id_local * 3u + 2u];
+                        // BLAS BVH4 leaf nodes store triangle IDs directly - no AABB indirection!
+                        let tri_id_local = child_idx;
+                        let i0 = index_buffer[first_index + tri_id_local * 3u + 0u];
+                        let i1 = index_buffer[first_index + tri_id_local * 3u + 1u];
+                        let i2 = index_buffer[first_index + tri_id_local * 3u + 2u];
 
-                            let v0 = vertex_buffer[first_vertex + i0].position.xyz;
-                            let v1 = vertex_buffer[first_vertex + i1].position.xyz;
-                            let v2 = vertex_buffer[first_vertex + i2].position.xyz;
+                        let v0 = vertex_buffer[first_vertex + i0].position.xyz;
+                        let v1 = vertex_buffer[first_vertex + i1].position.xyz;
+                        let v2 = vertex_buffer[first_vertex + i2].position.xyz;
 
-                            let t_tri = intersect_triangle(current_ray, v0, v1, v2);
-                            if (t_tri >= current_ray.origin_and_tmin.w && t_tri < current_ray.direction_and_tmax.w) {
-                                hit.position_and_t.w = t_tri;
-                                hit.normal_and_user_data.w = f32(tri_id_local);
-                            }
+                        let t_tri = intersect_triangle(current_ray, v0, v1, v2);
+                        if (t_tri >= current_ray.origin_and_tmin.w && t_tri < current_ray.direction_and_tmax.w) {
+                            hit.position_and_t.w = t_tri;
+                            hit.normal_and_user_data.w = f32(tri_id_local);
                         }
                     } else {
                         let child_node = atlas_load_bvh4_node(child_idx);
@@ -122,7 +119,7 @@ fn trace_blas(
 
                 for (var i = 0u; i < valid_children; i = i + 1u) {
                     for (var j = i + 1u; j < valid_children; j = j + 1u) {
-                        if (child_data[j].y < child_data[i].y) {
+                        if (child_data[j].y > child_data[i].y) {
                             let temp = child_data[i];
                             child_data[i] = child_data[j];
                             child_data[j] = temp;
@@ -132,8 +129,7 @@ fn trace_blas(
 
                 for (var i = 0u; i < valid_children; i = i + 1u) {
                     if (stack_size < NODE_STACK_SIZE) {
-                        let idx = valid_children - 1u - i;
-                        node_stack[stack_size] = u32(child_data[idx].x);
+                        node_stack[stack_size] = u32(child_data[i].x);
                         stack_size = stack_size + 1u;
                     }
                 }
@@ -183,22 +179,19 @@ fn trace_blas_any_hit(
                     let child_idx = u32(child_raw);
 
                     if (is_leaf_child) {
-                        let leaf_bounds = atlas_load_aabb(child_idx);
-                        let t_leaf = intersect_aabb(*ray_local, leaf_bounds.min.xyz, leaf_bounds.max.xyz);
-                        if (t_leaf.x <= t_leaf.y && t_leaf.x >= ray_local.origin_and_tmin.w && t_leaf.x < ray_local.direction_and_tmax.w) {
-                            let tri_id_local = u32(leaf_bounds.min.w);
-                            let i0 = index_buffer[first_index + tri_id_local * 3u + 0u];
-                            let i1 = index_buffer[first_index + tri_id_local * 3u + 1u];
-                            let i2 = index_buffer[first_index + tri_id_local * 3u + 2u];
+                        // BLAS BVH4 leaf nodes store triangle IDs directly - no AABB indirection!
+                        let tri_id_local = child_idx;
+                        let i0 = index_buffer[first_index + tri_id_local * 3u + 0u];
+                        let i1 = index_buffer[first_index + tri_id_local * 3u + 1u];
+                        let i2 = index_buffer[first_index + tri_id_local * 3u + 2u];
 
-                            let v0 = vertex_buffer[first_vertex + i0].position.xyz;
-                            let v1 = vertex_buffer[first_vertex + i1].position.xyz;
-                            let v2 = vertex_buffer[first_vertex + i2].position.xyz;
+                        let v0 = vertex_buffer[first_vertex + i0].position.xyz;
+                        let v1 = vertex_buffer[first_vertex + i1].position.xyz;
+                        let v2 = vertex_buffer[first_vertex + i2].position.xyz;
 
-                            let t_tri = intersect_triangle(*ray_local, v0, v1, v2);
-                            if (t_tri >= ray_local.origin_and_tmin.w && t_tri < ray_local.direction_and_tmax.w) {
-                                return true;
-                            }
+                        let t_tri = intersect_triangle(*ray_local, v0, v1, v2);
+                        if (t_tri >= ray_local.origin_and_tmin.w && t_tri < ray_local.direction_and_tmax.w) {
+                            return true;
                         }
                     } else {
                         let child_node = atlas_load_bvh4_node(child_idx);
@@ -214,7 +207,7 @@ fn trace_blas_any_hit(
                 // Near-to-far sorting
                 for (var i = 0u; i < valid_children; i = i + 1u) {
                     for (var j = i + 1u; j < valid_children; j = j + 1u) {
-                        if (child_data[j].y < child_data[i].y) {
+                        if (child_data[j].y > child_data[i].y) {
                             let temp = child_data[i];
                             child_data[i] = child_data[j];
                             child_data[j] = temp;
@@ -224,8 +217,7 @@ fn trace_blas_any_hit(
 
                 for (var i = 0u; i < valid_children; i = i + 1u) {
                     if (stack_size < NODE_STACK_SIZE) {
-                        let idx = valid_children - 1u - i;
-                        node_stack[stack_size] = u32(child_data[idx].x);
+                        node_stack[stack_size] = u32(child_data[i].x);
                         stack_size = stack_size + 1u;
                     }
                 }
@@ -315,7 +307,7 @@ fn trace_hit(ray: ptr<function, Ray>) -> RayHit {
 
                 for (var i = 0u; i < valid_children; i = i + 1u) {
                     for (var j = i + 1u; j < valid_children; j = j + 1u) {
-                        if (child_data[j].y < child_data[i].y) {
+                        if (child_data[j].y > child_data[i].y) {
                             let temp = child_data[i];
                             child_data[i] = child_data[j];
                             child_data[j] = temp;
@@ -325,8 +317,7 @@ fn trace_hit(ray: ptr<function, Ray>) -> RayHit {
 
                 for (var i = 0u; i < valid_children; i = i + 1u) {
                     if (stack_size < NODE_STACK_SIZE) {
-                        let idx = valid_children - 1u - i;
-                        node_stack[stack_size] = u32(child_data[idx].x);
+                        node_stack[stack_size] = u32(child_data[i].x);
                         stack_size = stack_size + 1u;
                     }
                 }
@@ -405,7 +396,7 @@ fn trace_hit_any(ray: ptr<function, Ray>) -> bool {
 
                 for (var i = 0u; i < valid_children; i = i + 1u) {
                     for (var j = i + 1u; j < valid_children; j = j + 1u) {
-                        if (child_data[j].y < child_data[i].y) {
+                        if (child_data[j].y > child_data[i].y) {
                             let temp = child_data[i];
                             child_data[i] = child_data[j];
                             child_data[j] = temp;
@@ -415,8 +406,7 @@ fn trace_hit_any(ray: ptr<function, Ray>) -> bool {
 
                 for (var i = 0u; i < valid_children; i = i + 1u) {
                     if (stack_size < NODE_STACK_SIZE) {
-                        let idx = valid_children - 1u - i;
-                        node_stack[stack_size] = u32(child_data[idx].x);
+                        node_stack[stack_size] = u32(child_data[i].x);
                         stack_size = stack_size + 1u;
                     }
                 }

@@ -38,6 +38,7 @@ struct BVHData {
     prim_count: u32,
     prim_base: u32,
     node_base: u32,
+    is_blas: u32,  // 1 = BLAS (store triangle IDs directly), 0 = TLAS (store AABB indices)
 };
 
 struct IndexPair {
@@ -172,10 +173,12 @@ fn greedy_assignment(offsets: array<vec3<f32>, 4>, n: u32) -> u32 {
 fn create_bvh4_node(
     bounds_arg: AABB,
     child_nodes: array<u32, 4>,
+    child_bounds: array<AABB, 4>,
     child_base_idx: u32,
     assignments: u32,
     inner_mask: u32,
-    leaf_mask: u32
+    leaf_mask: u32,
+    is_blas: bool
 ) -> BVH4Node {
     var node: BVH4Node;
 
@@ -186,7 +189,8 @@ fn create_bvh4_node(
     // Encode per-slot children directly into BVH4Node.children
     // Convention:
     // - If slot i is inner: children[i] = f32(child_base_idx + rank among inner slots)
-    // - If slot i is leaf:  children[i] = f32(bvh2 leaf node index)
+    // - If slot i is leaf (BLAS): children[i] = f32(triangle_id) - DIRECT, no AABB indirection!
+    // - If slot i is leaf (TLAS): children[i] = f32(bvh2_aabb_index) - for entity lookup
     node.children = vec4<f32>(-1.0, -1.0, -1.0, -1.0);
 
     for (var i = 0u; i < 4u; i = i + 1u) {
@@ -196,15 +200,18 @@ fn create_bvh4_node(
 
         let is_inner = (inner_mask & (1u << i)) != 0u;
         let inner_rank = count_bits_below(inner_mask, i);
-        let leaf_rank = count_bits_below(leaf_mask, i);
+        let original_child_idx = get_nibble(assignments, i);
 
-        let encoded = select(
-            // leaf: store BVH2 leaf node index directly from gathered children
-            f32(child_nodes[get_nibble(assignments, i)]),
-            // inner: store absolute child node index
-            f32(child_base_idx + inner_rank),
-            is_inner
-        );
+        var encoded: f32;
+        if (is_inner) {
+            // Inner node: store absolute child node index
+            encoded = f32(child_base_idx + inner_rank);
+        } else {
+            // Leaf node: behavior depends on BLAS vs TLAS
+            // BLAS: store triangle ID directly (removes AABB indirection!)
+            // TLAS: store BVH2 AABB index (needed for entity lookup)
+            encoded = select(f32(child_nodes[original_child_idx]), child_bounds[original_child_idx].min.w, is_blas);
+        }
 
         node.children[i] = encoded;
     }
@@ -412,9 +419,10 @@ fn convert_bvh2_to_bvh4(
 
                 // Create and store the new BVH4 node
                 let child_base_abs = bvh_data.node_base + child_base_idx;
+                let is_blas = bvh_data.is_blas != 0u;
                 bvh4_nodes[bvh_data.node_base + bvh4_node_idx] = create_bvh4_node(
-                    bvh2_node, child_nodes, child_base_abs, 
-                    assignments, inner_mask, leaf_mask
+                    bvh2_node, child_nodes, child_bounds_cached, child_base_abs, 
+                    assignments, inner_mask, leaf_mask, is_blas
                 );
             }
         }

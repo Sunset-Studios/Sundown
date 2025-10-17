@@ -11,6 +11,7 @@ struct BVHData {
     prim_count: u32,
     prim_base: u32,
     node_base: u32,
+    is_blas: u32,
 };
 
 // ==================================

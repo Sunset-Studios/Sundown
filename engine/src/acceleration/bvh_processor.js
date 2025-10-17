@@ -128,7 +128,7 @@ export class BVHProcessor {
   
   // ─── BVH Construction Parameters ──────────────────────────────────────────────────────────────────────────────────
   bvh2_uniforms = new Uint32Array(2);            // BVH2 algorithm parameters
-  bvh2_data = new Uint32Array(6);                // [leaf_count, node_count, prim_count, bases...]
+  bvh2_data = new Uint32Array(6);                // [leaf_count, node_count, prim_count, prim_base, node_base, is_blas]
   
   // ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════
   //                                        COMPUTE KERNEL I/O BUFFERS
@@ -372,6 +372,7 @@ export class BVHProcessor {
     this.bvh2_data[2] = true_primitive_count;   // prim_count - Actual number of primitives to process
     this.bvh2_data[3] = 0;                      // prim_base - Base index for primitive storage
     this.bvh2_data[4] = 0;                      // node_base - Base index for node storage
+    this.bvh2_data[5] = 0;                      // is_blas - 0 for TLAS (store AABB indices)
     bvh.bvh_info_buffer.write(this.bvh2_data);
 
     // ─── Configure Morton Code Generation Inputs ─────────────────────────────────────────────────────────────────
