@@ -94,19 +94,27 @@ fn transform_aabb(node: AABB, transform: mat4x4<f32>) -> AABB {
 }
 
 // Ray-AABB intersection (slab method)
-fn intersect_aabb(ray: Ray, min_point: vec3<f32>, max_point: vec3<f32>) -> vec2<f32> {
-    var tmin = ray.origin_and_tmin.w;
-    var tmax = ray.direction_and_tmax.w;
-    for (var i = 0; i < 3; i++) {
-        let inv_d = ray.inv_direction.xyz[i];
-        let inv_less_than_zero = inv_d < 0.0;
-        let min_p = select(min_point[i], max_point[i], inv_less_than_zero);
-        let max_p = select(max_point[i], min_point[i], inv_less_than_zero);
-        var t1 = (min_p - ray.origin_and_tmin.xyz[i]) * inv_d;
-        var t2 = (max_p - ray.origin_and_tmin.xyz[i]) * inv_d;
-        tmin = max(tmin, t1);
-        tmax = min(tmax, t2);
-    }
+fn intersect_aabb(ray: ptr<function, Ray>, min_point: vec3<f32>, max_point: vec3<f32>) -> vec2<f32> {
+    let inv = (*ray).inv_direction.xyz;
+    let ro = (*ray).origin_and_tmin.xyz;
+
+    let min_x = select(min_point.x, max_point.x, inv.x < 0.0);
+    let max_x = select(max_point.x, min_point.x, inv.x < 0.0);
+    let tx1 = (min_x - ro.x) * inv.x;
+    let tx2 = (max_x - ro.x) * inv.x;
+
+    let min_y = select(min_point.y, max_point.y, inv.y < 0.0);
+    let max_y = select(max_point.y, min_point.y, inv.y < 0.0);
+    let ty1 = (min_y - ro.y) * inv.y;
+    let ty2 = (max_y - ro.y) * inv.y;
+
+    let min_z = select(min_point.z, max_point.z, inv.z < 0.0);
+    let max_z = select(max_point.z, min_point.z, inv.z < 0.0);
+    let tz1 = (min_z - ro.z) * inv.z;
+    let tz2 = (max_z - ro.z) * inv.z;
+
+    let tmin = max((*ray).origin_and_tmin.w, max(min(tx1, tx2), max(min(ty1, ty2), min(tz1, tz2))));
+    let tmax = min((*ray).direction_and_tmax.w, min(max(tx1, tx2), min(max(ty1, ty2), max(tz1, tz2))));
     return vec2<f32>(tmin, tmax);
 }
 
@@ -134,27 +142,25 @@ fn merge_aabbs(a_min: vec3<f32>, a_max: vec3<f32>, b_min: vec3<f32>, b_max: vec3
 }
 
 // Intersection with a triangle
-fn intersect_triangle(ray: Ray, v0: vec3<f32>, v1: vec3<f32>, v2: vec3<f32>) -> f32 {
+fn intersect_triangle(ray: ptr<function, Ray>, v0: vec3<f32>, v1: vec3<f32>, v2: vec3<f32>) -> f32 {
     let e1 = v1 - v0;
     let e2 = v2 - v0;
-    let dir  = ray.direction_and_tmax.xyz;
-    let orig = ray.origin_and_tmin.xyz;
+    let dir  = (*ray).direction_and_tmax.xyz;
+    let orig = (*ray).origin_and_tmin.xyz;
 
     let pvec = cross(dir, e2);
     let det  = dot(e1, pvec);
-    if (abs(det) < 0.00001) { return -1.0; }
 
     let inv_det = 1.0 / det;
     let tvec = orig - v0;
     let u = dot(tvec, pvec) * inv_det;
-    if (u < 0.0 || u > 1.0) { return -1.0; }
 
     let qvec = cross(tvec, e1);
     let v = dot(dir, qvec) * inv_det;
-    if (v < 0.0 || u + v > 1.0) { return -1.0; }
 
     let t = dot(e2, qvec) * inv_det;
-    return select(-1.0, t, t > 0.0001); // Epsilon check
+    let valid = abs(det) > 0.00001 && t > 0.0001 && u > 0.0 && v > 0.0 && u + v < 1.0;
+    return select(-1.0, t, valid); // Epsilon check
 }
 
 fn build_local_ray(

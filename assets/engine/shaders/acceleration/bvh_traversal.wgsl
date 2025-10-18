@@ -32,7 +32,7 @@ fn traverse_tlas_bvh(@builtin(global_invocation_id) global_id: vec3<u32>) {
         if (node_idx == INVALID_IDX) { continue; }
 
         let node = bvh4_nodes[node_idx];
-        let t_aabb = intersect_aabb(ray, node.min.xyz, node.max.xyz);
+        let t_aabb = intersect_aabb(&ray, node.min.xyz, node.max.xyz);
 
         if (t_aabb.y >= t_aabb.x && t_aabb.x >= ray.origin_and_tmin.w && t_aabb.x < hit.position_and_t.w) {
             if (stack_size < 32u) {
@@ -47,7 +47,7 @@ fn traverse_tlas_bvh(@builtin(global_invocation_id) global_id: vec3<u32>) {
 
                     if (is_leaf_child) {
                         let leaf_bounds = bvh2_bounds[child_idx];
-                        let t_leaf = intersect_aabb(ray, leaf_bounds.min.xyz, leaf_bounds.max.xyz);
+                        let t_leaf = intersect_aabb(&ray, leaf_bounds.min.xyz, leaf_bounds.max.xyz);
                         if (t_leaf.y >= t_leaf.x && t_leaf.x >= ray.origin_and_tmin.w && t_leaf.x < hit.position_and_t.w) {
                             let prim = u32(leaf_bounds.min.w);
                             hit.position_and_t = vec4<f32>(
@@ -58,7 +58,7 @@ fn traverse_tlas_bvh(@builtin(global_invocation_id) global_id: vec3<u32>) {
                         }
                     } else {
                         let child_node = bvh4_nodes[child_idx];
-                        let t_aabb_child = intersect_aabb(ray, child_node.min.xyz, child_node.max.xyz);
+                        let t_aabb_child = intersect_aabb(&ray, child_node.min.xyz, child_node.max.xyz);
 
                         if (t_aabb_child.y >= t_aabb_child.x && t_aabb_child.x >= ray.origin_and_tmin.w && t_aabb_child.x < hit.position_and_t.w) {
                             node_stack[stack_size] = child_idx;

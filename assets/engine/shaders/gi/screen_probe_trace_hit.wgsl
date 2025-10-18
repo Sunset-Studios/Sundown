@@ -81,7 +81,7 @@ fn trace_blas(
         if (node_idx == INVALID_IDX) { continue; }
 
         let node = atlas_load_bvh4_node(node_idx);
-        let t_aabb = intersect_aabb(current_ray, node.min.xyz, node.max.xyz);
+        let t_aabb = intersect_aabb(&current_ray, node.min.xyz, node.max.xyz);
 
         if (t_aabb.x <= t_aabb.y && t_aabb.x >= current_ray.origin_and_tmin.w && t_aabb.x < hit.position_and_t.w) {
             if (stack_size < NODE_STACK_SIZE) {
@@ -107,14 +107,14 @@ fn trace_blas(
                         let v1 = vertex_buffer[first_vertex + i1].position.xyz;
                         let v2 = vertex_buffer[first_vertex + i2].position.xyz;
 
-                        let t_tri = intersect_triangle(current_ray, v0, v1, v2);
+                        let t_tri = intersect_triangle(&current_ray, v0, v1, v2);
                         if (t_tri >= current_ray.origin_and_tmin.w && t_tri < current_ray.direction_and_tmax.w) {
                             hit.position_and_t.w = t_tri;
                             hit.normal_and_user_data.w = f32(tri_id_local);
                         }
                     } else {
                         let child_node = atlas_load_bvh4_node(child_idx);
-                        let t_aabb_child = intersect_aabb(current_ray, child_node.min.xyz, child_node.max.xyz);
+                        let t_aabb_child = intersect_aabb(&current_ray, child_node.min.xyz, child_node.max.xyz);
 
                         if (t_aabb_child.x <= t_aabb_child.y && t_aabb_child.x >= current_ray.origin_and_tmin.w && t_aabb_child.x < hit.position_and_t.w) {
                             child_data[valid_children] = vec2<f32>(f32(child_idx), t_aabb_child.x);
@@ -170,7 +170,7 @@ fn trace_blas_any_hit(
         if (node_idx == INVALID_IDX) { continue; }
 
         let node = atlas_load_bvh4_node(node_idx);
-        let t_aabb = intersect_aabb(*ray_local, node.min.xyz, node.max.xyz);
+        let t_aabb = intersect_aabb(ray_local, node.min.xyz, node.max.xyz);
 
         if (t_aabb.x <= t_aabb.y && t_aabb.x >= ray_local.origin_and_tmin.w && t_aabb.x < ray_local.direction_and_tmax.w) {
             if (stack_size < NODE_STACK_SIZE) {
@@ -196,13 +196,13 @@ fn trace_blas_any_hit(
                         let v1 = vertex_buffer[first_vertex + i1].position.xyz;
                         let v2 = vertex_buffer[first_vertex + i2].position.xyz;
 
-                        let t_tri = intersect_triangle(*ray_local, v0, v1, v2);
+                        let t_tri = intersect_triangle(ray_local, v0, v1, v2);
                         if (t_tri >= ray_local.origin_and_tmin.w && t_tri < ray_local.direction_and_tmax.w) {
                             return true;
                         }
                     } else {
                         let child_node = atlas_load_bvh4_node(child_idx);
-                        let t_aabb_child = intersect_aabb(*ray_local, child_node.min.xyz, child_node.max.xyz);
+                        let t_aabb_child = intersect_aabb(ray_local, child_node.min.xyz, child_node.max.xyz);
 
                         if (t_aabb_child.x <= t_aabb_child.y && t_aabb_child.x >= ray_local.origin_and_tmin.w && t_aabb_child.x < ray_local.direction_and_tmax.w) {
                             child_data[valid_children] = vec2<f32>(f32(child_idx), t_aabb_child.x);
@@ -255,7 +255,7 @@ fn trace_hit(ray: ptr<function, Ray>) -> RayHit {
         if (node_idx == INVALID_IDX) { continue; }
 
         let current_node = tlas_bvh4_nodes[node_idx];
-        let t_aabb = intersect_aabb(current_ray, current_node.min.xyz, current_node.max.xyz);
+        let t_aabb = intersect_aabb(&current_ray, current_node.min.xyz, current_node.max.xyz);
 
         if (t_aabb.x <= t_aabb.y && t_aabb.x >= current_ray.origin_and_tmin.w && t_aabb.x < hit.position_and_t.w) {
             if (stack_size < NODE_STACK_SIZE) {
@@ -272,7 +272,7 @@ fn trace_hit(ray: ptr<function, Ray>) -> RayHit {
 
                     if (is_leaf_child) {
                         let leaf_bounds = tlas_bvh2_bounds[child_idx];
-                        let t_leaf = intersect_aabb(current_ray, leaf_bounds.min.xyz, leaf_bounds.max.xyz);
+                        let t_leaf = intersect_aabb(&current_ray, leaf_bounds.min.xyz, leaf_bounds.max.xyz);
 
                         // Allow rays that start inside AABBs (t_leaf.x < tmin) by using max(t_leaf.x, tmin)
                         if (t_leaf.x <= t_leaf.y && max(t_leaf.x, current_ray.origin_and_tmin.w) < hit.position_and_t.w) {
@@ -303,7 +303,7 @@ fn trace_hit(ray: ptr<function, Ray>) -> RayHit {
                         }
                     } else {
                         let child_node = tlas_bvh4_nodes[child_idx];
-                        let t_aabb_child = intersect_aabb(current_ray, child_node.min.xyz, child_node.max.xyz);
+                        let t_aabb_child = intersect_aabb(&current_ray, child_node.min.xyz, child_node.max.xyz);
 
                         if (t_aabb_child.x <= t_aabb_child.y && max(t_aabb_child.x, current_ray.origin_and_tmin.w) < hit.position_and_t.w) {
                             child_data[valid_children] = vec2<f32>(f32(child_idx), t_aabb_child.x);
@@ -351,7 +351,7 @@ fn trace_hit_any(ray: ptr<function, Ray>) -> bool {
         if (node_idx == INVALID_IDX) { continue; }
 
         let current_node = tlas_bvh4_nodes[node_idx];
-        let t_aabb = intersect_aabb(current_ray, current_node.min.xyz, current_node.max.xyz);
+        let t_aabb = intersect_aabb(&current_ray, current_node.min.xyz, current_node.max.xyz);
 
         if (t_aabb.x <= t_aabb.y && t_aabb.x >= current_ray.origin_and_tmin.w && t_aabb.x < current_ray.direction_and_tmax.w) {
             if (stack_size < NODE_STACK_SIZE) {
@@ -368,7 +368,7 @@ fn trace_hit_any(ray: ptr<function, Ray>) -> bool {
 
                     if (is_leaf_child) {
                         let leaf_bounds = tlas_bvh2_bounds[child_idx];
-                        let t_leaf = intersect_aabb(current_ray, leaf_bounds.min.xyz, leaf_bounds.max.xyz);
+                        let t_leaf = intersect_aabb(&current_ray, leaf_bounds.min.xyz, leaf_bounds.max.xyz);
 
                         if (t_leaf.x <= t_leaf.y && max(t_leaf.x, current_ray.origin_and_tmin.w) < current_ray.direction_and_tmax.w) {
                             let prim_store = u32(leaf_bounds.min.w);
@@ -393,7 +393,7 @@ fn trace_hit_any(ray: ptr<function, Ray>) -> bool {
                         }
                     } else {
                         let child_node = tlas_bvh4_nodes[child_idx];
-                        let t_aabb_child = intersect_aabb(current_ray, child_node.min.xyz, child_node.max.xyz);
+                        let t_aabb_child = intersect_aabb(&current_ray, child_node.min.xyz, child_node.max.xyz);
 
                         if (t_aabb_child.x <= t_aabb_child.y && max(t_aabb_child.x, current_ray.origin_and_tmin.w) < current_ray.direction_and_tmax.w) {
                             child_data[valid_children] = vec2<f32>(f32(child_idx), t_aabb_child.x);

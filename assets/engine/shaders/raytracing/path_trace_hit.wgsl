@@ -71,65 +71,43 @@ fn trace_blas(
         if (stack_size == 0u) { break; }
         stack_size = stack_size - 1u;
 
-        var node_idx = node_stack[stack_size];
+        let node_idx = node_stack[stack_size];
         if (node_idx == INVALID_IDX) { continue; }
 
         let node = atlas_load_bvh4_node(node_idx);
-        let t_aabb = intersect_aabb(current_ray, node.min.xyz, node.max.xyz);
+        
+        // Node already tested before push - no redundant AABB test here!
+        if (stack_size < NODE_STACK_SIZE) {
+            let leaf_mask = bitcast<u32>(node.min.w);
 
-        if (t_aabb.x <= t_aabb.y && t_aabb.x >= current_ray.origin_and_tmin.w && t_aabb.x < hit.position_and_t.w) {
-            if (stack_size < NODE_STACK_SIZE) {
-                let leaf_mask = bitcast<u32>(node.min.w);
-                var child_data: array<vec2<f32>, 4>;
-                var valid_children = 0u;
+            for (var i = 0u; i < 4u; i = i + 1u) {
+                if (node.children[i] < 0.0) { continue; }
 
-                for (var i = 0u; i < 4u; i = i + 1u) {
-                    let child_raw = node.children[i];
-                    if (child_raw < 0.0) { continue; }
+                let child_idx = u32(node.children[i]);
 
-                    let is_leaf_child = ((leaf_mask >> i) & 1u) != 0u;
-                    let child_idx = u32(child_raw);
+                if (((leaf_mask >> i) & 1u) != 0u) { // Is leaf?
+                    // Child idx is triangle id for blas leafs
+                    let i0 = index_buffer[first_index + child_idx * 3u + 0u];
+                    let i1 = index_buffer[first_index + child_idx * 3u + 1u];
+                    let i2 = index_buffer[first_index + child_idx * 3u + 2u];
 
-                    if (is_leaf_child) {
-                        // BLAS BVH4 leaf nodes store triangle IDs directly - no AABB indirection!
-                        let tri_id_local = child_idx;
-                        let i0 = index_buffer[first_index + tri_id_local * 3u + 0u];
-                        let i1 = index_buffer[first_index + tri_id_local * 3u + 1u];
-                        let i2 = index_buffer[first_index + tri_id_local * 3u + 2u];
+                    let v0 = vertex_buffer[first_vertex + i0].position.xyz;
+                    let v1 = vertex_buffer[first_vertex + i1].position.xyz;
+                    let v2 = vertex_buffer[first_vertex + i2].position.xyz;
 
-                        let v0 = vertex_buffer[first_vertex + i0].position.xyz;
-                        let v1 = vertex_buffer[first_vertex + i1].position.xyz;
-                        let v2 = vertex_buffer[first_vertex + i2].position.xyz;
-
-                        let t_tri = intersect_triangle(current_ray, v0, v1, v2);
-                        if (t_tri >= current_ray.origin_and_tmin.w && t_tri < current_ray.direction_and_tmax.w) {
-                            hit.position_and_t.w = t_tri;
-                            hit.normal_and_user_data.w = f32(tri_id_local);
-                        }
-                    } else {
-                        let child_node = atlas_load_bvh4_node(child_idx);
-                        let t_aabb_child = intersect_aabb(current_ray, child_node.min.xyz, child_node.max.xyz);
-
-                        if (t_aabb_child.x <= t_aabb_child.y && t_aabb_child.x >= current_ray.origin_and_tmin.w && t_aabb_child.x < hit.position_and_t.w) {
-                            child_data[valid_children] = vec2<f32>(f32(child_idx), t_aabb_child.x);
-                            valid_children = valid_children + 1u;
-                        }
+                    let t_tri = intersect_triangle(&current_ray, v0, v1, v2);
+                    if (t_tri >= current_ray.origin_and_tmin.w && t_tri < current_ray.direction_and_tmax.w) {
+                        hit.position_and_t.w = t_tri;
+                        hit.normal_and_user_data.w = f32(child_idx);
+                        current_ray.direction_and_tmax.w = t_tri;
                     }
-                }
+                } else {
+                    // Only test AABB before pushing - guarantees single test per node
+                    let child_node = atlas_load_bvh4_node(child_idx);
+                    let t_aabb_child = intersect_aabb(&current_ray, child_node.min.xyz, child_node.max.xyz);
 
-                for (var i = 0u; i < valid_children; i = i + 1u) {
-                    for (var j = i + 1u; j < valid_children; j = j + 1u) {
-                        if (child_data[j].y > child_data[i].y) {
-                            let temp = child_data[i];
-                            child_data[i] = child_data[j];
-                            child_data[j] = temp;
-                        }
-                    }
-                }
-
-                for (var i = 0u; i < valid_children; i = i + 1u) {
-                    if (stack_size < NODE_STACK_SIZE) {
-                        node_stack[stack_size] = u32(child_data[i].x);
+                    if (t_aabb_child.x <= t_aabb_child.y && t_aabb_child.x >= current_ray.origin_and_tmin.w && t_aabb_child.x < current_ray.direction_and_tmax.w) {
+                        node_stack[stack_size] = child_idx;
                         stack_size = stack_size + 1u;
                     }
                 }
@@ -159,76 +137,54 @@ fn trace_hit(ray: ptr<function, Ray>) -> RayHit {
         if (node_idx == INVALID_IDX) { continue; }
 
         let current_node = tlas_bvh4_nodes[node_idx];
-        let t_aabb = intersect_aabb(current_ray, current_node.min.xyz, current_node.max.xyz);
+        
+        // Node already tested before push - no redundant AABB test here!
+        if (stack_size < NODE_STACK_SIZE) {
+            let leaf_mask = bitcast<u32>(current_node.min.w);
 
-        if (t_aabb.x <= t_aabb.y && t_aabb.x >= current_ray.origin_and_tmin.w && t_aabb.x < hit.position_and_t.w) {
-            if (stack_size < NODE_STACK_SIZE) {
-                let leaf_mask = bitcast<u32>(current_node.min.w);
-                var child_data: array<vec2<f32>, 4>;
-                var valid_children = 0u;
+            for (var i = 0u; i < 4u; i = i + 1u) {
+                if (current_node.children[i] < 0.0) { continue; }
 
-                for (var i = 0u; i < 4u; i = i + 1u) {
-                    let child_raw = current_node.children[i];
-                    if (child_raw < 0.0) { continue; }
+                let child_idx = u32(current_node.children[i]);
 
-                    let is_leaf_child = ((leaf_mask >> i) & 1u) != 0u;
-                    let child_idx = u32(child_raw);
+                if (((leaf_mask >> i) & 1u) != 0u) { // Is leaf?
+                    let leaf_bounds = tlas_bvh2_bounds[child_idx];
+                    let t_leaf = intersect_aabb(&current_ray, leaf_bounds.min.xyz, leaf_bounds.max.xyz);
 
-                    if (is_leaf_child) {
-                        let leaf_bounds = tlas_bvh2_bounds[child_idx];
-                        let t_leaf = intersect_aabb(current_ray, leaf_bounds.min.xyz, leaf_bounds.max.xyz);
+                    // Allow rays that start inside AABBs (t_leaf.x < tmin) by using max(t_leaf.x, tmin)
+                    if (t_leaf.x <= t_leaf.y && max(t_leaf.x, current_ray.origin_and_tmin.w) < hit.position_and_t.w) {
+                        let prim_store = u32(leaf_bounds.min.w);
+                        let mesh_id = mesh_asset_ids[prim_store];
+                        var entity_transform = entity_transforms[prim_store];
 
-                        // Allow rays that start inside AABBs (t_leaf.x < tmin) by using max(t_leaf.x, tmin)
-                        if (t_leaf.x <= t_leaf.y && max(t_leaf.x, current_ray.origin_and_tmin.w) < hit.position_and_t.w) {
-                            let prim_store = u32(leaf_bounds.min.w);
-                            let mesh_id = mesh_asset_ids[prim_store];
-                            var entity_transform = entity_transforms[prim_store];
+                        var ray_local = build_local_ray(
+                            &current_ray,
+                            entity_transform.transform,
+                            entity_transform.transpose_inverse_model_matrix
+                        );
+                        
+                        let blas_hit = trace_blas(
+                            &current_ray,
+                            &ray_local,
+                            entity_transform.transform,
+                            entity_transform.transpose_inverse_model_matrix,
+                            mesh_id
+                        );
 
-                            var ray_local = build_local_ray(
-                                &current_ray,
-                                entity_transform.transform,
-                                entity_transform.transpose_inverse_model_matrix
-                            );
-                            
-                            let blas_hit = trace_blas(
-                                &current_ray,
-                                &ray_local,
-                                entity_transform.transform,
-                                entity_transform.transpose_inverse_model_matrix,
-                                mesh_id
-                            );
-
-                            if (blas_hit.normal_and_user_data.w >= 0.0) {
-                                hit = blas_hit;
-                                hit.prim_meshid_padding = vec4f(f32(prim_store), f32(mesh_id), 0.0, 0.0);
-                                hit.ray_local = ray_local;
-                                current_ray.direction_and_tmax.w = min(current_ray.direction_and_tmax.w, hit.position_and_t.w);
-                            }
-                        }
-                    } else {
-                        let child_node = tlas_bvh4_nodes[child_idx];
-                        let t_aabb_child = intersect_aabb(current_ray, child_node.min.xyz, child_node.max.xyz);
-
-                        if (t_aabb_child.x <= t_aabb_child.y && max(t_aabb_child.x, current_ray.origin_and_tmin.w) < hit.position_and_t.w) {
-                            child_data[valid_children] = vec2<f32>(f32(child_idx), t_aabb_child.x);
-                            valid_children = valid_children + 1u;
+                        if (blas_hit.normal_and_user_data.w >= 0.0) {
+                            hit = blas_hit;
+                            hit.prim_meshid_padding = vec4f(f32(prim_store), f32(mesh_id), 0.0, 0.0);
+                            hit.ray_local = ray_local;
+                            current_ray.direction_and_tmax.w = min(current_ray.direction_and_tmax.w, hit.position_and_t.w);
                         }
                     }
-                }
+                } else {
+                    // Only test AABB before pushing - guarantees single test per node
+                    let child_node = tlas_bvh4_nodes[child_idx];
+                    let t_aabb_child = intersect_aabb(&current_ray, child_node.min.xyz, child_node.max.xyz);
 
-                for (var i = 0u; i < valid_children; i = i + 1u) {
-                    for (var j = i + 1u; j < valid_children; j = j + 1u) {
-                        if (child_data[j].y > child_data[i].y) {
-                            let temp = child_data[i];
-                            child_data[i] = child_data[j];
-                            child_data[j] = temp;
-                        }
-                    }
-                }
-
-                for (var i = 0u; i < valid_children; i = i + 1u) {
-                    if (stack_size < NODE_STACK_SIZE) {
-                        node_stack[stack_size] = u32(child_data[i].x);
+                    if (t_aabb_child.x <= t_aabb_child.y && t_aabb_child.x >= current_ray.origin_and_tmin.w && t_aabb_child.x < hit.position_and_t.w) {
+                        node_stack[stack_size] = child_idx;
                         stack_size = stack_size + 1u;
                     }
                 }
