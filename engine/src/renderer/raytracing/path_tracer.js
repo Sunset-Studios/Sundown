@@ -47,6 +47,12 @@ const path_tracer_shade_shader_setup = {
   },
 };
 
+const path_tracer_output_shader_setup = {
+  pipeline_shaders: {
+    compute: { path: "raytracing/path_trace_output.wgsl" },
+  },
+};
+
 export class PathTracer extends RayTracer {
   params = new Uint32Array([
     0, // max_bounces
@@ -214,10 +220,9 @@ export class PathTracer extends RayTracer {
         },
         (graph, frame_data, encoder) => {
           const pass = graph.get_physical_pass(frame_data.current_pass);
-          // Optimize dispatch based on trace_rate
-          const active_pixel_count = Math.ceil((width * height) / Math.max(1, trace_rate));
-          const workgroup_size = 64; // 64x1x1 workgroup
-          pass.dispatch(Math.ceil(active_pixel_count / workgroup_size), 1, 1);
+          const pixel_count = view_moved ? (width * height) : Math.ceil((width * height) / Math.max(1, trace_rate));
+          const workgroup_size = 64;
+          pass.dispatch(Math.ceil(pixel_count / workgroup_size), 1, 1);
         }
       );
 
@@ -317,5 +322,23 @@ export class PathTracer extends RayTracer {
         );
       }
     }
+
+    render_graph.add_pass(
+      "path_trace_output",
+      RenderPassFlags.Compute,
+      {
+        inputs: [path_shade, this.output_texture],
+        outputs: [this.output_texture],
+        shader_setup: path_tracer_output_shader_setup,
+      },
+      (graph, frame_data, encoder) => {
+        const pass = graph.get_physical_pass(frame_data.current_pass);
+        pass.dispatch(
+          Math.ceil(width / 8),
+          Math.ceil(height / 8),
+          1
+        );
+      }
+    );
   }
 }

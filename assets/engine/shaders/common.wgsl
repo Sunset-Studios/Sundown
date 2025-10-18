@@ -384,3 +384,9 @@ fn mask_popcount(mask: vec4<u32>) -> u32 {
     return ones.x + ones.y + ones.z + ones.w;
 }
 
+fn safe_clamp_vec3(value: vec3<f32>) -> vec3<f32> {
+    let x = select(value.x, 0.0, isinf(value.x));
+    let y = select(value.y, 0.0, isinf(value.y));
+    let z = select(value.z, 0.0, isinf(value.z));
+    return vec3<f32>(x, y, z);
+}

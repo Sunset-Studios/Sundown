@@ -86,19 +86,25 @@ fn compute_pixel_coords(linear_index: u32, res: vec2<u32>, trace_rate: u32, fram
 fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let res = textureDimensions(output_tex);
     
-    // Compute actual pixel coordinates based on linear thread index and trace pattern
-    let pixel_coords = compute_pixel_coords(gid.x, res, pt_params.trace_rate, pt_params.frame_phase);
-    
-    // Early exit if we're out of bounds
+    let pixel_coords = select(
+        compute_pixel_coords(gid.x, res, pt_params.trace_rate, pt_params.frame_phase),
+        vec2<u32>(gid.x % res.x, gid.x / res.x),
+        pt_params.reset_accum_flag != 0u
+    );
+
     if (pixel_coords.x >= res.x || pixel_coords.y >= res.y) { return; }
-    
     let pixel_index = pixel_coords.y * res.x + pixel_coords.x;
 
     let view_index = u32(frame_info.view_index);
     let view = view_buffer[view_index];
     
-    // Start a new path
-    if (pt_params.use_gbuffer != 0u) {
+    // Check if this specific pixel should actually trace this frame
+    let first_x_in_row = (pt_params.frame_phase + pt_params.trace_rate - (pixel_coords.y * 2u) % pt_params.trace_rate) % pt_params.trace_rate;
+    let should_trace_this_pixel = (pt_params.trace_rate <= 1u) || 
+        ((pixel_coords.x >= first_x_in_row) && ((pixel_coords.x - first_x_in_row) % pt_params.trace_rate == 0u));
+    
+    // Start a new path (only for pixels being traced this frame)
+    if (should_trace_this_pixel && pt_params.use_gbuffer != 0u) {
         // G-buffer mode: Read from rasterized G-buffer instead of shooting primary rays
         let pixel_coord = vec2<i32>(i32(pixel_coords.x), i32(pixel_coords.y));
         
@@ -109,7 +115,6 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         
         // Check if this pixel has valid geometry (normal length > 0 means geometry was rasterized)
         if (gbuffer_norm_length > 0.0) {
-            // Valid geometry in G-buffer
             var normalized_normal = safe_normalize(gbuffer_norm);
 
             // Read pre-computed material properties from G-buffer
@@ -151,7 +156,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
             // Mark as miss (tri_id = 0xffffffff) so shade pass will evaluate sky
             path_state[pixel_index].state_u32 = vec4<u32>(0u, 1u, 0u, 0xffffffffu);
         }
-    } else {
+    } else if (should_trace_this_pixel) {
         // Traditional ray tracing mode: Generate primary rays from camera
         let dims = vec2<f32>(f32(res.x), f32(res.y));
         let pixel_center = vec2<f32>(f32(pixel_coords.x) + 0.5, f32(pixel_coords.y) + 0.5);
@@ -176,27 +181,27 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         path_state[pixel_index].state_u32 = vec4<u32>(0u, 1u, 0u, 0xffffffffu);
     }
 
-    // Reset accumulation only when camera moves (view changed)
-    // Only reset accumulation-related state once per frame when requested
+    // Reset accumulation when camera moves (view changed)
     if (pt_params.reset_accum_flag != 0u) {
         let frame_id = u32(frame_info.frame_index);
-        if (u32(path_shade[pixel_index].rng_sample_count_frame_stamp.z) != frame_id) {
-            let rng_seed = hash(pixel_index ^ frame_id);
-            path_shade[pixel_index].rng_sample_count_frame_stamp = vec4f(
-                f32(rng_seed), 0.0, f32(frame_id), 0.0
-            );
-            path_shade[pixel_index].throughput = vec4f(0.0);
-            path_shade[pixel_index].reservoir_radiance_m = vec4f(0.0);
-            path_shade[pixel_index].reservoir_direction_w = vec4f(0.0);
-        }
+        let rng_seed = hash(pixel_index ^ frame_id);
+        path_shade[pixel_index].rng_sample_count_frame_stamp = vec4f(
+            f32(rng_seed), 0.0, f32(frame_id), 0.0
+        );
+        path_shade[pixel_index].throughput = vec4f(0.0);
+        path_shade[pixel_index].reservoir_radiance_m = vec4f(0.0);
+        path_shade[pixel_index].reservoir_direction_w = vec4f(0.0);
     }
 
-    path_state[pixel_index].shadow_origin = vec4f(0.0, 0.0, 0.0, 0.0);
-    path_state[pixel_index].shadow_direction = vec4f(0.0, 0.0, 0.0, 0.0);
-    path_state[pixel_index].shadow_radiance = vec4f(0.0, 0.0, 0.0, 0.0);
-    // Initialize path_weight with neutral throughput (1,1,1) and a dummy PDF for primary rays
-    // Primary rays don't need MIS since they're from the camera, not from sampling
-    path_shade[pixel_index].path_weight = vec4f(1.0, 1.0, 1.0, 1.0);
+    // Clear shadow state for pixels being traced (or all pixels when resetting)
+    if (should_trace_this_pixel || pt_params.reset_accum_flag != 0u) {
+        path_state[pixel_index].shadow_origin = vec4f(0.0, 0.0, 0.0, 0.0);
+        path_state[pixel_index].shadow_direction = vec4f(0.0, 0.0, 0.0, 0.0);
+        path_state[pixel_index].shadow_radiance = vec4f(0.0, 0.0, 0.0, 0.0);
+        // Initialize path_weight with neutral throughput (1,1,1) and a dummy PDF for primary rays
+        // Primary rays don't need MIS since they're from the camera, not from sampling
+        path_shade[pixel_index].path_weight = vec4f(1.0, 1.0, 1.0, 1.0);
+    }
 }
 
 

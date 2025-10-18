@@ -280,7 +280,7 @@ export class PathTracingStrategy {
   // Path tracing parameters (optimized for hybrid mode)
   max_bounces = 2;
   spp_per_frame = 1;
-  trace_rate = 1; // 1=full res, 2=half, 4=quarter, etc.
+  trace_rate = 8; // 1=full res, 2=half, 4=quarter, etc.
   indirect_boost = 1.0;
 
   setup(render_graph) {

@@ -199,14 +199,6 @@ fn mis_weight(pdf_a: f32, pdf_b: f32) -> f32 {
     return a / max(a + b, 0.0001);
 }
 
-// Clamp NaN values to zero for safe throughput accumulation
-fn safe_clamp_nan(value: vec3<f32>) -> vec3<f32> {
-    let x = select(value.x, 0.0, isinf(value.x));
-    let y = select(value.y, 0.0, isinf(value.y));
-    let z = select(value.z, 0.0, isinf(value.z));
-    return vec3<f32>(x, y, z);
-}
-
 // Helper function to compute pixel coordinates from linear index
 fn compute_pixel_coords(linear_index: u32, res: vec2<u32>, trace_rate: u32, frame_phase: u32) -> vec2<u32> {
     if (trace_rate <= 1u) {
@@ -237,6 +229,24 @@ fn compute_pixel_coords(linear_index: u32, res: vec2<u32>, trace_rate: u32, fram
     return vec2<u32>(0xFFFFFFFFu, 0xFFFFFFFFu);
 }
 
+// Check if a pixel was traced recently (current or previous frame phase)
+fn is_pixel_traced_recently(coord: vec2<u32>, trace_rate: u32, frame_phase: u32) -> bool {
+    if (trace_rate <= 1u) { return true; }
+    
+    // Check current frame phase
+    let first_x_now = (frame_phase + trace_rate - (coord.y * 2u) % trace_rate) % trace_rate;
+    let is_traced_now = (coord.x >= first_x_now) && ((coord.x - first_x_now) % trace_rate == 0u);
+    
+    if (is_traced_now) { return true; }
+    
+    // Check previous frame phase for recency tolerance
+    let prev_phase = (frame_phase + trace_rate - 1u) % max(trace_rate, 1u);
+    let first_x_prev = (prev_phase + trace_rate - (coord.y * 2u) % trace_rate) % trace_rate;
+    let is_traced_prev = (coord.x >= first_x_prev) && ((coord.x - first_x_prev) % trace_rate == 0u);
+    
+    return is_traced_prev;
+}
+
 @compute @workgroup_size(64, 1, 1)
 fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let res = textureDimensions(output_tex);
@@ -252,7 +262,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     // === SHADOW CONTRIBUTION ===
     // Add visible light contributions directly to throughput (not reservoir)
     if (info.state_u32.z == 1u) {
-        let safe_shadow_contrib = safe_clamp_nan(info.shadow_radiance.rgb);
+        let safe_shadow_contrib = safe_clamp_vec3(info.shadow_radiance.rgb);
         shade.throughput += vec4f(safe_shadow_contrib, 0.0);
         info.shadow_radiance = vec4f(0.0);
         info.state_u32.z = 0u;
@@ -276,7 +286,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         );
         
         // Add sky contribution weighted by path throughput
-        let safe_sky_contrib = safe_clamp_nan(sky_radiance * shade.path_weight.xyz);
+        let safe_sky_contrib = safe_clamp_vec3(sky_radiance * shade.path_weight.xyz);
         shade.throughput += vec4f(safe_sky_contrib, 0.0);
         
         // Mark path as dead
@@ -406,11 +416,11 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
                 // Compute stable scale factor (deterministic for same inputs)
                 let scale = min(1.0, (max_contribution * ray_source_pdf) / max(contribution_luminance, 0.001));
                 
-                let emissive_contribution = safe_clamp_nan(raw_contribution * scale);
+                let emissive_contribution = safe_clamp_vec3(raw_contribution * scale);
                 shade.throughput += vec4f(emissive_contribution, 0.0);
             } else {
                 // Direct camera hit: full contribution always
-                let emissive_contribution = safe_clamp_nan(emissive_radiance * shade.path_weight.xyz);
+                let emissive_contribution = safe_clamp_vec3(emissive_radiance * shade.path_weight.xyz);
                 shade.throughput += vec4f(emissive_contribution, 0.0);
             }
         }
@@ -443,7 +453,6 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         }
         
         // Generate BRDF sampling candidates (indirect lighting)
-        // Apply MIS if BRDF sample happens to be near the sun
         for (var i = 0u; i < num_ris_samples; i = i + 1u) {
             rng = random_seed(rng);
             let r1 = rand_float(rng);
@@ -503,6 +512,13 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
             let neighbor_y = i32(pixel_coords.y) + offset_y;
 
             if (neighbor_x >= 0 && neighbor_x < i32(res.x) && neighbor_y >= 0 && neighbor_y < i32(res.y)) {
+                let neighbor_coord = vec2<u32>(u32(neighbor_x), u32(neighbor_y));
+                
+                // CRITICAL: Only reuse from pixels traced recently to avoid ghosting
+                if (!is_pixel_traced_recently(neighbor_coord, pt_params.trace_rate, pt_params.frame_phase)) {
+                    continue;
+                }
+                
                 let neighbor_index = u32(neighbor_y) * res.x + u32(neighbor_x);
                 let neighbor_ps = path_state[neighbor_index];
                 let neighbor_shade = path_shade[neighbor_index];
@@ -543,26 +559,19 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         }
 
         // === STEP 3: Temporal Reuse - UNBIASED approach ===
-        // Reuse previous frame's DIRECTION (not radiance) as a candidate
-        // Evaluate contribution fresh each frame - this is unbiased!
         let prev_direction = shade.reservoir_direction_w.xyz;
         let prev_m = u32(shade.reservoir_radiance_m.w);
-        let prev_importance_hint = shade.reservoir_radiance_m.xyz; // Stores BRDF from previous frame
+        let prev_importance_hint = shade.reservoir_radiance_m.xyz;
         
         if (prev_m > 0u && length(prev_direction) > 0.01) {
-            // Evaluate THIS FRAME's BRDF for the previous direction
             let prev_brdf = calculate_brdf_rt(
                 n, v_dir, prev_direction, albedo, roughness, metallic,
                 reflectance, clear_coat, clear_coat_roughness
             );
             
-            // Compute PDF for this direction
             let prev_pdf = brdf_pdf(n, v_dir, prev_direction, clamped_roughness, mis_specular_prob);
-            
-            // Use BRDF as radiance estimate, but boost if previous frame had high contribution
-            // This helps propagate emissive hits through temporal reuse
             let prev_hint_lum = max(0.0, prev_importance_hint.x * 0.2126 + prev_importance_hint.y * 0.7152 + prev_importance_hint.z * 0.0722);
-            let temporal_boost = min(2.0, 1.0 + prev_hint_lum * 0.5); // Boost up to 2x for very bright samples
+            let temporal_boost = min(2.0, 1.0 + prev_hint_lum * 0.3);
             let brdf_lum = max(0.0, prev_brdf.x * 0.2126 + prev_brdf.y * 0.7152 + prev_brdf.z * 0.0722) * temporal_boost;
             
             if (num_candidates < num_max_samples && brdf_lum > 0.0) {
@@ -649,8 +658,4 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     // Write results
     path_state[pixel_index] = info;
     path_shade[pixel_index] = shade;
-    
-    let denom = max(shade.rng_sample_count_frame_stamp.y, 1.0);
-    let avg = vec4f(safe_clamp_nan(shade.throughput.xyz / denom), 1.0);
-    textureStore(output_tex, vec2<i32>(pixel_coords), avg);
 }
