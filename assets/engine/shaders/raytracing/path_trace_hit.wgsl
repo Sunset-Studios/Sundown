@@ -10,7 +10,7 @@ diagnostic(off,subgroup_uniformity);
 #include "acceleration_common.wgsl"
 #include "blas_common.wgsl"
 
-const NODE_STACK_SIZE = 16;
+const NODE_STACK_SIZE = 12;
 
 struct PathTracerParams {
     max_bounces: u32,
@@ -74,15 +74,15 @@ fn trace_blas(
         let node_idx = node_stack[stack_size];
         if (node_idx == INVALID_IDX) { continue; }
 
-        let node_children = atlas_load_bvh4_node_children(node_idx);
-        let leaf_mask = atlas_load_bvh4_leaf_mask(node_idx);
+        let node_data = atlas_load_bvh4_node(node_idx);
+        let leaf_mask = bitcast<u32>(node_data.min.w);
         
         // Node already tested before push - no redundant AABB test here!
         if (stack_size < NODE_STACK_SIZE) {
             for (var i = 0u; i < 4u; i = i + 1u) {
-                if (node_children[i] < 0.0) { continue; }
+                if (node_data.children[i] < 0.0) { continue; }
 
-                let child_idx = u32(node_children[i]);
+                let child_idx = u32(node_data.children[i]);
 
                 if (((leaf_mask >> i) & 1u) != 0u) { // Is leaf?
                     // Child idx is triangle id for blas leafs
@@ -98,13 +98,13 @@ fn trace_blas(
                     if (t_tri >= current_ray.origin_and_tmin.w && t_tri < current_ray.direction_and_tmax.w) {
                         hit.position_and_t.w = t_tri;
                         hit.normal_and_user_data.w = f32(child_idx);
+                        hit.hit_triangle_data = vec4u(first_vertex + i0, first_vertex + i1, first_vertex + i2, 0u);
                         current_ray.direction_and_tmax.w = t_tri;
                     }
                 } else {
                     // Only test AABB before pushing - guarantees single test per node
-                    let child_node_min = atlas_load_bvh4_node_min(child_idx);
-                    let child_node_max = atlas_load_bvh4_node_max(child_idx);
-                    let t_aabb_child = intersect_aabb(&current_ray, child_node_min, child_node_max);
+                    let child_node = atlas_load_bvh4_node(child_idx);
+                    let t_aabb_child = intersect_aabb(&current_ray, child_node.min.xyz, child_node.max.xyz);
 
                     if (t_aabb_child.x <= t_aabb_child.y && t_aabb_child.x >= current_ray.origin_and_tmin.w && t_aabb_child.x < current_ray.direction_and_tmax.w) {
                         node_stack[stack_size] = child_idx;
@@ -272,7 +272,6 @@ fn cs(
         if (hit_result.normal_and_user_data.w >= 0.0) {
             let tri_id_local = u32(hit_result.normal_and_user_data.w);
             let prim_store = u32(hit_result.prim_meshid_padding.x);
-            let mesh_id = u32(hit_result.prim_meshid_padding.y);
 
             let entity_transform = entity_transforms[prim_store];
 
@@ -280,18 +279,14 @@ fn cs(
             let p_local = hit_result.ray_local.origin_and_tmin.xyz + hit_result.ray_local.direction_and_tmax.xyz * t_tri;
             let p_world = (entity_transform.transform * vec4f(p_local, 1.0)).xyz;
 
-            let mesh_entry = atlas_load_directory_entry(mesh_id);
-            let first_vertex = mesh_entry.first_vertex;
-            let first_index = mesh_entry.first_index;
-
-            let i0 = index_buffer[first_index + tri_id_local * 3u + 0u];
-            let i1 = index_buffer[first_index + tri_id_local * 3u + 1u];
-            let i2 = index_buffer[first_index + tri_id_local * 3u + 2u];
+            let v0i = hit_result.hit_triangle_data.x;
+            let v1i = hit_result.hit_triangle_data.y;
+            let v2i = hit_result.hit_triangle_data.z;
             
             // Load positions only for barycentric calculation
-            let v0 = vertex_buffer[first_vertex + i0].position.xyz;
-            let v1 = vertex_buffer[first_vertex + i1].position.xyz;
-            let v2 = vertex_buffer[first_vertex + i2].position.xyz;
+            let v0 = vertex_buffer[v0i].position.xyz;
+            let v1 = vertex_buffer[v1i].position.xyz;
+            let v2 = vertex_buffer[v2i].position.xyz;
 
             // Compute barycentric coordinates immediately
             let e0 = v1 - v0;
@@ -308,30 +303,30 @@ fn cs(
             let w_bc = 1.0 - u_bc - v_bc;
 
             // Load and interpolate UVs immediately (reduce live ranges)
-            let uv_hit = vertex_buffer[first_vertex + i0].uv.xy * w_bc + 
-                         vertex_buffer[first_vertex + i1].uv.xy * u_bc + 
-                         vertex_buffer[first_vertex + i2].uv.xy * v_bc;
+            let uv_hit = vertex_buffer[v0i].uv.xy * w_bc + 
+                         vertex_buffer[v1i].uv.xy * u_bc + 
+                         vertex_buffer[v2i].uv.xy * v_bc;
 
             // Load and interpolate normals, transform immediately
-            let n_local = vertex_buffer[first_vertex + i0].normal.xyz * w_bc + 
-                          vertex_buffer[first_vertex + i1].normal.xyz * u_bc + 
-                          vertex_buffer[first_vertex + i2].normal.xyz * v_bc;
+            let n_local = vertex_buffer[v0i].normal.xyz * w_bc + 
+                          vertex_buffer[v1i].normal.xyz * u_bc + 
+                          vertex_buffer[v2i].normal.xyz * v_bc;
             var world_n = safe_normalize((entity_transform.transpose_inverse_model_matrix * vec4<f32>(n_local, 0.0)).xyz);
 
             // Load and interpolate tangents, transform immediately
-            let t_local = vertex_buffer[first_vertex + i0].tangent.xyz * w_bc + 
-                          vertex_buffer[first_vertex + i1].tangent.xyz * u_bc + 
-                          vertex_buffer[first_vertex + i2].tangent.xyz * v_bc;
+            let t_local = vertex_buffer[v0i].tangent.xyz * w_bc + 
+                          vertex_buffer[v1i].tangent.xyz * u_bc + 
+                          vertex_buffer[v2i].tangent.xyz * v_bc;
             var world_t = safe_normalize((entity_transform.transform * vec4<f32>(t_local, 0.0)).xyz);
 
             // Load and interpolate bitangents, transform immediately
-            let b_local = vertex_buffer[first_vertex + i0].bitangent.xyz * w_bc + 
-                          vertex_buffer[first_vertex + i1].bitangent.xyz * u_bc + 
-                          vertex_buffer[first_vertex + i2].bitangent.xyz * v_bc;
+            let b_local = vertex_buffer[v0i].bitangent.xyz * w_bc + 
+                          vertex_buffer[v1i].bitangent.xyz * u_bc + 
+                          vertex_buffer[v2i].bitangent.xyz * v_bc;
             var world_b = safe_normalize((entity_transform.transform * vec4<f32>(b_local, 0.0)).xyz);
             
             // Get section_index from first vertex only
-            let section_idx = vertex_buffer[first_vertex + i0].section_index;
+            let section_idx = vertex_buffer[v0i].section_index;
 
             let ray_dir = ray.direction_and_tmax.xyz;
             if (dot(world_n, ray_dir) > 0.0) {

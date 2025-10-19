@@ -36,6 +36,7 @@ struct RayHit {
     normal_and_user_data: vec4<f32>,
     prim_meshid_padding: vec4<f32>,
     ray_local: Ray,
+    hit_triangle_data: vec4<u32>,
 };
 
 // ------------------------------------------------------------------------------------
@@ -95,23 +96,20 @@ fn transform_aabb(node: AABB, transform: mat4x4<f32>) -> AABB {
 
 // Ray-AABB intersection (slab method)
 fn intersect_aabb(ray: ptr<function, Ray>, min_point: vec3<f32>, max_point: vec3<f32>) -> vec2<f32> {
-    let inv = (*ray).inv_direction.xyz;
-    let ro = (*ray).origin_and_tmin.xyz;
+    let min_x = select(min_point.x, max_point.x, (*ray).inv_direction.x < 0.0);
+    let max_x = select(max_point.x, min_point.x, (*ray).inv_direction.x < 0.0);
+    let tx1 = (min_x - (*ray).origin_and_tmin.x) * (*ray).inv_direction.x;
+    let tx2 = (max_x - (*ray).origin_and_tmin.x) * (*ray).inv_direction.x;
 
-    let min_x = select(min_point.x, max_point.x, inv.x < 0.0);
-    let max_x = select(max_point.x, min_point.x, inv.x < 0.0);
-    let tx1 = (min_x - ro.x) * inv.x;
-    let tx2 = (max_x - ro.x) * inv.x;
+    let min_y = select(min_point.y, max_point.y, (*ray).inv_direction.y < 0.0);
+    let max_y = select(max_point.y, min_point.y, (*ray).inv_direction.y < 0.0);
+    let ty1 = (min_y - (*ray).origin_and_tmin.y) * (*ray).inv_direction.y;
+    let ty2 = (max_y - (*ray).origin_and_tmin.y) * (*ray).inv_direction.y;
 
-    let min_y = select(min_point.y, max_point.y, inv.y < 0.0);
-    let max_y = select(max_point.y, min_point.y, inv.y < 0.0);
-    let ty1 = (min_y - ro.y) * inv.y;
-    let ty2 = (max_y - ro.y) * inv.y;
-
-    let min_z = select(min_point.z, max_point.z, inv.z < 0.0);
-    let max_z = select(max_point.z, min_point.z, inv.z < 0.0);
-    let tz1 = (min_z - ro.z) * inv.z;
-    let tz2 = (max_z - ro.z) * inv.z;
+    let min_z = select(min_point.z, max_point.z, (*ray).inv_direction.z < 0.0);
+    let max_z = select(max_point.z, min_point.z, (*ray).inv_direction.z < 0.0);
+    let tz1 = (min_z - (*ray).origin_and_tmin.z) * (*ray).inv_direction.z;
+    let tz2 = (max_z - (*ray).origin_and_tmin.z) * (*ray).inv_direction.z;
 
     let tmin = max((*ray).origin_and_tmin.w, max(min(tx1, tx2), max(min(ty1, ty2), min(tz1, tz2))));
     let tmax = min((*ray).direction_and_tmax.w, min(max(tx1, tx2), min(max(ty1, ty2), max(tz1, tz2))));

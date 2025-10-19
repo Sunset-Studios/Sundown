@@ -7,7 +7,7 @@ diagnostic(off,subgroup_uniformity);
 #include "acceleration_common.wgsl"
 #include "blas_common.wgsl"
 
-const NODE_STACK_SIZE = 16;
+const NODE_STACK_SIZE = 12; 
 
 struct PathTracerParams {
     max_bounces: u32,
