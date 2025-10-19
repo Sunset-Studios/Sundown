@@ -10,7 +10,7 @@ diagnostic(off,subgroup_uniformity);
 #include "acceleration_common.wgsl"
 #include "blas_common.wgsl"
 
-const NODE_STACK_SIZE = 16;  // Reduced from 16 to lower register pressure
+const NODE_STACK_SIZE = 16;
 
 struct PathTracerParams {
     max_bounces: u32,
@@ -74,16 +74,15 @@ fn trace_blas(
         let node_idx = node_stack[stack_size];
         if (node_idx == INVALID_IDX) { continue; }
 
-        let node = atlas_load_bvh4_node(node_idx);
+        let node_children = atlas_load_bvh4_node_children(node_idx);
+        let leaf_mask = atlas_load_bvh4_leaf_mask(node_idx);
         
         // Node already tested before push - no redundant AABB test here!
         if (stack_size < NODE_STACK_SIZE) {
-            let leaf_mask = bitcast<u32>(node.min.w);
-
             for (var i = 0u; i < 4u; i = i + 1u) {
-                if (node.children[i] < 0.0) { continue; }
+                if (node_children[i] < 0.0) { continue; }
 
-                let child_idx = u32(node.children[i]);
+                let child_idx = u32(node_children[i]);
 
                 if (((leaf_mask >> i) & 1u) != 0u) { // Is leaf?
                     // Child idx is triangle id for blas leafs
@@ -103,8 +102,9 @@ fn trace_blas(
                     }
                 } else {
                     // Only test AABB before pushing - guarantees single test per node
-                    let child_node = atlas_load_bvh4_node(child_idx);
-                    let t_aabb_child = intersect_aabb(&current_ray, child_node.min.xyz, child_node.max.xyz);
+                    let child_node_min = atlas_load_bvh4_node_min(child_idx);
+                    let child_node_max = atlas_load_bvh4_node_max(child_idx);
+                    let t_aabb_child = intersect_aabb(&current_ray, child_node_min, child_node_max);
 
                     if (t_aabb_child.x <= t_aabb_child.y && t_aabb_child.x >= current_ray.origin_and_tmin.w && t_aabb_child.x < current_ray.direction_and_tmax.w) {
                         node_stack[stack_size] = child_idx;

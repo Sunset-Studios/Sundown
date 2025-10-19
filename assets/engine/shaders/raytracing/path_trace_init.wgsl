@@ -191,6 +191,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         path_shade[pixel_index].throughput = vec4f(0.0);
         path_shade[pixel_index].reservoir_radiance_m = vec4f(0.0);
         path_shade[pixel_index].reservoir_direction_w = vec4f(0.0);
+        path_state[pixel_index].state_u32.y = 0u;
     }
 
     // Clear shadow state for pixels being traced (or all pixels when resetting)

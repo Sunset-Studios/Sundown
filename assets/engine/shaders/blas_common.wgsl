@@ -39,6 +39,26 @@ fn atlas_load_bvh4_node(idx: u32) -> BVH4Node {
     return BVH4Node(mn, mx, ch);
 }
 
+fn atlas_load_bvh4_leaf_mask(idx: u32) -> u32 {
+    let base = blas_atlas.header.bvh4_base_v4 + idx * 3u;
+    return bitcast<u32>(blas_atlas.data[base + 0u].w);
+}
+
+fn atlas_load_bvh4_node_children(idx: u32) -> vec4<f32> {
+    let base = blas_atlas.header.bvh4_base_v4 + idx * 3u;
+    return blas_atlas.data[base + 2u];
+}
+
+fn atlas_load_bvh4_node_min(idx: u32) -> vec3<f32> {
+    let base = blas_atlas.header.bvh4_base_v4 + idx * 3u;
+    return blas_atlas.data[base + 0u].xyz;
+}
+
+fn atlas_load_bvh4_node_max(idx: u32) -> vec3<f32> {
+    let base = blas_atlas.header.bvh4_base_v4 + idx * 3u;
+    return blas_atlas.data[base + 1u].xyz;
+}
+
 fn atlas_load_directory_entry(idx: u32) -> MeshDirectoryEntry {
     let base = blas_atlas.header.dir_base_v4 + idx * 2u;
     let u0 = blas_atlas.data[base + 0u];
