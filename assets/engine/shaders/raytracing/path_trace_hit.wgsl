@@ -85,20 +85,16 @@ fn trace_blas(
                 let child_idx = u32(node_data.children[i]);
 
                 if (((leaf_mask >> i) & 1u) != 0u) { // Is leaf?
-                    // Child idx is triangle id for blas leafs
-                    let i0 = index_buffer[first_index + child_idx * 3u + 0u];
-                    let i1 = index_buffer[first_index + child_idx * 3u + 1u];
-                    let i2 = index_buffer[first_index + child_idx * 3u + 2u];
-
-                    let v0 = vertex_buffer[first_vertex + i0].position.xyz;
-                    let v1 = vertex_buffer[first_vertex + i1].position.xyz;
-                    let v2 = vertex_buffer[first_vertex + i2].position.xyz;
-
+                    // Load vertex indices from co-located leaf data (cache-adjacent to node!)
+                    let leaf_indices = atlas_load_bvh4_leaf_indices(node_idx, i);
+                    let v0 = vertex_buffer[leaf_indices.x].position.xyz;
+                    let v1 = vertex_buffer[leaf_indices.y].position.xyz;
+                    let v2 = vertex_buffer[leaf_indices.z].position.xyz;
                     let t_tri = intersect_triangle(&current_ray, v0, v1, v2);
                     if (t_tri >= current_ray.origin_and_tmin.w && t_tri < current_ray.direction_and_tmax.w) {
                         hit.position_and_t.w = t_tri;
                         hit.normal_and_user_data.w = f32(child_idx);
-                        hit.hit_triangle_data = vec4u(first_vertex + i0, first_vertex + i1, first_vertex + i2, 0u);
+                        hit.hit_triangle_data = leaf_indices;
                         current_ray.direction_and_tmax.w = t_tri;
                     }
                 } else {

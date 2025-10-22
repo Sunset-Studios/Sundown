@@ -6,6 +6,7 @@
 @group(1) @binding(1) var<storage, read> src_bvh2: array<AABB>;
 @group(1) @binding(2) var<storage, read> src_bvh4: array<BVH4Node>;
 @group(1) @binding(3) var<storage, read> src_dir: array<MeshDirectoryEntry>;
+@group(1) @binding(4) var<storage, read> index_buffer: array<u32>;
 
 @compute @workgroup_size(256)
 fn pack_bvh2(@builtin(global_invocation_id) gid: vec3u) {
@@ -20,13 +21,54 @@ fn pack_bvh2(@builtin(global_invocation_id) gid: vec3u) {
 @compute @workgroup_size(256)
 fn pack_bvh4(@builtin(global_invocation_id) gid: vec3u) {
     let i = gid.x;
-    let total = u32(blas_atlas.header.bvh4_vec4_count) / 3;
+    let total = u32(blas_atlas.header.bvh4_vec4_count) / 7;  // Now 7 vec4s per node (3 node + 4 leaf data)
     if (i >= total) { return; }
-    let dst_base = u32(blas_atlas.header.bvh4_base_v4) + i * 3u;
+    let dst_base = u32(blas_atlas.header.bvh4_base_v4) + i * 7u;
     let node = src_bvh4[i];
+    
+    // Write node data (first 3 vec4s)
     blas_atlas.data[dst_base + 0u] = node.min;
     blas_atlas.data[dst_base + 1u] = node.max;
     blas_atlas.data[dst_base + 2u] = node.children;
+    
+    // Find which mesh this node belongs to by searching the directory
+    let dir_entry_count = u32(blas_atlas.header.dir_vec4_count) / 2u;
+    var first_index = 0u;
+    var first_vertex = 0u;
+    var found = false;
+    
+    for (var mesh_id = 0u; mesh_id < dir_entry_count; mesh_id = mesh_id + 1u) {
+        let entry = src_dir[mesh_id];
+        let bvh4_start = entry.bvh4_base;
+        let bvh4_end = entry.bvh4_base + entry.bvh4_capacity;
+        
+        if (i >= bvh4_start && i < bvh4_end) {
+            first_index = entry.first_index;
+            first_vertex = entry.first_vertex;
+            found = true;
+            break;
+        }
+    }
+    
+    // Generate co-located leaf data (4 vec4s) by resolving triangle vertex indices
+    let leaf_mask = bitcast<u32>(node.min.w);
+    
+    for (var child = 0u; child < 4u; child = child + 1u) {
+        var leaf_indices = vec4<u32>(0u, 0u, 0u, 0u);
+        
+        // Check if this child is a leaf and valid
+        if (found && node.children[child] >= 0.0 && ((leaf_mask >> child) & 1u) != 0u) {
+            let tri_id = u32(node.children[child]);
+            
+            // Load vertex indices from the mesh's index buffer region
+            leaf_indices.x = first_vertex + index_buffer[first_index + tri_id * 3u + 0u];
+            leaf_indices.y = first_vertex + index_buffer[first_index + tri_id * 3u + 1u];
+            leaf_indices.z = first_vertex + index_buffer[first_index + tri_id * 3u + 2u];
+        }
+        
+        // Write leaf data co-located with node
+        blas_atlas.data[dst_base + 3u + child] = bitcast<vec4<f32>>(leaf_indices);
+    }
 }
 
 @compute @workgroup_size(256)

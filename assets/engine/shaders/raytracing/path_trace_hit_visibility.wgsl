@@ -76,15 +76,11 @@ fn trace_blas_any_hit(
                 let child_idx = u32(node.children[i]);
 
                 if (((leaf_mask >> i) & 1u) != 0u) { // Is leaf?
-                    // BLAS BVH4 leaf nodes store triangle IDs directly - no AABB indirection!
-                    let i0 = index_buffer[first_index + child_idx * 3u + 0u];
-                    let i1 = index_buffer[first_index + child_idx * 3u + 1u];
-                    let i2 = index_buffer[first_index + child_idx * 3u + 2u];
-
-                    let v0 = vertex_buffer[first_vertex + i0].position.xyz;
-                    let v1 = vertex_buffer[first_vertex + i1].position.xyz;
-                    let v2 = vertex_buffer[first_vertex + i2].position.xyz;
-
+                    // Load vertex indices from co-located leaf data (cache-adjacent to node!)
+                    let leaf_indices = atlas_load_bvh4_leaf_indices(node_idx, i);
+                    let v0 = vertex_buffer[leaf_indices.x].position.xyz;
+                    let v1 = vertex_buffer[leaf_indices.y].position.xyz;
+                    let v2 = vertex_buffer[leaf_indices.z].position.xyz;
                     let t_tri = intersect_triangle(ray_local, v0, v1, v2);
                     if (t_tri >= ray_local.origin_and_tmin.w && t_tri < ray_local.direction_and_tmax.w) {
                         return true;

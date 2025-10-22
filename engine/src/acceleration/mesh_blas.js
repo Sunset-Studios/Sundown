@@ -40,7 +40,7 @@ import { ComputeTaskQueue } from "../renderer/compute_task_queue.js";
 // │                           📊 CORE BLAS CONFIGURATION CONSTANTS                               │
 // └─────────────────────────────────────────────────────────────────────────────────────────────┘
 const BVH2_NODE_BYTE_SIZE = 32; // BVH2 node: AABB (6 floats) + metadata (2 u32)
-const BVH4_NODE_BYTE_SIZE = 48; // BVH4 node: 4 children + bounds + primitive refs
+const BVH4_NODE_BYTE_SIZE = 112; // BVH4 node: 4 children (1 vec4<f32>) + bounds (2 vec4<f32>) + leaf data (4 vec4<u32>)
 const INITIAL_MAX_PAGES = 256; // Conservative initial allocation (16K nodes)
 const PAGE_SIZE = 64; // Nodes per page (optimal for GPU workgroup size)
 const UINT32_BYTES = 4; // Standard 32-bit integer size
@@ -419,14 +419,14 @@ export class MeshBLAS {
     // Dispatch compute shader to pack atlas
     const bvh2_base_v4 = 0;
     const bvh4_base_v4 = bvh2_base_v4 + bvh2_count * 2;
-    const dir_base_v4 = bvh4_base_v4 + bvh4_count * 3;
+    const dir_base_v4 = bvh4_base_v4 + bvh4_count * 7;
 
     // Write atlas header directly (CPU-side) into first 32 bytes of atlas
     const header = new Uint32Array(8);
     header[0] = bvh2_base_v4 >>> 0;
     header[1] = (bvh2_count * 2) >>> 0;
     header[2] = bvh4_base_v4 >>> 0;
-    header[3] = (bvh4_count * 3) >>> 0;
+    header[3] = (bvh4_count * 7) >>> 0;
     header[4] = dir_base_v4 >>> 0;
     header[5] = (dir_count * 2) >>> 0;
     header[6] = 0;
@@ -441,6 +441,7 @@ export class MeshBLAS {
         this.#bvh2_nodes_buffer,
         this.#bvh4_nodes_buffer,
         this.#directory_buffer,
+        MeshData.index_buffer,  // Unused by pack_bvh2 but needed for binding consistency
       ],
       [this.#atlas_buffer],
       Math.ceil(bvh2_count / 256),
@@ -457,6 +458,7 @@ export class MeshBLAS {
         this.#bvh2_nodes_buffer,
         this.#bvh4_nodes_buffer,
         this.#directory_buffer,
+        MeshData.index_buffer,  // Index buffer for resolving triangle vertex indices
       ],
       [this.#atlas_buffer],
       Math.ceil(bvh4_count / 256),
@@ -473,6 +475,7 @@ export class MeshBLAS {
         this.#bvh2_nodes_buffer,
         this.#bvh4_nodes_buffer,
         this.#directory_buffer,
+        MeshData.index_buffer,  // Unused by pack_directory but needed for binding consistency
       ],
       [this.#atlas_buffer],
       Math.ceil(dir_count / 256),

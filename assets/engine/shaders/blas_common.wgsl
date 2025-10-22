@@ -1,6 +1,7 @@
 // ------------------------------------------------------------------------------------
 // BLAS Atlas (single storage buffer view)
-// - Packs BLAS BVH2 AABBs, BVH4 nodes, and MeshDirectory entries into one buffer
+// - Packs BLAS BVH2 AABBs, BVH4 nodes (with co-located leaf data), and MeshDirectory entries
+// - BVH4 nodes are now 7 vec4s: [min, max, children, leaf0_indices, leaf1_indices, leaf2_indices, leaf3_indices]
 // - Offsets are expressed in vec4 units relative to the start of the runtime array
 // ------------------------------------------------------------------------------------
 struct BLASAtlasHeader {
@@ -32,7 +33,7 @@ fn atlas_load_aabb(idx: u32) -> AABB {
 }
 
 fn atlas_load_bvh4_node(idx: u32) -> BVH4Node {
-    let base = blas_atlas.header.bvh4_base_v4 + idx * 3u;
+    let base = blas_atlas.header.bvh4_base_v4 + idx * 7u;  // Now 7 vec4s per node
     let mn = blas_atlas.data[base + 0u];
     let mx = blas_atlas.data[base + 1u];
     let ch = blas_atlas.data[base + 2u];
@@ -40,23 +41,28 @@ fn atlas_load_bvh4_node(idx: u32) -> BVH4Node {
 }
 
 fn atlas_load_bvh4_leaf_mask(idx: u32) -> u32 {
-    let base = blas_atlas.header.bvh4_base_v4 + idx * 3u;
+    let base = blas_atlas.header.bvh4_base_v4 + idx * 7u;  // Now 7 vec4s per node
     return bitcast<u32>(blas_atlas.data[base + 0u].w);
 }
 
 fn atlas_load_bvh4_node_children(idx: u32) -> vec4<f32> {
-    let base = blas_atlas.header.bvh4_base_v4 + idx * 3u;
+    let base = blas_atlas.header.bvh4_base_v4 + idx * 7u;  // Now 7 vec4s per node
     return blas_atlas.data[base + 2u];
 }
 
 fn atlas_load_bvh4_node_min(idx: u32) -> vec3<f32> {
-    let base = blas_atlas.header.bvh4_base_v4 + idx * 3u;
+    let base = blas_atlas.header.bvh4_base_v4 + idx * 7u;  // Now 7 vec4s per node
     return blas_atlas.data[base + 0u].xyz;
 }
 
 fn atlas_load_bvh4_node_max(idx: u32) -> vec3<f32> {
-    let base = blas_atlas.header.bvh4_base_v4 + idx * 3u;
+    let base = blas_atlas.header.bvh4_base_v4 + idx * 7u;  // Now 7 vec4s per node
     return blas_atlas.data[base + 1u].xyz;
+}
+
+fn atlas_load_bvh4_leaf_indices(node_idx: u32, child_slot: u32) -> vec4<u32> {
+    let base = blas_atlas.header.bvh4_base_v4 + node_idx * 7u;
+    return bitcast<vec4<u32>>(blas_atlas.data[base + 3u + child_slot]);
 }
 
 fn atlas_load_directory_entry(idx: u32) -> MeshDirectoryEntry {
