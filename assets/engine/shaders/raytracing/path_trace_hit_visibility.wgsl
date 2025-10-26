@@ -169,36 +169,6 @@ fn trace_hit_any(ray: ptr<function, Ray>) -> bool {
     return false;
 }
 
-// Helper function to compute pixel coords matching trace pattern
-fn compute_pixel_coords(linear_index: u32, res: vec2<u32>, trace_rate: u32, frame_phase: u32) -> vec2<u32> {
-    if (trace_rate <= 1u) {
-        return vec2<u32>(linear_index % res.x, linear_index / res.x);
-    }
-    
-    let avg_pixels_per_row = res.x / trace_rate;
-    let estimated_row = linear_index / max(avg_pixels_per_row, 1u);
-    
-    let search_start = select(0u, estimated_row - 1u, estimated_row >= 1u);
-    let search_end = min(estimated_row + 4u, res.y);
-    
-    var cumulative_pixels = search_start * avg_pixels_per_row;
-    
-    for (var y = search_start; y < search_end; y = y + 1u) {
-        let first_x = (frame_phase + trace_rate - (y * 2u) % trace_rate) % trace_rate;
-        let pixels_in_row = (res.x + trace_rate - 1u - first_x) / trace_rate;
-        
-        if (linear_index < cumulative_pixels + pixels_in_row) {
-            let offset_in_row = linear_index - cumulative_pixels;
-            let x = first_x + offset_in_row * trace_rate;
-            return vec2<u32>(x, y);
-        }
-        
-        cumulative_pixels += pixels_in_row;
-    }
-    
-    return vec2<u32>(0xFFFFFFFFu, 0xFFFFFFFFu);
-}
-
 @compute @workgroup_size(128, 1, 1)
 fn cs(
     @builtin(global_invocation_id) gid: vec3<u32>,
@@ -207,7 +177,7 @@ fn cs(
     @builtin(subgroup_size) warp_size: u32
 ) {
     let res = textureDimensions(output_tex);
-    let pixel_coords = compute_pixel_coords(gid.x, res, pt_params.trace_rate, pt_params.frame_phase);
+    let pixel_coords = compute_phased_pixel_coords(gid.x, res, pt_params.trace_rate, pt_params.frame_phase);
     
     if (pixel_coords.x >= res.x || pixel_coords.y >= res.y) { return; }
 

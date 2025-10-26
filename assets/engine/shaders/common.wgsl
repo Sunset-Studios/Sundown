@@ -390,3 +390,43 @@ fn safe_clamp_vec3(value: vec3<f32>) -> vec3<f32> {
     let z = select(value.z, 0.0, isinf(value.z));
     return vec3<f32>(x, y, z);
 }
+
+// ============================================================================
+// O(1) Helper function to compute pixel coordinates from linear index
+// ============================================================================
+// This computes the 2D pixel coordinate for checkerboard/interlaced rendering
+// patterns where pixels are sampled at intervals of trace_rate.
+// The pattern shifts by 2 pixels per row to maintain temporal stability.
+// ============================================================================
+fn compute_phased_pixel_coords(linear_index: u32, res: vec2<u32>, trace_rate: u32, frame_phase: u32) -> vec2<u32> {
+    // Fast path: full resolution (no checkerboarding)
+    if (trace_rate <= 1u) {
+        return vec2<u32>(linear_index % res.x, linear_index / res.x);
+    }
+    
+    // Compute average pixels per row
+    let pixels_per_row = res.x / trace_rate;
+    
+    // Direct mathematical computation of row and offset
+    let estimated_y = linear_index / max(pixels_per_row, 1u);
+    let offset_in_row = linear_index % max(pixels_per_row, 1u);
+    
+    // Compute the first x position for the estimated row
+    // Pattern: shifts by 2 mod trace_rate each row for temporal coherence
+    let first_x = (frame_phase + trace_rate - (estimated_y * 2u) % trace_rate) % trace_rate;
+    
+    // Compute actual pixels available in this row given the first_x position
+    let actual_pixels_in_row = (res.x + trace_rate - 1u - first_x) / trace_rate;
+    
+    // Check if our offset fits in this row or if we need to adjust
+    var pixel_coords = vec2u(first_x + offset_in_row * trace_rate, estimated_y);
+    if (offset_in_row >= actual_pixels_in_row) {
+        // Rare case: offset spills into next row due to alignment mismatch
+        // This happens when first_x causes the row to have fewer pixels
+        pixel_coords.y = estimated_y + 1u;
+        let next_first_x = (frame_phase + trace_rate - (pixel_coords.y * 2u) % trace_rate) % trace_rate;
+        pixel_coords.x = next_first_x + (offset_in_row - actual_pixels_in_row) * trace_rate;
+    }
+
+    return pixel_coords;
+}

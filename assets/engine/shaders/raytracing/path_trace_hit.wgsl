@@ -184,41 +184,6 @@ fn trace_hit(ray: ptr<function, Ray>) -> RayHit {
     return hit;
 }
 
-// Helper function to compute the Nth pixel that matches the frame_phase pattern
-// Optimized: ~3-5 iterations max, independent of resolution
-fn compute_pixel_coords(linear_index: u32, res: vec2<u32>, trace_rate: u32, frame_phase: u32) -> vec2<u32> {
-    if (trace_rate <= 1u) {
-        return vec2<u32>(linear_index % res.x, linear_index / res.x);
-    }
-    
-    // Estimate which row the pixel is in
-    // Most rows have approx res.x / trace_rate pixels
-    let avg_pixels_per_row = res.x / trace_rate;
-    let estimated_row = linear_index / max(avg_pixels_per_row, 1u);
-    
-    // Search a small window around the estimate (max ~5 iterations)
-    let search_start = select(0u, estimated_row - 1u, estimated_row >= 1u);
-    let search_end = min(estimated_row + 4u, res.y);
-    
-    // Estimate cumulative pixels before search_start
-    var cumulative_pixels = search_start * avg_pixels_per_row;
-    
-    for (var y = search_start; y < search_end; y = y + 1u) {
-        let first_x = (frame_phase + trace_rate - (y * 2u) % trace_rate) % trace_rate;
-        let pixels_in_row = (res.x + trace_rate - 1u - first_x) / trace_rate;
-        
-        if (linear_index < cumulative_pixels + pixels_in_row) {
-            let offset_in_row = linear_index - cumulative_pixels;
-            let x = first_x + offset_in_row * trace_rate;
-            return vec2<u32>(x, y);
-        }
-        
-        cumulative_pixels += pixels_in_row;
-    }
-    
-    return vec2<u32>(0xFFFFFFFFu, 0xFFFFFFFFu);
-}
-
 @compute @workgroup_size(128, 1, 1)
 fn cs(
     @builtin(global_invocation_id) gid: vec3<u32>,
@@ -228,7 +193,7 @@ fn cs(
 ) {
     let res = textureDimensions(output_tex);
     // Compute actual pixel coordinates based on linear thread index and trace pattern
-    let pixel_coords = compute_pixel_coords(gid.x, res, pt_params.trace_rate, pt_params.frame_phase);
+    let pixel_coords = compute_phased_pixel_coords(gid.x, res, pt_params.trace_rate, pt_params.frame_phase);
     let pixel_index = pixel_coords.y * res.x + pixel_coords.x;
 
     var ray: Ray;
