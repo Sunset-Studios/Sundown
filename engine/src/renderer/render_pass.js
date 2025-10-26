@@ -132,6 +132,12 @@ export class RenderPass {
     }
   }
 
+  dispatch_indirect(buffer, offset = 0) {
+    if (this.config.flags & RenderPassFlags.Compute) {
+      this.pass.dispatchWorkgroupsIndirect(buffer.buffer, offset);
+    }
+  }
+
   end() {
     if (this.pass) {
       this.pass.end();

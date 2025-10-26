@@ -80,3 +80,38 @@ fn atlas_load_directory_entry(idx: u32) -> MeshDirectoryEntry {
     entry.padding = u32(u1.w);
     return entry;
 }
+
+fn atlas_load_directory_entry_bvh2_base(idx: u32) -> u32 {
+    let base = blas_atlas.header.dir_base_v4 + idx * 2u;
+    return u32(blas_atlas.data[base + 0u].x);
+}
+
+fn atlas_load_directory_entry_bvh2_capacity(idx: u32) -> u32 {
+    let base = blas_atlas.header.dir_base_v4 + idx * 2u;
+    return u32(blas_atlas.data[base + 0u].y);
+}
+
+fn atlas_load_directory_entry_bvh4_base(idx: u32) -> u32 {
+    let base = blas_atlas.header.dir_base_v4 + idx * 2u;
+    return u32(blas_atlas.data[base + 0u].z);
+}
+
+fn atlas_load_directory_entry_bvh4_capacity(idx: u32) -> u32 {
+    let base = blas_atlas.header.dir_base_v4 + idx * 2u;
+    return u32(blas_atlas.data[base + 0u].w);
+}
+
+fn atlas_load_directory_entry_leaf_count(idx: u32) -> u32 {
+    let base = blas_atlas.header.dir_base_v4 + idx * 2u;
+    return u32(blas_atlas.data[base + 1u].x);
+}
+
+fn atlas_load_directory_entry_first_vertex(idx: u32) -> u32 {
+    let base = blas_atlas.header.dir_base_v4 + idx * 2u;
+    return u32(blas_atlas.data[base + 1u].y);
+}
+
+fn atlas_load_directory_entry_first_index(idx: u32) -> u32 {
+    let base = blas_atlas.header.dir_base_v4 + idx * 2u;
+    return u32(blas_atlas.data[base + 1u].z);
+}

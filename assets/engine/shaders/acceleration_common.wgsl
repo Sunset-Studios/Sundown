@@ -149,14 +149,13 @@ fn intersect_triangle(ray: ptr<function, Ray>, v0: vec3<f32>, v1: vec3<f32>, v2:
     let pvec = cross(dir, e2);
     let det  = dot(e1, pvec);
 
-    let inv_det = 1.0 / det;
     let tvec = orig - v0;
-    let u = dot(tvec, pvec) * inv_det;
+    let u = dot(tvec, pvec) / det;
 
     let qvec = cross(tvec, e1);
-    let v = dot(dir, qvec) * inv_det;
+    let v = dot(dir, qvec) / det;
 
-    let t = dot(e2, qvec) * inv_det;
+    let t = dot(e2, qvec) / det;
     let valid = abs(det) > 0.00001 && t > 0.0001 && u > 0.0 && v > 0.0 && u + v < 1.0;
     return select(-1.0, t, valid); // Epsilon check
 }

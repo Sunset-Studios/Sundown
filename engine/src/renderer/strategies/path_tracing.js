@@ -278,9 +278,9 @@ export class PathTracingStrategy {
   occlusion_culler = null;
 
   // Path tracing parameters (optimized for hybrid mode)
-  max_bounces = 2;
+  max_bounces = 1;
   spp_per_frame = 1;
-  trace_rate = 8; // 1=full res, 2=half, 4=quarter, etc.
+  trace_rate = 16; // 1=full res, 2=half, 4=quarter, etc.
   indirect_boost = 1.0;
 
   setup(render_graph) {
@@ -789,8 +789,8 @@ export class PathTracingStrategy {
           this.max_bounces,
           this.spp_per_frame,
           this.trace_rate,
-          true, // use_gbuffer - always true for hybrid mode
           this.indirect_boost,
+          true, // use_gbuffer - always true for hybrid mode
           aabb_bounds,
           tlas_bvh4_nodes,
           blas_atlas,

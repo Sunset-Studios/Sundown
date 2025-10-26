@@ -247,7 +247,7 @@ fn is_pixel_traced_recently(coord: vec2<u32>, trace_rate: u32, frame_phase: u32)
     return is_traced_prev;
 }
 
-@compute @workgroup_size(64, 1, 1)
+@compute @workgroup_size(128, 1, 1)
 fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let res = textureDimensions(output_tex);
     let pixel_coords = compute_pixel_coords(gid.x, res, pt_params.trace_rate, pt_params.frame_phase);
@@ -305,65 +305,71 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         let world_n = info.normal_section_index.xyz;
         var n = world_n;
         
-        // Check if this is a G-buffer hit
-        let is_gbuffer_hit = (pt_params.use_gbuffer != 0u) && (info.state_u32.w == 0x0u);
-        
-        if (is_gbuffer_hit) {
-            // G-buffer mode: Read pre-computed material properties
-            albedo = info.hit_attr0.rgb;
-            roughness = info.hit_attr0.w;
-            metallic = info.hit_attr1.x;
-            reflectance = info.hit_attr1.y;
-            emissive = info.hit_attr1.z;
+        // Sample textures for material properties
+        let prim_store = u32(info.direction_tmax.w);
+        let entity_palette_base = material_table_offset[prim_store];
+        let section_index = u32(info.normal_section_index.w);
+        let mat_params_index = material_palette[entity_palette_base + section_index];
+        let material = material_params[mat_params_index];
+
+        let tiling = material.emission_roughness_metallic_tiling.w;
+        // Reconstruct UVs if barycentrics + vertex indices were stored by hit pass
+        let has_deferred_uv = (info.hit_attr1.x == 0.0 && info.hit_attr1.y == 0.0 && info.hit_attr1.z == 0.0);
+        var base_uv: vec2<f32>;
+        if (has_deferred_uv) {
+            let v0i = u32(info.hit_attr0.x);
+            let v1i = u32(info.hit_attr0.y);
+            let v2i = u32(info.hit_attr0.z);
+            let u_bc = info.hit_attr0.w;
+            let v_bc = info.hit_attr1.w;
+            let w_bc = 1.0 - u_bc - v_bc;
+            let uv0 = vertex_buffer[v0i].uv.xy;
+            let uv1 = vertex_buffer[v1i].uv.xy;
+            let uv2 = vertex_buffer[v2i].uv.xy;
+            base_uv = uv0 * w_bc + uv1 * u_bc + uv2 * v_bc;
         } else {
-            // Regular ray tracing mode: Sample textures
-            let prim_store = u32(info.direction_tmax.w);
-            let entity_palette_base = material_table_offset[prim_store];
-            let section_index = u32(info.normal_section_index.w);
-            let mat_params_index = material_palette[entity_palette_base + section_index];
-            let material = material_params[mat_params_index];
+            base_uv = vec2f(info.hit_attr0.w, info.hit_attr1.w);
+        }
+        base_uv = base_uv * tiling;
+        let lod = 0.0;
 
-            let tiling = material.emission_roughness_metallic_tiling.w;
-            let base_uv = vec2f(info.hit_attr0.w, info.hit_attr1.w) * tiling;
-            let lod = 0.0;
+        albedo = sample_texture_or_vec4_param_handle(
+            u32(material.albedo_handle), base_uv, material.albedo,
+            u32(material.texture_flags1.x), texture_pool_albedo, lod
+        ).xyz;
+        roughness = sample_texture_or_float_param_handle(
+            u32(material.roughness_handle), base_uv,
+            material.emission_roughness_metallic_tiling.y,
+            u32(material.texture_flags1.z), texture_pool_roughness, lod
+        );
+        metallic = sample_texture_or_float_param_handle(
+            u32(material.metallic_handle), base_uv,
+            material.emission_roughness_metallic_tiling.z,
+            u32(material.texture_flags1.w), texture_pool_metallic, lod
+        );
+        emissive = sample_texture_or_float_param_handle(
+            u32(material.emission_handle), base_uv,
+            material.emission_roughness_metallic_tiling.x,
+            u32(material.texture_flags2.w), texture_pool_emission, lod
+        );
+        let specular = sample_texture_or_float_param_handle(
+            u32(material.specular_handle), base_uv,
+            material.ao_height_specular.z,
+            u32(material.texture_flags2.z), texture_pool_specular, lod
+        );
+        reflectance = specular * 0.0009765625;
 
-            albedo = sample_texture_or_vec4_param_handle(
-                u32(material.albedo_handle), base_uv, material.albedo,
-                u32(material.texture_flags1.x), texture_pool_albedo, lod
-            ).xyz;
-            roughness = sample_texture_or_float_param_handle(
-                u32(material.roughness_handle), base_uv,
-                material.emission_roughness_metallic_tiling.y,
-                u32(material.texture_flags1.z), texture_pool_roughness, lod
-            );
-            metallic = sample_texture_or_float_param_handle(
-                u32(material.metallic_handle), base_uv,
-                material.emission_roughness_metallic_tiling.z,
-                u32(material.texture_flags1.w), texture_pool_metallic, lod
-            );
-            emissive = sample_texture_or_float_param_handle(
-                u32(material.emission_handle), base_uv,
-                material.emission_roughness_metallic_tiling.x,
-                u32(material.texture_flags2.w), texture_pool_emission, lod
-            );
-            let specular = sample_texture_or_float_param_handle(
-                u32(material.specular_handle), base_uv,
-                material.ao_height_specular.z,
-                u32(material.texture_flags2.z), texture_pool_specular, lod
-            );
-            reflectance = specular * 0.0009765625;
-
-            // Normal mapping
-            let world_t = info.hit_attr0.xyz;
-            let world_b = info.hit_attr1.xyz;
-            if ((u32(material.texture_flags1.y) & 1u) != 0u) {
-                let tbn = mat3x3<precision_float>(world_t, world_b, world_n);
-                let nm = sample_handle_rgba(
-                    u32(material.normal_handle), base_uv,
-                    texture_pool_normal, lod
-                ).xyz * 2.0 - 1.0;
-                n = normalize(tbn * nm);
-            }
+        // Normal mapping (only if TBN provided by hit pass)
+        let world_t = info.hit_attr0.xyz;
+        let world_b = info.hit_attr1.xyz;
+        let has_tbn = length(world_t) > 0.0001 && length(world_b) > 0.0001;
+        if ((u32(material.texture_flags1.y) & 1u) != 0u && has_tbn) {
+            let tbn = mat3x3<precision_float>(world_t, world_b, world_n);
+            let nm = sample_handle_rgba(
+                u32(material.normal_handle), base_uv,
+                texture_pool_normal, lod
+            ).xyz * 2.0 - 1.0;
+            n = normalize(tbn * nm);
         }
 
         let clear_coat = 0.0;
