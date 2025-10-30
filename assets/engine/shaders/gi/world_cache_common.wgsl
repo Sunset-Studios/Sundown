@@ -63,7 +63,6 @@ fn cache_lookup_weight(
 fn query_world_cache(
     position: vec3<f32>,
     normal: vec3<f32>,
-    cache: ptr<storage, array<WorldCacheCell>, read>,
     cache_size: u32,
     cell_size: f32
 ) -> vec3<f32> {
@@ -77,7 +76,7 @@ fn query_world_cache(
     let max_probes = 8u;
     for (var i = 0u; i < max_probes; i = i + 1u) {
         let probe_index = (base_index + i) % cache_size;
-        let cell = (*cache)[probe_index];
+        let cell = world_cache[probe_index];
         
         // Check if cell is occupied and valid
         if (cell.data.y == 0u) {

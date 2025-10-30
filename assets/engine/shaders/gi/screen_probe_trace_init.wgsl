@@ -1,32 +1,12 @@
 // =============================================================================
 // GI-1.0 Screen Probe Ray Tracing - Init Pass
-// - Initializes rays for each screen probe
+// - Initializes rays for screen probes marked active this frame
 // - Generates multiple rays per probe for variance reduction
+// - Inactive probes (not updated this frame) get dead rays
 // =============================================================================
 #include "common.wgsl"
-
-struct GIParams {
-    screen_probe_spawn_rate: u32,
-    screen_probe_size: u32,
-    screen_ray_count: u32,
-    world_cache_size: u32,
-    max_screen_probes: u32,
-    frame_index: u32,
-    reset_caches: u32,
-    indirect_boost: u32,
-    upscale_x: u32,
-    upscale_y: u32,
-    cell_size_heuristic: u32,
-    padding: u32,
-};
-
-struct ScreenProbe {
-    position_radius: vec4<f32>,
-    normal_frame: vec4<f32>,
-    radiance_m: vec4<f32>,
-    albedo_roughness: vec4<f32>,
-    state: vec4<u32>,
-};
+#include "lighting_common.wgsl"
+#include "gi/gi_common.wgsl"
 
 // Path state for screen probe rays
 struct ProbePathState {
@@ -51,8 +31,8 @@ struct ProbePathShade {
 };
 
 @group(1) @binding(0) var<uniform> gi_params: GIParams;
-@group(1) @binding(1) var<storage, read> screen_probes: array<ScreenProbe>;
-@group(1) @binding(2) var<storage, read> screen_probe_counter: array<u32>;
+@group(1) @binding(1) var<storage, read_write> gi_counters: GICounters;
+@group(1) @binding(2) var<storage, read> screen_probes: array<ScreenProbe>;
 @group(1) @binding(3) var<storage, read_write> probe_path_state: array<ProbePathState>;
 @group(1) @binding(4) var<storage, read_write> probe_path_shade: array<ProbePathShade>;
 
@@ -66,17 +46,20 @@ fn sample_cosine_hemisphere(u1: f32, u2: f32, normal: vec3<f32>) -> vec3<f32> {
     let z = sqrt(max(0.0, 1.0 - u1));
     
     // Build TBN frame
-    let up = select(vec3<f32>(0.0, 1.0, 0.0), vec3<f32>(1.0, 0.0, 0.0), abs(normal.y) < 0.999);
+    // When normal is aligned with Y-axis, use X-axis as up; otherwise use Y-axis
+    let up = select(vec3<f32>(1.0, 0.0, 0.0), vec3<f32>(0.0, 1.0, 0.0), abs(normal.y) < 0.999);
     let tangent = normalize(cross(up, normal));
-    let bitangent = cross(normal, tangent);
+    let bitangent = normalize(cross(normal, tangent));
     
     return normalize(tangent * x + bitangent * y + normal * z);
 }
 
-@compute @workgroup_size(64, 1, 1)
+@compute @workgroup_size(128, 1, 1)
 fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
-    let probe_count = screen_probe_counter[0];
-    let rays_per_probe = gi_params.screen_ray_count;
+    // Use total_screen_probes (derived from grid dimensions)
+    // Some probes may be inactive (not updated this frame), which is fine
+    let probe_count = u32(gi_params.total_screen_probes);
+    let rays_per_probe = u32(gi_params.screen_ray_count);
     let total_rays = probe_count * rays_per_probe;
     
     if (gid.x >= total_rays) {
@@ -88,15 +71,20 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     
     let probe = screen_probes[probe_index];
     
-    // Check if probe is active
-    if (probe.state.x == 0u) {
+    // Check if probe is active (being updated this frame)
+    // Inactive probes get dead rays and won't be traced
+    // Also check if probe was actually spawned (has valid data from spawn pass)
+    if (probe.state.x == 0.0) {
+        // Mark all rays and shade data for this inactive probe as dead
         probe_path_state[gid.x].state_u32 = vec4<u32>(0u, 0u, 0u, 0xffffffffu);
+        probe_path_state[gid.x].origin_tmin = vec4<f32>(0.0);
+        probe_path_state[gid.x].direction_tmax = vec4<f32>(0.0, 0.0, 0.0, 0.0);
         return;
     }
     
     let position = probe.position_radius.xyz;
     let normal = probe.normal_frame.xyz;
-    let frame_id = gi_params.frame_index;
+    let frame_id = u32(gi_params.frame_index);
     
     // Initialize RNG for this probe ray
     let ray_seed = hash(probe_index ^ (ray_index << 16u) ^ frame_id);
@@ -122,11 +110,13 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     probe_path_state[gid.x].shadow_direction = vec4<f32>(0.0);
     probe_path_state[gid.x].shadow_radiance = vec4<f32>(0.0);
     
-    // Initialize shading state
-    probe_path_shade[gid.x].path_weight = vec4<f32>(1.0, 1.0, 1.0, 1.0 / PI); // cosine-weighted PDF
-    probe_path_shade[gid.x].rng_sample_count_frame_stamp = vec4<f32>(f32(rng_state), 0.0, f32(frame_id), 0.0);
-    probe_path_shade[gid.x].throughput = vec4<f32>(0.0);
-    probe_path_shade[gid.x].reservoir_radiance_m = vec4<f32>(0.0);
-    probe_path_shade[gid.x].reservoir_direction_w = vec4<f32>(0.0);
+    // New spawn so reinitialize shading state from scratch
+    //if (probe.state.w == 1.0) { 
+        probe_path_shade[gid.x].rng_sample_count_frame_stamp = vec4<f32>(f32(rng_state), 0.0, f32(frame_id), 0.0);
+        probe_path_shade[gid.x].path_weight = vec4<f32>(1.0, 1.0, 1.0, 1.0);
+        probe_path_shade[gid.x].throughput = vec4<f32>(0.0);
+        probe_path_shade[gid.x].reservoir_radiance_m = vec4<f32>(0.0);
+        probe_path_shade[gid.x].reservoir_direction_w = vec4<f32>(0.0);
+    //}
 }
 

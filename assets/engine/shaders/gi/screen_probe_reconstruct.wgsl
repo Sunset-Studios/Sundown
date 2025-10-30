@@ -5,33 +5,12 @@
 // - Outputs final indirect lighting texture
 // =============================================================================
 #include "common.wgsl"
-
-struct GIParams {
-    screen_probe_spawn_rate: u32,
-    screen_probe_size: u32,
-    screen_ray_count: u32,
-    world_cache_size: u32,
-    max_screen_probes: u32,
-    frame_index: u32,
-    reset_caches: u32,
-    indirect_boost: u32,
-    upscale_x: u32,
-    upscale_y: u32,
-    cell_size_heuristic: u32,
-    padding: u32,
-};
-
-struct ScreenProbe {
-    position_radius: vec4<f32>,
-    normal_frame: vec4<f32>,
-    radiance_m: vec4<f32>,
-    albedo_roughness: vec4<f32>,
-    state: vec4<u32>,
-};
+#include "lighting_common.wgsl"
+#include "gi/gi_common.wgsl"
 
 @group(1) @binding(0) var<uniform> gi_params: GIParams;
-@group(1) @binding(1) var<storage, read> screen_probes: array<ScreenProbe>;
-@group(1) @binding(2) var<storage, read> screen_probe_counter: array<u32>;
+@group(1) @binding(1) var<storage, read_write> gi_counters: GICounters;
+@group(1) @binding(2) var<storage, read> screen_probes: array<ScreenProbe>;
 @group(1) @binding(3) var gbuffer_position: texture_2d<f32>;
 @group(1) @binding(4) var gbuffer_normal: texture_2d<f32>;
 @group(1) @binding(5) var gbuffer_albedo: texture_2d<f32>;
@@ -85,20 +64,38 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let albedo = textureLoad(gbuffer_albedo, pixel_coord, 0).rgb;
     
     // Interpolate radiance from nearby screen probes
-    let probe_count = screen_probe_counter[0];
+    let probe_count = u32(gi_params.total_screen_probes);
     var total_radiance = vec3<f32>(0.0);
     var total_weight = 0.0;
     
-    // Search for nearby probes
-    // For now, do a linear search (could be optimized with spatial acceleration)
+    // Search for nearby probes in screen-space neighborhood
+    // For temporal upscale, probes are roughly uniformly distributed at probe_size intervals
     let max_search_radius = 50.0; // World units
-    let max_probes_to_check = min(probe_count, 64u); // Limit for performance
+    let search_radius_screen = gi_params.screen_probe_size * 1.5; // Search within 1.5 probe tiles
     
-    for (var i = 0u; i < max_probes_to_check; i = i + 1u) {
+    // Calculate expected probe region in the array
+    // With temporal upscale, each spawn tile is probe_size * upscale
+    let upscale = vec2<f32>(gi_params.upscale_x, gi_params.upscale_y);
+    let spawn_tile_size = gi_params.screen_probe_size * upscale;
+    let pixel_spawn_tile = vec2<f32>(gid.xy) / spawn_tile_size;
+    
+    // Linear search through all probes, but early exit based on screen distance
+    var probes_checked = 0u;
+    let max_probes_to_interpolate = 9u; // Use up to 9 nearest probes
+    
+    for (var i = 0u; i < probe_count && probes_checked < max_probes_to_interpolate; i = i + 1u) {
         let probe = screen_probes[i];
         
         // Check if probe is active
-        if (probe.state.x == 0u) {
+        if (probe.state.x == 0.0) {
+            continue;
+        }
+        
+        let probe_pixel = vec2<u32>(probe.state.yz);
+        let pixel_dist = length(vec2<f32>(gid.xy) - vec2<f32>(probe_pixel));
+        
+        // Screen-space distance cull - only consider nearby probes
+        if (pixel_dist > search_radius_screen) {
             continue;
         }
         
@@ -107,7 +104,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         let probe_normal = probe.normal_frame.xyz;
         let probe_radiance = probe.radiance_m.xyz;
         
-        // Quick distance cull
+        // World-space distance cull
         let dist = length(position - probe_pos);
         if (dist > max_search_radius) {
             continue;
@@ -119,12 +116,13 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
             normal,
             probe_pos,
             probe_normal,
-            probe_radius * 10.0 // Scale radius for wider influence
+            probe_radius * 1.0 // Scale radius for wider influence
         );
         
         if (weight > 0.001) {
             total_radiance += probe_radiance * weight;
             total_weight += weight;
+            probes_checked += 1u;
         }
     }
     
@@ -134,8 +132,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         let interpolated_radiance = total_radiance / total_weight;
         
         // Apply indirect boost
-        let indirect_boost = bitcast<f32>(gi_params.indirect_boost);
-        final_radiance = interpolated_radiance * albedo * indirect_boost;
+        final_radiance = interpolated_radiance * albedo * gi_params.indirect_boost;
     }
     
     // Clamp to reasonable range

@@ -8,35 +8,14 @@
 #include "common.wgsl"
 #include "acceleration_common.wgsl"
 #include "lighting_common.wgsl"
+#include "postprocess_common.wgsl"
 #include "sky_common.wgsl"
+#include "gi/gi_common.wgsl"
 #include "gi/world_cache_common.wgsl"
 
 const num_ris_samples = 2u;
 const num_env_samples = 2u;
 const max_bounces = 2u;
-
-struct GIParams {
-    screen_probe_spawn_rate: u32,
-    screen_probe_size: u32,
-    screen_ray_count: u32,
-    world_cache_size: u32,
-    max_screen_probes: u32,
-    frame_index: u32,
-    reset_caches: u32,
-    indirect_boost: u32,
-    upscale_x: u32,
-    upscale_y: u32,
-    cell_size_heuristic: u32,
-    padding: u32,
-};
-
-struct ScreenProbe {
-    position_radius: vec4<f32>,
-    normal_frame: vec4<f32>,
-    radiance_m: vec4<f32>,
-    albedo_roughness: vec4<f32>,
-    state: vec4<u32>,
-};
 
 struct ProbePathState {
     origin_tmin: vec4<f32>,
@@ -75,25 +54,23 @@ struct GISample {
 
 @group(1) @binding(0) var<uniform> gi_params: GIParams;
 @group(1) @binding(1) var<uniform> scene_lighting_data: SceneLightingData;
-@group(1) @binding(2) var<storage, read_write> screen_probes: array<ScreenProbe>;
-@group(1) @binding(3) var<storage, read> screen_probe_counter: array<u32>;
-@group(1) @binding(4) var<storage, read_write> probe_path_state: array<ProbePathState>;
-@group(1) @binding(5) var<storage, read_write> probe_path_shade: array<ProbePathShade>;
-@group(1) @binding(6) var<storage, read_write> world_cache: array<WorldCacheCell>;
-@group(1) @binding(7) var<storage, read> material_params: array<StandardMaterialParams>;
-@group(1) @binding(8) var<storage, read> material_table_offset: array<u32>;
-@group(1) @binding(9) var<storage, read> material_palette: array<u32>;
-@group(1) @binding(10) var<storage, read> dense_lights_buffer: array<Light>;
-@group(1) @binding(11) var<storage, read> light_count_buffer: array<u32>;
-@group(1) @binding(12) var texture_pool_albedo: texture_2d_array<f32>;
-@group(1) @binding(13) var texture_pool_normal: texture_2d_array<f32>;
-@group(1) @binding(14) var texture_pool_roughness: texture_2d_array<f32>;
-@group(1) @binding(15) var texture_pool_metallic: texture_2d_array<f32>;
-@group(1) @binding(16) var texture_pool_ao: texture_2d_array<f32>;
-@group(1) @binding(17) var texture_pool_height: texture_2d_array<f32>;
-@group(1) @binding(18) var texture_pool_specular: texture_2d_array<f32>;
-@group(1) @binding(19) var texture_pool_emission: texture_2d_array<f32>;
-@group(1) @binding(20) var skybox_texture: texture_cube<f32>;
+@group(1) @binding(2) var<storage, read_write> gi_counters: GICounters;
+@group(1) @binding(3) var<storage, read_write> probe_path_state: array<ProbePathState>;
+@group(1) @binding(4) var<storage, read_write> probe_path_shade: array<ProbePathShade>;
+@group(1) @binding(5) var<storage, read_write> world_cache: array<WorldCacheCell>;
+@group(1) @binding(6) var<storage, read> material_params: array<StandardMaterialParams>;
+@group(1) @binding(7) var<storage, read> material_table_offset: array<u32>;
+@group(1) @binding(8) var<storage, read> material_palette: array<u32>;
+@group(1) @binding(9) var<storage, read> dense_lights_buffer: array<Light>;
+@group(1) @binding(10) var texture_pool_albedo: texture_2d_array<f32>;
+@group(1) @binding(11) var texture_pool_normal: texture_2d_array<f32>;
+@group(1) @binding(12) var texture_pool_roughness: texture_2d_array<f32>;
+@group(1) @binding(13) var texture_pool_metallic: texture_2d_array<f32>;
+@group(1) @binding(14) var texture_pool_ao: texture_2d_array<f32>;
+@group(1) @binding(15) var texture_pool_height: texture_2d_array<f32>;
+@group(1) @binding(16) var texture_pool_specular: texture_2d_array<f32>;
+@group(1) @binding(17) var texture_pool_emission: texture_2d_array<f32>;
+@group(1) @binding(18) var skybox_texture: texture_cube<f32>;
 
 fn sample_texture_or_vec4_param_handle(
     tex_handle: u32,
@@ -202,10 +179,10 @@ fn mis_weight(pdf_a: f32, pdf_b: f32) -> f32 {
     return a / max(a + b, 0.0001);
 }
 
-@compute @workgroup_size(64, 1, 1)
+@compute @workgroup_size(128, 1, 1)
 fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
-    let probe_count = screen_probe_counter[0];
-    let rays_per_probe = gi_params.screen_ray_count;
+    let probe_count = u32(gi_params.total_screen_probes);
+    let rays_per_probe = u32(gi_params.screen_ray_count);
     let total_rays = probe_count * rays_per_probe;
     
     if (gid.x >= total_rays) {
@@ -226,10 +203,19 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let bounce = path.state_u32.x;
     let tri_id = path.state_u32.w;
     
+    // === SHADOW CONTRIBUTION ===
+    // Add visible light contributions directly to throughput (not reservoir)
+    if (path.state_u32.z == 1u) {
+        let safe_shadow_contrib = safe_clamp_vec3(path.shadow_radiance.rgb);
+        shade.throughput += vec4f(safe_shadow_contrib, 0.0);
+        path.shadow_radiance = vec4f(0.0);
+        path.state_u32.z = 0u;
+    }
+    
     // Get RNG state
     var rng_state = u32(shade.rng_sample_count_frame_stamp.x);
     if (rng_state == 0u) {
-        rng_state = hash(ray_id ^ gi_params.frame_index);
+        rng_state = hash(ray_id ^ u32(gi_params.frame_index));
     } else {
         rng_state = random_seed(rng_state);
     }
@@ -345,7 +331,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     // Storage for candidate GI samples
     var candidate_samples: array<GISample, 8>;
     var num_candidates = 0u;
-    let num_lights = light_count_buffer[0];
+    let num_lights = gi_counters.light_count;
     
     // === EMISSIVE CONTRIBUTION ===
     if (emissive > 0.0) {
@@ -371,8 +357,9 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         }
     }
     
-    // === Direct Lighting (NEE) ===
+    // === Direct Lighting with Shadow Rays (NEE) ===
     if (num_lights > 0u) {
+        // Sample one light for direct lighting with shadow ray
         rng_state = random_seed(rng_state);
         let light_idx = u32(rand_float(rng_state) * f32(num_lights)) % num_lights;
         let light = dense_lights_buffer[light_idx];
@@ -385,25 +372,25 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
             reflectance, clear_coat, clear_coat_roughness
         );
         
-        let indirect_boost = bitcast<f32>(gi_params.indirect_boost);
-        let bounce_multiplier = select(1.0, indirect_boost, bounce > 0u);
+        // Compute light contribution (will be added if shadow ray doesn't hit)
+        let bounce_multiplier = select(1.0, gi_params.indirect_boost, bounce > 0u);
         let light_contrib = brdf * light.color.rgb * light.intensity * attenuation 
             * bounce_multiplier * shade.path_weight.xyz * f32(num_lights);
         
-        // Direct contribution (simplified - no shadow tracing for probes to save bandwidth)
-        if (dot(n, light_dir) > 0.0) {
-            shade.throughput += vec4f(light_contrib, 0.0);
-        }
+        // Setup shadow ray for visibility test
+        let selected_distance = select(1e30, length(light.position.xyz - hit_pos), light.light_type != 0.0);
+        path.shadow_origin = vec4f(hit_pos + n * 0.001, 0.0001);
+        path.shadow_direction = vec4f(light_dir, selected_distance * 0.999);
+        path.shadow_radiance = vec4f(light_contrib, 1.0);
     }
     
     // === Query World Cache for Indirect Lighting ===
-    let world_cache_size = gi_params.world_cache_size;
+    let world_cache_size = u32(gi_params.world_cache_size);
     let cell_size = 1.0;
     
     let cached_radiance = query_world_cache(
         hit_pos,
         n,
-        &world_cache,
         world_cache_size,
         cell_size
     );
@@ -411,9 +398,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     // If we have cached radiance, use it; otherwise generate new path
     if (length(cached_radiance) > 0.001 && bounce > 0u) {
         // Use cached radiance
-        let indirect_boost = bitcast<f32>(gi_params.indirect_boost);
-        shade.throughput += vec4<f32>(cached_radiance * albedo * shade.path_weight.xyz * indirect_boost, 0.0);
-        
+        shade.throughput += vec4<f32>(cached_radiance * albedo * shade.path_weight.xyz * gi_params.indirect_boost, 0.0);
         // Terminate path after using cache
         path.state_u32.y = 0u;
     } else {

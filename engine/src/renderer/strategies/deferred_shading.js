@@ -529,7 +529,9 @@ export class DeferredShadingStrategy {
       const entity_flags = render_graph.register_buffer(entity_flags_buffer.buffer.config.name);
 
       const entity_index_map_buffer = FragmentGpuBuffer.entity_index_map_buffer;
-      const entity_index_lookup = render_graph.register_buffer(entity_index_map_buffer.buffer.config.name);
+      const entity_index_lookup = render_graph.register_buffer(
+        entity_index_map_buffer.buffer.config.name
+      );
 
       const transforms_buffer = EntityManager.get_fragment_gpu_buffer(
         TransformFragment,
@@ -555,7 +557,7 @@ export class DeferredShadingStrategy {
       );
 
       const blas_gpu_data = MeshBLAS.to_gpu_data();
-      const blas_atlas = render_graph.register_buffer(blas_gpu_data.atlas_buffer.config.name)
+      const blas_atlas = render_graph.register_buffer(blas_gpu_data.atlas_buffer.config.name);
 
       // ┌─────────────────────────────────────────────────────────────────────────────┐
       // │ 🎯 Register Mesh & Instance Buffers                                        │
@@ -570,9 +572,7 @@ export class DeferredShadingStrategy {
       );
       const mesh_asset_ids_buffer = render_graph.register_buffer(mesh_asset_ids.buffer.config.name);
 
-      const index_buffer = render_graph.register_buffer(
-        MeshData.index_buffer.config.name
-      );
+      const index_buffer = render_graph.register_buffer(MeshData.index_buffer.config.name);
 
       // ┌─────────────────────────────────────────────────────────────────────────────┐
       // │ 💡 Setup Lighting System                                                   │
@@ -1311,6 +1311,7 @@ export class DeferredShadingStrategy {
           index_buffer,
           dense_lights,
           light_count,
+          debug_view,
           this.force_recreate
         );
       }
@@ -1394,6 +1395,23 @@ export class DeferredShadingStrategy {
             const pass = graph.get_physical_pass(frame_data.current_pass);
             MeshTaskQueue.draw_quad(pass);
           }
+        );
+      }
+
+      // ┌─────────────────────────────────────────────────────────────────────────────┐
+      // │ 🔍 PASS: GI Debug Probe Visualization                                     │
+      // │    Composite probe irradiance on top of lit scene to separate texture     │
+      // │    (displayed via debug overlay, doesn't affect main rendering pipeline)  │
+      // └─────────────────────────────────────────────────────────────────────────────┘
+      if (gi_enabled && debug_view === DebugDrawType.GI_ScreenProbes) {
+        this.gi.add_debug_passes(
+          render_graph,
+          image_extent.width,
+          image_extent.height,
+          main_position_image,
+          main_normal_image,
+          post_lighting_image_desc,
+          this.force_recreate
         );
       }
 
@@ -1615,7 +1633,7 @@ export class DeferredShadingStrategy {
               DebugDrawType.Emissive,
               0, // texture_level
               [0.0, 0.0, 0.0, 1.0], // channel_mask (alpha only)
-              1 // Use channels 
+              1 // Use channels
             );
             break;
           case DebugDrawType.Motion:
@@ -1737,6 +1755,16 @@ export class DeferredShadingStrategy {
               image_extent.width,
               image_extent.height,
               DebugDrawType.GI_Irradiance
+            );
+            break;
+          case DebugDrawType.GI_ScreenProbes:
+            this.debug_overlay.set_properties(
+              this.gi.debug_probe_texture,
+              0,
+              0,
+              image_extent.width,
+              image_extent.height,
+              DebugDrawType.GI_ScreenProbes
             );
             break;
           default:

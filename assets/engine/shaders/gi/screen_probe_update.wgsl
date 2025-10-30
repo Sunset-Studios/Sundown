@@ -3,32 +3,12 @@
 // - Accumulates radiance from traced rays back to screen probes
 // - Updates world cache with secondary bounce radiance
 // - Performs temporal filtering with exponential moving average
+// - Only updates probes marked active this frame
 // =============================================================================
 #include "common.wgsl"
+#include "lighting_common.wgsl"
+#include "gi/gi_common.wgsl"
 #include "gi/world_cache_common.wgsl"
-
-struct GIParams {
-    screen_probe_spawn_rate: u32,
-    screen_probe_size: u32,
-    screen_ray_count: u32,
-    world_cache_size: u32,
-    max_screen_probes: u32,
-    frame_index: u32,
-    reset_caches: u32,
-    indirect_boost: u32,
-    upscale_x: u32,
-    upscale_y: u32,
-    cell_size_heuristic: u32,
-    padding: u32,
-};
-
-struct ScreenProbe {
-    position_radius: vec4<f32>,
-    normal_frame: vec4<f32>,
-    radiance_m: vec4<f32>,
-    albedo_roughness: vec4<f32>,
-    state: vec4<u32>,
-};
 
 struct ProbePathState {
     origin_tmin: vec4<f32>,
@@ -51,43 +31,73 @@ struct ProbePathShade {
 };
 
 @group(1) @binding(0) var<uniform> gi_params: GIParams;
-@group(1) @binding(1) var<storage, read_write> screen_probes: array<ScreenProbe>;
-@group(1) @binding(2) var<storage, read> screen_probe_counter: array<u32>;
+@group(1) @binding(1) var<storage, read_write> gi_counters: GICounters;
+@group(1) @binding(2) var<storage, read_write> screen_probes: array<ScreenProbe>;
 @group(1) @binding(3) var<storage, read> probe_path_state: array<ProbePathState>;
 @group(1) @binding(4) var<storage, read> probe_path_shade: array<ProbePathShade>;
 @group(1) @binding(5) var<storage, read_write> world_cache: array<WorldCacheCell>;
 
-@compute @workgroup_size(64, 1, 1)
+// =============================================================================
+// Biased Temporal Hysteresis (GI-1.0 Algorithm 3)
+// - Adapts blend factor based on luminance difference
+// - Preserves shadows and occlusion better than exponential moving average
+// - Acts as firefly removal by filtering out transient bright signals
+// =============================================================================
+fn temporal_blend(curr_radiance: vec3<f32>, prev_radiance: vec3<f32>) -> vec3<f32> {
+    // Compute luminance using equal weighting (1/3, 1/3, 1/3)
+    let l1 = dot(curr_radiance, vec3<f32>(1.0 / 3.0));
+    let l2 = dot(prev_radiance, vec3<f32>(1.0 / 3.0));
+    
+    // Compute adaptive alpha based on normalized difference
+    // Bias towards darker values to preserve shadows
+    let numerator = max(l1 - l2 - min(l1, l2), 0.0);
+    let denominator = max(max(l1, l2), 1e-4);
+    var alpha = numerator / denominator;
+    
+    // Clamp and remap with squared falloff
+    alpha = clamp(alpha, 0.0, 0.95);
+    alpha = alpha * alpha;
+    
+    // Blend: higher alpha = more previous radiance (temporal stability)
+    return mix(curr_radiance, prev_radiance, alpha);
+}
+
+@compute @workgroup_size(128, 1, 1)
 fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
-    let probe_count = screen_probe_counter[0];
+    // Process all grid probes (derived from resolution)
+    let probe_count = u32(gi_params.total_screen_probes);
     
     if (gid.x >= probe_count) {
         return;
     }
     
-    let probe_index = gid.x;
-    let rays_per_probe = gi_params.screen_ray_count;
+    // Only update probes that are active (were spawned/updated this frame)
+    let probe = screen_probes[gid.x];
+    if (probe.state.x == 0.0) {
+        return; // Skip inactive probes
+    }
+    
+    let rays_per_probe = u32(gi_params.screen_ray_count);
     
     // Accumulate radiance from all rays for this probe
     var accumulated_radiance = vec3<f32>(0.0);
     var valid_ray_count = 0u;
     
     // World cache parameters
-    let world_cache_size = gi_params.world_cache_size;
+    let world_cache_size = u32(gi_params.world_cache_size);
     let cell_size = 1.0;
     
     for (var i = 0u; i < rays_per_probe; i = i + 1u) {
-        let ray_id = probe_index * rays_per_probe + i;
+        let ray_id = gid.x * rays_per_probe + i;
         let path = probe_path_state[ray_id];
         let shade = probe_path_shade[ray_id];
         
         let radiance = shade.throughput.rgb;
         
-        // Only accumulate if radiance is valid (not NaN or inf)
-        if (!any(isinf(radiance)) && length(radiance) < 1000.0) {
-            accumulated_radiance += radiance;
-            valid_ray_count += 1u;
-        }
+        // Accumulate ALL rays (even if zero) to increment M properly
+        // This ensures probes show as "blue" in debug even if radiance is zero
+        accumulated_radiance += radiance;
+        valid_ray_count += 1u;
         
         // === Update World Cache for Secondary Bounces ===
         // Insert radiance at secondary hit points to enable reuse across probes
@@ -103,7 +113,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
             let outgoing_radiance = radiance / max(shade.path_weight.w, 0.001);
             
             // Validate before inserting
-            if (!any(isinf(outgoing_radiance)) && length(outgoing_radiance) < 100.0) {
+            if (!isinf(outgoing_radiance.x) && !isinf(outgoing_radiance.y) && !isinf(outgoing_radiance.z)) {
                 let inserted = insert_world_cache(
                     hit_pos,
                     hit_normal,
@@ -111,36 +121,34 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
                     &world_cache,
                     world_cache_size,
                     cell_size,
-                    gi_params.frame_index
+                    u32(gi_params.frame_index)
                 );
             }
         }
     }
     
-    // Average radiance across valid rays
+    // Average radiance across valid rays (protect against divide by zero)
     if (valid_ray_count > 0u) {
         accumulated_radiance /= f32(valid_ray_count);
     }
     
-    // Read current probe state
-    var probe = screen_probes[probe_index];
+    // Retrieve previous radiance for temporal blending
+    let prev_radiance = screen_probes[gid.x].radiance_m.xyz;
+    let prev_sample_count = screen_probes[gid.x].radiance_m.w;
     
-    // Temporal filtering with exponential moving average
-    let alpha = 0.1; // Blend factor (higher = faster response, lower = more stable)
-    let old_radiance = probe.radiance_m.xyz;
-    let old_m = probe.radiance_m.w;
+    // Apply biased temporal hysteresis
+    // For newly spawned probes (M=0), prev_radiance is 0, so blend naturally starts at current
+    // For reprojected probes, blend with accumulated history
+    var final_radiance = accumulated_radiance;
+    // if (prev_sample_count > 0.0 && valid_ray_count > 0u) {
+    //     final_radiance = temporal_blend(accumulated_radiance, prev_radiance);
+    // }
     
-    // Blend with previous frame
-    let new_radiance = mix(old_radiance, accumulated_radiance, alpha);
-    let new_m = old_m + f32(valid_ray_count);
-    
-    // Clamp to reasonable range
-    let clamped_radiance = clamp(new_radiance, vec3<f32>(0.0), vec3<f32>(100.0));
-    
-    // Update probe
-    probe.radiance_m = vec4<f32>(clamped_radiance, new_m);
-    probe.normal_frame.w = f32(gi_params.frame_index);
-    
-    screen_probes[probe_index] = probe;
+    // Update probe with blended radiance
+    screen_probes[gid.x].radiance_m = vec4<f32>(
+        final_radiance,
+        prev_sample_count + f32(valid_ray_count)
+    );
+    screen_probes[gid.x].normal_frame.w = gi_params.frame_index;
 }
 

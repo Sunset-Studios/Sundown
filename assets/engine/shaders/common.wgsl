@@ -391,6 +391,38 @@ fn safe_clamp_vec3(value: vec3<f32>) -> vec3<f32> {
     return vec3<f32>(x, y, z);
 }
 
+// =============================================================================
+// Halton Sequence Generation (Low-Discrepancy Sampling)
+// =============================================================================
+fn halton_base2(index: u32) -> f32 {
+    var bits = index;
+    bits = (bits << 16u) | (bits >> 16u);
+    bits = ((bits & 0x55555555u) << 1u) | ((bits & 0xAAAAAAAAu) >> 1u);
+    bits = ((bits & 0x33333333u) << 2u) | ((bits & 0xCCCCCCCCu) >> 2u);
+    bits = ((bits & 0x0F0F0F0Fu) << 4u) | ((bits & 0xF0F0F0F0u) >> 4u);
+    bits = ((bits & 0x00FF00FFu) << 8u) | ((bits & 0xFF00FF00u) >> 8u);
+    return f32(bits) * 2.3283064365386963e-10; // / 2^32
+}
+
+fn halton_base3(index: u32) -> f32 {
+    var result = 0.0;
+    var f = 1.0 / 3.0;
+    var i = index;
+    
+    for (var iter = 0u; iter < 16u; iter = iter + 1u) {
+        if (i == 0u) { break; }
+        result += f32(i % 3u) * f;
+        i /= 3u;
+        f /= 3.0;
+    }
+    
+    return result;
+}
+
+fn halton_2d(index: u32) -> vec2<f32> {
+    return vec2<f32>(halton_base2(index), halton_base3(index));
+}
+
 // ============================================================================
 // O(1) Helper function to compute pixel coordinates from linear index
 // ============================================================================
