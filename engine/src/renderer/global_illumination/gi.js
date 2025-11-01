@@ -122,7 +122,7 @@ export class GI {
     cell_size_heuristic: 0.5, // Spatial error tolerance for probe reuse (world units)
     world_cache_size: 65536, // Number of world cache cells (64K)
     world_cache_cell_size: 1.0, // Size of world cache cells in world units
-    max_bounces: 1, // Maximum path bounces
+    max_bounces: 2, // Maximum path bounces
     indirect_boost: 1.0, // Multiplier for indirect lighting
     reset_caches: false, // Force reset all caches
   };

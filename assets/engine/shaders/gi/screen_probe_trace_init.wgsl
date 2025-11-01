@@ -203,6 +203,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     // Finalize reservoir and select best direction
     var ray_dir: vec3<f32>;
     var path_weight = vec3<f32>(1.0, 1.0, 1.0);
+    var is_alive = 1u;
     
     if (gi_reservoir.m > 0u) {
         let selected_sample = candidate_samples[gi_reservoir.selected_index];
@@ -220,11 +221,27 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         let brdf_weight = selected_brdf * gi_reservoir.w;
         path_weight = brdf_weight;
         
-        // Store reservoir data for potential temporal reuse
-        probe_path_shade[gid.x].reservoir_radiance_m = vec4f(selected_sample.radiance_and_target_pdf.xyz, f32(gi_reservoir.m));
-        probe_path_shade[gid.x].reservoir_direction_w = vec4f(selected_dir, gi_reservoir.w);
+        // Russian Roulette: Kill paths with very low throughput to prevent underflow
+        let weight_luminance = path_weight.x * 0.2126 + path_weight.y * 0.7152 + path_weight.z * 0.0722;
+        let min_weight_threshold = 0.0001;
+        
+        if (weight_luminance < min_weight_threshold) {
+            // Path weight too low - kill path and clear reservoir
+            is_alive = 0u;
+            probe_path_shade[gid.x].reservoir_radiance_m = vec4f(0.0);
+            probe_path_shade[gid.x].reservoir_direction_w = vec4f(0.0);
+        } else {
+            // Store reservoir data for potential temporal reuse
+            probe_path_shade[gid.x].reservoir_radiance_m = vec4f(selected_sample.radiance_and_target_pdf.xyz, f32(gi_reservoir.m));
+            probe_path_shade[gid.x].reservoir_direction_w = vec4f(selected_dir, gi_reservoir.w);
+        }
     } else {
-        // Fallback to simple cosine hemisphere if RIS fails
+        // Reservoir failed - kill path and clear reservoir to stop propagation
+        is_alive = 0u;
+        probe_path_shade[gid.x].reservoir_radiance_m = vec4f(0.0);
+        probe_path_shade[gid.x].reservoir_direction_w = vec4f(0.0);
+        
+        // Still generate fallback direction for debugging (won't be traced since alive=0)
         rng = random_seed(rng);
         let u1 = rand_float(rng);
         rng = random_seed(rng);
@@ -270,7 +287,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     probe_path_state[gid.x].origin_tmin = vec4<f32>(position + normal * 0.001, 0.0001);
     probe_path_state[gid.x].direction_tmax = vec4<f32>(ray_dir, 1e30);
     probe_path_state[gid.x].normal_section_index = vec4<f32>(normal, 0.0);
-    probe_path_state[gid.x].state_u32 = vec4<u32>(0u, 1u, 0u, 0xffffffffu);
+    probe_path_state[gid.x].state_u32 = vec4<u32>(0u, is_alive, 0u, 0xffffffffu);
     probe_path_state[gid.x].hit_attr0 = vec4<f32>(0.0);
     probe_path_state[gid.x].hit_attr1 = vec4<f32>(0.0);
     probe_path_state[gid.x].rng_sample_count_frame_stamp = vec4<f32>(f32(rng), 0.0, f32(frame_id), 0.0);

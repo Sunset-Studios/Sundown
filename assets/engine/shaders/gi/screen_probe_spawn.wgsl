@@ -39,18 +39,19 @@
 @group(1) @binding(6) var gbuffer_smra: texture_2d<f32>;
 @group(1) @binding(7) var gbuffer_motion: texture_2d<f32>;
 
+const SCREEN_PROBE_SIZE = 4u;
+
 // Workgroup-shared memory for reprojection (AMD GI-1.0 algorithm)
 // Format: (reprojection_score << 16) | (lane_index & 0xFFFF)
 // Lower 16 bits store which thread/lane won the competition
 // Upper 16 bits store reprojection score (distance) for atomic competition
 var<workgroup> reprojection_best: atomic<u32>;
-
 // Each thread stores its pixel coordinates and previous probe index
 // Indexed by lane_index (lid.y * 4 + lid.x for 4x4 workgroup)
 var<workgroup> thread_pixel_coords: array<vec2<u32>, 16>;
 var<workgroup> thread_prev_probe_index: array<u32, 16>;
 
-@compute @workgroup_size(4, 4, 1)
+@compute @workgroup_size(SCREEN_PROBE_SIZE, SCREEN_PROBE_SIZE, 1)
 fn cs(
     @builtin(global_invocation_id) gid: vec3<u32>,
     @builtin(local_invocation_id) lid: vec3<u32>,
@@ -99,7 +100,7 @@ fn cs(
     // Each thread samples one pixel in the current tile
     let tile_corner = probe_tile * probe_size;
     let pixel = tile_corner + lid.xy;
-    let lane_index = lid.y * 4u + lid.x;  // Thread's lane index in workgroup
+    let lane_index = lid.y * SCREEN_PROBE_SIZE + lid.x;  // Thread's lane index in workgroup
     
     // Check if pixel is within bounds
     if (pixel.x < res.x && pixel.y < res.y) {

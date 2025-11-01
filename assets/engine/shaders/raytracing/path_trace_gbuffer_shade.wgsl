@@ -235,40 +235,54 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         let selected_target = compute_gi_target_pdf(selected_sample.radiance_and_target_pdf.xyz, selected_brdf);
         gi_reservoir_finalize(&gi_reservoir, selected_target);
         
-        // Store BRDF estimate for temporal reuse
-        var selected_brdf_estimate = selected_sample.radiance_and_target_pdf.xyz;
-        
-        // Boost importance if we hit an emissive
-        if (emissive > 0.0) {
-            let hit_distance = max(info.origin_tmin.w, 0.1);
-            let proximity_boost = 1.0 / (1.0 + hit_distance);
-            let emissive_importance = emissive * albedo.x * 0.2126 + emissive * albedo.y * 0.7152 + emissive * albedo.z * 0.0722;
-            let boost_factor = emissive_importance * 10.0 * proximity_boost;
-            selected_brdf_estimate = selected_brdf_estimate * (1.0 + boost_factor);
-        }
-        
-        shade.reservoir_radiance_m = vec4f(selected_brdf_estimate, f32(gi_reservoir.m));
-        shade.reservoir_direction_w = vec4f(selected_dir, gi_reservoir.w);
-        
         // Update path weight
         let brdf_weight = selected_brdf * gi_reservoir.w;
-        let selected_source_pdf = selected_sample.direction_and_source_pdf.w;
-        shade.path_weight = vec4f(shade.path_weight.xyz * brdf_weight, selected_source_pdf);
+        let new_path_weight = shade.path_weight.xyz * brdf_weight;
         
-        // Kill path if we hit an emissive on first bounce (already contributed)
-        let is_first_bounce_emissive = emissive > 0.1;
-        let should_continue = !is_first_bounce_emissive;
-        let alive_next = select(0u, 1u, should_continue);
+        // Russian Roulette: Kill paths with very low throughput to prevent underflow
+        // This prevents "zombie" paths that contribute nothing but still propagate bad state
+        let weight_luminance = new_path_weight.x * 0.2126 + new_path_weight.y * 0.7152 + new_path_weight.z * 0.0722;
+        let min_weight_threshold = 0.0001;
         
-        // Spawn next ray (bounce 1)
-        info.origin_tmin = vec4f(hit_pos + n * 0.001, 0.0001);
-        info.direction_tmax = vec4f(selected_dir, 1e30);
-        info.state_u32.x = 1u; // Move to bounce 1
-        info.state_u32.y = alive_next;
-        info.state_u32.w = 0xffffffffu; // Mark as needing intersection test
-        
-        shade.rng_sample_count_frame_stamp.x = f32(rng);
-        shade.rng_sample_count_frame_stamp.y += 1.0;
+        if (weight_luminance < min_weight_threshold) {
+            // Path weight too low - kill path and clear reservoir
+            info.state_u32.y = 0u;
+            shade.reservoir_radiance_m = vec4f(0.0);
+            shade.reservoir_direction_w = vec4f(0.0);
+        } else {
+            // Store BRDF estimate for temporal reuse
+            var selected_brdf_estimate = selected_sample.radiance_and_target_pdf.xyz;
+            
+            // Boost importance if we hit an emissive (capped to prevent extreme values)
+            if (emissive > 0.0) {
+                let hit_distance = max(info.origin_tmin.w, 0.1);
+                let proximity_boost = 1.0 / (1.0 + hit_distance);
+                let emissive_importance = emissive * albedo.x * 0.2126 + emissive * albedo.y * 0.7152 + emissive * albedo.z * 0.0722;
+                let boost_factor = clamp(emissive_importance * 10.0 * proximity_boost, 0.0, 50.0);
+                selected_brdf_estimate = selected_brdf_estimate * (1.0 + boost_factor);
+            }
+            
+            shade.reservoir_radiance_m = vec4f(selected_brdf_estimate, f32(gi_reservoir.m));
+            shade.reservoir_direction_w = vec4f(selected_dir, gi_reservoir.w);
+            
+            let selected_source_pdf = selected_sample.direction_and_source_pdf.w;
+            shade.path_weight = vec4f(new_path_weight, selected_source_pdf);
+            
+            // Kill path if we hit an emissive on first bounce (already contributed)
+            let is_first_bounce_emissive = emissive > 0.1;
+            let should_continue = !is_first_bounce_emissive;
+            let alive_next = select(0u, 1u, should_continue);
+            
+            // Spawn next ray (bounce 1)
+            info.origin_tmin = vec4f(hit_pos + n * 0.001, 0.0001);
+            info.direction_tmax = vec4f(selected_dir, 1e30);
+            info.state_u32.x = 1u; // Move to bounce 1
+            info.state_u32.y = alive_next;
+            info.state_u32.w = 0xffffffffu; // Mark as needing intersection test
+            
+            shade.rng_sample_count_frame_stamp.x = f32(rng);
+            shade.rng_sample_count_frame_stamp.y += 1.0;
+        }
     }
 
     // =============================================================================
