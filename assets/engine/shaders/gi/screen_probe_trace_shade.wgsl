@@ -489,7 +489,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
     
     // Finalize reservoir and spawn next bounce
-    if (gi_reservoir.m > 0u && bounce < max_bounces) {
+    if (gi_reservoir.m > 0u) {
         let selected_sample = candidate_samples[gi_reservoir.selected_index];
         let selected_dir = selected_sample.direction_and_source_pdf.xyz;
         let selected_brdf = calculate_brdf_rt(

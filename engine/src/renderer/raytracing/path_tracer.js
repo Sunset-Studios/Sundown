@@ -104,7 +104,7 @@ export class PathTracer extends RayTracer {
   ) {
     super.setup(render_graph, width, height, force_recreate);
 
-    const num_bounce_passes = max_bounces + 1;
+    const num_bounce_passes = max_bounces;
     const num_rays = width * height;
 
     const view_index = SharedFrameInfoBuffer.get_view_index();

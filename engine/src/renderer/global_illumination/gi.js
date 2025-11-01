@@ -185,6 +185,7 @@ export class GI {
     index_buffer,
     dense_lights,
     light_count,
+    draw_count,
     force_recreate = false
   ) {
     // =========================================================================
@@ -195,64 +196,6 @@ export class GI {
     const grid_width = Math.ceil(width / this.config.screen_probe_size);
     const grid_height = Math.ceil(height / this.config.screen_probe_size);
     this.total_screen_probes = grid_width * grid_height;
-
-    // Get material resources
-    const params_gpu = MaterialAllocationTable.params_buffer;
-    const material_palette = MaterialAllocationTable.palette_buffer;
-    const material_palette_offsets = EntityManager.get_fragment_gpu_buffer(
-      StaticMeshFragment,
-      material_offsets_name
-    );
-
-    const params_gpu_buffer = render_graph.register_buffer(params_gpu.config.name);
-    const material_palette_buffer = render_graph.register_buffer(material_palette.config.name);
-    const material_palette_offsets_buffer = render_graph.register_buffer(
-      material_palette_offsets.buffer.config.name
-    );
-
-    // Get texture pools
-    const default_texture = Texture.default_array();
-    const albedo_pool = ResourceCache.get().fetch(CacheTypes.IMAGE, texture_pool_albedo_name);
-    const normal_pool = ResourceCache.get().fetch(CacheTypes.IMAGE, texture_pool_normal_name);
-    const roughness_pool = ResourceCache.get().fetch(CacheTypes.IMAGE, texture_pool_roughness_name);
-    const metallic_pool = ResourceCache.get().fetch(CacheTypes.IMAGE, texture_pool_metallic_name);
-    const ao_pool = ResourceCache.get().fetch(CacheTypes.IMAGE, texture_pool_ao_name);
-    const height_pool = ResourceCache.get().fetch(CacheTypes.IMAGE, texture_pool_height_name);
-    const specular_pool = ResourceCache.get().fetch(CacheTypes.IMAGE, texture_pool_specular_name);
-    const emission_pool = ResourceCache.get().fetch(CacheTypes.IMAGE, texture_pool_emission_name);
-
-    const default_texture_buffer = render_graph.register_image(default_texture.config.name);
-    const albedo_pool_buffer = albedo_pool
-      ? render_graph.register_image(albedo_pool.config.name)
-      : default_texture_buffer;
-    const normal_pool_buffer = normal_pool
-      ? render_graph.register_image(normal_pool.config.name)
-      : default_texture_buffer;
-    const roughness_pool_buffer = roughness_pool
-      ? render_graph.register_image(roughness_pool.config.name)
-      : default_texture_buffer;
-    const metallic_pool_buffer = metallic_pool
-      ? render_graph.register_image(metallic_pool.config.name)
-      : default_texture_buffer;
-    const ao_pool_buffer = ao_pool
-      ? render_graph.register_image(ao_pool.config.name)
-      : default_texture_buffer;
-    const height_pool_buffer = height_pool
-      ? render_graph.register_image(height_pool.config.name)
-      : default_texture_buffer;
-    const specular_pool_buffer = specular_pool
-      ? render_graph.register_image(specular_pool.config.name)
-      : default_texture_buffer;
-    const emission_pool_buffer = emission_pool
-      ? render_graph.register_image(emission_pool.config.name)
-      : default_texture_buffer;
-
-    // Environment data
-    const skydome_data = SharedEnvironmentData.get_skydome_data();
-    const skydome_data_buffer = render_graph.register_buffer(skydome_data.config.name);
-
-    const skybox = SharedEnvironmentData.get_skybox();
-    const skybox_texture_buffer = render_graph.register_image(skybox.config.name);
 
     // =========================================================================
     // Create GI Resources
@@ -319,180 +262,151 @@ export class GI {
       force: force_recreate,
     });
 
-    // =========================================================================
-    // Pass 0: Reset counters and upload parameters
-    // =========================================================================
-    render_graph.add_pass(
-      "gi_upload_params",
-      RenderPassFlags.GraphLocal,
-      {},
-      (graph, frame_data, encoder) => {
-        const gi_params_buf = graph.get_physical_buffer(gi_params);
-
-        // Upload GI parameters
-        this.gi_params_data[0] = this.config.screen_probe_size;
-        this.gi_params_data[1] = this.config.screen_ray_count;
-        this.gi_params_data[2] = this.config.world_cache_size;
-        this.gi_params_data[3] = this.total_screen_probes; // Derived from grid dimensions
-        this.gi_params_data[4] = SharedFrameInfoBuffer.get_frame_index();
-        this.gi_params_data[5] = this.config.reset_caches ? 1 : 0;
-        this.gi_params_data[6] = this.config.indirect_boost;
-        this.gi_params_data[7] = this.config.upscale_x;
-        this.gi_params_data[8] = this.config.upscale_y;
-        this.gi_params_data[9] = this.config.cell_size_heuristic;
-        gi_params_buf.write_raw(this.gi_params_data);
-
-        // Clear reset flag after use
-        this.config.reset_caches = false;
-      }
-    );
-
-    // =========================================================================
-    // Pass 1: Reset counters (GPU compute shader)
-    // =========================================================================
-    render_graph.add_pass(
-      "gi_reset",
-      RenderPassFlags.Compute,
-      {
-        inputs: [gi_counters, light_count],
-        outputs: [gi_counters],
-        shader_setup: gi_reset_shader_setup,
-      },
-      (graph, frame_data, encoder) => {
-        const pass = graph.get_physical_pass(frame_data.current_pass);
-        pass.dispatch(1, 1, 1); // Single thread does the reset
-      }
-    );
-
-    // =========================================================================
-    // Pass 2: Spawn Screen Probes (Motion vector reprojection + Halton spawn)
-    // - Each pixel in tile uses motion vectors to track backward in time
-    // - Finds which probe contained that geometry in previous frame
-    // - Validates probe: plane_distance < cell_size && normal_dot > 0.95
-    // - If valid: reproject probe (keep accumulated radiance!)
-    // - If invalid: spawn new probe using Halton jitter (reset radiance)
-    // =========================================================================
-    render_graph.add_pass(
-      "gi_screen_probe_spawn",
-      RenderPassFlags.Compute,
-      {
-        inputs: [
-          gi_params,
-          gi_counters,
-          screen_probes,
-          gbuffer_position,
-          gbuffer_normal,
-          gbuffer_albedo,
-          gbuffer_smra,
-          gbuffer_motion_emissive,
-        ],
-        outputs: [gi_counters, screen_probes],
-        shader_setup: screen_probe_spawn_shader_setup,
-      },
-      (graph, frame_data, encoder) => {
-        const pass = graph.get_physical_pass(frame_data.current_pass);
-        pass.dispatch(grid_width, grid_height, 1);
-      }
-    );
-
-    // =========================================================================
-    // Pass 3-N: Screen Probe Path Tracing (Init, Hit, Shade for each bounce)
-    // =========================================================================
-    render_graph.add_pass(
-      "gi_probe_trace_init",
-      RenderPassFlags.Compute,
-      {
-        inputs: [gi_params, gi_counters, screen_probes, probe_path_state, probe_path_shade],
-        outputs: [probe_path_state, probe_path_shade],
-        shader_setup: screen_probe_trace_init_shader_setup,
-      },
-      (graph, frame_data, encoder) => {
-        const pass = graph.get_physical_pass(frame_data.current_pass);
-        const max_rays = this.total_screen_probes * this.config.screen_ray_count;
-        pass.dispatch(Math.ceil(max_rays / 128), 1, 1);
-      }
-    );
-
-    for (let bounce = 0; bounce < this.config.max_bounces + 1; bounce++) {
+    if (draw_count > 0) {
+      // Get material resources
+      const params_gpu = MaterialAllocationTable.params_buffer;
+      const material_palette = MaterialAllocationTable.palette_buffer;
+      const material_palette_offsets = EntityManager.get_fragment_gpu_buffer(
+        StaticMeshFragment,
+        material_offsets_name
+      );
+  
+      const params_gpu_buffer = render_graph.register_buffer(params_gpu.config.name);
+      const material_palette_buffer = render_graph.register_buffer(material_palette.config.name);
+      const material_palette_offsets_buffer = render_graph.register_buffer(
+        material_palette_offsets.buffer.config.name
+      );
+  
+      // Get texture pools
+      const default_texture = Texture.default_array();
+      const albedo_pool = ResourceCache.get().fetch(CacheTypes.IMAGE, texture_pool_albedo_name);
+      const normal_pool = ResourceCache.get().fetch(CacheTypes.IMAGE, texture_pool_normal_name);
+      const roughness_pool = ResourceCache.get().fetch(CacheTypes.IMAGE, texture_pool_roughness_name);
+      const metallic_pool = ResourceCache.get().fetch(CacheTypes.IMAGE, texture_pool_metallic_name);
+      const ao_pool = ResourceCache.get().fetch(CacheTypes.IMAGE, texture_pool_ao_name);
+      const height_pool = ResourceCache.get().fetch(CacheTypes.IMAGE, texture_pool_height_name);
+      const specular_pool = ResourceCache.get().fetch(CacheTypes.IMAGE, texture_pool_specular_name);
+      const emission_pool = ResourceCache.get().fetch(CacheTypes.IMAGE, texture_pool_emission_name);
+  
+      const default_texture_buffer = render_graph.register_image(default_texture.config.name);
+      const albedo_pool_buffer = albedo_pool
+        ? render_graph.register_image(albedo_pool.config.name)
+        : default_texture_buffer;
+      const normal_pool_buffer = normal_pool
+        ? render_graph.register_image(normal_pool.config.name)
+        : default_texture_buffer;
+      const roughness_pool_buffer = roughness_pool
+        ? render_graph.register_image(roughness_pool.config.name)
+        : default_texture_buffer;
+      const metallic_pool_buffer = metallic_pool
+        ? render_graph.register_image(metallic_pool.config.name)
+        : default_texture_buffer;
+      const ao_pool_buffer = ao_pool
+        ? render_graph.register_image(ao_pool.config.name)
+        : default_texture_buffer;
+      const height_pool_buffer = height_pool
+        ? render_graph.register_image(height_pool.config.name)
+        : default_texture_buffer;
+      const specular_pool_buffer = specular_pool
+        ? render_graph.register_image(specular_pool.config.name)
+        : default_texture_buffer;
+      const emission_pool_buffer = emission_pool
+        ? render_graph.register_image(emission_pool.config.name)
+        : default_texture_buffer;
+  
+      // Environment data
+      const skydome_data = SharedEnvironmentData.get_skydome_data();
+      const skydome_data_buffer = render_graph.register_buffer(skydome_data.config.name);
+  
+      const skybox = SharedEnvironmentData.get_skybox();
+      const skybox_texture_buffer = render_graph.register_image(skybox.config.name);
+      
+      // =========================================================================
+      // Pass 0: Reset counters and upload parameters
+      // =========================================================================
       render_graph.add_pass(
-        `gi_probe_trace_hit_visibility_${bounce}`,
+        "gi_upload_params",
+        RenderPassFlags.GraphLocal,
+        {},
+        (graph, frame_data, encoder) => {
+          const gi_params_buf = graph.get_physical_buffer(gi_params);
+
+          // Upload GI parameters
+          this.gi_params_data[0] = this.config.screen_probe_size;
+          this.gi_params_data[1] = this.config.screen_ray_count;
+          this.gi_params_data[2] = this.config.world_cache_size;
+          this.gi_params_data[3] = this.total_screen_probes; // Derived from grid dimensions
+          this.gi_params_data[4] = SharedFrameInfoBuffer.get_frame_index();
+          this.gi_params_data[5] = this.config.reset_caches ? 1 : 0;
+          this.gi_params_data[6] = this.config.indirect_boost;
+          this.gi_params_data[7] = this.config.upscale_x;
+          this.gi_params_data[8] = this.config.upscale_y;
+          this.gi_params_data[9] = this.config.cell_size_heuristic;
+          gi_params_buf.write_raw(this.gi_params_data);
+
+          // Clear reset flag after use
+          this.config.reset_caches = false;
+        }
+      );
+
+      // =========================================================================
+      // Pass 1: Reset counters (GPU compute shader)
+      // =========================================================================
+      render_graph.add_pass(
+        "gi_reset",
+        RenderPassFlags.Compute,
+        {
+          inputs: [gi_counters, light_count],
+          outputs: [gi_counters],
+          shader_setup: gi_reset_shader_setup,
+        },
+        (graph, frame_data, encoder) => {
+          const pass = graph.get_physical_pass(frame_data.current_pass);
+          pass.dispatch(1, 1, 1); // Single thread does the reset
+        }
+      );
+
+      // =========================================================================
+      // Pass 2: Spawn Screen Probes (Motion vector reprojection + Halton spawn)
+      // - Each pixel in tile uses motion vectors to track backward in time
+      // - Finds which probe contained that geometry in previous frame
+      // - Validates probe: plane_distance < cell_size && normal_dot > 0.95
+      // - If valid: reproject probe (keep accumulated radiance!)
+      // - If invalid: spawn new probe using Halton jitter (reset radiance)
+      // =========================================================================
+      render_graph.add_pass(
+        "gi_screen_probe_spawn",
         RenderPassFlags.Compute,
         {
           inputs: [
             gi_params,
             gi_counters,
-            probe_path_state,
-            tlas_bvh2_bounds,
-            tlas_bvh4_nodes,
-            blas_atlas,
-            entity_transforms,
-            index_buffer,
-            mesh_asset_ids,
+            screen_probes,
+            gbuffer_position,
+            gbuffer_normal,
+            gbuffer_albedo,
+            gbuffer_smra,
+            gbuffer_motion_emissive,
           ],
-          outputs: [probe_path_state],
-          shader_setup: screen_probe_trace_hit_visibility_shader_setup,
+          outputs: [gi_counters, screen_probes],
+          shader_setup: screen_probe_spawn_shader_setup,
         },
         (graph, frame_data, encoder) => {
           const pass = graph.get_physical_pass(frame_data.current_pass);
-          const max_rays = this.total_screen_probes * this.config.screen_ray_count;
-          pass.dispatch(Math.ceil(max_rays / 128), 1, 1);
+          pass.dispatch(grid_width, grid_height, 1);
         }
       );
 
+      // =========================================================================
+      // Pass 3-N: Screen Probe Path Tracing (Init, Hit, Shade for each bounce)
+      // =========================================================================
       render_graph.add_pass(
-        `gi_probe_trace_hit_${bounce}`,
+        "gi_probe_trace_init",
         RenderPassFlags.Compute,
         {
-          inputs: [
-            gi_params,
-            gi_counters,
-            probe_path_state,
-            tlas_bvh2_bounds,
-            tlas_bvh4_nodes,
-            blas_atlas,
-            entity_transforms,
-            index_buffer,
-            mesh_asset_ids,
-          ],
-          outputs: [probe_path_state],
-          shader_setup: screen_probe_trace_hit_shader_setup,
-        },
-        (graph, frame_data, encoder) => {
-          const pass = graph.get_physical_pass(frame_data.current_pass);
-          const max_rays = this.total_screen_probes * this.config.screen_ray_count;
-          pass.dispatch(Math.ceil(max_rays / 128), 1, 1);
-        }
-      );
-
-      const shade_inputs = [
-        gi_params,
-        skydome_data_buffer,
-        gi_counters,
-        probe_path_state,
-        probe_path_shade,
-        world_cache,
-        params_gpu_buffer,
-        material_palette_offsets_buffer,
-        material_palette_buffer,
-        dense_lights,
-        albedo_pool_buffer,
-        normal_pool_buffer,
-        roughness_pool_buffer,
-        metallic_pool_buffer,
-        ao_pool_buffer,
-        height_pool_buffer,
-        specular_pool_buffer,
-        emission_pool_buffer,
-        skybox_texture_buffer,
-      ];
-
-      render_graph.add_pass(
-        `gi_probe_trace_shade_${bounce}`,
-        RenderPassFlags.Compute,
-        {
-          inputs: shade_inputs,
+          inputs: [gi_params, gi_counters, screen_probes, probe_path_state, probe_path_shade],
           outputs: [probe_path_state, probe_path_shade],
-          shader_setup: screen_probe_trace_shade_shader_setup,
+          shader_setup: screen_probe_trace_init_shader_setup,
         },
         (graph, frame_data, encoder) => {
           const pass = graph.get_physical_pass(frame_data.current_pass);
@@ -500,59 +414,148 @@ export class GI {
           pass.dispatch(Math.ceil(max_rays / 128), 1, 1);
         }
       );
-    }
 
-    // =========================================================================
-    // Pass N+2: Update Screen Probes (accumulate ray radiance and world cache)
-    // - Performs weighted averaging of radiance over time
-    // - New spawns start fresh; reprojected probes maintain history
-    // - Sample count is clamped to prevent overflow and ensure responsiveness
-    // =========================================================================
-    render_graph.add_pass(
-      "gi_screen_probe_update",
-      RenderPassFlags.Compute,
-      {
-        inputs: [
+      for (let bounce = 0; bounce < this.config.max_bounces + 1; bounce++) {
+        render_graph.add_pass(
+          `gi_probe_trace_hit_visibility_${bounce}`,
+          RenderPassFlags.Compute,
+          {
+            inputs: [
+              gi_params,
+              gi_counters,
+              probe_path_state,
+              tlas_bvh2_bounds,
+              tlas_bvh4_nodes,
+              blas_atlas,
+              entity_transforms,
+              index_buffer,
+              mesh_asset_ids,
+            ],
+            outputs: [probe_path_state],
+            shader_setup: screen_probe_trace_hit_visibility_shader_setup,
+          },
+          (graph, frame_data, encoder) => {
+            const pass = graph.get_physical_pass(frame_data.current_pass);
+            const max_rays = this.total_screen_probes * this.config.screen_ray_count;
+            pass.dispatch(Math.ceil(max_rays / 128), 1, 1);
+          }
+        );
+
+        render_graph.add_pass(
+          `gi_probe_trace_hit_${bounce}`,
+          RenderPassFlags.Compute,
+          {
+            inputs: [
+              gi_params,
+              gi_counters,
+              probe_path_state,
+              tlas_bvh2_bounds,
+              tlas_bvh4_nodes,
+              blas_atlas,
+              entity_transforms,
+              index_buffer,
+              mesh_asset_ids,
+            ],
+            outputs: [probe_path_state],
+            shader_setup: screen_probe_trace_hit_shader_setup,
+          },
+          (graph, frame_data, encoder) => {
+            const pass = graph.get_physical_pass(frame_data.current_pass);
+            const max_rays = this.total_screen_probes * this.config.screen_ray_count;
+            pass.dispatch(Math.ceil(max_rays / 128), 1, 1);
+          }
+        );
+
+        const shade_inputs = [
           gi_params,
+          skydome_data_buffer,
           gi_counters,
-          screen_probes,
           probe_path_state,
           probe_path_shade,
           world_cache,
-        ],
-        outputs: [screen_probes, world_cache],
-        shader_setup: screen_probe_update_shader_setup,
-      },
-      (graph, frame_data, encoder) => {
-        const pass = graph.get_physical_pass(frame_data.current_pass);
-        pass.dispatch(Math.ceil(this.total_screen_probes / 128), 1, 1);
-      }
-    );
+          params_gpu_buffer,
+          material_palette_offsets_buffer,
+          material_palette_buffer,
+          dense_lights,
+          albedo_pool_buffer,
+          normal_pool_buffer,
+          roughness_pool_buffer,
+          metallic_pool_buffer,
+          ao_pool_buffer,
+          height_pool_buffer,
+          specular_pool_buffer,
+          emission_pool_buffer,
+          skybox_texture_buffer,
+        ];
 
-    // =========================================================================
-    // Pass N+3: Reconstruct Final Radiance (interpolate from probes)
-    // =========================================================================
-    // render_graph.add_pass(
-    //   "gi_reconstruct",
-    //   RenderPassFlags.Compute,
-    //   {
-    //     inputs: [
-    //       gi_params,
-    //       gi_counters,
-    //       screen_probes,
-    //       gbuffer_position,
-    //       gbuffer_normal,
-    //       gbuffer_albedo,
-    //       gi_output,
-    //     ],
-    //     outputs: [gi_output],
-    //     shader_setup: screen_probe_reconstruct_shader_setup,
-    //   },
-    //   (graph, frame_data, encoder) => {
-    //     const pass = graph.get_physical_pass(frame_data.current_pass);
-    //     pass.dispatch(Math.ceil(width / 8), Math.ceil(height / 8), 1);
-    //   }
-    // );
+        render_graph.add_pass(
+          `gi_probe_trace_shade_${bounce}`,
+          RenderPassFlags.Compute,
+          {
+            inputs: shade_inputs,
+            outputs: [probe_path_state, probe_path_shade],
+            shader_setup: screen_probe_trace_shade_shader_setup,
+          },
+          (graph, frame_data, encoder) => {
+            const pass = graph.get_physical_pass(frame_data.current_pass);
+            const max_rays = this.total_screen_probes * this.config.screen_ray_count;
+            pass.dispatch(Math.ceil(max_rays / 128), 1, 1);
+          }
+        );
+      }
+
+      // =========================================================================
+      // Pass N+2: Update Screen Probes (accumulate ray radiance and world cache)
+      // - Performs weighted averaging of radiance over time
+      // - New spawns start fresh; reprojected probes maintain history
+      // - Sample count is clamped to prevent overflow and ensure responsiveness
+      // =========================================================================
+      render_graph.add_pass(
+        "gi_screen_probe_update",
+        RenderPassFlags.Compute,
+        {
+          inputs: [
+            gi_params,
+            gi_counters,
+            screen_probes,
+            probe_path_state,
+            probe_path_shade,
+            world_cache,
+          ],
+          outputs: [screen_probes, world_cache],
+          shader_setup: screen_probe_update_shader_setup,
+        },
+        (graph, frame_data, encoder) => {
+          const pass = graph.get_physical_pass(frame_data.current_pass);
+          pass.dispatch(Math.ceil(this.total_screen_probes / 128), 1, 1);
+        }
+      );
+
+      // =========================================================================
+      // Pass N+3: Reconstruct Final Radiance (interpolate from probes)
+      // =========================================================================
+      // render_graph.add_pass(
+      //   "gi_reconstruct",
+      //   RenderPassFlags.Compute,
+      //   {
+      //     inputs: [
+      //       gi_params,
+      //       gi_counters,
+      //       screen_probes,
+      //       gbuffer_position,
+      //       gbuffer_normal,
+      //       gbuffer_albedo,
+      //       gi_output,
+      //     ],
+      //     outputs: [gi_output],
+      //     shader_setup: screen_probe_reconstruct_shader_setup,
+      //   },
+      //   (graph, frame_data, encoder) => {
+      //     const pass = graph.get_physical_pass(frame_data.current_pass);
+      //     pass.dispatch(Math.ceil(width / 8), Math.ceil(height / 8), 1);
+      //   }
+      // );
+    }
 
     // Store references for external use
     this.gi_params = gi_params;
@@ -568,7 +571,7 @@ export class GI {
     main_position_image,
     main_normal_image,
     post_lighting_image_desc,
-    force_recreate = false,
+    force_recreate = false
   ) {
     // Debug visualization texture
     this.debug_probe_texture = render_graph.create_image({

@@ -286,7 +286,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         
         // Kill path if we hit an emissive on first bounce (already contributed)
         let is_first_bounce_emissive = emissive > 0.1;
-        let should_continue = (pt_params.max_bounces > 1u) && !is_first_bounce_emissive;
+        let should_continue = !is_first_bounce_emissive;
         let alive_next = select(0u, 1u, should_continue);
         
         // Spawn next ray (bounce 1)

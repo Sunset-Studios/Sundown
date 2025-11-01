@@ -617,7 +617,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
             // Emissive surfaces are light sources - they don't need indirect lighting accumulation
             // This prevents temporal instability from varying indirect contributions
             let is_first_bounce_emissive = (current_bounce == 0u) && (emissive > 0.1);
-            let should_continue = (info.state_u32.x + 1u) < pt_params.max_bounces && !is_first_bounce_emissive;
+            let should_continue = (info.state_u32.x + 1u) <= pt_params.max_bounces && !is_first_bounce_emissive;
             let alive_next = select(0u, 1u, should_continue);
             
             info.origin_tmin = vec4f(hit_pos + n * 0.001, 0.0001);
