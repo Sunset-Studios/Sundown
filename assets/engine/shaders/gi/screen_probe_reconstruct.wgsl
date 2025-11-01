@@ -5,7 +5,6 @@
 // - Outputs final indirect lighting texture
 // =============================================================================
 #include "common.wgsl"
-#include "lighting_common.wgsl"
 #include "gi/gi_common.wgsl"
 
 @group(1) @binding(0) var<uniform> gi_params: GIParams;
@@ -15,29 +14,6 @@
 @group(1) @binding(4) var gbuffer_normal: texture_2d<f32>;
 @group(1) @binding(5) var gbuffer_albedo: texture_2d<f32>;
 @group(1) @binding(6) var output_gi: texture_storage_2d<rgba16float, write>;
-
-// Compute weight for a probe contribution
-fn compute_probe_weight(
-    pixel_pos: vec3<f32>,
-    pixel_normal: vec3<f32>,
-    probe_pos: vec3<f32>,
-    probe_normal: vec3<f32>,
-    probe_radius: f32
-) -> f32 {
-    // Distance-based weight
-    let dist = length(pixel_pos - probe_pos);
-    let dist_weight = max(0.0, 1.0 - dist / max(0.001, probe_radius));
-    
-    // Normal similarity weight
-    let normal_dot = max(0.0, dot(pixel_normal, probe_normal));
-    let normal_weight = pow(normal_dot, 4.0); // Higher power for sharper falloff
-    
-    // View direction weight (prefer probes in front of surface)
-    let to_probe = normalize(probe_pos - pixel_pos);
-    let view_weight = max(0.0, dot(pixel_normal, to_probe));
-    
-    return dist_weight * normal_weight * view_weight;
-}
 
 @compute @workgroup_size(8, 8, 1)
 fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {

@@ -1311,7 +1311,6 @@ export class DeferredShadingStrategy {
           index_buffer,
           dense_lights,
           light_count,
-          debug_view,
           this.force_recreate
         );
       }

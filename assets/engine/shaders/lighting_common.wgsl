@@ -24,27 +24,6 @@ struct Light {
     shadows_dirty: f32,
 };
 
-struct GIParams {
-    screen_probe_size: f32,         // Side length of square probe footprint in pixels
-    screen_ray_count: f32,          // Rays per screen probe
-    world_cache_size: f32,          // Number of world cache entries
-    total_screen_probes: f32,       // Total probes in grid (derived from resolution)
-    frame_index: f32,               // Current frame for temporal updates
-    reset_caches: f32,              // Force reset flag
-    indirect_boost: f32,            // Indirect lighting multiplier (f32 bits)
-    upscale_x: f32,                 // Temporal upscale factor X
-    upscale_y: f32,                 // Temporal upscale factor Y
-    cell_size_heuristic: f32,       // Spatial error tolerance (f32 bits)
-};
-
-struct ScreenProbe {
-    position_radius: vec4<f32>,     // xyz = world position, w = influence radius
-    normal_frame: vec4<f32>,        // xyz = normal, w = frame stamp
-    radiance_m: vec4<f32>,          // xyz = accumulated radiance, w = sample count (M)
-    albedo_roughness: vec4<f32>,    // xyz = albedo, w = roughness
-    state: vec4<f32>,               // x = active(0/1), y = pixel_x, z = pixel_y, w = probe_id
-};
-
 // ------------------------------------------------------------------------------------
 // Light Helpers
 // ------------------------------------------------------------------------------------

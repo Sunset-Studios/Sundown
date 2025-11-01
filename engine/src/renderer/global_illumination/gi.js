@@ -13,7 +13,12 @@
  *    - Threads compete atomically for best match (closest 3D distance)
  * 3. If reprojection succeeds: Reuse probe data (keep accumulated radiance!)
  * 4. If reprojection fails: Spawn new probe using Halton jitter, reset radiance
- * 5. Gradual convergence as all tiles fill in over multiple frames
+ * 5. Ray tracing: Trace rays from probe position with temporal jittering
+ * 6. Accumulation: Weighted average of ray throughput over time
+ *    - Reprojected probes: maintain history for progressive refinement
+ *    - New spawns: start fresh to avoid ghosting
+ *    - Sample count clamped to ~32 for responsiveness
+ * 7. Gradual convergence as all tiles fill in over multiple frames
  *
  * Features:
  * - ReSTIR-based path sampling for high-quality convergence
@@ -111,7 +116,7 @@ export class GI {
   // Configuration parameters
   config = {
     screen_probe_size: 4, // Side length of probe footprint in pixels
-    screen_ray_count: 2, // Rays per screen probe
+    screen_ray_count: 1, // Rays per screen probe
     upscale_x: 2, // Temporal upscale factor X (2x2 = 4 frames to fill)
     upscale_y: 2, // Temporal upscale factor Y
     cell_size_heuristic: 0.5, // Spatial error tolerance for probe reuse (world units)
@@ -180,7 +185,6 @@ export class GI {
     index_buffer,
     dense_lights,
     light_count,
-    debug_view,
     force_recreate = false
   ) {
     // =========================================================================
@@ -292,7 +296,7 @@ export class GI {
     const max_probe_rays = this.total_screen_probes * this.config.screen_ray_count;
     const probe_path_state = render_graph.create_buffer({
       name: "gi_probe_path_state",
-      size: max_probe_rays * 36 * 4, // 9 vec4<f32> per ray
+      size: max_probe_rays * 12 * 4, // 12 vec4<f32> per ray
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
       force: force_recreate,
     });
@@ -300,7 +304,7 @@ export class GI {
     // Probe path shade (shading state with ReSTIR)
     const probe_path_shade = render_graph.create_buffer({
       name: "gi_probe_path_shade",
-      size: max_probe_rays * 20 * 4, // 5 vec4<f32> per ray
+      size: max_probe_rays * 8 * 4, // 2 vec4<f32> per ray
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
       force: force_recreate,
     });
@@ -314,8 +318,6 @@ export class GI {
       usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
       force: force_recreate,
     });
-
-
 
     // =========================================================================
     // Pass 0: Reset counters and upload parameters
@@ -389,10 +391,6 @@ export class GI {
       },
       (graph, frame_data, encoder) => {
         const pass = graph.get_physical_pass(frame_data.current_pass);
-        // Dispatch one workgroup per probe tile (workgroup size = 8x8)
-        // Each workgroup validates and updates one probe
-        const grid_width = Math.ceil(width / this.config.screen_probe_size);
-        const grid_height = Math.ceil(height / this.config.screen_probe_size);
         pass.dispatch(grid_width, grid_height, 1);
       }
     );
@@ -506,6 +504,9 @@ export class GI {
 
     // =========================================================================
     // Pass N+2: Update Screen Probes (accumulate ray radiance and world cache)
+    // - Performs weighted averaging of radiance over time
+    // - New spawns start fresh; reprojected probes maintain history
+    // - Sample count is clamped to prevent overflow and ensure responsiveness
     // =========================================================================
     render_graph.add_pass(
       "gi_screen_probe_update",

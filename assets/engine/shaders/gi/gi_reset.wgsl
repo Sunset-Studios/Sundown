@@ -4,6 +4,7 @@
 // - Active probe count = number of probes selected for update this frame
 // - All GPU-side, no CPU readbacks needed
 // =============================================================================
+#include "common.wgsl"
 #include "gi/gi_common.wgsl"
 
 @group(1) @binding(0) var<storage, read_write> gi_counters: GICounters;
@@ -15,12 +16,8 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     if (gid.x == 0u) {
         // Reset active probe count for this frame (how many will be updated)
         atomicStore(&gi_counters.active_probe_count, 0u);
-        
         // Copy light count from lighting system buffer
         gi_counters.light_count = light_count_buffer[0];
-        
-        // Note: Total probe count is now derived from grid dimensions (GIParams.total_screen_probes)
-        // No need to track it atomically!
     }
 }
 

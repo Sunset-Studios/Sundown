@@ -5,7 +5,6 @@
 // - Dispatches one thread per probe, each probe writes to its influenced pixels
 // =============================================================================
 #include "common.wgsl"
-#include "lighting_common.wgsl"
 #include "gi/gi_common.wgsl"
 
 @group(1) @binding(0) var<uniform> gi_params: GIParams;
@@ -37,8 +36,8 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let res = textureDimensions(output_debug);
     
     // Probe is active - visualize its data
-    let probe_radiance = select(probe.radiance_m.xyz, vec3<f32>(1.0, 0.0, 0.0), probe.state.x == 0.0);
-    let probe_sample_count = probe.radiance_m.w;
+    let probe_sample_count = select(1.0, probe.radiance_m.w, probe.state.x > 0.0);
+    let probe_radiance = select(probe.radiance_m.xyz, vec3<f32>(1.0, 0.0, 0.0), probe.state.x == 0.0) / max(probe_sample_count, 1.0);
     
     // Calculate probe tile center (stable position, not jittered sample)
     let probe_size = u32(gi_params.screen_probe_size);
@@ -67,7 +66,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
             let scene = textureLoad(scene_color, pixel_i32, 0).rgb;
 
             let dist = distance(pixel, probe_center);
-            let edge_falloff = 1.0 - smoothstep(DEBUG_PROBE_RADIUS - 1.0, DEBUG_PROBE_RADIUS, dist);
+            let edge_falloff = 1.0 - smoothstep(DEBUG_PROBE_RADIUS - 0.5, DEBUG_PROBE_RADIUS, dist);
             let final_color = mix(scene, probe_radiance, edge_falloff);
              
             textureStore(output_debug, pixel_i32, vec4<f32>(final_color, 1.0));

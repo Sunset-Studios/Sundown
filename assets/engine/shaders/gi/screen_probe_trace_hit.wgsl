@@ -9,22 +9,9 @@ diagnostic(off,subgroup_uniformity);
 #include "common.wgsl"
 #include "acceleration_common.wgsl"
 #include "blas_common.wgsl"
-#include "lighting_common.wgsl"
 #include "gi/gi_common.wgsl"
 
 const NODE_STACK_SIZE = 12;
-
-struct ProbePathState {
-    origin_tmin: vec4<f32>,
-    direction_tmax: vec4<f32>,
-    normal_section_index: vec4<f32>,
-    state_u32: vec4<u32>,
-    hit_attr0: vec4<f32>,
-    hit_attr1: vec4<f32>,
-    shadow_origin: vec4<f32>,
-    shadow_direction: vec4<f32>,
-    shadow_radiance: vec4<f32>,
-};
 
 @group(1) @binding(0) var<uniform> gi_params: GIParams;
 @group(1) @binding(1) var<storage, read_write> gi_counters: GICounters;
