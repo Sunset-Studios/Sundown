@@ -264,7 +264,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
     
     // Only shade if we have a valid hit
-    if (info.state_u32.w != 0xffffffffu) {
+    if (info.state_u32.w != 0xffffffffu && info.state_u32.y != 0u) {
         var albedo: vec3<f32>;
         var roughness: f32;
         var metallic: f32;

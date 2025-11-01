@@ -149,38 +149,9 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         shade.throughput += vec4f(emissive_contribution, 0.0);
     }
     
-    // =============================================================================
-    // DIRECT LIGHTING with Shadow Rays (NEE)
-    // =============================================================================
-    let num_lights = light_count_buffer[0];
-    
     var rng = u32(shade.rng_sample_count_frame_stamp.x);
     if (rng == 0u) { rng = hash(pixel_index ^ u32(frame_info.frame_index)); }
     else { rng = random_seed(rng); }
-    
-    if (num_lights > 0u) {
-        rng = random_seed(rng);
-        let light_idx = u32(rand_float(rng) * f32(num_lights)) % num_lights;
-        let light = dense_lights_buffer[light_idx];
-        
-        let light_dir = get_light_dir(light, hit_pos);
-        let attenuation = get_light_attenuation(light, hit_pos);
-        
-        let brdf = calculate_brdf_rt(
-            n, v_dir, light_dir, albedo, roughness, metallic,
-            reflectance, clear_coat, clear_coat_roughness
-        );
-        
-        // Direct lighting (no bounce multiplier for first bounce)
-        let light_contrib = brdf * light.color.rgb * light.intensity * attenuation 
-            * shade.path_weight.xyz * f32(num_lights);
-        
-        // Setup shadow ray for visibility test
-        let selected_distance = select(1e30, length(light.position.xyz - hit_pos), light.light_type != 0.0);
-        info.shadow_origin = vec4f(hit_pos + n * 0.001, 0.0001);
-        info.shadow_direction = vec4f(light_dir, selected_distance * 0.999);
-        info.shadow_radiance = vec4f(light_contrib, 1.0);
-    }
     
     // =============================================================================
     // INDIRECT LIGHTING - Generate first bounce ray using ReSTIR
@@ -298,6 +269,34 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         
         shade.rng_sample_count_frame_stamp.x = f32(rng);
         shade.rng_sample_count_frame_stamp.y += 1.0;
+    }
+
+    // =============================================================================
+    // DIRECT LIGHTING with Shadow Rays (NEE)
+    // =============================================================================
+    let num_lights = light_count_buffer[0];
+    if (num_lights > 0u) {
+        rng = random_seed(rng);
+        let light_idx = u32(rand_float(rng) * f32(num_lights)) % num_lights;
+        let light = dense_lights_buffer[light_idx];
+        
+        let light_dir = get_light_dir(light, hit_pos);
+        let attenuation = get_light_attenuation(light, hit_pos);
+        
+        let brdf = calculate_brdf_rt(
+            n, v_dir, light_dir, albedo, roughness, metallic,
+            reflectance, clear_coat, clear_coat_roughness
+        );
+        
+        // Direct lighting (no bounce multiplier for first bounce)
+        let light_contrib = brdf * light.color.rgb * light.intensity * attenuation 
+            * shade.path_weight.xyz * f32(num_lights);
+        
+        // Setup shadow ray for visibility test
+        let selected_distance = select(1e30, length(light.position.xyz - hit_pos), light.light_type != 0.0);
+        info.shadow_origin = vec4f(hit_pos + n * 0.001, 0.0001);
+        info.shadow_direction = vec4f(light_dir, selected_distance * 0.999);
+        info.shadow_radiance = vec4f(light_contrib, 1.0);
     }
     
     // Write results

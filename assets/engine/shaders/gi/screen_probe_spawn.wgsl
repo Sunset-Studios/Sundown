@@ -205,8 +205,15 @@ fn cs(
         let normal_length = length(normal_data.xyz);
         let albedo = textureLoad(gbuffer_albedo, pixel_i32, 0).rgb;
         let smra = textureLoad(gbuffer_smra, pixel_i32, 0);
+        let motion_emissive = textureLoad(gbuffer_motion, pixel_i32, 0);
 
         if (normal_length > 0.0) {
+            // Extract material properties from G-buffer
+            let roughness = smra.g;
+            let metallic = smra.b;
+            let reflectance = smra.r * 0.0009765625; // Decode: 1.0 / 1024
+            let emissive = motion_emissive.w;
+            
             // Place probe at chosen pixel location
             // If reprojection succeeded: at winning pixel, copy radiance from previous probe
             // If reprojection failed: at Halton-jittered pixel, initialize new probe
@@ -220,7 +227,13 @@ fn cs(
             );
             screen_probes[probe_index].albedo_roughness = vec4<f32>(
                 albedo,
-                smra.g
+                roughness
+            );
+            screen_probes[probe_index].material_props = vec4<f32>(
+                metallic,
+                reflectance,
+                emissive,
+                0.0  // unused
             );
             screen_probes[probe_index].radiance_m = select(
                 vec4<f32>(0.0),

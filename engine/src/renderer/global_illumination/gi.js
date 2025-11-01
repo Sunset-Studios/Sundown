@@ -208,10 +208,10 @@ export class GI {
     });
 
     // Screen probe storage (persistent across frames)
-    // Each probe: position+radius(16) + normal+frame(16) + radiance+m(16) + albedo+roughness(16) + state(16) = 80 bytes
+    // Each probe: position+radius(16) + normal+frame(16) + radiance+m(16) + albedo+roughness(16) + material_props(16) + state(16) = 96 bytes
     const screen_probes = render_graph.create_buffer({
       name: "gi_screen_probes",
-      size: this.total_screen_probes * 80,
+      size: this.total_screen_probes * 96,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
       force: force_recreate,
       persistent: true, // Keep across frames
@@ -270,24 +270,27 @@ export class GI {
         StaticMeshFragment,
         material_offsets_name
       );
-  
+
       const params_gpu_buffer = render_graph.register_buffer(params_gpu.config.name);
       const material_palette_buffer = render_graph.register_buffer(material_palette.config.name);
       const material_palette_offsets_buffer = render_graph.register_buffer(
         material_palette_offsets.buffer.config.name
       );
-  
+
       // Get texture pools
       const default_texture = Texture.default_array();
       const albedo_pool = ResourceCache.get().fetch(CacheTypes.IMAGE, texture_pool_albedo_name);
       const normal_pool = ResourceCache.get().fetch(CacheTypes.IMAGE, texture_pool_normal_name);
-      const roughness_pool = ResourceCache.get().fetch(CacheTypes.IMAGE, texture_pool_roughness_name);
+      const roughness_pool = ResourceCache.get().fetch(
+        CacheTypes.IMAGE,
+        texture_pool_roughness_name
+      );
       const metallic_pool = ResourceCache.get().fetch(CacheTypes.IMAGE, texture_pool_metallic_name);
       const ao_pool = ResourceCache.get().fetch(CacheTypes.IMAGE, texture_pool_ao_name);
       const height_pool = ResourceCache.get().fetch(CacheTypes.IMAGE, texture_pool_height_name);
       const specular_pool = ResourceCache.get().fetch(CacheTypes.IMAGE, texture_pool_specular_name);
       const emission_pool = ResourceCache.get().fetch(CacheTypes.IMAGE, texture_pool_emission_name);
-  
+
       const default_texture_buffer = render_graph.register_image(default_texture.config.name);
       const albedo_pool_buffer = albedo_pool
         ? render_graph.register_image(albedo_pool.config.name)
@@ -313,14 +316,14 @@ export class GI {
       const emission_pool_buffer = emission_pool
         ? render_graph.register_image(emission_pool.config.name)
         : default_texture_buffer;
-  
+
       // Environment data
       const skydome_data = SharedEnvironmentData.get_skydome_data();
       const skydome_data_buffer = render_graph.register_buffer(skydome_data.config.name);
-  
+
       const skybox = SharedEnvironmentData.get_skybox();
       const skybox_texture_buffer = render_graph.register_image(skybox.config.name);
-      
+
       // =========================================================================
       // Pass 0: Reset counters and upload parameters
       // =========================================================================
@@ -404,7 +407,15 @@ export class GI {
         "gi_probe_trace_init",
         RenderPassFlags.Compute,
         {
-          inputs: [gi_params, gi_counters, screen_probes, probe_path_state, probe_path_shade],
+          inputs: [
+            gi_params,
+            gi_counters,
+            screen_probes,
+            probe_path_state,
+            probe_path_shade,
+            light_count,
+            dense_lights,
+          ],
           outputs: [probe_path_state, probe_path_shade],
           shader_setup: screen_probe_trace_init_shader_setup,
         },
@@ -415,7 +426,7 @@ export class GI {
         }
       );
 
-      for (let bounce = 0; bounce < this.config.max_bounces + 1; bounce++) {
+      for (let bounce = 0; bounce < this.config.max_bounces; bounce++) {
         render_graph.add_pass(
           `gi_probe_trace_hit_visibility_${bounce}`,
           RenderPassFlags.Compute,
