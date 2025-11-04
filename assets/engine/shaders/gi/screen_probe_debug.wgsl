@@ -15,7 +15,7 @@
 @group(1) @binding(5) var scene_color: texture_2d<f32>;
 @group(1) @binding(6) var output_debug: texture_storage_2d<rgba16float, write>;
 
-const DEBUG_PROBE_RADIUS: f32 = 1.5;
+const DEBUG_PROBE_RADIUS: f32 = 2.5;
 
 // =============================================================================
 // Probe Grid Visualization

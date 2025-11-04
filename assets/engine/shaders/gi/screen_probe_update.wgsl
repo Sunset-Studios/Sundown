@@ -33,13 +33,15 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     
     let rays_per_probe = u32(gi_params.screen_ray_count);
     
+    // Get camera position for adaptive world cache eviction
+    let view_index = u32(frame_info.view_index);
+    let view = view_buffer[view_index];
+    let camera_position = view.view_position.xyz;
+    
     // Accumulate radiance from all rays for this probe
     var accumulated_radiance = vec3<f32>(0.0);
     
     // World cache parameters
-    let world_cache_size = u32(gi_params.world_cache_size);
-    let cell_size = 1.0;
-    
     for (var i = 0u; i < rays_per_probe; i = i + 1u) {
         let ray_id = gid.x * rays_per_probe + i;
         let path = probe_path_state[ray_id];
@@ -54,30 +56,18 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         
         // === Update World Cache for Secondary Bounces ===
         // Insert radiance at secondary hit points to enable reuse across probes
-        let bounce = path.state_u32.x;
-        let tri_id = path.state_u32.w;
-        
-        if (bounce > 0u && tri_id != 0xffffffffu) {
-            let hit_pos = path.origin_tmin.xyz;
-            let hit_normal = path.normal_section_index.xyz;
-            
-            // Compute outgoing radiance at this point
-            // Divide by path weight PDF to get unbiased radiance estimate
-            let outgoing_radiance = radiance / max(path.path_weight.w, 0.001);
-            
-            // Validate before inserting
-            if (!isinf(outgoing_radiance.x) && !isinf(outgoing_radiance.y) && !isinf(outgoing_radiance.z)) {
-                let inserted = insert_world_cache(
-                    hit_pos,
-                    hit_normal,
-                    outgoing_radiance,
-                    &world_cache,
-                    world_cache_size,
-                    cell_size,
-                    u32(gi_params.frame_index)
-                );
-            }
-        }
+        // Uses adaptive eviction: when full, replaces oldest, farthest, lowest-confidence entries
+        let hit_pos = path.origin_tmin.xyz;
+        let hit_normal = path.normal_section_index.xyz;
+        insert_world_cache(
+            hit_pos,
+            hit_normal,
+            radiance,
+            u32(gi_params.world_cache_size),
+            gi_params.world_cache_cell_size,
+            u32(gi_params.frame_index),
+            camera_position
+        );
     }
     
     // =========================================================================
@@ -90,7 +80,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     
     // Apply temporal blend for stable, shadow-preserving accumulation
     let blended_radiance = temporal_blend(accumulated_radiance + prev_radiance, prev_radiance);
-    
+
     // Update sample count to track total accumulated samples
     screen_probes[gid.x].radiance_m = vec4<f32>(blended_radiance, prev_sample_count + f32(rays_per_probe));
     screen_probes[gid.x].normal_frame.w = gi_params.frame_index;

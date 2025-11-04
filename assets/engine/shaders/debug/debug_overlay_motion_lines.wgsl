@@ -8,7 +8,8 @@ struct VertexOutput {
 
 @group(1) @binding(0) var motion_texture: texture_2d<f32>;
 @group(1) @binding(1) var depth_texture: texture_2d<f32>;
-@group(1) @binding(2) var scene_color: texture_2d<f32>;
+@group(1) @binding(2) var position_texture: texture_2d<f32>;
+@group(1) @binding(3) var scene_color: texture_2d<f32>;
 
 const TILE_SIZE = 16.0;
 const LINE_WIDTH = 1.0;
@@ -41,25 +42,50 @@ fn fs(input: VertexOutput) -> @location(0) vec4<f32> {
     let tile_center_pixel = (tile_coord + 0.5) * TILE_SIZE;
     let tile_center_uv = tile_center_pixel / resolution;
     
-    // Sample motion vector at tile center (in NDC space, -1 to 1)
+    // Sample world-space velocity (xyz stored in motion texture)
     let motion_sample = textureSample(motion_texture, non_filtering_sampler, tile_center_uv);
-    let motion_ndc = motion_sample.rg;
+    let world_velocity = motion_sample.xyz;
     
     // Sample depth to check if this is valid geometry
     let depth = textureSample(depth_texture, non_filtering_sampler, tile_center_uv).r;
     
-    // Convert motion from NDC space to pixel space
-    // NDC space is -1 to 1, we need to convert to pixels
-    let motion_pixels = motion_ndc * resolution * 0.5 * MOTION_SCALE;
+    // Reconstruct world position at the tile center
+    let world_position = textureSample(position_texture, non_filtering_sampler, tile_center_uv).xyz;
+    let prev_world_position = world_position - world_velocity;
+    
+    // Project both positions using current and previous view-projection matrices
+    let view_index = u32(frame_info.view_index);
+    let view_proj = view_buffer[view_index].view_projection_matrix;
+    let prev_view_proj = view_buffer[view_index].prev_projection_matrix * view_buffer[view_index].prev_view_matrix;
+    let current_clip = view_proj * vec4f(
+        world_position.x,
+        world_position.y,
+        world_position.z,
+        1.0
+    );
+    let prev_clip = prev_view_proj * vec4f(
+        prev_world_position.x,
+        prev_world_position.y,
+        prev_world_position.z,
+        1.0
+    );
+    
+    var motion_pixels = vec2f(0.0);
+    if (current_clip.w > 1e-5 && prev_clip.w > 1e-5) {
+        let current_ndc = current_clip.xy / current_clip.w;
+        let prev_ndc = prev_clip.xy / prev_clip.w;
+        let motion_ndc = current_ndc - prev_ndc;
+        motion_pixels = motion_ndc * resolution * vec2f(0.5, -0.5) * MOTION_SCALE;
+    }
     
     // Calculate line endpoints in pixel space
-    // Motion vector is (current - previous), so arrows point in direction of motion
     let line_start = tile_center_pixel;
     let line_end = tile_center_pixel + motion_pixels;
     
-    // Check if motion is significant
-    let motion_magnitude = length(motion_ndc);
-    let is_valid = motion_magnitude > 0.001 && depth < 0.9999;
+    // Check if motion is significant and geometry is valid
+    let motion_magnitude = length(motion_pixels);
+    let has_valid_clip = (current_clip.w > 1e-5) && (prev_clip.w > 1e-5);
+    let is_valid = has_valid_clip && motion_magnitude > 0.1 && depth < 0.9999;
     
     // Calculate distance from current pixel to the motion line
     let dist_to_line = distance_to_line_segment(pixel_coord, line_start, line_end);

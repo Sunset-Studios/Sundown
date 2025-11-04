@@ -1399,11 +1399,12 @@ export class DeferredShadingStrategy {
       }
 
       // ┌─────────────────────────────────────────────────────────────────────────────┐
-      // │ 🔍 PASS: GI Debug Probe Visualization                                     │
-      // │    Composite probe irradiance on top of lit scene to separate texture     │
+      // │ 🔍 PASS: GI Debug Visualizations                                          │
+      // │    - Screen Probes: Shows probe irradiance on screen                      │
+      // │    - World Cache: Shows spatial hash cached radiance                      │
       // │    (displayed via debug overlay, doesn't affect main rendering pipeline)  │
       // └─────────────────────────────────────────────────────────────────────────────┘
-      if (gi_enabled && debug_view === DebugDrawType.GI_ScreenProbes) {
+      if (gi_enabled && (debug_view === DebugDrawType.GI_ScreenProbes || debug_view === DebugDrawType.GI_WorldCache)) {
         this.gi.add_debug_passes(
           render_graph,
           image_extent.width,
@@ -1411,6 +1412,7 @@ export class DeferredShadingStrategy {
           main_position_image,
           main_normal_image,
           post_lighting_image_desc,
+          debug_view,
           this.force_recreate
         );
       }
@@ -1638,7 +1640,12 @@ export class DeferredShadingStrategy {
             break;
           case DebugDrawType.Motion:
             this.debug_overlay.set_properties(
-              [main_motion_emissive_image, main_depth_image, post_lighting_image_desc],
+              [
+                main_motion_emissive_image,
+                main_depth_image,
+                main_position_image,
+                post_lighting_image_desc,
+              ],
               0,
               0,
               image_extent.width,
@@ -1759,12 +1766,22 @@ export class DeferredShadingStrategy {
             break;
           case DebugDrawType.GI_ScreenProbes:
             this.debug_overlay.set_properties(
-              this.gi.debug_probe_texture,
+              this.gi.debug_texture,
               0,
               0,
               image_extent.width,
               image_extent.height,
               DebugDrawType.GI_ScreenProbes
+            );
+            break;
+          case DebugDrawType.GI_WorldCache:
+            this.debug_overlay.set_properties(
+              this.gi.debug_texture,
+              0,
+              0,
+              image_extent.width,
+              image_extent.height,
+              DebugDrawType.GI_WorldCache
             );
             break;
           default:
