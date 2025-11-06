@@ -41,7 +41,7 @@
 @group(1) @binding(7) var gbuffer_smra: texture_2d<f32>;
 @group(1) @binding(8) var gbuffer_motion: texture_2d<f32>;
 
-const SCREEN_PROBE_SIZE = 2u;
+const SCREEN_PROBE_SIZE = 4u;
 
 // Workgroup-shared memory for reprojection (AMD GI-1.0 algorithm)
 // Format: (reprojection_score << 16) | (lane_index & 0xFFFF)
@@ -49,8 +49,8 @@ const SCREEN_PROBE_SIZE = 2u;
 // Upper 16 bits store reprojection score (distance) for atomic competition
 var<workgroup> reprojection_best: atomic<u32>;
 // Each thread stores its pixel coordinates and previous probe index
-var<workgroup> thread_pixel_coords: array<vec2<u32>, SCREEN_PROBE_SIZE * SCREEN_PROBE_SIZE>;
-var<workgroup> thread_prev_probe_index: array<u32, SCREEN_PROBE_SIZE * SCREEN_PROBE_SIZE>;
+var<workgroup> thread_pixel_coords: array<vec2<u32>, 16u>;
+var<workgroup> thread_prev_probe_index: array<u32, 16u>;
 
 @compute @workgroup_size(SCREEN_PROBE_SIZE, SCREEN_PROBE_SIZE, 1)
 fn cs(
@@ -161,7 +161,7 @@ fn cs(
                     let plane_dist = abs(dot(world_probe - position_current, normal_current));
                     let normal_similarity = dot(normal_probe, normal_current);
                     
-                    if (plane_dist < adaptive_cell_size && normal_similarity > 0.99) {
+                    if (plane_dist < adaptive_cell_size && normal_similarity > 0.95) {
                         thread_pixel_coords[lane_index] = pixel;
                         thread_prev_probe_index[lane_index] = probe_index_prev;
                         
@@ -230,20 +230,6 @@ fn cs(
             if (found_valid_reprojection && u32(gi_params.reset_caches) == 0u) {
                 // Reprojection succeeded: Copy accumulated radiance from previous probe
                 initial_radiance = max(screen_probes[best_probe_prev_index].radiance_m, vec4<f32>(0.0));
-            } else {
-                // New probe spawn: Query world cache for initial radiance seed
-                // This provides better convergence by leveraging secondary bounce cache
-                let cached_radiance = query_world_cache_cell(
-                    position,
-                    u32(gi_params.world_cache_size),
-                    gi_params.world_cache_cell_size
-                );
-                
-                // Apply albedo modulation to cached radiance (converts irradiance to radiance)
-                // and initialize with small sample count to allow quick updates
-                if (length(cached_radiance) > 0.001) {
-                    initial_radiance = vec4<f32>(cached_radiance * albedo, 1.0);
-                }
             }
             
             // Place probe at chosen pixel location

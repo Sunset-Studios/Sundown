@@ -129,8 +129,9 @@ export class GI {
     screen_ray_count: 1, // Rays per screen probe
     upscale_x: 2, // Temporal upscale factor X (2x2 = 4 frames to fill)
     upscale_y: 2, // Temporal upscale factor Y
-    world_cache_size: 131072, // Number of world cache cells (128K)
+    world_cache_size: 65536, // Number of world cache cells (64K)
     world_cache_cell_size: 0.5, // Size of world cache cells in world units (larger = better coverage)
+    world_cache_lod_count: 6, // Number of LOD levels for world cache
     max_bounces: 2, // Maximum path bounces (1 = direct hits only, 2+ = secondary bounces)
     indirect_boost: 1.0, // Multiplier for indirect lighting
     reset_caches: false, // Force reset all caches
@@ -152,6 +153,7 @@ export class GI {
       0, // indirect_boost,
       0, // upscale_x,
       0, // upscale_y,
+      0, // world_cache_lod_count,
       0, // padding,
     ]);
   }
@@ -239,7 +241,7 @@ export class GI {
     // Each cell: position+frame(16) + normal+count(16) + radiance+w(16) + data(16) = 64 bytes
     const world_cache = render_graph.create_buffer({
       name: "gi_world_cache",
-      size: this.config.world_cache_size * 64,
+      size: this.config.world_cache_size * 6 * 64,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
       force: force_recreate,
       persistent: true, // Keep across frames
@@ -355,6 +357,8 @@ export class GI {
           this.gi_params_data[7] = this.config.indirect_boost;
           this.gi_params_data[8] = this.config.upscale_x;
           this.gi_params_data[9] = this.config.upscale_y;
+          this.gi_params_data[10] = this.config.world_cache_lod_count;
+          this.gi_params_data[11] = 0;
           gi_params_buf.write_raw(this.gi_params_data);
 
           // Clear reset flag after use

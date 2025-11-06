@@ -57,16 +57,15 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         // === Update World Cache for Secondary Bounces ===
         // Insert radiance at secondary hit points to enable reuse across probes
         // Uses adaptive eviction: when full, replaces oldest, farthest, lowest-confidence entries
-        let hit_pos = path.origin_tmin.xyz;
-        let hit_normal = path.normal_section_index.xyz;
         insert_world_cache(
-            hit_pos,
-            hit_normal,
+            path.origin_tmin.xyz,
+            path.normal_section_index.xyz,
             radiance,
             u32(gi_params.world_cache_size),
             gi_params.world_cache_cell_size,
             u32(gi_params.frame_index),
-            camera_position
+            camera_position,
+            u32(gi_params.world_cache_lod_count)
         );
     }
     

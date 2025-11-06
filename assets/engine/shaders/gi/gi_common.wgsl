@@ -29,6 +29,8 @@ struct GIParams {
     indirect_boost: f32,            // Indirect lighting multiplier (f32 bits)
     upscale_x: f32,                 // Temporal upscale factor X
     upscale_y: f32,                 // Temporal upscale factor Y
+    world_cache_lod_count: f32,     // Number of LOD levels for world cache
+    _padding0: f32,
 };
 
 struct ScreenProbe {

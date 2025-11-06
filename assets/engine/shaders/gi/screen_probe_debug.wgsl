@@ -64,10 +64,11 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
             let pixel_i32 = vec2<i32>(px, py);
             // Load existing scene color
             let scene = textureLoad(scene_color, pixel_i32, 0).rgb;
-
-            let dist = distance(pixel, probe_center);
-            let edge_falloff = 1.0 - smoothstep(DEBUG_PROBE_RADIUS - 0.5, DEBUG_PROBE_RADIUS, dist);
-            let final_color = mix(scene, probe_radiance, edge_falloff);
+            // (Optional) Visualize as circular probes    
+            //let dist = distance(pixel, probe_center);
+            //let edge_falloff = 1.0 - smoothstep(DEBUG_PROBE_RADIUS - 0.5, DEBUG_PROBE_RADIUS, dist);
+            //let final_color = mix(scene, probe_radiance, edge_falloff);
+            let final_color = probe_radiance;
              
             textureStore(output_debug, pixel_i32, vec4<f32>(final_color, 1.0));
         }

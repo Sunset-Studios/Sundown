@@ -38,11 +38,19 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         return;
     }
     
-    // Query world cache for entire grid cell (uniform color per cell)
+    // Get camera position for clipmap level selection
+    let view_index = u32(frame_info.view_index);
+    let view = view_buffer[view_index];
+    let camera_position = view.view_position.xyz;
+    
+    // Query world cache with bucket+fingerprint (descriptor-based lookup)
     let cached_radiance = query_world_cache_cell(
         position,
+        normal,
+        camera_position,
         u32(gi_params.world_cache_size),
-        gi_params.world_cache_cell_size
+        gi_params.world_cache_cell_size,
+        u32(gi_params.world_cache_lod_count)
     );
     
     textureStore(output_debug, pixel_coord, vec4<f32>(cached_radiance, 1.0));
