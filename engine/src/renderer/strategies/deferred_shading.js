@@ -1404,7 +1404,11 @@ export class DeferredShadingStrategy {
       // │    - World Cache: Shows spatial hash cached radiance                      │
       // │    (displayed via debug overlay, doesn't affect main rendering pipeline)  │
       // └─────────────────────────────────────────────────────────────────────────────┘
-      if (gi_enabled && (debug_view === DebugDrawType.GI_ScreenProbes || debug_view === DebugDrawType.GI_WorldCache)) {
+      if (gi_enabled &&
+        (debug_view === DebugDrawType.GI_ScreenProbes
+          || debug_view === DebugDrawType.GI_WorldCache
+          || debug_view === DebugDrawType.GI_ScreenTracer)
+        ) {
         this.gi.add_debug_passes(
           render_graph,
           image_extent.width,
@@ -1782,6 +1786,16 @@ export class DeferredShadingStrategy {
               image_extent.width,
               image_extent.height,
               DebugDrawType.GI_WorldCache
+            );
+            break;
+          case DebugDrawType.GI_ScreenTracer:
+            this.debug_overlay.set_properties(
+              this.gi.debug_texture,
+              0,
+              0,
+              image_extent.width,
+              image_extent.height,
+              DebugDrawType.GI_ScreenTracer
             );
             break;
           default:

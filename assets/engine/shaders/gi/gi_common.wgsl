@@ -30,7 +30,8 @@ struct GIParams {
     upscale_x: f32,                 // Temporal upscale factor X
     upscale_y: f32,                 // Temporal upscale factor Y
     world_cache_lod_count: f32,     // Number of LOD levels for world cache
-    _padding0: f32,
+    trace_rate: f32,                // Trace rate for path tracing
+    frame_phase: f32,               // Frame phase for path tracing
 };
 
 struct ScreenProbe {

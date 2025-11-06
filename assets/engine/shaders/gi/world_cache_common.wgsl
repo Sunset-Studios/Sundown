@@ -51,7 +51,6 @@ const BUCKET_SIZE = 8u;           // Number of cells per bucket
 const MAX_LINEAR_PROBE = 8u;      // Max cells to check within bucket
 
 // LOD configuration (adaptive quantization based on distance)
-const NUM_LOD_LEVELS = 6u;
 const LOD_EXTENT = 128.0;
 
 // Quantization resolution for direction hashing
@@ -285,7 +284,7 @@ fn compute_eviction_score(
     // Sample count factor: inverse of sample count [0, 1]
     // Fewer samples = higher eviction priority
     let sample_count = cell.normal_count.w;
-    let sample_factor = 1.0 - min(sample_count / 16.0, 1.0);
+    let sample_factor = 1.0 - min(sample_count / RADIANCE_UPDATE_SAMPLE_CAP, 1.0);
     
     // Weighted combination (tune weights based on importance)
     // Higher weights = more important in eviction decision

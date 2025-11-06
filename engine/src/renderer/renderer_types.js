@@ -135,11 +135,12 @@ export const DebugDrawType = Object.freeze({
     GI_Irradiance: 16,
     GI_WorldCache: 17,
     GI_ScreenProbes: 18,
-    EntityBounds: 19,
-    BVH: 20,
-    BVH4: 21,
-    BLAS_Bounds: 22,
-    BLAS_BVH4: 23,
+    GI_ScreenTracer: 19,
+    EntityBounds: 20,
+    BVH: 21,
+    BVH4: 22,
+    BLAS_Bounds: 23,
+    BLAS_BVH4: 24,
 });
 
 /**

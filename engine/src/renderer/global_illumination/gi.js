@@ -37,6 +37,7 @@
  * - ReSTIR GI
  */
 
+import { WorldCachePathTracer } from "./world_cache_path_tracer.js";
 import { DebugDrawType, RenderPassFlags } from "../renderer_types.js";
 import { SharedEnvironmentData, SharedFrameInfoBuffer } from "../../core/shared_data.js";
 import { MaterialAllocationTable } from "../material_allocation_table.js";
@@ -122,18 +123,21 @@ export class GI {
   final_gi_texture = null;
   debug_texture = null;
   total_screen_probes = 0; // Calculated from resolution and probe size
+  world_cache_path_tracer = null;
 
   // Configuration parameters
   config = {
     screen_probe_size: 4, // Side length of probe footprint in pixels
     screen_ray_count: 1, // Rays per screen probe
-    upscale_x: 2, // Temporal upscale factor X (2x2 = 4 frames to fill)
-    upscale_y: 2, // Temporal upscale factor Y
+    upscale_x: 4, // Temporal upscale factor X (2x2 = 4 frames to fill)
+    upscale_y: 4, // Temporal upscale factor Y
     world_cache_size: 65536, // Number of world cache cells (64K)
-    world_cache_cell_size: 0.5, // Size of world cache cells in world units (larger = better coverage)
+    world_cache_cell_size: 0.1, // Size of world cache cells in world units (larger = better coverage)
     world_cache_lod_count: 6, // Number of LOD levels for world cache
     max_bounces: 2, // Maximum path bounces (1 = direct hits only, 2+ = secondary bounces)
     indirect_boost: 1.0, // Multiplier for indirect lighting
+    max_spp: 1, // Samples per pixel per frame for path tracer mode
+    use_screen_probes: false, // When true, use screen probes. Otherwise, use full screen path tracing (at reduced rate)
     reset_caches: false, // Force reset all caches
   };
 
@@ -201,39 +205,31 @@ export class GI {
     force_recreate = false
   ) {
     // =========================================================================
-    // Calculate total_screen_probes based on grid dimensions
+    // Determine GI mode (screen probes vs world-cache path tracing)
     // =========================================================================
-    // Grid dimensions = ceil(resolution / probe_size)
-    // Example: 720p with 8x8 probes = (160 x 90) = 14,400 probes
-    const grid_width = Math.ceil(width / this.config.screen_probe_size);
-    const grid_height = Math.ceil(height / this.config.screen_probe_size);
-    this.total_screen_probes = grid_width * grid_height;
+    let grid_width = 0;
+    let grid_height = 0;
+    if (this.config.use_screen_probes) {
+      grid_width = Math.ceil(width / this.config.screen_probe_size);
+      grid_height = Math.ceil(height / this.config.screen_probe_size);
+      this.total_screen_probes = grid_width * grid_height;
+    } else {
+      this.total_screen_probes = 0;
+    }
 
     // =========================================================================
     // Create GI Resources
     // =========================================================================
+    let screen_probes = null;
+    let gi_counters = null;
+    let probe_path_state = null;
+    let probe_path_shade = null;
+    let gi_output = null;
+
     const gi_params = render_graph.create_buffer({
       name: "gi_params",
       size: this.gi_params_data.byteLength,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-      force: force_recreate,
-    });
-
-    // Screen probe storage (persistent across frames)
-    // Each probe: position+radius(16) + normal+frame(16) + radiance+m(16) + albedo+roughness(16) + material_props(16) + state(16) = 96 bytes
-    const screen_probes = render_graph.create_buffer({
-      name: "gi_screen_probes",
-      size: this.total_screen_probes * 96,
-      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-      force: force_recreate,
-      persistent: true, // Keep across frames
-    });
-
-    // GI counters buffer: light_count + active_probe_count + padding
-    const gi_counters = render_graph.create_buffer({
-      name: "gi_counters",
-      size: 16, // 4 x u32 (light_count, active_probe_count, padding0, padding1)
-      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
       force: force_recreate,
     });
 
@@ -247,32 +243,49 @@ export class GI {
       persistent: true, // Keep across frames
     });
 
-    // Probe path state (rays from screen probes)
-    const max_probe_rays = this.total_screen_probes * this.config.screen_ray_count;
-    const probe_path_state = render_graph.create_buffer({
-      name: "gi_probe_path_state",
-      size: max_probe_rays * 12 * 4, // 12 vec4<f32> per ray
-      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-      force: force_recreate,
-    });
+    if (this.config.use_screen_probes) {
+      // Screen probe storage (persistent across frames)
+      // Each probe: position+radius(16) + normal+frame(16) + radiance+m(16) + albedo+roughness(16) + material_props(16) + state(16) = 96 bytes
+      screen_probes = render_graph.create_buffer({
+        name: "gi_screen_probes",
+        size: this.total_screen_probes * 96,
+        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+        force: force_recreate,
+        persistent: true, // Keep across frames
+      });
 
-    // Probe path shade (shading state with ReSTIR)
-    const probe_path_shade = render_graph.create_buffer({
-      name: "gi_probe_path_shade",
-      size: max_probe_rays * 8 * 4, // 2 vec4<f32> per ray
-      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-      force: force_recreate,
-    });
+      // GI counters buffer: light_count + active_probe_count + padding
+      gi_counters = render_graph.create_buffer({
+        name: "gi_counters",
+        size: 16, // 4 x u32 (light_count, active_probe_count, padding0, padding1)
+        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+        force: force_recreate,
+      });
 
-    // Final output texture
-    const gi_output = render_graph.create_image({
-      name: "gi_output",
-      format: "rgba16float",
-      width: width,
-      height: height,
-      usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
-      force: force_recreate,
-    });
+      const max_probe_rays = this.total_screen_probes * this.config.screen_ray_count;
+      probe_path_state = render_graph.create_buffer({
+        name: "gi_probe_path_state",
+        size: max_probe_rays * 12 * 4, // 12 vec4<f32> per ray
+        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+        force: force_recreate,
+      });
+
+      probe_path_shade = render_graph.create_buffer({
+        name: "gi_probe_path_shade",
+        size: max_probe_rays * 8 * 4, // 2 vec4<f32> per ray
+        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+        force: force_recreate,
+      });
+
+      gi_output = render_graph.create_image({
+        name: "gi_output",
+        format: "rgba16float",
+        width: width,
+        height: height,
+        usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
+        force: force_recreate,
+      });
+    }
 
     if (draw_count > 0) {
       // Get material resources
@@ -366,161 +379,69 @@ export class GI {
         }
       );
 
-      // =========================================================================
-      // Pass 1: Reset counters (GPU compute shader)
-      // =========================================================================
-      render_graph.add_pass(
-        "gi_reset",
-        RenderPassFlags.Compute,
-        {
-          inputs: [gi_counters, light_count],
-          outputs: [gi_counters],
-          shader_setup: gi_reset_shader_setup,
-        },
-        (graph, frame_data, encoder) => {
-          const pass = graph.get_physical_pass(frame_data.current_pass);
-          pass.dispatch(1, 1, 1); // Single thread does the reset
-        }
-      );
-
-      // =========================================================================
-      // Pass 2: Spawn Screen Probes (World velocity reprojection + Halton spawn)
-      // - Each pixel in tile uses world-space velocity + prev matrices to track backward
-      // - Finds which probe contained that geometry in previous frame
-      // - Validates probe: plane_distance < cell_size && normal_dot > 0.95
-      // - If valid: reproject probe (keep accumulated radiance!)
-      // - If invalid: spawn new probe using Halton jitter, seed from world cache
-      // =========================================================================
-      render_graph.add_pass(
-        "gi_screen_probe_spawn",
-        RenderPassFlags.Compute,
-        {
-          inputs: [
-            gi_params,
-            gi_counters,
-            screen_probes,
-            world_cache,
-            gbuffer_position,
-            gbuffer_normal,
-            gbuffer_albedo,
-            gbuffer_smra,
-            gbuffer_motion_emissive,
-          ],
-          outputs: [gi_counters, screen_probes],
-          shader_setup: screen_probe_spawn_shader_setup,
-        },
-        (graph, frame_data, encoder) => {
-          const pass = graph.get_physical_pass(frame_data.current_pass);
-          pass.dispatch(grid_width, grid_height, 1);
-        }
-      );
-
-      // =========================================================================
-      // Pass 3-N: Screen Probe Path Tracing (Init, Hit, Shade for each bounce)
-      // =========================================================================
-      render_graph.add_pass(
-        "gi_probe_trace_init",
-        RenderPassFlags.Compute,
-        {
-          inputs: [
-            gi_params,
-            gi_counters,
-            screen_probes,
-            probe_path_state,
-            probe_path_shade,
-            light_count,
-            dense_lights,
-          ],
-          outputs: [probe_path_state, probe_path_shade],
-          shader_setup: screen_probe_trace_init_shader_setup,
-        },
-        (graph, frame_data, encoder) => {
-          const pass = graph.get_physical_pass(frame_data.current_pass);
-          const max_rays = this.total_screen_probes * this.config.screen_ray_count;
-          pass.dispatch(Math.ceil(max_rays / 128), 1, 1);
-        }
-      );
-
-      for (let bounce = 0; bounce < this.config.max_bounces; bounce++) {
+      if (this.config.use_screen_probes) {
+        // =========================================================================
+        // Pass 1: Reset counters (GPU compute shader)
+        // =========================================================================
         render_graph.add_pass(
-          `gi_probe_trace_hit_visibility_${bounce}`,
+          "gi_reset",
+          RenderPassFlags.Compute,
+          {
+            inputs: [gi_counters, light_count],
+            outputs: [gi_counters],
+            shader_setup: gi_reset_shader_setup,
+          },
+          (graph, frame_data, encoder) => {
+            const pass = graph.get_physical_pass(frame_data.current_pass);
+            pass.dispatch(1, 1, 1); // Single thread does the reset
+          }
+        );
+
+        // =========================================================================
+        // Pass 2: Spawn Screen Probes (World velocity reprojection + Halton spawn)
+        // =========================================================================
+        render_graph.add_pass(
+          "gi_screen_probe_spawn",
           RenderPassFlags.Compute,
           {
             inputs: [
               gi_params,
               gi_counters,
-              probe_path_state,
-              tlas_bvh2_bounds,
-              tlas_bvh4_nodes,
-              blas_atlas,
-              entity_transforms,
-              index_buffer,
-              mesh_asset_ids,
+              screen_probes,
+              world_cache,
+              gbuffer_position,
+              gbuffer_normal,
+              gbuffer_albedo,
+              gbuffer_smra,
+              gbuffer_motion_emissive,
             ],
-            outputs: [probe_path_state],
-            shader_setup: screen_probe_trace_hit_visibility_shader_setup,
+            outputs: [gi_counters, screen_probes],
+            shader_setup: screen_probe_spawn_shader_setup,
           },
           (graph, frame_data, encoder) => {
             const pass = graph.get_physical_pass(frame_data.current_pass);
-            const max_rays = this.total_screen_probes * this.config.screen_ray_count;
-            pass.dispatch(Math.ceil(max_rays / 128), 1, 1);
+            pass.dispatch(grid_width, grid_height, 1);
           }
         );
 
+        // =========================================================================
+        // Pass 3-N: Screen Probe Path Tracing (Init, Hit, Shade for each bounce)
+        // =========================================================================
         render_graph.add_pass(
-          `gi_probe_trace_hit_${bounce}`,
+          "gi_probe_trace_init",
           RenderPassFlags.Compute,
           {
             inputs: [
               gi_params,
               gi_counters,
+              screen_probes,
               probe_path_state,
-              tlas_bvh2_bounds,
-              tlas_bvh4_nodes,
-              blas_atlas,
-              entity_transforms,
-              index_buffer,
-              mesh_asset_ids,
+              probe_path_shade,
+              light_count,
+              dense_lights,
             ],
-            outputs: [probe_path_state],
-            shader_setup: screen_probe_trace_hit_shader_setup,
-          },
-          (graph, frame_data, encoder) => {
-            const pass = graph.get_physical_pass(frame_data.current_pass);
-            const max_rays = this.total_screen_probes * this.config.screen_ray_count;
-            pass.dispatch(Math.ceil(max_rays / 128), 1, 1);
-          }
-        );
-
-        const shade_inputs = [
-          gi_params,
-          skydome_data_buffer,
-          gi_counters,
-          probe_path_state,
-          probe_path_shade,
-          world_cache,
-          params_gpu_buffer,
-          material_palette_offsets_buffer,
-          material_palette_buffer,
-          dense_lights,
-          albedo_pool_buffer,
-          normal_pool_buffer,
-          roughness_pool_buffer,
-          metallic_pool_buffer,
-          ao_pool_buffer,
-          height_pool_buffer,
-          specular_pool_buffer,
-          emission_pool_buffer,
-          skybox_texture_buffer,
-        ];
-
-        render_graph.add_pass(
-          `gi_probe_trace_shade_${bounce}`,
-          RenderPassFlags.Compute,
-          {
-            inputs: shade_inputs,
             outputs: [probe_path_state, probe_path_shade],
-            shader_setup: screen_probe_trace_shade_shader_setup,
+            shader_setup: screen_probe_trace_init_shader_setup,
           },
           (graph, frame_data, encoder) => {
             const pass = graph.get_physical_pass(frame_data.current_pass);
@@ -528,34 +449,152 @@ export class GI {
             pass.dispatch(Math.ceil(max_rays / 128), 1, 1);
           }
         );
-      }
 
-      // =========================================================================
-      // Pass N+2: Update Screen Probes (accumulate ray radiance and world cache)
-      // - Performs weighted averaging of radiance over time
-      // - New spawns start fresh; reprojected probes maintain history
-      // - Sample count is clamped to prevent overflow and ensure responsiveness
-      // =========================================================================
-      render_graph.add_pass(
-        "gi_screen_probe_update",
-        RenderPassFlags.Compute,
-        {
-          inputs: [
+        for (let bounce = 0; bounce < this.config.max_bounces; bounce++) {
+          render_graph.add_pass(
+            `gi_probe_trace_hit_visibility_${bounce}`,
+            RenderPassFlags.Compute,
+            {
+              inputs: [
+                gi_params,
+                gi_counters,
+                probe_path_state,
+                tlas_bvh2_bounds,
+                tlas_bvh4_nodes,
+                blas_atlas,
+                entity_transforms,
+                index_buffer,
+                mesh_asset_ids,
+              ],
+              outputs: [probe_path_state],
+              shader_setup: screen_probe_trace_hit_visibility_shader_setup,
+            },
+            (graph, frame_data, encoder) => {
+              const pass = graph.get_physical_pass(frame_data.current_pass);
+              const max_rays = this.total_screen_probes * this.config.screen_ray_count;
+              pass.dispatch(Math.ceil(max_rays / 128), 1, 1);
+            }
+          );
+
+          render_graph.add_pass(
+            `gi_probe_trace_hit_${bounce}`,
+            RenderPassFlags.Compute,
+            {
+              inputs: [
+                gi_params,
+                gi_counters,
+                probe_path_state,
+                tlas_bvh2_bounds,
+                tlas_bvh4_nodes,
+                blas_atlas,
+                entity_transforms,
+                index_buffer,
+                mesh_asset_ids,
+              ],
+              outputs: [probe_path_state],
+              shader_setup: screen_probe_trace_hit_shader_setup,
+            },
+            (graph, frame_data, encoder) => {
+              const pass = graph.get_physical_pass(frame_data.current_pass);
+              const max_rays = this.total_screen_probes * this.config.screen_ray_count;
+              pass.dispatch(Math.ceil(max_rays / 128), 1, 1);
+            }
+          );
+
+          const shade_inputs = [
             gi_params,
+            skydome_data_buffer,
             gi_counters,
-            screen_probes,
             probe_path_state,
             probe_path_shade,
             world_cache,
-          ],
-          outputs: [screen_probes, world_cache],
-          shader_setup: screen_probe_update_shader_setup,
-        },
-        (graph, frame_data, encoder) => {
-          const pass = graph.get_physical_pass(frame_data.current_pass);
-          pass.dispatch(Math.ceil(this.total_screen_probes / 128), 1, 1);
+            params_gpu_buffer,
+            material_palette_offsets_buffer,
+            material_palette_buffer,
+            dense_lights,
+            albedo_pool_buffer,
+            normal_pool_buffer,
+            roughness_pool_buffer,
+            metallic_pool_buffer,
+            ao_pool_buffer,
+            height_pool_buffer,
+            specular_pool_buffer,
+            emission_pool_buffer,
+            skybox_texture_buffer,
+          ];
+
+          render_graph.add_pass(
+            `gi_probe_trace_shade_${bounce}`,
+            RenderPassFlags.Compute,
+            {
+              inputs: shade_inputs,
+              outputs: [probe_path_state, probe_path_shade],
+              shader_setup: screen_probe_trace_shade_shader_setup,
+            },
+            (graph, frame_data, encoder) => {
+              const pass = graph.get_physical_pass(frame_data.current_pass);
+              const max_rays = this.total_screen_probes * this.config.screen_ray_count;
+              pass.dispatch(Math.ceil(max_rays / 128), 1, 1);
+            }
+          );
         }
-      );
+
+        // =========================================================================
+        // Pass N+2: Update Screen Probes (accumulate ray radiance and world cache)
+        // =========================================================================
+        render_graph.add_pass(
+          "gi_screen_probe_update",
+          RenderPassFlags.Compute,
+          {
+            inputs: [
+              gi_params,
+              gi_counters,
+              screen_probes,
+              probe_path_state,
+              probe_path_shade,
+              world_cache,
+            ],
+            outputs: [screen_probes, world_cache],
+            shader_setup: screen_probe_update_shader_setup,
+          },
+          (graph, frame_data, encoder) => {
+            const pass = graph.get_physical_pass(frame_data.current_pass);
+            pass.dispatch(Math.ceil(this.total_screen_probes / 128), 1, 1);
+          }
+        );
+      } else {
+        if (!this.world_cache_path_tracer) {
+          this.world_cache_path_tracer = new WorldCachePathTracer();
+        }
+
+        this.world_cache_path_tracer.add_passes(
+          render_graph,
+          width,
+          height,
+          this.config.max_bounces,
+          this.config.max_spp,
+          this.config.upscale_x * this.config.upscale_y,
+          this.config.indirect_boost,
+          tlas_bvh2_bounds,
+          tlas_bvh4_nodes,
+          blas_atlas,
+          entity_transforms,
+          mesh_asset_ids,
+          index_buffer,
+          dense_lights,
+          light_count,
+          gbuffer_position,
+          gbuffer_normal,
+          gbuffer_albedo,
+          gbuffer_smra,
+          gbuffer_motion_emissive,
+          gi_params,
+          world_cache,
+          force_recreate
+        );
+
+        gi_output = this.world_cache_path_tracer.output_texture;
+      }
 
       // =========================================================================
       // Pass N+3: Reconstruct Final Radiance (interpolate from probes)
@@ -611,7 +650,7 @@ export class GI {
       force: force_recreate,
     });
 
-    if (debug_view === DebugDrawType.GI_ScreenProbes) {
+    if (this.config.use_screen_probes && debug_view === DebugDrawType.GI_ScreenProbes) {
       render_graph.add_pass(
         "gi_debug_probes_composite",
         RenderPassFlags.Compute,
@@ -634,6 +673,11 @@ export class GI {
           pass.dispatch(Math.ceil(this.total_screen_probes / 64), 1, 1);
         }
       );
+    } else if (!this.config.use_screen_probes && debug_view === DebugDrawType.GI_ScreenTracer) {
+      // Full screen path tracer output - just return the gi_output directly
+      if (this.final_gi_texture) {
+        this.debug_texture = this.final_gi_texture;
+      }
     } else if (debug_view === DebugDrawType.GI_WorldCache) {
       // World cache debug visualization
       render_graph.add_pass(
