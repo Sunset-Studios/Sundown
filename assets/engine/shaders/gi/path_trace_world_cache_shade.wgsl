@@ -10,13 +10,7 @@
 #include "sky_common.wgsl"
 #include "gi/gi_common.wgsl"
 #include "gi/world_cache_common.wgsl"
-
-const num_spatial_samples = 3u;
-const num_temporal_samples = 1u;
-const num_ris_samples = 2u;
-const num_env_samples = 2u;
-const num_max_samples = 8u;
-const spatial_radius = 20.0;
+#include "raytracing/restir_common.wgsl"
 
 struct PathTracerParams {
     max_bounces: u32,
@@ -48,20 +42,6 @@ struct PathShade {
     reservoir_direction_w: vec4<f32>,      // xyz=next bounce direction, w=final weight
 };
 
-// ReSTIR GI Reservoir for path resampling
-struct GIReservoir {
-    selected_index: u32,
-    weight_sum: f32,
-    m: u32,                      // Number of samples seen
-    w: f32,                      // Final weight for selected sample
-};
-
-// GI Sample - represents a complete path contribution
-struct GISample {
-    radiance_and_target_pdf: vec4<f32>,         // Total radiance contribution (direct + indirect) + Target PDF for this sample
-    direction_and_source_pdf: vec4<f32>,        // Next bounce direction + Source PDF used to generate this sample
-};
-
 @group(1) @binding(0) var<uniform> pt_params: PathTracerParams;
 @group(1) @binding(1) var<uniform> scene_lighting_data: SceneLightingData;
 @group(1) @binding(2) var<storage, read_write> path_state: array<PathState>;
@@ -83,122 +63,6 @@ struct GISample {
 @group(1) @binding(18) var texture_pool_emission: texture_2d_array<f32>;
 @group(1) @binding(19) var skybox_texture: texture_cube<f32>;
 @group(1) @binding(20) var output_tex: texture_storage_2d<rgba16float, write>;
-
-fn sample_texture_or_vec4_param_handle(
-    tex_handle: u32,
-    uv_coords: vec2<precision_float>,
-    param_val: vec4<precision_float>,
-    flag: u32,
-    pool: texture_2d_array<f32>,
-    lod: f32
-) -> vec4<precision_float> {
-    if ((flag & 1u) != 0u) {
-        return sample_handle_rgba(tex_handle, uv_coords, pool, lod);
-    }
-    return param_val;
-}
-
-fn sample_texture_or_float_param_handle(
-    tex_handle: u32,
-    uv_coords: vec2<precision_float>,
-    param_val: precision_float,
-    flag: u32,
-    pool: texture_2d_array<f32>,
-    lod: f32
-) -> precision_float {
-    if ((flag & 1u) != 0u) {
-        let sampled_val = sample_handle_rgba(tex_handle, uv_coords, pool, lod);
-        let channel_index = (flag >> 1u) & 3u;
-        return select(select(select(sampled_val.r, sampled_val.g, channel_index == 1u), sampled_val.b, channel_index == 2u), sampled_val.a, channel_index == 3u);
-    }
-    return param_val;
-}
-
-// =============================================================================
-// ReSTIR GI Helper Functions
-// =============================================================================
-
-fn gi_reservoir_init() -> GIReservoir {
-    var reservoir: GIReservoir;
-    reservoir.selected_index = 0u;
-    reservoir.weight_sum = 0.0;
-    reservoir.m = 0u;
-    reservoir.w = 0.0;
-    return reservoir;
-}
-
-// Update reservoir with a new GI sample candidate
-fn gi_reservoir_update(
-    reservoir: ptr<function, GIReservoir>,
-    candidate_index: u32,
-    weight: f32,
-    rng_state: ptr<function, u32>
-) {
-    (*reservoir).weight_sum += weight;
-    (*reservoir).m += 1u;
-    
-    *rng_state = random_seed(*rng_state);
-    let xi = rand_float(*rng_state);
-    if (xi * (*reservoir).weight_sum < weight) {
-        (*reservoir).selected_index = candidate_index;
-    }
-}
-
-// Finalize GI reservoir and compute final weight
-fn gi_reservoir_finalize(
-    reservoir: ptr<function, GIReservoir>,
-    selected_target_pdf: f32
-) {
-    let contributes = (*reservoir).m > 0u && selected_target_pdf > 0.0;
-    let unclamped_weight = (*reservoir).weight_sum / (f32((*reservoir).m) * max(selected_target_pdf, 0.0001));
-    
-    // Reasonable clamping to handle extreme variance
-    // With proper MIS, variance should be much lower, but still cap to prevent numerical issues
-    let max_weight = 200.0;
-    (*reservoir).w = select(
-        0.0,
-        min(max_weight, unclamped_weight),
-        contributes
-    );
-}
-
-// Compute target PDF (p-hat) for a GI sample
-// p-hat = luminance(BRDF * radiance)
-fn compute_gi_target_pdf(
-    sample_radiance: vec3<f32>,
-    brdf_value: vec3<f32>
-) -> f32 {
-    let contribution = sample_radiance * brdf_value;
-    let luminance = contribution.x * 0.2126 + contribution.y * 0.7152 + contribution.z * 0.0722;
-    return max(luminance, 0.0);
-}
-
-// Sample a uniform direction within a cone (for sun disk sampling)
-fn sample_cone_uniform(u1: f32, u2: f32, cos_theta_max: f32, tangent: vec3<f32>, bitangent: vec3<f32>, normal: vec3<f32>) -> vec3<f32> {
-    let cos_theta = (1.0 - u1) + u1 * cos_theta_max;
-    let sin_theta = sqrt(max(0.0, 1.0 - cos_theta * cos_theta));
-    let phi = u2 * 2.0 * PI;
-    
-    let local_dir = vec3<f32>(
-        cos(phi) * sin_theta,
-        sin(phi) * sin_theta,
-        cos_theta
-    );
-    
-    return normalize(tangent * local_dir.x + bitangent * local_dir.y + normal * local_dir.z);
-}
-
-// Compute PDF for uniform cone sampling
-fn cone_pdf(cos_theta_max: f32) -> f32 {
-    return 1.0 / (2.0 * PI * (1.0 - cos_theta_max));
-}
-
-// Power heuristic for MIS (balance heuristic with power=2)
-fn mis_weight(pdf_a: f32, pdf_b: f32) -> f32 {
-    let a = pdf_a * pdf_a;
-    let b = pdf_b * pdf_b;
-    return a / max(a + b, 0.0001);
-}
 
 // Check if a pixel was traced recently (current or previous frame phase)
 fn is_pixel_traced_recently(coord: vec2<u32>, trace_rate: u32, frame_phase: u32) -> bool {

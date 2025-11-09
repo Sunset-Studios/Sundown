@@ -31,36 +31,6 @@
 @group(1) @binding(16) var texture_pool_emission: texture_2d_array<f32>;
 @group(1) @binding(17) var skybox_texture: texture_cube<f32>;
 
-fn sample_texture_or_vec4_param_handle(
-    tex_handle: u32,
-    uv_coords: vec2<f32>,
-    param_val: vec4<f32>,
-    flag: u32,
-    pool: texture_2d_array<f32>,
-    lod: f32
-) -> vec4<f32> {
-    if ((flag & 1u) != 0u) {
-        return sample_handle_rgba(tex_handle, uv_coords, pool, lod);
-    }
-    return param_val;
-}
-
-fn sample_texture_or_float_param_handle(
-    tex_handle: u32,
-    uv_coords: vec2<f32>,
-    param_val: f32,
-    flag: u32,
-    pool: texture_2d_array<f32>,
-    lod: f32
-) -> f32 {
-    if ((flag & 1u) != 0u) {
-        let sampled_val = sample_handle_rgba(tex_handle, uv_coords, pool, lod);
-        let channel_index = (flag >> 1u) & 3u;
-        return select(select(select(sampled_val.r, sampled_val.g, channel_index == 1u), sampled_val.b, channel_index == 2u), sampled_val.a, channel_index == 3u);
-    }
-    return param_val;
-}
-
 @compute @workgroup_size(128, 1, 1)
 fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     // Thread ID maps to index in compacted active cell array

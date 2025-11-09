@@ -167,6 +167,36 @@ fn sample_handle_rgba(tex_handle: u32, uv: vec2<precision_float>, pool: texture_
     return result;
 }
 
+fn sample_texture_or_vec4_param_handle(
+    tex_handle: u32,
+    uv_coords: vec2<precision_float>,
+    param_val: vec4<precision_float>,
+    flag: u32,
+    pool: texture_2d_array<f32>,
+    lod: f32
+) -> vec4<precision_float> {
+    if ((flag & 1u) != 0u) {
+        return sample_handle_rgba(tex_handle, uv_coords, pool, lod);
+    }
+    return param_val;
+}
+
+fn sample_texture_or_float_param_handle(
+    tex_handle: u32,
+    uv_coords: vec2<precision_float>,
+    param_val: precision_float,
+    flag: u32,
+    pool: texture_2d_array<f32>,
+    lod: f32
+) -> precision_float {
+    if ((flag & 1u) != 0u) {
+        let sampled_val = sample_handle_rgba(tex_handle, uv_coords, pool, lod);
+        let channel_index = (flag >> 1u) & 3u;
+        return select(select(select(sampled_val.r, sampled_val.g, channel_index == 1u), sampled_val.b, channel_index == 2u), sampled_val.a, channel_index == 3u);
+    }
+    return param_val;
+}
+
 // Helper function to safely normalize a vector
 fn safe_normalize(v: vec3f) -> vec3f {
   let len = length(v);

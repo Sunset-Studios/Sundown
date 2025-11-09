@@ -12,8 +12,7 @@
 #include "lighting_common.wgsl"
 #include "postprocess_common.wgsl"
 #include "sky_common.wgsl"
-
-const num_ris_samples = 2u;
+#include "raytracing/restir_common.wgsl"
 
 struct PathTracerParams {
     max_bounces: u32,
@@ -44,69 +43,12 @@ struct PathShade {
     reservoir_direction_w: vec4<f32>,
 }
 
-struct GIReservoir {
-    selected_index: u32,
-    weight_sum: f32,
-    m: u32,
-    w: f32,
-};
-
-struct GISample {
-    radiance_and_target_pdf: vec4<f32>,
-    direction_and_source_pdf: vec4<f32>,
-};
-
 @group(1) @binding(0) var<uniform> pt_params: PathTracerParams;
 @group(1) @binding(1) var<storage, read_write> path_state: array<PathState>;
 @group(1) @binding(2) var<storage, read_write> path_shade: array<PathShade>;
 @group(1) @binding(3) var<storage, read> dense_lights_buffer: array<Light>;
 @group(1) @binding(4) var<storage, read> light_count_buffer: array<u32>;
 @group(1) @binding(5) var output_tex: texture_storage_2d<rgba16float, write>;
-
-// =============================================================================
-// ReSTIR GI Helper Functions
-// =============================================================================
-
-fn gi_reservoir_init() -> GIReservoir {
-    var reservoir: GIReservoir;
-    reservoir.selected_index = 0u;
-    reservoir.weight_sum = 0.0;
-    reservoir.m = 0u;
-    reservoir.w = 0.0;
-    return reservoir;
-}
-
-fn gi_reservoir_update(
-    reservoir: ptr<function, GIReservoir>,
-    candidate_index: u32,
-    weight: f32,
-    rng_state: ptr<function, u32>
-) {
-    (*reservoir).weight_sum += weight;
-    (*reservoir).m += 1u;
-    
-    *rng_state = random_seed(*rng_state);
-    let xi = rand_float(*rng_state);
-    if (xi * (*reservoir).weight_sum < weight) {
-        (*reservoir).selected_index = candidate_index;
-    }
-}
-
-fn gi_reservoir_finalize(
-    reservoir: ptr<function, GIReservoir>,
-    selected_target_pdf: f32
-) {
-    let contributes = (*reservoir).m > 0u && selected_target_pdf > 0.0;
-    let unclamped_weight = (*reservoir).weight_sum / (f32((*reservoir).m) * max(selected_target_pdf, 0.0001));
-    let max_weight = 200.0;
-    (*reservoir).w = select(0.0, min(max_weight, unclamped_weight), contributes);
-}
-
-fn compute_gi_target_pdf(sample_radiance: vec3<f32>, brdf_value: vec3<f32>) -> f32 {
-    let contribution = sample_radiance * brdf_value;
-    let luminance = contribution.x * 0.2126 + contribution.y * 0.7152 + contribution.z * 0.0722;
-    return max(luminance, 0.0);
-}
 
 @compute @workgroup_size(128, 1, 1)
 fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
