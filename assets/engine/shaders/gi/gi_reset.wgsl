@@ -16,6 +16,8 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     if (gid.x == 0u) {
         // Reset active probe count for this frame (how many will be updated)
         atomicStore(&gi_counters.active_probe_count, 0u);
+        // Reset active cache cell count for this frame (how many will be updated)
+        atomicStore(&gi_counters.active_cache_cell_count, 0u);
         // Copy light count from lighting system buffer
         gi_counters.light_count = light_count_buffer[0];
     }

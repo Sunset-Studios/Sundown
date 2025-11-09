@@ -64,13 +64,11 @@ const path_tracer_output_shader_setup = {
 export class PathTracer extends RayTracer {
   params = new Uint32Array([
     0, // max_bounces
-    0, // spp_per_frame
     0, // reset_accum_flag
     0, // use_gbuffer
     0, // trace_rate
     0, // frame_phase
     0, // indirect_boost
-    0, // padding
   ]);
   frame_phase = 0;
 
@@ -83,7 +81,6 @@ export class PathTracer extends RayTracer {
     width,
     height,
     max_bounces = 2,
-    spp_per_frame = 4,
     trace_rate = 1,
     indirect_boost = 2.0,
     use_gbuffer = false,
@@ -193,165 +190,159 @@ export class PathTracer extends RayTracer {
       (graph, frame_data, encoder) => {
         const params_buffer = graph.get_physical_buffer(pt_params);
         this.params[0] = num_bounce_passes; // max_bounces
-        this.params[1] = spp_per_frame; // spp_per_frame
-        this.params[2] = view_moved ? 1 : 0; // reset_accum_flag
-        this.params[3] = use_gbuffer ? 1 : 0; // use_gbuffer
-        this.params[4] = trace_rate; // trace_rate
-        this.params[5] = this.frame_phase; // frame_phase
-        this.params[6] = indirect_boost; // indirect_boost
-        this.params[7] = 0; // padding
+        this.params[1] = view_moved ? 1 : 0; // reset_accum_flag
+        this.params[2] = use_gbuffer ? 1 : 0; // use_gbuffer
+        this.params[3] = trace_rate; // trace_rate
+        this.params[4] = this.frame_phase; // frame_phase
+        this.params[5] = indirect_boost; // indirect_boost
         params_buffer.write_raw(this.params);
         // Cycle frame phase for next frame
         this.frame_phase = (this.frame_phase + 1) % Math.max(1, trace_rate);
       }
     );
 
-    const spp = Math.max(1, spp_per_frame | 0);
+    render_graph.add_pass(
+      `path_trace_init`,
+      RenderPassFlags.Compute,
+      {
+        inputs: [
+          pt_params,
+          path_state,
+          path_shade,
+          gbuffer_position,
+          gbuffer_normal,
+          gbuffer_albedo,
+          gbuffer_smra,
+          gbuffer_emissive,
+          this.output_texture,
+        ],
+        outputs: [path_state],
+        shader_setup: path_tracer_init_shader_setup,
+      },
+      (graph, frame_data, encoder) => {
+        const pass = graph.get_physical_pass(frame_data.current_pass);
+        const pixel_count = view_moved ? num_rays : Math.ceil(num_rays / Math.max(1, trace_rate));
+        pass.dispatch(Math.ceil(pixel_count / COMPUTE_WORKGROUP_SIZE), 1, 1);
+      }
+    );
 
-    for (let s = 0; s < spp; s++) {
+    // ═════════════════════════════════════════════════════════════════════════
+    // G-Buffer Initial Shade Pass (Bounce 0 only, when use_gbuffer is enabled)
+    // - Handles direct lighting and spawns first indirect ray
+    // - Eliminates need for G-buffer checks in main bounce loop
+    // ═════════════════════════════════════════════════════════════════════════
+    if (use_gbuffer) {
       render_graph.add_pass(
-        `path_trace_init_${s}`,
+        `path_trace_gbuffer_shade`,
         RenderPassFlags.Compute,
         {
           inputs: [
             pt_params,
             path_state,
             path_shade,
-            gbuffer_position,
-            gbuffer_normal,
-            gbuffer_albedo,
-            gbuffer_smra,
-            gbuffer_emissive,
+            dense_lights,
+            light_count,
             this.output_texture,
           ],
-          outputs: [path_state],
-          shader_setup: path_tracer_init_shader_setup,
+          outputs: [path_state, path_shade],
+          shader_setup: path_tracer_gbuffer_shade_shader_setup,
         },
         (graph, frame_data, encoder) => {
           const pass = graph.get_physical_pass(frame_data.current_pass);
-          const pixel_count = view_moved ? num_rays : Math.ceil(num_rays / Math.max(1, trace_rate));
-          pass.dispatch(Math.ceil(pixel_count / COMPUTE_WORKGROUP_SIZE), 1, 1);
+          const active_pixel_count = Math.ceil(num_rays / Math.max(1, trace_rate));
+          pass.dispatch(Math.ceil(active_pixel_count / COMPUTE_WORKGROUP_SIZE), 1, 1);
+        }
+      );
+    }
+
+    for (let b = 0; b < num_bounce_passes; b++) {
+      render_graph.add_pass(
+        `path_trace_hit_visibility_${b}`,
+        RenderPassFlags.Compute,
+        {
+          inputs: [
+            pt_params,
+            path_state,
+            tlas_bvh2_bounds,
+            tlas_bvh4_nodes,
+            blas_atlas,
+            entity_transforms,
+            index_buffer,
+            mesh_asset_ids,
+            this.output_texture,
+          ],
+          outputs: [path_state],
+          shader_setup: path_tracer_hit_visibility_shader_setup,
+        },
+        (graph, frame_data, encoder) => {
+          const pass = graph.get_physical_pass(frame_data.current_pass);
+          const active_pixel_count = Math.ceil(num_rays / Math.max(1, trace_rate));
+          pass.dispatch(Math.ceil(active_pixel_count / COMPUTE_WORKGROUP_SIZE), 1, 1);
         }
       );
 
-      // ═════════════════════════════════════════════════════════════════════════
-      // G-Buffer Initial Shade Pass (Bounce 0 only, when use_gbuffer is enabled)
-      // - Handles direct lighting and spawns first indirect ray
-      // - Eliminates need for G-buffer checks in main bounce loop
-      // ═════════════════════════════════════════════════════════════════════════
-      if (use_gbuffer) {
-        render_graph.add_pass(
-          `path_trace_gbuffer_shade_${s}`,
-          RenderPassFlags.Compute,
-          {
-            inputs: [
-              pt_params,
-              path_state,
-              path_shade,
-              dense_lights,
-              light_count,
-              this.output_texture,
-            ],
-            outputs: [path_state, path_shade],
-            shader_setup: path_tracer_gbuffer_shade_shader_setup,
-          },
-          (graph, frame_data, encoder) => {
-            const pass = graph.get_physical_pass(frame_data.current_pass);
-            const active_pixel_count = Math.ceil(num_rays / Math.max(1, trace_rate));
-            pass.dispatch(Math.ceil(active_pixel_count / COMPUTE_WORKGROUP_SIZE), 1, 1);
-          }
-        );
-      }
+      render_graph.add_pass(
+        `path_trace_hit_${b}`,
+        RenderPassFlags.Compute,
+        {
+          inputs: [
+            pt_params,
+            path_state,
+            tlas_bvh2_bounds,
+            tlas_bvh4_nodes,
+            blas_atlas,
+            entity_transforms,
+            index_buffer,
+            mesh_asset_ids,
+            this.output_texture,
+          ],
+          outputs: [path_state],
+          shader_setup: path_tracer_hit_shader_setup,
+        },
+        (graph, frame_data, encoder) => {
+          const pass = graph.get_physical_pass(frame_data.current_pass);
+          const active_pixel_count = Math.ceil(num_rays / Math.max(1, trace_rate));
+          pass.dispatch(Math.ceil(active_pixel_count / COMPUTE_WORKGROUP_SIZE), 1, 1);
+        }
+      );
 
-      for (let b = 0; b < num_bounce_passes; b++) {
-        render_graph.add_pass(
-          `path_trace_hit_visibility_${s}_${b}`,
-          RenderPassFlags.Compute,
-          {
-            inputs: [
-              pt_params,
-              path_state,
-              tlas_bvh2_bounds,
-              tlas_bvh4_nodes,
-              blas_atlas,
-              entity_transforms,
-              index_buffer,
-              mesh_asset_ids,
-              this.output_texture,
-            ],
-            outputs: [path_state],
-            shader_setup: path_tracer_hit_visibility_shader_setup,
-          },
-          (graph, frame_data, encoder) => {
-            const pass = graph.get_physical_pass(frame_data.current_pass);
-            const active_pixel_count = Math.ceil(num_rays / Math.max(1, trace_rate));
-            pass.dispatch(Math.ceil(active_pixel_count / COMPUTE_WORKGROUP_SIZE), 1, 1);
-          }
-        );
+      // Build shader inputs
+      const shade_inputs_list = [
+        pt_params,
+        skydome_data_buffer,
+        path_state,
+        path_shade,
+        params_gpu_buffer,
+        material_palette_offsets_buffer,
+        material_palette_buffer,
+        dense_lights,
+        light_count,
+        albedo_pool_buffer,
+        normal_pool_buffer,
+        roughness_pool_buffer,
+        metallic_pool_buffer,
+        ao_pool_buffer,
+        height_pool_buffer,
+        specular_pool_buffer,
+        emission_pool_buffer,
+        skybox_texture_buffer,
+        this.output_texture,
+      ];
 
-        render_graph.add_pass(
-          `path_trace_hit_${s}_${b}`,
-          RenderPassFlags.Compute,
-          {
-            inputs: [
-              pt_params,
-              path_state,
-              tlas_bvh2_bounds,
-              tlas_bvh4_nodes,
-              blas_atlas,
-              entity_transforms,
-              index_buffer,
-              mesh_asset_ids,
-              this.output_texture,
-            ],
-            outputs: [path_state],
-            shader_setup: path_tracer_hit_shader_setup,
-          },
-          (graph, frame_data, encoder) => {
-            const pass = graph.get_physical_pass(frame_data.current_pass);
-            const active_pixel_count = Math.ceil(num_rays / Math.max(1, trace_rate));
-            pass.dispatch(Math.ceil(active_pixel_count / COMPUTE_WORKGROUP_SIZE), 1, 1);
-          }
-        );
-
-        // Build shader inputs
-        const shade_inputs_list = [
-          pt_params,
-          skydome_data_buffer,
-          path_state,
-          path_shade,
-          params_gpu_buffer,
-          material_palette_offsets_buffer,
-          material_palette_buffer,
-          dense_lights,
-          light_count,
-          albedo_pool_buffer,
-          normal_pool_buffer,
-          roughness_pool_buffer,
-          metallic_pool_buffer,
-          ao_pool_buffer,
-          height_pool_buffer,
-          specular_pool_buffer,
-          emission_pool_buffer,
-          skybox_texture_buffer,
-          this.output_texture,
-        ];
-
-        render_graph.add_pass(
-          `path_trace_shade_${s}_${b}`,
-          RenderPassFlags.Compute,
-          {
-            inputs: shade_inputs_list,
-            outputs: [path_state, path_shade],
-            shader_setup: path_tracer_shade_shader_setup,
-          },
-          (graph, frame_data, encoder) => {
-            const pass = graph.get_physical_pass(frame_data.current_pass);
-            const active_pixel_count = Math.ceil(num_rays / Math.max(1, trace_rate));
-            pass.dispatch(Math.ceil(active_pixel_count / COMPUTE_WORKGROUP_SIZE), 1, 1);
-          }
-        );
-      }
+      render_graph.add_pass(
+        `path_trace_shade_${b}`,
+        RenderPassFlags.Compute,
+        {
+          inputs: shade_inputs_list,
+          outputs: [path_state, path_shade],
+          shader_setup: path_tracer_shade_shader_setup,
+        },
+        (graph, frame_data, encoder) => {
+          const pass = graph.get_physical_pass(frame_data.current_pass);
+          const active_pixel_count = Math.ceil(num_rays / Math.max(1, trace_rate));
+          pass.dispatch(Math.ceil(active_pixel_count / COMPUTE_WORKGROUP_SIZE), 1, 1);
+        }
+      );
     }
 
     render_graph.add_pass(

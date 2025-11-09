@@ -14,7 +14,7 @@
 struct GICounters {
     light_count: u32,                      // Number of lights
     active_probe_count: atomic<u32>,       // Probes updated this frame (resets)
-    _padding0: u32,
+    active_cache_cell_count: atomic<u32>,
     _padding1: u32,
 };
 
@@ -56,9 +56,22 @@ struct ProbePathState {
     path_weight: vec4<f32>,
     rng_sample_count_frame_stamp: vec4<f32>,
     throughput: vec4<f32>,
+    reservoir_radiance_m: vec4<f32>,
+    reservoir_direction_w: vec4<f32>,
 };
 
-struct ProbePathShade {
+struct WorldCachePathState {
+    origin_tmin: vec4<f32>,
+    direction_tmax: vec4<f32>,
+    normal_section_index: vec4<f32>,
+    state_u32: vec4<u32>,      // x=bounce, y=alive, z=unused, w=tri_id
+    hit_attr0: vec4<f32>,
+    hit_attr1: vec4<f32>,
+    shadow_origin: vec4<f32>,
+    shadow_direction: vec4<f32>,
+    shadow_radiance: vec4<f32>,
+    path_weight: vec4<f32>,
+    rng_sample_count_frame_stamp: vec4<f32>,
     reservoir_radiance_m: vec4<f32>,
     reservoir_direction_w: vec4<f32>,
 };

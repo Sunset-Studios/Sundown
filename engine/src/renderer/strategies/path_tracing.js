@@ -191,7 +191,7 @@ const skybox_shader_setup = {
 const path_trace_composite_shader_setup = {
   pipeline_shaders: {
     compute: {
-      path: "path_trace_composite.wgsl",
+      path: "raytracing/path_trace_composite.wgsl",
     },
   },
 };
@@ -279,7 +279,6 @@ export class PathTracingStrategy {
 
   // Path tracing parameters (optimized for hybrid mode)
   max_bounces = 2;
-  spp_per_frame = 1;
   trace_rate = 16; // 1=full res, 2=half, 4=quarter, etc.
   indirect_boost = 1.0;
 
@@ -328,13 +327,11 @@ export class PathTracingStrategy {
    * Set path tracing parameters
    * @param {Object} params - Path tracing parameters
    * @param {number} params.max_bounces - Maximum number of bounces
-   * @param {number} params.spp_per_frame - Samples per pixel per frame
    * @param {number} params.trace_rate - Trace rate (1=full res, 2=half, 4=quarter)
    * @param {number} params.indirect_boost - Indirect lighting boost multiplier
    */
   set_parameters(params) {
     if (params.max_bounces !== undefined) this.max_bounces = params.max_bounces;
-    if (params.spp_per_frame !== undefined) this.spp_per_frame = params.spp_per_frame;
     if (params.trace_rate !== undefined) this.trace_rate = params.trace_rate;
     if (params.indirect_boost !== undefined) this.indirect_boost = params.indirect_boost;
   }
@@ -787,7 +784,6 @@ export class PathTracingStrategy {
           image_extent.width,
           image_extent.height,
           this.max_bounces,
-          this.spp_per_frame,
           this.trace_rate,
           this.indirect_boost,
           true, // use_gbuffer - always true for hybrid mode

@@ -9,13 +9,11 @@
 
 struct PathTracerParams {
     max_bounces: u32,
-    spp_per_frame: u32,
     reset_accum_flag: u32,
     use_gbuffer: u32,
     trace_rate: u32,      // 1=full res, 2=half res, 4=quarter res, etc.
     frame_phase: u32,     // cycles 0 to trace_rate-1
     indirect_boost: u32,          // Multiplier for indirect bounces
-    padding: u32,
 };
 
 struct PathState {
@@ -61,15 +59,4 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let view_index = u32(frame_info.view_index);
     let view = view_buffer[view_index];
     let camera_position = view.view_position.xyz;
-
-    insert_world_cache(
-        path_state[pixel_index].origin_tmin.xyz,
-        path_state[pixel_index].normal_section_index.xyz,
-        radiance,
-        u32(gi_params.world_cache_size),
-        gi_params.world_cache_cell_size,
-        u32(gi_params.frame_index),
-        camera_position,
-        u32(gi_params.world_cache_lod_count)
-    );
 }

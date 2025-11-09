@@ -1,8 +1,8 @@
 // =============================================================================
-// GI-1.0 Screen Probe Ray Tracing - Hit Pass
-// - Traces rays from screen probes against BVH
+// GI-1.0 World Cache Ray Tracing - Hit Pass
+// - Traces rays from active world cache cells against BVH
 // - Writes hit information to path state
-// - Uses optimized traversal from path_trace_hit.wgsl for consistency
+// - Uses optimized traversal consistent with probe tracing
 // =============================================================================
 diagnostic(off,subgroup_uniformity);
 
@@ -14,17 +14,17 @@ diagnostic(off,subgroup_uniformity);
 const NODE_STACK_SIZE = 12;
 
 @group(1) @binding(0) var<uniform> gi_params: GIParams;
-@group(1) @binding(1) var<storage, read_write> gi_counters: GICounters;
-@group(1) @binding(2) var<storage, read_write> probe_path_state: array<ProbePathState>;
-@group(1) @binding(3) var<storage, read> tlas_bvh2_bounds: array<AABB>;
-@group(1) @binding(4) var<storage, read> tlas_bvh4_nodes: array<BVH4Node>;
-@group(1) @binding(5) var<storage, read> blas_atlas: BLASAtlas;
-@group(1) @binding(6) var<storage, read> entity_transforms: array<EntityTransform>;
-@group(1) @binding(7) var<storage, read> index_buffer: array<u32>;
-@group(1) @binding(8) var<storage, read> mesh_asset_ids: array<u32>;
+@group(1) @binding(1) var<storage, read_write> world_cache_path_state: array<WorldCachePathState>;
+@group(1) @binding(2) var<storage, read> tlas_bvh2_bounds: array<AABB>;
+@group(1) @binding(3) var<storage, read> tlas_bvh4_nodes: array<BVH4Node>;
+@group(1) @binding(4) var<storage, read> blas_atlas: BLASAtlas;
+@group(1) @binding(5) var<storage, read> entity_transforms: array<EntityTransform>;
+@group(1) @binding(6) var<storage, read> index_buffer: array<u32>;
+@group(1) @binding(7) var<storage, read> mesh_asset_ids: array<u32>;
+@group(1) @binding(8) var<storage, read_write> gi_counters: GICounters;
 
 // =============================================================================
-// BVH Traversal 
+// BVH Traversal (identical to screen probe tracing)
 // =============================================================================
 
 fn trace_blas(
@@ -300,20 +300,22 @@ fn cs(
     @builtin(subgroup_invocation_id) lane_id: u32,
     @builtin(subgroup_size) warp_size: u32
 ) {
-    let probe_count = u32(gi_params.total_screen_probes);
-    let rays_per_probe = u32(gi_params.screen_ray_count);
-    let total_rays = probe_count * rays_per_probe;
+    // Thread ID maps to index in compacted active cell array
+    let active_index = gid.x;
+    let active_cache_cell_count = atomicLoad(&gi_counters.active_cache_cell_count);
     
-    if (gid.x >= total_rays) {
+    // Early exit if beyond active cell count
+    if (active_index >= active_cache_cell_count) {
         return;
     }
 
     var ray: Ray;
 
     // Is ray alive?
-    if (probe_path_state[gid.x].state_u32.y != 0u) {
-        ray.origin_and_tmin = probe_path_state[gid.x].shadow_origin;
-        ray.direction_and_tmax = probe_path_state[gid.x].shadow_direction;
+    if (world_cache_path_state[active_index].state_u32.y != 0u) {
+        // Trace shadow ray first (direct lighting visibility)
+        ray.origin_and_tmin = world_cache_path_state[active_index].shadow_origin;
+        ray.direction_and_tmax = world_cache_path_state[active_index].shadow_direction;
         var d = ray.direction_and_tmax.xyz;
         ray.inv_direction = vec4f(
             1.0 / max(abs(d.x), 1e-8) * select(1.0, -1.0, d.x < 0.0),
@@ -323,11 +325,12 @@ fn cs(
         );
         
         if (!trace_hit_any(&ray)) {
-            probe_path_state[gid.x].state_u32.z = 1u; // No shadow hit - light is visible
+            world_cache_path_state[active_index].state_u32.z = 1u; // No shadow hit - light is visible
         }
 
-        ray.origin_and_tmin = probe_path_state[gid.x].origin_tmin;
-        ray.direction_and_tmax = probe_path_state[gid.x].direction_tmax;
+        // Trace indirect ray (for multi-bounce radiance)
+        ray.origin_and_tmin = world_cache_path_state[active_index].origin_tmin;
+        ray.direction_and_tmax = world_cache_path_state[active_index].direction_tmax;
         d = ray.direction_and_tmax.xyz;
         ray.inv_direction = vec4f(
             1.0 / max(abs(d.x), 1e-8) * select(1.0, -1.0, d.x < 0.0),
@@ -404,13 +407,12 @@ fn cs(
             world_b = select(world_b, -world_b, ray_is_backfacing);
 
             // Store hit distance in origin_tmin.w for use in shade pass (for emissive attenuation)
-            // This will be overwritten when we spawn the next ray, but shade pass reads it first
-            probe_path_state[gid.x].origin_tmin = vec4f(p_world, t_tri);
-            probe_path_state[gid.x].direction_tmax = vec4f(ray_dir, hit_result.prim_meshid_padding.x);
-            probe_path_state[gid.x].normal_section_index = vec4f(world_n, f32(section_idx));
-            probe_path_state[gid.x].hit_attr0 = vec4f(world_t, uv_hit.x);
-            probe_path_state[gid.x].hit_attr1 = vec4f(world_b, uv_hit.y);
-            probe_path_state[gid.x].state_u32.w = tri_id_local;
+            world_cache_path_state[active_index].origin_tmin = vec4f(p_world, t_tri);
+            world_cache_path_state[active_index].direction_tmax = vec4f(ray_dir, hit_result.prim_meshid_padding.x);
+            world_cache_path_state[active_index].normal_section_index = vec4f(world_n, f32(section_idx));
+            world_cache_path_state[active_index].hit_attr0 = vec4f(world_t, uv_hit.x);
+            world_cache_path_state[active_index].hit_attr1 = vec4f(world_b, uv_hit.y);
+            world_cache_path_state[active_index].state_u32.w = tri_id_local;
         }
     }
 }

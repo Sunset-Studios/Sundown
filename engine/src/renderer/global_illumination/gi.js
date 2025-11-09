@@ -1,9 +1,9 @@
 /**
  * GI-1.0 Radiance Caching System
  *
- * Implements a two-level radiance caching scheme following the GI-1.0 paper (Algorithm 1):
+ * Implements a two-level radiance caching scheme following the GI-1.0 paper:
  * - Screen Cache: Fixed grid of probes on primary surfaces with temporal reuse
- * - World Cache: Spatial hash-based cache for secondary bounce radiance
+ * - World Cache: Spatial hash-based cache for secondary+ bounce radiance
  *
  * Screen Probe Algorithm (per tile, per frame):
  * 1. Temporal Upscaling: Only fraction of tiles update each frame (e.g., 1/4)
@@ -37,7 +37,6 @@
  * - ReSTIR GI
  */
 
-import { WorldCachePathTracer } from "./world_cache_path_tracer.js";
 import { DebugDrawType, RenderPassFlags } from "../renderer_types.js";
 import { SharedEnvironmentData, SharedFrameInfoBuffer } from "../../core/shared_data.js";
 import { MaterialAllocationTable } from "../material_allocation_table.js";
@@ -47,6 +46,8 @@ import { ResourceCache } from "../resource_cache.js";
 import { CacheTypes } from "../renderer_types.js";
 import { Name } from "../../utility/names.js";
 import { Texture } from "../texture.js";
+
+const COMPUTE_WORKGROUP_SIZE = 128;
 
 const material_offsets_name = "material_table_offset";
 const texture_pool_albedo_name = Name.from("texture_pool_albedo");
@@ -58,10 +59,51 @@ const texture_pool_height_name = Name.from("texture_pool_height");
 const texture_pool_specular_name = Name.from("texture_pool_specular");
 const texture_pool_emission_name = Name.from("texture_pool_emission");
 
-// Shader configurations
 const gi_reset_shader_setup = {
   pipeline_shaders: {
     compute: { path: "gi/gi_reset.wgsl" },
+  },
+};
+
+const world_cache_evict_shader_setup = {
+  pipeline_shaders: {
+    compute: { path: "gi/world_cache_evict.wgsl" },
+  },
+};
+
+const world_cache_compact_mark_shader_setup = {
+  pipeline_shaders: {
+    compute: { path: "gi/world_cache_active_mark.wgsl" },
+  },
+};
+
+const world_cache_compact_prefix_sum_shader_setup = {
+  pipeline_shaders: {
+    compute: { path: "gi/world_cache_active_prefix_sum.wgsl" },
+  },
+};
+
+const world_cache_compact_scatter_shader_setup = {
+  pipeline_shaders: {
+    compute: { path: "gi/world_cache_active_compact.wgsl" },
+  },
+};
+
+const world_cache_trace_init_shader_setup = {
+  pipeline_shaders: {
+    compute: { path: "gi/world_cache_trace_init.wgsl" },
+  },
+};
+
+const world_cache_trace_hit_shader_setup = {
+  pipeline_shaders: {
+    compute: { path: "gi/world_cache_trace_hit.wgsl" },
+  },
+};
+
+const world_cache_trace_shade_shader_setup = {
+  pipeline_shaders: {
+    compute: { path: "gi/world_cache_trace_shade.wgsl" },
   },
 };
 
@@ -74,12 +116,6 @@ const screen_probe_spawn_shader_setup = {
 const screen_probe_trace_init_shader_setup = {
   pipeline_shaders: {
     compute: { path: "gi/screen_probe_trace_init.wgsl" },
-  },
-};
-
-const screen_probe_trace_hit_visibility_shader_setup = {
-  pipeline_shaders: {
-    compute: { path: "gi/screen_probe_trace_hit_visibility.wgsl" },
   },
 };
 
@@ -107,6 +143,48 @@ const screen_probe_reconstruct_shader_setup = {
   },
 };
 
+const path_tracer_init_shader_setup = {
+  pipeline_shaders: {
+    compute: { path: "raytracing/path_trace_init.wgsl" },
+  },
+};
+
+const path_tracer_hit_shader_setup = {
+  pipeline_shaders: {
+    compute: { path: "raytracing/path_trace_hit.wgsl" },
+  },
+};
+
+const path_tracer_hit_visibility_shader_setup = {
+  pipeline_shaders: {
+    compute: { path: "raytracing/path_trace_hit_visibility.wgsl" },
+  },
+};
+
+const path_tracer_gbuffer_shade_shader_setup = {
+  pipeline_shaders: {
+    compute: { path: "raytracing/path_trace_gbuffer_shade.wgsl" },
+  },
+};
+
+const world_cache_path_tracer_shade_shader_setup = {
+  pipeline_shaders: {
+    compute: { path: "gi/path_trace_world_cache_shade.wgsl" },
+  },
+};
+
+const world_cache_path_tracer_update_shader_setup = {
+  pipeline_shaders: {
+    compute: { path: "gi/path_trace_world_cache_update.wgsl" },
+  },
+};
+
+const path_tracer_output_shader_setup = {
+  pipeline_shaders: {
+    compute: { path: "gi/path_trace_world_cache_output.wgsl" },
+  },
+};
+
 const screen_probe_debug_shader_setup = {
   pipeline_shaders: {
     compute: { path: "gi/screen_probe_debug.wgsl" },
@@ -122,29 +200,25 @@ const world_cache_debug_shader_setup = {
 export class GI {
   final_gi_texture = null;
   debug_texture = null;
-  total_screen_probes = 0; // Calculated from resolution and probe size
-  world_cache_path_tracer = null;
 
   // Configuration parameters
   config = {
     screen_probe_size: 4, // Side length of probe footprint in pixels
     screen_ray_count: 1, // Rays per screen probe
-    upscale_x: 4, // Temporal upscale factor X (2x2 = 4 frames to fill)
-    upscale_y: 4, // Temporal upscale factor Y
+    upscale_x: 2, // Temporal upscale factor X (2x2 = 4 frames to fill)
+    upscale_y: 2, // Temporal upscale factor Y
     world_cache_size: 65536, // Number of world cache cells (64K)
-    world_cache_cell_size: 0.1, // Size of world cache cells in world units (larger = better coverage)
-    world_cache_lod_count: 6, // Number of LOD levels for world cache
+    world_cache_cell_size: 0.25, // Size of world cache cells in world units (larger = better coverage)
+    world_cache_lod_count: 4, // Number of LOD levels for world cache
     max_bounces: 2, // Maximum path bounces (1 = direct hits only, 2+ = secondary bounces)
     indirect_boost: 1.0, // Multiplier for indirect lighting
-    max_spp: 1, // Samples per pixel per frame for path tracer mode
-    use_screen_probes: false, // When true, use screen probes. Otherwise, use full screen path tracing (at reduced rate)
+    use_screen_probes: true, // When true, use screen probes. Otherwise, use full screen path tracing (at reduced rate)
     reset_caches: false, // Force reset all caches
   };
 
   constructor(params = {}) {
     // Override defaults with provided parameters
     this.config = { ...this.config, ...params };
-
     // GI parameters buffer (must match shader GIParams struct)
     this.gi_params_data = new Float32Array([
       0, // screen_probe_size,
@@ -160,6 +234,15 @@ export class GI {
       0, // world_cache_lod_count,
       0, // padding,
     ]);
+    this.pt_params = new Uint32Array([
+      0, // max_bounces
+      0, // reset_accum_flag
+      0, // use_gbuffer
+      0, // trace_rate
+      0, // frame_phase
+      0, // indirect_boost
+    ]);
+    this.pt_frame_phase = 0;
   }
 
   /**
@@ -205,376 +288,23 @@ export class GI {
     force_recreate = false
   ) {
     // =========================================================================
-    // Determine GI mode (screen probes vs world-cache path tracing)
-    // =========================================================================
-    let grid_width = 0;
-    let grid_height = 0;
-    if (this.config.use_screen_probes) {
-      grid_width = Math.ceil(width / this.config.screen_probe_size);
-      grid_height = Math.ceil(height / this.config.screen_probe_size);
-      this.total_screen_probes = grid_width * grid_height;
-    } else {
-      this.total_screen_probes = 0;
-    }
-
-    // =========================================================================
     // Create GI Resources
     // =========================================================================
-    let screen_probes = null;
-    let gi_counters = null;
-    let probe_path_state = null;
-    let probe_path_shade = null;
-    let gi_output = null;
-
-    const gi_params = render_graph.create_buffer({
-      name: "gi_params",
-      size: this.gi_params_data.byteLength,
-      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+    let gi_output = render_graph.create_image({
+      name: "gi_output",
+      format: "rgba16float",
+      width: width,
+      height: height,
+      usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
       force: force_recreate,
     });
-
-    // World cache storage (persistent across frames)
-    // Each cell: position+frame(16) + normal+count(16) + radiance+w(16) + data(16) = 64 bytes
-    const world_cache = render_graph.create_buffer({
-      name: "gi_world_cache",
-      size: this.config.world_cache_size * 6 * 64,
-      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-      force: force_recreate,
-      persistent: true, // Keep across frames
-    });
-
-    if (this.config.use_screen_probes) {
-      // Screen probe storage (persistent across frames)
-      // Each probe: position+radius(16) + normal+frame(16) + radiance+m(16) + albedo+roughness(16) + material_props(16) + state(16) = 96 bytes
-      screen_probes = render_graph.create_buffer({
-        name: "gi_screen_probes",
-        size: this.total_screen_probes * 96,
-        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-        force: force_recreate,
-        persistent: true, // Keep across frames
-      });
-
-      // GI counters buffer: light_count + active_probe_count + padding
-      gi_counters = render_graph.create_buffer({
-        name: "gi_counters",
-        size: 16, // 4 x u32 (light_count, active_probe_count, padding0, padding1)
-        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-        force: force_recreate,
-      });
-
-      const max_probe_rays = this.total_screen_probes * this.config.screen_ray_count;
-      probe_path_state = render_graph.create_buffer({
-        name: "gi_probe_path_state",
-        size: max_probe_rays * 12 * 4, // 12 vec4<f32> per ray
-        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-        force: force_recreate,
-      });
-
-      probe_path_shade = render_graph.create_buffer({
-        name: "gi_probe_path_shade",
-        size: max_probe_rays * 8 * 4, // 2 vec4<f32> per ray
-        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-        force: force_recreate,
-      });
-
-      gi_output = render_graph.create_image({
-        name: "gi_output",
-        format: "rgba16float",
-        width: width,
-        height: height,
-        usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
-        force: force_recreate,
-      });
-    }
 
     if (draw_count > 0) {
-      // Get material resources
-      const params_gpu = MaterialAllocationTable.params_buffer;
-      const material_palette = MaterialAllocationTable.palette_buffer;
-      const material_palette_offsets = EntityManager.get_fragment_gpu_buffer(
-        StaticMeshFragment,
-        material_offsets_name
-      );
-
-      const params_gpu_buffer = render_graph.register_buffer(params_gpu.config.name);
-      const material_palette_buffer = render_graph.register_buffer(material_palette.config.name);
-      const material_palette_offsets_buffer = render_graph.register_buffer(
-        material_palette_offsets.buffer.config.name
-      );
-
-      // Get texture pools
-      const default_texture = Texture.default_array();
-      const albedo_pool = ResourceCache.get().fetch(CacheTypes.IMAGE, texture_pool_albedo_name);
-      const normal_pool = ResourceCache.get().fetch(CacheTypes.IMAGE, texture_pool_normal_name);
-      const roughness_pool = ResourceCache.get().fetch(
-        CacheTypes.IMAGE,
-        texture_pool_roughness_name
-      );
-      const metallic_pool = ResourceCache.get().fetch(CacheTypes.IMAGE, texture_pool_metallic_name);
-      const ao_pool = ResourceCache.get().fetch(CacheTypes.IMAGE, texture_pool_ao_name);
-      const height_pool = ResourceCache.get().fetch(CacheTypes.IMAGE, texture_pool_height_name);
-      const specular_pool = ResourceCache.get().fetch(CacheTypes.IMAGE, texture_pool_specular_name);
-      const emission_pool = ResourceCache.get().fetch(CacheTypes.IMAGE, texture_pool_emission_name);
-
-      const default_texture_buffer = render_graph.register_image(default_texture.config.name);
-      const albedo_pool_buffer = albedo_pool
-        ? render_graph.register_image(albedo_pool.config.name)
-        : default_texture_buffer;
-      const normal_pool_buffer = normal_pool
-        ? render_graph.register_image(normal_pool.config.name)
-        : default_texture_buffer;
-      const roughness_pool_buffer = roughness_pool
-        ? render_graph.register_image(roughness_pool.config.name)
-        : default_texture_buffer;
-      const metallic_pool_buffer = metallic_pool
-        ? render_graph.register_image(metallic_pool.config.name)
-        : default_texture_buffer;
-      const ao_pool_buffer = ao_pool
-        ? render_graph.register_image(ao_pool.config.name)
-        : default_texture_buffer;
-      const height_pool_buffer = height_pool
-        ? render_graph.register_image(height_pool.config.name)
-        : default_texture_buffer;
-      const specular_pool_buffer = specular_pool
-        ? render_graph.register_image(specular_pool.config.name)
-        : default_texture_buffer;
-      const emission_pool_buffer = emission_pool
-        ? render_graph.register_image(emission_pool.config.name)
-        : default_texture_buffer;
-
-      // Environment data
-      const skydome_data = SharedEnvironmentData.get_skydome_data();
-      const skydome_data_buffer = render_graph.register_buffer(skydome_data.config.name);
-
-      const skybox = SharedEnvironmentData.get_skybox();
-      const skybox_texture_buffer = render_graph.register_image(skybox.config.name);
-
-      // =========================================================================
-      // Pass 0: Reset counters and upload parameters
-      // =========================================================================
-      render_graph.add_pass(
-        "gi_upload_params",
-        RenderPassFlags.GraphLocal,
-        {},
-        (graph, frame_data, encoder) => {
-          const gi_params_buf = graph.get_physical_buffer(gi_params);
-
-          // Upload GI parameters
-          this.gi_params_data[0] = this.config.screen_probe_size;
-          this.gi_params_data[1] = this.config.screen_ray_count;
-          this.gi_params_data[2] = this.config.world_cache_size;
-          this.gi_params_data[3] = this.config.world_cache_cell_size;
-          this.gi_params_data[4] = this.total_screen_probes; // Derived from grid dimensions
-          this.gi_params_data[5] = SharedFrameInfoBuffer.get_frame_index();
-          this.gi_params_data[6] = this.config.reset_caches ? 1 : 0;
-          this.gi_params_data[7] = this.config.indirect_boost;
-          this.gi_params_data[8] = this.config.upscale_x;
-          this.gi_params_data[9] = this.config.upscale_y;
-          this.gi_params_data[10] = this.config.world_cache_lod_count;
-          this.gi_params_data[11] = 0;
-          gi_params_buf.write_raw(this.gi_params_data);
-
-          // Clear reset flag after use
-          this.config.reset_caches = false;
-        }
-      );
-
       if (this.config.use_screen_probes) {
-        // =========================================================================
-        // Pass 1: Reset counters (GPU compute shader)
-        // =========================================================================
-        render_graph.add_pass(
-          "gi_reset",
-          RenderPassFlags.Compute,
-          {
-            inputs: [gi_counters, light_count],
-            outputs: [gi_counters],
-            shader_setup: gi_reset_shader_setup,
-          },
-          (graph, frame_data, encoder) => {
-            const pass = graph.get_physical_pass(frame_data.current_pass);
-            pass.dispatch(1, 1, 1); // Single thread does the reset
-          }
-        );
-
-        // =========================================================================
-        // Pass 2: Spawn Screen Probes (World velocity reprojection + Halton spawn)
-        // =========================================================================
-        render_graph.add_pass(
-          "gi_screen_probe_spawn",
-          RenderPassFlags.Compute,
-          {
-            inputs: [
-              gi_params,
-              gi_counters,
-              screen_probes,
-              world_cache,
-              gbuffer_position,
-              gbuffer_normal,
-              gbuffer_albedo,
-              gbuffer_smra,
-              gbuffer_motion_emissive,
-            ],
-            outputs: [gi_counters, screen_probes],
-            shader_setup: screen_probe_spawn_shader_setup,
-          },
-          (graph, frame_data, encoder) => {
-            const pass = graph.get_physical_pass(frame_data.current_pass);
-            pass.dispatch(grid_width, grid_height, 1);
-          }
-        );
-
-        // =========================================================================
-        // Pass 3-N: Screen Probe Path Tracing (Init, Hit, Shade for each bounce)
-        // =========================================================================
-        render_graph.add_pass(
-          "gi_probe_trace_init",
-          RenderPassFlags.Compute,
-          {
-            inputs: [
-              gi_params,
-              gi_counters,
-              screen_probes,
-              probe_path_state,
-              probe_path_shade,
-              light_count,
-              dense_lights,
-            ],
-            outputs: [probe_path_state, probe_path_shade],
-            shader_setup: screen_probe_trace_init_shader_setup,
-          },
-          (graph, frame_data, encoder) => {
-            const pass = graph.get_physical_pass(frame_data.current_pass);
-            const max_rays = this.total_screen_probes * this.config.screen_ray_count;
-            pass.dispatch(Math.ceil(max_rays / 128), 1, 1);
-          }
-        );
-
-        for (let bounce = 0; bounce < this.config.max_bounces; bounce++) {
-          render_graph.add_pass(
-            `gi_probe_trace_hit_visibility_${bounce}`,
-            RenderPassFlags.Compute,
-            {
-              inputs: [
-                gi_params,
-                gi_counters,
-                probe_path_state,
-                tlas_bvh2_bounds,
-                tlas_bvh4_nodes,
-                blas_atlas,
-                entity_transforms,
-                index_buffer,
-                mesh_asset_ids,
-              ],
-              outputs: [probe_path_state],
-              shader_setup: screen_probe_trace_hit_visibility_shader_setup,
-            },
-            (graph, frame_data, encoder) => {
-              const pass = graph.get_physical_pass(frame_data.current_pass);
-              const max_rays = this.total_screen_probes * this.config.screen_ray_count;
-              pass.dispatch(Math.ceil(max_rays / 128), 1, 1);
-            }
-          );
-
-          render_graph.add_pass(
-            `gi_probe_trace_hit_${bounce}`,
-            RenderPassFlags.Compute,
-            {
-              inputs: [
-                gi_params,
-                gi_counters,
-                probe_path_state,
-                tlas_bvh2_bounds,
-                tlas_bvh4_nodes,
-                blas_atlas,
-                entity_transforms,
-                index_buffer,
-                mesh_asset_ids,
-              ],
-              outputs: [probe_path_state],
-              shader_setup: screen_probe_trace_hit_shader_setup,
-            },
-            (graph, frame_data, encoder) => {
-              const pass = graph.get_physical_pass(frame_data.current_pass);
-              const max_rays = this.total_screen_probes * this.config.screen_ray_count;
-              pass.dispatch(Math.ceil(max_rays / 128), 1, 1);
-            }
-          );
-
-          const shade_inputs = [
-            gi_params,
-            skydome_data_buffer,
-            gi_counters,
-            probe_path_state,
-            probe_path_shade,
-            world_cache,
-            params_gpu_buffer,
-            material_palette_offsets_buffer,
-            material_palette_buffer,
-            dense_lights,
-            albedo_pool_buffer,
-            normal_pool_buffer,
-            roughness_pool_buffer,
-            metallic_pool_buffer,
-            ao_pool_buffer,
-            height_pool_buffer,
-            specular_pool_buffer,
-            emission_pool_buffer,
-            skybox_texture_buffer,
-          ];
-
-          render_graph.add_pass(
-            `gi_probe_trace_shade_${bounce}`,
-            RenderPassFlags.Compute,
-            {
-              inputs: shade_inputs,
-              outputs: [probe_path_state, probe_path_shade],
-              shader_setup: screen_probe_trace_shade_shader_setup,
-            },
-            (graph, frame_data, encoder) => {
-              const pass = graph.get_physical_pass(frame_data.current_pass);
-              const max_rays = this.total_screen_probes * this.config.screen_ray_count;
-              pass.dispatch(Math.ceil(max_rays / 128), 1, 1);
-            }
-          );
-        }
-
-        // =========================================================================
-        // Pass N+2: Update Screen Probes (accumulate ray radiance and world cache)
-        // =========================================================================
-        render_graph.add_pass(
-          "gi_screen_probe_update",
-          RenderPassFlags.Compute,
-          {
-            inputs: [
-              gi_params,
-              gi_counters,
-              screen_probes,
-              probe_path_state,
-              probe_path_shade,
-              world_cache,
-            ],
-            outputs: [screen_probes, world_cache],
-            shader_setup: screen_probe_update_shader_setup,
-          },
-          (graph, frame_data, encoder) => {
-            const pass = graph.get_physical_pass(frame_data.current_pass);
-            pass.dispatch(Math.ceil(this.total_screen_probes / 128), 1, 1);
-          }
-        );
-      } else {
-        if (!this.world_cache_path_tracer) {
-          this.world_cache_path_tracer = new WorldCachePathTracer();
-        }
-
-        this.world_cache_path_tracer.add_passes(
+        this.add_probe_based_passes(
           render_graph,
           width,
           height,
-          this.config.max_bounces,
-          this.config.max_spp,
-          this.config.upscale_x * this.config.upscale_y,
-          this.config.indirect_boost,
           tlas_bvh2_bounds,
           tlas_bvh4_nodes,
           blas_atlas,
@@ -588,46 +318,974 @@ export class GI {
           gbuffer_albedo,
           gbuffer_smra,
           gbuffer_motion_emissive,
-          gi_params,
-          world_cache,
+          gi_output,
           force_recreate
         );
-
-        gi_output = this.world_cache_path_tracer.output_texture;
+      } else {
+        this.add_rt_based_passes(
+          render_graph,
+          width,
+          height,
+          tlas_bvh2_bounds,
+          tlas_bvh4_nodes,
+          blas_atlas,
+          entity_transforms,
+          mesh_asset_ids,
+          index_buffer,
+          dense_lights,
+          light_count,
+          gbuffer_position,
+          gbuffer_normal,
+          gbuffer_albedo,
+          gbuffer_smra,
+          gbuffer_motion_emissive,
+          gi_output,
+          force_recreate
+        );
       }
-
-      // =========================================================================
-      // Pass N+3: Reconstruct Final Radiance (interpolate from probes)
-      // =========================================================================
-      // render_graph.add_pass(
-      //   "gi_reconstruct",
-      //   RenderPassFlags.Compute,
-      //   {
-      //     inputs: [
-      //       gi_params,
-      //       gi_counters,
-      //       screen_probes,
-      //       gbuffer_position,
-      //       gbuffer_normal,
-      //       gbuffer_albedo,
-      //       gi_output,
-      //     ],
-      //     outputs: [gi_output],
-      //     shader_setup: screen_probe_reconstruct_shader_setup,
-      //   },
-      //   (graph, frame_data, encoder) => {
-      //     const pass = graph.get_physical_pass(frame_data.current_pass);
-      //     pass.dispatch(Math.ceil(width / 8), Math.ceil(height / 8), 1);
-      //   }
-      // );
     }
 
     // Store references for external use
+
+    this.final_gi_texture = gi_output;
+  }
+
+  add_probe_based_passes(
+    render_graph,
+    width,
+    height,
+    tlas_bvh2_bounds = null,
+    tlas_bvh4_nodes = null,
+    blas_atlas = null,
+    entity_transforms = null,
+    mesh_asset_ids = null,
+    index_buffer = null,
+    dense_lights = null,
+    light_count = null,
+    gbuffer_position = null,
+    gbuffer_normal = null,
+    gbuffer_albedo = null,
+    gbuffer_smra = null,
+    gbuffer_motion_emissive = null,
+    gi_output = null,
+    force_recreate = false
+  ) {
+    let grid_width = Math.ceil(width / this.config.screen_probe_size);
+    let grid_height = Math.ceil(height / this.config.screen_probe_size);
+    let total_screen_probes = grid_width * grid_height;
+
+    const total_cells = this.config.world_cache_size * this.config.world_cache_lod_count;
+
+    // GI parameters buffer
+    const gi_params = render_graph.create_buffer({
+      name: "gi_params",
+      size: this.gi_params_data.byteLength,
+      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+      force: force_recreate,
+    });
+
+    // GI counters buffer: light_count + active_probe_count + padding
+    let gi_counters = render_graph.create_buffer({
+      name: "gi_counters",
+      size: 16, // 4 x u32 (light_count, active_probe_count, active_cache_cell_count, padding)
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+      force: force_recreate,
+    });
+
+    // World cache storage (persistent across frames)
+    // Each cell: position+frame(16) + normal+count(16) + radiance+w(16) + data(16) 
+    //            + albedo+roughness(16) + material_props(16) = 96 bytes
+    const world_cache = render_graph.create_buffer({
+      name: "gi_world_cache",
+      size: total_cells * 96,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+      force: force_recreate,
+      persistent: true, // Keep across frames
+    });
+
+    // World cache compaction buffers
+    const world_cache_active_flags = render_graph.create_buffer({
+      name: "gi_world_cache_active_flags",
+      size: total_cells * 4, // u32 per cell
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+      force: force_recreate,
+    });
+
+    const world_cache_prefix_sum = render_graph.create_buffer({
+      name: "gi_world_cache_prefix_sum",
+      size: total_cells * 4, // u32 per cell
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+      force: force_recreate,
+    });
+
+    const world_cache_block_sums = render_graph.create_buffer({
+      name: "gi_world_cache_block_sums",
+      size: Math.ceil(total_cells / COMPUTE_WORKGROUP_SIZE) * 4, // u32 per workgroup
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+      force: force_recreate,
+    });
+
+    const world_cache_compacted_indices = render_graph.create_buffer({
+      name: "gi_world_cache_compacted_indices",
+      size: total_cells * 4, // u32 per cell (worst case: all active)
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+      force: force_recreate,
+    });
+
+    const world_cache_dispatch_params = render_graph.create_buffer({
+      name: "gi_world_cache_dispatch_params",
+      size: 12, // 3 x u32 (x, y, z)
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.INDIRECT | GPUBufferUsage.COPY_DST,
+      force: force_recreate,
+    });
+
+    // World cache path state for tracing from active cells
+    // Each active cell traces 1 ray per frame to populate cache with indirect radiance
+    const world_cache_path_state = render_graph.create_buffer({
+      name: "gi_world_cache_path_state",
+      size: total_cells * 13 * 4, // Same structure as WorldCachePathState (13 vec4<f32> per ray)
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+      force: force_recreate,
+    });
+
+    // Screen probe storage (persistent across frames)
+    // Each probe: position+radius(16) + normal+frame(16) + radiance+m(16) + albedo+roughness(16) + material_props(16) + state(16) = 96 bytes
+    let screen_probes = render_graph.create_buffer({
+      name: "gi_screen_probes",
+      size: total_screen_probes * 96,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+      force: force_recreate,
+      persistent: true, // Keep across frames
+    });
+
+    const max_probe_rays = total_screen_probes * this.config.screen_ray_count;
+    let probe_path_state = render_graph.create_buffer({
+      name: "gi_probe_path_state",
+      size: max_probe_rays * 14 * 4, // 12 vec4<f32> per ray
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+      force: force_recreate,
+    });
+    // Get material resources
+    const params_gpu = MaterialAllocationTable.params_buffer;
+    const material_palette = MaterialAllocationTable.palette_buffer;
+    const material_palette_offsets = EntityManager.get_fragment_gpu_buffer(
+      StaticMeshFragment,
+      material_offsets_name
+    );
+
+    const params_gpu_buffer = render_graph.register_buffer(params_gpu.config.name);
+    const material_palette_buffer = render_graph.register_buffer(material_palette.config.name);
+    const material_palette_offsets_buffer = render_graph.register_buffer(
+      material_palette_offsets.buffer.config.name
+    );
+
+    // Get texture pools
+    const default_texture = Texture.default_array();
+    const albedo_pool = ResourceCache.get().fetch(CacheTypes.IMAGE, texture_pool_albedo_name);
+    const normal_pool = ResourceCache.get().fetch(CacheTypes.IMAGE, texture_pool_normal_name);
+    const roughness_pool = ResourceCache.get().fetch(CacheTypes.IMAGE, texture_pool_roughness_name);
+    const metallic_pool = ResourceCache.get().fetch(CacheTypes.IMAGE, texture_pool_metallic_name);
+    const ao_pool = ResourceCache.get().fetch(CacheTypes.IMAGE, texture_pool_ao_name);
+    const height_pool = ResourceCache.get().fetch(CacheTypes.IMAGE, texture_pool_height_name);
+    const specular_pool = ResourceCache.get().fetch(CacheTypes.IMAGE, texture_pool_specular_name);
+    const emission_pool = ResourceCache.get().fetch(CacheTypes.IMAGE, texture_pool_emission_name);
+
+    const default_texture_buffer = render_graph.register_image(default_texture.config.name);
+    const albedo_pool_buffer = albedo_pool
+      ? render_graph.register_image(albedo_pool.config.name)
+      : default_texture_buffer;
+    const normal_pool_buffer = normal_pool
+      ? render_graph.register_image(normal_pool.config.name)
+      : default_texture_buffer;
+    const roughness_pool_buffer = roughness_pool
+      ? render_graph.register_image(roughness_pool.config.name)
+      : default_texture_buffer;
+    const metallic_pool_buffer = metallic_pool
+      ? render_graph.register_image(metallic_pool.config.name)
+      : default_texture_buffer;
+    const ao_pool_buffer = ao_pool
+      ? render_graph.register_image(ao_pool.config.name)
+      : default_texture_buffer;
+    const height_pool_buffer = height_pool
+      ? render_graph.register_image(height_pool.config.name)
+      : default_texture_buffer;
+    const specular_pool_buffer = specular_pool
+      ? render_graph.register_image(specular_pool.config.name)
+      : default_texture_buffer;
+    const emission_pool_buffer = emission_pool
+      ? render_graph.register_image(emission_pool.config.name)
+      : default_texture_buffer;
+
+    // Environment data
+    const skydome_data = SharedEnvironmentData.get_skydome_data();
+    const skydome_data_buffer = render_graph.register_buffer(skydome_data.config.name);
+
+    const skybox = SharedEnvironmentData.get_skybox();
+    const skybox_texture_buffer = render_graph.register_image(skybox.config.name);
+
+    render_graph.add_pass(
+      "gi_upload_params",
+      RenderPassFlags.GraphLocal,
+      {},
+      (graph, frame_data, encoder) => {
+        const gi_params_buf = graph.get_physical_buffer(gi_params);
+
+        // Upload GI parameters
+        this.gi_params_data[0] = this.config.screen_probe_size;
+        this.gi_params_data[1] = this.config.screen_ray_count;
+        this.gi_params_data[2] = this.config.world_cache_size;
+        this.gi_params_data[3] = this.config.world_cache_cell_size;
+        this.gi_params_data[4] = total_screen_probes; // Derived from grid dimensions
+        this.gi_params_data[5] = SharedFrameInfoBuffer.get_frame_index();
+        this.gi_params_data[6] = this.config.reset_caches ? 1 : 0;
+        this.gi_params_data[7] = this.config.indirect_boost;
+        this.gi_params_data[8] = this.config.upscale_x;
+        this.gi_params_data[9] = this.config.upscale_y;
+        this.gi_params_data[10] = this.config.world_cache_lod_count;
+        this.gi_params_data[11] = 0;
+        gi_params_buf.write_raw(this.gi_params_data);
+
+        // Clear reset flag after use
+        this.config.reset_caches = false;
+      }
+    );
+
+    render_graph.add_pass(
+      "gi_reset",
+      RenderPassFlags.Compute,
+      {
+        inputs: [gi_counters, light_count],
+        outputs: [gi_counters],
+        shader_setup: gi_reset_shader_setup,
+      },
+      (graph, frame_data, encoder) => {
+        const pass = graph.get_physical_pass(frame_data.current_pass);
+        pass.dispatch(1, 1, 1); // Single thread does the reset
+      }
+    );
+
+    render_graph.add_pass(
+      "gi_world_cache_evict",
+      RenderPassFlags.Compute,
+      {
+        inputs: [world_cache],
+        outputs: [world_cache],
+        shader_setup: world_cache_evict_shader_setup,
+      },
+      (graph, frame_data, encoder) => {
+        const pass = graph.get_physical_pass(frame_data.current_pass);
+        pass.dispatch(Math.ceil(total_cells / COMPUTE_WORKGROUP_SIZE), 1, 1);
+      }
+    );
+
+    render_graph.add_pass(
+      "gi_world_cache_active_mark",
+      RenderPassFlags.Compute,
+      {
+        inputs: [world_cache, world_cache_active_flags],
+        outputs: [world_cache_active_flags],
+        shader_setup: world_cache_compact_mark_shader_setup,
+      },
+      (graph, frame_data, encoder) => {
+        const pass = graph.get_physical_pass(frame_data.current_pass);
+        pass.dispatch(Math.ceil(total_cells / COMPUTE_WORKGROUP_SIZE), 1, 1);
+      }
+    );
+
+    render_graph.add_pass(
+      "gi_world_cache_active_prefix_sum",
+      RenderPassFlags.Compute,
+      {
+        inputs: [world_cache_active_flags, world_cache_prefix_sum, world_cache_block_sums],
+        outputs: [world_cache_prefix_sum, world_cache_block_sums],
+        shader_setup: world_cache_compact_prefix_sum_shader_setup,
+      },
+      (graph, frame_data, encoder) => {
+        const pass = graph.get_physical_pass(frame_data.current_pass);
+        pass.dispatch(Math.ceil(total_cells / COMPUTE_WORKGROUP_SIZE), 1, 1);
+      }
+    );
+
+    render_graph.add_pass(
+      "gi_world_cache_active_compact",
+      RenderPassFlags.Compute,
+      {
+        inputs: [
+          world_cache_active_flags,
+          world_cache_prefix_sum,
+          world_cache_block_sums,
+          world_cache_compacted_indices,
+          world_cache_dispatch_params,
+          gi_counters,
+        ],
+        outputs: [world_cache_compacted_indices, world_cache_dispatch_params],
+        shader_setup: world_cache_compact_scatter_shader_setup,
+      },
+      (graph, frame_data, encoder) => {
+        const pass = graph.get_physical_pass(frame_data.current_pass);
+        pass.dispatch(Math.ceil(total_cells / COMPUTE_WORKGROUP_SIZE), 1, 1);
+      }
+    );
+
+    render_graph.add_pass(
+      "gi_world_cache_trace_init_and_sample_lights",
+      RenderPassFlags.Compute,
+      {
+        inputs: [
+          gi_params,
+          world_cache,
+          world_cache_compacted_indices,
+          world_cache_dispatch_params,
+          world_cache_path_state,
+          light_count,
+          dense_lights,
+          gi_counters,
+        ],
+        outputs: [world_cache_path_state],
+        shader_setup: world_cache_trace_init_shader_setup,
+      },
+      (graph, frame_data, encoder) => {
+        const pass = graph.get_physical_pass(frame_data.current_pass);
+        const dispatch_buffer = graph.get_physical_buffer(world_cache_dispatch_params);
+        // Indirect dispatch based on number of active cells
+        pass.dispatch_indirect(dispatch_buffer, 0);
+      }
+    );
+
+    render_graph.add_pass(
+      "gi_world_cache_trace_hit",
+      RenderPassFlags.Compute,
+      {
+        inputs: [
+          gi_params,
+          world_cache_path_state,
+          tlas_bvh2_bounds,
+          tlas_bvh4_nodes,
+          blas_atlas,
+          entity_transforms,
+          index_buffer,
+          mesh_asset_ids,
+          gi_counters,
+        ],
+        outputs: [world_cache_path_state],
+        shader_setup: world_cache_trace_hit_shader_setup,
+      },
+      (graph, frame_data, encoder) => {
+        const pass = graph.get_physical_pass(frame_data.current_pass);
+        const dispatch_buffer = graph.get_physical_buffer(world_cache_dispatch_params);
+        // Indirect dispatch based on number of active cells
+        pass.dispatch_indirect(dispatch_buffer, 0);
+      }
+    );
+
+    render_graph.add_pass(
+      "gi_world_cache_trace_shade",
+      RenderPassFlags.Compute,
+      {
+        inputs: [
+          gi_params,
+          skydome_data_buffer,
+          world_cache,
+          world_cache_compacted_indices,
+          world_cache_path_state,
+          params_gpu_buffer,
+          material_palette_offsets_buffer,
+          material_palette_buffer,
+          dense_lights,
+          albedo_pool_buffer,
+          normal_pool_buffer,
+          roughness_pool_buffer,
+          metallic_pool_buffer,
+          ao_pool_buffer,
+          height_pool_buffer,
+          specular_pool_buffer,
+          emission_pool_buffer,
+          skybox_texture_buffer,
+        ],
+        outputs: [world_cache_path_state, world_cache],
+        shader_setup: world_cache_trace_shade_shader_setup,
+      },
+      (graph, frame_data, encoder) => {
+        const pass = graph.get_physical_pass(frame_data.current_pass);
+        const dispatch_buffer = graph.get_physical_buffer(world_cache_dispatch_params);
+        // Indirect dispatch based on number of active cells
+        pass.dispatch_indirect(dispatch_buffer, 0);
+      }
+    );
+
+    render_graph.add_pass(
+      "gi_screen_probe_spawn",
+      RenderPassFlags.Compute,
+      {
+        inputs: [
+          gi_params,
+          gi_counters,
+          screen_probes,
+          world_cache,
+          gbuffer_position,
+          gbuffer_normal,
+          gbuffer_albedo,
+          gbuffer_smra,
+          gbuffer_motion_emissive,
+        ],
+        outputs: [gi_counters, screen_probes],
+        shader_setup: screen_probe_spawn_shader_setup,
+      },
+      (graph, frame_data, encoder) => {
+        const pass = graph.get_physical_pass(frame_data.current_pass);
+        pass.dispatch(grid_width, grid_height, 1);
+      }
+    );
+
+    render_graph.add_pass(
+      "gi_probe_trace_init_and_sample_lights",
+      RenderPassFlags.Compute,
+      {
+        inputs: [
+          gi_params,
+          gi_counters,
+          screen_probes,
+          probe_path_state,
+          light_count,
+          dense_lights,
+        ],
+        outputs: [probe_path_state],
+        shader_setup: screen_probe_trace_init_shader_setup,
+      },
+      (graph, frame_data, encoder) => {
+        const pass = graph.get_physical_pass(frame_data.current_pass);
+        const max_rays = total_screen_probes * this.config.screen_ray_count;
+        pass.dispatch(Math.ceil(max_rays / COMPUTE_WORKGROUP_SIZE), 1, 1);
+      }
+    );
+
+    render_graph.add_pass(
+      `gi_probe_trace_hit`,
+      RenderPassFlags.Compute,
+      {
+        inputs: [
+          gi_params,
+          gi_counters,
+          probe_path_state,
+          tlas_bvh2_bounds,
+          tlas_bvh4_nodes,
+          blas_atlas,
+          entity_transforms,
+          index_buffer,
+          mesh_asset_ids,
+        ],
+        outputs: [probe_path_state],
+        shader_setup: screen_probe_trace_hit_shader_setup,
+      },
+      (graph, frame_data, encoder) => {
+        const pass = graph.get_physical_pass(frame_data.current_pass);
+        const max_rays = total_screen_probes * this.config.screen_ray_count;
+        pass.dispatch(Math.ceil(max_rays / COMPUTE_WORKGROUP_SIZE), 1, 1);
+      }
+    );
+
+    render_graph.add_pass(
+      `gi_probe_trace_shade`,
+      RenderPassFlags.Compute,
+      {
+        inputs: [
+          gi_params,
+          skydome_data_buffer,
+          gi_counters,
+          probe_path_state,
+          world_cache,
+          params_gpu_buffer,
+          material_palette_offsets_buffer,
+          material_palette_buffer,
+          dense_lights,
+          albedo_pool_buffer,
+          normal_pool_buffer,
+          roughness_pool_buffer,
+          metallic_pool_buffer,
+          ao_pool_buffer,
+          height_pool_buffer,
+          specular_pool_buffer,
+          emission_pool_buffer,
+          skybox_texture_buffer,
+        ],
+        outputs: [probe_path_state],
+        shader_setup: screen_probe_trace_shade_shader_setup,
+      },
+      (graph, frame_data, encoder) => {
+        const pass = graph.get_physical_pass(frame_data.current_pass);
+        const max_rays = total_screen_probes * this.config.screen_ray_count;
+        pass.dispatch(Math.ceil(max_rays / COMPUTE_WORKGROUP_SIZE), 1, 1);
+      }
+    );
+
+    render_graph.add_pass(
+      "gi_screen_probe_update",
+      RenderPassFlags.Compute,
+      {
+        inputs: [gi_params, gi_counters, screen_probes, probe_path_state, world_cache],
+        outputs: [screen_probes, world_cache],
+        shader_setup: screen_probe_update_shader_setup,
+      },
+      (graph, frame_data, encoder) => {
+        const pass = graph.get_physical_pass(frame_data.current_pass);
+        pass.dispatch(Math.ceil(total_screen_probes / COMPUTE_WORKGROUP_SIZE), 1, 1);
+      }
+    );
+
+    // render_graph.add_pass(
+    //   "gi_reconstruct",
+    //   RenderPassFlags.Compute,
+    //   {
+    //     inputs: [
+    //       gi_params,
+    //       gi_counters,
+    //       screen_probes,
+    //       gbuffer_position,
+    //       gbuffer_normal,
+    //       gbuffer_albedo,
+    //       gi_output,
+    //     ],
+    //     outputs: [gi_output],
+    //     shader_setup: screen_probe_reconstruct_shader_setup,
+    //   },
+    //   (graph, frame_data, encoder) => {
+    //     const pass = graph.get_physical_pass(frame_data.current_pass);
+    //     pass.dispatch(Math.ceil(width / 8), Math.ceil(height / 8), 1);
+    //   }
+    // );
+
     this.gi_params = gi_params;
     this.gi_counters = gi_counters;
     this.screen_probes = screen_probes;
     this.world_cache = world_cache;
-    this.final_gi_texture = gi_output;
+  }
+
+  add_rt_based_passes(
+    render_graph,
+    width,
+    height,
+    tlas_bvh2_bounds = null,
+    tlas_bvh4_nodes = null,
+    blas_atlas = null,
+    entity_transforms = null,
+    mesh_asset_ids = null,
+    index_buffer = null,
+    dense_lights = null,
+    light_count = null,
+    gbuffer_position = null,
+    gbuffer_normal = null,
+    gbuffer_albedo = null,
+    gbuffer_smra = null,
+    gbuffer_motion_emissive = null,
+    gi_output = null,
+    force_recreate = false
+  ) {
+    const num_bounce_passes = this.config.max_bounces;
+    const num_rays = width * height;
+    const trace_rate = this.config.upscale_x * this.config.upscale_y;
+
+    const params_gpu = MaterialAllocationTable.params_buffer;
+    const material_palette = MaterialAllocationTable.palette_buffer;
+    const material_palette_offsets = EntityManager.get_fragment_gpu_buffer(
+      StaticMeshFragment,
+      material_offsets_name
+    );
+
+    const params_gpu_buffer = render_graph.register_buffer(params_gpu.config.name);
+    const material_palette_buffer = render_graph.register_buffer(material_palette.config.name);
+    const material_palette_offsets_buffer = render_graph.register_buffer(
+      material_palette_offsets.buffer.config.name
+    );
+
+    const default_texture = Texture.default_array();
+    const albedo_pool = ResourceCache.get().fetch(CacheTypes.IMAGE, texture_pool_albedo_name);
+    const normal_pool = ResourceCache.get().fetch(CacheTypes.IMAGE, texture_pool_normal_name);
+    const roughness_pool = ResourceCache.get().fetch(CacheTypes.IMAGE, texture_pool_roughness_name);
+    const metallic_pool = ResourceCache.get().fetch(CacheTypes.IMAGE, texture_pool_metallic_name);
+    const ao_pool = ResourceCache.get().fetch(CacheTypes.IMAGE, texture_pool_ao_name);
+    const height_pool = ResourceCache.get().fetch(CacheTypes.IMAGE, texture_pool_height_name);
+    const specular_pool = ResourceCache.get().fetch(CacheTypes.IMAGE, texture_pool_specular_name);
+    const emission_pool = ResourceCache.get().fetch(CacheTypes.IMAGE, texture_pool_emission_name);
+
+    const default_texture_buffer = render_graph.register_image(default_texture.config.name);
+    const albedo_pool_buffer = albedo_pool
+      ? render_graph.register_image(albedo_pool.config.name)
+      : default_texture_buffer;
+    const normal_pool_buffer = normal_pool
+      ? render_graph.register_image(normal_pool.config.name)
+      : default_texture_buffer;
+    const roughness_pool_buffer = roughness_pool
+      ? render_graph.register_image(roughness_pool.config.name)
+      : default_texture_buffer;
+    const metallic_pool_buffer = metallic_pool
+      ? render_graph.register_image(metallic_pool.config.name)
+      : default_texture_buffer;
+    const ao_pool_buffer = ao_pool
+      ? render_graph.register_image(ao_pool.config.name)
+      : default_texture_buffer;
+    const height_pool_buffer = height_pool
+      ? render_graph.register_image(height_pool.config.name)
+      : default_texture_buffer;
+    const specular_pool_buffer = specular_pool
+      ? render_graph.register_image(specular_pool.config.name)
+      : default_texture_buffer;
+    const emission_pool_buffer = emission_pool
+      ? render_graph.register_image(emission_pool.config.name)
+      : default_texture_buffer;
+
+    const skydome_data = SharedEnvironmentData.get_skydome_data();
+    const skydome_data_buffer = render_graph.register_buffer(skydome_data.config.name);
+
+    const skybox = SharedEnvironmentData.get_skybox();
+    const skybox_texture_buffer = render_graph.register_image(skybox.config.name);
+
+    const total_cells = this.config.world_cache_size * this.config.world_cache_lod_count;
+
+    // GI parameters buffer
+    const gi_params = render_graph.create_buffer({
+      name: "gi_params",
+      size: this.gi_params_data.byteLength,
+      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+      force: force_recreate,
+    });
+
+    // World cache storage (persistent across frames)
+    // Each cell: position+frame(16) + normal+count(16) + radiance+w(16) + data(16) 
+    //            + albedo+roughness(16) + material_props(16) = 96 bytes
+    const world_cache = render_graph.create_buffer({
+      name: "gi_world_cache",
+      size: total_cells * 96,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+      force: force_recreate,
+      persistent: true, // Keep across frames
+    });
+
+    // World cache compaction buffers
+    const world_cache_active_flags = render_graph.create_buffer({
+      name: "gi_world_cache_active_flags",
+      size: total_cells * 4, // u32 per cell
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+      force: force_recreate,
+    });
+
+    const world_cache_prefix_sum = render_graph.create_buffer({
+      name: "gi_world_cache_prefix_sum",
+      size: total_cells * 4, // u32 per cell
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+      force: force_recreate,
+    });
+
+    const world_cache_block_sums = render_graph.create_buffer({
+      name: "gi_world_cache_block_sums",
+      size: Math.ceil(total_cells / COMPUTE_WORKGROUP_SIZE) * 4, // u32 per workgroup
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+      force: force_recreate,
+    });
+
+    const world_cache_compacted_indices = render_graph.create_buffer({
+      name: "gi_world_cache_compacted_indices",
+      size: total_cells * 4, // u32 per cell (worst case: all active)
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+      force: force_recreate,
+    });
+
+    const world_cache_dispatch_params = render_graph.create_buffer({
+      name: "gi_world_cache_dispatch_params",
+      size: 12, // 3 x u32 (x, y, z)
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.INDIRECT | GPUBufferUsage.COPY_DST,
+      force: force_recreate,
+    });
+
+    const path_state = render_graph.create_buffer({
+      name: "gi_pt_path_state",
+      size: num_rays * 36 * 4,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+      force: force_recreate,
+    });
+
+    const path_shade = render_graph.create_buffer({
+      name: "gi_pt_path_shade",
+      size: num_rays * 20 * 4,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+      force: force_recreate,
+    });
+
+    const pt_params = render_graph.create_buffer({
+      name: "gi_pt_params",
+      size: this.pt_params.byteLength,
+      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+      force: force_recreate,
+    });
+
+    render_graph.add_pass(
+      "gi_pt_reset",
+      RenderPassFlags.GraphLocal,
+      {},
+      (graph, frame_data, encoder) => {
+        const params_buffer = graph.get_physical_buffer(pt_params);
+        this.pt_params[0] = num_bounce_passes;
+        this.pt_params[2] = 1; // reset_accum_flag
+        this.pt_params[3] = 1; // use_gbuffer
+        this.pt_params[4] = trace_rate; // trace_rate
+        this.pt_params[5] = this.pt_frame_phase; // frame_phase
+        this.pt_params[6] = this.config.indirect_boost; // indirect_boost
+        params_buffer.write_raw(this.pt_params);
+        this.pt_frame_phase = (this.pt_frame_phase + 1) % Math.max(1, trace_rate);
+      }
+    );
+
+    render_graph.add_pass(
+      "gi_upload_params",
+      RenderPassFlags.GraphLocal,
+      {},
+      (graph, frame_data, encoder) => {
+        const gi_params_buf = graph.get_physical_buffer(gi_params);
+
+        // Upload GI parameters
+        this.gi_params_data[0] = this.config.screen_probe_size;
+        this.gi_params_data[1] = this.config.screen_ray_count;
+        this.gi_params_data[2] = this.config.world_cache_size;
+        this.gi_params_data[3] = this.config.world_cache_cell_size;
+        this.gi_params_data[4] = 0; // Total screen probes (unused in this GI mode)
+        this.gi_params_data[5] = SharedFrameInfoBuffer.get_frame_index();
+        this.gi_params_data[6] = this.config.reset_caches ? 1 : 0;
+        this.gi_params_data[7] = this.config.indirect_boost;
+        this.gi_params_data[8] = this.config.upscale_x;
+        this.gi_params_data[9] = this.config.upscale_y;
+        this.gi_params_data[10] = this.config.world_cache_lod_count;
+        this.gi_params_data[11] = 0;
+        gi_params_buf.write_raw(this.gi_params_data);
+
+        // Clear reset flag after use
+        this.config.reset_caches = false;
+      }
+    );
+
+    render_graph.add_pass(
+      "gi_world_cache_evict",
+      RenderPassFlags.Compute,
+      {
+        inputs: [world_cache],
+        outputs: [world_cache],
+        shader_setup: world_cache_evict_shader_setup,
+      },
+      (graph, frame_data, encoder) => {
+        const pass = graph.get_physical_pass(frame_data.current_pass);
+        pass.dispatch(Math.ceil(total_cells / COMPUTE_WORKGROUP_SIZE), 1, 1);
+      }
+    );
+
+    render_graph.add_pass(
+      "gi_world_cache_active_mark",
+      RenderPassFlags.Compute,
+      {
+        inputs: [world_cache, world_cache_active_flags],
+        outputs: [world_cache_active_flags],
+        shader_setup: world_cache_compact_mark_shader_setup,
+      },
+      (graph, frame_data, encoder) => {
+        const pass = graph.get_physical_pass(frame_data.current_pass);
+        pass.dispatch(Math.ceil(total_cells / COMPUTE_WORKGROUP_SIZE), 1, 1);
+      }
+    );
+
+    render_graph.add_pass(
+      "gi_world_cache_active_prefix_sum",
+      RenderPassFlags.Compute,
+      {
+        inputs: [world_cache_active_flags, world_cache_prefix_sum, world_cache_block_sums],
+        outputs: [world_cache_prefix_sum, world_cache_block_sums],
+        shader_setup: world_cache_compact_prefix_sum_shader_setup,
+      },
+      (graph, frame_data, encoder) => {
+        const pass = graph.get_physical_pass(frame_data.current_pass);
+        pass.dispatch(Math.ceil(total_cells / COMPUTE_WORKGROUP_SIZE), 1, 1);
+      }
+    );
+
+    render_graph.add_pass(
+      "gi_world_cache_active_compact",
+      RenderPassFlags.Compute,
+      {
+        inputs: [
+          world_cache_active_flags,
+          world_cache_prefix_sum,
+          world_cache_block_sums,
+          world_cache_compacted_indices,
+          world_cache_dispatch_params,
+        ],
+        outputs: [world_cache_compacted_indices, world_cache_dispatch_params],
+        shader_setup: world_cache_compact_scatter_shader_setup,
+      },
+      (graph, frame_data, encoder) => {
+        const pass = graph.get_physical_pass(frame_data.current_pass);
+        pass.dispatch(Math.ceil(total_cells / COMPUTE_WORKGROUP_SIZE), 1, 1);
+      }
+    );
+
+    render_graph.add_pass(
+      `gi_pt_init`,
+      RenderPassFlags.Compute,
+      {
+        inputs: [
+          pt_params,
+          path_state,
+          path_shade,
+          gbuffer_position,
+          gbuffer_normal,
+          gbuffer_albedo,
+          gbuffer_smra,
+          gbuffer_motion_emissive,
+          gi_output,
+        ],
+        outputs: [path_state],
+        shader_setup: path_tracer_init_shader_setup,
+      },
+      (graph, frame_data, encoder) => {
+        const pass = graph.get_physical_pass(frame_data.current_pass);
+        //const pixel_count = Math.ceil(num_rays / Math.max(1, trace_rate));
+        const pixel_count = num_rays;
+        pass.dispatch(Math.ceil(pixel_count / COMPUTE_WORKGROUP_SIZE), 1, 1);
+      }
+    );
+
+    render_graph.add_pass(
+      `gi_pt_gbuffer_shade`,
+      RenderPassFlags.Compute,
+      {
+        inputs: [pt_params, path_state, path_shade, dense_lights, light_count, gi_output],
+        outputs: [path_state, path_shade],
+        shader_setup: path_tracer_gbuffer_shade_shader_setup,
+      },
+      (graph, frame_data, encoder) => {
+        const pass = graph.get_physical_pass(frame_data.current_pass);
+        const active_pixel_count = Math.ceil(num_rays / Math.max(1, trace_rate));
+        pass.dispatch(Math.ceil(active_pixel_count / COMPUTE_WORKGROUP_SIZE), 1, 1);
+      }
+    );
+
+    for (let b = 0; b < num_bounce_passes; b++) {
+      render_graph.add_pass(
+        `gi_pt_hit_visibility_${b}`,
+        RenderPassFlags.Compute,
+        {
+          inputs: [
+            pt_params,
+            path_state,
+            tlas_bvh2_bounds,
+            tlas_bvh4_nodes,
+            blas_atlas,
+            entity_transforms,
+            index_buffer,
+            mesh_asset_ids,
+            gi_output,
+          ],
+          outputs: [path_state],
+          shader_setup: path_tracer_hit_visibility_shader_setup,
+        },
+        (graph, frame_data, encoder) => {
+          const pass = graph.get_physical_pass(frame_data.current_pass);
+          const active_pixel_count = Math.ceil(num_rays / Math.max(1, trace_rate));
+          pass.dispatch(Math.ceil(active_pixel_count / COMPUTE_WORKGROUP_SIZE), 1, 1);
+        }
+      );
+
+      render_graph.add_pass(
+        `gi_pt_hit_${b}`,
+        RenderPassFlags.Compute,
+        {
+          inputs: [
+            pt_params,
+            path_state,
+            tlas_bvh2_bounds,
+            tlas_bvh4_nodes,
+            blas_atlas,
+            entity_transforms,
+            index_buffer,
+            mesh_asset_ids,
+            gi_output,
+          ],
+          outputs: [path_state],
+          shader_setup: path_tracer_hit_shader_setup,
+        },
+        (graph, frame_data, encoder) => {
+          const pass = graph.get_physical_pass(frame_data.current_pass);
+          const active_pixel_count = Math.ceil(num_rays / Math.max(1, trace_rate));
+          pass.dispatch(Math.ceil(active_pixel_count / COMPUTE_WORKGROUP_SIZE), 1, 1);
+        }
+      );
+
+      const shade_inputs_list = [
+        pt_params,
+        skydome_data_buffer,
+        path_state,
+        path_shade,
+        params_gpu_buffer,
+        material_palette_offsets_buffer,
+        material_palette_buffer,
+        dense_lights,
+        light_count,
+        world_cache,
+        gi_params,
+        albedo_pool_buffer,
+        normal_pool_buffer,
+        roughness_pool_buffer,
+        metallic_pool_buffer,
+        ao_pool_buffer,
+        height_pool_buffer,
+        specular_pool_buffer,
+        emission_pool_buffer,
+        skybox_texture_buffer,
+        gi_output,
+      ];
+
+      render_graph.add_pass(
+        `gi_pt_shade_${b}`,
+        RenderPassFlags.Compute,
+        {
+          inputs: shade_inputs_list,
+          outputs: [path_state, path_shade],
+          shader_setup: world_cache_path_tracer_shade_shader_setup,
+        },
+        (graph, frame_data, encoder) => {
+          const pass = graph.get_physical_pass(frame_data.current_pass);
+          const active_pixel_count = Math.ceil(num_rays / Math.max(1, trace_rate));
+          pass.dispatch(Math.ceil(active_pixel_count / COMPUTE_WORKGROUP_SIZE), 1, 1);
+        }
+      );
+    }
+
+    render_graph.add_pass(
+      `gi_pt_world_cache_update`,
+      RenderPassFlags.Compute,
+      {
+        inputs: [gi_params, pt_params, path_state, path_shade, world_cache, gi_output],
+        outputs: [world_cache],
+        shader_setup: world_cache_path_tracer_update_shader_setup,
+      },
+      (graph, frame_data, encoder) => {
+        const pass = graph.get_physical_pass(frame_data.current_pass);
+        const active_pixel_count = Math.ceil(num_rays / Math.max(1, trace_rate));
+        pass.dispatch(Math.ceil(active_pixel_count / COMPUTE_WORKGROUP_SIZE), 1, 1);
+      }
+    );
+
+    render_graph.add_pass(
+      "gi_pt_output",
+      RenderPassFlags.Compute,
+      {
+        inputs: [gi_params, pt_params, path_state, path_shade, world_cache, gi_output],
+        outputs: [gi_output],
+        shader_setup: path_tracer_output_shader_setup,
+      },
+      (graph, frame_data, encoder) => {
+        const pass = graph.get_physical_pass(frame_data.current_pass);
+        pass.dispatch(Math.ceil(width / 8), Math.ceil(height / 8), 1);
+      }
+    );
+
+    this.gi_params = gi_params;
+    this.world_cache = world_cache;
   }
 
   add_debug_passes(
@@ -640,6 +1298,10 @@ export class GI {
     debug_view,
     force_recreate = false
   ) {
+    let grid_width = Math.ceil(width / this.config.screen_probe_size);
+    let grid_height = Math.ceil(height / this.config.screen_probe_size);
+    let total_screen_probes = grid_width * grid_height;
+
     // Debug visualization texture for screen probes
     this.debug_texture = render_graph.create_image({
       name: "gi_debug_probes",
@@ -670,7 +1332,7 @@ export class GI {
         (graph, frame_data, encoder) => {
           const pass = graph.get_physical_pass(frame_data.current_pass);
           // Dispatch one thread per probe (workgroup size = 64)
-          pass.dispatch(Math.ceil(this.total_screen_probes / 64), 1, 1);
+          pass.dispatch(Math.ceil(total_screen_probes / 64), 1, 1);
         }
       );
     } else if (!this.config.use_screen_probes && debug_view === DebugDrawType.GI_ScreenTracer) {

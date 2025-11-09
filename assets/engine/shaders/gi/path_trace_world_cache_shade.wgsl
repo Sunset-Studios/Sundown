@@ -20,13 +20,11 @@ const spatial_radius = 20.0;
 
 struct PathTracerParams {
     max_bounces: u32,
-    spp_per_frame: u32,
     reset_accum_flag: u32,
     use_gbuffer: u32,
     trace_rate: u32,      // 1=full res, 2=half res, 4=quarter res, etc.
     frame_phase: u32,     // cycles 0 to trace_rate-1
     indirect_boost: u32,          // Multiplier for indirect bounces
-    padding: u32,
 };
 
 struct PathState {
@@ -283,25 +281,6 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         if (rng == 0u) { rng = hash(pixel_index ^ u32(frame_info.frame_index)); }
         else { rng = random_seed(rng); }
 
-        let cached_radiance = query_world_cache_cell(
-            hit_pos,
-            world_n,
-            camera_position,
-            u32(gi_params.world_cache_size),
-            gi_params.world_cache_cell_size,
-            u32(gi_params.world_cache_lod_count)
-        );
-
-        let cached_luminance = dot(cached_radiance, vec3<f32>(0.2126, 0.7152, 0.0722));
-        if (cached_luminance > 0.00001) {
-            let bounce_multiplier = select(1.0, gi_params.indirect_boost, current_bounce > 0u);
-            let cached_contribution = safe_clamp_vec3(cached_radiance * shade.path_weight.xyz * bounce_multiplier);
-            path_shade[pixel_index].throughput += vec4f(cached_contribution, 0.0);
-            path_shade[pixel_index].rng_sample_count_frame_stamp.y += 1.0;
-            path_state[pixel_index].state_u32.y = 0u;
-            return;
-        }
-
         // Sample textures for material properties
         let prim_store = u32(info.direction_tmax.w);
         let entity_palette_base = material_table_offset[prim_store];
@@ -373,6 +352,31 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         let clear_coat_roughness = 0.0;
         let v_dir = -normalize(info.direction_tmax.xyz);
         let n_dot_v = max(dot(v_dir, n), 0.0001);
+
+        // Query world cache for existing radiance - early termination if found
+        let cached_radiance = query_world_cache_cell(
+            hit_pos,
+            n,
+            albedo,
+            roughness,
+            metallic,
+            reflectance,
+            emissive,
+            camera_position,
+            u32(gi_params.world_cache_size),
+            gi_params.world_cache_cell_size,
+            u32(gi_params.world_cache_lod_count)
+        );
+
+        let cached_luminance = dot(cached_radiance, vec3<f32>(0.2126, 0.7152, 0.0722));
+        if (cached_luminance > 0.00001) {
+            let bounce_multiplier = select(1.0, gi_params.indirect_boost, current_bounce > 0u);
+            let cached_contribution = safe_clamp_vec3(cached_radiance * shade.path_weight.xyz * bounce_multiplier);
+            path_shade[pixel_index].throughput += vec4f(cached_contribution, 0.0);
+            path_shade[pixel_index].rng_sample_count_frame_stamp.y += 1.0;
+            path_state[pixel_index].state_u32.y = 0u;
+            return;
+        }
 
         // =============================================================================
         // === ReSTIR GI: Generate candidates + temporal/spatial reuse ===

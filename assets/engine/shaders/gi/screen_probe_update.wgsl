@@ -13,8 +13,7 @@
 @group(1) @binding(1) var<storage, read_write> gi_counters: GICounters;
 @group(1) @binding(2) var<storage, read_write> screen_probes: array<ScreenProbe>;
 @group(1) @binding(3) var<storage, read> probe_path_state: array<ProbePathState>;
-@group(1) @binding(4) var<storage, read> probe_path_shade: array<ProbePathShade>;
-@group(1) @binding(5) var<storage, read_write> world_cache: array<WorldCacheCell>;
+@group(1) @binding(4) var<storage, read_write> world_cache: array<WorldCacheCell>;
 
 @compute @workgroup_size(128, 1, 1)
 fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
@@ -45,7 +44,6 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     for (var i = 0u; i < rays_per_probe; i = i + 1u) {
         let ray_id = gid.x * rays_per_probe + i;
         let path = probe_path_state[ray_id];
-        let shade = probe_path_shade[ray_id];
 
         let sample_count = max(path.rng_sample_count_frame_stamp.y, 1.0);
         let accumulated_avg = path.throughput.xyz / sample_count;
@@ -53,26 +51,12 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         
         // Accumulate ALL rays (even if zero) to increment M properly
         accumulated_radiance += radiance;
-        
-        // === Update World Cache for Secondary Bounces ===
-        // Insert radiance at secondary hit points to enable reuse across probes
-        // Uses adaptive eviction: when full, replaces oldest, farthest, lowest-confidence entries
-        insert_world_cache(
-            path.origin_tmin.xyz,
-            path.normal_section_index.xyz,
-            radiance,
-            u32(gi_params.world_cache_size),
-            gi_params.world_cache_cell_size,
-            u32(gi_params.frame_index),
-            camera_position,
-            u32(gi_params.world_cache_lod_count)
-        );
     }
     
     // =========================================================================
     // Temporal blend with biased hysteresis (GI-1.0 Algorithm 3)
     // - Adapts based on luminance difference
-    // - Preserves shadows and removes fireflies
+    // - Preserves shadows and occlusion better than exponential moving average
     // =========================================================================
     let prev_radiance = max(screen_probes[gid.x].radiance_m.xyz, vec3<f32>(0.0));
     let prev_sample_count = max(screen_probes[gid.x].radiance_m.w, 1.0);

@@ -7,13 +7,11 @@
 
 struct PathTracerParams {
     max_bounces: u32,
-    spp_per_frame: u32,
     reset_accum_flag: u32,
     use_gbuffer: u32,
     trace_rate: u32,      // 1=full res, 2=half res, 4=quarter res, etc.
     frame_phase: u32,     // cycles 0 to trace_rate-1
     indirect_boost: u32,          // Multiplier for indirect bounces
-    padding: u32,
 };
 
 struct PathState {

@@ -10,13 +10,11 @@
 
 struct PathTracerParams {
     max_bounces: u32,
-    spp_per_frame: u32,
     reset_accum_flag: u32,
     use_gbuffer: u32,
     trace_rate: u32,      // 1=full res, 2=half res, 4=quarter res, etc.
     frame_phase: u32,     // cycles 0 to trace_rate-1
     indirect_boost: u32,  // Multiplier for indirect bounces
-    padding: u32,
 };
 
 struct PathState {
@@ -85,15 +83,6 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let view = view_buffer[view_index];
     let camera_position = view.view_position.xyz;
     
-    let cached_radiance = query_world_cache_cell(
-        info.origin_tmin.xyz,
-        info.normal_section_index.xyz,
-        camera_position,
-        u32(gi_params.world_cache_size),
-        gi_params.world_cache_cell_size,
-        u32(gi_params.world_cache_lod_count)
-    );
-    
     // =============================================================================
     // Adaptive Blending Based on Trace Status
     // - Untraced pixels: Heavily favor cache (acts as spatial filter)
@@ -102,13 +91,8 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     // This implements the article's approach: "the noise is also greatly reduced
     // thanks to the filtering offered by the data structure"
     // =============================================================================
-    let final_radiance = select(
-        cached_radiance,
-        path_traced_radiance,
-        was_traced
-    );
     
     // Write final composited result
-    textureStore(output_tex, pixel_coords, vec4f(final_radiance, 1.0));
+    textureStore(output_tex, pixel_coords, vec4f(path_traced_radiance, 1.0));
 }
 

@@ -46,16 +46,12 @@ const p3 = 83492791;
 const p4 = 50331653;  // For direction hashing
 const p5 = 25165843;  // For LOD hashing
 
-// Bucket configuration
-const BUCKET_SIZE = 8u;           // Number of cells per bucket
-const MAX_LINEAR_PROBE = 8u;      // Max cells to check within bucket
-
-// LOD configuration (adaptive quantization based on distance)
-const LOD_EXTENT = 128.0;
-
-// Quantization resolution for direction hashing
-const QUANTIZATION_RESOLUTION = 8;
-const RADIANCE_UPDATE_SAMPLE_CAP = 64.0;
+const BUCKET_SIZE = 8u;            // Number of cells per bucket
+const LOD_EXTENT = 128.0;          // Size of first LOD level
+const QUANTIZATION_RESOLUTION = 8; // Quantization resolution for direction hashing
+const RADIANCE_UPDATE_SAMPLE_CAP = 64.0; // Maximum sample count for radiance update
+const WORLD_CACHE_CELL_LIFETIME = 60.0; // Maximum lifetime of a cell in frames
+const WORLD_CACHE_CELL_EMPTY = 0u;
 
 // World cache cell - stores outgoing radiance at secondary vertices
 // Indexed by descriptor: quantized_position + quantized_direction + LOD
@@ -63,7 +59,9 @@ struct WorldCacheCell {
     position_frame: vec4<f32>,      // xyz = world position, w = frame stamp
     normal_count: vec4<f32>,        // xyz = normal (direction), w = sample count
     radiance_w: vec4<f32>,          // xyz = radiance, w = confidence weight
-    data: vec4<u32>,                // x = fingerprint hash, y = occupied flag, z = LOD level, w = padding
+    data: vec4<u32>,                // x = fingerprint hash, y = LOD level, z = padding, w = padding
+    albedo_roughness: vec4<f32>,    // xyz = albedo, w = roughness
+    material_props: vec4<f32>,      // x = metallic, y = reflectance, z = emissive, w = unused
 };
 
 // =============================================================================
@@ -71,10 +69,12 @@ struct WorldCacheCell {
 // Adaptive quantization: coarser cells at distance for constant sample density
 // =============================================================================
 
-// Determine LOD level based on distance from camera
+// Determine LOD level using a square (Chebyshev on XY) metric from camera
 // Higher LOD = coarser quantization (larger cells)
-fn select_lod_level(distance_from_camera: f32, base_cell_size: f32, lod_count: u32) -> u32 {
-    let normalized_distance = distance_from_camera / (base_cell_size * LOD_EXTENT);
+fn select_lod_level(position: vec3<f32>, camera_position: vec3<f32>, base_cell_size: f32, lod_count: u32) -> u32 {
+    let delta = position - camera_position;
+    let square_distance = max(max(abs(delta.x), abs(delta.y)), abs(delta.z));
+    let normalized_distance = square_distance / (LOD_EXTENT);
     let raw_level = log2(max(normalized_distance, 0.001));
     let level = clamp(i32(ceil(raw_level)), 0, i32(lod_count - 1u));
     return u32(level);
@@ -89,7 +89,7 @@ fn get_lod_cell_size(lod_level: u32, base_cell_size: f32) -> f32 {
 // Returns quantized grid cell coordinates
 fn quantize_position(position: vec3<f32>, lod_level: u32, base_cell_size: f32) -> vec3<i32> {
     let cell_size = get_lod_cell_size(lod_level, base_cell_size);
-    return vec3<i32>(floor(position / cell_size));
+    return vec3<i32>(floor(position / cell_size + 0.0001));
 }
 
 // Quantize direction (normal) to discrete hemisphere directions
@@ -177,27 +177,28 @@ fn descriptors_match(
 fn query_world_cache_cell(
     position: vec3<f32>,
     normal: vec3<f32>,
+    albedo: vec3<f32>,
+    roughness: f32,
+    metallic: f32,
+    reflectance: f32,
+    emissive: f32,
     camera_position: vec3<f32>,
     cache_size: u32,
     base_cell_size: f32,
     lod_count: u32
 ) -> vec3<f32> {
-    // Determine LOD level and create descriptor
-    let distance_from_camera = length(position - camera_position);
-    let lod_level = select_lod_level(distance_from_camera, base_cell_size, lod_count);
+    // Determine LOD level (square thresholds) and create descriptor
+    let lod_level = select_lod_level(position, camera_position, base_cell_size, lod_count);
     
     let quantized_pos = quantize_position(position, lod_level, base_cell_size);
     let quantized_dir = quantize_direction(normal);
     
-    // FIRST HASH: Get bucket index
     let bucket_index = hash_descriptor_to_bucket(
         quantized_pos,
         quantized_dir,
         lod_level,
         cache_size
     );
-    
-    // SECOND HASH: Get fingerprint for linear probing
     let target_fingerprint = hash_descriptor_to_fingerprint(
         quantized_pos,
         quantized_dir,
@@ -207,28 +208,18 @@ fn query_world_cache_cell(
     // Linear probe within bucket using fingerprint matching
     let bucket_start = get_bucket_start_index(bucket_index);
     
-    for (var probe = 0u; probe < min(BUCKET_SIZE, MAX_LINEAR_PROBE); probe = probe + 1u) {
+    for (var probe = 0u; probe < BUCKET_SIZE; probe = probe + 1u) {
         let cell_index = bucket_start + probe;
-        let cell = world_cache[cell_index];
-        
-        // Check if slot is occupied
-        if (cell.data.y == 0u) {
-            continue; // Empty slot
-        }
-        
         // Fast fingerprint comparison first
-        if (cell.data.x != target_fingerprint) {
-            continue; // Fingerprint mismatch
-        }
-        
-        // Fingerprint matches - verify full descriptor
-        let stored_pos = quantize_position(cell.position_frame.xyz, cell.data.z, base_cell_size);
-        let stored_dir = quantize_direction(cell.normal_count.xyz);
-        let stored_lod = cell.data.z;
-        
-        if (descriptors_match(quantized_pos, quantized_dir, lod_level, stored_pos, stored_dir, stored_lod)) {
-            // Found matching entry - return averaged radiance
-            return cell.radiance_w.xyz;
+        if (world_cache[cell_index].data.x == target_fingerprint) {
+            world_cache[cell_index].position_frame.w = WORLD_CACHE_CELL_LIFETIME;
+            return world_cache[cell_index].radiance_w.xyz;
+        } else if (world_cache[cell_index].data.x == 0u) {
+            world_cache[cell_index].position_frame = vec4<f32>(position, WORLD_CACHE_CELL_LIFETIME);
+            world_cache[cell_index].normal_count = vec4<f32>(normal, 1.0);
+            world_cache[cell_index].albedo_roughness = vec4<f32>(albedo, roughness);
+            world_cache[cell_index].material_props = vec4<f32>(metallic, reflectance, emissive, 0.0);
+            return vec3<f32>(0.0);
         }
     }
     
@@ -243,6 +234,11 @@ fn query_world_cache_cell(
 fn query_world_cache_interpolated(
     position: vec3<f32>,
     normal: vec3<f32>,
+    albedo: vec3<f32>,
+    roughness: f32,
+    metallic: f32,
+    reflectance: f32,
+    emissive: f32,
     camera_position: vec3<f32>,
     cache_size: u32,
     base_cell_size: f32,
@@ -250,163 +246,54 @@ fn query_world_cache_interpolated(
 ) -> vec3<f32> {
     // For now, just use direct query
     // Can be extended to sample neighboring directions for smoother results
-    return query_world_cache_cell(position, normal, camera_position, cache_size, base_cell_size, lod_count);
+    return query_world_cache_cell(
+        position,
+        normal,
+        albedo,
+        roughness,
+        metallic,
+        reflectance,
+        emissive,
+        camera_position,
+        cache_size,
+        base_cell_size,
+        lod_count
+    );
 }
 
-// =============================================================================
-// Eviction Priority Scoring
-// Lower score = higher priority to evict
-// Combines: age (older = evict), distance (farther = evict), confidence (lower = evict)
-// =============================================================================
-fn compute_eviction_score(
-    cell: WorldCacheCell,
-    camera_position: vec3<f32>,
-    current_frame: u32,
-    max_age_frames: f32
-) -> f32 {
-    // Age factor: normalized age [0, 1], higher = older
-    let cell_frame = u32(cell.position_frame.w);
-    let age = f32(current_frame - cell_frame);
-    let age_factor = min(age / max_age_frames, 1.0);
-    
-    // Distance factor: normalized distance from camera [0, 1]
-    // Clamp max distance to prevent overflow
-    let distance = length(cell.position_frame.xyz - camera_position);
-    let max_distance = 3000.0; // Tune based on your world scale
-    let distance_factor = min(distance / max_distance, 1.0);
-    
-    // Confidence factor: inverse of confidence [0, 1]
-    // Lower confidence = higher eviction priority
-    let confidence = cell.radiance_w.w;
-    let max_confidence = 10.0; // Tune based on typical confidence values
-    let confidence_factor = 1.0 - min(confidence / max_confidence, 1.0);
-    
-    // Sample count factor: inverse of sample count [0, 1]
-    // Fewer samples = higher eviction priority
-    let sample_count = cell.normal_count.w;
-    let sample_factor = 1.0 - min(sample_count / RADIANCE_UPDATE_SAMPLE_CAP, 1.0);
-    
-    // Weighted combination (tune weights based on importance)
-    // Higher weights = more important in eviction decision
-    let weight_age = 2.0;
-    let weight_distance = 0.5;
-    let weight_confidence = 0.5;
-    let weight_samples = 1.0;
-    
-    let total_weight = weight_age + weight_distance + weight_confidence + weight_samples;
-    let score = (age_factor * weight_age + 
-                 distance_factor * weight_distance + 
-                 confidence_factor * weight_confidence +
-                 sample_factor * weight_samples) / total_weight;
-    
-    return score;
-}
-
-// =============================================================================
-// Insert or Update World Cache (Bucket + Fingerprint with Eviction)
-// Uses two-level hashing with descriptor-based indexing
-// =============================================================================
-fn insert_world_cache(
+fn read_world_cache_cell_radiance(
     position: vec3<f32>,
     normal: vec3<f32>,
-    radiance: vec3<f32>,
+    camera_position: vec3<f32>,
     cache_size: u32,
     base_cell_size: f32,
-    frame_index: u32,
-    camera_position: vec3<f32>,
     lod_count: u32
-) {
-    // Determine LOD level and create descriptor
-    let distance_from_camera = length(position - camera_position);
-    let lod_level = select_lod_level(distance_from_camera, base_cell_size, lod_count);
-    
+) -> vec3<f32> {
+    // Determine LOD level (square thresholds) and create descriptor
+    let lod_level = select_lod_level(position, camera_position, base_cell_size, lod_count);
     let quantized_pos = quantize_position(position, lod_level, base_cell_size);
     let quantized_dir = quantize_direction(normal);
     
-    // FIRST HASH: Get bucket index
     let bucket_index = hash_descriptor_to_bucket(
         quantized_pos,
         quantized_dir,
         lod_level,
         cache_size
     );
-    
-    // SECOND HASH: Get fingerprint for linear probing
     let target_fingerprint = hash_descriptor_to_fingerprint(
         quantized_pos,
         quantized_dir,
         lod_level
     );
     
-    // Linear probe within bucket to find slot
+    // Linear probe within bucket using fingerprint matching
     let bucket_start = get_bucket_start_index(bucket_index);
-    
-    var best_slot_index = bucket_start;
-    var best_eviction_score = -1.0;
-    var found_empty = false;
-    var found_match = false;
-    
-    for (var probe = 0u; probe < min(BUCKET_SIZE, MAX_LINEAR_PROBE); probe = probe + 1u) {
+    for (var probe = 0u; probe < BUCKET_SIZE; probe = probe + 1u) {
         let cell_index = bucket_start + probe;
-        let existing_cell = world_cache[cell_index];
-        let is_occupied = existing_cell.data.y != 0u;
-        
-        // Case 1: Found empty slot - use it immediately
-        if (!is_occupied) {
-            best_slot_index = cell_index;
-            found_empty = true;
-            break;
-        }
-        
-        // Case 2: Fingerprint matches - check for exact descriptor match
-        if (is_occupied && existing_cell.data.x == target_fingerprint) {
-            let stored_pos = quantize_position(existing_cell.position_frame.xyz, existing_cell.data.z, base_cell_size);
-            let stored_dir = quantize_direction(existing_cell.normal_count.xyz);
-            let stored_lod = existing_cell.data.z;
-            
-            if (descriptors_match(quantized_pos, quantized_dir, lod_level, stored_pos, stored_dir, stored_lod)) {
-                // Exact match - update with accumulated radiance
-                let old_radiance = existing_cell.radiance_w.xyz;
-                let old_count = existing_cell.normal_count.w;
-
-                let alpha = 1.0 / min(old_count + 1.0, RADIANCE_UPDATE_SAMPLE_CAP); // Max history of 32 samples
-                let new_radiance = mix(old_radiance, radiance, alpha);
-
-                world_cache[cell_index].position_frame.w = f32(frame_index);
-                world_cache[cell_index].normal_count.w = old_count + 1.0;
-                world_cache[cell_index].radiance_w = vec4<f32>(new_radiance, existing_cell.radiance_w.w);
-                world_cache[cell_index].data = vec4<u32>(target_fingerprint, 1u, lod_level, 0u);
-                found_match = true;
-                break;
-            }
-        }
-        
-        // Case 3: Track worst entry for potential eviction
-        if (is_occupied) {
-            let score = compute_eviction_score(
-                existing_cell,
-                camera_position,
-                frame_index,
-                60.0
-            );
-            
-            if (score > best_eviction_score) {
-                best_eviction_score = score;
-                best_slot_index = cell_index;
-            }
+        if (world_cache[cell_index].data.x == target_fingerprint) {
+            return world_cache[cell_index].radiance_w.xyz;
         }
     }
     
-    // If we found a match and updated it, we're done
-    if (found_match) {
-        return;
-    }
-    
-    // Insert new entry if we found empty slot OR eviction candidate
-    if (found_empty || best_eviction_score >= 0.0) {
-        world_cache[best_slot_index].position_frame = vec4<f32>(position, f32(frame_index));
-        world_cache[best_slot_index].normal_count = vec4<f32>(normal, 1.0);
-        world_cache[best_slot_index].radiance_w = vec4<f32>(radiance, 1.0);
-        world_cache[best_slot_index].data = vec4<u32>(target_fingerprint, 1u, lod_level, 0u);
-    }
+    return vec3<f32>(0.0); // No match found
 }

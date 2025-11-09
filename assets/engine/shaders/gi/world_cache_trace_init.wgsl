@@ -1,21 +1,24 @@
 // =============================================================================
-// GI-1.0 Screen Probe Ray Tracing - Init Pass
-// - Initializes rays for screen probes marked active this frame
-// - Uses ReSTIR-based importance sampling guided by BRDF
-// - Generates ray directions based on material properties (GGX/cosine)
-// - Inactive probes (not updated this frame) get dead rays
+// GI-1.0 World Cache Ray Tracing - Init Pass
+// - Initializes rays for active world cache cells
+// - Each active cell traces 1 ray per frame to accumulate indirect radiance
+// - Uses ReSTIR-based importance sampling for convergence
+// - Rays spawn from cached cell position/normal from previous frame
 // =============================================================================
 #include "common.wgsl"
 #include "gi/gi_common.wgsl"
+#include "gi/world_cache_common.wgsl"
 
 const num_ris_samples = 2u;
 
 @group(1) @binding(0) var<uniform> gi_params: GIParams;
-@group(1) @binding(1) var<storage, read_write> gi_counters: GICounters;
-@group(1) @binding(2) var<storage, read> screen_probes: array<ScreenProbe>;
-@group(1) @binding(3) var<storage, read_write> probe_path_state: array<ProbePathState>;
-@group(1) @binding(4) var<storage, read> light_count_buffer: array<u32>;
-@group(1) @binding(5) var<storage, read> dense_lights_buffer: array<Light>;
+@group(1) @binding(1) var<storage, read_write> world_cache: array<WorldCacheCell>;
+@group(1) @binding(2) var<storage, read> compacted_indices: array<u32>;
+@group(1) @binding(3) var<storage, read> dispatch_params: array<u32>;
+@group(1) @binding(4) var<storage, read_write> world_cache_path_state: array<WorldCachePathState>;
+@group(1) @binding(5) var<storage, read> light_count_buffer: array<u32>;
+@group(1) @binding(6) var<storage, read> dense_lights_buffer: array<Light>;
+@group(1) @binding(7) var<storage, read_write> gi_counters: GICounters;
 
 // =============================================================================
 // ReSTIR GI Helper Functions
@@ -76,73 +79,61 @@ fn compute_gi_target_pdf(sample_radiance: vec3<f32>, brdf_value: vec3<f32>) -> f
 
 @compute @workgroup_size(128, 1, 1)
 fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
-    // Use total_screen_probes (derived from grid dimensions)
-    // Some probes may be inactive (not updated this frame), which is fine
-    let probe_count = u32(gi_params.total_screen_probes);
-    let rays_per_probe = u32(gi_params.screen_ray_count);
-    let total_rays = probe_count * rays_per_probe;
+    // Thread ID maps to index in compacted active cell array
+    let active_index = gid.x;
+    let active_cache_cell_count = atomicLoad(&gi_counters.active_cache_cell_count);
     
-    if (gid.x >= total_rays) {
+    // Early exit if beyond active cell count
+    // Note: dispatch is already sized to active count, but check for safety
+    if (active_index >= active_cache_cell_count) {
         return;
     }
     
-    let probe_index = gid.x / rays_per_probe;
-    let ray_index = gid.x % rays_per_probe;
+    // Get actual world cache cell index from compacted array
+    let cell_index = compacted_indices[active_index];
+    let cell = world_cache[cell_index];
     
-    let probe = screen_probes[probe_index];
-    let view_index = u32(frame_info.view_index);
-    let view = view_buffer[view_index];
-    
-    // Check if probe is active (being updated this frame)
-    // Inactive probes get dead rays and won't be traced
-    // Also check if probe was actually spawned (has valid data from spawn pass)
-    if (probe.state.x == 0.0 || probe.state.w == 0.0) {
-        // Mark all rays and shade data for this inactive probe as dead
-        probe_path_state[gid.x].state_u32 = vec4<u32>(0u, 0u, 0u, 0xffffffffu);
+    // Check if cell is actually active (has valid data)
+    if (cell.data.x == WORLD_CACHE_CELL_EMPTY) {
+        // Mark ray as dead
+        world_cache_path_state[active_index].state_u32.y = 0u;
         return;
     }
     
     // =============================================================================
-    // Extract probe surface properties
+    // Extract cell surface properties from cached data
     // =============================================================================
-    let position = probe.position_radius.xyz;
-    let normal = probe.normal_frame.xyz;
-    let albedo = probe.albedo_roughness.xyz;
-    let roughness = probe.albedo_roughness.w;
-    let metallic = probe.material_props.x;
-    let reflectance = probe.material_props.y;
-    let emissive = probe.material_props.z;
-    let frame_id = u32(gi_params.frame_index);
-    
-    // Clear coat not stored in probes (assume 0)
+    let position = cell.position_frame.xyz;
+    let normal = cell.normal_count.xyz;
+    let albedo = cell.albedo_roughness.xyz;
+    let roughness = cell.albedo_roughness.w;
+    let metallic = cell.material_props.x;
+    let reflectance = cell.material_props.y;
+    let emissive = cell.material_props.z;
     let clear_coat = 0.0;
     let clear_coat_roughness = 0.0;
-    
-    // View direction: probe is first bounce from camera, so use direction from camera to probe
+
+    // Get view for camera position (for BRDF evaluation)
+    let view_index = u32(frame_info.view_index);
+    let view = view_buffer[view_index];
     let v_dir = normalize(view.view_position.xyz - position);
     let n_dot_v = max(dot(v_dir, normal), 0.0001);
     
-    // Initialize RNG for this probe ray
-    var rng = u32(probe_path_state[gid.x].rng_sample_count_frame_stamp.x);
-    if (rng == 0u) { rng = hash(gid.x ^ u32(gi_params.frame_index)); }
-    else { rng = random_seed(rng); }
+    let frame_id = u32(gi_params.frame_index);
+    
+    // Initialize RNG for this cell
+    var rng = u32(world_cache_path_state[active_index].rng_sample_count_frame_stamp.x);
+    rng = select(random_seed(rng), hash(cell_index ^ u32(gi_params.frame_index)), rng == 0u); 
     
     // =============================================================================
-    // BRDF-guided importance sampling with ReSTIR for indirect ray
+    // Cosine-weighted hemisphere sampling with ReSTIR
+    // Simple diffuse-like sampling for world cache (stable and efficient)
     // =============================================================================
     
-    // BRDF precomputation
-    let clamped_roughness = clamp(roughness, 0.001, 1.0);
-    let dielectric_f0 = 0.16 * reflectance * reflectance;
-    let f0 = mix(vec3<f32>(dielectric_f0), albedo, metallic);
+    let clamped_roughness = max(roughness, 0.045); // Clamp to avoid numerical issues
+    let mis_specular_prob = 0.0; // Pure cosine-weighted sampling (no specular)
     
-    let f = f_schlick_vec3(f0, 1.0, n_dot_v);
-    let fresnel_luminance = (f.x + f.y + f.z) / 3.0;
-    let use_ggx = (clamped_roughness < 0.3) || (metallic > 0.5);
-    let specular_prob_if_ggx = clamp(fresnel_luminance, 0.001, 0.99);
-    let mis_specular_prob = select(0.0, specular_prob_if_ggx, use_ggx);
-    
-    // Generate BRDF sampling candidates
+    // Generate cosine-weighted hemisphere sampling candidates
     var candidate_samples: array<GISample, num_ris_samples>;
     
     for (var i = 0u; i < num_ris_samples; i = i + 1u) {
@@ -150,27 +141,18 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         let r1 = rand_float(rng);
         rng = random_seed(rng);
         let r2 = rand_float(rng);
-        rng = random_seed(rng);
-        let r3 = rand_float(rng);
         
-        var dir: vec3<f32>;
-        if (use_ggx && r3 < specular_prob_if_ggx) {
-            // GGX sampling for specular lobes
-            let h = importance_sample_ggx(vec2<f32>(r1, r2), normal, clamped_roughness);
-            dir = normalize(reflect(-v_dir, h));
-        } else {
-            // Cosine-weighted hemisphere sampling for diffuse
-            let phi = 2.0 * PI * r1;
-            let cos_theta = sqrt(1.0 - r2);
-            let sin_theta = sqrt(r2);
-            let up = select(vec3f(0.0, 1.0, 0.0), vec3f(1.0, 0.0, 0.0), abs(normal.y) > 0.999);
-            let tangent = normalize(cross(up, normal));
-            let bitangent = normalize(cross(normal, tangent));
-            let dir_local = vec3f(cos(phi) * sin_theta, sin(phi) * sin_theta, cos_theta);
-            dir = normalize(tangent * dir_local.x + bitangent * dir_local.y + normal * dir_local.z);
-        }
+        // Cosine-weighted hemisphere sampling
+        let phi = 2.0 * PI * r1;
+        let cos_theta = sqrt(1.0 - r2);
+        let sin_theta = sqrt(r2);
+        let up = select(vec3f(0.0, 1.0, 0.0), vec3f(1.0, 0.0, 0.0), abs(normal.y) > 0.999);
+        let tangent = normalize(cross(up, normal));
+        let bitangent = normalize(cross(normal, tangent));
+        let dir_local = vec3f(cos(phi) * sin_theta, sin(phi) * sin_theta, cos_theta);
+        let dir = normalize(tangent * dir_local.x + bitangent * dir_local.y + normal * dir_local.z);
         
-        // Evaluate BRDF for this direction
+        // Evaluate BRDF for sampled direction
         let brdf = calculate_brdf_rt(
             normal, v_dir, dir, albedo, roughness, metallic,
             reflectance, clear_coat, clear_coat_roughness
@@ -220,27 +202,16 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         let brdf_weight = selected_brdf * gi_reservoir.w;
         path_weight = brdf_weight;
         
-        // Russian Roulette: Kill paths with very low throughput to prevent underflow
+        // Russian Roulette: Kill paths with very low throughput
         let weight_luminance = path_weight.x * 0.2126 + path_weight.y * 0.7152 + path_weight.z * 0.0722;
         let min_weight_threshold = 0.0001;
         
-        if (weight_luminance < min_weight_threshold) {
-            // Path weight too low - kill path and clear reservoir
-            is_alive = 0u;
-            probe_path_state[gid.x].reservoir_radiance_m = vec4f(0.0);
-            probe_path_state[gid.x].reservoir_direction_w = vec4f(0.0);
-        } else {
-            // Store reservoir data for potential temporal reuse
-            probe_path_state[gid.x].reservoir_radiance_m = vec4f(selected_sample.radiance_and_target_pdf.xyz, f32(gi_reservoir.m));
-            probe_path_state[gid.x].reservoir_direction_w = vec4f(selected_dir, gi_reservoir.w);
-        }
+        is_alive = select(0u, 1u, weight_luminance >= min_weight_threshold);
     } else {
-        // Reservoir failed - kill path and clear reservoir to stop propagation
+        // Reservoir failed - kill path
         is_alive = 0u;
-        probe_path_state[gid.x].reservoir_radiance_m = vec4f(0.0);
-        probe_path_state[gid.x].reservoir_direction_w = vec4f(0.0);
         
-        // Still generate fallback direction for debugging (won't be traced since alive=0)
+        // Generate fallback direction
         rng = random_seed(rng);
         let u1 = rand_float(rng);
         rng = random_seed(rng);
@@ -250,7 +221,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
 
     // =============================================================================
     // DIRECT LIGHTING with Visibility Rays (NEE)
-    // Setup shadow rays for direct lighting from the probe surface (bounce 0)
+    // Setup shadow rays for direct lighting from the cache cell position
     // =============================================================================
     let num_lights = light_count_buffer[0];
     if (num_lights > 0u) {
@@ -270,24 +241,23 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         
         // Setup shadow ray for visibility test
         let selected_distance = select(1e30, length(light.position.xyz - position), light.light_type != 0.0);
-        probe_path_state[gid.x].shadow_origin = vec4f(position + normal * 0.001, f32(light_idx));
-        probe_path_state[gid.x].shadow_direction = vec4f(light_dir, selected_distance * 0.999);
-        probe_path_state[gid.x].shadow_radiance = vec4f(light_contrib, 1.0);
+        world_cache_path_state[active_index].shadow_origin = vec4f(position + normal * 0.001, f32(light_idx));
+        world_cache_path_state[active_index].shadow_direction = vec4f(light_dir, selected_distance * 0.999);
+        world_cache_path_state[active_index].shadow_radiance = vec4f(light_contrib, 1.0);
     } else {
-        probe_path_state[gid.x].shadow_origin = vec4<f32>(0.0, 0.0, 0.0, -1.0);
-        probe_path_state[gid.x].shadow_direction = vec4<f32>(0.0, 0.0, 0.0, 0.0);
-        probe_path_state[gid.x].shadow_radiance = vec4<f32>(0.0, 0.0, 0.0, 0.0);
+        world_cache_path_state[active_index].shadow_origin = vec4<f32>(0.0, 0.0, 0.0, -1.0);
+        world_cache_path_state[active_index].shadow_direction = vec4<f32>(0.0, 0.0, 0.0, 0.0);
+        world_cache_path_state[active_index].shadow_radiance = vec4<f32>(0.0, 0.0, 0.0, 0.0);
     }
     
     // Initialize path state
-    probe_path_state[gid.x].origin_tmin = vec4<f32>(position + normal * 0.001, 0.0001);
-    probe_path_state[gid.x].direction_tmax = vec4<f32>(ray_dir, 1e30);
-    probe_path_state[gid.x].normal_section_index = vec4<f32>(normal, 0.0);
-    probe_path_state[gid.x].state_u32 = vec4<u32>(0u, is_alive, 0u, 0xffffffffu);
-    probe_path_state[gid.x].hit_attr0 = vec4<f32>(0.0);
-    probe_path_state[gid.x].hit_attr1 = vec4<f32>(0.0);
-    probe_path_state[gid.x].rng_sample_count_frame_stamp = vec4<f32>(f32(rng), 0.0, f32(frame_id), 0.0);
-    probe_path_state[gid.x].path_weight = vec4<f32>(path_weight, 1.0);
-    probe_path_state[gid.x].throughput = vec4<f32>(emissive * albedo, 0.0);
+    world_cache_path_state[active_index].origin_tmin = vec4<f32>(position + normal * 0.001, 0.0001);
+    world_cache_path_state[active_index].direction_tmax = vec4<f32>(ray_dir, 1e30);
+    world_cache_path_state[active_index].normal_section_index = vec4<f32>(normal, 0.0);
+    world_cache_path_state[active_index].state_u32 = vec4<u32>(0u, is_alive, 0u, 0xffffffffu);
+    world_cache_path_state[active_index].hit_attr0 = vec4<f32>(0.0);
+    world_cache_path_state[active_index].hit_attr1 = vec4<f32>(0.0);
+    world_cache_path_state[active_index].rng_sample_count_frame_stamp = vec4<f32>(f32(rng), 0.0, f32(frame_id), 0.0);
+    world_cache_path_state[active_index].path_weight = vec4<f32>(path_weight, 1.0);
 }
 

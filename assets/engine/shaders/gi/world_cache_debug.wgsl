@@ -44,7 +44,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let camera_position = view.view_position.xyz;
     
     // Query world cache with bucket+fingerprint (descriptor-based lookup)
-    let cached_radiance = query_world_cache_cell(
+    let cached_radiance = read_world_cache_cell_radiance(
         position,
         normal,
         camera_position,
