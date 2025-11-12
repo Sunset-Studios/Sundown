@@ -20,5 +20,5 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     if (idx >= arrayLength(&world_cache)) {
         return;
     }
-    active_flags[idx] = select(0u, 1u, world_cache[idx].data.x != WORLD_CACHE_CELL_EMPTY);
+    active_flags[idx] = select(0u, 1u, atomicLoad(&world_cache[idx].fingerprint) != WORLD_CACHE_CELL_EMPTY);
 }

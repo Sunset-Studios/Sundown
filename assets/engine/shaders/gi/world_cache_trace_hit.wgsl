@@ -303,8 +303,6 @@ fn cs(
     // Thread ID maps to index in compacted active cell array
     let active_index = gid.x;
     let active_cache_cell_count = atomicLoad(&gi_counters.active_cache_cell_count);
-    
-    // Early exit if beyond active cell count
     if (active_index >= active_cache_cell_count) {
         return;
     }

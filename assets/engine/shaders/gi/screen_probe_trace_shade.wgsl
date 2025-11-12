@@ -46,17 +46,16 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     
     var path = probe_path_state[ray_id];
     
-    let bounce = path.state_u32.x;
     let tri_id = path.state_u32.w;
     
     let light_view_index = u32(scene_lighting_data.view_index);
     let light_view = view_buffer[light_view_index];
+    let camera_position = view_buffer[u32(frame_info.view_index)].view_position.xyz;
     let sun_dir = normalize(-light_view.view_direction.xyz);
 
     // === Handle primary vertex visibility ray throughput ===
     if (path.shadow_origin.w >= 0.0 && path.state_u32.z == 1u) {
         path.throughput += vec4f(path.shadow_radiance.rgb * path.path_weight.xyz, 0.0);
-        path.rng_sample_count_frame_stamp.y += 1.0;
         path.shadow_origin.w = -1.0;
         path.state_u32.z = 0u;
     }
@@ -73,7 +72,6 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         );
         // Add sky contribution weighted by path throughput
         path.throughput += vec4<f32>(sky_radiance * path.path_weight.xyz, 0.0);
-        path.rng_sample_count_frame_stamp.y += 1.0;
         // Mark path as dead
         path.state_u32.y = 0u;
     }
@@ -167,27 +165,8 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         
         // === EMISSIVE CONTRIBUTION ===
         if (emissive > 0.0) {
-            let emissive_radiance = emissive * albedo;
-            
-            if (bounce > 0u) {
-                // Indirect hit: Apply distance-aware attenuation
-                let hit_distance = max(path.origin_tmin.w, 0.01);
-                let ray_source_pdf = path.path_weight.w;
-                let raw_contribution = emissive_radiance * path.path_weight.xyz;
-                let contribution_luminance = raw_contribution.x * 0.2126 + raw_contribution.y * 0.7152 + raw_contribution.z * 0.0722;
-                
-                let distance_factor = 1.0 / hit_distance;
-                let max_contribution = emissive * PI * distance_factor;
-                let scale = min(1.0, (max_contribution * ray_source_pdf) / max(contribution_luminance, 0.001));
-                
-                let emissive_contribution = raw_contribution * scale;
-                path.throughput += vec4f(emissive_contribution, 0.0);
-            } else {
-                // First bounce: full contribution
-                let emissive_contribution = emissive_radiance * path.path_weight.xyz;
-                path.throughput += vec4f(emissive_contribution, 0.0);
-            }
-            path.rng_sample_count_frame_stamp.y += 1.0;
+            let emissive_contribution = emissive * albedo * path.path_weight.xyz;
+            path.throughput += vec4f(emissive_contribution, 0.0);
         }
 
         // Get RNG state
@@ -202,37 +181,26 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         // === World Cache Query - Early termination with cached irradiance ===
         // =====================================================================
         // Query world cache at hit point to check if we have cached radiance
-        // If found, use it and terminate path (avoid expensive multi-bounce tracing)
-        // Only query on secondary+ bounces (bounce > 0) to ensure first hit gets full quality
-        let should_query_world_cache = bounce > 0u;
-        var found_cached_radiance = false;
+        let cached_radiance = query_world_cache_cell(
+            hit_pos,
+            n,
+            albedo,
+            roughness,
+            metallic,
+            reflectance,
+            emissive,
+            camera_position,
+            u32(gi_params.world_cache_size),
+            gi_params.world_cache_cell_size,
+            u32(gi_params.world_cache_lod_count)
+        );
         
-        if (should_query_world_cache) {
-            let cached_radiance = query_world_cache_cell(
-                hit_pos,
-                n,
-                albedo,
-                roughness,
-                metallic,
-                reflectance,
-                emissive,
-                light_view.view_position.xyz,
-                u32(gi_params.world_cache_size),
-                gi_params.world_cache_cell_size,
-                u32(gi_params.world_cache_lod_count)
-            );
-            
-            // Check if we got valid cached data (non-zero radiance)
-            let cached_luminance = cached_radiance.x * 0.2126 + cached_radiance.y * 0.7152 + cached_radiance.z * 0.0722;
-            if (cached_luminance > 0.001) {
-                // Found valid cached radiance! Apply it and terminate path
-                let bounce_multiplier = select(1.0, gi_params.indirect_boost, bounce > 0u);
-                let cached_contribution = cached_radiance * path.path_weight.xyz * bounce_multiplier;
-                path.throughput += vec4f(cached_contribution, 0.0);
-                // Mark path as dead - we don't need further bounces
-                path.state_u32.y = 0u;
-                found_cached_radiance = true;
-            }
+        // Check if we got valid cached data (non-zero radiance)
+        let cached_luminance = cached_radiance.x * 0.2126 + cached_radiance.y * 0.7152 + cached_radiance.z * 0.0722;
+        if (cached_luminance > 0.0001) {
+            // Found valid cached radiance! Apply it and terminate path
+            let cached_contribution = cached_radiance * path.path_weight.xyz;
+            path.throughput += vec4f(cached_contribution, 0.0);
         }
         
         // Generate BRDF sampling candidates (indirect lighting)
@@ -359,7 +327,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
             }
         }
         
-        // Finalize reservoir and spawn next bounce
+        // Finalize reservoir
         if (gi_reservoir.m > 0u) {
             let selected_sample = candidate_samples[gi_reservoir.selected_index];
             let selected_dir = selected_sample.direction_and_source_pdf.xyz;
@@ -412,7 +380,6 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
                 // Continue path
                 path.origin_tmin = vec4f(hit_pos + n * 0.001, 0.0001);
                 path.direction_tmax = vec4f(selected_dir, 1e30);
-                path.state_u32.x = bounce + 1u;
                 path.state_u32.y = 1u;
                 path.state_u32.w = 0xffffffffu;
             }

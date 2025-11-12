@@ -20,9 +20,11 @@
 //   1. Create descriptor from position, direction, and distance-to-camera
 //   2. Apply 1st hash → get bucket index
 //   3. Apply 2nd hash → get fingerprint
-//   4. Linear probe within bucket (up to BUCKET_SIZE entries):
-//      a. Quick fingerprint comparison (fast reject)
-//      b. Full descriptor match verification (if fingerprint matches)
+//   4. PCG-based pseudorandom probe within bucket (up to BUCKET_SIZE entries):
+//      a. Initialize PCG state from fingerprint (deterministic seed)
+//      b. Generate probe sequence using PCG random numbers
+//      c. Quick fingerprint comparison at each probe location (fast reject)
+//      d. Full descriptor match verification (if fingerprint matches)
 //   5. Insert/update entry or evict oldest/farthest entry on collision
 //
 // ADAPTIVE QUANTIZATION (LOD):
@@ -34,7 +36,8 @@
 // BENEFITS:
 //   - View-dependent caching (position + direction)
 //   - Fast lookups via fingerprint comparison
-//   - Efficient collision resolution with linear probing
+//   - Efficient collision resolution with PCG-based pseudorandom probing
+//   - Better hash distribution than linear probing (reduces clustering)
 //   - Adaptive resolution maintains consistent quality at all distances
 //
 // =============================================================================
@@ -49,9 +52,16 @@ const p5 = 25165843;  // For LOD hashing
 const BUCKET_SIZE = 8u;            // Number of cells per bucket
 const LOD_EXTENT = 128.0;          // Size of first LOD level
 const QUANTIZATION_RESOLUTION = 8; // Quantization resolution for direction hashing
-const RADIANCE_UPDATE_SAMPLE_CAP = 64.0; // Maximum sample count for radiance update
-const WORLD_CACHE_CELL_LIFETIME = 60.0; // Maximum lifetime of a cell in frames
+const WORLD_CACHE_RADIANCE_UPDATE_SAMPLE_CAP = 32.0; // Maximum sample count for radiance update
+const WORLD_CACHE_CELL_LIFETIME = 30.0; // Maximum lifetime of a cell in frames
 const WORLD_CACHE_CELL_EMPTY = 0u;
+const PCG_MULTIPLIER = 747796405u;
+const PCG_INCREMENT = 2891336453u;
+
+// PCG random state for generating probe sequence
+struct PcgHashState {
+    state: u32,
+}
 
 // World cache cell - stores outgoing radiance at secondary vertices
 // Indexed by descriptor: quantized_position + quantized_direction + LOD
@@ -59,15 +69,39 @@ struct WorldCacheCell {
     position_frame: vec4<f32>,      // xyz = world position, w = frame stamp
     normal_count: vec4<f32>,        // xyz = normal (direction), w = sample count
     radiance_w: vec4<f32>,          // xyz = radiance, w = confidence weight
-    data: vec4<u32>,                // x = fingerprint hash, y = LOD level, z = padding, w = padding
     albedo_roughness: vec4<f32>,    // xyz = albedo, w = roughness
     material_props: vec4<f32>,      // x = metallic, y = reflectance, z = emissive, w = unused
+    fingerprint: atomic<u32>,
+    padding1: u32,
+    padding2: u32,
+    padding3: u32,
 };
 
-// =============================================================================
-// LOD Level Selection and Quantization
-// Adaptive quantization: coarser cells at distance for constant sample density
-// =============================================================================
+// Initialize PCG hash state from seed value
+// Performs two rounds of PCG advancement for better mixing
+fn pcg_hash_init(seed: u32) -> PcgHashState {
+    var state = seed * PCG_MULTIPLIER + PCG_INCREMENT;
+    state = state * PCG_MULTIPLIER + PCG_INCREMENT;
+    return PcgHashState(state);
+}
+
+// Generate next probe index using PCG random number generator
+// Returns value in range [0, max_val)
+// Updates internal state for next call
+fn pcg_hash_next(state_ptr: ptr<function, PcgHashState>, max_val: u32) -> u32 {
+    let state = (*state_ptr).state;
+    
+    // PCG XSH-RR output function (32-bit)
+    // XSH = xorshift, RR = random rotation
+    let xorshifted = ((state >> 18u) ^ state) >> 27u;
+    let rot = state >> 27u;
+    let result = (xorshifted >> rot) | (xorshifted << ((~rot + 1u) & 31u));
+    
+    // Advance internal state (LCG step)
+    (*state_ptr).state = state * PCG_MULTIPLIER + PCG_INCREMENT;
+    
+    return result % max_val;
+}
 
 // Determine LOD level using a square (Chebyshev on XY) metric from camera
 // Higher LOD = coarser quantization (larger cells)
@@ -109,18 +143,14 @@ fn quantize_direction(direction: vec3<f32>) -> vec2<i32> {
     return quantized;
 }
 
-// =============================================================================
-// Two-Level Hashing: Bucket Hash + Fingerprint Hash
-// Based on Jarzynski and Olano 2020 for minimal collisions
-// =============================================================================
-
 // FIRST HASH: Descriptor → Bucket Index
 // Hashes the complete descriptor (position + direction + LOD) to a bucket
 fn hash_descriptor_to_bucket(
     quantized_pos: vec3<i32>,
     quantized_dir: vec2<i32>,
     lod_level: u32,
-    cache_size: u32
+    cache_size: u32,
+    lod_count: u32
 ) -> u32 {
     // Combine all descriptor components with different primes
     let hash_pos = (quantized_pos.x * p1) ^ (quantized_pos.y * p2) ^ (quantized_pos.z * p3);
@@ -130,7 +160,9 @@ fn hash_descriptor_to_bucket(
     let combined_hash = bitcast<u32>(hash_pos ^ hash_dir ^ hash_lod);
     
     // Map to bucket index (each bucket contains BUCKET_SIZE cells)
-    let num_buckets = cache_size / BUCKET_SIZE;
+    // Hash across entire cache including all LOD levels
+    let total_cache_size = cache_size * lod_count;
+    let num_buckets = total_cache_size / BUCKET_SIZE;
     return combined_hash % num_buckets;
 }
 
@@ -158,21 +190,10 @@ fn get_bucket_start_index(bucket_index: u32) -> u32 {
     return bucket_index * BUCKET_SIZE;
 }
 
-// Helper: Check if two descriptors match
-fn descriptors_match(
-    pos_a: vec3<i32>,
-    dir_a: vec2<i32>,
-    lod_a: u32,
-    pos_b: vec3<i32>,
-    dir_b: vec2<i32>,
-    lod_b: u32
-) -> bool {
-    return all(pos_a == pos_b) && all(dir_a == dir_b) && lod_a == lod_b;
-}
-
 // =============================================================================
-// Query World Cache (Bucket + Fingerprint Linear Probing)
+// Query World Cache (Bucket + Fingerprint with PCG Probing)
 // Returns cached radiance for a given position and direction descriptor
+// Uses PCG-based pseudorandom probing for better collision resolution
 // =============================================================================
 fn query_world_cache_cell(
     position: vec3<f32>,
@@ -197,7 +218,8 @@ fn query_world_cache_cell(
         quantized_pos,
         quantized_dir,
         lod_level,
-        cache_size
+        cache_size,
+        lod_count
     );
     let target_fingerprint = hash_descriptor_to_fingerprint(
         quantized_pos,
@@ -205,25 +227,40 @@ fn query_world_cache_cell(
         lod_level
     );
     
-    // Linear probe within bucket using fingerprint matching
+    // Initialize PCG state for pseudorandom probing within bucket
+    // Seed with fingerprint to get deterministic but well-distributed probe sequence
     let bucket_start = get_bucket_start_index(bucket_index);
+    var pcg_state = pcg_hash_init(bucket_start);
+    let total_cells = cache_size * lod_count;
     
+    var cell_index = bucket_start;
+    // PCG-based probing: each collision jumps to pseudorandom location in bucket
     for (var probe = 0u; probe < BUCKET_SIZE; probe = probe + 1u) {
-        let cell_index = bucket_start + probe;
         // Fast fingerprint comparison first
-        if (world_cache[cell_index].data.x == target_fingerprint) {
+        let existing_fingerprint = atomicCompareExchangeWeak(
+            &world_cache[cell_index].fingerprint, 
+            WORLD_CACHE_CELL_EMPTY, 
+            target_fingerprint
+        ).old_value;
+        
+        if (existing_fingerprint == target_fingerprint) {
+            // Cache hit: found matching entry, refresh lifetime and return radiance
             world_cache[cell_index].position_frame.w = WORLD_CACHE_CELL_LIFETIME;
             return world_cache[cell_index].radiance_w.xyz;
-        } else if (world_cache[cell_index].data.x == 0u) {
+        } else if (existing_fingerprint == WORLD_CACHE_CELL_EMPTY) {
+            // Empty slot: initialize new cache entry
             world_cache[cell_index].position_frame = vec4<f32>(position, WORLD_CACHE_CELL_LIFETIME);
-            world_cache[cell_index].normal_count = vec4<f32>(normal, 1.0);
+            world_cache[cell_index].normal_count = vec4<f32>(normal, 0.0);
+            world_cache[cell_index].radiance_w = vec4<f32>(0.0);
             world_cache[cell_index].albedo_roughness = vec4<f32>(albedo, roughness);
             world_cache[cell_index].material_props = vec4<f32>(metallic, reflectance, emissive, 0.0);
             return vec3<f32>(0.0);
         }
+
+        cell_index = pcg_hash_next(&pcg_state, total_cells);
     }
-    
-    return vec3<f32>(0.0); // No match found
+
+    return vec3<f32>(0.0);
 }
 
 // =============================================================================
@@ -278,7 +315,8 @@ fn read_world_cache_cell_radiance(
         quantized_pos,
         quantized_dir,
         lod_level,
-        cache_size
+        cache_size,
+        lod_count
     );
     let target_fingerprint = hash_descriptor_to_fingerprint(
         quantized_pos,
@@ -288,12 +326,55 @@ fn read_world_cache_cell_radiance(
     
     // Linear probe within bucket using fingerprint matching
     let bucket_start = get_bucket_start_index(bucket_index);
-    for (var probe = 0u; probe < BUCKET_SIZE; probe = probe + 1u) {
-        let cell_index = bucket_start + probe;
-        if (world_cache[cell_index].data.x == target_fingerprint) {
+    var pcg_state = pcg_hash_init(bucket_start);
+    let total_cells = cache_size * lod_count;
+    
+    var cell_index = bucket_start;
+    for (var cell = 0u; cell < BUCKET_SIZE; cell = cell + 1u) {
+        if (atomicLoad(&world_cache[cell_index].fingerprint) == target_fingerprint) {
             return world_cache[cell_index].radiance_w.xyz;
         }
+        cell_index = pcg_hash_next(&pcg_state, total_cells);
     }
+    return vec3<f32>(0.0);
+}
+
+fn validate_world_cache_cell(
+    position: vec3<f32>,
+    normal: vec3<f32>,
+    camera_position: vec3<f32>,
+    cache_size: u32,
+    base_cell_size: f32,
+    lod_count: u32
+) -> bool {
+    let lod_level = select_lod_level(position, camera_position, base_cell_size, lod_count);
+    let quantized_pos = quantize_position(position, lod_level, base_cell_size);
+    let quantized_dir = quantize_direction(normal);
     
-    return vec3<f32>(0.0); // No match found
+    let bucket_index = hash_descriptor_to_bucket(
+        quantized_pos,
+        quantized_dir,
+        lod_level,
+        cache_size,
+        lod_count
+    );
+    let target_fingerprint = hash_descriptor_to_fingerprint(
+        quantized_pos,
+        quantized_dir,
+        lod_level
+    );
+
+    // Linear probe within bucket using fingerprint matching
+    let bucket_start = get_bucket_start_index(bucket_index);
+    var pcg_state = pcg_hash_init(bucket_start);
+    let total_cells = cache_size * lod_count;
+    
+    var cell_index = bucket_start;
+    for (var cell = 0u; cell < BUCKET_SIZE; cell = cell + 1u) {
+        if (atomicLoad(&world_cache[cell_index].fingerprint) == target_fingerprint) {
+            return true;
+        }
+        cell_index = pcg_hash_next(&pcg_state, total_cells);
+    }
+    return false;
 }

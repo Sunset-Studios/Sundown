@@ -8,6 +8,8 @@
 #include "gi/gi_common.wgsl"
 #include "gi/world_cache_common.wgsl"
 
+//define WORLD_CACHE_SHOW_VALID_CELLS
+
 @group(1) @binding(0) var<uniform> gi_params: GIParams;
 @group(1) @binding(1) var<storage, read_write> world_cache: array<WorldCacheCell>;
 @group(1) @binding(2) var gbuffer_position: texture_2d<f32>;
@@ -44,6 +46,17 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let camera_position = view.view_position.xyz;
     
     // Query world cache with bucket+fingerprint (descriptor-based lookup)
+#if WORLD_CACHE_SHOW_VALID_CELLS
+    let is_valid = validate_world_cache_cell(
+        position,
+        normal,
+        camera_position,
+        u32(gi_params.world_cache_size),
+        gi_params.world_cache_cell_size,
+        u32(gi_params.world_cache_lod_count)
+    );
+    let cached_radiance = select(vec3<f32>(1.0, 0.0, 0.0), vec3<f32>(0.0, 1.0, 0.0), is_valid);
+#else
     let cached_radiance = read_world_cache_cell_radiance(
         position,
         normal,
@@ -52,7 +65,8 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         gi_params.world_cache_cell_size,
         u32(gi_params.world_cache_lod_count)
     );
-    
+#endif
+
     textureStore(output_debug, pixel_coord, vec4<f32>(cached_radiance, 1.0));
 }
 

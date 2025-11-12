@@ -7,6 +7,7 @@
 // =============================================================================
 #include "common.wgsl"
 #include "gi/gi_common.wgsl"
+#include "gi/world_cache_common.wgsl"
 #include "raytracing/restir_common.wgsl"
 
 @group(1) @binding(0) var<uniform> gi_params: GIParams;
@@ -15,6 +16,7 @@
 @group(1) @binding(3) var<storage, read_write> probe_path_state: array<ProbePathState>;
 @group(1) @binding(4) var<storage, read> light_count_buffer: array<u32>;
 @group(1) @binding(5) var<storage, read> dense_lights_buffer: array<Light>;
+@group(1) @binding(6) var<storage, read_write> world_cache: array<WorldCacheCell>;
 
 @compute @workgroup_size(128, 1, 1)
 fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {

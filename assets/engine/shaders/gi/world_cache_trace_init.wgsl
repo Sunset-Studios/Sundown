@@ -33,10 +33,8 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     
     // Get actual world cache cell index from compacted array
     let cell_index = compacted_indices[active_index];
-    let cell = world_cache[cell_index];
-    
     // Check if cell is actually active (has valid data)
-    if (cell.data.x == WORLD_CACHE_CELL_EMPTY) {
+    if (atomicLoad(&world_cache[cell_index].fingerprint) == WORLD_CACHE_CELL_EMPTY) {
         // Mark ray as dead
         world_cache_path_state[active_index].state_u32.y = 0u;
         return;
@@ -45,13 +43,13 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     // =============================================================================
     // Extract cell surface properties from cached data
     // =============================================================================
-    let position = cell.position_frame.xyz;
-    let normal = cell.normal_count.xyz;
-    let albedo = cell.albedo_roughness.xyz;
-    let roughness = cell.albedo_roughness.w;
-    let metallic = cell.material_props.x;
-    let reflectance = cell.material_props.y;
-    let emissive = cell.material_props.z;
+    let position = world_cache[cell_index].position_frame.xyz;
+    let normal = world_cache[cell_index].normal_count.xyz;
+    let albedo = world_cache[cell_index].albedo_roughness.xyz;
+    let roughness = world_cache[cell_index].albedo_roughness.w;
+    let metallic = world_cache[cell_index].material_props.x;
+    let reflectance = world_cache[cell_index].material_props.y;
+    let emissive = world_cache[cell_index].material_props.z;
     let clear_coat = 0.0;
     let clear_coat_roughness = 0.0;
 
@@ -139,10 +137,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         gi_reservoir_finalize(&gi_reservoir, selected_target);
         
         ray_dir = selected_dir;
-        
-        // Update path weight with BRDF and reservoir weight
-        let brdf_weight = selected_brdf * gi_reservoir.w;
-        path_weight = brdf_weight;
+        path_weight = selected_brdf * gi_reservoir.w;
         
         // Russian Roulette: Kill paths with very low throughput
         let weight_luminance = path_weight.x * 0.2126 + path_weight.y * 0.7152 + path_weight.z * 0.0722;

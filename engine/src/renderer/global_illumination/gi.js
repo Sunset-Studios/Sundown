@@ -173,12 +173,6 @@ const world_cache_path_tracer_shade_shader_setup = {
   },
 };
 
-const world_cache_path_tracer_update_shader_setup = {
-  pipeline_shaders: {
-    compute: { path: "gi/path_trace_world_cache_update.wgsl" },
-  },
-};
-
 const path_tracer_output_shader_setup = {
   pipeline_shaders: {
     compute: { path: "gi/path_trace_world_cache_output.wgsl" },
@@ -208,8 +202,8 @@ export class GI {
     upscale_x: 2, // Temporal upscale factor X (2x2 = 4 frames to fill)
     upscale_y: 2, // Temporal upscale factor Y
     world_cache_size: 65536, // Number of world cache cells (64K)
-    world_cache_cell_size: 0.25, // Size of world cache cells in world units (larger = better coverage)
-    world_cache_lod_count: 4, // Number of LOD levels for world cache
+    world_cache_cell_size: 0.5, // Size of world cache cells in world units (larger = better coverage)
+    world_cache_lod_count: 2, // Number of LOD levels for world cache
     max_bounces: 2, // Maximum path bounces (1 = direct hits only, 2+ = secondary bounces)
     indirect_boost: 1.0, // Multiplier for indirect lighting
     use_screen_probes: true, // When true, use screen probes. Otherwise, use full screen path tracing (at reduced rate)
@@ -692,6 +686,7 @@ export class GI {
           material_palette_offsets_buffer,
           material_palette_buffer,
           dense_lights,
+          gi_counters,
           albedo_pool_buffer,
           normal_pool_buffer,
           roughness_pool_buffer,
@@ -748,6 +743,7 @@ export class GI {
           probe_path_state,
           light_count,
           dense_lights,
+          world_cache,
         ],
         outputs: [probe_path_state],
         shader_setup: screen_probe_trace_init_shader_setup,
@@ -1254,21 +1250,6 @@ export class GI {
         }
       );
     }
-
-    render_graph.add_pass(
-      `gi_pt_world_cache_update`,
-      RenderPassFlags.Compute,
-      {
-        inputs: [gi_params, pt_params, path_state, path_shade, world_cache, gi_output],
-        outputs: [world_cache],
-        shader_setup: world_cache_path_tracer_update_shader_setup,
-      },
-      (graph, frame_data, encoder) => {
-        const pass = graph.get_physical_pass(frame_data.current_pass);
-        const active_pixel_count = Math.ceil(num_rays / Math.max(1, trace_rate));
-        pass.dispatch(Math.ceil(active_pixel_count / COMPUTE_WORKGROUP_SIZE), 1, 1);
-      }
-    );
 
     render_graph.add_pass(
       "gi_pt_output",
