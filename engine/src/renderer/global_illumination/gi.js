@@ -201,7 +201,7 @@ export class GI {
     screen_ray_count: 1, // Rays per screen probe
     upscale_x: 2, // Temporal upscale factor X (2x2 = 4 frames to fill)
     upscale_y: 2, // Temporal upscale factor Y
-    world_cache_size: 65536, // Number of world cache cells (64K)
+    world_cache_size: 32768, // Number of world cache cells (32K)
     world_cache_cell_size: 1.0, // Size of world cache cells in world units (larger = better coverage)
     world_cache_lod_count: 4, // Number of LOD levels for world cache
     max_bounces: 2, // Maximum path bounces (1 = direct hits only, 2+ = secondary bounces)

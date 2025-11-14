@@ -1865,7 +1865,7 @@ export class GITestScene extends Scene {
     const emissive_white_material = StandardMaterial.create("testgym_emissive_white_material");
     const emissive_white_material_id = emissive_white_material.material_id;
     emissive_white_material.set_albedo([1, 1, 1, 1]);
-    emissive_white_material.set_emission(100.0);
+    emissive_white_material.set_emission(10.0);
     emissive_white_material.set_metallic(0.01);
     emissive_white_material.set_roughness(0.9);
 
@@ -2714,7 +2714,7 @@ export class SponzaScene extends Scene {
     const light_fragment_view = EntityManager.get_fragment(light_entity, LightFragment);
     light_fragment_view.type = LightType.DIRECTIONAL;
     light_fragment_view.color = [1, 1, 1];
-    light_fragment_view.intensity = 20.0;
+    light_fragment_view.intensity = 40.0;
     light_fragment_view.position = [5, 20, 2.5];
     light_fragment_view.active = true;
     light_fragment_view.is_primary_sun = 1;
@@ -2767,7 +2767,7 @@ export class SponzaScene extends Scene {
     const sponza_entity = spawn_mesh_entity(
       [0, 2.0, 0],
       [0, 0, 0, 1],
-      [3, 3, 3],
+      [10, 10, 10],
       sponza_mesh,
       0 // GLTF sets the material id
     );
@@ -2914,10 +2914,10 @@ export class CityScene extends Scene {
   //await scene_switcher.add_scene(ml_scene);
   //await scene_switcher.add_scene(voxel_terrain_scene);
   //await scene_switcher.add_scene(object_painting_scene);
-  await scene_switcher.add_scene(gi_test_scene);
+  //await scene_switcher.add_scene(gi_test_scene);
   //await scene_switcher.add_scene(shadow_test_scene);
   //await scene_switcher.add_scene(gltf_model_scene);
-  //await scene_switcher.add_scene(sponza_scene);
+  await scene_switcher.add_scene(sponza_scene);
   //await scene_switcher.add_scene(city_scene);
 
   simulator.add_sim_layer(scene_switcher);

@@ -90,17 +90,13 @@ fn cs(
     let upscale = vec2<u32>(u32(gi_params.upscale_x), u32(gi_params.upscale_y));
     let should_update = should_update_probe_this_frame(probe_tile, u32(gi_params.frame_index), upscale);
     
-    // Early exit if not updating this frame (unless reset flag is set)
-    if (!should_update && u32(gi_params.reset_caches) == 0u) {
+    if (!should_update) {
         screen_probes[probe_index].state.w = 0.0;
-        return;
-    }
-    
-    // If reset flag is set but not updating, just clear and return
-    if (!should_update && u32(gi_params.reset_caches) != 0u) {
-        screen_probes[probe_index].radiance_m = vec4<f32>(0.0);
-        screen_probes[probe_index].state.x = 0.0;
-        screen_probes[probe_index].state.w = 0.0;
+        screen_probes[probe_index].radiance_m = select(
+            vec4<f32>(0.0),
+            screen_probes[probe_index].radiance_m,
+            u32(gi_params.reset_caches) == 0u
+        );
         return;
     }
 
