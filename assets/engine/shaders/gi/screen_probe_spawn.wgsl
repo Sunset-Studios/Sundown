@@ -230,22 +230,7 @@ fn cs(
             if (found_valid_reprojection && u32(gi_params.reset_caches) == 0u) {
                 // Reprojection succeeded: Copy accumulated radiance from previous probe
                 initial_radiance = max(screen_probes[best_probe_prev_index].radiance_m, vec4<f32>(0.0));
-            } 
-
-            let cached_radiance = query_world_cache_cell(
-                position,
-                normal,
-                albedo,
-                roughness,
-                metallic,
-                reflectance,
-                emissive,
-                camera_position,
-                u32(gi_params.world_cache_size),
-                gi_params.world_cache_cell_size,
-                u32(gi_params.world_cache_lod_count)
-            );
-            initial_radiance += vec4<f32>(cached_radiance.xyz, 1.0);
+            }
             
             // Place probe at chosen pixel location
             // If reprojection succeeded: at winning pixel, copy radiance from previous probe

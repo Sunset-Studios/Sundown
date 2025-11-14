@@ -56,6 +56,10 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let sun_dir = normalize(-light_view.view_direction.xyz);
     let v_dir = normalize(camera_position - path.origin_tmin.xyz);
 
+    var rng = u32(world_cache_path_state[active_index].rng_sample_count_frame_stamp.x);
+    if (rng == 0u) { rng = hash(cell_index ^ u32(gi_params.frame_index)); }
+    else { rng = random_seed(rng); }
+
     // Accumulator for this cell's radiance contribution
     var radiance_contribution = vec3<f32>(0.0);
     var sample_count = 0.0;
@@ -63,8 +67,8 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     // === Handle primary vertex visibility ray throughput (direct lighting) ===
     if (path.shadow_origin.w >= 0.0 && path.state_u32.z == 1u) {
         radiance_contribution += path.shadow_radiance.rgb * path.path_weight.xyz;
-        sample_count = 1.0;
         world_cache_path_state[active_index].state_u32.z = 0u;
+        sample_count = 1.0;
     }
     
     // === Handle Ray Miss (Sky contribution) ===
@@ -167,9 +171,10 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         // === INDIRECT LIGHTING - Query world cache for multi-bounce ===
         // Query world cache at hit point to get cached irradiance from previous frames
         // This provides multi-bounce indirect illumination without tracing further
-        let cached_radiance = query_world_cache_cell(
+        // NOTE: Use geometric normal (world_n) not shading normal (n) for consistent cache lookups
+        let cached_radiance = query_world_cache_cell_probabilistic(
             hit_pos,
-            n,
+            world_n,
             albedo,
             roughness,
             metallic,
@@ -178,18 +183,16 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
             camera_position,
             u32(gi_params.world_cache_size),
             gi_params.world_cache_cell_size,
-            u32(gi_params.world_cache_lod_count)
+            u32(gi_params.world_cache_lod_count),
+            25.0,
+            rand_float(rng)
         );
+        
         
         // Check if we got valid cached data
         let cached_luminance = cached_radiance.x * 0.2126 + cached_radiance.y * 0.7152 + cached_radiance.z * 0.0722;
         if (cached_luminance > 0.0001) {
-            // Apply cached radiance with path weight
-            let brdf = calculate_brdf_rt(
-                n, v_dir, -path.direction_tmax.xyz, albedo, roughness, metallic,
-                reflectance, 0.0, 0.0
-            );
-            radiance_contribution += path.path_weight.xyz * cached_radiance * gi_params.indirect_boost;
+            radiance_contribution += cached_radiance * gi_params.indirect_boost * path.path_weight.xyz;
             sample_count = 1.0;
         }
     }

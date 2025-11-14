@@ -202,8 +202,8 @@ export class GI {
     upscale_x: 2, // Temporal upscale factor X (2x2 = 4 frames to fill)
     upscale_y: 2, // Temporal upscale factor Y
     world_cache_size: 65536, // Number of world cache cells (64K)
-    world_cache_cell_size: 0.5, // Size of world cache cells in world units (larger = better coverage)
-    world_cache_lod_count: 2, // Number of LOD levels for world cache
+    world_cache_cell_size: 1.0, // Size of world cache cells in world units (larger = better coverage)
+    world_cache_lod_count: 4, // Number of LOD levels for world cache
     max_bounces: 2, // Maximum path bounces (1 = direct hits only, 2+ = secondary bounces)
     indirect_boost: 1.0, // Multiplier for indirect lighting
     use_screen_probes: true, // When true, use screen probes. Otherwise, use full screen path tracing (at reduced rate)

@@ -48,8 +48,9 @@ const p2 = 19349663;
 const p3 = 83492791;
 const p4 = 50331653;  // For direction hashing
 const p5 = 25165843;  // For LOD hashing
+const p6 = 12582923;  // For direction hashing
 
-const BUCKET_SIZE = 8u;            // Number of cells per bucket
+const BUCKET_SIZE = 16u;            // Number of cells per bucket
 const LOD_EXTENT = 128.0;          // Size of first LOD level
 const QUANTIZATION_RESOLUTION = 8; // Quantization resolution for direction hashing
 const WORLD_CACHE_RADIANCE_UPDATE_SAMPLE_CAP = 32.0; // Maximum sample count for radiance update
@@ -129,15 +130,16 @@ fn quantize_position(position: vec3<f32>, lod_level: u32, base_cell_size: f32) -
 // Quantize direction (normal) to discrete hemisphere directions
 // Uses octahedral mapping for compact representation
 // Returns quantized direction as integer coordinates
-fn quantize_direction(direction: vec3<f32>) -> vec2<i32> {
+fn quantize_direction(direction: vec3<f32>) -> vec3<i32> {
     // Octahedral projection (maps sphere to square)
     let l1norm = abs(direction.x) + abs(direction.y) + abs(direction.z);
-    let oct = direction.xy / max(l1norm, 0.0001);
+    let oct = direction.xyz / max(l1norm, 0.0001);
     
     // Quantize to 32x32 grid for reasonable angular resolution
-    let quantized = vec2<i32>(
+    let quantized = vec3<i32>(
         i32(floor(oct.x * f32(QUANTIZATION_RESOLUTION) + 0.5)),
-        i32(floor(oct.y * f32(QUANTIZATION_RESOLUTION) + 0.5))
+        i32(floor(oct.y * f32(QUANTIZATION_RESOLUTION) + 0.5)),
+        i32(floor(oct.z * f32(QUANTIZATION_RESOLUTION) + 0.5))
     );
     
     return quantized;
@@ -147,14 +149,14 @@ fn quantize_direction(direction: vec3<f32>) -> vec2<i32> {
 // Hashes the complete descriptor (position + direction + LOD) to a bucket
 fn hash_descriptor_to_bucket(
     quantized_pos: vec3<i32>,
-    quantized_dir: vec2<i32>,
+    quantized_dir: vec3<i32>,
     lod_level: u32,
     cache_size: u32,
     lod_count: u32
 ) -> u32 {
     // Combine all descriptor components with different primes
     let hash_pos = (quantized_pos.x * p1) ^ (quantized_pos.y * p2) ^ (quantized_pos.z * p3);
-    let hash_dir = (quantized_dir.x * p4) ^ (quantized_dir.y * p5);
+    let hash_dir = (quantized_dir.x * p4) ^ (quantized_dir.y * p5) ^ (quantized_dir.z * p6);
     let hash_lod = i32(lod_level) * 196613; // Another prime
     
     let combined_hash = bitcast<u32>(hash_pos ^ hash_dir ^ hash_lod);
@@ -171,12 +173,12 @@ fn hash_descriptor_to_bucket(
 // Uses different hash function to minimize collisions with bucket hash
 fn hash_descriptor_to_fingerprint(
     quantized_pos: vec3<i32>,
-    quantized_dir: vec2<i32>,
+    quantized_dir: vec3<i32>,
     lod_level: u32
 ) -> u32 {
     // Use different mixing pattern than bucket hash
     let hash_pos = (quantized_pos.x * p5) ^ (quantized_pos.y * p4) ^ (quantized_pos.z * p1);
-    let hash_dir = (quantized_dir.x * p3) ^ (quantized_dir.y * p2);
+    let hash_dir = (quantized_dir.x * p3) ^ (quantized_dir.y * p2) ^ (quantized_dir.z * p6);
     let hash_lod = i32(lod_level) * 393241; // Different prime
     
     let fingerprint = bitcast<u32>(hash_pos ^ hash_dir ^ hash_lod);
@@ -230,8 +232,7 @@ fn query_world_cache_cell(
     // Initialize PCG state for pseudorandom probing within bucket
     // Seed with fingerprint to get deterministic but well-distributed probe sequence
     let bucket_start = get_bucket_start_index(bucket_index);
-    var pcg_state = pcg_hash_init(bucket_start);
-    let total_cells = cache_size * lod_count;
+    var pcg_state = pcg_hash_init(target_fingerprint);
     
     var cell_index = bucket_start;
     // PCG-based probing: each collision jumps to pseudorandom location in bucket
@@ -245,22 +246,85 @@ fn query_world_cache_cell(
         
         if (existing_fingerprint == target_fingerprint) {
             // Cache hit: found matching entry, refresh lifetime and return radiance
-            world_cache[cell_index].position_frame.w = WORLD_CACHE_CELL_LIFETIME;
+            world_cache[cell_index].position_frame = vec4<f32>(position, WORLD_CACHE_CELL_LIFETIME);
+            world_cache[cell_index].normal_count = vec4<f32>(normal, world_cache[cell_index].normal_count.w);
+            world_cache[cell_index].albedo_roughness = vec4<f32>(albedo, roughness);
+            world_cache[cell_index].material_props = vec4<f32>(metallic, reflectance, emissive, 0.0);
             return world_cache[cell_index].radiance_w.xyz;
         } else if (existing_fingerprint == WORLD_CACHE_CELL_EMPTY) {
             // Empty slot: initialize new cache entry
             world_cache[cell_index].position_frame = vec4<f32>(position, WORLD_CACHE_CELL_LIFETIME);
             world_cache[cell_index].normal_count = vec4<f32>(normal, 0.0);
-            world_cache[cell_index].radiance_w = vec4<f32>(0.0);
             world_cache[cell_index].albedo_roughness = vec4<f32>(albedo, roughness);
             world_cache[cell_index].material_props = vec4<f32>(metallic, reflectance, emissive, 0.0);
+            world_cache[cell_index].radiance_w = vec4<f32>(0.0);
             return vec3<f32>(0.0);
         }
 
-        cell_index = pcg_hash_next(&pcg_state, total_cells);
+        // Probe next slot within bucket (stay within bucket boundaries)
+        cell_index = bucket_start + pcg_hash_next(&pcg_state, BUCKET_SIZE);
     }
 
     return vec3<f32>(0.0);
+}
+
+// =============================================================================
+// Probabilistic Query with Distance-Based Allocation Probability
+// Queries world cache with allocation probability inversely proportional to distance
+// Provides smooth falloff: nearby hits allocate often, distant hits rarely
+// Excellent for temporal amortization while preserving camera coverage
+// =============================================================================
+fn query_world_cache_cell_probabilistic(
+    position: vec3<f32>,
+    normal: vec3<f32>,
+    albedo: vec3<f32>,
+    roughness: f32,
+    metallic: f32,
+    reflectance: f32,
+    emissive: f32,
+    camera_position: vec3<f32>,
+    cache_size: u32,
+    base_cell_size: f32,
+    lod_count: u32,
+    allocation_radius: f32,  // Distance at which allocation probability = 0.5
+    random_value: f32        // Random value [0,1] for probabilistic decision
+) -> vec3<f32> {
+    let distance_from_camera = length(position - camera_position);
+    
+    // Compute allocation probability: exponential falloff with distance
+    // probability = exp(-distance / radius)
+    // At distance = 0: prob = 1.0 (always allocate)
+    // At distance = radius: prob = 0.37 (occasionally allocate)  
+    // At distance = 3*radius: prob ~= 0.05 (rarely allocate)
+    let allocation_probability = exp(-distance_from_camera / allocation_radius);
+    
+    // Decide whether to allow allocation based on probability
+    if (random_value < allocation_probability) {
+        // Probabilistic allocation: allows gradual propagation to distant regions
+        return query_world_cache_cell(
+            position,
+            normal,
+            albedo,
+            roughness,
+            metallic,
+            reflectance,
+            emissive,
+            camera_position,
+            cache_size,
+            base_cell_size,
+            lod_count
+        );
+    }
+    
+    // Read without allocating instead
+    return read_world_cache_cell_radiance(
+        position,
+        normal,
+        camera_position,
+        cache_size,
+        base_cell_size,
+        lod_count
+    );
 }
 
 // =============================================================================
@@ -326,15 +390,15 @@ fn read_world_cache_cell_radiance(
     
     // Linear probe within bucket using fingerprint matching
     let bucket_start = get_bucket_start_index(bucket_index);
-    var pcg_state = pcg_hash_init(bucket_start);
-    let total_cells = cache_size * lod_count;
+    var pcg_state = pcg_hash_init(target_fingerprint);
     
     var cell_index = bucket_start;
     for (var cell = 0u; cell < BUCKET_SIZE; cell = cell + 1u) {
         if (atomicLoad(&world_cache[cell_index].fingerprint) == target_fingerprint) {
             return world_cache[cell_index].radiance_w.xyz;
         }
-        cell_index = pcg_hash_next(&pcg_state, total_cells);
+        // Probe next slot within bucket (stay within bucket boundaries)
+        cell_index = bucket_start + pcg_hash_next(&pcg_state, BUCKET_SIZE);
     }
     return vec3<f32>(0.0);
 }
@@ -366,15 +430,15 @@ fn validate_world_cache_cell(
 
     // Linear probe within bucket using fingerprint matching
     let bucket_start = get_bucket_start_index(bucket_index);
-    var pcg_state = pcg_hash_init(bucket_start);
-    let total_cells = cache_size * lod_count;
+    var pcg_state = pcg_hash_init(target_fingerprint);
     
     var cell_index = bucket_start;
     for (var cell = 0u; cell < BUCKET_SIZE; cell = cell + 1u) {
         if (atomicLoad(&world_cache[cell_index].fingerprint) == target_fingerprint) {
             return true;
         }
-        cell_index = pcg_hash_next(&pcg_state, total_cells);
+        // Probe next slot within bucket (stay within bucket boundaries)
+        cell_index = bucket_start + pcg_hash_next(&pcg_state, BUCKET_SIZE);
     }
     return false;
 }
