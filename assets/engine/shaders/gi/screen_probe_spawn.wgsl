@@ -151,8 +151,9 @@ fn cs(
                 
                 // Validate probe index and active in last frame
                 if (screen_probes[probe_index_prev].state.x > 0.0) {
-                    let world_probe = screen_probes[probe_index_prev].position_radius.xyz;
-                    let normal_probe = screen_probes[probe_index_prev].normal_frame.xyz;
+                    let prev_normal_data = textureLoad(gbuffer_normal, pixel_prev, 0);
+                    let normal_probe = safe_normalize(prev_normal_data.xyz);
+                    let world_probe = textureLoad(gbuffer_position, pixel_prev, 0).xyz;
                     
                     let plane_dist = abs(dot(world_probe - position_current, normal_current));
                     let normal_similarity = dot(normal_probe, normal_current);
@@ -231,24 +232,6 @@ fn cs(
             // Place probe at chosen pixel location
             // If reprojection succeeded: at winning pixel, copy radiance from previous probe
             // If reprojection failed: at Halton-jittered pixel, seed from world cache
-            screen_probes[probe_index].position_radius = vec4<f32>(
-                position,
-                adaptive_cell_size_spawn
-            );
-            screen_probes[probe_index].normal_frame = vec4<f32>(
-                normal,
-                gi_params.frame_index
-            );
-            screen_probes[probe_index].albedo_roughness = vec4<f32>(
-                albedo,
-                roughness
-            );
-            screen_probes[probe_index].material_props = vec4<f32>(
-                metallic,
-                reflectance,
-                emissive,
-                0.0  // unused
-            );
             screen_probes[probe_index].radiance_m = initial_radiance;
             screen_probes[probe_index].state = vec4<f32>(
                 1.0,                 // active

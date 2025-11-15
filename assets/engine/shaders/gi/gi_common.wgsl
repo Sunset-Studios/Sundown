@@ -35,11 +35,7 @@ struct GIParams {
 };
 
 struct ScreenProbe {
-    position_radius: vec4<f32>,     // xyz = world position, w = influence radius
-    normal_frame: vec4<f32>,        // xyz = normal, w = frame stamp
     radiance_m: vec4<f32>,          // xyz = accumulated radiance, w = sample count (M)
-    albedo_roughness: vec4<f32>,    // xyz = albedo, w = roughness
-    material_props: vec4<f32>,      // x = metallic, y = reflectance, z = emissive, w = unused
     state: vec4<f32>,               // x = active(0/1), y = pixel_x, z = pixel_y, w = updating(0/1)
 };
 

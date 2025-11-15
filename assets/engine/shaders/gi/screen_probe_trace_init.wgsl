@@ -17,6 +17,11 @@
 @group(1) @binding(4) var<storage, read> light_count_buffer: array<u32>;
 @group(1) @binding(5) var<storage, read> dense_lights_buffer: array<Light>;
 @group(1) @binding(6) var<storage, read_write> world_cache: array<WorldCacheCell>;
+@group(1) @binding(7) var gbuffer_position: texture_2d<f32>;
+@group(1) @binding(8) var gbuffer_normal: texture_2d<f32>;
+@group(1) @binding(9) var gbuffer_albedo: texture_2d<f32>;
+@group(1) @binding(10) var gbuffer_smra: texture_2d<f32>;
+@group(1) @binding(11) var gbuffer_motion: texture_2d<f32>;
 
 @compute @workgroup_size(128, 1, 1)
 fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
@@ -49,13 +54,19 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     // =============================================================================
     // Extract probe surface properties
     // =============================================================================
-    let position = probe.position_radius.xyz;
-    let normal = probe.normal_frame.xyz;
-    let albedo = probe.albedo_roughness.xyz;
-    let roughness = probe.albedo_roughness.w;
-    let metallic = probe.material_props.x;
-    let reflectance = probe.material_props.y;
-    let emissive = probe.material_props.z;
+    let pixel_i32 = vec2<i32>(i32(probe.state.y), i32(probe.state.z));
+    let position = textureLoad(gbuffer_position, pixel_i32, 0).xyz;
+    let normal_data = textureLoad(gbuffer_normal, pixel_i32, 0);
+    let normal = safe_normalize(normal_data.xyz);
+    let normal_length = length(normal_data.xyz);
+    let albedo = textureLoad(gbuffer_albedo, pixel_i32, 0).rgb;
+    let smra = textureLoad(gbuffer_smra, pixel_i32, 0);
+    let motion_emissive = textureLoad(gbuffer_motion, pixel_i32, 0);
+
+    let roughness = smra.g;
+    let metallic = smra.b;
+    let reflectance = smra.r * 0.0009765625; // Decode: 1.0 / 1024
+    let emissive = motion_emissive.w;
     let frame_id = u32(gi_params.frame_index);
     
     // Clear coat not stored in probes (assume 0)

@@ -75,31 +75,10 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
             continue;
         }
         
-        let probe_pos = probe.position_radius.xyz;
-        let probe_radius = probe.position_radius.w;
-        let probe_normal = probe.normal_frame.xyz;
-        let probe_radiance = probe.radiance_m.xyz;
-        
-        // World-space distance cull
-        let dist = length(position - probe_pos);
-        if (dist > max_search_radius) {
-            continue;
-        }
-        
-        // Compute probe weight
-        let weight = compute_probe_weight(
-            position,
-            normal,
-            probe_pos,
-            probe_normal,
-            probe_radius * 1.0 // Scale radius for wider influence
-        );
-        
-        if (weight > 0.001) {
-            total_radiance += probe_radiance * weight;
-            total_weight += weight;
-            probes_checked += 1u;
-        }
+        let weight = 1.0 / (1.0 + pixel_dist * pixel_dist);
+        total_radiance += probe.radiance_m.xyz * weight;
+        total_weight += weight;
+        probes_checked += 1u;
     }
     
     // Normalize and apply albedo

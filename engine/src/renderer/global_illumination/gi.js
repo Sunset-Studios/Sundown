@@ -387,11 +387,10 @@ export class GI {
     });
 
     // World cache storage (persistent across frames)
-    // Each cell: position+frame(16) + normal+count(16) + radiance+w(16) + data(16) 
-    //            + albedo+roughness(16) + material_props(16) = 96 bytes
+    // Each cell: radiance+w(16) + data(16) = 32 bytes
     const world_cache = render_graph.create_buffer({
       name: "gi_world_cache",
-      size: total_cells * 96,
+      size: total_cells * 32,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
       force: force_recreate,
       persistent: true, // Keep across frames
@@ -744,6 +743,11 @@ export class GI {
           light_count,
           dense_lights,
           world_cache,
+          gbuffer_position,
+          gbuffer_normal,
+          gbuffer_albedo,
+          gbuffer_smra,
+          gbuffer_motion_emissive,
         ],
         outputs: [probe_path_state],
         shader_setup: screen_probe_trace_init_shader_setup,

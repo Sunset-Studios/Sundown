@@ -66,5 +66,4 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
 
     // Update sample count to track total accumulated samples
     screen_probes[gid.x].radiance_m = vec4<f32>(blended_radiance, prev_sample_count + f32(rays_per_probe));
-    screen_probes[gid.x].normal_frame.w = gi_params.frame_index;
 }
