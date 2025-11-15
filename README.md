@@ -8,8 +8,8 @@ Some of the current (code) features include:
 
 * ⚡ WebGPU renderable abstractions
 * ⚡ Flexible render graph for crafting render and compute pipelines
-* ⚡ Simple, expressive material system for crafting custom shaders and materials
-* ⚡ Gameplay simulation layer system for adding layered, modular functionality
+* ⚡ Simple, expressive, shader-based material system for crafting custom materials
+* ⚡ Layered Gameplay simulation architecture for adding layered, modular functionality
 * ⚡ Archetype-chunk ECS system for more efficient processing, using a fragment framework and TypedArrays
 * ⚡ Simple, context-based input system, allowing you to set up different input schemes and contexts
 * ⚡ Built-in PBR shaders
@@ -20,9 +20,11 @@ Some of the current (code) features include:
 * ⚡ Configurable post-process stack
 * ⚡ Immediate mode screen-space UI
 * ⚡ Sparse Virtual Shadow Maps 
-* ⚡ Dynamic BVH tree acceleration structure for physics, ray tracing and ray casting
-* ⚡ Per-mesh triangle BVH for software ray tracing
-* ⚡ Compute shader path tracer with ReSTIR global illumination and surfel radiance cache
+* ⚡ Dynamic TLAS BVH tree acceleration structure for physics, ray tracing and ray casting
+* ⚡ Per-mesh triangle BLAS BVH for software ray tracing
+* ⚡ Pseudo-bindless texture pools and material tables 
+* ⚡ Software (Compute) path tracer with ReSTIR
+* ⚡ 2-level radiance cache realtime GI using software path tracing 
 * ⚡ Helpers for loading GTLFs, tracking performance scopes, named IDs, running frames and more.
 
 Sundown also includes a simple but capable ML framework for running real-time AI experiments:
