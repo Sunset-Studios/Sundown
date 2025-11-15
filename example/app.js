@@ -2705,17 +2705,17 @@ export class SponzaScene extends Scene {
     SharedEnvironmentData.set_skydome("default_scene_skydome");
 
     const view_data = SharedViewBuffer.get_view_data(0);
-    view_data.view_position = [5.78, 6.92, 0.98];
-    view_data.view_rotation = [-0.1072285, 0.7414748, -0.12231449, -0.6500234];
+    view_data.view_position = [47.472286, 27.78186, -13.869926];
+    view_data.view_rotation = [-0.11834184, 0.511507153, -0.012147546, -0.787763178];
 
     const light_entity = EntityManager.create_entity([LightFragment]);
     this.entities.push(light_entity);
 
     const light_fragment_view = EntityManager.get_fragment(light_entity, LightFragment);
     light_fragment_view.type = LightType.DIRECTIONAL;
-    light_fragment_view.color = [1, 1, 1];
+    light_fragment_view.color = [0.9, 0.9, 1.0];
     light_fragment_view.intensity = 40.0;
-    light_fragment_view.position = [5, 20, 2.5];
+    light_fragment_view.position = [0.0, 20, 0.0];
     light_fragment_view.active = true;
     light_fragment_view.is_primary_sun = 1;
     light_fragment_view.shadow_clipmaps = MAX_CLIPMAP_LEVELS;
@@ -2767,7 +2767,7 @@ export class SponzaScene extends Scene {
     const sponza_entity = spawn_mesh_entity(
       [0, 2.0, 0],
       [0, 0, 0, 1],
-      [10, 10, 10],
+      [5, 5, 5],
       sponza_mesh,
       0 // GLTF sets the material id
     );

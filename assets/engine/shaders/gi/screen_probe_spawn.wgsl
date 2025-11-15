@@ -127,12 +127,19 @@ fn cs(
             let distance_to_camera = length(camera_position - position_current);
             let adaptive_cell_size = max(distance_scale * distance_to_camera, 0.001);
             
-            // Use world-space velocity stored in G-buffer to recover the previous position
+            // Use NDC-space velocity stored in G-buffer to recover the previous pixel position
             let motion_sample = textureLoad(gbuffer_motion, pixel_i32, 0);
-            let world_velocity = motion_sample.xyz;
-            let position_prev = position_current - world_velocity;
-            let prev_clip = prev_view_projection * vec4<f32>(position_prev, 1.0);
-            let prev_ndc = prev_clip.xy / prev_clip.w;
+            let ndc_velocity = motion_sample.xy;
+            
+            // Calculate current NDC position from current pixel
+            let current_uv = vec2<f32>(f32(pixel.x) / f32(res.x), f32(pixel.y) / f32(res.y));
+            let current_ndc = vec2<f32>(
+                current_uv.x * 2.0 - 1.0,
+                1.0 - current_uv.y * 2.0
+            );
+            
+            // Subtract NDC velocity to get previous NDC position
+            let prev_ndc = current_ndc - ndc_velocity;
 
             // Convert previous NDC position into pixel coordinates (Y flip for screen space)
             let pixel_prev_f = vec2<f32>(

@@ -51,7 +51,7 @@ const p5 = 25165843;  // For LOD hashing
 const p6 = 12582923;  // For direction hashing
 
 const BUCKET_SIZE = 16u;            // Number of cells per bucket
-const LOD_EXTENT = 128.0;          // Size of first LOD level
+const LOD_EXTENT = 16.0;          // Size of first LOD level
 const QUANTIZATION_RESOLUTION = 8; // Quantization resolution for direction hashing
 const WORLD_CACHE_RADIANCE_UPDATE_SAMPLE_CAP = 32.0; // Maximum sample count for radiance update
 const WORLD_CACHE_CELL_LIFETIME = 30.0; // Maximum lifetime of a cell in frames

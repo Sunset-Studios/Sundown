@@ -111,12 +111,13 @@ fn fragment(v_out: VertexOutput, f_out: ptr<function, FragmentOutput>) -> Fragme
     // Last component of normal is deferred standard lighting factor. Set to 0 if custom lighting is used when using custom FS / VS.
     output.normal = vec4<precision_float>(v_out.normal.xyz, 1.0);
     // :::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
-    // :: World-Space Velocity Export                                        ::
+    // :: Screen-Space (NDC) Velocity Export                                 ::
     // :::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
-    let world_velocity = vec3<precision_float>(
-        v_out.world_position.xyz - v_out.prev_world_position.xyz
-    );
-    output.motion_emissive = vec4<precision_float>(world_velocity, 0.0);
+    // Convert clip-space positions to NDC and compute motion vector
+    let current_ndc = v_out.current_clip_pos.xy / v_out.current_clip_pos.w;
+    let prev_ndc = v_out.prev_clip_pos.xy / v_out.prev_clip_pos.w;
+    let ndc_velocity = vec2<precision_float>(current_ndc - prev_ndc);
+    output.motion_emissive = vec4<precision_float>(ndc_velocity, 0.0, 0.0);
 
     var post_material_output = fragment(v_out, &output);
 
