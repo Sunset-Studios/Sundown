@@ -9,11 +9,12 @@
 
 @group(1) @binding(0) var<uniform> gi_params: GIParams;
 @group(1) @binding(1) var<storage, read_write> gi_counters: GICounters;
-@group(1) @binding(2) var<storage, read> screen_probes: array<ScreenProbe>;
-@group(1) @binding(3) var gbuffer_position: texture_2d<f32>;
-@group(1) @binding(4) var gbuffer_normal: texture_2d<f32>;
-@group(1) @binding(5) var gbuffer_albedo: texture_2d<f32>;
-@group(1) @binding(6) var output_gi: texture_storage_2d<rgba16float, write>;
+@group(1) @binding(2) var<storage, read> screen_probe_metadata: array<ScreenProbe>;
+@group(1) @binding(3) var probe_radiance_curr: texture_2d<f32>;
+@group(1) @binding(4) var gbuffer_position: texture_2d<f32>;
+@group(1) @binding(5) var gbuffer_normal: texture_2d<f32>;
+@group(1) @binding(6) var gbuffer_albedo: texture_2d<f32>;
+@group(1) @binding(7) var output_gi: texture_storage_2d<rgba16float, write>;
 
 @compute @workgroup_size(8, 8, 1)
 fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
@@ -46,21 +47,18 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     
     // Search for nearby probes in screen-space neighborhood
     // For temporal upscale, probes are roughly uniformly distributed at probe_size intervals
-    let max_search_radius = 50.0; // World units
     let search_radius_screen = gi_params.screen_probe_size * 1.5; // Search within 1.5 probe tiles
     
-    // Calculate expected probe region in the array
-    // With temporal upscale, each spawn tile is probe_size * upscale
-    let upscale = vec2<f32>(gi_params.upscale_x, gi_params.upscale_y);
-    let spawn_tile_size = gi_params.screen_probe_size * upscale;
-    let pixel_spawn_tile = vec2<f32>(gid.xy) / spawn_tile_size;
+    // Probe grid layout (matches debug visualization and update pass)
+    let probe_size = u32(gi_params.screen_probe_size);
+    let grid_width = (res.x + probe_size - 1u) / probe_size;
     
     // Linear search through all probes, but early exit based on screen distance
     var probes_checked = 0u;
     let max_probes_to_interpolate = 9u; // Use up to 9 nearest probes
     
     for (var i = 0u; i < probe_count && probes_checked < max_probes_to_interpolate; i = i + 1u) {
-        let probe = screen_probes[i];
+        let probe = screen_probe_metadata[i];
         
         // Check if probe is active
         if (probe.state.x == 0.0) {
@@ -75,8 +73,17 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
             continue;
         }
         
+        // Look up this probe's radiance from the atlas (center texel)
+        let probe_tile_x = i % grid_width;
+        let probe_tile_y = i / grid_width;
+        let probe_tile = vec2<u32>(probe_tile_x, probe_tile_y);
+        let atlas_center_offset = probe_size / 2u;
+        let atlas_coord = probe_tile * probe_size + atlas_center_offset;
+        let radiance_sample = textureLoad(probe_radiance_curr, vec2<i32>(atlas_coord), 0);
+        let probe_radiance = radiance_sample.rgb;
+        
         let weight = 1.0 / (1.0 + pixel_dist * pixel_dist);
-        total_radiance += probe.radiance_m.xyz * weight;
+        total_radiance += probe_radiance * weight;
         total_weight += weight;
         probes_checked += 1u;
     }

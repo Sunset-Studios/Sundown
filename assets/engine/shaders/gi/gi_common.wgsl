@@ -18,6 +18,19 @@ struct GICounters {
     _padding1: u32,
 };
 
+// =============================================================================
+// Tile classification counters
+// =============================================================================
+struct TileCounters {
+    empty_count: atomic<u32>,
+    override_count: atomic<u32>,
+    padding0: u32,
+    padding1: u32,
+}
+
+// =============================================================================
+// GI Parameters
+// =============================================================================
 struct GIParams {
     screen_probe_size: f32,         // Side length of square probe footprint in pixels
     screen_ray_count: f32,          // Rays per screen probe
@@ -25,20 +38,24 @@ struct GIParams {
     world_cache_cell_size: f32,     // Size of world cache cells in world units
     total_screen_probes: f32,       // Total probes in grid (derived from resolution)
     frame_index: f32,               // Current frame for temporal updates
-    reset_caches: f32,              // Force reset flag
     indirect_boost: f32,            // Indirect lighting multiplier (f32 bits)
     upscale_x: f32,                 // Temporal upscale factor X
     upscale_y: f32,                 // Temporal upscale factor Y
     world_cache_lod_count: f32,     // Number of LOD levels for world cache
     trace_rate: f32,                // Trace rate for path tracing
-    frame_phase: f32,               // Frame phase for path tracing
+    padding: f32,                   // Padding
 };
 
+// =============================================================================
+// Screen Probe
+// =============================================================================
 struct ScreenProbe {
-    radiance_m: vec4<f32>,          // xyz = accumulated radiance, w = sample count (M)
-    state: vec4<f32>,               // x = active(0/1), y = pixel_x, z = pixel_y, w = updating(0/1)
+    state: vec4<f32>,               // x = active(0/1), y = pixel_x, z = pixel_y, w = updated_this_frame(0/1)
 };
 
+// =============================================================================
+// Probe Path State
+// =============================================================================
 struct ProbePathState {
     origin_tmin: vec4<f32>,
     direction_tmax: vec4<f32>,

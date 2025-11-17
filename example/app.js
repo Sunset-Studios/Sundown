@@ -2754,9 +2754,9 @@ export class SponzaScene extends Scene {
 
     // Emissive white cube in center of Sponza atrium
     // const emissive_cube = spawn_mesh_entity(
-    //   [0.0, 10.0, -0.25],
+    //   [0.0, 25.0, -0.25],
     //   quat.fromEuler(quat.create(), 0, 0, 0),
-    //   [4.5, 0.2, 0.7],
+    //   [9.5, 0.2, 0.7],
     //   cube_mesh,
     //   emissive_white_material_id
     // );

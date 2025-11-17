@@ -12,16 +12,17 @@
 
 @group(1) @binding(0) var<uniform> gi_params: GIParams;
 @group(1) @binding(1) var<storage, read_write> gi_counters: GICounters;
-@group(1) @binding(2) var<storage, read> screen_probes: array<ScreenProbe>;
-@group(1) @binding(3) var<storage, read_write> probe_path_state: array<ProbePathState>;
-@group(1) @binding(4) var<storage, read> light_count_buffer: array<u32>;
-@group(1) @binding(5) var<storage, read> dense_lights_buffer: array<Light>;
-@group(1) @binding(6) var<storage, read_write> world_cache: array<WorldCacheCell>;
-@group(1) @binding(7) var gbuffer_position: texture_2d<f32>;
-@group(1) @binding(8) var gbuffer_normal: texture_2d<f32>;
-@group(1) @binding(9) var gbuffer_albedo: texture_2d<f32>;
-@group(1) @binding(10) var gbuffer_smra: texture_2d<f32>;
-@group(1) @binding(11) var gbuffer_motion: texture_2d<f32>;
+@group(1) @binding(2) var<storage, read> screen_probe_metadata: array<ScreenProbe>;
+@group(1) @binding(3) var probe_radiance_prev: texture_2d<f32>;
+@group(1) @binding(4) var<storage, read_write> probe_path_state: array<ProbePathState>;
+@group(1) @binding(5) var<storage, read> light_count_buffer: array<u32>;
+@group(1) @binding(6) var<storage, read> dense_lights_buffer: array<Light>;
+@group(1) @binding(7) var<storage, read_write> world_cache: array<WorldCacheCell>;
+@group(1) @binding(8) var gbuffer_position: texture_2d<f32>;
+@group(1) @binding(9) var gbuffer_normal: texture_2d<f32>;
+@group(1) @binding(10) var gbuffer_albedo: texture_2d<f32>;
+@group(1) @binding(11) var gbuffer_smra: texture_2d<f32>;
+@group(1) @binding(12) var gbuffer_motion: texture_2d<f32>;
 
 @compute @workgroup_size(128, 1, 1)
 fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
@@ -38,30 +39,32 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let probe_index = gid.x / rays_per_probe;
     let ray_index = gid.x % rays_per_probe;
     
-    let probe = screen_probes[probe_index];
     let view_index = u32(frame_info.view_index);
     let view = view_buffer[view_index];
     
-    // Check if probe is active (being updated this frame)
-    // Inactive probes get dead rays and won't be traced
-    // Also check if probe was actually spawned (has valid data from spawn pass)
-    if (probe.state.x == 0.0 || probe.state.w == 0.0) {
-        // Mark all rays and shade data for this inactive probe as dead
+    // Read probe metadata
+    let probe = screen_probe_metadata[probe_index];
+    let probe_valid = probe.state.x > 0.0;
+    
+    // Check if probe is active/valid and scheduled for update
+    let probe_updated_this_frame = probe.state.w > 0.0;
+    
+    if (!probe_valid || !probe_updated_this_frame) {
+        // Mark all rays for this inactive probe as dead
         probe_path_state[gid.x].state_u32 = vec4<u32>(0u, 0u, 0u, 0xffffffffu);
         return;
     }
     
     // =============================================================================
-    // Extract probe surface properties
+    // Extract probe surface properties by sampling G-buffer at probe's pixel
     // =============================================================================
-    let pixel_i32 = vec2<i32>(i32(probe.state.y), i32(probe.state.z));
-    let position = textureLoad(gbuffer_position, pixel_i32, 0).xyz;
-    let normal_data = textureLoad(gbuffer_normal, pixel_i32, 0);
+    let probe_pixel = vec2<i32>(i32(probe.state.y), i32(probe.state.z));
+    let position = textureLoad(gbuffer_position, probe_pixel, 0).xyz;
+    let normal_data = textureLoad(gbuffer_normal, probe_pixel, 0);
     let normal = safe_normalize(normal_data.xyz);
-    let normal_length = length(normal_data.xyz);
-    let albedo = textureLoad(gbuffer_albedo, pixel_i32, 0).rgb;
-    let smra = textureLoad(gbuffer_smra, pixel_i32, 0);
-    let motion_emissive = textureLoad(gbuffer_motion, pixel_i32, 0);
+    let albedo = textureLoad(gbuffer_albedo, probe_pixel, 0).rgb;
+    let smra = textureLoad(gbuffer_smra, probe_pixel, 0);
+    let motion_emissive = textureLoad(gbuffer_motion, probe_pixel, 0);
 
     let roughness = smra.g;
     let metallic = smra.b;
