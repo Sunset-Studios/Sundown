@@ -155,42 +155,6 @@ const screen_probe_reconstruct_shader_setup = {
   },
 };
 
-const path_tracer_init_shader_setup = {
-  pipeline_shaders: {
-    compute: { path: "raytracing/path_trace_init.wgsl" },
-  },
-};
-
-const path_tracer_hit_shader_setup = {
-  pipeline_shaders: {
-    compute: { path: "raytracing/path_trace_hit.wgsl" },
-  },
-};
-
-const path_tracer_hit_visibility_shader_setup = {
-  pipeline_shaders: {
-    compute: { path: "raytracing/path_trace_hit_visibility.wgsl" },
-  },
-};
-
-const path_tracer_gbuffer_shade_shader_setup = {
-  pipeline_shaders: {
-    compute: { path: "raytracing/path_trace_gbuffer_shade.wgsl" },
-  },
-};
-
-const world_cache_path_tracer_shade_shader_setup = {
-  pipeline_shaders: {
-    compute: { path: "gi/path_trace_world_cache_shade.wgsl" },
-  },
-};
-
-const path_tracer_output_shader_setup = {
-  pipeline_shaders: {
-    compute: { path: "gi/path_trace_world_cache_output.wgsl" },
-  },
-};
-
 const screen_probe_debug_shader_setup = {
   pipeline_shaders: {
     compute: { path: "gi/screen_probe_debug.wgsl" },
@@ -211,14 +175,12 @@ export class GI {
   config = {
     screen_probe_size: 4, // Side length of probe footprint in pixels
     screen_ray_count: 1, // Rays per screen probe
-    upscale_x: 2, // Temporal upscale factor X (2x2 = 4 frames to fill)
-    upscale_y: 2, // Temporal upscale factor Y
+    upscale_x: 4, // Temporal upscale factor X (2x2 = 4 frames to fill)
+    upscale_y: 4, // Temporal upscale factor Y
     world_cache_size: 32768, // Number of world cache cells (32K)
     world_cache_cell_size: 1.0, // Size of world cache cells in world units (larger = better coverage)
     world_cache_lod_count: 6, // Number of LOD levels for world cache
-    max_bounces: 2, // Maximum path bounces (1 = direct hits only, 2+ = secondary bounces)
     indirect_boost: 1.0, // Multiplier for indirect lighting
-    use_screen_probes: true, // When true, use screen probes. Otherwise, use full screen path tracing (at reduced rate)
   };
 
   constructor(params = {}) {
@@ -239,16 +201,6 @@ export class GI {
       0, // trace_rate
       0, // padding
     ]);
-    this.pt_params = new Uint32Array([
-      0, // max_bounces
-      0, // reset_accum_flag
-      0, // use_gbuffer
-      0, // trace_rate
-      0, // frame_phase
-      0, // indirect_boost
-    ]);
-    this.pt_frame_phase = 0;
-    // Ping-pong flip flag for screen probe history
   }
 
   /**
@@ -306,7 +258,6 @@ export class GI {
     });
 
     if (draw_count > 0) {
-      if (this.config.use_screen_probes) {
         this.add_probe_based_passes(
           render_graph,
           width,
@@ -327,32 +278,9 @@ export class GI {
           gi_output,
           force_recreate
         );
-      } else {
-        this.add_rt_based_passes(
-          render_graph,
-          width,
-          height,
-          tlas_bvh2_bounds,
-          tlas_bvh4_nodes,
-          blas_atlas,
-          entity_transforms,
-          mesh_asset_ids,
-          index_buffer,
-          dense_lights,
-          light_count,
-          gbuffer_position,
-          gbuffer_normal,
-          gbuffer_albedo,
-          gbuffer_smra,
-          gbuffer_motion_emissive,
-          gi_output,
-          force_recreate
-        );
-      }
     }
 
     // Store references for external use
-
     this.final_gi_texture = gi_output;
   }
 
@@ -482,10 +410,10 @@ export class GI {
     });
 
     // Probe metadata buffer: matches ScreenProbe struct
-    // Each probe: state(vec4) where x=active, y=pixel_x, z=pixel_y, w=sample_count
+    // Each probe: state(vec4)
     const screen_probe_metadata = render_graph.create_buffer({
       name: "gi_screen_probe_metadata",
-      size: total_screen_probes * 16, // vec4<f32> per probe
+      size: total_screen_probes * 16, // 1 x vec4<f32> per probe (16 bytes)
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
       force: force_recreate,
     });
@@ -1002,439 +930,22 @@ export class GI {
       }
     );
 
-    // render_graph.add_pass(
-    //   `gi_reconstruct_${ping_pong_frame}`,
-    //   RenderPassFlags.Compute,
-    //   {
-    //     inputs: [
-    //       gi_params,
-    //       gi_counters,
-    //       screen_probe_metadata,
-    //       probe_radiance_updated, // Read from update pass output
-    //       gbuffer_position,
-    //       gbuffer_normal,
-    //       gbuffer_albedo,
-    //       gi_output,
-    //     ],
-    //     outputs: [gi_output],
-    //     shader_setup: screen_probe_reconstruct_shader_setup,
-    //   },
-    //   (graph, frame_data, encoder) => {
-    //     const pass = graph.get_physical_pass(frame_data.current_pass);
-    //     pass.dispatch(Math.ceil(width / 8), Math.ceil(height / 8), 1);
-    //   }
-    // );
-
-    // Store references for external use and debugging
-    this.gi_params = gi_params;
-    this.gi_counters = gi_counters;
-    this.screen_probe_radiance_0 = screen_probe_radiance_0;
-    this.screen_probe_radiance_1 = screen_probe_radiance_1;
-    this.screen_probe_metadata = screen_probe_metadata;
-    this.world_cache = world_cache;
-  }
-
-  add_rt_based_passes(
-    render_graph,
-    width,
-    height,
-    tlas_bvh2_bounds = null,
-    tlas_bvh4_nodes = null,
-    blas_atlas = null,
-    entity_transforms = null,
-    mesh_asset_ids = null,
-    index_buffer = null,
-    dense_lights = null,
-    light_count = null,
-    gbuffer_position = null,
-    gbuffer_normal = null,
-    gbuffer_albedo = null,
-    gbuffer_smra = null,
-    gbuffer_motion_emissive = null,
-    gi_output = null,
-    force_recreate = false
-  ) {
-    const num_bounce_passes = this.config.max_bounces;
-    const num_rays = width * height;
-    const trace_rate = this.config.upscale_x * this.config.upscale_y;
-
-    const params_gpu = MaterialAllocationTable.params_buffer;
-    const material_palette = MaterialAllocationTable.palette_buffer;
-    const material_palette_offsets = EntityManager.get_fragment_gpu_buffer(
-      StaticMeshFragment,
-      material_offsets_name
-    );
-
-    const params_gpu_buffer = render_graph.register_buffer(params_gpu.config.name);
-    const material_palette_buffer = render_graph.register_buffer(material_palette.config.name);
-    const material_palette_offsets_buffer = render_graph.register_buffer(
-      material_palette_offsets.buffer.config.name
-    );
-
-    const default_texture = Texture.default_array();
-    const albedo_pool = ResourceCache.get().fetch(CacheTypes.IMAGE, texture_pool_albedo_name);
-    const normal_pool = ResourceCache.get().fetch(CacheTypes.IMAGE, texture_pool_normal_name);
-    const roughness_pool = ResourceCache.get().fetch(CacheTypes.IMAGE, texture_pool_roughness_name);
-    const metallic_pool = ResourceCache.get().fetch(CacheTypes.IMAGE, texture_pool_metallic_name);
-    const ao_pool = ResourceCache.get().fetch(CacheTypes.IMAGE, texture_pool_ao_name);
-    const height_pool = ResourceCache.get().fetch(CacheTypes.IMAGE, texture_pool_height_name);
-    const specular_pool = ResourceCache.get().fetch(CacheTypes.IMAGE, texture_pool_specular_name);
-    const emission_pool = ResourceCache.get().fetch(CacheTypes.IMAGE, texture_pool_emission_name);
-
-    const default_texture_buffer = render_graph.register_image(default_texture.config.name);
-    const albedo_pool_buffer = albedo_pool
-      ? render_graph.register_image(albedo_pool.config.name)
-      : default_texture_buffer;
-    const normal_pool_buffer = normal_pool
-      ? render_graph.register_image(normal_pool.config.name)
-      : default_texture_buffer;
-    const roughness_pool_buffer = roughness_pool
-      ? render_graph.register_image(roughness_pool.config.name)
-      : default_texture_buffer;
-    const metallic_pool_buffer = metallic_pool
-      ? render_graph.register_image(metallic_pool.config.name)
-      : default_texture_buffer;
-    const ao_pool_buffer = ao_pool
-      ? render_graph.register_image(ao_pool.config.name)
-      : default_texture_buffer;
-    const height_pool_buffer = height_pool
-      ? render_graph.register_image(height_pool.config.name)
-      : default_texture_buffer;
-    const specular_pool_buffer = specular_pool
-      ? render_graph.register_image(specular_pool.config.name)
-      : default_texture_buffer;
-    const emission_pool_buffer = emission_pool
-      ? render_graph.register_image(emission_pool.config.name)
-      : default_texture_buffer;
-
-    const skydome_data = SharedEnvironmentData.get_skydome_data();
-    const skydome_data_buffer = render_graph.register_buffer(skydome_data.config.name);
-
-    const skybox = SharedEnvironmentData.get_skybox();
-    const skybox_texture_buffer = render_graph.register_image(skybox.config.name);
-
-    const total_cells = this.config.world_cache_size * this.config.world_cache_lod_count;
-
-    // GI parameters buffer
-    const gi_params = render_graph.create_buffer({
-      name: "gi_params",
-      size: this.gi_params_data.byteLength,
-      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-      force: force_recreate,
-    });
-
-    // World cache storage (persistent across frames)
-    // Each cell: position+frame(16) + normal+count(16) + radiance+w(16) + data(16) 
-    //            + albedo+roughness(16) + material_props(16) = 96 bytes
-    const world_cache = render_graph.create_buffer({
-      name: "gi_world_cache",
-      size: total_cells * 96,
-      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-      force: force_recreate,
-    });
-
-    // World cache compaction buffers
-    const world_cache_active_flags = render_graph.create_buffer({
-      name: "gi_world_cache_active_flags",
-      size: total_cells * 4, // u32 per cell
-      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-      force: force_recreate,
-    });
-
-    const world_cache_prefix_sum = render_graph.create_buffer({
-      name: "gi_world_cache_prefix_sum",
-      size: total_cells * 4, // u32 per cell
-      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-      force: force_recreate,
-    });
-
-    const world_cache_block_sums = render_graph.create_buffer({
-      name: "gi_world_cache_block_sums",
-      size: Math.ceil(total_cells / COMPUTE_WORKGROUP_SIZE) * 4, // u32 per workgroup
-      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-      force: force_recreate,
-    });
-
-    const world_cache_compacted_indices = render_graph.create_buffer({
-      name: "gi_world_cache_compacted_indices",
-      size: total_cells * 4, // u32 per cell (worst case: all active)
-      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-      force: force_recreate,
-    });
-
-    const world_cache_dispatch_params = render_graph.create_buffer({
-      name: "gi_world_cache_dispatch_params",
-      size: 12, // 3 x u32 (x, y, z)
-      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.INDIRECT | GPUBufferUsage.COPY_DST,
-      force: force_recreate,
-    });
-
-    const path_state = render_graph.create_buffer({
-      name: "gi_pt_path_state",
-      size: num_rays * 36 * 4,
-      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-      force: force_recreate,
-    });
-
-    const path_shade = render_graph.create_buffer({
-      name: "gi_pt_path_shade",
-      size: num_rays * 20 * 4,
-      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-      force: force_recreate,
-    });
-
-    const pt_params = render_graph.create_buffer({
-      name: "gi_pt_params",
-      size: this.pt_params.byteLength,
-      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-      force: force_recreate,
-    });
-
     render_graph.add_pass(
-      "gi_pt_reset",
-      RenderPassFlags.GraphLocal,
-      {},
-      (graph, frame_data, encoder) => {
-        const params_buffer = graph.get_physical_buffer(pt_params);
-        this.pt_params[0] = num_bounce_passes;
-        this.pt_params[2] = 1; // reset_accum_flag
-        this.pt_params[3] = 1; // use_gbuffer
-        this.pt_params[4] = trace_rate; // trace_rate
-        this.pt_params[5] = this.pt_frame_phase; // frame_phase
-        this.pt_params[6] = this.config.indirect_boost; // indirect_boost
-        params_buffer.write_raw(this.pt_params);
-        this.pt_frame_phase = (this.pt_frame_phase + 1) % Math.max(1, trace_rate);
-      }
-    );
-
-    render_graph.add_pass(
-      "gi_upload_params",
-      RenderPassFlags.GraphLocal,
-      {},
-      (graph, frame_data, encoder) => {
-        const gi_params_buf = graph.get_physical_buffer(gi_params);
-
-        // Upload GI parameters
-        const frame_index = SharedFrameInfoBuffer.get_frame_index();
-        const trace_rate = this.config.upscale_x * this.config.upscale_y;
-
-        this.gi_params_data[0] = this.config.screen_probe_size;
-        this.gi_params_data[1] = this.config.screen_ray_count;
-        this.gi_params_data[2] = this.config.world_cache_size;
-        this.gi_params_data[3] = this.config.world_cache_cell_size;
-        this.gi_params_data[4] = 0; // Total screen probes (unused in this GI mode)
-        this.gi_params_data[5] = frame_index;
-        this.gi_params_data[6] = this.config.indirect_boost;
-        this.gi_params_data[7] = this.config.upscale_x;
-        this.gi_params_data[8] = this.config.upscale_y;
-        this.gi_params_data[9] = this.config.world_cache_lod_count;
-        this.gi_params_data[10] = trace_rate;
-        this.gi_params_data[11] = 0.0;
-        gi_params_buf.write_raw(this.gi_params_data);
-      }
-    );
-
-    render_graph.add_pass(
-      "gi_world_cache_evict",
-      RenderPassFlags.Compute,
-      {
-        inputs: [world_cache],
-        outputs: [world_cache],
-        shader_setup: world_cache_evict_shader_setup,
-      },
-      (graph, frame_data, encoder) => {
-        const pass = graph.get_physical_pass(frame_data.current_pass);
-        pass.dispatch(Math.ceil(total_cells / COMPUTE_WORKGROUP_SIZE), 1, 1);
-      }
-    );
-
-    render_graph.add_pass(
-      "gi_world_cache_active_mark",
-      RenderPassFlags.Compute,
-      {
-        inputs: [world_cache, world_cache_active_flags],
-        outputs: [world_cache_active_flags],
-        shader_setup: world_cache_compact_mark_shader_setup,
-      },
-      (graph, frame_data, encoder) => {
-        const pass = graph.get_physical_pass(frame_data.current_pass);
-        pass.dispatch(Math.ceil(total_cells / COMPUTE_WORKGROUP_SIZE), 1, 1);
-      }
-    );
-
-    render_graph.add_pass(
-      "gi_world_cache_active_prefix_sum",
-      RenderPassFlags.Compute,
-      {
-        inputs: [world_cache_active_flags, world_cache_prefix_sum, world_cache_block_sums],
-        outputs: [world_cache_prefix_sum, world_cache_block_sums],
-        shader_setup: world_cache_compact_prefix_sum_shader_setup,
-      },
-      (graph, frame_data, encoder) => {
-        const pass = graph.get_physical_pass(frame_data.current_pass);
-        pass.dispatch(Math.ceil(total_cells / COMPUTE_WORKGROUP_SIZE), 1, 1);
-      }
-    );
-
-    render_graph.add_pass(
-      "gi_world_cache_active_compact",
+      `gi_reconstruct_${ping_pong_frame}`,
       RenderPassFlags.Compute,
       {
         inputs: [
-          world_cache_active_flags,
-          world_cache_prefix_sum,
-          world_cache_block_sums,
-          world_cache_compacted_indices,
-          world_cache_dispatch_params,
-        ],
-        outputs: [world_cache_compacted_indices, world_cache_dispatch_params],
-        shader_setup: world_cache_compact_scatter_shader_setup,
-      },
-      (graph, frame_data, encoder) => {
-        const pass = graph.get_physical_pass(frame_data.current_pass);
-        pass.dispatch(Math.ceil(total_cells / COMPUTE_WORKGROUP_SIZE), 1, 1);
-      }
-    );
-
-    render_graph.add_pass(
-      `gi_pt_init`,
-      RenderPassFlags.Compute,
-      {
-        inputs: [
-          pt_params,
-          path_state,
-          path_shade,
+          gi_params,
+          gi_counters,
+          screen_probe_metadata,
+          probe_radiance_updated, // Read from update pass output
           gbuffer_position,
           gbuffer_normal,
           gbuffer_albedo,
-          gbuffer_smra,
-          gbuffer_motion_emissive,
           gi_output,
         ],
-        outputs: [path_state],
-        shader_setup: path_tracer_init_shader_setup,
-      },
-      (graph, frame_data, encoder) => {
-        const pass = graph.get_physical_pass(frame_data.current_pass);
-        //const pixel_count = Math.ceil(num_rays / Math.max(1, trace_rate));
-        const pixel_count = num_rays;
-        pass.dispatch(Math.ceil(pixel_count / COMPUTE_WORKGROUP_SIZE), 1, 1);
-      }
-    );
-
-    render_graph.add_pass(
-      `gi_pt_gbuffer_shade`,
-      RenderPassFlags.Compute,
-      {
-        inputs: [pt_params, path_state, path_shade, dense_lights, light_count, gi_output],
-        outputs: [path_state, path_shade],
-        shader_setup: path_tracer_gbuffer_shade_shader_setup,
-      },
-      (graph, frame_data, encoder) => {
-        const pass = graph.get_physical_pass(frame_data.current_pass);
-        const active_pixel_count = Math.ceil(num_rays / Math.max(1, trace_rate));
-        pass.dispatch(Math.ceil(active_pixel_count / COMPUTE_WORKGROUP_SIZE), 1, 1);
-      }
-    );
-
-    for (let b = 0; b < num_bounce_passes; b++) {
-      render_graph.add_pass(
-        `gi_pt_hit_visibility_${b}`,
-        RenderPassFlags.Compute,
-        {
-          inputs: [
-            pt_params,
-            path_state,
-            tlas_bvh2_bounds,
-            tlas_bvh4_nodes,
-            blas_atlas,
-            entity_transforms,
-            index_buffer,
-            mesh_asset_ids,
-            gi_output,
-          ],
-          outputs: [path_state],
-          shader_setup: path_tracer_hit_visibility_shader_setup,
-        },
-        (graph, frame_data, encoder) => {
-          const pass = graph.get_physical_pass(frame_data.current_pass);
-          const active_pixel_count = Math.ceil(num_rays / Math.max(1, trace_rate));
-          pass.dispatch(Math.ceil(active_pixel_count / COMPUTE_WORKGROUP_SIZE), 1, 1);
-        }
-      );
-
-      render_graph.add_pass(
-        `gi_pt_hit_${b}`,
-        RenderPassFlags.Compute,
-        {
-          inputs: [
-            pt_params,
-            path_state,
-            tlas_bvh2_bounds,
-            tlas_bvh4_nodes,
-            blas_atlas,
-            entity_transforms,
-            index_buffer,
-            mesh_asset_ids,
-            gi_output,
-          ],
-          outputs: [path_state],
-          shader_setup: path_tracer_hit_shader_setup,
-        },
-        (graph, frame_data, encoder) => {
-          const pass = graph.get_physical_pass(frame_data.current_pass);
-          const active_pixel_count = Math.ceil(num_rays / Math.max(1, trace_rate));
-          pass.dispatch(Math.ceil(active_pixel_count / COMPUTE_WORKGROUP_SIZE), 1, 1);
-        }
-      );
-
-      const shade_inputs_list = [
-        pt_params,
-        skydome_data_buffer,
-        path_state,
-        path_shade,
-        params_gpu_buffer,
-        material_palette_offsets_buffer,
-        material_palette_buffer,
-        dense_lights,
-        light_count,
-        world_cache,
-        gi_params,
-        albedo_pool_buffer,
-        normal_pool_buffer,
-        roughness_pool_buffer,
-        metallic_pool_buffer,
-        ao_pool_buffer,
-        height_pool_buffer,
-        specular_pool_buffer,
-        emission_pool_buffer,
-        skybox_texture_buffer,
-        gi_output,
-      ];
-
-      render_graph.add_pass(
-        `gi_pt_shade_${b}`,
-        RenderPassFlags.Compute,
-        {
-          inputs: shade_inputs_list,
-          outputs: [path_state, path_shade],
-          shader_setup: world_cache_path_tracer_shade_shader_setup,
-        },
-        (graph, frame_data, encoder) => {
-          const pass = graph.get_physical_pass(frame_data.current_pass);
-          const active_pixel_count = Math.ceil(num_rays / Math.max(1, trace_rate));
-          pass.dispatch(Math.ceil(active_pixel_count / COMPUTE_WORKGROUP_SIZE), 1, 1);
-        }
-      );
-    }
-
-    render_graph.add_pass(
-      "gi_pt_output",
-      RenderPassFlags.Compute,
-      {
-        inputs: [gi_params, pt_params, path_state, path_shade, world_cache, gi_output],
         outputs: [gi_output],
-        shader_setup: path_tracer_output_shader_setup,
+        shader_setup: screen_probe_reconstruct_shader_setup,
       },
       (graph, frame_data, encoder) => {
         const pass = graph.get_physical_pass(frame_data.current_pass);
@@ -1442,7 +953,12 @@ export class GI {
       }
     );
 
+    // Store references for external use and debugging
     this.gi_params = gi_params;
+    this.gi_counters = gi_counters;
+    this.screen_probe_radiance_0 = screen_probe_radiance_0;
+    this.screen_probe_radiance_1 = screen_probe_radiance_1;
+    this.screen_probe_metadata = screen_probe_metadata;
     this.world_cache = world_cache;
   }
 
@@ -1470,7 +986,7 @@ export class GI {
       force: force_recreate,
     });
 
-    if (this.config.use_screen_probes && debug_view === DebugDrawType.GI_ScreenProbes) {
+    if (debug_view === DebugDrawType.GI_ScreenProbes) {
       // Get updated probe radiance texture for debugging (output of update pass)
       const ping_pong_frame = SharedFrameInfoBuffer.get_frame_index() % 2;
       const probe_radiance_final = this.screen_probe_radiance_0;
@@ -1498,11 +1014,6 @@ export class GI {
           pass.dispatch(Math.ceil(total_screen_probes / 64), 1, 1);
         }
       );
-    } else if (!this.config.use_screen_probes && debug_view === DebugDrawType.GI_ScreenTracer) {
-      // Full screen path tracer output - just return the gi_output directly
-      if (this.final_gi_texture) {
-        this.debug_texture = this.final_gi_texture;
-      }
     } else if (debug_view === DebugDrawType.GI_WorldCache) {
       // World cache debug visualization
       render_graph.add_pass(

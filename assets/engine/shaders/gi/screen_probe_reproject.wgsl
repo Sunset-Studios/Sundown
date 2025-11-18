@@ -39,9 +39,9 @@ var<workgroup> reprojection_best: atomic<u32>;
 var<workgroup> thread_pixel_coords: array<vec2<u32>, 16u>;
 var<workgroup> thread_prev_probe_index: array<u32, 16u>;
 
-const WORKGROUP_SIZE = 4u; // 4x4 = 16 threads per tile
+const SCREEN_PROBE_SIZE = 4u; // 4x4 = 16 threads per tile
 
-@compute @workgroup_size(WORKGROUP_SIZE, WORKGROUP_SIZE, 1)
+@compute @workgroup_size(SCREEN_PROBE_SIZE, SCREEN_PROBE_SIZE, 1)
 fn cs(
     @builtin(global_invocation_id) gid: vec3<u32>,
     @builtin(local_invocation_id) lid: vec3<u32>,
@@ -58,11 +58,9 @@ fn cs(
 
     // Adaptive cell size calculation for reprojection tolerance
     let reciprocal_height = 1.0 / max(view_dimensions.y, 1.0);
-    let width_squared = max(view_dimensions.x * view_dimensions.x, 1.0);
-    let anisotropic_term = view_dimensions.y / width_squared;
+    let anisotropic_term = view_dimensions.y / max(view_dimensions.x * view_dimensions.x, 1.0);
     let pixel_footprint = max(reciprocal_height, anisotropic_term);
-    let base_distance_scale = tan(view.fov * gi_params.screen_probe_size * pixel_footprint);
-    let distance_scale = max(base_distance_scale, 1e-5);
+    let distance_scale = tan(view.fov * gi_params.screen_probe_size * pixel_footprint);
     
     // Current probe tile being processed
     let probe_tile = wid.xy;
@@ -76,30 +74,6 @@ fn cs(
     // Reset "updated" flag once per tile so only this frame's winners mark it again
     if (lid.x == 0u && lid.y == 0u) {
         screen_probe_metadata[probe_index].state.w = 0.0;
-    }
-    workgroupBarrier();
-    
-    // Check if this probe should be updated this frame (temporal upscaling)
-    let upscale = vec2<u32>(u32(gi_params.upscale_x), u32(gi_params.upscale_y));
-    let should_update = should_update_probe_this_frame(probe_tile, u32(gi_params.frame_index), upscale);
-    
-    if (!should_update) {
-        // Tile is skipped this frame—just keep previous radiance
-        if (lid.x == 0u && lid.y == 0u) {
-            for (var py = 0u; py < probe_size; py = py + 1u) {
-                for (var px = 0u; px < probe_size; px = px + 1u) {
-                    let atlas_coord = probe_tile * probe_size + vec2<u32>(px, py);
-                    let radiance_sample = textureLoad(probe_radiance_prev, vec2<i32>(atlas_coord), 0);
-                    textureStore(probe_radiance_curr, vec2<i32>(atlas_coord), radiance_sample);
-                }
-            }
-        }
-        screen_probe_metadata[probe_index].state.w = 0.0;
-        return;
-    }
-    
-    // Initialize shared memory: store invalid lane index (0xFFFF) with max distance
-    if (lid.x == 0u && lid.y == 0u) {
         atomicStore(&reprojection_best, (pack_half_float(65504.0) << 16u) | 0xFFFFu);
     }
     workgroupBarrier();
@@ -110,7 +84,7 @@ fn cs(
     // Each thread samples one pixel in the current tile
     let tile_corner = probe_tile * probe_size;
     let pixel = tile_corner + lid.xy;
-    let lane_index = lid.y * WORKGROUP_SIZE + lid.x;
+    let lane_index = lid.y * SCREEN_PROBE_SIZE + lid.x;
     
     // Check if pixel is within bounds
     if (pixel.x < res.x && pixel.y < res.y) {
@@ -120,11 +94,6 @@ fn cs(
         
         // Only valid geometry pixels participate in reprojection
         if (normal_length > 0.0) {
-            let position_current = textureLoad(gbuffer_position, pixel_i32, 0).xyz;
-            let normal_current = safe_normalize(normal_data.xyz);
-            let distance_to_camera = length(camera_position - position_current);
-            let adaptive_cell_size = max(distance_scale * distance_to_camera, 0.001);
-            
             // Use NDC-space velocity stored in G-buffer to recover previous pixel position
             let motion_sample = textureLoad(gbuffer_motion, pixel_i32, 0);
             let ndc_velocity = motion_sample.xy;
@@ -141,44 +110,31 @@ fn cs(
                 
                 // Check if probe tile is within grid bounds and was active
                 if (probe_index_prev < u32(gi_params.total_screen_probes)) {
-                    let prev_probe = screen_probe_metadata[probe_index_prev];
-                    let prev_probe_valid = prev_probe.state.x > 0.0;
+                    let position_current = textureLoad(gbuffer_position, pixel_i32, 0).xyz;
+                    let normal_current = safe_normalize(normal_data.xyz);
+                    let distance_to_camera = length(camera_position - position_current);
+                    let adaptive_cell_size = max(distance_scale * distance_to_camera, 0.001);
                     
-                    if (prev_probe_valid) {
-                        // Forward-project: find where the previous probe's pixel is NOW in current frame
-                        // by reading the motion vector at that location
-                        let prev_probe_pixel = vec2<i32>(i32(prev_probe.state.y), i32(prev_probe.state.z));
-                        let prev_probe_motion = textureLoad(gbuffer_motion, prev_probe_pixel, 0);
-                        let prev_probe_ndc_velocity = prev_probe_motion.xy;
-                        let prev_probe_pixel_velocity = prev_probe_ndc_velocity * vec2<f32>(f32(res.x), f32(res.y)) * vec2<f32>(0.5, -0.5);
-                        let prev_probe_pixel_curr = vec2<i32>(prev_probe_pixel) - vec2<i32>(prev_probe_pixel_velocity);
+                    if (screen_probe_metadata[probe_index_prev].state.x > 0.0) {
+                        // World-space geometry validation using stored probe geometry
+                        let prev_probe_position = textureLoad(gbuffer_position, vec2<i32>(pixel_prev), 0).xyz;
+                        let prev_probe_normal_data = textureLoad(gbuffer_normal, vec2<i32>(pixel_prev), 0).xyz;
+                        let prev_probe_normal = safe_normalize(prev_probe_normal_data.xyz);
                         
-                        // Check if forward-projected position is within bounds
-                        if (prev_probe_pixel_curr.x >= 0 && prev_probe_pixel_curr.x < i32(res.x) && 
-                            prev_probe_pixel_curr.y >= 0 && prev_probe_pixel_curr.y < i32(res.y)) {
-                            
-                            // Sample current frame's G-buffer at forward-projected location
-                            let world_probe = textureLoad(gbuffer_position, prev_probe_pixel_curr, 0).xyz;
-                            let prev_probe_normal_data = textureLoad(gbuffer_normal, prev_probe_pixel_curr, 0);
-                            let normal_probe = safe_normalize(prev_probe_normal_data.xyz);
-                            
-                            // Consistency checks (GI-1.0 Algorithm 1)
-                            // Compare forward-projected probe position with current pixel position
-                            let plane_dist = abs(dot(world_probe - position_current, normal_current));
-                            let normal_similarity = dot(normal_probe, normal_current);
-                            
-                            if (plane_dist < adaptive_cell_size && normal_similarity > 0.95) {
-                                // Valid reprojection candidate!
-                                thread_pixel_coords[lane_index] = pixel;
-                                thread_prev_probe_index[lane_index] = probe_index_prev;
-                                
-                                // Calculate 3D distance for competition
-                                let dist_3d = distance(world_probe, position_current);
-                                
-                                // Pack score and lane index for atomic competition
-                                let packed_score = (pack_half_float(dist_3d) << 16u) | (lane_index & 0xFFFFu);
-                                atomicMin(&reprojection_best, packed_score);
-                            }
+                        // Check plane distance and normal similarity
+                        let plane_dist = abs(dot(prev_probe_position - position_current, normal_current));
+                        let normal_similarity = dot(prev_probe_normal, normal_current);
+                        let min_normal_similarity = 0.5;
+
+                        let world_dist_3d = distance(prev_probe_position, position_current);
+
+                        if (plane_dist < adaptive_cell_size && world_dist_3d < adaptive_cell_size && normal_similarity > min_normal_similarity) {
+                            // Valid reprojection candidate!
+                            thread_pixel_coords[lane_index] = pixel;
+                            thread_prev_probe_index[lane_index] = probe_index_prev;
+                            // Pack score and lane index for atomic competition
+                            let packed_score = (pack_half_float(world_dist_3d) << 16u) | (lane_index & 0xFFFFu);
+                            atomicMin(&reprojection_best, packed_score);
                         }
                     }
                 }
@@ -219,6 +175,12 @@ fn cs(
                     textureStore(probe_radiance_curr, vec2<i32>(dst_atlas_coord), radiance_sample);
                 }
             }
+            
+            // Sample G-buffer at winner pixel to get surface properties
+            let winner_pixel_i32 = vec2<i32>(winner_pixel);
+            let winner_position = textureLoad(gbuffer_position, winner_pixel_i32, 0).xyz;
+            let winner_normal_data = textureLoad(gbuffer_normal, winner_pixel_i32, 0);
+            let winner_normal = safe_normalize(winner_normal_data.xyz);
             
             // Update probe metadata: store winner pixel coords and mark updated
             screen_probe_metadata[probe_index].state = vec4<f32>(

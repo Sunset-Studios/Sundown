@@ -285,9 +285,10 @@ fn calculate_brdf(
     // Layered composition: base * (1 - clear_coat_energy_loss) + clear_coat
     let direct_brdf = direct_light + clear_coat_brdf * light.intensity * n_dot_l * attenuation * light.color.rgb;
 
-    // ---- Image-Based Lighting (Environment) ----
-    // Diffuse (irradiance): only AO, only affects non-metal, energy conserve with (1-F)
-    let indirect_diffuse = irradiance * kd * ao;
+    // ---- Indirect Lighting ----
+    // Indirect lighting from irradiance cache texture (screen probes / skybox)
+    // TODO: Disabled AO/GTAO should default to 1.0 not 0.0
+    let indirect_contribution = select(irradiance * ao, irradiance, ao <= 0.0);
 
     // Specular: prefiltered env map, split-sum approximation, modulated by AO
     let env_f = f_schlick_roughness(n_dot_v, f0, a);
@@ -297,7 +298,7 @@ fn calculate_brdf(
     // For simplicity, we omit indirect clear coat here.
 
     // ---- Combine all lighting ----
-    let color = direct_brdf * (1.0 - shadow_factor) + indirect_diffuse + indirect_specular;
+    let color = direct_brdf * (1.0 - shadow_factor) + indirect_contribution + indirect_specular;
 
     return color;
 }

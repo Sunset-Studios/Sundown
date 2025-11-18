@@ -166,8 +166,6 @@ export class DebugOverlay {
         return "debug/debug_overlay_2d.wgsl";
       case DebugDrawType.GI_Irradiance:
         return "debug/debug_overlay_2d.wgsl";
-      case DebugDrawType.GI_ScreenTracer:
-        return "debug/debug_overlay_2d.wgsl";
       default:
         return "debug/debug_overlay_2d.wgsl";
     }

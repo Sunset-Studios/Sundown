@@ -40,65 +40,77 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     
     let albedo = textureLoad(gbuffer_albedo, pixel_coord, 0).rgb;
     
-    // Interpolate radiance from nearby screen probes
+    // -------------------------------------------------------------------------
+    // Interpolate radiance from nearby screen probes using grid structure
+    // -------------------------------------------------------------------------
     let probe_count = u32(gi_params.total_screen_probes);
     var total_radiance = vec3<f32>(0.0);
     var total_weight = 0.0;
     
-    // Search for nearby probes in screen-space neighborhood
-    // For temporal upscale, probes are roughly uniformly distributed at probe_size intervals
-    let search_radius_screen = gi_params.screen_probe_size * 1.5; // Search within 1.5 probe tiles
-    
     // Probe grid layout (matches debug visualization and update pass)
     let probe_size = u32(gi_params.screen_probe_size);
     let grid_width = (res.x + probe_size - 1u) / probe_size;
+    let grid_height = (res.y + probe_size - 1u) / probe_size;
     
-    // Linear search through all probes, but early exit based on screen distance
-    var probes_checked = 0u;
-    let max_probes_to_interpolate = 9u; // Use up to 9 nearest probes
+    // Calculate which grid cell this pixel is in
+    let pixel_grid_x = gid.x / probe_size;
+    let pixel_grid_y = gid.y / probe_size;
     
-    for (var i = 0u; i < probe_count && probes_checked < max_probes_to_interpolate; i = i + 1u) {
-        let probe = screen_probe_metadata[i];
-        
-        // Check if probe is active
-        if (probe.state.x == 0.0) {
-            continue;
+    // Search radius in grid cells (1 means check 3x3 neighborhood)
+    let grid_search_radius = 1i;
+    
+    // Iterate through nearby grid cells only
+    for (var dy = -grid_search_radius; dy <= grid_search_radius; dy = dy + 1) {
+        for (var dx = -grid_search_radius; dx <= grid_search_radius; dx = dx + 1) {
+            // Calculate neighbor grid position
+            let neighbor_grid_x = i32(pixel_grid_x) + dx;
+            let neighbor_grid_y = i32(pixel_grid_y) + dy;
+            
+            // Bounds check
+            if (neighbor_grid_x < 0 || neighbor_grid_y < 0 || 
+                neighbor_grid_x >= i32(grid_width) || neighbor_grid_y >= i32(grid_height)) {
+                continue;
+            }
+            
+            // Compute probe index directly from grid position
+            let probe_index = u32(neighbor_grid_y) * grid_width + u32(neighbor_grid_x);
+            
+            // Bounds check against actual probe count
+            if (probe_index >= probe_count) {
+                continue;
+            }
+            
+            // Fetch probe metadata
+            let probe = screen_probe_metadata[probe_index];
+            
+            // Check if probe is active
+            if (probe.state.x == 0.0) {
+                continue;
+            }
+            
+            // Get actual probe pixel position (may differ slightly from grid center)
+            let probe_pixel = vec2<u32>(probe.state.yz);
+            let pixel_dist = length(vec2<f32>(gid.xy) - vec2<f32>(probe_pixel));
+            
+            // Look up this probe's radiance from the atlas (center texel)
+            let probe_tile = vec2<u32>(u32(neighbor_grid_x), u32(neighbor_grid_y));
+            let atlas_center_offset = probe_size / 2u;
+            let atlas_coord = probe_tile * probe_size + atlas_center_offset;
+            let radiance_sample = textureLoad(probe_radiance_curr, vec2<i32>(atlas_coord), 0);
+            let probe_radiance = radiance_sample.rgb / max(radiance_sample.w, 1.0);
+            
+            // Distance-based weight (inverse square falloff)
+            let weight = 1.0 / (1.0 + pixel_dist * pixel_dist);
+            total_radiance += probe_radiance * weight;
+            total_weight += weight;
         }
-        
-        let probe_pixel = vec2<u32>(probe.state.yz);
-        let pixel_dist = length(vec2<f32>(gid.xy) - vec2<f32>(probe_pixel));
-        
-        // Screen-space distance cull - only consider nearby probes
-        if (pixel_dist > search_radius_screen) {
-            continue;
-        }
-        
-        // Look up this probe's radiance from the atlas (center texel)
-        let probe_tile_x = i % grid_width;
-        let probe_tile_y = i / grid_width;
-        let probe_tile = vec2<u32>(probe_tile_x, probe_tile_y);
-        let atlas_center_offset = probe_size / 2u;
-        let atlas_coord = probe_tile * probe_size + atlas_center_offset;
-        let radiance_sample = textureLoad(probe_radiance_curr, vec2<i32>(atlas_coord), 0);
-        let probe_radiance = radiance_sample.rgb;
-        
-        let weight = 1.0 / (1.0 + pixel_dist * pixel_dist);
-        total_radiance += probe_radiance * weight;
-        total_weight += weight;
-        probes_checked += 1u;
     }
     
     // Normalize and apply albedo
     var final_radiance = vec3<f32>(0.0);
     if (total_weight > 0.001) {
-        let interpolated_radiance = total_radiance / total_weight;
-        
-        // Apply indirect boost
-        final_radiance = interpolated_radiance * albedo * gi_params.indirect_boost;
+        final_radiance = total_radiance / total_weight;
     }
-    
-    // Clamp to reasonable range
-    final_radiance = clamp(final_radiance, vec3<f32>(0.0), vec3<f32>(10.0));
     
     textureStore(output_gi, pixel_coord, vec4<f32>(final_radiance, 1.0));
 }

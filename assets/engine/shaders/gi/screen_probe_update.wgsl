@@ -1,8 +1,8 @@
 // =============================================================================
 // GI-1.0 Screen Probe Update
 // - Accumulates radiance from traced rays back to screen probes
-// - Updates world cache with secondary bounce radiance
-// - Performs temporal filtering with exponential moving average
+// - Writes FRESH probe data each frame (no temporal blending at probe level)
+// - Temporal stability is handled at per-pixel reconstruction stage
 // - Only updates probes marked active this frame
 // - Writes to probe radiance atlas texture (octahedral layout)
 // =============================================================================
@@ -31,7 +31,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     
     // Read probe metadata
     let probe = screen_probe_metadata[gid.x];
-    if (probe.state.x == 0.0 || probe.state.w == 0.0) {
+    if (probe.state.x == 0.0) {
         return; // Skip inactive probes
     }
     
@@ -70,8 +70,8 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
     
     // =========================================================================
-    // Read from current radiance (reprojection pass already copied prev->curr),
-    // blend with ray contributions, and write to output (ping-pong)
+    // Write fresh probe data to output atlas
+    // No temporal blending at probe level - that's handled at reconstruction
     // =========================================================================
     for (var py = 0u; py < probe_size; py = py + 1u) {
         for (var px = 0u; px < probe_size; px = px + 1u) {
@@ -82,7 +82,6 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
             let curr_radiance = max(curr_radiance_data.rgb, vec3<f32>(0.0));
             let curr_sample_count = max(curr_radiance_data.w, 0.0);
             
-            // Blend new ray samples with current radiance
             let new_sample_count = curr_sample_count + f32(rays_per_probe);
             let blended_radiance = temporal_blend(accumulated_radiance + curr_radiance, curr_radiance);
             

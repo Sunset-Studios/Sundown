@@ -66,10 +66,6 @@ export class DebugDrawPicker extends DevConsoleTool {
         case "world-cache":
           Renderer.get().set_debug_draw_type(DebugDrawType.GI_WorldCache);
           break;
-        case "gi-screen-trace":
-        case "screen-trace":
-          Renderer.get().set_debug_draw_type(DebugDrawType.GI_ScreenTracer);
-          break;
         case "bounds":
           Renderer.get().set_debug_draw_type(DebugDrawType.EntityBounds);
           break;

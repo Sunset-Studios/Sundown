@@ -60,6 +60,16 @@ fn cs(
     if (probe_tile.x >= grid_dims.x || probe_tile.y >= grid_dims.y) {
         return;
     }
+
+    // Check if this probe should be spawned this frame (temporal upscaling)
+    let upscale = vec2<u32>(u32(gi_params.upscale_x), u32(gi_params.upscale_y));
+    let should_spawn = should_update_probe_this_frame(probe_tile, u32(gi_params.frame_index), upscale);
+    
+    if (!should_spawn) {
+        // Tile is skipped this frame—just keep previous radiance
+        screen_probe_metadata[probe_index].state.w = 0.0;
+        return;
+    }
     
     let view_index = u32(frame_info.view_index);
     let view = view_buffer[view_index];
@@ -69,7 +79,6 @@ fn cs(
     // Spawn New Probe with Halton Jitter (Temporal Upscaling)
     // =========================================================================
     // Halton sequence provides good spatial distribution over time
-    let upscale = vec2<u32>(u32(gi_params.upscale_x), u32(gi_params.upscale_y));
     let total_frames = upscale.x * upscale.y;
     let frame_in_cycle = u32(gi_params.frame_index) % total_frames;
     let halton_sample = halton_2d(frame_in_cycle);
@@ -87,13 +96,13 @@ fn cs(
         return;
     }
     
+    let position = textureLoad(gbuffer_position, pixel_i32, 0).xyz;
     let normal_data = textureLoad(gbuffer_normal, pixel_i32, 0);
+    let normal = safe_normalize(normal_data.xyz);
     let normal_length = length(normal_data.xyz);
     
     if (normal_length > 0.0) {
-        // Valid geometry - spawn probe by storing pixel coordinates
-        // Surface properties (position, normal, albedo, etc.) will be sampled
-        // from G-buffer in subsequent passes using these pixel coords
+        // Valid geometry - spawn probe by storing pixel coordinates and surface properties
         screen_probe_metadata[probe_index].state = vec4<f32>(
             1.0,                    // active
             f32(spawn_pixel.x),     // pixel_x

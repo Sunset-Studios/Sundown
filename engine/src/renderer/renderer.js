@@ -13,7 +13,6 @@ import { MeshData } from "./mesh_data.js";
 import { global_dispatcher } from "../core/dispatcher.js";
 import { profile_scope } from "../utility/performance.js";
 import ExecutionQueue from "../utility/execution_queue.js";
-import { FragmentGpuBuffer } from "../core/ecs/solar/memory.js";
 import { GPUTimeQuery } from "./query.js";
 import { log, error } from "../utility/logging.js";
 import { vec2 } from "gl-matrix";
@@ -42,7 +41,7 @@ export class Renderer {
   use_depth_prepass = true;
   shadows_enabled = true;
   gi_enabled = true;
-  gtao_enabled = true;
+  gtao_enabled = false;
   debug_draw_type = DebugDrawType.None;
 
   static renderers = [];
