@@ -1,8 +1,15 @@
 # Sundown Engine 🕹️
 
-An extendible WebGPU game and simulation engine for fun, games and research.
+#### An extendible WebGPU game and simulation engine for fun, games and research.
+![sundown_demo](https://github.com/user-attachments/assets/fb001dca-66dd-4ba5-b307-428cad52e441)
 
-![Sundown Demo](./sundown_demo.gif)
+<img width="1583" height="885" alt="Screenshot 2025-11-18 132838" src="https://github.com/user-attachments/assets/9131c374-b200-49c0-940a-ad52afdacda4" />
+
+<img width="1582" height="897" alt="Screenshot 2025-11-18 133035" src="https://github.com/user-attachments/assets/30e32ad7-1714-4aa1-8e38-667f0eee3aab" />
+
+https://github.com/user-attachments/assets/3671857c-6eab-422b-81d8-8d6095874c5a
+
+https://github.com/user-attachments/assets/2925ccb8-4484-48e6-a049-143ed0b5c944
 
 Some of the current (code) features include:
 
