@@ -39,7 +39,7 @@ export class Renderer {
   has_f16 = false;
   has_subgroups = false;
   use_depth_prepass = true;
-  shadows_enabled = true;
+  shadows_enabled = false;
   gi_enabled = true;
   gtao_enabled = false;
   debug_draw_type = DebugDrawType.None;

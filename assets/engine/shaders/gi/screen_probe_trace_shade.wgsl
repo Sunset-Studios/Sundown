@@ -165,7 +165,22 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         
         // === EMISSIVE CONTRIBUTION ===
         if (emissive > 0.0) {
-            let emissive_contribution = emissive * albedo * path.path_weight.xyz;
+            let emissive_radiance = emissive * albedo;
+            // The formula is deterministic: same distance + PDF -> same result every frame
+            let hit_distance = max(path.origin_tmin.w, 0.01); // Clamp to avoid division by zero
+            let ray_source_pdf = path.path_weight.w;
+            let raw_contribution = emissive_radiance * path.path_weight.xyz;
+            let contribution_luminance = raw_contribution.x * 0.2126 + raw_contribution.y * 0.7152 + raw_contribution.z * 0.0722;
+                
+            // Distance-based maximum: closer emissives can contribute more
+            // This naturally reduces fireflies from distant small emissives
+            let distance_factor = 1.0 / hit_distance;
+            let max_contribution = emissive * PI * distance_factor;
+            
+            // Compute stable scale factor (deterministic for same inputs)
+            let scale = min(1.0, (max_contribution * ray_source_pdf) / max(contribution_luminance, 0.001));
+             
+            let emissive_contribution = safe_clamp_vec3(raw_contribution * scale);
             path.throughput += vec4f(emissive_contribution, 0.0);
         }
 

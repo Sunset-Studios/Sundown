@@ -76,7 +76,7 @@ const main_smra_image_config = {
   force: false,
 };
 const main_normal_image_config = {
-  name: "main_normal",
+  name: "main_normal_0",
   format: rgba16float_format,
   width: 0,
   height: 0,
@@ -87,7 +87,7 @@ const main_normal_image_config = {
   force: false,
 };
 const main_position_image_config = {
-  name: "main_position",
+  name: "main_position_0",
   format: rgba32float_format,
   width: 0,
   height: 0,
@@ -278,7 +278,7 @@ export class PathTracingStrategy {
   occlusion_culler = null;
 
   // Path tracing parameters (optimized for hybrid mode)
-  max_bounces = 2;
+  max_bounces = 3;
   trace_rate = 16; // 1=full res, 2=half, 4=quarter, etc.
   indirect_boost = 1.0;
 

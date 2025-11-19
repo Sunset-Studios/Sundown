@@ -1,3 +1,4 @@
+import { Renderer } from "../../renderer/renderer.js";
 import { LightType, EntityFlags, WORLD_FORWARD } from "../minimal.js";
 import { DEFAULT_CHUNK_CAPACITY } from "../ecs/solar/types.js";
 import { SimulationLayer } from "../simulation_layer.js";
@@ -32,6 +33,7 @@ export class LightViewProcessor extends SimulationLayer {
 
   _update_internal_iter_chunk(chunk, flags, counts, archetype) {
     const lights = chunk.get_fragment_view(LightFragment);
+    const shadows_enabled = Renderer.get().is_shadows_enabled();
 
     let slot = 0;
     while (slot < DEFAULT_CHUNK_CAPACITY) {
@@ -55,10 +57,10 @@ export class LightViewProcessor extends SimulationLayer {
 
       if (!lights.view_index[slot] || lights.view_index[slot] < 0) {
         const view = SharedViewBuffer.add_view_data();
-        view.clipmap_count = lights.shadow_clipmaps[slot];
+        view.clipmap_count = shadows_enabled ? lights.shadow_clipmaps[slot] : 1;
         view.occlusion_enabled = 0;
         view.far = camera_view.far;
-        view.renderable_state = lights.shadow_casting[slot];
+        view.renderable_state = shadows_enabled ? lights.shadow_casting[slot] : 0;
 
         const light_position = [
           lights.position[slot * 4 + 0],

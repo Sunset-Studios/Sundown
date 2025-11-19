@@ -211,7 +211,9 @@ export class GI {
    * @param {number} width - Screen width
    * @param {number} height - Screen height
    * @param {string} gbuffer_position - Position GBuffer texture name
+   * @param {string} gbuffer_position_prev - Previous position GBuffer texture name
    * @param {string} gbuffer_normal - Normal GBuffer texture name
+   * @param {string} gbuffer_normal_prev - Previous normal GBuffer texture name
    * @param {string} gbuffer_albedo - Albedo GBuffer texture name
    * @param {string} gbuffer_smra - SMRA GBuffer texture name
    * @param {string} gbuffer_motion_emissive - Motion and emissive GBuffer texture name
@@ -230,7 +232,9 @@ export class GI {
     width,
     height,
     gbuffer_position,
+    gbuffer_position_prev,
     gbuffer_normal,
+    gbuffer_normal_prev,
     gbuffer_albedo,
     gbuffer_smra,
     gbuffer_motion_emissive,
@@ -271,7 +275,9 @@ export class GI {
           dense_lights,
           light_count,
           gbuffer_position,
+          gbuffer_position_prev,
           gbuffer_normal,
+          gbuffer_normal_prev,
           gbuffer_albedo,
           gbuffer_smra,
           gbuffer_motion_emissive,
@@ -297,7 +303,9 @@ export class GI {
     dense_lights = null,
     light_count = null,
     gbuffer_position = null,
+    gbuffer_position_prev = null,
     gbuffer_normal = null,
+    gbuffer_normal_prev = null,
     gbuffer_albedo = null,
     gbuffer_smra = null,
     gbuffer_motion_emissive = null,
@@ -722,7 +730,9 @@ export class GI {
           probe_radiance_prev,
           screen_probe_metadata,
           gbuffer_position,
+          gbuffer_position_prev,
           gbuffer_normal,
+          gbuffer_normal_prev,
           gbuffer_albedo,
           gbuffer_smra,
           gbuffer_motion_emissive,

@@ -90,25 +90,51 @@ const main_smra_image_config = {
   force: false,
 };
 const main_normal_image_config = {
-  name: "main_normal",
+  name: "main_normal_0",
   format: rgba16float_format,
   width: 0,
   height: 0,
   usage:
     GPUTextureUsage.RENDER_ATTACHMENT |
     GPUTextureUsage.TEXTURE_BINDING |
-    GPUTextureUsage.STORAGE_BINDING,
+    GPUTextureUsage.STORAGE_BINDING |
+    GPUTextureUsage.COPY_SRC,
+  force: false,
+};
+const main_normal_image2_config = {
+  name: "main_normal_1",
+  format: rgba16float_format,
+  width: 0,
+  height: 0,
+  usage:
+    GPUTextureUsage.RENDER_ATTACHMENT |
+    GPUTextureUsage.TEXTURE_BINDING |
+    GPUTextureUsage.STORAGE_BINDING |
+    GPUTextureUsage.COPY_DST,
   force: false,
 };
 const main_position_image_config = {
-  name: "main_position",
+  name: "main_position_0",
   format: rgba32float_format,
   width: 0,
   height: 0,
   usage:
     GPUTextureUsage.RENDER_ATTACHMENT |
     GPUTextureUsage.TEXTURE_BINDING |
-    GPUTextureUsage.STORAGE_BINDING,
+    GPUTextureUsage.STORAGE_BINDING |
+    GPUTextureUsage.COPY_SRC,
+  force: false,
+};
+const main_position_image2_config = {
+  name: "main_position_1",
+  format: rgba32float_format,
+  width: 0,
+  height: 0,
+  usage:
+    GPUTextureUsage.RENDER_ATTACHMENT |
+    GPUTextureUsage.TEXTURE_BINDING |
+    GPUTextureUsage.STORAGE_BINDING |
+    GPUTextureUsage.COPY_DST,
   force: false,
 };
 const main_motion_emissive_image_config = {
@@ -414,7 +440,6 @@ const prev_lighting_image_config = {
 
 const swapchain_name = "swapchain";
 const clear_g_buffer_pass_name = "clear_g_buffer";
-const skybox_pass_name = "skybox_pass";
 const skydome_pass_name = "skydome_pass";
 const depth_prepass_name = "depth_prepass";
 const transparency_composite_pass_name = "transparency_composite";
@@ -595,18 +620,28 @@ export class DeferredShadingStrategy {
       let main_hzb_image = render_graph.register_image(this.hzb_image.config.name);
       let main_entity_id_image = render_graph.register_image(this.entity_id_image.config.name);
 
+      main_position_image_config.width = image_extent.width;
+      main_position_image_config.height = image_extent.height;
+      main_position_image_config.force = this.force_recreate;
+
+      main_position_image2_config.width = image_extent.width;
+      main_position_image2_config.height = image_extent.height;
+      main_position_image2_config.force = this.force_recreate;
+
+      main_normal_image_config.width = image_extent.width;
+      main_normal_image_config.height = image_extent.height;
+      main_normal_image_config.force = this.force_recreate;
+
+      main_normal_image2_config.width = image_extent.width;
+      main_normal_image2_config.height = image_extent.height;
+      main_normal_image2_config.force = this.force_recreate;
+
       main_albedo_image_config.width = image_extent.width;
       main_albedo_image_config.height = image_extent.height;
       main_albedo_image_config.force = this.force_recreate;
       main_smra_image_config.width = image_extent.width;
       main_smra_image_config.height = image_extent.height;
       main_smra_image_config.force = this.force_recreate;
-      main_normal_image_config.width = image_extent.width;
-      main_normal_image_config.height = image_extent.height;
-      main_normal_image_config.force = this.force_recreate;
-      main_position_image_config.width = image_extent.width;
-      main_position_image_config.height = image_extent.height;
-      main_position_image_config.force = this.force_recreate;
       main_motion_emissive_image_config.width = image_extent.width;
       main_motion_emissive_image_config.height = image_extent.height;
       main_motion_emissive_image_config.force = this.force_recreate;
@@ -619,13 +654,15 @@ export class DeferredShadingStrategy {
 
       let main_albedo_image = render_graph.create_image(main_albedo_image_config);
       let main_smra_image = render_graph.create_image(main_smra_image_config);
-      let main_normal_image = render_graph.create_image(main_normal_image_config);
-      let main_position_image = render_graph.create_image(main_position_image_config);
       let main_motion_emissive_image = render_graph.create_image(main_motion_emissive_image_config);
       let main_transparency_accum_image = render_graph.create_image(
         main_transparency_accum_image_config
       );
       let main_depth_image = render_graph.create_image(main_depth_image_config);
+      let main_position_image = render_graph.create_image(main_position_image_config);
+      let main_normal_image = render_graph.create_image(main_normal_image_config);
+      let prev_position_image = render_graph.create_image(main_position_image2_config);
+      let prev_normal_image = render_graph.create_image(main_normal_image2_config);
 
       let skybox_image = null;
       let post_lighting_image_desc = null;
@@ -1299,7 +1336,9 @@ export class DeferredShadingStrategy {
           image_extent.width,
           image_extent.height,
           main_position_image,
+          prev_position_image,
           main_normal_image,
+          prev_normal_image,
           main_albedo_image,
           main_smra_image,
           main_motion_emissive_image,
@@ -1571,13 +1610,25 @@ export class DeferredShadingStrategy {
 
       // Copy current bloom result into prev_lighting for the next frame
       render_graph.add_pass(
-        "copy_prev_lighting",
+        "copy_history",
         RenderPassFlags.GraphLocal,
         {},
         (graph, frame_data, encoder) => {
-          const curr = graph.get_physical_image(curr_post_bloom);
-          const prev = graph.get_physical_image(prev_lighting);
-          prev.copy_texture(encoder, curr);
+          const curr_final_lighting = graph.get_physical_image(curr_post_bloom);
+          const prev_final_lighting = graph.get_physical_image(prev_lighting);
+          prev_final_lighting.copy_texture(encoder, curr_final_lighting);
+
+          const curr_position = graph.get_physical_image(main_position_image);
+          const prev_position = graph.get_physical_image(prev_position_image);
+          if (prev_position) {
+            prev_position.copy_texture(encoder, curr_position);
+          }
+
+          const curr_normal = graph.get_physical_image(main_normal_image);
+          const prev_normal = graph.get_physical_image(prev_normal_image);
+          if (prev_normal) {
+            prev_normal.copy_texture(encoder, curr_normal);
+          }
         }
       );
 
