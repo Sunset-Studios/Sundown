@@ -20,6 +20,8 @@
 @group(1) @binding(7) var gbuffer_normal: texture_2d<f32>;
 @group(1) @binding(8) var probe_radiance_output: texture_storage_2d<rgba16float, write>; // Write to ping-pong output
 
+const SCREEN_PROBE_SAMPLE_CAP = 32.0;
+
 @compute @workgroup_size(128, 1, 1)
 fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     // Process all grid probes (derived from resolution)
@@ -64,7 +66,6 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         let sample_count = max(path.rng_sample_count_frame_stamp.y, 1.0);
         let accumulated_avg = path.throughput.xyz / sample_count;
         let radiance = safe_clamp_vec3(accumulated_avg);
-        
         // Accumulate ALL rays (even if zero) to increment sample count properly
         accumulated_radiance += radiance;
     }
@@ -82,8 +83,23 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
             let curr_radiance = max(curr_radiance_data.rgb, vec3<f32>(0.0));
             let curr_sample_count = max(curr_radiance_data.w, 0.0);
             
-            let new_sample_count = curr_sample_count + f32(rays_per_probe);
-            let blended_radiance = temporal_blend(accumulated_radiance + curr_radiance, curr_radiance);
+            // We store the SUM of samples, reconstruction divides by count to get average
+            // With temporal upscaling, probes update infrequently (e.g., once per 16 frames)
+            // A lower cap ensures faster convergence and prevents old dark samples from dominating
+            var blended_radiance: vec3<f32>;
+            var new_sample_count: f32;
+            
+            if (curr_sample_count + f32(rays_per_probe) <= SCREEN_PROBE_SAMPLE_CAP) {
+                // Below cap: simple accumulation (sum of all samples so far)
+                blended_radiance = curr_radiance + accumulated_radiance;
+                new_sample_count = curr_sample_count + f32(rays_per_probe);
+            } else {
+                // At/above cap: rolling window - remove N oldest samples
+                // Keep (cap - rays) worth of old samples, add new samples
+                let keep_ratio = (SCREEN_PROBE_SAMPLE_CAP - f32(rays_per_probe)) / SCREEN_PROBE_SAMPLE_CAP;
+                blended_radiance = curr_radiance * keep_ratio + accumulated_radiance * (1.0 + keep_ratio);
+                new_sample_count = SCREEN_PROBE_SAMPLE_CAP - f32(rays_per_probe);
+            }
             
             // Write to ping-pong output texture
             textureStore(probe_radiance_output, vec2<i32>(atlas_coord), vec4<f32>(blended_radiance, new_sample_count));
