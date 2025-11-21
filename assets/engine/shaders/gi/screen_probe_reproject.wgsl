@@ -41,7 +41,7 @@ var<workgroup> reprojection_best: atomic<u32>;
 var<workgroup> thread_pixel_coords: array<vec2<u32>, 16u>;
 var<workgroup> thread_prev_probe_index: array<u32, 16u>;
 
-const SCREEN_PROBE_SIZE = 4u; // 4x4 = 16 threads per tile
+const SCREEN_PROBE_SIZE = 2u; // 4x4 = 16 threads per tile
 
 @compute @workgroup_size(SCREEN_PROBE_SIZE, SCREEN_PROBE_SIZE, 1)
 fn cs(
@@ -73,9 +73,8 @@ fn cs(
         return;
     }
     
-    // Reset "updated" flag once per tile so only this frame's winners mark it again
+    // Initialize reprojection best to a large value
     if (lid.x == 0u && lid.y == 0u) {
-        screen_probe_metadata[probe_index].state.w = 0.0;
         atomicStore(&reprojection_best, (pack_half_float(65504.0) << 16u) | 0xFFFFu);
     }
     workgroupBarrier();
@@ -100,11 +99,11 @@ fn cs(
             // Use NDC-space velocity stored in G-buffer to recover previous pixel position
             let motion_sample = textureLoad(gbuffer_motion, pixel_i32, 0);
             let ndc_velocity = motion_sample.xy;
-            let pixel_velocity = ndc_velocity * vec2<f32>(f32(res.x), f32(res.y)) * vec2<f32>(0.5, 0.5);
+            let pixel_velocity = ndc_velocity * vec2<f32>(f32(res.x), f32(res.y)) * vec2<f32>(0.5, -0.5);
             
             // Use sub-pixel precision for previous pixel calculation to avoid integer truncation artifacts
             let pixel_center = vec2<f32>(pixel) + 0.5;
-            let pixel_prev_center = pixel_center - pixel_velocity;
+            let pixel_prev_center = pixel_center + -pixel_velocity;
             let pixel_prev = vec2<i32>(floor(pixel_prev_center));
 
             // Check if previous pixel is within bounds
@@ -118,7 +117,7 @@ fn cs(
                 // Check if probe tile is within grid bounds and was active
                 if (probe_index_prev < u32(gi_params.total_screen_probes)) {
                     let position_current = textureLoad(gbuffer_position, pixel_i32, 0).xyz;
-                    let distance_to_camera = length(camera_position - position_current);
+                    let distance_to_camera = distance(camera_position, position_current);
                     let adaptive_cell_size = max(distance_scale * distance_to_camera, 0.0001);
                     
                     // Only reproject from probes that were active AND updated last frame
@@ -188,12 +187,18 @@ fn cs(
             
             // Sample G-buffer at winner pixel to get surface properties
             let winner_pixel_i32 = vec2<i32>(winner_pixel);
-            // Update probe metadata: store winner pixel coords and mark updated
+            
+            // Increment probe age (stability counter) for successful reprojection
+            // Clamped to prevent overflow - age represents temporal stability
+            let prev_age = prev_probe.state.w;
+            let new_age = min(prev_age + 1.0, 1024.0);
+            
+            // Update probe metadata: store winner pixel coords and age
             screen_probe_metadata[probe_index].state = vec4<f32>(
                 1.0,                          // active
                 f32(winner_pixel.x),          // pixel_x
                 f32(winner_pixel.y),          // pixel_y
-                1.0                           // updated this frame
+                new_age                       // age (frames since spawn)
             );
             
             // Add to override queue (can be reassigned in patch pass)
@@ -210,6 +215,8 @@ fn cs(
                     textureStore(probe_radiance_curr, vec2<i32>(atlas_coord), vec4<f32>(0.0));
                 }
             }
+
+            screen_probe_metadata[probe_index].state.w = -1.0;
             
             // Mark probe as invalid (will be respawned) and add to empty queue
             let empty_index = atomicAdd(&tile_counters.empty_count, 1u);

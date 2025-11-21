@@ -66,8 +66,9 @@ fn cs(
     let should_spawn = should_update_probe_this_frame(probe_tile, u32(gi_params.frame_index), upscale);
     
     if (!should_spawn) {
-        // Tile is skipped this frame—just keep previous radiance
-        screen_probe_metadata[probe_index].state.w = 0.0;
+        // Tile is skipped this frame—mark as inactive for this update cycle
+        // age = -1.0 signals "not tracing this frame" (temporal upscale skip)
+        screen_probe_metadata[probe_index].state.w = -1.0;
         return;
     }
     
@@ -107,7 +108,7 @@ fn cs(
             1.0,                    // active
             f32(spawn_pixel.x),     // pixel_x
             f32(spawn_pixel.y),     // pixel_y
-            1.0                     // updated this frame
+            0.0                     // age = 0 (newly spawned, no history)
         );
         
         // Increment active probe count

@@ -47,7 +47,8 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let probe_valid = probe.state.x > 0.0;
     
     // Check if probe is active/valid and scheduled for update
-    let probe_updated_this_frame = probe.state.w > 0.0;
+    // age >= 0.0 means probe is being updated this frame (age 0 = newly spawned, age > 0 = reprojected)
+    let probe_updated_this_frame = probe.state.w >= 0.0;
     
     if (!probe_valid || !probe_updated_this_frame) {
         // Mark all rays for this inactive probe as dead

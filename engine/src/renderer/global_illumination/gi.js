@@ -173,13 +173,13 @@ export class GI {
 
   // Configuration parameters
   config = {
-    screen_probe_size: 4, // Side length of probe footprint in pixels
+    screen_probe_size: 2, // Side length of probe footprint in pixels
     screen_ray_count: 1, // Rays per screen probe
-    upscale_x: 2, // Temporal upscale factor X (2x2 = 4 frames to fill)
-    upscale_y: 2, // Temporal upscale factor Y
+    upscale_x: 4, // Temporal upscale factor X (2x2 = 4 frames to fill)
+    upscale_y: 4, // Temporal upscale factor Y
     world_cache_size: 32768, // Number of world cache cells (32K)
     world_cache_cell_size: 1.0, // Size of world cache cells in world units (larger = better coverage)
-    world_cache_lod_count: 6, // Number of LOD levels for world cache
+    world_cache_lod_count: 4, // Number of LOD levels for world cache
     indirect_boost: 1.0, // Multiplier for indirect lighting
   };
 
