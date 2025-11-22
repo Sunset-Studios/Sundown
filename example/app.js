@@ -1764,7 +1764,7 @@ export class GITestScene extends Scene {
     light_fragment_view.type = LightType.DIRECTIONAL;
     light_fragment_view.color = [1, 1, 1];
     light_fragment_view.intensity = 1.0;
-    light_fragment_view.position = [5, 35, 25];
+    light_fragment_view.position = [5, 5, 25];
     light_fragment_view.active = true;
     light_fragment_view.is_primary_sun = 1;
     light_fragment_view.shadow_clipmaps = MAX_CLIPMAP_LEVELS;
@@ -2714,7 +2714,7 @@ export class SponzaScene extends Scene {
     const light_fragment_view = EntityManager.get_fragment(light_entity, LightFragment);
     light_fragment_view.type = LightType.DIRECTIONAL;
     light_fragment_view.color = [0.9, 0.9, 1.0];
-    light_fragment_view.intensity = 40.0;
+    light_fragment_view.intensity = 30.0;
     light_fragment_view.position = [5.0, 20, 2.0];
     light_fragment_view.active = true;
     light_fragment_view.is_primary_sun = 1;

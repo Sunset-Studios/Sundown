@@ -177,7 +177,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         
         // Update path weight with BRDF and reservoir weight
         let brdf_weight = selected_brdf * gi_reservoir.w;
-        path_weight = brdf_weight;
+        path_weight = brdf_weight * gi_params.indirect_boost;
         
         // Russian Roulette: Kill paths with very low throughput to prevent underflow
         let weight_luminance = path_weight.x * 0.2126 + path_weight.y * 0.7152 + path_weight.z * 0.0722;

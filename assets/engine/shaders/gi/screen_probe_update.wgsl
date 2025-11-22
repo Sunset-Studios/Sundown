@@ -36,7 +36,7 @@
 @group(1) @binding(8) var probe_radiance_output: texture_storage_2d<rgba16float, write>; // Write to ping-pong output
 
 // Progressive accumulation cap: how many samples to accumulate before blending
-const MAX_ACCUMULATED_SAMPLES = 16.0;  // Balance between convergence speed and adaptability
+const MAX_ACCUMULATED_SAMPLES = 32.0;  // Balance between convergence speed and adaptability
 
 @compute @workgroup_size(128, 1, 1)
 fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
@@ -102,25 +102,32 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
             // RGB = accumulated radiance SUM, W = number of samples accumulated
             let curr_sum = curr_radiance_data.rgb;
             let curr_count = curr_radiance_data.w;
-            
-            var new_sum: vec3<f32>;
-            var new_count: f32;
-            
-            // Simple progressive accumulation with cap
-            if (curr_count + f32(rays_per_probe) <= MAX_ACCUMULATED_SAMPLES) {
-                // Below cap: accumulate samples (progressively reduces noise)
-                new_sum = curr_sum + accumulated_radiance;
-                new_count = curr_count + f32(rays_per_probe);
-            } else {
-                // At cap: blend (exponential moving average for adaptability)
-                let alpha = f32(rays_per_probe) / MAX_ACCUMULATED_SAMPLES;
-                let curr_avg = curr_sum / max(curr_count, 1.0);
-                let new_avg = accumulated_radiance / max(f32(rays_per_probe), 1.0);
-                let blended_avg = curr_avg * (1.0 - alpha) + new_avg * alpha;
-                new_sum = blended_avg * MAX_ACCUMULATED_SAMPLES;
-                new_count = MAX_ACCUMULATED_SAMPLES - f32(rays_per_probe);
-            }
-            
+
+            // At cap: blend (exponential moving average for adaptability)
+            let base_alpha = f32(rays_per_probe) / MAX_ACCUMULATED_SAMPLES;
+
+            let curr_avg  = curr_sum / max(curr_count, 1.0);
+            let frame_mean = accumulated_radiance / max(f32(rays_per_probe), 1.0);
+
+            // luma change
+            let frame_luma = dot(frame_mean, vec3<f32>(0.2126, 0.7152, 0.0722));
+            let curr_luma  = dot(curr_avg,  vec3<f32>(0.2126, 0.7152, 0.0722));
+            let diff       = abs(frame_luma - curr_luma);
+
+            // Heuristic: normalize by some scene-scale constant
+            let scale      = 0.1; // tweak: what you consider "big" change in luma
+            let t          = clamp(diff / scale, 0.0, 1.0);
+
+            let alpha_min  = 0.01;
+            let alpha_max  = 0.2;
+            let adaptive_alpha = alpha_min + (alpha_max - alpha_min) * t;
+            let alpha = min(adaptive_alpha, base_alpha);
+
+            let blended_avg = curr_avg * (1.0 - alpha) + frame_mean * alpha;
+
+            let new_count = min(curr_count + f32(rays_per_probe), MAX_ACCUMULATED_SAMPLES);
+            let new_sum = blended_avg * new_count;
+ 
             // Write accumulated sum + count
             textureStore(probe_radiance_output, vec2<i32>(atlas_coord), vec4<f32>(new_sum, new_count));
         }

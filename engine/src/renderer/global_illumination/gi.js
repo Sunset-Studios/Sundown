@@ -180,7 +180,7 @@ export class GI {
     world_cache_size: 32768, // Number of world cache cells (32K)
     world_cache_cell_size: 1.0, // Size of world cache cells in world units (larger = better coverage)
     world_cache_lod_count: 4, // Number of LOD levels for world cache
-    indirect_boost: 1.0, // Multiplier for indirect lighting
+    indirect_boost: 2.0, // Multiplier for indirect lighting
   };
 
   constructor(params = {}) {

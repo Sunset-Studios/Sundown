@@ -192,7 +192,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         // Check if we got valid cached data
         let cached_luminance = cached_radiance.x * 0.2126 + cached_radiance.y * 0.7152 + cached_radiance.z * 0.0722;
         if (cached_luminance > 0.0001) {
-            radiance_contribution += cached_radiance * gi_params.indirect_boost * path.path_weight.xyz;
+            radiance_contribution += cached_radiance * path.path_weight.xyz;
             sample_count = 1.0;
         }
     }
@@ -204,7 +204,8 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         let current_radiance = world_cache[cell_index].radiance_w.xyz;
         let current_sample_count = world_cache[cell_index].normal_count.w;
         
-        let alpha = 1.0 / min((current_sample_count + sample_count), WORLD_CACHE_RADIANCE_UPDATE_SAMPLE_CAP);
+        var alpha = 1.0 / min((current_sample_count + sample_count), WORLD_CACHE_RADIANCE_UPDATE_SAMPLE_CAP);
+        alpha = max(alpha, 0.05);
         let new_radiance = mix(current_radiance, radiance_contribution, alpha);
         
         world_cache[cell_index].radiance_w = vec4f(new_radiance, world_cache[cell_index].radiance_w.w);

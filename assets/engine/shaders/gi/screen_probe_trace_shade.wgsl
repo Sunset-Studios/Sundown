@@ -71,7 +71,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
             skybox_texture
         );
         // Add sky contribution weighted by path throughput
-        path.throughput += vec4<f32>(sky_radiance * path.path_weight.xyz, 0.0);
+        path.throughput += vec4<f32>(sky_radiance * gi_params.indirect_boost * path.path_weight.xyz, 0.0);
         // Mark path as dead
         path.state_u32.y = 0u;
     }
@@ -215,7 +215,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         let cached_luminance = cached_radiance.x * 0.2126 + cached_radiance.y * 0.7152 + cached_radiance.z * 0.0722;
         if (cached_luminance > 0.0001) {
             // Found valid cached radiance! Apply it and terminate path
-            let cached_contribution = cached_radiance * path.path_weight.xyz;
+            let cached_contribution = cached_radiance * gi_params.indirect_boost * path.path_weight.xyz;
             path.throughput += vec4f(cached_contribution, 0.0);
         }
         
