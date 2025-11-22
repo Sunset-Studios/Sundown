@@ -166,26 +166,3 @@ fn should_update_probe_this_frame(
     
     return probe_frame == frame_in_cycle;
 }
-
-// Compute weight for a probe contribution
-fn compute_probe_weight(
-    pixel_pos: vec3<f32>,
-    pixel_normal: vec3<f32>,
-    probe_pos: vec3<f32>,
-    probe_normal: vec3<f32>,
-    probe_radius: f32
-) -> f32 {
-    // Distance-based weight
-    let dist = length(pixel_pos - probe_pos);
-    let dist_weight = max(0.0, 1.0 - dist / max(0.001, probe_radius));
-    
-    // Normal similarity weight
-    let normal_dot = max(0.0, dot(pixel_normal, probe_normal));
-    let normal_weight = pow(normal_dot, 4.0); // Higher power for sharper falloff
-    
-    // View direction weight (prefer probes in front of surface)
-    let to_probe = normalize(probe_pos - pixel_pos);
-    let view_weight = max(0.0, dot(pixel_normal, to_probe));
-    
-    return dist_weight * normal_weight * view_weight;
-}

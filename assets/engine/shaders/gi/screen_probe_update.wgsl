@@ -36,7 +36,7 @@
 @group(1) @binding(8) var probe_radiance_output: texture_storage_2d<rgba16float, write>; // Write to ping-pong output
 
 // Progressive accumulation cap: how many samples to accumulate before blending
-const MAX_ACCUMULATED_SAMPLES = 32.0;  // Balance between convergence speed and adaptability
+const MAX_ACCUMULATED_SAMPLES = 8.0;  // Balance between convergence speed and adaptability
 
 @compute @workgroup_size(128, 1, 1)
 fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {

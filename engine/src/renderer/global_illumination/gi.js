@@ -178,7 +178,7 @@ export class GI {
     upscale_x: 4, // Temporal upscale factor X (2x2 = 4 frames to fill)
     upscale_y: 4, // Temporal upscale factor Y
     world_cache_size: 32768, // Number of world cache cells (32K)
-    world_cache_cell_size: 1.0, // Size of world cache cells in world units (larger = better coverage)
+    world_cache_cell_size: 2.0, // Size of world cache cells in world units (larger = better coverage)
     world_cache_lod_count: 4, // Number of LOD levels for world cache
     indirect_boost: 2.0, // Multiplier for indirect lighting
   };
@@ -338,7 +338,7 @@ export class GI {
     // Each cell: radiance+w(16) + data(16) = 32 bytes
     const world_cache = render_graph.create_buffer({
       name: "gi_world_cache",
-      size: total_cells * 32,
+      size: total_cells * 96,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
       force: force_recreate,
     });

@@ -50,11 +50,11 @@ const p4 = 50331653;  // For direction hashing
 const p5 = 25165843;  // For LOD hashing
 const p6 = 12582923;  // For direction hashing
 
-const BUCKET_SIZE = 16u;            // Number of cells per bucket
+const BUCKET_SIZE = 8u;            // Number of cells per bucket
 const LOD_EXTENT = 16.0;          // Size of first LOD level
 const QUANTIZATION_RESOLUTION = 8; // Quantization resolution for direction hashing
 const WORLD_CACHE_RADIANCE_UPDATE_SAMPLE_CAP = 32.0; // Maximum sample count for radiance update
-const WORLD_CACHE_CELL_LIFETIME = 30.0; // Maximum lifetime of a cell in frames
+const WORLD_CACHE_CELL_LIFETIME = 16.0; // Maximum lifetime of a cell in frames
 const WORLD_CACHE_CELL_EMPTY = 0u;
 const PCG_MULTIPLIER = 747796405u;
 const PCG_INCREMENT = 2891336453u;
@@ -262,7 +262,7 @@ fn query_world_cache_cell(
         }
 
         // Probe next slot within bucket (stay within bucket boundaries)
-        cell_index = bucket_start + pcg_hash_next(&pcg_state, BUCKET_SIZE);
+        cell_index = bucket_start + (probe + pcg_hash_next(&pcg_state, BUCKET_SIZE)) % BUCKET_SIZE;
     }
 
     return vec3<f32>(0.0);
@@ -398,7 +398,7 @@ fn read_world_cache_cell_radiance(
             return world_cache[cell_index].radiance_w.xyz;
         }
         // Probe next slot within bucket (stay within bucket boundaries)
-        cell_index = bucket_start + pcg_hash_next(&pcg_state, BUCKET_SIZE);
+        cell_index = bucket_start + (cell + pcg_hash_next(&pcg_state, BUCKET_SIZE)) % BUCKET_SIZE;
     }
     return vec3<f32>(0.0);
 }
@@ -438,7 +438,7 @@ fn validate_world_cache_cell(
             return true;
         }
         // Probe next slot within bucket (stay within bucket boundaries)
-        cell_index = bucket_start + pcg_hash_next(&pcg_state, BUCKET_SIZE);
+        cell_index = bucket_start + (cell + pcg_hash_next(&pcg_state, BUCKET_SIZE)) % BUCKET_SIZE;
     }
     return false;
 }
