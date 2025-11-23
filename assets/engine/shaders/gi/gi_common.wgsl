@@ -5,6 +5,12 @@
 #include "lighting_common.wgsl"
 
 // =============================================================================
+// Shared Probe Encoding Parameters
+// =============================================================================
+const MAX_SCREEN_PROBE_SIZE = 32u;                     // Supports up to 32x32 tiles
+const MAX_SCREEN_PROBE_PIXEL_COUNT = MAX_SCREEN_PROBE_SIZE * MAX_SCREEN_PROBE_SIZE;
+
+// =============================================================================
 // GI Counters
 // - light_count: Number of lights in the scene (copied from lighting system)
 // - active_probe_count: Number of probes updated THIS frame (reset each frame)
@@ -145,6 +151,46 @@ fn sample_cosine_hemisphere(u1: f32, u2: f32, normal: vec3<f32>) -> vec3<f32> {
 // =============================================================================
 fn grid_dimensions(resolution: vec2<u32>, probe_size: u32) -> vec2<u32> {
     return (resolution + probe_size - 1u) / probe_size;
+}
+
+// =============================================================================
+// OCTAHEDRAL DIRECTION ENCODING
+// =============================================================================
+fn encode_octahedral(direction: vec3<f32>) -> vec2<f32> {
+    let normal = safe_normalize(direction);
+    var projected = normal.xy / max(abs(normal.x) + abs(normal.y) + abs(normal.z), 1e-6);
+    let wrap_sign = vec2<f32>(
+        select(-1.0, 1.0, projected.x >= 0.0),
+        select(-1.0, 1.0, projected.y >= 0.0)
+    );
+    let wrapped = (vec2<f32>(1.0) - abs(projected.yx)) * wrap_sign;
+    projected = select(projected, wrapped, normal.z < 0.0);
+
+    return projected * 0.5 + 0.5;
+}
+
+fn decode_octahedral(encoded: vec2<f32>) -> vec3<f32> {
+    let f = encoded * 2.0 - 1.0;
+    var normal = vec3<f32>(f.x, f.y, 1.0 - abs(f.x) - abs(f.y));
+    let t = clamp(-normal.z, 0.0, 1.0);
+    let correction = vec2<f32>(
+        select(-t, t, f.x >= 0.0),
+        select(-t, t, f.y >= 0.0)
+    );
+    normal = vec3<f32>(f.x + correction.x, f.y + correction.y, normal.z);
+    return safe_normalize(normal);
+}
+
+fn direction_to_probe_local_coord(direction: vec3<f32>, probe_size: u32) -> vec2<u32> {
+    let encoded = encode_octahedral(direction);
+    let clamped_size = max(min(probe_size, u32(MAX_SCREEN_PROBE_SIZE)), 1u);
+    let scaled = clamp(
+        encoded * vec2<f32>(f32(clamped_size)),
+        vec2<f32>(0.0),
+        vec2<f32>(f32(clamped_size) - 1e-4)
+    );
+    let coord = vec2<u32>(scaled);
+    return coord;
 }
 
 // =============================================================================

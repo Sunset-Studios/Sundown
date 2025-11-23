@@ -93,7 +93,7 @@ fn cs(
     // Check if pixel is within bounds
     if (spawn_pixel.x >= res.x || spawn_pixel.y >= res.y) {
         // Out of bounds - mark probe as invalid
-        screen_probe_metadata[probe_index].state = vec4<f32>(0.0, 0.0, 0.0, 0.0);
+        screen_probe_metadata[probe_index].state = vec4<f32>(0.0, 0.0, 0.0, -1.0);
         return;
     }
     
@@ -115,6 +115,6 @@ fn cs(
         atomicAdd(&gi_counters.active_probe_count, 1u);
     } else {
         // No valid geometry - mark probe as invalid
-        screen_probe_metadata[probe_index].state = vec4<f32>(0.0, 0.0, 0.0, 0.0);
+        screen_probe_metadata[probe_index].state = vec4<f32>(0.0, 0.0, 0.0, -1.0);
     }
 }

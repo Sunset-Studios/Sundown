@@ -43,7 +43,7 @@ var<workgroup> thread_has_candidate: array<u32, 16u>;
 var<workgroup> winner_prev_tile_coords: vec2<u32>;
 var<workgroup> reprojection_success_flag: u32;
 
-const SCREEN_PROBE_SIZE = 2u; // 4x4 = 16 threads per tile
+const SCREEN_PROBE_SIZE = 4u; // 4x4 = 16 threads per tile
 const MIN_NORMAL_SIMILARITY = 0.95;
 
 @compute @workgroup_size(SCREEN_PROBE_SIZE, SCREEN_PROBE_SIZE, 1)

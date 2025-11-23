@@ -173,7 +173,7 @@ export class GI {
 
   // Configuration parameters
   config = {
-    screen_probe_size: 2, // Side length of probe footprint in pixels
+    screen_probe_size: 4, // Side length of probe footprint in pixels
     screen_ray_count: 1, // Rays per screen probe (directional atlas coverage)
     upscale_x: 2, // Temporal upscale factor X (2x2 = 4 frames to fill)
     upscale_y: 2, // Temporal upscale factor Y
