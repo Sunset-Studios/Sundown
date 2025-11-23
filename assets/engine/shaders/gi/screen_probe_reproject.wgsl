@@ -27,21 +27,24 @@
 @group(1) @binding(4) var gbuffer_position_prev: texture_2d<f32>;
 @group(1) @binding(5) var gbuffer_normal: texture_2d<f32>;
 @group(1) @binding(6) var gbuffer_normal_prev: texture_2d<f32>;
-@group(1) @binding(7) var gbuffer_albedo: texture_2d<f32>;
-@group(1) @binding(8) var gbuffer_smra: texture_2d<f32>;
-@group(1) @binding(9) var gbuffer_motion: texture_2d<f32>;
-@group(1) @binding(10) var<storage, read_write> empty_tiles: array<u32>;
-@group(1) @binding(11) var<storage, read_write> override_tiles: array<u32>;
-@group(1) @binding(12) var<storage, read_write> tile_counters: TileCounters;
-@group(1) @binding(13) var probe_radiance_curr: texture_storage_2d<rgba16float, write>;
+@group(1) @binding(7) var gbuffer_motion: texture_2d<f32>;
+@group(1) @binding(8) var<storage, read_write> empty_tiles: array<u32>;
+@group(1) @binding(9) var<storage, read_write> override_tiles: array<u32>;
+@group(1) @binding(10) var<storage, read_write> tile_counters: TileCounters;
+@group(1) @binding(11) var probe_radiance_curr: texture_storage_2d<rgba16float, write>;
 
 // Workgroup-shared memory for atomic reprojection competition
 // Format: (reprojection_score << 16) | (lane_index & 0xFFFF)
 var<workgroup> reprojection_best: atomic<u32>;
 var<workgroup> thread_pixel_coords: array<vec2<u32>, 16u>;
 var<workgroup> thread_prev_probe_index: array<u32, 16u>;
+var<workgroup> thread_prev_pixel_coords: array<vec2<u32>, 16u>;
+var<workgroup> thread_has_candidate: array<u32, 16u>;
+var<workgroup> winner_prev_tile_coords: vec2<u32>;
+var<workgroup> reprojection_success_flag: u32;
 
-const SCREEN_PROBE_SIZE = 4u; // 4x4 = 16 threads per tile
+const SCREEN_PROBE_SIZE = 2u; // 4x4 = 16 threads per tile
+const MIN_NORMAL_SIMILARITY = 0.95;
 
 @compute @workgroup_size(SCREEN_PROBE_SIZE, SCREEN_PROBE_SIZE, 1)
 fn cs(
@@ -50,6 +53,7 @@ fn cs(
     @builtin(workgroup_id) wid: vec3<u32>
 ) {
     let res = textureDimensions(gbuffer_position);
+    let res_i32 = vec2<i32>(res);
     let probe_size = u32(gi_params.screen_probe_size);
     let grid_dims = grid_dimensions(res, probe_size);
 
@@ -84,29 +88,31 @@ fn cs(
     // =========================================================================
     // Each thread samples one pixel in the current tile
     let tile_corner = probe_tile * probe_size;
-    let pixel = tile_corner + lid.xy;
+    let local_offset = vec2<u32>(lid.xy);
+    let pixel = tile_corner + local_offset;
     let lane_index = lid.y * SCREEN_PROBE_SIZE + lid.x;
+    thread_has_candidate[lane_index] = 0u;
     
     // Check if pixel is within bounds
     if (pixel.x < res.x && pixel.y < res.y) {
         let pixel_i32 = vec2<i32>(pixel);
-        let normal_data = textureLoad(gbuffer_normal, pixel_i32, 0);
-        let normal_current = safe_normalize(normal_data.xyz);
+        let normal_data = textureLoad(gbuffer_normal, pixel_i32, 0).xyz;
         
         // Only valid geometry pixels participate in reprojection
-        if (length(normal_data.xyz) > 0.0) {
+        if (length(normal_data) > 0.0) {
+            let normal_current = safe_normalize(normal_data);
             // Use NDC-space velocity stored in G-buffer to recover previous pixel position
             let motion_sample = textureLoad(gbuffer_motion, pixel_i32, 0);
             let pixel_velocity = motion_sample.xy * vec2<f32>(f32(res.x), f32(res.y)) * vec2<f32>(0.5, -0.5);
             
             // Use sub-pixel precision for previous pixel calculation to avoid integer truncation artifacts
             let pixel_center = vec2<f32>(pixel) + 0.5;
-            let pixel_prev_center = pixel_center + -pixel_velocity;
+            let pixel_prev_center = pixel_center - pixel_velocity;
             let pixel_prev = vec2<i32>(floor(pixel_prev_center));
 
             // Check if previous pixel is within bounds
-            if (pixel_prev.x >= 0 && pixel_prev.x < i32(res.x) && 
-                pixel_prev.y >= 0 && pixel_prev.y < i32(res.y)) {
+            if (pixel_prev.x >= 0 && pixel_prev.x < res_i32.x &&
+                pixel_prev.y >= 0 && pixel_prev.y < res_i32.y) {
                 
                 // Find which probe tile contained pixel_prev
                 let probe_tile_prev = vec2<u32>(pixel_prev) / probe_size;
@@ -118,27 +124,30 @@ fn cs(
                     let distance_to_camera = distance(camera_position, position_current);
                     let adaptive_cell_size = max(distance_scale * distance_to_camera, 0.0001);
                     
-                    // Only reproject from probes that were active AND updated last frame
-                    if (screen_probe_metadata[probe_index_prev].state.x > 0.0) {
+                    // Only reproject from probes that were active
+                    let prev_probe_state = screen_probe_metadata[probe_index_prev].state;
+                    if (prev_probe_state.x > 0.0) {
                         // World-space geometry validation using the probe's representative pixel
                         let prev_probe_pixel = vec2<u32>(
-                            u32(screen_probe_metadata[probe_index_prev].state.y),
-                            u32(screen_probe_metadata[probe_index_prev].state.z)
+                            u32(prev_probe_state.y),
+                            u32(prev_probe_state.z)
                         );
-                        let prev_probe_position = textureLoad(gbuffer_position_prev, prev_probe_pixel, 0).xyz;
-                        let prev_probe_normal_data = textureLoad(gbuffer_normal_prev, prev_probe_pixel, 0).xyz;
-                        let prev_probe_normal = safe_normalize(prev_probe_normal_data.xyz);
+                        let prev_probe_pixel_i32 = vec2<i32>(prev_probe_pixel);
+                        let prev_probe_position = textureLoad(gbuffer_position_prev, prev_probe_pixel_i32, 0).xyz;
+                        let prev_probe_normal_data = textureLoad(gbuffer_normal_prev, prev_probe_pixel_i32, 0).xyz;
+                        let prev_probe_normal = safe_normalize(prev_probe_normal_data);
                         
                         // Check plane distance and normal similarity
                         let plane_dist = abs(dot(prev_probe_position - position_current, normal_current));
                         let normal_similarity = dot(prev_probe_normal, normal_current);
-                        let min_normal_similarity = 0.95;
 
-                        if (plane_dist < adaptive_cell_size && normal_similarity > min_normal_similarity) {
+                        if (plane_dist < adaptive_cell_size && normal_similarity > MIN_NORMAL_SIMILARITY) {
                             // Valid reprojection candidate!
                             let world_dist_3d = distance(prev_probe_position, position_current);
                             thread_pixel_coords[lane_index] = pixel;
                             thread_prev_probe_index[lane_index] = probe_index_prev;
+                            thread_prev_pixel_coords[lane_index] = vec2<u32>(pixel_prev);
+                            thread_has_candidate[lane_index] = 1u;
                             // Pack score and lane index for atomic competition
                             let packed_score = (pack_half_float(world_dist_3d) << 16u) | (lane_index & 0xFFFFu);
                             atomicMin(&reprojection_best, packed_score);
@@ -155,33 +164,20 @@ fn cs(
     // STEP 2: Read Back Reprojection Result and Classify Tile
     // =========================================================================
     if (lid.x == 0u && lid.y == 0u) {
+        reprojection_success_flag = 0u;
         let final_best = atomicLoad(&reprojection_best);
         let winning_lane_index = final_best & 0xFFFFu;
         let found_valid_reprojection = winning_lane_index != 0xFFFFu;
         
         if (found_valid_reprojection) {
-            // =====================================================================
-            // REPROJECTION SUCCESS: Copy probe data from previous frame
-            // =====================================================================
+            reprojection_success_flag = 1u;
             let winner_pixel = thread_pixel_coords[winning_lane_index];
             let prev_probe_index = thread_prev_probe_index[winning_lane_index];
             let prev_probe = screen_probe_metadata[prev_probe_index];
-            
-            // Calculate previous probe tile coordinates
-            let prev_probe_tile = vec2<u32>(
+            winner_prev_tile_coords = vec2<u32>(
                 prev_probe_index % grid_dims.x,
                 prev_probe_index / grid_dims.x
             );
-
-            // Copy radiance data from previous probe tile to current probe tile
-            for (var py = 0u; py < probe_size; py = py + 1u) {
-                for (var px = 0u; px < probe_size; px = px + 1u) {
-                    let src_atlas_coord = prev_probe_tile * probe_size + vec2<u32>(px, py);
-                    let dst_atlas_coord = probe_tile * probe_size + vec2<u32>(px, py);
-                    let radiance_sample = textureLoad(probe_radiance_prev, vec2<i32>(src_atlas_coord), 0);
-                    textureStore(probe_radiance_curr, vec2<i32>(dst_atlas_coord), radiance_sample);
-                }
-            }
             
             // Increment probe age (stability counter) for successful reprojection
             let prev_age = prev_probe.state.w;
@@ -202,19 +198,32 @@ fn cs(
             // =====================================================================
             // REPROJECTION FAILED: Mark tile as empty
             // =====================================================================
-            // Clear probe radiance atlas
-            for (var py = 0u; py < probe_size; py = py + 1u) {
-                for (var px = 0u; px < probe_size; px = px + 1u) {
-                    let atlas_coord = probe_tile * probe_size + vec2<u32>(px, py);
-                    textureStore(probe_radiance_curr, vec2<i32>(atlas_coord), vec4<f32>(0.0));
-                }
-            }
-
             screen_probe_metadata[probe_index].state.w = -1.0;
             
             // Mark probe as invalid (will be respawned) and add to empty queue
             let empty_index = atomicAdd(&tile_counters.empty_count, 1u);
             empty_tiles[empty_index] = probe_index;
         }
+    }
+    
+    workgroupBarrier();
+    
+    // =========================================================================
+    // STEP 3: Per-Pixel Radiance Copy
+    // =========================================================================
+    let atlas_base = probe_tile * probe_size;
+    let atlas_coord = atlas_base + local_offset;
+    
+    if (reprojection_success_flag == 1u) {
+        let lane_has_candidate = thread_has_candidate[lane_index] == 1u;
+        let winner_tile_base = winner_prev_tile_coords * probe_size;
+        var prev_pixel_coord = winner_tile_base + local_offset;
+        if (lane_has_candidate) {
+            prev_pixel_coord = thread_prev_pixel_coords[lane_index];
+        }
+        let radiance_sample = textureLoad(probe_radiance_prev, vec2<i32>(prev_pixel_coord), 0);
+        textureStore(probe_radiance_curr, vec2<i32>(atlas_coord), radiance_sample);
+    } else {
+        textureStore(probe_radiance_curr, vec2<i32>(atlas_coord), vec4<f32>(0.0));
     }
 }
