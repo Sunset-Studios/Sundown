@@ -113,10 +113,6 @@ fn cs(
         
         // Increment active probe count
         atomicAdd(&gi_counters.active_probe_count, 1u);
-        
-        // Note: Probe radiance atlas will be initialized by trace_init pass
-        // We could optionally seed from world cache here for faster convergence
-        
     } else {
         // No valid geometry - mark probe as invalid
         screen_probe_metadata[probe_index].state = vec4<f32>(0.0, 0.0, 0.0, 0.0);

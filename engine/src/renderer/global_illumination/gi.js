@@ -173,10 +173,10 @@ export class GI {
 
   // Configuration parameters
   config = {
-    screen_probe_size: 2, // Side length of probe footprint in pixels
-    screen_ray_count: 1, // Rays per screen probe
-    upscale_x: 4, // Temporal upscale factor X (2x2 = 4 frames to fill)
-    upscale_y: 4, // Temporal upscale factor Y
+    screen_probe_size: 4, // Side length of probe footprint in pixels
+    screen_ray_count: 1, // Rays per screen probe (directional atlas coverage)
+    upscale_x: 2, // Temporal upscale factor X (2x2 = 4 frames to fill)
+    upscale_y: 2, // Temporal upscale factor Y
     world_cache_size: 32768, // Number of world cache cells (32K)
     world_cache_cell_size: 2.0, // Size of world cache cells in world units (larger = better coverage)
     world_cache_lod_count: 4, // Number of LOD levels for world cache
@@ -454,7 +454,7 @@ export class GI {
     const max_probe_rays = total_screen_probes * this.config.screen_ray_count;
     let probe_path_state = render_graph.create_buffer({
       name: "gi_probe_path_state",
-      size: max_probe_rays * 14 * 4, // 12 vec4<f32> per ray
+      size: max_probe_rays * 14 * 4, // 14 vec4<f32> per ray
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
       force: force_recreate,
     });
