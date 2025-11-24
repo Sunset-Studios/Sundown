@@ -171,10 +171,9 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         // === INDIRECT LIGHTING - Query world cache for multi-bounce ===
         // Query world cache at hit point to get cached irradiance from previous frames
         // This provides multi-bounce indirect illumination without tracing further
-        // NOTE: Use geometric normal (world_n) not shading normal (n) for consistent cache lookups
         let cached_radiance = query_world_cache_cell_probabilistic(
             hit_pos,
-            world_n,
+            n,
             albedo,
             roughness,
             metallic,

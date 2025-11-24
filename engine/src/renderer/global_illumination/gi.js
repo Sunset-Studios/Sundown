@@ -315,8 +315,11 @@ export class GI {
     let grid_width = Math.ceil(width / this.config.screen_probe_size);
     let grid_height = Math.ceil(height / this.config.screen_probe_size);
     let total_screen_probes = grid_width * grid_height;
-
+    
     const total_cells = this.config.world_cache_size * this.config.world_cache_lod_count;
+
+    const probe_atlas_width = grid_width * this.config.screen_probe_size;
+    const probe_atlas_height = grid_height * this.config.screen_probe_size;
 
     // GI parameters buffer
     const gi_params = render_graph.create_buffer({
@@ -335,7 +338,6 @@ export class GI {
     });
 
     // World cache storage (persistent across frames)
-    // Each cell: radiance+w(16) + data(16) = 32 bytes
     const world_cache = render_graph.create_buffer({
       name: "gi_world_cache",
       size: total_cells * 96,
@@ -393,8 +395,7 @@ export class GI {
     // =========================================================================
     // Each probe occupies screen_probe_size x screen_probe_size texels in the atlas
     // Probe grid dimensions
-    const probe_atlas_width = grid_width * this.config.screen_probe_size;
-    const probe_atlas_height = grid_height * this.config.screen_probe_size;
+
 
     // Ping-pong probe radiance textures
     // Each probe is a screen_probe_size x screen_probe_size octahedral atlas
@@ -419,8 +420,15 @@ export class GI {
 
     // Probe metadata buffer: matches ScreenProbe struct
     // Each probe: state(vec4)
-    const screen_probe_metadata = render_graph.create_buffer({
-      name: "gi_screen_probe_metadata",
+    const screen_probe_metadata_0 = render_graph.create_buffer({
+      name: "gi_screen_probe_metadata_0",
+      size: total_screen_probes * 16, // 1 x vec4<f32> per probe (16 bytes)
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+      force: force_recreate,
+    });
+
+    const screen_probe_metadata_1 = render_graph.create_buffer({
+      name: "gi_screen_probe_metadata_1",
       size: total_screen_probes * 16, // 1 x vec4<f32> per probe (16 bytes)
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
       force: force_recreate,
@@ -464,6 +472,9 @@ export class GI {
     const ping_pong_frame = SharedFrameInfoBuffer.get_frame_index() % 2;
     const probe_radiance_prev = screen_probe_radiance_0;
     const probe_radiance_curr = screen_probe_radiance_1;
+
+    const screen_probe_metadata = ping_pong_frame == 0 ? screen_probe_metadata_0 : screen_probe_metadata_1;
+    const screen_probe_metadata_prev = ping_pong_frame == 0 ? screen_probe_metadata_1 : screen_probe_metadata_0;
 
     // Get material resources
     const params_gpu = MaterialAllocationTable.params_buffer;
@@ -729,6 +740,7 @@ export class GI {
           gi_params,
           probe_radiance_prev,
           screen_probe_metadata,
+          screen_probe_metadata_prev,
           gbuffer_position,
           gbuffer_position_prev,
           gbuffer_normal,
@@ -827,7 +839,6 @@ export class GI {
           gi_params,
           gi_counters,
           screen_probe_metadata,
-          probe_radiance_prev,
           probe_path_state,
           light_count,
           dense_lights,

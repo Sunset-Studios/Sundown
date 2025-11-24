@@ -36,7 +36,7 @@
 @group(1) @binding(8) var probe_radiance_output: texture_storage_2d<rgba16float, write>; // Write to ping-pong output
 
 // Progressive accumulation cap: how many samples to accumulate before blending
-const MAX_ACCUMULATED_SAMPLES = 16.0;  // Balance between convergence speed and adaptability
+const MAX_ACCUMULATED_SAMPLES = 8.0;  // Balance between convergence speed and adaptability
 
 @compute @workgroup_size(128, 1, 1)
 fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
@@ -112,16 +112,9 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
             // luma change
             let frame_luma = dot(frame_mean, vec3<f32>(0.2126, 0.7152, 0.0722));
             let curr_luma  = dot(curr_avg,  vec3<f32>(0.2126, 0.7152, 0.0722));
-            let diff       = abs(frame_luma - curr_luma);
+            let t          = abs(clamp(curr_luma / frame_luma, 0.0, 2.0) - 1.0);
 
-            // Heuristic: normalize by some scene-scale constant
-            let scale      = 0.1; // tweak: what you consider "big" change in luma
-            let t          = clamp(diff / scale, 0.0, 1.0);
-
-            let alpha_min  = 0.01;
-            let alpha_max  = 0.2;
-            let adaptive_alpha = alpha_min + (alpha_max - alpha_min) * t;
-            let alpha = min(adaptive_alpha, base_alpha);
+            let alpha = min(0.01 + 0.2 * t, base_alpha);
 
             let blended_avg = curr_avg * (1.0 - alpha) + frame_mean * alpha;
 

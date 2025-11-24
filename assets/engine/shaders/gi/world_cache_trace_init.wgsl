@@ -109,11 +109,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     var gi_reservoir = gi_reservoir_init();
     for (var i = 0u; i < num_ris_samples; i = i + 1u) {
         let sample = candidate_samples[i];
-        let brdf_for_target = calculate_brdf_rt(
-            normal, v_dir, sample.direction_and_source_pdf.xyz, albedo, roughness, metallic,
-            reflectance, clear_coat, clear_coat_roughness
-        );
-        let target_pdf = compute_gi_target_pdf(sample.radiance_and_target_pdf.xyz, brdf_for_target);
+        let target_pdf = sample.radiance_and_target_pdf.w;
         let ris_weight = target_pdf / max(sample.direction_and_source_pdf.w, 0.0001);
         
         if (ris_weight > 0.0 && !isinf(ris_weight)) {
@@ -124,29 +120,40 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     // Finalize reservoir and select best direction
     var ray_dir: vec3<f32>;
     var path_weight = vec3<f32>(1.0, 1.0, 1.0);
+    var ray_source_pdf = 0.0;
     var is_alive = 1u;
     
     if (gi_reservoir.m > 0u) {
         let selected_sample = candidate_samples[gi_reservoir.selected_index];
         let selected_dir = selected_sample.direction_and_source_pdf.xyz;
-        let selected_brdf = calculate_brdf_rt(
-            normal, v_dir, selected_dir, albedo, roughness, metallic,
-            reflectance, clear_coat, clear_coat_roughness
-        );
-        let selected_target = compute_gi_target_pdf(selected_sample.radiance_and_target_pdf.xyz, selected_brdf);
+        let selected_brdf = selected_sample.radiance_and_target_pdf.xyz;
+        let selected_target = selected_sample.radiance_and_target_pdf.w;
         gi_reservoir_finalize(&gi_reservoir, selected_target);
         
         ray_dir = selected_dir;
+        ray_source_pdf = selected_sample.direction_and_source_pdf.w;
         path_weight = selected_brdf * gi_reservoir.w;
         
         // Russian Roulette: Kill paths with very low throughput
         let weight_luminance = path_weight.x * 0.2126 + path_weight.y * 0.7152 + path_weight.z * 0.0722;
         let min_weight_threshold = 0.0001;
         
-        is_alive = select(0u, 1u, weight_luminance >= min_weight_threshold);
+        if (weight_luminance < min_weight_threshold) {
+            is_alive = 0u;
+            ray_source_pdf = 0.0;
+            world_cache_path_state[active_index].reservoir_radiance_m = vec4f(0.0);
+            world_cache_path_state[active_index].reservoir_direction_w = vec4f(0.0);
+        } else {
+            is_alive = 1u;
+            world_cache_path_state[active_index].reservoir_radiance_m = vec4f(selected_sample.radiance_and_target_pdf.xyz, f32(gi_reservoir.m));
+            world_cache_path_state[active_index].reservoir_direction_w = vec4f(selected_dir, gi_reservoir.w);
+        }
     } else {
         // Reservoir failed - kill path
         is_alive = 0u;
+        ray_source_pdf = 0.0;
+        world_cache_path_state[active_index].reservoir_radiance_m = vec4f(0.0);
+        world_cache_path_state[active_index].reservoir_direction_w = vec4f(0.0);
         
         // Generate fallback direction
         rng = random_seed(rng);
@@ -195,6 +202,6 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     world_cache_path_state[active_index].hit_attr0 = vec4<f32>(0.0);
     world_cache_path_state[active_index].hit_attr1 = vec4<f32>(0.0);
     world_cache_path_state[active_index].rng_sample_count_frame_stamp = vec4<f32>(f32(rng), 0.0, f32(frame_id), 0.0);
-    world_cache_path_state[active_index].path_weight = vec4<f32>(path_weight, 1.0);
+    world_cache_path_state[active_index].path_weight = vec4<f32>(path_weight, ray_source_pdf);
 }
 

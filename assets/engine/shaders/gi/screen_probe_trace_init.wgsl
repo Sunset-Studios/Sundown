@@ -13,16 +13,15 @@
 @group(1) @binding(0) var<uniform> gi_params: GIParams;
 @group(1) @binding(1) var<storage, read_write> gi_counters: GICounters;
 @group(1) @binding(2) var<storage, read> screen_probe_metadata: array<ScreenProbe>;
-@group(1) @binding(3) var probe_radiance_prev: texture_2d<f32>;
-@group(1) @binding(4) var<storage, read_write> probe_path_state: array<ProbePathState>;
-@group(1) @binding(5) var<storage, read> light_count_buffer: array<u32>;
-@group(1) @binding(6) var<storage, read> dense_lights_buffer: array<Light>;
-@group(1) @binding(7) var<storage, read_write> world_cache: array<WorldCacheCell>;
-@group(1) @binding(8) var gbuffer_position: texture_2d<f32>;
-@group(1) @binding(9) var gbuffer_normal: texture_2d<f32>;
-@group(1) @binding(10) var gbuffer_albedo: texture_2d<f32>;
-@group(1) @binding(11) var gbuffer_smra: texture_2d<f32>;
-@group(1) @binding(12) var gbuffer_motion: texture_2d<f32>;
+@group(1) @binding(3) var<storage, read_write> probe_path_state: array<ProbePathState>;
+@group(1) @binding(4) var<storage, read> light_count_buffer: array<u32>;
+@group(1) @binding(5) var<storage, read> dense_lights_buffer: array<Light>;
+@group(1) @binding(6) var<storage, read_write> world_cache: array<WorldCacheCell>;
+@group(1) @binding(7) var gbuffer_position: texture_2d<f32>;
+@group(1) @binding(8) var gbuffer_normal: texture_2d<f32>;
+@group(1) @binding(9) var gbuffer_albedo: texture_2d<f32>;
+@group(1) @binding(10) var gbuffer_smra: texture_2d<f32>;
+@group(1) @binding(11) var gbuffer_motion: texture_2d<f32>;
 
 @compute @workgroup_size(128, 1, 1)
 fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
@@ -146,11 +145,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     var gi_reservoir = gi_reservoir_init();
     for (var i = 0u; i < num_ris_samples; i = i + 1u) {
         let sample = candidate_samples[i];
-        let brdf_for_target = calculate_brdf_rt(
-            normal, v_dir, sample.direction_and_source_pdf.xyz, albedo, roughness, metallic,
-            reflectance, clear_coat, clear_coat_roughness
-        );
-        let target_pdf = compute_gi_target_pdf(sample.radiance_and_target_pdf.xyz, brdf_for_target);
+        let target_pdf = sample.radiance_and_target_pdf.w;
         let ris_weight = target_pdf / max(sample.direction_and_source_pdf.w, 0.0001);
         
         if (ris_weight > 0.0 && !isinf(ris_weight)) {
@@ -161,19 +156,18 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     // Finalize reservoir and select best direction
     var ray_dir: vec3<f32>;
     var path_weight = vec3<f32>(1.0, 1.0, 1.0);
+    var ray_source_pdf = 0.0;
     var is_alive = 1u;
     
     if (gi_reservoir.m > 0u) {
         let selected_sample = candidate_samples[gi_reservoir.selected_index];
         let selected_dir = selected_sample.direction_and_source_pdf.xyz;
-        let selected_brdf = calculate_brdf_rt(
-            normal, v_dir, selected_dir, albedo, roughness, metallic,
-            reflectance, clear_coat, clear_coat_roughness
-        );
-        let selected_target = compute_gi_target_pdf(selected_sample.radiance_and_target_pdf.xyz, selected_brdf);
+        let selected_brdf = selected_sample.radiance_and_target_pdf.xyz;
+        let selected_target = selected_sample.radiance_and_target_pdf.w;
         gi_reservoir_finalize(&gi_reservoir, selected_target);
         
         ray_dir = selected_dir;
+        ray_source_pdf = selected_sample.direction_and_source_pdf.w;
         
         // Update path weight with BRDF and reservoir weight
         let brdf_weight = selected_brdf * gi_reservoir.w;
@@ -186,6 +180,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         if (weight_luminance < min_weight_threshold) {
             // Path weight too low - kill path and clear reservoir
             is_alive = 0u;
+            ray_source_pdf = 0.0;
             probe_path_state[gid.x].reservoir_radiance_m = vec4f(0.0);
             probe_path_state[gid.x].reservoir_direction_w = vec4f(0.0);
         } else {
@@ -246,7 +241,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     probe_path_state[gid.x].hit_attr0 = vec4<f32>(0.0);
     probe_path_state[gid.x].hit_attr1 = vec4<f32>(0.0);
     probe_path_state[gid.x].rng_sample_count_frame_stamp = vec4<f32>(f32(rng), 0.0, f32(frame_id), 0.0);
-    probe_path_state[gid.x].path_weight = vec4<f32>(path_weight, 1.0);
+    probe_path_state[gid.x].path_weight = vec4<f32>(path_weight, ray_source_pdf);
     probe_path_state[gid.x].throughput = vec4<f32>(emissive * albedo, 0.0);
 }
 

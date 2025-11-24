@@ -183,14 +183,13 @@ fn decode_octahedral(encoded: vec2<f32>) -> vec3<f32> {
 
 fn direction_to_probe_local_coord(direction: vec3<f32>, probe_size: u32) -> vec2<u32> {
     let encoded = encode_octahedral(direction);
-    let clamped_size = max(min(probe_size, u32(MAX_SCREEN_PROBE_SIZE)), 1u);
+    let clamped_size = min(probe_size, u32(MAX_SCREEN_PROBE_SIZE));
     let scaled = clamp(
         encoded * vec2<f32>(f32(clamped_size)),
         vec2<f32>(0.0),
         vec2<f32>(f32(clamped_size) - 1e-4)
     );
-    let coord = vec2<u32>(scaled);
-    return coord;
+    return vec2<u32>(scaled);
 }
 
 // =============================================================================

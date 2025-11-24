@@ -1,4 +1,4 @@
-const num_ris_samples = 2u;
+const num_ris_samples = 4u;
 const num_spatial_samples = 3u;
 const num_max_samples = 8u;
 const spatial_radius = 20.0;

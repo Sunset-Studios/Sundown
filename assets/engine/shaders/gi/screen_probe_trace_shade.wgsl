@@ -152,10 +152,9 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         // === World Cache Query - Early termination with cached irradiance ===
         // =====================================================================
         // Query world cache at hit point to check if we have cached radiance
-        // NOTE: Use geometric normal (world_n) not shading normal (n) for consistent cache lookups
         let cached_radiance = query_world_cache_cell(
             hit_pos,
-            world_n,
+            n,
             albedo,
             roughness,
             metallic,

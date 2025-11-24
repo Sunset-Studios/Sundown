@@ -139,7 +139,19 @@ struct FragmentOutput {
 
 
 #if USE_RADIANCE_CACHE_AS_DEFERRED_LIGHTING
-    color += select(irradiance * ao, irradiance, ao <= 0.0);
+    let radiance_brdf = calculate_brdf_from_irradiance(
+        normalized_normal,
+        view_dir,
+        albedo,
+        roughness,
+        metallic,
+        reflectance,
+        0.0, // clear coat
+        0.0, // clear coat roughness
+        ao,
+        irradiance
+    );
+    color += radiance_brdf;
 #else
     let num_lights = light_count_buffer[0] * (1u - unlit);
     for (var light_index = 0u; light_index < num_lights; light_index++) {

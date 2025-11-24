@@ -23,15 +23,16 @@
 @group(1) @binding(0) var<uniform> gi_params: GIParams;
 @group(1) @binding(1) var probe_radiance_prev: texture_2d<f32>;
 @group(1) @binding(2) var<storage, read_write> screen_probe_metadata: array<ScreenProbe>;
-@group(1) @binding(3) var gbuffer_position: texture_2d<f32>;
-@group(1) @binding(4) var gbuffer_position_prev: texture_2d<f32>;
-@group(1) @binding(5) var gbuffer_normal: texture_2d<f32>;
-@group(1) @binding(6) var gbuffer_normal_prev: texture_2d<f32>;
-@group(1) @binding(7) var gbuffer_motion: texture_2d<f32>;
-@group(1) @binding(8) var<storage, read_write> empty_tiles: array<u32>;
-@group(1) @binding(9) var<storage, read_write> override_tiles: array<u32>;
-@group(1) @binding(10) var<storage, read_write> tile_counters: TileCounters;
-@group(1) @binding(11) var probe_radiance_curr: texture_storage_2d<rgba16float, write>;
+@group(1) @binding(3) var<storage, read> screen_probe_metadata_prev: array<ScreenProbe>;
+@group(1) @binding(4) var gbuffer_position: texture_2d<f32>;
+@group(1) @binding(5) var gbuffer_position_prev: texture_2d<f32>;
+@group(1) @binding(6) var gbuffer_normal: texture_2d<f32>;
+@group(1) @binding(7) var gbuffer_normal_prev: texture_2d<f32>;
+@group(1) @binding(8) var gbuffer_motion: texture_2d<f32>;
+@group(1) @binding(9) var<storage, read_write> empty_tiles: array<u32>;
+@group(1) @binding(10) var<storage, read_write> override_tiles: array<u32>;
+@group(1) @binding(11) var<storage, read_write> tile_counters: TileCounters;
+@group(1) @binding(12) var probe_radiance_curr: texture_storage_2d<rgba16float, write>;
 
 const WORKGROUP_SIZE_X = 8u;
 const WORKGROUP_SIZE_Y = 8u;
@@ -150,7 +151,7 @@ fn cs(
         let distance_to_camera = distance(camera_position, position_current);
         let adaptive_cell_size = max(distance_scale * distance_to_camera, 0.0001);
 
-        let prev_probe_state = screen_probe_metadata[probe_index_prev].state;
+        let prev_probe_state = screen_probe_metadata_prev[probe_index_prev].state;
         if (prev_probe_state.x <= 0.0) {
             continue;
         }
@@ -213,7 +214,7 @@ fn cs(
             if (found_valid_reprojection) {
                 let slot_index = tile_index * tile_pixel_count + winning_pixel_index;
                 let prev_probe_index = slot_prev_probe_index[slot_index];
-                let prev_probe = screen_probe_metadata[prev_probe_index];
+                let prev_probe = screen_probe_metadata_prev[prev_probe_index];
 
                 let tile_corner = probe_tile * probe_size;
                 let winner_pixel_offset = vec2<u32>(
@@ -231,7 +232,7 @@ fn cs(
                     1.0,
                     f32(winner_pixel.x),
                     f32(winner_pixel.y),
-                    min(prev_probe.state.w + 1.0, 1024.0);
+                    min(prev_probe.state.w + 1.0, 1024.0)
                 );
 
                 tile_success_flag[tile_index] = 1u;

@@ -304,6 +304,46 @@ fn calculate_brdf(
 }
 
 // ------------------------------------------------------------------------------------
+// BRDF (Irradiance Input Variant)
+// - Applies the layered BRDF using a precomputed irradiance signal (direct + indirect)
+// - Useful for radiance cache / GI textures where explicit lights are unavailable
+// ------------------------------------------------------------------------------------
+fn calculate_brdf_from_irradiance(
+    normal: vec3<f32>,
+    view_dir: vec3<f32>,
+    albedo: vec3<f32>,
+    roughness: f32,
+    metallic: f32,
+    reflectance: f32,
+    clear_coat: f32,
+    clear_coat_roughness: f32,
+    ao: f32,
+    irradiance: vec3<f32>,
+) -> vec3<f32> {
+    let pseudo_light_dir = normal;
+    let layered = calculate_brdf_rt(
+        normal,
+        view_dir,
+        pseudo_light_dir,
+        albedo,
+        roughness,
+        metallic,
+        reflectance,
+        clear_coat,
+        clear_coat_roughness,
+    );
+    let luma_weights = vec3<f32>(0.2126, 0.7152, 0.0722);
+    let brdf_luma = max(dot(layered, luma_weights), 0.0001);
+    let normalized_brdf = clamp(
+        layered / brdf_luma,
+        vec3<f32>(0.0, 0.0, 0.0),
+        vec3<f32>(8.0, 8.0, 8.0)
+    );
+    let occluded_irradiance = select(irradiance * ao, irradiance, ao <= 0.0);
+    return occluded_irradiance * normalized_brdf;
+}
+
+// ------------------------------------------------------------------------------------
 // BRDF - Ray Tracing Step Variant
 // - Light-agnostic evaluation for a sampled direction `light_dir`
 // - Returns (diffuse + specular [+ clear coat]) * n_dot_l
