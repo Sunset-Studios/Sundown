@@ -178,9 +178,9 @@ export class GI {
     upscale_x: 2, // Temporal upscale factor X (2x2 = 4 frames to fill)
     upscale_y: 2, // Temporal upscale factor Y
     world_cache_size: 32768, // Number of world cache cells (32K)
-    world_cache_cell_size: 2.0, // Size of world cache cells in world units (larger = better coverage)
+    world_cache_cell_size: 4.0, // Size of world cache cells in world units (larger = better coverage)
     world_cache_lod_count: 4, // Number of LOD levels for world cache
-    indirect_boost: 2.0, // Multiplier for indirect lighting
+    indirect_boost: 3.14, // Multiplier for indirect lighting
   };
 
   constructor(params = {}) {
