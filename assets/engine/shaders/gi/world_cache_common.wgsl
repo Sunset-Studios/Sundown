@@ -52,9 +52,9 @@ const p6 = 12582923;  // For direction hashing
 
 const BUCKET_SIZE = 8u;            // Number of cells per bucket
 const LOD_EXTENT = 128.0;          // Size of first LOD level
-const QUANTIZATION_RESOLUTION = 8; // Quantization resolution for direction hashing
-const WORLD_CACHE_RADIANCE_UPDATE_SAMPLE_CAP = 32.0; // Maximum sample count for radiance update
-const WORLD_CACHE_CELL_LIFETIME = 16.0; // Maximum lifetime of a cell in frames
+const QUANTIZATION_RESOLUTION = 1; // Quantization resolution for direction hashing
+const WORLD_CACHE_RADIANCE_UPDATE_SAMPLE_CAP = 16.0; // Maximum sample count for radiance update
+const WORLD_CACHE_CELL_LIFETIME = 33.0; // Maximum lifetime of a cell in frames
 const WORLD_CACHE_CELL_EMPTY = 0u;
 const PCG_MULTIPLIER = 747796405u;
 const PCG_INCREMENT = 2891336453u;
@@ -146,11 +146,14 @@ fn quantize_direction(direction: vec3<f32>) -> vec3<i32> {
 }
 
 // FIRST HASH: Descriptor → Bucket Index
-// Hashes the complete descriptor (position + direction + LOD) to a bucket
+// Hashes the complete descriptor (position + direction + LOD + short_ray flag) to a bucket
+// The is_short_ray flag separates rays that haven't traveled beyond a cell size,
+// preventing light leaking when secondary rays are shorter than cell dimensions
 fn hash_descriptor_to_bucket(
     quantized_pos: vec3<i32>,
     quantized_dir: vec3<i32>,
     lod_level: u32,
+    is_short_ray: bool,
     cache_size: u32,
     lod_count: u32
 ) -> u32 {
@@ -158,8 +161,10 @@ fn hash_descriptor_to_bucket(
     let hash_pos = (quantized_pos.x * p1) ^ (quantized_pos.y * p2) ^ (quantized_pos.z * p3);
     let hash_dir = (quantized_dir.x * p4) ^ (quantized_dir.y * p5) ^ (quantized_dir.z * p6);
     let hash_lod = i32(lod_level) * 196613; // Another prime
+    // Hash the short ray boolean to separate short/long ray events into distinct cells
+    let hash_short = select(0, 786433, is_short_ray); // Prime for short ray flag
     
-    let combined_hash = bitcast<u32>(hash_pos ^ hash_dir ^ hash_lod);
+    let combined_hash = bitcast<u32>(hash_pos ^ hash_dir ^ hash_lod ^ hash_short);
     
     // Map to bucket index (each bucket contains BUCKET_SIZE cells)
     // Hash across entire cache including all LOD levels
@@ -171,17 +176,21 @@ fn hash_descriptor_to_bucket(
 // SECOND HASH: Descriptor → Fingerprint
 // Creates a compact fingerprint for fast comparison within bucket
 // Uses different hash function to minimize collisions with bucket hash
+// Includes is_short_ray flag to match bucket hash descriptor
 fn hash_descriptor_to_fingerprint(
     quantized_pos: vec3<i32>,
     quantized_dir: vec3<i32>,
-    lod_level: u32
+    lod_level: u32,
+    is_short_ray: bool
 ) -> u32 {
     // Use different mixing pattern than bucket hash
     let hash_pos = (quantized_pos.x * p5) ^ (quantized_pos.y * p4) ^ (quantized_pos.z * p1);
     let hash_dir = (quantized_dir.x * p3) ^ (quantized_dir.y * p2) ^ (quantized_dir.z * p6);
     let hash_lod = i32(lod_level) * 393241; // Different prime
+    // Hash the short ray boolean with different prime than bucket hash
+    let hash_short = select(0, 1572869, is_short_ray); // Different prime for fingerprint
     
-    let fingerprint = bitcast<u32>(hash_pos ^ hash_dir ^ hash_lod);
+    let fingerprint = bitcast<u32>(hash_pos ^ hash_dir ^ hash_lod ^ hash_short);
     
     // Keep fingerprint non-zero (0 reserved for empty slots)
     return select(fingerprint, 1u, fingerprint == 0u);
@@ -208,10 +217,16 @@ fn query_world_cache_cell(
     camera_position: vec3<f32>,
     cache_size: u32,
     base_cell_size: f32,
-    lod_count: u32
+    lod_count: u32,
+    ray_length: f32
 ) -> vec3<f32> {
     // Determine LOD level (square thresholds) and create descriptor
     let lod_level = select_lod_level(position, camera_position, base_cell_size, lod_count);
+    let cell_size = get_lod_cell_size(lod_level, base_cell_size);
+    
+    // Light-leak prevention: separate short rays (< cell size) from long rays
+    // Short rays haven't traveled far enough to be in a geometrically distinct region
+    let is_short_ray = ray_length < cell_size;
     
     let quantized_pos = quantize_position(position, lod_level, base_cell_size);
     let quantized_dir = quantize_direction(normal);
@@ -220,13 +235,15 @@ fn query_world_cache_cell(
         quantized_pos,
         quantized_dir,
         lod_level,
+        is_short_ray,
         cache_size,
         lod_count
     );
     let target_fingerprint = hash_descriptor_to_fingerprint(
         quantized_pos,
         quantized_dir,
-        lod_level
+        lod_level,
+        is_short_ray
     );
     
     // Initialize PCG state for pseudorandom probing within bucket
@@ -287,7 +304,8 @@ fn query_world_cache_cell_probabilistic(
     base_cell_size: f32,
     lod_count: u32,
     allocation_radius: f32,  // Distance at which allocation probability = 0.5
-    random_value: f32        // Random value [0,1] for probabilistic decision
+    random_value: f32,       // Random value [0,1] for probabilistic decision
+    ray_length: f32          // Secondary ray length for light-leak prevention
 ) -> vec3<f32> {
     let distance_from_camera = length(position - camera_position);
     
@@ -312,7 +330,8 @@ fn query_world_cache_cell_probabilistic(
             camera_position,
             cache_size,
             base_cell_size,
-            lod_count
+            lod_count,
+            ray_length
         );
     }
     
@@ -323,7 +342,8 @@ fn query_world_cache_cell_probabilistic(
         camera_position,
         cache_size,
         base_cell_size,
-        lod_count
+        lod_count,
+        ray_length
     );
 }
 
@@ -343,7 +363,8 @@ fn query_world_cache_interpolated(
     camera_position: vec3<f32>,
     cache_size: u32,
     base_cell_size: f32,
-    lod_count: u32
+    lod_count: u32,
+    ray_length: f32
 ) -> vec3<f32> {
     // For now, just use direct query
     // Can be extended to sample neighboring directions for smoother results
@@ -358,7 +379,8 @@ fn query_world_cache_interpolated(
         camera_position,
         cache_size,
         base_cell_size,
-        lod_count
+        lod_count,
+        ray_length
     );
 }
 
@@ -368,10 +390,16 @@ fn read_world_cache_cell_radiance(
     camera_position: vec3<f32>,
     cache_size: u32,
     base_cell_size: f32,
-    lod_count: u32
+    lod_count: u32,
+    ray_length: f32
 ) -> vec3<f32> {
     // Determine LOD level (square thresholds) and create descriptor
     let lod_level = select_lod_level(position, camera_position, base_cell_size, lod_count);
+    let cell_size = get_lod_cell_size(lod_level, base_cell_size);
+    
+    // Light-leak prevention: separate short rays (< cell size) from long rays
+    let is_short_ray = ray_length < cell_size;
+    
     let quantized_pos = quantize_position(position, lod_level, base_cell_size);
     let quantized_dir = quantize_direction(normal);
     
@@ -379,13 +407,15 @@ fn read_world_cache_cell_radiance(
         quantized_pos,
         quantized_dir,
         lod_level,
+        is_short_ray,
         cache_size,
         lod_count
     );
     let target_fingerprint = hash_descriptor_to_fingerprint(
         quantized_pos,
         quantized_dir,
-        lod_level
+        lod_level,
+        is_short_ray
     );
     
     // Linear probe within bucket using fingerprint matching
@@ -409,9 +439,15 @@ fn validate_world_cache_cell(
     camera_position: vec3<f32>,
     cache_size: u32,
     base_cell_size: f32,
-    lod_count: u32
+    lod_count: u32,
+    ray_length: f32
 ) -> bool {
     let lod_level = select_lod_level(position, camera_position, base_cell_size, lod_count);
+    let cell_size = get_lod_cell_size(lod_level, base_cell_size);
+    
+    // Light-leak prevention: separate short rays (< cell size) from long rays
+    let is_short_ray = ray_length < cell_size;
+    
     let quantized_pos = quantize_position(position, lod_level, base_cell_size);
     let quantized_dir = quantize_direction(normal);
     
@@ -419,13 +455,15 @@ fn validate_world_cache_cell(
         quantized_pos,
         quantized_dir,
         lod_level,
+        is_short_ray,
         cache_size,
         lod_count
     );
     let target_fingerprint = hash_descriptor_to_fingerprint(
         quantized_pos,
         quantized_dir,
-        lod_level
+        lod_level,
+        is_short_ray
     );
 
     // Linear probe within bucket using fingerprint matching

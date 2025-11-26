@@ -1,89 +1,111 @@
 // =============================================================================
-// GI-1.0 Common Definitions
-// Shared structures and utilities for the GI system
+// ╔═══════════════════════════════════════════════════════════════════════════╗
+// ║                    GI COMMON DEFINITIONS                                  ║
+// ╠═══════════════════════════════════════════════════════════════════════════╣
+// ║                                                                           ║
+// ║  Shared structures and utilities for the per-pixel GI system:             ║
+// ║  • GI parameter structures                                                ║
+// ║  • Path state for ray tracing                                             ║
+// ║  • Tile-based stochastic sampling helpers                                 ║
+// ║  • Direction encoding/decoding                                            ║
+// ║  • Temporal blending algorithms                                           ║
+// ║                                                                           ║
+// ╚═══════════════════════════════════════════════════════════════════════════╝
 // =============================================================================
+
 #include "lighting_common.wgsl"
 
 // =============================================================================
-// Shared Probe Encoding Parameters
+// GI COUNTERS
 // =============================================================================
-const MAX_SCREEN_PROBE_SIZE = 32u;                     // Supports up to 32x32 tiles
-const MAX_SCREEN_PROBE_PIXEL_COUNT = MAX_SCREEN_PROBE_SIZE * MAX_SCREEN_PROBE_SIZE;
 
-// =============================================================================
-// GI Counters
-// - light_count: Number of lights in the scene (copied from lighting system)
-// - active_probe_count: Number of probes updated THIS frame (reset each frame)
-// 
-// Note: Total probe count is derived from grid dimensions and stored in GIParams.total_screen_probes
-// =============================================================================
 struct GICounters {
-    light_count: u32,                      // Number of lights
-    active_probe_count: atomic<u32>,       // Probes updated this frame (resets)
+    light_count: u32,
     active_cache_cell_count: atomic<u32>,
     _padding1: u32,
+    _padding2: u32,
 };
 
 // =============================================================================
-// Tile classification counters
+// GI PARAMETERS
 // =============================================================================
-struct TileCounters {
-    empty_count: atomic<u32>,
-    override_count: atomic<u32>,
-    padding0: u32,
-    padding1: u32,
-}
 
-// =============================================================================
-// GI Parameters
-// =============================================================================
 struct GIParams {
-    screen_probe_size: f32,         // Side length of square probe footprint in pixels
-    screen_ray_count: f32,          // Rays per screen probe
-    world_cache_size: f32,          // Number of world cache entries
-    world_cache_cell_size: f32,     // Size of world cache cells in world units
-    total_screen_probes: f32,       // Total probes in grid (derived from resolution)
-    frame_index: f32,               // Current frame for temporal updates
-    indirect_boost: f32,            // Indirect lighting multiplier (f32 bits)
-    upscale_x: f32,                 // Temporal upscale factor X
-    upscale_y: f32,                 // Temporal upscale factor Y
+    screen_ray_count: f32,          // Rays per tile per frame
+    world_cache_size: f32,          // Number of world cache entries per LOD
+    world_cache_cell_size: f32,     // Base cell size in world units
+    total_pixels: f32,              // Total pixels (width * height)
+    frame_index: f32,               // Current frame index
+    indirect_boost: f32,            // Indirect lighting multiplier
+    upscale_x: f32,                 // Temporal upscale factor X (tile width)
+    upscale_y: f32,                 // Temporal upscale factor Y (tile height)
     world_cache_lod_count: f32,     // Number of LOD levels for world cache
-    trace_rate: f32,                // Trace rate for path tracing
-    padding: f32,                   // Padding
+    resolution_x: f32,              // Screen resolution X
+    resolution_y: f32,              // Screen resolution Y
+    padding: f32,
 };
 
 // =============================================================================
-// Screen Probe
+// PER-PIXEL PATH STATE
+// 
+// Stores the complete state of a per-pixel ray for multi-pass path tracing.
+// Each tile traces screen_ray_count rays per frame.
 // =============================================================================
-struct ScreenProbe {
-    state: vec4<f32>,               // x = active(0/1), y = pixel_x, z = pixel_y, w = updated_this_frame(0/1)
+
+struct PixelPathState {
+    // ─────────────────────────────────────────────────────────────────────────
+    // Ray geometry
+    // ─────────────────────────────────────────────────────────────────────────
+    origin_tmin: vec4<f32>,              // xyz = ray origin, w = t_min
+    direction_tmax: vec4<f32>,           // xyz = ray direction, w = t_max / prim_store
+    normal_section_index: vec4<f32>,     // xyz = hit normal, w = section index
+    
+    // ─────────────────────────────────────────────────────────────────────────
+    // Ray state
+    // ─────────────────────────────────────────────────────────────────────────
+    state_u32: vec4<u32>,                // x = bounce, y = alive, z = shadow_visible, w = tri_id
+    
+    // ─────────────────────────────────────────────────────────────────────────
+    // Hit attributes (for material sampling)
+    // ─────────────────────────────────────────────────────────────────────────
+    hit_attr0: vec4<f32>,                // xyz = tangent, w = uv.x
+    hit_attr1: vec4<f32>,                // xyz = bitangent, w = uv.y
+    
+    // ─────────────────────────────────────────────────────────────────────────
+    // Shadow ray (NEE)
+    // ─────────────────────────────────────────────────────────────────────────
+    shadow_origin: vec4<f32>,            // xyz = shadow ray origin, w = light index
+    shadow_direction: vec4<f32>,         // xyz = shadow ray direction, w = max distance
+    shadow_radiance: vec4<f32>,          // xyz = potential light contribution, w = weight
+    
+    // ─────────────────────────────────────────────────────────────────────────
+    // Path throughput and sampling
+    // ─────────────────────────────────────────────────────────────────────────
+    path_weight: vec4<f32>,              // xyz = BRDF weight, w = source PDF
+    rng_sample_count_frame_stamp: vec4<f32>, // x = RNG state, y = sample count, z = frame, w = unused
+    throughput: vec4<f32>,               // xyz = accumulated radiance, w = unused
+    
+    // ─────────────────────────────────────────────────────────────────────────
+    // ReSTIR reservoir
+    // ─────────────────────────────────────────────────────────────────────────
+    reservoir_radiance_m: vec4<f32>,     // xyz = reservoir radiance, w = M count
+    reservoir_direction_w: vec4<f32>,    // xyz = selected direction, w = weight
+    
+    // ─────────────────────────────────────────────────────────────────────────
+    // Pixel coordinates (for update pass)
+    // ─────────────────────────────────────────────────────────────────────────
+    pixel_coords: vec4<f32>,             // xy = pixel coordinates, zw = unused
 };
 
 // =============================================================================
-// Probe Path State
+// WORLD CACHE PATH STATE
 // =============================================================================
-struct ProbePathState {
-    origin_tmin: vec4<f32>,
-    direction_tmax: vec4<f32>,
-    normal_section_index: vec4<f32>,
-    state_u32: vec4<u32>,      // x=bounce, y=alive, z=unused, w=tri_id
-    hit_attr0: vec4<f32>,
-    hit_attr1: vec4<f32>,
-    shadow_origin: vec4<f32>,
-    shadow_direction: vec4<f32>,
-    shadow_radiance: vec4<f32>,
-    path_weight: vec4<f32>,
-    rng_sample_count_frame_stamp: vec4<f32>,
-    throughput: vec4<f32>,
-    reservoir_radiance_m: vec4<f32>,
-    reservoir_direction_w: vec4<f32>,
-};
 
 struct WorldCachePathState {
     origin_tmin: vec4<f32>,
     direction_tmax: vec4<f32>,
     normal_section_index: vec4<f32>,
-    state_u32: vec4<u32>,      // x=bounce, y=alive, z=unused, w=tri_id
+    state_u32: vec4<u32>,
     hit_attr0: vec4<f32>,
     hit_attr1: vec4<f32>,
     shadow_origin: vec4<f32>,
@@ -96,39 +118,38 @@ struct WorldCachePathState {
 };
 
 // =============================================================================
-// Helper: Pack half float into u32
+// HELPER FUNCTIONS
 // =============================================================================
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Pack half float into u32 (for distance comparison)
+// ─────────────────────────────────────────────────────────────────────────────
 fn pack_half_float(value: f32) -> u32 {
     let clamped = clamp(value, 0.0, 65504.0);
-    return u32(clamped * 2.0); // Simple packing (not true fp16, but sufficient for distance comparison)
+    return u32(clamped * 2.0);
 }
 
-// =============================================================================
-// Biased Temporal Hysteresis (GI-1.0 Algorithm 3)
-// - Adapts blend factor based on luminance difference
-// - Preserves shadows and occlusion better than exponential moving average
-// - Acts as firefly removal by filtering out transient bright signals
-// =============================================================================
+// ─────────────────────────────────────────────────────────────────────────────
+// Biased Temporal Hysteresis
+// Adapts blend factor based on luminance difference for shadow preservation
+// ─────────────────────────────────────────────────────────────────────────────
 fn temporal_blend(curr_radiance: vec3<f32>, prev_radiance: vec3<f32>) -> vec3<f32> {
-    // Compute luminance using equal weighting (1/3, 1/3, 1/3)
     let l1 = dot(curr_radiance, vec3<f32>(1.0 / 3.0));
     let l2 = dot(prev_radiance, vec3<f32>(1.0 / 3.0));
     
-    // Compute adaptive alpha based on normalized difference
-    // Bias towards darker values to preserve shadows
     let numerator = max(l1 - l2 - min(l1, l2), 0.0);
     let denominator = max(max(l1, l2), 1e-4);
     var alpha = numerator / denominator;
     
-    // Clamp and remap with squared falloff
     alpha = clamp(alpha, 0.0, 0.95);
     alpha = alpha * alpha;
     
-    // Blend: higher alpha = more previous radiance (temporal stability)
     return mix(curr_radiance, prev_radiance, alpha);
 }
 
-// Generate cosine-weighted hemisphere sample
+// ─────────────────────────────────────────────────────────────────────────────
+// Cosine-weighted hemisphere sampling
+// ─────────────────────────────────────────────────────────────────────────────
 fn sample_cosine_hemisphere(u1: f32, u2: f32, normal: vec3<f32>) -> vec3<f32> {
     let r = sqrt(u1);
     let theta = 2.0 * PI * u2;
@@ -138,7 +159,6 @@ fn sample_cosine_hemisphere(u1: f32, u2: f32, normal: vec3<f32>) -> vec3<f32> {
     let z = sqrt(max(0.0, 1.0 - u1));
     
     // Build TBN frame
-    // When normal is aligned with Y-axis, use X-axis as up; otherwise use Y-axis
     let up = select(vec3<f32>(1.0, 0.0, 0.0), vec3<f32>(0.0, 1.0, 0.0), abs(normal.y) < 0.999);
     let tangent = normalize(cross(up, normal));
     let bitangent = normalize(cross(normal, tangent));
@@ -147,15 +167,9 @@ fn sample_cosine_hemisphere(u1: f32, u2: f32, normal: vec3<f32>) -> vec3<f32> {
 }
 
 // =============================================================================
-// PROBE GRID HELPER
-// =============================================================================
-fn grid_dimensions(resolution: vec2<u32>, probe_size: u32) -> vec2<u32> {
-    return (resolution + probe_size - 1u) / probe_size;
-}
-
-// =============================================================================
 // OCTAHEDRAL DIRECTION ENCODING
 // =============================================================================
+
 fn encode_octahedral(direction: vec3<f32>) -> vec2<f32> {
     let normal = safe_normalize(direction);
     var projected = normal.xy / max(abs(normal.x) + abs(normal.y) + abs(normal.z), 1e-6);
@@ -181,33 +195,51 @@ fn decode_octahedral(encoded: vec2<f32>) -> vec3<f32> {
     return safe_normalize(normal);
 }
 
-fn direction_to_probe_local_coord(direction: vec3<f32>, probe_size: u32) -> vec2<u32> {
-    let encoded = encode_octahedral(direction);
-    let clamped_size = min(probe_size, u32(MAX_SCREEN_PROBE_SIZE));
-    let scaled = clamp(
-        encoded * vec2<f32>(f32(clamped_size)),
-        vec2<f32>(0.0),
-        vec2<f32>(f32(clamped_size) - 1e-4)
-    );
-    return vec2<u32>(scaled);
+// =============================================================================
+// TILE-BASED STOCHASTIC SAMPLING
+// 
+// Instead of dispatching all pixels and doing early-outs, we dispatch only
+// the number of tiles (upscale_x × upscale_y per tile) and randomly select
+// a pixel within each tile. This is more efficient and provides better
+// temporal sampling distribution.
+// =============================================================================
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Compute pixel coordinates from tile index with stochastic offset
+// Returns the pixel coordinates for a given tile, with random offset within tile
+// ─────────────────────────────────────────────────────────────────────────────
+fn tile_to_pixel_stochastic(
+    tile_index: u32,
+    tile_grid_width: u32,
+    upscale: vec2<u32>,
+    resolution: vec2<u32>,
+    rng: ptr<function, u32>
+) -> vec2<u32> {
+    // Compute tile coordinates from linear tile index
+    let tile_x = tile_index % tile_grid_width;
+    let tile_y = tile_index / tile_grid_width;
+    
+    // Compute tile corner in pixel space
+    let tile_corner_x = tile_x * upscale.x;
+    let tile_corner_y = tile_y * upscale.y;
+    
+    // Generate random offset within tile
+    *rng = random_seed(*rng);
+    let rand_x = u32(rand_float(*rng) * f32(upscale.x)) % upscale.x;
+    *rng = random_seed(*rng);
+    let rand_y = u32(rand_float(*rng) * f32(upscale.y)) % upscale.y;
+    
+    // Compute final pixel coordinates (clamp to resolution bounds)
+    let pixel_x = min(tile_corner_x + rand_x, resolution.x - 1u);
+    let pixel_y = min(tile_corner_y + rand_y, resolution.y - 1u);
+    
+    return vec2<u32>(pixel_x, pixel_y);
 }
 
-// =============================================================================
-// TEMPORAL UPSCALE SELECTION
-// Determines if this probe tile should be updated this frame
-// =============================================================================
-fn should_update_probe_this_frame(
-    probe_tile_coords: vec2<u32>,
-    frame_index: u32,
-    upscale: vec2<u32>
-) -> bool {
-    let total_frames = upscale.x * upscale.y;
-    let frame_in_cycle = frame_index % total_frames;
-    
-    // Create 2D tiling pattern: map tile coords to frame within upscale block
-    let tile_in_block_x = probe_tile_coords.x % upscale.x;
-    let tile_in_block_y = probe_tile_coords.y % upscale.y;
-    let probe_frame = tile_in_block_y * upscale.x + tile_in_block_x;
-    
-    return probe_frame == frame_in_cycle;
+// ─────────────────────────────────────────────────────────────────────────────
+// Compute total number of tiles for dispatch
+// ─────────────────────────────────────────────────────────────────────────────
+fn compute_tile_count(resolution: vec2<u32>, upscale: vec2<u32>) -> u32 {
+    let tile_grid_dims = vec2<u32>(resolution.x / upscale.x, resolution.y / upscale.y);
+    return tile_grid_dims.x * tile_grid_dims.y;
 }

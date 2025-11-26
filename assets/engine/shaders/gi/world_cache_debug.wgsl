@@ -46,6 +46,8 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let camera_position = view.view_position.xyz;
     
     // Query world cache with bucket+fingerprint (descriptor-based lookup)
+    // Use distance from camera as ray_length for light-leak prevention consistency
+    let ray_length = length(position - camera_position);
 #if WORLD_CACHE_SHOW_VALID_CELLS
     let is_valid = validate_world_cache_cell(
         position,
@@ -53,7 +55,8 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         camera_position,
         u32(gi_params.world_cache_size),
         gi_params.world_cache_cell_size,
-        u32(gi_params.world_cache_lod_count)
+        u32(gi_params.world_cache_lod_count),
+        ray_length
     );
     let cached_radiance = select(vec3<f32>(1.0, 0.0, 0.0), vec3<f32>(0.0, 1.0, 0.0), is_valid);
 #else
@@ -63,7 +66,8 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         camera_position,
         u32(gi_params.world_cache_size),
         gi_params.world_cache_cell_size,
-        u32(gi_params.world_cache_lod_count)
+        u32(gi_params.world_cache_lod_count),
+        ray_length
     );
 #endif
 

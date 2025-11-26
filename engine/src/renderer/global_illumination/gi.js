@@ -1,40 +1,61 @@
 /**
- * GI-1.0 Radiance Caching System
- *
- * Implements a two-level radiance caching scheme following the GI-1.0 paper:
- * - Screen Cache: Fixed grid of probes on primary surfaces with temporal reuse
- * - World Cache: Spatial hash-based cache for secondary+ bounce radiance
- *
- * Screen Probe Algorithm (per tile, per frame):
- * 1. Temporal Upscaling: Only fraction of tiles update each frame (e.g., 1/4)
- * 2. Reprojection: Use motion vectors to find previous probe
- *    - Each pixel in tile tracks backward to find which probe it came from
- *    - Validate: plane_distance < cell_size && normal_dot > 0.95
- *    - Threads compete atomically for best match (closest 3D distance)
- * 3. If reprojection succeeds: Reuse probe data (keep accumulated radiance!)
- * 4. If reprojection fails: Spawn new probe using Halton jitter, seed from world cache
- *    - Query spatial hash to find nearby cached radiance from secondary bounces
- *    - Provides much better initial estimates than starting from zero
- *    - Accelerates convergence and reduces flickering on disocclusions
- * 5. Ray tracing: Trace rays from probe position with temporal jittering
- * 6. Accumulation: Weighted average of ray throughput over time
- *    - Reprojected probes: maintain history for progressive refinement
- *    - New spawns: start with world cache seed for faster convergence
- *    - Sample count clamped to ~32 for responsiveness
- * 7. Gradual convergence as all tiles fill in over multiple frames
- *
- * Features:
- * - ReSTIR-based path sampling for high-quality convergence
- * - Two-level caching with cross-pollination (world cache seeds screen probes)
- * - Separate hit and visibility passes (aligned with path tracer architecture)
- * - Optimized BVH traversal with minimal redundant AABB tests
- * - Temporal stability through geometry-aware probe reuse
- * - Scalable configuration for different performance targets
- *
- * References:
- * - GI-1.0 Paper: https://gpuopen.com/download/GPUOpen2022_GI1_0.pdf
- * - Screen Space Radiance Caching (SSRC)
- * - ReSTIR GI
+ * ╔═══════════════════════════════════════════════════════════════════════════╗
+ * ║                     PER-PIXEL PATH TRACED GI SYSTEM                       ║
+ * ╠═══════════════════════════════════════════════════════════════════════════╣
+ * ║                                                                           ║
+ * ║  A simplified, high-quality global illumination system that traces rays  ║
+ * ║  directly from each screen pixel. Uses a two-level approach:             ║
+ * ║                                                                           ║
+ * ║  ┌─────────────────────────────────────────────────────────────────────┐  ║
+ * ║  │  LEVEL 1: Per-Pixel First Bounce                                    │  ║
+ * ║  │  ─────────────────────────────────                                  │  ║
+ * ║  │  • Each pixel traces 1+ rays per frame                              │  ║
+ * ║  │  • BRDF-importance sampled ray directions                           │  ║
+ * ║  │  • ReSTIR-based path sampling for quality                           │  ║
+ * ║  │  • Temporal accumulation with adaptive blending                     │  ║
+ * ║  └─────────────────────────────────────────────────────────────────────┘  ║
+ * ║                                                                           ║
+ * ║  ┌─────────────────────────────────────────────────────────────────────┐  ║
+ * ║  │  LEVEL 2: World Cache (Multi-Bounce Irradiance)                     │  ║
+ * ║  │  ──────────────────────────────────────────────                     │  ║
+ * ║  │  • Spatial hash-based radiance cache                                │  ║
+ * ║  │  • Provides cached irradiance at ray hit points                     │  ║
+ * ║  │  • Temporally recurrent for multi-bounce propagation                │  ║
+ * ║  │  • LOD-adaptive quantization for view-dependent quality             │  ║
+ * ║  └─────────────────────────────────────────────────────────────────────┘  ║
+ * ║                                                                           ║
+ * ║  Pipeline Flow:                                                           ║
+ * ║  ═════════════                                                            ║
+ * ║                                                                           ║
+ * ║  ┌──────────────┐    ┌──────────────┐    ┌──────────────┐                 ║
+ * ║  │ World Cache  │───▶│ World Cache  │───▶│ World Cache  │                 ║
+ * ║  │    Evict     │    │  Trace Init  │    │  Trace Hit   │                 ║
+ * ║  └──────────────┘    └──────────────┘    └──────────────┘                 ║
+ * ║          │                                      │                         ║
+ * ║          ▼                                      ▼                         ║
+ * ║  ┌──────────────┐                       ┌──────────────┐                  ║
+ * ║  │ World Cache  │◀──────────────────────│ World Cache  │                  ║
+ * ║  │   Compact    │                       │  Trace Shade │                  ║
+ * ║  └──────────────┘                       └──────────────┘                  ║
+ * ║          │                                                                ║
+ * ║          ▼                                                                ║
+ * ║  ┌──────────────┐    ┌──────────────┐    ┌──────────────┐                 ║
+ * ║  │ Pixel Trace  │───▶│ Pixel Trace  │───▶│ Pixel Trace  │                 ║
+ * ║  │     Init     │    │     Hit      │    │    Shade     │                 ║
+ * ║  └──────────────┘    └──────────────┘    └──────────────┘                 ║
+ * ║                                                 │                         ║
+ * ║                                                 ▼                         ║
+ * ║                                         ┌──────────────┐                  ║
+ * ║                                         │ Pixel Update │                  ║
+ * ║                                         │ (Accumulate) │                  ║
+ * ║                                         └──────────────┘                  ║
+ * ║                                                 │                         ║
+ * ║                                                 ▼                         ║
+ * ║                                         ┌──────────────┐                  ║
+ * ║                                         │  GI Output   │                  ║
+ * ║                                         └──────────────┘                  ║
+ * ║                                                                           ║
+ * ╚═══════════════════════════════════════════════════════════════════════════╝
  */
 
 import { DebugDrawType, RenderPassFlags } from "../renderer_types.js";
@@ -47,8 +68,13 @@ import { CacheTypes } from "../renderer_types.js";
 import { Name } from "../../utility/names.js";
 import { Texture } from "../texture.js";
 
+// ═══════════════════════════════════════════════════════════════════════════
+// CONSTANTS
+// ═══════════════════════════════════════════════════════════════════════════
+
 const COMPUTE_WORKGROUP_SIZE = 128;
 
+// Material resource names
 const material_offsets_name = "material_table_offset";
 const texture_pool_albedo_name = Name.from("texture_pool_albedo");
 const texture_pool_normal_name = Name.from("texture_pool_normal");
@@ -59,11 +85,23 @@ const texture_pool_height_name = Name.from("texture_pool_height");
 const texture_pool_specular_name = Name.from("texture_pool_specular");
 const texture_pool_emission_name = Name.from("texture_pool_emission");
 
+// ═══════════════════════════════════════════════════════════════════════════
+// SHADER CONFIGURATIONS
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ─────────────────────────────────────────────────────────────────────────────
+// System Shaders
+// ─────────────────────────────────────────────────────────────────────────────
+
 const gi_reset_shader_setup = {
   pipeline_shaders: {
     compute: { path: "gi/gi_reset.wgsl" },
   },
 };
+
+// ─────────────────────────────────────────────────────────────────────────────
+// World Cache Shaders
+// ─────────────────────────────────────────────────────────────────────────────
 
 const world_cache_evict_shader_setup = {
   pipeline_shaders: {
@@ -107,59 +145,37 @@ const world_cache_trace_shade_shader_setup = {
   },
 };
 
-const screen_probe_reproject_shader_setup = {
+// ─────────────────────────────────────────────────────────────────────────────
+// Per-Pixel Path Tracing Shaders
+// ─────────────────────────────────────────────────────────────────────────────
+
+const pixel_trace_init_shader_setup = {
   pipeline_shaders: {
-    compute: { path: "gi/screen_probe_reproject.wgsl" },
+    compute: { path: "gi/pixel_trace_init.wgsl" },
   },
 };
 
-const screen_probe_patch_shader_setup = {
+const pixel_trace_hit_shader_setup = {
   pipeline_shaders: {
-    compute: { path: "gi/screen_probe_patch.wgsl" },
+    compute: { path: "gi/pixel_trace_hit.wgsl" },
   },
 };
 
-const screen_probe_spawn_shader_setup = {
+const pixel_trace_shade_shader_setup = {
   pipeline_shaders: {
-    compute: { path: "gi/screen_probe_spawn.wgsl" },
+    compute: { path: "gi/pixel_trace_shade.wgsl" },
   },
 };
 
-const screen_probe_trace_init_shader_setup = {
+const pixel_update_shader_setup = {
   pipeline_shaders: {
-    compute: { path: "gi/screen_probe_trace_init.wgsl" },
+    compute: { path: "gi/pixel_update.wgsl" },
   },
 };
 
-const screen_probe_trace_hit_shader_setup = {
-  pipeline_shaders: {
-    compute: { path: "gi/screen_probe_trace_hit.wgsl" },
-  },
-};
-
-const screen_probe_trace_shade_shader_setup = {
-  pipeline_shaders: {
-    compute: { path: "gi/screen_probe_trace_shade.wgsl" },
-  },
-};
-
-const screen_probe_update_shader_setup = {
-  pipeline_shaders: {
-    compute: { path: "gi/screen_probe_update.wgsl" },
-  },
-};
-
-const screen_probe_reconstruct_shader_setup = {
-  pipeline_shaders: {
-    compute: { path: "gi/screen_probe_reconstruct.wgsl" },
-  },
-};
-
-const screen_probe_debug_shader_setup = {
-  pipeline_shaders: {
-    compute: { path: "gi/screen_probe_debug.wgsl" },
-  },
-};
+// ─────────────────────────────────────────────────────────────────────────────
+// Debug Shaders
+// ─────────────────────────────────────────────────────────────────────────────
 
 const world_cache_debug_shader_setup = {
   pipeline_shaders: {
@@ -167,65 +183,59 @@ const world_cache_debug_shader_setup = {
   },
 };
 
+// ═══════════════════════════════════════════════════════════════════════════
+// GI SYSTEM CLASS
+// ═══════════════════════════════════════════════════════════════════════════
+
 export class GI {
+  // Output textures
   final_gi_texture = null;
   debug_texture = null;
 
-  // Configuration parameters
+  // ─────────────────────────────────────────────────────────────────────────
+  // Configuration Parameters
+  // ─────────────────────────────────────────────────────────────────────────
   config = {
-    screen_probe_size: 4, // Side length of probe footprint in pixels
-    screen_ray_count: 1, // Rays per screen probe (directional atlas coverage)
-    upscale_x: 2, // Temporal upscale factor X (2x2 = 4 frames to fill)
-    upscale_y: 2, // Temporal upscale factor Y
-    world_cache_size: 32768, // Number of world cache cells (32K)
-    world_cache_cell_size: 4.0, // Size of world cache cells in world units (larger = better coverage)
-    world_cache_lod_count: 4, // Number of LOD levels for world cache
-    indirect_boost: 3.14, // Multiplier for indirect lighting
+    screen_ray_count: 1,          // Rays per pixel per frame (1 recommended for real-time)
+    upscale_x: 2,                 // Temporal upscale factor X
+    upscale_y: 2,                 // Temporal upscale factor Y
+    world_cache_size: 32768,      // Number of world cache cells per LOD level
+    world_cache_cell_size: 4.0,   // Base cell size in world units
+    world_cache_lod_count: 4,     // Number of LOD levels
+    indirect_boost: 3.14,         // Multiplier for indirect lighting contribution
   };
 
+  // GI parameters buffer data (matches shader GIParams struct)
+  gi_params_data = new Float32Array([
+    0,    // screen_ray_count
+    0,    // world_cache_size
+    0,    // world_cache_cell_size
+    0,    // total_pixels
+    0,    // frame_index
+    0,    // indirect_boost
+    0,    // upscale_x
+    0,    // upscale_y
+    0,    // world_cache_lod_count
+    0,    // resolution_x
+    0,    // resolution_y
+    0,    // padding
+  ]);
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Constructor
+  // ─────────────────────────────────────────────────────────────────────────
   constructor(params = {}) {
     // Override defaults with provided parameters
     this.config = { ...this.config, ...params };
-    // GI parameters buffer (must match shader GIParams struct)
-    this.gi_params_data = new Float32Array([
-      0, // screen_probe_size
-      0, // screen_ray_count
-      0, // world_cache_size
-      0, // world_cache_cell_size
-      0, // total_screen_probes
-      0, // frame_index
-      0, // indirect_boost
-      0, // upscale_x
-      0, // upscale_y
-      0, // world_cache_lod_count
-      0, // trace_rate
-      0, // padding
-    ]);
   }
 
+  // ═══════════════════════════════════════════════════════════════════════════
+  // MAIN PASS SETUP
+  // ═══════════════════════════════════════════════════════════════════════════
+
   /**
-   * Adds global-illumination passes to the render graph and exposes the final
-   * indirect-lighting texture via `final_gi_texture`.
-   *
-   * @param {RenderGraph} render_graph - The render graph to add passes to
-   * @param {number} width - Screen width
-   * @param {number} height - Screen height
-   * @param {string} gbuffer_position - Position GBuffer texture name
-   * @param {string} gbuffer_position_prev - Previous position GBuffer texture name
-   * @param {string} gbuffer_normal - Normal GBuffer texture name
-   * @param {string} gbuffer_normal_prev - Previous normal GBuffer texture name
-   * @param {string} gbuffer_albedo - Albedo GBuffer texture name
-   * @param {string} gbuffer_smra - SMRA GBuffer texture name
-   * @param {string} gbuffer_motion_emissive - Motion and emissive GBuffer texture name
-   * @param {string} tlas_bvh2_bounds - TLAS BVH2 bounds buffer name
-   * @param {string} tlas_bvh4_nodes - TLAS BVH4 nodes buffer name
-   * @param {string} blas_atlas - BLAS atlas buffer name
-   * @param {string} entity_transforms - Entity transforms buffer name
-   * @param {string} mesh_asset_ids - Mesh asset IDs buffer name
-   * @param {string} index_buffer - Index buffer name
-   * @param {string} dense_lights - Dense lights buffer name
-   * @param {string} light_count - Light count buffer name
-   * @param {boolean} force_recreate - Force recreation of resources
+   * Adds global-illumination passes to the render graph.
+   * Exposes the final indirect-lighting texture via `final_gi_texture`.
    */
   add_passes(
     render_graph,
@@ -249,9 +259,9 @@ export class GI {
     draw_count,
     force_recreate = false
   ) {
-    // =========================================================================
-    // Create GI Resources
-    // =========================================================================
+    // ─────────────────────────────────────────────────────────────────────
+    // Create GI Output Texture
+    // ─────────────────────────────────────────────────────────────────────
     let gi_output = render_graph.create_image({
       name: "gi_output",
       format: "rgba16float",
@@ -261,67 +271,82 @@ export class GI {
       force: force_recreate,
     });
 
+    // Only add GI passes if there are drawable objects
     if (draw_count > 0) {
-        this.add_probe_based_passes(
-          render_graph,
-          width,
-          height,
-          tlas_bvh2_bounds,
-          tlas_bvh4_nodes,
-          blas_atlas,
-          entity_transforms,
-          mesh_asset_ids,
-          index_buffer,
-          dense_lights,
-          light_count,
-          gbuffer_position,
-          gbuffer_position_prev,
-          gbuffer_normal,
-          gbuffer_normal_prev,
-          gbuffer_albedo,
-          gbuffer_smra,
-          gbuffer_motion_emissive,
-          gi_output,
-          force_recreate
-        );
+      this.add_per_pixel_gi_passes(
+        render_graph,
+        width,
+        height,
+        tlas_bvh2_bounds,
+        tlas_bvh4_nodes,
+        blas_atlas,
+        entity_transforms,
+        mesh_asset_ids,
+        index_buffer,
+        dense_lights,
+        light_count,
+        gbuffer_position,
+        gbuffer_position_prev,
+        gbuffer_normal,
+        gbuffer_normal_prev,
+        gbuffer_albedo,
+        gbuffer_smra,
+        gbuffer_motion_emissive,
+        gi_output,
+        force_recreate
+      );
     }
 
-    // Store references for external use
+    // Store reference for external use
     this.final_gi_texture = gi_output;
   }
 
-  add_probe_based_passes(
+  // ═══════════════════════════════════════════════════════════════════════════
+  // PER-PIXEL GI PASSES
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  add_per_pixel_gi_passes(
     render_graph,
     width,
     height,
-    tlas_bvh2_bounds = null,
-    tlas_bvh4_nodes = null,
-    blas_atlas = null,
-    entity_transforms = null,
-    mesh_asset_ids = null,
-    index_buffer = null,
-    dense_lights = null,
-    light_count = null,
-    gbuffer_position = null,
-    gbuffer_position_prev = null,
-    gbuffer_normal = null,
-    gbuffer_normal_prev = null,
-    gbuffer_albedo = null,
-    gbuffer_smra = null,
-    gbuffer_motion_emissive = null,
-    gi_output = null,
-    force_recreate = false
+    tlas_bvh2_bounds,
+    tlas_bvh4_nodes,
+    blas_atlas,
+    entity_transforms,
+    mesh_asset_ids,
+    index_buffer,
+    dense_lights,
+    light_count,
+    gbuffer_position,
+    gbuffer_position_prev,
+    gbuffer_normal,
+    gbuffer_normal_prev,
+    gbuffer_albedo,
+    gbuffer_smra,
+    gbuffer_motion_emissive,
+    gi_output,
+    force_recreate
   ) {
-    let grid_width = Math.ceil(width / this.config.screen_probe_size);
-    let grid_height = Math.ceil(height / this.config.screen_probe_size);
-    let total_screen_probes = grid_width * grid_height;
-    
+    // ─────────────────────────────────────────────────────────────────────
+    // Calculate Dimensions
+    // ─────────────────────────────────────────────────────────────────────
+    const total_pixels = width * height;
     const total_cells = this.config.world_cache_size * this.config.world_cache_lod_count;
 
-    const probe_atlas_width = grid_width * this.config.screen_probe_size;
-    const probe_atlas_height = grid_height * this.config.screen_probe_size;
+    // Tile-based dispatch: only trace one pixel per tile per frame
+    // Each tile is upscale_x × upscale_y pixels
+    const tile_grid_width = Math.ceil(width / this.config.upscale_x);
+    const tile_grid_height = Math.ceil(height / this.config.upscale_y);
+    const tiles_per_frame = tile_grid_width * tile_grid_height;
+    const rays_per_frame = tiles_per_frame * this.config.screen_ray_count;
 
-    // GI parameters buffer
+    // ═════════════════════════════════════════════════════════════════════
+    // CREATE GPU RESOURCES
+    // ═════════════════════════════════════════════════════════════════════
+
+    // ─────────────────────────────────────────────────────────────────────
+    // GI Parameters Buffer
+    // ─────────────────────────────────────────────────────────────────────
     const gi_params = render_graph.create_buffer({
       name: "gi_params",
       size: this.gi_params_data.byteLength,
@@ -329,18 +354,22 @@ export class GI {
       force: force_recreate,
     });
 
-    // GI counters buffer: light_count + active_probe_count + padding
+    // ─────────────────────────────────────────────────────────────────────
+    // GI Counters Buffer
+    // ─────────────────────────────────────────────────────────────────────
     let gi_counters = render_graph.create_buffer({
       name: "gi_counters",
-      size: 16, // 4 x u32 (light_count, active_probe_count, active_cache_cell_count, padding)
+      size: 16, // 4 x u32 (light_count, active_cache_cell_count, padding, padding)
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
       force: force_recreate,
     });
 
-    // World cache storage (persistent across frames)
+    // ─────────────────────────────────────────────────────────────────────
+    // World Cache Storage
+    // ─────────────────────────────────────────────────────────────────────
     const world_cache = render_graph.create_buffer({
       name: "gi_world_cache",
-      size: total_cells * 96,
+      size: total_cells * 96, // WorldCacheCell size
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
       force: force_recreate,
     });
@@ -348,28 +377,28 @@ export class GI {
     // World cache compaction buffers
     const world_cache_active_flags = render_graph.create_buffer({
       name: "gi_world_cache_active_flags",
-      size: total_cells * 4, // u32 per cell
+      size: total_cells * 4,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
       force: force_recreate,
     });
 
     const world_cache_prefix_sum = render_graph.create_buffer({
       name: "gi_world_cache_prefix_sum",
-      size: total_cells * 4, // u32 per cell
+      size: total_cells * 4,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
       force: force_recreate,
     });
 
     const world_cache_block_sums = render_graph.create_buffer({
       name: "gi_world_cache_block_sums",
-      size: Math.ceil(total_cells / COMPUTE_WORKGROUP_SIZE) * 4, // u32 per workgroup
+      size: Math.ceil(total_cells / COMPUTE_WORKGROUP_SIZE) * 4,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
       force: force_recreate,
     });
 
     const world_cache_compacted_indices = render_graph.create_buffer({
       name: "gi_world_cache_compacted_indices",
-      size: total_cells * 4, // u32 per cell (worst case: all active)
+      size: total_cells * 4,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
       force: force_recreate,
     });
@@ -381,102 +410,52 @@ export class GI {
       force: force_recreate,
     });
 
-    // World cache path state for tracing from active cells
-    // Each active cell traces 1 ray per frame to populate cache with indirect radiance
     const world_cache_path_state = render_graph.create_buffer({
       name: "gi_world_cache_path_state",
-      size: total_cells * 13 * 4, // Same structure as WorldCachePathState (13 vec4<f32> per ray)
+      size: total_cells * 13 * 4, // WorldCachePathState
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
       force: force_recreate,
     });
 
-    // =========================================================================
-    // Screen Probe Textures (Ping-Pong for Temporal Reprojection)
-    // =========================================================================
-    // Each probe occupies screen_probe_size x screen_probe_size texels in the atlas
-    // Probe grid dimensions
+    // ─────────────────────────────────────────────────────────────────────
+    // Per-Pixel Path State (sized for rays traced per frame, not all pixels)
+    // ─────────────────────────────────────────────────────────────────────
+    let pixel_path_state = render_graph.create_buffer({
+      name: "gi_pixel_path_state",
+      size: rays_per_frame * 15 * 4, // PixelPathState (15 vec4 per ray)
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+      force: force_recreate,
+    });
 
-
-    // Ping-pong probe radiance textures
-    // Each probe is a screen_probe_size x screen_probe_size octahedral atlas
-    // RGBA16F: RGB = radiance, A = hit distance for reconstruction
-    const screen_probe_radiance_0 = render_graph.create_image({
-      name: "gi_screen_probe_radiance_0",
+    // ─────────────────────────────────────────────────────────────────────
+    // Per-Pixel Radiance Accumulation (Ping-Pong)
+    // ─────────────────────────────────────────────────────────────────────
+    const pixel_radiance_0 = render_graph.create_image({
+      name: "gi_pixel_radiance_0",
       format: "rgba16float",
-      width: probe_atlas_width,
-      height: probe_atlas_height,
+      width: width,
+      height: height,
       usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
       force: force_recreate,
     });
 
-    const screen_probe_radiance_1 = render_graph.create_image({
-      name: "gi_screen_probe_radiance_1",
+    const pixel_radiance_1 = render_graph.create_image({
+      name: "gi_pixel_radiance_1",
       format: "rgba16float",
-      width: probe_atlas_width,
-      height: probe_atlas_height,
+      width: width,
+      height: height,
       usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
       force: force_recreate,
     });
 
-    // Probe metadata buffer: matches ScreenProbe struct
-    // Each probe: state(vec4)
-    const screen_probe_metadata_0 = render_graph.create_buffer({
-      name: "gi_screen_probe_metadata_0",
-      size: total_screen_probes * 16, // 1 x vec4<f32> per probe (16 bytes)
-      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-      force: force_recreate,
-    });
-
-    const screen_probe_metadata_1 = render_graph.create_buffer({
-      name: "gi_screen_probe_metadata_1",
-      size: total_screen_probes * 16, // 1 x vec4<f32> per probe (16 bytes)
-      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-      force: force_recreate,
-    });
-
-    // Tile classification buffers for reprojection and patching
-    // Queue of empty tiles (need new probes)
-    const screen_probe_empty_tiles = render_graph.create_buffer({
-      name: "gi_screen_probe_empty_tiles",
-      size: total_screen_probes * 4, // u32 per tile (worst case: all empty)
-      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-      force: force_recreate,
-    });
-
-    // Queue of override tiles (reprojected but may be reassigned)
-    const screen_probe_override_tiles = render_graph.create_buffer({
-      name: "gi_screen_probe_override_tiles",
-      size: total_screen_probes * 4, // u32 per tile (worst case: all override)
-      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-      force: force_recreate,
-    });
-
-    // Tile classification counters: empty_count, override_count
-    const screen_probe_tile_counters = render_graph.create_buffer({
-      name: "gi_screen_probe_tile_counters",
-      size: 16, // 4 x u32 (empty_count, override_count, padding, padding)
-      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-      force: force_recreate,
-    });
-
-    const max_probe_rays = total_screen_probes * this.config.screen_ray_count;
-    let probe_path_state = render_graph.create_buffer({
-      name: "gi_probe_path_state",
-      size: max_probe_rays * 14 * 4, // 14 vec4<f32> per ray
-      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-      force: force_recreate,
-    });
-
-    // Determine which probe radiance textures are current vs previous based on ping-pong flip
-    // On frame N, we read from the texture we wrote to on frame N-1
+    // Ping-pong selection based on frame index
     const ping_pong_frame = SharedFrameInfoBuffer.get_frame_index() % 2;
-    const probe_radiance_prev = screen_probe_radiance_0;
-    const probe_radiance_curr = screen_probe_radiance_1;
+    const pixel_radiance_prev = ping_pong_frame === 0 ? pixel_radiance_0 : pixel_radiance_1;
+    const pixel_radiance_curr = ping_pong_frame === 0 ? pixel_radiance_1 : pixel_radiance_0;
 
-    const screen_probe_metadata = ping_pong_frame == 0 ? screen_probe_metadata_0 : screen_probe_metadata_1;
-    const screen_probe_metadata_prev = ping_pong_frame == 0 ? screen_probe_metadata_1 : screen_probe_metadata_0;
-
-    // Get material resources
+    // ─────────────────────────────────────────────────────────────────────
+    // Get Material Resources
+    // ─────────────────────────────────────────────────────────────────────
     const params_gpu = MaterialAllocationTable.params_buffer;
     const material_palette = MaterialAllocationTable.palette_buffer;
     const material_palette_offsets = EntityManager.get_fragment_gpu_buffer(
@@ -490,7 +469,9 @@ export class GI {
       material_palette_offsets.buffer.config.name
     );
 
-    // Get texture pools
+    // ─────────────────────────────────────────────────────────────────────
+    // Get Texture Pools
+    // ─────────────────────────────────────────────────────────────────────
     const default_texture = Texture.default_array();
     const albedo_pool = ResourceCache.get().fetch(CacheTypes.IMAGE, texture_pool_albedo_name);
     const normal_pool = ResourceCache.get().fetch(CacheTypes.IMAGE, texture_pool_normal_name);
@@ -527,13 +508,22 @@ export class GI {
       ? render_graph.register_image(emission_pool.config.name)
       : default_texture_buffer;
 
-    // Environment data
+    // ─────────────────────────────────────────────────────────────────────
+    // Get Environment Data
+    // ─────────────────────────────────────────────────────────────────────
     const skydome_data = SharedEnvironmentData.get_skydome_data();
     const skydome_data_buffer = render_graph.register_buffer(skydome_data.config.name);
 
     const skybox = SharedEnvironmentData.get_skybox();
     const skybox_texture_buffer = render_graph.register_image(skybox.config.name);
 
+    // ═════════════════════════════════════════════════════════════════════
+    // ADD RENDER PASSES
+    // ═════════════════════════════════════════════════════════════════════
+
+    // ─────────────────────────────────────────────────────────────────────
+    // Pass 0: Upload GI Parameters
+    // ─────────────────────────────────────────────────────────────────────
     render_graph.add_pass(
       "gi_upload_params",
       RenderPassFlags.GraphLocal,
@@ -541,40 +531,50 @@ export class GI {
       (graph, frame_data, encoder) => {
         const gi_params_buf = graph.get_physical_buffer(gi_params);
 
-        // Upload GI parameters
         const frame_index = SharedFrameInfoBuffer.get_frame_index();
-        const trace_rate = this.config.upscale_x * this.config.upscale_y;
 
-        this.gi_params_data[0] = this.config.screen_probe_size;
-        this.gi_params_data[1] = this.config.screen_ray_count;
-        this.gi_params_data[2] = this.config.world_cache_size;
-        this.gi_params_data[3] = this.config.world_cache_cell_size;
-        this.gi_params_data[4] = total_screen_probes; // Derived from grid dimensions
-        this.gi_params_data[5] = frame_index;
-        this.gi_params_data[6] = this.config.indirect_boost;
-        this.gi_params_data[7] = this.config.upscale_x;
-        this.gi_params_data[8] = this.config.upscale_y;
-        this.gi_params_data[9] = this.config.world_cache_lod_count;
-        this.gi_params_data[10] = trace_rate;
-        this.gi_params_data[11] = 0.0;
+        // Fill parameter buffer
+        this.gi_params_data[0] = this.config.screen_ray_count;
+        this.gi_params_data[1] = this.config.world_cache_size;
+        this.gi_params_data[2] = this.config.world_cache_cell_size;
+        this.gi_params_data[3] = total_pixels;
+        this.gi_params_data[4] = frame_index;
+        this.gi_params_data[5] = this.config.indirect_boost;
+        this.gi_params_data[6] = this.config.upscale_x;
+        this.gi_params_data[7] = this.config.upscale_y;
+        this.gi_params_data[8] = this.config.world_cache_lod_count;
+        this.gi_params_data[9] = width;
+        this.gi_params_data[10] = height;
+        this.gi_params_data[11] = 0;
+
         gi_params_buf.write_raw(this.gi_params_data);
       }
     );
 
+    // ─────────────────────────────────────────────────────────────────────
+    // Pass 1: Reset Counters
+    // ─────────────────────────────────────────────────────────────────────
     render_graph.add_pass(
       "gi_reset",
       RenderPassFlags.Compute,
       {
-        inputs: [gi_counters, screen_probe_tile_counters, light_count],
-        outputs: [gi_counters, screen_probe_tile_counters],
+        inputs: [gi_counters, light_count],
+        outputs: [gi_counters],
         shader_setup: gi_reset_shader_setup,
       },
       (graph, frame_data, encoder) => {
         const pass = graph.get_physical_pass(frame_data.current_pass);
-        pass.dispatch(1, 1, 1); // Single thread does the reset
+        pass.dispatch(1, 1, 1);
       }
     );
 
+    // ═════════════════════════════════════════════════════════════════════
+    // WORLD CACHE PASSES
+    // ═════════════════════════════════════════════════════════════════════
+
+    // ─────────────────────────────────────────────────────────────────────
+    // Pass 2: Evict Stale World Cache Cells
+    // ─────────────────────────────────────────────────────────────────────
     render_graph.add_pass(
       "gi_world_cache_evict",
       RenderPassFlags.Compute,
@@ -589,6 +589,9 @@ export class GI {
       }
     );
 
+    // ─────────────────────────────────────────────────────────────────────
+    // Pass 3: Mark Active World Cache Cells
+    // ─────────────────────────────────────────────────────────────────────
     render_graph.add_pass(
       "gi_world_cache_active_mark",
       RenderPassFlags.Compute,
@@ -603,6 +606,9 @@ export class GI {
       }
     );
 
+    // ─────────────────────────────────────────────────────────────────────
+    // Pass 4: Prefix Sum for Compaction
+    // ─────────────────────────────────────────────────────────────────────
     render_graph.add_pass(
       "gi_world_cache_active_prefix_sum",
       RenderPassFlags.Compute,
@@ -617,6 +623,9 @@ export class GI {
       }
     );
 
+    // ─────────────────────────────────────────────────────────────────────
+    // Pass 5: Compact Active Cells
+    // ─────────────────────────────────────────────────────────────────────
     render_graph.add_pass(
       "gi_world_cache_active_compact",
       RenderPassFlags.Compute,
@@ -638,8 +647,11 @@ export class GI {
       }
     );
 
+    // ─────────────────────────────────────────────────────────────────────
+    // Pass 6: World Cache Trace Init
+    // ─────────────────────────────────────────────────────────────────────
     render_graph.add_pass(
-      "gi_world_cache_trace_init_and_sample_lights",
+      "gi_world_cache_trace_init",
       RenderPassFlags.Compute,
       {
         inputs: [
@@ -658,11 +670,13 @@ export class GI {
       (graph, frame_data, encoder) => {
         const pass = graph.get_physical_pass(frame_data.current_pass);
         const dispatch_buffer = graph.get_physical_buffer(world_cache_dispatch_params);
-        // Indirect dispatch based on number of active cells
         pass.dispatch_indirect(dispatch_buffer, 0);
       }
     );
 
+    // ─────────────────────────────────────────────────────────────────────
+    // Pass 7: World Cache Trace Hit
+    // ─────────────────────────────────────────────────────────────────────
     render_graph.add_pass(
       "gi_world_cache_trace_hit",
       RenderPassFlags.Compute,
@@ -684,11 +698,13 @@ export class GI {
       (graph, frame_data, encoder) => {
         const pass = graph.get_physical_pass(frame_data.current_pass);
         const dispatch_buffer = graph.get_physical_buffer(world_cache_dispatch_params);
-        // Indirect dispatch based on number of active cells
         pass.dispatch_indirect(dispatch_buffer, 0);
       }
     );
 
+    // ─────────────────────────────────────────────────────────────────────
+    // Pass 8: World Cache Trace Shade
+    // ─────────────────────────────────────────────────────────────────────
     render_graph.add_pass(
       "gi_world_cache_trace_shade",
       RenderPassFlags.Compute,
@@ -720,126 +736,26 @@ export class GI {
       (graph, frame_data, encoder) => {
         const pass = graph.get_physical_pass(frame_data.current_pass);
         const dispatch_buffer = graph.get_physical_buffer(world_cache_dispatch_params);
-        // Indirect dispatch based on number of active cells
         pass.dispatch_indirect(dispatch_buffer, 0);
       }
     );
 
-    // =========================================================================
-    // Screen Probe Reprojection Phase
-    // =========================================================================
+    // ═════════════════════════════════════════════════════════════════════
+    // PER-PIXEL PATH TRACING PASSES
+    // ═════════════════════════════════════════════════════════════════════
 
-    // Reprojection pass: Algorithm 1 from GI-1.0 paper
-    // For each tile, attempt to reproject a probe from previous frame
-    // Outputs: classified tiles into empty_tiles and override_tiles queues
+    // ─────────────────────────────────────────────────────────────────────
+    // Pass 9: Per-Pixel Trace Init (with NEE light sampling)
+    // Dispatches only tiles_per_frame rays (one per tile), not all pixels
+    // ─────────────────────────────────────────────────────────────────────
     render_graph.add_pass(
-      `gi_screen_probe_reproject_${ping_pong_frame}`,
-      RenderPassFlags.Compute,
-      {
-        inputs: [
-          gi_params,
-          probe_radiance_prev,
-          screen_probe_metadata,
-          screen_probe_metadata_prev,
-          gbuffer_position,
-          gbuffer_position_prev,
-          gbuffer_normal,
-          gbuffer_normal_prev,
-          gbuffer_motion_emissive,
-          screen_probe_empty_tiles,
-          screen_probe_override_tiles,
-          screen_probe_tile_counters,
-          probe_radiance_curr,
-        ],
-        outputs: [
-          probe_radiance_curr,
-          screen_probe_metadata,
-          screen_probe_empty_tiles,
-          screen_probe_override_tiles,
-          screen_probe_tile_counters,
-        ],
-        shader_setup: screen_probe_reproject_shader_setup,
-      },
-      (graph, frame_data, encoder) => {
-        const pass = graph.get_physical_pass(frame_data.current_pass);
-        // Dispatch one workgroup per tile
-        pass.dispatch(grid_width, grid_height, 1);
-      }
-    );
-
-    // Patch pass: Algorithm 2 from GI-1.0 paper
-    // Reassign some override tiles to fill empty tiles (fixed ray budget)
-    // Dispatches one thread per override tile for parallel processing
-    render_graph.add_pass(
-      "gi_screen_probe_patch",
-      RenderPassFlags.Compute,
-      {
-        inputs: [
-          gi_params,
-          screen_probe_empty_tiles,
-          screen_probe_override_tiles,
-          screen_probe_tile_counters,
-        ],
-        outputs: [
-          screen_probe_empty_tiles,
-          screen_probe_override_tiles,
-          screen_probe_tile_counters,
-        ],
-        shader_setup: screen_probe_patch_shader_setup,
-      },
-      (graph, frame_data, encoder) => {
-        const pass = graph.get_physical_pass(frame_data.current_pass);
-        // Dispatch based on maximum possible override tiles (worst case: all probes)
-        // The shader will bounds-check against actual override_count
-        pass.dispatch(Math.ceil(total_screen_probes / COMPUTE_WORKGROUP_SIZE), 1, 1);
-      }
-    );
-
-    // Spawn pass: Generate new probes for tiles that need them
-    // Uses Halton jitter within spawn tiles for temporal upscaling
-    render_graph.add_pass(
-      "gi_screen_probe_spawn",
+      `gi_pixel_trace_init_${ping_pong_frame}`,
       RenderPassFlags.Compute,
       {
         inputs: [
           gi_params,
           gi_counters,
-          world_cache,
-          screen_probe_metadata,
-          screen_probe_empty_tiles,
-          screen_probe_tile_counters,
-          gbuffer_position,
-          gbuffer_normal,
-          gbuffer_albedo,
-          gbuffer_smra,
-          gbuffer_motion_emissive,
-        ],
-        outputs: [
-          gi_counters,
-          screen_probe_metadata,
-        ],
-        shader_setup: screen_probe_spawn_shader_setup,
-      },
-      (graph, frame_data, encoder) => {
-        const pass = graph.get_physical_pass(frame_data.current_pass);
-        // Dispatch based on number of tiles that need new probes
-        pass.dispatch(Math.ceil(total_screen_probes / COMPUTE_WORKGROUP_SIZE), 1, 1);
-      }
-    );
-
-    // =========================================================================
-    // Screen Probe Ray Tracing Phase
-    // =========================================================================
-    
-    render_graph.add_pass(
-      `gi_probe_trace_init_and_sample_lights_${ping_pong_frame}`,
-      RenderPassFlags.Compute,
-      {
-        inputs: [
-          gi_params,
-          gi_counters,
-          screen_probe_metadata,
-          probe_path_state,
+          pixel_path_state,
           light_count,
           dense_lights,
           world_cache,
@@ -849,24 +765,26 @@ export class GI {
           gbuffer_smra,
           gbuffer_motion_emissive,
         ],
-        outputs: [probe_path_state],
-        shader_setup: screen_probe_trace_init_shader_setup,
+        outputs: [pixel_path_state],
+        shader_setup: pixel_trace_init_shader_setup,
       },
       (graph, frame_data, encoder) => {
         const pass = graph.get_physical_pass(frame_data.current_pass);
-        const max_rays = total_screen_probes * this.config.screen_ray_count;
-        pass.dispatch(Math.ceil(max_rays / COMPUTE_WORKGROUP_SIZE), 1, 1);
+        pass.dispatch(Math.ceil(rays_per_frame / COMPUTE_WORKGROUP_SIZE), 1, 1);
       }
     );
 
+    // ─────────────────────────────────────────────────────────────────────
+    // Pass 10: Per-Pixel Trace Hit (BVH traversal)
+    // ─────────────────────────────────────────────────────────────────────
     render_graph.add_pass(
-      `gi_probe_trace_hit`,
+      "gi_pixel_trace_hit",
       RenderPassFlags.Compute,
       {
         inputs: [
           gi_params,
           gi_counters,
-          probe_path_state,
+          pixel_path_state,
           tlas_bvh2_bounds,
           tlas_bvh4_nodes,
           blas_atlas,
@@ -874,25 +792,27 @@ export class GI {
           index_buffer,
           mesh_asset_ids,
         ],
-        outputs: [probe_path_state],
-        shader_setup: screen_probe_trace_hit_shader_setup,
+        outputs: [pixel_path_state],
+        shader_setup: pixel_trace_hit_shader_setup,
       },
       (graph, frame_data, encoder) => {
         const pass = graph.get_physical_pass(frame_data.current_pass);
-        const max_rays = total_screen_probes * this.config.screen_ray_count;
-        pass.dispatch(Math.ceil(max_rays / COMPUTE_WORKGROUP_SIZE), 1, 1);
+        pass.dispatch(Math.ceil(rays_per_frame / COMPUTE_WORKGROUP_SIZE), 1, 1);
       }
     );
 
+    // ─────────────────────────────────────────────────────────────────────
+    // Pass 11: Per-Pixel Trace Shade (material evaluation + world cache query)
+    // ─────────────────────────────────────────────────────────────────────
     render_graph.add_pass(
-      `gi_probe_trace_shade`,
+      "gi_pixel_trace_shade",
       RenderPassFlags.Compute,
       {
         inputs: [
           gi_params,
           skydome_data_buffer,
           gi_counters,
-          probe_path_state,
+          pixel_path_state,
           world_cache,
           params_gpu_buffer,
           material_palette_offsets_buffer,
@@ -908,78 +828,58 @@ export class GI {
           emission_pool_buffer,
           skybox_texture_buffer,
         ],
-        outputs: [probe_path_state],
-        shader_setup: screen_probe_trace_shade_shader_setup,
+        outputs: [pixel_path_state],
+        shader_setup: pixel_trace_shade_shader_setup,
       },
       (graph, frame_data, encoder) => {
         const pass = graph.get_physical_pass(frame_data.current_pass);
-        const max_rays = total_screen_probes * this.config.screen_ray_count;
-        pass.dispatch(Math.ceil(max_rays / COMPUTE_WORKGROUP_SIZE), 1, 1);
+        pass.dispatch(Math.ceil(rays_per_frame / COMPUTE_WORKGROUP_SIZE), 1, 1);
       }
     );
 
-    // Create a third texture for update pass output to avoid read/write conflict
-    const probe_radiance_updated = screen_probe_radiance_0;
-    
+    // ─────────────────────────────────────────────────────────────────────
+    // Pass 12: Per-Pixel Update (Temporal Accumulation)
+    // ─────────────────────────────────────────────────────────────────────
     render_graph.add_pass(
-      `gi_screen_probe_update_${ping_pong_frame}`,
+      `gi_pixel_update_${ping_pong_frame}`,
       RenderPassFlags.Compute,
       {
         inputs: [
           gi_params,
           gi_counters,
-          screen_probe_metadata,
-          probe_radiance_curr, // Read from curr (reprojection wrote here) - binding 3
-          probe_path_state,
-          world_cache,
+          pixel_path_state,
+          pixel_radiance_prev,
           gbuffer_position,
+          gbuffer_position_prev,
           gbuffer_normal,
-          probe_radiance_updated, // Write to updated (flips back to match next frame's prev) - binding 8
-        ],
-        outputs: [
-          probe_radiance_updated,
-          screen_probe_metadata,
+          gbuffer_normal_prev,
+          gbuffer_motion_emissive,
           world_cache,
-        ],
-        shader_setup: screen_probe_update_shader_setup,
-      },
-      (graph, frame_data, encoder) => {
-        const pass = graph.get_physical_pass(frame_data.current_pass);
-        pass.dispatch(Math.ceil(total_screen_probes / COMPUTE_WORKGROUP_SIZE), 1, 1);
-      }
-    );
-
-    render_graph.add_pass(
-      `gi_reconstruct_${ping_pong_frame}`,
-      RenderPassFlags.Compute,
-      {
-        inputs: [
-          gi_params,
-          gi_counters,
-          screen_probe_metadata,
-          probe_radiance_updated, // Read from update pass output
-          gbuffer_position,
-          gbuffer_normal,
-          gbuffer_albedo,
+          pixel_radiance_curr,
           gi_output,
         ],
-        outputs: [gi_output],
-        shader_setup: screen_probe_reconstruct_shader_setup,
+        outputs: [pixel_radiance_curr, gi_output, world_cache],
+        shader_setup: pixel_update_shader_setup,
       },
       (graph, frame_data, encoder) => {
         const pass = graph.get_physical_pass(frame_data.current_pass);
+        // Dispatch as 8x8 tiles for better cache coherency
         pass.dispatch(Math.ceil(width / 8), Math.ceil(height / 8), 1);
       }
     );
 
-    // Store references for external use and debugging
+    // ─────────────────────────────────────────────────────────────────────
+    // Store References for Debug Passes
+    // ─────────────────────────────────────────────────────────────────────
     this.gi_params = gi_params;
     this.gi_counters = gi_counters;
-    this.screen_probe_radiance_0 = screen_probe_radiance_0;
-    this.screen_probe_radiance_1 = screen_probe_radiance_1;
-    this.screen_probe_metadata = screen_probe_metadata;
+    this.pixel_radiance_curr = pixel_radiance_curr;
     this.world_cache = world_cache;
   }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // DEBUG PASSES
+  // ═══════════════════════════════════════════════════════════════════════════
 
   add_debug_passes(
     render_graph,
@@ -991,13 +891,9 @@ export class GI {
     debug_view,
     force_recreate = false
   ) {
-    let grid_width = Math.ceil(width / this.config.screen_probe_size);
-    let grid_height = Math.ceil(height / this.config.screen_probe_size);
-    let total_screen_probes = grid_width * grid_height;
-
-    // Debug visualization texture for screen probes
+    // Create debug visualization texture
     this.debug_texture = render_graph.create_image({
-      name: "gi_debug_probes",
+      name: "gi_debug",
       format: "rgba16float",
       width: width,
       height: height,
@@ -1005,38 +901,10 @@ export class GI {
       force: force_recreate,
     });
 
-    if (debug_view === DebugDrawType.GI_ScreenProbes) {
-      // Get updated probe radiance texture for debugging (output of update pass)
-      const ping_pong_frame = SharedFrameInfoBuffer.get_frame_index() % 2;
-      const probe_radiance_final = this.screen_probe_radiance_0;
-      
-      render_graph.add_pass(
-        `gi_debug_probes_composite_${ping_pong_frame}`,
-        RenderPassFlags.Compute,
-        {
-          inputs: [
-            this.gi_params,
-            this.gi_counters,
-            this.screen_probe_metadata,
-            probe_radiance_final,
-            main_position_image,
-            main_normal_image,
-            post_lighting_image_desc,
-            this.debug_texture,
-          ],
-          outputs: [this.debug_texture],
-          shader_setup: screen_probe_debug_shader_setup,
-        },
-        (graph, frame_data, encoder) => {
-          const pass = graph.get_physical_pass(frame_data.current_pass);
-          // Dispatch one thread per probe (workgroup size = 64)
-          pass.dispatch(Math.ceil(total_screen_probes / 64), 1, 1);
-        }
-      );
-    } else if (debug_view === DebugDrawType.GI_WorldCache) {
+    if (debug_view === DebugDrawType.GI_WorldCache) {
       // World cache debug visualization
       render_graph.add_pass(
-        "gi_debug_world_cache_composite",
+        "gi_debug_world_cache",
         RenderPassFlags.Compute,
         {
           inputs: [
@@ -1052,13 +920,17 @@ export class GI {
         },
         (graph, frame_data, encoder) => {
           const pass = graph.get_physical_pass(frame_data.current_pass);
-          // Dispatch per pixel (workgroup size = 8x8)
           pass.dispatch(Math.ceil(width / 8), Math.ceil(height / 8), 1);
         }
       );
     }
+
     return this.debug_texture;
   }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // CONFIGURATION
+  // ═══════════════════════════════════════════════════════════════════════════
 
   /**
    * Update configuration parameters at runtime
@@ -1070,5 +942,5 @@ export class GI {
   /**
    * Force reset of all caches (useful for teleports, scene changes)
    */
-  reset() { }
+  reset() {}
 }

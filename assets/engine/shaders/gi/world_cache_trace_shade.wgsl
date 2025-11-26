@@ -171,6 +171,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         // === INDIRECT LIGHTING - Query world cache for multi-bounce ===
         // Query world cache at hit point to get cached irradiance from previous frames
         // This provides multi-bounce indirect illumination without tracing further
+        // Pass ray hit distance for light-leak prevention (short ray separation)
         let cached_radiance = query_world_cache_cell_probabilistic(
             hit_pos,
             n,
@@ -184,7 +185,8 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
             gi_params.world_cache_cell_size,
             u32(gi_params.world_cache_lod_count),
             25.0,
-            rand_float(rng)
+            rand_float(rng),
+            path.origin_tmin.w
         );
         
         
@@ -203,8 +205,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         let current_radiance = world_cache[cell_index].radiance_w.xyz;
         let current_sample_count = world_cache[cell_index].normal_count.w;
         
-        var alpha = 1.0 / min((current_sample_count + sample_count), WORLD_CACHE_RADIANCE_UPDATE_SAMPLE_CAP);
-        alpha = max(alpha, 0.05);
+        let alpha = 1.0 / min((current_sample_count + sample_count), WORLD_CACHE_RADIANCE_UPDATE_SAMPLE_CAP);
         let new_radiance = mix(current_radiance, radiance_contribution, alpha);
         
         world_cache[cell_index].radiance_w = vec4f(new_radiance, world_cache[cell_index].radiance_w.w);

@@ -1628,8 +1628,8 @@ export class ObjectPaintingScene extends Scene {
     this.object_material3_id = object_material3.material_id;
 
     object_material1.set_albedo([1.0, 1.0, 1.0, 1]);
-    object_material1.set_roughness(0.001);
-    object_material1.set_metallic(0.999);
+    object_material1.set_roughness(0.01);
+    object_material1.set_metallic(0.99);
 
     object_material2.set_albedo([0.3, 0.0, 0.0, 1]);
     object_material2.set_roughness(0.9);
@@ -1763,8 +1763,8 @@ export class GITestScene extends Scene {
     const light_fragment_view = EntityManager.get_fragment(light_entity, LightFragment);
     light_fragment_view.type = LightType.DIRECTIONAL;
     light_fragment_view.color = [1, 1, 1];
-    light_fragment_view.intensity = 0.0;
-    light_fragment_view.position = [5, -5, 25];
+    light_fragment_view.intensity = 0.5;
+    light_fragment_view.position = [5, 5, 5];
     light_fragment_view.active = true;
     light_fragment_view.is_primary_sun = 1;
     light_fragment_view.shadow_clipmaps = MAX_CLIPMAP_LEVELS;
@@ -2839,7 +2839,7 @@ export class CityScene extends Scene {
     const light_fragment_view = EntityManager.get_fragment(light_entity, LightFragment);
     light_fragment_view.type = LightType.DIRECTIONAL;
     light_fragment_view.color = [1, 1, 1];
-    light_fragment_view.intensity = 15.0;
+    light_fragment_view.intensity = 1.0;
     light_fragment_view.position = [-25, 20, 20];
     light_fragment_view.active = true;
     light_fragment_view.is_primary_sun = 1;
