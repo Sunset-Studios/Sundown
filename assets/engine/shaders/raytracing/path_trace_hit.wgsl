@@ -1,9 +1,17 @@
 // =============================================================================
-// Path Tracer - Hit Pass (Minimal Wave Optimizations)
-// - ONLY adds wave-level early exits (highest ROI)
-// - Keeps 8x8 workgroup for cache locality
-// - No broadcasting overhead unless proven beneficial
+// ╔═══════════════════════════════════════════════════════════════════════════╗
+// ║               PATH TRACER - COMBINED HIT PASS                             ║
+// ╠═══════════════════════════════════════════════════════════════════════════╣
+// ║                                                                           ║
+// ║  Traces both shadow rays and bounce rays in a single pass:               ║
+// ║  • Shadow ray any-hit queries for Next Event Estimation (NEE)            ║
+// ║  • TLAS (Top-Level) traversal for instance culling                       ║
+// ║  • BLAS (Bottom-Level) traversal for triangle intersection               ║
+// ║  • Outputs hit attributes for shading pass                               ║
+// ║                                                                           ║
+// ╚═══════════════════════════════════════════════════════════════════════════╝
 // =============================================================================
+
 diagnostic(off,subgroup_uniformity);
 
 #include "common.wgsl"
@@ -12,13 +20,18 @@ diagnostic(off,subgroup_uniformity);
 
 const NODE_STACK_SIZE = 12;
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Structures
+// ─────────────────────────────────────────────────────────────────────────────
 struct PathTracerParams {
     max_bounces: u32,
     reset_accum_flag: u32,
     use_gbuffer: u32,
-    trace_rate: u32,      // 1=full res, 2=half res, 4=quarter res, etc.
-    frame_phase: u32,     // cycles 0 to trace_rate-1
-    indirect_boost: u32,          // Multiplier for indirect bounces
+    trace_rate: u32,
+    frame_phase: u32,
+    samples_per_pixel: u32,
+    sample_index: u32,
+    padding: u32,
 };
 
 struct PathState {
@@ -31,8 +44,14 @@ struct PathState {
     shadow_origin: vec4<f32>,
     shadow_direction: vec4<f32>,
     shadow_radiance: vec4<f32>,
+    path_weight: vec4<f32>,
+    rng_sample_count: vec4<f32>,
+    accumulated_radiance: vec4<f32>,
 };
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Bindings
+// ─────────────────────────────────────────────────────────────────────────────
 @group(1) @binding(0) var<uniform> pt_params: PathTracerParams;
 @group(1) @binding(1) var<storage, read_write> path_state: array<PathState>;
 @group(1) @binding(2) var<storage, read> tlas_bvh2_bounds: array<AABB>;
@@ -42,6 +61,10 @@ struct PathState {
 @group(1) @binding(6) var<storage, read> index_buffer: array<u32>;
 @group(1) @binding(7) var<storage, read> mesh_asset_ids: array<u32>;
 @group(1) @binding(8) var output_tex: texture_storage_2d<rgba16float, write>;
+
+// =============================================================================
+// BLAS TRAVERSAL (CLOSEST HIT)
+// =============================================================================
 
 fn trace_blas(
     ray_world: ptr<function, Ray>,
@@ -67,14 +90,13 @@ fn trace_blas(
         let leaf_mask = atlas_load_bvh4_leaf_mask(node_idx);
         let children = atlas_load_bvh4_node_children(node_idx);
         
-        // Node already tested before push - no redundant AABB test here!
         for (var i = 0u; i < 4u; i = i + 1u) {
             if (children[i] < 0.0) { continue; }
 
             let child_idx = u32(children[i]);
 
-            if (((leaf_mask >> i) & 1u) != 0u) { // Is leaf?
-                // Load vertex indices from co-located leaf data (cache-adjacent to node!)
+            if (((leaf_mask >> i) & 1u) != 0u) {
+                // Leaf node: triangle intersection
                 let leaf_indices = atlas_load_bvh4_leaf_indices(node_idx, i);
                 let t_tri = intersect_triangle(
                     &current_ray,
@@ -88,7 +110,7 @@ fn trace_blas(
                 hit.hit_triangle_data = select(hit.hit_triangle_data, leaf_indices, is_better_hit);
                 current_ray.direction_and_tmax.w = select(current_ray.direction_and_tmax.w, t_tri, is_better_hit);
             } else {
-                // Only test AABB before pushing - guarantees single test per node
+                // Internal node: AABB test before push
                 let t_aabb_child = intersect_aabb(
                     &current_ray,
                     atlas_load_bvh4_node_min(child_idx),
@@ -106,6 +128,10 @@ fn trace_blas(
 
     return hit;
 }
+
+// =============================================================================
+// TLAS TRAVERSAL (CLOSEST HIT)
+// =============================================================================
 
 fn trace_hit(ray: ptr<function, Ray>) -> RayHit {
     var hit: RayHit;
@@ -131,14 +157,14 @@ fn trace_hit(ray: ptr<function, Ray>) -> RayHit {
 
             let child_idx = u32(tlas_bvh4_nodes[node_idx].children[i]);
 
-            if (((leaf_mask >> i) & 1u) != 0u) { // Is leaf?
+            if (((leaf_mask >> i) & 1u) != 0u) {
+                // Leaf: instance bounds test
                 let t_leaf = intersect_aabb(
                     &current_ray,
                     tlas_bvh2_bounds[child_idx].min.xyz,
                     tlas_bvh2_bounds[child_idx].max.xyz
                 );
 
-                // Allow rays that start inside AABBs (t_leaf.x < tmin) by using max(t_leaf.x, tmin)
                 if (t_leaf.x <= t_leaf.y && max(t_leaf.x, current_ray.origin_and_tmin.w) < hit.position_and_t.w) {
                     let prim_store = u32(tlas_bvh2_bounds[child_idx].min.w);
                     let mesh_id = mesh_asset_ids[prim_store];
@@ -163,7 +189,7 @@ fn trace_hit(ray: ptr<function, Ray>) -> RayHit {
                     }
                 }
             } else {
-                // Only test AABB before pushing - guarantees single test per node
+                // Internal node: AABB test before push
                 let t_aabb_child = intersect_aabb(
                     &current_ray,
                     tlas_bvh4_nodes[child_idx].min.xyz,
@@ -173,7 +199,7 @@ fn trace_hit(ray: ptr<function, Ray>) -> RayHit {
                     && t_aabb_child.x >= current_ray.origin_and_tmin.w
                     && t_aabb_child.x < hit.position_and_t.w;
 
-                node_stack[stack_size] =  select(node_stack[stack_size], child_idx, is_better_child);
+                node_stack[stack_size] = select(node_stack[stack_size], child_idx, is_better_child);
                 stack_size = select(stack_size, stack_size + 1u, is_better_child);
             }
         }
@@ -181,6 +207,141 @@ fn trace_hit(ray: ptr<function, Ray>) -> RayHit {
 
     return hit;
 }
+
+// =============================================================================
+// BLAS ANY-HIT (SHADOW RAYS)
+// =============================================================================
+
+fn trace_blas_any_hit(
+    ray_world: ptr<function, Ray>,
+    ray_local: ptr<function, Ray>,
+    entity_transform: mat4x4f,
+    mesh_asset_id: u32,
+) -> bool {
+    let mesh_directory_entry = atlas_load_directory_entry(mesh_asset_id);
+    let bvh4_base = mesh_directory_entry.bvh4_base;
+
+    var node_stack: array<u32, NODE_STACK_SIZE>;
+    node_stack[0] = bvh4_base;
+    var stack_size = 1u;
+
+    loop {
+        if (stack_size == 0u) { break; }
+        stack_size = stack_size - 1u;
+
+        var node_idx = node_stack[stack_size];
+        if (node_idx == INVALID_IDX) { continue; }
+
+        let node = atlas_load_bvh4_node(node_idx);
+        
+        if (stack_size < NODE_STACK_SIZE) {
+            let leaf_mask = bitcast<u32>(node.min.w);
+
+            for (var i = 0u; i < 4u; i = i + 1u) {
+                if (node.children[i] < 0.0) { continue; }
+
+                let child_idx = u32(node.children[i]);
+
+                if (((leaf_mask >> i) & 1u) != 0u) {
+                    // Leaf: triangle intersection
+                    let leaf_indices = atlas_load_bvh4_leaf_indices(node_idx, i);
+                    let v0 = vertex_buffer[leaf_indices.x].position.xyz;
+                    let v1 = vertex_buffer[leaf_indices.y].position.xyz;
+                    let v2 = vertex_buffer[leaf_indices.z].position.xyz;
+                    let t_tri = intersect_triangle(ray_local, v0, v1, v2);
+                    if (t_tri >= ray_local.origin_and_tmin.w && t_tri < ray_local.direction_and_tmax.w) {
+                        return true;
+                    }
+                } else {
+                    // Internal node: AABB test before push
+                    let child_node = atlas_load_bvh4_node(child_idx);
+                    let t_aabb_child = intersect_aabb(ray_local, child_node.min.xyz, child_node.max.xyz);
+
+                    if (t_aabb_child.x <= t_aabb_child.y && t_aabb_child.x >= ray_local.origin_and_tmin.w && t_aabb_child.x < ray_local.direction_and_tmax.w) {
+                        node_stack[stack_size] = child_idx;
+                        stack_size = stack_size + 1u;
+                    }
+                }
+            }
+        }
+    }
+
+    return false;
+}
+
+// =============================================================================
+// TLAS ANY-HIT (SHADOW RAYS)
+// =============================================================================
+
+fn trace_hit_any(ray: ptr<function, Ray>) -> bool {
+    var node_stack: array<u32, NODE_STACK_SIZE>;
+    node_stack[0] = 0u;
+    var stack_size = 1u;
+
+    var current_ray = *ray;
+
+    loop {
+        if (stack_size == 0u) { break; }
+        stack_size = stack_size - 1u;
+
+        var node_idx = node_stack[stack_size];
+        if (node_idx == INVALID_IDX) { continue; }
+
+        let current_node = tlas_bvh4_nodes[node_idx];
+        
+        if (stack_size < NODE_STACK_SIZE) {
+            let leaf_mask = bitcast<u32>(current_node.min.w);
+
+            for (var i = 0u; i < 4u; i = i + 1u) {
+                if (current_node.children[i] < 0.0) { continue; }
+
+                let child_idx = u32(current_node.children[i]);
+
+                if (((leaf_mask >> i) & 1u) != 0u) {
+                    // Leaf: instance bounds test
+                    let leaf_bounds = tlas_bvh2_bounds[child_idx];
+                    let t_leaf = intersect_aabb(&current_ray, leaf_bounds.min.xyz, leaf_bounds.max.xyz);
+
+                    if (t_leaf.x <= t_leaf.y && max(t_leaf.x, current_ray.origin_and_tmin.w) < current_ray.direction_and_tmax.w) {
+                        let prim_store = u32(leaf_bounds.min.w);
+                        let mesh_id = mesh_asset_ids[prim_store];
+                        let entity_transform = entity_transforms[prim_store];
+
+                        var ray_local = build_local_ray(
+                            &current_ray,
+                            entity_transform.transform,
+                            entity_transform.transpose_inverse_model_matrix
+                        );
+                        
+                        if (trace_blas_any_hit(
+                            &current_ray,
+                            &ray_local,
+                            entity_transform.transform,
+                            mesh_id
+                        )) {
+                            return true;
+                        } 
+                    }
+                } else {
+                    // Internal node: AABB test before push
+                    let child_node = tlas_bvh4_nodes[child_idx];
+                    let t_aabb_child = intersect_aabb(&current_ray, child_node.min.xyz, child_node.max.xyz);
+
+                    if (t_aabb_child.x <= t_aabb_child.y && max(t_aabb_child.x, current_ray.origin_and_tmin.w) < current_ray.direction_and_tmax.w) {
+                        node_stack[stack_size] = child_idx;
+                        stack_size = stack_size + 1u;
+                    }
+                }
+            }
+        }
+    }
+
+    return false;
+}
+
+// =============================================================================
+// MAIN COMPUTE SHADER
+// =============================================================================
 
 @compute @workgroup_size(128, 1, 1)
 fn cs(
@@ -190,14 +351,39 @@ fn cs(
     @builtin(subgroup_size) warp_size: u32
 ) {
     let res = textureDimensions(output_tex);
-    // Compute actual pixel coordinates based on linear thread index and trace pattern
     let pixel_coords = compute_phased_pixel_coords(gid.x, res, pt_params.trace_rate, pt_params.frame_phase);
+    
+    if (pixel_coords.x >= res.x || pixel_coords.y >= res.y) { return; }
+    
     let pixel_index = pixel_coords.y * res.x + pixel_coords.x;
 
     var ray: Ray;
 
-    // Is ray alive?
+    // Only process if path is alive
     if (path_state[pixel_index].state_u32.y != 0u) {
+        // ─────────────────────────────────────────────────────────────────────
+        // Shadow Ray Trace (NEE visibility) - only if shadow ray is pending
+        // ─────────────────────────────────────────────────────────────────────
+        if (path_state[pixel_index].shadow_radiance.a > 0.0) {
+            ray.origin_and_tmin = path_state[pixel_index].shadow_origin;
+            ray.direction_and_tmax = path_state[pixel_index].shadow_direction;
+            var d = ray.direction_and_tmax.xyz;
+            ray.inv_direction = vec4f(
+                1.0 / max(abs(d.x), 1e-8) * select(1.0, -1.0, d.x < 0.0),
+                1.0 / max(abs(d.y), 1e-8) * select(1.0, -1.0, d.y < 0.0),
+                1.0 / max(abs(d.z), 1e-8) * select(1.0, -1.0, d.z < 0.0),
+                0.0
+            );
+            
+            if (!trace_hit_any(&ray)) {
+                // No shadow hit - light is visible
+                path_state[pixel_index].state_u32.z = 1u;
+            }
+        }
+
+        // ─────────────────────────────────────────────────────────────────────
+        // Primary/Bounce Ray Trace
+        // ─────────────────────────────────────────────────────────────────────
         ray.origin_and_tmin = path_state[pixel_index].origin_tmin;
         ray.direction_and_tmax = path_state[pixel_index].direction_tmax;
         let d = ray.direction_and_tmax.xyz;
@@ -211,6 +397,9 @@ fn cs(
         let hit_result = trace_hit(&ray);
         
         if (hit_result.normal_and_user_data.w >= 0.0) {
+            // ─────────────────────────────────────────────────────────────────
+            // Process hit: compute barycentric coords and interpolate attributes
+            // ─────────────────────────────────────────────────────────────────
             let tri_id_local = u32(hit_result.normal_and_user_data.w);
             let prim_store = u32(hit_result.prim_meshid_padding.x);
 
@@ -224,12 +413,12 @@ fn cs(
             let v1i = hit_result.hit_triangle_data.y;
             let v2i = hit_result.hit_triangle_data.z;
             
-            // Load positions only for barycentric calculation
+            // Load vertex positions for barycentric calculation
             let v0 = vertex_buffer[v0i].position.xyz;
             let v1 = vertex_buffer[v1i].position.xyz;
             let v2 = vertex_buffer[v2i].position.xyz;
 
-            // Compute barycentric coordinates immediately
+            // Compute barycentric coordinates
             let e0 = v1 - v0;
             let e1 = v2 - v0;
             let vp = p_local - v0;
@@ -243,40 +432,40 @@ fn cs(
             let u_bc = (d11 * d20 - d01 * d21) / denom;
             let w_bc = 1.0 - u_bc - v_bc;
 
-            // Load and interpolate UVs immediately (reduce live ranges)
+            // Interpolate UVs
             let uv_hit = vertex_buffer[v0i].uv.xy * w_bc + 
                          vertex_buffer[v1i].uv.xy * u_bc + 
                          vertex_buffer[v2i].uv.xy * v_bc;
 
-            // Load and interpolate normals, transform immediately
+            // Interpolate and transform normals
             let n_local = vertex_buffer[v0i].normal.xyz * w_bc + 
                           vertex_buffer[v1i].normal.xyz * u_bc + 
                           vertex_buffer[v2i].normal.xyz * v_bc;
             var world_n = safe_normalize((entity_transform.transpose_inverse_model_matrix * vec4<f32>(n_local, 0.0)).xyz);
 
-            // Load and interpolate tangents, transform immediately
+            // Interpolate and transform tangents
             let t_local = vertex_buffer[v0i].tangent.xyz * w_bc + 
                           vertex_buffer[v1i].tangent.xyz * u_bc + 
                           vertex_buffer[v2i].tangent.xyz * v_bc;
             var world_t = safe_normalize((entity_transform.transform * vec4<f32>(t_local, 0.0)).xyz);
 
-            // Load and interpolate bitangents, transform immediately
+            // Interpolate and transform bitangents
             let b_local = vertex_buffer[v0i].bitangent.xyz * w_bc + 
                           vertex_buffer[v1i].bitangent.xyz * u_bc + 
                           vertex_buffer[v2i].bitangent.xyz * v_bc;
             var world_b = safe_normalize((entity_transform.transform * vec4<f32>(b_local, 0.0)).xyz);
             
-            // Get section_index from first vertex only
+            // Get section index from first vertex
             let section_idx = vertex_buffer[v0i].section_index;
 
+            // Handle backfacing geometry
             let ray_dir = ray.direction_and_tmax.xyz;
             let ray_is_backfacing = dot(world_n, ray_dir) > 0.0;
             world_n = select(world_n, -world_n, ray_is_backfacing);
             world_t = select(world_t, -world_t, ray_is_backfacing);
             world_b = select(world_b, -world_b, ray_is_backfacing);
 
-            // Store hit distance in origin_tmin.w for use in shade pass (for emissive attenuation)
-            // This will be overwritten when we spawn the next ray, but shade pass reads it first
+            // Store hit information
             path_state[pixel_index].origin_tmin = vec4f(p_world, t_tri);
             path_state[pixel_index].direction_tmax = vec4f(ray_dir, hit_result.prim_meshid_padding.x);
             path_state[pixel_index].normal_section_index = vec4f(world_n, f32(section_idx));
@@ -286,4 +475,3 @@ fn cs(
         }
     }
 }
-

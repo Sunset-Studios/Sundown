@@ -202,7 +202,7 @@ export class GI {
     world_cache_size: 32768,      // Number of world cache cells per LOD level
     world_cache_cell_size: 4.0,   // Base cell size in world units
     world_cache_lod_count: 4,     // Number of LOD levels
-    indirect_boost: 3.14,         // Multiplier for indirect lighting contribution
+    indirect_boost: 1.0,         // Multiplier for indirect lighting contribution
   };
 
   // GI parameters buffer data (matches shader GIParams struct)

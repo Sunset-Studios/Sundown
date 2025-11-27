@@ -204,9 +204,8 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
 
     let roughness = smra.g;
     let metallic = smra.b;
-    let reflectance = smra.r * 0.0009765625; // Decode: 1.0 / 1024
+    let reflectance = smra.r;
     let emissive = motion_emissive.w;
-    // Clear coat (not stored in G-buffer, assume none for now)
     let clear_coat = 0.0;
     let clear_coat_roughness = 0.0;
     

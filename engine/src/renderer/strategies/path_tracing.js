@@ -278,9 +278,9 @@ export class PathTracingStrategy {
   occlusion_culler = null;
 
   // Path tracing parameters (optimized for hybrid mode)
-  max_bounces = 3;
+  max_bounces = 6;
   trace_rate = 16; // 1=full res, 2=half, 4=quarter, etc.
-  indirect_boost = 1.0;
+  samples_per_pixel = 1; // Number of samples per pixel per frame
 
   setup(render_graph) {
     this.path_tracer = new PathTracer();
@@ -328,12 +328,12 @@ export class PathTracingStrategy {
    * @param {Object} params - Path tracing parameters
    * @param {number} params.max_bounces - Maximum number of bounces
    * @param {number} params.trace_rate - Trace rate (1=full res, 2=half, 4=quarter)
-   * @param {number} params.indirect_boost - Indirect lighting boost multiplier
+   * @param {number} params.samples_per_pixel - Samples per pixel per frame
    */
   set_parameters(params) {
     if (params.max_bounces !== undefined) this.max_bounces = params.max_bounces;
     if (params.trace_rate !== undefined) this.trace_rate = params.trace_rate;
-    if (params.indirect_boost !== undefined) this.indirect_boost = params.indirect_boost;
+    if (params.samples_per_pixel !== undefined) this.samples_per_pixel = params.samples_per_pixel;
   }
 
   _draw_internal(render_graph) {
@@ -785,7 +785,7 @@ export class PathTracingStrategy {
           image_extent.height,
           this.max_bounces,
           this.trace_rate,
-          this.indirect_boost,
+          this.samples_per_pixel,
           true, // use_gbuffer - always true for hybrid mode
           aabb_bounds,
           tlas_bvh4_nodes,

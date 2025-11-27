@@ -143,7 +143,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
             material.ao_height_specular.z,
             u32(material.texture_flags2.z), texture_pool_specular, lod
         );
-        let reflectance = specular * 0.0009765625;
+        let reflectance = specular;
 
         // Normal mapping
         let world_t = path.hit_attr0.xyz;

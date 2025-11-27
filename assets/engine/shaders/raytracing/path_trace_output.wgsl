@@ -1,22 +1,55 @@
 // =============================================================================
-// Path Trace Output Pass
-// - Writes accumulated results for ALL pixels every frame
-// - This ensures coherent output even when trace_rate > 1
-// - Prevents checkerboard flickering from partial updates
+// Path Trace Output Pass (Simple Monte Carlo)
 // =============================================================================
+// Writes accumulated results and increments sample count.
+// Uses simple averaging for progressive rendering:
+//   output = accumulated_radiance / sample_count
+// =============================================================================
+
 #include "common.wgsl"
 
-struct PathShade {
+// ─────────────────────────────────────────────────────────────────────────────
+// Path Tracer Parameters
+// ─────────────────────────────────────────────────────────────────────────────
+struct PathTracerParams {
+    max_bounces: u32,
+    reset_accum_flag: u32,
+    use_gbuffer: u32,
+    trace_rate: u32,
+    frame_phase: u32,
+    samples_per_pixel: u32,
+    sample_index: u32,
+    padding: u32,
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Path State Structure
+// ─────────────────────────────────────────────────────────────────────────────
+struct PathState {
+    origin_tmin: vec4<f32>,
+    direction_tmax: vec4<f32>,
+    normal_section_index: vec4<f32>,
+    state_u32: vec4<u32>,
+    hit_attr0: vec4<f32>,
+    hit_attr1: vec4<f32>,
+    shadow_origin: vec4<f32>,
+    shadow_direction: vec4<f32>,
+    shadow_radiance: vec4<f32>,
     path_weight: vec4<f32>,
-    rng_sample_count_frame_stamp: vec4<f32>,
-    throughput: vec4<f32>,
-    reservoir_radiance_m: vec4<f32>,
-    reservoir_direction_w: vec4<f32>,
-}
+    rng_sample_count: vec4<f32>,
+    accumulated_radiance: vec4<f32>,
+};
 
-@group(1) @binding(0) var<storage, read> path_shade: array<PathShade>;
-@group(1) @binding(1) var output_tex: texture_storage_2d<rgba16float, write>;
+// ─────────────────────────────────────────────────────────────────────────────
+// Bindings
+// ─────────────────────────────────────────────────────────────────────────────
+@group(1) @binding(0) var<uniform> pt_params: PathTracerParams;
+@group(1) @binding(1) var<storage, read_write> path_state: array<PathState>;
+@group(1) @binding(2) var output_tex: texture_storage_2d<rgba16float, write>;
 
+// =============================================================================
+// Main Compute Shader
+// =============================================================================
 @compute @workgroup_size(8, 8, 1)
 fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let res = textureDimensions(output_tex);
@@ -24,13 +57,38 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     if (gid.x >= res.x || gid.y >= res.y) { return; }
     
     let pixel_index = gid.y * res.x + gid.x;
-    let shade = path_shade[pixel_index];
+    var state = path_state[pixel_index];
     
-    // Write current accumulated average for this pixel
-    let sample_count = max(shade.rng_sample_count_frame_stamp.y, 1.0);
-    let accumulated_avg = shade.throughput.xyz / sample_count;
-    let safe_output = safe_clamp_vec3(accumulated_avg);
+    // ─────────────────────────────────────────────────────────────────────────
+    // Determine if this pixel was traced this frame (same logic as init shader)
+    // ─────────────────────────────────────────────────────────────────────────
+    let first_x_in_row = (pt_params.frame_phase + pt_params.trace_rate - (gid.y * 2u) % pt_params.trace_rate) % pt_params.trace_rate;
+    let was_traced_this_frame = (pt_params.trace_rate <= 1u) || 
+        ((gid.x >= first_x_in_row) && ((gid.x - first_x_in_row) % pt_params.trace_rate == 0u));
     
+    // ─────────────────────────────────────────────────────────────────────────
+    // Increment sample count ONLY for traced pixels, by samples_per_pixel
+    // ─────────────────────────────────────────────────────────────────────────
+    if (was_traced_this_frame) {
+        state.rng_sample_count.y += f32(pt_params.samples_per_pixel);
+    }
+    
+    // ─────────────────────────────────────────────────────────────────────────
+    // Compute progressive average
+    // ─────────────────────────────────────────────────────────────────────────
+    let sample_count = max(state.rng_sample_count.y, 1.0);
+    let averaged_radiance = state.accumulated_radiance.xyz / sample_count;
+    
+    // Clamp to prevent extreme values
+    let safe_output = safe_clamp_vec3(averaged_radiance);
+    
+    // ─────────────────────────────────────────────────────────────────────────
+    // Write to output texture
+    // ─────────────────────────────────────────────────────────────────────────
     textureStore(output_tex, vec2<i32>(i32(gid.x), i32(gid.y)), vec4f(safe_output, 1.0));
+    
+    // ─────────────────────────────────────────────────────────────────────────
+    // Write back updated sample count
+    // ─────────────────────────────────────────────────────────────────────────
+    path_state[pixel_index] = state;
 }
-
