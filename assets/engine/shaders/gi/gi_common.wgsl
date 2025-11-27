@@ -205,15 +205,16 @@ fn decode_octahedral(encoded: vec2<f32>) -> vec3<f32> {
 // =============================================================================
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Compute pixel coordinates from tile index with stochastic offset
-// Returns the pixel coordinates for a given tile, with random offset within tile
+// Tile-to-pixel selection using explicit random values
+// Allows using blue noise or white noise for tile selection
 // ─────────────────────────────────────────────────────────────────────────────
-fn tile_to_pixel_stochastic(
+fn tile_to_pixel_with_offset(
     tile_index: u32,
     tile_grid_width: u32,
     upscale: vec2<u32>,
     resolution: vec2<u32>,
-    rng: ptr<function, u32>
+    rand_offset_x: f32,
+    rand_offset_y: f32
 ) -> vec2<u32> {
     // Compute tile coordinates from linear tile index
     let tile_x = tile_index % tile_grid_width;
@@ -223,23 +224,14 @@ fn tile_to_pixel_stochastic(
     let tile_corner_x = tile_x * upscale.x;
     let tile_corner_y = tile_y * upscale.y;
     
-    // Generate random offset within tile
-    *rng = random_seed(*rng);
-    let rand_x = u32(rand_float(*rng) * f32(upscale.x)) % upscale.x;
-    *rng = random_seed(*rng);
-    let rand_y = u32(rand_float(*rng) * f32(upscale.y)) % upscale.y;
+    // Use provided random values for offset within tile
+    let offset_x = u32(rand_offset_x * f32(upscale.x)) % upscale.x;
+    let offset_y = u32(rand_offset_y * f32(upscale.y)) % upscale.y;
     
     // Compute final pixel coordinates (clamp to resolution bounds)
-    let pixel_x = min(tile_corner_x + rand_x, resolution.x - 1u);
-    let pixel_y = min(tile_corner_y + rand_y, resolution.y - 1u);
+    let pixel_x = min(tile_corner_x + offset_x, resolution.x - 1u);
+    let pixel_y = min(tile_corner_y + offset_y, resolution.y - 1u);
     
     return vec2<u32>(pixel_x, pixel_y);
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Compute total number of tiles for dispatch
-// ─────────────────────────────────────────────────────────────────────────────
-fn compute_tile_count(resolution: vec2<u32>, upscale: vec2<u32>) -> u32 {
-    let tile_grid_dims = vec2<u32>(resolution.x / upscale.x, resolution.y / upscale.y);
-    return tile_grid_dims.x * tile_grid_dims.y;
-}

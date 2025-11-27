@@ -12,6 +12,9 @@
 // ║  Each invocation corresponds to one tile (upscale_x × upscale_y pixels).  ║
 // ║  A random pixel within the tile is selected for tracing this frame.       ║
 // ║                                                                           ║
+// ║  Uses blue noise sampling for low-discrepancy quasi-random values,        ║
+// ║  providing faster convergence than traditional white noise.               ║
+// ║                                                                           ║
 // ╚═══════════════════════════════════════════════════════════════════════════╝
 // =============================================================================
 
@@ -35,6 +38,95 @@
 @group(1) @binding(8) var gbuffer_albedo: texture_2d<f32>;
 @group(1) @binding(9) var gbuffer_smra: texture_2d<f32>;
 @group(1) @binding(10) var gbuffer_motion: texture_2d<f32>;
+@group(1) @binding(11) var blue_noise: texture_2d_array<f32>;
+
+// =============================================================================
+// ╔═══════════════════════════════════════════════════════════════════════════╗
+// ║                      BLUE NOISE SAMPLING                                  ║
+// ╠═══════════════════════════════════════════════════════════════════════════╣
+// ║                                                                           ║
+// ║  Blue noise provides low-discrepancy sampling that converges faster       ║
+// ║  than white noise by distributing samples more uniformly across the       ║
+// ║  sampling domain. This is especially beneficial for path tracing where    ║
+// ║  we need multiple uncorrelated random values per pixel per frame.         ║
+// ║                                                                           ║
+// ║  We use:                                                                  ║
+// ║  • 64 layers of blue noise textures for temporal decorrelation           ║
+// ║  • RGBA channels provide 3 values per texel                               ║
+// ║  • Cranley-Patterson rotation adds per-pixel scrambling                   ║
+// ║                                                                           ║
+// ╚═══════════════════════════════════════════════════════════════════════════╝
+// =============================================================================
+
+const BLUE_NOISE_LAYER_COUNT: u32 = 64u;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Blue Noise Sampler State
+// Tracks the current sampling dimension for a given pixel/frame combination
+// ─────────────────────────────────────────────────────────────────────────────
+struct BlueNoiseSampler {
+    base_coord: vec2<u32>,     // Base sampling coordinates (tile or pixel)
+    frame_index: u32,          // Current frame for temporal variation
+    dimension: u32,            // Current dimension index (auto-incremented)
+    scramble: u32,             // Per-pixel scrambling value (Cranley-Patterson)
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Initialize blue noise sampler
+// Uses tile index for initial scramble to ensure each tile gets unique samples
+// ─────────────────────────────────────────────────────────────────────────────
+fn blue_noise_init(base_coord: vec2<u32>, frame_index: u32, seed: u32) -> BlueNoiseSampler {
+    // Generate Cranley-Patterson rotation value from seed for per-sample scrambling
+    let scramble = hash(seed ^ (frame_index * 0x9E3779B9u));
+    return BlueNoiseSampler(base_coord, frame_index, 0u, scramble);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Sample next blue noise value
+// Returns a value in [0, 1) with low-discrepancy properties
+// Automatically advances to next dimension for subsequent calls
+// ─────────────────────────────────────────────────────────────────────────────
+fn blue_noise_next(sampler: ptr<function, BlueNoiseSampler>) -> f32 {
+    let dim = (*sampler).dimension;
+    (*sampler).dimension = dim + 1u;
+    
+    // Get blue noise texture dimensions
+    let noise_dims = textureDimensions(blue_noise);
+    
+    // Select layer based on frame + dimension for temporal decorrelation
+    // This ensures different dimensions sample from different noise patterns
+    let layer = ((*sampler).frame_index + dim / 4u) % BLUE_NOISE_LAYER_COUNT;
+    
+    // Select channel (0-2) based on dimension within the layer
+    let channel = dim % 3u;
+    
+    // Compute sample coordinates with wrapping
+    // Add dimension-based offset to decorrelate different dimensions spatially
+    let offset = vec2<u32>((dim * 17u) % noise_dims.x, (dim * 31u) % noise_dims.y);
+    let sample_coord = vec2<i32>(
+        i32(((*sampler).base_coord.x + offset.x) % noise_dims.x),
+        i32(((*sampler).base_coord.y + offset.y) % noise_dims.y)
+    );
+    
+    // Sample blue noise texture
+    let noise_texel = textureLoad(blue_noise, sample_coord, i32(layer), 0);
+    
+    // Extract value from appropriate channel
+    var noise_value: f32;
+    switch (channel) {
+        case 0u: { noise_value = noise_texel.r; }
+        case 1u: { noise_value = noise_texel.g; }
+        case 2u: { noise_value = noise_texel.b; }
+        default: { noise_value = 0.0; }
+    }
+    
+    // Apply Cranley-Patterson rotation for additional scrambling
+    // This adds a per-pixel/per-frame offset, wrapping around [0, 1)
+    let rotation = f32(hash((*sampler).scramble + dim)) * one_over_float_max;
+    noise_value = fract(noise_value + rotation);
+    
+    return noise_value;
+}
 
 // =============================================================================
 // MAIN COMPUTE SHADER
@@ -65,21 +157,31 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let frame_id = u32(gi_params.frame_index);
     
     // ─────────────────────────────────────────────────────────────────────────
-    // Initialize RNG with tile and frame for good temporal distribution
+    // Initialize blue noise sampler for low-discrepancy random sampling
+    // Use tile coordinates as base for spatial coherence within tiles
     // ─────────────────────────────────────────────────────────────────────────
-    var rng = hash(gid.x ^ (frame_id * 0x9E3779B9u));
+    let tile_x = tile_index % tile_grid_dims.x;
+    let tile_y = tile_index / tile_grid_dims.x;
+    var bn_sampler = blue_noise_init(vec2<u32>(tile_x, tile_y), frame_id, gid.x);
     
     // ─────────────────────────────────────────────────────────────────────────
-    // Stochastic pixel selection within tile
+    // Stochastic pixel selection within tile using blue noise
     // ─────────────────────────────────────────────────────────────────────────
-    let pixel_coords = tile_to_pixel_stochastic(
+    let rand_tile_x = blue_noise_next(&bn_sampler);
+    let rand_tile_y = blue_noise_next(&bn_sampler);
+    let pixel_coords = tile_to_pixel_with_offset(
         tile_index,
         tile_grid_dims.x,
         upscale,
         resolution,
-        &rng
+        rand_tile_x,
+        rand_tile_y
     );
     let pixel_coord = vec2<i32>(i32(pixel_coords.x), i32(pixel_coords.y));
+    
+    // Update blue noise sampler to use selected pixel coordinates for remaining samples
+    // This ensures BRDF sampling is coherent with the actual pixel being traced
+    bn_sampler.base_coord = pixel_coords;
     
     // ─────────────────────────────────────────────────────────────────────────
     // Sample G-buffer at selected pixel location
@@ -133,17 +235,17 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let mis_specular_prob = select(0.0, specular_prob_if_ggx, use_ggx);
     
     // ─────────────────────────────────────────────────────────────────────────
-    // Generate BRDF sampling candidates
+    // Generate BRDF sampling candidates using blue noise
+    // Blue noise provides better sample distribution than white noise,
+    // reducing variance and improving convergence speed
     // ─────────────────────────────────────────────────────────────────────────
     var candidate_samples: array<GISample, num_ris_samples>;
     
     for (var i = 0u; i < num_ris_samples; i = i + 1u) {
-        rng = random_seed(rng);
-        let r1 = rand_float(rng);
-        rng = random_seed(rng);
-        let r2 = rand_float(rng);
-        rng = random_seed(rng);
-        let r3 = rand_float(rng);
+        // Sample three blue noise values for this candidate
+        let r1 = blue_noise_next(&bn_sampler);
+        let r2 = blue_noise_next(&bn_sampler);
+        let r3 = blue_noise_next(&bn_sampler);
         
         var dir: vec3<f32>;
         if (use_ggx && r3 < specular_prob_if_ggx) {
@@ -151,10 +253,10 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
             let h = importance_sample_ggx(vec2<f32>(r1, r2), normal, clamped_roughness);
             dir = normalize(reflect(-v_dir, h));
         } else {
-            // Cosine-weighted hemisphere sampling for diffuse
+            // Uniform hemisphere sampling for diffuse
             let phi = 2.0 * PI * r1;
-            let cos_theta = sqrt(1.0 - r2);
-            let sin_theta = sqrt(r2);
+            let cos_theta = r2;
+            let sin_theta = sqrt(1.0 - r2 * r2);
             let up = select(vec3f(0.0, 1.0, 0.0), vec3f(1.0, 0.0, 0.0), abs(normal.y) > 0.999);
             let tangent = normalize(cross(up, normal));
             let bitangent = normalize(cross(normal, tangent));
@@ -176,7 +278,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
     
     // ─────────────────────────────────────────────────────────────────────────
-    // Perform RIS on candidates
+    // Perform RIS on candidates using blue noise for reservoir selection
     // ─────────────────────────────────────────────────────────────────────────
     var gi_reservoir = gi_reservoir_init();
     for (var i = 0u; i < num_ris_samples; i = i + 1u) {
@@ -185,7 +287,9 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         let ris_weight = target_pdf / max(sample.direction_and_source_pdf.w, 0.0001);
         
         if (ris_weight > 0.0 && !isinf(ris_weight)) {
-            gi_reservoir_update(&gi_reservoir, i, ris_weight, &rng);
+            // Use blue noise for reservoir random selection
+            let reservoir_rand = blue_noise_next(&bn_sampler);
+            gi_reservoir_update_with_rand(&gi_reservoir, i, ris_weight, reservoir_rand);
         }
     }
     
@@ -226,16 +330,14 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
             pixel_path_state[gid.x].reservoir_direction_w = vec4f(selected_dir, gi_reservoir.w);
         }
     } else {
-        // Reservoir failed - generate fallback direction
+        // Reservoir failed - generate fallback direction using blue noise
         is_alive = 0u;
         pixel_path_state[gid.x].reservoir_radiance_m = vec4f(0.0);
         pixel_path_state[gid.x].reservoir_direction_w = vec4f(0.0);
         
-        rng = random_seed(rng);
-        let u1 = rand_float(rng);
-        rng = random_seed(rng);
-        let u2 = rand_float(rng);
-        ray_dir = sample_cosine_hemisphere(u1, u2, normal);
+        let fallback_u1 = blue_noise_next(&bn_sampler);
+        let fallback_u2 = blue_noise_next(&bn_sampler);
+        ray_dir = sample_cosine_hemisphere(fallback_u1, fallback_u2, normal);
     }
 
     // ═════════════════════════════════════════════════════════════════════════
@@ -245,8 +347,8 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     
     let num_lights = light_count_buffer[0];
     if (num_lights > 0u) {
-        rng = random_seed(rng);
-        let light_idx = u32(rand_float(rng) * f32(num_lights)) % num_lights;
+        let light_rand = blue_noise_next(&bn_sampler);
+        let light_idx = u32(light_rand * f32(num_lights)) % num_lights;
         let light = dense_lights_buffer[light_idx];
         
         let light_dir = get_light_dir(light, position);
@@ -272,6 +374,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     
     // ═════════════════════════════════════════════════════════════════════════
     // STORE PATH STATE
+    // Store blue noise dimension in RNG field for subsequent passes to continue
     // ═════════════════════════════════════════════════════════════════════════
     pixel_path_state[gid.x].origin_tmin = vec4<f32>(position + normal * 0.001, 0.0001);
     pixel_path_state[gid.x].direction_tmax = vec4<f32>(ray_dir, 1e30);
@@ -279,7 +382,8 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     pixel_path_state[gid.x].state_u32 = vec4<u32>(0u, is_alive, 0u, 0xffffffffu);
     pixel_path_state[gid.x].hit_attr0 = vec4<f32>(0.0);
     pixel_path_state[gid.x].hit_attr1 = vec4<f32>(0.0);
-    pixel_path_state[gid.x].rng_sample_count_frame_stamp = vec4<f32>(f32(rng), 0.0, f32(frame_id), 0.0);
+    // x = blue noise scramble, y = sample count, z = frame, w = blue noise dimension
+    pixel_path_state[gid.x].rng_sample_count_frame_stamp = vec4<f32>(f32(bn_sampler.scramble), 0.0, f32(frame_id), f32(bn_sampler.dimension));
     pixel_path_state[gid.x].path_weight = vec4<f32>(path_weight, ray_source_pdf);
     pixel_path_state[gid.x].throughput = vec4<f32>(emissive * albedo, 0.0);
     // Store pixel coordinates for update pass

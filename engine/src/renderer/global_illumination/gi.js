@@ -345,6 +345,12 @@ export class GI {
     // ═════════════════════════════════════════════════════════════════════
 
     // ─────────────────────────────────────────────────────────────────────
+    // Blue Noise Texture
+    // ─────────────────────────────────────────────────────────────────────
+    const blue_noise = Texture.default_blue_noise();
+    const blue_noise_image = render_graph.register_image(blue_noise.config.name);
+
+    // ─────────────────────────────────────────────────────────────────────
     // GI Parameters Buffer
     // ─────────────────────────────────────────────────────────────────────
     const gi_params = render_graph.create_buffer({
@@ -764,6 +770,7 @@ export class GI {
           gbuffer_albedo,
           gbuffer_smra,
           gbuffer_motion_emissive,
+          blue_noise_image,
         ],
         outputs: [pixel_path_state],
         shader_setup: pixel_trace_init_shader_setup,

@@ -5,6 +5,9 @@ import { ImageFlags } from "./renderer_types.js";
 import { CacheTypes } from "./renderer_types.js";
 import { global_dispatcher } from "../core/dispatcher.js";
 import { TextureArrayPools } from "./texture_pool.js";
+import {
+  r8unorm_format,
+} from "../utility/config_permutations.js";
 
 /**
  * Configuration for a texture sampler.
@@ -192,14 +195,17 @@ export class Texture {
         GPUTextureUsage.RENDER_ATTACHMENT |
         GPUTextureUsage.SAMPLED,
     });
+    // Create a default view for the texture while we wait for the images to load
+    if (!this.config.pool_key) {
+      this._setup_views();
+    }
 
     const textures = await Promise.all(config.paths.map(load_image_bitmap));
 
     // 1) compute how many mip‐levels we want
     const base = textures[0];
     const max_dim = Math.max(base.width, base.height);
-    const mip_count = Math.floor(Math.log2(max_dim)) + 1;
-    this.config = { ...this.config, ...config, mip_levels: mip_count };
+    this.config.mip_levels = !!this.config.no_mips ? 1 : Math.floor(Math.log2(max_dim)) + 1;
     this.config.width = base.width;
     this.config.height = base.height;
     this.config.depth = textures.length;
@@ -598,6 +604,78 @@ export class Texture {
       });
     }
     return Texture.#default_cube;
+  }
+
+  static #default_blue_noise = null;
+  static default_blue_noise() {
+    if (!Texture.#default_blue_noise) {
+      Texture.#default_blue_noise = Texture.load({
+        name: "blue_noise_32x32",
+        paths: [
+          "assets/engine/textures/noise/blue/LDR_RGB1_0.png",
+          "assets/engine/textures/noise/blue/LDR_RGB1_1.png",
+          "assets/engine/textures/noise/blue/LDR_RGB1_2.png",
+          "assets/engine/textures/noise/blue/LDR_RGB1_3.png",
+          "assets/engine/textures/noise/blue/LDR_RGB1_4.png",
+          "assets/engine/textures/noise/blue/LDR_RGB1_5.png",
+          "assets/engine/textures/noise/blue/LDR_RGB1_6.png",
+          "assets/engine/textures/noise/blue/LDR_RGB1_7.png",
+          "assets/engine/textures/noise/blue/LDR_RGB1_8.png",
+          "assets/engine/textures/noise/blue/LDR_RGB1_9.png",
+          "assets/engine/textures/noise/blue/LDR_RGB1_10.png",
+          "assets/engine/textures/noise/blue/LDR_RGB1_11.png",
+          "assets/engine/textures/noise/blue/LDR_RGB1_12.png",
+          "assets/engine/textures/noise/blue/LDR_RGB1_13.png",
+          "assets/engine/textures/noise/blue/LDR_RGB1_14.png",
+          "assets/engine/textures/noise/blue/LDR_RGB1_15.png",
+          "assets/engine/textures/noise/blue/LDR_RGB1_16.png",
+          "assets/engine/textures/noise/blue/LDR_RGB1_17.png",
+          "assets/engine/textures/noise/blue/LDR_RGB1_18.png",
+          "assets/engine/textures/noise/blue/LDR_RGB1_19.png",
+          "assets/engine/textures/noise/blue/LDR_RGB1_20.png",
+          "assets/engine/textures/noise/blue/LDR_RGB1_21.png",
+          "assets/engine/textures/noise/blue/LDR_RGB1_22.png",
+          "assets/engine/textures/noise/blue/LDR_RGB1_23.png",
+          "assets/engine/textures/noise/blue/LDR_RGB1_24.png",
+          "assets/engine/textures/noise/blue/LDR_RGB1_25.png",
+          "assets/engine/textures/noise/blue/LDR_RGB1_26.png",
+          "assets/engine/textures/noise/blue/LDR_RGB1_27.png",
+          "assets/engine/textures/noise/blue/LDR_RGB1_28.png",
+          "assets/engine/textures/noise/blue/LDR_RGB1_29.png",
+          "assets/engine/textures/noise/blue/LDR_RGB1_30.png",
+          "assets/engine/textures/noise/blue/LDR_RGB1_31.png",
+          "assets/engine/textures/noise/blue/LDR_RGB1_32.png",
+          "assets/engine/textures/noise/blue/LDR_RGB1_33.png",
+          "assets/engine/textures/noise/blue/LDR_RGB1_34.png",
+          "assets/engine/textures/noise/blue/LDR_RGB1_46.png",
+          "assets/engine/textures/noise/blue/LDR_RGB1_47.png",
+          "assets/engine/textures/noise/blue/LDR_RGB1_48.png",
+          "assets/engine/textures/noise/blue/LDR_RGB1_49.png",
+          "assets/engine/textures/noise/blue/LDR_RGB1_50.png",
+          "assets/engine/textures/noise/blue/LDR_RGB1_51.png",
+          "assets/engine/textures/noise/blue/LDR_RGB1_52.png",
+          "assets/engine/textures/noise/blue/LDR_RGB1_53.png",
+          "assets/engine/textures/noise/blue/LDR_RGB1_54.png",
+          "assets/engine/textures/noise/blue/LDR_RGB1_55.png",
+          "assets/engine/textures/noise/blue/LDR_RGB1_56.png",
+          "assets/engine/textures/noise/blue/LDR_RGB1_57.png",
+          "assets/engine/textures/noise/blue/LDR_RGB1_58.png",
+          "assets/engine/textures/noise/blue/LDR_RGB1_59.png",
+          "assets/engine/textures/noise/blue/LDR_RGB1_60.png",
+          "assets/engine/textures/noise/blue/LDR_RGB1_61.png",
+          "assets/engine/textures/noise/blue/LDR_RGB1_62.png",
+          "assets/engine/textures/noise/blue/LDR_RGB1_63.png",
+        ],
+        format: r8unorm_format,
+        dimension: "2d-array",
+        no_mips: true,
+        usage:
+          GPUTextureUsage.TEXTURE_BINDING |
+          GPUTextureUsage.SAMPLED,
+        force: true,
+      });
+    }
+    return Texture.#default_blue_noise;
   }
 
   static filter_type_from_format(format) {

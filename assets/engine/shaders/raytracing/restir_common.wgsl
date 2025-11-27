@@ -41,6 +41,24 @@ fn gi_reservoir_update(
     }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Update reservoir with explicit random value (for blue noise sampling)
+// Takes a pre-computed random value in [0, 1) instead of using RNG state
+// ─────────────────────────────────────────────────────────────────────────────
+fn gi_reservoir_update_with_rand(
+    reservoir: ptr<function, GIReservoir>,
+    candidate_index: u32,
+    weight: f32,
+    xi: f32
+) {
+    (*reservoir).weight_sum += weight;
+    (*reservoir).m += 1u;
+    
+    if (xi * (*reservoir).weight_sum < weight) {
+        (*reservoir).selected_index = candidate_index;
+    }
+}
+
 // Finalize GI reservoir and compute final weight
 fn gi_reservoir_finalize(
     reservoir: ptr<function, GIReservoir>,
