@@ -197,12 +197,12 @@ export class GI {
   // ─────────────────────────────────────────────────────────────────────────
   config = {
     screen_ray_count: 1,          // Rays per pixel per frame (1 recommended for real-time)
-    upscale_x: 2,                 // Temporal upscale factor X
-    upscale_y: 2,                 // Temporal upscale factor Y
+    upscale_x: 4,                 // Temporal upscale factor X
+    upscale_y: 4,                 // Temporal upscale factor Y
     world_cache_size: 32768,      // Number of world cache cells per LOD level
-    world_cache_cell_size: 4.0,   // Base cell size in world units
+    world_cache_cell_size: 2.0,   // Base cell size in world units
     world_cache_lod_count: 4,     // Number of LOD levels
-    indirect_boost: 1.0,         // Multiplier for indirect lighting contribution
+    indirect_boost: 2.0,         // Multiplier for indirect lighting contribution
   };
 
   // GI parameters buffer data (matches shader GIParams struct)

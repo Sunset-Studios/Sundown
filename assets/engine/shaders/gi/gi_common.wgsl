@@ -151,19 +151,16 @@ fn temporal_blend(curr_radiance: vec3<f32>, prev_radiance: vec3<f32>) -> vec3<f3
 // Cosine-weighted hemisphere sampling
 // ─────────────────────────────────────────────────────────────────────────────
 fn sample_cosine_hemisphere(u1: f32, u2: f32, normal: vec3<f32>) -> vec3<f32> {
-    let r = sqrt(u1);
-    let theta = 2.0 * PI * u2;
+    let phi = 2.0 * PI * u1;
+    let cos_theta = sqrt(1.0 - u2);
+    let sin_theta = sqrt(u2);
     
-    let x = r * cos(theta);
-    let y = r * sin(theta);
-    let z = sqrt(max(0.0, 1.0 - u1));
-    
-    // Build TBN frame
-    let up = select(vec3<f32>(1.0, 0.0, 0.0), vec3<f32>(0.0, 1.0, 0.0), abs(normal.y) < 0.999);
+    let up = select(vec3f(0.0, 1.0, 0.0), vec3f(1.0, 0.0, 0.0), abs(normal.y) > 0.999);
     let tangent = normalize(cross(up, normal));
     let bitangent = normalize(cross(normal, tangent));
     
-    return normalize(tangent * x + bitangent * y + normal * z);
+    let dir_local = vec3f(cos(phi) * sin_theta, sin(phi) * sin_theta, cos_theta);
+    return normalize(tangent * dir_local.x + bitangent * dir_local.y + normal * dir_local.z);
 }
 
 // =============================================================================

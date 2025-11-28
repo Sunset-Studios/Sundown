@@ -129,6 +129,42 @@ fn blue_noise_next(sampler: ptr<function, BlueNoiseSampler>) -> f32 {
 }
 
 // =============================================================================
+// BRDF Sampling Functions (duplicated for standalone compilation)
+// =============================================================================
+
+fn sample_ggx(n: vec3<f32>, roughness: f32, r1: f32, r2: f32) -> vec3<f32> {
+    let a = roughness * roughness;
+    let a2 = a * a;
+    
+    let phi = 2.0 * PI * r1;
+    let cos_theta = sqrt((1.0 - r2) / (1.0 + (a2 - 1.0) * r2));
+    let sin_theta = sqrt(1.0 - cos_theta * cos_theta);
+    
+    let up = select(vec3f(0.0, 1.0, 0.0), vec3f(1.0, 0.0, 0.0), abs(n.y) > 0.999);
+    let tangent = normalize(cross(up, n));
+    let bitangent = normalize(cross(n, tangent));
+    
+    let h_local = vec3f(cos(phi) * sin_theta, sin(phi) * sin_theta, cos_theta);
+    return normalize(tangent * h_local.x + bitangent * h_local.y + n * h_local.z);
+}
+
+fn pdf_cosine_hemisphere(n_dot_l: f32) -> f32 {
+    return max(n_dot_l, 0.0) / PI;
+}
+
+fn pdf_ggx_reflection(n: vec3<f32>, h: vec3<f32>, v: vec3<f32>, l: vec3<f32>, roughness: f32) -> f32 {
+    let a = roughness * roughness;
+    let a2 = a * a;
+    let n_dot_h = max(dot(n, h), 0.0);
+    let h_dot_v = max(dot(h, v), 0.0);
+    
+    let denom = n_dot_h * n_dot_h * (a2 - 1.0) + 1.0;
+    let d = a2 / (PI * denom * denom);
+    
+    return (d * n_dot_h) / max(4.0 * h_dot_v, 0.0001);
+}
+
+// =============================================================================
 // MAIN COMPUTE SHADER
 // =============================================================================
 
@@ -221,17 +257,13 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     // BRDF-GUIDED IMPORTANCE SAMPLING WITH ReSTIR
     // ═════════════════════════════════════════════════════════════════════════
     
-    let clamped_roughness = clamp(roughness, 0.0001, 1.0);
+    let clamped_roughness = clamp(roughness, 0.04, 1.0);
     let dielectric_f0 = 0.16 * reflectance * reflectance;
     let f0 = mix(vec3<f32>(dielectric_f0), albedo, metallic);
     
     let f = f_schlick_vec3(f0, 1.0, n_dot_v);
     let fresnel_luminance = (f.x + f.y + f.z) / 3.0;
-    
-    // Use GGX for glossy/metallic, cosine for rough diffuse
-    let use_ggx = (clamped_roughness < 0.3) || (metallic > 0.5);
-    let specular_prob_if_ggx = clamp(fresnel_luminance, 0.001, 0.99);
-    let mis_specular_prob = select(0.0, specular_prob_if_ggx, use_ggx);
+    let specular_prob = clamp(fresnel_luminance * (1.0 - clamped_roughness * 0.5), 0.1, 0.9);
     
     // ─────────────────────────────────────────────────────────────────────────
     // Generate BRDF sampling candidates using blue noise
@@ -245,22 +277,31 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         let r1 = blue_noise_next(&bn_sampler);
         let r2 = blue_noise_next(&bn_sampler);
         let r3 = blue_noise_next(&bn_sampler);
-        
+
         var dir: vec3<f32>;
-        if (use_ggx && r3 < specular_prob_if_ggx) {
-            // GGX sampling for specular lobes
-            let h = importance_sample_ggx(vec2<f32>(r1, r2), normal, clamped_roughness);
+        var pdf: f32;
+        
+        if (r3 < specular_prob) {
+            // GGX specular sampling
+            let h = sample_ggx(normal, clamped_roughness, r1, r2);
             dir = normalize(reflect(-v_dir, h));
+            
+            if (dot(dir, normal) <= 0.0) {
+                dir = sample_cosine_hemisphere(r1, r2, normal);
+                pdf = pdf_cosine_hemisphere(max(dot(dir, normal), 0.0));
+            } else {
+                let ggx_pdf = pdf_ggx_reflection(normal, h, v_dir, dir, clamped_roughness);
+                let cosine_pdf = pdf_cosine_hemisphere(max(dot(dir, normal), 0.0));
+                pdf = specular_prob * ggx_pdf + (1.0 - specular_prob) * cosine_pdf;
+            }
         } else {
-            // Uniform hemisphere sampling for diffuse
-            let phi = 2.0 * PI * r1;
-            let cos_theta = r2;
-            let sin_theta = sqrt(1.0 - r2 * r2);
-            let up = select(vec3f(0.0, 1.0, 0.0), vec3f(1.0, 0.0, 0.0), abs(normal.y) > 0.999);
-            let tangent = normalize(cross(up, normal));
-            let bitangent = normalize(cross(normal, tangent));
-            let dir_local = vec3f(cos(phi) * sin_theta, sin(phi) * sin_theta, cos_theta);
-            dir = normalize(tangent * dir_local.x + bitangent * dir_local.y + normal * dir_local.z);
+            // Cosine-weighted diffuse sampling
+            dir = sample_cosine_hemisphere(r1, r2, normal);
+            
+            let h = normalize(v_dir + dir);
+            let ggx_pdf = pdf_ggx_reflection(normal, h, v_dir, dir, clamped_roughness);
+            let cosine_pdf = pdf_cosine_hemisphere(max(dot(dir, normal), 0.0));
+            pdf = specular_prob * ggx_pdf + (1.0 - specular_prob) * cosine_pdf;
         }
         
         // Evaluate BRDF for this direction
@@ -269,11 +310,10 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
             reflectance, clear_coat, clear_coat_roughness
         );
         
-        let brdf_sample_pdf = brdf_pdf(normal, v_dir, dir, clamped_roughness, mis_specular_prob);
         let brdf_lum = max(0.0, brdf.x * 0.2126 + brdf.y * 0.7152 + brdf.z * 0.0722);
         
         candidate_samples[i].radiance_and_target_pdf = vec4f(brdf, brdf_lum);
-        candidate_samples[i].direction_and_source_pdf = vec4f(dir, brdf_sample_pdf);
+        candidate_samples[i].direction_and_source_pdf = vec4f(dir, pdf);
     }
     
     // ─────────────────────────────────────────────────────────────────────────
