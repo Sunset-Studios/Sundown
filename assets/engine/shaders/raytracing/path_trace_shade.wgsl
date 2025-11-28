@@ -396,7 +396,6 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         let throughput_update = brdf_value / safe_pdf;
         let new_path_weight = info.path_weight.xyz * throughput_update;
         
-        
         let reached_max_bounces = (info.state_u32.x + 1u) > pt_params.max_bounces;
         
         if (reached_max_bounces) {

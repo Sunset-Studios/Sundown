@@ -139,19 +139,10 @@ struct FragmentOutput {
 
 
 #if USE_RADIANCE_CACHE_AS_DEFERRED_LIGHTING
-    let radiance_brdf = calculate_brdf_from_irradiance(
-        normalized_normal,
-        view_dir,
-        albedo,
-        roughness,
-        metallic,
-        reflectance,
-        0.0, // clear coat
-        0.0, // clear coat roughness
-        ao,
-        irradiance
-    );
-    color += radiance_brdf;
+    // GI output is already radiance (Li * BRDF), not irradiance
+    // Just apply AO and add directly - no additional BRDF modulation needed
+    let gi_contribution = select(irradiance * ao, irradiance, ao <= 0.0);
+    color += gi_contribution;
 #else
     let num_lights = light_count_buffer[0] * (1u - unlit);
     for (var light_index = 0u; light_index < num_lights; light_index++) {

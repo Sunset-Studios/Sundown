@@ -7,6 +7,7 @@
 // =============================================================================
 
 #include "common.wgsl"
+#include "postprocess_common.wgsl"
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Path Tracer Parameters
@@ -81,11 +82,15 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     
     // Clamp to prevent extreme values
     let safe_output = safe_clamp_vec3(averaged_radiance);
+
+    // Tonemap the output
+    let exposure = 1.2;
+    let tonemapped_color = reinhard_tonemapping(safe_output, exposure);
     
     // ─────────────────────────────────────────────────────────────────────────
     // Write to output texture
     // ─────────────────────────────────────────────────────────────────────────
-    textureStore(output_tex, vec2<i32>(i32(gid.x), i32(gid.y)), vec4f(safe_output, 1.0));
+    textureStore(output_tex, vec2<i32>(i32(gid.x), i32(gid.y)), vec4f(tonemapped_color, 1.0));
     
     // ─────────────────────────────────────────────────────────────────────────
     // Write back updated sample count
