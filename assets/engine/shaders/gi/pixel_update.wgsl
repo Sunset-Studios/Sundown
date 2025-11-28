@@ -45,7 +45,7 @@
 // =============================================================================
 
 // Reprojection validation thresholds
-const MIN_NORMAL_SIMILARITY = 0.9;
+const MIN_NORMAL_SIMILARITY = 0.95;
 const MAX_DEPTH_RATIO = 0.1;
 
 // Temporal blending parameters
@@ -97,7 +97,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     // Path state is indexed by tile - check if the traced pixel matches this one
     // ─────────────────────────────────────────────────────────────────────────
     var current_radiance = vec3<f32>(0.0);
-    var traced_this_frame = false;
+    var current_count = 0.0;
     
     for (var i = 0u; i < rays_per_tile; i = i + 1u) {
         // Index into path state by tile, not by pixel
@@ -116,18 +116,18 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
                                 length(path.throughput.xyz) > 0.0;
             
             if (ray_was_alive) {
-                traced_this_frame = true;
                 let sample_count = max(path.rng_sample_count_frame_stamp.y, 1.0);
                 let accumulated_avg = path.throughput.xyz / sample_count;
                 let radiance = safe_clamp_vec3(accumulated_avg);
                 current_radiance += radiance;
+                current_count += 1.0;
             }
         }
     }
     
     // Average if multiple rays per tile
-    if (rays_per_tile > 1u && traced_this_frame) {
-        current_radiance /= f32(rays_per_tile);
+    if (current_count > 0.0) {
+        current_radiance /= current_count;
     }
     
     // ─────────────────────────────────────────────────────────────────────────
@@ -137,7 +137,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let pixel_velocity = motion_sample.xy * vec2<f32>(f32(res.x), f32(res.y)) * vec2<f32>(0.5, -0.5);
     
     let pixel_center = vec2<f32>(gid.xy) + 0.5;
-    let pixel_prev_center = pixel_center - pixel_velocity;
+    let pixel_prev_center = pixel_center + -pixel_velocity;
     let pixel_prev = vec2<i32>(floor(pixel_prev_center));
     
     // Check if reprojected pixel is within bounds
@@ -192,7 +192,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let upscale_factor = f32(upscale.x * upscale.y);
     let base_alpha = clamp(sqrt(upscale_factor) * MIN_BLEND_ALPHA, MIN_BLEND_ALPHA, MAX_BLEND_ALPHA);
     
-    if (traced_this_frame) {
+    if (current_count > 0.0) {
         if (reprojection_valid && prev_count > 0.0) {
             // ─────────────────────────────────────────────────────────────────
             // Upscale-aware adaptive blending

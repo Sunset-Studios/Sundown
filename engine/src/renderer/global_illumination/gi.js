@@ -669,6 +669,7 @@ export class GI {
           light_count,
           dense_lights,
           gi_counters,
+          blue_noise_image,
         ],
         outputs: [world_cache_path_state],
         shader_setup: world_cache_trace_init_shader_setup,

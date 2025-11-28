@@ -18,6 +18,96 @@
 @group(1) @binding(5) var<storage, read> light_count_buffer: array<u32>;
 @group(1) @binding(6) var<storage, read> dense_lights_buffer: array<Light>;
 @group(1) @binding(7) var<storage, read_write> gi_counters: GICounters;
+@group(1) @binding(8) var blue_noise: texture_2d_array<f32>;
+
+// =============================================================================
+// ╔═══════════════════════════════════════════════════════════════════════════╗
+// ║                      BLUE NOISE SAMPLING                                  ║
+// ╠═══════════════════════════════════════════════════════════════════════════╣
+// ║                                                                           ║
+// ║  Blue noise provides low-discrepancy sampling that converges faster       ║
+// ║  than white noise by distributing samples more uniformly across the       ║
+// ║  sampling domain. This is especially beneficial for path tracing where    ║
+// ║  we need multiple uncorrelated random values per pixel per frame.         ║
+// ║                                                                           ║
+// ║  We use:                                                                  ║
+// ║  • 64 layers of blue noise textures for temporal decorrelation           ║
+// ║  • RGBA channels provide 3 values per texel                               ║
+// ║  • Cranley-Patterson rotation adds per-pixel scrambling                   ║
+// ║                                                                           ║
+// ╚═══════════════════════════════════════════════════════════════════════════╝
+// =============================================================================
+
+const BLUE_NOISE_LAYER_COUNT: u32 = 64u;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Blue Noise Sampler State
+// Tracks the current sampling dimension for a given pixel/frame combination
+// ─────────────────────────────────────────────────────────────────────────────
+struct BlueNoiseSampler {
+    base_coord: vec2<u32>,     // Base sampling coordinates (tile or pixel)
+    frame_index: u32,          // Current frame for temporal variation
+    dimension: u32,            // Current dimension index (auto-incremented)
+    scramble: u32,             // Per-pixel scrambling value (Cranley-Patterson)
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Initialize blue noise sampler
+// Uses tile index for initial scramble to ensure each tile gets unique samples
+// ─────────────────────────────────────────────────────────────────────────────
+fn blue_noise_init(base_coord: vec2<u32>, frame_index: u32, seed: u32) -> BlueNoiseSampler {
+    // Generate Cranley-Patterson rotation value from seed for per-sample scrambling
+    let scramble = hash(seed ^ (frame_index * 0x9E3779B9u));
+    return BlueNoiseSampler(base_coord, frame_index, 0u, scramble);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Sample next blue noise value
+// Returns a value in [0, 1) with low-discrepancy properties
+// Automatically advances to next dimension for subsequent calls
+// ─────────────────────────────────────────────────────────────────────────────
+fn blue_noise_next(sampler: ptr<function, BlueNoiseSampler>) -> f32 {
+    let dim = (*sampler).dimension;
+    (*sampler).dimension = dim + 1u;
+    
+    // Get blue noise texture dimensions
+    let noise_dims = textureDimensions(blue_noise);
+    
+    // Select layer based on frame + dimension for temporal decorrelation
+    // This ensures different dimensions sample from different noise patterns
+    let layer = ((*sampler).frame_index + dim / 4u) % BLUE_NOISE_LAYER_COUNT;
+    
+    // Select channel (0-2) based on dimension within the layer
+    let channel = dim % 3u;
+    
+    // Compute sample coordinates with wrapping
+    // Add dimension-based offset to decorrelate different dimensions spatially
+    let offset = vec2<u32>((dim * 17u) % noise_dims.x, (dim * 31u) % noise_dims.y);
+    let sample_coord = vec2<i32>(
+        i32(((*sampler).base_coord.x + offset.x) % noise_dims.x),
+        i32(((*sampler).base_coord.y + offset.y) % noise_dims.y)
+    );
+    
+    // Sample blue noise texture
+    let noise_texel = textureLoad(blue_noise, sample_coord, i32(layer), 0);
+    
+    // Extract value from appropriate channel
+    var noise_value: f32;
+    switch (channel) {
+        case 0u: { noise_value = noise_texel.r; }
+        case 1u: { noise_value = noise_texel.g; }
+        case 2u: { noise_value = noise_texel.b; }
+        default: { noise_value = 0.0; }
+    }
+    
+    // Apply Cranley-Patterson rotation for additional scrambling
+    // This adds a per-pixel/per-frame offset, wrapping around [0, 1)
+    let rotation = f32(hash((*sampler).scramble + dim)) * one_over_float_max;
+    noise_value = fract(noise_value + rotation);
+    
+    return noise_value;
+}
+
 
 // =============================================================================
 // BRDF Sampling Functions (duplicated for standalone compilation)
@@ -99,8 +189,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let frame_id = u32(gi_params.frame_index);
     
     // Initialize RNG for this cell
-    var rng = u32(world_cache_path_state[active_index].rng_sample_count_frame_stamp.x);
-    rng = select(random_seed(rng), hash(cell_index ^ u32(gi_params.frame_index)), rng == 0u); 
+    var bn_sampler = blue_noise_init(vec2<u32>(cell_index, cell_index), frame_id, gid.x);
     
     // =============================================================================
     // Cosine-weighted hemisphere sampling with ReSTIR
@@ -119,11 +208,9 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     var candidate_samples: array<GISample, num_ris_samples>;
     
     for (var i = 0u; i < num_ris_samples; i = i + 1u) {
-        rng = random_seed(rng);
-        let r1 = rand_float(rng);
-        rng = random_seed(rng);
-        let r2 = rand_float(rng);
-        
+        let r1 = blue_noise_next(&bn_sampler);
+        let r2 = blue_noise_next(&bn_sampler);
+
         // Cosine-weighted diffuse sampling
         let dir = sample_cosine_hemisphere(r1, r2, normal);
         let pdf = pdf_cosine_hemisphere(max(dot(dir, normal), 0.0));
@@ -148,7 +235,8 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         let ris_weight = target_pdf / max(sample.direction_and_source_pdf.w, 0.0001);
         
         if (ris_weight > 0.0 && !isinf(ris_weight)) {
-            gi_reservoir_update(&gi_reservoir, i, ris_weight, &rng);
+            let reservoir_rand = blue_noise_next(&bn_sampler);
+            gi_reservoir_update_with_rand(&gi_reservoir, i, ris_weight, reservoir_rand);
         }
     }
     
@@ -191,10 +279,8 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         world_cache_path_state[active_index].reservoir_direction_w = vec4f(0.0);
         
         // Generate fallback direction
-        rng = random_seed(rng);
-        let u1 = rand_float(rng);
-        rng = random_seed(rng);
-        let u2 = rand_float(rng);
+        let u1 = blue_noise_next(&bn_sampler);
+        let u2 = blue_noise_next(&bn_sampler);
         ray_dir = sample_cosine_hemisphere(u1, u2, normal);
     }
 
@@ -204,8 +290,8 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     // =============================================================================
     let num_lights = light_count_buffer[0];
     if (num_lights > 0u) {
-        rng = random_seed(rng);
-        let light_idx = u32(rand_float(rng) * f32(num_lights)) % num_lights;
+        let light_rand = blue_noise_next(&bn_sampler);
+        let light_idx = u32(light_rand * f32(num_lights)) % num_lights;
         let light = dense_lights_buffer[light_idx];
         
         let light_dir = get_light_dir(light, position);
@@ -236,7 +322,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     world_cache_path_state[active_index].state_u32 = vec4<u32>(0u, is_alive, 0u, 0xffffffffu);
     world_cache_path_state[active_index].hit_attr0 = vec4<f32>(0.0);
     world_cache_path_state[active_index].hit_attr1 = vec4<f32>(0.0);
-    world_cache_path_state[active_index].rng_sample_count_frame_stamp = vec4<f32>(f32(rng), 0.0, f32(frame_id), 0.0);
+    world_cache_path_state[active_index].rng_sample_count_frame_stamp = vec4<f32>(f32(bn_sampler.scramble), 0.0, f32(frame_id), f32(bn_sampler.dimension));
     world_cache_path_state[active_index].path_weight = vec4<f32>(path_weight, ray_source_pdf);
 }
 
