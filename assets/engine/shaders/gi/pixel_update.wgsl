@@ -50,7 +50,7 @@ const MAX_DEPTH_RATIO = 0.1;
 
 // Temporal blending parameters
 const MIN_BLEND_ALPHA = 0.05;     // Minimum blend for stability (5%)
-const MAX_BLEND_ALPHA = 0.8;      // Maximum blend for responsiveness (80%)
+const MAX_BLEND_ALPHA = 0.5;      // Maximum blend for responsiveness (80%)
 const VARIANCE_BOOST = 0.5;       // How much luminance difference boosts alpha
 
 // =============================================================================
@@ -197,7 +197,6 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
             // ─────────────────────────────────────────────────────────────────
             // Upscale-aware adaptive blending
             // ─────────────────────────────────────────────────────────────────
-            
             // Compute luminance difference for variance-based adaptation
             let curr_luma = dot(current_radiance, vec3<f32>(0.2126, 0.7152, 0.0722));
             let prev_luma = dot(prev_radiance, vec3<f32>(0.2126, 0.7152, 0.0722));

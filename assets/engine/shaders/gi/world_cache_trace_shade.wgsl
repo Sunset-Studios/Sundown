@@ -66,7 +66,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
 
     // === Handle primary vertex visibility ray throughput (direct lighting) ===
     if (path.shadow_origin.w >= 0.0 && path.state_u32.z == 1u) {
-        radiance_contribution += path.shadow_radiance.rgb * path.path_weight.xyz;
+        radiance_contribution += path.shadow_radiance.rgb;
         world_cache_path_state[active_index].state_u32.z = 0u;
         sample_count = 1.0;
     }
@@ -172,7 +172,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         // Query world cache at hit point to get cached irradiance from previous frames
         // This provides multi-bounce indirect illumination without tracing further
         // Pass ray hit distance for light-leak prevention (short ray separation)
-        let cached_radiance = query_world_cache_cell_probabilistic(
+        let cached_radiance = query_world_cache_cell(
             hit_pos,
             n,
             albedo,
@@ -184,11 +184,8 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
             u32(gi_params.world_cache_size),
             gi_params.world_cache_cell_size,
             u32(gi_params.world_cache_lod_count),
-            25.0,
-            rand_float(rng),
             path.origin_tmin.w
         );
-        
         
         // Check if we got valid cached data
         let cached_luminance = cached_radiance.x * 0.2126 + cached_radiance.y * 0.7152 + cached_radiance.z * 0.0722;

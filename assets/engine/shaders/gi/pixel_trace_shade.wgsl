@@ -73,7 +73,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     // Handle Direct Light Visibility (NEE result from hit pass)
     // ─────────────────────────────────────────────────────────────────────────
     if (path.shadow_origin.w >= 0.0 && path.state_u32.z == 1u) {
-        path.throughput += vec4f(path.shadow_radiance.rgb * path.path_weight.xyz, 0.0);
+        path.throughput += vec4f(path.shadow_radiance.rgb, 0.0);
         path.shadow_origin.w = -1.0;
         path.state_u32.z = 0u;
     }
