@@ -62,6 +62,7 @@ fn corner(min_p: vec3f, max_p: vec3f, idx: u32) -> vec3f {
 @group(1) @binding(1) var<storage, read> blas_atlas: BLASAtlas;
 @group(1) @binding(2) var<storage, read> entity_transforms: array<EntityTransform>;
 @group(1) @binding(3) var<storage, read> closest_entities_per_mesh: array<u32>;
+@group(1) @binding(4) var<storage, read> bvh2_nodes: array<AABB>; // Direct BVH2 buffer (not in atlas)
 
 @compute @workgroup_size(32, 8)
 fn cs(
@@ -98,7 +99,8 @@ fn cs(
     
     let entity_transform = entity_transforms[entity_resolved].transform;
     let global_node_index = u32(mesh_directory_entry.bvh2_base) + node_idx;
-    var node = atlas_load_aabb(global_node_index);
+    var node = bvh2_nodes[global_node_index];
+    
     node.min -= vec4f(EPS, EPS, EPS, 0.0);
     node.max += vec4f(EPS, EPS, EPS, 0.0);
     

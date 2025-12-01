@@ -117,6 +117,7 @@ export class MeshBLAS {
   static #bvh2_blas_size = INITIAL_MAX_PAGES * PAGE_SIZE; // Total nodes available
   static #bvh2_free_pages = []; // Available page indices (sorted)
   static #bvh2_allocations = new Map(); // mesh_id -> AllocationInfo mapping
+  static #bvh2_allocated_node_count = 0; // Actual number of BVH2 nodes allocated (not capacity)
 
   // ╔════════════════════════════════════════════════════════════════════════════════════════════╗
   // ║                           🔧 BVH4 ALLOCATION MANAGEMENT SYSTEM                            ║
@@ -125,6 +126,8 @@ export class MeshBLAS {
   static #bvh4_blas_size = INITIAL_MAX_PAGES * PAGE_SIZE; // Total nodes available
   static #bvh4_free_pages = []; // Available page indices (sorted)
   static #bvh4_allocations = new Map(); // mesh_id -> AllocationInfo mapping
+  static #bvh4_allocated_node_count = 0; // Actual number of BVH4 nodes allocated (not capacity)
+  static #directory_entry_count = 0; // Actual number of directory entries used
 
   // ╔════════════════════════════════════════════════════════════════════════════════════════════╗
   // ║                              📊 MESH LIFECYCLE TRACKING                                   ║
@@ -215,7 +218,6 @@ export class MeshBLAS {
       name: "mesh_blas_atlas",
       usage: STORAGE_USAGE,
       size:
-        this.#bvh2_blas_size * BVH2_NODE_BYTE_SIZE +
         this.#bvh4_blas_size * BVH4_NODE_BYTE_SIZE +
         this.#directory.length * UINT32_BYTES,
       force: true,
@@ -279,9 +281,48 @@ export class MeshBLAS {
       this.#bvh4_allocations.delete(mesh_id);
     }
 
+    // Recalculate actual allocation counts after release
+    this.#recalculate_allocation_counts();
+
     // Clean up all related data
     this.#mesh_metadata.delete(mesh_id);
     this.#dirty_meshes.delete(mesh_id);
+  }
+  
+  /**
+   * ┌─────────────────────────────────────────────────────────────────────────────────────────┐
+   * │                        📊 RECALCULATE ALLOCATION COUNTS                                  │
+   * └─────────────────────────────────────────────────────────────────────────────────────────┘
+   *
+   * Recalculates the actual allocation counts after mesh releases. This ensures the atlas
+   * is sized correctly based on actual usage rather than peak historical usage.
+   *
+   * @private
+   */
+  static #recalculate_allocation_counts() {
+    // Recalculate BVH2 high water mark
+    this.#bvh2_allocated_node_count = 0;
+    for (const allocation of this.#bvh2_allocations.values()) {
+      this.#bvh2_allocated_node_count = Math.max(
+        this.#bvh2_allocated_node_count,
+        allocation.base_node_index + allocation.actual_node_count
+      );
+    }
+    
+    // Recalculate BVH4 high water mark
+    this.#bvh4_allocated_node_count = 0;
+    for (const allocation of this.#bvh4_allocations.values()) {
+      this.#bvh4_allocated_node_count = Math.max(
+        this.#bvh4_allocated_node_count,
+        allocation.base_node_index + allocation.actual_node_count
+      );
+    }
+    
+    // Recalculate directory entry count (highest mesh_id + 1)
+    this.#directory_entry_count = 0;
+    for (const mesh_id of this.#mesh_metadata.keys()) {
+      this.#directory_entry_count = Math.max(this.#directory_entry_count, mesh_id + 1);
+    }
   }
 
   /**
@@ -371,8 +412,7 @@ export class MeshBLAS {
    *
    * 📦 ATLAS STRUCTURE:
    *    • Header (32 bytes): Base offsets and counts for each section in vec4 units
-   *    • BVH2 Section: Binary BVH nodes for fast traversal
-   *    • BVH4 Section: Quaternary BVH nodes for SIMD-optimized traversal
+   *    • BVH4 Section: Quaternary BVH nodes for SIMD-optimized traversal (with co-located leaf data)
    *    • Directory Section: Per-mesh metadata (bounds, node ranges, vertex/index offsets)
    *
    * 🔄 DYNAMIC REBUILDING:
@@ -380,109 +420,96 @@ export class MeshBLAS {
    *    bind group invalidation to ensure GPU shaders access the latest data structure.
    *    Header contains vec4-aligned offsets for efficient GPU memory access patterns.
    *
-   * 🚀 PERFORMANCE BENEFITS:
-   *    • Single Buffer Access: Eliminates multiple buffer bindings in shaders
-   *    • Cache Locality: Related BVH data packed together for better memory access
-   *    • GPU Efficiency: Vec4-aligned layout optimizes GPU memory transactions
-   *
    * @param {RenderGraph} render_graph - Render graph for buffer registration and command scheduling
    * @returns {string|null} Atlas buffer handle for render graph, or null if no BLAS data exists
    */
   static build_atlas(render_graph) {
     this.initialize();
 
-    if (!this.#bvh2_nodes_buffer || !this.#bvh4_nodes_buffer || !this.#directory_buffer) {
+    if (!this.#bvh4_nodes_buffer || !this.#directory_buffer) {
       return;
     }
 
-    // Compute vec4 counts for each section
-    const header_bytes = 8 * 4; // 8 u32
-    const bvh2_count = Math.floor((this.#bvh2_nodes_buffer.config.size || 0) / BVH2_NODE_BYTE_SIZE);
-    const bvh4_count = Math.floor((this.#bvh4_nodes_buffer.config.size || 0) / BVH4_NODE_BYTE_SIZE);
-    const dir_count = Math.floor((this.#directory_buffer.config.size || 0) / DIRECTORY_ENTRY_SIZE);
-    const total_entries =
-      (header_bytes +
-      (bvh2_count * BVH2_NODE_BYTE_SIZE +
-        bvh4_count * BVH4_NODE_BYTE_SIZE +
-        dir_count * DIRECTORY_ENTRY_SIZE)) / 4;
+    // ┌─────────────────────────────────────────────────────────────────────────────────────────┐
+    // │  Use ACTUAL allocation counts, not buffer capacity - massive memory savings!           │
+    // │  BVH2 is excluded from atlas - only used for debug visualization                       │
+    // └─────────────────────────────────────────────────────────────────────────────────────────┘
+    const header_bytes = 4 * 4; // 4 u32 header
+    const bvh4_count = this.#bvh4_allocated_node_count; // Actual allocated, not capacity
+    const dir_count = this.#directory_entry_count; // Actual mesh count, not capacity
+    
+    // BVH4 uses 7 vec4s per node (3 for node + 4 for co-located leaf data)
+    // Directory uses 2 vec4s per entry
+    const bvh4_vec4s = bvh4_count * 7;
+    const dir_vec4s = dir_count * 2;
+    const total_bytes = header_bytes + (bvh4_vec4s + dir_vec4s) * 16;
 
-    if (!this.#atlas_buffer || this.#atlas_buffer.config.size < total_entries * 4) {
+    // Only resize if needed - avoid unnecessary allocations
+    if (!this.#atlas_buffer || this.#atlas_buffer.config.size < total_bytes) {
       this.#atlas_buffer = Buffer.create({
         name: "mesh_blas_atlas",
-        size: total_entries,
+        size: total_bytes,
         usage: STORAGE_USAGE,
         force: true,
       });
       Renderer.get().mark_bind_groups_dirty(true);
     }
 
-    // Dispatch compute shader to pack atlas
-    const bvh2_base_v4 = 0;
-    const bvh4_base_v4 = bvh2_base_v4 + bvh2_count * 2;
-    const dir_base_v4 = bvh4_base_v4 + bvh4_count * 7;
+    // Layout: [Header(8 u32)] [BVH4 nodes] [Directory]
+    // Note: bvh2_base/count set to 0 - BVH2 not included in atlas (debug only)
+    const bvh4_base_v4 = 0; // BVH4 starts at beginning of data section
+    const dir_base_v4 = bvh4_base_v4 + bvh4_vec4s;
 
     // Write atlas header directly (CPU-side) into first 32 bytes of atlas
-    const header = new Uint32Array(8);
-    header[0] = bvh2_base_v4 >>> 0;
-    header[1] = (bvh2_count * 2) >>> 0;
-    header[2] = bvh4_base_v4 >>> 0;
-    header[3] = (bvh4_count * 7) >>> 0;
-    header[4] = dir_base_v4 >>> 0;
-    header[5] = (dir_count * 2) >>> 0;
-    header[6] = 0;
-    header[7] = 0;
+    const header = new Uint32Array(4);
+    header[0] = bvh4_base_v4 >>> 0;
+    header[1] = bvh4_vec4s >>> 0;
+    header[2] = dir_base_v4 >>> 0;
+    header[3] = dir_vec4s >>> 0;
     this.#atlas_buffer.write_raw(header, 0, header.length);
 
-    ComputeTaskQueue.new_task(
-      "blas_pack_atlas_bvh2",
-      "acceleration/blas_atlas_pack.wgsl",
-      [
-        this.#atlas_buffer,
-        this.#bvh2_nodes_buffer,
-        this.#bvh4_nodes_buffer,
-        this.#directory_buffer,
-        MeshData.index_buffer,  // Unused by pack_bvh2 but needed for binding consistency
-      ],
-      [this.#atlas_buffer],
-      Math.ceil(bvh2_count / 256),
-      1,
-      1,
-      "pack_bvh2"
-    );
+    // Skip empty atlases
+    if (bvh4_count === 0 && dir_count === 0) {
+      return;
+    }
 
-    ComputeTaskQueue.new_task(
-      "blas_pack_atlas_bvh4",
-      "acceleration/blas_atlas_pack.wgsl",
-      [
-        this.#atlas_buffer,
-        this.#bvh2_nodes_buffer,
-        this.#bvh4_nodes_buffer,
-        this.#directory_buffer,
-        MeshData.index_buffer,  // Index buffer for resolving triangle vertex indices
-      ],
-      [this.#atlas_buffer],
-      Math.ceil(bvh4_count / 256),
-      1,
-      1,
-      "pack_bvh4"
-    );
+    // Pack BVH4 nodes into atlas (includes co-located leaf index resolution)
+    if (bvh4_count > 0) {
+      ComputeTaskQueue.new_task(
+        "blas_pack_atlas_bvh4",
+        "acceleration/blas_atlas_pack.wgsl",
+        [
+          this.#atlas_buffer,
+          this.#bvh4_nodes_buffer,
+          this.#directory_buffer,
+          MeshData.index_buffer, // Index buffer for resolving triangle vertex indices
+        ],
+        [this.#atlas_buffer],
+        Math.ceil(bvh4_count / 256),
+        1,
+        1,
+        "pack_bvh4"
+      );
+    }
 
-    ComputeTaskQueue.new_task(
-      "blas_pack_atlas_dir",
-      "acceleration/blas_atlas_pack.wgsl",
-      [
-        this.#atlas_buffer,
-        this.#bvh2_nodes_buffer,
-        this.#bvh4_nodes_buffer,
-        this.#directory_buffer,
-        MeshData.index_buffer,  // Unused by pack_directory but needed for binding consistency
-      ],
-      [this.#atlas_buffer],
-      Math.ceil(dir_count / 256),
-      1,
-      1,
-      "pack_directory"
-    );
+    // Pack directory entries into atlas
+    if (dir_count > 0) {
+      ComputeTaskQueue.new_task(
+        "blas_pack_atlas_dir",
+        "acceleration/blas_atlas_pack.wgsl",
+        [
+          this.#atlas_buffer,
+          this.#bvh4_nodes_buffer,
+          this.#directory_buffer,
+          MeshData.index_buffer, // Unused by pack_directory but needed for binding consistency
+        ],
+        [this.#atlas_buffer],
+        Math.ceil(dir_count / 256),
+        1,
+        1,
+        "pack_directory"
+      );
+    }
   }
 
   // ╔════════════════════════════════════════════════════════════════════════════════════════════╗
@@ -613,6 +640,9 @@ export class MeshBLAS {
       DIRECTORY_ENTRY_SIZE
     );
 
+    // Track actual directory entry count for atlas sizing
+    this.#directory_entry_count = Math.max(this.#directory_entry_count, mesh_id + 1);
+
     // Store mesh metadata for build pipeline
     this.#mesh_metadata.set(mesh_id, {
       first_vertex: first_vertex,
@@ -676,6 +706,12 @@ export class MeshBLAS {
     };
 
     this.#bvh2_allocations.set(mesh_id, allocation);
+    
+    // Update actual allocated node count for atlas sizing
+    this.#bvh2_allocated_node_count = Math.max(
+      this.#bvh2_allocated_node_count,
+      allocation.base_node_index + allocation.actual_node_count
+    );
 
     return allocation.base_node_index;
   }
@@ -730,6 +766,13 @@ export class MeshBLAS {
     };
 
     this.#bvh4_allocations.set(mesh_id, allocation);
+    
+    // Update actual allocated node count for atlas sizing
+    this.#bvh4_allocated_node_count = Math.max(
+      this.#bvh4_allocated_node_count,
+      allocation.base_node_index + allocation.actual_node_count
+    );
+    
     return allocation.base_node_index;
   }
 

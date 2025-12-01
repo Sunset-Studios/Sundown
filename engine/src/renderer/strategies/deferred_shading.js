@@ -583,6 +583,7 @@ export class DeferredShadingStrategy {
 
       const blas_gpu_data = MeshBLAS.to_gpu_data();
       const blas_atlas = render_graph.register_buffer(blas_gpu_data.atlas_buffer.config.name);
+      const blas_bvh2_nodes = render_graph.register_buffer(blas_gpu_data.bvh2_nodes_buffer.config.name);
 
       // ┌─────────────────────────────────────────────────────────────────────────────┐
       // │ 🎯 Register Mesh & Instance Buffers                                        │
@@ -1162,6 +1163,7 @@ export class DeferredShadingStrategy {
                 blas_atlas,
                 entity_transforms,
                 closest_entities_per_mesh_buf,
+                blas_bvh2_nodes, // Direct BVH2 buffer (not in atlas for memory optimization)
               ],
               outputs: [debug_line_data_buf],
               shader_setup: debug_emit_blas_nodes_shader_setup,

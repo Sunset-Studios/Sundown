@@ -3,20 +3,9 @@
 #include "blas_common.wgsl"
 
 @group(1) @binding(0) var<storage, read_write> blas_atlas: BLASAtlas;
-@group(1) @binding(1) var<storage, read> src_bvh2: array<AABB>;
-@group(1) @binding(2) var<storage, read> src_bvh4: array<BVH4Node>;
-@group(1) @binding(3) var<storage, read> src_dir: array<MeshDirectoryEntry>;
-@group(1) @binding(4) var<storage, read> index_buffer: array<u32>;
-
-@compute @workgroup_size(256)
-fn pack_bvh2(@builtin(global_invocation_id) gid: vec3u) {
-    let i = gid.x;
-    let total = u32(blas_atlas.header.bvh2_vec4_count) / 2;
-    if (i >= total) { return; }
-    let dst_base = u32(blas_atlas.header.bvh2_base_v4) + i * 2u;
-    blas_atlas.data[dst_base + 0u] = src_bvh2[i].min;
-    blas_atlas.data[dst_base + 1u] = src_bvh2[i].max;
-}
+@group(1) @binding(1) var<storage, read> src_bvh4: array<BVH4Node>;
+@group(1) @binding(2) var<storage, read> src_dir: array<MeshDirectoryEntry>;
+@group(1) @binding(3) var<storage, read> index_buffer: array<u32>;
 
 @compute @workgroup_size(256)
 fn pack_bvh4(@builtin(global_invocation_id) gid: vec3u) {

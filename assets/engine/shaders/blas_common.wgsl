@@ -5,14 +5,10 @@
 // - Offsets are expressed in vec4 units relative to the start of the runtime array
 // ------------------------------------------------------------------------------------
 struct BLASAtlasHeader {
-    bvh2_base_v4: u32,     // start of BVH2 AABB data (in vec4 units)
-    bvh2_vec4_count: u32,  // total vec4s used by BVH2 section
     bvh4_base_v4: u32,     // start of BVH4 node data (in vec4 units)
     bvh4_vec4_count: u32,  // total vec4s used by BVH4 section
     dir_base_v4: u32,      // start of directory entries (in vec4 units)
     dir_vec4_count: u32,   // total vec4s used by directory section
-    _pad0: u32,
-    _pad1: u32,
 };
 
 struct BLASAtlas {
@@ -23,15 +19,6 @@ struct BLASAtlas {
 // ------------------------------------------------------------------------------------
 // Functions
 // ------------------------------------------------------------------------------------
-
-// Helpers to read structures from the atlas
-fn atlas_load_aabb(idx: u32) -> AABB {
-    let base = blas_atlas.header.bvh2_base_v4 + idx * 2u;
-    let v0 = blas_atlas.data[base + 0u];
-    let v1 = blas_atlas.data[base + 1u];
-    return AABB(v0, v1);
-}
-
 fn atlas_load_bvh4_node(idx: u32) -> BVH4Node {
     let base = blas_atlas.header.bvh4_base_v4 + idx * 7u;  // Now 7 vec4s per node
     let mn = blas_atlas.data[base + 0u];
@@ -79,16 +66,6 @@ fn atlas_load_directory_entry(idx: u32) -> MeshDirectoryEntry {
     entry.first_index = u32(u1.z);
     entry.padding = u32(u1.w);
     return entry;
-}
-
-fn atlas_load_directory_entry_bvh2_base(idx: u32) -> u32 {
-    let base = blas_atlas.header.dir_base_v4 + idx * 2u;
-    return u32(blas_atlas.data[base + 0u].x);
-}
-
-fn atlas_load_directory_entry_bvh2_capacity(idx: u32) -> u32 {
-    let base = blas_atlas.header.dir_base_v4 + idx * 2u;
-    return u32(blas_atlas.data[base + 0u].y);
 }
 
 fn atlas_load_directory_entry_bvh4_base(idx: u32) -> u32 {
