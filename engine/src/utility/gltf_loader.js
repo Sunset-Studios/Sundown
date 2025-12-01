@@ -1315,6 +1315,9 @@ function _loadImage(url, iid, onload) {
   img.onload = function () {
     onload(img, iid, url);
   };
+  img.onerror = function () {
+    console.error("Failed to load image:", url);
+  };
 }
 
 export { glTFLoader };

@@ -536,6 +536,10 @@ export class Mesh {
       return mesh;
     }
 
+    // Track processed meshes by meshID to avoid duplicating vertex data
+    // when the same mesh is referenced by multiple nodes
+    const processed_meshes = new Map(); // meshID -> base_vertex_offset
+
     // Respect interleaved vertex data (byteStride) when reading attributes
     const read_accessor_f32 = (accessor) => {
       const comps = Type2NumOfComponent[accessor.type];
@@ -733,7 +737,7 @@ export class Mesh {
         let local_indices = [];
         if (primitive.indices !== undefined) {
           const index_accessor = gltf_obj.accessors[primitive.indices];
-          
+
           if (index_accessor.componentType === 5123) {
             // UNSIGNED_SHORT - read as Uint16Array then convert to Uint32Array
             const temp_indices = new Uint16Array(
@@ -785,6 +789,72 @@ export class Mesh {
       }
     };
 
+    const add_indices_for_reused_mesh = (gltf_obj, node, cached_base) => {
+      let vertex_offset = cached_base;
+
+      for (const primitive of node.mesh.primitives) {
+        // Get or create material group (same logic as parse_node_mesh)
+        const material_index = primitive.material
+          ? gltf_obj.materials.indexOf(primitive.material)
+          : -1;
+        let group = mesh._section_groups.get(material_index);
+        if (!group) {
+          group = { key: material_index, indices: [] };
+          mesh._section_groups.set(material_index, group);
+        }
+
+        // Get vertex count from position accessor
+        let num_verts = 0;
+        if (primitive.attributes.POSITION !== undefined) {
+          num_verts = primitive.attributes.POSITION.count;
+        }
+
+        // Read indices (replicating index reading logic from parse_node_mesh)
+        let local_indices = [];
+        if (primitive.indices !== undefined) {
+          const index_accessor = gltf_obj.accessors[primitive.indices];
+
+          if (index_accessor.componentType === 5123) {
+            // UNSIGNED_SHORT
+            const temp_indices = new Uint16Array(
+              index_accessor.bufferView.data,
+              index_accessor.byteOffset || 0,
+              index_accessor.count
+            );
+            local_indices = new Uint32Array(temp_indices);
+          } else if (index_accessor.componentType === 5125) {
+            // UNSIGNED_INT
+            local_indices = new Uint32Array(
+              index_accessor.bufferView.data,
+              index_accessor.byteOffset || 0,
+              index_accessor.count
+            );
+          } else if (index_accessor.componentType === 5121) {
+            // UNSIGNED_BYTE
+            const temp_indices = new Uint8Array(
+              index_accessor.bufferView.data,
+              index_accessor.byteOffset || 0,
+              index_accessor.count
+            );
+            local_indices = new Uint32Array(temp_indices);
+          }
+        } else {
+          // No indices - generate sequential
+          local_indices = new Uint32Array(num_verts);
+          for (let k = 0; k < num_verts; k++) {
+            local_indices[k] = k;
+          }
+        }
+
+        // Add indices to group, referencing the already-existing vertices
+        for (let idx of local_indices) {
+          group.indices.push(idx + vertex_offset);
+        }
+
+        vertex_offset += num_verts;
+      }
+    };
+
     mesh = new Mesh();
     mesh.name = gltf;
 
@@ -813,11 +883,29 @@ export class Mesh {
         return out;
       };
 
+      // ───────────────────────────────────────────────────────────────────────
+      // Process all nodes, deduplicating mesh vertex data by meshID
+      // ───────────────────────────────────────────────────────────────────────
       for (const node of gltf_obj.nodes) {
         if (node.mesh) {
-          // ensure world matrix is computed
+          // Ensure world matrix is computed
           node._world = get_world_matrix(node);
-          parse_node_mesh(gltf_obj, node);
+
+          if (processed_meshes.has(node.mesh.meshID)) {
+            // ─────────────────────────────────────────────────────────────────
+            // Mesh already processed - only add indices referencing existing
+            // vertices (no vertex duplication)
+            // ─────────────────────────────────────────────────────────────────
+            const cached_base = processed_meshes.get(node.mesh.meshID);
+            add_indices_for_reused_mesh(gltf_obj, node, cached_base);
+          } else {
+            // ─────────────────────────────────────────────────────────────────
+            // First occurrence of this mesh - full processing (vertices + indices)
+            // ─────────────────────────────────────────────────────────────────
+            const base_vertex_offset = mesh.vertices.length;
+            parse_node_mesh(gltf_obj, node);
+            processed_meshes.set(node.mesh.meshID, base_vertex_offset);
+          }
         }
       }
 
@@ -914,7 +1002,11 @@ export class Mesh {
     const family =
       alpha_mode === "BLEND" ? MaterialFamilyType.Transparent : MaterialFamilyType.Opaque;
 
-    const std = StandardMaterial.create(mat_name, {}, { family, raster_state: { cull_mode: "none" } });
+    const std = StandardMaterial.create(
+      mat_name,
+      {},
+      { family, raster_state: { cull_mode: "none" } }
+    );
 
     // Base color
     const base = mat.pbrMetallicRoughness;

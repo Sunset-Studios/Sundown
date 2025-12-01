@@ -2885,6 +2885,79 @@ export class LivingRoomScene extends Scene {
 }
 
 // ------------------------------------------------------------------------------------
+// =============================== City Scene =========================================
+// ------------------------------------------------------------------------------------
+
+export class CityScene extends Scene {
+  name = "CityScene";
+  entities = [];
+
+  init(parent_context) {
+    super.init(parent_context);
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Camera Controls
+    // ─────────────────────────────────────────────────────────────────────────
+    const freeform_arcball_control_processor = this.add_layer(FreeformArcballControlProcessor);
+    freeform_arcball_control_processor.move_speed = 50.0;
+    freeform_arcball_control_processor.set_scene(this);
+
+    // Set the skydome for ambient lighting
+    SharedEnvironmentData.set_skydome("default_scene_skydome");
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Camera Setup - positioned to overlook the city
+    // ─────────────────────────────────────────────────────────────────────────
+    const view_data = SharedViewBuffer.get_view_data(0);
+    view_data.view_position = [50.0, 30.0, 80.0];
+    view_data.view_rotation = quat.fromEuler(quat.create(), -15, 160, 0);
+    view_data.far = 10000.0;
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Primary Directional Light (sun)
+    // ─────────────────────────────────────────────────────────────────────────
+    const light_entity = EntityManager.create_entity([LightFragment]);
+    this.entities.push(light_entity);
+
+    const light_fragment_view = EntityManager.get_fragment(light_entity, LightFragment);
+    light_fragment_view.type = LightType.DIRECTIONAL;
+    light_fragment_view.color = [1.0, 0.95, 0.85];  // Warm sunlight tint
+    light_fragment_view.intensity = 5.0;
+    light_fragment_view.position = [30.0, 50.0, 20.0];
+    light_fragment_view.active = true;
+    light_fragment_view.is_primary_sun = 1;
+    light_fragment_view.shadow_clipmaps = MAX_CLIPMAP_LEVELS;
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Load City GLTF Model
+    // ─────────────────────────────────────────────────────────────────────────
+    const city_mesh = Mesh.from_gltf("engine/models/city/City.gltf");
+
+    const city_entity = spawn_mesh_entity(
+      [0, 0, 0],             // Position at origin
+      [0, 0, 0, 1],          // No rotation (identity quaternion)
+      [1, 1, 1],             // Default scale
+      city_mesh,
+      0                      // GLTF sets the material id
+    );
+    this.entities.push(city_entity);
+
+    log(`[${this.name}] City scene initialized.`);
+  }
+
+  cleanup() {
+    for (const entity of this.entities) {
+      delete_entity(entity);
+    }
+    this.entities.length = 0;
+
+    this.remove_layer(FreeformArcballControlProcessor);
+
+    super.cleanup();
+  }
+}
+
+// ------------------------------------------------------------------------------------
 // =============================== Main ==============================================
 // ------------------------------------------------------------------------------------
 
@@ -2904,6 +2977,7 @@ export class LivingRoomScene extends Scene {
   const gltf_model_scene = new GLTFModelScene("GLTFModelScene");
   const sponza_scene = new SponzaScene("SponzaScene");
   const living_room_scene = new LivingRoomScene("LivingRoomScene");
+  const city_scene = new CityScene("CityScene");
 
   const scene_switcher = new SceneSwitcher("SceneSwitcher");
   //await scene_switcher.add_scene(solar_ecs_scene);
@@ -2918,6 +2992,7 @@ export class LivingRoomScene extends Scene {
   //await scene_switcher.add_scene(gltf_model_scene);
   await scene_switcher.add_scene(sponza_scene);
   //await scene_switcher.add_scene(living_room_scene);
+  //await scene_switcher.add_scene(city_scene);
 
   simulator.add_sim_layer(scene_switcher);
 
