@@ -295,7 +295,6 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         // =====================================================================
         // BRDF Setup
         // =====================================================================
-        let clamped_roughness = clamp(roughness, 0.04, 1.0);
         let dielectric_f0 = 0.16 * reflectance * reflectance;
         let f0 = mix(vec3<f32>(dielectric_f0), albedo, metallic);
         
@@ -304,7 +303,9 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         let fresnel_luminance = (f.x + f.y + f.z) / 3.0;
         
         // Probability of sampling specular vs diffuse
-        let specular_prob = clamp(fresnel_luminance * (1.0 - clamped_roughness * 0.5), 0.1, 0.9);
+        let use_ggx = (roughness < 0.3) || (metallic > 0.5);
+        let specular_prob_if_ggx = clamp(fresnel_luminance, 0.001, 0.99);
+        let specular_prob = select(0.0, specular_prob_if_ggx, use_ggx);
 
         // =====================================================================
         // Direct Lighting via Next Event Estimation (NEE)
@@ -350,36 +351,21 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         var pdf: f32;
         var brdf_value: vec3<f32>;
         
-        if (r3 < specular_prob) {
+        if (use_ggx && r3 < specular_prob) {
             // ─────────────────────────────────────────────────────────────────
             // GGX Specular Sampling
             // ─────────────────────────────────────────────────────────────────
-            let h = sample_ggx(n, clamped_roughness, r1, r2);
+            let h = sample_ggx(n, roughness, r1, r2);
             next_dir = normalize(reflect(-v_dir, h));
-            
-            // Ensure valid reflection
-            if (dot(next_dir, n) <= 0.0) {
-                next_dir = sample_cosine_hemisphere(n, r1, r2);
-                pdf = pdf_cosine_hemisphere(max(dot(next_dir, n), 0.0));
-            } else {
-                let ggx_pdf = pdf_ggx_reflection(n, h, v_dir, next_dir, clamped_roughness);
-                let cosine_pdf = pdf_cosine_hemisphere(max(dot(next_dir, n), 0.0));
-                // MIS: combine specular and diffuse PDFs
-                pdf = specular_prob * ggx_pdf + (1.0 - specular_prob) * cosine_pdf;
-            }
         } else {
             // ─────────────────────────────────────────────────────────────────
             // Cosine-Weighted Diffuse Sampling
             // ─────────────────────────────────────────────────────────────────
             next_dir = sample_cosine_hemisphere(n, r1, r2);
-            
-            let h = normalize(v_dir + next_dir);
-            let ggx_pdf = pdf_ggx_reflection(n, h, v_dir, next_dir, clamped_roughness);
-            let cosine_pdf = pdf_cosine_hemisphere(max(dot(next_dir, n), 0.0));
-            // MIS: combine specular and diffuse PDFs
-            pdf = specular_prob * ggx_pdf + (1.0 - specular_prob) * cosine_pdf;
         }
         
+        pdf = brdf_pdf(n, v_dir, next_dir, roughness, specular_prob);
+
         // Evaluate full BRDF for sampled direction
         brdf_value = calculate_brdf_rt(
             n, v_dir, next_dir, albedo, roughness, metallic,

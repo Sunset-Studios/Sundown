@@ -173,6 +173,12 @@ const pixel_update_shader_setup = {
   },
 };
 
+const pixel_motion_blur_shader_setup = {
+  pipeline_shaders: {
+    compute: { path: "gi/pixel_motion_blur.wgsl" },
+  },
+};
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Debug Shaders
 // ─────────────────────────────────────────────────────────────────────────────
@@ -197,12 +203,12 @@ export class GI {
   // ─────────────────────────────────────────────────────────────────────────
   config = {
     screen_ray_count: 1,          // Rays per pixel per frame (1 recommended for real-time)
-    upscale_x: 4,                 // Temporal upscale factor X
-    upscale_y: 4,                 // Temporal upscale factor Y
+    upscale_x: 2,                 // Temporal upscale factor X
+    upscale_y: 2,                 // Temporal upscale factor Y
     world_cache_size: 32768,      // Number of world cache cells per LOD level
     world_cache_cell_size: 2.0,   // Base cell size in world units
     world_cache_lod_count: 4,     // Number of LOD levels
-    indirect_boost: 2.0,         // Multiplier for indirect lighting contribution
+    indirect_boost: 1.0,         // Multiplier for indirect lighting contribution
   };
 
   // GI parameters buffer data (matches shader GIParams struct)
@@ -454,10 +460,30 @@ export class GI {
       force: force_recreate,
     });
 
+    // ─────────────────────────────────────────────────────────────────────
+    // Per-Pixel Variance Tracking (Ping-Pong Buffers)
+    // Used for variance-guided motion blur
+    // ─────────────────────────────────────────────────────────────────────
+    const pixel_variance_0 = render_graph.create_buffer({
+      name: "gi_pixel_variance_0",
+      size: total_pixels * 4, // f32 per pixel
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+      force: force_recreate,
+    });
+
+    const pixel_variance_1 = render_graph.create_buffer({
+      name: "gi_pixel_variance_1",
+      size: total_pixels * 4, // f32 per pixel
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+      force: force_recreate,
+    });
+
     // Ping-pong selection based on frame index
     const ping_pong_frame = SharedFrameInfoBuffer.get_frame_index() % 2;
     const pixel_radiance_prev = ping_pong_frame === 0 ? pixel_radiance_0 : pixel_radiance_1;
     const pixel_radiance_curr = ping_pong_frame === 0 ? pixel_radiance_1 : pixel_radiance_0;
+    const pixel_variance_prev = ping_pong_frame === 0 ? pixel_variance_0 : pixel_variance_1;
+    const pixel_variance_curr = ping_pong_frame === 0 ? pixel_variance_1 : pixel_variance_0;
 
     // ─────────────────────────────────────────────────────────────────────
     // Get Material Resources
@@ -846,7 +872,7 @@ export class GI {
     );
 
     // ─────────────────────────────────────────────────────────────────────
-    // Pass 12: Per-Pixel Update (Temporal Accumulation)
+    // Pass 12: Per-Pixel Update (Temporal Accumulation + Variance)
     // ─────────────────────────────────────────────────────────────────────
     render_graph.add_pass(
       `gi_pixel_update_${ping_pong_frame}`,
@@ -862,12 +888,43 @@ export class GI {
           gbuffer_normal,
           gbuffer_normal_prev,
           gbuffer_motion_emissive,
+          gbuffer_smra,
           world_cache,
           pixel_radiance_curr,
+          pixel_variance_prev,
+          pixel_variance_curr,
           gi_output,
         ],
-        outputs: [pixel_radiance_curr, gi_output, world_cache],
+        outputs: [pixel_radiance_curr, pixel_variance_curr, gi_output, world_cache],
         shader_setup: pixel_update_shader_setup,
+      },
+      (graph, frame_data, encoder) => {
+        const pass = graph.get_physical_pass(frame_data.current_pass);
+        // Dispatch as 8x8 tiles for better cache coherency
+        pass.dispatch(Math.ceil(width / 8), Math.ceil(height / 8), 1);
+      }
+    );
+
+    // ─────────────────────────────────────────────────────────────────────
+    // Pass 13: Variance-Guided Motion Blur
+    // Applies spatial filtering guided by variance and motion vectors
+    // High-variance areas receive more blur, converged areas stay sharp
+    // ─────────────────────────────────────────────────────────────────────
+    render_graph.add_pass(
+      `gi_motion_blur_${ping_pong_frame}`,
+      RenderPassFlags.Compute,
+      {
+        inputs: [
+          gi_params,
+          pixel_radiance_curr,
+          pixel_variance_curr,
+          gbuffer_position,
+          gbuffer_normal,
+          gbuffer_motion_emissive,
+          gi_output,
+        ],
+        outputs: [gi_output],
+        shader_setup: pixel_motion_blur_shader_setup,
       },
       (graph, frame_data, encoder) => {
         const pass = graph.get_physical_pass(frame_data.current_pass);
@@ -882,6 +939,7 @@ export class GI {
     this.gi_params = gi_params;
     this.gi_counters = gi_counters;
     this.pixel_radiance_curr = pixel_radiance_curr;
+    this.pixel_variance_curr = pixel_variance_curr;
     this.world_cache = world_cache;
   }
 

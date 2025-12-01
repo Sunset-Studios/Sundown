@@ -172,7 +172,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         // Query world cache at hit point to get cached irradiance from previous frames
         // This provides multi-bounce indirect illumination without tracing further
         // Pass ray hit distance for light-leak prevention (short ray separation)
-        let cached_radiance = query_world_cache_cell(
+        let cached_radiance = query_world_cache_cell_probabilistic(
             hit_pos,
             n,
             albedo,
@@ -184,7 +184,9 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
             u32(gi_params.world_cache_size),
             gi_params.world_cache_cell_size,
             u32(gi_params.world_cache_lod_count),
-            path.origin_tmin.w
+            50.0, // allocation radius
+            rand_float(rng),
+            path.origin_tmin.w,
         );
         
         // Check if we got valid cached data

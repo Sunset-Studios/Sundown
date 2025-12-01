@@ -22,6 +22,7 @@
 #include "common.wgsl"
 #include "gi/gi_common.wgsl"
 #include "gi/world_cache_common.wgsl"
+#include "postprocess_common.wgsl"
 
 // =============================================================================
 // BINDINGS
@@ -36,9 +37,12 @@
 @group(1) @binding(6) var gbuffer_normal: texture_2d<f32>;
 @group(1) @binding(7) var gbuffer_normal_prev: texture_2d<f32>;
 @group(1) @binding(8) var gbuffer_motion: texture_2d<f32>;
-@group(1) @binding(9) var<storage, read_write> world_cache: array<WorldCacheCell>;
-@group(1) @binding(10) var pixel_radiance_curr: texture_storage_2d<rgba16float, write>;
-@group(1) @binding(11) var output_gi: texture_storage_2d<rgba16float, write>;
+@group(1) @binding(9) var gbuffer_smra: texture_2d<f32>;
+@group(1) @binding(10) var<storage, read_write> world_cache: array<WorldCacheCell>;
+@group(1) @binding(11) var pixel_radiance_curr: texture_storage_2d<rgba16float, write>;
+@group(1) @binding(12) var<storage, read> pixel_variance_prev: array<f32>;
+@group(1) @binding(13) var<storage, read_write> pixel_variance_curr: array<f32>;
+@group(1) @binding(14) var output_gi: texture_storage_2d<rgba16float, write>;
 
 // =============================================================================
 // CONSTANTS
@@ -49,9 +53,36 @@ const MIN_NORMAL_SIMILARITY = 0.95;
 const MAX_DEPTH_RATIO = 0.1;
 
 // Temporal blending parameters
-const MIN_BLEND_ALPHA = 0.05;     // Minimum blend for stability (5%)
-const MAX_BLEND_ALPHA = 0.5;      // Maximum blend for responsiveness (80%)
-const VARIANCE_BOOST = 0.5;       // How much luminance difference boosts alpha
+const MIN_BLEND_ALPHA = 0.02;     // Minimum blend for stability (2%)
+const MAX_BLEND_ALPHA = 1.0;      // Maximum blend for responsiveness (100% = instant)
+
+// Lighting change detection (shadow borders, moving lights)
+// Luminance is remapped via Reinhard (L / (1 + L)) to normalize the range
+// and suppress fireflies. This maps [0, ∞) → [0, 1) while preserving
+// relative differences. The ratio threshold applies to remapped values.
+const MIN_LUMINANCE_RATIO = 0.1;        // Ratio threshold in remapped space
+const MAX_LUMINANCE_RATIO = 1.0;        // Ratio threshold in remapped space
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Firefly Prevention: Maximum output luminance
+// This is the final safety clamp for all GI output
+// ─────────────────────────────────────────────────────────────────────────────
+const MAX_OUTPUT_LUMINANCE = 10.0;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Variance tracking parameters
+// Used for variance-guided spatial filtering in subsequent pass
+// ─────────────────────────────────────────────────────────────────────────────
+const VARIANCE_BLEND_ALPHA = 0.1;       // Temporal smoothing for variance
+const MIN_VARIANCE_CLAMP = 0.0001;      // Minimum variance to avoid precision issues
+const MAX_VARIANCE_CLAMP = 1.0;         // Maximum variance to prevent blowup
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Helper: Convert 2D pixel coordinates to 1D buffer index
+// ─────────────────────────────────────────────────────────────────────────────
+fn pixel_to_variance_index(coord: vec2<i32>, width: u32) -> u32 {
+    return u32(coord.y) * width + u32(coord.x);
+}
 
 // =============================================================================
 // MAIN COMPUTE SHADER
@@ -77,6 +108,9 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let tile_grid_width = res.x / upscale.x;
     let tile_index = tile_y * tile_grid_width + tile_x;
     
+    let view = view_buffer[u32(frame_info.view_index)];
+    let camera_position = view.view_position.xyz;
+
     // ─────────────────────────────────────────────────────────────────────────
     // Read G-buffer for current pixel
     // ─────────────────────────────────────────────────────────────────────────
@@ -85,10 +119,32 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let normal = safe_normalize(normal_data.xyz);
     let normal_length = length(normal_data.xyz);
     
+    // Read material properties for roughness-aware accumulation
+    let smra = textureLoad(gbuffer_smra, pixel_coord, 0);
+    let reflectance = smra.r;
+    let roughness = smra.g;
+    let metallic = smra.b;
+    
+    // ─────────────────────────────────────────────────────────────────────────
+    // Compute specularity factor for relaxing variance checks
+    // Low roughness + high reflectivity = very specular = need relaxed variance checks
+    // Specular surfaces have legitimately high variance in their reflections
+    //
+    // Effective reflectivity considers:
+    // - Metals (metallic ≈ 1): always highly reflective
+    // - Dielectrics: reflectivity depends on reflectance parameter (F0)
+    //   High reflectance dielectrics (glass, polished surfaces) also need
+    //   relaxed checks to properly gather reflections
+    // ─────────────────────────────────────────────────────────────────────────
+    let effective_reflectivity = mix(reflectance, 1.0, metallic);
+    let specularity = (1.0 - roughness) * effective_reflectivity;
+    
     // Skip sky pixels (no geometry)
     if (normal_length < 0.01) {
+        let variance_idx = pixel_to_variance_index(pixel_coord, res.x);
         textureStore(output_gi, pixel_coord, vec4<f32>(0.0, 0.0, 0.0, 1.0));
         textureStore(pixel_radiance_curr, pixel_coord, vec4<f32>(0.0, 0.0, 0.0, 0.0));
+        pixel_variance_curr[variance_idx] = 0.0;
         return;
     }
     
@@ -131,6 +187,11 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
     
     // ─────────────────────────────────────────────────────────────────────────
+    // Pre-clamp current radiance to prevent fireflies from entering accumulation
+    // ─────────────────────────────────────────────────────────────────────────
+    current_radiance = safe_clamp_vec3_max(current_radiance, MAX_OUTPUT_LUMINANCE);
+    
+    // ─────────────────────────────────────────────────────────────────────────
     // Temporal Reprojection
     // ─────────────────────────────────────────────────────────────────────────
     let motion_sample = textureLoad(gbuffer_motion, pixel_coord, 0);
@@ -157,22 +218,67 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         let prev_normal = safe_normalize(prev_normal_data.xyz);
         
         // Depth similarity check
-        let depth_current = length(position);
-        let depth_prev = length(prev_position);
+        let depth_current = length(position - camera_position);
+        let depth_prev = length(prev_position - camera_position);
         let depth_ratio = abs(depth_current - depth_prev) / max(depth_current, 0.001);
         
         // Normal similarity check
         let normal_similarity = dot(normal, prev_normal);
         
-        // Validate reprojection
+        // Validate reprojection (geometry tests first)
         reprojection_valid = reprojection_valid && 
                             depth_ratio < MAX_DEPTH_RATIO && 
                             normal_similarity > MIN_NORMAL_SIMILARITY;
         
         if (reprojection_valid) {
+            // Load previous frame's accumulated radiance
             let prev_data = textureLoad(pixel_radiance_prev, pixel_prev, 0);
             prev_radiance = prev_data.rgb;
             prev_count = prev_data.w;
+
+            // ─────────────────────────────────────────────────────────────────
+            // Firefly Prevention: Clamp current sample relative to history
+            // For specular surfaces, we moderately relax these checks since
+            // they have higher natural variance in their reflections.
+            // ─────────────────────────────────────────────────────────────────
+            if (current_count > 0.0 && prev_count > 0.0) {
+                let curr_lum_raw = dot(current_radiance, vec3<f32>(0.2126, 0.7152, 0.0722));
+                let prev_lum_raw = dot(prev_radiance, vec3<f32>(0.2126, 0.7152, 0.0722));
+                
+                // ───────────────────────────────────────────────────────────────
+                // Variance-based firefly rejection: if current sample is much
+                // brighter than history, clamp it to prevent single outliers.
+                //
+                // For specular surfaces, we use relaxed thresholds but still
+                // apply some clamping for stability. The key is that specular
+                // surfaces will converge via higher blend alpha, not by
+                // completely disabling clamping.
+                // ───────────────────────────────────────────────────────────────
+                if (prev_count >= 1.0 && prev_lum_raw > 0.001) {
+                    // Base tolerance scales with specularity
+                    // Diffuse: 2x, Specular: 8x (moderate relaxation)
+                    let base_ratio = mix(2.0, 8.0, specularity);
+                    let max_ratio = base_ratio / sqrt(max(prev_count, 1.0));
+                    let max_allowed_lum = prev_lum_raw * (1.0 + max_ratio);
+                    
+                    if (curr_lum_raw > max_allowed_lum) {
+                        let clamp_scale = max_allowed_lum / curr_lum_raw;
+                        current_radiance = current_radiance * clamp_scale;
+                    }
+                }
+                
+                // ───────────────────────────────────────────────────────────────
+                // Shadow border detection: if current is MUCH darker/brighter
+                // than history, we might be at a shadow edge or reflection change.
+                // For specular surfaces, we use relaxed thresholds.
+                // ───────────────────────────────────────────────────────────────
+                let adjusted_min_ratio = mix(MIN_LUMINANCE_RATIO, 0.01, specularity);
+                let adjusted_max_ratio = mix(MAX_LUMINANCE_RATIO, 10.0, specularity);
+                
+                let luminance_difference = curr_lum_raw < prev_lum_raw * adjusted_min_ratio
+                    || curr_lum_raw > prev_lum_raw * adjusted_max_ratio;
+                reprojection_valid = reprojection_valid && !luminance_difference;
+            }
         }
     }
     
@@ -185,6 +291,14 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     
     var final_radiance: vec3<f32>;
     var final_count: f32;
+    var final_variance: f32;
+    
+    // Load previous variance for temporal smoothing
+    var prev_variance = 0.0;
+    if (reprojection_valid) {
+        let prev_variance_idx = pixel_to_variance_index(pixel_prev, res.x);
+        prev_variance = pixel_variance_prev[prev_variance_idx];
+    }
     
     // Compute upscale-aware base blend factor
     // Higher upscale = fewer samples per pixel = each sample MORE valuable = higher alpha
@@ -192,27 +306,64 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let upscale_factor = f32(upscale.x * upscale.y);
     let base_alpha = clamp(sqrt(upscale_factor) * MIN_BLEND_ALPHA, MIN_BLEND_ALPHA, MAX_BLEND_ALPHA);
     
+    // ─────────────────────────────────────────────────────────────────────────
+    // Specularity-Aware Temporal Accumulation
+    // ─────────────────────────────────────────────────────────────────────────
+    // For specular surfaces:
+    // - Use higher minimum blend alpha (faster updates)
+    // - Cap effective history count (prevent over-accumulation)
+    // This ensures specular reflections converge quickly while staying stable
+    // ─────────────────────────────────────────────────────────────────────────
+    
+    // First sample luminance limit scales with specularity
+    let max_first_sample_luminance = mix(3.0, MAX_OUTPUT_LUMINANCE, specularity);
+    
+    // Minimum blend alpha for specular surfaces (faster response)
+    // Diffuse: 2% minimum, Highly specular: 15% minimum
+    let specular_min_alpha = mix(MIN_BLEND_ALPHA, 0.15, specularity);
+    
+    // Maximum effective history count for specular surfaces
+    // Diffuse: unlimited (use actual count), Highly specular: cap at ~8 samples
+    // This prevents specular from accumulating too much stale history
+    let max_effective_count = mix(1000.0, 8.0, specularity);
+    
     if (current_count > 0.0) {
         if (reprojection_valid && prev_count > 0.0) {
-            // ─────────────────────────────────────────────────────────────────
-            // Upscale-aware adaptive blending
-            // ─────────────────────────────────────────────────────────────────
-            // Compute luminance difference for variance-based adaptation
-            let curr_luma = dot(current_radiance, vec3<f32>(0.2126, 0.7152, 0.0722));
-            let prev_luma = dot(prev_radiance, vec3<f32>(0.2126, 0.7152, 0.0722));
-            let luma_diff = abs(curr_luma - prev_luma) / max(max(curr_luma, prev_luma), 0.001);
+            // Cap history count for specular surfaces to ensure faster convergence
+            let effective_prev_count = min(prev_count, max_effective_count);
             
-            // Boost alpha when there's significant luminance change (lighting changed)
-            // This makes the system react quickly to light switches, time-of-day, etc.
-            let variance_alpha = base_alpha + luma_diff * VARIANCE_BOOST;
-            let adaptive_alpha = clamp(variance_alpha, MIN_BLEND_ALPHA, MAX_BLEND_ALPHA);
-            
+            let sample_alpha = 1.0 / (1.0 + effective_prev_count);
+            let adaptive_alpha = clamp(sample_alpha, specular_min_alpha, MAX_BLEND_ALPHA);
             final_radiance = mix(prev_radiance, current_radiance, adaptive_alpha);
-            final_count = prev_count + 1.0;
+            
+            // Still track actual count for variance calculations, but cap for next frame
+            final_count = min(prev_count + 1.0, max_effective_count + 1.0);
+            
+            // ─────────────────────────────────────────────────────────────────
+            // Variance Computation
+            // Compute squared difference between new sample and accumulated mean
+            // This measures how much the new sample differs from expectation
+            // ─────────────────────────────────────────────────────────────────
+            let radiance_diff = current_radiance - prev_radiance;
+            let luminance_diff = dot(radiance_diff, vec3<f32>(0.2126, 0.7152, 0.0722));
+            let sample_variance = luminance_diff * luminance_diff;
+            
+            // Temporal smoothing of variance using exponential moving average
+            // Blend more aggressively when we have few samples or for specular
+            let variance_alpha = max(VARIANCE_BLEND_ALPHA, adaptive_alpha);
+            final_variance = mix(prev_variance, sample_variance, variance_alpha);
+            // Variance decays with effective sample count
+            final_variance = final_variance / sqrt(max(effective_prev_count + 1.0, 1.0));
         } else {
-            // No valid history - use current sample directly
-            final_radiance = current_radiance;
+            // No valid history - use current sample with firefly clamping
+            // A single sample with no history is high-variance, so clamp more tightly
+            // For specular surfaces, we allow brighter samples
+            final_radiance = safe_clamp_vec3_max(current_radiance, max_first_sample_luminance);
             final_count = 1.0;
+            // First sample has maximum uncertainty (high variance)
+            // Use luminance as initial variance estimate
+            let initial_lum = dot(current_radiance, vec3<f32>(0.2126, 0.7152, 0.0722));
+            final_variance = max(initial_lum * 0.5, MAX_VARIANCE_CLAMP);
         }
     } else {
         if (reprojection_valid && prev_count > 0.0) {
@@ -220,12 +371,24 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
             // No decay needed - we'll blend properly when this pixel is traced
             final_radiance = prev_radiance;
             final_count = prev_count;
+            // Carry forward variance but increase slightly due to no new sample
+            // Pixels not sampled this frame have slightly higher uncertainty
+            final_variance = min(prev_variance * 1.05, MAX_VARIANCE_CLAMP);
         } else {
-            // No valid data - output zero
+            // No valid data - output zero with max variance
             final_radiance = vec3<f32>(0.0);
             final_count = 0.0;
+            final_variance = MAX_VARIANCE_CLAMP;
         }
     }
+    
+    // Clamp variance to valid range
+    final_variance = clamp(final_variance, MIN_VARIANCE_CLAMP, MAX_VARIANCE_CLAMP);
+    
+    // ─────────────────────────────────────────────────────────────────────────
+    // Final firefly clamp on output radiance
+    // ─────────────────────────────────────────────────────────────────────────
+    final_radiance = safe_clamp_vec3_max(final_radiance, MAX_OUTPUT_LUMINANCE);
     
     // ─────────────────────────────────────────────────────────────────────────
     // Output
@@ -233,6 +396,10 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     // Store accumulated radiance for next frame
     textureStore(pixel_radiance_curr, pixel_coord, vec4<f32>(final_radiance, final_count));
     
-    // Output final GI radiance
+    // Store variance for motion blur pass (buffer indexed by pixel)
+    let variance_idx = pixel_to_variance_index(pixel_coord, res.x);
+    pixel_variance_curr[variance_idx] = final_variance;
+    
+    // Output final GI radiance (will be refined by motion blur pass)
     textureStore(output_gi, pixel_coord, vec4<f32>(final_radiance, 1.0));
 }

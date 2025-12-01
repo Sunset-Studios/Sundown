@@ -1168,8 +1168,8 @@ export class DeferredShadingStrategy {
             },
             (graph, frame_data, encoder) => {
               const pass = graph.get_physical_pass(frame_data.current_pass);
-              const x_dispatch = Math.ceil(max_nodes_debug / 16);
-              const y_dispatch = Math.ceil(mesh_count / 16);
+              const x_dispatch = Math.ceil(max_nodes_debug / 32);
+              const y_dispatch = Math.ceil(mesh_count / 8);
               pass.dispatch(x_dispatch, y_dispatch, 1);
             }
           );
@@ -1220,6 +1220,7 @@ export class DeferredShadingStrategy {
                 this.frustum_culler.get_visibility_buffer(current_view, 0),
                 entity_transforms,
                 mesh_asset_ids_buffer,
+                entity_index_lookup,
               ],
               outputs: [closest_entities_per_mesh_buf, closest_distances_per_mesh_buf],
               shader_setup: debug_find_closest_mesh_instances_shader_setup,

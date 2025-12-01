@@ -40,6 +40,13 @@
 @group(1) @binding(10) var gbuffer_motion: texture_2d<f32>;
 @group(1) @binding(11) var blue_noise: texture_2d_array<f32>;
 
+// Soft compress values above threshold instead of hard clamping
+// This preserves the relative importance of bright specular paths
+const SOFT_CLAMP_THRESHOLD = 4.0;  // Start compressing above this
+const SOFT_CLAMP_MAX = 16.0;       // Maximum output luminance
+const MAX_INITIAL_EMISSIVE = 10.0;
+const MAX_NEE_LUMINANCE = 10.0;
+
 // =============================================================================
 // ╔═══════════════════════════════════════════════════════════════════════════╗
 // ║                      BLUE NOISE SAMPLING                                  ║
@@ -263,7 +270,11 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     
     let f = f_schlick_vec3(f0, 1.0, n_dot_v);
     let fresnel_luminance = (f.x + f.y + f.z) / 3.0;
-    let specular_prob = clamp(fresnel_luminance * (1.0 - clamped_roughness * 0.5), 0.1, 0.9);
+
+    // Probability of sampling specular vs diffuse
+    let use_ggx = (roughness < 0.3) || (metallic > 0.5);
+    let specular_prob_if_ggx = clamp(fresnel_luminance, 0.001, 0.99);
+    let specular_prob = select(0.0, specular_prob_if_ggx, use_ggx);
     
     // ─────────────────────────────────────────────────────────────────────────
     // Generate BRDF sampling candidates using blue noise
@@ -279,30 +290,21 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         let r3 = blue_noise_next(&bn_sampler);
 
         var dir: vec3<f32>;
-        var pdf: f32;
         
-        if (r3 < specular_prob) {
-            // GGX specular sampling
+        if (use_ggx && r3 < specular_prob) {
+            // ─────────────────────────────────────────────────────────────────
+            // GGX Specular Sampling
+            // ─────────────────────────────────────────────────────────────────
             let h = sample_ggx(normal, clamped_roughness, r1, r2);
             dir = normalize(reflect(-v_dir, h));
-            
-            if (dot(dir, normal) <= 0.0) {
-                dir = sample_cosine_hemisphere(r1, r2, normal);
-                pdf = pdf_cosine_hemisphere(max(dot(dir, normal), 0.0));
-            } else {
-                let ggx_pdf = pdf_ggx_reflection(normal, h, v_dir, dir, clamped_roughness);
-                let cosine_pdf = pdf_cosine_hemisphere(max(dot(dir, normal), 0.0));
-                pdf = specular_prob * ggx_pdf + (1.0 - specular_prob) * cosine_pdf;
-            }
         } else {
-            // Cosine-weighted diffuse sampling
+            // ─────────────────────────────────────────────────────────────────
+            // Cosine-Weighted Diffuse Sampling
+            // ─────────────────────────────────────────────────────────────────
             dir = sample_cosine_hemisphere(r1, r2, normal);
-            
-            let h = normalize(v_dir + dir);
-            let ggx_pdf = pdf_ggx_reflection(normal, h, v_dir, dir, clamped_roughness);
-            let cosine_pdf = pdf_cosine_hemisphere(max(dot(dir, normal), 0.0));
-            pdf = specular_prob * ggx_pdf + (1.0 - specular_prob) * cosine_pdf;
         }
+
+        let pdf = brdf_pdf(normal, v_dir, dir, roughness, specular_prob);
         
         // Evaluate BRDF for this direction
         let brdf = calculate_brdf_rt(
@@ -353,6 +355,22 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         // Update path weight with BRDF and reservoir weight
         let brdf_weight = selected_brdf * gi_reservoir.w;
         path_weight = brdf_weight * gi_params.indirect_boost;
+
+        // ─────────────────────────────────────────────────────────────────────────
+        // Firefly Prevention: Soft clamp path throughput using compression
+        // Use a soft knee instead of hard normalization to preserve specular energy
+        // ─────────────────────────────────────────────────────────────────────────
+        let path_luminance = dot(path_weight, vec3<f32>(0.2126, 0.7152, 0.0722));
+
+        let compressed_luminance = select(
+            path_luminance,
+            SOFT_CLAMP_THRESHOLD + (SOFT_CLAMP_MAX - SOFT_CLAMP_THRESHOLD) * 
+                (1.0 - 1.0 / (1.0 + (path_luminance - SOFT_CLAMP_THRESHOLD) / (SOFT_CLAMP_MAX - SOFT_CLAMP_THRESHOLD))),
+            path_luminance > SOFT_CLAMP_THRESHOLD
+        );
+
+        let path_scale = select(1.0, compressed_luminance / path_luminance, path_luminance > 0.0001);
+        path_weight = path_weight * path_scale;
         
         // Russian Roulette: Kill paths with very low throughput
         let weight_luminance = path_weight.x * 0.2126 + path_weight.y * 0.7152 + path_weight.z * 0.0722;
@@ -383,7 +401,6 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     // NEXT EVENT ESTIMATION (NEE) - DIRECT LIGHTING
     // Setup shadow rays for direct lighting contribution
     // ═════════════════════════════════════════════════════════════════════════
-    
     let num_lights = light_count_buffer[0];
     if (num_lights > 0u) {
         let light_rand = blue_noise_next(&bn_sampler);
@@ -398,7 +415,10 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
             reflectance, clear_coat, clear_coat_roughness
         );
         
-        let light_contrib = brdf * light.color.rgb * light.intensity * attenuation * f32(num_lights);
+        // Compute light contribution with firefly clamping
+        // Clamp before storing to prevent extreme values from propagating
+        let raw_light_contrib = brdf * light.color.rgb * light.intensity * attenuation * f32(num_lights);
+        let light_contrib = safe_clamp_vec3_max(raw_light_contrib, MAX_NEE_LUMINANCE);
         
         // Setup shadow ray for visibility test
         let selected_distance = select(1e30, length(light.position.xyz - position), light.light_type != 0.0);
@@ -415,6 +435,13 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     // STORE PATH STATE
     // Store blue noise dimension in RNG field for subsequent passes to continue
     // ═════════════════════════════════════════════════════════════════════════
+    
+    // ─────────────────────────────────────────────────────────────────────────
+    // Clamp initial emissive contribution to prevent fireflies
+    // This is the primary surface emission from the G-buffer
+    // ─────────────────────────────────────────────────────────────────────────
+    let initial_emissive = safe_clamp_vec3_max(emissive * albedo, MAX_INITIAL_EMISSIVE);
+    
     pixel_path_state[gid.x].origin_tmin = vec4<f32>(position + normal * 0.001, 0.0001);
     pixel_path_state[gid.x].direction_tmax = vec4<f32>(ray_dir, 1e30);
     pixel_path_state[gid.x].normal_section_index = vec4<f32>(normal, 0.0);
@@ -424,7 +451,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     // x = blue noise scramble, y = sample count, z = frame, w = blue noise dimension
     pixel_path_state[gid.x].rng_sample_count_frame_stamp = vec4<f32>(f32(bn_sampler.scramble), 0.0, f32(frame_id), f32(bn_sampler.dimension));
     pixel_path_state[gid.x].path_weight = vec4<f32>(path_weight, ray_source_pdf);
-    pixel_path_state[gid.x].throughput = vec4<f32>(emissive * albedo, 0.0);
+    pixel_path_state[gid.x].throughput = vec4<f32>(initial_emissive, 0.0);
     // Store pixel coordinates for update pass
     pixel_path_state[gid.x].pixel_coords = vec4<f32>(f32(pixel_coords.x), f32(pixel_coords.y), 0.0, 0.0);
 }

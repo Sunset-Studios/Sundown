@@ -162,8 +162,18 @@ fn compute_lod_from_uv(uv: vec2f, tex_size: vec2f) -> f32 {
     return log2(safe_rho);
 }
 
+// Read UV scale from the last pixel of the layer (stored in padding area)
+fn get_uv_scale(texture_pool: texture_2d_array<f32>, layer_index: u32, pool_dims: vec2<i32>) -> vec2<f32> {
+    let metadata_pixel = textureLoad(texture_pool, vec2<u32>(u32(pool_dims.x - 1), u32(pool_dims.y - 1)), layer_index, 0);
+    return select(vec2<f32>(0.0), metadata_pixel.rg, metadata_pixel.b == 0.0 && metadata_pixel.a == 0.0);  // u_scale in R, v_scale in G
+}
+
 fn sample_handle_rgba(tex_handle: u32, uv: vec2<precision_float>, pool: texture_2d_array<f32>, lod: f32) -> vec4<precision_float> {
-    let result = textureSampleLevel(pool, global_sampler, uv, tex_handle, lod);
+    let pool_dims = vec2<i32>(textureDimensions(pool).xy);
+    let uv_scale = get_uv_scale(pool, tex_handle, pool_dims);
+    //let scaled_uv = uv * uv_scale;
+    let scaled_uv = uv;
+    let result = textureSampleLevel(pool, global_sampler, scaled_uv, tex_handle, lod);
     return result;
 }
 
@@ -415,10 +425,28 @@ fn mask_popcount(mask: vec4<u32>) -> u32 {
 }
 
 fn safe_clamp_vec3(value: vec3<f32>) -> vec3<f32> {
-    let x = select(value.x, 0.0, isinf(value.x));
-    let y = select(value.y, 0.0, isinf(value.y));
-    let z = select(value.z, 0.0, isinf(value.z));
+    let x = select(value.x, 0.0, isinf(value.x) || value.x < 0.0);
+    let y = select(value.y, 0.0, isinf(value.y) || value.y < 0.0);
+    let z = select(value.z, 0.0, isinf(value.z) || value.z < 0.0);
     return vec3<f32>(x, y, z);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Firefly-Safe Radiance Clamping
+// Clamps a vec3 radiance value to a maximum luminance while preserving hue.
+// This prevents fireflies by limiting extreme values while maintaining color.
+// ─────────────────────────────────────────────────────────────────────────────
+fn safe_clamp_vec3_max(value: vec3<f32>, max_luminance: f32) -> vec3<f32> {
+    // First sanitize: remove NaN, Inf, and negative values
+    let sanitized = safe_clamp_vec3(value);
+    
+    // Compute luminance
+    let luminance = dot(sanitized, vec3<f32>(0.2126, 0.7152, 0.0722));
+    
+    // If luminance exceeds max, scale down proportionally to preserve hue
+    let scale = select(1.0, max_luminance / luminance, luminance > max_luminance);
+    
+    return sanitized * scale;
 }
 
 // =============================================================================

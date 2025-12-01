@@ -63,7 +63,7 @@ fn corner(min_p: vec3f, max_p: vec3f, idx: u32) -> vec3f {
 @group(1) @binding(2) var<storage, read> entity_transforms: array<EntityTransform>;
 @group(1) @binding(3) var<storage, read> closest_entities_per_mesh: array<u32>;
 
-@compute @workgroup_size(16, 16)
+@compute @workgroup_size(32, 8)
 fn cs(
     @builtin(global_invocation_id) gid: vec3<u32>
 ) {

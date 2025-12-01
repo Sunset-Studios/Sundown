@@ -202,8 +202,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     
     let f = f_schlick_vec3(f0, 1.0, n_dot_v);
     let fresnel_luminance = (f.x + f.y + f.z) / 3.0;
-    let specular_prob = clamp(fresnel_luminance * (1.0 - clamped_roughness * 0.5), 0.1, 0.9);
-    
+
     // Generate cosine-weighted hemisphere sampling candidates
     var candidate_samples: array<GISample, num_ris_samples>;
     
@@ -213,7 +212,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
 
         // Cosine-weighted diffuse sampling
         let dir = sample_cosine_hemisphere(r1, r2, normal);
-        let pdf = pdf_cosine_hemisphere(max(dot(dir, normal), 0.0));
+        let pdf = brdf_pdf(normal, v_dir, dir, roughness, 0.0);
         
         // Evaluate BRDF for sampled direction
         let brdf = calculate_brdf_rt(

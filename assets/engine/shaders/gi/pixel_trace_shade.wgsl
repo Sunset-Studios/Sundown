@@ -21,6 +21,14 @@
 #include "raytracing/restir_common.wgsl"
 
 // =============================================================================
+// FIREFLY SUPPRESSION CONSTANTS
+// =============================================================================
+
+// Maximum luminance for any single radiance contribution
+// Tune based on your HDR range - lower = more aggressive firefly removal
+const MAX_RADIANCE_LUMINANCE = 10.0;
+
+// =============================================================================
 // BINDINGS
 // =============================================================================
 
@@ -71,15 +79,18 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
 
     // ─────────────────────────────────────────────────────────────────────────
     // Handle Direct Light Visibility (NEE result from hit pass)
+    // Clamp NEE contribution to prevent fireflies from bright lights
     // ─────────────────────────────────────────────────────────────────────────
     if (path.shadow_origin.w >= 0.0 && path.state_u32.z == 1u) {
-        path.throughput += vec4f(path.shadow_radiance.rgb, 0.0);
+        let nee_radiance = safe_clamp_vec3_max(path.shadow_radiance.rgb, MAX_RADIANCE_LUMINANCE);
+        path.throughput += vec4f(nee_radiance, 0.0);
         path.shadow_origin.w = -1.0;
         path.state_u32.z = 0u;
     }
     
     // ─────────────────────────────────────────────────────────────────────────
     // Handle Ray Miss (Sky/Environment)
+    // Clamp sky contribution to prevent sun disc fireflies on specular bounces
     // ─────────────────────────────────────────────────────────────────────────
     if (tri_id == 0xffffffffu && path.state_u32.y != 0u) {
         let ray_dir = path.direction_tmax.xyz;
@@ -92,8 +103,11 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
             skybox_texture
         );
         
-        // Add sky contribution weighted by path throughput
-        path.throughput += vec4<f32>(sky_radiance * path.path_weight.xyz, 0.0);
+        // Clamp sky radiance before multiplying by path weight
+        // This prevents sun disc from causing fireflies on specular surfaces
+        let sky_clamped = safe_clamp_vec3_max(sky_radiance, MAX_RADIANCE_LUMINANCE);
+        let sky_contribution = safe_clamp_vec3_max(sky_clamped * path.path_weight.xyz, MAX_RADIANCE_LUMINANCE);
+        path.throughput += vec4<f32>(sky_contribution, 0.0);
         
         // Mark path as dead
         path.state_u32.y = 0u;
@@ -196,10 +210,11 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
             path.origin_tmin.w
         );
         
-        // Apply cached radiance if valid
+        // Apply cached radiance if valid, with firefly clamping
         let cached_luminance = cached_radiance.x * 0.2126 + cached_radiance.y * 0.7152 + cached_radiance.z * 0.0722;
         if (cached_luminance > 0.0001) {
-            let cached_contribution = cached_radiance * path.path_weight.xyz;
+            let cached_clamped = safe_clamp_vec3_max(cached_radiance, MAX_RADIANCE_LUMINANCE);
+            let cached_contribution = safe_clamp_vec3_max(cached_clamped * path.path_weight.xyz, MAX_RADIANCE_LUMINANCE);
             path.throughput += vec4f(cached_contribution, 0.0);
         }
         

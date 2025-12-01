@@ -2714,7 +2714,7 @@ export class SponzaScene extends Scene {
     const light_fragment_view = EntityManager.get_fragment(light_entity, LightFragment);
     light_fragment_view.type = LightType.DIRECTIONAL;
     light_fragment_view.color = [0.9, 0.9, 1.0];
-    light_fragment_view.intensity = 30.0;
+    light_fragment_view.intensity = 50.0;
     light_fragment_view.position = [5.0, 20, 2.0];
     light_fragment_view.active = true;
     light_fragment_view.is_primary_sun = 1;
@@ -2814,74 +2814,73 @@ export class SponzaScene extends Scene {
 }
 
 // ------------------------------------------------------------------------------------
-// =============================== City Scene ==============================
+// =============================== Living Room Scene ==============================
 // ------------------------------------------------------------------------------------
 
-export class CityScene extends Scene {
-  name = "CityScene";
+export class LivingRoomScene extends Scene {
+  name = "LivingRoomScene";
   entities = [];
 
   init(parent_context) {
     super.init(parent_context);
 
+    // ─────────────────────────────────────────────────────────────────────────
+    // Camera Controls
+    // ─────────────────────────────────────────────────────────────────────────
     const freeform_arcball_control_processor = this.add_layer(FreeformArcballControlProcessor);
     freeform_arcball_control_processor.set_scene(this);
 
+    // Set the skydome for ambient lighting
     SharedEnvironmentData.set_skydome("default_scene_skydome");
 
+    // ─────────────────────────────────────────────────────────────────────────
+    // Camera Setup - positioned to view the living room interior
+    // ─────────────────────────────────────────────────────────────────────────
     const view_data = SharedViewBuffer.get_view_data(0);
-    view_data.view_position = [1443.306, 880.005, 1363.9818];
-    view_data.view_rotation = [-0.122922606, 0.844215, -0.224311, -0.4626290];
+    view_data.view_position = [5.0, 3.0, 8.0];
+    view_data.view_rotation = quat.fromEuler(quat.create(), -10, 160, 0);
 
+    // ─────────────────────────────────────────────────────────────────────────
+    // Primary Directional Light (simulating window light)
+    // ─────────────────────────────────────────────────────────────────────────
     const light_entity = EntityManager.create_entity([LightFragment]);
     this.entities.push(light_entity);
 
     const light_fragment_view = EntityManager.get_fragment(light_entity, LightFragment);
     light_fragment_view.type = LightType.DIRECTIONAL;
-    light_fragment_view.color = [1, 1, 1];
-    light_fragment_view.intensity = 1.0;
-    light_fragment_view.position = [-25, 20, 20];
+    light_fragment_view.color = [1.0, 0.95, 0.9];  // Warm daylight tint
+    light_fragment_view.intensity = 8.0;
+    light_fragment_view.position = [10.0, 15.0, 5.0];
     light_fragment_view.active = true;
     light_fragment_view.is_primary_sun = 1;
     light_fragment_view.shadow_clipmaps = MAX_CLIPMAP_LEVELS;
 
-    const ground_material = StandardMaterial.create("city_ground_material");
-    const ground_material_id = ground_material.material_id;
-    ground_material.set_albedo([0.75, 0.75, 0.75, 1.0]);
-    ground_material.set_roughness(0.9);
-    ground_material.set_metallic(1.0);
+    // ─────────────────────────────────────────────────────────────────────────
+    // Load Living Room GLTF Model
+    // ─────────────────────────────────────────────────────────────────────────
+    const living_room_mesh = Mesh.from_gltf("engine/models/living_room/living_room.gltf");
 
-    const cube_mesh = Mesh.cube();
-    const ground_entity = spawn_mesh_entity(
-      [0, 0, 0],
-      [0, 0, 0, 1],
-      [4000, 5.0, 4000],
-      cube_mesh,
-      ground_material_id
+    const living_room_entity = spawn_mesh_entity(
+      [0, 2.0, 0],           // Position at origin
+      [0, 0, 0, 1],        // No rotation (identity quaternion)
+      [5, 5, 5],           // Default scale
+      living_room_mesh,
+      0                    // GLTF sets the material id
     );
-    this.entities.push(ground_entity);
+    this.entities.push(living_room_entity);
 
-    const city_mesh = Mesh.from_gltf("engine/models/city/city.gltf");
-
-    const city_entity = spawn_mesh_entity(
-      [0, 35.0, 0],
-      [0, 0, 0, 1],
-      [1, 1, 1],
-      city_mesh,
-      0 // GLTF sets the material id
-    );
-    this.entities.push(city_entity);
-  }
-
-  update(delta_time) {
-    super.update(delta_time);
+    log(`[${this.name}] Living room scene initialized.`);
   }
 
   cleanup() {
-    for (const e of this.entities) {
-      delete_entity(e);
+    for (const entity of this.entities) {
+      delete_entity(entity);
     }
     this.entities.length = 0;
+
+    this.remove_layer(FreeformArcballControlProcessor);
+
+    super.cleanup();
   }
 }
 
@@ -2904,7 +2903,7 @@ export class CityScene extends Scene {
   const shadow_test_scene = new ShadowTestScene("ShadowTestScene");
   const gltf_model_scene = new GLTFModelScene("GLTFModelScene");
   const sponza_scene = new SponzaScene("SponzaScene");
-  const city_scene = new CityScene("CityScene");
+  const living_room_scene = new LivingRoomScene("LivingRoomScene");
 
   const scene_switcher = new SceneSwitcher("SceneSwitcher");
   //await scene_switcher.add_scene(solar_ecs_scene);
@@ -2918,7 +2917,7 @@ export class CityScene extends Scene {
   //await scene_switcher.add_scene(shadow_test_scene);
   //await scene_switcher.add_scene(gltf_model_scene);
   await scene_switcher.add_scene(sponza_scene);
-  //await scene_switcher.add_scene(city_scene);
+  //await scene_switcher.add_scene(living_room_scene);
 
   simulator.add_sim_layer(scene_switcher);
 

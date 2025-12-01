@@ -16,7 +16,7 @@
 @group(1) @binding(3) var<storage, read> visible_object_instances: array<i32>;
 @group(1) @binding(4) var<storage, read> entity_transforms: array<EntityTransform>;
 @group(1) @binding(5) var<storage, read> mesh_asset_ids: array<u32>;
-@group(1) @binding(4) var<storage, read> entity_index_lookup: array<u32>;
+@group(1) @binding(6) var<storage, read> entity_index_lookup: array<u32>;
 
 @compute @workgroup_size(64)
 fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
