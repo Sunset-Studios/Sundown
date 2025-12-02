@@ -27,7 +27,7 @@ import { Name } from "../engine/src/utility/names.js";
 import { TextureChannel } from "../engine/src/renderer/renderer_types.js";
 import { profile_scope } from "../engine/src/utility/performance.js";
 import { log } from "../engine/src/utility/logging.js";
-import { vec3, vec4, quat } from "gl-matrix";
+import { vec3, vec4, quat, mat4 } from "gl-matrix";
 
 import * as UI from "../engine/src/ui/2d/immediate.js";
 
@@ -71,7 +71,7 @@ export class RenderingScene extends Scene {
     const light_fragment_view = EntityManager.get_fragment(light_entity, LightFragment);
     light_fragment_view.type = LightType.DIRECTIONAL;
     light_fragment_view.color = [1, 1, 1, 1];
-    light_fragment_view.intensity = 3;
+    light_fragment_view.intensity = 30.0;
     light_fragment_view.position = [50, 15, 50, 1];
     light_fragment_view.active = true;
     light_fragment_view.is_primary_sun = 1;
@@ -678,7 +678,7 @@ export class TexturesScene extends Scene {
     const barrel_entity = spawn_mesh_entity(
       [0, 0, 0],
       [0, 0, 0, 1],
-      [0.1, 0.1, 0.1],
+      [1.0, 1.0, 1.0],
       barrel_mesh,
       0 // GLTF sets the material id
     );
@@ -692,7 +692,7 @@ export class TexturesScene extends Scene {
       const x = (Math.random() - 0.5) * barrel_spawn_range;
       const z = (Math.random() - 0.5) * barrel_spawn_range;
       const y = 5.0; // Place on top of the plane
-      const scale = 0.02 + Math.random() * 0.05;
+      const scale = 1.0 + Math.random() * 10.0;
       const view = EntityManager.get_fragment(barrel_entity, TransformFragment, i);
       view.position = [x, y, z];
       view.scale = [scale, scale, scale];
@@ -2162,16 +2162,13 @@ export class GITestScene extends Scene {
     }
 
     // Load and place the station behind the three Cornell boxes (large scale)
-    const station_mesh = Mesh.from_gltf("engine/models/station/station.gltf");
-
-    const station_entity = spawn_mesh_entity(
+    let station_root = this.load_gltf_scene(
+      "engine/models/station/station.gltf",
       [0, 0, -100],
       [0, 0, 0, 1],
-      [10, 10, 10],
-      station_mesh,
-      0 // GLTF sets the material id
+      [10, 10, 10]
     );
-    this.entities.push(station_entity);
+    this.entities.push(station_root);
   }
 
   cleanup() {
@@ -2651,7 +2648,7 @@ export class GLTFModelScene extends Scene {
       const entity = spawn_mesh_entity(
         pos,
         [0, 0, 0, 1],
-        [0.1, 0.1, 0.1],
+        [10.0, 10.0, 10.0],
         model_mesh,
         0 // GLTF sets the material id
       );
@@ -2762,16 +2759,13 @@ export class SponzaScene extends Scene {
     // );
     // this.entities.push(emissive_cube);
 
-    const sponza_mesh = Mesh.from_gltf("engine/models/sponza/Sponza.gltf");
-
-    const sponza_entity = spawn_mesh_entity(
-      [0, 2.0, 0],
+    let root_entity = this.load_gltf_scene(
+      "engine/models/sponza/Sponza.gltf",
+      [0, 5.0, 0],
       [0, 0, 0, 1],
-      [5, 5, 5],
-      sponza_mesh,
-      0 // GLTF sets the material id
+      [5, 5, 5]
     );
-    this.entities.push(sponza_entity);
+    this.entities.push(root_entity);
   }
 
   update(delta_time) {
@@ -2837,7 +2831,7 @@ export class LivingRoomScene extends Scene {
     // Camera Setup - positioned to view the living room interior
     // ─────────────────────────────────────────────────────────────────────────
     const view_data = SharedViewBuffer.get_view_data(0);
-    view_data.view_position = [5.0, 3.0, 8.0];
+    view_data.view_position = [5.0, 15.0, 5.0];
     view_data.view_rotation = quat.fromEuler(quat.create(), -10, 160, 0);
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -2849,8 +2843,8 @@ export class LivingRoomScene extends Scene {
     const light_fragment_view = EntityManager.get_fragment(light_entity, LightFragment);
     light_fragment_view.type = LightType.DIRECTIONAL;
     light_fragment_view.color = [1.0, 0.95, 0.9];  // Warm daylight tint
-    light_fragment_view.intensity = 8.0;
-    light_fragment_view.position = [10.0, 15.0, 5.0];
+    light_fragment_view.intensity = 30.0;
+    light_fragment_view.position = [5.0, 5.0, -10.0];
     light_fragment_view.active = true;
     light_fragment_view.is_primary_sun = 1;
     light_fragment_view.shadow_clipmaps = MAX_CLIPMAP_LEVELS;
@@ -2858,16 +2852,19 @@ export class LivingRoomScene extends Scene {
     // ─────────────────────────────────────────────────────────────────────────
     // Load Living Room GLTF Model
     // ─────────────────────────────────────────────────────────────────────────
-    const living_room_mesh = Mesh.from_gltf("engine/models/living_room/living_room.gltf");
-
-    const living_room_entity = spawn_mesh_entity(
-      [0, 2.0, 0],           // Position at origin
-      [0, 0, 0, 1],        // No rotation (identity quaternion)
-      [5, 5, 5],           // Default scale
-      living_room_mesh,
-      0                    // GLTF sets the material id
+    let living_room_root = this.load_gltf_scene(
+      "engine/models/living_room/living_room.gltf",
+      [0, 2.0, 0],
+      [0, 0, 0, 1],
+      [5, 5, 5],
+      null,
+      null,
+      null,
+      {
+        single_mesh: false
+      }
     );
-    this.entities.push(living_room_entity);
+    this.entities.push(living_room_root);
 
     log(`[${this.name}] Living room scene initialized.`);
   }
@@ -2931,16 +2928,18 @@ export class CityScene extends Scene {
     // ─────────────────────────────────────────────────────────────────────────
     // Load City GLTF Model
     // ─────────────────────────────────────────────────────────────────────────
-    const city_mesh = Mesh.from_gltf("engine/models/city/City.gltf");
-
-    const city_entity = spawn_mesh_entity(
-      [0, 0, 0],             // Position at origin
-      [0, 0, 0, 1],          // No rotation (identity quaternion)
-      [1, 1, 1],             // Default scale
-      city_mesh,
-      0                      // GLTF sets the material id
+    let city_root = this.load_gltf_scene("engine/models/city/City.gltf",
+      [0, 0, 0],
+      [0, 0, 0, 1],
+      [10, 10, 10],
+      null,
+      null,
+      null,
+      {
+        single_mesh: false
+      }
     );
-    this.entities.push(city_entity);
+    this.entities.push(city_root);
 
     log(`[${this.name}] City scene initialized.`);
   }
@@ -2990,8 +2989,8 @@ export class CityScene extends Scene {
   //await scene_switcher.add_scene(gi_test_scene);
   //await scene_switcher.add_scene(shadow_test_scene);
   //await scene_switcher.add_scene(gltf_model_scene);
-  await scene_switcher.add_scene(sponza_scene);
-  //await scene_switcher.add_scene(living_room_scene);
+  //await scene_switcher.add_scene(sponza_scene);
+  await scene_switcher.add_scene(living_room_scene);
   //await scene_switcher.add_scene(city_scene);
 
   simulator.add_sim_layer(scene_switcher);

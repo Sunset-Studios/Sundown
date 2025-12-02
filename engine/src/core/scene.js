@@ -1,6 +1,6 @@
-import { EntityManager } from "./ecs/entity.js";
 import { SimulationLayer } from "./simulation_layer.js";
 import { DevConsole } from "../tools/dev_console.js";
+import { GLTFSceneLoader } from "../renderer/gltf_scene_loader.js";
 
 import { LightViewProcessor } from "./subsystems/light_view_processor.js";
 import { EntityPreprocessor } from "./subsystems/entity_preprocessor.js";
@@ -125,5 +125,27 @@ export class Scene extends SimulationLayer {
   hide_dev_cursor() {
     if (!this.dev_cursor_enabled) return;
     this.dev_cursor_visible = false;
+  }
+
+  load_gltf_scene(
+    gltf_path,
+    position = [0, 0, 0],
+    rotation = [0, 0, 0, 1],
+    scale = [1, 1, 1],
+    scene_index = null,
+    parent_entity = null,
+    callback = null,
+    options = {}
+  ) {
+    return GLTFSceneLoader.load_scene(
+      gltf_path,
+      position,
+      rotation,
+      scale,
+      scene_index,
+      parent_entity,
+      callback,
+      options
+    );
   }
 }

@@ -11,6 +11,39 @@ import { WORLD_FORWARD, EntityFlags } from "../../core/minimal.js";
 import { quat } from "gl-matrix";
 
 /**
+ * Spawns a new transform-only entity (no mesh or visibility).
+ * Useful for creating root entities for scene hierarchies or grouping entities.
+ *
+ * @param {Vec3} position - The position of the entity.
+ * @param {Quat} rotation - The rotation of the entity (quaternion).
+ * @param {Vec3} scale - The scale of the entity.
+ * @param {EntityID} parent - The parent entity of the entity.
+ * @param {EntityFlags} flags - The flags of the entity.
+ * @returns {EntityHandle} The created entity handle.
+ */
+export function spawn_transform_entity(
+  position = [0, 0, 0],
+  rotation = [0, 0, 0, 1],
+  scale = [1, 1, 1],
+  parent = null,
+  flags = EntityFlags.IGNORE_PARENT_SCALE
+) {
+  const entity = EntityManager.create_entity([TransformFragment]);
+
+  const transform_view = EntityManager.get_fragment(entity, TransformFragment);
+  transform_view.position = position;
+  transform_view.rotation = rotation;
+  transform_view.scale = scale;
+
+  EntityManager.set_entity_parent(entity, parent);
+
+  let existing_flags = EntityManager.get_entity_flags(entity);
+  EntityManager.set_entity_flags(entity, existing_flags | flags);
+
+  return entity;
+}
+
+/**
  * Spawns a new mesh entity with the specified position, rotation, scale, mesh, material, parent,
  * children, visibility, and transform flags.
  *
