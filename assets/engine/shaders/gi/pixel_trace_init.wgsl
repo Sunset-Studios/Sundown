@@ -272,9 +272,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let fresnel_luminance = (f.x + f.y + f.z) / 3.0;
 
     // Probability of sampling specular vs diffuse
-    let use_ggx = (roughness < 0.3) || (metallic > 0.5);
-    let specular_prob_if_ggx = clamp(fresnel_luminance, 0.001, 0.99);
-    let specular_prob = select(0.0, specular_prob_if_ggx, use_ggx);
+    let specular_prob = clamp(fresnel_luminance, 0.001, 0.99);
     
     // ─────────────────────────────────────────────────────────────────────────
     // Generate BRDF sampling candidates using blue noise
@@ -291,7 +289,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
 
         var dir: vec3<f32>;
         
-        if (use_ggx && r3 < specular_prob) {
+        if (r3 < specular_prob) {
             // ─────────────────────────────────────────────────────────────────
             // GGX Specular Sampling
             // ─────────────────────────────────────────────────────────────────

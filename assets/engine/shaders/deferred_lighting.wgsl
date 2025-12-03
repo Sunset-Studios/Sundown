@@ -110,7 +110,7 @@ struct FragmentOutput {
     var deferred_standard_lighting = tex_normal.w;
 
     var tex_smra = textureSample(smra_texture, global_sampler, uv);
-    var reflectance = tex_smra.r * 0.0009765625 /* 1.0f / 1024 */;
+    var reflectance = tex_smra.r;
     var roughness = tex_smra.g;
     var metallic = tex_smra.b;
     var ao = tex_smra.a;
@@ -139,8 +139,6 @@ struct FragmentOutput {
 
 
 #if USE_RADIANCE_CACHE_AS_DEFERRED_LIGHTING
-    // GI output is already radiance (Li * BRDF), not irradiance
-    // Just apply AO and add directly - no additional BRDF modulation needed
     let gi_contribution = select(irradiance * ao, irradiance, ao <= 0.0);
     color += gi_contribution;
 #else

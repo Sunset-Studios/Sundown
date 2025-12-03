@@ -2875,7 +2875,10 @@ export class LivingRoomScene extends Scene {
       [10, 10, 10],
       null,
       null,
-      null
+      null,
+      {
+        single_mesh: false
+      }
     );
     this.entities.push(living_room_root);
 
@@ -3002,8 +3005,8 @@ export class CityScene extends Scene {
   //await scene_switcher.add_scene(gi_test_scene);
   //await scene_switcher.add_scene(shadow_test_scene);
   //await scene_switcher.add_scene(gltf_model_scene);
-  //await scene_switcher.add_scene(sponza_scene);
-  await scene_switcher.add_scene(living_room_scene);
+  await scene_switcher.add_scene(sponza_scene);
+  //await scene_switcher.add_scene(living_room_scene);
   //await scene_switcher.add_scene(city_scene);
 
   simulator.add_sim_layer(scene_switcher);
