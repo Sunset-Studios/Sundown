@@ -441,7 +441,7 @@ fn cs(
             let n_local = vertex_buffer[v0i].normal.xyz * w_bc + 
                           vertex_buffer[v1i].normal.xyz * u_bc + 
                           vertex_buffer[v2i].normal.xyz * v_bc;
-            var world_n = safe_normalize((entity_transform.transpose_inverse_model_matrix * vec4<f32>(n_local, 0.0)).xyz);
+            var world_n = safe_normalize((entity_transform.transform * vec4<f32>(n_local, 0.0)).xyz);
 
             // Interpolate and transform tangents
             let t_local = vertex_buffer[v0i].tangent.xyz * w_bc + 

@@ -75,7 +75,7 @@ export class ComputeTaskQueue {
           if (task.inputs[j] instanceof Buffer) {
             task.inputs[j] = render_graph.register_buffer(task.inputs[j].config.name);
           } else if (task.inputs[j] instanceof Texture) {
-            task.inputs[j] = render_graph.register_texture(task.inputs[j].config.name);
+            task.inputs[j] = render_graph.register_image(task.inputs[j].config.name);
           }
         }
 
@@ -83,7 +83,7 @@ export class ComputeTaskQueue {
           if (task.outputs[j] instanceof Buffer) {
             task.outputs[j] = render_graph.register_buffer(task.outputs[j].config.name);
           } else if (task.outputs[j] instanceof Texture) {
-            task.outputs[j] = render_graph.register_texture(task.outputs[j].config.name);
+            task.outputs[j] = render_graph.register_image(task.outputs[j].config.name);
           }
         }
 
@@ -115,7 +115,7 @@ export class ComputeTaskQueue {
           if (task.inputs[j] instanceof Buffer) {
             task.inputs[j] = render_graph.register_buffer(task.inputs[j].config.name);
           } else if (task.inputs[j] instanceof Texture) {
-            task.inputs[j] = render_graph.register_texture(task.inputs[j].config.name);
+            task.inputs[j] = render_graph.register_image(task.inputs[j].config.name);
           }
         }
 
@@ -123,7 +123,7 @@ export class ComputeTaskQueue {
           if (task.outputs[j] instanceof Buffer) {
             task.outputs[j] = render_graph.register_buffer(task.outputs[j].config.name);
           } else if (task.outputs[j] instanceof Texture) {
-            task.outputs[j] = render_graph.register_texture(task.outputs[j].config.name);
+            task.outputs[j] = render_graph.register_image(task.outputs[j].config.name);
           }
         }
 

@@ -64,7 +64,7 @@ fn corner(min_p: vec3f, max_p: vec3f, idx: u32) -> vec3f {
 @group(1) @binding(3) var<storage, read> closest_entities_per_mesh: array<u32>;
 @group(1) @binding(4) var<storage, read> bvh2_nodes: array<AABB>; // Direct BVH2 buffer (not in atlas)
 
-@compute @workgroup_size(32, 8)
+@compute @workgroup_size(128, 2)
 fn cs(
     @builtin(global_invocation_id) gid: vec3<u32>
 ) {

@@ -204,19 +204,29 @@ export class Texture {
 
     // 1) compute how many mip‐levels we want
     const base = textures[0];
-    const max_dim = Math.max(base.width, base.height);
-    this.config.mip_levels = !!this.config.no_mips ? 1 : Math.floor(Math.log2(max_dim)) + 1;
     this.config.width = base.width;
     this.config.height = base.height;
     this.config.depth = textures.length;
 
     // 2) create or allocate the GPU texture with multiple mips
+    // For pooled textures, allocation may trigger a GPU blit to resize existing content.
+    const flip_y = config.flip_y !== undefined ? config.flip_y : true;
+
     if (this.config.pool_key) {
       const allocation = TextureArrayPools.allocate(this.config);
       this.image = allocation.texture.image;
       this.views = allocation.texture.views;
       this.bindless_handle = allocation.index;
+
+      // Get actual pool dimensions - textures are resized to fill the entire layer
+      const pool = TextureArrayPools.get_pool(this.config.pool_key);
+      this.config.width = pool.config.width;
+      this.config.height = pool.config.height;
+      this.config.mip_levels = pool.config.mip_levels;
     } else {
+      const max_dim = Math.max(base.width, base.height);
+      this.config.mip_levels = !!this.config.no_mips ? 1 : Math.floor(Math.log2(max_dim)) + 1;
+
       this.image = renderer.device.createTexture({
         label: this.config.name,
         size: {
@@ -234,32 +244,43 @@ export class Texture {
 
     for (let layer = 0; layer < textures.length; layer++) {
       const texture = textures[layer];
-      // 3) copy the full-res image into mip 0
       const targetLayer = this.config.pool_key ? this.bindless_handle + layer : layer;
+
+      // 3) Resize source to match pool/texture dimensions if needed
+      let mip0_source = texture;
+      if (this.config.pool_key && (texture.width !== this.config.width || texture.height !== this.config.height)) {
+        mip0_source = await createImageBitmap(texture, {
+          resizeWidth: this.config.width,
+          resizeHeight: this.config.height,
+          resizeQuality: "high",
+        });
+      }
+
+      // 4) copy the (possibly resized) image into mip 0
       renderer.device.queue.copyExternalImageToTexture(
-        { source: texture, flipY: config.flip_y !== undefined ? config.flip_y : true },
+        { source: mip0_source, flipY: flip_y },
         { texture: this.image, mipLevel: 0, origin: { x: 0, y: 0, z: targetLayer } },
-        [texture.width, texture.height]
+        [this.config.width, this.config.height]
       );
 
-      // 4) for each subsequent level, use createImageBitmap to resize
+      // 5) for each subsequent mip level, resize from the mip0 source
       for (let lvl = 1; lvl < this.config.mip_levels; lvl++) {
-        const w = Math.max(1, texture.width >> lvl);
-        const h = Math.max(1, texture.height >> lvl);
-        const mip_bitmap = await createImageBitmap(texture, {
+        const w = Math.max(1, this.config.width >> lvl);
+        const h = Math.max(1, this.config.height >> lvl);
+        const mip_bitmap = await createImageBitmap(mip0_source, {
           resizeWidth: w,
           resizeHeight: h,
           resizeQuality: "high",
         });
         renderer.device.queue.copyExternalImageToTexture(
-          { source: mip_bitmap, flipY: config.flip_y !== undefined ? config.flip_y : true },
+          { source: mip_bitmap, flipY: flip_y },
           { texture: this.image, mipLevel: lvl, origin: { x: 0, y: 0, z: targetLayer } },
           [w, h]
         );
       }
     }
 
-    // 5) rebuild all the texture views now that we've got new mips
+    // 6) rebuild all the texture views now that we've got new mips
     if (!this.config.pool_key) {
       this._setup_views();
     }

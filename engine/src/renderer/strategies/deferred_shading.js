@@ -1170,8 +1170,8 @@ export class DeferredShadingStrategy {
             },
             (graph, frame_data, encoder) => {
               const pass = graph.get_physical_pass(frame_data.current_pass);
-              const x_dispatch = Math.ceil(max_nodes_debug / 32);
-              const y_dispatch = Math.ceil(mesh_count / 8);
+              const x_dispatch = Math.ceil(max_nodes_debug / 128);
+              const y_dispatch = Math.ceil(mesh_count / 2);
               pass.dispatch(x_dispatch, y_dispatch, 1);
             }
           );

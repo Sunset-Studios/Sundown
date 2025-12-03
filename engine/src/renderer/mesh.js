@@ -162,7 +162,7 @@ export class Mesh {
     return out;
   }
 
-  static _build_from_gltf_mesh(mesh, gltf_obj, gltf_mesh) {
+  static build_from_gltf_mesh(mesh, gltf_obj, gltf_mesh) {
     mesh._reset_build_state();
 
     const material_cache = new Map();
@@ -826,7 +826,7 @@ export class Mesh {
       if (!target_mesh) {
         return;
       }
-      Mesh._build_from_gltf_mesh(mesh, gltf_obj, target_mesh);
+      Mesh.build_from_gltf_mesh(mesh, gltf_obj, target_mesh);
       MeshTaskQueue.invalidate_mesh(cache_key);
     });
 
@@ -858,7 +858,7 @@ export class Mesh {
 
     mesh.pending_loader = new glTFLoader();
     mesh.pending_loader.load(gltf_path, (gltf_obj) => {
-      Mesh._build_combined_gltf_scene(mesh, gltf_obj, scene_index);
+      Mesh.build_combined_gltf_scene(mesh, gltf_obj, scene_index);
       MeshTaskQueue.invalidate_mesh(cache_key);
     });
 
@@ -875,7 +875,7 @@ export class Mesh {
    * @param {Object} gltf_obj - The parsed GLTF object
    * @param {number|null} scene_index - Which scene to use
    */
-  static _build_combined_gltf_scene(mesh, gltf_obj, scene_index = null) {
+  static build_combined_gltf_scene(mesh, gltf_obj, scene_index = null) {
     mesh._reset_build_state();
 
     const material_cache = new Map();
@@ -909,7 +909,7 @@ export class Mesh {
         current = current._parent;
       }
 
-      const world_matrix = mat4.create();
+      let world_matrix = mat4.create();
       for (const n of chain) {
         const local_matrix = mat4.create();
         const translation = n.translation
@@ -923,7 +923,7 @@ export class Mesh {
           : vec3.fromValues(1, 1, 1);
 
         mat4.fromRotationTranslationScale(local_matrix, rotation, translation, scale);
-        mat4.multiply(world_matrix, world_matrix, local_matrix);
+        world_matrix = mat4.multiply(mat4.create(), world_matrix, local_matrix);
       }
       return world_matrix;
     };
@@ -1043,7 +1043,6 @@ export class Mesh {
               tangent_w = tangents[tangent_index + 3] ?? 1.0;
             }
 
-            // Transform position by world matrix
             const src_pos = vec3.fromValues(
               positions[pos_index] ?? 0.0,
               positions[pos_index + 1] ?? 0.0,
@@ -1052,7 +1051,6 @@ export class Mesh {
             const world_pos = vec3.create();
             vec3.transformMat4(world_pos, src_pos, world_matrix);
 
-            // Transform and normalize normal
             const n = vec3.fromValues(
               normals[normal_index] ?? 0.0,
               normals[normal_index + 1] ?? 0.0,
@@ -1061,19 +1059,19 @@ export class Mesh {
             vec3.transformMat3(n, n, normal_matrix);
             vec3.normalize(n, n);
 
-            // Transform and orthonormalize tangent
             const t = vec3.fromValues(
               tangents[tangent_index] ?? 0.0,
               tangents[tangent_index + 1] ?? 0.0,
               tangents[tangent_index + 2] ?? 0.0
             );
-            vec3.transformMat3(t, t, normal_matrix);
             const nt_dot_t = vec3.dot(n, t);
             const t_ortho = vec3.subtract(vec3.create(), t, vec3.scale(vec3.create(), n, nt_dot_t));
+            vec3.transformMat3(t_ortho, t_ortho, normal_matrix);
             vec3.normalize(t_ortho, t_ortho);
 
             // Compute bitangent from cross product
             const b = vec3.cross(vec3.create(), n, t_ortho);
+            vec3.transformMat3(b, b, normal_matrix);
             vec3.normalize(b, b);
 
             mesh.vertices.push({
@@ -1146,7 +1144,6 @@ export class Mesh {
 
     // ─────────────────────────────────────────────────────────────────────────
     // Finalize: Build sections, indices, and mesh data
-    // (Same pattern as _build_from_gltf_mesh)
     // ─────────────────────────────────────────────────────────────────────────
     mesh.sections = [];
     mesh.index_count = 0;
@@ -1222,7 +1219,7 @@ export class Mesh {
 
     MeshData.register(mesh);
 
-    Mesh._build_from_gltf_mesh(mesh, gltf_obj, gltf_mesh);
+    Mesh.build_from_gltf_mesh(mesh, gltf_obj, gltf_mesh);
     MeshTaskQueue.invalidate_mesh(cache_key);
 
     ResourceCache.get().store(CacheTypes.MESH, cache_key, mesh);

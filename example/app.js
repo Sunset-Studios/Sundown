@@ -2831,8 +2831,8 @@ export class LivingRoomScene extends Scene {
     // Camera Setup - positioned to view the living room interior
     // ─────────────────────────────────────────────────────────────────────────
     const view_data = SharedViewBuffer.get_view_data(0);
-    view_data.view_position = [5.0, 15.0, 5.0];
-    view_data.view_rotation = quat.fromEuler(quat.create(), -10, 160, 0);
+    view_data.view_position = [10.61615, 18.35985, 60.53034];
+    view_data.view_rotation = [-0.023007927, 0.97692966, -0.15258932, -0.1472981];
 
     // ─────────────────────────────────────────────────────────────────────────
     // Primary Directional Light (simulating window light)
@@ -2849,20 +2849,33 @@ export class LivingRoomScene extends Scene {
     light_fragment_view.is_primary_sun = 1;
     light_fragment_view.shadow_clipmaps = MAX_CLIPMAP_LEVELS;
 
+    const ground_material = StandardMaterial.create("sponza_ground_material");
+    const ground_material_id = ground_material.material_id;
+    ground_material.set_albedo([0.75, 0.75, 0.75, 1.0]);
+    ground_material.set_roughness(0.9);
+    ground_material.set_metallic(0.8);
+
+    const cube_mesh = Mesh.cube();
+    const ground_entity = spawn_mesh_entity(
+      [0, 0, 0],
+      quat.fromEuler(quat.create(), 0, 0, 0),
+      [2000, 1.0, 2000],
+      cube_mesh,
+      ground_material_id
+    );
+    this.entities.push(ground_entity);
+
     // ─────────────────────────────────────────────────────────────────────────
     // Load Living Room GLTF Model
     // ─────────────────────────────────────────────────────────────────────────
     let living_room_root = this.load_gltf_scene(
       "engine/models/living_room/living_room.gltf",
-      [0, 2.0, 0],
+      [0, 1, 0],
       [0, 0, 0, 1],
-      [5, 5, 5],
+      [10, 10, 10],
       null,
       null,
-      null,
-      {
-        single_mesh: false
-      }
+      null
     );
     this.entities.push(living_room_root);
 

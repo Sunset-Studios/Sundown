@@ -295,7 +295,29 @@ fn convert_bvh2_to_bvh4(
             }
 
             if (is_leaf(bvh2_node)) {
-                prim_indices[bvh4_node_idx] = u32(bvh2_node.min.w);
+                // Special case: when there's only one leaf in the entire scene,
+                // that single leaf IS the root. We need to create a BVH4 root node
+                // for it since there's no parent internal node to contain it.
+                // With multiple leaves, H-PLOC creates internal nodes and the root
+                // is never a leaf, so this path only triggers for single-entity scenes.
+                if (leaf_count == 1u) {
+                    let is_blas = bvh_data.is_blas != 0u;
+                    
+                    // For BLAS: store the primitive ID from min.w
+                    // For TLAS: store the AABB index (bvh2_node_idx) for entity lookup
+                    let leaf_id = select(bvh2_node_idx, u32(bvh2_node.min.w), is_blas);
+                    
+                    var node: BVH4Node;
+                    // Copy bounds, but replace w components with masks:
+                    // leaf_mask = 1 (slot 0 is a leaf), inner_mask = 0 (no inner children)
+                    node.min = vec4<f32>(bvh2_node.min.xyz, bitcast<f32>(1u));
+                    node.max = vec4<f32>(bvh2_node.max.xyz, bitcast<f32>(0u));
+                    node.children = vec4<f32>(f32(leaf_id), -1.0, -1.0, -1.0);
+                    
+                    bvh4_nodes[bvh_data.node_base + bvh4_node_idx] = node;
+                } else {
+                    prim_indices[bvh4_node_idx] = u32(bvh2_node.min.w);
+                }
                 lane_active = false;
                 has_work = false;
                 spin_count = 0u;

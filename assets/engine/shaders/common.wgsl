@@ -162,19 +162,8 @@ fn compute_lod_from_uv(uv: vec2f, tex_size: vec2f) -> f32 {
     return log2(safe_rho);
 }
 
-// Read UV scale from the last pixel of the layer (stored in padding area)
-fn get_uv_scale(texture_pool: texture_2d_array<f32>, layer_index: u32, pool_dims: vec2<i32>) -> vec2<f32> {
-    let metadata_pixel = textureLoad(texture_pool, vec2<u32>(u32(pool_dims.x - 1), u32(pool_dims.y - 1)), layer_index, 0);
-    return select(vec2<f32>(0.0), metadata_pixel.rg, metadata_pixel.b == 0.0 && metadata_pixel.a == 0.0);  // u_scale in R, v_scale in G
-}
-
 fn sample_handle_rgba(tex_handle: u32, uv: vec2<precision_float>, pool: texture_2d_array<f32>, lod: f32) -> vec4<precision_float> {
-    let pool_dims = vec2<i32>(textureDimensions(pool).xy);
-    let uv_scale = get_uv_scale(pool, tex_handle, pool_dims);
-    //let scaled_uv = uv * uv_scale;
-    let scaled_uv = uv;
-    let result = textureSampleLevel(pool, global_sampler, scaled_uv, tex_handle, lod);
-    return result;
+    return textureSampleLevel(pool, global_sampler, uv, tex_handle, lod);
 }
 
 fn sample_texture_or_vec4_param_handle(
