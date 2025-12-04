@@ -7,14 +7,17 @@
 // ║  • Temporal reprojection using motion vectors                             ║
 // ║  • Geometry-aware blending (depth + normal validation)                    ║
 // ║  • Adaptive sample accumulation for noise reduction                       ║
-// ║  • Outputs final GI radiance                                              ║
+// ║                                                                           ║
+// ║  Note: pixel_radiance_prev contains the BLURRED output from last frame    ║
+// ║  (output of recurrent blur), not raw accumulation. This ensures the       ║
+// ║  temporal history is the "clean background" from the denoiser.            ║
 // ║                                                                           ║
 // ║  Algorithm:                                                               ║
 // ║  1. Read current frame's traced radiance from path state                  ║
-// ║  2. Reproject to find previous frame's accumulated value                  ║
+// ║  2. Reproject to find previous frame's BLURRED value                      ║
 // ║  3. Validate reprojection with depth/normal similarity                    ║
 // ║  4. Blend current sample with history (adaptive alpha)                    ║
-// ║  5. Output to both accumulation buffer and final GI texture               ║
+// ║  5. Output raw accumulation (recurrent blur will process this)            ║
 // ║                                                                           ║
 // ╚═══════════════════════════════════════════════════════════════════════════╝
 // =============================================================================
@@ -31,6 +34,7 @@
 @group(1) @binding(0) var<uniform> gi_params: GIParams;
 @group(1) @binding(1) var<storage, read_write> gi_counters: GICounters;
 @group(1) @binding(2) var<storage, read> pixel_path_state: array<PixelPathState>;
+// Previous frame's BLURRED radiance (output of recurrent blur from last frame)
 @group(1) @binding(3) var pixel_radiance_prev: texture_2d<f32>;
 @group(1) @binding(4) var gbuffer_position: texture_2d<f32>;
 @group(1) @binding(5) var gbuffer_position_prev: texture_2d<f32>;
@@ -39,10 +43,9 @@
 @group(1) @binding(8) var gbuffer_motion: texture_2d<f32>;
 @group(1) @binding(9) var gbuffer_smra: texture_2d<f32>;
 @group(1) @binding(10) var<storage, read_write> world_cache: array<WorldCacheCell>;
-@group(1) @binding(11) var pixel_radiance_curr: texture_storage_2d<rgba16float, write>;
-@group(1) @binding(12) var<storage, read> pixel_variance_prev: array<f32>;
-@group(1) @binding(13) var<storage, read_write> pixel_variance_curr: array<f32>;
-@group(1) @binding(14) var output_gi: texture_storage_2d<rgba16float, write>;
+// Raw accumulation output (will be processed by recurrent blur)
+@group(1) @binding(11) var raw_accumulation: texture_storage_2d<rgba16float, write>;
+@group(1) @binding(12) var output_gi: texture_storage_2d<rgba16float, write>;
 
 // =============================================================================
 // CONSTANTS
@@ -68,21 +71,6 @@ const MAX_LUMINANCE_RATIO = 1.0;        // Ratio threshold in remapped space
 // This is the final safety clamp for all GI output
 // ─────────────────────────────────────────────────────────────────────────────
 const MAX_OUTPUT_LUMINANCE = 10.0;
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Variance tracking parameters
-// Used for variance-guided spatial filtering in subsequent pass
-// ─────────────────────────────────────────────────────────────────────────────
-const VARIANCE_BLEND_ALPHA = 0.1;       // Temporal smoothing for variance
-const MIN_VARIANCE_CLAMP = 0.0001;      // Minimum variance to avoid precision issues
-const MAX_VARIANCE_CLAMP = 1.0;         // Maximum variance to prevent blowup
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Helper: Convert 2D pixel coordinates to 1D buffer index
-// ─────────────────────────────────────────────────────────────────────────────
-fn pixel_to_variance_index(coord: vec2<i32>, width: u32) -> u32 {
-    return u32(coord.y) * width + u32(coord.x);
-}
 
 // =============================================================================
 // MAIN COMPUTE SHADER
@@ -141,10 +129,8 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     
     // Skip sky pixels (no geometry)
     if (normal_length < 0.01) {
-        let variance_idx = pixel_to_variance_index(pixel_coord, res.x);
         textureStore(output_gi, pixel_coord, vec4<f32>(0.0, 0.0, 0.0, 1.0));
-        textureStore(pixel_radiance_curr, pixel_coord, vec4<f32>(0.0, 0.0, 0.0, 0.0));
-        pixel_variance_curr[variance_idx] = 0.0;
+        textureStore(raw_accumulation, pixel_coord, vec4<f32>(0.0, 0.0, 0.0, 0.0));
         return;
     }
     
@@ -291,14 +277,6 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     
     var final_radiance: vec3<f32>;
     var final_count: f32;
-    var final_variance: f32;
-    
-    // Load previous variance for temporal smoothing
-    var prev_variance = 0.0;
-    if (reprojection_valid) {
-        let prev_variance_idx = pixel_to_variance_index(pixel_prev, res.x);
-        prev_variance = pixel_variance_prev[prev_variance_idx];
-    }
     
     // Compute upscale-aware base blend factor
     // Higher upscale = fewer samples per pixel = each sample MORE valuable = higher alpha
@@ -321,7 +299,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     // Minimum blend alpha for specular surfaces (faster response)
     // Diffuse: 2% minimum, Highly specular: 15% minimum
     let specular_min_alpha = mix(MIN_BLEND_ALPHA, 0.15, specularity);
-    
+
     // Maximum effective history count for specular surfaces
     // Diffuse: unlimited (use actual count), Highly specular: cap at ~8 samples
     // This prevents specular from accumulating too much stale history
@@ -330,40 +308,19 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     if (current_count > 0.0) {
         if (reprojection_valid && prev_count > 0.0) {
             // Cap history count for specular surfaces to ensure faster convergence
-            let effective_prev_count = min(prev_count, max_effective_count);
-            
-            let sample_alpha = 1.0 / (1.0 + effective_prev_count);
+            let sample_alpha = 1.0 / min(1.0 + prev_count, max_effective_count);
             let adaptive_alpha = clamp(sample_alpha, specular_min_alpha, MAX_BLEND_ALPHA);
             final_radiance = mix(prev_radiance, current_radiance, adaptive_alpha);
             
-            // Still track actual count for variance calculations, but cap for next frame
-            final_count = min(prev_count + 1.0, max_effective_count + 1.0);
-            
-            // ─────────────────────────────────────────────────────────────────
-            // Variance Computation
-            // Compute squared difference between new sample and accumulated mean
-            // This measures how much the new sample differs from expectation
-            // ─────────────────────────────────────────────────────────────────
-            let radiance_diff = current_radiance - prev_radiance;
-            let luminance_diff = dot(radiance_diff, vec3<f32>(0.2126, 0.7152, 0.0722));
-            let sample_variance = luminance_diff * luminance_diff;
-            
-            // Temporal smoothing of variance using exponential moving average
-            // Blend more aggressively when we have few samples or for specular
-            let variance_alpha = max(VARIANCE_BLEND_ALPHA, adaptive_alpha);
-            final_variance = mix(prev_variance, sample_variance, variance_alpha);
-            // Variance decays with effective sample count
-            final_variance = final_variance / sqrt(max(effective_prev_count + 1.0, 1.0));
+            // Track sample count for adaptive blur radius in recurrent blur pass
+            // Sample count enables self-stabilizing blur: more samples → smaller radius
+            final_count = min(prev_count + 1.0, max_effective_count);
         } else {
             // No valid history - use current sample with firefly clamping
             // A single sample with no history is high-variance, so clamp more tightly
             // For specular surfaces, we allow brighter samples
             final_radiance = safe_clamp_vec3_max(current_radiance, max_first_sample_luminance);
             final_count = 1.0;
-            // First sample has maximum uncertainty (high variance)
-            // Use luminance as initial variance estimate
-            let initial_lum = dot(current_radiance, vec3<f32>(0.2126, 0.7152, 0.0722));
-            final_variance = max(initial_lum * 0.5, MAX_VARIANCE_CLAMP);
         }
     } else {
         if (reprojection_valid && prev_count > 0.0) {
@@ -371,19 +328,12 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
             // No decay needed - we'll blend properly when this pixel is traced
             final_radiance = prev_radiance;
             final_count = prev_count;
-            // Carry forward variance but increase slightly due to no new sample
-            // Pixels not sampled this frame have slightly higher uncertainty
-            final_variance = min(prev_variance * 1.05, MAX_VARIANCE_CLAMP);
         } else {
-            // No valid data - output zero with max variance
+            // No valid data - output zero
             final_radiance = vec3<f32>(0.0);
             final_count = 0.0;
-            final_variance = MAX_VARIANCE_CLAMP;
         }
     }
-    
-    // Clamp variance to valid range
-    final_variance = clamp(final_variance, MIN_VARIANCE_CLAMP, MAX_VARIANCE_CLAMP);
     
     // ─────────────────────────────────────────────────────────────────────────
     // Final firefly clamp on output radiance
@@ -393,13 +343,11 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     // ─────────────────────────────────────────────────────────────────────────
     // Output
     // ─────────────────────────────────────────────────────────────────────────
-    // Store accumulated radiance for next frame
-    textureStore(pixel_radiance_curr, pixel_coord, vec4<f32>(final_radiance, final_count));
+    // Store accumulated radiance with sample count in alpha channel
+    // Sample count is used by recurrent blur for adaptive radius:
+    // blur_radius = BASE_RADIUS / (1 + sample_count)
+    textureStore(raw_accumulation, pixel_coord, vec4<f32>(final_radiance, final_count));
     
-    // Store variance for motion blur pass (buffer indexed by pixel)
-    let variance_idx = pixel_to_variance_index(pixel_coord, res.x);
-    pixel_variance_curr[variance_idx] = final_variance;
-    
-    // Output final GI radiance (will be refined by motion blur pass)
+    // Output final GI radiance (will be refined by recurrent blur pass)
     textureStore(output_gi, pixel_coord, vec4<f32>(final_radiance, 1.0));
 }
