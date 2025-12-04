@@ -300,10 +300,8 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     // Diffuse: 2% minimum, Highly specular: 15% minimum
     let specular_min_alpha = mix(MIN_BLEND_ALPHA, 0.15, specularity);
 
-    // Maximum effective history count for specular surfaces
-    // Diffuse: unlimited (use actual count), Highly specular: cap at ~8 samples
-    // This prevents specular from accumulating too much stale history
-    let max_effective_count = mix(1000.0, 8.0, specularity);
+    // Maximum effective history count
+    let max_effective_count = 32.0;
     
     if (current_count > 0.0) {
         if (reprojection_valid && prev_count > 0.0) {

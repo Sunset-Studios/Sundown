@@ -173,9 +173,9 @@ const pixel_update_shader_setup = {
   },
 };
 
-const pixel_denoise_blur_shader_setup = {
+const pixel_blur_denoise_shader_setup = {
   pipeline_shaders: {
-    compute: { path: "gi/pixel_denoise_blur.wgsl" },
+    compute: { path: "gi/pixel_blur_denoise.wgsl" },
   },
 };
 
@@ -935,7 +935,7 @@ export class GI {
           gi_output,
         ],
         outputs: [pixel_radiance_curr, gi_output],
-        shader_setup: pixel_denoise_blur_shader_setup,
+        shader_setup: pixel_blur_denoise_shader_setup,
       },
       (graph, frame_data, encoder) => {
         const pass = graph.get_physical_pass(frame_data.current_pass);
