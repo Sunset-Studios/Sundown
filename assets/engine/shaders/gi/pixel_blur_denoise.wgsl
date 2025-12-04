@@ -41,19 +41,21 @@
 // =============================================================================
 
 @group(1) @binding(0) var<uniform> gi_params: GIParams;
-// Current frame's raw temporal accumulation (from pixel_update)
+// Current frame's raw temporal accumulation (from pixel_accumulate)
 // Contains fresh accumulated radiance with sample count in .w
 @group(1) @binding(1) var raw_accumulation: texture_2d<f32>;
 // Previous frame's BLURRED output - the "clean background" for recurrent blur
 // Neighbors are sampled from here, enabling temporal redistribution of spatial sampling
 @group(1) @binding(2) var pixel_radiance_prev: texture_2d<f32>;
 @group(1) @binding(3) var gbuffer_position: texture_2d<f32>;
-@group(1) @binding(4) var gbuffer_normal: texture_2d<f32>;
+@group(1) @binding(4) var gbuffer_position_prev: texture_2d<f32>;
+@group(1) @binding(5) var gbuffer_normal: texture_2d<f32>;
+@group(1) @binding(6) var gbuffer_normal_prev: texture_2d<f32>;
 // Current frame's blurred output - becomes pixel_radiance_prev next frame
-// This is what pixel_update will read as history in the next frame
-@group(1) @binding(5) var pixel_radiance_curr: texture_storage_2d<rgba16float, write>;
+// This is what pixel_accumulate will read as history in the next frame
+@group(1) @binding(7) var pixel_radiance_curr: texture_storage_2d<rgba16float, write>;
 // Final GI output for deferred lighting passes
-@group(1) @binding(6) var gi_output: texture_storage_2d<rgba16float, write>;
+@group(1) @binding(8) var gi_output: texture_storage_2d<rgba16float, write>;
 
 // =============================================================================
 // CONSTANTS
@@ -61,16 +63,10 @@
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Blur Configuration
-// BASE_RADIUS: Maximum blur radius when sample_count = 0
+// BASE_RADIUS: Maximum blur radius in pixels when sample_count = 0
 // As samples accumulate, effective radius = BASE_RADIUS / (1 + sample_count)
 // ─────────────────────────────────────────────────────────────────────────────
-const BASE_BLUR_RADIUS: f32 = 1.0;
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Minimum effective radius before blur is skipped entirely
-// Avoids unnecessary work for well-converged pixels
-// ─────────────────────────────────────────────────────────────────────────────
-const MIN_BLUR_RADIUS: f32 = 0.1;
+const BASE_BLUR_RADIUS: f32 = 4.0;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Number of samples per blur pass
@@ -176,7 +172,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     
     // ─────────────────────────────────────────────────────────────────────────
     // Load center pixel's CURRENT accumulated radiance and sample count
-    // This is the fresh temporal accumulation from pixel_update
+    // This is the fresh temporal accumulation from pixel_accumulate
     // ─────────────────────────────────────────────────────────────────────────
     let center_data = textureLoad(raw_accumulation, pixel_coord, 0);
     let center_radiance = center_data.rgb;
@@ -192,7 +188,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     // ─────────────────────────────────────────────────────────────────────────
     // Early out: Skip sky pixels (no geometry to blur)
     // ─────────────────────────────────────────────────────────────────────────
-    if (length(center_normal_data.xyz) < 0.01) {
+    if (length(center_normal_data.xyz) <= 0.0) {
         textureStore(pixel_radiance_curr, pixel_coord, vec4<f32>(center_radiance, sample_count));
         textureStore(gi_output, pixel_coord, vec4<f32>(center_radiance, 1.0));
         return;
@@ -203,15 +199,6 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     // This is the key stabilization: more samples → smaller radius → sharper
     // ─────────────────────────────────────────────────────────────────────────
     let effective_radius = compute_adaptive_radius(sample_count);
-    
-    // ─────────────────────────────────────────────────────────────────────────
-    // Early out: Skip blur if radius too small (pixel is well-converged)
-    // ─────────────────────────────────────────────────────────────────────────
-    if (effective_radius < MIN_BLUR_RADIUS) {
-        textureStore(pixel_radiance_curr, pixel_coord, vec4<f32>(center_radiance, sample_count));
-        textureStore(gi_output, pixel_coord, vec4<f32>(center_radiance, 1.0));
-        return;
-    }
     
     // ─────────────────────────────────────────────────────────────────────────
     // Get camera position for depth computation
@@ -262,8 +249,8 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         // ─────────────────────────────────────────────────────────────────
         // Load sample G-buffer data
         // ─────────────────────────────────────────────────────────────────
-        let sample_position = textureLoad(gbuffer_position, sample_coord, 0).xyz;
-        let sample_normal_data = textureLoad(gbuffer_normal, sample_coord, 0);
+        let sample_position = textureLoad(gbuffer_position_prev, sample_coord, 0).xyz;
+        let sample_normal_data = textureLoad(gbuffer_normal_prev, sample_coord, 0);
         let sample_normal = safe_normalize(sample_normal_data.xyz);
         
         // Skip invalid samples (sky pixels)
@@ -276,7 +263,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         // This is the "clean background" that makes recurrent blur work
         // Neighbors contribute their already-filtered values, not raw input
         // ─────────────────────────────────────────────────────────────────
-        let sample_data = textureLoad(pixel_radiance_prev, sample_coord, 0);
+        let sample_data = textureLoad(raw_accumulation, sample_coord, 0);
         let sample_radiance = sample_data.rgb;
         let sample_depth = length(sample_position - camera_position);
         

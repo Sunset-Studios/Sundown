@@ -167,9 +167,9 @@ const pixel_trace_shade_shader_setup = {
   },
 };
 
-const pixel_update_shader_setup = {
+const pixel_accumulate_shader_setup = {
   pipeline_shaders: {
-    compute: { path: "gi/pixel_update.wgsl" },
+    compute: { path: "gi/pixel_accumulate.wgsl" },
   },
 };
 
@@ -442,7 +442,7 @@ export class GI {
     // ─────────────────────────────────────────────────────────────────────
     // Per-Pixel Radiance (Ping-Pong) - BLURRED Output
     // These contain the BLURRED radiance from the recurrent blur pass.
-    // pixel_radiance_prev is what pixel_update reads as history, ensuring
+    // pixel_radiance_prev is what pixel_accumulate reads as history, ensuring
     // the temporal accumulation sees the clean blurred background.
     // ─────────────────────────────────────────────────────────────────────
     const pixel_radiance_0 = render_graph.create_image({
@@ -465,7 +465,7 @@ export class GI {
 
     // ─────────────────────────────────────────────────────────────────────
     // Raw Accumulation Buffer (Temporary)
-    // pixel_update writes raw temporal accumulation here, then recurrent_blur
+    // pixel_accumulate writes raw temporal accumulation here, then recurrent_blur
     // reads this (center) + pixel_radiance_prev (neighbors) and writes the
     // blurred result to pixel_radiance_curr.
     // ─────────────────────────────────────────────────────────────────────
@@ -870,12 +870,12 @@ export class GI {
     );
 
     // ─────────────────────────────────────────────────────────────────────
-    // Pass 12: Per-Pixel Update (Temporal Accumulation)
+    // Pass 12: Per-Pixel Accumulate (Temporal Accumulation)
     // Reads from pixel_radiance_prev (last frame's BLURRED output) and
     // writes raw accumulated radiance to raw_accumulation buffer.
     // ─────────────────────────────────────────────────────────────────────
     render_graph.add_pass(
-      `gi_pixel_update_${ping_pong_frame}`,
+      `gi_pixel_accumulate_${ping_pong_frame}`,
       RenderPassFlags.Compute,
       {
         inputs: [
@@ -891,10 +891,9 @@ export class GI {
           gbuffer_smra,
           world_cache,
           raw_accumulation,
-          gi_output,
         ],
-        outputs: [raw_accumulation, gi_output, world_cache],
-        shader_setup: pixel_update_shader_setup,
+        outputs: [raw_accumulation, world_cache],
+        shader_setup: pixel_accumulate_shader_setup,
       },
       (graph, frame_data, encoder) => {
         const pass = graph.get_physical_pass(frame_data.current_pass);
@@ -930,7 +929,9 @@ export class GI {
           raw_accumulation,
           pixel_radiance_prev,
           gbuffer_position,
+          gbuffer_position_prev,
           gbuffer_normal,
+          gbuffer_normal_prev,
           pixel_radiance_curr,
           gi_output,
         ],

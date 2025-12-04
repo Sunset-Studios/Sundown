@@ -271,8 +271,34 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let f = f_schlick_vec3(f0, 1.0, n_dot_v);
     let fresnel_luminance = (f.x + f.y + f.z) / 3.0;
 
-    // Probability of sampling specular vs diffuse
-    let specular_prob = clamp(fresnel_luminance, 0.001, 0.99);
+    // ─────────────────────────────────────────────────────────────────────────
+    // Compute optimal specular vs diffuse sampling probability
+    // ─────────────────────────────────────────────────────────────────────────
+    // The probability should balance the expected contribution from each lobe:
+    //
+    // For metals (metallic ≈ 1):
+    //   - No diffuse term exists, must sample 100% specular
+    //   - diffuse_weight naturally becomes 0
+    //
+    // For dielectrics:
+    //   - Specular: weighted by Fresnel reflectance
+    //   - Diffuse: weighted by (1-Fresnel) × albedo (transmitted light that scatters)
+    //
+    // This ensures we sample proportionally to expected radiance contribution,
+    // minimizing variance compared to a fixed probability.
+    // ─────────────────────────────────────────────────────────────────────────
+    let albedo_luminance = dot(albedo, vec3<f32>(0.2126, 0.7152, 0.0722));
+    
+    // Specular weight: Fresnel reflectance (higher at grazing angles)
+    let specular_weight = fresnel_luminance;
+    
+    // Diffuse weight: only for non-metals, scaled by (1-Fresnel) and albedo
+    // Metals have no diffuse term, so (1-metallic) zeros this out
+    let diffuse_weight = (1.0 - metallic) * (1.0 - fresnel_luminance) * albedo_luminance;
+    
+    // Probability of sampling specular lobe
+    let total_weight = specular_weight + diffuse_weight;
+    let specular_prob = clamp(specular_weight / max(total_weight, 0.001), 0.001, 0.999);
     
     // ─────────────────────────────────────────────────────────────────────────
     // Generate BRDF sampling candidates using blue noise
@@ -446,10 +472,8 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     pixel_path_state[gid.x].state_u32 = vec4<u32>(0u, is_alive, 0u, 0xffffffffu);
     pixel_path_state[gid.x].hit_attr0 = vec4<f32>(0.0);
     pixel_path_state[gid.x].hit_attr1 = vec4<f32>(0.0);
-    // x = blue noise scramble, y = sample count, z = frame, w = blue noise dimension
     pixel_path_state[gid.x].rng_sample_count_frame_stamp = vec4<f32>(f32(bn_sampler.scramble), 0.0, f32(frame_id), f32(bn_sampler.dimension));
     pixel_path_state[gid.x].path_weight = vec4<f32>(path_weight, ray_source_pdf);
     pixel_path_state[gid.x].throughput = vec4<f32>(initial_emissive, 0.0);
-    // Store pixel coordinates for update pass
     pixel_path_state[gid.x].pixel_coords = vec4<f32>(f32(pixel_coords.x), f32(pixel_coords.y), 0.0, 0.0);
 }

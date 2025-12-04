@@ -1865,7 +1865,7 @@ export class GITestScene extends Scene {
     const emissive_white_material = StandardMaterial.create("testgym_emissive_white_material");
     const emissive_white_material_id = emissive_white_material.material_id;
     emissive_white_material.set_albedo([1, 1, 1, 1]);
-    emissive_white_material.set_emission(10.0);
+    emissive_white_material.set_emission(30.0);
     emissive_white_material.set_metallic(0.01);
     emissive_white_material.set_roughness(0.9);
 
@@ -2711,7 +2711,7 @@ export class SponzaScene extends Scene {
     const light_fragment_view = EntityManager.get_fragment(light_entity, LightFragment);
     light_fragment_view.type = LightType.DIRECTIONAL;
     light_fragment_view.color = [0.9, 0.9, 1.0];
-    light_fragment_view.intensity = 50.0;
+    light_fragment_view.intensity = 30.0;
     light_fragment_view.position = [5.0, 20, 2.0];
     light_fragment_view.active = true;
     light_fragment_view.is_primary_sun = 1;
@@ -2734,7 +2734,7 @@ export class SponzaScene extends Scene {
     const emissive_white_material = StandardMaterial.create("sponza_emissive_white_material");
     const emissive_white_material_id = emissive_white_material.material_id;
     emissive_white_material.set_albedo([1, 1, 1, 1]);
-    emissive_white_material.set_emission(100.0);
+    emissive_white_material.set_emission(300.0);
     emissive_white_material.set_metallic(0.2);
     emissive_white_material.set_roughness(0.9);
     emissive_white_material.set_specular(0.5);
@@ -2751,7 +2751,7 @@ export class SponzaScene extends Scene {
 
     // Emissive white cube in center of Sponza atrium
     // const emissive_cube = spawn_mesh_entity(
-    //   [0.0, 25.0, -0.25],
+    //   [0.0, 30.0, -0.25],
     //   quat.fromEuler(quat.create(), 0, 0, 0),
     //   [9.5, 0.2, 0.7],
     //   cube_mesh,
@@ -3002,8 +3002,8 @@ export class CityScene extends Scene {
   //await scene_switcher.add_scene(gi_test_scene);
   //await scene_switcher.add_scene(shadow_test_scene);
   //await scene_switcher.add_scene(gltf_model_scene);
-  //await scene_switcher.add_scene(sponza_scene);
-  await scene_switcher.add_scene(living_room_scene);
+  await scene_switcher.add_scene(sponza_scene);
+  //await scene_switcher.add_scene(living_room_scene);
   //await scene_switcher.add_scene(city_scene);
 
   simulator.add_sim_layer(scene_switcher);
