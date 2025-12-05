@@ -53,47 +53,18 @@ struct GIParams {
 // =============================================================================
 
 struct PixelPathState {
-    // ─────────────────────────────────────────────────────────────────────────
-    // Ray geometry
-    // ─────────────────────────────────────────────────────────────────────────
     origin_tmin: vec4<f32>,              // xyz = ray origin, w = t_min
     direction_tmax: vec4<f32>,           // xyz = ray direction, w = t_max / prim_store
     normal_section_index: vec4<f32>,     // xyz = hit normal, w = section index
-    
-    // ─────────────────────────────────────────────────────────────────────────
-    // Ray state
-    // ─────────────────────────────────────────────────────────────────────────
     state_u32: vec4<u32>,                // x = bounce, y = alive, z = shadow_visible, w = tri_id
-    
-    // ─────────────────────────────────────────────────────────────────────────
-    // Hit attributes (for material sampling)
-    // ─────────────────────────────────────────────────────────────────────────
     hit_attr0: vec4<f32>,                // xyz = tangent, w = uv.x
     hit_attr1: vec4<f32>,                // xyz = bitangent, w = uv.y
-    
-    // ─────────────────────────────────────────────────────────────────────────
-    // Shadow ray (NEE)
-    // ─────────────────────────────────────────────────────────────────────────
     shadow_origin: vec4<f32>,            // xyz = shadow ray origin, w = light index
     shadow_direction: vec4<f32>,         // xyz = shadow ray direction, w = max distance
     shadow_radiance: vec4<f32>,          // xyz = potential light contribution, w = weight
-    
-    // ─────────────────────────────────────────────────────────────────────────
-    // Path throughput and sampling
-    // ─────────────────────────────────────────────────────────────────────────
     path_weight: vec4<f32>,              // xyz = BRDF weight, w = source PDF
     rng_sample_count_frame_stamp: vec4<f32>, // x = RNG state, y = sample count, z = frame, w = unused
     throughput: vec4<f32>,               // xyz = accumulated radiance, w = unused
-    
-    // ─────────────────────────────────────────────────────────────────────────
-    // ReSTIR reservoir
-    // ─────────────────────────────────────────────────────────────────────────
-    reservoir_radiance_m: vec4<f32>,     // xyz = reservoir radiance, w = M count
-    reservoir_direction_w: vec4<f32>,    // xyz = selected direction, w = weight
-    
-    // ─────────────────────────────────────────────────────────────────────────
-    // Pixel coordinates (for update pass)
-    // ─────────────────────────────────────────────────────────────────────────
     pixel_coords: vec4<f32>,             // xy = pixel coordinates, zw = unused
 };
 
@@ -112,9 +83,7 @@ struct WorldCachePathState {
     shadow_direction: vec4<f32>,
     shadow_radiance: vec4<f32>,
     path_weight: vec4<f32>,
-    rng_sample_count_frame_stamp: vec4<f32>,
-    reservoir_radiance_m: vec4<f32>,
-    reservoir_direction_w: vec4<f32>,
+    rng_rank_frame_stamp: vec4<f32>,
 };
 
 // =============================================================================

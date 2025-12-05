@@ -56,7 +56,8 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         u32(gi_params.world_cache_size),
         gi_params.world_cache_cell_size,
         u32(gi_params.world_cache_lod_count),
-        ray_length
+        ray_length,
+        0u
     );
     let cached_radiance = select(vec3<f32>(1.0, 0.0, 0.0), vec3<f32>(0.0, 1.0, 0.0), is_valid);
 #else
@@ -67,7 +68,8 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         u32(gi_params.world_cache_size),
         gi_params.world_cache_cell_size,
         u32(gi_params.world_cache_lod_count),
-        ray_length
+        ray_length,
+        0u
     );
 #endif
 

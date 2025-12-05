@@ -56,7 +56,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let sun_dir = normalize(-light_view.view_direction.xyz);
     let v_dir = normalize(camera_position - path.origin_tmin.xyz);
 
-    var rng = u32(world_cache_path_state[active_index].rng_sample_count_frame_stamp.x);
+    var rng = u32(world_cache_path_state[active_index].rng_rank_frame_stamp.x);
     if (rng == 0u) { rng = hash(cell_index ^ u32(gi_params.frame_index)); }
     else { rng = random_seed(rng); }
 
@@ -187,6 +187,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
             50.0, // allocation radius
             rand_float(rng),
             path.origin_tmin.w,
+            u32(path.rng_rank_frame_stamp.y)
         );
         
         // Check if we got valid cached data

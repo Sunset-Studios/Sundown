@@ -166,7 +166,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         world_cache_path_state[active_index].state_u32.y = 0u;
         return;
     }
-    
+
     // =============================================================================
     // Extract cell surface properties from cached data
     // =============================================================================
@@ -183,6 +183,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     // Get view for camera position (for BRDF evaluation)
     let view_index = u32(frame_info.view_index);
     let view = view_buffer[view_index];
+    let camera_position = view.view_position.xyz;
     let v_dir = normalize(view.view_position.xyz - position);
     let n_dot_v = max(dot(v_dir, normal), 0.0001);
     
@@ -259,23 +260,13 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         // Russian Roulette: Kill paths with very low throughput
         let weight_luminance = path_weight.x * 0.2126 + path_weight.y * 0.7152 + path_weight.z * 0.0722;
         let min_weight_threshold = 0.0001;
-        
-        if (weight_luminance < min_weight_threshold) {
-            is_alive = 0u;
-            ray_source_pdf = 0.0;
-            world_cache_path_state[active_index].reservoir_radiance_m = vec4f(0.0);
-            world_cache_path_state[active_index].reservoir_direction_w = vec4f(0.0);
-        } else {
-            is_alive = 1u;
-            world_cache_path_state[active_index].reservoir_radiance_m = vec4f(selected_sample.radiance_and_target_pdf.xyz, f32(gi_reservoir.m));
-            world_cache_path_state[active_index].reservoir_direction_w = vec4f(selected_dir, gi_reservoir.w);
-        }
+        let is_alive = select(0u, 1u, weight_luminance >= min_weight_threshold);
+
+        ray_source_pdf = select(0.0, ray_source_pdf, is_alive == 1u);
     } else {
         // Reservoir failed - kill path
         is_alive = 0u;
         ray_source_pdf = 0.0;
-        world_cache_path_state[active_index].reservoir_radiance_m = vec4f(0.0);
-        world_cache_path_state[active_index].reservoir_direction_w = vec4f(0.0);
         
         // Generate fallback direction
         let u1 = blue_noise_next(&bn_sampler);
@@ -313,6 +304,16 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         world_cache_path_state[active_index].shadow_direction = vec4<f32>(0.0, 0.0, 0.0, 0.0);
         world_cache_path_state[active_index].shadow_radiance = vec4<f32>(0.0, 0.0, 0.0, 0.0);
     }
+
+    let rank = read_world_cache_cell_rank(
+        position,
+        normal,
+        camera_position,
+        u32(gi_params.world_cache_size),
+        gi_params.world_cache_cell_size,
+        u32(gi_params.world_cache_lod_count),
+        gi_params.world_cache_cell_size * 2.0 
+    );
     
     // Initialize path state
     world_cache_path_state[active_index].origin_tmin = vec4<f32>(position + normal * 0.001, 0.0001);
@@ -321,7 +322,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     world_cache_path_state[active_index].state_u32 = vec4<u32>(0u, is_alive, 0u, 0xffffffffu);
     world_cache_path_state[active_index].hit_attr0 = vec4<f32>(0.0);
     world_cache_path_state[active_index].hit_attr1 = vec4<f32>(0.0);
-    world_cache_path_state[active_index].rng_sample_count_frame_stamp = vec4<f32>(f32(bn_sampler.scramble), 0.0, f32(frame_id), f32(bn_sampler.dimension));
+    world_cache_path_state[active_index].rng_rank_frame_stamp = vec4<f32>(f32(bn_sampler.scramble), f32(rank), f32(frame_id), f32(bn_sampler.dimension));
     world_cache_path_state[active_index].path_weight = vec4<f32>(path_weight, ray_source_pdf);
 }
 

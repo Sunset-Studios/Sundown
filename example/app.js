@@ -2842,9 +2842,9 @@ export class LivingRoomScene extends Scene {
 
     const light_fragment_view = EntityManager.get_fragment(light_entity, LightFragment);
     light_fragment_view.type = LightType.DIRECTIONAL;
-    light_fragment_view.color = [1.0, 0.95, 0.9];  // Warm daylight tint
-    light_fragment_view.intensity = 30.0;
-    light_fragment_view.position = [5.0, 5.0, -10.0];
+    light_fragment_view.color = [1.0, 1.0, 1.0];  // Warm daylight tint
+    light_fragment_view.intensity = 40.0;
+    light_fragment_view.position = [0.0, 5.0, -10.0];
     light_fragment_view.active = true;
     light_fragment_view.is_primary_sun = 1;
     light_fragment_view.shadow_clipmaps = MAX_CLIPMAP_LEVELS;
@@ -2866,20 +2866,45 @@ export class LivingRoomScene extends Scene {
     this.entities.push(ground_entity);
 
     // ─────────────────────────────────────────────────────────────────────────
-    // Load Living Room GLTF Model
+    // Load Living Room GLTF Model - Instanced 100x in a 10x10 grid
     // ─────────────────────────────────────────────────────────────────────────
-    let living_room_root = this.load_gltf_scene(
+    const living_room_entity = this.load_gltf_scene(
       "engine/models/living_room/living_room.gltf",
-      [0, 1, 0],
+      [0, 0, 0],
       [0, 0, 0, 1],
       [10, 10, 10],
-      null,
-      null,
-      null
     );
-    this.entities.push(living_room_root);
+    this.entities.push(living_room_entity);
 
-    log(`[${this.name}] Living room scene initialized.`);
+    const grid_size = 10; // 10x10 = 100 instances
+    const num_instances = grid_size * grid_size;
+    const spacing = 120.0; // Distance between living room instances
+    const half_grid = (grid_size - 1) * spacing * 0.5;
+
+    // Set instance count for the living room entity
+    EntityManager.set_entity_instance_count(living_room_entity, num_instances);
+
+    // Position each instance in a uniform grid along the floor
+    let instance_index = 0;
+    for (let gx = 0; gx < grid_size; gx++) {
+      for (let gz = 0; gz < grid_size; gz++) {
+        const x = gx * spacing - half_grid;
+        const y = 1.0; // Slightly above the ground
+        const z = gz * spacing - half_grid;
+
+        const transform_view = EntityManager.get_fragment(
+          living_room_entity,
+          TransformFragment,
+          instance_index
+        );
+        transform_view.position = [x, y, z];
+        transform_view.scale = [10, 10, 10];
+
+        instance_index++;
+      }
+    }
+
+    log(`[${this.name}] Living room scene initialized with ${num_instances} instances.`);
   }
 
   cleanup() {

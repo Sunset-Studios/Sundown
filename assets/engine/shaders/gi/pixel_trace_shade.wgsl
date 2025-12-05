@@ -207,7 +207,8 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
             u32(gi_params.world_cache_size),
             gi_params.world_cache_cell_size,
             u32(gi_params.world_cache_lod_count),
-            path.origin_tmin.w
+            path.origin_tmin.w,
+            0u // Screen space traces rank at 0 (first hit)
         );
         
         // Apply cached radiance if valid, with firefly clamping

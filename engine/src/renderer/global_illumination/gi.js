@@ -371,7 +371,7 @@ export class GI {
     // ─────────────────────────────────────────────────────────────────────
     let gi_counters = render_graph.create_buffer({
       name: "gi_counters",
-      size: 16, // 4 x u32 (light_count, active_cache_cell_count, padding, padding)
+      size: 16,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
       force: force_recreate,
     });
@@ -381,7 +381,7 @@ export class GI {
     // ─────────────────────────────────────────────────────────────────────
     const world_cache = render_graph.create_buffer({
       name: "gi_world_cache",
-      size: total_cells * 96, // WorldCacheCell size
+      size: total_cells * 96,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
       force: force_recreate,
     });
@@ -417,14 +417,14 @@ export class GI {
 
     const world_cache_dispatch_params = render_graph.create_buffer({
       name: "gi_world_cache_dispatch_params",
-      size: 12, // 3 x u32 (x, y, z)
+      size: 12,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.INDIRECT | GPUBufferUsage.COPY_DST,
       force: force_recreate,
     });
 
     const world_cache_path_state = render_graph.create_buffer({
       name: "gi_world_cache_path_state",
-      size: total_cells * 13 * 4, // WorldCachePathState
+      size: total_cells * 11 * 4,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
       force: force_recreate,
     });
@@ -434,7 +434,7 @@ export class GI {
     // ─────────────────────────────────────────────────────────────────────
     let pixel_path_state = render_graph.create_buffer({
       name: "gi_pixel_path_state",
-      size: rays_per_frame * 15 * 4, // PixelPathState (15 vec4 per ray)
+      size: rays_per_frame * 13 * 4,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
       force: force_recreate,
     });

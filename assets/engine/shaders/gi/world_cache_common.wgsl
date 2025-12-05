@@ -73,7 +73,7 @@ struct WorldCacheCell {
     albedo_roughness: vec4<f32>,    // xyz = albedo, w = roughness
     material_props: vec4<f32>,      // x = metallic, y = reflectance, z = emissive, w = unused
     fingerprint: atomic<u32>,
-    padding1: u32,
+    rank: u32,
     padding2: u32,
     padding3: u32,
 };
@@ -218,7 +218,8 @@ fn query_world_cache_cell(
     cache_size: u32,
     base_cell_size: f32,
     lod_count: u32,
-    ray_length: f32
+    ray_length: f32,
+    rank: u32
 ) -> vec3<f32> {
     // Determine LOD level (square thresholds) and create descriptor
     let lod_level = select_lod_level(position, camera_position, base_cell_size, lod_count);
@@ -260,8 +261,9 @@ fn query_world_cache_cell(
             WORLD_CACHE_CELL_EMPTY, 
             target_fingerprint
         ).old_value;
-        
-        if (existing_fingerprint == target_fingerprint) {
+        let existing_rank = world_cache[cell_index].rank;
+
+        if (existing_fingerprint == target_fingerprint && rank <= existing_rank) {
             // Cache hit: found matching entry, refresh lifetime and return radiance
             world_cache[cell_index].position_frame = vec4<f32>(position, WORLD_CACHE_CELL_LIFETIME);
             world_cache[cell_index].normal_count = vec4<f32>(normal, world_cache[cell_index].normal_count.w);
@@ -275,6 +277,7 @@ fn query_world_cache_cell(
             world_cache[cell_index].albedo_roughness = vec4<f32>(albedo, roughness);
             world_cache[cell_index].material_props = vec4<f32>(metallic, reflectance, emissive, 0.0);
             world_cache[cell_index].radiance_w = vec4<f32>(0.0);
+            world_cache[cell_index].rank = rank + 1u;
             return vec3<f32>(0.0);
         }
 
@@ -305,7 +308,8 @@ fn query_world_cache_cell_probabilistic(
     lod_count: u32,
     allocation_radius: f32,  // Distance at which allocation probability = 0.5
     random_value: f32,       // Random value [0,1] for probabilistic decision
-    ray_length: f32          // Secondary ray length for light-leak prevention
+    ray_length: f32,          // Secondary ray length for light-leak prevention
+    rank: u32
 ) -> vec3<f32> {
     let distance_from_camera = length(position - camera_position);
     
@@ -331,7 +335,8 @@ fn query_world_cache_cell_probabilistic(
             cache_size,
             base_cell_size,
             lod_count,
-            ray_length
+            ray_length,
+            rank
         );
     }
     
@@ -343,7 +348,8 @@ fn query_world_cache_cell_probabilistic(
         cache_size,
         base_cell_size,
         lod_count,
-        ray_length
+        ray_length,
+        rank
     );
 }
 
@@ -364,7 +370,8 @@ fn query_world_cache_interpolated(
     cache_size: u32,
     base_cell_size: f32,
     lod_count: u32,
-    ray_length: f32
+    ray_length: f32,
+    rank: u32
 ) -> vec3<f32> {
     // For now, just use direct query
     // Can be extended to sample neighboring directions for smoother results
@@ -380,7 +387,8 @@ fn query_world_cache_interpolated(
         cache_size,
         base_cell_size,
         lod_count,
-        ray_length
+        ray_length,
+        rank
     );
 }
 
@@ -391,7 +399,8 @@ fn read_world_cache_cell_radiance(
     cache_size: u32,
     base_cell_size: f32,
     lod_count: u32,
-    ray_length: f32
+    ray_length: f32,
+    rank: u32
 ) -> vec3<f32> {
     // Determine LOD level (square thresholds) and create descriptor
     let lod_level = select_lod_level(position, camera_position, base_cell_size, lod_count);
@@ -424,13 +433,60 @@ fn read_world_cache_cell_radiance(
     
     var cell_index = bucket_start;
     for (var cell = 0u; cell < BUCKET_SIZE; cell = cell + 1u) {
-        if (atomicLoad(&world_cache[cell_index].fingerprint) == target_fingerprint) {
+        if (atomicLoad(&world_cache[cell_index].fingerprint) == target_fingerprint && rank <= world_cache[cell_index].rank) {
             return world_cache[cell_index].radiance_w.xyz;
         }
         // Probe next slot within bucket (stay within bucket boundaries)
         cell_index = bucket_start + (cell + pcg_hash_next(&pcg_state, BUCKET_SIZE)) % BUCKET_SIZE;
     }
     return vec3<f32>(0.0);
+}
+
+fn read_world_cache_cell_rank(
+    position: vec3<f32>,
+    normal: vec3<f32>,
+    camera_position: vec3<f32>,
+    cache_size: u32,
+    base_cell_size: f32,
+    lod_count: u32,
+    ray_length: f32
+) -> u32 {
+    let lod_level = select_lod_level(position, camera_position, base_cell_size, lod_count);
+    let cell_size = get_lod_cell_size(lod_level, base_cell_size);
+    
+    // Light-leak prevention: separate short rays (< cell size) from long rays
+    let is_short_ray = ray_length < cell_size;
+    
+    let quantized_pos = quantize_position(position, lod_level, base_cell_size);
+    let quantized_dir = quantize_direction(normal);
+    
+    let bucket_index = hash_descriptor_to_bucket(
+        quantized_pos,
+        quantized_dir,
+        lod_level,
+        is_short_ray,
+        cache_size,
+        lod_count
+    );
+    let target_fingerprint = hash_descriptor_to_fingerprint(
+        quantized_pos,
+        quantized_dir,
+        lod_level,
+        is_short_ray
+    );
+    
+    let bucket_start = get_bucket_start_index(bucket_index);
+    var pcg_state = pcg_hash_init(target_fingerprint);
+    
+    var cell_index = bucket_start;
+    for (var cell = 0u; cell < BUCKET_SIZE; cell = cell + 1u) {
+        if (atomicLoad(&world_cache[cell_index].fingerprint) == target_fingerprint) {
+            return world_cache[cell_index].rank;
+        }
+        // Probe next slot within bucket (stay within bucket boundaries)
+        cell_index = bucket_start + (cell + pcg_hash_next(&pcg_state, BUCKET_SIZE)) % BUCKET_SIZE;
+    }
+    return 0u;
 }
 
 fn validate_world_cache_cell(
@@ -440,7 +496,8 @@ fn validate_world_cache_cell(
     cache_size: u32,
     base_cell_size: f32,
     lod_count: u32,
-    ray_length: f32
+    ray_length: f32,
+    rank: u32
 ) -> bool {
     let lod_level = select_lod_level(position, camera_position, base_cell_size, lod_count);
     let cell_size = get_lod_cell_size(lod_level, base_cell_size);
@@ -472,7 +529,7 @@ fn validate_world_cache_cell(
     
     var cell_index = bucket_start;
     for (var cell = 0u; cell < BUCKET_SIZE; cell = cell + 1u) {
-        if (atomicLoad(&world_cache[cell_index].fingerprint) == target_fingerprint) {
+        if (atomicLoad(&world_cache[cell_index].fingerprint) == target_fingerprint && rank <= world_cache[cell_index].rank) {
             return true;
         }
         // Probe next slot within bucket (stay within bucket boundaries)

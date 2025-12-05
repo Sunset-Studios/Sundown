@@ -399,22 +399,12 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         // Russian Roulette: Kill paths with very low throughput
         let weight_luminance = path_weight.x * 0.2126 + path_weight.y * 0.7152 + path_weight.z * 0.0722;
         let min_weight_threshold = 0.0001;
+        let is_alive = select(0u, 1u, weight_luminance >= min_weight_threshold);
         
-        if (weight_luminance < min_weight_threshold) {
-            is_alive = 0u;
-            ray_source_pdf = 0.0;
-            pixel_path_state[gid.x].reservoir_radiance_m = vec4f(0.0);
-            pixel_path_state[gid.x].reservoir_direction_w = vec4f(0.0);
-        } else {
-            // Store reservoir data for potential temporal reuse
-            pixel_path_state[gid.x].reservoir_radiance_m = vec4f(selected_sample.radiance_and_target_pdf.xyz, f32(gi_reservoir.m));
-            pixel_path_state[gid.x].reservoir_direction_w = vec4f(selected_dir, gi_reservoir.w);
-        }
+        ray_source_pdf = select(0.0, ray_source_pdf, is_alive == 1u);
     } else {
         // Reservoir failed - generate fallback direction using blue noise
         is_alive = 0u;
-        pixel_path_state[gid.x].reservoir_radiance_m = vec4f(0.0);
-        pixel_path_state[gid.x].reservoir_direction_w = vec4f(0.0);
         
         let fallback_u1 = blue_noise_next(&bn_sampler);
         let fallback_u2 = blue_noise_next(&bn_sampler);
