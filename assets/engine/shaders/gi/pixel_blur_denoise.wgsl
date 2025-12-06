@@ -102,16 +102,9 @@ const POISSON_DISK: array<vec2<f32>, 8> = array<vec2<f32>, 8>(
 // =============================================================================
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Compute adaptive blur radius based on accumulated sample count
-// This is the core stabilization mechanism from the paper:
-// blur_radius_scale = 1.0 / (1.0 + sample_count)
+// Compute adaptive blur radius based on sample count
 // ─────────────────────────────────────────────────────────────────────────────
 fn compute_adaptive_radius(sample_count: f32) -> f32 {
-    // Adaptive radius: shrinks as samples accumulate
-    // sample_count = 0  → radius = BASE_BLUR_RADIUS / 1  = 8.0
-    // sample_count = 3  → radius = BASE_BLUR_RADIUS / 4  = 2.0
-    // sample_count = 7  → radius = BASE_BLUR_RADIUS / 8  = 1.0
-    // sample_count = 15 → radius = BASE_BLUR_RADIUS / 16 = 0.5 (nearly skipped)
     return BASE_BLUR_RADIUS / (1.0 + sample_count);
 }
 
@@ -195,8 +188,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
     
     // ─────────────────────────────────────────────────────────────────────────
-    // Compute adaptive blur radius based on sample count
-    // This is the key stabilization: more samples → smaller radius → sharper
+    // Compute adaptive blur radius
     // ─────────────────────────────────────────────────────────────────────────
     let effective_radius = compute_adaptive_radius(sample_count);
     
@@ -216,10 +208,9 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     
     // ─────────────────────────────────────────────────────────────────────────
     // Accumulate samples using bilateral-weighted Poisson disk pattern
-    // CENTER pixel uses CURRENT radiance (fresh temporal accumulation)
-    // NEIGHBOR pixels use PREVIOUS BLURRED output (clean background)
     // ─────────────────────────────────────────────────────────────────────────
     var accumulated_radiance = center_radiance;
+    var total_sample_count = sample_count;
     var total_weight = 1.0;
     
     for (var i = 0u; i < NUM_SAMPLES; i = i + 1u) {
@@ -249,22 +240,21 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         // ─────────────────────────────────────────────────────────────────
         // Load sample G-buffer data
         // ─────────────────────────────────────────────────────────────────
-        let sample_position = textureLoad(gbuffer_position_prev, sample_coord, 0).xyz;
-        let sample_normal_data = textureLoad(gbuffer_normal_prev, sample_coord, 0);
+        let sample_position = textureLoad(gbuffer_position, sample_coord, 0).xyz;
+        let sample_normal_data = textureLoad(gbuffer_normal, sample_coord, 0);
         let sample_normal = safe_normalize(sample_normal_data.xyz);
         
         // Skip invalid samples (sky pixels)
-        if (length(sample_normal_data.xyz) < 0.01) {
+        if (length(sample_normal_data.xyz) <= 0.0) {
             continue;
         }
         
         // ─────────────────────────────────────────────────────────────────
-        // RECURRENT BLUR: Sample neighbor from PREVIOUS FRAME'S BLURRED OUTPUT
-        // This is the "clean background" that makes recurrent blur work
-        // Neighbors contribute their already-filtered values, not raw input
+        // Load sample data from raw accumulation
         // ─────────────────────────────────────────────────────────────────
         let sample_data = textureLoad(raw_accumulation, sample_coord, 0);
         let sample_radiance = sample_data.rgb;
+        let sample_count = sample_data.a;
         let sample_depth = length(sample_position - camera_position);
         
         // ─────────────────────────────────────────────────────────────────
@@ -291,6 +281,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         // Accumulate weighted sample
         // ─────────────────────────────────────────────────────────────────
         accumulated_radiance += sample_radiance * weight;
+        total_sample_count += sample_count * weight;
         total_weight += weight;
     }
     
@@ -298,10 +289,11 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     // Normalize and output
     // ─────────────────────────────────────────────────────────────────────────
     let final_radiance = accumulated_radiance / total_weight;
+    let final_sample_count = total_sample_count / total_weight;
     
     // Output to blur buffer (becomes blur_prev next frame for recurrence)
     // Preserve sample count in alpha for next frame's adaptive radius
-    textureStore(pixel_radiance_curr, pixel_coord, vec4<f32>(final_radiance, sample_count));
+    textureStore(pixel_radiance_curr, pixel_coord, vec4<f32>(final_radiance, final_sample_count));
     
     // Output to final GI texture for deferred lighting passes
     textureStore(gi_output, pixel_coord, vec4<f32>(final_radiance, 1.0));

@@ -40,7 +40,6 @@
 @group(1) @binding(0) var<uniform> gi_params: GIParams;
 @group(1) @binding(1) var<storage, read_write> gi_counters: GICounters;
 @group(1) @binding(2) var<storage, read> pixel_path_state: array<PixelPathState>;
-// Previous frame's BLURRED radiance (output of recurrent blur from last frame)
 @group(1) @binding(3) var pixel_radiance_prev: texture_2d<f32>;
 @group(1) @binding(4) var gbuffer_position: texture_2d<f32>;
 @group(1) @binding(5) var gbuffer_position_prev: texture_2d<f32>;
@@ -49,7 +48,6 @@
 @group(1) @binding(8) var gbuffer_motion: texture_2d<f32>;
 @group(1) @binding(9) var gbuffer_smra: texture_2d<f32>;
 @group(1) @binding(10) var<storage, read_write> world_cache: array<WorldCacheCell>;
-// Raw accumulation output (will be processed by recurrent blur)
 @group(1) @binding(11) var raw_accumulation: texture_storage_2d<rgba16float, write>;
 
 // =============================================================================
@@ -69,7 +67,7 @@ const NORMAL_THRESHOLD = 0.95;         // Normal dot product threshold
 // Lower = faster response to changes, Higher = more stable but more lag
 // With upscaling, effective convergence time = MAX_FRAMES × upscale_factor
 // ─────────────────────────────────────────────────────────────────────────────
-const MAX_ACCUMULATED_FRAMES = 16.0;
+const MAX_ACCUMULATED_FRAMES = 4.0;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Firefly Prevention: Maximum output luminance
@@ -142,7 +140,6 @@ fn get_bilinear_custom_weights(bilinear: BilinearFilter, occlusion: vec4<f32>) -
 // ─────────────────────────────────────────────────────────────────────────────
 fn test_corner_validity(
     corner_coord: vec2<i32>,
-    current_position: vec3<f32>,
     current_normal: vec3<f32>,
     current_depth: f32,
     camera_position: vec3<f32>,
@@ -286,10 +283,10 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     // Returns 1.0 if valid, 0.0 if occluded/disoccluded
     // ─────────────────────────────────────────────────────────────────────────
     let validity = vec4<f32>(
-        test_corner_validity(corner_00, position, normal, current_depth, camera_position, res),
-        test_corner_validity(corner_10, position, normal, current_depth, camera_position, res),
-        test_corner_validity(corner_01, position, normal, current_depth, camera_position, res),
-        test_corner_validity(corner_11, position, normal, current_depth, camera_position, res)
+        test_corner_validity(corner_00, normal, current_depth, camera_position, res),
+        test_corner_validity(corner_10, normal, current_depth, camera_position, res),
+        test_corner_validity(corner_01, normal, current_depth, camera_position, res),
+        test_corner_validity(corner_11, normal, current_depth, camera_position, res)
     );
     
     // ─────────────────────────────────────────────────────────────────────────
@@ -302,7 +299,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     // Sample radiance and frame count from each corner, weighted by validity
     // ─────────────────────────────────────────────────────────────────────────
     var prev_radiance = vec3<f32>(0.0);
-    var prev_count = 0.0;
+    var count_sum = 0.0;
     
     if (any_valid) {
         // Sample each corner and apply custom weights
@@ -319,10 +316,11 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         
         // Weighted average of frame count (use minimum for conservative estimate)
         // This ensures we don't over-trust history when mixing different counts
-        prev_count = data_00.w * custom_weights.x +
-                     data_10.w * custom_weights.y +
-                     data_01.w * custom_weights.z +
-                     data_11.w * custom_weights.w;
+        count_sum = 
+            min(data_00.w + 1.0, MAX_ACCUMULATED_FRAMES) * custom_weights.x +
+            min(data_10.w + 1.0, MAX_ACCUMULATED_FRAMES) * custom_weights.y +
+            min(data_01.w + 1.0, MAX_ACCUMULATED_FRAMES) * custom_weights.z +
+            min(data_11.w + 1.0, MAX_ACCUMULATED_FRAMES) * custom_weights.w;
     }
     
     // ═════════════════════════════════════════════════════════════════════════
@@ -340,20 +338,19 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     var final_count: f32;
     if (has_current_sample) {
         // Linear accumulation: alpha = 1 / (1 + N)
-        let new_count = min(prev_count + 1.0, MAX_ACCUMULATED_FRAMES);
-        let alpha = 1.0 / new_count;
+        let alpha = 1.0 / (1.0 + count_sum);
         
         // Blend current sample with history
         final_radiance = select(
             safe_clamp_vec3_max(prev_radiance, MAX_OUTPUT_LUMINANCE),
             mix(prev_radiance, current_radiance, alpha),
-            any_valid && prev_count > 0.0
+            any_valid
         );
-        final_count = select(1.0, new_count, any_valid && prev_count > 0.0);
+        final_count = select(1.0, count_sum, any_valid);
     } else {
         // No new sample this frame - keep history unchanged
-        final_radiance = select(vec3<f32>(0.0), prev_radiance, any_valid && prev_count > 0.0);
-        final_count = select(0.0, prev_count, any_valid && prev_count > 0.0);
+        final_radiance = select(vec3<f32>(0.0), prev_radiance, any_valid);
+        final_count = select(0.0, count_sum, any_valid);
     }
     
     // ─────────────────────────────────────────────────────────────────────────

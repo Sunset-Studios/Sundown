@@ -331,8 +331,8 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         let pdf = brdf_pdf(normal, v_dir, dir, roughness, specular_prob);
         
         // Evaluate BRDF for this direction
-        let brdf = calculate_brdf_rt(
-            normal, v_dir, dir, albedo, roughness, metallic,
+        let brdf = calculate_brdf_lighting_rt(
+            normal, v_dir, dir, roughness, metallic,
             reflectance, clear_coat, clear_coat_roughness
         );
         
@@ -400,7 +400,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         let weight_luminance = path_weight.x * 0.2126 + path_weight.y * 0.7152 + path_weight.z * 0.0722;
         let min_weight_threshold = 0.0001;
         let is_alive = select(0u, 1u, weight_luminance >= min_weight_threshold);
-        
+
         ray_source_pdf = select(0.0, ray_source_pdf, is_alive == 1u);
     } else {
         // Reservoir failed - generate fallback direction using blue noise
@@ -424,8 +424,8 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         let light_dir = get_light_dir(light, position);
         let attenuation = get_light_attenuation(light, position);
         
-        let brdf = calculate_brdf_rt(
-            normal, v_dir, light_dir, albedo, roughness, metallic,
+        let brdf = calculate_brdf_lighting_rt(
+            normal, v_dir, light_dir, roughness, metallic,
             reflectance, clear_coat, clear_coat_roughness
         );
         

@@ -2876,7 +2876,7 @@ export class LivingRoomScene extends Scene {
     );
     this.entities.push(living_room_entity);
 
-    const grid_size = 10; // 10x10 = 100 instances
+    const grid_size = 1;
     const num_instances = grid_size * grid_size;
     const spacing = 120.0; // Distance between living room instances
     const half_grid = (grid_size - 1) * spacing * 0.5;

@@ -386,8 +386,8 @@ const post_bloom_color_image_config = {
   force: false,
 };
 const bloom_params = [
-  1.2 /* final exposure */, 0.2 /* bloom intensity */, 0.1 /* bloom threshold */,
-  0.4 /* bloom knee */, 0.0 /* near plane (attenuation starts) */,
+  1.1 /* final exposure */, 0.001 /* bloom intensity */, 0.1 /* bloom threshold */,
+  0.2 /* bloom knee */, 0.0 /* near plane (attenuation starts) */,
   50.0 /* far plane (full bloom) */,
 ];
 

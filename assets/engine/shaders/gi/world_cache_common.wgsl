@@ -354,10 +354,90 @@ fn query_world_cache_cell_probabilistic(
 }
 
 // =============================================================================
-// Query World Cache with Interpolation (Optional Higher Quality)
-// Queries with slight direction perturbations to provide smooth falloff
-// Note: More expensive than direct query - use for final gather if needed
+// Query World Cache with Interpolation (Higher Quality Spatial Filtering)
+// Performs trilinear interpolation across 8 neighboring cells with intelligent
+// falloff based on distance, normal alignment, and cell confidence.
+// 
+// INTERPOLATION STRATEGY:
+//   1. Compute fractional position within current LOD cell
+//   2. Sample all 8 corner cells (neighbors in 3D grid)
+//   3. Weight each neighbor by:
+//      - Trilinear distance weight (standard interpolation)
+//      - Normal similarity (dot product with query normal)
+//      - Confidence from sample count (cells with more samples = higher weight)
+//   4. Normalize and return weighted radiance sum
+//
+// PERFORMANCE NOTES:
+//   - ~8x more cache reads than direct query
+//   - Uses read-only queries (no allocation) for neighbors
+//   - Allocates only the primary cell to maintain cache population
+//   - Best used for final gather / screen-space integration
 // =============================================================================
+
+// Helper: Read a neighboring cell's radiance and metadata for interpolation
+// Returns vec4: xyz = radiance, w = validity weight (0 if empty, else confidence)
+fn read_neighbor_cell_for_interpolation(
+    quantized_pos: vec3<i32>,
+    quantized_dir: vec3<i32>,
+    lod_level: u32,
+    is_short_ray: bool,
+    query_normal: vec3<f32>,
+    cache_size: u32,
+    lod_count: u32,
+    rank: u32
+) -> vec4<f32> {
+    // Hash to find bucket and fingerprint for this neighbor cell
+    let bucket_index = hash_descriptor_to_bucket(
+        quantized_pos,
+        quantized_dir,
+        lod_level,
+        is_short_ray,
+        cache_size,
+        lod_count
+    );
+    let target_fingerprint = hash_descriptor_to_fingerprint(
+        quantized_pos,
+        quantized_dir,
+        lod_level,
+        is_short_ray
+    );
+    
+    // PCG-based probing within bucket
+    let bucket_start = get_bucket_start_index(bucket_index);
+    var pcg_state = pcg_hash_init(target_fingerprint);
+    
+    var cell_index = bucket_start;
+    for (var probe = 0u; probe < BUCKET_SIZE; probe = probe + 1u) {
+        let existing_fingerprint = atomicLoad(&world_cache[cell_index].fingerprint);
+        
+        if (existing_fingerprint == target_fingerprint && rank <= world_cache[cell_index].rank) {
+            // Found matching cell - extract radiance and compute validity weight
+            let radiance = world_cache[cell_index].radiance_w.xyz;
+            let cell_normal = world_cache[cell_index].normal_count.xyz;
+            let sample_count = world_cache[cell_index].normal_count.w;
+            
+            // Normal alignment factor: prefer cells facing similar direction
+            // Use saturated dot product for hemisphere compatibility
+            let normal_alignment = max(dot(cell_normal, query_normal), 0.0);
+            
+            // Confidence factor: cells with more samples are more reliable
+            // Smooth ramp from 0 to 1 over first few samples
+            let confidence = saturate(sample_count / 4.0);
+            
+            // Combined validity weight
+            let validity = normal_alignment * confidence;
+            
+            return vec4<f32>(radiance, validity);
+        }
+        
+        // Probe next slot within bucket
+        cell_index = bucket_start + (probe + pcg_hash_next(&pcg_state, BUCKET_SIZE)) % BUCKET_SIZE;
+    }
+    
+    // Cell not found - return zero with zero validity
+    return vec4<f32>(0.0, 0.0, 0.0, 0.0);
+}
+
 fn query_world_cache_interpolated(
     position: vec3<f32>,
     normal: vec3<f32>,
@@ -373,9 +453,39 @@ fn query_world_cache_interpolated(
     ray_length: f32,
     rank: u32
 ) -> vec3<f32> {
-    // For now, just use direct query
-    // Can be extended to sample neighboring directions for smoother results
-    return query_world_cache_cell(
+    // -------------------------------------------------------------------------
+    // Step 1: Determine LOD level and cell size
+    // -------------------------------------------------------------------------
+    let lod_level = select_lod_level(position, camera_position, base_cell_size, lod_count);
+    let cell_size = get_lod_cell_size(lod_level, base_cell_size);
+    let is_short_ray = ray_length < cell_size;
+    let quantized_dir = quantize_direction(normal);
+    
+    // -------------------------------------------------------------------------
+    // Step 2: Compute fractional position within cell for trilinear weights
+    // -------------------------------------------------------------------------
+    // Get continuous cell coordinates (not quantized)
+    let cell_coords = position / cell_size;
+    
+    // Floor gives us the base cell, fract gives interpolation weights
+    let base_cell = vec3<i32>(floor(cell_coords));
+    let frac = fract(cell_coords);
+    
+    // Trilinear interpolation weights for the 8 corners
+    // Weight for corner (i,j,k) = product of (1-frac) or frac per axis
+    let w000 = (1.0 - frac.x) * (1.0 - frac.y) * (1.0 - frac.z);
+    let w001 = (1.0 - frac.x) * (1.0 - frac.y) * frac.z;
+    let w010 = (1.0 - frac.x) * frac.y * (1.0 - frac.z);
+    let w011 = (1.0 - frac.x) * frac.y * frac.z;
+    let w100 = frac.x * (1.0 - frac.y) * (1.0 - frac.z);
+    let w101 = frac.x * (1.0 - frac.y) * frac.z;
+    let w110 = frac.x * frac.y * (1.0 - frac.z);
+    let w111 = frac.x * frac.y * frac.z;
+    
+    // -------------------------------------------------------------------------
+    // Step 3: Query primary cell with allocation (maintains cache population)
+    // -------------------------------------------------------------------------
+    let primary_radiance = query_world_cache_cell(
         position,
         normal,
         albedo,
@@ -390,6 +500,80 @@ fn query_world_cache_interpolated(
         ray_length,
         rank
     );
+    
+    // -------------------------------------------------------------------------
+    // Step 4: Sample all 8 neighboring cells (read-only, no allocation)
+    // -------------------------------------------------------------------------
+    // Sample each corner of the interpolation cube
+    let n000 = read_neighbor_cell_for_interpolation(
+        base_cell + vec3<i32>(0, 0, 0), quantized_dir, lod_level, is_short_ray, normal, cache_size, lod_count, rank
+    );
+    let n001 = read_neighbor_cell_for_interpolation(
+        base_cell + vec3<i32>(0, 0, 1), quantized_dir, lod_level, is_short_ray, normal, cache_size, lod_count, rank
+    );
+    let n010 = read_neighbor_cell_for_interpolation(
+        base_cell + vec3<i32>(0, 1, 0), quantized_dir, lod_level, is_short_ray, normal, cache_size, lod_count, rank
+    );
+    let n011 = read_neighbor_cell_for_interpolation(
+        base_cell + vec3<i32>(0, 1, 1), quantized_dir, lod_level, is_short_ray, normal, cache_size, lod_count, rank
+    );
+    let n100 = read_neighbor_cell_for_interpolation(
+        base_cell + vec3<i32>(1, 0, 0), quantized_dir, lod_level, is_short_ray, normal, cache_size, lod_count, rank
+    );
+    let n101 = read_neighbor_cell_for_interpolation(
+        base_cell + vec3<i32>(1, 0, 1), quantized_dir, lod_level, is_short_ray, normal, cache_size, lod_count, rank
+    );
+    let n110 = read_neighbor_cell_for_interpolation(
+        base_cell + vec3<i32>(1, 1, 0), quantized_dir, lod_level, is_short_ray, normal, cache_size, lod_count, rank
+    );
+    let n111 = read_neighbor_cell_for_interpolation(
+        base_cell + vec3<i32>(1, 1, 1), quantized_dir, lod_level, is_short_ray, normal, cache_size, lod_count, rank
+    );
+    
+    // -------------------------------------------------------------------------
+    // Step 5: Compute weighted radiance sum with combined weights
+    // -------------------------------------------------------------------------
+    // Combined weight = trilinear_weight * validity_weight (from normal + confidence)
+    let cw000 = w000 * n000.w;
+    let cw001 = w001 * n001.w;
+    let cw010 = w010 * n010.w;
+    let cw011 = w011 * n011.w;
+    let cw100 = w100 * n100.w;
+    let cw101 = w101 * n101.w;
+    let cw110 = w110 * n110.w;
+    let cw111 = w111 * n111.w;
+    
+    // Accumulate weighted radiance
+    var weighted_radiance = vec3<f32>(0.0);
+    weighted_radiance += n000.xyz * cw000;
+    weighted_radiance += n001.xyz * cw001;
+    weighted_radiance += n010.xyz * cw010;
+    weighted_radiance += n011.xyz * cw011;
+    weighted_radiance += n100.xyz * cw100;
+    weighted_radiance += n101.xyz * cw101;
+    weighted_radiance += n110.xyz * cw110;
+    weighted_radiance += n111.xyz * cw111;
+    
+    // Total weight for normalization
+    let total_weight = cw000 + cw001 + cw010 + cw011 + cw100 + cw101 + cw110 + cw111;
+    
+    // -------------------------------------------------------------------------
+    // Step 6: Normalize or fallback to primary cell
+    // -------------------------------------------------------------------------
+    // If we have enough valid neighbor data, use interpolated result
+    // Otherwise fall back to the primary cell's direct query result
+    let min_weight_threshold = 0.01;
+    
+    if (total_weight > min_weight_threshold) {
+        // Blend interpolated result with primary for stability
+        // Higher total weight = more confidence in interpolation
+        let interp_confidence = saturate(total_weight * 2.0);
+        let interpolated = weighted_radiance / total_weight;
+        return mix(primary_radiance, interpolated, interp_confidence);
+    }
+    
+    // Fallback to direct query result
+    return primary_radiance;
 }
 
 fn read_world_cache_cell_radiance(
