@@ -3,8 +3,9 @@
 // ║        STABILIZED RECURRENT BLUR - ADAPTIVE RADIUS SPATIAL FILTER         ║
 // ╠═══════════════════════════════════════════════════════════════════════════╣
 // ║                                                                           ║
-// ║  Implements "Ingredient #1: Recurrent Blur" from NVIDIA's paper:          ║
-// ║  "Fast Denoising with Self-Stabilizing Recurrent Blurs" (GTC 2020)        ║
+// ║  Implements "Ingredient #1: Recurrent Blur" and "Ingredient #4: Choosing  ║
+// ║  Sampling Space" from NVIDIA's "Fast Denoising with Self-Stabilizing      ║
+// ║  Recurrent Blurs" (GTC 2020)                                              ║
 // ║                                                                           ║
 // ║  Key Insight - Recurrent Blur:                                            ║
 // ║  ──────────────────────────────                                           ║
@@ -21,6 +22,12 @@
 // ║                                                                           ║
 // ║  This naturally prevents over-blurring: as accumulation converges,        ║
 // ║  the blur radius shrinks to preserve detail.                              ║
+// ║                                                                           ║
+// ║  Ingredient #4 - Anisotropic Screen-Space Kernel:                         ║
+// ║  ─────────────────────────────────────────────────                        ║
+// ║  At grazing viewing angles, the kernel is stretched along the surface     ║
+// ║  direction in screen space. This prevents blur across depth               ║
+// ║  discontinuities while maintaining edge-aligned filtering.                ║
 // ║                                                                           ║
 // ║  Inputs:                                                                   ║
 // ║  • current_radiance: This frame's accumulated radiance (sample count in α)║
@@ -63,7 +70,7 @@
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Blur Configuration
-// BASE_RADIUS: Maximum blur radius in pixels when sample_count = 0
+// BASE_RADIUS: Maximum blur radius in PIXELS when sample_count = 0
 // As samples accumulate, effective radius = BASE_RADIUS / (1 + sample_count)
 // ─────────────────────────────────────────────────────────────────────────────
 const BASE_BLUR_RADIUS: f32 = 4.0;
@@ -73,7 +80,7 @@ const BASE_BLUR_RADIUS: f32 = 4.0;
 // Using 8 samples with Poisson disk distribution works well (paper recommendation)
 // 30 FPS × 8 samples = 240 cumulative samples/sec due to recurrent nature
 // ─────────────────────────────────────────────────────────────────────────────
-const NUM_SAMPLES: u32 = 8u;
+const NUM_SAMPLES: u32 = 0u;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Bilateral weight parameters for edge preservation
@@ -82,9 +89,16 @@ const DEPTH_SIGMA: f32 = 0.05;          // Depth similarity falloff (relative)
 const NORMAL_POWER: f32 = 64.0;         // Normal similarity sharpness
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Anisotropic Kernel Configuration (Ingredient #4)
+// MIN_ANISO_SCALE: Minimum scale at grazing angles (0.25 = 4x compression)
+// MAX_ACCUMULATED_FRAMES: Sample count at which kernel becomes fully isotropic
+// ─────────────────────────────────────────────────────────────────────────────
+const MIN_ANISO_SCALE: f32 = 0.25;
+const MAX_ACCUMULATED_FRAMES: f32 = 8.0;
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Poisson Disk Sample Offsets
 // Pre-computed 8-sample Poisson disk for quality spatial distribution
-// Offsets are in unit circle, scaled by effective_radius at runtime
 // ─────────────────────────────────────────────────────────────────────────────
 const POISSON_DISK: array<vec2<f32>, 8> = array<vec2<f32>, 8>(
     vec2<f32>( 0.0,       1.0      ),
@@ -102,7 +116,7 @@ const POISSON_DISK: array<vec2<f32>, 8> = array<vec2<f32>, 8>(
 // =============================================================================
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Compute adaptive blur radius based on sample count
+// Compute adaptive blur radius based on sample count (in pixels)
 // ─────────────────────────────────────────────────────────────────────────────
 fn compute_adaptive_radius(sample_count: f32) -> f32 {
     return BASE_BLUR_RADIUS / (1.0 + sample_count);
@@ -135,15 +149,82 @@ fn compute_bilateral_weight(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Rotate 2D offset by angle (for temporal jittering of sample pattern)
+// Compute the screen-space direction of surface tilt
+// This is the direction in which the surface "falls away" from the viewer
+// Returns: 2D unit vector in screen space, or (0,0) if viewing perpendicular
 // ─────────────────────────────────────────────────────────────────────────────
-fn rotate_offset(offset: vec2<f32>, angle: f32) -> vec2<f32> {
-    let c = cos(angle);
-    let s = sin(angle);
-    return vec2<f32>(
-        offset.x * c - offset.y * s,
-        offset.x * s + offset.y * c
-    );
+fn compute_screen_space_tilt(
+    normal: vec3<f32>,
+    view_matrix: mat4x4<f32>
+) -> vec2<f32> {
+    // Transform normal to view space
+    let view_normal = (view_matrix * vec4<f32>(normal, 0.0)).xyz;
+    
+    // The screen-space tilt is the XY component of the view-space normal
+    // When normal.z (view-space) is 1, we're looking straight at the surface
+    // When normal.z approaches 0, we're at a grazing angle
+    let screen_tilt = vec2<f32>(view_normal.x, -view_normal.y); // Flip Y for screen coords
+    
+    let tilt_length = length(screen_tilt);
+    if (tilt_length < 0.001) {
+        return vec2<f32>(0.0, 0.0);
+    }
+    
+    return screen_tilt / tilt_length;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Apply anisotropic scaling to a 2D sample offset
+// At grazing angles, compresses the offset in the tilt direction
+// 
+// Parameters:
+//   offset: Original sample offset (e.g., from Poisson disk)
+//   tilt_dir: Screen-space direction of surface tilt (unit vector)
+//   n_dot_v: Cosine of viewing angle (1 = perpendicular, 0 = grazing)
+//   sample_count: Number of accumulated samples (for progressive relaxation)
+//
+// Returns: Scaled sample offset
+// ─────────────────────────────────────────────────────────────────────────────
+fn apply_anisotropic_scaling(
+    offset: vec2<f32>,
+    tilt_dir: vec2<f32>,
+    n_dot_v: f32,
+    sample_count: f32
+) -> vec2<f32> {
+    // ─────────────────────────────────────────────────────────────────────
+    // Compute anisotropic scale factor based on viewing angle
+    // At perpendicular viewing (n_dot_v = 1): scale = 1.0 (isotropic)
+    // At grazing viewing (n_dot_v = 0): scale = MIN_ANISO_SCALE (compressed)
+    // ─────────────────────────────────────────────────────────────────────
+    let angle_factor = 1.0 - n_dot_v;  // 0 at perpendicular, 1 at grazing
+    let aniso_scale = mix(1.0, MIN_ANISO_SCALE, angle_factor);
+    
+    // ─────────────────────────────────────────────────────────────────────
+    // Progressive relaxation: as samples accumulate, move towards isotropic
+    // This prevents permanent stretching artifacts over time
+    // ─────────────────────────────────────────────────────────────────────
+    let normalized_count = saturate(sample_count / MAX_ACCUMULATED_FRAMES);
+    let final_scale = mix(aniso_scale, 1.0, normalized_count);
+    
+    // ─────────────────────────────────────────────────────────────────────
+    // Apply scaling: compress offset in the tilt direction
+    // Decompose offset into parallel and perpendicular components to tilt
+    // ─────────────────────────────────────────────────────────────────────
+    let tilt_len_sq = dot(tilt_dir, tilt_dir);
+    if (tilt_len_sq < 0.0001) {
+        // No significant tilt, return original offset
+        return offset;
+    }
+    
+    // Component parallel to tilt direction (this gets scaled)
+    let parallel_amount = dot(offset, tilt_dir);
+    let parallel_component = tilt_dir * parallel_amount;
+    
+    // Component perpendicular to tilt direction (this stays the same)
+    let perp_component = offset - parallel_component;
+    
+    // Scale the parallel component and recombine
+    return perp_component + parallel_component * final_scale;
 }
 
 // =============================================================================
@@ -188,26 +269,32 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
     
     // ─────────────────────────────────────────────────────────────────────────
-    // Compute adaptive blur radius
+    // Get view data for depth computation and anisotropic kernel
+    // ─────────────────────────────────────────────────────────────────────────
+    let view = view_buffer[u32(frame_info.view_index)];
+    let camera_position = view.view_position.xyz;
+    let view_matrix = view.view_matrix;
+    let center_depth = length(center_position - camera_position);
+    
+    // ─────────────────────────────────────────────────────────────────────────
+    // Compute view direction and N·V for anisotropic kernel
+    // ─────────────────────────────────────────────────────────────────────────
+    let view_dir = normalize(camera_position - center_position);
+    let n_dot_v = saturate(abs(dot(center_normal, view_dir)));
+    
+    // ─────────────────────────────────────────────────────────────────────────
+    // Compute screen-space tilt direction for anisotropic scaling
+    // This is used to stretch/compress the kernel based on surface orientation
+    // ─────────────────────────────────────────────────────────────────────────
+    let tilt_dir = compute_screen_space_tilt(center_normal, view_matrix);
+    
+    // ─────────────────────────────────────────────────────────────────────────
+    // Compute adaptive blur radius in pixels
     // ─────────────────────────────────────────────────────────────────────────
     let effective_radius = compute_adaptive_radius(sample_count);
     
     // ─────────────────────────────────────────────────────────────────────────
-    // Get camera position for depth computation
-    // ─────────────────────────────────────────────────────────────────────────
-    let view = view_buffer[u32(frame_info.view_index)];
-    let camera_position = view.view_position.xyz;
-    let center_depth = length(center_position - camera_position);
-    
-    // ─────────────────────────────────────────────────────────────────────────
-    // Compute per-frame rotation angle for temporal jittering
-    // Rotates the Poisson disk each frame to improve temporal coverage
-    // ─────────────────────────────────────────────────────────────────────────
-    let frame_index = u32(gi_params.frame_index);
-    let rotation_angle = f32(frame_index % 8u) * (PI / 4.0);
-    
-    // ─────────────────────────────────────────────────────────────────────────
-    // Accumulate samples using bilateral-weighted Poisson disk pattern
+    // Accumulate samples using anisotropic screen-space kernel
     // ─────────────────────────────────────────────────────────────────────────
     var accumulated_radiance = center_radiance;
     var total_sample_count = sample_count;
@@ -215,15 +302,25 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     
     for (var i = 0u; i < NUM_SAMPLES; i = i + 1u) {
         // ─────────────────────────────────────────────────────────────────
-        // Compute sample offset with temporal rotation
+        // Get base Poisson disk offset
         // ─────────────────────────────────────────────────────────────────
         let base_offset = POISSON_DISK[i];
-        let rotated_offset = rotate_offset(base_offset, rotation_angle);
-        let sample_offset = rotated_offset * effective_radius;
+        
+        // ─────────────────────────────────────────────────────────────────
+        // Apply anisotropic scaling (Ingredient #4)
+        // At grazing angles, compress kernel in the tilt direction
+        // ─────────────────────────────────────────────────────────────────
+        let scaled_offset = apply_anisotropic_scaling(
+            base_offset,
+            tilt_dir,
+            n_dot_v,
+            sample_count
+        );
         
         // ─────────────────────────────────────────────────────────────────
         // Compute sample pixel coordinates
         // ─────────────────────────────────────────────────────────────────
+        let sample_offset = scaled_offset * effective_radius;
         let sample_coord = pixel_coord + vec2<i32>(
             i32(round(sample_offset.x)),
             i32(round(sample_offset.y))
@@ -254,7 +351,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         // ─────────────────────────────────────────────────────────────────
         let sample_data = textureLoad(raw_accumulation, sample_coord, 0);
         let sample_radiance = sample_data.rgb;
-        let sample_count = sample_data.a;
+        let neighbor_sample_count = sample_data.a;
         let sample_depth = length(sample_position - camera_position);
         
         // ─────────────────────────────────────────────────────────────────
@@ -267,7 +364,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         
         // ─────────────────────────────────────────────────────────────────
         // Spatial weight: Gaussian falloff with distance
-        // Samples further from center contribute less
+        // Use original (non-scaled) offset for consistent weighting
         // ─────────────────────────────────────────────────────────────────
         let dist_sq = dot(base_offset, base_offset);
         let spatial_weight = exp(-dist_sq * 0.5);
@@ -281,7 +378,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         // Accumulate weighted sample
         // ─────────────────────────────────────────────────────────────────
         accumulated_radiance += sample_radiance * weight;
-        total_sample_count += sample_count * weight;
+        total_sample_count += neighbor_sample_count * weight;
         total_weight += weight;
     }
     
