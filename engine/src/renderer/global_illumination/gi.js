@@ -203,8 +203,8 @@ export class GI {
   // ─────────────────────────────────────────────────────────────────────────
   config = {
     screen_ray_count: 1,          // Rays per pixel per frame (1 recommended for real-time)
-    upscale_x: 1,                 // Temporal upscale factor X
-    upscale_y: 1,                 // Temporal upscale factor Y
+    upscale_x: 4,                 // Temporal upscale factor X
+    upscale_y: 4,                 // Temporal upscale factor Y
     world_cache_size: 32768,      // Number of world cache cells per LOD level
     world_cache_cell_size: 4.0,   // Base cell size in world units
     world_cache_lod_count: 4,     // Number of LOD levels
@@ -368,10 +368,12 @@ export class GI {
 
     // ─────────────────────────────────────────────────────────────────────
     // GI Counters Buffer
+    // 6 fields: light_count, active_cache_cell_count, ray_queue_shadow_head,
+    //           ray_queue_primary_head, ray_queue_count, padding
     // ─────────────────────────────────────────────────────────────────────
     let gi_counters = render_graph.create_buffer({
       name: "gi_counters",
-      size: 16,
+      size: 24,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
       force: force_recreate,
     });
@@ -435,6 +437,14 @@ export class GI {
     let pixel_path_state = render_graph.create_buffer({
       name: "gi_pixel_path_state",
       size: rays_per_frame * 13 * 4,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+      force: force_recreate,
+    });
+
+    // Work queue used for persistent threads in the path tracing passes
+    let pixel_ray_queue = render_graph.create_buffer({
+      name: "gi_pixel_ray_queue",
+      size: rays_per_frame * 4,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
       force: force_recreate,
     });
@@ -719,7 +729,6 @@ export class GI {
           tlas_bvh4_nodes,
           blas_atlas,
           entity_transforms,
-          index_buffer,
           mesh_asset_ids,
           gi_counters,
         ],
@@ -787,6 +796,7 @@ export class GI {
           gi_params,
           gi_counters,
           pixel_path_state,
+          pixel_ray_queue,
           light_count,
           dense_lights,
           world_cache,
@@ -797,7 +807,7 @@ export class GI {
           gbuffer_motion_emissive,
           blue_noise_image,
         ],
-        outputs: [pixel_path_state],
+        outputs: [pixel_path_state, pixel_ray_queue],
         shader_setup: pixel_trace_init_shader_setup,
       },
       (graph, frame_data, encoder) => {
@@ -808,6 +818,9 @@ export class GI {
 
     // ─────────────────────────────────────────────────────────────────────
     // Pass 10: Per-Pixel Trace Hit (BVH traversal)
+    // Dispatches 2x rays_per_frame to run shadow and primary rays in parallel:
+    //   - First half of threads: shadow ray traces (NEE visibility)
+    //   - Second half of threads: primary ray traces (indirect bounce)
     // ─────────────────────────────────────────────────────────────────────
     render_graph.add_pass(
       "gi_pixel_trace_hit",
@@ -817,11 +830,11 @@ export class GI {
           gi_params,
           gi_counters,
           pixel_path_state,
+          pixel_ray_queue,
           tlas_bvh2_bounds,
           tlas_bvh4_nodes,
           blas_atlas,
           entity_transforms,
-          index_buffer,
           mesh_asset_ids,
         ],
         outputs: [pixel_path_state],
@@ -829,7 +842,8 @@ export class GI {
       },
       (graph, frame_data, encoder) => {
         const pass = graph.get_physical_pass(frame_data.current_pass);
-        pass.dispatch(Math.ceil(rays_per_frame / COMPUTE_WORKGROUP_SIZE), 1, 1);
+        // 2x dispatch: first half for shadow rays, second half for primary rays
+        pass.dispatch(Math.ceil((2 * rays_per_frame) / COMPUTE_WORKGROUP_SIZE), 1, 1);
       }
     );
 

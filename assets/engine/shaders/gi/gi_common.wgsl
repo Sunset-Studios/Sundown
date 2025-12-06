@@ -22,8 +22,10 @@
 struct GICounters {
     light_count: u32,
     active_cache_cell_count: atomic<u32>,
-    _padding1: u32,
-    _padding2: u32,
+    ray_queue_shadow_head: atomic<u32>,      // Shadow ray work queue consumer head
+    ray_queue_primary_head: atomic<u32>,     // Primary ray work queue consumer head
+    ray_queue_count: atomic<u32>,            // Active rays added to work queue (atomic for conditional add)
+    padding: u32,
 };
 
 // =============================================================================

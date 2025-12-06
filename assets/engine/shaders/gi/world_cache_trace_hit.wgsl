@@ -19,9 +19,8 @@ const NODE_STACK_SIZE = 12;
 @group(1) @binding(3) var<storage, read> tlas_bvh4_nodes: array<BVH4Node>;
 @group(1) @binding(4) var<storage, read> blas_atlas: BLASAtlas;
 @group(1) @binding(5) var<storage, read> entity_transforms: array<EntityTransform>;
-@group(1) @binding(6) var<storage, read> index_buffer: array<u32>;
-@group(1) @binding(7) var<storage, read> mesh_asset_ids: array<u32>;
-@group(1) @binding(8) var<storage, read_write> gi_counters: GICounters;
+@group(1) @binding(6) var<storage, read> mesh_asset_ids: array<u32>;
+@group(1) @binding(7) var<storage, read_write> gi_counters: GICounters;
 
 // =============================================================================
 // BVH Traversal (identical to screen probe tracing)

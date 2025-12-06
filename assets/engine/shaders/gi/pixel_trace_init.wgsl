@@ -30,15 +30,16 @@
 @group(1) @binding(0) var<uniform> gi_params: GIParams;
 @group(1) @binding(1) var<storage, read_write> gi_counters: GICounters;
 @group(1) @binding(2) var<storage, read_write> pixel_path_state: array<PixelPathState>;
-@group(1) @binding(3) var<storage, read> light_count_buffer: array<u32>;
-@group(1) @binding(4) var<storage, read> dense_lights_buffer: array<Light>;
-@group(1) @binding(5) var<storage, read_write> world_cache: array<WorldCacheCell>;
-@group(1) @binding(6) var gbuffer_position: texture_2d<f32>;
-@group(1) @binding(7) var gbuffer_normal: texture_2d<f32>;
-@group(1) @binding(8) var gbuffer_albedo: texture_2d<f32>;
-@group(1) @binding(9) var gbuffer_smra: texture_2d<f32>;
-@group(1) @binding(10) var gbuffer_motion: texture_2d<f32>;
-@group(1) @binding(11) var blue_noise: texture_2d_array<f32>;
+@group(1) @binding(3) var<storage, read_write> ray_work_queue: array<u32>;
+@group(1) @binding(4) var<storage, read> light_count_buffer: array<u32>;
+@group(1) @binding(5) var<storage, read> dense_lights_buffer: array<Light>;
+@group(1) @binding(6) var<storage, read_write> world_cache: array<WorldCacheCell>;
+@group(1) @binding(7) var gbuffer_position: texture_2d<f32>;
+@group(1) @binding(8) var gbuffer_normal: texture_2d<f32>;
+@group(1) @binding(9) var gbuffer_albedo: texture_2d<f32>;
+@group(1) @binding(10) var gbuffer_smra: texture_2d<f32>;
+@group(1) @binding(11) var gbuffer_motion: texture_2d<f32>;
+@group(1) @binding(12) var blue_noise: texture_2d_array<f32>;
 
 // Soft compress values above threshold instead of hard clamping
 // This preserves the relative importance of bright specular paths
@@ -189,7 +190,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     // Compute total tiles from resolution and upscale
     let total_tiles = tile_grid_dims.x * tile_grid_dims.y;
     let total_rays = total_tiles * rays_per_tile;
-    
+
     if (gid.x >= total_rays) {
         return;
     }
@@ -466,4 +467,13 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     pixel_path_state[gid.x].path_weight = vec4<f32>(path_weight, ray_source_pdf);
     pixel_path_state[gid.x].throughput = vec4<f32>(initial_emissive, 0.0);
     pixel_path_state[gid.x].pixel_coords = vec4<f32>(f32(pixel_coords.x), f32(pixel_coords.y), 0.0, 0.0);
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Add to work queue only if ray is active
+    // This reduces work for the hit shader by skipping dead rays entirely
+    // ─────────────────────────────────────────────────────────────────────────
+    if (is_alive == 1u) {
+        let queue_index = atomicAdd(&gi_counters.ray_queue_count, 1u);
+        ray_work_queue[queue_index] = gid.x;
+    }
 }

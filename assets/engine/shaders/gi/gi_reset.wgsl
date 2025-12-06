@@ -34,7 +34,13 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         // Reset active cache cell count for this frame
         atomicStore(&gi_counters.active_cache_cell_count, 0u);
         
-        // Copy light count from lighting system buffer
+        // Reset both shadow and primary ray queue heads for parallel traversal
+        atomicStore(&gi_counters.ray_queue_shadow_head, 0u);
+        atomicStore(&gi_counters.ray_queue_primary_head, 0u);
+
+        // Reset ray queue count (will be incremented by active rays in init pass)
+        atomicStore(&gi_counters.ray_queue_count, 0u);
+        
         gi_counters.light_count = light_count_buffer[0];
     }
 }
