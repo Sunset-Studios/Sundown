@@ -2734,7 +2734,7 @@ export class SponzaScene extends Scene {
     const emissive_white_material = StandardMaterial.create("sponza_emissive_white_material");
     const emissive_white_material_id = emissive_white_material.material_id;
     emissive_white_material.set_albedo([1, 1, 1, 1]);
-    emissive_white_material.set_emission(300.0);
+    emissive_white_material.set_emission(500.0);
     emissive_white_material.set_metallic(0.2);
     emissive_white_material.set_roughness(0.9);
     emissive_white_material.set_specular(0.5);

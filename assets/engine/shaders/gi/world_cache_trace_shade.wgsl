@@ -84,7 +84,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
             skybox_texture
         );
         // Add sky contribution weighted by path throughput
-        radiance_contribution += sky_radiance * path.path_weight.xyz;
+        radiance_contribution += sky_radiance;
         sample_count = 1.0;
     }
     
