@@ -80,7 +80,8 @@ fn cs(
         atomicStore(&gi_counters.active_cache_cell_count, total_active);
 
         // Write dispatch parameters: [x, y, z, total_count]
-        dispatch_params[0] = (total_active + (WORKGROUP_SIZE - 1u)) / WORKGROUP_SIZE; // Ceiling division
+        // 2x for shadow + primary ray processing
+        dispatch_params[0] = (2 * total_active + (WORKGROUP_SIZE - 1u)) / WORKGROUP_SIZE; // Ceiling division
         dispatch_params[1] = 1u;
         dispatch_params[2] = 1u;
     }

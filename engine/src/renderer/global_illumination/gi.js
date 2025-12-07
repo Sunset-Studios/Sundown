@@ -717,6 +717,9 @@ export class GI {
 
     // ─────────────────────────────────────────────────────────────────────
     // Pass 7: World Cache Trace Hit
+    // Dispatches 2x rays_per_frame to run shadow and primary rays in parallel:
+    //   - First half of threads: shadow ray traces (NEE visibility)
+    //   - Second half of threads: primary ray traces (indirect bounce)
     // ─────────────────────────────────────────────────────────────────────
     render_graph.add_pass(
       "gi_world_cache_trace_hit",

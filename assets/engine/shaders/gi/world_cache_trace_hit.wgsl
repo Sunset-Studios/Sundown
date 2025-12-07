@@ -292,6 +292,121 @@ fn trace_hit_any(ray: ptr<function, Ray>) -> bool {
     return false;
 }
 
+// =============================================================================
+// HELPER: Process a shadow ray and write result
+// =============================================================================
+
+fn process_shadow_ray(active_index: u32) {
+    var ray: Ray;
+    ray.origin_and_tmin = world_cache_path_state[active_index].shadow_origin;
+    ray.direction_and_tmax = world_cache_path_state[active_index].shadow_direction;
+    let d = ray.direction_and_tmax.xyz;
+    ray.inv_direction = vec4f(
+        1.0 / max(abs(d.x), 1e-8) * select(1.0, -1.0, d.x < 0.0),
+        1.0 / max(abs(d.y), 1e-8) * select(1.0, -1.0, d.y < 0.0),
+        1.0 / max(abs(d.z), 1e-8) * select(1.0, -1.0, d.z < 0.0),
+        0.0
+    );
+
+    if (!trace_hit_any(&ray)) {
+        // No shadow hit - light is visible
+        world_cache_path_state[active_index].state_u32.z = 1u;
+    }
+}
+
+// =============================================================================
+// HELPER: Process a primary ray and write hit attributes
+// =============================================================================
+
+fn process_primary_ray(active_index: u32) {
+    var ray: Ray;
+    ray.origin_and_tmin = world_cache_path_state[active_index].origin_tmin;
+    ray.direction_and_tmax = world_cache_path_state[active_index].direction_tmax;
+    let d = ray.direction_and_tmax.xyz;
+    ray.inv_direction = vec4f(
+        1.0 / max(abs(d.x), 1e-8) * select(1.0, -1.0, d.x < 0.0),
+        1.0 / max(abs(d.y), 1e-8) * select(1.0, -1.0, d.y < 0.0),
+        1.0 / max(abs(d.z), 1e-8) * select(1.0, -1.0, d.z < 0.0),
+        0.0
+    );
+
+    let hit_result = trace_hit(&ray);
+
+    if (hit_result.normal_and_user_data.w >= 0.0) {
+        let tri_id_local = u32(hit_result.normal_and_user_data.w);
+        let prim_store = u32(hit_result.prim_meshid_padding.x);
+
+        let entity_transform = entity_transforms[prim_store];
+
+        let t_tri = hit_result.position_and_t.w;
+        let p_local = hit_result.ray_local.origin_and_tmin.xyz + hit_result.ray_local.direction_and_tmax.xyz * t_tri;
+        let p_world = (entity_transform.transform * vec4f(p_local, 1.0)).xyz;
+
+        let v0i = hit_result.hit_triangle_data.x;
+        let v1i = hit_result.hit_triangle_data.y;
+        let v2i = hit_result.hit_triangle_data.z;
+        
+        // Load positions only for barycentric calculation
+        let v0 = vertex_buffer[v0i].position.xyz;
+        let v1 = vertex_buffer[v1i].position.xyz;
+        let v2 = vertex_buffer[v2i].position.xyz;
+
+        // Compute barycentric coordinates immediately
+        let e0 = v1 - v0;
+        let e1 = v2 - v0;
+        let vp = p_local - v0;
+        let d00 = dot(e0, e0);
+        let d01 = dot(e0, e1);
+        let d11 = dot(e1, e1);
+        let d20 = dot(vp, e0);
+        let d21 = dot(vp, e1);
+        let denom = max(d00 * d11 - d01 * d01, 1e-8);
+        let v_bc = (d00 * d21 - d01 * d20) / denom;
+        let u_bc = (d11 * d20 - d01 * d21) / denom;
+        let w_bc = 1.0 - u_bc - v_bc;
+
+        // Load and interpolate UVs immediately (reduce live ranges)
+        let uv_hit = vertex_buffer[v0i].uv.xy * w_bc + 
+                        vertex_buffer[v1i].uv.xy * u_bc + 
+                        vertex_buffer[v2i].uv.xy * v_bc;
+
+        // Load and interpolate normals, transform immediately
+        let n_local = vertex_buffer[v0i].normal.xyz * w_bc + 
+                        vertex_buffer[v1i].normal.xyz * u_bc + 
+                        vertex_buffer[v2i].normal.xyz * v_bc;
+        var world_n = safe_normalize((entity_transform.transform * vec4<f32>(n_local, 0.0)).xyz);
+
+        // Load and interpolate tangents, transform immediately
+        let t_local = vertex_buffer[v0i].tangent.xyz * w_bc + 
+                        vertex_buffer[v1i].tangent.xyz * u_bc + 
+                        vertex_buffer[v2i].tangent.xyz * v_bc;
+        var world_t = safe_normalize((entity_transform.transform * vec4<f32>(t_local, 0.0)).xyz);
+
+        // Load and interpolate bitangents, transform immediately
+        let b_local = vertex_buffer[v0i].bitangent.xyz * w_bc + 
+                        vertex_buffer[v1i].bitangent.xyz * u_bc + 
+                        vertex_buffer[v2i].bitangent.xyz * v_bc;
+        var world_b = safe_normalize((entity_transform.transform * vec4<f32>(b_local, 0.0)).xyz);
+        
+        // Get section_index from first vertex only
+        let section_idx = vertex_buffer[v0i].section_index;
+
+        let ray_dir = ray.direction_and_tmax.xyz;
+        let ray_is_backfacing = dot(world_n, ray_dir) > 0.0;
+        world_n = select(world_n, -world_n, ray_is_backfacing);
+        world_t = select(world_t, -world_t, ray_is_backfacing);
+        world_b = select(world_b, -world_b, ray_is_backfacing);
+
+        // Store hit distance in origin_tmin.w for use in shade pass (for emissive attenuation)
+        world_cache_path_state[active_index].origin_tmin = vec4f(p_world, t_tri);
+        world_cache_path_state[active_index].direction_tmax = vec4f(ray_dir, hit_result.prim_meshid_padding.x);
+        world_cache_path_state[active_index].normal_section_index = vec4f(world_n, f32(section_idx));
+        world_cache_path_state[active_index].hit_attr0 = vec4f(world_t, uv_hit.x);
+        world_cache_path_state[active_index].hit_attr1 = vec4f(world_b, uv_hit.y);
+        world_cache_path_state[active_index].state_u32.w = tri_id_local;
+    }
+}
+
 @compute @workgroup_size(128, 1, 1)
 fn cs(
     @builtin(global_invocation_id) gid: vec3<u32>,
@@ -302,114 +417,19 @@ fn cs(
     // Thread ID maps to index in compacted active cell array
     let active_index = gid.x;
     let active_cache_cell_count = atomicLoad(&gi_counters.active_cache_cell_count);
-    if (active_index >= active_cache_cell_count) {
+    if (active_index >= 2u * active_cache_cell_count) {
         return;
     }
 
-    var ray: Ray;
+    let is_shadow_thread = gid.x < active_cache_cell_count;
+    let true_active_index = select(active_index - active_cache_cell_count, active_index, is_shadow_thread);
 
     // Is ray alive?
-    if (world_cache_path_state[active_index].state_u32.y != 0u) {
-        // Trace shadow ray first (direct lighting visibility)
-        ray.origin_and_tmin = world_cache_path_state[active_index].shadow_origin;
-        ray.direction_and_tmax = world_cache_path_state[active_index].shadow_direction;
-        var d = ray.direction_and_tmax.xyz;
-        ray.inv_direction = vec4f(
-            1.0 / max(abs(d.x), 1e-8) * select(1.0, -1.0, d.x < 0.0),
-            1.0 / max(abs(d.y), 1e-8) * select(1.0, -1.0, d.y < 0.0),
-            1.0 / max(abs(d.z), 1e-8) * select(1.0, -1.0, d.z < 0.0),
-            0.0
-        );
-        
-        if (!trace_hit_any(&ray)) {
-            world_cache_path_state[active_index].state_u32.z = 1u; // No shadow hit - light is visible
-        }
-
-        // Trace indirect ray (for multi-bounce radiance)
-        ray.origin_and_tmin = world_cache_path_state[active_index].origin_tmin;
-        ray.direction_and_tmax = world_cache_path_state[active_index].direction_tmax;
-        d = ray.direction_and_tmax.xyz;
-        ray.inv_direction = vec4f(
-            1.0 / max(abs(d.x), 1e-8) * select(1.0, -1.0, d.x < 0.0),
-            1.0 / max(abs(d.y), 1e-8) * select(1.0, -1.0, d.y < 0.0),
-            1.0 / max(abs(d.z), 1e-8) * select(1.0, -1.0, d.z < 0.0),
-            0.0
-        );
-
-        let hit_result = trace_hit(&ray);
-        
-        if (hit_result.normal_and_user_data.w >= 0.0) {
-            let tri_id_local = u32(hit_result.normal_and_user_data.w);
-            let prim_store = u32(hit_result.prim_meshid_padding.x);
-
-            let entity_transform = entity_transforms[prim_store];
-
-            let t_tri = hit_result.position_and_t.w;
-            let p_local = hit_result.ray_local.origin_and_tmin.xyz + hit_result.ray_local.direction_and_tmax.xyz * t_tri;
-            let p_world = (entity_transform.transform * vec4f(p_local, 1.0)).xyz;
-
-            let v0i = hit_result.hit_triangle_data.x;
-            let v1i = hit_result.hit_triangle_data.y;
-            let v2i = hit_result.hit_triangle_data.z;
-            
-            // Load positions only for barycentric calculation
-            let v0 = vertex_buffer[v0i].position.xyz;
-            let v1 = vertex_buffer[v1i].position.xyz;
-            let v2 = vertex_buffer[v2i].position.xyz;
-
-            // Compute barycentric coordinates immediately
-            let e0 = v1 - v0;
-            let e1 = v2 - v0;
-            let vp = p_local - v0;
-            let d00 = dot(e0, e0);
-            let d01 = dot(e0, e1);
-            let d11 = dot(e1, e1);
-            let d20 = dot(vp, e0);
-            let d21 = dot(vp, e1);
-            let denom = max(d00 * d11 - d01 * d01, 1e-8);
-            let v_bc = (d00 * d21 - d01 * d20) / denom;
-            let u_bc = (d11 * d20 - d01 * d21) / denom;
-            let w_bc = 1.0 - u_bc - v_bc;
-
-            // Load and interpolate UVs immediately (reduce live ranges)
-            let uv_hit = vertex_buffer[v0i].uv.xy * w_bc + 
-                         vertex_buffer[v1i].uv.xy * u_bc + 
-                         vertex_buffer[v2i].uv.xy * v_bc;
-
-            // Load and interpolate normals, transform immediately
-            let n_local = vertex_buffer[v0i].normal.xyz * w_bc + 
-                          vertex_buffer[v1i].normal.xyz * u_bc + 
-                          vertex_buffer[v2i].normal.xyz * v_bc;
-            var world_n = safe_normalize((entity_transform.transform * vec4<f32>(n_local, 0.0)).xyz);
-
-            // Load and interpolate tangents, transform immediately
-            let t_local = vertex_buffer[v0i].tangent.xyz * w_bc + 
-                          vertex_buffer[v1i].tangent.xyz * u_bc + 
-                          vertex_buffer[v2i].tangent.xyz * v_bc;
-            var world_t = safe_normalize((entity_transform.transform * vec4<f32>(t_local, 0.0)).xyz);
-
-            // Load and interpolate bitangents, transform immediately
-            let b_local = vertex_buffer[v0i].bitangent.xyz * w_bc + 
-                          vertex_buffer[v1i].bitangent.xyz * u_bc + 
-                          vertex_buffer[v2i].bitangent.xyz * v_bc;
-            var world_b = safe_normalize((entity_transform.transform * vec4<f32>(b_local, 0.0)).xyz);
-            
-            // Get section_index from first vertex only
-            let section_idx = vertex_buffer[v0i].section_index;
-
-            let ray_dir = ray.direction_and_tmax.xyz;
-            let ray_is_backfacing = dot(world_n, ray_dir) > 0.0;
-            world_n = select(world_n, -world_n, ray_is_backfacing);
-            world_t = select(world_t, -world_t, ray_is_backfacing);
-            world_b = select(world_b, -world_b, ray_is_backfacing);
-
-            // Store hit distance in origin_tmin.w for use in shade pass (for emissive attenuation)
-            world_cache_path_state[active_index].origin_tmin = vec4f(p_world, t_tri);
-            world_cache_path_state[active_index].direction_tmax = vec4f(ray_dir, hit_result.prim_meshid_padding.x);
-            world_cache_path_state[active_index].normal_section_index = vec4f(world_n, f32(section_idx));
-            world_cache_path_state[active_index].hit_attr0 = vec4f(world_t, uv_hit.x);
-            world_cache_path_state[active_index].hit_attr1 = vec4f(world_b, uv_hit.y);
-            world_cache_path_state[active_index].state_u32.w = tri_id_local;
+    if (world_cache_path_state[true_active_index].state_u32.y != 0u) {
+        if (is_shadow_thread) {
+            process_shadow_ray(true_active_index);
+        } else {
+            process_primary_ray(true_active_index);
         }
     }
 }

@@ -309,16 +309,133 @@ fn trace_hit_any(ray: ptr<function, Ray>) -> bool {
 }
 
 // =============================================================================
+// HELPER: Process a shadow ray and write result
+// =============================================================================
+
+fn process_shadow_ray(ray_index: u32) {
+    var ray: Ray;
+    ray.origin_and_tmin = pixel_path_state[ray_index].shadow_origin;
+    ray.direction_and_tmax = pixel_path_state[ray_index].shadow_direction;
+    let d = ray.direction_and_tmax.xyz;
+    ray.inv_direction = vec4f(
+        1.0 / max(abs(d.x), 1e-8) * select(1.0, -1.0, d.x < 0.0),
+        1.0 / max(abs(d.y), 1e-8) * select(1.0, -1.0, d.y < 0.0),
+        1.0 / max(abs(d.z), 1e-8) * select(1.0, -1.0, d.z < 0.0),
+        0.0
+    );
+
+    if (!trace_hit_any(&ray)) {
+        // No shadow hit - light is visible
+        pixel_path_state[ray_index].state_u32.z = 1u;
+    }
+}
+
+// =============================================================================
+// HELPER: Process a primary ray and write hit attributes
+// =============================================================================
+
+fn process_primary_ray(ray_index: u32) {
+    var ray: Ray;
+    ray.origin_and_tmin = pixel_path_state[ray_index].origin_tmin;
+    ray.direction_and_tmax = pixel_path_state[ray_index].direction_tmax;
+    let d = ray.direction_and_tmax.xyz;
+    ray.inv_direction = vec4f(
+        1.0 / max(abs(d.x), 1e-8) * select(1.0, -1.0, d.x < 0.0),
+        1.0 / max(abs(d.y), 1e-8) * select(1.0, -1.0, d.y < 0.0),
+        1.0 / max(abs(d.z), 1e-8) * select(1.0, -1.0, d.z < 0.0),
+        0.0
+    );
+
+    let hit_result = trace_hit(&ray);
+
+    if (hit_result.normal_and_user_data.w >= 0.0) {
+        let tri_id_local = u32(hit_result.normal_and_user_data.w);
+        let prim_store = u32(hit_result.prim_meshid_padding.x);
+
+        let entity_transform = entity_transforms[prim_store];
+
+        let t_tri = hit_result.position_and_t.w;
+        let p_local = hit_result.ray_local.origin_and_tmin.xyz + hit_result.ray_local.direction_and_tmax.xyz * t_tri;
+        let p_world = (entity_transform.transform * vec4f(p_local, 1.0)).xyz;
+
+        let v0i = hit_result.hit_triangle_data.x;
+        let v1i = hit_result.hit_triangle_data.y;
+        let v2i = hit_result.hit_triangle_data.z;
+
+        // Load vertex positions for barycentric calculation
+        let v0 = vertex_buffer[v0i].position.xyz;
+        let v1 = vertex_buffer[v1i].position.xyz;
+        let v2 = vertex_buffer[v2i].position.xyz;
+
+        // Compute barycentric coordinates
+        let e0 = v1 - v0;
+        let e1 = v2 - v0;
+        let vp = p_local - v0;
+        let d00 = dot(e0, e0);
+        let d01 = dot(e0, e1);
+        let d11 = dot(e1, e1);
+        let d20 = dot(vp, e0);
+        let d21 = dot(vp, e1);
+        let denom = max(d00 * d11 - d01 * d01, 1e-8);
+        let v_bc = (d00 * d21 - d01 * d20) / denom;
+        let u_bc = (d11 * d20 - d01 * d21) / denom;
+        let w_bc = 1.0 - u_bc - v_bc;
+
+        // Interpolate UVs
+        let uv_hit = vertex_buffer[v0i].uv.xy * w_bc +
+                     vertex_buffer[v1i].uv.xy * u_bc +
+                     vertex_buffer[v2i].uv.xy * v_bc;
+
+        // Interpolate and transform normals
+        let n_local = vertex_buffer[v0i].normal.xyz * w_bc +
+                      vertex_buffer[v1i].normal.xyz * u_bc +
+                      vertex_buffer[v2i].normal.xyz * v_bc;
+        var world_n = safe_normalize((entity_transform.transform * vec4<f32>(n_local, 0.0)).xyz);
+
+        // Interpolate and transform tangents
+        let t_local = vertex_buffer[v0i].tangent.xyz * w_bc +
+                      vertex_buffer[v1i].tangent.xyz * u_bc +
+                      vertex_buffer[v2i].tangent.xyz * v_bc;
+        var world_t = safe_normalize((entity_transform.transform * vec4<f32>(t_local, 0.0)).xyz);
+
+        // Interpolate and transform bitangents
+        let b_local = vertex_buffer[v0i].bitangent.xyz * w_bc +
+                      vertex_buffer[v1i].bitangent.xyz * u_bc +
+                      vertex_buffer[v2i].bitangent.xyz * v_bc;
+        var world_b = safe_normalize((entity_transform.transform * vec4<f32>(b_local, 0.0)).xyz);
+
+        // Get section index from first vertex
+        let section_idx = vertex_buffer[v0i].section_index;
+
+        // Handle backfacing geometry
+        let ray_dir = ray.direction_and_tmax.xyz;
+        let ray_is_backfacing = dot(world_n, ray_dir) > 0.0;
+        world_n = select(world_n, -world_n, ray_is_backfacing);
+        world_t = select(world_t, -world_t, ray_is_backfacing);
+        world_b = select(world_b, -world_b, ray_is_backfacing);
+
+        // Store hit information
+        pixel_path_state[ray_index].origin_tmin = vec4f(p_world, t_tri);
+        pixel_path_state[ray_index].direction_tmax = vec4f(ray_dir, hit_result.prim_meshid_padding.x);
+        pixel_path_state[ray_index].normal_section_index = vec4f(world_n, f32(section_idx));
+        pixel_path_state[ray_index].hit_attr0 = vec4f(world_t, uv_hit.x);
+        pixel_path_state[ray_index].hit_attr1 = vec4f(world_b, uv_hit.y);
+        pixel_path_state[ray_index].state_u32.w = tri_id_local;
+    }
+}
+
+// =============================================================================
 // MAIN COMPUTE SHADER
 // =============================================================================
 //
-// This shader dispatches 2x the ray count to run shadow and primary ray
-// tracing in parallel:
-//   - First half of invocations (gid.x < total_rays): Shadow ray traces (NEE)
-//   - Second half (gid.x >= total_rays): Primary ray traces (indirect bounce)
+// Dispatched over ALL pixels (2x for shadow + primary ray processing).
+// Uses work queue for efficient processing of only active rays.
 //
-// Both halves independently consume from the same work queue using separate
-// atomic counters, allowing full parallelism between visibility and hit queries.
+//   - First half of invocations: Shadow ray traces (NEE)
+//   - Second half: Primary ray traces (indirect bounce)
+//
+// Each thread independently consumes from a work queue, processing rays until
+// the queue is exhausted.
 // =============================================================================
 
 @compute @workgroup_size(128, 1, 1)
@@ -349,13 +466,13 @@ fn cs(
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    // Work queue consumption loop
-    // Shadow and primary threads use separate queue heads for independent
-    // traversal of the same work queue
-    // ─────────────────────────────────────────────────────────────────────────
     // Read queue count once at start (all active rays added by init pass)
+    // ─────────────────────────────────────────────────────────────────────────
     let queue_count = atomicLoad(&gi_counters.ray_queue_count);
-    
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Work queue consumption loop
+    // ─────────────────────────────────────────────────────────────────────────
     loop {
         // Each thread type uses its own atomic counter
         var queue_index = 0u;
@@ -369,121 +486,13 @@ fn cs(
             break;
         }
 
-        let ray_index = ray_work_queue[queue_index];
+        // ray_index is now a pixel_index (y * width + x)
+        let pixel_index = ray_work_queue[queue_index];
 
         if (is_shadow_thread) {
-            // ─────────────────────────────────────────────────────────────────
-            // Shadow Ray Trace (NEE visibility test)
-            // ─────────────────────────────────────────────────────────────────
-            var ray: Ray;
-            ray.origin_and_tmin = pixel_path_state[ray_index].shadow_origin;
-            ray.direction_and_tmax = pixel_path_state[ray_index].shadow_direction;
-            let d = ray.direction_and_tmax.xyz;
-            ray.inv_direction = vec4f(
-                1.0 / max(abs(d.x), 1e-8) * select(1.0, -1.0, d.x < 0.0),
-                1.0 / max(abs(d.y), 1e-8) * select(1.0, -1.0, d.y < 0.0),
-                1.0 / max(abs(d.z), 1e-8) * select(1.0, -1.0, d.z < 0.0),
-                0.0
-            );
-
-            if (!trace_hit_any(&ray)) {
-                // No shadow hit - light is visible
-                pixel_path_state[ray_index].state_u32.z = 1u;
-            }
+            process_shadow_ray(pixel_index);
         } else {
-            // ─────────────────────────────────────────────────────────────────
-            // Primary Ray Trace (indirect bounce)
-            // ─────────────────────────────────────────────────────────────────
-            var ray: Ray;
-            ray.origin_and_tmin = pixel_path_state[ray_index].origin_tmin;
-            ray.direction_and_tmax = pixel_path_state[ray_index].direction_tmax;
-            let d = ray.direction_and_tmax.xyz;
-            ray.inv_direction = vec4f(
-                1.0 / max(abs(d.x), 1e-8) * select(1.0, -1.0, d.x < 0.0),
-                1.0 / max(abs(d.y), 1e-8) * select(1.0, -1.0, d.y < 0.0),
-                1.0 / max(abs(d.z), 1e-8) * select(1.0, -1.0, d.z < 0.0),
-                0.0
-            );
-
-            let hit_result = trace_hit(&ray);
-
-            if (hit_result.normal_and_user_data.w >= 0.0) {
-                // ─────────────────────────────────────────────────────────────
-                // Process hit: compute barycentric coords and interpolate attributes
-                // ─────────────────────────────────────────────────────────────
-                let tri_id_local = u32(hit_result.normal_and_user_data.w);
-                let prim_store = u32(hit_result.prim_meshid_padding.x);
-
-                let entity_transform = entity_transforms[prim_store];
-
-                let t_tri = hit_result.position_and_t.w;
-                let p_local = hit_result.ray_local.origin_and_tmin.xyz + hit_result.ray_local.direction_and_tmax.xyz * t_tri;
-                let p_world = (entity_transform.transform * vec4f(p_local, 1.0)).xyz;
-
-                let v0i = hit_result.hit_triangle_data.x;
-                let v1i = hit_result.hit_triangle_data.y;
-                let v2i = hit_result.hit_triangle_data.z;
-
-                // Load vertex positions for barycentric calculation
-                let v0 = vertex_buffer[v0i].position.xyz;
-                let v1 = vertex_buffer[v1i].position.xyz;
-                let v2 = vertex_buffer[v2i].position.xyz;
-
-                // Compute barycentric coordinates
-                let e0 = v1 - v0;
-                let e1 = v2 - v0;
-                let vp = p_local - v0;
-                let d00 = dot(e0, e0);
-                let d01 = dot(e0, e1);
-                let d11 = dot(e1, e1);
-                let d20 = dot(vp, e0);
-                let d21 = dot(vp, e1);
-                let denom = max(d00 * d11 - d01 * d01, 1e-8);
-                let v_bc = (d00 * d21 - d01 * d20) / denom;
-                let u_bc = (d11 * d20 - d01 * d21) / denom;
-                let w_bc = 1.0 - u_bc - v_bc;
-
-                // Interpolate UVs
-                let uv_hit = vertex_buffer[v0i].uv.xy * w_bc +
-                             vertex_buffer[v1i].uv.xy * u_bc +
-                             vertex_buffer[v2i].uv.xy * v_bc;
-
-                // Interpolate and transform normals
-                let n_local = vertex_buffer[v0i].normal.xyz * w_bc +
-                              vertex_buffer[v1i].normal.xyz * u_bc +
-                              vertex_buffer[v2i].normal.xyz * v_bc;
-                var world_n = safe_normalize((entity_transform.transform * vec4<f32>(n_local, 0.0)).xyz);
-
-                // Interpolate and transform tangents
-                let t_local = vertex_buffer[v0i].tangent.xyz * w_bc +
-                              vertex_buffer[v1i].tangent.xyz * u_bc +
-                              vertex_buffer[v2i].tangent.xyz * v_bc;
-                var world_t = safe_normalize((entity_transform.transform * vec4<f32>(t_local, 0.0)).xyz);
-
-                // Interpolate and transform bitangents
-                let b_local = vertex_buffer[v0i].bitangent.xyz * w_bc +
-                              vertex_buffer[v1i].bitangent.xyz * u_bc +
-                              vertex_buffer[v2i].bitangent.xyz * v_bc;
-                var world_b = safe_normalize((entity_transform.transform * vec4<f32>(b_local, 0.0)).xyz);
-
-                // Get section index from first vertex
-                let section_idx = vertex_buffer[v0i].section_index;
-
-                // Handle backfacing geometry
-                let ray_dir = ray.direction_and_tmax.xyz;
-                let ray_is_backfacing = dot(world_n, ray_dir) > 0.0;
-                world_n = select(world_n, -world_n, ray_is_backfacing);
-                world_t = select(world_t, -world_t, ray_is_backfacing);
-                world_b = select(world_b, -world_b, ray_is_backfacing);
-
-                // Store hit information
-                pixel_path_state[ray_index].origin_tmin = vec4f(p_world, t_tri);
-                pixel_path_state[ray_index].direction_tmax = vec4f(ray_dir, hit_result.prim_meshid_padding.x);
-                pixel_path_state[ray_index].normal_section_index = vec4f(world_n, f32(section_idx));
-                pixel_path_state[ray_index].hit_attr0 = vec4f(world_t, uv_hit.x);
-                pixel_path_state[ray_index].hit_attr1 = vec4f(world_b, uv_hit.y);
-                pixel_path_state[ray_index].state_u32.w = tri_id_local;
-            }
+            process_primary_ray(pixel_index);
         }
     }
 }
