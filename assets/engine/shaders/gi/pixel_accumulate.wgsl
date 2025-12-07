@@ -67,7 +67,7 @@ const NORMAL_THRESHOLD = 0.95;         // Normal dot product threshold
 // Lower = faster response to changes, Higher = more stable but more lag
 // With upscaling, effective convergence time = MAX_FRAMES × upscale_factor
 // ─────────────────────────────────────────────────────────────────────────────
-const MAX_ACCUMULATED_FRAMES = 4.0;
+const MAX_ACCUMULATED_FRAMES = 16.0;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Firefly Prevention: Maximum output luminance
@@ -221,6 +221,12 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     // ─────────────────────────────────────────────────────────────────────────
     var current_radiance = vec3<f32>(0.0);
     var has_current_sample = false;
+
+    // Track the most recent traced pixel within this tile so we can seed
+    // disoccluded regions when the trace rate skips over this pixel.
+    var tile_radiance = vec3<f32>(0.0);
+    var tile_sample_coords = vec2<u32>(gid.xy);
+    var has_tile_sample = false;
     
     for (var i = 0u; i < rays_per_tile; i = i + 1u) {
         // Index into path state by tile, not by pixel
@@ -232,24 +238,35 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         let ray_pixel_y = u32(path.pixel_coords.y);
         let coords_match = ray_pixel_x == gid.x && ray_pixel_y == gid.y;
         
-        if (coords_match) {
-            // This tile's ray was traced at our pixel location
-            let ray_was_alive = path.state_u32.y != 0u || 
-                                path.state_u32.w != 0xffffffffu ||
-                                length(path.throughput.xyz) > 0.0;
-            
-            if (ray_was_alive) {
-                let sample_count = max(path.rng_sample_count_frame_stamp.y, 1.0);
-                let accumulated_avg = path.throughput.xyz / sample_count;
-                current_radiance = safe_clamp_vec3(accumulated_avg);
+        let ray_was_alive = path.state_u32.y != 0u ||
+                            path.state_u32.w != 0xffffffffu ||
+                            length(path.throughput.xyz) > 0.0;
+
+        if (ray_was_alive) {
+            let sample_count = max(path.rng_sample_count_frame_stamp.y, 1.0);
+            let accumulated_avg = path.throughput.xyz / sample_count;
+            let clamped_avg = safe_clamp_vec3(accumulated_avg);
+
+            if (coords_match) {
+                // This tile's ray was traced at our pixel location
+                current_radiance = clamped_avg;
                 has_current_sample = true;
                 break; // Take first valid sample
             }
+
+            // Store the first valid traced pixel within this tile for
+            // potential disocclusion seeding when our pixel was skipped.
+            if (!has_tile_sample) {
+                tile_radiance = clamped_avg;
+                tile_sample_coords = vec2<u32>(ray_pixel_x, ray_pixel_y);
+                has_tile_sample = true;
+            }
         }
     }
-    
+
     // Pre-clamp current radiance to prevent fireflies from entering accumulation
     current_radiance = safe_clamp_vec3_max(current_radiance, MAX_OUTPUT_LUMINANCE);
+    tile_radiance = safe_clamp_vec3_max(tile_radiance, MAX_OUTPUT_LUMINANCE);
     
     // ═════════════════════════════════════════════════════════════════════════
     // GHOSTING-FREE BILINEAR REPROJECTION
@@ -336,17 +353,32 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     
     var final_radiance: vec3<f32>;
     var final_count: f32;
+    let disoccluded = !any_valid;
+
+    // When tracing at a rate higher than 1 (tiles larger than 1x1), seed
+    // newly disoccluded pixels with the traced pixel from this tile to avoid
+    // dark holes until the trace phase reaches them.
+    let trace_rate_scale = max(f32(upscale.x), f32(upscale.y));
+    let trace_rate_active = trace_rate_scale > 1.0 && has_tile_sample;
+    var tile_sample_weight = 0.0;
+    if (trace_rate_active) {
+        let tile_extent = vec2<f32>(f32(max(upscale.x, 1u)), f32(max(upscale.y, 1u)));
+        let tile_distance = length(vec2<f32>(vec2<u32>(gid.xy)) - vec2<f32>(tile_sample_coords));
+        let normalized_distance = tile_distance / max(length(tile_extent), 0.0001);
+        tile_sample_weight = clamp(1.0 - normalized_distance, 0.0, 1.0);
+    }
+
     if (has_current_sample) {
         // Linear accumulation: alpha = 1 / (1 + N)
         let alpha = 1.0 / (1.0 + count_sum);
-        
         // Blend current sample with history
-        final_radiance = select(
-            safe_clamp_vec3_max(prev_radiance, MAX_OUTPUT_LUMINANCE),
-            mix(prev_radiance, current_radiance, alpha),
-            any_valid
-        );
+        final_radiance = select(current_radiance, mix(prev_radiance, current_radiance, alpha), any_valid);
         final_count = select(1.0, count_sum, any_valid);
+    } else if (disoccluded && trace_rate_active && tile_sample_weight > 0.0) {
+        // Use the traced pixel from this tile as a low-resolution seed for
+        // newly visible pixels, weighted by distance to avoid cross-tile leaks.
+        final_radiance = tile_radiance * tile_sample_weight;
+        final_count = 0.0;
     } else {
         // No new sample this frame - keep history unchanged
         final_radiance = select(vec3<f32>(0.0), prev_radiance, any_valid);
