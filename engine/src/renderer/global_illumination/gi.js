@@ -203,12 +203,11 @@ export class GI {
   // ─────────────────────────────────────────────────────────────────────────
   config = {
     screen_ray_count: 1,          // Rays per pixel per frame (1 recommended for real-time)
-    upscale_x: 2,                 // Temporal upscale factor X
-    upscale_y: 2,                 // Temporal upscale factor Y
+    upscale_factor: 3,            // Temporal upscale factor X
     world_cache_size: 32768,      // Number of world cache cells per LOD level
     world_cache_cell_size: 4.0,   // Base cell size in world units
     world_cache_lod_count: 4,     // Number of LOD levels
-    indirect_boost: 1.0,         // Multiplier for indirect lighting contribution
+    indirect_boost: 1.0,          // Multiplier for indirect lighting contribution
   };
 
   // GI parameters buffer data (matches shader GIParams struct)
@@ -219,12 +218,10 @@ export class GI {
     0,    // total_pixels
     0,    // frame_index
     0,    // indirect_boost
-    0,    // upscale_x
-    0,    // upscale_y
+    0,    // upscale_factor
     0,    // world_cache_lod_count
     0,    // resolution_x
     0,    // resolution_y
-    0,    // padding
   ]);
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -340,9 +337,9 @@ export class GI {
     const total_cells = this.config.world_cache_size * this.config.world_cache_lod_count;
 
     // Tile-based dispatch: only trace one pixel per tile per frame
-    // Each tile is upscale_x × upscale_y pixels
-    const tile_grid_width = Math.ceil(width / this.config.upscale_x);
-    const tile_grid_height = Math.ceil(height / this.config.upscale_y);
+    // Each tile is upscale_factor pixels
+    const tile_grid_width = Math.ceil(width / this.config.upscale_factor);
+    const tile_grid_height = Math.ceil(height / this.config.upscale_factor);
     const tiles_per_frame = tile_grid_width * tile_grid_height;
     const rays_per_frame = tiles_per_frame * this.config.screen_ray_count;
 
@@ -580,12 +577,10 @@ export class GI {
         this.gi_params_data[3] = total_pixels;
         this.gi_params_data[4] = frame_index;
         this.gi_params_data[5] = this.config.indirect_boost;
-        this.gi_params_data[6] = this.config.upscale_x;
-        this.gi_params_data[7] = this.config.upscale_y;
-        this.gi_params_data[8] = this.config.world_cache_lod_count;
-        this.gi_params_data[9] = width;
-        this.gi_params_data[10] = height;
-        this.gi_params_data[11] = 0;
+        this.gi_params_data[6] = this.config.upscale_factor;
+        this.gi_params_data[7] = this.config.world_cache_lod_count;
+        this.gi_params_data[8] = width;
+        this.gi_params_data[9] = height;
 
         gi_params_buf.write_raw(this.gi_params_data);
       }

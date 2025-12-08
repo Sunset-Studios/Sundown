@@ -39,12 +39,10 @@ struct GIParams {
     total_pixels: f32,              // Total pixels (width * height)
     frame_index: f32,               // Current frame index
     indirect_boost: f32,            // Indirect lighting multiplier
-    upscale_x: f32,                 // Temporal upscale factor X (tile width)
-    upscale_y: f32,                 // Temporal upscale factor Y (tile height)
+    upscale_factor: f32,                 // Temporal upscale factor
     world_cache_lod_count: f32,     // Number of LOD levels for world cache
     resolution_x: f32,              // Screen resolution X
     resolution_y: f32,              // Screen resolution Y
-    padding: f32,
 };
 
 // =============================================================================
@@ -167,7 +165,7 @@ fn decode_octahedral(encoded: vec2<f32>) -> vec3<f32> {
 // TILE-BASED STOCHASTIC SAMPLING
 // 
 // Instead of dispatching all pixels and doing early-outs, we dispatch only
-// the number of tiles (upscale_x × upscale_y per tile) and randomly select
+// the number of tiles (upscale_factor per tile) and randomly select
 // a pixel within each tile. This is more efficient and provides better
 // temporal sampling distribution.
 // =============================================================================
@@ -179,7 +177,7 @@ fn decode_octahedral(encoded: vec2<f32>) -> vec3<f32> {
 fn tile_to_pixel_with_offset(
     tile_index: u32,
     tile_grid_width: u32,
-    upscale: vec2<u32>,
+    upscale_factor: u32,
     resolution: vec2<u32>,
     rand_offset_x: f32,
     rand_offset_y: f32
@@ -189,12 +187,12 @@ fn tile_to_pixel_with_offset(
     let tile_y = tile_index / tile_grid_width;
     
     // Compute tile corner in pixel space
-    let tile_corner_x = tile_x * upscale.x;
-    let tile_corner_y = tile_y * upscale.y;
+    let tile_corner_x = tile_x * upscale_factor;
+    let tile_corner_y = tile_y * upscale_factor;
     
     // Use provided random values for offset within tile
-    let offset_x = u32(rand_offset_x * f32(upscale.x)) % upscale.x;
-    let offset_y = u32(rand_offset_y * f32(upscale.y)) % upscale.y;
+    let offset_x = u32(rand_offset_x * f32(upscale_factor)) % upscale_factor;
+    let offset_y = u32(rand_offset_y * f32(upscale_factor)) % upscale_factor;
     
     // Compute final pixel coordinates (clamp to resolution bounds)
     let pixel_x = min(tile_corner_x + offset_x, resolution.x - 1u);

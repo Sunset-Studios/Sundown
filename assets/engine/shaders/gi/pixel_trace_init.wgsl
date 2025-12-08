@@ -9,7 +9,7 @@
 // ║  • ReSTIR-based path sampling for high-quality convergence                ║
 // ║  • Next Event Estimation (NEE) for direct lighting                        ║
 // ║                                                                           ║
-// ║  Each invocation corresponds to one tile (upscale_x × upscale_y pixels).  ║
+// ║  Each invocation corresponds to one tile (upscale_factor pixels).  ║
 // ║  A random pixel within the tile is selected for tracing this frame.       ║
 // ║                                                                           ║
 // ║  Uses blue noise sampling for low-discrepancy quasi-random values,        ║
@@ -184,8 +184,8 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     // ─────────────────────────────────────────────────────────────────────────
     let rays_per_tile = u32(gi_params.screen_ray_count);
     let resolution = vec2<u32>(u32(gi_params.resolution_x), u32(gi_params.resolution_y));
-    let upscale = vec2<u32>(u32(gi_params.upscale_x), u32(gi_params.upscale_y));
-    let tile_grid_dims = vec2<u32>(resolution.x / upscale.x, resolution.y / upscale.y);
+    let upscale_factor = u32(gi_params.upscale_factor);
+    let tile_grid_dims = vec2<u32>(resolution.x / upscale_factor, resolution.y / upscale_factor);
     
     // Compute total tiles from resolution and upscale
     let total_tiles = tile_grid_dims.x * tile_grid_dims.y;
@@ -216,7 +216,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let pixel_coords = tile_to_pixel_with_offset(
         tile_index,
         tile_grid_dims.x,
-        upscale,
+        upscale_factor,
         resolution,
         rand_tile_x,
         rand_tile_y

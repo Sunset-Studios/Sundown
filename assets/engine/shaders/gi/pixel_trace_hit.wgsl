@@ -450,8 +450,8 @@ fn cs(
     // ─────────────────────────────────────────────────────────────────────────
     let rays_per_tile = u32(gi_params.screen_ray_count);
     let resolution = vec2<u32>(u32(gi_params.resolution_x), u32(gi_params.resolution_y));
-    let upscale = vec2<u32>(u32(gi_params.upscale_x), u32(gi_params.upscale_y));
-    let tile_grid_dims = vec2<u32>(resolution.x / upscale.x, resolution.y / upscale.y);
+    let upscale_factor = u32(gi_params.upscale_factor);
+    let tile_grid_dims = vec2<u32>(resolution.x / upscale_factor, resolution.y / upscale_factor);
     let total_tiles = tile_grid_dims.x * tile_grid_dims.y;
     let total_rays = total_tiles * rays_per_tile;
 
