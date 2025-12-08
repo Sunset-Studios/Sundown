@@ -559,6 +559,13 @@ var Material = (MinimalGLTFLoader.Material = function (m) {
 
   this.extensions = m.extensions !== undefined ? m.extensions : null;
   this.extras = m.extras !== undefined ? m.extras : null;
+
+  if (this.extensions && this.extensions.KHR_materials_emissive_strength) {
+    let emissiveStrength = this.extensions.KHR_materials_emissive_strength.emissiveStrength;
+    this.emissiveFactor[0] *= emissiveStrength;
+    this.emissiveFactor[1] *= emissiveStrength;
+    this.emissiveFactor[2] *= emissiveStrength;
+  }
 });
 
 var Skin = (MinimalGLTFLoader.Skin = function (gltf, s, skinID) {
