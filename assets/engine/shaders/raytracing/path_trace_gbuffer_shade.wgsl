@@ -68,22 +68,6 @@ fn sample_cosine_hemisphere(n: vec3<f32>, r1: f32, r2: f32) -> vec3<f32> {
     return normalize(tangent * dir_local.x + bitangent * dir_local.y + n * dir_local.z);
 }
 
-fn sample_ggx(n: vec3<f32>, roughness: f32, r1: f32, r2: f32) -> vec3<f32> {
-    let a = roughness * roughness;
-    let a2 = a * a;
-    
-    let phi = 2.0 * PI * r1;
-    let cos_theta = sqrt((1.0 - r2) / (1.0 + (a2 - 1.0) * r2));
-    let sin_theta = sqrt(1.0 - cos_theta * cos_theta);
-    
-    let up = select(vec3f(0.0, 1.0, 0.0), vec3f(1.0, 0.0, 0.0), abs(n.y) > 0.999);
-    let tangent = normalize(cross(up, n));
-    let bitangent = normalize(cross(n, tangent));
-    
-    let h_local = vec3f(cos(phi) * sin_theta, sin(phi) * sin_theta, cos_theta);
-    return normalize(tangent * h_local.x + bitangent * h_local.y + n * h_local.z);
-}
-
 fn pdf_cosine_hemisphere(n_dot_l: f32) -> f32 {
     return max(n_dot_l, 0.0) / PI;
 }

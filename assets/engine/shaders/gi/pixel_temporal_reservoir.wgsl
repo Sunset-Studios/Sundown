@@ -29,32 +29,17 @@
 @group(1) @binding(1) var<storage, read> pixel_path_state: array<PixelPathState>;
 @group(1) @binding(2) var<storage, read_write> temporal_reservoir_prev: array<GIReservoirData>;
 @group(1) @binding(3) var<storage, read_write> temporal_reservoir_curr: array<GIReservoirData>;
-@group(1) @binding(4) var<storage, read_write> spatial_reservoir_prev: array<GIReservoirData>;
-@group(1) @binding(5) var gbuffer_position: texture_2d<f32>;
-@group(1) @binding(6) var gbuffer_position_prev: texture_2d<f32>;
-@group(1) @binding(7) var gbuffer_normal: texture_2d<f32>;
-@group(1) @binding(8) var gbuffer_motion: texture_2d<f32>;
-@group(1) @binding(9) var gbuffer_normal_prev: texture_2d<f32>;
+@group(1) @binding(4) var gbuffer_position: texture_2d<f32>;
+@group(1) @binding(5) var gbuffer_position_prev: texture_2d<f32>;
+@group(1) @binding(6) var gbuffer_normal: texture_2d<f32>;
+@group(1) @binding(7) var gbuffer_motion: texture_2d<f32>;
+@group(1) @binding(8) var gbuffer_normal_prev: texture_2d<f32>;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Temporal reprojection validation thresholds
 // ─────────────────────────────────────────────────────────────────────────────
 const TEMPORAL_NORMAL_THRESHOLD: f32 = 0.95;
 const TEMPORAL_DEPTH_THRESHOLD: f32 = 0.05; // relative distance-to-camera threshold
-
-// =============================================================================
-// HELPERS
-// =============================================================================
-
-fn create_empty(pixel_index: u32) -> GIReservoirData {
-    var empty: GIReservoirData;
-    empty.reservoir = gi_reservoir_init();
-    empty.sample.visible_position_source_pdf = vec4<f32>(0.0);
-    empty.sample.sample_position = vec4<f32>(0.0);
-    empty.sample.sample_normal_target_pdf = vec4<f32>(0.0);
-    empty.sample.outgoing_radiance = vec4<f32>(0.0);
-    return empty;
-}
 
 // =============================================================================
 // MAIN COMPUTE SHADER
@@ -73,7 +58,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let normal = safe_normalize(normal_sample.xyz);
 
     if (length(normal_sample.xyz) <= 0.0) {
-        temporal_reservoir_curr[pixel_index] = create_empty(pixel_index);
+        temporal_reservoir_curr[pixel_index] = create_empty();
         return;
     }
 
@@ -87,12 +72,11 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     // ─────────────────────────────────────────────────────────────────────────
     // Build output reservoir by merging current frame sample with history
     // ─────────────────────────────────────────────────────────────────────────
-    var output: GIReservoirData;
-    output.reservoir = gi_reservoir_init();
-    
     // Store candidate samples for final selection
     var candidate_samples: array<GIReservoirSample, 2>;
     var candidate_count = 0u;
+    var output: GIReservoirData;
+    output.reservoir = gi_reservoir_init();
 
     // =====================================================================
     // RNG Setup
@@ -113,14 +97,15 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     // - `sample.sample_normal_target_pdf.w` = p_hat(y) (we use luminance(f(y)))
     // ─────────────────────────────────────────────────────────────────────────
     let visible_position = textureLoad(gbuffer_position, vec2<i32>(gid.xy), 0).xyz;
-    let view = view_buffer[u32(frame_info.view_index)];
-    let camera_position = view.view_position.xyz;
+    let camera_position = view_buffer[u32(frame_info.view_index)].view_position.xyz;
 
     for (var i = 0u; i < rays_per_tile; i = i + 1u) {
         let ray_id = tile_index * rays_per_tile + i;
         let path = pixel_path_state[ray_id];
+
+        // TODO: Should we skip this or fill the candidate with something meaningful?
         let traced_this_frame = u32(path.pixel_coords.x) == gid.x && u32(path.pixel_coords.y) == gid.y;
-        if (u32(path.pixel_coords.x) != gid.x || u32(path.pixel_coords.y) != gid.y || !traced_this_frame) {
+        if (!traced_this_frame) {
             continue;
         }
 
@@ -143,19 +128,22 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         candidate_samples[candidate_count].outgoing_radiance = vec4<f32>(integrand_radiance, 0.0);
         
         // For a new sample: contribution weight = p_hat / p_source (RIS weight)
-        let ris_weight = target_pdf / source_pdf;
-        rng_state = random_seed(rng_state);
-        gi_reservoir_update_with_rand(&output.reservoir, candidate_count, ris_weight, rand_float(rng_state), max_temporal_samples);
+        gi_reservoir_update(
+            &output.reservoir,
+            candidate_count,
+            target_pdf / source_pdf,
+            &rng_state,
+            max_temporal_samples
+        );
         
         candidate_count = candidate_count + 1u;
-        break;
     }
 
+    #ifndef SKIP_TEMPORAL_RESAMPLING
     // ─────────────────────────────────────────────────────────────────────────
     // Reproject last frame's temporal reservoir using motion vectors
     // Use proper reservoir merging to preserve the temporal sample count
     // ─────────────────────────────────────────────────────────────────────────
-    #ifndef SKIP_TEMPORAL_RESAMPLING
     let motion_sample = textureLoad(gbuffer_motion, vec2<i32>(gid.xy), 0);
     let pixel_velocity = motion_sample.xy * vec2<f32>(f32(res.x), f32(res.y)) * vec2<f32>(0.5, -0.5);
     let pixel_center = vec2<f32>(gid.xy) + 0.5;
@@ -196,28 +184,23 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         }
     }
 
-    // Clear spatial history when temporal reprojection fails (disocclusion)
+    // Clear history when temporal reprojection fails (disocclusion)
     // This prevents stale samples from persisting indefinitely
     if (!has_valid_reprojection) {
-        temporal_reservoir_prev[pixel_index] = create_empty(pixel_index);
-        spatial_reservoir_prev[pixel_index] = create_empty(pixel_index);
+        temporal_reservoir_prev[pixel_index] = create_empty();
     }
     #endif
 
     // ─────────────────────────────────────────────────────────────────────────
     // Finalize reservoir
     // ─────────────────────────────────────────────────────────────────────────
-    if (candidate_count == 0u) {
-        temporal_reservoir_curr[pixel_index] = create_empty(pixel_index);
-    } else {
-        let selected_index = output.reservoir.selected_index;
-        let selected_sample = candidate_samples[selected_index];
-        let selected_target_pdf = selected_sample.sample_normal_target_pdf.w;
-        
-        gi_reservoir_finalize(&output.reservoir, selected_target_pdf);
+    output.sample = candidate_samples[output.reservoir.selected_index];
+    gi_reservoir_finalize(&output.reservoir, output.sample.sample_normal_target_pdf.w);
 
-        output.sample = selected_sample;
-        
+    // Select the output reservoir or create an empty one if no candidates were found
+    if (candidate_count > 0u) {
         temporal_reservoir_curr[pixel_index] = output;
+    } else {
+        temporal_reservoir_curr[pixel_index] = create_empty();
     }
 }

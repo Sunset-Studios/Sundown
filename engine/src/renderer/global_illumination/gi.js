@@ -972,7 +972,6 @@ export class GI {
           pixel_path_state,
           temporal_reservoir_prev,
           temporal_reservoir_curr,
-          spatial_reservoir_prev,
           gbuffer_position,
           gbuffer_position_prev,
           gbuffer_normal,
@@ -1014,7 +1013,7 @@ export class GI {
 
     // ─────────────────────────────────────────────────────────────────────
     // Pass 14: Per-Pixel Accumulate (Temporal Accumulation)
-    // Reads from pixel_radiance (last frame's BLURRED output) and
+    // Reads from accepted spatial reservoir samples and
     // writes raw accumulated radiance to raw_accumulation buffer.
     // ─────────────────────────────────────────────────────────────────────
     render_graph.add_pass(
@@ -1060,7 +1059,7 @@ export class GI {
     //   - gi_output: Final GI radiance for deferred lighting passes
     // ─────────────────────────────────────────────────────────────────────
     render_graph.add_pass(
-      `gi_recurrent_blur_${ping_pong_frame}`,
+      `gi_recurrent_blur`,
       RenderPassFlags.Compute,
       {
         inputs: [

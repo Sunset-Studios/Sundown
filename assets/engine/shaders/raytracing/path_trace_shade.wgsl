@@ -90,27 +90,6 @@ fn sample_cosine_hemisphere(n: vec3<f32>, r1: f32, r2: f32) -> vec3<f32> {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// GGX importance sampling for specular reflection
-// Returns: half vector in world space
-// ─────────────────────────────────────────────────────────────────────────────
-fn sample_ggx(n: vec3<f32>, roughness: f32, r1: f32, r2: f32) -> vec3<f32> {
-    let a = roughness * roughness;
-    let a2 = a * a;
-    
-    let phi = 2.0 * PI * r1;
-    let cos_theta = sqrt((1.0 - r2) / (1.0 + (a2 - 1.0) * r2));
-    let sin_theta = sqrt(1.0 - cos_theta * cos_theta);
-    
-    // Build orthonormal basis
-    let up = select(vec3f(0.0, 1.0, 0.0), vec3f(1.0, 0.0, 0.0), abs(n.y) > 0.999);
-    let tangent = normalize(cross(up, n));
-    let bitangent = normalize(cross(n, tangent));
-    
-    let h_local = vec3f(cos(phi) * sin_theta, sin(phi) * sin_theta, cos_theta);
-    return normalize(tangent * h_local.x + bitangent * h_local.y + n * h_local.z);
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
 // PDF for cosine-weighted hemisphere sampling
 // ─────────────────────────────────────────────────────────────────────────────
 fn pdf_cosine_hemisphere(n_dot_l: f32) -> f32 {

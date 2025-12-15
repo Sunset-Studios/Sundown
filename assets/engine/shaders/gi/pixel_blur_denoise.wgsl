@@ -48,19 +48,12 @@
 // =============================================================================
 
 @group(1) @binding(0) var<uniform> gi_params: GIParams;
-// Current frame's raw temporal accumulation (from pixel_accumulate)
-// Contains fresh accumulated radiance with sample count in .w
 @group(1) @binding(1) var raw_accumulation: texture_2d<f32>;
-// Previous frame's BLURRED output - the "clean background" for recurrent blur
-// Neighbors are sampled from here, enabling temporal redistribution of spatial sampling
 @group(1) @binding(2) var gbuffer_position: texture_2d<f32>;
 @group(1) @binding(3) var gbuffer_position_prev: texture_2d<f32>;
 @group(1) @binding(4) var gbuffer_normal: texture_2d<f32>;
 @group(1) @binding(5) var gbuffer_normal_prev: texture_2d<f32>;
-// Current frame's blurred output - becomes pixel_radiance_prev next frame
-// This is what pixel_accumulate will read as history in the next frame
 @group(1) @binding(6) var pixel_radiance_curr: texture_storage_2d<rgba16float, write>;
-// Final GI output for deferred lighting passes
 @group(1) @binding(7) var gi_output: texture_storage_2d<rgba16float, write>;
 
 // =============================================================================

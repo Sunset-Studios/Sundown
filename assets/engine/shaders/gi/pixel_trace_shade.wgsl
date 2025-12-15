@@ -69,8 +69,6 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         return;
     }
     
-    var path = pixel_path_state[gid.x];
-    
     let light_view_index = u32(scene_lighting_data.view_index);
     let camera_position = view_buffer[u32(frame_info.view_index)].view_position.xyz;
     let sun_dir = normalize(-view_buffer[light_view_index].view_direction.xyz);
@@ -79,55 +77,50 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     // Handle Direct Light Visibility (NEE result from hit pass)
     // Clamp NEE contribution to prevent fireflies from bright lights
     // ─────────────────────────────────────────────────────────────────────────
-    if (path.shadow_origin.w >= 0.0 && path.state_u32.z == 1u) {
-        let nee_radiance = safe_clamp_vec3_max(path.shadow_radiance.rgb, MAX_RADIANCE_LUMINANCE);
-        path.throughput += vec4f(nee_radiance, 0.0);
-        path.shadow_origin.w = -1.0;
-        path.state_u32.z = 0u;
+    if (pixel_path_state[gid.x].shadow_origin.w >= 0.0 && pixel_path_state[gid.x].state_u32.z == 1u) {
+        let nee_radiance = safe_clamp_vec3_max(pixel_path_state[gid.x].shadow_radiance.rgb, MAX_RADIANCE_LUMINANCE);
+        pixel_path_state[gid.x].throughput += vec4f(nee_radiance, 0.0);
+        pixel_path_state[gid.x].shadow_origin.w = -1.0;
+        pixel_path_state[gid.x].state_u32.z = 0u;
     }
     
     // ─────────────────────────────────────────────────────────────────────────
     // Handle Ray Miss (Sky/Environment)
     // Clamp sky contribution to prevent sun disc fireflies on specular bounces
     // ─────────────────────────────────────────────────────────────────────────
-    if (path.state_u32.w == 0xffffffffu && path.state_u32.y != 0u) {
-        let ray_dir = path.direction_tmax.xyz;
-        
+    if (pixel_path_state[gid.x].state_u32.w == 0xffffffffu && pixel_path_state[gid.x].state_u32.y != 0u) {
         // Evaluate environment radiance
         let sky_radiance = evaluate_environment(
-            ray_dir, 
+            pixel_path_state[gid.x].direction_tmax.xyz, 
             sun_dir, 
             scene_lighting_data,
             skybox_texture
         );
         
-        // Clamp sky radiance before multiplying by path weight
-        // This prevents sun disc from causing fireflies on specular surfaces
+        // Clamp sky radiance. This prevents sun disc from causing fireflies on specular surfaces.
         let sky_contribution = safe_clamp_vec3_max(sky_radiance, MAX_RADIANCE_LUMINANCE);
-        path.throughput += vec4<f32>(sky_contribution, 0.0);
-        
-        // Mark path as dead
-        path.state_u32.y = 0u;
+        pixel_path_state[gid.x].throughput += vec4f(sky_contribution, 0.0);
+        pixel_path_state[gid.x].state_u32.y = 0u; // Mark path as dead
     }
     
     // ─────────────────────────────────────────────────────────────────────────
     // Handle Ray Hit
     // ─────────────────────────────────────────────────────────────────────────
-    if (path.state_u32.w != 0xffffffffu && path.state_u32.y != 0u) {
-        let hit_pos = path.origin_tmin.xyz;
-        let world_n = path.normal_section_index.xyz;
+    if (pixel_path_state[gid.x].state_u32.w != 0xffffffffu && pixel_path_state[gid.x].state_u32.y != 0u) {
+        let hit_pos = pixel_path_state[gid.x].origin_tmin.xyz;
+        let world_n = pixel_path_state[gid.x].normal_section_index.xyz;
         
         // ─────────────────────────────────────────────────────────────────────
         // Sample Material Properties
         // ─────────────────────────────────────────────────────────────────────
-        let prim_store = u32(path.direction_tmax.w);
+        let prim_store = u32(pixel_path_state[gid.x].direction_tmax.w);
         let entity_palette_base = material_table_offset[prim_store];
-        let section_index = u32(path.normal_section_index.w);
+        let section_index = u32(pixel_path_state[gid.x].normal_section_index.w);
         let mat_params_index = material_palette[entity_palette_base + section_index];
         let material = material_params[mat_params_index];
 
         let tiling = material.emission_roughness_metallic_tiling.w;
-        let base_uv = vec2f(path.hit_attr0.w, path.hit_attr1.w) * tiling;
+        let base_uv = vec2f(pixel_path_state[gid.x].hit_attr0.w, pixel_path_state[gid.x].hit_attr1.w) * tiling;
         let lod = 0.0;
 
         let albedo = sample_texture_or_vec4_param_handle(
@@ -149,16 +142,15 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
             material.emission_roughness_metallic_tiling.x,
             u32(material.texture_flags2.w), texture_pool_emission, lod
         );
-        let specular = sample_texture_or_float_param_handle(
+        let reflectance = sample_texture_or_float_param_handle(
             u32(material.specular_handle), base_uv,
             material.ao_height_specular.z,
             u32(material.texture_flags2.z), texture_pool_specular, lod
         );
-        let reflectance = specular;
 
         // Normal mapping
-        let world_t = path.hit_attr0.xyz;
-        let world_b = path.hit_attr1.xyz;
+        let world_t = pixel_path_state[gid.x].hit_attr0.xyz;
+        let world_b = pixel_path_state[gid.x].hit_attr1.xyz;
         var n = world_n;
         if ((u32(material.texture_flags1.y) & 1u) != 0u) {
             let tbn = mat3x3<f32>(world_t, world_b, world_n);
@@ -174,19 +166,16 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         // ─────────────────────────────────────────────────────────────────────
         if (emissive > 0.0) {
             let emissive_radiance = emissive * albedo;
-            let hit_distance = max(path.origin_tmin.w, 0.01);
-            let ray_source_pdf = path.path_weight.w;
-            let raw_contribution = emissive_radiance;
-            let contribution_luminance = raw_contribution.x * 0.2126 + raw_contribution.y * 0.7152 + raw_contribution.z * 0.0722;
+            let hit_distance = max(pixel_path_state[gid.x].origin_tmin.w, 0.001);
+            let ray_source_pdf = pixel_path_state[gid.x].path_weight.w;
+            let contribution_luminance = luminance(emissive_radiance);
                 
             // Distance-based maximum for firefly reduction
-            let distance_factor = 1.0 / hit_distance;
-            let max_contribution = emissive * PI * distance_factor;
-            
+            let max_contribution = emissive * PI * (1.0 / hit_distance);
             let scale = min(1.0, (max_contribution * ray_source_pdf) / max(contribution_luminance, 0.001));
-             
-            let emissive_contribution = safe_clamp_vec3(raw_contribution * scale);
-            path.throughput += vec4f(emissive_contribution, 0.0);
+            let emissive_contribution = safe_clamp_vec3(emissive_radiance * scale);
+
+            pixel_path_state[gid.x].throughput += vec4f(emissive_contribution, 0.0);
         }
 
         // ─────────────────────────────────────────────────────────────────────
@@ -204,20 +193,17 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
             u32(gi_params.world_cache_size),
             gi_params.world_cache_cell_size,
             u32(gi_params.world_cache_lod_count),
-            path.origin_tmin.w,
+            pixel_path_state[gid.x].origin_tmin.w,
             0u // Screen space traces rank at 0 (first hit)
         );
         
         // Apply cached radiance if valid, with firefly clamping
-        let cached_luminance = cached_radiance.x * 0.2126 + cached_radiance.y * 0.7152 + cached_radiance.z * 0.0722;
+        let cached_luminance = luminance(cached_radiance);
         if (cached_luminance > 0.0001) {
-            let cached_contribution = safe_clamp_vec3_max(cached_radiance, MAX_RADIANCE_LUMINANCE);
-            path.throughput += vec4f(cached_contribution, 0.0);
+            pixel_path_state[gid.x].throughput += vec4f(safe_clamp_vec3_max(cached_radiance, MAX_RADIANCE_LUMINANCE), 0.0);
         }
         
-        path.rng_sample_count_frame_stamp.y += 1.0;
+        pixel_path_state[gid.x].rng_sample_count_frame_stamp.y += 1.0;
     }
-    
-    pixel_path_state[gid.x] = path;
 }
 

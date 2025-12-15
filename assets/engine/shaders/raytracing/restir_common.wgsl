@@ -1,6 +1,6 @@
 const num_init_ris_samples = 4u;
-const num_spatial_samples = 1u;
-const spatial_radius = 30.0;
+const num_spatial_samples = 2u;
+const spatial_radius = 0.5;
 const max_temporal_samples = 30u;
 const max_spatial_samples = 500u;
 
@@ -27,6 +27,16 @@ struct GIReservoirData {
     reservoir: GIReservoir,
     sample: GIReservoirSample,
 };
+
+fn create_empty() -> GIReservoirData {
+    var empty: GIReservoirData;
+    empty.reservoir = gi_reservoir_init();
+    empty.sample.visible_position_source_pdf = vec4<f32>(0.0);
+    empty.sample.sample_position = vec4<f32>(0.0);
+    empty.sample.sample_normal_target_pdf = vec4<f32>(0.0);
+    empty.sample.outgoing_radiance = vec4<f32>(0.0);
+    return empty;
+}
 
 fn gi_reservoir_init() -> GIReservoir {
     var reservoir: GIReservoir;
@@ -176,4 +186,30 @@ fn compute_restir_gi_jacobian(
 
     // |J_{q->r}| = (|cos(phi_2^r)| / |cos(phi_2^q)|) * (||x1^q - x2^q||^2 / ||x1^r - x2^q||^2)
     return (cos_r / max(cos_q, 1e-6)) * (dist2_q / dist2_r);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Compute target PDF with Jacobian adjustment for spatial reuse
+// When reusing a sample from a different surface, apply Jacobian to account
+// for the change in solid angle measure between surfaces.
+// ─────────────────────────────────────────────────────────────────────────────
+fn compute_reuse_target_pdf(
+    sample: GIReservoirSample,
+    target_visible_position: vec3<f32>
+) -> f32 {
+    let source_visible_position = sample.visible_position_source_pdf.xyz;
+    let sample_position = sample.sample_position.xyz;
+    let sample_normal = safe_normalize(sample.sample_normal_target_pdf.xyz);
+
+    let jacobian = compute_restir_gi_jacobian(
+        sample_normal,
+        source_visible_position,
+        target_visible_position,
+        sample_position
+    );
+
+    // Algorithm 4: beta_hat'_q = beta_hat_q / |J_{q->r}|
+    // We use beta_hat = p_hat = luminance(f(y)), where f(y) is the *unweighted integrand*
+    // stored in `sample.outgoing_radiance.xyz`.
+    return sample.sample_normal_target_pdf.w / max(jacobian, 1e-6);
 }

@@ -134,26 +134,6 @@ fn blue_noise_next(sampler: ptr<function, BlueNoiseSampler>) -> f32 {
 }
 
 // =============================================================================
-// BRDF Sampling Functions (duplicated for standalone compilation)
-// =============================================================================
-
-fn sample_ggx(n: vec3<f32>, roughness: f32, r1: f32, r2: f32) -> vec3<f32> {
-    let a = roughness * roughness;
-    let a2 = a * a;
-    
-    let phi = 2.0 * PI * r1;
-    let cos_theta = sqrt((1.0 - r2) / (1.0 + (a2 - 1.0) * r2));
-    let sin_theta = sqrt(1.0 - cos_theta * cos_theta);
-    
-    let up = select(vec3f(0.0, 1.0, 0.0), vec3f(1.0, 0.0, 0.0), abs(n.y) > 0.999);
-    let tangent = normalize(cross(up, n));
-    let bitangent = normalize(cross(n, tangent));
-    
-    let h_local = vec3f(cos(phi) * sin_theta, sin(phi) * sin_theta, cos_theta);
-    return normalize(tangent * h_local.x + bitangent * h_local.y + n * h_local.z);
-}
-
-// =============================================================================
 // MAIN COMPUTE SHADER
 // =============================================================================
 
@@ -174,7 +154,6 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let pixel_x = gid.x % resolution.x;
     let pixel_y = gid.x / resolution.x;
     let pixel_coord = vec2<u32>(pixel_x, pixel_y);
-    let pixel_coord_i32 = vec2<i32>(i32(pixel_x), i32(pixel_y));
     
     // ─────────────────────────────────────────────────────────────────────────
     // Determine tile dimensions and which tile this pixel belongs to
@@ -220,14 +199,8 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
             continue;
         }
         
-        // ─────────────────────────────────────────────────────────────────────
-        // This pixel is selected for ray_slot - initialize the ray
-        // Update sampler to use pixel coords for remaining BRDF samples
-        // ─────────────────────────────────────────────────────────────────────
-        bn_sampler.base_coord = pixel_coord;
-        
         // Process this pixel for the given ray_slot
-        process_selected_pixel(ray_slot, pixel_coord, pixel_coord_i32, &bn_sampler);
+        process_selected_pixel(ray_slot, pixel_coord, &bn_sampler, resolution);
     }
 }
 
@@ -238,18 +211,16 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
 fn process_selected_pixel(
     ray_slot: u32,
     pixel_coord: vec2<u32>,
-    pixel_coord_i32: vec2<i32>,
-    bn_sampler: ptr<function, BlueNoiseSampler>
+    bn_sampler: ptr<function, BlueNoiseSampler>,
+    resolution: vec2<u32>
 ) {
     let frame_id = u32(gi_params.frame_index);
-    let res = textureDimensions(gbuffer_position);
-    let pixel_index = pixel_coord.y * res.x + pixel_coord.x;
+    let pixel_index = pixel_coord.y * resolution.x + pixel_coord.x;
     
     // ─────────────────────────────────────────────────────────────────────────
     // Sample G-buffer at selected pixel location
     // ─────────────────────────────────────────────────────────────────────────
-    let position = textureLoad(gbuffer_position, pixel_coord_i32, 0).xyz;
-    let normal_data = textureLoad(gbuffer_normal, pixel_coord_i32, 0);
+    let normal_data = textureLoad(gbuffer_normal, pixel_coord, 0u);
     let normal = safe_normalize(normal_data.xyz);
     let normal_length = length(normal_data.xyz);
     
@@ -259,9 +230,10 @@ fn process_selected_pixel(
         return;
     }
     
-    let albedo = textureLoad(gbuffer_albedo, pixel_coord_i32, 0).rgb;
-    let smra = textureLoad(gbuffer_smra, pixel_coord_i32, 0);
-    let motion_emissive = textureLoad(gbuffer_motion, pixel_coord_i32, 0);
+    let position = textureLoad(gbuffer_position, pixel_coord, 0u).xyz;
+    let albedo = textureLoad(gbuffer_albedo, pixel_coord, 0u).rgb;
+    let smra = textureLoad(gbuffer_smra, pixel_coord, 0u);
+    let motion_emissive = textureLoad(gbuffer_motion, pixel_coord, 0u);
 
     let roughness = smra.g;
     let metallic = smra.b;
@@ -274,20 +246,19 @@ fn process_selected_pixel(
     // Get view direction
     // ─────────────────────────────────────────────────────────────────────────
     let view_index = u32(frame_info.view_index);
-    let view = view_buffer[view_index];
-    let v_dir = normalize(view.view_position.xyz - position);
+    let v_dir = normalize(view_buffer[view_index].view_position.xyz - position);
     let n_dot_v = max(dot(v_dir, normal), 0.0001);
     
     // ═════════════════════════════════════════════════════════════════════════
-    // BRDF-GUIDED IMPORTANCE SAMPLING WITH ReSTIR
+    // Initial candidate sample generation using RIS 
     // ═════════════════════════════════════════════════════════════════════════
     
-    let clamped_roughness = clamp(roughness, 0.04, 1.0);
+    let clamped_roughness = clamp(roughness, 0.001, 1.0);
     let dielectric_f0 = 0.16 * reflectance * reflectance;
     let f0 = mix(vec3<f32>(dielectric_f0), albedo, metallic);
     
     let f = f_schlick_vec3(f0, 1.0, n_dot_v);
-    let fresnel_luminance = (f.x + f.y + f.z) / 3.0;
+    let fresnel_luminance = luminance(f);
 
     // ─────────────────────────────────────────────────────────────────────────
     // RNG Setup
@@ -299,31 +270,12 @@ fn process_selected_pixel(
     // ─────────────────────────────────────────────────────────────────────────
     // Compute optimal specular vs diffuse sampling probability
     // ─────────────────────────────────────────────────────────────────────────
-    // The probability should balance the expected contribution from each lobe:
-    //
-    // For metals (metallic ≈ 1):
-    //   - No diffuse term exists, must sample 100% specular
-    //   - diffuse_weight naturally becomes 0
-    //
-    // For dielectrics:
-    //   - Specular: weighted by Fresnel reflectance
-    //   - Diffuse: weighted by (1-Fresnel) × albedo (transmitted light that scatters)
-    //
-    // This ensures we sample proportionally to expected radiance contribution,
-    // minimizing variance compared to a fixed probability.
-    // ─────────────────────────────────────────────────────────────────────────
-    let albedo_luminance = dot(albedo, vec3<f32>(0.2126, 0.7152, 0.0722));
-    
-    // Specular weight: Fresnel reflectance (higher at grazing angles)
-    let specular_weight = fresnel_luminance;
-    
     // Diffuse weight: only for non-metals, scaled by (1-Fresnel) and albedo
     // Metals have no diffuse term, so (1-metallic) zeros this out
-    let diffuse_weight = (1.0 - metallic) * (1.0 - fresnel_luminance) * albedo_luminance;
+    let diffuse_weight = (1.0 - metallic) * (1.0 - fresnel_luminance) * luminance(albedo);
     
     // Probability of sampling specular lobe
-    let total_weight = specular_weight + diffuse_weight;
-    let specular_prob = clamp(specular_weight / max(total_weight, 0.001), 0.001, 0.999);
+    let specular_prob = clamp(fresnel_luminance / max(fresnel_luminance + diffuse_weight, 0.001), 0.001, 0.999);
 
         // ─────────────────────────────────────────────────────────────────────────
     // Generate BRDF sampling candidates using blue noise
@@ -331,7 +283,8 @@ fn process_selected_pixel(
     // reducing variance and improving convergence speed
     // ─────────────────────────────────────────────────────────────────────────
     var candidate_samples: array<GISampleCandidate, num_init_ris_samples>;
-    
+    var gi_reservoir = gi_reservoir_init();
+
     for (var i = 0u; i < num_init_ris_samples; i = i + 1u) {
         // Sample three blue noise values for this candidate
         rng = random_seed(rng);
@@ -351,54 +304,40 @@ fn process_selected_pixel(
             dir = normalize(reflect(-v_dir, h));
         } else {
             // ─────────────────────────────────────────────────────────────────
-            // Cosine-Weighted Diffuse Sampling
+            // Uniform Hemisphere Sampling
             // ─────────────────────────────────────────────────────────────────
             dir = sample_uniform_hemisphere(normal, r1, r2);
         }
 
-        let pdf = brdf_pdf(normal, v_dir, dir, roughness, specular_prob);
-        
+        let source_pdf = brdf_pdf(normal, v_dir, dir, roughness, specular_prob);
         // Evaluate BRDF for this direction
         let brdf = calculate_brdf_lighting_rt(
             normal, v_dir, dir, roughness, metallic,
             reflectance, clear_coat, clear_coat_roughness
         );
-        
-        candidate_samples[i].radiance_and_target_pdf = vec4f(brdf, luminance(brdf));
-        candidate_samples[i].direction_and_source_pdf = vec4f(dir, pdf);
-    }
-    
-    // ─────────────────────────────────────────────────────────────────────────
-    // Perform RIS on candidates using blue noise for reservoir selection
-    // ─────────────────────────────────────────────────────────────────────────
-    var gi_reservoir = gi_reservoir_init();
-    for (var i = 0u; i < num_init_ris_samples; i = i + 1u) {
-        let sample = candidate_samples[i];
-        let target_pdf = sample.radiance_and_target_pdf.w;
-        let ris_weight = target_pdf / max(sample.direction_and_source_pdf.w, 0.0001);
-        
+        let target_pdf = luminance(brdf);
+
+        let ris_weight = target_pdf / max(source_pdf, 0.0001);
         if (ris_weight > 0.0 && !isinf(ris_weight)) {
-            // Use blue noise for reservoir random selection
-            rng = random_seed(rng);
-            gi_reservoir_update_with_rand(&gi_reservoir, i, ris_weight, rand_float(rng), max_spatial_samples);
+            gi_reservoir_update(&gi_reservoir, i, ris_weight, &rng, max_spatial_samples);
         }
+        
+        candidate_samples[i].radiance_and_target_pdf = vec4f(brdf, target_pdf);
+        candidate_samples[i].direction_and_source_pdf = vec4f(dir, source_pdf);
     }
     
     // ─────────────────────────────────────────────────────────────────────────
     // Finalize reservoir and select best direction
     // ─────────────────────────────────────────────────────────────────────────
-    let selected_sample = candidate_samples[gi_reservoir.selected_index];
-    let selected_dir = selected_sample.direction_and_source_pdf.xyz;
-    let selected_brdf = selected_sample.radiance_and_target_pdf.xyz;
-    let selected_target = selected_sample.radiance_and_target_pdf.w;
-    gi_reservoir_finalize(&gi_reservoir, selected_target);
-    
-    let ray_dir = selected_dir;
-    let ray_source_pdf = selected_sample.direction_and_source_pdf.w;
+    let selected_index = gi_reservoir.selected_index;
+    let ray_dir = candidate_samples[selected_index].direction_and_source_pdf.xyz;
+    let ray_source_pdf = candidate_samples[selected_index].direction_and_source_pdf.w;
+    let ray_brdf = candidate_samples[selected_index].radiance_and_target_pdf.xyz;
+    let selected_target_pdf = candidate_samples[selected_index].radiance_and_target_pdf.w;
+    gi_reservoir_finalize(&gi_reservoir, selected_target_pdf);
     
     // Update path weight with BRDF and reservoir weight
-    let brdf_weight = selected_brdf * gi_reservoir.w;
-    let path_weight = brdf_weight * gi_params.indirect_boost;
+    let path_weight = ray_brdf * gi_reservoir.w * gi_params.indirect_boost;
 
     // ═════════════════════════════════════════════════════════════════════════
     // NEXT EVENT ESTIMATION (NEE) - DIRECT LIGHTING
@@ -425,9 +364,9 @@ fn process_selected_pixel(
         let light_contrib = safe_clamp_vec3_max(raw_light_contrib, MAX_NEE_LUMINANCE);
         
         // Setup shadow ray for visibility test
-        let selected_distance = select(1e30, length(light.position.xyz - position), light.light_type != 0.0);
+        let light_distance = select(1e30, length(light.position.xyz - position), light.light_type != 0.0);
         pixel_path_state[ray_slot].shadow_origin = vec4f(position + normal * 0.001, f32(light_idx));
-        pixel_path_state[ray_slot].shadow_direction = vec4f(light_dir, selected_distance * 0.999);
+        pixel_path_state[ray_slot].shadow_direction = vec4f(light_dir, light_distance * 0.999);
         pixel_path_state[ray_slot].shadow_radiance = vec4f(light_contrib, 1.0);
     } else {
         pixel_path_state[ray_slot].shadow_origin = vec4<f32>(0.0, 0.0, 0.0, -1.0);
@@ -435,17 +374,9 @@ fn process_selected_pixel(
         pixel_path_state[ray_slot].shadow_radiance = vec4<f32>(0.0, 0.0, 0.0, 0.0);
     }
     
-    // ═════════════════════════════════════════════════════════════════════════
-    // STORE PATH STATE
-    // Store blue noise dimension in RNG field for subsequent passes to continue
-    // ═════════════════════════════════════════════════════════════════════════
-    
     // ─────────────────────────────────────────────────────────────────────────
-    // Clamp initial emissive contribution to prevent fireflies
-    // This is the primary surface emission from the G-buffer
+    // Store path state for initial bounce
     // ─────────────────────────────────────────────────────────────────────────
-    let initial_emissive = safe_clamp_vec3_max(emissive * albedo, MAX_INITIAL_EMISSIVE);
-    
     pixel_path_state[ray_slot].origin_tmin = vec4<f32>(position + normal * 0.001, 0.0001);
     pixel_path_state[ray_slot].direction_tmax = vec4<f32>(ray_dir, 1e30);
     pixel_path_state[ray_slot].normal_section_index = vec4<f32>(normal, 0.0);
@@ -454,7 +385,7 @@ fn process_selected_pixel(
     pixel_path_state[ray_slot].hit_attr1 = vec4<f32>(0.0);
     pixel_path_state[ray_slot].rng_sample_count_frame_stamp = vec4<f32>(f32(rng), 0.0, f32(frame_id), 0.0);
     pixel_path_state[ray_slot].path_weight = vec4<f32>(path_weight, ray_source_pdf);
-    pixel_path_state[ray_slot].throughput = vec4<f32>(initial_emissive, 0.0);
+    pixel_path_state[ray_slot].throughput = vec4<f32>(safe_clamp_vec3_max(emissive * albedo, MAX_INITIAL_EMISSIVE), 0.0);
     pixel_path_state[ray_slot].pixel_coords = vec4<f32>(f32(pixel_coord.x), f32(pixel_coord.y), 0.0, 0.0);
 
     // ─────────────────────────────────────────────────────────────────────────

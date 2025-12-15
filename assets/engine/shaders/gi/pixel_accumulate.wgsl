@@ -20,7 +20,6 @@
 // ║  3. Geometry-Only Validation:                                             ║
 // ║     - Depth similarity test per corner                                    ║
 // ║     - Normal similarity test per corner                                   ║
-// ║     - No luminance-based rejection (handled by recurrent blur)            ║
 // ║                                                                           ║
 // ║  Note: pixel_radiance_prev contains the BLURRED output from last frame    ║
 // ║  (output of recurrent blur), ensuring history is "clean background".      ║
@@ -70,18 +69,13 @@ const NORMAL_THRESHOLD = 0.95;         // Normal dot product threshold
 // Lower = faster response to changes, Higher = more stable but more lag
 // With upscaling, effective convergence time = MAX_FRAMES × upscale_factor
 // ─────────────────────────────────────────────────────────────────────────────
-const MAX_ACCUMULATED_FRAMES = 4.0;
+const MAX_ACCUMULATED_FRAMES = 16.0;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Firefly Prevention: Maximum output luminance
 // This is the final safety clamp for all GI output
 // ─────────────────────────────────────────────────────────────────────────────
 const MAX_OUTPUT_LUMINANCE = 10.0;
-
-// =============================================================================
-// BILINEAR REPROJECTION HELPERS
-// =============================================================================
-// Based on ReBLUR's "Ghosting Free Temporal Reprojection" implementation
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Compute bilinear filter origin and weights from sub-pixel UV coordinates
