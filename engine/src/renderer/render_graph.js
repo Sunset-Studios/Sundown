@@ -615,7 +615,7 @@ export class RenderGraph {
    * This method allocates a new buffer resource, sets up its configuration, and registers it in the graph.
    *
    * @param {Object} config - The configuration object for the buffer.
-   * @param {number} config.size - The size of the buffer in bytes.
+   * @param {number} config.size - The size of the buffer in elements.
    * @param {number} config.usage - The usage flags for the buffer (e.g., GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST).
    * @param {boolean} [config.b_is_bindless=false] - Whether the buffer should be bindless.
    * @returns {number} The handle of the newly created buffer resource.

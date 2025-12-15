@@ -35,21 +35,21 @@ fn cs(
     let value = select(0u, active_flags_in[global_idx], global_idx < arrayLength(&active_flags_in));
     
 #if HAS_SUBGROUPS
-    // Native subgroup-level exclusive scan (hardware accelerated!)
+    // Native subgroup-level exclusive scan
     let warp_ctx = make_warp_ctx(local_idx, sid, ss);
     let subgroup_exclusive = warp_scan_exclusive_add_u32(warp_ctx, value);
     let subgroup_total = warp_reduce_add_u32(warp_ctx, value);
     
     // Store subgroup totals for cross-subgroup accumulation
-    let subgroup_id = local_idx / ss;
+    //let subgroup_id = local_idx / ss;
     if (is_warp_leader(warp_ctx)) {
-        subgroup_sums[subgroup_id] = subgroup_total;
+        subgroup_sums[sid] = subgroup_total;
     }
     workgroupBarrier();
     
     // Accumulate prefix from previous subgroups
     var prefix_from_previous_subgroups = 0u;
-    for (var i = 0u; i < subgroup_id; i = i + 1u) {
+    for (var i = 0u; i < sid; i = i + 1u) {
         prefix_from_previous_subgroups = prefix_from_previous_subgroups + subgroup_sums[i];
     }
     

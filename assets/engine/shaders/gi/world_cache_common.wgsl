@@ -68,12 +68,12 @@ struct PcgHashState {
 // Indexed by descriptor: quantized_position + quantized_direction + LOD
 struct WorldCacheCell {
     position_frame: vec4<f32>,      // xyz = world position, w = frame stamp
-    normal_count: vec4<f32>,        // xyz = normal (direction), w = sample count
-    radiance_w: vec4<f32>,          // xyz = radiance, w = confidence weight
+    normal_rank: vec4<f32>,        // xyz = normal (direction), w = rank
+    radiance_m: vec4<f32>,          // xyz = radiance, w = sample count
     albedo_roughness: vec4<f32>,    // xyz = albedo, w = roughness
     material_props: vec4<f32>,      // x = metallic, y = reflectance, z = emissive, w = unused
     fingerprint: atomic<u32>,
-    rank: u32,
+    padding1: u32,
     padding2: u32,
     padding3: u32,
 };
@@ -261,28 +261,27 @@ fn query_world_cache_cell(
             WORLD_CACHE_CELL_EMPTY, 
             target_fingerprint
         ).old_value;
-        let existing_rank = world_cache[cell_index].rank;
+        let existing_rank = u32(world_cache[cell_index].normal_rank.w);
 
         if (existing_fingerprint == target_fingerprint && rank <= existing_rank) {
             // Cache hit: found matching entry, refresh lifetime and return radiance
             world_cache[cell_index].position_frame = vec4<f32>(position, WORLD_CACHE_CELL_LIFETIME);
-            world_cache[cell_index].normal_count = vec4<f32>(normal, world_cache[cell_index].normal_count.w);
+            world_cache[cell_index].normal_rank = vec4<f32>(normal, world_cache[cell_index].normal_rank.w);
             world_cache[cell_index].albedo_roughness = vec4<f32>(albedo, roughness);
             world_cache[cell_index].material_props = vec4<f32>(metallic, reflectance, emissive, 0.0);
-            return world_cache[cell_index].radiance_w.xyz;
+            return world_cache[cell_index].radiance_m.xyz;
         } else if (existing_fingerprint == WORLD_CACHE_CELL_EMPTY) {
             // Empty slot: initialize new cache entry
             world_cache[cell_index].position_frame = vec4<f32>(position, WORLD_CACHE_CELL_LIFETIME);
-            world_cache[cell_index].normal_count = vec4<f32>(normal, 0.0);
+            world_cache[cell_index].normal_rank = vec4<f32>(normal, world_cache[cell_index].normal_rank.w + 1.0);
             world_cache[cell_index].albedo_roughness = vec4<f32>(albedo, roughness);
             world_cache[cell_index].material_props = vec4<f32>(metallic, reflectance, emissive, 0.0);
-            world_cache[cell_index].radiance_w = vec4<f32>(0.0);
-            world_cache[cell_index].rank = rank + 1u;
+            world_cache[cell_index].radiance_m = vec4<f32>(0.0);
             return vec3<f32>(0.0);
         }
 
         // Probe next slot within bucket (stay within bucket boundaries)
-        cell_index = bucket_start + (probe + pcg_hash_next(&pcg_state, BUCKET_SIZE)) % BUCKET_SIZE;
+        cell_index = bucket_start + ((probe + pcg_hash_next(&pcg_state, BUCKET_SIZE)) % BUCKET_SIZE);
     }
 
     return vec3<f32>(0.0);
@@ -410,11 +409,11 @@ fn read_neighbor_cell_for_interpolation(
     for (var probe = 0u; probe < BUCKET_SIZE; probe = probe + 1u) {
         let existing_fingerprint = atomicLoad(&world_cache[cell_index].fingerprint);
         
-        if (existing_fingerprint == target_fingerprint && rank <= world_cache[cell_index].rank) {
+        if (existing_fingerprint == target_fingerprint && rank <= u32(world_cache[cell_index].normal_rank.w)) {
             // Found matching cell - extract radiance and compute validity weight
-            let radiance = world_cache[cell_index].radiance_w.xyz;
-            let cell_normal = world_cache[cell_index].normal_count.xyz;
-            let sample_count = world_cache[cell_index].normal_count.w;
+            let radiance = world_cache[cell_index].radiance_m.xyz;
+            let cell_normal = world_cache[cell_index].normal_rank.xyz;
+            let sample_count = world_cache[cell_index].radiance_m.w;
             
             // Normal alignment factor: prefer cells facing similar direction
             // Use saturated dot product for hemisphere compatibility
@@ -617,11 +616,11 @@ fn read_world_cache_cell_radiance(
     
     var cell_index = bucket_start;
     for (var cell = 0u; cell < BUCKET_SIZE; cell = cell + 1u) {
-        if (atomicLoad(&world_cache[cell_index].fingerprint) == target_fingerprint && rank <= world_cache[cell_index].rank) {
-            return world_cache[cell_index].radiance_w.xyz;
+        if (atomicLoad(&world_cache[cell_index].fingerprint) == target_fingerprint && rank <= u32(world_cache[cell_index].normal_rank.w)) {
+            return world_cache[cell_index].radiance_m.xyz;
         }
         // Probe next slot within bucket (stay within bucket boundaries)
-        cell_index = bucket_start + (cell + pcg_hash_next(&pcg_state, BUCKET_SIZE)) % BUCKET_SIZE;
+        cell_index = bucket_start + ((cell + pcg_hash_next(&pcg_state, BUCKET_SIZE)) % BUCKET_SIZE);
     }
     return vec3<f32>(0.0);
 }
@@ -665,10 +664,10 @@ fn read_world_cache_cell_rank(
     var cell_index = bucket_start;
     for (var cell = 0u; cell < BUCKET_SIZE; cell = cell + 1u) {
         if (atomicLoad(&world_cache[cell_index].fingerprint) == target_fingerprint) {
-            return world_cache[cell_index].rank;
+            return u32(world_cache[cell_index].normal_rank.w);
         }
         // Probe next slot within bucket (stay within bucket boundaries)
-        cell_index = bucket_start + (cell + pcg_hash_next(&pcg_state, BUCKET_SIZE)) % BUCKET_SIZE;
+        cell_index = bucket_start + ((cell + pcg_hash_next(&pcg_state, BUCKET_SIZE)) % BUCKET_SIZE);
     }
     return 0u;
 }
@@ -713,11 +712,11 @@ fn validate_world_cache_cell(
     
     var cell_index = bucket_start;
     for (var cell = 0u; cell < BUCKET_SIZE; cell = cell + 1u) {
-        if (atomicLoad(&world_cache[cell_index].fingerprint) == target_fingerprint && rank <= world_cache[cell_index].rank) {
+        if (atomicLoad(&world_cache[cell_index].fingerprint) == target_fingerprint && rank <= u32(world_cache[cell_index].normal_rank.w)) {
             return true;
         }
         // Probe next slot within bucket (stay within bucket boundaries)
-        cell_index = bucket_start + (cell + pcg_hash_next(&pcg_state, BUCKET_SIZE)) % BUCKET_SIZE;
+        cell_index = bucket_start + ((cell + pcg_hash_next(&pcg_state, BUCKET_SIZE)) % BUCKET_SIZE);
     }
     return false;
 }

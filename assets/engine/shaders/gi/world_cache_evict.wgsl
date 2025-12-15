@@ -19,8 +19,8 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         world_cache[gid.x].position_frame.w = life;
         if (life <= 0.0) {
             world_cache[gid.x].position_frame = vec4<f32>(0.0);
-            world_cache[gid.x].normal_count = vec4<f32>(0.0);
-            world_cache[gid.x].radiance_w = vec4<f32>(0.0);
+            world_cache[gid.x].normal_rank = vec4<f32>(0.0);
+            world_cache[gid.x].radiance_m = vec4<f32>(0.0);
             atomicStore(&world_cache[gid.x].fingerprint, WORLD_CACHE_CELL_EMPTY);
         }
     }

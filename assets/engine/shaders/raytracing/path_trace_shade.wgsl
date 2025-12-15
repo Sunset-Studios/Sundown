@@ -160,8 +160,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
 
     // Get sun direction for sky evaluation
     let light_view_index = u32(scene_lighting_data.view_index);
-    let light_view = view_buffer[light_view_index];
-    let sun_dir = normalize(-light_view.view_direction.xyz);
+    let sun_dir = normalize(-view_buffer[light_view_index].view_direction.xyz);
     
     // ─────────────────────────────────────────────────────────────────────────
     // Handle sky miss - ray escaped the scene
@@ -361,7 +360,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
             // ─────────────────────────────────────────────────────────────────
             // Cosine-Weighted Diffuse Sampling
             // ─────────────────────────────────────────────────────────────────
-            next_dir = sample_cosine_hemisphere(n, r1, r2);
+            next_dir = sample_uniform_hemisphere(n, r1, r2);
         }
         
         pdf = brdf_pdf(n, v_dir, next_dir, roughness, specular_prob);

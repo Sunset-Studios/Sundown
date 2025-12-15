@@ -105,7 +105,7 @@ export const UIContext = {
   /**
    * Global layout allocator.
    */
-  layout_allocator: new FrameAllocator(256, LayoutStackContainer),
+  layout_allocator: new FrameAllocator(1024, LayoutStackContainer),
   /**
    * Global layout stack.
    */

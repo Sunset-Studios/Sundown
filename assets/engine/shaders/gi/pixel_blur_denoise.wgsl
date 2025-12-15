@@ -53,16 +53,15 @@
 @group(1) @binding(1) var raw_accumulation: texture_2d<f32>;
 // Previous frame's BLURRED output - the "clean background" for recurrent blur
 // Neighbors are sampled from here, enabling temporal redistribution of spatial sampling
-@group(1) @binding(2) var pixel_radiance_prev: texture_2d<f32>;
-@group(1) @binding(3) var gbuffer_position: texture_2d<f32>;
-@group(1) @binding(4) var gbuffer_position_prev: texture_2d<f32>;
-@group(1) @binding(5) var gbuffer_normal: texture_2d<f32>;
-@group(1) @binding(6) var gbuffer_normal_prev: texture_2d<f32>;
+@group(1) @binding(2) var gbuffer_position: texture_2d<f32>;
+@group(1) @binding(3) var gbuffer_position_prev: texture_2d<f32>;
+@group(1) @binding(4) var gbuffer_normal: texture_2d<f32>;
+@group(1) @binding(5) var gbuffer_normal_prev: texture_2d<f32>;
 // Current frame's blurred output - becomes pixel_radiance_prev next frame
 // This is what pixel_accumulate will read as history in the next frame
-@group(1) @binding(7) var pixel_radiance_curr: texture_storage_2d<rgba16float, write>;
+@group(1) @binding(6) var pixel_radiance_curr: texture_storage_2d<rgba16float, write>;
 // Final GI output for deferred lighting passes
-@group(1) @binding(8) var gi_output: texture_storage_2d<rgba16float, write>;
+@group(1) @binding(7) var gi_output: texture_storage_2d<rgba16float, write>;
 
 // =============================================================================
 // CONSTANTS
@@ -73,7 +72,7 @@
 // BASE_RADIUS: Maximum blur radius in PIXELS when sample_count = 0
 // As samples accumulate, effective radius = BASE_RADIUS / (1 + sample_count)
 // ─────────────────────────────────────────────────────────────────────────────
-const BASE_BLUR_RADIUS: f32 = 4.0;
+const BASE_BLUR_RADIUS: f32 = 8.0;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Number of samples per blur pass

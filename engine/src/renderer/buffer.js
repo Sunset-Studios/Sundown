@@ -33,7 +33,7 @@ export class Buffer {
       this.config.size = buffer_data.byteLength;
     }
 
-    this.config.size = this.config.size || buffer_data.byteLength;
+    this.config.size = buffer_data.byteLength;
 
     this.buffer = renderer.device.createBuffer({
       label: this.config.name,

@@ -5,6 +5,7 @@
 const HPLOC_WAVE_SIZE = 128u;
 const QUANT_BITS = 10u;
 const QUANT_MAX = 1023u;
+const NODE_STACK_SIZE = 12;
 
 // ------------------------------------------------------------------------------------
 // Data Structures 

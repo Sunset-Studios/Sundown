@@ -21,10 +21,6 @@ struct BloomResolveConstants {
 @group(1) @binding(2) var scene_depth: texture_2d<f32>;
 @group(1) @binding(3) var<uniform> bloom_resolve_constants: BloomResolveConstants;
 
-fn luminance(color: vec3<f32>) -> f32 {
-    return dot(color, vec3<f32>(0.2126, 0.7152, 0.0722));
-}
-
 fn apply_bloom(scene: vec3<f32>, bloom: vec3<f32>, intensity: f32, threshold: f32, knee: f32) -> vec3<f32> {
     let scene_luminance = luminance(scene);
     

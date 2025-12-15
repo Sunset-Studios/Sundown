@@ -509,3 +509,22 @@ fn compute_phased_pixel_coords(linear_index: u32, res: vec2<u32>, trace_rate: u3
 
     return pixel_coords;
 }
+
+// Copy the sign bit from B onto A.
+fn copysign(a: f32, b: f32) -> f32 {
+    return bitcast<f32>((bitcast<u32>(a) & 0x7FFFFFFF) | (bitcast<u32>(b) & 0x80000000));
+}
+
+// Constructs a right-handed orthonormal basis from a given unit Z vector.
+fn orthonormalize(z_basis: vec3<f32>) -> mat3x3<f32> {
+    let sign = copysign(1.0, z_basis.z);
+    let a = -1.0 / (sign + z_basis.z);
+    let b = z_basis.x * z_basis.y * a;
+    let x_basis = vec3(1.0 + sign * z_basis.x * z_basis.x * a, sign * b, -sign * z_basis.x);
+    let y_basis = vec3(b, sign + z_basis.y * z_basis.y * a, -z_basis.y);
+    return mat3x3(x_basis, y_basis, z_basis);
+}
+
+fn luminance(v: vec3<f32>) -> f32 {
+    return v.x * 0.2126 + v.y * 0.7152 + v.z * 0.0722;
+}

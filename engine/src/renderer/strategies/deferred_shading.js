@@ -1350,7 +1350,6 @@ export class DeferredShadingStrategy {
           blas_atlas,
           entity_transforms,
           mesh_asset_ids_buffer,
-          index_buffer,
           dense_lights,
           light_count,
           draw_count,

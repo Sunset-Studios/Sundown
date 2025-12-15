@@ -166,15 +166,36 @@ fn compute_spot_angle_attenuation(cos_theta: f32, cos_inner: f32, cos_outer: f32
 // ------------------------------------------------------------------------------------
 // PDF Sampling 
 // ------------------------------------------------------------------------------------
-fn brdf_pdf(normal: vec3<f32>, view_dir: vec3<f32>, sample_dir: vec3<f32>, roughness: f32, mis_specular_prob: f32) -> f32 {
+fn uniform_hemisphere_pdf() -> f32 {
+    return 1.0 / (2.0 * PI);
+}
+
+fn cosine_hemisphere_pdf(normal: vec3<f32>, sample_dir: vec3<f32>) -> f32 {
+    return dot(normal, sample_dir) / PI;
+}
+
+fn ggx_pdf(normal: vec3<f32>, view_dir: vec3<f32>, sample_dir: vec3<f32>, roughness: f32) -> f32 {
     let h = normalize(view_dir + sample_dir);
-    let n_dot_l = max(dot(normal, sample_dir), 0.0001);
     let n_dot_h = max(dot(normal, h), 0.0001);
-    let v_dot_h = max(dot(view_dir, h), 0.0001);
     let d = d_ggx(n_dot_h, roughness);
-    let cosine_pdf = n_dot_l / PI;
-    let ggx_pdf = d * n_dot_h / max(4.0 * v_dot_h, 0.0001);
-    return mis_specular_prob * ggx_pdf + (1.0 - mis_specular_prob) * cosine_pdf;
+    return d * n_dot_h / max(4.0 * max(dot(view_dir, h), 0.0001), 0.0001);
+}
+
+fn brdf_pdf(normal: vec3<f32>, view_dir: vec3<f32>, sample_dir: vec3<f32>, roughness: f32, mis_specular_prob: f32) -> f32 {
+    let uniform_pdf = cosine_hemisphere_pdf(normal, sample_dir);
+    let ggx_pdf = ggx_pdf(normal, view_dir, sample_dir, roughness);
+    return mis_specular_prob * ggx_pdf + (1.0 - mis_specular_prob) * uniform_pdf;
+}
+
+// https://www.pbr-book.org/3ed-2018/Monte_Carlo_Integration/2D_Sampling_with_Multidimensional_Transformations#UniformlySamplingaHemisphere
+fn sample_uniform_hemisphere(normal: vec3<f32>, r1: f32, r2: f32) -> vec3<f32> {
+    let cos_theta = sqrt(1.0 - r2);
+    let phi = 2.0 * PI * r1;
+    let sin_theta = sqrt(max(1.0 - cos_theta * cos_theta, 0.0));
+    let x = sin_theta * cos(phi);
+    let y = sin_theta * sin(phi);
+    let z = cos_theta;
+    return orthonormalize(normal) * vec3<f32>(x, y, z);
 }
 
 // ------------------------------------------------------------------------------------

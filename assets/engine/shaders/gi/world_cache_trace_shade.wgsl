@@ -34,29 +34,20 @@
 
 @compute @workgroup_size(128, 1, 1)
 fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
-    // Thread ID maps to index in compacted active cell array
-    let active_index = gid.x;
-    let active_cache_cell_count = atomicLoad(&gi_counters.active_cache_cell_count);
-    
     // Early exit if beyond active cell count
-    if (active_index >= active_cache_cell_count) {
+    if (gid.x >= atomicLoad(&gi_counters.active_cache_cell_count)) {
         return;
     }
     
     // Get actual world cache cell index from compacted array
-    let cell_index = compacted_indices[active_index];
-    let path = world_cache_path_state[active_index];
-    
-    let bounce = path.state_u32.x;
-    let tri_id = path.state_u32.w;
+    let cell_index = compacted_indices[gid.x];
+    let path = world_cache_path_state[gid.x];
     
     let light_view_index = u32(scene_lighting_data.view_index);
-    let light_view = view_buffer[light_view_index];
     let camera_position = view_buffer[u32(frame_info.view_index)].view_position.xyz;
-    let sun_dir = normalize(-light_view.view_direction.xyz);
-    let v_dir = normalize(camera_position - path.origin_tmin.xyz);
+    let sun_dir = normalize(-view_buffer[light_view_index].view_direction.xyz);
 
-    var rng = u32(world_cache_path_state[active_index].rng_rank_frame_stamp.x);
+    var rng = u32(world_cache_path_state[gid.x].rng_rank_frame_stamp.x);
     if (rng == 0u) { rng = hash(cell_index ^ u32(gi_params.frame_index)); }
     else { rng = random_seed(rng); }
 
@@ -67,14 +58,14 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     // === Handle primary vertex visibility ray throughput (direct lighting) ===
     if (path.shadow_origin.w >= 0.0 && path.state_u32.z == 1u) {
         radiance_contribution += path.shadow_radiance.rgb;
-        world_cache_path_state[active_index].state_u32.z = 0u;
+        world_cache_path_state[gid.x].state_u32.z = 0u;
         sample_count = 1.0;
     }
     
     // === Handle Ray Miss (Sky contribution) ===
     // Always count sky contributions, even for "dead" rays from failed ReSTIR
     // This prevents cold-start where cells never update
-    if (tri_id == 0xffffffffu && path.state_u32.y != 0u) {
+    if (path.state_u32.w == 0xffffffffu && path.state_u32.y != 0u) {
         let ray_dir = path.direction_tmax.xyz;
         // Evaluate environment radiance
         let sky_radiance = evaluate_environment(
@@ -89,7 +80,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
     
     // === Handle Ray Hit ===
-    if (tri_id != 0xffffffffu && path.state_u32.y != 0u) {
+    if (path.state_u32.w != 0xffffffffu && path.state_u32.y != 0u) {
         let hit_pos = path.origin_tmin.xyz;
         let world_n = path.normal_section_index.xyz;
         
@@ -130,12 +121,11 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
             material.emission_roughness_metallic_tiling.x,
             u32(material.texture_flags2.w), texture_pool_emission, lod
         );
-        let specular = sample_texture_or_float_param_handle(
+        reflectance = sample_texture_or_float_param_handle(
             u32(material.specular_handle), base_uv,
             material.ao_height_specular.z,
             u32(material.texture_flags2.z), texture_pool_specular, lod
         );
-        reflectance = specular;
 
         // Normal mapping
         let world_t = path.hit_attr0.xyz;
@@ -160,8 +150,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
             let max_contribution = emissive * PI * distance_factor;
             let ray_source_pdf = path.path_weight.w;
             let raw_contribution = emissive_radiance;
-            let contribution_luminance = raw_contribution.x * 0.2126 + raw_contribution.y * 0.7152 + raw_contribution.z * 0.0722;
-            let scale = min(1.0, (max_contribution * ray_source_pdf) / max(contribution_luminance, 0.001));
+            let scale = min(1.0, (max_contribution * ray_source_pdf) / max(luminance(raw_contribution), 0.001));
             
             let emissive_contribution = raw_contribution * scale;
             radiance_contribution += emissive_contribution;
@@ -191,7 +180,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         );
         
         // Check if we got valid cached data
-        let cached_luminance = cached_radiance.x * 0.2126 + cached_radiance.y * 0.7152 + cached_radiance.z * 0.0722;
+        let cached_luminance = luminance(cached_radiance);
         if (cached_luminance > 0.0001) {
             radiance_contribution += cached_radiance * path.path_weight.xyz;
             sample_count = 1.0;
@@ -202,14 +191,12 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     // UPDATE WORLD CACHE CELL with accumulated radiance
     // =============================================================================
     if (sample_count > 0.0) {
-        let current_radiance = world_cache[cell_index].radiance_w.xyz;
-        let current_sample_count = world_cache[cell_index].normal_count.w;
+        let current_radiance = world_cache[cell_index].radiance_m;
         
-        let alpha = 1.0 / min((current_sample_count + sample_count), WORLD_CACHE_RADIANCE_UPDATE_SAMPLE_CAP);
-        let new_radiance = mix(current_radiance, radiance_contribution, alpha);
+        let alpha = 1.0 / min((current_radiance.w + sample_count), WORLD_CACHE_RADIANCE_UPDATE_SAMPLE_CAP);
+        let new_radiance = mix(current_radiance.rgb, radiance_contribution, alpha);
         
-        world_cache[cell_index].radiance_w = vec4f(new_radiance, world_cache[cell_index].radiance_w.w);
-        world_cache[cell_index].normal_count.w = current_sample_count + sample_count;
+        world_cache[cell_index].radiance_m = vec4f(new_radiance, current_radiance.w + sample_count);
     }
 }
 

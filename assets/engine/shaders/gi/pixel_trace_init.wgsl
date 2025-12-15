@@ -4,13 +4,14 @@
 // ╠═══════════════════════════════════════════════════════════════════════════╣
 // ║                                                                           ║
 // ║  Initializes rays for per-pixel path tracing with:                        ║
-// ║  • Tile-based stochastic pixel selection                                  ║
+// ║  • Per-pixel dispatch with blue noise tile selection                      ║
 // ║  • BRDF-importance sampled ray directions                                 ║
 // ║  • ReSTIR-based path sampling for high-quality convergence                ║
 // ║  • Next Event Estimation (NEE) for direct lighting                        ║
 // ║                                                                           ║
-// ║  Each invocation corresponds to one tile (upscale_factor pixels).  ║
-// ║  A random pixel within the tile is selected for tracing this frame.       ║
+// ║  Each invocation handles one pixel. The pixel determines if it should     ║
+// ║  be the one traced for its tile this frame using blue noise selection.    ║
+// ║  This gives upscale_factor×upscale_factor pixels per tile.                ║
 // ║                                                                           ║
 // ║  Uses blue noise sampling for low-discrepancy quasi-random values,        ║
 // ║  providing faster convergence than traditional white noise.               ║
@@ -41,10 +42,6 @@
 @group(1) @binding(11) var gbuffer_motion: texture_2d<f32>;
 @group(1) @binding(12) var blue_noise: texture_2d_array<f32>;
 
-// Soft compress values above threshold instead of hard clamping
-// This preserves the relative importance of bright specular paths
-const SOFT_CLAMP_THRESHOLD = 4.0;  // Start compressing above this
-const SOFT_CLAMP_MAX = 16.0;       // Maximum output luminance
 const MAX_INITIAL_EMISSIVE = 10.0;
 const MAX_NEE_LUMINANCE = 10.0;
 
@@ -156,22 +153,6 @@ fn sample_ggx(n: vec3<f32>, roughness: f32, r1: f32, r2: f32) -> vec3<f32> {
     return normalize(tangent * h_local.x + bitangent * h_local.y + n * h_local.z);
 }
 
-fn pdf_cosine_hemisphere(n_dot_l: f32) -> f32 {
-    return max(n_dot_l, 0.0) / PI;
-}
-
-fn pdf_ggx_reflection(n: vec3<f32>, h: vec3<f32>, v: vec3<f32>, l: vec3<f32>, roughness: f32) -> f32 {
-    let a = roughness * roughness;
-    let a2 = a * a;
-    let n_dot_h = max(dot(n, h), 0.0);
-    let h_dot_v = max(dot(h, v), 0.0);
-    
-    let denom = n_dot_h * n_dot_h * (a2 - 1.0) + 1.0;
-    let d = a2 / (PI * denom * denom);
-    
-    return (d * n_dot_h) / max(4.0 * h_dot_v, 0.0001);
-}
-
 // =============================================================================
 // MAIN COMPUTE SHADER
 // =============================================================================
@@ -179,72 +160,108 @@ fn pdf_ggx_reflection(n: vec3<f32>, h: vec3<f32>, v: vec3<f32>, l: vec3<f32>, ro
 @compute @workgroup_size(128, 1, 1)
 fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     // ─────────────────────────────────────────────────────────────────────────
-    // Calculate tile and ray indices
-    // We dispatch one thread per tile, each tile samples one random pixel
+    // Per-pixel dispatch: each thread handles one pixel
+    // The pixel determines if it should be traced for its tile this frame
     // ─────────────────────────────────────────────────────────────────────────
-    let rays_per_tile = u32(gi_params.screen_ray_count);
     let resolution = vec2<u32>(u32(gi_params.resolution_x), u32(gi_params.resolution_y));
-    let upscale_factor = u32(gi_params.upscale_factor);
-    let tile_grid_dims = vec2<u32>(resolution.x / upscale_factor, resolution.y / upscale_factor);
+    let total_pixels = resolution.x * resolution.y;
     
-    // Compute total tiles from resolution and upscale
-    let total_tiles = tile_grid_dims.x * tile_grid_dims.y;
-    let total_rays = total_tiles * rays_per_tile;
-
-    if (gid.x >= total_rays) {
+    if (gid.x >= total_pixels) {
         return;
     }
     
-    // Compute tile index and ray index within tile
-    let tile_index = gid.x / rays_per_tile;
-    let ray_index = gid.x % rays_per_tile;
+    // Convert linear index to 2D pixel coordinates
+    let pixel_x = gid.x % resolution.x;
+    let pixel_y = gid.x / resolution.x;
+    let pixel_coord = vec2<u32>(pixel_x, pixel_y);
+    let pixel_coord_i32 = vec2<i32>(i32(pixel_x), i32(pixel_y));
+    
+    // ─────────────────────────────────────────────────────────────────────────
+    // Determine tile dimensions and which tile this pixel belongs to
+    // ─────────────────────────────────────────────────────────────────────────
+    let upscale_factor = u32(gi_params.upscale_factor);
+    let tile_grid_dims = vec2<u32>(resolution.x / upscale_factor, resolution.y / upscale_factor);
+    let tile_x = pixel_x / upscale_factor;
+    let tile_y = pixel_y / upscale_factor;
+    let tile_index = tile_y * tile_grid_dims.x + tile_x;
+    
     let frame_id = u32(gi_params.frame_index);
+    let rays_per_tile = u32(gi_params.screen_ray_count);
     
     // ─────────────────────────────────────────────────────────────────────────
-    // Initialize blue noise sampler for low-discrepancy random sampling
-    // Use tile coordinates as base for spatial coherence within tiles
+    // Blue noise pixel selection: check if this pixel is selected for its tile
+    // Uses the same sampling logic as tile_to_pixel_with_offset to ensure
+    // consistent selection across the per-pixel dispatch model
     // ─────────────────────────────────────────────────────────────────────────
-    let tile_x = tile_index % tile_grid_dims.x;
-    let tile_y = tile_index / tile_grid_dims.x;
-    var bn_sampler = blue_noise_init(vec2<u32>(tile_x, tile_y), frame_id, gid.x);
     
-    // ─────────────────────────────────────────────────────────────────────────
-    // Stochastic pixel selection within tile using blue noise
-    // ─────────────────────────────────────────────────────────────────────────
-    let rand_tile_x = blue_noise_next(&bn_sampler);
-    let rand_tile_y = blue_noise_next(&bn_sampler);
-    let pixel_coords = tile_to_pixel_with_offset(
-        tile_index,
-        tile_grid_dims.x,
-        upscale_factor,
-        resolution,
-        rand_tile_x,
-        rand_tile_y
-    );
-    let pixel_coord = vec2<i32>(i32(pixel_coords.x), i32(pixel_coords.y));
+    // Calculate this pixel's offset within its tile
+    let pixel_offset_x = pixel_x % upscale_factor;
+    let pixel_offset_y = pixel_y % upscale_factor;
     
-    // Update blue noise sampler to use selected pixel coordinates for remaining samples
-    // This ensures BRDF sampling is coherent with the actual pixel being traced
-    bn_sampler.base_coord = pixel_coords;
+    // Check each ray slot for this tile to see if this pixel is selected
+    for (var ray_index = 0u; ray_index < rays_per_tile; ray_index = ray_index + 1u) {
+        // Compute global ray slot index (matches original gid.x mapping)
+        let ray_slot = tile_index * rays_per_tile + ray_index;
+        
+        // Initialize blue noise sampler with same parameters as original
+        var bn_sampler = blue_noise_init(vec2<u32>(tile_x, tile_y), frame_id, ray_slot);
+        
+        // Sample blue noise to determine which pixel is selected for this ray
+        let rand_tile_x = blue_noise_next(&bn_sampler);
+        let rand_tile_y = blue_noise_next(&bn_sampler);
+        
+        // Compute selected offset within tile (matches tile_to_pixel_with_offset logic)
+        let selected_offset_x = u32(rand_tile_x * f32(upscale_factor)) % upscale_factor;
+        let selected_offset_y = u32(rand_tile_y * f32(upscale_factor)) % upscale_factor;
+        
+        // Skip if this pixel is not the selected one for this tile 
+        if (pixel_offset_x != selected_offset_x || pixel_offset_y != selected_offset_y) {
+            pixel_path_state[ray_slot].state_u32 = vec4<u32>(0u, 0u, 0u, 0xffffffffu);
+            continue;
+        }
+        
+        // ─────────────────────────────────────────────────────────────────────
+        // This pixel is selected for ray_slot - initialize the ray
+        // Update sampler to use pixel coords for remaining BRDF samples
+        // ─────────────────────────────────────────────────────────────────────
+        bn_sampler.base_coord = pixel_coord;
+        
+        // Process this pixel for the given ray_slot
+        process_selected_pixel(ray_slot, pixel_coord, pixel_coord_i32, &bn_sampler);
+    }
+}
+
+// =============================================================================
+// SELECTED PIXEL PROCESSING
+// =============================================================================
+
+fn process_selected_pixel(
+    ray_slot: u32,
+    pixel_coord: vec2<u32>,
+    pixel_coord_i32: vec2<i32>,
+    bn_sampler: ptr<function, BlueNoiseSampler>
+) {
+    let frame_id = u32(gi_params.frame_index);
+    let res = textureDimensions(gbuffer_position);
+    let pixel_index = pixel_coord.y * res.x + pixel_coord.x;
     
     // ─────────────────────────────────────────────────────────────────────────
     // Sample G-buffer at selected pixel location
     // ─────────────────────────────────────────────────────────────────────────
-    let position = textureLoad(gbuffer_position, pixel_coord, 0).xyz;
-    let normal_data = textureLoad(gbuffer_normal, pixel_coord, 0);
+    let position = textureLoad(gbuffer_position, pixel_coord_i32, 0).xyz;
+    let normal_data = textureLoad(gbuffer_normal, pixel_coord_i32, 0);
     let normal = safe_normalize(normal_data.xyz);
     let normal_length = length(normal_data.xyz);
     
     // Skip sky pixels (no geometry)
     if (normal_length <= 0.0) {
-        pixel_path_state[gid.x].state_u32 = vec4<u32>(0u, 0u, 0u, 0xffffffffu);
-        pixel_path_state[gid.x].pixel_coords = vec4<f32>(f32(pixel_coords.x), f32(pixel_coords.y), 0.0, 0.0);
+        pixel_path_state[ray_slot].state_u32 = vec4<u32>(0u, 0u, 0u, 0xffffffffu);
         return;
     }
     
-    let albedo = textureLoad(gbuffer_albedo, pixel_coord, 0).rgb;
-    let smra = textureLoad(gbuffer_smra, pixel_coord, 0);
-    let motion_emissive = textureLoad(gbuffer_motion, pixel_coord, 0);
+    let albedo = textureLoad(gbuffer_albedo, pixel_coord_i32, 0).rgb;
+    let smra = textureLoad(gbuffer_smra, pixel_coord_i32, 0);
+    let motion_emissive = textureLoad(gbuffer_motion, pixel_coord_i32, 0);
 
     let roughness = smra.g;
     let metallic = smra.b;
@@ -271,6 +288,13 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     
     let f = f_schlick_vec3(f0, 1.0, n_dot_v);
     let fresnel_luminance = (f.x + f.y + f.z) / 3.0;
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // RNG Setup
+    // ─────────────────────────────────────────────────────────────────────────
+    var rng = u32(pixel_path_state[ray_slot].rng_sample_count_frame_stamp.x);
+    if (rng == 0u) { rng = hash(pixel_index ^ u32(frame_id)); }
+    else { rng = random_seed(rng); }
 
     // ─────────────────────────────────────────────────────────────────────────
     // Compute optimal specular vs diffuse sampling probability
@@ -300,19 +324,22 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     // Probability of sampling specular lobe
     let total_weight = specular_weight + diffuse_weight;
     let specular_prob = clamp(specular_weight / max(total_weight, 0.001), 0.001, 0.999);
-    
-    // ─────────────────────────────────────────────────────────────────────────
+
+        // ─────────────────────────────────────────────────────────────────────────
     // Generate BRDF sampling candidates using blue noise
     // Blue noise provides better sample distribution than white noise,
     // reducing variance and improving convergence speed
     // ─────────────────────────────────────────────────────────────────────────
-    var candidate_samples: array<GISample, num_ris_samples>;
+    var candidate_samples: array<GISampleCandidate, num_init_ris_samples>;
     
-    for (var i = 0u; i < num_ris_samples; i = i + 1u) {
+    for (var i = 0u; i < num_init_ris_samples; i = i + 1u) {
         // Sample three blue noise values for this candidate
-        let r1 = blue_noise_next(&bn_sampler);
-        let r2 = blue_noise_next(&bn_sampler);
-        let r3 = blue_noise_next(&bn_sampler);
+        rng = random_seed(rng);
+        let r1 = rand_float(rng);
+        rng = random_seed(rng);
+        let r2 = rand_float(rng);
+        rng = random_seed(rng);
+        let r3 = rand_float(rng);
 
         var dir: vec3<f32>;
         
@@ -326,7 +353,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
             // ─────────────────────────────────────────────────────────────────
             // Cosine-Weighted Diffuse Sampling
             // ─────────────────────────────────────────────────────────────────
-            dir = sample_cosine_hemisphere(r1, r2, normal);
+            dir = sample_uniform_hemisphere(normal, r1, r2);
         }
 
         let pdf = brdf_pdf(normal, v_dir, dir, roughness, specular_prob);
@@ -337,9 +364,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
             reflectance, clear_coat, clear_coat_roughness
         );
         
-        let brdf_lum = max(0.0, brdf.x * 0.2126 + brdf.y * 0.7152 + brdf.z * 0.0722);
-        
-        candidate_samples[i].radiance_and_target_pdf = vec4f(brdf, brdf_lum);
+        candidate_samples[i].radiance_and_target_pdf = vec4f(brdf, luminance(brdf));
         candidate_samples[i].direction_and_source_pdf = vec4f(dir, pdf);
     }
     
@@ -347,70 +372,33 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     // Perform RIS on candidates using blue noise for reservoir selection
     // ─────────────────────────────────────────────────────────────────────────
     var gi_reservoir = gi_reservoir_init();
-    for (var i = 0u; i < num_ris_samples; i = i + 1u) {
+    for (var i = 0u; i < num_init_ris_samples; i = i + 1u) {
         let sample = candidate_samples[i];
         let target_pdf = sample.radiance_and_target_pdf.w;
         let ris_weight = target_pdf / max(sample.direction_and_source_pdf.w, 0.0001);
         
         if (ris_weight > 0.0 && !isinf(ris_weight)) {
             // Use blue noise for reservoir random selection
-            let reservoir_rand = blue_noise_next(&bn_sampler);
-            gi_reservoir_update_with_rand(&gi_reservoir, i, ris_weight, reservoir_rand);
+            rng = random_seed(rng);
+            gi_reservoir_update_with_rand(&gi_reservoir, i, ris_weight, rand_float(rng), max_spatial_samples);
         }
     }
     
     // ─────────────────────────────────────────────────────────────────────────
     // Finalize reservoir and select best direction
     // ─────────────────────────────────────────────────────────────────────────
-    var ray_dir: vec3<f32>;
-    var path_weight = vec3<f32>(1.0, 1.0, 1.0);
-    var ray_source_pdf = 0.0;
-    var is_alive = 1u;
+    let selected_sample = candidate_samples[gi_reservoir.selected_index];
+    let selected_dir = selected_sample.direction_and_source_pdf.xyz;
+    let selected_brdf = selected_sample.radiance_and_target_pdf.xyz;
+    let selected_target = selected_sample.radiance_and_target_pdf.w;
+    gi_reservoir_finalize(&gi_reservoir, selected_target);
     
-    if (gi_reservoir.m > 0u) {
-        let selected_sample = candidate_samples[gi_reservoir.selected_index];
-        let selected_dir = selected_sample.direction_and_source_pdf.xyz;
-        let selected_brdf = selected_sample.radiance_and_target_pdf.xyz;
-        let selected_target = selected_sample.radiance_and_target_pdf.w;
-        gi_reservoir_finalize(&gi_reservoir, selected_target);
-        
-        ray_dir = selected_dir;
-        ray_source_pdf = selected_sample.direction_and_source_pdf.w;
-        
-        // Update path weight with BRDF and reservoir weight
-        let brdf_weight = selected_brdf * gi_reservoir.w;
-        path_weight = brdf_weight * gi_params.indirect_boost;
-
-        // ─────────────────────────────────────────────────────────────────────────
-        // Firefly Prevention: Soft clamp path throughput using compression
-        // Use a soft knee instead of hard normalization to preserve specular energy
-        // ─────────────────────────────────────────────────────────────────────────
-        let path_luminance = dot(path_weight, vec3<f32>(0.2126, 0.7152, 0.0722));
-
-        let compressed_luminance = select(
-            path_luminance,
-            SOFT_CLAMP_THRESHOLD + (SOFT_CLAMP_MAX - SOFT_CLAMP_THRESHOLD) * 
-                (1.0 - 1.0 / (1.0 + (path_luminance - SOFT_CLAMP_THRESHOLD) / (SOFT_CLAMP_MAX - SOFT_CLAMP_THRESHOLD))),
-            path_luminance > SOFT_CLAMP_THRESHOLD
-        );
-
-        let path_scale = select(1.0, compressed_luminance / path_luminance, path_luminance > 0.0001);
-        path_weight = path_weight * path_scale;
-        
-        // Russian Roulette: Kill paths with very low throughput
-        let weight_luminance = path_weight.x * 0.2126 + path_weight.y * 0.7152 + path_weight.z * 0.0722;
-        let min_weight_threshold = 0.0001;
-        let is_alive = select(0u, 1u, weight_luminance >= min_weight_threshold);
-
-        ray_source_pdf = select(0.0, ray_source_pdf, is_alive == 1u);
-    } else {
-        // Reservoir failed - generate fallback direction using blue noise
-        is_alive = 0u;
-        
-        let fallback_u1 = blue_noise_next(&bn_sampler);
-        let fallback_u2 = blue_noise_next(&bn_sampler);
-        ray_dir = sample_cosine_hemisphere(fallback_u1, fallback_u2, normal);
-    }
+    let ray_dir = selected_dir;
+    let ray_source_pdf = selected_sample.direction_and_source_pdf.w;
+    
+    // Update path weight with BRDF and reservoir weight
+    let brdf_weight = selected_brdf * gi_reservoir.w;
+    let path_weight = brdf_weight * gi_params.indirect_boost;
 
     // ═════════════════════════════════════════════════════════════════════════
     // NEXT EVENT ESTIMATION (NEE) - DIRECT LIGHTING
@@ -418,7 +406,8 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     // ═════════════════════════════════════════════════════════════════════════
     let num_lights = light_count_buffer[0];
     if (num_lights > 0u) {
-        let light_rand = blue_noise_next(&bn_sampler);
+        rng = random_seed(rng);
+        let light_rand = rand_float(rng);
         let light_idx = u32(light_rand * f32(num_lights)) % num_lights;
         let light = dense_lights_buffer[light_idx];
         
@@ -437,13 +426,13 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         
         // Setup shadow ray for visibility test
         let selected_distance = select(1e30, length(light.position.xyz - position), light.light_type != 0.0);
-        pixel_path_state[gid.x].shadow_origin = vec4f(position + normal * 0.001, f32(light_idx));
-        pixel_path_state[gid.x].shadow_direction = vec4f(light_dir, selected_distance * 0.999);
-        pixel_path_state[gid.x].shadow_radiance = vec4f(light_contrib, 1.0);
+        pixel_path_state[ray_slot].shadow_origin = vec4f(position + normal * 0.001, f32(light_idx));
+        pixel_path_state[ray_slot].shadow_direction = vec4f(light_dir, selected_distance * 0.999);
+        pixel_path_state[ray_slot].shadow_radiance = vec4f(light_contrib, 1.0);
     } else {
-        pixel_path_state[gid.x].shadow_origin = vec4<f32>(0.0, 0.0, 0.0, -1.0);
-        pixel_path_state[gid.x].shadow_direction = vec4<f32>(0.0, 0.0, 0.0, 0.0);
-        pixel_path_state[gid.x].shadow_radiance = vec4<f32>(0.0, 0.0, 0.0, 0.0);
+        pixel_path_state[ray_slot].shadow_origin = vec4<f32>(0.0, 0.0, 0.0, -1.0);
+        pixel_path_state[ray_slot].shadow_direction = vec4<f32>(0.0, 0.0, 0.0, 0.0);
+        pixel_path_state[ray_slot].shadow_radiance = vec4<f32>(0.0, 0.0, 0.0, 0.0);
     }
     
     // ═════════════════════════════════════════════════════════════════════════
@@ -457,23 +446,20 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     // ─────────────────────────────────────────────────────────────────────────
     let initial_emissive = safe_clamp_vec3_max(emissive * albedo, MAX_INITIAL_EMISSIVE);
     
-    pixel_path_state[gid.x].origin_tmin = vec4<f32>(position + normal * 0.001, 0.0001);
-    pixel_path_state[gid.x].direction_tmax = vec4<f32>(ray_dir, 1e30);
-    pixel_path_state[gid.x].normal_section_index = vec4<f32>(normal, 0.0);
-    pixel_path_state[gid.x].state_u32 = vec4<u32>(0u, is_alive, 0u, 0xffffffffu);
-    pixel_path_state[gid.x].hit_attr0 = vec4<f32>(0.0);
-    pixel_path_state[gid.x].hit_attr1 = vec4<f32>(0.0);
-    pixel_path_state[gid.x].rng_sample_count_frame_stamp = vec4<f32>(f32(bn_sampler.scramble), 0.0, f32(frame_id), f32(bn_sampler.dimension));
-    pixel_path_state[gid.x].path_weight = vec4<f32>(path_weight, ray_source_pdf);
-    pixel_path_state[gid.x].throughput = vec4<f32>(initial_emissive, 0.0);
-    pixel_path_state[gid.x].pixel_coords = vec4<f32>(f32(pixel_coords.x), f32(pixel_coords.y), 0.0, 0.0);
+    pixel_path_state[ray_slot].origin_tmin = vec4<f32>(position + normal * 0.001, 0.0001);
+    pixel_path_state[ray_slot].direction_tmax = vec4<f32>(ray_dir, 1e30);
+    pixel_path_state[ray_slot].normal_section_index = vec4<f32>(normal, 0.0);
+    pixel_path_state[ray_slot].state_u32 = vec4<u32>(0u, 1u, 0u, 0xffffffffu);
+    pixel_path_state[ray_slot].hit_attr0 = vec4<f32>(0.0);
+    pixel_path_state[ray_slot].hit_attr1 = vec4<f32>(0.0);
+    pixel_path_state[ray_slot].rng_sample_count_frame_stamp = vec4<f32>(f32(rng), 0.0, f32(frame_id), 0.0);
+    pixel_path_state[ray_slot].path_weight = vec4<f32>(path_weight, ray_source_pdf);
+    pixel_path_state[ray_slot].throughput = vec4<f32>(initial_emissive, 0.0);
+    pixel_path_state[ray_slot].pixel_coords = vec4<f32>(f32(pixel_coord.x), f32(pixel_coord.y), 0.0, 0.0);
 
     // ─────────────────────────────────────────────────────────────────────────
-    // Add to work queue only if ray is active
-    // This reduces work for the hit shader by skipping dead rays entirely
+    // Add to work queue
     // ─────────────────────────────────────────────────────────────────────────
-    if (is_alive == 1u) {
-        let queue_index = atomicAdd(&gi_counters.ray_queue_count, 1u);
-        ray_work_queue[queue_index] = gid.x;
-    }
+    let queue_index = atomicAdd(&gi_counters.ray_queue_count, 1u);
+    ray_work_queue[queue_index] = ray_slot;
 }

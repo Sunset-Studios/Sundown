@@ -11,15 +11,10 @@
 // ║                                                                           ║
 // ╚═══════════════════════════════════════════════════════════════════════════╝
 // =============================================================================
-
-diagnostic(off,subgroup_uniformity);
-
 #include "common.wgsl"
 #include "acceleration_common.wgsl"
 #include "blas_common.wgsl"
 #include "gi/gi_common.wgsl"
-
-const NODE_STACK_SIZE = 12;
 
 // =============================================================================
 // BINDINGS
@@ -316,11 +311,10 @@ fn process_shadow_ray(ray_index: u32) {
     var ray: Ray;
     ray.origin_and_tmin = pixel_path_state[ray_index].shadow_origin;
     ray.direction_and_tmax = pixel_path_state[ray_index].shadow_direction;
-    let d = ray.direction_and_tmax.xyz;
     ray.inv_direction = vec4f(
-        1.0 / max(abs(d.x), 1e-8) * select(1.0, -1.0, d.x < 0.0),
-        1.0 / max(abs(d.y), 1e-8) * select(1.0, -1.0, d.y < 0.0),
-        1.0 / max(abs(d.z), 1e-8) * select(1.0, -1.0, d.z < 0.0),
+        1.0 / max(abs(ray.direction_and_tmax.x), 1e-8) * select(1.0, -1.0, ray.direction_and_tmax.x < 0.0),
+        1.0 / max(abs(ray.direction_and_tmax.y), 1e-8) * select(1.0, -1.0, ray.direction_and_tmax.y < 0.0),
+        1.0 / max(abs(ray.direction_and_tmax.z), 1e-8) * select(1.0, -1.0, ray.direction_and_tmax.z < 0.0),
         0.0
     );
 
@@ -338,11 +332,10 @@ fn process_primary_ray(ray_index: u32) {
     var ray: Ray;
     ray.origin_and_tmin = pixel_path_state[ray_index].origin_tmin;
     ray.direction_and_tmax = pixel_path_state[ray_index].direction_tmax;
-    let d = ray.direction_and_tmax.xyz;
     ray.inv_direction = vec4f(
-        1.0 / max(abs(d.x), 1e-8) * select(1.0, -1.0, d.x < 0.0),
-        1.0 / max(abs(d.y), 1e-8) * select(1.0, -1.0, d.y < 0.0),
-        1.0 / max(abs(d.z), 1e-8) * select(1.0, -1.0, d.z < 0.0),
+        1.0 / max(abs(ray.direction_and_tmax.x), 1e-8) * select(1.0, -1.0, ray.direction_and_tmax.x < 0.0),
+        1.0 / max(abs(ray.direction_and_tmax.y), 1e-8) * select(1.0, -1.0, ray.direction_and_tmax.y < 0.0),
+        1.0 / max(abs(ray.direction_and_tmax.z), 1e-8) * select(1.0, -1.0, ray.direction_and_tmax.z < 0.0),
         0.0
     );
 
@@ -404,9 +397,6 @@ fn process_primary_ray(ray_index: u32) {
                       vertex_buffer[v2i].bitangent.xyz * v_bc;
         var world_b = safe_normalize((entity_transform.transform * vec4<f32>(b_local, 0.0)).xyz);
 
-        // Get section index from first vertex
-        let section_idx = vertex_buffer[v0i].section_index;
-
         // Handle backfacing geometry
         let ray_dir = ray.direction_and_tmax.xyz;
         let ray_is_backfacing = dot(world_n, ray_dir) > 0.0;
@@ -417,7 +407,7 @@ fn process_primary_ray(ray_index: u32) {
         // Store hit information
         pixel_path_state[ray_index].origin_tmin = vec4f(p_world, t_tri);
         pixel_path_state[ray_index].direction_tmax = vec4f(ray_dir, hit_result.prim_meshid_padding.x);
-        pixel_path_state[ray_index].normal_section_index = vec4f(world_n, f32(section_idx));
+        pixel_path_state[ray_index].normal_section_index = vec4f(world_n, f32(vertex_buffer[v0i].section_index));
         pixel_path_state[ray_index].hit_attr0 = vec4f(world_t, uv_hit.x);
         pixel_path_state[ray_index].hit_attr1 = vec4f(world_b, uv_hit.y);
         pixel_path_state[ray_index].state_u32.w = tri_id_local;

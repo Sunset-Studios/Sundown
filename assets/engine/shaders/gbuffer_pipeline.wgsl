@@ -117,7 +117,7 @@ fn fragment(v_out: VertexOutput, f_out: ptr<function, FragmentOutput>) -> Fragme
     let current_ndc = v_out.current_clip_pos.xy / v_out.current_clip_pos.w;
     let prev_ndc = v_out.prev_clip_pos.xy / v_out.prev_clip_pos.w;
     let ndc_velocity = vec2<precision_float>(current_ndc - prev_ndc);
-    output.motion_emissive = vec4<precision_float>(ndc_velocity, 0.0, 0.0);
+    output.motion_emissive = vec4<f32>(ndc_velocity.xy, 0.0, 0.0);
 
     var post_material_output = fragment(v_out, &output);
 

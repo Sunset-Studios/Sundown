@@ -28,7 +28,7 @@ struct FragmentOutput {
     @location(1) smra: vec4<precision_float>,
     @location(2) position: vec4<f32>,
     @location(3) normal: vec4<precision_float>,
-    @location(4) motion_emissive: vec4<precision_float>,
+    @location(4) motion_emissive: vec4<f32>,
 }
 
 #else

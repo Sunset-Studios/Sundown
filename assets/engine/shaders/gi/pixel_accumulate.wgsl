@@ -30,25 +30,28 @@
 
 #include "common.wgsl"
 #include "gi/gi_common.wgsl"
-#include "gi/world_cache_common.wgsl"
+#include "raytracing/restir_common.wgsl"
 #include "postprocess_common.wgsl"
+
+// =============================================================================
+// DEFINES
+// =============================================================================
+// Uncomment to skip temporal accumulation (output raw reservoir radiance)
+#define SKIP_ACCUMULATION
 
 // =============================================================================
 // BINDINGS
 // =============================================================================
 
 @group(1) @binding(0) var<uniform> gi_params: GIParams;
-@group(1) @binding(1) var<storage, read_write> gi_counters: GICounters;
-@group(1) @binding(2) var<storage, read> pixel_path_state: array<PixelPathState>;
-@group(1) @binding(3) var pixel_radiance_prev: texture_2d<f32>;
-@group(1) @binding(4) var gbuffer_position: texture_2d<f32>;
-@group(1) @binding(5) var gbuffer_position_prev: texture_2d<f32>;
-@group(1) @binding(6) var gbuffer_normal: texture_2d<f32>;
-@group(1) @binding(7) var gbuffer_normal_prev: texture_2d<f32>;
-@group(1) @binding(8) var gbuffer_motion: texture_2d<f32>;
-@group(1) @binding(9) var gbuffer_smra: texture_2d<f32>;
-@group(1) @binding(10) var<storage, read_write> world_cache: array<WorldCacheCell>;
-@group(1) @binding(11) var raw_accumulation: texture_storage_2d<rgba16float, write>;
+@group(1) @binding(1) var<storage, read> spatial_reservoir: array<GIReservoirData>;
+@group(1) @binding(2) var pixel_radiance_prev: texture_2d<f32>;
+@group(1) @binding(3) var gbuffer_position: texture_2d<f32>;
+@group(1) @binding(4) var gbuffer_position_prev: texture_2d<f32>;
+@group(1) @binding(5) var gbuffer_normal: texture_2d<f32>;
+@group(1) @binding(6) var gbuffer_normal_prev: texture_2d<f32>;
+@group(1) @binding(7) var gbuffer_motion: texture_2d<f32>;
+@group(1) @binding(8) var raw_accumulation: texture_storage_2d<rgba16float, write>;
 
 // =============================================================================
 // CONSTANTS
@@ -67,7 +70,7 @@ const NORMAL_THRESHOLD = 0.95;         // Normal dot product threshold
 // Lower = faster response to changes, Higher = more stable but more lag
 // With upscaling, effective convergence time = MAX_FRAMES × upscale_factor
 // ─────────────────────────────────────────────────────────────────────────────
-const MAX_ACCUMULATED_FRAMES = 2.0;
+const MAX_ACCUMULATED_FRAMES = 4.0;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Firefly Prevention: Maximum output luminance
@@ -186,16 +189,6 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
     
     let pixel_coord = vec2<i32>(i32(gid.x), i32(gid.y));
-    let rays_per_tile = u32(gi_params.screen_ray_count);
-    
-    // ─────────────────────────────────────────────────────────────────────────
-    // Compute tile index for this pixel (path state is indexed by tile, not pixel)
-    // ─────────────────────────────────────────────────────────────────────────
-    let upscale_factor = u32(gi_params.upscale_factor);
-    let tile_x = gid.x / upscale_factor;
-    let tile_y = gid.y / upscale_factor;
-    let tile_grid_width = res.x / upscale_factor;
-    let tile_index = tile_y * tile_grid_width + tile_x;
     
     let view = view_buffer[u32(frame_info.view_index)];
     let camera_position = view.view_position.xyz;
@@ -215,41 +208,17 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         return;
     }
     
-    // ─────────────────────────────────────────────────────────────────────────
-    // Check if this pixel was traced this frame
-    // Path state is indexed by tile - check if the traced pixel matches this one
-    // ─────────────────────────────────────────────────────────────────────────
-    var current_radiance = vec3<f32>(0.0);
-    var has_current_sample = false;
+    // Spatially reused reservoir sample -> evaluate RIS estimator (paper Eq. 6)
+    let reservoir_index = gid.y * res.x + gid.x;
+    let reservoir_entry = spatial_reservoir[reservoir_index];
+    var has_current_sample = reservoir_entry.reservoir.m > 0u;
 
-    for (var i = 0u; i < rays_per_tile; i = i + 1u) {
-        // Index into path state by tile, not by pixel
-        let ray_id = tile_index * rays_per_tile + i;
-        let path = pixel_path_state[ray_id];
-        
-        // Check if the traced pixel coordinates match THIS pixel
-        let ray_pixel_x = u32(path.pixel_coords.x);
-        let ray_pixel_y = u32(path.pixel_coords.y);
-        let coords_match = ray_pixel_x == gid.x && ray_pixel_y == gid.y;
-        
-        let ray_was_alive = path.state_u32.y != 0u ||
-                            path.state_u32.w != 0xffffffffu ||
-                            length(path.throughput.xyz) > 0.0;
-
-        if (ray_was_alive) {
-            let sample_count = max(path.rng_sample_count_frame_stamp.y, 1.0);
-            let accumulated_avg = path.throughput.xyz / sample_count;
-            let clamped_avg = safe_clamp_vec3(accumulated_avg);
-
-            if (coords_match) {
-                // This tile's ray was traced at our pixel location
-                current_radiance = clamped_avg;
-                has_current_sample = true;
-                break; // Take first valid sample
-            }
-
-        }
-    }
+    // Evaluate (f(y) = BSDF * cos * L_o(sample_point)) * W_s at the current visible point.
+    var current_radiance = select(
+        vec3<f32>(0.0),
+        reservoir_entry.sample.outgoing_radiance.xyz * reservoir_entry.reservoir.w,
+        has_current_sample
+    );
 
     // Pre-clamp current radiance to prevent fireflies from entering accumulation
     current_radiance = safe_clamp_vec3_max(current_radiance, MAX_OUTPUT_LUMINANCE);
@@ -320,10 +289,10 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         // Weighted average of frame count (use minimum for conservative estimate)
         // This ensures we don't over-trust history when mixing different counts
         count_sum = 
-            min(data_00.w + 1.0, MAX_ACCUMULATED_FRAMES) * custom_weights.x +
-            min(data_10.w + 1.0, MAX_ACCUMULATED_FRAMES) * custom_weights.y +
-            min(data_01.w + 1.0, MAX_ACCUMULATED_FRAMES) * custom_weights.z +
-            min(data_11.w + 1.0, MAX_ACCUMULATED_FRAMES) * custom_weights.w;
+            min(data_00.w + f32(reservoir_entry.reservoir.m), MAX_ACCUMULATED_FRAMES) * custom_weights.x +
+            min(data_10.w + f32(reservoir_entry.reservoir.m), MAX_ACCUMULATED_FRAMES) * custom_weights.y +
+            min(data_01.w + f32(reservoir_entry.reservoir.m), MAX_ACCUMULATED_FRAMES) * custom_weights.z +
+            min(data_11.w + f32(reservoir_entry.reservoir.m), MAX_ACCUMULATED_FRAMES) * custom_weights.w;
     }
     
     // ═════════════════════════════════════════════════════════════════════════
@@ -340,17 +309,16 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     var final_radiance: vec3<f32>;
     var final_count: f32;
 
-    if (has_current_sample) {
-        // Linear accumulation: alpha = 1 / (1 + N)
-        let alpha = 1.0 / (1.0 + count_sum);
-        // Blend current sample with history
-        final_radiance = select(current_radiance, mix(prev_radiance, current_radiance, alpha), any_valid);
-        final_count = select(1.0, count_sum, any_valid);
-    } else {
-        // No new sample this frame - keep history unchanged
-        final_radiance = select(vec3<f32>(0.0), prev_radiance, any_valid);
-        final_count = select(0.0, count_sum, any_valid);
-    }
+    // Linear accumulation: alpha = 1 / (1 + N)
+    let alpha = 1.0 / (1.0 + count_sum);
+    // Blend current sample with history
+    #if SKIP_ACCUMULATION
+    final_radiance = current_radiance;
+    #else
+    final_radiance = select(current_radiance, mix(prev_radiance, current_radiance, alpha), any_valid);
+    #endif
+
+    final_count = select(1.0, count_sum, any_valid);
     
     // ─────────────────────────────────────────────────────────────────────────
     // Final firefly clamp on output radiance

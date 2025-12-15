@@ -209,7 +209,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         next_dir = normalize(reflect(-v_dir, h));
     } else {
         // Cosine-weighted diffuse sampling
-        next_dir = sample_cosine_hemisphere(n, r1, r2);
+        next_dir = sample_uniform_hemisphere(n, r1, r2);
     }
     
     pdf = brdf_pdf(n, v_dir, next_dir, roughness, specular_prob);

@@ -46,8 +46,26 @@
  * ║                                                 │                         ║
  * ║                                                 ▼                         ║
  * ║                                         ┌──────────────┐                  ║
+ * ║                                         │ Temporal     │                  ║
+ * ║                                         │ Reservoir    │                  ║
+ * ║                                         └──────────────┘                  ║
+ * ║                                                 │                         ║
+ * ║                                                 ▼                         ║
+ * ║                                         ┌──────────────┐                  ║
+ * ║                                         │ Spatial      │                  ║
+ * ║                                         │ Reservoir    │                  ║
+ * ║                                         └──────────────┘                  ║
+ * ║                                                 │                         ║
+ * ║                                                 ▼                         ║
+ * ║                                         ┌──────────────┐                  ║
  * ║                                         │ Pixel Update │                  ║
  * ║                                         │ (Accumulate) │                  ║
+ * ║                                         └──────────────┘                  ║
+ * ║                                                 │                         ║
+ * ║                                                 ▼                         ║
+ * ║                                         ┌──────────────┐                  ║
+ * ║                                         │ Pixel Blur   │                  ║
+ * ║                                         │ (Denoise)    │                  ║
  * ║                                         └──────────────┘                  ║
  * ║                                                 │                         ║
  * ║                                                 ▼                         ║
@@ -121,6 +139,12 @@ const world_cache_compact_prefix_sum_shader_setup = {
   },
 };
 
+const world_cache_compact_block_prefix_scan_shader_setup = {
+  pipeline_shaders: {
+    compute: { path: "gi/world_cache_active_block_prefix_scan.wgsl" },
+  },
+};
+
 const world_cache_compact_scatter_shader_setup = {
   pipeline_shaders: {
     compute: { path: "gi/world_cache_active_compact.wgsl" },
@@ -167,6 +191,18 @@ const pixel_trace_shade_shader_setup = {
   },
 };
 
+const pixel_temporal_reservoir_shader_setup = {
+  pipeline_shaders: {
+    compute: { path: "gi/pixel_temporal_reservoir.wgsl" },
+  },
+};
+
+const pixel_spatial_reservoir_shader_setup = {
+  pipeline_shaders: {
+    compute: { path: "gi/pixel_spatial_reservoir.wgsl" },
+  },
+};
+
 const pixel_accumulate_shader_setup = {
   pipeline_shaders: {
     compute: { path: "gi/pixel_accumulate.wgsl" },
@@ -203,7 +239,7 @@ export class GI {
   // ─────────────────────────────────────────────────────────────────────────
   config = {
     screen_ray_count: 1,          // Rays per pixel per frame (1 recommended for real-time)
-    upscale_factor: 3,            // Temporal upscale factor X
+    upscale_factor: 4,            // Temporal upscale factor X
     world_cache_size: 32768,      // Number of world cache cells per LOD level
     world_cache_cell_size: 4.0,   // Base cell size in world units
     world_cache_lod_count: 4,     // Number of LOD levels
@@ -256,7 +292,6 @@ export class GI {
     blas_atlas,
     entity_transforms,
     mesh_asset_ids,
-    index_buffer,
     dense_lights,
     light_count,
     draw_count,
@@ -285,7 +320,6 @@ export class GI {
         blas_atlas,
         entity_transforms,
         mesh_asset_ids,
-        index_buffer,
         dense_lights,
         light_count,
         gbuffer_position,
@@ -317,7 +351,6 @@ export class GI {
     blas_atlas,
     entity_transforms,
     mesh_asset_ids,
-    index_buffer,
     dense_lights,
     light_count,
     gbuffer_position,
@@ -337,15 +370,11 @@ export class GI {
     const total_cells = this.config.world_cache_size * this.config.world_cache_lod_count;
 
     // Tile-based dispatch: only trace one pixel per tile per frame
-    // Each tile is upscale_factor pixels
+    // Each tile is upscale_factor x upscale_factor pixels
     const tile_grid_width = Math.ceil(width / this.config.upscale_factor);
     const tile_grid_height = Math.ceil(height / this.config.upscale_factor);
     const tiles_per_frame = tile_grid_width * tile_grid_height;
     const rays_per_frame = tiles_per_frame * this.config.screen_ray_count;
-
-    // ═════════════════════════════════════════════════════════════════════
-    // CREATE GPU RESOURCES
-    // ═════════════════════════════════════════════════════════════════════
 
     // ─────────────────────────────────────────────────────────────────────
     // Blue Noise Texture
@@ -358,7 +387,7 @@ export class GI {
     // ─────────────────────────────────────────────────────────────────────
     const gi_params = render_graph.create_buffer({
       name: "gi_params",
-      size: this.gi_params_data.byteLength,
+      size: this.gi_params_data.length,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
       force: force_recreate,
     });
@@ -370,7 +399,7 @@ export class GI {
     // ─────────────────────────────────────────────────────────────────────
     let gi_counters = render_graph.create_buffer({
       name: "gi_counters",
-      size: 24,
+      size: 6,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
       force: force_recreate,
     });
@@ -380,7 +409,7 @@ export class GI {
     // ─────────────────────────────────────────────────────────────────────
     const world_cache = render_graph.create_buffer({
       name: "gi_world_cache",
-      size: total_cells * 96,
+      size: total_cells * 24,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
       force: force_recreate,
     });
@@ -388,35 +417,42 @@ export class GI {
     // World cache compaction buffers
     const world_cache_active_flags = render_graph.create_buffer({
       name: "gi_world_cache_active_flags",
-      size: total_cells * 4,
+      size: total_cells,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
       force: force_recreate,
     });
 
     const world_cache_prefix_sum = render_graph.create_buffer({
       name: "gi_world_cache_prefix_sum",
-      size: total_cells * 4,
+      size: total_cells,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
       force: force_recreate,
     });
 
     const world_cache_block_sums = render_graph.create_buffer({
       name: "gi_world_cache_block_sums",
-      size: Math.ceil(total_cells / COMPUTE_WORKGROUP_SIZE) * 4,
+      size: Math.ceil(total_cells / COMPUTE_WORKGROUP_SIZE),
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+      force: force_recreate,
+    });
+
+    const world_cache_block_prefixes = render_graph.create_buffer({
+      name: "gi_world_cache_block_prefixes",
+      size: Math.ceil(total_cells / COMPUTE_WORKGROUP_SIZE),
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
       force: force_recreate,
     });
 
     const world_cache_compacted_indices = render_graph.create_buffer({
       name: "gi_world_cache_compacted_indices",
-      size: total_cells * 4,
+      size: total_cells,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
       force: force_recreate,
     });
 
     const world_cache_dispatch_params = render_graph.create_buffer({
       name: "gi_world_cache_dispatch_params",
-      size: 12,
+      size: 4,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.INDIRECT | GPUBufferUsage.COPY_DST,
       force: force_recreate,
     });
@@ -441,28 +477,51 @@ export class GI {
     // Work queue used for persistent threads in the path tracing passes
     let pixel_ray_queue = render_graph.create_buffer({
       name: "gi_pixel_ray_queue",
-      size: rays_per_frame * 4,
+      size: rays_per_frame,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+      force: force_recreate,
+    });
+
+    // ReSTIR GI reservoir storage (double buffered for temporal and spatial reuse)
+    // GIReservoirData = GIReservoir (4x 32-bit) + GISample (4x vec4<f32>) = 20x 32-bit words
+    const reservoir_size = width * height * 20;
+
+    const temporal_reservoir_0 = render_graph.create_buffer({
+      name: "gi_temporal_reservoir_0",
+      size: reservoir_size,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+      force: force_recreate,
+    });
+
+    const temporal_reservoir_1 = render_graph.create_buffer({
+      name: "gi_temporal_reservoir_1",
+      size: reservoir_size,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+      force: force_recreate,
+    });
+
+    const spatial_reservoir_0 = render_graph.create_buffer({
+      name: "gi_spatial_reservoir_0",
+      size: reservoir_size,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+      force: force_recreate,
+    });
+
+    const spatial_reservoir_1 = render_graph.create_buffer({
+      name: "gi_spatial_reservoir_1",
+      size: reservoir_size,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
       force: force_recreate,
     });
 
     // ─────────────────────────────────────────────────────────────────────
-    // Per-Pixel Radiance (Ping-Pong) - BLURRED Output
-    // These contain the BLURRED radiance from the recurrent blur pass.
-    // pixel_radiance_prev is what pixel_accumulate reads as history, ensuring
+    // Per-Pixel Radiance - BLURRED Output
+    // This contains the BLURRED radiance from the recurrent blur pass.
+    // raw_accumulation is what pixel_accumulate reads as history, ensuring
     // the temporal accumulation sees the clean blurred background.
     // ─────────────────────────────────────────────────────────────────────
-    const pixel_radiance_0 = render_graph.create_image({
-      name: "gi_pixel_radiance_0",
-      format: "rgba16float",
-      width: width,
-      height: height,
-      usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
-      force: force_recreate,
-    });
-
-    const pixel_radiance_1 = render_graph.create_image({
-      name: "gi_pixel_radiance_1",
+    const pixel_radiance = render_graph.create_image({
+      name: "gi_pixel_radiance",
       format: "rgba16float",
       width: width,
       height: height,
@@ -473,8 +532,8 @@ export class GI {
     // ─────────────────────────────────────────────────────────────────────
     // Raw Accumulation Buffer (Temporary)
     // pixel_accumulate writes raw temporal accumulation here, then recurrent_blur
-    // reads this (center) + pixel_radiance_prev (neighbors) and writes the
-    // blurred result to pixel_radiance_curr.
+    // reads this (center) + raw_accumulation (neighbors) and writes the
+    // blurred result to pixel_radiance.
     // ─────────────────────────────────────────────────────────────────────
     const raw_accumulation = render_graph.create_image({
       name: "gi_raw_accumulation",
@@ -487,8 +546,14 @@ export class GI {
 
     // Ping-pong selection based on frame index
     const ping_pong_frame = SharedFrameInfoBuffer.get_frame_index() % 2;
-    const pixel_radiance_prev = ping_pong_frame === 0 ? pixel_radiance_0 : pixel_radiance_1;
-    const pixel_radiance_curr = ping_pong_frame === 0 ? pixel_radiance_1 : pixel_radiance_0;
+
+    const temporal_reservoir_prev =
+      ping_pong_frame === 0 ? temporal_reservoir_0 : temporal_reservoir_1;
+    const temporal_reservoir_curr =
+      ping_pong_frame === 0 ? temporal_reservoir_1 : temporal_reservoir_0;
+
+    const spatial_reservoir_prev = ping_pong_frame === 0 ? spatial_reservoir_0 : spatial_reservoir_1;
+    const spatial_reservoir_curr = ping_pong_frame === 0 ? spatial_reservoir_1 : spatial_reservoir_0;
 
     // ─────────────────────────────────────────────────────────────────────
     // Get Material Resources
@@ -554,10 +619,6 @@ export class GI {
     const skybox = SharedEnvironmentData.get_skybox();
     const skybox_texture_buffer = render_graph.register_image(skybox.config.name);
 
-    // ═════════════════════════════════════════════════════════════════════
-    // ADD RENDER PASSES
-    // ═════════════════════════════════════════════════════════════════════
-
     // ─────────────────────────────────────────────────────────────────────
     // Pass 0: Upload GI Parameters
     // ─────────────────────────────────────────────────────────────────────
@@ -602,10 +663,6 @@ export class GI {
         pass.dispatch(1, 1, 1);
       }
     );
-
-    // ═════════════════════════════════════════════════════════════════════
-    // WORLD CACHE PASSES
-    // ═════════════════════════════════════════════════════════════════════
 
     // ─────────────────────────────────────────────────────────────────────
     // Pass 2: Evict Stale World Cache Cells
@@ -659,7 +716,33 @@ export class GI {
     );
 
     // ─────────────────────────────────────────────────────────────────────
-    // Pass 5: Compact Active Cells
+    // Pass 5: Scan Block Sums → Block Prefixes + Dispatch Params
+    // ─────────────────────────────────────────────────────────────────────
+    render_graph.add_pass(
+      "gi_world_cache_active_block_prefix_scan",
+      RenderPassFlags.Compute,
+      {
+        inputs: [
+          world_cache_block_sums,
+          world_cache_block_prefixes,
+          world_cache_dispatch_params,
+          gi_counters,
+        ],
+        outputs: [
+          world_cache_block_prefixes,
+          world_cache_dispatch_params,
+          gi_counters,
+        ],
+        shader_setup: world_cache_compact_block_prefix_scan_shader_setup,
+      },
+      (graph, frame_data, encoder) => {
+        const pass = graph.get_physical_pass(frame_data.current_pass);
+        pass.dispatch(1, 1, 1);
+      }
+    );
+
+    // ─────────────────────────────────────────────────────────────────────
+    // Pass 6: Compact Active Cells
     // ─────────────────────────────────────────────────────────────────────
     render_graph.add_pass(
       "gi_world_cache_active_compact",
@@ -668,12 +751,12 @@ export class GI {
         inputs: [
           world_cache_active_flags,
           world_cache_prefix_sum,
-          world_cache_block_sums,
+          world_cache_block_prefixes,
           world_cache_compacted_indices,
-          world_cache_dispatch_params,
-          gi_counters,
         ],
-        outputs: [world_cache_compacted_indices, world_cache_dispatch_params],
+        outputs: [
+          world_cache_compacted_indices,
+        ],
         shader_setup: world_cache_compact_scatter_shader_setup,
       },
       (graph, frame_data, encoder) => {
@@ -683,7 +766,7 @@ export class GI {
     );
 
     // ─────────────────────────────────────────────────────────────────────
-    // Pass 6: World Cache Trace Init
+    // Pass 7: World Cache Trace Init
     // ─────────────────────────────────────────────────────────────────────
     render_graph.add_pass(
       "gi_world_cache_trace_init",
@@ -698,7 +781,6 @@ export class GI {
           light_count,
           dense_lights,
           gi_counters,
-          blue_noise_image,
         ],
         outputs: [world_cache_path_state],
         shader_setup: world_cache_trace_init_shader_setup,
@@ -778,13 +860,10 @@ export class GI {
       }
     );
 
-    // ═════════════════════════════════════════════════════════════════════
-    // PER-PIXEL PATH TRACING PASSES
-    // ═════════════════════════════════════════════════════════════════════
-
     // ─────────────────────────────────────────────────────────────────────
     // Pass 9: Per-Pixel Trace Init (with NEE light sampling)
-    // Dispatches only tiles_per_frame rays (one per tile), not all pixels
+    // Dispatches over all pixels - each pixel determines via blue noise
+    // whether it should be the one traced for its tile this frame
     // ─────────────────────────────────────────────────────────────────────
     render_graph.add_pass(
       `gi_pixel_trace_init_${ping_pong_frame}`,
@@ -810,7 +889,7 @@ export class GI {
       },
       (graph, frame_data, encoder) => {
         const pass = graph.get_physical_pass(frame_data.current_pass);
-        pass.dispatch(Math.ceil(rays_per_frame / COMPUTE_WORKGROUP_SIZE), 1, 1);
+        pass.dispatch(Math.ceil(total_pixels / COMPUTE_WORKGROUP_SIZE), 1, 1);
       }
     );
 
@@ -882,8 +961,60 @@ export class GI {
     );
 
     // ─────────────────────────────────────────────────────────────────────
-    // Pass 12: Per-Pixel Accumulate (Temporal Accumulation)
-    // Reads from pixel_radiance_prev (last frame's BLURRED output) and
+    // Pass 12: Temporal Resampling (ReSTIR GI)
+    // ─────────────────────────────────────────────────────────────────────
+    render_graph.add_pass(
+      `gi_pixel_temporal_reservoir_${ping_pong_frame}`,
+      RenderPassFlags.Compute,
+      {
+        inputs: [
+          gi_params,
+          pixel_path_state,
+          temporal_reservoir_prev,
+          temporal_reservoir_curr,
+          spatial_reservoir_prev,
+          gbuffer_position,
+          gbuffer_position_prev,
+          gbuffer_normal,
+          gbuffer_motion_emissive,
+          gbuffer_normal_prev,
+        ],
+        outputs: [temporal_reservoir_curr],
+        shader_setup: pixel_temporal_reservoir_shader_setup,
+      },
+      (graph, frame_data, encoder) => {
+        const pass = graph.get_physical_pass(frame_data.current_pass);
+        pass.dispatch(Math.ceil(width / 16), Math.ceil(height / 16), 1);
+      }
+    );
+
+    // ─────────────────────────────────────────────────────────────────────
+    // Pass 13: Spatial Resampling (ReSTIR GI)
+    // ─────────────────────────────────────────────────────────────────────
+    render_graph.add_pass(
+      `gi_pixel_spatial_reservoir_${ping_pong_frame}`,
+      RenderPassFlags.Compute,
+      {
+        inputs: [
+          gi_params,
+          temporal_reservoir_curr,
+          spatial_reservoir_prev,
+          spatial_reservoir_curr,
+          gbuffer_position,
+          gbuffer_normal,
+        ],
+        outputs: [spatial_reservoir_curr],
+        shader_setup: pixel_spatial_reservoir_shader_setup,
+      },
+      (graph, frame_data, encoder) => {
+        const pass = graph.get_physical_pass(frame_data.current_pass);
+        pass.dispatch(Math.ceil(width / 16), Math.ceil(height / 16), 1);
+      }
+    );
+
+    // ─────────────────────────────────────────────────────────────────────
+    // Pass 14: Per-Pixel Accumulate (Temporal Accumulation)
+    // Reads from pixel_radiance (last frame's BLURRED output) and
     // writes raw accumulated radiance to raw_accumulation buffer.
     // ─────────────────────────────────────────────────────────────────────
     render_graph.add_pass(
@@ -892,19 +1023,16 @@ export class GI {
       {
         inputs: [
           gi_params,
-          gi_counters,
-          pixel_path_state,
-          pixel_radiance_prev,
+          spatial_reservoir_curr,
+          pixel_radiance,
           gbuffer_position,
           gbuffer_position_prev,
           gbuffer_normal,
           gbuffer_normal_prev,
           gbuffer_motion_emissive,
-          gbuffer_smra,
-          world_cache,
           raw_accumulation,
         ],
-        outputs: [raw_accumulation, world_cache],
+        outputs: [raw_accumulation],
         shader_setup: pixel_accumulate_shader_setup,
       },
       (graph, frame_data, encoder) => {
@@ -915,21 +1043,20 @@ export class GI {
     );
 
     // ─────────────────────────────────────────────────────────────────────
-    // Pass 13: Stabilized Recurrent Blur
+    // Pass 15: Stabilized Recurrent Blur
     // Adaptive-radius spatial filter using sample count for stabilization
     // Based on NVIDIA's "Fast Denoising with Self-Stabilizing Recurrent Blurs"
     //
     // Key insight: Neighbors are sampled from previous frame's BLURRED output
-    // (pixel_radiance_prev), not raw accumulated radiance. This allows
+    // (via raw_accumulation), not raw accumulated radiance. This allows
     // temporal redistribution of spatial sampling: 30 FPS × 8 samples =
     // 240 cumulative samples/sec due to the recurrent nature.
     //
     // Inputs:
     //   - raw_accumulation: Current frame's raw temporal accumulation
-    //   - pixel_radiance_prev: Previous frame's BLURRED output (clean background)
     //
     // Outputs:
-    //   - pixel_radiance_curr: Blurred output (becomes pixel_radiance_prev next frame)
+    //   - pixel_radiance: Blurred output (becomes raw_accumulation next frame)
     //   - gi_output: Final GI radiance for deferred lighting passes
     // ─────────────────────────────────────────────────────────────────────
     render_graph.add_pass(
@@ -939,15 +1066,14 @@ export class GI {
         inputs: [
           gi_params,
           raw_accumulation,
-          pixel_radiance_prev,
           gbuffer_position,
           gbuffer_position_prev,
           gbuffer_normal,
           gbuffer_normal_prev,
-          pixel_radiance_curr,
+          pixel_radiance,
           gi_output,
         ],
-        outputs: [pixel_radiance_curr, gi_output],
+        outputs: [pixel_radiance, gi_output],
         shader_setup: pixel_blur_denoise_shader_setup,
       },
       (graph, frame_data, encoder) => {

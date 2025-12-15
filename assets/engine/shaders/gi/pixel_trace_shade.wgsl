@@ -70,12 +70,10 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
     
     var path = pixel_path_state[gid.x];
-    let tri_id = path.state_u32.w;
     
     let light_view_index = u32(scene_lighting_data.view_index);
-    let light_view = view_buffer[light_view_index];
     let camera_position = view_buffer[u32(frame_info.view_index)].view_position.xyz;
-    let sun_dir = normalize(-light_view.view_direction.xyz);
+    let sun_dir = normalize(-view_buffer[light_view_index].view_direction.xyz);
 
     // ─────────────────────────────────────────────────────────────────────────
     // Handle Direct Light Visibility (NEE result from hit pass)
@@ -92,7 +90,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     // Handle Ray Miss (Sky/Environment)
     // Clamp sky contribution to prevent sun disc fireflies on specular bounces
     // ─────────────────────────────────────────────────────────────────────────
-    if (tri_id == 0xffffffffu && path.state_u32.y != 0u) {
+    if (path.state_u32.w == 0xffffffffu && path.state_u32.y != 0u) {
         let ray_dir = path.direction_tmax.xyz;
         
         // Evaluate environment radiance
@@ -115,7 +113,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     // ─────────────────────────────────────────────────────────────────────────
     // Handle Ray Hit
     // ─────────────────────────────────────────────────────────────────────────
-    if (tri_id != 0xffffffffu && path.state_u32.y != 0u) {
+    if (path.state_u32.w != 0xffffffffu && path.state_u32.y != 0u) {
         let hit_pos = path.origin_tmin.xyz;
         let world_n = path.normal_section_index.xyz;
         

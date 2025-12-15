@@ -1,7 +1,8 @@
-const num_ris_samples = 4u;
-const num_spatial_samples = 3u;
-const num_max_samples = 8u;
-const spatial_radius = 20.0;
+const num_init_ris_samples = 4u;
+const num_spatial_samples = 1u;
+const spatial_radius = 30.0;
+const max_temporal_samples = 30u;
+const max_spatial_samples = 500u;
 
 struct GIReservoir {
     selected_index: u32,
@@ -10,9 +11,21 @@ struct GIReservoir {
     w: f32,                      // Final weight for selected sample
 };
 
-struct GISample {
-    radiance_and_target_pdf: vec4<f32>,         // Total radiance contribution (direct + indirect) + Target PDF for this sample
-    direction_and_source_pdf: vec4<f32>,        // Next bounce direction + Source PDF used to generate this sample
+struct GISampleCandidate {
+    direction_and_source_pdf: vec4f,
+    radiance_and_target_pdf: vec4f,
+};
+
+struct GIReservoirSample {
+    visible_position_source_pdf: vec4<f32>,
+    sample_position: vec4<f32>,
+    sample_normal_target_pdf: vec4<f32>,
+    outgoing_radiance: vec4<f32>,
+};
+
+struct GIReservoirData {
+    reservoir: GIReservoir,
+    sample: GIReservoirSample,
 };
 
 fn gi_reservoir_init() -> GIReservoir {
@@ -29,10 +42,19 @@ fn gi_reservoir_update(
     reservoir: ptr<function, GIReservoir>,
     candidate_index: u32,
     weight: f32,
-    rng_state: ptr<function, u32>
+    rng_state: ptr<function, u32>,
+    sample_clamp_threshold: u32
 ) {
+    // If we've hit the clamp threshold, do NOT keep accumulating weight_sum.
+    // Otherwise `m` stays clamped but `weight_sum` grows without bound, causing
+    // `w = weight_sum / (m * p_hat)` to drift upward over time (runaway brightness).
+    if ((*reservoir).m >= sample_clamp_threshold) {
+        return;
+    }
+
     (*reservoir).weight_sum += weight;
     (*reservoir).m += 1u;
+    (*reservoir).m = min((*reservoir).m, sample_clamp_threshold);
     
     *rng_state = random_seed(*rng_state);
     let xi = rand_float(*rng_state);
@@ -49,12 +71,66 @@ fn gi_reservoir_update_with_rand(
     reservoir: ptr<function, GIReservoir>,
     candidate_index: u32,
     weight: f32,
-    xi: f32
+    xi: f32,
+    sample_clamp_threshold: u32
 ) {
+    // Same clamp behavior as gi_reservoir_update(): stop weight accumulation once full.
+    if ((*reservoir).m >= sample_clamp_threshold) {
+        return;
+    }
+
     (*reservoir).weight_sum += weight;
     (*reservoir).m += 1u;
+    (*reservoir).m = min((*reservoir).m, sample_clamp_threshold);
     
     if (xi * (*reservoir).weight_sum < weight) {
+        (*reservoir).selected_index = candidate_index;
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Merge a source reservoir into a target reservoir
+// This properly accumulates the M value from the source reservoir, which is
+// critical for unbiased ReSTIR. When merging reservoir B into A:
+//   - The combined weight_sum = A.weight_sum + (B.w * B.m * p_hat_at_A)
+//   - The combined M = A.m + B.m
+// ─────────────────────────────────────────────────────────────────────────────
+fn gi_reservoir_merge(
+    reservoir: ptr<function, GIReservoir>,
+    candidate_index: u32,
+    source_reservoir: GIReservoir,
+    target_pdf: f32,
+    xi: f32,
+    sample_clamp_threshold: u32
+) {
+    if (source_reservoir.m == 0u) {
+        return;
+    }
+
+    let old_m = (*reservoir).m;
+    if (old_m >= sample_clamp_threshold) {
+        return;
+    }
+
+    // If this merge would push us past the clamp, scale the contribution so
+    // weight_sum remains consistent with the (clamped) effective M.
+    let remaining_m = sample_clamp_threshold - old_m;
+    let effective_m = min(source_reservoir.m, remaining_m);
+    if (effective_m == 0u) {
+        return;
+    }
+
+    let m_scale = f32(effective_m) / f32(source_reservoir.m);
+
+    // The contribution weight for the source reservoir's sample when evaluated
+    // at the target location: w_i = W_s * M_s * p_hat(x_s)
+    let contribution_weight = source_reservoir.w * f32(source_reservoir.m) * target_pdf;
+    let scaled_contribution_weight = contribution_weight * m_scale;
+    
+    (*reservoir).weight_sum += scaled_contribution_weight;
+    (*reservoir).m += effective_m;
+    
+    if (xi * (*reservoir).weight_sum < scaled_contribution_weight) {
         (*reservoir).selected_index = candidate_index;
     }
 }
@@ -77,13 +153,27 @@ fn gi_reservoir_finalize(
     );
 }
 
-// Compute target PDF (p-hat) for a GI sample
-// p-hat = luminance(BRDF * radiance)
-fn compute_gi_target_pdf(
-    sample_radiance: vec3<f32>,
-    brdf_value: vec3<f32>
+// Full Jacobian determinant for spatial reuse (Eq. 11 in ReSTIR GI paper).
+// Converts the source pixel's solid angle measure at x_v^q to the target pixel's
+// solid angle measure at x_v^r for a shared sample point x_s.
+fn compute_restir_gi_jacobian(
+    sample_point_normal: vec3<f32>,
+    source_visible_position: vec3<f32>,
+    target_visible_position: vec3<f32>,
+    sample_position: vec3<f32>
 ) -> f32 {
-    let contribution = sample_radiance * brdf_value;
-    let luminance = contribution.x * 0.2126 + contribution.y * 0.7152 + contribution.z * 0.0722;
-    return max(luminance, 0.0);
+    let v_q = source_visible_position - sample_position;
+    let v_r = target_visible_position - sample_position;
+
+    let dist2_q = max(dot(v_q, v_q), 1e-6);
+    let dist2_r = max(dot(v_r, v_r), 1e-6);
+
+    let dir_q = v_q * inverseSqrt(dist2_q);
+    let dir_r = v_r * inverseSqrt(dist2_r);
+
+    let cos_q = abs(dot(sample_point_normal, dir_q));
+    let cos_r = abs(dot(sample_point_normal, dir_r));
+
+    // |J_{q->r}| = (|cos(phi_2^r)| / |cos(phi_2^q)|) * (||x1^q - x2^q||^2 / ||x1^r - x2^q||^2)
+    return (cos_r / max(cos_q, 1e-6)) * (dist2_q / dist2_r);
 }
