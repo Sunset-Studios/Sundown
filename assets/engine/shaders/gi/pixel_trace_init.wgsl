@@ -139,69 +139,48 @@ fn blue_noise_next(sampler: ptr<function, BlueNoiseSampler>) -> f32 {
 
 @compute @workgroup_size(128, 1, 1)
 fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
-    // ─────────────────────────────────────────────────────────────────────────
-    // Per-pixel dispatch: each thread handles one pixel
-    // The pixel determines if it should be traced for its tile this frame
-    // ─────────────────────────────────────────────────────────────────────────
     let resolution = vec2<u32>(u32(gi_params.resolution_x), u32(gi_params.resolution_y));
-    let total_pixels = resolution.x * resolution.y;
-    
-    if (gid.x >= total_pixels) {
-        return;
-    }
-    
-    // Convert linear index to 2D pixel coordinates
-    let pixel_x = gid.x % resolution.x;
-    let pixel_y = gid.x / resolution.x;
-    let pixel_coord = vec2<u32>(pixel_x, pixel_y);
-    
-    // ─────────────────────────────────────────────────────────────────────────
-    // Determine tile dimensions and which tile this pixel belongs to
-    // ─────────────────────────────────────────────────────────────────────────
     let upscale_factor = u32(gi_params.upscale_factor);
     let tile_grid_dims = vec2<u32>(resolution.x / upscale_factor, resolution.y / upscale_factor);
-    let tile_x = pixel_x / upscale_factor;
-    let tile_y = pixel_y / upscale_factor;
-    let tile_index = tile_y * tile_grid_dims.x + tile_x;
+    let total_tiles = tile_grid_dims.x * tile_grid_dims.y;
     
     let frame_id = u32(gi_params.frame_index);
     let rays_per_tile = u32(gi_params.screen_ray_count);
+    let total_rays = total_tiles * rays_per_tile;
     
     // ─────────────────────────────────────────────────────────────────────────
-    // Blue noise pixel selection: check if this pixel is selected for its tile
-    // Uses the same sampling logic as tile_to_pixel_with_offset to ensure
-    // consistent selection across the per-pixel dispatch model
+    // Per-ray-slot dispatch: each thread initializes exactly ONE ray slot.
+    // This avoids races from multiple pixels in the same tile writing to the
+    // same ray slot simultaneously.
     // ─────────────────────────────────────────────────────────────────────────
-    
-    // Calculate this pixel's offset within its tile
-    let pixel_offset_x = pixel_x % upscale_factor;
-    let pixel_offset_y = pixel_y % upscale_factor;
-    
-    // Check each ray slot for this tile to see if this pixel is selected
-    for (var ray_index = 0u; ray_index < rays_per_tile; ray_index = ray_index + 1u) {
-        // Compute global ray slot index (matches original gid.x mapping)
-        let ray_slot = tile_index * rays_per_tile + ray_index;
-        
-        // Initialize blue noise sampler with same parameters as original
-        var bn_sampler = blue_noise_init(vec2<u32>(tile_x, tile_y), frame_id, ray_slot);
-        
-        // Sample blue noise to determine which pixel is selected for this ray
-        let rand_tile_x = blue_noise_next(&bn_sampler);
-        let rand_tile_y = blue_noise_next(&bn_sampler);
-        
-        // Compute selected offset within tile (matches tile_to_pixel_with_offset logic)
-        let selected_offset_x = u32(rand_tile_x * f32(upscale_factor)) % upscale_factor;
-        let selected_offset_y = u32(rand_tile_y * f32(upscale_factor)) % upscale_factor;
-        
-        // Skip if this pixel is not the selected one for this tile 
-        if (pixel_offset_x != selected_offset_x || pixel_offset_y != selected_offset_y) {
-            pixel_path_state[ray_slot].state_u32 = vec4<u32>(0u, 0u, 0u, 0xffffffffu);
-            continue;
-        }
-        
-        // Process this pixel for the given ray_slot
-        process_selected_pixel(ray_slot, pixel_coord, &bn_sampler, resolution);
+    if (gid.x >= total_rays) {
+        return;
     }
+
+    let ray_slot = gid.x;
+    let tile_index = ray_slot / rays_per_tile;
+
+    // Tile coords in the tile grid
+    let tile_x = tile_index % tile_grid_dims.x;
+    let tile_y = tile_index / tile_grid_dims.x;
+
+    // Initialize blue noise sampler (tile space)
+    var bn_sampler = blue_noise_init(vec2<u32>(tile_x, tile_y), frame_id, ray_slot);
+
+    // Sample blue noise to pick a pixel within the tile
+    let rand_tile_x = blue_noise_next(&bn_sampler);
+    let rand_tile_y = blue_noise_next(&bn_sampler);
+
+    let pixel_coord = tile_to_pixel_with_offset(
+        tile_index,
+        tile_grid_dims.x,
+        upscale_factor,
+        resolution,
+        rand_tile_x,
+        rand_tile_y
+    );
+
+    process_selected_pixel(ray_slot, pixel_coord, &bn_sampler, resolution);
 }
 
 // =============================================================================
@@ -227,6 +206,9 @@ fn process_selected_pixel(
     // Skip sky pixels (no geometry)
     if (normal_length <= 0.0) {
         pixel_path_state[ray_slot].state_u32 = vec4<u32>(0u, 0u, 0u, 0xffffffffu);
+        pixel_path_state[ray_slot].throughput_direct = vec4<f32>(0.0);
+        pixel_path_state[ray_slot].throughput_indirect_diffuse = vec4<f32>(0.0);
+        pixel_path_state[ray_slot].throughput_indirect_specular = vec4<f32>(0.0);
         return;
     }
     
@@ -296,7 +278,8 @@ fn process_selected_pixel(
 
         var dir: vec3<f32>;
         
-        if (r3 < specular_prob) {
+        let is_specular_lobe = r3 < specular_prob;
+        if (is_specular_lobe) {
             // ─────────────────────────────────────────────────────────────────
             // GGX Specular Sampling
             // ─────────────────────────────────────────────────────────────────
@@ -324,12 +307,14 @@ fn process_selected_pixel(
         
         candidate_samples[i].radiance_and_target_pdf = vec4f(brdf, target_pdf);
         candidate_samples[i].direction_and_source_pdf = vec4f(dir, source_pdf);
+        candidate_samples[i].lobe_type = select(0u, 1u, is_specular_lobe);
     }
     
     // ─────────────────────────────────────────────────────────────────────────
     // Finalize reservoir and select best direction
     // ─────────────────────────────────────────────────────────────────────────
     let selected_index = gi_reservoir.selected_index;
+    let selected_lobe_type = candidate_samples[selected_index].lobe_type;
     let ray_dir = candidate_samples[selected_index].direction_and_source_pdf.xyz;
     let ray_source_pdf = candidate_samples[selected_index].direction_and_source_pdf.w;
     let ray_brdf = candidate_samples[selected_index].radiance_and_target_pdf.xyz;
@@ -380,12 +365,15 @@ fn process_selected_pixel(
     pixel_path_state[ray_slot].origin_tmin = vec4<f32>(position + normal * 0.001, 0.0001);
     pixel_path_state[ray_slot].direction_tmax = vec4<f32>(ray_dir, 1e30);
     pixel_path_state[ray_slot].normal_section_index = vec4<f32>(normal, 0.0);
-    pixel_path_state[ray_slot].state_u32 = vec4<u32>(0u, 1u, 0u, 0xffffffffu);
+    pixel_path_state[ray_slot].state_u32 = vec4<u32>(selected_lobe_type, 1u, 0u, 0xffffffffu);
     pixel_path_state[ray_slot].hit_attr0 = vec4<f32>(0.0);
     pixel_path_state[ray_slot].hit_attr1 = vec4<f32>(0.0);
     pixel_path_state[ray_slot].rng_sample_count_frame_stamp = vec4<f32>(f32(rng), 0.0, f32(frame_id), 0.0);
     pixel_path_state[ray_slot].path_weight = vec4<f32>(path_weight, ray_source_pdf);
-    pixel_path_state[ray_slot].throughput = vec4<f32>(safe_clamp_vec3_max(emissive * albedo, MAX_INITIAL_EMISSIVE), 0.0);
+    // Visible emissive at the shaded (camera-visible) surface is treated as "direct".
+    pixel_path_state[ray_slot].throughput_direct = vec4<f32>(safe_clamp_vec3_max(emissive * albedo, MAX_INITIAL_EMISSIVE), 0.0);
+    pixel_path_state[ray_slot].throughput_indirect_diffuse = vec4<f32>(0.0);
+    pixel_path_state[ray_slot].throughput_indirect_specular = vec4<f32>(0.0);
     pixel_path_state[ray_slot].pixel_coords = vec4<f32>(f32(pixel_coord.x), f32(pixel_coord.y), 0.0, 0.0);
 
     // ─────────────────────────────────────────────────────────────────────────

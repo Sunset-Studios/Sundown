@@ -132,13 +132,15 @@ export const DebugDrawType = Object.freeze({
     Bloom: 13,
     GTAO: 14,
     BentNormal: 15,
-    GI_Irradiance: 16,
-    GI_WorldCache: 17,
-    EntityBounds: 18,
-    BVH: 19,
-    BVH4: 20,
-    BLAS_Bounds: 21,
-    BLAS_BVH4: 22,
+    GI_Direct: 16,
+    GI_Diffuse: 17,
+    GI_Specular: 18,
+    GI_WorldCache: 19,
+    EntityBounds: 20,
+    BVH: 21,
+    BVH4: 22,
+    BLAS_Bounds: 23,
+    BLAS_BVH4: 24,
 });
 
 /**

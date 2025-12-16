@@ -1399,7 +1399,11 @@ export class DeferredShadingStrategy {
         deferred_lighting_shader_setup.pipeline_shaders.fragment.defines.GI_ENABLED = gi_enabled;
 
         if (gi_enabled) {
-          lighting_inputs.push(this.gi.final_gi_texture);
+          lighting_inputs.push(
+            this.gi.final_gi_texture_direct,
+            this.gi.final_gi_texture_indirect_diffuse,
+            this.gi.final_gi_texture_indirect_specular
+          );
         }
 
         deferred_lighting_shader_setup.pipeline_shaders.vertex.defines.SHADOWS_ENABLED =
@@ -1806,14 +1810,34 @@ export class DeferredShadingStrategy {
               DebugDrawType.BentNormal
             );
             break;
-          case DebugDrawType.GI_Irradiance:
+          case DebugDrawType.GI_Direct:
             this.debug_overlay.set_properties(
-              this.gi.final_gi_texture,
+              this.gi.final_gi_texture_direct,
               0,
               0,
               image_extent.width,
               image_extent.height,
-              DebugDrawType.GI_Irradiance
+              DebugDrawType.GI_Direct
+            );
+            break;
+          case DebugDrawType.GI_Specular:
+            this.debug_overlay.set_properties(
+              this.gi.final_gi_texture_indirect_specular,
+              0,
+              0,
+              image_extent.width,
+              image_extent.height,
+              DebugDrawType.GI_Specular
+            );
+            break;
+          case DebugDrawType.GI_Diffuse:
+            this.debug_overlay.set_properties(
+              this.gi.final_gi_texture_indirect_diffuse,
+              0,
+              0,
+              image_extent.width,
+              image_extent.height,
+              DebugDrawType.GI_Diffuse
             );
             break;
           case DebugDrawType.GI_WorldCache:

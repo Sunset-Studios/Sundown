@@ -164,7 +164,11 @@ export class DebugOverlay {
         return "debug/debug_overlay_2d_single_comp.wgsl";
       case DebugDrawType.BentNormal:
         return "debug/debug_overlay_2d.wgsl";
-      case DebugDrawType.GI_Irradiance:
+      case DebugDrawType.GI_Direct:
+        return "debug/debug_overlay_2d.wgsl";
+      case DebugDrawType.GI_Specular:
+        return "debug/debug_overlay_2d.wgsl";
+      case DebugDrawType.GI_Diffuse:
         return "debug/debug_overlay_2d.wgsl";
       default:
         return "debug/debug_overlay_2d.wgsl";

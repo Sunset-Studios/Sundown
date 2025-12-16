@@ -87,13 +87,13 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     // Current frame sample from the traced pixel (initial sampling buffer)
     //
     // IMPORTANT (unbiasedness):
-    // - `path.throughput` is an MC estimate which already includes `1 / source_pdf`.
+    // - `path.throughput_*` are MC estimates which already include `1 / source_pdf`.
     // - ReSTIR/RIS expects the reservoir payload `f(y)` to be the *unweighted integrand*.
     //   Otherwise, multiplying by `reservoir.w` later will effectively apply `1 / pdf`
     //   twice and can bias/brighten the result.
     //
     // So we store:
-    // - `sample.outgoing_radiance.xyz` = f(y) = (mc_estimate * source_pdf)
+    // - `sample.outgoing_radiance_*.xyz` = f(y) = (mc_estimate * source_pdf)
     // - `sample.sample_normal_target_pdf.w` = p_hat(y) (we use luminance(f(y)))
     // ─────────────────────────────────────────────────────────────────────────
     let visible_position = textureLoad(gbuffer_position, vec2<i32>(gid.xy), 0).xyz;
@@ -110,22 +110,29 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         }
 
         let sample_count = max(path.rng_sample_count_frame_stamp.y, 1.0);
-        let accumulated_avg = path.throughput.xyz / sample_count;
+        let accumulated_avg_direct = path.throughput_direct.xyz / sample_count;
+        let accumulated_avg_indirect_diffuse = path.throughput_indirect_diffuse.xyz / sample_count;
+        let accumulated_avg_indirect_specular = path.throughput_indirect_specular.xyz / sample_count;
 
         // The proposal PDF for this candidate (used for RIS weights).
         let source_pdf = max(path.path_weight.w, 0.0001);
 
         // Convert MC estimate -> unweighted integrand for ReSTIR:
         // mc_estimate = f(y) / source_pdf  =>  f(y) = mc_estimate * source_pdf
-        let integrand_radiance = safe_clamp_vec3(accumulated_avg * source_pdf);
+        let integrand_direct = safe_clamp_vec3(accumulated_avg_direct * source_pdf);
+        let integrand_indirect_diffuse = safe_clamp_vec3(accumulated_avg_indirect_diffuse * source_pdf);
+        let integrand_indirect_specular = safe_clamp_vec3(accumulated_avg_indirect_specular * source_pdf);
+        let integrand_total = integrand_direct + integrand_indirect_diffuse + integrand_indirect_specular;
 
         // Target function approximation p_hat(y). Must be computed from the same f(y).
-        let target_pdf = max(luminance(integrand_radiance), 0.0);
+        let target_pdf = max(luminance(integrand_total), 0.0);
 
         candidate_samples[candidate_count].visible_position_source_pdf = vec4<f32>(visible_position, source_pdf);
         candidate_samples[candidate_count].sample_position = vec4<f32>(path.origin_tmin.xyz, 0.0);
         candidate_samples[candidate_count].sample_normal_target_pdf = vec4<f32>(safe_normalize(path.normal_section_index.xyz), target_pdf);
-        candidate_samples[candidate_count].outgoing_radiance = vec4<f32>(integrand_radiance, 0.0);
+        candidate_samples[candidate_count].outgoing_radiance_direct = vec4<f32>(integrand_direct, 0.0);
+        candidate_samples[candidate_count].outgoing_radiance_indirect_diffuse = vec4<f32>(integrand_indirect_diffuse, 0.0);
+        candidate_samples[candidate_count].outgoing_radiance_indirect_specular = vec4<f32>(integrand_indirect_specular, 0.0);
         
         // For a new sample: contribution weight = p_hat / p_source (RIS weight)
         gi_reservoir_update(

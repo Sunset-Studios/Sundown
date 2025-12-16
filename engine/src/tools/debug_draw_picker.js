@@ -55,8 +55,14 @@ export class DebugDrawPicker extends DevConsoleTool {
         case "bent-normal":
           Renderer.get().set_debug_draw_type(DebugDrawType.BentNormal);
           break;
-        case "gi":
-          Renderer.get().set_debug_draw_type(DebugDrawType.GI_Irradiance);
+        case "gi-direct":
+          Renderer.get().set_debug_draw_type(DebugDrawType.GI_Direct);
+          break;
+        case "gi-specular":
+          Renderer.get().set_debug_draw_type(DebugDrawType.GI_Specular);
+          break;
+        case "gi-diffuse":
+          Renderer.get().set_debug_draw_type(DebugDrawType.GI_Diffuse);
           break;
         case "gi-world-cache":
         case "world-cache":

@@ -44,13 +44,17 @@
 
 @group(1) @binding(0) var<uniform> gi_params: GIParams;
 @group(1) @binding(1) var<storage, read> spatial_reservoir: array<GIReservoirData>;
-@group(1) @binding(2) var pixel_radiance_prev: texture_2d<f32>;
-@group(1) @binding(3) var gbuffer_position: texture_2d<f32>;
-@group(1) @binding(4) var gbuffer_position_prev: texture_2d<f32>;
-@group(1) @binding(5) var gbuffer_normal: texture_2d<f32>;
-@group(1) @binding(6) var gbuffer_normal_prev: texture_2d<f32>;
-@group(1) @binding(7) var gbuffer_motion: texture_2d<f32>;
-@group(1) @binding(8) var raw_accumulation: texture_storage_2d<rgba16float, write>;
+@group(1) @binding(2) var pixel_radiance_prev_direct: texture_2d<f32>;
+@group(1) @binding(3) var pixel_radiance_prev_indirect_diffuse: texture_2d<f32>;
+@group(1) @binding(4) var pixel_radiance_prev_indirect_specular: texture_2d<f32>;
+@group(1) @binding(5) var gbuffer_position: texture_2d<f32>;
+@group(1) @binding(6) var gbuffer_position_prev: texture_2d<f32>;
+@group(1) @binding(7) var gbuffer_normal: texture_2d<f32>;
+@group(1) @binding(8) var gbuffer_normal_prev: texture_2d<f32>;
+@group(1) @binding(9) var gbuffer_motion: texture_2d<f32>;
+@group(1) @binding(10) var raw_accumulation_direct: texture_storage_2d<rgba16float, write>;
+@group(1) @binding(11) var raw_accumulation_indirect_diffuse: texture_storage_2d<rgba16float, write>;
+@group(1) @binding(12) var raw_accumulation_indirect_specular: texture_storage_2d<rgba16float, write>;
 
 // =============================================================================
 // CONSTANTS
@@ -198,7 +202,9 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     
     // Skip sky pixels (no geometry)
     if (normal_length < 0.01) {
-        textureStore(raw_accumulation, pixel_coord, vec4<f32>(0.0, 0.0, 0.0, 0.0));
+        textureStore(raw_accumulation_direct, pixel_coord, vec4<f32>(0.0, 0.0, 0.0, 0.0));
+        textureStore(raw_accumulation_indirect_diffuse, pixel_coord, vec4<f32>(0.0, 0.0, 0.0, 0.0));
+        textureStore(raw_accumulation_indirect_specular, pixel_coord, vec4<f32>(0.0, 0.0, 0.0, 0.0));
         return;
     }
     
@@ -208,14 +214,26 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     var has_current_sample = reservoir_entry.reservoir.m > 0u;
 
     // Evaluate (f(y) = BSDF * cos * L_o(sample_point)) * W_s at the current visible point.
-    var current_radiance = select(
+    var current_radiance_direct = select(
         vec3<f32>(0.0),
-        reservoir_entry.sample.outgoing_radiance.xyz * reservoir_entry.reservoir.w,
+        reservoir_entry.sample.outgoing_radiance_direct.xyz * reservoir_entry.reservoir.w,
+        has_current_sample
+    );
+    var current_radiance_indirect_diffuse = select(
+        vec3<f32>(0.0),
+        reservoir_entry.sample.outgoing_radiance_indirect_diffuse.xyz * reservoir_entry.reservoir.w,
+        has_current_sample
+    );
+    var current_radiance_indirect_specular = select(
+        vec3<f32>(0.0),
+        reservoir_entry.sample.outgoing_radiance_indirect_specular.xyz * reservoir_entry.reservoir.w,
         has_current_sample
     );
 
     // Pre-clamp current radiance to prevent fireflies from entering accumulation
-    current_radiance = safe_clamp_vec3_max(current_radiance, MAX_OUTPUT_LUMINANCE);
+    current_radiance_direct = safe_clamp_vec3_max(current_radiance_direct, MAX_OUTPUT_LUMINANCE);
+    current_radiance_indirect_diffuse = safe_clamp_vec3_max(current_radiance_indirect_diffuse, MAX_OUTPUT_LUMINANCE);
+    current_radiance_indirect_specular = safe_clamp_vec3_max(current_radiance_indirect_specular, MAX_OUTPUT_LUMINANCE);
     
     // ═════════════════════════════════════════════════════════════════════════
     // GHOSTING-FREE BILINEAR REPROJECTION
@@ -264,29 +282,49 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     // ─────────────────────────────────────────────────────────────────────────
     // Sample radiance and frame count from each corner, weighted by validity
     // ─────────────────────────────────────────────────────────────────────────
-    var prev_radiance = vec3<f32>(0.0);
+    var prev_radiance_direct = vec3<f32>(0.0);
+    var prev_radiance_indirect_diffuse = vec3<f32>(0.0);
+    var prev_radiance_indirect_specular = vec3<f32>(0.0);
     var count_sum = 0.0;
     
     if (any_valid) {
         // Sample each corner and apply custom weights
-        let data_00 = textureLoad(pixel_radiance_prev, corner_00, 0);
-        let data_10 = textureLoad(pixel_radiance_prev, corner_10, 0);
-        let data_01 = textureLoad(pixel_radiance_prev, corner_01, 0);
-        let data_11 = textureLoad(pixel_radiance_prev, corner_11, 0);
+        let data_00_direct = textureLoad(pixel_radiance_prev_direct, corner_00, 0);
+        let data_10_direct = textureLoad(pixel_radiance_prev_direct, corner_10, 0);
+        let data_01_direct = textureLoad(pixel_radiance_prev_direct, corner_01, 0);
+        let data_11_direct = textureLoad(pixel_radiance_prev_direct, corner_11, 0);
+
+        let data_00_indirect_diffuse = textureLoad(pixel_radiance_prev_indirect_diffuse, corner_00, 0);
+        let data_10_indirect_diffuse = textureLoad(pixel_radiance_prev_indirect_diffuse, corner_10, 0);
+        let data_01_indirect_diffuse = textureLoad(pixel_radiance_prev_indirect_diffuse, corner_01, 0);
+        let data_11_indirect_diffuse = textureLoad(pixel_radiance_prev_indirect_diffuse, corner_11, 0);
+
+        let data_00_indirect_specular = textureLoad(pixel_radiance_prev_indirect_specular, corner_00, 0);
+        let data_10_indirect_specular = textureLoad(pixel_radiance_prev_indirect_specular, corner_10, 0);
+        let data_01_indirect_specular = textureLoad(pixel_radiance_prev_indirect_specular, corner_01, 0);
+        let data_11_indirect_specular = textureLoad(pixel_radiance_prev_indirect_specular, corner_11, 0);
         
         // Weighted average of radiance
-        prev_radiance = data_00.rgb * custom_weights.x +
-                        data_10.rgb * custom_weights.y +
-                        data_01.rgb * custom_weights.z +
-                        data_11.rgb * custom_weights.w;
+        prev_radiance_direct = data_00_direct.rgb * custom_weights.x +
+                               data_10_direct.rgb * custom_weights.y +
+                               data_01_direct.rgb * custom_weights.z +
+                               data_11_direct.rgb * custom_weights.w;
+        prev_radiance_indirect_diffuse = data_00_indirect_diffuse.rgb * custom_weights.x +
+                                         data_10_indirect_diffuse.rgb * custom_weights.y +
+                                         data_01_indirect_diffuse.rgb * custom_weights.z +
+                                         data_11_indirect_diffuse.rgb * custom_weights.w;
+        prev_radiance_indirect_specular = data_00_indirect_specular.rgb * custom_weights.x +
+                                          data_10_indirect_specular.rgb * custom_weights.y +
+                                          data_01_indirect_specular.rgb * custom_weights.z +
+                                          data_11_indirect_specular.rgb * custom_weights.w;
         
         // Weighted average of frame count (use minimum for conservative estimate)
         // This ensures we don't over-trust history when mixing different counts
-        count_sum = 
-            min(data_00.w + f32(reservoir_entry.reservoir.m), MAX_ACCUMULATED_FRAMES) * custom_weights.x +
-            min(data_10.w + f32(reservoir_entry.reservoir.m), MAX_ACCUMULATED_FRAMES) * custom_weights.y +
-            min(data_01.w + f32(reservoir_entry.reservoir.m), MAX_ACCUMULATED_FRAMES) * custom_weights.z +
-            min(data_11.w + f32(reservoir_entry.reservoir.m), MAX_ACCUMULATED_FRAMES) * custom_weights.w;
+        count_sum =
+            min(data_00_direct.w + f32(reservoir_entry.reservoir.m), MAX_ACCUMULATED_FRAMES) * custom_weights.x +
+            min(data_10_direct.w + f32(reservoir_entry.reservoir.m), MAX_ACCUMULATED_FRAMES) * custom_weights.y +
+            min(data_01_direct.w + f32(reservoir_entry.reservoir.m), MAX_ACCUMULATED_FRAMES) * custom_weights.z +
+            min(data_11_direct.w + f32(reservoir_entry.reservoir.m), MAX_ACCUMULATED_FRAMES) * custom_weights.w;
     }
     
     // ═════════════════════════════════════════════════════════════════════════
@@ -300,16 +338,22 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     // history[1] = history[0] * (1/2) + curr1 * (1/2) = (curr0 + curr1) / 2
     // history[2] = history[1] * (2/3) + curr2 * (1/3) = (curr0 + curr1 + curr2) / 3
     
-    var final_radiance: vec3<f32>;
+    var final_radiance_direct: vec3<f32>;
+    var final_radiance_indirect_diffuse: vec3<f32>;
+    var final_radiance_indirect_specular: vec3<f32>;
     var final_count: f32;
 
     // Linear accumulation: alpha = 1 / (1 + N)
     let alpha = 1.0 / (1.0 + count_sum);
     // Blend current sample with history
     #if SKIP_ACCUMULATION
-    final_radiance = current_radiance;
+    final_radiance_direct = current_radiance_direct;
+    final_radiance_indirect_diffuse = current_radiance_indirect_diffuse;
+    final_radiance_indirect_specular = current_radiance_indirect_specular;
     #else
-    final_radiance = select(current_radiance, mix(prev_radiance, current_radiance, alpha), any_valid);
+    final_radiance_direct = select(current_radiance_direct, mix(prev_radiance_direct, current_radiance_direct, alpha), any_valid);
+    final_radiance_indirect_diffuse = select(current_radiance_indirect_diffuse, mix(prev_radiance_indirect_diffuse, current_radiance_indirect_diffuse, alpha), any_valid);
+    final_radiance_indirect_specular = select(current_radiance_indirect_specular, mix(prev_radiance_indirect_specular, current_radiance_indirect_specular, alpha), any_valid);
     #endif
 
     final_count = select(1.0, count_sum, any_valid);
@@ -317,7 +361,9 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     // ─────────────────────────────────────────────────────────────────────────
     // Final firefly clamp on output radiance
     // ─────────────────────────────────────────────────────────────────────────
-    final_radiance = safe_clamp_vec3_max(final_radiance, MAX_OUTPUT_LUMINANCE);
+    final_radiance_direct = safe_clamp_vec3_max(final_radiance_direct, MAX_OUTPUT_LUMINANCE);
+    final_radiance_indirect_diffuse = safe_clamp_vec3_max(final_radiance_indirect_diffuse, MAX_OUTPUT_LUMINANCE);
+    final_radiance_indirect_specular = safe_clamp_vec3_max(final_radiance_indirect_specular, MAX_OUTPUT_LUMINANCE);
     
     // ─────────────────────────────────────────────────────────────────────────
     // Output
@@ -325,5 +371,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     // Store accumulated radiance with sample count in alpha channel
     // Sample count is used by recurrent blur for adaptive radius:
     // blur_radius = BASE_RADIUS / (1 + sample_count)
-    textureStore(raw_accumulation, pixel_coord, vec4<f32>(final_radiance, final_count));
+    textureStore(raw_accumulation_direct, pixel_coord, vec4<f32>(final_radiance_direct, final_count));
+    textureStore(raw_accumulation_indirect_diffuse, pixel_coord, vec4<f32>(final_radiance_indirect_diffuse, final_count));
+    textureStore(raw_accumulation_indirect_specular, pixel_coord, vec4<f32>(final_radiance_indirect_specular, final_count));
 }

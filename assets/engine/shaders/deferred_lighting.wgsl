@@ -19,20 +19,22 @@
 @group(1) @binding(8) var<storage, read> light_count_buffer: array<u32>;
 
 #if GI_ENABLED
-  @group(1) @binding(9) var gi_texture: texture_2d<f32>;
+  @group(1) @binding(9) var gi_direct_texture: texture_2d<f32>;
+  @group(1) @binding(10) var gi_indirect_diffuse_texture: texture_2d<f32>;
+  @group(1) @binding(11) var gi_indirect_specular_texture: texture_2d<f32>;
   #if SHADOWS_ENABLED
-    @group(1) @binding(10) var<storage, read> shadow_atlas_depth: array<u32>;
-    @group(1) @binding(11) var page_table: texture_storage_2d_array<r32uint, read>;
-    @group(1) @binding(12) var page_offset: texture_storage_2d_array<rgba32float, read>;
-    @group(1) @binding(13) var<uniform> vsm_settings: ASVSMSettings;
+    @group(1) @binding(12) var<storage, read> shadow_atlas_depth: array<u32>;
+    @group(1) @binding(13) var page_table: texture_storage_2d_array<r32uint, read>;
+    @group(1) @binding(14) var page_offset: texture_storage_2d_array<rgba32float, read>;
+    @group(1) @binding(15) var<uniform> vsm_settings: ASVSMSettings;
     #if GTAO_ENABLED
-      @group(1) @binding(14) var ao_texture: texture_2d<f32>;
-      @group(1) @binding(15) var bent_normal_texture: texture_2d<f32>;
+      @group(1) @binding(16) var ao_texture: texture_2d<f32>;
+      @group(1) @binding(17) var bent_normal_texture: texture_2d<f32>;
     #endif
   #else
     #if GTAO_ENABLED
-      @group(1) @binding(10) var ao_texture: texture_2d<f32>;
-      @group(1) @binding(11) var bent_normal_texture: texture_2d<f32>;
+      @group(1) @binding(12) var ao_texture: texture_2d<f32>;
+      @group(1) @binding(13) var bent_normal_texture: texture_2d<f32>;
     #endif
   #endif
 #else
@@ -132,15 +134,24 @@ struct FragmentOutput {
 
     var color = f32(unlit) * tex_sky.rgb * mix(vec3f(1.0), albedo, tex_albedo.a);
 
-    var irradiance = vec3f(0.0);
+    var gi_direct = vec3f(0.0);
+    var gi_indirect_diffuse = vec3f(0.0);
+    var gi_indirect_specular = vec3f(0.0);
 #if GI_ENABLED
-    irradiance = textureSample(gi_texture, global_sampler, uv).rgb;
+    gi_direct = textureSample(gi_direct_texture, global_sampler, uv).rgb;
+    gi_indirect_diffuse = textureSample(gi_indirect_diffuse_texture, global_sampler, uv).rgb;
+    gi_indirect_specular = textureSample(gi_indirect_specular_texture, global_sampler, uv).rgb;
 #endif
 
 
 #if USE_RADIANCE_CACHE_AS_DEFERRED_LIGHTING
-    color += irradiance * albedo;
+    // The split GI buffers are stored in "lighting without albedo" space (irradiance-like):
+    // - direct + indirect_diffuse should be tinted by albedo in the deferred pass
+    // - indirect_specular is already in reflected radiance space (no albedo multiply)
+    color += (gi_direct + gi_indirect_diffuse + gi_indirect_specular) * albedo;
 #else
+    // Only use split GI as *indirect* when doing classic deferred direct lighting.
+    let irradiance = gi_indirect_diffuse;
     let num_lights = light_count_buffer[0] * (1u - unlit);
     for (var light_index = 0u; light_index < num_lights; light_index++) {
         var light = dense_lights_buffer[light_index];
@@ -193,6 +204,9 @@ struct FragmentOutput {
             shadow_factor,
         );
     }
+
+    // Add indirect specular term after direct lighting evaluation.
+    color += gi_indirect_specular;
 #endif
 
     color += (emissive * albedo);

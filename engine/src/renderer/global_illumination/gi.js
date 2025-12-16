@@ -231,7 +231,9 @@ const world_cache_debug_shader_setup = {
 
 export class GI {
   // Output textures
-  final_gi_texture = null;
+  final_gi_texture_direct = null;
+  final_gi_texture_indirect_diffuse = null;
+  final_gi_texture_indirect_specular = null;
   debug_texture = null;
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -297,17 +299,9 @@ export class GI {
     draw_count,
     force_recreate = false
   ) {
-    // ─────────────────────────────────────────────────────────────────────
-    // Create GI Output Texture
-    // ─────────────────────────────────────────────────────────────────────
-    let gi_output = render_graph.create_image({
-      name: "gi_output",
-      format: "rgba16float",
-      width: width,
-      height: height,
-      usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
-      force: force_recreate,
-    });
+    this.final_gi_texture_direct = null;
+    this.final_gi_texture_indirect_diffuse = null;
+    this.final_gi_texture_indirect_specular = null;
 
     // Only add GI passes if there are drawable objects
     if (draw_count > 0) {
@@ -329,13 +323,9 @@ export class GI {
         gbuffer_albedo,
         gbuffer_smra,
         gbuffer_motion_emissive,
-        gi_output,
         force_recreate
       );
     }
-
-    // Store reference for external use
-    this.final_gi_texture = gi_output;
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -360,7 +350,6 @@ export class GI {
     gbuffer_albedo,
     gbuffer_smra,
     gbuffer_motion_emissive,
-    gi_output,
     force_recreate
   ) {
     // ─────────────────────────────────────────────────────────────────────
@@ -469,7 +458,8 @@ export class GI {
     // ─────────────────────────────────────────────────────────────────────
     let pixel_path_state = render_graph.create_buffer({
       name: "gi_pixel_path_state",
-      size: rays_per_frame * 13 * 4,
+      // PixelPathState is 15x vec4<f32/u32> after split throughput fields.
+      size: rays_per_frame * 15 * 4,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
       force: force_recreate,
     });
@@ -483,8 +473,8 @@ export class GI {
     });
 
     // ReSTIR GI reservoir storage (double buffered for temporal and spatial reuse)
-    // GIReservoirData = GIReservoir (4x 32-bit) + GISample (4x vec4<f32>) = 20x 32-bit words
-    const reservoir_size = width * height * 20;
+    // GIReservoirData = GIReservoir (4x 32-bit) + GISample (6x vec4<f32>) = 28x 32-bit words
+    const reservoir_size = width * height * 28;
 
     const temporal_reservoir_0 = render_graph.create_buffer({
       name: "gi_temporal_reservoir_0",
@@ -515,13 +505,13 @@ export class GI {
     });
 
     // ─────────────────────────────────────────────────────────────────────
-    // Per-Pixel Radiance - BLURRED Output
-    // This contains the BLURRED radiance from the recurrent blur pass.
-    // raw_accumulation is what pixel_accumulate reads as history, ensuring
-    // the temporal accumulation sees the clean blurred background.
+    // Per-Pixel Radiance - BLURRED Output (split components)
+    // These contain the BLURRED radiance from the recurrent blur pass.
+    // pixel_accumulate reads these as history, ensuring temporal accumulation
+    // sees the clean blurred background (per component).
     // ─────────────────────────────────────────────────────────────────────
-    const pixel_radiance = render_graph.create_image({
-      name: "gi_pixel_radiance",
+    const pixel_radiance_direct = render_graph.create_image({
+      name: "gi_pixel_radiance_direct",
       format: "rgba16float",
       width: width,
       height: height,
@@ -529,14 +519,55 @@ export class GI {
       force: force_recreate,
     });
 
+    const pixel_radiance_indirect_diffuse = render_graph.create_image({
+      name: "gi_pixel_radiance_indirect_diffuse",
+      format: "rgba16float",
+      width: width,
+      height: height,
+      usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
+      force: force_recreate,
+    });
+
+    const pixel_radiance_indirect_specular = render_graph.create_image({
+      name: "gi_pixel_radiance_indirect_specular",
+      format: "rgba16float",
+      width: width,
+      height: height,
+      usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
+      force: force_recreate,
+    });
+
+    // Expose split outputs to the rest of the renderer.
+    // These are the BLURRED (stabilized) radiance buffers produced by the recurrent blur pass.
+    this.final_gi_texture_direct = pixel_radiance_direct;
+    this.final_gi_texture_indirect_diffuse = pixel_radiance_indirect_diffuse;
+    this.final_gi_texture_indirect_specular = pixel_radiance_indirect_specular;
+
     // ─────────────────────────────────────────────────────────────────────
-    // Raw Accumulation Buffer (Temporary)
+    // Raw Accumulation Buffers (Temporary, split components)
     // pixel_accumulate writes raw temporal accumulation here, then recurrent_blur
-    // reads this (center) + raw_accumulation (neighbors) and writes the
-    // blurred result to pixel_radiance.
+    // reads these (center + neighbors) and writes blurred results to pixel_radiance_*.
     // ─────────────────────────────────────────────────────────────────────
-    const raw_accumulation = render_graph.create_image({
-      name: "gi_raw_accumulation",
+    const raw_accumulation_direct = render_graph.create_image({
+      name: "gi_raw_accumulation_direct",
+      format: "rgba16float",
+      width: width,
+      height: height,
+      usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
+      force: force_recreate,
+    });
+
+    const raw_accumulation_indirect_diffuse = render_graph.create_image({
+      name: "gi_raw_accumulation_indirect_diffuse",
+      format: "rgba16float",
+      width: width,
+      height: height,
+      usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
+      force: force_recreate,
+    });
+
+    const raw_accumulation_indirect_specular = render_graph.create_image({
+      name: "gi_raw_accumulation_indirect_specular",
       format: "rgba16float",
       width: width,
       height: height,
@@ -889,7 +920,7 @@ export class GI {
       },
       (graph, frame_data, encoder) => {
         const pass = graph.get_physical_pass(frame_data.current_pass);
-        pass.dispatch(Math.ceil(total_pixels / COMPUTE_WORKGROUP_SIZE), 1, 1);
+        pass.dispatch(Math.ceil(rays_per_frame / COMPUTE_WORKGROUP_SIZE), 1, 1);
       }
     );
 
@@ -1023,15 +1054,23 @@ export class GI {
         inputs: [
           gi_params,
           spatial_reservoir_curr,
-          pixel_radiance,
+          pixel_radiance_direct,
+          pixel_radiance_indirect_diffuse,
+          pixel_radiance_indirect_specular,
           gbuffer_position,
           gbuffer_position_prev,
           gbuffer_normal,
           gbuffer_normal_prev,
           gbuffer_motion_emissive,
-          raw_accumulation,
+          raw_accumulation_direct,
+          raw_accumulation_indirect_diffuse,
+          raw_accumulation_indirect_specular,
         ],
-        outputs: [raw_accumulation],
+        outputs: [
+          raw_accumulation_direct,
+          raw_accumulation_indirect_diffuse,
+          raw_accumulation_indirect_specular,
+        ],
         shader_setup: pixel_accumulate_shader_setup,
       },
       (graph, frame_data, encoder) => {
@@ -1056,7 +1095,7 @@ export class GI {
     //
     // Outputs:
     //   - pixel_radiance: Blurred output (becomes raw_accumulation next frame)
-    //   - gi_output: Final GI radiance for deferred lighting passes
+    //   - pixel_radiance_*: Final GI radiance for deferred lighting passes (split components)
     // ─────────────────────────────────────────────────────────────────────
     render_graph.add_pass(
       `gi_recurrent_blur`,
@@ -1064,15 +1103,22 @@ export class GI {
       {
         inputs: [
           gi_params,
-          raw_accumulation,
+          raw_accumulation_direct,
+          raw_accumulation_indirect_diffuse,
+          raw_accumulation_indirect_specular,
           gbuffer_position,
           gbuffer_position_prev,
           gbuffer_normal,
           gbuffer_normal_prev,
-          pixel_radiance,
-          gi_output,
+          pixel_radiance_direct,
+          pixel_radiance_indirect_diffuse,
+          pixel_radiance_indirect_specular,
         ],
-        outputs: [pixel_radiance, gi_output],
+        outputs: [
+          pixel_radiance_direct,
+          pixel_radiance_indirect_diffuse,
+          pixel_radiance_indirect_specular,
+        ],
         shader_setup: pixel_blur_denoise_shader_setup,
       },
       (graph, frame_data, encoder) => {

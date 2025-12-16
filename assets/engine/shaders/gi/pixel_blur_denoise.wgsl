@@ -48,13 +48,16 @@
 // =============================================================================
 
 @group(1) @binding(0) var<uniform> gi_params: GIParams;
-@group(1) @binding(1) var raw_accumulation: texture_2d<f32>;
-@group(1) @binding(2) var gbuffer_position: texture_2d<f32>;
-@group(1) @binding(3) var gbuffer_position_prev: texture_2d<f32>;
-@group(1) @binding(4) var gbuffer_normal: texture_2d<f32>;
-@group(1) @binding(5) var gbuffer_normal_prev: texture_2d<f32>;
-@group(1) @binding(6) var pixel_radiance_curr: texture_storage_2d<rgba16float, write>;
-@group(1) @binding(7) var gi_output: texture_storage_2d<rgba16float, write>;
+@group(1) @binding(1) var raw_accumulation_direct: texture_2d<f32>;
+@group(1) @binding(2) var raw_accumulation_indirect_diffuse: texture_2d<f32>;
+@group(1) @binding(3) var raw_accumulation_indirect_specular: texture_2d<f32>;
+@group(1) @binding(4) var gbuffer_position: texture_2d<f32>;
+@group(1) @binding(5) var gbuffer_position_prev: texture_2d<f32>;
+@group(1) @binding(6) var gbuffer_normal: texture_2d<f32>;
+@group(1) @binding(7) var gbuffer_normal_prev: texture_2d<f32>;
+@group(1) @binding(8) var pixel_radiance_curr_direct: texture_storage_2d<rgba16float, write>;
+@group(1) @binding(9) var pixel_radiance_curr_indirect_diffuse: texture_storage_2d<rgba16float, write>;
+@group(1) @binding(10) var pixel_radiance_curr_indirect_specular: texture_storage_2d<rgba16float, write>;
 
 // =============================================================================
 // CONSTANTS
@@ -225,7 +228,7 @@ fn apply_anisotropic_scaling(
 
 @compute @workgroup_size(8, 8, 1)
 fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
-    let res = textureDimensions(raw_accumulation);
+    let res = textureDimensions(raw_accumulation_direct);
     
     // ─────────────────────────────────────────────────────────────────────────
     // Bounds check
@@ -240,9 +243,16 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     // Load center pixel's CURRENT accumulated radiance and sample count
     // This is the fresh temporal accumulation from pixel_accumulate
     // ─────────────────────────────────────────────────────────────────────────
-    let center_data = textureLoad(raw_accumulation, pixel_coord, 0);
-    let center_radiance = center_data.rgb;
-    let sample_count = center_data.a;
+    let center_data_direct = textureLoad(raw_accumulation_direct, pixel_coord, 0);
+    let center_data_indirect_diffuse = textureLoad(raw_accumulation_indirect_diffuse, pixel_coord, 0);
+    let center_data_indirect_specular = textureLoad(raw_accumulation_indirect_specular, pixel_coord, 0);
+
+    let center_radiance_direct = center_data_direct.rgb;
+    let center_radiance_indirect_diffuse = center_data_indirect_diffuse.rgb;
+    let center_radiance_indirect_specular = center_data_indirect_specular.rgb;
+
+    // Sample count is shared across components (written identically by pixel_accumulate).
+    let sample_count = center_data_direct.a;
     
     // ─────────────────────────────────────────────────────────────────────────
     // Load center G-buffer data
@@ -255,8 +265,9 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     // Early out: Skip sky pixels (no geometry to blur)
     // ─────────────────────────────────────────────────────────────────────────
     if (length(center_normal_data.xyz) <= 0.0) {
-        textureStore(pixel_radiance_curr, pixel_coord, vec4<f32>(center_radiance, sample_count));
-        textureStore(gi_output, pixel_coord, vec4<f32>(center_radiance, 1.0));
+        textureStore(pixel_radiance_curr_direct, pixel_coord, vec4<f32>(center_radiance_direct, sample_count));
+        textureStore(pixel_radiance_curr_indirect_diffuse, pixel_coord, vec4<f32>(center_radiance_indirect_diffuse, sample_count));
+        textureStore(pixel_radiance_curr_indirect_specular, pixel_coord, vec4<f32>(center_radiance_indirect_specular, sample_count));
         return;
     }
     
@@ -288,7 +299,9 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     // ─────────────────────────────────────────────────────────────────────────
     // Accumulate samples using anisotropic screen-space kernel
     // ─────────────────────────────────────────────────────────────────────────
-    var accumulated_radiance = center_radiance;
+    var accumulated_radiance_direct = center_radiance_direct;
+    var accumulated_radiance_indirect_diffuse = center_radiance_indirect_diffuse;
+    var accumulated_radiance_indirect_specular = center_radiance_indirect_specular;
     var total_sample_count = sample_count;
     var total_weight = 1.0;
     
@@ -341,9 +354,16 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         // ─────────────────────────────────────────────────────────────────
         // Load sample data from raw accumulation
         // ─────────────────────────────────────────────────────────────────
-        let sample_data = textureLoad(raw_accumulation, sample_coord, 0);
-        let sample_radiance = sample_data.rgb;
-        let neighbor_sample_count = sample_data.a;
+        let sample_data_direct = textureLoad(raw_accumulation_direct, sample_coord, 0);
+        let sample_data_indirect_diffuse = textureLoad(raw_accumulation_indirect_diffuse, sample_coord, 0);
+        let sample_data_indirect_specular = textureLoad(raw_accumulation_indirect_specular, sample_coord, 0);
+
+        let sample_radiance_direct = sample_data_direct.rgb;
+        let sample_radiance_indirect_diffuse = sample_data_indirect_diffuse.rgb;
+        let sample_radiance_indirect_specular = sample_data_indirect_specular.rgb;
+
+        // Sample count is shared across components.
+        let neighbor_sample_count = sample_data_direct.a;
         let sample_depth = length(sample_position - camera_position);
         
         // ─────────────────────────────────────────────────────────────────
@@ -369,7 +389,9 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         // ─────────────────────────────────────────────────────────────────
         // Accumulate weighted sample
         // ─────────────────────────────────────────────────────────────────
-        accumulated_radiance += sample_radiance * weight;
+        accumulated_radiance_direct += sample_radiance_direct * weight;
+        accumulated_radiance_indirect_diffuse += sample_radiance_indirect_diffuse * weight;
+        accumulated_radiance_indirect_specular += sample_radiance_indirect_specular * weight;
         total_sample_count += neighbor_sample_count * weight;
         total_weight += weight;
     }
@@ -377,13 +399,14 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     // ─────────────────────────────────────────────────────────────────────────
     // Normalize and output
     // ─────────────────────────────────────────────────────────────────────────
-    let final_radiance = accumulated_radiance / total_weight;
+    let final_radiance_direct = accumulated_radiance_direct / total_weight;
+    let final_radiance_indirect_diffuse = accumulated_radiance_indirect_diffuse / total_weight;
+    let final_radiance_indirect_specular = accumulated_radiance_indirect_specular / total_weight;
     let final_sample_count = total_sample_count / total_weight;
     
     // Output to blur buffer (becomes blur_prev next frame for recurrence)
     // Preserve sample count in alpha for next frame's adaptive radius
-    textureStore(pixel_radiance_curr, pixel_coord, vec4<f32>(final_radiance, final_sample_count));
-    
-    // Output to final GI texture for deferred lighting passes
-    textureStore(gi_output, pixel_coord, vec4<f32>(final_radiance, 1.0));
+    textureStore(pixel_radiance_curr_direct, pixel_coord, vec4<f32>(final_radiance_direct, final_sample_count));
+    textureStore(pixel_radiance_curr_indirect_diffuse, pixel_coord, vec4<f32>(final_radiance_indirect_diffuse, final_sample_count));
+    textureStore(pixel_radiance_curr_indirect_specular, pixel_coord, vec4<f32>(final_radiance_indirect_specular, final_sample_count));
 }

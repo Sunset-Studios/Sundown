@@ -79,7 +79,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     // ─────────────────────────────────────────────────────────────────────────
     if (pixel_path_state[gid.x].shadow_origin.w >= 0.0 && pixel_path_state[gid.x].state_u32.z == 1u) {
         let nee_radiance = safe_clamp_vec3_max(pixel_path_state[gid.x].shadow_radiance.rgb, MAX_RADIANCE_LUMINANCE);
-        pixel_path_state[gid.x].throughput += vec4f(nee_radiance, 0.0);
+        pixel_path_state[gid.x].throughput_direct += vec4f(nee_radiance, 0.0);
         pixel_path_state[gid.x].shadow_origin.w = -1.0;
         pixel_path_state[gid.x].state_u32.z = 0u;
     }
@@ -99,7 +99,10 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         
         // Clamp sky radiance. This prevents sun disc from causing fireflies on specular surfaces.
         let sky_contribution = safe_clamp_vec3_max(sky_radiance, MAX_RADIANCE_LUMINANCE);
-        pixel_path_state[gid.x].throughput += vec4f(sky_contribution, 0.0);
+        let is_specular_lobe = pixel_path_state[gid.x].state_u32.x == 1u;
+        let indirect_add = vec4f(sky_contribution, 0.0);
+        pixel_path_state[gid.x].throughput_indirect_diffuse += select(indirect_add, vec4f(0.0), is_specular_lobe);
+        pixel_path_state[gid.x].throughput_indirect_specular += select(vec4f(0.0), indirect_add, is_specular_lobe);
         pixel_path_state[gid.x].state_u32.y = 0u; // Mark path as dead
     }
     
@@ -175,7 +178,10 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
             let scale = min(1.0, (max_contribution * ray_source_pdf) / max(contribution_luminance, 0.001));
             let emissive_contribution = safe_clamp_vec3(emissive_radiance * scale);
 
-            pixel_path_state[gid.x].throughput += vec4f(emissive_contribution, 0.0);
+            let is_specular_lobe = pixel_path_state[gid.x].state_u32.x == 1u;
+            let indirect_add = vec4f(emissive_contribution, 0.0);
+            pixel_path_state[gid.x].throughput_indirect_diffuse += select(indirect_add, vec4f(0.0), is_specular_lobe);
+            pixel_path_state[gid.x].throughput_indirect_specular += select(vec4f(0.0), indirect_add, is_specular_lobe);
         }
 
         // ─────────────────────────────────────────────────────────────────────
@@ -200,7 +206,10 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         // Apply cached radiance if valid, with firefly clamping
         let cached_luminance = luminance(cached_radiance);
         if (cached_luminance > 0.0001) {
-            pixel_path_state[gid.x].throughput += vec4f(safe_clamp_vec3_max(cached_radiance, MAX_RADIANCE_LUMINANCE), 0.0);
+            let is_specular_lobe = pixel_path_state[gid.x].state_u32.x == 1u;
+            let indirect_add = vec4f(safe_clamp_vec3_max(cached_radiance, MAX_RADIANCE_LUMINANCE), 0.0);
+            pixel_path_state[gid.x].throughput_indirect_diffuse += select(indirect_add, vec4f(0.0), is_specular_lobe);
+            pixel_path_state[gid.x].throughput_indirect_specular += select(vec4f(0.0), indirect_add, is_specular_lobe);
         }
         
         pixel_path_state[gid.x].rng_sample_count_frame_stamp.y += 1.0;

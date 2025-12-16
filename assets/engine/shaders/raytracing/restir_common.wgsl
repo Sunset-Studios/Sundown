@@ -14,13 +14,23 @@ struct GIReservoir {
 struct GISampleCandidate {
     direction_and_source_pdf: vec4f,
     radiance_and_target_pdf: vec4f,
+    lobe_type: u32,
+    padding: u32,
+    padding2: u32,
+    padding3: u32,
 };
 
 struct GIReservoirSample {
     visible_position_source_pdf: vec4<f32>,
     sample_position: vec4<f32>,
     sample_normal_target_pdf: vec4<f32>,
-    outgoing_radiance: vec4<f32>,
+    // Split lighting payload carried by ReSTIR reservoirs (all are *unweighted integrands* f(y)):
+    // - direct:              next-event-estimation + visible emissive at the shading point
+    // - indirect_diffuse:    indirect contribution attributed to diffuse lobe sampling
+    // - indirect_specular:   indirect contribution attributed to specular lobe sampling
+    outgoing_radiance_direct: vec4<f32>,
+    outgoing_radiance_indirect_diffuse: vec4<f32>,
+    outgoing_radiance_indirect_specular: vec4<f32>,
 };
 
 struct GIReservoirData {
@@ -34,7 +44,9 @@ fn create_empty() -> GIReservoirData {
     empty.sample.visible_position_source_pdf = vec4<f32>(0.0);
     empty.sample.sample_position = vec4<f32>(0.0);
     empty.sample.sample_normal_target_pdf = vec4<f32>(0.0);
-    empty.sample.outgoing_radiance = vec4<f32>(0.0);
+    empty.sample.outgoing_radiance_direct = vec4<f32>(0.0);
+    empty.sample.outgoing_radiance_indirect_diffuse = vec4<f32>(0.0);
+    empty.sample.outgoing_radiance_indirect_specular = vec4<f32>(0.0);
     return empty;
 }
 
@@ -209,7 +221,8 @@ fn compute_reuse_target_pdf(
     );
 
     // Algorithm 4: beta_hat'_q = beta_hat_q / |J_{q->r}|
-    // We use beta_hat = p_hat = luminance(f(y)), where f(y) is the *unweighted integrand*
-    // stored in `sample.outgoing_radiance.xyz`.
+    // We use beta_hat = p_hat = luminance(f(y)), where f(y) is the *unweighted integrand*.
+    // The integrand is stored split across the three radiance payloads, and we use the
+    // combined target PDF stored in sample_normal_target_pdf.w.
     return sample.sample_normal_target_pdf.w / max(jacobian, 1e-6);
 }
