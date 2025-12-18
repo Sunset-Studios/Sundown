@@ -240,26 +240,26 @@ export class GI {
   // Configuration Parameters
   // ─────────────────────────────────────────────────────────────────────────
   config = {
-    screen_ray_count: 1,          // Rays per pixel per frame (1 recommended for real-time)
-    upscale_factor: 4,            // Temporal upscale factor X
-    world_cache_size: 32768,      // Number of world cache cells per LOD level
-    world_cache_cell_size: 4.0,   // Base cell size in world units
-    world_cache_lod_count: 4,     // Number of LOD levels
-    indirect_boost: 1.0,          // Multiplier for indirect lighting contribution
+    screen_ray_count: 1, // Rays per pixel per frame (1 recommended for real-time)
+    upscale_factor: 4, // Temporal upscale factor X
+    world_cache_size: 32768, // Number of world cache cells per LOD level
+    world_cache_cell_size: 4.0, // Base cell size in world units
+    world_cache_lod_count: 4, // Number of LOD levels
+    indirect_boost: 1.0, // Multiplier for indirect lighting contribution
   };
 
   // GI parameters buffer data (matches shader GIParams struct)
   gi_params_data = new Float32Array([
-    0,    // screen_ray_count
-    0,    // world_cache_size
-    0,    // world_cache_cell_size
-    0,    // total_pixels
-    0,    // frame_index
-    0,    // indirect_boost
-    0,    // upscale_factor
-    0,    // world_cache_lod_count
-    0,    // resolution_x
-    0,    // resolution_y
+    0, // screen_ray_count
+    0, // world_cache_size
+    0, // world_cache_cell_size
+    0, // total_pixels
+    0, // frame_index
+    0, // indirect_boost
+    0, // upscale_factor
+    0, // world_cache_lod_count
+    0, // resolution_x
+    0, // resolution_y
   ]);
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -299,9 +299,32 @@ export class GI {
     draw_count,
     force_recreate = false
   ) {
-    this.final_gi_texture_direct = null;
-    this.final_gi_texture_indirect_diffuse = null;
-    this.final_gi_texture_indirect_specular = null;
+    this.final_gi_texture_direct = render_graph.create_image({
+      name: "gi_pixel_radiance_direct",
+      format: "rgba16float",
+      width: width,
+      height: height,
+      usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
+      force: force_recreate,
+    });
+
+    this.final_gi_texture_indirect_diffuse = render_graph.create_image({
+      name: "gi_pixel_radiance_indirect_diffuse",
+      format: "rgba16float",
+      width: width,
+      height: height,
+      usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
+      force: force_recreate,
+    });
+
+    this.final_gi_texture_indirect_specular = render_graph.create_image({
+      name: "gi_pixel_radiance_indirect_specular",
+      format: "rgba16float",
+      width: width,
+      height: height,
+      usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
+      force: force_recreate,
+    });
 
     // Only add GI passes if there are drawable objects
     if (draw_count > 0) {
@@ -357,6 +380,12 @@ export class GI {
     // ─────────────────────────────────────────────────────────────────────
     const total_pixels = width * height;
     const total_cells = this.config.world_cache_size * this.config.world_cache_lod_count;
+
+    // ─────────────────────────────────────────────────────────────────────
+    // Get current frame index for validation frame detection
+    // ─────────────────────────────────────────────────────────────────────
+    const frame_index = SharedFrameInfoBuffer.get_frame_index();
+    const ping_pong_frame = frame_index % 2;
 
     // Tile-based dispatch: only trace one pixel per tile per frame
     // Each tile is upscale_factor x upscale_factor pixels
@@ -505,45 +534,6 @@ export class GI {
     });
 
     // ─────────────────────────────────────────────────────────────────────
-    // Per-Pixel Radiance - BLURRED Output (split components)
-    // These contain the BLURRED radiance from the recurrent blur pass.
-    // pixel_accumulate reads these as history, ensuring temporal accumulation
-    // sees the clean blurred background (per component).
-    // ─────────────────────────────────────────────────────────────────────
-    const pixel_radiance_direct = render_graph.create_image({
-      name: "gi_pixel_radiance_direct",
-      format: "rgba16float",
-      width: width,
-      height: height,
-      usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
-      force: force_recreate,
-    });
-
-    const pixel_radiance_indirect_diffuse = render_graph.create_image({
-      name: "gi_pixel_radiance_indirect_diffuse",
-      format: "rgba16float",
-      width: width,
-      height: height,
-      usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
-      force: force_recreate,
-    });
-
-    const pixel_radiance_indirect_specular = render_graph.create_image({
-      name: "gi_pixel_radiance_indirect_specular",
-      format: "rgba16float",
-      width: width,
-      height: height,
-      usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
-      force: force_recreate,
-    });
-
-    // Expose split outputs to the rest of the renderer.
-    // These are the BLURRED (stabilized) radiance buffers produced by the recurrent blur pass.
-    this.final_gi_texture_direct = pixel_radiance_direct;
-    this.final_gi_texture_indirect_diffuse = pixel_radiance_indirect_diffuse;
-    this.final_gi_texture_indirect_specular = pixel_radiance_indirect_specular;
-
-    // ─────────────────────────────────────────────────────────────────────
     // Raw Accumulation Buffers (Temporary, split components)
     // pixel_accumulate writes raw temporal accumulation here, then recurrent_blur
     // reads these (center + neighbors) and writes blurred results to pixel_radiance_*.
@@ -576,15 +566,15 @@ export class GI {
     });
 
     // Ping-pong selection based on frame index
-    const ping_pong_frame = SharedFrameInfoBuffer.get_frame_index() % 2;
 
     const temporal_reservoir_prev =
       ping_pong_frame === 0 ? temporal_reservoir_0 : temporal_reservoir_1;
+    const spatial_reservoir_prev =
+      ping_pong_frame === 0 ? spatial_reservoir_0 : spatial_reservoir_1;
     const temporal_reservoir_curr =
       ping_pong_frame === 0 ? temporal_reservoir_1 : temporal_reservoir_0;
-
-    const spatial_reservoir_prev = ping_pong_frame === 0 ? spatial_reservoir_0 : spatial_reservoir_1;
-    const spatial_reservoir_curr = ping_pong_frame === 0 ? spatial_reservoir_1 : spatial_reservoir_0;
+    const spatial_reservoir_curr =
+      ping_pong_frame === 0 ? spatial_reservoir_1 : spatial_reservoir_0;
 
     // ─────────────────────────────────────────────────────────────────────
     // Get Material Resources
@@ -659,8 +649,6 @@ export class GI {
       {},
       (graph, frame_data, encoder) => {
         const gi_params_buf = graph.get_physical_buffer(gi_params);
-
-        const frame_index = SharedFrameInfoBuffer.get_frame_index();
 
         // Fill parameter buffer
         this.gi_params_data[0] = this.config.screen_ray_count;
@@ -759,11 +747,7 @@ export class GI {
           world_cache_dispatch_params,
           gi_counters,
         ],
-        outputs: [
-          world_cache_block_prefixes,
-          world_cache_dispatch_params,
-          gi_counters,
-        ],
+        outputs: [world_cache_block_prefixes, world_cache_dispatch_params, gi_counters],
         shader_setup: world_cache_compact_block_prefix_scan_shader_setup,
       },
       (graph, frame_data, encoder) => {
@@ -785,9 +769,7 @@ export class GI {
           world_cache_block_prefixes,
           world_cache_compacted_indices,
         ],
-        outputs: [
-          world_cache_compacted_indices,
-        ],
+        outputs: [world_cache_compacted_indices],
         shader_setup: world_cache_compact_scatter_shader_setup,
       },
       (graph, frame_data, encoder) => {
@@ -1054,9 +1036,9 @@ export class GI {
         inputs: [
           gi_params,
           spatial_reservoir_curr,
-          pixel_radiance_direct,
-          pixel_radiance_indirect_diffuse,
-          pixel_radiance_indirect_specular,
+          this.final_gi_texture_direct,
+          this.final_gi_texture_indirect_diffuse,
+          this.final_gi_texture_indirect_specular,
           gbuffer_position,
           gbuffer_position_prev,
           gbuffer_normal,
@@ -1110,14 +1092,14 @@ export class GI {
           gbuffer_position_prev,
           gbuffer_normal,
           gbuffer_normal_prev,
-          pixel_radiance_direct,
-          pixel_radiance_indirect_diffuse,
-          pixel_radiance_indirect_specular,
+          this.final_gi_texture_direct,
+          this.final_gi_texture_indirect_diffuse,
+          this.final_gi_texture_indirect_specular,
         ],
         outputs: [
-          pixel_radiance_direct,
-          pixel_radiance_indirect_diffuse,
-          pixel_radiance_indirect_specular,
+          this.final_gi_texture_direct,
+          this.final_gi_texture_indirect_diffuse,
+          this.final_gi_texture_indirect_specular,
         ],
         shader_setup: pixel_blur_denoise_shader_setup,
       },
