@@ -40,6 +40,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 const TEMPORAL_NORMAL_THRESHOLD: f32 = 0.95;
 const TEMPORAL_DEPTH_THRESHOLD: f32 = 0.05; // relative distance-to-camera threshold
+const TEMPORAL_RADIANCE_RELATIVE_THRESHOLD: f32 = 0.9; // relative luminance mismatch threshold (0 = strict, 1 = permissive)
 
 // =============================================================================
 // MAIN COMPUTE SHADER
@@ -172,7 +173,13 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
             let delta_position = prev_position - visible_position;
             let depth_valid = abs(dot(delta_position, normal)) < TEMPORAL_DEPTH_THRESHOLD;
             
-            if (normal_valid && depth_valid) {
+            let radiance_valid = select(
+                true,
+                temporal_radiance_valid(prev_reservoir_data.sample, candidate_samples[0], TEMPORAL_RADIANCE_RELATIVE_THRESHOLD),
+                candidate_count > 0u
+            );
+
+            if (normal_valid && depth_valid && radiance_valid) {
                 rng_state = random_seed(rng_state);
 
                 gi_reservoir_merge(

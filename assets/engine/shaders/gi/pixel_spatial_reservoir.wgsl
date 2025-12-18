@@ -14,7 +14,7 @@
 // DEFINES
 // =============================================================================
 // Uncomment to skip spatial reservoir resampling (pass through temporal sample)
-// #define SKIP_SPATIAL_RESAMPLING
+// define SKIP_SPATIAL_RESAMPLING
 
 #include "common.wgsl"
 #include "gi/gi_common.wgsl"

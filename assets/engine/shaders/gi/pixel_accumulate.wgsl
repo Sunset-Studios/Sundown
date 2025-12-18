@@ -36,7 +36,7 @@
 // DEFINES
 // =============================================================================
 // Uncomment to skip temporal accumulation (output raw reservoir radiance)
-#define SKIP_ACCUMULATION
+// define SKIP_ACCUMULATION
 
 // =============================================================================
 // BINDINGS
@@ -73,7 +73,7 @@ const NORMAL_THRESHOLD = 0.95;         // Normal dot product threshold
 // Lower = faster response to changes, Higher = more stable but more lag
 // With upscaling, effective convergence time = MAX_FRAMES × upscale_factor
 // ─────────────────────────────────────────────────────────────────────────────
-const MAX_ACCUMULATED_FRAMES = 16.0;
+const MAX_ACCUMULATED_FRAMES = 8.0;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Firefly Prevention: Maximum output luminance

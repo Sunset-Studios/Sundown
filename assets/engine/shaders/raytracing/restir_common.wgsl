@@ -226,3 +226,33 @@ fn compute_reuse_target_pdf(
     // combined target PDF stored in sample_normal_target_pdf.w.
     return sample.sample_normal_target_pdf.w / max(jacobian, 1e-6);
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Temporal radiance similarity check
+// NOTE:
+// - We compare the reprojected (history) sample's radiance against the current
+//   frame's newly traced candidate (candidate_samples[0]) when available.
+// - This is an additional disocclusion/lighting-change rejection to avoid
+//   dragging stale bright samples across edges or through lighting changes.
+// ─────────────────────────────────────────────────────────────────────────────
+fn gi_sample_total_radiance(sample: GIReservoirSample) -> vec3<f32> {
+    return sample.outgoing_radiance_direct.xyz
+        + sample.outgoing_radiance_indirect_diffuse.xyz
+        + sample.outgoing_radiance_indirect_specular.xyz;
+}
+
+fn temporal_radiance_valid(prev_sample: GIReservoirSample, curr_sample: GIReservoirSample, threshold: f32) -> bool {
+    let prev_luma = luminance(gi_sample_total_radiance(prev_sample));
+    let curr_luma = luminance(gi_sample_total_radiance(curr_sample));
+
+    let max_luma = max(prev_luma, curr_luma);
+    let min_luma = min(prev_luma, curr_luma);
+
+    // If both are near-black, treat as similar to avoid dividing by tiny values.
+    if (max_luma < 1e-4) {
+        return true;
+    }
+
+    let rel_mismatch = (max_luma - min_luma) / max(max_luma, 1e-4);
+    return rel_mismatch < threshold;
+}
