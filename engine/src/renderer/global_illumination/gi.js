@@ -197,9 +197,15 @@ const pixel_temporal_reservoir_shader_setup = {
   },
 };
 
-const pixel_spatial_reservoir_shader_setup = {
+const pixel_spatial_reservoir_wide_shader_setup = {
   pipeline_shaders: {
-    compute: { path: "gi/pixel_spatial_reservoir.wgsl" },
+    compute: { path: "gi/pixel_spatial_reservoir_wide.wgsl" },
+  },
+};
+
+const pixel_spatial_reservoir_narrow_shader_setup = {
+  pipeline_shaders: {
+    compute: { path: "gi/pixel_spatial_reservoir_narrow.wgsl" },
   },
 };
 
@@ -241,7 +247,7 @@ export class GI {
   // ─────────────────────────────────────────────────────────────────────────
   config = {
     screen_ray_count: 1, // Rays per pixel per frame (1 recommended for real-time)
-    upscale_factor: 4, // Temporal upscale factor X
+    upscale_factor: 1, // Temporal upscale factor X
     world_cache_size: 32768, // Number of world cache cells per LOD level
     world_cache_cell_size: 4.0, // Base cell size in world units
     world_cache_lod_count: 4, // Number of LOD levels
@@ -528,6 +534,15 @@ export class GI {
 
     const spatial_reservoir_1 = render_graph.create_buffer({
       name: "gi_spatial_reservoir_1",
+      size: reservoir_size,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+      force: force_recreate,
+    });
+
+    // Intermediate buffer for multi-stage spatial reuse (wide -> narrow).
+    // NOTE: Same layout/size as the other GI reservoirs.
+    const spatial_reservoir_stage = render_graph.create_buffer({
+      name: "gi_spatial_reservoir_stage",
       size: reservoir_size,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
       force: force_recreate,
@@ -1001,22 +1016,44 @@ export class GI {
     );
 
     // ─────────────────────────────────────────────────────────────────────
-    // Pass 13: Spatial Resampling (ReSTIR GI)
+    // Pass 13a: Spatial Resampling (ReSTIR GI) - Wide reuse
     // ─────────────────────────────────────────────────────────────────────
     render_graph.add_pass(
-      `gi_pixel_spatial_reservoir_${ping_pong_frame}`,
+      `gi_pixel_spatial_reservoir_wide_${ping_pong_frame}`,
       RenderPassFlags.Compute,
       {
         inputs: [
           gi_params,
           temporal_reservoir_curr,
-          spatial_reservoir_prev,
+          spatial_reservoir_stage,
+          gbuffer_position,
+          gbuffer_normal,
+        ],
+        outputs: [spatial_reservoir_stage],
+        shader_setup: pixel_spatial_reservoir_wide_shader_setup,
+      },
+      (graph, frame_data, encoder) => {
+        const pass = graph.get_physical_pass(frame_data.current_pass);
+        pass.dispatch(Math.ceil(width / 16), Math.ceil(height / 16), 1);
+      }
+    );
+
+    // ─────────────────────────────────────────────────────────────────────
+    // Pass 13b: Spatial Resampling (ReSTIR GI) - Narrow reuse
+    // ─────────────────────────────────────────────────────────────────────
+    render_graph.add_pass(
+      `gi_pixel_spatial_reservoir_narrow_${ping_pong_frame}`,
+      RenderPassFlags.Compute,
+      {
+        inputs: [
+          gi_params,
+          spatial_reservoir_stage,
           spatial_reservoir_curr,
           gbuffer_position,
           gbuffer_normal,
         ],
         outputs: [spatial_reservoir_curr],
-        shader_setup: pixel_spatial_reservoir_shader_setup,
+        shader_setup: pixel_spatial_reservoir_narrow_shader_setup,
       },
       (graph, frame_data, encoder) => {
         const pass = graph.get_physical_pass(frame_data.current_pass);

@@ -40,7 +40,8 @@
 // ─────────────────────────────────────────────────────────────────────────────
 const TEMPORAL_NORMAL_THRESHOLD: f32 = 0.95;
 const TEMPORAL_DEPTH_THRESHOLD: f32 = 0.05; // relative distance-to-camera threshold
-const TEMPORAL_RADIANCE_RELATIVE_THRESHOLD: f32 = 0.9; // relative luminance mismatch threshold (0 = strict, 1 = permissive)
+const TEMPORAL_RADIANCE_RELATIVE_THRESHOLD: f32 = 0.95; // relative luminance mismatch threshold (0 = strict, 1 = permissive)
+const MAX_TEMPORAL_SAMPLES = 10u;
 
 // =============================================================================
 // MAIN COMPUTE SHADER
@@ -141,7 +142,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
             candidate_count,
             target_pdf / source_pdf,
             &rng_state,
-            max_temporal_samples
+            MAX_TEMPORAL_SAMPLES
         );
         
         candidate_count = candidate_count + 1u;
@@ -188,7 +189,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
                     prev_reservoir_data.reservoir,
                     prev_reservoir_data.sample.sample_normal_target_pdf.w,
                     rand_float(rng_state),
-                    max_temporal_samples
+                    MAX_TEMPORAL_SAMPLES
                 );
                 
                 candidate_samples[candidate_count] = prev_reservoir_data.sample;

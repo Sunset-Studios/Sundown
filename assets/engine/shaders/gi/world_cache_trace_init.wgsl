@@ -88,7 +88,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
 
         let ris_weight = target_pdf / max(source_pdf, 0.0001);
         if (ris_weight > 0.0 && !isinf(ris_weight)) {
-            gi_reservoir_update(&gi_reservoir, i, ris_weight, &rng, max_spatial_samples);
+            gi_reservoir_update(&gi_reservoir, i, ris_weight, &rng, num_init_ris_samples);
         }
         
         candidate_samples[i].radiance_and_target_pdf = vec4f(brdf, target_pdf);

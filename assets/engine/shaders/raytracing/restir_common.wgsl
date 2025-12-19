@@ -1,8 +1,4 @@
 const num_init_ris_samples = 4u;
-const num_spatial_samples = 2u;
-const spatial_radius = 0.5;
-const max_temporal_samples = 30u;
-const max_spatial_samples = 500u;
 
 struct GIReservoir {
     selected_index: u32,
@@ -24,10 +20,6 @@ struct GIReservoirSample {
     visible_position_source_pdf: vec4<f32>,
     sample_position: vec4<f32>,
     sample_normal_target_pdf: vec4<f32>,
-    // Split lighting payload carried by ReSTIR reservoirs (all are *unweighted integrands* f(y)):
-    // - direct:              next-event-estimation + visible emissive at the shading point
-    // - indirect_diffuse:    indirect contribution attributed to diffuse lobe sampling
-    // - indirect_specular:   indirect contribution attributed to specular lobe sampling
     outgoing_radiance_direct: vec4<f32>,
     outgoing_radiance_indirect_diffuse: vec4<f32>,
     outgoing_radiance_indirect_specular: vec4<f32>,
@@ -193,8 +185,8 @@ fn compute_restir_gi_jacobian(
     let dir_q = v_q * inverseSqrt(dist2_q);
     let dir_r = v_r * inverseSqrt(dist2_r);
 
-    let cos_q = abs(dot(sample_point_normal, dir_q));
-    let cos_r = abs(dot(sample_point_normal, dir_r));
+    let cos_q = max(dot(sample_point_normal, dir_q), 0.0);
+    let cos_r = max(dot(sample_point_normal, dir_r), 0.0);
 
     // |J_{q->r}| = (|cos(phi_2^r)| / |cos(phi_2^q)|) * (||x1^q - x2^q||^2 / ||x1^r - x2^q||^2)
     return (cos_r / max(cos_q, 1e-6)) * (dist2_q / dist2_r);
@@ -220,11 +212,8 @@ fn compute_reuse_target_pdf(
         sample_position
     );
 
-    // Algorithm 4: beta_hat'_q = beta_hat_q / |J_{q->r}|
-    // We use beta_hat = p_hat = luminance(f(y)), where f(y) is the *unweighted integrand*.
-    // The integrand is stored split across the three radiance payloads, and we use the
-    // combined target PDF stored in sample_normal_target_pdf.w.
-    return sample.sample_normal_target_pdf.w / max(jacobian, 1e-6);
+    let clamped_jacobian = clamp(jacobian, 1e-6, 10.0);
+    return sample.sample_normal_target_pdf.w * clamped_jacobian;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
