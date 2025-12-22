@@ -235,7 +235,7 @@ const world_cache_debug_shader_setup = {
 // GI SYSTEM CLASS
 // ═══════════════════════════════════════════════════════════════════════════
 
-export class GI {
+export class PTGI {
   // Output textures
   final_gi_texture_direct = null;
   final_gi_texture_indirect_diffuse = null;
@@ -247,7 +247,7 @@ export class GI {
   // ─────────────────────────────────────────────────────────────────────────
   config = {
     screen_ray_count: 1, // Rays per pixel per frame (1 recommended for real-time)
-    upscale_factor: 1, // Temporal upscale factor X
+    upscale_factor: 2, // Temporal upscale factor X
     world_cache_size: 32768, // Number of world cache cells per LOD level
     world_cache_cell_size: 4.0, // Base cell size in world units
     world_cache_lod_count: 4, // Number of LOD levels
@@ -1117,7 +1117,7 @@ export class GI {
     //   - pixel_radiance_*: Final GI radiance for deferred lighting passes (split components)
     // ─────────────────────────────────────────────────────────────────────
     render_graph.add_pass(
-      `gi_recurrent_blur`,
+      `gi_recurrent_blur_${ping_pong_frame}`,
       RenderPassFlags.Compute,
       {
         inputs: [

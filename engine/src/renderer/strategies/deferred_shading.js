@@ -48,7 +48,7 @@ import {
 } from "../../utility/config_permutations.js";
 
 // Specialized renderer components
-import { GI } from "../global_illumination/gi.js";
+import { PTGI } from "../global_illumination/ptgi.js";
 import { GTAO } from "../global_illumination/gtao.js";
 import { AdaptiveSparseVirtualShadowMaps } from "../shadows/as_vsm.js";
 import {
@@ -465,7 +465,7 @@ export class DeferredShadingStrategy {
   setup(render_graph) {
     this.debug_overlay = new DebugOverlay();
 
-    this.gi = new GI();
+    this.ptgi = new PTGI();
     this.gtao = new GTAO();
     this.as_vsm = new AdaptiveSparseVirtualShadowMaps({
       atlas_size: ATLAS_SIZE,
@@ -1334,7 +1334,7 @@ export class DeferredShadingStrategy {
       // │    Real-time global illumination using radiance cascades                    │
       // └─────────────────────────────────────────────────────────────────────────────┘
       if (gi_enabled) {
-        this.gi.add_passes(
+        this.ptgi.add_passes(
           render_graph,
           image_extent.width,
           image_extent.height,
@@ -1400,9 +1400,9 @@ export class DeferredShadingStrategy {
 
         if (gi_enabled) {
           lighting_inputs.push(
-            this.gi.final_gi_texture_direct,
-            this.gi.final_gi_texture_indirect_diffuse,
-            this.gi.final_gi_texture_indirect_specular
+            this.ptgi.final_gi_texture_direct,
+            this.ptgi.final_gi_texture_indirect_diffuse,
+            this.ptgi.final_gi_texture_indirect_specular
           );
         }
 
@@ -1449,7 +1449,7 @@ export class DeferredShadingStrategy {
       // │    (displayed via debug overlay, doesn't affect main rendering pipeline)  │
       // └─────────────────────────────────────────────────────────────────────────────┘
       if (gi_enabled && debug_view === DebugDrawType.GI_WorldCache) {
-        this.gi.add_debug_passes(
+        this.ptgi.add_debug_passes(
           render_graph,
           image_extent.width,
           image_extent.height,
@@ -1812,7 +1812,7 @@ export class DeferredShadingStrategy {
             break;
           case DebugDrawType.GI_Direct:
             this.debug_overlay.set_properties(
-              this.gi.final_gi_texture_direct,
+              this.ptgi.final_gi_texture_direct,
               0,
               0,
               image_extent.width,
@@ -1822,7 +1822,7 @@ export class DeferredShadingStrategy {
             break;
           case DebugDrawType.GI_Specular:
             this.debug_overlay.set_properties(
-              this.gi.final_gi_texture_indirect_specular,
+              this.ptgi.final_gi_texture_indirect_specular,
               0,
               0,
               image_extent.width,
@@ -1832,7 +1832,7 @@ export class DeferredShadingStrategy {
             break;
           case DebugDrawType.GI_Diffuse:
             this.debug_overlay.set_properties(
-              this.gi.final_gi_texture_indirect_diffuse,
+              this.ptgi.final_gi_texture_indirect_diffuse,
               0,
               0,
               image_extent.width,
@@ -1842,7 +1842,7 @@ export class DeferredShadingStrategy {
             break;
           case DebugDrawType.GI_WorldCache:
             this.debug_overlay.set_properties(
-              this.gi.debug_texture,
+              this.ptgi.debug_texture,
               0,
               0,
               image_extent.width,
