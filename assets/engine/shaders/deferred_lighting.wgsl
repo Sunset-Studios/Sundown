@@ -2,8 +2,6 @@
 #include "lighting_common.wgsl"
 #include "shadow/shadows_sampling.wgsl"
 
-#define USE_RADIANCE_CACHE_AS_DEFERRED_LIGHTING
-
 // ------------------------------------------------------------------------------------
 // Buffers
 // ------------------------------------------------------------------------------------ 

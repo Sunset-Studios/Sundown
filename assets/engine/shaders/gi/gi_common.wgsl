@@ -16,6 +16,12 @@
 #include "lighting_common.wgsl"
 
 // =============================================================================
+// CONSTANTS
+// =============================================================================
+
+const MAX_HIT_DISTANCE: f32 = 65504.0;
+
+// =============================================================================
 // GI COUNTERS
 // =============================================================================
 
@@ -146,20 +152,19 @@ fn encode_octahedral(direction: vec3<f32>) -> vec2<f32> {
         select(-1.0, 1.0, projected.y >= 0.0)
     );
     let wrapped = (vec2<f32>(1.0) - abs(projected.yx)) * wrap_sign;
-    projected = select(projected, wrapped, normal.z < 0.0);
-
+    projected = select(projected, wrapped, normal.z <= 0.0);
     return projected * 0.5 + 0.5;
 }
 
 fn decode_octahedral(encoded: vec2<f32>) -> vec3<f32> {
     let f = encoded * 2.0 - 1.0;
     var normal = vec3<f32>(f.x, f.y, 1.0 - abs(f.x) - abs(f.y));
-    let t = clamp(-normal.z, 0.0, 1.0);
-    let correction = vec2<f32>(
-        select(-t, t, f.x >= 0.0),
-        select(-t, t, f.y >= 0.0)
+    let wrap_sign = vec2<f32>(
+        select(-1.0, 1.0, normal.x >= 0.0),
+        select(-1.0, 1.0, normal.y >= 0.0)
     );
-    normal = vec3<f32>(f.x + correction.x, f.y + correction.y, normal.z);
+    let wrapped = (vec2<f32>(1.0) - abs(normal.yx)) * wrap_sign;
+    normal = select(normal, vec3<f32>(wrapped.x, wrapped.y, normal.z), normal.z < 0.0);
     return safe_normalize(normal);
 }
 

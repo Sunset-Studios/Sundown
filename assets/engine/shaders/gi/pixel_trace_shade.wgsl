@@ -73,6 +73,8 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let camera_position = view_buffer[u32(frame_info.view_index)].view_position.xyz;
     let sun_dir = normalize(-view_buffer[light_view_index].view_direction.xyz);
 
+    // We only handle NEE direct lighting when using the radiance cache as deferred lighting
+#if USE_RADIANCE_CACHE_AS_DEFERRED_LIGHTING
     // ─────────────────────────────────────────────────────────────────────────
     // Handle Direct Light Visibility (NEE result from hit pass)
     // Clamp NEE contribution to prevent fireflies from bright lights
@@ -83,6 +85,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         pixel_path_state[gid.x].shadow_origin.w = -1.0;
         pixel_path_state[gid.x].state_u32.z = 0u;
     }
+#endif
     
     // ─────────────────────────────────────────────────────────────────────────
     // Handle Ray Miss (Sky/Environment)

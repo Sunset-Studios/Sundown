@@ -324,6 +324,8 @@ fn process_selected_pixel(
     // Update path weight with BRDF and reservoir weight
     let path_weight = ray_brdf * gi_reservoir.w * gi_params.indirect_boost;
 
+    // We only handle NEE direct lighting when using the radiance cache as deferred lighting
+#if USE_RADIANCE_CACHE_AS_DEFERRED_LIGHTING
     // ═════════════════════════════════════════════════════════════════════════
     // NEXT EVENT ESTIMATION (NEE) - DIRECT LIGHTING
     // Setup shadow rays for direct lighting contribution
@@ -358,6 +360,7 @@ fn process_selected_pixel(
         pixel_path_state[ray_slot].shadow_direction = vec4<f32>(0.0, 0.0, 0.0, 0.0);
         pixel_path_state[ray_slot].shadow_radiance = vec4<f32>(0.0, 0.0, 0.0, 0.0);
     }
+#endif
     
     // ─────────────────────────────────────────────────────────────────────────
     // Store path state for initial bounce

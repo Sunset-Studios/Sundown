@@ -470,6 +470,199 @@ fn halton_2d(index: u32) -> vec2<f32> {
     return vec2<f32>(halton_base2(index), halton_base3(index));
 }
 
+// =============================================================================
+// ╔═══════════════════════════════════════════════════════════════════════════╗
+// ║          LOW-DISCREPANCY SEQUENCES (Scrambled Halton & Sobol)            ║
+// ╠═══════════════════════════════════════════════════════════════════════════╣
+// ║                                                                           ║
+// ║  These functions provide low-discrepancy sampling with per-pixel/probe   ║
+// ║  scrambling to decorrelate samples across the image while preserving     ║
+// ║  the superior convergence properties of quasi-Monte Carlo sequences.     ║
+// ║                                                                           ║
+// ║  Usage pattern (replaces rand_float for RIS/importance sampling):        ║
+// ║    let r1 = rand_halton(rng, sample_idx, 0u);  // dimension 0            ║
+// ║    let r2 = rand_halton(rng, sample_idx, 1u);  // dimension 1            ║
+// ║    let r3 = rand_halton(rng, sample_idx, 2u);  // dimension 2            ║
+// ║                                                                           ║
+// ╚═══════════════════════════════════════════════════════════════════════════╝
+// =============================================================================
+
+// Prime bases for Halton sequence (first 8 primes for 8 dimensions)
+const HALTON_PRIMES = array<u32, 8>(2u, 3u, 5u, 7u, 11u, 13u, 17u, 19u);
+
+// -----------------------------------------------------------------------------
+// Generalized Halton sequence for arbitrary prime base
+// More flexible than halton_base2/base3 - works for any dimension
+// -----------------------------------------------------------------------------
+fn halton_base(index: u32, base: u32) -> f32 {
+    var result = 0.0;
+    var f = 1.0 / f32(base);
+    var i = index;
+    
+    // Iterate through digits in the given base (max 20 iterations for u32)
+    for (var iter = 0u; iter < 20u; iter = iter + 1u) {
+        if (i == 0u) { break; }
+        result += f32(i % base) * f;
+        i /= base;
+        f /= f32(base);
+    }
+    
+    return result;
+}
+
+// -----------------------------------------------------------------------------
+// Scrambled Halton Sequence (Cranley-Patterson Rotation)
+// -----------------------------------------------------------------------------
+// Uses the RNG to generate a per-pixel/probe offset that decorrelates the
+// sequence while preserving low-discrepancy properties within each pixel.
+//
+// Parameters:
+//   rng         - Scrambling seed (derived from pixel/probe position + frame)
+//   sample_idx  - Index in the sequence (0, 1, 2, ... for each sample)
+//   dimension   - Which dimension to sample (0, 1, 2, ... up to 7)
+//
+// Returns: A value in [0, 1) with low-discrepancy properties
+// -----------------------------------------------------------------------------
+fn rand_halton(rng: u32, sample_idx: u32, dimension: u32) -> f32 {
+    let base = HALTON_PRIMES[dimension % 8u];
+    
+    // +1 to sample_idx avoids first sample always being 0
+    let halton_val = halton_base(sample_idx + 1u, base);
+    
+    // Cranley-Patterson rotation: add per-dimension random offset
+    // Using hash to decorrelate dimensions from each other
+    let scramble = rand_float(hash(rng ^ (dimension * 0x9E3779B9u)));
+    
+    return fract(halton_val + scramble);
+}
+
+// =============================================================================
+// Sobol Sequence Implementation
+// =============================================================================
+// Sobol sequences are another family of low-discrepancy sequences with
+// excellent multidimensional uniformity. They use direction vectors to
+// generate samples via XOR operations.
+// =============================================================================
+
+// Direction vectors for Sobol sequence (first 4 dimensions)
+// These are standard Sobol direction numbers shifted to fill 32 bits
+const SOBOL_V0 = array<u32, 16>(
+    0x80000000u, 0x40000000u, 0x20000000u, 0x10000000u,
+    0x08000000u, 0x04000000u, 0x02000000u, 0x01000000u,
+    0x00800000u, 0x00400000u, 0x00200000u, 0x00100000u,
+    0x00080000u, 0x00040000u, 0x00020000u, 0x00010000u
+);
+
+const SOBOL_V1 = array<u32, 16>(
+    0x80000000u, 0xc0000000u, 0xa0000000u, 0xf0000000u,
+    0x88000000u, 0xcc000000u, 0xaa000000u, 0xff000000u,
+    0x80800000u, 0xc0c00000u, 0xa0a00000u, 0xf0f00000u,
+    0x88880000u, 0xcccc0000u, 0xaaaa0000u, 0xffff0000u
+);
+
+const SOBOL_V2 = array<u32, 16>(
+    0x80000000u, 0xc0000000u, 0x60000000u, 0x90000000u,
+    0xe8000000u, 0x5c000000u, 0x8e000000u, 0xc5000000u,
+    0x68800000u, 0x9cc00000u, 0xee600000u, 0x55900000u,
+    0x80e80000u, 0xc05c0000u, 0x608e0000u, 0x90c50000u
+);
+
+const SOBOL_V3 = array<u32, 16>(
+    0x80000000u, 0xc0000000u, 0x20000000u, 0x50000000u,
+    0xf8000000u, 0x74000000u, 0xa2000000u, 0x93000000u,
+    0xd8800000u, 0x25400000u, 0x59e00000u, 0xe6d00000u,
+    0x78080000u, 0xb40c0000u, 0x82020000u, 0xc3050000u
+);
+
+// -----------------------------------------------------------------------------
+// Core Sobol sample generation for a single dimension
+// -----------------------------------------------------------------------------
+fn sobol_sample_dim(index: u32, dimension: u32) -> u32 {
+    var result = 0u;
+    var i = index;
+    var bit = 0u;
+    
+    // XOR direction vectors based on which bits are set in the index
+    while (i != 0u && bit < 16u) {
+        if ((i & 1u) != 0u) {
+            // Select direction vector based on dimension
+            let v = select(
+                select(
+                    select(SOBOL_V3[bit], SOBOL_V2[bit], dimension == 2u),
+                    SOBOL_V1[bit],
+                    dimension == 1u
+                ),
+                SOBOL_V0[bit],
+                dimension == 0u
+            );
+            result ^= v;
+        }
+        i >>= 1u;
+        bit += 1u;
+    }
+    
+    return result;
+}
+
+// -----------------------------------------------------------------------------
+// Scrambled Sobol Sequence (XOR Scrambling / Owen-like)
+// -----------------------------------------------------------------------------
+// Uses the RNG to generate a per-pixel/probe XOR mask that decorrelates
+// the sequence while preserving stratification properties.
+//
+// Parameters:
+//   rng         - Scrambling seed (derived from pixel/probe position + frame)
+//   sample_idx  - Index in the sequence (0, 1, 2, ... for each sample)
+//   dimension   - Which dimension to sample (0, 1, 2, 3 supported)
+//
+// Returns: A value in [0, 1) with low-discrepancy properties
+// -----------------------------------------------------------------------------
+fn rand_sobol(rng: u32, sample_idx: u32, dimension: u32) -> f32 {
+    // Generate the raw Sobol sample (+1 to avoid index 0)
+    let sobol_raw = sobol_sample_dim(sample_idx + 1u, dimension % 4u);
+    
+    // XOR scrambling with per-dimension random mask
+    // This is a simplified form of Owen scrambling
+    let scramble_mask = hash(rng ^ (dimension * 0x85ebca6bu));
+    let scrambled = sobol_raw ^ scramble_mask;
+    
+    // Convert to [0, 1) float
+    return f32(scrambled) * 2.3283064365386963e-10;  // = 1.0 / 2^32
+}
+
+// -----------------------------------------------------------------------------
+// Convenience: 2D/3D sampling helpers
+// -----------------------------------------------------------------------------
+fn rand_halton_2d(rng: u32, sample_idx: u32) -> vec2<f32> {
+    return vec2<f32>(
+        rand_halton(rng, sample_idx, 0u),
+        rand_halton(rng, sample_idx, 1u)
+    );
+}
+
+fn rand_halton_3d(rng: u32, sample_idx: u32) -> vec3<f32> {
+    return vec3<f32>(
+        rand_halton(rng, sample_idx, 0u),
+        rand_halton(rng, sample_idx, 1u),
+        rand_halton(rng, sample_idx, 2u)
+    );
+}
+
+fn rand_sobol_2d(rng: u32, sample_idx: u32) -> vec2<f32> {
+    return vec2<f32>(
+        rand_sobol(rng, sample_idx, 0u),
+        rand_sobol(rng, sample_idx, 1u)
+    );
+}
+
+fn rand_sobol_3d(rng: u32, sample_idx: u32) -> vec3<f32> {
+    return vec3<f32>(
+        rand_sobol(rng, sample_idx, 0u),
+        rand_sobol(rng, sample_idx, 1u),
+        rand_sobol(rng, sample_idx, 2u)
+    );
+}
+
 // ============================================================================
 // O(1) Helper function to compute pixel coordinates from linear index
 // ============================================================================

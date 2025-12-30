@@ -39,9 +39,10 @@ export class Renderer {
   has_f16 = false;
   has_subgroups = false;
   use_depth_prepass = true;
-  shadows_enabled = false;
+  shadows_enabled = true;
   gi_enabled = true;
-  gtao_enabled = true;
+  gtao_enabled = false;
+  use_radiance_cache_as_deferred_lighting = false;
   debug_draw_type = DebugDrawType.None;
 
   static renderers = [];
@@ -76,6 +77,10 @@ export class Renderer {
 
     this.has_f16 = this.adapter.features.has("shader-f16") && !options.use_precision_float;
     this.has_subgroups = this.adapter.features.has("subgroups");
+
+    if (!this.has_subgroups) {
+      throw Error("Sundown requires WebGPU subgroups to be supported");
+    }
 
     let required_features = ["indirect-first-instance"];
     if (this.has_f16) {
@@ -420,6 +425,22 @@ export class Renderer {
    */
   set_depth_prepass_enabled(enabled) {
     this.use_depth_prepass = enabled;
+  }
+
+  /**
+   * Check if the radiance cache should be used as deferred lighting
+   * @returns {boolean} - True if the radiance cache should be used as deferred lighting, false otherwise
+   */
+  is_use_radiance_cache_as_deferred_lighting() {
+    return this.use_radiance_cache_as_deferred_lighting;
+  }
+
+  /**
+   * Set the radiance cache should be used as deferred lighting
+   * @param {boolean} enabled - True if the radiance cache should be used as deferred lighting, false otherwise
+   */
+  set_use_radiance_cache_as_deferred_lighting(enabled) {
+    this.use_radiance_cache_as_deferred_lighting = enabled;
   }
 
   /**

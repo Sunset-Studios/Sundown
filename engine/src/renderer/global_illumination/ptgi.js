@@ -247,7 +247,7 @@ export class PTGI {
   // ─────────────────────────────────────────────────────────────────────────
   config = {
     screen_ray_count: 1, // Rays per pixel per frame (1 recommended for real-time)
-    upscale_factor: 2, // Temporal upscale factor X
+    upscale_factor: 4, // Temporal upscale factor X
     world_cache_size: 32768, // Number of world cache cells per LOD level
     world_cache_cell_size: 4.0, // Base cell size in world units
     world_cache_lod_count: 4, // Number of LOD levels
