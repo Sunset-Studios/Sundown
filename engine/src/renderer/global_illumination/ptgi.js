@@ -221,6 +221,12 @@ const pixel_blur_denoise_shader_setup = {
   },
 };
 
+const pixel_upscale_final_shader_setup = {
+  pipeline_shaders: {
+    compute: { path: "gi/pixel_upscale_final.wgsl" },
+  },
+};
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Debug Shaders
 // ─────────────────────────────────────────────────────────────────────────────
@@ -247,9 +253,9 @@ export class PTGI {
   // ─────────────────────────────────────────────────────────────────────────
   config = {
     screen_ray_count: 1, // Rays per pixel per frame (1 recommended for real-time)
-    upscale_factor: 4, // Temporal upscale factor X
+    upscale_factor: 1, // A final full-resolution pass upsamples the GI outputs for lighting.
     world_cache_size: 32768, // Number of world cache cells per LOD level
-    world_cache_cell_size: 4.0, // Base cell size in world units
+    world_cache_cell_size: 1.0, // Base cell size in world units
     world_cache_lod_count: 4, // Number of LOD levels
     indirect_boost: 1.0, // Multiplier for indirect lighting contribution
   };
@@ -264,8 +270,10 @@ export class PTGI {
     0, // indirect_boost
     0, // upscale_factor
     0, // world_cache_lod_count
-    0, // resolution_x
-    0, // resolution_y
+    0, // full_resolution_x
+    0, // full_resolution_y
+    0, // gi_resolution_x
+    0, // gi_resolution_y
   ]);
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -384,7 +392,11 @@ export class PTGI {
     // ─────────────────────────────────────────────────────────────────────
     // Calculate Dimensions
     // ─────────────────────────────────────────────────────────────────────
-    const total_pixels = width * height;
+    const safe_upscale_factor = Math.max(1, Math.floor(this.config.upscale_factor));
+    const gi_width = Math.max(1, Math.ceil(width / safe_upscale_factor));
+    const gi_height = Math.max(1, Math.ceil(height / safe_upscale_factor));
+
+    const total_pixels = gi_width * gi_height;
     const total_cells = this.config.world_cache_size * this.config.world_cache_lod_count;
 
     // ─────────────────────────────────────────────────────────────────────
@@ -393,12 +405,8 @@ export class PTGI {
     const frame_index = SharedFrameInfoBuffer.get_frame_index();
     const ping_pong_frame = frame_index % 2;
 
-    // Tile-based dispatch: only trace one pixel per tile per frame
-    // Each tile is upscale_factor x upscale_factor pixels
-    const tile_grid_width = Math.ceil(width / this.config.upscale_factor);
-    const tile_grid_height = Math.ceil(height / this.config.upscale_factor);
-    const tiles_per_frame = tile_grid_width * tile_grid_height;
-    const rays_per_frame = tiles_per_frame * this.config.screen_ray_count;
+    // GI runs at reduced resolution (gi_width x gi_height). We trace every GI pixel each frame.
+    const rays_per_frame = total_pixels * this.config.screen_ray_count;
 
     // ─────────────────────────────────────────────────────────────────────
     // Blue Noise Texture
@@ -509,7 +517,7 @@ export class PTGI {
 
     // ReSTIR GI reservoir storage (double buffered for temporal and spatial reuse)
     // GIReservoirData = GIReservoir (4x 32-bit) + GISample (6x vec4<f32>) = 28x 32-bit words
-    const reservoir_size = width * height * 28;
+    const reservoir_size = gi_width * gi_height * 28;
 
     const temporal_reservoir_0 = render_graph.create_buffer({
       name: "gi_temporal_reservoir_0",
@@ -556,8 +564,8 @@ export class PTGI {
     const raw_accumulation_direct = render_graph.create_image({
       name: "gi_raw_accumulation_direct",
       format: "rgba16float",
-      width: width,
-      height: height,
+      width: gi_width,
+      height: gi_height,
       usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
       force: force_recreate,
     });
@@ -565,8 +573,8 @@ export class PTGI {
     const raw_accumulation_indirect_diffuse = render_graph.create_image({
       name: "gi_raw_accumulation_indirect_diffuse",
       format: "rgba16float",
-      width: width,
-      height: height,
+      width: gi_width,
+      height: gi_height,
       usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
       force: force_recreate,
     });
@@ -574,8 +582,37 @@ export class PTGI {
     const raw_accumulation_indirect_specular = render_graph.create_image({
       name: "gi_raw_accumulation_indirect_specular",
       format: "rgba16float",
-      width: width,
-      height: height,
+      width: gi_width,
+      height: gi_height,
+      usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
+      force: force_recreate,
+    });
+
+    // Low-resolution GI history / blurred output (used for temporal accumulation).
+    // A final pass upsamples these into `this.final_gi_texture_*` at full resolution.
+    const gi_low_radiance_direct = render_graph.create_image({
+      name: "gi_low_radiance_direct",
+      format: "rgba16float",
+      width: gi_width,
+      height: gi_height,
+      usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
+      force: force_recreate,
+    });
+
+    const gi_low_radiance_indirect_diffuse = render_graph.create_image({
+      name: "gi_low_radiance_indirect_diffuse",
+      format: "rgba16float",
+      width: gi_width,
+      height: gi_height,
+      usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
+      force: force_recreate,
+    });
+
+    const gi_low_radiance_indirect_specular = render_graph.create_image({
+      name: "gi_low_radiance_indirect_specular",
+      format: "rgba16float",
+      width: gi_width,
+      height: gi_height,
       usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
       force: force_recreate,
     });
@@ -672,10 +709,12 @@ export class PTGI {
         this.gi_params_data[3] = total_pixels;
         this.gi_params_data[4] = frame_index;
         this.gi_params_data[5] = this.config.indirect_boost;
-        this.gi_params_data[6] = this.config.upscale_factor;
+        this.gi_params_data[6] = safe_upscale_factor;
         this.gi_params_data[7] = this.config.world_cache_lod_count;
         this.gi_params_data[8] = width;
         this.gi_params_data[9] = height;
+        this.gi_params_data[10] = gi_width;
+        this.gi_params_data[11] = gi_height;
 
         gi_params_buf.write_raw(this.gi_params_data);
       }
@@ -1011,7 +1050,7 @@ export class PTGI {
       },
       (graph, frame_data, encoder) => {
         const pass = graph.get_physical_pass(frame_data.current_pass);
-        pass.dispatch(Math.ceil(width / 16), Math.ceil(height / 16), 1);
+        pass.dispatch(Math.ceil(gi_width / 16), Math.ceil(gi_height / 16), 1);
       }
     );
 
@@ -1034,7 +1073,7 @@ export class PTGI {
       },
       (graph, frame_data, encoder) => {
         const pass = graph.get_physical_pass(frame_data.current_pass);
-        pass.dispatch(Math.ceil(width / 16), Math.ceil(height / 16), 1);
+        pass.dispatch(Math.ceil(gi_width / 16), Math.ceil(gi_height / 16), 1);
       }
     );
 
@@ -1057,7 +1096,7 @@ export class PTGI {
       },
       (graph, frame_data, encoder) => {
         const pass = graph.get_physical_pass(frame_data.current_pass);
-        pass.dispatch(Math.ceil(width / 16), Math.ceil(height / 16), 1);
+        pass.dispatch(Math.ceil(gi_width / 16), Math.ceil(gi_height / 16), 1);
       }
     );
 
@@ -1073,9 +1112,9 @@ export class PTGI {
         inputs: [
           gi_params,
           spatial_reservoir_curr,
-          this.final_gi_texture_direct,
-          this.final_gi_texture_indirect_diffuse,
-          this.final_gi_texture_indirect_specular,
+          gi_low_radiance_direct,
+          gi_low_radiance_indirect_diffuse,
+          gi_low_radiance_indirect_specular,
           gbuffer_position,
           gbuffer_position_prev,
           gbuffer_normal,
@@ -1095,7 +1134,7 @@ export class PTGI {
       (graph, frame_data, encoder) => {
         const pass = graph.get_physical_pass(frame_data.current_pass);
         // Dispatch as 8x8 tiles for better cache coherency
-        pass.dispatch(Math.ceil(width / 8), Math.ceil(height / 8), 1);
+        pass.dispatch(Math.ceil(gi_width / 8), Math.ceil(gi_height / 8), 1);
       }
     );
 
@@ -1129,6 +1168,39 @@ export class PTGI {
           gbuffer_position_prev,
           gbuffer_normal,
           gbuffer_normal_prev,
+          gi_low_radiance_direct,
+          gi_low_radiance_indirect_diffuse,
+          gi_low_radiance_indirect_specular,
+        ],
+        outputs: [
+          gi_low_radiance_direct,
+          gi_low_radiance_indirect_diffuse,
+          gi_low_radiance_indirect_specular,
+        ],
+        shader_setup: pixel_blur_denoise_shader_setup,
+      },
+      (graph, frame_data, encoder) => {
+        const pass = graph.get_physical_pass(frame_data.current_pass);
+        // Dispatch as 8x8 tiles for better cache coherency
+        pass.dispatch(Math.ceil(gi_width / 8), Math.ceil(gi_height / 8), 1);
+      }
+    );
+
+    // ─────────────────────────────────────────────────────────────────────
+    // Pass 16: Final Full-Resolution Upscale
+    // Converts low-res GI outputs into crisp full-res textures for lighting.
+    // ─────────────────────────────────────────────────────────────────────
+    render_graph.add_pass(
+      `gi_upscale_final_${ping_pong_frame}`,
+      RenderPassFlags.Compute,
+      {
+        inputs: [
+          gi_params,
+          gi_low_radiance_direct,
+          gi_low_radiance_indirect_diffuse,
+          gi_low_radiance_indirect_specular,
+          gbuffer_position,
+          gbuffer_normal,
           this.final_gi_texture_direct,
           this.final_gi_texture_indirect_diffuse,
           this.final_gi_texture_indirect_specular,
@@ -1138,11 +1210,10 @@ export class PTGI {
           this.final_gi_texture_indirect_diffuse,
           this.final_gi_texture_indirect_specular,
         ],
-        shader_setup: pixel_blur_denoise_shader_setup,
+        shader_setup: pixel_upscale_final_shader_setup,
       },
       (graph, frame_data, encoder) => {
         const pass = graph.get_physical_pass(frame_data.current_pass);
-        // Dispatch as 8x8 tiles for better cache coherency
         pass.dispatch(Math.ceil(width / 8), Math.ceil(height / 8), 1);
       }
     );

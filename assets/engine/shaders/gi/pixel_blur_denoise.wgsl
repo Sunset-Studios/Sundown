@@ -238,6 +238,9 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
     
     let pixel_coord = vec2<i32>(i32(gid.x), i32(gid.y));
+    let full_res = vec2<u32>(u32(gi_params.full_resolution_x), u32(gi_params.full_resolution_y));
+    let upscale_factor = u32(gi_params.upscale_factor);
+    let center_full_pixel_coord = gi_pixel_to_full_res_pixel_coord(gid.xy, upscale_factor, full_res);
     
     // ─────────────────────────────────────────────────────────────────────────
     // Load center pixel's CURRENT accumulated radiance and sample count
@@ -257,8 +260,8 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     // ─────────────────────────────────────────────────────────────────────────
     // Load center G-buffer data
     // ─────────────────────────────────────────────────────────────────────────
-    let center_position = textureLoad(gbuffer_position, pixel_coord, 0).xyz;
-    let center_normal_data = textureLoad(gbuffer_normal, pixel_coord, 0);
+    let center_position = textureLoad(gbuffer_position, center_full_pixel_coord, 0u).xyz;
+    let center_normal_data = textureLoad(gbuffer_normal, center_full_pixel_coord, 0u);
     let center_normal = safe_normalize(center_normal_data.xyz);
     
     // ─────────────────────────────────────────────────────────────────────────
@@ -294,7 +297,8 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     // ─────────────────────────────────────────────────────────────────────────
     // Compute adaptive blur radius in pixels
     // ─────────────────────────────────────────────────────────────────────────
-    let effective_radius = compute_adaptive_radius(sample_count);
+    // Keep blur footprint roughly constant in full-res pixels by scaling in GI pixel units.
+    let effective_radius = compute_adaptive_radius(sample_count) / max(f32(upscale_factor), 1.0);
     
     // ─────────────────────────────────────────────────────────────────────────
     // Accumulate samples using anisotropic screen-space kernel
@@ -342,8 +346,9 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         // ─────────────────────────────────────────────────────────────────
         // Load sample G-buffer data
         // ─────────────────────────────────────────────────────────────────
-        let sample_position = textureLoad(gbuffer_position, sample_coord, 0).xyz;
-        let sample_normal_data = textureLoad(gbuffer_normal, sample_coord, 0);
+        let sample_full_pixel_coord = gi_pixel_to_full_res_pixel_coord(vec2<u32>(sample_coord), upscale_factor, full_res);
+        let sample_position = textureLoad(gbuffer_position, sample_full_pixel_coord, 0u).xyz;
+        let sample_normal_data = textureLoad(gbuffer_normal, sample_full_pixel_coord, 0u);
         let sample_normal = safe_normalize(sample_normal_data.xyz);
         
         // Skip invalid samples (sky pixels)

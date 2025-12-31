@@ -22,7 +22,7 @@
 // =============================================================================
 // TUNABLES (NARROW PASS)
 // =============================================================================
-const SPATIAL_RADIUS_PIXELS: f32 = 6.0;
+const SPATIAL_RADIUS_PIXELS: f32 = 12.0;
 const SPATIAL_SAMPLE_COUNT: u32 = 3u;
 const MAX_SPATIAL_SAMPLES = 500u;
 
@@ -48,7 +48,8 @@ const SPATIAL_DEPTH_THRESHOLD: f32 = 0.03;
 
 @compute @workgroup_size(16, 16, 1)
 fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
-    let res = textureDimensions(gbuffer_position);
+    let full_res = vec2<u32>(u32(gi_params.full_resolution_x), u32(gi_params.full_resolution_y));
+    let res = vec2<u32>(u32(gi_params.gi_resolution_x), u32(gi_params.gi_resolution_y));
 
     if (gid.x >= res.x || gid.y >= res.y) {
         return;
@@ -57,7 +58,10 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let pixel_index = gid.y * res.x + gid.x;
     let pixel_coord = vec2<u32>(gid.xy);
 
-    let normal_sample = textureLoad(gbuffer_normal, pixel_coord, 0u);
+    let upscale_factor = u32(gi_params.upscale_factor);
+    let full_pixel_coord = gi_pixel_to_full_res_pixel_coord(pixel_coord, upscale_factor, full_res);
+
+    let normal_sample = textureLoad(gbuffer_normal, full_pixel_coord, 0u);
     let normal = safe_normalize(normal_sample.xyz);
 
     if (length(normal_sample.xyz) <= 0.0) {
@@ -65,7 +69,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         return;
     }
 
-    let center_position = textureLoad(gbuffer_position, pixel_coord, 0u).xyz;
+    let center_position = textureLoad(gbuffer_position, full_pixel_coord, 0u).xyz;
 
     var candidate_samples: array<GIReservoirSample, SPATIAL_SAMPLE_COUNT + 1u>;
     var candidate_count = 0u;
@@ -101,7 +105,9 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         rng_state = random_seed(rng_state);
         let rand_angle = rand_float(rng_state);
 
-        let radius_pixels = rand_radius * SPATIAL_RADIUS_PIXELS;
+        // Keep radius roughly constant in full-res pixels by scaling in GI pixel units.
+        let scaled_radius_pixels = SPATIAL_RADIUS_PIXELS / max(f32(upscale_factor), 1.0);
+        let radius_pixels = rand_radius * scaled_radius_pixels;
         let angle = rand_angle * 2.0 * PI;
         let offset_pixels_f = vec2<f32>(cos(angle), sin(angle)) * radius_pixels;
 
@@ -114,7 +120,8 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
             continue;
         }
 
-        let neighbor_normal_sample = textureLoad(gbuffer_normal, neighbor, 0u);
+        let neighbor_full_pixel_coord = gi_pixel_to_full_res_pixel_coord(neighbor, upscale_factor, full_res);
+        let neighbor_normal_sample = textureLoad(gbuffer_normal, neighbor_full_pixel_coord, 0u);
         let neighbor_normal = safe_normalize(neighbor_normal_sample.xyz);
         if (length(neighbor_normal_sample.xyz) <= 0.0) {
             continue;
@@ -126,7 +133,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         }
 
         let normal_similarity = dot(neighbor_normal, normal);
-        let neighbor_position = textureLoad(gbuffer_position, neighbor, 0u).xyz;
+        let neighbor_position = textureLoad(gbuffer_position, neighbor_full_pixel_coord, 0u).xyz;
         let plane_distance = abs(dot(neighbor_position - center_position, normal));
 
         let valid_for_reuse = normal_similarity > SPATIAL_NORMAL_THRESHOLD

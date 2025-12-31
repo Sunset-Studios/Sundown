@@ -57,13 +57,11 @@ const MAX_RADIANCE_LUMINANCE = 10.0;
 
 @compute @workgroup_size(128, 1, 1)
 fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
-    // Compute total rays from tile grid (not total pixels)
-    let rays_per_tile = u32(gi_params.screen_ray_count);
-    let resolution = vec2<u32>(u32(gi_params.resolution_x), u32(gi_params.resolution_y));
-    let upscale_factor = u32(gi_params.upscale_factor);
-    let tile_grid_dims = vec2<u32>(resolution.x / upscale_factor, resolution.y / upscale_factor);
-    let total_tiles = tile_grid_dims.x * tile_grid_dims.y;
-    let total_rays = total_tiles * rays_per_tile;
+    // Compute total rays from GI internal resolution (trace every GI pixel each frame)
+    let rays_per_pixel = u32(gi_params.screen_ray_count);
+    let gi_resolution = vec2<u32>(u32(gi_params.gi_resolution_x), u32(gi_params.gi_resolution_y));
+    let total_pixels = gi_resolution.x * gi_resolution.y;
+    let total_rays = total_pixels * rays_per_pixel;
     
     if (gid.x >= total_rays) {
         return;

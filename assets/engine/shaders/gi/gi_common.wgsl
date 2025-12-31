@@ -45,10 +45,12 @@ struct GIParams {
     total_pixels: f32,              // Total pixels (width * height)
     frame_index: f32,               // Current frame index
     indirect_boost: f32,            // Indirect lighting multiplier
-    upscale_factor: f32,                 // Temporal upscale factor
+    upscale_factor: f32,            // GI internal resolution scale factor (1, 2, 4, ...)
     world_cache_lod_count: f32,     // Number of LOD levels for world cache
-    resolution_x: f32,              // Screen resolution X
-    resolution_y: f32,              // Screen resolution Y
+    full_resolution_x: f32,         // Full-resolution X (GBuffer / lighting target)
+    full_resolution_y: f32,         // Full-resolution Y (GBuffer / lighting target)
+    gi_resolution_x: f32,           // GI internal resolution X (full_resolution / upscale_factor)
+    gi_resolution_y: f32,           // GI internal resolution Y (full_resolution / upscale_factor)
 };
 
 // =============================================================================
@@ -97,6 +99,25 @@ struct WorldCachePathState {
 // =============================================================================
 // HELPER FUNCTIONS
 // =============================================================================
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GI resolution helpers
+// 
+// We run PTGI at a reduced internal resolution (gi_resolution_*), while
+// sampling geometry from the full-resolution GBuffer (full_resolution_*).
+// This helper maps a GI pixel coordinate to a representative full-res pixel
+// coordinate inside its upscale_factor×upscale_factor footprint.
+// ─────────────────────────────────────────────────────────────────────────────
+fn gi_pixel_to_full_res_pixel_coord(
+    gi_pixel_coord: vec2<u32>,
+    upscale_factor: u32,
+    full_resolution: vec2<u32>
+) -> vec2<u32> {
+    let center_offset = upscale_factor / 2u;
+    let full_x = min(gi_pixel_coord.x * upscale_factor + center_offset, full_resolution.x - 1u);
+    let full_y = min(gi_pixel_coord.y * upscale_factor + center_offset, full_resolution.y - 1u);
+    return vec2<u32>(full_x, full_y);
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Pack half float into u32 (for distance comparison)

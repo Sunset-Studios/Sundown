@@ -139,14 +139,13 @@ fn blue_noise_next(sampler: ptr<function, BlueNoiseSampler>) -> f32 {
 
 @compute @workgroup_size(128, 1, 1)
 fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
-    let resolution = vec2<u32>(u32(gi_params.resolution_x), u32(gi_params.resolution_y));
-    let upscale_factor = u32(gi_params.upscale_factor);
-    let tile_grid_dims = vec2<u32>(resolution.x / upscale_factor, resolution.y / upscale_factor);
-    let total_tiles = tile_grid_dims.x * tile_grid_dims.y;
+    let full_resolution = vec2<u32>(u32(gi_params.full_resolution_x), u32(gi_params.full_resolution_y));
+    let gi_resolution = vec2<u32>(u32(gi_params.gi_resolution_x), u32(gi_params.gi_resolution_y));
     
     let frame_id = u32(gi_params.frame_index);
-    let rays_per_tile = u32(gi_params.screen_ray_count);
-    let total_rays = total_tiles * rays_per_tile;
+    let rays_per_pixel = u32(gi_params.screen_ray_count);
+    let total_pixels = gi_resolution.x * gi_resolution.y;
+    let total_rays = total_pixels * rays_per_pixel;
     
     // ─────────────────────────────────────────────────────────────────────────
     // Per-ray-slot dispatch: each thread initializes exactly ONE ray slot.
@@ -158,29 +157,21 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
 
     let ray_slot = gid.x;
-    let tile_index = ray_slot / rays_per_tile;
+    let pixel_index = ray_slot / rays_per_pixel;
 
-    // Tile coords in the tile grid
-    let tile_x = tile_index % tile_grid_dims.x;
-    let tile_y = tile_index / tile_grid_dims.x;
+    // GI pixel coords
+    let gi_x = pixel_index % gi_resolution.x;
+    let gi_y = pixel_index / gi_resolution.x;
+    let gi_pixel_coord = vec2<u32>(gi_x, gi_y);
 
-    // Initialize blue noise sampler (tile space)
-    var bn_sampler = blue_noise_init(vec2<u32>(tile_x, tile_y), frame_id, ray_slot);
+    // Representative full-res pixel coord for GBuffer sampling
+    let upscale_factor = u32(gi_params.upscale_factor);
+    let full_pixel_coord = gi_pixel_to_full_res_pixel_coord(gi_pixel_coord, upscale_factor, full_resolution);
 
-    // Sample blue noise to pick a pixel within the tile
-    let rand_tile_x = blue_noise_next(&bn_sampler);
-    let rand_tile_y = blue_noise_next(&bn_sampler);
+    // Initialize blue noise sampler (GI pixel space)
+    var bn_sampler = blue_noise_init(gi_pixel_coord, frame_id, ray_slot);
 
-    let pixel_coord = tile_to_pixel_with_offset(
-        tile_index,
-        tile_grid_dims.x,
-        upscale_factor,
-        resolution,
-        rand_tile_x,
-        rand_tile_y
-    );
-
-    process_selected_pixel(ray_slot, pixel_coord, &bn_sampler, resolution);
+    process_selected_pixel(ray_slot, gi_pixel_coord, full_pixel_coord, &bn_sampler, gi_resolution);
 }
 
 // =============================================================================
@@ -189,17 +180,18 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
 
 fn process_selected_pixel(
     ray_slot: u32,
-    pixel_coord: vec2<u32>,
+    gi_pixel_coord: vec2<u32>,
+    full_pixel_coord: vec2<u32>,
     bn_sampler: ptr<function, BlueNoiseSampler>,
     resolution: vec2<u32>
 ) {
     let frame_id = u32(gi_params.frame_index);
-    let pixel_index = pixel_coord.y * resolution.x + pixel_coord.x;
+    let pixel_index = gi_pixel_coord.y * resolution.x + gi_pixel_coord.x;
     
     // ─────────────────────────────────────────────────────────────────────────
     // Sample G-buffer at selected pixel location
     // ─────────────────────────────────────────────────────────────────────────
-    let normal_data = textureLoad(gbuffer_normal, pixel_coord, 0u);
+    let normal_data = textureLoad(gbuffer_normal, full_pixel_coord, 0u);
     let normal = safe_normalize(normal_data.xyz);
     let normal_length = length(normal_data.xyz);
     
@@ -212,10 +204,10 @@ fn process_selected_pixel(
         return;
     }
     
-    let position = textureLoad(gbuffer_position, pixel_coord, 0u).xyz;
-    let albedo = textureLoad(gbuffer_albedo, pixel_coord, 0u).rgb;
-    let smra = textureLoad(gbuffer_smra, pixel_coord, 0u);
-    let motion_emissive = textureLoad(gbuffer_motion, pixel_coord, 0u);
+    let position = textureLoad(gbuffer_position, full_pixel_coord, 0u).xyz;
+    let albedo = textureLoad(gbuffer_albedo, full_pixel_coord, 0u).rgb;
+    let smra = textureLoad(gbuffer_smra, full_pixel_coord, 0u);
+    let motion_emissive = textureLoad(gbuffer_motion, full_pixel_coord, 0u);
 
     let roughness = smra.g;
     let metallic = smra.b;
@@ -377,7 +369,7 @@ fn process_selected_pixel(
     pixel_path_state[ray_slot].throughput_direct = vec4<f32>(safe_clamp_vec3_max(emissive * albedo, MAX_INITIAL_EMISSIVE), 0.0);
     pixel_path_state[ray_slot].throughput_indirect_diffuse = vec4<f32>(0.0);
     pixel_path_state[ray_slot].throughput_indirect_specular = vec4<f32>(0.0);
-    pixel_path_state[ray_slot].pixel_coords = vec4<f32>(f32(pixel_coord.x), f32(pixel_coord.y), 0.0, 0.0);
+    pixel_path_state[ray_slot].pixel_coords = vec4<f32>(f32(gi_pixel_coord.x), f32(gi_pixel_coord.y), 0.0, 0.0);
 
     // ─────────────────────────────────────────────────────────────────────────
     // Add to work queue

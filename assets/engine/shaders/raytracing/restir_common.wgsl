@@ -59,13 +59,6 @@ fn gi_reservoir_update(
     rng_state: ptr<function, u32>,
     sample_clamp_threshold: u32
 ) {
-    // If we've hit the clamp threshold, do NOT keep accumulating weight_sum.
-    // Otherwise `m` stays clamped but `weight_sum` grows without bound, causing
-    // `w = weight_sum / (m * p_hat)` to drift upward over time (runaway brightness).
-    if ((*reservoir).m >= sample_clamp_threshold) {
-        return;
-    }
-
     (*reservoir).weight_sum += weight;
     (*reservoir).m += 1u;
     (*reservoir).m = min((*reservoir).m, sample_clamp_threshold);
@@ -88,11 +81,6 @@ fn gi_reservoir_update_with_rand(
     xi: f32,
     sample_clamp_threshold: u32
 ) {
-    // Same clamp behavior as gi_reservoir_update(): stop weight accumulation once full.
-    if ((*reservoir).m >= sample_clamp_threshold) {
-        return;
-    }
-
     (*reservoir).weight_sum += weight;
     (*reservoir).m += 1u;
     (*reservoir).m = min((*reservoir).m, sample_clamp_threshold);
@@ -122,9 +110,6 @@ fn gi_reservoir_merge(
     }
 
     let old_m = (*reservoir).m;
-    if (old_m >= sample_clamp_threshold) {
-        return;
-    }
 
     // If this merge would push us past the clamp, scale the contribution so
     // weight_sum remains consistent with the (clamped) effective M.
@@ -228,20 +213,4 @@ fn gi_sample_total_radiance(sample: GIReservoirSample) -> vec3<f32> {
     return sample.outgoing_radiance_direct.xyz
         + sample.outgoing_radiance_indirect_diffuse.xyz
         + sample.outgoing_radiance_indirect_specular.xyz;
-}
-
-fn temporal_radiance_valid(prev_sample: GIReservoirSample, curr_sample: GIReservoirSample, threshold: f32) -> bool {
-    let prev_luma = luminance(gi_sample_total_radiance(prev_sample));
-    let curr_luma = luminance(gi_sample_total_radiance(curr_sample));
-
-    let max_luma = max(prev_luma, curr_luma);
-    let min_luma = min(prev_luma, curr_luma);
-
-    // If both are near-black, treat as similar to avoid dividing by tiny values.
-    if (max_luma < 1e-4) {
-        return true;
-    }
-
-    let rel_mismatch = (max_luma - min_luma) / max(max_luma, 1e-4);
-    return rel_mismatch < threshold;
 }

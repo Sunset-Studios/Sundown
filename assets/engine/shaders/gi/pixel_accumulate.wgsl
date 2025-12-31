@@ -144,7 +144,9 @@ fn test_corner_validity(
     current_normal: vec3<f32>,
     current_depth: f32,
     camera_position: vec3<f32>,
-    res: vec2<u32>
+    res: vec2<u32>,
+    upscale_factor: u32,
+    full_res: vec2<u32>
 ) -> f32 {
     // Bounds check
     if (corner_coord.x < 0 || corner_coord.y < 0 ||
@@ -153,8 +155,9 @@ fn test_corner_validity(
     }
     
     // Load previous frame's geometry
-    let prev_position = textureLoad(gbuffer_position_prev, corner_coord, 0).xyz;
-    let prev_normal_data = textureLoad(gbuffer_normal_prev, corner_coord, 0);
+    let corner_full_coord = gi_pixel_to_full_res_pixel_coord(vec2<u32>(corner_coord), upscale_factor, full_res);
+    let prev_position = textureLoad(gbuffer_position_prev, corner_full_coord, 0u).xyz;
+    let prev_normal_data = textureLoad(gbuffer_normal_prev, corner_full_coord, 0u);
     let prev_normal = safe_normalize(prev_normal_data.xyz);
     
     // Skip sky pixels
@@ -180,13 +183,16 @@ fn test_corner_validity(
 
 @compute @workgroup_size(8, 8, 1)
 fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
-    let res = textureDimensions(gbuffer_position);
+    let full_res = vec2<u32>(u32(gi_params.full_resolution_x), u32(gi_params.full_resolution_y));
+    let res = vec2<u32>(u32(gi_params.gi_resolution_x), u32(gi_params.gi_resolution_y));
     
     if (gid.x >= res.x || gid.y >= res.y) {
         return;
     }
     
     let pixel_coord = vec2<i32>(i32(gid.x), i32(gid.y));
+    let upscale_factor = u32(gi_params.upscale_factor);
+    let full_pixel_coord = gi_pixel_to_full_res_pixel_coord(gid.xy, upscale_factor, full_res);
     
     let view = view_buffer[u32(frame_info.view_index)];
     let camera_position = view.view_position.xyz;
@@ -194,8 +200,8 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     // ─────────────────────────────────────────────────────────────────────────
     // Read G-buffer for current pixel
     // ─────────────────────────────────────────────────────────────────────────
-    let position = textureLoad(gbuffer_position, pixel_coord, 0).xyz;
-    let normal_data = textureLoad(gbuffer_normal, pixel_coord, 0);
+    let position = textureLoad(gbuffer_position, full_pixel_coord, 0u).xyz;
+    let normal_data = textureLoad(gbuffer_normal, full_pixel_coord, 0u);
     let normal = safe_normalize(normal_data.xyz);
     let normal_length = length(normal_data.xyz);
     let current_depth = length(position - camera_position);
@@ -245,8 +251,9 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     // ─────────────────────────────────────────────────────────────────────────
     // Compute reprojected position using motion vectors
     // ─────────────────────────────────────────────────────────────────────────
-    let motion_sample = textureLoad(gbuffer_motion, pixel_coord, 0);
-    let pixel_velocity = motion_sample.xy * vec2<f32>(f32(res.x), f32(res.y)) * vec2<f32>(0.5, -0.5);
+    let motion_sample = textureLoad(gbuffer_motion, vec2<i32>(full_pixel_coord), 0);
+    let full_pixel_velocity = motion_sample.xy * vec2<f32>(f32(full_res.x), f32(full_res.y)) * vec2<f32>(0.5, -0.5);
+    let pixel_velocity = full_pixel_velocity / max(f32(upscale_factor), 1.0);
     
     let pixel_center = vec2<f32>(gid.xy) + 0.5;
     let pixel_prev_center = pixel_center - pixel_velocity;
@@ -267,10 +274,10 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     // Returns 1.0 if valid, 0.0 if occluded/disoccluded
     // ─────────────────────────────────────────────────────────────────────────
     let validity = vec4<f32>(
-        test_corner_validity(corner_00, normal, current_depth, camera_position, res),
-        test_corner_validity(corner_10, normal, current_depth, camera_position, res),
-        test_corner_validity(corner_01, normal, current_depth, camera_position, res),
-        test_corner_validity(corner_11, normal, current_depth, camera_position, res)
+        test_corner_validity(corner_00, normal, current_depth, camera_position, res, upscale_factor, full_res),
+        test_corner_validity(corner_10, normal, current_depth, camera_position, res, upscale_factor, full_res),
+        test_corner_validity(corner_01, normal, current_depth, camera_position, res, upscale_factor, full_res),
+        test_corner_validity(corner_11, normal, current_depth, camera_position, res, upscale_factor, full_res)
     );
     
     // ─────────────────────────────────────────────────────────────────────────

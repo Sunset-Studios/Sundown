@@ -438,12 +438,10 @@ fn cs(
     // ─────────────────────────────────────────────────────────────────────────
     // Compute ray counts and determine thread role
     // ─────────────────────────────────────────────────────────────────────────
-    let rays_per_tile = u32(gi_params.screen_ray_count);
-    let resolution = vec2<u32>(u32(gi_params.resolution_x), u32(gi_params.resolution_y));
-    let upscale_factor = u32(gi_params.upscale_factor);
-    let tile_grid_dims = vec2<u32>(resolution.x / upscale_factor, resolution.y / upscale_factor);
-    let total_tiles = tile_grid_dims.x * tile_grid_dims.y;
-    let total_rays = total_tiles * rays_per_tile;
+    let rays_per_pixel = u32(gi_params.screen_ray_count);
+    let gi_resolution = vec2<u32>(u32(gi_params.gi_resolution_x), u32(gi_params.gi_resolution_y));
+    let total_pixels = gi_resolution.x * gi_resolution.y;
+    let total_rays = total_pixels * rays_per_pixel;
 
     // Determine if this thread handles shadow rays or primary rays
     // First half = shadow threads, Second half = primary threads
@@ -476,13 +474,13 @@ fn cs(
             break;
         }
 
-        // ray_index is now a pixel_index (y * width + x)
-        let pixel_index = ray_work_queue[queue_index];
+        // Work queue stores ray slots (each slot corresponds to one PixelPathState entry).
+        let ray_slot = ray_work_queue[queue_index];
 
         if (is_shadow_thread) {
-            process_shadow_ray(pixel_index);
+            process_shadow_ray(ray_slot);
         } else {
-            process_primary_ray(pixel_index);
+            process_primary_ray(ray_slot);
         }
     }
 }

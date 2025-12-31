@@ -49,14 +49,18 @@ const MAX_TEMPORAL_SAMPLES = 10u;
 
 @compute @workgroup_size(16, 16, 1)
 fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
-    let res = textureDimensions(gbuffer_position);
+    let full_res = vec2<u32>(u32(gi_params.full_resolution_x), u32(gi_params.full_resolution_y));
+    let gi_res = vec2<u32>(u32(gi_params.gi_resolution_x), u32(gi_params.gi_resolution_y));
 
-    if (gid.x >= res.x || gid.y >= res.y) {
+    if (gid.x >= gi_res.x || gid.y >= gi_res.y) {
         return;
     }
 
-    let pixel_index = gid.y * res.x + gid.x;
-    let normal_sample = textureLoad(gbuffer_normal, vec2<i32>(gid.xy), 0);
+    let pixel_index = gid.y * gi_res.x + gid.x;
+    let upscale_factor = u32(gi_params.upscale_factor);
+    let full_pixel_coord = gi_pixel_to_full_res_pixel_coord(gid.xy, upscale_factor, full_res);
+
+    let normal_sample = textureLoad(gbuffer_normal, vec2<i32>(full_pixel_coord), 0);
     let normal = safe_normalize(normal_sample.xyz);
 
     if (length(normal_sample.xyz) <= 0.0) {
@@ -64,12 +68,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         return;
     }
 
-    let rays_per_tile = u32(gi_params.screen_ray_count);
-    let upscale_factor = u32(gi_params.upscale_factor);
-    let tile_x = gid.x / upscale_factor;
-    let tile_y = gid.y / upscale_factor;
-    let tile_grid_width = res.x / upscale_factor;
-    let tile_index = tile_y * tile_grid_width + tile_x;
+    let rays_per_pixel = u32(gi_params.screen_ray_count);
 
     // ─────────────────────────────────────────────────────────────────────────
     // Build output reservoir by merging current frame sample with history
@@ -98,18 +97,13 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     // - `sample.outgoing_radiance_*.xyz` = f(y) = (mc_estimate * source_pdf)
     // - `sample.sample_normal_target_pdf.w` = p_hat(y) (we use luminance(f(y)))
     // ─────────────────────────────────────────────────────────────────────────
-    let visible_position = textureLoad(gbuffer_position, vec2<i32>(gid.xy), 0).xyz;
+    let visible_position = textureLoad(gbuffer_position, vec2<i32>(full_pixel_coord), 0).xyz;
     let camera_position = view_buffer[u32(frame_info.view_index)].view_position.xyz;
 
-    for (var i = 0u; i < rays_per_tile; i = i + 1u) {
-        let ray_id = tile_index * rays_per_tile + i;
+    let base_ray_id = pixel_index * rays_per_pixel;
+    for (var i = 0u; i < rays_per_pixel; i = i + 1u) {
+        let ray_id = base_ray_id + i;
         let path = pixel_path_state[ray_id];
-
-        // TODO: Should we skip this or fill the candidate with something meaningful?
-        let traced_this_frame = u32(path.pixel_coords.x) == gid.x && u32(path.pixel_coords.y) == gid.y;
-        if (!traced_this_frame) {
-            continue;
-        }
 
         let sample_count = max(path.rng_sample_count_frame_stamp.y, 1.0);
         let accumulated_avg_direct = path.throughput_direct.xyz / sample_count;
@@ -153,17 +147,19 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     // Reproject last frame's temporal reservoir using motion vectors
     // Use proper reservoir merging to preserve the temporal sample count
     // ─────────────────────────────────────────────────────────────────────────
-    let motion_sample = textureLoad(gbuffer_motion, vec2<i32>(gid.xy), 0);
-    let pixel_velocity = motion_sample.xy * vec2<f32>(f32(res.x), f32(res.y)) * vec2<f32>(0.5, -0.5);
+    let motion_sample = textureLoad(gbuffer_motion, vec2<i32>(full_pixel_coord), 0);
+    let full_pixel_velocity = motion_sample.xy * vec2<f32>(f32(full_res.x), f32(full_res.y)) * vec2<f32>(0.5, -0.5);
+    let gi_pixel_velocity = full_pixel_velocity / max(f32(upscale_factor), 1.0);
     let pixel_center = vec2<f32>(gid.xy) + 0.5;
-    let prev_coord = vec2<i32>(pixel_center - pixel_velocity);
+    let prev_coord = vec2<i32>(pixel_center - gi_pixel_velocity);
     var has_valid_reprojection = false;
 
-    if (prev_coord.x >= 0 && prev_coord.y >= 0 && prev_coord.x < i32(res.x) && prev_coord.y < i32(res.y)) {
-        let prev_index = u32(prev_coord.y) * res.x + u32(prev_coord.x);
+    if (prev_coord.x >= 0 && prev_coord.y >= 0 && prev_coord.x < i32(gi_res.x) && prev_coord.y < i32(gi_res.y)) {
+        let prev_index = u32(prev_coord.y) * gi_res.x + u32(prev_coord.x);
         let prev_reservoir_data = temporal_reservoir_prev[prev_index];
-        let prev_position = textureLoad(gbuffer_position_prev, prev_coord, 0).xyz;
-        let prev_normal_sample = textureLoad(gbuffer_normal_prev, prev_coord, 0);
+        let prev_full_pixel_coord = gi_pixel_to_full_res_pixel_coord(vec2<u32>(prev_coord), upscale_factor, full_res);
+        let prev_position = textureLoad(gbuffer_position_prev, vec2<i32>(prev_full_pixel_coord), 0).xyz;
+        let prev_normal_sample = textureLoad(gbuffer_normal_prev, vec2<i32>(prev_full_pixel_coord), 0);
         let prev_normal = safe_normalize(prev_normal_sample.xyz);
 
         if (prev_reservoir_data.reservoir.m > 0u && length(prev_normal_sample.xyz) > 0.0) {
@@ -174,13 +170,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
             let delta_position = prev_position - visible_position;
             let depth_valid = abs(dot(delta_position, normal)) < TEMPORAL_DEPTH_THRESHOLD;
             
-            let radiance_valid = select(
-                true,
-                temporal_radiance_valid(prev_reservoir_data.sample, candidate_samples[0], TEMPORAL_RADIANCE_RELATIVE_THRESHOLD),
-                candidate_count > 0u
-            );
-
-            if (normal_valid && depth_valid && radiance_valid) {
+            if (depth_valid) {
                 rng_state = random_seed(rng_state);
 
                 gi_reservoir_merge(
