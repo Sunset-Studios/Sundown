@@ -28,28 +28,23 @@ fn atlas_load_bvh4_node(idx: u32) -> BVH4Node {
 }
 
 fn atlas_load_bvh4_leaf_mask(idx: u32) -> u32 {
-    let base = blas_atlas.header.bvh4_base_v4 + idx * 7u;  // Now 7 vec4s per node
-    return bitcast<u32>(blas_atlas.data[base + 0u].w);
+    return bitcast<u32>(blas_atlas.data[blas_atlas.header.bvh4_base_v4 + idx * 7u + 0u].w);
 }
 
 fn atlas_load_bvh4_node_children(idx: u32) -> vec4<f32> {
-    let base = blas_atlas.header.bvh4_base_v4 + idx * 7u;  // Now 7 vec4s per node
-    return blas_atlas.data[base + 2u];
+    return blas_atlas.data[blas_atlas.header.bvh4_base_v4 + idx * 7u + 2u];
 }
 
 fn atlas_load_bvh4_node_min(idx: u32) -> vec3<f32> {
-    let base = blas_atlas.header.bvh4_base_v4 + idx * 7u;  // Now 7 vec4s per node
-    return blas_atlas.data[base + 0u].xyz;
+    return blas_atlas.data[blas_atlas.header.bvh4_base_v4 + idx * 7u + 0u].xyz;
 }
 
 fn atlas_load_bvh4_node_max(idx: u32) -> vec3<f32> {
-    let base = blas_atlas.header.bvh4_base_v4 + idx * 7u;  // Now 7 vec4s per node
-    return blas_atlas.data[base + 1u].xyz;
+    return blas_atlas.data[blas_atlas.header.bvh4_base_v4 + idx * 7u + 1u].xyz;
 }
 
 fn atlas_load_bvh4_leaf_indices(node_idx: u32, child_slot: u32) -> vec4<u32> {
-    let base = blas_atlas.header.bvh4_base_v4 + node_idx * 7u;
-    return bitcast<vec4<u32>>(blas_atlas.data[base + 3u + child_slot]);
+    return bitcast<vec4<u32>>(blas_atlas.data[blas_atlas.header.bvh4_base_v4 + node_idx * 7u + 3u + child_slot]);
 }
 
 fn atlas_load_directory_entry(idx: u32) -> MeshDirectoryEntry {
@@ -69,26 +64,21 @@ fn atlas_load_directory_entry(idx: u32) -> MeshDirectoryEntry {
 }
 
 fn atlas_load_directory_entry_bvh4_base(idx: u32) -> u32 {
-    let base = blas_atlas.header.dir_base_v4 + idx * 2u;
-    return u32(blas_atlas.data[base + 0u].z);
+    return u32(blas_atlas.data[blas_atlas.header.dir_base_v4 + idx * 2u].z);
 }
 
 fn atlas_load_directory_entry_bvh4_capacity(idx: u32) -> u32 {
-    let base = blas_atlas.header.dir_base_v4 + idx * 2u;
-    return u32(blas_atlas.data[base + 0u].w);
+    return u32(blas_atlas.data[blas_atlas.header.dir_base_v4 + idx * 2u].w);
 }
 
 fn atlas_load_directory_entry_leaf_count(idx: u32) -> u32 {
-    let base = blas_atlas.header.dir_base_v4 + idx * 2u;
-    return u32(blas_atlas.data[base + 1u].x);
+    return u32(blas_atlas.data[blas_atlas.header.dir_base_v4 + idx * 2u + 1u].x);
 }
 
 fn atlas_load_directory_entry_first_vertex(idx: u32) -> u32 {
-    let base = blas_atlas.header.dir_base_v4 + idx * 2u;
-    return u32(blas_atlas.data[base + 1u].y);
+    return u32(blas_atlas.data[blas_atlas.header.dir_base_v4 + idx * 2u + 1u].y);
 }
 
 fn atlas_load_directory_entry_first_index(idx: u32) -> u32 {
-    let base = blas_atlas.header.dir_base_v4 + idx * 2u;
-    return u32(blas_atlas.data[base + 1u].z);
+    return u32(blas_atlas.data[blas_atlas.header.dir_base_v4 + idx * 2u + 1u].z);
 }

@@ -72,11 +72,12 @@ fn trace_blas(
                     vertex_buffer[leaf_indices.y].position.xyz,
                     vertex_buffer[leaf_indices.z].position.xyz
                 );
-                let is_better_hit = t_tri >= current_ray.origin_and_tmin.w && t_tri < current_ray.direction_and_tmax.w;
-                hit.position_and_t.w = select(hit.position_and_t.w, t_tri, is_better_hit);
-                hit.normal_and_user_data.w = select(hit.normal_and_user_data.w, f32(child_idx), is_better_hit);
-                hit.hit_triangle_data = select(hit.hit_triangle_data, leaf_indices, is_better_hit);
-                current_ray.direction_and_tmax.w = select(current_ray.direction_and_tmax.w, t_tri, is_better_hit);
+                if (t_tri >= current_ray.origin_and_tmin.w && t_tri < current_ray.direction_and_tmax.w) {
+                    hit.position_and_t.w = t_tri;
+                    hit.normal_and_user_data.w = f32(child_idx);
+                    hit.hit_triangle_data = leaf_indices;
+                    current_ray.direction_and_tmax.w = t_tri;
+                }
             } else {
                 // Internal node: AABB test before push
                 let t_aabb_child = intersect_aabb(
@@ -88,8 +89,10 @@ fn trace_blas(
                 let is_better_child = t_aabb_child.x <= t_aabb_child.y
                     && t_aabb_child.x >= current_ray.origin_and_tmin.w
                     && t_aabb_child.x < current_ray.direction_and_tmax.w;
-                node_stack[stack_size] = select(node_stack[stack_size], child_idx, is_better_child);
-                stack_size = select(stack_size, stack_size + 1u, is_better_child);
+                if (is_better_child) {
+                    node_stack[stack_size] = child_idx;
+                    stack_size = stack_size + 1u;
+                }
             }
         }
     }
@@ -167,8 +170,10 @@ fn trace_hit(ray: ptr<function, Ray>) -> RayHit {
                     && t_aabb_child.x >= current_ray.origin_and_tmin.w
                     && t_aabb_child.x < hit.position_and_t.w;
 
-                node_stack[stack_size] = select(node_stack[stack_size], child_idx, is_better_child);
-                stack_size = select(stack_size, stack_size + 1u, is_better_child);
+                if (is_better_child) {
+                    node_stack[stack_size] = child_idx;
+                    stack_size = stack_size + 1u;
+                }
             }
         }
     }
@@ -443,10 +448,16 @@ fn cs(
     let total_pixels = gi_resolution.x * gi_resolution.y;
     let total_rays = total_pixels * rays_per_pixel;
 
+#if USE_RADIANCE_CACHE_AS_DEFERRED_LIGHTING
     // Determine if this thread handles shadow rays or primary rays
     // First half = shadow threads, Second half = primary threads
     let is_shadow_thread = gid.x < total_rays;
     let thread_id = select(gid.x - total_rays, gid.x, is_shadow_thread);
+#else
+    // In this case, we only have primary rays
+    let is_shadow_thread = false;
+    let thread_id = gid.x;
+#endif
 
     // Early exit if thread is outside valid range
     if (thread_id >= total_rays) {

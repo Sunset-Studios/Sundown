@@ -77,6 +77,7 @@
  */
 
 import { DebugDrawType, RenderPassFlags } from "../renderer_types.js";
+import { Renderer } from "../renderer.js";
 import { SharedEnvironmentData, SharedFrameInfoBuffer } from "../../core/shared_data.js";
 import { MaterialAllocationTable } from "../material_allocation_table.js";
 import { EntityManager } from "../../core/ecs/entity.js";
@@ -413,6 +414,12 @@ export class PTGI {
     // ─────────────────────────────────────────────────────────────────────
     const blue_noise = Texture.default_blue_noise();
     const blue_noise_image = render_graph.register_image(blue_noise.config.name);
+
+    // ─────────────────────────────────────────────────────────────────────
+    // Miscellaneous Parameters
+    // ─────────────────────────────────────────────────────────────────────
+    const use_radiance_cache_as_deferred_lighting =
+      Renderer.get().is_use_radiance_cache_as_deferred_lighting();
 
     // ─────────────────────────────────────────────────────────────────────
     // GI Parameters Buffer
@@ -986,8 +993,12 @@ export class PTGI {
       },
       (graph, frame_data, encoder) => {
         const pass = graph.get_physical_pass(frame_data.current_pass);
-        // 2x dispatch: first half for shadow rays, second half for primary rays
-        pass.dispatch(Math.ceil((2 * rays_per_frame) / COMPUTE_WORKGROUP_SIZE), 1, 1);
+        // 2x dispatch: first half for shadow rays, second half for primary rays if using radiance cache as deferred lighting
+        if (use_radiance_cache_as_deferred_lighting) {
+          pass.dispatch(Math.ceil((2 * rays_per_frame) / COMPUTE_WORKGROUP_SIZE), 1, 1);
+        } else {
+          pass.dispatch(Math.ceil(rays_per_frame / COMPUTE_WORKGROUP_SIZE), 1, 1);
+        }
       }
     );
 
