@@ -112,6 +112,15 @@ export const RenderStrategyType = Object.freeze({
 });
 
 /**
+ * Types of GI strategies.
+ * @enum {number}
+ */
+export const GIStrategyType = Object.freeze({
+    PTGI: 0,
+    DDGI: 1,
+});
+
+/**
  * Types of debug draw in the render graph.
  * @enum {number}
  */
@@ -136,11 +145,15 @@ export const DebugDrawType = Object.freeze({
     GI_Diffuse: 17,
     GI_Specular: 18,
     GI_WorldCache: 19,
-    EntityBounds: 20,
-    BVH: 21,
-    BVH4: 22,
-    BLAS_Bounds: 23,
-    BLAS_BVH4: 24,
+    GI_Probes: 20,
+    GI_ProbeAtlas: 21,
+    GI_Reflections: 22,
+    GI_ProbeDepthAtlas: 23,
+    EntityBounds: 24,
+    BVH: 25,
+    BVH4: 26,
+    BLAS_Bounds: 27,
+    BLAS_BVH4: 28,
 });
 
 /**

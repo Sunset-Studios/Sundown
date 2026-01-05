@@ -9,6 +9,7 @@ import { BVHDebug } from "./bvh_debug.js";
 import { PerformanceTrace } from "./performance_trace.js";
 import { DebugDrawPicker } from "./debug_draw_picker.js";
 import { RenderStrategyPicker } from "./render_strategy_picker.js";
+import { GIStrategyPicker } from "./gi_strategy_picker.js";
 import { ASVSMStats } from "./as_vsm_stats.js";
 import { RenderToggle } from "./render_toggle.js";
 import { DebugMemory } from "./debug_memory.js";
@@ -81,6 +82,7 @@ export class DevConsole extends SimulationLayer {
     this.register_command("as_vsm_stats", new ASVSMStats());
     this.register_command("debug_draw", new DebugDrawPicker());
     this.register_command("render_strategy", new RenderStrategyPicker());
+    this.register_command("gi_strategy", new GIStrategyPicker());
     this.register_command("render_toggle", new RenderToggle());
     this.register_command("debug_memory", new DebugMemory());
     this.register_command("gpu_timer", new GPUTimerView());
@@ -154,7 +156,7 @@ export class DevConsole extends SimulationLayer {
           this._navigate_history(-1, input_state);
           consume = true;
         }
-      } else if (key.key === InputKey.K_Tab && !key.held) {
+      } else if (key.key === InputKey.K_Slash && !key.held) {
         // Complete the current suggestion.
         this._complete_suggestion(input_state);
         consume = true;

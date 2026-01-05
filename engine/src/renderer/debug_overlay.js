@@ -170,6 +170,14 @@ export class DebugOverlay {
         return "debug/debug_overlay_2d.wgsl";
       case DebugDrawType.GI_Diffuse:
         return "debug/debug_overlay_2d.wgsl";
+      case DebugDrawType.GI_Probes:
+        return "debug/debug_overlay_2d.wgsl";
+      case DebugDrawType.GI_ProbeAtlas:
+        return "debug/debug_overlay_2d.wgsl";
+      case DebugDrawType.GI_ProbeDepthAtlas:
+        return "debug/debug_overlay_2d.wgsl";
+      case DebugDrawType.GI_Reflections:
+        return "debug/debug_overlay_2d.wgsl";
       default:
         return "debug/debug_overlay_2d.wgsl";
     }

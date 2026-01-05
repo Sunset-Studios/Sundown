@@ -1,5 +1,5 @@
 import { MAX_BUFFERED_FRAMES } from "../core/minimal.js";
-import { DebugDrawType, RenderStrategyType } from "./renderer_types.js";
+import { DebugDrawType, RenderStrategyType, GIStrategyType } from "./renderer_types.js";
 import { DeferredShadingStrategy } from "./strategies/deferred_shading.js";
 import { PathTracingStrategy } from "./strategies/path_tracing.js";
 import { RenderGraph } from "./render_graph.js";
@@ -30,7 +30,6 @@ export class Renderer {
   execution_queue = new ExecutionQueue();
   render_strategy = null;
   render_strategy_type = RenderStrategyType.Deferred;
-  render_strategy_class = null;
   render_graph = null;
   post_render_callbacks = [];
   pre_render_callbacks = [];
@@ -44,6 +43,7 @@ export class Renderer {
   gtao_enabled = false;
   use_radiance_cache_as_deferred_lighting = false;
   debug_draw_type = DebugDrawType.None;
+  gi_strategy_type = GIStrategyType.DDGI;
 
   static renderers = [];
 
@@ -140,7 +140,6 @@ export class Renderer {
 
     this.render_graph = RenderGraph.create(this.max_bind_groups());
 
-    this.render_strategy_class = render_strategy;
     this.render_strategy = new render_strategy();
 
     if (__DEV__) {
@@ -392,6 +391,26 @@ export class Renderer {
   }
 
   /**
+   * Get the current GI strategy type
+   * @returns {GIStrategyType} - The GI strategy type
+   */
+  get_gi_strategy_type() {
+    return this.gi_strategy_type;
+  }
+
+  /**
+   * Set the GI strategy type
+   * @param {GIStrategyType} strategy_type - The GI strategy type
+   */
+  set_gi_strategy_type(strategy_type) {
+    this.gi_strategy_type = strategy_type;
+    if (this.render_strategy) {
+      this.refresh_render_graph();
+      this.recreate_pipeline_states();
+    }
+  }
+
+  /**
    * Check if GTAO is enabled
    * @returns {boolean} - True if GTAO is enabled, false otherwise
    */
@@ -500,7 +519,6 @@ export class Renderer {
 
     // If a specific strategy class is provided, use it
     if (strategy_class) {
-      this.render_strategy_class = strategy_class;
       this.render_strategy = new strategy_class();
       this.render_strategy.refresh(this.render_graph);
       return;
@@ -510,17 +528,14 @@ export class Renderer {
     // Import default strategies dynamically to avoid circular dependencies
     switch (strategy_type) {
       case RenderStrategyType.Deferred:
-        this.render_strategy_class = DeferredShadingStrategy;
         this.render_strategy = new DeferredShadingStrategy();
         break;
       case RenderStrategyType.PathTracing:
-        this.render_strategy_class = PathTracingStrategy;
         this.render_strategy = new PathTracingStrategy();
         this.render_strategy.refresh(this.render_graph);
         break;
       default:
         log(`Unknown render strategy type: ${strategy_type}, falling back to Deferred`);
-        this.render_strategy_class = DeferredShadingStrategy;
         this.render_strategy = new DeferredShadingStrategy();
         break;
     }

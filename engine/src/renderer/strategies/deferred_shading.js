@@ -28,7 +28,12 @@ import { FrustumCuller } from "../cull/frustum_culler.js";
 import { OcclusionCuller } from "../cull/occlusion_culler.js";
 
 // Types and utilities
-import { RenderPassFlags, MaterialFamilyType, DebugDrawType } from "../renderer_types.js";
+import {
+  RenderPassFlags,
+  MaterialFamilyType,
+  DebugDrawType,
+  GIStrategyType,
+} from "../renderer_types.js";
 import { BVH } from "../../acceleration/bvh.js";
 import { MeshBLAS } from "../../acceleration/mesh_blas.js";
 import { npot, ppot, clamp } from "../../utility/math.js";
@@ -49,6 +54,7 @@ import {
 
 // Specialized renderer components
 import { PTGI } from "../global_illumination/ptgi.js";
+import { DDGI } from "../global_illumination/ddgi.js";
 import { GTAO } from "../global_illumination/gtao.js";
 import { AdaptiveSparseVirtualShadowMaps } from "../shadows/as_vsm.js";
 import {
@@ -465,7 +471,8 @@ export class DeferredShadingStrategy {
   setup(render_graph) {
     this.debug_overlay = new DebugOverlay();
 
-    this.gi = new PTGI();
+    const gi_strategy_type = Renderer.get().get_gi_strategy_type();
+    this.gi = gi_strategy_type === GIStrategyType.DDGI ? new DDGI() : new PTGI();
     this.gtao = new GTAO();
     this.as_vsm = new AdaptiveSparseVirtualShadowMaps({
       atlas_size: ATLAS_SIZE,
@@ -1450,13 +1457,20 @@ export class DeferredShadingStrategy {
       // │    - World Cache: Shows spatial hash cached radiance                      │
       // │    (displayed via debug overlay, doesn't affect main rendering pipeline)  │
       // └─────────────────────────────────────────────────────────────────────────────┘
-      if (gi_enabled && debug_view === DebugDrawType.GI_WorldCache) {
+      if (
+        gi_enabled &&
+        (debug_view === DebugDrawType.GI_WorldCache ||
+          debug_view === DebugDrawType.GI_Probes ||
+          debug_view === DebugDrawType.GI_ProbeAtlas ||
+          debug_view === DebugDrawType.GI_ProbeDepthAtlas)
+      ) {
         this.gi.add_debug_passes(
           render_graph,
           image_extent.width,
           image_extent.height,
           main_position_image,
           main_normal_image,
+          main_depth_image,
           post_lighting_image_desc,
           debug_view,
           this.force_recreate
@@ -1850,6 +1864,46 @@ export class DeferredShadingStrategy {
               image_extent.width,
               image_extent.height,
               DebugDrawType.GI_WorldCache
+            );
+            break;
+          case DebugDrawType.GI_Probes:
+            this.debug_overlay.set_properties(
+              this.gi.debug_texture,
+              0,
+              0,
+              image_extent.width,
+              image_extent.height,
+              DebugDrawType.GI_Probes
+            );
+            break;
+          case DebugDrawType.GI_ProbeAtlas:
+            this.debug_overlay.set_properties(
+              this.gi.debug_texture,
+              0,
+              0,
+              image_extent.width,
+              image_extent.height,
+              DebugDrawType.GI_ProbeAtlas
+            );
+            break;
+          case DebugDrawType.GI_ProbeDepthAtlas:
+            this.debug_overlay.set_properties(
+              this.gi.debug_texture,
+              0,
+              0,
+              image_extent.width,
+              image_extent.height,
+              DebugDrawType.GI_ProbeDepthAtlas
+            );
+            break;
+          case DebugDrawType.GI_Reflections:
+            this.debug_overlay.set_properties(
+              this.gi.final_gi_texture_indirect_specular,
+              0,
+              0,
+              image_extent.width,
+              image_extent.height,
+              DebugDrawType.GI_Reflections
             );
             break;
           default:
