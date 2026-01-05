@@ -35,6 +35,8 @@ const LOG_DEPTH_C = 0.1; // Can adjust this value based on scene scale
 const MAX_UINT = 4294967295u;
 const INVALID_IDX = 0xffffffffu;
 
+const PI = 3.14159265359;
+
 struct Vertex {
     position: vec4<precision_float>,
     normal: vec4<precision_float>,

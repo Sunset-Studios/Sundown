@@ -21,6 +21,10 @@
 
 const MAX_HIT_DISTANCE: f32 = 65504.0;
 
+// Maximum luminance for any single radiance contribution
+// Tune based on your HDR range - lower = more aggressive firefly removal
+const MAX_RADIANCE_LUMINANCE = 10.0;
+
 // =============================================================================
 // GI COUNTERS
 // =============================================================================

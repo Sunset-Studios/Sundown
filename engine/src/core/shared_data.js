@@ -926,11 +926,11 @@ export class SharedFrameInfoBuffer {
       item.view_index,
       item.time,
       item.frame_index,
-      ...item.resolution,
-      ...item.cursor_world_position,
       item.padding0,
+      ...item.resolution,
       item.padding1,
       item.padding2,
+      ...item.cursor_world_position,
     );
   }
 }

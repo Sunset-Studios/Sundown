@@ -216,12 +216,6 @@ const pixel_accumulate_shader_setup = {
   },
 };
 
-const pixel_blur_denoise_shader_setup = {
-  pipeline_shaders: {
-    compute: { path: "gi/pixel_blur_denoise.wgsl" },
-  },
-};
-
 const pixel_upscale_final_shader_setup = {
   pipeline_shaders: {
     compute: { path: "gi/pixel_upscale_final.wgsl" },
@@ -564,12 +558,14 @@ export class PTGI {
     });
 
     // ─────────────────────────────────────────────────────────────────────
-    // Raw Accumulation Buffers (Temporary, split components)
-    // pixel_accumulate writes raw temporal accumulation here, then recurrent_blur
-    // reads these (center + neighbors) and writes blurred results to pixel_radiance_*.
+    // Low-resolution GI history (ping-pong)
+    //
+    // We need separate `prev` and `curr` textures so the accumulate pass can
+    // sample history while writing the next history directly, without adding
+    // an extra resolve/copy pass.
     // ─────────────────────────────────────────────────────────────────────
-    const raw_accumulation_direct = render_graph.create_image({
-      name: "gi_raw_accumulation_direct",
+    const gi_low_radiance_direct_0 = render_graph.create_image({
+      name: "gi_low_radiance_direct_0",
       format: "rgba16float",
       width: gi_width,
       height: gi_height,
@@ -577,8 +573,8 @@ export class PTGI {
       force: force_recreate,
     });
 
-    const raw_accumulation_indirect_diffuse = render_graph.create_image({
-      name: "gi_raw_accumulation_indirect_diffuse",
+    const gi_low_radiance_direct_1 = render_graph.create_image({
+      name: "gi_low_radiance_direct_1",
       format: "rgba16float",
       width: gi_width,
       height: gi_height,
@@ -586,8 +582,8 @@ export class PTGI {
       force: force_recreate,
     });
 
-    const raw_accumulation_indirect_specular = render_graph.create_image({
-      name: "gi_raw_accumulation_indirect_specular",
+    const gi_low_radiance_indirect_diffuse_0 = render_graph.create_image({
+      name: "gi_low_radiance_indirect_diffuse_0",
       format: "rgba16float",
       width: gi_width,
       height: gi_height,
@@ -595,10 +591,8 @@ export class PTGI {
       force: force_recreate,
     });
 
-    // Low-resolution GI history / blurred output (used for temporal accumulation).
-    // A final pass upsamples these into `this.final_gi_texture_*` at full resolution.
-    const gi_low_radiance_direct = render_graph.create_image({
-      name: "gi_low_radiance_direct",
+    const gi_low_radiance_indirect_diffuse_1 = render_graph.create_image({
+      name: "gi_low_radiance_indirect_diffuse_1",
       format: "rgba16float",
       width: gi_width,
       height: gi_height,
@@ -606,8 +600,8 @@ export class PTGI {
       force: force_recreate,
     });
 
-    const gi_low_radiance_indirect_diffuse = render_graph.create_image({
-      name: "gi_low_radiance_indirect_diffuse",
+    const gi_low_radiance_indirect_specular_0 = render_graph.create_image({
+      name: "gi_low_radiance_indirect_specular_0",
       format: "rgba16float",
       width: gi_width,
       height: gi_height,
@@ -615,14 +609,32 @@ export class PTGI {
       force: force_recreate,
     });
 
-    const gi_low_radiance_indirect_specular = render_graph.create_image({
-      name: "gi_low_radiance_indirect_specular",
+    const gi_low_radiance_indirect_specular_1 = render_graph.create_image({
+      name: "gi_low_radiance_indirect_specular_1",
       format: "rgba16float",
       width: gi_width,
       height: gi_height,
       usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
       force: force_recreate,
     });
+
+    const gi_low_radiance_prev_direct =
+      ping_pong_frame === 0 ? gi_low_radiance_direct_0 : gi_low_radiance_direct_1;
+    const gi_low_radiance_prev_indirect_diffuse =
+      ping_pong_frame === 0 ? gi_low_radiance_indirect_diffuse_0 : gi_low_radiance_indirect_diffuse_1;
+    const gi_low_radiance_prev_indirect_specular =
+      ping_pong_frame === 0
+        ? gi_low_radiance_indirect_specular_0
+        : gi_low_radiance_indirect_specular_1;
+
+    const gi_low_radiance_curr_direct =
+      ping_pong_frame === 0 ? gi_low_radiance_direct_1 : gi_low_radiance_direct_0;
+    const gi_low_radiance_curr_indirect_diffuse =
+      ping_pong_frame === 0 ? gi_low_radiance_indirect_diffuse_1 : gi_low_radiance_indirect_diffuse_0;
+    const gi_low_radiance_curr_indirect_specular =
+      ping_pong_frame === 0
+        ? gi_low_radiance_indirect_specular_1
+        : gi_low_radiance_indirect_specular_0;
 
     // Ping-pong selection based on frame index
 
@@ -1123,72 +1135,24 @@ export class PTGI {
         inputs: [
           gi_params,
           spatial_reservoir_curr,
-          gi_low_radiance_direct,
-          gi_low_radiance_indirect_diffuse,
-          gi_low_radiance_indirect_specular,
+          gi_low_radiance_prev_direct,
+          gi_low_radiance_prev_indirect_diffuse,
+          gi_low_radiance_prev_indirect_specular,
           gbuffer_position,
           gbuffer_position_prev,
           gbuffer_normal,
           gbuffer_normal_prev,
           gbuffer_motion_emissive,
-          raw_accumulation_direct,
-          raw_accumulation_indirect_diffuse,
-          raw_accumulation_indirect_specular,
+          gi_low_radiance_curr_direct,
+          gi_low_radiance_curr_indirect_diffuse,
+          gi_low_radiance_curr_indirect_specular,
         ],
         outputs: [
-          raw_accumulation_direct,
-          raw_accumulation_indirect_diffuse,
-          raw_accumulation_indirect_specular,
+          gi_low_radiance_curr_direct,
+          gi_low_radiance_curr_indirect_diffuse,
+          gi_low_radiance_curr_indirect_specular,
         ],
         shader_setup: pixel_accumulate_shader_setup,
-      },
-      (graph, frame_data, encoder) => {
-        const pass = graph.get_physical_pass(frame_data.current_pass);
-        // Dispatch as 8x8 tiles for better cache coherency
-        pass.dispatch(Math.ceil(gi_width / 8), Math.ceil(gi_height / 8), 1);
-      }
-    );
-
-    // ─────────────────────────────────────────────────────────────────────
-    // Pass 15: Stabilized Recurrent Blur
-    // Adaptive-radius spatial filter using sample count for stabilization
-    // Based on NVIDIA's "Fast Denoising with Self-Stabilizing Recurrent Blurs"
-    //
-    // Key insight: Neighbors are sampled from previous frame's BLURRED output
-    // (via raw_accumulation), not raw accumulated radiance. This allows
-    // temporal redistribution of spatial sampling: 30 FPS × 8 samples =
-    // 240 cumulative samples/sec due to the recurrent nature.
-    //
-    // Inputs:
-    //   - raw_accumulation: Current frame's raw temporal accumulation
-    //
-    // Outputs:
-    //   - pixel_radiance: Blurred output (becomes raw_accumulation next frame)
-    //   - pixel_radiance_*: Final GI radiance for deferred lighting passes (split components)
-    // ─────────────────────────────────────────────────────────────────────
-    render_graph.add_pass(
-      `gi_recurrent_blur_${ping_pong_frame}`,
-      RenderPassFlags.Compute,
-      {
-        inputs: [
-          gi_params,
-          raw_accumulation_direct,
-          raw_accumulation_indirect_diffuse,
-          raw_accumulation_indirect_specular,
-          gbuffer_position,
-          gbuffer_position_prev,
-          gbuffer_normal,
-          gbuffer_normal_prev,
-          gi_low_radiance_direct,
-          gi_low_radiance_indirect_diffuse,
-          gi_low_radiance_indirect_specular,
-        ],
-        outputs: [
-          gi_low_radiance_direct,
-          gi_low_radiance_indirect_diffuse,
-          gi_low_radiance_indirect_specular,
-        ],
-        shader_setup: pixel_blur_denoise_shader_setup,
       },
       (graph, frame_data, encoder) => {
         const pass = graph.get_physical_pass(frame_data.current_pass);
@@ -1207,9 +1171,9 @@ export class PTGI {
       {
         inputs: [
           gi_params,
-          gi_low_radiance_direct,
-          gi_low_radiance_indirect_diffuse,
-          gi_low_radiance_indirect_specular,
+          gi_low_radiance_curr_direct,
+          gi_low_radiance_curr_indirect_diffuse,
+          gi_low_radiance_curr_indirect_specular,
           gbuffer_position,
           gbuffer_normal,
           this.final_gi_texture_direct,

@@ -41,6 +41,9 @@ const SPATIAL_DEPTH_THRESHOLD: f32 = 0.03;
 @group(1) @binding(2) var<storage, read_write> spatial_reservoir_curr: array<GIReservoirData>;
 @group(1) @binding(3) var gbuffer_position: texture_2d<f32>;
 @group(1) @binding(4) var gbuffer_normal: texture_2d<f32>;
+#if SPECULAR_MASK_ENABLED
+@group(1) @binding(5) var specular_mask: texture_2d<u32>;
+#endif
 
 // =============================================================================
 // MAIN COMPUTE SHADER
@@ -68,6 +71,13 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         spatial_reservoir_curr[pixel_index] = create_empty();
         return;
     }
+
+#if SPECULAR_MASK_ENABLED
+    if (textureLoad(specular_mask, vec2<i32>(i32(gid.x), i32(gid.y)), 0).x == 0u) {
+        spatial_reservoir_curr[pixel_index] = create_empty();
+        return;
+    }
+#endif
 
     let center_position = textureLoad(gbuffer_position, full_pixel_coord, 0u).xyz;
 

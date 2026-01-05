@@ -21,14 +21,6 @@
 #include "raytracing/restir_common.wgsl"
 
 // =============================================================================
-// FIREFLY SUPPRESSION CONSTANTS
-// =============================================================================
-
-// Maximum luminance for any single radiance contribution
-// Tune based on your HDR range - lower = more aggressive firefly removal
-const MAX_RADIANCE_LUMINANCE = 10.0;
-
-// =============================================================================
 // BINDINGS
 // =============================================================================
 

@@ -26,6 +26,9 @@
 @group(1) @binding(6) var out_direct: texture_storage_2d<rgba16float, write>;
 @group(1) @binding(7) var out_indirect_diffuse: texture_storage_2d<rgba16float, write>;
 @group(1) @binding(8) var out_indirect_specular: texture_storage_2d<rgba16float, write>;
+#if SPECULAR_MASK_ENABLED
+@group(1) @binding(9) var specular_mask: texture_2d<u32>;
+#endif
 
 // =============================================================================
 // CONSTANTS
@@ -82,6 +85,20 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         textureStore(out_indirect_specular, full_pixel_coord, vec4<f32>(0.0));
         return;
     }
+
+#if SPECULAR_MASK_ENABLED
+    // Mask is in GI resolution. Use the corresponding GI texel for this full-res pixel.
+    let gi_coord = vec2<u32>(
+        min(u32(gid.x) / max(u32(upscale_factor), 1u), gi_res.x - 1u),
+        min(u32(gid.y) / max(u32(upscale_factor), 1u), gi_res.y - 1u)
+    );
+    if (textureLoad(specular_mask, vec2<i32>(gi_coord), 0).x == 0u) {
+        textureStore(out_direct, full_pixel_coord, vec4<f32>(0.0));
+        textureStore(out_indirect_diffuse, full_pixel_coord, vec4<f32>(0.0));
+        textureStore(out_indirect_specular, full_pixel_coord, vec4<f32>(0.0));
+        return;
+    }
+#endif
 
     let view = view_buffer[u32(frame_info.view_index)];
     let camera_position = view.view_position.xyz;

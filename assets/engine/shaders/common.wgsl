@@ -90,7 +90,6 @@ fn approx(a: f32, b: f32) -> bool {
     return abs(a - b) <= epsilon; 
 }
 
-// get the max value between three values
 fn max3(v: vec3f) -> f32 {
     return max(max(v.x, v.y), v.z);
 }
@@ -99,9 +98,16 @@ fn isinf(x: f32) -> bool {
     return x == x && x != 0.0 && x * 2.0 == x;
 }
 
-// For vector types:
 fn isinf3(v: vec3<f32>) -> vec3<bool> {
     return vec3<bool>(isinf(v.x), isinf(v.y), isinf(v.z));
+}
+
+fn is_nan(x: f32) -> bool {
+    return x != x;
+}
+
+fn is_nan3(v: vec3<f32>) -> vec3<bool> {
+    return vec3<bool>(is_nan(v.x), is_nan(v.y), is_nan(v.z));
 }
 
 // A helper function to compute the median of three values.

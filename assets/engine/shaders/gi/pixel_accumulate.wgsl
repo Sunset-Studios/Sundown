@@ -55,6 +55,9 @@
 @group(1) @binding(10) var raw_accumulation_direct: texture_storage_2d<rgba16float, write>;
 @group(1) @binding(11) var raw_accumulation_indirect_diffuse: texture_storage_2d<rgba16float, write>;
 @group(1) @binding(12) var raw_accumulation_indirect_specular: texture_storage_2d<rgba16float, write>;
+#if SPECULAR_MASK_ENABLED
+@group(1) @binding(13) var specular_mask: texture_2d<u32>;
+#endif
 
 // =============================================================================
 // CONSTANTS
@@ -213,6 +216,15 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         textureStore(raw_accumulation_indirect_specular, pixel_coord, vec4<f32>(0.0, 0.0, 0.0, 0.0));
         return;
     }
+
+#if SPECULAR_MASK_ENABLED
+    if (textureLoad(specular_mask, vec2<i32>(i32(gid.x), i32(gid.y)), 0).x == 0u) {
+        textureStore(raw_accumulation_direct, pixel_coord, vec4<f32>(0.0, 0.0, 0.0, 0.0));
+        textureStore(raw_accumulation_indirect_diffuse, pixel_coord, vec4<f32>(0.0, 0.0, 0.0, 0.0));
+        textureStore(raw_accumulation_indirect_specular, pixel_coord, vec4<f32>(0.0, 0.0, 0.0, 0.0));
+        return;
+    }
+#endif
     
     // Spatially reused reservoir sample -> evaluate RIS estimator (paper Eq. 6)
     let reservoir_index = gid.y * res.x + gid.x;

@@ -39,6 +39,7 @@ export const src_alpha_one_minus_src_alpha_blend_config = {
 
 export const rgba32float_format = "rgba32float";
 export const rgba16float_format = "rgba16float";
+export const rg16float_format = "rg16float";
 export const rgba32uint_format = "rgba32uint";
 export const rgba32sint_format = "rgba32sint";
 export const r8unorm_format = "r8unorm";

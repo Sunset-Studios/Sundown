@@ -150,6 +150,10 @@ export function clamp(value, min, max) {
   return Math.min(Math.max(value, min), max);
 }
 
+export function ispot(value) {
+  return value > 0 && (value & (value - 1)) === 0;
+}
+
 export function npot(value) {
   value = Math.floor(value);
   --value;

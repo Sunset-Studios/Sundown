@@ -41,6 +41,9 @@
 @group(1) @binding(10) var gbuffer_smra: texture_2d<f32>;
 @group(1) @binding(11) var gbuffer_motion: texture_2d<f32>;
 @group(1) @binding(12) var blue_noise: texture_2d_array<f32>;
+#if SPECULAR_MASK_ENABLED
+@group(1) @binding(13) var specular_mask: texture_2d<u32>;
+#endif
 
 const MAX_INITIAL_EMISSIVE = 10.0;
 const MAX_NEE_LUMINANCE = 10.0;
@@ -203,6 +206,17 @@ fn process_selected_pixel(
         pixel_path_state[ray_slot].throughput_indirect_specular = vec4<f32>(0.0);
         return;
     }
+
+#if SPECULAR_MASK_ENABLED
+    // Skip pixels that are not deemed specular-relevant for this pipeline.
+    if (textureLoad(specular_mask, vec2<i32>(gi_pixel_coord), 0).x == 0u) {
+        pixel_path_state[ray_slot].state_u32 = vec4<u32>(0u, 0u, 0u, 0xffffffffu);
+        pixel_path_state[ray_slot].throughput_direct = vec4<f32>(0.0);
+        pixel_path_state[ray_slot].throughput_indirect_diffuse = vec4<f32>(0.0);
+        pixel_path_state[ray_slot].throughput_indirect_specular = vec4<f32>(0.0);
+        return;
+    }
+#endif
     
     let position = textureLoad(gbuffer_position, full_pixel_coord, 0u).xyz;
     let albedo = textureLoad(gbuffer_albedo, full_pixel_coord, 0u).rgb;

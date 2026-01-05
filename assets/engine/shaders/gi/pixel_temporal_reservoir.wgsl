@@ -34,6 +34,9 @@
 @group(1) @binding(6) var gbuffer_normal: texture_2d<f32>;
 @group(1) @binding(7) var gbuffer_motion: texture_2d<f32>;
 @group(1) @binding(8) var gbuffer_normal_prev: texture_2d<f32>;
+#if SPECULAR_MASK_ENABLED
+@group(1) @binding(9) var specular_mask: texture_2d<u32>;
+#endif
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Temporal reprojection validation thresholds
@@ -67,6 +70,13 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         temporal_reservoir_curr[pixel_index] = create_empty();
         return;
     }
+
+#if SPECULAR_MASK_ENABLED
+    if (textureLoad(specular_mask, vec2<i32>(i32(gid.x), i32(gid.y)), 0).x == 0u) {
+        temporal_reservoir_curr[pixel_index] = create_empty();
+        return;
+    }
+#endif
 
     let rays_per_pixel = u32(gi_params.screen_ray_count);
 
