@@ -2,8 +2,8 @@
 #include "acceleration_common.wgsl"
 
 // Bindings for BVH traversal
-@group(1) @binding(0) var<storage, read> bvh4_nodes: array<BVH4Node>;
-@group(1) @binding(1) var<storage, read> bvh4_prim_indices: array<u32>;
+@group(1) @binding(0) var<storage, read> bvh8_nodes: array<BVH8Node>;
+@group(1) @binding(1) var<storage, read> bvh8_prim_indices: array<u32>;
 @group(1) @binding(2) var<uniform> scene_bounds: array<vec4<f32>, 2>;
 @group(1) @binding(3) var<storage, read> rays: array<Ray>; // The mesh's vertex buffer
 @group(1) @binding(4) var<storage, read_write> hits: array<RayHit>;
@@ -31,15 +31,15 @@ fn traverse_tlas_bvh(@builtin(global_invocation_id) global_id: vec3<u32>) {
         var node_idx = node_stack[stack_size];
         if (node_idx == INVALID_IDX) { continue; }
 
-        let node = bvh4_nodes[node_idx];
+        let node = bvh8_nodes[node_idx];
         let t_aabb = intersect_aabb(&ray, node.min.xyz, node.max.xyz);
 
         if (t_aabb.y >= t_aabb.x && t_aabb.x >= ray.origin_and_tmin.w && t_aabb.x < hit.position_and_t.w) {
             if (stack_size < 32u) {
                 let leaf_mask = bitcast<u32>(node.min.w);
 
-                for (var i = 0u; i < 4u; i = i + 1u) {
-                    let child_raw = node.children[i];
+                for (var i = 0u; i < 8u; i = i + 1u) {
+                    let child_raw = bvh8_child(node, i);
                     if (child_raw < 0.0) { continue; }
 
                     let is_leaf_child = ((leaf_mask >> i) & 1u) != 0u;
@@ -57,7 +57,7 @@ fn traverse_tlas_bvh(@builtin(global_invocation_id) global_id: vec3<u32>) {
                             hit.normal_and_user_data = vec4<f32>(0.0, 0.0, 0.0, f32(prim));
                         }
                     } else {
-                        let child_node = bvh4_nodes[child_idx];
+                        let child_node = bvh8_nodes[child_idx];
                         let t_aabb_child = intersect_aabb(&ray, child_node.min.xyz, child_node.max.xyz);
 
                         if (t_aabb_child.y >= t_aabb_child.x && t_aabb_child.x >= ray.origin_and_tmin.w && t_aabb_child.x < hit.position_and_t.w) {

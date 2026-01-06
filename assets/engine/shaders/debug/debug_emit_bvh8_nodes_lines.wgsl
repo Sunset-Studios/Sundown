@@ -82,7 +82,7 @@ fn corner(min_p: vec3f, max_p: vec3f, idx: u32) -> vec3f {
 
 // Outputs
 @group(1) @binding(0) var<storage, read_write> out_line_data: array<LineData>;
-@group(1) @binding(1) var<storage, read> bvh4_nodes: array<BVH4Node>;
+@group(1) @binding(1) var<storage, read> bvh8_nodes: array<BVH8Node>;
 @group(1) @binding(2) var<storage, read_write> bvh_data: BVHData;
 @group(1) @binding(3) var<uniform> scene_aabb: AABB;
 
@@ -110,18 +110,17 @@ fn emit_box_lines(min_p: vec3f, max_p: vec3f, node_index: u32, is_active: bool) 
 
 @compute @workgroup_size(64)
 fn cs(@builtin(global_invocation_id) gid: vec3u) {
-    let total_bvh4 = bvh_data.prim_count;
-    if (gid.x >= total_bvh4) { return; }
+    let total_bvh8 = bvh_data.prim_count;
+    if (gid.x >= total_bvh8) { return; }
 
-    // One thread per BVH4 node: reconstruct parent chain to decode world bounds
+    // One thread per BVH8 node: reconstruct parent chain to decode world bounds
     let target_idx = bvh_data.node_base + gid.x;
 
-    let node = bvh4_nodes[target_idx];
+    let node = bvh8_nodes[target_idx];
 
     let min_ws = node.min.xyz;
     let max_ws = node.max.xyz;
     let has_volume = all(max_ws > min_ws);
     emit_box_lines(min_ws, max_ws, target_idx, has_volume);
 }
-
 

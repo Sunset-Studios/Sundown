@@ -171,8 +171,8 @@ export class BVHRaycast {
       "bvh_raycast",
       "acceleration/bvh_traversal.wgsl",
       [
-        bvh_buffers.bvh4_nodes_buffer,
-        bvh_buffers.bvh4_prim_indices_buffer,
+        bvh_buffers.bvh8_nodes_buffer,
+        bvh_buffers.bvh8_prim_indices_buffer,
         bvh_buffers.scene_bounds_buffer,
         this.rays_buffer,
         this.hits_buffer,

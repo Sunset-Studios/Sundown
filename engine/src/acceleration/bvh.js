@@ -13,7 +13,7 @@
 //  raytracing and spatial queries. Features include:
 //  
 //  • GPU-native construction using radix-sorted Morton codes and H-PLOC algorithm
-//  • BVH4 nodes for optimal SIMD traversal performance and less depth traversal cost
+//  • BVH8 nodes for optimal SIMD traversal performance and less depth traversal cost
 //  • Decoupled from entity system for maximum flexibility
 //  • Dynamic resizing with lazy buffer allocation for memory efficiency
 //
@@ -31,9 +31,9 @@ import { Buffer } from "../renderer/buffer.js";
 
 // ─── Core BVH Data Structures ───────────────────────────────────────────────────────────────────
 const SCENE_BVH_BUFFER_NAME = "scene_bvh_buffer";                    // Scene bounding box (min/max)
-const BVH4_NODES_BUFFER_NAME = "bvh4_nodes_buffer";                  // BVH4 internal/leaf nodes  
+const BVH8_NODES_BUFFER_NAME = "bvh8_nodes_buffer";                  // BVH8 internal/leaf nodes  
 const PARENT_IDX_BUFFER_NAME = "bvh_parent_idx";                     // Parent indices for traversal
-const BVH4_BUILD_STATE_BUFFER_NAME = "bvh4_build_state";             // Build algorithm state counters
+const BVH8_BUILD_STATE_BUFFER_NAME = "bvh8_build_state";             // Build algorithm state counters
 
 // ─── Morton Code Generation & Sorting ───────────────────────────────────────────────────────────
 const MORTON_CODES_BUFFER_NAME = "morton_codes_buffer";              // 3D Morton codes for primitives
@@ -47,10 +47,10 @@ const ONESWEEP_PASS_HIST_BUFFER_NAME = "onesweep_pass_histogram";     // Per-pas
 const ONESWEEP_TILE_INDICES_BUFFER_NAME = "onesweep_tile_indices";    // Tile indexing for workgroups
 const ONESWEEP_ERROR_COUNT_BUFFER_NAME = "onesweep_error_count";      // Error tracking for debugging
 
-// ─── BVH4 Construction Workspace ────────────────────────────────────────────────────────────────
-const BVH4_INDEX_PAIRS_BUFFER_NAME = "bvh4_index_pairs";             // Work queue index pairs
-const BVH4_PRIM_INDICES_BUFFER_NAME = "bvh4_prim_indices";           // Final primitive index mapping
-const BVH4_DEBUG_WATCHDOG_BUFFER_NAME = "bvh4_debug_watchdog";       // Debug counters and validation
+// ─── BVH8 Construction Workspace ────────────────────────────────────────────────────────────────
+const BVH8_INDEX_PAIRS_BUFFER_NAME = "bvh8_index_pairs";             // Work queue index pairs
+const BVH8_PRIM_INDICES_BUFFER_NAME = "bvh8_prim_indices";           // Final primitive index mapping
+const BVH8_DEBUG_WATCHDOG_BUFFER_NAME = "bvh8_debug_watchdog";       // Debug counters and validation
 
 // ╔═══════════════════════════════════════════════════════════════════════════════════════════════╗
 // ║                                 ALGORITHM CONFIGURATION                                       ║
@@ -76,7 +76,7 @@ export const TILE_SIZE = WORKGROUP_SIZE * ITEMS_PER_TILE; // Total items per wor
 
 // ─── Data Structure Sizes ───────────────────────────────────────────────────────────────────────
 const SCENE_BVH_BYTE_SIZE = 32;                         // Scene bounds: float4 min + float4 max
-const BVH4_NODE_BYTE_SIZE = 48;                         // BVH4 node: 3x float4 for bounds + metadata
+const BVH8_NODE_BYTE_SIZE = 64;                         // BVH8 node: 4x float4 for bounds + metadata
 const DEFAULT_BVH_SIZE = 1024;                          // Initial capacity for BVH nodes
 
 // ─── GPU Buffer Usage Patterns ──────────────────────────────────────────────────────────────────
@@ -90,7 +90,7 @@ const storage_usage = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBuff
 // ║  Architecture Features:                                                                       ║
 // ║  • Cache-friendly memory layout with structure-of-arrays design                              ║
 // ║  • GPU-native construction using Morton codes and OneSweep radix sort                        ║
-// ║  • BVH4 nodes for 4-way SIMD traversal on modern GPUs                                        ║
+// ║  • BVH8 nodes for 8-way SIMD traversal on modern GPUs                                        ║
 // ║  • Completely decoupled from entity system for maximum flexibility                           ║
 // ║  • Dynamic resizing with lazy buffer allocation for memory efficiency                        ║
 // ╚═══════════════════════════════════════════════════════════════════════════════════════════════╝
@@ -127,7 +127,7 @@ export class BVH {
   
   // ─── Core BVH Structure Buffers ─────────────────────────────────────────────────────────────────
   static scene_bounds_buffer = null;                    // Scene AABB for Morton code normalization
-  static bvh4_nodes_buffer = null;                      // BVH4 internal and leaf node data
+  static bvh8_nodes_buffer = null;                      // BVH8 internal and leaf node data
   static bvh_info_buffer = null;                        // Build statistics and metadata
   static parent_idx_buffer = null;                      // Parent node indices for traversal
   
@@ -143,11 +143,11 @@ export class BVH {
   static onesweep_tile_indices_buffer = null;           // Tile management for workgroups
   static onesweep_error_count_buffer = null;            // Error tracking and validation
   
-  // ─── BVH4 Construction Workspace ────────────────────────────────────────────────────────────────
-  static bvh4_build_state_buffer = null;                // Build algorithm state and counters
-  static bvh4_index_pairs_buffer = null;                // Work queue for parallel construction
-  static bvh4_prim_indices_buffer = null;               // Final primitive index remapping
-  static bvh4_debug_watchdog_buffer = null;             // Debug counters with CPU readback
+  // ─── BVH8 Construction Workspace ────────────────────────────────────────────────────────────────
+  static bvh8_build_state_buffer = null;                // Build algorithm state and counters
+  static bvh8_index_pairs_buffer = null;                // Work queue for parallel construction
+  static bvh8_prim_indices_buffer = null;               // Final primitive index remapping
+  static bvh8_debug_watchdog_buffer = null;             // Debug counters with CPU readback
 
   // ═══════════════════════════════════════════════════════════════════════════════════════════════
   //                                   INITIALIZATION METHODS
@@ -374,17 +374,17 @@ export class BVH {
       });
     }
 
-    // ─── BVH4 Node Structure ────────────────────────────────────────────────────────────────────
-    // BVH4 uses 4-way branching for optimal SIMD traversal on modern GPUs
-    // Each node stores bounding boxes for up to 4 children plus metadata
+    // ─── BVH8 Node Structure ────────────────────────────────────────────────────────────────────
+    // BVH8 uses 8-way branching for optimal SIMD traversal on modern GPUs
+    // Each node stores bounding boxes for up to 8 children plus metadata
     
-    const required_bvh4_size = this.bvh_size * BVH4_NODE_BYTE_SIZE;  // 48 bytes per node
+    const required_bvh8_size = this.bvh_size * BVH8_NODE_BYTE_SIZE;  // 64 bytes per node
 
-    if (!this.bvh4_nodes_buffer || this.bvh4_nodes_buffer.config.size < required_bvh4_size) {
-      this.bvh4_nodes_buffer = Buffer.create({
-        name: BVH4_NODES_BUFFER_NAME,
+    if (!this.bvh8_nodes_buffer || this.bvh8_nodes_buffer.config.size < required_bvh8_size) {
+      this.bvh8_nodes_buffer = Buffer.create({
+        name: BVH8_NODES_BUFFER_NAME,
         usage: storage_usage,
-        size: required_bvh4_size,
+        size: required_bvh8_size,
         force: true,
       });
 
@@ -414,14 +414,14 @@ export class BVH {
       });
     }
 
-    // ─── BVH4 Construction State Management ─────────────────────────────────────────────────────
-    // These buffers manage the parallel BVH4 construction algorithm state
+    // ─── BVH8 Construction State Management ─────────────────────────────────────────────────────
+    // These buffers manage the parallel BVH8 construction algorithm state
     
     // Build state: Atomic counters for work distribution and progress tracking
     // Layout: [work_counter, node_counter, leaf_counter, work_alloc_counter, prim_count]
-    if (!this.bvh4_build_state_buffer) {
-      this.bvh4_build_state_buffer = Buffer.create({
-        name: BVH4_BUILD_STATE_BUFFER_NAME,
+    if (!this.bvh8_build_state_buffer) {
+      this.bvh8_build_state_buffer = Buffer.create({
+        name: BVH8_BUILD_STATE_BUFFER_NAME,
         usage: storage_usage,
         size: 20,                         // 5 u32 atomic counters
         force: true,
@@ -432,9 +432,9 @@ export class BVH {
     // Each entry contains start/end indices for a work unit
     const index_pairs_size = this.bvh_size * 8;    // u64 pairs (start, end)
     
-    if (!this.bvh4_index_pairs_buffer || this.bvh4_index_pairs_buffer.config.size < index_pairs_size) {
-      this.bvh4_index_pairs_buffer = Buffer.create({
-        name: BVH4_INDEX_PAIRS_BUFFER_NAME,
+    if (!this.bvh8_index_pairs_buffer || this.bvh8_index_pairs_buffer.config.size < index_pairs_size) {
+      this.bvh8_index_pairs_buffer = Buffer.create({
+        name: BVH8_INDEX_PAIRS_BUFFER_NAME,
         usage: storage_usage,
         size: index_pairs_size,
         force: true,
@@ -442,9 +442,9 @@ export class BVH {
     }
 
     // Primitive indices: Final mapping from BVH leaves to original primitives
-    if (!this.bvh4_prim_indices_buffer || this.bvh4_prim_indices_buffer.config.size < required_primitive_size) {
-      this.bvh4_prim_indices_buffer = Buffer.create({
-        name: BVH4_PRIM_INDICES_BUFFER_NAME,
+    if (!this.bvh8_prim_indices_buffer || this.bvh8_prim_indices_buffer.config.size < required_primitive_size) {
+      this.bvh8_prim_indices_buffer = Buffer.create({
+        name: BVH8_PRIM_INDICES_BUFFER_NAME,
         usage: storage_usage,
         size: required_primitive_size,     // One u32 index per primitive
         force: true,
@@ -454,9 +454,9 @@ export class BVH {
     // ─── Debug and Profiling Infrastructure ────────────────────────────────────────────────────
     // Debug watchdog: Performance counters and validation with CPU readback capability
     // Layout: [iteration_count, max_depth_reached, error_flags, padding]
-    if (!this.bvh4_debug_watchdog_buffer) {
-      this.bvh4_debug_watchdog_buffer = Buffer.create({
-        name: BVH4_DEBUG_WATCHDOG_BUFFER_NAME,
+    if (!this.bvh8_debug_watchdog_buffer) {
+      this.bvh8_debug_watchdog_buffer = Buffer.create({
+        name: BVH8_DEBUG_WATCHDOG_BUFFER_NAME,
         usage: storage_usage,
         size: 16,                         // 4 u32 counters with alignment
         force: true,
@@ -512,7 +512,7 @@ export class BVH {
   static #data_buffers = {
     // Core BVH structure buffers
     scene_bounds_buffer: null,              // Scene AABB for Morton normalization
-    bvh4_nodes_buffer: null,                // BVH4 internal and leaf nodes
+    bvh8_nodes_buffer: null,                // BVH8 internal and leaf nodes
     bvh_info_buffer: null,                  // Build statistics and metadata
     parent_idx_buffer: null,                // Parent node indices
     
@@ -554,7 +554,7 @@ export class BVH {
 
     // ─── Populate Core BVH Structure Buffers ───────────────────────────────────────────────────
     this.#data_buffers.scene_bounds_buffer = this.scene_bounds_buffer;
-    this.#data_buffers.bvh4_nodes_buffer = this.bvh4_nodes_buffer;
+    this.#data_buffers.bvh8_nodes_buffer = this.bvh8_nodes_buffer;
     this.#data_buffers.bvh_info_buffer = this.bvh_info_buffer;
     this.#data_buffers.parent_idx_buffer = this.parent_idx_buffer;
     
@@ -570,11 +570,11 @@ export class BVH {
     this.#data_buffers.onesweep_tile_indices_buffer = this.onesweep_tile_indices_buffer;
     this.#data_buffers.onesweep_error_count_buffer = this.onesweep_error_count_buffer;
     
-    // ─── Populate BVH4 Construction Workspace ──────────────────────────────────────────────────
-    this.#data_buffers.bvh4_build_state_buffer = this.bvh4_build_state_buffer;
-    this.#data_buffers.bvh4_index_pairs_buffer = this.bvh4_index_pairs_buffer;
-    this.#data_buffers.bvh4_prim_indices_buffer = this.bvh4_prim_indices_buffer;
-    this.#data_buffers.bvh4_debug_watchdog_buffer = this.bvh4_debug_watchdog_buffer;
+    // ─── Populate BVH8 Construction Workspace ──────────────────────────────────────────────────
+    this.#data_buffers.bvh8_build_state_buffer = this.bvh8_build_state_buffer;
+    this.#data_buffers.bvh8_index_pairs_buffer = this.bvh8_index_pairs_buffer;
+    this.#data_buffers.bvh8_prim_indices_buffer = this.bvh8_prim_indices_buffer;
+    this.#data_buffers.bvh8_debug_watchdog_buffer = this.bvh8_debug_watchdog_buffer;
 
     return this.#data_buffers;
   }

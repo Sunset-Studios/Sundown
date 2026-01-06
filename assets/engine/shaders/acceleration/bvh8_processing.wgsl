@@ -4,7 +4,6 @@ diagnostic(off,subgroup_uniformity);
 #include "acceleration_common.wgsl"
 
 // Based on "Efficient BVH8 construction for GPU ray tracing" by Vinkler et al.
-// Adapted from BVH8 to BVH4 while maintaining the exact algorithm structure
 
 // -----------------------------------------------------------------------------
 // Constants
@@ -50,7 +49,7 @@ struct IndexPair {
 // Bindings & Uniforms
 //------------------------------------------------------------------------------
 @group(1) @binding(0) var<storage, read_write> bounds: array<AABB>;
-@group(1) @binding(1) var<storage, read_write> bvh4_nodes: array<BVH4Node>;
+@group(1) @binding(1) var<storage, read_write> bvh8_nodes: array<BVH8Node>;
 @group(1) @binding(2) var<storage, read_write> build_state: BuildState;
 @group(1) @binding(3) var<storage, read_write> index_pairs: array<IndexPair>;
 @group(1) @binding(4) var<storage, read_write> prim_indices: array<u32>;
@@ -142,7 +141,7 @@ fn syncthreads_count(warp_ctx: WarpCtx, pred: bool) -> u32 {
 // Greedy assignment. Assigns each child to the
 // best available slot independently, using the cost function and skipping
 // already-assigned slots.
-fn greedy_assignment(offsets: array<vec3<f32>, 4>, n: u32) -> u32 {
+fn greedy_assignment(offsets: array<vec3<f32>, 8>, n: u32) -> u32 {
     var assignments: u32 = INVALID_IDX;
 
     for (var c = 0u; c < n; c = c + 1u) {
@@ -150,7 +149,7 @@ fn greedy_assignment(offsets: array<vec3<f32>, 4>, n: u32) -> u32 {
         var best_slot = INVALID_ASSIGNMENT;
         let offset = offsets[c];
 
-        for (var s = 0u; s < 4u; s = s + 1u) {
+        for (var s = 0u; s < 8u; s = s + 1u) {
             // If slot already assigned, skip
             if (get_nibble(assignments, s) != INVALID_ASSIGNMENT) {
                 continue;
@@ -169,31 +168,32 @@ fn greedy_assignment(offsets: array<vec3<f32>, 4>, n: u32) -> u32 {
     return assignments;
 }
 
-// BVH4 Node Creation
-fn create_bvh4_node(
+// BVH8 Node Creation
+fn create_bvh8_node(
     bounds_arg: AABB,
-    child_nodes: array<u32, 4>,
-    child_bounds: array<AABB, 4>,
+    child_nodes: array<u32, 8>,
+    child_bounds: array<AABB, 8>,
     child_base_idx: u32,
     assignments: u32,
     inner_mask: u32,
     leaf_mask: u32,
     is_blas: bool
-) -> BVH4Node {
-    var node: BVH4Node;
+) -> BVH8Node {
+    var node: BVH8Node;
 
     // Write world-space bounds directly
     node.min = bounds_arg.min;
     node.max = bounds_arg.max;
 
-    // Encode per-slot children directly into BVH4Node.children
+    // Encode per-slot children directly into BVH8Node children
     // Convention:
     // - If slot i is inner: children[i] = f32(child_base_idx + rank among inner slots)
     // - If slot i is leaf (BLAS): children[i] = f32(triangle_id) - DIRECT, no AABB indirection!
     // - If slot i is leaf (TLAS): children[i] = f32(bvh2_aabb_index) - for entity lookup
-    node.children = vec4<f32>(-1.0, -1.0, -1.0, -1.0);
+    node.children0 = vec4<f32>(-1.0, -1.0, -1.0, -1.0);
+    node.children1 = vec4<f32>(-1.0, -1.0, -1.0, -1.0);
 
-    for (var i = 0u; i < 4u; i = i + 1u) {
+    for (var i = 0u; i < 8u; i = i + 1u) {
         if (get_nibble(assignments, i) == INVALID_ASSIGNMENT) {
             continue;
         }
@@ -213,7 +213,11 @@ fn create_bvh4_node(
             encoded = select(f32(child_nodes[original_child_idx]), child_bounds[original_child_idx].min.w, is_blas);
         }
 
-        node.children[i] = encoded;
+        if (i < 4u) {
+            node.children0[i] = encoded;
+        } else {
+            node.children1[i - 4u] = encoded;
+        }
     }
 
     // Store masks in w-components (bitcast to/from f32)
@@ -227,7 +231,7 @@ fn create_bvh4_node(
 // Main Kernel
 //------------------------------------------------------------------------------
 @compute @workgroup_size(32)
-fn convert_bvh2_to_bvh4(
+fn convert_bvh2_to_bvh8(
     @builtin(global_invocation_id) gid: vec3<u32>,
     @builtin(local_invocation_id) local_id: vec3<u32>,
     @builtin(workgroup_id) group_id: vec3<u32>,
@@ -284,7 +288,7 @@ fn convert_bvh2_to_bvh4(
             // Load index pair
             let index_pair = load_index_pair(work_id);
             let bvh2_node_idx = index_pair.x;
-            let bvh4_node_idx = index_pair.y;
+            let bvh8_node_idx = index_pair.y;
 
             // If no work assigned to this slot yet, skip (keep lane active to poll until assigned)
             var has_work = (bvh2_node_idx != INVALID_IDX);
@@ -296,7 +300,7 @@ fn convert_bvh2_to_bvh4(
 
             if (is_leaf(bvh2_node)) {
                 // Special case: when there's only one leaf in the entire scene,
-                // that single leaf IS the root. We need to create a BVH4 root node
+                // that single leaf IS the root. We need to create a BVH8 root node
                 // for it since there's no parent internal node to contain it.
                 // With multiple leaves, H-PLOC creates internal nodes and the root
                 // is never a leaf, so this path only triggers for single-entity scenes.
@@ -307,16 +311,17 @@ fn convert_bvh2_to_bvh4(
                     // For TLAS: store the AABB index (bvh2_node_idx) for entity lookup
                     let leaf_id = select(bvh2_node_idx, u32(bvh2_node.min.w), is_blas);
                     
-                    var node: BVH4Node;
+                    var node: BVH8Node;
                     // Copy bounds, but replace w components with masks:
                     // leaf_mask = 1 (slot 0 is a leaf), inner_mask = 0 (no inner children)
                     node.min = vec4<f32>(bvh2_node.min.xyz, bitcast<f32>(1u));
                     node.max = vec4<f32>(bvh2_node.max.xyz, bitcast<f32>(0u));
-                    node.children = vec4<f32>(f32(leaf_id), -1.0, -1.0, -1.0);
+                    node.children0 = vec4<f32>(f32(leaf_id), -1.0, -1.0, -1.0);
+                    node.children1 = vec4<f32>(-1.0, -1.0, -1.0, -1.0);
                     
-                    bvh4_nodes[bvh_data.node_base + bvh4_node_idx] = node;
+                    bvh8_nodes[bvh_data.node_base + bvh8_node_idx] = node;
                 } else {
-                    prim_indices[bvh4_node_idx] = u32(bvh2_node.min.w);
+                    prim_indices[bvh8_node_idx] = u32(bvh2_node.min.w);
                 }
                 lane_active = false;
                 has_work = false;
@@ -327,15 +332,15 @@ fn convert_bvh2_to_bvh4(
                 // Gather children using top-down traversal
                 var inner_mask = 0u;
                 var child_count = 0u;
-                var child_nodes: array<u32, 4>;
+                var child_nodes: array<u32, 8>;
 
                 var child_bounds_local: array<AABB, 2>;
-                var child_bounds_cached: array<AABB, 4>;
+                var child_bounds_cached: array<AABB, 8>;
                 var left_child = u32(bvh2_node.min.w);
                 var right_child = u32(bvh2_node.max.w);
                 var msb = 0;
 
-                // Top-down traversal to collect up to 4 nodes
+                // Top-down traversal to collect up to 8 nodes
                 loop {
                     child_bounds_local[0] = invalid_bounds;
                     child_bounds_local[1] = invalid_bounds;
@@ -372,7 +377,7 @@ fn convert_bvh2_to_bvh4(
                     // Pop the last inner node from the stack
                     msb = 31 - i32(countLeadingZeros(inner_mask));
 
-                    if (msb < 0 || child_count == 4u) {
+                    if (msb < 0 || child_count == 8u) {
                        break;
                     }
 
@@ -388,7 +393,7 @@ fn convert_bvh2_to_bvh4(
                 let parent_centroid = bvh2_node.min.xyz + bvh2_node.max.xyz;
 
                 // Reorder the child nodes (greedy by default, optional auction)
-                var offsets: array<vec3<f32>, 4>;
+                var offsets: array<vec3<f32>, 8>;
                 for (var c = 0u; c < child_count; c = c + 1u) {
                     let centroid = child_bounds_cached[c].min.xyz + child_bounds_cached[c].max.xyz;
                     offsets[c] = parent_centroid - centroid;
@@ -398,7 +403,7 @@ fn convert_bvh2_to_bvh4(
                 // Compute new masks after reordering
                 var new_inner_mask: u32 = 0u;
                 var leaf_mask: u32 = 0u;
-                for (var i = 0u; i < 4u; i = i + 1u) {
+                for (var i = 0u; i < 8u; i = i + 1u) {
                     if (get_nibble(assignments, i) == INVALID_ASSIGNMENT) {
                         continue;
                     }
@@ -422,7 +427,7 @@ fn convert_bvh2_to_bvh4(
                 }
 
                 // Add new work in the index pair list
-                for (var i = 0u; i < 4u; i = i + 1u) {
+                for (var i = 0u; i < 8u; i = i + 1u) {
                     if (get_nibble(assignments, i) == INVALID_ASSIGNMENT) {
                         continue;
                     }
@@ -439,10 +444,10 @@ fn convert_bvh2_to_bvh4(
                     store_index_pair(idx, pair_hi, pair_lo);
                 }
 
-                // Create and store the new BVH4 node
+                // Create and store the new BVH8 node
                 let child_base_abs = bvh_data.node_base + child_base_idx;
                 let is_blas = bvh_data.is_blas != 0u;
-                bvh4_nodes[bvh_data.node_base + bvh4_node_idx] = create_bvh4_node(
+                bvh8_nodes[bvh_data.node_base + bvh8_node_idx] = create_bvh8_node(
                     bvh2_node, child_nodes, child_bounds_cached, child_base_abs, 
                     assignments, inner_mask, leaf_mask, is_blas
                 );
@@ -465,4 +470,3 @@ fn convert_bvh2_to_bvh4(
         }
     }
 }
-

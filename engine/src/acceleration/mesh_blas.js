@@ -17,14 +17,14 @@ import { ComputeTaskQueue } from "../renderer/compute_task_queue.js";
 // This system implements a sophisticated dual-BVH architecture for high-performance raytracing:
 //
 // 🏗️  ARCHITECTURE OVERVIEW:
-//     • Dual-Format Storage: BVH2 (intermediate) + BVH4 (final optimized)
+//     • Dual-Format Storage: BVH2 (intermediate) + BVH8 (final optimized)
 //     • Page-Based Allocation: Efficient memory management with 64-node pages
 //     • Dynamic Scratch Buffers: Auto-resizing build workspace
 //     • Unified Buffer Pool: Reduces GPU bind group overhead
 //
 // 🧠 ALGORITHMIC FOUNDATION:
 //     • BVH2 Build: Classic recursive binary hierarchy (2N-1 nodes for N triangles)
-//     • BVH4 Conversion: Optimized 4-way tree for hardware traversal ((4N-1)/3 nodes)
+//     • BVH8 Conversion: Optimized 8-way tree for hardware traversal ((8N-1)/7 nodes)
 //     • Morton Code Sorting: Z-order curve for spatial coherence
 //     • OneSweep Radix Sort: High-performance GPU sorting algorithm
 //
@@ -40,11 +40,11 @@ import { ComputeTaskQueue } from "../renderer/compute_task_queue.js";
 // │                           📊 CORE BLAS CONFIGURATION CONSTANTS                               │
 // └─────────────────────────────────────────────────────────────────────────────────────────────┘
 const BVH2_NODE_BYTE_SIZE = 32; // BVH2 node: AABB (6 floats) + metadata (2 u32)
-const BVH4_NODE_BYTE_SIZE = 112; // BVH4 node: 4 children (1 vec4<f32>) + bounds (2 vec4<f32>) + leaf data (4 vec4<u32>)
+const BVH8_NODE_BYTE_SIZE = 192; // BVH8 node: 8 children (2 vec4<f32>) + bounds (2 vec4<f32>) + leaf data (8 vec4<u32>)
 const INITIAL_MAX_PAGES = 256; // Conservative initial allocation (16K nodes)
 const PAGE_SIZE = 64; // Nodes per page (optimal for GPU workgroup size)
 const UINT32_BYTES = 4; // Standard 32-bit integer size
-const DIRECTORY_ENTRY_SIZE = 8; // Per-mesh metadata: [bvh2_base, bvh2_cap, bvh4_base, bvh4_cap, leaf_count, first_vertex, first_index, padding]
+const DIRECTORY_ENTRY_SIZE = 8; // Per-mesh metadata: [bvh2_base, bvh2_cap, bvh8_base, bvh8_cap, leaf_count, first_vertex, first_index, padding]
 
 // ┌─────────────────────────────────────────────────────────────────────────────────────────────┐
 // │                         🔧 COMPUTE SHADER BUILD CONFIGURATION                                │
@@ -73,7 +73,7 @@ const STORAGE_USAGE = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBuff
  *
  * ┌────────────────────────── 🎯 PRIMARY RESPONSIBILITIES ──────────────────────────┐
  * │                                                                                   │
- * │  • Dual-Format BVH Storage: Maintains both BVH2 and BVH4 representations        │
+ * │  • Dual-Format BVH Storage: Maintains both BVH2 and BVH8 representations        │
  * │  • Intelligent Page Allocation: 64-node pages for optimal memory utilization    │
  * │  • Dynamic Scratch Management: Auto-resizing build workspace buffers            │
  * │  • Unified Buffer Architecture: Single shared buffers reduce GPU overhead       │
@@ -85,12 +85,12 @@ const STORAGE_USAGE = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBuff
  * │                                                                                   │
  * │  Directory Entry Format (per mesh):                                              │
  * │  ┌─────────────┬─────────────┬─────────────┬─────────────┬─────────────┬──────┐ │
- * │  │ bvh2_base   │ bvh2_cap    │ bvh4_base   │ bvh4_cap    │ leaf_count  │ v_off│ │
+ * │  │ bvh2_base   │ bvh2_cap    │ bvh8_base   │ bvh8_cap    │ leaf_count  │ v_off│ │
  * │  │ (u32)       │ (u32)       │ (u32)       │ (u32)       │ (u32)       │(u32) │ │
  * │  └─────────────┴─────────────┴─────────────┴─────────────┴─────────────┴──────┘ │
  * │                                                                                   │
  * │  BVH2 Allocation: 2N-1 nodes for N triangles (binary tree structure)            │
- * │  BVH4 Allocation: (4N-1)/3 nodes for N triangles (optimized 4-way tree)         │
+ * │  BVH8 Allocation: (8N-1)/7 nodes for N triangles (optimized 8-way tree)         │
  * │                                                                                   │
  * └───────────────────────────────────────────────────────────────────────────────────┘
  */
@@ -105,7 +105,7 @@ export class MeshBLAS {
   // ║                            📦 DUAL-PAGED BLAS STORAGE SYSTEM                              ║
   // ╚════════════════════════════════════════════════════════════════════════════════════════════╝
   static #bvh2_nodes_buffer = null; // Global BVH2 storage: binary tree nodes (intermediate format)
-  static #bvh4_nodes_buffer = null; // Global BVH4 storage: quaternary tree nodes (final optimized format)
+  static #bvh8_nodes_buffer = null; // Global BVH8 storage: octary tree nodes (final optimized format)
   static #directory_buffer = null; // Per-mesh allocation metadata directory (GPU accessible)
   static #directory = null; // CPU-side directory mirror for fast updates
   static #dummy_index_buffer = null; // Fallback buffer for meshes without index data
@@ -120,13 +120,13 @@ export class MeshBLAS {
   static #bvh2_allocated_node_count = 0; // Actual number of BVH2 nodes allocated (not capacity)
 
   // ╔════════════════════════════════════════════════════════════════════════════════════════════╗
-  // ║                           🔧 BVH4 ALLOCATION MANAGEMENT SYSTEM                            ║
+  // ║                           🔧 BVH8 ALLOCATION MANAGEMENT SYSTEM                            ║
   // ╚════════════════════════════════════════════════════════════════════════════════════════════╝
-  static #bvh4_max_pages = INITIAL_MAX_PAGES; // Current maximum page capacity
-  static #bvh4_blas_size = INITIAL_MAX_PAGES * PAGE_SIZE; // Total nodes available
-  static #bvh4_free_pages = []; // Available page indices (sorted)
-  static #bvh4_allocations = new Map(); // mesh_id -> AllocationInfo mapping
-  static #bvh4_allocated_node_count = 0; // Actual number of BVH4 nodes allocated (not capacity)
+  static #bvh8_max_pages = INITIAL_MAX_PAGES; // Current maximum page capacity
+  static #bvh8_blas_size = INITIAL_MAX_PAGES * PAGE_SIZE; // Total nodes available
+  static #bvh8_free_pages = []; // Available page indices (sorted)
+  static #bvh8_allocations = new Map(); // mesh_id -> AllocationInfo mapping
+  static #bvh8_allocated_node_count = 0; // Actual number of BVH8 nodes allocated (not capacity)
   static #directory_entry_count = 0; // Actual number of directory entries used
 
   // ╔════════════════════════════════════════════════════════════════════════════════════════════╗
@@ -157,10 +157,10 @@ export class MeshBLAS {
 
   // BVH Build State Management
   static #parent_indices_buffer = null; // Parent node indices for hierarchy
-  static #bvh4_build_state_buffer = null; // Build iteration state tracker
-  static #bvh4_index_pairs_buffer = null; // Child-parent index pairs for BVH4
-  static #bvh4_prim_indices_buffer = null; // Primitive indices for leaf nodes
-  static #bvh4_debug_watchdog_buffer = null; // Debug/safety mechanism for infinite loops
+  static #bvh8_build_state_buffer = null; // Build iteration state tracker
+  static #bvh8_index_pairs_buffer = null; // Child-parent index pairs for BVH8
+  static #bvh8_prim_indices_buffer = null; // Primitive indices for leaf nodes
+  static #bvh8_debug_watchdog_buffer = null; // Debug/safety mechanism for infinite loops
 
   // BLAS atlas buffer (header + packed data)
   static #atlas_buffer = null;
@@ -174,7 +174,7 @@ export class MeshBLAS {
    * │                           🏗️  SYSTEM INITIALIZATION                                     │
    * └─────────────────────────────────────────────────────────────────────────────────────────┘
    *
-   * Initialize the dual-paged MeshBLAS system. Sets up both BVH2 and BVH4 buffer pools,
+   * Initialize the dual-paged MeshBLAS system. Sets up both BVH2 and BVH8 buffer pools,
    * creates the allocation directory, and prepares the scratch buffer system.
    *
    * This method is safe to call multiple times and will only initialize once.
@@ -196,11 +196,11 @@ export class MeshBLAS {
       force: true,
     });
 
-    // Create BVH4 nodes storage buffer (final BVH4 output)
-    this.#bvh4_nodes_buffer = Buffer.create({
-      name: "mesh_blas_bvh4_nodes",
+    // Create BVH8 nodes storage buffer (final BVH8 output)
+    this.#bvh8_nodes_buffer = Buffer.create({
+      name: "mesh_blas_bvh8_nodes",
       usage: STORAGE_USAGE,
-      size: this.#bvh4_blas_size * BVH4_NODE_BYTE_SIZE,
+      size: this.#bvh8_blas_size * BVH8_NODE_BYTE_SIZE,
       force: true,
     });
 
@@ -218,7 +218,7 @@ export class MeshBLAS {
       name: "mesh_blas_atlas",
       usage: STORAGE_USAGE,
       size:
-        this.#bvh4_blas_size * BVH4_NODE_BYTE_SIZE +
+        this.#bvh8_blas_size * BVH8_NODE_BYTE_SIZE +
         this.#directory.length * UINT32_BYTES,
       force: true,
     });
@@ -234,7 +234,7 @@ export class MeshBLAS {
     // Initialize free page lists for both buffer types
     for (let i = 0; i < INITIAL_MAX_PAGES; i++) {
       this.#bvh2_free_pages.push(i);
-      this.#bvh4_free_pages.push(i);
+      this.#bvh8_free_pages.push(i);
     }
 
     this.#initialized = true;
@@ -247,13 +247,13 @@ export class MeshBLAS {
    * │                            🗑️  MESH RESOURCE CLEANUP                                   │
    * └─────────────────────────────────────────────────────────────────────────────────────────┘
    *
-   * Release all resources associated with a mesh, including BVH2/BVH4 page allocations,
+   * Release all resources associated with a mesh, including BVH2/BVH8 page allocations,
    * metadata tracking, and rebuild flags. This performs a complete cleanup of the mesh
    * from the acceleration structure system.
    *
    * 🔄 CLEANUP PROCESS:
    *    • BVH2 Pages: Returns allocated pages to the free pool
-   *    • BVH4 Pages: Returns allocated pages to the free pool
+   *    • BVH8 Pages: Returns allocated pages to the free pool
    *    • Free List Maintenance: Keeps page lists sorted for optimal allocation
    *    • Metadata Cleanup: Removes all tracking data for the mesh
    *    • Build State Reset: Clears any pending rebuild flags
@@ -271,14 +271,14 @@ export class MeshBLAS {
       this.#bvh2_allocations.delete(mesh_id);
     }
 
-    // Release BVH4 allocation
-    const bvh4_allocation = this.#bvh4_allocations.get(mesh_id);
-    if (bvh4_allocation) {
-      for (let i = 0; i < bvh4_allocation.page_count; i++) {
-        this.#bvh4_free_pages.push(bvh4_allocation.start_page + i);
+    // Release BVH8 allocation
+    const bvh8_allocation = this.#bvh8_allocations.get(mesh_id);
+    if (bvh8_allocation) {
+      for (let i = 0; i < bvh8_allocation.page_count; i++) {
+        this.#bvh8_free_pages.push(bvh8_allocation.start_page + i);
       }
-      this.#bvh4_free_pages.sort((a, b) => a - b);
-      this.#bvh4_allocations.delete(mesh_id);
+      this.#bvh8_free_pages.sort((a, b) => a - b);
+      this.#bvh8_allocations.delete(mesh_id);
     }
 
     // Recalculate actual allocation counts after release
@@ -309,11 +309,11 @@ export class MeshBLAS {
       );
     }
     
-    // Recalculate BVH4 high water mark
-    this.#bvh4_allocated_node_count = 0;
-    for (const allocation of this.#bvh4_allocations.values()) {
-      this.#bvh4_allocated_node_count = Math.max(
-        this.#bvh4_allocated_node_count,
+    // Recalculate BVH8 high water mark
+    this.#bvh8_allocated_node_count = 0;
+    for (const allocation of this.#bvh8_allocations.values()) {
+      this.#bvh8_allocated_node_count = Math.max(
+        this.#bvh8_allocated_node_count,
         allocation.base_node_index + allocation.actual_node_count
       );
     }
@@ -330,14 +330,14 @@ export class MeshBLAS {
    * │                       📐 MESH BLAS ALLOCATION & BUILD SETUP                             │
    * └─────────────────────────────────────────────────────────────────────────────────────────┘
    *
-   * Analyzes a mesh and prepares dual BVH allocations (BVH2 + BVH4) based on triangle count.
+   * Analyzes a mesh and prepares dual BVH allocations (BVH2 + BVH8) based on triangle count.
    * Calculates optimal page requirements and updates the allocation directory. Marks the
    * mesh as dirty to trigger a rebuild during the next build pass.
    *
    * 🔍 ALLOCATION ANALYSIS:
    *    • Triangle Count Extraction: From mesh.indices.length / 3
    *    • BVH2 Requirements: 2N-1 nodes for N triangles (binary tree formula)
-   *    • BVH4 Requirements: ⌈(4N-1)/3⌉ nodes for N triangles (quaternary optimization)
+   *    • BVH8 Requirements: ⌈(8N-1)/7⌉ nodes for N triangles (octary optimization)
    *    • Page Calculation: Rounds up to 64-node page boundaries
    *    • Directory Update: Records base indices and capacities for GPU access
    *
@@ -412,7 +412,7 @@ export class MeshBLAS {
    *
    * 📦 ATLAS STRUCTURE:
    *    • Header (32 bytes): Base offsets and counts for each section in vec4 units
-   *    • BVH4 Section: Quaternary BVH nodes for SIMD-optimized traversal (with co-located leaf data)
+   *    • BVH8 Section: Octary BVH nodes for SIMD-optimized traversal (with co-located leaf data)
    *    • Directory Section: Per-mesh metadata (bounds, node ranges, vertex/index offsets)
    *
    * 🔄 DYNAMIC REBUILDING:
@@ -426,7 +426,7 @@ export class MeshBLAS {
   static build_atlas(render_graph) {
     this.initialize();
 
-    if (!this.#bvh4_nodes_buffer || !this.#directory_buffer) {
+    if (!this.#bvh8_nodes_buffer || !this.#directory_buffer) {
       return;
     }
 
@@ -435,14 +435,14 @@ export class MeshBLAS {
     // │  BVH2 is excluded from atlas - only used for debug visualization                       │
     // └─────────────────────────────────────────────────────────────────────────────────────────┘
     const header_bytes = 4 * 4; // 4 u32 header
-    const bvh4_count = this.#bvh4_allocated_node_count; // Actual allocated, not capacity
+    const bvh8_count = this.#bvh8_allocated_node_count; // Actual allocated, not capacity
     const dir_count = this.#directory_entry_count; // Actual mesh count, not capacity
     
-    // BVH4 uses 7 vec4s per node (3 for node + 4 for co-located leaf data)
+    // BVH8 uses 12 vec4s per node (4 for node + 8 for co-located leaf data)
     // Directory uses 2 vec4s per entry
-    const bvh4_vec4s = bvh4_count * 7;
+    const bvh8_vec4s = bvh8_count * 12;
     const dir_vec4s = dir_count * 2;
-    const total_bytes = header_bytes + (bvh4_vec4s + dir_vec4s) * 16;
+    const total_bytes = header_bytes + (bvh8_vec4s + dir_vec4s) * 16;
 
     // Only resize if needed - avoid unnecessary allocations
     if (!this.#atlas_buffer || this.#atlas_buffer.config.size < total_bytes) {
@@ -455,40 +455,40 @@ export class MeshBLAS {
       Renderer.get().mark_bind_groups_dirty(true);
     }
 
-    // Layout: [Header(8 u32)] [BVH4 nodes] [Directory]
+    // Layout: [Header(8 u32)] [BVH8 nodes] [Directory]
     // Note: bvh2_base/count set to 0 - BVH2 not included in atlas (debug only)
-    const bvh4_base_v4 = 0; // BVH4 starts at beginning of data section
-    const dir_base_v4 = bvh4_base_v4 + bvh4_vec4s;
+    const bvh8_base_v4 = 0; // BVH8 starts at beginning of data section
+    const dir_base_v4 = bvh8_base_v4 + bvh8_vec4s;
 
     // Write atlas header directly (CPU-side) into first 32 bytes of atlas
     const header = new Uint32Array(4);
-    header[0] = bvh4_base_v4 >>> 0;
-    header[1] = bvh4_vec4s >>> 0;
+    header[0] = bvh8_base_v4 >>> 0;
+    header[1] = bvh8_vec4s >>> 0;
     header[2] = dir_base_v4 >>> 0;
     header[3] = dir_vec4s >>> 0;
     this.#atlas_buffer.write_raw(header, 0, header.length);
 
     // Skip empty atlases
-    if (bvh4_count === 0 && dir_count === 0) {
+    if (bvh8_count === 0 && dir_count === 0) {
       return;
     }
 
-    // Pack BVH4 nodes into atlas (includes co-located leaf index resolution)
-    if (bvh4_count > 0) {
+    // Pack BVH8 nodes into atlas (includes co-located leaf index resolution)
+    if (bvh8_count > 0) {
       ComputeTaskQueue.new_task(
-        "blas_pack_atlas_bvh4",
+        "blas_pack_atlas_bvh8",
         "acceleration/blas_atlas_pack.wgsl",
         [
           this.#atlas_buffer,
-          this.#bvh4_nodes_buffer,
+          this.#bvh8_nodes_buffer,
           this.#directory_buffer,
           MeshData.index_buffer, // Index buffer for resolving triangle vertex indices
         ],
         [this.#atlas_buffer],
-        Math.ceil(bvh4_count / 256),
+        Math.ceil(bvh8_count / 256),
         1,
         1,
-        "pack_bvh4"
+        "pack_bvh8"
       );
     }
 
@@ -499,7 +499,7 @@ export class MeshBLAS {
         "acceleration/blas_atlas_pack.wgsl",
         [
           this.#atlas_buffer,
-          this.#bvh4_nodes_buffer,
+          this.#bvh8_nodes_buffer,
           this.#directory_buffer,
           MeshData.index_buffer, // Unused by pack_directory but needed for binding consistency
         ],
@@ -523,7 +523,7 @@ export class MeshBLAS {
    *
    * Initialize the dynamic single-mesh scratch system with conservative initial capacity.
    * This creates all the temporary buffers needed for BVH construction including Morton
-   * code generation, radix sorting, and BVH4 conversion state management.
+   * code generation, radix sorting, and BVH8 conversion state management.
    *
    * 🛠️ BUFFER CREATION STRATEGY:
    *    • Conservative Start: 4K triangle capacity to handle most common cases
@@ -577,13 +577,13 @@ export class MeshBLAS {
    * │                        📊 MESH ALLOCATION COORDINATOR                                   │
    * └─────────────────────────────────────────────────────────────────────────────────────────┘
    *
-   * Coordinates the allocation of both BVH2 and BVH4 node space for a mesh, updates the
+   * Coordinates the allocation of both BVH2 and BVH8 node space for a mesh, updates the
    * GPU-accessible directory with allocation metadata, and maintains CPU-side tracking
    * information for the build pipeline.
    *
    * 🔄 ALLOCATION PROCESS:
    *    • BVH2 Allocation: Binary tree structure requiring 2N-1 nodes
-   *    • BVH4 Allocation: Quaternary tree requiring ⌈(4N-1)/3⌉ nodes
+   *    • BVH8 Allocation: Octary tree requiring ⌈(8N-1)/7⌉ nodes
    *    • Directory Update: GPU metadata with base indices and capacities
    *    • Metadata Storage: CPU build pipeline tracking information
    *
@@ -608,27 +608,27 @@ export class MeshBLAS {
       bvh2_base_index = existing_bvh2.base_node_index;
     }
 
-    // Allocate BVH4 nodes ((4N - 1) / 3)
-    let bvh4_base_index = 0;
-    const existing_bvh4 = this.#bvh4_allocations.get(mesh_id);
-    const bvh4_nodes_required = Math.max(1, Math.ceil((4 * triangle_count - 1) / 3));
+    // Allocate BVH8 nodes ((8N - 1) / 7)
+    let bvh8_base_index = 0;
+    const existing_bvh8 = this.#bvh8_allocations.get(mesh_id);
+    const bvh8_nodes_required = Math.max(1, Math.ceil((8 * triangle_count - 1) / 7));
 
-    if (!existing_bvh4 || existing_bvh4.node_capacity < bvh4_nodes_required) {
-      bvh4_base_index = this.#allocate_bvh4(mesh_id, triangle_count);
-      if (bvh4_base_index < 0) return;
+    if (!existing_bvh8 || existing_bvh8.node_capacity < bvh8_nodes_required) {
+      bvh8_base_index = this.#allocate_bvh8(mesh_id, triangle_count);
+      if (bvh8_base_index < 0) return;
     } else {
-      bvh4_base_index = existing_bvh4.base_node_index;
+      bvh8_base_index = existing_bvh8.base_node_index;
     }
 
-    // Update directory entry: [bvh2_base, bvh2_capacity, bvh4_base, bvh4_capacity, leaf_count, first_vertex, first_index]
+    // Update directory entry: [bvh2_base, bvh2_capacity, bvh8_base, bvh8_capacity, leaf_count, first_vertex, first_index]
     const bvh2_allocation = this.#bvh2_allocations.get(mesh_id);
-    const bvh4_allocation = this.#bvh4_allocations.get(mesh_id);
+    const bvh8_allocation = this.#bvh8_allocations.get(mesh_id);
     const directory_offset = mesh_id * DIRECTORY_ENTRY_SIZE;
 
     this.#directory[directory_offset + 0] = bvh2_base_index >>> 0;
     this.#directory[directory_offset + 1] = bvh2_allocation.node_capacity >>> 0;
-    this.#directory[directory_offset + 2] = bvh4_base_index >>> 0;
-    this.#directory[directory_offset + 3] = bvh4_allocation.node_capacity >>> 0;
+    this.#directory[directory_offset + 2] = bvh8_base_index >>> 0;
+    this.#directory[directory_offset + 3] = bvh8_allocation.node_capacity >>> 0;
     this.#directory[directory_offset + 4] = triangle_count >>> 0;
     this.#directory[directory_offset + 5] = first_vertex >>> 0;
     this.#directory[directory_offset + 6] = first_index >>> 0;
@@ -649,9 +649,9 @@ export class MeshBLAS {
       first_index: first_index,
       leaf_count: triangle_count,
       bvh2_base_node_index: bvh2_base_index,
-      bvh4_base_node_index: bvh4_base_index,
+      bvh8_base_node_index: bvh8_base_index,
       bvh2_node_count: bvh2_nodes_required,
-      bvh4_node_count: bvh4_nodes_required,
+      bvh8_node_count: bvh8_nodes_required,
       index_buffer: index_buffer || this.#dummy_index_buffer,
     });
   }
@@ -717,59 +717,59 @@ export class MeshBLAS {
   }
 
   // ┌─────────────────────────────────────────────────────────────────────────────────────────────┐
-  // │                              🌲 BVH4 PAGE ALLOCATION SYSTEM                                  │
+  // │                              🌲 BVH8 PAGE ALLOCATION SYSTEM                                  │
   // └─────────────────────────────────────────────────────────────────────────────────────────────┘
 
   /**
    * ┌─────────────────────────────────────────────────────────────────────────────────────────┐
-   * │                           ⚡ BVH4 OPTIMIZED PAGE ALLOCATOR                              │
+   * │                           ⚡ BVH8 OPTIMIZED PAGE ALLOCATOR                              │
    * └─────────────────────────────────────────────────────────────────────────────────────────┘
    *
-   * Allocates contiguous page runs for BVH4 node storage using the optimized quaternary tree
-   * formula: ⌈(4N-1)/3⌉ nodes for N triangles. BVH4 provides superior ray traversal performance
+   * Allocates contiguous page runs for BVH8 node storage using the optimized octary tree
+   * formula: ⌈(8N-1)/7⌉ nodes for N triangles. BVH8 provides superior ray traversal performance
    * on modern GPU architectures compared to binary trees.
    *
-   * 🔬 BVH4 OPTIMIZATION THEORY:
-   *    • Quaternary Tree Formula: ⌈(4N - 1) / 3⌉ total nodes (reduced depth vs BVH2)
-   *    • Hardware Optimization: 4-way branching matches GPU SIMD width
+   * 🔬 BVH8 OPTIMIZATION THEORY:
+   *    • Octary Tree Formula: ⌈(8N - 1) / 7⌉ total nodes (reduced depth vs BVH2)
+   *    • Hardware Optimization: 8-way branching matches GPU SIMD width
    *    • Cache Efficiency: Fewer traversal steps = better cache hit ratios
    *    • Memory Density: ~33% fewer nodes than equivalent BVH2 structure
    *
    * @param {number} mesh_id - Unique mesh identifier for tracking
-   * @param {number} primitive_count - Number of triangles requiring BVH4 storage
-   * @returns {number} Base node index in global BVH4 buffer, or -1 if allocation fails
+   * @param {number} primitive_count - Number of triangles requiring BVH8 storage
+   * @returns {number} Base node index in global BVH8 buffer, or -1 if allocation fails
    * @private
    */
-  static #allocate_bvh4(mesh_id, primitive_count) {
+  static #allocate_bvh8(mesh_id, primitive_count) {
     this.initialize();
 
-    const bvh4_node_count = Math.max(1, Math.ceil((4 * primitive_count - 1) / 3)); // (4N - 1) / 3
-    const pages_needed = Math.ceil(bvh4_node_count / PAGE_SIZE);
+    const bvh8_node_count = Math.max(1, Math.ceil((8 * primitive_count - 1) / 7)); // (8N - 1) / 7
+    const pages_needed = Math.ceil(bvh8_node_count / PAGE_SIZE);
 
     // Ensure contiguous free pages are available
-    this.#ensure_contiguous_free_bvh4_pages(pages_needed);
+    this.#ensure_contiguous_free_bvh8_pages(pages_needed);
 
     // Find and allocate contiguous page run
-    const page_index = this.#find_contiguous_free_bvh4_run(pages_needed);
+    const page_index = this.#find_contiguous_free_bvh8_run(pages_needed);
     if (page_index < 0) return -1;
 
-    const start_page = this.#bvh4_free_pages[page_index];
-    this.#bvh4_free_pages.splice(page_index, pages_needed);
+    const start_page = this.#bvh8_free_pages[page_index];
+    this.#bvh8_free_pages.splice(page_index, pages_needed);
 
-    // Create BVH4 allocation record
+    // Create BVH8 allocation record
     const allocation = {
       start_page,
       page_count: pages_needed,
       node_capacity: pages_needed * PAGE_SIZE,
       base_node_index: start_page * PAGE_SIZE,
-      actual_node_count: bvh4_node_count,
+      actual_node_count: bvh8_node_count,
     };
 
-    this.#bvh4_allocations.set(mesh_id, allocation);
+    this.#bvh8_allocations.set(mesh_id, allocation);
     
     // Update actual allocated node count for atlas sizing
-    this.#bvh4_allocated_node_count = Math.max(
-      this.#bvh4_allocated_node_count,
+    this.#bvh8_allocated_node_count = Math.max(
+      this.#bvh8_allocated_node_count,
       allocation.base_node_index + allocation.actual_node_count
     );
     
@@ -787,13 +787,13 @@ export class MeshBLAS {
   }
 
   /**
-   * Ensure contiguous free BVH4 pages are available, growing buffer if needed.
+   * Ensure contiguous free BVH8 pages are available, growing buffer if needed.
    * @private
    */
-  static #ensure_contiguous_free_bvh4_pages(required_pages) {
-    if (this.#find_contiguous_free_bvh4_run(required_pages) >= 0) return;
-    const additional_pages = Math.max(required_pages, this.#bvh4_max_pages);
-    this.#grow_bvh4_buffer(additional_pages);
+  static #ensure_contiguous_free_bvh8_pages(required_pages) {
+    if (this.#find_contiguous_free_bvh8_run(required_pages) >= 0) return;
+    const additional_pages = Math.max(required_pages, this.#bvh8_max_pages);
+    this.#grow_bvh8_buffer(additional_pages);
   }
 
   /**
@@ -822,19 +822,19 @@ export class MeshBLAS {
   }
 
   /**
-   * Find index of contiguous free BVH4 page run.
+   * Find index of contiguous free BVH8 page run.
    * @private
    */
-  static #find_contiguous_free_bvh4_run(required_pages) {
-    const free_count = this.#bvh4_free_pages.length;
+  static #find_contiguous_free_bvh8_run(required_pages) {
+    const free_count = this.#bvh8_free_pages.length;
     if (required_pages > free_count) return -1;
 
     for (let i = 0; i <= free_count - required_pages; i++) {
       let is_contiguous = true;
-      const start_page = this.#bvh4_free_pages[i];
+      const start_page = this.#bvh8_free_pages[i];
 
       for (let j = 1; j < required_pages; j++) {
-        if (this.#bvh4_free_pages[i + j] !== start_page + j) {
+        if (this.#bvh8_free_pages[i + j] !== start_page + j) {
           is_contiguous = false;
           break;
         }
@@ -880,32 +880,32 @@ export class MeshBLAS {
   }
 
   /**
-   * Grow the BVH4 nodes buffer by adding additional pages.
+   * Grow the BVH8 nodes buffer by adding additional pages.
    * @private
    */
-  static #grow_bvh4_buffer(additional_pages) {
-    const old_max_pages = this.#bvh4_max_pages;
+  static #grow_bvh8_buffer(additional_pages) {
+    const old_max_pages = this.#bvh8_max_pages;
     const new_max_pages = old_max_pages + Math.max(1, additional_pages);
 
-    this.#bvh4_max_pages = new_max_pages;
-    this.#bvh4_blas_size = new_max_pages * PAGE_SIZE;
+    this.#bvh8_max_pages = new_max_pages;
+    this.#bvh8_blas_size = new_max_pages * PAGE_SIZE;
 
-    // Recreate BVH4 nodes buffer with new capacity
-    this.#bvh4_nodes_buffer = Buffer.create({
-      name: "mesh_blas_bvh4_nodes",
+    // Recreate BVH8 nodes buffer with new capacity
+    this.#bvh8_nodes_buffer = Buffer.create({
+      name: "mesh_blas_bvh8_nodes",
       usage: STORAGE_USAGE,
-      size: this.#bvh4_blas_size * BVH4_NODE_BYTE_SIZE,
+      size: this.#bvh8_blas_size * BVH8_NODE_BYTE_SIZE,
       force: true,
     });
 
     // Add new pages to free list (maintain sorted order)
     for (let i = old_max_pages; i < new_max_pages; i++) {
-      this.#bvh4_free_pages.push(i);
+      this.#bvh8_free_pages.push(i);
     }
-    this.#bvh4_free_pages.sort((a, b) => a - b);
+    this.#bvh8_free_pages.sort((a, b) => a - b);
 
     // Mark all meshes dirty since buffer was recreated
-    for (const mesh_id of this.#bvh4_allocations.keys()) {
+    for (const mesh_id of this.#bvh8_allocations.keys()) {
       this.#dirty_meshes.add(mesh_id);
     }
 
@@ -958,13 +958,13 @@ export class MeshBLAS {
    *
    * Creates a complete set of scratch buffers optimized for the specified primitive capacity.
    * These temporary buffers support the full BVH build pipeline from Morton code generation
-   * through final BVH4 optimization.
+   * through final BVH8 optimization.
    *
    * 📦 BUFFER ARCHITECTURE:
    *    • Morton Codes: Primary + temporary for radix sort ping-pong
    *    • Sorted Indices: Triangle indices organized by spatial Morton code
    *    • OneSweep Histograms: Global + per-pass statistics for efficient sorting
-   *    • BVH4 Build State: Iteration control and conversion tracking
+   *    • BVH8 Build State: Iteration control and conversion tracking
    *    • Debug Infrastructure: Watchdog counters to prevent infinite loops
    *
    * @param {number} primitive_capacity - Maximum number of triangles to support
@@ -1032,28 +1032,28 @@ export class MeshBLAS {
       force: true,
     });
 
-    this.#bvh4_build_state_buffer = Buffer.create({
+    this.#bvh8_build_state_buffer = Buffer.create({
       name: "mesh_blas_build_state",
       usage: STORAGE_USAGE | GPUBufferUsage.COPY_SRC,
       size: 5 * UINT32_BYTES, // Single build state
       force: true,
     });
 
-    this.#bvh4_index_pairs_buffer = Buffer.create({
+    this.#bvh8_index_pairs_buffer = Buffer.create({
       name: "mesh_blas_index_pairs",
       usage: STORAGE_USAGE | GPUBufferUsage.COPY_SRC,
       size: primitive_byte_size * 2, // u64 per primitive
       force: true,
     });
 
-    this.#bvh4_prim_indices_buffer = Buffer.create({
+    this.#bvh8_prim_indices_buffer = Buffer.create({
       name: "mesh_blas_prim_indices",
       usage: STORAGE_USAGE | GPUBufferUsage.COPY_SRC,
       size: primitive_byte_size,
       force: true,
     });
 
-    this.#bvh4_debug_watchdog_buffer = Buffer.create({
+    this.#bvh8_debug_watchdog_buffer = Buffer.create({
       name: "mesh_blas_debug_watchdog",
       usage: STORAGE_USAGE | GPUBufferUsage.COPY_SRC,
       size: 4 * UINT32_BYTES, // Single debug state
@@ -1137,7 +1137,7 @@ export class MeshBLAS {
   // │                             🌳 BVH BUILD STATE MANAGEMENT                                    │
   // │                                                                                               │
   // │  These buffers coordinate the multi-step BVH construction process, from binary tree          │
-  // │  generation through quaternary tree optimization and final primitive assignment.             │
+  // │  generation through octary tree optimization and final primitive assignment.                 │
   // └─────────────────────────────────────────────────────────────────────────────────────────────┘
 
   /** @returns {Buffer} Parent node indices for hierarchy construction */
@@ -1145,29 +1145,29 @@ export class MeshBLAS {
     return this.#parent_indices_buffer;
   }
 
-  /** @returns {Buffer} Global BVH4 nodes storage (final optimized format) */
-  static get bvh4_nodes_buffer() {
-    return this.#bvh4_nodes_buffer;
+  /** @returns {Buffer} Global BVH8 nodes storage (final optimized format) */
+  static get bvh8_nodes_buffer() {
+    return this.#bvh8_nodes_buffer;
   }
 
   /** @returns {Buffer} Build iteration state and progress tracking */
-  static get bvh4_build_state_buffer() {
-    return this.#bvh4_build_state_buffer;
+  static get bvh8_build_state_buffer() {
+    return this.#bvh8_build_state_buffer;
   }
 
-  /** @returns {Buffer} Child-parent index pairs for BVH4 conversion */
-  static get bvh4_index_pairs_buffer() {
-    return this.#bvh4_index_pairs_buffer;
+  /** @returns {Buffer} Child-parent index pairs for BVH8 conversion */
+  static get bvh8_index_pairs_buffer() {
+    return this.#bvh8_index_pairs_buffer;
   }
 
-  /** @returns {Buffer} Primitive indices for BVH4 leaf node assignment */
-  static get bvh4_prim_indices_buffer() {
-    return this.#bvh4_prim_indices_buffer;
+  /** @returns {Buffer} Primitive indices for BVH8 leaf node assignment */
+  static get bvh8_prim_indices_buffer() {
+    return this.#bvh8_prim_indices_buffer;
   }
 
   /** @returns {Buffer} Debug watchdog counters to prevent infinite loops */
-  static get bvh4_debug_watchdog_buffer() {
-    return this.#bvh4_debug_watchdog_buffer;
+  static get bvh8_debug_watchdog_buffer() {
+    return this.#bvh8_debug_watchdog_buffer;
   }
 
   // ┌─────────────────────────────────────────────────────────────────────────────────────────────┐
@@ -1179,9 +1179,9 @@ export class MeshBLAS {
     return this.#bvh2_blas_size;
   }
 
-  /** @returns {Buffer} BLAS bvh4 size */
-  static get bvh4_size() {
-    return this.#bvh4_blas_size;
+  /** @returns {Buffer} BLAS bvh8 size */
+  static get bvh8_size() {
+    return this.#bvh8_blas_size;
   }
 
   // ┌─────────────────────────────────────────────────────────────────────────────────────────────┐
@@ -1209,18 +1209,18 @@ export class MeshBLAS {
    * └─────────────────────────────────────────────────────────────────────────────────────────┘
    *
    * Provides a cached object containing all GPU buffers needed for shader binding. This includes
-   * the main BVH2/BVH4 storage buffers and the allocation directory for GPU-side mesh lookups.
+   * the main BVH2/BVH8 storage buffers and the allocation directory for GPU-side mesh lookups.
    *
    * 🔄 CACHING STRATEGY:
    *    • Static Cache Object: Reused to minimize allocation overhead
    *    • Automatic Initialization: Ensures system is ready before data access
    *    • Buffer Reference Updates: Refreshes cache with current buffer instances
    *
-   * @returns {object} GPU binding data: {bvh2_nodes_buffer, bvh4_nodes_buffer, directory_buffer}
+   * @returns {object} GPU binding data: {bvh2_nodes_buffer, bvh8_nodes_buffer, directory_buffer}
    */
   static #gpu_data_cache = {
     bvh2_nodes_buffer: null,
-    bvh4_nodes_buffer: null,
+    bvh8_nodes_buffer: null,
     directory_buffer: null,
     morton_codes_buffer: null,
     sorted_indices_buffer: null,
@@ -1230,15 +1230,15 @@ export class MeshBLAS {
     onesweep_pass_hist_buffer: null,
     onesweep_tile_indices_buffer: null,
     parent_idx_buffer: null,
-    bvh4_build_state_buffer: null,
-    bvh4_index_pairs_buffer: null,
-    bvh4_prim_indices_buffer: null,
-    bvh4_debug_watchdog_buffer: null,
+    bvh8_build_state_buffer: null,
+    bvh8_index_pairs_buffer: null,
+    bvh8_prim_indices_buffer: null,
+    bvh8_debug_watchdog_buffer: null,
   };
   static to_gpu_data() {
     this.initialize();
     this.#gpu_data_cache.bvh2_nodes_buffer = this.#bvh2_nodes_buffer;
-    this.#gpu_data_cache.bvh4_nodes_buffer = this.#bvh4_nodes_buffer;
+    this.#gpu_data_cache.bvh8_nodes_buffer = this.#bvh8_nodes_buffer;
     this.#gpu_data_cache.directory_buffer = this.#directory_buffer;
     this.#gpu_data_cache.atlas_buffer = this.#atlas_buffer;
     this.#gpu_data_cache.morton_codes_buffer = this.#morton_codes_buffer;
@@ -1249,10 +1249,10 @@ export class MeshBLAS {
     this.#gpu_data_cache.onesweep_pass_hist_buffer = this.#onesweep_pass_hist_buffer;
     this.#gpu_data_cache.onesweep_tile_indices_buffer = this.#onesweep_tile_indices_buffer;
     this.#gpu_data_cache.parent_idx_buffer = this.#parent_indices_buffer;
-    this.#gpu_data_cache.bvh4_build_state_buffer = this.#bvh4_build_state_buffer;
-    this.#gpu_data_cache.bvh4_index_pairs_buffer = this.#bvh4_index_pairs_buffer;
-    this.#gpu_data_cache.bvh4_prim_indices_buffer = this.#bvh4_prim_indices_buffer;
-    this.#gpu_data_cache.bvh4_debug_watchdog_buffer = this.#bvh4_debug_watchdog_buffer;
+    this.#gpu_data_cache.bvh8_build_state_buffer = this.#bvh8_build_state_buffer;
+    this.#gpu_data_cache.bvh8_index_pairs_buffer = this.#bvh8_index_pairs_buffer;
+    this.#gpu_data_cache.bvh8_prim_indices_buffer = this.#bvh8_prim_indices_buffer;
+    this.#gpu_data_cache.bvh8_debug_watchdog_buffer = this.#bvh8_debug_watchdog_buffer;
     return this.#gpu_data_cache;
   }
 }

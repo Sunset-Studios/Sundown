@@ -101,8 +101,8 @@ struct DrawCommand {
 struct MeshDirectoryEntry {
     bvh2_base: u32,
     bvh2_capacity: u32,
-    bvh4_base: u32,
-    bvh4_capacity: u32,
+    bvh8_base: u32,
+    bvh8_capacity: u32,
     leaf_count: u32,
     first_vertex: u32,
     first_index: u32,
@@ -154,4 +154,3 @@ const pos_inf = 3.402823466e+38;
 const neg_inf = -3.402823466e+38;
 
 const one_over_float_max = 1.0 / 4294967295.0;
-

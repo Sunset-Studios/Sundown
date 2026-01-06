@@ -5,7 +5,7 @@
 const HPLOC_WAVE_SIZE = 128u;
 const QUANT_BITS = 10u;
 const QUANT_MAX = 1023u;
-const NODE_STACK_SIZE = 12;
+const NODE_STACK_SIZE = 8;
 
 // ------------------------------------------------------------------------------------
 // Data Structures 
@@ -17,11 +17,12 @@ struct AABB {
     max: vec4<f32>,
 };
 
-// BVH4 (4-wide) node
-struct BVH4Node {
+// BVH8 (8-wide) node
+struct BVH8Node {
     min: vec4<f32>,
     max: vec4<f32>,
-    children: vec4<f32>,
+    children0: vec4<f32>,
+    children1: vec4<f32>,
 };
 
 // Ray structure for intersection tests
@@ -52,6 +53,10 @@ fn is_leaf(node: AABB) -> bool {
 // Check if a node is valid
 fn is_valid_node(node: AABB) -> bool {
     return node.min.w >= 0.0;
+}
+
+fn bvh8_child(node: BVH8Node, slot: u32) -> f32 {
+    return select(node.children0[slot], node.children1[slot - 4u], slot >= 4u);
 }
 
 // Transform an AABB - properly handles rotation/scaling by transforming all 8 corners

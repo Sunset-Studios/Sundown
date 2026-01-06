@@ -3,7 +3,7 @@
 #include "blas_common.wgsl"
 
 const LINES_PER_BOX = 12u;
-const BVH4_COLOR = vec4f(1.0, 0.6, 0.2, 1.0);
+const BVH8_COLOR = vec4f(1.0, 0.6, 0.2, 1.0);
 const MAX_STACK = 256u;
 const EPS = 0.0001;
 const MAX_NODES_DEBUG = 8096u;
@@ -81,7 +81,7 @@ fn cs(
     let mesh_directory_entry = atlas_load_directory_entry(mesh_asset_id);
     
     // Check if this node index is valid for this mesh
-    if (node_idx >= u32(mesh_directory_entry.bvh4_capacity)) { return; }
+    if (node_idx >= u32(mesh_directory_entry.bvh8_capacity)) { return; }
     
     // ============================================================================
     // UNIQUE LINEAR INDEX CALCULATION - Create unique index per (mesh, node)
@@ -97,9 +97,9 @@ fn cs(
     // ============================================================================
     
     let entity_transform = entity_transforms[entity_resolved].transform;
-    let global_node_index = u32(mesh_directory_entry.bvh4_base) + node_idx;
-    let bvh4_node = atlas_load_bvh4_node(global_node_index);
-    var node = AABB(bvh4_node.min, bvh4_node.max);
+    let global_node_index = u32(mesh_directory_entry.bvh8_base) + node_idx;
+    let bvh8_node = atlas_load_bvh8_node(global_node_index);
+    var node = AABB(bvh8_node.min, bvh8_node.max);
     node.min -= vec4f(EPS, EPS, EPS, 0.0);
     node.max += vec4f(EPS, EPS, EPS, 0.0);
     
@@ -135,7 +135,6 @@ fn cs(
         transform[3] = select(transform[3], identity_matrix[3], !is_active);
 
         out_line_data[line_index].transform = transform;
-        out_line_data[line_index].color_and_width = vec4f(BVH4_COLOR.rgb, width);
+        out_line_data[line_index].color_and_width = vec4f(BVH8_COLOR.rgb, width);
     }
 }
-

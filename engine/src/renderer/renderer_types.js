@@ -151,9 +151,9 @@ export const DebugDrawType = Object.freeze({
     GI_ProbeDepthAtlas: 23,
     EntityBounds: 24,
     BVH: 25,
-    BVH4: 26,
+    BVH8: 26,
     BLAS_Bounds: 27,
-    BLAS_BVH4: 28,
+    BLAS_BVH8: 28,
 });
 
 /**

@@ -14,7 +14,7 @@
 @group(1) @binding(2) var<storage, read> probe_update_indices: array<u32>;
 @group(1) @binding(3) var<storage, read_write> probe_ray_hits: array<DDGIProbeRayHit>;
 @group(1) @binding(4) var<storage, read> tlas_bvh2_bounds: array<AABB>;
-@group(1) @binding(5) var<storage, read> tlas_bvh4_nodes: array<BVH4Node>;
+@group(1) @binding(5) var<storage, read> tlas_bvh8_nodes: array<BVH8Node>;
 @group(1) @binding(6) var<storage, read> blas_atlas: BLASAtlas;
 @group(1) @binding(7) var<storage, read> entity_transforms: array<EntityTransform>;
 @group(1) @binding(8) var<storage, read> mesh_asset_ids: array<u32>;
@@ -81,7 +81,7 @@ fn trace_blas(
     var current_ray = *ray_local;
 
     var node_stack: array<u32, NODE_STACK_SIZE>;
-    node_stack[0] = atlas_load_directory_entry_bvh4_base(mesh_asset_id);
+    node_stack[0] = atlas_load_directory_entry_bvh8_base(mesh_asset_id);
     var stack_size = 1u;
 
     while (stack_size > 0u) {
@@ -90,18 +90,18 @@ fn trace_blas(
         let node_idx = node_stack[stack_size];
         if (node_idx == INVALID_IDX) { continue; }
 
-        let leaf_mask = atlas_load_bvh4_leaf_mask(node_idx);
-        let children = atlas_load_bvh4_node_children(node_idx);
+        let leaf_mask = atlas_load_bvh8_leaf_mask(node_idx);
         
         // Node already tested before push - no redundant AABB test here!
-        for (var i = 0u; i < 4u; i = i + 1u) {
-            if (children[i] < 0.0) { continue; }
+        for (var i = 0u; i < 8u; i = i + 1u) {
+            let child_raw = atlas_load_bvh8_child(node_idx, i);
+            if (child_raw < 0.0) { continue; }
 
-            let child_idx = u32(children[i]);
+            let child_idx = u32(child_raw);
 
             if (((leaf_mask >> i) & 1u) != 0u) { // Is leaf?
                 // Load vertex indices from co-located leaf data (cache-adjacent to node!)
-                let leaf_indices = atlas_load_bvh4_leaf_indices(node_idx, i);
+                let leaf_indices = atlas_load_bvh8_leaf_indices(node_idx, i);
                 let t_tri = intersect_triangle(
                     &current_ray,
                     vertex_buffer[leaf_indices.x].position.xyz,
@@ -117,8 +117,8 @@ fn trace_blas(
                 // Only test AABB before pushing - guarantees single test per node
                 let t_aabb_child = intersect_aabb(
                     &current_ray,
-                    atlas_load_bvh4_node_min(child_idx),
-                    atlas_load_bvh4_node_max(child_idx)
+                    atlas_load_bvh8_node_min(child_idx),
+                    atlas_load_bvh8_node_max(child_idx)
                 );
 
                 let is_better_child = t_aabb_child.x <= t_aabb_child.y
@@ -150,12 +150,13 @@ fn trace_hit(ray: ptr<function, Ray>) -> RayHit {
         var node_idx = node_stack[stack_size];
         if (node_idx == INVALID_IDX) { continue; }
 
-        let leaf_mask = bitcast<u32>(tlas_bvh4_nodes[node_idx].min.w);
+        let leaf_mask = bitcast<u32>(tlas_bvh8_nodes[node_idx].min.w);
 
-        for (var i = 0u; i < 4u; i = i + 1u) {
-            if (tlas_bvh4_nodes[node_idx].children[i] < 0.0) { continue; }
+        for (var i = 0u; i < 8u; i = i + 1u) {
+            let child_raw = bvh8_child(tlas_bvh8_nodes[node_idx], i);
+            if (child_raw < 0.0) { continue; }
 
-            let child_idx = u32(tlas_bvh4_nodes[node_idx].children[i]);
+            let child_idx = u32(child_raw);
 
             if (((leaf_mask >> i) & 1u) != 0u) { // Is leaf?
                 let t_leaf = intersect_aabb(
@@ -192,8 +193,8 @@ fn trace_hit(ray: ptr<function, Ray>) -> RayHit {
                 // Only test AABB before pushing - guarantees single test per node
                 let t_aabb_child = intersect_aabb(
                     &current_ray,
-                    tlas_bvh4_nodes[child_idx].min.xyz,
-                    tlas_bvh4_nodes[child_idx].max.xyz
+                    tlas_bvh8_nodes[child_idx].min.xyz,
+                    tlas_bvh8_nodes[child_idx].max.xyz
                 );
                 let is_better_child = t_aabb_child.x <= t_aabb_child.y
                     && t_aabb_child.x >= current_ray.origin_and_tmin.w
@@ -318,5 +319,4 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
 
     process_primary_ray(gid.x, probe_position, ray_dir);
 }
-
 

@@ -324,10 +324,10 @@ const debug_emit_bvh2_nodes_shader_setup = {
     },
   },
 };
-const debug_emit_bvh4_nodes_shader_setup = {
+const debug_emit_bvh8_nodes_shader_setup = {
   pipeline_shaders: {
     compute: {
-      path: "debug/debug_emit_bvh4_nodes_lines.wgsl",
+      path: "debug/debug_emit_bvh8_nodes_lines.wgsl",
     },
   },
 };
@@ -338,10 +338,10 @@ const debug_emit_blas_nodes_shader_setup = {
     },
   },
 };
-const debug_emit_blas_bvh4_nodes_shader_setup = {
+const debug_emit_blas_bvh8_nodes_shader_setup = {
   pipeline_shaders: {
     compute: {
-      path: "debug/debug_emit_blas_bvh4_nodes_lines.wgsl",
+      path: "debug/debug_emit_blas_bvh8_nodes_lines.wgsl",
     },
   },
 };
@@ -581,8 +581,8 @@ export class DeferredShadingStrategy {
       const entity_occluders = render_graph.register_buffer(occluder_buffer.buffer.config.name);
 
       const aabb_gpu_data = BVH.to_gpu_data();
-      const tlas_bvh4_nodes = render_graph.register_buffer(
-        aabb_gpu_data.bvh4_nodes_buffer.config.name
+      const tlas_bvh8_nodes = render_graph.register_buffer(
+        aabb_gpu_data.bvh8_nodes_buffer.config.name
       );
       const scene_bounds = render_graph.register_buffer(
         aabb_gpu_data.scene_bounds_buffer.config.name
@@ -1068,17 +1068,17 @@ export class DeferredShadingStrategy {
       if (
         debug_view === DebugDrawType.EntityBounds ||
         debug_view === DebugDrawType.BVH ||
-        debug_view === DebugDrawType.BVH4 ||
+        debug_view === DebugDrawType.BVH8 ||
         debug_view === DebugDrawType.BLAS_Bounds ||
-        debug_view === DebugDrawType.BLAS_BVH4
+        debug_view === DebugDrawType.BLAS_BVH8
       ) {
         let max_nodes_debug = BVH.bvh_size;
         switch (debug_view) {
           case DebugDrawType.BLAS_Bounds:
             max_nodes_debug = MeshBLAS.bounds_size;
             break;
-          case DebugDrawType.BLAS_BVH4:
-            max_nodes_debug = MeshBLAS.bvh4_size;
+          case DebugDrawType.BLAS_BVH8:
+            max_nodes_debug = MeshBLAS.bvh8_size;
             break;
           default:
             break;
@@ -1108,7 +1108,7 @@ export class DeferredShadingStrategy {
         } else if (debug_view === DebugDrawType.BLAS_Bounds) {
           // Calculate mesh directory size (directory buffer size / bytes per entry / 4 bytes per u32)
           const directory_buffer_size = blas_gpu_data.directory_buffer.config.size;
-          const directory_entry_size = 8; // [bvh2_base, bvh2_cap, bvh4_base, bvh4_cap, leaf_count, first_vertex, first_index, padding]
+          const directory_entry_size = 8; // [bvh2_base, bvh2_cap, bvh8_base, bvh8_cap, leaf_count, first_vertex, first_index, padding]
           const mesh_count = Math.floor(directory_buffer_size / (directory_entry_size * 4));
 
           // Compact per-mesh preprocessing buffers
@@ -1184,10 +1184,10 @@ export class DeferredShadingStrategy {
               pass.dispatch(x_dispatch, y_dispatch, 1);
             }
           );
-        } else if (debug_view === DebugDrawType.BLAS_BVH4) {
+        } else if (debug_view === DebugDrawType.BLAS_BVH8) {
           // Calculate mesh directory size (directory buffer size / bytes per entry / 4 bytes per u32)
           const directory_buffer_size = blas_gpu_data.directory_buffer.config.size;
-          const directory_entry_size = 8; // [bvh2_base, bvh2_cap, bvh4_base, bvh4_cap, leaf_count, first_vertex, first_index, padding]
+          const directory_entry_size = 8; // [bvh2_base, bvh2_cap, bvh8_base, bvh8_cap, leaf_count, first_vertex, first_index, padding]
           const mesh_count = Math.floor(directory_buffer_size / (directory_entry_size * 4));
 
           // Compact per-mesh preprocessing buffers
@@ -1243,7 +1243,7 @@ export class DeferredShadingStrategy {
           );
 
           render_graph.add_pass(
-            "debug_emit_blas_bvh4_lines",
+            "debug_emit_blas_bvh8_lines",
             RenderPassFlags.Compute,
             {
               inputs: [
@@ -1253,7 +1253,7 @@ export class DeferredShadingStrategy {
                 closest_entities_per_mesh_buf,
               ],
               outputs: [debug_line_data_buf],
-              shader_setup: debug_emit_blas_bvh4_nodes_shader_setup,
+              shader_setup: debug_emit_blas_bvh8_nodes_shader_setup,
             },
             (graph, frame_data, encoder) => {
               const pass = graph.get_physical_pass(frame_data.current_pass);
@@ -1262,16 +1262,16 @@ export class DeferredShadingStrategy {
               pass.dispatch(x_dispatch, y_dispatch, 1);
             }
           );
-        } else if (debug_view === DebugDrawType.BVH4) {
+        } else if (debug_view === DebugDrawType.BVH8) {
           const bvh_info = render_graph.register_buffer(aabb_gpu_data.bvh_info_buffer.config.name);
 
           render_graph.add_pass(
-            "debug_emit_bvh4_lines",
+            "debug_emit_bvh8_lines",
             RenderPassFlags.Compute,
             {
-              inputs: [debug_line_data_buf, tlas_bvh4_nodes, bvh_info, scene_bounds],
+              inputs: [debug_line_data_buf, tlas_bvh8_nodes, bvh_info, scene_bounds],
               outputs: [debug_line_data_buf],
-              shader_setup: debug_emit_bvh4_nodes_shader_setup,
+              shader_setup: debug_emit_bvh8_nodes_shader_setup,
             },
             (graph, frame_data, encoder) => {
               const pass = graph.get_physical_pass(frame_data.current_pass);
@@ -1279,7 +1279,7 @@ export class DeferredShadingStrategy {
             }
           );
         } else {
-          // Debug BVH: emit lines from BVH4 nodes
+          // Debug BVH: emit lines from BVH8 nodes
           render_graph.add_pass(
             "debug_emit_bvh2_lines",
             RenderPassFlags.Compute,
@@ -1355,7 +1355,7 @@ export class DeferredShadingStrategy {
           main_smra_image,
           main_motion_emissive_image,
           aabb_bounds,
-          tlas_bvh4_nodes,
+          tlas_bvh8_nodes,
           blas_atlas,
           entity_transforms,
           mesh_asset_ids_buffer,
