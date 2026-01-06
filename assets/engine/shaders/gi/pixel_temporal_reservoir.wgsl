@@ -47,6 +47,41 @@ const TEMPORAL_RADIANCE_RELATIVE_THRESHOLD: f32 = 0.95; // relative luminance mi
 const MAX_TEMPORAL_SAMPLES = 16u;
 
 // =============================================================================
+// GEOMETRIC NORMAL RECONSTRUCTION (screen-space)
+// =============================================================================
+// NOTE:
+// - We intentionally use a *geometric* normal derived from the world-position buffer
+//   for temporal validation, instead of the GBuffer shading normal. Shading normals
+//   can change due to normal maps, LOD changes, etc., and are too strict for reprojection.
+// - This is only used for *safety checks* (dot + plane-distance), not for lighting.
+fn compute_geometric_normal_from_position_tex(
+    position_tex: texture_2d<f32>,
+    full_pixel_coord: vec2<i32>,
+    full_res: vec2<i32>
+) -> vec3<f32> {
+    let coord_l = vec2<i32>(max(full_pixel_coord.x - 1, 0), full_pixel_coord.y);
+    let coord_r = vec2<i32>(min(full_pixel_coord.x + 1, full_res.x - 1), full_pixel_coord.y);
+    let coord_u = vec2<i32>(full_pixel_coord.x, max(full_pixel_coord.y - 1, 0));
+    let coord_d = vec2<i32>(full_pixel_coord.x, min(full_pixel_coord.y + 1, full_res.y - 1));
+
+    let pos_l = textureLoad(position_tex, coord_l, 0);
+    let pos_r = textureLoad(position_tex, coord_r, 0);
+    let pos_u = textureLoad(position_tex, coord_u, 0);
+    let pos_d = textureLoad(position_tex, coord_d, 0);
+
+    // Reject if any neighbor is invalid (typically cleared to 0).
+    let neighbors_valid = (pos_l.w > 0.0) && (pos_r.w > 0.0) && (pos_u.w > 0.0) && (pos_d.w > 0.0);
+    if (!neighbors_valid) {
+        return vec3<f32>(0.0);
+    }
+
+    let dp_dx = pos_r.xyz - pos_l.xyz;
+    let dp_dy = pos_d.xyz - pos_u.xyz; // screen Y increases downward
+
+    return safe_normalize(cross(dp_dx, dp_dy));
+}
+
+// =============================================================================
 // MAIN COMPUTE SHADER
 // =============================================================================
 
@@ -54,6 +89,7 @@ const MAX_TEMPORAL_SAMPLES = 16u;
 fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let full_res = vec2<u32>(u32(gi_params.full_resolution_x), u32(gi_params.full_resolution_y));
     let gi_res = vec2<u32>(u32(gi_params.gi_resolution_x), u32(gi_params.gi_resolution_y));
+    let full_res_i32 = vec2<i32>(i32(full_res.x), i32(full_res.y));
 
     if (gid.x >= gi_res.x || gid.y >= gi_res.y) {
         return;
@@ -63,13 +99,18 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let upscale_factor = u32(gi_params.upscale_factor);
     let full_pixel_coord = gi_pixel_to_full_res_pixel_coord(gid.xy, upscale_factor, full_res);
 
-    let normal_sample = textureLoad(gbuffer_normal, vec2<i32>(full_pixel_coord), 0);
-    let normal = safe_normalize(normal_sample.xyz);
-
-    if (length(normal_sample.xyz) <= 0.0) {
+    let visible_position4 = textureLoad(gbuffer_position, vec2<i32>(full_pixel_coord), 0);
+    if (visible_position4.w <= 0.0) {
         temporal_reservoir_curr[pixel_index] = create_empty();
         return;
     }
+
+    let visible_position = visible_position4.xyz;
+    let geom_normal = compute_geometric_normal_from_position_tex(
+        gbuffer_position,
+        vec2<i32>(full_pixel_coord),
+        full_res_i32
+    );
 
 #if SPECULAR_MASK_ENABLED
     if (textureLoad(specular_mask, vec2<i32>(i32(gid.x), i32(gid.y)), 0).x == 0u) {
@@ -107,7 +148,6 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     // - `sample.outgoing_radiance_*.xyz` = f(y) = (mc_estimate * source_pdf)
     // - `sample.sample_normal_target_pdf.w` = p_hat(y) (we use luminance(f(y)))
     // ─────────────────────────────────────────────────────────────────────────
-    let visible_position = textureLoad(gbuffer_position, vec2<i32>(full_pixel_coord), 0).xyz;
     let camera_position = view_buffer[u32(frame_info.view_index)].view_position.xyz;
 
     let base_ray_id = pixel_index * rays_per_pixel;
@@ -173,22 +213,26 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         let prev_index = u32(prev_coord.y) * gi_res.x + u32(prev_coord.x);
         let prev_reservoir_data = temporal_reservoir_prev[prev_index];
         let prev_full_pixel_coord = gi_pixel_to_full_res_pixel_coord(vec2<u32>(prev_coord), upscale_factor, full_res);
-        let prev_position = textureLoad(gbuffer_position_prev, vec2<i32>(prev_full_pixel_coord), 0).xyz;
-        let prev_normal_sample = textureLoad(gbuffer_normal_prev, vec2<i32>(prev_full_pixel_coord), 0);
-        let prev_normal = safe_normalize(prev_normal_sample.xyz);
+        let prev_position4 = textureLoad(gbuffer_position_prev, vec2<i32>(prev_full_pixel_coord), 0);
+        let prev_geom_normal = compute_geometric_normal_from_position_tex(
+            gbuffer_position_prev,
+            vec2<i32>(prev_full_pixel_coord),
+            full_res_i32
+        );
 
-        if (prev_reservoir_data.reservoir.m > 0u && length(prev_normal_sample.xyz) > 0.0) {
-            // Geometry validation: normal + depth similarity to reject disocclusion.
-            let normal_similarity = dot(prev_normal, normal);
+        if (prev_reservoir_data.reservoir.m > 0u && prev_position4.w > 0.0 && length(prev_geom_normal) > 0.0 && length(geom_normal) > 0.0) {
+            // Geometry validation: geometric normal + depth similarity to reject disocclusion.
+            // Use abs(dot) to avoid rejecting due to sign flips from screen-space reconstruction.
+            let normal_similarity = abs(dot(prev_geom_normal, geom_normal));
             let normal_valid = normal_similarity > TEMPORAL_NORMAL_THRESHOLD;
 
-            let delta_position = prev_position - visible_position;
+            let delta_position = prev_position4.xyz - visible_position;
             // Use a relative depth metric (scaled by distance-to-camera) for robustness.
-            let plane_distance = abs(dot(delta_position, normal));
+            let plane_distance = abs(dot(delta_position, geom_normal));
             let camera_distance = max(length(visible_position - camera_position), 0.001);
             let depth_valid = (plane_distance / camera_distance) < TEMPORAL_DEPTH_THRESHOLD;
 
-            if (depth_valid) {
+            if (normal_valid && depth_valid) {
                 rng_state = random_seed(rng_state);
 
                 gi_reservoir_merge(

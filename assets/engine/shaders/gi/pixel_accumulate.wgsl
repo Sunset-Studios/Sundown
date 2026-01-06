@@ -69,14 +69,10 @@
 // ─────────────────────────────────────────────────────────────────────────────
 const DEPTH_THRESHOLD = 0.05;         // Relative depth difference threshold
 const NORMAL_THRESHOLD = 0.95;         // Normal dot product threshold
-
 // ─────────────────────────────────────────────────────────────────────────────
 // Maximum Accumulated Frame Count
-// Paper recommends 5 < MAX_FRAME_NUM < 32
-// Lower = faster response to changes, Higher = more stable but more lag
-// With upscaling, effective convergence time = MAX_FRAMES × upscale_factor
 // ─────────────────────────────────────────────────────────────────────────────
-const MAX_ACCUMULATED_FRAMES = 8.0;
+const MAX_ACCUMULATED_FRAMES = 4.0;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Compute bilinear filter origin and weights from sub-pixel UV coordinates
