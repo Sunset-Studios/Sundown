@@ -369,10 +369,8 @@ fn cs(
                 0.0
             );
             
-            if (!trace_hit_any(&ray)) {
-                // No shadow hit - light is visible
-                path_state[pixel_index].state_u32.z = 1u;
-            }
+            let has_hit = trace_hit_any(&ray);
+            path_state[pixel_index].state_u32.z = select(1u, 0u, has_hit);
         }
 
         // ─────────────────────────────────────────────────────────────────────

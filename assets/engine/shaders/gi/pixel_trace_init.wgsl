@@ -45,9 +45,6 @@
 @group(1) @binding(13) var specular_mask: texture_2d<u32>;
 #endif
 
-const MAX_INITIAL_EMISSIVE = 10.0;
-const MAX_NEE_LUMINANCE = 10.0;
-
 // =============================================================================
 // ╔═══════════════════════════════════════════════════════════════════════════╗
 // ║                      BLUE NOISE SAMPLING                                  ║
@@ -59,7 +56,7 @@ const MAX_NEE_LUMINANCE = 10.0;
 // ║  we need multiple uncorrelated random values per pixel per frame.         ║
 // ║                                                                           ║
 // ║  We use:                                                                  ║
-// ║  • 64 layers of blue noise textures for temporal decorrelation           ║
+// ║  • 64 layers of blue noise textures for temporal decorrelation            ║
 // ║  • RGBA channels provide 3 values per texel                               ║
 // ║  • Cranley-Patterson rotation adds per-pixel scrambling                   ║
 // ║                                                                           ║
@@ -247,6 +244,12 @@ fn process_selected_pixel(
     
     let f = f_schlick_vec3(f0, 1.0, n_dot_v);
     let fresnel_luminance = luminance(f);
+    //let fresnel_luminance = (f.x + f.y + f.z) / 3.0;
+
+    // Probability of sampling specular vs diffuse
+    let use_ggx = (roughness < 0.3) || (metallic > 0.5);
+    let specular_prob_if_ggx = clamp(fresnel_luminance, 0.001, 0.99);
+    let specular_prob = select(0.0, specular_prob_if_ggx, use_ggx);
 
     // ─────────────────────────────────────────────────────────────────────────
     // RNG Setup
@@ -256,16 +259,6 @@ fn process_selected_pixel(
     else { rng = random_seed(rng); }
 
     // ─────────────────────────────────────────────────────────────────────────
-    // Compute optimal specular vs diffuse sampling probability
-    // ─────────────────────────────────────────────────────────────────────────
-    // Diffuse weight: only for non-metals, scaled by (1-Fresnel) and albedo
-    // Metals have no diffuse term, so (1-metallic) zeros this out
-    let diffuse_weight = (1.0 - metallic) * (1.0 - fresnel_luminance) * luminance(albedo);
-    
-    // Probability of sampling specular lobe
-    let specular_prob = clamp(fresnel_luminance / max(fresnel_luminance + diffuse_weight, 0.001), 0.001, 0.999);
-
-        // ─────────────────────────────────────────────────────────────────────────
     // Generate BRDF sampling candidates using blue noise
     // Blue noise provides better sample distribution than white noise,
     // reducing variance and improving convergence speed
@@ -380,7 +373,7 @@ fn process_selected_pixel(
     pixel_path_state[ray_slot].rng_sample_count_frame_stamp = vec4<f32>(f32(rng), 0.0, f32(frame_id), 0.0);
     pixel_path_state[ray_slot].path_weight = vec4<f32>(path_weight, ray_source_pdf);
     // Visible emissive at the shaded (camera-visible) surface is treated as "direct".
-    pixel_path_state[ray_slot].throughput_direct = vec4<f32>(safe_clamp_vec3_max(emissive * albedo, MAX_INITIAL_EMISSIVE), 0.0);
+    pixel_path_state[ray_slot].throughput_direct = vec4<f32>(safe_clamp_vec3_max(emissive * albedo, MAX_NEE_LUMINANCE), 0.0);
     pixel_path_state[ray_slot].throughput_indirect_diffuse = vec4<f32>(0.0);
     pixel_path_state[ray_slot].throughput_indirect_specular = vec4<f32>(0.0);
     pixel_path_state[ray_slot].pixel_coords = vec4<f32>(f32(gi_pixel_coord.x), f32(gi_pixel_coord.y), 0.0, 0.0);

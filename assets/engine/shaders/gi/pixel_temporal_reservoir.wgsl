@@ -27,7 +27,7 @@
 
 @group(1) @binding(0) var<uniform> gi_params: GIParams;
 @group(1) @binding(1) var<storage, read> pixel_path_state: array<PixelPathState>;
-@group(1) @binding(2) var<storage, read_write> temporal_reservoir_prev: array<GIReservoirData>;
+@group(1) @binding(2) var<storage, read> temporal_reservoir_prev: array<GIReservoirData>;
 @group(1) @binding(3) var<storage, read_write> temporal_reservoir_curr: array<GIReservoirData>;
 @group(1) @binding(4) var gbuffer_position: texture_2d<f32>;
 @group(1) @binding(5) var gbuffer_position_prev: texture_2d<f32>;
@@ -44,7 +44,7 @@
 const TEMPORAL_NORMAL_THRESHOLD: f32 = 0.95;
 const TEMPORAL_DEPTH_THRESHOLD: f32 = 0.05; // relative distance-to-camera threshold
 const TEMPORAL_RADIANCE_RELATIVE_THRESHOLD: f32 = 0.95; // relative luminance mismatch threshold (0 = strict, 1 = permissive)
-const MAX_TEMPORAL_SAMPLES = 10u;
+const MAX_TEMPORAL_SAMPLES = 16u;
 
 // =============================================================================
 // MAIN COMPUTE SHADER
@@ -133,8 +133,13 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         // Target function approximation p_hat(y). Must be computed from the same f(y).
         let target_pdf = max(luminance(integrand_total), 0.0);
 
+        // Mark environment-miss samples explicitly. They do not have a finite sample point,
+        // so later Jacobian-based spatial reuse must avoid treating them like on-surface hits.
+        let is_environment_sample = path.state_u32.w == 0xffffffffu;
+        let sample_kind = select(0.0, 1.0, is_environment_sample);
+
         candidate_samples[candidate_count].visible_position_source_pdf = vec4<f32>(visible_position, source_pdf);
-        candidate_samples[candidate_count].sample_position = vec4<f32>(path.origin_tmin.xyz, 0.0);
+        candidate_samples[candidate_count].sample_position = vec4<f32>(path.origin_tmin.xyz, sample_kind);
         candidate_samples[candidate_count].sample_normal_target_pdf = vec4<f32>(safe_normalize(path.normal_section_index.xyz), target_pdf);
         candidate_samples[candidate_count].outgoing_radiance_direct = vec4<f32>(integrand_direct, 0.0);
         candidate_samples[candidate_count].outgoing_radiance_indirect_diffuse = vec4<f32>(integrand_indirect_diffuse, 0.0);
@@ -178,8 +183,11 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
             let normal_valid = normal_similarity > TEMPORAL_NORMAL_THRESHOLD;
 
             let delta_position = prev_position - visible_position;
-            let depth_valid = abs(dot(delta_position, normal)) < TEMPORAL_DEPTH_THRESHOLD;
-            
+            // Use a relative depth metric (scaled by distance-to-camera) for robustness.
+            let plane_distance = abs(dot(delta_position, normal));
+            let camera_distance = max(length(visible_position - camera_position), 0.001);
+            let depth_valid = (plane_distance / camera_distance) < TEMPORAL_DEPTH_THRESHOLD;
+
             if (depth_valid) {
                 rng_state = random_seed(rng_state);
 
@@ -197,12 +205,6 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
                 has_valid_reprojection = true;
             }
         }
-    }
-
-    // Clear history when temporal reprojection fails (disocclusion)
-    // This prevents stale samples from persisting indefinitely
-    if (!has_valid_reprojection) {
-        temporal_reservoir_prev[pixel_index] = create_empty();
     }
     #endif
 

@@ -61,39 +61,32 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     var state = path_state[pixel_index];
     
     // ─────────────────────────────────────────────────────────────────────────
-    // Determine if this pixel was traced this frame (same logic as init shader)
+    // Determine if this pixel should be traced this frame (for trace_rate > 1)
     // ─────────────────────────────────────────────────────────────────────────
     let first_x_in_row = (pt_params.frame_phase + pt_params.trace_rate - (gid.y * 2u) % pt_params.trace_rate) % pt_params.trace_rate;
     let was_traced_this_frame = (pt_params.trace_rate <= 1u) || 
         ((gid.x >= first_x_in_row) && ((gid.x - first_x_in_row) % pt_params.trace_rate == 0u));
-    
-    // ─────────────────────────────────────────────────────────────────────────
-    // Increment sample count ONLY for traced pixels, by samples_per_pixel
-    // ─────────────────────────────────────────────────────────────────────────
-    if (was_traced_this_frame) {
-        state.rng_sample_count.y += f32(pt_params.samples_per_pixel);
-    }
-    
-    // ─────────────────────────────────────────────────────────────────────────
-    // Compute progressive average
-    // ─────────────────────────────────────────────────────────────────────────
-    let sample_count = max(state.rng_sample_count.y, 1.0);
-    let averaged_radiance = state.accumulated_radiance.xyz / sample_count;
-    
-    // Clamp to prevent extreme values
-    let safe_output = safe_clamp_vec3(averaged_radiance);
 
-    // Tonemap the output
-    let exposure = 1.2;
-    let tonemapped_color = reinhard_tonemapping(safe_output, exposure);
-    
-    // ─────────────────────────────────────────────────────────────────────────
-    // Write to output texture
-    // ─────────────────────────────────────────────────────────────────────────
-    textureStore(output_tex, vec2<i32>(i32(gid.x), i32(gid.y)), vec4f(tonemapped_color, 1.0));
-    
-    // ─────────────────────────────────────────────────────────────────────────
-    // Write back updated sample count
-    // ─────────────────────────────────────────────────────────────────────────
-    path_state[pixel_index] = state;
+    if (was_traced_this_frame) {
+        // ─────────────────────────────────────────────────────────────────────────
+        // Increment sample count ONLY for traced pixels, by samples_per_pixel
+        // ─────────────────────────────────────────────────────────────────────────
+        path_state[pixel_index].rng_sample_count.y += f32(pt_params.samples_per_pixel);
+
+        // ─────────────────────────────────────────────────────────────────────────
+        // Compute progressive average
+        // ─────────────────────────────────────────────────────────────────────────
+        let sample_count = max(path_state[pixel_index].rng_sample_count.y, 1.0);
+        let averaged_radiance = safe_clamp_vec3(path_state[pixel_index].accumulated_radiance.xyz / sample_count);
+
+        // Tonemap the output
+        let exposure = 1.2;
+        let tonemapped_color = reinhard_tonemapping(averaged_radiance, exposure);
+        
+        // ─────────────────────────────────────────────────────────────────────────
+        // Write to output texture
+        // ─────────────────────────────────────────────────────────────────────────
+        textureStore(output_tex, vec2<i32>(i32(gid.x), i32(gid.y)), vec4f(tonemapped_color, 1.0));
+    }
+
 }

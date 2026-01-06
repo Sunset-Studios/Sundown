@@ -13,6 +13,8 @@
 #include "postprocess_common.wgsl"
 #include "sky_common.wgsl"
 
+const MAX_NEE_LUMINANCE = 10.0;
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Structures
 // ─────────────────────────────────────────────────────────────────────────────
@@ -52,39 +54,6 @@ struct PathState {
 @group(1) @binding(4) var output_tex: texture_storage_2d<rgba16float, write>;
 
 // =============================================================================
-// BRDF Sampling Functions (duplicated for standalone compilation)
-// =============================================================================
-
-fn sample_cosine_hemisphere(n: vec3<f32>, r1: f32, r2: f32) -> vec3<f32> {
-    let phi = 2.0 * PI * r1;
-    let cos_theta = sqrt(1.0 - r2);
-    let sin_theta = sqrt(r2);
-    
-    let up = select(vec3f(0.0, 1.0, 0.0), vec3f(1.0, 0.0, 0.0), abs(n.y) > 0.999);
-    let tangent = normalize(cross(up, n));
-    let bitangent = normalize(cross(n, tangent));
-    
-    let dir_local = vec3f(cos(phi) * sin_theta, sin(phi) * sin_theta, cos_theta);
-    return normalize(tangent * dir_local.x + bitangent * dir_local.y + n * dir_local.z);
-}
-
-fn pdf_cosine_hemisphere(n_dot_l: f32) -> f32 {
-    return max(n_dot_l, 0.0) / PI;
-}
-
-fn pdf_ggx_reflection(n: vec3<f32>, h: vec3<f32>, v: vec3<f32>, l: vec3<f32>, roughness: f32) -> f32 {
-    let a = roughness * roughness;
-    let a2 = a * a;
-    let n_dot_h = max(dot(n, h), 0.0);
-    let h_dot_v = max(dot(h, v), 0.0);
-    
-    let denom = n_dot_h * n_dot_h * (a2 - 1.0) + 1.0;
-    let d = a2 / (PI * denom * denom);
-    
-    return (d * n_dot_h) / max(4.0 * h_dot_v, 0.0001);
-}
-
-// =============================================================================
 // Main Compute Shader
 // =============================================================================
 @compute @workgroup_size(128, 1, 1)
@@ -95,24 +64,23 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     if (pixel_coords.x >= res.x || pixel_coords.y >= res.y) { return; }
 
     let pixel_index = pixel_coords.y * res.x + pixel_coords.x;
-    var info = path_state[pixel_index];
     
     // Only process G-buffer hits (marked with tri_id == 0x0)
     // Skip misses (tri_id == 0xffffffff) - those are sky rays
-    if (info.state_u32.w != 0x0u) { return; }
+    if (path_state[pixel_index].state_u32.w != 0x0u) { return; }
     
     // ─────────────────────────────────────────────────────────────────────────
     // Read pre-computed material properties from G-buffer
     // ─────────────────────────────────────────────────────────────────────────
-    let albedo = info.hit_attr0.rgb;
-    let roughness = info.hit_attr0.w;
-    let metallic = info.hit_attr1.x;
-    let reflectance = info.hit_attr1.y;
-    let emissive = info.hit_attr1.z;
+    let albedo = path_state[pixel_index].hit_attr0.rgb;
+    let roughness = path_state[pixel_index].hit_attr0.w;
+    let metallic = path_state[pixel_index].hit_attr1.x;
+    let reflectance = path_state[pixel_index].hit_attr1.y;
+    let emissive = path_state[pixel_index].hit_attr1.z;
     
-    let hit_pos = info.origin_tmin.xyz;
-    let n = info.normal_section_index.xyz;
-    let v_dir = -normalize(info.direction_tmax.xyz);
+    let hit_pos = path_state[pixel_index].origin_tmin.xyz;
+    let n = path_state[pixel_index].normal_section_index.xyz;
+    let v_dir = -normalize(path_state[pixel_index].direction_tmax.xyz);
     let n_dot_v = max(dot(v_dir, n), 0.0001);
     
     let clear_coat = 0.0;
@@ -123,14 +91,14 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     // ─────────────────────────────────────────────────────────────────────────
     if (emissive > 0.0) {
         let emissive_radiance = emissive * albedo;
-        let emissive_contrib = safe_clamp_vec3(emissive_radiance * info.path_weight.xyz);
-        info.accumulated_radiance += vec4f(emissive_contrib, 0.0);
+        let emissive_contrib = safe_clamp_vec3(emissive_radiance * path_state[pixel_index].path_weight.xyz);
+        path_state[pixel_index].accumulated_radiance += vec4f(emissive_contrib, 0.0);
     }
     
     // ─────────────────────────────────────────────────────────────────────────
     // RNG Setup
     // ─────────────────────────────────────────────────────────────────────────
-    var rng = u32(info.rng_sample_count.x);
+    var rng = u32(path_state[pixel_index].rng_sample_count.x);
     if (rng == 0u) { rng = hash(pixel_index ^ u32(frame_info.frame_index)); }
     else { rng = random_seed(rng); }
     
@@ -165,13 +133,14 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
             reflectance, clear_coat, clear_coat_roughness
         );
         
-        let light_contrib = brdf * light.color.rgb * light.intensity * attenuation 
-            * info.path_weight.xyz * f32(num_lights);
+        let raw_light_contrib = brdf * light.color.rgb * light.intensity * attenuation
+            * path_state[pixel_index].path_weight.xyz * f32(num_lights);
+        let light_contrib = safe_clamp_vec3_max(raw_light_contrib, MAX_NEE_LUMINANCE);
         
         let light_distance = select(1e30, length(light.position.xyz - hit_pos), light.light_type != 0.0);
-        info.shadow_origin = vec4f(hit_pos + n * 0.001, 0.0001);
-        info.shadow_direction = vec4f(light_dir, light_distance * 0.999);
-        info.shadow_radiance = vec4f(light_contrib, 1.0);
+        path_state[pixel_index].shadow_origin = vec4f(hit_pos + n * 0.001, 0.0001);
+        path_state[pixel_index].shadow_direction = vec4f(light_dir, light_distance * 0.999);
+        path_state[pixel_index].shadow_radiance = vec4f(light_contrib, 1.0);
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -212,18 +181,13 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     // Monte Carlo estimator: (BRDF * cos(theta)) / PDF
     // Note: calculate_brdf_rt already includes the cosine term
     let throughput_update = brdf_value / safe_pdf;
-    let new_path_weight = info.path_weight.xyz * throughput_update;
+    let new_path_weight = path_state[pixel_index].path_weight.xyz * throughput_update;
     
-    info.path_weight = vec4f(new_path_weight, 0.0);
-    info.origin_tmin = vec4f(hit_pos + n * 0.001, 0.0001);
-    info.direction_tmax = vec4f(next_dir, 1e30);
-    info.state_u32.x = 1u; // Move to bounce 1
-    info.state_u32.y = 1u; // Still alive
-    info.state_u32.w = 0xffffffffu; // Mark as needing intersection test
-    info.rng_sample_count.x = f32(rng);
-    
-    // ─────────────────────────────────────────────────────────────────────────
-    // Write Results
-    // ─────────────────────────────────────────────────────────────────────────
-    path_state[pixel_index] = info;
+    path_state[pixel_index].path_weight = vec4f(new_path_weight, 0.0);
+    path_state[pixel_index].origin_tmin = vec4f(hit_pos + n * 0.001, 0.0001);
+    path_state[pixel_index].direction_tmax = vec4f(next_dir, 1e30);
+    path_state[pixel_index].state_u32.x = 1u; // Move to bounce 1
+    path_state[pixel_index].state_u32.y = 1u; // Still alive
+    path_state[pixel_index].state_u32.w = 0xffffffffu; // Mark as needing intersection test
+    path_state[pixel_index].rng_sample_count.x = f32(rng);
 }

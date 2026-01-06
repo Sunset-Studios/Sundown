@@ -250,7 +250,7 @@ export class PTGI {
     screen_ray_count: 1, // Rays per pixel per frame (1 recommended for real-time)
     upscale_factor: 1, // A final full-resolution pass upsamples the GI outputs for lighting.
     world_cache_size: 32768, // Number of world cache cells per LOD level
-    world_cache_cell_size: 1.0, // Base cell size in world units
+    world_cache_cell_size: 4.0, // Base cell size in world units
     world_cache_lod_count: 4, // Number of LOD levels
     indirect_boost: 1.0, // Multiplier for indirect lighting contribution
   };

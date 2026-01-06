@@ -57,7 +57,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
 
     // === Handle primary vertex visibility ray throughput (direct lighting) ===
     if (path.shadow_origin.w >= 0.0 && path.state_u32.z == 1u) {
-        radiance_contribution += path.shadow_radiance.rgb;
+        radiance_contribution += safe_clamp_vec3_max(path.shadow_radiance.rgb, MAX_NEE_LUMINANCE);
         world_cache_path_state[gid.x].state_u32.z = 0u;
         sample_count = 1.0;
     }
@@ -75,7 +75,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
             skybox_texture
         );
         // Add sky contribution weighted by path throughput
-        radiance_contribution += sky_radiance;
+        radiance_contribution += safe_clamp_vec3_max(sky_radiance, MAX_RADIANCE_LUMINANCE);
         sample_count = 1.0;
     }
     
@@ -153,7 +153,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
             let scale = min(1.0, (max_contribution * ray_source_pdf) / max(luminance(raw_contribution), 0.001));
             
             let emissive_contribution = raw_contribution * scale;
-            radiance_contribution += emissive_contribution;
+            radiance_contribution += safe_clamp_vec3_max(emissive_contribution, MAX_NEE_LUMINANCE);
             sample_count = 1.0;
         }
 
@@ -182,7 +182,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         // Check if we got valid cached data
         let cached_luminance = luminance(cached_radiance);
         if (cached_luminance > 0.0001) {
-            radiance_contribution += cached_radiance * path.path_weight.xyz;
+            radiance_contribution += safe_clamp_vec3_max(cached_radiance * path.path_weight.xyz, MAX_RADIANCE_LUMINANCE);
             sample_count = 1.0;
         }
     }

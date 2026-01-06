@@ -278,7 +278,7 @@ export class PathTracingStrategy {
   occlusion_culler = null;
 
   // Path tracing parameters (optimized for hybrid mode)
-  max_bounces = 4;
+  max_bounces = 2;
   trace_rate = 4; // 1=full res, 2=half, 4=quarter, etc.
   samples_per_pixel = 1; // Number of samples per pixel per frame
 

@@ -79,12 +79,6 @@ const NORMAL_THRESHOLD = 0.95;         // Normal dot product threshold
 const MAX_ACCUMULATED_FRAMES = 8.0;
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Firefly Prevention: Maximum output luminance
-// This is the final safety clamp for all GI output
-// ─────────────────────────────────────────────────────────────────────────────
-const MAX_OUTPUT_LUMINANCE = 10.0;
-
-// ─────────────────────────────────────────────────────────────────────────────
 // Compute bilinear filter origin and weights from sub-pixel UV coordinates
 // ─────────────────────────────────────────────────────────────────────────────
 struct BilinearFilter {
@@ -249,9 +243,9 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     );
 
     // Pre-clamp current radiance to prevent fireflies from entering accumulation
-    current_radiance_direct = safe_clamp_vec3_max(current_radiance_direct, MAX_OUTPUT_LUMINANCE);
-    current_radiance_indirect_diffuse = safe_clamp_vec3_max(current_radiance_indirect_diffuse, MAX_OUTPUT_LUMINANCE);
-    current_radiance_indirect_specular = safe_clamp_vec3_max(current_radiance_indirect_specular, MAX_OUTPUT_LUMINANCE);
+    current_radiance_direct = safe_clamp_vec3_max(current_radiance_direct, MAX_RADIANCE_LUMINANCE);
+    current_radiance_indirect_diffuse = safe_clamp_vec3_max(current_radiance_indirect_diffuse, MAX_RADIANCE_LUMINANCE);
+    current_radiance_indirect_specular = safe_clamp_vec3_max(current_radiance_indirect_specular, MAX_RADIANCE_LUMINANCE);
     
     // ═════════════════════════════════════════════════════════════════════════
     // GHOSTING-FREE BILINEAR REPROJECTION
@@ -380,9 +374,9 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     // ─────────────────────────────────────────────────────────────────────────
     // Final firefly clamp on output radiance
     // ─────────────────────────────────────────────────────────────────────────
-    final_radiance_direct = safe_clamp_vec3_max(final_radiance_direct, MAX_OUTPUT_LUMINANCE);
-    final_radiance_indirect_diffuse = safe_clamp_vec3_max(final_radiance_indirect_diffuse, MAX_OUTPUT_LUMINANCE);
-    final_radiance_indirect_specular = safe_clamp_vec3_max(final_radiance_indirect_specular, MAX_OUTPUT_LUMINANCE);
+    final_radiance_direct = safe_clamp_vec3_max(final_radiance_direct, MAX_RADIANCE_LUMINANCE);
+    final_radiance_indirect_diffuse = safe_clamp_vec3_max(final_radiance_indirect_diffuse, MAX_RADIANCE_LUMINANCE);
+    final_radiance_indirect_specular = safe_clamp_vec3_max(final_radiance_indirect_specular, MAX_RADIANCE_LUMINANCE);
     
     // ─────────────────────────────────────────────────────────────────────────
     // Output

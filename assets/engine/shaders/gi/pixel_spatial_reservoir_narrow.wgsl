@@ -93,7 +93,13 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     if (input_reservoir[pixel_index].reservoir.m > 0u) {
         rng_state = random_seed(rng_state);
         
-        let target_pdf = compute_reuse_target_pdf(input_reservoir[pixel_index].sample, center_position);
+        // Environment samples do not have a finite sample point; avoid Jacobian-based reuse math.
+        let is_environment_sample = input_reservoir[pixel_index].sample.sample_position.w > 0.5;
+        let target_pdf = select(
+            compute_reuse_target_pdf(input_reservoir[pixel_index].sample, center_position),
+            input_reservoir[pixel_index].sample.sample_normal_target_pdf.w,
+            is_environment_sample
+        );
         gi_reservoir_merge(
             &output.reservoir,
             candidate_count,
@@ -142,6 +148,11 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
             continue;
         }
 
+        // Do not spatially reuse environment-miss samples across pixels.
+        if (input_reservoir[neighbor_index].sample.sample_position.w > 0.5) {
+            continue;
+        }
+
         let normal_similarity = dot(neighbor_normal, normal);
         let neighbor_position = textureLoad(gbuffer_position, neighbor_full_pixel_coord, 0u).xyz;
         let plane_distance = abs(dot(neighbor_position - center_position, normal));
@@ -172,7 +183,11 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
 
     gi_reservoir_finalize(
         &output.reservoir,
-        compute_reuse_target_pdf(output.sample, center_position)
+        select(
+            compute_reuse_target_pdf(output.sample, center_position),
+            output.sample.sample_normal_target_pdf.w,
+            output.sample.sample_position.w > 0.5
+        )
     );
 
     if (candidate_count > 0u) {

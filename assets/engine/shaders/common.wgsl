@@ -420,9 +420,10 @@ fn mask_popcount(mask: vec4<u32>) -> u32 {
 }
 
 fn safe_clamp_vec3(value: vec3<f32>) -> vec3<f32> {
-    let x = select(value.x, 0.0, isinf(value.x) || value.x < 0.0);
-    let y = select(value.y, 0.0, isinf(value.y) || value.y < 0.0);
-    let z = select(value.z, 0.0, isinf(value.z) || value.z < 0.0);
+    // Sanitize: clamp NaN/Inf/negative to 0 to prevent accumulator poisoning.
+    let x = select(value.x, 0.0, is_nan(value.x) || isinf(value.x) || value.x < 0.0);
+    let y = select(value.y, 0.0, is_nan(value.y) || isinf(value.y) || value.y < 0.0);
+    let z = select(value.z, 0.0, is_nan(value.z) || isinf(value.z) || value.z < 0.0);
     return vec3<f32>(x, y, z);
 }
 

@@ -235,7 +235,7 @@ fn calculate_blinn_phong(
     let diffuse_color = light.color.rgb * albedo * n_dot_l;
 
     // Specular
-    let halfway = normalize(light_dir + view_dir);
+    let halfway = safe_normalize(light_dir + view_dir);
     let n_dot_h = max(dot(normal, halfway), 0.0);
     let specular = pow(n_dot_h, shininess);
     let specular_color = light.color.rgb * specular;
@@ -272,7 +272,7 @@ fn calculate_brdf(
     let attenuation = get_light_attenuation(light, fragment_pos);
 
     // Halfway vector and dot products
-    let halfway = normalize(light_dir + view_dir);
+    let halfway = safe_normalize(light_dir + view_dir);
     let n_dot_v = max(dot(normal, view_dir), 0.0001);
     let n_dot_l = max(dot(normal, light_dir), 0.0001);
     let n_dot_h = max(dot(normal, halfway), 0.0001);
@@ -353,7 +353,7 @@ fn calculate_brdf_rt(
     clear_coat_roughness: f32,
 ) -> vec3<f32> {
     // Halfway vector and dot products
-    let halfway = normalize(light_dir + view_dir);
+    let halfway = safe_normalize(light_dir + view_dir);
     let n_dot_v = max(dot(normal, view_dir), 0.0001);
     let n_dot_l = max(dot(normal, light_dir), 0.0001);
     let n_dot_h = max(dot(normal, halfway), 0.0001);
@@ -405,7 +405,7 @@ fn calculate_brdf_lighting_rt(
     clear_coat: f32,
     clear_coat_roughness: f32,
 ) -> vec3<f32> {
-    let halfway = normalize(light_dir + view_dir);
+    let halfway = safe_normalize(light_dir + view_dir);
     let n_dot_v = max(dot(normal, view_dir), 0.0001);
     let n_dot_l = max(dot(normal, light_dir), 0.0001);
     let n_dot_h = max(dot(normal, halfway), 0.0001);

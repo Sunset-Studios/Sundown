@@ -179,10 +179,13 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let out_d = s00_d * fw00 + s10_d * fw10 + s01_d * fw01 + s11_d * fw11;
     let out_id = s00_id * fw00 + s10_id * fw10 + s01_id * fw01 + s11_id * fw11;
     let out_is = s00_is * fw00 + s10_is * fw10 + s01_is * fw01 + s11_is * fw11;
+    let direct = safe_clamp_vec3_max(out_d.xyz, MAX_RADIANCE_LUMINANCE);
+    let indirect_diffuse = safe_clamp_vec3_max(out_id.xyz, MAX_RADIANCE_LUMINANCE);
+    let indirect_specular = safe_clamp_vec3_max(out_is.xyz, MAX_RADIANCE_LUMINANCE);
 
-    textureStore(out_direct, full_pixel_coord, out_d);
-    textureStore(out_indirect_diffuse, full_pixel_coord, out_id);
-    textureStore(out_indirect_specular, full_pixel_coord, out_is);
+    textureStore(out_direct, full_pixel_coord, vec4<f32>(direct, out_d.w));
+    textureStore(out_indirect_diffuse, full_pixel_coord, vec4<f32>(indirect_diffuse, out_id.w));
+    textureStore(out_indirect_specular, full_pixel_coord, vec4<f32>(indirect_specular, out_is.w));
 }
 
 

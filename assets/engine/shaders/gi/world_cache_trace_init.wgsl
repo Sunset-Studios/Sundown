@@ -124,7 +124,8 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
             reflectance, clear_coat, clear_coat_roughness
         );
         
-        let light_contrib = brdf * light.color.rgb * light.intensity * attenuation * f32(num_lights);
+        let raw_light_contrib = brdf * light.color.rgb * light.intensity * attenuation * f32(num_lights);
+        let light_contrib = safe_clamp_vec3_max(raw_light_contrib, MAX_NEE_LUMINANCE);
         
         // Setup shadow ray for visibility test
         let selected_light_distance = select(1e30, length(light.position.xyz - position), light.light_type != 0.0);
