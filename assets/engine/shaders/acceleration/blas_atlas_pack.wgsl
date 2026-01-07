@@ -13,7 +13,7 @@ fn pack_bvh8(@builtin(global_invocation_id) gid: vec3u) {
     let total = u32(blas_atlas.header.bvh8_vec4_count) / 12;  // 12 vec4s per node (4 node + 8 leaf data)
     if (i >= total) { return; }
     let dst_base = u32(blas_atlas.header.bvh8_base_v4) + i * 12u;
-    let node = src_bvh8[i];
+    var node = src_bvh8[i];
     
     // Write node data (first 4 vec4s)
     blas_atlas.data[dst_base + 0u] = node.min;
@@ -47,8 +47,8 @@ fn pack_bvh8(@builtin(global_invocation_id) gid: vec3u) {
         var leaf_indices = vec4<u32>(0u, 0u, 0u, 0u);
         
         // Check if this child is a leaf and valid
-        if (found && bvh8_child(node, child) >= 0.0 && ((leaf_mask >> child) & 1u) != 0u) {
-            let tri_id = u32(bvh8_child(node, child));
+        if (found && bvh8_child(&node, child) >= 0.0 && ((leaf_mask >> child) & 1u) != 0u) {
+            let tri_id = u32(bvh8_child(&node, child));
             
             // Load vertex indices from the mesh's index buffer region
             leaf_indices.x = first_vertex + index_buffer[first_index + tri_id * 3u + 0u];

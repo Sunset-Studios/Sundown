@@ -31,7 +31,7 @@ fn traverse_tlas_bvh(@builtin(global_invocation_id) global_id: vec3<u32>) {
         var node_idx = node_stack[stack_size];
         if (node_idx == INVALID_IDX) { continue; }
 
-        let node = bvh8_nodes[node_idx];
+        var node = bvh8_nodes[node_idx];
         let t_aabb = intersect_aabb(&ray, node.min.xyz, node.max.xyz);
 
         if (t_aabb.y >= t_aabb.x && t_aabb.x >= ray.origin_and_tmin.w && t_aabb.x < hit.position_and_t.w) {
@@ -39,7 +39,7 @@ fn traverse_tlas_bvh(@builtin(global_invocation_id) global_id: vec3<u32>) {
                 let leaf_mask = bitcast<u32>(node.min.w);
 
                 for (var i = 0u; i < 8u; i = i + 1u) {
-                    let child_raw = bvh8_child(node, i);
+                    let child_raw = bvh8_child(&node, i);
                     if (child_raw < 0.0) { continue; }
 
                     let is_leaf_child = ((leaf_mask >> i) & 1u) != 0u;

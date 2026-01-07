@@ -1,10 +1,13 @@
 // ------------------------------------------------------------------------------------
+// Defines
+// ------------------------------------------------------------------------------------
+#define BVH_TRAVERSAL_ORDER_CHILDREN
+
+// ------------------------------------------------------------------------------------
 // Constants
 // ------------------------------------------------------------------------------------
 
 const HPLOC_WAVE_SIZE = 128u;
-const QUANT_BITS = 10u;
-const QUANT_MAX = 1023u;
 const NODE_STACK_SIZE = 8;
 
 // ------------------------------------------------------------------------------------
@@ -41,9 +44,31 @@ struct RayHit {
     hit_triangle_data: vec4<u32>,
 };
 
+// Ray hit compact structure for intersection tests
+struct RayHitCompact {
+    t_hit: f32,
+    prim_store: u32,
+    mesh_id: u32,
+    tri_id_local: u32,
+    tri_indices: vec4<u32>,
+    has_hit: u32,
+};
+
 // ------------------------------------------------------------------------------------
 // Functions
 // ------------------------------------------------------------------------------------
+
+// Make a miss ray hit compact
+fn make_miss_ray_hit_compact(t_max: f32) -> RayHitCompact {
+    var result: RayHitCompact;
+    result.t_hit = t_max;
+    result.prim_store = 0xffffffffu;
+    result.mesh_id = 0xffffffffu;
+    result.tri_id_local = 0xffffffffu;
+    result.tri_indices = vec4<u32>(0u, 0u, 0u, 0u);
+    result.has_hit = 0u;
+    return result;
+}
 
 // Check if a node is a leaf
 fn is_leaf(node: AABB) -> bool {
@@ -55,8 +80,11 @@ fn is_valid_node(node: AABB) -> bool {
     return node.min.w >= 0.0;
 }
 
-fn bvh8_child(node: BVH8Node, slot: u32) -> f32 {
-    return select(node.children0[slot], node.children1[slot - 4u], slot >= 4u);
+fn bvh8_child(node: ptr<function, BVH8Node>, slot: u32) -> f32 {
+    if (slot < 4u) {
+        return (*node).children0[slot];
+    }
+    return (*node).children1[slot - 4u];
 }
 
 // Transform an AABB - properly handles rotation/scaling by transforming all 8 corners

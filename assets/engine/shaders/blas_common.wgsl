@@ -34,8 +34,10 @@ fn atlas_load_bvh8_leaf_mask(idx: u32) -> u32 {
 
 fn atlas_load_bvh8_child(idx: u32, slot: u32) -> f32 {
     let base = blas_atlas.header.bvh8_base_v4 + idx * 12u;
-    let child = select(blas_atlas.data[base + 2u][slot], blas_atlas.data[base + 3u][slot - 4u], slot >= 4u);
-    return child;
+    if (slot < 4u) {
+        return blas_atlas.data[base + 2u][slot];
+    }
+    return blas_atlas.data[base + 3u][slot - 4u];
 }
 
 fn atlas_load_bvh8_node_min(idx: u32) -> vec3<f32> {
