@@ -20,7 +20,7 @@ export const VSM_VIRTUAL_DIM = SHADOW_MAP_TILES * TILE_SIZE;
 // Used when constructing stable light-aligned view/projection matrices.
 export const DEFAULT_LIGHT_CLIP_EXTENT = 4;
 // Maximum number of clipmap levels.
-export const MAX_CLIPMAP_LEVELS = 16;
+export const MAX_CLIPMAP_LEVELS = 12;
 // Size (world units) of one virtual-shadow-map texel in clip-map level 0.
 export const VSM_WORLD_UNITS_PER_PAGE =
   (DEFAULT_LIGHT_CLIP_EXTENT) / VSM_VIRTUAL_DIM;

@@ -53,10 +53,10 @@ const gtao_bilateral_params_config = {
 
 export class GTAO {
   constructor(
-    radius = 0.3,
-    bias = 0.01,
-    sample_count = 4,
-    radius_bilateral = 3,
+    radius = 1.0,
+    bias = 0.001,
+    sample_count = 8,
+    radius_bilateral = 5,
     normal_power = 32,
     sigma_ao = 0.25
   ) {
@@ -144,6 +144,7 @@ export class GTAO {
       {
         inputs: [
           position_texture,
+          normal_texture,
           this.ao_texture,
           this.ao_blur_texture,
           this.gtao_bilateral_params_buffer,

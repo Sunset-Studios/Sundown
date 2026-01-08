@@ -23,9 +23,10 @@ struct BilateralBlurSettings {
 // Bindings (match your engine however you like; these mirror GTAO-ish layout)
 // -----------------------------------------------------------------------------
 @group(1) @binding(0) var position_tex: texture_2d<f32>;                 // world pos G-buffer
-@group(1) @binding(1) var ao_src:       texture_2d<f32>;                 // GTAO AO (sample view)
-@group(1) @binding(2) var ao_dst:       texture_storage_2d<r32float, write>; // blurred AO out
-@group(1) @binding(3) var<uniform> blur_settings: BilateralBlurSettings;
+@group(1) @binding(1) var normal_tex:   texture_2d<f32>;                 // world normal G-buffer
+@group(1) @binding(2) var ao_src:       texture_2d<f32>;                 // GTAO AO (sample view)
+@group(1) @binding(3) var ao_dst:       texture_storage_2d<r32float, write>; // blurred AO out
+@group(1) @binding(4) var<uniform> blur_settings: BilateralBlurSettings;
 
 // -----------------------------------------------------------------------------
 // Helpers
@@ -54,6 +55,7 @@ const load_extent = 8 + 2 * max_halo;
 
 var<workgroup> shared_ao: array<f32, load_extent * load_extent>;
 var<workgroup> shared_vs: array<f32, load_extent * load_extent>;
+var<workgroup> shared_nrm: array<vec4<f32>, load_extent * load_extent>;
 
 @compute @workgroup_size(8,8,1)
 fn cs(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(local_invocation_id) lid: vec3<u32>, @builtin(workgroup_id) wgid: vec3<u32>) {
@@ -62,7 +64,8 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(local_invocation_i
 
     let xy = gid.xy;
 
-    let r = i32(max(0, min(u32(blur_settings.radius_px) / 2, u32(max_halo))));
+    // blur_settings.radius_px is the half-kernel radius in pixels.
+    let r = i32(max(0, min(u32(blur_settings.radius_px + 0.5), u32(max_halo))));
     let this_load_w = 8 + 2 * r;
 
     let tile_left = i32(wgid.x * 8u);
@@ -90,6 +93,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(local_invocation_i
         let suv = (vec2f(sxy) + 0.5) / dims_f;
 
         let s_pos = textureLoad(position_tex, sxy, 0).xyz;
+        let s_nrm = textureLoad(normal_tex, sxy, 0).xyz;
         let s_ao = textureLoad(ao_src, sxy, 0).x;
 
         let view = view_buffer[u32(frame_info.view_index)];
@@ -98,6 +102,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(local_invocation_i
         let shared_idx = ly * load_extent + lx;
         shared_ao[shared_idx] = s_ao;
         shared_vs[shared_idx] = s_vs;
+        shared_nrm[shared_idx] = vec4f(normalize(s_nrm), 0.0);
     }
 
     if (thread_idx < remainder_loads) {
@@ -113,6 +118,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(local_invocation_i
             let suv = (vec2f(sxy) + 0.5) / dims_f;
 
             let s_pos = textureLoad(position_tex, sxy, 0).xyz;
+            let s_nrm = textureLoad(normal_tex, sxy, 0).xyz;
             let s_ao = textureLoad(ao_src, sxy, 0).x;
 
             let view = view_buffer[u32(frame_info.view_index)];
@@ -121,6 +127,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(local_invocation_i
             let shared_idx = ly * load_extent + lx;
             shared_ao[shared_idx] = s_ao;
             shared_vs[shared_idx] = s_vs;
+            shared_nrm[shared_idx] = vec4f(normalize(s_nrm), 0.0);
         }
     }
 
@@ -135,6 +142,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(local_invocation_i
 
     let c_ao = shared_ao[center_idx];
     let c_vs = shared_vs[center_idx];
+    let c_nrm = shared_nrm[center_idx].xyz;
 
     var w_sum = 0.0;
     var ao_sum = 0.0;
@@ -153,6 +161,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(local_invocation_i
 
             let s_ao = shared_ao[s_idx];
             let s_vs = shared_vs[s_idx];
+            let s_nrm = shared_nrm[s_idx].xyz;
 
             let dz = abs(s_vs - c_vs);
             if (dz > blur_settings.sigma_depth * 3.0) { continue; } // Bilateral rejection
@@ -165,7 +174,10 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(local_invocation_i
             let da = abs(s_ao - c_ao);
             let w_ao = gauss_from_var(da, blur_settings.sigma_ao);
 
-            let w = w_spatial * w_depth * w_ao;
+            let ndot = max(dot(c_nrm, s_nrm), 0.0);
+            let w_nrm = pow(ndot, max(blur_settings.normal_power, 0.0));
+
+            let w = w_spatial * w_depth * w_ao * w_nrm;
             ao_sum += w * s_ao;
             w_sum += w;
         }
