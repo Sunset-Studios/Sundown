@@ -146,14 +146,13 @@ export const DebugDrawType = Object.freeze({
     GI_Specular: 18,
     GI_WorldCache: 19,
     GI_Probes: 20,
-    GI_ProbeAtlas: 21,
-    GI_Reflections: 22,
-    GI_ProbeDepthAtlas: 23,
-    EntityBounds: 24,
-    BVH: 25,
-    BVH8: 26,
-    BLAS_Bounds: 27,
-    BLAS_BVH8: 28,
+    GI_Reflections: 21,
+    GI_ProbeDepthAtlas: 22,
+    EntityBounds: 23,
+    BVH: 24,
+    BVH8: 25,
+    BLAS_Bounds: 26,
+    BLAS_BVH8: 27,
 });
 
 /**

@@ -1461,7 +1461,6 @@ export class DeferredShadingStrategy {
         gi_enabled &&
         (debug_view === DebugDrawType.GI_WorldCache ||
           debug_view === DebugDrawType.GI_Probes ||
-          debug_view === DebugDrawType.GI_ProbeAtlas ||
           debug_view === DebugDrawType.GI_ProbeDepthAtlas)
       ) {
         this.gi.add_debug_passes(
@@ -1874,16 +1873,6 @@ export class DeferredShadingStrategy {
               image_extent.width,
               image_extent.height,
               DebugDrawType.GI_Probes
-            );
-            break;
-          case DebugDrawType.GI_ProbeAtlas:
-            this.debug_overlay.set_properties(
-              this.gi.debug_texture,
-              0,
-              0,
-              image_extent.width,
-              image_extent.height,
-              DebugDrawType.GI_ProbeAtlas
             );
             break;
           case DebugDrawType.GI_ProbeDepthAtlas:

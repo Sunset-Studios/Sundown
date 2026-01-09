@@ -43,7 +43,7 @@ export class Renderer {
   gtao_enabled = false;
   use_radiance_cache_as_deferred_lighting = false;
   debug_draw_type = DebugDrawType.None;
-  gi_strategy_type = GIStrategyType.PTGI;
+  gi_strategy_type = GIStrategyType.DDGI;
 
   static renderers = [];
 

@@ -163,39 +163,9 @@ const ddgi_probe_trace_shade_shader_setup = {
   },
 };
 
-const ddgi_probe_accumulate_shader_setup = {
-  pipeline_shaders: {
-    compute: { path: "gi/ddgi_probe_accumulate.wgsl" },
-  },
-};
-
 const ddgi_probe_indices_init_shader_setup = {
   pipeline_shaders: {
     compute: { path: "gi/ddgi_probe_indices_init.wgsl" },
-  },
-};
-
-const ddgi_probe_reproject_shader_setup = {
-  pipeline_shaders: {
-    compute: { path: "gi/ddgi_probe_reproject.wgsl" },
-  },
-};
-
-const ddgi_probe_sample_shader_setup = {
-  pipeline_shaders: {
-    compute: { path: "gi/ddgi_probe_sample.wgsl" },
-  },
-};
-
-const ddgi_probe_debug_shader_setup = {
-  pipeline_shaders: {
-    compute: { path: "gi/ddgi_probe_debug.wgsl" },
-  },
-};
-
-const ddgi_probe_atlas_overlay_shader_setup = {
-  pipeline_shaders: {
-    compute: { path: "gi/ddgi_probe_atlas_overlay.wgsl" },
   },
 };
 
@@ -211,10 +181,31 @@ const world_cache_debug_shader_setup = {
   },
 };
 
+// ┌─────────────────────────────────────────────────────────────────────────────┐
+// │ SH Probe shader setups                                                       │
+// └─────────────────────────────────────────────────────────────────────────────┘
+const ddgi_sh_probe_accumulate_shader_setup = {
+  pipeline_shaders: {
+    compute: { path: "gi/ddgi_sh_probe_accumulate.wgsl" },
+  },
+};
+
+const ddgi_sh_probe_sample_shader_setup = {
+  pipeline_shaders: {
+    compute: { path: "gi/ddgi_sh_probe_sample.wgsl" },
+  },
+};
+
+const ddgi_sh_probe_debug_shader_setup = {
+  pipeline_shaders: {
+    compute: { path: "gi/ddgi_sh_probe_debug.wgsl" },
+  },
+};
+
 export class DDGI {
   config = {
-    probe_grid_dimensions: [16, 8, 16],
-    probe_spacing: 8.0,
+    probe_grid_dimensions: [22, 22, 22],
+    probe_spacing: 6.0,
     probe_radius: 0.5,
     rays_per_probe: 32,
     max_probes_per_frame: 100,
@@ -260,7 +251,7 @@ export class DDGI {
     specular_pool_buffer: null,
     emission_pool_buffer: null,
     skybox_texture_buffer: null,
-    probe_radiance_buffer: null,
+    sh_probes_buffer: null,
     probe_depth_buffer: null,
     world_cache: null,
   };
@@ -281,30 +272,12 @@ export class DDGI {
   ]);
   ddgi_params = null;
   ddgi_params_data = new Float32Array([
-    0,
-    0,
-    0,
-    0, // - probe_counts        (x=probe_count, y=rays_per_probe, z=probes_per_frame, w=probe_spacing)
-    0,
-    0,
-    0,
-    0, // - probe_grid_dims     (x=dim_x, y=dim_y, z=dim_z, w=probe_radius)
-    0,
-    0,
-    0,
-    0, // - probe_grid_origin   (xyz=grid origin, w=unused)
-    0,
-    0,
-    0,
-    0, // - probe_grid_log2     (xyz=log2(dim_*), w=unused)
-    0,
-    0,
-    0,
-    0, // - probe_grid_mask     (xyz=(dim_*-1), w=unused)
-    0,
-    0,
-    0,
-    0, // - probe_grid_snap_delta (xyz=delta in probe cells, w=active (1/0))
+    0, 0, 0, 0, // - probe_counts        (x=probe_count, y=rays_per_probe, z=probes_per_frame, w=probe_spacing)
+    0, 0, 0, 0, // - probe_grid_dims     (x=dim_x, y=dim_y, z=dim_z, w=probe_radius)
+    0, 0, 0, 0, // - probe_grid_origin   (xyz=grid origin, w=unused)
+    0, 0, 0, 0, // - probe_grid_log2     (xyz=log2(dim_*), w=unused)
+    0, 0, 0, 0, // - probe_grid_mask     (xyz=(dim_*-1), w=unused)
+    0, 0, 0, 0, // - probe_grid_snap_delta (xyz=delta in probe cells, w=active (1/0))
   ]);
 
   // ┌─────────────────────────────────────────────────────────────────────────────┐
@@ -490,32 +463,18 @@ export class DDGI {
       );
     } else if (debug_view === DebugDrawType.GI_Probes) {
       render_graph.add_pass(
-        "ddgi_probe_debug",
+        "ddgi_sh_probe_debug",
         RenderPassFlags.Compute,
         {
           inputs: [
             this.ddgi_params,
-            this.shared_bindings.probe_radiance_buffer,
+            this.shared_bindings.sh_probes_buffer,
             scene_color,
             depth_texture,
             this.debug_texture,
           ],
           outputs: [this.debug_texture],
-          shader_setup: ddgi_probe_debug_shader_setup,
-        },
-        (graph, frame_data, encoder) => {
-          const pass = graph.get_physical_pass(frame_data.current_pass);
-          pass.dispatch(Math.ceil(width / 8), Math.ceil(height / 8), 1);
-        }
-      );
-    } else if (debug_view === DebugDrawType.GI_ProbeAtlas) {
-      render_graph.add_pass(
-        "ddgi_probe_atlas_overlay",
-        RenderPassFlags.Compute,
-        {
-          inputs: [this.shared_bindings.probe_radiance_buffer, scene_color, this.debug_texture],
-          outputs: [this.debug_texture],
-          shader_setup: ddgi_probe_atlas_overlay_shader_setup,
+          shader_setup: ddgi_sh_probe_debug_shader_setup,
         },
         (graph, frame_data, encoder) => {
           const pass = graph.get_physical_pass(frame_data.current_pass);
@@ -1460,12 +1419,16 @@ export class DDGI {
     ];
     const grid_mask = [grid_dims[0] - 1, grid_dims[1] - 1, grid_dims[2] - 1];
 
-    const atlas_cols = grid_dims[0] * grid_dims[2];
-    const atlas_rows = grid_dims[1];
-    const atlas_width = Math.max(1, atlas_cols * DDGI_PROBE_ATLAS_TILE_SIZE);
-    const atlas_height = Math.max(1, atlas_rows * DDGI_PROBE_ATLAS_TILE_SIZE);
-    const depth_atlas_width = Math.max(1, atlas_cols * DDGI_PROBE_DEPTH_ATLAS_TILE_SIZE);
-    const depth_atlas_height = Math.max(1, atlas_rows * DDGI_PROBE_DEPTH_ATLAS_TILE_SIZE);
+    // ─────────────────────────────────────────────────────────────────────────
+    // Depth atlas as 3D texture (2d-array):
+    // - Each layer (Y) contains XZ probe data
+    // - Width  = grid_dims[0] * tile_size (X probes)
+    // - Height = grid_dims[2] * tile_size (Z probes)
+    // - Depth  = grid_dims[1] (Y layers)
+    // ─────────────────────────────────────────────────────────────────────────
+    const depth_atlas_width = Math.max(1, grid_dims[0] * DDGI_PROBE_DEPTH_ATLAS_TILE_SIZE);
+    const depth_atlas_height = Math.max(1, grid_dims[2] * DDGI_PROBE_DEPTH_ATLAS_TILE_SIZE);
+    const depth_atlas_layers = Math.max(1, grid_dims[1]);
 
     this.ddgi_params_data[0] = probe_count;
     this.ddgi_params_data[1] = rays_per_probe;
@@ -1521,29 +1484,13 @@ export class DDGI {
       force: force_recreate,
     });
 
-    const probe_irradiance_atlas_0 = render_graph.create_image({
-      name: "ddgi_probe_irradiance_atlas_0",
-      format: rgba16float_format,
-      width: atlas_width,
-      height: atlas_height,
-      usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
-      force: force_recreate,
-    });
-
-    const probe_irradiance_atlas_1 = render_graph.create_image({
-      name: "ddgi_probe_irradiance_atlas_1",
-      format: rgba16float_format,
-      width: atlas_width,
-      height: atlas_height,
-      usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
-      force: force_recreate,
-    });
-
     const probe_depth_atlas_0 = render_graph.create_image({
       name: "ddgi_probe_depth_atlas_0",
       format: rgba16float_format,
       width: depth_atlas_width,
       height: depth_atlas_height,
+      depth: depth_atlas_layers,
+      dimension: "2d-array",
       usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
       force: force_recreate,
     });
@@ -1553,18 +1500,57 @@ export class DDGI {
       format: rgba16float_format,
       width: depth_atlas_width,
       height: depth_atlas_height,
+      depth: depth_atlas_layers,
+      dimension: "2d-array",
       usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
       force: force_recreate,
     });
 
-    const probe_irradiance_src =
-      this.ddgi_frame_setup.ping_pong_frame === 0
-        ? probe_irradiance_atlas_0
-        : probe_irradiance_atlas_1;
-    const probe_irradiance_dst =
-      this.ddgi_frame_setup.ping_pong_frame === 0
-        ? probe_irradiance_atlas_1
-        : probe_irradiance_atlas_0;
+    // ─────────────────────────────────────────────────────────────────────────
+    // SH Probe Buffers
+    // L1 RGB: 4 coefficients × 3 channels = 12 floats packed to 6 u32 per probe
+    // ─────────────────────────────────────────────────────────────────────────
+    const sh_probe_size_u32 = 6;
+    const sh_probes_0 = render_graph.create_buffer({
+      name: "ddgi_sh_probes_0",
+      size: probe_count * sh_probe_size_u32,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+      force: force_recreate,
+    });
+
+    const sh_probes_1 = render_graph.create_buffer({
+      name: "ddgi_sh_probes_1",
+      size: probe_count * sh_probe_size_u32,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+      force: force_recreate,
+    });
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // SH Probe Sample Count Buffers
+    // Tracks accumulated sample count per probe for proper temporal averaging
+    // ─────────────────────────────────────────────────────────────────────────
+    const sh_sample_counts_0 = render_graph.create_buffer({
+      name: "ddgi_sh_sample_counts_0",
+      size: probe_count,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+      force: force_recreate,
+    });
+
+    const sh_sample_counts_1 = render_graph.create_buffer({
+      name: "ddgi_sh_sample_counts_1",
+      size: probe_count,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+      force: force_recreate,
+    });
+
+    const sh_probes_prev =
+      this.ddgi_frame_setup.ping_pong_frame === 0 ? sh_probes_0 : sh_probes_1;
+    const sh_probes_curr =
+      this.ddgi_frame_setup.ping_pong_frame === 0 ? sh_probes_1 : sh_probes_0;
+    const sh_sample_counts_prev =
+      this.ddgi_frame_setup.ping_pong_frame === 0 ? sh_sample_counts_0 : sh_sample_counts_1;
+    const sh_sample_counts_curr =
+      this.ddgi_frame_setup.ping_pong_frame === 0 ? sh_sample_counts_1 : sh_sample_counts_0;
 
     const probe_depth_src =
       this.ddgi_frame_setup.ping_pong_frame === 0 ? probe_depth_atlas_0 : probe_depth_atlas_1;
@@ -1654,8 +1640,13 @@ export class DDGI {
       }
     );
 
+    // ─────────────────────────────────────────────────────────────────────────
+    // SH Probe Accumulation Pass
+    // Projects ray radiance onto L1 spherical harmonics per probe
+    // Tracks sample counts for proper weighted temporal averaging
+    // ─────────────────────────────────────────────────────────────────────────
     render_graph.add_pass(
-      `ddgi_probe_accumulate_${this.ddgi_frame_setup.ping_pong_frame}`,
+      `ddgi_sh_probe_accumulate_${this.ddgi_frame_setup.ping_pong_frame}`,
       RenderPassFlags.Compute,
       {
         inputs: [
@@ -1663,13 +1654,13 @@ export class DDGI {
           probe_update_indices,
           probe_ray_hits,
           probe_ray_radiance,
-          probe_irradiance_src,
-          probe_irradiance_dst,
-          probe_depth_src,
-          probe_depth_dst,
+          sh_probes_prev,
+          sh_probes_curr,
+          sh_sample_counts_prev,
+          sh_sample_counts_curr,
         ],
-        outputs: [probe_irradiance_dst, probe_depth_dst],
-        shader_setup: ddgi_probe_accumulate_shader_setup,
+        outputs: [sh_probes_curr, sh_sample_counts_curr],
+        shader_setup: ddgi_sh_probe_accumulate_shader_setup,
       },
       (graph, frame_data, encoder) => {
         const pass = graph.get_physical_pass(frame_data.current_pass);
@@ -1677,21 +1668,24 @@ export class DDGI {
       }
     );
 
+    // ─────────────────────────────────────────────────────────────────────────
+    // Probe SH Sampling Pass
+    // ─────────────────────────────────────────────────────────────────────────
     render_graph.add_pass(
-      `ddgi_probe_sample_${this.ddgi_frame_setup.ping_pong_frame}`,
+      `ddgi_sh_probe_sample_${this.ddgi_frame_setup.ping_pong_frame}`,
       RenderPassFlags.Compute,
       {
         inputs: [
           this.shared_bindings.gi_params,
           this.ddgi_params,
-          probe_irradiance_dst,
+          sh_probes_curr,
           probe_depth_dst,
           gbuffer_position,
           gbuffer_normal,
           this.final_gi_texture_indirect_diffuse,
         ],
         outputs: [this.final_gi_texture_indirect_diffuse],
-        shader_setup: ddgi_probe_sample_shader_setup,
+        shader_setup: ddgi_sh_probe_sample_shader_setup,
       },
       (graph, frame_data, encoder) => {
         const pass = graph.get_physical_pass(frame_data.current_pass);
@@ -1703,8 +1697,8 @@ export class DDGI {
       }
     );
 
-    this.shared_bindings.probe_radiance_buffer = probe_irradiance_dst;
     this.shared_bindings.probe_depth_buffer = probe_depth_dst;
+    this.shared_bindings.sh_probes_buffer = sh_probes_curr;
   }
 
   _sanitize_probe_grid_dimensions(probe_grid_dimensions) {
