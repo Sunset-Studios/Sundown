@@ -19,6 +19,30 @@ struct Light {
     shadows_dirty: f32,
 };
 
+struct DenseLightsHeader {
+    light_count: u32,
+    shadow_casting_light_count: u32,
+    _pad0: u32,
+    _pad1: u32,
+};
+
+struct DenseLightsBuffer {
+    header: DenseLightsHeader,
+    lights: array<Light>,
+};
+
+struct DenseLightsHeaderA {
+    light_count: atomic<u32>,
+    shadow_casting_light_count: atomic<u32>,
+    _pad0: u32,
+    _pad1: u32,
+};
+
+struct DenseLightsBufferA {
+    header: DenseLightsHeaderA,
+    lights: array<Light>,
+};
+
 // ------------------------------------------------------------------------------------
 // Light Helpers
 // ------------------------------------------------------------------------------------

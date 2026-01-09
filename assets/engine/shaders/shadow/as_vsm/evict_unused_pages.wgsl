@@ -7,7 +7,7 @@
 @group(1) @binding(2) var<uniform> vsm_settings: ASVSMSettings;
 @group(1) @binding(3) var<storage, read> bitmask: array<u32>;
 @group(1) @binding(4) var<storage, read> light_shadow_idx_buffer: array<u32>;
-@group(1) @binding(5) var<storage, read> light_count_buffer: array<u32>;
+@group(1) @binding(5) var<storage, read> dense_lights_buffer: DenseLightsBuffer;
 @group(1) @binding(6) var<storage, read_write> eviction_counter: array<atomic<u32>>;
 
 @compute @workgroup_size(8, 8, 4)
@@ -23,7 +23,7 @@ fn cs(@builtin(global_invocation_id) id: vec3<u32>) {
   let light_idx = id.z / max_lods;
   let clipmap_idx = id.z % max_lods;
 
-  let light_count = light_count_buffer[0u];
+  let light_count = dense_lights_buffer.header.light_count;
   if (light_idx >= light_count) {
     return;
   }

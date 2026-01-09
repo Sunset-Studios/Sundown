@@ -252,12 +252,6 @@ const dense_lights_buffer_config = {
   usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
 };
 
-const light_count_buffer_config = {
-  name: "light_count",
-  size: Uint32Array.BYTES_PER_ELEMENT * 2, // [total_lights, total_shadow_casting_lights]
-  usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-};
-
 const compact_lights_pass_name = "compact_lights";
 const compact_lights_shader_setup = {
   pipeline_shaders: {
@@ -618,10 +612,8 @@ export class DeferredShadingStrategy {
       );
       const lights = render_graph.register_buffer(light_fragment_buffer.buffer.config.name);
 
-      dense_lights_buffer_config.size = light_fragment_buffer.buffer.config.size;
+      dense_lights_buffer_config.size = light_fragment_buffer.buffer.config.size + 16;
       const dense_lights = render_graph.create_buffer(dense_lights_buffer_config);
-
-      const light_count = render_graph.create_buffer(light_count_buffer_config);
 
       // ┌─────────────────────────────────────────────────────────────────────────────┐
       // │ 🖼️  Create G-Buffer & Main Render Targets                                  │
@@ -761,14 +753,14 @@ export class DeferredShadingStrategy {
           RenderPassFlags.Compute,
           {
             shader_setup: compact_lights_shader_setup,
-            inputs: [lights, light_count, dense_lights],
-            outputs: [light_count, dense_lights],
+            inputs: [lights, dense_lights],
+            outputs: [dense_lights],
           },
           (graph, frame_data, encoder) => {
             const pass = graph.get_physical_pass(frame_data.current_pass);
-            // Reset light count to zero
-            const count_buf = graph.get_physical_buffer(light_count);
-            count_buf.write(new Uint32Array([0, 0]));
+            // Reset light counters to zero (header u32[4])
+            const dense_lights_buf = graph.get_physical_buffer(dense_lights);
+            dense_lights_buf.write_raw(new Uint32Array([0, 0, 0, 0]), 0);
             // Dispatch compute to compact lights
             const max_light_count = EntityManager.get_max_rows();
             pass.dispatch((max_light_count + 128 - 1) / 128, 1, 1);
@@ -1327,7 +1319,7 @@ export class DeferredShadingStrategy {
           entity_flags: entity_flags,
           aabb_bounds: aabb_bounds,
           lights: lights,
-          light_count_buffer: light_count,
+          dense_lights_buffer: dense_lights,
           transforms_buffer: entity_transforms,
           object_instances: object_instances,
           entity_index_lookup: entity_index_lookup,
@@ -1360,7 +1352,6 @@ export class DeferredShadingStrategy {
           entity_transforms,
           mesh_asset_ids_buffer,
           dense_lights,
-          light_count,
           draw_count,
           this.force_recreate
         );
@@ -1401,7 +1392,6 @@ export class DeferredShadingStrategy {
           main_motion_emissive_image,
           main_depth_image,
           dense_lights,
-          light_count,
         ];
 
         deferred_lighting_shader_setup.pipeline_shaders.vertex.defines.GI_ENABLED = gi_enabled;

@@ -167,12 +167,6 @@ const dense_lights_buffer_config = {
   usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
 };
 
-const light_count_buffer_config = {
-  name: "light_count",
-  size: Uint32Array.BYTES_PER_ELEMENT * 2,
-  usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-};
-
 const skybox_shader_setup = {
   pipeline_shaders: {
     vertex: {
@@ -418,10 +412,9 @@ export class PathTracingStrategy {
       );
       const lights = render_graph.register_buffer(light_fragment_buffer.buffer.config.name);
 
-      dense_lights_buffer_config.size = light_fragment_buffer.buffer.config.size;
+      // The Light payload follows immediately after the header.
+      dense_lights_buffer_config.size = light_fragment_buffer.buffer.config.size + 16;
       const dense_lights = render_graph.create_buffer(dense_lights_buffer_config);
-
-      const light_count = render_graph.create_buffer(light_count_buffer_config);
 
       // ┌─────────────────────────────────────────────────────────────────────────────┐
       // │ 🖼️  Create G-Buffer & Main Render Targets                                  │
@@ -534,13 +527,14 @@ export class PathTracingStrategy {
           RenderPassFlags.Compute,
           {
             shader_setup: compact_lights_shader_setup,
-            inputs: [lights, light_count, dense_lights],
-            outputs: [light_count, dense_lights],
+            inputs: [lights, dense_lights],
+            outputs: [dense_lights],
           },
           (graph, frame_data, encoder) => {
             const pass = graph.get_physical_pass(frame_data.current_pass);
-            const count_buf = graph.get_physical_buffer(light_count);
-            count_buf.write(new Uint32Array([0, 0]));
+            // Reset light counters to zero (header u32[4])
+            const dense_lights_buf = graph.get_physical_buffer(dense_lights);
+            dense_lights_buf.write_raw(new Uint32Array([0, 0, 0, 0]), 0);
             const max_light_count = EntityManager.get_max_rows();
             pass.dispatch((max_light_count + 128 - 1) / 128, 1, 1);
           }
@@ -794,7 +788,6 @@ export class PathTracingStrategy {
           mesh_asset_ids_buffer,
           index_buffer,
           dense_lights,
-          light_count,
           main_position_image, // G-buffer position
           main_normal_image,   // G-buffer normal
           main_albedo_image,   // G-buffer albedo

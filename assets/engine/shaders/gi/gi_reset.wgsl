@@ -21,7 +21,7 @@
 // =============================================================================
 
 @group(1) @binding(0) var<storage, read_write> gi_counters: GICounters;
-@group(1) @binding(1) var<storage, read> light_count_buffer: array<u32>;
+@group(1) @binding(1) var<storage, read> dense_lights_buffer: DenseLightsBuffer;
 
 // =============================================================================
 // MAIN COMPUTE SHADER
@@ -41,6 +41,6 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         // Reset ray queue count (will be incremented by active rays in init pass)
         atomicStore(&gi_counters.ray_queue_count, 0u);
         
-        gi_counters.light_count = light_count_buffer[0];
+        gi_counters.light_count = dense_lights_buffer.header.light_count;
     }
 }

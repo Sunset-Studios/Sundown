@@ -15,9 +15,8 @@
 @group(1) @binding(2) var<storage, read> compacted_indices: array<u32>;
 @group(1) @binding(3) var<storage, read> dispatch_params: array<u32>;
 @group(1) @binding(4) var<storage, read_write> world_cache_path_state: array<WorldCachePathState>;
-@group(1) @binding(5) var<storage, read> light_count_buffer: array<u32>;
-@group(1) @binding(6) var<storage, read> dense_lights_buffer: array<Light>;
-@group(1) @binding(7) var<storage, read_write> gi_counters: GICounters;
+@group(1) @binding(5) var<storage, read> dense_lights_buffer: DenseLightsBuffer;
+@group(1) @binding(6) var<storage, read_write> gi_counters: GICounters;
 
 @compute @workgroup_size(128, 1, 1)
 fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
@@ -109,12 +108,12 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     // DIRECT LIGHTING with Visibility Rays (NEE)
     // Setup shadow rays for direct lighting from the cache cell position
     // =============================================================================
-    let num_lights = light_count_buffer[0];
+    let num_lights = dense_lights_buffer.header.light_count;
     if (num_lights > 0u) {
         rng = random_seed(rng);
         let light_rand = rand_float(rng);
         let light_idx = u32(light_rand * f32(num_lights)) % num_lights;
-        let light = dense_lights_buffer[light_idx];
+        let light = dense_lights_buffer.lights[light_idx];
         
         let light_dir = get_light_dir(light, position);
         let attenuation = get_light_attenuation(light, position);

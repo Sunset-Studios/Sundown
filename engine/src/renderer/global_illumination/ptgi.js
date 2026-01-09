@@ -304,7 +304,6 @@ export class PTGI {
     entity_transforms,
     mesh_asset_ids,
     dense_lights,
-    light_count,
     draw_count,
     force_recreate = false
   ) {
@@ -347,7 +346,6 @@ export class PTGI {
         entity_transforms,
         mesh_asset_ids,
         dense_lights,
-        light_count,
         gbuffer_position,
         gbuffer_position_prev,
         gbuffer_normal,
@@ -374,7 +372,6 @@ export class PTGI {
     entity_transforms,
     mesh_asset_ids,
     dense_lights,
-    light_count,
     gbuffer_position,
     gbuffer_position_prev,
     gbuffer_normal,
@@ -746,7 +743,7 @@ export class PTGI {
       "gi_reset",
       RenderPassFlags.Compute,
       {
-        inputs: [gi_counters, light_count],
+        inputs: [gi_counters, dense_lights],
         outputs: [gi_counters],
         shader_setup: gi_reset_shader_setup,
       },
@@ -864,7 +861,6 @@ export class PTGI {
           world_cache_compacted_indices,
           world_cache_dispatch_params,
           world_cache_path_state,
-          light_count,
           dense_lights,
           gi_counters,
         ],
@@ -960,7 +956,6 @@ export class PTGI {
           gi_counters,
           pixel_path_state,
           pixel_ray_queue,
-          light_count,
           dense_lights,
           world_cache,
           gbuffer_position,

@@ -32,17 +32,16 @@
 @group(1) @binding(1) var<storage, read_write> gi_counters: GICounters;
 @group(1) @binding(2) var<storage, read_write> pixel_path_state: array<PixelPathState>;
 @group(1) @binding(3) var<storage, read_write> ray_work_queue: array<u32>;
-@group(1) @binding(4) var<storage, read> light_count_buffer: array<u32>;
-@group(1) @binding(5) var<storage, read> dense_lights_buffer: array<Light>;
-@group(1) @binding(6) var<storage, read_write> world_cache: array<WorldCacheCell>;
-@group(1) @binding(7) var gbuffer_position: texture_2d<f32>;
-@group(1) @binding(8) var gbuffer_normal: texture_2d<f32>;
-@group(1) @binding(9) var gbuffer_albedo: texture_2d<f32>;
-@group(1) @binding(10) var gbuffer_smra: texture_2d<f32>;
-@group(1) @binding(11) var gbuffer_motion: texture_2d<f32>;
-@group(1) @binding(12) var blue_noise: texture_2d_array<f32>;
+@group(1) @binding(4) var<storage, read> dense_lights_buffer: DenseLightsBuffer;
+@group(1) @binding(5) var<storage, read_write> world_cache: array<WorldCacheCell>;
+@group(1) @binding(6) var gbuffer_position: texture_2d<f32>;
+@group(1) @binding(7) var gbuffer_normal: texture_2d<f32>;
+@group(1) @binding(8) var gbuffer_albedo: texture_2d<f32>;
+@group(1) @binding(9) var gbuffer_smra: texture_2d<f32>;
+@group(1) @binding(10) var gbuffer_motion: texture_2d<f32>;
+@group(1) @binding(11) var blue_noise: texture_2d_array<f32>;
 #if SPECULAR_MASK_ENABLED
-@group(1) @binding(13) var specular_mask: texture_2d<u32>;
+@group(1) @binding(12) var specular_mask: texture_2d<u32>;
 #endif
 
 // =============================================================================
@@ -329,12 +328,12 @@ fn process_selected_pixel(
     // NEXT EVENT ESTIMATION (NEE) - DIRECT LIGHTING
     // Setup shadow rays for direct lighting contribution
     // ═════════════════════════════════════════════════════════════════════════
-    let num_lights = light_count_buffer[0];
+    let num_lights = dense_lights_buffer.header.light_count;
     if (num_lights > 0u) {
         rng = random_seed(rng);
         let light_rand = rand_float(rng);
         let light_idx = u32(light_rand * f32(num_lights)) % num_lights;
-        let light = dense_lights_buffer[light_idx];
+        let light = dense_lights_buffer.lights[light_idx];
         
         let light_dir = get_light_dir(light, position);
         let attenuation = get_light_attenuation(light, position);

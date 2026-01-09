@@ -457,9 +457,29 @@ fn trace_hit_any(ray: ptr<function, Ray>) -> bool {
 }
 
 // =============================================================================
+// HELPER: Process a shadow ray and write result
+// =============================================================================
+fn process_shadow_ray(index: u32, probe_position: vec3<f32>, ray_dir: vec3<f32>) {
+    var ray: Ray;
+    ray.origin_and_tmin = vec4f(probe_position + ray_dir * 0.001, 0.001);
+    ray.direction_and_tmax = vec4f(ray_dir, 1e30);
+    ray.inv_direction = vec4f(
+        1.0 / max(abs(ray.direction_and_tmax.x), 1e-8) * select(1.0, -1.0, ray.direction_and_tmax.x < 0.0),
+        1.0 / max(abs(ray.direction_and_tmax.y), 1e-8) * select(1.0, -1.0, ray.direction_and_tmax.y < 0.0),
+        1.0 / max(abs(ray.direction_and_tmax.z), 1e-8) * select(1.0, -1.0, ray.direction_and_tmax.z < 0.0),
+        0.0
+    );
+
+    if (!trace_hit_any(&ray)) {
+        // No shadow hit - light is visible
+        probe_ray_hits[index].state_u32.z = 1u;
+    }
+}
+
+// =============================================================================
 // HELPER: Process a primary ray and write hit attributes
 // =============================================================================
-fn process_primary_ray(index: u32, probe_position: vec3<f32>, ray_dir: vec3<f32>) {
+fn process_primary_ray(index: u32, probe_position: vec3<f32>, ray_dir: vec3<f32>, probe_index: u32) {
     var ray: Ray;
     ray.origin_and_tmin = vec4f(probe_position + ray_dir * 0.001, 0.001);
     ray.direction_and_tmax = vec4f(ray_dir, 1e30);
@@ -473,7 +493,7 @@ fn process_primary_ray(index: u32, probe_position: vec3<f32>, ray_dir: vec3<f32>
     let hit_result = trace_hit(&ray);
 
     // Default: miss
-    probe_ray_hits[index].state_u32 = vec4<u32>(0u, 1u, 0u, 0xffffffffu);
+    probe_ray_hits[index].state_u32 = vec4<u32>(probe_index, 1u, 0u, 0xffffffffu);
 
     if (hit_result.has_hit != 0u) {
         let tri_id_local = hit_result.tri_id_local;
@@ -570,6 +590,6 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         rays_per_probe
     );
 
-    process_primary_ray(gid.x, probe_position, ray_dir);
+    process_primary_ray(gid.x, probe_position, ray_dir, probe_index);
 }
 

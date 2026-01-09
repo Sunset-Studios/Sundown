@@ -49,9 +49,8 @@ struct PathState {
 // ─────────────────────────────────────────────────────────────────────────────
 @group(1) @binding(0) var<uniform> pt_params: PathTracerParams;
 @group(1) @binding(1) var<storage, read_write> path_state: array<PathState>;
-@group(1) @binding(2) var<storage, read> dense_lights_buffer: array<Light>;
-@group(1) @binding(3) var<storage, read> light_count_buffer: array<u32>;
-@group(1) @binding(4) var output_tex: texture_storage_2d<rgba16float, write>;
+@group(1) @binding(2) var<storage, read> dense_lights_buffer: DenseLightsBuffer;
+@group(1) @binding(3) var output_tex: texture_storage_2d<rgba16float, write>;
 
 // =============================================================================
 // Main Compute Shader
@@ -119,11 +118,11 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     // ─────────────────────────────────────────────────────────────────────────
     // Direct Lighting via NEE (sample one light)
     // ─────────────────────────────────────────────────────────────────────────
-    let num_lights = light_count_buffer[0];
+    let num_lights = dense_lights_buffer.header.light_count;
     if (num_lights > 0u) {
         rng = random_seed(rng);
         let light_idx = u32(rand_float(rng) * f32(num_lights)) % num_lights;
-        let light = dense_lights_buffer[light_idx];
+        let light = dense_lights_buffer.lights[light_idx];
         
         let light_dir = get_light_dir(light, hit_pos);
         let attenuation = get_light_attenuation(light, hit_pos);

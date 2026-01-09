@@ -13,43 +13,42 @@
 @group(1) @binding(4) var position_texture: texture_2d<f32>;
 @group(1) @binding(5) var motion_emissive_texture: texture_2d<f32>;
 @group(1) @binding(6) var depth_texture: texture_depth_2d;
-@group(1) @binding(7) var<storage, read> dense_lights_buffer: array<Light>;
-@group(1) @binding(8) var<storage, read> light_count_buffer: array<u32>;
+@group(1) @binding(7) var<storage, read> dense_lights_buffer: DenseLightsBuffer;
 
 #if GI_ENABLED
-  @group(1) @binding(9) var gi_direct_texture: texture_2d<f32>;
-  @group(1) @binding(10) var gi_indirect_diffuse_texture: texture_2d<f32>;
-  @group(1) @binding(11) var gi_indirect_specular_texture: texture_2d<f32>;
+  @group(1) @binding(8) var gi_direct_texture: texture_2d<f32>;
+  @group(1) @binding(9) var gi_indirect_diffuse_texture: texture_2d<f32>;
+  @group(1) @binding(10) var gi_indirect_specular_texture: texture_2d<f32>;
   #if SHADOWS_ENABLED
-    @group(1) @binding(12) var<storage, read> shadow_atlas_depth: array<u32>;
-    @group(1) @binding(13) var page_table: texture_storage_2d_array<r32uint, read>;
-    @group(1) @binding(14) var page_offset: texture_storage_2d_array<rgba32float, read>;
-    @group(1) @binding(15) var<uniform> vsm_settings: ASVSMSettings;
+    @group(1) @binding(11) var<storage, read> shadow_atlas_depth: array<u32>;
+    @group(1) @binding(12) var page_table: texture_storage_2d_array<r32uint, read>;
+    @group(1) @binding(13) var page_offset: texture_storage_2d_array<rgba32float, read>;
+    @group(1) @binding(14) var<uniform> vsm_settings: ASVSMSettings;
     #if GTAO_ENABLED
-      @group(1) @binding(16) var ao_texture: texture_2d<f32>;
-      @group(1) @binding(17) var bent_normal_texture: texture_2d<f32>;
+      @group(1) @binding(15) var ao_texture: texture_2d<f32>;
+      @group(1) @binding(16) var bent_normal_texture: texture_2d<f32>;
     #endif
   #else
     #if GTAO_ENABLED
-      @group(1) @binding(12) var ao_texture: texture_2d<f32>;
-      @group(1) @binding(13) var bent_normal_texture: texture_2d<f32>;
+      @group(1) @binding(11) var ao_texture: texture_2d<f32>;
+      @group(1) @binding(12) var bent_normal_texture: texture_2d<f32>;
     #endif
   #endif
 #else
   #if SHADOWS_ENABLED
-    @group(1) @binding(9) var<storage, read> shadow_atlas_depth: array<u32>;
-    @group(1) @binding(10) var page_table: texture_storage_2d_array<r32uint, read>;
-    @group(1) @binding(11) var page_offset: texture_storage_2d_array<rgba32float, read>;
-    @group(1) @binding(12) var<uniform> vsm_settings: ASVSMSettings;
+    @group(1) @binding(8) var<storage, read> shadow_atlas_depth: array<u32>;
+    @group(1) @binding(9) var page_table: texture_storage_2d_array<r32uint, read>;
+    @group(1) @binding(10) var page_offset: texture_storage_2d_array<rgba32float, read>;
+    @group(1) @binding(11) var<uniform> vsm_settings: ASVSMSettings;
 
     #if GTAO_ENABLED
-      @group(1) @binding(13) var ao_texture: texture_2d<f32>;
-      @group(1) @binding(14) var bent_normal_texture: texture_2d<f32>;
+      @group(1) @binding(12) var ao_texture: texture_2d<f32>;
+      @group(1) @binding(13) var bent_normal_texture: texture_2d<f32>;
     #endif
   #else
     #if GTAO_ENABLED
-      @group(1) @binding(9) var ao_texture: texture_2d<f32>;
-      @group(1) @binding(10) var bent_normal_texture: texture_2d<f32>;
+      @group(1) @binding(8) var ao_texture: texture_2d<f32>;
+      @group(1) @binding(9) var bent_normal_texture: texture_2d<f32>;
     #endif
   #endif
 #endif
@@ -150,9 +149,9 @@ struct FragmentOutput {
 #else
     // Only use split GI as *indirect* when doing classic deferred direct lighting.
     let irradiance = gi_indirect_diffuse;
-    let num_lights = light_count_buffer[0] * (1u - unlit);
+    let num_lights = dense_lights_buffer.header.light_count * (1u - unlit);
     for (var light_index = 0u; light_index < num_lights; light_index++) {
-        var light = dense_lights_buffer[light_index];
+        var light = dense_lights_buffer.lights[light_index];
         let light_view_index = u32(light.view_index);
         let light_shadow_index = u32(light.shadow_index);
         let light_dir = get_light_dir(light, position);

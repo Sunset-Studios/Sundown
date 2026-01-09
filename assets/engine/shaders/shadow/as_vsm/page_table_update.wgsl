@@ -10,7 +10,7 @@
 @group(1) @binding(3) var<storage, read> light_view_idx_buffer: array<u32>;
 @group(1) @binding(4) var<uniform> vsm_settings: ASVSMSettings;
 @group(1) @binding(5) var<storage, read_write> bitmask: array<u32>;
-@group(1) @binding(6) var<storage, read> light_count_buffer: array<u32>;
+@group(1) @binding(6) var<storage, read> dense_lights_buffer: DenseLightsBuffer;
 @group(1) @binding(7) var<storage, read_write> eviction_counter: array<atomic<u32>>;
 @group(1) @binding(8) var page_offset: texture_storage_2d_array<rgba32float, write>;
 
@@ -67,7 +67,7 @@ fn cs(
     // Each 8×8 work-group covers 64 consecutive 32-bit words.
     // Combine the work-group offset (group_id.x) with the local thread offset
     // to obtain a unique word index for the entire dispatch.
-    let light_count = light_count_buffer[0u];
+    let light_count = dense_lights_buffer.header.light_count;
     if (id.z >= light_count) {
         return;
     }

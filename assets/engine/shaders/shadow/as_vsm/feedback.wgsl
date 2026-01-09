@@ -9,7 +9,7 @@
 @group(1) @binding(2) var<storage, read_write> bitmask: array<atomic<u32>>;
 @group(1) @binding(3) var<storage, read> light_view_buffer: array<u32>;
 @group(1) @binding(4) var<storage, read> light_shadow_idx_buffer: array<u32>;
-@group(1) @binding(5) var<storage, read> light_count_buffer: array<u32>;
+@group(1) @binding(5) var<storage, read> dense_lights_buffer: DenseLightsBuffer;
 @group(1) @binding(6) var page_table: texture_storage_2d_array<r32uint, read_write>;
 
 @compute @workgroup_size(8, 8, 1)
@@ -23,7 +23,7 @@ fn cs(@builtin(global_invocation_id) id: vec3<u32>) {
     return;
   }
 
-  let light_count = light_count_buffer[0u];
+  let light_count = dense_lights_buffer.header.light_count;
   if (id.z >= light_count) {
     return;
   }

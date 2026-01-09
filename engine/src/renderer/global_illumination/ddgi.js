@@ -213,7 +213,7 @@ export class DDGI {
     specular_upscale_factor: 2,
     specular_screen_ray_count: 1,
     world_cache_size: 32768,
-    world_cache_cell_size: 2.0,
+    world_cache_cell_size: 4.0,
     world_cache_lod_count: 4,
     indirect_boost: 1.0,
   };
@@ -229,7 +229,7 @@ export class DDGI {
     frame_index: 0,
     ping_pong_frame: 0,
     safe_upscale_factor: 0,
-    light_count: 0,
+    dense_lights: null,
     force_recreate: false,
   };
 
@@ -311,7 +311,6 @@ export class DDGI {
     entity_transforms,
     mesh_asset_ids,
     dense_lights,
-    light_count,
     draw_count,
     force_recreate = false
   ) {
@@ -354,7 +353,7 @@ export class DDGI {
     this._setup_frame_data(
       width,
       height,
-      light_count,
+      dense_lights,
       force_recreate,
       this.config.specular_upscale_factor
     );
@@ -363,7 +362,6 @@ export class DDGI {
 
     this._add_world_cache_passes(
       render_graph,
-      light_count,
       dense_lights,
       tlas_bvh2_bounds,
       tlas_bvh8_nodes,
@@ -395,7 +393,6 @@ export class DDGI {
         entity_transforms,
         mesh_asset_ids,
         dense_lights,
-        light_count,
         gbuffer_position,
         gbuffer_position_prev,
         gbuffer_normal,
@@ -593,10 +590,10 @@ export class DDGI {
   // ┌─────────────────────────────────────────────────────────────────────────────┐
   // │ Frame data setup                                                            │
   // └─────────────────────────────────────────────────────────────────────────────┘
-  _setup_frame_data(width, height, light_count, force_recreate, safe_upscale_factor) {
+  _setup_frame_data(width, height, dense_lights, force_recreate, safe_upscale_factor) {
     this.ddgi_frame_setup.width = width;
     this.ddgi_frame_setup.height = height;
-    this.ddgi_frame_setup.light_count = light_count;
+    this.ddgi_frame_setup.dense_lights = dense_lights;
     this.ddgi_frame_setup.force_recreate = force_recreate;
     this.ddgi_frame_setup.gi_width = Math.max(1, Math.ceil(width / safe_upscale_factor));
     this.ddgi_frame_setup.gi_height = Math.max(1, Math.ceil(height / safe_upscale_factor));
@@ -647,7 +644,7 @@ export class DDGI {
       "ddgi_gi_reset",
       RenderPassFlags.Compute,
       {
-        inputs: [this.shared_bindings.gi_counters, this.ddgi_frame_setup.light_count],
+        inputs: [this.shared_bindings.gi_counters, this.ddgi_frame_setup.dense_lights],
         outputs: [this.shared_bindings.gi_counters],
         shader_setup: gi_reset_shader_setup,
       },
@@ -669,7 +666,6 @@ export class DDGI {
     entity_transforms,
     mesh_asset_ids,
     dense_lights,
-    light_count,
     gbuffer_position,
     gbuffer_position_prev,
     gbuffer_normal,
@@ -862,7 +858,6 @@ export class DDGI {
           this.shared_bindings.gi_counters,
           pixel_path_state,
           pixel_ray_queue,
-          light_count,
           dense_lights,
           this.shared_bindings.world_cache,
           gbuffer_position,
@@ -1114,7 +1109,6 @@ export class DDGI {
   // └─────────────────────────────────────────────────────────────────────────────┘
   _add_world_cache_passes(
     render_graph,
-    light_count,
     dense_lights,
     tlas_bvh2_bounds,
     tlas_bvh8_nodes,
@@ -1286,7 +1280,6 @@ export class DDGI {
           world_cache_compacted_indices,
           world_cache_dispatch_params,
           world_cache_path_state,
-          light_count,
           dense_lights,
           this.shared_bindings.gi_counters,
         ],
