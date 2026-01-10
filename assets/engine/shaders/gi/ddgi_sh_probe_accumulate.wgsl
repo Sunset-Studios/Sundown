@@ -62,7 +62,8 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
     
     let probe_index = probe_update_indices[gid.x];
-    let ray_base = gid.x * rays_per_probe;
+    let shadow_ray_index = gid.x;
+    let ray_base = probes_per_frame + gid.x * rays_per_probe;
     
     // ─────────────────────────────────────────────────────────────────────────
     // Compute probe grid reprojection for snapped grids
@@ -94,6 +95,31 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     // ─────────────────────────────────────────────────────────────────────────
     var sh_new = sh_l1_rgb_zero();
     var valid_sample_count = 0u;
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // 1x Shadow ray sample (NEE) per probe
+    // Stored at [0..probes_per_frame) in probe_ray_hits/probe_ray_radiance.
+    // ─────────────────────────────────────────────────────────────────────────
+    {
+        let shadow_hit_data = probe_ray_hits[shadow_ray_index];
+        let shadow_radiance = probe_ray_radiance[shadow_ray_index].xyz;
+        let shadow_dir = shadow_hit_data.ray_dir_prim.xyz;
+
+        if (shadow_hit_data.state_u32.y != 0u && shadow_hit_data.state_u32.z == 1u && length(shadow_dir) >= 0.5) {
+            let max_luminance = MAX_RADIANCE_LUMINANCE * 2.0;
+            let lum = dot(shadow_radiance, vec3<f32>(0.2126, 0.7152, 0.0722));
+            let clamped_radiance = select(
+                shadow_radiance,
+                shadow_radiance * (max_luminance / max(lum, 0.001)),
+                lum > max_luminance
+            );
+
+            let sample_weight = SPHERE_AREA / f32(rays_per_probe + 1u);
+            let sample_sh = ddgi_sh_project_sample(shadow_dir, clamped_radiance, sample_weight);
+            sh_new = sh_l1_rgb_add(sh_new, sample_sh);
+            valid_sample_count = valid_sample_count + 1u;
+        }
+    }
     
     for (var i = 0u; i < rays_per_probe; i = i + 1u) {
         let ray_index = ray_base + i;
@@ -119,7 +145,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         
         // Project onto SH basis
         // Weight: 4π/N for uniform sphere sampling Monte Carlo integration
-        let sample_weight = SPHERE_AREA / f32(rays_per_probe);
+        let sample_weight = SPHERE_AREA / f32(rays_per_probe + 1u);
         let sample_sh = ddgi_sh_project_sample(ray_dir, clamped_radiance, sample_weight);
         
         sh_new = sh_l1_rgb_add(sh_new, sample_sh);

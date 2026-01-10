@@ -9,15 +9,15 @@
 #include "blas_common.wgsl"
 #include "gi/ddgi_common.wgsl"
 
-@group(1) @binding(0) var<uniform> gi_params: GIParams;
-@group(1) @binding(1) var<uniform> ddgi_params: DDGIParams;
-@group(1) @binding(2) var<storage, read> probe_update_indices: array<u32>;
-@group(1) @binding(3) var<storage, read_write> probe_ray_hits: array<DDGIProbeRayHit>;
-@group(1) @binding(4) var<storage, read> tlas_bvh2_bounds: array<AABB>;
-@group(1) @binding(5) var<storage, read> tlas_bvh8_nodes: array<BVH8Node>;
-@group(1) @binding(6) var<storage, read> blas_atlas: BLASAtlas;
-@group(1) @binding(7) var<storage, read> entity_transforms: array<EntityTransform>;
-@group(1) @binding(8) var<storage, read> mesh_asset_ids: array<u32>;
+@group(1) @binding(0) var<uniform> ddgi_params: DDGIParams;
+@group(1) @binding(1) var<storage, read> probe_update_indices: array<u32>;
+@group(1) @binding(2) var<storage, read_write> probe_ray_hits: array<DDGIProbeRayHit>;
+@group(1) @binding(3) var<storage, read> tlas_bvh2_bounds: array<AABB>;
+@group(1) @binding(4) var<storage, read> tlas_bvh8_nodes: array<BVH8Node>;
+@group(1) @binding(5) var<storage, read> blas_atlas: BLASAtlas;
+@group(1) @binding(6) var<storage, read> entity_transforms: array<EntityTransform>;
+@group(1) @binding(7) var<storage, read> mesh_asset_ids: array<u32>;
+@group(1) @binding(8) var<storage, read> dense_lights_buffer: DenseLightsBuffer;
 
 // =============================================================================
 // DDGI Probe Direction Sampling
@@ -48,7 +48,7 @@ fn ddgi_probe_ray_direction_spherical_fibonacci(
 ) -> vec3<f32> {
     // One stochastic rotation per probe per frame (shared across all rays in the probe).
     // This avoids static banding while preserving the uniform Fibonacci distribution.
-    var probe_rng = hash(probe_index ^ (u32(gi_params.frame_index) * 0x9E3779B9u));
+    var probe_rng = hash(probe_index ^ (u32(ddgi_params.frame_index) * 0x9E3779B9u));
     // Rotation for the Fibonacci spiral parameterization (Cranley-Patterson offset).
     let rotation_01 = rand_float(probe_rng);
     // Randomly rotate the entire point set in 3D (avoid locking the pattern to world axes).
@@ -459,10 +459,10 @@ fn trace_hit_any(ray: ptr<function, Ray>) -> bool {
 // =============================================================================
 // HELPER: Process a shadow ray and write result
 // =============================================================================
-fn process_shadow_ray(index: u32, probe_position: vec3<f32>, ray_dir: vec3<f32>) {
+fn process_shadow_ray(index: u32, probe_position: vec3<f32>, ray_dir: vec3<f32>, t_max: f32) {
     var ray: Ray;
     ray.origin_and_tmin = vec4f(probe_position + ray_dir * 0.001, 0.001);
-    ray.direction_and_tmax = vec4f(ray_dir, 1e30);
+    ray.direction_and_tmax = vec4f(ray_dir, t_max);
     ray.inv_direction = vec4f(
         1.0 / max(abs(ray.direction_and_tmax.x), 1e-8) * select(1.0, -1.0, ray.direction_and_tmax.x < 0.0),
         1.0 / max(abs(ray.direction_and_tmax.y), 1e-8) * select(1.0, -1.0, ray.direction_and_tmax.y < 0.0),
@@ -573,23 +573,56 @@ fn process_primary_ray(index: u32, probe_position: vec3<f32>, ray_dir: vec3<f32>
 fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let rays_per_probe = u32(ddgi_params.probe_counts.y);
     let probes_per_frame = u32(ddgi_params.probe_counts.z);
-    let total_rays = probes_per_frame * rays_per_probe;
+    let total_primary_rays = probes_per_frame * rays_per_probe;
+    let total_rays = probes_per_frame + total_primary_rays;
 
     if (gid.x >= total_rays) {
         return;
     }
 
-    let probe_slot = gid.x / rays_per_probe;
+    let is_shadow_thread = gid.x < probes_per_frame;
+    let shadow_index = gid.x;
+    let primary_index = gid.x - probes_per_frame;
+    let out_index = select(probes_per_frame + primary_index, shadow_index, is_shadow_thread);
+
+    let probe_slot = select(primary_index / rays_per_probe, shadow_index, is_shadow_thread);
     let probe_index = probe_update_indices[probe_slot];
     let probe_position = ddgi_probe_world_position_from_index(&ddgi_params, probe_index);
 
-    // Uniform spherical directions (stochastically-rotated Fibonacci spiral).
-    let ray_dir = ddgi_probe_ray_direction_spherical_fibonacci(
-        probe_index,
-        gid.x - probe_slot * rays_per_probe,
-        rays_per_probe
-    );
+    if (is_shadow_thread) {
+        let num_lights = dense_lights_buffer.header.light_count;
 
-    process_primary_ray(gid.x, probe_position, ray_dir, probe_index);
+        // Default: invalid shadow sample (no lights).
+        probe_ray_hits[out_index].state_u32 = vec4<u32>(probe_index, 0u, 0u, 0xffffffffu);
+        probe_ray_hits[out_index].ray_dir_prim = vec4f(0.0, 0.0, 0.0, 0.0);
+
+        if (num_lights == 0u) {
+            return;
+        }
+
+        var rng = hash(probe_index ^ (u32(ddgi_params.frame_index) * 0x9E3779B9u));
+        rng = random_seed(rng);
+        let light_rand = rand_float(rng);
+        let light_idx = u32(light_rand * f32(num_lights)) % num_lights;
+        let light = dense_lights_buffer.lights[light_idx];
+
+        let ray_dir = get_light_dir(light, probe_position);
+        let light_distance = select(1e30, length(light.position.xyz - probe_position), light.light_type != 0.0);
+        let t_max = light_distance * 0.999;
+
+        // Shadow ray header (interpreted by shade + accumulate as a radiance sample).
+        probe_ray_hits[out_index].state_u32 = vec4<u32>(probe_index, 1u, 0u, 0xffffffffu);
+        probe_ray_hits[out_index].ray_dir_prim = vec4f(ray_dir, f32(light_idx));
+
+        process_shadow_ray(out_index, probe_position, ray_dir, t_max);
+    } else {
+        // Uniform spherical directions (stochastically-rotated Fibonacci spiral).
+        let ray_dir = ddgi_probe_ray_direction_spherical_fibonacci(
+            probe_index,
+            primary_index - probe_slot * rays_per_probe,
+            rays_per_probe
+        );
+        process_primary_ray(out_index, probe_position, ray_dir, probe_index);
+    }
 }
 

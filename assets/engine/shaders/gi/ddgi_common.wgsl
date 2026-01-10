@@ -45,6 +45,8 @@ struct DDGIParams {
     probe_grid_log2: vec4<f32>,   // xyz = log2(dim_*), w = unused
     probe_grid_mask: vec4<f32>,   // xyz = (dim_*-1), w = unused
     probe_grid_snap_delta: vec4<f32>, // xyz = delta in probe cells, w = active (1/0)
+    frame_index: u32,
+    indirect_boost: f32,
 };
 
 struct DDGIProbeRayHit {
@@ -123,8 +125,8 @@ fn ddgi_probe_world_position_from_index(ddgi_params: ptr<uniform, DDGIParams>, p
 }
 
 fn ddgi_probe_world_position_from_coord(ddgi_params: ptr<uniform, DDGIParams>, coord: vec3<u32>) -> vec3<f32> {
-    let spacing = ddgi_params.probe_counts.w;
-    let origin = ddgi_params.probe_grid_origin.xyz;
+    let spacing = (*ddgi_params).probe_counts.w;
+    let origin = (*ddgi_params).probe_grid_origin.xyz;
     return origin + vec3<f32>(f32(coord.x), f32(coord.y), f32(coord.z)) * spacing;
 }
 

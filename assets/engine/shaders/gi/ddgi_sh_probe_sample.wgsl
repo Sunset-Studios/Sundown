@@ -22,13 +22,12 @@
 // BINDINGS
 // =============================================================================
 
-@group(1) @binding(0) var<uniform> gi_params: GIParams;
-@group(1) @binding(1) var<uniform> ddgi_params: DDGIParams;
-@group(1) @binding(2) var<storage, read> sh_probes: array<u32>;
-@group(1) @binding(3) var probe_depth_atlas: texture_2d_array<f32>;
-@group(1) @binding(4) var gbuffer_position: texture_2d<f32>;
-@group(1) @binding(5) var gbuffer_normal: texture_2d<f32>;
-@group(1) @binding(6) var output_diffuse: texture_storage_2d<rgba16float, write>;
+@group(1) @binding(0) var<uniform> ddgi_params: DDGIParams;
+@group(1) @binding(1) var<storage, read> sh_probes: array<u32>;
+@group(1) @binding(2) var probe_depth_atlas: texture_2d_array<f32>;
+@group(1) @binding(3) var gbuffer_position: texture_2d<f32>;
+@group(1) @binding(4) var gbuffer_normal: texture_2d<f32>;
+@group(1) @binding(5) var output_diffuse: texture_storage_2d<rgba16float, write>;
 
 // =============================================================================
 // MAIN COMPUTE SHADER
@@ -168,7 +167,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     var irradiance = ddgi_sh_evaluate_irradiance(sh_interpolated, normal_ws);
     
     // Apply indirect boost
-    irradiance = irradiance * gi_params.indirect_boost;
+    irradiance = irradiance * ddgi_params.indirect_boost;
     
     // Ensure non-negative output
     irradiance = max(irradiance, vec3<f32>(0.0));
