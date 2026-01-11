@@ -17,6 +17,7 @@
 // =============================================================================
 
 #include "common.wgsl"
+#include "postprocess_common.wgsl"
 #include "gi/ddgi_common.wgsl"
 
 // =============================================================================
@@ -283,19 +284,26 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
     
     // ─────────────────────────────────────────────────────────────────────────
-    // Sample SH probe and evaluate radiance at sphere surface point
+    // Sample SH probe and evaluate irradiance at sphere surface point
+    // - We visualize a Lambertian-equivalent radiance preview: L = E / PI
+    // - This tends to match how the probe field contributes to diffuse surfaces
     // ─────────────────────────────────────────────────────────────────────────
     let probe_center = ddgi_probe_world_position_from_index(&ddgi_params, hit_probe_index);
     let hit_pos = ray_origin + ray_direction * hit_t;
     let sphere_normal = safe_normalize(hit_pos - probe_center);
     
-    // Read SH probe and evaluate radiance in the sphere surface direction
+    // Read SH probe and evaluate diffuse irradiance for the sphere surface normal.
     let probe_sh = ddgi_sh_probe_read(&sh_probes, hit_probe_index);
-    let sphere_color = ddgi_sh_evaluate_radiance(probe_sh, sphere_normal);
+    let sphere_irradiance = ddgi_sh_evaluate_irradiance(probe_sh, sphere_normal) * ddgi_params.indirect_boost;
+
+    // Lambertian-equivalent radiance preview (albedo = 1): L = E / PI
+    let sphere_radiance = max(sphere_irradiance, vec3<f32>(0.0)) * (1.0 / PI);
     
-    // Apply simple tone mapping for visualization
-    let mapped_color = sphere_color / (sphere_color + vec3<f32>(1.0));
+    // Tone map + display gamma for debug readability.
+    let exposure = 1.2;
+    let mapped_color = aces_tonemapping(sphere_radiance, exposure);
+    let display_color = pow(clamp(mapped_color, vec3<f32>(0.0), vec3<f32>(1.0)), vec3<f32>(1.0 / 2.2));
     
-    textureStore(output_debug, pixel_coord, vec4f(mapped_color, 1.0));
+    textureStore(output_debug, pixel_coord, vec4f(display_color, 1.0));
 }
 

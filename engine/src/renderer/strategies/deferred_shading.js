@@ -452,6 +452,7 @@ const fullscreen_present_pass_name = "fullscreen_present_pass";
 export class DeferredShadingStrategy {
   initialized = false;
   force_recreate = false;
+  force_reinit = false;
   hzb_image = null;
   entity_id_image = null;
   prev_lighting_image = null;
@@ -510,15 +511,17 @@ export class DeferredShadingStrategy {
     );
   }
 
-  refresh(render_graph) {
+  refresh(render_graph, reinit = false) {
     this.force_recreate = true;
+    this.force_reinit = reinit;
   }
 
   _draw_internal(render_graph) {
     profile_scope(deferred_shading_profile_scope_name, () => {
-      if (!this.initialized) {
+      if (!this.initialized || this.force_reinit) {
         this.setup(render_graph);
         this.initialized = true;
+        this.force_reinit = false;
       }
 
       // ═══════════════════════════════════════════════════════════════════════════════
@@ -1450,8 +1453,7 @@ export class DeferredShadingStrategy {
       if (
         gi_enabled &&
         (debug_view === DebugDrawType.GI_WorldCache ||
-          debug_view === DebugDrawType.GI_Probes ||
-          debug_view === DebugDrawType.GI_ProbeDepthAtlas)
+          debug_view === DebugDrawType.GI_Probes)
       ) {
         this.gi.add_debug_passes(
           render_graph,
@@ -1863,16 +1865,6 @@ export class DeferredShadingStrategy {
               image_extent.width,
               image_extent.height,
               DebugDrawType.GI_Probes
-            );
-            break;
-          case DebugDrawType.GI_ProbeDepthAtlas:
-            this.debug_overlay.set_properties(
-              this.gi.debug_texture,
-              0,
-              0,
-              image_extent.width,
-              image_extent.height,
-              DebugDrawType.GI_ProbeDepthAtlas
             );
             break;
           case DebugDrawType.GI_Reflections:

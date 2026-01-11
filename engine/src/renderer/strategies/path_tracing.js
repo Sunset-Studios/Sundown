@@ -265,6 +265,7 @@ const compact_lights_pass_name = "compact_lights";
 export class PathTracingStrategy {
   initialized = false;
   force_recreate = false;
+  force_reinit = false;
   hzb_image = null;
   entity_id_image = null;
   path_tracer = null;
@@ -273,7 +274,7 @@ export class PathTracingStrategy {
 
   // Path tracing parameters (optimized for hybrid mode)
   max_bounces = 6;
-  trace_rate = 2; // 1=full res, 2=half, 4=quarter, etc.
+  trace_rate = 8; // 1=full res, 2=half, 4=quarter, etc.
   samples_per_pixel = 1; // Number of samples per pixel per frame
 
   setup(render_graph) {
@@ -313,7 +314,8 @@ export class PathTracingStrategy {
     );
   }
 
-  refresh(render_graph) {
+  refresh(render_graph, reinit = false) {
+    this.force_reinit = reinit;
     this.force_recreate = true;
   }
 
@@ -332,9 +334,10 @@ export class PathTracingStrategy {
 
   _draw_internal(render_graph) {
     profile_scope(path_tracing_profile_scope_name, () => {
-      if (!this.initialized) {
+      if (!this.initialized || this.force_reinit) {
         this.setup(render_graph);
         this.initialized = true;
+        this.force_reinit = false;
       }
 
       // ═══════════════════════════════════════════════════════════════════════════════

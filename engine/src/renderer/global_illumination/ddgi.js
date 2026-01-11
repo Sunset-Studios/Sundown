@@ -11,12 +11,8 @@ import { StaticMeshFragment } from "../../core/ecs/fragments/static_mesh_fragmen
 import { Name } from "../../utility/names.js";
 import { ResourceCache } from "../resource_cache.js";
 import { ispot, npot } from "../../utility/math.js";
-import { rgba16float_format } from "../../utility/config_permutations.js";
 
 const COMPUTE_WORKGROUP_SIZE = 128;
-const DDGI_PROBE_DEPTH_ATLAS_GUTTER = 1;
-const DDGI_PROBE_DEPTH_RES = 16;
-const DDGI_PROBE_DEPTH_ATLAS_TILE_SIZE = DDGI_PROBE_DEPTH_RES + 2 * DDGI_PROBE_DEPTH_ATLAS_GUTTER;
 
 // ┌─────────────────────────────────────────────────────────────────────────────┐
 // │ Resource cache / binding names                                               │
@@ -46,6 +42,12 @@ const ddgi_probe_indices_init_shader_setup = {
   },
 };
 
+const ddgi_probe_trace_init_shader_setup = {
+  pipeline_shaders: {
+    compute: { path: "gi/ddgi_probe_trace_init.wgsl" },
+  },
+};
+
 const ddgi_probe_trace_hit_shader_setup = {
   pipeline_shaders: {
     compute: { path: "gi/ddgi_probe_trace_hit.wgsl" },
@@ -70,12 +72,6 @@ const ddgi_sh_probe_sample_shader_setup = {
   },
 };
 
-const ddgi_probe_depth_atlas_overlay_shader_setup = {
-  pipeline_shaders: {
-    compute: { path: "gi/ddgi_probe_depth_atlas_overlay.wgsl" },
-  },
-};
-
 const ddgi_sh_probe_debug_shader_setup = {
   pipeline_shaders: {
     compute: { path: "gi/ddgi_sh_probe_debug.wgsl" },
@@ -84,12 +80,13 @@ const ddgi_sh_probe_debug_shader_setup = {
 
 export class DDGI {
   config = {
-    probe_grid_dimensions: [16, 8, 16],
-    probe_spacing: 6.0,
-    probe_radius: 0.5,
-    rays_per_probe: 32,
-    max_probes_per_frame: 100,
+    probe_grid_dimensions: [32, 32, 32],
+    probe_spacing: 4.0,
+    probe_radius: 0.2,
+    rays_per_probe: 16,
+    max_probes_per_frame: 1000,
     indirect_boost: 1.0,
+    self_shadow_bias: 0.6,
   };
 
   ddgi_frame_setup = {
@@ -103,7 +100,6 @@ export class DDGI {
 
   shared_bindings = {
     sh_probes_buffer: null,
-    probe_depth_buffer: null,
   };
 
   ddgi_params = null;
@@ -134,7 +130,7 @@ export class DDGI {
     0, // - probe_grid_snap_delta (xyz=delta in probe cells, w=active (1/0))
     0, // - frame_index
     0, // - indirect_boost
-    0, // - padding
+    0, // - self_shadow_bias
     0, // - padding
   ]);
 
@@ -260,20 +256,6 @@ export class DDGI {
           pass.dispatch(Math.ceil(width / 8), Math.ceil(height / 8), 1);
         }
       );
-    } else if (debug_view === DebugDrawType.GI_ProbeDepthAtlas) {
-      render_graph.add_pass(
-        "ddgi_probe_depth_atlas_overlay",
-        RenderPassFlags.Compute,
-        {
-          inputs: [this.shared_bindings.probe_depth_buffer, scene_color, this.debug_texture],
-          outputs: [this.debug_texture],
-          shader_setup: ddgi_probe_depth_atlas_overlay_shader_setup,
-        },
-        (graph, frame_data, encoder) => {
-          const pass = graph.get_physical_pass(frame_data.current_pass);
-          pass.dispatch(Math.ceil(width / 8), Math.ceil(height / 8), 1);
-        }
-      );
     }
   }
 
@@ -297,11 +279,17 @@ export class DDGI {
     const grid_dims = this._sanitize_probe_grid_dimensions(this.config.probe_grid_dimensions);
     const probe_count = grid_dims[0] * grid_dims[1] * grid_dims[2];
 
+    // ┌─────────────────────────────────────────────────────────────────────────────┐
+    // │ Probe update budget (temporal cycling)                                       │
+    // └─────────────────────────────────────────────────────────────────────────────┘
+    // Update only a subset of probes per frame and rotate through the full set
+    // temporally. The selection itself is generated on the GPU by
+    // `gi/ddgi_probe_indices_init.wgsl`.
+    const max_probes_per_frame = Math.max(1, this.config.max_probes_per_frame);
     const probes_per_frame = probe_count;
     const rays_per_probe = Math.max(1, Math.floor(this.config.rays_per_probe));
-    const probe_shadow_ray_count = probes_per_frame;
     const probe_primary_ray_count = probes_per_frame * rays_per_probe;
-    const probe_total_ray_count = probe_shadow_ray_count + probe_primary_ray_count;
+    const probe_total_ray_count = probe_primary_ray_count;
 
     const view_index = SharedFrameInfoBuffer.get_view_index();
     const view = SharedViewBuffer.get_view_data(view_index);
@@ -340,10 +328,6 @@ export class DDGI {
       Math.round(Math.log2(grid_dims[2])),
     ];
     const grid_mask = [grid_dims[0] - 1, grid_dims[1] - 1, grid_dims[2] - 1];
-
-    const depth_atlas_width = Math.max(1, grid_dims[0] * DDGI_PROBE_DEPTH_ATLAS_TILE_SIZE);
-    const depth_atlas_height = Math.max(1, grid_dims[2] * DDGI_PROBE_DEPTH_ATLAS_TILE_SIZE);
-    const depth_atlas_layers = Math.max(1, grid_dims[1]);
 
     this.ddgi_frame_setup.width = width;
     this.ddgi_frame_setup.height = height;
@@ -425,7 +409,7 @@ export class DDGI {
 
     const probe_update_indices = render_graph.create_buffer({
       name: "ddgi_probe_update_indices",
-      size: probe_count,
+      size: probes_per_frame,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
       force: force_recreate,
     });
@@ -441,17 +425,6 @@ export class DDGI {
       name: "ddgi_probe_ray_hits",
       size: probe_total_ray_count * 24,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-      force: force_recreate,
-    });
-
-    const probe_depth_atlas = render_graph.create_image({
-      name: "ddgi_probe_depth_atlas",
-      format: rgba16float_format,
-      width: depth_atlas_width,
-      height: depth_atlas_height,
-      depth: depth_atlas_layers,
-      dimension: "2d-array",
-      usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
       force: force_recreate,
     });
 
@@ -534,6 +507,7 @@ export class DDGI {
           snap_delta_x !== 0 || snap_delta_y !== 0 || snap_delta_z !== 0 ? 1 : 0;
         this.ddgi_params_data[24] = this.ddgi_frame_setup.frame_index;
         this.ddgi_params_data[25] = this.config.indirect_boost;
+        this.ddgi_params_data[26] = this.config.self_shadow_bias;
 
         ddgi_params_buf.write_raw(this.ddgi_params_data);
       }
@@ -563,8 +537,28 @@ export class DDGI {
       },
       (graph, frame_data, encoder) => {
         const pass = graph.get_physical_pass(frame_data.current_pass);
-        const probe_dispatch_count = Math.ceil(probe_count / COMPUTE_WORKGROUP_SIZE);
+        const probe_dispatch_count = Math.ceil(probes_per_frame / COMPUTE_WORKGROUP_SIZE);
         pass.dispatch(probe_dispatch_count, 1, 1);
+      }
+    );
+
+    render_graph.add_pass(
+      "ddgi_probe_trace_init",
+      RenderPassFlags.Compute,
+      {
+        inputs: [
+          this.ddgi_params,
+          probe_update_indices,
+          probe_ray_hits,
+          sh_probes_prev,
+          sh_sample_counts_prev,
+        ],
+        outputs: [probe_ray_hits],
+        shader_setup: ddgi_probe_trace_init_shader_setup,
+      },
+      (graph, frame_data, encoder) => {
+        const pass = graph.get_physical_pass(frame_data.current_pass);
+        pass.dispatch(Math.ceil(probe_total_ray_count / COMPUTE_WORKGROUP_SIZE), 1, 1);
       }
     );
 
@@ -607,7 +601,6 @@ export class DDGI {
           material_palette_buffer,
           dense_lights,
           sh_probes_prev,
-          probe_depth_atlas,
           albedo_pool_buffer,
           normal_pool_buffer,
           roughness_pool_buffer,
@@ -651,7 +644,7 @@ export class DDGI {
       },
       (graph, frame_data, encoder) => {
         const pass = graph.get_physical_pass(frame_data.current_pass);
-        pass.dispatch(Math.ceil(probes_per_frame / 64), 1, 1);
+        pass.dispatch(Math.ceil(probes_per_frame / 128), 1, 1);
       }
     );
 
@@ -665,7 +658,6 @@ export class DDGI {
         inputs: [
           this.ddgi_params,
           sh_probes_curr,
-          probe_depth_atlas,
           gbuffer_position,
           gbuffer_normal,
           this.final_gi_texture_indirect_diffuse,
@@ -683,7 +675,6 @@ export class DDGI {
       }
     );
 
-    this.shared_bindings.probe_depth_buffer = probe_depth_atlas;
     this.shared_bindings.sh_probes_buffer = sh_probes_curr;
   }
 

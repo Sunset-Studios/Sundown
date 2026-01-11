@@ -251,8 +251,8 @@ export class Renderer {
   /**
    * Force recreates all resources in the render graph
    */
-  refresh_render_graph() {
-    this.render_strategy.refresh(this.render_graph);
+  refresh_render_graph(reinit = false) {
+    this.render_strategy.refresh(this.render_graph, reinit);
   }
 
   /**
@@ -405,7 +405,7 @@ export class Renderer {
   set_gi_strategy_type(strategy_type) {
     this.gi_strategy_type = strategy_type;
     if (this.render_strategy) {
-      this.refresh_render_graph();
+      this.refresh_render_graph(true /* reinit */);
       this.recreate_pipeline_states();
     }
   }

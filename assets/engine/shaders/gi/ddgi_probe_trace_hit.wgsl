@@ -20,53 +20,6 @@
 @group(1) @binding(8) var<storage, read> dense_lights_buffer: DenseLightsBuffer;
 
 // =============================================================================
-// DDGI Probe Direction Sampling
-// - Uniform spherical directions so probes trace in all
-//   directions around the probe volume.
-// - Uses a stochastically-rotated Fibonacci spiral point set, following the
-//   "spherical Fibonacci" style sampling described by McGuire et al.
-// =============================================================================
-fn ddgi_fibonacci_sphere_direction(ray_index: u32, ray_count: u32, rotation_01: f32) -> vec3<f32> {
-    let n = max(ray_count, 1u);
-    let i = min(ray_index, n - 1u);
-
-    // Stratified latitude, uniform in cos(theta) for uniform area on the sphere.
-    let u = (f32(i) + 0.5) / f32(n);           // (0,1)
-    let cos_theta = 1.0 - 2.0 * u;             // [-1,1]
-    let sin_theta = sqrt(max(1.0 - cos_theta * cos_theta, 0.0));
-
-    // Fibonacci spiral azimuth with a per-probe Cranley-Patterson rotation.
-    let phi = 2.0 * PI * fract(f32(i) * GOLDEN_RATIO_CONJUGATE + rotation_01);
-
-    return vec3<f32>(cos(phi) * sin_theta, sin(phi) * sin_theta, cos_theta);
-}
-
-fn ddgi_probe_ray_direction_spherical_fibonacci(
-    probe_index: u32,
-    ray_index_in_probe: u32,
-    rays_per_probe: u32
-) -> vec3<f32> {
-    // One stochastic rotation per probe per frame (shared across all rays in the probe).
-    // This avoids static banding while preserving the uniform Fibonacci distribution.
-    var probe_rng = hash(probe_index ^ (u32(ddgi_params.frame_index) * 0x9E3779B9u));
-    // Rotation for the Fibonacci spiral parameterization (Cranley-Patterson offset).
-    let rotation_01 = rand_float(probe_rng);
-    // Randomly rotate the entire point set in 3D (avoid locking the pattern to world axes).
-    probe_rng = random_seed(probe_rng);
-    let r1 = rand_float(probe_rng);
-    probe_rng = random_seed(probe_rng);
-    let r2 = rand_float(probe_rng);
-
-    let z = 1.0 - 2.0 * r1;
-    let rot_phi = 2.0 * PI * r2;
-    let r_xy = sqrt(max(1.0 - z * z, 0.0));
-    let z_axis = vec3<f32>(cos(rot_phi) * r_xy, sin(rot_phi) * r_xy, z);
-
-    let dir_local = ddgi_fibonacci_sphere_direction(ray_index_in_probe, rays_per_probe, rotation_01);
-    return orthonormalize(z_axis) * dir_local;
-}
-
-// =============================================================================
 // BLAS TRAVERSAL
 // =============================================================================
 
@@ -459,9 +412,9 @@ fn trace_hit_any(ray: ptr<function, Ray>) -> bool {
 // =============================================================================
 // HELPER: Process a shadow ray and write result
 // =============================================================================
-fn process_shadow_ray(index: u32, probe_position: vec3<f32>, ray_dir: vec3<f32>, t_max: f32) {
+fn process_shadow_visibility(index: u32, ray_origin: vec3<f32>, ray_dir: vec3<f32>, t_max: f32) {
     var ray: Ray;
-    ray.origin_and_tmin = vec4f(probe_position + ray_dir * 0.001, 0.001);
+    ray.origin_and_tmin = vec4f(ray_origin + ray_dir * 0.001, 0.001);
     ray.direction_and_tmax = vec4f(ray_dir, t_max);
     ray.inv_direction = vec4f(
         1.0 / max(abs(ray.direction_and_tmax.x), 1e-8) * select(1.0, -1.0, ray.direction_and_tmax.x < 0.0),
@@ -479,7 +432,13 @@ fn process_shadow_ray(index: u32, probe_position: vec3<f32>, ray_dir: vec3<f32>,
 // =============================================================================
 // HELPER: Process a primary ray and write hit attributes
 // =============================================================================
-fn process_primary_ray(index: u32, probe_position: vec3<f32>, ray_dir: vec3<f32>, probe_index: u32) {
+fn process_primary_ray(
+    index: u32,
+    probe_position: vec3<f32>,
+    ray_dir: vec3<f32>,
+    probe_index: u32,
+    ray_index_in_probe: u32,
+) {
     var ray: Ray;
     ray.origin_and_tmin = vec4f(probe_position + ray_dir * 0.001, 0.001);
     ray.direction_and_tmax = vec4f(ray_dir, 1e30);
@@ -490,10 +449,13 @@ fn process_primary_ray(index: u32, probe_position: vec3<f32>, ray_dir: vec3<f32>
         0.0
     );
 
-    let hit_result = trace_hit(&ray);
+    // Always write per-ray direction so the shade pass can handle ray misses.
+    // Preserve ray_dir_prim.w which stores the per-ray PDF written by the init pass.
+    let ray_pdf = probe_ray_hits[index].ray_dir_prim.w;
+    probe_ray_hits[index].ray_dir_prim = vec4f(ray_dir, ray_pdf);
+    probe_ray_hits[index].hit_pos_t = vec4f(0.0, 0.0, 0.0, -1.0);
 
-    // Default: miss
-    probe_ray_hits[index].state_u32 = vec4<u32>(probe_index, 1u, 0u, 0xffffffffu);
+    let hit_result = trace_hit(&ray);
 
     if (hit_result.has_hit != 0u) {
         let tri_id_local = hit_result.tri_id_local;
@@ -557,12 +519,42 @@ fn process_primary_ray(index: u32, probe_position: vec3<f32>, ray_dir: vec3<f32>
 
         let section_index = u32(vertex_buffer[v0i].section_index);
 
-        probe_ray_hits[index].hit_pos_t = vec4f(p_world, t_tri);
-        probe_ray_hits[index].ray_dir_prim = vec4f(ray_dir, f32(prim_store));
+        // Backface rays:
+        // - Tag them so the shade pass can zero irradiance (leak reduction).
+        // - Shorten their stored depth by 80% (multiply by 0.2) for conservative visibility.
+        //   (World hit position stays unmodified; we only adjust the stored "t".)
+        probe_ray_hits[index].state_u32.y = probe_ray_hits[index].state_u32.y | select(0u, 2u, ray_is_backfacing);
+        let stored_t = select(t_tri, t_tri * 0.2, ray_is_backfacing);
+        probe_ray_hits[index].hit_pos_t = vec4f(p_world, stored_t);
+        probe_ray_hits[index].ray_dir_prim = vec4f(ray_dir, ray_pdf);
         probe_ray_hits[index].world_n_section = vec4f(world_n, f32(section_index));
         probe_ray_hits[index].world_t_uvx = vec4f(world_t, uv_hit.x);
         probe_ray_hits[index].world_b_uvy = vec4f(world_b, uv_hit.y);
         probe_ray_hits[index].state_u32.w = tri_id_local;
+        probe_ray_hits[index].state_u32.x = prim_store;
+
+        // One-sample NEE visibility test at the primary hit point.
+        // We do the expensive shadow trace here (hit pass has BVH bindings),
+        // and the shade pass replays the same light selection to compute the
+        // direct lighting contribution.
+        let num_lights = dense_lights_buffer.header.light_count;
+        if (num_lights > 0u) {
+            var nee_rng = hash(
+                probe_index
+                    ^ (ray_index_in_probe * 0xA24BAEDDu)
+                    ^ (u32(ddgi_params.frame_index) * 0x9E3779B9u)
+            );
+            nee_rng = random_seed(nee_rng);
+            let light_rand = rand_float(nee_rng);
+            let light_idx = u32(light_rand * f32(num_lights)) % num_lights;
+            let light = dense_lights_buffer.lights[light_idx];
+
+            let shadow_dir = get_light_dir(light, p_world);
+            let light_distance = select(1e30, length(light.position.xyz - p_world), light.light_type != 0.0);
+            let shadow_t_max = light_distance * 0.999;
+
+            process_shadow_visibility(index, p_world, shadow_dir, shadow_t_max);
+        }
     }
 }
 
@@ -573,56 +565,18 @@ fn process_primary_ray(index: u32, probe_position: vec3<f32>, ray_dir: vec3<f32>
 fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let rays_per_probe = u32(ddgi_params.probe_counts.y);
     let probes_per_frame = u32(ddgi_params.probe_counts.z);
-    let total_primary_rays = probes_per_frame * rays_per_probe;
-    let total_rays = probes_per_frame + total_primary_rays;
+    let total_rays = probes_per_frame * rays_per_probe;
 
     if (gid.x >= total_rays) {
         return;
     }
 
-    let is_shadow_thread = gid.x < probes_per_frame;
-    let shadow_index = gid.x;
-    let primary_index = gid.x - probes_per_frame;
-    let out_index = select(probes_per_frame + primary_index, shadow_index, is_shadow_thread);
-
-    let probe_slot = select(primary_index / rays_per_probe, shadow_index, is_shadow_thread);
+    let probe_slot = gid.x / rays_per_probe;
+    let ray_index_in_probe = gid.x - probe_slot * rays_per_probe;
     let probe_index = probe_update_indices[probe_slot];
     let probe_position = ddgi_probe_world_position_from_index(&ddgi_params, probe_index);
 
-    if (is_shadow_thread) {
-        let num_lights = dense_lights_buffer.header.light_count;
-
-        // Default: invalid shadow sample (no lights).
-        probe_ray_hits[out_index].state_u32 = vec4<u32>(probe_index, 0u, 0u, 0xffffffffu);
-        probe_ray_hits[out_index].ray_dir_prim = vec4f(0.0, 0.0, 0.0, 0.0);
-
-        if (num_lights == 0u) {
-            return;
-        }
-
-        var rng = hash(probe_index ^ (u32(ddgi_params.frame_index) * 0x9E3779B9u));
-        rng = random_seed(rng);
-        let light_rand = rand_float(rng);
-        let light_idx = u32(light_rand * f32(num_lights)) % num_lights;
-        let light = dense_lights_buffer.lights[light_idx];
-
-        let ray_dir = get_light_dir(light, probe_position);
-        let light_distance = select(1e30, length(light.position.xyz - probe_position), light.light_type != 0.0);
-        let t_max = light_distance * 0.999;
-
-        // Shadow ray header (interpreted by shade + accumulate as a radiance sample).
-        probe_ray_hits[out_index].state_u32 = vec4<u32>(probe_index, 1u, 0u, 0xffffffffu);
-        probe_ray_hits[out_index].ray_dir_prim = vec4f(ray_dir, f32(light_idx));
-
-        process_shadow_ray(out_index, probe_position, ray_dir, t_max);
-    } else {
-        // Uniform spherical directions (stochastically-rotated Fibonacci spiral).
-        let ray_dir = ddgi_probe_ray_direction_spherical_fibonacci(
-            probe_index,
-            primary_index - probe_slot * rays_per_probe,
-            rays_per_probe
-        );
-        process_primary_ray(out_index, probe_position, ray_dir, probe_index);
-    }
+    let ray_dir = probe_ray_hits[gid.x].ray_dir_prim.xyz;
+    process_primary_ray(gid.x, probe_position, ray_dir, probe_index, ray_index_in_probe);
 }
 

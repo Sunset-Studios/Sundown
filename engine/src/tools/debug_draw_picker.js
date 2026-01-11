@@ -71,10 +71,6 @@ export class DebugDrawPicker extends DevConsoleTool {
         case "gi-probes":
           Renderer.get().set_debug_draw_type(DebugDrawType.GI_Probes);
           break;
-        case "gi-probe-depth-atlas":
-        case "gi-depth-atlas":
-          Renderer.get().set_debug_draw_type(DebugDrawType.GI_ProbeDepthAtlas);
-          break;
         case "gi-reflections":
           Renderer.get().set_debug_draw_type(DebugDrawType.GI_Reflections);
           break;

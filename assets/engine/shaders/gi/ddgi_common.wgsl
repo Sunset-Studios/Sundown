@@ -47,6 +47,8 @@ struct DDGIParams {
     probe_grid_snap_delta: vec4<f32>, // xyz = delta in probe cells, w = active (1/0)
     frame_index: u32,
     indirect_boost: f32,
+    self_shadow_bias: f32,
+    _pad0: f32,
 };
 
 struct DDGIProbeRayHit {
@@ -64,14 +66,6 @@ struct DDGIProbeRayHit {
 // ─────────────────────────────────────────────────────────────────────────────
 struct DDGISHProbe {
     data: array<u32, 6>,
-}
-
-fn ddgi_probe_atlas_tile_size() -> u32 {
-    return DDGI_PROBE_IRRADIANCE_RES + 2u * DDGI_PROBE_ATLAS_GUTTER;
-}
-
-fn ddgi_probe_depth_atlas_tile_size() -> u32 {
-    return DDGI_PROBE_DEPTH_RES + 2u * DDGI_PROBE_ATLAS_GUTTER;
 }
 
 fn ddgi_probe_coord_from_index(ddgi_params: ptr<uniform, DDGIParams>, probe_index: u32) -> vec3<u32> {
@@ -95,28 +89,9 @@ fn ddgi_probe_index_from_coord(ddgi_params: ptr<uniform, DDGIParams>, coord: vec
     return coord.x | (coord.y << shift_x) | (coord.z << (shift_x + shift_y));
 }
 
-fn ddgi_probe_atlas_cell_from_coord(ddgi_params: ptr<uniform, DDGIParams>, coord: vec3<u32>) -> vec2<u32> {
-    let dim_x = u32((*ddgi_params).probe_grid_dims.x);
-    let cell_x = coord.x + coord.z * dim_x;
-    let cell_y = coord.y;
-    return vec2<u32>(cell_x, cell_y);
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
 // 3D depth atlas cell coordinates: XZ within layer, Y as layer index
 // ─────────────────────────────────────────────────────────────────────────────
-fn ddgi_probe_depth_atlas_cell_from_coord(ddgi_params: ptr<uniform, DDGIParams>, coord: vec3<u32>) -> vec3<u32> {
-    // For 3D depth atlas: cell_x = X probe, cell_z = Z probe, layer = Y probe
-    return vec3<u32>(coord.x, coord.z, coord.y);
-}
-
-fn ddgi_probe_depth_atlas_base_pixel(ddgi_params: ptr<uniform, DDGIParams>, probe_index: u32) -> vec3<u32> {
-    let coord = ddgi_probe_coord_from_index(ddgi_params, probe_index);
-    let cell = ddgi_probe_depth_atlas_cell_from_coord(ddgi_params, coord);
-    let tile_size = ddgi_probe_depth_atlas_tile_size();
-    return vec3<u32>(cell.x * tile_size, cell.y * tile_size, cell.z);
-}
-
 fn ddgi_probe_world_position_from_index(ddgi_params: ptr<uniform, DDGIParams>, probe_index: u32) -> vec3<f32> {
     let spacing = (*ddgi_params).probe_counts.w;
     let origin = (*ddgi_params).probe_grid_origin.xyz;
@@ -128,65 +103,6 @@ fn ddgi_probe_world_position_from_coord(ddgi_params: ptr<uniform, DDGIParams>, c
     let spacing = (*ddgi_params).probe_counts.w;
     let origin = (*ddgi_params).probe_grid_origin.xyz;
     return origin + vec3<f32>(f32(coord.x), f32(coord.y), f32(coord.z)) * spacing;
-}
-
-// =============================================================================
-// DDGI paper-inspired probe interpolation weights
-// - Backface culling (soft)
-// - Perceptual low-irradiance reduction (light leak robustness)
-// - Chebyshev visibility from depth moments atlas (VSM-inspired)
-// - Shading point bias for visibility query stability
-// - Standard trilinear interpolation in probe grid space
-// =============================================================================
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Sample depth moments from 3D probe depth atlas (2d-array texture)
-// Layout: XZ probes per layer, Y as layer index
-// ─────────────────────────────────────────────────────────────────────────────
-fn ddgi_sample_probe_depth_moments(
-    ddgi_params_ptr: ptr<uniform, DDGIParams>,
-    atlas: texture_2d_array<f32>,
-    probe_index: u32,
-    dir_ws: vec3<f32>
-) -> vec2<f32> {
-    let oct_uv = encode_octahedral(dir_ws);
-    let res = f32(DDGI_PROBE_DEPTH_RES);
-    let gutter = f32(DDGI_PROBE_ATLAS_GUTTER);
-
-    // base_px: (x_pixel, z_pixel, y_layer)
-    let base_px_u32 = ddgi_probe_depth_atlas_base_pixel(ddgi_params_ptr, probe_index);
-    let base_px = vec2<f32>(f32(base_px_u32.x), f32(base_px_u32.y));
-    let layer = i32(base_px_u32.z);
-
-    let atlas_dims_u32 = textureDimensions(atlas);
-    let atlas_dims = vec2<f32>(f32(atlas_dims_u32.x), f32(atlas_dims_u32.y));
-
-    // Map [0,1] oct UV into the interior [0,res-1] texel range, sample with
-    // bilinear filtering. The duplicated gutter prevents cross-tile bleeding.
-    let interior_px = base_px + vec2<f32>(gutter, gutter) + oct_uv * (res - 1.0);
-    let sample_uv = (interior_px + vec2<f32>(0.5)) / atlas_dims;
-
-    return textureSampleLevel(atlas, global_sampler, sample_uv, layer, 0.0).xy;
-}
-
-fn ddgi_visibility_chebyshev(moments: vec2<f32>, dist: f32, mean_bias: f32, variance_bias_sq: f32) -> f32 {
-    // Depth moments:
-    // - moments.x = E[d]
-    // - moments.y = E[d^2]
-    let mean_d = max(moments.x, 0.0);
-    let mean_d2 = max(moments.y, 0.0);
-    let variance = max(mean_d2 - mean_d * mean_d, 0.0);
-
-    // Biasing (VSM-style) to reduce light leaks:
-    // - Move the mean closer (more conservative occlusion)
-    // - Add variance to widen the filter conservatively
-    let mean_d_biased = max(mean_d - mean_bias, 0.0);
-    let variance_biased = max(variance + variance_bias_sq, 1e-6);
-
-    // If the point is closer than the (biased) mean hit distance, treat as visible.
-    let delta = max(dist - mean_d_biased, 0.0);
-    let p_max = variance_biased / (variance_biased + delta * delta);
-    return clamp(p_max, 0.0, 1.0);
 }
 
 // =============================================================================
@@ -275,3 +191,101 @@ fn ddgi_sh_evaluate_radiance(
     return max(sh_l1_rgb_evaluate(sh, direction), vec3<f32>(0.0));
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Sample SH irradiance from probes
+// ─────────────────────────────────────────────────────────────────────────────
+fn ddgi_sample_sh_irradiance(
+    ddgi_params: ptr<uniform, DDGIParams>,
+    sh_probes: ptr<storage, array<u32>, read>,
+    position: vec3<f32>,
+    normal_ws: vec3<f32>
+) -> vec3<f32> {
+    let spacing = (*ddgi_params).probe_counts.w;
+    let dims = vec3<u32>(
+        u32((*ddgi_params).probe_grid_dims.x),
+        u32((*ddgi_params).probe_grid_dims.y),
+        u32((*ddgi_params).probe_grid_dims.z)
+    );
+    let origin = (*ddgi_params).probe_grid_origin.xyz;
+    let probe_radius = (*ddgi_params).probe_grid_dims.w;
+
+    let rel = (position - origin) / spacing;
+    let base_f = floor(rel);
+    let frac = rel - base_f;
+
+    let max_base = vec3<f32>(
+        f32(select(0u, dims.x - 2u, dims.x > 1u)),
+        f32(select(0u, dims.y - 2u, dims.y > 1u)),
+        f32(select(0u, dims.z - 2u, dims.z > 1u))
+    );
+    let base_clamped = clamp(base_f, vec3<f32>(0.0), max_base);
+    let base = vec3<u32>(base_clamped);
+    let frac_clamped = clamp(frac, vec3<f32>(0.0), vec3<f32>(1.0));
+
+    // -------------------------------------------------------------------------
+    // Unified self-shadow bias (paper-style)
+    //
+    // Bias_vector = (n * 0.2 + w_o * 0.8) * (0.75 * D) * B
+    //
+    // - n   : surface normal (world)
+    // - w_o : direction from surface point to camera (world)
+    // - D   : minimum axial distance between probes (probe spacing)
+    // - B   : user-tunable scalar (`ddgi_params.self_shadow_bias`)
+    //
+    // We apply this world-space bias to the *visibility query point* (not the
+    // shading point itself) to reduce shadow leaking near the mean of the depth
+    // distribution in the probe depth moments atlas.
+    // -------------------------------------------------------------------------
+    let view_index = u32(frame_info.view_index);
+    let camera_position = view_buffer[view_index].view_position.xyz;
+    let w_o = safe_normalize(camera_position - position);
+    let b = (*ddgi_params).self_shadow_bias;
+    let bias_vector = (normal_ws * 0.2 + w_o * 0.8) * (0.75 * spacing) * b;
+
+    let perceptual_threshold = max(0.05 * MAX_RADIANCE_LUMINANCE, 1e-4);
+
+    var sh_sum = sh_l1_rgb_zero();
+    var weight_sum = 0.0;
+
+    for (var z = 0u; z < 2u; z = z + 1u) {
+        for (var y = 0u; y < 2u; y = y + 1u) {
+            for (var x = 0u; x < 2u; x = x + 1u) {
+                let coord = base + vec3<u32>(x, y, z);
+                let clamped_coord = clamp(coord, vec3<u32>(0u), dims - vec3<u32>(1u));
+                let probe_index = ddgi_probe_index_from_coord(ddgi_params, clamped_coord);
+
+                let tri_weight =
+                    select(1.0 - frac_clamped.x, frac_clamped.x, x == 1u) *
+                    select(1.0 - frac_clamped.y, frac_clamped.y, y == 1u) *
+                    select(1.0 - frac_clamped.z, frac_clamped.z, z == 1u);
+
+                let probe_pos = ddgi_probe_world_position_from_coord(ddgi_params, clamped_coord);
+                let dir_to_probe = safe_normalize(probe_pos - position);
+
+                let backface = clamp(dot(normal_ws, dir_to_probe), 0.0, 1.0);
+                let backface_weight = backface * backface;
+
+                let biased_pos = position + bias_vector;
+                let dir_from_probe = safe_normalize(biased_pos - probe_pos);
+                let dist = length(biased_pos - probe_pos);
+
+                let probe_sh = ddgi_sh_probe_read(sh_probes, probe_index);
+                let preview_irradiance = max(ddgi_sh_evaluate_irradiance(probe_sh, normal_ws), vec3<f32>(0.0));
+                let probe_luma = luminance(preview_irradiance);
+                let perceptual_linear = clamp(probe_luma / perceptual_threshold, 0.0, 1.0);
+                // Avoid "black holes" from perceptual weight reaching 0.0 everywhere.
+                let perceptual_weight = max(perceptual_linear * perceptual_linear, 0.05);
+
+                let weight = tri_weight * backface_weight * perceptual_weight;
+
+                sh_sum = sh_l1_rgb_add(sh_sum, sh_l1_rgb_multiply_scalar(probe_sh, weight));
+                weight_sum = weight_sum + weight;
+            }
+        }
+    }
+
+    let inv_weight_sum = 1.0 / weight_sum;
+    let sh_interpolated = sh_l1_rgb_multiply_scalar(sh_sum, inv_weight_sum);
+    var irradiance = ddgi_sh_evaluate_irradiance(sh_interpolated, normal_ws) * (*ddgi_params).indirect_boost;
+    return max(irradiance, vec3<f32>(0.0));
+}
