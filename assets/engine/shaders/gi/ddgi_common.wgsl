@@ -15,19 +15,22 @@
 // ╚═══════════════════════════════════════════════════════════════════════════╝
 // =============================================================================
 
-// =============================================================================
-// OCTAHEDRAL ATLAS CONSTANTS
-// =============================================================================
-// - Each probe stores directional irradiance in an octahedral map (paper: 8x8)
-// - Each probe tile is padded with a 1-texel duplicated gutter to avoid bilinear
-//   filtering artifacts across atlas tile boundaries.
-// - Each probe stores depth moments in an octahedral map (paper: 16x16)
-// =============================================================================
-const DDGI_PROBE_IRRADIANCE_RES = 8u;
-const DDGI_PROBE_DEPTH_RES = 16u;
-const DDGI_PROBE_ATLAS_GUTTER = 1u;
-const PROBE_SAMPLE_CAP = 32.0;
 const GOLDEN_RATIO_CONJUGATE = 0.6180339887498948;
+
+// =============================================================================
+// OCTAHEDRAL DEPTH MOMENTS CONSTANTS (16x16)
+// =============================================================================
+const DDGI_PROBE_DEPTH_RES = 8u;
+const DDGI_DEPTH_TEXEL_COUNT = 64u;
+
+// =============================================================================
+// DEPTH MOMENTS VISIBILITY CONSTANTS (octahedral, temporally accumulated)
+// =============================================================================
+const DDGI_VISIBILITY_MIN_VARIANCE = 1e-4;
+const DDGI_VISIBILITY_POWER = 2.0;
+const DDGI_VISIBILITY_CONFIDENCE_MIN = 1e-3;
+const DDGI_VISBILITY_DISTANCE_THICKNESS_BIAS = 0.01;
+const DDGI_PERCEPTUAL_FALLOFF_THRESHOLD = 0.05;
 
 // =============================================================================
 // SPHERICAL HARMONICS PROBE CONSTANTS
@@ -51,13 +54,14 @@ struct DDGIParams {
     _pad0: f32,
 };
 
-struct DDGIProbeRayHit {
+struct DDGIProbeRayData {
     hit_pos_t: vec4<f32>,         // xyz = world hit position, w = t (>=0) or -1 for miss
-    ray_dir_prim: vec4<f32>,      // xyz = ray direction, w = prim_store as f32 (undefined if miss)
+    ray_dir_prim: vec4<f32>,      // xyz = ray direction, w = ray PDF (set by init; preserved by hit)
     world_n_section: vec4<f32>,   // xyz = world geometric normal, w = section_index as f32
     world_t_uvx: vec4<f32>,       // xyz = world tangent, w = uv.x
     world_b_uvy: vec4<f32>,       // xyz = world bitangent, w = uv.y
-    state_u32: vec4<u32>,         // x = lobe_type (0 = diffuse, 1 = specular), y = alive, z = shadow_visible, w = tri_id
+    state_u32: vec4<u32>,         // x = prim_store, y = alive|flags, z = shadow_visible, w = tri_id_local
+    radiance: vec4<f32>,          // xyz = shaded ray radiance, w = 1.0 (or unused)
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -191,12 +195,94 @@ fn ddgi_sh_evaluate_radiance(
     return max(sh_l1_rgb_evaluate(sh, direction), vec3<f32>(0.0));
 }
 
+// =============================================================================
+// ╔═══════════════════════════════════════════════════════════════════════════╗
+// ║                  PROBE DEPTH MOMENTS VISIBILITY HELPERS                   ║
+// ╚═══════════════════════════════════════════════════════════════════════════╝
+// =============================================================================
+fn ddgi_depth_texel_id(texel_coord: vec2<u32>) -> u32 {
+    return texel_coord.x + texel_coord.y * DDGI_PROBE_DEPTH_RES;
+}
+
+fn ddgi_depth_clamp_texel_coord(texel_coord: vec2<i32>) -> vec2<u32> {
+    let max_i = i32(DDGI_PROBE_DEPTH_RES) - 1;
+    return vec2<u32>(
+        u32(clamp(texel_coord.x, 0, max_i)),
+        u32(clamp(texel_coord.y, 0, max_i))
+    );
+}
+
+// Returns accumulated (mean_t, mean_t2, confidence) bilinearly sampled from the
+// per-probe octahedral moments atlas.
+fn ddgi_probe_depth_moments_sample_accum(
+    probe_depth_moments: ptr<storage, array<vec4<f32>>, read>,
+    probe_index: u32,
+    direction_from_probe: vec3<f32>
+) -> vec3<f32> {
+    let res_f = f32(DDGI_PROBE_DEPTH_RES);
+    let uv = encode_octahedral(direction_from_probe);
+    let uv_f = uv * res_f - 0.5;
+
+    let base_f = floor(uv_f);
+    let frac = uv_f - base_f;
+    let base_i = vec2<i32>(i32(base_f.x), i32(base_f.y));
+
+    let w00 = (1.0 - frac.x) * (1.0 - frac.y);
+    let w10 = frac.x * (1.0 - frac.y);
+    let w01 = (1.0 - frac.x) * frac.y;
+    let w11 = frac.x * frac.y;
+
+    let t00_xy = ddgi_depth_clamp_texel_coord(base_i + vec2<i32>(0, 0));
+    let t10_xy = ddgi_depth_clamp_texel_coord(base_i + vec2<i32>(1, 0));
+    let t01_xy = ddgi_depth_clamp_texel_coord(base_i + vec2<i32>(0, 1));
+    let t11_xy = ddgi_depth_clamp_texel_coord(base_i + vec2<i32>(1, 1));
+
+    let base_offset = probe_index * DDGI_DEPTH_TEXEL_COUNT;
+
+    let v00 = (*probe_depth_moments)[base_offset + ddgi_depth_texel_id(t00_xy)];
+    let v10 = (*probe_depth_moments)[base_offset + ddgi_depth_texel_id(t10_xy)];
+    let v01 = (*probe_depth_moments)[base_offset + ddgi_depth_texel_id(t01_xy)];
+    let v11 = (*probe_depth_moments)[base_offset + ddgi_depth_texel_id(t11_xy)];
+
+    // x = mean_t, y = mean_t2, z = confidence
+    let a00 = vec3<f32>(v00.x, v00.y, v00.z) * w00;
+    let a10 = vec3<f32>(v10.x, v10.y, v10.z) * w10;
+    let a01 = vec3<f32>(v01.x, v01.y, v01.z) * w01;
+    let a11 = vec3<f32>(v11.x, v11.y, v11.z) * w11;
+    return a00 + a10 + a01 + a11;
+}
+
+fn ddgi_visibility_chebyshev(dist: f32, mean_d: f32, mean_d2: f32) -> f32 {
+    // Moment shadow mapping / Chebyshev upper bound.
+    // If the queried distance is in front of the mean, treat as visible.
+    let variance = max(mean_d2 - mean_d * mean_d, DDGI_VISIBILITY_MIN_VARIANCE);
+    let delta = dist - mean_d;
+    let p_max = variance / (variance + delta * delta);
+    let v = select(p_max, 1.0, dist <= mean_d);
+    return clamp(v, 0.0, 1.0);
+}
+
+fn ddgi_visibility_weight_from_moments(
+    probe_depth_moments: ptr<storage, array<vec4<f32>>, read>,
+    probe_index: u32,
+    direction_from_probe: vec3<f32>,
+    dist: f32
+) -> f32 {
+    let biased_dist = dist + DDGI_VISBILITY_DISTANCE_THICKNESS_BIAS;
+    let accum = ddgi_probe_depth_moments_sample_accum(probe_depth_moments, probe_index, direction_from_probe);
+    // Chebyshev visibility with a mild power curve for sharper occluder rejection.
+    var v = ddgi_visibility_chebyshev(biased_dist, accum.x, accum.y);
+    // Confidence fade (low confidence -> treat as visible).
+    return pow(mix(1.0, v, accum.z), DDGI_VISIBILITY_POWER);
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Sample SH irradiance from probes
 // ─────────────────────────────────────────────────────────────────────────────
 fn ddgi_sample_sh_irradiance(
     ddgi_params: ptr<uniform, DDGIParams>,
     sh_probes: ptr<storage, array<u32>, read>,
+    probe_depth_moments: ptr<storage, array<vec4<f32>>, read>,
     position: vec3<f32>,
     normal_ws: vec3<f32>
 ) -> vec3<f32> {
@@ -222,27 +308,10 @@ fn ddgi_sample_sh_irradiance(
     let base = vec3<u32>(base_clamped);
     let frac_clamped = clamp(frac, vec3<f32>(0.0), vec3<f32>(1.0));
 
-    // -------------------------------------------------------------------------
-    // Unified self-shadow bias (paper-style)
-    //
-    // Bias_vector = (n * 0.2 + w_o * 0.8) * (0.75 * D) * B
-    //
-    // - n   : surface normal (world)
-    // - w_o : direction from surface point to camera (world)
-    // - D   : minimum axial distance between probes (probe spacing)
-    // - B   : user-tunable scalar (`ddgi_params.self_shadow_bias`)
-    //
-    // We apply this world-space bias to the *visibility query point* (not the
-    // shading point itself) to reduce shadow leaking near the mean of the depth
-    // distribution in the probe depth moments atlas.
-    // -------------------------------------------------------------------------
     let view_index = u32(frame_info.view_index);
     let camera_position = view_buffer[view_index].view_position.xyz;
     let w_o = safe_normalize(camera_position - position);
-    let b = (*ddgi_params).self_shadow_bias;
-    let bias_vector = (normal_ws * 0.2 + w_o * 0.8) * (0.75 * spacing) * b;
-
-    let perceptual_threshold = max(0.05 * MAX_RADIANCE_LUMINANCE, 1e-4);
+    let bias_offset = (0.2 * normal_ws + 0.8 * w_o) * (0.75 * spacing) * (*ddgi_params).self_shadow_bias;
 
     var sh_sum = sh_l1_rgb_zero();
     var weight_sum = 0.0;
@@ -265,18 +334,26 @@ fn ddgi_sample_sh_irradiance(
                 let backface = clamp(dot(normal_ws, dir_to_probe), 0.0, 1.0);
                 let backface_weight = backface * backface;
 
-                let biased_pos = position + bias_vector;
-                let dir_from_probe = safe_normalize(biased_pos - probe_pos);
-                let dist = length(biased_pos - probe_pos);
+                let offset_pos = position + bias_offset;
+                let dir_from_probe = safe_normalize(offset_pos - probe_pos);
+                let dist = length(offset_pos - probe_pos);
+
+                // -----------------------------------------------------------------
+                // Probe visibility weight from depth moments
+                // -----------------------------------------------------------------
+                let visibility_weight = ddgi_visibility_weight_from_moments(
+                    probe_depth_moments,
+                    probe_index,
+                    dir_from_probe,
+                    dist
+                );
 
                 let probe_sh = ddgi_sh_probe_read(sh_probes, probe_index);
-                let preview_irradiance = max(ddgi_sh_evaluate_irradiance(probe_sh, normal_ws), vec3<f32>(0.0));
-                let probe_luma = luminance(preview_irradiance);
-                let perceptual_linear = clamp(probe_luma / perceptual_threshold, 0.0, 1.0);
-                // Avoid "black holes" from perceptual weight reaching 0.0 everywhere.
-                let perceptual_weight = max(perceptual_linear * perceptual_linear, 0.05);
+                let preview_irradiance = ddgi_sh_evaluate_irradiance(probe_sh, normal_ws);
+                let perceptual_linear = luminance(preview_irradiance) / DDGI_PERCEPTUAL_FALLOFF_THRESHOLD;
+                let perceptual_weight = max(perceptual_linear * perceptual_linear, 1e-5);
 
-                let weight = tri_weight * backface_weight * perceptual_weight;
+                let weight = tri_weight * backface_weight * perceptual_weight * visibility_weight;
 
                 sh_sum = sh_l1_rgb_add(sh_sum, sh_l1_rgb_multiply_scalar(probe_sh, weight));
                 weight_sum = weight_sum + weight;
@@ -284,7 +361,7 @@ fn ddgi_sample_sh_irradiance(
         }
     }
 
-    let inv_weight_sum = 1.0 / weight_sum;
+    let inv_weight_sum = 1.0 / max(weight_sum, 1e-6);
     let sh_interpolated = sh_l1_rgb_multiply_scalar(sh_sum, inv_weight_sum);
     var irradiance = ddgi_sh_evaluate_irradiance(sh_interpolated, normal_ws) * (*ddgi_params).indirect_boost;
     return max(irradiance, vec3<f32>(0.0));

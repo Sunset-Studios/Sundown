@@ -13,6 +13,8 @@ import { ResourceCache } from "../resource_cache.js";
 import { ispot, npot } from "../../utility/math.js";
 
 const COMPUTE_WORKGROUP_SIZE = 128;
+const DDGI_PROBE_DEPTH_RES = 8;
+const DDGI_PROBE_DEPTH_TEXEL_COUNT = DDGI_PROBE_DEPTH_RES * DDGI_PROBE_DEPTH_RES;
 
 // ┌─────────────────────────────────────────────────────────────────────────────┐
 // │ Resource cache / binding names                                               │
@@ -83,10 +85,9 @@ export class DDGI {
     probe_grid_dimensions: [32, 32, 32],
     probe_spacing: 4.0,
     probe_radius: 0.2,
-    rays_per_probe: 16,
-    max_probes_per_frame: 1000,
+    rays_per_probe: 32,
     indirect_boost: 1.0,
-    self_shadow_bias: 0.6,
+    self_shadow_bias: 0.0,
   };
 
   ddgi_frame_setup = {
@@ -285,7 +286,6 @@ export class DDGI {
     // Update only a subset of probes per frame and rotate through the full set
     // temporally. The selection itself is generated on the GPU by
     // `gi/ddgi_probe_indices_init.wgsl`.
-    const max_probes_per_frame = Math.max(1, this.config.max_probes_per_frame);
     const probes_per_frame = probe_count;
     const rays_per_probe = Math.max(1, Math.floor(this.config.rays_per_probe));
     const probe_primary_ray_count = probes_per_frame * rays_per_probe;
@@ -393,17 +393,17 @@ export class DDGI {
     const skybox = SharedEnvironmentData.get_skybox();
     const skybox_texture_buffer = render_graph.register_image(skybox.config.name);
 
-    const gi_counters = render_graph.create_buffer({
-      name: "ddgi_gi_counters",
-      size: 6,
-      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-      force: force_recreate,
-    });
-
     this.ddgi_params = render_graph.create_buffer({
       name: "ddgi_params",
       size: this.ddgi_params_data.length,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+      force: force_recreate,
+    });
+
+    const gi_counters = render_graph.create_buffer({
+      name: "ddgi_gi_counters",
+      size: 6,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
       force: force_recreate,
     });
 
@@ -414,16 +414,36 @@ export class DDGI {
       force: force_recreate,
     });
 
-    const probe_ray_radiance = render_graph.create_buffer({
-      name: "ddgi_probe_ray_radiance",
-      size: probe_total_ray_count * 4,
+    // ─────────────────────────────────────────────────────────────────────────
+    // Probe Ray Data Buffer
+    // - Single per-ray record containing both hit data and shaded radiance
+    // - DDGIProbeRayData = 7 vec4s = 28 x u32 words
+    // ─────────────────────────────────────────────────────────────────────────
+    const probe_ray_data = render_graph.create_buffer({
+      name: "ddgi_probe_ray_data",
+      size: probe_total_ray_count * 28,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
       force: force_recreate,
     });
 
-    const probe_ray_hits = render_graph.create_buffer({
-      name: "ddgi_probe_ray_hits",
-      size: probe_total_ray_count * 24,
+    // ─────────────────────────────────────────────────────────────────────────
+    // Probe Depth Moments Buffers (Directional visibility, octahedral 16x16)
+    // Each texel stores vec4<f32>:
+    // - x = mean_t
+    // - y = mean_t2
+    // - z = confidence (0..1)
+    // - w = accumulated sample_count (clamped)
+    // ─────────────────────────────────────────────────────────────────────────
+    const probe_depth_moments_0 = render_graph.create_buffer({
+      name: "ddgi_probe_depth_moments_0",
+      size: probe_count * DDGI_PROBE_DEPTH_TEXEL_COUNT * 4,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+      force: force_recreate,
+    });
+
+    const probe_depth_moments_1 = render_graph.create_buffer({
+      name: "ddgi_probe_depth_moments_1",
+      size: probe_count * DDGI_PROBE_DEPTH_TEXEL_COUNT * 4,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
       force: force_recreate,
     });
@@ -432,25 +452,20 @@ export class DDGI {
     // SH Probe Buffers
     // L1 RGB: 4 coefficients × 3 channels = 12 floats packed to 6 u32 per probe
     // ─────────────────────────────────────────────────────────────────────────
-    const sh_probe_size_u32 = 6;
     const sh_probes_0 = render_graph.create_buffer({
       name: "ddgi_sh_probes_0",
-      size: probe_count * sh_probe_size_u32,
+      size: probe_count * 6,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
       force: force_recreate,
     });
 
     const sh_probes_1 = render_graph.create_buffer({
       name: "ddgi_sh_probes_1",
-      size: probe_count * sh_probe_size_u32,
+      size: probe_count * 6,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
       force: force_recreate,
     });
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // SH Probe Sample Count Buffers
-    // Tracks accumulated sample count per probe for proper temporal averaging
-    // ─────────────────────────────────────────────────────────────────────────
     const sh_sample_counts_0 = render_graph.create_buffer({
       name: "ddgi_sh_sample_counts_0",
       size: probe_count,
@@ -472,6 +487,11 @@ export class DDGI {
       this.ddgi_frame_setup.ping_pong_frame === 0 ? sh_sample_counts_0 : sh_sample_counts_1;
     const sh_sample_counts_curr =
       this.ddgi_frame_setup.ping_pong_frame === 0 ? sh_sample_counts_1 : sh_sample_counts_0;
+
+    const probe_depth_moments_prev =
+      this.ddgi_frame_setup.ping_pong_frame === 0 ? probe_depth_moments_0 : probe_depth_moments_1;
+    const probe_depth_moments_curr =
+      this.ddgi_frame_setup.ping_pong_frame === 0 ? probe_depth_moments_1 : probe_depth_moments_0;
 
     render_graph.add_pass(
       "ddgi_upload_params",
@@ -543,17 +563,17 @@ export class DDGI {
     );
 
     render_graph.add_pass(
-      "ddgi_probe_trace_init",
+      `ddgi_probe_trace_init_${this.ddgi_frame_setup.ping_pong_frame}`,
       RenderPassFlags.Compute,
       {
         inputs: [
           this.ddgi_params,
           probe_update_indices,
-          probe_ray_hits,
+          probe_ray_data,
           sh_probes_prev,
           sh_sample_counts_prev,
         ],
-        outputs: [probe_ray_hits],
+        outputs: [probe_ray_data],
         shader_setup: ddgi_probe_trace_init_shader_setup,
       },
       (graph, frame_data, encoder) => {
@@ -569,7 +589,7 @@ export class DDGI {
         inputs: [
           this.ddgi_params,
           probe_update_indices,
-          probe_ray_hits,
+          probe_ray_data,
           tlas_bvh2_bounds,
           tlas_bvh8_nodes,
           blas_atlas,
@@ -577,7 +597,7 @@ export class DDGI {
           mesh_asset_ids,
           dense_lights,
         ],
-        outputs: [probe_ray_hits],
+        outputs: [probe_ray_data],
         shader_setup: ddgi_probe_trace_hit_shader_setup,
       },
       (graph, frame_data, encoder) => {
@@ -585,6 +605,14 @@ export class DDGI {
         pass.dispatch(Math.ceil(probe_total_ray_count / COMPUTE_WORKGROUP_SIZE), 1, 1);
       }
     );
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Probe Depth Moments (visibility / occlusion weighting)
+    // Updated inside `ddgi_sh_probe_accumulate.wgsl`:
+    // - per-probe scratch clear
+    // - per-ray binning (no splatting)
+    // - resolve into the persistent octahedral atlas
+    // ─────────────────────────────────────────────────────────────────────────
 
     render_graph.add_pass(
       `ddgi_probe_trace_shade_${this.ddgi_frame_setup.ping_pong_frame}`,
@@ -594,13 +622,13 @@ export class DDGI {
           this.ddgi_params,
           skydome_data_buffer,
           probe_update_indices,
-          probe_ray_hits,
-          probe_ray_radiance,
+          probe_ray_data,
           params_gpu_buffer,
           material_palette_offsets_buffer,
           material_palette_buffer,
           dense_lights,
           sh_probes_prev,
+          probe_depth_moments_prev,
           albedo_pool_buffer,
           normal_pool_buffer,
           roughness_pool_buffer,
@@ -611,7 +639,7 @@ export class DDGI {
           emission_pool_buffer,
           skybox_texture_buffer,
         ],
-        outputs: [probe_ray_radiance],
+        outputs: [probe_ray_data],
         shader_setup: ddgi_probe_trace_shade_shader_setup,
       },
       (graph, frame_data, encoder) => {
@@ -632,14 +660,15 @@ export class DDGI {
         inputs: [
           this.ddgi_params,
           probe_update_indices,
-          probe_ray_hits,
-          probe_ray_radiance,
+          probe_ray_data,
           sh_probes_prev,
           sh_probes_curr,
           sh_sample_counts_prev,
           sh_sample_counts_curr,
+          probe_depth_moments_prev,
+          probe_depth_moments_curr,
         ],
-        outputs: [sh_probes_curr, sh_sample_counts_curr],
+        outputs: [sh_probes_curr, sh_sample_counts_curr, probe_depth_moments_curr],
         shader_setup: ddgi_sh_probe_accumulate_shader_setup,
       },
       (graph, frame_data, encoder) => {
@@ -658,6 +687,7 @@ export class DDGI {
         inputs: [
           this.ddgi_params,
           sh_probes_curr,
+          probe_depth_moments_curr,
           gbuffer_position,
           gbuffer_normal,
           this.final_gi_texture_indirect_diffuse,

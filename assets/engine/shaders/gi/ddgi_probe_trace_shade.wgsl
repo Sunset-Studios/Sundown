@@ -13,13 +13,13 @@
 @group(1) @binding(0) var<uniform> ddgi_params: DDGIParams;
 @group(1) @binding(1) var<uniform> scene_lighting_data: SceneLightingData;
 @group(1) @binding(2) var<storage, read> probe_update_indices: array<u32>;
-@group(1) @binding(3) var<storage, read> probe_ray_hits: array<DDGIProbeRayHit>;
-@group(1) @binding(4) var<storage, read_write> probe_ray_radiance: array<vec4<f32>>;
-@group(1) @binding(5) var<storage, read> material_params: array<StandardMaterialParams>;
-@group(1) @binding(6) var<storage, read> material_table_offset: array<u32>;
-@group(1) @binding(7) var<storage, read> material_palette: array<u32>;
-@group(1) @binding(8) var<storage, read> dense_lights_buffer: DenseLightsBuffer;
-@group(1) @binding(9) var<storage, read> sh_probes_prev: array<u32>;
+@group(1) @binding(3) var<storage, read_write> probe_ray_data: array<DDGIProbeRayData>;
+@group(1) @binding(4) var<storage, read> material_params: array<StandardMaterialParams>;
+@group(1) @binding(5) var<storage, read> material_table_offset: array<u32>;
+@group(1) @binding(6) var<storage, read> material_palette: array<u32>;
+@group(1) @binding(7) var<storage, read> dense_lights_buffer: DenseLightsBuffer;
+@group(1) @binding(8) var<storage, read> sh_probes_prev: array<u32>;
+@group(1) @binding(9) var<storage, read> probe_depth_moments_prev: array<vec4<f32>>;
 @group(1) @binding(10) var texture_pool_albedo: texture_2d_array<f32>;
 @group(1) @binding(11) var texture_pool_normal: texture_2d_array<f32>;
 @group(1) @binding(12) var texture_pool_roughness: texture_2d_array<f32>;
@@ -40,7 +40,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         return;
     }
 
-    let hit = probe_ray_hits[gid.x];
+    let hit = probe_ray_data[gid.x];
     let ray_dir = hit.ray_dir_prim.xyz;
     let probe_slot = gid.x / rays_per_probe;
     let ray_index_in_probe = gid.x - probe_slot * rays_per_probe;
@@ -53,14 +53,14 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     if (hit.state_u32.y != 0u && hit.state_u32.w == 0xffffffffu) {
         // Ray miss: evaluate environment radiance.
         let env_radiance = evaluate_environment(ray_dir, sun_dir, scene_lighting_data, skybox_texture);
-        probe_ray_radiance[gid.x] = vec4f(safe_clamp_vec3_max(env_radiance, MAX_RADIANCE_LUMINANCE), 1.0);
+        probe_ray_data[gid.x].radiance = vec4f(safe_clamp_vec3_max(env_radiance, MAX_RADIANCE_LUMINANCE), 1.0);
     }
 
     // Backface leak reduction:
     // - Backface hits are tagged in the hit pass (alive bitfield: bit1).
     // - We record 0 radiance to avoid lighting surfaces that should be shadowed.
     if ((hit.state_u32.y & 2u) != 0u) {
-        probe_ray_radiance[gid.x] = vec4f(0.0, 0.0, 0.0, 1.0);
+        probe_ray_data[gid.x].radiance = vec4f(0.0, 0.0, 0.0, 1.0);
     } else if (hit.state_u32.y != 0u && hit.state_u32.w != 0xffffffffu) {
         // Ray hit: shade the hit.
         let prim_store = hit.state_u32.x;
@@ -151,16 +151,21 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
                 * f32(num_lights);
 
             // Lambertian: outgoing radiance toward the probe direction
-            let direct_radiance = (albedo * (1.0 / (2.0 * PI))) * direct_irradiance;
-            radiance += safe_clamp_vec3_max(direct_radiance, MAX_RADIANCE_LUMINANCE);
+            radiance += safe_clamp_vec3_max(direct_irradiance, MAX_RADIANCE_LUMINANCE);
         }
 
         // Reseed multi-bounce using last frame's DDGI SH field.
         // Treat SH as incident diffuse irradiance at the hit point.
-        let sh_irradiance = ddgi_sample_sh_irradiance(&ddgi_params, &sh_probes_prev, hit.hit_pos_t.xyz, n);
-        let bounce_radiance = sh_irradiance * albedo * (1.0 / (2.0 * PI));
-        radiance += safe_clamp_vec3_max(bounce_radiance, MAX_RADIANCE_LUMINANCE);
+        let sh_irradiance = ddgi_sample_sh_irradiance(
+            &ddgi_params,
+            &sh_probes_prev,
+            &probe_depth_moments_prev,
+            hit.hit_pos_t.xyz,
+            n
+        );
+        radiance += safe_clamp_vec3_max(sh_irradiance, MAX_RADIANCE_LUMINANCE);
+        radiance *= albedo * (1.0 / (2.0 * PI));
 
-        probe_ray_radiance[gid.x] = vec4f(radiance, 1.0);
+        probe_ray_data[gid.x].radiance = vec4f(radiance, 1.0);
     }
 }
