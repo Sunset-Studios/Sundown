@@ -26,12 +26,11 @@
 @group(1) @binding(0) var<uniform> ddgi_params: DDGIParams;
 @group(1) @binding(1) var<storage, read> probe_update_indices: array<u32>;
 @group(1) @binding(2) var<storage, read> probe_ray_data: array<DDGIProbeRayData>;
-@group(1) @binding(3) var<storage, read> sh_probes_prev: array<u32>;
-@group(1) @binding(4) var<storage, read_write> sh_probes_curr: array<u32>;
-@group(1) @binding(5) var<storage, read> sample_counts_prev: array<u32>;
-@group(1) @binding(6) var<storage, read_write> sample_counts_curr: array<u32>;
-@group(1) @binding(7) var<storage, read> probe_depth_moments_prev: array<vec4<f32>>;
-@group(1) @binding(8) var<storage, read_write> probe_depth_moments_curr: array<vec4<f32>>;
+@group(1) @binding(3) var<storage, read_write> sh_probes: array<u32>;
+@group(1) @binding(4) var<storage, read_write> sample_counts: array<u32>;
+@group(1) @binding(5) var<storage, read_write> probe_depth_moments: array<vec4<f32>>;
+@group(1) @binding(6) var<storage, read> probe_states: array<u32>;
+@group(1) @binding(7) var<storage, read_write> gi_counters: GICounters;
 
 // =============================================================================
 // CONSTANTS
@@ -84,10 +83,11 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     // ─────────────────────────────────────────────────────────────────────────
     // Early exit if we're beyond the number of probes to update this frame
     // ─────────────────────────────────────────────────────────────────────────
-    let probes_per_frame = u32(ddgi_params.probe_counts.z);
+    let max_probes_per_frame = u32(ddgi_params.probe_counts.z);
+    let active_probe_count = atomicLoad(&gi_counters.probe_update_count);
     let rays_per_probe = u32(ddgi_params.probe_counts.y);
     
-    if (gid.x >= probes_per_frame) {
+    if (gid.x >= active_probe_count) {
         return;
     }
     
@@ -105,36 +105,14 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     );
     
     let dst_coord = ddgi_probe_coord_from_index(&ddgi_params, probe_index);
-    let src_coord_i32 = vec3<i32>(dst_coord) + vec3<i32>(ddgi_params.probe_grid_snap_delta.xyz);
-    
-    // Check if the source probe is within grid bounds
-    let in_bounds =
-        src_coord_i32.x >= 0 && src_coord_i32.x < dims.x &&
-        src_coord_i32.y >= 0 && src_coord_i32.y < dims.y &&
-        src_coord_i32.z >= 0 && src_coord_i32.z < dims.z;
-    
-    let src_coord = vec3<u32>(src_coord_i32);
-    let src_probe_index = ddgi_probe_index_from_coord(&ddgi_params, src_coord);
 
     let depth_base = probe_index * DDGI_DEPTH_TEXEL_COUNT;
 
     // -------------------------------------------------------------------------
     // Warm start (copy/reproject history into current for THIS probe)
     // -------------------------------------------------------------------------
-    var sh_prev = sh_l1_rgb_zero();
-    var prev_sample_count = 0u;
-
-    if (in_bounds) {
-        let prev_depth_base = src_probe_index * DDGI_DEPTH_TEXEL_COUNT;
-        for (var texel_id = 0u; texel_id < DDGI_DEPTH_TEXEL_COUNT; texel_id = texel_id + 1u) {
-            let dst_idx = depth_base + texel_id;
-            let src_idx = prev_depth_base + texel_id;
-            probe_depth_moments_curr[dst_idx] = probe_depth_moments_prev[src_idx];
-        }
-
-        sh_prev = ddgi_sh_probe_read(&sh_probes_prev, src_probe_index);
-        prev_sample_count = sample_counts_prev[src_probe_index];
-    }
+    var sh_prev = ddgi_sh_probe_read(&sh_probes, probe_index);
+    var prev_sample_count = sample_counts[probe_index];
     
     // ─────────────────────────────────────────────────────────────────────────
     // Project all ray samples onto SH basis
@@ -178,7 +156,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         let texel_id = tx + ty * u32(DDGI_DEPTH_RES);
 
         let depth_idx = depth_base + texel_id;
-        var moments = probe_depth_moments_curr[depth_idx];
+        var moments = probe_depth_moments[depth_idx];
 
         let new_count = min(moments.w + 1.0, DDGI_DEPTH_SAMPLE_COUNT_CAP);
 
@@ -189,7 +167,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         moments.z = clamp(new_count / DDGI_DEPTH_SAMPLE_COUNT_CAP, 0.0, 1.0);
         moments.w = new_count;
 
-        probe_depth_moments_curr[depth_idx] = moments;
+        probe_depth_moments[depth_idx] = moments;
 
         // ---------------------------------------------------------------------
         // Luminance statistics for variance gating
@@ -198,6 +176,14 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         luma_sum += sample_luma;
         luma_sum_sq += sample_luma * sample_luma;
     }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Probe state-based hysteresis override
+    // "Newly" states (NEWLY_AWAKE, NEWLY_VIGILANT) use fast convergence
+    // ─────────────────────────────────────────────────────────────────────────
+    let state_data = probe_state_read(&probe_states, probe_index);
+    let probe_state = probe_state_get_state(state_data.packed_state);
+    let is_newly_state = probe_state_is_newly(probe_state);
 
     // Luminance-driven hysteresis:
     // - change_factor = 0 -> keep long history (slow updates)
@@ -223,7 +209,13 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let sigma_threshold = (DDGI_NOISE_SIGMA_MULTIPLIER * luma_std_err) / luma_ref;
     let significant_delta = max(relative_luma_delta - sigma_threshold, 0.0);
 
-    let change_factor = smoothstep(DDGI_LUMA_FAST_START, DDGI_LUMA_FAST_END, significant_delta) * noise_suppression;
+    var change_factor = smoothstep(DDGI_LUMA_FAST_START, DDGI_LUMA_FAST_END, significant_delta) * noise_suppression;
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // For "Newly" states, force fast convergence (high change factor)
+    // This effectively sets hysteresis to 0, discarding history
+    // ─────────────────────────────────────────────────────────────────────────
+    change_factor = select(change_factor, 1.0, is_newly_state);
 
     let prev_frames = min(f32(prev_sample_count), DDGI_HISTORY_CAP_FRAMES_MAX);
     let history_cap_frames = mix(DDGI_HISTORY_CAP_FRAMES_MAX, DDGI_HISTORY_CAP_FRAMES_MIN, change_factor);
@@ -239,7 +231,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     // ─────────────────────────────────────────────────────────────────────────
     // Write results to output buffers
     // ─────────────────────────────────────────────────────────────────────────
-    ddgi_sh_probe_write(&sh_probes_curr, probe_index, sh_result);
-    sample_counts_curr[probe_index] = u32(clamp(accumulated_frames, 1.0, DDGI_HISTORY_CAP_FRAMES_MAX));
+    ddgi_sh_probe_write(&sh_probes, probe_index, sh_result);
+    sample_counts[probe_index] = u32(clamp(accumulated_frames, 1.0, DDGI_HISTORY_CAP_FRAMES_MAX));
 }
 

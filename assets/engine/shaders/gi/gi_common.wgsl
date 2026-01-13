@@ -32,7 +32,7 @@ struct GICounters {
     ray_queue_shadow_head: atomic<u32>,      // Shadow ray work queue consumer head
     ray_queue_primary_head: atomic<u32>,     // Primary ray work queue consumer head
     ray_queue_count: atomic<u32>,            // Active rays added to work queue (atomic for conditional add)
-    padding: u32,
+    probe_update_count: atomic<u32>,         // DDGI probe update count (compacted active probes)
 };
 
 // =============================================================================

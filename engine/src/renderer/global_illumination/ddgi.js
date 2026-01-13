@@ -80,6 +80,12 @@ const ddgi_sh_probe_debug_shader_setup = {
   },
 };
 
+const ddgi_probe_state_classify_shader_setup = {
+  pipeline_shaders: {
+    compute: { path: "gi/ddgi_probe_state_classify.wgsl" },
+  },
+};
+
 export class DDGI {
   config = {
     probe_grid_dimensions: [32, 32, 32],
@@ -101,6 +107,7 @@ export class DDGI {
 
   shared_bindings = {
     sh_probes_buffer: null,
+    probe_states_buffer: null,
   };
 
   ddgi_params = null;
@@ -138,7 +145,7 @@ export class DDGI {
   // ┌─────────────────────────────────────────────────────────────────────────────┐
   // │ Probe grid snap tracking (CPU-side)                                          │
   // └─────────────────────────────────────────────────────────────────────────────┘
-  ddgi_probe_grid_snapped_origin = new Float32Array(3);
+  ddgi_probe_grid_snapped_origin = null;
 
   final_gi_texture_direct = null;
   final_gi_texture_indirect_diffuse = null;
@@ -245,6 +252,7 @@ export class DDGI {
           inputs: [
             this.ddgi_params,
             this.shared_bindings.sh_probes_buffer,
+            this.shared_bindings.probe_states_buffer,
             scene_color,
             depth_texture,
             this.debug_texture,
@@ -302,25 +310,36 @@ export class DDGI {
       (grid_dims[2] - 1) * 0.5 * spacing,
     ];
 
-    const snapped_origin = [
-      Math.floor(camera_position[0] / spacing) * spacing - half_extents[0],
-      Math.floor(camera_position[1] / spacing) * spacing - half_extents[1],
-      Math.floor(camera_position[2] / spacing) * spacing - half_extents[2],
-    ];
+    if (!this.ddgi_probe_grid_snapped_origin) {
+      this.ddgi_probe_grid_snapped_origin = new Float32Array(3);
+      this.ddgi_probe_grid_snapped_origin[0] = Math.floor(camera_position[0] / spacing) * spacing - half_extents[0];
+      this.ddgi_probe_grid_snapped_origin[1] = Math.floor(camera_position[1] / spacing) * spacing - half_extents[1];
+      this.ddgi_probe_grid_snapped_origin[2] = Math.floor(camera_position[2] / spacing) * spacing - half_extents[2];
+    }
+    const snapped_origin = this.ddgi_probe_grid_snapped_origin;
+    const snap_delta_x = 0;
+    const snap_delta_y = 0;
+    const snap_delta_z = 0;
 
-    const snap_delta_x = Math.round(
-      (snapped_origin[0] - this.ddgi_probe_grid_snapped_origin[0]) / spacing
-    );
-    const snap_delta_y = Math.round(
-      (snapped_origin[1] - this.ddgi_probe_grid_snapped_origin[1]) / spacing
-    );
-    const snap_delta_z = Math.round(
-      (snapped_origin[2] - this.ddgi_probe_grid_snapped_origin[2]) / spacing
-    );
+    // const snapped_origin = [
+    //   Math.floor(camera_position[0] / spacing) * spacing - half_extents[0],
+    //   Math.floor(camera_position[1] / spacing) * spacing - half_extents[1],
+    //   Math.floor(camera_position[2] / spacing) * spacing - half_extents[2],
+    // ];
 
-    this.ddgi_probe_grid_snapped_origin[0] = snapped_origin[0];
-    this.ddgi_probe_grid_snapped_origin[1] = snapped_origin[1];
-    this.ddgi_probe_grid_snapped_origin[2] = snapped_origin[2];
+    // const snap_delta_x = Math.round(
+    //   (snapped_origin[0] - this.ddgi_probe_grid_snapped_origin[0]) / spacing
+    // );
+    // const snap_delta_y = Math.round(
+    //   (snapped_origin[1] - this.ddgi_probe_grid_snapped_origin[1]) / spacing
+    // );
+    // const snap_delta_z = Math.round(
+    //   (snapped_origin[2] - this.ddgi_probe_grid_snapped_origin[2]) / spacing
+    // );
+
+    // this.ddgi_probe_grid_snapped_origin[0] = snapped_origin[0];
+    // this.ddgi_probe_grid_snapped_origin[1] = snapped_origin[1];
+    // this.ddgi_probe_grid_snapped_origin[2] = snapped_origin[2];
 
     const grid_log2 = [
       Math.round(Math.log2(grid_dims[0])),
@@ -434,15 +453,8 @@ export class DDGI {
     // - z = confidence (0..1)
     // - w = accumulated sample_count (clamped)
     // ─────────────────────────────────────────────────────────────────────────
-    const probe_depth_moments_0 = render_graph.create_buffer({
-      name: "ddgi_probe_depth_moments_0",
-      size: probe_count * DDGI_PROBE_DEPTH_TEXEL_COUNT * 4,
-      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-      force: force_recreate,
-    });
-
-    const probe_depth_moments_1 = render_graph.create_buffer({
-      name: "ddgi_probe_depth_moments_1",
+    const probe_depth_moments = render_graph.create_buffer({
+      name: "ddgi_probe_depth_moments",
       size: probe_count * DDGI_PROBE_DEPTH_TEXEL_COUNT * 4,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
       force: force_recreate,
@@ -452,46 +464,30 @@ export class DDGI {
     // SH Probe Buffers
     // L1 RGB: 4 coefficients × 3 channels = 12 floats packed to 6 u32 per probe
     // ─────────────────────────────────────────────────────────────────────────
-    const sh_probes_0 = render_graph.create_buffer({
-      name: "ddgi_sh_probes_0",
+    const sh_probes = render_graph.create_buffer({
+      name: "ddgi_sh_probes",
       size: probe_count * 6,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
       force: force_recreate,
     });
 
-    const sh_probes_1 = render_graph.create_buffer({
-      name: "ddgi_sh_probes_1",
-      size: probe_count * 6,
-      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-      force: force_recreate,
-    });
-
-    const sh_sample_counts_0 = render_graph.create_buffer({
-      name: "ddgi_sh_sample_counts_0",
+    const sh_sample_counts = render_graph.create_buffer({
+      name: "ddgi_sh_sample_counts",
       size: probe_count,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
       force: force_recreate,
     });
 
-    const sh_sample_counts_1 = render_graph.create_buffer({
-      name: "ddgi_sh_sample_counts_1",
-      size: probe_count,
+    // ─────────────────────────────────────────────────────────────────────────
+    // Probe State Buffers
+    // ProbeStateData = 4 u32 per probe (packed_state, nearest_hit_dist, backface_count, reserved)
+    // ─────────────────────────────────────────────────────────────────────────
+    const probe_states = render_graph.create_buffer({
+      name: "ddgi_probe_states",
+      size: probe_count * 4,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
       force: force_recreate,
     });
-
-    const sh_probes_prev = this.ddgi_frame_setup.ping_pong_frame === 0 ? sh_probes_0 : sh_probes_1;
-    const sh_probes_curr = this.ddgi_frame_setup.ping_pong_frame === 0 ? sh_probes_1 : sh_probes_0;
-
-    const sh_sample_counts_prev =
-      this.ddgi_frame_setup.ping_pong_frame === 0 ? sh_sample_counts_0 : sh_sample_counts_1;
-    const sh_sample_counts_curr =
-      this.ddgi_frame_setup.ping_pong_frame === 0 ? sh_sample_counts_1 : sh_sample_counts_0;
-
-    const probe_depth_moments_prev =
-      this.ddgi_frame_setup.ping_pong_frame === 0 ? probe_depth_moments_0 : probe_depth_moments_1;
-    const probe_depth_moments_curr =
-      this.ddgi_frame_setup.ping_pong_frame === 0 ? probe_depth_moments_1 : probe_depth_moments_0;
 
     render_graph.add_pass(
       "ddgi_upload_params",
@@ -551,13 +547,13 @@ export class DDGI {
       "ddgi_probe_indices_init",
       RenderPassFlags.Compute,
       {
-        inputs: [this.ddgi_params, probe_update_indices],
-        outputs: [probe_update_indices],
+        inputs: [this.ddgi_params, probe_update_indices, probe_states, gi_counters],
+        outputs: [probe_update_indices, gi_counters],
         shader_setup: ddgi_probe_indices_init_shader_setup,
       },
       (graph, frame_data, encoder) => {
         const pass = graph.get_physical_pass(frame_data.current_pass);
-        const probe_dispatch_count = Math.ceil(probes_per_frame / COMPUTE_WORKGROUP_SIZE);
+        const probe_dispatch_count = Math.ceil(probe_count / COMPUTE_WORKGROUP_SIZE);
         pass.dispatch(probe_dispatch_count, 1, 1);
       }
     );
@@ -570,8 +566,9 @@ export class DDGI {
           this.ddgi_params,
           probe_update_indices,
           probe_ray_data,
-          sh_probes_prev,
-          sh_sample_counts_prev,
+          sh_probes,
+          sh_sample_counts,
+          gi_counters,
         ],
         outputs: [probe_ray_data],
         shader_setup: ddgi_probe_trace_init_shader_setup,
@@ -627,8 +624,8 @@ export class DDGI {
           material_palette_offsets_buffer,
           material_palette_buffer,
           dense_lights,
-          sh_probes_prev,
-          probe_depth_moments_prev,
+          sh_probes,
+          probe_depth_moments,
           albedo_pool_buffer,
           normal_pool_buffer,
           roughness_pool_buffer,
@@ -652,6 +649,7 @@ export class DDGI {
     // SH Probe Accumulation Pass
     // Projects ray radiance onto L1 spherical harmonics per probe
     // Tracks sample counts for proper weighted temporal averaging
+    // Uses probe states to determine hysteresis (fast convergence for newly states)
     // ─────────────────────────────────────────────────────────────────────────
     render_graph.add_pass(
       `ddgi_sh_probe_accumulate_${this.ddgi_frame_setup.ping_pong_frame}`,
@@ -661,19 +659,42 @@ export class DDGI {
           this.ddgi_params,
           probe_update_indices,
           probe_ray_data,
-          sh_probes_prev,
-          sh_probes_curr,
-          sh_sample_counts_prev,
-          sh_sample_counts_curr,
-          probe_depth_moments_prev,
-          probe_depth_moments_curr,
+          sh_probes,
+          sh_sample_counts,
+          probe_depth_moments,
+          probe_states,
+          gi_counters,
         ],
-        outputs: [sh_probes_curr, sh_sample_counts_curr, probe_depth_moments_curr],
+        outputs: [sh_probes, sh_sample_counts, probe_depth_moments],
         shader_setup: ddgi_sh_probe_accumulate_shader_setup,
       },
       (graph, frame_data, encoder) => {
         const pass = graph.get_physical_pass(frame_data.current_pass);
         pass.dispatch(Math.ceil(probes_per_frame / 128), 1, 1);
+      }
+    );
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Probe State Classification Pass
+    // Classifies probes into states based on ray hit data
+    // Must run after accumulate so we have complete ray data to analyze
+    // ─────────────────────────────────────────────────────────────────────────
+    render_graph.add_pass(
+      "ddgi_probe_state_classify",
+      RenderPassFlags.Compute,
+      {
+        inputs: [
+          this.ddgi_params,
+          probe_update_indices,
+          probe_ray_data,
+          probe_states,
+        ],
+        outputs: [probe_states],
+        shader_setup: ddgi_probe_state_classify_shader_setup,
+      },
+      (graph, frame_data, encoder) => {
+        const pass = graph.get_physical_pass(frame_data.current_pass);
+        pass.dispatch(Math.ceil(probes_per_frame / COMPUTE_WORKGROUP_SIZE), 1, 1);
       }
     );
 
@@ -686,8 +707,9 @@ export class DDGI {
       {
         inputs: [
           this.ddgi_params,
-          sh_probes_curr,
-          probe_depth_moments_curr,
+          sh_probes,
+          probe_states,
+          probe_depth_moments,
           gbuffer_position,
           gbuffer_normal,
           this.final_gi_texture_indirect_diffuse,
@@ -705,7 +727,8 @@ export class DDGI {
       }
     );
 
-    this.shared_bindings.sh_probes_buffer = sh_probes_curr;
+    this.shared_bindings.sh_probes_buffer = sh_probes;
+    this.shared_bindings.probe_states_buffer = probe_states;
   }
 
   _sanitize_probe_grid_dimensions(probe_grid_dimensions) {

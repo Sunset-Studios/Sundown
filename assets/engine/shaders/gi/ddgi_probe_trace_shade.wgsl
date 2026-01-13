@@ -18,8 +18,8 @@
 @group(1) @binding(5) var<storage, read> material_table_offset: array<u32>;
 @group(1) @binding(6) var<storage, read> material_palette: array<u32>;
 @group(1) @binding(7) var<storage, read> dense_lights_buffer: DenseLightsBuffer;
-@group(1) @binding(8) var<storage, read> sh_probes_prev: array<u32>;
-@group(1) @binding(9) var<storage, read> probe_depth_moments_prev: array<vec4<f32>>;
+@group(1) @binding(8) var<storage, read_write> sh_probes: array<u32>;
+@group(1) @binding(9) var<storage, read> probe_depth_moments: array<vec4<f32>>;
 @group(1) @binding(10) var texture_pool_albedo: texture_2d_array<f32>;
 @group(1) @binding(11) var texture_pool_normal: texture_2d_array<f32>;
 @group(1) @binding(12) var texture_pool_roughness: texture_2d_array<f32>;
@@ -36,7 +36,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let probes_per_frame = u32(ddgi_params.probe_counts.z);
     let total_rays = probes_per_frame * rays_per_probe;
 
-    if (gid.x >= total_rays) {
+    if (gid.x >= total_rays || probe_ray_data[gid.x].state_u32.y == 0u) {
         return;
     }
 
@@ -50,7 +50,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let sun_dir = normalize(-view_buffer[light_view_index].view_direction.xyz);
     let num_lights = dense_lights_buffer.header.light_count;
 
-    if (hit.state_u32.y != 0u && hit.state_u32.w == 0xffffffffu) {
+    if (hit.state_u32.w == 0xffffffffu) {
         // Ray miss: evaluate environment radiance.
         let env_radiance = evaluate_environment(ray_dir, sun_dir, scene_lighting_data, skybox_texture);
         probe_ray_data[gid.x].radiance = vec4f(safe_clamp_vec3_max(env_radiance, MAX_RADIANCE_LUMINANCE), 1.0);
@@ -61,7 +61,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     // - We record 0 radiance to avoid lighting surfaces that should be shadowed.
     if ((hit.state_u32.y & 2u) != 0u) {
         probe_ray_data[gid.x].radiance = vec4f(0.0, 0.0, 0.0, 1.0);
-    } else if (hit.state_u32.y != 0u && hit.state_u32.w != 0xffffffffu) {
+    } else if (hit.state_u32.w != 0xffffffffu) {
         // Ray hit: shade the hit.
         let prim_store = hit.state_u32.x;
         let section_index = u32(hit.world_n_section.w);
@@ -158,8 +158,8 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         // Treat SH as incident diffuse irradiance at the hit point.
         let sh_irradiance = ddgi_sample_sh_irradiance(
             &ddgi_params,
-            &sh_probes_prev,
-            &probe_depth_moments_prev,
+            &sh_probes,
+            &probe_depth_moments,
             hit.hit_pos_t.xyz,
             n
         );

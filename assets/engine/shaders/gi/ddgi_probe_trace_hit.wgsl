@@ -568,10 +568,9 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let probes_per_frame = u32(ddgi_params.probe_counts.z);
     let total_rays = probes_per_frame * rays_per_probe;
 
-    if (gid.x >= total_rays) {
+    if (gid.x >= total_rays || probe_ray_data[gid.x].state_u32.y == 0u) {
         return;
     }
-
     let probe_slot = gid.x / rays_per_probe;
     let ray_index_in_probe = gid.x - probe_slot * rays_per_probe;
     let probe_index = probe_update_indices[probe_slot];

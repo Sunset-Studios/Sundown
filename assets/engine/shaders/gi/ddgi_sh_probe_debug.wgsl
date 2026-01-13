@@ -25,10 +25,11 @@
 // =============================================================================
 
 @group(1) @binding(0) var<uniform> ddgi_params: DDGIParams;
-@group(1) @binding(1) var<storage, read> sh_probes: array<u32>;
-@group(1) @binding(2) var scene_color: texture_2d<f32>;
-@group(1) @binding(3) var depth_texture: texture_2d<f32>;
-@group(1) @binding(4) var output_debug: texture_storage_2d<rgba16float, write>;
+@group(1) @binding(1) var<storage, read_write> sh_probes: array<u32>;
+@group(1) @binding(2) var<storage, read> probe_states: array<u32>;
+@group(1) @binding(3) var scene_color: texture_2d<f32>;
+@group(1) @binding(4) var depth_texture: texture_2d<f32>;
+@group(1) @binding(5) var output_debug: texture_storage_2d<rgba16float, write>;
 
 // =============================================================================
 // RAY HELPERS
@@ -223,11 +224,25 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
             for (var oy = 0u; oy < 2u; oy = oy + 1u) {
                 for (var ox = 0u; ox < 2u; ox = ox + 1u) {
                     let v = base + vec3<u32>(ox, oy, oz);
+                    let probe_idx = ddgi_probe_index_from_coord(&ddgi_params, v);
+                    
+                    // Only display active probes (VIGILANT or AWAKE states)
+                    let state_data = probe_state_read(&probe_states, probe_idx);
+                    let state = probe_state_get_state(state_data.packed_state);
+                    let is_active = state == PROBE_STATE_VIGILANT || 
+                                    state == PROBE_STATE_AWAKE ||
+                                    state == PROBE_STATE_NEWLY_VIGILANT ||
+                                    state == PROBE_STATE_NEWLY_AWAKE;
+                    
+                    if (!is_active) {
+                        continue;
+                    }
+                    
                     let center = ddgi_probe_world_position_from_coord(&ddgi_params, v);
                     let t = sh_debug_ray_sphere_intersect(ray_origin, ray_direction, center, probe_radius);
                     let valid = t > 0.0 && t >= t_range.x && t <= t_range.y && t < hit_t;
                     hit_t = select(hit_t, t, valid);
-                    hit_probe_index = select(hit_probe_index, ddgi_probe_index_from_coord(&ddgi_params, v), valid);
+                    hit_probe_index = select(hit_probe_index, probe_idx, valid);
                     hit = hit || valid;
                 }
             }

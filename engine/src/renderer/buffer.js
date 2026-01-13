@@ -26,11 +26,19 @@ export class Buffer {
       buffer_data = config.raw_data;
     } else if (config.data) {
       const data = config.data.flat();
-      buffer_data = new Float32Array(data.length);
-      buffer_data.set(data);
+      try {
+        buffer_data = new Float32Array(data.length);
+        buffer_data.set(data);
+      } catch (error) {
+        throw new Error(`Failed to create buffer: ${this.config.name} with size: ${this.config.size}. Typed array may be too large in this environment.`);
+      }
     } else if (this.config.size != undefined) {
-      buffer_data = new Float32Array(this.config.size);
-      this.config.size = buffer_data.byteLength;
+      try {
+        buffer_data = new Float32Array(this.config.size);
+        this.config.size = buffer_data.byteLength;
+      } catch (error) {
+        throw new Error(`Failed to create buffer: ${this.config.name} with size: ${this.config.size}. Typed array may be too large in this environment.`);
+      }
     }
 
     this.config.size = buffer_data.byteLength;

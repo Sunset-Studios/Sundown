@@ -40,6 +40,9 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
 
         // Reset ray queue count (will be incremented by active rays in init pass)
         atomicStore(&gi_counters.ray_queue_count, 0u);
+
+        // Reset DDGI probe update count (compacted active probes for tracing)
+        atomicStore(&gi_counters.probe_update_count, 0u);
         
         gi_counters.light_count = dense_lights_buffer.header.light_count;
     }
