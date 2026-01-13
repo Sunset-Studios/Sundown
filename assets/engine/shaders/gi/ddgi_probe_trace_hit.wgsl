@@ -10,14 +10,13 @@
 #include "gi/ddgi_common.wgsl"
 
 @group(1) @binding(0) var<uniform> ddgi_params: DDGIParams;
-@group(1) @binding(1) var<storage, read> probe_update_indices: array<u32>;
-@group(1) @binding(2) var<storage, read_write> probe_ray_data: array<DDGIProbeRayData>;
-@group(1) @binding(3) var<storage, read> tlas_bvh2_bounds: array<AABB>;
-@group(1) @binding(4) var<storage, read> tlas_bvh8_nodes: array<BVH8Node>;
-@group(1) @binding(5) var<storage, read> blas_atlas: BLASAtlas;
-@group(1) @binding(6) var<storage, read> entity_transforms: array<EntityTransform>;
-@group(1) @binding(7) var<storage, read> mesh_asset_ids: array<u32>;
-@group(1) @binding(8) var<storage, read> dense_lights_buffer: DenseLightsBuffer;
+@group(1) @binding(1) var<storage, read_write> probe_ray_data: DDGIProbeRayDataBuffer;
+@group(1) @binding(2) var<storage, read> tlas_bvh2_bounds: array<AABB>;
+@group(1) @binding(3) var<storage, read> tlas_bvh8_nodes: array<BVH8Node>;
+@group(1) @binding(4) var<storage, read> blas_atlas: BLASAtlas;
+@group(1) @binding(5) var<storage, read> entity_transforms: array<EntityTransform>;
+@group(1) @binding(6) var<storage, read> mesh_asset_ids: array<u32>;
+@group(1) @binding(7) var<storage, read> dense_lights_buffer: DenseLightsBuffer;
 
 // =============================================================================
 // BLAS TRAVERSAL
@@ -425,7 +424,7 @@ fn process_shadow_visibility(index: u32, ray_origin: vec3<f32>, ray_dir: vec3<f3
 
     if (!trace_hit_any(&ray)) {
         // No shadow hit - light is visible
-        probe_ray_data[index].state_u32.z = 1u;
+        probe_ray_data.rays[index].state_u32.z = 1u;
     }
 }
 
@@ -451,9 +450,10 @@ fn process_primary_ray(
 
     // Always write per-ray direction so the shade pass can handle ray misses.
     // Preserve ray_dir_prim.w which stores the per-ray PDF written by the init pass.
-    let ray_pdf = probe_ray_data[index].ray_dir_prim.w;
-    probe_ray_data[index].ray_dir_prim = vec4f(ray_dir, ray_pdf);
-    probe_ray_data[index].hit_pos_t = vec4f(0.0, 0.0, 0.0, -1.0);
+    probe_ray_data.rays[index].meta_u32.x = probe_index;
+    let ray_pdf = probe_ray_data.rays[index].ray_dir_prim.w;
+    probe_ray_data.rays[index].ray_dir_prim = vec4f(ray_dir, ray_pdf);
+    probe_ray_data.rays[index].hit_pos_t = vec4f(0.0, 0.0, 0.0, -1.0);
 
     let hit_result = trace_hit(&ray);
 
@@ -523,16 +523,16 @@ fn process_primary_ray(
         // - Tag them so the shade pass can zero irradiance (leak reduction).
         // - Shorten their stored depth by 80% (multiply by 0.2) for conservative visibility.
         //   (World hit position stays unmodified; we only adjust the stored "t".)
-        probe_ray_data[index].state_u32.y =
-            probe_ray_data[index].state_u32.y | select(0u, 2u, ray_is_backfacing);
+        probe_ray_data.rays[index].state_u32.y =
+            probe_ray_data.rays[index].state_u32.y | select(0u, 2u, ray_is_backfacing);
         let stored_t = select(t_tri, t_tri * 0.2, ray_is_backfacing);
-        probe_ray_data[index].hit_pos_t = vec4f(p_world, stored_t);
-        probe_ray_data[index].ray_dir_prim = vec4f(ray_dir, ray_pdf);
-        probe_ray_data[index].world_n_section = vec4f(world_n, f32(section_index));
-        probe_ray_data[index].world_t_uvx = vec4f(world_t, uv_hit.x);
-        probe_ray_data[index].world_b_uvy = vec4f(world_b, uv_hit.y);
-        probe_ray_data[index].state_u32.w = tri_id_local;
-        probe_ray_data[index].state_u32.x = prim_store;
+        probe_ray_data.rays[index].hit_pos_t = vec4f(p_world, stored_t);
+        probe_ray_data.rays[index].ray_dir_prim = vec4f(ray_dir, ray_pdf);
+        probe_ray_data.rays[index].world_n_section = vec4f(world_n, f32(section_index));
+        probe_ray_data.rays[index].world_t_uvx = vec4f(world_t, uv_hit.x);
+        probe_ray_data.rays[index].world_b_uvy = vec4f(world_b, uv_hit.y);
+        probe_ray_data.rays[index].state_u32.w = tri_id_local;
+        probe_ray_data.rays[index].state_u32.x = prim_store;
 
         // One-sample NEE visibility test at the primary hit point.
         // We do the expensive shadow trace here (hit pass has BVH bindings),
@@ -565,18 +565,18 @@ fn process_primary_ray(
 @compute @workgroup_size(128, 1, 1)
 fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let rays_per_probe = u32(ddgi_params.probe_counts.y);
-    let probes_per_frame = u32(ddgi_params.probe_counts.z);
-    let total_rays = probes_per_frame * rays_per_probe;
+    let active_ray_count = atomicLoad(&probe_ray_data.header.active_ray_count);
 
-    if (gid.x >= total_rays || probe_ray_data[gid.x].state_u32.y == 0u) {
+    if (gid.x >= active_ray_count || probe_ray_data.rays[gid.x].state_u32.y == 0u) {
         return;
     }
+
     let probe_slot = gid.x / rays_per_probe;
     let ray_index_in_probe = gid.x - probe_slot * rays_per_probe;
-    let probe_index = probe_update_indices[probe_slot];
+    let probe_index = probe_ray_data.rays[gid.x].meta_u32.x;
     let probe_position = ddgi_probe_world_position_from_index(&ddgi_params, probe_index);
 
-    let ray_dir = probe_ray_data[gid.x].ray_dir_prim.xyz;
+    let ray_dir = probe_ray_data.rays[gid.x].ray_dir_prim.xyz;
     process_primary_ray(gid.x, probe_position, ray_dir, probe_index, ray_index_in_probe);
 }
 

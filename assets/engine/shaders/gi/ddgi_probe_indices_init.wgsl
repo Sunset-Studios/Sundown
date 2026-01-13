@@ -37,20 +37,19 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         return;
     }
     
-    let probe_index = gid.x;
-    
     // ─────────────────────────────────────────────────────────────────────────
     // Read probe state and check if it should be traced
     // ─────────────────────────────────────────────────────────────────────────
-    let state_data = probe_state_read(&probe_states, probe_index);
+    let state_data = probe_state_read(&probe_states, gid.x);
     let state = probe_state_get_state(state_data.packed_state);
     
     // Only include probes that should trace this frame
     if (probe_state_should_trace(state)) {
         // Atomically allocate a slot in the update indices array
         let slot = atomicAdd(&gi_counters.probe_update_count, 1u);
-        probe_update_indices[slot] = probe_index;
+        probe_update_indices[slot] = gid.x;
     }
+
 }
 
 

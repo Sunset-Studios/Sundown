@@ -12,8 +12,8 @@
 
 @group(1) @binding(0) var<uniform> ddgi_params: DDGIParams;
 @group(1) @binding(1) var<uniform> scene_lighting_data: SceneLightingData;
-@group(1) @binding(2) var<storage, read> probe_update_indices: array<u32>;
-@group(1) @binding(3) var<storage, read_write> probe_ray_data: array<DDGIProbeRayData>;
+@group(1) @binding(2) var<storage, read_write> probe_ray_data: DDGIProbeRayDataBuffer;
+@group(1) @binding(3) var<storage, read> probe_states: array<u32>;
 @group(1) @binding(4) var<storage, read> material_params: array<StandardMaterialParams>;
 @group(1) @binding(5) var<storage, read> material_table_offset: array<u32>;
 @group(1) @binding(6) var<storage, read> material_palette: array<u32>;
@@ -33,18 +33,17 @@
 @compute @workgroup_size(128, 1, 1)
 fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let rays_per_probe = u32(ddgi_params.probe_counts.y);
-    let probes_per_frame = u32(ddgi_params.probe_counts.z);
-    let total_rays = probes_per_frame * rays_per_probe;
+    let active_ray_count = atomicLoad(&probe_ray_data.header.active_ray_count);
 
-    if (gid.x >= total_rays || probe_ray_data[gid.x].state_u32.y == 0u) {
+    if (gid.x >= active_ray_count || probe_ray_data.rays[gid.x].state_u32.y == 0u) {
         return;
     }
 
-    let hit = probe_ray_data[gid.x];
+    let hit = probe_ray_data.rays[gid.x];
     let ray_dir = hit.ray_dir_prim.xyz;
     let probe_slot = gid.x / rays_per_probe;
     let ray_index_in_probe = gid.x - probe_slot * rays_per_probe;
-    let probe_index = probe_update_indices[probe_slot];
+    let probe_index = hit.meta_u32.x;
 
     let light_view_index = u32(scene_lighting_data.view_index);
     let sun_dir = normalize(-view_buffer[light_view_index].view_direction.xyz);
@@ -53,14 +52,14 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     if (hit.state_u32.w == 0xffffffffu) {
         // Ray miss: evaluate environment radiance.
         let env_radiance = evaluate_environment(ray_dir, sun_dir, scene_lighting_data, skybox_texture);
-        probe_ray_data[gid.x].radiance = vec4f(safe_clamp_vec3_max(env_radiance, MAX_RADIANCE_LUMINANCE), 1.0);
+        probe_ray_data.rays[gid.x].radiance = vec4f(safe_clamp_vec3_max(env_radiance, MAX_RADIANCE_LUMINANCE), 1.0);
     }
 
     // Backface leak reduction:
     // - Backface hits are tagged in the hit pass (alive bitfield: bit1).
     // - We record 0 radiance to avoid lighting surfaces that should be shadowed.
     if ((hit.state_u32.y & 2u) != 0u) {
-        probe_ray_data[gid.x].radiance = vec4f(0.0, 0.0, 0.0, 1.0);
+        probe_ray_data.rays[gid.x].radiance = vec4f(0.0, 0.0, 0.0, 1.0);
     } else if (hit.state_u32.w != 0xffffffffu) {
         // Ray hit: shade the hit.
         let prim_store = hit.state_u32.x;
@@ -156,9 +155,10 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
 
         // Reseed multi-bounce using last frame's DDGI SH field.
         // Treat SH as incident diffuse irradiance at the hit point.
-        let sh_irradiance = ddgi_sample_sh_irradiance(
+        let sh_irradiance = ddgi_sample_sh_irradiance_with_states(
             &ddgi_params,
             &sh_probes,
+            &probe_states,
             &probe_depth_moments,
             hit.hit_pos_t.xyz,
             n
@@ -166,6 +166,6 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         radiance += safe_clamp_vec3_max(sh_irradiance, MAX_RADIANCE_LUMINANCE);
         radiance *= albedo * (1.0 / (2.0 * PI));
 
-        probe_ray_data[gid.x].radiance = vec4f(radiance, 1.0);
+        probe_ray_data.rays[gid.x].radiance = vec4f(radiance, 1.0);
     }
 }

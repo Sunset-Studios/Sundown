@@ -15,6 +15,8 @@ import { ispot, npot } from "../../utility/math.js";
 const COMPUTE_WORKGROUP_SIZE = 128;
 const DDGI_PROBE_DEPTH_RES = 8;
 const DDGI_PROBE_DEPTH_TEXEL_COUNT = DDGI_PROBE_DEPTH_RES * DDGI_PROBE_DEPTH_RES;
+const DDGI_PROBE_RAY_DATA_HEADER_WORDS = 4; // 16 bytes (aligned)
+const DDGI_PROBE_RAY_DATA_WORDS_PER_RAY = 32; // 8 vec4s = 32 x u32 words
 
 // ┌─────────────────────────────────────────────────────────────────────────────┐
 // │ Resource cache / binding names                                               │
@@ -32,9 +34,9 @@ const texture_pool_emission_name = Name.from("texture_pool_emission");
 // ┌─────────────────────────────────────────────────────────────────────────────┐
 // │ Shader setups                                                                │
 // └─────────────────────────────────────────────────────────────────────────────┘
-const gi_reset_shader_setup = {
+const ddgi_reset_shader_setup = {
   pipeline_shaders: {
-    compute: { path: "gi/gi_reset.wgsl" },
+    compute: { path: "gi/ddgi_reset.wgsl" },
   },
 };
 
@@ -435,18 +437,19 @@ export class DDGI {
 
     // ─────────────────────────────────────────────────────────────────────────
     // Probe Ray Data Buffer
-    // - Single per-ray record containing both hit data and shaded radiance
-    // - DDGIProbeRayData = 7 vec4s = 28 x u32 words
+    // - Small header + per-ray record containing both hit data and shaded radiance
+    // - header = 1 atomic<u32> + padding = 4 x u32 words
+    // - DDGIProbeRayData = 8 vec4s = 32 x u32 words
     // ─────────────────────────────────────────────────────────────────────────
     const probe_ray_data = render_graph.create_buffer({
       name: "ddgi_probe_ray_data",
-      size: probe_total_ray_count * 28,
+      size: DDGI_PROBE_RAY_DATA_HEADER_WORDS + probe_total_ray_count * DDGI_PROBE_RAY_DATA_WORDS_PER_RAY,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
       force: force_recreate,
     });
 
     // ─────────────────────────────────────────────────────────────────────────
-    // Probe Depth Moments Buffers (Directional visibility, octahedral 16x16)
+    // Probe Depth Moments Buffers (Directional visibility, octahedral 8x8)
     // Each texel stores vec4<f32>:
     // - x = mean_t
     // - y = mean_t2
@@ -530,12 +533,12 @@ export class DDGI {
     );
 
     render_graph.add_pass(
-      "ddgi_gi_reset",
+      "ddgi_reset",
       RenderPassFlags.Compute,
       {
-        inputs: [gi_counters, dense_lights],
-        outputs: [gi_counters],
-        shader_setup: gi_reset_shader_setup,
+        inputs: [gi_counters, dense_lights, probe_ray_data],
+        outputs: [gi_counters, probe_ray_data],
+        shader_setup: ddgi_reset_shader_setup,
       },
       (graph, frame_data, encoder) => {
         const pass = graph.get_physical_pass(frame_data.current_pass);
@@ -559,7 +562,7 @@ export class DDGI {
     );
 
     render_graph.add_pass(
-      `ddgi_probe_trace_init_${this.ddgi_frame_setup.ping_pong_frame}`,
+      "ddgi_probe_trace_init",
       RenderPassFlags.Compute,
       {
         inputs: [
@@ -585,7 +588,6 @@ export class DDGI {
       {
         inputs: [
           this.ddgi_params,
-          probe_update_indices,
           probe_ray_data,
           tlas_bvh2_bounds,
           tlas_bvh8_nodes,
@@ -612,14 +614,14 @@ export class DDGI {
     // ─────────────────────────────────────────────────────────────────────────
 
     render_graph.add_pass(
-      `ddgi_probe_trace_shade_${this.ddgi_frame_setup.ping_pong_frame}`,
+      "ddgi_probe_trace_shade",
       RenderPassFlags.Compute,
       {
         inputs: [
           this.ddgi_params,
           skydome_data_buffer,
-          probe_update_indices,
           probe_ray_data,
+          probe_states,
           params_gpu_buffer,
           material_palette_offsets_buffer,
           material_palette_buffer,
@@ -652,7 +654,7 @@ export class DDGI {
     // Uses probe states to determine hysteresis (fast convergence for newly states)
     // ─────────────────────────────────────────────────────────────────────────
     render_graph.add_pass(
-      `ddgi_sh_probe_accumulate_${this.ddgi_frame_setup.ping_pong_frame}`,
+      "ddgi_sh_probe_accumulate",
       RenderPassFlags.Compute,
       {
         inputs: [

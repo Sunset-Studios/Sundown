@@ -62,6 +62,29 @@ struct DDGIProbeRayData {
     world_b_uvy: vec4<f32>,       // xyz = world bitangent, w = uv.y
     state_u32: vec4<u32>,         // x = prim_store, y = alive|flags, z = shadow_visible, w = tri_id_local
     radiance: vec4<f32>,          // xyz = shaded ray radiance, w = 1.0 (or unused)
+    meta_u32: vec4<u32>,          // x = probe_index, yzw = reserved
+};
+
+// =============================================================================
+// Probe ray data buffer header + wrapper
+// =============================================================================
+// We keep a small header in front of the runtime array so later passes can
+// cheaply query statistics without re-deriving them from ddgi_params.
+//
+// Layout:
+// - header (16 bytes): active_ray_count + padding
+// - rays[]: DDGIProbeRayData records
+// =============================================================================
+struct DDGIProbeRayDataHeader {
+    active_ray_count: atomic<u32>,
+    _pad0: u32,
+    _pad1: u32,
+    _pad2: u32,
+};
+
+struct DDGIProbeRayDataBuffer {
+    header: DDGIProbeRayDataHeader,
+    rays: array<DDGIProbeRayData>,
 };
 
 // ─────────────────────────────────────────────────────────────────────────────

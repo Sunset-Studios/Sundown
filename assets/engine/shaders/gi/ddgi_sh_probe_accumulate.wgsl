@@ -25,7 +25,7 @@
 
 @group(1) @binding(0) var<uniform> ddgi_params: DDGIParams;
 @group(1) @binding(1) var<storage, read> probe_update_indices: array<u32>;
-@group(1) @binding(2) var<storage, read> probe_ray_data: array<DDGIProbeRayData>;
+@group(1) @binding(2) var<storage, read_write> probe_ray_data: DDGIProbeRayDataBuffer;
 @group(1) @binding(3) var<storage, read_write> sh_probes: array<u32>;
 @group(1) @binding(4) var<storage, read_write> sample_counts: array<u32>;
 @group(1) @binding(5) var<storage, read_write> probe_depth_moments: array<vec4<f32>>;
@@ -125,8 +125,8 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
 
     for (var i = 0u; i < rays_per_probe; i = i + 1u) {
         let ray_index = ray_base + i;
-        let hit_data = probe_ray_data[ray_index];
-        let radiance = probe_ray_data[ray_index].radiance.xyz;
+        let hit_data = probe_ray_data.rays[ray_index];
+        let radiance = probe_ray_data.rays[ray_index].radiance.xyz;
         let ray_dir = hit_data.ray_dir_prim.xyz;
         
         // Project onto SH basis

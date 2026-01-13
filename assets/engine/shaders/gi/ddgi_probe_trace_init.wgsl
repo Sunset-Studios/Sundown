@@ -13,7 +13,7 @@
 
 @group(1) @binding(0) var<uniform> ddgi_params: DDGIParams;
 @group(1) @binding(1) var<storage, read> probe_update_indices: array<u32>;
-@group(1) @binding(2) var<storage, read_write> probe_ray_data: array<DDGIProbeRayData>;
+@group(1) @binding(2) var<storage, read_write> probe_ray_data: DDGIProbeRayDataBuffer;
 @group(1) @binding(3) var<storage, read> sh_probes: array<u32>;
 @group(1) @binding(4) var<storage, read> sample_counts: array<u32>;
 @group(1) @binding(5) var<storage, read_write> gi_counters: GICounters;
@@ -77,7 +77,8 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
 
     if (gid.x >= total_rays) {
-        probe_ray_data[gid.x].state_u32 = vec4<u32>(0xffffffffu, 0u, 0u, 0xffffffffu);
+        probe_ray_data.rays[gid.x].state_u32 = vec4<u32>(INVALID_IDX, 0u, 0u, INVALID_IDX);
+        probe_ray_data.rays[gid.x].meta_u32 = vec4<u32>(INVALID_IDX, 0u, 0u, 0u);
         return;
     }
 
@@ -93,9 +94,10 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     // - y = alive
     // - z = shadow_visible (set by hit pass)
     // - w = tri_id_local (filled by hit pass, 0xffffffff if miss)
-    probe_ray_data[gid.x].state_u32 = vec4<u32>(0xffffffffu, 1u, 0u, 0xffffffffu);
-    probe_ray_data[gid.x].hit_pos_t = vec4f(0.0, 0.0, 0.0, -1.0);
-    probe_ray_data[gid.x].radiance = vec4f(0.0, 0.0, 0.0, 1.0);
+    probe_ray_data.rays[gid.x].state_u32 = vec4<u32>(INVALID_IDX, 1u, 0u, INVALID_IDX);
+    probe_ray_data.rays[gid.x].hit_pos_t = vec4f(0.0, 0.0, 0.0, -1.0);
+    probe_ray_data.rays[gid.x].radiance = vec4f(0.0, 0.0, 0.0, 1.0);
+    probe_ray_data.rays[gid.x].meta_u32 = vec4<u32>(probe_index, 0u, 0u, 0u);
 
     // -------------------------------------------------------------------------
     // Uniform directions (base proposal)
@@ -108,6 +110,9 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
 
     // Store direction + per-ray PDF in ray_dir_prim.
     // ray_dir_prim.w holds the PDF until the hit pass fills other attributes.
-    probe_ray_data[gid.x].ray_dir_prim = vec4f(uniform_ray_dir, ddgi_uniform_sphere_pdf);
+    probe_ray_data.rays[gid.x].ray_dir_prim = vec4f(uniform_ray_dir, ddgi_uniform_sphere_pdf);
+
+    // Track active rays in the header (reset in ddgi_probe_ray_data_header_reset.wgsl).
+    atomicAdd(&probe_ray_data.header.active_ray_count, 1u);
 }
 

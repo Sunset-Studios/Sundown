@@ -25,7 +25,7 @@
 
 @group(1) @binding(0) var<uniform> ddgi_params: DDGIParams;
 @group(1) @binding(1) var<storage, read> probe_update_indices: array<u32>;
-@group(1) @binding(2) var<storage, read> probe_ray_data: array<DDGIProbeRayData>;
+@group(1) @binding(2) var<storage, read_write> probe_ray_data: DDGIProbeRayDataBuffer;
 @group(1) @binding(3) var<storage, read_write> probe_states: array<u32>;
 
 // =============================================================================
@@ -48,18 +48,16 @@ fn analyze_probe_rays(
     
     for (var i = 0u; i < rays_per_probe; i = i + 1u) {
         let ray_index = ray_base + i;
-        let hit_data = probe_ray_data[ray_index];
-        let t = hit_data.hit_pos_t.w;
+        let t = probe_ray_data.rays[ray_index].hit_pos_t.w;
         
         // Check if ray hit something (t > 0)
         if (t > 0.0) {
             hit_count = hit_count + 1u;
-            nearest_hit = min(nearest_hit, t);
-            
             // Check if backface hit (flagged in state_u32.y bit 1)
-            let is_backface = (hit_data.state_u32.y & 2u) != 0u;
-            if (is_backface) {
+            if ((probe_ray_data.rays[ray_index].state_u32.y & 2u) != 0u) {
                 backface_count = backface_count + 1u;
+            } else {
+                nearest_hit = min(nearest_hit, t);
             }
         }
     }
@@ -89,7 +87,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     if (gid.x >= probes_per_frame) {
         return;
     }
-    
+
     let probe_index = probe_update_indices[gid.x];
     
     // ─────────────────────────────────────────────────────────────────────────

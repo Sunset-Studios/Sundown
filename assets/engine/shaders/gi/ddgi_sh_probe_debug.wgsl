@@ -234,16 +234,14 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
                                     state == PROBE_STATE_NEWLY_VIGILANT ||
                                     state == PROBE_STATE_NEWLY_AWAKE;
                     
-                    if (!is_active) {
-                        continue;
+                    if (is_active) {
+                        let center = ddgi_probe_world_position_from_coord(&ddgi_params, v);
+                        let t = sh_debug_ray_sphere_intersect(ray_origin, ray_direction, center, probe_radius);
+                        let valid = t > 0.0 && t >= t_range.x && t <= t_range.y && t < hit_t;
+                        hit_t = select(hit_t, t, valid);
+                        hit_probe_index = select(hit_probe_index, probe_idx, valid);
+                        hit = hit || valid;
                     }
-                    
-                    let center = ddgi_probe_world_position_from_coord(&ddgi_params, v);
-                    let t = sh_debug_ray_sphere_intersect(ray_origin, ray_direction, center, probe_radius);
-                    let valid = t > 0.0 && t >= t_range.x && t <= t_range.y && t < hit_t;
-                    hit_t = select(hit_t, t, valid);
-                    hit_probe_index = select(hit_probe_index, probe_idx, valid);
-                    hit = hit || valid;
                 }
             }
         }
