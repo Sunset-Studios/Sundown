@@ -1,19 +1,15 @@
 // =============================================================================
 // ╔═══════════════════════════════════════════════════════════════════════════╗
-// ║                    DDGI PROBE INDICES INITIALIZATION                      ║
+// ║                       DDGI ACTIVE PROBE MARK                              ║
 // ╠═══════════════════════════════════════════════════════════════════════════╣
 // ║                                                                           ║
-// ║  Builds the list of probes to update this frame based on probe states.   ║
+// ║  Pass 1 of active-only probe cycling:                                     ║
+// ║  - Builds an "active flag" array (0/1) over a deterministic permutation   ║
+// ║    of probe indices.                                                     ║
+// ║  - The permutation is frame-shifted so we cycle through the active set    ║
+// ║    temporally without structured artifacts.                               ║
 // ║                                                                           ║
-// ║  Updated strategy (active-only):                                          ║
-// ║  - A prior "mark + prefix-sum" pipeline builds an active flag array over  ║
-// ║    a deterministic, frame-shifted permutation of probes.                  ║
-// ║  - This pass scatters the first `probes_per_frame` active probes into     ║
-// ║    `probe_update_indices`.                                                ║
-// ║                                                                           ║
-// ║  The output probe_update_indices array contains:                          ║
-// ║  - Indices of all probes that need tracing                                ║
-// ║  - Compacted via atomic counter for efficient dispatch                    ║
+// ║  Output: active_flags_permuted[i] == 1 when the permuted probe is active  ║
 // ║                                                                           ║
 // ╚═══════════════════════════════════════════════════════════════════════════╝
 // =============================================================================
@@ -26,101 +22,72 @@
 // =============================================================================
 
 @group(1) @binding(0) var<uniform> ddgi_params: DDGIParams;
-@group(1) @binding(1) var<storage, read_write> probe_update_indices: array<u32>;
-@group(1) @binding(2) var<storage, read> active_flags_in: array<u32>;
-@group(1) @binding(3) var<storage, read> prefix_sum_in: array<u32>;
-@group(1) @binding(4) var<storage, read> block_prefixes_in: array<u32>;
+@group(1) @binding(1) var<storage, read> probe_states: array<u32>;
+@group(1) @binding(2) var<storage, read_write> active_flags: array<u32>;
 
 // =============================================================================
-// STOCHASTIC (BUT DETERMINISTIC) PROBE CYCLING
+// STOCHASTIC (BUT DETERMINISTIC) PERMUTATION HELPERS
 // =============================================================================
-// We want a selection pattern that:
-// - Looks "random" to avoid structured artifacts (better temporal distribution)
-// - Is deterministic (given probe_count and frame_index)
-// - Does not miss probes: every probe index must be visited eventually
-//
-// Approach:
-// - Treat the per-frame probe picks as a walk over Z_n (n = probe_count).
-// - Use an affine map:   idx(k) = (offset + k * stride) mod n
-// - If gcd(stride, n) = 1, this is a permutation: k=0..n-1 visits every probe once.
-// - We set k = frame_index * probes_per_frame + local_id so the walk advances by
-//   probes_per_frame each frame without gaps.
-//
-// Notes:
-// - `offset` and `stride` are derived from a hash of `probe_count` to make the
-//   permutation "stochastic" but still deterministic for a given configuration.
-// - `stride` is forced to be coprime with n using a small bounded search.
 
 fn ddgi_gcd_u32(a: u32, b: u32) -> u32 {
     var x = a;
     var y = b;
-
-    // Bounded Euclid to keep shader compilers happy.
     for (var iter = 0u; iter < 32u; iter = iter + 1u) {
-        if (y == 0u) {
-            break;
-        }
+        if (y == 0u) { break; }
         let t = x % y;
         x = y;
         y = t;
     }
-
     return x;
 }
 
 fn ddgi_coprime_stride_from_seed(sequence_seed: u32, modulus: u32) -> u32 {
-    // Degenerate cases: 0 or 1 probe -> any stride works; keep it simple.
     if (modulus <= 1u) {
         return 1u;
     }
 
-    // Start with a hashed candidate in [1, modulus-1], bias to odd.
-    // Odd isn't strictly required, but helps avoid easy common factors with powers-of-two.
     let range = modulus - 1u;
     var stride = (hash(sequence_seed) % range) + 1u;
     stride = stride | 1u;
     stride = ((stride - 1u) % range) + 1u;
 
-    // Bounded search for a coprime stride.
     for (var iter = 0u; iter < 32u; iter = iter + 1u) {
         if (ddgi_gcd_u32(stride, modulus) == 1u) {
             break;
         }
-
-        // Try the next odd. Wrap to stay in [1, modulus-1].
         stride = stride + 2u;
         stride = select(stride, stride % modulus, stride >= modulus);
         stride = select(stride, 1u, stride == 0u);
     }
 
-    // Last-resort fallback: stride=1 always coprime and still cycles fully.
     return select(stride, 1u, ddgi_gcd_u32(stride, modulus) != 1u);
 }
 
 fn ddgi_probe_index_from_permuted_slot(slot: u32, probe_count: u32, frame_index_u32: u32) -> u32 {
     let safe_probe_count = max(probe_count, 1u);
 
+    // Stable sequence for a given grid configuration (good temporal stability).
     let sequence_seed = hash(probe_count ^ 0xA3C59AC3u);
     let stride = ddgi_coprime_stride_from_seed(sequence_seed, safe_probe_count);
     let base_offset = hash(sequence_seed ^ 0x85ebca6bu) % safe_probe_count;
 
+    // Frame shift so we cycle through the permutation across frames.
+    // Use a coprime "frame stride" so the start position visits all residues
+    // regardless of probe_count and probes_per_frame relationships.
     let frame_stride = ddgi_coprime_stride_from_seed(sequence_seed ^ 0xC2B2AE35u, safe_probe_count);
     let frame_shift = frame_index_u32 * frame_stride;
+
     let k = frame_shift + slot;
     return (base_offset + k * stride) % safe_probe_count;
 }
 
 // =============================================================================
-// MAIN COMPUTE SHADER
+// MAIN
 // =============================================================================
 
 @compute @workgroup_size(128, 1, 1)
-fn cs(
-    @builtin(global_invocation_id) gid: vec3<u32>,
-    @builtin(workgroup_id) wid: vec3<u32>
-) {
+fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let probe_count = u32(ddgi_params.probe_counts.x);
-    let probes_per_frame = u32(ddgi_params.probe_counts.z);
     let frame_index_u32 = u32(ddgi_params.frame_index);
 
     let slot = gid.x;
@@ -128,15 +95,12 @@ fn cs(
         return;
     }
 
-    // -------------------------------------------------------------------------
-    // Scatter active probes (in permuted order) into a dense update list
-    // -------------------------------------------------------------------------
-    let global_prefix = prefix_sum_in[slot] + block_prefixes_in[wid.x];
+    let probe_index = ddgi_probe_index_from_permuted_slot(slot, probe_count, frame_index_u32);
 
-    if (active_flags_in[slot] != 0u && global_prefix < probes_per_frame) {
-        let probe_index = ddgi_probe_index_from_permuted_slot(slot, probe_count, frame_index_u32);
-        probe_update_indices[global_prefix] = probe_index;
-    }
+    let state_data = probe_state_read(&probe_states, probe_index);
+    let state = probe_state_get_state(state_data.packed_state);
+
+    // Store flag in permuted order (slot-space).
+    active_flags[slot] = select(0u, 1u, probe_state_is_active(state));
 }
-
 

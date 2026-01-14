@@ -46,6 +46,24 @@ const ddgi_probe_indices_init_shader_setup = {
   },
 };
 
+const ddgi_probe_active_mark_shader_setup = {
+  pipeline_shaders: {
+    compute: { path: "gi/ddgi_probe_active_mark.wgsl" },
+  },
+};
+
+const ddgi_probe_active_prefix_sum_shader_setup = {
+  pipeline_shaders: {
+    compute: { path: "gi/ddgi_probe_active_prefix_sum.wgsl" },
+  },
+};
+
+const ddgi_probe_active_block_prefix_scan_shader_setup = {
+  pipeline_shaders: {
+    compute: { path: "gi/ddgi_probe_active_block_prefix_scan.wgsl" },
+  },
+};
+
 const ddgi_probe_trace_init_shader_setup = {
   pipeline_shaders: {
     compute: { path: "gi/ddgi_probe_trace_init.wgsl" },
@@ -94,7 +112,7 @@ export class DDGI {
     probe_spacing: 4.0,
     probe_radius: 0.2,
     rays_per_probe: 32,
-    probes_per_frame: 4096,
+    probes_per_frame: 1024,
     indirect_boost: 1.0,
     self_shadow_bias: 0.0,
   };
@@ -316,9 +334,12 @@ export class DDGI {
 
     if (!this.ddgi_probe_grid_snapped_origin) {
       this.ddgi_probe_grid_snapped_origin = new Float32Array(3);
-      this.ddgi_probe_grid_snapped_origin[0] = Math.floor(camera_position[0] / spacing) * spacing - half_extents[0];
-      this.ddgi_probe_grid_snapped_origin[1] = Math.floor(camera_position[1] / spacing) * spacing - half_extents[1];
-      this.ddgi_probe_grid_snapped_origin[2] = Math.floor(camera_position[2] / spacing) * spacing - half_extents[2];
+      this.ddgi_probe_grid_snapped_origin[0] =
+        Math.floor(camera_position[0] / spacing) * spacing - half_extents[0];
+      this.ddgi_probe_grid_snapped_origin[1] =
+        Math.floor(camera_position[1] / spacing) * spacing - half_extents[1];
+      this.ddgi_probe_grid_snapped_origin[2] =
+        Math.floor(camera_position[2] / spacing) * spacing - half_extents[2];
     }
     const snapped_origin = this.ddgi_probe_grid_snapped_origin;
     const snap_delta_x = 0;
@@ -438,6 +459,41 @@ export class DDGI {
     });
 
     // ─────────────────────────────────────────────────────────────────────────
+    // Active-only probe scheduling (mark → prefix sum → scatter)
+    // - We build a permuted active-flag array over all probes, then scatter the
+    //   first `probes_per_frame` active probes into `probe_update_indices`.
+    // ─────────────────────────────────────────────────────────────────────────
+    const probe_active_flags = render_graph.create_buffer({
+      name: "ddgi_probe_active_flags",
+      size: probe_count,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+      force: force_recreate,
+    });
+
+    const probe_active_prefix_sum = render_graph.create_buffer({
+      name: "ddgi_probe_active_prefix_sum",
+      size: probe_count,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+      force: force_recreate,
+    });
+
+    const probe_active_block_count = Math.ceil(probe_count / COMPUTE_WORKGROUP_SIZE);
+
+    const probe_active_block_sums = render_graph.create_buffer({
+      name: "ddgi_probe_active_block_sums",
+      size: probe_active_block_count,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+      force: force_recreate,
+    });
+
+    const probe_active_block_prefixes = render_graph.create_buffer({
+      name: "ddgi_probe_active_block_prefixes",
+      size: probe_active_block_count,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+      force: force_recreate,
+    });
+
+    // ─────────────────────────────────────────────────────────────────────────
     // Probe Ray Data Buffer
     // - Small header + per-ray record containing both hit data and shaded radiance
     // - header = 1 atomic<u32> + padding = 4 x u32 words
@@ -445,7 +501,9 @@ export class DDGI {
     // ─────────────────────────────────────────────────────────────────────────
     const probe_ray_data = render_graph.create_buffer({
       name: "ddgi_probe_ray_data",
-      size: DDGI_PROBE_RAY_DATA_HEADER_WORDS + probe_total_ray_count * DDGI_PROBE_RAY_DATA_WORDS_PER_RAY,
+      size:
+        DDGI_PROBE_RAY_DATA_HEADER_WORDS +
+        probe_total_ray_count * DDGI_PROBE_RAY_DATA_WORDS_PER_RAY,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
       force: force_recreate,
     });
@@ -549,17 +607,69 @@ export class DDGI {
     );
 
     render_graph.add_pass(
+      "ddgi_probe_active_mark",
+      RenderPassFlags.Compute,
+      {
+        inputs: [this.ddgi_params, probe_states, probe_active_flags],
+        outputs: [probe_active_flags],
+        shader_setup: ddgi_probe_active_mark_shader_setup,
+      },
+      (graph, frame_data, encoder) => {
+        const pass = graph.get_physical_pass(frame_data.current_pass);
+        pass.dispatch(Math.ceil(probe_count / COMPUTE_WORKGROUP_SIZE), 1, 1);
+      }
+    );
+
+    render_graph.add_pass(
+      "ddgi_probe_active_prefix_sum",
+      RenderPassFlags.Compute,
+      {
+        inputs: [probe_active_flags, probe_active_prefix_sum, probe_active_block_sums],
+        outputs: [probe_active_prefix_sum, probe_active_block_sums],
+        shader_setup: ddgi_probe_active_prefix_sum_shader_setup,
+      },
+      (graph, frame_data, encoder) => {
+        const pass = graph.get_physical_pass(frame_data.current_pass);
+        pass.dispatch(Math.ceil(probe_count / COMPUTE_WORKGROUP_SIZE), 1, 1);
+      }
+    );
+
+    render_graph.add_pass(
+      "ddgi_probe_active_block_prefix_scan",
+      RenderPassFlags.Compute,
+      {
+        inputs: [
+          probe_active_block_sums,
+          probe_active_block_prefixes,
+          gi_counters,
+          this.ddgi_params,
+        ],
+        outputs: [probe_active_block_prefixes, gi_counters],
+        shader_setup: ddgi_probe_active_block_prefix_scan_shader_setup,
+      },
+      (graph, frame_data, encoder) => {
+        const pass = graph.get_physical_pass(frame_data.current_pass);
+        pass.dispatch(1, 1, 1);
+      }
+    );
+
+    render_graph.add_pass(
       "ddgi_probe_indices_init",
       RenderPassFlags.Compute,
       {
-        inputs: [this.ddgi_params, probe_update_indices, probe_states, gi_counters],
-        outputs: [probe_update_indices, gi_counters],
+        inputs: [
+          this.ddgi_params,
+          probe_update_indices,
+          probe_active_flags,
+          probe_active_prefix_sum,
+          probe_active_block_prefixes,
+        ],
+        outputs: [probe_update_indices],
         shader_setup: ddgi_probe_indices_init_shader_setup,
       },
       (graph, frame_data, encoder) => {
         const pass = graph.get_physical_pass(frame_data.current_pass);
-        const probe_dispatch_count = Math.ceil(probes_per_frame / COMPUTE_WORKGROUP_SIZE);
-        pass.dispatch(probe_dispatch_count, 1, 1);
+        pass.dispatch(Math.ceil(probe_count / COMPUTE_WORKGROUP_SIZE), 1, 1);
       }
     );
 
@@ -687,13 +797,7 @@ export class DDGI {
       "ddgi_probe_state_classify",
       RenderPassFlags.Compute,
       {
-        inputs: [
-          this.ddgi_params,
-          probe_update_indices,
-          probe_ray_data,
-          probe_states,
-          gi_counters,
-        ],
+        inputs: [this.ddgi_params, probe_update_indices, probe_ray_data, probe_states, gi_counters],
         outputs: [probe_states],
         shader_setup: ddgi_probe_state_classify_shader_setup,
       },

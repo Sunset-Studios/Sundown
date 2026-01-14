@@ -31,6 +31,7 @@
 @group(1) @binding(4) var depth_texture: texture_2d<f32>;
 @group(1) @binding(5) var output_debug: texture_storage_2d<rgba16float, write>;
 
+const STATE_DEBUG_SHOW_ALL: bool = false;
 const STATE_DEBUG_COLOR_OVERLAY_STRENGTH: f32 = 0.0; // Tweak this to show debug colors for probe states (0.0 = no overlay, 1.0 = full overlay)
 
 // =============================================================================
@@ -250,7 +251,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
                     let state_data = probe_state_read(&probe_states, probe_idx);
                     let state = probe_state_get_state(state_data.packed_state);
 
-                    if (!probe_state_is_active(state)) {
+                    if (!STATE_DEBUG_SHOW_ALL && !probe_state_is_active(state)) {
                         continue;
                     }
 
