@@ -17,29 +17,38 @@
 
 const GOLDEN_RATIO_CONJUGATE = 0.6180339887498948;
 
-// =============================================================================
-// OCTAHEDRAL DEPTH MOMENTS CONSTANTS (16x16)
-// =============================================================================
 const DDGI_PROBE_DEPTH_RES = 8u;
 const DDGI_DEPTH_TEXEL_COUNT = 64u;
 
-// =============================================================================
-// DEPTH MOMENTS VISIBILITY CONSTANTS (octahedral, temporally accumulated)
-// =============================================================================
 const DDGI_VISIBILITY_MIN_VARIANCE = 1e-4;
 const DDGI_VISIBILITY_POWER = 2.0;
 const DDGI_VISIBILITY_CONFIDENCE_MIN = 1e-3;
 const DDGI_VISBILITY_DISTANCE_THICKNESS_BIAS = 0.01;
 const DDGI_PERCEPTUAL_FALLOFF_THRESHOLD = 0.05;
 
-// =============================================================================
-// SPHERICAL HARMONICS PROBE CONSTANTS
-// =============================================================================
 // SH probes store L1 RGB coefficients (4 coefficients × 3 channels = 12 floats)
 // packed into 6 u32 values using f16 packing for efficient storage.
-// =============================================================================
 const DDGI_SH_PROBE_SIZE_U32 = 6u;    // Size of packed SH L1 RGB in u32 units
 const DDGI_SH_PROBE_SIZE_F32 = 12u;   // Size of unpacked SH L1 RGB in f32 units
+
+// Probe states - stored as u32 per probe
+const PROBE_STATE_UNINITIALIZED: u32 = 0u;   // Default - needs classification
+const PROBE_STATE_OFF: u32           = 1u;   // Inside static geometry - never trace
+const PROBE_STATE_SLEEPING: u32      = 2u;   // No geometry nearby - skip tracing
+const PROBE_STATE_NEWLY_AWAKE: u32   = 3u;   // Just woken by dynamic - fast converge
+const PROBE_STATE_NEWLY_VIGILANT: u32= 4u;   // Just initialized near static - fast converge
+const PROBE_STATE_VIGILANT: u32      = 5u;   // Near static geometry - always trace
+const PROBE_STATE_AWAKE: u32         = 6u;   // Near dynamic geometry - trace while active
+
+// Classification parameters
+const PROBE_STATE_INIT_FRAMES: u32         = 5u;   // Frames of tracing for classification
+const PROBE_STATE_CONVERGENCE_FRAMES: u32  = 4u;   // Frames for "Newly" states to converge
+const PROBE_STATE_BACKFACE_THRESHOLD: f32  = 0.7;  // Fraction of backface hits = inside geometry
+const PROBE_STATE_NEAR_GEOMETRY_DIST: f32  = 1.0;  // Multiplier of probe_spacing for "near"
+
+// Hysteresis values for different states
+const PROBE_STATE_HYSTERESIS_NEW: f32      = 0.0;   // Newly awake/vigilant - no history blend
+const PROBE_STATE_HYSTERESIS_NORMAL: f32   = 0.95;  // Normal temporal blend factor
 
 struct DDGIParams {
     probe_counts: vec4<f32>,      // x=probe_count, y=rays_per_probe, z=probes_per_frame, w=probe_spacing
@@ -48,7 +57,7 @@ struct DDGIParams {
     probe_grid_log2: vec4<f32>,   // xyz = log2(dim_*), w = unused
     probe_grid_mask: vec4<f32>,   // xyz = (dim_*-1), w = unused
     probe_grid_snap_delta: vec4<f32>, // xyz = delta in probe cells, w = active (1/0)
-    frame_index: u32,
+    frame_index: f32,
     indirect_boost: f32,
     self_shadow_bias: f32,
     _pad0: f32,
@@ -64,6 +73,18 @@ struct DDGIProbeRayData {
     radiance: vec4<f32>,          // xyz = shaded ray radiance, w = 1.0 (or unused)
     meta_u32: vec4<u32>,          // x = probe_index, yzw = reserved
 };
+
+// Per-probe state data (packed into u32s for efficiency)
+// Word 0: state | init_frame_count<<8 | convergence_frame_count<<16 | flags<<24
+// Word 1: nearest_hit_distance (f32 as u32)
+// Word 2: backface_hit_count (for inside-geometry detection)
+// Word 3: reserved for future use
+struct ProbeStateData {
+    packed_state: u32,        // state + counters + flags
+    nearest_hit_dist: u32,    // bitcast from f32
+    backface_count: u32,      // accumulated backface hit count
+    reserved: u32,
+}
 
 // =============================================================================
 // Probe ray data buffer header + wrapper
@@ -433,49 +454,6 @@ fn ddgi_sample_sh_irradiance(
 // ╚═══════════════════════════════════════════════════════════════════════════╝
 // =============================================================================
 
-// =============================================================================
-// PROBE STATE CONSTANTS
-// =============================================================================
-
-// Probe states - stored as u32 per probe
-const PROBE_STATE_UNINITIALIZED: u32 = 0u;   // Default - needs classification
-const PROBE_STATE_OFF: u32           = 1u;   // Inside static geometry - never trace
-const PROBE_STATE_SLEEPING: u32      = 2u;   // No geometry nearby - skip tracing
-const PROBE_STATE_NEWLY_AWAKE: u32   = 3u;   // Just woken by dynamic - fast converge
-const PROBE_STATE_NEWLY_VIGILANT: u32= 4u;   // Just initialized near static - fast converge
-const PROBE_STATE_VIGILANT: u32      = 5u;   // Near static geometry - always trace
-const PROBE_STATE_AWAKE: u32         = 6u;   // Near dynamic geometry - trace while active
-
-// Classification parameters
-const PROBE_STATE_INIT_FRAMES: u32         = 5u;   // Frames of tracing for classification
-const PROBE_STATE_CONVERGENCE_FRAMES: u32  = 4u;   // Frames for "Newly" states to converge
-const PROBE_STATE_BACKFACE_THRESHOLD: f32  = 0.7;  // Fraction of backface hits = inside geometry
-const PROBE_STATE_NEAR_GEOMETRY_DIST: f32  = 1.0;  // Multiplier of probe_spacing for "near"
-
-// Hysteresis values for different states
-const PROBE_STATE_HYSTERESIS_NEW: f32      = 0.0;   // Newly awake/vigilant - no history blend
-const PROBE_STATE_HYSTERESIS_NORMAL: f32   = 0.95;  // Normal temporal blend factor
-
-// =============================================================================
-// PROBE STATE DATA STRUCTURES
-// =============================================================================
-
-// Per-probe state data (packed into u32s for efficiency)
-// Word 0: state | init_frame_count<<8 | convergence_frame_count<<16 | flags<<24
-// Word 1: nearest_hit_distance (f32 as u32)
-// Word 2: backface_hit_count (for inside-geometry detection)
-// Word 3: reserved for future use
-struct ProbeStateData {
-    packed_state: u32,        // state + counters + flags
-    nearest_hit_dist: u32,    // bitcast from f32
-    backface_count: u32,      // accumulated backface hit count
-    reserved: u32,
-}
-
-// =============================================================================
-// PROBE STATE PACKING/UNPACKING
-// =============================================================================
-
 // ─────────────────────────────────────────────────────────────────────────────
 // Extract the probe state from packed data
 // ─────────────────────────────────────────────────────────────────────────────
@@ -514,19 +492,6 @@ fn probe_state_pack(state: u32, init_frames: u32, convergence_frames: u32, flags
            ((flags & 0xFFu) << 24u);
 }
 
-// =============================================================================
-// PROBE STATE QUERY HELPERS
-// =============================================================================
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Check if a probe should be traced this frame
-// ─────────────────────────────────────────────────────────────────────────────
-fn probe_state_should_trace(state: u32) -> bool {
-    // Trace if: UNINITIALIZED, NEWLY_AWAKE, NEWLY_VIGILANT, VIGILANT, or AWAKE
-    // Don't trace if: OFF or SLEEPING
-    return state != PROBE_STATE_OFF && state != PROBE_STATE_SLEEPING;
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
 // Check if a probe is in a "newly" state (needs fast convergence)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -546,16 +511,10 @@ fn probe_state_get_hysteresis(state: u32) -> f32 {
 // Check if a probe should be used for shading
 // ─────────────────────────────────────────────────────────────────────────────
 fn probe_state_is_active(state: u32) -> bool {
-    // Active for shading if: NEWLY_AWAKE, NEWLY_VIGILANT, VIGILANT, or AWAKE
-    return state == PROBE_STATE_NEWLY_AWAKE ||
-           state == PROBE_STATE_NEWLY_VIGILANT ||
-           state == PROBE_STATE_VIGILANT ||
-           state == PROBE_STATE_AWAKE;
+    // Active for tracing if: UNINITIALIZED, NEWLY_AWAKE, NEWLY_VIGILANT, VIGILANT, or AWAKE
+    // Don't trace or use for shading if: OFF or SLEEPING
+    return state != PROBE_STATE_OFF && state != PROBE_STATE_SLEEPING;
 }
-
-// =============================================================================
-// PROBE STATE BUFFER ACCESS
-// =============================================================================
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Read probe state from buffer (read-only access)
@@ -603,10 +562,6 @@ fn probe_state_write(
     (*buffer)[base + 2u] = data.backface_count;
     (*buffer)[base + 3u] = data.reserved;
 }
-
-// =============================================================================
-// PROBE STATE TRANSITION HELPERS
-// =============================================================================
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Transition a probe from UNINITIALIZED based on classification results
@@ -711,8 +666,7 @@ fn ddgi_sample_sh_irradiance_with_states(
                 // ─────────────────────────────────────────────────────────────
                 // State-based weight: skip OFF and SLEEPING probes
                 // ─────────────────────────────────────────────────────────────
-                let state_weight = ddgi_probe_state_weight(probe_states, probe_index);
-                if (state_weight <= 0.0) {
+                if (ddgi_probe_state_weight(probe_states, probe_index) <= 0.0) {
                     continue;
                 }
 
@@ -744,7 +698,7 @@ fn ddgi_sample_sh_irradiance_with_states(
                 let perceptual_linear = luminance(preview_irradiance) / DDGI_PERCEPTUAL_FALLOFF_THRESHOLD;
                 let perceptual_weight = max(perceptual_linear * perceptual_linear, 1e-5);
 
-                let weight = tri_weight * backface_weight * perceptual_weight * visibility_weight * state_weight;
+                let weight = tri_weight * backface_weight * perceptual_weight * visibility_weight;
 
                 sh_sum = sh_l1_rgb_add(sh_sum, sh_l1_rgb_multiply_scalar(probe_sh, weight));
                 weight_sum = weight_sum + weight;

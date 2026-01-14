@@ -31,9 +31,31 @@
 @group(1) @binding(4) var depth_texture: texture_2d<f32>;
 @group(1) @binding(5) var output_debug: texture_storage_2d<rgba16float, write>;
 
+const STATE_DEBUG_COLOR_OVERLAY_STRENGTH: f32 = 0.0; // Tweak this to show debug colors for probe states (0.0 = no overlay, 1.0 = full overlay)
+
 // =============================================================================
-// RAY HELPERS
+// PROBE STATE DEBUG COLORS
 // =============================================================================
+// Visual color key for probe states (used as an overlay on the probe radiance):
+// - UNINITIALIZED     : gray
+// - OFF (in wall)     : dark red
+// - SLEEPING (empty)  : blue
+// - NEWLY_AWAKE       : orange
+// - NEWLY_VIGILANT    : yellow
+// - VIGILANT          : green
+// - AWAKE             : cyan
+// - unknown           : magenta
+fn ddgi_probe_state_debug_color(state: u32) -> vec3<f32> {
+    var color = vec3<f32>(1.0, 0.0, 1.0);
+    color = select(color, vec3<f32>(0.65, 0.65, 0.65), state == PROBE_STATE_UNINITIALIZED);
+    color = select(color, vec3<f32>(0.35, 0.05, 0.05), state == PROBE_STATE_OFF);
+    color = select(color, vec3<f32>(0.10, 0.20, 0.85), state == PROBE_STATE_SLEEPING);
+    color = select(color, vec3<f32>(1.00, 0.45, 0.05), state == PROBE_STATE_NEWLY_AWAKE);
+    color = select(color, vec3<f32>(1.00, 0.95, 0.05), state == PROBE_STATE_NEWLY_VIGILANT);
+    color = select(color, vec3<f32>(0.10, 0.90, 0.10), state == PROBE_STATE_VIGILANT);
+    color = select(color, vec3<f32>(0.10, 0.95, 0.95), state == PROBE_STATE_AWAKE);
+    return color;
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Reconstruct world-space ray direction from pixel UV
@@ -225,23 +247,19 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
                 for (var ox = 0u; ox < 2u; ox = ox + 1u) {
                     let v = base + vec3<u32>(ox, oy, oz);
                     let probe_idx = ddgi_probe_index_from_coord(&ddgi_params, v);
-                    
-                    // Only display active probes (VIGILANT or AWAKE states)
                     let state_data = probe_state_read(&probe_states, probe_idx);
                     let state = probe_state_get_state(state_data.packed_state);
-                    let is_active = state == PROBE_STATE_VIGILANT || 
-                                    state == PROBE_STATE_AWAKE ||
-                                    state == PROBE_STATE_NEWLY_VIGILANT ||
-                                    state == PROBE_STATE_NEWLY_AWAKE;
-                    
-                    if (is_active) {
-                        let center = ddgi_probe_world_position_from_coord(&ddgi_params, v);
-                        let t = sh_debug_ray_sphere_intersect(ray_origin, ray_direction, center, probe_radius);
-                        let valid = t > 0.0 && t >= t_range.x && t <= t_range.y && t < hit_t;
-                        hit_t = select(hit_t, t, valid);
-                        hit_probe_index = select(hit_probe_index, probe_idx, valid);
-                        hit = hit || valid;
+
+                    if (!probe_state_is_active(state)) {
+                        continue;
                     }
+
+                    let center = ddgi_probe_world_position_from_coord(&ddgi_params, v);
+                    let t = sh_debug_ray_sphere_intersect(ray_origin, ray_direction, center, probe_radius);
+                    let valid = t > 0.0 && t >= t_range.x && t <= t_range.y && t < hit_t;
+                    hit_t = select(hit_t, t, valid);
+                    hit_probe_index = select(hit_probe_index, probe_idx, valid);
+                    hit = hit || valid;
                 }
             }
         }
@@ -316,7 +334,17 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let exposure = 1.2;
     let mapped_color = aces_tonemapping(sphere_radiance, exposure);
     let display_color = pow(clamp(mapped_color, vec3<f32>(0.0), vec3<f32>(1.0)), vec3<f32>(1.0 / 2.2));
-    
-    textureStore(output_debug, pixel_coord, vec4f(display_color, 1.0));
+
+    // -------------------------------------------------------------------------
+    // State overlay (high-contrast state visualization)
+    // -------------------------------------------------------------------------
+    let hit_state_data = probe_state_read(&probe_states, hit_probe_index);
+    let hit_state = probe_state_get_state(hit_state_data.packed_state);
+    let state_color = ddgi_probe_state_debug_color(hit_state);
+
+    // Blend: keep some radiance info but strongly tint by state.
+    let final_color = mix(display_color, state_color, STATE_DEBUG_COLOR_OVERLAY_STRENGTH);
+
+    textureStore(output_debug, pixel_coord, vec4f(final_color, 1.0));
 }
 

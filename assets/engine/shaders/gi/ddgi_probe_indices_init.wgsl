@@ -32,22 +32,31 @@
 @compute @workgroup_size(128, 1, 1)
 fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let probe_count = u32(ddgi_params.probe_counts.x);
-    
-    if (gid.x >= probe_count) {
+    let probes_per_frame = u32(ddgi_params.probe_counts.z);
+    let candidate_count = min(probes_per_frame, probe_count);
+
+    if (gid.x >= candidate_count) {
         return;
     }
-    
-    // ─────────────────────────────────────────────────────────────────────────
-    // Read probe state and check if it should be traced
-    // ─────────────────────────────────────────────────────────────────────────
-    let state_data = probe_state_read(&probe_states, gid.x);
+
+    // -------------------------------------------------------------------------
+    // Round-robin probe selection
+    // -------------------------------------------------------------------------
+    let frame_index_u32 = u32(ddgi_params.frame_index);
+    let base_probe_index = frame_index_u32 * probes_per_frame;
+    let probe_index = (base_probe_index + gid.x) % max(probe_count, 1u);
+
+    // -------------------------------------------------------------------------
+    // Read probe state and include only probes that should be traced
+    // -------------------------------------------------------------------------
+    let state_data = probe_state_read(&probe_states, probe_index);
     let state = probe_state_get_state(state_data.packed_state);
-    
-    // Only include probes that should trace this frame
-    if (probe_state_should_trace(state)) {
-        // Atomically allocate a slot in the update indices array
+
+    if (probe_state_is_active(state)) {
+        // Atomically allocate a slot in the update indices array.
+        // Max writes per frame are bounded by `candidate_count <= probes_per_frame`.
         let slot = atomicAdd(&gi_counters.probe_update_count, 1u);
-        probe_update_indices[slot] = gid.x;
+        probe_update_indices[slot] = probe_index;
     }
 
 }

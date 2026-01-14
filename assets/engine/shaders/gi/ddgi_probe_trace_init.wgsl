@@ -68,8 +68,7 @@ fn ddgi_probe_ray_direction_spherical_fibonacci(
 @compute @workgroup_size(128, 1, 1)
 fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let rays_per_probe = u32(ddgi_params.probe_counts.y);
-    let active_probe_count = atomicLoad(&gi_counters.probe_update_count);
-    let total_rays = active_probe_count * rays_per_probe;
+    let total_rays = atomicLoad(&gi_counters.probe_update_count) * rays_per_probe;
     let max_rays = u32(ddgi_params.probe_counts.z) * rays_per_probe;
 
     if (gid.x >= max_rays) {

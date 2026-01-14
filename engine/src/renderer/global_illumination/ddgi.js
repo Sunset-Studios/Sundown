@@ -90,10 +90,11 @@ const ddgi_probe_state_classify_shader_setup = {
 
 export class DDGI {
   config = {
-    probe_grid_dimensions: [32, 32, 32],
+    probe_grid_dimensions: [64, 64, 64],
     probe_spacing: 4.0,
     probe_radius: 0.2,
     rays_per_probe: 32,
+    probes_per_frame: 4096,
     indirect_boost: 1.0,
     self_shadow_bias: 0.0,
   };
@@ -294,9 +295,10 @@ export class DDGI {
     // │ Probe update budget (temporal cycling)                                       │
     // └─────────────────────────────────────────────────────────────────────────────┘
     // Update only a subset of probes per frame and rotate through the full set
-    // temporally. The selection itself is generated on the GPU by
-    // `gi/ddgi_probe_indices_init.wgsl`.
-    const probes_per_frame = probe_count;
+    // temporally. The selection itself is generated on the GPU by `gi/ddgi_probe_indices_init.wgsl`.
+    const probes_per_frame_cfg = Math.max(0, Math.floor(this.config.probes_per_frame));
+    const probes_per_frame =
+      probes_per_frame_cfg === 0 ? probe_count : Math.min(probe_count, probes_per_frame_cfg);
     const rays_per_probe = Math.max(1, Math.floor(this.config.rays_per_probe));
     const probe_primary_ray_count = probes_per_frame * rays_per_probe;
     const probe_total_ray_count = probe_primary_ray_count;
@@ -556,7 +558,7 @@ export class DDGI {
       },
       (graph, frame_data, encoder) => {
         const pass = graph.get_physical_pass(frame_data.current_pass);
-        const probe_dispatch_count = Math.ceil(probe_count / COMPUTE_WORKGROUP_SIZE);
+        const probe_dispatch_count = Math.ceil(probes_per_frame / COMPUTE_WORKGROUP_SIZE);
         pass.dispatch(probe_dispatch_count, 1, 1);
       }
     );
@@ -690,6 +692,7 @@ export class DDGI {
           probe_update_indices,
           probe_ray_data,
           probe_states,
+          gi_counters,
         ],
         outputs: [probe_states],
         shader_setup: ddgi_probe_state_classify_shader_setup,
