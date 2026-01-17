@@ -1,21 +1,35 @@
 // =============================================================================
-// DDGI Active Probe Prefix Sum
-// - Pass 2 of active-only probe cycling:
-//   Computes an exclusive prefix sum over the permuted active_flags array.
-// - Output:
-//   prefix_sum[i] = number of active flags in [0..i)
-//   block_sums[b] = total active flags in workgroup b
+// ╔═══════════════════════════════════════════════════════════════════════════╗
+// ║                    DDGI Active Probe Prefix Sum                           ║
+// ╠═══════════════════════════════════════════════════════════════════════════╣
+// ║                                                                           ║
+// ║  Pass 2 of active-only probe cycling with frustum culling priority:       ║
+// ║  - Computes exclusive prefix sums over BOTH the permuted active flag      ║
+// ║    arrays (nonculled and culled) in a single pass.                        ║
+// ║                                                                           ║
+// ║  Output:                                                                  ║
+// ║  - prefix_sum_nonculled[i] = number of nonculled active flags in [0..i)   ║
+// ║  - prefix_sum_culled[i] = number of culled active flags in [0..i)         ║
+// ║  - block_sums_nonculled[b] = total nonculled active flags in workgroup b  ║
+// ║  - block_sums_culled[b] = total culled active flags in workgroup b        ║
+// ║                                                                           ║
+// ╚═══════════════════════════════════════════════════════════════════════════╝
 // =============================================================================
 
 #include "common.wgsl"
 
-@group(1) @binding(0) var<storage, read> active_flags_in: array<u32>;
-@group(1) @binding(1) var<storage, read_write> prefix_sum: array<u32>;
-@group(1) @binding(2) var<storage, read_write> block_sums: array<u32>;
+@group(1) @binding(0) var<storage, read> active_flags_nonculled_in: array<u32>;
+@group(1) @binding(1) var<storage, read> active_flags_culled_in: array<u32>;
+@group(1) @binding(2) var<storage, read_write> prefix_sum_nonculled: array<u32>;
+@group(1) @binding(3) var<storage, read_write> prefix_sum_culled: array<u32>;
+@group(1) @binding(4) var<storage, read_write> block_sums_nonculled: array<u32>;
+@group(1) @binding(5) var<storage, read_write> block_sums_culled: array<u32>;
 
 const WORKGROUP_SIZE = 128u;
 
-var<workgroup> subgroup_sums: array<u32, 4u>;
+// Workgroup shared memory for both categories
+var<workgroup> subgroup_sums_nonculled: array<u32, 4u>;
+var<workgroup> subgroup_sums_culled: array<u32, 4u>;
 
 @compute @workgroup_size(WORKGROUP_SIZE, 1, 1)
 fn cs(
@@ -30,52 +44,106 @@ fn cs(
     let global_idx = gid.x;
     let local_idx = lid.x;
     let workgroup_idx = wid.x;
+    let array_len = arrayLength(&active_flags_nonculled_in);
 
-    let value = select(0u, active_flags_in[global_idx], global_idx < arrayLength(&active_flags_in));
+    // ─────────────────────────────────────────────────────────────────────────
+    // Load values for both categories
+    // ─────────────────────────────────────────────────────────────────────────
+    let value_nonculled = select(0u, active_flags_nonculled_in[global_idx], global_idx < array_len);
+    let value_culled = select(0u, active_flags_culled_in[global_idx], global_idx < array_len);
 
 #if HAS_SUBGROUPS
+    // ─────────────────────────────────────────────────────────────────────────
+    // Subgroup path: process nonculled
+    // ─────────────────────────────────────────────────────────────────────────
     let warp_ctx = make_warp_ctx(local_idx, sid, ss);
-    let subgroup_exclusive = warp_scan_exclusive_add_u32(warp_ctx, value);
-    let subgroup_total = warp_reduce_add_u32(warp_ctx, value);
+    
+    let subgroup_exclusive_nonculled = warp_scan_exclusive_add_u32(warp_ctx, value_nonculled);
+    let subgroup_total_nonculled = warp_reduce_add_u32(warp_ctx, value_nonculled);
 
     if (is_warp_leader(warp_ctx)) {
-        subgroup_sums[sid] = subgroup_total;
+        subgroup_sums_nonculled[sid] = subgroup_total_nonculled;
     }
     workgroupBarrier();
 
-    var prefix_from_previous_subgroups = 0u;
+    var prefix_from_prev_sg_nonculled = 0u;
     for (var i = 0u; i < sid; i = i + 1u) {
-        prefix_from_previous_subgroups = prefix_from_previous_subgroups + subgroup_sums[i];
+        prefix_from_prev_sg_nonculled = prefix_from_prev_sg_nonculled + subgroup_sums_nonculled[i];
     }
 
-    let final_exclusive = subgroup_exclusive + prefix_from_previous_subgroups;
+    let final_exclusive_nonculled = subgroup_exclusive_nonculled + prefix_from_prev_sg_nonculled;
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Subgroup path: process culled
+    // ─────────────────────────────────────────────────────────────────────────
+    let subgroup_exclusive_culled = warp_scan_exclusive_add_u32(warp_ctx, value_culled);
+    let subgroup_total_culled = warp_reduce_add_u32(warp_ctx, value_culled);
+
+    if (is_warp_leader(warp_ctx)) {
+        subgroup_sums_culled[sid] = subgroup_total_culled;
+    }
+    workgroupBarrier();
+
+    var prefix_from_prev_sg_culled = 0u;
+    for (var i = 0u; i < sid; i = i + 1u) {
+        prefix_from_prev_sg_culled = prefix_from_prev_sg_culled + subgroup_sums_culled[i];
+    }
+
+    let final_exclusive_culled = subgroup_exclusive_culled + prefix_from_prev_sg_culled;
+
 #else
+    // ─────────────────────────────────────────────────────────────────────────
+    // Logical warp path: process nonculled
+    // ─────────────────────────────────────────────────────────────────────────
     let lane = lane_id(local_idx, LOGICAL_WARP_SIZE);
     let warp_id_local = warp_id(local_idx, LOGICAL_WARP_SIZE);
-
     let warp_ctx = make_warp_ctx(local_idx, lane, LOGICAL_WARP_SIZE);
-    let warp_exclusive = warp_scan_exclusive_add_u32(warp_ctx, value);
-    let warp_total = warp_reduce_add_u32(warp_ctx, value);
+
+    let warp_exclusive_nonculled = warp_scan_exclusive_add_u32(warp_ctx, value_nonculled);
+    let warp_total_nonculled = warp_reduce_add_u32(warp_ctx, value_nonculled);
 
     if (is_warp_leader(warp_ctx)) {
-        subgroup_sums[warp_id_local] = warp_total;
+        subgroup_sums_nonculled[warp_id_local] = warp_total_nonculled;
     }
     workgroupBarrier();
 
-    var prefix_from_previous_warps = 0u;
+    var prefix_from_prev_warps_nonculled = 0u;
     for (var i = 0u; i < warp_id_local; i = i + 1u) {
-        prefix_from_previous_warps = prefix_from_previous_warps + subgroup_sums[i];
+        prefix_from_prev_warps_nonculled = prefix_from_prev_warps_nonculled + subgroup_sums_nonculled[i];
     }
 
-    let final_exclusive = warp_exclusive + prefix_from_previous_warps;
+    let final_exclusive_nonculled = warp_exclusive_nonculled + prefix_from_prev_warps_nonculled;
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Logical warp path: process culled
+    // ─────────────────────────────────────────────────────────────────────────
+    let warp_exclusive_culled = warp_scan_exclusive_add_u32(warp_ctx, value_culled);
+    let warp_total_culled = warp_reduce_add_u32(warp_ctx, value_culled);
+
+    if (is_warp_leader(warp_ctx)) {
+        subgroup_sums_culled[warp_id_local] = warp_total_culled;
+    }
+    workgroupBarrier();
+
+    var prefix_from_prev_warps_culled = 0u;
+    for (var i = 0u; i < warp_id_local; i = i + 1u) {
+        prefix_from_prev_warps_culled = prefix_from_prev_warps_culled + subgroup_sums_culled[i];
+    }
+
+    let final_exclusive_culled = warp_exclusive_culled + prefix_from_prev_warps_culled;
 #endif
 
-    if (global_idx < arrayLength(&prefix_sum)) {
-        prefix_sum[global_idx] = final_exclusive;
+    // ─────────────────────────────────────────────────────────────────────────
+    // Write results for both categories
+    // ─────────────────────────────────────────────────────────────────────────
+    if (global_idx < arrayLength(&prefix_sum_nonculled)) {
+        prefix_sum_nonculled[global_idx] = final_exclusive_nonculled;
+        prefix_sum_culled[global_idx] = final_exclusive_culled;
     }
 
+    // Write block sums (last thread in workgroup)
     if (local_idx == WORKGROUP_SIZE - 1u) {
-        block_sums[workgroup_idx] = final_exclusive + value;
+        block_sums_nonculled[workgroup_idx] = final_exclusive_nonculled + value_nonculled;
+        block_sums_culled[workgroup_idx] = final_exclusive_culled + value_culled;
     }
 }
-

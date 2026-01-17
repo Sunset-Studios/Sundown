@@ -1334,8 +1334,7 @@ export class DeferredShadingStrategy {
       }
 
       // ┌─────────────────────────────────────────────────────────────────────────────┐
-      // │ 🌟 PASS: Radiance Cascades                                                 │
-      // │    Real-time global illumination using radiance cascades                    │
+      // │ 🌟 PASS: Real-Time Global Illumination                                     │
       // └─────────────────────────────────────────────────────────────────────────────┘
       if (gi_enabled) {
         this.gi.add_passes(
@@ -1356,12 +1355,13 @@ export class DeferredShadingStrategy {
           mesh_asset_ids_buffer,
           dense_lights,
           draw_count,
+          main_hzb_image,
           this.force_recreate
         );
       }
 
       // ┌─────────────────────────────────────────────────────────────────────────────┐
-      // │ 🌟 PASS: GTAO                                                              │
+      // │ 🌟 PASS: GTAO                                                               │
       // │    Ground Truth Ambient Occlusion                                           │
       // └─────────────────────────────────────────────────────────────────────────────┘
       if (gtao_enabled) {

@@ -3,17 +3,21 @@
 // ║                    DDGI PROBE INDICES INITIALIZATION                      ║
 // ╠═══════════════════════════════════════════════════════════════════════════╣
 // ║                                                                           ║
-// ║  Builds the list of probes to update this frame based on probe states.   ║
+// ║  Builds the list of probes to update this frame with frustum culling      ║
+// ║  priority. Non-culled (visible) probes are prioritized over culled ones.  ║
 // ║                                                                           ║
-// ║  Updated strategy (active-only):                                          ║
-// ║  - A prior "mark + prefix-sum" pipeline builds an active flag array over  ║
-// ║    a deterministic, frame-shifted permutation of probes.                  ║
-// ║  - This pass scatters the first `probes_per_frame` active probes into     ║
-// ║    `probe_update_indices`.                                                ║
+// ║  Priority Strategy:                                                       ║
+// ║  ┌─────────────────────────────────────────────────────────────────────┐  ║
+// ║  │ Case 1: nonculled_count >= probes_per_frame                         │  ║
+// ║  │   → Stochastically select probes_per_frame from nonculled probes    │  ║
+// ║  │                                                                     │  ║
+// ║  │ Case 2: nonculled_count < probes_per_frame                          │  ║
+// ║  │   → Add ALL nonculled probes (deterministic, slots 0..nonculled-1)  │  ║
+// ║  │   → Stochastically fill remaining slots from culled probes          │  ║
+// ║  └─────────────────────────────────────────────────────────────────────┘  ║
 // ║                                                                           ║
-// ║  The output probe_update_indices array contains:                          ║
-// ║  - Indices of all probes that need tracing                                ║
-// ║  - Compacted via atomic counter for efficient dispatch                    ║
+// ║  The stochastic selection uses a frame-shifted permutation to ensure      ║
+// ║  temporal coverage of all probes while avoiding structured artifacts.     ║
 // ║                                                                           ║
 // ╚═══════════════════════════════════════════════════════════════════════════╝
 // =============================================================================
@@ -27,9 +31,19 @@
 
 @group(1) @binding(0) var<uniform> ddgi_params: DDGIParams;
 @group(1) @binding(1) var<storage, read_write> probe_update_indices: array<u32>;
-@group(1) @binding(2) var<storage, read> active_flags_in: array<u32>;
-@group(1) @binding(3) var<storage, read> prefix_sum_in: array<u32>;
-@group(1) @binding(4) var<storage, read> block_prefixes_in: array<u32>;
+
+// Non-culled probe data (visible in frustum)
+@group(1) @binding(2) var<storage, read> active_flags_nonculled: array<u32>;
+@group(1) @binding(3) var<storage, read> prefix_sum_nonculled: array<u32>;
+@group(1) @binding(4) var<storage, read> block_prefixes_nonculled: array<u32>;
+
+// Culled probe data (outside frustum)
+@group(1) @binding(5) var<storage, read> active_flags_culled: array<u32>;
+@group(1) @binding(6) var<storage, read> prefix_sum_culled: array<u32>;
+@group(1) @binding(7) var<storage, read> block_prefixes_culled: array<u32>;
+
+// Counters containing total nonculled/culled counts
+@group(1) @binding(8) var<storage, read_write> gi_counters: GICounters;
 
 // =============================================================================
 // STOCHASTIC (BUT DETERMINISTIC) PROBE CYCLING
@@ -128,15 +142,66 @@ fn cs(
         return;
     }
 
-    // -------------------------------------------------------------------------
-    // Scatter active probes (in permuted order) into a dense update list
-    // -------------------------------------------------------------------------
-    let global_prefix = prefix_sum_in[slot] + block_prefixes_in[wid.x];
+    // ─────────────────────────────────────────────────────────────────────────
+    // Read total counts from GI counters
+    // (ray_queue_shadow_head stores nonculled count, ray_queue_primary_head stores culled count)
+    // ─────────────────────────────────────────────────────────────────────────
+    let total_nonculled = atomicLoad(&gi_counters.ray_queue_shadow_head);
+    let total_culled = atomicLoad(&gi_counters.ray_queue_primary_head);
 
-    if (active_flags_in[slot] != 0u && global_prefix < probes_per_frame) {
-        let probe_index = ddgi_probe_index_from_permuted_slot(slot, probe_count, frame_index_u32);
-        probe_update_indices[global_prefix] = probe_index;
+    // ─────────────────────────────────────────────────────────────────────────
+    // Get the probe index from the permuted slot
+    // ─────────────────────────────────────────────────────────────────────────
+    let probe_index = ddgi_probe_index_from_permuted_slot(slot, probe_count, frame_index_u32);
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Priority Scheduling Logic
+    // ─────────────────────────────────────────────────────────────────────────
+    // Case 1: More nonculled probes than budget
+    //   → Select probes_per_frame from nonculled using stochastic permutation
+    //
+    // Case 2: Fewer nonculled probes than budget
+    //   → Add ALL nonculled probes deterministically (slots 0 to nonculled-1)
+    //   → Fill remaining slots with culled probes stochastically
+    // ─────────────────────────────────────────────────────────────────────────
+
+    if (total_nonculled >= probes_per_frame) {
+        // ─────────────────────────────────────────────────────────────────────
+        // Case 1: Stochastically select from nonculled probes only
+        // This is like the original algorithm, but only considers nonculled
+        // ─────────────────────────────────────────────────────────────────────
+        let global_prefix_nonculled = prefix_sum_nonculled[slot] + block_prefixes_nonculled[wid.x];
+
+        if (active_flags_nonculled[slot] != 0u && global_prefix_nonculled < probes_per_frame) {
+            probe_update_indices[global_prefix_nonculled] = probe_index;
+        }
+    } else {
+        // ─────────────────────────────────────────────────────────────────────
+        // Case 2: Add all nonculled, then fill with culled
+        // ─────────────────────────────────────────────────────────────────────
+        let global_prefix_nonculled = prefix_sum_nonculled[slot] + block_prefixes_nonculled[wid.x];
+        let global_prefix_culled = prefix_sum_culled[slot] + block_prefixes_culled[wid.x];
+
+        // Calculate how many culled probes we can add to fill the remaining budget
+        let remaining_budget = probes_per_frame - total_nonculled;
+
+        // ─────────────────────────────────────────────────────────────────────
+        // Scatter nonculled probes: ALL of them go to slots [0, total_nonculled)
+        // These are added deterministically (no stochastic selection needed)
+        // ─────────────────────────────────────────────────────────────────────
+        if (active_flags_nonculled[slot] != 0u) {
+            // Nonculled probes are placed at the beginning of the update list
+            probe_update_indices[global_prefix_nonculled] = probe_index;
+        }
+
+        // ─────────────────────────────────────────────────────────────────────
+        // Scatter culled probes: stochastically fill slots [total_nonculled, probes_per_frame)
+        // Only add up to remaining_budget culled probes
+        // ─────────────────────────────────────────────────────────────────────
+        if (active_flags_culled[slot] != 0u && global_prefix_culled < remaining_budget) {
+            // Culled probes are placed after the nonculled ones
+            let output_slot = total_nonculled + global_prefix_culled;
+            probe_update_indices[output_slot] = probe_index;
+        }
     }
 }
-
-

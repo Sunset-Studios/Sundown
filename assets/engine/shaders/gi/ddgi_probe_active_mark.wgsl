@@ -3,13 +3,20 @@
 // ║                       DDGI ACTIVE PROBE MARK                              ║
 // ╠═══════════════════════════════════════════════════════════════════════════╣
 // ║                                                                           ║
-// ║  Pass 1 of active-only probe cycling:                                     ║
-// ║  - Builds an "active flag" array (0/1) over a deterministic permutation   ║
-// ║    of probe indices.                                                     ║
+// ║  Pass 1 of active-only probe cycling with frustum culling priority:       ║
+// ║  - Builds two "active flag" arrays over a deterministic permutation of    ║
+// ║    probe indices: one for non-culled active, one for culled active.       ║
 // ║  - The permutation is frame-shifted so we cycle through the active set    ║
 // ║    temporally without structured artifacts.                               ║
 // ║                                                                           ║
-// ║  Output: active_flags_permuted[i] == 1 when the permuted probe is active  ║
+// ║  Output:                                                                  ║
+// ║  - active_flags_nonculled[slot] = 1 when permuted probe is active AND     ║
+// ║    visible in frustum                                                     ║
+// ║  - active_flags_culled[slot] = 1 when permuted probe is active AND        ║
+// ║    culled (not in frustum)                                                ║
+// ║                                                                           ║
+// ║  This dual-output enables the scheduling system to prioritize visible     ║
+// ║  probes while still updating culled probes stochastically.                ║
 // ║                                                                           ║
 // ╚═══════════════════════════════════════════════════════════════════════════╝
 // =============================================================================
@@ -23,7 +30,8 @@
 
 @group(1) @binding(0) var<uniform> ddgi_params: DDGIParams;
 @group(1) @binding(1) var<storage, read> probe_states: array<ProbeStateData>;
-@group(1) @binding(2) var<storage, read_write> active_flags: array<u32>;
+@group(1) @binding(2) var<storage, read_write> active_flags_nonculled: array<u32>;
+@group(1) @binding(3) var<storage, read_write> active_flags_culled: array<u32>;
 
 // =============================================================================
 // STOCHASTIC (BUT DETERMINISTIC) PERMUTATION HELPERS
@@ -95,12 +103,28 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         return;
     }
 
+    // ─────────────────────────────────────────────────────────────────────────
+    // Get the probe index from the permuted slot
+    // ─────────────────────────────────────────────────────────────────────────
     let probe_index = ddgi_probe_index_from_permuted_slot(slot, probe_count, frame_index_u32);
 
-    let state_data = probe_state_read(&probe_states, probe_index);
-    let state = probe_state_get_state(state_data.packed_state);
+    // ─────────────────────────────────────────────────────────────────────────
+    // Check if probe is active (based on probe state)
+    // ─────────────────────────────────────────────────────────────────────────
+    let state = probe_state_get_state(probe_states[probe_index].packed_state);
+    let is_active = probe_state_is_active(state);
 
-    // Store flag in permuted order (slot-space).
-    active_flags[slot] = select(0u, 1u, probe_state_is_active(state));
+    // ─────────────────────────────────────────────────────────────────────────
+    // Check if probe is in frustum and visible (from cull_flags in probe state data)
+    // ─────────────────────────────────────────────────────────────────────────
+    let is_culled = probe_states[probe_index].cull_flags == 0u;
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Output to appropriate flag array based on culling status
+    // - Non-culled active probes get priority in scheduling
+    // - Culled active probes are scheduled stochastically to fill remaining budget
+    // ─────────────────────────────────────────────────────────────────────────
+    // Store flags in permuted order (slot-space)
+    active_flags_nonculled[slot] = select(0u, 1u, is_active && !is_culled);
+    active_flags_culled[slot] = select(0u, 1u, is_active && is_culled);
 }
-

@@ -178,8 +178,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     // Probe state-based hysteresis override
     // "Newly" states (NEWLY_AWAKE, NEWLY_VIGILANT) use fast convergence
     // ─────────────────────────────────────────────────────────────────────────
-    let state_data = probe_state_read(&probe_states, probe_index);
-    let probe_state = probe_state_get_state(state_data.packed_state);
+    let probe_state = probe_state_get_state(probe_states[probe_index].packed_state);
     let is_newly_state = probe_state_is_newly(probe_state);
 
     // Luminance-driven hysteresis:

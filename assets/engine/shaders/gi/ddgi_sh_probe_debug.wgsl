@@ -248,8 +248,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
                 for (var ox = 0u; ox < 2u; ox = ox + 1u) {
                     let v = base + vec3<u32>(ox, oy, oz);
                     let probe_idx = ddgi_probe_index_from_coord(&ddgi_params, v);
-                    let state_data = probe_state_read(&probe_states, probe_idx);
-                    let state = probe_state_get_state(state_data.packed_state);
+                    let state = probe_state_get_state(probe_states[probe_idx].packed_state);
 
                     if (!STATE_DEBUG_SHOW_ALL && !probe_state_is_active(state)) {
                         continue;
@@ -339,8 +338,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     // -------------------------------------------------------------------------
     // State overlay (high-contrast state visualization)
     // -------------------------------------------------------------------------
-    let hit_state_data = probe_state_read(&probe_states, hit_probe_index);
-    let hit_state = probe_state_get_state(hit_state_data.packed_state);
+    let hit_state = probe_state_get_state(probe_states[hit_probe_index].packed_state);
     let state_color = ddgi_probe_state_debug_color(hit_state);
 
     // Blend: keep some radiance info but strongly tint by state.

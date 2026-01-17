@@ -148,7 +148,6 @@ struct FragmentOutput {
     color += (gi_direct + gi_indirect_diffuse + gi_indirect_specular) * albedo;
 #else
     // Only use split GI as *indirect* when doing classic deferred direct lighting.
-    let irradiance = gi_indirect_diffuse;
     let num_lights = dense_lights_buffer.header.light_count * (1u - unlit);
     for (var light_index = 0u; light_index < num_lights; light_index++) {
         var light = dense_lights_buffer.lights[light_index];
@@ -195,7 +194,7 @@ struct FragmentOutput {
             0.0, // clear coat
             0.0, // clear coat roughness 
             ao,
-            irradiance, // irradiance
+            gi_indirect_diffuse, // irradiance
             vec3f(0.01, 0.01, 0.01), // prefilter color 
             vec2f(1.0, 1.0), // env brdf
             shadow_factor,

@@ -106,15 +106,21 @@ const ddgi_probe_state_classify_shader_setup = {
   },
 };
 
+const ddgi_probe_cull_shader_setup = {
+  pipeline_shaders: {
+    compute: { path: "gi/ddgi_probe_cull.wgsl" },
+  },
+};
+
 export class DDGI {
   config = {
     probe_grid_dimensions: [64, 64, 64],
     probe_spacing: 4.0,
     probe_radius: 0.2,
     rays_per_probe: 32,
-    probes_per_frame: 2048,
+    probes_per_frame: 512,
     indirect_boost: 1.0,
-    self_shadow_bias: 0.2,
+    self_shadow_bias: 0.3,
   };
 
   ddgi_frame_setup = {
@@ -195,6 +201,7 @@ export class DDGI {
     mesh_asset_ids,
     dense_lights,
     draw_count,
+    hzb_texture,
     force_recreate = false
   ) {
     // ┌─────────────────────────────────────────────────────────────────────────────┐
@@ -240,6 +247,7 @@ export class DDGI {
         entity_transforms,
         mesh_asset_ids,
         dense_lights,
+        hzb_texture,
         force_recreate
       );
     }
@@ -304,6 +312,7 @@ export class DDGI {
     entity_transforms,
     mesh_asset_ids,
     dense_lights,
+    hzb_texture,
     force_recreate
   ) {
     const grid_dims = this._sanitize_probe_grid_dimensions(this.config.probe_grid_dimensions);
@@ -459,19 +468,35 @@ export class DDGI {
     });
 
     // ─────────────────────────────────────────────────────────────────────────
-    // Active-only probe scheduling (mark → prefix sum → scatter)
-    // - We build a permuted active-flag array over all probes, then scatter the
-    //   first `probes_per_frame` active probes into `probe_update_indices`.
+    // Active-only probe scheduling with frustum culling priority
+    // (cull → mark → prefix sum → scatter)
+    // - We build TWO permuted active-flag arrays: one for non-culled active
+    //   probes and one for culled active probes.
+    // - Non-culled probes are prioritized in the update list.
     // ─────────────────────────────────────────────────────────────────────────
-    const probe_active_flags = render_graph.create_buffer({
-      name: "ddgi_probe_active_flags",
+    const probe_active_flags_nonculled = render_graph.create_buffer({
+      name: "ddgi_probe_active_flags_nonculled",
       size: probe_count,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
       force: force_recreate,
     });
 
-    const probe_active_prefix_sum = render_graph.create_buffer({
-      name: "ddgi_probe_active_prefix_sum",
+    const probe_active_flags_culled = render_graph.create_buffer({
+      name: "ddgi_probe_active_flags_culled",
+      size: probe_count,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+      force: force_recreate,
+    });
+
+    const probe_active_prefix_sum_nonculled = render_graph.create_buffer({
+      name: "ddgi_probe_active_prefix_sum_nonculled",
+      size: probe_count,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+      force: force_recreate,
+    });
+
+    const probe_active_prefix_sum_culled = render_graph.create_buffer({
+      name: "ddgi_probe_active_prefix_sum_culled",
       size: probe_count,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
       force: force_recreate,
@@ -479,15 +504,29 @@ export class DDGI {
 
     const probe_active_block_count = Math.ceil(probe_count / COMPUTE_WORKGROUP_SIZE);
 
-    const probe_active_block_sums = render_graph.create_buffer({
-      name: "ddgi_probe_active_block_sums",
+    const probe_active_block_sums_nonculled = render_graph.create_buffer({
+      name: "ddgi_probe_active_block_sums_nonculled",
       size: probe_active_block_count,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
       force: force_recreate,
     });
 
-    const probe_active_block_prefixes = render_graph.create_buffer({
-      name: "ddgi_probe_active_block_prefixes",
+    const probe_active_block_sums_culled = render_graph.create_buffer({
+      name: "ddgi_probe_active_block_sums_culled",
+      size: probe_active_block_count,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+      force: force_recreate,
+    });
+
+    const probe_active_block_prefixes_nonculled = render_graph.create_buffer({
+      name: "ddgi_probe_active_block_prefixes_nonculled",
+      size: probe_active_block_count,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+      force: force_recreate,
+    });
+
+    const probe_active_block_prefixes_culled = render_graph.create_buffer({
+      name: "ddgi_probe_active_block_prefixes_culled",
       size: probe_active_block_count,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
       force: force_recreate,
@@ -607,12 +646,43 @@ export class DDGI {
       }
     );
 
+    // ─────────────────────────────────────────────────────────────────────────
+    // Probe Frustum & Occlusion Culling Pass
+    // Marks each probe as visible (1) or culled (0) based on:
+    // - Frustum culling: Is the probe inside the view frustum?
+    // - Occlusion culling: Is the probe visible in the Hierarchical Z-Buffer?
+    // Writes cull flags directly into ProbeStateData.cull_flags field
+    // ─────────────────────────────────────────────────────────────────────────
+    render_graph.add_pass(
+      "ddgi_probe_cull",
+      RenderPassFlags.Compute,
+      {
+        inputs: [this.ddgi_params, probe_states, hzb_texture],
+        outputs: [probe_states],
+        shader_setup: ddgi_probe_cull_shader_setup,
+      },
+      (graph, frame_data, encoder) => {
+        const pass = graph.get_physical_pass(frame_data.current_pass);
+        pass.dispatch(Math.ceil(probe_count / COMPUTE_WORKGROUP_SIZE), 1, 1);
+      }
+    );
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Probe Active Mark Pass (with frustum culling priority)
+    // Outputs two flag arrays: one for non-culled active, one for culled active
+    // Reads cull flags from ProbeStateData.cull_flags (set by ddgi_probe_cull)
+    // ─────────────────────────────────────────────────────────────────────────
     render_graph.add_pass(
       "ddgi_probe_active_mark",
       RenderPassFlags.Compute,
       {
-        inputs: [this.ddgi_params, probe_states, probe_active_flags],
-        outputs: [probe_active_flags],
+        inputs: [
+          this.ddgi_params,
+          probe_states,
+          probe_active_flags_nonculled,
+          probe_active_flags_culled,
+        ],
+        outputs: [probe_active_flags_nonculled, probe_active_flags_culled],
         shader_setup: ddgi_probe_active_mark_shader_setup,
       },
       (graph, frame_data, encoder) => {
@@ -621,12 +691,27 @@ export class DDGI {
       }
     );
 
+    // ─────────────────────────────────────────────────────────────────────────
+    // Probe Active Prefix Sum Pass (handles both nonculled and culled)
+    // ─────────────────────────────────────────────────────────────────────────
     render_graph.add_pass(
       "ddgi_probe_active_prefix_sum",
       RenderPassFlags.Compute,
       {
-        inputs: [probe_active_flags, probe_active_prefix_sum, probe_active_block_sums],
-        outputs: [probe_active_prefix_sum, probe_active_block_sums],
+        inputs: [
+          probe_active_flags_nonculled,
+          probe_active_flags_culled,
+          probe_active_prefix_sum_nonculled,
+          probe_active_prefix_sum_culled,
+          probe_active_block_sums_nonculled,
+          probe_active_block_sums_culled,
+        ],
+        outputs: [
+          probe_active_prefix_sum_nonculled,
+          probe_active_prefix_sum_culled,
+          probe_active_block_sums_nonculled,
+          probe_active_block_sums_culled,
+        ],
         shader_setup: ddgi_probe_active_prefix_sum_shader_setup,
       },
       (graph, frame_data, encoder) => {
@@ -635,17 +720,27 @@ export class DDGI {
       }
     );
 
+    // ─────────────────────────────────────────────────────────────────────────
+    // Probe Active Block Prefix Scan Pass (handles both nonculled and culled)
+    // Also writes total counts to gi_counters for scheduling logic
+    // ─────────────────────────────────────────────────────────────────────────
     render_graph.add_pass(
       "ddgi_probe_active_block_prefix_scan",
       RenderPassFlags.Compute,
       {
         inputs: [
-          probe_active_block_sums,
-          probe_active_block_prefixes,
+          probe_active_block_sums_nonculled,
+          probe_active_block_sums_culled,
+          probe_active_block_prefixes_nonculled,
+          probe_active_block_prefixes_culled,
           gi_counters,
           this.ddgi_params,
         ],
-        outputs: [probe_active_block_prefixes, gi_counters],
+        outputs: [
+          probe_active_block_prefixes_nonculled,
+          probe_active_block_prefixes_culled,
+          gi_counters,
+        ],
         shader_setup: ddgi_probe_active_block_prefix_scan_shader_setup,
       },
       (graph, frame_data, encoder) => {
@@ -654,6 +749,10 @@ export class DDGI {
       }
     );
 
+    // ─────────────────────────────────────────────────────────────────────────
+    // Probe Indices Init Pass (with frustum culling priority)
+    // Prioritizes non-culled probes, then fills remaining budget with culled
+    // ─────────────────────────────────────────────────────────────────────────
     render_graph.add_pass(
       "ddgi_probe_indices_init",
       RenderPassFlags.Compute,
@@ -661,9 +760,13 @@ export class DDGI {
         inputs: [
           this.ddgi_params,
           probe_update_indices,
-          probe_active_flags,
-          probe_active_prefix_sum,
-          probe_active_block_prefixes,
+          probe_active_flags_nonculled,
+          probe_active_prefix_sum_nonculled,
+          probe_active_block_prefixes_nonculled,
+          probe_active_flags_culled,
+          probe_active_prefix_sum_culled,
+          probe_active_block_prefixes_culled,
+          gi_counters,
         ],
         outputs: [probe_update_indices],
         shader_setup: ddgi_probe_indices_init_shader_setup,

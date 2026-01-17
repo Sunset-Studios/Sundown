@@ -89,7 +89,7 @@ struct ProbeStateData {
     packed_state: u32,        // state | init_frame_count | convergence_frame_count | flags
     nearest_hit_dist: u32,    // bitcast from f32
     backface_ratio: f32,      // accumulated backface hit ratio
-    padding: u32,             // padding for future use
+    cull_flags: u32,          // frustum/occlusion cull result (1 = visible, 0 = culled)
     probe_offset: vec4<f32>,  // xyz = probe position offset in world-space, w = unused
 }
 
@@ -392,37 +392,6 @@ fn probe_state_is_active(state: u32) -> bool {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Read probe state from buffer (read-only access)
-// ─────────────────────────────────────────────────────────────────────────────
-fn probe_state_read(
-    buffer: ptr<storage, array<ProbeStateData>, read>,
-    probe_index: u32
-) -> ProbeStateData {
-    return (*buffer)[probe_index];
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Read probe state from buffer (read-write access, for modify passes)
-// ─────────────────────────────────────────────────────────────────────────────
-fn probe_state_read_rw(
-    buffer: ptr<storage, array<ProbeStateData>, read_write>,
-    probe_index: u32
-) -> ProbeStateData {
-    return (*buffer)[probe_index];
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Write probe state to buffer
-// ─────────────────────────────────────────────────────────────────────────────
-fn probe_state_write(
-    buffer: ptr<storage, array<ProbeStateData>, read_write>,
-    probe_index: u32,
-    data: ProbeStateData
-) {
-    (*buffer)[probe_index] = data;
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
 // Probe world position with per-probe offset
 // ─────────────────────────────────────────────────────────────────────────────
 fn ddgi_probe_world_position_from_index_with_offset(
@@ -431,8 +400,7 @@ fn ddgi_probe_world_position_from_index_with_offset(
     probe_index: u32
 ) -> vec3<f32> {
     let base_pos = ddgi_probe_world_position_from_index(ddgi_params, probe_index);
-    let state_data = probe_state_read(probe_states, probe_index);
-    return base_pos + state_data.probe_offset.xyz;
+    return base_pos + probe_states[probe_index].probe_offset.xyz;
 }
 
 fn ddgi_probe_world_position_from_coord_with_offset(
@@ -489,7 +457,7 @@ fn ddgi_probe_state_weight(
     probe_states: ptr<storage, array<ProbeStateData>, read>,
     probe_index: u32
 ) -> f32 {
-    let state_data = probe_state_read(probe_states, probe_index);
+    let state_data = probe_states[probe_index];
     let state = probe_state_get_state(state_data.packed_state);
     return select(0.0, 1.0, probe_state_is_active(state));
 }
@@ -555,8 +523,7 @@ fn ddgi_sample_sh_irradiance_with_states(
         // ─────────────────────────────────────────────────────────────
         // Read probe state data for offset and state check
         // ─────────────────────────────────────────────────────────────
-        let state_data = probe_state_read(probe_states, probe_index);
-        let probe_state = probe_state_get_state(state_data.packed_state);
+        let probe_state = probe_state_get_state(probe_states[probe_index].packed_state);
         
         // Skip OFF and SLEEPING probes
         if (!probe_state_is_active(probe_state)) {
@@ -566,7 +533,7 @@ fn ddgi_sample_sh_irradiance_with_states(
         var weight = 1.0;
 
         let base_pos = ddgi_probe_world_position_from_coord_with_offset(ddgi_params, probe_states, clamped_coord);
-        let probe_pos = base_pos + state_data.probe_offset.xyz;
+        let probe_pos = base_pos + probe_states[probe_index].probe_offset.xyz;
         let dir_to_probe = safe_normalize(probe_pos - position);
 
         // Backface weight

@@ -95,11 +95,10 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     // ─────────────────────────────────────────────────────────────────────────
     // Read current probe state (using read_write version for modify pass)
     // ─────────────────────────────────────────────────────────────────────────
-    var state_data = probe_state_read_rw(&probe_states, probe_index);
-    var current_state = probe_state_get_state(state_data.packed_state);
-    var init_frames = probe_state_get_init_frames(state_data.packed_state);
-    var convergence_frames = probe_state_get_convergence_frames(state_data.packed_state);
-    let flags = probe_state_get_flags(state_data.packed_state);
+    var current_state = probe_state_get_state(probe_states[probe_index].packed_state);
+    var init_frames = probe_state_get_init_frames(probe_states[probe_index].packed_state);
+    var convergence_frames = probe_state_get_convergence_frames(probe_states[probe_index].packed_state);
+    let flags = probe_state_get_flags(probe_states[probe_index].packed_state);
     
     // ─────────────────────────────────────────────────────────────────────────
     // Process based on current state
@@ -115,13 +114,13 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
             let nearest_hit = ray_analysis.y;
             
             // Accumulate statistics
-            let prev_backface_ratio = state_data.backface_ratio;
-            let prev_nearest = bitcast<f32>(state_data.nearest_hit_dist);
+            let prev_backface_ratio = probe_states[probe_index].backface_ratio;
+            let prev_nearest = bitcast<f32>(probe_states[probe_index].nearest_hit_dist);
             
             // Running average for backface ratio
             let weight = 1.0 / f32(init_frames + 1u);
             let new_avg_backface = mix(prev_backface_ratio, backface_ratio, weight);
-            state_data.backface_ratio = new_avg_backface;
+            probe_states[probe_index].backface_ratio = new_avg_backface;
             
             // Track minimum nearest hit
             let new_nearest = select(
@@ -129,15 +128,15 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
                 nearest_hit,
                 init_frames == 0u
             );
-            state_data.nearest_hit_dist = bitcast<u32>(new_nearest);
+            probe_states[probe_index].nearest_hit_dist = bitcast<u32>(new_nearest);
             
             init_frames = init_frames + 1u;
             
             // After enough frames, classify the probe
             if (init_frames >= PROBE_STATE_INIT_FRAMES) {
                 current_state = probe_state_classify_initial(
-                    state_data.backface_ratio,
-                    bitcast<f32>(state_data.nearest_hit_dist),
+                    probe_states[probe_index].backface_ratio,
+                    bitcast<f32>(probe_states[probe_index].nearest_hit_dist),
                     spacing
                 );
                 
@@ -202,6 +201,5 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     // ─────────────────────────────────────────────────────────────────────────
     // Write updated state
     // ─────────────────────────────────────────────────────────────────────────
-    state_data.packed_state = probe_state_pack(current_state, init_frames, convergence_frames, flags);
-    probe_state_write(&probe_states, probe_index, state_data);
+    probe_states[probe_index].packed_state = probe_state_pack(current_state, init_frames, convergence_frames, flags);
 }

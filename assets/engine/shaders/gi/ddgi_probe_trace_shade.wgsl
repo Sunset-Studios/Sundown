@@ -49,6 +49,14 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let sun_dir = normalize(-view_buffer[light_view_index].view_direction.xyz);
     let num_lights = dense_lights_buffer.header.light_count;
 
+    // Backface leak reduction:
+    // - Backface hits are encoded with negative t values.
+    // - We record 0 radiance to avoid lighting surfaces that should be shadowed.
+    if (hit.hit_pos_t.w < 0.0) {
+        probe_ray_data.rays[gid.x].radiance = vec4f(0.0, 0.0, 0.0, 1.0);
+        return;
+    }
+
     // Backface hits are encoded as negative t values in hit_pos_t.w.
     let is_miss = hit.state_u32.w == 0xffffffffu;
     if (is_miss) {
@@ -56,13 +64,8 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         let env_radiance = evaluate_environment(ray_dir, sun_dir, scene_lighting_data, skybox_texture);
         probe_ray_data.rays[gid.x].radiance = vec4f(safe_clamp_vec3_max(env_radiance, MAX_RADIANCE_LUMINANCE), 1.0);
     }
-
-    // Backface leak reduction:
-    // - Backface hits are encoded with negative t values.
-    // - We record 0 radiance to avoid lighting surfaces that should be shadowed.
-    if (hit.hit_pos_t.w < 0.0) {
-        probe_ray_data.rays[gid.x].radiance = vec4f(0.0, 0.0, 0.0, 1.0);
-    } else if (!is_miss) {
+    
+    if (!is_miss) {
         // Ray hit: shade the hit.
         let prim_store = hit.state_u32.x;
         let section_index = u32(hit.world_n_section.w);
@@ -123,6 +126,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
             let max_contribution = emissive * PI * (1.0 / hit_distance);
             let scale = min(1.0, max_contribution / max(luminance(emissive_radiance), 0.001));
             radiance += safe_clamp_vec3_max(emissive_radiance * scale, MAX_NEE_LUMINANCE);
+            radiance *= (1.0 / (2.0 * PI));
         }
 
         // -----------------------------------------------------------------------------
