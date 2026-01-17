@@ -25,7 +25,7 @@
 
 @group(1) @binding(0) var<uniform> ddgi_params: DDGIParams;
 @group(1) @binding(1) var<storage, read_write> sh_probes: array<u32>;
-@group(1) @binding(2) var<storage, read> probe_states: array<u32>;
+@group(1) @binding(2) var<storage, read> probe_states: array<ProbeStateData>;
 @group(1) @binding(3) var<storage, read> probe_depth_moments: array<vec4<f32>>;
 @group(1) @binding(4) var gbuffer_position: texture_2d<f32>;
 @group(1) @binding(5) var gbuffer_normal: texture_2d<f32>;
@@ -52,7 +52,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     // ─────────────────────────────────────────────────────────────────────────
     // Skip sky pixels (no geometry)
     // ─────────────────────────────────────────────────────────────────────────
-    if (length(normal_data.xyz) <= 0.001) {
+    if (length(normal_data.xyz) <= 0.0) {
         textureStore(output_diffuse, pixel_coord, vec4f(0.0));
         return;
     }

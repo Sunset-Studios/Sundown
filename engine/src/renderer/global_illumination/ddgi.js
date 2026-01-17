@@ -13,7 +13,7 @@ import { ResourceCache } from "../resource_cache.js";
 import { ispot, npot } from "../../utility/math.js";
 
 const COMPUTE_WORKGROUP_SIZE = 128;
-const DDGI_PROBE_DEPTH_RES = 8;
+const DDGI_PROBE_DEPTH_RES = 16;
 const DDGI_PROBE_DEPTH_TEXEL_COUNT = DDGI_PROBE_DEPTH_RES * DDGI_PROBE_DEPTH_RES;
 const DDGI_PROBE_RAY_DATA_HEADER_WORDS = 4; // 16 bytes (aligned)
 const DDGI_PROBE_RAY_DATA_WORDS_PER_RAY = 32; // 8 vec4s = 32 x u32 words
@@ -112,9 +112,9 @@ export class DDGI {
     probe_spacing: 4.0,
     probe_radius: 0.2,
     rays_per_probe: 32,
-    probes_per_frame: 1024,
+    probes_per_frame: 2048,
     indirect_boost: 1.0,
-    self_shadow_bias: 0.0,
+    self_shadow_bias: 0.2,
   };
 
   ddgi_frame_setup = {
@@ -543,11 +543,12 @@ export class DDGI {
 
     // ─────────────────────────────────────────────────────────────────────────
     // Probe State Buffers
-    // ProbeStateData = 4 u32 per probe (packed_state, nearest_hit_dist, backface_count, reserved)
+    // - [0..3] packed_state, nearest_hit_dist, backface_count, reserved
+    // - [4..7] probe_offset (vec4<f32>)
     // ─────────────────────────────────────────────────────────────────────────
     const probe_states = render_graph.create_buffer({
       name: "ddgi_probe_states",
-      size: probe_count * 4,
+      size: probe_count * 8,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
       force: force_recreate,
     });
@@ -707,6 +708,7 @@ export class DDGI {
           entity_transforms,
           mesh_asset_ids,
           dense_lights,
+          probe_states,
         ],
         outputs: [probe_ray_data],
         shader_setup: ddgi_probe_trace_hit_shader_setup,

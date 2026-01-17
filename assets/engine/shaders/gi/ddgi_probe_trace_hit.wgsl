@@ -17,6 +17,7 @@
 @group(1) @binding(5) var<storage, read> entity_transforms: array<EntityTransform>;
 @group(1) @binding(6) var<storage, read> mesh_asset_ids: array<u32>;
 @group(1) @binding(7) var<storage, read> dense_lights_buffer: DenseLightsBuffer;
+@group(1) @binding(8) var<storage, read> probe_states: array<ProbeStateData>;
 
 // =============================================================================
 // BLAS TRAVERSAL
@@ -413,7 +414,7 @@ fn trace_hit_any(ray: ptr<function, Ray>) -> bool {
 // =============================================================================
 fn process_shadow_visibility(index: u32, ray_origin: vec3<f32>, ray_dir: vec3<f32>, t_max: f32) {
     var ray: Ray;
-    ray.origin_and_tmin = vec4f(ray_origin + ray_dir * 0.001, 0.001);
+    ray.origin_and_tmin = vec4f(ray_origin + ray_dir * 0.001, 0.0);
     ray.direction_and_tmax = vec4f(ray_dir, t_max);
     ray.inv_direction = vec4f(
         1.0 / max(abs(ray.direction_and_tmax.x), 1e-8) * select(1.0, -1.0, ray.direction_and_tmax.x < 0.0),
@@ -439,7 +440,7 @@ fn process_primary_ray(
     ray_index_in_probe: u32,
 ) {
     var ray: Ray;
-    ray.origin_and_tmin = vec4f(probe_position + ray_dir * 0.001, 0.001);
+    ray.origin_and_tmin = vec4f(probe_position + ray_dir * 0.001, 0.0);
     ray.direction_and_tmax = vec4f(ray_dir, 1e30);
     ray.inv_direction = vec4f(
         1.0 / max(abs(ray_dir.x), 1e-8) * select(1.0, -1.0, ray_dir.x < 0.0),
@@ -453,7 +454,7 @@ fn process_primary_ray(
     probe_ray_data.rays[index].meta_u32.x = probe_index;
     let ray_pdf = probe_ray_data.rays[index].ray_dir_prim.w;
     probe_ray_data.rays[index].ray_dir_prim = vec4f(ray_dir, ray_pdf);
-    probe_ray_data.rays[index].hit_pos_t = vec4f(0.0, 0.0, 0.0, -1.0);
+    probe_ray_data.rays[index].hit_pos_t = vec4f(0.0, 0.0, 0.0, 0.0);
 
     let hit_result = trace_hit(&ray);
 
@@ -513,19 +514,19 @@ fn process_primary_ray(
         var world_b = safe_normalize((entity_transform.transform * vec4<f32>(b_local, 0.0)).xyz);
 
         let ray_is_backfacing = dot(world_n, ray_dir) > 0.0;
-        world_n = select(world_n, -world_n, ray_is_backfacing);
-        world_t = select(world_t, -world_t, ray_is_backfacing);
-        world_b = select(world_b, -world_b, ray_is_backfacing);
+        //world_n = select(world_n, -world_n, ray_is_backfacing);
+        //world_t = select(world_t, -world_t, ray_is_backfacing);
+        //world_b = select(world_b, -world_b, ray_is_backfacing);
 
         let section_index = u32(vertex_buffer[v0i].section_index);
 
         // Backface rays:
-        // - Tag them so the shade pass can zero irradiance (leak reduction).
+        // - Mark with NEGATIVE distance so the shade pass can zero irradiance (leak reduction).
         // - Shorten their stored depth by 80% (multiply by 0.2) for conservative visibility.
         //   (World hit position stays unmodified; we only adjust the stored "t".)
-        probe_ray_data.rays[index].state_u32.y =
-            probe_ray_data.rays[index].state_u32.y | select(0u, 2u, ray_is_backfacing);
-        let stored_t = select(t_tri, t_tri * 0.2, ray_is_backfacing);
+        // - Using negative distance allows efficient backface counting without extra flags,
+        //   enabling robust dead probe detection even with non-manifold geometry.
+        let stored_t = select(t_tri, -t_tri, ray_is_backfacing);
         probe_ray_data.rays[index].hit_pos_t = vec4f(p_world, stored_t);
         probe_ray_data.rays[index].ray_dir_prim = vec4f(ray_dir, ray_pdf);
         probe_ray_data.rays[index].world_n_section = vec4f(world_n, f32(section_index));
@@ -574,7 +575,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let probe_slot = gid.x / rays_per_probe;
     let ray_index_in_probe = gid.x - probe_slot * rays_per_probe;
     let probe_index = probe_ray_data.rays[gid.x].meta_u32.x;
-    let probe_position = ddgi_probe_world_position_from_index(&ddgi_params, probe_index);
+    let probe_position = ddgi_probe_world_position_from_index_with_offset(&ddgi_params, &probe_states, probe_index);
 
     let ray_dir = probe_ray_data.rays[gid.x].ray_dir_prim.xyz;
     process_primary_ray(gid.x, probe_position, ray_dir, probe_index, ray_index_in_probe);

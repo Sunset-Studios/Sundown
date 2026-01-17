@@ -26,7 +26,7 @@
 @group(1) @binding(0) var<uniform> ddgi_params: DDGIParams;
 @group(1) @binding(1) var<storage, read> probe_update_indices: array<u32>;
 @group(1) @binding(2) var<storage, read_write> probe_ray_data: DDGIProbeRayDataBuffer;
-@group(1) @binding(3) var<storage, read_write> probe_states: array<u32>;
+@group(1) @binding(3) var<storage, read_write> probe_states: array<ProbeStateData>;
 @group(1) @binding(4) var<storage, read_write> gi_counters: GICounters;
 
 // =============================================================================
@@ -35,6 +35,7 @@
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Analyze ray hit data to determine backface ratio and nearest hit
+// Backface hits are encoded as negative t values in the ray data.
 // ─────────────────────────────────────────────────────────────────────────────
 fn analyze_probe_rays(
     probe_slot: u32,
@@ -49,17 +50,17 @@ fn analyze_probe_rays(
     
     for (var i = 0u; i < rays_per_probe; i = i + 1u) {
         let ray_index = ray_base + i;
-        let t = probe_ray_data.rays[ray_index].hit_pos_t.w;
+        let t_raw = probe_ray_data.rays[ray_index].hit_pos_t.w;
         
-        // Check if ray hit something (t > 0)
-        if (t > 0.0) {
+        // Backface hits are encoded as negative t values.
+        // t_raw < 0 = backface hit
+        // t_raw > 0 = frontface hit
+        let is_hit = probe_ray_data.rays[ray_index].state_u32.w != INVALID_IDX;
+        
+        if (is_hit) {
             hit_count = hit_count + 1u;
-            // Check if backface hit (flagged in state_u32.y bit 1)
-            if ((probe_ray_data.rays[ray_index].state_u32.y & 2u) != 0u) {
-                backface_count = backface_count + 1u;
-            } else {
-                nearest_hit = min(nearest_hit, t);
-            }
+            backface_count = select(backface_count, backface_count + 1u, t_raw < 0.0);
+            nearest_hit = select(nearest_hit, min(nearest_hit, t_raw), t_raw > 0.0);
         }
     }
     
@@ -89,17 +90,16 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
 
     let probe_index = probe_update_indices[gid.x];
+    let spacing = ddgi_params.probe_counts.w;
     
     // ─────────────────────────────────────────────────────────────────────────
     // Read current probe state (using read_write version for modify pass)
     // ─────────────────────────────────────────────────────────────────────────
     var state_data = probe_state_read_rw(&probe_states, probe_index);
-    let current_state = probe_state_get_state(state_data.packed_state);
+    var current_state = probe_state_get_state(state_data.packed_state);
     var init_frames = probe_state_get_init_frames(state_data.packed_state);
     var convergence_frames = probe_state_get_convergence_frames(state_data.packed_state);
     let flags = probe_state_get_flags(state_data.packed_state);
-    
-    var new_state = current_state;
     
     // ─────────────────────────────────────────────────────────────────────────
     // Process based on current state
@@ -115,14 +115,13 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
             let nearest_hit = ray_analysis.y;
             
             // Accumulate statistics
-            let prev_backface_count = state_data.backface_count;
+            let prev_backface_ratio = state_data.backface_ratio;
             let prev_nearest = bitcast<f32>(state_data.nearest_hit_dist);
             
             // Running average for backface ratio
             let weight = 1.0 / f32(init_frames + 1u);
-            let avg_backface = f32(prev_backface_count) / 100.0;
-            let new_avg_backface = mix(avg_backface, backface_ratio, weight);
-            state_data.backface_count = u32(new_avg_backface * 100.0);
+            let new_avg_backface = mix(prev_backface_ratio, backface_ratio, weight);
+            state_data.backface_ratio = new_avg_backface;
             
             // Track minimum nearest hit
             let new_nearest = select(
@@ -136,16 +135,12 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
             
             // After enough frames, classify the probe
             if (init_frames >= PROBE_STATE_INIT_FRAMES) {
-                let final_backface_ratio = f32(state_data.backface_count) / 100.0;
-                let final_nearest = bitcast<f32>(state_data.nearest_hit_dist);
-                
-                new_state = probe_state_classify_initial(
-                    final_backface_ratio,
-                    final_nearest,
-                    ddgi_params.probe_counts.w // probe_spacing
+                current_state = probe_state_classify_initial(
+                    state_data.backface_ratio,
+                    bitcast<f32>(state_data.nearest_hit_dist),
+                    spacing
                 );
                 
-                // Reset counters for the new state
                 init_frames = 0u;
                 convergence_frames = 0u;
             }
@@ -156,7 +151,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         // ═══════════════════════════════════════════════════════════════════
         case PROBE_STATE_OFF: {
             // OFF probes stay off permanently
-            new_state = PROBE_STATE_OFF;
+            current_state = PROBE_STATE_OFF;
         }
         
         // ═══════════════════════════════════════════════════════════════════
@@ -165,7 +160,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         // ═══════════════════════════════════════════════════════════════════
         case PROBE_STATE_SLEEPING: {
             // Sleeping probes stay sleeping until externally woken
-            new_state = PROBE_STATE_SLEEPING;
+            current_state = PROBE_STATE_SLEEPING;
         }
         
         // ═══════════════════════════════════════════════════════════════════
@@ -175,7 +170,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
             convergence_frames = convergence_frames + 1u;
             
             if (convergence_frames >= PROBE_STATE_CONVERGENCE_FRAMES) {
-                new_state = PROBE_STATE_VIGILANT;
+                current_state = PROBE_STATE_VIGILANT;
                 convergence_frames = 0u;
             }
         }
@@ -185,7 +180,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         // ═══════════════════════════════════════════════════════════════════
         case PROBE_STATE_VIGILANT: {
             // Vigilant probes stay vigilant (they shade static geometry)
-            new_state = PROBE_STATE_VIGILANT;
+            current_state = PROBE_STATE_VIGILANT;
         }
         
         // ═══════════════════════════════════════════════════════════════════
@@ -193,12 +188,12 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         // ═══════════════════════════════════════════════════════════════════
         case PROBE_STATE_NEWLY_AWAKE, PROBE_STATE_AWAKE: {
             // For now, treat awake probes as vigilant
-            new_state = PROBE_STATE_VIGILANT;
+            current_state = PROBE_STATE_VIGILANT;
         }
         
         default: {
             // Unknown state - reset to uninitialized
-            new_state = PROBE_STATE_UNINITIALIZED;
+            current_state = PROBE_STATE_UNINITIALIZED;
             init_frames = 0u;
             convergence_frames = 0u;
         }
@@ -207,6 +202,6 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     // ─────────────────────────────────────────────────────────────────────────
     // Write updated state
     // ─────────────────────────────────────────────────────────────────────────
-    state_data.packed_state = probe_state_pack(new_state, init_frames, convergence_frames, flags);
+    state_data.packed_state = probe_state_pack(current_state, init_frames, convergence_frames, flags);
     probe_state_write(&probe_states, probe_index, state_data);
 }

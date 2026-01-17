@@ -29,7 +29,7 @@
 @group(1) @binding(3) var<storage, read_write> sh_probes: array<u32>;
 @group(1) @binding(4) var<storage, read_write> sample_counts: array<u32>;
 @group(1) @binding(5) var<storage, read_write> probe_depth_moments: array<vec4<f32>>;
-@group(1) @binding(6) var<storage, read> probe_states: array<u32>;
+@group(1) @binding(6) var<storage, read> probe_states: array<ProbeStateData>;
 @group(1) @binding(7) var<storage, read_write> gi_counters: GICounters;
 
 // =============================================================================
@@ -41,7 +41,6 @@
 const SPHERE_AREA = 12.566370614359172; // 4 * PI
 
 // Depth moments update
-const DDGI_DEPTH_RES = 8.0;
 const DDGI_DEPTH_SAMPLE_COUNT_CAP = 32.0;
 
 // -----------------------------------------------------------------------------
@@ -136,9 +135,6 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         
         sh_new = sh_l1_rgb_add(sh_new, sample_sh);
 
-        // ---------------------------------------------------------------------
-        // Depth moments binning (no splatting)
-        // ---------------------------------------------------------------------
         let spacing = ddgi_params.probe_counts.w;
         let max_dim = max(
             ddgi_params.probe_grid_dims.x,
@@ -147,13 +143,14 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         let miss_distance = max(1.0, spacing * max_dim * 2.0);
 
         let t_raw = hit_data.hit_pos_t.w;
-        let t = min(select(miss_distance, t_raw, t_raw > 0.0), miss_distance);
+        let is_valid_hit = hit_data.state_u32.w != INVALID_IDX;
+        let t = min(select(miss_distance, abs(t_raw), is_valid_hit && t_raw > 0.0), miss_distance);
         let t2 = t * t;
 
         let uv = encode_octahedral(safe_normalize(ray_dir));
-        let tx = min(u32(uv.x * DDGI_DEPTH_RES), u32(DDGI_DEPTH_RES) - 1u);
-        let ty = min(u32(uv.y * DDGI_DEPTH_RES), u32(DDGI_DEPTH_RES) - 1u);
-        let texel_id = tx + ty * u32(DDGI_DEPTH_RES);
+        let tx = min(u32(uv.x * f32(DDGI_PROBE_DEPTH_RES)), DDGI_PROBE_DEPTH_RES - 1u);
+        let ty = min(u32(uv.y * f32(DDGI_PROBE_DEPTH_RES)), DDGI_PROBE_DEPTH_RES - 1u);
+        let texel_id = tx + ty * DDGI_PROBE_DEPTH_RES;
 
         let depth_idx = depth_base + texel_id;
         var moments = probe_depth_moments[depth_idx];
@@ -161,9 +158,9 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         let new_count = min(moments.w + 1.0, DDGI_DEPTH_SAMPLE_COUNT_CAP);
 
         // Online update: mean <- mean + (x - mean) / n
-        let inv_n = 1.0 / max(new_count, 1.0);
-        moments.x += (t - moments.x) * inv_n;
-        moments.y += (t2 - moments.y) * inv_n;
+        let alpha = 1.0 / max(new_count, 1.0);
+        moments.x = mix(moments.x, t, alpha);
+        moments.y = mix(moments.y, t2, alpha);
         moments.z = clamp(new_count / DDGI_DEPTH_SAMPLE_COUNT_CAP, 0.0, 1.0);
         moments.w = new_count;
 

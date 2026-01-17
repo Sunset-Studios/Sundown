@@ -26,7 +26,7 @@
 
 @group(1) @binding(0) var<uniform> ddgi_params: DDGIParams;
 @group(1) @binding(1) var<storage, read_write> sh_probes: array<u32>;
-@group(1) @binding(2) var<storage, read> probe_states: array<u32>;
+@group(1) @binding(2) var<storage, read> probe_states: array<ProbeStateData>;
 @group(1) @binding(3) var scene_color: texture_2d<f32>;
 @group(1) @binding(4) var depth_texture: texture_2d<f32>;
 @group(1) @binding(5) var output_debug: texture_storage_2d<rgba16float, write>;
@@ -255,7 +255,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
                         continue;
                     }
 
-                    let center = ddgi_probe_world_position_from_coord(&ddgi_params, v);
+                    let center = ddgi_probe_world_position_from_coord_with_offset(&ddgi_params, &probe_states, v);
                     let t = sh_debug_ray_sphere_intersect(ray_origin, ray_direction, center, probe_radius);
                     let valid = t > 0.0 && t >= t_range.x && t <= t_range.y && t < hit_t;
                     hit_t = select(hit_t, t, valid);
@@ -320,7 +320,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     // - We visualize a Lambertian-equivalent radiance preview: L = E / PI
     // - This tends to match how the probe field contributes to diffuse surfaces
     // ─────────────────────────────────────────────────────────────────────────
-    let probe_center = ddgi_probe_world_position_from_index(&ddgi_params, hit_probe_index);
+    let probe_center = ddgi_probe_world_position_from_index_with_offset(&ddgi_params, &probe_states, hit_probe_index);
     let hit_pos = ray_origin + ray_direction * hit_t;
     let sphere_normal = safe_normalize(hit_pos - probe_center);
     

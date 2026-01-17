@@ -13,7 +13,7 @@
 @group(1) @binding(0) var<uniform> ddgi_params: DDGIParams;
 @group(1) @binding(1) var<uniform> scene_lighting_data: SceneLightingData;
 @group(1) @binding(2) var<storage, read_write> probe_ray_data: DDGIProbeRayDataBuffer;
-@group(1) @binding(3) var<storage, read> probe_states: array<u32>;
+@group(1) @binding(3) var<storage, read> probe_states: array<ProbeStateData>;
 @group(1) @binding(4) var<storage, read> material_params: array<StandardMaterialParams>;
 @group(1) @binding(5) var<storage, read> material_table_offset: array<u32>;
 @group(1) @binding(6) var<storage, read> material_palette: array<u32>;
@@ -49,18 +49,20 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let sun_dir = normalize(-view_buffer[light_view_index].view_direction.xyz);
     let num_lights = dense_lights_buffer.header.light_count;
 
-    if (hit.state_u32.w == 0xffffffffu) {
+    // Backface hits are encoded as negative t values in hit_pos_t.w.
+    let is_miss = hit.state_u32.w == 0xffffffffu;
+    if (is_miss) {
         // Ray miss: evaluate environment radiance.
         let env_radiance = evaluate_environment(ray_dir, sun_dir, scene_lighting_data, skybox_texture);
         probe_ray_data.rays[gid.x].radiance = vec4f(safe_clamp_vec3_max(env_radiance, MAX_RADIANCE_LUMINANCE), 1.0);
     }
 
     // Backface leak reduction:
-    // - Backface hits are tagged in the hit pass (alive bitfield: bit1).
+    // - Backface hits are encoded with negative t values.
     // - We record 0 radiance to avoid lighting surfaces that should be shadowed.
-    if ((hit.state_u32.y & 2u) != 0u) {
+    if (hit.hit_pos_t.w < 0.0) {
         probe_ray_data.rays[gid.x].radiance = vec4f(0.0, 0.0, 0.0, 1.0);
-    } else if (hit.state_u32.w != 0xffffffffu) {
+    } else if (!is_miss) {
         // Ray hit: shade the hit.
         let prim_store = hit.state_u32.x;
         let section_index = u32(hit.world_n_section.w);
@@ -115,7 +117,12 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         var radiance = vec3<f32>(0.0);
 
         if (emissive > 0.0) {
-            radiance += emissive * albedo;
+            let emissive_radiance = emissive * albedo;
+            let hit_distance = max(hit.hit_pos_t.w, 0.001);
+                
+            let max_contribution = emissive * PI * (1.0 / hit_distance);
+            let scale = min(1.0, max_contribution / max(luminance(emissive_radiance), 0.001));
+            radiance += safe_clamp_vec3_max(emissive_radiance * scale, MAX_NEE_LUMINANCE);
         }
 
         // -----------------------------------------------------------------------------

@@ -94,7 +94,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     // - z = shadow_visible (set by hit pass)
     // - w = tri_id_local (filled by hit pass, 0xffffffff if miss)
     probe_ray_data.rays[gid.x].state_u32 = vec4<u32>(INVALID_IDX, 1u, 0u, INVALID_IDX);
-    probe_ray_data.rays[gid.x].hit_pos_t = vec4f(0.0, 0.0, 0.0, -1.0);
+    probe_ray_data.rays[gid.x].hit_pos_t = vec4f(0.0, 0.0, 0.0, 0.0);
     probe_ray_data.rays[gid.x].radiance = vec4f(0.0, 0.0, 0.0, 1.0);
     probe_ray_data.rays[gid.x].meta_u32 = vec4<u32>(probe_index, 0u, 0u, 0u);
 

@@ -16,12 +16,10 @@
 // =============================================================================
 
 const GOLDEN_RATIO_CONJUGATE = 0.6180339887498948;
-
-const DDGI_PROBE_DEPTH_RES = 8u;
-const DDGI_DEPTH_TEXEL_COUNT = 64u;
-
-const DDGI_VISIBILITY_MIN_VARIANCE = 1e-4;
-const DDGI_VISIBILITY_POWER = 2.0;
+const DDGI_PROBE_DEPTH_RES = 16u;
+const DDGI_DEPTH_TEXEL_COUNT = 256u;
+const DDGI_VISIBILITY_MIN_VARIANCE = 1e-2;
+const DDGI_VISIBILITY_POWER = 1.0;
 const DDGI_VISIBILITY_CONFIDENCE_MIN = 1e-3;
 const DDGI_VISBILITY_DISTANCE_THICKNESS_BIAS = 0.01;
 const DDGI_PERCEPTUAL_FALLOFF_THRESHOLD = 0.05;
@@ -43,12 +41,25 @@ const PROBE_STATE_AWAKE: u32         = 6u;   // Near dynamic geometry - trace wh
 // Classification parameters
 const PROBE_STATE_INIT_FRAMES: u32         = 5u;   // Frames of tracing for classification
 const PROBE_STATE_CONVERGENCE_FRAMES: u32  = 4u;   // Frames for "Newly" states to converge
-const PROBE_STATE_BACKFACE_THRESHOLD: f32  = 0.7;  // Fraction of backface hits = inside geometry
+const PROBE_STATE_BACKFACE_THRESHOLD: f32  = 0.45;  // Fraction of backface hits = inside geometry
 const PROBE_STATE_NEAR_GEOMETRY_DIST: f32  = 1.0;  // Multiplier of probe_spacing for "near"
+
+// Dead probe detection:
+// To minimize calculations, we reuse ray-tracing information. Backface hits are
+// encoded with negative distances in the ray data (hit_pos_t.w < 0). A probe is
+// considered "dead" (inside geometry) when the fraction of backface hits exceeds
+// PROBE_STATE_BACKFACE_THRESHOLD. This approach handles non-manifold and
+// intersecting geometry robustly by counting multiple rays rather than relying
+// on a single ray test.
+//
+// Based on "Improving Probes in Dynamic Diffuse Global Illumination" by D. Rohacek et al.
 
 // Hysteresis values for different states
 const PROBE_STATE_HYSTERESIS_NEW: f32      = 0.0;   // Newly awake/vigilant - no history blend
 const PROBE_STATE_HYSTERESIS_NORMAL: f32   = 0.95;  // Normal temporal blend factor
+
+// Offset-aware trilinear index offsets
+
 
 struct DDGIParams {
     probe_counts: vec4<f32>,      // x=probe_count, y=rays_per_probe, z=probes_per_frame, w=probe_spacing
@@ -64,26 +75,22 @@ struct DDGIParams {
 };
 
 struct DDGIProbeRayData {
-    hit_pos_t: vec4<f32>,         // xyz = world hit position, w = t (>=0) or -1 for miss
+    hit_pos_t: vec4<f32>,
     ray_dir_prim: vec4<f32>,      // xyz = ray direction, w = ray PDF (set by init; preserved by hit)
     world_n_section: vec4<f32>,   // xyz = world geometric normal, w = section_index as f32
     world_t_uvx: vec4<f32>,       // xyz = world tangent, w = uv.x
     world_b_uvy: vec4<f32>,       // xyz = world bitangent, w = uv.y
-    state_u32: vec4<u32>,         // x = prim_store, y = alive|flags, z = shadow_visible, w = tri_id_local
+    state_u32: vec4<u32>,         // x = prim_store, y = alive, z = shadow_visible, w = tri_id_local
     radiance: vec4<f32>,          // xyz = shaded ray radiance, w = 1.0 (or unused)
     meta_u32: vec4<u32>,          // x = probe_index, yzw = reserved
 };
 
-// Per-probe state data (packed into u32s for efficiency)
-// Word 0: state | init_frame_count<<8 | convergence_frame_count<<16 | flags<<24
-// Word 1: nearest_hit_distance (f32 as u32)
-// Word 2: backface_hit_count (for inside-geometry detection)
-// Word 3: reserved for future use
 struct ProbeStateData {
-    packed_state: u32,        // state + counters + flags
+    packed_state: u32,        // state | init_frame_count | convergence_frame_count | flags
     nearest_hit_dist: u32,    // bitcast from f32
-    backface_count: u32,      // accumulated backface hit count
-    reserved: u32,
+    backface_ratio: f32,      // accumulated backface hit ratio
+    padding: u32,             // padding for future use
+    probe_offset: vec4<f32>,  // xyz = probe position offset in world-space, w = unused
 }
 
 // =============================================================================
@@ -91,10 +98,6 @@ struct ProbeStateData {
 // =============================================================================
 // We keep a small header in front of the runtime array so later passes can
 // cheaply query statistics without re-deriving them from ddgi_params.
-//
-// Layout:
-// - header (16 bytes): active_ray_count + padding
-// - rays[]: DDGIProbeRayData records
 // =============================================================================
 struct DDGIProbeRayDataHeader {
     active_ray_count: atomic<u32>,
@@ -256,159 +259,31 @@ fn ddgi_depth_clamp_texel_coord(texel_coord: vec2<i32>) -> vec2<u32> {
     );
 }
 
-// Returns accumulated (mean_t, mean_t2, confidence) bilinearly sampled from the
-// per-probe octahedral moments atlas.
-fn ddgi_probe_depth_moments_sample_accum(
-    probe_depth_moments: ptr<storage, array<vec4<f32>>, read>,
-    probe_index: u32,
-    direction_from_probe: vec3<f32>
-) -> vec3<f32> {
-    let res_f = f32(DDGI_PROBE_DEPTH_RES);
-    let uv = encode_octahedral(direction_from_probe);
-    let uv_f = uv * res_f - 0.5;
-
-    let base_f = floor(uv_f);
-    let frac = uv_f - base_f;
-    let base_i = vec2<i32>(i32(base_f.x), i32(base_f.y));
-
-    let w00 = (1.0 - frac.x) * (1.0 - frac.y);
-    let w10 = frac.x * (1.0 - frac.y);
-    let w01 = (1.0 - frac.x) * frac.y;
-    let w11 = frac.x * frac.y;
-
-    let t00_xy = ddgi_depth_clamp_texel_coord(base_i + vec2<i32>(0, 0));
-    let t10_xy = ddgi_depth_clamp_texel_coord(base_i + vec2<i32>(1, 0));
-    let t01_xy = ddgi_depth_clamp_texel_coord(base_i + vec2<i32>(0, 1));
-    let t11_xy = ddgi_depth_clamp_texel_coord(base_i + vec2<i32>(1, 1));
-
-    let base_offset = probe_index * DDGI_DEPTH_TEXEL_COUNT;
-
-    let v00 = (*probe_depth_moments)[base_offset + ddgi_depth_texel_id(t00_xy)];
-    let v10 = (*probe_depth_moments)[base_offset + ddgi_depth_texel_id(t10_xy)];
-    let v01 = (*probe_depth_moments)[base_offset + ddgi_depth_texel_id(t01_xy)];
-    let v11 = (*probe_depth_moments)[base_offset + ddgi_depth_texel_id(t11_xy)];
-
-    // x = mean_t, y = mean_t2, z = confidence
-    let a00 = vec3<f32>(v00.x, v00.y, v00.z) * w00;
-    let a10 = vec3<f32>(v10.x, v10.y, v10.z) * w10;
-    let a01 = vec3<f32>(v01.x, v01.y, v01.z) * w01;
-    let a11 = vec3<f32>(v11.x, v11.y, v11.z) * w11;
-    return a00 + a10 + a01 + a11;
-}
-
-fn ddgi_visibility_chebyshev(dist: f32, mean_d: f32, mean_d2: f32) -> f32 {
-    // Moment shadow mapping / Chebyshev upper bound.
-    // If the queried distance is in front of the mean, treat as visible.
-    let variance = max(mean_d2 - mean_d * mean_d, DDGI_VISIBILITY_MIN_VARIANCE);
-    let delta = dist - mean_d;
-    let p_max = variance / (variance + delta * delta);
-    let v = select(p_max, 1.0, dist <= mean_d);
-    return clamp(v, 0.0, 1.0);
-}
-
 fn ddgi_visibility_weight_from_moments(
     probe_depth_moments: ptr<storage, array<vec4<f32>>, read>,
     probe_index: u32,
     direction_from_probe: vec3<f32>,
     dist: f32
 ) -> f32 {
-    let biased_dist = dist + DDGI_VISBILITY_DISTANCE_THICKNESS_BIAS;
-    let accum = ddgi_probe_depth_moments_sample_accum(probe_depth_moments, probe_index, direction_from_probe);
-    // Chebyshev visibility with a mild power curve for sharper occluder rejection.
-    var v = ddgi_visibility_chebyshev(biased_dist, accum.x, accum.y);
-    // Confidence fade (low confidence -> treat as visible).
-    return pow(mix(1.0, v, accum.z), DDGI_VISIBILITY_POWER);
-}
+    let uv = encode_octahedral(direction_from_probe) * f32(DDGI_PROBE_DEPTH_RES);
+    let base = floor(uv);
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Sample SH irradiance from probes
-// ─────────────────────────────────────────────────────────────────────────────
-fn ddgi_sample_sh_irradiance(
-    ddgi_params: ptr<uniform, DDGIParams>,
-    sh_probes: ptr<storage, array<u32>, read_write>,
-    probe_depth_moments: ptr<storage, array<vec4<f32>>, read>,
-    position: vec3<f32>,
-    normal_ws: vec3<f32>
-) -> vec3<f32> {
-    let spacing = (*ddgi_params).probe_counts.w;
-    let dims = vec3<u32>(
-        u32((*ddgi_params).probe_grid_dims.x),
-        u32((*ddgi_params).probe_grid_dims.y),
-        u32((*ddgi_params).probe_grid_dims.z)
-    );
-    let origin = (*ddgi_params).probe_grid_origin.xyz;
-    let probe_radius = (*ddgi_params).probe_grid_dims.w;
+    let depth_moments = probe_depth_moments[probe_index * DDGI_DEPTH_TEXEL_COUNT + ddgi_depth_texel_id(vec2<u32>(base))];
 
-    let rel = (position - origin) / spacing;
-    let base_f = floor(rel);
-    let frac = rel - base_f;
+    let mean_d = depth_moments.x;
+    let mean_d2 = depth_moments.y;
+    let variance = max(mean_d2 - mean_d * mean_d, DDGI_VISIBILITY_MIN_VARIANCE);
 
-    let max_base = vec3<f32>(
-        f32(select(0u, dims.x - 2u, dims.x > 1u)),
-        f32(select(0u, dims.y - 2u, dims.y > 1u)),
-        f32(select(0u, dims.z - 2u, dims.z > 1u))
-    );
-    let base_clamped = clamp(base_f, vec3<f32>(0.0), max_base);
-    let base = vec3<u32>(base_clamped);
-    let frac_clamped = clamp(frac, vec3<f32>(0.0), vec3<f32>(1.0));
+    // Apply thickness bias to reduce self-shadowing artifacts near surfaces
+    let biased_mean_d = mean_d * (1.0 - DDGI_VISBILITY_DISTANCE_THICKNESS_BIAS);
+    
+    let delta = max(0.0, dist - biased_mean_d);
+    var chebyshev_weight = variance / (variance + delta * delta);
+    
+    // Softer contrast (square instead of cube) to reduce banding
+    chebyshev_weight = chebyshev_weight * chebyshev_weight;
 
-    let view_index = u32(frame_info.view_index);
-    let camera_position = view_buffer[view_index].view_position.xyz;
-    let w_o = safe_normalize(camera_position - position);
-    let bias_offset = (0.2 * normal_ws + 0.8 * w_o) * (0.75 * spacing) * (*ddgi_params).self_shadow_bias;
-
-    var sh_sum = sh_l1_rgb_zero();
-    var weight_sum = 0.0;
-
-    for (var z = 0u; z < 2u; z = z + 1u) {
-        for (var y = 0u; y < 2u; y = y + 1u) {
-            for (var x = 0u; x < 2u; x = x + 1u) {
-                let coord = base + vec3<u32>(x, y, z);
-                let clamped_coord = clamp(coord, vec3<u32>(0u), dims - vec3<u32>(1u));
-                let probe_index = ddgi_probe_index_from_coord(ddgi_params, clamped_coord);
-
-                let tri_weight =
-                    select(1.0 - frac_clamped.x, frac_clamped.x, x == 1u) *
-                    select(1.0 - frac_clamped.y, frac_clamped.y, y == 1u) *
-                    select(1.0 - frac_clamped.z, frac_clamped.z, z == 1u);
-
-                let probe_pos = ddgi_probe_world_position_from_coord(ddgi_params, clamped_coord);
-                let dir_to_probe = safe_normalize(probe_pos - position);
-
-                let backface = clamp(dot(normal_ws, dir_to_probe), 0.0, 1.0);
-                let backface_weight = backface * backface;
-
-                let offset_pos = position + bias_offset;
-                let dir_from_probe = safe_normalize(offset_pos - probe_pos);
-                let dist = length(offset_pos - probe_pos);
-
-                // -----------------------------------------------------------------
-                // Probe visibility weight from depth moments
-                // -----------------------------------------------------------------
-                let visibility_weight = ddgi_visibility_weight_from_moments(
-                    probe_depth_moments,
-                    probe_index,
-                    dir_from_probe,
-                    dist
-                );
-
-                let probe_sh = ddgi_sh_probe_read(sh_probes, probe_index);
-                let preview_irradiance = ddgi_sh_evaluate_irradiance(probe_sh, normal_ws);
-                let perceptual_linear = luminance(preview_irradiance) / DDGI_PERCEPTUAL_FALLOFF_THRESHOLD;
-                let perceptual_weight = max(perceptual_linear * perceptual_linear, 1e-5);
-
-                let weight = tri_weight * backface_weight * perceptual_weight * visibility_weight;
-
-                sh_sum = sh_l1_rgb_add(sh_sum, sh_l1_rgb_multiply_scalar(probe_sh, weight));
-                weight_sum = weight_sum + weight;
-            }
-        }
-    }
-
-    let inv_weight_sum = 1.0 / max(weight_sum, 1e-6);
-    let sh_interpolated = sh_l1_rgb_multiply_scalar(sh_sum, inv_weight_sum);
-    var irradiance = ddgi_sh_evaluate_irradiance(sh_interpolated, normal_ws) * (*ddgi_params).indirect_boost;
-    return max(irradiance, vec3<f32>(0.0));
+    return select(chebyshev_weight, 1.0, dist <= biased_mean_d);
 }
 
 // =============================================================================
@@ -520,47 +395,53 @@ fn probe_state_is_active(state: u32) -> bool {
 // Read probe state from buffer (read-only access)
 // ─────────────────────────────────────────────────────────────────────────────
 fn probe_state_read(
-    buffer: ptr<storage, array<u32>, read>,
+    buffer: ptr<storage, array<ProbeStateData>, read>,
     probe_index: u32
 ) -> ProbeStateData {
-    let base = probe_index * 4u;
-    var data: ProbeStateData;
-    data.packed_state = (*buffer)[base + 0u];
-    data.nearest_hit_dist = (*buffer)[base + 1u];
-    data.backface_count = (*buffer)[base + 2u];
-    data.reserved = (*buffer)[base + 3u];
-    return data;
+    return (*buffer)[probe_index];
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Read probe state from buffer (read-write access, for modify passes)
 // ─────────────────────────────────────────────────────────────────────────────
 fn probe_state_read_rw(
-    buffer: ptr<storage, array<u32>, read_write>,
+    buffer: ptr<storage, array<ProbeStateData>, read_write>,
     probe_index: u32
 ) -> ProbeStateData {
-    let base = probe_index * 4u;
-    var data: ProbeStateData;
-    data.packed_state = (*buffer)[base + 0u];
-    data.nearest_hit_dist = (*buffer)[base + 1u];
-    data.backface_count = (*buffer)[base + 2u];
-    data.reserved = (*buffer)[base + 3u];
-    return data;
+    return (*buffer)[probe_index];
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Write probe state to buffer
 // ─────────────────────────────────────────────────────────────────────────────
 fn probe_state_write(
-    buffer: ptr<storage, array<u32>, read_write>,
+    buffer: ptr<storage, array<ProbeStateData>, read_write>,
     probe_index: u32,
     data: ProbeStateData
 ) {
-    let base = probe_index * 4u;
-    (*buffer)[base + 0u] = data.packed_state;
-    (*buffer)[base + 1u] = data.nearest_hit_dist;
-    (*buffer)[base + 2u] = data.backface_count;
-    (*buffer)[base + 3u] = data.reserved;
+    (*buffer)[probe_index] = data;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Probe world position with per-probe offset
+// ─────────────────────────────────────────────────────────────────────────────
+fn ddgi_probe_world_position_from_index_with_offset(
+    ddgi_params: ptr<uniform, DDGIParams>,
+    probe_states: ptr<storage, array<ProbeStateData>, read>,
+    probe_index: u32
+) -> vec3<f32> {
+    let base_pos = ddgi_probe_world_position_from_index(ddgi_params, probe_index);
+    let state_data = probe_state_read(probe_states, probe_index);
+    return base_pos + state_data.probe_offset.xyz;
+}
+
+fn ddgi_probe_world_position_from_coord_with_offset(
+    ddgi_params: ptr<uniform, DDGIParams>,
+    probe_states: ptr<storage, array<ProbeStateData>, read>,
+    coord: vec3<u32>
+) -> vec3<f32> {
+    let probe_index = ddgi_probe_index_from_coord(ddgi_params, coord);
+    return ddgi_probe_world_position_from_index_with_offset(ddgi_params, probe_states, probe_index);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -605,7 +486,7 @@ fn probe_state_after_convergence(current_state: u32) -> u32 {
 // Returns 1.0 for active probes, 0.0 for inactive/sleeping/off probes
 // ─────────────────────────────────────────────────────────────────────────────
 fn ddgi_probe_state_weight(
-    probe_states: ptr<storage, array<u32>, read>,
+    probe_states: ptr<storage, array<ProbeStateData>, read>,
     probe_index: u32
 ) -> f32 {
     let state_data = probe_state_read(probe_states, probe_index);
@@ -614,14 +495,21 @@ fn ddgi_probe_state_weight(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Sample SH irradiance from probes with state awareness
-// Same as ddgi_sample_sh_irradiance but incorporates probe state weighting
-// Probes that are OFF or SLEEPING are excluded from interpolation
+// Sample SH irradiance from probes with state awareness and offset-aware filtering
+//
+// This function incorporates:
+// - Probe state weighting (OFF and SLEEPING probes are excluded)
+// - Offset-aware trilinear interpolation that accounts for probe displacement
+//   from the uniform grid (via spiral optimizer for dead probe relocation)
+//
+// The offset-aware filtering ensures:
+// - Weights remain in [0,1] range (no oversaturation or light subtraction)
+// - Proper interpolation even when probes are moved from grid positions
 // ─────────────────────────────────────────────────────────────────────────────
 fn ddgi_sample_sh_irradiance_with_states(
     ddgi_params: ptr<uniform, DDGIParams>,
     sh_probes: ptr<storage, array<u32>, read_write>,
-    probe_states: ptr<storage, array<u32>, read>,
+    probe_states: ptr<storage, array<ProbeStateData>, read>,
     probe_depth_moments: ptr<storage, array<vec4<f32>>, read>,
     position: vec3<f32>,
     normal_ws: vec3<f32>
@@ -635,79 +523,91 @@ fn ddgi_sample_sh_irradiance_with_states(
     let origin = (*ddgi_params).probe_grid_origin.xyz;
     let probe_radius = (*ddgi_params).probe_grid_dims.w;
 
-    let rel = (position - origin) / spacing;
-    let base_f = floor(rel);
-    let frac = rel - base_f;
-
-    let max_base = vec3<f32>(
-        f32(select(0u, dims.x - 2u, dims.x > 1u)),
-        f32(select(0u, dims.y - 2u, dims.y > 1u)),
-        f32(select(0u, dims.z - 2u, dims.z > 1u))
-    );
-    let base_clamped = clamp(base_f, vec3<f32>(0.0), max_base);
-    let base = vec3<u32>(base_clamped);
-    let frac_clamped = clamp(frac, vec3<f32>(0.0), vec3<f32>(1.0));
-
     let view_index = u32(frame_info.view_index);
     let camera_position = view_buffer[view_index].view_position.xyz;
     let w_o = safe_normalize(camera_position - position);
     let bias_offset = (0.2 * normal_ws + 0.8 * w_o) * (0.75 * spacing) * (*ddgi_params).self_shadow_bias;
+    let offset_pos = position + bias_offset;
+
+    let rel = (offset_pos - origin) / spacing;
+    let base = floor(rel);
+    let alpha = fract(rel);
+
+    let trilinear_index_offsets: array<vec3<f32>, 8> = array<vec3<f32>, 8>(
+        vec3<f32>(0.0, 0.0, 0.0),
+        vec3<f32>(0.0, 1.0, 0.0),
+        vec3<f32>(1.0, 1.0, 0.0),
+        vec3<f32>(1.0, 0.0, 0.0),
+        vec3<f32>(0.0, 0.0, 1.0),
+        vec3<f32>(0.0, 1.0, 1.0),
+        vec3<f32>(1.0, 1.0, 1.0),
+        vec3<f32>(1.0, 0.0, 1.0),
+    );
 
     var sh_sum = sh_l1_rgb_zero();
     var weight_sum = 0.0;
 
-    for (var z = 0u; z < 2u; z = z + 1u) {
-        for (var y = 0u; y < 2u; y = y + 1u) {
-            for (var x = 0u; x < 2u; x = x + 1u) {
-                let coord = base + vec3<u32>(x, y, z);
-                let clamped_coord = clamp(coord, vec3<u32>(0u), dims - vec3<u32>(1u));
-                let probe_index = ddgi_probe_index_from_coord(ddgi_params, clamped_coord);
+    for (var i = 0; i < 8; i = i + 1) {
+        let coord = vec3<u32>(base) + vec3<u32>(trilinear_index_offsets[i]);
+        let clamped_coord = clamp(coord, vec3<u32>(0u), dims - vec3<u32>(1u));
+        let probe_index = ddgi_probe_index_from_coord(ddgi_params, clamped_coord);
 
-                // ─────────────────────────────────────────────────────────────
-                // State-based weight: skip OFF and SLEEPING probes
-                // ─────────────────────────────────────────────────────────────
-                if (ddgi_probe_state_weight(probe_states, probe_index) <= 0.0) {
-                    continue;
-                }
+        // ─────────────────────────────────────────────────────────────
+        // Read probe state data for offset and state check
+        // ─────────────────────────────────────────────────────────────
+        let state_data = probe_state_read(probe_states, probe_index);
+        let probe_state = probe_state_get_state(state_data.packed_state);
+        
+        // Skip OFF and SLEEPING probes
+        if (!probe_state_is_active(probe_state)) {
+            continue;
+        }
 
-                let tri_weight =
-                    select(1.0 - frac_clamped.x, frac_clamped.x, x == 1u) *
-                    select(1.0 - frac_clamped.y, frac_clamped.y, y == 1u) *
-                    select(1.0 - frac_clamped.z, frac_clamped.z, z == 1u);
+        var weight = 1.0;
 
-                let probe_pos = ddgi_probe_world_position_from_coord(ddgi_params, clamped_coord);
-                let dir_to_probe = safe_normalize(probe_pos - position);
+        let base_pos = ddgi_probe_world_position_from_coord_with_offset(ddgi_params, probe_states, clamped_coord);
+        let probe_pos = base_pos + state_data.probe_offset.xyz;
+        let dir_to_probe = safe_normalize(probe_pos - position);
 
-                let backface = clamp(dot(normal_ws, dir_to_probe), 0.0, 1.0);
-                let backface_weight = backface * backface;
+        // Backface weight
+        {
+            let backface = max(0.00001, (dot(normal_ws, dir_to_probe) + 1.0) * 0.5);
+            weight *= (backface * backface) + 0.2;
+        }
 
-                let offset_pos = position + bias_offset;
-                let dir_from_probe = safe_normalize(offset_pos - probe_pos);
-                let dist = length(offset_pos - probe_pos);
+        // Probe visibility weight from depth moments
+        {
+            // Use consistent position for both direction and distance
+            let dir_from_probe = safe_normalize(offset_pos - probe_pos);
+            let dist = length(offset_pos - probe_pos);
+            weight *= ddgi_visibility_weight_from_moments(
+                probe_depth_moments,
+                probe_index,
+                dir_from_probe,
+                dist
+            );
+        }
 
-                // Probe visibility weight from depth moments
-                let visibility_weight = ddgi_visibility_weight_from_moments(
-                    probe_depth_moments,
-                    probe_index,
-                    dir_from_probe,
-                    dist
-                );
-
-                let probe_sh = ddgi_sh_probe_read(sh_probes, probe_index);
-                let preview_irradiance = ddgi_sh_evaluate_irradiance(probe_sh, normal_ws);
-                let perceptual_linear = luminance(preview_irradiance) / DDGI_PERCEPTUAL_FALLOFF_THRESHOLD;
-                let perceptual_weight = max(perceptual_linear * perceptual_linear, 1e-5);
-
-                let weight = tri_weight * backface_weight * perceptual_weight * visibility_weight;
-
-                sh_sum = sh_l1_rgb_add(sh_sum, sh_l1_rgb_multiply_scalar(probe_sh, weight));
-                weight_sum = weight_sum + weight;
+        // Perceptual weight
+        {
+            let crush_threshold = 0.2;
+            if (weight < crush_threshold) {
+                weight *= (weight * weight) / (crush_threshold * crush_threshold);
             }
         }
+
+        // Trilinear weight
+        {
+            let trilinear_weight = mix(vec3<f32>(1.0) - alpha, alpha, trilinear_index_offsets[i]);
+            weight *= trilinear_weight.x * trilinear_weight.y * trilinear_weight.z;
+        }
+
+        let probe_sh = ddgi_sh_probe_read(sh_probes, probe_index);
+        sh_sum = sh_l1_rgb_add(sh_sum, sh_l1_rgb_multiply_scalar(probe_sh, weight));
+        weight_sum = weight_sum + weight;
     }
 
-    let inv_weight_sum = 1.0 / max(weight_sum, 1e-6);
-    let sh_interpolated = sh_l1_rgb_multiply_scalar(sh_sum, inv_weight_sum);
+    let sh_interpolated = sh_l1_rgb_multiply_scalar(sh_sum, 1.0 / clamp(weight_sum, 1e-6, 1e6));
     var irradiance = ddgi_sh_evaluate_irradiance(sh_interpolated, normal_ws) * (*ddgi_params).indirect_boost;
     return max(irradiance, vec3<f32>(0.0));
 }

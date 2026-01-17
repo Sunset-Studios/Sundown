@@ -22,7 +22,7 @@
 // =============================================================================
 
 @group(1) @binding(0) var<uniform> ddgi_params: DDGIParams;
-@group(1) @binding(1) var<storage, read> probe_states: array<u32>;
+@group(1) @binding(1) var<storage, read> probe_states: array<ProbeStateData>;
 @group(1) @binding(2) var<storage, read_write> active_flags: array<u32>;
 
 // =============================================================================
