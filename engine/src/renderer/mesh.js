@@ -1245,7 +1245,7 @@ export class Mesh {
     const std = StandardMaterial.create(
       mat_name,
       {},
-      { family }
+      { family, rasterizer_state: { cull_mode: "none" } }
     );
 
     // Base color

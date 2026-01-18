@@ -117,18 +117,6 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
             n = normalize(tbn * nm);
         }
 
-        var radiance = vec3<f32>(0.0);
-
-        if (emissive > 0.0) {
-            let emissive_radiance = emissive * albedo;
-            let hit_distance = max(hit.hit_pos_t.w, 0.001);
-                
-            let max_contribution = emissive * PI * (1.0 / hit_distance);
-            let scale = min(1.0, max_contribution / max(luminance(emissive_radiance), 0.001));
-            radiance += safe_clamp_vec3_max(emissive_radiance * scale, MAX_NEE_LUMINANCE);
-            radiance *= (1.0 / (2.0 * PI));
-        }
-
         // -----------------------------------------------------------------------------
         // Direct lighting seed (NEE at the PRIMARY HIT POINT)
         // - The hit pass already performed a shadow visibility test and stored it in
@@ -136,6 +124,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         // - We replay the same deterministic light selection here to compute the
         //   direct contribution, without any BVH bindings in this pass.
         // -----------------------------------------------------------------------------
+        var radiance = vec3<f32>(0.0);
         if (num_lights > 0u) {
             var nee_rng = hash(
                 probe_index
@@ -175,7 +164,18 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
             n
         );
         radiance += safe_clamp_vec3_max(sh_irradiance, MAX_RADIANCE_LUMINANCE);
+
+        // Apply Lambertian BRDF to reflected light (NEE + multi-bounce SH)
         radiance *= albedo * (1.0 / (2.0 * PI));
+
+        // Emissive contribution - added directly as light emission, not modulated by surface BRDF.
+        // This matches the path tracer: emissive surfaces emit light, they don't reflect it.
+        if (emissive > 0.0) {
+            let emissive_radiance = emissive * albedo;
+            let hit_distance = max(hit.hit_pos_t.w, 0.001);
+            let emissive_contribution = emissive_radiance * 2.0 * PI * (1.0 / hit_distance);
+            radiance += safe_clamp_vec3_max(emissive_contribution, MAX_RADIANCE_LUMINANCE);
+        }
 
         probe_ray_data.rays[gid.x].radiance = vec4f(radiance, 1.0);
     }

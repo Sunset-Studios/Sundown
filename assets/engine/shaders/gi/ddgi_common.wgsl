@@ -11,6 +11,17 @@
 // ║  • Spherical harmonics (SH) probe representation                          ║
 // ║  • Probe grid indexing and coordinate conversion                          ║
 // ║  • Sampling helpers for both octahedral and SH representations            ║
+// ║  • Dead probe detection                                                   ║
+// ║                                                                           ║
+// ║  To minimize calculations, we reuse ray-tracing information.              ║
+// ║  Backface hits are encoded with negative distances in the ray data        ║
+// ║  (hit_pos_t.w < 0). A probe is considered "dead" (inside geometry) when   ║
+// ║  the fraction of backface hits exceeds PROBE_STATE_BACKFACE_THRESHOLD.    ║
+// ║  This approach handles non-manifold and intersecting geometry robustly by ║
+// ║  counting multiple rays rather than relying on a single ray test.         ║
+// ║                                                                           ║
+// ║  Based on "Improving Probes in Dynamic Diffuse Global Illumination" by D  ║
+// ║  Rohacek et al.                                                           ║
 // ║                                                                           ║
 // ╚═══════════════════════════════════════════════════════════════════════════╝
 // =============================================================================
@@ -18,11 +29,8 @@
 const GOLDEN_RATIO_CONJUGATE = 0.6180339887498948;
 const DDGI_PROBE_DEPTH_RES = 16u;
 const DDGI_DEPTH_TEXEL_COUNT = 256u;
-const DDGI_VISIBILITY_MIN_VARIANCE = 1e-2;
-const DDGI_VISIBILITY_POWER = 1.0;
-const DDGI_VISIBILITY_CONFIDENCE_MIN = 1e-3;
-const DDGI_VISBILITY_DISTANCE_THICKNESS_BIAS = 0.01;
-const DDGI_PERCEPTUAL_FALLOFF_THRESHOLD = 0.05;
+const DDGI_VISIBILITY_MIN_VARIANCE = 1e-4;
+const DDGI_VISBILITY_DISTANCE_THICKNESS_BIAS = 0.0;
 
 // SH probes store L1 RGB coefficients (4 coefficients × 3 channels = 12 floats)
 // packed into 6 u32 values using f16 packing for efficient storage.
@@ -41,25 +49,12 @@ const PROBE_STATE_AWAKE: u32         = 6u;   // Near dynamic geometry - trace wh
 // Classification parameters
 const PROBE_STATE_INIT_FRAMES: u32         = 5u;   // Frames of tracing for classification
 const PROBE_STATE_CONVERGENCE_FRAMES: u32  = 4u;   // Frames for "Newly" states to converge
-const PROBE_STATE_BACKFACE_THRESHOLD: f32  = 0.45;  // Fraction of backface hits = inside geometry
+const PROBE_STATE_BACKFACE_THRESHOLD: f32  = 0.15;  // Fraction of backface hits = inside geometry
 const PROBE_STATE_NEAR_GEOMETRY_DIST: f32  = 1.0;  // Multiplier of probe_spacing for "near"
-
-// Dead probe detection:
-// To minimize calculations, we reuse ray-tracing information. Backface hits are
-// encoded with negative distances in the ray data (hit_pos_t.w < 0). A probe is
-// considered "dead" (inside geometry) when the fraction of backface hits exceeds
-// PROBE_STATE_BACKFACE_THRESHOLD. This approach handles non-manifold and
-// intersecting geometry robustly by counting multiple rays rather than relying
-// on a single ray test.
-//
-// Based on "Improving Probes in Dynamic Diffuse Global Illumination" by D. Rohacek et al.
 
 // Hysteresis values for different states
 const PROBE_STATE_HYSTERESIS_NEW: f32      = 0.0;   // Newly awake/vigilant - no history blend
 const PROBE_STATE_HYSTERESIS_NORMAL: f32   = 0.95;  // Normal temporal blend factor
-
-// Offset-aware trilinear index offsets
-
 
 struct DDGIParams {
     probe_counts: vec4<f32>,      // x=probe_count, y=rays_per_probe, z=probes_per_frame, w=probe_spacing
@@ -110,14 +105,6 @@ struct DDGIProbeRayDataBuffer {
     header: DDGIProbeRayDataHeader,
     rays: array<DDGIProbeRayData>,
 };
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Storage structure for packed SH L1 RGB probe data
-// Uses f16 packing: 12 floats (4 coefficients × 3 channels) → 6 u32 values
-// ─────────────────────────────────────────────────────────────────────────────
-struct DDGISHProbe {
-    data: array<u32, 6>,
-}
 
 fn ddgi_probe_coord_from_index(ddgi_params: ptr<uniform, DDGIParams>, probe_index: u32) -> vec3<u32> {
     let shift_x = u32((*ddgi_params).probe_grid_log2.x);
@@ -251,14 +238,6 @@ fn ddgi_depth_texel_id(texel_coord: vec2<u32>) -> u32 {
     return texel_coord.x + texel_coord.y * DDGI_PROBE_DEPTH_RES;
 }
 
-fn ddgi_depth_clamp_texel_coord(texel_coord: vec2<i32>) -> vec2<u32> {
-    let max_i = i32(DDGI_PROBE_DEPTH_RES) - 1;
-    return vec2<u32>(
-        u32(clamp(texel_coord.x, 0, max_i)),
-        u32(clamp(texel_coord.y, 0, max_i))
-    );
-}
-
 fn ddgi_visibility_weight_from_moments(
     probe_depth_moments: ptr<storage, array<vec4<f32>>, read>,
     probe_index: u32,
@@ -270,8 +249,15 @@ fn ddgi_visibility_weight_from_moments(
 
     let depth_moments = probe_depth_moments[probe_index * DDGI_DEPTH_TEXEL_COUNT + ddgi_depth_texel_id(vec2<u32>(base))];
 
+    let min_d = depth_moments.z;
+    // Hard visibility: if closer than min depth ever seen, definitely visible
+    if (dist <= min_d * 1.05) {  // small bias
+        return 1.0;
+    }
+
     let mean_d = depth_moments.x;
     let mean_d2 = depth_moments.y;
+
     let variance = max(mean_d2 - mean_d * mean_d, DDGI_VISIBILITY_MIN_VARIANCE);
 
     // Apply thickness bias to reduce self-shadowing artifacts near surfaces
@@ -457,8 +443,7 @@ fn ddgi_probe_state_weight(
     probe_states: ptr<storage, array<ProbeStateData>, read>,
     probe_index: u32
 ) -> f32 {
-    let state_data = probe_states[probe_index];
-    let state = probe_state_get_state(state_data.packed_state);
+    let state = probe_state_get_state(probe_states[probe_index].packed_state);
     return select(0.0, 1.0, probe_state_is_active(state));
 }
 
@@ -494,6 +479,7 @@ fn ddgi_sample_sh_irradiance_with_states(
     let view_index = u32(frame_info.view_index);
     let camera_position = view_buffer[view_index].view_position.xyz;
     let w_o = safe_normalize(camera_position - position);
+
     let bias_offset = (0.2 * normal_ws + 0.8 * w_o) * (0.75 * spacing) * (*ddgi_params).self_shadow_bias;
     let offset_pos = position + bias_offset;
 
@@ -535,6 +521,8 @@ fn ddgi_sample_sh_irradiance_with_states(
         let base_pos = ddgi_probe_world_position_from_coord_with_offset(ddgi_params, probe_states, clamped_coord);
         let probe_pos = base_pos + probe_states[probe_index].probe_offset.xyz;
         let dir_to_probe = safe_normalize(probe_pos - position);
+        let dir_from_probe = safe_normalize(offset_pos - probe_pos);
+        let dist = length(offset_pos - probe_pos);
 
         // Backface weight
         {
@@ -545,8 +533,6 @@ fn ddgi_sample_sh_irradiance_with_states(
         // Probe visibility weight from depth moments
         {
             // Use consistent position for both direction and distance
-            let dir_from_probe = safe_normalize(offset_pos - probe_pos);
-            let dist = length(offset_pos - probe_pos);
             weight *= ddgi_visibility_weight_from_moments(
                 probe_depth_moments,
                 probe_index,
@@ -574,7 +560,7 @@ fn ddgi_sample_sh_irradiance_with_states(
         weight_sum = weight_sum + weight;
     }
 
-    let sh_interpolated = sh_l1_rgb_multiply_scalar(sh_sum, 1.0 / clamp(weight_sum, 1e-6, 1e6));
+    let sh_interpolated = sh_l1_rgb_multiply_scalar(sh_sum, 1.0 / max(weight_sum, 1e-6));
     var irradiance = ddgi_sh_evaluate_irradiance(sh_interpolated, normal_ws) * (*ddgi_params).indirect_boost;
     return max(irradiance, vec3<f32>(0.0));
 }

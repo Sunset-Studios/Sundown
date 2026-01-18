@@ -41,7 +41,7 @@
 const SPHERE_AREA = 12.566370614359172; // 4 * PI
 
 // Depth moments update
-const DDGI_DEPTH_SAMPLE_COUNT_CAP = 32.0;
+const DDGI_DEPTH_SAMPLE_COUNT_CAP = 64.0;
 
 // -----------------------------------------------------------------------------
 // Adaptive temporal hysteresis (no fixed MAX_ACCUMULATED_SAMPLES)
@@ -159,9 +159,11 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
 
         // Online update: mean <- mean + (x - mean) / n
         let alpha = 1.0 / max(new_count, 1.0);
-        moments.x = mix(moments.x, t, alpha);
-        moments.y = mix(moments.y, t2, alpha);
-        moments.z = clamp(new_count / DDGI_DEPTH_SAMPLE_COUNT_CAP, 0.0, 1.0);
+        moments.x += (t - moments.x) * alpha;
+        moments.y += (t2 - moments.y) * alpha;
+
+        let prev_min_d = select(t, moments.z, moments.w > 0.0);
+        moments.z = min(prev_min_d, t);
         moments.w = new_count;
 
         probe_depth_moments[depth_idx] = moments;
