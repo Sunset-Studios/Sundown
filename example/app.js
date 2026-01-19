@@ -2711,7 +2711,7 @@ export class SponzaScene extends Scene {
     const light_fragment_view = EntityManager.get_fragment(light_entity, LightFragment);
     light_fragment_view.type = LightType.DIRECTIONAL;
     light_fragment_view.color = [0.9, 0.9, 1.0];
-    light_fragment_view.intensity = 0.0;
+    light_fragment_view.intensity = 30.0;
     light_fragment_view.position = [5.0, 20, 2.0];
     light_fragment_view.active = true;
     light_fragment_view.is_primary_sun = 1;
@@ -2750,14 +2750,14 @@ export class SponzaScene extends Scene {
     this.entities.push(ground_entity);
 
     // Emissive white cube in center of Sponza atrium
-    const emissive_cube = spawn_mesh_entity(
-      [0.0, 30.0, -0.25],
-      quat.fromEuler(quat.create(), 0, 0, 0),
-      [9.5, 0.2, 0.7],
-      cube_mesh,
-      emissive_white_material_id
-    );
-    this.entities.push(emissive_cube);
+    // const emissive_cube = spawn_mesh_entity(
+    //   [0.0, 30.0, -0.25],
+    //   quat.fromEuler(quat.create(), 0, 0, 0),
+    //   [9.5, 0.2, 0.7],
+    //   cube_mesh,
+    //   emissive_white_material_id
+    // );
+    // this.entities.push(emissive_cube);
 
     let root_entity = this.load_gltf_scene(
       "engine/models/sponza/Sponza.gltf",
