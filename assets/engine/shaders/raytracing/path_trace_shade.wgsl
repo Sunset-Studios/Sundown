@@ -17,6 +17,15 @@ const MAX_RADIANCE_LUMINANCE = 10.0;
 const MAX_NEE_LUMINANCE = 10.0;
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Demodulation Helper - Safely divides radiance by albedo
+// ─────────────────────────────────────────────────────────────────────────────
+fn demodulate(radiance: vec3<f32>, albedo: vec3<f32>) -> vec3<f32> {
+    // Prevent division by very small values while preserving color ratios
+    let safe_albedo = max(albedo, vec3f(0.001));
+    return radiance / safe_albedo;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Path Tracer Parameters
 // ─────────────────────────────────────────────────────────────────────────────
 struct PathTracerParams {
@@ -46,6 +55,7 @@ struct PathState {
     path_weight: vec4<f32>,
     rng_sample_count: vec4<f32>,
     accumulated_radiance: vec4<f32>,
+    primary_albedo: vec4<f32>,
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -112,7 +122,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         );
         
         // Add sky contribution weighted by path throughput
-        let sky_contrib = safe_clamp_vec3_max(sky_radiance * path_state[pixel_index].path_weight.xyz, MAX_RADIANCE_LUMINANCE);
+        let sky_contrib = safe_clamp_vec3_max(sky_radiance, MAX_RADIANCE_LUMINANCE);
         path_state[pixel_index].accumulated_radiance += vec4f(sky_contrib, 0.0);
         
         // Mark path as complete
@@ -207,16 +217,38 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
 
         let clear_coat = 0.0;
         let clear_coat_roughness = 0.0;
+        let clamped_roughness = clamp(roughness, 0.001, 1.0);
         let v_dir = -normalize(path_state[pixel_index].direction_tmax.xyz);
         let n_dot_v = max(dot(v_dir, n), 0.0001);
+        
+        // Check if this is bounce 0 (first hit in non-gbuffer mode) for demodulation
+        let is_bounce_0 = current_bounce == 0u;
+        
+        // For bounce 0, store primary_albedo and demodulate; otherwise use existing
+        if (is_bounce_0) {
+            path_state[pixel_index].primary_albedo = vec4f(albedo, 1.0);
+        }
+        let primary_albedo = path_state[pixel_index].primary_albedo.xyz;
 
         // =====================================================================
-        // Emissive Contribution
+        // Emissive Contribution (Demodulated at bounce 0)
         // =====================================================================
         if (emissive > 0.0) {
             let emissive_radiance = emissive * albedo;
-            let emissive_contrib = safe_clamp_vec3(emissive_radiance * path_state[pixel_index].path_weight.xyz);
-            path_state[pixel_index].accumulated_radiance += vec4f(emissive_contrib, 0.0);
+
+            // Distance-based maximum for firefly reduction
+            let hit_distance = max(path_state[pixel_index].origin_tmin.w, 0.001);
+            var emissive_contribution = emissive_radiance * PI * (1.0 / hit_distance) * path_state[pixel_index].path_weight.xyz;
+            
+            // Demodulate at bounce 0: divide by primary_albedo (will be reapplied in output)
+            if (is_bounce_0) {
+                emissive_contribution = demodulate(emissive_contribution, primary_albedo);
+            }
+            
+            path_state[pixel_index].accumulated_radiance += vec4f(
+                safe_clamp_vec3_max(emissive_contribution, MAX_NEE_LUMINANCE), 
+                0.0
+            );
         }
         
         // =====================================================================
@@ -234,7 +266,8 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         
         // Fresnel at normal incidence for sampling probability
         let f = f_schlick_vec3(f0, 1.0, n_dot_v);
-        let fresnel_luminance = (f.x + f.y + f.z) / 3.0;
+        let fresnel_luminance = luminance(f);
+        //let fresnel_luminance = (f.x + f.y + f.z) / 3.0;
         
         // Probability of sampling specular vs diffuse
         let use_ggx = (roughness < 0.3) || (metallic > 0.5);
@@ -242,7 +275,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         let specular_prob = select(0.0, specular_prob_if_ggx, use_ggx);
 
         // =====================================================================
-        // Direct Lighting via Next Event Estimation (NEE)
+        // Direct Lighting via Next Event Estimation (NEE) - Demodulated at bounce 0
         // =====================================================================
         let num_lights = dense_lights_buffer.header.light_count;
         if (num_lights > 0u) {
@@ -261,8 +294,13 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
             );
             
             // Light contribution (multiply by num_lights for unbiased estimator)
-            let raw_light_contrib = brdf * light.color.rgb * light.intensity * attenuation
+            var raw_light_contrib = brdf * light.color.rgb * light.intensity * attenuation
                 * path_state[pixel_index].path_weight.xyz * f32(num_lights);
+            
+            // Demodulate at bounce 0: divide by primary_albedo (will be reapplied in output)
+            if (is_bounce_0) {
+                raw_light_contrib = demodulate(raw_light_contrib, primary_albedo);
+            }
             let light_contrib = safe_clamp_vec3_max(raw_light_contrib, MAX_NEE_LUMINANCE);
             
             // Setup shadow ray for visibility test
@@ -286,11 +324,12 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         var pdf: f32;
         var brdf_value: vec3<f32>;
         
-        if (use_ggx && r3 < specular_prob) {
+        let is_specular_lobe = r3 < specular_prob;
+        if (is_specular_lobe) {
             // ─────────────────────────────────────────────────────────────────
             // GGX Specular Sampling
             // ─────────────────────────────────────────────────────────────────
-            let h = sample_ggx(n, roughness, r1, r2);
+            let h = sample_ggx(n, clamped_roughness, r1, r2);
             next_dir = normalize(reflect(-v_dir, h));
         } else {
             // ─────────────────────────────────────────────────────────────────
@@ -308,13 +347,19 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         );
         
         // =====================================================================
-        // Update Path Throughput and Spawn Next Ray
+        // Update Path Throughput and Spawn Next Ray - Demodulated at bounce 0
         // =====================================================================
         let safe_pdf = max(pdf, 0.0001);
         
         // Monte Carlo estimator: (BRDF * cos(theta)) / PDF
         // Note: calculate_brdf_rt already includes the cosine term
-        let throughput_update = brdf_value / safe_pdf;
+        // At bounce 0: demodulate BRDF by primary_albedo so path_weight doesn't include it
+        // This ensures all subsequent bounce contributions are also demodulated
+        var throughput_brdf = brdf_value;
+        if (is_bounce_0) {
+            throughput_brdf = demodulate(brdf_value, primary_albedo);
+        }
+        let throughput_update = throughput_brdf / safe_pdf;
         let new_path_weight = path_state[pixel_index].path_weight.xyz * throughput_update;
         
         let reached_max_bounces = (path_state[pixel_index].state_u32.x + 1u) > pt_params.max_bounces;

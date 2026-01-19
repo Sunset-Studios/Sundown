@@ -42,6 +42,7 @@ struct PathState {
     path_weight: vec4<f32>,
     rng_sample_count: vec4<f32>,
     accumulated_radiance: vec4<f32>,
+    primary_albedo: vec4<f32>,
 };
 
 // ─────────────────────────────────────────────────────────────────────────────

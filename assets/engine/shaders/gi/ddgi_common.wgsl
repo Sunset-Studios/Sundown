@@ -49,8 +49,8 @@ const PROBE_STATE_AWAKE: u32         = 6u;   // Near dynamic geometry - trace wh
 // Classification parameters
 const PROBE_STATE_INIT_FRAMES: u32         = 5u;   // Frames of tracing for classification
 const PROBE_STATE_CONVERGENCE_FRAMES: u32  = 4u;   // Frames for "Newly" states to converge
-const PROBE_STATE_BACKFACE_THRESHOLD: f32  = 0.15;  // Fraction of backface hits = inside geometry
-const PROBE_STATE_NEAR_GEOMETRY_DIST: f32  = 1.0;  // Multiplier of probe_spacing for "near"
+const PROBE_STATE_BACKFACE_THRESHOLD: f32  = 0.45;  // Fraction of backface hits = inside geometry
+const PROBE_STATE_NEAR_GEOMETRY_DIST: f32  = 2.0;  // Multiplier of probe_spacing for "near"
 
 // Hysteresis values for different states
 const PROBE_STATE_HYSTERESIS_NEW: f32      = 0.0;   // Newly awake/vigilant - no history blend
@@ -65,8 +65,8 @@ struct DDGIParams {
     probe_grid_snap_delta: vec4<f32>, // xyz = delta in probe cells, w = active (1/0)
     frame_index: f32,
     indirect_boost: f32,
-    self_shadow_bias: f32,
     _pad0: f32,
+    _pad1: f32,
 };
 
 struct DDGIProbeRayData {
@@ -369,12 +369,22 @@ fn probe_state_get_hysteresis(state: u32) -> f32 {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Check if a probe should be used for shading
+// Check if a probe should be traced (updated with new rays)
 // ─────────────────────────────────────────────────────────────────────────────
 fn probe_state_is_active(state: u32) -> bool {
     // Active for tracing if: UNINITIALIZED, NEWLY_AWAKE, NEWLY_VIGILANT, VIGILANT, or AWAKE
-    // Don't trace or use for shading if: OFF or SLEEPING
+    // Don't trace if: OFF or SLEEPING (OFF is inside geometry, SLEEPING has no nearby geometry)
     return state != PROBE_STATE_OFF && state != PROBE_STATE_SLEEPING;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Check if a probe should be used for shading/sampling
+// SLEEPING probes have valid SH data and should contribute to sampling,
+// they just don't need frequent ray updates since they're in open space.
+// ─────────────────────────────────────────────────────────────────────────────
+fn probe_state_is_valid_for_sampling(state: u32) -> bool {
+    // Valid for sampling: everything except OFF (inside geometry) and UNINITIALIZED (no data yet)
+    return state != PROBE_STATE_OFF && state != PROBE_STATE_UNINITIALIZED;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -478,9 +488,9 @@ fn ddgi_sample_sh_irradiance_with_states(
 
     let view_index = u32(frame_info.view_index);
     let camera_position = view_buffer[view_index].view_position.xyz;
-    let w_o = safe_normalize(camera_position - position);
+    let w_o = normalize(camera_position - position);
 
-    let bias_offset = (0.2 * normal_ws + 0.8 * w_o) * (0.75 * spacing) * (*ddgi_params).self_shadow_bias;
+    let bias_offset = (normal_ws + 1.2 * w_o) * (0.45 * spacing);
     let offset_pos = position + bias_offset;
 
     let rel = (offset_pos - origin) / spacing;
@@ -511,18 +521,20 @@ fn ddgi_sample_sh_irradiance_with_states(
         // ─────────────────────────────────────────────────────────────
         let probe_state = probe_state_get_state(probe_states[probe_index].packed_state);
         
-        // Skip OFF and SLEEPING probes
-        if (!probe_state_is_active(probe_state)) {
+        // Skip OFF probes (inside geometry) and UNINITIALIZED probes (no data yet)
+        // SLEEPING probes have valid SH data and should still contribute
+        if (!probe_state_is_valid_for_sampling(probe_state)) {
             continue;
         }
 
         var weight = 1.0;
 
-        let base_pos = ddgi_probe_world_position_from_coord_with_offset(ddgi_params, probe_states, clamped_coord);
-        let probe_pos = base_pos + probe_states[probe_index].probe_offset.xyz;
-        let dir_to_probe = safe_normalize(probe_pos - position);
-        let dir_from_probe = safe_normalize(offset_pos - probe_pos);
-        let dist = length(offset_pos - probe_pos);
+        let probe_pos = ddgi_probe_world_position_from_coord_with_offset(ddgi_params, probe_states, clamped_coord);
+        let dir_to_probe = normalize(probe_pos - position);
+
+        let to_probe = offset_pos - probe_pos;
+        let dist = length(to_probe);
+        let dir_from_probe = to_probe / dist;
 
         // Backface weight
         {

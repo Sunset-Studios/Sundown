@@ -195,11 +195,11 @@ export class PathTracer extends RayTracer {
 
     // ─────────────────────────────────────────────────────────────────────────
     // Path Tracing Buffers
-    // PathState: 12 vec4<f32> = 48 floats per ray
+    // PathState: 13 vec4<f32> = 52 floats per ray (includes primary_albedo for demodulation)
     // ─────────────────────────────────────────────────────────────────────────
     const path_state = render_graph.create_buffer({
       name: "pt_path_state",
-      size: num_rays * 48 * 4,
+      size: num_rays * 52 * 4,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
       force: force_recreate,
     });
@@ -273,8 +273,10 @@ export class PathTracer extends RayTracer {
           {
             inputs: [
               pt_params,
+              skydome_data_buffer,
               path_state,
               dense_lights,
+              skybox_texture_buffer,
               this.output_texture,
             ],
             outputs: [path_state],

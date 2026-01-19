@@ -120,7 +120,6 @@ export class DDGI {
     rays_per_probe: 32,
     probes_per_frame: 512,
     indirect_boost: 1.0,
-    self_shadow_bias: 0.3,
   };
 
   ddgi_frame_setup = {
@@ -165,8 +164,8 @@ export class DDGI {
     0, // - probe_grid_snap_delta (xyz=delta in probe cells, w=active (1/0))
     0, // - frame_index
     0, // - indirect_boost
-    0, // - self_shadow_bias
-    0, // - padding
+    0, // - _pad0
+    0, // - _pad1
   ]);
 
   // ┌─────────────────────────────────────────────────────────────────────────────┐
@@ -626,7 +625,6 @@ export class DDGI {
           snap_delta_x !== 0 || snap_delta_y !== 0 || snap_delta_z !== 0 ? 1 : 0;
         this.ddgi_params_data[24] = this.ddgi_frame_setup.frame_index;
         this.ddgi_params_data[25] = this.config.indirect_boost;
-        this.ddgi_params_data[26] = this.config.self_shadow_bias;
 
         ddgi_params_buf.write_raw(this.ddgi_params_data);
       }

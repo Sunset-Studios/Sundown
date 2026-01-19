@@ -37,7 +37,8 @@ struct PathState {
     shadow_radiance: vec4<f32>,        // rgb = potential light contribution, a = needs_trace
     path_weight: vec4<f32>,            // xyz = current path throughput, w = unused
     rng_sample_count: vec4<f32>,       // x = rng state, y = sample count, zw = unused
-    accumulated_radiance: vec4<f32>,   // xyz = total accumulated radiance, w = unused
+    accumulated_radiance: vec4<f32>,   // xyz = total accumulated radiance (demodulated), w = unused
+    primary_albedo: vec4<f32>,         // xyz = primary hit albedo for demodulation, w = unused
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -119,6 +120,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
             path_state[pixel_index].hit_attr0 = vec4f(albedo_data.rgb, smra_data.g); // albedo, roughness
             path_state[pixel_index].hit_attr1 = vec4f(smra_data.b, smra_data.r, emissive_data, smra_data.a); // metallic, reflectance, emissive, ao
             path_state[pixel_index].state_u32 = vec4<u32>(0u, 1u, 0u, 0x0u); // bounce=0, alive=1, gbuffer marker
+            path_state[pixel_index].primary_albedo = vec4f(albedo_data.rgb, 1.0);
         } else {
             // No geometry - shoot ray to evaluate sky
             let dims = vec2<f32>(f32(res.x), f32(res.y));
@@ -142,6 +144,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
             path_state[pixel_index].hit_attr0 = vec4f(0.0);
             path_state[pixel_index].hit_attr1 = vec4f(0.0);
             path_state[pixel_index].state_u32 = vec4<u32>(0u, 1u, 0u, 0xffffffffu); // miss marker
+            path_state[pixel_index].primary_albedo = vec4f(1.0, 1.0, 1.0, 1.0);
         }
     } else if (should_trace_this_pixel) {
         // =====================================================================
@@ -168,6 +171,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         path_state[pixel_index].hit_attr0 = vec4f(0.0);
         path_state[pixel_index].hit_attr1 = vec4f(0.0);
         path_state[pixel_index].state_u32 = vec4<u32>(0u, 1u, 0u, 0xffffffffu);
+        path_state[pixel_index].primary_albedo = vec4f(1.0, 1.0, 1.0, 1.0);
     }
 
     // ─────────────────────────────────────────────────────────────────────────

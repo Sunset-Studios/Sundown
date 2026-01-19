@@ -305,6 +305,7 @@ export class PTGI {
     mesh_asset_ids,
     dense_lights,
     draw_count,
+    hzb_texture,
     force_recreate = false
   ) {
     this.final_gi_texture_direct = render_graph.create_image({
