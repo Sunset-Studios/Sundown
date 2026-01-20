@@ -112,7 +112,14 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     // Check if probe is active (based on probe state)
     // ─────────────────────────────────────────────────────────────────────────
     let state = probe_state_get_state(probe_states[probe_index].packed_state);
-    let is_active = probe_state_is_active(state);
+    let is_state_active = probe_state_is_active(state);
+    
+    // ─────────────────────────────────────────────────────────────────────────
+    // Clipmap selection: only update probes in their cascade's "shell"
+    // For cascade N > 0, skip probes that fall within cascade N-1's bounds
+    // ─────────────────────────────────────────────────────────────────────────
+    let is_in_shell = ddgi_is_probe_in_cascade_shell(&ddgi_params, probe_index);
+    let is_active = is_state_active && is_in_shell;
 
     // ─────────────────────────────────────────────────────────────────────────
     // Check if probe is in frustum and visible (from cull_flags in probe state data)

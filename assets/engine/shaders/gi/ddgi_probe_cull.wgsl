@@ -247,7 +247,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     // Use probe spacing as the influence radius - probes can contribute
     // to surfaces within this distance
     // ─────────────────────────────────────────────────────────────────────────
-    let probe_spacing = ddgi_params.probe_counts.w;
+    let probe_spacing = ddgi_probe_spacing_from_index(&ddgi_params, probe_index);
     let influence_radius = probe_spacing * 0.75;  // Conservative margin
     
     // Get view index from frame info

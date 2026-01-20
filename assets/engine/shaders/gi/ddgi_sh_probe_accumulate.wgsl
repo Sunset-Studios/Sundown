@@ -135,7 +135,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         
         sh_new = sh_l1_rgb_add(sh_new, sample_sh);
 
-        let spacing = ddgi_params.probe_counts.w;
+        let spacing = ddgi_probe_spacing_from_index(&ddgi_params, probe_index);
         let max_dim = max(
             ddgi_params.probe_grid_dims.x,
             max(ddgi_params.probe_grid_dims.y, ddgi_params.probe_grid_dims.z)
@@ -232,4 +232,3 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     ddgi_sh_probe_write(&sh_probes, probe_index, sh_result);
     sample_counts[probe_index] = u32(clamp(accumulated_frames, 1.0, DDGI_HISTORY_CAP_FRAMES_MAX));
 }
-

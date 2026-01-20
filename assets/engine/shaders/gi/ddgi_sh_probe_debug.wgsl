@@ -119,34 +119,22 @@ fn sh_debug_world_position_from_depth(pixel_uv: vec2<f32>, depth: f32, view_inde
 }
 
 // =============================================================================
-// MAIN COMPUTE SHADER
+// CASCADE PROBE TRAVERSAL
 // =============================================================================
+// Traverses a single cascade's probe grid using 3D DDA and returns the nearest
+// probe hit. Returns vec2(hit_t, probe_index) or vec2(1e30, 0) if no hit.
+// Uses clipmap-style selection to only show probes in each cascade's "shell".
 
-@compute @workgroup_size(8, 8, 1)
-fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
-    let res = textureDimensions(output_debug);
-    if (gid.x >= res.x || gid.y >= res.y) {
-        return;
-    }
+fn traverse_cascade_probes(
+    cascade_index: u32,
+    ray_origin: vec3<f32>,
+    ray_direction: vec3<f32>,
+    probe_radius: f32,
+    current_best_t: f32
+) -> vec2<f32> {
+    let spacing = ddgi_cascade_spacing(&ddgi_params, cascade_index);
+    let origin = ddgi_cascade_origin(&ddgi_params, cascade_index);
     
-    let pixel_coord = vec2<i32>(i32(gid.x), i32(gid.y));
-    let scene = textureLoad(scene_color, pixel_coord, 0).rgb;
-    
-    let probe_radius = ddgi_params.probe_grid_dims.w;
-    let spacing = ddgi_params.probe_counts.w;
-    let origin = ddgi_params.probe_grid_origin.xyz;
-    
-    // ─────────────────────────────────────────────────────────────────────────
-    // Construct camera ray for this pixel
-    // ─────────────────────────────────────────────────────────────────────────
-    let view_index = u32(frame_info.view_index);
-    let ray_origin = view_buffer[view_index].view_position.xyz;
-    let pixel_uv = (vec2<f32>(f32(gid.x) + 0.5, f32(gid.y) + 0.5)) / vec2<f32>(f32(res.x), f32(res.y));
-    let ray_direction = sh_debug_world_ray_direction(pixel_uv, view_index);
-    
-    // ─────────────────────────────────────────────────────────────────────────
-    // Compute probe volume AABB for early culling
-    // ─────────────────────────────────────────────────────────────────────────
     let dims = vec3<u32>(
         u32(ddgi_params.probe_grid_dims.x),
         u32(ddgi_params.probe_grid_dims.y),
@@ -164,18 +152,16 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let t_range = sh_debug_ray_aabb_intersect(
         ray_origin,
         ray_direction,
-        bmin_ws - vec3<f32>(probe_radius),
-        bmax_ws + vec3<f32>(probe_radius)
+        bmin_ws,
+        bmax_ws
     );
     
-    if (t_range.x > t_range.y) {
-        textureStore(output_debug, pixel_coord, vec4f(scene, 1.0));
-        return;
+    // Early exit if ray misses cascade AABB or enters after current best
+    if (t_range.x > t_range.y || t_range.x > current_best_t) {
+        return vec2<f32>(1e30, 0.0);
     }
     
-    // ─────────────────────────────────────────────────────────────────────────
     // Grid traversal setup (3D DDA)
-    // ─────────────────────────────────────────────────────────────────────────
     let cell_dims = vec3<u32>(
         select(0u, dims.x - 1u, dims.x > 1u),
         select(0u, dims.y - 1u, dims.y > 1u),
@@ -195,8 +181,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let t_exit = vs_range.y;
     
     if (t_enter > t_exit) {
-        textureStore(output_debug, pixel_coord, vec4f(scene, 1.0));
-        return;
+        return vec2<f32>(1e30, 0.0);
     }
     
     // Starting cell
@@ -231,10 +216,8 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         select(1e30, f32(step.z) / rd_vs.z, abs(rd_vs.z) > 1e-8)
     );
     
-    // ─────────────────────────────────────────────────────────────────────────
     // Traverse grid and find nearest probe sphere hit
-    // ─────────────────────────────────────────────────────────────────────────
-    var hit_t = 1e30;
+    var hit_t = current_best_t;
     var hit_probe_index = 0u;
     var hit = false;
     
@@ -247,15 +230,26 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
             for (var oy = 0u; oy < 2u; oy = oy + 1u) {
                 for (var ox = 0u; ox < 2u; ox = ox + 1u) {
                     let v = base + vec3<u32>(ox, oy, oz);
-                    let probe_idx = ddgi_probe_index_from_coord(&ddgi_params, v);
+                    let probe_idx = ddgi_probe_index_from_coord(&ddgi_params, cascade_index, v);
                     let state = probe_state_get_state(probe_states[probe_idx].packed_state);
 
                     if (!STATE_DEBUG_SHOW_ALL && !probe_state_is_active(state)) {
                         continue;
                     }
 
-                    let center = ddgi_probe_world_position_from_coord_with_offset(&ddgi_params, &probe_states, v);
-                    let t = sh_debug_ray_sphere_intersect(ray_origin, ray_direction, center, probe_radius);
+                    // Clipmap selection: only show probes in this cascade's "shell"
+                    if (!ddgi_is_probe_in_cascade_shell(&ddgi_params, probe_idx)) {
+                        continue;
+                    }
+
+                    let center = ddgi_probe_world_position_from_coord_with_offset(
+                        &ddgi_params,
+                        &probe_states,
+                        cascade_index,
+                        v
+                    );
+                    
+                    let t = sh_debug_ray_sphere_intersect(ray_origin, ray_direction, center, probe_radius * f32(cascade_index + 1u));
                     let valid = t > 0.0 && t >= t_range.x && t <= t_range.y && t < hit_t;
                     hit_t = select(hit_t, t, valid);
                     hit_probe_index = select(hit_probe_index, probe_idx, valid);
@@ -292,6 +286,50 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         
         if (out_of_bounds) {
             break;
+        }
+    }
+    
+    return select(vec2<f32>(1e30, 0.0), vec2<f32>(hit_t, f32(hit_probe_index)), hit);
+}
+
+// =============================================================================
+// MAIN COMPUTE SHADER
+// =============================================================================
+
+@compute @workgroup_size(8, 8, 1)
+fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let res = textureDimensions(output_debug);
+    if (gid.x >= res.x || gid.y >= res.y) {
+        return;
+    }
+    
+    let pixel_coord = vec2<i32>(i32(gid.x), i32(gid.y));
+    let scene = textureLoad(scene_color, pixel_coord, 0).rgb;
+    
+    let probe_radius = ddgi_params.probe_grid_dims.w;
+    let cascade_count = ddgi_cascade_count(&ddgi_params);
+    
+    // ─────────────────────────────────────────────────────────────────────────
+    // Construct camera ray for this pixel
+    // ─────────────────────────────────────────────────────────────────────────
+    let view_index = u32(frame_info.view_index);
+    let ray_origin = view_buffer[view_index].view_position.xyz;
+    let pixel_uv = (vec2<f32>(f32(gid.x) + 0.5, f32(gid.y) + 0.5)) / vec2<f32>(f32(res.x), f32(res.y));
+    let ray_direction = sh_debug_world_ray_direction(pixel_uv, view_index);
+    
+    // ─────────────────────────────────────────────────────────────────────────
+    // Traverse all cascades and find nearest probe hit
+    // ─────────────────────────────────────────────────────────────────────────
+    var hit_t = 1e30;
+    var hit_probe_index = 0u;
+    var hit = false;
+    
+    for (var c = 0u; c < cascade_count; c = c + 1u) {
+        let result = traverse_cascade_probes(c, ray_origin, ray_direction, probe_radius, hit_t);
+        if (result.x < hit_t) {
+            hit_t = result.x;
+            hit_probe_index = u32(result.y);
+            hit = true;
         }
     }
     
@@ -346,4 +384,3 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
 
     textureStore(output_debug, pixel_coord, vec4f(final_color, 1.0));
 }
-

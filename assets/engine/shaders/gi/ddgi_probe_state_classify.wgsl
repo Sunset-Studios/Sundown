@@ -90,7 +90,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
 
     let probe_index = probe_update_indices[gid.x];
-    let spacing = ddgi_params.probe_counts.w;
+    let spacing = ddgi_probe_spacing_from_index(&ddgi_params, probe_index);
     
     // ─────────────────────────────────────────────────────────────────────────
     // Read current probe state (using read_write version for modify pass)

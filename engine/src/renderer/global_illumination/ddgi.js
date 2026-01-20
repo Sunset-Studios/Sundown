@@ -17,6 +17,7 @@ const DDGI_PROBE_DEPTH_RES = 16;
 const DDGI_PROBE_DEPTH_TEXEL_COUNT = DDGI_PROBE_DEPTH_RES * DDGI_PROBE_DEPTH_RES;
 const DDGI_PROBE_RAY_DATA_HEADER_WORDS = 4; // 16 bytes (aligned)
 const DDGI_PROBE_RAY_DATA_WORDS_PER_RAY = 32; // 8 vec4s = 32 x u32 words
+const DDGI_MAX_CASCADES = 8;
 
 // ┌─────────────────────────────────────────────────────────────────────────────┐
 // │ Resource cache / binding names                                               │
@@ -37,6 +38,12 @@ const texture_pool_emission_name = Name.from("texture_pool_emission");
 const ddgi_reset_shader_setup = {
   pipeline_shaders: {
     compute: { path: "gi/ddgi_reset.wgsl" },
+  },
+};
+
+const ddgi_probe_scroll_reset_shader_setup = {
+  pipeline_shaders: {
+    compute: { path: "gi/ddgi_probe_scroll_reset.wgsl" },
   },
 };
 
@@ -114,12 +121,14 @@ const ddgi_probe_cull_shader_setup = {
 
 export class DDGI {
   config = {
-    probe_grid_dimensions: [64, 64, 64],
+    probe_grid_dimensions: [32, 32, 32],
     probe_spacing: 4.0,
     probe_radius: 0.2,
     rays_per_probe: 32,
     probes_per_frame: 512,
     indirect_boost: 1.0,
+    cascade_count: DDGI_MAX_CASCADES,
+    cascade_spacing_multiplier: 2.0,
   };
 
   ddgi_frame_setup = {
@@ -137,41 +146,27 @@ export class DDGI {
   };
 
   ddgi_params = null;
-  ddgi_params_data = new Float32Array([
-    0,
-    0,
-    0,
-    0, // - probe_counts        (x=probe_count, y=rays_per_probe, z=probes_per_frame, w=probe_spacing)
-    0,
-    0,
-    0,
-    0, // - probe_grid_dims     (x=dim_x, y=dim_y, z=dim_z, w=probe_radius)
-    0,
-    0,
-    0,
-    0, // - probe_grid_origin   (xyz=grid origin, w=unused)
-    0,
-    0,
-    0,
-    0, // - probe_grid_log2     (xyz=log2(dim_*), w=unused)
-    0,
-    0,
-    0,
-    0, // - probe_grid_mask     (xyz=(dim_*-1), w=unused)
-    0,
-    0,
-    0,
-    0, // - probe_grid_snap_delta (xyz=delta in probe cells, w=active (1/0))
-    0, // - frame_index
-    0, // - indirect_boost
-    0, // - _pad0
-    0, // - _pad1
-  ]);
+  // DDGIParams layout:
+  // [0-3]   probe_counts        (x=probe_count, y=rays_per_probe, z=probes_per_frame, w=probe_spacing)
+  // [4-7]   probe_grid_dims     (x=dim_x, y=dim_y, z=dim_z, w=probe_radius)
+  // [8-11]  probe_grid_origin   (xyz=grid origin, w=unused)
+  // [12-15] probe_grid_log2     (xyz=log2(dim_*), w=unused)
+  // [16-19] probe_grid_mask     (xyz=(dim_*-1), w=unused)
+  // [20-23] probe_grid_snap_delta (xyz=delta in probe cells, w=active (1/0))
+  // [24]    frame_index
+  // [25]    indirect_boost
+  // [26]    cascade_count
+  // [27]    _pad1
+  // [28-39] cascade[0]: origin_spacing(4), scroll_offset(4), snap_delta(4)
+  // ... (12 floats per cascade)
+  ddgi_params_data = new Float32Array(28 + 12 * DDGI_MAX_CASCADES);
 
   // ┌─────────────────────────────────────────────────────────────────────────────┐
   // │ Probe grid snap tracking (CPU-side)                                          │
   // └─────────────────────────────────────────────────────────────────────────────┘
   ddgi_probe_grid_snapped_origin = null;
+  ddgi_probe_grid_scroll_offsets = null;
+  ddgi_probe_grid_initialized = null;
 
   final_gi_texture_direct = null;
   final_gi_texture_indirect_diffuse = null;
@@ -315,7 +310,9 @@ export class DDGI {
     force_recreate
   ) {
     const grid_dims = this._sanitize_probe_grid_dimensions(this.config.probe_grid_dimensions);
-    const probe_count = grid_dims[0] * grid_dims[1] * grid_dims[2];
+    const probes_per_cascade = grid_dims[0] * grid_dims[1] * grid_dims[2];
+    const cascade_count = Math.max(1, Math.floor(this.config.cascade_count));
+    const probe_count = probes_per_cascade * cascade_count;
 
     // ┌─────────────────────────────────────────────────────────────────────────────┐
     // │ Probe update budget (temporal cycling)                                       │
@@ -324,7 +321,9 @@ export class DDGI {
     // temporally. The selection itself is generated on the GPU by `gi/ddgi_probe_indices_init.wgsl`.
     const probes_per_frame_cfg = Math.max(0, Math.floor(this.config.probes_per_frame));
     const probes_per_frame =
-      probes_per_frame_cfg === 0 ? probe_count : Math.min(probe_count, probes_per_frame_cfg);
+      probes_per_frame_cfg === 0
+        ? probe_count
+        : Math.min(probe_count, probes_per_frame_cfg);
     const rays_per_probe = Math.max(1, Math.floor(this.config.rays_per_probe));
     const probe_primary_ray_count = probes_per_frame * rays_per_probe;
     const probe_total_ray_count = probe_primary_ray_count;
@@ -333,46 +332,85 @@ export class DDGI {
     const view = SharedViewBuffer.get_view_data(view_index);
     const camera_position = view.view_position;
 
-    const spacing = this.config.probe_spacing;
-    const half_extents = [
-      (grid_dims[0] - 1) * 0.5 * spacing,
-      (grid_dims[1] - 1) * 0.5 * spacing,
-      (grid_dims[2] - 1) * 0.5 * spacing,
-    ];
+    const base_spacing = this.config.probe_spacing;
+    const cascade_spacing_multiplier = Math.max(1.0, this.config.cascade_spacing_multiplier);
 
-    if (!this.ddgi_probe_grid_snapped_origin) {
-      this.ddgi_probe_grid_snapped_origin = new Float32Array(3);
-      this.ddgi_probe_grid_snapped_origin[0] =
-        Math.floor(camera_position[0] / spacing) * spacing - half_extents[0];
-      this.ddgi_probe_grid_snapped_origin[1] =
-        Math.floor(camera_position[1] / spacing) * spacing - half_extents[1];
-      this.ddgi_probe_grid_snapped_origin[2] =
-        Math.floor(camera_position[2] / spacing) * spacing - half_extents[2];
+    if (
+      !this.ddgi_probe_grid_snapped_origin ||
+      this.ddgi_probe_grid_snapped_origin.length !== cascade_count
+    ) {
+      this.ddgi_probe_grid_snapped_origin = Array.from(
+        { length: cascade_count },
+        () => new Float32Array(3)
+      );
+      this.ddgi_probe_grid_scroll_offsets = Array.from(
+        { length: cascade_count },
+        () => new Int32Array(3)
+      );
+      this.ddgi_probe_grid_initialized = Array.from({ length: cascade_count }, () => false);
     }
-    const snapped_origin = this.ddgi_probe_grid_snapped_origin;
-    const snap_delta_x = 0;
-    const snap_delta_y = 0;
-    const snap_delta_z = 0;
 
-    // const snapped_origin = [
-    //   Math.floor(camera_position[0] / spacing) * spacing - half_extents[0],
-    //   Math.floor(camera_position[1] / spacing) * spacing - half_extents[1],
-    //   Math.floor(camera_position[2] / spacing) * spacing - half_extents[2],
-    // ];
+    const cascade_data = new Float32Array(cascade_count * 12);
+    let cascade_has_scroll = false;
 
-    // const snap_delta_x = Math.round(
-    //   (snapped_origin[0] - this.ddgi_probe_grid_snapped_origin[0]) / spacing
-    // );
-    // const snap_delta_y = Math.round(
-    //   (snapped_origin[1] - this.ddgi_probe_grid_snapped_origin[1]) / spacing
-    // );
-    // const snap_delta_z = Math.round(
-    //   (snapped_origin[2] - this.ddgi_probe_grid_snapped_origin[2]) / spacing
-    // );
+    for (let cascade_index = 0; cascade_index < cascade_count; cascade_index += 1) {
+      const spacing = base_spacing * Math.pow(cascade_spacing_multiplier, cascade_index);
+      const half_extents = [
+        (grid_dims[0] - 1) * 0.5 * spacing,
+        (grid_dims[1] - 1) * 0.5 * spacing,
+        (grid_dims[2] - 1) * 0.5 * spacing,
+      ];
 
-    // this.ddgi_probe_grid_snapped_origin[0] = snapped_origin[0];
-    // this.ddgi_probe_grid_snapped_origin[1] = snapped_origin[1];
-    // this.ddgi_probe_grid_snapped_origin[2] = snapped_origin[2];
+      const snapped_origin = this.ddgi_probe_grid_snapped_origin[cascade_index];
+      const scroll_offset = this.ddgi_probe_grid_scroll_offsets[cascade_index];
+
+      const next_origin = [
+        Math.floor(camera_position[0] / spacing) * spacing - half_extents[0],
+        Math.floor(camera_position[1] / spacing) * spacing - half_extents[1],
+        Math.floor(camera_position[2] / spacing) * spacing - half_extents[2],
+      ];
+
+      let snap_delta_x = 0;
+      let snap_delta_y = 0;
+      let snap_delta_z = 0;
+      const was_initialized = this.ddgi_probe_grid_initialized[cascade_index];
+
+      if (was_initialized) {
+        snap_delta_x = Math.round((next_origin[0] - snapped_origin[0]) / spacing);
+        snap_delta_y = Math.round((next_origin[1] - snapped_origin[1]) / spacing);
+        snap_delta_z = Math.round((next_origin[2] - snapped_origin[2]) / spacing);
+      }
+
+      snapped_origin[0] = next_origin[0];
+      snapped_origin[1] = next_origin[1];
+      snapped_origin[2] = next_origin[2];
+      this.ddgi_probe_grid_initialized[cascade_index] = true;
+
+      if (snap_delta_x !== 0 || snap_delta_y !== 0 || snap_delta_z !== 0) {
+        scroll_offset[0] =
+          ((scroll_offset[0] + snap_delta_x) % grid_dims[0] + grid_dims[0]) % grid_dims[0];
+        scroll_offset[1] =
+          ((scroll_offset[1] + snap_delta_y) % grid_dims[1] + grid_dims[1]) % grid_dims[1];
+        scroll_offset[2] =
+          ((scroll_offset[2] + snap_delta_z) % grid_dims[2] + grid_dims[2]) % grid_dims[2];
+        cascade_has_scroll = true;
+      }
+
+      const base_index = cascade_index * 12;
+      cascade_data[base_index + 0] = snapped_origin[0];
+      cascade_data[base_index + 1] = snapped_origin[1];
+      cascade_data[base_index + 2] = snapped_origin[2];
+      cascade_data[base_index + 3] = spacing;
+      cascade_data[base_index + 4] = scroll_offset[0];
+      cascade_data[base_index + 5] = scroll_offset[1];
+      cascade_data[base_index + 6] = scroll_offset[2];
+      cascade_data[base_index + 7] = 0;
+      cascade_data[base_index + 8] = snap_delta_x;
+      cascade_data[base_index + 9] = snap_delta_y;
+      cascade_data[base_index + 10] = snap_delta_z;
+      cascade_data[base_index + 11] =
+        snap_delta_x !== 0 || snap_delta_y !== 0 || snap_delta_z !== 0 ? 1 : 0;
+    }
 
     const grid_log2 = [
       Math.round(Math.log2(grid_dims[0])),
@@ -598,17 +636,18 @@ export class DDGI {
       (graph, frame_data, encoder) => {
         const ddgi_params_buf = graph.get_physical_buffer(this.ddgi_params);
 
+        const primary_origin = this.ddgi_probe_grid_snapped_origin[0];
         this.ddgi_params_data[0] = probe_count;
         this.ddgi_params_data[1] = rays_per_probe;
         this.ddgi_params_data[2] = probes_per_frame;
-        this.ddgi_params_data[3] = spacing;
+        this.ddgi_params_data[3] = base_spacing;
         this.ddgi_params_data[4] = grid_dims[0];
         this.ddgi_params_data[5] = grid_dims[1];
         this.ddgi_params_data[6] = grid_dims[2];
         this.ddgi_params_data[7] = this.config.probe_radius;
-        this.ddgi_params_data[8] = snapped_origin[0];
-        this.ddgi_params_data[9] = snapped_origin[1];
-        this.ddgi_params_data[10] = snapped_origin[2];
+        this.ddgi_params_data[8] = primary_origin[0];
+        this.ddgi_params_data[9] = primary_origin[1];
+        this.ddgi_params_data[10] = primary_origin[2];
         this.ddgi_params_data[11] = 0;
         this.ddgi_params_data[12] = grid_log2[0];
         this.ddgi_params_data[13] = grid_log2[1];
@@ -618,13 +657,20 @@ export class DDGI {
         this.ddgi_params_data[17] = grid_mask[1];
         this.ddgi_params_data[18] = grid_mask[2];
         this.ddgi_params_data[19] = 0;
-        this.ddgi_params_data[20] = snap_delta_x;
-        this.ddgi_params_data[21] = snap_delta_y;
-        this.ddgi_params_data[22] = snap_delta_z;
-        this.ddgi_params_data[23] =
-          snap_delta_x !== 0 || snap_delta_y !== 0 || snap_delta_z !== 0 ? 1 : 0;
+        this.ddgi_params_data[20] = 0;
+        this.ddgi_params_data[21] = 0;
+        this.ddgi_params_data[22] = 0;
+        this.ddgi_params_data[23] = 0;
         this.ddgi_params_data[24] = this.ddgi_frame_setup.frame_index;
         this.ddgi_params_data[25] = this.config.indirect_boost;
+        this.ddgi_params_data[26] = cascade_count;
+        this.ddgi_params_data[27] = 0; // _pad1
+
+        // Copy cascade data into params buffer (starts at offset 28)
+        // Each cascade has 12 floats: origin_spacing(4), scroll_offset(4), snap_delta(4)
+        for (let i = 0; i < cascade_data.length; i++) {
+          this.ddgi_params_data[28 + i] = cascade_data[i];
+        }
 
         ddgi_params_buf.write_raw(this.ddgi_params_data);
       }
@@ -643,6 +689,28 @@ export class DDGI {
         pass.dispatch(1, 1, 1);
       }
     );
+
+    if (cascade_has_scroll) {
+      render_graph.add_pass(
+        "ddgi_probe_scroll_reset",
+        RenderPassFlags.Compute,
+        {
+          inputs: [
+            this.ddgi_params,
+            sh_probes,
+            sh_sample_counts,
+            probe_depth_moments,
+            probe_states,
+          ],
+          outputs: [sh_probes, sh_sample_counts, probe_depth_moments, probe_states],
+          shader_setup: ddgi_probe_scroll_reset_shader_setup,
+        },
+        (graph, frame_data, encoder) => {
+          const pass = graph.get_physical_pass(frame_data.current_pass);
+          pass.dispatch(Math.ceil(probe_count / COMPUTE_WORKGROUP_SIZE), 1, 1);
+        }
+      );
+    }
 
     // ─────────────────────────────────────────────────────────────────────────
     // Probe Frustum & Occlusion Culling Pass
@@ -900,7 +968,13 @@ export class DDGI {
       "ddgi_probe_state_classify",
       RenderPassFlags.Compute,
       {
-        inputs: [this.ddgi_params, probe_update_indices, probe_ray_data, probe_states, gi_counters],
+        inputs: [
+          this.ddgi_params,
+          probe_update_indices,
+          probe_ray_data,
+          probe_states,
+          gi_counters,
+        ],
         outputs: [probe_states],
         shader_setup: ddgi_probe_state_classify_shader_setup,
       },

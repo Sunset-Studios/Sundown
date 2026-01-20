@@ -56,8 +56,17 @@ const PROBE_STATE_NEAR_GEOMETRY_DIST: f32  = 2.0;  // Multiplier of probe_spacin
 const PROBE_STATE_HYSTERESIS_NEW: f32      = 0.0;   // Newly awake/vigilant - no history blend
 const PROBE_STATE_HYSTERESIS_NORMAL: f32   = 0.95;  // Normal temporal blend factor
 
+// Maximum number of DDGI cascades supported
+const DDGI_MAX_CASCADES: u32 = 8u;
+
+struct DDGICascadeData {
+    origin_spacing: vec4<f32>, // xyz = cascade origin, w = probe spacing
+    scroll_offset: vec4<f32>,  // xyz = ring buffer scroll offset (probe cells), w = unused
+    snap_delta: vec4<f32>,     // xyz = delta in probe cells, w = active (1/0)
+};
+
 struct DDGIParams {
-    probe_counts: vec4<f32>,      // x=probe_count, y=rays_per_probe, z=probes_per_frame, w=probe_spacing
+    probe_counts: vec4<f32>,      // x=probe_count_total, y=rays_per_probe, z=probes_per_frame, w=probe_spacing_base
     probe_grid_dims: vec4<f32>,   // x=dim_x, y=dim_y, z=dim_z, w=probe_radius
     probe_grid_origin: vec4<f32>, // xyz = grid origin, w = unused
     probe_grid_log2: vec4<f32>,   // xyz = log2(dim_*), w = unused
@@ -65,8 +74,9 @@ struct DDGIParams {
     probe_grid_snap_delta: vec4<f32>, // xyz = delta in probe cells, w = active (1/0)
     frame_index: f32,
     indirect_boost: f32,
-    _pad0: f32,
+    cascade_count: f32,
     _pad1: f32,
+    cascades: array<DDGICascadeData, DDGI_MAX_CASCADES>, // Per-cascade data (origin, scroll, snap)
 };
 
 struct DDGIProbeRayData {
@@ -106,7 +116,53 @@ struct DDGIProbeRayDataBuffer {
     rays: array<DDGIProbeRayData>,
 };
 
-fn ddgi_probe_coord_from_index(ddgi_params: ptr<uniform, DDGIParams>, probe_index: u32) -> vec3<u32> {
+fn ddgi_probe_count_per_cascade(ddgi_params: ptr<uniform, DDGIParams>) -> u32 {
+    let dims = vec3<u32>(
+        u32((*ddgi_params).probe_grid_dims.x),
+        u32((*ddgi_params).probe_grid_dims.y),
+        u32((*ddgi_params).probe_grid_dims.z)
+    );
+    return dims.x * dims.y * dims.z;
+}
+
+fn ddgi_cascade_count(ddgi_params: ptr<uniform, DDGIParams>) -> u32 {
+    return max(1u, u32((*ddgi_params).cascade_count));
+}
+
+fn ddgi_probe_cascade_index(ddgi_params: ptr<uniform, DDGIParams>, probe_index: u32) -> u32 {
+    let probes_per_cascade = ddgi_probe_count_per_cascade(ddgi_params);
+    return probe_index / max(probes_per_cascade, 1u);
+}
+
+fn ddgi_probe_index_in_cascade(ddgi_params: ptr<uniform, DDGIParams>, probe_index: u32) -> u32 {
+    let probes_per_cascade = ddgi_probe_count_per_cascade(ddgi_params);
+    return probe_index - ddgi_probe_cascade_index(ddgi_params, probe_index) * probes_per_cascade;
+}
+
+fn ddgi_cascade_origin(ddgi_params: ptr<uniform, DDGIParams>, cascade_index: u32) -> vec3<f32> {
+    return (*ddgi_params).cascades[cascade_index].origin_spacing.xyz;
+}
+
+fn ddgi_cascade_spacing(ddgi_params: ptr<uniform, DDGIParams>, cascade_index: u32) -> f32 {
+    return (*ddgi_params).cascades[cascade_index].origin_spacing.w;
+}
+
+fn ddgi_probe_spacing_from_index(ddgi_params: ptr<uniform, DDGIParams>, probe_index: u32) -> f32 {
+    return ddgi_cascade_spacing(ddgi_params, ddgi_probe_cascade_index(ddgi_params, probe_index));
+}
+
+fn ddgi_cascade_scroll_offset(ddgi_params: ptr<uniform, DDGIParams>, cascade_index: u32) -> vec3<u32> {
+    return vec3<u32>(
+        u32((*ddgi_params).cascades[cascade_index].scroll_offset.x),
+        u32((*ddgi_params).cascades[cascade_index].scroll_offset.y),
+        u32((*ddgi_params).cascades[cascade_index].scroll_offset.z)
+    );
+}
+
+fn ddgi_probe_storage_coord_from_index(
+    ddgi_params: ptr<uniform, DDGIParams>,
+    probe_index: u32
+) -> vec3<u32> {
     let shift_x = u32((*ddgi_params).probe_grid_log2.x);
     let shift_y = u32((*ddgi_params).probe_grid_log2.y);
 
@@ -114,33 +170,145 @@ fn ddgi_probe_coord_from_index(ddgi_params: ptr<uniform, DDGIParams>, probe_inde
     let mask_y = u32((*ddgi_params).probe_grid_mask.y);
     let mask_z = u32((*ddgi_params).probe_grid_mask.z);
 
-    let x = probe_index & mask_x;
-    let y = (probe_index >> shift_x) & mask_y;
-    let z = (probe_index >> (shift_x + shift_y)) & mask_z;
+    let local_index = ddgi_probe_index_in_cascade(ddgi_params, probe_index);
+    let x = local_index & mask_x;
+    let y = (local_index >> shift_x) & mask_y;
+    let z = (local_index >> (shift_x + shift_y)) & mask_z;
 
     return vec3<u32>(x, y, z);
 }
 
-fn ddgi_probe_index_from_coord(ddgi_params: ptr<uniform, DDGIParams>, coord: vec3<u32>) -> u32 {
+fn ddgi_probe_coord_from_index(ddgi_params: ptr<uniform, DDGIParams>, probe_index: u32) -> vec3<u32> {
+    let mask = vec3<u32>(
+        u32((*ddgi_params).probe_grid_mask.x),
+        u32((*ddgi_params).probe_grid_mask.y),
+        u32((*ddgi_params).probe_grid_mask.z)
+    );
+    let dims = mask + vec3<u32>(1u);
+
+    let cascade_index = ddgi_probe_cascade_index(ddgi_params, probe_index);
+    let scroll = ddgi_cascade_scroll_offset(ddgi_params, cascade_index);
+    let storage_coord = ddgi_probe_storage_coord_from_index(ddgi_params, probe_index);
+    let world_coord = (storage_coord + dims - scroll) & mask;
+
+    return world_coord;
+}
+
+fn ddgi_probe_index_from_coord(
+    ddgi_params: ptr<uniform, DDGIParams>,
+    cascade_index: u32,
+    coord: vec3<u32>
+) -> u32 {
     let shift_x = u32((*ddgi_params).probe_grid_log2.x);
     let shift_y = u32((*ddgi_params).probe_grid_log2.y);
-    return coord.x | (coord.y << shift_x) | (coord.z << (shift_x + shift_y));
+    let mask = vec3<u32>(
+        u32((*ddgi_params).probe_grid_mask.x),
+        u32((*ddgi_params).probe_grid_mask.y),
+        u32((*ddgi_params).probe_grid_mask.z)
+    );
+    let scroll = ddgi_cascade_scroll_offset(ddgi_params, cascade_index);
+    let storage_coord = (coord + scroll) & mask;
+    let local_index =
+        storage_coord.x |
+        (storage_coord.y << shift_x) |
+        (storage_coord.z << (shift_x + shift_y));
+    let probes_per_cascade = ddgi_probe_count_per_cascade(ddgi_params);
+    return cascade_index * probes_per_cascade + local_index;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 3D depth atlas cell coordinates: XZ within layer, Y as layer index
 // ─────────────────────────────────────────────────────────────────────────────
 fn ddgi_probe_world_position_from_index(ddgi_params: ptr<uniform, DDGIParams>, probe_index: u32) -> vec3<f32> {
-    let spacing = (*ddgi_params).probe_counts.w;
-    let origin = (*ddgi_params).probe_grid_origin.xyz;
+    let cascade_index = ddgi_probe_cascade_index(ddgi_params, probe_index);
+    let spacing = ddgi_cascade_spacing(ddgi_params, cascade_index);
+    let origin = ddgi_cascade_origin(ddgi_params, cascade_index);
     let coord = ddgi_probe_coord_from_index(ddgi_params, probe_index);
     return origin + vec3<f32>(f32(coord.x), f32(coord.y), f32(coord.z)) * spacing;
 }
 
-fn ddgi_probe_world_position_from_coord(ddgi_params: ptr<uniform, DDGIParams>, coord: vec3<u32>) -> vec3<f32> {
-    let spacing = (*ddgi_params).probe_counts.w;
-    let origin = (*ddgi_params).probe_grid_origin.xyz;
+fn ddgi_probe_world_position_from_coord(
+    ddgi_params: ptr<uniform, DDGIParams>,
+    cascade_index: u32,
+    coord: vec3<u32>
+) -> vec3<f32> {
+    let spacing = ddgi_cascade_spacing(ddgi_params, cascade_index);
+    let origin = ddgi_cascade_origin(ddgi_params, cascade_index);
     return origin + vec3<f32>(f32(coord.x), f32(coord.y), f32(coord.z)) * spacing;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Clipmap-style cascade shell selection
+// Returns true if a probe belongs to its cascade's "shell" (toroidal region).
+// For cascade 0: always true (innermost cascade covers entire bounds)
+// For cascade N > 0: true only if probe is outside cascade N-1's bounds
+// ─────────────────────────────────────────────────────────────────────────────
+fn ddgi_is_probe_in_cascade_shell(
+    ddgi_params: ptr<uniform, DDGIParams>,
+    probe_index: u32
+) -> bool {
+    let cascade_index = ddgi_probe_cascade_index(ddgi_params, probe_index);
+    
+    // Cascade 0 always includes all its probes (innermost)
+    if (cascade_index == 0u) {
+        return true;
+    }
+    
+    // Get probe world position
+    let probe_pos = ddgi_probe_world_position_from_index(ddgi_params, probe_index);
+    
+    // Get inner cascade's (N-1) bounds
+    let inner_cascade = cascade_index - 1u;
+    let inner_origin = ddgi_cascade_origin(ddgi_params, inner_cascade);
+    let inner_spacing = ddgi_cascade_spacing(ddgi_params, inner_cascade);
+    
+    let dims = vec3<f32>(
+        (*ddgi_params).probe_grid_dims.x,
+        (*ddgi_params).probe_grid_dims.y,
+        (*ddgi_params).probe_grid_dims.z
+    );
+    
+    // Compute inner cascade's AABB
+    let inner_min = inner_origin;
+    let inner_max = inner_origin + (dims - vec3<f32>(1.0)) * inner_spacing;
+    
+    // Probe is in the shell if it's outside the inner cascade's bounds
+    let inside_inner = all(probe_pos >= inner_min) && all(probe_pos <= inner_max);
+    
+    return !inside_inner;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Get the cascade index that contains a given world position.
+// Returns the finest (lowest index) cascade whose bounds contain the position.
+// Falls back to cascade 0 if the position is outside all cascades.
+// ─────────────────────────────────────────────────────────────────────────────
+fn ddgi_cascade_index_for_position(
+    ddgi_params: ptr<uniform, DDGIParams>,
+    position: vec3<f32>
+) -> u32 {
+    let cascade_count = ddgi_cascade_count(ddgi_params);
+    let dims_f = vec3<f32>(
+        (*ddgi_params).probe_grid_dims.x,
+        (*ddgi_params).probe_grid_dims.y,
+        (*ddgi_params).probe_grid_dims.z
+    );
+    
+    var cascade_index = 0u;
+    for (var c = 0u; c < cascade_count; c = c + 1u) {
+        let spacing = ddgi_cascade_spacing(ddgi_params, c);
+        let origin = ddgi_cascade_origin(ddgi_params, c);
+        let max_bound = origin + (dims_f - vec3<f32>(1.0)) * spacing;
+        let inside =
+            position.x >= origin.x && position.y >= origin.y && position.z >= origin.z &&
+            position.x <= max_bound.x && position.y <= max_bound.y && position.z <= max_bound.z;
+        cascade_index = select(cascade_index, c, inside);
+        if (inside) {
+            break;
+        }
+    }
+    
+    return cascade_index;
 }
 
 // =============================================================================
@@ -402,9 +570,10 @@ fn ddgi_probe_world_position_from_index_with_offset(
 fn ddgi_probe_world_position_from_coord_with_offset(
     ddgi_params: ptr<uniform, DDGIParams>,
     probe_states: ptr<storage, array<ProbeStateData>, read>,
+    cascade_index: u32,
     coord: vec3<u32>
 ) -> vec3<f32> {
-    let probe_index = ddgi_probe_index_from_coord(ddgi_params, coord);
+    let probe_index = ddgi_probe_index_from_coord(ddgi_params, cascade_index, coord);
     return ddgi_probe_world_position_from_index_with_offset(ddgi_params, probe_states, probe_index);
 }
 
@@ -477,14 +646,16 @@ fn ddgi_sample_sh_irradiance_with_states(
     position: vec3<f32>,
     normal_ws: vec3<f32>
 ) -> vec3<f32> {
-    let spacing = (*ddgi_params).probe_counts.w;
     let dims = vec3<u32>(
         u32((*ddgi_params).probe_grid_dims.x),
         u32((*ddgi_params).probe_grid_dims.y),
         u32((*ddgi_params).probe_grid_dims.z)
     );
-    let origin = (*ddgi_params).probe_grid_origin.xyz;
     let probe_radius = (*ddgi_params).probe_grid_dims.w;
+
+    let cascade_index = ddgi_cascade_index_for_position(ddgi_params, position);
+    let spacing = ddgi_cascade_spacing(ddgi_params, cascade_index);
+    let origin = ddgi_cascade_origin(ddgi_params, cascade_index);
 
     let view_index = u32(frame_info.view_index);
     let camera_position = view_buffer[view_index].view_position.xyz;
@@ -514,7 +685,7 @@ fn ddgi_sample_sh_irradiance_with_states(
     for (var i = 0; i < 8; i = i + 1) {
         let coord = vec3<u32>(base) + vec3<u32>(trilinear_index_offsets[i]);
         let clamped_coord = clamp(coord, vec3<u32>(0u), dims - vec3<u32>(1u));
-        let probe_index = ddgi_probe_index_from_coord(ddgi_params, clamped_coord);
+        let probe_index = ddgi_probe_index_from_coord(ddgi_params, cascade_index, clamped_coord);
 
         // ─────────────────────────────────────────────────────────────
         // Read probe state data for offset and state check
@@ -529,7 +700,12 @@ fn ddgi_sample_sh_irradiance_with_states(
 
         var weight = 1.0;
 
-        let probe_pos = ddgi_probe_world_position_from_coord_with_offset(ddgi_params, probe_states, clamped_coord);
+        let probe_pos = ddgi_probe_world_position_from_coord_with_offset(
+            ddgi_params,
+            probe_states,
+            cascade_index,
+            clamped_coord
+        );
         let dir_to_probe = normalize(probe_pos - position);
 
         let to_probe = offset_pos - probe_pos;
