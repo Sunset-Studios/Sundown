@@ -661,7 +661,7 @@ fn ddgi_sample_sh_irradiance_with_states(
     let camera_position = view_buffer[view_index].view_position.xyz;
     let w_o = normalize(camera_position - position);
 
-    let bias_offset = (normal_ws + 1.2 * w_o) * (0.45 * spacing);
+    let bias_offset = (0.2 * normal_ws + 0.8 * w_o) * (0.75 * spacing) * 0.3;
     let offset_pos = position + bias_offset;
 
     let rel = (offset_pos - origin) / spacing;

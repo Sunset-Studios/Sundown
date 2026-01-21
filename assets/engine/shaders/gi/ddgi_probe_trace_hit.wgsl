@@ -514,9 +514,9 @@ fn process_primary_ray(
         var world_b = safe_normalize((entity_transform.transform * vec4<f32>(b_local, 0.0)).xyz);
 
         let ray_is_backfacing = dot(world_n, ray_dir) > 0.0;
-        //world_n = select(world_n, -world_n, ray_is_backfacing);
-        //world_t = select(world_t, -world_t, ray_is_backfacing);
-        //world_b = select(world_b, -world_b, ray_is_backfacing);
+        world_n = select(world_n, -world_n, ray_is_backfacing);
+        world_t = select(world_t, -world_t, ray_is_backfacing);
+        world_b = select(world_b, -world_b, ray_is_backfacing);
 
         let section_index = u32(vertex_buffer[v0i].section_index);
 
