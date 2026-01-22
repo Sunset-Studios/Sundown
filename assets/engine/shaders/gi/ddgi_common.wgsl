@@ -95,7 +95,7 @@ struct ProbeStateData {
     nearest_hit_dist: u32,    // bitcast from f32
     backface_ratio: f32,      // accumulated backface hit ratio
     cull_flags: u32,          // frustum/occlusion cull result (1 = visible, 0 = culled)
-    probe_offset: vec4<f32>,  // xyz = probe position offset in world-space, w = unused
+    probe_offset: vec4<f32>,  // xyz = probe position offset in world-space, w = sample_count (bitcast u32)
 }
 
 // =============================================================================
@@ -115,6 +115,14 @@ struct DDGIProbeRayDataBuffer {
     header: DDGIProbeRayDataHeader,
     rays: array<DDGIProbeRayData>,
 };
+
+fn ddgi_probe_state_get_sample_count(probe_state: ProbeStateData) -> u32 {
+    return bitcast<u32>(probe_state.probe_offset.w);
+}
+
+fn ddgi_probe_state_set_sample_count(probe_state: ptr<storage, ProbeStateData, read_write>, count: u32) {
+    (*probe_state).probe_offset.w = bitcast<f32>(count);
+}
 
 fn ddgi_probe_count_per_cascade(ddgi_params: ptr<uniform, DDGIParams>) -> u32 {
     let dims = vec3<u32>(
@@ -661,7 +669,7 @@ fn ddgi_sample_sh_irradiance_with_states(
     let camera_position = view_buffer[view_index].view_position.xyz;
     let w_o = normalize(camera_position - position);
 
-    let bias_offset = (0.2 * normal_ws + 0.8 * w_o) * (0.75 * spacing) * 0.3;
+    let bias_offset = (0.2 * normal_ws + 0.8 * w_o) * (0.45 * spacing) * (1.0 - f32(cascade_index) / f32(DDGI_MAX_CASCADES));
     let offset_pos = position + bias_offset;
 
     let rel = (offset_pos - origin) / spacing;

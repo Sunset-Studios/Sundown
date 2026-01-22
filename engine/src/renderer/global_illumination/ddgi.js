@@ -122,10 +122,10 @@ const ddgi_probe_cull_shader_setup = {
 export class DDGI {
   config = {
     probe_grid_dimensions: [32, 32, 32],
-    probe_spacing: 4.0,
+    probe_spacing: 2.0,
     probe_radius: 0.2,
     rays_per_probe: 32,
-    probes_per_frame: 2048,
+    probes_per_frame: 1024,
     indirect_boost: 1.0,
     cascade_count: DDGI_MAX_CASCADES,
     cascade_spacing_multiplier: 2.0,
@@ -610,13 +610,6 @@ export class DDGI {
       force: force_recreate,
     });
 
-    const sh_sample_counts = render_graph.create_buffer({
-      name: "ddgi_sh_sample_counts",
-      size: probe_count,
-      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-      force: force_recreate,
-    });
-
     // ─────────────────────────────────────────────────────────────────────────
     // Probe State Buffers
     // - [0..3] packed_state, nearest_hit_dist, backface_count, reserved
@@ -698,11 +691,10 @@ export class DDGI {
           inputs: [
             this.ddgi_params,
             sh_probes,
-            sh_sample_counts,
             probe_depth_moments,
             probe_states,
           ],
-          outputs: [sh_probes, sh_sample_counts, probe_depth_moments, probe_states],
+          outputs: [sh_probes, probe_depth_moments, probe_states],
           shader_setup: ddgi_probe_scroll_reset_shader_setup,
         },
         (graph, frame_data, encoder) => {
@@ -852,7 +844,6 @@ export class DDGI {
           probe_update_indices,
           probe_ray_data,
           sh_probes,
-          sh_sample_counts,
           gi_counters,
         ],
         outputs: [probe_ray_data],
@@ -945,12 +936,11 @@ export class DDGI {
           probe_update_indices,
           probe_ray_data,
           sh_probes,
-          sh_sample_counts,
           probe_depth_moments,
           probe_states,
           gi_counters,
         ],
-        outputs: [sh_probes, sh_sample_counts, probe_depth_moments],
+        outputs: [sh_probes, probe_depth_moments, probe_states],
         shader_setup: ddgi_sh_probe_accumulate_shader_setup,
       },
       (graph, frame_data, encoder) => {

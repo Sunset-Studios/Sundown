@@ -27,10 +27,9 @@
 @group(1) @binding(1) var<storage, read> probe_update_indices: array<u32>;
 @group(1) @binding(2) var<storage, read_write> probe_ray_data: DDGIProbeRayDataBuffer;
 @group(1) @binding(3) var<storage, read_write> sh_probes: array<u32>;
-@group(1) @binding(4) var<storage, read_write> sample_counts: array<u32>;
-@group(1) @binding(5) var<storage, read_write> probe_depth_moments: array<vec4<f32>>;
-@group(1) @binding(6) var<storage, read> probe_states: array<ProbeStateData>;
-@group(1) @binding(7) var<storage, read_write> gi_counters: GICounters;
+@group(1) @binding(4) var<storage, read_write> probe_depth_moments: array<vec4<f32>>;
+@group(1) @binding(5) var<storage, read_write> probe_states: array<ProbeStateData>;
+@group(1) @binding(6) var<storage, read_write> gi_counters: GICounters;
 
 // =============================================================================
 // CONSTANTS
@@ -111,7 +110,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     // Warm start (copy/reproject history into current for THIS probe)
     // -------------------------------------------------------------------------
     var sh_prev = ddgi_sh_probe_read(&sh_probes, probe_index);
-    var prev_sample_count = sample_counts[probe_index];
+    var prev_sample_count = ddgi_probe_state_get_sample_count(probe_states[probe_index]);
     
     // ─────────────────────────────────────────────────────────────────────────
     // Project all ray samples onto SH basis
@@ -230,5 +229,5 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     // Write results to output buffers
     // ─────────────────────────────────────────────────────────────────────────
     ddgi_sh_probe_write(&sh_probes, probe_index, sh_result);
-    sample_counts[probe_index] = u32(clamp(accumulated_frames, 1.0, DDGI_HISTORY_CAP_FRAMES_MAX));
+    ddgi_probe_state_set_sample_count(&probe_states[probe_index], u32(clamp(accumulated_frames, 1.0, DDGI_HISTORY_CAP_FRAMES_MAX)));
 }

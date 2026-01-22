@@ -15,8 +15,7 @@
 @group(1) @binding(1) var<storage, read> probe_update_indices: array<u32>;
 @group(1) @binding(2) var<storage, read_write> probe_ray_data: DDGIProbeRayDataBuffer;
 @group(1) @binding(3) var<storage, read> sh_probes: array<u32>;
-@group(1) @binding(4) var<storage, read> sample_counts: array<u32>;
-@group(1) @binding(5) var<storage, read_write> gi_counters: GICounters;
+@group(1) @binding(4) var<storage, read_write> gi_counters: GICounters;
 
 // =============================================================================
 // Ray direction sampling
