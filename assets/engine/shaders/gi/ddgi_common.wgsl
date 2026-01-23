@@ -286,6 +286,23 @@ fn ddgi_is_probe_in_cascade_shell(
     return !inside_inner;
 }
 
+fn ddgi_probe_in_cascade(
+    ddgi_params: ptr<uniform, DDGIParams>,
+    probe_index: u32
+) -> bool {
+    let cascade_index = ddgi_probe_cascade_index(ddgi_params, probe_index);
+    let probe_pos = ddgi_probe_world_position_from_index(ddgi_params, probe_index);
+    let origin = ddgi_cascade_origin(ddgi_params, cascade_index);
+    let spacing = ddgi_cascade_spacing(ddgi_params, cascade_index);
+    let dims = vec3<f32>(
+        (*ddgi_params).probe_grid_dims.x,
+        (*ddgi_params).probe_grid_dims.y,
+        (*ddgi_params).probe_grid_dims.z
+    );
+    let max_bound = origin + (dims - vec3<f32>(1.0)) * spacing;
+    return all(probe_pos <= max_bound);
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Get the cascade index that contains a given world position.
 // Returns the finest (lowest index) cascade whose bounds contain the position.
@@ -665,14 +682,7 @@ fn ddgi_sample_sh_irradiance_with_states(
     let spacing = ddgi_cascade_spacing(ddgi_params, cascade_index);
     let origin = ddgi_cascade_origin(ddgi_params, cascade_index);
 
-    let view_index = u32(frame_info.view_index);
-    let camera_position = view_buffer[view_index].view_position.xyz;
-    let w_o = normalize(camera_position - position);
-
-    let bias_offset = (0.2 * normal_ws + 0.8 * w_o) * (0.45 * spacing) * (1.0 - f32(cascade_index) / f32(DDGI_MAX_CASCADES));
-    let offset_pos = position + bias_offset;
-
-    let rel = (offset_pos - origin) / spacing;
+    let rel = (position - origin) / spacing;
     let base = floor(rel);
     let alpha = fract(rel);
 
@@ -714,6 +724,10 @@ fn ddgi_sample_sh_irradiance_with_states(
             cascade_index,
             clamped_coord
         );
+
+        let bias_offset = (normal_ws + normalize(probe_pos - position)) * (0.45 * spacing) * (1.0 - f32(cascade_index) / f32(DDGI_MAX_CASCADES));
+        let offset_pos = position + bias_offset;
+
         let dir_to_probe = normalize(probe_pos - position);
 
         let to_probe = offset_pos - probe_pos;
