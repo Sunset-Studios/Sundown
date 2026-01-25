@@ -2843,7 +2843,7 @@ export class LivingRoomScene extends Scene {
     const light_fragment_view = EntityManager.get_fragment(light_entity, LightFragment);
     light_fragment_view.type = LightType.DIRECTIONAL;
     light_fragment_view.color = [1.0, 1.0, 1.0];  // Warm daylight tint
-    light_fragment_view.intensity = 40.0;
+    light_fragment_view.intensity = 0.0;
     light_fragment_view.position = [0.0, 5.0, -10.0];
     light_fragment_view.active = true;
     light_fragment_view.is_primary_sun = 1;
@@ -2872,7 +2872,7 @@ export class LivingRoomScene extends Scene {
       "engine/models/living_room/living_room.gltf",
       [0, 0, 0],
       [0, 0, 0, 1],
-      [10, 10, 10],
+      [5, 5, 5],
     );
     this.entities.push(living_room_entity);
 
@@ -3127,10 +3127,10 @@ export class SciFiCityScene extends Scene {
   //await scene_switcher.add_scene(ml_scene);
   //await scene_switcher.add_scene(voxel_terrain_scene);
   //await scene_switcher.add_scene(object_painting_scene);
-  await scene_switcher.add_scene(gi_test_scene);
+  //await scene_switcher.add_scene(gi_test_scene);
   //await scene_switcher.add_scene(shadow_test_scene);
   //await scene_switcher.add_scene(gltf_model_scene);
-  //await scene_switcher.add_scene(sponza_scene);
+  await scene_switcher.add_scene(sponza_scene);
   //await scene_switcher.add_scene(living_room_scene);
   //await scene_switcher.add_scene(city_scene);
   //await scene_switcher.add_scene(scifi_city_scene);

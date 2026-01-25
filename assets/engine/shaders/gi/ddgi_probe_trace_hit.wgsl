@@ -17,7 +17,7 @@
 @group(1) @binding(5) var<storage, read> entity_transforms: array<EntityTransform>;
 @group(1) @binding(6) var<storage, read> mesh_asset_ids: array<u32>;
 @group(1) @binding(7) var<storage, read> dense_lights_buffer: DenseLightsBuffer;
-@group(1) @binding(8) var<storage, read> probe_states: array<ProbeStateData>;
+@group(1) @binding(8) var<storage, read_write> probe_states: array<ProbeStateData>;
 
 // =============================================================================
 // BLAS TRAVERSAL

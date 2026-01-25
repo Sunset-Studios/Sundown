@@ -1672,6 +1672,9 @@
 			"extensions":{
 				"KHR_materials_specular":{
 					"specularFactor":0
+				},
+				"KHR_materials_emissive_strength": {
+					"emissiveStrength": 3
 				}
 			},
 			"name":"BackLight",
@@ -1684,7 +1687,12 @@
 				],
 				"metallicFactor":0,
 				"roughnessFactor":0.494035542011261
-			}
+			},
+			"emissiveFactor": [
+				1,
+				1,
+				1
+			]
 		},
 		{
 			"doubleSided":true,

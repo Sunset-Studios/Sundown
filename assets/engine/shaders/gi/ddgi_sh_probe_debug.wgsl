@@ -26,7 +26,7 @@
 
 @group(1) @binding(0) var<uniform> ddgi_params: DDGIParams;
 @group(1) @binding(1) var<storage, read_write> sh_probes: array<u32>;
-@group(1) @binding(2) var<storage, read> probe_states: array<ProbeStateData>;
+@group(1) @binding(2) var<storage, read_write> probe_states: array<ProbeStateData>;
 @group(1) @binding(3) var scene_color: texture_2d<f32>;
 @group(1) @binding(4) var depth_texture: texture_2d<f32>;
 @group(1) @binding(5) var output_debug: texture_storage_2d<rgba16float, write>;

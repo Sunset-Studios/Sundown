@@ -37,14 +37,24 @@
 // Analyze ray hit data to determine backface ratio and nearest hit
 // Backface hits are encoded as negative t values in the ray data.
 // ─────────────────────────────────────────────────────────────────────────────
+struct ProbeRayAnalysis {
+    backface_ratio: f32,
+    nearest_hit_dist: f32,
+    nearest_hit_pos: vec3<f32>,
+    nearest_hit_normal: vec3<f32>,
+    has_nearest_hit: bool,
+};
+
 fn analyze_probe_rays(
     probe_slot: u32,
     rays_per_probe: u32
-) -> vec2<f32> {
-    // Returns: x = backface_ratio, y = nearest_hit_distance
+) -> ProbeRayAnalysis {
     var backface_count = 0u;
     var hit_count = 0u;
-    var nearest_hit = 1e30;
+    var nearest_hit_dist = 1e30;
+    var nearest_hit_pos = vec3<f32>(0.0, 0.0, 0.0);
+    var nearest_hit_normal = vec3<f32>(0.0, 0.0, 0.0);
+    var has_nearest_hit = false;
     
     let ray_base = probe_slot * rays_per_probe;
     
@@ -60,7 +70,12 @@ fn analyze_probe_rays(
         if (is_hit) {
             hit_count = hit_count + 1u;
             backface_count = select(backface_count, backface_count + 1u, t_raw < 0.0);
-            nearest_hit = select(nearest_hit, min(nearest_hit, t_raw), t_raw > 0.0);
+            if (t_raw > 0.0 && t_raw < nearest_hit_dist) {
+                nearest_hit_dist = t_raw;
+                nearest_hit_pos = probe_ray_data.rays[ray_index].hit_pos_t.xyz;
+                nearest_hit_normal = probe_ray_data.rays[ray_index].world_n_section.xyz;
+                has_nearest_hit = true;
+            }
         }
     }
     
@@ -70,7 +85,13 @@ fn analyze_probe_rays(
         hit_count > 0u
     );
     
-    return vec2<f32>(backface_ratio, nearest_hit);
+    var result: ProbeRayAnalysis;
+    result.backface_ratio = backface_ratio;
+    result.nearest_hit_dist = nearest_hit_dist;
+    result.nearest_hit_pos = nearest_hit_pos;
+    result.nearest_hit_normal = nearest_hit_normal;
+    result.has_nearest_hit = has_nearest_hit;
+    return result;
 }
 
 // =============================================================================
@@ -89,8 +110,11 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         return;
     }
 
+    let probe_slot = gid.x;
     let probe_index = probe_update_indices[gid.x];
     let spacing = ddgi_probe_spacing_from_index(&ddgi_params, probe_index);
+    let probe_radius = ddgi_params.probe_grid_dims.w;
+    let ray_analysis = analyze_probe_rays(gid.x, rays_per_probe);
     
     // ─────────────────────────────────────────────────────────────────────────
     // Read current probe state (using read_write version for modify pass)
@@ -98,7 +122,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     var current_state = probe_state_get_state(probe_states[probe_index].packed_state);
     var init_frames = probe_state_get_init_frames(probe_states[probe_index].packed_state);
     var convergence_frames = probe_state_get_convergence_frames(probe_states[probe_index].packed_state);
-    let flags = probe_state_get_flags(probe_states[probe_index].packed_state);
+    var flags = probe_state_get_flags(probe_states[probe_index].packed_state);
     
     // ─────────────────────────────────────────────────────────────────────────
     // Process based on current state
@@ -109,9 +133,8 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         // UNINITIALIZED: Accumulate classification data over init frames
         // ═══════════════════════════════════════════════════════════════════
         case PROBE_STATE_UNINITIALIZED: {
-            let ray_analysis = analyze_probe_rays(gid.x, rays_per_probe);
-            let backface_ratio = ray_analysis.x;
-            let nearest_hit = ray_analysis.y;
+            let backface_ratio = ray_analysis.backface_ratio;
+            let nearest_hit = ray_analysis.nearest_hit_dist;
             
             // Accumulate statistics
             let prev_backface_ratio = probe_states[probe_index].backface_ratio;
@@ -140,7 +163,6 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
                     spacing
                 );
                 
-                init_frames = 0u;
                 convergence_frames = 0u;
             }
         }
@@ -170,7 +192,6 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
             
             if (convergence_frames >= PROBE_STATE_CONVERGENCE_FRAMES) {
                 current_state = PROBE_STATE_VIGILANT;
-                convergence_frames = 0u;
             }
         }
         
@@ -198,6 +219,67 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         }
     }
     
+    // ─────────────────────────────────────────────────────────────────────────
+    // Probe relocation from hit data (surface alignment)
+    // ─────────────────────────────────────────────────────────────────────────
+    let near_threshold = spacing * 0.5;
+    let base_probe_pos = ddgi_probe_world_position_from_index(&ddgi_params, probe_index);
+    let current_probe_pos = ddgi_probe_world_position_from_index_with_offset(&ddgi_params, &probe_states, probe_index);
+
+    var new_offset = probe_states[probe_index].probe_offset.xyz;
+
+    if (init_frames < PROBE_STATE_INIT_FRAMES) {
+        let target_distance = min(near_threshold, max(probe_radius, spacing * 0.25));
+        let candidate_pos = ray_analysis.nearest_hit_pos + ray_analysis.nearest_hit_normal * target_distance;
+
+        var candidate_is_clear = true;
+        var min_candidate_dist = 1e30;
+        let ray_base = probe_slot * rays_per_probe;
+
+        for (var i = 0u; i < rays_per_probe; i = i + 1u) {
+            let ray_index = ray_base + i;
+            let t_raw = probe_ray_data.rays[ray_index].hit_pos_t.w;
+            let is_hit = probe_ray_data.rays[ray_index].state_u32.w != INVALID_IDX;
+            let is_front_hit = is_hit && t_raw > 0.0;
+
+            if (is_front_hit) {
+                let hit_pos = probe_ray_data.rays[ray_index].hit_pos_t.xyz;
+                let dist_current = length(hit_pos - current_probe_pos);
+                let dist_candidate = length(hit_pos - candidate_pos);
+                min_candidate_dist = min(min_candidate_dist, dist_candidate);
+
+                let gets_closer = dist_candidate + 1e-4 < dist_current;
+                candidate_is_clear = candidate_is_clear && !gets_closer;
+            }
+        }
+
+        if (candidate_is_clear && min_candidate_dist >= target_distance) {
+            new_offset = candidate_pos - base_probe_pos;
+        } else {
+            let mid_pos = (current_probe_pos + candidate_pos) * 0.5;
+            var min_mid_dist = 1e30;
+
+            for (var i = 0u; i < rays_per_probe; i = i + 1u) {
+                let ray_index = ray_base + i;
+                let t_raw = probe_ray_data.rays[ray_index].hit_pos_t.w;
+                let is_hit = probe_ray_data.rays[ray_index].state_u32.w != INVALID_IDX;
+                let is_front_hit = is_hit && t_raw > 0.0;
+
+                if (is_front_hit) {
+                    let hit_pos = probe_ray_data.rays[ray_index].hit_pos_t.xyz;
+                    let dist_mid = length(hit_pos - mid_pos);
+                    min_mid_dist = min(min_mid_dist, dist_mid);
+                }
+            }
+
+            if (min_mid_dist >= target_distance) {
+                new_offset = mid_pos - base_probe_pos;
+            }
+        }
+
+        probe_states[probe_index].probe_offset = vec4<f32>(new_offset, probe_states[probe_index].probe_offset.w);
+    }
+
     // ─────────────────────────────────────────────────────────────────────────
     // Write updated state
     // ─────────────────────────────────────────────────────────────────────────

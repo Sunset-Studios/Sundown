@@ -13,7 +13,7 @@
 @group(1) @binding(0) var<uniform> ddgi_params: DDGIParams;
 @group(1) @binding(1) var<uniform> scene_lighting_data: SceneLightingData;
 @group(1) @binding(2) var<storage, read_write> probe_ray_data: DDGIProbeRayDataBuffer;
-@group(1) @binding(3) var<storage, read> probe_states: array<ProbeStateData>;
+@group(1) @binding(3) var<storage, read_write> probe_states: array<ProbeStateData>;
 @group(1) @binding(4) var<storage, read> material_params: array<StandardMaterialParams>;
 @group(1) @binding(5) var<storage, read> material_table_offset: array<u32>;
 @group(1) @binding(6) var<storage, read> material_palette: array<u32>;

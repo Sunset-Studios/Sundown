@@ -585,7 +585,7 @@ fn probe_state_is_valid_for_sampling(state: u32) -> bool {
 // ─────────────────────────────────────────────────────────────────────────────
 fn ddgi_probe_world_position_from_index_with_offset(
     ddgi_params: ptr<uniform, DDGIParams>,
-    probe_states: ptr<storage, array<ProbeStateData>, read>,
+    probe_states: ptr<storage, array<ProbeStateData>, read_write>,
     probe_index: u32
 ) -> vec3<f32> {
     let base_pos = ddgi_probe_world_position_from_index(ddgi_params, probe_index);
@@ -594,7 +594,7 @@ fn ddgi_probe_world_position_from_index_with_offset(
 
 fn ddgi_probe_world_position_from_coord_with_offset(
     ddgi_params: ptr<uniform, DDGIParams>,
-    probe_states: ptr<storage, array<ProbeStateData>, read>,
+    probe_states: ptr<storage, array<ProbeStateData>, read_write>,
     cascade_index: u32,
     coord: vec3<u32>
 ) -> vec3<f32> {
@@ -666,7 +666,7 @@ fn ddgi_probe_state_weight(
 fn ddgi_sample_sh_irradiance_with_states(
     ddgi_params: ptr<uniform, DDGIParams>,
     sh_probes: ptr<storage, array<u32>, read_write>,
-    probe_states: ptr<storage, array<ProbeStateData>, read>,
+    probe_states: ptr<storage, array<ProbeStateData>, read_write>,
     probe_depth_moments: ptr<storage, array<vec4<f32>>, read>,
     position: vec3<f32>,
     normal_ws: vec3<f32>

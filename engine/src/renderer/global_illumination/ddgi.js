@@ -125,7 +125,7 @@ export class DDGI {
     probe_spacing: 2.0,
     probe_radius: 0.2,
     rays_per_probe: 32,
-    probes_per_frame: 1024,
+    probes_per_frame: 4096,
     indirect_boost: 1.0,
     cascade_count: DDGI_MAX_CASCADES,
     cascade_spacing_multiplier: 2.0,
