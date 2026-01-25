@@ -49,8 +49,8 @@ const PROBE_STATE_AWAKE: u32         = 6u;   // Near dynamic geometry - trace wh
 // Classification parameters
 const PROBE_STATE_INIT_FRAMES: u32         = 5u;   // Frames of tracing for classification
 const PROBE_STATE_CONVERGENCE_FRAMES: u32  = 4u;   // Frames for "Newly" states to converge
-const PROBE_STATE_BACKFACE_THRESHOLD: f32  = 0.45;  // Fraction of backface hits = inside geometry
-const PROBE_STATE_NEAR_GEOMETRY_DIST: f32  = 2.0;  // Multiplier of probe_spacing for "near"
+const PROBE_STATE_BACKFACE_THRESHOLD: f32  = 0.5;  // Fraction of backface hits = inside geometry
+const PROBE_STATE_NEAR_GEOMETRY_DIST: f32  = 1.5;  // Multiplier of probe_spacing for "near"
 
 // Hysteresis values for different states
 const PROBE_STATE_HYSTERESIS_NEW: f32      = 0.0;   // Newly awake/vigilant - no history blend
@@ -577,7 +577,7 @@ fn probe_state_is_active(state: u32) -> bool {
 // ─────────────────────────────────────────────────────────────────────────────
 fn probe_state_is_valid_for_sampling(state: u32) -> bool {
     // Valid for sampling: everything except OFF (inside geometry) and UNINITIALIZED (no data yet)
-    return state != PROBE_STATE_OFF && state != PROBE_STATE_UNINITIALIZED;
+    return state != PROBE_STATE_OFF && state != PROBE_STATE_UNINITIALIZED && state != PROBE_STATE_SLEEPING;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -682,7 +682,12 @@ fn ddgi_sample_sh_irradiance_with_states(
     let spacing = ddgi_cascade_spacing(ddgi_params, cascade_index);
     let origin = ddgi_cascade_origin(ddgi_params, cascade_index);
 
-    let rel = (position - origin) / spacing;
+    let view_index = u32(frame_info.view_index);
+    let camera_position = view_buffer[view_index].view_position.xyz;
+    let bias_offset = (0.2 * normal_ws + 0.8 * normalize(camera_position - position)) * (0.45 * spacing);
+    let offset_pos = position + bias_offset;
+
+    let rel = (offset_pos - origin) / spacing;
     let base = floor(rel);
     let alpha = fract(rel);
 
@@ -724,9 +729,6 @@ fn ddgi_sample_sh_irradiance_with_states(
             cascade_index,
             clamped_coord
         );
-
-        let bias_offset = (normal_ws + normalize(probe_pos - position)) * (0.45 * spacing) * (1.0 - f32(cascade_index) / f32(DDGI_MAX_CASCADES));
-        let offset_pos = position + bias_offset;
 
         let dir_to_probe = normalize(probe_pos - position);
 
