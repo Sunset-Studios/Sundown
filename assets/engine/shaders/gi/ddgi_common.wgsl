@@ -31,6 +31,7 @@ const DDGI_PROBE_DEPTH_RES = 16u;
 const DDGI_DEPTH_TEXEL_COUNT = 256u;
 const DDGI_VISIBILITY_MIN_VARIANCE = 1e-4;
 const DDGI_VISBILITY_DISTANCE_THICKNESS_BIAS = 0.0;
+const DDGI_CASCADE_BLEND_WINDOW_PROBES = 4.0;
 
 // SH probes store L1 RGB coefficients (4 coefficients × 3 channels = 12 floats)
 // packed into 6 u32 values using f16 packing for efficient storage.
@@ -658,6 +659,30 @@ fn ddgi_probe_state_weight(
     return select(0.0, 1.0, probe_state_is_active(state));
 }
 
+fn ddgi_cascade_blend_weight(
+    ddgi_params: ptr<uniform, DDGIParams>,
+    cascade_index: u32,
+    position: vec3<f32>
+) -> f32 {
+    let dims_f = vec3<f32>(
+        (*ddgi_params).probe_grid_dims.x,
+        (*ddgi_params).probe_grid_dims.y,
+        (*ddgi_params).probe_grid_dims.z
+    );
+    let spacing = ddgi_cascade_spacing(ddgi_params, cascade_index);
+    let origin = ddgi_cascade_origin(ddgi_params, cascade_index);
+    let max_bound = origin + (dims_f - vec3<f32>(1.0)) * spacing;
+
+    let dist_to_min = position - origin;
+    let dist_to_max = max_bound - position;
+    let dist_to_edge = min(dist_to_min, dist_to_max);
+    let min_edge_dist = min(dist_to_edge.x, min(dist_to_edge.y, dist_to_edge.z));
+    let edge_dist_probes = min_edge_dist / max(spacing, 1e-6);
+    let blend_window = max(DDGI_CASCADE_BLEND_WINDOW_PROBES, 1e-6);
+
+    return clamp(1.0 - edge_dist_probes / blend_window, 0.0, 1.0);
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Sample SH irradiance from probes with state awareness and offset-aware filtering
 //
@@ -670,22 +695,21 @@ fn ddgi_probe_state_weight(
 // - Weights remain in [0,1] range (no oversaturation or light subtraction)
 // - Proper interpolation even when probes are moved from grid positions
 // ─────────────────────────────────────────────────────────────────────────────
-fn ddgi_sample_sh_irradiance_with_states(
+fn ddgi_sample_sh_irradiance_single_cascade(
     ddgi_params: ptr<uniform, DDGIParams>,
     sh_probes: ptr<storage, array<u32>, read_write>,
     probe_states: ptr<storage, array<ProbeStateData>, read_write>,
     probe_depth_moments: ptr<storage, array<vec4<f32>>, read>,
     position: vec3<f32>,
-    normal_ws: vec3<f32>
+    normal_ws: vec3<f32>,
+    cascade_index: u32
 ) -> vec3<f32> {
     let dims = vec3<u32>(
         u32((*ddgi_params).probe_grid_dims.x),
         u32((*ddgi_params).probe_grid_dims.y),
         u32((*ddgi_params).probe_grid_dims.z)
     );
-    let probe_radius = (*ddgi_params).probe_grid_dims.w;
 
-    let cascade_index = ddgi_cascade_index_for_position(ddgi_params, position);
     let spacing = ddgi_cascade_spacing(ddgi_params, cascade_index);
     let origin = ddgi_cascade_origin(ddgi_params, cascade_index);
 
@@ -720,7 +744,7 @@ fn ddgi_sample_sh_irradiance_with_states(
         // ─────────────────────────────────────────────────────────────
         // Read probe state data for offset and state check
         // ─────────────────────────────────────────────────────────────
-        
+
         // Skip OFF probes (inside geometry) and UNINITIALIZED probes (no data yet)
         // SLEEPING probes have valid SH data and should still contribute
         if (!probe_state_is_valid_for_sampling(probe_states[probe_index])) {
@@ -779,6 +803,46 @@ fn ddgi_sample_sh_irradiance_with_states(
     }
 
     let sh_interpolated = sh_l1_rgb_multiply_scalar(sh_sum, 1.0 / max(weight_sum, 1e-6));
-    var irradiance = ddgi_sh_evaluate_irradiance(sh_interpolated, normal_ws) * (*ddgi_params).indirect_boost;
+    let irradiance = ddgi_sh_evaluate_irradiance(sh_interpolated, normal_ws) * (*ddgi_params).indirect_boost;
     return max(irradiance, vec3<f32>(0.0));
+}
+
+fn ddgi_sample_sh_irradiance_with_states(
+    ddgi_params: ptr<uniform, DDGIParams>,
+    sh_probes: ptr<storage, array<u32>, read_write>,
+    probe_states: ptr<storage, array<ProbeStateData>, read_write>,
+    probe_depth_moments: ptr<storage, array<vec4<f32>>, read>,
+    position: vec3<f32>,
+    normal_ws: vec3<f32>
+) -> vec3<f32> {
+    let cascade_index = ddgi_cascade_index_for_position(ddgi_params, position);
+    let irradiance_fine = ddgi_sample_sh_irradiance_single_cascade(
+        ddgi_params,
+        sh_probes,
+        probe_states,
+        probe_depth_moments,
+        position,
+        normal_ws,
+        cascade_index
+    );
+
+    let cascade_count = ddgi_cascade_count(ddgi_params);
+    let coarser_index = cascade_index + 1u;
+    let has_coarser = coarser_index < cascade_count;
+    let blend_weight = select(0.0, ddgi_cascade_blend_weight(ddgi_params, cascade_index, position), has_coarser);
+
+    if (blend_weight > 0.0) {
+        let irradiance_coarse = ddgi_sample_sh_irradiance_single_cascade(
+            ddgi_params,
+            sh_probes,
+            probe_states,
+            probe_depth_moments,
+            position,
+            normal_ws,
+            coarser_index
+        );
+        return mix(irradiance_fine, irradiance_coarse, blend_weight);
+    }
+
+    return irradiance_fine;
 }

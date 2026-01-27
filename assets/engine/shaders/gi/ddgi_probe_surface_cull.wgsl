@@ -163,8 +163,8 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let state = probe_state_get_state(probe_states[probe_index].packed_state);
     let flags = probe_state_get_flags(probe_states[probe_index].packed_state);
 
-    let probe_min = probe_pos - vec3<f32>(spacing * 2.0);
-    let probe_max = probe_pos + vec3<f32>(spacing * 2.0);
+    let probe_min = probe_pos - vec3<f32>(spacing);
+    let probe_max = probe_pos + vec3<f32>(spacing);
     let true_probe_min = min(probe_min, probe_max);
     let true_probe_max = max(probe_min, probe_max);
 
