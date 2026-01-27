@@ -87,6 +87,8 @@ fn trace_blas(
                     current_ray.direction_and_tmax.w = t_tri;
                 }
             } else {
+                if (child_idx == node_idx) { continue; }
+
                 // Internal node: AABB test before push
                 t_aabb_child = intersect_aabb(
                     &current_ray,
@@ -213,6 +215,8 @@ fn trace_hit(ray: ptr<function, Ray>) -> RayHitCompact {
                     }
                 }
             } else {
+                if (child_idx == node_idx) { continue; }
+
                 // Internal node: AABB test before push
                 t_aabb_child = intersect_aabb(
                     &current_ray,
@@ -316,6 +320,8 @@ fn trace_blas_any_hit(
                     return true;
                 }
             } else {
+                if (child_idx == node_idx) { continue; }
+
                 child_node = atlas_load_bvh8_node(child_idx);
                 t_aabb_child = intersect_aabb(ray_local, child_node.min.xyz, child_node.max.xyz);
 
@@ -395,6 +401,8 @@ fn trace_hit_any(ray: ptr<function, Ray>) -> bool {
                     } 
                 }
             } else {
+                if (child_idx == node_idx) { continue; }
+
                 child_node = tlas_bvh8_nodes[child_idx];
                 t_aabb_child = intersect_aabb(&current_ray, child_node.min.xyz, child_node.max.xyz);
 

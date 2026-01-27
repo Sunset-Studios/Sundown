@@ -47,6 +47,12 @@ const ddgi_probe_scroll_reset_shader_setup = {
   },
 };
 
+const ddgi_probe_surface_cull_shader_setup = {
+  pipeline_shaders: {
+    compute: { path: "gi/ddgi_probe_surface_cull.wgsl" },
+  },
+};
+
 const ddgi_probe_indices_init_shader_setup = {
   pipeline_shaders: {
     compute: { path: "gi/ddgi_probe_indices_init.wgsl" },
@@ -125,7 +131,7 @@ export class DDGI {
     probe_spacing: 2.0,
     probe_radius: 0.2,
     rays_per_probe: 32,
-    probes_per_frame: 4096,
+    probes_per_frame: 1024,
     indirect_boost: 1.0,
     cascade_count: DDGI_MAX_CASCADES,
     cascade_spacing_multiplier: 2.0,
@@ -191,6 +197,7 @@ export class DDGI {
     tlas_bvh2_bounds,
     tlas_bvh8_nodes,
     blas_atlas,
+    blas_bvh2_nodes,
     entity_transforms,
     mesh_asset_ids,
     dense_lights,
@@ -238,6 +245,7 @@ export class DDGI {
         tlas_bvh2_bounds,
         tlas_bvh8_nodes,
         blas_atlas,
+        blas_bvh2_nodes,
         entity_transforms,
         mesh_asset_ids,
         dense_lights,
@@ -303,6 +311,7 @@ export class DDGI {
     tlas_bvh2_bounds,
     tlas_bvh8_nodes,
     blas_atlas,
+    blas_bvh2_nodes,
     entity_transforms,
     mesh_asset_ids,
     dense_lights,
@@ -703,6 +712,34 @@ export class DDGI {
         }
       );
     }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Probe BVH Pre-Cull Pass
+    // Marks probes as OFF when their cell does not overlap scene geometry
+    // (Uses TLAS + BLAS BVH traversal for overlap testing)
+    // ─────────────────────────────────────────────────────────────────────────
+    render_graph.add_pass(
+      "ddgi_probe_surface_cull",
+      RenderPassFlags.Compute,
+      {
+        inputs: [
+          this.ddgi_params,
+          probe_states,
+          tlas_bvh2_bounds,
+          tlas_bvh8_nodes,
+          blas_atlas,
+          blas_bvh2_nodes,
+          entity_transforms,
+          mesh_asset_ids,
+        ],
+        outputs: [probe_states],
+        shader_setup: ddgi_probe_surface_cull_shader_setup,
+      },
+      (graph, frame_data, encoder) => {
+        const pass = graph.get_physical_pass(frame_data.current_pass);
+        pass.dispatch(Math.ceil(probe_count / COMPUTE_WORKGROUP_SIZE), 1, 1);
+      }
+    );
 
     // ─────────────────────────────────────────────────────────────────────────
     // Probe Frustum & Occlusion Culling Pass

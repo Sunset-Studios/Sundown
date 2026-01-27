@@ -1351,6 +1351,7 @@ export class DeferredShadingStrategy {
           aabb_bounds,
           tlas_bvh8_nodes,
           blas_atlas,
+          blas_bvh2_nodes,
           entity_transforms,
           mesh_asset_ids_buffer,
           dense_lights,

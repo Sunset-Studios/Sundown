@@ -108,6 +108,5 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     probe_states[probe_index].backface_ratio = 0.0;
     probe_states[probe_index].cull_flags = 0u;
     probe_states[probe_index].probe_offset = vec4<f32>(0.0);
-
     probe_states[probe_index].packed_state = probe_state_pack(PROBE_STATE_UNINITIALIZED, 0u, 0u, 0u);
 }

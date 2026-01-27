@@ -50,7 +50,7 @@ const PROBE_STATE_AWAKE: u32         = 6u;   // Near dynamic geometry - trace wh
 const PROBE_STATE_INIT_FRAMES: u32         = 5u;   // Frames of tracing for classification
 const PROBE_STATE_CONVERGENCE_FRAMES: u32  = 4u;   // Frames for "Newly" states to converge
 const PROBE_STATE_BACKFACE_THRESHOLD: f32  = 0.5;  // Fraction of backface hits = inside geometry
-const PROBE_STATE_NEAR_GEOMETRY_DIST: f32  = 1.5;  // Multiplier of probe_spacing for "near"
+const PROBE_STATE_NEAR_GEOMETRY_DIST: f32  = 2.0;  // Multiplier of probe_spacing for "near"
 
 // Hysteresis values for different states
 const PROBE_STATE_HYSTERESIS_NEW: f32      = 0.0;   // Newly awake/vigilant - no history blend
@@ -575,9 +575,16 @@ fn probe_state_is_active(state: u32) -> bool {
 // SLEEPING probes have valid SH data and should contribute to sampling,
 // they just don't need frequent ray updates since they're in open space.
 // ─────────────────────────────────────────────────────────────────────────────
-fn probe_state_is_valid_for_sampling(state: u32) -> bool {
+fn probe_state_is_valid_for_sampling(state_data: ProbeStateData) -> bool {
     // Valid for sampling: everything except OFF (inside geometry) and UNINITIALIZED (no data yet)
-    return state != PROBE_STATE_OFF && state != PROBE_STATE_UNINITIALIZED && state != PROBE_STATE_SLEEPING;
+    let state = probe_state_get_state(state_data.packed_state);
+    let init_frames = probe_state_get_init_frames(state_data.packed_state);
+    let convergence_frames = probe_state_get_convergence_frames(state_data.packed_state);
+    return state != PROBE_STATE_OFF
+        && state != PROBE_STATE_UNINITIALIZED
+        && state != PROBE_STATE_SLEEPING
+        && init_frames >= PROBE_STATE_INIT_FRAMES
+        && convergence_frames >= PROBE_STATE_CONVERGENCE_FRAMES;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -713,11 +720,10 @@ fn ddgi_sample_sh_irradiance_with_states(
         // ─────────────────────────────────────────────────────────────
         // Read probe state data for offset and state check
         // ─────────────────────────────────────────────────────────────
-        let probe_state = probe_state_get_state(probe_states[probe_index].packed_state);
         
         // Skip OFF probes (inside geometry) and UNINITIALIZED probes (no data yet)
         // SLEEPING probes have valid SH data and should still contribute
-        if (!probe_state_is_valid_for_sampling(probe_state)) {
+        if (!probe_state_is_valid_for_sampling(probe_states[probe_index])) {
             continue;
         }
 
