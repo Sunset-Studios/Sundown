@@ -32,16 +32,9 @@ export class Buffer {
       } catch (error) {
         throw new Error(`Failed to create buffer: ${this.config.name} with size: ${this.config.size}. Typed array may be too large in this environment.`);
       }
-    } else if (this.config.size != undefined) {
-      try {
-        buffer_data = new Float32Array(this.config.size);
-        this.config.size = buffer_data.byteLength;
-      } catch (error) {
-        throw new Error(`Failed to create buffer: ${this.config.name} with size: ${this.config.size}. Typed array may be too large in this environment.`);
-      }
     }
 
-    this.config.size = buffer_data.byteLength;
+    this.config.size = buffer_data ? buffer_data.byteLength : (this.config.size !== undefined ? this.config.size * 4 : 0);
 
     this.buffer = renderer.device.createBuffer({
       label: this.config.name,
@@ -49,7 +42,9 @@ export class Buffer {
       usage: this.config.usage,
     });
 
-    this.write(buffer_data);
+    if (buffer_data) {
+      this.write(buffer_data);
+    }
 
     if (this.config.cpu_readback) {
       this.cpu_buffers = new Array(MAX_BUFFERED_FRAMES);
@@ -62,7 +57,9 @@ export class Buffer {
         });
       }
 
-      this.write_cpu(buffer_data);
+      if (buffer_data) {
+        this.write_cpu(buffer_data);
+      }
 
       Renderer.get().enqueue_post_commands(
         this.config.name,

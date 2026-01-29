@@ -275,7 +275,7 @@ export class FragmentGpuBuffer {
     // initial GPU buffer
     this.buffer = Buffer.create({
       name: this.name,
-      size: this.max_rows * this.byte_stride * this.capacity_multiplier,
+      size: this.max_rows * (this.byte_stride / 4) * this.capacity_multiplier,
       usage: this.usage,
       force: true,
       dispatch: this.dispatch,

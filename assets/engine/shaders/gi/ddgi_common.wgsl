@@ -53,10 +53,6 @@ const PROBE_STATE_CONVERGENCE_FRAMES: u32  = 4u;   // Frames for "Newly" states 
 const PROBE_STATE_BACKFACE_THRESHOLD: f32  = 0.5;  // Fraction of backface hits = inside geometry
 const PROBE_STATE_NEAR_GEOMETRY_DIST: f32  = 2.0;  // Multiplier of probe_spacing for "near"
 
-// Hysteresis values for different states
-const PROBE_STATE_HYSTERESIS_NEW: f32      = 0.0;   // Newly awake/vigilant - no history blend
-const PROBE_STATE_HYSTERESIS_NORMAL: f32   = 0.95;  // Normal temporal blend factor
-
 // Maximum number of DDGI cascades supported
 const DDGI_MAX_CASCADES: u32 = 8u;
 
@@ -76,7 +72,7 @@ struct DDGIParams {
     frame_index: f32,
     indirect_boost: f32,
     cascade_count: f32,
-    _pad1: f32,
+    probe_update_culled_ratio: f32,
     cascades: array<DDGICascadeData, DDGI_MAX_CASCADES>, // Per-cascade data (origin, scroll, snap)
 };
 
@@ -552,14 +548,6 @@ fn probe_state_pack(state: u32, init_frames: u32, convergence_frames: u32, flags
 // ─────────────────────────────────────────────────────────────────────────────
 fn probe_state_is_newly(state: u32) -> bool {
     return state == PROBE_STATE_NEWLY_AWAKE || state == PROBE_STATE_NEWLY_VIGILANT;
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Get hysteresis factor for a given probe state
-// Returns 0.0 for newly states (fast convergence), normal hysteresis otherwise
-// ─────────────────────────────────────────────────────────────────────────────
-fn probe_state_get_hysteresis(state: u32) -> f32 {
-    return select(PROBE_STATE_HYSTERESIS_NORMAL, PROBE_STATE_HYSTERESIS_NEW, probe_state_is_newly(state));
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

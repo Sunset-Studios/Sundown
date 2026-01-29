@@ -15,8 +15,6 @@ import { ispot, npot } from "../../utility/math.js";
 const COMPUTE_WORKGROUP_SIZE = 128;
 const DDGI_PROBE_DEPTH_RES = 16;
 const DDGI_PROBE_DEPTH_TEXEL_COUNT = DDGI_PROBE_DEPTH_RES * DDGI_PROBE_DEPTH_RES;
-const DDGI_PROBE_RAY_DATA_HEADER_WORDS = 4; // 16 bytes (aligned)
-const DDGI_PROBE_RAY_DATA_WORDS_PER_RAY = 32; // 8 vec4s = 32 x u32 words
 const DDGI_MAX_CASCADES = 8;
 
 // ┌─────────────────────────────────────────────────────────────────────────────┐
@@ -131,7 +129,8 @@ export class DDGI {
     probe_spacing: 2.0,
     probe_radius: 0.2,
     rays_per_probe: 32,
-    probes_per_frame: 1024,
+    probes_per_frame: 4096,
+    probe_update_culled_ratio: 0.0,
     indirect_boost: 1.0,
     cascade_count: DDGI_MAX_CASCADES,
     cascade_spacing_multiplier: 2.0,
@@ -162,7 +161,7 @@ export class DDGI {
   // [24]    frame_index
   // [25]    indirect_boost
   // [26]    cascade_count
-  // [27]    _pad1
+  // [27]    probe_update_culled_ratio
   // [28-39] cascade[0]: origin_spacing(4), scroll_offset(4), snap_delta(4)
   // ... (12 floats per cascade)
   ddgi_params_data = new Float32Array(28 + 12 * DDGI_MAX_CASCADES);
@@ -587,8 +586,8 @@ export class DDGI {
     const probe_ray_data = render_graph.create_buffer({
       name: "ddgi_probe_ray_data",
       size:
-        DDGI_PROBE_RAY_DATA_HEADER_WORDS +
-        probe_total_ray_count * DDGI_PROBE_RAY_DATA_WORDS_PER_RAY,
+        4 +                         // header = 1 atomic<u32> + padding = 4 x u32 words
+        probe_total_ray_count * 32, // 8 vec4s = 32 x u32 words
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
       force: force_recreate,
     });
@@ -666,7 +665,7 @@ export class DDGI {
         this.ddgi_params_data[24] = this.ddgi_frame_setup.frame_index;
         this.ddgi_params_data[25] = this.config.indirect_boost;
         this.ddgi_params_data[26] = cascade_count;
-        this.ddgi_params_data[27] = 0; // _pad1
+        this.ddgi_params_data[27] = this.config.probe_update_culled_ratio;
 
         // Copy cascade data into params buffer (starts at offset 28)
         // Each cascade has 12 floats: origin_spacing(4), scroll_offset(4), snap_delta(4)
