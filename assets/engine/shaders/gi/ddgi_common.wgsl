@@ -551,6 +551,23 @@ fn probe_state_is_newly(state: u32) -> bool {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Compute probe readiness weight (0.0 to 1.0) based on state and convergence
+// Used for cascade fallback blending during probe initialization
+// ─────────────────────────────────────────────────────────────────────────────
+fn ddgi_probe_readiness_weight(state_data: ProbeStateData) -> f32 {
+    let state = probe_state_get_state(state_data.packed_state);
+    let convergence_frames = probe_state_get_convergence_frames(state_data.packed_state);
+    
+    // UNINITIALIZED and OFF probes have no valid data
+    if (state == PROBE_STATE_UNINITIALIZED || state == PROBE_STATE_OFF) {
+        return 0.0;
+    }
+    
+    // VIGILANT, AWAKE, SLEEPING are fully ready
+    return min(1.0, f32(convergence_frames) / f32(PROBE_STATE_CONVERGENCE_FRAMES * 8u));
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Check if a probe should be traced (updated with new rays)
 // ─────────────────────────────────────────────────────────────────────────────
 fn probe_state_is_active(state: u32) -> bool {
@@ -563,17 +580,16 @@ fn probe_state_is_active(state: u32) -> bool {
 // Check if a probe should be used for shading/sampling
 // SLEEPING probes have valid SH data and should contribute to sampling,
 // they just don't need frequent ray updates since they're in open space.
+// NEWLY_* states are also valid - their partial contribution is handled by
+// ddgi_probe_readiness_weight() for cascade fallback blending.
 // ─────────────────────────────────────────────────────────────────────────────
 fn probe_state_is_valid_for_sampling(state_data: ProbeStateData) -> bool {
     // Valid for sampling: everything except OFF (inside geometry) and UNINITIALIZED (no data yet)
     let state = probe_state_get_state(state_data.packed_state);
-    let init_frames = probe_state_get_init_frames(state_data.packed_state);
-    let convergence_frames = probe_state_get_convergence_frames(state_data.packed_state);
-    return state != PROBE_STATE_OFF
-        && state != PROBE_STATE_UNINITIALIZED
-        && state != PROBE_STATE_SLEEPING
-        && init_frames >= PROBE_STATE_INIT_FRAMES
-        && convergence_frames >= PROBE_STATE_CONVERGENCE_FRAMES;
+    return state == PROBE_STATE_VIGILANT
+        || state == PROBE_STATE_AWAKE
+        || state == PROBE_STATE_NEWLY_VIGILANT
+        || state == PROBE_STATE_NEWLY_AWAKE;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -608,7 +624,7 @@ fn probe_state_classify_initial(
     probe_spacing: f32
 ) -> u32 {
     // If most rays hit backfaces, probe is inside geometry
-    if (backface_ratio >= PROBE_STATE_BACKFACE_THRESHOLD) {
+    if (backface_ratio > PROBE_STATE_BACKFACE_THRESHOLD) {
         return PROBE_STATE_OFF;
     }
     
@@ -672,6 +688,15 @@ fn ddgi_cascade_blend_weight(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Result struct for sampling with readiness tracking
+// Used for cascade fallback blending during probe initialization
+// ─────────────────────────────────────────────────────────────────────────────
+struct DDGISampleResult {
+    irradiance: vec3<f32>,
+    readiness: f32,  // Weighted average of probe readiness (0.0 to 1.0)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Sample SH irradiance from probes with state awareness and offset-aware filtering
 //
 // This function incorporates:
@@ -683,7 +708,7 @@ fn ddgi_cascade_blend_weight(
 // - Weights remain in [0,1] range (no oversaturation or light subtraction)
 // - Proper interpolation even when probes are moved from grid positions
 // ─────────────────────────────────────────────────────────────────────────────
-fn ddgi_sample_sh_irradiance_single_cascade(
+fn ddgi_sample_sh_irradiance_single_cascade_internal(
     ddgi_params: ptr<uniform, DDGIParams>,
     sh_probes: ptr<storage, array<u32>, read_write>,
     probe_states: ptr<storage, array<ProbeStateData>, read_write>,
@@ -691,7 +716,7 @@ fn ddgi_sample_sh_irradiance_single_cascade(
     position: vec3<f32>,
     normal_ws: vec3<f32>,
     cascade_index: u32
-) -> vec3<f32> {
+) -> DDGISampleResult {
     let dims = vec3<u32>(
         u32((*ddgi_params).probe_grid_dims.x),
         u32((*ddgi_params).probe_grid_dims.y),
@@ -703,7 +728,7 @@ fn ddgi_sample_sh_irradiance_single_cascade(
 
     let view_index = u32(frame_info.view_index);
     let camera_position = view_buffer[view_index].view_position.xyz;
-    let bias_offset = (0.2 * normal_ws + 0.8 * normalize(camera_position - position)) * (0.45 * spacing);
+    let bias_offset = (normal_ws + 0.2 * normalize(camera_position - position)) * (0.75 * spacing);
     let offset_pos = position + bias_offset;
 
     let rel = (offset_pos - origin) / spacing;
@@ -723,21 +748,21 @@ fn ddgi_sample_sh_irradiance_single_cascade(
 
     var sh_sum = sh_l1_rgb_zero();
     var weight_sum = 0.0;
+    var readiness_weighted_sum = 0.0;
 
     for (var i = 0; i < 8; i = i + 1) {
         let coord = vec3<u32>(base) + vec3<u32>(trilinear_index_offsets[i]);
         let clamped_coord = clamp(coord, vec3<u32>(0u), dims - vec3<u32>(1u));
         let probe_index = ddgi_probe_index_from_coord(ddgi_params, cascade_index, clamped_coord);
 
-        // ─────────────────────────────────────────────────────────────
-        // Read probe state data for offset and state check
-        // ─────────────────────────────────────────────────────────────
-
         // Skip OFF probes (inside geometry) and UNINITIALIZED probes (no data yet)
-        // SLEEPING probes have valid SH data and should still contribute
+        // SLEEPING and NEWLY_* probes have valid SH data and should contribute
         if (!probe_state_is_valid_for_sampling(probe_states[probe_index])) {
             continue;
         }
+
+        // Get probe readiness for cascade fallback blending
+        let probe_readiness = ddgi_probe_readiness_weight(probe_states[probe_index]);
 
         var weight = 1.0;
 
@@ -762,7 +787,6 @@ fn ddgi_sample_sh_irradiance_single_cascade(
 
         // Probe visibility weight from depth moments
         {
-            // Use consistent position for both direction and distance
             weight *= ddgi_visibility_weight_from_moments(
                 probe_depth_moments,
                 probe_index,
@@ -788,13 +812,97 @@ fn ddgi_sample_sh_irradiance_single_cascade(
         let probe_sh = ddgi_sh_probe_read(sh_probes, probe_index);
         sh_sum = sh_l1_rgb_add(sh_sum, sh_l1_rgb_multiply_scalar(probe_sh, weight));
         weight_sum = weight_sum + weight;
+        readiness_weighted_sum = readiness_weighted_sum + weight * probe_readiness;
     }
 
-    let sh_interpolated = sh_l1_rgb_multiply_scalar(sh_sum, 1.0 / max(weight_sum, 1e-6));
-    let irradiance = ddgi_sh_evaluate_irradiance(sh_interpolated, normal_ws) * (*ddgi_params).indirect_boost;
-    return max(irradiance, vec3<f32>(0.0));
+    var result: DDGISampleResult;
+    
+    if (weight_sum > 1e-6) {
+        let sh_interpolated = sh_l1_rgb_multiply_scalar(sh_sum, 1.0 / weight_sum);
+        result.irradiance = max(ddgi_sh_evaluate_irradiance(sh_interpolated, normal_ws) * (*ddgi_params).indirect_boost, vec3<f32>(0.0));
+        result.readiness = saturate(readiness_weighted_sum / weight_sum);
+    } else {
+        result.irradiance = vec3<f32>(0.0);
+        result.readiness = 0.0;
+    }
+    
+    return result;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Sample SH irradiance with cascade fallback for initializing probes
+// When fine cascade probes aren't fully ready, blends with coarser cascade data
+// ─────────────────────────────────────────────────────────────────────────────
+fn ddgi_sample_sh_irradiance_with_fallback(
+    ddgi_params: ptr<uniform, DDGIParams>,
+    sh_probes: ptr<storage, array<u32>, read_write>,
+    probe_states: ptr<storage, array<ProbeStateData>, read_write>,
+    probe_depth_moments: ptr<storage, array<vec4<f32>>, read>,
+    position: vec3<f32>,
+    normal_ws: vec3<f32>,
+    start_cascade: u32
+) -> vec3<f32> {
+    let cascade_count = ddgi_cascade_count(ddgi_params);
+    
+    // Sample the starting cascade
+    let fine_result = ddgi_sample_sh_irradiance_single_cascade_internal(
+        ddgi_params,
+        sh_probes,
+        probe_states,
+        probe_depth_moments,
+        position,
+        normal_ws,
+        start_cascade
+    );
+    
+    // If no coarser cascade, return as-is
+    let next_cascade = start_cascade + 1u;
+    if (next_cascade >= cascade_count) {
+        return fine_result.irradiance;
+    }
+    
+    // Sample coarser cascade for fallback
+    // Use iteration instead of recursion (WGSL limitation)
+    var accumulated_irradiance = fine_result.irradiance * fine_result.readiness;
+    var accumulated_weight = fine_result.readiness;
+    var current_cascade = next_cascade;
+    var remaining_weight = 1.0 - fine_result.readiness;
+    
+    // Iterate through coarser cascades until we have full coverage
+    for (var iter = 0u; remaining_weight > 0.0001 && current_cascade < cascade_count; iter = iter + 1u) {
+        let coarse_result = ddgi_sample_sh_irradiance_single_cascade_internal(
+            ddgi_params,
+            sh_probes,
+            probe_states,
+            probe_depth_moments,
+            position,
+            normal_ws,
+            current_cascade
+        );
+        
+        // Contribute proportionally to the remaining weight needed
+        let contribute_weight = remaining_weight * coarse_result.readiness;
+        accumulated_irradiance = accumulated_irradiance + coarse_result.irradiance * contribute_weight;
+        accumulated_weight = accumulated_weight + contribute_weight;
+        remaining_weight = remaining_weight * (1.0 - coarse_result.readiness);
+        
+        current_cascade = current_cascade + 1u;
+    }
+    
+    // Normalize by total weight (handles case where not all cascades are ready)
+    return select(
+        fine_result.irradiance,
+        accumulated_irradiance / accumulated_weight,
+        accumulated_weight > 0.0001
+    );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Main sampling entry point with state awareness and cascade fallback
+// Handles both:
+// - Readiness-based fallback to coarser cascades for initializing probes
+// - Edge blending between cascades for smooth transitions
+// ─────────────────────────────────────────────────────────────────────────────
 fn ddgi_sample_sh_irradiance_with_states(
     ddgi_params: ptr<uniform, DDGIParams>,
     sh_probes: ptr<storage, array<u32>, read_write>,
@@ -804,7 +912,9 @@ fn ddgi_sample_sh_irradiance_with_states(
     normal_ws: vec3<f32>
 ) -> vec3<f32> {
     let cascade_index = ddgi_cascade_index_for_position(ddgi_params, position);
-    let irradiance_fine = ddgi_sample_sh_irradiance_single_cascade(
+    
+    // Use fallback-aware sampling to handle initializing probes
+    let irradiance_fine = ddgi_sample_sh_irradiance_with_fallback(
         ddgi_params,
         sh_probes,
         probe_states,
@@ -814,13 +924,15 @@ fn ddgi_sample_sh_irradiance_with_states(
         cascade_index
     );
 
+    // Edge blending between cascades for smooth spatial transitions
     let cascade_count = ddgi_cascade_count(ddgi_params);
     let coarser_index = cascade_index + 1u;
     let has_coarser = coarser_index < cascade_count;
     let blend_weight = select(0.0, ddgi_cascade_blend_weight(ddgi_params, cascade_index, position), has_coarser);
 
     if (blend_weight > 0.0) {
-        let irradiance_coarse = ddgi_sample_sh_irradiance_single_cascade(
+        // Also use fallback-aware sampling for the coarser cascade
+        let irradiance_coarse = ddgi_sample_sh_irradiance_with_fallback(
             ddgi_params,
             sh_probes,
             probe_states,
