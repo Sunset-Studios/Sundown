@@ -111,6 +111,11 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     // -------------------------------------------------------------------------
     var sh_prev = ddgi_sh_probe_read(&sh_probes, probe_index);
     var prev_sample_count = ddgi_probe_state_get_sample_count(probe_states[probe_index]);
+    var init_frames = probe_state_get_init_frames(probe_states[probe_index].packed_state);
+
+    if (init_frames < PROBE_STATE_INIT_FRAMES) {
+        return;
+    }
     
     // ─────────────────────────────────────────────────────────────────────────
     // Project all ray samples onto SH basis
@@ -143,7 +148,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
 
         let t_raw = hit_data.hit_pos_t.w;
         let is_valid_hit = hit_data.state_u32.w != INVALID_IDX;
-        let t = min(select(miss_distance, abs(t_raw), is_valid_hit && t_raw > 0.0), miss_distance);
+        let t = min(select(miss_distance, abs(t_raw), is_valid_hit), miss_distance);
         let t2 = t * t;
 
         let uv = encode_octahedral(safe_normalize(ray_dir));

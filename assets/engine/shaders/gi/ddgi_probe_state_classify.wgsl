@@ -48,11 +48,12 @@ fn analyze_probe_rays(
     probe_slot: u32,
     rays_per_probe: u32
 ) -> ProbeRayAnalysis {
+    var result: ProbeRayAnalysis;
+    result.nearest_hit_dist = 1e30;
+    result.nearest_hit_pos = vec3<f32>(0.0, 0.0, 0.0);
+    result.nearest_hit_normal = vec3<f32>(0.0, 0.0, 0.0);
     var backface_count = 0u;
-    var nearest_hit_dist = 1e30;
-    var nearest_hit_pos = vec3<f32>(0.0, 0.0, 0.0);
-    var nearest_hit_normal = vec3<f32>(0.0, 0.0, 0.0);
-    
+
     let ray_base = probe_slot * rays_per_probe;
     
     for (var i = 0u; i < rays_per_probe; i = i + 1u) {
@@ -66,21 +67,16 @@ fn analyze_probe_rays(
         
         if (is_hit) {
             backface_count = select(backface_count, backface_count + 1u, t_raw < 0.0);
-            if (t_raw > 0.0 && t_raw < nearest_hit_dist) {
-                nearest_hit_dist = t_raw;
-                nearest_hit_pos = probe_ray_data.rays[ray_index].hit_pos_t.xyz;
-                nearest_hit_normal = probe_ray_data.rays[ray_index].world_n_section.xyz;
+            if (t_raw > 0.0 && t_raw < result.nearest_hit_dist) {
+                result.nearest_hit_dist = t_raw;
+                result.nearest_hit_pos = probe_ray_data.rays[ray_index].hit_pos_t.xyz;
+                result.nearest_hit_normal = probe_ray_data.rays[ray_index].world_n_section.xyz;
             }
         }
     }
     
-    let backface_ratio = f32(backface_count) / f32(rays_per_probe);
-    
-    var result: ProbeRayAnalysis;
-    result.backface_ratio = backface_ratio;
-    result.nearest_hit_dist = nearest_hit_dist;
-    result.nearest_hit_pos = nearest_hit_pos;
-    result.nearest_hit_normal = nearest_hit_normal;
+    result.backface_ratio = f32(backface_count) / f32(rays_per_probe);
+
     return result;
 }
 
@@ -130,13 +126,10 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
             let nearest_hit = ray_analysis.nearest_hit_dist;
             
             // Accumulate statistics
-            let prev_backface_ratio = probe_states[probe_index].backface_ratio;
-            let prev_nearest = bitcast<f32>(probe_states[probe_index].nearest_hit_dist);
+            let prev_nearest = probe_states[probe_index].nearest_hit_dist;
             
             // Running average for backface ratio
-            let weight = 1.0 / f32(init_frames + 1u);
-            let new_avg_backface = mix(prev_backface_ratio, backface_ratio, weight);
-            probe_states[probe_index].backface_ratio = new_avg_backface;
+            probe_states[probe_index].backface_ratio = backface_ratio;
             
             // Track minimum nearest hit
             let new_nearest = select(
@@ -144,7 +137,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
                 nearest_hit,
                 init_frames == 0u
             );
-            probe_states[probe_index].nearest_hit_dist = bitcast<u32>(new_nearest);
+            probe_states[probe_index].nearest_hit_dist = new_nearest;
             
             init_frames = init_frames + 1u;
             
@@ -152,7 +145,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
             if (init_frames >= PROBE_STATE_INIT_FRAMES) {
                 current_state = probe_state_classify_initial(
                     probe_states[probe_index].backface_ratio,
-                    bitcast<f32>(probe_states[probe_index].nearest_hit_dist),
+                    probe_states[probe_index].nearest_hit_dist,
                     spacing
                 );
                 
@@ -220,7 +213,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     var new_offset = probe_states[probe_index].probe_offset.xyz;
 
     if (init_frames < PROBE_STATE_INIT_FRAMES) {
-        let target_distance = min(near_threshold, max(probe_radius, spacing * 0.25));
+        let target_distance = min(near_threshold, spacing * 0.5);
         let candidate_pos = ray_analysis.nearest_hit_pos + ray_analysis.nearest_hit_normal * target_distance;
 
         var candidate_is_clear = true;

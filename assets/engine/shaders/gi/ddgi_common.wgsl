@@ -89,7 +89,7 @@ struct DDGIProbeRayData {
 
 struct ProbeStateData {
     packed_state: u32,        // state | init_frame_count | convergence_frame_count | flags
-    nearest_hit_dist: u32,    // bitcast from f32
+    nearest_hit_dist: f32,    // nearest hit distance in world-space
     backface_ratio: f32,      // accumulated backface hit ratio
     cull_flags: u32,          // frustum/occlusion cull result (1 = visible, 0 = culled)
     probe_offset: vec4<f32>,  // xyz = probe position offset in world-space, w = sample_count (bitcast u32)
@@ -439,12 +439,6 @@ fn ddgi_visibility_weight_from_moments(
 
     let depth_moments = probe_depth_moments[probe_index * DDGI_DEPTH_TEXEL_COUNT + ddgi_depth_texel_id(vec2<u32>(base))];
 
-    let min_d = depth_moments.z;
-    // Hard visibility: if closer than min depth ever seen, definitely visible
-    if (dist <= min_d * 1.05) {  // small bias
-        return 1.0;
-    }
-
     let mean_d = depth_moments.x;
     let mean_d2 = depth_moments.y;
 
@@ -728,7 +722,7 @@ fn ddgi_sample_sh_irradiance_single_cascade_internal(
 
     let view_index = u32(frame_info.view_index);
     let camera_position = view_buffer[view_index].view_position.xyz;
-    let bias_offset = (normal_ws + 0.2 * normalize(camera_position - position)) * (0.75 * spacing);
+    let bias_offset = (normal_ws * 0.2 + normalize(camera_position - position) * 0.8) * (0.75 * spacing) * 0.3;
     let offset_pos = position + bias_offset;
 
     let rel = (offset_pos - origin) / spacing;
