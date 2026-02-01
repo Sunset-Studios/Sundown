@@ -14,7 +14,7 @@
 @group(1) @binding(2) var<storage, read_write> probe_depth_moments: array<vec4<f32>>;
 @group(1) @binding(3) var<storage, read_write> probe_states: array<ProbeStateData>;
 
-@compute @workgroup_size(128, 1, 1)
+@compute @workgroup_size(256, 1, 1)
 fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let probe_index = gid.x;
     let probe_count = u32(ddgi_params.probe_counts.x);
@@ -64,49 +64,56 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         return;
     }
 
+    let probe_sparse_index = ddgi_probe_sparse_index(&probe_states, probe_index);
+    let has_sparse_data = ddgi_probe_sparse_index_is_valid(probe_sparse_index);
+
     let cascade_count = ddgi_cascade_count(&ddgi_params);
     let coarser_cascade = cascade_index + 1u;
 
-    if (coarser_cascade < cascade_count) {
-        let world_pos = ddgi_probe_world_position_from_coord(&ddgi_params, cascade_index, world_coord);
-        let coarse_origin = ddgi_cascade_origin(&ddgi_params, coarser_cascade);
-        let coarse_spacing = ddgi_cascade_spacing(&ddgi_params, coarser_cascade);
-        let coarse_rel = (world_pos - coarse_origin) / coarse_spacing;
-        let coarse_coord_f = clamp(
-            round(coarse_rel),
-            vec3<f32>(0.0),
-            vec3<f32>(f32(dims.x - 1u), f32(dims.y - 1u), f32(dims.z - 1u))
-        );
-        let coarse_coord = vec3<u32>(coarse_coord_f);
-        let coarse_probe_index = ddgi_probe_index_from_coord(&ddgi_params, coarser_cascade, coarse_coord);
+    if (has_sparse_data) {
+        if (coarser_cascade < cascade_count) {
+            let world_pos = ddgi_probe_world_position_from_coord(&ddgi_params, cascade_index, world_coord);
+            let coarse_origin = ddgi_cascade_origin(&ddgi_params, coarser_cascade);
+            let coarse_spacing = ddgi_cascade_spacing(&ddgi_params, coarser_cascade);
+            let coarse_rel = (world_pos - coarse_origin) / coarse_spacing;
+            let coarse_coord_f = clamp(
+                round(coarse_rel),
+                vec3<f32>(0.0),
+                vec3<f32>(f32(dims.x - 1u), f32(dims.y - 1u), f32(dims.z - 1u))
+            );
+            let coarse_coord = vec3<u32>(coarse_coord_f);
+            let coarse_probe_index = ddgi_probe_index_from_coord(&ddgi_params, coarser_cascade, coarse_coord);
+            let coarse_sparse_index = ddgi_probe_sparse_index(&probe_states, coarse_probe_index);
 
-        let coarse_sh = ddgi_sh_probe_read(&sh_probes, coarse_probe_index);
-        ddgi_sh_probe_write(&sh_probes, probe_index, coarse_sh);
-        let coarse_sample_count = ddgi_probe_state_get_sample_count(probe_states[coarse_probe_index]);
-        ddgi_probe_state_set_sample_count(&probe_states[probe_index], coarse_sample_count);
+            if (ddgi_probe_sparse_index_is_valid(coarse_sparse_index)) {
+                let coarse_sh = ddgi_sh_probe_read(&sh_probes, &probe_states, coarse_probe_index);
+                ddgi_sh_probe_write(&sh_probes, &probe_states, probe_index, coarse_sh);
+                let coarse_sample_count = ddgi_probe_state_get_sample_count(probe_states[coarse_probe_index]);
+                ddgi_probe_state_set_sample_count(&probe_states[probe_index], coarse_sample_count);
 
-        let depth_base = probe_index * DDGI_DEPTH_TEXEL_COUNT;
-        let coarse_depth_base = coarse_probe_index * DDGI_DEPTH_TEXEL_COUNT;
-        for (var texel = 0u; texel < DDGI_DEPTH_TEXEL_COUNT; texel = texel + 1u) {
-            probe_depth_moments[depth_base + texel] = probe_depth_moments[coarse_depth_base + texel];
-        }
-    } else {
-        let sh_base = probe_index * DDGI_SH_PROBE_SIZE_U32;
-        for (var i = 0u; i < DDGI_SH_PROBE_SIZE_U32; i = i + 1u) {
-            sh_probes[sh_base + i] = 0u;
-        }
+                let depth_base = probe_sparse_index * DDGI_DEPTH_TEXEL_COUNT;
+                let coarse_depth_base = coarse_sparse_index * DDGI_DEPTH_TEXEL_COUNT;
+                for (var texel = 0u; texel < DDGI_DEPTH_TEXEL_COUNT; texel = texel + 1u) {
+                    probe_depth_moments[depth_base + texel] = probe_depth_moments[coarse_depth_base + texel];
+                }
+            }
+        } else {
+            let sh_base = probe_sparse_index * DDGI_SH_PROBE_SIZE_U32;
+            for (var i = 0u; i < DDGI_SH_PROBE_SIZE_U32; i = i + 1u) {
+                sh_probes[sh_base + i] = 0u;
+            }
 
-        ddgi_probe_state_set_sample_count(&probe_states[probe_index], 0u);
+            ddgi_probe_state_set_sample_count(&probe_states[probe_index], 0u);
 
-        let depth_base = probe_index * DDGI_DEPTH_TEXEL_COUNT;
-        for (var texel = 0u; texel < DDGI_DEPTH_TEXEL_COUNT; texel = texel + 1u) {
-            probe_depth_moments[depth_base + texel] = vec4<f32>(0.0);
+            let depth_base = probe_sparse_index * DDGI_DEPTH_TEXEL_COUNT;
+            for (var texel = 0u; texel < DDGI_DEPTH_TEXEL_COUNT; texel = texel + 1u) {
+                probe_depth_moments[depth_base + texel] = vec4<f32>(0.0);
+            }
         }
     }
 
     probe_states[probe_index].nearest_hit_dist = 0.0;
     probe_states[probe_index].backface_ratio = 0.0;
-    probe_states[probe_index].cull_flags = 0u;
     probe_states[probe_index].probe_offset = vec4<f32>(0.0);
     probe_states[probe_index].packed_state = probe_state_pack(PROBE_STATE_UNINITIALIZED, 0u, 0u, 0u);
 }

@@ -229,7 +229,7 @@ fn is_sphere_occluded(center: vec3<f32>, radius: f32, view_index: u32) -> bool {
 // MAIN COMPUTE SHADER
 // =============================================================================
 
-@compute @workgroup_size(128, 1, 1)
+@compute @workgroup_size(256, 1, 1)
 fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let probe_count = u32(ddgi_params.probe_counts.x);
     let probe_index = gid.x;
@@ -264,6 +264,9 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         is_visible = !is_sphere_occluded(probe_pos, influence_radius, view_index);
     }
     
-    // Write culling result directly into probe state data (reuses padding field)
-    probe_states[probe_index].cull_flags = select(0u, 1u, is_visible);
+    // Write culling result into the flags byte of packed_state
+    probe_states[probe_index].packed_state = ddgi_probe_state_set_cull_visible(
+        probe_states[probe_index].packed_state,
+        is_visible
+    );
 }

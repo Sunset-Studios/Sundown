@@ -149,7 +149,7 @@ fn probe_overlaps_scene(probe_min: vec3<f32>, probe_max: vec3<f32>) -> bool {
 // MAIN COMPUTE SHADER
 // =============================================================================
 
-@compute @workgroup_size(128, 1, 1)
+@compute @workgroup_size(256, 1, 1)
 fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let probe_count = u32(ddgi_params.probe_counts.x);
     let probe_index = gid.x;

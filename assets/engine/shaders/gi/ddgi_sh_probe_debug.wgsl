@@ -362,7 +362,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let sphere_normal = safe_normalize(hit_pos - probe_center);
     
     // Read SH probe and evaluate diffuse irradiance for the sphere surface normal.
-    let probe_sh = ddgi_sh_probe_read(&sh_probes, hit_probe_index);
+    let probe_sh = ddgi_sh_probe_read(&sh_probes, &probe_states, hit_probe_index);
     let sphere_irradiance = ddgi_sh_evaluate_irradiance(probe_sh, sphere_normal) * ddgi_params.indirect_boost;
 
     // Lambertian-equivalent radiance preview (albedo = 1): L = E / PI

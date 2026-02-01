@@ -12,10 +12,100 @@ import { Name } from "../../utility/names.js";
 import { ResourceCache } from "../resource_cache.js";
 import { ispot, npot } from "../../utility/math.js";
 
-const COMPUTE_WORKGROUP_SIZE = 128;
+const COMPUTE_WORKGROUP_SIZE = 256;
 const DDGI_PROBE_DEPTH_RES = 16;
 const DDGI_PROBE_DEPTH_TEXEL_COUNT = DDGI_PROBE_DEPTH_RES * DDGI_PROBE_DEPTH_RES;
 const DDGI_MAX_CASCADES = 8;
+
+// ┌─────────────────────────────────────────────────────────────────────────────┐
+// │ Permutation helpers (CPU-side precomputation for probe cycling)             │
+// └─────────────────────────────────────────────────────────────────────────────┘
+
+/**
+ * Simple integer hash function matching the shader's hash() function.
+ * @param {number} x - Input value
+ * @returns {number} - Hashed value as unsigned 32-bit integer
+ */
+function hash_u32(x) {
+  x = x >>> 0; // Ensure unsigned
+  x = ((x >>> 16) ^ x) * 0x45d9f3b;
+  x = ((x >>> 16) ^ x) * 0x45d9f3b;
+  x = (x >>> 16) ^ x;
+  return x >>> 0;
+}
+
+/**
+ * Compute GCD using Euclidean algorithm.
+ * @param {number} a
+ * @param {number} b
+ * @returns {number}
+ */
+function gcd_u32(a, b) {
+  a = a >>> 0;
+  b = b >>> 0;
+  while (b !== 0) {
+    const t = a % b;
+    a = b;
+    b = t;
+  }
+  return a;
+}
+
+/**
+ * Find a stride coprime with modulus, starting from a hashed seed.
+ * Matches the shader's ddgi_coprime_stride_from_seed logic exactly.
+ * @param {number} sequence_seed
+ * @param {number} modulus
+ * @returns {number}
+ */
+function coprime_stride_from_seed(sequence_seed, modulus) {
+  modulus = modulus >>> 0;
+  if (modulus <= 1) {
+    return 1;
+  }
+
+  const range = modulus - 1;
+  let stride = (hash_u32(sequence_seed) % range) + 1;
+  stride = stride | 1; // Bias to odd
+  stride = ((stride - 1) % range) + 1;
+
+  // Bounded search for coprime stride
+  for (let iter = 0; iter < 32; iter++) {
+    if (gcd_u32(stride, modulus) === 1) {
+      break;
+    }
+    stride = stride + 2;
+    if (stride >= modulus) {
+      stride = stride % modulus;
+    }
+    if (stride === 0) {
+      stride = 1;
+    }
+  }
+
+  // Fallback
+  if (gcd_u32(stride, modulus) !== 1) {
+    return 1;
+  }
+  return stride;
+}
+
+/**
+ * Precompute the permutation parameters for probe cycling.
+ * These values are uniform across all shader invocations.
+ * @param {number} probe_count
+ * @returns {{stride: number, base_offset: number, frame_stride: number}}
+ */
+function compute_permutation_params(probe_count) {
+  probe_count = Math.max(1, probe_count >>> 0);
+
+  const sequence_seed = hash_u32(probe_count ^ 0xa3c59ac3);
+  const stride = coprime_stride_from_seed(sequence_seed, probe_count);
+  const base_offset = hash_u32(sequence_seed ^ 0x85ebca6b) % probe_count;
+  const frame_stride = coprime_stride_from_seed(sequence_seed ^ 0xc2b2ae35, probe_count);
+
+  return { stride, base_offset, frame_stride };
+}
 
 // ┌─────────────────────────────────────────────────────────────────────────────┐
 // │ Resource cache / binding names                                               │
@@ -60,6 +150,18 @@ const ddgi_probe_indices_init_shader_setup = {
 const ddgi_probe_active_mark_shader_setup = {
   pipeline_shaders: {
     compute: { path: "gi/ddgi_probe_active_mark.wgsl" },
+  },
+};
+
+const ddgi_probe_indirection_reset_shader_setup = {
+  pipeline_shaders: {
+    compute: { path: "gi/ddgi_probe_indirection_reset.wgsl" },
+  },
+};
+
+const ddgi_probe_indirection_update_shader_setup = {
+  pipeline_shaders: {
+    compute: { path: "gi/ddgi_probe_indirection_update.wgsl" },
   },
 };
 
@@ -125,11 +227,12 @@ const ddgi_probe_cull_shader_setup = {
 
 export class DDGI {
   config = {
-    probe_grid_dimensions: [32, 32, 32],
+    probe_grid_dimensions: [64, 64, 64],
     probe_spacing: 2.0,
     probe_radius: 0.2,
     rays_per_probe: 32,
     probes_per_frame: 1024,
+    probe_storage_capacity: 16384 * DDGI_MAX_CASCADES,
     probe_update_culled_ratio: 0.0,
     indirect_boost: 1.0,
     cascade_count: DDGI_MAX_CASCADES,
@@ -150,7 +253,6 @@ export class DDGI {
     probe_states_buffer: null,
   };
 
-  ddgi_params = null;
   // DDGIParams layout:
   // [0-3]   probe_counts        (x=probe_count, y=rays_per_probe, z=probes_per_frame, w=probe_spacing)
   // [4-7]   probe_grid_dims     (x=dim_x, y=dim_y, z=dim_z, w=probe_radius)
@@ -162,9 +264,14 @@ export class DDGI {
   // [25]    indirect_boost
   // [26]    cascade_count
   // [27]    probe_update_culled_ratio
-  // [28-39] cascade[0]: origin_spacing(4), scroll_offset(4), snap_delta(4)
+  // [28]    probe_storage_capacity
+  // [29]    permutation_stride       (precomputed coprime stride for probe cycling)
+  // [30]    permutation_base_offset  (precomputed base offset for permutation)
+  // [31]    permutation_frame_stride (precomputed frame stride for temporal offset)
+  // [32+]   cascade[0..N]: origin_spacing(4), scroll_offset(4), snap_delta(4)
   // ... (12 floats per cascade)
-  ddgi_params_data = new Float32Array(28 + 12 * DDGI_MAX_CASCADES);
+  ddgi_params_data = new Float32Array(32 + 12 * DDGI_MAX_CASCADES);
+  ddgi_params = null;
 
   // ┌─────────────────────────────────────────────────────────────────────────────┐
   // │ Probe grid snap tracking (CPU-side)                                          │
@@ -172,6 +279,8 @@ export class DDGI {
   ddgi_probe_grid_snapped_origin = null;
   ddgi_probe_grid_scroll_offsets = null;
   ddgi_probe_grid_initialized = null;
+  ddgi_probe_storage_capacity = 0;
+  ddgi_probe_count = 0;
 
   final_gi_texture_direct = null;
   final_gi_texture_indirect_diffuse = null;
@@ -327,11 +436,14 @@ export class DDGI {
     // └─────────────────────────────────────────────────────────────────────────────┘
     // Update only a subset of probes per frame and rotate through the full set
     // temporally. The selection itself is generated on the GPU by `gi/ddgi_probe_indices_init.wgsl`.
+    const probe_storage_capacity_cfg = Math.max(1, Math.floor(this.config.probe_storage_capacity));
+    const probe_storage_capacity = Math.min(probe_count, probe_storage_capacity_cfg);
     const probes_per_frame_cfg = Math.max(0, Math.floor(this.config.probes_per_frame));
-    const probes_per_frame =
+    const probes_per_frame_requested =
       probes_per_frame_cfg === 0
         ? probe_count
         : Math.min(probe_count, probes_per_frame_cfg);
+    const probes_per_frame = Math.min(probe_storage_capacity, probes_per_frame_requested);
     const rays_per_probe = Math.max(1, Math.floor(this.config.rays_per_probe));
     const probe_primary_ray_count = probes_per_frame * rays_per_probe;
     const probe_total_ray_count = probe_primary_ray_count;
@@ -512,6 +624,13 @@ export class DDGI {
       force: force_recreate,
     });
 
+    const probe_indirection_free_list = render_graph.create_buffer({
+      name: "ddgi_probe_indirection_free_list",
+      size: 1 + probe_storage_capacity,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+      force: force_recreate,
+    });
+
     // ─────────────────────────────────────────────────────────────────────────
     // Active-only probe scheduling with frustum culling priority
     // (cull → mark → prefix sum → scatter)
@@ -528,6 +647,13 @@ export class DDGI {
 
     const probe_active_flags_culled = render_graph.create_buffer({
       name: "ddgi_probe_active_flags_culled",
+      size: probe_count,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+      force: force_recreate,
+    });
+
+    const probe_active_flags = render_graph.create_buffer({
+      name: "ddgi_probe_active_flags",
       size: probe_count,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
       force: force_recreate,
@@ -602,7 +728,7 @@ export class DDGI {
     // ─────────────────────────────────────────────────────────────────────────
     const probe_depth_moments = render_graph.create_buffer({
       name: "ddgi_probe_depth_moments",
-      size: probe_count * DDGI_PROBE_DEPTH_TEXEL_COUNT * 4,
+      size: probe_storage_capacity * DDGI_PROBE_DEPTH_TEXEL_COUNT * 4,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
       force: force_recreate,
     });
@@ -613,7 +739,7 @@ export class DDGI {
     // ─────────────────────────────────────────────────────────────────────────
     const sh_probes = render_graph.create_buffer({
       name: "ddgi_sh_probes",
-      size: probe_count * 6,
+      size: probe_storage_capacity * 6,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
       force: force_recreate,
     });
@@ -629,6 +755,9 @@ export class DDGI {
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
       force: force_recreate,
     });
+
+    // Precompute permutation parameters on CPU (eliminates expensive GCD loops in shader)
+    const permutation_params = compute_permutation_params(probe_count);
 
     render_graph.add_pass(
       "ddgi_upload_params",
@@ -666,16 +795,42 @@ export class DDGI {
         this.ddgi_params_data[25] = this.config.indirect_boost;
         this.ddgi_params_data[26] = cascade_count;
         this.ddgi_params_data[27] = this.config.probe_update_culled_ratio;
+        this.ddgi_params_data[28] = probe_storage_capacity;
+        this.ddgi_params_data[29] = permutation_params.stride;
+        this.ddgi_params_data[30] = permutation_params.base_offset;
+        this.ddgi_params_data[31] = permutation_params.frame_stride;
 
-        // Copy cascade data into params buffer (starts at offset 28)
+        // Copy cascade data into params buffer (starts at offset 32)
         // Each cascade has 12 floats: origin_spacing(4), scroll_offset(4), snap_delta(4)
         for (let i = 0; i < cascade_data.length; i++) {
-          this.ddgi_params_data[28 + i] = cascade_data[i];
+          this.ddgi_params_data[32 + i] = cascade_data[i];
         }
 
         ddgi_params_buf.write_raw(this.ddgi_params_data);
       }
     );
+
+    const needs_indirection_reset =
+      force_recreate ||
+      this.ddgi_probe_storage_capacity !== probe_storage_capacity ||
+      this.ddgi_probe_count !== probe_count;
+
+    if (needs_indirection_reset) {
+      render_graph.add_pass(
+        "ddgi_probe_indirection_reset",
+        RenderPassFlags.Compute,
+        {
+          inputs: [this.ddgi_params, probe_states, probe_indirection_free_list],
+          outputs: [probe_states, probe_indirection_free_list],
+          shader_setup: ddgi_probe_indirection_reset_shader_setup,
+        },
+        (graph, frame_data, encoder) => {
+          const pass = graph.get_physical_pass(frame_data.current_pass);
+          const dispatch_count = Math.max(probe_count, probe_storage_capacity);
+          pass.dispatch(Math.ceil(dispatch_count / COMPUTE_WORKGROUP_SIZE), 1, 1);
+        }
+      );
+    }
 
     render_graph.add_pass(
       "ddgi_reset",
@@ -775,8 +930,9 @@ export class DDGI {
           probe_states,
           probe_active_flags_nonculled,
           probe_active_flags_culled,
+          probe_active_flags,
         ],
-        outputs: [probe_active_flags_nonculled, probe_active_flags_culled],
+        outputs: [probe_active_flags_nonculled, probe_active_flags_culled, probe_active_flags],
         shader_setup: ddgi_probe_active_mark_shader_setup,
       },
       (graph, frame_data, encoder) => {
@@ -840,6 +996,32 @@ export class DDGI {
       (graph, frame_data, encoder) => {
         const pass = graph.get_physical_pass(frame_data.current_pass);
         pass.dispatch(1, 1, 1);
+      }
+    );
+
+    render_graph.add_pass(
+      "ddgi_probe_indirection_update",
+      RenderPassFlags.Compute,
+      {
+        inputs: [
+          this.ddgi_params,
+          probe_active_flags,
+          probe_states,
+          probe_indirection_free_list,
+          sh_probes,
+          probe_depth_moments,
+        ],
+        outputs: [
+          probe_states,
+          probe_indirection_free_list,
+          sh_probes,
+          probe_depth_moments,
+        ],
+        shader_setup: ddgi_probe_indirection_update_shader_setup,
+      },
+      (graph, frame_data, encoder) => {
+        const pass = graph.get_physical_pass(frame_data.current_pass);
+        pass.dispatch(Math.ceil(probe_count / COMPUTE_WORKGROUP_SIZE), 1, 1);
       }
     );
 
@@ -981,7 +1163,7 @@ export class DDGI {
       },
       (graph, frame_data, encoder) => {
         const pass = graph.get_physical_pass(frame_data.current_pass);
-        pass.dispatch(Math.ceil(probes_per_frame / 128), 1, 1);
+        pass.dispatch(Math.ceil(probes_per_frame / COMPUTE_WORKGROUP_SIZE), 1, 1);
       }
     );
 
@@ -1039,6 +1221,8 @@ export class DDGI {
       }
     );
 
+    this.ddgi_probe_storage_capacity = probe_storage_capacity;
+    this.ddgi_probe_count = probe_count;
     this.shared_bindings.sh_probes_buffer = sh_probes;
     this.shared_bindings.probe_states_buffer = probe_states;
   }

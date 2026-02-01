@@ -32,59 +32,41 @@
 @group(1) @binding(1) var<storage, read> probe_states: array<ProbeStateData>;
 @group(1) @binding(2) var<storage, read_write> active_flags_nonculled: array<u32>;
 @group(1) @binding(3) var<storage, read_write> active_flags_culled: array<u32>;
+@group(1) @binding(4) var<storage, read_write> active_flags_by_index: array<u32>;
 
 // =============================================================================
-// STOCHASTIC (BUT DETERMINISTIC) PERMUTATION HELPERS
+// STOCHASTIC (BUT DETERMINISTIC) PROBE CYCLING
 // =============================================================================
+// We want a selection pattern that:
+// - Looks "random" to avoid structured artifacts (better temporal distribution)
+// - Is deterministic (given probe_count and frame_index)
+// - Does not miss probes: every probe index must be visited eventually
+//
+// Approach:
+// - Treat the per-frame probe picks as a walk over Z_n (n = probe_count).
+// - Use an affine map:   idx(k) = (offset + k * stride) mod n
+// - If gcd(stride, n) = 1, this is a permutation: k=0..n-1 visits every probe once.
+// - We set k = frame_index * probes_per_frame + local_id so the walk advances by
+//   probes_per_frame each frame without gaps.
+//
+// OPTIMIZATION: The stride, base_offset, and frame_stride values are UNIFORM
+// across all shader invocations (they only depend on probe_count). These are
+// precomputed on the CPU and passed via DDGIParams, eliminating expensive
+// GCD computation loops that previously ran per-thread.
+//
+// The permutation formula is:
+//   probe_index = (base_offset + (frame_stride * frame_index + slot) * stride) % probe_count
 
-fn ddgi_gcd_u32(a: u32, b: u32) -> u32 {
-    var x = a;
-    var y = b;
-    for (var iter = 0u; iter < 32u; iter = iter + 1u) {
-        if (y == 0u) { break; }
-        let t = x % y;
-        x = y;
-        y = t;
-    }
-    return x;
-}
-
-fn ddgi_coprime_stride_from_seed(sequence_seed: u32, modulus: u32) -> u32 {
-    if (modulus <= 1u) {
-        return 1u;
-    }
-
-    let range = modulus - 1u;
-    var stride = (hash(sequence_seed) % range) + 1u;
-    stride = stride | 1u;
-    stride = ((stride - 1u) % range) + 1u;
-
-    for (var iter = 0u; iter < 32u; iter = iter + 1u) {
-        if (ddgi_gcd_u32(stride, modulus) == 1u) {
-            break;
-        }
-        stride = stride + 2u;
-        stride = select(stride, stride % modulus, stride >= modulus);
-        stride = select(stride, 1u, stride == 0u);
-    }
-
-    return select(stride, 1u, ddgi_gcd_u32(stride, modulus) != 1u);
-}
-
-fn ddgi_probe_index_from_permuted_slot(slot: u32, probe_count: u32, frame_index_u32: u32) -> u32 {
+fn ddgi_probe_index_from_permuted_slot(
+    slot: u32,
+    probe_count: u32,
+    frame_index_u32: u32,
+    stride: u32,
+    base_offset: u32,
+    frame_stride: u32
+) -> u32 {
     let safe_probe_count = max(probe_count, 1u);
-
-    // Stable sequence for a given grid configuration (good temporal stability).
-    let sequence_seed = hash(probe_count ^ 0xA3C59AC3u);
-    let stride = ddgi_coprime_stride_from_seed(sequence_seed, safe_probe_count);
-    let base_offset = hash(sequence_seed ^ 0x85ebca6bu) % safe_probe_count;
-
-    // Frame shift so we cycle through the permutation across frames.
-    // Use a coprime "frame stride" so the start position visits all residues
-    // regardless of probe_count and probes_per_frame relationships.
-    let frame_stride = ddgi_coprime_stride_from_seed(sequence_seed ^ 0xC2B2AE35u, safe_probe_count);
     let frame_shift = frame_index_u32 * frame_stride;
-
     let k = frame_shift + slot;
     return (base_offset + k * stride) % safe_probe_count;
 }
@@ -93,7 +75,7 @@ fn ddgi_probe_index_from_permuted_slot(slot: u32, probe_count: u32, frame_index_
 // MAIN
 // =============================================================================
 
-@compute @workgroup_size(128, 1, 1)
+@compute @workgroup_size(256, 1, 1)
 fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let probe_count = u32(ddgi_params.probe_counts.x);
     let frame_index_u32 = u32(ddgi_params.frame_index);
@@ -106,7 +88,14 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     // ─────────────────────────────────────────────────────────────────────────
     // Get the probe index from the permuted slot
     // ─────────────────────────────────────────────────────────────────────────
-    let probe_index = ddgi_probe_index_from_permuted_slot(slot, probe_count, frame_index_u32);
+    let probe_index = ddgi_probe_index_from_permuted_slot(
+        slot,
+        probe_count,
+        frame_index_u32,
+        u32(ddgi_params.permutation_stride),
+        u32(ddgi_params.permutation_base_offset),
+        u32(ddgi_params.permutation_frame_stride)
+    );
 
     // ─────────────────────────────────────────────────────────────────────────
     // Check if probe is active (based on probe state)
@@ -122,16 +111,17 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let is_active = is_state_active && is_in_cascade;
 
     // ─────────────────────────────────────────────────────────────────────────
-    // Check if probe is in frustum and visible (from cull_flags in probe state data)
+    // Check if probe is in frustum and visible (from flags byte in packed_state)
     // ─────────────────────────────────────────────────────────────────────────
-    let is_culled = probe_states[probe_index].cull_flags == 0u;
+    let is_culled = !ddgi_probe_state_get_cull_visible(probe_states[probe_index].packed_state);
 
     // ─────────────────────────────────────────────────────────────────────────
     // Output to appropriate flag array based on culling status
     // - Non-culled active probes get priority in scheduling
     // - Culled active probes are scheduled stochastically to fill remaining budget
     // ─────────────────────────────────────────────────────────────────────────
-    // Store flags in permuted order (slot-space)
+    // Store culling-aware flags in permuted order (slot-space) for scheduling
     active_flags_nonculled[slot] = select(0u, 1u, is_active && !is_culled);
     active_flags_culled[slot] = select(0u, 1u, is_active && is_culled);
+    active_flags_by_index[probe_index] = select(0u, 1u, is_active);
 }

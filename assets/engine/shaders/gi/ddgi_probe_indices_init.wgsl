@@ -42,7 +42,7 @@
 @group(1) @binding(7) var<storage, read> block_prefixes_culled: array<u32>;
 
 // Counters containing total nonculled/culled counts
-@group(1) @binding(8) var<storage, read_write> gi_counters: GICounters;
+@group(1) @binding(8) var<storage, read> gi_counters: GICountersReadOnly;
 
 // =============================================================================
 // STOCHASTIC (BUT DETERMINISTIC) PROBE CYCLING
@@ -59,65 +59,23 @@
 // - We set k = frame_index * probes_per_frame + local_id so the walk advances by
 //   probes_per_frame each frame without gaps.
 //
-// Notes:
-// - `offset` and `stride` are derived from a hash of `probe_count` to make the
-//   permutation "stochastic" but still deterministic for a given configuration.
-// - `stride` is forced to be coprime with n using a small bounded search.
+// OPTIMIZATION: The stride, base_offset, and frame_stride values are UNIFORM
+// across all shader invocations (they only depend on probe_count). These are
+// precomputed on the CPU and passed via DDGIParams, eliminating expensive
+// GCD computation loops that previously ran per-thread.
+//
+// The permutation formula is:
+//   probe_index = (base_offset + (frame_stride * frame_index + slot) * stride) % probe_count
 
-fn ddgi_gcd_u32(a: u32, b: u32) -> u32 {
-    var x = a;
-    var y = b;
-
-    // Bounded Euclid to keep shader compilers happy.
-    for (var iter = 0u; iter < 32u; iter = iter + 1u) {
-        if (y == 0u) {
-            break;
-        }
-        let t = x % y;
-        x = y;
-        y = t;
-    }
-
-    return x;
-}
-
-fn ddgi_coprime_stride_from_seed(sequence_seed: u32, modulus: u32) -> u32 {
-    // Degenerate cases: 0 or 1 probe -> any stride works; keep it simple.
-    if (modulus <= 1u) {
-        return 1u;
-    }
-
-    // Start with a hashed candidate in [1, modulus-1], bias to odd.
-    // Odd isn't strictly required, but helps avoid easy common factors with powers-of-two.
-    let range = modulus - 1u;
-    var stride = (hash(sequence_seed) % range) + 1u;
-    stride = stride | 1u;
-    stride = ((stride - 1u) % range) + 1u;
-
-    // Bounded search for a coprime stride.
-    for (var iter = 0u; iter < 32u; iter = iter + 1u) {
-        if (ddgi_gcd_u32(stride, modulus) == 1u) {
-            break;
-        }
-
-        // Try the next odd. Wrap to stay in [1, modulus-1].
-        stride = stride + 2u;
-        stride = select(stride, stride % modulus, stride >= modulus);
-        stride = select(stride, 1u, stride == 0u);
-    }
-
-    // Last-resort fallback: stride=1 always coprime and still cycles fully.
-    return select(stride, 1u, ddgi_gcd_u32(stride, modulus) != 1u);
-}
-
-fn ddgi_probe_index_from_permuted_slot(slot: u32, probe_count: u32, frame_index_u32: u32) -> u32 {
+fn ddgi_probe_index_from_permuted_slot(
+    slot: u32,
+    probe_count: u32,
+    frame_index_u32: u32,
+    stride: u32,
+    base_offset: u32,
+    frame_stride: u32
+) -> u32 {
     let safe_probe_count = max(probe_count, 1u);
-
-    let sequence_seed = hash(probe_count ^ 0xA3C59AC3u);
-    let stride = ddgi_coprime_stride_from_seed(sequence_seed, safe_probe_count);
-    let base_offset = hash(sequence_seed ^ 0x85ebca6bu) % safe_probe_count;
-
-    let frame_stride = ddgi_coprime_stride_from_seed(sequence_seed ^ 0xC2B2AE35u, safe_probe_count);
     let frame_shift = frame_index_u32 * frame_stride;
     let k = frame_shift + slot;
     return (base_offset + k * stride) % safe_probe_count;
@@ -127,7 +85,7 @@ fn ddgi_probe_index_from_permuted_slot(slot: u32, probe_count: u32, frame_index_
 // MAIN COMPUTE SHADER
 // =============================================================================
 
-@compute @workgroup_size(128, 1, 1)
+@compute @workgroup_size(256, 1, 1)
 fn cs(
     @builtin(global_invocation_id) gid: vec3<u32>,
     @builtin(workgroup_id) wid: vec3<u32>
@@ -145,13 +103,21 @@ fn cs(
     // Read total counts from GI counters
     // (ray_queue_shadow_head stores nonculled count, ray_queue_primary_head stores culled count)
     // ─────────────────────────────────────────────────────────────────────────
-    let total_nonculled = atomicLoad(&gi_counters.ray_queue_shadow_head);
-    let total_culled = atomicLoad(&gi_counters.ray_queue_primary_head);
+    let total_nonculled = gi_counters.ray_queue_shadow_head;
+    let total_culled = gi_counters.ray_queue_primary_head;
 
     // ─────────────────────────────────────────────────────────────────────────
-    // Get the probe index from the permuted slot
+    // Get the probe index from the permuted slot using CPU-precomputed params
+    // (Eliminates expensive GCD computation that was previously done per-thread)
     // ─────────────────────────────────────────────────────────────────────────
-    let probe_index = ddgi_probe_index_from_permuted_slot(slot, probe_count, frame_index_u32);
+    let probe_index = ddgi_probe_index_from_permuted_slot(
+        slot,
+        probe_count,
+        frame_index_u32,
+        u32(ddgi_params.permutation_stride),
+        u32(ddgi_params.permutation_base_offset),
+        u32(ddgi_params.permutation_frame_stride)
+    );
 
     // ─────────────────────────────────────────────────────────────────────────
     // Weighted Scheduling Logic

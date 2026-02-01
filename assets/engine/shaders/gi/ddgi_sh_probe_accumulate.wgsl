@@ -76,7 +76,7 @@ fn ddgi_sh_average_radiance_luma(sh: SH_L1_RGB) -> f32 {
 // MAIN COMPUTE SHADER
 // =============================================================================
 
-@compute @workgroup_size(128, 1, 1)
+@compute @workgroup_size(256, 1, 1)
 fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     // ─────────────────────────────────────────────────────────────────────────
     // Early exit if we're beyond the number of probes to update this frame
@@ -90,6 +90,10 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
     
     let probe_index = probe_update_indices[gid.x];
+    let probe_sparse_index = ddgi_probe_sparse_index(&probe_states, probe_index);
+    if (!ddgi_probe_sparse_index_is_valid(probe_sparse_index)) {
+        return;
+    }
     let ray_base = gid.x * rays_per_probe;
     
     // ─────────────────────────────────────────────────────────────────────────
@@ -104,12 +108,12 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     
     let dst_coord = ddgi_probe_coord_from_index(&ddgi_params, probe_index);
 
-    let depth_base = probe_index * DDGI_DEPTH_TEXEL_COUNT;
+    let depth_base = probe_sparse_index * DDGI_DEPTH_TEXEL_COUNT;
 
     // -------------------------------------------------------------------------
     // Warm start (copy/reproject history into current for THIS probe)
     // -------------------------------------------------------------------------
-    var sh_prev = ddgi_sh_probe_read(&sh_probes, probe_index);
+    var sh_prev = ddgi_sh_probe_read(&sh_probes, &probe_states, probe_index);
     var prev_sample_count = ddgi_probe_state_get_sample_count(probe_states[probe_index]);
     var init_frames = probe_state_get_init_frames(probe_states[probe_index].packed_state);
 
@@ -233,6 +237,6 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     // ─────────────────────────────────────────────────────────────────────────
     // Write results to output buffers
     // ─────────────────────────────────────────────────────────────────────────
-    ddgi_sh_probe_write(&sh_probes, probe_index, sh_result);
+    ddgi_sh_probe_write(&sh_probes, &probe_states, probe_index, sh_result);
     ddgi_probe_state_set_sample_count(&probe_states[probe_index], u32(clamp(accumulated_frames, 1.0, DDGI_HISTORY_CAP_FRAMES_MAX)));
 }

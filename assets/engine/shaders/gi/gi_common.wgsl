@@ -35,6 +35,15 @@ struct GICounters {
     probe_update_count: atomic<u32>,         // DDGI probe update count (compacted active probes)
 };
 
+struct GICountersReadOnly {
+    light_count: u32,
+    active_cache_cell_count: u32,
+    ray_queue_shadow_head: u32,
+    ray_queue_primary_head: u32,
+    ray_queue_count: u32,
+    probe_update_count: u32,
+};
+
 // =============================================================================
 // GI PARAMETERS
 // =============================================================================
