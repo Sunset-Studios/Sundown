@@ -27,7 +27,7 @@
 @group(1) @binding(1) var<storage, read> probe_update_indices: array<u32>;
 @group(1) @binding(2) var<storage, read_write> probe_ray_data: DDGIProbeRayDataBuffer;
 @group(1) @binding(3) var<storage, read_write> probe_states: array<ProbeStateData>;
-@group(1) @binding(4) var<storage, read_write> gi_counters: GICounters;
+@group(1) @binding(4) var<storage, read> gi_counters: GICountersReadOnly;
 
 // =============================================================================
 // HELPER FUNCTIONS
@@ -89,7 +89,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     // ─────────────────────────────────────────────────────────────────────────
     // Early exit if beyond probe count
     // ─────────────────────────────────────────────────────────────────────────
-    let active_probe_count = atomicLoad(&gi_counters.probe_update_count);
+    let active_probe_count = gi_counters.probe_update_count;
     let rays_per_probe = u32(ddgi_params.probe_counts.y);
     
     if (gid.x >= active_probe_count) {

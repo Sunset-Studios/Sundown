@@ -29,7 +29,7 @@
 @group(1) @binding(3) var<storage, read_write> sh_probes: array<u32>;
 @group(1) @binding(4) var<storage, read_write> probe_depth_moments: array<vec4<f32>>;
 @group(1) @binding(5) var<storage, read_write> probe_states: array<ProbeStateData>;
-@group(1) @binding(6) var<storage, read_write> gi_counters: GICounters;
+@group(1) @binding(6) var<storage, read> gi_counters: GICountersReadOnly;
 
 // =============================================================================
 // CONSTANTS
@@ -82,7 +82,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     // Early exit if we're beyond the number of probes to update this frame
     // ─────────────────────────────────────────────────────────────────────────
     let max_probes_per_frame = u32(ddgi_params.probe_counts.z);
-    let active_probe_count = atomicLoad(&gi_counters.probe_update_count);
+    let active_probe_count = gi_counters.probe_update_count;
     let rays_per_probe = u32(ddgi_params.probe_counts.y);
     
     if (gid.x >= active_probe_count) {

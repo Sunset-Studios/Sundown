@@ -652,13 +652,6 @@ export class DDGI {
       force: force_recreate,
     });
 
-    const probe_active_flags = render_graph.create_buffer({
-      name: "ddgi_probe_active_flags",
-      size: probe_count,
-      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-      force: force_recreate,
-    });
-
     const probe_active_prefix_sum_nonculled = render_graph.create_buffer({
       name: "ddgi_probe_active_prefix_sum_nonculled",
       size: probe_count,
@@ -930,9 +923,8 @@ export class DDGI {
           probe_states,
           probe_active_flags_nonculled,
           probe_active_flags_culled,
-          probe_active_flags,
         ],
-        outputs: [probe_active_flags_nonculled, probe_active_flags_culled, probe_active_flags],
+        outputs: [probe_active_flags_nonculled, probe_active_flags_culled],
         shader_setup: ddgi_probe_active_mark_shader_setup,
       },
       (graph, frame_data, encoder) => {
@@ -1005,7 +997,6 @@ export class DDGI {
       {
         inputs: [
           this.ddgi_params,
-          probe_active_flags,
           probe_states,
           probe_indirection_free_list,
           sh_probes,

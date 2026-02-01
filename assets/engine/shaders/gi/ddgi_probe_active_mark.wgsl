@@ -32,7 +32,6 @@
 @group(1) @binding(1) var<storage, read> probe_states: array<ProbeStateData>;
 @group(1) @binding(2) var<storage, read_write> active_flags_nonculled: array<u32>;
 @group(1) @binding(3) var<storage, read_write> active_flags_culled: array<u32>;
-@group(1) @binding(4) var<storage, read_write> active_flags_by_index: array<u32>;
 
 // =============================================================================
 // STOCHASTIC (BUT DETERMINISTIC) PROBE CYCLING
@@ -123,5 +122,4 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     // Store culling-aware flags in permuted order (slot-space) for scheduling
     active_flags_nonculled[slot] = select(0u, 1u, is_active && !is_culled);
     active_flags_culled[slot] = select(0u, 1u, is_active && is_culled);
-    active_flags_by_index[probe_index] = select(0u, 1u, is_active);
 }

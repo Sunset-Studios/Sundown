@@ -15,7 +15,7 @@
 @group(1) @binding(1) var<storage, read> probe_update_indices: array<u32>;
 @group(1) @binding(2) var<storage, read_write> probe_ray_data: DDGIProbeRayDataBuffer;
 @group(1) @binding(3) var<storage, read> sh_probes: array<u32>;
-@group(1) @binding(4) var<storage, read_write> gi_counters: GICounters;
+@group(1) @binding(4) var<storage, read> gi_counters: GICountersReadOnly;
 
 // =============================================================================
 // Ray direction sampling
@@ -67,7 +67,7 @@ fn ddgi_probe_ray_direction_spherical_fibonacci(
 @compute @workgroup_size(256, 1, 1)
 fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let rays_per_probe = u32(ddgi_params.probe_counts.y);
-    let total_rays = atomicLoad(&gi_counters.probe_update_count) * rays_per_probe;
+    let total_rays = gi_counters.probe_update_count * rays_per_probe;
     let max_rays = u32(ddgi_params.probe_counts.z) * rays_per_probe;
 
     if (gid.x >= max_rays) {

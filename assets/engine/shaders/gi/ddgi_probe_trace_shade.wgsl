@@ -12,7 +12,7 @@
 
 @group(1) @binding(0) var<uniform> ddgi_params: DDGIParams;
 @group(1) @binding(1) var<uniform> scene_lighting_data: SceneLightingData;
-@group(1) @binding(2) var<storage, read_write> probe_ray_data: DDGIProbeRayDataBuffer;
+@group(1) @binding(2) var<storage, read_write> probe_ray_data: DDGIProbeRayDataBufferReadOnlyHeader;
 @group(1) @binding(3) var<storage, read_write> probe_states: array<ProbeStateData>;
 @group(1) @binding(4) var<storage, read> material_params: array<StandardMaterialParams>;
 @group(1) @binding(5) var<storage, read> material_table_offset: array<u32>;
@@ -33,7 +33,7 @@
 @compute @workgroup_size(256, 1, 1)
 fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let rays_per_probe = u32(ddgi_params.probe_counts.y);
-    let active_ray_count = atomicLoad(&probe_ray_data.header.active_ray_count);
+    let active_ray_count = probe_ray_data.header.active_ray_count;
 
     if (gid.x >= active_ray_count || probe_ray_data.rays[gid.x].state_u32.y == 0u) {
         return;

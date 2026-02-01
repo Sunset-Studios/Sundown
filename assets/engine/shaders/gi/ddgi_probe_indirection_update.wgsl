@@ -7,11 +7,10 @@
 #include "gi/ddgi_common.wgsl"
 
 @group(1) @binding(0) var<uniform> ddgi_params: DDGIParams;
-@group(1) @binding(1) var<storage, read> active_flags: array<u32>;
-@group(1) @binding(2) var<storage, read_write> probe_states: array<ProbeStateData>;
-@group(1) @binding(3) var<storage, read_write> probe_free_list: DDGIProbeIndirectionFreeList;
-@group(1) @binding(4) var<storage, read_write> sh_probes: array<u32>;
-@group(1) @binding(5) var<storage, read_write> probe_depth_moments: array<vec4<f32>>;
+@group(1) @binding(1) var<storage, read_write> probe_states: array<ProbeStateData>;
+@group(1) @binding(2) var<storage, read_write> probe_free_list: DDGIProbeIndirectionFreeList;
+@group(1) @binding(3) var<storage, read_write> sh_probes: array<u32>;
+@group(1) @binding(4) var<storage, read_write> probe_depth_moments: array<vec4<f32>>;
 
 fn ddgi_probe_free_list_pop() -> u32 {
     loop {
@@ -49,7 +48,10 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         return;
     }
 
-    let is_active = active_flags[gid.x] != 0u;
+    let state = probe_state_get_state(probe_states[gid.x].packed_state);
+    let is_state_active = probe_state_is_active(state);
+    let is_in_cascade = ddgi_probe_in_cascade(&ddgi_params, gid.x);
+    let is_active = is_state_active && is_in_cascade;
     let current_slot = probe_states[gid.x].sparse_index;
 
     // If the probe is not active and has an indirection slot, free it
