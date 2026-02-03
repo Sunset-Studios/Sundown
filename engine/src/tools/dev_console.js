@@ -14,6 +14,7 @@ import { ASVSMStats } from "./as_vsm_stats.js";
 import { RenderToggle } from "./render_toggle.js";
 import { DebugMemory } from "./debug_memory.js";
 import { GPUTimerView } from "./gpu_timer_view.js";
+import { GPUMemoryView } from "./gpu_memory_view.js";
 import { warn } from "../utility/logging.js";
 
 // Constants for naming and key codes
@@ -86,6 +87,7 @@ export class DevConsole extends SimulationLayer {
     this.register_command("render_toggle", new RenderToggle());
     this.register_command("debug_memory", new DebugMemory());
     this.register_command("gpu_timer", new GPUTimerView());
+    this.register_command("gpu_memory", new GPUMemoryView());
   }
 
   update(delta_time) {

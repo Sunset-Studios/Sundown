@@ -846,11 +846,11 @@ export class DDGI {
         {
           inputs: [
             this.ddgi_params,
+            probe_states,
             sh_probes,
             probe_depth_moments,
-            probe_states,
           ],
-          outputs: [sh_probes, probe_depth_moments, probe_states],
+          outputs: [probe_states, sh_probes, probe_depth_moments],
           shader_setup: ddgi_probe_scroll_reset_shader_setup,
         },
         (graph, frame_data, encoder) => {
@@ -1052,7 +1052,6 @@ export class DDGI {
           this.ddgi_params,
           probe_update_indices,
           probe_ray_data,
-          sh_probes,
           gi_counters,
         ],
         outputs: [probe_ray_data],

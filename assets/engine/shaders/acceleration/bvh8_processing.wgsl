@@ -13,7 +13,7 @@ const NQ: u32 = 8u;
 const THETA: f32 = 8.0;
 const INV_THETA: f32 = 0.125; // 1.0 / 8.0;
 const MAX_COST: f32 = 10.0;
-const SPIN_THRESHOLD: u32 = 65536u; // 1u << 16u; // tune as needed
+const SPIN_THRESHOLD: u32 = 256u; // 1u << 8u; // tune as needed
 const WATCHDOG_ABORT: u32 = 1u; // set to 1u to force-deactivate lanes when tripped
 const invalid_bounds: AABB = AABB(
     vec4<f32>(0.0, 0.0, 0.0, -1.0), 

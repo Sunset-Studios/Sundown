@@ -40,9 +40,10 @@ export const CacheTypes = Object.freeze({
     BIND_GROUP_LAYOUT: 4,
     BUFFER: 5,
     IMAGE: 6,
-    SAMPLER: 7,
-    MESH: 8,
-    MATERIAL: 9,
+    IMAGE_POOL: 7,
+    SAMPLER: 8,
+    MESH: 9,
+    MATERIAL: 10,
 });
 
 /**

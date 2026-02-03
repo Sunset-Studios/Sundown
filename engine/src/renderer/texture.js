@@ -148,6 +148,9 @@ export class Texture {
 
   destroy() {
     ResourceCache.get().remove(CacheTypes.IMAGE, Name.from(this.config.name));
+    if (this.image) {
+      this.image.destroy();
+    }
     this.image = null;
   }
 

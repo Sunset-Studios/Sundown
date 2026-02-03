@@ -1,6 +1,10 @@
 import { Renderer } from "./renderer.js";
 import { Texture } from "./texture.js";
+import { ResourceCache } from "./resource_cache.js";
+import { CacheTypes } from "./renderer_types.js";
 import { global_dispatcher } from "../core/dispatcher.js";
+import { MAX_BUFFERED_FRAMES } from "../core/minimal.js";
+import { Name } from "../utility/names.js";
 
 export const MIN_TEXTURES_PER_POOL = 8;
 
@@ -50,52 +54,26 @@ class TextureArrayPool {
   }
 
   /**
-   * Resizes the pool to new dimensions.
-   */
-  _resize_dimensions(new_width, new_height) {
-    this.ping_pong_index = (this.ping_pong_index + 1) % 2;
-    this.config.width = new_width;
-    this.config.height = new_height;
-
-    const max_dim = Math.max(this.config.width, this.config.height);
-    this.config.mip_levels = !!this.config.no_mips ? 1 : Math.floor(Math.log2(max_dim)) + 1;
-
-    this.texture = Texture.create({
-      name: `texture_pool_${this.pool_key}_${this.ping_pong_index}`,
-      width: this.config.width,
-      height: this.config.height,
-      depth: this.capacity,
-      mip_levels: this.config.mip_levels,
-      sample_count: this.config.sample_count,
-      format: this.config.format,
-      usage:
-        this.config.usage |
-        GPUTextureUsage.COPY_SRC |
-        GPUTextureUsage.COPY_DST |
-        GPUTextureUsage.RENDER_ATTACHMENT |
-        GPUTextureUsage.STORAGE_BINDING,
-      dimension: "2d-array",
-      force: true,
-    });
-
-    this.texture.rename(`texture_pool_${this.pool_key}`);
-
-    global_dispatcher.dispatch(`texture_pool_${this.pool_key}`, this.texture);
-
-    Renderer.get().mark_bind_groups_dirty(true);
-  }
-
-  /**
    * Doubles the pool capacity while preserving existing content.
    * Since dimensions don't change, a simple texture copy is sufficient.
    */
   _grow() {
     this.capacity *= 2;
+    const old_ping_pong_index = this.ping_pong_index;
     this.ping_pong_index = (this.ping_pong_index + 1) % 2;
 
     const old_texture = this.texture;
+
+    // ─────────────────────────────────────────────────────────────────────────────
+    // Remove old texture from cache BEFORE creating new one with the canonical name.
+    // This prevents the destroy() call from accidentally removing the new texture.
+    // We give it a temporary name that marks it as pending deletion.
+    // ─────────────────────────────────────────────────────────────────────────────
+    const deletion_name = `texture_pool_${this.pool_key}_delete_${old_ping_pong_index}`;
+    old_texture.rename(deletion_name);
+
     this.texture = Texture.create({
-      name: `texture_pool_${this.pool_key}_${this.ping_pong_index}`,
+      name: `texture_pool_${this.pool_key}`,
       width: this.config.width,
       height: this.config.height,
       depth: this.capacity,
@@ -124,11 +102,18 @@ class TextureArrayPool {
       false /*persistent*/
     );
 
-    this.texture.rename(`texture_pool_${this.pool_key}`);
-
     global_dispatcher.dispatch(`texture_pool_${this.pool_key}`, this.texture);
 
     Renderer.get().mark_bind_groups_dirty(true);
+
+    // Use the renderer's execution queue which is updated after onSubmittedWorkDone().
+    // Wait MAX_BUFFERED_FRAMES + 1 to ensure all in-flight GPU work referencing the
+    // old texture has completed before destroying it.
+    Renderer.get().execution_queue.push_execution(
+      () => old_texture.destroy(),
+      Name.from(deletion_name),
+      MAX_BUFFERED_FRAMES + 1
+    );
   }
 }
 
@@ -136,7 +121,6 @@ class TextureArrayPool {
 // Texture Array Pools Static Manager
 // ═══════════════════════════════════════════════════════════════════════════════
 export class TextureArrayPools {
-  static pools = new Map();
   static next_pool_id = 0;
   static fallback_texture = null;
   static fallback_view = null;
@@ -144,10 +128,10 @@ export class TextureArrayPools {
   static allocate(config) {
     const key = config.pool_key || "default";
 
-    let pool = this.pools.get(key);
+    let pool = ResourceCache.get().fetch(CacheTypes.IMAGE_POOL, key);
     if (!pool) {
       pool = new TextureArrayPool(config);
-      this.pools.set(key, pool);
+      ResourceCache.get().store(CacheTypes.IMAGE_POOL, key, pool);
       Renderer.get().mark_bind_groups_dirty(true);
     }
     const index = pool.allocate();
@@ -160,7 +144,7 @@ export class TextureArrayPools {
   }
 
   static get_pool(key) {
-    return this.pools.get(key);
+    return ResourceCache.get().fetch(CacheTypes.IMAGE_POOL, key);
   }
 
   static get_fallback_view() {

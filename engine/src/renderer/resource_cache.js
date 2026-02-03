@@ -18,6 +18,7 @@ export class ResourceCache {
         this.cache.set(CacheTypes.SAMPLER, new Map());
         this.cache.set(CacheTypes.MESH, new Map());
         this.cache.set(CacheTypes.MATERIAL, new Map());
+        this.cache.set(CacheTypes.IMAGE_POOL, new Map());
     }
 
     static get() {
@@ -29,6 +30,10 @@ export class ResourceCache {
 
     fetch(type, key) {
         return this.cache.get(type).get(key);
+    }
+
+    fetch_all(type) {
+        return this.cache.get(type);
     }
 
     store(type, key, value) {
