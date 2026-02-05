@@ -3019,8 +3019,8 @@ export class SciFiCityScene extends Scene {
     // Camera Setup - positioned to overlook the city
     // ─────────────────────────────────────────────────────────────────────────
     const view_data = SharedViewBuffer.get_view_data(0);
-    view_data.view_position = [76.7398, 7.6299, 83.8937];
-    view_data.view_rotation = [0.00995796, 0.9367928, 0.02691937, -0.34799280];
+    view_data.view_position = [76.99639, 51.54750, -46.67527];
+    view_data.view_rotation = [-0.144709, 0.641239, -0.125076, -0.7408550];
     view_data.far = 10000.0;
 
     // ─────────────────────────────────────────────────────────────────────────
