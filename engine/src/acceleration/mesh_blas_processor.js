@@ -23,14 +23,14 @@ import { MeshBLAS } from "./mesh_blas.js";
 //     • Morton Code Computation: Z-order curve spatial coherence for efficient tree construction
 //     • OneSweep Radix Sort: Ultra-high-performance GPU sorting for Morton codes
 //     • H-PLOC (Hierarchical Parallel Locally-Ordered Clustering): Wave-optimised Modern GPU bottom-up BVH builder
-//     • BVH8 Conversion: Wave-optimised octary tree generation from binary trees
+//     • BVH2 Construction: Wave-optimised binary tree generation
 //
 // 🚀 COMPUTE PIPELINE ARCHITECTURE:
 //     Phase 1: Leaf Bounds Generation → Compute triangle bounding boxes
 //     Phase 2: Morton Code Generation → Z-order spatial indexing
 //     Phase 3: OneSweep Radix Sort → Ultra-fast primitive ordering
 //     Phase 4: H-PLOC BVH2 Build → Wave-optimised parallel binary tree construction
-//     Phase 5: BVH8 Conversion → Wave-optimised octary tree generation
+//     Phase 5: (removed)
 //
 // 💡 PERFORMANCE OPTIMIZATIONS:
 //     • Minimal CPU-GPU Synchronization: Fully GPU-driven compute pipeline
@@ -46,7 +46,6 @@ import { MeshBLAS } from "./mesh_blas.js";
 const hploc_compute_morton_codes_task_name = "hploc_compute_morton_codes";
 const hploc_init_leaf_clusters_task_name = "hploc_init_leaf_clusters";
 const hploc_build_bvh2_task_name = "hploc_build_bvh2";
-const hploc_convert_parallel_single_pass_task_name = "hploc_convert_parallel_single_pass";
 
 // ┌─────────────────────────────────────────────────────────────────────────────────────────────┐
 // │                              📄 COMPUTE SHADER RESOURCES                                     │
@@ -55,7 +54,6 @@ const bvh_sorting_wgsl_path = "acceleration/bvh_sorting.wgsl"; // OneSweep radix
 const bvh_morton_wgsl_path = "acceleration/bvh_morton.wgsl"; // Z-order Morton code generation
 const bvh_as_init_wgsl_path = "acceleration/bvh_as_init.wgsl"; // BVH initialization and leaf setup
 const bvh_processing_wgsl_path = "acceleration/bvh_processing.wgsl"; // H-PLOC BVH2 construction
-const bvh8_processing_wgsl_path = "acceleration/bvh8_processing.wgsl"; // BVH8 conversion and optimization
 
 // ┌─────────────────────────────────────────────────────────────────────────────────────────────┐
 // │                            🔧 COMPUTE SHADER ENTRY POINTS                                    │
@@ -67,7 +65,6 @@ const onesweep_scan_cs_entry_point = "onesweep_scan"; // Prefix scan phase
 const onesweep_digit_binning_cs_entry_point = "onesweep_digit_binning"; // Digit binning phase
 const initialize_leaf_clusters_cs_entry_point = "initialize_leaf_clusters"; // Leaf cluster initialization
 const build_bvh2_hploc_cs_entry_point = "build_bvh2_hploc"; // H-PLOC BVH2 construction
-const convert_bvh2_to_bvh8_cs_entry_point = "convert_bvh2_to_bvh8"; // BVH8 conversion
 
 // ┌─────────────────────────────────────────────────────────────────────────────────────────────┐
 // │                          ⚙️  PIPELINE CONFIGURATION CONSTANTS                              │
@@ -101,7 +98,7 @@ const TILE_SIZE = WORKGROUP_SIZE * 16; // 4K primitives per tile (OneSweep optim
  * │  Phase 2: Morton Codes   → Z-order spatial indexing (3D → 1D mapping)           │
  * │  Phase 3: OneSweep Sort  → Ultra-fast GPU radix sort (4 × 8-bit passes)         │
  * │  Phase 4: H-PLOC BVH2    → Parallel binary tree construction                     │
- * │  Phase 5: BVH8 Convert   → Hardware-optimized octary tree generation            │
+ * │  Phase 5: (removed)                                                             │
  * │                                                                                   │
  * └───────────────────────────────────────────────────────────────────────────────────┘
  */
@@ -142,7 +139,7 @@ export class MeshBLASProcessor extends SimulationLayer {
       this.sort_uniforms_buffers[i] = Buffer.create({
         name: `mesh_blas_radix_uniforms_pass_${i}`,
         usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-        size: 16, // RadixSortParams: [primitive_count, bit_shift, thread_blocks, padding]
+        size: 4, // RadixSortParams: [primitive_count, bit_shift, thread_blocks, padding]
       });
     }
 
@@ -151,7 +148,7 @@ export class MeshBLASProcessor extends SimulationLayer {
     // └─────────────────────────────────────────────────────────────────────────────────────────┘
 
     this.radix_uniforms = new Uint32Array(4); // OneSweep parameters: [count, shift, blocks, pad]
-    this.bvh_build_data = new Uint32Array(6); // BVH build state: [leaf_count, bvh2_count, prim_count, bvh2_base, bvh8_base, is_blas]
+    this.bvh_build_data = new Uint32Array(6); // BVH build state: [leaf_count, bvh2_count, prim_count, bvh2_base, unused, is_blas]
 
     // ┌─────────────────────────────────────────────────────────────────────────────────────────┐
     // │                     🔗 PRE-ALLOCATED BINDING ARRAY INFRASTRUCTURE                       │
@@ -172,10 +169,6 @@ export class MeshBLASProcessor extends SimulationLayer {
     // H-PLOC BVH2 Construction Phase Bindings
     this.bvh2_inputs = new Array(6); // [bounds, indices, build_info, codes, parent_idx, index_pairs]
     this.bvh2_outputs = new Array(2); // [bounds, bounds] (reused for efficiency)
-
-    // BVH8 Conversion Phase Bindings
-    this.bvh8_inputs = new Array(7); // [bvh2_bounds, bvh8_nodes, build_state, index_pairs, prim_indices, build_info, debug_watchdog]
-    this.bvh8_outputs = new Array(5); // [bvh8_nodes, build_state, index_pairs, prim_indices, debug_watchdog]
 
     // ┌─────────────────────────────────────────────────────────────────────────────────────────┐
     // │                          📋 BUILD QUEUE MANAGEMENT SYSTEM                               │
@@ -219,13 +212,13 @@ export class MeshBLASProcessor extends SimulationLayer {
    *
    * Orchestrates the complete 5-phase GPU compute pipeline for building a mesh's acceleration
    * structure. This method sequences Morton code generation, OneSweep radix sorting, H-PLOC
-   * BVH2 construction, and final BVH8 conversion into an efficient asynchronous pipeline.
+   * BVH2 construction into an efficient asynchronous pipeline.
    *
    * 🔬 PIPELINE PHASES:
    *    Phase 1: Morton Code Generation   → Spatial indexing via Z-order curve mapping
    *    Phase 2: OneSweep Radix Sort     → 4-pass ultra-fast GPU sorting (8-bit digits)
    *    Phase 3: H-PLOC BVH2 Build       → Parallel binary tree construction
-   *    Phase 4: BVH8 Conversion         → Wave-optimised octary tree generation
+   *    Phase 4: H-PLOC BVH2 Build       → Wave-optimised binary tree generation
    *
    * @param {number} mesh_id - Unique mesh identifier for resource allocation
    * @param {number} primitive_count - Number of triangles in the mesh
@@ -243,12 +236,12 @@ export class MeshBLASProcessor extends SimulationLayer {
     if (!mesh_meta) return;
 
     // Initialize per-mesh build state for GPU compute shaders
-    // BVHData structure: [leaf_count, bvh2_count, primitive_count, bvh2_base_index, bvh8_base_index, is_blas]
+    // BVHData structure: [leaf_count, bvh2_count, primitive_count, bvh2_base_index, unused, is_blas]
     this.bvh_build_data[0] = 0; // leaf_count (updated by shaders)
     this.bvh_build_data[1] = 0; // bvh2_count (updated by shaders)
     this.bvh_build_data[2] = primitive_count; // primitive_count (input parameter)
     this.bvh_build_data[3] = mesh_meta.bvh2_base_node_index >>> 0; // bvh2_base_index (allocation offset)
-    this.bvh_build_data[4] = mesh_meta.bvh8_base_node_index >>> 0; // bvh8_base_index (allocation offset)
+    this.bvh_build_data[4] = 0; // unused slot (kept for layout stability)
     this.bvh_build_data[5] = 1; // is_blas - 1 for BLAS (store triangle IDs directly)
     mesh_info_buffer.write(this.bvh_build_data);
 
@@ -441,7 +434,7 @@ export class MeshBLASProcessor extends SimulationLayer {
 
     // Acquire additional scratch buffers for hierarchy construction
     const parent_idx_buffer = blas_gpu_data.parent_idx_buffer; // Parent node index tracking
-    const bvh8_index_pairs_buffer = blas_gpu_data.bvh8_index_pairs_buffer; // Child-parent relationships
+    const bvh_index_pairs_buffer = blas_gpu_data.bvh_index_pairs_buffer; // Child-parent relationships
 
     // Configure BVH2 construction input bindings
     this.bvh2_inputs[0] = bvh2_nodes_buffer; // BVH2 node storage (input/output)
@@ -449,7 +442,7 @@ export class MeshBLASProcessor extends SimulationLayer {
     this.bvh2_inputs[2] = mesh_info_buffer; // Per-mesh build parameters
     this.bvh2_inputs[3] = morton_codes_buffer; // Sorted Morton codes for clustering
     this.bvh2_inputs[4] = parent_idx_buffer; // Parent index tracking buffer
-    this.bvh2_inputs[5] = bvh8_index_pairs_buffer; // Index pairs for BVH8 conversion prep
+    this.bvh2_inputs[5] = bvh_index_pairs_buffer; // Index pairs for H-PLOC construction
 
     // Configure BVH2 construction output bindings
     this.bvh2_outputs[0] = bvh2_nodes_buffer; // Updated BVH2 nodes with computed bounds
@@ -483,70 +476,7 @@ export class MeshBLASProcessor extends SimulationLayer {
       build_bvh2_hploc_cs_entry_point
     );
 
-    // ┌─────────────────────────────────────────────────────────────────────────────────────────┐
-    // │                     ⚡ PHASE 4: BVH8 CONVERSION & OPTIMIZATION                         │
-    // │                                                                                          │
-    // │  Convert the binary BVH2 tree into a hardware-optimized octary BVH8 structure.         │
-    // │  BVH8 reduces traversal depth and matches modern GPU SIMD widths for superior          │
-    // │  ray tracing performance compared to binary structures.                                 │
-    // └─────────────────────────────────────────────────────────────────────────────────────────┘
-
-    // Initialize BVH8 construction state machine
-    // BuildState: [work_counter, node_counter, leaf_counter, work_alloc_counter, primitive_count]
-    const build_state = new Uint32Array(5);
-    build_state[0] = 0; // work_counter: Active work items in queue
-    build_state[1] = 1; // node_counter: Next available node index (start at root)
-    build_state[2] = 0; // leaf_counter: Number of leaf nodes created
-    build_state[3] = 1; // work_alloc_counter: Work allocation tracking
-    build_state[4] = primitive_count; // primitive_count: Total triangles for validation
-
-    // Acquire BVH8 conversion infrastructure buffers
-    const bvh8_build_state_buffer = blas_gpu_data.bvh8_build_state_buffer; // Build state machine
-    const bvh8_nodes_buffer = blas_gpu_data.bvh8_nodes_buffer; // Final BVH8 nodes
-    const bvh8_prim_indices_buffer = blas_gpu_data.bvh8_prim_indices_buffer; // Primitive assignments
-    const bvh8_debug_watchdog_buffer = blas_gpu_data.bvh8_debug_watchdog_buffer; // Debug/safety monitoring
-
-    // Initialize build state and reset debug counters
-    bvh8_build_state_buffer.write(build_state);
-    bvh8_debug_watchdog_buffer.write_raw(new Uint32Array(4)); // Clear debug state
-
-    // Configure BVH8 conversion input bindings
-    this.bvh8_inputs[0] = bvh2_nodes_buffer; // Source BVH2 tree for conversion
-    this.bvh8_inputs[1] = bvh8_nodes_buffer; // Destination BVH8 node buffer
-    this.bvh8_inputs[2] = bvh8_build_state_buffer; // Conversion state machine
-    this.bvh8_inputs[3] = bvh8_index_pairs_buffer; // Child-parent relationship tracking
-    this.bvh8_inputs[4] = bvh8_prim_indices_buffer; // Triangle index assignments
-    this.bvh8_inputs[5] = mesh_info_buffer; // Per-mesh build parameters
-    this.bvh8_inputs[6] = bvh8_debug_watchdog_buffer; // Debug/safety infrastructure
-
-    // Configure BVH8 conversion output bindings
-    this.bvh8_outputs[0] = bvh8_nodes_buffer; // Final optimized BVH8 tree
-    this.bvh8_outputs[1] = bvh8_build_state_buffer; // Updated build state
-    this.bvh8_outputs[2] = bvh8_index_pairs_buffer; // Updated relationship data
-    this.bvh8_outputs[3] = bvh8_prim_indices_buffer; // Final primitive assignments
-    this.bvh8_outputs[4] = bvh8_debug_watchdog_buffer; // Updated debug counters
-
-    // ┌─────────────────────────────────────────────────────────────────────────────────────────┐
-    // │                        🔀 PARALLEL BVH8 CONVERSION DISPATCH                             │
-    // └─────────────────────────────────────────────────────────────────────────────────────────┘
-
-    const bvh8_workgroups = Math.max(1, Math.ceil(primitive_count / 32)); // 32 threads per workgroup
-    ComputeTaskQueue.new_task(
-      `${hploc_convert_parallel_single_pass_task_name}_${mesh_id}`,
-      bvh8_processing_wgsl_path,
-      this.bvh8_inputs,
-      this.bvh8_outputs,
-      bvh8_workgroups, // Parallel conversion of BVH2 to BVH8
-      1,
-      1,
-      convert_bvh2_to_bvh8_cs_entry_point
-    );
-
-    // ┌─────────────────────────────────────────────────────────────────────────────────────────┐
-    // │                        🔀 ATLAS BUILD DISPATCH                                         │
-    // └─────────────────────────────────────────────────────────────────────────────────────────┘
-    
-    MeshBLAS.build_atlas();
+    // BVH2 construction completes the BLAS build.
   }
 
   // ╔════════════════════════════════════════════════════════════════════════════════════════════╗
@@ -602,13 +532,13 @@ export class MeshBLASProcessor extends SimulationLayer {
       const mesh_info_buffer = Buffer.create({
         name: `mesh_${mesh_id}_build_info`,
         usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-        size: 6 * 4, // BVHData structure: [leaf_count, bvh2_count, prim_count, bvh2_base, bvh8_base, is_blas]
+        size: 6, // BVHData structure: [leaf_count, bvh2_count, prim_count, bvh2_base, unused, is_blas]
       });
 
       const mesh_selector_buffer = Buffer.create({
         name: `mesh_${mesh_id}_selector`,
         usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-        size: 4, // Single u32: mesh_id for directory lookup
+        size: 1, // Single u32: mesh_id for directory lookup
       });
       mesh_selector_buffer.write_raw(new Uint32Array([mesh_id >>> 0]));
 
@@ -642,7 +572,7 @@ export class MeshBLASProcessor extends SimulationLayer {
    * Processes one queued mesh BVH build per frame to maintain optimal performance.
    * This method executes the complete 5-phase pipeline for a single mesh, including
    * leaf bounds generation, Morton code computation, OneSweep sorting, H-PLOC BVH2
-   * construction, and BVH8 conversion.
+   * construction.
    *
    * 🎯 FRAME-RATE OPTIMIZATION:
    *    • Single Build Processing: Only one mesh build executed per frame
@@ -690,7 +620,7 @@ export class MeshBLASProcessor extends SimulationLayer {
     // │                      🚀 COMPLETE 5-PHASE PIPELINE EXECUTION                             │
     // └─────────────────────────────────────────────────────────────────────────────────────────┘
 
-    // Execute the complete compute pipeline: Morton → Sort → H-PLOC → BVH8
+    // Execute the complete compute pipeline: Morton → Sort → H-PLOC
     this.build(
       mesh_id,
       leaf_count, // Triangle count

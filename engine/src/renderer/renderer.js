@@ -41,7 +41,7 @@ export class Renderer {
   // Configurable renderer features
   use_depth_prepass = true;
   shadows_enabled = true;
-  gi_enabled = false;
+  gi_enabled = true;
   gtao_enabled = false;
   use_radiance_cache_as_deferred_lighting = false;
   debug_draw_type = DebugDrawType.None;

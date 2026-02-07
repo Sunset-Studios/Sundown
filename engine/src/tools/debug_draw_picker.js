@@ -80,14 +80,8 @@ export class DebugDrawPicker extends DevConsoleTool {
         case "bvh":
           Renderer.get().set_debug_draw_type(DebugDrawType.BVH);
           break;
-        case "bvh8":
-          Renderer.get().set_debug_draw_type(DebugDrawType.BVH8);
-          break;
         case "blas-bounds":
           Renderer.get().set_debug_draw_type(DebugDrawType.BLAS_Bounds);
-          break;
-        case "blas-bvh8":
-          Renderer.get().set_debug_draw_type(DebugDrawType.BLAS_BVH8);
           break;
         default:
           Renderer.get().set_debug_draw_type(DebugDrawType.None);

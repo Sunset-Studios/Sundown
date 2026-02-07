@@ -35,7 +35,7 @@ export class MeshData {
     this.mesh_bounds_buffer = Buffer.create({
       name: mesh_bounds_buffer_name,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-      size: initial_max_meshes * mesh_bounds_size * 4,
+      size: initial_max_meshes * mesh_bounds_size,
       force: true,
     });
 
@@ -43,7 +43,7 @@ export class MeshData {
     this.vertex_buffer = Buffer.create({
       name: vertex_buffer_name,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-      size: initial_vertex_buffer_size * 4,
+      size: initial_vertex_buffer_size,
       force: true,
     });
 
@@ -51,7 +51,7 @@ export class MeshData {
     this.index_buffer = Buffer.create({
       name: index_buffer_name,
       usage: GPUBufferUsage.INDEX | GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-      size: initial_index_buffer_size * 4,
+      size: initial_index_buffer_size,
       element_type: "uint32",
       force: true,
     });
@@ -163,7 +163,7 @@ export class MeshData {
     this.mesh_bounds_buffer = Buffer.create({
       name: mesh_bounds_buffer_name,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-      size: this.mesh_count * mesh_bounds_size * 4,
+      size: this.mesh_count * mesh_bounds_size,
       force: true,
     });
 
@@ -207,7 +207,7 @@ export class MeshData {
     this.vertex_buffer = Buffer.create({
       name: vertex_buffer_name,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-      size: this.vertex_data.length * 4,
+      size: this.vertex_data.length,
       force: true,
     });
 
@@ -248,7 +248,7 @@ export class MeshData {
     this.index_buffer = Buffer.create({
       name: index_buffer_name,
       usage: GPUBufferUsage.INDEX | GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-      size: this.index_data.length * 4,
+      size: this.index_data.length,
       element_type: "uint32",
       force: true,
     });

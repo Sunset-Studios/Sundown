@@ -1,6 +1,5 @@
 #include "common.wgsl"
 #include "acceleration_common.wgsl"
-#include "blas_common.wgsl"
 
 const LINES_PER_BOX = 12u;
 const BVH_COLOR = vec4f(0.0, 0.8, 1.0, 1.0);
@@ -59,7 +58,7 @@ fn corner(min_p: vec3f, max_p: vec3f, idx: u32) -> vec3f {
 }
 
 @group(1) @binding(0) var<storage, read_write> out_line_data: array<LineData>;
-@group(1) @binding(1) var<storage, read> blas_atlas: BLASAtlas;
+@group(1) @binding(1) var<storage, read> blas_directory: array<MeshDirectoryEntry>;
 @group(1) @binding(2) var<storage, read> entity_transforms: array<EntityTransform>;
 @group(1) @binding(3) var<storage, read> closest_entities_per_mesh: array<u32>;
 @group(1) @binding(4) var<storage, read> bvh2_nodes: array<AABB>; // Direct BVH2 buffer (not in atlas)
@@ -79,7 +78,7 @@ fn cs(
     let entity_resolved = closest_entities_per_mesh[mesh_asset_id];
     if (entity_resolved == 0u) { return; } // No entity assigned for this mesh
     
-    let mesh_directory_entry = atlas_load_directory_entry(mesh_asset_id);
+    let mesh_directory_entry = blas_directory[mesh_asset_id];
     
     // Check if this node index is valid for this mesh
     if (node_idx >= u32(mesh_directory_entry.leaf_count)) { return; }

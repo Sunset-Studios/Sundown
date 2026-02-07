@@ -178,7 +178,6 @@ export class DebugMemory extends DevConsoleTool {
     push_buf("Temp Morton Codes", bvh_data.temp_morton_codes_buffer);
     push_buf("Sorted Indices", bvh_data.sorted_indices_buffer);
     push_buf("Temp Sorted Indices", bvh_data.temp_sorted_indices_buffer);
-    push_buf("BVH8 Nodes", bvh_data.bvh8_nodes_buffer);
     push_buf("Onesweep Data", bvh_data.onesweep_data_buffer);
     push_buf("BVH Info", bvh_data.bvh_info_buffer);
     push_buf("Clusters", bvh_data.clusters_buffer);

@@ -41,7 +41,6 @@ import { profile_scope } from "../../utility/performance.js";
 import {
   rgba8unorm_format,
   rgba16float_format,
-  r8unorm_format,
   depth32float_format,
   rgba32float_format,
   r32float_format,
@@ -318,24 +317,10 @@ const debug_emit_bvh2_nodes_shader_setup = {
     },
   },
 };
-const debug_emit_bvh8_nodes_shader_setup = {
-  pipeline_shaders: {
-    compute: {
-      path: "debug/debug_emit_bvh8_nodes_lines.wgsl",
-    },
-  },
-};
 const debug_emit_blas_nodes_shader_setup = {
   pipeline_shaders: {
     compute: {
       path: "debug/debug_emit_blas_nodes_lines.wgsl",
-    },
-  },
-};
-const debug_emit_blas_bvh8_nodes_shader_setup = {
-  pipeline_shaders: {
-    compute: {
-      path: "debug/debug_emit_blas_bvh8_nodes_lines.wgsl",
     },
   },
 };
@@ -578,15 +563,17 @@ export class DeferredShadingStrategy {
       const entity_occluders = render_graph.register_buffer(occluder_buffer.buffer.config.name);
 
       const aabb_gpu_data = BVH.to_gpu_data();
-      const tlas_bvh8_nodes = render_graph.register_buffer(
-        aabb_gpu_data.bvh8_nodes_buffer.config.name
+      const tlas_bvh_info = render_graph.register_buffer(
+        aabb_gpu_data.bvh_info_buffer.config.name
       );
       const scene_bounds = render_graph.register_buffer(
         aabb_gpu_data.scene_bounds_buffer.config.name
       );
 
       const blas_gpu_data = MeshBLAS.to_gpu_data();
-      const blas_atlas = render_graph.register_buffer(blas_gpu_data.atlas_buffer.config.name);
+      const blas_directory = render_graph.register_buffer(
+        blas_gpu_data.directory_buffer.config.name
+      );
       const blas_bvh2_nodes = render_graph.register_buffer(
         blas_gpu_data.bvh2_nodes_buffer.config.name
       );
@@ -615,7 +602,7 @@ export class DeferredShadingStrategy {
       );
       const lights = render_graph.register_buffer(light_fragment_buffer.buffer.config.name);
 
-      dense_lights_buffer_config.size = light_fragment_buffer.buffer.config.size + 16;
+      dense_lights_buffer_config.size = (light_fragment_buffer.buffer.config.size / 4) + 4;
       const dense_lights = render_graph.create_buffer(dense_lights_buffer_config);
 
       // ┌─────────────────────────────────────────────────────────────────────────────┐
@@ -1063,17 +1050,12 @@ export class DeferredShadingStrategy {
       if (
         debug_view === DebugDrawType.EntityBounds ||
         debug_view === DebugDrawType.BVH ||
-        debug_view === DebugDrawType.BVH8 ||
-        debug_view === DebugDrawType.BLAS_Bounds ||
-        debug_view === DebugDrawType.BLAS_BVH8
+        debug_view === DebugDrawType.BLAS_Bounds
       ) {
         let max_nodes_debug = BVH.bvh_size;
         switch (debug_view) {
           case DebugDrawType.BLAS_Bounds:
             max_nodes_debug = MeshBLAS.bounds_size;
-            break;
-          case DebugDrawType.BLAS_BVH8:
-            max_nodes_debug = MeshBLAS.bvh8_size;
             break;
           default:
             break;
@@ -1082,7 +1064,7 @@ export class DeferredShadingStrategy {
 
         const debug_line_data_buf = render_graph.create_buffer({
           name: "debug_line_data",
-          size: max_lines * 4,
+          size: max_lines,
           usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
         });
 
@@ -1103,19 +1085,19 @@ export class DeferredShadingStrategy {
         } else if (debug_view === DebugDrawType.BLAS_Bounds) {
           // Calculate mesh directory size (directory buffer size / bytes per entry / 4 bytes per u32)
           const directory_buffer_size = blas_gpu_data.directory_buffer.config.size;
-          const directory_entry_size = 8; // [bvh2_base, bvh2_cap, bvh8_base, bvh8_cap, leaf_count, first_vertex, first_index, padding]
+          const directory_entry_size = 6; // [bvh2_base, bvh2_cap, leaf_count, first_vertex, first_index, padding]
           const mesh_count = Math.floor(directory_buffer_size / (directory_entry_size * 4));
 
           // Compact per-mesh preprocessing buffers
           const closest_entities_per_mesh_buf = render_graph.create_buffer({
             name: "closest_entities_per_mesh",
-            size: mesh_count * 4, // u32 per mesh
+            size: mesh_count, // u32 per mesh
             usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
           });
 
           const closest_distances_per_mesh_buf = render_graph.create_buffer({
             name: "closest_distances_per_mesh",
-            size: mesh_count * 4, // f32 per mesh
+            size: mesh_count, // f32 per mesh
             usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
           });
 
@@ -1164,10 +1146,10 @@ export class DeferredShadingStrategy {
             {
               inputs: [
                 debug_line_data_buf,
-                blas_atlas,
+                blas_directory,
                 entity_transforms,
                 closest_entities_per_mesh_buf,
-                blas_bvh2_nodes, // Direct BVH2 buffer (not in atlas for memory optimization)
+                blas_bvh2_nodes,
               ],
               outputs: [debug_line_data_buf],
               shader_setup: debug_emit_blas_nodes_shader_setup,
@@ -1179,102 +1161,8 @@ export class DeferredShadingStrategy {
               pass.dispatch(x_dispatch, y_dispatch, 1);
             }
           );
-        } else if (debug_view === DebugDrawType.BLAS_BVH8) {
-          // Calculate mesh directory size (directory buffer size / bytes per entry / 4 bytes per u32)
-          const directory_buffer_size = blas_gpu_data.directory_buffer.config.size;
-          const directory_entry_size = 8; // [bvh2_base, bvh2_cap, bvh8_base, bvh8_cap, leaf_count, first_vertex, first_index, padding]
-          const mesh_count = Math.floor(directory_buffer_size / (directory_entry_size * 4));
-
-          // Compact per-mesh preprocessing buffers
-          const closest_entities_per_mesh_buf = render_graph.create_buffer({
-            name: "closest_entities_per_mesh",
-            size: mesh_count * 4, // u32 per mesh
-            usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-          });
-
-          const closest_distances_per_mesh_buf = render_graph.create_buffer({
-            name: "closest_distances_per_mesh",
-            size: mesh_count * 4, // f32 per mesh
-            usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-          });
-
-          // ┌─────────────────────────────────────────────────────────────────────────────┐
-          // │ 🔍 PASS: Find Closest Mesh Instances                                       │
-          // │    Compact preprocessing to find closest entity per mesh asset              │
-          // └─────────────────────────────────────────────────────────────────────────────┘
-          render_graph.add_pass(
-            "debug_init_closest_distances",
-            RenderPassFlags.GraphLocal,
-            {},
-            (graph, frame_data, encoder) => {
-              // Initialize distances to infinity
-              const distances_buf = graph.get_physical_buffer(closest_distances_per_mesh_buf);
-              const infinity_array = new Float32Array(mesh_count);
-              infinity_array.fill(Number.MAX_VALUE);
-              distances_buf.write(infinity_array);
-            }
-          );
-
-          render_graph.add_pass(
-            "debug_find_closest_instances",
-            RenderPassFlags.Compute,
-            {
-              inputs: [
-                closest_entities_per_mesh_buf,
-                closest_distances_per_mesh_buf,
-                object_instances,
-                this.frustum_culler.get_visibility_buffer(current_view, 0),
-                entity_transforms,
-                mesh_asset_ids_buffer,
-                entity_index_lookup,
-              ],
-              outputs: [closest_entities_per_mesh_buf, closest_distances_per_mesh_buf],
-              shader_setup: debug_find_closest_mesh_instances_shader_setup,
-            },
-            (graph, frame_data, encoder) => {
-              const pass = graph.get_physical_pass(frame_data.current_pass);
-              pass.dispatch(Math.ceil(mesh_count / 64), 1, 1);
-            }
-          );
-
-          render_graph.add_pass(
-            "debug_emit_blas_bvh8_lines",
-            RenderPassFlags.Compute,
-            {
-              inputs: [
-                debug_line_data_buf,
-                blas_atlas,
-                entity_transforms,
-                closest_entities_per_mesh_buf,
-              ],
-              outputs: [debug_line_data_buf],
-              shader_setup: debug_emit_blas_bvh8_nodes_shader_setup,
-            },
-            (graph, frame_data, encoder) => {
-              const pass = graph.get_physical_pass(frame_data.current_pass);
-              const x_dispatch = Math.ceil(max_nodes_debug / 16);
-              const y_dispatch = Math.ceil(mesh_count / 16);
-              pass.dispatch(x_dispatch, y_dispatch, 1);
-            }
-          );
-        } else if (debug_view === DebugDrawType.BVH8) {
-          const bvh_info = render_graph.register_buffer(aabb_gpu_data.bvh_info_buffer.config.name);
-
-          render_graph.add_pass(
-            "debug_emit_bvh8_lines",
-            RenderPassFlags.Compute,
-            {
-              inputs: [debug_line_data_buf, tlas_bvh8_nodes, bvh_info, scene_bounds],
-              outputs: [debug_line_data_buf],
-              shader_setup: debug_emit_bvh8_nodes_shader_setup,
-            },
-            (graph, frame_data, encoder) => {
-              const pass = graph.get_physical_pass(frame_data.current_pass);
-              pass.dispatch(Math.ceil(max_nodes_debug / 64), 1, 1);
-            }
-          );
         } else {
-          // Debug BVH: emit lines from BVH8 nodes
+          // Debug BVH: emit lines from BVH2 nodes
           render_graph.add_pass(
             "debug_emit_bvh2_lines",
             RenderPassFlags.Compute,
@@ -1349,11 +1237,11 @@ export class DeferredShadingStrategy {
           main_smra_image,
           main_motion_emissive_image,
           aabb_bounds,
-          tlas_bvh8_nodes,
-          blas_atlas,
+          tlas_bvh_info,
           blas_bvh2_nodes,
+          blas_directory,
           entity_transforms,
-          mesh_asset_ids_buffer,
+          index_buffer,
           dense_lights,
           draw_count,
           main_hzb_image,

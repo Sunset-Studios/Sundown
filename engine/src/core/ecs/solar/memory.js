@@ -413,7 +413,7 @@ export class FragmentGpuBuffer {
     if (new_max_rows == this.max_rows) return;
 
     this.max_rows = new_max_rows;
-    const new_size = this.max_rows * this.byte_stride;
+    const new_size = this.max_rows * (this.byte_stride / 4);
 
     // resize GPU buffer
     this.buffer = Buffer.create({

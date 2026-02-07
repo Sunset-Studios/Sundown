@@ -1,31 +1,31 @@
 // ------------------------------------------------------------------------------------
 // Defines
 // ------------------------------------------------------------------------------------
-// define BVH_TRAVERSAL_ORDER_CHILDREN
+#define BVH_TRAVERSAL_ORDER_CHILDREN
 
 // ------------------------------------------------------------------------------------
 // Constants
 // ------------------------------------------------------------------------------------
 
 const HPLOC_WAVE_SIZE = 128u;
-const NODE_STACK_SIZE = 8;
+const NODE_STACK_SIZE = 24;
 
 // ------------------------------------------------------------------------------------
 // Data Structures 
 // ------------------------------------------------------------------------------------
 
+// BVH info structure
+struct BVHInfo {
+    leaf_count: u32,
+    bvh2_count: u32,
+    prim_count: u32,
+    prim_base: u32,
+};
+
 // World-space AABB with 4x f32 components for packing
 struct AABB {
     min: vec4<f32>,
     max: vec4<f32>,
-};
-
-// BVH8 (8-wide) node
-struct BVH8Node {
-    min: vec4<f32>,
-    max: vec4<f32>,
-    children0: vec4<f32>,
-    children1: vec4<f32>,
 };
 
 // Ray structure for intersection tests
@@ -78,13 +78,6 @@ fn is_leaf(node: AABB) -> bool {
 // Check if a node is valid
 fn is_valid_node(node: AABB) -> bool {
     return node.min.w >= 0.0;
-}
-
-fn bvh8_child(node: ptr<function, BVH8Node>, slot: u32) -> f32 {
-    if (slot < 4u) {
-        return (*node).children0[slot];
-    }
-    return (*node).children1[slot - 4u];
 }
 
 // Transform an AABB - properly handles rotation/scaling by transforming all 8 corners

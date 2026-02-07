@@ -126,8 +126,8 @@ fn cs(
 			);
 		}
 
-		min_node_bounds = vec4f(min_point, f32(entity_id_offset));
-		max_node_bounds = vec4f(max_point, -1.0);
+        min_node_bounds = vec4f(min_point, f32(mesh_id));
+        max_node_bounds = vec4f(max_point, -1.0 - f32(entity_id_offset));
 
 		entity_flags[entity_id_offset] |= EF_AABB_DIRTY;
 	}

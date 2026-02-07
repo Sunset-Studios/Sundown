@@ -389,7 +389,7 @@ export class AdaptiveSparseVirtualShadowMaps {
     this.bitmask_u32_lod_stride = this.bitmask_u32_stride / this.max_lods;
     this.bitmask_u32_count = this.bitmask_u32_stride * adjusted_light_count;
 
-    bitmask_buf_config.size = this.bitmask_u32_count * 4;
+    bitmask_buf_config.size = this.bitmask_u32_count;
     bitmask_buf_config.force = force_recreate;
     this.bitmask_buf = render_graph.create_buffer(bitmask_buf_config);
 
@@ -407,7 +407,7 @@ export class AdaptiveSparseVirtualShadowMaps {
     page_offset_config.force = force_recreate;
     this.page_offset = render_graph.create_image(page_offset_config);
 
-    eviction_counter_buf_config.size = 4; // 1 atomic u32
+    eviction_counter_buf_config.size = 1; // 1 atomic u32
     eviction_counter_buf_config.force = force_recreate;
     this.eviction_counter_buf = render_graph.create_buffer(eviction_counter_buf_config);
 
@@ -419,7 +419,7 @@ export class AdaptiveSparseVirtualShadowMaps {
 
     // Create storage-buffer version of the atlas for race-free depth updates
     const total_pixels = this.atlas_size * this.atlas_size * MAX_NUM_TEXTURE_POOLS;
-    shadow_atlas_buf_config.size = total_pixels * Uint32Array.BYTES_PER_ELEMENT;
+    shadow_atlas_buf_config.size = total_pixels;
     shadow_atlas_buf_config.force = force_recreate;
     shadow_atlas_buf_config.raw_data = null;
     if (force_recreate) {
@@ -431,7 +431,7 @@ export class AdaptiveSparseVirtualShadowMaps {
     this.shadow_atlas_buf = render_graph.create_buffer(shadow_atlas_buf_config);
 
     // Create dirty slices buffer
-    dirty_slices_buf_config.size = adjusted_light_count * this.max_lods * 4;
+    dirty_slices_buf_config.size = adjusted_light_count * this.max_lods;
     dirty_slices_buf_config.force = force_recreate;
     this.dirty_slices = render_graph.create_buffer(dirty_slices_buf_config);
 

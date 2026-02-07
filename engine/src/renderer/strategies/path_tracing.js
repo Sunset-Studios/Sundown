@@ -384,12 +384,17 @@ export class PathTracingStrategy {
       const entity_occluders = render_graph.register_buffer(occluder_buffer.buffer.config.name);
 
       const aabb_gpu_data = BVH.to_gpu_data();
-      const tlas_bvh8_nodes = render_graph.register_buffer(
-        aabb_gpu_data.bvh8_nodes_buffer.config.name
+      const tlas_bvh_info = render_graph.register_buffer(
+        aabb_gpu_data.bvh_info_buffer.config.name
       );
 
       const blas_gpu_data = MeshBLAS.to_gpu_data();
-      const blas_atlas = render_graph.register_buffer(blas_gpu_data.atlas_buffer.config.name);
+      const blas_bvh2_nodes = render_graph.register_buffer(
+        blas_gpu_data.bvh2_nodes_buffer.config.name
+      );
+      const blas_directory = render_graph.register_buffer(
+        blas_gpu_data.directory_buffer.config.name
+      );
 
       // ┌─────────────────────────────────────────────────────────────────────────────┐
       // │ 🎯 Register Mesh & Instance Buffers                                        │
@@ -785,10 +790,10 @@ export class PathTracingStrategy {
           this.samples_per_pixel,
           true, // use_gbuffer - always true for hybrid mode
           aabb_bounds,
-          tlas_bvh8_nodes,
-          blas_atlas,
+          tlas_bvh_info,
+          blas_bvh2_nodes,
+          blas_directory,
           entity_transforms,
-          mesh_asset_ids_buffer,
           index_buffer,
           dense_lights,
           main_position_image, // G-buffer position

@@ -171,9 +171,7 @@ export class BVHRaycast {
       "bvh_raycast",
       "acceleration/bvh_traversal.wgsl",
       [
-        bvh_buffers.bvh8_nodes_buffer,
-        bvh_buffers.bvh8_prim_indices_buffer,
-        bvh_buffers.scene_bounds_buffer,
+        bvh_buffers.bvh_info_buffer,
         this.rays_buffer,
         this.hits_buffer,
         bounds_gpu.buffer,
@@ -220,14 +218,14 @@ export class BVHRaycast {
     this.rays_buffer = Buffer.create({
       name: "raycast_rays_buffer",
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-      size: this.max_rays * 12 * 4,
+      size: this.max_rays * 12,
       force: true,
     });
 
     this.hits_buffer = Buffer.create({
       name: "raycast_hits_buffer",
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST,
-      size: this.max_rays * 8 * 4,
+      size: this.max_rays * 8,
       force: true,
       cpu_readback: true,
     });

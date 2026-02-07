@@ -10,16 +10,16 @@
 //  GPU-Accelerated H-PLOC BVH Construction Pipeline
 //  
 //  This module implements a state-of-the-art GPU-driven H-PLOC (Hierarchical Parallel Locally-Ordered Clustering) 
-//  algorithm for building high-performance BVH2/BVH8 acceleration structures.
+//  algorithm for building high-performance BVH2 acceleration structures.
 //  
 //  Pipeline Architecture:
 //  ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-//  │  Bounds Update  │───▶│  Morton Codes   │─── │  OneSweep Sort  │───▶│  BVH2 → BVH8    │
+//  │  Bounds Update  │───▶│  Morton Codes   │─── │  OneSweep Sort  │───▶│  BVH2 Build     │
 //  │  & Validation   │    │  Generation     │    │  (Radix Sort)   │    │  Conversion     │
 //  └─────────────────┘    └─────────────────┘    └─────────────────┘    └─────────────────┘
 //          │                        │                        │                        │
 //          ▼                        ▼                        ▼                        ▼
-//    • Entity AABB           • 3D Morton Z-order      • 4-pass radix sort     • Parallel BVH8
+//    • Entity AABB           • 3D Morton Z-order      • 4-pass radix sort     • Parallel BVH2
 //    • Scene bounds          • Spatial hashing        • OneSweep algorithm    • SIMD traversal
 //                            • Locality preservation  • Warp-optimized        • Cache efficiency
 //
@@ -46,7 +46,6 @@ const bounds_processing_task_name = "bounds_processing";                      //
 const hploc_compute_morton_codes_task_name = "hploc_compute_morton_codes";     // 3D Morton code generation
 const hploc_init_leaf_clusters_task_name = "hploc_init_leaf_clusters";        // BVH2 leaf initialization
 const hploc_build_bvh2_task_name = "hploc_build_bvh2";                        // H-PLOC binary BVH construction
-const hploc_convert_parallel_single_pass_task_name = "hploc_convert_parallel_single_pass"; // BVH2 → BVH8 conversion
 
 // ╔══════════════════════════════════════════════════════════════════════════════════════════════════════════════════╗
 // ║                                            SHADER RESOURCE PATHS                                               ║
@@ -61,7 +60,6 @@ const bvh_morton_wgsl_path = "acceleration/bvh_morton.wgsl";                  //
 const bvh_sorting_wgsl_path = "acceleration/bvh_sorting.wgsl";                // OneSweep radix sort
 const bvh_as_init_wgsl_path = "acceleration/bvh_as_init.wgsl";                // BVH2 initialization
 const bvh_processing_wgsl_path = "acceleration/bvh_processing.wgsl";          // H-PLOC BVH2 construction
-const bvh8_processing_wgsl_path = "acceleration/bvh8_processing.wgsl";        // BVH8 conversion & optimization
 
 // ╔══════════════════════════════════════════════════════════════════════════════════════════════════════════════════╗
 // ║                                          COMPUTE SHADER ENTRY POINTS                                          ║
@@ -82,7 +80,6 @@ const onesweep_digit_binning_cs_entry_point = "onesweep_digit_binning";      // 
 // ─── H-PLOC BVH Construction ──────────────────────────────────────────────────────────────────────────────────────
 const initialize_leaf_clusters_cs_entry_point = "initialize_leaf_clusters";  // Setup BVH2 leaf nodes
 const build_bvh2_hploc_cs_entry_point = "build_bvh2_hploc";                  // Parallel hierarchical clustering
-const convert_bvh2_to_bvh8_cs_entry_point = "convert_bvh2_to_bvh8";          // Wide BVH8 node construction
 
 // ╔══════════════════════════════════════════════════════════════════════════════════════════════════════════════════╗
 // ║                                           ECS FRAGMENT BUFFER NAMES                                            ║
@@ -105,7 +102,7 @@ const mesh_asset_id_name = "mesh_asset_id";                                  // 
 // ║  • Frame-coherent BVH reconstruction with dynamic primitive count handling                                      ║
 // ║  • GPU-native OneSweep radix sort for optimal Morton code ordering                                              ║
 // ║  • Parallel hierarchical clustering using H-PLOC for balanced tree construction                                ║
-// ║  • Automatic BVH2 → BVH8 conversion for SIMD-optimized traversal performance                                   ║
+// ║  • BVH2 construction for traversal performance                                                             ║
 // ║  • Memory-efficient ping-pong buffer management for multi-pass algorithms                                       ║
 // ║  • Integrated with ECS for seamless entity data streaming to GPU                                                ║
 // ╚══════════════════════════════════════════════════════════════════════════════════════════════════════════════════╝
@@ -151,13 +148,9 @@ export class BVHProcessor {
   radix_sort_outputs = [null, null];                                      // Sorted keys, sorted indices
   
   // ─── BVH2 Construction Phase ──────────────────────────────────────────────────────────────────────────────────────
-  bvh2_inputs = [null, null, null, null, null, null, null, null, null, null]; // Sorted data, workspace
-  bvh2_outputs = [null, null, null];                                          // Binary BVH nodes, metadata
+  bvh2_inputs = [null, null, null, null, null, null]; // Sorted data, workspace
+  bvh2_outputs = [null, null, null];                  // Binary BVH nodes, metadata
   
-  // ─── BVH8 Conversion Phase ────────────────────────────────────────────────────────────────────────────────────────
-  bvh8_inputs = [null, null, null, null, null, null, null];              // BVH2 data, build state, debug
-  bvh8_outputs = [null, null, null, null, null];                         // BVH8 nodes, final indices, debug
-
   // ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════
   //                                           INITIALIZATION
   // ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════
@@ -190,7 +183,7 @@ export class BVHProcessor {
       this.sort_uniforms_buffers[i] = Buffer.create({
         name: `sort_uniforms_${i}`,           // Unique identifier for each pass
         usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-        size: 16,                            // 4 × u32 values with alignment
+        size: 4,                            // 4 × u32 values with alignment
       });
     }
   }
@@ -204,7 +197,7 @@ export class BVHProcessor {
    * 
    * This method orchestrates the entire H-PLOC BVH construction process through a carefully
    * ordered sequence of GPU compute dispatches. Each phase depends on the output of previous
-   * phases, creating a pipeline that transforms entity data into a high-performance BVH8.
+   * phases, creating a pipeline that transforms entity data into a high-performance BVH2.
    * 
    * Pipeline Execution Order:
    * ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
@@ -217,13 +210,13 @@ export class BVHProcessor {
    * • Scene bounds            • Spatial hashing         • Cache-friendly access
    * • Visibility culling      • 3D → 1D mapping         • Ready for clustering
    * 
-   * ┌─────────────────┐    ┌─────────────────┐
-   * │ 4. Build        │───▶│ 5. Convert      │
-   * │    BVH2         │    │    BVH2→BVH8    │
-   * └─────────────────┘    └─────────────────┘
-   *          │                        │
-   *          ▼                        ▼
-   * • Binary hierarchy        • 8-way branching
+   * ┌─────────────────┐
+   * │ 4. Build        │
+   * │    BVH2         │
+   * └─────────────────┘
+   *          │
+   *          ▼
+   * • Binary hierarchy
    * • H-PLOC clustering       • SIMD traversal
    * • Balanced partitioning   • Cache optimization
    * 
@@ -246,7 +239,6 @@ export class BVHProcessor {
     this.clear_onesweep();                      // Phase 3a: Initialize OneSweep sort workspace
     this.radix_sort();                          // Phase 3b: Sort primitives by Morton codes
     this.build_bvh2();                          // Phase 4: Construct binary BVH using H-PLOC
-    this.convert_bvh2_to_bvh8();                // Phase 5: Convert to wide BVH8 for performance
   }
 
   // ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════
@@ -641,7 +633,7 @@ export class BVHProcessor {
     this.bvh2_inputs[2] = bvh.bvh_info_buffer;          // Algorithm metadata and counters
     this.bvh2_inputs[3] = bvh.morton_codes_buffer;      // Sorted Morton codes for clustering
     this.bvh2_inputs[4] = bvh.parent_idx_buffer;        // Parent node indices (will be filled)
-    this.bvh2_inputs[5] = bvh.bvh8_index_pairs_buffer;  // Work queue for parallel construction
+    this.bvh2_inputs[5] = bvh.bvh_index_pairs_buffer;  // Work queue for parallel construction
 
     // ─── Configure BVH2 Construction Output Bindings ─────────────────────────────────────────────────────────────
     this.bvh2_outputs[0] = bounds_buffer.buffer;        // Updated with internal node bounds
@@ -673,95 +665,6 @@ export class BVHProcessor {
       1,
       1,
       build_bvh2_hploc_cs_entry_point
-    );
-  }
-
-  /**
-   * Phase 5: Convert binary BVH2 to wide BVH8 for optimal traversal performance.
-   * 
-   * This final phase transforms the binary BVH produced by H-PLOC into an 8-way branching
-   * BVH8 structure. BVH8 nodes provide significant performance benefits on modern GPUs
-   * through SIMD (Single Instruction, Multiple Data) parallel processing and less depth traversal cost overall.
-   * 
-   * **BVH8 Performance Advantages**:
-   * 
-   * **SIMD Traversal Efficiency**:
-   * • Process 4 child nodes simultaneously using vector instructions
-   * • Reduce branch divergence in GPU wavefronts/warps
-   * • Minimize traversal depth through wider branching factor
-   * • Enable efficient ray-AABB intersection testing for 4 boxes at once
-   * 
-   * **Cache Optimization**:
-   * • Fewer memory accesses due to reduced tree depth
-   * • Better spatial locality with grouped child nodes
-   * • Optimal memory layout for GPU cache lines
-   * • Reduced bandwidth requirements during traversal
-   * 
-   * **Conversion Algorithm**:
-   * • Traverse BVH2 structure and identify collapsible subtrees
-   * • Merge compatible binary nodes into 8-way nodes
-   * • Preserve spatial coherence and bounding volume hierarchy
-   * • Maintain primitive index mappings for correct intersection results
-   * 
-   * The algorithm uses a parallel single-pass approach with work queues to efficiently
-   * convert the entire BVH2 structure while maintaining thread safety on the GPU.
-   * 
-   * @returns {void}
-   */
-  convert_bvh2_to_bvh8() {
-    const primitive_count = EntityManager.get_total_subscribed(TransformFragment);
-    const bvh = BVH.to_gpu_data();
-
-    // Access final entity bounds data from BVH2 construction
-    const bounds_buffer = EntityManager.get_fragment_gpu_buffer(
-      TransformFragment,
-      bounds_name                               // Entity bounds updated by BVH2 construction
-    );
-    
-    // ─── Initialize BVH8 Construction State ──────────────────────────────────────────────────────────────────────
-    // Set up atomic counters and algorithm parameters for parallel BVH8 construction
-    // This follows CUDA-style parallel algorithms with work distribution
-    const build_state_data = new Uint32Array(5);
-    build_state_data[0] = 0;                    // work_counter - Atomic counter for work items
-    build_state_data[1] = 1;                    // node_counter - Next available BVH8 node index
-    build_state_data[2] = 0;                    // leaf_counter - Number of leaf nodes created
-    build_state_data[3] = 1;                    // work_alloc_counter - Work queue allocation
-    build_state_data[4] = primitive_count;      // prim_count - Total primitives for validation
-    bvh.bvh8_build_state_buffer.write(build_state_data);
-
-    // ─── Configure BVH8 Conversion Input Bindings ────────────────────────────────────────────────────────────────
-    this.bvh8_inputs[0] = bounds_buffer.buffer;             // Entity bounding boxes
-    this.bvh8_inputs[1] = bvh.bvh8_nodes_buffer;            // Output: BVH8 node storage
-    this.bvh8_inputs[2] = bvh.bvh8_build_state_buffer;      // Algorithm state counters
-    this.bvh8_inputs[3] = bvh.bvh8_index_pairs_buffer;      // Work queue for parallel processing
-    this.bvh8_inputs[4] = bvh.bvh8_prim_indices_buffer;     // Primitive index remapping
-    this.bvh8_inputs[5] = bvh.bvh_info_buffer;              // BVH metadata from previous phases
-    this.bvh8_inputs[6] = bvh.bvh8_debug_watchdog_buffer;   // Debug counters and validation
-
-    // ─── Configure BVH8 Conversion Output Bindings ───────────────────────────────────────────────────────────────
-    this.bvh8_outputs[0] = bvh.bvh8_nodes_buffer;           // Generated BVH8 nodes
-    this.bvh8_outputs[1] = bvh.bvh8_build_state_buffer;     // Updated algorithm state
-    this.bvh8_outputs[2] = bvh.bvh8_index_pairs_buffer;     // Updated work queue
-    this.bvh8_outputs[3] = bvh.bvh8_prim_indices_buffer;    // Final primitive mappings
-    this.bvh8_outputs[4] = bvh.bvh8_debug_watchdog_buffer;  // Debug statistics
-
-    // ─── Initialize Debug Watchdog Counters ──────────────────────────────────────────────────────────────────────
-    // Clear debug counters before algorithm execution for clean profiling data
-    bvh.bvh8_debug_watchdog_buffer.write_raw(new Uint32Array(4));
-    
-    // ═══ Execute Parallel BVH8 Conversion ════════════════════════════════════════════════════════════════════════
-    // Launch parallel conversion kernel with optimal workgroup distribution
-    // 32 threads per workgroup provides good occupancy for BVH processing
-    const workgroups = Math.max(1, Math.ceil(primitive_count / 32));
-    ComputeTaskQueue.new_task(
-      hploc_convert_parallel_single_pass_task_name,
-      bvh8_processing_wgsl_path,
-      this.bvh8_inputs,
-      this.bvh8_outputs,
-      workgroups,                               // Parallel processing across all primitives
-      1,
-      1,
-      convert_bvh2_to_bvh8_cs_entry_point
     );
   }
 

@@ -437,7 +437,7 @@ export class EntityManager {
   static get_entity_image_buffer() {
     return Buffer.create({
       name: entity_image_buffer_name,
-      size: this.get_entity_count() * 4,
+      size: this.get_entity_count(),
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
     });
   }

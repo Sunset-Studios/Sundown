@@ -150,9 +150,7 @@ export const DebugDrawType = Object.freeze({
     GI_Reflections: 21,
     EntityBounds: 22,
     BVH: 23,
-    BVH8: 24,
     BLAS_Bounds: 25,
-    BLAS_BVH8: 26,
 });
 
 /**

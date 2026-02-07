@@ -108,10 +108,10 @@ export class PathTracer extends RayTracer {
     samples_per_pixel = 1,
     use_gbuffer = false,
     tlas_bvh2_bounds = null,
-    tlas_bvh8_nodes = null,
-    blas_atlas = null,
+    tlas_bvh_info = null,
+    blas_bvh2_nodes = null,
+    blas_directory = null,
     entity_transforms = null,
-    mesh_asset_ids = null,
     index_buffer = null,
     dense_lights = null,
     gbuffer_position = null,
@@ -199,14 +199,14 @@ export class PathTracer extends RayTracer {
     // ─────────────────────────────────────────────────────────────────────────
     const path_state = render_graph.create_buffer({
       name: "pt_path_state",
-      size: num_rays * 52 * 4,
+      size: num_rays * 52,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
       force: force_recreate,
     });
 
     const pt_params = render_graph.create_buffer({
       name: "pt_params",
-      size: this.params.byteLength,
+      size: this.params.length,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
       force: force_recreate,
     });
@@ -305,11 +305,11 @@ export class PathTracer extends RayTracer {
               pt_params,
               path_state,
               tlas_bvh2_bounds,
-              tlas_bvh8_nodes,
-              blas_atlas,
+              tlas_bvh_info,
+              blas_bvh2_nodes,
+              blas_directory,
               entity_transforms,
               index_buffer,
-              mesh_asset_ids,
               this.output_texture,
             ],
             outputs: [path_state],
