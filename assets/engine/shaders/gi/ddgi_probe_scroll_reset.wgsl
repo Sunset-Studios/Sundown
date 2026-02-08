@@ -11,7 +11,7 @@
 
 @group(1) @binding(0) var<uniform> ddgi_params: DDGIParams;
 @group(1) @binding(1) var<storage, read_write> sh_probes: array<u32>;
-@group(1) @binding(2) var<storage, read_write> probe_depth_moments: array<vec4<f32>>;
+@group(1) @binding(2) var<storage, read_write> probe_depth_moments: array<u32>;
 @group(1) @binding(3) var<storage, read_write> probe_states: array<ProbeStateData>;
 
 @compute @workgroup_size(256, 1, 1)
@@ -107,7 +107,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
 
             let depth_base = probe_sparse_index * DDGI_DEPTH_TEXEL_COUNT;
             for (var texel = 0u; texel < DDGI_DEPTH_TEXEL_COUNT; texel = texel + 1u) {
-                probe_depth_moments[depth_base + texel] = vec4<f32>(0.0);
+                probe_depth_moments[depth_base + texel] = 0u;
             }
         }
     }

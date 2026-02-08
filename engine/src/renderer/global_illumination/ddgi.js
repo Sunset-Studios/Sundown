@@ -5,6 +5,7 @@ import {
   SharedViewBuffer,
 } from "../../core/shared_data.js";
 import { DebugDrawType, RenderPassFlags, CacheTypes } from "../renderer_types.js";
+import { Buffer } from "../buffer.js";
 import { MaterialAllocationTable } from "../material_allocation_table.js";
 import { EntityManager } from "../../core/ecs/entity.js";
 import { StaticMeshFragment } from "../../core/ecs/fragments/static_mesh_fragment.js";
@@ -16,6 +17,12 @@ const COMPUTE_WORKGROUP_SIZE = 256;
 const DDGI_PROBE_DEPTH_RES = 16;
 const DDGI_PROBE_DEPTH_TEXEL_COUNT = DDGI_PROBE_DEPTH_RES * DDGI_PROBE_DEPTH_RES;
 const DDGI_MAX_CASCADES = 8;
+
+const DDGI_GI_COUNTERS_NAME = "ddgi_gi_counters";
+const DDGI_GI_COUNTER_LIGHT_COUNT_INDEX = 0;
+const DDGI_GI_COUNTER_NONCULLED_ACTIVE_PROBE_INDEX = 2;
+const DDGI_GI_COUNTER_CULLED_ACTIVE_PROBE_INDEX = 3;
+const DDGI_GI_COUNTER_PROBE_UPDATE_COUNT_INDEX = 5;
 
 // ┌─────────────────────────────────────────────────────────────────────────────┐
 // │ Permutation helpers (CPU-side precomputation for probe cycling)             │
@@ -232,7 +239,7 @@ export class DDGI {
     probe_radius: 0.2,
     rays_per_probe: 32,
     probes_per_frame: 1024,
-    probe_storage_capacity: 4096 * DDGI_MAX_CASCADES,
+    probe_storage_capacity: 8192 * DDGI_MAX_CASCADES,
     probe_update_culled_ratio: 0.0,
     indirect_boost: 1.0,
     cascade_count: DDGI_MAX_CASCADES,
@@ -281,6 +288,8 @@ export class DDGI {
   ddgi_probe_grid_initialized = null;
   ddgi_probe_storage_capacity = 0;
   ddgi_probe_count = 0;
+  ddgi_gi_counters_buffer = null;
+  ddgi_gi_counters_data = null;
 
   final_gi_texture_direct = null;
   final_gi_texture_indirect_diffuse = null;
@@ -405,6 +414,80 @@ export class DDGI {
         }
       );
     }
+  }
+
+  _ensure_gi_counters_buffer(force_recreate) {
+    const needs_recreate = force_recreate || !this.ddgi_gi_counters_buffer;
+    if (!needs_recreate) {
+      return;
+    }
+
+    if (this.ddgi_gi_counters_buffer) {
+      this.ddgi_gi_counters_buffer.destroy();
+      this.ddgi_gi_counters_buffer = null;
+    }
+
+    this.ddgi_gi_counters_data = new Uint32Array(6);
+    this.ddgi_gi_counters_buffer = Buffer.create({
+      name: DDGI_GI_COUNTERS_NAME,
+      raw_data: this.ddgi_gi_counters_data,
+      usage:
+        GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC,
+      cpu_readback: true,
+      own_readback: true,
+    });
+  }
+
+  get_stats() {
+    if (!this.ddgi_gi_counters_buffer || !this.ddgi_gi_counters_data) {
+      return null;
+    }
+
+    const probe_grid_dims = this._sanitize_probe_grid_dimensions(
+      this.config.probe_grid_dimensions
+    );
+    const cascade_count = Math.max(1, Math.floor(this.config.cascade_count));
+    const probes_per_cascade = probe_grid_dims[0] * probe_grid_dims[1] * probe_grid_dims[2];
+    const total_probe_count = probes_per_cascade * cascade_count;
+
+    const probe_storage_capacity_cfg = Math.max(1, Math.floor(this.config.probe_storage_capacity));
+    const probe_storage_capacity = Math.min(total_probe_count, probe_storage_capacity_cfg);
+
+    const probes_per_frame_cfg = Math.max(0, Math.floor(this.config.probes_per_frame));
+    const probes_per_frame_requested =
+      probes_per_frame_cfg === 0
+        ? total_probe_count
+        : Math.min(total_probe_count, probes_per_frame_cfg);
+    const probes_per_frame = Math.min(probe_storage_capacity, probes_per_frame_requested);
+
+    const rays_per_probe = Math.max(1, Math.floor(this.config.rays_per_probe));
+
+    const gi_counters_data = this.ddgi_gi_counters_data;
+    const active_probe_count_nonculled =
+      gi_counters_data[DDGI_GI_COUNTER_NONCULLED_ACTIVE_PROBE_INDEX] || 0;
+    const active_probe_count_culled =
+      gi_counters_data[DDGI_GI_COUNTER_CULLED_ACTIVE_PROBE_INDEX] || 0;
+    const active_probe_count = active_probe_count_nonculled + active_probe_count_culled;
+    const probe_update_count = gi_counters_data[DDGI_GI_COUNTER_PROBE_UPDATE_COUNT_INDEX] || 0;
+    const total_rays_fired = probe_update_count * rays_per_probe;
+
+    return {
+      probe_grid_dims,
+      cascade_count,
+      probes_per_cascade,
+      total_probe_count,
+      probes_per_frame,
+      probe_storage_capacity,
+      rays_per_probe,
+      total_rays_fired,
+      active_probe_count,
+      active_probe_count_nonculled,
+      active_probe_count_culled,
+      probe_update_count,
+      light_count: gi_counters_data[DDGI_GI_COUNTER_LIGHT_COUNT_INDEX] || 0,
+      probe_spacing: this.config.probe_spacing,
+      probe_radius: this.config.probe_radius,
+    };
   }
 
   // ┌─────────────────────────────────────────────────────────────────────────────┐
@@ -610,12 +693,8 @@ export class DDGI {
       force: force_recreate,
     });
 
-    const gi_counters = render_graph.create_buffer({
-      name: "ddgi_gi_counters",
-      size: 6,
-      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-      force: force_recreate,
-    });
+    this._ensure_gi_counters_buffer(force_recreate);
+    const gi_counters = render_graph.register_buffer(DDGI_GI_COUNTERS_NAME);
 
     const probe_update_indices = render_graph.create_buffer({
       name: "ddgi_probe_update_indices",
@@ -713,15 +792,13 @@ export class DDGI {
 
     // ─────────────────────────────────────────────────────────────────────────
     // Probe Depth Moments Buffers (Directional visibility, octahedral 8x8)
-    // Each texel stores vec4<f32>:
-    // - x = mean_t
-    // - y = mean_t2
-    // - z = confidence (0..1)
-    // - w = accumulated sample_count (clamped)
+    // Each texel stores a single u32 with two f16-packed values:
+    // - bits [0..15]  = mean_t   (f16)
+    // - bits [16..31] = mean_t2  (f16)
     // ─────────────────────────────────────────────────────────────────────────
     const probe_depth_moments = render_graph.create_buffer({
       name: "ddgi_probe_depth_moments",
-      size: probe_storage_capacity * DDGI_PROBE_DEPTH_TEXEL_COUNT * 4,
+      size: probe_storage_capacity * DDGI_PROBE_DEPTH_TEXEL_COUNT,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
       force: force_recreate,
     });

@@ -52,14 +52,10 @@ const PROBE_STATE_INIT_FRAMES: u32         = 5u;   // Frames of tracing for clas
 const PROBE_STATE_CONVERGENCE_FRAMES: u32  = 4u;   // Frames for "Newly" states to converge
 const PROBE_STATE_BACKFACE_THRESHOLD: f32  = 0.5;  // Fraction of backface hits = inside geometry
 const PROBE_STATE_NEAR_GEOMETRY_DIST: f32  = 2.0;  // Multiplier of probe_spacing for "near"
+const PROBE_STATE_FLAG_CULL_VISIBLE: u32 = 1u;  // Bit 0 of flags byte (bit 24 of packed_state)
 
 // Maximum number of DDGI cascades supported
 const DDGI_MAX_CASCADES: u32 = 8u;
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Cull visibility flag (stored in bit 0 of flags byte in packed_state)
-// ─────────────────────────────────────────────────────────────────────────────
-const PROBE_STATE_FLAG_CULL_VISIBLE: u32 = 1u;  // Bit 0 of flags byte (bit 24 of packed_state)
 
 struct DDGICascadeData {
     origin_spacing: vec4<f32>, // xyz = cascade origin, w = probe spacing
@@ -104,12 +100,6 @@ struct ProbeStateData {
     probe_offset: vec4<f32>,  // xyz = probe position offset in world-space, w = sample_count (bitcast u32)
 }
 
-// =============================================================================
-// Probe ray data buffer header + wrapper
-// =============================================================================
-// We keep a small header in front of the runtime array so later passes can
-// cheaply query statistics without re-deriving them from ddgi_params.
-// =============================================================================
 struct DDGIProbeRayDataHeader {
     active_ray_count: atomic<u32>,
     _pad0: u32,
@@ -488,12 +478,28 @@ fn ddgi_sh_evaluate_radiance(
 // ║                  PROBE DEPTH MOMENTS VISIBILITY HELPERS                   ║
 // ╚═══════════════════════════════════════════════════════════════════════════╝
 // =============================================================================
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Depth moments are packed into a single u32 per texel using f16 packing:
+//   bits [0..15]  = mean distance     (f16)
+//   bits [16..31] = mean distance²    (f16)
+// This halves storage compared to the previous vec4<f32> layout while
+// retaining sufficient precision for Chebyshev visibility testing.
+// ─────────────────────────────────────────────────────────────────────────────
+fn ddgi_depth_moments_pack(mean_t: f32, mean_t2: f32) -> u32 {
+    return pack2x16float(vec2<f32>(mean_t, mean_t2));
+}
+
+fn ddgi_depth_moments_unpack(packed: u32) -> vec2<f32> {
+    return unpack2x16float(packed);
+}
+
 fn ddgi_depth_texel_id(texel_coord: vec2<u32>) -> u32 {
     return texel_coord.x + texel_coord.y * DDGI_PROBE_DEPTH_RES;
 }
 
 fn ddgi_visibility_weight_from_moments(
-    probe_depth_moments: ptr<storage, array<vec4<f32>>, read>,
+    probe_depth_moments: ptr<storage, array<u32>, read>,
     probe_states: ptr<storage, array<ProbeStateData>, read_write>,
     probe_index: u32,
     direction_from_probe: vec3<f32>,
@@ -507,10 +513,11 @@ fn ddgi_visibility_weight_from_moments(
     let uv = encode_octahedral(direction_from_probe) * f32(DDGI_PROBE_DEPTH_RES);
     let base = floor(uv);
 
-    let depth_moments = (*probe_depth_moments)[sparse_index * DDGI_DEPTH_TEXEL_COUNT + ddgi_depth_texel_id(vec2<u32>(base))];
+    let packed = (*probe_depth_moments)[sparse_index * DDGI_DEPTH_TEXEL_COUNT + ddgi_depth_texel_id(vec2<u32>(base))];
+    let moments = ddgi_depth_moments_unpack(packed);
 
-    let mean_d = depth_moments.x;
-    let mean_d2 = depth_moments.y;
+    let mean_d = moments.x;
+    let mean_d2 = moments.y;
 
     let variance = max(mean_d2 - mean_d * mean_d, DDGI_VISIBILITY_MIN_VARIANCE);
 
@@ -776,7 +783,7 @@ fn ddgi_sample_sh_irradiance_single_cascade_internal(
     ddgi_params: ptr<uniform, DDGIParams>,
     sh_probes: ptr<storage, array<u32>, read_write>,
     probe_states: ptr<storage, array<ProbeStateData>, read_write>,
-    probe_depth_moments: ptr<storage, array<vec4<f32>>, read>,
+    probe_depth_moments: ptr<storage, array<u32>, read>,
     position: vec3<f32>,
     normal_ws: vec3<f32>,
     cascade_index: u32
@@ -908,7 +915,7 @@ fn ddgi_sample_sh_irradiance_with_fallback(
     ddgi_params: ptr<uniform, DDGIParams>,
     sh_probes: ptr<storage, array<u32>, read_write>,
     probe_states: ptr<storage, array<ProbeStateData>, read_write>,
-    probe_depth_moments: ptr<storage, array<vec4<f32>>, read>,
+    probe_depth_moments: ptr<storage, array<u32>, read>,
     position: vec3<f32>,
     normal_ws: vec3<f32>,
     start_cascade: u32
@@ -978,7 +985,7 @@ fn ddgi_sample_sh_irradiance_with_states(
     ddgi_params: ptr<uniform, DDGIParams>,
     sh_probes: ptr<storage, array<u32>, read_write>,
     probe_states: ptr<storage, array<ProbeStateData>, read_write>,
-    probe_depth_moments: ptr<storage, array<vec4<f32>>, read>,
+    probe_depth_moments: ptr<storage, array<u32>, read>,
     position: vec3<f32>,
     normal_ws: vec3<f32>
 ) -> vec3<f32> {

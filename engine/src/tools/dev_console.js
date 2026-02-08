@@ -11,6 +11,7 @@ import { DebugDrawPicker } from "./debug_draw_picker.js";
 import { RenderStrategyPicker } from "./render_strategy_picker.js";
 import { GIStrategyPicker } from "./gi_strategy_picker.js";
 import { ASVSMStats } from "./as_vsm_stats.js";
+import { DDGIStats } from "./ddgi_stats.js";
 import { RenderToggle } from "./render_toggle.js";
 import { DebugMemory } from "./debug_memory.js";
 import { GPUTimerView } from "./gpu_timer_view.js";
@@ -88,6 +89,7 @@ export class DevConsole extends SimulationLayer {
     this.register_command("debug_memory", new DebugMemory());
     this.register_command("gpu_timer", new GPUTimerView());
     this.register_command("gpu_memory", new GPUMemoryView());
+    this.register_command("ddgi_stats", new DDGIStats());
   }
 
   update(delta_time) {

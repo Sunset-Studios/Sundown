@@ -19,7 +19,7 @@
 @group(1) @binding(6) var<storage, read> material_palette: array<u32>;
 @group(1) @binding(7) var<storage, read> dense_lights_buffer: DenseLightsBuffer;
 @group(1) @binding(8) var<storage, read_write> sh_probes: array<u32>;
-@group(1) @binding(9) var<storage, read> probe_depth_moments: array<vec4<f32>>;
+@group(1) @binding(9) var<storage, read> probe_depth_moments: array<u32>;
 @group(1) @binding(10) var texture_pool_albedo: texture_2d_array<f32>;
 @group(1) @binding(11) var texture_pool_normal: texture_2d_array<f32>;
 @group(1) @binding(12) var texture_pool_roughness: texture_2d_array<f32>;

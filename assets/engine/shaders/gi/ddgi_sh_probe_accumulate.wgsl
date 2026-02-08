@@ -27,7 +27,7 @@
 @group(1) @binding(1) var<storage, read> probe_update_indices: array<u32>;
 @group(1) @binding(2) var<storage, read_write> probe_ray_data: DDGIProbeRayDataBuffer;
 @group(1) @binding(3) var<storage, read_write> sh_probes: array<u32>;
-@group(1) @binding(4) var<storage, read_write> probe_depth_moments: array<vec4<f32>>;
+@group(1) @binding(4) var<storage, read_write> probe_depth_moments: array<u32>;
 @group(1) @binding(5) var<storage, read_write> probe_states: array<ProbeStateData>;
 @group(1) @binding(6) var<storage, read> gi_counters: GICountersReadOnly;
 
@@ -161,20 +161,15 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         let texel_id = tx + ty * DDGI_PROBE_DEPTH_RES;
 
         let depth_idx = depth_base + texel_id;
-        var moments = probe_depth_moments[depth_idx];
 
-        let new_count = min(moments.w + 1.0, DDGI_DEPTH_SAMPLE_COUNT_CAP);
+        let new_count = min(f32(prev_sample_count) + 1.0, DDGI_DEPTH_SAMPLE_COUNT_CAP);
 
         // Online update: mean <- mean + (x - mean) / n
-        let alpha = 1.0 / max(new_count, 1.0);
-        moments.x += (t - moments.x) * alpha;
-        moments.y += (t2 - moments.y) * alpha;
-
-        let prev_min_d = select(t, moments.z, moments.w > 0.0);
-        moments.z = min(prev_min_d, t);
-        moments.w = new_count;
-
-        probe_depth_moments[depth_idx] = moments;
+        let depth_alpha = 1.0 / max(new_count, 1.0);
+        let prev_moments = ddgi_depth_moments_unpack(probe_depth_moments[depth_idx]);
+        let updated_mean_t = prev_moments.x + (t - prev_moments.x) * depth_alpha;
+        let updated_mean_t2 = prev_moments.y + (t2 - prev_moments.y) * depth_alpha;
+        probe_depth_moments[depth_idx] = ddgi_depth_moments_pack(updated_mean_t, updated_mean_t2);
 
         // ---------------------------------------------------------------------
         // Luminance statistics for variance gating

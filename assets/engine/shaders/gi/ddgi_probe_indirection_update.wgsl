@@ -10,7 +10,7 @@
 @group(1) @binding(1) var<storage, read_write> probe_states: array<ProbeStateData>;
 @group(1) @binding(2) var<storage, read_write> probe_free_list: DDGIProbeIndirectionFreeList;
 @group(1) @binding(3) var<storage, read_write> sh_probes: array<u32>;
-@group(1) @binding(4) var<storage, read_write> probe_depth_moments: array<vec4<f32>>;
+@group(1) @binding(4) var<storage, read_write> probe_depth_moments: array<u32>;
 
 fn ddgi_probe_free_list_pop() -> u32 {
     loop {
@@ -37,7 +37,7 @@ fn ddgi_probe_clear_sparse_slot(slot: u32) {
 
     let depth_base = slot * DDGI_DEPTH_TEXEL_COUNT;
     for (var texel = 0u; texel < DDGI_DEPTH_TEXEL_COUNT; texel = texel + 1u) {
-        probe_depth_moments[depth_base + texel] = vec4<f32>(0.0);
+        probe_depth_moments[depth_base + texel] = 0u;
     }
 }
 
