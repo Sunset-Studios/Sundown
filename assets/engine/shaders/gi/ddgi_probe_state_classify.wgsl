@@ -213,8 +213,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     var new_offset = probe_states[probe_index].probe_offset.xyz;
 
     if (init_frames < PROBE_STATE_INIT_FRAMES) {
-        let target_distance = min(near_threshold, spacing * 0.5);
-        let candidate_pos = ray_analysis.nearest_hit_pos + ray_analysis.nearest_hit_normal * target_distance;
+        let candidate_pos = ray_analysis.nearest_hit_pos + ray_analysis.nearest_hit_normal * near_threshold;
 
         var candidate_is_clear = true;
         var min_candidate_dist = 1e30;
@@ -237,7 +236,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
             }
         }
 
-        if (candidate_is_clear && min_candidate_dist >= target_distance) {
+        if (candidate_is_clear && min_candidate_dist >= near_threshold) {
             new_offset = candidate_pos - base_probe_pos;
         } else {
             let mid_pos = (current_probe_pos + candidate_pos) * 0.5;
@@ -256,7 +255,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
                 }
             }
 
-            if (min_mid_dist >= target_distance) {
+            if (min_mid_dist >= near_threshold) {
                 new_offset = mid_pos - base_probe_pos;
             }
         }

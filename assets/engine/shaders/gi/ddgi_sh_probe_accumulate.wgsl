@@ -39,9 +39,6 @@
 // For uniform sphere: PDF = 1 / (4 * PI), so weight = 4 * PI / N
 const SPHERE_AREA = 12.566370614359172; // 4 * PI
 
-// Depth moments update
-const DDGI_DEPTH_SAMPLE_COUNT_CAP = 64.0;
-
 // -----------------------------------------------------------------------------
 // Adaptive temporal hysteresis (no fixed MAX_ACCUMULATED_SAMPLES)
 //
@@ -72,6 +69,25 @@ fn ddgi_sh_average_radiance_luma(sh: SH_L1_RGB) -> f32 {
     return luminance(avg_radiance);
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Depth moment update (nearest-texel write)
+//
+// Each ray direction is mapped to its nearest texel on the octahedral depth
+// map and the depth moments (mean_t, mean_t²) are updated with an exponential
+// moving average. The read side uses bilinear interpolation for smooth results.
+// ─────────────────────────────────────────────────────────────────────────────
+fn depth_moment_update(depth_base: u32, ray_dir: vec3<f32>, t: f32, t2: f32, update_alpha: f32) {
+    let uv = encode_octahedral(safe_normalize(ray_dir)) * f32(DDGI_PROBE_DEPTH_RES);
+    let max_coord = i32(DDGI_PROBE_DEPTH_RES) - 1;
+    let texel_coord = vec2<u32>(clamp(vec2<i32>(uv), vec2<i32>(0), vec2<i32>(max_coord)));
+    let idx = depth_base + ddgi_depth_texel_id(texel_coord);
+    let prev = ddgi_depth_moments_unpack(probe_depth_moments[idx]);
+    probe_depth_moments[idx] = ddgi_depth_moments_pack(
+        prev.x + (t - prev.x) * update_alpha,
+        prev.y + (t2 - prev.y) * update_alpha
+    );
+}
+
 // =============================================================================
 // MAIN COMPUTE SHADER
 // =============================================================================
@@ -90,10 +106,6 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
     
     let probe_index = probe_update_indices[gid.x];
-    let probe_sparse_index = ddgi_probe_sparse_index(&probe_states, probe_index);
-    if (!ddgi_probe_sparse_index_is_valid(probe_sparse_index)) {
-        return;
-    }
     let ray_base = gid.x * rays_per_probe;
     
     // ─────────────────────────────────────────────────────────────────────────
@@ -108,12 +120,12 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     
     let dst_coord = ddgi_probe_coord_from_index(&ddgi_params, probe_index);
 
-    let depth_base = probe_sparse_index * DDGI_DEPTH_TEXEL_COUNT;
+    let depth_base = probe_index * DDGI_DEPTH_TEXEL_COUNT;
 
     // -------------------------------------------------------------------------
     // Warm start (copy/reproject history into current for THIS probe)
     // -------------------------------------------------------------------------
-    var sh_prev = ddgi_sh_probe_read(&sh_probes, &probe_states, probe_index);
+    var sh_prev = ddgi_sh_probe_read(&sh_probes, probe_index);
     var prev_sample_count = ddgi_probe_state_get_sample_count(probe_states[probe_index]);
     var init_frames = probe_state_get_init_frames(probe_states[probe_index].packed_state);
 
@@ -122,9 +134,13 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
     
     // ─────────────────────────────────────────────────────────────────────────
-    // Project all ray samples onto SH basis
+    // Phase 1: Project all ray samples onto SH basis + luminance statistics
     // Monte Carlo integration: E[L(ω)] ≈ (1/N) Σ L(ω_i) * Y(ω_i) * (4π)
     // where 4π is the sphere surface area (normalization for uniform sampling)
+    //
+    // Depth moments are updated in Phase 4 AFTER hysteresis is computed,
+    // so both SH and depth use the same adaptive alpha. This prevents stale
+    // depth data from causing shadow leaking when lighting changes.
     // ─────────────────────────────────────────────────────────────────────────
     var sh_new = sh_l1_rgb_zero();
     var luma_sum = 0.0;
@@ -132,9 +148,8 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
 
     for (var i = 0u; i < rays_per_probe; i = i + 1u) {
         let ray_index = ray_base + i;
-        let hit_data = probe_ray_data.rays[ray_index];
         let radiance = probe_ray_data.rays[ray_index].radiance.xyz;
-        let ray_dir = hit_data.ray_dir_prim.xyz;
+        let ray_dir = probe_ray_data.rays[ray_index].ray_dir_prim.xyz;
         
         // Project onto SH basis
         // Weight: 4π/N for uniform sphere sampling Monte Carlo integration
@@ -143,44 +158,14 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         
         sh_new = sh_l1_rgb_add(sh_new, sample_sh);
 
-        let spacing = ddgi_probe_spacing_from_index(&ddgi_params, probe_index);
-        let max_dim = max(
-            ddgi_params.probe_grid_dims.x,
-            max(ddgi_params.probe_grid_dims.y, ddgi_params.probe_grid_dims.z)
-        );
-        let miss_distance = max(1.0, spacing * max_dim * 2.0);
-
-        let t_raw = hit_data.hit_pos_t.w;
-        let is_valid_hit = hit_data.state_u32.w != INVALID_IDX;
-        let t = min(select(miss_distance, abs(t_raw), is_valid_hit), miss_distance);
-        let t2 = t * t;
-
-        let uv = encode_octahedral(safe_normalize(ray_dir));
-        let tx = min(u32(uv.x * f32(DDGI_PROBE_DEPTH_RES)), DDGI_PROBE_DEPTH_RES - 1u);
-        let ty = min(u32(uv.y * f32(DDGI_PROBE_DEPTH_RES)), DDGI_PROBE_DEPTH_RES - 1u);
-        let texel_id = tx + ty * DDGI_PROBE_DEPTH_RES;
-
-        let depth_idx = depth_base + texel_id;
-
-        let new_count = min(f32(prev_sample_count) + 1.0, DDGI_DEPTH_SAMPLE_COUNT_CAP);
-
-        // Online update: mean <- mean + (x - mean) / n
-        let depth_alpha = 1.0 / max(new_count, 1.0);
-        let prev_moments = ddgi_depth_moments_unpack(probe_depth_moments[depth_idx]);
-        let updated_mean_t = prev_moments.x + (t - prev_moments.x) * depth_alpha;
-        let updated_mean_t2 = prev_moments.y + (t2 - prev_moments.y) * depth_alpha;
-        probe_depth_moments[depth_idx] = ddgi_depth_moments_pack(updated_mean_t, updated_mean_t2);
-
-        // ---------------------------------------------------------------------
         // Luminance statistics for variance gating
-        // ---------------------------------------------------------------------
         let sample_luma = luminance(radiance);
         luma_sum += sample_luma;
         luma_sum_sq += sample_luma * sample_luma;
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    // Probe state-based hysteresis override
+    // Phase 2: Compute adaptive temporal hysteresis
     // "Newly" states (NEWLY_AWAKE, NEWLY_VIGILANT) use fast convergence
     // ─────────────────────────────────────────────────────────────────────────
     let probe_state = probe_state_get_state(probe_states[probe_index].packed_state);
@@ -212,10 +197,8 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
 
     var change_factor = smoothstep(DDGI_LUMA_FAST_START, DDGI_LUMA_FAST_END, significant_delta) * noise_suppression;
 
-    // ─────────────────────────────────────────────────────────────────────────
     // For "Newly" states, force fast convergence (high change factor)
     // This effectively sets hysteresis to 0, discarding history
-    // ─────────────────────────────────────────────────────────────────────────
     change_factor = select(change_factor, 1.0, is_newly_state);
 
     let prev_frames = min(f32(prev_sample_count), DDGI_HISTORY_CAP_FRAMES_MAX);
@@ -226,12 +209,40 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let accumulated_frames = retained_frames + 1.0;
     let alpha = 1.0 / accumulated_frames;
     
-    // Blend new SH with history using weighted average
+    // ─────────────────────────────────────────────────────────────────────────
+    // Phase 3: Blend new SH with history using the hysteresis-adjusted alpha
+    // ─────────────────────────────────────────────────────────────────────────
     let sh_result = sh_l1_rgb_lerp(sh_prev, sh_new, alpha);
     
     // ─────────────────────────────────────────────────────────────────────────
+    // Phase 4: Update depth moments using the same hysteresis-adjusted alpha
+    // This ensures depth moments respond to lighting/geometry changes at the
+    // same rate as SH irradiance, preventing stale occlusion data from causing
+    // shadow leaking or incorrect visibility weights.
+    // ─────────────────────────────────────────────────────────────────────────
+    let spacing = ddgi_probe_spacing_from_index(&ddgi_params, probe_index);
+    let max_dim = max(
+        ddgi_params.probe_grid_dims.x,
+        max(ddgi_params.probe_grid_dims.y, ddgi_params.probe_grid_dims.z)
+    );
+    let miss_distance = max(1.0, spacing * max_dim * 2.0);
+
+    for (var i = 0u; i < rays_per_probe; i = i + 1u) {
+        let ray_index = ray_base + i;
+        let hit_data = probe_ray_data.rays[ray_index];
+        let ray_dir = hit_data.ray_dir_prim.xyz;
+
+        let t_raw = hit_data.hit_pos_t.w;
+        let is_valid_hit = hit_data.state_u32.w != INVALID_IDX;
+        let t = min(select(miss_distance, abs(t_raw), is_valid_hit), miss_distance);
+        let t2 = t * t;
+
+        depth_moment_update(depth_base, ray_dir, t, t2, alpha);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
     // Write results to output buffers
     // ─────────────────────────────────────────────────────────────────────────
-    ddgi_sh_probe_write(&sh_probes, &probe_states, probe_index, sh_result);
+    ddgi_sh_probe_write(&sh_probes, probe_index, sh_result);
     ddgi_probe_state_set_sample_count(&probe_states[probe_index], u32(clamp(accumulated_frames, 1.0, DDGI_HISTORY_CAP_FRAMES_MAX)));
 }

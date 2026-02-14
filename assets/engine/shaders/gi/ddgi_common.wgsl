@@ -30,7 +30,6 @@ const GOLDEN_RATIO_CONJUGATE = 0.6180339887498948;
 const DDGI_PROBE_DEPTH_RES = 16u;
 const DDGI_DEPTH_TEXEL_COUNT = 256u;
 const DDGI_VISIBILITY_MIN_VARIANCE = 1e-4;
-const DDGI_VISBILITY_DISTANCE_THICKNESS_BIAS = 0.0;
 const DDGI_CASCADE_BLEND_WINDOW_PROBES = 4.0;
 
 // SH probes store L1 RGB coefficients (4 coefficients × 3 channels = 12 floats)
@@ -50,6 +49,7 @@ const PROBE_STATE_AWAKE: u32         = 6u;   // Near dynamic geometry - trace wh
 // Classification parameters
 const PROBE_STATE_INIT_FRAMES: u32         = 5u;   // Frames of tracing for classification
 const PROBE_STATE_CONVERGENCE_FRAMES: u32  = 4u;   // Frames for "Newly" states to converge
+const PROBE_STATE_CONVERGENCE_READINESS_MULTIPLIER: u32 = 16u;
 const PROBE_STATE_BACKFACE_THRESHOLD: f32  = 0.5;  // Fraction of backface hits = inside geometry
 const PROBE_STATE_NEAR_GEOMETRY_DIST: f32  = 2.0;  // Multiplier of probe_spacing for "near"
 const PROBE_STATE_FLAG_CULL_VISIBLE: u32 = 1u;  // Bit 0 of flags byte (bit 24 of packed_state)
@@ -74,10 +74,10 @@ struct DDGIParams {
     indirect_boost: f32,
     cascade_count: f32,
     probe_update_culled_ratio: f32,
-    probe_storage_capacity: f32,
     permutation_stride: f32,       // Precomputed coprime stride for probe cycling (CPU-computed)
     permutation_base_offset: f32,  // Precomputed base offset for permutation (CPU-computed)
     permutation_frame_stride: f32, // Precomputed frame stride for temporal offset (CPU-computed)
+    padding: f32,                  // Padding for 16-byte alignment
     cascades: array<DDGICascadeData, DDGI_MAX_CASCADES>, // Per-cascade data (origin, scroll, snap)
 };
 
@@ -96,7 +96,7 @@ struct ProbeStateData {
     packed_state: u32,        // state | init_frame_count | convergence_frame_count | flags (bit 0 = cull_visible)
     nearest_hit_dist: f32,    // nearest hit distance in world-space
     backface_ratio: f32,      // accumulated backface hit ratio
-    sparse_index: u32,        // index into sparse storage arrays (INVALID_IDX if not allocated)
+    padding: f32,
     probe_offset: vec4<f32>,  // xyz = probe position offset in world-space, w = sample_count (bitcast u32)
 }
 
@@ -124,10 +124,14 @@ struct DDGIProbeRayDataBufferReadOnlyHeader {
     rays: array<DDGIProbeRayData>,
 };
 
-struct DDGIProbeIndirectionFreeList {
-    counter: atomic<u32>,
-    entries: array<u32>,
-};
+// ─────────────────────────────────────────────────────────────────────────────
+// Result struct for sampling with readiness tracking
+// Used for cascade fallback blending during probe initialization
+// ─────────────────────────────────────────────────────────────────────────────
+struct DDGISampleResult {
+    irradiance: vec3<f32>,
+    readiness: f32,  // Weighted average of probe readiness (0.0 to 1.0)
+}
 
 fn ddgi_probe_state_get_cull_visible(packed: u32) -> bool {
     return (probe_state_get_flags(packed) & PROBE_STATE_FLAG_CULL_VISIBLE) != 0u;
@@ -142,17 +146,6 @@ fn ddgi_probe_state_set_cull_visible(packed: u32, visible: bool) -> u32 {
         probe_state_get_convergence_frames(packed),
         new_flags
     );
-}
-
-fn ddgi_probe_sparse_index(
-    probe_states: ptr<storage, array<ProbeStateData>, read_write>,
-    probe_index: u32
-) -> u32 {
-    return (*probe_states)[probe_index].sparse_index;
-}
-
-fn ddgi_probe_sparse_index_is_valid(index: u32) -> bool {
-    return index != INVALID_IDX;
 }
 
 fn ddgi_probe_state_get_sample_count(probe_state: ProbeStateData) -> u32 {
@@ -386,15 +379,9 @@ fn ddgi_cascade_index_for_position(
 // ─────────────────────────────────────────────────────────────────────────────
 fn ddgi_sh_probe_read(
     buffer: ptr<storage, array<u32>, read_write>,
-    probe_states: ptr<storage, array<ProbeStateData>, read_write>,
     probe_index: u32
 ) -> SH_L1_RGB {
-    let sparse_index = ddgi_probe_sparse_index(probe_states, probe_index);
-    if (!ddgi_probe_sparse_index_is_valid(sparse_index)) {
-        return sh_l1_rgb_zero();
-    }
-
-    let base_offset = sparse_index * DDGI_SH_PROBE_SIZE_U32;
+    let base_offset = probe_index * DDGI_SH_PROBE_SIZE_U32;
     
     var packed: SH_L1_RGB_Packed;
     packed.data[0] = (*buffer)[base_offset + 0u];
@@ -412,16 +399,10 @@ fn ddgi_sh_probe_read(
 // ─────────────────────────────────────────────────────────────────────────────
 fn ddgi_sh_probe_write(
     buffer: ptr<storage, array<u32>, read_write>,
-    probe_states: ptr<storage, array<ProbeStateData>, read_write>,
     probe_index: u32,
     sh: SH_L1_RGB
 ) {
-    let sparse_index = ddgi_probe_sparse_index(probe_states, probe_index);
-    if (!ddgi_probe_sparse_index_is_valid(sparse_index)) {
-        return;
-    }
-
-    let base_offset = sparse_index * DDGI_SH_PROBE_SIZE_U32;
+    let base_offset = probe_index * DDGI_SH_PROBE_SIZE_U32;
     let packed = sh_l1_rgb_pack(sh);
     
     (*buffer)[base_offset + 0u] = packed.data[0];
@@ -500,37 +481,45 @@ fn ddgi_depth_texel_id(texel_coord: vec2<u32>) -> u32 {
 
 fn ddgi_visibility_weight_from_moments(
     probe_depth_moments: ptr<storage, array<u32>, read>,
-    probe_states: ptr<storage, array<ProbeStateData>, read_write>,
     probe_index: u32,
     direction_from_probe: vec3<f32>,
     dist: f32
 ) -> f32 {
-    let sparse_index = ddgi_probe_sparse_index(probe_states, probe_index);
-    if (!ddgi_probe_sparse_index_is_valid(sparse_index)) {
-        return 0.0;
-    }
+    // Map direction to octahedral UV in texel space with half-texel offset
+    // so that texel centers align with integer coordinates for bilinear filtering
+    let uv = encode_octahedral(direction_from_probe) * f32(DDGI_PROBE_DEPTH_RES) - 0.5;
+    let base_f = floor(uv);
+    let frac = uv - base_f;
+    let base_i = vec2<i32>(base_f);
 
-    let uv = encode_octahedral(direction_from_probe) * f32(DDGI_PROBE_DEPTH_RES);
-    let base = floor(uv);
+    let base_idx = probe_index * DDGI_DEPTH_TEXEL_COUNT;
+    let max_coord = i32(DDGI_PROBE_DEPTH_RES) - 1;
 
-    let packed = (*probe_depth_moments)[sparse_index * DDGI_DEPTH_TEXEL_COUNT + ddgi_depth_texel_id(vec2<u32>(base))];
-    let moments = ddgi_depth_moments_unpack(packed);
+    // Bilinear sample with clamped coordinates to prevent out-of-bounds reads
+    let c00 = vec2<u32>(clamp(base_i, vec2<i32>(0), vec2<i32>(max_coord)));
+    let c10 = vec2<u32>(clamp(base_i + vec2<i32>(1, 0), vec2<i32>(0), vec2<i32>(max_coord)));
+    let c01 = vec2<u32>(clamp(base_i + vec2<i32>(0, 1), vec2<i32>(0), vec2<i32>(max_coord)));
+    let c11 = vec2<u32>(clamp(base_i + vec2<i32>(1, 1), vec2<i32>(0), vec2<i32>(max_coord)));
+
+    let m00 = ddgi_depth_moments_unpack((*probe_depth_moments)[base_idx + ddgi_depth_texel_id(c00)]);
+    let m10 = ddgi_depth_moments_unpack((*probe_depth_moments)[base_idx + ddgi_depth_texel_id(c10)]);
+    let m01 = ddgi_depth_moments_unpack((*probe_depth_moments)[base_idx + ddgi_depth_texel_id(c01)]);
+    let m11 = ddgi_depth_moments_unpack((*probe_depth_moments)[base_idx + ddgi_depth_texel_id(c11)]);
+
+    let moments = mix(mix(m00, m10, frac.x), mix(m01, m11, frac.x), frac.y);
 
     let mean_d = moments.x;
     let mean_d2 = moments.y;
 
     let variance = max(mean_d2 - mean_d * mean_d, DDGI_VISIBILITY_MIN_VARIANCE);
 
-    // Apply thickness bias to reduce self-shadowing artifacts near surfaces
-    let biased_mean_d = mean_d * (1.0 - DDGI_VISBILITY_DISTANCE_THICKNESS_BIAS);
-    
-    let delta = max(0.0, dist - biased_mean_d);
+    let delta = max(0.0, dist - mean_d);
     var chebyshev_weight = variance / (variance + delta * delta);
     
     // Softer contrast (square instead of cube) to reduce banding
     chebyshev_weight = chebyshev_weight * chebyshev_weight;
 
-    return select(chebyshev_weight, 1.0, dist <= biased_mean_d);
+    return select(chebyshev_weight, 1.0, dist <= mean_d);
 }
 
 // =============================================================================
@@ -635,7 +624,7 @@ fn ddgi_probe_readiness_weight(state_data: ProbeStateData) -> f32 {
     }
     
     // VIGILANT, AWAKE, SLEEPING are fully ready
-    return min(1.0, f32(convergence_frames) / f32(PROBE_STATE_CONVERGENCE_FRAMES * 8u));
+    return min(1.0, f32(convergence_frames) / f32(PROBE_STATE_CONVERGENCE_FRAMES * PROBE_STATE_CONVERGENCE_READINESS_MULTIPLIER));
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -649,9 +638,8 @@ fn probe_state_is_active(state: u32) -> bool {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Check if a probe should be used for shading/sampling
-// Only probes in active states (VIGILANT, AWAKE, NEWLY_*) have sparse storage
-// allocated and valid SH data. SLEEPING and OFF probes don't have sparse slots
-// so they cannot contribute to sampling.
+// Only probes in active states (VIGILANT, AWAKE, NEWLY_*) have valid SH data.
+// SLEEPING and OFF probes are not traced and have no meaningful data.
 // NEWLY_* states are valid - their partial contribution is handled by
 // ddgi_probe_readiness_weight() for cascade fallback blending.
 // ─────────────────────────────────────────────────────────────────────────────
@@ -759,15 +747,6 @@ fn ddgi_cascade_blend_weight(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Result struct for sampling with readiness tracking
-// Used for cascade fallback blending during probe initialization
-// ─────────────────────────────────────────────────────────────────────────────
-struct DDGISampleResult {
-    irradiance: vec3<f32>,
-    readiness: f32,  // Weighted average of probe readiness (0.0 to 1.0)
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
 // Sample SH irradiance from probes with state awareness and offset-aware filtering
 //
 // This function incorporates:
@@ -826,14 +805,7 @@ fn ddgi_sample_sh_irradiance_single_cascade_internal(
         let clamped_coord = clamp(coord, vec3<u32>(0u), dims - vec3<u32>(1u));
         let probe_index = ddgi_probe_index_from_coord(ddgi_params, cascade_index, clamped_coord);
 
-        // Skip probes without valid sparse storage allocation
-        let sparse_index = ddgi_probe_sparse_index(probe_states, probe_index);
-        if (!ddgi_probe_sparse_index_is_valid(sparse_index)) {
-            continue;
-        }
-
-        // Skip OFF probes (inside geometry) and UNINITIALIZED probes (no data yet)
-        // SLEEPING and NEWLY_* probes have valid SH data and should contribute
+        // Skip probes that don't have valid data for sampling
         if (!probe_state_is_valid_for_sampling((*probe_states)[probe_index])) {
             continue;
         }
@@ -866,7 +838,6 @@ fn ddgi_sample_sh_irradiance_single_cascade_internal(
         {
             weight *= ddgi_visibility_weight_from_moments(
                 probe_depth_moments,
-                probe_states,
                 probe_index,
                 dir_from_probe,
                 dist
@@ -887,7 +858,7 @@ fn ddgi_sample_sh_irradiance_single_cascade_internal(
             weight *= trilinear_weight.x * trilinear_weight.y * trilinear_weight.z;
         }
 
-        let probe_sh = ddgi_sh_probe_read(sh_probes, probe_states, probe_index);
+        let probe_sh = ddgi_sh_probe_read(sh_probes, probe_index);
         sh_sum = sh_l1_rgb_add(sh_sum, sh_l1_rgb_multiply_scalar(probe_sh, weight));
         weight_sum = weight_sum + weight;
         readiness_weighted_sum = readiness_weighted_sum + weight * probe_readiness;
