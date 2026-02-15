@@ -16,12 +16,12 @@
 @group(1) @binding(3) var<storage, read> dispatch_params: array<u32>;
 @group(1) @binding(4) var<storage, read_write> world_cache_path_state: array<WorldCachePathState>;
 @group(1) @binding(5) var<storage, read> dense_lights_buffer: DenseLightsBuffer;
-@group(1) @binding(6) var<storage, read_write> gi_counters: GICounters;
+@group(1) @binding(6) var<storage, read> gi_counters: GICountersReadOnly;
 
 @compute @workgroup_size(128, 1, 1)
 fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     // Early exit if beyond active cell count
-    if (gid.x >= atomicLoad(&gi_counters.active_cache_cell_count)) {
+    if (gid.x >= gi_counters.active_cache_cell_count) {
         return;
     }
     

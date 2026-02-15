@@ -1025,7 +1025,6 @@ export class PTGI {
         inputs: [
           gi_params,
           skydome_data_buffer,
-          gi_counters,
           pixel_path_state,
           world_cache,
           params_gpu_buffer,

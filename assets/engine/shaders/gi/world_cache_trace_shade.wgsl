@@ -21,7 +21,7 @@
 @group(1) @binding(6) var<storage, read> material_table_offset: array<u32>;
 @group(1) @binding(7) var<storage, read> material_palette: array<u32>;
 @group(1) @binding(8) var<storage, read> dense_lights_buffer: DenseLightsBuffer;
-@group(1) @binding(9) var<storage, read_write> gi_counters: GICounters;
+@group(1) @binding(9) var<storage, read> gi_counters: GICountersReadOnly;
 @group(1) @binding(10) var texture_pool_albedo: texture_2d_array<f32>;
 @group(1) @binding(11) var texture_pool_normal: texture_2d_array<f32>;
 @group(1) @binding(12) var texture_pool_roughness: texture_2d_array<f32>;
@@ -35,7 +35,7 @@
 @compute @workgroup_size(128, 1, 1)
 fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     // Early exit if beyond active cell count
-    if (gid.x >= atomicLoad(&gi_counters.active_cache_cell_count)) {
+    if (gid.x >= gi_counters.active_cache_cell_count) {
         return;
     }
     

@@ -26,22 +26,21 @@
 
 @group(1) @binding(0) var<uniform> gi_params: GIParams;
 @group(1) @binding(1) var<uniform> scene_lighting_data: SceneLightingData;
-@group(1) @binding(2) var<storage, read_write> gi_counters: GICounters;
-@group(1) @binding(3) var<storage, read_write> pixel_path_state: array<PixelPathState>;
-@group(1) @binding(4) var<storage, read_write> world_cache: array<WorldCacheCell>;
-@group(1) @binding(5) var<storage, read> material_params: array<StandardMaterialParams>;
-@group(1) @binding(6) var<storage, read> material_table_offset: array<u32>;
-@group(1) @binding(7) var<storage, read> material_palette: array<u32>;
-@group(1) @binding(8) var<storage, read> dense_lights_buffer: DenseLightsBuffer;
-@group(1) @binding(9) var texture_pool_albedo: texture_2d_array<f32>;
-@group(1) @binding(10) var texture_pool_normal: texture_2d_array<f32>;
-@group(1) @binding(11) var texture_pool_roughness: texture_2d_array<f32>;
-@group(1) @binding(12) var texture_pool_metallic: texture_2d_array<f32>;
-@group(1) @binding(13) var texture_pool_ao: texture_2d_array<f32>;
-@group(1) @binding(14) var texture_pool_height: texture_2d_array<f32>;
-@group(1) @binding(15) var texture_pool_specular: texture_2d_array<f32>;
-@group(1) @binding(16) var texture_pool_emission: texture_2d_array<f32>;
-@group(1) @binding(17) var skybox_texture: texture_cube<f32>;
+@group(1) @binding(2) var<storage, read_write> pixel_path_state: array<PixelPathState>;
+@group(1) @binding(3) var<storage, read_write> world_cache: array<WorldCacheCell>;
+@group(1) @binding(4) var<storage, read> material_params: array<StandardMaterialParams>;
+@group(1) @binding(5) var<storage, read> material_table_offset: array<u32>;
+@group(1) @binding(6) var<storage, read> material_palette: array<u32>;
+@group(1) @binding(7) var<storage, read> dense_lights_buffer: DenseLightsBuffer;
+@group(1) @binding(8) var texture_pool_albedo: texture_2d_array<f32>;
+@group(1) @binding(9) var texture_pool_normal: texture_2d_array<f32>;
+@group(1) @binding(10) var texture_pool_roughness: texture_2d_array<f32>;
+@group(1) @binding(11) var texture_pool_metallic: texture_2d_array<f32>;
+@group(1) @binding(12) var texture_pool_ao: texture_2d_array<f32>;
+@group(1) @binding(13) var texture_pool_height: texture_2d_array<f32>;
+@group(1) @binding(14) var texture_pool_specular: texture_2d_array<f32>;
+@group(1) @binding(15) var texture_pool_emission: texture_2d_array<f32>;
+@group(1) @binding(16) var skybox_texture: texture_cube<f32>;
 
 // =============================================================================
 // MAIN COMPUTE SHADER

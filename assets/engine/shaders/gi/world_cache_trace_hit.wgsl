@@ -16,7 +16,7 @@
 @group(1) @binding(5) var<storage, read> blas_directory: array<MeshDirectoryEntry>;
 @group(1) @binding(6) var<storage, read> entity_transforms: array<EntityTransform>;
 @group(1) @binding(7) var<storage, read> index_buffer: array<u32>;
-@group(1) @binding(8) var<storage, read_write> gi_counters: GICounters;
+@group(1) @binding(8) var<storage, read> gi_counters: GICountersReadOnly;
 
 // =============================================================================
 // BLAS TRAVERSAL
@@ -596,7 +596,7 @@ fn cs(
 ) {
     // Thread ID maps to index in compacted active cell array
     let active_index = gid.x;
-    let active_cache_cell_count = atomicLoad(&gi_counters.active_cache_cell_count);
+    let active_cache_cell_count = gi_counters.active_cache_cell_count;
     if (active_index >= 2u * active_cache_cell_count) {
         return;
     }
