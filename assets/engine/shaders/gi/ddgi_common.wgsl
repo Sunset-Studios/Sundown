@@ -49,7 +49,7 @@ const PROBE_STATE_AWAKE: u32         = 6u;   // Near dynamic geometry - trace wh
 // Classification parameters
 const PROBE_STATE_INIT_FRAMES: u32         = 5u;   // Frames of tracing for classification
 const PROBE_STATE_CONVERGENCE_FRAMES: u32  = 4u;   // Frames for "Newly" states to converge
-const PROBE_STATE_CONVERGENCE_READINESS_MULTIPLIER: u32 = 16u;
+const PROBE_STATE_CONVERGENCE_READINESS_MULTIPLIER: u32 = 2u;
 const PROBE_STATE_BACKFACE_THRESHOLD: f32  = 0.5;  // Fraction of backface hits = inside geometry
 const PROBE_STATE_NEAR_GEOMETRY_DIST: f32  = 2.0;  // Multiplier of probe_spacing for "near"
 const PROBE_STATE_FLAG_CULL_VISIBLE: u32 = 1u;  // Bit 0 of flags byte (bit 24 of packed_state)
@@ -619,11 +619,11 @@ fn ddgi_probe_readiness_weight(state_data: ProbeStateData) -> f32 {
     let convergence_frames = probe_state_get_convergence_frames(state_data.packed_state);
     
     // UNINITIALIZED and OFF probes have no valid data
-    if (state == PROBE_STATE_UNINITIALIZED || state == PROBE_STATE_OFF) {
+    if (state == PROBE_STATE_UNINITIALIZED || state == PROBE_STATE_OFF || state == PROBE_STATE_SLEEPING) {
         return 0.0;
     }
     
-    // VIGILANT, AWAKE, SLEEPING are fully ready
+    // VIGILANT and AWAKE are fully ready
     return min(1.0, f32(convergence_frames) / f32(PROBE_STATE_CONVERGENCE_FRAMES * PROBE_STATE_CONVERGENCE_READINESS_MULTIPLIER));
 }
 
