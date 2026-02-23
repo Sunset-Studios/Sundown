@@ -47,9 +47,11 @@ const PROBE_STATE_VIGILANT: u32      = 5u;   // Near static geometry - always tr
 const PROBE_STATE_AWAKE: u32         = 6u;   // Near dynamic geometry - trace while active
 
 // Classification parameters
-const PROBE_STATE_INIT_FRAMES: u32         = 5u;   // Frames of tracing for classification
-const PROBE_STATE_CONVERGENCE_FRAMES: u32  = 4u;   // Frames for "Newly" states to converge
-const PROBE_STATE_CONVERGENCE_READINESS_MULTIPLIER: u32 = 2u;
+const PROBE_STATE_INIT_FRAMES: u32         = 1u;   // Frames of tracing for classification
+const PROBE_STATE_CONVERGENCE_FRAMES: u32  = 2u;   // Frames for "Newly" states to converge
+const PROBE_STATE_CONVERGENCE_READINESS_MULTIPLIER_START: f32 = 8.0;
+const PROBE_STATE_CONVERGENCE_READINESS_MULTIPLIER_END: f32 = 1.0;
+const PROBE_STATE_CONVERGENCE_READINESS_MULTIPLIER_RAMP_FRAMES: u32 = 16u;
 const PROBE_STATE_BACKFACE_THRESHOLD: f32  = 0.5;  // Fraction of backface hits = inside geometry
 const PROBE_STATE_NEAR_GEOMETRY_DIST: f32  = 2.0;  // Multiplier of probe_spacing for "near"
 const PROBE_STATE_FLAG_CULL_VISIBLE: u32 = 1u;  // Bit 0 of flags byte (bit 24 of packed_state)
@@ -619,12 +621,23 @@ fn ddgi_probe_readiness_weight(state_data: ProbeStateData) -> f32 {
     let convergence_frames = probe_state_get_convergence_frames(state_data.packed_state);
     
     // UNINITIALIZED and OFF probes have no valid data
-    if (state == PROBE_STATE_UNINITIALIZED || state == PROBE_STATE_OFF || state == PROBE_STATE_SLEEPING) {
+    if (state == PROBE_STATE_OFF || state == PROBE_STATE_SLEEPING) {
         return 0.0;
     }
-    
+
+    let readiness_multiplier_t = min(
+        1.0,
+        f32(convergence_frames) / f32(max(1u, PROBE_STATE_CONVERGENCE_READINESS_MULTIPLIER_RAMP_FRAMES))
+    );
+    let readiness_multiplier = mix(
+        PROBE_STATE_CONVERGENCE_READINESS_MULTIPLIER_START,
+        PROBE_STATE_CONVERGENCE_READINESS_MULTIPLIER_END,
+        readiness_multiplier_t
+    );
+    let readiness_frames_target = f32(PROBE_STATE_CONVERGENCE_FRAMES) * readiness_multiplier;
+
     // VIGILANT and AWAKE are fully ready
-    return min(1.0, f32(convergence_frames) / f32(PROBE_STATE_CONVERGENCE_FRAMES * PROBE_STATE_CONVERGENCE_READINESS_MULTIPLIER));
+    return min(1.0, f32(convergence_frames) / readiness_frames_target);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -778,7 +791,7 @@ fn ddgi_sample_sh_irradiance_single_cascade_internal(
 
     let view_index = u32(frame_info.view_index);
     let camera_position = view_buffer[view_index].view_position.xyz;
-    let bias_offset = (normal_ws * 0.2 + normalize(camera_position - position) * 0.8) * (0.75 * spacing) * 0.3;
+    let bias_offset = (normal_ws * 0.2 + normalize(camera_position - position) * 0.8) * (0.45 * spacing);
     let offset_pos = position + bias_offset;
 
     let rel = (offset_pos - origin) / spacing;
@@ -846,7 +859,7 @@ fn ddgi_sample_sh_irradiance_single_cascade_internal(
 
         // Perceptual weight
         {
-            let crush_threshold = 0.2;
+            let crush_threshold = 0.1;
             if (weight < crush_threshold) {
                 weight *= (weight * weight) / (crush_threshold * crush_threshold);
             }
@@ -914,8 +927,8 @@ fn ddgi_sample_sh_irradiance_with_fallback(
     // Use iteration instead of recursion (WGSL limitation)
     var accumulated_irradiance = fine_result.irradiance * fine_result.readiness;
     var accumulated_weight = fine_result.readiness;
-    var current_cascade = next_cascade;
     var remaining_weight = 1.0 - fine_result.readiness;
+    var current_cascade = next_cascade;
     
     // Iterate through coarser cascades until we have full coverage
     for (var iter = 0u; remaining_weight > 0.0001 && current_cascade < cascade_count; iter = iter + 1u) {

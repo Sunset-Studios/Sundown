@@ -148,8 +148,6 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
                     probe_states[probe_index].nearest_hit_dist,
                     spacing
                 );
-                
-                convergence_frames = 0u;
             }
         }
         

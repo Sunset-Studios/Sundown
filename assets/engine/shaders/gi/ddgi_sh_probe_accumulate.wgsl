@@ -129,10 +129,6 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     var prev_sample_count = ddgi_probe_state_get_sample_count(probe_states[probe_index]);
     var init_frames = probe_state_get_init_frames(probe_states[probe_index].packed_state);
 
-    if (init_frames < PROBE_STATE_INIT_FRAMES) {
-        return;
-    }
-    
     // ─────────────────────────────────────────────────────────────────────────
     // Phase 1: Project all ray samples onto SH basis + luminance statistics
     // Monte Carlo integration: E[L(ω)] ≈ (1/N) Σ L(ω_i) * Y(ω_i) * (4π)
