@@ -366,6 +366,24 @@ fn ddgi_probe_in_cascade(
     return all(probe_pos <= max_bound);
 }
 
+fn ddgi_position_inside_cascade_bounds(
+    ddgi_params: ptr<uniform, DDGIParams>,
+    cascade_index: u32,
+    position: vec3<f32>
+) -> bool {
+    let dims_f = vec3<f32>(
+        (*ddgi_params).probe_grid_dims.x,
+        (*ddgi_params).probe_grid_dims.y,
+        (*ddgi_params).probe_grid_dims.z
+    );
+    let spacing = ddgi_cascade_spacing(ddgi_params, cascade_index);
+    let origin = ddgi_cascade_origin(ddgi_params, cascade_index);
+    let max_bound = origin + (dims_f - vec3<f32>(1.0)) * spacing;
+    return
+        position.x >= origin.x && position.y >= origin.y && position.z >= origin.z &&
+        position.x <= max_bound.x && position.y <= max_bound.y && position.z <= max_bound.z;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Get the cascade index that contains a given world position.
 // Returns the finest (lowest index) cascade whose bounds contain the position.
@@ -376,20 +394,10 @@ fn ddgi_cascade_index_for_position(
     position: vec3<f32>
 ) -> u32 {
     let cascade_count = ddgi_cascade_count(ddgi_params);
-    let dims_f = vec3<f32>(
-        (*ddgi_params).probe_grid_dims.x,
-        (*ddgi_params).probe_grid_dims.y,
-        (*ddgi_params).probe_grid_dims.z
-    );
     
     var cascade_index = 0u;
     for (var c = 0u; c < cascade_count; c = c + 1u) {
-        let spacing = ddgi_cascade_spacing(ddgi_params, c);
-        let origin = ddgi_cascade_origin(ddgi_params, c);
-        let max_bound = origin + (dims_f - vec3<f32>(1.0)) * spacing;
-        let inside =
-            position.x >= origin.x && position.y >= origin.y && position.z >= origin.z &&
-            position.x <= max_bound.x && position.y <= max_bound.y && position.z <= max_bound.z;
+        let inside = ddgi_position_inside_cascade_bounds(ddgi_params, c, position);
         cascade_index = select(cascade_index, c, inside);
         if (inside) {
             break;
@@ -1006,6 +1014,17 @@ fn ddgi_sample_sh_irradiance_with_states(
     position: vec3<f32>,
     normal_ws: vec3<f32>
 ) -> vec3<f32> {
+    let cascade_count = ddgi_cascade_count(ddgi_params);
+    let highest_cascade_index = cascade_count - 1u;
+    let is_inside_highest_cascade = ddgi_position_inside_cascade_bounds(
+        ddgi_params,
+        highest_cascade_index,
+        position
+    );
+    if (!is_inside_highest_cascade) {
+        return vec3<f32>(0.0);
+    }
+
     let cascade_index = ddgi_cascade_index_for_position(ddgi_params, position);
     
     // Use fallback-aware sampling to handle initializing probes
@@ -1020,7 +1039,6 @@ fn ddgi_sample_sh_irradiance_with_states(
     );
 
     // Edge blending between cascades for smooth spatial transitions
-    let cascade_count = ddgi_cascade_count(ddgi_params);
     let coarser_index = cascade_index + 1u;
     let has_coarser = coarser_index < cascade_count;
     let blend_weight = select(0.0, ddgi_cascade_blend_weight(ddgi_params, cascade_index, position), has_coarser);

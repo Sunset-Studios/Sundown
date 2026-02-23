@@ -17,6 +17,7 @@
 
 #include "common.wgsl"
 #include "postprocess_common.wgsl"
+#include "sky_common.wgsl"
 #include "gi/ddgi_common.wgsl"
 
 // =============================================================================
@@ -30,6 +31,8 @@
 @group(1) @binding(4) var gbuffer_position: texture_2d<f32>;
 @group(1) @binding(5) var gbuffer_normal: texture_2d<f32>;
 @group(1) @binding(6) var output_diffuse: texture_storage_2d<rgba16float, write>;
+@group(1) @binding(7) var<uniform> scene_lighting_data: SceneLightingData;
+@group(1) @binding(8) var skybox_texture: texture_cube<f32>;
 
 // =============================================================================
 // MAIN COMPUTE SHADER
@@ -58,19 +61,38 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
     
     let normal = safe_normalize(normal_data.xyz);
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // Sample SH irradiance using shared helper (includes visibility weighting,
-    // robust fallbacks, and indirect_boost).
-    // ─────────────────────────────────────────────────────────────────────────
-    let irradiance = ddgi_sample_sh_irradiance_with_states(
+    let cascade_count = ddgi_cascade_count(&ddgi_params);
+    let highest_cascade_index = cascade_count - 1u;
+    let is_inside_highest_cascade = ddgi_position_inside_cascade_bounds(
         &ddgi_params,
-        &sh_probes,
-        &probe_states,
-        &probe_depth_moments,
-        position,
-        normal
+        highest_cascade_index,
+        position
     );
+
+    var irradiance = vec3<f32>(0.0);
+    if (!is_inside_highest_cascade) {
+        let light_view_index = u32(scene_lighting_data.view_index);
+        let sun_dir = normalize(-view_buffer[light_view_index].view_direction.xyz);
+        irradiance = evaluate_environment(
+            normal,
+            sun_dir,
+            scene_lighting_data,
+            skybox_texture
+        );
+    } else {
+        // ─────────────────────────────────────────────────────────────────────────
+        // Sample SH irradiance using shared helper (includes visibility weighting,
+        // robust fallbacks, and indirect_boost).
+        // ─────────────────────────────────────────────────────────────────────────
+        irradiance = ddgi_sample_sh_irradiance_with_states(
+            &ddgi_params,
+            &sh_probes,
+            &probe_states,
+            &probe_depth_moments,
+            position,
+            normal
+        );
+    }
 
     let exposure = 1.2;
     let tonemapped_color = reinhard_tonemapping(irradiance, exposure);

@@ -2692,6 +2692,11 @@ export class SponzaScene extends Scene {
   sun_light_entity = null;
   sun_light_base_dir = [0, 0, 0];
   time_elapsed_sec = 0;
+  emissive_cube_entity = null;
+  emissive_cube_base_pos = [0, 0, 0];
+  emissive_cube_sway_enabled = false;
+  emissive_cube_sway_max_distance = 5.0;
+  emissive_cube_sway_period_sec = 15.0;
 
   init(parent_context) {
     super.init(parent_context);
@@ -2750,14 +2755,17 @@ export class SponzaScene extends Scene {
     this.entities.push(ground_entity);
 
     // Emissive white cube in center of Sponza atrium
+    // const emissive_cube_spawn_pos = [0.0, 10.0, -0.25];
     // const emissive_cube = spawn_mesh_entity(
-    //   [0.0, 30.0, -0.25],
+    //   emissive_cube_spawn_pos,
     //   quat.fromEuler(quat.create(), 0, 0, 0),
-    //   [9.5, 0.2, 0.7],
+    //   [0.25, 0.25, 0.25],
     //   cube_mesh,
     //   emissive_white_material_id
     // );
     // this.entities.push(emissive_cube);
+    // this.emissive_cube_entity = emissive_cube;
+    // this.emissive_cube_base_pos = [...emissive_cube_spawn_pos];
 
     let root_entity = this.load_gltf_scene(
       "engine/models/sponza/Sponza.gltf",
@@ -2777,25 +2785,44 @@ export class SponzaScene extends Scene {
       this.sway_light_enabled = !this.sway_light_enabled;
     }
 
-    if (!this.sway_light_enabled || !this.sun_light_entity) return;
+    if (this.sway_light_enabled && this.sun_light_entity) {
+      const base_x = this.sun_light_base_dir[0];
+      const base_y = this.sun_light_base_dir[1];
+      const base_z = this.sun_light_base_dir[2];
 
-    const base_x = this.sun_light_base_dir[0];
-    const base_y = this.sun_light_base_dir[1];
-    const base_z = this.sun_light_base_dir[2];
+      const two_pi = Math.PI * 2.0;
+      const phase = (this.time_elapsed_sec / this.sway_period_sec) * two_pi;
+      const angle_rad = Math.sin(phase) * ((this.sway_angle_deg * Math.PI) / 180.0);
 
-    const two_pi = Math.PI * 2.0;
-    const phase = (this.time_elapsed_sec / this.sway_period_sec) * two_pi;
-    const angle_rad = Math.sin(phase) * ((this.sway_angle_deg * Math.PI) / 180.0);
+      const cos_a = Math.cos(angle_rad);
+      const sin_a = Math.sin(angle_rad);
+      const rot_x = base_x * cos_a + base_z * sin_a;
+      const rot_z = -base_x * sin_a + base_z * cos_a;
 
-    const cos_a = Math.cos(angle_rad);
-    const sin_a = Math.sin(angle_rad);
-    const rot_x = base_x * cos_a + base_z * sin_a;
-    const rot_z = -base_x * sin_a + base_z * cos_a;
+      const light_fragment_view = EntityManager.get_fragment(this.sun_light_entity, LightFragment);
+      if (light_fragment_view) {
+        light_fragment_view.position = [rot_x, base_y, rot_z];
+        light_fragment_view.shadows_dirty = 1;
+      }
+    }
 
-    const light_fragment_view = EntityManager.get_fragment(this.sun_light_entity, LightFragment);
-    if (light_fragment_view) {
-      light_fragment_view.position = [rot_x, base_y, rot_z];
-      light_fragment_view.shadows_dirty = 1;
+    if (
+      this.emissive_cube_sway_enabled &&
+      this.emissive_cube_entity &&
+      this.emissive_cube_sway_period_sec > 0.0
+    ) {
+      const two_pi = Math.PI * 2.0;
+      const phase = (this.time_elapsed_sec / this.emissive_cube_sway_period_sec) * two_pi;
+      const x_offset = Math.sin(phase) * this.emissive_cube_sway_max_distance;
+
+      const cube_x = this.emissive_cube_base_pos[0] + x_offset;
+      const cube_y = this.emissive_cube_base_pos[1];
+      const cube_z = this.emissive_cube_base_pos[2];
+
+      const cube_tf = EntityManager.get_fragment(this.emissive_cube_entity, TransformFragment);
+      if (cube_tf) {
+        cube_tf.position = [cube_x, cube_y, cube_z];
+      }
     }
   }
 
@@ -3130,8 +3157,8 @@ export class SciFiCityScene extends Scene {
   //await scene_switcher.add_scene(gi_test_scene);
   //await scene_switcher.add_scene(shadow_test_scene);
   //await scene_switcher.add_scene(gltf_model_scene);
-  await scene_switcher.add_scene(sponza_scene);
-  //await scene_switcher.add_scene(living_room_scene);
+  //await scene_switcher.add_scene(sponza_scene);
+  await scene_switcher.add_scene(living_room_scene);
   //await scene_switcher.add_scene(city_scene);
   //await scene_switcher.add_scene(scifi_city_scene);
 

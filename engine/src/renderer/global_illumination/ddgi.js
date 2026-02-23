@@ -221,7 +221,7 @@ const ddgi_probe_cull_shader_setup = {
 export class DDGI {
   config = {
     probe_grid_dimensions: [64, 64, 64],
-    probe_spacing: 0.5,
+    probe_spacing: 1.0,
     probe_radius: 0.1,
     rays_per_probe: 128,
     probes_per_frame: 512,
@@ -1218,6 +1218,8 @@ export class DDGI {
           gbuffer_position,
           gbuffer_normal,
           this.final_gi_texture_indirect_diffuse,
+          skydome_data_buffer,
+          skybox_texture_buffer,
         ],
         outputs: [this.final_gi_texture_indirect_diffuse],
         shader_setup: ddgi_sh_probe_sample_shader_setup,
