@@ -14,9 +14,8 @@ import { ResourceCache } from "../resource_cache.js";
 import { ispot, npot } from "../../utility/math.js";
 
 const COMPUTE_WORKGROUP_SIZE = 256;
-const DDGI_PROBE_DEPTH_RES = 16;
-const DDGI_PROBE_DEPTH_TEXEL_COUNT = DDGI_PROBE_DEPTH_RES * DDGI_PROBE_DEPTH_RES;
-const DDGI_MAX_CASCADES = 8;
+const DDGI_DEFAULT_PROBE_DEPTH_RESOLUTION = 16;
+const DDGI_MAX_CASCADES = 6;
 
 const DDGI_GI_COUNTERS_NAME = "ddgi_gi_counters";
 const DDGI_GI_COUNTER_LIGHT_COUNT_INDEX = 0;
@@ -221,15 +220,16 @@ const ddgi_probe_cull_shader_setup = {
 
 export class DDGI {
   config = {
-    probe_grid_dimensions: [32, 32, 32],
-    probe_spacing: 2.0,
-    probe_radius: 0.2,
+    probe_grid_dimensions: [64, 64, 64],
+    probe_spacing: 0.5,
+    probe_radius: 0.1,
     rays_per_probe: 128,
     probes_per_frame: 512,
     probe_update_culled_ratio: 0.1,
     indirect_boost: 1.0,
     cascade_count: DDGI_MAX_CASCADES,
     cascade_spacing_multiplier: 2.0,
+    probe_depth_resolutions: [8, 8, 4, 4, 4, 4],
   };
 
   ddgi_frame_setup = {
@@ -261,9 +261,10 @@ export class DDGI {
   // [29]    permutation_base_offset  (precomputed base offset for permutation)
   // [30]    permutation_frame_stride (precomputed frame stride for temporal offset)
   // [31]    reserved (padding for 16-byte alignment before cascades array)
-  // [32+]   cascade[0..N]: origin_spacing(4), scroll_offset(4), snap_delta(4)
-  // ... (12 floats per cascade)
-  ddgi_params_data = new Float32Array(32 + 12 * DDGI_MAX_CASCADES);
+  // [32+]   cascade[0..N]:
+  //         origin_spacing(4), scroll_offset(4), snap_delta(4), depth_atlas_info(4)
+  // ... (16 floats per cascade)
+  ddgi_params_data = new Float32Array(32 + 16 * DDGI_MAX_CASCADES);
   ddgi_params = null;
 
   // ┌─────────────────────────────────────────────────────────────────────────────┐
@@ -516,6 +517,7 @@ export class DDGI {
 
     const base_spacing = this.config.probe_spacing;
     const cascade_spacing_multiplier = Math.max(1.0, this.config.cascade_spacing_multiplier);
+    const probe_depth_resolutions = this._sanitize_probe_depth_resolutions(cascade_count);
 
     if (
       !this.ddgi_probe_grid_snapped_origin ||
@@ -532,7 +534,8 @@ export class DDGI {
       this.ddgi_probe_grid_initialized = Array.from({ length: cascade_count }, () => false);
     }
 
-    const cascade_data = new Float32Array(cascade_count * 12);
+    const cascade_data = new Float32Array(cascade_count * 16);
+    let total_depth_texel_count = 0;
     let cascade_has_scroll = false;
 
     for (let cascade_index = 0; cascade_index < cascade_count; cascade_index += 1) {
@@ -578,7 +581,12 @@ export class DDGI {
         cascade_has_scroll = true;
       }
 
-      const base_index = cascade_index * 12;
+      const depth_resolution = probe_depth_resolutions[cascade_index];
+      const depth_texel_count_per_probe = depth_resolution * depth_resolution;
+      const cascade_depth_base_offset = total_depth_texel_count;
+      total_depth_texel_count += probes_per_cascade * depth_texel_count_per_probe;
+
+      const base_index = cascade_index * 16;
       cascade_data[base_index + 0] = snapped_origin[0];
       cascade_data[base_index + 1] = snapped_origin[1];
       cascade_data[base_index + 2] = snapped_origin[2];
@@ -592,6 +600,10 @@ export class DDGI {
       cascade_data[base_index + 10] = snap_delta_z;
       cascade_data[base_index + 11] =
         snap_delta_x !== 0 || snap_delta_y !== 0 || snap_delta_z !== 0 ? 1 : 0;
+      cascade_data[base_index + 12] = depth_resolution;
+      cascade_data[base_index + 13] = depth_texel_count_per_probe;
+      cascade_data[base_index + 14] = cascade_depth_base_offset;
+      cascade_data[base_index + 15] = 0;
     }
 
     const grid_log2 = [
@@ -764,13 +776,18 @@ export class DDGI {
 
     // ─────────────────────────────────────────────────────────────────────────
     // Probe Depth Moments Buffers (Directional visibility, octahedral 8x8)
+    // Per-cascade depth atlas resolution:
+    // - Configurable through config.probe_depth_resolutions[cascade_index]
+    // - atlas uses packed u32 moments (f16 mean_t, f16 mean_t2)
+    // - total size is the sum over all cascades
+    //
     // Each texel stores a single u32 with two f16-packed values:
     // - bits [0..15]  = mean_t   (f16)
     // - bits [16..31] = mean_t2  (f16)
     // ─────────────────────────────────────────────────────────────────────────
     const probe_depth_moments = render_graph.create_buffer({
       name: "ddgi_probe_depth_moments",
-      size: probe_count * DDGI_PROBE_DEPTH_TEXEL_COUNT,
+      size: total_depth_texel_count,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
       force: force_recreate,
     });
@@ -843,7 +860,8 @@ export class DDGI {
         this.ddgi_params_data[31] = 0; // padding for 16-byte alignment
 
         // Copy cascade data into params buffer (starts at offset 32)
-        // Each cascade has 12 floats: origin_spacing(4), scroll_offset(4), snap_delta(4)
+        // Each cascade has 16 floats:
+        // origin_spacing(4), scroll_offset(4), snap_delta(4), depth_atlas_info(4)
         for (let i = 0; i < cascade_data.length; i++) {
           this.ddgi_params_data[32 + i] = cascade_data[i];
         }
@@ -1236,6 +1254,31 @@ export class DDGI {
     }
     if (!ispot(out[2])) {
       out[2] = npot(out[2]);
+    }
+
+    return out;
+  }
+
+  _sanitize_probe_depth_resolutions(cascade_count) {
+    const default_resolution = DDGI_DEFAULT_PROBE_DEPTH_RESOLUTION;
+    const configured_resolutions = Array.isArray(this.config.probe_depth_resolutions)
+      ? this.config.probe_depth_resolutions
+      : [];
+    const out = new Uint32Array(cascade_count);
+
+    for (let cascade_index = 0; cascade_index < cascade_count; cascade_index += 1) {
+      const configured_resolution = configured_resolutions[cascade_index];
+      let resolution =
+        Number.isFinite(configured_resolution) && configured_resolution > 0
+          ? Math.floor(configured_resolution)
+          : default_resolution;
+
+      resolution = Math.max(4, Math.min(64, resolution));
+      if (!ispot(resolution)) {
+        resolution = npot(resolution);
+      }
+
+      out[cascade_index] = resolution;
     }
 
     return out;

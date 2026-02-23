@@ -27,8 +27,6 @@
 // =============================================================================
 
 const GOLDEN_RATIO_CONJUGATE = 0.6180339887498948;
-const DDGI_PROBE_DEPTH_RES = 16u;
-const DDGI_DEPTH_TEXEL_COUNT = 256u;
 const DDGI_VISIBILITY_MIN_VARIANCE = 1e-4;
 const DDGI_CASCADE_BLEND_WINDOW_PROBES = 4.0;
 
@@ -57,12 +55,13 @@ const PROBE_STATE_NEAR_GEOMETRY_DIST: f32  = 2.0;  // Multiplier of probe_spacin
 const PROBE_STATE_FLAG_CULL_VISIBLE: u32 = 1u;  // Bit 0 of flags byte (bit 24 of packed_state)
 
 // Maximum number of DDGI cascades supported
-const DDGI_MAX_CASCADES: u32 = 8u;
+const DDGI_MAX_CASCADES: u32 = 6u;
 
 struct DDGICascadeData {
     origin_spacing: vec4<f32>, // xyz = cascade origin, w = probe spacing
     scroll_offset: vec4<f32>,  // xyz = ring buffer scroll offset (probe cells), w = unused
     snap_delta: vec4<f32>,     // xyz = delta in probe cells, w = active (1/0)
+    depth_atlas_info: vec4<f32>, // x = depth_res, y = depth_texel_count_per_probe, z = depth_base_texel_offset, w = unused
 };
 
 struct DDGIParams {
@@ -189,8 +188,38 @@ fn ddgi_cascade_spacing(ddgi_params: ptr<uniform, DDGIParams>, cascade_index: u3
     return (*ddgi_params).cascades[cascade_index].origin_spacing.w;
 }
 
+fn ddgi_depth_resolution_for_cascade(ddgi_params: ptr<uniform, DDGIParams>, cascade_index: u32) -> u32 {
+    return u32((*ddgi_params).cascades[cascade_index].depth_atlas_info.x);
+}
+
+fn ddgi_depth_texel_count_for_cascade(ddgi_params: ptr<uniform, DDGIParams>, cascade_index: u32) -> u32 {
+    return u32((*ddgi_params).cascades[cascade_index].depth_atlas_info.y);
+}
+
+fn ddgi_depth_base_offset_for_cascade(ddgi_params: ptr<uniform, DDGIParams>, cascade_index: u32) -> u32 {
+    return u32((*ddgi_params).cascades[cascade_index].depth_atlas_info.z);
+}
+
 fn ddgi_probe_spacing_from_index(ddgi_params: ptr<uniform, DDGIParams>, probe_index: u32) -> f32 {
     return ddgi_cascade_spacing(ddgi_params, ddgi_probe_cascade_index(ddgi_params, probe_index));
+}
+
+fn ddgi_depth_resolution_for_probe(ddgi_params: ptr<uniform, DDGIParams>, probe_index: u32) -> u32 {
+    let cascade_index = ddgi_probe_cascade_index(ddgi_params, probe_index);
+    return ddgi_depth_resolution_for_cascade(ddgi_params, cascade_index);
+}
+
+fn ddgi_depth_texel_count_for_probe(ddgi_params: ptr<uniform, DDGIParams>, probe_index: u32) -> u32 {
+    let cascade_index = ddgi_probe_cascade_index(ddgi_params, probe_index);
+    return ddgi_depth_texel_count_for_cascade(ddgi_params, cascade_index);
+}
+
+fn ddgi_depth_base_for_probe(ddgi_params: ptr<uniform, DDGIParams>, probe_index: u32) -> u32 {
+    let cascade_index = ddgi_probe_cascade_index(ddgi_params, probe_index);
+    let local_probe_index = ddgi_probe_index_in_cascade(ddgi_params, probe_index);
+    let cascade_base_offset = ddgi_depth_base_offset_for_cascade(ddgi_params, cascade_index);
+    let depth_texel_count = ddgi_depth_texel_count_for_cascade(ddgi_params, cascade_index);
+    return cascade_base_offset + local_probe_index * depth_texel_count;
 }
 
 fn ddgi_cascade_scroll_offset(ddgi_params: ptr<uniform, DDGIParams>, cascade_index: u32) -> vec3<u32> {
@@ -477,25 +506,28 @@ fn ddgi_depth_moments_unpack(packed: u32) -> vec2<f32> {
     return unpack2x16float(packed);
 }
 
-fn ddgi_depth_texel_id(texel_coord: vec2<u32>) -> u32 {
-    return texel_coord.x + texel_coord.y * DDGI_PROBE_DEPTH_RES;
+fn ddgi_depth_texel_id(texel_coord: vec2<u32>, depth_res: u32) -> u32 {
+    return texel_coord.x + texel_coord.y * depth_res;
 }
 
 fn ddgi_visibility_weight_from_moments(
+    ddgi_params: ptr<uniform, DDGIParams>,
     probe_depth_moments: ptr<storage, array<u32>, read>,
     probe_index: u32,
     direction_from_probe: vec3<f32>,
     dist: f32
 ) -> f32 {
+    let depth_res = ddgi_depth_resolution_for_probe(ddgi_params, probe_index);
+
     // Map direction to octahedral UV in texel space with half-texel offset
     // so that texel centers align with integer coordinates for bilinear filtering
-    let uv = encode_octahedral(direction_from_probe) * f32(DDGI_PROBE_DEPTH_RES) - 0.5;
+    let uv = encode_octahedral(direction_from_probe) * f32(depth_res) - 0.5;
     let base_f = floor(uv);
     let frac = uv - base_f;
     let base_i = vec2<i32>(base_f);
 
-    let base_idx = probe_index * DDGI_DEPTH_TEXEL_COUNT;
-    let max_coord = i32(DDGI_PROBE_DEPTH_RES) - 1;
+    let base_idx = ddgi_depth_base_for_probe(ddgi_params, probe_index);
+    let max_coord = i32(depth_res) - 1;
 
     // Bilinear sample with clamped coordinates to prevent out-of-bounds reads
     let c00 = vec2<u32>(clamp(base_i, vec2<i32>(0), vec2<i32>(max_coord)));
@@ -503,10 +535,10 @@ fn ddgi_visibility_weight_from_moments(
     let c01 = vec2<u32>(clamp(base_i + vec2<i32>(0, 1), vec2<i32>(0), vec2<i32>(max_coord)));
     let c11 = vec2<u32>(clamp(base_i + vec2<i32>(1, 1), vec2<i32>(0), vec2<i32>(max_coord)));
 
-    let m00 = ddgi_depth_moments_unpack((*probe_depth_moments)[base_idx + ddgi_depth_texel_id(c00)]);
-    let m10 = ddgi_depth_moments_unpack((*probe_depth_moments)[base_idx + ddgi_depth_texel_id(c10)]);
-    let m01 = ddgi_depth_moments_unpack((*probe_depth_moments)[base_idx + ddgi_depth_texel_id(c01)]);
-    let m11 = ddgi_depth_moments_unpack((*probe_depth_moments)[base_idx + ddgi_depth_texel_id(c11)]);
+    let m00 = ddgi_depth_moments_unpack((*probe_depth_moments)[base_idx + ddgi_depth_texel_id(c00, depth_res)]);
+    let m10 = ddgi_depth_moments_unpack((*probe_depth_moments)[base_idx + ddgi_depth_texel_id(c10, depth_res)]);
+    let m01 = ddgi_depth_moments_unpack((*probe_depth_moments)[base_idx + ddgi_depth_texel_id(c01, depth_res)]);
+    let m11 = ddgi_depth_moments_unpack((*probe_depth_moments)[base_idx + ddgi_depth_texel_id(c11, depth_res)]);
 
     let moments = mix(mix(m00, m10, frac.x), mix(m01, m11, frac.x), frac.y);
 
@@ -850,6 +882,7 @@ fn ddgi_sample_sh_irradiance_single_cascade_internal(
         // Probe visibility weight from depth moments
         {
             weight *= ddgi_visibility_weight_from_moments(
+                ddgi_params,
                 probe_depth_moments,
                 probe_index,
                 dir_from_probe,

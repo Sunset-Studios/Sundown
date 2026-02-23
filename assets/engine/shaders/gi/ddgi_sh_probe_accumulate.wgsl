@@ -76,11 +76,18 @@ fn ddgi_sh_average_radiance_luma(sh: SH_L1_RGB) -> f32 {
 // map and the depth moments (mean_t, mean_t²) are updated with an exponential
 // moving average. The read side uses bilinear interpolation for smooth results.
 // ─────────────────────────────────────────────────────────────────────────────
-fn depth_moment_update(depth_base: u32, ray_dir: vec3<f32>, t: f32, t2: f32, update_alpha: f32) {
-    let uv = encode_octahedral(safe_normalize(ray_dir)) * f32(DDGI_PROBE_DEPTH_RES);
-    let max_coord = i32(DDGI_PROBE_DEPTH_RES) - 1;
+fn depth_moment_update(
+    depth_base: u32,
+    depth_res: u32,
+    ray_dir: vec3<f32>,
+    t: f32,
+    t2: f32,
+    update_alpha: f32
+) {
+    let uv = encode_octahedral(safe_normalize(ray_dir)) * f32(depth_res);
+    let max_coord = i32(depth_res) - 1;
     let texel_coord = vec2<u32>(clamp(vec2<i32>(uv), vec2<i32>(0), vec2<i32>(max_coord)));
-    let idx = depth_base + ddgi_depth_texel_id(texel_coord);
+    let idx = depth_base + ddgi_depth_texel_id(texel_coord, depth_res);
     let prev = ddgi_depth_moments_unpack(probe_depth_moments[idx]);
     probe_depth_moments[idx] = ddgi_depth_moments_pack(
         prev.x + (t - prev.x) * update_alpha,
@@ -120,7 +127,8 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     
     let dst_coord = ddgi_probe_coord_from_index(&ddgi_params, probe_index);
 
-    let depth_base = probe_index * DDGI_DEPTH_TEXEL_COUNT;
+    let depth_base = ddgi_depth_base_for_probe(&ddgi_params, probe_index);
+    let depth_res = ddgi_depth_resolution_for_probe(&ddgi_params, probe_index);
 
     // -------------------------------------------------------------------------
     // Warm start (copy/reproject history into current for THIS probe)
@@ -233,7 +241,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         let t = min(select(miss_distance, abs(t_raw), is_valid_hit), miss_distance);
         let t2 = t * t;
 
-        depth_moment_update(depth_base, ray_dir, t, t2, alpha);
+        depth_moment_update(depth_base, depth_res, ray_dir, t, t2, alpha);
     }
 
     // ─────────────────────────────────────────────────────────────────────────

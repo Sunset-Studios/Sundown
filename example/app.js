@@ -2763,7 +2763,7 @@ export class SponzaScene extends Scene {
       "engine/models/sponza/Sponza.gltf",
       [0, 2.5, 0],
       [0, 0, 0, 1],
-      [2.5, 2.5, 2.5]
+      [1.0, 1.0, 1.0]
     );
     this.entities.push(root_entity);
   }
@@ -2872,7 +2872,7 @@ export class LivingRoomScene extends Scene {
       "engine/models/living_room/living_room.gltf",
       [0, 0, 0],
       [0, 0, 0, 1],
-      [5, 5, 5],
+      [1, 1, 1],
     );
     this.entities.push(living_room_entity);
 
@@ -2898,7 +2898,7 @@ export class LivingRoomScene extends Scene {
           instance_index
         );
         transform_view.position = [x, y, z];
-        transform_view.scale = [10, 10, 10];
+        transform_view.scale = [2, 2, 2];
 
         instance_index++;
       }

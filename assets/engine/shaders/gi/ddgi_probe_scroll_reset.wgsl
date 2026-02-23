@@ -96,8 +96,9 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
 
     // Initialize depth moments to "not visible" (0).
-    let depth_base = probe_index * DDGI_DEPTH_TEXEL_COUNT;
-    for (var texel = 0u; texel < DDGI_DEPTH_TEXEL_COUNT; texel = texel + 1u) {
+    let depth_base = ddgi_depth_base_for_probe(&ddgi_params, probe_index);
+    let depth_texel_count = ddgi_depth_texel_count_for_probe(&ddgi_params, probe_index);
+    for (var texel = 0u; texel < depth_texel_count; texel = texel + 1u) {
         probe_depth_moments[depth_base + texel] = 0u;
     }
 
