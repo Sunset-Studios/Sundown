@@ -1740,8 +1740,13 @@ export class GITestScene extends Scene {
   init(parent_context) {
     super.init(parent_context);
 
-    const room_size = 10.0;
-    const wall_thickness = 0.1;
+    // Mesh.cube() spans [-1, 1], so final dimensions are 2 * scale.
+    // Keep Cornell boxes around 3.5m interior size (target: 3-4m).
+    const cornell_box_size_m = 3.5;
+    const room_size = cornell_box_size_m * 0.5;
+    const wall_thickness = 0.05;
+    const box_spacing = 12.0;
+    const scene_y_offset = -3.5;
     const ambient_emissive = 0.0;
 
     // camera arcball
@@ -1753,7 +1758,7 @@ export class GITestScene extends Scene {
 
     // camera
     const view_data = SharedViewBuffer.get_view_data(0);
-    view_data.view_position = [0, 23, 40];
+    view_data.view_position = [0, 8 + scene_y_offset, 24];
     view_data.view_rotation = [0.0005166, 0.9986818, -0.027326133, 0.0188794];
 
     // directional light
@@ -1764,7 +1769,7 @@ export class GITestScene extends Scene {
     light_fragment_view.type = LightType.DIRECTIONAL;
     light_fragment_view.color = [1, 1, 1];
     light_fragment_view.intensity = 0.5;
-    light_fragment_view.position = [5, 5, 5];
+    light_fragment_view.position = [5, 5 + scene_y_offset, 5];
     light_fragment_view.active = true;
     light_fragment_view.is_primary_sun = 1;
     light_fragment_view.shadow_clipmaps = MAX_CLIPMAP_LEVELS;
@@ -1877,7 +1882,7 @@ export class GITestScene extends Scene {
     const floor_plane = spawn_mesh_entity(
       [0, -5, 0],
       [0, 0, 0, 1],
-      [3000, 4.5, 3000],
+      [200, 1, 200],
       cube_mesh,
       metallic_floor_material_id
     );
@@ -1887,7 +1892,7 @@ export class GITestScene extends Scene {
     {
       // floor top at y=0
       const floor = spawn_mesh_entity(
-        [0, -wall_thickness, 0],
+        [0, scene_y_offset - wall_thickness, 0],
         [0, 0, 0, 1],
         [room_size, wall_thickness, room_size],
         cube_mesh,
@@ -1897,7 +1902,7 @@ export class GITestScene extends Scene {
 
       // ceiling bottom at y=room_size
       const ceiling = spawn_mesh_entity(
-        [0, room_size * 2.0 + wall_thickness, 0.0],
+        [0, scene_y_offset + room_size * 2.0 + wall_thickness, 0.0],
         [0, 0, 0, 1],
         [room_size, wall_thickness, room_size],
         cube_mesh,
@@ -1907,9 +1912,9 @@ export class GITestScene extends Scene {
 
       // White emissive rectangle on ceiling (light)
       const emissive_light = spawn_mesh_entity(
-        [0, room_size * 2.0 - 0.1, 0.0],
+        [0, scene_y_offset + room_size * 2.0 - 0.1, 0.0],
         [0, 0, 0, 1],
-        [4.0, 0.1, 4.0],
+        [0.5, 0.1, 0.5],
         cube_mesh,
         emissive_white_material_id
       );
@@ -1917,7 +1922,7 @@ export class GITestScene extends Scene {
 
       // back wall inner surface at z=-room_size/2
       const back_wall = spawn_mesh_entity(
-        [0, room_size, -room_size - wall_thickness],
+        [0, scene_y_offset + room_size, -room_size - wall_thickness],
         [0, 0, 0, 1],
         [room_size, room_size, wall_thickness],
         cube_mesh,
@@ -1927,7 +1932,7 @@ export class GITestScene extends Scene {
 
       // left wall inner surface at x=-room_size/2
       const left_wall = spawn_mesh_entity(
-        [-room_size - wall_thickness, room_size, 0],
+        [-room_size - wall_thickness, scene_y_offset + room_size, 0],
         [0, 0, 0, 1],
         [wall_thickness, room_size, room_size],
         cube_mesh,
@@ -1937,7 +1942,7 @@ export class GITestScene extends Scene {
 
       // right wall inner surface at x=+room_size/2
       const right_wall = spawn_mesh_entity(
-        [room_size + wall_thickness, room_size, 0],
+        [room_size + wall_thickness, scene_y_offset + room_size, 0],
         [0, 0, 0, 1],
         [wall_thickness, room_size, room_size],
         cube_mesh,
@@ -1947,12 +1952,12 @@ export class GITestScene extends Scene {
 
       // blockout "buildings"
       const building_data = [
-        { mesh: cube_mesh, position: [-3, 2, -3], scale: [1, 2, 1], material_id: gray_material_id },
-        { mesh: cube_mesh, position: [2, 3, -2], scale: [1, 3, 1], material_id: red_material_id },
+        { mesh: cube_mesh, position: [-0.9, scene_y_offset + 0.65, -0.9], scale: [0.45, 0.65, 0.45], material_id: gray_material_id },
+        { mesh: cube_mesh, position: [0.85, scene_y_offset + 0.95, -0.45], scale: [0.35, 0.95, 0.35], material_id: red_material_id },
         {
           mesh: sphere_mesh,
-          position: [-1, 1.5, 2],
-          scale: [1.5, 1.5, 1.5],
+          position: [-0.2, scene_y_offset + 0.35, 0.85],
+          scale: [0.35, 0.35, 0.35],
           material_id: blue_material_id,
         },
       ];
@@ -1967,9 +1972,9 @@ export class GITestScene extends Scene {
         this.entities.push(b);
       }
     }
-    // Additional Cornell box with different wall colors at x = -30
+    // Additional Cornell box with different wall colors at x = -box_spacing
     {
-      const offset_x = -30.0;
+      const offset_x = -box_spacing;
 
       const left_wall_material_second = StandardMaterial.create("testgym_left_material_second");
       const left_wall_material_second_id = left_wall_material_second.material_id;
@@ -1985,7 +1990,7 @@ export class GITestScene extends Scene {
 
       // spawn elements for second box
       const floor_second = spawn_mesh_entity(
-        [offset_x, -wall_thickness, 0],
+        [offset_x, scene_y_offset - wall_thickness, 0],
         [0, 0, 0, 1],
         [room_size, wall_thickness, room_size],
         cube_mesh,
@@ -1994,7 +1999,7 @@ export class GITestScene extends Scene {
       this.entities.push(floor_second);
 
       const ceiling_second = spawn_mesh_entity(
-        [offset_x, room_size * 2.0 + wall_thickness, 0],
+        [offset_x, scene_y_offset + room_size * 2.0 + wall_thickness, 0],
         [0, 0, 0, 1],
         [room_size, wall_thickness, room_size],
         cube_mesh,
@@ -2004,16 +2009,16 @@ export class GITestScene extends Scene {
 
       // White emissive rectangle on ceiling (light)
       const emissive_light_second = spawn_mesh_entity(
-        [offset_x, room_size * 2.0 - 0.1, 0.0],
+        [offset_x, scene_y_offset + room_size * 2.0 - 0.1, 0.0],
         [0, 0, 0, 1],
-        [4.0, 0.1, 4.0],
+        [0.5, 0.1, 0.5],
         cube_mesh,
         emissive_white_material_id
       );
       this.entities.push(emissive_light_second);
 
       const back_wall_second = spawn_mesh_entity(
-        [offset_x, room_size, -room_size - wall_thickness],
+        [offset_x, scene_y_offset + room_size, -room_size - wall_thickness],
         [0, 0, 0, 1],
         [room_size, room_size, wall_thickness],
         cube_mesh,
@@ -2022,7 +2027,7 @@ export class GITestScene extends Scene {
       this.entities.push(back_wall_second);
 
       const left_wall_second = spawn_mesh_entity(
-        [offset_x - (room_size + wall_thickness), room_size, 0],
+        [offset_x - (room_size + wall_thickness), scene_y_offset + room_size, 0],
         [0, 0, 0, 1],
         [wall_thickness, room_size, room_size],
         cube_mesh,
@@ -2031,7 +2036,7 @@ export class GITestScene extends Scene {
       this.entities.push(left_wall_second);
 
       const right_wall_second = spawn_mesh_entity(
-        [offset_x + room_size + wall_thickness, room_size, 0],
+        [offset_x + room_size + wall_thickness, scene_y_offset + room_size, 0],
         [0, 0, 0, 1],
         [wall_thickness, room_size, room_size],
         cube_mesh,
@@ -2042,14 +2047,14 @@ export class GITestScene extends Scene {
       const building_data_second = [
         {
           mesh: cube_mesh,
-          position: [offset_x - 3, 2, -3],
-          scale: [1, 2, 1],
+          position: [offset_x - 0.7, scene_y_offset + 0.55, -0.7],
+          scale: [0.4, 0.55, 0.4],
           material_id: left_wall_material_second_id,
         },
         {
           mesh: sphere_mesh,
-          position: [offset_x + 2, 1.5, 2],
-          scale: [1.5, 1.5, 1.5],
+          position: [offset_x + 0.55, scene_y_offset + 0.3, 0.75],
+          scale: [0.3, 0.3, 0.3],
           material_id: right_wall_material_second_id,
         },
       ];
@@ -2064,9 +2069,9 @@ export class GITestScene extends Scene {
         this.entities.push(b);
       }
     }
-    // Additional Cornell box with different wall colors at x = 30
+    // Additional Cornell box with different wall colors at x = +box_spacing
     {
-      const offset_x = 30.0;
+      const offset_x = box_spacing;
 
       const left_wall_material_third = StandardMaterial.create("testgym_left_material_third");
       const left_wall_material_third_id = left_wall_material_third.material_id;
@@ -2081,7 +2086,7 @@ export class GITestScene extends Scene {
       right_wall_material_third.set_metallic(0.9);
 
       const floor_third = spawn_mesh_entity(
-        [offset_x, -wall_thickness, 0],
+        [offset_x, scene_y_offset - wall_thickness, 0],
         [0, 0, 0, 1],
         [room_size, wall_thickness, room_size],
         cube_mesh,
@@ -2090,7 +2095,7 @@ export class GITestScene extends Scene {
       this.entities.push(floor_third);
 
       const ceiling_third = spawn_mesh_entity(
-        [offset_x, room_size * 2.0 + wall_thickness, 0],
+        [offset_x, scene_y_offset + room_size * 2.0 + wall_thickness, 0],
         [0, 0, 0, 1],
         [room_size, wall_thickness, room_size],
         cube_mesh,
@@ -2100,16 +2105,16 @@ export class GITestScene extends Scene {
 
       // White emissive rectangle on ceiling (light)
       const emissive_light_third = spawn_mesh_entity(
-        [offset_x, room_size * 2.0 - 0.1, 0.0],
+        [offset_x, scene_y_offset + room_size * 2.0 - 0.1, 0.0],
         [0, 0, 0, 1],
-        [4.0, 0.1, 4.0],
+        [0.5, 0.1, 0.5],
         cube_mesh,
         emissive_white_material_id
       );
       this.entities.push(emissive_light_third);
 
       const back_wall_third = spawn_mesh_entity(
-        [offset_x, room_size, -room_size - wall_thickness],
+        [offset_x, scene_y_offset + room_size, -room_size - wall_thickness],
         [0, 0, 0, 1],
         [room_size, room_size, wall_thickness],
         cube_mesh,
@@ -2118,7 +2123,7 @@ export class GITestScene extends Scene {
       this.entities.push(back_wall_third);
 
       const left_wall_third = spawn_mesh_entity(
-        [offset_x - (room_size + wall_thickness), room_size, 0],
+        [offset_x - (room_size + wall_thickness), scene_y_offset + room_size, 0],
         [0, 0, 0, 1],
         [wall_thickness, room_size, room_size],
         cube_mesh,
@@ -2127,7 +2132,7 @@ export class GITestScene extends Scene {
       this.entities.push(left_wall_third);
 
       const right_wall_third = spawn_mesh_entity(
-        [offset_x + room_size + wall_thickness, room_size, 0],
+        [offset_x + room_size + wall_thickness, scene_y_offset + room_size, 0],
         [0, 0, 0, 1],
         [wall_thickness, room_size, room_size],
         cube_mesh,
@@ -2138,14 +2143,14 @@ export class GITestScene extends Scene {
       const building_data_third = [
         {
           mesh: sphere_mesh,
-          position: [offset_x - 2, 2.5, -2],
-          scale: [1.5, 1.5, 1.5],
+          position: [offset_x - 0.6, scene_y_offset + 0.4, -0.6],
+          scale: [0.4, 0.4, 0.4],
           material_id: left_wall_material_third_id,
         },
         {
           mesh: cube_mesh,
-          position: [offset_x + 3, 1, 5],
-          scale: [2, 1, 2],
+          position: [offset_x + 0.7, scene_y_offset + 0.45, 0.7],
+          scale: [0.45, 0.45, 0.45],
           material_id: right_wall_material_third_id,
         },
       ];
@@ -2161,12 +2166,12 @@ export class GITestScene extends Scene {
       }
     }
 
-    // Load and place the station behind the three Cornell boxes (large scale)
+    // Load and place the station behind the three Cornell boxes.
     let station_root = this.load_gltf_scene(
       "engine/models/station/station.gltf",
-      [0, 0, -100],
+      [0, scene_y_offset, -45],
       [0, 0, 0, 1],
-      [10, 10, 10]
+      [1.5, 1.5, 1.5]
     );
     this.entities.push(station_root);
   }
@@ -3158,9 +3163,9 @@ export class SciFiCityScene extends Scene {
   //await scene_switcher.add_scene(shadow_test_scene);
   //await scene_switcher.add_scene(gltf_model_scene);
   //await scene_switcher.add_scene(sponza_scene);
-  await scene_switcher.add_scene(living_room_scene);
+  //await scene_switcher.add_scene(living_room_scene);
   //await scene_switcher.add_scene(city_scene);
-  //await scene_switcher.add_scene(scifi_city_scene);
+  await scene_switcher.add_scene(scifi_city_scene);
 
   simulator.add_sim_layer(scene_switcher);
 

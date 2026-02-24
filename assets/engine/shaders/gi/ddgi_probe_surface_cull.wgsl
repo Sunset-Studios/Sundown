@@ -92,13 +92,19 @@ fn probe_overlaps_blas(
             }
         } else {
             let left_idx = u32(node.min.w);
-            if (aabb_overlaps(probe_min_local, probe_max_local, blas_bvh2_nodes[left_idx].min.xyz, blas_bvh2_nodes[left_idx].max.xyz)) {
+            if (left_idx != node_idx
+                && left_idx != INVALID_IDX
+                && aabb_overlaps(probe_min_local, probe_max_local, blas_bvh2_nodes[left_idx].min.xyz, blas_bvh2_nodes[left_idx].max.xyz)
+                ) {
                 node_stack[stack_size] = left_idx;
                 stack_size = stack_size + 1u;
             }
 
             let right_idx = u32(node.max.w);
-            if (aabb_overlaps(probe_min_local, probe_max_local, blas_bvh2_nodes[right_idx].min.xyz, blas_bvh2_nodes[right_idx].max.xyz)) {
+            if (right_idx != node_idx
+                && right_idx != INVALID_IDX
+                && aabb_overlaps(probe_min_local, probe_max_local, blas_bvh2_nodes[right_idx].min.xyz, blas_bvh2_nodes[right_idx].max.xyz)
+                ) {
                 node_stack[stack_size] = right_idx;
                 stack_size = stack_size + 1u;
             }
@@ -140,13 +146,19 @@ fn probe_overlaps_scene(probe_min: vec3<f32>, probe_max: vec3<f32>) -> bool {
             }
         } else {
             let left_idx = u32(node.min.w);
-            if (aabb_overlaps(probe_min, probe_max, tlas_bvh2_bounds[left_idx].min.xyz, tlas_bvh2_bounds[left_idx].max.xyz)) {
+            if (left_idx != node_idx
+                && left_idx != INVALID_IDX
+                && aabb_overlaps(probe_min, probe_max, tlas_bvh2_bounds[left_idx].min.xyz, tlas_bvh2_bounds[left_idx].max.xyz)
+                ) {
                 node_stack[stack_size] = left_idx;
                 stack_size = stack_size + 1u;
             }
 
             let right_idx = u32(node.max.w);
-            if (aabb_overlaps(probe_min, probe_max, tlas_bvh2_bounds[right_idx].min.xyz, tlas_bvh2_bounds[right_idx].max.xyz)) {
+            if (right_idx != node_idx
+                && right_idx != INVALID_IDX
+                && aabb_overlaps(probe_min, probe_max, tlas_bvh2_bounds[right_idx].min.xyz, tlas_bvh2_bounds[right_idx].max.xyz)
+                ) {
                 node_stack[stack_size] = right_idx;
                 stack_size = stack_size + 1u;
             }
