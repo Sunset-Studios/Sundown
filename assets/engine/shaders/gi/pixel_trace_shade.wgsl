@@ -96,6 +96,8 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         pixel_path_state[gid.x].throughput_indirect_diffuse += select(indirect_add, vec4f(0.0), is_specular_lobe);
         pixel_path_state[gid.x].throughput_indirect_specular += select(vec4f(0.0), indirect_add, is_specular_lobe);
         pixel_path_state[gid.x].state_u32.y = 0u; // Mark path as dead
+
+        pixel_path_state[gid.x].rng_sample_count_frame_stamp.y += 1.0;
     }
     
     // ─────────────────────────────────────────────────────────────────────────
@@ -162,13 +164,8 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         if (emissive > 0.0) {
             let emissive_radiance = emissive * albedo;
             let hit_distance = max(pixel_path_state[gid.x].origin_tmin.w, 0.001);
-            let ray_source_pdf = pixel_path_state[gid.x].path_weight.w;
-            let contribution_luminance = luminance(emissive_radiance);
-                
-            // Distance-based maximum for firefly reduction
-            let max_contribution = emissive * PI * (1.0 / hit_distance);
-            let scale = min(1.0, (max_contribution * ray_source_pdf) / max(contribution_luminance, 0.001));
-            let emissive_contribution = safe_clamp_vec3_max(emissive_radiance * scale, MAX_NEE_LUMINANCE);
+            let max_contribution = emissive * 2.0 * PI * (1.0 / hit_distance) * pixel_path_state[gid.x].path_weight.w;
+            let emissive_contribution = safe_clamp_vec3_max(emissive_radiance * max_contribution, MAX_NEE_LUMINANCE);
 
             let is_specular_lobe = pixel_path_state[gid.x].state_u32.x == 1u;
             let indirect_add = vec4f(emissive_contribution, 0.0);
@@ -179,21 +176,25 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         // ─────────────────────────────────────────────────────────────────────
         // World Cache Query (Multi-Bounce Irradiance)
         // ─────────────────────────────────────────────────────────────────────
-        let cached_radiance = query_world_cache_cell(
-            hit_pos,
-            n,
-            albedo,
-            roughness,
-            metallic,
-            reflectance,
-            emissive,
-            camera_position,
-            u32(gi_params.world_cache_size),
-            gi_params.world_cache_cell_size,
-            u32(gi_params.world_cache_lod_count),
-            pixel_path_state[gid.x].origin_tmin.w,
-            0u // Screen space traces rank at 0 (first hit)
-        );
+        let hit_distance_for_cache = pixel_path_state[gid.x].origin_tmin.w;
+        var cached_radiance = vec3<f32>(0.0);
+        if (hit_distance_for_cache >= gi_params.world_cache_cell_size * 0.5) {
+            cached_radiance = query_world_cache_cell(
+                hit_pos,
+                n,
+                albedo,
+                roughness,
+                metallic,
+                reflectance,
+                emissive,
+                camera_position,
+                u32(gi_params.world_cache_size),
+                gi_params.world_cache_cell_size,
+                u32(gi_params.world_cache_lod_count),
+                hit_distance_for_cache,
+                0u // Screen space traces rank at 0 (first hit)
+            );
+        }
         
         // Apply cached radiance if valid, with firefly clamping
         let cached_luminance = luminance(cached_radiance);

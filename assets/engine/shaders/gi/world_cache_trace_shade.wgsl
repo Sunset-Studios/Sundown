@@ -59,7 +59,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     if (path.shadow_origin.w >= 0.0 && path.state_u32.z == 1u) {
         radiance_contribution += safe_clamp_vec3_max(path.shadow_radiance.rgb, MAX_NEE_LUMINANCE);
         world_cache_path_state[gid.x].state_u32.z = 0u;
-        sample_count = 1.0;
+        sample_count += 1.0;
     }
     
     // === Handle Ray Miss (Sky contribution) ===
@@ -76,7 +76,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         );
         // Add sky contribution weighted by path throughput
         radiance_contribution += safe_clamp_vec3_max(sky_radiance, MAX_RADIANCE_LUMINANCE);
-        sample_count = 1.0;
+        sample_count += 1.0;
     }
     
     // === Handle Ray Hit ===
@@ -143,18 +143,11 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         // === EMISSIVE CONTRIBUTION ===
         if (emissive > 0.0) {
             let emissive_radiance = emissive * albedo;
-            let hit_distance = max(path.origin_tmin.w, 0.01);
-            
-            // Apply distance-aware attenuation for emissive
-            let distance_factor = 1.0 / hit_distance;
-            let max_contribution = emissive * PI * distance_factor;
-            let ray_source_pdf = path.path_weight.w;
-            let raw_contribution = emissive_radiance;
-            let scale = min(1.0, (max_contribution * ray_source_pdf) / max(luminance(raw_contribution), 0.001));
-            
-            let emissive_contribution = raw_contribution * scale;
+            let hit_distance = max(path.origin_tmin.w, 0.001);
+            let max_contribution = emissive * 2.0 * PI * (1.0 / hit_distance) * path.path_weight.w;
+            let emissive_contribution = emissive_radiance * max_contribution;
             radiance_contribution += safe_clamp_vec3_max(emissive_contribution, MAX_NEE_LUMINANCE);
-            sample_count = 1.0;
+            sample_count += 1.0;
         }
 
         // === INDIRECT LIGHTING - Query world cache for multi-bounce ===
@@ -183,7 +176,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         let cached_luminance = luminance(cached_radiance);
         if (cached_luminance > 0.0001) {
             radiance_contribution += safe_clamp_vec3_max(cached_radiance * path.path_weight.xyz, MAX_RADIANCE_LUMINANCE);
-            sample_count = 1.0;
+            sample_count += 1.0;
         }
     }
     
