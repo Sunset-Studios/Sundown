@@ -51,7 +51,7 @@ const PROBE_STATE_CONVERGENCE_READINESS_MULTIPLIER_START: f32 = 8.0;
 const PROBE_STATE_CONVERGENCE_READINESS_MULTIPLIER_END: f32 = 1.0;
 const PROBE_STATE_CONVERGENCE_READINESS_MULTIPLIER_RAMP_FRAMES: u32 = 16u;
 const PROBE_STATE_BACKFACE_THRESHOLD: f32  = 0.5;  // Fraction of backface hits = inside geometry
-const PROBE_STATE_NEAR_GEOMETRY_DIST: f32  = 2.0;  // Multiplier of probe_spacing for "near"
+const PROBE_STATE_NEAR_GEOMETRY_DIST: f32  = 1.0;  // Multiplier of probe_spacing for "near"
 const PROBE_STATE_FLAG_CULL_VISIBLE: u32 = 1u;  // Bit 0 of flags byte (bit 24 of packed_state)
 
 // Maximum number of DDGI cascades supported

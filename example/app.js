@@ -3084,7 +3084,7 @@ export class SciFiCityScene extends Scene {
     const area_light_plane = spawn_mesh_entity(
       [250.0, 80.0, -10.0],  // Positioned off to the side and elevated
       quat.fromEuler(quat.create(), 0, -90, 10),  // Angled slightly towards scene
-      [100.0, 60.0, 1.0],  // Large flat plane
+      [50.0, 30.0, 1.0],  // Large flat plane
       cube_mesh,
       area_light_material_id
     );
@@ -3093,7 +3093,7 @@ export class SciFiCityScene extends Scene {
     const area_light_plane2 = spawn_mesh_entity(
       [100.0, 80.0, 200.0],  // Positioned off to the side and elevated
       quat.fromEuler(quat.create(), 0, 45, 10),  // Angled slightly towards scene
-      [100.0, 60.0, 1.0],  // Large flat plane
+      [50.0, 30.0, 1.0],  // Large flat plane
       cube_mesh,
       area_light_material_id
     );
@@ -3105,10 +3105,10 @@ export class SciFiCityScene extends Scene {
     let scifi_city_root = this.load_gltf_scene("engine/models/scifi-city/CityScene.gltf",
       [0, 0, 0],
       [0, 0, 0, 1],
-      [10, 10, 10],
+      [5, 5, 5],
       null,
       null,
-      null
+      null,
     );
     this.entities.push(scifi_city_root);
 
@@ -3162,10 +3162,10 @@ export class SciFiCityScene extends Scene {
   //await scene_switcher.add_scene(gi_test_scene);
   //await scene_switcher.add_scene(shadow_test_scene);
   //await scene_switcher.add_scene(gltf_model_scene);
-  //await scene_switcher.add_scene(sponza_scene);
+  await scene_switcher.add_scene(sponza_scene);
   //await scene_switcher.add_scene(living_room_scene);
   //await scene_switcher.add_scene(city_scene);
-  await scene_switcher.add_scene(scifi_city_scene);
+  //await scene_switcher.add_scene(scifi_city_scene);
 
   simulator.add_sim_layer(scene_switcher);
 

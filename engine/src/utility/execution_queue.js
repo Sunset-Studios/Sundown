@@ -20,6 +20,15 @@ export default class ExecutionQueue {
         }
     }
 
+    remove_execution_by_id(execution_id) {
+        const index = this.execution_ids.indexOf(execution_id);
+        if (index !== -1) {
+            this.executions.splice(index, 1);
+            this.execution_delays.splice(index, 1);
+            this.execution_ids.splice(index, 1);
+        }
+    }
+
     update() {
         for (let i = this.executions.length - 1; i >= 0; --i) {
             if (--this.execution_delays[i] < 0) {

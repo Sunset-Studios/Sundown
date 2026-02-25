@@ -3,6 +3,7 @@ import { Name } from "../utility/names.js";
 import { ResourceCache } from "./resource_cache.js";
 import { ImageFlags } from "./renderer_types.js";
 import { CacheTypes } from "./renderer_types.js";
+import { MAX_BUFFERED_FRAMES } from "../core/minimal.js";
 import { global_dispatcher } from "../core/dispatcher.js";
 import { TextureArrayPools } from "./texture_pool.js";
 import {
@@ -148,9 +149,16 @@ export class Texture {
 
   destroy() {
     ResourceCache.get().remove(CacheTypes.IMAGE, Name.from(this.config.name));
-    if (this.image) {
-      this.image.destroy();
-    }
+    // if (this.image) {
+    //   let old_image = this.image;
+    //   Renderer.get().render_graph.queue_resource_deletion(
+    //     () => {
+    //       old_image.destroy();
+    //     },
+    //     `image_${this.physical_id}`,
+    //     MAX_BUFFERED_FRAMES + 1
+    //   );
+    // }
     this.image = null;
   }
 

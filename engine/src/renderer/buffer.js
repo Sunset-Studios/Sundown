@@ -83,14 +83,29 @@ export class Buffer {
       Renderer.get().unqueue_post_commands(this.config.name);
     }
     ResourceCache.get().remove(CacheTypes.BUFFER, Name.from(this.config.name));
-    if (this.cpu_buffers) {
-      for (let i = 0; i < MAX_BUFFERED_FRAMES; ++i) {
-        this.cpu_buffers[i]?.destroy();
-      }
-    }
-    if (this.buffer) {
-      this.buffer.destroy();
-    }
+
+    // if (this.cpu_buffers) {
+    //   for (let i = 0; i < MAX_BUFFERED_FRAMES; ++i) {
+    //     let old_cpu_buffer = this.cpu_buffers[i];
+    //     Renderer.get().render_graph.queue_resource_deletion(
+    //       () => {
+    //         old_cpu_buffer?.destroy();
+    //       },
+    //       `buffer_cpu_${this.physical_id}_${i}`,
+    //       MAX_BUFFERED_FRAMES + 1
+    //     );
+    //   }
+    // }
+    // if (this.buffer) {
+    //   let old_buffer = this.buffer;
+    //   Renderer.get().render_graph.queue_resource_deletion(
+    //     () => {
+    //       old_buffer?.destroy();
+    //     },
+    //     `buffer_${this.physical_id}`,
+    //     MAX_BUFFERED_FRAMES + 1
+    //   );
+    // }
     this.cpu_buffer = null;
     this.buffer = null;
   }
@@ -164,7 +179,7 @@ export class Buffer {
         data_offset,
         size ?? data.length
       );
-    if (this.config.dispatch) {
+      if (this.config.dispatch) {
         global_dispatcher.dispatch(this.config.name, this);
       }
     }

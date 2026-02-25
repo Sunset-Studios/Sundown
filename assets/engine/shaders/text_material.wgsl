@@ -87,9 +87,9 @@ fn fragment(v_out: VertexOutput, f_out: ptr<function, FragmentOutput>) -> Fragme
     f_out.albedo = vec4<precision_float>(string_color.rgb, mask);
     f_out.motion_emissive.a = emissive;
 
-    f_out.smra.r = 2555.0;
+    f_out.smra.r = 1.0;
     f_out.smra.g = 0.5;
-    f_out.smra.b = 0.3;
+    f_out.smra.b = 0.1;
     f_out.smra.a = 0.0;
 
     return *f_out;

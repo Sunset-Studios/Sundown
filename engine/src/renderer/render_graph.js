@@ -508,6 +508,15 @@ export class RenderGraph {
     this._add_queued_pre_commands();
   }
 
+  queue_resource_deletion(execution, execution_id, execution_frame_delay = 0) {
+    this.registry.resource_deletion_queue.remove_execution_by_id(execution_id);
+    this.registry.resource_deletion_queue.push_execution(
+      execution,
+      execution_id,
+      execution_frame_delay
+    );
+  }
+
   /**
    * Creates a new image resource in the render graph.
    *
@@ -1523,12 +1532,11 @@ export class RenderGraph {
         buffer_resource.config.raw_data = null;
 
         if (!buffer_metadata.b_is_persistent) {
-          this.registry.resource_deletion_queue.remove_execution(buffer_metadata.physical_id);
-          this.registry.resource_deletion_queue.push_execution(
+          this.queue_resource_deletion(
             () => {
               buffer.destroy();
             },
-            buffer_metadata.physical_id,
+            `buffer_${buffer_metadata.physical_id}`,
             buffer_metadata.max_frame_lifetime
           );
         }
@@ -1547,12 +1555,11 @@ export class RenderGraph {
         const image = Texture.create(image_resource.config);
 
         if (!image_metadata.b_is_persistent) {
-          this.registry.resource_deletion_queue.remove_execution(image_metadata.physical_id);
-          this.registry.resource_deletion_queue.push_execution(
+          this.queue_resource_deletion(
             () => {
               image.destroy();
             },
-            image_metadata.physical_id,
+            `image_${image_metadata.physical_id}`,
             image_metadata.max_frame_lifetime
           );
         }
