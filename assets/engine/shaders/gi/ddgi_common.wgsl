@@ -55,7 +55,7 @@ const PROBE_STATE_NEAR_GEOMETRY_DIST: f32  = 1.0;  // Multiplier of probe_spacin
 const PROBE_STATE_FLAG_CULL_VISIBLE: u32 = 1u;  // Bit 0 of flags byte (bit 24 of packed_state)
 
 // Maximum number of DDGI cascades supported
-const DDGI_MAX_CASCADES: u32 = 6u;
+const DDGI_MAX_CASCADES: u32 = 8u;
 
 struct DDGICascadeData {
     origin_spacing: vec4<f32>, // xyz = cascade origin, w = probe spacing
@@ -65,7 +65,7 @@ struct DDGICascadeData {
 };
 
 struct DDGIParams {
-    probe_counts: vec4<f32>,      // x=probe_count_total, y=rays_per_probe, z=probes_per_frame, w=probe_spacing_base
+    probe_counts: vec4<f32>,      // x=probe_count_total, y=max_rays_per_probe, z=probes_per_frame, w=probe_spacing_base
     probe_grid_dims: vec4<f32>,   // x=dim_x, y=dim_y, z=dim_z, w=probe_radius
     probe_grid_origin: vec4<f32>, // xyz = grid origin, w = unused
     probe_grid_log2: vec4<f32>,   // xyz = log2(dim_*), w = unused
@@ -78,7 +78,7 @@ struct DDGIParams {
     permutation_stride: f32,       // Precomputed coprime stride for probe cycling (CPU-computed)
     permutation_base_offset: f32,  // Precomputed base offset for permutation (CPU-computed)
     permutation_frame_stride: f32, // Precomputed frame stride for temporal offset (CPU-computed)
-    padding: f32,                  // Padding for 16-byte alignment
+    min_rays_per_probe: f32,       // min_rays_per_probe
     cascades: array<DDGICascadeData, DDGI_MAX_CASCADES>, // Per-cascade data (origin, scroll, snap)
 };
 
@@ -155,6 +155,15 @@ fn ddgi_probe_state_get_sample_count(probe_state: ProbeStateData) -> u32 {
 
 fn ddgi_probe_state_set_sample_count(probe_state: ptr<storage, ProbeStateData, read_write>, count: u32) {
     (*probe_state).probe_offset.w = f32(count);
+}
+
+
+fn ddgi_max_rays_per_probe(ddgi_params: ptr<uniform, DDGIParams>) -> u32 {
+    return max(1u, u32((*ddgi_params).probe_counts.y));
+}
+
+fn ddgi_min_rays_per_probe(ddgi_params: ptr<uniform, DDGIParams>) -> u32 {
+    return min(ddgi_max_rays_per_probe(ddgi_params), max(1u, u32((*ddgi_params).min_rays_per_probe)));
 }
 
 fn ddgi_probe_count_per_cascade(ddgi_params: ptr<uniform, DDGIParams>) -> u32 {
@@ -831,7 +840,7 @@ fn ddgi_sample_sh_irradiance_single_cascade_internal(
 
     let view_index = u32(frame_info.view_index);
     let camera_position = view_buffer[view_index].view_position.xyz;
-    let bias_offset = (normal_ws * 0.2 + normalize(camera_position - position) * 0.8) * (0.45 * spacing);
+    let bias_offset = (normal_ws * 0.2 + normalize(camera_position - position) * 0.8) * (0.75 * spacing);
     let offset_pos = position + bias_offset;
 
     let rel = (offset_pos - origin) / spacing;

@@ -25,11 +25,12 @@
 
 @group(1) @binding(0) var<uniform> ddgi_params: DDGIParams;
 @group(1) @binding(1) var<storage, read> probe_update_indices: array<u32>;
-@group(1) @binding(2) var<storage, read_write> probe_ray_data: DDGIProbeRayDataBuffer;
-@group(1) @binding(3) var<storage, read_write> sh_probes: array<u32>;
-@group(1) @binding(4) var<storage, read_write> probe_depth_moments: array<u32>;
-@group(1) @binding(5) var<storage, read_write> probe_states: array<ProbeStateData>;
-@group(1) @binding(6) var<storage, read> gi_counters: GICountersReadOnly;
+@group(1) @binding(2) var<storage, read> probe_ray_allocations: array<vec2<u32>>;
+@group(1) @binding(3) var<storage, read_write> probe_ray_data: DDGIProbeRayDataBuffer;
+@group(1) @binding(4) var<storage, read_write> sh_probes: array<u32>;
+@group(1) @binding(5) var<storage, read_write> probe_depth_moments: array<u32>;
+@group(1) @binding(6) var<storage, read_write> probe_states: array<ProbeStateData>;
+@group(1) @binding(7) var<storage, read> gi_counters: GICountersReadOnly;
 
 // =============================================================================
 // CONSTANTS
@@ -104,16 +105,16 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     // ─────────────────────────────────────────────────────────────────────────
     // Early exit if we're beyond the number of probes to update this frame
     // ─────────────────────────────────────────────────────────────────────────
-    let max_probes_per_frame = u32(ddgi_params.probe_counts.z);
     let active_probe_count = gi_counters.probe_update_count;
-    let rays_per_probe = u32(ddgi_params.probe_counts.y);
     
     if (gid.x >= active_probe_count) {
         return;
     }
     
     let probe_index = probe_update_indices[gid.x];
-    let ray_base = gid.x * rays_per_probe;
+    let allocation = probe_ray_allocations[gid.x];
+    let ray_base = allocation.x;
+    let rays_per_probe = max(1u, allocation.y);
     
     // ─────────────────────────────────────────────────────────────────────────
     // Compute probe grid reprojection for snapped grids

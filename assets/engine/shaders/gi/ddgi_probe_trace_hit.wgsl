@@ -621,16 +621,14 @@ fn process_primary_ray(
 // =============================================================================
 @compute @workgroup_size(256, 1, 1)
 fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
-    let rays_per_probe = u32(ddgi_params.probe_counts.y);
     let active_ray_count = probe_ray_data.header.active_ray_count;
 
     if (gid.x >= active_ray_count || probe_ray_data.rays[gid.x].state_u32.y == 0u) {
         return;
     }
 
-    let probe_slot = gid.x / rays_per_probe;
-    let ray_index_in_probe = gid.x - probe_slot * rays_per_probe;
     let probe_index = probe_ray_data.rays[gid.x].meta_u32.x;
+    let ray_index_in_probe = probe_ray_data.rays[gid.x].meta_u32.y;
     let probe_position = ddgi_probe_world_position_from_index_with_offset(&ddgi_params, &probe_states, probe_index);
 
     let ray_dir = probe_ray_data.rays[gid.x].ray_dir_prim.xyz;

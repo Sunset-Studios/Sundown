@@ -32,7 +32,6 @@
 
 @compute @workgroup_size(256, 1, 1)
 fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
-    let rays_per_probe = u32(ddgi_params.probe_counts.y);
     let active_ray_count = probe_ray_data.header.active_ray_count;
 
     if (gid.x >= active_ray_count || probe_ray_data.rays[gid.x].state_u32.y == 0u) {
@@ -41,8 +40,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
 
     let hit = probe_ray_data.rays[gid.x];
     let ray_dir = hit.ray_dir_prim.xyz;
-    let probe_slot = gid.x / rays_per_probe;
-    let ray_index_in_probe = gid.x - probe_slot * rays_per_probe;
+    let ray_index_in_probe = hit.meta_u32.y;
     let probe_index = hit.meta_u32.x;
 
     let light_view_index = u32(scene_lighting_data.view_index);

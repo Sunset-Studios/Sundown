@@ -25,9 +25,10 @@
 
 @group(1) @binding(0) var<uniform> ddgi_params: DDGIParams;
 @group(1) @binding(1) var<storage, read> probe_update_indices: array<u32>;
-@group(1) @binding(2) var<storage, read_write> probe_ray_data: DDGIProbeRayDataBuffer;
-@group(1) @binding(3) var<storage, read_write> probe_states: array<ProbeStateData>;
-@group(1) @binding(4) var<storage, read> gi_counters: GICountersReadOnly;
+@group(1) @binding(2) var<storage, read> probe_ray_allocations: array<vec2<u32>>;
+@group(1) @binding(3) var<storage, read_write> probe_ray_data: DDGIProbeRayDataBuffer;
+@group(1) @binding(4) var<storage, read_write> probe_states: array<ProbeStateData>;
+@group(1) @binding(5) var<storage, read> gi_counters: GICountersReadOnly;
 
 // =============================================================================
 // HELPER FUNCTIONS
@@ -45,7 +46,7 @@ struct ProbeRayAnalysis {
 };
 
 fn analyze_probe_rays(
-    probe_slot: u32,
+    ray_base: u32,
     rays_per_probe: u32
 ) -> ProbeRayAnalysis {
     var result: ProbeRayAnalysis;
@@ -54,8 +55,6 @@ fn analyze_probe_rays(
     result.nearest_hit_normal = vec3<f32>(0.0, 0.0, 0.0);
     var backface_count = 0u;
 
-    let ray_base = probe_slot * rays_per_probe;
-    
     for (var i = 0u; i < rays_per_probe; i = i + 1u) {
         let ray_index = ray_base + i;
         let t_raw = probe_ray_data.rays[ray_index].hit_pos_t.w;
@@ -90,17 +89,18 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     // Early exit if beyond probe count
     // ─────────────────────────────────────────────────────────────────────────
     let active_probe_count = gi_counters.probe_update_count;
-    let rays_per_probe = u32(ddgi_params.probe_counts.y);
     
     if (gid.x >= active_probe_count) {
         return;
     }
 
-    let probe_slot = gid.x;
     let probe_index = probe_update_indices[gid.x];
+    let allocation = probe_ray_allocations[gid.x];
+    let ray_base = allocation.x;
+    let rays_per_probe = max(1u, allocation.y);
     let spacing = ddgi_probe_spacing_from_index(&ddgi_params, probe_index);
     let probe_radius = ddgi_params.probe_grid_dims.w;
-    let ray_analysis = analyze_probe_rays(gid.x, rays_per_probe);
+    let ray_analysis = analyze_probe_rays(ray_base, rays_per_probe);
     
     // ─────────────────────────────────────────────────────────────────────────
     // Read current probe state (using read_write version for modify pass)
@@ -215,7 +215,6 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
 
         var candidate_is_clear = true;
         var min_candidate_dist = 1e30;
-        let ray_base = probe_slot * rays_per_probe;
 
         for (var i = 0u; i < rays_per_probe; i = i + 1u) {
             let ray_index = ray_base + i;
