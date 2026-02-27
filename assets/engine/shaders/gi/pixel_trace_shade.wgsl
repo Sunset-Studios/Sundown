@@ -80,11 +80,15 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
 #endif
     
+
     // ─────────────────────────────────────────────────────────────────────────
     // Handle Ray Miss (Sky/Environment)
     // Clamp sky contribution to prevent sun disc fireflies on specular bounces
     // ─────────────────────────────────────────────────────────────────────────
     if (pixel_path_state[gid.x].state_u32.w == 0xffffffffu && pixel_path_state[gid.x].state_u32.y != 0u) {
+        let is_specular_lobe = pixel_path_state[gid.x].state_u32.x == 1u;
+
+#ifndef DONT_SHADE_WITH_SKY_ON_RAY_MISS
         // Evaluate environment radiance
         let sky_radiance = evaluate_environment(
             pixel_path_state[gid.x].direction_tmax.xyz, 
@@ -95,13 +99,17 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         
         // Clamp sky radiance. This prevents sun disc from causing fireflies on specular surfaces.
         let sky_contribution = safe_clamp_vec3_max(sky_radiance, MAX_RADIANCE_LUMINANCE);
-        let is_specular_lobe = pixel_path_state[gid.x].state_u32.x == 1u;
         let indirect_add = vec4f(sky_contribution, 0.0);
         pixel_path_state[gid.x].throughput_indirect_diffuse += select(indirect_add, vec4f(0.0), is_specular_lobe);
         pixel_path_state[gid.x].throughput_indirect_specular += select(vec4f(0.0), indirect_add, is_specular_lobe);
-        pixel_path_state[gid.x].state_u32.y = 0u; // Mark path as dead
+#else
+        let indirect_add = vec4f(1.0, 1.0, 1.0, 0.0);
+        pixel_path_state[gid.x].throughput_indirect_diffuse += indirect_add;
+        pixel_path_state[gid.x].throughput_indirect_specular += indirect_add;
+#endif
 
         pixel_path_state[gid.x].rng_sample_count_frame_stamp.y += 1.0;
+        pixel_path_state[gid.x].state_u32.y = 0u; // Mark path as dead
     }
     
     // ─────────────────────────────────────────────────────────────────────────

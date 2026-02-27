@@ -224,6 +224,72 @@ const ddgi_probe_cull_shader_setup = {
   },
 };
 
+const ddgi_short_range_gi_reset_shader_setup = {
+  pipeline_shaders: {
+    compute: { path: "gi/gi_reset.wgsl" },
+  },
+};
+
+const ddgi_short_range_pixel_trace_init_shader_setup = {
+  pipeline_shaders: {
+    compute: { path: "gi/pixel_trace_init.wgsl" },
+  },
+};
+
+const ddgi_short_range_pixel_trace_hit_shader_setup = {
+  pipeline_shaders: {
+    compute: { path: "gi/pixel_trace_hit.wgsl" },
+  },
+};
+
+const ddgi_short_range_pixel_trace_shade_shader_setup = {
+  pipeline_shaders: {
+    compute: {
+      path: "gi/pixel_trace_shade.wgsl",
+      defines: {
+        DISABLE_WORLD_CACHE_SAMPLING: true,
+        DONT_SHADE_WITH_SKY_ON_RAY_MISS: true,
+      },
+    },
+  },
+};
+
+const ddgi_short_range_pixel_temporal_reservoir_shader_setup = {
+  pipeline_shaders: {
+    compute: { path: "gi/pixel_temporal_reservoir.wgsl" },
+  },
+};
+
+const ddgi_short_range_pixel_spatial_reservoir_wide_shader_setup = {
+  pipeline_shaders: {
+    compute: { path: "gi/pixel_spatial_reservoir_wide.wgsl" },
+  },
+};
+
+const ddgi_short_range_pixel_spatial_reservoir_narrow_shader_setup = {
+  pipeline_shaders: {
+    compute: { path: "gi/pixel_spatial_reservoir_narrow.wgsl" },
+  },
+};
+
+const ddgi_short_range_pixel_accumulate_shader_setup = {
+  pipeline_shaders: {
+    compute: { path: "gi/pixel_accumulate.wgsl" },
+  },
+};
+
+const ddgi_short_range_pixel_upscale_final_shader_setup = {
+  pipeline_shaders: {
+    compute: { path: "gi/pixel_upscale_final.wgsl" },
+  },
+};
+
+const ddgi_short_range_add_shader_setup = {
+  pipeline_shaders: {
+    compute: { path: "gi/ddgi_short_range_add.wgsl" },
+  },
+};
+
 export class DDGI {
   config = {
     probe_grid_dimensions: [64, 64, 64],
@@ -237,6 +303,10 @@ export class DDGI {
     cascade_count: DDGI_MAX_CASCADES,
     cascade_spacing_multiplier: 2.0,
     probe_depth_resolutions: [8, 4, 4, 4, 4, 4, 4, 4],
+    short_range_gi_enabled: true,
+    short_range_screen_ray_count: 1,
+    short_range_upscale_factor: 2,
+    short_range_max_ray_length: 1.0,
   };
 
   ddgi_frame_setup = {
@@ -273,6 +343,21 @@ export class DDGI {
   // ... (16 floats per cascade)
   ddgi_params_data = new Float32Array(32 + 16 * DDGI_MAX_CASCADES);
   ddgi_params = null;
+  short_range_gi_params_data = new Float32Array([
+    0, // screen_ray_count
+    0, // world_cache_size
+    0, // world_cache_cell_size
+    0, // total_pixels
+    0, // frame_index
+    0, // indirect_boost
+    0, // upscale_factor
+    0, // world_cache_lod_count
+    0, // full_resolution_x
+    0, // full_resolution_y
+    0, // gi_resolution_x
+    0, // gi_resolution_y
+    0, // max_ray_length
+  ]);
 
   // ┌─────────────────────────────────────────────────────────────────────────────┐
   // │ Probe grid snap tracking (CPU-side)                                          │
@@ -351,7 +436,12 @@ export class DDGI {
         height,
         render_graph,
         gbuffer_position,
+        gbuffer_position_prev,
         gbuffer_normal,
+        gbuffer_normal_prev,
+        gbuffer_albedo,
+        gbuffer_smra,
+        gbuffer_motion_emissive,
         tlas_bvh2_bounds,
         tlas_bvh_info,
         blas_bvh2_nodes,
@@ -497,7 +587,12 @@ export class DDGI {
     height,
     render_graph,
     gbuffer_position,
+    gbuffer_position_prev,
     gbuffer_normal,
+    gbuffer_normal_prev,
+    gbuffer_albedo,
+    gbuffer_smra,
+    gbuffer_motion_emissive,
     tlas_bvh2_bounds,
     tlas_bvh_info,
     blas_bvh2_nodes,
@@ -1293,9 +1388,589 @@ export class DDGI {
       }
     );
 
+    if (this.config.short_range_gi_enabled) {
+      this._add_short_range_gi_passes(
+        render_graph,
+        width,
+        height,
+        gbuffer_position,
+        gbuffer_position_prev,
+        gbuffer_normal,
+        gbuffer_normal_prev,
+        gbuffer_albedo,
+        gbuffer_smra,
+        gbuffer_motion_emissive,
+        tlas_bvh2_bounds,
+        tlas_bvh_info,
+        blas_bvh2_nodes,
+        blas_directory,
+        entity_transforms,
+        index_buffer,
+        dense_lights,
+        params_gpu_buffer,
+        material_palette_offsets_buffer,
+        material_palette_buffer,
+        skydome_data_buffer,
+        albedo_pool_buffer,
+        normal_pool_buffer,
+        roughness_pool_buffer,
+        metallic_pool_buffer,
+        ao_pool_buffer,
+        height_pool_buffer,
+        specular_pool_buffer,
+        emission_pool_buffer,
+        skybox_texture_buffer,
+        force_recreate
+      );
+    }
+
     this.ddgi_probe_count = probe_count;
     this.shared_bindings.sh_probes_buffer = sh_probes;
     this.shared_bindings.probe_states_buffer = probe_states;
+  }
+
+  _add_short_range_gi_passes(
+    render_graph,
+    width,
+    height,
+    gbuffer_position,
+    gbuffer_position_prev,
+    gbuffer_normal,
+    gbuffer_normal_prev,
+    gbuffer_albedo,
+    gbuffer_smra,
+    gbuffer_motion_emissive,
+    tlas_bvh2_bounds,
+    tlas_bvh_info,
+    blas_bvh2_nodes,
+    blas_directory,
+    entity_transforms,
+    index_buffer,
+    dense_lights,
+    params_gpu_buffer,
+    material_palette_offsets_buffer,
+    material_palette_buffer,
+    skydome_data_buffer,
+    albedo_pool_buffer,
+    normal_pool_buffer,
+    roughness_pool_buffer,
+    metallic_pool_buffer,
+    ao_pool_buffer,
+    height_pool_buffer,
+    specular_pool_buffer,
+    emission_pool_buffer,
+    skybox_texture_buffer,
+    force_recreate
+  ) {
+    const safe_upscale_factor = Math.max(
+      1,
+      Math.floor(this.config.short_range_upscale_factor)
+    );
+    const gi_width = Math.max(1, Math.ceil(width / safe_upscale_factor));
+    const gi_height = Math.max(1, Math.ceil(height / safe_upscale_factor));
+    const total_pixels = gi_width * gi_height;
+    const frame_index = SharedFrameInfoBuffer.get_frame_index();
+    const ping_pong_frame = frame_index % 2;
+    const rays_per_frame =
+      total_pixels * Math.max(1, Math.floor(this.config.short_range_screen_ray_count));
+    const reservoir_size = gi_width * gi_height * 28;
+
+    const blue_noise = Texture.default_blue_noise();
+    const blue_noise_image = render_graph.register_image(blue_noise.config.name);
+
+    const short_range_gi_params = render_graph.create_buffer({
+      name: "ddgi_short_range_gi_params",
+      size: this.short_range_gi_params_data.length,
+      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+      force: force_recreate,
+    });
+
+    const short_range_gi_counters = render_graph.create_buffer({
+      name: "ddgi_short_range_gi_counters",
+      size: 6,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+      force: force_recreate,
+    });
+
+    // Keep the PTGI pixel shaders bind-compatible while disabling cache sampling.
+    const short_range_dummy_world_cache = render_graph.create_buffer({
+      name: "ddgi_short_range_dummy_world_cache",
+      size: 24,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+      force: force_recreate,
+    });
+
+    const short_range_pixel_path_state = render_graph.create_buffer({
+      name: "ddgi_short_range_pixel_path_state",
+      size: rays_per_frame * 15 * 4,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+      force: force_recreate,
+    });
+
+    const short_range_pixel_ray_queue = render_graph.create_buffer({
+      name: "ddgi_short_range_pixel_ray_queue",
+      size: rays_per_frame,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+      force: force_recreate,
+    });
+
+    const short_range_temporal_reservoir_0 = render_graph.create_buffer({
+      name: "ddgi_short_range_temporal_reservoir_0",
+      size: reservoir_size,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+      force: force_recreate,
+    });
+
+    const short_range_temporal_reservoir_1 = render_graph.create_buffer({
+      name: "ddgi_short_range_temporal_reservoir_1",
+      size: reservoir_size,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+      force: force_recreate,
+    });
+
+    const short_range_spatial_reservoir_0 = render_graph.create_buffer({
+      name: "ddgi_short_range_spatial_reservoir_0",
+      size: reservoir_size,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+      force: force_recreate,
+    });
+
+    const short_range_spatial_reservoir_1 = render_graph.create_buffer({
+      name: "ddgi_short_range_spatial_reservoir_1",
+      size: reservoir_size,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+      force: force_recreate,
+    });
+
+    const short_range_spatial_reservoir_stage = render_graph.create_buffer({
+      name: "ddgi_short_range_spatial_reservoir_stage",
+      size: reservoir_size,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+      force: force_recreate,
+    });
+
+    const short_range_low_radiance_direct_0 = render_graph.create_image({
+      name: "ddgi_short_range_low_radiance_direct_0",
+      format: "rgba16float",
+      width: gi_width,
+      height: gi_height,
+      usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
+      force: force_recreate,
+    });
+    const short_range_low_radiance_direct_1 = render_graph.create_image({
+      name: "ddgi_short_range_low_radiance_direct_1",
+      format: "rgba16float",
+      width: gi_width,
+      height: gi_height,
+      usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
+      force: force_recreate,
+    });
+
+    const short_range_low_radiance_indirect_diffuse_0 = render_graph.create_image({
+      name: "ddgi_short_range_low_radiance_indirect_diffuse_0",
+      format: "rgba16float",
+      width: gi_width,
+      height: gi_height,
+      usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
+      force: force_recreate,
+    });
+    const short_range_low_radiance_indirect_diffuse_1 = render_graph.create_image({
+      name: "ddgi_short_range_low_radiance_indirect_diffuse_1",
+      format: "rgba16float",
+      width: gi_width,
+      height: gi_height,
+      usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
+      force: force_recreate,
+    });
+
+    const short_range_low_radiance_indirect_specular_0 = render_graph.create_image({
+      name: "ddgi_short_range_low_radiance_indirect_specular_0",
+      format: "rgba16float",
+      width: gi_width,
+      height: gi_height,
+      usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
+      force: force_recreate,
+    });
+    const short_range_low_radiance_indirect_specular_1 = render_graph.create_image({
+      name: "ddgi_short_range_low_radiance_indirect_specular_1",
+      format: "rgba16float",
+      width: gi_width,
+      height: gi_height,
+      usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
+      force: force_recreate,
+    });
+
+    const short_range_low_radiance_prev_direct =
+      ping_pong_frame === 0
+        ? short_range_low_radiance_direct_0
+        : short_range_low_radiance_direct_1;
+    const short_range_low_radiance_prev_indirect_diffuse =
+      ping_pong_frame === 0
+        ? short_range_low_radiance_indirect_diffuse_0
+        : short_range_low_radiance_indirect_diffuse_1;
+    const short_range_low_radiance_prev_indirect_specular =
+      ping_pong_frame === 0
+        ? short_range_low_radiance_indirect_specular_0
+        : short_range_low_radiance_indirect_specular_1;
+
+    const short_range_low_radiance_curr_direct =
+      ping_pong_frame === 0
+        ? short_range_low_radiance_direct_1
+        : short_range_low_radiance_direct_0;
+    const short_range_low_radiance_curr_indirect_diffuse =
+      ping_pong_frame === 0
+        ? short_range_low_radiance_indirect_diffuse_1
+        : short_range_low_radiance_indirect_diffuse_0;
+    const short_range_low_radiance_curr_indirect_specular =
+      ping_pong_frame === 0
+        ? short_range_low_radiance_indirect_specular_1
+        : short_range_low_radiance_indirect_specular_0;
+
+    const short_range_temporal_reservoir_prev =
+      ping_pong_frame === 0
+        ? short_range_temporal_reservoir_0
+        : short_range_temporal_reservoir_1;
+    const short_range_temporal_reservoir_curr =
+      ping_pong_frame === 0
+        ? short_range_temporal_reservoir_1
+        : short_range_temporal_reservoir_0;
+    const short_range_spatial_reservoir_curr =
+      ping_pong_frame === 0
+        ? short_range_spatial_reservoir_1
+        : short_range_spatial_reservoir_0;
+
+    const short_range_output_direct = render_graph.create_image({
+      name: "ddgi_short_range_output_direct",
+      format: "rgba16float",
+      width,
+      height,
+      usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
+      force: force_recreate,
+    });
+    const short_range_output_indirect_diffuse = render_graph.create_image({
+      name: "ddgi_short_range_output_indirect_diffuse",
+      format: "rgba16float",
+      width,
+      height,
+      usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
+      force: force_recreate,
+    });
+    const short_range_output_indirect_specular = render_graph.create_image({
+      name: "ddgi_short_range_output_indirect_specular",
+      format: "rgba16float",
+      width,
+      height,
+      usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
+      force: force_recreate,
+    });
+
+    const combined_direct_output = render_graph.create_image({
+      name: "ddgi_direct_output_combined",
+      format: "rgba16float",
+      width,
+      height,
+      usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
+      force: force_recreate,
+    });
+    const combined_indirect_diffuse_output = render_graph.create_image({
+      name: "ddgi_diffuse_output_combined",
+      format: "rgba16float",
+      width,
+      height,
+      usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
+      force: force_recreate,
+    });
+    const combined_indirect_specular_output = render_graph.create_image({
+      name: "ddgi_specular_output_combined",
+      format: "rgba16float",
+      width,
+      height,
+      usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
+      force: force_recreate,
+    });
+
+    render_graph.add_pass(
+      "ddgi_short_range_upload_params",
+      RenderPassFlags.GraphLocal,
+      {},
+      (graph, frame_data, encoder) => {
+        const short_range_gi_params_buf = graph.get_physical_buffer(short_range_gi_params);
+        this.short_range_gi_params_data[0] = Math.max(
+          1,
+          Math.floor(this.config.short_range_screen_ray_count)
+        );
+        this.short_range_gi_params_data[1] = 1;
+        this.short_range_gi_params_data[2] = 1;
+        this.short_range_gi_params_data[3] = total_pixels;
+        this.short_range_gi_params_data[4] = frame_index;
+        this.short_range_gi_params_data[5] = this.config.indirect_boost;
+        this.short_range_gi_params_data[6] = safe_upscale_factor;
+        this.short_range_gi_params_data[7] = 1;
+        this.short_range_gi_params_data[8] = width;
+        this.short_range_gi_params_data[9] = height;
+        this.short_range_gi_params_data[10] = gi_width;
+        this.short_range_gi_params_data[11] = gi_height;
+        this.short_range_gi_params_data[12] = this.config.short_range_max_ray_length;
+        short_range_gi_params_buf.write_raw(this.short_range_gi_params_data);
+      }
+    );
+
+    render_graph.add_pass(
+      "ddgi_short_range_reset",
+      RenderPassFlags.Compute,
+      {
+        inputs: [short_range_gi_counters, dense_lights],
+        outputs: [short_range_gi_counters],
+        shader_setup: ddgi_short_range_gi_reset_shader_setup,
+      },
+      (graph, frame_data, encoder) => {
+        const pass = graph.get_physical_pass(frame_data.current_pass);
+        pass.dispatch(1, 1, 1);
+      }
+    );
+
+    render_graph.add_pass(
+      `ddgi_short_range_pixel_trace_init_${ping_pong_frame}`,
+      RenderPassFlags.Compute,
+      {
+        inputs: [
+          short_range_gi_params,
+          short_range_gi_counters,
+          short_range_pixel_path_state,
+          short_range_pixel_ray_queue,
+          dense_lights,
+          short_range_dummy_world_cache,
+          gbuffer_position,
+          gbuffer_normal,
+          gbuffer_albedo,
+          gbuffer_smra,
+          gbuffer_motion_emissive,
+          blue_noise_image,
+        ],
+        outputs: [short_range_pixel_path_state, short_range_pixel_ray_queue],
+        shader_setup: ddgi_short_range_pixel_trace_init_shader_setup,
+      },
+      (graph, frame_data, encoder) => {
+        const pass = graph.get_physical_pass(frame_data.current_pass);
+        pass.dispatch(Math.ceil(rays_per_frame / 128), 1, 1);
+      }
+    );
+
+    render_graph.add_pass(
+      "ddgi_short_range_pixel_trace_hit",
+      RenderPassFlags.Compute,
+      {
+        inputs: [
+          short_range_gi_params,
+          short_range_gi_counters,
+          short_range_pixel_path_state,
+          short_range_pixel_ray_queue,
+          tlas_bvh2_bounds,
+          tlas_bvh_info,
+          blas_bvh2_nodes,
+          blas_directory,
+          entity_transforms,
+          index_buffer,
+        ],
+        outputs: [short_range_pixel_path_state],
+        shader_setup: ddgi_short_range_pixel_trace_hit_shader_setup,
+      },
+      (graph, frame_data, encoder) => {
+        const pass = graph.get_physical_pass(frame_data.current_pass);
+        pass.dispatch(Math.ceil(rays_per_frame / 128), 1, 1);
+      }
+    );
+
+    render_graph.add_pass(
+      "ddgi_short_range_pixel_trace_shade",
+      RenderPassFlags.Compute,
+      {
+        inputs: [
+          short_range_gi_params,
+          skydome_data_buffer,
+          short_range_pixel_path_state,
+          params_gpu_buffer,
+          material_palette_offsets_buffer,
+          material_palette_buffer,
+          dense_lights,
+          albedo_pool_buffer,
+          normal_pool_buffer,
+          roughness_pool_buffer,
+          metallic_pool_buffer,
+          ao_pool_buffer,
+          height_pool_buffer,
+          specular_pool_buffer,
+          emission_pool_buffer,
+          skybox_texture_buffer,
+        ],
+        outputs: [short_range_pixel_path_state],
+        shader_setup: ddgi_short_range_pixel_trace_shade_shader_setup,
+      },
+      (graph, frame_data, encoder) => {
+        const pass = graph.get_physical_pass(frame_data.current_pass);
+        pass.dispatch(Math.ceil(rays_per_frame / 128), 1, 1);
+      }
+    );
+
+    render_graph.add_pass(
+      `ddgi_short_range_pixel_temporal_reservoir_${ping_pong_frame}`,
+      RenderPassFlags.Compute,
+      {
+        inputs: [
+          short_range_gi_params,
+          short_range_pixel_path_state,
+          short_range_temporal_reservoir_prev,
+          short_range_temporal_reservoir_curr,
+          gbuffer_position,
+          gbuffer_position_prev,
+          gbuffer_normal,
+          gbuffer_motion_emissive,
+          gbuffer_normal_prev,
+        ],
+        outputs: [short_range_temporal_reservoir_curr],
+        shader_setup: ddgi_short_range_pixel_temporal_reservoir_shader_setup,
+      },
+      (graph, frame_data, encoder) => {
+        const pass = graph.get_physical_pass(frame_data.current_pass);
+        pass.dispatch(Math.ceil(gi_width / 16), Math.ceil(gi_height / 16), 1);
+      }
+    );
+
+    render_graph.add_pass(
+      `ddgi_short_range_pixel_spatial_reservoir_wide_${ping_pong_frame}`,
+      RenderPassFlags.Compute,
+      {
+        inputs: [
+          short_range_gi_params,
+          short_range_temporal_reservoir_curr,
+          short_range_spatial_reservoir_stage,
+          gbuffer_position,
+          gbuffer_normal,
+        ],
+        outputs: [short_range_spatial_reservoir_stage],
+        shader_setup: ddgi_short_range_pixel_spatial_reservoir_wide_shader_setup,
+      },
+      (graph, frame_data, encoder) => {
+        const pass = graph.get_physical_pass(frame_data.current_pass);
+        pass.dispatch(Math.ceil(gi_width / 16), Math.ceil(gi_height / 16), 1);
+      }
+    );
+
+    render_graph.add_pass(
+      `ddgi_short_range_pixel_spatial_reservoir_narrow_${ping_pong_frame}`,
+      RenderPassFlags.Compute,
+      {
+        inputs: [
+          short_range_gi_params,
+          short_range_spatial_reservoir_stage,
+          short_range_spatial_reservoir_curr,
+          gbuffer_position,
+          gbuffer_normal,
+        ],
+        outputs: [short_range_spatial_reservoir_curr],
+        shader_setup: ddgi_short_range_pixel_spatial_reservoir_narrow_shader_setup,
+      },
+      (graph, frame_data, encoder) => {
+        const pass = graph.get_physical_pass(frame_data.current_pass);
+        pass.dispatch(Math.ceil(gi_width / 16), Math.ceil(gi_height / 16), 1);
+      }
+    );
+
+    render_graph.add_pass(
+      `ddgi_short_range_pixel_accumulate_${ping_pong_frame}`,
+      RenderPassFlags.Compute,
+      {
+        inputs: [
+          short_range_gi_params,
+          short_range_spatial_reservoir_curr,
+          short_range_low_radiance_prev_direct,
+          short_range_low_radiance_prev_indirect_diffuse,
+          short_range_low_radiance_prev_indirect_specular,
+          gbuffer_position,
+          gbuffer_position_prev,
+          gbuffer_normal,
+          gbuffer_normal_prev,
+          gbuffer_motion_emissive,
+          short_range_low_radiance_curr_direct,
+          short_range_low_radiance_curr_indirect_diffuse,
+          short_range_low_radiance_curr_indirect_specular,
+        ],
+        outputs: [
+          short_range_low_radiance_curr_direct,
+          short_range_low_radiance_curr_indirect_diffuse,
+          short_range_low_radiance_curr_indirect_specular,
+        ],
+        shader_setup: ddgi_short_range_pixel_accumulate_shader_setup,
+      },
+      (graph, frame_data, encoder) => {
+        const pass = graph.get_physical_pass(frame_data.current_pass);
+        pass.dispatch(Math.ceil(gi_width / 8), Math.ceil(gi_height / 8), 1);
+      }
+    );
+
+    render_graph.add_pass(
+      `ddgi_short_range_upscale_final_${ping_pong_frame}`,
+      RenderPassFlags.Compute,
+      {
+        inputs: [
+          short_range_gi_params,
+          short_range_low_radiance_curr_direct,
+          short_range_low_radiance_curr_indirect_diffuse,
+          short_range_low_radiance_curr_indirect_specular,
+          gbuffer_position,
+          gbuffer_normal,
+          short_range_output_direct,
+          short_range_output_indirect_diffuse,
+          short_range_output_indirect_specular,
+        ],
+        outputs: [
+          short_range_output_direct,
+          short_range_output_indirect_diffuse,
+          short_range_output_indirect_specular,
+        ],
+        shader_setup: ddgi_short_range_pixel_upscale_final_shader_setup,
+      },
+      (graph, frame_data, encoder) => {
+        const pass = graph.get_physical_pass(frame_data.current_pass);
+        pass.dispatch(Math.ceil(width / 8), Math.ceil(height / 8), 1);
+      }
+    );
+
+    render_graph.add_pass(
+      `ddgi_short_range_add_${ping_pong_frame}`,
+      RenderPassFlags.Compute,
+      {
+        inputs: [
+          this.final_gi_texture_direct,
+          this.final_gi_texture_indirect_diffuse,
+          this.final_gi_texture_indirect_specular,
+          short_range_output_direct,
+          short_range_output_indirect_diffuse,
+          short_range_output_indirect_specular,
+          combined_direct_output,
+          combined_indirect_diffuse_output,
+          combined_indirect_specular_output,
+        ],
+        outputs: [
+          combined_direct_output,
+          combined_indirect_diffuse_output,
+          combined_indirect_specular_output,
+        ],
+        shader_setup: ddgi_short_range_add_shader_setup,
+      },
+      (graph, frame_data, encoder) => {
+        const pass = graph.get_physical_pass(frame_data.current_pass);
+        pass.dispatch(Math.ceil(width / 8), Math.ceil(height / 8), 1);
+      }
+    );
+
+    this.final_gi_texture_direct = combined_direct_output;
+    this.final_gi_texture_indirect_diffuse = combined_indirect_diffuse_output;
+    this.final_gi_texture_indirect_specular = combined_indirect_specular_output;
+  }
+
+  set_config(new_config) {
+    this.config = { ...this.config, ...new_config };
   }
 
   _sanitize_probe_grid_dimensions(probe_grid_dimensions) {
