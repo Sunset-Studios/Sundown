@@ -9,9 +9,9 @@ export class RenderToggle extends DevConsoleTool {
     const feature = args[0];
     if (feature) {
       switch (feature) {
-        case "gtao":
-          const is_gtao_enabled = Renderer.get().is_gtao_enabled();
-          Renderer.get().set_gtao_enabled(!is_gtao_enabled);
+        case "ao":
+          const is_ao_enabled = Renderer.get().is_ao_enabled();
+          Renderer.get().set_ao_enabled(!is_ao_enabled);
           break;
         case "shadow":
           const is_shadows_enabled = Renderer.get().is_shadows_enabled();

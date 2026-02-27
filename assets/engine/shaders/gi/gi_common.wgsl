@@ -61,6 +61,7 @@ struct GIParams {
     full_resolution_y: f32,         // Full-resolution Y (GBuffer / lighting target)
     gi_resolution_x: f32,           // GI internal resolution X (full_resolution / upscale_factor)
     gi_resolution_y: f32,           // GI internal resolution Y (full_resolution / upscale_factor)
+    max_ray_length: f32,            // Maximum ray travel distance
 };
 
 // =============================================================================

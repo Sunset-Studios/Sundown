@@ -253,6 +253,7 @@ export class PTGI {
     world_cache_cell_size: 1.0, // Base cell size in world units
     world_cache_lod_count: 4, // Number of LOD levels
     indirect_boost: 1.0, // Multiplier for indirect lighting contribution
+    max_ray_length: 1e30, // Maximum ray travel distance for GI path segments
   };
 
   // GI parameters buffer data (matches shader GIParams struct)
@@ -269,6 +270,7 @@ export class PTGI {
     0, // full_resolution_y
     0, // gi_resolution_x
     0, // gi_resolution_y
+    0, // max_ray_length
   ]);
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -735,6 +737,7 @@ export class PTGI {
         this.gi_params_data[9] = height;
         this.gi_params_data[10] = gi_width;
         this.gi_params_data[11] = gi_height;
+        this.gi_params_data[12] = this.config.max_ray_length;
 
         gi_params_buf.write_raw(this.gi_params_data);
       }
@@ -1026,7 +1029,6 @@ export class PTGI {
           gi_params,
           skydome_data_buffer,
           pixel_path_state,
-          world_cache,
           params_gpu_buffer,
           material_palette_offsets_buffer,
           material_palette_buffer,
@@ -1040,6 +1042,7 @@ export class PTGI {
           specular_pool_buffer,
           emission_pool_buffer,
           skybox_texture_buffer,
+          world_cache,
         ],
         outputs: [pixel_path_state],
         shader_setup: pixel_trace_shade_shader_setup,

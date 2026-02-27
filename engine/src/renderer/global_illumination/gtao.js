@@ -76,7 +76,21 @@ export class GTAO {
 
   add_passes(
     render_graph,
-    { position_texture, normal_texture, width, height, force_recreate = false }
+    width,
+    height,
+    gbuffer_position,
+    gbuffer_normal,
+    gbuffer_albedo,
+    gbuffer_smra,
+    gbuffer_motion_emissive,
+    tlas_bvh2_bounds,
+    tlas_bvh_info,
+    blas_bvh2_nodes,
+    blas_directory,
+    entity_transforms,
+    index_buffer,
+    dense_lights,
+    force_recreate = false
   ) {
     ao_image_config.width = width;
     ao_image_config.height = height;
@@ -123,8 +137,8 @@ export class GTAO {
       RenderPassFlags.Compute,
       {
         inputs: [
-          position_texture,
-          normal_texture,
+          gbuffer_position,
+          gbuffer_normal,
           this.ao_texture,
           this.bent_normal_texture,
           this.gtao_params_buffer,
@@ -143,8 +157,8 @@ export class GTAO {
       RenderPassFlags.Compute,
       {
         inputs: [
-          position_texture,
-          normal_texture,
+          gbuffer_position,
+          gbuffer_normal,
           this.ao_texture,
           this.ao_blur_texture,
           this.gtao_bilateral_params_buffer,

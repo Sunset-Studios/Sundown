@@ -1350,7 +1350,7 @@ export class Mesh {
 
     // Ambient occlusion (R channel), strength scales AO value
     let ao_tex = null;
-    let ao_strength = 0.0;
+    let ao_strength = 1.0;
     if (mat.occlusionTexture) {
       const tex = gltf.textures[mat.occlusionTexture.index];
       const src = tex?.base;

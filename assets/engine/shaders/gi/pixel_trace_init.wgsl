@@ -364,7 +364,7 @@ fn process_selected_pixel(
     // Store path state for initial bounce
     // ─────────────────────────────────────────────────────────────────────────
     pixel_path_state[ray_slot].origin_tmin = vec4<f32>(position + normal * 0.001, 0.0001);
-    pixel_path_state[ray_slot].direction_tmax = vec4<f32>(ray_dir, 1e30);
+    pixel_path_state[ray_slot].direction_tmax = vec4<f32>(ray_dir, gi_params.max_ray_length);
     pixel_path_state[ray_slot].normal_section_index = vec4<f32>(normal, 0.0);
     pixel_path_state[ray_slot].state_u32 = vec4<u32>(selected_lobe_type, 1u, 0u, 0xffffffffu);
     pixel_path_state[ray_slot].hit_attr0 = vec4<f32>(0.0);

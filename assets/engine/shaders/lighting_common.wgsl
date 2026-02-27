@@ -343,9 +343,7 @@ fn calculate_brdf(
 
     // ---- Indirect Lighting ----
     // Indirect lighting from irradiance cache texture (screen probes / skybox)
-    // TODO: Disabled AO/GTAO should default to 1.0 not 0.0
-    var indirect_contribution = select(irradiance * ao, irradiance, ao <= 0.0);
-    indirect_contribution = albedo * indirect_contribution;
+    var indirect_contribution = albedo * irradiance * ao;
 
     // Specular: prefiltered env map, split-sum approximation, modulated by AO
     let env_f = f_schlick_roughness(n_dot_v, f0, a);

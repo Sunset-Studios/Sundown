@@ -24,12 +24,12 @@
     @group(1) @binding(12) var page_table: texture_storage_2d_array<r32uint, read>;
     @group(1) @binding(13) var page_offset: texture_storage_2d_array<rgba32float, read>;
     @group(1) @binding(14) var<uniform> vsm_settings: ASVSMSettings;
-    #if GTAO_ENABLED
+    #if AO_ENABLED
       @group(1) @binding(15) var ao_texture: texture_2d<f32>;
       @group(1) @binding(16) var bent_normal_texture: texture_2d<f32>;
     #endif
   #else
-    #if GTAO_ENABLED
+    #if AO_ENABLED
       @group(1) @binding(11) var ao_texture: texture_2d<f32>;
       @group(1) @binding(12) var bent_normal_texture: texture_2d<f32>;
     #endif
@@ -41,12 +41,12 @@
     @group(1) @binding(10) var page_offset: texture_storage_2d_array<rgba32float, read>;
     @group(1) @binding(11) var<uniform> vsm_settings: ASVSMSettings;
 
-    #if GTAO_ENABLED
+    #if AO_ENABLED
       @group(1) @binding(12) var ao_texture: texture_2d<f32>;
       @group(1) @binding(13) var bent_normal_texture: texture_2d<f32>;
     #endif
   #else
-    #if GTAO_ENABLED
+    #if AO_ENABLED
       @group(1) @binding(8) var ao_texture: texture_2d<f32>;
       @group(1) @binding(9) var bent_normal_texture: texture_2d<f32>;
     #endif
@@ -114,7 +114,7 @@ struct FragmentOutput {
     var metallic = tex_smra.b;
     var ao = tex_smra.a;
 
-#if GTAO_ENABLED
+#if AO_ENABLED
     ao = textureSample(ao_texture, non_filtering_sampler, uv).r;
     let bent_normal = textureSample(bent_normal_texture, non_filtering_sampler, uv).xyz;
     //normalized_normal = normalize(bent_normal);

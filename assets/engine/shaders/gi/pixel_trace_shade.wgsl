@@ -17,7 +17,9 @@
 #include "postprocess_common.wgsl"
 #include "sky_common.wgsl"
 #include "gi/gi_common.wgsl"
+#ifndef DISABLE_WORLD_CACHE_SAMPLING
 #include "gi/world_cache_common.wgsl"
+#endif
 #include "raytracing/restir_common.wgsl"
 
 // =============================================================================
@@ -27,20 +29,22 @@
 @group(1) @binding(0) var<uniform> gi_params: GIParams;
 @group(1) @binding(1) var<uniform> scene_lighting_data: SceneLightingData;
 @group(1) @binding(2) var<storage, read_write> pixel_path_state: array<PixelPathState>;
-@group(1) @binding(3) var<storage, read_write> world_cache: array<WorldCacheCell>;
-@group(1) @binding(4) var<storage, read> material_params: array<StandardMaterialParams>;
-@group(1) @binding(5) var<storage, read> material_table_offset: array<u32>;
-@group(1) @binding(6) var<storage, read> material_palette: array<u32>;
-@group(1) @binding(7) var<storage, read> dense_lights_buffer: DenseLightsBuffer;
-@group(1) @binding(8) var texture_pool_albedo: texture_2d_array<f32>;
-@group(1) @binding(9) var texture_pool_normal: texture_2d_array<f32>;
-@group(1) @binding(10) var texture_pool_roughness: texture_2d_array<f32>;
-@group(1) @binding(11) var texture_pool_metallic: texture_2d_array<f32>;
-@group(1) @binding(12) var texture_pool_ao: texture_2d_array<f32>;
-@group(1) @binding(13) var texture_pool_height: texture_2d_array<f32>;
-@group(1) @binding(14) var texture_pool_specular: texture_2d_array<f32>;
-@group(1) @binding(15) var texture_pool_emission: texture_2d_array<f32>;
-@group(1) @binding(16) var skybox_texture: texture_cube<f32>;
+@group(1) @binding(3) var<storage, read> material_params: array<StandardMaterialParams>;
+@group(1) @binding(4) var<storage, read> material_table_offset: array<u32>;
+@group(1) @binding(5) var<storage, read> material_palette: array<u32>;
+@group(1) @binding(6) var<storage, read> dense_lights_buffer: DenseLightsBuffer;
+@group(1) @binding(7) var texture_pool_albedo: texture_2d_array<f32>;
+@group(1) @binding(8) var texture_pool_normal: texture_2d_array<f32>;
+@group(1) @binding(9) var texture_pool_roughness: texture_2d_array<f32>;
+@group(1) @binding(10) var texture_pool_metallic: texture_2d_array<f32>;
+@group(1) @binding(11) var texture_pool_ao: texture_2d_array<f32>;
+@group(1) @binding(12) var texture_pool_height: texture_2d_array<f32>;
+@group(1) @binding(13) var texture_pool_specular: texture_2d_array<f32>;
+@group(1) @binding(14) var texture_pool_emission: texture_2d_array<f32>;
+@group(1) @binding(15) var skybox_texture: texture_cube<f32>;
+#ifndef DISABLE_WORLD_CACHE_SAMPLING
+@group(1) @binding(16) var<storage, read_write> world_cache: array<WorldCacheCell>;
+#endif
 
 // =============================================================================
 // MAIN COMPUTE SHADER
@@ -173,6 +177,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
             pixel_path_state[gid.x].throughput_indirect_specular += select(vec4f(0.0), indirect_add, is_specular_lobe);
         }
 
+        #ifndef DISABLE_WORLD_CACHE_SAMPLING
         // ─────────────────────────────────────────────────────────────────────
         // World Cache Query (Multi-Bounce Irradiance)
         // ─────────────────────────────────────────────────────────────────────
@@ -204,6 +209,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
             pixel_path_state[gid.x].throughput_indirect_diffuse += select(indirect_add, vec4f(0.0), is_specular_lobe);
             pixel_path_state[gid.x].throughput_indirect_specular += select(vec4f(0.0), indirect_add, is_specular_lobe);
         }
+        #endif
         
         pixel_path_state[gid.x].rng_sample_count_frame_stamp.y += 1.0;
     }

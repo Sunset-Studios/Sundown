@@ -160,7 +160,7 @@ export class DebugOverlay {
         return "debug/debug_overlay_2d.wgsl";
       case DebugDrawType.ASVSM_DirtyTiles:
         return "debug/debug_overlay_2d.wgsl";
-      case DebugDrawType.GTAO:
+      case DebugDrawType.AO:
         return "debug/debug_overlay_2d_single_comp.wgsl";
       case DebugDrawType.BentNormal:
         return "debug/debug_overlay_2d.wgsl";

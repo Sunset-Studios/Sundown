@@ -49,8 +49,8 @@ export class DebugDrawPicker extends DevConsoleTool {
         case "bloom":
           Renderer.get().set_debug_draw_type(DebugDrawType.Bloom);
           break;
-        case "gtao":
-          Renderer.get().set_debug_draw_type(DebugDrawType.GTAO);
+        case "ao":
+          Renderer.get().set_debug_draw_type(DebugDrawType.AO);
           break;
         case "bent-normal":
           Renderer.get().set_debug_draw_type(DebugDrawType.BentNormal);

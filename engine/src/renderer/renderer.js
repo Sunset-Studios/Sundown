@@ -1,5 +1,5 @@
 import { MAX_BUFFERED_FRAMES } from "../core/minimal.js";
-import { DebugDrawType, RenderStrategyType, GIStrategyType } from "./renderer_types.js";
+import { DebugDrawType, RenderStrategyType, GIStrategyType, AOStrategyType } from "./renderer_types.js";
 import { DeferredShadingStrategy } from "./strategies/deferred_shading.js";
 import { PathTracingStrategy } from "./strategies/path_tracing.js";
 import { RenderGraph } from "./render_graph.js";
@@ -42,10 +42,11 @@ export class Renderer {
   use_depth_prepass = true;
   shadows_enabled = true;
   gi_enabled = true;
-  gtao_enabled = false;
+  ao_enabled = false;
   use_radiance_cache_as_deferred_lighting = false;
   debug_draw_type = DebugDrawType.None;
   gi_strategy_type = GIStrategyType.DDGI;
+  ao_strategy_type = AOStrategyType.GTAO;
 
   static renderers = [];
 
@@ -413,19 +414,39 @@ export class Renderer {
   }
 
   /**
-   * Check if GTAO is enabled
-   * @returns {boolean} - True if GTAO is enabled, false otherwise
+   * Get the current AO strategy type
+   * @returns {AOStrategyType} - The AO strategy type
    */
-  is_gtao_enabled() {
-    return this.gtao_enabled;
+  get_ao_strategy_type() {
+    return this.ao_strategy_type;
   }
 
   /**
-   * Set the GTAO enabled state
-   * @param {boolean} enabled - True if GTAO should be enabled, false otherwise
+   * Set the AO strategy type
+   * @param {AOStrategyType} strategy_type - The AO strategy type
    */
-  set_gtao_enabled(enabled) {
-    this.gtao_enabled = enabled;
+  set_ao_strategy_type(strategy_type) {
+    this.ao_strategy_type = strategy_type;
+    if (this.render_strategy) {
+      this.refresh_render_graph(true /* reinit */);
+      this.recreate_pipeline_states();
+    }
+  }
+
+  /**
+   * Check if AO is enabled
+   * @returns {boolean} - True if AO is enabled, false otherwise
+   */
+  is_ao_enabled() {
+    return this.ao_enabled;
+  }
+
+  /**
+   * Set the AO enabled state
+   * @param {boolean} enabled - True if AO should be enabled, false otherwise
+   */
+  set_ao_enabled(enabled) {
+    this.ao_enabled = enabled;
     if (this.render_strategy) {
       this.refresh_render_graph();
       this.recreate_pipeline_states();

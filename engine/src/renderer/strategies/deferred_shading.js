@@ -33,6 +33,7 @@ import {
   MaterialFamilyType,
   DebugDrawType,
   GIStrategyType,
+  AOStrategyType,
 } from "../renderer_types.js";
 import { BVH } from "../../acceleration/bvh.js";
 import { MeshBLAS } from "../../acceleration/mesh_blas.js";
@@ -55,6 +56,7 @@ import {
 import { PTGI } from "../global_illumination/ptgi.js";
 import { DDGI } from "../global_illumination/ddgi.js";
 import { GTAO } from "../global_illumination/gtao.js";
+import { RTAO } from "../global_illumination/rtao.js";
 import { AdaptiveSparseVirtualShadowMaps } from "../shadows/as_vsm.js";
 import {
   DEFAULT_LIGHT_CLIP_EXTENT,
@@ -267,7 +269,7 @@ const deferred_lighting_shader_setup = {
       defines: {
         GI_ENABLED: false,
         SHADOWS_ENABLED: false,
-        GTAO_ENABLED: false,
+        AO_ENABLED: false,
       },
     },
     fragment: {
@@ -275,7 +277,7 @@ const deferred_lighting_shader_setup = {
       defines: {
         GI_ENABLED: false,
         SHADOWS_ENABLED: false,
-        GTAO_ENABLED: false,
+        AO_ENABLED: false,
       },
     },
   },
@@ -443,6 +445,7 @@ export class DeferredShadingStrategy {
   prev_lighting_image = null;
   gi = null;
   gtao = null;
+  rtao = null;
   as_vsm = null;
   debug_overlay = null;
   frustum_culler = null;
@@ -452,8 +455,9 @@ export class DeferredShadingStrategy {
     this.debug_overlay = new DebugOverlay();
 
     const gi_strategy_type = Renderer.get().get_gi_strategy_type();
+    const ao_strategy_type = Renderer.get().get_ao_strategy_type();
     this.gi = gi_strategy_type === GIStrategyType.DDGI ? new DDGI() : new PTGI();
-    this.gtao = new GTAO();
+    this.ao = ao_strategy_type === AOStrategyType.GTAO ? new GTAO() : new RTAO();
     this.as_vsm = new AdaptiveSparseVirtualShadowMaps({
       atlas_size: ATLAS_SIZE,
       tile_size: TILE_SIZE,
@@ -528,7 +532,7 @@ export class DeferredShadingStrategy {
 
       const shadows_enabled = renderer.is_shadows_enabled();
       const gi_enabled = renderer.is_gi_enabled();
-      const gtao_enabled = renderer.is_gtao_enabled();
+      const ao_enabled = renderer.is_ao_enabled();
 
       if (this.force_recreate) {
         render_graph.mark_pass_cache_bind_groups_dirty(true /* pass_only */);
@@ -1250,17 +1254,28 @@ export class DeferredShadingStrategy {
       }
 
       // ┌─────────────────────────────────────────────────────────────────────────────┐
-      // │ 🌟 PASS: GTAO                                                               │
-      // │    Ground Truth Ambient Occlusion                                           │
+      // │ 🌟 PASS: AO                                                                │
+      // │    Ambient Occlusion using Real-Time or Ground Truth methods                │
       // └─────────────────────────────────────────────────────────────────────────────┘
-      if (gtao_enabled) {
-        this.gtao.add_passes(render_graph, {
-          normal_texture: main_normal_image,
-          position_texture: main_position_image,
-          width: image_extent.width,
-          height: image_extent.height,
-          force_recreate: this.force_recreate,
-        });
+      if (ao_enabled) {
+        this.ao.add_passes(
+          render_graph,
+          image_extent.width,
+          image_extent.height,
+          main_position_image,
+          main_normal_image,
+          main_albedo_image,
+          main_smra_image,
+          main_motion_emissive_image,
+          aabb_bounds,
+          tlas_bvh_info,
+          blas_bvh2_nodes,
+          blas_directory,
+          entity_transforms,
+          index_buffer,
+          dense_lights,
+          this.force_recreate
+        );
       }
 
       // ┌─────────────────────────────────────────────────────────────────────────────┐
@@ -1311,12 +1326,12 @@ export class DeferredShadingStrategy {
           );
         }
 
-        deferred_lighting_shader_setup.pipeline_shaders.vertex.defines.GTAO_ENABLED = gtao_enabled;
-        deferred_lighting_shader_setup.pipeline_shaders.fragment.defines.GTAO_ENABLED =
-          gtao_enabled;
+        deferred_lighting_shader_setup.pipeline_shaders.vertex.defines.AO_ENABLED = ao_enabled;
+        deferred_lighting_shader_setup.pipeline_shaders.fragment.defines.AO_ENABLED =
+          ao_enabled;
 
-        if (gtao_enabled) {
-          lighting_inputs.push(this.gtao.ao_blur_texture, this.gtao.bent_normal_texture);
+        if (ao_enabled) {
+          lighting_inputs.push(this.ao.ao_texture, this.ao.bent_normal_texture);
         }
 
         render_graph.add_pass(
@@ -1686,19 +1701,19 @@ export class DeferredShadingStrategy {
               DebugDrawType.Bloom
             );
             break;
-          case DebugDrawType.GTAO:
+          case DebugDrawType.AO:
             this.debug_overlay.set_properties(
-              this.gtao.ao_blur_texture,
+              this.ao.ao_blur_texture || this.ao.ao_texture,
               0,
               0,
               image_extent.width,
               image_extent.height,
-              DebugDrawType.GTAO
+              DebugDrawType.AO
             );
             break;
           case DebugDrawType.BentNormal:
             this.debug_overlay.set_properties(
-              this.gtao.bent_normal_texture,
+              this.ao.bent_normal_texture,
               0,
               0,
               image_extent.width,

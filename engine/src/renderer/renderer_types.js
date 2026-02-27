@@ -122,6 +122,15 @@ export const GIStrategyType = Object.freeze({
 });
 
 /**
+ * Types of AO strategies.
+ * @enum {number}
+ */
+export const AOStrategyType = Object.freeze({
+    GTAO: 0,
+    RTAO: 1,
+});
+
+/**
  * Types of debug draw in the render graph.
  * @enum {number}
  */
@@ -140,7 +149,7 @@ export const DebugDrawType = Object.freeze({
     ASVSM_TileRenderOutput: 11,
     ASVSM_DirtyTiles: 12,
     Bloom: 13,
-    GTAO: 14,
+    AO: 14,
     BentNormal: 15,
     GI_Direct: 16,
     GI_Diffuse: 17,

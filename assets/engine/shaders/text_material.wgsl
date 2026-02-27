@@ -90,7 +90,7 @@ fn fragment(v_out: VertexOutput, f_out: ptr<function, FragmentOutput>) -> Fragme
     f_out.smra.r = 1.0;
     f_out.smra.g = 0.5;
     f_out.smra.b = 0.1;
-    f_out.smra.a = 0.0;
+    f_out.smra.a = 1.0;
 
     return *f_out;
 }
