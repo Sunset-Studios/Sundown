@@ -49809,7 +49809,6 @@
 			}
 		},
 		{
-			"alphaMode":"BLEND",
 			"doubleSided":true,
 			"name":"SC_European_Hackberry_leaf",
 			"pbrMetallicRoughness":{

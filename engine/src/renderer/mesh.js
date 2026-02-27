@@ -1241,12 +1241,14 @@ export class Mesh {
     const alpha_mode = mat.alphaMode || "OPAQUE";
     const family =
       alpha_mode === "BLEND" ? MaterialFamilyType.Transparent : MaterialFamilyType.Opaque;
+    const alpha_cutoff = alpha_mode === "MASK" ? (mat.alphaCutoff ?? 0.5) : 0.0;
 
     const std = StandardMaterial.create(
       mat_name,
       {},
       { family, raster_state: { cull_mode: "none" } }
     );
+    std.set_alpha_cutoff(alpha_cutoff);
 
     // Base color
     const base = mat.pbrMetallicRoughness;

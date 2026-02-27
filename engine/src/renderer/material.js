@@ -1256,6 +1256,13 @@ export class StandardMaterial {
     this.mark_params_dirty();
   }
 
+  set_alpha_cutoff(alpha_cutoff) {
+    const params_buffer = MaterialAllocationTable.params_data;
+    const offset = this.material_allocation_index * MATERIAL_PARAMS_SIZE;
+    params_buffer[offset + float_params_offset + 15] = Math.max(0.0, alpha_cutoff);
+    this.mark_params_dirty();
+  }
+
   mark_params_dirty() {
     MaterialAllocationTable.mark_params_dirty(this.material_allocation_index);
   }
