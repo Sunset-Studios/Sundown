@@ -79,8 +79,7 @@ export class Buffer {
     }
 
     if (this.config.flags !== undefined && (this.config.flags & BufferFlags.GlobalBinding) !== 0) {
-      //console.log('here')
-      //Renderer.get().refresh_global_shader_bindings();
+      Renderer.get().refresh_global_shader_bindings();
     } else {
       Renderer.get().mark_bind_groups_dirty(true);
     }

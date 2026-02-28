@@ -343,6 +343,9 @@ export class PathTracingStrategy {
       // ═══════════════════════════════════════════════════════════════════════════════
       // ⚙️  SETUP & INITIALIZATION PHASE
       // ═══════════════════════════════════════════════════════════════════════════════
+      // Async content (like glTF callbacks) can create entities between simulation
+      // flush and render; flush again here so culling sees a current dense row map.
+      EntityManager.flush_gpu_buffers();
       MeshTaskQueue.sort_and_batch();
       ComputeTaskQueue.compile_pre_rg_passes(render_graph);
 

@@ -5,8 +5,6 @@ var MinimalGLTFLoader = MinimalGLTFLoader || {};
 
 var globalUniformBlockID = 0;
 
-var curLoader = null; // @tmp, might be unsafe if loading multiple model at the same time
-
 var NUM_MAX_JOINTS = 65;
 
 // Data classes
@@ -189,7 +187,7 @@ var Camera = (MinimalGLTFLoader.Camera = function (c) {
   this.extras = c.extras !== undefined ? c.extras : null;
 });
 
-var Node = (MinimalGLTFLoader.Node = function (n, nodeID) {
+var Node = (MinimalGLTFLoader.Node = function (loader, n, nodeID) {
   this.name = n.name !== undefined ? n.name : null;
   this.nodeID = nodeID;
   // TODO: camera
@@ -217,22 +215,22 @@ var Node = (MinimalGLTFLoader.Node = function (n, nodeID) {
   }
 
   this.children = n.children || []; // init as id, then hook up to node object later
-  this.mesh = n.mesh !== undefined ? curLoader.glTF.meshes[n.mesh] : null;
+  this.mesh = n.mesh !== undefined ? loader.glTF.meshes[n.mesh] : null;
 
   this.skin = n.skin !== undefined ? n.skin : null; // init as id, then hook up to skin object later
 
   if (n.extensions !== undefined) {
     if (
       n.extensions.gl_avatar !== undefined &&
-      curLoader.enableGLAvatar === true
+      loader.enableGLAvatar === true
     ) {
       var linkedSkinID =
-        curLoader.skeletonGltf.json.extensions.gl_avatar.skins[
+        loader.skeletonGltf.json.extensions.gl_avatar.skins[
           n.extensions.gl_avatar.skin.name
         ];
-      var linkedSkin = curLoader.skeletonGltf.skins[linkedSkinID];
+      var linkedSkin = loader.skeletonGltf.skins[linkedSkinID];
       this.skin = new SkinLink(
-        curLoader.glTF,
+        loader.glTF,
         linkedSkin,
         n.extensions.gl_avatar.skin.inverseBindMatrices
       );
@@ -301,7 +299,7 @@ Node.prototype.updateMatrixFromTRS = function () {
   mat4.scale(this.matrix, TRSMatrix, this.scale);
 };
 
-var Mesh = (MinimalGLTFLoader.Mesh = function (m, meshID) {
+var Mesh = (MinimalGLTFLoader.Mesh = function (loader, m, meshID) {
   this.meshID = meshID;
   this.name = m.name !== undefined ? m.name : null;
 
@@ -314,7 +312,7 @@ var Mesh = (MinimalGLTFLoader.Mesh = function (m, meshID) {
 
   for (var i = 0, len = m.primitives.length; i < len; ++i) {
     p = m.primitives[i];
-    primitive = new Primitive(curLoader.glTF, p);
+    primitive = new Primitive(loader, loader.glTF, p);
     this.primitives.push(primitive);
 
     // bounding box related
@@ -337,7 +335,7 @@ var Mesh = (MinimalGLTFLoader.Mesh = function (m, meshID) {
   this.extras = m.extras !== undefined ? m.extras : null;
 });
 
-var Primitive = (MinimalGLTFLoader.Primitive = function (gltf, p) {
+var Primitive = (MinimalGLTFLoader.Primitive = function (loader, gltf, p) {
   // <attribute name, accessor id>, required
   // get hook up with accessor object in _postprocessing
   this.attributes = p.attributes;
@@ -347,7 +345,7 @@ var Primitive = (MinimalGLTFLoader.Primitive = function (gltf, p) {
   if (p.extensions !== undefined) {
     if (
       p.extensions.gl_avatar !== undefined &&
-      curLoader.enableGLAvatar === true
+      loader.enableGLAvatar === true
     ) {
       if (p.extensions.gl_avatar.attributes) {
         for (attname in p.extensions.gl_avatar.attributes) {
@@ -410,12 +408,12 @@ var Primitive = (MinimalGLTFLoader.Primitive = function (gltf, p) {
   }
 });
 
-var Texture = (MinimalGLTFLoader.Texture = function (t) {
+var Texture = (MinimalGLTFLoader.Texture = function (loader, t) {
   this.name = t.name !== undefined ? t.name : null;
   this.sampler =
-    t.sampler !== undefined ? curLoader.glTF.samplers[t.sampler] : null;
-  this.source = t.source !== undefined ? curLoader.glTF.images[t.source] : null;
-  this.base = t.source !== undefined ? curLoader.glTF.image_bases[t.source] : null;
+    t.sampler !== undefined ? loader.glTF.samplers[t.sampler] : null;
+  this.source = t.source !== undefined ? loader.glTF.images[t.source] : null;
+  this.base = t.source !== undefined ? loader.glTF.image_bases[t.source] : null;
 
   this.extensions = t.extensions !== undefined ? t.extensions : null;
   this.extras = t.extras !== undefined ? t.extras : null;
@@ -649,7 +647,7 @@ var SkinLink = (MinimalGLTFLoader.SkinLink = function (
   this.name = linkedSkin.name;
   // this.skinID = linkedSkin.skinID;   // use this for uniformblock id
   // this.skinID = gltf.skins.length - 1;
-  // this.skinID = curLoader.skeletonGltf.skins.length + gltf.skins.length - 1;
+  // this.skinID = loader.skeletonGltf.skins.length + gltf.skins.length - 1;
   this.skinID = gltf.skins.length - 1;
 
   this.joints = linkedSkin.joints;
@@ -920,8 +918,6 @@ glTFLoader.prototype._init = function () {
   this._finishedPendingTasks = 0;
 
   this.onload = null;
-
-  curLoader = this;
 };
 
 glTFLoader.prototype._checkComplete = function () {
@@ -1032,8 +1028,6 @@ glTFLoader.prototype._postprocess = function () {
   // if there's no plan for progressive loading (streaming)
   // than simply everything should be placed here
 
-  curLoader = this;
-
   var i, leni, j, lenj;
 
   var scene, s;
@@ -1084,18 +1078,18 @@ glTFLoader.prototype._postprocess = function () {
   // load all textures
   if (this.glTF.textures) {
     for (i = 0, leni = this.glTF.textures.length; i < leni; i++) {
-      this.glTF.textures[i] = new Texture(this.glTF.json.textures[i]);
+      this.glTF.textures[i] = new Texture(this, this.glTF.json.textures[i]);
     }
   }
 
   // mesh
   for (i = 0, leni = this.glTF.meshes.length; i < leni; i++) {
-    this.glTF.meshes[i] = new Mesh(this.glTF.json.meshes[i], i);
+    this.glTF.meshes[i] = new Mesh(this, this.glTF.json.meshes[i], i);
   }
 
   // node
   for (i = 0, leni = this.glTF.nodes.length; i < leni; i++) {
-    this.glTF.nodes[i] = new Node(this.glTF.json.nodes[i], i);
+    this.glTF.nodes[i] = new Node(this, this.glTF.json.nodes[i], i);
   }
 
   // node: hook up children

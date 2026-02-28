@@ -390,6 +390,8 @@ export class Texture {
   }
 
   copy_texture(encoder, texture) {
+    if (!texture || !texture.image || !this.image) return;
+
     const src_origin = {
       x: 0,
       y: 0,

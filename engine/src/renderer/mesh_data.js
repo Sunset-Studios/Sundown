@@ -1,3 +1,4 @@
+import { Renderer } from "./renderer.js";
 import { BufferFlags } from "./renderer_types.js";
 import { Buffer } from "./buffer.js";
 import { Name } from "../utility/names.js";
@@ -43,7 +44,6 @@ export class MeshData {
     this.vertex_buffer = Buffer.create({
       name: vertex_buffer_name,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-      flags: BufferFlags.GlobalBinding,
       size: initial_vertex_buffer_size,
       force: true,
     });
@@ -206,10 +206,11 @@ export class MeshData {
     this.vertex_buffer = Buffer.create({
       name: vertex_buffer_name,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-      flags: BufferFlags.GlobalBinding,
       size: this.vertex_data.length,
       force: true,
     });
+
+    Renderer.get().refresh_global_shader_bindings();
   }
 
   static _add_index_data(mesh) {

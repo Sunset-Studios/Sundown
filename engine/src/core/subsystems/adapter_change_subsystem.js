@@ -119,7 +119,7 @@ export class AdapterChangeSubsystem extends SimulationLayer {
     this.elapsed_ms = 0;
     this.is_check_in_flight = true;
 
-    log('[AdapterChangeSubsystem] Checking for adapter change...');
+    //log('[AdapterChangeSubsystem] Checking for adapter change...');
 
     const that = this;
     this.check_for_adapter_change().finally(() => {
@@ -147,7 +147,8 @@ export class AdapterChangeSubsystem extends SimulationLayer {
       return;
     }
 
-    log(`[AdapterChangeSubsystem] Adapter check completed: ${current_adapter.info.device}`);
+    // log(`[AdapterChangeSubsystem] Adapter check completed:`);
+    // console.log(current_adapter);
 
     const current_snapshot = await collect_adapter_snapshot(current_adapter);
     const change_report = get_change_report(this.last_snapshot, current_snapshot);

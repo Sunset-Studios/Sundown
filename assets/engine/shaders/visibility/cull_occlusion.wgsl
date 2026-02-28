@@ -132,9 +132,9 @@ fn is_occluded(aabb_node: ptr<function, AABB>, view: ptr<function, View>) -> u32
                 mix(v_min, v_max, f32(iy) / f32(sample_dim - 1u))
             );
             let raw_d: f32 = textureSampleLevel(input_texture, non_filtering_sampler, uv, level).r;
-            let pixel = vec2<u32>(uv * entity_dims);
-            let id = textureLoad(entity_id_texture, vec2<i32>(pixel), 0).x;
-            let occ = occluder_buffer[id] != 0u;
+            let pixel_xy = clamp(vec2<i32>(uv * entity_dims), vec2<i32>(0), vec2<i32>(entity_dims) - vec2<i32>(1));
+            let id = textureLoad(entity_id_texture, pixel_xy, 0).x;
+            let occ = select(false, occluder_buffer[id] != 0u, id < arrayLength(&occluder_buffer));
             let d = select(far_depth, raw_d, occ);
             let lin_d = linearize_depth(d, view.near, view.far, draw_cull_data.view_index);
             max_depth = max(max_depth, lin_d);
@@ -166,7 +166,15 @@ fn cs(@builtin(global_invocation_id) global_id: vec3<u32>) {
     }
 
     let object_instance = object_instances[object_instance_index];
-    let entity_resolved = entity_index_lookup[get_entity_row(object_instance.row)];
+    let entity_row = get_entity_row(object_instance.row);
+    if (entity_row >= arrayLength(&entity_index_lookup)) {
+        return;
+    }
+
+    let entity_resolved = entity_index_lookup[entity_row];
+    if (entity_resolved == 0xffffffffu || entity_resolved >= arrayLength(&aabb_bounds)) {
+        return;
+    }
 
     var aabb_node = aabb_bounds[entity_resolved];
 

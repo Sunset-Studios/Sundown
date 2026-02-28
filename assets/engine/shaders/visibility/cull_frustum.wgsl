@@ -63,7 +63,15 @@ fn cs(@builtin(global_invocation_id) global_id: vec3<u32>) {
     }
 
     let row = object_instances[g_id].row;
-    let entity_resolved = entity_index_lookup[get_entity_row(row)];
+    let entity_row = get_entity_row(row);
+    if (entity_row >= arrayLength(&entity_index_lookup)) {
+        return;
+    }
+
+    let entity_resolved = entity_index_lookup[entity_row];
+    if (entity_resolved == 0xffffffffu || entity_resolved >= arrayLength(&aabb_bounds)) {
+        return;
+    }
 
     let aabb_node = aabb_bounds[entity_resolved];
     let center = vec4f((aabb_node.min.xyz + aabb_node.max.xyz) * 0.5, 1.0);
