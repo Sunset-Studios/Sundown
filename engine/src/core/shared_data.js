@@ -1,6 +1,7 @@
-import { Buffer } from "../renderer/buffer.js";
-import { Texture } from "../renderer/texture.js";
 import { Renderer } from "../renderer/renderer.js";
+import { Buffer } from "../renderer/buffer.js";
+import { BufferFlags } from "../renderer/renderer_types.js";
+import { Texture } from "../renderer/texture.js";
 import { RingBufferAllocator } from "../memory/allocator.js";
 import { ResizableBitArray, TypedStack } from "../memory/container.js";
 import { MeshTaskQueue } from "../renderer/mesh_task_queue.js";
@@ -917,8 +918,6 @@ export class SharedFrameInfoBuffer {
       data: gpu_layout,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
-
-    Renderer.get().refresh_global_shader_bindings();
   }
 
   static _get_gpu_type_layout(item) {

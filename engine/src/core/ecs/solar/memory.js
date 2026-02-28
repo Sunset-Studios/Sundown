@@ -629,8 +629,6 @@ export class FragmentGpuBuffer {
         null, // config_key_within_fragment
         (chunk) => chunk.flags_meta // sync_target_accessor for entity_flags
       );
-
-      Renderer.get().mark_bind_groups_dirty(true);
     }
   }
 
@@ -764,9 +762,6 @@ export class FragmentGpuBuffer {
       }
       // clear our full-flush set
       FragmentGpuBuffer.need_full_flush = false;
-
-      Renderer.get().mark_bind_groups_dirty(true);
-
     }
   }
 

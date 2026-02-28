@@ -243,9 +243,6 @@ export class BVH {
         size: required_primitive_size,     // One u32 Morton code per primitive
         force: true,
       });
-
-      // Notify renderer that bind groups need updating due to buffer changes
-      Renderer.get().mark_bind_groups_dirty(true);
     }
 
     // Temporary workspace for Morton code radix sort ping-pong operations
@@ -259,8 +256,6 @@ export class BVH {
         size: required_primitive_size,     // Must match primary buffer for swapping
         force: true,
       });
-
-      Renderer.get().mark_bind_groups_dirty(true);
     }
 
     // ─── Primitive Index Buffers ───────────────────────────────────────────────────────────────
@@ -276,8 +271,6 @@ export class BVH {
         size: required_primitive_size,     // One u32 index per primitive
         force: true,
       });
-
-      Renderer.get().mark_bind_groups_dirty(true);
     }
 
     // Temporary workspace for index sorting - pairs with Morton code sorting
@@ -313,7 +306,6 @@ export class BVH {
         size: pass_hist_count,
         force: true,
       });
-      Renderer.get().mark_bind_groups_dirty(true);
     }
 
     // Global histogram: Aggregated bucket counts across all workgroups
@@ -329,7 +321,6 @@ export class BVH {
         size: global_hist_count,
         force: true,
       });
-      Renderer.get().mark_bind_groups_dirty(true);
     }
 
     // Tile indices: Track which tiles are active for each radix pass
@@ -343,7 +334,6 @@ export class BVH {
         size: RADIX_PASSES,
         force: true,
       });
-      Renderer.get().mark_bind_groups_dirty(true);
     }
 
     // Error counting: Debug validation for sort algorithm correctness

@@ -78,7 +78,6 @@ export class SceneGraph {
         raw_data: result,
         force: true,
       });
-      Renderer.get().mark_bind_groups_dirty(true);
     } else {
       this.scene_graph_buffer.write_raw(result);
     }

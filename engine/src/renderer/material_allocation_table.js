@@ -106,7 +106,6 @@ export class MaterialAllocationTable {
           dispatch: true,
           force: true,
         });
-        Renderer.get().mark_bind_groups_dirty(true);
       } else {
         const dirty_pages = this.dirty_params_pages.buffer;
         for (let i = 0; i < dirty_pages.length; i++) {
@@ -132,7 +131,6 @@ export class MaterialAllocationTable {
           dispatch: true,
           force: true,
         });
-        Renderer.get().mark_bind_groups_dirty(true);
       } else {
         const dirty_pages = this.dirty_palette_pages.buffer;
         for (let i = 0; i < dirty_pages.length; i++) {

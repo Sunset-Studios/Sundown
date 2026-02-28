@@ -74,8 +74,6 @@ class ObjectInstanceBuffer {
           usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
           force: true,
         });
-
-        Renderer.get().mark_bind_groups_dirty(true);
       }
 
       profile_scope("write_object_instance_buffer", () => {
@@ -163,8 +161,6 @@ class IndirectDrawObject {
           usage: GPUBufferUsage.INDIRECT | GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
           force: true,
         });
-
-        Renderer.get().mark_bind_groups_dirty(true);
       }
 
       profile_scope("write_indirect_draw_buffer", () => {

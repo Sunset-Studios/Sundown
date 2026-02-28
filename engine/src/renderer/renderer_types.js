@@ -81,6 +81,8 @@ export const BufferFlags = Object.freeze({
   None: 0,
   /** Indicates a transient buffer resource */
   Transient: 1,
+  /** Indicates a buffer that needs to refresh global shader bindings */
+  GlobalBinding: 2,
 });
 
 /**

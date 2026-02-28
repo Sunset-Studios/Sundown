@@ -1,5 +1,6 @@
 import { MAX_BUFFERED_FRAMES } from "../core/minimal.js";
 import { Name } from "../utility/names.js";
+import { BufferFlags } from "./renderer_types.js";
 import { Renderer } from "./renderer.js";
 import { ResourceCache } from "./resource_cache.js";
 import { CacheTypes } from "./renderer_types.js";
@@ -75,6 +76,13 @@ export class Buffer {
 
     if (this.config.dispatch) {
       global_dispatcher.dispatch(this.config.name, this);
+    }
+
+    if (this.config.flags !== undefined && (this.config.flags & BufferFlags.GlobalBinding) !== 0) {
+      //console.log('here')
+      //Renderer.get().refresh_global_shader_bindings();
+    } else {
+      Renderer.get().mark_bind_groups_dirty(true);
     }
   }
 

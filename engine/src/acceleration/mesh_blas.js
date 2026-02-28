@@ -393,9 +393,6 @@ export class MeshBLAS {
     // Recreate buffers with new capacity
     this.#current_scratch_capacity = new_capacity;
     this.#create_scratch_buffers(new_capacity);
-
-    // Mark renderer dirty since buffers changed
-    Renderer.get().mark_bind_groups_dirty(true);
   }
 
   // ┌─────────────────────────────────────────────────────────────────────────────────────────────┐
@@ -596,8 +593,6 @@ export class MeshBLAS {
     for (const mesh_id of this.#bvh2_allocations.keys()) {
       this.#dirty_meshes.add(mesh_id);
     }
-
-    Renderer.get().mark_bind_groups_dirty(true);
   }
 
 
@@ -628,8 +623,6 @@ export class MeshBLAS {
       raw_data: this.#directory,
       force: true,
     });
-
-    Renderer.get().mark_bind_groups_dirty(true);
   }
 
   // ---------------------------------------------------------------------------

@@ -1,4 +1,4 @@
-import { Renderer } from "./renderer.js";
+import { BufferFlags } from "./renderer_types.js";
 import { Buffer } from "./buffer.js";
 import { Name } from "../utility/names.js";
 import { MeshBLAS } from "../acceleration/mesh_blas.js";
@@ -43,6 +43,7 @@ export class MeshData {
     this.vertex_buffer = Buffer.create({
       name: vertex_buffer_name,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+      flags: BufferFlags.GlobalBinding,
       size: initial_vertex_buffer_size,
       force: true,
     });
@@ -166,8 +167,6 @@ export class MeshData {
       size: this.mesh_count * mesh_bounds_size,
       force: true,
     });
-
-    Renderer.get().mark_bind_groups_dirty(true);
   }
 
   static _add_vertex_data(mesh) {
@@ -207,12 +206,10 @@ export class MeshData {
     this.vertex_buffer = Buffer.create({
       name: vertex_buffer_name,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+      flags: BufferFlags.GlobalBinding,
       size: this.vertex_data.length,
       force: true,
     });
-
-    Renderer.get().refresh_global_shader_bindings();
-    Renderer.get().mark_bind_groups_dirty(true);
   }
 
   static _add_index_data(mesh) {
@@ -252,9 +249,6 @@ export class MeshData {
       element_type: "uint32",
       force: true,
     });
-
-    Renderer.get().refresh_global_shader_bindings();
-    Renderer.get().mark_bind_groups_dirty(true);
   }
 
   static get_index_by_name_hash(name_hash) {
