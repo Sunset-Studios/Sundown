@@ -1031,9 +1031,30 @@ export class DDGI {
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    // Probe BVH Pre-Cull Pass
-    // Marks probes as OFF when their cell does not overlap scene geometry
-    // (Uses TLAS + BLAS BVH traversal for overlap testing)
+    // Probe Frustum & Occlusion Culling Pass
+    // Marks each probe as visible (1) or culled (0) based on:
+    // - Frustum culling: Is the probe inside the view frustum?
+    // - Occlusion culling: Is the probe visible in the Hierarchical Z-Buffer?
+    // Writes cull flags directly into ProbeStateData.cull_flags field
+    // ─────────────────────────────────────────────────────────────────────────
+    render_graph.add_pass(
+      "ddgi_probe_cull",
+      RenderPassFlags.Compute,
+      {
+        inputs: [this.ddgi_params, probe_states, hzb_texture],
+        outputs: [probe_states],
+        shader_setup: ddgi_probe_cull_shader_setup,
+      },
+      (graph, frame_data, encoder) => {
+        const pass = graph.get_physical_pass(frame_data.current_pass);
+        pass.dispatch(Math.ceil(probe_count / COMPUTE_WORKGROUP_SIZE), 1, 1);
+      }
+    );
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Probe BVH Surface Cull Pass
+    // Runs after ddgi_probe_cull so we only BVH-test visible probes
+    // Marks probes as SLEEPING/OFF when their cell does not overlap geometry
     // ─────────────────────────────────────────────────────────────────────────
     render_graph.add_pass(
       "ddgi_probe_surface_cull",
@@ -1050,27 +1071,6 @@ export class DDGI {
         ],
         outputs: [probe_states],
         shader_setup: ddgi_probe_surface_cull_shader_setup,
-      },
-      (graph, frame_data, encoder) => {
-        const pass = graph.get_physical_pass(frame_data.current_pass);
-        pass.dispatch(Math.ceil(probe_count / COMPUTE_WORKGROUP_SIZE), 1, 1);
-      }
-    );
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // Probe Frustum & Occlusion Culling Pass
-    // Marks each probe as visible (1) or culled (0) based on:
-    // - Frustum culling: Is the probe inside the view frustum?
-    // - Occlusion culling: Is the probe visible in the Hierarchical Z-Buffer?
-    // Writes cull flags directly into ProbeStateData.cull_flags field
-    // ─────────────────────────────────────────────────────────────────────────
-    render_graph.add_pass(
-      "ddgi_probe_cull",
-      RenderPassFlags.Compute,
-      {
-        inputs: [this.ddgi_params, probe_states, hzb_texture],
-        outputs: [probe_states],
-        shader_setup: ddgi_probe_cull_shader_setup,
       },
       (graph, frame_data, encoder) => {
         const pass = graph.get_physical_pass(frame_data.current_pass);

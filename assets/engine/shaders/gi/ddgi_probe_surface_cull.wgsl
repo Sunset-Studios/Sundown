@@ -165,10 +165,16 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         return;
     }
 
+    let packed_state = probe_states[probe_index].packed_state;
+    let is_cull_visible = ddgi_probe_state_get_cull_visible(packed_state);
+    if (!is_cull_visible) {
+        return;
+    }
+
     let probe_pos = ddgi_probe_world_position_from_index(&ddgi_params, probe_index);
     let spacing = ddgi_probe_spacing_from_index(&ddgi_params, probe_index);
-    let state = probe_state_get_state(probe_states[probe_index].packed_state);
-    let flags = probe_state_get_flags(probe_states[probe_index].packed_state);
+    let state = probe_state_get_state(packed_state);
+    let flags = probe_state_get_flags(packed_state);
 
     let probe_min = probe_pos - vec3<f32>(spacing);
     let probe_max = probe_pos + vec3<f32>(spacing);
