@@ -239,8 +239,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
     
     // Get probe world position (including any offset)
-    let base_pos = ddgi_probe_world_position_from_index(&ddgi_params, probe_index);
-    let probe_pos = base_pos + probe_states[probe_index].probe_offset.xyz;
+    let probe_pos = ddgi_probe_world_position_from_index(&ddgi_params, probe_index);
     
     // ─────────────────────────────────────────────────────────────────────────
     // Calculate probe influence radius for conservative culling

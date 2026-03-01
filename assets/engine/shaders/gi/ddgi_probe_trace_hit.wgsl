@@ -17,7 +17,6 @@
 @group(1) @binding(6) var<storage, read> entity_transforms: array<EntityTransform>;
 @group(1) @binding(7) var<storage, read> index_buffer: array<u32>;
 @group(1) @binding(8) var<storage, read> dense_lights_buffer: DenseLightsBuffer;
-@group(1) @binding(9) var<storage, read_write> probe_states: array<ProbeStateData>;
 
 // =============================================================================
 // BLAS TRAVERSAL
@@ -629,7 +628,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
 
     let probe_index = probe_ray_data.rays[gid.x].meta_u32.x;
     let ray_index_in_probe = probe_ray_data.rays[gid.x].meta_u32.y;
-    let probe_position = ddgi_probe_world_position_from_index_with_offset(&ddgi_params, &probe_states, probe_index);
+    let probe_position = ddgi_probe_world_position_from_index(&ddgi_params, probe_index);
 
     let ray_dir = probe_ray_data.rays[gid.x].ray_dir_prim.xyz;
     process_primary_ray(gid.x, probe_position, ray_dir, probe_index, ray_index_in_probe);

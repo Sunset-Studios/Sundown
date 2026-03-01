@@ -24,10 +24,9 @@ fn ddgi_probe_ray_priority(state_data: ProbeStateData) -> f32 {
     }
 
     // Prefer probes that are still noisy / less converged.
-    let variance_boost = clamp(state_data.backface_ratio * 4.0, 0.0, 1.0);
     let convergence_t = clamp(f32(convergence_frames) / 64.0, 0.0, 1.0);
     let convergence_boost = 1.0 - convergence_t;
-    return 1.0 + variance_boost + convergence_boost;
+    return 1.0 + convergence_boost;
 }
 
 @compute @workgroup_size(256, 1, 1)

@@ -25,7 +25,6 @@
 @group(1) @binding(4) var<storage, read> blas_bvh2_nodes: array<AABB>;
 @group(1) @binding(5) var<storage, read> blas_directory: array<MeshDirectoryEntry>;
 @group(1) @binding(6) var<storage, read> entity_transforms: array<EntityTransform>;
-@group(1) @binding(7) var<storage, read> index_buffer: array<u32>;
 
 // =============================================================================
 // HELPERS
@@ -74,22 +73,7 @@ fn probe_overlaps_blas(
         }
 
         if (is_leaf(node)) {
-            let tri_id = u32(node.min.w);
-            let tri_base = mesh_directory_entry.first_index + tri_id * 3u;
-            let v0i = mesh_directory_entry.first_vertex + index_buffer[tri_base + 0u];
-            let v1i = mesh_directory_entry.first_vertex + index_buffer[tri_base + 1u];
-            let v2i = mesh_directory_entry.first_vertex + index_buffer[tri_base + 2u];
-            let min_point = min(
-                vertex_buffer[v0i].position.xyz,
-                min(vertex_buffer[v1i].position.xyz, vertex_buffer[v2i].position.xyz)
-            ) - vec3<f32>(0.001);
-            let max_point = max(
-                vertex_buffer[v0i].position.xyz,
-                max(vertex_buffer[v1i].position.xyz, vertex_buffer[v2i].position.xyz)
-            ) + vec3<f32>(0.001);
-            if (aabb_overlaps(probe_min_local, probe_max_local, min_point, max_point)) {
-                return true;
-            }
+            return true;
         } else {
             let left_idx = u32(node.min.w);
             if (left_idx != node_idx
@@ -181,7 +165,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         return;
     }
 
-    let probe_pos = ddgi_probe_world_position_from_index_with_offset(&ddgi_params, &probe_states, probe_index);
+    let probe_pos = ddgi_probe_world_position_from_index(&ddgi_params, probe_index);
     let spacing = ddgi_probe_spacing_from_index(&ddgi_params, probe_index);
     let state = probe_state_get_state(probe_states[probe_index].packed_state);
     let flags = probe_state_get_flags(probe_states[probe_index].packed_state);

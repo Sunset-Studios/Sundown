@@ -103,8 +103,6 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
 
     let reset_sample_count = ddgi_probe_state_get_sample_count(probe_states[probe_index]);
-    probe_states[probe_index].nearest_hit_dist = 0.0;
-    probe_states[probe_index].backface_ratio = 0.0;
-    probe_states[probe_index].probe_offset = vec4<f32>(0.0, 0.0, 0.0, f32(reset_sample_count));
+    ddgi_probe_state_set_sample_count(&probe_states[probe_index], reset_sample_count);
     probe_states[probe_index].packed_state = probe_state_pack(PROBE_STATE_UNINITIALIZED, 0u, 0u, 0u);
 }

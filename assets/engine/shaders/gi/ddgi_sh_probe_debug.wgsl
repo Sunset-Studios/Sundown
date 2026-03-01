@@ -242,9 +242,8 @@ fn traverse_cascade_probes(
                         continue;
                     }
 
-                    let center = ddgi_probe_world_position_from_coord_with_offset(
+                    let center = ddgi_probe_world_position_from_coord(
                         &ddgi_params,
-                        &probe_states,
                         cascade_index,
                         v
                     );
@@ -357,7 +356,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     // - We visualize a Lambertian-equivalent radiance preview: L = E / PI
     // - This tends to match how the probe field contributes to diffuse surfaces
     // ─────────────────────────────────────────────────────────────────────────
-    let probe_center = ddgi_probe_world_position_from_index_with_offset(&ddgi_params, &probe_states, hit_probe_index);
+    let probe_center = ddgi_probe_world_position_from_index(&ddgi_params, hit_probe_index);
     let hit_pos = ray_origin + ray_direction * hit_t;
     let sphere_normal = safe_normalize(hit_pos - probe_center);
     

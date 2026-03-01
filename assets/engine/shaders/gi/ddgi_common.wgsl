@@ -95,10 +95,7 @@ struct DDGIProbeRayData {
 
 struct ProbeStateData {
     packed_state: u32,        // state | init_frame_count | convergence_frame_count | flags (bit 0 = cull_visible)
-    nearest_hit_dist: f32,    // nearest hit distance in world-space
-    backface_ratio: f32,      // accumulated backface hit ratio
-    padding: f32,
-    probe_offset: vec4<f32>,  // xyz = probe position offset in world-space, w = sample_count (bitcast u32)
+    sample_count: u32,        // sample count
 }
 
 struct DDGIProbeRayDataHeader {
@@ -150,11 +147,11 @@ fn ddgi_probe_state_set_cull_visible(packed: u32, visible: bool) -> u32 {
 }
 
 fn ddgi_probe_state_get_sample_count(probe_state: ProbeStateData) -> u32 {
-    return u32(probe_state.probe_offset.w);
+    return probe_state.sample_count;
 }
 
 fn ddgi_probe_state_set_sample_count(probe_state: ptr<storage, ProbeStateData, read_write>, count: u32) {
-    (*probe_state).probe_offset.w = f32(count);
+    (*probe_state).sample_count = count;
 }
 
 
@@ -714,45 +711,13 @@ fn probe_state_is_valid_for_sampling(state_data: ProbeStateData) -> bool {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Probe world position with per-probe offset
-// ─────────────────────────────────────────────────────────────────────────────
-fn ddgi_probe_world_position_from_index_with_offset(
-    ddgi_params: ptr<uniform, DDGIParams>,
-    probe_states: ptr<storage, array<ProbeStateData>, read_write>,
-    probe_index: u32
-) -> vec3<f32> {
-    let base_pos = ddgi_probe_world_position_from_index(ddgi_params, probe_index);
-    return base_pos + probe_states[probe_index].probe_offset.xyz;
-}
-
-fn ddgi_probe_world_position_from_coord_with_offset(
-    ddgi_params: ptr<uniform, DDGIParams>,
-    probe_states: ptr<storage, array<ProbeStateData>, read_write>,
-    cascade_index: u32,
-    coord: vec3<u32>
-) -> vec3<f32> {
-    let probe_index = ddgi_probe_index_from_coord(ddgi_params, cascade_index, coord);
-    return ddgi_probe_world_position_from_index_with_offset(ddgi_params, probe_states, probe_index);
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
 // Transition a probe from UNINITIALIZED based on classification results
 // Called after PROBE_STATE_INIT_FRAMES of tracing
 // ─────────────────────────────────────────────────────────────────────────────
-fn probe_state_classify_initial(
-    backface_ratio: f32,
-    nearest_hit_dist: f32,
-    probe_spacing: f32
-) -> u32 {
+fn probe_state_classify_initial(backface_ratio: f32) -> u32 {
     // If most rays hit backfaces, probe is inside geometry
     if (backface_ratio > PROBE_STATE_BACKFACE_THRESHOLD) {
         return PROBE_STATE_OFF;
-    }
-    
-    // If no geometry within probe_spacing, probe is sleeping
-    let near_threshold = probe_spacing * PROBE_STATE_NEAR_GEOMETRY_DIST;
-    if (nearest_hit_dist > near_threshold) {
-        return PROBE_STATE_SLEEPING;
     }
     
     // Otherwise, probe is near static geometry
@@ -877,9 +842,8 @@ fn ddgi_sample_sh_irradiance_single_cascade_internal(
 
         var weight = 1.0;
 
-        let probe_pos = ddgi_probe_world_position_from_coord_with_offset(
+        let probe_pos = ddgi_probe_world_position_from_coord(
             ddgi_params,
-            probe_states,
             cascade_index,
             clamped_coord
         );

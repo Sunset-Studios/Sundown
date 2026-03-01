@@ -931,12 +931,11 @@ export class DDGI {
 
     // ─────────────────────────────────────────────────────────────────────────
     // Probe State Buffers
-    // - [0..3] packed_state, nearest_hit_dist, backface_count, reserved
-    // - [4..7] probe_offset (vec4<f32>)
+    // - [0..1] packed_state, sample_count
     // ─────────────────────────────────────────────────────────────────────────
     const probe_states = render_graph.create_buffer({
       name: "ddgi_probe_states",
-      size: probe_count * 8,
+      size: probe_count * 2,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
       force: force_recreate,
     });
@@ -1048,7 +1047,6 @@ export class DDGI {
           blas_bvh2_nodes,
           blas_directory,
           entity_transforms,
-          index_buffer,
         ],
         outputs: [probe_states],
         shader_setup: ddgi_probe_surface_cull_shader_setup,
@@ -1249,7 +1247,6 @@ export class DDGI {
           entity_transforms,
           index_buffer,
           dense_lights,
-          probe_states,
         ],
         outputs: [probe_ray_data],
         shader_setup: ddgi_probe_trace_hit_shader_setup,
