@@ -381,8 +381,16 @@ fn trace_blas_any_hit(
     node_stack[0] = root_node_idx;
     var stack_size = 1u;
 
+    var pending_child_idx = 0u;
+    var pending_child_tmin = 0.0;
+    var have_pending_child = false;
     var node_idx = INVALID_IDX;
     var child_idx = INVALID_IDX;
+    var is_better_child = false;
+    var current_is_farther = false;
+    var push_idx = INVALID_IDX;
+    var keep_idx = INVALID_IDX;
+    var keep_tmin = 0.0;
     var t_tri = 0.0;
     var t_aabb_child = vec2<f32>(0.0, 0.0);
     var v0 = vec3<f32>(0.0, 0.0, 0.0);
@@ -412,19 +420,72 @@ fn trace_blas_any_hit(
                 return true;
             }
         } else {
+            pending_child_idx = 0u;
+            pending_child_tmin = 0.0;
+            have_pending_child = false;
+
             child_idx = u32(node.min.w);
             t_aabb_child = intersect_aabb(ray_local, blas_bvh2_nodes[child_idx].min.xyz, blas_bvh2_nodes[child_idx].max.xyz);
-            if (t_aabb_child.x <= t_aabb_child.y && t_aabb_child.x >= ray_local.origin_and_tmin.w && t_aabb_child.x < ray_local.direction_and_tmax.w) {
+            is_better_child = t_aabb_child.x <= t_aabb_child.y && t_aabb_child.x >= ray_local.origin_and_tmin.w && t_aabb_child.x < ray_local.direction_and_tmax.w;
+            if (is_better_child) {
+                #if BVH_TRAVERSAL_ORDER_CHILDREN
+                if (!have_pending_child) {
+                    pending_child_idx = child_idx;
+                    pending_child_tmin = t_aabb_child.x;
+                    have_pending_child = true;
+                } else {
+                    current_is_farther = t_aabb_child.x > pending_child_tmin;
+                    push_idx = select(pending_child_idx, child_idx, current_is_farther);
+                    keep_idx = select(child_idx, pending_child_idx, current_is_farther);
+                    keep_tmin = select(t_aabb_child.x, pending_child_tmin, current_is_farther);
+
+                    node_stack[stack_size] = push_idx;
+                    stack_size = stack_size + 1u;
+
+                    pending_child_idx = keep_idx;
+                    pending_child_tmin = keep_tmin;
+                    have_pending_child = true;
+                }
+                #else
                 node_stack[stack_size] = child_idx;
                 stack_size = stack_size + 1u;
+                #endif
             }
 
             child_idx = u32(node.max.w);
             t_aabb_child = intersect_aabb(ray_local, blas_bvh2_nodes[child_idx].min.xyz, blas_bvh2_nodes[child_idx].max.xyz);
-            if (t_aabb_child.x <= t_aabb_child.y && t_aabb_child.x >= ray_local.origin_and_tmin.w && t_aabb_child.x < ray_local.direction_and_tmax.w) {
+            is_better_child = t_aabb_child.x <= t_aabb_child.y && t_aabb_child.x >= ray_local.origin_and_tmin.w && t_aabb_child.x < ray_local.direction_and_tmax.w;
+            if (is_better_child) {
+                #if BVH_TRAVERSAL_ORDER_CHILDREN
+                if (!have_pending_child) {
+                    pending_child_idx = child_idx;
+                    pending_child_tmin = t_aabb_child.x;
+                    have_pending_child = true;
+                } else {
+                    current_is_farther = t_aabb_child.x > pending_child_tmin;
+                    push_idx = select(pending_child_idx, child_idx, current_is_farther);
+                    keep_idx = select(child_idx, pending_child_idx, current_is_farther);
+                    keep_tmin = select(t_aabb_child.x, pending_child_tmin, current_is_farther);
+
+                    node_stack[stack_size] = push_idx;
+                    stack_size = stack_size + 1u;
+
+                    pending_child_idx = keep_idx;
+                    pending_child_tmin = keep_tmin;
+                    have_pending_child = true;
+                }
+                #else
                 node_stack[stack_size] = child_idx;
                 stack_size = stack_size + 1u;
+                #endif
             }
+
+            #if BVH_TRAVERSAL_ORDER_CHILDREN
+            if (have_pending_child) {
+                node_stack[stack_size] = pending_child_idx;
+                stack_size = stack_size + 1u;
+            }
+            #endif
         }
     }
 
@@ -446,8 +507,16 @@ fn trace_hit_any(ray: ptr<function, Ray>) -> bool {
 
     var current_ray = *ray;
 
+    var pending_child_idx = 0u;
+    var pending_child_tmin = 0.0;
+    var have_pending_child = false;
     var node_idx = INVALID_IDX;
     var child_idx = INVALID_IDX;
+    var is_better_child = false;
+    var current_is_farther = false;
+    var push_idx = INVALID_IDX;
+    var keep_idx = INVALID_IDX;
+    var keep_tmin = 0.0;
     var t_leaf = vec2<f32>(0.0, 0.0);
     var t_aabb_child = vec2<f32>(0.0, 0.0);
     var leaf_bounds: AABB;
@@ -486,19 +555,72 @@ fn trace_hit_any(ray: ptr<function, Ray>) -> bool {
                 }
             }
         } else {
+            pending_child_idx = 0u;
+            pending_child_tmin = 0.0;
+            have_pending_child = false;
+
             child_idx = u32(current_node.min.w);
             t_aabb_child = intersect_aabb(&current_ray, tlas_bvh2_bounds[child_idx].min.xyz, tlas_bvh2_bounds[child_idx].max.xyz);
-            if (t_aabb_child.x <= t_aabb_child.y && max(t_aabb_child.x, current_ray.origin_and_tmin.w) < current_ray.direction_and_tmax.w) {
+            is_better_child = t_aabb_child.x <= t_aabb_child.y && max(t_aabb_child.x, current_ray.origin_and_tmin.w) < current_ray.direction_and_tmax.w;
+            if (is_better_child) {
+                #if BVH_TRAVERSAL_ORDER_CHILDREN
+                if (!have_pending_child) {
+                    pending_child_idx = child_idx;
+                    pending_child_tmin = t_aabb_child.x;
+                    have_pending_child = true;
+                } else {
+                    current_is_farther = t_aabb_child.x > pending_child_tmin;
+                    push_idx = select(pending_child_idx, child_idx, current_is_farther);
+                    keep_idx = select(child_idx, pending_child_idx, current_is_farther);
+                    keep_tmin = select(t_aabb_child.x, pending_child_tmin, current_is_farther);
+
+                    node_stack[stack_size] = push_idx;
+                    stack_size = stack_size + 1u;
+
+                    pending_child_idx = keep_idx;
+                    pending_child_tmin = keep_tmin;
+                    have_pending_child = true;
+                }
+                #else
                 node_stack[stack_size] = child_idx;
                 stack_size = stack_size + 1u;
+                #endif
             }
 
             child_idx = u32(current_node.max.w);
             t_aabb_child = intersect_aabb(&current_ray, tlas_bvh2_bounds[child_idx].min.xyz, tlas_bvh2_bounds[child_idx].max.xyz);
-            if (t_aabb_child.x <= t_aabb_child.y && max(t_aabb_child.x, current_ray.origin_and_tmin.w) < current_ray.direction_and_tmax.w) {
+            is_better_child = t_aabb_child.x <= t_aabb_child.y && max(t_aabb_child.x, current_ray.origin_and_tmin.w) < current_ray.direction_and_tmax.w;
+            if (is_better_child) {
+                #if BVH_TRAVERSAL_ORDER_CHILDREN
+                if (!have_pending_child) {
+                    pending_child_idx = child_idx;
+                    pending_child_tmin = t_aabb_child.x;
+                    have_pending_child = true;
+                } else {
+                    current_is_farther = t_aabb_child.x > pending_child_tmin;
+                    push_idx = select(pending_child_idx, child_idx, current_is_farther);
+                    keep_idx = select(child_idx, pending_child_idx, current_is_farther);
+                    keep_tmin = select(t_aabb_child.x, pending_child_tmin, current_is_farther);
+
+                    node_stack[stack_size] = push_idx;
+                    stack_size = stack_size + 1u;
+
+                    pending_child_idx = keep_idx;
+                    pending_child_tmin = keep_tmin;
+                    have_pending_child = true;
+                }
+                #else
                 node_stack[stack_size] = child_idx;
                 stack_size = stack_size + 1u;
+                #endif
             }
+
+            #if BVH_TRAVERSAL_ORDER_CHILDREN
+            if (have_pending_child) {
+                node_stack[stack_size] = pending_child_idx;
+                stack_size = stack_size + 1u;
+            }
+            #endif
         }
     }
 

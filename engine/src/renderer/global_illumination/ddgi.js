@@ -305,7 +305,7 @@ export class DDGI {
     probe_depth_resolutions: [8, 4, 4, 4, 4, 4, 4, 4],
     short_range_gi_enabled: true,
     short_range_screen_ray_count: 1,
-    short_range_upscale_factor: 2,
+    short_range_upscale_factor: 4,
     short_range_max_ray_length: 1.0,
   };
 
