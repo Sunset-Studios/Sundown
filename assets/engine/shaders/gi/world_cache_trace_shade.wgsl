@@ -141,10 +141,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
 
         // === EMISSIVE CONTRIBUTION ===
         if (emissive > 0.0) {
-            let emissive_radiance = emissive * albedo;
-            let emissive_contribution = emissive_radiance;
-            radiance_contribution += safe_clamp_vec3_max(emissive_contribution, MAX_NEE_LUMINANCE);
-            sample_count += 1.0;
+            radiance_contribution += safe_clamp_vec3_max(emissive * albedo, MAX_NEE_LUMINANCE);
         }
 
         // === INDIRECT LIGHTING - Query world cache for multi-bounce ===
@@ -173,8 +170,9 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         let cached_luminance = luminance(cached_radiance);
         if (cached_luminance > 0.0001) {
             radiance_contribution += safe_clamp_vec3_max(cached_radiance * path.path_weight.xyz, MAX_RADIANCE_LUMINANCE);
-            sample_count += 1.0;
         }
+        
+        sample_count += 1.0;
     }
     
     // =============================================================================

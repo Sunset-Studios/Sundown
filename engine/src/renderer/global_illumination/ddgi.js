@@ -292,6 +292,12 @@ const ddgi_short_range_add_shader_setup = {
   },
 };
 
+const ddgi_atrous_diffuse_shader_setup = {
+  pipeline_shaders: {
+    compute: { path: "gi/ddgi_atrous_diffuse.wgsl" },
+  },
+};
+
 export class DDGI {
   config = {
     probe_grid_dimensions: [64, 64, 64],
@@ -310,6 +316,11 @@ export class DDGI {
     short_range_upscale_factor: 4,
     short_range_max_ray_length: 1.0,
     max_emissive_lights: 32768,
+    diffuse_atrous_enabled: true,
+    diffuse_atrous_pass_count: 3,
+    diffuse_atrous_phi_depth: 0.04,
+    diffuse_atrous_phi_normal: 64.0,
+    diffuse_atrous_luma_sigma: 1.0,
   };
 
   ddgi_frame_setup = {
@@ -1737,6 +1748,32 @@ export class DDGI {
       force: force_recreate,
     });
 
+    const diffuse_atrous_ping = render_graph.create_image({
+      name: "ddgi_diffuse_atrous_ping",
+      format: "rgba16float",
+      width,
+      height,
+      usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
+      force: force_recreate,
+    });
+
+    const diffuse_atrous_pong = render_graph.create_image({
+      name: "ddgi_diffuse_atrous_pong",
+      format: "rgba16float",
+      width,
+      height,
+      usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
+      force: force_recreate,
+    });
+
+    const diffuse_atrous_params_data = new Float32Array([1, 0.04, 64.0, 1.0]);
+    const diffuse_atrous_params = render_graph.create_buffer({
+      name: "ddgi_diffuse_atrous_params",
+      size: diffuse_atrous_params_data.length,
+      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+      force: force_recreate,
+    });
+
     render_graph.add_pass(
       "ddgi_short_range_upload_params",
       RenderPassFlags.GraphLocal,
@@ -2017,8 +2054,81 @@ export class DDGI {
       }
     );
 
+    let final_diffuse_output = combined_indirect_diffuse_output;
+    let atrous_read_texture = combined_indirect_diffuse_output;
+    let atrous_write_texture = diffuse_atrous_ping;
+    const diffuse_atrous_enabled = this.config.diffuse_atrous_enabled !== false;
+    const diffuse_atrous_pass_count = Math.max(
+      0,
+      Math.floor(this.config.diffuse_atrous_pass_count || 0)
+    );
+    const diffuse_atrous_phi_depth = Math.max(
+      0.0001,
+      this.config.diffuse_atrous_phi_depth || 0.04
+    );
+    const diffuse_atrous_phi_normal = Math.max(
+      1.0,
+      this.config.diffuse_atrous_phi_normal || 64.0
+    );
+    const diffuse_atrous_luma_sigma = Math.max(
+      0.0001,
+      this.config.diffuse_atrous_luma_sigma || 1.0
+    );
+
+    if (diffuse_atrous_enabled && diffuse_atrous_pass_count > 0) {
+      for (let pass_index = 0; pass_index < diffuse_atrous_pass_count; pass_index += 1) {
+        render_graph.add_pass(
+          `ddgi_diffuse_atrous_upload_params_${ping_pong_frame}_${pass_index}`,
+          RenderPassFlags.GraphLocal,
+          {},
+          (graph, frame_data, encoder) => {
+            const diffuse_atrous_params_buffer = graph.get_physical_buffer(diffuse_atrous_params);
+            diffuse_atrous_params_data[0] = Math.pow(2, pass_index);
+            diffuse_atrous_params_data[1] = diffuse_atrous_phi_depth;
+            diffuse_atrous_params_data[2] = diffuse_atrous_phi_normal;
+            diffuse_atrous_params_data[3] = diffuse_atrous_luma_sigma;
+            diffuse_atrous_params_buffer.write_raw(diffuse_atrous_params_data);
+          }
+        );
+
+        render_graph.add_pass(
+          `ddgi_diffuse_atrous_${ping_pong_frame}_${pass_index}`,
+          RenderPassFlags.Compute,
+          {
+            inputs: [
+              diffuse_atrous_params,
+              atrous_read_texture,
+              gbuffer_position,
+              gbuffer_normal,
+              atrous_write_texture,
+            ],
+            outputs: [atrous_write_texture],
+            shader_setup: ddgi_atrous_diffuse_shader_setup,
+          },
+          (graph, frame_data, encoder) => {
+            const pass = graph.get_physical_pass(frame_data.current_pass);
+            pass.dispatch(Math.ceil(width / 8), Math.ceil(height / 8), 1);
+          }
+        );
+
+        final_diffuse_output = atrous_write_texture;
+
+        if (atrous_read_texture === diffuse_atrous_ping) {
+          atrous_read_texture = diffuse_atrous_pong;
+        } else {
+          atrous_read_texture = diffuse_atrous_ping;
+        }
+
+        if (atrous_write_texture === diffuse_atrous_ping) {
+          atrous_write_texture = diffuse_atrous_pong;
+        } else {
+          atrous_write_texture = diffuse_atrous_ping;
+        }
+      }
+    }
+
     this.final_gi_texture_direct = combined_direct_output;
-    this.final_gi_texture_indirect_diffuse = combined_indirect_diffuse_output;
+    this.final_gi_texture_indirect_diffuse = final_diffuse_output;
     this.final_gi_texture_indirect_specular = combined_indirect_specular_output;
   }
 

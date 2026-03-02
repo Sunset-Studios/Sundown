@@ -80,6 +80,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
 #endif
 
     let center_position = textureLoad(gbuffer_position, full_pixel_coord, 0u).xyz;
+    let camera_position = view_buffer[u32(frame_info.view_index)].view_position.xyz;
 
     var candidate_samples: array<GIReservoirSample, SPATIAL_SAMPLE_COUNT + 1u>;
     var candidate_count = 0u;
@@ -155,10 +156,12 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
 
         let normal_similarity = dot(neighbor_normal, normal);
         let neighbor_position = textureLoad(gbuffer_position, neighbor_full_pixel_coord, 0u).xyz;
+        // Use a relative depth metric (scaled by distance-to-camera) for robustness.
         let plane_distance = abs(dot(neighbor_position - center_position, normal));
+        let camera_distance = max(length(center_position - camera_position), 0.001);
 
         let valid_for_reuse = normal_similarity > SPATIAL_NORMAL_THRESHOLD
-            && plane_distance < SPATIAL_DEPTH_THRESHOLD;
+            && (plane_distance / camera_distance) < SPATIAL_DEPTH_THRESHOLD;
 
         if (valid_for_reuse) {
             rng_state = random_seed(rng_state);
