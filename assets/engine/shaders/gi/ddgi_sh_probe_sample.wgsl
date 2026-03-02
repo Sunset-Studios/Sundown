@@ -94,9 +94,6 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         );
     }
 
-    let exposure = 1.2;
-    let tonemapped_color = reinhard_tonemapping(irradiance, exposure);
-
-    textureStore(output_diffuse, pixel_coord, vec4f(tonemapped_color, 1.0));
+    textureStore(output_diffuse, pixel_coord, vec4f(irradiance, 1.0));
 }
 

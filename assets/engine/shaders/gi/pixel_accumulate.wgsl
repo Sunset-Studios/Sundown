@@ -72,7 +72,7 @@ const NORMAL_THRESHOLD = 0.95;         // Normal dot product threshold
 // ─────────────────────────────────────────────────────────────────────────────
 // Maximum Accumulated Frame Count
 // ─────────────────────────────────────────────────────────────────────────────
-const MAX_ACCUMULATED_FRAMES = 4.0;
+const MAX_ACCUMULATED_FRAMES = 16.0;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Compute bilinear filter origin and weights from sub-pixel UV coordinates

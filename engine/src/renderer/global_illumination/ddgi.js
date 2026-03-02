@@ -245,11 +245,7 @@ const ddgi_short_range_pixel_trace_hit_shader_setup = {
 const ddgi_short_range_pixel_trace_shade_shader_setup = {
   pipeline_shaders: {
     compute: {
-      path: "gi/pixel_trace_shade.wgsl",
-      defines: {
-        DISABLE_WORLD_CACHE_SAMPLING: true,
-        DONT_SHADE_WITH_SKY_ON_RAY_MISS: true,
-      },
+      path: "gi/pixel_trace_shade_ddgi.wgsl",
     },
   },
 };
@@ -1417,6 +1413,9 @@ export class DDGI {
         specular_pool_buffer,
         emission_pool_buffer,
         skybox_texture_buffer,
+        sh_probes,
+        probe_states,
+        probe_depth_moments,
         force_recreate
       );
     }
@@ -1457,6 +1456,9 @@ export class DDGI {
     specular_pool_buffer,
     emission_pool_buffer,
     skybox_texture_buffer,
+    short_range_sh_probes_buffer,
+    short_range_probe_states_buffer,
+    short_range_probe_depth_moments_buffer,
     force_recreate
   ) {
     const safe_upscale_factor = Math.max(
@@ -1799,6 +1801,10 @@ export class DDGI {
           specular_pool_buffer,
           emission_pool_buffer,
           skybox_texture_buffer,
+          this.ddgi_params,
+          short_range_sh_probes_buffer,
+          short_range_probe_states_buffer,
+          short_range_probe_depth_moments_buffer,
         ],
         outputs: [short_range_pixel_path_state],
         shader_setup: ddgi_short_range_pixel_trace_shade_shader_setup,

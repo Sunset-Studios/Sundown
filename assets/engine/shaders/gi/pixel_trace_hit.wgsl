@@ -73,6 +73,11 @@ fn trace_blas(
     var v0 = vec3<f32>(0.0, 0.0, 0.0);
     var v1 = vec3<f32>(0.0, 0.0, 0.0);
     var v2 = vec3<f32>(0.0, 0.0, 0.0);
+    var tri_id = 0u;
+    var tri_base = 0u;
+    var v0i = 0u;
+    var v1i = 0u;
+    var v2i = 0u;
 
     while (stack_size > 0u) {
         stack_size = stack_size - 1u;
@@ -82,11 +87,11 @@ fn trace_blas(
 
         node = blas_bvh2_nodes[node_idx];
         if (is_leaf(node)) {
-            let tri_id = u32(node.min.w);
-            let tri_base = mesh_directory_entry.first_index + tri_id * 3u;
-            let v0i = mesh_directory_entry.first_vertex + index_buffer[tri_base + 0u];
-            let v1i = mesh_directory_entry.first_vertex + index_buffer[tri_base + 1u];
-            let v2i = mesh_directory_entry.first_vertex + index_buffer[tri_base + 2u];
+            tri_id = u32(node.min.w);
+            tri_base = mesh_directory_entry.first_index + tri_id * 3u;
+            v0i = mesh_directory_entry.first_vertex + index_buffer[tri_base + 0u];
+            v1i = mesh_directory_entry.first_vertex + index_buffer[tri_base + 1u];
+            v2i = mesh_directory_entry.first_vertex + index_buffer[tri_base + 2u];
             v0 = vertex_buffer[v0i].position.xyz;
             v1 = vertex_buffer[v1i].position.xyz;
             v2 = vertex_buffer[v2i].position.xyz;

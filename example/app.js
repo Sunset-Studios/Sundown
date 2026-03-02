@@ -2712,8 +2712,8 @@ export class SponzaScene extends Scene {
     SharedEnvironmentData.set_skydome("default_scene_skydome");
 
     const view_data = SharedViewBuffer.get_view_data(0);
-    view_data.view_position = [25.55401, 15.68060, -4.085144];
-    view_data.view_rotation = [-0.110163, 0.60627985, -0.02259093, -0.718425929];
+    view_data.view_position = [8.360948, 7.528844, -1.364703];
+    view_data.view_rotation = [-0.075029, 0.645789, -0.0024352, -0.68824034];
 
     const light_entity = EntityManager.create_entity([LightFragment]);
     this.entities.push(light_entity);

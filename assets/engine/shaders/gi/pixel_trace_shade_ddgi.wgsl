@@ -1,13 +1,13 @@
 // =============================================================================
 // ╔═══════════════════════════════════════════════════════════════════════════╗
-// ║               PER-PIXEL PATH TRACING - SHADING PASS                       ║
+// ║           PER-PIXEL PATH TRACING - SHADING PASS (DDGI CACHE)             ║
 // ╠═══════════════════════════════════════════════════════════════════════════╣
 // ║                                                                           ║
 // ║  Evaluates material properties at ray hit points:                         ║
 // ║  • Samples material textures (albedo, normal, roughness, etc.)            ║
-// ║  • Handles emissive surfaces                                              ║
-// ║  • Queries world cache for multi-bounce irradiance                        ║
-// ║  • Evaluates sky/environment for ray misses                               ║
+// ║  • Handles emissive surfaces                                               ║
+// ║  • Queries DDGI probes for multi-bounce irradiance                         ║
+// ║  • Evaluates sky/environment for ray misses                                ║
 // ║                                                                           ║
 // ╚═══════════════════════════════════════════════════════════════════════════╝
 // =============================================================================
@@ -16,8 +16,7 @@
 #include "acceleration_common.wgsl"
 #include "postprocess_common.wgsl"
 #include "sky_common.wgsl"
-#include "gi/gi_common.wgsl"
-#include "gi/world_cache_common.wgsl"
+#include "gi/ddgi_common.wgsl"
 #include "raytracing/restir_common.wgsl"
 
 // =============================================================================
@@ -40,7 +39,10 @@
 @group(1) @binding(13) var texture_pool_specular: texture_2d_array<f32>;
 @group(1) @binding(14) var texture_pool_emission: texture_2d_array<f32>;
 @group(1) @binding(15) var skybox_texture: texture_cube<f32>;
-@group(1) @binding(16) var<storage, read_write> world_cache: array<WorldCacheCell>;
+@group(1) @binding(16) var<uniform> ddgi_params: DDGIParams;
+@group(1) @binding(17) var<storage, read_write> sh_probes: array<u32>;
+@group(1) @binding(18) var<storage, read_write> probe_states: array<ProbeStateData>;
+@group(1) @binding(19) var<storage, read> probe_depth_moments: array<u32>;
 
 // =============================================================================
 // MAIN COMPUTE SHADER
@@ -59,9 +61,9 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
     
     let light_view_index = u32(scene_lighting_data.view_index);
-    let camera_position = view_buffer[u32(frame_info.view_index)].view_position.xyz;
     let sun_dir = normalize(-view_buffer[light_view_index].view_direction.xyz);
-
+    let is_specular_lobe = pixel_path_state[gid.x].state_u32.x == 1u;
+    
     // We only handle NEE direct lighting when using the radiance cache as deferred lighting
 #if USE_RADIANCE_CACHE_AS_DEFERRED_LIGHTING
     // ─────────────────────────────────────────────────────────────────────────
@@ -82,21 +84,10 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     // Clamp sky contribution to prevent sun disc fireflies on specular bounces
     // ─────────────────────────────────────────────────────────────────────────
     if (pixel_path_state[gid.x].state_u32.w == 0xffffffffu && pixel_path_state[gid.x].state_u32.y != 0u) {
-        let is_specular_lobe = pixel_path_state[gid.x].state_u32.x == 1u;
-
-        // Evaluate environment radiance
-        let sky_radiance = evaluate_environment(
-            pixel_path_state[gid.x].direction_tmax.xyz, 
-            sun_dir, 
-            scene_lighting_data,
-            skybox_texture
-        );
-        
-        // Clamp sky radiance. This prevents sun disc from causing fireflies on specular surfaces.
-        let sky_contribution = safe_clamp_vec3_max(sky_radiance, MAX_RADIANCE_LUMINANCE);
-        let indirect_add = vec4f(sky_contribution, 0.0);
-        pixel_path_state[gid.x].throughput_indirect_diffuse += select(indirect_add, vec4f(0.0), is_specular_lobe);
-        pixel_path_state[gid.x].throughput_indirect_specular += select(vec4f(0.0), indirect_add, is_specular_lobe);
+        // Short-range detail is multiplied into DDGI output, so misses must be neutral (1.0),
+        // not black (0.0), to avoid erasing base lighting.
+        let indirect_add = vec4f(1.0, 1.0, 1.0, 0.0);
+        pixel_path_state[gid.x].throughput_indirect_diffuse += indirect_add;
 
         pixel_path_state[gid.x].rng_sample_count_frame_stamp.y += 1.0;
         pixel_path_state[gid.x].state_u32.y = 0u; // Mark path as dead
@@ -136,15 +127,15 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
             material.emission_roughness_metallic_tiling.z,
             u32(material.texture_flags1.w), texture_pool_metallic, lod
         );
-        let emissive = sample_texture_or_float_param_handle(
-            u32(material.emission_handle), base_uv,
-            material.emission_roughness_metallic_tiling.x,
-            u32(material.texture_flags2.w), texture_pool_emission, lod
-        );
         let reflectance = sample_texture_or_float_param_handle(
             u32(material.specular_handle), base_uv,
             material.ao_height_specular.z,
             u32(material.texture_flags2.z), texture_pool_specular, lod
+        );
+        let emissive = sample_texture_or_float_param_handle(
+            u32(material.emission_handle), base_uv,
+            material.emission_roughness_metallic_tiling.x,
+            u32(material.texture_flags2.w), texture_pool_emission, lod
         );
 
         // Normal mapping
@@ -161,6 +152,25 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         }
 
         // ─────────────────────────────────────────────────────────────────────
+        // DDGI Probe Query (Multi-Bounce Irradiance)
+        // ─────────────────────────────────────────────────────────────────────
+        let hit_distance_for_cache = pixel_path_state[gid.x].origin_tmin.w;
+        let probe_spacing = ddgi_params.cascades[0].origin_spacing.w;
+        if (hit_distance_for_cache >= probe_spacing * 0.5) {
+            var cached_irradiance = ddgi_sample_sh_irradiance_with_states(
+                &ddgi_params,
+                &sh_probes,
+                &probe_states,
+                &probe_depth_moments,
+                hit_pos,
+                n
+            );
+            cached_irradiance = safe_clamp_vec3_max(cached_irradiance, MAX_RADIANCE_LUMINANCE);
+            pixel_path_state[gid.x].throughput_indirect_diffuse += vec4f(cached_irradiance, 0.0);
+            pixel_path_state[gid.x].rng_sample_count_frame_stamp.y += 1.0;
+        }
+
+        // ─────────────────────────────────────────────────────────────────────
         // Emissive Contribution
         // ─────────────────────────────────────────────────────────────────────
         if (emissive > 0.0) {
@@ -173,41 +183,9 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
             let indirect_add = vec4f(emissive_contribution, 0.0);
             pixel_path_state[gid.x].throughput_indirect_diffuse += select(indirect_add, vec4f(0.0), is_specular_lobe);
             pixel_path_state[gid.x].throughput_indirect_specular += select(vec4f(0.0), indirect_add, is_specular_lobe);
-        }
 
-        // ─────────────────────────────────────────────────────────────────────
-        // World Cache Query (Multi-Bounce Irradiance)
-        // ─────────────────────────────────────────────────────────────────────
-        let hit_distance_for_cache = pixel_path_state[gid.x].origin_tmin.w;
-        var cached_radiance = vec3<f32>(0.0);
-        if (hit_distance_for_cache >= gi_params.world_cache_cell_size * 0.5) {
-            cached_radiance = query_world_cache_cell(
-                hit_pos,
-                n,
-                albedo,
-                roughness,
-                metallic,
-                reflectance,
-                emissive,
-                camera_position,
-                u32(gi_params.world_cache_size),
-                gi_params.world_cache_cell_size,
-                u32(gi_params.world_cache_lod_count),
-                hit_distance_for_cache,
-                0u // Screen space traces rank at 0 (first hit)
-            );
+            pixel_path_state[gid.x].rng_sample_count_frame_stamp.y += 1.0;
         }
-        
-        // Apply cached radiance if valid, with firefly clamping
-        let cached_luminance = luminance(cached_radiance);
-        if (cached_luminance > 0.0001) {
-            let is_specular_lobe = pixel_path_state[gid.x].state_u32.x == 1u;
-            let indirect_add = vec4f(safe_clamp_vec3_max(cached_radiance, MAX_RADIANCE_LUMINANCE), 0.0);
-            pixel_path_state[gid.x].throughput_indirect_diffuse += select(indirect_add, vec4f(0.0), is_specular_lobe);
-            pixel_path_state[gid.x].throughput_indirect_specular += select(vec4f(0.0), indirect_add, is_specular_lobe);
-        }
-        
-        pixel_path_state[gid.x].rng_sample_count_frame_stamp.y += 1.0;
     }
 }
 
