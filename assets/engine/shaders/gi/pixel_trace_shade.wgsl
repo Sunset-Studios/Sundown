@@ -165,9 +165,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         // ─────────────────────────────────────────────────────────────────────
         if (emissive > 0.0) {
             let emissive_radiance = emissive * albedo;
-            let hit_distance = max(pixel_path_state[gid.x].origin_tmin.w, 0.001);
-            let max_contribution = emissive * 2.0 * PI * (1.0 / hit_distance) * pixel_path_state[gid.x].path_weight.w;
-            let emissive_contribution = safe_clamp_vec3_max(emissive_radiance * max_contribution, MAX_NEE_LUMINANCE);
+            let emissive_contribution = safe_clamp_vec3_max(emissive_radiance, MAX_NEE_LUMINANCE);
 
             let is_specular_lobe = pixel_path_state[gid.x].state_u32.x == 1u;
             let indirect_add = vec4f(emissive_contribution, 0.0);

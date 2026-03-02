@@ -143,9 +143,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         // === EMISSIVE CONTRIBUTION ===
         if (emissive > 0.0) {
             let emissive_radiance = emissive * albedo;
-            let hit_distance = max(path.origin_tmin.w, 0.001);
-            let max_contribution = emissive * 2.0 * PI * (1.0 / hit_distance) * path.path_weight.w;
-            let emissive_contribution = emissive_radiance * max_contribution;
+            let emissive_contribution = emissive_radiance;
             radiance_contribution += safe_clamp_vec3_max(emissive_contribution, MAX_NEE_LUMINANCE);
             sample_count += 1.0;
         }

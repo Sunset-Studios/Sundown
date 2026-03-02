@@ -235,10 +235,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         // =====================================================================
         if (emissive > 0.0) {
             let emissive_radiance = emissive * albedo;
-
-            // Distance-based maximum for firefly reduction
-            let hit_distance = max(path_state[pixel_index].origin_tmin.w, 0.001);
-            var emissive_contribution = emissive_radiance * PI * (1.0 / hit_distance) * path_state[pixel_index].path_weight.xyz;
+            var emissive_contribution = emissive_radiance * path_state[pixel_index].path_weight.xyz;
             
             // Demodulate at bounce 0: divide by primary_albedo (will be reapplied in output)
             if (is_bounce_0) {

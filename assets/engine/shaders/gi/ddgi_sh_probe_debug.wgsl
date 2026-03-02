@@ -238,7 +238,7 @@ fn traverse_cascade_probes(
                     }
 
                     // Clipmap selection: only show probes in this cascade's "shell"
-                    if (!ddgi_is_probe_in_cascade_shell(&ddgi_params, probe_idx)) {
+                    if (!ddgi_probe_in_cascade_shell(&ddgi_params, probe_idx)) {
                         continue;
                     }
 

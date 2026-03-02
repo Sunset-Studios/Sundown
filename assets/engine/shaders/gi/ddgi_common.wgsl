@@ -320,7 +320,7 @@ fn ddgi_probe_world_position_from_coord(
 // For cascade 0: always true (innermost cascade covers entire bounds)
 // For cascade N > 0: true only if probe is outside cascade N-1's bounds
 // ─────────────────────────────────────────────────────────────────────────────
-fn ddgi_is_probe_in_cascade_shell(
+fn ddgi_probe_in_cascade_shell(
     ddgi_params: ptr<uniform, DDGIParams>,
     probe_index: u32
 ) -> bool {
