@@ -17,6 +17,7 @@
 @group(1) @binding(6) var<storage, read> entity_transforms: array<EntityTransform>;
 @group(1) @binding(7) var<storage, read> index_buffer: array<u32>;
 @group(1) @binding(8) var<storage, read> dense_lights_buffer: DenseLightsBuffer;
+@group(1) @binding(9) var<storage, read> emissive_lights_buffer: EmissiveLightsBuffer;
 
 // =============================================================================
 // BLAS TRAVERSAL
@@ -631,6 +632,8 @@ fn process_primary_ray(
     probe_ray_data.rays[index].meta_u32.x = probe_index;
     let ray_pdf = probe_ray_data.rays[index].ray_dir_prim.w;
     probe_ray_data.rays[index].ray_dir_prim = vec4f(ray_dir, ray_pdf);
+    probe_ray_data.rays[index].nee_light_dir_type = vec4f(0.0, 0.0, 0.0, 0.0);
+    probe_ray_data.rays[index].nee_light_radiance = vec4f(0.0, 0.0, 0.0, 0.0);
     probe_ray_data.rays[index].hit_pos_t = vec4f(0.0, 0.0, 0.0, 0.0);
 
     let hit_result = trace_hit(&ray);
@@ -717,7 +720,9 @@ fn process_primary_ray(
         // and the shade pass replays the same light selection to compute the
         // direct lighting contribution.
         let num_lights = dense_lights_buffer.header.light_count;
-        if (num_lights > 0u) {
+        let num_emissive_lights = emissive_lights_buffer.header.light_count;
+        let total_light_count = num_lights + num_emissive_lights;
+        if (total_light_count > 0u) {
             var nee_rng = hash(
                 probe_index
                     ^ (ray_index_in_probe * 0xA24BAEDDu)
@@ -725,14 +730,39 @@ fn process_primary_ray(
             );
             nee_rng = random_seed(nee_rng);
             let light_rand = rand_float(nee_rng);
-            let light_idx = u32(light_rand * f32(num_lights)) % num_lights;
-            let light = dense_lights_buffer.lights[light_idx];
+            let selected_light_idx = u32(light_rand * f32(total_light_count)) % total_light_count;
 
-            let shadow_dir = get_light_dir(light, p_world);
-            let light_distance = select(1e30, length(light.position.xyz - p_world), light.light_type != 0.0);
-            let shadow_t_max = light_distance * 0.999;
+            if (selected_light_idx < num_lights) {
+                let light = dense_lights_buffer.lights[selected_light_idx];
+                let shadow_dir = get_light_dir(light, p_world);
+                let attenuation = get_light_attenuation(light, p_world);
+                let light_distance = select(1e30, length(light.position.xyz - p_world), light.light_type != 0.0);
+                let shadow_t_max = light_distance * 0.999;
 
-            process_shadow_visibility(index, p_world, shadow_dir, shadow_t_max);
+                probe_ray_data.rays[index].nee_light_dir_type = vec4f(shadow_dir, 0.0);
+                probe_ray_data.rays[index].nee_light_radiance = vec4f(
+                    light.color.rgb * light.intensity * attenuation * f32(total_light_count),
+                    0.0
+                );
+                process_shadow_visibility(index, p_world, shadow_dir, shadow_t_max);
+            } else {
+                let emissive_idx = selected_light_idx - num_lights;
+                let emissive_light = emissive_lights_buffer.lights[emissive_idx];
+                let to_emissive = emissive_light.position_radius.xyz - p_world;
+                let distance_sq = max(dot(to_emissive, to_emissive), 1e-6);
+                let distance = sqrt(distance_sq);
+                let shadow_dir = to_emissive / distance;
+                let light_facing = max(dot(emissive_light.normal_area.xyz, -shadow_dir), 0.0);
+                let solid_angle_scale = emissive_light.normal_area.w / distance_sq;
+                let shadow_t_max = max(0.0, distance - emissive_light.position_radius.w) * 0.999;
+
+                probe_ray_data.rays[index].nee_light_dir_type = vec4f(shadow_dir, 1.0);
+                probe_ray_data.rays[index].nee_light_radiance = vec4f(
+                    emissive_light.radiance_weight.xyz * light_facing * solid_angle_scale * f32(total_light_count),
+                    0.0
+                );
+                process_shadow_visibility(index, p_world, shadow_dir, shadow_t_max);
+            }
         }
     }
 }

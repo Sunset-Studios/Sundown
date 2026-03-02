@@ -43,6 +43,37 @@ struct DenseLightsBufferA {
     lights: array<Light>,
 };
 
+struct EmissiveLight {
+    position_radius: vec4f,      // xyz = world centroid, w = equivalent radius
+    normal_area: vec4f,          // xyz = world normal, w = triangle area
+    radiance_weight: vec4f,      // rgb = emissive radiance estimate, w = sampling weight (luminance * area)
+    instance_tri_section: vec4<u32>, // x = prim_store, y = mesh_id, z = tri_id_local, w = section_index
+};
+
+struct EmissiveLightsHeader {
+    light_count: u32,
+    _pad0: u32,
+    _pad1: u32,
+    _pad2: u32,
+};
+
+struct EmissiveLightsBuffer {
+    header: EmissiveLightsHeader,
+    lights: array<EmissiveLight>,
+};
+
+struct EmissiveLightsHeaderA {
+    light_count: atomic<u32>,
+    _pad0: u32,
+    _pad1: u32,
+    _pad2: u32,
+};
+
+struct EmissiveLightsBufferA {
+    header: EmissiveLightsHeaderA,
+    lights: array<EmissiveLight>,
+};
+
 // ------------------------------------------------------------------------------------
 // Light Helpers
 // ------------------------------------------------------------------------------------

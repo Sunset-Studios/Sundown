@@ -85,6 +85,8 @@ struct DDGIParams {
 struct DDGIProbeRayData {
     hit_pos_t: vec4<f32>,
     ray_dir_prim: vec4<f32>,      // xyz = ray direction, w = ray PDF (set by init; preserved by hit)
+    nee_light_dir_type: vec4<f32>, // xyz = selected NEE light dir, w = 0 analytic / 1 emissive
+    nee_light_radiance: vec4<f32>, // xyz = selected NEE radiance scale (without n_dot_l), w = unused
     world_n_section: vec4<f32>,   // xyz = world geometric normal, w = section_index as f32
     world_t_uvx: vec4<f32>,       // xyz = world tangent, w = uv.x
     world_b_uvy: vec4<f32>,       // xyz = world bitangent, w = uv.y

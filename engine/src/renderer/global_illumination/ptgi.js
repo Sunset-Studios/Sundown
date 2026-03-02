@@ -118,6 +118,12 @@ const gi_reset_shader_setup = {
   },
 };
 
+const compact_emissive_lights_shader_setup = {
+  pipeline_shaders: {
+    compute: { path: "system_compute/compact_emissive_lights.wgsl" },
+  },
+};
+
 // ─────────────────────────────────────────────────────────────────────────────
 // World Cache Shaders
 // ─────────────────────────────────────────────────────────────────────────────
@@ -254,6 +260,7 @@ export class PTGI {
     world_cache_lod_count: 4, // Number of LOD levels
     indirect_boost: 1.0, // Multiplier for indirect lighting contribution
     max_ray_length: 1e30, // Maximum ray travel distance for GI path segments
+    max_emissive_lights: 32768, // Max emissive light candidates stored in the GPU list
   };
 
   // GI parameters buffer data (matches shader GIParams struct)
@@ -496,6 +503,16 @@ export class PTGI {
     const world_cache_path_state = render_graph.create_buffer({
       name: "gi_world_cache_path_state",
       size: total_cells * 11 * 4,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+      force: force_recreate,
+    });
+
+    const emissive_light_header_words = 4;
+    const emissive_light_stride_words = 16;
+    const max_emissive_lights = Math.max(1, Math.floor(this.config.max_emissive_lights));
+    const emissive_lights = render_graph.create_buffer({
+      name: "gi_emissive_lights",
+      size: emissive_light_header_words + max_emissive_lights * emissive_light_stride_words,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
       force: force_recreate,
     });
@@ -743,6 +760,36 @@ export class PTGI {
       }
     );
 
+    render_graph.add_pass(
+      "gi_compact_emissive_lights",
+      RenderPassFlags.Compute,
+      {
+        inputs: [
+          tlas_bvh2_bounds,
+          tlas_bvh_info,
+          blas_directory,
+          index_buffer,
+          entity_transforms,
+          params_gpu_buffer,
+          material_palette_offsets_buffer,
+          material_palette_buffer,
+          emissive_lights,
+        ],
+        outputs: [emissive_lights],
+        shader_setup: compact_emissive_lights_shader_setup,
+      },
+      (graph, frame_data, encoder) => {
+        const pass = graph.get_physical_pass(frame_data.current_pass);
+        const emissive_lights_buf = graph.get_physical_buffer(emissive_lights);
+        emissive_lights_buf.write_raw(new Uint32Array([0, 0, 0, 0]), 0);
+
+        const tlas_bvh2_bounds_buf = graph.get_physical_buffer(tlas_bvh2_bounds);
+        const tlas_aabb_stride_words = 8;
+        const tlas_node_count = Math.floor(tlas_bvh2_bounds_buf.config.size / tlas_aabb_stride_words);
+        pass.dispatch(Math.ceil(tlas_node_count / COMPUTE_WORKGROUP_SIZE), 1, 1);
+      }
+    );
+
     // ─────────────────────────────────────────────────────────────────────
     // Pass 1: Reset Counters
     // ─────────────────────────────────────────────────────────────────────
@@ -869,6 +916,7 @@ export class PTGI {
           world_cache_dispatch_params,
           world_cache_path_state,
           dense_lights,
+          emissive_lights,
           gi_counters,
         ],
         outputs: [world_cache_path_state],
@@ -928,7 +976,6 @@ export class PTGI {
           params_gpu_buffer,
           material_palette_offsets_buffer,
           material_palette_buffer,
-          dense_lights,
           gi_counters,
           albedo_pool_buffer,
           normal_pool_buffer,
@@ -965,6 +1012,7 @@ export class PTGI {
           pixel_path_state,
           pixel_ray_queue,
           dense_lights,
+          emissive_lights,
           world_cache,
           gbuffer_position,
           gbuffer_normal,
@@ -1032,7 +1080,6 @@ export class PTGI {
           params_gpu_buffer,
           material_palette_offsets_buffer,
           material_palette_buffer,
-          dense_lights,
           albedo_pool_buffer,
           normal_pool_buffer,
           roughness_pool_buffer,
@@ -1214,6 +1261,7 @@ export class PTGI {
     height,
     main_position_image,
     main_normal_image,
+    depth_texture,
     post_lighting_image_desc,
     debug_view,
     force_recreate = false

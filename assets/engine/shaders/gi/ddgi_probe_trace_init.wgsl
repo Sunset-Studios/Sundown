@@ -87,6 +87,8 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
 
     probe_ray_data.rays[ray_index].state_u32 = vec4<u32>(INVALID_IDX, 1u, 0u, INVALID_IDX);
     probe_ray_data.rays[ray_index].hit_pos_t = vec4f(0.0, 0.0, 0.0, 0.0);
+    probe_ray_data.rays[ray_index].nee_light_dir_type = vec4f(0.0, 0.0, 0.0, 0.0);
+    probe_ray_data.rays[ray_index].nee_light_radiance = vec4f(0.0, 0.0, 0.0, 0.0);
     probe_ray_data.rays[ray_index].radiance = vec4f(0.0, 0.0, 0.0, 1.0);
     probe_ray_data.rays[ray_index].meta_u32 = vec4<u32>(probe_index, ray_index_in_probe, probe_slot, 0u);
 

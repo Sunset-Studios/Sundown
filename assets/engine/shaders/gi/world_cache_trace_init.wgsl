@@ -16,7 +16,8 @@
 @group(1) @binding(3) var<storage, read> dispatch_params: array<u32>;
 @group(1) @binding(4) var<storage, read_write> world_cache_path_state: array<WorldCachePathState>;
 @group(1) @binding(5) var<storage, read> dense_lights_buffer: DenseLightsBuffer;
-@group(1) @binding(6) var<storage, read> gi_counters: GICountersReadOnly;
+@group(1) @binding(6) var<storage, read> emissive_lights_buffer: EmissiveLightsBuffer;
+@group(1) @binding(7) var<storage, read> gi_counters: GICountersReadOnly;
 
 @compute @workgroup_size(128, 1, 1)
 fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
@@ -109,28 +110,58 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     // Setup shadow rays for direct lighting from the cache cell position
     // =============================================================================
     let num_lights = dense_lights_buffer.header.light_count;
-    if (num_lights > 0u) {
+    let num_emissive_lights = emissive_lights_buffer.header.light_count;
+    let total_light_count = num_lights + num_emissive_lights;
+    if (total_light_count > 0u) {
         rng = random_seed(rng);
         let light_rand = rand_float(rng);
-        let light_idx = u32(light_rand * f32(num_lights)) % num_lights;
-        let light = dense_lights_buffer.lights[light_idx];
-        
-        let light_dir = get_light_dir(light, position);
-        let attenuation = get_light_attenuation(light, position);
-        
-        let brdf = calculate_brdf_rt(
-            normal, v_dir, light_dir, albedo, roughness, metallic,
-            reflectance, clear_coat, clear_coat_roughness
-        );
-        
-        let raw_light_contrib = brdf * light.color.rgb * light.intensity * attenuation * f32(num_lights);
-        let light_contrib = safe_clamp_vec3_max(raw_light_contrib, MAX_NEE_LUMINANCE);
-        
-        // Setup shadow ray for visibility test
-        let selected_light_distance = select(1e30, length(light.position.xyz - position), light.light_type != 0.0);
-        world_cache_path_state[gid.x].shadow_origin = vec4f(position + normal * 0.001, f32(light_idx));
-        world_cache_path_state[gid.x].shadow_direction = vec4f(light_dir, selected_light_distance * 0.999);
-        world_cache_path_state[gid.x].shadow_radiance = vec4f(light_contrib, 1.0);
+        let selected_light_idx = u32(light_rand * f32(total_light_count)) % total_light_count;
+
+        if (selected_light_idx < num_lights) {
+            let light = dense_lights_buffer.lights[selected_light_idx];
+            let light_dir = get_light_dir(light, position);
+            let attenuation = get_light_attenuation(light, position);
+
+            let brdf = calculate_brdf_rt(
+                normal, v_dir, light_dir, albedo, roughness, metallic,
+                reflectance, clear_coat, clear_coat_roughness
+            );
+
+            let raw_light_contrib = brdf * light.color.rgb * light.intensity * attenuation * f32(total_light_count);
+            let light_contrib = safe_clamp_vec3_max(raw_light_contrib, MAX_NEE_LUMINANCE);
+
+            let selected_light_distance = select(1e30, length(light.position.xyz - position), light.light_type != 0.0);
+            world_cache_path_state[gid.x].shadow_origin = vec4f(position + normal * 0.001, f32(selected_light_idx));
+            world_cache_path_state[gid.x].shadow_direction = vec4f(light_dir, selected_light_distance * 0.999);
+            world_cache_path_state[gid.x].shadow_radiance = vec4f(light_contrib, 1.0);
+        } else {
+            let emissive_idx = selected_light_idx - num_lights;
+            let emissive_light = emissive_lights_buffer.lights[emissive_idx];
+            let to_emissive = emissive_light.position_radius.xyz - position;
+            let distance_sq = max(dot(to_emissive, to_emissive), 1e-6);
+            let distance = sqrt(distance_sq);
+            let light_dir = to_emissive / distance;
+
+            let brdf = calculate_brdf_rt(
+                normal, v_dir, light_dir, albedo, roughness, metallic,
+                reflectance, clear_coat, clear_coat_roughness
+            );
+
+            let n_light_dot = max(dot(emissive_light.normal_area.xyz, -light_dir), 0.0);
+            let solid_angle_scale = emissive_light.normal_area.w / distance_sq;
+            let raw_light_contrib =
+                brdf
+                * emissive_light.radiance_weight.xyz
+                * n_light_dot
+                * solid_angle_scale
+                * f32(total_light_count);
+            let light_contrib = safe_clamp_vec3_max(raw_light_contrib, MAX_NEE_LUMINANCE);
+
+            let selected_light_distance = max(0.0, distance - emissive_light.position_radius.w);
+            world_cache_path_state[gid.x].shadow_origin = vec4f(position + normal * 0.001, f32(selected_light_idx));
+            world_cache_path_state[gid.x].shadow_direction = vec4f(light_dir, selected_light_distance * 0.999);
+            world_cache_path_state[gid.x].shadow_radiance = vec4f(light_contrib, 1.0);
+        }
     } else {
         world_cache_path_state[gid.x].shadow_origin = vec4<f32>(0.0, 0.0, 0.0, -1.0);
         world_cache_path_state[gid.x].shadow_direction = vec4<f32>(0.0, 0.0, 0.0, 0.0);

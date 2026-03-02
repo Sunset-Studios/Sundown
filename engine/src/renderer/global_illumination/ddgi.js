@@ -134,6 +134,12 @@ const ddgi_reset_shader_setup = {
   },
 };
 
+const compact_emissive_lights_shader_setup = {
+  pipeline_shaders: {
+    compute: { path: "system_compute/compact_emissive_lights.wgsl" },
+  },
+};
+
 const ddgi_probe_scroll_reset_shader_setup = {
   pipeline_shaders: {
     compute: { path: "gi/ddgi_probe_scroll_reset.wgsl" },
@@ -303,6 +309,7 @@ export class DDGI {
     short_range_screen_ray_count: 1,
     short_range_upscale_factor: 4,
     short_range_max_ray_length: 1.0,
+    max_emissive_lights: 32768,
   };
 
   ddgi_frame_setup = {
@@ -885,13 +892,13 @@ export class DDGI {
     // Probe Ray Data Buffer
     // - Small header + per-ray record containing both hit data and shaded radiance
     // - header = 1 atomic<u32> + padding = 4 x u32 words
-    // - DDGIProbeRayData = 8 vec4s = 32 x u32 words
+    // - DDGIProbeRayData = 10 vec4s = 40 x u32 words
     // ─────────────────────────────────────────────────────────────────────────
     const probe_ray_data = render_graph.create_buffer({
       name: "ddgi_probe_ray_data",
       size:
         4 +                         // header = 1 atomic<u32> + padding = 4 x u32 words
-        probe_total_ray_count * 32, // 8 vec4s = 32 x u32 words
+        probe_total_ray_count * 40, // 10 vec4s = 40 x u32 words
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
       force: force_recreate,
     });
@@ -932,6 +939,16 @@ export class DDGI {
     const probe_states = render_graph.create_buffer({
       name: "ddgi_probe_states",
       size: probe_count * 2,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+      force: force_recreate,
+    });
+
+    const emissive_light_header_words = 4;
+    const emissive_light_stride_words = 16;
+    const max_emissive_lights = Math.max(1, Math.floor(this.config.max_emissive_lights));
+    const emissive_lights = render_graph.create_buffer({
+      name: "ddgi_emissive_lights",
+      size: emissive_light_header_words + max_emissive_lights * emissive_light_stride_words,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
       force: force_recreate,
     });
@@ -988,6 +1005,36 @@ export class DDGI {
         }
 
         ddgi_params_buf.write_raw(this.ddgi_params_data);
+      }
+    );
+
+    render_graph.add_pass(
+      "ddgi_compact_emissive_lights",
+      RenderPassFlags.Compute,
+      {
+        inputs: [
+          tlas_bvh2_bounds,
+          tlas_bvh_info,
+          blas_directory,
+          index_buffer,
+          entity_transforms,
+          params_gpu_buffer,
+          material_palette_offsets_buffer,
+          material_palette_buffer,
+          emissive_lights,
+        ],
+        outputs: [emissive_lights],
+        shader_setup: compact_emissive_lights_shader_setup,
+      },
+      (graph, frame_data, encoder) => {
+        const pass = graph.get_physical_pass(frame_data.current_pass);
+        const emissive_lights_buf = graph.get_physical_buffer(emissive_lights);
+        emissive_lights_buf.write_raw(new Uint32Array([0, 0, 0, 0]), 0);
+
+        const tlas_bvh2_bounds_buf = graph.get_physical_buffer(tlas_bvh2_bounds);
+        const tlas_aabb_stride_words = 8;
+        const tlas_node_count = Math.floor(tlas_bvh2_bounds_buf.config.size / tlas_aabb_stride_words);
+        pass.dispatch(Math.ceil(tlas_node_count / COMPUTE_WORKGROUP_SIZE), 1, 1);
       }
     );
 
@@ -1243,6 +1290,7 @@ export class DDGI {
           entity_transforms,
           index_buffer,
           dense_lights,
+          emissive_lights,
         ],
         outputs: [probe_ray_data],
         shader_setup: ddgi_probe_trace_hit_shader_setup,
@@ -1273,7 +1321,6 @@ export class DDGI {
           params_gpu_buffer,
           material_palette_offsets_buffer,
           material_palette_buffer,
-          dense_lights,
           sh_probes,
           probe_depth_moments,
           albedo_pool_buffer,
@@ -1400,6 +1447,7 @@ export class DDGI {
         entity_transforms,
         index_buffer,
         dense_lights,
+        emissive_lights,
         params_gpu_buffer,
         material_palette_offsets_buffer,
         material_palette_buffer,
@@ -1443,6 +1491,7 @@ export class DDGI {
     entity_transforms,
     index_buffer,
     dense_lights,
+    emissive_lights,
     params_gpu_buffer,
     material_palette_offsets_buffer,
     material_palette_buffer,
@@ -1738,6 +1787,7 @@ export class DDGI {
           short_range_pixel_path_state,
           short_range_pixel_ray_queue,
           dense_lights,
+          emissive_lights,
           short_range_dummy_world_cache,
           gbuffer_position,
           gbuffer_normal,

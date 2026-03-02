@@ -17,18 +17,17 @@
 @group(1) @binding(4) var<storage, read> material_params: array<StandardMaterialParams>;
 @group(1) @binding(5) var<storage, read> material_table_offset: array<u32>;
 @group(1) @binding(6) var<storage, read> material_palette: array<u32>;
-@group(1) @binding(7) var<storage, read> dense_lights_buffer: DenseLightsBuffer;
-@group(1) @binding(8) var<storage, read_write> sh_probes: array<u32>;
-@group(1) @binding(9) var<storage, read> probe_depth_moments: array<u32>;
-@group(1) @binding(10) var texture_pool_albedo: texture_2d_array<f32>;
-@group(1) @binding(11) var texture_pool_normal: texture_2d_array<f32>;
-@group(1) @binding(12) var texture_pool_roughness: texture_2d_array<f32>;
-@group(1) @binding(13) var texture_pool_metallic: texture_2d_array<f32>;
-@group(1) @binding(14) var texture_pool_ao: texture_2d_array<f32>;
-@group(1) @binding(15) var texture_pool_height: texture_2d_array<f32>;
-@group(1) @binding(16) var texture_pool_specular: texture_2d_array<f32>;
-@group(1) @binding(17) var texture_pool_emission: texture_2d_array<f32>;
-@group(1) @binding(18) var skybox_texture: texture_cube<f32>;
+@group(1) @binding(7) var<storage, read_write> sh_probes: array<u32>;
+@group(1) @binding(8) var<storage, read> probe_depth_moments: array<u32>;
+@group(1) @binding(9) var texture_pool_albedo: texture_2d_array<f32>;
+@group(1) @binding(10) var texture_pool_normal: texture_2d_array<f32>;
+@group(1) @binding(11) var texture_pool_roughness: texture_2d_array<f32>;
+@group(1) @binding(12) var texture_pool_metallic: texture_2d_array<f32>;
+@group(1) @binding(13) var texture_pool_ao: texture_2d_array<f32>;
+@group(1) @binding(14) var texture_pool_height: texture_2d_array<f32>;
+@group(1) @binding(15) var texture_pool_specular: texture_2d_array<f32>;
+@group(1) @binding(16) var texture_pool_emission: texture_2d_array<f32>;
+@group(1) @binding(17) var skybox_texture: texture_cube<f32>;
 
 @compute @workgroup_size(256, 1, 1)
 fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
@@ -45,7 +44,6 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
 
     let light_view_index = u32(scene_lighting_data.view_index);
     let sun_dir = normalize(-view_buffer[light_view_index].view_direction.xyz);
-    let num_lights = dense_lights_buffer.header.light_count;
 
     // Backface leak reduction:
     // - Backface hits are encoded with negative t values.
@@ -117,37 +115,16 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
 
         // -----------------------------------------------------------------------------
         // Direct lighting seed (NEE at the PRIMARY HIT POINT)
-        // - The hit pass already performed a shadow visibility test and stored it in
-        //   hit.state_u32.z (1 = visible, 0 = occluded).
-        // - We replay the same deterministic light selection here to compute the
-        //   direct contribution, without any BVH bindings in this pass.
+        // - Hit pass chooses one analytic/emissive candidate light and computes
+        //   its radiance scale + direction.
+        // - This pass only applies visibility and the shaded normal response.
         // -----------------------------------------------------------------------------
         var radiance = vec3<f32>(0.0);
-        if (num_lights > 0u) {
-            var nee_rng = hash(
-                probe_index
-                    ^ (ray_index_in_probe * 0xA24BAEDDu)
-                    ^ (u32(ddgi_params.frame_index) * 0x9E3779B9u)
-            );
-            nee_rng = random_seed(nee_rng);
-            let light_rand = rand_float(nee_rng);
-            let light_idx = u32(light_rand * f32(num_lights)) % num_lights;
-            let light = dense_lights_buffer.lights[light_idx];
-
-            let l = get_light_dir(light, hit.hit_pos_t.xyz);
-            let n_dot_l = max(dot(n, l), 0.0);
-            let attenuation = get_light_attenuation(light, hit.hit_pos_t.xyz);
-            let visibility = select(0.0, 1.0, hit.state_u32.z == 1u);
-
-            let direct_irradiance =
-                light.color.rgb
-                * light.intensity
-                * attenuation
-                * n_dot_l
-                * visibility
-                * f32(num_lights);
-
-            // Lambertian: outgoing radiance toward the probe direction
+        let light_dir = hit.nee_light_dir_type.xyz;
+        let n_dot_l = max(dot(n, light_dir), 0.0);
+        let visibility = select(0.0, 1.0, hit.state_u32.z == 1u);
+        let direct_irradiance = hit.nee_light_radiance.xyz * n_dot_l * visibility;
+        if (n_dot_l > 0.0) {
             radiance += safe_clamp_vec3_max(direct_irradiance, MAX_RADIANCE_LUMINANCE);
         }
 
