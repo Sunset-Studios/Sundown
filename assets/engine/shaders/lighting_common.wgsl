@@ -52,8 +52,8 @@ struct EmissiveLight {
 
 struct EmissiveLightsHeader {
     light_count: u32,
-    _pad0: u32,
-    _pad1: u32,
+    _pad0: u32, // quantized total sampling weight (sum(w) * EMISSIVE_WEIGHT_QUANTIZATION)
+    _pad1: u32, // quantized max sampling weight (max(w) * EMISSIVE_WEIGHT_QUANTIZATION)
     _pad2: u32,
 };
 
@@ -64,8 +64,8 @@ struct EmissiveLightsBuffer {
 
 struct EmissiveLightsHeaderA {
     light_count: atomic<u32>,
-    _pad0: u32,
-    _pad1: u32,
+    _pad0: atomic<u32>, // quantized total sampling weight
+    _pad1: atomic<u32>, // quantized max sampling weight
     _pad2: u32,
 };
 
@@ -73,6 +73,10 @@ struct EmissiveLightsBufferA {
     header: EmissiveLightsHeaderA,
     lights: array<EmissiveLight>,
 };
+
+const EMISSIVE_WEIGHT_QUANTIZATION = 1024.0;
+const EMISSIVE_WEIGHT_QUANTIZATION_INV = 1.0 / EMISSIVE_WEIGHT_QUANTIZATION;
+const EMISSIVE_WEIGHTED_SAMPLE_ATTEMPTS: u32 = 4u;
 
 // ------------------------------------------------------------------------------------
 // Light Helpers

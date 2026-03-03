@@ -41,6 +41,21 @@
 @group(1) @binding(14) var skybox_texture: texture_cube<f32>;
 @group(1) @binding(15) var<storage, read_write> world_cache: array<WorldCacheCell>;
 
+const EMISSIVE_HIT_LUMA_SOFT_CAP: f32 = 2.0;
+const EMISSIVE_HIT_OVERFLOW_SCALE: f32 = 0.1;
+
+fn stabilize_emissive_hit_radiance(raw_emissive_radiance: vec3<f32>) -> vec3<f32> {
+    let clamped_emissive_radiance = safe_clamp_vec3_max(raw_emissive_radiance, MAX_RADIANCE_LUMINANCE);
+    let emissive_luma = max(luminance(clamped_emissive_radiance), 1e-6);
+    let compressed_luma = select(
+        emissive_luma,
+        EMISSIVE_HIT_LUMA_SOFT_CAP + (emissive_luma - EMISSIVE_HIT_LUMA_SOFT_CAP) * EMISSIVE_HIT_OVERFLOW_SCALE,
+        emissive_luma > EMISSIVE_HIT_LUMA_SOFT_CAP
+    );
+    let emissive_scale = compressed_luma / emissive_luma;
+    return clamped_emissive_radiance * emissive_scale;
+}
+
 // =============================================================================
 // MAIN COMPUTE SHADER
 // =============================================================================
@@ -157,6 +172,14 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
                 texture_pool_normal, lod
             ).xyz * 2.0 - 1.0;
             n = normalize(tbn * nm);
+        }
+
+        if (emissive > 0.0) {
+            let emissive_radiance = stabilize_emissive_hit_radiance(emissive * albedo);
+            let is_specular_lobe = pixel_path_state[gid.x].state_u32.x == 1u;
+            let indirect_add = vec4f(emissive_radiance, 0.0) * pixel_path_state[gid.x].path_weight;
+            pixel_path_state[gid.x].throughput_indirect_diffuse += select(indirect_add, vec4f(0.0), is_specular_lobe);
+            pixel_path_state[gid.x].throughput_indirect_specular += select(vec4f(0.0), indirect_add, is_specular_lobe);
         }
 
         // ─────────────────────────────────────────────────────────────────────

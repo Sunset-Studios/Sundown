@@ -31,6 +31,21 @@
 @group(1) @binding(16) var texture_pool_emission: texture_2d_array<f32>;
 @group(1) @binding(17) var skybox_texture: texture_cube<f32>;
 
+const EMISSIVE_HIT_LUMA_SOFT_CAP: f32 = 2.0;
+const EMISSIVE_HIT_OVERFLOW_SCALE: f32 = 0.1;
+
+fn stabilize_emissive_hit_radiance(raw_emissive_radiance: vec3<f32>) -> vec3<f32> {
+    let clamped_emissive_radiance = safe_clamp_vec3_max(raw_emissive_radiance, MAX_RADIANCE_LUMINANCE);
+    let emissive_luma = max(luminance(clamped_emissive_radiance), 1e-6);
+    let compressed_luma = select(
+        emissive_luma,
+        EMISSIVE_HIT_LUMA_SOFT_CAP + (emissive_luma - EMISSIVE_HIT_LUMA_SOFT_CAP) * EMISSIVE_HIT_OVERFLOW_SCALE,
+        emissive_luma > EMISSIVE_HIT_LUMA_SOFT_CAP
+    );
+    let emissive_scale = compressed_luma / emissive_luma;
+    return clamped_emissive_radiance * emissive_scale;
+}
+
 @compute @workgroup_size(128, 1, 1)
 fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     // Early exit if beyond active cell count
@@ -137,6 +152,10 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
                 texture_pool_normal, lod
             ).xyz * 2.0 - 1.0;
             n = normalize(tbn * nm);
+        }
+
+        if (emissive > 0.0) {
+            radiance_contribution += stabilize_emissive_hit_radiance(emissive * albedo);
         }
 
         // === INDIRECT LIGHTING - Query world cache for multi-bounce ===

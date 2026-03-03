@@ -10,7 +10,9 @@
 @group(1) @binding(5) var<storage, read> material_params: array<StandardMaterialParams>;
 @group(1) @binding(6) var<storage, read> material_table_offset: array<u32>;
 @group(1) @binding(7) var<storage, read> material_palette: array<u32>;
-@group(1) @binding(8) var<storage, read_write> emissive_lights_buffer: EmissiveLightsBufferA;
+@group(1) @binding(8) var texture_pool_albedo: texture_2d_array<f32>;
+@group(1) @binding(9) var texture_pool_emission: texture_2d_array<f32>;
+@group(1) @binding(10) var<storage, read_write> emissive_lights_buffer: EmissiveLightsBufferA;
 
 const MAX_TRIANGLES_PER_LEAF: u32 = 32u;
 fn triangle_area_and_normal(p0: vec3<f32>, p1: vec3<f32>, p2: vec3<f32>) -> vec4<f32> {
@@ -86,21 +88,50 @@ fn cs(@builtin(global_invocation_id) global_id: vec3<u32>) {
         let area_and_normal = triangle_area_and_normal(p0_world, p1_world, p2_world);
         let tri_area = area_and_normal.w;
 
-        // MVP estimate (texture-unaware): emissive scalar times base color.
-        let emissive_radiance = max(material.albedo.xyz, vec3<f32>(0.0)) * emissive_scalar;
+        // Estimate emission at triangle centroid UV so emissive NEE better matches
+        // textured emitters and near-field intensity.
+        let tiling = material.emission_roughness_metallic_tiling.w;
+        let uv0 = vertex_buffer[v0i].uv.xy;
+        let uv1 = vertex_buffer[v1i].uv.xy;
+        let uv2 = vertex_buffer[v2i].uv.xy;
+        let centroid_uv = ((uv0 + uv1 + uv2) * (1.0 / 3.0)) * tiling;
+        let lod = 0.0;
+        let centroid_albedo = sample_texture_or_vec4_param_handle(
+            u32(material.albedo_handle),
+            centroid_uv,
+            material.albedo,
+            u32(material.texture_flags1.x),
+            texture_pool_albedo,
+            lod
+        ).xyz;
+        let centroid_emissive = sample_texture_or_float_param_handle(
+            u32(material.emission_handle),
+            centroid_uv,
+            emissive_scalar,
+            u32(material.texture_flags2.w),
+            texture_pool_emission,
+            lod
+        );
+        let emissive_radiance = max(centroid_albedo, vec3<f32>(0.0)) * centroid_emissive;
         let sampling_weight = luminance(emissive_radiance) * tri_area;
+        if (sampling_weight <= 0.0) {
+            continue;
+        }
 
         let dst = atomicAdd(&emissive_lights_buffer.header.light_count, 1u);
         if (dst < arrayLength(&emissive_lights_buffer.lights)) {
             let centroid = (p0_world + p1_world + p2_world) * (1.0 / 3.0);
             let extent_radius = max(
-                max(length(p0_world - p1_world), length(p1_world - p2_world)),
-                length(p2_world - p0_world)
+                max(length(p0_world - centroid), length(p1_world - centroid)),
+                length(p2_world - centroid)
             );
 
             emissive_lights_buffer.lights[dst].position_radius = vec4<f32>(centroid, extent_radius);
             emissive_lights_buffer.lights[dst].normal_area = vec4<f32>(area_and_normal.xyz, tri_area);
             emissive_lights_buffer.lights[dst].radiance_weight = vec4<f32>(emissive_radiance, sampling_weight);
+            let sampling_weight_q = u32(min(sampling_weight * EMISSIVE_WEIGHT_QUANTIZATION, 4294967295.0));
+            _ = atomicAdd(&emissive_lights_buffer.header._pad0, sampling_weight_q);
+            _ = atomicMax(&emissive_lights_buffer.header._pad1, sampling_weight_q);
             emissive_lights_buffer.lights[dst].instance_tri_section = vec4<u32>(
                 prim_store,
                 mesh_id,

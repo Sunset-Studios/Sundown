@@ -810,6 +810,8 @@ export class PTGI {
           params_gpu_buffer,
           material_palette_offsets_buffer,
           material_palette_buffer,
+          albedo_pool_buffer,
+          emission_pool_buffer,
           emissive_lights,
         ],
         outputs: [emissive_lights],

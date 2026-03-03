@@ -133,6 +133,58 @@ fn blue_noise_next(sampler: ptr<function, BlueNoiseSampler>) -> f32 {
     return noise_value;
 }
 
+fn sample_weighted_emissive_light(
+    rng: ptr<function, u32>,
+    num_emissive_lights: u32,
+    emissive_pdf: ptr<function, f32>
+) -> u32 {
+    let safe_emissive_count = max(num_emissive_lights, 1u);
+    let uniform_pdf = 1.0 / f32(safe_emissive_count);
+    (*emissive_pdf) = uniform_pdf;
+
+    (*rng) = random_seed((*rng));
+    let uniform_rand = rand_float((*rng));
+    var selected_emissive_idx = u32(uniform_rand * f32(safe_emissive_count)) % safe_emissive_count;
+
+    if (num_emissive_lights == 0u) {
+        return selected_emissive_idx;
+    }
+
+    let total_sampling_weight =
+        f32(emissive_lights_buffer.header._pad0) * EMISSIVE_WEIGHT_QUANTIZATION_INV;
+    let max_sampling_weight =
+        f32(emissive_lights_buffer.header._pad1) * EMISSIVE_WEIGHT_QUANTIZATION_INV;
+
+    let can_use_weighted_sampling =
+        total_sampling_weight > 0.0 && max_sampling_weight > 0.0;
+
+    var accepted = false;
+    if (can_use_weighted_sampling) {
+        for (var attempt_idx = 0u; attempt_idx < EMISSIVE_WEIGHTED_SAMPLE_ATTEMPTS; attempt_idx = attempt_idx + 1u) {
+            (*rng) = random_seed((*rng));
+            let candidate_rand = rand_float((*rng));
+            let candidate_idx = u32(candidate_rand * f32(num_emissive_lights)) % num_emissive_lights;
+            let candidate_weight = max(emissive_lights_buffer.lights[candidate_idx].radiance_weight.w, 0.0);
+            let accept_prob = min(candidate_weight / max_sampling_weight, 1.0);
+
+            (*rng) = random_seed((*rng));
+            let accept_rand = rand_float((*rng));
+            if (accept_rand <= accept_prob) {
+                selected_emissive_idx = candidate_idx;
+                accepted = true;
+                break;
+            }
+        }
+    }
+
+    if (accepted) {
+        let selected_weight = max(emissive_lights_buffer.lights[selected_emissive_idx].radiance_weight.w, 0.0);
+        (*emissive_pdf) = selected_weight / max(total_sampling_weight, 1e-6);
+    }
+
+    return selected_emissive_idx;
+}
+
 // =============================================================================
 // MAIN COMPUTE SHADER
 // =============================================================================
@@ -335,19 +387,32 @@ fn process_selected_pixel(
     if (total_light_count > 0u) {
         rng = random_seed(rng);
         let light_rand = rand_float(rng);
-        let selected_light_idx = u32(light_rand * f32(total_light_count)) % total_light_count;
+        let emissive_bucket_pdf = f32(num_emissive_lights) / f32(total_light_count);
+        let analytic_bucket_pdf = 1.0 - emissive_bucket_pdf;
+        let select_emissive =
+            num_emissive_lights > 0u && (num_lights == 0u || light_rand >= analytic_bucket_pdf);
 
-        if (selected_light_idx < num_lights) {
+        if (!select_emissive) {
+            rng = random_seed(rng);
+            let analytic_rand = rand_float(rng);
+            let selected_light_idx = u32(analytic_rand * f32(num_lights)) % max(num_lights, 1u);
             let light = dense_lights_buffer.lights[selected_light_idx];
             let light_dir = get_light_dir(light, position);
             let attenuation = get_light_attenuation(light, position);
+            let analytic_light_pdf = analytic_bucket_pdf * (1.0 / max(f32(num_lights), 1.0));
+            let analytic_light_scale = 1.0 / max(analytic_light_pdf, 1e-6);
 
             let brdf = calculate_brdf_lighting_rt(
                 normal, v_dir, light_dir, roughness, metallic,
                 reflectance, clear_coat, clear_coat_roughness
             );
 
-            let raw_light_contrib = brdf * light.color.rgb * light.intensity * attenuation * f32(total_light_count);
+            let raw_light_contrib =
+                brdf
+                * light.color.rgb
+                * light.intensity
+                * attenuation
+                * analytic_light_scale;
             let light_contrib = safe_clamp_vec3_max(raw_light_contrib, MAX_NEE_LUMINANCE);
 
             let light_distance = select(1e30, length(light.position.xyz - position), light.light_type != 0.0);
@@ -355,12 +420,20 @@ fn process_selected_pixel(
             pixel_path_state[ray_slot].shadow_direction = vec4f(light_dir, light_distance * 0.999);
             pixel_path_state[ray_slot].shadow_radiance = vec4f(light_contrib, 1.0);
         } else {
-            let emissive_idx = selected_light_idx - num_lights;
+            var emissive_pdf = 0.0;
+            let emissive_idx = sample_weighted_emissive_light(
+                &rng,
+                num_emissive_lights,
+                &emissive_pdf
+            );
+            let selected_light_idx = num_lights + emissive_idx;
             let emissive_light = emissive_lights_buffer.lights[emissive_idx];
             let to_emissive = emissive_light.position_radius.xyz - position;
             let distance_sq = max(dot(to_emissive, to_emissive), 1e-6);
             let distance = sqrt(distance_sq);
             let light_dir = to_emissive / distance;
+            let emissive_light_pdf = emissive_bucket_pdf * emissive_pdf;
+            let emissive_light_scale = 1.0 / max(emissive_light_pdf, 1e-6);
 
             let brdf = calculate_brdf_lighting_rt(
                 normal, v_dir, light_dir, roughness, metallic,
@@ -374,7 +447,7 @@ fn process_selected_pixel(
                 * emissive_light.radiance_weight.xyz
                 * n_light_dot
                 * solid_angle_scale
-                * f32(total_light_count);
+                * emissive_light_scale;
             let light_contrib = safe_clamp_vec3_max(raw_light_contrib, MAX_NEE_LUMINANCE);
 
             let light_distance = max(0.0, distance - emissive_light.position_radius.w);

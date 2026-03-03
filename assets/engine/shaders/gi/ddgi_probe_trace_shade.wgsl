@@ -29,6 +29,21 @@
 @group(1) @binding(16) var texture_pool_emission: texture_2d_array<f32>;
 @group(1) @binding(17) var skybox_texture: texture_cube<f32>;
 
+const EMISSIVE_HIT_LUMA_SOFT_CAP: f32 = 2.0;
+const EMISSIVE_HIT_OVERFLOW_SCALE: f32 = 0.1;
+
+fn stabilize_emissive_hit_radiance(raw_emissive_radiance: vec3<f32>) -> vec3<f32> {
+    let clamped_emissive_radiance = safe_clamp_vec3_max(raw_emissive_radiance, MAX_RADIANCE_LUMINANCE);
+    let emissive_luma = max(luminance(clamped_emissive_radiance), 1e-6);
+    let compressed_luma = select(
+        emissive_luma,
+        EMISSIVE_HIT_LUMA_SOFT_CAP + (emissive_luma - EMISSIVE_HIT_LUMA_SOFT_CAP) * EMISSIVE_HIT_OVERFLOW_SCALE,
+        emissive_luma > EMISSIVE_HIT_LUMA_SOFT_CAP
+    );
+    let emissive_scale = compressed_luma / emissive_luma;
+    return clamped_emissive_radiance * emissive_scale;
+}
+
 @compute @workgroup_size(256, 1, 1)
 fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let active_ray_count = probe_ray_data.header.active_ray_count;
@@ -121,12 +136,8 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         // -----------------------------------------------------------------------------
         var radiance = vec3<f32>(0.0);
         let light_dir = hit.nee_light_dir_type.xyz;
-        let n_dot_l = max(dot(n, light_dir), 0.0);
         let visibility = select(0.0, 1.0, hit.state_u32.z == 1u);
-        let direct_irradiance = hit.nee_light_radiance.xyz * n_dot_l * visibility;
-        if (n_dot_l > 0.0) {
-            radiance += safe_clamp_vec3_max(direct_irradiance, MAX_RADIANCE_LUMINANCE);
-        }
+        radiance += safe_clamp_vec3_max(hit.nee_light_radiance.xyz * visibility, MAX_RADIANCE_LUMINANCE);
 
         // Reseed multi-bounce using last frame's DDGI SH field.
         // Treat SH as incident diffuse irradiance at the hit point.
@@ -142,6 +153,10 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
 
         // Apply Lambertian BRDF to reflected light (NEE + multi-bounce SH)
         radiance *= albedo * (1.0 / (2.0 * PI));
+
+        if (emissive > 0.0) {
+            radiance += stabilize_emissive_hit_radiance(emissive * albedo);
+        }
 
         probe_ray_data.rays[gid.x].radiance = vec4f(radiance, 1.0);
     }
