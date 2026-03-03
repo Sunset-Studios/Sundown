@@ -27,6 +27,7 @@
 const SPATIAL_RADIUS_PIXELS: f32 = 16.0;
 const SPATIAL_SAMPLE_COUNT: u32 = 5u;
 const MAX_SPATIAL_SAMPLES = 500u;
+const SPATIAL_SKIP_ROUGHNESS_THRESHOLD: f32 = 0.15;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Spatial Reuse Similarity Thresholds
@@ -43,8 +44,9 @@ const SPATIAL_DEPTH_THRESHOLD: f32 = 0.05;   // 5% relative tangent-plane distan
 @group(1) @binding(2) var<storage, read_write> spatial_reservoir_curr: array<GIReservoirData>;
 @group(1) @binding(3) var gbuffer_position: texture_2d<f32>;
 @group(1) @binding(4) var gbuffer_normal: texture_2d<f32>;
+@group(1) @binding(5) var gbuffer_smra: texture_2d<f32>;
 #if SPECULAR_MASK_ENABLED
-@group(1) @binding(5) var specular_mask: texture_2d<u32>;
+@group(1) @binding(6) var specular_mask: texture_2d<u32>;
 #endif
 
 // =============================================================================
@@ -80,6 +82,12 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         return;
     }
 #endif
+
+    let roughness = clamp(textureLoad(gbuffer_smra, full_pixel_coord, 0u).g, 0.0, 1.0);
+    if (roughness < SPATIAL_SKIP_ROUGHNESS_THRESHOLD) {
+        spatial_reservoir_curr[pixel_index] = input_reservoir[pixel_index];
+        return;
+    }
 
     let center_position = textureLoad(gbuffer_position, full_pixel_coord, 0u).xyz;
     let camera_position = view_buffer[u32(frame_info.view_index)].view_position.xyz;
