@@ -133,6 +133,14 @@ export const AOStrategyType = Object.freeze({
 });
 
 /**
+ * Types of Reflection strategies.
+ * @enum {number}
+ */
+export const ReflectionStrategyType = Object.freeze({
+    SSR: 0,
+});
+
+/**
  * Types of debug draw in the render graph.
  * @enum {number}
  */

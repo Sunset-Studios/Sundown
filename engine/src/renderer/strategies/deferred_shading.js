@@ -34,6 +34,7 @@ import {
   DebugDrawType,
   GIStrategyType,
   AOStrategyType,
+  ReflectionStrategyType,
 } from "../renderer_types.js";
 import { BVH } from "../../acceleration/bvh.js";
 import { MeshBLAS } from "../../acceleration/mesh_blas.js";
@@ -58,6 +59,7 @@ import { DDGI } from "../global_illumination/ddgi.js";
 import { GTAO } from "../global_illumination/gtao.js";
 import { RTAO } from "../global_illumination/rtao.js";
 import { AdaptiveSparseVirtualShadowMaps } from "../shadows/as_vsm.js";
+import { SSR } from "../reflections/ssr.js";
 import {
   DEFAULT_LIGHT_CLIP_EXTENT,
   MAX_CLIPMAP_LEVELS,
@@ -446,6 +448,7 @@ export class DeferredShadingStrategy {
   gi = null;
   gtao = null;
   rtao = null;
+  reflections = null;
   as_vsm = null;
   debug_overlay = null;
   frustum_culler = null;
@@ -456,8 +459,11 @@ export class DeferredShadingStrategy {
 
     const gi_strategy_type = Renderer.get().get_gi_strategy_type();
     const ao_strategy_type = Renderer.get().get_ao_strategy_type();
+    const reflection_strategy_type = Renderer.get().get_reflection_strategy_type();
     this.gi = gi_strategy_type === GIStrategyType.DDGI ? new DDGI() : new PTGI();
     this.ao = ao_strategy_type === AOStrategyType.GTAO ? new GTAO() : new RTAO();
+    this.reflections =
+      reflection_strategy_type === ReflectionStrategyType.SSR ? new SSR() : null;
     this.as_vsm = new AdaptiveSparseVirtualShadowMaps({
       atlas_size: ATLAS_SIZE,
       tile_size: TILE_SIZE,
@@ -535,7 +541,9 @@ export class DeferredShadingStrategy {
 
       const shadows_enabled = renderer.is_shadows_enabled();
       const gi_enabled = renderer.is_gi_enabled();
+      const gi_has_builtin_specular = renderer.get_gi_strategy_type() === GIStrategyType.PTGI;
       const ao_enabled = renderer.is_ao_enabled();
+      const reflections_enabled = gi_enabled && !gi_has_builtin_specular && !!this.reflections;
 
       if (this.force_recreate) {
         render_graph.mark_pass_cache_bind_groups_dirty(true /* pass_only */);
@@ -1281,6 +1289,20 @@ export class DeferredShadingStrategy {
         );
       }
 
+
+      if (reflections_enabled) {
+        this.reflections.add_passes(
+          render_graph,
+          image_extent.width,
+          image_extent.height,
+          main_normal_image,
+          main_position_image,
+          main_smra_image,
+          skybox_image,
+          this.force_recreate
+        );
+      }
+
       // ┌─────────────────────────────────────────────────────────────────────────────┐
       // │ 💡 PASS: Deferred Lighting                                                 │
       // │    Combine G-Buffer data with lights to produce final shaded results      │
@@ -1311,7 +1333,9 @@ export class DeferredShadingStrategy {
           lighting_inputs.push(
             this.gi.final_gi_texture_direct,
             this.gi.final_gi_texture_indirect_diffuse,
-            this.gi.final_gi_texture_indirect_specular
+            reflections_enabled
+              ? this.reflections.reflection_texture
+              : this.gi.final_gi_texture_indirect_specular
           );
         }
 
@@ -1736,7 +1760,9 @@ export class DeferredShadingStrategy {
             break;
           case DebugDrawType.GI_Specular:
             this.debug_overlay.set_properties(
-              this.gi.final_gi_texture_indirect_specular,
+              reflections_enabled
+              ? this.reflections.reflection_texture
+              : this.gi.final_gi_texture_indirect_specular,
               0,
               0,
               image_extent.width,
@@ -1776,7 +1802,9 @@ export class DeferredShadingStrategy {
             break;
           case DebugDrawType.GI_Reflections:
             this.debug_overlay.set_properties(
-              this.gi.final_gi_texture_indirect_specular,
+              reflections_enabled
+              ? this.reflections.reflection_texture
+              : this.gi.final_gi_texture_indirect_specular,
               0,
               0,
               image_extent.width,

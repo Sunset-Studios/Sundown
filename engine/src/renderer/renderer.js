@@ -1,5 +1,11 @@
 import { MAX_BUFFERED_FRAMES } from "../core/minimal.js";
-import { DebugDrawType, RenderStrategyType, GIStrategyType, AOStrategyType } from "./renderer_types.js";
+import {
+  DebugDrawType,
+  RenderStrategyType,
+  GIStrategyType,
+  AOStrategyType,
+  ReflectionStrategyType,
+} from "./renderer_types.js";
 import { DeferredShadingStrategy } from "./strategies/deferred_shading.js";
 import { PathTracingStrategy } from "./strategies/path_tracing.js";
 import { RenderGraph } from "./render_graph.js";
@@ -47,6 +53,7 @@ export class Renderer {
   debug_draw_type = DebugDrawType.None;
   gi_strategy_type = GIStrategyType.DDGI;
   ao_strategy_type = AOStrategyType.GTAO;
+  reflection_strategy_type = ReflectionStrategyType.SSR;
 
   static renderers = [];
 
@@ -427,6 +434,27 @@ export class Renderer {
    */
   set_ao_strategy_type(strategy_type) {
     this.ao_strategy_type = strategy_type;
+    if (this.render_strategy) {
+      this.refresh_render_graph(true /* reinit */);
+      this.recreate_pipeline_states();
+    }
+  }
+
+
+  /**
+   * Get the current Reflection strategy type
+   * @returns {ReflectionStrategyType} - The Reflection strategy type
+   */
+  get_reflection_strategy_type() {
+    return this.reflection_strategy_type;
+  }
+
+  /**
+   * Set the Reflection strategy type
+   * @param {ReflectionStrategyType} strategy_type - The Reflection strategy type
+   */
+  set_reflection_strategy_type(strategy_type) {
+    this.reflection_strategy_type = strategy_type;
     if (this.render_strategy) {
       this.refresh_render_graph(true /* reinit */);
       this.recreate_pipeline_states();
