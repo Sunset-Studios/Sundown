@@ -2011,6 +2011,7 @@ export class DDGI {
           short_range_low_radiance_curr_indirect_specular,
           gbuffer_position,
           gbuffer_normal,
+          gbuffer_smra,
           short_range_output_direct,
           short_range_output_indirect_diffuse,
           short_range_output_indirect_specular,

@@ -23,11 +23,12 @@
 @group(1) @binding(3) var gi_low_indirect_specular: texture_2d<f32>;
 @group(1) @binding(4) var gbuffer_position: texture_2d<f32>;
 @group(1) @binding(5) var gbuffer_normal: texture_2d<f32>;
-@group(1) @binding(6) var out_direct: texture_storage_2d<rgba16float, write>;
-@group(1) @binding(7) var out_indirect_diffuse: texture_storage_2d<rgba16float, write>;
-@group(1) @binding(8) var out_indirect_specular: texture_storage_2d<rgba16float, write>;
+@group(1) @binding(6) var gbuffer_smra: texture_2d<f32>;
+@group(1) @binding(7) var out_direct: texture_storage_2d<rgba16float, write>;
+@group(1) @binding(8) var out_indirect_diffuse: texture_storage_2d<rgba16float, write>;
+@group(1) @binding(9) var out_indirect_specular: texture_storage_2d<rgba16float, write>;
 #if SPECULAR_MASK_ENABLED
-@group(1) @binding(9) var specular_mask: texture_2d<u32>;
+@group(1) @binding(10) var specular_mask: texture_2d<u32>;
 #endif
 
 // =============================================================================
@@ -36,6 +37,8 @@
 
 const DEPTH_SIGMA: f32 = 0.05;
 const NORMAL_POWER: f32 = 64.0;
+const SPECULAR_EIGHT_TAP_ROUGHNESS_THRESHOLD: f32 = 0.15;
+const EIGHT_TAP_DISTANCE_FALLOFF: f32 = 0.75;
 
 // =============================================================================
 // HELPERS
@@ -104,6 +107,8 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let camera_position = view.view_position.xyz;
     let center_position = textureLoad(gbuffer_position, full_pixel_coord, 0).xyz;
     let center_depth = length(center_position - camera_position);
+    let roughness = clamp(textureLoad(gbuffer_smra, full_pixel_coord, 0).g, 0.0, 1.0);
+    let should_use_eight_tap = roughness < SPECULAR_EIGHT_TAP_ROUGHNESS_THRESHOLD;
 
     // Map full-res pixel to low-res GI space (floating point for bilinear taps).
     let uv = (vec2<f32>(f32(gid.x), f32(gid.y)) + vec2<f32>(0.5)) / vec2<f32>(f32(full_res.x), f32(full_res.y));
@@ -179,13 +184,61 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let out_d = s00_d * fw00 + s10_d * fw10 + s01_d * fw01 + s11_d * fw11;
     let out_id = s00_id * fw00 + s10_id * fw10 + s01_id * fw01 + s11_id * fw11;
     let out_is = s00_is * fw00 + s10_is * fw10 + s01_is * fw01 + s11_is * fw11;
-    let direct = safe_clamp_vec3_max(out_d.xyz, MAX_RADIANCE_LUMINANCE);
-    let indirect_diffuse = safe_clamp_vec3_max(out_id.xyz, MAX_RADIANCE_LUMINANCE);
-    let indirect_specular = safe_clamp_vec3_max(out_is.xyz, MAX_RADIANCE_LUMINANCE);
 
-    textureStore(out_direct, full_pixel_coord, vec4<f32>(direct, out_d.w));
-    textureStore(out_indirect_diffuse, full_pixel_coord, vec4<f32>(indirect_diffuse, out_id.w));
-    textureStore(out_indirect_specular, full_pixel_coord, vec4<f32>(indirect_specular, out_is.w));
+    var out_d_8 = vec4<f32>(0.0);
+    var out_id_8 = vec4<f32>(0.0);
+    var out_is_8 = vec4<f32>(0.0);
+    var weight_sum_8 = 0.0;
+
+    if (should_use_eight_tap) {
+        let center_gi_i = clamp_i32(vec2<i32>(round(gi_pos)), vec2<i32>(0, 0), max_gi_i);
+        let tap_offsets = array<vec2<i32>, 8>(
+            vec2<i32>(0, 0),
+            vec2<i32>(1, 0),
+            vec2<i32>(-1, 0),
+            vec2<i32>(0, 1),
+            vec2<i32>(0, -1),
+            vec2<i32>(1, 1),
+            vec2<i32>(-1, 1),
+            vec2<i32>(1, -1)
+        );
+
+        for (var tap_index = 0u; tap_index < 8u; tap_index = tap_index + 1u) {
+            let tap_i = clamp_i32(center_gi_i + tap_offsets[tap_index], vec2<i32>(0, 0), max_gi_i);
+            let tap_full = gi_pixel_to_full_res_pixel_coord(vec2<u32>(tap_i), upscale_factor, full_res);
+
+            let tap_position = textureLoad(gbuffer_position, vec2<i32>(tap_full), 0).xyz;
+            let tap_normal = safe_normalize(textureLoad(gbuffer_normal, vec2<i32>(tap_full), 0).xyz);
+            let tap_depth = length(tap_position - camera_position);
+
+            let delta = vec2<f32>(tap_i) - gi_pos;
+            let distance_weight = exp(-dot(delta, delta) * EIGHT_TAP_DISTANCE_FALLOFF);
+            let edge_weight = compute_edge_weight(center_depth, center_normal, tap_depth, tap_normal);
+            let tap_weight = distance_weight * edge_weight;
+
+            out_d_8 = out_d_8 + textureLoad(gi_low_direct, tap_i, 0) * tap_weight;
+            out_id_8 = out_id_8 + textureLoad(gi_low_indirect_diffuse, tap_i, 0) * tap_weight;
+            out_is_8 = out_is_8 + textureLoad(gi_low_indirect_specular, tap_i, 0) * tap_weight;
+            weight_sum_8 = weight_sum_8 + tap_weight;
+        }
+    }
+
+    let use_eight_tap_resolve = should_use_eight_tap && (weight_sum_8 > 1e-6);
+    out_d_8 = out_d_8 / max(weight_sum_8, 1e-6);
+    out_id_8 = out_id_8 / max(weight_sum_8, 1e-6);
+    out_is_8 = out_is_8 / max(weight_sum_8, 1e-6);
+
+    let final_out_d = select(out_d, out_d_8, use_eight_tap_resolve);
+    let final_out_id = select(out_id, out_id_8, use_eight_tap_resolve);
+    let final_out_is = select(out_is, out_is_8, use_eight_tap_resolve);
+
+    let direct = safe_clamp_vec3_max(final_out_d.xyz, MAX_RADIANCE_LUMINANCE);
+    let indirect_diffuse = safe_clamp_vec3_max(final_out_id.xyz, MAX_RADIANCE_LUMINANCE);
+    let indirect_specular = safe_clamp_vec3_max(final_out_is.xyz, MAX_RADIANCE_LUMINANCE);
+
+    textureStore(out_direct, full_pixel_coord, vec4<f32>(direct, final_out_d.w));
+    textureStore(out_indirect_diffuse, full_pixel_coord, vec4<f32>(indirect_diffuse, final_out_id.w));
+    textureStore(out_indirect_specular, full_pixel_coord, vec4<f32>(indirect_specular, final_out_is.w));
 }
 
 

@@ -1265,6 +1265,7 @@ export class PTGI {
           gi_low_radiance_curr_indirect_specular,
           gbuffer_position,
           gbuffer_normal,
+          gbuffer_smra,
           this.final_gi_texture_direct,
           this.final_gi_texture_indirect_diffuse,
           this.final_gi_texture_indirect_specular,
