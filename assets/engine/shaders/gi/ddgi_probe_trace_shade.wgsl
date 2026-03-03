@@ -143,13 +143,6 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         // Apply Lambertian BRDF to reflected light (NEE + multi-bounce SH)
         radiance *= albedo * (1.0 / (2.0 * PI));
 
-        // Emissive contribution - added directly as light emission, not modulated by surface BRDF.
-        // Stable form: avoid ad-hoc distance scaling to reduce probe boiling from emissive outliers.
-        if (emissive > 0.0) {
-            let emissive_radiance = emissive * albedo;
-            radiance += safe_clamp_vec3_max(emissive_radiance, MAX_RADIANCE_LUMINANCE);
-        }
-
         probe_ray_data.rays[gid.x].radiance = vec4f(radiance, 1.0);
     }
 }

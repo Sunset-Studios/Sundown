@@ -160,19 +160,6 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         }
 
         // ─────────────────────────────────────────────────────────────────────
-        // Emissive Contribution
-        // ─────────────────────────────────────────────────────────────────────
-        if (emissive > 0.0) {
-            let emissive_radiance = emissive * albedo;
-            let emissive_contribution = safe_clamp_vec3_max(emissive_radiance, MAX_NEE_LUMINANCE);
-
-            let is_specular_lobe = pixel_path_state[gid.x].state_u32.x == 1u;
-            let indirect_add = vec4f(emissive_contribution, 0.0);
-            pixel_path_state[gid.x].throughput_indirect_diffuse += select(indirect_add, vec4f(0.0), is_specular_lobe);
-            pixel_path_state[gid.x].throughput_indirect_specular += select(vec4f(0.0), indirect_add, is_specular_lobe);
-        }
-
-        // ─────────────────────────────────────────────────────────────────────
         // World Cache Query (Multi-Bounce Irradiance)
         // ─────────────────────────────────────────────────────────────────────
         let hit_distance_for_cache = pixel_path_state[gid.x].origin_tmin.w;
@@ -200,8 +187,8 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         if (cached_luminance > 0.0001) {
             let is_specular_lobe = pixel_path_state[gid.x].state_u32.x == 1u;
             let indirect_add = vec4f(safe_clamp_vec3_max(cached_radiance, MAX_RADIANCE_LUMINANCE), 0.0);
-            pixel_path_state[gid.x].throughput_indirect_diffuse += select(indirect_add, vec4f(0.0), is_specular_lobe);
-            pixel_path_state[gid.x].throughput_indirect_specular += select(vec4f(0.0), indirect_add, is_specular_lobe);
+            pixel_path_state[gid.x].throughput_indirect_diffuse += select(indirect_add * pixel_path_state[gid.x].path_weight, vec4f(0.0), is_specular_lobe);
+            pixel_path_state[gid.x].throughput_indirect_specular += select(vec4f(0.0), indirect_add * pixel_path_state[gid.x].path_weight, is_specular_lobe);
         }
         
         pixel_path_state[gid.x].rng_sample_count_frame_stamp.y += 1.0;

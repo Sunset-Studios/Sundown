@@ -139,11 +139,6 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
             n = normalize(tbn * nm);
         }
 
-        // === EMISSIVE CONTRIBUTION ===
-        if (emissive > 0.0) {
-            radiance_contribution += safe_clamp_vec3_max(emissive * albedo, MAX_NEE_LUMINANCE);
-        }
-
         // === INDIRECT LIGHTING - Query world cache for multi-bounce ===
         // Query world cache at hit point to get cached irradiance from previous frames
         // This provides multi-bounce indirect illumination without tracing further

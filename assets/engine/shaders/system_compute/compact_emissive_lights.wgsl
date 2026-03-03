@@ -13,9 +13,6 @@
 @group(1) @binding(8) var<storage, read_write> emissive_lights_buffer: EmissiveLightsBufferA;
 
 const MAX_TRIANGLES_PER_LEAF: u32 = 32u;
-const MIN_EMISSIVE_WEIGHT: f32 = 1e-5;
-const ONE_OVER_PI: f32 = 0.3183098861837907;
-
 fn triangle_area_and_normal(p0: vec3<f32>, p1: vec3<f32>, p2: vec3<f32>) -> vec4<f32> {
     let edge0 = p1 - p0;
     let edge1 = p2 - p0;
@@ -88,23 +85,20 @@ fn cs(@builtin(global_invocation_id) global_id: vec3<u32>) {
 
         let area_and_normal = triangle_area_and_normal(p0_world, p1_world, p2_world);
         let tri_area = area_and_normal.w;
-        if (tri_area <= 1e-7) {
-            continue;
-        }
 
         // MVP estimate (texture-unaware): emissive scalar times base color.
         let emissive_radiance = max(material.albedo.xyz, vec3<f32>(0.0)) * emissive_scalar;
         let sampling_weight = luminance(emissive_radiance) * tri_area;
-        if (sampling_weight <= MIN_EMISSIVE_WEIGHT) {
-            continue;
-        }
 
         let dst = atomicAdd(&emissive_lights_buffer.header.light_count, 1u);
         if (dst < arrayLength(&emissive_lights_buffer.lights)) {
             let centroid = (p0_world + p1_world + p2_world) * (1.0 / 3.0);
-            let equivalent_radius = sqrt(max(tri_area, 1e-7) * ONE_OVER_PI);
+            let extent_radius = max(
+                max(length(p0_world - p1_world), length(p1_world - p2_world)),
+                length(p2_world - p0_world)
+            );
 
-            emissive_lights_buffer.lights[dst].position_radius = vec4<f32>(centroid, equivalent_radius);
+            emissive_lights_buffer.lights[dst].position_radius = vec4<f32>(centroid, extent_radius);
             emissive_lights_buffer.lights[dst].normal_area = vec4<f32>(area_and_normal.xyz, tri_area);
             emissive_lights_buffer.lights[dst].radiance_weight = vec4<f32>(emissive_radiance, sampling_weight);
             emissive_lights_buffer.lights[dst].instance_tri_section = vec4<u32>(
