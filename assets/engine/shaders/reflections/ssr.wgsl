@@ -118,7 +118,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let reflection_strength = (1.0 - roughness) * max(reflectance, metallic);
 
     if (reflection_strength <= 0.001) {
-        textureStore(out_reflections, coord, vec4f(0.0));
+        textureStore(out_trace, coord, vec4f(0.0));
         return;
     }
 
