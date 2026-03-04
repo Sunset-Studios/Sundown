@@ -1297,8 +1297,12 @@ export class DeferredShadingStrategy {
           image_extent.height,
           main_normal_image,
           main_position_image,
+          prev_normal_image,
+          prev_position_image,
+          main_motion_emissive_image,
           main_smra_image,
-          skybox_image,
+          prev_lighting,
+          main_hzb_image,
           this.force_recreate
         );
       }
