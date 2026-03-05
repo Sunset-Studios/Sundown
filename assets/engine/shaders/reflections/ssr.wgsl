@@ -23,8 +23,11 @@ fn project_to_depth01(position: vec3f, view_index: u32) -> f32 {
 }
 
 fn uv_to_coord(uv: vec2f, resolution: vec2<u32>) -> vec2<i32> {
-    let max_coord = vec2f(f32(max(1u, resolution.x) - 1u), f32(max(1u, resolution.y) - 1u));
-    return vec2<i32>(clamp(uv * max_coord, vec2f(0.0), max_coord));
+    let pixel = vec2<i32>(floor(uv * vec2f(f32(resolution.x), f32(resolution.y))));
+    return vec2<i32>(
+        clamp(pixel.x, 0, i32(resolution.x) - 1),
+        clamp(pixel.y, 0, i32(resolution.y) - 1)
+    );
 }
 
 fn tangent_basis(n: vec3f) -> mat3x3f {
@@ -70,7 +73,7 @@ fn trace_hiz(
 ) -> vec4f {
     let mip_count = textureNumLevels(hzb_texture);
     let max_steps = u32(floor(mix(48.0, 20.0, roughness)));
-    let max_trace_distance = mix(500.0, 36.0, roughness);
+    let max_trace_distance = mix(1000.0, 36.0, roughness);
     let min_trace_distance = 0.05 + roughness * 0.15;
     let distance_curve_power = mix(1.45, 1.15, roughness);
     let thickness = mix(0.01, 0.2, roughness * roughness);
@@ -158,7 +161,8 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
 
     // Low-discrepancy jitter: same (pixel, frame) always gets the same ray; we cycle over SSR_NUM_RAY_SAMPLES.
     let pixel_id = gid.x + gid.y * resolution.x;
-    let sample_idx = u32(frame_info.frame_index) % SSR_NUM_RAY_SAMPLES;
+    let sample_phase = hash(pixel_id) % SSR_NUM_RAY_SAMPLES;
+    let sample_idx = (u32(frame_info.frame_index) + sample_phase) % SSR_NUM_RAY_SAMPLES;
     var xi = rand_halton_2d(pixel_id, sample_idx);
     xi.y = mix(xi.y, 0.0, 0.7);
 

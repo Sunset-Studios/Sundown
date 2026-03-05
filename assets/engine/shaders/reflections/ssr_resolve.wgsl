@@ -17,8 +17,11 @@ const resolve_offsets = array<vec2<i32>, 4>(
 );
 
 fn uv_to_coord(uv: vec2f, resolution: vec2<u32>) -> vec2<i32> {
-    let max_coord = vec2f(f32(max(1u, resolution.x) - 1u), f32(max(1u, resolution.y) - 1u));
-    return vec2<i32>(clamp(uv * max_coord, vec2f(0.0), max_coord));
+    let pixel = vec2<i32>(floor(uv * vec2f(f32(resolution.x), f32(resolution.y))));
+    return vec2<i32>(
+        clamp(pixel.x, 0, i32(resolution.x) - 1),
+        clamp(pixel.y, 0, i32(resolution.y) - 1)
+    );
 }
 
 fn ray_atten_border(pos: vec2f, value: f32) -> f32 {
