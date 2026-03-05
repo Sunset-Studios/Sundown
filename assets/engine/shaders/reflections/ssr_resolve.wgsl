@@ -1,20 +1,76 @@
 #include "common.wgsl"
 
-@group(1) @binding(0) var trace_texture: texture_2d<f32>;
-@group(1) @binding(1) var history_texture: texture_2d<f32>;
-@group(1) @binding(2) var curr_normal_texture: texture_2d<f32>;
-@group(1) @binding(3) var curr_position_texture: texture_2d<f32>;
-@group(1) @binding(4) var prev_normal_texture: texture_2d<f32>;
-@group(1) @binding(5) var prev_position_texture: texture_2d<f32>;
-@group(1) @binding(6) var motion_texture: texture_2d<f32>;
-@group(1) @binding(7) var smra_texture: texture_2d<f32>;
-@group(1) @binding(8) var lighting_history_texture: texture_2d<f32>;
-@group(1) @binding(9) var out_reflections: texture_storage_2d<rgba16float, write>;
-@group(1) @binding(10) var out_history: texture_storage_2d<rgba16float, write>;
+@group(1) @binding(0) var raycast_hit_texture: texture_2d<f32>;
+@group(1) @binding(1) var raycast_mask_texture: texture_2d<f32>;
+@group(1) @binding(2) var gbuffer_normal: texture_2d<f32>;
+@group(1) @binding(3) var gbuffer_position: texture_2d<f32>;
+@group(1) @binding(4) var gbuffer_smra: texture_2d<f32>;
+@group(1) @binding(5) var lighting_history_texture: texture_2d<f32>;
+@group(1) @binding(6) var out_resolve: texture_storage_2d<rgba16float, write>;
+
+const EDGE_FACTOR = 0.25;
+const resolve_offsets = array<vec2<i32>, 4>(
+    vec2<i32>(0, 0),
+    vec2<i32>(0, 1),
+    vec2<i32>(1, -1),
+    vec2<i32>(-1, -1),
+);
 
 fn uv_to_coord(uv: vec2f, resolution: vec2<u32>) -> vec2<i32> {
     let max_coord = vec2f(f32(max(1u, resolution.x) - 1u), f32(max(1u, resolution.y) - 1u));
     return vec2<i32>(clamp(uv * max_coord, vec2f(0.0), max_coord));
+}
+
+fn ray_atten_border(pos: vec2f, value: f32) -> f32 {
+    let border_dist = min(1.0 - max(pos.x, pos.y), min(pos.x, pos.y));
+    return clamp(select(border_dist / max(value, 1e-4), 1.0, border_dist > value), 0.0, 1.0);
+}
+
+fn d_ggx(n_dot_h: f32, roughness: f32) -> f32 {
+    let a = max(roughness * roughness, 0.0001);
+    let a2 = a * a;
+    let d = n_dot_h * n_dot_h * (a2 - 1.0) + 1.0;
+    return a2 / max(PI * d * d, 0.0001);
+}
+
+fn v_smith_ggx_height_correlated_fast(n_dot_v: f32, n_dot_l: f32, roughness: f32) -> f32 {
+    return 0.5 / max(mix(2.0 * n_dot_l * n_dot_v, n_dot_l + n_dot_v, roughness), 0.0001);
+}
+
+fn f_schlick_vec3(f0: vec3<f32>, f90: f32, v_dot_h: f32) -> vec3<f32> {
+    let one_minus_voh = 1.0 - v_dot_h;
+    let one_minus_voh_2 = one_minus_voh * one_minus_voh;
+    return f0 + (f90 - f0) * one_minus_voh_2 * one_minus_voh_2 * one_minus_voh;
+}
+
+fn brdf_importance_weight(
+    normal: vec3f,
+    view_dir: vec3f,
+    light_dir: vec3f,
+    roughness: f32,
+    metallic: f32,
+    reflectance: f32
+) -> f32 {
+    let halfway = safe_normalize(light_dir + view_dir);
+    let n_dot_v = max(dot(normal, view_dir), 0.0001);
+    let n_dot_l = max(dot(normal, light_dir), 0.0001);
+    let n_dot_h = max(dot(normal, halfway), 0.0001);
+    let v_dot_h = max(dot(view_dir, halfway), 0.0001);
+
+    let dielectric_f0 = 0.16 * reflectance * reflectance;
+    let f0 = mix(vec3<f32>(dielectric_f0), vec3<f32>(1.0), metallic);
+    let f = f_schlick_vec3(f0, 1.0, v_dot_h);
+
+    let r = clamp(roughness, 0.02, 1.0);
+    let d = d_ggx(n_dot_h, r);
+    let v = v_smith_ggx_height_correlated_fast(n_dot_v, n_dot_l, r);
+    let specular = (d * v) * f;
+
+    let kd = (1.0 - metallic) * (vec3<f32>(1.0) - f);
+    let diffuse = kd * vec3<f32>(1.0 / PI);
+    let brdf = (diffuse + specular) * n_dot_l;
+
+    return max(luminance(brdf), 1e-4);
 }
 
 @compute @workgroup_size(8, 8, 1)
@@ -25,56 +81,76 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
 
     let coord = vec2<i32>(i32(gid.x), i32(gid.y));
-    let trace = textureLoad(trace_texture, coord, 0);
-    let curr_normal = safe_normalize(textureLoad(curr_normal_texture, coord, 0).xyz);
-    let curr_position = textureLoad(curr_position_texture, coord, 0).xyz;
-    let roughness = clamp(textureLoad(smra_texture, coord, 0).g, 0.0, 1.0);
-
-    let uv = vec2f(f32(gid.x) / max(1.0, f32(resolution.x - 1u)), f32(gid.y) / max(1.0, f32(resolution.y - 1u)));
-    let motion = textureLoad(motion_texture, coord, 0).xy;
-    let prev_uv = uv + vec2f(-0.5 * motion.x, 0.5 * motion.y);
-    let prev_uv_in_bounds = all(prev_uv >= vec2f(0.0)) && all(prev_uv <= vec2f(1.0));
-
-    var history_color = vec3f(0.0);
-    var history_conf = 0.0;
-    var history_valid = false;
-    if (prev_uv_in_bounds) {
-        let prev_coord = uv_to_coord(prev_uv, resolution);
-        let prev_sample = textureLoad(history_texture, prev_coord, 0);
-        let prev_normal = safe_normalize(textureLoad(prev_normal_texture, prev_coord, 0).xyz);
-        let prev_pos = textureLoad(prev_position_texture, prev_coord, 0).xyz;
-        history_valid = distance(curr_position, prev_pos) < (0.06 + roughness * 0.25) && dot(curr_normal, prev_normal) > (0.65 - roughness * 0.3);
-        history_color = prev_sample.rgb;
-        history_conf = prev_sample.a;
+    let normal_data = textureLoad(gbuffer_normal, coord, 0).xyz;
+    if (length(normal_data) < 1e-5) {
+        textureStore(out_resolve, coord, vec4f(0.0));
+        return;
     }
 
-    let center = trace.rgb;
-    var neigh_min = center;
-    var neigh_max = center;
-    let radius = i32(1 + i32(round(roughness * 3.0)));
-    for (var y = -radius; y <= radius; y++) {
-        for (var x = -radius; x <= radius; x++) {
-            let tap = vec2<i32>(clamp(i32(gid.x) + x, 0, i32(resolution.x) - 1), clamp(i32(gid.y) + y, 0, i32(resolution.y) - 1));
-            let tap_trace = textureLoad(trace_texture, tap, 0).rgb;
-            let tap_normal = safe_normalize(textureLoad(curr_normal_texture, tap, 0).xyz);
-            let tap_pos = textureLoad(curr_position_texture, tap, 0).xyz;
-            let edge_weight = pow(max(dot(curr_normal, tap_normal), 0.0), 8.0) * exp(-distance(curr_position, tap_pos) * 18.0);
-            let weighted = mix(center, tap_trace, edge_weight);
-            neigh_min = min(neigh_min, weighted);
-            neigh_max = max(neigh_max, weighted);
+    let smra = textureLoad(gbuffer_smra, coord, 0);
+    let roughness = clamp(smra.g, 0.0, 1.0);
+    let metallic = smra.b;
+    let reflectance = smra.r;
+    let normal = safe_normalize(normal_data);
+    let position = textureLoad(gbuffer_position, coord, 0).xyz;
+
+    let uv = (vec2f(f32(gid.x), f32(gid.y)) + 0.5) / vec2f(f32(resolution.x), f32(resolution.y));
+    let view_index = u32(frame_info.view_index);
+    let view_dir = safe_normalize(view_buffer[view_index].view_position.xyz - position);
+
+    let max_mip = max(0.0, f32(textureNumLevels(lighting_history_texture) - 1u));
+
+    var accum = vec3f(0.0);
+    var accum_weight = 0.0;
+    var confidence_sum = 0.0;
+
+    let stride = 1 + i32(round(roughness * 2.0));
+
+    for (var i = 0u; i < 4u; i++) {
+        let tap_coord = vec2<i32>(
+            clamp(coord.x + resolve_offsets[i].x * stride, 0, i32(resolution.x) - 1),
+            clamp(coord.y + resolve_offsets[i].y * stride, 0, i32(resolution.y) - 1)
+        );
+
+        let hit = textureLoad(raycast_hit_texture, tap_coord, 0);
+        let mask = textureLoad(raycast_mask_texture, tap_coord, 0).r;
+
+        if (mask <= 1e-4 || any(hit.xy < vec2f(0.0)) || any(hit.xy > vec2f(1.0))) {
+            continue;
         }
+
+        let hit_coord = uv_to_coord(hit.xy, resolution);
+        let hit_pos = textureLoad(gbuffer_position, hit_coord, 0).xyz;
+
+        let light_dir = safe_normalize(hit_pos - position);
+        if (dot(normal, light_dir) <= 0.0) {
+            continue;
+        }
+
+        let brdf_w = brdf_importance_weight(normal, view_dir, light_dir, roughness, metallic, reflectance);
+        let pdf = max(hit.w, 1e-4);
+        let weight = brdf_w / pdf;
+
+        let cone_tangent = roughness * roughness;
+        let pixel_footprint = length(hit.xy - uv) * max(f32(resolution.x), f32(resolution.y));
+        let source_mip = clamp(log2(max(1.0, cone_tangent * pixel_footprint)), 0.0, max_mip);
+
+        var sample_color = textureSampleLevel(lighting_history_texture, clamped_sampler, hit.xy, source_mip).rgb;
+        sample_color = sample_color / (1.0 + luminance(sample_color));
+
+        let sample_alpha = ray_atten_border(hit.xy, EDGE_FACTOR) * mask;
+        accum += sample_color * sample_alpha * weight;
+        accum_weight += sample_alpha * weight;
+        confidence_sum += sample_alpha;
     }
 
-    let clamped_history = clamp(history_color, neigh_min, neigh_max);
-    let temporal_alpha = mix(0.25, 0.08, roughness) * (1.0 - history_conf * 0.6);
-    let blended = select(trace.rgb, mix(clamped_history, trace.rgb, temporal_alpha), history_valid);
+    let fallback_color = textureSampleLevel(lighting_history_texture, clamped_sampler, uv, roughness * 4.0).rgb * 0.2;
+    var resolved_color = select(fallback_color, accum / max(accum_weight, 1e-4), accum_weight > 1e-4);
+    resolved_color = resolved_color / max(1e-3, 1.0 - luminance(resolved_color));
 
-    let fallback_uv = select(uv, prev_uv, prev_uv_in_bounds);
-    let fallback_color = textureSampleLevel(lighting_history_texture, clamped_sampler, fallback_uv, roughness * 4.0).rgb * 0.25;
-    let confidence = max(trace.a, select(0.0, history_conf * 0.95, history_valid));
-    let final_color = mix(fallback_color, blended, clamp(confidence * 1.5, 0.0, 1.0));
+    let confidence = clamp(confidence_sum * 0.25, 0.0, 1.0);
+    let final_color = mix(fallback_color, resolved_color, confidence);
 
-    let out_sample = vec4f(final_color, clamp(confidence, 0.0, 1.0));
-    textureStore(out_reflections, coord, out_sample);
-    textureStore(out_history, coord, out_sample);
+    textureStore(out_resolve, coord, vec4f(final_color, confidence));
 }
+
