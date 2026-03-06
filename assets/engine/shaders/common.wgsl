@@ -728,3 +728,11 @@ fn orthonormalize(z_basis: vec3<f32>) -> mat3x3<f32> {
 fn luminance(v: vec3<f32>) -> f32 {
     return v.x * 0.2126 + v.y * 0.7152 + v.z * 0.0722;
 }
+
+fn uv_to_coord(uv: vec2f, resolution: vec2<u32>) -> vec2<i32> {
+    let pixel = vec2<i32>(floor(uv * vec2f(f32(resolution.x), f32(resolution.y))));
+    return vec2<i32>(
+        clamp(pixel.x, 0, i32(resolution.x) - 1),
+        clamp(pixel.y, 0, i32(resolution.y) - 1)
+    );
+}

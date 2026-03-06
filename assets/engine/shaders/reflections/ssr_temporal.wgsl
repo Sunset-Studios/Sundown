@@ -10,14 +10,6 @@ const FLT_EPS = 1e-6;
 const TEMPORAL_RESPONSE_MIN = 0.0;
 const TEMPORAL_RESPONSE_MAX = 0.2;
 
-fn uv_to_coord(uv: vec2f, resolution: vec2<u32>) -> vec2<i32> {
-    let pixel = vec2<i32>(floor(uv * vec2f(f32(resolution.x), f32(resolution.y))));
-    return vec2<i32>(
-        clamp(pixel.x, 0, i32(resolution.x) - 1),
-        clamp(pixel.y, 0, i32(resolution.y) - 1)
-    );
-}
-
 fn clip_aabb(aabb_min: vec3f, aabb_max: vec3f, p: vec4f, q: vec4f) -> vec4f {
     let p_clip = 0.5 * (aabb_max + aabb_min);
     let e_clip = 0.5 * (aabb_max - aabb_min) + vec3f(FLT_EPS);

@@ -24,14 +24,6 @@ fn project_to_depth01(position: vec3f, view_index: u32) -> f32 {
     return clamp(ndc_z, 0.0, 1.0);
 }
 
-fn uv_to_coord(uv: vec2f, resolution: vec2<u32>) -> vec2<i32> {
-    let pixel = vec2<i32>(floor(uv * vec2f(f32(resolution.x), f32(resolution.y))));
-    return vec2<i32>(
-        clamp(pixel.x, 0, i32(resolution.x) - 1),
-        clamp(pixel.y, 0, i32(resolution.y) - 1)
-    );
-}
-
 fn trace_to_full_coord(trace_coord: vec2<u32>, full_resolution: vec2<u32>, trace_resolution: vec2<u32>) -> vec2<i32> {
     let trace_uv = (vec2f(trace_coord) + 0.5) / vec2f(trace_resolution);
     let full_pixel = vec2<i32>(floor(trace_uv * vec2f(full_resolution)));

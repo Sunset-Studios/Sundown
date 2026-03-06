@@ -254,11 +254,11 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     // Compute reprojected position using motion vectors
     // ─────────────────────────────────────────────────────────────────────────
     let motion_sample = textureLoad(gbuffer_motion, vec2<i32>(full_pixel_coord), 0);
-    let full_pixel_velocity = motion_sample.xy * vec2<f32>(f32(full_res.x), f32(full_res.y)) * vec2<f32>(0.5, -0.5);
+    let full_pixel_velocity = vec2<f32>(-0.5 * motion_sample.x, 0.5 * motion_sample.y) * vec2<f32>(f32(full_res.x) - 1.0, f32(full_res.y) - 1.0);
     let pixel_velocity = full_pixel_velocity / max(f32(upscale_factor), 1.0);
     
     let pixel_center = vec2<f32>(gid.xy) + 0.5;
-    let pixel_prev_center = pixel_center - pixel_velocity;
+    let pixel_prev_center = pixel_center + pixel_velocity;
     
     // ─────────────────────────────────────────────────────────────────────────
     // Get bilinear filter parameters

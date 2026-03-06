@@ -203,10 +203,10 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     // Use proper reservoir merging to preserve the temporal sample count
     // ─────────────────────────────────────────────────────────────────────────
     let motion_sample = textureLoad(gbuffer_motion, vec2<i32>(full_pixel_coord), 0);
-    let full_pixel_velocity = motion_sample.xy * vec2<f32>(f32(full_res.x), f32(full_res.y)) * vec2<f32>(0.5, -0.5);
+    let full_pixel_velocity = vec2<f32>(-0.5 * motion_sample.x, 0.5 * motion_sample.y) * vec2<f32>(f32(full_res.x) - 1.0, f32(full_res.y) - 1.0);
     let gi_pixel_velocity = full_pixel_velocity / max(f32(upscale_factor), 1.0);
     let pixel_center = vec2<f32>(gid.xy) + 0.5;
-    let prev_coord = vec2<i32>(pixel_center - gi_pixel_velocity);
+    let prev_coord = vec2<i32>(pixel_center + gi_pixel_velocity);
     var has_valid_reprojection = false;
 
     if (prev_coord.x >= 0 && prev_coord.y >= 0 && prev_coord.x < i32(gi_res.x) && prev_coord.y < i32(gi_res.y)) {

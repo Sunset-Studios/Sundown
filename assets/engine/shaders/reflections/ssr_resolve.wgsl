@@ -16,14 +16,6 @@ const resolve_offsets = array<vec2<i32>, 4>(
     vec2<i32>(-1, -1),
 );
 
-fn uv_to_coord(uv: vec2f, resolution: vec2<u32>) -> vec2<i32> {
-    let pixel = vec2<i32>(floor(uv * vec2f(f32(resolution.x), f32(resolution.y))));
-    return vec2<i32>(
-        clamp(pixel.x, 0, i32(resolution.x) - 1),
-        clamp(pixel.y, 0, i32(resolution.y) - 1)
-    );
-}
-
 fn full_to_trace_coord(coord: vec2<i32>, full_resolution: vec2<u32>, trace_resolution: vec2<u32>) -> vec2<i32> {
     let x = min(i32((u32(max(coord.x, 0)) * trace_resolution.x) / max(full_resolution.x, 1u)), i32(trace_resolution.x) - 1);
     let y = min(i32((u32(max(coord.y, 0)) * trace_resolution.y) / max(full_resolution.y, 1u)), i32(trace_resolution.y) - 1);

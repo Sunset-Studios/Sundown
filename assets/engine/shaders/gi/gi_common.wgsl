@@ -124,9 +124,8 @@ fn gi_pixel_to_full_res_pixel_coord(
     upscale_factor: u32,
     full_resolution: vec2<u32>
 ) -> vec2<u32> {
-    let center_offset = upscale_factor / 2u;
-    let full_x = min(gi_pixel_coord.x * upscale_factor + center_offset, full_resolution.x - 1u);
-    let full_y = min(gi_pixel_coord.y * upscale_factor + center_offset, full_resolution.y - 1u);
+    let full_x = min(gi_pixel_coord.x * upscale_factor, full_resolution.x - 1u);
+    let full_y = min(gi_pixel_coord.y * upscale_factor, full_resolution.y - 1u);
     return vec2<u32>(full_x, full_y);
 }
 
