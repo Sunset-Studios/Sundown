@@ -154,7 +154,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
 
     let mask = textureLoad(raycast_mask_texture, trace_coord, 0).r;
-    let fallback_color = textureSampleLevel(lighting_history_texture, clamped_sampler, uv, roughness * 4.0).rgb * 0.2;
+    let fallback_color = textureSampleLevel(lighting_history_texture, clamped_sampler, uv, roughness * 4.0).rgb * 0.2 * mask;
     var resolved_color = accum / max(accum_weight, 1e-4);
 
     let confidence = clamp(confidence_sum * 0.25, 0.0, 1.0);
