@@ -69,24 +69,6 @@ const ssr_temporal_image_config = {
   force: false,
 };
 
-const ssr_history_0_image_config = {
-  name: "ssr_history_0",
-  format: "rgba16float",
-  width: 0,
-  height: 0,
-  usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
-  force: false,
-};
-
-const ssr_history_1_image_config = {
-  name: "ssr_history_1",
-  format: "rgba16float",
-  width: 0,
-  height: 0,
-  usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
-  force: false,
-};
-
 export class SSR {
   reflection_texture = null;
   frame_index = 0;
@@ -105,16 +87,20 @@ export class SSR {
     hzb_texture,
     force_recreate = false
   ) {
+    const trace_width = Math.max(1, Math.ceil(width * 0.5));
+    const trace_height = Math.max(1, Math.ceil(height * 0.5));
+    const ping_pong_frame = this.frame_index % 2;
+
     ssr_output_image_config.width = width;
     ssr_output_image_config.height = height;
     ssr_output_image_config.force = force_recreate;
 
-    ssr_raycast_image_config.width = width;
-    ssr_raycast_image_config.height = height;
+    ssr_raycast_image_config.width = trace_width;
+    ssr_raycast_image_config.height = trace_height;
     ssr_raycast_image_config.force = force_recreate;
 
-    ssr_mask_image_config.width = width;
-    ssr_mask_image_config.height = height;
+    ssr_mask_image_config.width = trace_width;
+    ssr_mask_image_config.height = trace_height;
     ssr_mask_image_config.force = force_recreate;
 
     ssr_resolve_image_config.width = width;
@@ -125,25 +111,11 @@ export class SSR {
     ssr_temporal_image_config.height = height;
     ssr_temporal_image_config.force = force_recreate;
 
-    ssr_history_0_image_config.width = width;
-    ssr_history_0_image_config.height = height;
-    ssr_history_0_image_config.force = force_recreate;
-
-    ssr_history_1_image_config.width = width;
-    ssr_history_1_image_config.height = height;
-    ssr_history_1_image_config.force = force_recreate;
-
     this.reflection_texture = render_graph.create_image(ssr_output_image_config);
     const ssr_raycast_texture = render_graph.create_image(ssr_raycast_image_config);
     const ssr_mask_texture = render_graph.create_image(ssr_mask_image_config);
     const ssr_resolve_texture = render_graph.create_image(ssr_resolve_image_config);
     const ssr_temporal_texture = render_graph.create_image(ssr_temporal_image_config);
-    const ssr_history_0 = render_graph.create_image(ssr_history_0_image_config);
-    const ssr_history_1 = render_graph.create_image(ssr_history_1_image_config);
-
-    const ping_pong_frame = this.frame_index % 2;
-    const ssr_history_prev = ping_pong_frame === 0 ? ssr_history_0 : ssr_history_1;
-    const ssr_history_curr = ping_pong_frame === 0 ? ssr_history_1 : ssr_history_0;
 
     render_graph.add_pass(
       `ssr_raycast_${ping_pong_frame}`,
@@ -162,7 +134,7 @@ export class SSR {
       },
       (g, fd, encoder) => {
         const pass = g.get_physical_pass(fd.current_pass);
-        pass.dispatch(Math.ceil(width / 8), Math.ceil(height / 8), 1);
+        pass.dispatch(Math.ceil(trace_width / 8), Math.ceil(trace_height / 8), 1);
       }
     );
 
@@ -194,20 +166,12 @@ export class SSR {
       {
         inputs: [
           ssr_resolve_texture,
-          ssr_history_prev,
-          ssr_raycast_texture,
-          ssr_mask_texture,
-          gbuffer_normal,
-          gbuffer_position,
-          prev_gbuffer_normal,
-          prev_gbuffer_position,
+          this.reflection_texture,
           gbuffer_motion_emissive,
           gbuffer_smra,
-          lighting_history_texture,
           ssr_temporal_texture,
-          ssr_history_curr,
         ],
-        outputs: [ssr_temporal_texture, ssr_history_curr],
+        outputs: [ssr_temporal_texture],
         shader_setup: ssr_temporal_shader_setup,
       },
       (g, fd, encoder) => {
@@ -222,8 +186,6 @@ export class SSR {
       {
         inputs: [
           ssr_temporal_texture,
-          gbuffer_normal,
-          gbuffer_position,
           gbuffer_smra,
           this.reflection_texture,
         ],

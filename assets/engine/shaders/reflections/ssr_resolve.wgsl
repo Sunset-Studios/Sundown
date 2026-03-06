@@ -24,6 +24,12 @@ fn uv_to_coord(uv: vec2f, resolution: vec2<u32>) -> vec2<i32> {
     );
 }
 
+fn full_to_trace_coord(coord: vec2<i32>, full_resolution: vec2<u32>, trace_resolution: vec2<u32>) -> vec2<i32> {
+    let x = min(i32((u32(max(coord.x, 0)) * trace_resolution.x) / max(full_resolution.x, 1u)), i32(trace_resolution.x) - 1);
+    let y = min(i32((u32(max(coord.y, 0)) * trace_resolution.y) / max(full_resolution.y, 1u)), i32(trace_resolution.y) - 1);
+    return vec2<i32>(x, y);
+}
+
 fn ray_atten_border(pos: vec2f, value: f32) -> f32 {
     let border_dist = min(1.0 - max(pos.x, pos.y), min(pos.x, pos.y));
     return clamp(select(border_dist / max(value, 1e-4), 1.0, border_dist > value), 0.0, 1.0);
@@ -78,12 +84,15 @@ fn brdf_importance_weight(
 
 @compute @workgroup_size(8, 8, 1)
 fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
-    let resolution = vec2<u32>(u32(frame_info.resolution.x), u32(frame_info.resolution.y));
-    if (gid.x >= resolution.x || gid.y >= resolution.y) {
+    let full_resolution = vec2<u32>(u32(frame_info.resolution.x), u32(frame_info.resolution.y));
+    if (gid.x >= full_resolution.x || gid.y >= full_resolution.y) {
         return;
     }
 
+    let trace_resolution = textureDimensions(raycast_hit_texture);
     let coord = vec2<i32>(i32(gid.x), i32(gid.y));
+    let trace_coord = full_to_trace_coord(coord, full_resolution, trace_resolution);
+
     let normal_data = textureLoad(gbuffer_normal, coord, 0).xyz;
     if (length(normal_data) < 1e-5) {
         textureStore(out_resolve, coord, vec4f(0.0));
@@ -97,7 +106,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let normal = safe_normalize(normal_data);
     let position = textureLoad(gbuffer_position, coord, 0).xyz;
 
-    let uv = (vec2f(f32(gid.x), f32(gid.y)) + 0.5) / vec2f(f32(resolution.x), f32(resolution.y));
+    let uv = (vec2f(f32(gid.x), f32(gid.y)) + 0.5) / vec2f(f32(full_resolution.x), f32(full_resolution.y));
     let view_index = u32(frame_info.view_index);
     let view_dir = safe_normalize(view_buffer[view_index].view_position.xyz - position);
 
@@ -111,8 +120,8 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
 
     for (var i = 0u; i < 4u; i++) {
         let tap_coord = vec2<i32>(
-            clamp(coord.x + resolve_offsets[i].x * stride, 0, i32(resolution.x) - 1),
-            clamp(coord.y + resolve_offsets[i].y * stride, 0, i32(resolution.y) - 1)
+            clamp(trace_coord.x + resolve_offsets[i].x * stride, 0, i32(trace_resolution.x) - 1),
+            clamp(trace_coord.y + resolve_offsets[i].y * stride, 0, i32(trace_resolution.y) - 1)
         );
 
         let hit = textureLoad(raycast_hit_texture, tap_coord, 0);
@@ -122,34 +131,31 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
             continue;
         }
 
-        let hit_coord = uv_to_coord(hit.xy, resolution);
+        let hit_coord = uv_to_coord(hit.xy, full_resolution);
         let hit_pos = textureLoad(gbuffer_position, hit_coord, 0).xyz;
 
         let light_dir = safe_normalize(hit_pos - position);
-        if (dot(normal, light_dir) <= 0.0) {
-            continue;
-        }
 
         let brdf_w = brdf_importance_weight(normal, view_dir, light_dir, roughness, metallic, reflectance);
         let pdf = max(hit.w, 1e-4);
         let weight = brdf_w / pdf;
 
         let cone_tangent = roughness * roughness;
-        let pixel_footprint = length(hit.xy - uv) * max(f32(resolution.x), f32(resolution.y));
+        let pixel_footprint = length(hit.xy - uv) * max(f32(full_resolution.x), f32(full_resolution.y));
         let source_mip = clamp(log2(max(1.0, cone_tangent * pixel_footprint)), 0.0, max_mip);
 
         var sample_color = textureSampleLevel(lighting_history_texture, clamped_sampler, hit.xy, source_mip).rgb;
         sample_color = sample_color / (1.0 + luminance(sample_color));
 
         let sample_alpha = ray_atten_border(hit.xy, EDGE_FACTOR) * mask;
-        accum += sample_color * sample_alpha * weight;
-        accum_weight += sample_alpha * weight;
+        accum += sample_color * weight;
+        accum_weight += weight;
         confidence_sum += sample_alpha;
     }
 
+    let mask = textureLoad(raycast_mask_texture, trace_coord, 0).r;
     let fallback_color = textureSampleLevel(lighting_history_texture, clamped_sampler, uv, roughness * 4.0).rgb * 0.2;
-    var resolved_color = select(fallback_color, accum / max(accum_weight, 1e-4), accum_weight > 1e-4);
-    resolved_color = resolved_color / max(1e-3, 1.0 - luminance(resolved_color));
+    var resolved_color = accum / max(accum_weight, 1e-4);
 
     let confidence = clamp(confidence_sum * 0.25, 0.0, 1.0);
     let final_color = mix(fallback_color, resolved_color, confidence);

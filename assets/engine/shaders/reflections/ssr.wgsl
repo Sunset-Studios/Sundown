@@ -8,7 +8,9 @@
 @group(1) @binding(5) var out_raycast_mask: texture_storage_2d<rgba16float, write>;
 
 // Number of ray directions per pixel; we cycle through these each frame for stable temporal convergence.
-const SSR_NUM_RAY_SAMPLES = 16u;
+const SSR_NUM_RAY_SAMPLES = 32u;
+// Retries for ray direction when the sampled direction goes below the surface.
+const SSR_RAY_DIR_RETRIES = 8u;
 
 fn project_to_uv(position: vec3f, view_index: u32) -> vec2f {
     let clip = view_buffer[view_index].view_projection_matrix * vec4f(position, 1.0);
@@ -27,6 +29,15 @@ fn uv_to_coord(uv: vec2f, resolution: vec2<u32>) -> vec2<i32> {
     return vec2<i32>(
         clamp(pixel.x, 0, i32(resolution.x) - 1),
         clamp(pixel.y, 0, i32(resolution.y) - 1)
+    );
+}
+
+fn trace_to_full_coord(trace_coord: vec2<u32>, full_resolution: vec2<u32>, trace_resolution: vec2<u32>) -> vec2<i32> {
+    let trace_uv = (vec2f(trace_coord) + 0.5) / vec2f(trace_resolution);
+    let full_pixel = vec2<i32>(floor(trace_uv * vec2f(full_resolution)));
+    return vec2<i32>(
+        clamp(full_pixel.x, 0, i32(full_resolution.x) - 1),
+        clamp(full_pixel.y, 0, i32(full_resolution.y) - 1)
     );
 }
 
@@ -129,69 +140,74 @@ fn trace_hiz(
 
 @compute @workgroup_size(8, 8, 1)
 fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
-    let resolution = vec2<u32>(u32(frame_info.resolution.x), u32(frame_info.resolution.y));
-    if (gid.x >= resolution.x || gid.y >= resolution.y) {
+    let full_resolution = vec2<u32>(u32(frame_info.resolution.x), u32(frame_info.resolution.y));
+    let trace_resolution = textureDimensions(out_raycast_hit);
+    if (gid.x >= trace_resolution.x || gid.y >= trace_resolution.y) {
         return;
     }
 
-    let coord = vec2<i32>(i32(gid.x), i32(gid.y));
-    let normal_data = textureLoad(gbuffer_normal, coord, 0).xyz;
+    let trace_coord = vec2<i32>(i32(gid.x), i32(gid.y));
+    let full_coord = trace_to_full_coord(gid.xy, full_resolution, trace_resolution);
+
+    let normal_data = textureLoad(gbuffer_normal, full_coord, 0).xyz;
     if (length(normal_data) < 1e-5) {
-        textureStore(out_raycast_hit, coord, vec4f(0.0));
-        textureStore(out_raycast_mask, coord, vec4f(0.0));
+        textureStore(out_raycast_hit, trace_coord, vec4f(0.0));
+        textureStore(out_raycast_mask, trace_coord, vec4f(0.0));
         return;
     }
 
-    let smra = textureLoad(gbuffer_smra, coord, 0);
+    let smra = textureLoad(gbuffer_smra, full_coord, 0);
     let roughness = clamp(smra.g, 0.0, 1.0);
     let metallic = smra.b;
     let reflectance = smra.r;
     let reflection_strength = (1.0 - roughness) * max(reflectance, metallic);
 
-    if (reflection_strength <= 0.001 || roughness >= 0.995) {
-        textureStore(out_raycast_hit, coord, vec4f(0.0));
-        textureStore(out_raycast_mask, coord, vec4f(0.0));
+    if (reflection_strength <= 0.001 || roughness >= 0.85) {
+        textureStore(out_raycast_hit, trace_coord, vec4f(0.0));
+        textureStore(out_raycast_mask, trace_coord, vec4f(0.0));
         return;
     }
 
-    let position = textureLoad(gbuffer_position, coord, 0).xyz;
+    let position = textureLoad(gbuffer_position, full_coord, 0).xyz;
     let view_index = u32(frame_info.view_index);
     let normal = safe_normalize(normal_data);
     let view_dir = safe_normalize(view_buffer[view_index].view_position.xyz - position);
 
     // Low-discrepancy jitter: same (pixel, frame) always gets the same ray; we cycle over SSR_NUM_RAY_SAMPLES.
-    let pixel_id = gid.x + gid.y * resolution.x;
+    let pixel_id = gid.x + gid.y * trace_resolution.x;
     let sample_phase = hash(pixel_id) % SSR_NUM_RAY_SAMPLES;
     let sample_idx = (u32(frame_info.frame_index) + sample_phase) % SSR_NUM_RAY_SAMPLES;
-    var xi = rand_halton_2d(pixel_id, sample_idx);
-    xi.y = mix(xi.y, 0.0, 0.7);
 
-    let h = sample_ggx_half_vector(xi, normal, max(roughness, 0.05));
-    let ray_dir = safe_normalize(reflect(-view_dir, h));
-
-    if (dot(normal, ray_dir) <= 0.0) {
-        textureStore(out_raycast_hit, coord, vec4f(0.0));
-        textureStore(out_raycast_mask, coord, vec4f(0.0));
-        return;
+    var ray_dir = normal.xyz;
+    var xi = vec2f(0.0);
+    var pdf = 0.0;
+    for (var retry = 0u; retry < SSR_RAY_DIR_RETRIES; retry++) {
+        let sample_idx_retry = (sample_idx + retry * SSR_NUM_RAY_SAMPLES) % SSR_NUM_RAY_SAMPLES;
+        xi = rand_halton_2d(pixel_id, sample_idx_retry);
+        xi.y = mix(xi.y, 0.0, 0.7);
+        let h = sample_ggx_half_vector(xi, normal, max(roughness, 0.001));
+        ray_dir = safe_normalize(reflect(-view_dir, h));
+        if (dot(normal, ray_dir) > 0.0) {
+            pdf = ggx_pdf(normal, view_dir, ray_dir, max(roughness, 0.001));
+            break;
+        }
     }
-
-    let pdf = ggx_pdf(normal, view_dir, ray_dir, max(roughness, 0.05));
     let step_jitter = xi.x - 0.5;
     let trace = trace_hiz(
-        position + normal * 0.04,
+        position + normal * 0.0001,
         ray_dir,
         normal,
         view_index,
         roughness,
-        resolution,
+        full_resolution,
         step_jitter
     );
 
-    let valid_hit = trace.w > 0.5 && all(trace.xy >= vec2f(0.0)) && all(trace.xy <= vec2f(1.0));
+    let valid_hit = trace.w > 0.0;
     let out_hit = select(vec4f(0.0), vec4f(trace.xy, trace.z, pdf), valid_hit);
     let out_mask = select(vec4f(0.0), vec4f(trace.w * reflection_strength), valid_hit);
 
-    textureStore(out_raycast_hit, coord, out_hit);
-    textureStore(out_raycast_mask, coord, out_mask);
+    textureStore(out_raycast_hit, trace_coord, out_hit);
+    textureStore(out_raycast_mask, trace_coord, out_mask);
 }
 
