@@ -3082,18 +3082,18 @@ export class SciFiCityScene extends Scene {
 
     const cube_mesh = Mesh.cube();
     const area_light_plane = spawn_mesh_entity(
-      [250.0, 80.0, -10.0],  // Positioned off to the side and elevated
+      [75.0, 24.0, -3.0],  // Positioned off to the side and elevated
       quat.fromEuler(quat.create(), 0, -90, 10),  // Angled slightly towards scene
-      [50.0, 30.0, 1.0],  // Large flat plane
+      [20.0, 10.0, 1.0],  // Large flat plane
       cube_mesh,
       area_light_material_id
     );
     this.entities.push(area_light_plane);
 
     const area_light_plane2 = spawn_mesh_entity(
-      [100.0, 80.0, 200.0],  // Positioned off to the side and elevated
+      [30.0, 20.0, 60.0],  // Positioned off to the side and elevated
       quat.fromEuler(quat.create(), 0, 45, 10),  // Angled slightly towards scene
-      [50.0, 30.0, 1.0],  // Large flat plane
+      [20.0, 10.0, 1.0],  // Large flat plane
       cube_mesh,
       area_light_material_id
     );
@@ -3105,7 +3105,7 @@ export class SciFiCityScene extends Scene {
     let scifi_city_root = this.load_gltf_scene("engine/models/scifi-city/CityScene.gltf",
       [0, 0, 0],
       [0, 0, 0, 1],
-      [5, 5, 5],
+      [2, 2, 2],
       null,
       null,
       null,

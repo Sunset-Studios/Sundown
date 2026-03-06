@@ -75,8 +75,8 @@ fn trace_hiz(
     step_jitter: f32
 ) -> vec4f {
     let mip_count = textureNumLevels(hzb_texture);
-    let max_steps = u32(floor(mix(48.0, 20.0, roughness)));
-    let max_trace_distance = mix(1000.0, 36.0, roughness);
+    let max_steps = u32(floor(mix(48.0, 16.0, roughness)));
+    let max_trace_distance = mix(100.0, 24.0, roughness);
     let min_trace_distance = 0.05 + roughness * 0.15;
     let distance_curve_power = mix(1.45, 1.15, roughness);
     let thickness = mix(0.01, 0.2, roughness * roughness);
@@ -120,7 +120,7 @@ fn trace_hiz(
 
             if (hit_error < hit_tolerance && facing > 0.01 && normal_ok) {
                 hit_uv = uv;
-                hit_depth = project_to_depth01(scene_pos, view_index);
+                hit_depth = hzb_depth;
                 hit_mask = 1.0;
                 break;
             }
