@@ -7,8 +7,8 @@
 @group(1) @binding(4) var out_temporal: texture_storage_2d<rgba16float, write>;
 
 const FLT_EPS = 1e-6;
-const TEMPORAL_RESPONSE_MIN = 0.0;
-const TEMPORAL_RESPONSE_MAX = 0.2;
+const TEMPORAL_RESPONSE_MIN = 0.02;
+const TEMPORAL_RESPONSE_MAX = 0.5;
 
 fn clip_aabb(aabb_min: vec3f, aabb_max: vec3f, p: vec4f, q: vec4f) -> vec4f {
     let p_clip = 0.5 * (aabb_max + aabb_min);
@@ -34,6 +34,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
 
     let current = textureLoad(resolve_texture, coord, 0);
     let roughness = clamp(textureLoad(smra_texture, coord, 0).g, 0.0, 1.0);
+    let current_confidence = clamp(current.a, 0.0, 1.0);
 
     let motion = textureLoad(motion_texture, coord, 0).xy;
     let prev_uv = uv + vec2f(-0.5 * motion.x, 0.5 * motion.y);
@@ -41,6 +42,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
 
     let prev_coord = uv_to_coord(prev_uv, resolution);
     let history = textureLoad(history_texture_prev, prev_coord, 0);
+    let history_confidence = select(0.0, clamp(history.a, 0.0, 1.0), prev_uv_in_bounds);
 
     var neigh_min = current.rgb;
     var neigh_max = current.rgb;
@@ -60,16 +62,28 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
     neigh_avg *= (1.0 / 9.0);
 
-    let clipped_history = clip_aabb(neigh_min, neigh_max, vec4f(clamp(neigh_avg, neigh_min, neigh_max), current.a), history);
+    let clipped_history = clip_aabb(
+        neigh_min,
+        neigh_max,
+        vec4f(clamp(neigh_avg, neigh_min, neigh_max), current_confidence),
+        history
+    );
     let history_sample = select(current, clipped_history, prev_uv_in_bounds);
 
     let lum_current = luminance(current.rgb);
     let lum_history = luminance(history_sample.rgb);
     let unbiased_diff = abs(lum_current - lum_history) / max(lum_current, max(lum_history, 0.2));
-    let unbiased_weight = 1.0 - unbiased_diff;
-    let feedback = mix(TEMPORAL_RESPONSE_MIN, TEMPORAL_RESPONSE_MAX, unbiased_weight * unbiased_weight);
+    let stability = (1.0 - unbiased_diff) * (1.0 - unbiased_diff);
+    let roughness_response = mix(0.85, 1.15, roughness);
+    var feedback = mix(
+        TEMPORAL_RESPONSE_MIN,
+        TEMPORAL_RESPONSE_MAX,
+        stability * current_confidence * roughness_response
+    );
+    feedback = select(1.0, clamp(feedback, TEMPORAL_RESPONSE_MIN, TEMPORAL_RESPONSE_MAX), prev_uv_in_bounds);
 
-    let temporal = mix(history_sample, current, feedback);
+    let temporal_rgb = mix(history_sample.rgb, current.rgb, feedback);
+    let temporal_confidence = max(current_confidence, history_confidence * (1.0 - feedback));
 
-    textureStore(out_temporal, coord, temporal);
+    textureStore(out_temporal, coord, vec4f(temporal_rgb, temporal_confidence));
 }

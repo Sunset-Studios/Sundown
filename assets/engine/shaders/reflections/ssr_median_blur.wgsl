@@ -68,7 +68,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     swap_if_less(&samples, 0u, 8u);
 
     let median = samples[4];
-    let blur_strength = mix(0.1, 0.65, roughness);
+    let blur_strength = mix(0.1, 0.95, roughness);
     let out_sample = mix(center, median, blur_strength);
 
     textureStore(out_reflections, coord, out_sample);

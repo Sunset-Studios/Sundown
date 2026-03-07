@@ -149,6 +149,7 @@ export class SSR {
           gbuffer_position,
           gbuffer_smra,
           lighting_history_texture,
+          gbuffer_motion_emissive,
           ssr_resolve_texture,
         ],
         outputs: [ssr_resolve_texture],

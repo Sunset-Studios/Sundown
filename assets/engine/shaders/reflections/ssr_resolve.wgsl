@@ -6,9 +6,10 @@
 @group(1) @binding(3) var gbuffer_position: texture_2d<f32>;
 @group(1) @binding(4) var gbuffer_smra: texture_2d<f32>;
 @group(1) @binding(5) var lighting_history_texture: texture_2d<f32>;
-@group(1) @binding(6) var out_resolve: texture_storage_2d<rgba16float, write>;
+@group(1) @binding(6) var motion_emissive_texture: texture_2d<f32>;
+@group(1) @binding(7) var out_resolve: texture_storage_2d<rgba16float, write>;
 
-const EDGE_FACTOR = 0.25;
+const EDGE_FACTOR = 1.25;
 const resolve_offsets = array<vec2<i32>, 4>(
     vec2<i32>(0, 0),
     vec2<i32>(0, 1),
@@ -136,7 +137,9 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         let pixel_footprint = length(hit.xy - uv) * max(f32(full_resolution.x), f32(full_resolution.y));
         let source_mip = clamp(log2(max(1.0, cone_tangent * pixel_footprint)), 0.0, max_mip);
 
+        let hit_emissive = textureLoad(motion_emissive_texture, hit_coord, 0).w;
         var sample_color = textureSampleLevel(lighting_history_texture, clamped_sampler, hit.xy, source_mip).rgb;
+        sample_color += sample_color * hit_emissive;
         sample_color = sample_color / (1.0 + luminance(sample_color));
 
         let sample_alpha = ray_atten_border(hit.xy, EDGE_FACTOR) * mask;
@@ -146,7 +149,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
 
     let mask = textureLoad(raycast_mask_texture, trace_coord, 0).r;
-    let fallback_color = textureSampleLevel(lighting_history_texture, clamped_sampler, uv, roughness * 4.0).rgb * 0.2 * mask;
+    let fallback_color = textureSampleLevel(lighting_history_texture, clamped_sampler, uv, roughness * 4.0).rgb * 0.1 * mask;
     var resolved_color = accum / max(accum_weight, 1e-4);
 
     let confidence = clamp(confidence_sum * 0.25, 0.0, 1.0);

@@ -1,4 +1,5 @@
 #include "common.wgsl"
+#include "lighting_common.wgsl"
 
 @group(1) @binding(0) var gbuffer_normal: texture_2d<f32>;
 @group(1) @binding(1) var gbuffer_position: texture_2d<f32>;
@@ -31,38 +32,6 @@ fn trace_to_full_coord(trace_coord: vec2<u32>, full_resolution: vec2<u32>, trace
         clamp(full_pixel.x, 0, i32(full_resolution.x) - 1),
         clamp(full_pixel.y, 0, i32(full_resolution.y) - 1)
     );
-}
-
-fn tangent_basis(n: vec3f) -> mat3x3f {
-    let up = select(vec3f(0.0, 0.0, 1.0), vec3f(1.0, 0.0, 0.0), abs(n.z) > 0.9);
-    let t = safe_normalize(cross(up, n));
-    let b = cross(n, t);
-    return mat3x3f(t, b, n);
-}
-
-fn sample_ggx_half_vector(xi: vec2f, normal: vec3f, roughness: f32) -> vec3f {
-    let a = roughness * roughness;
-    let a2 = a * a;
-    let phi = 2.0 * PI * xi.x;
-    let cos_theta = sqrt((1.0 - xi.y) / max(0.0001, 1.0 + (a2 - 1.0) * xi.y));
-    let sin_theta = sqrt(max(0.0, 1.0 - cos_theta * cos_theta));
-    let h_local = vec3f(cos(phi) * sin_theta, sin(phi) * sin_theta, cos_theta);
-    return safe_normalize(tangent_basis(normal) * h_local);
-}
-
-fn d_ggx(n_dot_h: f32, roughness: f32) -> f32 {
-    let a = max(roughness * roughness, 0.0001);
-    let a2 = a * a;
-    let d = n_dot_h * n_dot_h * (a2 - 1.0) + 1.0;
-    return a2 / max(PI * d * d, 0.0001);
-}
-
-fn ggx_pdf(normal: vec3f, view_dir: vec3f, sample_dir: vec3f, roughness: f32) -> f32 {
-    let h = safe_normalize(view_dir + sample_dir);
-    let n_dot_h = max(dot(normal, h), 0.0001);
-    let v_dot_h = max(dot(view_dir, h), 0.0001);
-    let d = d_ggx(n_dot_h, roughness);
-    return max(d * n_dot_h / max(4.0 * v_dot_h, 0.0001), 1e-5);
 }
 
 fn trace_hiz(
@@ -177,7 +146,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         let sample_idx_retry = (sample_idx + retry * SSR_NUM_RAY_SAMPLES) % SSR_NUM_RAY_SAMPLES;
         xi = rand_halton_2d(pixel_id, sample_idx_retry);
         xi.y = mix(xi.y, 0.0, 0.7);
-        let h = sample_ggx_half_vector(xi, normal, max(roughness, 0.001));
+        let h = sample_ggx(normal, max(roughness, 0.001), xi.x, xi.y);
         ray_dir = safe_normalize(reflect(-view_dir, h));
         if (dot(normal, ray_dir) > 0.0) {
             pdf = ggx_pdf(normal, view_dir, ray_dir, max(roughness, 0.001));
