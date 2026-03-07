@@ -30,6 +30,12 @@ export class DebugDrawPicker extends DevConsoleTool {
           break;
         case "hzb":
           Renderer.get().set_debug_draw_type(DebugDrawType.HZB);
+          if (args[1] !== undefined) {
+            const level = parseInt(args[1], 10);
+            if (!Number.isNaN(level)) {
+              Renderer.get().set_debug_texture_level(level);
+            }
+          }
           break;
         case "shadow-atlas":
           Renderer.get().set_debug_draw_type(DebugDrawType.ASVSM_ShadowAtlas);
@@ -73,6 +79,15 @@ export class DebugDrawPicker extends DevConsoleTool {
           break;
         case "gi-reflections":
           Renderer.get().set_debug_draw_type(DebugDrawType.GI_Reflections);
+          break;
+        case "prev-lighting":
+          Renderer.get().set_debug_draw_type(DebugDrawType.PrevLightingPyramid);
+          if (args[1] !== undefined) {
+            const level = parseInt(args[1], 10);
+            if (!Number.isNaN(level)) {
+              Renderer.get().set_debug_texture_level(level);
+            }
+          }
           break;
         case "bounds":
           Renderer.get().set_debug_draw_type(DebugDrawType.EntityBounds);

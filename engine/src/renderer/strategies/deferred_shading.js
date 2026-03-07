@@ -249,6 +249,14 @@ const hzb_reduce_shader_setup = {
   },
 };
 
+const prev_lighting_mip_shader_setup = {
+  pipeline_shaders: {
+    compute: {
+      path: "reflections/ssr_lighting_mip.wgsl",
+    },
+  },
+};
+
 const dense_lights_buffer_config = {
   name: "dense_lights",
   size: 0,
@@ -425,6 +433,8 @@ const prev_lighting_image_config = {
     GPUTextureUsage.TEXTURE_BINDING |
     GPUTextureUsage.STORAGE_BINDING |
     GPUTextureUsage.COPY_DST,
+  mip_levels: 0,
+  b_one_view_per_mip: true,
 };
 
 const swapchain_name = "swapchain";
@@ -935,7 +945,7 @@ export class DeferredShadingStrategy {
                 hzb_params_chain[dst_index],
               ],
               outputs: [main_hzb_image],
-              input_views: [src_index, dst_index],
+              input_views: [i === 0 ? 0 : i, i + 1],
               shader_setup: hzb_reduce_shader_setup,
             },
             (graph, frame_data, encoder) => {
@@ -1579,6 +1589,41 @@ export class DeferredShadingStrategy {
         }
       );
 
+      let prev_lighting_mip_params_chain = [];
+      for (let i = 1; i < this.prev_lighting_image.config.mip_levels; i++) {
+        prev_lighting_mip_params_chain.push(
+          render_graph.create_buffer({
+            name: `prev_lighting_mip_params_${i}`,
+            data: [0.0, 0.0, 0.0, 0.0],
+            usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+          })
+        );
+
+        render_graph.add_pass(
+          `prev_lighting_mip_${i}`,
+          RenderPassFlags.Compute,
+          {
+            inputs: [prev_lighting, prev_lighting, prev_lighting_mip_params_chain[i - 1]],
+            outputs: [prev_lighting],
+            input_views: [i, i + 1],
+            shader_setup: prev_lighting_mip_shader_setup,
+          },
+          (graph, frame_data, encoder) => {
+            const pass = graph.get_physical_pass(frame_data.current_pass);
+            const prevLighting = graph.get_physical_image(prev_lighting);
+            const params = graph.get_physical_buffer(prev_lighting_mip_params_chain[i - 1]);
+
+            const srcWidth = Math.max(1, prevLighting.config.width >> (i - 1));
+            const srcHeight = Math.max(1, prevLighting.config.height >> (i - 1));
+            const dstWidth = Math.max(1, prevLighting.config.width >> i);
+            const dstHeight = Math.max(1, prevLighting.config.height >> i);
+
+            params.write([srcWidth, srcHeight, dstWidth, dstHeight]);
+            pass.dispatch((dstWidth + 7) / 8, (dstHeight + 7) / 8, 1);
+          }
+        );
+      }
+
       // Use post-bloom color for antialiased_scene_color_desc
       const antialiased_scene_color_desc = curr_post_bloom;
 
@@ -1662,6 +1707,14 @@ export class DeferredShadingStrategy {
             );
             break;
           case DebugDrawType.HZB:
+            const hzb_max_level = Math.max(
+              0,
+              this.hzb_image.config.mip_levels - 1
+            );
+            const hzb_texture_level = Math.min(
+              renderer.get_debug_texture_level(),
+              hzb_max_level
+            );
             this.debug_overlay.set_properties(
               main_hzb_image,
               0,
@@ -1669,7 +1722,7 @@ export class DeferredShadingStrategy {
               image_extent.width,
               image_extent.height,
               DebugDrawType.HZB,
-              5
+              hzb_texture_level + 1
             );
             break;
           case DebugDrawType.ASVSM_ShadowAtlas:
@@ -1816,6 +1869,27 @@ export class DeferredShadingStrategy {
               DebugDrawType.GI_Reflections
             );
             break;
+          case DebugDrawType.PrevLightingPyramid:
+            {
+              const max_level = Math.max(
+                0,
+                this.prev_lighting_image.config.mip_levels - 1
+              );
+              const texture_level = Math.min(
+                renderer.get_debug_texture_level(),
+                max_level
+              );
+              this.debug_overlay.set_properties(
+                prev_lighting,
+                0,
+                0,
+                image_extent.width,
+                image_extent.height,
+                DebugDrawType.PrevLightingPyramid,
+                texture_level + 1
+              );
+            }
+            break;
           default:
             break;
         }
@@ -1950,6 +2024,13 @@ export class DeferredShadingStrategy {
     entity_id_image_config.height = image_extent.height;
     entity_id_image_config.force = this.force_recreate;
 
+    prev_lighting_image_config.mip_levels = Math.max(
+      1,
+      Math.max(
+        Math.floor(Math.log2(image_extent.width)),
+        Math.floor(Math.log2(image_extent.height))
+      )
+    );
     prev_lighting_image_config.width = image_extent.width;
     prev_lighting_image_config.height = image_extent.height;
     prev_lighting_image_config.force = this.force_recreate;
@@ -1959,3 +2040,5 @@ export class DeferredShadingStrategy {
     this.prev_lighting_image = Texture.create(prev_lighting_image_config);
   }
 }
+
+

@@ -678,7 +678,6 @@ export class PathTracingStrategy {
         }
 
         for (let i = 0; i < this.hzb_image.config.mip_levels; i++) {
-          const src_index = i === 0 ? 0 : i - 1;
           const dst_index = i;
 
           render_graph.add_pass(
@@ -691,7 +690,7 @@ export class PathTracingStrategy {
                 hzb_params_chain[dst_index],
               ],
               outputs: [main_hzb_image],
-              input_views: [src_index, dst_index],
+              input_views: [i === 0 ? 0 : i, i + 1],
               shader_setup: hzb_reduce_shader_setup,
             },
             (graph, frame_data, encoder) => {
@@ -701,6 +700,7 @@ export class PathTracingStrategy {
               const hzb = graph.get_physical_image(main_hzb_image);
               const hzb_params = graph.get_physical_buffer(hzb_params_chain[dst_index]);
 
+              const src_index = i === 0 ? 0 : i - 1;
               const src_mip_width = Math.max(
                 1,
                 i === 0 ? depth.config.width : hzb.config.width >> src_index

@@ -509,6 +509,14 @@ export class Texture {
       }
     }
     if (this.config.b_one_view_per_mip) {
+      // Full view first (index 0) so passes that sample the full pyramid bind view 0 and can sample all mips
+      this.views.push(this.create_view(
+        { ... view_config,
+          base_mip_level: 0, 
+          mip_levels: this.config.mip_levels,
+          label: `${this.config.name}_full`
+        }
+      ));
       for (let i = 0; i < this.config.mip_levels; i++) {
         const config = {
           ...view_config,

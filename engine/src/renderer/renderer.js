@@ -51,6 +51,7 @@ export class Renderer {
   ao_enabled = false;
   use_radiance_cache_as_deferred_lighting = false;
   debug_draw_type = DebugDrawType.None;
+  debug_texture_level = 0;
   gi_strategy_type = GIStrategyType.DDGI;
   ao_strategy_type = AOStrategyType.GTAO;
   reflection_strategy_type = ReflectionStrategyType.SSR;
@@ -545,6 +546,23 @@ export class Renderer {
    */
   set_debug_draw_type(debug_draw_type) {
     this.debug_draw_type = debug_draw_type;
+  }
+
+  /**
+   * Get the debug texture mip level (e.g. for HZB or prev lighting pyramid overlay).
+   * @returns {number} - The mip level to display (0 = full resolution).
+   */
+  get_debug_texture_level() {
+    return this.debug_texture_level;
+  }
+
+  /**
+   * Set the debug texture mip level for pyramid-style debug views.
+   * @param {number} level - The mip level (0 = full resolution).
+   */
+  set_debug_texture_level(level) {
+    this.debug_texture_level = Math.max(0, level);
+    this.mark_bind_groups_dirty(true);
   }
 
   /**

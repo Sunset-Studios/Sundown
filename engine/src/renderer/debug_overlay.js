@@ -174,6 +174,8 @@ export class DebugOverlay {
         return "debug/debug_overlay_2d.wgsl";
       case DebugDrawType.GI_Reflections:
         return "debug/debug_overlay_2d.wgsl";
+      case DebugDrawType.PrevLightingPyramid:
+        return "debug/debug_overlay_2d.wgsl";
       default:
         return "debug/debug_overlay_2d.wgsl";
     }
