@@ -1288,6 +1288,7 @@ export class DeferredShadingStrategy {
           main_albedo_image,
           main_smra_image,
           main_motion_emissive_image,
+          main_depth_image,
           aabb_bounds,
           tlas_bvh_info,
           blas_bvh2_nodes,

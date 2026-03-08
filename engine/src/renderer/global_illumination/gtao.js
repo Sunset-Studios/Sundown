@@ -56,7 +56,7 @@ export class GTAO {
     radius = 1.0,
     bias = 0.001,
     sample_count = 8,
-    radius_bilateral = 5,
+    radius_bilateral = 3,
     normal_power = 32,
     sigma_ao = 0.25
   ) {
@@ -83,6 +83,7 @@ export class GTAO {
     gbuffer_albedo,
     gbuffer_smra,
     gbuffer_motion_emissive,
+    depth_image,
     tlas_bvh2_bounds,
     tlas_bvh_info,
     blas_bvh2_nodes,

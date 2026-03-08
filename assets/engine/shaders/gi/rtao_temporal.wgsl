@@ -42,7 +42,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
                 clamp(coord.x + dx, 0, i32(resolution.x) - 1),
                 clamp(coord.y + dy, 0, i32(resolution.y) - 1)
             );
-            let tap_ao = textureLoad(ao_history, tap, 0).r;
+            let tap_ao = textureLoad(ao_current, tap, 0).r;
             neigh_min = min(neigh_min, tap_ao);
             neigh_max = max(neigh_max, tap_ao);
         }
