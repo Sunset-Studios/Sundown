@@ -90,6 +90,18 @@ struct PixelPathState {
 };
 
 // =============================================================================
+// AO PER-PIXEL PATH STATE
+//
+// Stores the state of a per-pixel ray for AO.
+// Each tile traces screen_ray_count rays per frame.
+// =============================================================================
+struct AOPixelPathState {
+    origin_tmin: vec4<f32>,              // xyz = ray origin, w = t_min
+    direction_tmax: vec4<f32>,           // xyz = ray direction, w = t_max / prim_store
+    state_u32: vec4<u32>,                // x = lobe_type (0 = diffuse, 1 = specular), y = alive, z = shadow_visible, w = tri_id
+}
+
+// =============================================================================
 // WORLD CACHE PATH STATE
 // =============================================================================
 

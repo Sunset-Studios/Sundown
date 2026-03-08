@@ -48,13 +48,14 @@ export class Renderer {
   use_depth_prepass = true;
   shadows_enabled = true;
   gi_enabled = true;
-  ao_enabled = false;
+  ao_enabled = true;
   use_radiance_cache_as_deferred_lighting = false;
+  gi_strategy_type = GIStrategyType.DDGI;
+  ao_strategy_type = AOStrategyType.RTAO;
+  reflection_strategy_type = ReflectionStrategyType.SSR;
+
   debug_draw_type = DebugDrawType.None;
   debug_texture_level = 0;
-  gi_strategy_type = GIStrategyType.DDGI;
-  ao_strategy_type = AOStrategyType.GTAO;
-  reflection_strategy_type = ReflectionStrategyType.SSR;
 
   static renderers = [];
 

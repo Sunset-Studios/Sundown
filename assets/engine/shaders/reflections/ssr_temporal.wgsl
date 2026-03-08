@@ -7,8 +7,8 @@
 @group(1) @binding(4) var out_temporal: texture_storage_2d<rgba16float, write>;
 
 const FLT_EPS = 1e-6;
-const TEMPORAL_RESPONSE_MIN = 0.02;
-const TEMPORAL_RESPONSE_MAX = 0.5;
+const TEMPORAL_RESPONSE_MIN = 0.01;
+const TEMPORAL_RESPONSE_MAX = 0.1;
 
 fn clip_aabb(aabb_min: vec3f, aabb_max: vec3f, p: vec4f, q: vec4f) -> vec4f {
     let p_clip = 0.5 * (aabb_max + aabb_min);

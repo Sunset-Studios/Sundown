@@ -12,24 +12,13 @@ const gi_reset_shader_setup = {
 
 const rtao_trace_init_shader_setup = {
   pipeline_shaders: {
-    compute: {
-      path: "gi/pixel_trace_init.wgsl",
-      defines: {
-        USE_RADIANCE_CACHE_AS_DEFERRED_LIGHTING: false,
-        SPECULAR_MASK_ENABLED: false,
-      },
-    },
+    compute: { path: "gi/rtao_trace_init.wgsl" },
   },
 };
 
 const rtao_trace_hit_shader_setup = {
   pipeline_shaders: {
-    compute: {
-      path: "gi/pixel_trace_hit.wgsl",
-      defines: {
-        USE_RADIANCE_CACHE_AS_DEFERRED_LIGHTING: false,
-      },
-    },
+    compute: { path: "gi/rtao_trace_hit.wgsl" },
   },
 };
 
@@ -39,14 +28,20 @@ const rtao_resolve_shader_setup = {
   },
 };
 
+const rtao_temporal_shader_setup = {
+  pipeline_shaders: {
+    compute: { path: "gi/rtao_temporal.wgsl" },
+  },
+};
+
 export class RTAO {
   ao_texture = null;
   bent_normal_texture = null;
 
   config = {
     screen_ray_count: 1,
-    upscale_factor: 2,
-    max_ray_length: 2.0,
+    upscale_factor: 4,
+    max_ray_length: 0.5,
   };
 
   gi_params_data = new Float32Array([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
@@ -79,8 +74,8 @@ export class RTAO {
     const total_pixels = gi_width * gi_height;
     const rays_per_frame = total_pixels * this.config.screen_ray_count;
 
-    this.ao_texture = render_graph.create_image({
-      name: "rtao_ao",
+    const ao_raw = render_graph.create_image({
+      name: "rtao_ao_raw",
       format: "r32float",
       width,
       height,
@@ -88,6 +83,31 @@ export class RTAO {
       clear_value: { r: 1.0, g: 1.0, b: 1.0, a: 1.0 },
       force: force_recreate,
     });
+
+    const ao_ping = render_graph.create_image({
+      name: "rtao_ao_ping",
+      format: "r32float",
+      width,
+      height,
+      usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
+      clear_value: { r: 1.0, g: 1.0, b: 1.0, a: 1.0 },
+      force: force_recreate,
+    });
+
+    const ao_pong = render_graph.create_image({
+      name: "rtao_ao_pong",
+      format: "r32float",
+      width,
+      height,
+      usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
+      clear_value: { r: 1.0, g: 1.0, b: 1.0, a: 1.0 },
+      force: force_recreate,
+    });
+
+    const ping_pong_index = SharedFrameInfoBuffer.get_frame_index() % 2;
+    const ao_history = ping_pong_index === 0 ? ao_pong : ao_ping;
+    const ao_output = ping_pong_index === 0 ? ao_ping : ao_pong;
+    this.ao_texture = ao_output;
 
     this.bent_normal_texture = render_graph.create_image({
       name: "rtao_bent_normal",
@@ -112,16 +132,9 @@ export class RTAO {
       force: force_recreate,
     });
 
-    const world_cache = render_graph.create_buffer({
-      name: "rtao_dummy_world_cache",
-      size: 24,
-      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-      force: force_recreate,
-    });
-
     const pixel_path_state = render_graph.create_buffer({
       name: "rtao_pixel_path_state",
-      size: rays_per_frame * 15 * 4,
+      size: rays_per_frame * 3 * 4,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
       force: force_recreate,
     });
@@ -184,13 +197,8 @@ export class RTAO {
           gi_counters,
           pixel_path_state,
           pixel_ray_queue,
-          dense_lights,
-          world_cache,
           gbuffer_position,
           gbuffer_normal,
-          gbuffer_albedo,
-          gbuffer_smra,
-          gbuffer_motion_emissive,
           blue_noise_image,
         ],
         outputs: [pixel_path_state, pixel_ray_queue],
@@ -228,12 +236,26 @@ export class RTAO {
     );
 
     render_graph.add_pass(
-      "rtao_resolve",
+      `rtao_resolve_${ping_pong_index}`,
       RenderPassFlags.Compute,
       {
-        inputs: [gi_params, pixel_path_state, gbuffer_normal, this.ao_texture, this.bent_normal_texture],
-        outputs: [this.ao_texture, this.bent_normal_texture],
+        inputs: [gi_params, pixel_path_state, gbuffer_normal, ao_raw, this.bent_normal_texture],
+        outputs: [ao_raw, this.bent_normal_texture],
         shader_setup: rtao_resolve_shader_setup,
+      },
+      (g, fd) => {
+        const pass = g.get_physical_pass(fd.current_pass);
+        pass.dispatch(Math.ceil(width / 8), Math.ceil(height / 8), 1);
+      }
+    );
+
+    render_graph.add_pass(
+      `rtao_temporal_${ping_pong_index}`,
+      RenderPassFlags.Compute,
+      {
+        inputs: [ao_raw, ao_history, gbuffer_motion_emissive, ao_output],
+        outputs: [ao_output],
+        shader_setup: rtao_temporal_shader_setup,
       },
       (g, fd) => {
         const pass = g.get_physical_pass(fd.current_pass);
