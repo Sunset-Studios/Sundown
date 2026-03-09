@@ -6,17 +6,23 @@ struct GTAOSettings {
     sample_count: f32,
     max_radius_px: f32,
     thickness: f32,
+    temporal_response: f32,
+    denoise_radius: f32,
+    denoise_position_sigma: f32,
+    denoise_normal_power: f32,
+    denoise_ao_sigma: f32,
+    denoise_direction: vec2f,
+    denoise_radius_px: f32,
     _pad0: f32,
     _pad1: f32,
     _pad2: f32,
 };
 
 @group(1) @binding(0) var normal_tex: texture_2d<f32>;
-@group(1) @binding(1) var depth_tex: texture_2d<f32>;
-@group(1) @binding(2) var hzb_tex: texture_2d<f32>;
-@group(1) @binding(3) var ao_output: texture_storage_2d<r32float, write>;
-@group(1) @binding(4) var bent_output: texture_storage_2d<rgba16float, write>;
-@group(1) @binding(5) var<uniform> settings: GTAOSettings;
+@group(1) @binding(1) var hzb_tex: texture_2d<f32>;
+@group(1) @binding(2) var ao_output: texture_storage_2d<r32float, write>;
+@group(1) @binding(3) var bent_output: texture_storage_2d<rgba16float, write>;
+@group(1) @binding(4) var<uniform> settings: GTAOSettings;
 
 const HALF_PI = 1.5707963267948966;
 const TWO_PI = 6.283185307179586;
@@ -94,18 +100,21 @@ fn integrate_slice(
 
 @compute @workgroup_size(8, 8, 1)
 fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
-    let dims = textureDimensions(normal_tex);
-    if (gid.x >= dims.x || gid.y >= dims.y) {
+    let trace_resolution = textureDimensions(ao_output);
+    if (gid.x >= trace_resolution.x || gid.y >= trace_resolution.y) {
         return;
     }
 
+    let full_resolution = textureDimensions(normal_tex);
     let coord = vec2<i32>(gid.xy);
-    let resolution = vec2f(dims);
-    let uv = (vec2f(gid.xy) + 0.5) / resolution;
+    let resolution = vec2f(f32(trace_resolution.x), f32(trace_resolution.y));
+    let full_resolution_f = vec2f(f32(full_resolution.x), f32(full_resolution.y));
+    let uv = (vec2f(f32(gid.x), f32(gid.y)) + 0.5) / resolution;
+    let full_coord = uv_to_coord(uv, full_resolution);
 
-    let normal_raw = textureLoad(normal_tex, coord, 0).xyz;
+    let normal_raw = textureLoad(normal_tex, full_coord, 0).xyz;
     let normal_len = length(normal_raw);
-    let depth = textureLoad(depth_tex, coord, 0).r;
+    let depth = textureSampleLevel(hzb_tex, non_filtering_sampler, uv, 0.0).r;
     if (normal_len < 1e-6 || depth >= 1.0) {
         textureStore(ao_output, coord, vec4f(1.0, 1.0, 1.0, 1.0));
         textureStore(bent_output, coord, vec4f(world_up, 1.0));
@@ -138,12 +147,17 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         MAX_STEPS_PER_SIDE
     );
     let inv_resolution = 1.0 / resolution;
+    let hzb_step_scale = max(
+        full_resolution_f.x / max(resolution.x, 1.0),
+        full_resolution_f.y / max(resolution.y, 1.0)
+    );
 
     let random = hash2(gid.xy, u32(frame_info.frame_index));
     let base_rotation = random.x * TWO_PI;
     let radial_jitter = random.y;
 
     var visibility_accum = 0.0;
+    var visibility_weight_accum = 0.0;
     var bent_accum_vs = vec3f(0.0);
     var valid_slice_count = 0u;
 
@@ -188,13 +202,13 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
                     break;
                 }
 
-                let hzb_depth = sample_hzb_depth(sample_uv, step_px);
+                let hzb_depth = sample_hzb_depth(sample_uv, step_px * hzb_step_scale);
                 if (hzb_depth >= 1.0) {
                     continue;
                 }
 
-                let sample_coord = uv_to_coord(sample_uv, dims);
-                let sample_depth = textureLoad(depth_tex, sample_coord, 0).r;
+                let sample_coord = uv_to_coord(sample_uv, full_resolution);
+                let sample_depth = textureSampleLevel(hzb_tex, non_filtering_sampler, sample_uv, 0.0).r;
                 if (sample_depth >= 1.0) {
                     continue;
                 }
@@ -202,12 +216,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
                 let sample_position_vs = reconstruct_view_position(sample_uv, sample_depth, view_index);
                 let delta_vs = sample_position_vs - position_vs;
                 let sample_distance = length(delta_vs);
-                if (sample_distance > settings.radius * 1.1) {
-                    continue;
-                }
-
-                let depth_separation = abs(sample_position_vs.z - position_vs.z);
-                if (depth_separation > settings.radius) {
+                if (sample_distance > settings.radius) {
                     continue;
                 }
 
@@ -247,14 +256,32 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
             slice_dir_perp_vs,
             view_vec_vs
         );
+        let slice_visibility_max = max(
+            integrate_slice(
+                normal_angle,
+                projected_normal_cos,
+                normal_angle - HALF_PI,
+                normal_angle + HALF_PI,
+                projected_normal_len,
+                slice_dir_perp_vs,
+                view_vec_vs
+            ).w,
+            1e-4
+        );
+        let slice_visibility = clamp(contribution.w, 0.0, slice_visibility_max);
+        let bent_scale = slice_visibility / max(contribution.w, 1e-4);
 
-        visibility_accum += contribution.w;
-        bent_accum_vs += contribution.xyz;
+        visibility_accum += slice_visibility;
+        visibility_weight_accum += slice_visibility_max;
+        bent_accum_vs += contribution.xyz * bent_scale;
         valid_slice_count += 1u;
     }
 
-    let slice_count = max(1.0, f32(valid_slice_count));
-    let ao_visibility = clamp(visibility_accum / slice_count, 0.0, 1.0);
+    let ao_visibility = clamp(
+        visibility_accum / max(visibility_weight_accum, max(1.0, f32(valid_slice_count)) * 1e-4),
+        0.0,
+        1.0
+    );
 
     var bent_vs = normal_vs;
     if (visibility_accum > 1e-5 && dot(bent_accum_vs, bent_accum_vs) > 1e-6) {

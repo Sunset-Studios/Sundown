@@ -1,10 +1,21 @@
 #include "common.wgsl"
 
-struct GTAOTemporalSettings {
-    temporal_response: f32,
+struct GTAOSettings {
     radius: f32,
+    bias: f32,
+    sample_count: f32,
+    max_radius_px: f32,
+    thickness: f32,
+    temporal_response: f32,
+    denoise_radius: f32,
+    denoise_position_sigma: f32,
+    denoise_normal_power: f32,
+    denoise_ao_sigma: f32,
+    denoise_direction: vec2f,
+    denoise_radius_px: f32,
     _pad0: f32,
     _pad1: f32,
+    _pad2: f32,
 };
 
 @group(1) @binding(0) var current_ao_tex: texture_2d<f32>;
@@ -18,7 +29,7 @@ struct GTAOTemporalSettings {
 @group(1) @binding(8) var motion_tex: texture_2d<f32>;
 @group(1) @binding(9) var ao_output: texture_storage_2d<r32float, write>;
 @group(1) @binding(10) var bent_output: texture_storage_2d<rgba16float, write>;
-@group(1) @binding(11) var<uniform> settings: GTAOTemporalSettings;
+@group(1) @binding(11) var<uniform> settings: GTAOSettings;
 
 @compute @workgroup_size(8, 8, 1)
 fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
@@ -27,13 +38,16 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         return;
     }
 
+    let full_dims = textureDimensions(normal_tex);
     let coord = vec2<i32>(gid.xy);
-    let resolution = vec2f(dims);
-    let uv = (vec2f(gid.xy) + 0.5) / resolution;
+    let resolution = vec2f(f32(dims.x), f32(dims.y));
+    let full_resolution = vec2f(f32(full_dims.x), f32(full_dims.y));
+    let uv = (vec2f(f32(gid.x), f32(gid.y)) + 0.5) / resolution;
+    let full_coord = uv_to_coord(uv, full_dims);
 
     let current_ao = textureLoad(current_ao_tex, coord, 0).r;
     let current_bent = safe_normalize(textureLoad(current_bent_tex, coord, 0).xyz);
-    let current_normal_raw = textureLoad(normal_tex, coord, 0).xyz;
+    let current_normal_raw = textureLoad(normal_tex, full_coord, 0).xyz;
     let current_normal_len = length(current_normal_raw);
     if (current_normal_len < 1e-6) {
         textureStore(ao_output, coord, vec4f(current_ao, current_ao, current_ao, 1.0));
@@ -42,8 +56,8 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
 
     let current_normal = current_normal_raw / current_normal_len;
-    let current_position = textureLoad(position_tex, coord, 0).xyz;
-    let motion = textureLoad(motion_tex, coord, 0).xy;
+    let current_position = textureLoad(position_tex, full_coord, 0).xyz;
+    let motion = textureLoad(motion_tex, full_coord, 0).xy;
     let prev_uv = uv + vec2f(-0.5 * motion.x, 0.5 * motion.y);
     let prev_in_bounds = all(prev_uv >= vec2f(0.0)) && all(prev_uv <= vec2f(1.0));
 
@@ -67,14 +81,15 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
 
     if (prev_in_bounds) {
         let prev_coord = uv_to_coord(prev_uv, dims);
-        let prev_normal_raw = textureLoad(prev_normal_tex, prev_coord, 0).xyz;
+        let prev_full_coord = uv_to_coord(prev_uv, full_dims);
+        let prev_normal_raw = textureLoad(prev_normal_tex, prev_full_coord, 0).xyz;
         let prev_normal_len = length(prev_normal_raw);
         if (prev_normal_len > 1e-6) {
             let prev_normal = prev_normal_raw / prev_normal_len;
-            let prev_position = textureLoad(prev_position_tex, prev_coord, 0).xyz;
+            let prev_position = textureLoad(prev_position_tex, prev_full_coord, 0).xyz;
             let camera_position = view_buffer[u32(frame_info.view_index)].view_position.xyz;
             let view_distance = distance(camera_position, current_position);
-            let position_threshold = max(settings.radius * 0.35, 0.0025 * view_distance);
+            let position_threshold = max(settings.denoise_radius * 0.35, 0.0025 * view_distance);
             let normal_match = dot(current_normal, prev_normal);
             let position_error = distance(current_position, prev_position);
             history_valid = normal_match > 0.85 && position_error <= position_threshold;
@@ -90,7 +105,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         }
     }
 
-    let motion_pixels = length(vec2f(-0.5 * motion.x, 0.5 * motion.y) * resolution);
+    let motion_pixels = length(vec2f(-0.5 * motion.x, 0.5 * motion.y) * full_resolution);
     let discrepancy = abs(history_ao - current_ao);
     let current_weight = clamp(
         max(settings.temporal_response, discrepancy * 0.85 + motion_pixels * 0.03),
