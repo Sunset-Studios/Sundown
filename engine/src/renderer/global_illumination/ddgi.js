@@ -250,7 +250,7 @@ export class DDGI {
     cascade_spacing_multiplier: 2.0,
     probe_depth_resolutions: [8, 4, 4, 4, 4, 4, 4, 4],
     max_emissive_lights: 32768,
-    diffuse_atrous_enabled: true,
+    diffuse_atrous_enabled: false,
     diffuse_atrous_pass_count: 3,
     diffuse_atrous_phi_depth: 0.04,
     diffuse_atrous_phi_normal: 64.0,

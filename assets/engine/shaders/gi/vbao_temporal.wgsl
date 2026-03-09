@@ -1,8 +1,9 @@
-#include "common.wgsl"
+﻿#include "common.wgsl"
 
-struct GTAOSettings {
+struct VBAOSettings {
     radius: f32,
     bias: f32,
+    slice_count: f32,
     sample_count: f32,
     max_radius_px: f32,
     thickness: f32,
@@ -13,23 +14,20 @@ struct GTAOSettings {
     denoise_ao_sigma: f32,
     denoise_direction: vec2f,
     denoise_radius_px: f32,
-    _pad0: f32,
-    _pad1: f32,
-    _pad2: f32,
 };
 
 @group(1) @binding(0) var current_ao_tex: texture_2d<f32>;
 @group(1) @binding(1) var current_bent_tex: texture_2d<f32>;
 @group(1) @binding(2) var history_ao_tex: texture_2d<f32>;
 @group(1) @binding(3) var history_bent_tex: texture_2d<f32>;
-@group(1) @binding(4) var position_tex: texture_2d<f32>;
-@group(1) @binding(5) var prev_position_tex: texture_2d<f32>;
+@group(1) @binding(4) var depth_tex: texture_2d<f32>;
+@group(1) @binding(5) var prev_depth_tex: texture_2d<f32>;
 @group(1) @binding(6) var normal_tex: texture_2d<f32>;
 @group(1) @binding(7) var prev_normal_tex: texture_2d<f32>;
 @group(1) @binding(8) var motion_tex: texture_2d<f32>;
 @group(1) @binding(9) var ao_output: texture_storage_2d<r32float, write>;
 @group(1) @binding(10) var bent_output: texture_storage_2d<rgba16float, write>;
-@group(1) @binding(11) var<uniform> settings: GTAOSettings;
+@group(1) @binding(11) var<uniform> settings: VBAOSettings;
 
 @compute @workgroup_size(8, 8, 1)
 fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
@@ -56,9 +54,10 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
 
     let current_normal = current_normal_raw / current_normal_len;
-    let current_position = textureLoad(position_tex, full_coord, 0).xyz;
+    let current_depth = textureLoad(depth_tex, full_coord, 0).r;
+    let current_position = reconstruct_world_position(uv, current_depth, u32(frame_info.view_index));
     let motion = textureLoad(motion_tex, full_coord, 0).xy;
-    let prev_uv = uv + vec2f(-0.5 * motion.x, 0.5 * motion.y);
+    let prev_uv = uv + vec2f(-0.45 * motion.x, 0.45 * motion.y);
     let prev_in_bounds = all(prev_uv >= vec2f(0.0)) && all(prev_uv <= vec2f(1.0));
 
     var neighborhood_min = current_ao;
@@ -86,10 +85,11 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         let prev_normal_len = length(prev_normal_raw);
         if (prev_normal_len > 1e-6) {
             let prev_normal = prev_normal_raw / prev_normal_len;
-            let prev_position = textureLoad(prev_position_tex, prev_full_coord, 0).xyz;
+            let prev_depth = textureLoad(prev_depth_tex, prev_full_coord, 0).r;
+            let prev_position = reconstruct_world_position(prev_uv, prev_depth, u32(frame_info.view_index));
             let camera_position = view_buffer[u32(frame_info.view_index)].view_position.xyz;
             let view_distance = distance(camera_position, current_position);
-            let position_threshold = max(settings.denoise_radius * 0.35, 0.0025 * view_distance);
+            let position_threshold = settings.denoise_radius * 0.35;
             let normal_match = dot(current_normal, prev_normal);
             let position_error = distance(current_position, prev_position);
             history_valid = normal_match > 0.85 && position_error <= position_threshold;
@@ -105,14 +105,8 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         }
     }
 
-    let motion_pixels = length(vec2f(-0.5 * motion.x, 0.5 * motion.y) * full_resolution);
     let discrepancy = abs(history_ao - current_ao);
-    let current_weight = clamp(
-        max(settings.temporal_response, discrepancy * 0.85 + motion_pixels * 0.03),
-        0.0,
-        1.0
-    );
-    let blend = select(1.0, current_weight, history_valid);
+    let blend = select(1.0, settings.temporal_response, history_valid);
 
     let ao_value = mix(history_ao, current_ao, blend);
     var bent_value = safe_normalize(mix(history_bent, current_bent, blend));
@@ -120,6 +114,8 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         bent_value = current_normal;
     }
 
-    textureStore(ao_output, coord, vec4f(ao_value, ao_value, ao_value, 1.0));
+    textureStore(ao_output, coord, vec4f(ao_value, 0.0, 0.0, 1.0));
     textureStore(bent_output, coord, vec4f(bent_value, 1.0));
 }
+
+

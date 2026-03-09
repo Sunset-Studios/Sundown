@@ -1,4 +1,4 @@
-const graphics_pass_name = "Graphics";
+﻿const graphics_pass_name = "Graphics";
 const present_pass_name = "Present";
 const compute_pass_name = "Compute";
 const graph_local_pass_name = "GraphLocal";
@@ -128,7 +128,7 @@ export const GIStrategyType = Object.freeze({
  * @enum {number}
  */
 export const AOStrategyType = Object.freeze({
-    GTAO: 0,
+    VBAO: 0,
     RTAO: 1,
 });
 

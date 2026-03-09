@@ -8,56 +8,45 @@ struct VertexOutput {
 }
 
 struct BloomResolveConstants {
-    exposure: f32,
-    bloom_intensity: f32,
-    bloom_threshold: f32,
-    bloom_knee: f32,
-    near_plane: f32,
-    far_plane: f32,
+    source_texel_size_and_scale: vec4<f32>,
+    curve_threshold: vec4<f32>,
+    bloom_color_and_exposure: vec4<f32>,
 }
 
 @group(1) @binding(0) var scene_color: texture_2d<f32>;
 @group(1) @binding(1) var bloom_brightness: texture_2d<f32>;
-@group(1) @binding(2) var scene_depth: texture_2d<f32>;
-@group(1) @binding(3) var<uniform> bloom_resolve_constants: BloomResolveConstants;
+@group(1) @binding(2) var<uniform> bloom_resolve_constants: BloomResolveConstants;
 
-fn apply_bloom(scene: vec3<f32>, bloom: vec3<f32>, intensity: f32, threshold: f32, knee: f32) -> vec3<f32> {
-    let scene_luminance = luminance(scene);
-    
-    // Soft threshold
-    let soft_threshold = smoothstep(threshold - knee, threshold + knee, scene_luminance);
-    
-    // Non-linear intensity scaling based on scene brightness
-    let adjusted_intensity = intensity * pow(soft_threshold, 2.0);
-    
-    return mix(scene, scene + bloom * adjusted_intensity, soft_threshold);
+fn upsample_filter_high(tex: texture_2d<f32>, uv: vec2<f32>, texel_size: vec2<f32>, sample_scale: f32) -> vec3<f32> {
+    let d = texel_size.xyxy * vec4f(1.0, 1.0, -1.0, 0.0) * sample_scale;
+
+    var s = safe_clamp_vec3(textureSampleLevel(tex, clamped_sampler, uv - d.xy, 0.0).rgb);
+    s += safe_clamp_vec3(textureSampleLevel(tex, clamped_sampler, uv - d.wy, 0.0).rgb) * 2.0;
+    s += safe_clamp_vec3(textureSampleLevel(tex, clamped_sampler, uv - d.zy, 0.0).rgb);
+
+    s += safe_clamp_vec3(textureSampleLevel(tex, clamped_sampler, uv + d.zw, 0.0).rgb) * 2.0;
+    s += safe_clamp_vec3(textureSampleLevel(tex, clamped_sampler, uv, 0.0).rgb) * 4.0;
+    s += safe_clamp_vec3(textureSampleLevel(tex, clamped_sampler, uv + d.xw, 0.0).rgb) * 2.0;
+
+    s += safe_clamp_vec3(textureSampleLevel(tex, clamped_sampler, uv + d.zy, 0.0).rgb);
+    s += safe_clamp_vec3(textureSampleLevel(tex, clamped_sampler, uv + d.wy, 0.0).rgb) * 2.0;
+    s += safe_clamp_vec3(textureSampleLevel(tex, clamped_sampler, uv + d.xy, 0.0).rgb);
+
+    return s * (1.0 / 16.0);
 }
 
 @fragment
 fn fs(in: VertexOutput) -> @location(0) vec4<precision_float> {
     let uv = vec2<f32>(in.uv);
-    var color = textureSample(scene_color, global_sampler, uv).rgb;
-    let bloom_color = textureSample(bloom_brightness, global_sampler, uv).rgb;
-
-    // Distance-based bloom attenuation
-    let d            = bloom_resolve_constants.far_plane - bloom_resolve_constants.near_plane;
-    let depth        = textureSample(scene_depth, non_filtering_sampler, uv).r;
-    let scaled_depth = pow(depth, d * 10.0);
-    let atten        = clamp(
-        scaled_depth,
-        0.0,
-        1.0,
-    ); // 0 when close, 1 when far
-
-    color = apply_bloom(
-        color,
-        bloom_color,
-        bloom_resolve_constants.bloom_intensity * atten,
-        bloom_resolve_constants.bloom_threshold,
-        bloom_resolve_constants.bloom_knee,
+    let scene = safe_clamp_vec3(textureSample(scene_color, global_sampler, uv).rgb);
+    let bloom = upsample_filter_high(
+        bloom_brightness,
+        uv,
+        bloom_resolve_constants.source_texel_size_and_scale.xy,
+        bloom_resolve_constants.source_texel_size_and_scale.z,
     );
-    
-    color = reinhard_tonemapping(color, bloom_resolve_constants.exposure);
+    var color = scene + bloom * bloom_resolve_constants.bloom_color_and_exposure.xyz;
+    color = reinhard_tonemapping(color, bloom_resolve_constants.bloom_color_and_exposure.w);
 
     return vec4<precision_float>(vec4<f32>(color, 1.0));
 }

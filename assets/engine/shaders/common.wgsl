@@ -736,3 +736,14 @@ fn uv_to_coord(uv: vec2f, resolution: vec2<u32>) -> vec2<i32> {
         clamp(pixel.y, 0, i32(resolution.y) - 1)
     );
 }
+
+fn reconstruct_world_position(uv: vec2f, depth: f32, view_index: u32) -> vec3f {
+    let clip = vec4f(
+        uv.x * 2.0 - 1.0,
+        (1.0 - uv.y) * 2.0 - 1.0,
+        depth,
+        1.0
+    );
+    let world = view_buffer[view_index].inverse_view_projection_matrix * clip;
+    return world.xyz / world.w;
+}

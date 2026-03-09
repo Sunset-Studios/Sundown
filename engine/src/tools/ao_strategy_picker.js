@@ -1,19 +1,19 @@
-import { DevConsoleTool } from "./dev_console_tool.js";
+﻿import { DevConsoleTool } from "./dev_console_tool.js";
 import { Renderer } from "../renderer/renderer.js";
 import { AOStrategyType } from "../renderer/renderer_types.js";
 
-const gtao = "gtao";
+const vbao = "vbao";
 const rtao = "rtao";
 
-const help_text = "Available strategies: gtao, rtao";
+const help_text = "Available strategies: vbao, rtao";
 
 export class AOStrategyPicker extends DevConsoleTool {
   execute(args) {
     const strategy_name = args[0];
     if (strategy_name) {
       switch (strategy_name) {
-        case gtao:
-          Renderer.get().set_ao_strategy_type(AOStrategyType.GTAO);
+        case vbao:
+          Renderer.get().set_ao_strategy_type(AOStrategyType.VBAO);
           break;
         case rtao:
           Renderer.get().set_ao_strategy_type(AOStrategyType.RTAO);

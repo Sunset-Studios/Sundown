@@ -1,8 +1,9 @@
-#include "common.wgsl"
+﻿#include "common.wgsl"
 
-struct GTAOSettings {
+struct VBAOSettings {
     radius: f32,
     bias: f32,
+    slice_count: f32,
     sample_count: f32,
     max_radius_px: f32,
     thickness: f32,
@@ -13,18 +14,15 @@ struct GTAOSettings {
     denoise_ao_sigma: f32,
     denoise_direction: vec2f,
     denoise_radius_px: f32,
-    _pad0: f32,
-    _pad1: f32,
-    _pad2: f32,
 };
 
-@group(1) @binding(0) var position_tex: texture_2d<f32>;
+@group(1) @binding(0) var depth_tex: texture_2d<f32>;
 @group(1) @binding(1) var normal_tex: texture_2d<f32>;
 @group(1) @binding(2) var ao_src: texture_2d<f32>;
 @group(1) @binding(3) var bent_src: texture_2d<f32>;
 @group(1) @binding(4) var ao_dst: texture_storage_2d<r32float, write>;
 @group(1) @binding(5) var bent_dst: texture_storage_2d<rgba16float, write>;
-@group(1) @binding(6) var<uniform> settings: GTAOSettings;
+@group(1) @binding(6) var<uniform> settings: VBAOSettings;
 
 fn gaussian(distance_sq: f32, sigma: f32) -> f32 {
     if (sigma <= 0.0) {
@@ -41,6 +39,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         return;
     }
 
+    let view_index = u32(frame_info.view_index);
     let full_dims = textureDimensions(normal_tex);
     let coord = vec2<i32>(gid.xy);
     let radius = max(0, i32(settings.denoise_radius_px + 0.5));
@@ -59,7 +58,8 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
 
     let center_normal = center_normal_raw / center_normal_len;
-    let center_position = textureLoad(position_tex, full_coord, 0).xyz;
+    let center_depth = textureLoad(depth_tex, full_coord, 0).r;
+    let center_position = reconstruct_world_position(uv, center_depth, view_index);
 
     var weight_sum = 1.0;
     var ao_sum = center_ao;
@@ -85,7 +85,8 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         }
 
         let tap_normal = tap_normal_raw / tap_normal_len;
-        let tap_position = textureLoad(position_tex, tap_full_coord, 0).xyz;
+        let tap_depth = textureLoad(depth_tex, tap_full_coord, 0).r;
+        let tap_position = reconstruct_world_position(tap_uv, tap_depth, view_index);
         let tap_ao = textureLoad(ao_src, tap_coord, 0).r;
         let tap_bent = safe_normalize(textureLoad(bent_src, tap_coord, 0).xyz);
 
@@ -112,3 +113,5 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     textureStore(ao_dst, coord, vec4f(filtered_ao, filtered_ao, filtered_ao, 1.0));
     textureStore(bent_dst, coord, vec4f(filtered_bent, 1.0));
 }
+
+

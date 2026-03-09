@@ -1,31 +1,31 @@
-import { RenderPassFlags } from "../renderer_types.js";
+﻿import { RenderPassFlags } from "../renderer_types.js";
 
-const gtao_trace_shader_setup = {
+const vbao_trace_shader_setup = {
   pipeline_shaders: {
-    compute: { path: "gi/gtao.wgsl" },
+    compute: { path: "gi/vbao.wgsl" },
   },
 };
 
-const gtao_temporal_shader_setup = {
+const vbao_temporal_shader_setup = {
   pipeline_shaders: {
-    compute: { path: "gi/gtao_temporal.wgsl" },
+    compute: { path: "gi/vbao_temporal.wgsl" },
   },
 };
 
-const gtao_denoise_shader_setup = {
+const vbao_denoise_shader_setup = {
   pipeline_shaders: {
-    compute: { path: "gi/gtao_bilateral.wgsl" },
+    compute: { path: "gi/vbao_bilateral.wgsl" },
   },
 };
 
-const gtao_resolve_shader_setup = {
+const vbao_resolve_shader_setup = {
   pipeline_shaders: {
-    compute: { path: "gi/gtao_resolve.wgsl" },
+    compute: { path: "gi/vbao_resolve.wgsl" },
   },
 };
 
 const ao_raw_image_config = {
-  name: "gtao_ao_raw",
+  name: "vbao_ao_raw",
   format: "r32float",
   width: 0,
   height: 0,
@@ -35,7 +35,7 @@ const ao_raw_image_config = {
 };
 
 const ao_temporal_image_config = {
-  name: "gtao_ao_temporal",
+  name: "vbao_ao_temporal",
   format: "r32float",
   width: 0,
   height: 0,
@@ -45,7 +45,7 @@ const ao_temporal_image_config = {
 };
 
 const ao_filter_image_config = {
-  name: "gtao_ao_filter",
+  name: "vbao_ao_filter",
   format: "r32float",
   width: 0,
   height: 0,
@@ -55,7 +55,7 @@ const ao_filter_image_config = {
 };
 
 const ao_history_image_config = {
-  name: "gtao_ao_history",
+  name: "vbao_ao_history",
   format: "r32float",
   width: 0,
   height: 0,
@@ -65,7 +65,7 @@ const ao_history_image_config = {
 };
 
 const ao_resolved_image_config = {
-  name: "gtao_ao_resolved",
+  name: "vbao_ao_resolved",
   format: "r32float",
   width: 0,
   height: 0,
@@ -75,7 +75,7 @@ const ao_resolved_image_config = {
 };
 
 const bent_raw_image_config = {
-  name: "gtao_bent_raw",
+  name: "vbao_bent_raw",
   format: "rgba16float",
   width: 0,
   height: 0,
@@ -84,7 +84,7 @@ const bent_raw_image_config = {
 };
 
 const bent_temporal_image_config = {
-  name: "gtao_bent_temporal",
+  name: "vbao_bent_temporal",
   format: "rgba16float",
   width: 0,
   height: 0,
@@ -93,7 +93,7 @@ const bent_temporal_image_config = {
 };
 
 const bent_filter_image_config = {
-  name: "gtao_bent_filter",
+  name: "vbao_bent_filter",
   format: "rgba16float",
   width: 0,
   height: 0,
@@ -102,7 +102,7 @@ const bent_filter_image_config = {
 };
 
 const bent_history_image_config = {
-  name: "gtao_bent_history",
+  name: "vbao_bent_history",
   format: "rgba16float",
   width: 0,
   height: 0,
@@ -111,7 +111,7 @@ const bent_history_image_config = {
 };
 
 const bent_resolved_image_config = {
-  name: "gtao_bent_resolved",
+  name: "vbao_bent_resolved",
   format: "rgba16float",
   width: 0,
   height: 0,
@@ -119,25 +119,23 @@ const bent_resolved_image_config = {
   force: false,
 };
 
-// Single unified GTAOSettings: 16 f32 (radius, bias, sample_count, max_radius_px, thickness,
-// temporal_response, denoise_radius, denoise_position_sigma, denoise_normal_power, denoise_ao_sigma,
-// denoise_direction.xy, denoise_radius_px, 3x pad) = 64 bytes
-const gtao_settings_buffer_config = {
-  name: "gtao_settings",
+const vbao_settings_buffer_config = {
+  name: "vbao_settings",
   size: 16,
   usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
   force: false,
 };
 
-export class GTAO {
+export class VBAO {
   config = {
-    radius: 0.5,
-    bias: 0.002,
-    sample_count: 6,
-    max_radius_px: 16,
-    thickness: 0.15,
-    temporal_response: 0.1,
-    denoise_radius: 4,
+    radius: 0.75,
+    bias: 0.001,
+    slice_count: 1,
+    sample_count: 16,
+    max_radius_px: 96,
+    thickness: 0.25,
+    temporal_response: 0.15,
+    denoise_radius: 8,
     denoise_position_sigma: 0.2,
     denoise_normal_power: 12,
     denoise_ao_sigma: 0.15,
@@ -166,6 +164,7 @@ export class GTAO {
     gbuffer_smra,
     gbuffer_motion_emissive,
     depth_image,
+    prev_depth_image,
     hzb_texture,
     tlas_bvh2_bounds,
     tlas_bvh_info,
@@ -223,7 +222,7 @@ export class GTAO {
     bent_resolved_image_config.height = height;
     bent_resolved_image_config.force = force_recreate;
 
-    gtao_settings_buffer_config.force = force_recreate;
+    vbao_settings_buffer_config.force = force_recreate;
 
     const ao_raw = render_graph.create_image(ao_raw_image_config);
     const ao_temporal = render_graph.create_image(ao_temporal_image_config);
@@ -237,45 +236,46 @@ export class GTAO {
     const bent_history = render_graph.create_image(bent_history_image_config);
     const bent_resolved = render_graph.create_image(bent_resolved_image_config);
 
-    const gtao_settings = render_graph.create_buffer(gtao_settings_buffer_config);
+    const vbao_settings = render_graph.create_buffer(vbao_settings_buffer_config);
 
     this.ao_texture = ao_resolved;
     this.ao_blur_texture = ao_resolved;
     this.bent_normal_texture = bent_resolved;
 
     render_graph.add_pass(
-      "gtao_prepare",
+      "vbao_prepare",
       RenderPassFlags.GraphLocal,
       {},
       (graph) => {
-        const settings_buffer = graph.get_physical_buffer(gtao_settings);
+        const settings_buffer = graph.get_physical_buffer(vbao_settings);
 
         this.settings_data[0] = this.config.radius;
         this.settings_data[1] = this.config.bias;
-        this.settings_data[2] = this.config.sample_count;
-        this.settings_data[3] = Math.max(1.0, this.config.max_radius_px * trace_scale);
-        this.settings_data[4] = this.config.thickness;
-        this.settings_data[5] = this.config.temporal_response;
-        this.settings_data[6] = this.config.denoise_radius;
-        this.settings_data[7] = this.config.denoise_position_sigma;
-        this.settings_data[8] = this.config.denoise_normal_power;
-        this.settings_data[9] = this.config.denoise_ao_sigma;
-        this.settings_data[10] = 1.0; // denoise_direction.x (for X pass)
-        this.settings_data[11] = 0.0; // denoise_direction.y
-        this.settings_data[12] = Math.max(1.0, this.config.denoise_radius * trace_scale); // denoise_radius_px
-        this.settings_data[13] = 0.0;
+        this.settings_data[2] = this.config.slice_count;
+        this.settings_data[3] = this.config.sample_count;
+        this.settings_data[4] = Math.max(1.0, this.config.max_radius_px);
+        this.settings_data[5] = this.config.thickness;
+        this.settings_data[6] = this.config.temporal_response;
+        this.settings_data[7] = this.config.denoise_radius;
+        this.settings_data[8] = this.config.denoise_position_sigma;
+        this.settings_data[9] = this.config.denoise_normal_power;
+        this.settings_data[10] = this.config.denoise_ao_sigma;
+        this.settings_data[11] = 1.0;
+        this.settings_data[12] = 0.0;
+        this.settings_data[13] = Math.max(1.0, this.config.denoise_radius * trace_scale);
         this.settings_data[14] = 0.0;
         this.settings_data[15] = 0.0;
         settings_buffer.write_raw(this.settings_data);
-      });
+      }
+    );
 
     render_graph.add_pass(
-      "gtao_trace",
+      "vbao_trace",
       RenderPassFlags.Compute,
       {
-        inputs: [gbuffer_normal, hzb_texture, ao_raw, bent_raw, gtao_settings],
+        inputs: [gbuffer_normal, depth_image, ao_raw, bent_raw, vbao_settings],
         outputs: [ao_raw, bent_raw],
-        shader_setup: gtao_trace_shader_setup,
+        shader_setup: vbao_trace_shader_setup,
       },
       (graph, frame_data) => {
         const pass = graph.get_physical_pass(frame_data.current_pass);
@@ -284,25 +284,25 @@ export class GTAO {
     );
 
     render_graph.add_pass(
-      "gtao_temporal",
+      "vbao_temporal",
       RenderPassFlags.Compute,
       {
         inputs: [
           ao_raw,
           bent_raw,
-          ao_history,
-          bent_history,
-          gbuffer_position,
-          prev_gbuffer_position,
+          ao_filter,
+          bent_filter,
+          depth_image,
+          prev_depth_image,
           gbuffer_normal,
           prev_gbuffer_normal,
           gbuffer_motion_emissive,
           ao_temporal,
           bent_temporal,
-          gtao_settings,
+          vbao_settings,
         ],
         outputs: [ao_temporal, bent_temporal],
-        shader_setup: gtao_temporal_shader_setup,
+        shader_setup: vbao_temporal_shader_setup,
       },
       (graph, frame_data) => {
         const pass = graph.get_physical_pass(frame_data.current_pass);
@@ -311,20 +311,20 @@ export class GTAO {
     );
 
     render_graph.add_pass(
-      "gtao_denoise_x",
+      "vbao_denoise_x",
       RenderPassFlags.Compute,
       {
         inputs: [
-          gbuffer_position,
+          depth_image,
           gbuffer_normal,
           ao_temporal,
           bent_temporal,
           ao_filter,
           bent_filter,
-          gtao_settings,
+          vbao_settings,
         ],
         outputs: [ao_filter, bent_filter],
-        shader_setup: gtao_denoise_shader_setup,
+        shader_setup: vbao_denoise_shader_setup,
       },
       (graph, frame_data) => {
         const pass = graph.get_physical_pass(frame_data.current_pass);
@@ -333,43 +333,43 @@ export class GTAO {
     );
 
     render_graph.add_pass(
-      "gtao_denoise_y",
+      "vbao_denoise_y",
       RenderPassFlags.Compute,
       {
         inputs: [
-          gbuffer_position,
+          depth_image,
           gbuffer_normal,
           ao_filter,
           bent_filter,
           ao_history,
           bent_history,
-          gtao_settings,
+          vbao_settings,
         ],
         outputs: [ao_filter, bent_filter],
-        shader_setup: gtao_denoise_shader_setup,
+        shader_setup: vbao_denoise_shader_setup,
       },
       (graph, frame_data) => {
-        const settings_buffer = graph.get_physical_buffer(gtao_settings);
-        settings_buffer.write_raw(this.denoise_direction_y_data, 40, 2);
+        const settings_buffer = graph.get_physical_buffer(vbao_settings);
+        settings_buffer.write_raw(this.denoise_direction_y_data, 44, 2);
         const pass = graph.get_physical_pass(frame_data.current_pass);
         pass.dispatch(Math.ceil(trace_width / 8), Math.ceil(trace_height / 8), 1);
       }
     );
 
     render_graph.add_pass(
-      "gtao_resolve",
+      "vbao_resolve",
       RenderPassFlags.Compute,
       {
         inputs: [
           ao_filter,
           bent_filter,
-          gbuffer_position,
+          depth_image,
           gbuffer_normal,
           ao_resolved,
           bent_resolved,
         ],
         outputs: [ao_resolved, bent_resolved],
-        shader_setup: gtao_resolve_shader_setup,
+        shader_setup: vbao_resolve_shader_setup,
       },
       (graph, frame_data) => {
         const pass = graph.get_physical_pass(frame_data.current_pass);
@@ -378,3 +378,4 @@ export class GTAO {
     );
   }
 }
+

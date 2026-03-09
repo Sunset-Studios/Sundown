@@ -1,8 +1,8 @@
-#include "common.wgsl"
+﻿#include "common.wgsl"
 
 @group(1) @binding(0) var ao_src: texture_2d<f32>;
 @group(1) @binding(1) var bent_src: texture_2d<f32>;
-@group(1) @binding(2) var position_tex: texture_2d<f32>;
+@group(1) @binding(2) var depth_tex: texture_2d<f32>;
 @group(1) @binding(3) var normal_tex: texture_2d<f32>;
 @group(1) @binding(4) var ao_output: texture_storage_2d<r32float, write>;
 @group(1) @binding(5) var bent_output: texture_storage_2d<rgba16float, write>;
@@ -27,7 +27,7 @@ fn bilinear_weight(offset: vec2<i32>, frac: vec2f) -> f32 {
 
 @compute @workgroup_size(8, 8, 1)
 fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
-    let full_resolution = textureDimensions(position_tex);
+    let full_resolution = textureDimensions(normal_tex);
     if (gid.x >= full_resolution.x || gid.y >= full_resolution.y) {
         return;
     }
@@ -45,8 +45,10 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         return;
     }
 
+    let view_index = u32(frame_info.view_index);
     let center_normal = normal_raw / normal_len;
-    let center_position = textureLoad(position_tex, coord, 0).xyz;
+    let center_depth = textureLoad(depth_tex, coord, 0).r;
+    let center_position = reconstruct_world_position(uv, center_depth, view_index);
     let trace_position = uv * vec2f(f32(trace_resolution.x), f32(trace_resolution.y)) - vec2f(0.5);
     let base = vec2<i32>(floor(trace_position));
     let frac = fract(trace_position);
@@ -78,7 +80,8 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
             }
 
             let tap_normal = tap_normal_raw / tap_normal_len;
-            let tap_position = textureLoad(position_tex, tap_full_coord, 0).xyz;
+            let tap_depth = textureLoad(depth_tex, tap_full_coord, 0).r;
+            let tap_position = reconstruct_world_position(tap_uv, tap_depth, view_index);
             let spatial_weight = bilinear_weight(offset, frac);
             let plane_distance = abs(dot(tap_position - center_position, center_normal));
             let position_weight = gaussian(plane_distance * plane_distance, position_sigma);
@@ -100,3 +103,4 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     textureStore(ao_output, coord, vec4f(resolved_ao, resolved_ao, resolved_ao, 1.0));
     textureStore(bent_output, coord, vec4f(resolved_bent, 1.0));
 }
+

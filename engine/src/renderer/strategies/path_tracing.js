@@ -109,7 +109,7 @@ const main_motion_emissive_image_config = {
   force: false,
 };
 const main_depth_image_config = {
-  name: "main_depth",
+  name: "main_depth_0",
   format: depth32float_format,
   width: 0,
   height: 0,

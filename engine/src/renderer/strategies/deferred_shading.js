@@ -1,4 +1,4 @@
-// Core imports
+﻿// Core imports
 import { global_dispatcher } from "../../core/dispatcher.js";
 import { EntityManager } from "../../core/ecs/entity.js";
 import { FragmentGpuBuffer } from "../../core/ecs/solar/memory.js";
@@ -38,7 +38,7 @@ import {
 } from "../renderer_types.js";
 import { BVH } from "../../acceleration/bvh.js";
 import { MeshBLAS } from "../../acceleration/mesh_blas.js";
-import { npot, ppot, clamp } from "../../utility/math.js";
+import { npot, clamp } from "../../utility/math.js";
 import { profile_scope } from "../../utility/performance.js";
 import {
   rgba8unorm_format,
@@ -56,10 +56,11 @@ import {
 // Specialized renderer components
 import { PTGI } from "../global_illumination/ptgi.js";
 import { DDGI } from "../global_illumination/ddgi.js";
-import { GTAO } from "../global_illumination/gtao.js";
+import { VBAO } from "../global_illumination/vbao.js";
 import { RTAO } from "../global_illumination/rtao.js";
 import { AdaptiveSparseVirtualShadowMaps } from "../shadows/as_vsm.js";
 import { SSR } from "../reflections/ssr.js";
+import { Bloom } from "../bloom.js";
 import {
   DEFAULT_LIGHT_CLIP_EXTENT,
   MAX_CLIPMAP_LEVELS,
@@ -170,11 +171,19 @@ const main_transparency_accum_image_config = {
   force: false,
 };
 const main_depth_image_config = {
-  name: "main_depth",
+  name: "main_depth_0",
   format: depth32float_format,
   width: 0,
   height: 0,
-  usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+  usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_SRC,
+  force: false,
+};
+const main_depth_image2_config = {
+  name: "main_depth_1",
+  format: depth32float_format,
+  width: 0,
+  height: 0,
+  usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
   force: false,
 };
 
@@ -344,50 +353,6 @@ const debug_find_closest_mesh_instances_shader_setup = {
   },
 };
 
-const bloom_downsample_shader_setup = {
-  pipeline_shaders: {
-    compute: {
-      path: "effects/bloom_downsample.wgsl",
-    },
-  },
-};
-const bloom_upsample_shader_setup = {
-  pipeline_shaders: {
-    compute: {
-      path: "effects/bloom_upsample.wgsl",
-    },
-  },
-};
-const bloom_resolve_shader_setup = {
-  pipeline_shaders: {
-    vertex: {
-      path: "fullscreen.wgsl",
-    },
-    fragment: {
-      path: "effects/bloom_resolve.wgsl",
-    },
-  },
-};
-const bloom_resolve_params_config = {
-  name: "bloom_resolve_params",
-  data: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-  usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-};
-const post_bloom_color_image_config = {
-  name: "post_bloom_color",
-  format: rgba16float_format,
-  width: 0,
-  height: 0,
-  usage:
-    GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_SRC,
-  force: false,
-};
-const bloom_params = [
-  1.1 /* final exposure */, 0.001 /* bloom intensity */, 0.1 /* bloom threshold */,
-  0.2 /* bloom knee */, 0.0 /* near plane (attenuation starts) */,
-  50.0 /* far plane (full bloom) */,
-];
-
 const fullscreen_shader_setup = {
   pipeline_shaders: {
     vertex: { path: "fullscreen.wgsl" },
@@ -456,9 +421,10 @@ export class DeferredShadingStrategy {
   entity_id_image = null;
   prev_lighting_image = null;
   gi = null;
-  gtao = null;
+  vbao = null;
   rtao = null;
   reflections = null;
+  bloom = null;
   as_vsm = null;
   debug_overlay = null;
   frustum_culler = null;
@@ -471,9 +437,10 @@ export class DeferredShadingStrategy {
     const ao_strategy_type = Renderer.get().get_ao_strategy_type();
     const reflection_strategy_type = Renderer.get().get_reflection_strategy_type();
     this.gi = gi_strategy_type === GIStrategyType.DDGI ? new DDGI() : new PTGI();
-    this.ao = ao_strategy_type === AOStrategyType.GTAO ? new GTAO() : new RTAO();
+    this.ao = ao_strategy_type === AOStrategyType.RTAO ? new RTAO() : new VBAO();
     this.reflections =
       reflection_strategy_type === ReflectionStrategyType.SSR ? new SSR() : null;
+    this.bloom = new Bloom();
     this.as_vsm = new AdaptiveSparseVirtualShadowMaps({
       atlas_size: ATLAS_SIZE,
       tile_size: TILE_SIZE,
@@ -653,6 +620,14 @@ export class DeferredShadingStrategy {
       main_normal_image2_config.height = image_extent.height;
       main_normal_image2_config.force = this.force_recreate;
 
+      main_depth_image_config.width = image_extent.width;
+      main_depth_image_config.height = image_extent.height;
+      main_depth_image_config.force = this.force_recreate;
+
+      main_depth_image2_config.width = image_extent.width;
+      main_depth_image2_config.height = image_extent.height;
+      main_depth_image2_config.force = this.force_recreate;
+
       main_albedo_image_config.width = image_extent.width;
       main_albedo_image_config.height = image_extent.height;
       main_albedo_image_config.force = this.force_recreate;
@@ -665,9 +640,6 @@ export class DeferredShadingStrategy {
       main_transparency_accum_image_config.width = image_extent.width;
       main_transparency_accum_image_config.height = image_extent.height;
       main_transparency_accum_image_config.force = this.force_recreate;
-      main_depth_image_config.width = image_extent.width;
-      main_depth_image_config.height = image_extent.height;
-      main_depth_image_config.force = this.force_recreate;
 
       let main_albedo_image = render_graph.create_image(main_albedo_image_config);
       let main_smra_image = render_graph.create_image(main_smra_image_config);
@@ -680,6 +652,7 @@ export class DeferredShadingStrategy {
       let main_normal_image = render_graph.create_image(main_normal_image_config);
       let prev_position_image = render_graph.create_image(main_position_image2_config);
       let prev_normal_image = render_graph.create_image(main_normal_image2_config);
+      let prev_depth_image = render_graph.create_image(main_depth_image2_config);
 
       let skybox_image = null;
       let post_lighting_image_desc = null;
@@ -753,7 +726,7 @@ export class DeferredShadingStrategy {
             b_skip_pass_pipeline_setup: true,
             b_skip_pass_bind_group_setup: true,
           },
-          (graph, frame_data, encoder) => {}
+          (graph, frame_data, encoder) => { }
         );
       }
 
@@ -1280,27 +1253,28 @@ export class DeferredShadingStrategy {
       // └─────────────────────────────────────────────────────────────────────────────┘
       if (ao_enabled) {
         this.ao.add_passes(
-            render_graph,
-            image_extent.width,
-            image_extent.height,
-            main_position_image,
-            prev_position_image,
-            main_normal_image,
-            prev_normal_image,
-            main_albedo_image,
-            main_smra_image,
-            main_motion_emissive_image,
-            main_depth_image,
-            main_hzb_image,
-            aabb_bounds,
-            tlas_bvh_info,
-            blas_bvh2_nodes,
-            blas_directory,
-            entity_transforms,
-            index_buffer,
-            dense_lights,
-            this.force_recreate
-          );
+          render_graph,
+          image_extent.width,
+          image_extent.height,
+          main_position_image,
+          prev_position_image,
+          main_normal_image,
+          prev_normal_image,
+          main_albedo_image,
+          main_smra_image,
+          main_motion_emissive_image,
+          main_depth_image,
+          prev_depth_image,
+          main_hzb_image,
+          aabb_bounds,
+          tlas_bvh_info,
+          blas_bvh2_nodes,
+          blas_directory,
+          entity_transforms,
+          index_buffer,
+          dense_lights,
+          this.force_recreate
+        );
       }
 
 
@@ -1422,153 +1396,14 @@ export class DeferredShadingStrategy {
       // │    Multi-pass gaussian blur to create beautiful light bleeding effects    │
       // └─────────────────────────────────────────────────────────────────────────────┘
 
-      post_bloom_color_image_config.width = image_extent.width;
-      post_bloom_color_image_config.height = image_extent.height;
-      post_bloom_color_image_config.force = this.force_recreate;
-      const curr_post_bloom = render_graph.create_image(post_bloom_color_image_config);
-
-      const num_iterations = 4;
-      let bloom_blur_chain = [];
-      if (num_iterations > 0) {
-        const image_extent = renderer.get_canvas_resolution();
-        const extent_x = ppot(image_extent.width);
-        const extent_y = ppot(image_extent.height);
-
-        let bloom_blur_params_chain = [];
-        for (let i = 0; i < num_iterations; i++) {
-          bloom_blur_chain.push(
-            render_graph.create_image({
-              name: `bloom_blur_${i}`,
-              format: rgba16float_format,
-              width: extent_x >> i,
-              height: extent_y >> i,
-              usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
-              force: this.force_recreate,
-            })
-          );
-          bloom_blur_params_chain.push(
-            render_graph.create_buffer({
-              name: `bloom_blur_params_${i}`,
-              data: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-              usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-              force: this.force_recreate,
-            })
-          );
-        }
-
-        for (let i = 0; i < num_iterations; i++) {
-          const src_index = i === 0 ? 0 : i - 1;
-          const dst_index = i;
-
-          render_graph.add_pass(
-            `bloom_downsample_pass_${i}`,
-            RenderPassFlags.Compute,
-            {
-              inputs: [
-                i === 0 ? post_lighting_image_desc : bloom_blur_chain[src_index],
-                bloom_blur_chain[dst_index],
-                bloom_blur_params_chain[dst_index],
-              ],
-              outputs: [bloom_blur_chain[dst_index]],
-              shader_setup: bloom_downsample_shader_setup,
-            },
-            (graph, frame_data, encoder) => {
-              const pass = graph.get_physical_pass(frame_data.current_pass);
-
-              const bloom_blur_params = graph.get_physical_buffer(
-                bloom_blur_params_chain[dst_index]
-              );
-
-              const src_mip_width = clamp(extent_x >> src_index, 1, extent_x);
-              const src_mip_height = clamp(extent_y >> src_index, 1, extent_y);
-
-              const dst_mip_width = clamp(extent_x >> dst_index, 1, extent_x);
-              const dst_mip_height = clamp(extent_y >> dst_index, 1, extent_y);
-
-              bloom_blur_params.write([
-                src_mip_width,
-                src_mip_height,
-                dst_mip_width,
-                dst_mip_height,
-                0.0,
-                i,
-              ]);
-
-              pass.dispatch((dst_mip_width + 15) / 16, (dst_mip_height + 15) / 16, 1);
-            }
-          );
-        }
-
-        for (let i = num_iterations - 1; i > 0; --i) {
-          const src_index = i;
-          const dst_index = i - 1;
-
-          render_graph.add_pass(
-            `bloom_upsample_pass_${i}`,
-            RenderPassFlags.Compute,
-            {
-              inputs: [
-                bloom_blur_chain[src_index],
-                bloom_blur_chain[dst_index],
-                bloom_blur_params_chain[dst_index],
-              ],
-              outputs: [bloom_blur_chain[dst_index]],
-              shader_setup: bloom_upsample_shader_setup,
-            },
-            (graph, frame_data, encoder) => {
-              const pass = graph.get_physical_pass(frame_data.current_pass);
-
-              const bloom_blur_params = graph.get_physical_buffer(
-                bloom_blur_params_chain[dst_index]
-              );
-
-              const src_mip_width = clamp(extent_x >> src_index, 1, extent_x);
-              const src_mip_height = clamp(extent_y >> src_index, 1, extent_y);
-
-              const dst_mip_width = clamp(extent_x >> dst_index, 1, extent_x);
-              const dst_mip_height = clamp(extent_y >> dst_index, 1, extent_y);
-
-              bloom_blur_params.write([
-                src_mip_width,
-                src_mip_height,
-                dst_mip_width,
-                dst_mip_height,
-                6.0,
-                i,
-              ]);
-
-              pass.dispatch((dst_mip_width + 15) / 16, (dst_mip_height + 15) / 16, 1);
-            }
-          );
-        }
-
-        let bloom_resolve_params_desc = render_graph.create_buffer(bloom_resolve_params_config);
-
-        render_graph.add_pass(
-          bloom_resolve_pass_name,
-          RenderPassFlags.Graphics,
-          {
-            inputs: [
-              post_lighting_image_desc,
-              bloom_blur_chain[0],
-              main_depth_image,
-              bloom_resolve_params_desc,
-            ],
-            outputs: [curr_post_bloom],
-            shader_setup: bloom_resolve_shader_setup,
-          },
-          (graph, frame_data, encoder) => {
-            const pass = graph.get_physical_pass(frame_data.current_pass);
-
-            const bloom_resolve_params = graph.get_physical_buffer(bloom_resolve_params_desc);
-
-            bloom_resolve_params.write(bloom_params);
-
-            MeshTaskQueue.draw_quad(pass);
-          }
-        );
-      }
-
+      this.bloom.add_passes(
+        render_graph,
+        image_extent.width,
+        image_extent.height,
+        post_lighting_image_desc,
+        this.force_recreate
+      );
+      const curr_post_bloom = this.bloom.output_image;
       // Copy current bloom result into prev_lighting for the next frame
       render_graph.add_pass(
         "copy_history",
@@ -1589,6 +1424,12 @@ export class DeferredShadingStrategy {
           const prev_normal = graph.get_physical_image(prev_normal_image);
           if (prev_normal) {
             prev_normal.copy_texture(encoder, curr_normal);
+          }
+
+          const curr_depth = graph.get_physical_image(main_depth_image);
+          const prev_depth = graph.get_physical_image(prev_depth_image);
+          if (prev_depth) {
+            prev_depth.copy_texture(encoder, curr_depth);
           }
         }
       );
@@ -1638,7 +1479,7 @@ export class DeferredShadingStrategy {
       const post_processed_image = PostProcessStack.compile_passes(
         0,
         render_graph,
-        post_bloom_color_image_config,
+        post_lighting_image_config,
         antialiased_scene_color_desc,
         main_depth_image,
         main_normal_image
@@ -1781,7 +1622,7 @@ export class DeferredShadingStrategy {
             break;
           case DebugDrawType.Bloom:
             this.debug_overlay.set_properties(
-              bloom_blur_chain[0],
+              this.bloom.debug_bloom_image,
               0,
               0,
               image_extent.width,
@@ -1822,8 +1663,8 @@ export class DeferredShadingStrategy {
           case DebugDrawType.GI_Specular:
             this.debug_overlay.set_properties(
               reflections_enabled
-              ? this.reflections.reflection_texture
-              : this.gi.final_gi_texture_indirect_specular,
+                ? this.reflections.reflection_texture
+                : this.gi.final_gi_texture_indirect_specular,
               0,
               0,
               image_extent.width,
@@ -1864,8 +1705,8 @@ export class DeferredShadingStrategy {
           case DebugDrawType.GI_Reflections:
             this.debug_overlay.set_properties(
               reflections_enabled
-              ? this.reflections.reflection_texture
-              : this.gi.final_gi_texture_indirect_specular,
+                ? this.reflections.reflection_texture
+                : this.gi.final_gi_texture_indirect_specular,
               0,
               0,
               image_extent.width,
@@ -2044,5 +1885,3 @@ export class DeferredShadingStrategy {
     this.prev_lighting_image = Texture.create(prev_lighting_image_config);
   }
 }
-
-

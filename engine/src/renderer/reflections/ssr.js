@@ -1,3 +1,4 @@
+import { Renderer } from "../renderer.js";
 import { RenderPassFlags } from "../renderer_types.js";
 
 const ssr_raycast_shader_setup = {
@@ -89,7 +90,7 @@ export class SSR {
   ) {
     const trace_width = Math.max(1, Math.ceil(width * 0.5));
     const trace_height = Math.max(1, Math.ceil(height * 0.5));
-    const ping_pong_frame = this.frame_index % 2;
+    const ping_pong_frame = Renderer.get().get_buffered_frame_number();
 
     ssr_output_image_config.width = width;
     ssr_output_image_config.height = height;
@@ -198,8 +199,6 @@ export class SSR {
         pass.dispatch(Math.ceil(width / 8), Math.ceil(height / 8), 1);
       }
     );
-
-    this.frame_index++;
   }
 }
 
