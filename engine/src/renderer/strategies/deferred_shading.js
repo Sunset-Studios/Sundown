@@ -1280,24 +1280,27 @@ export class DeferredShadingStrategy {
       // └─────────────────────────────────────────────────────────────────────────────┘
       if (ao_enabled) {
         this.ao.add_passes(
-          render_graph,
-          image_extent.width,
-          image_extent.height,
-          main_position_image,
-          main_normal_image,
-          main_albedo_image,
-          main_smra_image,
-          main_motion_emissive_image,
-          main_depth_image,
-          aabb_bounds,
-          tlas_bvh_info,
-          blas_bvh2_nodes,
-          blas_directory,
-          entity_transforms,
-          index_buffer,
-          dense_lights,
-          this.force_recreate
-        );
+            render_graph,
+            image_extent.width,
+            image_extent.height,
+            main_position_image,
+            prev_position_image,
+            main_normal_image,
+            prev_normal_image,
+            main_albedo_image,
+            main_smra_image,
+            main_motion_emissive_image,
+            main_depth_image,
+            main_hzb_image,
+            aabb_bounds,
+            tlas_bvh_info,
+            blas_bvh2_nodes,
+            blas_directory,
+            entity_transforms,
+            index_buffer,
+            dense_lights,
+            this.force_recreate
+          );
       }
 
 

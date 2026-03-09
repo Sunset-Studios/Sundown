@@ -51,7 +51,7 @@ export class Renderer {
   ao_enabled = true;
   use_radiance_cache_as_deferred_lighting = false;
   gi_strategy_type = GIStrategyType.DDGI;
-  ao_strategy_type = AOStrategyType.GTAO;
+  ao_strategy_type = AOStrategyType.RTAO;
   reflection_strategy_type = ReflectionStrategyType.SSR;
 
   debug_draw_type = DebugDrawType.None;

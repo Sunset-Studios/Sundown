@@ -17,7 +17,7 @@
 @group(1) @binding(3) var ao_output: texture_storage_2d<r32float, write>;
 
 // Blend factor: higher = more current frame (faster response), lower = more history (smoother)
-const RTAO_TEMPORAL_BLEND = 0.05;
+const RTAO_TEMPORAL_BLEND = 0.1;
 
 @compute @workgroup_size(8, 8, 1)
 fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
