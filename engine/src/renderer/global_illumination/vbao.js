@@ -1,4 +1,4 @@
-﻿import { RenderPassFlags } from "../renderer_types.js";
+import { RenderPassFlags } from "../renderer_types.js";
 
 const vbao_trace_shader_setup = {
   pipeline_shaders: {
@@ -128,16 +128,16 @@ const vbao_settings_buffer_config = {
 
 export class VBAO {
   config = {
-    radius: 0.75,
+    radius: 0.5,
     bias: 0.001,
     slice_count: 1,
     sample_count: 16,
     max_radius_px: 96,
     thickness: 0.25,
-    temporal_response: 0.15,
+    temporal_response: 0.1,
     denoise_radius: 8,
     denoise_position_sigma: 0.2,
-    denoise_normal_power: 12,
+    denoise_normal_power: 64,
     denoise_ao_sigma: 0.15,
   };
 
@@ -177,25 +177,21 @@ export class VBAO {
   ) {
     const trace_width = Math.max(1, Math.ceil(width * 0.5));
     const trace_height = Math.max(1, Math.ceil(height * 0.5));
-    const trace_scale = Math.min(
-      trace_width / Math.max(width, 1),
-      trace_height / Math.max(height, 1)
-    );
 
     ao_raw_image_config.width = trace_width;
     ao_raw_image_config.height = trace_height;
     ao_raw_image_config.force = force_recreate;
 
-    ao_temporal_image_config.width = trace_width;
-    ao_temporal_image_config.height = trace_height;
+    ao_temporal_image_config.width = width;
+    ao_temporal_image_config.height = height;
     ao_temporal_image_config.force = force_recreate;
 
-    ao_filter_image_config.width = trace_width;
-    ao_filter_image_config.height = trace_height;
+    ao_filter_image_config.width = width;
+    ao_filter_image_config.height = height;
     ao_filter_image_config.force = force_recreate;
 
-    ao_history_image_config.width = trace_width;
-    ao_history_image_config.height = trace_height;
+    ao_history_image_config.width = width;
+    ao_history_image_config.height = height;
     ao_history_image_config.force = force_recreate;
 
     ao_resolved_image_config.width = width;
@@ -206,16 +202,16 @@ export class VBAO {
     bent_raw_image_config.height = trace_height;
     bent_raw_image_config.force = force_recreate;
 
-    bent_temporal_image_config.width = trace_width;
-    bent_temporal_image_config.height = trace_height;
+    bent_temporal_image_config.width = width;
+    bent_temporal_image_config.height = height;
     bent_temporal_image_config.force = force_recreate;
 
-    bent_filter_image_config.width = trace_width;
-    bent_filter_image_config.height = trace_height;
+    bent_filter_image_config.width = width;
+    bent_filter_image_config.height = height;
     bent_filter_image_config.force = force_recreate;
 
-    bent_history_image_config.width = trace_width;
-    bent_history_image_config.height = trace_height;
+    bent_history_image_config.width = width;
+    bent_history_image_config.height = height;
     bent_history_image_config.force = force_recreate;
 
     bent_resolved_image_config.width = width;
@@ -230,17 +226,13 @@ export class VBAO {
     const ao_history = render_graph.create_image(ao_history_image_config);
     const ao_resolved = render_graph.create_image(ao_resolved_image_config);
 
-    const bent_raw = render_graph.create_image(bent_raw_image_config);
-    const bent_temporal = render_graph.create_image(bent_temporal_image_config);
-    const bent_filter = render_graph.create_image(bent_filter_image_config);
     const bent_history = render_graph.create_image(bent_history_image_config);
-    const bent_resolved = render_graph.create_image(bent_resolved_image_config);
 
     const vbao_settings = render_graph.create_buffer(vbao_settings_buffer_config);
 
-    this.ao_texture = ao_resolved;
-    this.ao_blur_texture = ao_resolved;
-    this.bent_normal_texture = bent_resolved;
+    this.ao_texture = ao_history;
+    this.ao_blur_texture = ao_history;
+    this.bent_normal_texture = bent_history;
 
     render_graph.add_pass(
       "vbao_prepare",
@@ -262,7 +254,7 @@ export class VBAO {
         this.settings_data[10] = this.config.denoise_ao_sigma;
         this.settings_data[11] = 1.0;
         this.settings_data[12] = 0.0;
-        this.settings_data[13] = Math.max(1.0, this.config.denoise_radius * trace_scale);
+        this.settings_data[13] = Math.max(1.0, this.config.denoise_radius);
         this.settings_data[14] = 0.0;
         this.settings_data[15] = 0.0;
         settings_buffer.write_raw(this.settings_data);
@@ -273,8 +265,8 @@ export class VBAO {
       "vbao_trace",
       RenderPassFlags.Compute,
       {
-        inputs: [gbuffer_normal, depth_image, ao_raw, bent_raw, vbao_settings],
-        outputs: [ao_raw, bent_raw],
+        inputs: [gbuffer_normal, depth_image, ao_raw, vbao_settings],
+        outputs: [ao_raw],
         shader_setup: vbao_trace_shader_setup,
       },
       (graph, frame_data) => {
@@ -284,29 +276,41 @@ export class VBAO {
     );
 
     render_graph.add_pass(
-      "vbao_temporal",
+      "vbao_resolve",
       RenderPassFlags.Compute,
       {
         inputs: [
           ao_raw,
-          bent_raw,
-          ao_filter,
-          bent_filter,
           depth_image,
-          prev_depth_image,
           gbuffer_normal,
-          prev_gbuffer_normal,
+          ao_resolved,
+        ],
+        outputs: [ao_resolved],
+        shader_setup: vbao_resolve_shader_setup,
+      },
+      (graph, frame_data) => {
+        const pass = graph.get_physical_pass(frame_data.current_pass);
+        pass.dispatch(Math.ceil(width / 8), Math.ceil(height / 8), 1);
+      }
+    );
+
+    render_graph.add_pass(
+      "vbao_temporal",
+      RenderPassFlags.Compute,
+      {
+        inputs: [
+          ao_resolved,
+          ao_history,
           gbuffer_motion_emissive,
           ao_temporal,
-          bent_temporal,
           vbao_settings,
         ],
-        outputs: [ao_temporal, bent_temporal],
+        outputs: [ao_temporal],
         shader_setup: vbao_temporal_shader_setup,
       },
       (graph, frame_data) => {
         const pass = graph.get_physical_pass(frame_data.current_pass);
-        pass.dispatch(Math.ceil(trace_width / 8), Math.ceil(trace_height / 8), 1);
+        pass.dispatch(Math.ceil(width / 8), Math.ceil(height / 8), 1);
       }
     );
 
@@ -318,17 +322,15 @@ export class VBAO {
           depth_image,
           gbuffer_normal,
           ao_temporal,
-          bent_temporal,
           ao_filter,
-          bent_filter,
           vbao_settings,
         ],
-        outputs: [ao_filter, bent_filter],
+        outputs: [ao_filter],
         shader_setup: vbao_denoise_shader_setup,
       },
       (graph, frame_data) => {
         const pass = graph.get_physical_pass(frame_data.current_pass);
-        pass.dispatch(Math.ceil(trace_width / 8), Math.ceil(trace_height / 8), 1);
+        pass.dispatch(Math.ceil(width / 8), Math.ceil(height / 8), 1);
       }
     );
 
@@ -340,42 +342,21 @@ export class VBAO {
           depth_image,
           gbuffer_normal,
           ao_filter,
-          bent_filter,
           ao_history,
-          bent_history,
           vbao_settings,
         ],
-        outputs: [ao_filter, bent_filter],
+        outputs: [ao_history],
         shader_setup: vbao_denoise_shader_setup,
       },
       (graph, frame_data) => {
         const settings_buffer = graph.get_physical_buffer(vbao_settings);
         settings_buffer.write_raw(this.denoise_direction_y_data, 44, 2);
         const pass = graph.get_physical_pass(frame_data.current_pass);
-        pass.dispatch(Math.ceil(trace_width / 8), Math.ceil(trace_height / 8), 1);
-      }
-    );
-
-    render_graph.add_pass(
-      "vbao_resolve",
-      RenderPassFlags.Compute,
-      {
-        inputs: [
-          ao_filter,
-          bent_filter,
-          depth_image,
-          gbuffer_normal,
-          ao_resolved,
-          bent_resolved,
-        ],
-        outputs: [ao_resolved, bent_resolved],
-        shader_setup: vbao_resolve_shader_setup,
-      },
-      (graph, frame_data) => {
-        const pass = graph.get_physical_pass(frame_data.current_pass);
         pass.dispatch(Math.ceil(width / 8), Math.ceil(height / 8), 1);
       }
     );
   }
 }
+
+
 

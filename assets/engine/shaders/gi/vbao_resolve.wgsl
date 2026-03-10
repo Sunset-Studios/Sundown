@@ -1,11 +1,9 @@
 ﻿#include "common.wgsl"
 
 @group(1) @binding(0) var ao_src: texture_2d<f32>;
-@group(1) @binding(1) var bent_src: texture_2d<f32>;
-@group(1) @binding(2) var depth_tex: texture_2d<f32>;
-@group(1) @binding(3) var normal_tex: texture_2d<f32>;
-@group(1) @binding(4) var ao_output: texture_storage_2d<r32float, write>;
-@group(1) @binding(5) var bent_output: texture_storage_2d<rgba16float, write>;
+@group(1) @binding(1) var depth_tex: texture_2d<f32>;
+@group(1) @binding(2) var normal_tex: texture_2d<f32>;
+@group(1) @binding(3) var ao_output: texture_storage_2d<r32float, write>;
 
 const NORMAL_WEIGHT_POWER = 16.0;
 const POSITION_SIGMA_SCALE = 0.01;
@@ -41,7 +39,6 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let normal_len = length(normal_raw);
     if (normal_len < 1e-6) {
         textureStore(ao_output, coord, vec4f(1.0, 1.0, 1.0, 1.0));
-        textureStore(bent_output, coord, vec4f(world_up, 1.0));
         return;
     }
 
@@ -58,7 +55,6 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let position_sigma = max(POSITION_SIGMA_MIN, view_distance * POSITION_SIGMA_SCALE);
 
     var ao_sum = 0.0;
-    var bent_sum = vec3f(0.0);
     var weight_sum = 0.0;
 
     for (var oy = 0; oy <= 1; oy = oy + 1) {
@@ -69,7 +65,6 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
                 clamp(base.y + offset.y, 0, i32(trace_resolution.y) - 1)
             );
             let tap_ao = textureLoad(ao_src, tap, 0).r;
-            let tap_bent = safe_normalize(textureLoad(bent_src, tap, 0).xyz);
             let tap_uv = (vec2f(f32(tap.x), f32(tap.y)) + 0.5) /
                 vec2f(f32(trace_resolution.x), f32(trace_resolution.y));
             let tap_full_coord = uv_to_coord(tap_uv, full_resolution);
@@ -89,18 +84,12 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
             let weight = spatial_weight * position_weight * max(normal_weight, 1e-4);
 
             ao_sum += tap_ao * weight;
-            bent_sum += tap_bent * weight;
             weight_sum += weight;
         }
     }
 
     let resolved_ao = clamp(ao_sum / weight_sum, 0.0, 1.0);
-    var resolved_bent = safe_normalize(bent_sum / weight_sum);
-    if (dot(resolved_bent, center_normal) < 0.0) {
-        resolved_bent = center_normal;
-    }
 
-    textureStore(ao_output, coord, vec4f(resolved_ao, resolved_ao, resolved_ao, 1.0));
-    textureStore(bent_output, coord, vec4f(resolved_bent, 1.0));
+    textureStore(ao_output, coord, vec4f(resolved_ao, 0.0, 0.0, 1.0));
 }
 

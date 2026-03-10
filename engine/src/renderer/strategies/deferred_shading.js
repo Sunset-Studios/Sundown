@@ -1,4 +1,4 @@
-﻿// Core imports
+// Core imports
 import { global_dispatcher } from "../../core/dispatcher.js";
 import { EntityManager } from "../../core/ecs/entity.js";
 import { FragmentGpuBuffer } from "../../core/ecs/solar/memory.js";
@@ -520,7 +520,7 @@ export class DeferredShadingStrategy {
       const gi_enabled = renderer.is_gi_enabled();
       const gi_has_builtin_specular = renderer.get_gi_strategy_type() === GIStrategyType.PTGI;
       const ao_enabled = renderer.is_ao_enabled();
-      const reflections_enabled = gi_enabled && !gi_has_builtin_specular && !!this.reflections;
+      const reflections_enabled = renderer.is_reflection_enabled() && !gi_has_builtin_specular;
 
       if (this.force_recreate) {
         render_graph.mark_pass_cache_bind_groups_dirty(true /* pass_only */);

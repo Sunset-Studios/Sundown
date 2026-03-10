@@ -2696,6 +2696,7 @@ export class SponzaScene extends Scene {
   sway_angle_deg = 120.0;
   sun_light_entity = null;
   sun_light_base_dir = [0, 0, 0];
+  sun_light_intensity_on = 30.0;
   time_elapsed_sec = 0;
   emissive_cube_entity = null;
   emissive_cube_base_pos = [0, 0, 0];
@@ -2721,7 +2722,7 @@ export class SponzaScene extends Scene {
     const light_fragment_view = EntityManager.get_fragment(light_entity, LightFragment);
     light_fragment_view.type = LightType.DIRECTIONAL;
     light_fragment_view.color = [0.9, 0.9, 1.0];
-    light_fragment_view.intensity = 30.0;
+    light_fragment_view.intensity = this.sun_light_intensity_on;
     light_fragment_view.position = [5.0, 20, 2.0];
     light_fragment_view.active = true;
     light_fragment_view.is_primary_sun = 1;
@@ -2788,6 +2789,16 @@ export class SponzaScene extends Scene {
     // Toggle light sway with 'T'
     if (InputProvider.get_action(InputKey.K_t)) {
       this.sway_light_enabled = !this.sway_light_enabled;
+    }
+
+    // Toggle directional light on/off with 'L' (intensity 0 = off)
+    if (InputProvider.get_action(InputKey.K_l) && this.sun_light_entity) {
+      const light_fragment_view = EntityManager.get_fragment(this.sun_light_entity, LightFragment);
+      if (light_fragment_view) {
+        const is_off = light_fragment_view.intensity <= 0.0;
+        light_fragment_view.intensity = is_off ? this.sun_light_intensity_on : 0.0;
+        light_fragment_view.shadows_dirty = 1;
+      }
     }
 
     if (this.sway_light_enabled && this.sun_light_entity) {
@@ -3162,10 +3173,10 @@ export class SciFiCityScene extends Scene {
   //await scene_switcher.add_scene(gi_test_scene);
   //await scene_switcher.add_scene(shadow_test_scene);
   //await scene_switcher.add_scene(gltf_model_scene);
-  await scene_switcher.add_scene(sponza_scene);
+  //await scene_switcher.add_scene(sponza_scene);
   //await scene_switcher.add_scene(living_room_scene);
   //await scene_switcher.add_scene(city_scene);
-  //await scene_switcher.add_scene(scifi_city_scene);
+  await scene_switcher.add_scene(scifi_city_scene);
 
   simulator.add_sim_layer(scene_switcher);
 

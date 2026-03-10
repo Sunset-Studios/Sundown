@@ -19,8 +19,7 @@ struct VBAOSettings {
 @group(1) @binding(0) var normal_tex: texture_2d<f32>;
 @group(1) @binding(1) var depth_tex: texture_2d<f32>;
 @group(1) @binding(2) var ao_output: texture_storage_2d<r32float, write>;
-@group(1) @binding(3) var bent_output: texture_storage_2d<rgba16float, write>;
-@group(1) @binding(4) var<uniform> settings: VBAOSettings;
+@group(1) @binding(3) var<uniform> settings: VBAOSettings;
 
 const HALF_PI = 1.5707963267948966;
 const INV_PI = 0.3183098861837907;
@@ -160,7 +159,6 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let normal_len = length(normal_raw);
     if (normal_len < 1e-6) {
         textureStore(ao_output, coord, vec4f(1.0, 1.0, 1.0, 1.0));
-        textureStore(bent_output, coord, vec4f(world_up, 1.0));
         return;
     }
 
@@ -173,7 +171,6 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let current_depth = textureLoad(depth_tex, full_coord, 0).r;
     if (current_depth >= 1.0) {
         textureStore(ao_output, coord, vec4f(1.0, 1.0, 1.0, 1.0));
-        textureStore(bent_output, coord, vec4f(world_up, 1.0));
         return;
     }
 
@@ -313,8 +310,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         1.0
     );
 
-    textureStore(ao_output, coord, vec4f(ao_visibility, ao_visibility, ao_visibility, 1.0));
-    textureStore(bent_output, coord, vec4f(normal_ws, 1.0));
+    textureStore(ao_output, coord, vec4f(ao_visibility, 0.0, 0.0, 1.0));
 }
 
 

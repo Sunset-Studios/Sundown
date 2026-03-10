@@ -1,4 +1,4 @@
-﻿import { MAX_BUFFERED_FRAMES } from "../core/minimal.js";
+import { MAX_BUFFERED_FRAMES } from "../core/minimal.js";
 import {
   DebugDrawType,
   RenderStrategyType,
@@ -49,6 +49,7 @@ export class Renderer {
   shadows_enabled = true;
   gi_enabled = true;
   ao_enabled = true;
+  reflections_enabled = true;
   use_radiance_cache_as_deferred_lighting = false;
   gi_strategy_type = GIStrategyType.DDGI;
   ao_strategy_type = AOStrategyType.VBAO;
@@ -442,6 +443,26 @@ export class Renderer {
     }
   }
 
+
+  /**
+   * Check if reflections are enabled
+   * @returns {boolean} - True if reflections are enabled, false otherwise
+   */
+  is_reflection_enabled() {
+    return this.reflections_enabled;
+  }
+
+  /**
+   * Set the reflections enabled state
+   * @param {boolean} enabled - True if reflections should be enabled, false otherwise
+   */
+  set_reflection_enabled(enabled) {
+    this.reflections_enabled = enabled;
+    if (this.render_strategy) {
+      this.refresh_render_graph();
+      this.recreate_pipeline_states();
+    }
+  }
 
   /**
    * Get the current Reflection strategy type

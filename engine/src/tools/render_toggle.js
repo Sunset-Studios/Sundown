@@ -21,6 +21,10 @@ export class RenderToggle extends DevConsoleTool {
           const is_gi_enabled = Renderer.get().is_gi_enabled();
           Renderer.get().set_gi_enabled(!is_gi_enabled);
           break;
+        case "reflection":
+          const is_reflection_enabled = Renderer.get().is_reflection_enabled();
+          Renderer.get().set_reflection_enabled(!is_reflection_enabled);
+          break;
         default:
           break;
       }

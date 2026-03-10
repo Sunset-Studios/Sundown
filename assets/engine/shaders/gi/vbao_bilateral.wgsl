@@ -19,10 +19,8 @@ struct VBAOSettings {
 @group(1) @binding(0) var depth_tex: texture_2d<f32>;
 @group(1) @binding(1) var normal_tex: texture_2d<f32>;
 @group(1) @binding(2) var ao_src: texture_2d<f32>;
-@group(1) @binding(3) var bent_src: texture_2d<f32>;
-@group(1) @binding(4) var ao_dst: texture_storage_2d<r32float, write>;
-@group(1) @binding(5) var bent_dst: texture_storage_2d<rgba16float, write>;
-@group(1) @binding(6) var<uniform> settings: VBAOSettings;
+@group(1) @binding(3) var ao_dst: texture_storage_2d<r32float, write>;
+@group(1) @binding(4) var<uniform> settings: VBAOSettings;
 
 fn gaussian(distance_sq: f32, sigma: f32) -> f32 {
     if (sigma <= 0.0) {
@@ -49,11 +47,9 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let center_normal_raw = textureLoad(normal_tex, full_coord, 0).xyz;
     let center_normal_len = length(center_normal_raw);
     let center_ao = textureLoad(ao_src, coord, 0).r;
-    let center_bent = safe_normalize(textureLoad(bent_src, coord, 0).xyz);
 
     if (center_normal_len < 1e-6) {
-        textureStore(ao_dst, coord, vec4f(center_ao, center_ao, center_ao, 1.0));
-        textureStore(bent_dst, coord, vec4f(center_bent, 1.0));
+        textureStore(ao_dst, coord, vec4f(center_ao, 0.0, 0.0, 1.0));
         return;
     }
 
@@ -63,7 +59,6 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
 
     var weight_sum = 1.0;
     var ao_sum = center_ao;
-    var bent_sum = center_bent;
 
     for (var step = -radius; step <= radius; step = step + 1) {
         let tap_offset = vec2<i32>(
@@ -88,7 +83,6 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         let tap_depth = textureLoad(depth_tex, tap_full_coord, 0).r;
         let tap_position = reconstruct_world_position(tap_uv, tap_depth, view_index);
         let tap_ao = textureLoad(ao_src, tap_coord, 0).r;
-        let tap_bent = safe_normalize(textureLoad(bent_src, tap_coord, 0).xyz);
 
         let spatial_weight = gaussian(f32(step * step), max(1.0, settings.denoise_radius_px * 0.5));
         let position_delta = tap_position - center_position;
@@ -100,18 +94,12 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
 
         let weight = spatial_weight * position_weight * normal_weight * ao_weight;
         ao_sum += tap_ao * weight;
-        bent_sum += tap_bent * weight;
         weight_sum += weight;
     }
 
     let filtered_ao = clamp(ao_sum / max(weight_sum, 1e-5), 0.0, 1.0);
-    var filtered_bent = safe_normalize(bent_sum / max(weight_sum, 1e-5));
-    if (dot(filtered_bent, center_normal) < 0.0) {
-        filtered_bent = center_normal;
-    }
 
-    textureStore(ao_dst, coord, vec4f(filtered_ao, filtered_ao, filtered_ao, 1.0));
-    textureStore(bent_dst, coord, vec4f(filtered_bent, 1.0));
+    textureStore(ao_dst, coord, vec4f(filtered_ao, 0.0, 0.0, 1.0));
 }
 
 
