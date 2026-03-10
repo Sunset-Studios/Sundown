@@ -124,7 +124,6 @@ export class SSR {
       {
         inputs: [
           gbuffer_normal,
-          gbuffer_position,
           gbuffer_smra,
           hzb_texture,
           ssr_raycast_texture,

@@ -4,19 +4,18 @@
 // ╠═══════════════════════════════════════════════════════════════════════════╣
 // ║                                                                           ║
 // ║  Pass 1 of active-only probe cycling with frustum culling priority:       ║
-// ║  - Builds two "active flag" arrays over a deterministic permutation of    ║
-// ║    probe indices: one for non-culled active, one for culled active.       ║
+// ║  - Builds one "active flags" array over a deterministic permutation of    ║
+// ║    probe indices: one u32 per slot with bit 0 = non-culled active,        ║
+// ║    bit 1 = culled active.                                                  ║
 // ║  - The permutation is frame-shifted so we cycle through the active set    ║
 // ║    temporally without structured artifacts.                               ║
 // ║                                                                           ║
 // ║  Output:                                                                  ║
-// ║  - active_flags_nonculled[slot] = 1 when permuted probe is active AND     ║
-// ║    visible in frustum                                                     ║
-// ║  - active_flags_culled[slot] = 1 when permuted probe is active AND        ║
-// ║    culled (not in frustum)                                                ║
+// ║  - active_flags[slot]: bit 0 set when permuted probe is active AND        ║
+// ║    visible in frustum; bit 1 set when active AND culled (not in frustum)   ║
 // ║                                                                           ║
-// ║  This dual-output enables the scheduling system to prioritize visible     ║
-// ║  probes while still updating culled probes stochastically.                ║
+// ║  This enables the scheduling system to prioritize visible probes while    ║
+// ║  still updating culled probes stochastically.                            ║
 // ║                                                                           ║
 // ╚═══════════════════════════════════════════════════════════════════════════╝
 // =============================================================================
@@ -30,8 +29,7 @@
 
 @group(1) @binding(0) var<uniform> ddgi_params: DDGIParams;
 @group(1) @binding(1) var<storage, read> probe_states: array<ProbeStateData>;
-@group(1) @binding(2) var<storage, read_write> active_flags_nonculled: array<u32>;
-@group(1) @binding(3) var<storage, read_write> active_flags_culled: array<u32>;
+@group(1) @binding(2) var<storage, read_write> active_flags: array<u32>;
 
 // =============================================================================
 // STOCHASTIC (BUT DETERMINISTIC) PROBE CYCLING
@@ -115,11 +113,9 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let is_culled = !ddgi_probe_state_get_cull_visible(probe_states[probe_index].packed_state);
 
     // ─────────────────────────────────────────────────────────────────────────
-    // Output to appropriate flag array based on culling status
-    // - Non-culled active probes get priority in scheduling
-    // - Culled active probes are scheduled stochastically to fill remaining budget
+    // Pack both flags into a single u32: bit 0 = non-culled active, bit 1 = culled active
     // ─────────────────────────────────────────────────────────────────────────
-    // Store culling-aware flags in permuted order (slot-space) for scheduling
-    active_flags_nonculled[slot] = select(0u, 1u, is_active && !is_culled);
-    active_flags_culled[slot] = select(0u, 1u, is_active && is_culled);
+    let nonculled_bit = select(0u, 1u, is_active && !is_culled);
+    let culled_bit = select(0u, 2u, is_active && is_culled);
+    active_flags[slot] = nonculled_bit | culled_bit;
 }

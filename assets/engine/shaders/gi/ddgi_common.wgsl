@@ -55,7 +55,7 @@ const PROBE_STATE_NEAR_GEOMETRY_DIST: f32  = 1.0;  // Multiplier of probe_spacin
 const PROBE_STATE_FLAG_CULL_VISIBLE: u32 = 1u;  // Bit 0 of flags byte (bit 24 of packed_state)
 
 // Maximum number of DDGI cascades supported
-const DDGI_MAX_CASCADES: u32 = 8u;
+const DDGI_MAX_CASCADES: u32 = 4u;
 
 struct DDGICascadeData {
     origin_spacing: vec4<f32>, // xyz = cascade origin, w = probe spacing

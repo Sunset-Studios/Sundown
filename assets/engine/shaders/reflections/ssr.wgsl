@@ -2,11 +2,10 @@
 #include "lighting_common.wgsl"
 
 @group(1) @binding(0) var gbuffer_normal: texture_2d<f32>;
-@group(1) @binding(1) var gbuffer_position: texture_2d<f32>;
-@group(1) @binding(2) var gbuffer_smra: texture_2d<f32>;
-@group(1) @binding(3) var hzb_texture: texture_2d<f32>;
-@group(1) @binding(4) var out_raycast_hit: texture_storage_2d<rgba16float, write>;
-@group(1) @binding(5) var out_raycast_mask: texture_storage_2d<rgba16float, write>;
+@group(1) @binding(1) var gbuffer_smra: texture_2d<f32>;
+@group(1) @binding(2) var hzb_texture: texture_2d<f32>;
+@group(1) @binding(3) var out_raycast_hit: texture_storage_2d<rgba16float, write>;
+@group(1) @binding(4) var out_raycast_mask: texture_storage_2d<rgba16float, write>;
 
 // Number of ray directions per pixel; we cycle through these each frame for stable temporal convergence.
 const SSR_NUM_RAY_SAMPLES = 32u;
@@ -41,7 +40,7 @@ fn trace_hiz(
     view_index: u32,
     roughness: f32,
     resolution: vec2<u32>,
-    step_jitter: f32
+    step_jitter: f32,
 ) -> vec4f {
     let mip_count = textureNumLevels(hzb_texture);
     let max_steps = u32(floor(mix(48.0, 16.0, roughness)));
@@ -80,7 +79,8 @@ fn trace_hiz(
 
         if (abs(depth_delta) <= depth_tolerance * 1.5) {
             let hit_coord = uv_to_coord(uv, resolution);
-            let scene_pos = textureLoad(gbuffer_position, hit_coord, 0).xyz;
+            let scene_depth = textureSampleLevel(hzb_texture, non_filtering_sampler, uv, 0.0).r;
+            let scene_pos = reconstruct_world_position(uv, scene_depth, view_index);
             let scene_normal = safe_normalize(textureLoad(gbuffer_normal, hit_coord, 0).xyz);
             let hit_error = distance(scene_pos, sample_pos);
             let facing = dot(scene_normal, -ray_dir);
@@ -109,6 +109,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
 
     let trace_coord = vec2<i32>(i32(gid.x), i32(gid.y));
     let full_coord = trace_to_full_coord(gid.xy, full_resolution, trace_resolution);
+    let full_uv = (vec2f(full_coord) + 0.5) / vec2f(full_resolution);
 
     let normal_data = textureLoad(gbuffer_normal, full_coord, 0).xyz;
     if (length(normal_data) < 1e-5) {
@@ -123,14 +124,15 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let reflectance = smra.r;
     let reflection_strength = (1.0 - roughness) * max(reflectance, metallic);
 
-    if (reflection_strength <= 0.001 || roughness >= 0.85) {
+    if (reflection_strength <= 0.001 || roughness >= 0.75) {
         textureStore(out_raycast_hit, trace_coord, vec4f(0.0));
         textureStore(out_raycast_mask, trace_coord, vec4f(0.0));
         return;
     }
 
-    let position = textureLoad(gbuffer_position, full_coord, 0).xyz;
     let view_index = u32(frame_info.view_index);
+    let depth = textureSampleLevel(hzb_texture, non_filtering_sampler, full_uv, 0.0).r;
+    let position = reconstruct_world_position(full_uv, depth, view_index);
     let normal = safe_normalize(normal_data);
     let view_dir = safe_normalize(view_buffer[view_index].view_position.xyz - position);
 

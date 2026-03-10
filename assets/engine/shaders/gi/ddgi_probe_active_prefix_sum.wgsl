@@ -4,8 +4,8 @@
 // ╠═══════════════════════════════════════════════════════════════════════════╣
 // ║                                                                           ║
 // ║  Pass 2 of active-only probe cycling with frustum culling priority:       ║
-// ║  - Computes exclusive prefix sums over BOTH the permuted active flag      ║
-// ║    arrays (nonculled and culled) in a single pass.                        ║
+// ║  - Reads packed active flags (bit 0 = nonculled, bit 1 = culled) and      ║
+// ║    computes exclusive prefix sums for both in a single pass.               ║
 // ║                                                                           ║
 // ║  Output:                                                                  ║
 // ║  - prefix_sum_nonculled[i] = number of nonculled active flags in [0..i)   ║
@@ -18,12 +18,11 @@
 
 #include "common.wgsl"
 
-@group(1) @binding(0) var<storage, read> active_flags_nonculled_in: array<u32>;
-@group(1) @binding(1) var<storage, read> active_flags_culled_in: array<u32>;
-@group(1) @binding(2) var<storage, read_write> prefix_sum_nonculled: array<u32>;
-@group(1) @binding(3) var<storage, read_write> prefix_sum_culled: array<u32>;
-@group(1) @binding(4) var<storage, read_write> block_sums_nonculled: array<u32>;
-@group(1) @binding(5) var<storage, read_write> block_sums_culled: array<u32>;
+@group(1) @binding(0) var<storage, read> active_flags_in: array<u32>;
+@group(1) @binding(1) var<storage, read_write> prefix_sum_nonculled: array<u32>;
+@group(1) @binding(2) var<storage, read_write> prefix_sum_culled: array<u32>;
+@group(1) @binding(3) var<storage, read_write> block_sums_nonculled: array<u32>;
+@group(1) @binding(4) var<storage, read_write> block_sums_culled: array<u32>;
 
 const WORKGROUP_SIZE = 256u;
 
@@ -44,13 +43,14 @@ fn cs(
     let global_idx = gid.x;
     let local_idx = lid.x;
     let workgroup_idx = wid.x;
-    let array_len = arrayLength(&active_flags_nonculled_in);
+    let array_len = arrayLength(&active_flags_in);
 
     // ─────────────────────────────────────────────────────────────────────────
-    // Load values for both categories
+    // Unpack flags: bit 0 = nonculled, bit 1 = culled
     // ─────────────────────────────────────────────────────────────────────────
-    let value_nonculled = select(0u, active_flags_nonculled_in[global_idx], global_idx < array_len);
-    let value_culled = select(0u, active_flags_culled_in[global_idx], global_idx < array_len);
+    let packed = select(0u, active_flags_in[global_idx], global_idx < array_len);
+    let value_nonculled = packed & 1u;
+    let value_culled = (packed >> 1u) & 1u;
 
 #if HAS_SUBGROUPS
     // ─────────────────────────────────────────────────────────────────────────

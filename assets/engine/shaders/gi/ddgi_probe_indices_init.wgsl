@@ -31,18 +31,19 @@
 @group(1) @binding(0) var<uniform> ddgi_params: DDGIParams;
 @group(1) @binding(1) var<storage, read_write> probe_update_indices: array<u32>;
 
+// Packed active flags: bit 0 = non-culled, bit 1 = culled
+@group(1) @binding(2) var<storage, read> active_flags: array<u32>;
+
 // Non-culled probe data (visible in frustum)
-@group(1) @binding(2) var<storage, read> active_flags_nonculled: array<u32>;
 @group(1) @binding(3) var<storage, read> prefix_sum_nonculled: array<u32>;
 @group(1) @binding(4) var<storage, read> block_prefixes_nonculled: array<u32>;
 
 // Culled probe data (outside frustum)
-@group(1) @binding(5) var<storage, read> active_flags_culled: array<u32>;
-@group(1) @binding(6) var<storage, read> prefix_sum_culled: array<u32>;
-@group(1) @binding(7) var<storage, read> block_prefixes_culled: array<u32>;
+@group(1) @binding(5) var<storage, read> prefix_sum_culled: array<u32>;
+@group(1) @binding(6) var<storage, read> block_prefixes_culled: array<u32>;
 
 // Counters containing total nonculled/culled counts
-@group(1) @binding(8) var<storage, read> gi_counters: GICountersReadOnly;
+@group(1) @binding(7) var<storage, read> gi_counters: GICountersReadOnly;
 
 // =============================================================================
 // STOCHASTIC (BUT DETERMINISTIC) PROBE CYCLING
@@ -137,17 +138,21 @@ fn cs(
     let global_prefix_nonculled = prefix_sum_nonculled[slot] + block_prefixes_nonculled[wid.x];
     let global_prefix_culled = prefix_sum_culled[slot] + block_prefixes_culled[wid.x];
 
+    let packed_flags = active_flags[slot];
+    let is_nonculled = (packed_flags & 1u) != 0u;
+    let is_culled = (packed_flags & 2u) != 0u;
+
     // ─────────────────────────────────────────────────────────────────────
     // Scatter nonculled probes into [0, nonculled_budget)
     // ─────────────────────────────────────────────────────────────────────
-    if (active_flags_nonculled[slot] != 0u && global_prefix_nonculled < nonculled_budget) {
+    if (is_nonculled && global_prefix_nonculled < nonculled_budget) {
         probe_update_indices[global_prefix_nonculled] = probe_index;
     }
 
     // ─────────────────────────────────────────────────────────────────────
     // Scatter culled probes into [nonculled_budget, nonculled_budget + culled_budget)
     // ─────────────────────────────────────────────────────────────────────
-    if (active_flags_culled[slot] != 0u && global_prefix_culled < culled_budget) {
+    if (is_culled && global_prefix_culled < culled_budget) {
         let output_slot = nonculled_budget + global_prefix_culled;
         probe_update_indices[output_slot] = probe_index;
     }

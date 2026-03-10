@@ -15,7 +15,7 @@ import { ispot, npot } from "../../utility/math.js";
 
 const COMPUTE_WORKGROUP_SIZE = 256;
 const DDGI_DEFAULT_PROBE_DEPTH_RESOLUTION = 16;
-const DDGI_MAX_CASCADES = 8;
+const DDGI_MAX_CASCADES = 4;
 
 const DDGI_GI_COUNTERS_NAME = "ddgi_gi_counters";
 const DDGI_GI_COUNTER_LIGHT_COUNT_INDEX = 0;
@@ -247,7 +247,7 @@ export class DDGI {
     probe_update_culled_ratio: 0.1,
     indirect_boost: 1.0,
     cascade_count: DDGI_MAX_CASCADES,
-    cascade_spacing_multiplier: 2.0,
+    cascade_spacing_multiplier: 4.0,
     probe_depth_resolutions: [8, 4, 4, 4, 4, 4, 4, 4],
     max_emissive_lights: 32768,
     diffuse_atrous_enabled: false,
@@ -782,19 +782,12 @@ export class DDGI {
     // ─────────────────────────────────────────────────────────────────────────
     // Active-only probe scheduling with frustum culling priority
     // (cull → mark → prefix sum → scatter)
-    // - We build TWO permuted active-flag arrays: one for non-culled active
-    //   probes and one for culled active probes.
+    // - We build a single permuted active-flag buffer: one u32 per slot with
+    //   bit 0 = non-culled active, bit 1 = culled active.
     // - Non-culled probes are prioritized in the update list.
     // ─────────────────────────────────────────────────────────────────────────
-    const probe_active_flags_nonculled = render_graph.create_buffer({
-      name: "ddgi_probe_active_flags_nonculled",
-      size: probe_count,
-      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-      force: force_recreate,
-    });
-
-    const probe_active_flags_culled = render_graph.create_buffer({
-      name: "ddgi_probe_active_flags_culled",
+    const probe_active_flags = render_graph.create_buffer({
+      name: "ddgi_probe_active_flags",
       size: probe_count,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
       force: force_recreate,
@@ -1091,10 +1084,9 @@ export class DDGI {
         inputs: [
           this.ddgi_params,
           probe_states,
-          probe_active_flags_nonculled,
-          probe_active_flags_culled,
+          probe_active_flags,
         ],
-        outputs: [probe_active_flags_nonculled, probe_active_flags_culled],
+        outputs: [probe_active_flags],
         shader_setup: ddgi_probe_active_mark_shader_setup,
       },
       (graph, frame_data, encoder) => {
@@ -1111,8 +1103,7 @@ export class DDGI {
       RenderPassFlags.Compute,
       {
         inputs: [
-          probe_active_flags_nonculled,
-          probe_active_flags_culled,
+          probe_active_flags,
           probe_active_prefix_sum_nonculled,
           probe_active_prefix_sum_culled,
           probe_active_block_sums_nonculled,
@@ -1172,10 +1163,9 @@ export class DDGI {
         inputs: [
           this.ddgi_params,
           probe_update_indices,
-          probe_active_flags_nonculled,
+          probe_active_flags,
           probe_active_prefix_sum_nonculled,
           probe_active_block_prefixes_nonculled,
-          probe_active_flags_culled,
           probe_active_prefix_sum_culled,
           probe_active_block_prefixes_culled,
           gi_counters,
