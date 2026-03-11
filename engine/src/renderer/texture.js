@@ -125,6 +125,12 @@ export class Texture {
     }
 
     if (this.config.pool_key) {
+      // Set mip_levels before allocate so the pool is created with a full mip chain (first
+      // allocation sets the pool's mip count). Otherwise the pool stays at 1 mip and distant
+      // objects show moiré.
+      const max_dim = Math.max(this.config.width, this.config.height);
+      this.config.mip_levels = this.config.no_mips ? 1 : Math.floor(Math.log2(max_dim)) + 1;
+      
       const allocation = TextureArrayPools.allocate(this.config);
       this.image = allocation.texture.image;
       this.views = allocation.texture.views;
@@ -224,6 +230,12 @@ export class Texture {
     const flip_y = config.flip_y !== undefined ? config.flip_y : true;
 
     if (this.config.pool_key) {
+      // Set mip_levels before allocate so the pool is created with a full mip chain (first
+      // allocation sets the pool's mip count). Otherwise the pool stays at 1 mip and distant
+      // objects show moiré.
+      const max_dim = Math.max(base.width, base.height);
+      this.config.mip_levels = this.config.no_mips ? 1 : Math.floor(Math.log2(max_dim)) + 1;
+
       const allocation = TextureArrayPools.allocate(this.config);
       this.image = allocation.texture.image;
       this.views = allocation.texture.views;

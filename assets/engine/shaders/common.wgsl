@@ -169,7 +169,9 @@ fn compute_lod_from_uv(uv: vec2f, tex_size: vec2f) -> f32 {
 }
 
 fn sample_handle_rgba(tex_handle: u32, uv: vec2<precision_float>, pool: texture_2d_array<f32>, lod: f32) -> vec4<precision_float> {
-    return textureSampleLevel(pool, global_sampler, uv, tex_handle, lod);
+    let max_lod = f32(textureNumLevels(pool) - 1u);
+    let clamped_lod = clamp(lod, 0.0, max(0.0, max_lod));
+    return textureSampleLevel(pool, global_sampler, uv, tex_handle, clamped_lod);
 }
 
 fn sample_texture_or_vec4_param_handle(

@@ -3150,13 +3150,13 @@ export class SciFiCityScene extends Scene {
   const bvh_scene = new BVHScene("BVHScene");
   const rendering_scene = new RenderingScene("RenderingScene");
   const ml_scene = new MLScene("MLScene");
-  const textures_scene = new TexturesScene("TexturesScene");
   const solar_ecs_scene = new SolarECSTestScene("SolarECSTestScene");
   const voxel_terrain_scene = new VoxelTerrainScene("VoxelTerrainScene");
   const object_painting_scene = new ObjectPaintingScene("ObjectPaintingScene");
+  const gltf_model_scene = new GLTFModelScene("GLTFModelScene");
+  const textures_scene = new TexturesScene("TexturesScene");
   const gi_test_scene = new GITestScene("GITestScene");
   const shadow_test_scene = new ShadowTestScene("ShadowTestScene");
-  const gltf_model_scene = new GLTFModelScene("GLTFModelScene");
   const sponza_scene = new SponzaScene("SponzaScene");
   const living_room_scene = new LivingRoomScene("LivingRoomScene");
   const city_scene = new CityScene("CityScene");
@@ -3164,19 +3164,19 @@ export class SciFiCityScene extends Scene {
 
   const scene_switcher = new SceneSwitcher("SceneSwitcher");
   //await scene_switcher.add_scene(solar_ecs_scene);
-  //await scene_switcher.add_scene(textures_scene);
-  //await scene_switcher.add_scene(bvh_scene);
   //await scene_switcher.add_scene(rendering_scene);
+  //await scene_switcher.add_scene(bvh_scene);
   //await scene_switcher.add_scene(ml_scene);
   //await scene_switcher.add_scene(voxel_terrain_scene);
   //await scene_switcher.add_scene(object_painting_scene);
+  //await scene_switcher.add_scene(gltf_model_scene);
+  //await scene_switcher.add_scene(textures_scene);
   //await scene_switcher.add_scene(gi_test_scene);
   //await scene_switcher.add_scene(shadow_test_scene);
-  //await scene_switcher.add_scene(gltf_model_scene);
-  await scene_switcher.add_scene(sponza_scene);
+  //await scene_switcher.add_scene(sponza_scene);
   //await scene_switcher.add_scene(living_room_scene);
   //await scene_switcher.add_scene(city_scene);
-  //await scene_switcher.add_scene(scifi_city_scene);
+  await scene_switcher.add_scene(scifi_city_scene);
 
   simulator.add_sim_layer(scene_switcher);
 
