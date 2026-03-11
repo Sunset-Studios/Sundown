@@ -29,7 +29,8 @@
 
 @group(1) @binding(0) var<uniform> ddgi_params: DDGIParams;
 @group(1) @binding(1) var<storage, read> probe_states: array<ProbeStateData>;
-@group(1) @binding(2) var<storage, read_write> active_flags: array<u32>;
+@group(1) @binding(2) var<storage, read> probe_cull_flags: array<u32>;
+@group(1) @binding(3) var<storage, read_write> active_flags: array<u32>;
 
 // =============================================================================
 // STOCHASTIC (BUT DETERMINISTIC) PROBE CYCLING
@@ -108,9 +109,11 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let is_active = is_state_active && is_in_cascade;
 
     // ─────────────────────────────────────────────────────────────────────────
-    // Check if probe is in frustum and visible (from flags byte in packed_state)
+    // Check if probe is in frustum and visible (from packed cull buffer)
     // ─────────────────────────────────────────────────────────────────────────
-    let is_culled = !ddgi_probe_state_get_cull_visible(probe_states[probe_index].packed_state);
+    let cull_word = probe_cull_flags[probe_index / 32u];
+    let cull_bit = (probe_index % 32u);
+    let is_culled = ((cull_word >> cull_bit) & 1u) == 0u;
 
     // ─────────────────────────────────────────────────────────────────────────
     // Pack both flags into a single u32: bit 0 = non-culled active, bit 1 = culled active

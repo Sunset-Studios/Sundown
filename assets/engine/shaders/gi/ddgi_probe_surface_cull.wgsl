@@ -20,11 +20,12 @@
 
 @group(1) @binding(0) var<uniform> ddgi_params: DDGIParams;
 @group(1) @binding(1) var<storage, read_write> probe_states: array<ProbeStateData>;
-@group(1) @binding(2) var<storage, read> tlas_bvh2_bounds: array<AABB>;
-@group(1) @binding(3) var<uniform> tlas_bvh_info: BVHInfo;
-@group(1) @binding(4) var<storage, read> blas_bvh2_nodes: array<AABB>;
-@group(1) @binding(5) var<storage, read> blas_directory: array<MeshDirectoryEntry>;
-@group(1) @binding(6) var<storage, read> entity_transforms: array<EntityTransform>;
+@group(1) @binding(2) var<storage, read> probe_cull_flags: array<u32>;
+@group(1) @binding(3) var<storage, read> tlas_bvh2_bounds: array<AABB>;
+@group(1) @binding(4) var<uniform> tlas_bvh_info: BVHInfo;
+@group(1) @binding(5) var<storage, read> blas_bvh2_nodes: array<AABB>;
+@group(1) @binding(6) var<storage, read> blas_directory: array<MeshDirectoryEntry>;
+@group(1) @binding(7) var<storage, read> entity_transforms: array<EntityTransform>;
 
 // =============================================================================
 // HELPERS
@@ -166,7 +167,8 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
 
     let packed_state = probe_states[probe_index].packed_state;
-    let is_cull_visible = ddgi_probe_state_get_cull_visible(packed_state);
+    let cull_word = probe_cull_flags[probe_index / 32u];
+    let is_cull_visible = ((cull_word >> (probe_index % 32u)) & 1u) != 0u;
     if (!is_cull_visible) {
         return;
     }

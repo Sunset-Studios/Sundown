@@ -11,7 +11,9 @@
 // ║  2. Occlusion Test: Is the probe visible in the Hierarchical Z-Buffer?    ║
 // ║                                                                           ║
 // ║  Output:                                                                  ║
-// ║  - probe_cull_flags[probe_index] = 1 if probe is visible, 0 otherwise     ║
+// ║  - probe_cull_flags[word_index] = 32 bits (bit i = visible for            ║
+// ║    probe word*32+i)                                                       ║
+// ║    Write-only, no probe_states RMW; 32x fewer writes than per-probe.      ║
 // ║                                                                           ║
 // ║  This information is used by the probe scheduling system to prioritize    ║
 // ║  updating probes that are visible to the camera before culled probes.     ║
@@ -27,10 +29,12 @@
 // =============================================================================
 
 @group(1) @binding(0) var<uniform> ddgi_params: DDGIParams;
-@group(1) @binding(1) var<storage, read_write> probe_states: array<ProbeStateData>;
-@group(1) @binding(2) var hzb_texture: texture_2d<f32>;
+@group(1) @binding(1) var hzb_texture: texture_2d<f32>;
+@group(1) @binding(2) var<storage, read_write> probe_cull_flags: array<u32>;
 
-const OCCLUSION_TESTING_GRID_SIZE: u32 = 3u;
+const OCCLUSION_TESTING_GRID_SIZE: u32 = 2u;
+// Each thread writes one u32 (32 visibility bits). No read-modify-write; minimal write traffic.
+const PROBES_PER_WORD: u32 = 32u;
 
 // =============================================================================
 // FRUSTUM CULLING HELPERS
@@ -43,22 +47,15 @@ const OCCLUSION_TESTING_GRID_SIZE: u32 = 3u;
 fn is_sphere_in_frustum(center: vec3<f32>, radius: f32, view_index: u32) -> bool {
     let view = view_buffer[view_index];
     
-    // Skip culling if disabled in view settings
-    if (view.culling_enabled < 0.5) {
-        return true;
-    }
-    
     // Test against all 6 frustum planes with sphere radius margin
-    for (var i = 0; i < 6; i = i + 1) {
-        let plane = view.frustum[i];
-        let dist = dot(plane.xyz, center) + plane.w;
-        // Sphere is outside if its center is further than radius from plane
-        if (dist < -radius) {
-            return false;
-        }
-    }
+    let check0 = (dot(view.frustum[0].xyz, center) + view.frustum[0].w) >= -radius;
+    let check1 = (dot(view.frustum[1].xyz, center) + view.frustum[1].w) >= -radius;
+    let check2 = (dot(view.frustum[2].xyz, center) + view.frustum[2].w) >= -radius;
+    let check3 = (dot(view.frustum[3].xyz, center) + view.frustum[3].w) >= -radius;
+    let check4 = (dot(view.frustum[4].xyz, center) + view.frustum[4].w) >= -radius;
+    let check5 = (dot(view.frustum[5].xyz, center) + view.frustum[5].w) >= -radius;
     
-    return true;
+    return view.culling_enabled < 0.5 || (check0 && check1 && check2 && check3 && check4 && check5);
 }
 
 // =============================================================================
@@ -122,13 +119,8 @@ fn sphere_project_to_screen(
         valid_corners = valid_corners + 1u;
     }
     
-    // If no valid corners, sphere is behind camera
-    if (valid_corners == 0u) {
-        return false;
-    }
-    
-    // If completely off-screen, no occlusion test needed
-    if (ndc_max.x < -1.0 || ndc_min.x > 1.0 ||
+    // If completely off-screen or no valid corners, no occlusion test needed
+    if (valid_corners == 0u || ndc_max.x < -1.0 || ndc_min.x > 1.0 ||
         ndc_max.y < -1.0 || ndc_min.y > 1.0) {
         return false;
     }
@@ -228,44 +220,34 @@ fn is_sphere_occluded(center: vec3<f32>, radius: f32, view_index: u32) -> bool {
 // =============================================================================
 // MAIN COMPUTE SHADER
 // =============================================================================
+// Each thread writes one u32 (32 probes' visibility bits). No probe_states read/write.
+// Dispatch: ceil(probe_count / 32 / 256) workgroups.
+// =============================================================================
 
 @compute @workgroup_size(256, 1, 1)
 fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let probe_count = u32(ddgi_params.probe_counts.x);
-    let probe_index = gid.x;
-    
-    if (probe_index >= probe_count) {
-        return;
-    }
-    
-    // Get probe world position (including any offset)
-    let probe_pos = ddgi_probe_world_position_from_index(&ddgi_params, probe_index);
-    
-    // ─────────────────────────────────────────────────────────────────────────
-    // Calculate probe influence radius for conservative culling
-    // Use probe spacing as the influence radius - probes can contribute
-    // to surfaces within this distance
-    // ─────────────────────────────────────────────────────────────────────────
-    let probe_spacing = ddgi_probe_spacing_from_index(&ddgi_params, probe_index);
-    let influence_radius = probe_spacing * 0.75;  // Conservative margin
-    
-    // Get view index from frame info
     let view_index = u32(frame_info.view_index);
-    
-    // ─────────────────────────────────────────────────────────────────────────
-    // Two-stage culling:
-    // 1. Frustum Test - Is the probe inside the view frustum?
-    // 2. Occlusion Test - Is the probe visible (not behind occluders)?
-    // ─────────────────────────────────────────────────────────────────────────
-    var is_visible = is_sphere_in_frustum(probe_pos, influence_radius, view_index);
-    // Only perform occlusion test if probe is in frustum
-    if (is_visible) {
-        is_visible = !is_sphere_occluded(probe_pos, influence_radius, view_index);
+    let word_index = gid.x;
+    let base_index = word_index * PROBES_PER_WORD;
+
+    var bits: u32 = 0u;
+    for (var i = 0u; i < PROBES_PER_WORD; i = i + 1u) {
+        let probe_index = base_index + i;
+        if (probe_index >= probe_count) {
+            break;
+        }
+        let probe_pos = ddgi_probe_world_position_from_index(&ddgi_params, probe_index);
+        let probe_spacing = ddgi_probe_spacing_from_index(&ddgi_params, probe_index);
+        let influence_radius = probe_spacing * 0.75;
+        var is_visible = is_sphere_in_frustum(probe_pos, influence_radius, view_index);
+        if (is_visible) {
+            is_visible = !is_sphere_occluded(probe_pos, influence_radius, view_index);
+        }
+        if (is_visible) {
+            bits = bits | (1u << i);
+        }
     }
     
-    // Write culling result into the flags byte of packed_state
-    probe_states[probe_index].packed_state = ddgi_probe_state_set_cull_visible(
-        probe_states[probe_index].packed_state,
-        is_visible
-    );
+    probe_cull_flags[word_index] = bits;
 }

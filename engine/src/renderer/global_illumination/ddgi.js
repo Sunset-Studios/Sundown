@@ -206,6 +206,12 @@ const ddgi_sh_probe_accumulate_shader_setup = {
   },
 };
 
+const ddgi_depth_update_shader_setup = {
+  pipeline_shaders: {
+    compute: { path: "gi/ddgi_depth_update.wgsl" },
+  },
+};
+
 const ddgi_sh_probe_sample_shader_setup = {
   pipeline_shaders: {
     compute: { path: "gi/ddgi_sh_probe_sample.wgsl" },
@@ -852,6 +858,14 @@ export class DDGI {
       force: force_recreate,
     });
 
+    // Per-probe alpha from SH accumulate (used by depth-update pass for hysteresis).
+    const probe_alpha = render_graph.create_buffer({
+      name: "ddgi_probe_alpha",
+      size: probe_count,
+      usage: GPUBufferUsage.STORAGE,
+      force: force_recreate,
+    });
+
     // ─────────────────────────────────────────────────────────────────────────
     // Probe Depth Moments Buffers (Directional visibility, octahedral 8x8)
     // Per-cascade depth atlas resolution:
@@ -889,6 +903,14 @@ export class DDGI {
       name: "ddgi_probe_states",
       size: probe_count * 2,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+      force: force_recreate,
+    });
+
+    // Packed cull visibility: 1 bit per probe (word i = probes [i*32 .. i*32+31]). Write-only in cull pass to minimize write traffic.
+    const probe_cull_flags = render_graph.create_buffer({
+      name: "ddgi_probe_cull_flags",
+      size: Math.ceil(probe_count / 32),
+      usage: GPUBufferUsage.STORAGE,
       force: force_recreate,
     });
 
@@ -1035,13 +1057,14 @@ export class DDGI {
       "ddgi_probe_cull",
       RenderPassFlags.Compute,
       {
-        inputs: [this.ddgi_params, probe_states, hzb_texture],
-        outputs: [probe_states],
+        inputs: [this.ddgi_params, hzb_texture, probe_cull_flags],
+        outputs: [probe_cull_flags],
         shader_setup: ddgi_probe_cull_shader_setup,
       },
       (graph, frame_data, encoder) => {
         const pass = graph.get_physical_pass(frame_data.current_pass);
-        pass.dispatch(Math.ceil(probe_count / COMPUTE_WORKGROUP_SIZE), 1, 1);
+        const cull_word_count = Math.ceil(probe_count / 32);
+        pass.dispatch(Math.ceil(cull_word_count / COMPUTE_WORKGROUP_SIZE), 1, 1);
       }
     );
 
@@ -1057,6 +1080,7 @@ export class DDGI {
         inputs: [
           this.ddgi_params,
           probe_states,
+          probe_cull_flags,
           tlas_bvh2_bounds,
           tlas_bvh_info,
           blas_bvh2_nodes,
@@ -1084,6 +1108,7 @@ export class DDGI {
         inputs: [
           this.ddgi_params,
           probe_states,
+          probe_cull_flags,
           probe_active_flags,
         ],
         outputs: [probe_active_flags],
@@ -1305,17 +1330,40 @@ export class DDGI {
           probe_update_indices,
           probe_ray_allocations,
           probe_ray_data,
+          probe_alpha,
           sh_probes,
-          probe_depth_moments,
           probe_states,
           gi_counters,
         ],
-        outputs: [sh_probes, probe_depth_moments, probe_states],
+        outputs: [probe_alpha, sh_probes, probe_states],
         shader_setup: ddgi_sh_probe_accumulate_shader_setup,
       },
       (graph, frame_data, encoder) => {
         const pass = graph.get_physical_pass(frame_data.current_pass);
-        pass.dispatch(Math.ceil(probes_per_frame / COMPUTE_WORKGROUP_SIZE), 1, 1);
+        pass.dispatch(probes_per_frame, 1, 1);
+      }
+    );
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Depth Moment Update Pass (1 thread per ray for better occupancy)
+    // Reads alpha per probe from accumulate; updates octahedral depth moments.
+    // ─────────────────────────────────────────────────────────────────────────
+    render_graph.add_pass(
+      "ddgi_depth_update",
+      RenderPassFlags.Compute,
+      {
+        inputs: [
+          this.ddgi_params,
+          probe_ray_data,
+          probe_alpha,
+          probe_depth_moments,
+        ],
+        outputs: [probe_depth_moments],
+        shader_setup: ddgi_depth_update_shader_setup,
+      },
+      (graph, frame_data, encoder) => {
+        const pass = graph.get_physical_pass(frame_data.current_pass);
+        pass.dispatch(Math.ceil(probe_total_ray_count / COMPUTE_WORKGROUP_SIZE), 1, 1);
       }
     );
 
@@ -1357,7 +1405,7 @@ export class DDGI {
           sh_probes,
           probe_states,
           probe_depth_moments,
-          gbuffer_position,
+          hzb_texture,
           gbuffer_normal,
           this.final_gi_texture_indirect_diffuse,
           skydome_data_buffer,
@@ -1369,8 +1417,8 @@ export class DDGI {
       (graph, frame_data, encoder) => {
         const pass = graph.get_physical_pass(frame_data.current_pass);
         pass.dispatch(
-          Math.ceil(this.ddgi_frame_setup.width / 8),
-          Math.ceil(this.ddgi_frame_setup.height / 8),
+          Math.ceil(this.ddgi_frame_setup.width / 16),
+          Math.ceil(this.ddgi_frame_setup.height / 16),
           1
         );
       }

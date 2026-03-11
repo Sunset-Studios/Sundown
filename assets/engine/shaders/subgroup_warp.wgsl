@@ -48,3 +48,7 @@ fn make_warp_ctx(local_tid: u32, lane: u32, warp_size: u32) -> WarpCtx {
 
 #define warp_any(warp_ctx, predicate) subgroupAny(predicate)
 #define warp_all(warp_ctx, predicate) subgroupAll(predicate)
+
+#define warp_or(warp_ctx, value) subgroupOr(value)
+#define warp_and(warp_ctx, value) subgroupAnd(value)
+#define warp_xor(warp_ctx, value) subgroupXor(value)

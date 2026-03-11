@@ -20,6 +20,9 @@
 #include "sky_common.wgsl"
 #include "gi/ddgi_common.wgsl"
 
+// Sky pixels have zero or near-zero normal length; use squared length to avoid sqrt.
+const DDGI_SAMPLE_SKY_NORMAL_LENGTH_SQ_EPS: f32 = 1e-10;
+
 // =============================================================================
 // BINDINGS
 // =============================================================================
@@ -28,7 +31,7 @@
 @group(1) @binding(1) var<storage, read_write> sh_probes: array<u32>;
 @group(1) @binding(2) var<storage, read_write> probe_states: array<ProbeStateData>;
 @group(1) @binding(3) var<storage, read> probe_depth_moments: array<u32>;
-@group(1) @binding(4) var gbuffer_position: texture_2d<f32>;
+@group(1) @binding(4) var hzb_texture: texture_2d<f32>;
 @group(1) @binding(5) var gbuffer_normal: texture_2d<f32>;
 @group(1) @binding(6) var output_diffuse: texture_storage_2d<rgba16float, write>;
 @group(1) @binding(7) var<uniform> scene_lighting_data: SceneLightingData;
@@ -38,7 +41,7 @@
 // MAIN COMPUTE SHADER
 // =============================================================================
 
-@compute @workgroup_size(8, 8, 1)
+@compute @workgroup_size(16, 16, 1)
 fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     // ─────────────────────────────────────────────────────────────────────────
     // Bounds check
@@ -48,14 +51,18 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         return;
     }
     
+    let view_index = u32(frame_info.view_index);
     let pixel_coord = vec2<i32>(i32(gid.x), i32(gid.y));
-    let position = textureLoad(gbuffer_position, pixel_coord, 0).xyz;
+    let uv = (vec2f(f32(pixel_coord.x), f32(pixel_coord.y)) + 0.5) / vec2f(f32(res.x), f32(res.y));
+
+    let depth = textureSampleLevel(hzb_texture, non_filtering_sampler, uv, 0.0).r;
+    let position = reconstruct_world_position(uv, depth, view_index);
     let normal_data = textureLoad(gbuffer_normal, pixel_coord, 0);
     
     // ─────────────────────────────────────────────────────────────────────────
-    // Skip sky pixels (no geometry)
+    // Skip sky pixels (no geometry). Squared length avoids sqrt.
     // ─────────────────────────────────────────────────────────────────────────
-    if (length(normal_data.xyz) <= 0.0) {
+    if (dot(normal_data.xyz, normal_data.xyz) <= DDGI_SAMPLE_SKY_NORMAL_LENGTH_SQ_EPS) {
         textureStore(output_diffuse, pixel_coord, vec4f(0.0));
         return;
     }

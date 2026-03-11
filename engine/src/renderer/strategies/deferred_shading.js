@@ -1205,6 +1205,7 @@ export class DeferredShadingStrategy {
       if (shadows_enabled) {
         this.as_vsm.add_passes(render_graph, {
           position_texture: main_position_image,
+          depth_texture: main_depth_image,
           entity_flags: entity_flags,
           aabb_bounds: aabb_bounds,
           lights: lights,

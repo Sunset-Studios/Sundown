@@ -148,8 +148,8 @@ fn ddgi_probe_state_set_cull_visible(packed: u32, visible: bool) -> u32 {
     );
 }
 
-fn ddgi_probe_state_get_sample_count(probe_state: ProbeStateData) -> u32 {
-    return probe_state.sample_count;
+fn ddgi_probe_state_get_sample_count(probe_state: ptr<storage, ProbeStateData, read_write>) -> u32 {
+    return (*probe_state).sample_count;
 }
 
 fn ddgi_probe_state_set_sample_count(probe_state: ptr<storage, ProbeStateData, read_write>, count: u32) {
@@ -990,16 +990,6 @@ fn ddgi_sample_sh_irradiance_with_states(
     normal_ws: vec3<f32>
 ) -> vec3<f32> {
     let cascade_count = ddgi_cascade_count(ddgi_params);
-    let highest_cascade_index = cascade_count - 1u;
-    let is_inside_highest_cascade = ddgi_position_inside_cascade_bounds(
-        ddgi_params,
-        highest_cascade_index,
-        position
-    );
-    if (!is_inside_highest_cascade) {
-        return vec3<f32>(0.0);
-    }
-
     let cascade_index = ddgi_cascade_index_for_position(ddgi_params, position);
     
     // Use fallback-aware sampling to handle initializing probes

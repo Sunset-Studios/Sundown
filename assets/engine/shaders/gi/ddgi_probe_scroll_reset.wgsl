@@ -85,7 +85,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
 
         let coarse_sh = ddgi_sh_probe_read(&sh_probes, coarse_probe_index);
         ddgi_sh_probe_write(&sh_probes, probe_index, coarse_sh);
-        let coarse_sample_count = ddgi_probe_state_get_sample_count(probe_states[coarse_probe_index]);
+        let coarse_sample_count = ddgi_probe_state_get_sample_count(&probe_states[coarse_probe_index]);
         ddgi_probe_state_set_sample_count(&probe_states[probe_index], coarse_sample_count);
     } else {
         let sh_base = probe_index * DDGI_SH_PROBE_SIZE_U32;
@@ -102,7 +102,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         probe_depth_moments[depth_base + texel] = 0u;
     }
 
-    let reset_sample_count = ddgi_probe_state_get_sample_count(probe_states[probe_index]);
+    let reset_sample_count = ddgi_probe_state_get_sample_count(&probe_states[probe_index]);
     ddgi_probe_state_set_sample_count(&probe_states[probe_index], reset_sample_count);
     probe_states[probe_index].packed_state = probe_state_pack(PROBE_STATE_UNINITIALIZED, 0u, 0u, 0u);
 }

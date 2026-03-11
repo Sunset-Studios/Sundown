@@ -284,6 +284,7 @@ export class AdaptiveSparseVirtualShadowMaps {
     render_graph,
     {
       position_texture,
+      depth_texture,
       entity_flags,
       aabb_bounds,
       lights,
@@ -510,7 +511,7 @@ export class AdaptiveSparseVirtualShadowMaps {
       RenderPassFlags.Compute,
       {
         inputs: [
-          position_texture,
+          depth_texture,
           this.settings_buf,
           this.bitmask_buf,
           this.light_view_buf,
@@ -523,9 +524,9 @@ export class AdaptiveSparseVirtualShadowMaps {
       },
       (graph, frame_data, encoder) => {
         const pass = graph.get_physical_pass(frame_data.current_pass);
-        const position_img = graph.get_physical_image(position_texture);
-        const w = position_img.config.width;
-        const h = position_img.config.height;
+        const depth_img = graph.get_physical_image(depth_texture);
+        const w = depth_img.config.width;
+        const h = depth_img.config.height;
         pass.dispatch(Math.ceil(w / 8), Math.ceil(h / 8), adjusted_light_count);
       }
     );

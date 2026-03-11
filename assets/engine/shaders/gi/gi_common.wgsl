@@ -189,6 +189,11 @@ fn sample_cosine_hemisphere(u1: f32, u2: f32, normal: vec3<f32>) -> vec3<f32> {
 
 fn encode_octahedral(direction: vec3<f32>) -> vec2<f32> {
     let normal = safe_normalize(direction);
+    return encode_octahedral_normalized(normal);
+}
+
+// Same as encode_octahedral but assumes direction is already unit length (avoids redundant normalize).
+fn encode_octahedral_normalized(normal: vec3<f32>) -> vec2<f32> {
     var projected = normal.xy / max(abs(normal.x) + abs(normal.y) + abs(normal.z), 1e-6);
     let wrap_sign = vec2<f32>(
         select(-1.0, 1.0, projected.x >= 0.0),
