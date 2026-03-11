@@ -1,6 +1,9 @@
 import { Renderer } from "../renderer.js";
 import { RenderPassFlags } from "../renderer_types.js";
 
+// Trace resolution scale (0.25 = quarter-res, ~4x faster raycast; 0.5 = half-res, better quality).
+const SSR_TRACE_RESOLUTION_SCALE = 0.5;
+
 const ssr_raycast_shader_setup = {
   pipeline_shaders: {
     compute: { path: "reflections/ssr.wgsl" },
@@ -88,8 +91,8 @@ export class SSR {
     hzb_texture,
     force_recreate = false
   ) {
-    const trace_width = Math.max(1, Math.ceil(width * 0.5));
-    const trace_height = Math.max(1, Math.ceil(height * 0.5));
+    const trace_width = Math.max(1, Math.ceil(width * SSR_TRACE_RESOLUTION_SCALE));
+    const trace_height = Math.max(1, Math.ceil(height * SSR_TRACE_RESOLUTION_SCALE));
     const ping_pong_frame = Renderer.get().get_buffered_frame_number();
 
     ssr_output_image_config.width = width;

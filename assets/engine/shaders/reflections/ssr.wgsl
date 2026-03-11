@@ -9,8 +9,8 @@
 
 // Number of ray directions per pixel; we cycle through these each frame for stable temporal convergence.
 const SSR_NUM_RAY_SAMPLES = 32u;
-// Retries for ray direction when the sampled direction goes below the surface.
-const SSR_RAY_DIR_RETRIES = 8u;
+// Retries for ray direction when the sampled direction goes below the surface. Lower = faster, 4 is a good balance.
+const SSR_RAY_DIR_RETRIES = 4u;
 
 fn project_to_uv(position: vec3f, view_index: u32) -> vec2f {
     let clip = view_buffer[view_index].view_projection_matrix * vec4f(position, 1.0);
@@ -124,7 +124,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let reflectance = smra.r;
     let reflection_strength = (1.0 - roughness) * max(reflectance, metallic);
 
-    if (reflection_strength <= 0.001 || roughness >= 0.75) {
+    if (reflection_strength <= 0.001 || roughness >= 0.7) {
         textureStore(out_raycast_hit, trace_coord, vec4f(0.0));
         textureStore(out_raycast_mask, trace_coord, vec4f(0.0));
         return;

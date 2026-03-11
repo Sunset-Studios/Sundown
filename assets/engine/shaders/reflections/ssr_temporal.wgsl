@@ -7,8 +7,11 @@
 @group(1) @binding(4) var out_temporal: texture_storage_2d<rgba16float, write>;
 
 const FLT_EPS = 1e-6;
-const TEMPORAL_RESPONSE_MIN = 0.01;
-const TEMPORAL_RESPONSE_MAX = 0.1;
+const TEMPORAL_RESPONSE_MIN = 0.1;
+const TEMPORAL_RESPONSE_MAX = 0.25;
+// Expand resolve AABB so we reject ghosting but don't over-clamp and kill accumulation.
+const AABB_EXPAND_FACTOR = 0.1;
+const AABB_EXPAND_MIN = 0.02;
 
 fn clip_aabb(aabb_min: vec3f, aabb_max: vec3f, p: vec4f, q: vec4f) -> vec4f {
     let p_clip = 0.5 * (aabb_max + aabb_min);
@@ -62,9 +65,15 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
     neigh_avg *= (1.0 / 9.0);
 
+    // Widen resolve AABB so clipping rejects ghosting but doesn't crush valid history (noise).
+    let extent = neigh_max - neigh_min;
+    let margin = max(extent * AABB_EXPAND_FACTOR, vec3f(AABB_EXPAND_MIN));
+    let clip_min = neigh_min - margin;
+    let clip_max = neigh_max + margin;
+
     let clipped_history = clip_aabb(
-        neigh_min,
-        neigh_max,
+        clip_min,
+        clip_max,
         vec4f(clamp(neigh_avg, neigh_min, neigh_max), current_confidence),
         history
     );
