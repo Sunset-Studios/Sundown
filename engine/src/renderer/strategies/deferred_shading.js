@@ -219,7 +219,6 @@ const prev_lighting_image_config = {
   b_one_view_per_mip: true,
 };
 
-
 const skybox_shader_setup = {
   pipeline_shaders: {
     vertex: {
@@ -401,7 +400,6 @@ const clear_dirty_flags_shader_setup = {
   },
 };
 
-
 const swapchain_name = "swapchain";
 const clear_g_buffer_pass_name = "clear_g_buffer";
 const skydome_pass_name = "skydome_pass";
@@ -409,7 +407,6 @@ const depth_prepass_name = "depth_prepass";
 const transparency_composite_pass_name = "transparency_composite";
 const reset_g_buffer_targets_pass_name = "reset_g_buffer_targets";
 const lighting_pass_name = "lighting_pass";
-const bloom_resolve_pass_name = "bloom_resolve_pass";
 const fullscreen_present_pass_name = "fullscreen_present_pass";
 
 // Debug shader setups for AS-VSM debug views
