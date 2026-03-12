@@ -41,7 +41,7 @@ const BVH2_NODE_DATA_SIZE = 8; // BVH2 node: AABB (6 floats) + metadata (2 u32)
 const INITIAL_MAX_PAGES = 256; // Conservative initial allocation (16K nodes)
 const PAGE_SIZE = 64; // Nodes per page (optimal for GPU workgroup size)
 const UINT32_BYTES = 4; // Standard 32-bit integer size
-const DIRECTORY_ENTRY_SIZE = 6; // Per-mesh metadata: [bvh2_base, bvh2_cap, leaf_count, first_vertex, first_index, padding]
+const DIRECTORY_ENTRY_SIZE = 4; // Per-mesh metadata: [bvh2_base, leaf_count, first_vertex, first_index]
 
 // ┌─────────────────────────────────────────────────────────────────────────────────────────────┐
 // │                         🔧 COMPUTE SHADER BUILD CONFIGURATION                                │
@@ -434,16 +434,14 @@ export class MeshBLAS {
       bvh2_base_index = existing_bvh2.base_node_index;
     }
 
-    // Update directory entry: [bvh2_base, bvh2_capacity, leaf_count, first_vertex, first_index, padding]
+    // Update directory entry: [bvh2_base, leaf_count, first_vertex, first_index]
     const bvh2_allocation = this.#bvh2_allocations.get(mesh_id);
     const directory_offset = mesh_id * DIRECTORY_ENTRY_SIZE;
 
     this.#directory[directory_offset + 0] = bvh2_base_index >>> 0;
-    this.#directory[directory_offset + 1] = bvh2_allocation.node_capacity >>> 0;
-    this.#directory[directory_offset + 2] = triangle_count >>> 0;
-    this.#directory[directory_offset + 3] = first_vertex >>> 0;
-    this.#directory[directory_offset + 4] = first_index >>> 0;
-    this.#directory[directory_offset + 5] = 0;
+    this.#directory[directory_offset + 1] = triangle_count >>> 0;
+    this.#directory[directory_offset + 2] = first_vertex >>> 0;
+    this.#directory[directory_offset + 3] = first_index >>> 0;
 
     // Write directory entry to GPU
     this.#directory_buffer.write_raw(

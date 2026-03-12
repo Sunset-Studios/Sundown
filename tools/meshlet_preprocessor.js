@@ -1,0 +1,941 @@
+import crypto from "crypto";
+import fs from "fs";
+import path from "path";
+import { fileURLToPath } from "url";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+const ASSET_ROOT = path.resolve(__dirname, "../assets");
+
+const GENERATOR_VERSION = 1;
+const DEFAULT_MAX_VERTICES = 64;
+const DEFAULT_MAX_TRIANGLES = 124;
+const DEFAULT_CLUSTER_GROUP_SIZE = 8;
+
+const MESHLET_STRUCT_STRIDE = 80;
+const MESHLET_GROUP_STRUCT_STRIDE = 64;
+
+const COMPONENT_TYPE_BYTE_SIZE = {
+  5120: 1,
+  5121: 1,
+  5122: 2,
+  5123: 2,
+  5125: 4,
+  5126: 4,
+};
+
+const ACCESSOR_COMPONENT_COUNT = {
+  SCALAR: 1,
+  VEC2: 2,
+  VEC3: 3,
+  VEC4: 4,
+  MAT2: 4,
+  MAT3: 9,
+  MAT4: 16,
+};
+
+function align_to(value, alignment) {
+  return Math.ceil(value / alignment) * alignment;
+}
+
+function find_gltf_files(dir, gltf_files) {
+  const entries = fs.readdirSync(dir, { withFileTypes: true });
+
+  for (const entry of entries) {
+    const full_path = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      find_gltf_files(full_path, gltf_files);
+    } else if (entry.isFile() && entry.name.toLowerCase().endsWith(".gltf")) {
+      gltf_files.push(full_path);
+    }
+  }
+}
+
+function decode_data_uri(uri) {
+  const match = uri.match(/^data:.*?(;base64)?,(.*)$/);
+  if (!match) {
+    throw new Error(`Unsupported data URI: ${uri.slice(0, 64)}`);
+  }
+
+  const is_base64 = Boolean(match[1]);
+  const payload = match[2];
+  return is_base64
+    ? Buffer.from(payload, "base64")
+    : Buffer.from(decodeURIComponent(payload), "utf8");
+}
+
+function load_referenced_buffer(base_dir, uri) {
+  if (!uri) {
+    throw new Error("glTF buffer is missing a uri.");
+  }
+
+  if (uri.startsWith("data:")) {
+    return decode_data_uri(uri);
+  }
+
+  return fs.readFileSync(path.resolve(base_dir, uri));
+}
+
+function create_source_hash(settings, gltf_text, referenced_buffers) {
+  const hash = crypto.createHash("sha1");
+  hash.update(JSON.stringify(settings));
+  hash.update(gltf_text);
+
+  for (const buffer of referenced_buffers) {
+    hash.update(buffer);
+  }
+
+  return hash.digest("hex");
+}
+
+function get_accessor_component_count(accessor) {
+  const count = ACCESSOR_COMPONENT_COUNT[accessor.type];
+  if (!count) {
+    throw new Error(`Unsupported accessor type "${accessor.type}".`);
+  }
+  return count;
+}
+
+function read_numeric_component(view, byte_offset, component_type) {
+  switch (component_type) {
+    case 5120:
+      return view.getInt8(byte_offset);
+    case 5121:
+      return view.getUint8(byte_offset);
+    case 5122:
+      return view.getInt16(byte_offset, true);
+    case 5123:
+      return view.getUint16(byte_offset, true);
+    case 5125:
+      return view.getUint32(byte_offset, true);
+    case 5126:
+      return view.getFloat32(byte_offset, true);
+    default:
+      throw new Error(`Unsupported component type ${component_type}.`);
+  }
+}
+
+function normalize_component(value, component_type) {
+  switch (component_type) {
+    case 5120:
+      return Math.max(value / 127.0, -1.0);
+    case 5121:
+      return value / 255.0;
+    case 5122:
+      return Math.max(value / 32767.0, -1.0);
+    case 5123:
+      return value / 65535.0;
+    default:
+      return value;
+  }
+}
+
+function read_accessor_to_float32(document, accessor_index) {
+  const accessor = document.accessors?.[accessor_index];
+  if (!accessor) {
+    throw new Error(`Missing accessor ${accessor_index}.`);
+  }
+
+  const buffer_view = document.bufferViews?.[accessor.bufferView];
+  if (!buffer_view) {
+    throw new Error(`Accessor ${accessor_index} is missing bufferView data.`);
+  }
+
+  const source_buffer = document.buffers[buffer_view.buffer];
+  const component_count = get_accessor_component_count(accessor);
+  const component_size = COMPONENT_TYPE_BYTE_SIZE[accessor.componentType];
+  const element_size = component_count * component_size;
+  const accessor_offset = accessor.byteOffset || 0;
+  const buffer_view_offset = buffer_view.byteOffset || 0;
+  const stride = buffer_view.byteStride || element_size;
+  const base_offset = buffer_view_offset + accessor_offset;
+
+  const out = new Float32Array(accessor.count * component_count);
+  const view = new DataView(source_buffer.buffer, source_buffer.byteOffset, source_buffer.byteLength);
+
+  for (let i = 0; i < accessor.count; i++) {
+    const element_offset = base_offset + i * stride;
+    for (let c = 0; c < component_count; c++) {
+      const component_offset = element_offset + c * component_size;
+      let value = read_numeric_component(view, component_offset, accessor.componentType);
+      if (accessor.normalized) {
+        value = normalize_component(value, accessor.componentType);
+      }
+      out[i * component_count + c] = value;
+    }
+  }
+
+  return out;
+}
+
+function read_accessor_to_indices(document, accessor_index) {
+  const accessor = document.accessors?.[accessor_index];
+  if (!accessor) {
+    throw new Error(`Missing accessor ${accessor_index}.`);
+  }
+
+  if (accessor.type !== "SCALAR") {
+    throw new Error(`Index accessor ${accessor_index} must be SCALAR.`);
+  }
+
+  const raw = read_accessor_to_float32(document, accessor_index);
+  const out = new Uint32Array(raw.length);
+  for (let i = 0; i < raw.length; i++) {
+    out[i] = raw[i];
+  }
+  return out;
+}
+
+function compute_position_bounds(positions) {
+  const bounds_min = [Infinity, Infinity, Infinity];
+  const bounds_max = [-Infinity, -Infinity, -Infinity];
+
+  for (let i = 0; i < positions.length; i += 3) {
+    bounds_min[0] = Math.min(bounds_min[0], positions[i + 0]);
+    bounds_min[1] = Math.min(bounds_min[1], positions[i + 1]);
+    bounds_min[2] = Math.min(bounds_min[2], positions[i + 2]);
+    bounds_max[0] = Math.max(bounds_max[0], positions[i + 0]);
+    bounds_max[1] = Math.max(bounds_max[1], positions[i + 1]);
+    bounds_max[2] = Math.max(bounds_max[2], positions[i + 2]);
+  }
+
+  if (!Number.isFinite(bounds_min[0])) {
+    return {
+      min: [0, 0, 0],
+      max: [0, 0, 0],
+    };
+  }
+
+  return {
+    min: bounds_min,
+    max: bounds_max,
+  };
+}
+
+function get_position(positions, vertex_index) {
+  const base = vertex_index * 3;
+  return [positions[base + 0], positions[base + 1], positions[base + 2]];
+}
+
+function add_vec3(a, b) {
+  return [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
+}
+
+function sub_vec3(a, b) {
+  return [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+}
+
+function scale_vec3(v, scalar) {
+  return [v[0] * scalar, v[1] * scalar, v[2] * scalar];
+}
+
+function dot_vec3(a, b) {
+  return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+}
+
+function cross_vec3(a, b) {
+  return [
+    a[1] * b[2] - a[2] * b[1],
+    a[2] * b[0] - a[0] * b[2],
+    a[0] * b[1] - a[1] * b[0],
+  ];
+}
+
+function length_vec3(v) {
+  return Math.sqrt(dot_vec3(v, v));
+}
+
+function normalize_vec3(v) {
+  const length = length_vec3(v);
+  if (length <= 1e-8) {
+    return [0, 1, 0];
+  }
+  return scale_vec3(v, 1.0 / length);
+}
+
+function compute_sphere_from_bounds(bounds_min, bounds_max, vertices) {
+  const center = [
+    (bounds_min[0] + bounds_max[0]) * 0.5,
+    (bounds_min[1] + bounds_max[1]) * 0.5,
+    (bounds_min[2] + bounds_max[2]) * 0.5,
+  ];
+
+  let radius = 0.0;
+  for (const vertex of vertices) {
+    const delta = sub_vec3(vertex, center);
+    radius = Math.max(radius, Math.sqrt(dot_vec3(delta, delta)));
+  }
+
+  return { center, radius };
+}
+
+function compute_normal_cone(meshlet_global_vertices, meshlet_local_indices, positions) {
+  let axis_sum = [0, 0, 0];
+  const normals = [];
+
+  for (let i = 0; i < meshlet_local_indices.length; i += 3) {
+    const v0 = get_position(positions, meshlet_global_vertices[meshlet_local_indices[i + 0]]);
+    const v1 = get_position(positions, meshlet_global_vertices[meshlet_local_indices[i + 1]]);
+    const v2 = get_position(positions, meshlet_global_vertices[meshlet_local_indices[i + 2]]);
+
+    const edge_a = sub_vec3(v1, v0);
+    const edge_b = sub_vec3(v2, v0);
+    const cross = cross_vec3(edge_a, edge_b);
+    const area = length_vec3(cross);
+    if (area <= 1e-8) {
+      continue;
+    }
+
+    const normal = scale_vec3(cross, 1.0 / area);
+    normals.push(normal);
+    axis_sum = add_vec3(axis_sum, normal);
+  }
+
+  if (normals.length === 0) {
+    return {
+      axis: [0, 1, 0],
+      cutoff: -1.0,
+    };
+  }
+
+  const axis = normalize_vec3(axis_sum);
+  let cutoff = 1.0;
+
+  for (const normal of normals) {
+    cutoff = Math.min(cutoff, dot_vec3(axis, normal));
+  }
+
+  return {
+    axis,
+    cutoff,
+  };
+}
+
+function create_pending_meshlet() {
+  return {
+    global_vertices: [],
+    global_to_local: new Map(),
+    local_indices: [],
+  };
+}
+
+function finalize_meshlet(pending_meshlet, positions) {
+  const vertices = pending_meshlet.global_vertices.map((vertex_index) =>
+    get_position(positions, vertex_index)
+  );
+
+  const bounds_min = [Infinity, Infinity, Infinity];
+  const bounds_max = [-Infinity, -Infinity, -Infinity];
+  for (const vertex of vertices) {
+    bounds_min[0] = Math.min(bounds_min[0], vertex[0]);
+    bounds_min[1] = Math.min(bounds_min[1], vertex[1]);
+    bounds_min[2] = Math.min(bounds_min[2], vertex[2]);
+    bounds_max[0] = Math.max(bounds_max[0], vertex[0]);
+    bounds_max[1] = Math.max(bounds_max[1], vertex[1]);
+    bounds_max[2] = Math.max(bounds_max[2], vertex[2]);
+  }
+
+  const sphere = compute_sphere_from_bounds(bounds_min, bounds_max, vertices);
+  const normal_cone = compute_normal_cone(
+    pending_meshlet.global_vertices,
+    pending_meshlet.local_indices,
+    positions
+  );
+
+  return {
+    global_vertices: pending_meshlet.global_vertices.slice(),
+    local_indices: pending_meshlet.local_indices.slice(),
+    bounds_min,
+    bounds_max,
+    center: sphere.center,
+    radius: sphere.radius,
+    normal_cone_axis: normal_cone.axis,
+    normal_cone_cutoff: normal_cone.cutoff,
+  };
+}
+
+function expand_bits_10(value) {
+  let x = value & 0x3ff;
+  x = (x | (x << 16)) & 0x30000ff;
+  x = (x | (x << 8)) & 0x300f00f;
+  x = (x | (x << 4)) & 0x30c30c3;
+  x = (x | (x << 2)) & 0x9249249;
+  return x;
+}
+
+function morton3d_10bit(x, y, z) {
+  return expand_bits_10(x) | (expand_bits_10(y) << 1) | (expand_bits_10(z) << 2);
+}
+
+function sort_meshlets_spatially(meshlets, primitive_bounds) {
+  const extent = [
+    primitive_bounds.max[0] - primitive_bounds.min[0],
+    primitive_bounds.max[1] - primitive_bounds.min[1],
+    primitive_bounds.max[2] - primitive_bounds.min[2],
+  ];
+
+  return meshlets
+    .map((meshlet, original_index) => {
+      const normalized_center = [0, 0, 0];
+      for (let i = 0; i < 3; i++) {
+        if (extent[i] <= 1e-8) {
+          normalized_center[i] = 0.5;
+        } else {
+          normalized_center[i] =
+            (meshlet.center[i] - primitive_bounds.min[i]) / extent[i];
+        }
+      }
+
+      const morton = morton3d_10bit(
+        Math.max(0, Math.min(1023, Math.floor(normalized_center[0] * 1023.0))),
+        Math.max(0, Math.min(1023, Math.floor(normalized_center[1] * 1023.0))),
+        Math.max(0, Math.min(1023, Math.floor(normalized_center[2] * 1023.0)))
+      );
+
+      return {
+        meshlet,
+        original_index,
+        morton,
+      };
+    })
+    .sort((a, b) => {
+      if (a.morton === b.morton) {
+        return a.original_index - b.original_index;
+      }
+      return a.morton - b.morton;
+    })
+    .map((entry) => entry.meshlet);
+}
+
+function build_meshlets(indices, positions, settings) {
+  const meshlets = [];
+  let pending = create_pending_meshlet();
+
+  for (let i = 0; i < indices.length; i += 3) {
+    const triangle = [indices[i + 0], indices[i + 1], indices[i + 2]];
+
+    let new_vertices = 0;
+    for (const index of triangle) {
+      if (!pending.global_to_local.has(index)) {
+        new_vertices++;
+      }
+    }
+
+    const next_triangle_count = pending.local_indices.length / 3 + 1;
+    const next_vertex_count = pending.global_vertices.length + new_vertices;
+    const exceeds_limits =
+      next_triangle_count > settings.max_triangles ||
+      next_vertex_count > settings.max_vertices;
+
+    if (exceeds_limits && pending.local_indices.length > 0) {
+      meshlets.push(finalize_meshlet(pending, positions));
+      pending = create_pending_meshlet();
+    }
+
+    for (const index of triangle) {
+      let local_index = pending.global_to_local.get(index);
+      if (local_index === undefined) {
+        local_index = pending.global_vertices.length;
+        pending.global_vertices.push(index);
+        pending.global_to_local.set(index, local_index);
+      }
+      pending.local_indices.push(local_index);
+    }
+  }
+
+  if (pending.local_indices.length > 0) {
+    meshlets.push(finalize_meshlet(pending, positions));
+  }
+
+  return meshlets;
+}
+
+function build_meshlet_groups(meshlets, group_size) {
+  const groups = [];
+
+  for (let i = 0; i < meshlets.length; i += group_size) {
+    const group_meshlets = meshlets.slice(i, i + group_size);
+    const bounds_min = [Infinity, Infinity, Infinity];
+    const bounds_max = [-Infinity, -Infinity, -Infinity];
+
+    for (const meshlet of group_meshlets) {
+      bounds_min[0] = Math.min(bounds_min[0], meshlet.bounds_min[0]);
+      bounds_min[1] = Math.min(bounds_min[1], meshlet.bounds_min[1]);
+      bounds_min[2] = Math.min(bounds_min[2], meshlet.bounds_min[2]);
+      bounds_max[0] = Math.max(bounds_max[0], meshlet.bounds_max[0]);
+      bounds_max[1] = Math.max(bounds_max[1], meshlet.bounds_max[1]);
+      bounds_max[2] = Math.max(bounds_max[2], meshlet.bounds_max[2]);
+    }
+
+    const sphere = compute_sphere_from_bounds(
+      bounds_min,
+      bounds_max,
+      group_meshlets.map((meshlet) => meshlet.center)
+    );
+
+    let radius = sphere.radius;
+    for (const meshlet of group_meshlets) {
+      const delta = sub_vec3(meshlet.center, sphere.center);
+      radius = Math.max(radius, length_vec3(delta) + meshlet.radius);
+    }
+
+    groups.push({
+      local_meshlet_offset: i,
+      meshlet_count: group_meshlets.length,
+      center: sphere.center,
+      radius,
+      bounds_min,
+      bounds_max,
+    });
+  }
+
+  return groups;
+}
+
+function load_gltf_document(gltf_path, settings) {
+  const gltf_text = fs.readFileSync(gltf_path, "utf8");
+  const json = JSON.parse(gltf_text);
+  const base_dir = path.dirname(gltf_path);
+  const buffers = [];
+  const buffer_uris = [];
+
+  for (const buffer of json.buffers || []) {
+    const loaded = load_referenced_buffer(base_dir, buffer.uri);
+    buffers.push(loaded);
+    buffer_uris.push(buffer.uri);
+  }
+
+  return {
+    path: gltf_path,
+    accessors: json.accessors || [],
+    bufferViews: json.bufferViews || [],
+    buffers,
+    buffer_uris,
+    json,
+    source_hash: create_source_hash(settings, gltf_text, buffers),
+  };
+}
+
+function process_primitive(document, primitive_index, primitive, settings) {
+  if ((primitive.mode ?? 4) !== 4) {
+    return {
+      primitive: primitive_index,
+      mode: primitive.mode ?? 4,
+      skipped: true,
+      reason: "Only triangle-list primitives are supported.",
+    };
+  }
+
+  if (primitive.attributes?.POSITION === undefined) {
+    return {
+      primitive: primitive_index,
+      mode: primitive.mode ?? 4,
+      skipped: true,
+      reason: "Primitive is missing POSITION data.",
+    };
+  }
+
+  const positions = read_accessor_to_float32(document, primitive.attributes.POSITION);
+  if (positions.length === 0) {
+    return {
+      primitive: primitive_index,
+      mode: primitive.mode ?? 4,
+      skipped: true,
+      reason: "Primitive has no vertex positions.",
+    };
+  }
+
+  let indices = null;
+  if (primitive.indices !== undefined) {
+    indices = read_accessor_to_indices(document, primitive.indices);
+  } else {
+    indices = new Uint32Array(positions.length / 3);
+    for (let i = 0; i < indices.length; i++) {
+      indices[i] = i;
+    }
+  }
+
+  const trimmed_index_count = indices.length - (indices.length % 3);
+  if (trimmed_index_count !== indices.length) {
+    console.warn(
+      `[meshlet_preprocessor] Trimming ${indices.length - trimmed_index_count} dangling indices from primitive ${primitive_index}.`
+    );
+    indices = indices.slice(0, trimmed_index_count);
+  }
+
+  if (indices.length === 0) {
+    return {
+      primitive: primitive_index,
+      mode: primitive.mode ?? 4,
+      skipped: true,
+      reason: "Primitive has no triangles.",
+    };
+  }
+
+  const primitive_bounds = compute_position_bounds(positions);
+  const meshlets = sort_meshlets_spatially(
+    build_meshlets(indices, positions, settings),
+    primitive_bounds
+  );
+  const meshlet_groups = build_meshlet_groups(meshlets, settings.cluster_group_size);
+
+  let meshlet_vertex_count = 0;
+  let meshlet_triangle_index_count = 0;
+  for (const meshlet of meshlets) {
+    meshlet_vertex_count += meshlet.global_vertices.length;
+    meshlet_triangle_index_count += meshlet.local_indices.length;
+  }
+
+  return {
+    primitive: primitive_index,
+    mode: primitive.mode ?? 4,
+    material: primitive.material ?? null,
+    skipped: false,
+    vertex_count: positions.length / 3,
+    triangle_count: indices.length / 3,
+    bounds: primitive_bounds,
+    meshlets,
+    meshlet_groups,
+    meshlet_vertex_count,
+    meshlet_triangle_index_count,
+  };
+}
+
+function build_output_payload(document, settings) {
+  const manifest = {
+    version: GENERATOR_VERSION,
+    generator: "tools/meshlet_preprocessor.js",
+    generatedAt: new Date().toISOString(),
+    settings: {
+      maxVertices: settings.max_vertices,
+      maxTriangles: settings.max_triangles,
+      clusterGroupSize: settings.cluster_group_size,
+    },
+    source: {
+      gltf: path.relative(path.dirname(document.path), document.path).replace(/\\/g, "/"),
+      buffers: document.buffer_uris.slice(),
+      hash: document.source_hash,
+    },
+    meshes: [],
+    sections: {},
+  };
+
+  const meshlet_records = [];
+  const meshlet_vertex_records = [];
+  const meshlet_triangle_records = [];
+  const meshlet_group_records = [];
+
+  for (let mesh_index = 0; mesh_index < (document.json.meshes || []).length; mesh_index++) {
+    const mesh = document.json.meshes[mesh_index];
+    const manifest_mesh = {
+      mesh: mesh_index,
+      name: mesh.name || null,
+      primitives: [],
+    };
+
+    for (let primitive_index = 0; primitive_index < mesh.primitives.length; primitive_index++) {
+      const primitive = mesh.primitives[primitive_index];
+      const processed = process_primitive(document, primitive_index, primitive, settings);
+
+      if (processed.skipped) {
+        manifest_mesh.primitives.push(processed);
+        continue;
+      }
+
+      const primitive_meshlet_offset = meshlet_records.length;
+      const primitive_vertex_offset = meshlet_vertex_records.length;
+      const primitive_triangle_offset = meshlet_triangle_records.length;
+      const primitive_group_offset = meshlet_group_records.length;
+
+      for (const meshlet of processed.meshlets) {
+        const record = {
+          vertex_offset: meshlet_vertex_records.length,
+          vertex_count: meshlet.global_vertices.length,
+          triangle_offset: meshlet_triangle_records.length,
+          triangle_count: meshlet.local_indices.length / 3,
+          center: meshlet.center,
+          radius: meshlet.radius,
+          bounds_min: meshlet.bounds_min,
+          bounds_max: meshlet.bounds_max,
+          normal_cone_axis: meshlet.normal_cone_axis,
+          normal_cone_cutoff: meshlet.normal_cone_cutoff,
+        };
+
+        meshlet_records.push(record);
+        meshlet_vertex_records.push(...meshlet.global_vertices);
+        meshlet_triangle_records.push(...meshlet.local_indices);
+      }
+
+      for (const group of processed.meshlet_groups) {
+        meshlet_group_records.push({
+          meshlet_offset: primitive_meshlet_offset + group.local_meshlet_offset,
+          meshlet_count: group.meshlet_count,
+          center: group.center,
+          radius: group.radius,
+          bounds_min: group.bounds_min,
+          bounds_max: group.bounds_max,
+        });
+      }
+
+      manifest_mesh.primitives.push({
+        primitive: primitive_index,
+        mode: processed.mode,
+        material: processed.material,
+        skipped: false,
+        vertexCount: processed.vertex_count,
+        triangleCount: processed.triangle_count,
+        meshletCount: processed.meshlets.length,
+        meshletVertexCount: processed.meshlet_vertex_count,
+        meshletTriangleIndexCount: processed.meshlet_triangle_index_count,
+        meshletOffset: primitive_meshlet_offset,
+        meshletVertexOffset: primitive_vertex_offset,
+        meshletTriangleIndexOffset: primitive_triangle_offset,
+        meshletGroupOffset: primitive_group_offset,
+        meshletGroupCount: processed.meshlet_groups.length,
+        bounds: processed.bounds,
+      });
+    }
+
+    manifest.meshes.push(manifest_mesh);
+  }
+
+  const meshlets_byte_length = meshlet_records.length * MESHLET_STRUCT_STRIDE;
+  const meshlet_vertices_byte_length = meshlet_vertex_records.length * Uint32Array.BYTES_PER_ELEMENT;
+  const meshlet_triangles_byte_length = meshlet_triangle_records.length;
+  const meshlet_groups_byte_length = meshlet_group_records.length * MESHLET_GROUP_STRUCT_STRIDE;
+
+  const meshlets_offset = 0;
+  const meshlet_vertices_offset = align_to(
+    meshlets_offset + meshlets_byte_length,
+    16
+  );
+  const meshlet_triangles_offset = align_to(
+    meshlet_vertices_offset + meshlet_vertices_byte_length,
+    16
+  );
+  const meshlet_groups_offset = align_to(
+    meshlet_triangles_offset + meshlet_triangles_byte_length,
+    16
+  );
+  const total_byte_length = meshlet_groups_offset + meshlet_groups_byte_length;
+
+  const binary = new ArrayBuffer(total_byte_length);
+  const view = new DataView(binary);
+  const meshlet_vertex_array = new Uint32Array(
+    binary,
+    meshlet_vertices_offset,
+    meshlet_vertex_records.length
+  );
+  const meshlet_triangle_array = new Uint8Array(
+    binary,
+    meshlet_triangles_offset,
+    meshlet_triangle_records.length
+  );
+
+  meshlet_vertex_array.set(meshlet_vertex_records);
+  meshlet_triangle_array.set(meshlet_triangle_records);
+
+  for (let i = 0; i < meshlet_records.length; i++) {
+    const base = meshlets_offset + i * MESHLET_STRUCT_STRIDE;
+    const meshlet = meshlet_records[i];
+
+    view.setUint32(base + 0, meshlet.vertex_offset, true);
+    view.setUint32(base + 4, meshlet.vertex_count, true);
+    view.setUint32(base + 8, meshlet.triangle_offset, true);
+    view.setUint32(base + 12, meshlet.triangle_count, true);
+
+    view.setFloat32(base + 16, meshlet.center[0], true);
+    view.setFloat32(base + 20, meshlet.center[1], true);
+    view.setFloat32(base + 24, meshlet.center[2], true);
+    view.setFloat32(base + 28, meshlet.radius, true);
+
+    view.setFloat32(base + 32, meshlet.bounds_min[0], true);
+    view.setFloat32(base + 36, meshlet.bounds_min[1], true);
+    view.setFloat32(base + 40, meshlet.bounds_min[2], true);
+    view.setFloat32(base + 44, 0.0, true);
+
+    view.setFloat32(base + 48, meshlet.bounds_max[0], true);
+    view.setFloat32(base + 52, meshlet.bounds_max[1], true);
+    view.setFloat32(base + 56, meshlet.bounds_max[2], true);
+    view.setFloat32(base + 60, 0.0, true);
+
+    view.setFloat32(base + 64, meshlet.normal_cone_axis[0], true);
+    view.setFloat32(base + 68, meshlet.normal_cone_axis[1], true);
+    view.setFloat32(base + 72, meshlet.normal_cone_axis[2], true);
+    view.setFloat32(base + 76, meshlet.normal_cone_cutoff, true);
+  }
+
+  for (let i = 0; i < meshlet_group_records.length; i++) {
+    const base = meshlet_groups_offset + i * MESHLET_GROUP_STRUCT_STRIDE;
+    const group = meshlet_group_records[i];
+
+    view.setUint32(base + 0, group.meshlet_offset, true);
+    view.setUint32(base + 4, group.meshlet_count, true);
+    view.setUint32(base + 8, 0, true);
+    view.setUint32(base + 12, 0, true);
+
+    view.setFloat32(base + 16, group.center[0], true);
+    view.setFloat32(base + 20, group.center[1], true);
+    view.setFloat32(base + 24, group.center[2], true);
+    view.setFloat32(base + 28, group.radius, true);
+
+    view.setFloat32(base + 32, group.bounds_min[0], true);
+    view.setFloat32(base + 36, group.bounds_min[1], true);
+    view.setFloat32(base + 40, group.bounds_min[2], true);
+    view.setFloat32(base + 44, 0.0, true);
+
+    view.setFloat32(base + 48, group.bounds_max[0], true);
+    view.setFloat32(base + 52, group.bounds_max[1], true);
+    view.setFloat32(base + 56, group.bounds_max[2], true);
+    view.setFloat32(base + 60, 0.0, true);
+  }
+
+  manifest.sections = {
+    meshlets: {
+      offset: meshlets_offset,
+      stride: MESHLET_STRUCT_STRIDE,
+      count: meshlet_records.length,
+    },
+    meshletVertices: {
+      offset: meshlet_vertices_offset,
+      stride: Uint32Array.BYTES_PER_ELEMENT,
+      count: meshlet_vertex_records.length,
+      elementType: "uint32",
+    },
+    meshletTriangles: {
+      offset: meshlet_triangles_offset,
+      stride: Uint8Array.BYTES_PER_ELEMENT,
+      count: meshlet_triangle_records.length,
+      elementType: "uint8",
+    },
+    meshletGroups: {
+      offset: meshlet_groups_offset,
+      stride: MESHLET_GROUP_STRUCT_STRIDE,
+      count: meshlet_group_records.length,
+    },
+  };
+
+  return {
+    manifest,
+    binary: Buffer.from(binary),
+  };
+}
+
+function should_skip_generation(manifest_path, binary_path, source_hash) {
+  if (!fs.existsSync(manifest_path) || !fs.existsSync(binary_path)) {
+    return false;
+  }
+
+  try {
+    const manifest = JSON.parse(fs.readFileSync(manifest_path, "utf8"));
+    return manifest?.source?.hash === source_hash;
+  } catch (error) {
+    return false;
+  }
+}
+
+function process_gltf_file(gltf_path, settings) {
+  const document = load_gltf_document(gltf_path, settings);
+  const manifest_path = gltf_path.replace(/\.gltf$/i, ".meshlet.json");
+  const binary_path = gltf_path.replace(/\.gltf$/i, ".meshlet.bin");
+
+  if (should_skip_generation(manifest_path, binary_path, document.source_hash)) {
+    return {
+      status: "skipped",
+      gltf_path,
+    };
+  }
+
+  const output = build_output_payload(document, settings);
+  output.manifest.binary = path.basename(binary_path);
+
+  fs.writeFileSync(manifest_path, JSON.stringify(output.manifest, null, 2));
+  fs.writeFileSync(binary_path, output.binary);
+
+  let meshlet_count = 0;
+  let group_count = 0;
+  for (const mesh of output.manifest.meshes) {
+    for (const primitive of mesh.primitives) {
+      if (primitive.skipped) {
+        continue;
+      }
+      meshlet_count += primitive.meshletCount;
+      group_count += primitive.meshletGroupCount;
+    }
+  }
+
+  return {
+    status: "generated",
+    gltf_path,
+    meshlet_count,
+    group_count,
+  };
+}
+
+function format_asset_path(file_path) {
+  return path.relative(ASSET_ROOT, file_path).replace(/\\/g, "/");
+}
+
+async function main() {
+  const settings = {
+    version: GENERATOR_VERSION,
+    max_vertices: DEFAULT_MAX_VERTICES,
+    max_triangles: DEFAULT_MAX_TRIANGLES,
+    cluster_group_size: DEFAULT_CLUSTER_GROUP_SIZE,
+  };
+
+  if (settings.max_vertices > 255) {
+    throw new Error("max_vertices must stay <= 255 so local triangle indices fit in uint8.");
+  }
+
+  const gltf_files = [];
+  find_gltf_files(ASSET_ROOT, gltf_files);
+  gltf_files.sort((a, b) => a.localeCompare(b));
+
+  const summary = {
+    generated: 0,
+    skipped: 0,
+    failed: 0,
+    meshlets: 0,
+    groups: 0,
+  };
+
+  for (const gltf_path of gltf_files) {
+    try {
+      const result = process_gltf_file(gltf_path, settings);
+      if (result.status === "skipped") {
+        summary.skipped++;
+        console.log(`[meshlet_preprocessor] up to date: ${format_asset_path(gltf_path)}`);
+        continue;
+      }
+
+      summary.generated++;
+      summary.meshlets += result.meshlet_count;
+      summary.groups += result.group_count;
+      console.log(
+        `[meshlet_preprocessor] generated ${format_asset_path(gltf_path)} (${result.meshlet_count} meshlets, ${result.group_count} groups)`
+      );
+    } catch (error) {
+      summary.failed++;
+      console.error(
+        `[meshlet_preprocessor] failed ${format_asset_path(gltf_path)}:`,
+        error
+      );
+    }
+  }
+
+  console.log(
+    `[meshlet_preprocessor] complete: ${summary.generated} generated, ${summary.skipped} skipped, ${summary.failed} failed, ${summary.meshlets} meshlets, ${summary.groups} groups`
+  );
+
+  if (summary.failed > 0) {
+    process.exit(1);
+  }
+}
+
+main().catch((error) => {
+  console.error("[meshlet_preprocessor] fatal:", error);
+  process.exit(1);
+});
+
