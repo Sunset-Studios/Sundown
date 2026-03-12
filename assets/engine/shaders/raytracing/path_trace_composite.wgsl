@@ -39,6 +39,6 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     // Where there's geometry, show path trace. Where there's none, show skybox
     var final_color = mix(skybox_color.rgb, path_trace_color.rgb, has_geometry);
     
-    textureStore(output_tex, pixel_coord, vec4f(final_color, 1.0));
+    textureStore(output_tex, pixel_coord, vec4<f32>(final_color, 1.0));
 }
 

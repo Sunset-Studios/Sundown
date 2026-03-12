@@ -1,6 +1,6 @@
 #include "common.wgsl"
 
-@group(1) @binding(0) var<storage, read_write> entity_positions: array<vec4f>;
+@group(1) @binding(0) var<storage, read_write> entity_positions: array<vec4<f32>>;
 @group(1) @binding(1) var<storage, read_write> entity_flags: array<atomic<u32>>;
 
 @compute @workgroup_size(256)

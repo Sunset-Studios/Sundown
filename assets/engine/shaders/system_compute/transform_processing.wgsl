@@ -21,9 +21,9 @@ struct SceneGraphLayerData {
 // Buffers
 // ------------------------------------------------------------------------------------ 
 
-@group(1) @binding(0) var<storage, read> entity_positions: array<vec4f>;
-@group(1) @binding(1) var<storage, read> entity_rotations: array<vec4f>;
-@group(1) @binding(2) var<storage, read> entity_scales: array<vec4f>;
+@group(1) @binding(0) var<storage, read> entity_positions: array<vec4<f32>>;
+@group(1) @binding(1) var<storage, read> entity_rotations: array<vec4<f32>>;
+@group(1) @binding(2) var<storage, read> entity_scales: array<vec4<f32>>;
 @group(1) @binding(3) var<storage, read_write> entity_transforms: array<EntityTransform>;
 @group(1) @binding(4) var<storage, read_write> entity_flags: array<u32>;
 @group(1) @binding(5) var<storage, read> scene_graph: array<vec2<i32>>;
@@ -69,10 +69,10 @@ fn cs(@builtin(global_invocation_id) global_id: vec3<u32>) {
 
         if ((flag & EF_IGNORE_PARENT_ROTATION) != 0) {
             // Extract translation from parent transform
-            let parent_translation = vec3f(parent_transform[3].xyz);
-            let parent_scale = vec3f(parent_transform[0].x, parent_transform[1].y, parent_transform[2].z);
+            let parent_translation = vec3<f32>(parent_transform[3].xyz);
+            let parent_scale = vec3<f32>(parent_transform[0].x, parent_transform[1].y, parent_transform[2].z);
             // Create a new parent transform that only has translation and scale
-            parent_transform = mat4x4f(
+            parent_transform = mat4x4<f32>(
                 parent_scale.x, 0.0, 0.0, 0.0,
                 0.0, parent_scale.y, 0.0, 0.0,
                 0.0, 0.0, parent_scale.z, 0.0,
@@ -81,9 +81,9 @@ fn cs(@builtin(global_invocation_id) global_id: vec3<u32>) {
         }
         if ((flag & EF_IGNORE_PARENT_SCALE) != 0) {
             // Create a new parent transform that only has translation and rotation
-            parent_transform[0] = parent_transform[0] / max(length(vec3f(parent_transform[0].xyz)), 1e-6);
-            parent_transform[1] = parent_transform[1] / max(length(vec3f(parent_transform[1].xyz)), 1e-6);
-            parent_transform[2] = parent_transform[2] / max(length(vec3f(parent_transform[2].xyz)), 1e-6);
+            parent_transform[0] = parent_transform[0] / max(length(vec3<f32>(parent_transform[0].xyz)), 1e-6);
+            parent_transform[1] = parent_transform[1] / max(length(vec3<f32>(parent_transform[1].xyz)), 1e-6);
+            parent_transform[2] = parent_transform[2] / max(length(vec3<f32>(parent_transform[2].xyz)), 1e-6);
         }
     }
 
@@ -93,7 +93,7 @@ fn cs(@builtin(global_invocation_id) global_id: vec3<u32>) {
     );
 
     // Calculate world transform matrix
-    let transform = parent_transform * mat4x4f(
+    let transform = parent_transform * mat4x4<f32>(
         (1.0 - 2.0 * (rotation.y * rotation.y + rotation.z * rotation.z)) * scale.x,
         (2.0 * (rotation.x * rotation.y + rotation.w * rotation.z)) * scale.x,
         (2.0 * (rotation.x * rotation.z - rotation.w * rotation.y)) * scale.x,
@@ -122,7 +122,7 @@ fn cs(@builtin(global_invocation_id) global_id: vec3<u32>) {
 
     let inv_det = 1.0 / det;
 
-    let inverse_transform = mat4x4f(
+    let inverse_transform = mat4x4<f32>(
         (transform[1][1] * transform[2][2] - transform[2][1] * transform[1][2]) * inv_det,
         -(transform[0][1] * transform[2][2] - transform[0][2] * transform[2][1]) * inv_det,
         (transform[0][1] * transform[1][2] - transform[0][2] * transform[1][1]) * inv_det,
@@ -160,7 +160,7 @@ fn cs(@builtin(global_invocation_id) global_id: vec3<u32>) {
     entity_transform.prev_transform = entity_transform.transform;
     entity_transform.transform = transform;
 
-    entity_transform.transpose_inverse_model_matrix = mat4x4f(
+    entity_transform.transpose_inverse_model_matrix = mat4x4<f32>(
         inverse_transform[0][0], inverse_transform[1][0], inverse_transform[2][0], inverse_transform[3][0],
         inverse_transform[0][1], inverse_transform[1][1], inverse_transform[2][1], inverse_transform[3][1],
         inverse_transform[0][2], inverse_transform[1][2], inverse_transform[2][2], inverse_transform[3][2],

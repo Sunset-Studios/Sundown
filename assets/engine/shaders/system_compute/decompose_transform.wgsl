@@ -18,9 +18,9 @@ struct SceneGraphLayerData {
 @group(1) @binding(1) var<storage, read> entity_flags: array<u32>; // Input: To know which entities are active/dirty
 @group(1) @binding(2) var<storage, read> scene_graph: array<vec2<i32>>; // Input: For consistent indexing with the first pass
 @group(1) @binding(3) var<uniform> scene_graph_layer_data: SceneGraphLayerData; // Input: For consistent indexing
-@group(1) @binding(4) var<storage, read_write> out_world_positions: array<vec4f>;
-@group(1) @binding(5) var<storage, read_write> out_world_rotations: array<vec4f>; // Store as quaternion
-@group(1) @binding(6) var<storage, read_write> out_world_scales: array<vec4f>; 
+@group(1) @binding(4) var<storage, read_write> out_world_positions: array<vec4<f32>>;
+@group(1) @binding(5) var<storage, read_write> out_world_rotations: array<vec4<f32>>; // Store as quaternion
+@group(1) @binding(6) var<storage, read_write> out_world_scales: array<vec4<f32>>; 
 @group(1) @binding(7) var<storage, read> entity_index_lookup: array<u32>;
 
 // ------------------------------------------------------------------------------------
@@ -57,24 +57,24 @@ fn cs(@builtin(global_invocation_id) global_id: vec3<u32>) {
 
     // Decompose and write world components
     // World Position
-    out_world_positions[entity_resolved] = vec4f(transform[3].xyz, 1.0);
+    out_world_positions[entity_resolved] = vec4<f32>(transform[3].xyz, 1.0);
 
     // World Scale
     let scale_x = length(transform[0].xyz);
     let scale_y = length(transform[1].xyz);
     let scale_z = length(transform[2].xyz);
-    out_world_scales[entity_resolved] = vec4f(scale_x, scale_y, scale_z, 1.0);
+    out_world_scales[entity_resolved] = vec4<f32>(scale_x, scale_y, scale_z, 1.0);
 
     // World Rotation (as quaternion)
-    var rot_mat_no_scale: mat3x3f;
+    var rot_mat_no_scale: mat3x3<f32>;
     if (scale_x > 1e-6 && scale_y > 1e-6 && scale_z > 1e-6) {
-        rot_mat_no_scale = mat3x3f(
+        rot_mat_no_scale = mat3x3<f32>(
             transform[0].xyz / scale_x,
             transform[1].xyz / scale_y,
             transform[2].xyz / scale_z
         );
     } else {
-        rot_mat_no_scale = mat3x3f(1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0); // Identity
+        rot_mat_no_scale = mat3x3<f32>(1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0); // Identity
     }
 
     var qx: f32;
@@ -107,5 +107,5 @@ fn cs(@builtin(global_invocation_id) global_id: vec3<u32>) {
         qy = (rot_mat_no_scale[1][2] + rot_mat_no_scale[2][1]) / S;
         qz = 0.25 * S;
     }
-    out_world_rotations[entity_resolved] = vec4f(qx, qy, qz, qw);
+    out_world_rotations[entity_resolved] = vec4<f32>(qx, qy, qz, qw);
 } 

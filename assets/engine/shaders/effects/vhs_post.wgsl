@@ -14,7 +14,7 @@ struct VhsParams {
 }
 
 struct VertexOutput {
-    @builtin(position) position: vec4f,
+    @builtin(position) position: vec4<f32>,
     @location(0) uv: vec2<f32>,
     @location(1) @interpolate(flat) instance_index: u32,
 };
@@ -35,25 +35,25 @@ struct FragmentOutput {
 // ------------------------------------------------------------------------------------ 
 
 // VHS noise function
-fn vhs_noise(uv: vec2f, time: f32) -> f32 {
+fn vhs_noise(uv: vec2<f32>, time: f32) -> f32 {
     let noise1 = hash(u32(uv.x * 35.34 + uv.y * 2375.23 + time * 2));
     let noise2 = hash(u32(uv.x * 256.0 + uv.y * 1437.0 + time * 3.14));
     return mix(uint_to_normalized_float(noise1), uint_to_normalized_float(noise2), 0.5);
 }
 
 // Vertical color bleeding
-fn color_bleeding(uv: vec2f, color: vec3f, intensity: f32) -> vec3f {
-    let offset = vec2f(0.0, 0.008 * intensity);
+fn color_bleeding(uv: vec2<f32>, color: vec3<f32>, intensity: f32) -> vec3<f32> {
+    let offset = vec2<f32>(0.0, 0.008 * intensity);
     
     let r = textureSample(input_texture, global_sampler, uv + offset).r;
     let g = textureSample(input_texture, global_sampler, uv).g;
     let b = textureSample(input_texture, global_sampler, uv - offset).b;
     
-    return vec3f(r, g, b);
+    return vec3<f32>(r, g, b);
 }
 
 // Scanline effect
-fn scanline(uv: vec2f, time: f32) -> f32 {
+fn scanline(uv: vec2<f32>, time: f32) -> f32 {
     let scan_speed = 9090.0;
     let scan_size = 150.0;
     let moving_line = fract(time * scan_speed + uv.y * scan_size) * 0.25;
@@ -61,9 +61,9 @@ fn scanline(uv: vec2f, time: f32) -> f32 {
 }
 
 // Horizontal distortion
-fn horizontal_distortion(uv: vec2f, time: f32, frequency: f32, amplitude: f32) -> vec2f {
+fn horizontal_distortion(uv: vec2<f32>, time: f32, frequency: f32, amplitude: f32) -> vec2<f32> {
     let wave = sin(uv.y * frequency + time) * amplitude;
-    return vec2f(uv.x + wave, uv.y);
+    return vec2<f32>(uv.x + wave, uv.y);
 }
 
 // 4x4 Bayer matrix for ordered dithering
@@ -79,12 +79,12 @@ fn bayer_matrix_from_coord(x: u32, y: u32) -> f32 {
 }
 
 // Apply dithering
-fn apply_dithering(color: vec3f, uv: vec2f, dither_amount: f32) -> vec3f {
+fn apply_dithering(color: vec3<f32>, uv: vec2<f32>, dither_amount: f32) -> vec3<f32> {
     let screen_size = vec2u(textureDimensions(input_texture));
-    let pixel_pos = vec2u(uv * vec2f(screen_size));
+    let pixel_pos = vec2u(uv * vec2<f32>(screen_size));
     
     let dither_value = (bayer_matrix_from_coord(pixel_pos.x, pixel_pos.y) - 0.5) * dither_amount;
-    return color + vec3f(dither_value);
+    return color + vec3<f32>(dither_value);
 }
 
 // ------------------------------------------------------------------------------------
@@ -104,7 +104,7 @@ fn fs(v_out: VertexOutput) -> FragmentOutput {
     );
     
     // Keep UVs in bounds
-    distorted_uv = clamp(distorted_uv, vec2f(0.0), vec2f(1.0));
+    distorted_uv = clamp(distorted_uv, vec2<f32>(0.0), vec2<f32>(1.0));
     
     // Sample base color
     var color = textureSample(input_texture, global_sampler, distorted_uv).rgb;
@@ -124,7 +124,7 @@ fn fs(v_out: VertexOutput) -> FragmentOutput {
     let noise = vhs_noise(v_out.uv, time);
     color = mix(
         color,
-        vec3f(noise),
+        vec3<f32>(noise),
         vhs_params.noise_intensity * 0.1
     );
     
@@ -132,10 +132,10 @@ fn fs(v_out: VertexOutput) -> FragmentOutput {
     color = apply_dithering(color, v_out.uv, 0.1); // Adjust the 0.1 to control dither intensity
     
     // Add slight color tinting
-    color *= vec3f(1.05, 1.0, 1.1); // Slight purple tint
+    color *= vec3<f32>(1.05, 1.0, 1.1); // Slight purple tint
     
     // Boost contrast slightly
-    color = pow(color, vec3f(1.1));
+    color = pow(color, vec3<f32>(1.1));
     
-    return FragmentOutput(vec4f(color, 1.0));
+    return FragmentOutput(vec4<f32>(color, 1.0));
 } 

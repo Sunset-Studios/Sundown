@@ -4,7 +4,7 @@
 // Data Structures
 // ------------------------------------------------------------------------------------ 
 struct VertexOutput {
-    @builtin(position) @invariant position: vec4f,
+    @builtin(position) @invariant position: vec4<f32>,
     @location(0) local_position: vec4<f32>,
     @location(1) view_position: vec4<f32>,
     @location(2) world_position: vec4<f32>,

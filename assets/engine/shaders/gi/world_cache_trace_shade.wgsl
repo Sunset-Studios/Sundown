@@ -113,7 +113,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         let material = material_params[mat_params_index];
 
         let tiling = material.emission_roughness_metallic_tiling.w;
-        let base_uv = vec2f(path.hit_attr0.w, path.hit_attr1.w) * tiling;
+        let base_uv = vec2<f32>(path.hit_attr0.w, path.hit_attr1.w) * tiling;
         let lod = 0.0;
 
         albedo = sample_texture_or_vec4_param_handle(
@@ -198,7 +198,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         let alpha = 1.0 / min((current_radiance.w + sample_count), WORLD_CACHE_RADIANCE_UPDATE_SAMPLE_CAP);
         let new_radiance = mix(current_radiance.rgb, radiance_contribution, alpha);
         
-        world_cache[cell_index].radiance_m = vec4f(new_radiance, current_radiance.w + sample_count);
+        world_cache[cell_index].radiance_m = vec4<f32>(new_radiance, current_radiance.w + sample_count);
     }
 }
 

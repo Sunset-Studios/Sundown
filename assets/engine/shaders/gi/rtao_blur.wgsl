@@ -66,5 +66,5 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let blurred = ao_sum / w_sum;
     let ao_out = mix(center_ao, blurred, BLUR_STRENGTH);
 
-    textureStore(ao_output, coord, vec4f(ao_out, 0.0, 0.0, 1.0));
+    textureStore(ao_output, coord, vec4<f32>(ao_out, 0.0, 0.0, 1.0));
 }

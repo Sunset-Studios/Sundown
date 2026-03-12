@@ -27,7 +27,7 @@ fn fragment(v_out: VertexOutput, f_out: ptr<function, FragmentOutput>) -> Fragme
     let tiling = material_params.emission_roughness_metallic_tiling.w;
     var base_uv = v_out.uv * tiling;
 
-    let tex_size = vec2f(textureDimensions(texture_pool_albedo).xy);
+    let tex_size = vec2<f32>(textureDimensions(texture_pool_albedo).xy);
     let lod = compute_lod_from_uv(base_uv, tex_size);
     
     // Simple parallax offset
@@ -135,7 +135,7 @@ fn fragment_mask(v_out: VertexOutput) -> f32 {
     let tiling = material_params.emission_roughness_metallic_tiling.w;
     var base_uv = v_out.uv * tiling;
 
-    let tex_size = vec2f(textureDimensions(texture_pool_albedo).xy);
+    let tex_size = vec2<f32>(textureDimensions(texture_pool_albedo).xy);
     let lod = compute_lod_from_uv(base_uv, tex_size);
     
     // Simple parallax offset

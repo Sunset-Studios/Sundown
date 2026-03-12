@@ -10,14 +10,14 @@ const CUTOFF_ANGLE: f32 = 1.6110731556870734;
 const STEEPNESS: f32 = 1.5;
 
 // Rayleigh scattering coefficients (wavelength-dependent)
-const TOTAL_RAYLEIGH: vec3f = vec3f(
+const TOTAL_RAYLEIGH: vec3<f32> = vec3<f32>(
     5.804542996261093E-6,  // Red
     1.3562911419845635E-5, // Green  
     3.0265902468824876E-5  // Blue
 );
 
 // Mie scattering constants
-const MIE_CONST: vec3f = vec3f(
+const MIE_CONST: vec3<f32> = vec3<f32>(
     1.8399918514433978E14,
     2.7798023919660528E14,
     4.0790479543861094E14
@@ -49,7 +49,7 @@ fn sun_intensity(zenith_angle_cos: f32) -> f32 {
 }
 
 /// Calculates total Mie scattering coefficient
-fn total_mie(t: f32) -> vec3f {
+fn total_mie(t: f32) -> vec3<f32> {
     let c = (0.2 * t) * 10E-18;
     return 0.434 * c * MIE_CONST;
 }
@@ -104,17 +104,17 @@ fn evaluate_sky(
     
     // Combine scattering contributions
     let beta_delta = (beta_r_theta + beta_m_theta) / (beta_r + beta_m);
-    var lin = pow(sun_e * beta_delta * (1.0 - f_ex), vec3f(1.5));
+    var lin = pow(sun_e * beta_delta * (1.0 - f_ex), vec3<f32>(1.5));
     
     // Apply atmospheric perspective
     lin *= mix(
-        vec3f(1.0), 
-        pow(sun_e * beta_delta * f_ex, vec3f(0.5)), 
+        vec3<f32>(1.0), 
+        pow(sun_e * beta_delta * f_ex, vec3<f32>(0.5)), 
         clamp(pow(1.0 - dot(world_up, sun_dir), 5.0), 0.0, 1.0)
     );
     
     // Calculate night sky contribution
-    let l0 = vec3f(0.1) * f_ex;
+    let l0 = vec3<f32>(0.1) * f_ex;
     
     // Add solar disk
     let sundisk = smoothstep(
@@ -125,12 +125,12 @@ fn evaluate_sky(
     let l0_final = l0 + (sun_e * 19000.0 * f_ex) * sundisk;
     
     // Combine all contributions
-    let tex_color = (lin + l0_final) * 0.04 + vec3f(0.0, 0.0003, 0.00075);
+    let tex_color = (lin + l0_final) * 0.04 + vec3<f32>(0.0, 0.0003, 0.00075);
     
     // Apply tonemapping and final adjustments
     let curr = u2_filmic_tonemapping(tex_color, log2(2.0 / (scene_lighting.sunlight_intensity / 2.0)));
     var color = curr * WHITE_SCALE;
-    color = pow(color, vec3f(1.0 / (1.2 + (1.2 * sun_fade))));
+    color = pow(color, vec3<f32>(1.0 / (1.2 + (1.2 * sun_fade))));
 
     return color;
 }

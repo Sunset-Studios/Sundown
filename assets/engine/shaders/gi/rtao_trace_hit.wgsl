@@ -343,7 +343,7 @@ fn process_rtao_ray(ray_index: u32) {
     var ray: Ray;
     ray.origin_and_tmin = pixel_path_state[ray_index].origin_tmin;
     ray.direction_and_tmax = pixel_path_state[ray_index].direction_tmax;
-    ray.inv_direction = vec4f(
+    ray.inv_direction = vec4<f32>(
         1.0 / max(abs(ray.direction_and_tmax.x), 1e-8) * select(1.0, -1.0, ray.direction_and_tmax.x < 0.0),
         1.0 / max(abs(ray.direction_and_tmax.y), 1e-8) * select(1.0, -1.0, ray.direction_and_tmax.y < 0.0),
         1.0 / max(abs(ray.direction_and_tmax.z), 1e-8) * select(1.0, -1.0, ray.direction_and_tmax.z < 0.0),

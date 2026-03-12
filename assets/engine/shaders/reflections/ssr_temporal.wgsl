@@ -13,16 +13,16 @@ const TEMPORAL_RESPONSE_MAX = 0.25;
 const AABB_EXPAND_FACTOR = 0.1;
 const AABB_EXPAND_MIN = 0.02;
 
-fn clip_aabb(aabb_min: vec3f, aabb_max: vec3f, p: vec4f, q: vec4f) -> vec4f {
+fn clip_aabb(aabb_min: vec3<f32>, aabb_max: vec3<f32>, p: vec4<f32>, q: vec4<f32>) -> vec4<f32> {
     let p_clip = 0.5 * (aabb_max + aabb_min);
-    let e_clip = 0.5 * (aabb_max - aabb_min) + vec3f(FLT_EPS);
+    let e_clip = 0.5 * (aabb_max - aabb_min) + vec3<f32>(FLT_EPS);
 
-    let v_clip = q - vec4f(p_clip, p.w);
+    let v_clip = q - vec4<f32>(p_clip, p.w);
     let v_unit = v_clip.xyz / e_clip;
     let a_unit = abs(v_unit);
     let ma_unit = max(a_unit.x, max(a_unit.y, a_unit.z));
 
-    return select(q, vec4f(p_clip, p.w) + v_clip / ma_unit, ma_unit > 1.0);
+    return select(q, vec4<f32>(p_clip, p.w) + v_clip / ma_unit, ma_unit > 1.0);
 }
 
 @compute @workgroup_size(8, 8, 1)
@@ -33,15 +33,15 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
 
     let coord = vec2<i32>(i32(gid.x), i32(gid.y));
-    let uv = (vec2f(f32(gid.x), f32(gid.y)) + 0.5) / vec2f(f32(resolution.x), f32(resolution.y));
+    let uv = (vec2<f32>(f32(gid.x), f32(gid.y)) + 0.5) / vec2<f32>(f32(resolution.x), f32(resolution.y));
 
     let current = textureLoad(resolve_texture, coord, 0);
     let roughness = clamp(textureLoad(smra_texture, coord, 0).g, 0.0, 1.0);
     let current_confidence = clamp(current.a, 0.0, 1.0);
 
     let motion = textureLoad(motion_texture, coord, 0).xy;
-    let prev_uv = uv + vec2f(-0.5 * motion.x, 0.5 * motion.y);
-    let prev_uv_in_bounds = all(prev_uv >= vec2f(0.0)) && all(prev_uv <= vec2f(1.0));
+    let prev_uv = uv + vec2<f32>(-0.5 * motion.x, 0.5 * motion.y);
+    let prev_uv_in_bounds = all(prev_uv >= vec2<f32>(0.0)) && all(prev_uv <= vec2<f32>(1.0));
 
     let prev_coord = uv_to_coord(prev_uv, resolution);
     let history = textureLoad(history_texture_prev, prev_coord, 0);
@@ -49,7 +49,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
 
     var neigh_min = current.rgb;
     var neigh_max = current.rgb;
-    var neigh_avg = vec3f(0.0);
+    var neigh_avg = vec3<f32>(0.0);
 
     for (var y = -1; y <= 1; y++) {
         for (var x = -1; x <= 1; x++) {
@@ -67,14 +67,14 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
 
     // Widen resolve AABB so clipping rejects ghosting but doesn't crush valid history (noise).
     let extent = neigh_max - neigh_min;
-    let margin = max(extent * AABB_EXPAND_FACTOR, vec3f(AABB_EXPAND_MIN));
+    let margin = max(extent * AABB_EXPAND_FACTOR, vec3<f32>(AABB_EXPAND_MIN));
     let clip_min = neigh_min - margin;
     let clip_max = neigh_max + margin;
 
     let clipped_history = clip_aabb(
         clip_min,
         clip_max,
-        vec4f(clamp(neigh_avg, neigh_min, neigh_max), current_confidence),
+        vec4<f32>(clamp(neigh_avg, neigh_min, neigh_max), current_confidence),
         history
     );
     let history_sample = select(current, clipped_history, prev_uv_in_bounds);
@@ -94,5 +94,5 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let temporal_rgb = mix(history_sample.rgb, current.rgb, feedback);
     let temporal_confidence = max(current_confidence, history_confidence * (1.0 - feedback));
 
-    textureStore(out_temporal, coord, vec4f(temporal_rgb, temporal_confidence));
+    textureStore(out_temporal, coord, vec4<f32>(temporal_rgb, temporal_confidence));
 }

@@ -10,11 +10,11 @@ struct OutlineParams {
     depth_threshold: f32,
     normal_threshold: f32,
     depth_scale: f32,
-    outline_color: vec4f,
+    outline_color: vec4<f32>,
 }
 
 struct VertexOutput {
-    @builtin(position) position: vec4f,
+    @builtin(position) position: vec4<f32>,
     @location(0) uv: vec2<f32>,
     @location(1) @interpolate(flat) instance_index: u32,
 };
@@ -36,23 +36,23 @@ struct FragmentOutput {
 // Helper Functions
 // ------------------------------------------------------------------------------------
 
-fn sample_depth(uv: vec2f) -> f32 {
+fn sample_depth(uv: vec2<f32>) -> f32 {
     return textureSample(depth_texture, non_filtering_sampler, uv).r;
 }
 
-fn sample_normal(uv: vec2f) -> vec3f {
+fn sample_normal(uv: vec2<f32>) -> vec3<f32> {
     return textureSample(normal_texture, global_sampler, uv).xyz * 2.0 - 1.0;
 }
 
-fn detect_edge(uv: vec2f) -> f32 {
-    let pixel_size = vec2f(1.0) / vec2f(textureDimensions(depth_texture));
+fn detect_edge(uv: vec2<f32>) -> f32 {
+    let pixel_size = vec2<f32>(1.0) / vec2<f32>(textureDimensions(depth_texture));
     
     // Sample the 4 adjacent pixels (cross pattern)
-    let offsets = array<vec2f, 4>(
-        vec2f(1.0, 0.0),  // right
-        vec2f(-1.0, 0.0), // left
-        vec2f(0.0, 1.0),  // up
-        vec2f(0.0, -1.0)  // down
+    let offsets = array<vec2<f32>, 4>(
+        vec2<f32>(1.0, 0.0),  // right
+        vec2<f32>(-1.0, 0.0), // left
+        vec2<f32>(0.0, 1.0),  // up
+        vec2<f32>(0.0, -1.0)  // down
     );
     
     // Sample center pixel

@@ -58,7 +58,7 @@
 // ------------------------------------------------------------------------------------ 
 
 struct VertexOutput {
-    @builtin(position) position: vec4f,
+    @builtin(position) position: vec4<f32>,
     @location(0) uv: vec2<f32>,
 };
 
@@ -129,11 +129,11 @@ struct FragmentOutput {
 
     let unlit = min(1u, u32(normal_length <= 0.0) + u32(1.0 - deferred_standard_lighting));
 
-    var color = f32(unlit) * tex_sky.rgb * mix(vec3f(1.0), albedo, tex_albedo.a);
+    var color = f32(unlit) * tex_sky.rgb * mix(vec3<f32>(1.0), albedo, tex_albedo.a);
 
-    var gi_direct = vec3f(0.0);
-    var gi_indirect_diffuse = vec3f(0.0);
-    var gi_indirect_specular = vec3f(0.0);
+    var gi_direct = vec3<f32>(0.0);
+    var gi_indirect_diffuse = vec3<f32>(0.0);
+    var gi_indirect_specular = vec3<f32>(0.0);
 #if GI_ENABLED
     gi_direct = textureSample(gi_direct_texture, global_sampler, uv).rgb;
     gi_indirect_diffuse = textureSample(gi_indirect_diffuse_texture, global_sampler, uv).rgb;
@@ -195,8 +195,8 @@ struct FragmentOutput {
             0.0, // clear coat roughness 
             ao,
             gi_indirect_diffuse, // irradiance
-            vec3f(0.01, 0.01, 0.01), // prefilter color 
-            vec2f(1.0, 1.0), // env brdf
+            vec3<f32>(0.01, 0.01, 0.01), // prefilter color 
+            vec2<f32>(1.0, 1.0), // env brdf
             shadow_factor,
         );
     }

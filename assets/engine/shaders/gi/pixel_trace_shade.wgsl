@@ -84,7 +84,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     // ─────────────────────────────────────────────────────────────────────────
     if (pixel_path_state[gid.x].shadow_origin.w >= 0.0 && pixel_path_state[gid.x].state_u32.z == 1u) {
         let nee_radiance = safe_clamp_vec3_max(pixel_path_state[gid.x].shadow_radiance.rgb, MAX_RADIANCE_LUMINANCE);
-        pixel_path_state[gid.x].throughput_direct += vec4f(nee_radiance, 0.0);
+        pixel_path_state[gid.x].throughput_direct += vec4<f32>(nee_radiance, 0.0);
         pixel_path_state[gid.x].shadow_origin.w = -1.0;
         pixel_path_state[gid.x].state_u32.z = 0u;
     }
@@ -108,9 +108,9 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         
         // Clamp sky radiance. This prevents sun disc from causing fireflies on specular surfaces.
         let sky_contribution = safe_clamp_vec3_max(sky_radiance, MAX_RADIANCE_LUMINANCE);
-        let indirect_add = vec4f(sky_contribution, 0.0);
-        pixel_path_state[gid.x].throughput_indirect_diffuse += select(indirect_add, vec4f(0.0), is_specular_lobe);
-        pixel_path_state[gid.x].throughput_indirect_specular += select(vec4f(0.0), indirect_add, is_specular_lobe);
+        let indirect_add = vec4<f32>(sky_contribution, 0.0);
+        pixel_path_state[gid.x].throughput_indirect_diffuse += select(indirect_add, vec4<f32>(0.0), is_specular_lobe);
+        pixel_path_state[gid.x].throughput_indirect_specular += select(vec4<f32>(0.0), indirect_add, is_specular_lobe);
 
         pixel_path_state[gid.x].rng_sample_count_frame_stamp.y += 1.0;
         pixel_path_state[gid.x].state_u32.y = 0u; // Mark path as dead
@@ -133,7 +133,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         let material = material_params[mat_params_index];
 
         let tiling = material.emission_roughness_metallic_tiling.w;
-        let base_uv = vec2f(pixel_path_state[gid.x].hit_attr0.w, pixel_path_state[gid.x].hit_attr1.w) * tiling;
+        let base_uv = vec2<f32>(pixel_path_state[gid.x].hit_attr0.w, pixel_path_state[gid.x].hit_attr1.w) * tiling;
         let lod = 0.0;
 
         let albedo = sample_texture_or_vec4_param_handle(
@@ -177,9 +177,9 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         if (emissive > 0.0) {
             let emissive_radiance = stabilize_emissive_hit_radiance(emissive * albedo);
             let is_specular_lobe = pixel_path_state[gid.x].state_u32.x == 1u;
-            let indirect_add = vec4f(emissive_radiance, 0.0) * pixel_path_state[gid.x].path_weight;
-            pixel_path_state[gid.x].throughput_indirect_diffuse += select(indirect_add, vec4f(0.0), is_specular_lobe);
-            pixel_path_state[gid.x].throughput_indirect_specular += select(vec4f(0.0), indirect_add, is_specular_lobe);
+            let indirect_add = vec4<f32>(emissive_radiance, 0.0) * pixel_path_state[gid.x].path_weight;
+            pixel_path_state[gid.x].throughput_indirect_diffuse += select(indirect_add, vec4<f32>(0.0), is_specular_lobe);
+            pixel_path_state[gid.x].throughput_indirect_specular += select(vec4<f32>(0.0), indirect_add, is_specular_lobe);
         }
 
         // ─────────────────────────────────────────────────────────────────────
@@ -209,9 +209,9 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         let cached_luminance = luminance(cached_radiance);
         if (cached_luminance > 0.0001) {
             let is_specular_lobe = pixel_path_state[gid.x].state_u32.x == 1u;
-            let indirect_add = vec4f(safe_clamp_vec3_max(cached_radiance, MAX_RADIANCE_LUMINANCE), 0.0);
-            pixel_path_state[gid.x].throughput_indirect_diffuse += select(indirect_add * pixel_path_state[gid.x].path_weight, vec4f(0.0), is_specular_lobe);
-            pixel_path_state[gid.x].throughput_indirect_specular += select(vec4f(0.0), indirect_add * pixel_path_state[gid.x].path_weight, is_specular_lobe);
+            let indirect_add = vec4<f32>(safe_clamp_vec3_max(cached_radiance, MAX_RADIANCE_LUMINANCE), 0.0);
+            pixel_path_state[gid.x].throughput_indirect_diffuse += select(indirect_add * pixel_path_state[gid.x].path_weight, vec4<f32>(0.0), is_specular_lobe);
+            pixel_path_state[gid.x].throughput_indirect_specular += select(vec4<f32>(0.0), indirect_add * pixel_path_state[gid.x].path_weight, is_specular_lobe);
         }
         
         pixel_path_state[gid.x].rng_sample_count_frame_stamp.y += 1.0;

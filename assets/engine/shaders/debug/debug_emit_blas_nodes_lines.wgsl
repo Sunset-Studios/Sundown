@@ -2,7 +2,7 @@
 #include "acceleration_common.wgsl"
 
 const LINES_PER_BOX = 12u;
-const BVH_COLOR = vec4f(0.0, 0.8, 1.0, 1.0);
+const BVH_COLOR = vec4<f32>(0.0, 0.8, 1.0, 1.0);
 const MAX_STACK = 256u;
 const EPS = 0.0001;
 const MAX_NODES_DEBUG = 8096u;
@@ -14,47 +14,47 @@ const EDGES: array<vec2<u32>, 12> = array<vec2<u32>, 12>(
 );
 
 struct LineData {
-    color_and_width: vec4f,
-    transform: mat4x4f,
+    color_and_width: vec4<f32>,
+    transform: mat4x4<f32>,
 };
 
-fn create_line_transform(start: vec3f, end: vec3f) -> mat4x4f {
+fn create_line_transform(start: vec3<f32>, end: vec3<f32>) -> mat4x4<f32> {
     let dir = end - start;
     let len = length(dir);
     let is_short = len < 0.0001;
     let safe_len = select(len, 1.0, is_short);
 
     let n = dir / safe_len;
-    var up = vec3f(0.0, 1.0, 0.0);
+    var up = vec3<f32>(0.0, 1.0, 0.0);
     let near_up = abs(dot(n, up)) > 0.99;
-    up = select(up, vec3f(0.0, 0.0, 1.0), near_up);
+    up = select(up, vec3<f32>(0.0, 0.0, 1.0), near_up);
 
     let right = normalize(cross(n, up));
     let true_up = normalize(cross(right, n));
 
-    let rot = mat4x4f(
-        vec4f(n, 0.0),
-        vec4f(true_up, 0.0),
-        vec4f(right, 0.0),
-        vec4f(0.0, 0.0, 0.0, 1.0),
+    let rot = mat4x4<f32>(
+        vec4<f32>(n, 0.0),
+        vec4<f32>(true_up, 0.0),
+        vec4<f32>(right, 0.0),
+        vec4<f32>(0.0, 0.0, 0.0, 1.0),
     );
 
-    let trans = mat4x4f(
-        vec4f(1.0, 0.0, 0.0, 0.0),
-        vec4f(0.0, 1.0, 0.0, 0.0),
-        vec4f(0.0, 0.0, 1.0, 0.0),
-        vec4f(start, 1.0),
+    let trans = mat4x4<f32>(
+        vec4<f32>(1.0, 0.0, 0.0, 0.0),
+        vec4<f32>(0.0, 1.0, 0.0, 0.0),
+        vec4<f32>(0.0, 0.0, 1.0, 0.0),
+        vec4<f32>(start, 1.0),
     );
 
-    let scale = mat4_from_scaling(vec3f(len, 1.0, 1.0));
+    let scale = mat4_from_scaling(vec3<f32>(len, 1.0, 1.0));
     return trans * rot * scale;
 }
 
-fn corner(min_p: vec3f, max_p: vec3f, idx: u32) -> vec3f {
+fn corner(min_p: vec3<f32>, max_p: vec3<f32>, idx: u32) -> vec3<f32> {
     let x_sel = select(min_p.x, max_p.x, (idx & 1u) != 0u);
     let y_sel = select(min_p.y, max_p.y, (idx & 2u) != 0u);
     let z_sel = select(min_p.z, max_p.z, (idx & 4u) != 0u);
-    return vec3f(x_sel, y_sel, z_sel);
+    return vec3<f32>(x_sel, y_sel, z_sel);
 }
 
 @group(1) @binding(0) var<storage, read_write> out_line_data: array<LineData>;
@@ -100,8 +100,8 @@ fn cs(
     let global_node_index = u32(mesh_directory_entry.bvh2_base) + node_idx;
     var node = bvh2_nodes[global_node_index];
     
-    node.min -= vec4f(EPS, EPS, EPS, 0.0);
-    node.max += vec4f(EPS, EPS, EPS, 0.0);
+    node.min -= vec4<f32>(EPS, EPS, EPS, 0.0);
+    node.max += vec4<f32>(EPS, EPS, EPS, 0.0);
     
     // Transform BLAS node bounds to world space using entity transform
     let transformed_node = transform_aabb(node, entity_transform);
@@ -135,6 +135,6 @@ fn cs(
         transform[3] = select(transform[3], identity_matrix[3], !is_active);
 
         out_line_data[line_index].transform = transform;
-        out_line_data[line_index].color_and_width = vec4f(BVH_COLOR.rgb, width);
+        out_line_data[line_index].color_and_width = vec4<f32>(BVH_COLOR.rgb, width);
     }
 }

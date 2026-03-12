@@ -592,9 +592,9 @@ fn trace_hit_any(ray: ptr<function, Ray>) -> bool {
 // =============================================================================
 fn process_shadow_visibility(index: u32, ray_origin: vec3<f32>, ray_dir: vec3<f32>, t_max: f32) {
     var ray: Ray;
-    ray.origin_and_tmin = vec4f(ray_origin + ray_dir * 0.001, 0.0);
-    ray.direction_and_tmax = vec4f(ray_dir, t_max);
-    ray.inv_direction = vec4f(
+    ray.origin_and_tmin = vec4<f32>(ray_origin + ray_dir * 0.001, 0.0);
+    ray.direction_and_tmax = vec4<f32>(ray_dir, t_max);
+    ray.inv_direction = vec4<f32>(
         1.0 / max(abs(ray.direction_and_tmax.x), 1e-8) * select(1.0, -1.0, ray.direction_and_tmax.x < 0.0),
         1.0 / max(abs(ray.direction_and_tmax.y), 1e-8) * select(1.0, -1.0, ray.direction_and_tmax.y < 0.0),
         1.0 / max(abs(ray.direction_and_tmax.z), 1e-8) * select(1.0, -1.0, ray.direction_and_tmax.z < 0.0),
@@ -669,9 +669,9 @@ fn process_primary_ray(
     ray_index_in_probe: u32,
 ) {
     var ray: Ray;
-    ray.origin_and_tmin = vec4f(probe_position + ray_dir * 0.001, 0.0);
-    ray.direction_and_tmax = vec4f(ray_dir, 1e30);
-    ray.inv_direction = vec4f(
+    ray.origin_and_tmin = vec4<f32>(probe_position + ray_dir * 0.001, 0.0);
+    ray.direction_and_tmax = vec4<f32>(ray_dir, 1e30);
+    ray.inv_direction = vec4<f32>(
         1.0 / max(abs(ray_dir.x), 1e-8) * select(1.0, -1.0, ray_dir.x < 0.0),
         1.0 / max(abs(ray_dir.y), 1e-8) * select(1.0, -1.0, ray_dir.y < 0.0),
         1.0 / max(abs(ray_dir.z), 1e-8) * select(1.0, -1.0, ray_dir.z < 0.0),
@@ -682,10 +682,10 @@ fn process_primary_ray(
     // Preserve ray_dir_prim.w which stores the per-ray PDF written by the init pass.
     probe_ray_data.rays[index].meta_u32.x = probe_index;
     let ray_pdf = probe_ray_data.rays[index].ray_dir_prim.w;
-    probe_ray_data.rays[index].ray_dir_prim = vec4f(ray_dir, ray_pdf);
-    probe_ray_data.rays[index].nee_light_dir_type = vec4f(0.0, 0.0, 0.0, 0.0);
-    probe_ray_data.rays[index].nee_light_radiance = vec4f(0.0, 0.0, 0.0, 0.0);
-    probe_ray_data.rays[index].hit_pos_t = vec4f(0.0, 0.0, 0.0, 0.0);
+    probe_ray_data.rays[index].ray_dir_prim = vec4<f32>(ray_dir, ray_pdf);
+    probe_ray_data.rays[index].nee_light_dir_type = vec4<f32>(0.0, 0.0, 0.0, 0.0);
+    probe_ray_data.rays[index].nee_light_radiance = vec4<f32>(0.0, 0.0, 0.0, 0.0);
+    probe_ray_data.rays[index].hit_pos_t = vec4<f32>(0.0, 0.0, 0.0, 0.0);
 
     let hit_result = trace_hit(&ray);
 
@@ -702,7 +702,7 @@ fn process_primary_ray(
 
         let t_tri = hit_result.t_hit;
         let p_local = ray_local.origin_and_tmin.xyz + ray_local.direction_and_tmax.xyz * t_tri;
-        let p_world = (entity_transform.transform * vec4f(p_local, 1.0)).xyz;
+        let p_world = (entity_transform.transform * vec4<f32>(p_local, 1.0)).xyz;
 
         let v0i = hit_result.tri_indices.x;
         let v1i = hit_result.tri_indices.y;
@@ -758,11 +758,11 @@ fn process_primary_ray(
         // - Using negative distance allows efficient backface counting without extra flags,
         //   enabling robust dead probe detection even with non-manifold geometry.
         let stored_t = select(t_tri, -t_tri, ray_is_backfacing);
-        probe_ray_data.rays[index].hit_pos_t = vec4f(p_world, stored_t);
-        probe_ray_data.rays[index].ray_dir_prim = vec4f(ray_dir, ray_pdf);
-        probe_ray_data.rays[index].world_n_section = vec4f(world_n, f32(section_index));
-        probe_ray_data.rays[index].world_t_uvx = vec4f(world_t, uv_hit.x);
-        probe_ray_data.rays[index].world_b_uvy = vec4f(world_b, uv_hit.y);
+        probe_ray_data.rays[index].hit_pos_t = vec4<f32>(p_world, stored_t);
+        probe_ray_data.rays[index].ray_dir_prim = vec4<f32>(ray_dir, ray_pdf);
+        probe_ray_data.rays[index].world_n_section = vec4<f32>(world_n, f32(section_index));
+        probe_ray_data.rays[index].world_t_uvx = vec4<f32>(world_t, uv_hit.x);
+        probe_ray_data.rays[index].world_b_uvy = vec4<f32>(world_b, uv_hit.y);
         probe_ray_data.rays[index].state_u32.w = tri_id_local;
         probe_ray_data.rays[index].state_u32.x = prim_store;
 
@@ -798,8 +798,8 @@ fn process_primary_ray(
                 let analytic_light_pdf = analytic_bucket_pdf * (1.0 / max(f32(num_lights), 1.0));
                 let analytic_light_scale = 1.0 / max(analytic_light_pdf, 1e-6);
 
-                probe_ray_data.rays[index].nee_light_dir_type = vec4f(shadow_dir, 0.0);
-                probe_ray_data.rays[index].nee_light_radiance = vec4f(
+                probe_ray_data.rays[index].nee_light_dir_type = vec4<f32>(shadow_dir, 0.0);
+                probe_ray_data.rays[index].nee_light_radiance = vec4<f32>(
                     light.color.rgb * light.intensity * attenuation * analytic_light_scale,
                     0.0
                 );
@@ -822,8 +822,8 @@ fn process_primary_ray(
                 let emissive_light_pdf = emissive_bucket_pdf * emissive_pdf;
                 let emissive_light_scale = 1.0 / max(emissive_light_pdf, 1e-6);
 
-                probe_ray_data.rays[index].nee_light_dir_type = vec4f(shadow_dir, 1.0);
-                probe_ray_data.rays[index].nee_light_radiance = vec4f(
+                probe_ray_data.rays[index].nee_light_dir_type = vec4<f32>(shadow_dir, 1.0);
+                probe_ray_data.rays[index].nee_light_radiance = vec4<f32>(
                     emissive_light.radiance_weight.xyz * light_facing * solid_angle_scale * emissive_light_scale,
                     0.0
                 );

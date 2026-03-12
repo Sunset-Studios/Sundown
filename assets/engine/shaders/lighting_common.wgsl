@@ -2,9 +2,9 @@
 // Data Structures
 // ------------------------------------------------------------------------------------ 
 struct Light {
-    position: vec4f,
-    direction: vec4f,
-    color: vec4f,
+    position: vec4<f32>,
+    direction: vec4<f32>,
+    color: vec4<f32>,
     light_type: f32,
     intensity: f32,
     radius: f32,
@@ -44,9 +44,9 @@ struct DenseLightsBufferA {
 };
 
 struct EmissiveLight {
-    position_radius: vec4f,      // xyz = world centroid, w = equivalent radius
-    normal_area: vec4f,          // xyz = world normal, w = triangle area
-    radiance_weight: vec4f,      // rgb = emissive radiance estimate, w = sampling weight (luminance * area)
+    position_radius: vec4<f32>,      // xyz = world centroid, w = equivalent radius
+    normal_area: vec4<f32>,          // xyz = world normal, w = triangle area
+    radiance_weight: vec4<f32>,      // rgb = emissive radiance estimate, w = sampling weight (luminance * area)
     instance_tri_section: vec4<u32>, // x = prim_store, y = mesh_id, z = tri_id_local, w = section_index
 };
 
@@ -260,11 +260,11 @@ fn sample_ggx(n: vec3<f32>, roughness: f32, r1: f32, r2: f32) -> vec3<f32> {
     let cos_theta = sqrt((1.0 - r2) / (1.0 + (a2 - 1.0) * r2));
     let sin_theta = sqrt(1.0 - cos_theta * cos_theta);
     
-    let up = select(vec3f(0.0, 1.0, 0.0), vec3f(1.0, 0.0, 0.0), abs(n.y) > 0.999);
+    let up = select(vec3<f32>(0.0, 1.0, 0.0), vec3<f32>(1.0, 0.0, 0.0), abs(n.y) > 0.999);
     let tangent = normalize(cross(up, n));
     let bitangent = normalize(cross(n, tangent));
     
-    let h_local = vec3f(cos(phi) * sin_theta, sin(phi) * sin_theta, cos_theta);
+    let h_local = vec3<f32>(cos(phi) * sin_theta, sin(phi) * sin_theta, cos_theta);
     return normalize(tangent * h_local.x + bitangent * h_local.y + n * h_local.z);
 }
 

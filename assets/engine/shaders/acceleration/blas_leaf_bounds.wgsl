@@ -8,7 +8,7 @@ struct MeshSelector { mesh_id: u32 };
 @group(1) @binding(2) var<storage, read> mesh_selector: MeshSelector;
 @group(1) @binding(3) var<storage, read> index_buffer: array<u32>;
 
-fn load_position(vertex_index: u32) -> vec3f {
+fn load_position(vertex_index: u32) -> vec3<f32> {
     return vertex_buffer[vertex_index].position.xyz;
 }
 
@@ -36,8 +36,8 @@ fn write_leaf_bounds(@builtin(global_invocation_id) gid: vec3u) {
     let mx = max(v0, max(v1, v2));
 
     let write_index = entry.bvh2_base + tri_id;
-    out_bounds[write_index].min = vec4f(mn, f32(tri_id));
-    out_bounds[write_index].max = vec4f(mx, -1.0);
+    out_bounds[write_index].min = vec4<f32>(mn, f32(tri_id));
+    out_bounds[write_index].max = vec4<f32>(mx, -1.0);
 }
 
 

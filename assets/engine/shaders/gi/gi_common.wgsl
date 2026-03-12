@@ -175,11 +175,11 @@ fn sample_cosine_hemisphere(u1: f32, u2: f32, normal: vec3<f32>) -> vec3<f32> {
     let cos_theta = sqrt(1.0 - u2);
     let sin_theta = sqrt(u2);
     
-    let up = select(vec3f(0.0, 1.0, 0.0), vec3f(1.0, 0.0, 0.0), abs(normal.y) > 0.999);
+    let up = select(vec3<f32>(0.0, 1.0, 0.0), vec3<f32>(1.0, 0.0, 0.0), abs(normal.y) > 0.999);
     let tangent = normalize(cross(up, normal));
     let bitangent = normalize(cross(normal, tangent));
     
-    let dir_local = vec3f(cos(phi) * sin_theta, sin(phi) * sin_theta, cos_theta);
+    let dir_local = vec3<f32>(cos(phi) * sin_theta, sin(phi) * sin_theta, cos_theta);
     return normalize(tangent * dir_local.x + bitangent * dir_local.y + normal * dir_local.z);
 }
 

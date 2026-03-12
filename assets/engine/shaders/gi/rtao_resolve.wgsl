@@ -32,8 +32,8 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
 
     let ao = 1.0 - (total_ao_weight / f32(rays_per_pixel));
     let normal = textureLoad(gbuffer_normal, vec2<i32>(pixel), 0).xyz;
-    let bent = select(vec3f(0.0, 1.0, 0.0), normalize(normal), dot(normal, normal) > 0.0);
+    let bent = select(vec3<f32>(0.0, 1.0, 0.0), normalize(normal), dot(normal, normal) > 0.0);
 
-    textureStore(ao_output, vec2<i32>(pixel), vec4f(ao, 0.0, 0.0, 1.0));
-    textureStore(bent_normal_output, vec2<i32>(pixel), vec4f(bent, 1.0));
+    textureStore(ao_output, vec2<i32>(pixel), vec4<f32>(ao, 0.0, 0.0, 1.0));
+    textureStore(bent_normal_output, vec2<i32>(pixel), vec4<f32>(bent, 1.0));
 }

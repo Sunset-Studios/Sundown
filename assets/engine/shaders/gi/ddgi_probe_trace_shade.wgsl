@@ -64,7 +64,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     // - Backface hits are encoded with negative t values.
     // - We record 0 radiance to avoid lighting surfaces that should be shadowed.
     if (hit.hit_pos_t.w < 0.0) {
-        probe_ray_data.rays[gid.x].radiance = vec4f(0.0, 0.0, 0.0, 1.0);
+        probe_ray_data.rays[gid.x].radiance = vec4<f32>(0.0, 0.0, 0.0, 1.0);
         return;
     }
 
@@ -73,7 +73,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     if (is_miss) {
         // Ray miss: evaluate environment radiance.
         let env_radiance = evaluate_environment(ray_dir, sun_dir, scene_lighting_data, skybox_texture);
-        probe_ray_data.rays[gid.x].radiance = vec4f(safe_clamp_vec3_max(env_radiance, MAX_RADIANCE_LUMINANCE), 1.0);
+        probe_ray_data.rays[gid.x].radiance = vec4<f32>(safe_clamp_vec3_max(env_radiance, MAX_RADIANCE_LUMINANCE), 1.0);
     }
     
     if (!is_miss) {
@@ -86,7 +86,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         let material = material_params[mat_params_index];
 
         let tiling = material.emission_roughness_metallic_tiling.w;
-        let base_uv = vec2f(hit.world_t_uvx.w, hit.world_b_uvy.w) * tiling;
+        let base_uv = vec2<f32>(hit.world_t_uvx.w, hit.world_b_uvy.w) * tiling;
         let lod = 0.0;
 
         let albedo = sample_texture_or_vec4_param_handle(
@@ -158,6 +158,6 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
             radiance += stabilize_emissive_hit_radiance(emissive * albedo);
         }
 
-        probe_ray_data.rays[gid.x].radiance = vec4f(radiance, 1.0);
+        probe_ray_data.rays[gid.x].radiance = vec4<f32>(radiance, 1.0);
     }
 }

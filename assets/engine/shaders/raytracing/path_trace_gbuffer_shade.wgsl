@@ -21,7 +21,7 @@ const MAX_RADIANCE_LUMINANCE = 10.0;
 // ─────────────────────────────────────────────────────────────────────────────
 fn demodulate(radiance: vec3<f32>, albedo: vec3<f32>) -> vec3<f32> {
     // Prevent division by very small values while preserving color ratios
-    let safe_albedo = max(albedo, vec3f(0.001));
+    let safe_albedo = max(albedo, vec3<f32>(0.001));
     return radiance / safe_albedo;
 }
 
@@ -97,7 +97,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         
         // Sky directly visible - no demodulation needed since primary_albedo is (1,1,1) for sky hits
         let sky_contrib = safe_clamp_vec3_max(sky_radiance, MAX_RADIANCE_LUMINANCE);
-        path_state[pixel_index].accumulated_radiance += vec4f(sky_contrib, 0.0);
+        path_state[pixel_index].accumulated_radiance += vec4<f32>(sky_contrib, 0.0);
         
         // Mark path as complete
         path_state[pixel_index].state_u32.y = 0u;
@@ -136,7 +136,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
             demod_emissive * PI * path_state[pixel_index].path_weight.xyz,
             MAX_NEE_LUMINANCE
         );
-        path_state[pixel_index].accumulated_radiance += vec4f(emissive_contrib, 0.0);
+        path_state[pixel_index].accumulated_radiance += vec4<f32>(emissive_contrib, 0.0);
     }
     
     // ─────────────────────────────────────────────────────────────────────────
@@ -185,9 +185,9 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         let light_contrib = safe_clamp_vec3_max(demod_light_contrib, MAX_NEE_LUMINANCE);
         
         let light_distance = select(1e30, length(light.position.xyz - hit_pos), light.light_type != 0.0);
-        path_state[pixel_index].shadow_origin = vec4f(hit_pos + n * 0.001, 0.0001);
-        path_state[pixel_index].shadow_direction = vec4f(light_dir, light_distance * 0.999);
-        path_state[pixel_index].shadow_radiance = vec4f(light_contrib, 1.0);
+        path_state[pixel_index].shadow_origin = vec4<f32>(hit_pos + n * 0.001, 0.0001);
+        path_state[pixel_index].shadow_direction = vec4<f32>(light_dir, light_distance * 0.999);
+        path_state[pixel_index].shadow_radiance = vec4<f32>(light_contrib, 1.0);
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -233,9 +233,9 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let throughput_update = demod_brdf / safe_pdf;
     let new_path_weight = path_state[pixel_index].path_weight.xyz * throughput_update;
     
-    path_state[pixel_index].path_weight = vec4f(new_path_weight, 0.0);
-    path_state[pixel_index].origin_tmin = vec4f(hit_pos + n * 0.001, 0.0001);
-    path_state[pixel_index].direction_tmax = vec4f(next_dir, 1e30);
+    path_state[pixel_index].path_weight = vec4<f32>(new_path_weight, 0.0);
+    path_state[pixel_index].origin_tmin = vec4<f32>(hit_pos + n * 0.001, 0.0001);
+    path_state[pixel_index].direction_tmax = vec4<f32>(next_dir, 1e30);
     path_state[pixel_index].state_u32.x = 1u; // Move to bounce 1
     path_state[pixel_index].state_u32.y = 1u; // Still alive
     path_state[pixel_index].state_u32.w = 0xffffffffu; // Mark as needing intersection test

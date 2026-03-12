@@ -204,8 +204,8 @@ fn intersect_triangle(ray: ptr<function, Ray>, v0: vec3<f32>, v1: vec3<f32>, v2:
 
 fn build_local_ray(
     ray_world: ptr<function, Ray>,
-    model: mat4x4f,
-    transpose_inverse_model: mat4x4f
+    model: mat4x4<f32>,
+    transpose_inverse_model: mat4x4<f32>
 ) -> Ray {
     let ro_world = (*ray_world).origin_and_tmin.xyz;
     let rd_world = (*ray_world).direction_and_tmax.xyz;
@@ -217,23 +217,23 @@ fn build_local_ray(
     let trans = model[3].xyz;
     let ro_rel = ro_world - trans;
 
-    let rd_local = vec3f(
+    let rd_local = vec3<f32>(
         dot(rd_world, t_col0),
         dot(rd_world, t_col1),
         dot(rd_world, t_col2)
     );
-    let ro_local = vec3f(
+    let ro_local = vec3<f32>(
         dot(ro_rel, t_col0),
         dot(ro_rel, t_col1),
         dot(ro_rel, t_col2)
     );
 
     var ray_local: Ray;
-    ray_local.origin_and_tmin = vec4f(ro_local, (*ray_world).origin_and_tmin.w);
-    ray_local.direction_and_tmax = vec4f(rd_local, (*ray_world).direction_and_tmax.w);
+    ray_local.origin_and_tmin = vec4<f32>(ro_local, (*ray_world).origin_and_tmin.w);
+    ray_local.direction_and_tmax = vec4<f32>(rd_local, (*ray_world).direction_and_tmax.w);
 
     let d = rd_local;
-    ray_local.inv_direction = vec4f(
+    ray_local.inv_direction = vec4<f32>(
         1.0 / max(abs(d.x), 1e-8) * select(1.0, -1.0, d.x < 0.0),
         1.0 / max(abs(d.y), 1e-8) * select(1.0, -1.0, d.y < 0.0),
         1.0 / max(abs(d.z), 1e-8) * select(1.0, -1.0, d.z < 0.0),

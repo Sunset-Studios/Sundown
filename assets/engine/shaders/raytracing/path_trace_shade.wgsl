@@ -21,7 +21,7 @@ const MAX_NEE_LUMINANCE = 10.0;
 // ─────────────────────────────────────────────────────────────────────────────
 fn demodulate(radiance: vec3<f32>, albedo: vec3<f32>) -> vec3<f32> {
     // Prevent division by very small values while preserving color ratios
-    let safe_albedo = max(albedo, vec3f(0.001));
+    let safe_albedo = max(albedo, vec3<f32>(0.001));
     return radiance / safe_albedo;
 }
 
@@ -98,8 +98,8 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     // ─────────────────────────────────────────────────────────────────────────
     if (path_state[pixel_index].state_u32.z == 1u) {
         let shadow_contrib = safe_clamp_vec3_max(path_state[pixel_index].shadow_radiance.rgb, MAX_NEE_LUMINANCE);
-        path_state[pixel_index].accumulated_radiance += vec4f(shadow_contrib, 0.0);
-        path_state[pixel_index].shadow_radiance = vec4f(0.0);
+        path_state[pixel_index].accumulated_radiance += vec4<f32>(shadow_contrib, 0.0);
+        path_state[pixel_index].shadow_radiance = vec4<f32>(0.0);
         path_state[pixel_index].state_u32.z = 0u;
     }
 
@@ -123,7 +123,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         
         // Add sky contribution weighted by path throughput
         let sky_contrib = safe_clamp_vec3_max(sky_radiance, MAX_RADIANCE_LUMINANCE);
-        path_state[pixel_index].accumulated_radiance += vec4f(sky_contrib, 0.0);
+        path_state[pixel_index].accumulated_radiance += vec4<f32>(sky_contrib, 0.0);
         
         // Mark path as complete
         path_state[pixel_index].state_u32.y = 0u;
@@ -170,7 +170,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
             let uv2 = vertex_buffer[v2i].uv.xy;
             base_uv = uv0 * w_bc + uv1 * u_bc + uv2 * v_bc;
         } else {
-            base_uv = vec2f(path_state[pixel_index].hit_attr0.w, path_state[pixel_index].hit_attr1.w);
+            base_uv = vec2<f32>(path_state[pixel_index].hit_attr0.w, path_state[pixel_index].hit_attr1.w);
         }
         base_uv = base_uv * tiling;
         let lod = 0.0;
@@ -226,7 +226,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         
         // For bounce 0, store primary_albedo and demodulate; otherwise use existing
         if (is_bounce_0) {
-            path_state[pixel_index].primary_albedo = vec4f(albedo, 1.0);
+            path_state[pixel_index].primary_albedo = vec4<f32>(albedo, 1.0);
         }
         let primary_albedo = path_state[pixel_index].primary_albedo.xyz;
 
@@ -242,7 +242,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
                 emissive_contribution = demodulate(emissive_contribution, primary_albedo);
             }
             
-            path_state[pixel_index].accumulated_radiance += vec4f(
+            path_state[pixel_index].accumulated_radiance += vec4<f32>(
                 safe_clamp_vec3_max(emissive_contribution, MAX_NEE_LUMINANCE), 
                 0.0
             );
@@ -302,9 +302,9 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
             
             // Setup shadow ray for visibility test
             let light_distance = select(1e30, length(light.position.xyz - hit_pos), light.light_type != 0.0);
-            path_state[pixel_index].shadow_origin = vec4f(hit_pos + n * 0.001, 0.0001);
-            path_state[pixel_index].shadow_direction = vec4f(light_dir, light_distance * 0.999);
-            path_state[pixel_index].shadow_radiance = vec4f(light_contrib, 1.0);
+            path_state[pixel_index].shadow_origin = vec4<f32>(hit_pos + n * 0.001, 0.0001);
+            path_state[pixel_index].shadow_direction = vec4<f32>(light_dir, light_distance * 0.999);
+            path_state[pixel_index].shadow_radiance = vec4<f32>(light_contrib, 1.0);
         }
 
         // =====================================================================
@@ -366,13 +366,13 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
             path_state[pixel_index].state_u32.y = 0u;
         } else {
             // Spawn next ray
-            path_state[pixel_index].origin_tmin = vec4f(hit_pos + n * 0.001, 0.0001);
-            path_state[pixel_index].direction_tmax = vec4f(next_dir, 1e30);
+            path_state[pixel_index].origin_tmin = vec4<f32>(hit_pos + n * 0.001, 0.0001);
+            path_state[pixel_index].direction_tmax = vec4<f32>(next_dir, 1e30);
             path_state[pixel_index].state_u32.x = path_state[pixel_index].state_u32.x + 1u;
             path_state[pixel_index].state_u32.w = 0xffffffffu; // Mark as needing intersection test
         }
 
-        path_state[pixel_index].path_weight = vec4f(new_path_weight, 0.0);
+        path_state[pixel_index].path_weight = vec4<f32>(new_path_weight, 0.0);
         path_state[pixel_index].rng_sample_count.x = f32(rng);
     }
 }

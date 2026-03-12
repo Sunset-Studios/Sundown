@@ -102,10 +102,10 @@ fn cs(@builtin(global_invocation_id) global_id: vec3<u32>) {
 
     // Replace projection of corners and min/max computation with world-to-tile mapping
     if (entity_moved) {
-        var min_render_clip = vec2f(99999.0);
-        var max_render_clip = vec2f(-99999.0);
-        var min_sample_clip = vec2f(99999.0);
-        var max_sample_clip = vec2f(-99999.0);
+        var min_render_clip = vec2<f32>(99999.0);
+        var max_render_clip = vec2<f32>(-99999.0);
+        var min_sample_clip = vec2<f32>(99999.0);
+        var max_sample_clip = vec2<f32>(-99999.0);
 
         // Project all 8 world-space corners
         for (var i = 0u; i < 8u; i = i + 1u) {
@@ -113,7 +113,7 @@ fn cs(@builtin(global_invocation_id) global_id: vec3<u32>) {
             let sy = select(-1.0, 1.0, (i & 2u) != 0u);
             let sz = select(-1.0, 1.0, (i & 4u) != 0u);
 
-            let world = position + scale.xyz * vec3f(sx, sy, sz);
+            let world = position + scale.xyz * vec3<f32>(sx, sy, sz);
 
             let render_clip = vsm_calculate_render_clip_value_from_world_pos(
                 vec4<f32>(world, 1.0),

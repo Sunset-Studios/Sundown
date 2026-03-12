@@ -27,12 +27,12 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
 
     let coord = vec2<i32>(i32(gid.x), i32(gid.y));
-    let uv = (vec2f(f32(gid.x), f32(gid.y)) + 0.5) / vec2f(f32(resolution.x), f32(resolution.y));
+    let uv = (vec2<f32>(f32(gid.x), f32(gid.y)) + 0.5) / vec2<f32>(f32(resolution.x), f32(resolution.y));
 
     let current_ao = textureLoad(ao_current, coord, 0).r;
     let motion = textureLoad(motion_texture, coord, 0).xy;
-    let prev_uv = uv + vec2f(-0.5 * motion.x, 0.5 * motion.y);
-    let prev_uv_in_bounds = all(prev_uv >= vec2f(0.0)) && all(prev_uv <= vec2f(1.0));
+    let prev_uv = uv + vec2<f32>(-0.5 * motion.x, 0.5 * motion.y);
+    let prev_uv_in_bounds = all(prev_uv >= vec2<f32>(0.0)) && all(prev_uv <= vec2<f32>(1.0));
 
     var neigh_min = current_ao;
     var neigh_max = current_ao;
@@ -56,5 +56,5 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let blend_alpha = select(1.0, RTAO_TEMPORAL_BLEND, prev_uv_in_bounds);
     let ao_out = mix(history_clamped, current_ao, blend_alpha);
 
-    textureStore(ao_output, coord, vec4f(ao_out, 0.0, 0.0, 1.0));
+    textureStore(ao_output, coord, vec4<f32>(ao_out, 0.0, 0.0, 1.0));
 }

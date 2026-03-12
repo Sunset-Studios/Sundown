@@ -18,7 +18,7 @@ struct BloomResolveConstants {
 @group(1) @binding(2) var<uniform> bloom_resolve_constants: BloomResolveConstants;
 
 fn upsample_filter_high(tex: texture_2d<f32>, uv: vec2<f32>, texel_size: vec2<f32>, sample_scale: f32) -> vec3<f32> {
-    let d = texel_size.xyxy * vec4f(1.0, 1.0, -1.0, 0.0) * sample_scale;
+    let d = texel_size.xyxy * vec4<f32>(1.0, 1.0, -1.0, 0.0) * sample_scale;
 
     var s = safe_clamp_vec3(textureSampleLevel(tex, clamped_sampler, uv - d.xy, 0.0).rgb);
     s += safe_clamp_vec3(textureSampleLevel(tex, clamped_sampler, uv - d.wy, 0.0).rgb) * 2.0;

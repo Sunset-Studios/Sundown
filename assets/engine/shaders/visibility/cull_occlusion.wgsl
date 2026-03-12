@@ -38,14 +38,14 @@ fn aabb_project(
 ) -> bool {
     // Build the 8 world‐space corners
     let corners = array<vec4<f32>, 8>(
-        vec4f(min_pt.x, min_pt.y, min_pt.z, 1.0),
-        vec4f(max_pt.x, min_pt.y, min_pt.z, 1.0),
-        vec4f(min_pt.x, max_pt.y, min_pt.z, 1.0),
-        vec4f(max_pt.x, max_pt.y, min_pt.z, 1.0),
-        vec4f(min_pt.x, min_pt.y, max_pt.z, 1.0),
-        vec4f(max_pt.x, min_pt.y, max_pt.z, 1.0),
-        vec4f(min_pt.x, max_pt.y, max_pt.z, 1.0),
-        vec4f(max_pt.x, max_pt.y, max_pt.z, 1.0)
+        vec4<f32>(min_pt.x, min_pt.y, min_pt.z, 1.0),
+        vec4<f32>(max_pt.x, min_pt.y, min_pt.z, 1.0),
+        vec4<f32>(min_pt.x, max_pt.y, min_pt.z, 1.0),
+        vec4<f32>(max_pt.x, max_pt.y, min_pt.z, 1.0),
+        vec4<f32>(min_pt.x, min_pt.y, max_pt.z, 1.0),
+        vec4<f32>(max_pt.x, min_pt.y, max_pt.z, 1.0),
+        vec4<f32>(min_pt.x, max_pt.y, max_pt.z, 1.0),
+        vec4<f32>(max_pt.x, max_pt.y, max_pt.z, 1.0)
     );
 
     // Initialize NDC min/max
@@ -97,7 +97,7 @@ fn is_occluded(aabb_node: ptr<function, AABB>, view: ptr<function, View>) -> u32
         return 0u;
     }
 
-    let center = vec4f((aabb_node.min.xyz + aabb_node.max.xyz) * 0.5, 1.0);
+    let center = vec4<f32>((aabb_node.min.xyz + aabb_node.max.xyz) * 0.5, 1.0);
     var radius = length(aabb_node.max.xyz - aabb_node.min.xyz) * 0.5;
 
     let hzb_dims = textureDimensions(input_texture);

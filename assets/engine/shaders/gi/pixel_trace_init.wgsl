@@ -356,8 +356,8 @@ fn process_selected_pixel(
             gi_reservoir_update(&gi_reservoir, i, ris_weight, &rng, num_init_ris_samples);
         }
         
-        candidate_samples[i].radiance_and_target_pdf = vec4f(brdf, target_pdf);
-        candidate_samples[i].direction_and_source_pdf = vec4f(dir, source_pdf);
+        candidate_samples[i].radiance_and_target_pdf = vec4<f32>(brdf, target_pdf);
+        candidate_samples[i].direction_and_source_pdf = vec4<f32>(dir, source_pdf);
         candidate_samples[i].lobe_type = select(0u, 1u, is_specular_lobe);
     }
     
@@ -416,9 +416,9 @@ fn process_selected_pixel(
             let light_contrib = safe_clamp_vec3_max(raw_light_contrib, MAX_NEE_LUMINANCE);
 
             let light_distance = select(1e30, length(light.position.xyz - position), light.light_type != 0.0);
-            pixel_path_state[ray_slot].shadow_origin = vec4f(position + normal * 0.001, f32(selected_light_idx));
-            pixel_path_state[ray_slot].shadow_direction = vec4f(light_dir, light_distance * 0.999);
-            pixel_path_state[ray_slot].shadow_radiance = vec4f(light_contrib, 1.0);
+            pixel_path_state[ray_slot].shadow_origin = vec4<f32>(position + normal * 0.001, f32(selected_light_idx));
+            pixel_path_state[ray_slot].shadow_direction = vec4<f32>(light_dir, light_distance * 0.999);
+            pixel_path_state[ray_slot].shadow_radiance = vec4<f32>(light_contrib, 1.0);
         } else {
             var emissive_pdf = 0.0;
             let emissive_idx = sample_weighted_emissive_light(
@@ -451,9 +451,9 @@ fn process_selected_pixel(
             let light_contrib = safe_clamp_vec3_max(raw_light_contrib, MAX_NEE_LUMINANCE);
 
             let light_distance = max(0.0, distance - emissive_light.position_radius.w);
-            pixel_path_state[ray_slot].shadow_origin = vec4f(position + normal * 0.001, f32(selected_light_idx));
-            pixel_path_state[ray_slot].shadow_direction = vec4f(light_dir, light_distance * 0.999);
-            pixel_path_state[ray_slot].shadow_radiance = vec4f(light_contrib, 1.0);
+            pixel_path_state[ray_slot].shadow_origin = vec4<f32>(position + normal * 0.001, f32(selected_light_idx));
+            pixel_path_state[ray_slot].shadow_direction = vec4<f32>(light_dir, light_distance * 0.999);
+            pixel_path_state[ray_slot].shadow_radiance = vec4<f32>(light_contrib, 1.0);
         }
     } else {
         pixel_path_state[ray_slot].shadow_origin = vec4<f32>(0.0, 0.0, 0.0, -1.0);

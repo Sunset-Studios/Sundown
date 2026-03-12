@@ -12,7 +12,7 @@ struct VBAOSettings {
     denoise_position_sigma: f32,
     denoise_normal_power: f32,
     denoise_ao_sigma: f32,
-    denoise_direction: vec2f,
+    denoise_direction: vec2<f32>,
     denoise_radius_px: f32,
 };
 
@@ -41,7 +41,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let full_dims = textureDimensions(normal_tex);
     let coord = vec2<i32>(gid.xy);
     let radius = max(0, i32(settings.denoise_radius_px + 0.5));
-    let uv = (vec2f(f32(gid.x), f32(gid.y)) + 0.5) / vec2f(f32(dims.x), f32(dims.y));
+    let uv = (vec2<f32>(f32(gid.x), f32(gid.y)) + 0.5) / vec2<f32>(f32(dims.x), f32(dims.y));
     let full_coord = uv_to_coord(uv, full_dims);
 
     let center_normal_raw = textureLoad(normal_tex, full_coord, 0).xyz;
@@ -49,7 +49,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let center_ao = textureLoad(ao_src, coord, 0).r;
 
     if (center_normal_len < 1e-6) {
-        textureStore(ao_dst, coord, vec4f(center_ao, 0.0, 0.0, 1.0));
+        textureStore(ao_dst, coord, vec4<f32>(center_ao, 0.0, 0.0, 1.0));
         return;
     }
 
@@ -69,8 +69,8 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
             clamp(coord.x + tap_offset.x, 0, i32(dims.x) - 1),
             clamp(coord.y + tap_offset.y, 0, i32(dims.y) - 1)
         );
-        let tap_uv = (vec2f(f32(tap_coord.x), f32(tap_coord.y)) + 0.5) /
-            vec2f(f32(dims.x), f32(dims.y));
+        let tap_uv = (vec2<f32>(f32(tap_coord.x), f32(tap_coord.y)) + 0.5) /
+            vec2<f32>(f32(dims.x), f32(dims.y));
         let tap_full_coord = uv_to_coord(tap_uv, full_dims);
 
         let tap_normal_raw = textureLoad(normal_tex, tap_full_coord, 0).xyz;
@@ -99,7 +99,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
 
     let filtered_ao = clamp(ao_sum / max(weight_sum, 1e-5), 0.0, 1.0);
 
-    textureStore(ao_dst, coord, vec4f(filtered_ao, 0.0, 0.0, 1.0));
+    textureStore(ao_dst, coord, vec4<f32>(filtered_ao, 0.0, 0.0, 1.0));
 }
 
 

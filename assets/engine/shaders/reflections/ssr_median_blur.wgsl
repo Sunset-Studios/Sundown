@@ -5,7 +5,7 @@
 @group(1) @binding(2) var out_reflections: texture_storage_2d<rgba16float, write>;
 
 // Optimal 9-element sorting network (25 compare-swaps instead of 36+ from selection sort).
-fn swap_if_less(s: ptr<function, array<vec4f, 9>>, a: u32, b: u32) {
+fn swap_if_less(s: ptr<function, array<vec4<f32>, 9>>, a: u32, b: u32) {
     let la = luminance((*s)[a].rgb);
     let lb = luminance((*s)[b].rgb);
     if (lb < la) {
@@ -26,7 +26,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let center = textureLoad(temporal_texture, coord, 0);
     let roughness = clamp(textureLoad(smra_texture, coord, 0).g, 0.0, 1.0);
 
-    var samples = array<vec4f, 9>();
+    var samples = array<vec4<f32>, 9>();
     var idx = 0u;
 
     for (var y = -1; y <= 1; y++) {

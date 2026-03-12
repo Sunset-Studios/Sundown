@@ -6,7 +6,7 @@
 // Data Structures
 //------------------------------------------------------------------------------------
 struct ElementData {
-    element_color: vec4f,
+    element_color: vec4<f32>,
     element_emissive: f32,
     element_rounding: f32,
 };
@@ -30,7 +30,7 @@ fn fragment(v_out: VertexOutput, f_out: ptr<function, FragmentOutput>) -> Fragme
     let dy = min(uv.y, 1.0 - uv.y);
     
     // Calculate corner distance in normalized space
-    let corner_distance = length(vec2f(
+    let corner_distance = length(vec2<f32>(
         max(0.0, element_rounding - dx),
         max(0.0, element_rounding - dy)
     )); 

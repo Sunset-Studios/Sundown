@@ -53,7 +53,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     
     let view_index = u32(frame_info.view_index);
     let pixel_coord = vec2<i32>(i32(gid.x), i32(gid.y));
-    let uv = (vec2f(f32(pixel_coord.x), f32(pixel_coord.y)) + 0.5) / vec2f(f32(res.x), f32(res.y));
+    let uv = (vec2<f32>(f32(pixel_coord.x), f32(pixel_coord.y)) + 0.5) / vec2<f32>(f32(res.x), f32(res.y));
 
     let depth = textureSampleLevel(hzb_texture, non_filtering_sampler, uv, 0.0).r;
     let position = reconstruct_world_position(uv, depth, view_index);
@@ -63,7 +63,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     // Skip sky pixels (no geometry). Squared length avoids sqrt.
     // ─────────────────────────────────────────────────────────────────────────
     if (dot(normal_data.xyz, normal_data.xyz) <= DDGI_SAMPLE_SKY_NORMAL_LENGTH_SQ_EPS) {
-        textureStore(output_diffuse, pixel_coord, vec4f(0.0));
+        textureStore(output_diffuse, pixel_coord, vec4<f32>(0.0));
         return;
     }
     
@@ -101,6 +101,6 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         );
     }
 
-    textureStore(output_diffuse, pixel_coord, vec4f(irradiance, 1.0));
+    textureStore(output_diffuse, pixel_coord, vec4<f32>(irradiance, 1.0));
 }
 

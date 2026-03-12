@@ -128,8 +128,8 @@ fn fragment(v_out: VertexOutput, f_out: ptr<function, FragmentOutput>) -> Fragme
 
     let weight = clamp(pow(min(1.0, alpha * 10.0) + 0.01, 3.0) * 1e8 * pow(1.0 - v_out.position.z * 0.9, 3.0), 1e-2, 3e3); 
     // Store weighted color in RGB and reveal (alpha) in A
-    post_material_output.albedo = vec4f(color * alpha * weight, alpha * weight);
-    post_material_output.normal = vec4f(0.0); // Treat transparency as unlit in deferred lighting pass; We've already done lighting here
+    post_material_output.albedo = vec4<f32>(color * alpha * weight, alpha * weight);
+    post_material_output.normal = vec4<f32>(0.0); // Treat transparency as unlit in deferred lighting pass; We've already done lighting here
 #endif
 
     return post_material_output;

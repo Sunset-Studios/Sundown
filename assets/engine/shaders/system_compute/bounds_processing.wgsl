@@ -68,16 +68,16 @@ fn cs(
 
 	let num_rows = arrayLength(&entity_transforms);
 
-	var min_point = vec3f(pos_inf, pos_inf, pos_inf);
-	var max_point = vec3f(neg_inf, neg_inf, neg_inf);
+	var min_point = vec3<f32>(pos_inf, pos_inf, pos_inf);
+	var max_point = vec3<f32>(neg_inf, neg_inf, neg_inf);
 
-	var min_node_bounds = vec4f(0.0, 0.0, 0.0, -1.0);
-	var max_node_bounds = vec4f(0.0, 0.0, 0.0, -1.0);
+	var min_node_bounds = vec4<f32>(0.0, 0.0, 0.0, -1.0);
+	var max_node_bounds = vec4<f32>(0.0, 0.0, 0.0, -1.0);
 
     let entity_id_offset = idx;
     let transform = entity_transforms[entity_id_offset].transform;
     let position = transform[3].xyz;
-	let scale = vec3f(length(transform[0].xyz), length(transform[1].xyz), length(transform[2].xyz));
+	let scale = vec3<f32>(length(transform[0].xyz), length(transform[1].xyz), length(transform[2].xyz));
 
 	let is_active = idx < num_rows && transform[3].w != 0.0;
 	if (is_active) {
@@ -91,11 +91,11 @@ fn cs(
 			let center_local = 0.5 * (mesh_min_local + mesh_max_local);
 			let half_local = 0.5 * (mesh_max_local - mesh_min_local);
 
-			let world_center = (transform * vec4f(center_local, 1.0)).xyz;
+			let world_center = (transform * vec4<f32>(center_local, 1.0)).xyz;
 			let r0 = abs(transform[0].xyz) * 0.5;
 			let r1 = abs(transform[1].xyz) * 0.5;
 			let r2 = abs(transform[2].xyz) * 0.5;
-			let world_half = vec3f(
+			let world_half = vec3<f32>(
 				dot(r0, half_local),
 				dot(r1, half_local),
 				dot(r2, half_local),
@@ -104,30 +104,30 @@ fn cs(
 			min_point = world_center - (world_half + padding);
 			max_point = world_center + (world_half + padding);
 		} else {
-			let half_size = vec3f(
+			let half_size = vec3<f32>(
 			  abs(scale[0]) * 0.5,
 			  abs(scale[1]) * 0.5,
 			  abs(scale[2]) * 0.5,
 			);
-			let padding = vec3f(
+			let padding = vec3<f32>(
 			  half_size[0] * bounds_padding,
 			  half_size[1] * bounds_padding,
 			  half_size[2] * bounds_padding,
 			);
-			min_point = vec3f(
+			min_point = vec3<f32>(
 			  position[0] - half_size[0] - padding[0],
 			  position[1] - half_size[1] - padding[1],
 			  position[2] - half_size[2] - padding[2],
 			);
-			max_point = vec3f(
+			max_point = vec3<f32>(
 			  position[0] + half_size[0] + padding[0],
 			  position[1] + half_size[1] + padding[1],
 			  position[2] + half_size[2] + padding[2],
 			);
 		}
 
-        min_node_bounds = vec4f(min_point, f32(mesh_id));
-        max_node_bounds = vec4f(max_point, -1.0 - f32(entity_id_offset));
+        min_node_bounds = vec4<f32>(min_point, f32(mesh_id));
+        max_node_bounds = vec4<f32>(max_point, -1.0 - f32(entity_id_offset));
 
 		entity_flags[entity_id_offset] |= EF_AABB_DIRTY;
 	}
@@ -141,12 +141,12 @@ fn cs(
 	workgroupBarrier();
 
 	if (lid == 0u) {
-		wg_scene_min = vec3f(
+		wg_scene_min = vec3<f32>(
 			bitcast<f32>(atomicLoad(&scene_aabb[0])),
 			bitcast<f32>(atomicLoad(&scene_aabb[1])),
 			bitcast<f32>(atomicLoad(&scene_aabb[2]))
 		);
-		wg_scene_max = vec3f(
+		wg_scene_max = vec3<f32>(
 			bitcast<f32>(atomicLoad(&scene_aabb[4])),
 			bitcast<f32>(atomicLoad(&scene_aabb[5])),
 			bitcast<f32>(atomicLoad(&scene_aabb[6]))
@@ -162,12 +162,12 @@ fn cs(
   let warp_ctx = make_warp_ctx(lid, lid, LOGICAL_WARP_SIZE);
 #endif
 
-	let sub_min = vec3f(
+	let sub_min = vec3<f32>(
 		warp_min_f32(warp_ctx, wg_min_points[lid].x),
 		warp_min_f32(warp_ctx, wg_min_points[lid].y),
 		warp_min_f32(warp_ctx, wg_min_points[lid].z)
 	);
-	let sub_max = vec3f(
+	let sub_max = vec3<f32>(
 		warp_max_f32(warp_ctx, wg_max_points[lid].x),
 		warp_max_f32(warp_ctx, wg_max_points[lid].y),
 		warp_max_f32(warp_ctx, wg_max_points[lid].z)

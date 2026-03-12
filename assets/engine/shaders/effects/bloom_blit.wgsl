@@ -22,9 +22,9 @@ fn cs(@builtin(global_invocation_id) global_id: vec3<u32>) {
         return;
     }
 
-    let uv = (vec2f(global_id.xy) + vec2f(0.5)) / output_size;
+    let uv = (vec2<f32>(global_id.xy) + vec2<f32>(0.5)) / output_size;
     let texel_size = bloom_params.source_texel_size_and_scale.xy;
-    let d = vec3f(texel_size.x, texel_size.y, 0.0);
+    let d = vec3<f32>(texel_size.x, texel_size.y, 0.0);
 
     let s0 = safe_clamp_vec3(textureSampleLevel(input_texture, clamped_sampler, uv, 0.0).rgb);
     let s1 = safe_clamp_vec3(textureSampleLevel(input_texture, clamped_sampler, uv - d.xz, 0.0).rgb);
@@ -45,5 +45,5 @@ fn cs(@builtin(global_invocation_id) global_id: vec3<u32>) {
         color *= 1.0 - max(0.0, brightness - clamp_intensity) / brightness;
     }
 
-    textureStore(output_texture, vec2i(global_id.xy), vec4f(color, 1.0));
+    textureStore(output_texture, vec2i(global_id.xy), vec4<f32>(color, 1.0));
 }

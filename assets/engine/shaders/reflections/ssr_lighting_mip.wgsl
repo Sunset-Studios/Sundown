@@ -17,13 +17,13 @@ fn cs(@builtin(global_invocation_id) global_id: vec3<u32>) {
 
     let input_texel_size = 1.0 / params.input_image_size;
     let output_texel_size = 1.0 / params.output_image_size;
-    let uv = (vec2f(global_id.xy) + 0.5) * output_texel_size;
+    let uv = (vec2<f32>(global_id.xy) + 0.5) * output_texel_size;
 
-    let c00 = textureSampleLevel(input_texture, non_filtering_sampler, uv + vec2f(-0.5 * input_texel_size.x, -0.5 * input_texel_size.y), 0.0).rgb;
-    let c10 = textureSampleLevel(input_texture, non_filtering_sampler, uv + vec2f( 0.5 * input_texel_size.x, -0.5 * input_texel_size.y), 0.0).rgb;
-    let c01 = textureSampleLevel(input_texture, non_filtering_sampler, uv + vec2f(-0.5 * input_texel_size.x,  0.5 * input_texel_size.y), 0.0).rgb;
-    let c11 = textureSampleLevel(input_texture, non_filtering_sampler, uv + vec2f( 0.5 * input_texel_size.x,  0.5 * input_texel_size.y), 0.0).rgb;
+    let c00 = textureSampleLevel(input_texture, non_filtering_sampler, uv + vec2<f32>(-0.5 * input_texel_size.x, -0.5 * input_texel_size.y), 0.0).rgb;
+    let c10 = textureSampleLevel(input_texture, non_filtering_sampler, uv + vec2<f32>( 0.5 * input_texel_size.x, -0.5 * input_texel_size.y), 0.0).rgb;
+    let c01 = textureSampleLevel(input_texture, non_filtering_sampler, uv + vec2<f32>(-0.5 * input_texel_size.x,  0.5 * input_texel_size.y), 0.0).rgb;
+    let c11 = textureSampleLevel(input_texture, non_filtering_sampler, uv + vec2<f32>( 0.5 * input_texel_size.x,  0.5 * input_texel_size.y), 0.0).rgb;
 
     let color = 0.25 * (c00 + c10 + c01 + c11);
-    textureStore(output_texture, global_id.xy, vec4f(color, 1.0));
+    textureStore(output_texture, global_id.xy, vec4<f32>(color, 1.0));
 }

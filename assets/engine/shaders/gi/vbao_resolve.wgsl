@@ -17,7 +17,7 @@ fn gaussian(distance_sq: f32, sigma: f32) -> f32 {
     return exp(-distance_sq / denom);
 }
 
-fn bilinear_weight(offset: vec2<i32>, frac: vec2f) -> f32 {
+fn bilinear_weight(offset: vec2<i32>, frac: vec2<f32>) -> f32 {
     let wx = select(1.0 - frac.x, frac.x, offset.x == 1);
     let wy = select(1.0 - frac.y, frac.y, offset.y == 1);
     return wx * wy;
@@ -32,13 +32,13 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
 
     let trace_resolution = textureDimensions(ao_src);
     let coord = vec2<i32>(gid.xy);
-    let uv = (vec2f(f32(gid.x), f32(gid.y)) + 0.5) /
-        vec2f(f32(full_resolution.x), f32(full_resolution.y));
+    let uv = (vec2<f32>(f32(gid.x), f32(gid.y)) + 0.5) /
+        vec2<f32>(f32(full_resolution.x), f32(full_resolution.y));
 
     let normal_raw = textureLoad(normal_tex, coord, 0).xyz;
     let normal_len = length(normal_raw);
     if (normal_len < 1e-6) {
-        textureStore(ao_output, coord, vec4f(1.0, 1.0, 1.0, 1.0));
+        textureStore(ao_output, coord, vec4<f32>(1.0, 1.0, 1.0, 1.0));
         return;
     }
 
@@ -46,7 +46,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let center_normal = normal_raw / normal_len;
     let center_depth = textureLoad(depth_tex, coord, 0).r;
     let center_position = reconstruct_world_position(uv, center_depth, view_index);
-    let trace_position = uv * vec2f(f32(trace_resolution.x), f32(trace_resolution.y)) - vec2f(0.5);
+    let trace_position = uv * vec2<f32>(f32(trace_resolution.x), f32(trace_resolution.y)) - vec2<f32>(0.5);
     let base = vec2<i32>(floor(trace_position));
     let frac = fract(trace_position);
 
@@ -65,8 +65,8 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
                 clamp(base.y + offset.y, 0, i32(trace_resolution.y) - 1)
             );
             let tap_ao = textureLoad(ao_src, tap, 0).r;
-            let tap_uv = (vec2f(f32(tap.x), f32(tap.y)) + 0.5) /
-                vec2f(f32(trace_resolution.x), f32(trace_resolution.y));
+            let tap_uv = (vec2<f32>(f32(tap.x), f32(tap.y)) + 0.5) /
+                vec2<f32>(f32(trace_resolution.x), f32(trace_resolution.y));
             let tap_full_coord = uv_to_coord(tap_uv, full_resolution);
             let tap_normal_raw = textureLoad(normal_tex, tap_full_coord, 0).xyz;
             let tap_normal_len = length(tap_normal_raw);
@@ -90,6 +90,6 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
 
     let resolved_ao = clamp(ao_sum / weight_sum, 0.0, 1.0);
 
-    textureStore(ao_output, coord, vec4f(resolved_ao, 0.0, 0.0, 1.0));
+    textureStore(ao_output, coord, vec4<f32>(resolved_ao, 0.0, 0.0, 1.0));
 }
 

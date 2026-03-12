@@ -96,7 +96,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         // ─────────────────────────────────────────────────────────────────────────
         // Write to output texture
         // ─────────────────────────────────────────────────────────────────────────
-        textureStore(output_tex, vec2<i32>(i32(gid.x), i32(gid.y)), vec4f(tonemapped_color, 1.0));
+        textureStore(output_tex, vec2<i32>(i32(gid.x), i32(gid.y)), vec4<f32>(tonemapped_color, 1.0));
     }
 
 }

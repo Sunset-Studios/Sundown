@@ -48,25 +48,25 @@ struct Vertex {
 };
 
 struct View {
-    view_matrix: mat4x4f,
-    prev_view_matrix: mat4x4f,
-    projection_matrix: mat4x4f,
-    prev_projection_matrix: mat4x4f,
-    view_projection_matrix: mat4x4f,
-    inverse_view_projection_matrix: mat4x4f,
-    view_direction: vec4f,
+    view_matrix: mat4x4<f32>,
+    prev_view_matrix: mat4x4<f32>,
+    projection_matrix: mat4x4<f32>,
+    prev_projection_matrix: mat4x4<f32>,
+    view_projection_matrix: mat4x4<f32>,
+    inverse_view_projection_matrix: mat4x4<f32>,
+    view_direction: vec4<f32>,
     near: f32,
     far: f32,
     culling_enabled: f32,
     occlusion_enabled: f32,
-    frustum: array<vec4f, 6>,
-    view_position: vec4f,
-    view_rotation: vec4f,
-    view_right: vec4f,
+    frustum: array<vec4<f32>, 6>,
+    view_position: vec4<f32>,
+    view_rotation: vec4<f32>,
+    view_right: vec4<f32>,
     fov: f32,
     aspect_ratio: f32,
     distance_check_enabled: f32,
-    velocity: vec4f,
+    velocity: vec4<f32>,
     zoom: f32,
     clipmap_count: u32,
 };
@@ -75,14 +75,14 @@ struct FrameInfo {
     view_index: f32,
     time: f32,
     frame_index: f32,
-    resolution: vec2f,
-    cursor_world_position: vec4f,
+    resolution: vec2<f32>,
+    cursor_world_position: vec4<f32>,
 };
 
 struct EntityTransform {
-    transform: mat4x4f,
-    transpose_inverse_model_matrix: mat4x4f,
-    prev_transform: mat4x4f,
+    transform: mat4x4<f32>,
+    transpose_inverse_model_matrix: mat4x4<f32>,
+    prev_transform: mat4x4<f32>,
 };
 
 struct ObjectInstance {
@@ -136,7 +136,7 @@ const bayer_matrix = array<f32, 16>(
     15.0 / 16.0, 7.0 / 16.0, 13.0 / 16.0, 5.0 / 16.0
 );
 
-const identity_matrix = mat4x4f(
+const identity_matrix = mat4x4<f32>(
     1.0, 0.0, 0.0, 0.0,
     0.0, 1.0, 0.0, 0.0,
     0.0, 0.0, 1.0, 0.0,
@@ -144,10 +144,10 @@ const identity_matrix = mat4x4f(
 );
 
 const epsilon = 1e-4;
-const zero_vec4 = vec4f(0.0, 0.0, 0.0, 0.0);
-const world_up = vec3f(0.0, 1.0, 0.0);
-const world_right = vec3f(1.0, 0.0, 0.0);
-const world_forward = vec3f(0.0, 0.0, 1.0);
+const zero_vec4 = vec4<f32>(0.0, 0.0, 0.0, 0.0);
+const world_up = vec3<f32>(0.0, 1.0, 0.0);
+const world_right = vec3<f32>(1.0, 0.0, 0.0);
+const world_forward = vec3<f32>(0.0, 0.0, 1.0);
 const pos_inf = 3.402823466e+38;
 const neg_inf = -3.402823466e+38;
 

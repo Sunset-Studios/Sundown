@@ -91,7 +91,7 @@ fn cs(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let entity_resolved = entity_index_lookup[get_entity_row(row)];
 
     let aabb_node = aabb_bounds[entity_resolved];
-    let center = vec4f((aabb_node.min.xyz + aabb_node.max.xyz) * 0.5, 1.0);
+    let center = vec4<f32>((aabb_node.min.xyz + aabb_node.max.xyz) * 0.5, 1.0);
     var radius = length(aabb_node.max.xyz - aabb_node.min.xyz) * 0.5;
     radius *= 1.2; // Inflate bounds conservatively
 

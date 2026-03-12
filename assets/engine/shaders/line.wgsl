@@ -20,8 +20,8 @@ struct FragmentOutput {
 }
 
 struct LineData {
-    color_and_width: vec4f,
-    transform: mat4x4f,
+    color_and_width: vec4<f32>,
+    transform: mat4x4<f32>,
 };
 
 @group(1) @binding(0) var<storage, read> line_data: array<LineData>;
@@ -91,8 +91,8 @@ fn fs(input: VertexOutput) -> FragmentOutput {
     output.color = input.color;
     output.position = input.position;
     output.motion_emissive.a = 2.0;
-    //output.smra = vec4f(0.0, 0.0, 0.0, 0.0);
-    output.normal = vec4f(0.0, 0.0, 0.0, 0.0);
+    //output.smra = vec4<f32>(0.0, 0.0, 0.0, 0.0);
+    output.normal = vec4<f32>(0.0, 0.0, 0.0, 0.0);
     
     return output;
 } 

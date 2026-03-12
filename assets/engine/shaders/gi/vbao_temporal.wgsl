@@ -15,7 +15,7 @@ struct VBAOSettings {
     denoise_position_sigma: f32,
     denoise_normal_power: f32,
     denoise_ao_sigma: f32,
-    denoise_direction: vec2f,
+    denoise_direction: vec2<f32>,
     denoise_radius_px: f32,
 };
 
@@ -33,8 +33,8 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
 
     let coord = vec2<i32>(gid.xy);
-    let uv = (vec2f(f32(gid.x), f32(gid.y)) + 0.5) /
-        vec2f(f32(dims.x), f32(dims.y));
+    let uv = (vec2<f32>(f32(gid.x), f32(gid.y)) + 0.5) /
+        vec2<f32>(f32(dims.x), f32(dims.y));
 
     let current_ao = textureLoad(current_ao_tex, coord, 0).r;
 
@@ -54,8 +54,8 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
 
     let motion = textureLoad(motion_tex, coord, 0).xy;
-    let prev_uv = uv + vec2f(-0.5 * motion.x, 0.5 * motion.y);
-    let prev_in_bounds = all(prev_uv >= vec2f(0.0)) && all(prev_uv <= vec2f(1.0));
+    let prev_uv = uv + vec2<f32>(-0.5 * motion.x, 0.5 * motion.y);
+    let prev_in_bounds = all(prev_uv >= vec2<f32>(0.0)) && all(prev_uv <= vec2<f32>(1.0));
 
     let prev_coord = uv_to_coord(prev_uv, dims);
     let history_ao_raw = textureLoad(history_ao_tex, prev_coord, 0).r;
@@ -65,5 +65,5 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let blend_alpha = select(1.0, settings.temporal_response, prev_in_bounds);
     let ao_value = mix(history_ao_clamped, current_ao, blend_alpha);
 
-    textureStore(ao_output, coord, vec4f(ao_value, 0.0, 0.0, 1.0));
+    textureStore(ao_output, coord, vec4<f32>(ao_value, 0.0, 0.0, 1.0));
 }

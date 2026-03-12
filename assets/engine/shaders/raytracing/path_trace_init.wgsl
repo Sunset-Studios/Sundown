@@ -87,8 +87,8 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         let frame_id = u32(frame_info.frame_index);
         let rng_seed = hash(pixel_index ^ frame_id);
         
-        path_state[pixel_index].rng_sample_count = vec4f(f32(rng_seed), 0.0, 0.0, 0.0);
-        path_state[pixel_index].accumulated_radiance = vec4f(0.0);
+        path_state[pixel_index].rng_sample_count = vec4<f32>(f32(rng_seed), 0.0, 0.0, 0.0);
+        path_state[pixel_index].accumulated_radiance = vec4<f32>(0.0);
     }
     
     // ─────────────────────────────────────────────────────────────────────────
@@ -114,13 +114,13 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
             
             let ray_dir = normalize(gbuffer_pos - view.view_position.xyz);
             
-            path_state[pixel_index].origin_tmin = vec4f(gbuffer_pos + normalized_normal * 0.001, 0.0001);
-            path_state[pixel_index].direction_tmax = vec4f(ray_dir, 0.0);
-            path_state[pixel_index].normal_section_index = vec4f(normalized_normal, 0.0);
-            path_state[pixel_index].hit_attr0 = vec4f(albedo_data.rgb, smra_data.g); // albedo, roughness
-            path_state[pixel_index].hit_attr1 = vec4f(smra_data.b, smra_data.r, emissive_data, smra_data.a); // metallic, reflectance, emissive, ao
+            path_state[pixel_index].origin_tmin = vec4<f32>(gbuffer_pos + normalized_normal * 0.001, 0.0001);
+            path_state[pixel_index].direction_tmax = vec4<f32>(ray_dir, 0.0);
+            path_state[pixel_index].normal_section_index = vec4<f32>(normalized_normal, 0.0);
+            path_state[pixel_index].hit_attr0 = vec4<f32>(albedo_data.rgb, smra_data.g); // albedo, roughness
+            path_state[pixel_index].hit_attr1 = vec4<f32>(smra_data.b, smra_data.r, emissive_data, smra_data.a); // metallic, reflectance, emissive, ao
             path_state[pixel_index].state_u32 = vec4<u32>(0u, 1u, 0u, 0x0u); // bounce=0, alive=1, gbuffer marker
-            path_state[pixel_index].primary_albedo = vec4f(albedo_data.rgb, 1.0);
+            path_state[pixel_index].primary_albedo = vec4<f32>(albedo_data.rgb, 1.0);
         } else {
             // No geometry - shoot ray to evaluate sky
             let dims = vec2<f32>(f32(res.x), f32(res.y));
@@ -138,13 +138,13 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
             var ray_dir = normalize(forward + right * sensor_x + up * sensor_y);
             let ray_origin = view.view_position.xyz;
 
-            path_state[pixel_index].origin_tmin = vec4f(ray_origin + ray_dir * 0.001, 0.0001);
-            path_state[pixel_index].direction_tmax = vec4f(ray_dir, 1e30);
-            path_state[pixel_index].normal_section_index = vec4f(0.0);
-            path_state[pixel_index].hit_attr0 = vec4f(0.0);
-            path_state[pixel_index].hit_attr1 = vec4f(0.0);
+            path_state[pixel_index].origin_tmin = vec4<f32>(ray_origin + ray_dir * 0.001, 0.0001);
+            path_state[pixel_index].direction_tmax = vec4<f32>(ray_dir, 1e30);
+            path_state[pixel_index].normal_section_index = vec4<f32>(0.0);
+            path_state[pixel_index].hit_attr0 = vec4<f32>(0.0);
+            path_state[pixel_index].hit_attr1 = vec4<f32>(0.0);
             path_state[pixel_index].state_u32 = vec4<u32>(0u, 1u, 0u, 0xffffffffu); // miss marker
-            path_state[pixel_index].primary_albedo = vec4f(1.0, 1.0, 1.0, 1.0);
+            path_state[pixel_index].primary_albedo = vec4<f32>(1.0, 1.0, 1.0, 1.0);
         }
     } else if (should_trace_this_pixel) {
         // =====================================================================
@@ -165,23 +165,23 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         var ray_dir = normalize(forward + right * sensor_x + up * sensor_y);
         let ray_origin = view.view_position.xyz;
 
-        path_state[pixel_index].origin_tmin = vec4f(ray_origin + ray_dir * 0.001, 0.0001);
-        path_state[pixel_index].direction_tmax = vec4f(ray_dir, 1e30);
-        path_state[pixel_index].normal_section_index = vec4f(0.0);
-        path_state[pixel_index].hit_attr0 = vec4f(0.0);
-        path_state[pixel_index].hit_attr1 = vec4f(0.0);
+        path_state[pixel_index].origin_tmin = vec4<f32>(ray_origin + ray_dir * 0.001, 0.0001);
+        path_state[pixel_index].direction_tmax = vec4<f32>(ray_dir, 1e30);
+        path_state[pixel_index].normal_section_index = vec4<f32>(0.0);
+        path_state[pixel_index].hit_attr0 = vec4<f32>(0.0);
+        path_state[pixel_index].hit_attr1 = vec4<f32>(0.0);
         path_state[pixel_index].state_u32 = vec4<u32>(0u, 1u, 0u, 0xffffffffu);
-        path_state[pixel_index].primary_albedo = vec4f(1.0, 1.0, 1.0, 1.0);
+        path_state[pixel_index].primary_albedo = vec4<f32>(1.0, 1.0, 1.0, 1.0);
     }
 
     // ─────────────────────────────────────────────────────────────────────────
     // Initialize fresh path state for this sample
     // ─────────────────────────────────────────────────────────────────────────
     if (should_trace_this_pixel || pt_params.reset_accum_flag != 0u) {
-        path_state[pixel_index].shadow_origin = vec4f(0.0);
-        path_state[pixel_index].shadow_direction = vec4f(0.0);
-        path_state[pixel_index].shadow_radiance = vec4f(0.0);
-        path_state[pixel_index].path_weight = vec4f(1.0, 1.0, 1.0, 0.0);
+        path_state[pixel_index].shadow_origin = vec4<f32>(0.0);
+        path_state[pixel_index].shadow_direction = vec4<f32>(0.0);
+        path_state[pixel_index].shadow_radiance = vec4<f32>(0.0);
+        path_state[pixel_index].path_weight = vec4<f32>(1.0, 1.0, 1.0, 0.0);
         
         // Advance RNG for this sample
         var rng = u32(path_state[pixel_index].rng_sample_count.x);

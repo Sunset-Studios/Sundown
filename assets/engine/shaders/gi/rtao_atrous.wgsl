@@ -38,7 +38,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let center_ao = textureLoad(input_ao, pixel_coord, 0).r;
 
     if (center_position_data.w <= 0.0 || length(center_normal_data.xyz) <= 0.0) {
-        textureStore(output_ao, pixel_coord, vec4f(center_ao, 0.0, 0.0, 1.0));
+        textureStore(output_ao, pixel_coord, vec4<f32>(center_ao, 0.0, 0.0, 1.0));
         return;
     }
 
@@ -86,5 +86,5 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
 
     let filtered_ao = select(center_ao, ao_sum / weight_sum, weight_sum > 1e-6);
-    textureStore(output_ao, pixel_coord, vec4f(filtered_ao, 0.0, 0.0, 1.0));
+    textureStore(output_ao, pixel_coord, vec4<f32>(filtered_ao, 0.0, 0.0, 1.0));
 }

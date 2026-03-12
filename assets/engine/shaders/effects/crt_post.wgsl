@@ -14,7 +14,7 @@ struct CrtParams {
 }
 
 struct VertexOutput {
-    @builtin(position) position: vec4f,
+    @builtin(position) position: vec4<f32>,
     @location(0) uv: vec2<f32>,
     @location(1) @interpolate(flat) instance_index: u32,
 };
@@ -36,7 +36,7 @@ struct FragmentOutput {
 // ------------------------------------------------------------------------------------ 
 
 // Apply screen curvature distortion
-fn curve_uv(uv: vec2f, curvature: f32) -> vec2f {
+fn curve_uv(uv: vec2<f32>, curvature: f32) -> vec2<f32> {
     // Convert UV to centered coordinates (-1 to 1)
     var curved_uv = uv * 2.0 - 1.0;
     
@@ -51,37 +51,37 @@ fn curve_uv(uv: vec2f, curvature: f32) -> vec2f {
 }
 
 // Create RGB subpixel pattern
-fn rgb_split(uv: vec2f, offset: f32) -> vec3f {
+fn rgb_split(uv: vec2<f32>, offset: f32) -> vec3<f32> {
     let pixel_offset = offset * 0.001;
-    let r = textureSample(input_texture, global_sampler, vec2f(uv.x + pixel_offset, uv.y)).r;
+    let r = textureSample(input_texture, global_sampler, vec2<f32>(uv.x + pixel_offset, uv.y)).r;
     let g = textureSample(input_texture, global_sampler, uv).g;
-    let b = textureSample(input_texture, global_sampler, vec2f(uv.x - pixel_offset, uv.y)).b;
-    return vec3f(r, g, b);
+    let b = textureSample(input_texture, global_sampler, vec2<f32>(uv.x - pixel_offset, uv.y)).b;
+    return vec3<f32>(r, g, b);
 }
 
 // Create scanline pattern
-fn scanlines(uv: vec2f, brightness: f32) -> f32 {
+fn scanlines(uv: vec2<f32>, brightness: f32) -> f32 {
     let scan_size = 400.0;
     let scan = sin(uv.y * scan_size) * 0.5 + 0.5;
     return mix(1.0, scan, brightness);
 }
 
 // Vignette effect
-fn vignette(uv: vec2f, strength: f32) -> f32 {
-    let center = vec2f(0.5);
+fn vignette(uv: vec2<f32>, strength: f32) -> f32 {
+    let center = vec2<f32>(0.5);
     let dist = distance(uv, center);
     return 1.0 - smoothstep(0.4, 0.7, dist * strength);
 }
 
 // Simple bloom effect
-fn bloom(uv: vec2f, strength: f32) -> vec3f {
+fn bloom(uv: vec2<f32>, strength: f32) -> vec3<f32> {
     let blur_size = 0.004;
-    var bloom_color = vec3f(0.0);
+    var bloom_color = vec3<f32>(0.0);
     
     // 9-tap gaussian blur
     for (var i = -1; i <= 1; i++) {
         for (var j = -1; j <= 1; j++) {
-            let offset = vec2f(f32(i), f32(j)) * blur_size;
+            let offset = vec2<f32>(f32(i), f32(j)) * blur_size;
             bloom_color += textureSample(
                 input_texture, 
                 global_sampler, 
@@ -116,11 +116,11 @@ fn fs(v_out: VertexOutput) -> FragmentOutput {
     color *= vignette(curved_uv, crt_params.vignette);
     
     // Enhance contrast and colors
-    color = pow(color, vec3f(1.2));  // Contrast boost
+    color = pow(color, vec3<f32>(1.2));  // Contrast boost
     color *= 1.2;                    // Brightness boost
     
     // Add subtle color tinting to simulate phosphor colors
-    color *= vec3f(1.0, 0.97, 0.95); // Slightly warmer
+    color *= vec3<f32>(1.0, 0.97, 0.95); // Slightly warmer
     
-    return FragmentOutput(vec4f(color, 1.0));
+    return FragmentOutput(vec4<f32>(color, 1.0));
 } 

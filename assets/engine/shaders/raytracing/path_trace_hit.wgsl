@@ -655,7 +655,7 @@ fn cs(
         if (path_state[pixel_index].shadow_radiance.a > 0.0) {
             ray.origin_and_tmin = path_state[pixel_index].shadow_origin;
             ray.direction_and_tmax = path_state[pixel_index].shadow_direction;
-            ray.inv_direction = vec4f(
+            ray.inv_direction = vec4<f32>(
                 1.0 / max(abs(ray.direction_and_tmax.x), 1e-8) * select(1.0, -1.0, ray.direction_and_tmax.x < 0.0),
                 1.0 / max(abs(ray.direction_and_tmax.y), 1e-8) * select(1.0, -1.0, ray.direction_and_tmax.y < 0.0),
                 1.0 / max(abs(ray.direction_and_tmax.z), 1e-8) * select(1.0, -1.0, ray.direction_and_tmax.z < 0.0),
@@ -671,7 +671,7 @@ fn cs(
         // ─────────────────────────────────────────────────────────────────────
         ray.origin_and_tmin = path_state[pixel_index].origin_tmin;
         ray.direction_and_tmax = path_state[pixel_index].direction_tmax;
-        ray.inv_direction = vec4f(
+        ray.inv_direction = vec4<f32>(
             1.0 / max(abs(ray.direction_and_tmax.x), 1e-8) * select(1.0, -1.0, ray.direction_and_tmax.x < 0.0),
             1.0 / max(abs(ray.direction_and_tmax.y), 1e-8) * select(1.0, -1.0, ray.direction_and_tmax.y < 0.0),
             1.0 / max(abs(ray.direction_and_tmax.z), 1e-8) * select(1.0, -1.0, ray.direction_and_tmax.z < 0.0),
@@ -697,7 +697,7 @@ fn cs(
 
             let t_tri = hit_result.t_hit;
             let p_local = ray_local.origin_and_tmin.xyz + ray_local.direction_and_tmax.xyz * t_tri;
-            let p_world = (entity_transform.transform * vec4f(p_local, 1.0)).xyz;
+            let p_world = (entity_transform.transform * vec4<f32>(p_local, 1.0)).xyz;
 
             let v0i = hit_result.tri_indices.x;
             let v1i = hit_result.tri_indices.y;
@@ -753,11 +753,11 @@ fn cs(
             world_b = select(world_b, -world_b, ray_is_backfacing);
 
             // Store hit information
-            path_state[pixel_index].origin_tmin = vec4f(p_world, t_tri);
-            path_state[pixel_index].direction_tmax = vec4f(ray_dir, f32(prim_store));
-            path_state[pixel_index].normal_section_index = vec4f(world_n, f32(vertex_buffer[v0i].section_index));
-            path_state[pixel_index].hit_attr0 = vec4f(world_t, uv_hit.x);
-            path_state[pixel_index].hit_attr1 = vec4f(world_b, uv_hit.y);
+            path_state[pixel_index].origin_tmin = vec4<f32>(p_world, t_tri);
+            path_state[pixel_index].direction_tmax = vec4<f32>(ray_dir, f32(prim_store));
+            path_state[pixel_index].normal_section_index = vec4<f32>(world_n, f32(vertex_buffer[v0i].section_index));
+            path_state[pixel_index].hit_attr0 = vec4<f32>(world_t, uv_hit.x);
+            path_state[pixel_index].hit_attr1 = vec4<f32>(world_b, uv_hit.y);
             path_state[pixel_index].state_u32.w = tri_id_local;
         }
     }

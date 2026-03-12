@@ -1,7 +1,7 @@
 #include "common.wgsl"
 
 struct VertexOutput {
-    @builtin(position) position: vec4f,
+    @builtin(position) position: vec4<f32>,
     @location(0) uv: vec2<f32>,
     @location(1) @interpolate(flat) instance_index: u32,
 };
@@ -14,10 +14,10 @@ struct VertexOutput {
 const TILE_SIZE = 16.0;
 const LINE_WIDTH = 1.0;
 const MOTION_SCALE = 1.0;
-const LINE_COLOR = vec3f(1.0, 1.0, 0.0); // Yellow
+const LINE_COLOR = vec3<f32>(1.0, 1.0, 0.0); // Yellow
 
 // Distance from point to line segment
-fn distance_to_line_segment(p: vec2f, start: vec2f, end: vec2f) -> f32 {
+fn distance_to_line_segment(p: vec2<f32>, start: vec2<f32>, end: vec2<f32>) -> f32 {
     let line_vec = end - start;
     let line_len_sq = dot(line_vec, line_vec);
     
@@ -32,7 +32,7 @@ fn distance_to_line_segment(p: vec2f, start: vec2f, end: vec2f) -> f32 {
 
 @fragment
 fn fs(input: VertexOutput) -> @location(0) vec4<f32> {
-    let resolution = vec2f(textureDimensions(motion_texture));
+    let resolution = vec2<f32>(textureDimensions(motion_texture));
     let pixel_coord = input.uv * resolution;
     
     // Calculate which tile this pixel belongs to
@@ -50,7 +50,7 @@ fn fs(input: VertexOutput) -> @location(0) vec4<f32> {
     let depth = textureSample(depth_texture, non_filtering_sampler, tile_center_uv).r;
     
     // Convert NDC velocity directly to pixel-space motion
-    let motion_pixels = ndc_velocity * resolution * vec2f(0.5, -0.5) * MOTION_SCALE;
+    let motion_pixels = ndc_velocity * resolution * vec2<f32>(0.5, -0.5) * MOTION_SCALE;
     
     // Calculate line endpoints in pixel space
     let line_start = tile_center_pixel;
@@ -76,7 +76,7 @@ fn fs(input: VertexOutput) -> @location(0) vec4<f32> {
     let background = textureSample(scene_color, non_filtering_sampler, input.uv);
     
     // Blend: show lines over dimmed scene
-    let output = select(vec4f(background.rgb * 0.7, 1.0), vec4f(LINE_COLOR, 1.0), on_line || on_arrowhead);
+    let output = select(vec4<f32>(background.rgb * 0.7, 1.0), vec4<f32>(LINE_COLOR, 1.0), on_line || on_arrowhead);
     return output;
 }
 

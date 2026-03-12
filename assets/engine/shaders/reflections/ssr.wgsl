@@ -12,21 +12,21 @@ const SSR_NUM_RAY_SAMPLES = 32u;
 // Retries for ray direction when the sampled direction goes below the surface. Lower = faster, 4 is a good balance.
 const SSR_RAY_DIR_RETRIES = 4u;
 
-fn project_to_uv(position: vec3f, view_index: u32) -> vec2f {
-    let clip = view_buffer[view_index].view_projection_matrix * vec4f(position, 1.0);
+fn project_to_uv(position: vec3<f32>, view_index: u32) -> vec2<f32> {
+    let clip = view_buffer[view_index].view_projection_matrix * vec4<f32>(position, 1.0);
     let ndc = clip.xyz / max(clip.w, epsilon);
-    return vec2f(ndc.x * 0.5 + 0.5, -ndc.y * 0.5 + 0.5);
+    return vec2<f32>(ndc.x * 0.5 + 0.5, -ndc.y * 0.5 + 0.5);
 }
 
-fn project_to_depth01(position: vec3f, view_index: u32) -> f32 {
-    let clip = view_buffer[view_index].view_projection_matrix * vec4f(position, 1.0);
+fn project_to_depth01(position: vec3<f32>, view_index: u32) -> f32 {
+    let clip = view_buffer[view_index].view_projection_matrix * vec4<f32>(position, 1.0);
     let ndc_z = clip.z / max(clip.w, epsilon);
     return clamp(ndc_z, 0.0, 1.0);
 }
 
 fn trace_to_full_coord(trace_coord: vec2<u32>, full_resolution: vec2<u32>, trace_resolution: vec2<u32>) -> vec2<i32> {
-    let trace_uv = (vec2f(trace_coord) + 0.5) / vec2f(trace_resolution);
-    let full_pixel = vec2<i32>(floor(trace_uv * vec2f(full_resolution)));
+    let trace_uv = (vec2<f32>(trace_coord) + 0.5) / vec2<f32>(trace_resolution);
+    let full_pixel = vec2<i32>(floor(trace_uv * vec2<f32>(full_resolution)));
     return vec2<i32>(
         clamp(full_pixel.x, 0, i32(full_resolution.x) - 1),
         clamp(full_pixel.y, 0, i32(full_resolution.y) - 1)
@@ -34,14 +34,14 @@ fn trace_to_full_coord(trace_coord: vec2<u32>, full_resolution: vec2<u32>, trace
 }
 
 fn trace_hiz(
-    origin: vec3f,
-    ray_dir: vec3f,
-    normal: vec3f,
+    origin: vec3<f32>,
+    ray_dir: vec3<f32>,
+    normal: vec3<f32>,
     view_index: u32,
     roughness: f32,
     resolution: vec2<u32>,
     step_jitter: f32,
-) -> vec4f {
+) -> vec4<f32> {
     let mip_count = textureNumLevels(hzb_texture);
     let max_steps = u32(floor(mix(48.0, 16.0, roughness)));
     let max_trace_distance = mix(100.0, 24.0, roughness);
@@ -49,7 +49,7 @@ fn trace_hiz(
     let distance_curve_power = mix(1.45, 1.15, roughness);
     let thickness = mix(0.01, 0.2, roughness * roughness);
 
-    var hit_uv = vec2f(-1.0, -1.0);
+    var hit_uv = vec2<f32>(-1.0, -1.0);
     var hit_depth = 0.0;
     var hit_mask = 0.0;
     var mip_level: i32 = 0;
@@ -60,7 +60,7 @@ fn trace_hiz(
         let sample_pos = origin + ray_dir * step_t;
 
         let uv = project_to_uv(sample_pos, view_index);
-        if (any(uv < vec2f(0.0)) || any(uv > vec2f(1.0))) {
+        if (any(uv < vec2<f32>(0.0)) || any(uv > vec2<f32>(1.0))) {
             break;
         }
 
@@ -96,7 +96,7 @@ fn trace_hiz(
         }
     }
 
-    return vec4f(hit_uv, hit_depth, hit_mask);
+    return vec4<f32>(hit_uv, hit_depth, hit_mask);
 }
 
 @compute @workgroup_size(8, 8, 1)
@@ -109,12 +109,12 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
 
     let trace_coord = vec2<i32>(i32(gid.x), i32(gid.y));
     let full_coord = trace_to_full_coord(gid.xy, full_resolution, trace_resolution);
-    let full_uv = (vec2f(full_coord) + 0.5) / vec2f(full_resolution);
+    let full_uv = (vec2<f32>(full_coord) + 0.5) / vec2<f32>(full_resolution);
 
     let normal_data = textureLoad(gbuffer_normal, full_coord, 0).xyz;
     if (length(normal_data) < 1e-5) {
-        textureStore(out_raycast_hit, trace_coord, vec4f(0.0));
-        textureStore(out_raycast_mask, trace_coord, vec4f(0.0));
+        textureStore(out_raycast_hit, trace_coord, vec4<f32>(0.0));
+        textureStore(out_raycast_mask, trace_coord, vec4<f32>(0.0));
         return;
     }
 
@@ -125,8 +125,8 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let reflection_strength = (1.0 - roughness) * max(reflectance, metallic);
 
     if (reflection_strength <= 0.001 || roughness >= 0.7) {
-        textureStore(out_raycast_hit, trace_coord, vec4f(0.0));
-        textureStore(out_raycast_mask, trace_coord, vec4f(0.0));
+        textureStore(out_raycast_hit, trace_coord, vec4<f32>(0.0));
+        textureStore(out_raycast_mask, trace_coord, vec4<f32>(0.0));
         return;
     }
 
@@ -142,7 +142,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let sample_idx = (u32(frame_info.frame_index) + sample_phase) % SSR_NUM_RAY_SAMPLES;
 
     var ray_dir = normal.xyz;
-    var xi = vec2f(0.0);
+    var xi = vec2<f32>(0.0);
     var pdf = 0.0;
     for (var retry = 0u; retry < SSR_RAY_DIR_RETRIES; retry++) {
         let sample_idx_retry = (sample_idx + retry * SSR_NUM_RAY_SAMPLES) % SSR_NUM_RAY_SAMPLES;
@@ -167,8 +167,8 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     );
 
     let valid_hit = trace.w > 0.0;
-    let out_hit = select(vec4f(0.0), vec4f(trace.xy, trace.z, pdf), valid_hit);
-    let out_mask = select(vec4f(0.0), vec4f(trace.w * reflection_strength), valid_hit);
+    let out_hit = select(vec4<f32>(0.0), vec4<f32>(trace.xy, trace.z, pdf), valid_hit);
+    let out_mask = select(vec4<f32>(0.0), vec4<f32>(trace.w * reflection_strength), valid_hit);
 
     textureStore(out_raycast_hit, trace_coord, out_hit);
     textureStore(out_raycast_mask, trace_coord, out_mask);

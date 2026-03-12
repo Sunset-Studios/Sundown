@@ -14,7 +14,7 @@ struct TiltShiftParams {
 }
 
 struct VertexOutput {
-    @builtin(position) position: vec4f,
+    @builtin(position) position: vec4<f32>,
     @location(0) uv: vec2<f32>,
     @location(1) @interpolate(flat) instance_index: u32,
 };
@@ -35,7 +35,7 @@ struct FragmentOutput {
 // ------------------------------------------------------------------------------------ 
 
 // Calculate blur amount based on distance from focus center
-fn get_blur_factor(uv: vec2f) -> f32 {
+fn get_blur_factor(uv: vec2<f32>) -> f32 {
     let dist = abs(uv.y - tilt_shift_params.focus_center);
     let focus_edge = tilt_shift_params.focus_width * 0.5;
     
@@ -44,8 +44,8 @@ fn get_blur_factor(uv: vec2f) -> f32 {
 }
 
 // Gaussian blur with dynamic sample count based on blur amount
-fn variable_blur(uv: vec2f, blur_factor: f32) -> vec3f {
-    var color = vec3f(0.0);
+fn variable_blur(uv: vec2<f32>, blur_factor: f32) -> vec3<f32> {
+    var color = vec3<f32>(0.0);
     var total_weight = 0.0;
     let blur_size = blur_factor * tilt_shift_params.blur_strength * 0.01;
     
@@ -53,7 +53,7 @@ fn variable_blur(uv: vec2f, blur_factor: f32) -> vec3f {
     // Using a 13x13 kernel for higher quality
     for (var i = -6.0; i <= 6.0; i += 1.0) {
         for (var j = -6.0; j <= 6.0; j += 1.0) {
-            let offset = vec2f(i, j) * blur_size;
+            let offset = vec2<f32>(i, j) * blur_size;
             let sample_uv = uv + offset;
             
             // Improved Gaussian weight calculation with better sigma
@@ -72,14 +72,14 @@ fn variable_blur(uv: vec2f, blur_factor: f32) -> vec3f {
 }
 
 // Adjust saturation
-fn adjust_saturation(color: vec3f, saturation: f32) -> vec3f {
-    let luminance = dot(color, vec3f(0.299, 0.587, 0.114));
-    return mix(vec3f(luminance), color, saturation);
+fn adjust_saturation(color: vec3<f32>, saturation: f32) -> vec3<f32> {
+    let luminance = dot(color, vec3<f32>(0.299, 0.587, 0.114));
+    return mix(vec3<f32>(luminance), color, saturation);
 }
 
 // Vignette effect
-fn apply_vignette(uv: vec2f, color: vec3f) -> vec3f {
-    let center = vec2f(0.5);
+fn apply_vignette(uv: vec2<f32>, color: vec3<f32>) -> vec3<f32> {
+    let center = vec2<f32>(0.5);
     let dist = distance(uv, center);
     let vignette = 1.0 - smoothstep(0.3, 0.7, dist);
     return color * vignette;
@@ -108,11 +108,11 @@ fn fs(v_out: VertexOutput) -> FragmentOutput {
     
     // Add subtle color grading
     // Slightly boost blues in shadows and yellows in highlights
-    let luminance = dot(color, vec3f(0.299, 0.587, 0.114));
+    let luminance = dot(color, vec3<f32>(0.299, 0.587, 0.114));
     let shadows = smoothstep(0.0, 0.3, luminance);
     let highlights = smoothstep(0.7, 1.0, luminance);
-    color += vec3f(-0.05, -0.05, 0.1) * (1.0 - shadows);    // Blue tint in shadows
-    color += vec3f(0.1, 0.05, -0.05) * highlights;          // Warm highlights
+    color += vec3<f32>(-0.05, -0.05, 0.1) * (1.0 - shadows);    // Blue tint in shadows
+    color += vec3<f32>(0.1, 0.05, -0.05) * highlights;          // Warm highlights
     
-    return FragmentOutput(vec4f(color, 1.0));
+    return FragmentOutput(vec4<f32>(color, 1.0));
 } 

@@ -23,7 +23,7 @@ fn full_to_trace_coord(coord: vec2<i32>, full_resolution: vec2<u32>, trace_resol
     return vec2<i32>(x, y);
 }
 
-fn ray_atten_border(pos: vec2f, value: f32) -> f32 {
+fn ray_atten_border(pos: vec2<f32>, value: f32) -> f32 {
     let border_dist = min(1.0 - max(pos.x, pos.y), min(pos.x, pos.y));
     return clamp(select(border_dist / max(value, 1e-4), 1.0, border_dist > value), 0.0, 1.0);
 }
@@ -46,9 +46,9 @@ fn f_schlick_vec3(f0: vec3<f32>, f90: f32, v_dot_h: f32) -> vec3<f32> {
 }
 
 fn brdf_importance_weight(
-    normal: vec3f,
-    view_dir: vec3f,
-    light_dir: vec3f,
+    normal: vec3<f32>,
+    view_dir: vec3<f32>,
+    light_dir: vec3<f32>,
     roughness: f32,
     metallic: f32,
     reflectance: f32
@@ -88,7 +88,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
 
     let normal_data = textureLoad(gbuffer_normal, coord, 0).xyz;
     if (length(normal_data) < 1e-5) {
-        textureStore(out_resolve, coord, vec4f(0.0));
+        textureStore(out_resolve, coord, vec4<f32>(0.0));
         return;
     }
 
@@ -99,13 +99,13 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let normal = safe_normalize(normal_data);
     let position = textureLoad(gbuffer_position, coord, 0).xyz;
 
-    let uv = (vec2f(f32(gid.x), f32(gid.y)) + 0.5) / vec2f(f32(full_resolution.x), f32(full_resolution.y));
+    let uv = (vec2<f32>(f32(gid.x), f32(gid.y)) + 0.5) / vec2<f32>(f32(full_resolution.x), f32(full_resolution.y));
     let view_index = u32(frame_info.view_index);
     let view_dir = safe_normalize(view_buffer[view_index].view_position.xyz - position);
 
     let max_mip = max(0.0, f32(textureNumLevels(lighting_history_texture) - 1u));
 
-    var accum = vec3f(0.0);
+    var accum = vec3<f32>(0.0);
     var accum_weight = 0.0;
     var confidence_sum = 0.0;
 
@@ -120,7 +120,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         let hit = textureLoad(raycast_hit_texture, tap_coord, 0);
         let mask = textureLoad(raycast_mask_texture, tap_coord, 0).r;
 
-        if (mask <= 1e-4 || any(hit.xy < vec2f(0.0)) || any(hit.xy > vec2f(1.0))) {
+        if (mask <= 1e-4 || any(hit.xy < vec2<f32>(0.0)) || any(hit.xy > vec2<f32>(1.0))) {
             continue;
         }
 
@@ -155,6 +155,6 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let confidence = clamp(confidence_sum * 0.25, 0.0, 1.0);
     let final_color = mix(fallback_color, resolved_color, confidence);
 
-    textureStore(out_resolve, coord, vec4f(final_color, confidence));
+    textureStore(out_resolve, coord, vec4<f32>(final_color, confidence));
 }
 

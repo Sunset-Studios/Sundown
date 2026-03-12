@@ -16,12 +16,12 @@
 // Helper Functions
 // ------------------------------------------------------------------------------------ 
 
-fn mat4_from_scaling(scale: vec3f) -> mat4x4f {
-    return mat4x4f(
-        vec4f(scale.x, 0.0, 0.0, 0.0),
-        vec4f(0.0, scale.y, 0.0, 0.0),
-        vec4f(0.0, 0.0, scale.z, 0.0),
-        vec4f(0.0, 0.0, 0.0, 1.0),
+fn mat4_from_scaling(scale: vec3<f32>) -> mat4x4<f32> {
+    return mat4x4<f32>(
+        vec4<f32>(scale.x, 0.0, 0.0, 0.0),
+        vec4<f32>(0.0, scale.y, 0.0, 0.0),
+        vec4<f32>(0.0, 0.0, scale.z, 0.0),
+        vec4<f32>(0.0, 0.0, 0.0, 1.0),
     );
 }
 
@@ -30,20 +30,20 @@ fn get_entity_row(entity: u32) -> u32 {
     return entity & ENTITY_ROW_MASK;
 }
 
-fn cubemap_direction_to_uv(direction: vec3f) -> vec3f {
+fn cubemap_direction_to_uv(direction: vec3<f32>) -> vec3<f32> {
     let abs_dir = abs(direction);
     var layer: f32;
-    var texcoord: vec2f;
+    var texcoord: vec2<f32>;
 
     if (abs_dir.x > abs_dir.y && abs_dir.x > abs_dir.z) {
         layer = select(1.0, 0.0, direction.x > 0.0);
-        texcoord = vec2f(-direction.z, direction.y) / abs_dir.x;
+        texcoord = vec2<f32>(-direction.z, direction.y) / abs_dir.x;
     } else if (abs_dir.y > abs_dir.z) {
         layer = select(3.0, 2.0, direction.y > 0.0);
-        texcoord = vec2f(direction.x, -direction.z) / abs_dir.y;
+        texcoord = vec2<f32>(direction.x, -direction.z) / abs_dir.y;
     } else {
         layer = select(5.0, 4.0, direction.z > 0.0);
-        texcoord = vec2f(direction.x, direction.y) / abs_dir.z;
+        texcoord = vec2<f32>(direction.x, direction.y) / abs_dir.z;
     }
     
     // Flip the x coordinate for the positive faces
@@ -59,7 +59,7 @@ fn cubemap_direction_to_uv(direction: vec3f) -> vec3f {
     // Convert from [-1, 1] to [0, 1]
     texcoord = texcoord * 0.5 + 0.5;
 
-    return vec3f(texcoord, layer);
+    return vec3<f32>(texcoord, layer);
 }
 
 fn random_seed(seed: u32) -> u32 {
@@ -73,7 +73,7 @@ fn rand_float(seed: u32) -> f32 {
   return f32(random_seed(seed)) * one_over_float_max;
 }
 
-fn dither_mask(uv: vec2f, resolution: vec2f) -> f32 {
+fn dither_mask(uv: vec2<f32>, resolution: vec2<f32>) -> f32 {
     // Scale UV coordinates to the size of the screen
     let scaled_uv = uv * resolution;
 
@@ -90,7 +90,7 @@ fn approx(a: f32, b: f32) -> bool {
     return abs(a - b) <= epsilon; 
 }
 
-fn max3(v: vec3f) -> f32 {
+fn max3(v: vec3<f32>) -> f32 {
     return max(max(v.x, v.y), v.z);
 }
 
@@ -152,7 +152,7 @@ fn interpolate(v0: f32, v1: f32, t: f32) -> f32 {
 // Notes:
 //   • For compute stages, derivatives are undefined; approximate via shared-memory
 //     neighborhood gradients and feed them into a custom variant if needed.
-fn compute_lod_from_uv(uv: vec2f, tex_size: vec2f) -> f32 {
+fn compute_lod_from_uv(uv: vec2<f32>, tex_size: vec2<f32>) -> f32 {
     // Convert to texel space so gradients are measured in pixels
     let uv_texel = uv * tex_size;
 
@@ -205,42 +205,42 @@ fn sample_texture_or_float_param_handle(
 }
 
 // Helper function to safely normalize a vector
-fn safe_normalize(v: vec3f) -> vec3f {
+fn safe_normalize(v: vec3<f32>) -> vec3<f32> {
   let len = length(v);
-  return select(normalize(v), vec3f(0.0), len < 1e-6);
+  return select(normalize(v), vec3<f32>(0.0), len < 1e-6);
 }
 
 // A billboard function that works with local position and entity transform
 // Uses model-view matrix manipulation for robust billboarding
-fn billboard_vertex_local(uv: vec2f, entity_transform: mat4x4f) -> vec4f {
+fn billboard_vertex_local(uv: vec2<f32>, entity_transform: mat4x4<f32>) -> vec4<f32> {
     // Get view and projection matrices
     let view_index = u32(frame_info.view_index);
     let view = view_buffer[view_index].view_matrix;
     // Extract translation from the entity transform (4th column)
-    let world_position = vec3f(
+    let world_position = vec3<f32>(
         entity_transform[3][0],
         entity_transform[3][1],
         entity_transform[3][2]
     );
     // Extract scale from the entity transform
     // Scale is the magnitude of each of the first three column vectors
-    let scale = vec3f(
-        length(vec3f(entity_transform[0][0], entity_transform[0][1], entity_transform[0][2])),
-        length(vec3f(entity_transform[1][0], entity_transform[1][1], entity_transform[1][2])),
-        length(vec3f(entity_transform[2][0], entity_transform[2][1], entity_transform[2][2]))
+    let scale = vec3<f32>(
+        length(vec3<f32>(entity_transform[0][0], entity_transform[0][1], entity_transform[0][2])),
+        length(vec3<f32>(entity_transform[1][0], entity_transform[1][1], entity_transform[1][2])),
+        length(vec3<f32>(entity_transform[2][0], entity_transform[2][1], entity_transform[2][2]))
     );
     // Calculate the billboard size - use the entity's scale
     // Using average of X and Y scale for consistent sizing
     let billboard_size = 0.6 * (scale.x + scale.y) * 0.5;
     // Calculate the vertex position in local space (centered quad)
-    let billboard_local_pos = vec4f(
+    let billboard_local_pos = vec4<f32>(
         (uv.x - 0.5) * billboard_size,
         (uv.y - 0.5) * billboard_size,
         0.0,
         1.0
     );
     // Transform back to world space using the inverse view matrix
-    let inverse_view = mat4x4f(
+    let inverse_view = mat4x4<f32>(
         view[0][0], view[1][0], view[2][0], 0.0,
         view[0][1], view[1][1], view[2][1], 0.0,
         view[0][2], view[1][2], view[2][2], 0.0,
@@ -251,7 +251,7 @@ fn billboard_vertex_local(uv: vec2f, entity_transform: mat4x4f) -> vec4f {
         inverse_view[0].xyz * billboard_local_pos.x +
         inverse_view[1].xyz * billboard_local_pos.y;
     
-    return vec4f(final_world_position, 1.0);
+    return vec4<f32>(final_world_position, 1.0);
 }
 
 fn log_depth(view_space_z: f32) -> f32 {
@@ -284,7 +284,7 @@ fn linearize_depth(d: f32, near_plane: f32, far_plane: f32, view_index: u32) -> 
     return select(persp_z, ortho_z, is_ortho);
 }
 
-fn rotate_hue(color: vec4f, hue_rotation: f32) -> vec4f {
+fn rotate_hue(color: vec4<f32>, hue_rotation: f32) -> vec4<f32> {
     // Convert RGB to HSV
     let rgb = color.rgb;
     let max_val = max(max(rgb.r, rgb.g), rgb.b);
@@ -322,28 +322,28 @@ fn rotate_hue(color: vec4f, hue_rotation: f32) -> vec4f {
     let t = value * (1.0 - saturation * (1.0 - hue_fract));
     
     // Create a lookup table for the RGB values based on the hue sector
-    let sector_0 = vec3f(value, t, p);
-    let sector_1 = vec3f(q, value, p);
-    let sector_2 = vec3f(p, value, t);
-    let sector_3 = vec3f(p, q, value);
-    let sector_4 = vec3f(t, p, value);
-    let sector_5 = vec3f(value, p, q);
+    let sector_0 = vec3<f32>(value, t, p);
+    let sector_1 = vec3<f32>(q, value, p);
+    let sector_2 = vec3<f32>(p, value, t);
+    let sector_3 = vec3<f32>(p, q, value);
+    let sector_4 = vec3<f32>(t, p, value);
+    let sector_5 = vec3<f32>(value, p, q);
     
     // Select the appropriate sector using dot products with a mask
-    let sector_mask = vec3f(
+    let sector_mask = vec3<f32>(
         select(1.0, 0.0, hue_sector == 0.0 || hue_sector == 5.0),
         select(1.0, 0.0, hue_sector == 1.0 || hue_sector == 2.0),
         select(1.0, 0.0, hue_sector == 3.0 || hue_sector == 4.0)
     );
     
-    let r = dot(vec3f(sector_0.x, sector_1.x, sector_2.x) * sector_mask, vec3f(1.0)) + 
-            dot(vec3f(sector_3.x, sector_4.x, sector_5.x) * sector_mask, vec3f(1.0));
-    let g = dot(vec3f(sector_0.y, sector_1.y, sector_2.y) * sector_mask, vec3f(1.0)) + 
-            dot(vec3f(sector_3.y, sector_4.y, sector_5.y) * sector_mask, vec3f(1.0));
-    let b = dot(vec3f(sector_0.z, sector_1.z, sector_2.z) * sector_mask, vec3f(1.0)) + 
-            dot(vec3f(sector_3.z, sector_4.z, sector_5.z) * sector_mask, vec3f(1.0));
+    let r = dot(vec3<f32>(sector_0.x, sector_1.x, sector_2.x) * sector_mask, vec3<f32>(1.0)) + 
+            dot(vec3<f32>(sector_3.x, sector_4.x, sector_5.x) * sector_mask, vec3<f32>(1.0));
+    let g = dot(vec3<f32>(sector_0.y, sector_1.y, sector_2.y) * sector_mask, vec3<f32>(1.0)) + 
+            dot(vec3<f32>(sector_3.y, sector_4.y, sector_5.y) * sector_mask, vec3<f32>(1.0));
+    let b = dot(vec3<f32>(sector_0.z, sector_1.z, sector_2.z) * sector_mask, vec3<f32>(1.0)) + 
+            dot(vec3<f32>(sector_3.z, sector_4.z, sector_5.z) * sector_mask, vec3<f32>(1.0));
     
-    return vec4f(r, g, b, color.a);
+    return vec4<f32>(r, g, b, color.a);
 }
 
 // Computes the inverse of a 4x4 matrix using Cramer's rule.
@@ -731,16 +731,16 @@ fn luminance(v: vec3<f32>) -> f32 {
     return v.x * 0.2126 + v.y * 0.7152 + v.z * 0.0722;
 }
 
-fn uv_to_coord(uv: vec2f, resolution: vec2<u32>) -> vec2<i32> {
-    let pixel = vec2<i32>(floor(uv * vec2f(f32(resolution.x), f32(resolution.y))));
+fn uv_to_coord(uv: vec2<f32>, resolution: vec2<u32>) -> vec2<i32> {
+    let pixel = vec2<i32>(floor(uv * vec2<f32>(f32(resolution.x), f32(resolution.y))));
     return vec2<i32>(
         clamp(pixel.x, 0, i32(resolution.x) - 1),
         clamp(pixel.y, 0, i32(resolution.y) - 1)
     );
 }
 
-fn reconstruct_world_position(uv: vec2f, depth: f32, view_index: u32) -> vec3f {
-    let clip = vec4f(
+fn reconstruct_world_position(uv: vec2<f32>, depth: f32, view_index: u32) -> vec3<f32> {
+    let clip = vec4<f32>(
         uv.x * 2.0 - 1.0,
         (1.0 - uv.y) * 2.0 - 1.0,
         depth,

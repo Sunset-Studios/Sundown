@@ -333,7 +333,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
     
     if (!hit) {
-        textureStore(output_debug, pixel_coord, vec4f(scene, 1.0));
+        textureStore(output_debug, pixel_coord, vec4<f32>(scene, 1.0));
         return;
     }
     
@@ -346,7 +346,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         let t_surface = dot(p_surface - ray_origin, ray_direction);
         let occluded = t_surface > 0.0 && hit_t > (t_surface + 1e-3);
         if (occluded) {
-            textureStore(output_debug, pixel_coord, vec4f(scene, 1.0));
+            textureStore(output_debug, pixel_coord, vec4<f32>(scene, 1.0));
             return;
         }
     }
@@ -381,5 +381,5 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     // Blend: keep some radiance info but strongly tint by state.
     let final_color = mix(display_color, state_color, STATE_DEBUG_COLOR_OVERLAY_STRENGTH);
 
-    textureStore(output_debug, pixel_coord, vec4f(final_color, 1.0));
+    textureStore(output_debug, pixel_coord, vec4<f32>(final_color, 1.0));
 }

@@ -8,8 +8,8 @@ struct GIReservoir {
 };
 
 struct GISampleCandidate {
-    direction_and_source_pdf: vec4f,
-    radiance_and_target_pdf: vec4f,
+    direction_and_source_pdf: vec4<f32>,
+    radiance_and_target_pdf: vec4<f32>,
     lobe_type: u32,
     padding: u32,
     padding2: u32,

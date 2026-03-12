@@ -40,7 +40,7 @@ fn probe_local_aabb(
     probe_max: vec3<f32>,
     entity_transform: EntityTransform
 ) -> AABB {
-    let probe_aabb = AABB(vec4f(probe_min, 0.0), vec4f(probe_max, 0.0));
+    let probe_aabb = AABB(vec4<f32>(probe_min, 0.0), vec4<f32>(probe_max, 0.0));
     let inverse_model = transpose(entity_transform.transpose_inverse_model_matrix);
     return transform_aabb(probe_aabb, inverse_model);
 }

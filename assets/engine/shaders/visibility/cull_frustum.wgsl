@@ -33,12 +33,12 @@ fn is_in_frustum(center: vec4<f32>, radius: f32, view: ptr<function, View>) -> u
     var clip_scaling = f32(1u << draw_cull_data.clipmap_index);
 
     var new_frustum = view.frustum;
-    new_frustum[0] = vec4f(view.frustum[0].xyz / clip_scaling, view.frustum[0].w / clip_scaling);
-    new_frustum[1] = vec4f(view.frustum[1].xyz / clip_scaling, view.frustum[1].w / clip_scaling);
-    new_frustum[2] = vec4f(view.frustum[2].xyz / clip_scaling, view.frustum[2].w / clip_scaling);
-    new_frustum[3] = vec4f(view.frustum[3].xyz / clip_scaling, view.frustum[3].w / clip_scaling);
-    new_frustum[4] = vec4f(view.frustum[4].xyz / clip_scaling, view.frustum[4].w / clip_scaling);
-    new_frustum[5] = vec4f(view.frustum[5].xyz / clip_scaling, view.frustum[5].w / clip_scaling);
+    new_frustum[0] = vec4<f32>(view.frustum[0].xyz / clip_scaling, view.frustum[0].w / clip_scaling);
+    new_frustum[1] = vec4<f32>(view.frustum[1].xyz / clip_scaling, view.frustum[1].w / clip_scaling);
+    new_frustum[2] = vec4<f32>(view.frustum[2].xyz / clip_scaling, view.frustum[2].w / clip_scaling);
+    new_frustum[3] = vec4<f32>(view.frustum[3].xyz / clip_scaling, view.frustum[3].w / clip_scaling);
+    new_frustum[4] = vec4<f32>(view.frustum[4].xyz / clip_scaling, view.frustum[4].w / clip_scaling);
+    new_frustum[5] = vec4<f32>(view.frustum[5].xyz / clip_scaling, view.frustum[5].w / clip_scaling);
 
     // Check all frustum planes
     visible *= u32(dot(new_frustum[0], center) > -radius);
@@ -74,7 +74,7 @@ fn cs(@builtin(global_invocation_id) global_id: vec3<u32>) {
     }
 
     let aabb_node = aabb_bounds[entity_resolved];
-    let center = vec4f((aabb_node.min.xyz + aabb_node.max.xyz) * 0.5, 1.0);
+    let center = vec4<f32>((aabb_node.min.xyz + aabb_node.max.xyz) * 0.5, 1.0);
     var radius = length(aabb_node.max.xyz - aabb_node.min.xyz) * 0.5;
     radius *= 1.2; // Inflate bounds conservatively
 

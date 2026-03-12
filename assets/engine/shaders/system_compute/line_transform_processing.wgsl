@@ -5,16 +5,16 @@
 
 // Define the line position struct
 struct LinePosition {
-    start: vec4f,
-    end: vec4f,
+    start: vec4<f32>,
+    end: vec4<f32>,
 }
 
 // Define the binding groups
-@group(1) @binding(0) var<storage, read_write> transforms: array<mat4x4f>;
+@group(1) @binding(0) var<storage, read_write> transforms: array<mat4x4<f32>>;
 @group(1) @binding(1) var<storage, read> line_positions: array<LinePosition>;
 
 // Main function to create a line transform
-fn create_line_transform(start: vec4f, end: vec4f) -> mat4x4f {
+fn create_line_transform(start: vec4<f32>, end: vec4<f32>) -> mat4x4<f32> {
     // Calculate direction vector from start to end
     let direction = end.xyz - start.xyz;
     
@@ -31,11 +31,11 @@ fn create_line_transform(start: vec4f, end: vec4f) -> mat4x4f {
     
     // Find perpendicular vectors to create a coordinate system
     // Start with a default up vector
-    var up = vec3f(0.0, 1.0, 0.0);
+    var up = vec3<f32>(0.0, 1.0, 0.0);
     
     // If direction is too close to up, use a different reference vector
     if (abs(dot(normalized_direction, up)) > 0.99) {
-        up = vec3f(0.0, 0.0, 1.0);
+        up = vec3<f32>(0.0, 0.0, 1.0);
     }
     
     // Calculate right vector (perpendicular to both direction and up)
@@ -46,23 +46,23 @@ fn create_line_transform(start: vec4f, end: vec4f) -> mat4x4f {
     
     // Build rotation matrix (column-major)
     // The columns represent the transformed basis vectors
-    var rotation_matrix = mat4x4f(
-        vec4f(normalized_direction, 0.0),  // x-axis maps to direction
-        vec4f(true_up, 0.0),               // y-axis maps to up
-        vec4f(right, 0.0),                 // z-axis maps to right
-        vec4f(0.0, 0.0, 0.0, 1.0)          // no translation in rotation matrix
+    var rotation_matrix = mat4x4<f32>(
+        vec4<f32>(normalized_direction, 0.0),  // x-axis maps to direction
+        vec4<f32>(true_up, 0.0),               // y-axis maps to up
+        vec4<f32>(right, 0.0),                 // z-axis maps to right
+        vec4<f32>(0.0, 0.0, 0.0, 1.0)          // no translation in rotation matrix
     );
     
     // Create translation matrix to position at start point
-    let translation_matrix = mat4x4f(
-        vec4f(1.0, 0.0, 0.0, 0.0),
-        vec4f(0.0, 1.0, 0.0, 0.0),
-        vec4f(0.0, 0.0, 1.0, 0.0),
-        vec4f(start.xyz, 1.0)
+    let translation_matrix = mat4x4<f32>(
+        vec4<f32>(1.0, 0.0, 0.0, 0.0),
+        vec4<f32>(0.0, 1.0, 0.0, 0.0),
+        vec4<f32>(0.0, 0.0, 1.0, 0.0),
+        vec4<f32>(start.xyz, 1.0)
     );
     
     // Apply scale to make the line the correct length
-    let scale_matrix = mat4_from_scaling(vec3f(line_length, 1.0, 1.0));
+    let scale_matrix = mat4_from_scaling(vec3<f32>(line_length, 1.0, 1.0));
     
     // Combine transformations: first scale, then rotate, then translate
     // Order matters in matrix multiplication
