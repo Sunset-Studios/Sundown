@@ -64,9 +64,9 @@ fn vertex(v_out: ptr<function, VertexOutput>) -> VertexOutput {
     let t = safe_normalize((entity_transform.transform * vec4<f32>(instance_vertex.tangent.xyz, 0.0)).xyz);
     let b = safe_normalize((entity_transform.transform * vec4<f32>(instance_vertex.bitangent.xyz, 0.0)).xyz);
 
-    output.normal = vec4<precision_float>(n, 0.0);
-    output.tangent = vec4<precision_float>(t, 0.0);
-    output.bitangent = vec4<precision_float>(b, 0.0);
+    output.normal = vec4<f32>(n, 0.0);
+    output.tangent = vec4<f32>(t, 0.0);
+    output.bitangent = vec4<f32>(b, 0.0);
 
     output = vertex(&output);
 
@@ -109,11 +109,11 @@ fn fragment(v_out: VertexOutput, f_out: ptr<function, FragmentOutput>) -> Fragme
 #ifndef DEPTH_ONLY
     output.position = v_out.world_position;
     // Last component of normal is deferred standard lighting factor. Set to 0 if custom lighting is used when using custom FS / VS.
-    output.normal = vec4<precision_float>(v_out.normal.xyz, 1.0);
+    output.normal = vec4<f32>(v_out.normal.xyz, 1.0);
     // Screen-Space (NDC) Velocity Export: Convert clip-space positions to NDC and compute motion vector
     let current_ndc = v_out.current_clip_pos.xy / v_out.current_clip_pos.w;
     let prev_ndc = v_out.prev_clip_pos.xy / v_out.prev_clip_pos.w;
-    let ndc_velocity = vec2<precision_float>(current_ndc - prev_ndc);
+    let ndc_velocity = vec2<f32>(current_ndc - prev_ndc);
     output.motion_emissive = vec4<f32>(ndc_velocity.xy, 0.0, 0.0);
 
     var post_material_output = fragment(v_out, &output);

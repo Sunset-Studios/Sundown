@@ -97,6 +97,7 @@ export class Renderer {
 
     let required_features = ["indirect-first-instance"];
     if (this.has_f16) {
+      console.log("has_f16");
       required_features.push("shader-f16");
     }
     if (this.has_subgroups) {

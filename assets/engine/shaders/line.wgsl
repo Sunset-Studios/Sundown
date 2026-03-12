@@ -6,17 +6,17 @@ struct VertexInput {
 };
 
 struct VertexOutput {
-    @builtin(position) position: vec4<precision_float>,
-    @location(0) color: vec4<precision_float>,
-    @location(1) uv: vec2<precision_float>,
+    @builtin(position) position: vec4<f32>,
+    @location(0) color: vec4<f32>,
+    @location(1) uv: vec2<f32>,
 };
 
 struct FragmentOutput {
-    @location(0) color: vec4<precision_float>,
-    @location(1) motion_emissive: vec4<precision_float>,
-    @location(2) smra: vec4<precision_float>,
+    @location(0) color: vec4<f32>,
+    @location(1) motion_emissive: vec4<f32>,
+    @location(2) smra: vec4<f32>,
     @location(3) position: vec4<f32>,
-    @location(4) normal: vec4<precision_float>,
+    @location(4) normal: vec4<f32>,
 }
 
 struct LineData {

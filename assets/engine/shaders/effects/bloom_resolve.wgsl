@@ -3,7 +3,7 @@
 
 struct VertexOutput {
     @builtin(position) position: vec4<f32>,
-    @location(0) uv: vec2<precision_float>,
+    @location(0) uv: vec2<f32>,
     @location(1) @interpolate(flat) instance_index: u32,
 }
 
@@ -36,7 +36,7 @@ fn upsample_filter_high(tex: texture_2d<f32>, uv: vec2<f32>, texel_size: vec2<f3
 }
 
 @fragment
-fn fs(in: VertexOutput) -> @location(0) vec4<precision_float> {
+fn fs(in: VertexOutput) -> @location(0) vec4<f32> {
     let uv = vec2<f32>(in.uv);
     let scene = safe_clamp_vec3(textureSample(scene_color, global_sampler, uv).rgb);
     let bloom = upsample_filter_high(
@@ -48,5 +48,5 @@ fn fs(in: VertexOutput) -> @location(0) vec4<precision_float> {
     var color = scene + bloom * bloom_resolve_constants.bloom_color_and_exposure.xyz;
     color = reinhard_tonemapping(color, bloom_resolve_constants.bloom_color_and_exposure.w);
 
-    return vec4<precision_float>(vec4<f32>(color, 1.0));
+    return vec4<f32>(vec4<f32>(color, 1.0));
 }

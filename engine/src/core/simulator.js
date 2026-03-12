@@ -26,7 +26,7 @@ export class Simulator {
     const canvas_ui = ui_canvas_name ? document.getElementById(ui_canvas_name) : null;
     await Renderer.create(canvas, canvas_ui, DeferredShadingStrategy, {
       pointer_lock: true,
-      use_precision_float: true,
+      use_precision_float: false,
     });
     
     // Initialize entity manager

@@ -8,9 +8,9 @@
 // Data Structures
 //------------------------------------------------------------------------------------
 struct StringData {
-    text_color: vec4<precision_float>,
-    page_texture_size: vec2<precision_float>,
-    text_emissive: precision_float,
+    text_color: vec4<f32>,
+    page_texture_size: vec2<f32>,
+    text_emissive: f32,
 };
 
 struct GlyphData {
@@ -52,14 +52,14 @@ fn vertex(v_out: ptr<function, VertexOutput>) -> VertexOutput {
     corner_offset.y = 1.0 - corner_offset.y;
 
     // Calculate UV coordinates for the glyph in the texture atlas
-    var uv_top_left = vec2<precision_float>(
-        precision_float(glyph_data.x),
-        precision_float(glyph_data.y)
+    var uv_top_left = vec2<f32>(
+        f32(glyph_data.x),
+        f32(glyph_data.y)
     ) / string.page_texture_size;
 
-    let uv_size = vec2<precision_float>(
-        precision_float(glyph_data.width),
-        precision_float(glyph_data.height)
+    let uv_size = vec2<f32>(
+        f32(glyph_data.width),
+        f32(glyph_data.height)
     ) / string.page_texture_size;
 
     // Flip Y coordinate and apply the corner offset
@@ -84,7 +84,7 @@ fn fragment(v_out: VertexOutput, f_out: ptr<function, FragmentOutput>) -> Fragme
     let string_color = string_data[entity_row].text_color;
     let emissive = string_data[entity_row].text_emissive;
 
-    f_out.albedo = vec4<precision_float>(string_color.rgb, mask);
+    f_out.albedo = vec4<f32>(string_color.rgb, mask);
     f_out.motion_emissive.a = emissive;
 
     f_out.smra.r = 1.0;
@@ -99,11 +99,11 @@ fn fragment(v_out: VertexOutput, f_out: ptr<function, FragmentOutput>) -> Fragme
 // MASK FUNCTION
 //------------------------------------------------------------------------------------
 
-fn fragment_mask(v_out: VertexOutput) -> precision_float {
+fn fragment_mask(v_out: VertexOutput) -> f32 {
     // Sample the MSDF texture
     let entity_row = v_out.instance_id;
 
-    let sample_color = vec4<precision_float>(textureSample(font_page_texture, global_sampler, vec2<f32>(v_out.uv)));
+    let sample_color = vec4<f32>(textureSample(font_page_texture, global_sampler, vec2<f32>(v_out.uv)));
     let string_color = string_data[entity_row].text_color;
     let emissive = string_data[entity_row].text_emissive;
 

@@ -15,12 +15,12 @@ struct OutlineParams {
 
 struct VertexOutput {
     @builtin(position) position: vec4f,
-    @location(0) uv: vec2<precision_float>,
+    @location(0) uv: vec2<f32>,
     @location(1) @interpolate(flat) instance_index: u32,
 };
 
 struct FragmentOutput {
-    @location(0) color: vec4<precision_float>,
+    @location(0) color: vec4<f32>,
 };
 
 // ------------------------------------------------------------------------------------
@@ -100,5 +100,5 @@ fn fs(v_out: VertexOutput) -> FragmentOutput {
     // Only show outline (no white dots)
     let final_color = select(original_color, outline_params.outline_color, edge > 0.1);
     
-    return FragmentOutput(vec4<precision_float>(final_color));
+    return FragmentOutput(vec4<f32>(final_color));
 } 

@@ -207,7 +207,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         let world_b = path_state[pixel_index].hit_attr1.xyz;
         let has_tbn = length(world_t) > 0.0001 && length(world_b) > 0.0001;
         if ((u32(material.texture_flags1.y) & 1u) != 0u && has_tbn) {
-            let tbn = mat3x3<precision_float>(world_t, world_b, world_n);
+            let tbn = mat3x3<f32>(world_t, world_b, world_n);
             let nm = sample_handle_rgba(
                 u32(material.normal_handle), base_uv,
                 texture_pool_normal, lod

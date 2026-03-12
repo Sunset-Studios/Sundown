@@ -18,7 +18,7 @@ struct VertexOutput {
 };
 
 struct FragmentOutput {
-    @location(0) color: vec4<precision_float>,
+    @location(0) color: vec4<f32>,
 };
 
 // ------------------------------------------------------------------------------------

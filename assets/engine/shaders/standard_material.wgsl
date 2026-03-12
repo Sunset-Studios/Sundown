@@ -36,7 +36,7 @@ fn fragment(v_out: VertexOutput, f_out: ptr<function, FragmentOutput>) -> Fragme
     if ((height_flag & 1u) != 0u) {
         let view_data = view_buffer[u32(frame_info.view_index)];
         let view_dir = normalize(view_data.view_position.xyz - v_out.world_position.xyz);
-        let tbn_matrix = mat3x3<precision_float>(
+        let tbn_matrix = mat3x3<f32>(
             v_out.tangent.xyz,
             v_out.bitangent.xyz,
             v_out.normal.xyz
@@ -106,14 +106,14 @@ fn fragment(v_out: VertexOutput, f_out: ptr<function, FragmentOutput>) -> Fragme
     
     // Apply normal mapping if enabled
     if ((u32(material_params.texture_flags1.y) & 1u) != 0u) {
-        let tbn_matrix = mat3x3<precision_float>(
+        let tbn_matrix = mat3x3<f32>(
             v_out.tangent.xyz,
             v_out.bitangent.xyz,
             v_out.normal.xyz
         );
         let nm_sample = sample_handle_rgba(u32(material_params.normal_handle), sample_uv, texture_pool_normal, lod).xyz * 2.0 - 1.0;
         let normal_map_vec = normalize(tbn_matrix * nm_sample);
-        f_out.normal = vec4<precision_float>(normal_map_vec, 1.0);
+        f_out.normal = vec4<f32>(normal_map_vec, 1.0);
     }
     
     f_out.albedo = albedo;
@@ -126,7 +126,7 @@ fn fragment(v_out: VertexOutput, f_out: ptr<function, FragmentOutput>) -> Fragme
     return *f_out;
 }
 
-fn fragment_mask(v_out: VertexOutput) -> precision_float {
+fn fragment_mask(v_out: VertexOutput) -> f32 {
    let section_index = u32(vertex_buffer[v_out.vertex_index].section_index);
     let entity_palette_offset = material_table_offset[v_out.instance_id];
     let material_params_index = material_palette[entity_palette_offset + section_index];

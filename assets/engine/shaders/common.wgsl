@@ -111,7 +111,7 @@ fn is_nan3(v: vec3<f32>) -> vec3<bool> {
 }
 
 // A helper function to compute the median of three values.
-fn median3(a: precision_float, b: precision_float, c: precision_float) -> precision_float {
+fn median3(a: f32, b: f32, c: f32) -> f32 {
     // Sort the three values and pick the middle one
     // A simple way: median = a + b + c - min(a,b,c) - max(a,b,c)
     let min_val = min(a, min(b, c));
@@ -132,12 +132,12 @@ fn hash(x: u32) -> u32 {
 }
 
 // Convert uint to float in [0, 1) range
-fn uint_to_normalized_float(x: u32) -> precision_float {
-    return precision_float(f32(x) * one_over_float_max);
+fn uint_to_normalized_float(x: u32) -> f32 {
+    return f32(f32(x) * one_over_float_max);
 }
 
 // Interpolate between two values
-fn interpolate(v0: precision_float, v1: precision_float, t: precision_float) -> precision_float {
+fn interpolate(v0: f32, v1: f32, t: f32) -> f32 {
     return v0 * (1.0 - t) + v1 * t;
 }
 
@@ -168,7 +168,7 @@ fn compute_lod_from_uv(uv: vec2f, tex_size: vec2f) -> f32 {
     return log2(safe_rho);
 }
 
-fn sample_handle_rgba(tex_handle: u32, uv: vec2<precision_float>, pool: texture_2d_array<f32>, lod: f32) -> vec4<precision_float> {
+fn sample_handle_rgba(tex_handle: u32, uv: vec2<f32>, pool: texture_2d_array<f32>, lod: f32) -> vec4<f32> {
     let max_lod = f32(textureNumLevels(pool) - 1u);
     let clamped_lod = clamp(lod, 0.0, max(0.0, max_lod));
     return textureSampleLevel(pool, global_sampler, uv, tex_handle, clamped_lod);
@@ -176,12 +176,12 @@ fn sample_handle_rgba(tex_handle: u32, uv: vec2<precision_float>, pool: texture_
 
 fn sample_texture_or_vec4_param_handle(
     tex_handle: u32,
-    uv_coords: vec2<precision_float>,
-    param_val: vec4<precision_float>,
+    uv_coords: vec2<f32>,
+    param_val: vec4<f32>,
     flag: u32,
     pool: texture_2d_array<f32>,
     lod: f32
-) -> vec4<precision_float> {
+) -> vec4<f32> {
     if ((flag & 1u) != 0u) {
         return sample_handle_rgba(tex_handle, uv_coords, pool, lod);
     }
@@ -190,12 +190,12 @@ fn sample_texture_or_vec4_param_handle(
 
 fn sample_texture_or_float_param_handle(
     tex_handle: u32,
-    uv_coords: vec2<precision_float>,
-    param_val: precision_float,
+    uv_coords: vec2<f32>,
+    param_val: f32,
     flag: u32,
     pool: texture_2d_array<f32>,
     lod: f32
-) -> precision_float {
+) -> f32 {
     if ((flag & 1u) != 0u) {
         let sampled_val = sample_handle_rgba(tex_handle, uv_coords, pool, lod);
         let channel_index = (flag >> 1u) & 3u;

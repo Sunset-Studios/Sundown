@@ -38,11 +38,11 @@ const INVALID_IDX = 0xffffffffu;
 const PI = 3.14159265359;
 
 struct Vertex {
-    position: vec4<precision_float>,
-    normal: vec4<precision_float>,
-    tangent: vec4<precision_float>,
-    bitangent: vec4<precision_float>,
-    uv: vec2<precision_float>,
+    position: vec4<f32>,
+    normal: vec4<f32>,
+    tangent: vec4<f32>,
+    bitangent: vec4<f32>,
+    uv: vec2<f32>,
     section_index: f32,
     _padding: f32,
 };
@@ -108,10 +108,10 @@ struct MeshDirectoryEntry {
 };
 
 struct StandardMaterialParams {
-    albedo: vec4<precision_float>,
-    normal: vec4<precision_float>,
-    emission_roughness_metallic_tiling: vec4<precision_float>,
-    ao_height_specular: vec4<precision_float>,
+    albedo: vec4<f32>,
+    normal: vec4<f32>,
+    emission_roughness_metallic_tiling: vec4<f32>,
+    ao_height_specular: vec4<f32>,
     texture_flags1: vec4<f32>, // x: albedo, y: normal, z: roughness, w: metallic
     texture_flags2: vec4<f32>, // x: ao, y: height, z: specular, w: emission 
     albedo_handle: f32,

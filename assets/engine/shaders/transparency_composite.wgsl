@@ -7,12 +7,12 @@
 // ------------------------------------------------------------------------------------ 
 struct VertexOutput {
     @builtin(position) position: vec4f,
-    @location(0) uv: vec2<precision_float>,
+    @location(0) uv: vec2<f32>,
     @location(1) @interpolate(flat) instance_index: u32,
 };
 
 struct FragmentOutput {
-    @location(0) color: vec4<precision_float>,
+    @location(0) color: vec4<f32>,
 };
 
 
@@ -34,8 +34,8 @@ struct FragmentOutput {
 // Fragment Shader
 // ------------------------------------------------------------------------------------ 
 @fragment fn fs(v_out: VertexOutput) -> FragmentOutput {
-    let accum = vec4<precision_float>(textureSample(accumulation_texture, global_sampler, vec2<f32>(v_out.uv)));
+    let accum = vec4<f32>(textureSample(accumulation_texture, global_sampler, vec2<f32>(v_out.uv)));
     var average_color = accum.rgb / max(accum.a, epsilon);
-    return FragmentOutput(vec4<precision_float>(average_color, accum.a));
+    return FragmentOutput(vec4<f32>(average_color, accum.a));
 
 }

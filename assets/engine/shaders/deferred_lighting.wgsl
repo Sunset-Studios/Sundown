@@ -59,11 +59,11 @@
 
 struct VertexOutput {
     @builtin(position) position: vec4f,
-    @location(0) uv: vec2<precision_float>,
+    @location(0) uv: vec2<f32>,
 };
 
 struct FragmentOutput {
-    @location(0) color: vec4<precision_float>,
+    @location(0) color: vec4<f32>,
 };
 
 // ------------------------------------------------------------------------------------
@@ -91,7 +91,7 @@ struct FragmentOutput {
 // ------------------------------------------------------------------------------------ 
 
 @fragment fn fs(v_out: VertexOutput) -> FragmentOutput {
-    let ambient = vec3<precision_float>(0.2, 0.2, 0.2);
+    let ambient = vec3<f32>(0.2, 0.2, 0.2);
     let uv = vec2<f32>(v_out.uv);
 
     var tex_sky = textureSample(skybox_texture, global_sampler, uv);
@@ -207,5 +207,5 @@ struct FragmentOutput {
 
     color += (emissive * albedo);
 
-    return FragmentOutput(vec4<precision_float>(vec4<f32>(color, 1.0)));
+    return FragmentOutput(vec4<f32>(vec4<f32>(color, 1.0)));
 }

@@ -12,12 +12,12 @@
 
 struct VertexOutput {
     @builtin(position) position: vec4f,
-    @location(0) uv: vec2<precision_float>,
+    @location(0) uv: vec2<f32>,
     @location(1) @interpolate(flat) instance_index: u32,
 };
 
 struct FragmentOutput {
-    @location(0) color: vec4<precision_float>,
+    @location(0) color: vec4<f32>,
 };
 
 
@@ -41,6 +41,6 @@ struct FragmentOutput {
 // ------------------------------------------------------------------------------------ 
 
 @fragment fn fs(v_out: VertexOutput) -> FragmentOutput {
-    var color = vec4<precision_float>(textureSample(input_texture, global_sampler, vec2<f32>(v_out.uv)));
+    var color = vec4<f32>(textureSample(input_texture, global_sampler, vec2<f32>(v_out.uv)));
     return FragmentOutput(color);
 }
