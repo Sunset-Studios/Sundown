@@ -186,6 +186,39 @@ const main_depth_image2_config = {
   usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
   force: false,
 };
+const hzb_image_config = {
+  name: "hzb",
+  format: r32float_format,
+  width: 0,
+  height: 0,
+  usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
+  mip_levels: 0,
+  b_one_view_per_mip: true,
+  force: false,
+};
+const entity_id_image_config = {
+  name: "entity_id",
+  format: r32uint_format,
+  width: 0,
+  height: 0,
+  usage:
+    GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_SRC,
+  force: false,
+};
+const prev_lighting_image_config = {
+  name: "prev_lighting",
+  format: rgba16float_format,
+  width: 0,
+  height: 0,
+  usage:
+    GPUTextureUsage.RENDER_ATTACHMENT |
+    GPUTextureUsage.TEXTURE_BINDING |
+    GPUTextureUsage.STORAGE_BINDING |
+    GPUTextureUsage.COPY_DST,
+  mip_levels: 0,
+  b_one_view_per_mip: true,
+};
+
 
 const skybox_shader_setup = {
   pipeline_shaders: {
@@ -368,39 +401,6 @@ const clear_dirty_flags_shader_setup = {
   },
 };
 
-const hzb_image_config = {
-  name: "hzb",
-  format: r32float_format,
-  width: 0,
-  height: 0,
-  usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
-  mip_levels: 0,
-  b_one_view_per_mip: true,
-  force: false,
-};
-const entity_id_image_config = {
-  name: "entity_id",
-  format: r32uint_format,
-  width: 0,
-  height: 0,
-  usage:
-    GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_SRC,
-  force: false,
-};
-
-const prev_lighting_image_config = {
-  name: "prev_lighting",
-  format: rgba16float_format,
-  width: 0,
-  height: 0,
-  usage:
-    GPUTextureUsage.RENDER_ATTACHMENT |
-    GPUTextureUsage.TEXTURE_BINDING |
-    GPUTextureUsage.STORAGE_BINDING |
-    GPUTextureUsage.COPY_DST,
-  mip_levels: 0,
-  b_one_view_per_mip: true,
-};
 
 const swapchain_name = "swapchain";
 const clear_g_buffer_pass_name = "clear_g_buffer";
