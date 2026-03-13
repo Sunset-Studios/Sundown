@@ -1511,6 +1511,16 @@ export class DeferredShadingStrategy {
               DebugDrawType.Normal
             );
             break;
+          case DebugDrawType.Meshlet:
+            this.debug_overlay.set_properties(
+              main_albedo_image,
+              0,
+              0,
+              image_extent.width,
+              image_extent.height,
+              DebugDrawType.Meshlet
+            );
+            break;
           case DebugDrawType.Emissive:
             this.debug_overlay.set_properties(
               main_motion_emissive_image,

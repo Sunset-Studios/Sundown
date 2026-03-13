@@ -568,6 +568,7 @@ export class Renderer {
    */
   set_debug_draw_type(debug_draw_type) {
     this.debug_draw_type = debug_draw_type;
+    SharedFrameInfoBuffer.set_debug_draw_type(debug_draw_type);
   }
 
   /**

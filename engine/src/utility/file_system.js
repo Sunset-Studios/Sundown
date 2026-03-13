@@ -30,3 +30,61 @@ export function read_file(file_path) {
     }
     return asset;
 }
+
+export function read_file_bytes(file_path) {
+    let asset = null;
+    try {
+        const url = new URL(`${file_path}`, window.location.href);
+        const xhr = new XMLHttpRequest();
+        xhr.open('GET', url.href, false);
+        xhr.responseType = 'arraybuffer';
+        xhr.send(null);
+
+        if (xhr.status === 200 && xhr.response instanceof ArrayBuffer) {
+            asset = xhr.response;
+        }
+    } catch (error) {
+        // Network error or other issues, continue silently. Let caller handle null asset return.
+    }
+    return asset;
+}
+
+async function fetch_file_response(file_path) {
+    try {
+        const url = new URL(`${file_path}`, window.location.href);
+        const response = await fetch(url.href);
+        if (!response.ok) {
+            return null;
+        }
+        return response;
+    } catch (error) {
+        return null;
+    }
+}
+
+export async function read_file_async(file_path) {
+    const response = await fetch_file_response(file_path);
+    if (!response) {
+        return null;
+    }
+
+    const asset = await response.text();
+    if (asset.includes("<!DOCTYPE html>")) {
+        return null;
+    }
+    return asset;
+}
+
+export async function read_file_bytes_async(file_path) {
+    const response = await fetch_file_response(file_path);
+    if (!response) {
+        return null;
+    }
+
+    const content_type = response.headers.get("content-type") || "";
+    if (content_type.includes("text/html")) {
+        return null;
+    }
+
+    return await response.arrayBuffer();
+}

@@ -2,15 +2,18 @@ import crypto from "crypto";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
+import { MeshoptClusterizer } from "meshoptimizer/clusterizer";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const ASSET_ROOT = path.resolve(__dirname, "../assets");
 
-const GENERATOR_VERSION = 1;
+const GENERATOR_VERSION = 2;
 const DEFAULT_MAX_VERTICES = 64;
+const DEFAULT_MIN_TRIANGLES = 24;
 const DEFAULT_MAX_TRIANGLES = 124;
+const DEFAULT_FILL_WEIGHT = 0.5;
 const DEFAULT_CLUSTER_GROUP_SIZE = 8;
 
 const MESHLET_STRUCT_STRIDE = 80;
@@ -270,91 +273,6 @@ function compute_sphere_from_bounds(bounds_min, bounds_max, vertices) {
   return { center, radius };
 }
 
-function compute_normal_cone(meshlet_global_vertices, meshlet_local_indices, positions) {
-  let axis_sum = [0, 0, 0];
-  const normals = [];
-
-  for (let i = 0; i < meshlet_local_indices.length; i += 3) {
-    const v0 = get_position(positions, meshlet_global_vertices[meshlet_local_indices[i + 0]]);
-    const v1 = get_position(positions, meshlet_global_vertices[meshlet_local_indices[i + 1]]);
-    const v2 = get_position(positions, meshlet_global_vertices[meshlet_local_indices[i + 2]]);
-
-    const edge_a = sub_vec3(v1, v0);
-    const edge_b = sub_vec3(v2, v0);
-    const cross = cross_vec3(edge_a, edge_b);
-    const area = length_vec3(cross);
-    if (area <= 1e-8) {
-      continue;
-    }
-
-    const normal = scale_vec3(cross, 1.0 / area);
-    normals.push(normal);
-    axis_sum = add_vec3(axis_sum, normal);
-  }
-
-  if (normals.length === 0) {
-    return {
-      axis: [0, 1, 0],
-      cutoff: -1.0,
-    };
-  }
-
-  const axis = normalize_vec3(axis_sum);
-  let cutoff = 1.0;
-
-  for (const normal of normals) {
-    cutoff = Math.min(cutoff, dot_vec3(axis, normal));
-  }
-
-  return {
-    axis,
-    cutoff,
-  };
-}
-
-function create_pending_meshlet() {
-  return {
-    global_vertices: [],
-    global_to_local: new Map(),
-    local_indices: [],
-  };
-}
-
-function finalize_meshlet(pending_meshlet, positions) {
-  const vertices = pending_meshlet.global_vertices.map((vertex_index) =>
-    get_position(positions, vertex_index)
-  );
-
-  const bounds_min = [Infinity, Infinity, Infinity];
-  const bounds_max = [-Infinity, -Infinity, -Infinity];
-  for (const vertex of vertices) {
-    bounds_min[0] = Math.min(bounds_min[0], vertex[0]);
-    bounds_min[1] = Math.min(bounds_min[1], vertex[1]);
-    bounds_min[2] = Math.min(bounds_min[2], vertex[2]);
-    bounds_max[0] = Math.max(bounds_max[0], vertex[0]);
-    bounds_max[1] = Math.max(bounds_max[1], vertex[1]);
-    bounds_max[2] = Math.max(bounds_max[2], vertex[2]);
-  }
-
-  const sphere = compute_sphere_from_bounds(bounds_min, bounds_max, vertices);
-  const normal_cone = compute_normal_cone(
-    pending_meshlet.global_vertices,
-    pending_meshlet.local_indices,
-    positions
-  );
-
-  return {
-    global_vertices: pending_meshlet.global_vertices.slice(),
-    local_indices: pending_meshlet.local_indices.slice(),
-    bounds_min,
-    bounds_max,
-    center: sphere.center,
-    radius: sphere.radius,
-    normal_cone_axis: normal_cone.axis,
-    normal_cone_cutoff: normal_cone.cutoff,
-  };
-}
-
 function expand_bits_10(value) {
   let x = value & 0x3ff;
   x = (x | (x << 16)) & 0x30000ff;
@@ -408,44 +326,65 @@ function sort_meshlets_spatially(meshlets, primitive_bounds) {
     .map((entry) => entry.meshlet);
 }
 
-function build_meshlets(indices, positions, settings) {
-  const meshlets = [];
-  let pending = create_pending_meshlet();
+function compute_meshlet_aabb(global_vertices, positions) {
+  const bounds_min = [Infinity, Infinity, Infinity];
+  const bounds_max = [-Infinity, -Infinity, -Infinity];
 
-  for (let i = 0; i < indices.length; i += 3) {
-    const triangle = [indices[i + 0], indices[i + 1], indices[i + 2]];
-
-    let new_vertices = 0;
-    for (const index of triangle) {
-      if (!pending.global_to_local.has(index)) {
-        new_vertices++;
-      }
-    }
-
-    const next_triangle_count = pending.local_indices.length / 3 + 1;
-    const next_vertex_count = pending.global_vertices.length + new_vertices;
-    const exceeds_limits =
-      next_triangle_count > settings.max_triangles ||
-      next_vertex_count > settings.max_vertices;
-
-    if (exceeds_limits && pending.local_indices.length > 0) {
-      meshlets.push(finalize_meshlet(pending, positions));
-      pending = create_pending_meshlet();
-    }
-
-    for (const index of triangle) {
-      let local_index = pending.global_to_local.get(index);
-      if (local_index === undefined) {
-        local_index = pending.global_vertices.length;
-        pending.global_vertices.push(index);
-        pending.global_to_local.set(index, local_index);
-      }
-      pending.local_indices.push(local_index);
-    }
+  for (const vertex_index of global_vertices) {
+    const vertex = get_position(positions, vertex_index);
+    bounds_min[0] = Math.min(bounds_min[0], vertex[0]);
+    bounds_min[1] = Math.min(bounds_min[1], vertex[1]);
+    bounds_min[2] = Math.min(bounds_min[2], vertex[2]);
+    bounds_max[0] = Math.max(bounds_max[0], vertex[0]);
+    bounds_max[1] = Math.max(bounds_max[1], vertex[1]);
+    bounds_max[2] = Math.max(bounds_max[2], vertex[2]);
   }
 
-  if (pending.local_indices.length > 0) {
-    meshlets.push(finalize_meshlet(pending, positions));
+  if (!Number.isFinite(bounds_min[0])) {
+    return {
+      min: [0, 0, 0],
+      max: [0, 0, 0],
+    };
+  }
+
+  return {
+    min: bounds_min,
+    max: bounds_max,
+  };
+}
+
+function build_meshlets(indices, positions, settings) {
+  const buffers = MeshoptClusterizer.buildMeshletsSpatial(
+    indices,
+    positions,
+    3,
+    settings.max_vertices,
+    settings.min_triangles,
+    settings.max_triangles,
+    settings.fill_weight
+  );
+
+  const computed_bounds = MeshoptClusterizer.computeMeshletBounds(buffers, positions, 3);
+  const bounds_array = Array.isArray(computed_bounds) ? computed_bounds : [computed_bounds];
+  const meshlets = [];
+
+  for (let i = 0; i < buffers.meshletCount; i++) {
+    const meshlet = MeshoptClusterizer.extractMeshlet(buffers, i);
+    const global_vertices = Array.from(meshlet.vertices);
+    const local_indices = Array.from(meshlet.triangles);
+    const bounds = bounds_array[i];
+    const aabb = compute_meshlet_aabb(global_vertices, positions);
+
+    meshlets.push({
+      global_vertices,
+      local_indices,
+      bounds_min: aabb.min,
+      bounds_max: aabb.max,
+      center: [bounds.centerX, bounds.centerY, bounds.centerZ],
+      radius: bounds.radius,
+      normal_cone_axis: [bounds.coneAxisX, bounds.coneAxisY, bounds.coneAxisZ],
+      normal_cone_cutoff: bounds.coneCutoff,
+    });
   }
 
   return meshlets;
@@ -609,7 +548,9 @@ function build_output_payload(document, settings) {
     generatedAt: new Date().toISOString(),
     settings: {
       maxVertices: settings.max_vertices,
+      minTriangles: settings.min_triangles,
       maxTriangles: settings.max_triangles,
+      fillWeight: settings.fill_weight,
       clusterGroupSize: settings.cluster_group_size,
     },
     source: {
@@ -881,13 +822,21 @@ async function main() {
   const settings = {
     version: GENERATOR_VERSION,
     max_vertices: DEFAULT_MAX_VERTICES,
+    min_triangles: DEFAULT_MIN_TRIANGLES,
     max_triangles: DEFAULT_MAX_TRIANGLES,
+    fill_weight: DEFAULT_FILL_WEIGHT,
     cluster_group_size: DEFAULT_CLUSTER_GROUP_SIZE,
   };
 
   if (settings.max_vertices > 255) {
     throw new Error("max_vertices must stay <= 255 so local triangle indices fit in uint8.");
   }
+
+  if (!MeshoptClusterizer.supported) {
+    throw new Error("meshoptimizer clusterizer is not supported in this Node.js runtime.");
+  }
+
+  await MeshoptClusterizer.ready;
 
   const gltf_files = [];
   find_gltf_files(ASSET_ROOT, gltf_files);

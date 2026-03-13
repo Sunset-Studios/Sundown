@@ -144,6 +144,8 @@ export class DebugOverlay {
         return "debug/debug_overlay_depth.wgsl";
       case DebugDrawType.Normal:
         return "debug/debug_overlay_2d.wgsl";
+      case DebugDrawType.Meshlet:
+        return "debug/debug_overlay_2d.wgsl";
       case DebugDrawType.Emissive:
         return "debug/debug_overlay_channel.wgsl";
       case DebugDrawType.Motion:

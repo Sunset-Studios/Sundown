@@ -15,14 +15,38 @@
 @group(2) @binding(9) var texture_pool_specular: texture_2d_array<f32>;
 @group(2) @binding(10) var texture_pool_emission: texture_2d_array<f32>;
 
+const DEBUG_DRAW_TYPE_MESHLET = 24u;
+
+fn meshlet_debug_color(meshlet_index: u32) -> vec3<f32> {
+    let seed = meshlet_index + 1u;
+    let hash_r = hash(seed);
+    let hash_g = hash(seed ^ 0x9e3779b9u);
+    let hash_b = hash(seed ^ 0x85ebca6bu);
+    return vec3<f32>(
+        0.2 + uint_to_normalized_float(hash_r) * 0.8,
+        0.2 + uint_to_normalized_float(hash_g) * 0.8,
+        0.2 + uint_to_normalized_float(hash_b) * 0.8
+    );
+}
+
 // ------------------------------------------------------------------------------------
 // Fragment Shader
 // ------------------------------------------------------------------------------------ 
 fn fragment(v_out: VertexOutput, f_out: ptr<function, FragmentOutput>) -> FragmentOutput {
-    let section_index = u32(vertex_buffer[v_out.vertex_index].section_index);
+    let vertex = vertex_buffer[v_out.vertex_index];
+    let section_index = u32(vertex.section_index);
+    let meshlet_index = u32(vertex.meshlet_index);
     let entity_palette_offset = material_table_offset[v_out.instance_id];
     let material_params_index = material_palette[entity_palette_offset + section_index];
     let material_params = material_params[material_params_index];
+
+    if (u32(frame_info.debug_draw_type) == DEBUG_DRAW_TYPE_MESHLET) {
+        let debug_color = meshlet_debug_color(meshlet_index);
+        f_out.albedo = vec4<f32>(debug_color, 1.0);
+        f_out.smra = vec4<f32>(0.0, 1.0, 0.0, 1.0);
+        f_out.motion_emissive.a = 0.0;
+        return *f_out;
+    }
 
     let tiling = material_params.emission_roughness_metallic_tiling.w;
     var base_uv = v_out.uv * tiling;

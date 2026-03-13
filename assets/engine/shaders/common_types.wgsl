@@ -12,7 +12,7 @@ enable f16;
 // Data Structures
 // ------------------------------------------------------------------------------------ 
 
-// 32‑bit handle ─ 21 bits chunk index | 7 bits row_index | 4 bits generation
+// 32-bit handle - 21 bits chunk index | 7 bits row_index | 4 bits generation
 const ENTITY_ROW_BITS = 28;
 const LOCAL_SLOT_BITS = 8;
 const ENTITY_GEN_BITS = 4;
@@ -44,7 +44,7 @@ struct Vertex {
     bitangent: vec4<f32>,
     uv: vec2<f32>,
     section_index: f32,
-    _padding: f32,
+    meshlet_index: f32,
 };
 
 struct View {
@@ -75,7 +75,10 @@ struct FrameInfo {
     view_index: f32,
     time: f32,
     frame_index: f32,
+    debug_draw_type: f32,
     resolution: vec2<f32>,
+    padding0: f32,
+    padding1: f32,
     cursor_world_position: vec4<f32>,
 };
 

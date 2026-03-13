@@ -4,9 +4,9 @@ import { MeshData } from "./mesh_data.js";
 import { Name } from "../utility/names.js";
 import { CacheTypes, TextureChannel, MaterialFamilyType } from "./renderer_types.js";
 import { MeshTaskQueue } from "./mesh_task_queue.js";
-import { vec3, quat, mat3, mat4 } from "gl-matrix";
 import { Type2NumOfComponent } from "../utility/gltf_loader.js";
 import { StandardMaterial } from "./material.js";
+import { build_gltf_mesh, build_combined_gltf_scene, load_meshlet_sidecar_async } from "./meshlet_runtime.js";
 
 const discard_cpu_data = true;
 
@@ -162,255 +162,8 @@ export class Mesh {
     return out;
   }
 
-  static build_from_gltf_mesh(mesh, gltf_obj, gltf_mesh) {
-    mesh._reset_build_state();
-
-    const material_cache = new Map();
-
-    const read_accessor_f32 = Mesh._read_accessor_f32;
-
-    for (const primitive of gltf_mesh.primitives) {
-      const material_index = primitive.material ? gltf_obj.materials.indexOf(primitive.material) : -1;
-      let group = mesh._section_groups.get(material_index);
-      if (!group) {
-        group = { key: material_index, indices: [] };
-        mesh._section_groups.set(material_index, group);
-      }
-
-      let positions = [];
-      let position_accessor = null;
-      if (primitive.attributes.POSITION !== undefined) {
-        position_accessor = primitive.attributes.POSITION;
-        positions = read_accessor_f32(position_accessor);
-      }
-
-      let normals = [];
-      let normal_accessor = null;
-      if (primitive.attributes.NORMAL !== undefined) {
-        normal_accessor = primitive.attributes.NORMAL;
-        normals = read_accessor_f32(normal_accessor);
-      }
-
-      let tangents = [];
-      let tangent_accessor = null;
-      if (primitive.attributes.TANGENT !== undefined) {
-        tangent_accessor = primitive.attributes.TANGENT;
-        tangents = read_accessor_f32(tangent_accessor);
-      }
-
-      let bitangents = [];
-      let bitangent_accessor = null;
-      if (primitive.attributes.BITANGENT !== undefined) {
-        bitangent_accessor = primitive.attributes.BITANGENT;
-        bitangents = read_accessor_f32(bitangent_accessor);
-      }
-
-      let colors = [];
-      let color_components = 0;
-      let color_accessor = null;
-      if (primitive.attributes.COLOR_0 !== undefined) {
-        color_accessor = primitive.attributes.COLOR_0;
-        color_components = Type2NumOfComponent[color_accessor.type];
-        colors = read_accessor_f32(color_accessor);
-      }
-
-      let uvs = [];
-      let uv_accessor = null;
-      if (primitive.attributes.TEXCOORD_0 !== undefined) {
-        uv_accessor = primitive.attributes.TEXCOORD_0;
-        uvs = read_accessor_f32(uv_accessor);
-      }
-
-      if (tangents.length === 0 && positions.length > 0 && uvs.length > 0) {
-        let computed = Mesh._get_tangents_and_bitangents(positions, uvs);
-        tangents = computed.t;
-        bitangents = computed.b;
-      } else if (bitangents.length === 0 && tangents.length > 0 && normals.length > 0) {
-        bitangents = new Array((tangents.length / 4) * 3);
-        for (let vi = 0; vi < tangents.length / 4; vi++) {
-          let tangent_start = vi * 4;
-          let normal_start = vi * 3;
-          let t = [tangents[tangent_start], tangents[tangent_start + 1], tangents[tangent_start + 2]];
-          let handedness = tangents[tangent_start + 3] || 1;
-          let n = [normals[normal_start], normals[normal_start + 1], normals[normal_start + 2]];
-          let b = vec3.cross(vec3.create(), n, t);
-          vec3.scale(b, b, handedness);
-          vec3.normalize(b, b);
-          let bitangent_start = vi * 3;
-          bitangents[bitangent_start] = b[0];
-          bitangents[bitangent_start + 1] = b[1];
-          bitangents[bitangent_start + 2] = b[2];
-        }
-      }
-
-      const num_verts = positions.length / 3;
-
-      for (let k = 0; k < num_verts; k++) {
-        let pos_index = k * 3;
-        let normal_index = k * 3;
-        let uv_index = k * 2;
-        let tangent_index = tangents.length % 4 === 0 ? k * 4 : k * 3;
-        let color_index = k * color_components;
-
-        let color = [1, 1, 1, 1];
-        if (colors.length > 0) {
-          if (color_components === 3) {
-            color = [colors[color_index], colors[color_index + 1], colors[color_index + 2], 1];
-          } else {
-            color = [
-              colors[color_index],
-              colors[color_index + 1],
-              colors[color_index + 2],
-              colors[color_index + 3],
-            ];
-          }
-        }
-
-        let tangent_w = 1.0;
-        if (tangents.length % 4 === 0) {
-          tangent_w = tangents[tangent_index + 3] ?? 1.0;
-        }
-
-        const src_pos_x = positions[pos_index] ?? 0.0;
-        const src_pos_y = positions[pos_index + 1] ?? 0.0;
-        const src_pos_z = positions[pos_index + 2] ?? 0.0;
-        const position = vec3.fromValues(src_pos_x, src_pos_y, src_pos_z);
-
-        const n = vec3.fromValues(
-          normals[normal_index] ?? 0.0,
-          normals[normal_index + 1] ?? 0.0,
-          normals[normal_index + 2] ?? 0.0
-        );
-        vec3.normalize(n, n);
-
-        const t = vec3.fromValues(
-          tangents[tangent_index] ?? 0.0,
-          tangents[tangent_index + 1] ?? 0.0,
-          tangents[tangent_index + 2] ?? 0.0
-        );
-        const nt_dot_t = vec3.dot(n, t);
-        const t_ortho = vec3.subtract(vec3.create(), t, vec3.scale(vec3.create(), n, nt_dot_t));
-        vec3.normalize(t_ortho, t_ortho);
-
-        const b = vec3.cross(vec3.create(), n, t_ortho);
-        vec3.normalize(b, b);
-
-        mesh.vertices.push({
-          position: [position[0], position[1], position[2], 1],
-          normal: [n[0], n[1], n[2], 0],
-          color: color,
-          uv: [uvs[uv_index] ?? 0.0, uvs[uv_index + 1] ?? 0.0],
-          tangent: [t_ortho[0], t_ortho[1], t_ortho[2], tangent_w],
-          bitangent: [b[0], b[1], b[2], 0],
-          extra_data: [0, 0],
-        });
-      }
-
-      if (primitive.indices !== null) {
-        const index_accessor = gltf_obj.accessors[primitive.indices];
-
-        if (index_accessor.componentType === 5123) {
-          // UNSIGNED_SHORT
-          const temp_indices = new Uint16Array(
-            index_accessor.bufferView.data,
-            index_accessor.byteOffset || 0,
-            index_accessor.count
-          );
-          for (let i = 0; i < temp_indices.length; i++) {
-            group.indices.push(temp_indices[i] + mesh.vertices.length - num_verts);
-          }
-        } else if (index_accessor.componentType === 5125) {
-          // UNSIGNED_INT
-          const temp_indices = new Uint32Array(
-            index_accessor.bufferView.data,
-            index_accessor.byteOffset || 0,
-            index_accessor.count
-          );
-          for (let i = 0; i < temp_indices.length; i++) {
-            group.indices.push(temp_indices[i] + mesh.vertices.length - num_verts);
-          }
-        } else if (index_accessor.componentType === 5121) {
-          // UNSIGNED_BYTE
-          const temp_indices = new Uint8Array(
-            index_accessor.bufferView.data,
-            index_accessor.byteOffset || 0,
-            index_accessor.count
-          );
-          for (let i = 0; i < temp_indices.length; i++) {
-            group.indices.push(temp_indices[i] + mesh.vertices.length - num_verts);
-          }
-        }
-      } else {
-        const vertex_base = mesh.vertices.length - num_verts;
-        for (let i = 0; i < num_verts; i++) {
-          group.indices.push(vertex_base + i);
-        }
-      }
-    }
-
-    mesh.sections = [];
-    mesh.index_count = 0;
-    mesh._tmp_indices.length = 0;
-
-    const vertex_section_map = new Int32Array(mesh.vertices.length).fill(-1);
-
-    {
-      let running_first_index = 0;
-      for (const [, group] of mesh._section_groups) {
-        if (group.indices.length === 0) continue;
-        const section_index = mesh.sections.length;
-        for (let i = 0; i < group.indices.length; i++) {
-          const v = group.indices[i];
-          vertex_section_map[v] = section_index;
-        }
-
-        let new_section = {
-          first_index: running_first_index,
-          index_count: group.indices.length,
-          material_id: null,
-        };
-        if (group.key >= 0) {
-          const gltf_mat = gltf_obj.materials[group.key];
-          new_section.material_id = Mesh.make_engine_material_from_gltf(
-            gltf_obj,
-            mesh,
-            gltf_mat,
-            group.key,
-            material_cache
-          );
-        }
-        mesh.sections.push(new_section);
-        mesh._tmp_indices = mesh._tmp_indices.concat(group.indices);
-        running_first_index += group.indices.length;
-      }
-    }
-
-    for (let vi = 0; vi < mesh.vertices.length; vi++) {
-      const s = vertex_section_map[vi] >= 0 ? vertex_section_map[vi] : 0;
-      mesh.vertices[vi].extra_data[0] = s;
-    }
-
-    if (mesh._tmp_indices.length > 0) {
-      let max_index = 0;
-      for (let i = 0; i < mesh._tmp_indices.length; i++) {
-        if (mesh._tmp_indices[i] > max_index) max_index = mesh._tmp_indices[i];
-      }
-      mesh.indices = new Uint32Array(mesh._tmp_indices);
-    }
-
-    mesh.vertex_count = mesh.vertices.length;
-    mesh.index_count = mesh.indices.length;
-
-    mesh._recreate_vertex_bounds();
-
-    MeshData.update(mesh);
-
-    if (discard_cpu_data) {
-      mesh.vertices = null;
-      mesh.indices = null;
-      mesh._tmp_indices = null;
-      mesh._section_groups = null;
-    }
+  static build_from_gltf_mesh(mesh, gltf_obj, gltf_mesh, mesh_index = null, sidecar = null) {
+    build_gltf_mesh(this, mesh, gltf_obj, gltf_mesh, mesh_index, sidecar);
   }
 
   static create(name, vertices, indices) {
@@ -820,14 +573,39 @@ export class Mesh {
 
     MeshData.register(mesh);
 
-    mesh.pending_loader = new glTFLoader();
-    mesh.pending_loader.load(gltf_path, (gltf_obj) => {
-      const target_mesh = gltf_obj.meshes[mesh_index] ?? gltf_obj.meshes[0];
-      if (!target_mesh) {
-        return;
-      }
-      Mesh.build_from_gltf_mesh(mesh, gltf_obj, target_mesh);
-      MeshTaskQueue.invalidate_mesh(cache_key);
+    const sidecar_promise = load_meshlet_sidecar_async(gltf_path);
+    const loader = new glTFLoader();
+    mesh.pending_loader = loader;
+
+    loader.load(gltf_path, (gltf_obj) => {
+      void (async () => {
+        const target_mesh = gltf_obj.meshes[mesh_index] ?? gltf_obj.meshes[0];
+        if (!target_mesh) {
+          if (mesh.pending_loader === loader) {
+            mesh.pending_loader = null;
+          }
+          return;
+        }
+
+        const resolved_mesh_index = target_mesh.meshID ?? gltf_obj.meshes.indexOf(target_mesh);
+        const sidecar = await sidecar_promise;
+        if (mesh.pending_loader !== loader) {
+          return;
+        }
+
+        Mesh.build_from_gltf_mesh(mesh, gltf_obj, target_mesh, resolved_mesh_index, sidecar);
+        if (mesh.pending_loader !== loader) {
+          return;
+        }
+
+        mesh.pending_loader = null;
+        MeshTaskQueue.invalidate_mesh(cache_key);
+      })().catch((error) => {
+        if (mesh.pending_loader === loader) {
+          mesh.pending_loader = null;
+        }
+        console.error(`[meshlet_runtime] failed to build ${gltf_path}:`, error);
+      });
     });
 
     ResourceCache.get().store(CacheTypes.MESH, cache_key, mesh);
@@ -856,10 +634,30 @@ export class Mesh {
 
     MeshData.register(mesh);
 
-    mesh.pending_loader = new glTFLoader();
-    mesh.pending_loader.load(gltf_path, (gltf_obj) => {
-      Mesh.build_combined_gltf_scene(mesh, gltf_obj, scene_index);
-      MeshTaskQueue.invalidate_mesh(cache_key);
+    const sidecar_promise = load_meshlet_sidecar_async(gltf_path);
+    const loader = new glTFLoader();
+    mesh.pending_loader = loader;
+    
+    loader.load(gltf_path, (gltf_obj) => {
+      void (async () => {
+        const sidecar = await sidecar_promise;
+        if (mesh.pending_loader !== loader) {
+          return;
+        }
+
+        Mesh.build_combined_gltf_scene(mesh, gltf_obj, scene_index, sidecar);
+        if (mesh.pending_loader !== loader) {
+          return;
+        }
+
+        mesh.pending_loader = null;
+        MeshTaskQueue.invalidate_mesh(cache_key);
+      })().catch((error) => {
+        if (mesh.pending_loader === loader) {
+          mesh.pending_loader = null;
+        }
+        console.error(`[meshlet_runtime] failed to build combined scene ${gltf_path}:`, error);
+      });
     });
 
     ResourceCache.get().store(CacheTypes.MESH, cache_key, mesh);
@@ -875,335 +673,8 @@ export class Mesh {
    * @param {Object} gltf_obj - The parsed GLTF object
    * @param {number|null} scene_index - Which scene to use
    */
-  static build_combined_gltf_scene(mesh, gltf_obj, scene_index = null) {
-    mesh._reset_build_state();
-
-    const material_cache = new Map();
-    const read_accessor_f32 = Mesh._read_accessor_f32;
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // Set up parent references for hierarchical traversal
-    // ─────────────────────────────────────────────────────────────────────────
-    for (const node of gltf_obj.nodes) {
-      for (const child of node.children) {
-        child._parent = node;
-      }
-    }
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // Determine which scene to load
-    // ─────────────────────────────────────────────────────────────────────────
-    const scene_to_use =
-      scene_index ?? gltf_obj.defaultScene ?? (gltf_obj.scenes.length > 0 ? 0 : null);
-    const scene = scene_to_use !== null ? gltf_obj.scenes[scene_to_use] : null;
-    const root_nodes = scene ? scene.nodes : gltf_obj.nodes;
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // Helper: Compute world matrix for a node by walking up parent chain
-    // ─────────────────────────────────────────────────────────────────────────
-    const compute_world_matrix = (node) => {
-      const chain = [];
-      let current = node;
-      while (current) {
-        chain.unshift(current);
-        current = current._parent;
-      }
-
-      let world_matrix = mat4.create();
-      for (const n of chain) {
-        const local_matrix = mat4.create();
-        const translation = n.translation
-          ? vec3.fromValues(n.translation[0], n.translation[1], n.translation[2])
-          : vec3.fromValues(0, 0, 0);
-        const rotation = n.rotation
-          ? quat.fromValues(n.rotation[0], n.rotation[1], n.rotation[2], n.rotation[3])
-          : quat.create();
-        const scale = n.scale
-          ? vec3.fromValues(n.scale[0], n.scale[1], n.scale[2])
-          : vec3.fromValues(1, 1, 1);
-
-        mat4.fromRotationTranslationScale(local_matrix, rotation, translation, scale);
-        world_matrix = mat4.multiply(mat4.create(), world_matrix, local_matrix);
-      }
-      return world_matrix;
-    };
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // Helper: Compute normal matrix (inverse transpose of upper 3x3)
-    // ─────────────────────────────────────────────────────────────────────────
-    const compute_normal_matrix = (world_matrix) => {
-      const normal_matrix = mat3.create();
-      mat3.fromMat4(normal_matrix, world_matrix);
-      mat3.invert(normal_matrix, normal_matrix);
-      mat3.transpose(normal_matrix, normal_matrix);
-      return normal_matrix;
-    };
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // Process each node with a mesh
-    // ─────────────────────────────────────────────────────────────────────────
-    const process_node = (node) => {
-      if (node.mesh) {
-        const gltf_mesh = node.mesh;
-        const world_matrix = compute_world_matrix(node);
-        const normal_matrix = compute_normal_matrix(world_matrix);
-
-        for (const primitive of gltf_mesh.primitives) {
-          const material_index = primitive.material
-            ? gltf_obj.materials.indexOf(primitive.material)
-            : -1;
-          let group = mesh._section_groups.get(material_index);
-          if (!group) {
-            group = { key: material_index, indices: [] };
-            mesh._section_groups.set(material_index, group);
-          }
-
-          // Read vertex attributes
-          let positions = [];
-          if (primitive.attributes.POSITION !== undefined) {
-            positions = read_accessor_f32(primitive.attributes.POSITION);
-          }
-
-          let normals = [];
-          if (primitive.attributes.NORMAL !== undefined) {
-            normals = read_accessor_f32(primitive.attributes.NORMAL);
-          }
-
-          let tangents = [];
-          if (primitive.attributes.TANGENT !== undefined) {
-            tangents = read_accessor_f32(primitive.attributes.TANGENT);
-          }
-
-          let bitangents = [];
-          if (primitive.attributes.BITANGENT !== undefined) {
-            bitangents = read_accessor_f32(primitive.attributes.BITANGENT);
-          }
-
-          let colors = [];
-          let color_components = 0;
-          if (primitive.attributes.COLOR_0 !== undefined) {
-            const color_accessor = primitive.attributes.COLOR_0;
-            color_components = Type2NumOfComponent[color_accessor.type];
-            colors = read_accessor_f32(color_accessor);
-          }
-
-          let uvs = [];
-          if (primitive.attributes.TEXCOORD_0 !== undefined) {
-            uvs = read_accessor_f32(primitive.attributes.TEXCOORD_0);
-          }
-
-          // Compute tangents/bitangents if needed
-          if (tangents.length === 0 && positions.length > 0 && uvs.length > 0) {
-            const computed = Mesh._get_tangents_and_bitangents(positions, uvs);
-            tangents = computed.t;
-            bitangents = computed.b;
-          } else if (bitangents.length === 0 && tangents.length > 0 && normals.length > 0) {
-            bitangents = new Array((tangents.length / 4) * 3);
-            for (let vi = 0; vi < tangents.length / 4; vi++) {
-              const tangent_start = vi * 4;
-              const normal_start = vi * 3;
-              const t = [tangents[tangent_start], tangents[tangent_start + 1], tangents[tangent_start + 2]];
-              const handedness = tangents[tangent_start + 3] || 1;
-              const n_vec = [normals[normal_start], normals[normal_start + 1], normals[normal_start + 2]];
-              const b = vec3.cross(vec3.create(), n_vec, t);
-              vec3.scale(b, b, handedness);
-              vec3.normalize(b, b);
-              const bitangent_start = vi * 3;
-              bitangents[bitangent_start] = b[0];
-              bitangents[bitangent_start + 1] = b[1];
-              bitangents[bitangent_start + 2] = b[2];
-            }
-          }
-
-          const num_verts = positions.length / 3;
-
-          // ─────────────────────────────────────────────────────────────────────
-          // Add vertices with world transform baked in
-          // ─────────────────────────────────────────────────────────────────────
-          for (let k = 0; k < num_verts; k++) {
-            const pos_index = k * 3;
-            const normal_index = k * 3;
-            const uv_index = k * 2;
-            const tangent_index = tangents.length % 4 === 0 ? k * 4 : k * 3;
-            const color_index = k * color_components;
-
-            // Color
-            let color = [1, 1, 1, 1];
-            if (colors.length > 0) {
-              if (color_components === 3) {
-                color = [colors[color_index], colors[color_index + 1], colors[color_index + 2], 1];
-              } else {
-                color = [colors[color_index], colors[color_index + 1], colors[color_index + 2], colors[color_index + 3]];
-              }
-            }
-
-            // Tangent W (handedness)
-            let tangent_w = 1.0;
-            if (tangents.length % 4 === 0) {
-              tangent_w = tangents[tangent_index + 3] ?? 1.0;
-            }
-
-            const src_pos = vec3.fromValues(
-              positions[pos_index] ?? 0.0,
-              positions[pos_index + 1] ?? 0.0,
-              positions[pos_index + 2] ?? 0.0
-            );
-            const world_pos = vec3.create();
-            vec3.transformMat4(world_pos, src_pos, world_matrix);
-
-            const n = vec3.fromValues(
-              normals[normal_index] ?? 0.0,
-              normals[normal_index + 1] ?? 0.0,
-              normals[normal_index + 2] ?? 0.0
-            );
-            vec3.transformMat3(n, n, normal_matrix);
-            vec3.normalize(n, n);
-
-            const t = vec3.fromValues(
-              tangents[tangent_index] ?? 0.0,
-              tangents[tangent_index + 1] ?? 0.0,
-              tangents[tangent_index + 2] ?? 0.0
-            );
-            const nt_dot_t = vec3.dot(n, t);
-            const t_ortho = vec3.subtract(vec3.create(), t, vec3.scale(vec3.create(), n, nt_dot_t));
-            vec3.transformMat3(t_ortho, t_ortho, normal_matrix);
-            vec3.normalize(t_ortho, t_ortho);
-
-            // Compute bitangent from cross product
-            const b = vec3.cross(vec3.create(), n, t_ortho);
-            vec3.transformMat3(b, b, normal_matrix);
-            vec3.normalize(b, b);
-
-            mesh.vertices.push({
-              position: [world_pos[0], world_pos[1], world_pos[2], 1],
-              normal: [n[0], n[1], n[2], 0],
-              color: color,
-              uv: [uvs[uv_index] ?? 0.0, uvs[uv_index + 1] ?? 0.0],
-              tangent: [t_ortho[0], t_ortho[1], t_ortho[2], tangent_w],
-              bitangent: [b[0], b[1], b[2], 0],
-              extra_data: [0, 0],
-            });
-          }
-
-          // ─────────────────────────────────────────────────────────────────────
-          // Add indices (offset by current vertex count)
-          // ─────────────────────────────────────────────────────────────────────
-          if (primitive.indices !== null) {
-            const index_accessor = gltf_obj.accessors[primitive.indices];
-
-            if (index_accessor.componentType === 5123) {
-              // UNSIGNED_SHORT
-              const temp_indices = new Uint16Array(
-                index_accessor.bufferView.data,
-                index_accessor.byteOffset || 0,
-                index_accessor.count
-              );
-              for (let i = 0; i < temp_indices.length; i++) {
-                group.indices.push(temp_indices[i] + mesh.vertices.length - num_verts);
-              }
-            } else if (index_accessor.componentType === 5125) {
-              // UNSIGNED_INT
-              const temp_indices = new Uint32Array(
-                index_accessor.bufferView.data,
-                index_accessor.byteOffset || 0,
-                index_accessor.count
-              );
-              for (let i = 0; i < temp_indices.length; i++) {
-                group.indices.push(temp_indices[i] + mesh.vertices.length - num_verts);
-              }
-            } else if (index_accessor.componentType === 5121) {
-              // UNSIGNED_BYTE
-              const temp_indices = new Uint8Array(
-                index_accessor.bufferView.data,
-                index_accessor.byteOffset || 0,
-                index_accessor.count
-              );
-              for (let i = 0; i < temp_indices.length; i++) {
-                group.indices.push(temp_indices[i] + mesh.vertices.length - num_verts);
-              }
-            }
-          } else {
-            const vertex_base = mesh.vertices.length - num_verts;
-            for (let i = 0; i < num_verts; i++) {
-              group.indices.push(vertex_base + i);
-            }
-          }
-        }
-      }
-
-      // Process children
-      for (const child of node.children) {
-        process_node(child);
-      }
-    };
-
-    // Process all root nodes
-    for (const node of root_nodes) {
-      process_node(node);
-    }
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // Finalize: Build sections, indices, and mesh data
-    // ─────────────────────────────────────────────────────────────────────────
-    mesh.sections = [];
-    mesh.index_count = 0;
-    mesh._tmp_indices.length = 0;
-
-    const vertex_section_map = new Int32Array(mesh.vertices.length).fill(-1);
-
-    {
-      let running_first_index = 0;
-      for (const [, group] of mesh._section_groups) {
-        if (group.indices.length === 0) continue;
-        const section_index = mesh.sections.length;
-        for (let i = 0; i < group.indices.length; i++) {
-          const v = group.indices[i];
-          vertex_section_map[v] = section_index;
-        }
-
-        let new_section = {
-          first_index: running_first_index,
-          index_count: group.indices.length,
-          material_id: null,
-        };
-        if (group.key >= 0) {
-          const gltf_mat = gltf_obj.materials[group.key];
-          new_section.material_id = Mesh.make_engine_material_from_gltf(
-            gltf_obj,
-            mesh,
-            gltf_mat,
-            group.key,
-            material_cache
-          );
-        }
-        mesh.sections.push(new_section);
-        mesh._tmp_indices = mesh._tmp_indices.concat(group.indices);
-        running_first_index += group.indices.length;
-      }
-    }
-
-    for (let vi = 0; vi < mesh.vertices.length; vi++) {
-      const s = vertex_section_map[vi] >= 0 ? vertex_section_map[vi] : 0;
-      mesh.vertices[vi].extra_data[0] = s;
-    }
-
-    if (mesh._tmp_indices.length > 0) {
-      mesh.indices = new Uint32Array(mesh._tmp_indices);
-    }
-
-    mesh.vertex_count = mesh.vertices.length;
-    mesh.index_count = mesh.indices.length;
-
-    mesh._recreate_vertex_bounds();
-
-    MeshData.update(mesh);
-
-    if (discard_cpu_data) {
-      mesh.vertices = null;
-      mesh.indices = null;
-      mesh._tmp_indices = null;
-      mesh._section_groups = null;
-    }
+  static build_combined_gltf_scene(mesh, gltf_obj, scene_index = null, sidecar = null) {
+    build_combined_gltf_scene(this, mesh, gltf_obj, scene_index, sidecar);
   }
 
   static from_parsed_gltf_mesh(gltf_path, gltf_obj, gltf_mesh) {
@@ -1219,8 +690,29 @@ export class Mesh {
 
     MeshData.register(mesh);
 
-    Mesh.build_from_gltf_mesh(mesh, gltf_obj, gltf_mesh);
-    MeshTaskQueue.invalidate_mesh(cache_key);
+    const pending_load = Symbol(key_name);
+    const resolved_mesh_index = gltf_mesh.meshID ?? gltf_obj.meshes.indexOf(gltf_mesh);
+    mesh.pending_loader = pending_load;
+    void load_meshlet_sidecar_async(gltf_path)
+      .then((sidecar) => {
+        if (mesh.pending_loader !== pending_load) {
+          return;
+        }
+
+        Mesh.build_from_gltf_mesh(mesh, gltf_obj, gltf_mesh, resolved_mesh_index, sidecar);
+        if (mesh.pending_loader !== pending_load) {
+          return;
+        }
+
+        mesh.pending_loader = null;
+        MeshTaskQueue.invalidate_mesh(cache_key);
+      })
+      .catch((error) => {
+        if (mesh.pending_loader === pending_load) {
+          mesh.pending_loader = null;
+        }
+        console.error(`[meshlet_runtime] failed to build parsed mesh ${gltf_path}:`, error);
+      });
 
     ResourceCache.get().store(CacheTypes.MESH, cache_key, mesh);
 
