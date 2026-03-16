@@ -52,7 +52,7 @@ const PROBE_STATE_CONVERGENCE_READINESS_MULTIPLIER_END: f32 = 1.0;
 const PROBE_STATE_CONVERGENCE_READINESS_MULTIPLIER_RAMP_FRAMES: u32 = 16u;
 const PROBE_STATE_BACKFACE_THRESHOLD: f32  = 0.5;  // Fraction of backface hits = inside geometry
 const PROBE_STATE_NEAR_GEOMETRY_DIST: f32  = 1.0;  // Multiplier of probe_spacing for "near"
-const PROBE_STATE_FLAG_CULL_VISIBLE: u32 = 1u;  // Bit 0 of flags byte (bit 24 of packed_state)
+const PROBE_STATE_FLAG_SURFACE_VISIBLE: u32 = 1u;  // Bit 0 of flags byte (bit 24 of packed_state)
 
 // Maximum number of DDGI cascades supported
 const DDGI_MAX_CASCADES: u32 = 4u;
@@ -131,21 +131,6 @@ struct DDGIProbeRayDataBufferReadOnlyHeader {
 struct DDGISampleResult {
     irradiance: vec3<f32>,
     readiness: f32,  // Weighted average of probe readiness (0.0 to 1.0)
-}
-
-fn ddgi_probe_state_get_cull_visible(packed: u32) -> bool {
-    return (probe_state_get_flags(packed) & PROBE_STATE_FLAG_CULL_VISIBLE) != 0u;
-}
-
-fn ddgi_probe_state_set_cull_visible(packed: u32, visible: bool) -> u32 {
-    let flags = probe_state_get_flags(packed);
-    let new_flags = select(flags & ~PROBE_STATE_FLAG_CULL_VISIBLE, flags | PROBE_STATE_FLAG_CULL_VISIBLE, visible);
-    return probe_state_pack(
-        probe_state_get_state(packed),
-        probe_state_get_init_frames(packed),
-        probe_state_get_convergence_frames(packed),
-        new_flags
-    );
 }
 
 fn ddgi_probe_state_get_sample_count(probe_state: ptr<storage, ProbeStateData, read_write>) -> u32 {
@@ -237,6 +222,43 @@ fn ddgi_cascade_scroll_offset(ddgi_params: ptr<uniform, DDGIParams>, cascade_ind
         u32((*ddgi_params).cascades[cascade_index].scroll_offset.z)
     );
 }
+
+// =============================================================================
+// STOCHASTIC (BUT DETERMINISTIC) PROBE CYCLING
+// =============================================================================
+// We want a selection pattern that:
+// - Looks "random" to avoid structured artifacts (better temporal distribution)
+// - Is deterministic (given probe_count and frame_index)
+// - Does not miss probes: every probe index must be visited eventually
+//
+// Approach:
+// - Treat the per-frame probe picks as a walk over Z_n (n = probe_count).
+// - Use an affine map:   idx(k) = (offset + k * stride) mod n
+// - If gcd(stride, n) = 1, this is a permutation: k=0..n-1 visits every probe once.
+// - We set k = frame_index * probes_per_frame + local_id so the walk advances by
+//   probes_per_frame each frame without gaps.
+//
+// OPTIMIZATION: The stride, base_offset, and frame_stride values are UNIFORM
+// across all shader invocations (they only depend on probe_count). These are
+// precomputed on the CPU and passed via DDGIParams, eliminating expensive
+// GCD computation loops that previously ran per-thread.
+//
+// The permutation formula is:
+//   probe_index = (base_offset + (frame_stride * frame_index + slot) * stride) % probe_count
+fn ddgi_probe_index_from_permuted_slot(
+    slot: u32,
+    probe_count: u32,
+    frame_index_u32: u32,
+    stride: u32,
+    base_offset: u32,
+    frame_stride: u32
+) -> u32 {
+    let safe_probe_count = max(probe_count, 1u);
+    let frame_shift = frame_index_u32 * frame_stride;
+    let k = frame_shift + slot;
+    return (base_offset + k * stride) % safe_probe_count;
+}
+
 
 fn ddgi_probe_storage_coord_from_index(
     ddgi_params: ptr<uniform, DDGIParams>,
@@ -829,6 +851,22 @@ fn ddgi_sample_sh_irradiance_single_cascade_internal(
     var weight_sum = 0.0;
     var readiness_weighted_sum = 0.0;
 
+    // Mark probes along trilinear neighborhood of surfaces as active
+    for (var i = 0; i < 8; i = i + 1) {
+        let coord = vec3<u32>(base) + vec3<u32>(trilinear_index_offsets[i]);
+        let clamped_coord = clamp(coord, vec3<u32>(0u), dims - vec3<u32>(1u));
+        let probe_index = ddgi_probe_index_from_coord(ddgi_params, cascade_index, clamped_coord);
+
+        let state = probe_state_get_state(probe_states[probe_index].packed_state);
+        var flags = probe_state_get_flags(probe_states[probe_index].packed_state);
+
+        if (state == PROBE_STATE_SLEEPING || state == PROBE_STATE_OFF) {
+            flags = flags | PROBE_STATE_FLAG_SURFACE_VISIBLE;
+            probe_states[probe_index].packed_state = probe_state_pack(PROBE_STATE_UNINITIALIZED, 0u, 0u, flags);
+        }
+    }
+
+    // Do trilinear interpolation for sampling
     for (var i = 0; i < 8; i = i + 1) {
         let coord = vec3<u32>(base) + vec3<u32>(trilinear_index_offsets[i]);
         let clamped_coord = clamp(coord, vec3<u32>(0u), dims - vec3<u32>(1u));

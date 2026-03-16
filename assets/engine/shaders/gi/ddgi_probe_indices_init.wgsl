@@ -45,42 +45,6 @@
 // Counters containing total nonculled/culled counts
 @group(1) @binding(7) var<storage, read> gi_counters: GICountersReadOnly;
 
-// =============================================================================
-// STOCHASTIC (BUT DETERMINISTIC) PROBE CYCLING
-// =============================================================================
-// We want a selection pattern that:
-// - Looks "random" to avoid structured artifacts (better temporal distribution)
-// - Is deterministic (given probe_count and frame_index)
-// - Does not miss probes: every probe index must be visited eventually
-//
-// Approach:
-// - Treat the per-frame probe picks as a walk over Z_n (n = probe_count).
-// - Use an affine map:   idx(k) = (offset + k * stride) mod n
-// - If gcd(stride, n) = 1, this is a permutation: k=0..n-1 visits every probe once.
-// - We set k = frame_index * probes_per_frame + local_id so the walk advances by
-//   probes_per_frame each frame without gaps.
-//
-// OPTIMIZATION: The stride, base_offset, and frame_stride values are UNIFORM
-// across all shader invocations (they only depend on probe_count). These are
-// precomputed on the CPU and passed via DDGIParams, eliminating expensive
-// GCD computation loops that previously ran per-thread.
-//
-// The permutation formula is:
-//   probe_index = (base_offset + (frame_stride * frame_index + slot) * stride) % probe_count
-
-fn ddgi_probe_index_from_permuted_slot(
-    slot: u32,
-    probe_count: u32,
-    frame_index_u32: u32,
-    stride: u32,
-    base_offset: u32,
-    frame_stride: u32
-) -> u32 {
-    let safe_probe_count = max(probe_count, 1u);
-    let frame_shift = frame_index_u32 * frame_stride;
-    let k = frame_shift + slot;
-    return (base_offset + k * stride) % safe_probe_count;
-}
 
 // =============================================================================
 // MAIN COMPUTE SHADER

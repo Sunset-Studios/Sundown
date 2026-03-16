@@ -1069,9 +1069,9 @@ export class DDGI {
     );
 
     // ─────────────────────────────────────────────────────────────────────────
-    // Probe BVH Surface Cull Pass
-    // Runs after ddgi_probe_cull so we only BVH-test visible probes
+    // Probe Surface Cull Pass
     // Marks probes as SLEEPING/OFF when their cell does not overlap geometry
+    // Based on the probe surface visibility flag from DDGI sampling in the previous frame
     // ─────────────────────────────────────────────────────────────────────────
     render_graph.add_pass(
       "ddgi_probe_surface_cull",
@@ -1081,11 +1081,6 @@ export class DDGI {
           this.ddgi_params,
           probe_states,
           probe_cull_flags,
-          tlas_bvh2_bounds,
-          tlas_bvh_info,
-          blas_bvh2_nodes,
-          blas_directory,
-          entity_transforms,
         ],
         outputs: [probe_states],
         shader_setup: ddgi_probe_surface_cull_shader_setup,
