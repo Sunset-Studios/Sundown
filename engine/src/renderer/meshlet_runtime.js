@@ -87,6 +87,7 @@ export function load_meshlet_sidecar_async(gltf_path) {
           manifest.sections.meshletTriangles.offset,
           manifest.sections.meshletTriangles.count
         ),
+        meshlet_group_view: new DataView(binary, manifest.sections.meshletGroups.offset),
       };
     } catch {
       return null;
@@ -116,6 +117,53 @@ function read_meshlet_record(sidecar, meshlet_index) {
     vertex_count: sidecar.meshlet_view.getUint32(base + 4, true),
     triangle_offset: sidecar.meshlet_view.getUint32(base + 8, true),
     triangle_count: sidecar.meshlet_view.getUint32(base + 12, true),
+    center: [
+      sidecar.meshlet_view.getFloat32(base + 16, true),
+      sidecar.meshlet_view.getFloat32(base + 20, true),
+      sidecar.meshlet_view.getFloat32(base + 24, true),
+    ],
+    radius: sidecar.meshlet_view.getFloat32(base + 28, true),
+    bounds_min: [
+      sidecar.meshlet_view.getFloat32(base + 32, true),
+      sidecar.meshlet_view.getFloat32(base + 36, true),
+      sidecar.meshlet_view.getFloat32(base + 40, true),
+    ],
+    bounds_max: [
+      sidecar.meshlet_view.getFloat32(base + 48, true),
+      sidecar.meshlet_view.getFloat32(base + 52, true),
+      sidecar.meshlet_view.getFloat32(base + 56, true),
+    ],
+    normal_cone_axis: [
+      sidecar.meshlet_view.getFloat32(base + 64, true),
+      sidecar.meshlet_view.getFloat32(base + 68, true),
+      sidecar.meshlet_view.getFloat32(base + 72, true),
+    ],
+    normal_cone_cutoff: sidecar.meshlet_view.getFloat32(base + 76, true),
+  };
+}
+
+function read_meshlet_group_record(sidecar, group_index) {
+  const section = sidecar.manifest.sections.meshletGroups;
+  const base = group_index * section.stride;
+  return {
+    meshlet_offset: sidecar.meshlet_group_view.getUint32(base + 0, true),
+    meshlet_count: sidecar.meshlet_group_view.getUint32(base + 4, true),
+    center: [
+      sidecar.meshlet_group_view.getFloat32(base + 16, true),
+      sidecar.meshlet_group_view.getFloat32(base + 20, true),
+      sidecar.meshlet_group_view.getFloat32(base + 24, true),
+    ],
+    radius: sidecar.meshlet_group_view.getFloat32(base + 28, true),
+    bounds_min: [
+      sidecar.meshlet_group_view.getFloat32(base + 32, true),
+      sidecar.meshlet_group_view.getFloat32(base + 36, true),
+      sidecar.meshlet_group_view.getFloat32(base + 40, true),
+    ],
+    bounds_max: [
+      sidecar.meshlet_group_view.getFloat32(base + 48, true),
+      sidecar.meshlet_group_view.getFloat32(base + 52, true),
+      sidecar.meshlet_group_view.getFloat32(base + 56, true),
+    ],
   };
 }
 
@@ -285,37 +333,126 @@ function append_standard_primitive(mesh, group, source_vertices, indices) {
   }
 }
 
-function append_meshlet_primitive(mesh, group, source_vertices, sidecar, primitive_info, next_meshlet_index) {
-  for (let meshlet_offset = 0; meshlet_offset < primitive_info.meshletCount; meshlet_offset++) {
-    const meshlet_index = primitive_info.meshletOffset + meshlet_offset;
-    const meshlet_record = read_meshlet_record(sidecar, meshlet_index);
-    const vertex_base = mesh.vertices.length;
-    const debug_meshlet_index = next_meshlet_index++;
+function build_empty_meshlet_sections(section_count) {
+  return Array.from({ length: section_count }, () => ({
+    meshlet_offset: 0,
+    meshlet_count: 0,
+    meshlet_group_offset: 0,
+    meshlet_group_count: 0,
+  }));
+}
 
-    for (let i = 0; i < meshlet_record.vertex_count; i++) {
-      const source_vertex_index = sidecar.meshlet_vertices[meshlet_record.vertex_offset + i];
-      const source_vertex = source_vertices[source_vertex_index];
-      mesh.vertices.push({
-        position: source_vertex.position.slice(),
-        normal: source_vertex.normal.slice(),
-        color: source_vertex.color.slice(),
-        uv: source_vertex.uv.slice(),
-        tangent: source_vertex.tangent.slice(),
-        bitangent: source_vertex.bitangent.slice(),
-        extra_data: [0, debug_meshlet_index],
+function create_meshlet_upload_data(sidecar, primitive_descriptors, section_count) {
+  if (!sidecar || primitive_descriptors.length === 0) {
+    return null;
+  }
+
+  const meshlets = [];
+  const meshlet_vertices = [];
+  const meshlet_triangles = [];
+  const meshlet_groups = [];
+  const sections = build_empty_meshlet_sections(section_count);
+
+  const sorted_descriptors = primitive_descriptors
+    .filter((descriptor) => descriptor.section_index >= 0)
+    .sort((a, b) => {
+      let diff = a.section_index - b.section_index;
+      if (diff !== 0) return diff;
+      diff = a.vertex_offset - b.vertex_offset;
+      if (diff !== 0) return diff;
+      return a.primitive_index - b.primitive_index;
+    });
+
+  for (const descriptor of sorted_descriptors) {
+    const primitive_info = get_meshlet_primitive_info(
+      sidecar,
+      descriptor.mesh_index,
+      descriptor.primitive_index
+    );
+    const use_meshlets =
+      primitive_info &&
+      primitive_info.skipped !== true &&
+      primitive_info.mode === 4 &&
+      primitive_info.meshletCount > 0 &&
+      primitive_info.vertexCount === descriptor.vertex_count;
+
+    if (!use_meshlets) {
+      continue;
+    }
+
+    const section = sections[descriptor.section_index];
+    if (section.meshlet_count === 0) {
+      section.meshlet_offset = meshlets.length;
+      section.meshlet_group_offset = meshlet_groups.length;
+    }
+
+    for (let meshlet_offset = 0; meshlet_offset < primitive_info.meshletCount; meshlet_offset++) {
+      const meshlet_record = read_meshlet_record(
+        sidecar,
+        primitive_info.meshletOffset + meshlet_offset
+      );
+      const rebased_vertex_offset = meshlet_vertices.length;
+      const rebased_triangle_offset = meshlet_triangles.length;
+
+      for (let i = 0; i < meshlet_record.vertex_count; i++) {
+        const local_vertex = sidecar.meshlet_vertices[meshlet_record.vertex_offset + i] ?? 0;
+        meshlet_vertices.push(descriptor.vertex_offset + local_vertex);
+      }
+
+      const triangle_index_count = meshlet_record.triangle_count * 3;
+      for (let i = 0; i < triangle_index_count; i++) {
+        meshlet_triangles.push(sidecar.meshlet_triangles[meshlet_record.triangle_offset + i] ?? 0);
+      }
+
+      meshlets.push({
+        vertex_offset: rebased_vertex_offset,
+        vertex_count: meshlet_record.vertex_count,
+        triangle_offset: rebased_triangle_offset,
+        triangle_count: meshlet_record.triangle_count,
+        center: meshlet_record.center,
+        radius: meshlet_record.radius,
+        bounds_min: meshlet_record.bounds_min,
+        bounds_max: meshlet_record.bounds_max,
+        normal_cone_axis: meshlet_record.normal_cone_axis,
+        normal_cone_cutoff: meshlet_record.normal_cone_cutoff,
       });
     }
 
-    const triangle_index_count = meshlet_record.triangle_count * 3;
-    for (let i = 0; i < triangle_index_count; i++) {
-      group.indices.push(vertex_base + sidecar.meshlet_triangles[meshlet_record.triangle_offset + i]);
+    for (let group_offset = 0; group_offset < primitive_info.meshletGroupCount; group_offset++) {
+      const group_record = read_meshlet_group_record(
+        sidecar,
+        primitive_info.meshletGroupOffset + group_offset
+      );
+      meshlet_groups.push({
+        meshlet_offset:
+          section.meshlet_offset +
+          (group_record.meshlet_offset - primitive_info.meshletOffset),
+        meshlet_count: group_record.meshlet_count,
+        center: group_record.center,
+        radius: group_record.radius,
+        bounds_min: group_record.bounds_min,
+        bounds_max: group_record.bounds_max,
+      });
     }
+
+    section.meshlet_count += primitive_info.meshletCount;
+    section.meshlet_group_count += primitive_info.meshletGroupCount;
   }
 
-  return next_meshlet_index;
+  if (meshlets.length === 0) {
+    return null;
+  }
+
+  return {
+    meshlets,
+    meshlet_vertices: Uint32Array.from(meshlet_vertices),
+    meshlet_triangles: Uint8Array.from(meshlet_triangles),
+    meshlet_groups,
+    sections,
+  };
 }
 
-function finalize_gltf_build(mesh_api, mesh, gltf_obj, material_cache) {
+function finalize_gltf_build(mesh_api, mesh, gltf_obj, material_cache, primitive_descriptors, sidecar) {
   mesh.sections = [];
   mesh.index_count = 0;
   mesh._tmp_indices.length = 0;
@@ -323,6 +460,7 @@ function finalize_gltf_build(mesh_api, mesh, gltf_obj, material_cache) {
   const vertex_section_map = new Int32Array(mesh.vertices.length).fill(-1);
 
   let running_first_index = 0;
+  const section_index_by_material = new Map();
   for (const [, group] of mesh._section_groups) {
     if (group.indices.length === 0) {
       continue;
@@ -348,6 +486,7 @@ function finalize_gltf_build(mesh_api, mesh, gltf_obj, material_cache) {
         material_cache
       );
     }
+    section_index_by_material.set(group.key, section_index);
     mesh.sections.push(new_section);
     mesh._tmp_indices = mesh._tmp_indices.concat(group.indices);
     running_first_index += group.indices.length;
@@ -367,6 +506,20 @@ function finalize_gltf_build(mesh_api, mesh, gltf_obj, material_cache) {
 
   mesh._recreate_vertex_bounds();
 
+  for (let i = 0; i < primitive_descriptors.length; i++) {
+    const descriptor = primitive_descriptors[i];
+    descriptor.section_index = section_index_by_material.get(descriptor.material_index) ?? -1;
+  }
+
+  mesh.meshlet_data = create_meshlet_upload_data(
+    sidecar,
+    primitive_descriptors,
+    mesh.sections.length
+  );
+  mesh.meshlet_sections = mesh.meshlet_data
+    ? mesh.meshlet_data.sections.map((section) => ({ ...section }))
+    : build_empty_meshlet_sections(mesh.sections.length);
+
   MeshData.update(mesh);
 
   if (discard_cpu_data) {
@@ -382,7 +535,7 @@ export function build_gltf_mesh(mesh_api, mesh, gltf_obj, gltf_mesh, mesh_index 
 
   const material_cache = new Map();
   const resolved_mesh_index = mesh_index ?? resolve_gltf_mesh_index(gltf_obj, gltf_mesh);
-  let next_meshlet_index = 0;
+  const primitive_descriptors = [];
 
   for (let primitive_index = 0; primitive_index < gltf_mesh.primitives.length; primitive_index++) {
     const primitive = gltf_mesh.primitives[primitive_index];
@@ -395,36 +548,26 @@ export function build_gltf_mesh(mesh_api, mesh, gltf_obj, gltf_mesh, mesh_index 
 
     const primitive_data = read_primitive_source_data(mesh_api, gltf_obj, primitive);
     const source_vertices = build_vertices_from_primitive_data(primitive_data);
-    const primitive_info = get_meshlet_primitive_info(sidecar, resolved_mesh_index, primitive_index);
-    const use_meshlets =
-      primitive_info &&
-      primitive_info.skipped !== true &&
-      primitive_info.mode === 4 &&
-      primitive_info.meshletCount > 0 &&
-      primitive_info.vertexCount === source_vertices.length;
+    primitive_descriptors.push({
+      mesh_index: resolved_mesh_index,
+      primitive_index,
+      material_index,
+      vertex_offset: mesh.vertices.length,
+      vertex_count: source_vertices.length,
+      section_index: -1,
+    });
 
-    if (use_meshlets) {
-      next_meshlet_index = append_meshlet_primitive(
-        mesh,
-        group,
-        source_vertices,
-        sidecar,
-        primitive_info,
-        next_meshlet_index
-      );
-    } else {
-      append_standard_primitive(mesh, group, source_vertices, primitive_data.indices);
-    }
+    append_standard_primitive(mesh, group, source_vertices, primitive_data.indices);
   }
 
-  finalize_gltf_build(mesh_api, mesh, gltf_obj, material_cache);
+  finalize_gltf_build(mesh_api, mesh, gltf_obj, material_cache, primitive_descriptors, sidecar);
 }
 
 export function build_combined_gltf_scene(mesh_api, mesh, gltf_obj, scene_index = null, sidecar = null) {
   mesh._reset_build_state();
 
   const material_cache = new Map();
-  let next_meshlet_index = 0;
+  const primitive_descriptors = [];
 
   for (const node of gltf_obj.nodes) {
     for (const child of node.children) {
@@ -493,26 +636,16 @@ export function build_combined_gltf_scene(mesh_api, mesh, gltf_obj, scene_index 
           world_matrix,
           normal_matrix,
         });
-        const primitive_info = get_meshlet_primitive_info(sidecar, mesh_index, primitive_index);
-        const use_meshlets =
-          primitive_info &&
-          primitive_info.skipped !== true &&
-          primitive_info.mode === 4 &&
-          primitive_info.meshletCount > 0 &&
-          primitive_info.vertexCount === source_vertices.length;
+        primitive_descriptors.push({
+          mesh_index,
+          primitive_index,
+          material_index,
+          vertex_offset: mesh.vertices.length,
+          vertex_count: source_vertices.length,
+          section_index: -1,
+        });
 
-        if (use_meshlets) {
-          next_meshlet_index = append_meshlet_primitive(
-            mesh,
-            group,
-            source_vertices,
-            sidecar,
-            primitive_info,
-            next_meshlet_index
-          );
-        } else {
-          append_standard_primitive(mesh, group, source_vertices, primitive_data.indices);
-        }
+        append_standard_primitive(mesh, group, source_vertices, primitive_data.indices);
       }
     }
 
@@ -525,5 +658,5 @@ export function build_combined_gltf_scene(mesh_api, mesh, gltf_obj, scene_index 
     process_node(node);
   }
 
-  finalize_gltf_build(mesh_api, mesh, gltf_obj, material_cache);
+  finalize_gltf_build(mesh_api, mesh, gltf_obj, material_cache, primitive_descriptors, sidecar);
 }

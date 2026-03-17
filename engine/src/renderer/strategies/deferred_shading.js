@@ -945,9 +945,7 @@ export class DeferredShadingStrategy {
           );
         }
       }
-
-      // TODO: Meshlet cull pass
-
+      
       // ┌─────────────────────────────────────────────────────────────────────────────┐
       // │ 🌫️  PASS: Occlusion Culling (Phase 2 of 2-Pass Occlusion)                 │
       // │    Use HZB to eliminate objects hidden behind other geometry               │
@@ -956,9 +954,11 @@ export class DeferredShadingStrategy {
         this.occlusion_culler.submit_cull(render_graph, draw_count);
       }
 
+      // TODO: Meshlet cull pass
+
       // ┌─────────────────────────────────────────────────────────────────────────────┐
       // │ 🖥️  PASS: Compute Rasterization                                            │
-      // │    Software rasterization for particles and small geometry                │
+      // │    Software rasterization for particles and small geometry                  │
       // └─────────────────────────────────────────────────────────────────────────────┘
       // TODO: Automatically run software rasterization over triangle clusters that fall within some maximum screen size
       {
@@ -1509,16 +1509,6 @@ export class DeferredShadingStrategy {
               image_extent.width,
               image_extent.height,
               DebugDrawType.Normal
-            );
-            break;
-          case DebugDrawType.Meshlet:
-            this.debug_overlay.set_properties(
-              main_albedo_image,
-              0,
-              0,
-              image_extent.width,
-              image_extent.height,
-              DebugDrawType.Meshlet
             );
             break;
           case DebugDrawType.Emissive:

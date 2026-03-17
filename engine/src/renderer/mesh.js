@@ -22,6 +22,15 @@ export class Mesh {
   sections = [];
   mesh_data_index = -1;
 
+  meshlet_data = null;
+  meshlet_sections = [];
+  meshlet_buffer_offset = -1;
+  meshlet_vertex_buffer_offset = -1;
+  meshlet_triangle_buffer_offset = -1;
+  meshlet_group_buffer_offset = -1;
+  meshlet_count = 0;
+  meshlet_group_count = 0;
+
   pending_loader = null;
   triangle_bvh = null;
 
@@ -47,6 +56,14 @@ export class Mesh {
     this.indices = [];
     this._tmp_indices = [];
     this._section_groups = new Map();
+    this.meshlet_data = null;
+    this.meshlet_sections = [];
+    this.meshlet_buffer_offset = -1;
+    this.meshlet_vertex_buffer_offset = -1;
+    this.meshlet_triangle_buffer_offset = -1;
+    this.meshlet_group_buffer_offset = -1;
+    this.meshlet_count = 0;
+    this.meshlet_group_count = 0;
   }
 
   static _get_tangents_and_bitangents(positions, uvs) {

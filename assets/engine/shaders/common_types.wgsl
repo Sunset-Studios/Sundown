@@ -75,10 +75,10 @@ struct FrameInfo {
     view_index: f32,
     time: f32,
     frame_index: f32,
-    debug_draw_type: f32,
-    resolution: vec2<f32>,
     padding0: f32,
+    resolution: vec2<f32>,
     padding1: f32,
+    padding2: f32,
     cursor_world_position: vec4<f32>,
 };
 

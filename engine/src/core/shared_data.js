@@ -838,11 +838,9 @@ export class SharedFrameInfoBuffer {
     view_index: 0,
     time: 0,
     frame_index: 0,
-    debug_draw_type: 0,
     resolution: vec2.create(),
     cursor_world_position: vec4.create(),
     padding0: 0,
-    padding1: 0,
   };
   static buffer = null;
   static size = 0;
@@ -886,15 +884,6 @@ export class SharedFrameInfoBuffer {
     return this.frame_info.frame_index;
   }
 
-  static set_debug_draw_type(debug_draw_type) {
-    this.frame_info.debug_draw_type = debug_draw_type;
-    if (!this.buffer) {
-      this.build();
-    } else {
-      this.buffer.write(this._get_gpu_type_layout(this.frame_info));
-    }
-  }
-
   static set_cursor_world_position(cursor_world_position) {
     this.frame_info.cursor_world_position = cursor_world_position;
     if (!this.buffer) {
@@ -934,10 +923,10 @@ export class SharedFrameInfoBuffer {
       item.view_index,
       item.time,
       item.frame_index,
-      item.debug_draw_type,
+      item.padding0,
       ...item.resolution,
       item.padding0,
-      item.padding1,
+      item.padding0,
       ...item.cursor_world_position,
     );
   }

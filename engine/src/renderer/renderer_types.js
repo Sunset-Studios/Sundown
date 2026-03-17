@@ -169,9 +169,8 @@ export const DebugDrawType = Object.freeze({
     GI_Reflections: 21,
     EntityBounds: 22,
     BVH: 23,
-    Meshlet: 24,
-    BLAS_Bounds: 25,
-    PrevLightingPyramid: 26,
+    BLAS_Bounds: 24,
+    PrevLightingPyramid: 25,
 });
 
 /**
