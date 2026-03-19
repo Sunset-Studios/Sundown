@@ -5,7 +5,7 @@
   "main": "dist/electron/main/index.js",
   "type": "module",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
+    "test": "node example/snake_game.test.js",
     "cook": "node tools/fragment_preprocessor.js && node tools/meshlet_preprocessor.js && node tools/msdf_font_generator.js",
     "predev": "npm run cook",
     "dev": "node tools/dev_server.js",
