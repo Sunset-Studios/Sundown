@@ -11,7 +11,7 @@ import { quat, vec3, mat3, mat4, vec4 } from "gl-matrix";
 // Shadow map resolution
 export const SHADOW_MAP_TILES = 32;
 // Tile size for both virtual and physical tiles.
-export const TILE_SIZE = 64;
+export const TILE_SIZE = 128;
 // Shadow atlas size.
 export const ATLAS_SIZE = SHADOW_MAP_TILES * TILE_SIZE;
 // virtual_dim has to match the AS-VSM instance you create (16384 by default).
