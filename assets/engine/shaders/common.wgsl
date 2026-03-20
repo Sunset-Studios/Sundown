@@ -739,6 +739,10 @@ fn uv_to_coord(uv: vec2<f32>, resolution: vec2<u32>) -> vec2<i32> {
     );
 }
 
+fn coord_to_uv(coord: vec2<i32>, resolution: vec2<u32>) -> vec2<f32> {
+    return (vec2<f32>(coord) + 0.5) / vec2<f32>(f32(resolution.x), f32(resolution.y));
+}
+
 fn reconstruct_world_position(uv: vec2<f32>, depth: f32, view_index: u32) -> vec3<f32> {
     let clip = vec4<f32>(
         uv.x * 2.0 - 1.0,
@@ -747,5 +751,16 @@ fn reconstruct_world_position(uv: vec2<f32>, depth: f32, view_index: u32) -> vec
         1.0
     );
     let world = view_buffer[view_index].inverse_view_projection_matrix * clip;
+    return world.xyz / world.w;
+}
+
+fn reconstruct_prev_world_position(uv: vec2<f32>, depth: f32, view_index: u32) -> vec3<f32> {
+    let clip = vec4<f32>(
+        uv.x * 2.0 - 1.0,
+        (1.0 - uv.y) * 2.0 - 1.0,
+        depth,
+        1.0
+    );
+    let world = view_buffer[view_index].prev_inverse_view_projection_matrix * clip;
     return world.xyz / world.w;
 }

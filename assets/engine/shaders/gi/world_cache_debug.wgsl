@@ -12,7 +12,7 @@
 
 @group(1) @binding(0) var<uniform> gi_params: GIParams;
 @group(1) @binding(1) var<storage, read_write> world_cache: array<WorldCacheCell>;
-@group(1) @binding(2) var gbuffer_position: texture_2d<f32>;
+@group(1) @binding(2) var depth_texture: texture_2d<f32>;
 @group(1) @binding(3) var gbuffer_normal: texture_2d<f32>;
 @group(1) @binding(4) var scene_color: texture_2d<f32>;
 @group(1) @binding(5) var output_debug: texture_storage_2d<rgba16float, write>;
@@ -28,20 +28,21 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let pixel_coord = vec2<i32>(i32(gid.x), i32(gid.y));
     
     // Read G-buffer
-    let position = textureLoad(gbuffer_position, pixel_coord, 0).xyz;
+    let view_index = u32(frame_info.view_index);
+    let depth = textureLoad(depth_texture, pixel_coord, 0).r;
+    let position = reconstruct_world_position(coord_to_uv(pixel_coord, res), depth, view_index);
     let normal_data = textureLoad(gbuffer_normal, pixel_coord, 0);
     let normal = safe_normalize(normal_data.xyz);
     let normal_length = length(normal_data.xyz);
     let scene = textureLoad(scene_color, pixel_coord, 0).rgb;
     
     // If no geometry, show scene color
-    if (normal_length <= 0.001) {
+    if (normal_length <= 0.001 || depth >= 1.0) {
         textureStore(output_debug, pixel_coord, vec4<f32>(scene, 1.0));
         return;
     }
     
     // Get camera position for clipmap level selection
-    let view_index = u32(frame_info.view_index);
     let view = view_buffer[view_index];
     let camera_position = view.view_position.xyz;
     

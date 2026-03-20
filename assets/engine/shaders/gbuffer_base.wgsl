@@ -26,9 +26,8 @@ struct VertexOutput {
 struct FragmentOutput {
     @location(0) albedo: vec4<f32>,
     @location(1) smra: vec4<f32>,
-    @location(2) position: vec4<f32>,
-    @location(3) normal: vec4<f32>,
-    @location(4) motion_emissive: vec4<f32>,
+    @location(2) normal: vec4<f32>,
+    @location(3) motion_emissive: vec4<f32>,
 }
 
 #else

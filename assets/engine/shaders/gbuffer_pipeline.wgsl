@@ -107,7 +107,6 @@ fn fragment(v_out: VertexOutput, f_out: ptr<function, FragmentOutput>) -> Fragme
 #endif
 
 #ifndef DEPTH_ONLY
-    output.position = v_out.world_position;
     // Last component of normal is deferred standard lighting factor. Set to 0 if custom lighting is used when using custom FS / VS.
     output.normal = vec4<f32>(v_out.normal.xyz, 1.0);
     // Screen-Space (NDC) Velocity Export: Convert clip-space positions to NDC and compute motion vector

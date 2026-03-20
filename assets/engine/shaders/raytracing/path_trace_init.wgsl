@@ -46,7 +46,7 @@ struct PathState {
 // ─────────────────────────────────────────────────────────────────────────────
 @group(1) @binding(0) var<uniform> pt_params: PathTracerParams;
 @group(1) @binding(1) var<storage, read_write> path_state: array<PathState>;
-@group(1) @binding(2) var gbuffer_position: texture_2d<f32>;
+@group(1) @binding(2) var depth_texture: texture_2d<f32>;
 @group(1) @binding(3) var gbuffer_normal: texture_2d<f32>;
 @group(1) @binding(4) var gbuffer_albedo: texture_2d<f32>;
 @group(1) @binding(5) var gbuffer_smra: texture_2d<f32>;
@@ -99,8 +99,10 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         // G-Buffer Mode: Read first hit from rasterized G-buffer
         // =====================================================================
         let pixel_coord = vec2<i32>(i32(pixel_coords.x), i32(pixel_coords.y));
+        let uv = coord_to_uv(pixel_coord, res);
+        let depth = textureLoad(depth_texture, pixel_coord, 0).r;
         
-        let gbuffer_pos = textureLoad(gbuffer_position, pixel_coord, 0).xyz;
+        let gbuffer_pos = reconstruct_world_position(uv, depth, view_index);
         let gbuffer_norm_data = textureLoad(gbuffer_normal, pixel_coord, 0);
         let gbuffer_norm = gbuffer_norm_data.xyz;
         let gbuffer_norm_length = length(gbuffer_norm);

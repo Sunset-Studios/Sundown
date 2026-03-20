@@ -8,8 +8,7 @@ struct VertexOutput {
 
 @group(1) @binding(0) var motion_texture: texture_2d<f32>;
 @group(1) @binding(1) var depth_texture: texture_2d<f32>;
-@group(1) @binding(2) var position_texture: texture_2d<f32>;
-@group(1) @binding(3) var scene_color: texture_2d<f32>;
+@group(1) @binding(2) var scene_color: texture_2d<f32>;
 
 const TILE_SIZE = 16.0;
 const LINE_WIDTH = 1.0;

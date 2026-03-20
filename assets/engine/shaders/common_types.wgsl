@@ -54,6 +54,7 @@ struct View {
     prev_projection_matrix: mat4x4<f32>,
     view_projection_matrix: mat4x4<f32>,
     inverse_view_projection_matrix: mat4x4<f32>,
+    prev_inverse_view_projection_matrix: mat4x4<f32>,
     view_direction: vec4<f32>,
     near: f32,
     far: f32,

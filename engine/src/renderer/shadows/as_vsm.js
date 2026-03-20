@@ -283,7 +283,6 @@ export class AdaptiveSparseVirtualShadowMaps {
   add_passes(
     render_graph,
     {
-      position_texture,
       depth_texture,
       entity_flags,
       aabb_bounds,
@@ -728,7 +727,7 @@ export class AdaptiveSparseVirtualShadowMaps {
 
     // Debug AS-VSM views
     if (debug_view !== DebugDrawType.None) {
-      this.add_debug_passes(render_graph, force_recreate, debug_view, position_texture);
+      this.add_debug_passes(render_graph, force_recreate, debug_view, depth_texture);
     }
 
     // ────────────────────────────────────────────────────────────────
@@ -799,7 +798,7 @@ export class AdaptiveSparseVirtualShadowMaps {
     return this.#light_draw_uniforms;
   }
 
-  add_debug_passes(render_graph, force_recreate, debug_view, position_texture) {
+  add_debug_passes(render_graph, force_recreate, debug_view, depth_texture) {
     const renderer = Renderer.get();
     const image_extent = renderer.get_canvas_resolution();
     // Debug AS-VSM views
@@ -855,7 +854,7 @@ export class AdaptiveSparseVirtualShadowMaps {
         {
           inputs: [
             this.page_table,
-            position_texture,
+            depth_texture,
             this.settings_buf,
             this.light_view_buf,
             this.shadow_atlas_buf,
@@ -904,7 +903,7 @@ export class AdaptiveSparseVirtualShadowMaps {
         {
           inputs: [
             this.page_table,
-            position_texture,
+            depth_texture,
             this.settings_buf,
             this.light_view_buf,
             this.shadow_atlas_buf,

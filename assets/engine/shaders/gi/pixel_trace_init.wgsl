@@ -35,7 +35,7 @@
 @group(1) @binding(4) var<storage, read> dense_lights_buffer: DenseLightsBuffer;
 @group(1) @binding(5) var<storage, read> emissive_lights_buffer: EmissiveLightsBuffer;
 @group(1) @binding(6) var<storage, read_write> world_cache: array<WorldCacheCell>;
-@group(1) @binding(7) var gbuffer_position: texture_2d<f32>;
+@group(1) @binding(7) var depth_texture: texture_2d<f32>;
 @group(1) @binding(8) var gbuffer_normal: texture_2d<f32>;
 @group(1) @binding(9) var gbuffer_albedo: texture_2d<f32>;
 @group(1) @binding(10) var gbuffer_smra: texture_2d<f32>;
@@ -267,7 +267,12 @@ fn process_selected_pixel(
     }
 #endif
     
-    let position = textureLoad(gbuffer_position, full_pixel_coord, 0u).xyz;
+    let depth = textureLoad(depth_texture, full_pixel_coord, 0u).r;
+    let position = reconstruct_world_position(
+        coord_to_uv(vec2<i32>(full_pixel_coord), full_resolution),
+        depth,
+        u32(frame_info.view_index)
+    );
     let albedo = textureLoad(gbuffer_albedo, full_pixel_coord, 0u).rgb;
     let smra = textureLoad(gbuffer_smra, full_pixel_coord, 0u);
     let motion_emissive = textureLoad(gbuffer_motion, full_pixel_coord, 0u);

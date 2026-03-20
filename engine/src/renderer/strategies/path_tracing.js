@@ -33,7 +33,6 @@ import { npot } from "../../utility/math.js";
 import { profile_scope } from "../../utility/performance.js";
 import {
   rgba16float_format,
-  rgba32float_format,
   depth32float_format,
   r32float_format,
   r32uint_format,
@@ -78,17 +77,6 @@ const main_smra_image_config = {
 const main_normal_image_config = {
   name: "main_normal_0",
   format: rgba16float_format,
-  width: 0,
-  height: 0,
-  usage:
-    GPUTextureUsage.RENDER_ATTACHMENT |
-    GPUTextureUsage.TEXTURE_BINDING |
-    GPUTextureUsage.STORAGE_BINDING,
-  force: false,
-};
-const main_position_image_config = {
-  name: "main_position_0",
-  format: rgba32float_format,
   width: 0,
   height: 0,
   usage:
@@ -442,9 +430,6 @@ export class PathTracingStrategy {
       main_normal_image_config.width = image_extent.width;
       main_normal_image_config.height = image_extent.height;
       main_normal_image_config.force = this.force_recreate;
-      main_position_image_config.width = image_extent.width;
-      main_position_image_config.height = image_extent.height;
-      main_position_image_config.force = this.force_recreate;
       main_motion_emissive_image_config.width = image_extent.width;
       main_motion_emissive_image_config.height = image_extent.height;
       main_motion_emissive_image_config.force = this.force_recreate;
@@ -455,7 +440,6 @@ export class PathTracingStrategy {
       let main_albedo_image = render_graph.create_image(main_albedo_image_config);
       let main_smra_image = render_graph.create_image(main_smra_image_config);
       let main_normal_image = render_graph.create_image(main_normal_image_config);
-      let main_position_image = render_graph.create_image(main_position_image_config);
       let main_motion_emissive_image = render_graph.create_image(main_motion_emissive_image_config);
       let main_depth_image = render_graph.create_image(main_depth_image_config);
 
@@ -516,7 +500,6 @@ export class PathTracingStrategy {
             outputs: [
               main_albedo_image,
               main_smra_image,
-              main_position_image,
               main_normal_image,
               main_motion_emissive_image,
               main_entity_id_image,
@@ -595,7 +578,6 @@ export class PathTracingStrategy {
           (graph, frame_data, encoder) => {
             const albedo = graph.get_physical_image(main_albedo_image);
             const smra = graph.get_physical_image(main_smra_image);
-            const position = graph.get_physical_image(main_position_image);
             const normal = graph.get_physical_image(main_normal_image);
             const motion = graph.get_physical_image(main_motion_emissive_image);
             const entity_id = graph.get_physical_image(main_entity_id_image);
@@ -603,7 +585,6 @@ export class PathTracingStrategy {
 
             if (albedo) albedo.config.load_op = load_op_load;
             if (smra) smra.config.load_op = load_op_load;
-            if (position) position.config.load_op = load_op_load;
             if (normal) normal.config.load_op = load_op_load;
             if (motion) motion.config.load_op = load_op_load;
             if (entity_id) entity_id.config.load_op = load_op_load;
@@ -750,7 +731,6 @@ export class PathTracingStrategy {
           const outputs = [
             main_albedo_image,
             main_smra_image,
-            main_position_image,
             main_normal_image,
             main_motion_emissive_image,
             main_depth_image,
@@ -799,7 +779,7 @@ export class PathTracingStrategy {
           entity_transforms,
           index_buffer,
           dense_lights,
-          main_position_image, // G-buffer position
+          main_depth_image,    // G-buffer depth
           main_normal_image,   // G-buffer normal
           main_albedo_image,   // G-buffer albedo
           main_smra_image,     // G-buffer SMRA
@@ -896,7 +876,6 @@ export class PathTracingStrategy {
           (graph, frame_data, encoder) => {
             const albedo = graph.get_physical_image(main_albedo_image);
             const smra = graph.get_physical_image(main_smra_image);
-            const position = graph.get_physical_image(main_position_image);
             const normal = graph.get_physical_image(main_normal_image);
             const motion = graph.get_physical_image(main_motion_emissive_image);
             const entity_id = graph.get_physical_image(main_entity_id_image);
@@ -904,7 +883,6 @@ export class PathTracingStrategy {
 
             if (albedo) albedo.config.load_op = load_op_clear;
             if (smra) smra.config.load_op = load_op_clear;
-            if (position) position.config.load_op = load_op_clear;
             if (normal) normal.config.load_op = load_op_clear;
             if (motion) motion.config.load_op = load_op_clear;
             if (entity_id) entity_id.config.load_op = load_op_clear;

@@ -29,8 +29,8 @@
 @group(1) @binding(1) var<storage, read> pixel_path_state: array<PixelPathState>;
 @group(1) @binding(2) var<storage, read> temporal_reservoir_prev: array<GIReservoirData>;
 @group(1) @binding(3) var<storage, read_write> temporal_reservoir_curr: array<GIReservoirData>;
-@group(1) @binding(4) var gbuffer_position: texture_2d<f32>;
-@group(1) @binding(5) var gbuffer_position_prev: texture_2d<f32>;
+@group(1) @binding(4) var depth_texture: texture_2d<f32>;
+@group(1) @binding(5) var prev_depth_texture: texture_2d<f32>;
 @group(1) @binding(6) var gbuffer_normal: texture_2d<f32>;
 @group(1) @binding(7) var gbuffer_motion: texture_2d<f32>;
 @group(1) @binding(8) var gbuffer_normal_prev: texture_2d<f32>;
@@ -50,33 +50,60 @@ const MAX_TEMPORAL_SAMPLES = 16u;
 // GEOMETRIC NORMAL RECONSTRUCTION (screen-space)
 // =============================================================================
 // NOTE:
-// - We intentionally use a *geometric* normal derived from the world-position buffer
+// - We intentionally use a *geometric* normal derived from reconstructed world positions
 //   for temporal validation, instead of the GBuffer shading normal. Shading normals
 //   can change due to normal maps, LOD changes, etc., and are too strict for reprojection.
 // - This is only used for *safety checks* (dot + plane-distance), not for lighting.
-fn compute_geometric_normal_from_position_tex(
-    position_tex: texture_2d<f32>,
+fn compute_geometric_normal_from_depth_tex(
+    depth_tex: texture_2d<f32>,
     full_pixel_coord: vec2<i32>,
-    full_res: vec2<i32>
+    full_res: vec2<i32>,
+    view_index: u32,
+    use_prev_view: bool
 ) -> vec3<f32> {
     let coord_l = vec2<i32>(max(full_pixel_coord.x - 1, 0), full_pixel_coord.y);
     let coord_r = vec2<i32>(min(full_pixel_coord.x + 1, full_res.x - 1), full_pixel_coord.y);
     let coord_u = vec2<i32>(full_pixel_coord.x, max(full_pixel_coord.y - 1, 0));
     let coord_d = vec2<i32>(full_pixel_coord.x, min(full_pixel_coord.y + 1, full_res.y - 1));
 
-    let pos_l = textureLoad(position_tex, coord_l, 0);
-    let pos_r = textureLoad(position_tex, coord_r, 0);
-    let pos_u = textureLoad(position_tex, coord_u, 0);
-    let pos_d = textureLoad(position_tex, coord_d, 0);
+    let depth_l = textureLoad(depth_tex, coord_l, 0).r;
+    let depth_r = textureLoad(depth_tex, coord_r, 0).r;
+    let depth_u = textureLoad(depth_tex, coord_u, 0).r;
+    let depth_d = textureLoad(depth_tex, coord_d, 0).r;
 
-    // Reject if any neighbor is invalid (typically cleared to 0).
-    let neighbors_valid = (pos_l.w > 0.0) && (pos_r.w > 0.0) && (pos_u.w > 0.0) && (pos_d.w > 0.0);
+    let neighbors_valid = (depth_l < 1.0) && (depth_r < 1.0) && (depth_u < 1.0) && (depth_d < 1.0);
     if (!neighbors_valid) {
         return vec3<f32>(0.0);
     }
 
-    let dp_dx = pos_r.xyz - pos_l.xyz;
-    let dp_dy = pos_d.xyz - pos_u.xyz; // screen Y increases downward
+    let uv_l = coord_to_uv(coord_l, vec2<u32>(full_res));
+    let uv_r = coord_to_uv(coord_r, vec2<u32>(full_res));
+    let uv_u = coord_to_uv(coord_u, vec2<u32>(full_res));
+    let uv_d = coord_to_uv(coord_d, vec2<u32>(full_res));
+
+    let pos_l = select(
+        reconstruct_world_position(uv_l, depth_l, view_index),
+        reconstruct_prev_world_position(uv_l, depth_l, view_index),
+        use_prev_view
+    );
+    let pos_r = select(
+        reconstruct_world_position(uv_r, depth_r, view_index),
+        reconstruct_prev_world_position(uv_r, depth_r, view_index),
+        use_prev_view
+    );
+    let pos_u = select(
+        reconstruct_world_position(uv_u, depth_u, view_index),
+        reconstruct_prev_world_position(uv_u, depth_u, view_index),
+        use_prev_view
+    );
+    let pos_d = select(
+        reconstruct_world_position(uv_d, depth_d, view_index),
+        reconstruct_prev_world_position(uv_d, depth_d, view_index),
+        use_prev_view
+    );
+
+    let dp_dx = pos_r - pos_l;
+    let dp_dy = pos_d - pos_u; // screen Y increases downward
 
     return safe_normalize(cross(dp_dx, dp_dy));
 }
@@ -98,18 +125,26 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let pixel_index = gid.y * gi_res.x + gid.x;
     let upscale_factor = u32(gi_params.upscale_factor);
     let full_pixel_coord = gi_pixel_to_full_res_pixel_coord(gid.xy, upscale_factor, full_res);
+    let view_index = u32(frame_info.view_index);
 
-    let visible_position4 = textureLoad(gbuffer_position, vec2<i32>(full_pixel_coord), 0);
-    if (visible_position4.w <= 0.0) {
+    let full_pixel_coord_i = vec2<i32>(full_pixel_coord);
+    let visible_depth = textureLoad(depth_texture, full_pixel_coord_i, 0).r;
+    if (visible_depth >= 1.0) {
         temporal_reservoir_curr[pixel_index] = create_empty();
         return;
     }
 
-    let visible_position = visible_position4.xyz;
-    let geom_normal = compute_geometric_normal_from_position_tex(
-        gbuffer_position,
-        vec2<i32>(full_pixel_coord),
-        full_res_i32
+    let visible_position = reconstruct_world_position(
+        coord_to_uv(full_pixel_coord_i, full_res),
+        visible_depth,
+        view_index
+    );
+    let geom_normal = compute_geometric_normal_from_depth_tex(
+        depth_texture,
+        full_pixel_coord_i,
+        full_res_i32,
+        view_index,
+        false
     );
 
 #if SPECULAR_MASK_ENABLED
@@ -148,7 +183,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     // - `sample.outgoing_radiance_*.xyz` = f(y) = (mc_estimate * source_pdf)
     // - `sample.sample_normal_target_pdf.w` = p_hat(y) (we use luminance(f(y)))
     // ─────────────────────────────────────────────────────────────────────────
-    let camera_position = view_buffer[u32(frame_info.view_index)].view_position.xyz;
+    let camera_position = view_buffer[view_index].view_position.xyz;
 
     let base_ray_id = pixel_index * rays_per_pixel;
     for (var i = 0u; i < rays_per_pixel; i = i + 1u) {
@@ -213,20 +248,28 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         let prev_index = u32(prev_coord.y) * gi_res.x + u32(prev_coord.x);
         let prev_reservoir_data = temporal_reservoir_prev[prev_index];
         let prev_full_pixel_coord = gi_pixel_to_full_res_pixel_coord(vec2<u32>(prev_coord), upscale_factor, full_res);
-        let prev_position4 = textureLoad(gbuffer_position_prev, vec2<i32>(prev_full_pixel_coord), 0);
-        let prev_geom_normal = compute_geometric_normal_from_position_tex(
-            gbuffer_position_prev,
-            vec2<i32>(prev_full_pixel_coord),
-            full_res_i32
+        let prev_full_pixel_coord_i = vec2<i32>(prev_full_pixel_coord);
+        let prev_depth = textureLoad(prev_depth_texture, prev_full_pixel_coord_i, 0).r;
+        let prev_position = reconstruct_prev_world_position(
+            coord_to_uv(prev_full_pixel_coord_i, full_res),
+            prev_depth,
+            view_index
+        );
+        let prev_geom_normal = compute_geometric_normal_from_depth_tex(
+            prev_depth_texture,
+            prev_full_pixel_coord_i,
+            full_res_i32,
+            view_index,
+            true
         );
 
-        if (prev_reservoir_data.reservoir.m > 0u && prev_position4.w > 0.0 && length(prev_geom_normal) > 0.0 && length(geom_normal) > 0.0) {
+        if (prev_reservoir_data.reservoir.m > 0u && prev_depth < 1.0 && length(prev_geom_normal) > 0.0 && length(geom_normal) > 0.0) {
             // Geometry validation: geometric normal + depth similarity to reject disocclusion.
             // Use abs(dot) to avoid rejecting due to sign flips from screen-space reconstruction.
             let normal_similarity = abs(dot(prev_geom_normal, geom_normal));
             let normal_valid = normal_similarity > TEMPORAL_NORMAL_THRESHOLD;
 
-            let delta_position = prev_position4.xyz - visible_position;
+            let delta_position = prev_position - visible_position;
             // Use a relative depth metric (scaled by distance-to-camera) for robustness.
             let plane_distance = abs(dot(delta_position, geom_normal));
             let camera_distance = max(length(visible_position - camera_position), 0.001);
