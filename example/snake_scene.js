@@ -348,7 +348,6 @@ export class SnakeScene extends Scene {
       gridSize: BOARD_SIZE,
       speed: SNAKE_SPEED,
     });
-    this.sync_entities_to_state();
   }
 
   queue_direction(direction) {
@@ -447,7 +446,6 @@ export class SnakeScene extends Scene {
   update(deltaTime) {
     this.update_camera_framing();
     this.handle_keyboard();
-    let shouldSyncEntities = false;
 
     if (!this.state.paused && this.rippleBursts.length > 0) {
       this.rippleBursts = advanceRippleBursts(
@@ -455,7 +453,6 @@ export class SnakeScene extends Scene {
         deltaTime,
         this.state.snake.length
       );
-      shouldSyncEntities = true;
     }
 
     if (!this.state.paused && !this.state.gameOver && !this.state.won) {
@@ -464,17 +461,13 @@ export class SnakeScene extends Scene {
       const scoreIncrease = Math.max(0, nextState.score - previousState.score);
 
       this.state = nextState;
-      shouldSyncEntities = shouldSyncEntities || nextState !== previousState;
 
       if (scoreIncrease > 0) {
         this.queue_eat_ripple(scoreIncrease);
-        shouldSyncEntities = true;
       }
     }
 
-    if (shouldSyncEntities) {
-      this.sync_entities_to_state();
-    }
+    this.sync_entities_to_state();
 
     super.update(deltaTime);
     this.render_ui();
