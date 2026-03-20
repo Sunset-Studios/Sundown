@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 
 import { DIRECTIONS, advanceGame, createInitialState, placeFood, queueDirection } from "./snake_game.js";
+import {
+  advanceRippleBursts,
+  createRippleBurst,
+  getRippleScaleMultiplier,
+} from "./snake_ripple.js";
 
 let failures = 0;
 let total = 0;
@@ -30,7 +35,7 @@ runTest("snake advances one cell in the active direction", () => {
     food: { x: 0, y: 0 },
   });
 
-  const nextState = advanceGame(state, () => 0);
+  const nextState = advanceGame(state, 1 / state.speed, () => 0);
 
   assert.deepEqual(nextState.snake, [
     { x: 4, y: 3 },
@@ -39,6 +44,34 @@ runTest("snake advances one cell in the active direction", () => {
   ]);
   assert.equal(nextState.score, 0);
   assert.equal(nextState.gameOver, false);
+});
+
+runTest("snake waits until enough time has accumulated to move", () => {
+  const state = createInitialState({
+    gridSize: 8,
+    speed: 4,
+    snake: [
+      { x: 3, y: 3 },
+      { x: 2, y: 3 },
+      { x: 1, y: 3 },
+    ],
+    direction: DIRECTIONS.RIGHT,
+    food: { x: 0, y: 0 },
+  });
+
+  const partialState = advanceGame(state, 0.2, () => 0);
+
+  assert.deepEqual(partialState.snake, state.snake);
+  assert.equal(partialState.moveAccumulator, 0.2);
+
+  const nextState = advanceGame(partialState, 0.05, () => 0);
+
+  assert.deepEqual(nextState.snake, [
+    { x: 4, y: 3 },
+    { x: 3, y: 3 },
+    { x: 2, y: 3 },
+  ]);
+  assert.equal(nextState.moveAccumulator, 0);
 });
 
 runTest("reverse turns are ignored", () => {
@@ -70,7 +103,7 @@ runTest("eating food grows the snake and increases the score", () => {
     food: { x: 3, y: 2 },
   });
 
-  const nextState = advanceGame(state, () => 0);
+  const nextState = advanceGame(state, 1 / state.speed, () => 0);
 
   assert.equal(nextState.snake.length, 4);
   assert.equal(nextState.score, 1);
@@ -99,7 +132,7 @@ runTest("moving beyond the board ends the game", () => {
     food: { x: 0, y: 0 },
   });
 
-  const nextState = advanceGame(state, () => 0);
+  const nextState = advanceGame(state, 1 / state.speed, () => 0);
 
   assert.equal(nextState.gameOver, true);
 });
@@ -118,7 +151,7 @@ runTest("running into the body ends the game", () => {
     food: { x: 5, y: 5 },
   });
 
-  const nextState = advanceGame(state, () => 0);
+  const nextState = advanceGame(state, 1 / state.speed, () => 0);
 
   assert.equal(nextState.gameOver, true);
 });
@@ -138,6 +171,31 @@ runTest("food placement only uses empty cells", () => {
   const food = placeFood(snake, 3, () => 0.99);
 
   assert.deepEqual(food, { x: 2, y: 2 });
+});
+
+runTest("ripple reaches the head before the tail", () => {
+  const burst = createRippleBurst({
+    pulseDuration: 0.3,
+    segmentDelay: 0.1,
+    amplitude: 0.3,
+  });
+
+  const headScale = getRippleScaleMultiplier(0, [{ ...burst, elapsed: 0.15 }]);
+  const tailScaleEarly = getRippleScaleMultiplier(3, [{ ...burst, elapsed: 0.15 }]);
+  const tailScaleLate = getRippleScaleMultiplier(3, [{ ...burst, elapsed: 0.45 }]);
+
+  assert.ok(headScale > 1.2);
+  assert.equal(tailScaleEarly, 1);
+  assert.ok(tailScaleLate > 1.2);
+});
+
+runTest("finished ripples are removed once they clear the tail", () => {
+  const bursts = [createRippleBurst({ pulseDuration: 0.25, segmentDelay: 0.1 })];
+  const active = advanceRippleBursts(bursts, 0.4, 3);
+  const finished = advanceRippleBursts(bursts, 0.5, 3);
+
+  assert.equal(active.length, 1);
+  assert.equal(finished.length, 0);
 });
 
 if (failures > 0) {

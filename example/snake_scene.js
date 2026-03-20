@@ -8,6 +8,7 @@ import { TransformFragment } from "../engine/src/core/ecs/fragments/transform_fr
 import { VisibilityFragment } from "../engine/src/core/ecs/fragments/visibility_fragment.js";
 import { SharedEnvironmentData, SharedViewBuffer } from "../engine/src/core/shared_data.js";
 import { LightType } from "../engine/src/core/minimal.js";
+import { MAX_CLIPMAP_LEVELS } from "../engine/src/renderer/shadows/shadow_utils.js";
 import { spawn_mesh_entity, delete_entity } from "../engine/src/core/ecs/entity_utils.js";
 import { InputProvider } from "../engine/src/input/input_provider.js";
 import { InputKey } from "../engine/src/input/input_types.js";
@@ -18,12 +19,16 @@ import { button, label, panel } from "../engine/src/ui/2d/immediate.js";
 
 import {
   DIRECTIONS,
-  TICK_MS,
   advanceGame,
   createInitialState,
   queueDirection,
   togglePause,
 } from "./snake_game.js";
+import {
+  advanceRippleBursts,
+  createRippleBurst,
+  getRippleScaleMultiplier,
+} from "./snake_ripple.js";
 
 const BOARD_SIZE = 14;
 const CELL_SPACING = 2.35;
@@ -31,9 +36,8 @@ const FLOOR_Y = -0.9;
 const TILE_Y = -0.25;
 const PIECE_Y = 0.75;
 const BOARD_HALF_EXTENT = ((BOARD_SIZE - 1) * CELL_SPACING) * 0.5;
-const TICK_SECONDS = TICK_MS / 1000;
-const SEGMENT_SCALE = [0.78, 0.78, 0.78];
-const HEAD_SCALE = [0.9, 0.9, 0.9];
+const SEGMENT_SCALE = [0.6, 0.6, 0.6];
+const HEAD_SCALE = [0.7, 0.7, 0.7];
 const FOOD_SCALE = [0.5, 0.5, 0.5];
 const TILE_SCALE = [0.95, 0.12, 0.95];
 const WALL_THICKNESS = 0.45;
@@ -43,12 +47,17 @@ const HIDDEN_POSITION = [0, -50, 0];
 const CAMERA_FAR = 160.0;
 const CAMERA_FRAME_PADDING = 2.5;
 const CAMERA_FOV = Math.PI / 3.4;
+const SNAKE_SPEED = 5;
+const RIPPLE_PULSE_DURATION = 0.28;
+const RIPPLE_SEGMENT_DELAY = 0.06;
+const RIPPLE_AMPLITUDE = 0.28;
+const RIPPLE_MAX_MULTIPLIER = 1.45;
 
 const HUD_PANEL = {
   layout: "column",
   gap: 6,
-  x: 20,
-  y: 20,
+  x: 40,
+  y: 40,
   width: 240,
   anchor_x: "right",
   padding: 12,
@@ -73,7 +82,7 @@ const HUD_TEXT = {
 };
 
 const CONTROLS_PANEL = {
-  width: 200,
+  width: 250,
   height: 150,
   x: 40,
   y: 40,
@@ -84,8 +93,8 @@ const CONTROLS_PANEL = {
 };
 
 const CONTROL_BUTTON = {
-  width: 50,
-  height: 34,
+  width: 75,
+  height: 45,
   font: "13px monospace",
   text_color: "#eef3fb",
   background_color: "rgba(26, 35, 47, 0.84)",
@@ -110,7 +119,7 @@ export class SnakeScene extends Scene {
   foodEntity = null;
   materials = {};
   state = null;
-  tickAccumulator = 0;
+  rippleBursts = [];
   lastAspectRatio = 0;
 
   init() {
@@ -134,6 +143,7 @@ export class SnakeScene extends Scene {
     this.boardTiles.length = 0;
     this.segmentEntities.length = 0;
     this.foodEntity = null;
+    this.rippleBursts.length = 0;
 
     super.cleanup();
   }
@@ -215,9 +225,9 @@ export class SnakeScene extends Scene {
 
     this.materials.food = StandardMaterial.create("snake_food", {
       albedo: [0.98, 0.41, 0.29, 1.0],
-      roughness: 0.35,
+      roughness: 0.5,
       metallic: 0.0,
-      emission: 10.0,
+      emission: 25.0,
       specular: 0.1,
     }).material_id;
   }
@@ -232,7 +242,7 @@ export class SnakeScene extends Scene {
     light.position = [40.0, 60.0, 20.0, 1.0];
     light.active = true;
     light.is_primary_sun = 1;
-    light.shadow_casting = 0;
+    light.shadow_clipmaps = MAX_CLIPMAP_LEVELS;
 
     this.entities.push(lightEntity);
   }
@@ -265,8 +275,8 @@ export class SnakeScene extends Scene {
       }
     }
 
-    const wallScaleHorizontal = [BOARD_HALF_EXTENT + CELL_SPACING, WALL_HEIGHT, WALL_THICKNESS];
-    const wallScaleVertical = [WALL_THICKNESS, WALL_HEIGHT, BOARD_HALF_EXTENT + CELL_SPACING];
+    const wallScaleHorizontal = [BOARD_HALF_EXTENT + CELL_SPACING * 0.5, WALL_HEIGHT, WALL_THICKNESS];
+    const wallScaleVertical = [WALL_THICKNESS, WALL_HEIGHT, BOARD_HALF_EXTENT + CELL_SPACING * 0.5];
     const outer = BOARD_HALF_EXTENT + CELL_SPACING * 0.5;
 
     const walls = [
@@ -314,7 +324,7 @@ export class SnakeScene extends Scene {
       HIDDEN_POSITION,
       [0, 0, 0, 1],
       FOOD_SCALE,
-      Mesh.cube(),
+      Mesh.sphere(),
       this.materials.food
     );
 
@@ -333,8 +343,11 @@ export class SnakeScene extends Scene {
   }
 
   restart_game() {
-    this.state = createInitialState({ gridSize: BOARD_SIZE });
-    this.tickAccumulator = 0;
+    this.rippleBursts.length = 0;
+    this.state = createInitialState({
+      gridSize: BOARD_SIZE,
+      speed: SNAKE_SPEED,
+    });
     this.sync_entities_to_state();
   }
 
@@ -348,6 +361,29 @@ export class SnakeScene extends Scene {
 
   toggle_pause() {
     this.state = togglePause(this.state);
+  }
+
+  queue_eat_ripple(count = 1) {
+    const total = Math.max(0, count);
+
+    for (let index = 0; index < total; index += 1) {
+      this.rippleBursts.push(
+        createRippleBurst({
+          elapsed: -index * RIPPLE_PULSE_DURATION * 0.45,
+          pulseDuration: RIPPLE_PULSE_DURATION,
+          segmentDelay: RIPPLE_SEGMENT_DELAY,
+          amplitude: RIPPLE_AMPLITUDE,
+          maxMultiplier: RIPPLE_MAX_MULTIPLIER,
+        })
+      );
+    }
+  }
+
+  get_segment_scale(index) {
+    const baseScale = index === 0 ? HEAD_SCALE : SEGMENT_SCALE;
+    const multiplier = getRippleScaleMultiplier(index, this.rippleBursts);
+
+    return baseScale.map((value) => value * multiplier);
   }
 
   sync_entities_to_state() {
@@ -366,7 +402,7 @@ export class SnakeScene extends Scene {
       const mesh = EntityManager.get_fragment(entity, StaticMeshFragment);
 
       transform.position = this.grid_to_world(segment);
-      transform.scale = index === 0 ? HEAD_SCALE : SEGMENT_SCALE;
+      transform.scale = this.get_segment_scale(index);
       mesh.material_slots = [BigInt(index === 0 ? this.materials.head : this.materials.segment)];
       visibility.visible = 1;
     }
@@ -411,15 +447,33 @@ export class SnakeScene extends Scene {
   update(deltaTime) {
     this.update_camera_framing();
     this.handle_keyboard();
+    let shouldSyncEntities = false;
+
+    if (!this.state.paused && this.rippleBursts.length > 0) {
+      this.rippleBursts = advanceRippleBursts(
+        this.rippleBursts,
+        deltaTime,
+        this.state.snake.length
+      );
+      shouldSyncEntities = true;
+    }
 
     if (!this.state.paused && !this.state.gameOver && !this.state.won) {
-      this.tickAccumulator += deltaTime;
+      const previousState = this.state;
+      const nextState = advanceGame(this.state, deltaTime);
+      const scoreIncrease = Math.max(0, nextState.score - previousState.score);
 
-      while (this.tickAccumulator >= TICK_SECONDS) {
-        this.state = advanceGame(this.state);
-        this.tickAccumulator -= TICK_SECONDS;
-        this.sync_entities_to_state();
+      this.state = nextState;
+      shouldSyncEntities = shouldSyncEntities || nextState !== previousState;
+
+      if (scoreIncrease > 0) {
+        this.queue_eat_ripple(scoreIncrease);
+        shouldSyncEntities = true;
       }
+    }
+
+    if (shouldSyncEntities) {
+      this.sync_entities_to_state();
     }
 
     super.update(deltaTime);
@@ -427,14 +481,6 @@ export class SnakeScene extends Scene {
   }
 
   render_ui() {
-    const status = this.state.won
-      ? "Board cleared"
-      : this.state.gameOver
-        ? "Game over"
-        : this.state.paused
-          ? "Paused"
-          : "Running";
-
     panel(HUD_PANEL, () => {
       label("Snake 3D", HUD_TITLE);
       label(`Score: ${this.state.score}`, HUD_TEXT);
@@ -447,22 +493,22 @@ export class SnakeScene extends Scene {
         this.queue_direction(DIRECTIONS.UP);
       }
 
-      if (button("Left", { ...CONTROL_BUTTON, x: 10, y: 42 }).clicked) {
+      if (button("Left", { ...CONTROL_BUTTON, x: 0, y: 45 }).clicked) {
         this.queue_direction(DIRECTIONS.LEFT);
       }
 
-      if (button("Down", { ...CONTROL_BUTTON, x: 70, y: 42 }).clicked) {
+      if (button("Down", { ...CONTROL_BUTTON, x: 70, y: 45 }).clicked) {
         this.queue_direction(DIRECTIONS.DOWN);
       }
 
-      if (button("Right", { ...CONTROL_BUTTON, x: 130, y: 42 }).clicked) {
+      if (button("Right", { ...CONTROL_BUTTON, x: 140, y: 45 }).clicked) {
         this.queue_direction(DIRECTIONS.RIGHT);
       }
 
       if (
         button(this.state.paused ? "Resume" : "Pause", {
           ...ACTION_BUTTON,
-          x: 10,
+          x: 0,
           y: 94,
         }).clicked
       ) {
@@ -472,7 +518,7 @@ export class SnakeScene extends Scene {
       if (
         button("Restart", {
           ...ACTION_BUTTON,
-          x: 108,
+          x: 140,
           y: 94,
         }).clicked
       ) {

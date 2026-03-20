@@ -1,5 +1,5 @@
 export const GRID_SIZE = 16;
-export const TICK_MS = 140;
+export const DEFAULT_SNAKE_SPEED = 5;
 
 export const DIRECTIONS = Object.freeze({
   UP: "up",
@@ -24,6 +24,10 @@ const OPPOSITE_DIRECTIONS = Object.freeze({
 
 function copyPoint(point) {
   return { x: point.x, y: point.y };
+}
+
+function normalizeSpeed(speed) {
+  return Number.isFinite(speed) && speed > 0 ? speed : DEFAULT_SNAKE_SPEED;
 }
 
 export function arePointsEqual(a, b) {
@@ -80,6 +84,7 @@ export function createInitialState(options = {}) {
   const direction = options.direction ?? DIRECTIONS.RIGHT;
   const snake = options.snake?.map(copyPoint) ?? createInitialSnake(gridSize);
   const food = options.food ? copyPoint(options.food) : placeFood(snake, gridSize, options.rng);
+  const speed = normalizeSpeed(options.speed);
 
   return {
     gridSize,
@@ -87,6 +92,8 @@ export function createInitialState(options = {}) {
     direction,
     nextDirection: direction,
     food,
+    speed,
+    moveAccumulator: options.moveAccumulator ?? 0,
     score: options.score ?? 0,
     paused: false,
     gameOver: food === null,
@@ -123,11 +130,7 @@ export function togglePause(state) {
   };
 }
 
-export function advanceGame(state, rng = Math.random) {
-  if (state.gameOver || state.paused || state.won) {
-    return state;
-  }
-
+function advanceSnakeStep(state, rng = Math.random) {
   const direction = state.nextDirection ?? state.direction;
   const movement = DIRECTION_VECTORS[direction];
   const head = state.snake[0];
@@ -164,5 +167,42 @@ export function advanceGame(state, rng = Math.random) {
     score: state.score + (isEating ? 1 : 0),
     gameOver: won,
     won,
+  };
+}
+
+export function advanceGame(state, delta_time = 0, rng = Math.random) {
+  if (state.gameOver || state.paused || state.won) {
+    return state;
+  }
+
+  const speed = normalizeSpeed(state.speed);
+  const deltaTime = Number.isFinite(delta_time) ? Math.max(0, delta_time) : 0;
+  const stepDuration = 1 / speed;
+  let nextState = {
+    ...state,
+    speed,
+    moveAccumulator: (state.moveAccumulator ?? 0) + deltaTime,
+  };
+
+  while (nextState.moveAccumulator + Number.EPSILON >= stepDuration) {
+    nextState = advanceSnakeStep(
+      {
+        ...nextState,
+        moveAccumulator: nextState.moveAccumulator - stepDuration,
+      },
+      rng
+    );
+
+    if (nextState.gameOver || nextState.won) {
+      return {
+        ...nextState,
+        moveAccumulator: 0,
+      };
+    }
+  }
+
+  return {
+    ...nextState,
+    moveAccumulator: Math.max(0, nextState.moveAccumulator),
   };
 }
