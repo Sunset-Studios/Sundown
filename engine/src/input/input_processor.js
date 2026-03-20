@@ -374,7 +374,7 @@ export class InputProcessor {
   }
 
   mark_touch_activity() {
-    this.suppress_compatibility_mouse_events_until = performance.now() + 750;
+    this.suppress_compatibility_mouse_events_until = performance.now() + 100;
   }
 
   should_ignore_compatibility_mouse_event() {

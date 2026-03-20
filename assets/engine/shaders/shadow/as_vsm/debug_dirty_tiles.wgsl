@@ -38,15 +38,15 @@ fn fs(input: VertexOutput) -> @location(0) vec4<f32> {
   }
 
   let view_index = u32(frame_info.view_index);
-  let depth = textureSample(depth_texture, non_filtering_sampler, input.uv);
-  if (depth >= 1.0) {
+  let tex_depth = textureSample(depth_texture, non_filtering_sampler, input.uv);
+  if (tex_depth.r >= 1.0) {
     return vec4<f32>(0.0);
   }
 
   let view_idx      = light_view_buffer[0u];
   let clipmap0_vp   = view_buffer[view_idx].view_projection_matrix;
   let camera_vp     = view_buffer[view_index].view_projection_matrix;
-  let world_pos     = vec4<f32>(reconstruct_world_position(input.uv, depth, view_index), 1.0);
+  let world_pos     = vec4<f32>(reconstruct_world_position(input.uv, tex_depth.r, view_index), 1.0);
 
   let vtile_info    = vsm_world_to_virtual_tile(world_pos, camera_vp, clipmap0_vp, vsm_settings);
   let ptile_info    = vsm_vtile_to_ptile(vtile_info, vsm_settings, 0u, page_table);

@@ -223,7 +223,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     // Initialize blue noise sampler (GI pixel space)
     var bn_sampler = blue_noise_init(gi_pixel_coord, frame_id, ray_slot);
 
-    process_selected_pixel(ray_slot, gi_pixel_coord, full_pixel_coord, &bn_sampler, gi_resolution);
+    process_selected_pixel(ray_slot, gi_pixel_coord, full_pixel_coord, &bn_sampler, gi_resolution, full_resolution);
 }
 
 // =============================================================================
@@ -235,7 +235,8 @@ fn process_selected_pixel(
     gi_pixel_coord: vec2<u32>,
     full_pixel_coord: vec2<u32>,
     bn_sampler: ptr<function, BlueNoiseSampler>,
-    resolution: vec2<u32>
+    resolution: vec2<u32>,
+    full_resolution: vec2<u32>
 ) {
     let frame_id = u32(gi_params.frame_index);
     let pixel_index = gi_pixel_coord.y * resolution.x + gi_pixel_coord.x;
