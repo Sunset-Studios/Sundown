@@ -26,7 +26,7 @@ async function bootstrap() {
   }
 
   await Renderer.create(canvas, uiCanvas, DeferredShadingStrategy, {
-    pointer_lock: true,
+    pointer_lock: false,
     use_precision_float: false,
   });
 

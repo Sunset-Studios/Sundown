@@ -111,7 +111,6 @@ export class SnakeScene extends Scene {
   init() {
     super.init();
 
-    this.show_dev_cursor();
     this.configure_view();
     this.create_materials();
     this.create_light();
