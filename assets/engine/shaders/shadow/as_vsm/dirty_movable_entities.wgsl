@@ -46,7 +46,7 @@ fn mark_tile(tx: u32, ty: u32, slice: u32, clipmap_index: u32, light_shadow_idx:
     let is_visible = (bitmask[word] & mask) != 0u;
     if (is_visible) {
         var pte = textureLoad(page_table, tile_coords, slice).r;
-        pte = pte | pte_dirty_mask;
+        pte = vsm_pte_mark_dirty(pte);
         textureStore(page_table, tile_coords, slice, vec4<u32>(pte));
         textureStore(page_offset, tile_coords, slice, vec4<f32>(view.view_matrix[3]));
     }
