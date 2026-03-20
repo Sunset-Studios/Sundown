@@ -13,6 +13,7 @@ import { InputProvider } from "../engine/src/input/input_provider.js";
 import { InputKey } from "../engine/src/input/input_types.js";
 import { StandardMaterial } from "../engine/src/renderer/material.js";
 import { Mesh } from "../engine/src/renderer/mesh.js";
+import { Renderer } from "../engine/src/renderer/renderer.js";
 import { button, label, panel } from "../engine/src/ui/2d/immediate.js";
 
 import {
@@ -39,6 +40,9 @@ const WALL_THICKNESS = 0.45;
 const WALL_HEIGHT = 0.7;
 const FLOOR_SCALE = [BOARD_HALF_EXTENT + 2.5, 0.5, BOARD_HALF_EXTENT + 2.5];
 const HIDDEN_POSITION = [0, -50, 0];
+const CAMERA_FAR = 160.0;
+const CAMERA_FRAME_PADDING = 2.5;
+const CAMERA_FOV = Math.PI / 3.4;
 
 const HUD_PANEL = {
   layout: "column",
@@ -107,6 +111,7 @@ export class SnakeScene extends Scene {
   materials = {};
   state = null;
   tickAccumulator = 0;
+  lastAspectRatio = 0;
 
   init() {
     super.init();
@@ -140,9 +145,29 @@ export class SnakeScene extends Scene {
     const view = SharedViewBuffer.get_view_data(this.context.current_view);
     view.view_position = [0, 36, 0.001];
     view.view_rotation = quat.fromEuler(quat.create(), 89.9, 180, 0);
-    view.fov = Math.PI / 3.4;
+    view.fov = CAMERA_FOV;
     view.near = 0.1;
-    view.far = 160.0;
+    view.far = CAMERA_FAR;
+
+    this.update_camera_framing(true);
+  }
+
+  update_camera_framing(force = false) {
+    const aspectRatio = Renderer.get().aspect_ratio || 1;
+
+    if (!force && Math.abs(aspectRatio - this.lastAspectRatio) < 0.001) {
+      return;
+    }
+
+    const view = SharedViewBuffer.get_view_data(this.context.current_view);
+    const boardHalfSpan = BOARD_HALF_EXTENT + CELL_SPACING * 0.5 + CAMERA_FRAME_PADDING;
+    const tanHalfFov = Math.tan(CAMERA_FOV * 0.5);
+    const verticalDistance = boardHalfSpan / tanHalfFov;
+    const horizontalDistance = boardHalfSpan / (tanHalfFov * Math.max(aspectRatio, 0.001));
+    const requiredDistance = Math.max(verticalDistance, horizontalDistance);
+
+    view.view_position = [0, requiredDistance, 0.001];
+    this.lastAspectRatio = aspectRatio;
   }
 
   create_materials() {
@@ -384,6 +409,7 @@ export class SnakeScene extends Scene {
   }
 
   update(deltaTime) {
+    this.update_camera_framing();
     this.handle_keyboard();
 
     if (!this.state.paused && !this.state.gameOver && !this.state.won) {
