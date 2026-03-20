@@ -114,7 +114,7 @@ export class PathTracer extends RayTracer {
     entity_transforms = null,
     index_buffer = null,
     dense_lights = null,
-    gbuffer_position = null,
+    depth_texture = null,
     gbuffer_normal = null,
     gbuffer_albedo = null,
     gbuffer_smra = null,
@@ -246,7 +246,7 @@ export class PathTracer extends RayTracer {
           inputs: [
             pt_params,
             path_state,
-            gbuffer_position,
+            depth_texture,
             gbuffer_normal,
             gbuffer_albedo,
             gbuffer_smra,

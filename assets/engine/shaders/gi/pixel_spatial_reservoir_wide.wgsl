@@ -42,7 +42,7 @@ const SPATIAL_DEPTH_THRESHOLD: f32 = 0.05;   // 5% relative tangent-plane distan
 @group(1) @binding(0) var<uniform> gi_params: GIParams;
 @group(1) @binding(1) var<storage, read> input_reservoir: array<GIReservoirData>;
 @group(1) @binding(2) var<storage, read_write> spatial_reservoir_curr: array<GIReservoirData>;
-@group(1) @binding(3) var gbuffer_position: texture_2d<f32>;
+@group(1) @binding(3) var depth_texture: texture_2d<f32>;
 @group(1) @binding(4) var gbuffer_normal: texture_2d<f32>;
 @group(1) @binding(5) var gbuffer_smra: texture_2d<f32>;
 #if SPECULAR_MASK_ENABLED
@@ -89,7 +89,13 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         return;
     }
 
-    let center_position = textureLoad(gbuffer_position, full_pixel_coord, 0u).xyz;
+    let view_index = u32(frame_info.view_index);
+    let center_depth = textureLoad(depth_texture, full_pixel_coord, 0u).r;
+    let center_position = reconstruct_world_position(
+        coord_to_uv(vec2<i32>(full_pixel_coord), full_res),
+        center_depth,
+        view_index
+    );
     let camera_position = view_buffer[u32(frame_info.view_index)].view_position.xyz;
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -178,7 +184,12 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
 
         // Similarity checks
         let normal_similarity = dot(neighbor_normal, normal);
-        let neighbor_position = textureLoad(gbuffer_position, neighbor_full_pixel_coord, 0u).xyz;
+        let neighbor_depth = textureLoad(depth_texture, neighbor_full_pixel_coord, 0u).r;
+        let neighbor_position = reconstruct_world_position(
+            coord_to_uv(vec2<i32>(neighbor_full_pixel_coord), full_res),
+            neighbor_depth,
+            view_index
+        );
         let plane_distance = abs(dot(neighbor_position - center_position, normal));
         let camera_distance = max(length(center_position - camera_position), 0.001);
 

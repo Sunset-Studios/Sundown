@@ -9,7 +9,7 @@ struct VertexOutput {
 };
 
 @group(1) @binding(0) var page_table: texture_storage_2d_array<r32uint, read>;
-@group(1) @binding(1) var world_position_tex: texture_2d<f32>;
+@group(1) @binding(1) var depth_texture: texture_2d<f32>;
 @group(1) @binding(2) var<uniform> vsm_settings: ASVSMSettings;
 @group(1) @binding(3) var<storage, read> light_view_buffer: array<u32>;
 @group(1) @binding(4) var<storage, read> shadow_atlas_depth: array<u32>;
@@ -37,16 +37,16 @@ fn fs(input: VertexOutput) -> @location(0) vec4<f32> {
     return vec4<f32>(0.0);
   }
 
-  // Sample world position; if w == 0 (no geometry), discard
-  let world_pos_sample = textureSample(world_position_tex, non_filtering_sampler, input.uv);
-  if (all(world_pos_sample.xyz == vec3<f32>(0.0))) {
+  let view_index = u32(frame_info.view_index);
+  let depth = textureSample(depth_texture, non_filtering_sampler, input.uv);
+  if (depth >= 1.0) {
     return vec4<f32>(0.0);
   }
 
   let view_idx      = light_view_buffer[0u];
   let clipmap0_vp   = view_buffer[view_idx].view_projection_matrix;
-  let camera_vp     = view_buffer[u32(frame_info.view_index)].view_projection_matrix;
-  let world_pos     = vec4<f32>(world_pos_sample.xyz, 1.0);
+  let camera_vp     = view_buffer[view_index].view_projection_matrix;
+  let world_pos     = vec4<f32>(reconstruct_world_position(input.uv, depth, view_index), 1.0);
 
   let vtile_info    = vsm_world_to_virtual_tile(world_pos, camera_vp, clipmap0_vp, vsm_settings);
   let ptile_info    = vsm_vtile_to_ptile(vtile_info, vsm_settings, 0u, page_table);
@@ -62,7 +62,7 @@ fn fs(input: VertexOutput) -> @location(0) vec4<f32> {
 
   // Compute depth
   let depth         = vsm_shadow_depth(
-                          vec4<f32>(world_pos_sample.xyz, 1.0),
+                          world_pos,
                           vec3<f32>(0.0, 0.0, 0.0),
                           vec3<f32>(0.0, 0.0, 0.0),
                           view_idx,
@@ -73,7 +73,7 @@ fn fs(input: VertexOutput) -> @location(0) vec4<f32> {
 
   let filter_res    = vsm_sample_shadow(
                           depth,
-                          vec4<f32>(world_pos_sample.xyz, 1.0),
+                          world_pos,
                           vec3<f32>(0.0, 0.0, 0.0),
                           vec3<f32>(0.0, 0.0, 0.0),
                           view_idx,

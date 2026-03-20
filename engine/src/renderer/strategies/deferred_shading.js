@@ -44,7 +44,6 @@ import {
   rgba8unorm_format,
   rgba16float_format,
   depth32float_format,
-  rgba32float_format,
   r32float_format,
   r32uint_format,
   one_one_blend_config,
@@ -114,30 +113,6 @@ const main_normal_image_config = {
 const main_normal_image2_config = {
   name: "main_normal_1",
   format: rgba16float_format,
-  width: 0,
-  height: 0,
-  usage:
-    GPUTextureUsage.RENDER_ATTACHMENT |
-    GPUTextureUsage.TEXTURE_BINDING |
-    GPUTextureUsage.STORAGE_BINDING |
-    GPUTextureUsage.COPY_DST,
-  force: false,
-};
-const main_position_image_config = {
-  name: "main_position_0",
-  format: rgba32float_format,
-  width: 0,
-  height: 0,
-  usage:
-    GPUTextureUsage.RENDER_ATTACHMENT |
-    GPUTextureUsage.TEXTURE_BINDING |
-    GPUTextureUsage.STORAGE_BINDING |
-    GPUTextureUsage.COPY_SRC,
-  force: false,
-};
-const main_position_image2_config = {
-  name: "main_position_1",
-  format: rgba32float_format,
   width: 0,
   height: 0,
   usage:
@@ -601,14 +576,6 @@ export class DeferredShadingStrategy {
       let main_hzb_image = render_graph.register_image(this.hzb_image.config.name);
       let main_entity_id_image = render_graph.register_image(this.entity_id_image.config.name);
 
-      main_position_image_config.width = image_extent.width;
-      main_position_image_config.height = image_extent.height;
-      main_position_image_config.force = this.force_recreate;
-
-      main_position_image2_config.width = image_extent.width;
-      main_position_image2_config.height = image_extent.height;
-      main_position_image2_config.force = this.force_recreate;
-
       main_normal_image_config.width = image_extent.width;
       main_normal_image_config.height = image_extent.height;
       main_normal_image_config.force = this.force_recreate;
@@ -645,9 +612,7 @@ export class DeferredShadingStrategy {
         main_transparency_accum_image_config
       );
       let main_depth_image = render_graph.create_image(main_depth_image_config);
-      let main_position_image = render_graph.create_image(main_position_image_config);
       let main_normal_image = render_graph.create_image(main_normal_image_config);
-      let prev_position_image = render_graph.create_image(main_position_image2_config);
       let prev_normal_image = render_graph.create_image(main_normal_image2_config);
       let prev_depth_image = render_graph.create_image(main_depth_image2_config);
 
@@ -713,7 +678,6 @@ export class DeferredShadingStrategy {
             outputs: [
               main_albedo_image,
               main_smra_image,
-              main_position_image,
               main_normal_image,
               main_motion_emissive_image,
               main_entity_id_image,
@@ -797,7 +761,6 @@ export class DeferredShadingStrategy {
           (graph, frame_data, encoder) => {
             const albedo = graph.get_physical_image(main_albedo_image);
             const smra = graph.get_physical_image(main_smra_image);
-            const position = graph.get_physical_image(main_position_image);
             const normal = graph.get_physical_image(main_normal_image);
             const motion_emissive = graph.get_physical_image(main_motion_emissive_image);
             const entity_id = graph.get_physical_image(main_entity_id_image);
@@ -809,9 +772,6 @@ export class DeferredShadingStrategy {
             }
             if (smra) {
               smra.config.load_op = load_op_load;
-            }
-            if (position) {
-              position.config.load_op = load_op_load;
             }
             if (normal) {
               normal.config.load_op = load_op_load;
@@ -989,7 +949,6 @@ export class DeferredShadingStrategy {
               ? main_transparency_accum_image
               : main_albedo_image,
             main_smra_image,
-            main_position_image,
             main_normal_image,
             main_motion_emissive_image,
             main_depth_image,
@@ -1181,7 +1140,6 @@ export class DeferredShadingStrategy {
             outputs: [
               main_albedo_image,
               main_smra_image,
-              main_position_image,
               main_normal_image,
               main_motion_emissive_image,
               main_depth_image,
@@ -1201,7 +1159,6 @@ export class DeferredShadingStrategy {
       // └─────────────────────────────────────────────────────────────────────────────┘
       if (shadows_enabled) {
         this.as_vsm.add_passes(render_graph, {
-          position_texture: main_position_image,
           depth_texture: main_depth_image,
           entity_flags: entity_flags,
           aabb_bounds: aabb_bounds,
@@ -1225,8 +1182,8 @@ export class DeferredShadingStrategy {
           render_graph,
           image_extent.width,
           image_extent.height,
-          main_position_image,
-          prev_position_image,
+          main_depth_image,
+          prev_depth_image,
           main_normal_image,
           prev_normal_image,
           main_albedo_image,
@@ -1254,8 +1211,6 @@ export class DeferredShadingStrategy {
           render_graph,
           image_extent.width,
           image_extent.height,
-          main_position_image,
-          prev_position_image,
           main_normal_image,
           prev_normal_image,
           main_albedo_image,
@@ -1282,9 +1237,9 @@ export class DeferredShadingStrategy {
           image_extent.width,
           image_extent.height,
           main_normal_image,
-          main_position_image,
+          main_depth_image,
           prev_normal_image,
-          prev_position_image,
+          prev_depth_image,
           main_motion_emissive_image,
           main_smra_image,
           prev_lighting,
@@ -1310,7 +1265,6 @@ export class DeferredShadingStrategy {
           main_albedo_image,
           main_smra_image,
           main_normal_image,
-          main_position_image,
           main_motion_emissive_image,
           main_depth_image,
           dense_lights,
@@ -1380,7 +1334,6 @@ export class DeferredShadingStrategy {
           render_graph,
           image_extent.width,
           image_extent.height,
-          main_position_image,
           main_normal_image,
           main_depth_image,
           post_lighting_image_desc,
@@ -1411,12 +1364,6 @@ export class DeferredShadingStrategy {
           const curr_final_lighting = graph.get_physical_image(curr_post_bloom);
           const prev_final_lighting = graph.get_physical_image(prev_lighting);
           prev_final_lighting.copy_texture(encoder, curr_final_lighting);
-
-          const curr_position = graph.get_physical_image(main_position_image);
-          const prev_position = graph.get_physical_image(prev_position_image);
-          if (prev_position) {
-            prev_position.copy_texture(encoder, curr_position);
-          }
 
           const curr_normal = graph.get_physical_image(main_normal_image);
           const prev_normal = graph.get_physical_image(prev_normal_image);
@@ -1529,7 +1476,6 @@ export class DeferredShadingStrategy {
               [
                 main_motion_emissive_image,
                 main_depth_image,
-                main_position_image,
                 post_lighting_image_desc,
               ],
               0,
@@ -1778,7 +1724,6 @@ export class DeferredShadingStrategy {
           (graph, frame_data, encoder) => {
             const albedo = graph.get_physical_image(main_albedo_image);
             const smra = graph.get_physical_image(main_smra_image);
-            const position = graph.get_physical_image(main_position_image);
             const normal = graph.get_physical_image(main_normal_image);
             const motion_emissive = graph.get_physical_image(main_motion_emissive_image);
             const entity_id = graph.get_physical_image(main_entity_id_image);
@@ -1790,9 +1735,6 @@ export class DeferredShadingStrategy {
             }
             if (smra) {
               smra.config.load_op = load_op_clear;
-            }
-            if (position) {
-              position.config.load_op = load_op_clear;
             }
             if (normal) {
               normal.config.load_op = load_op_clear;

@@ -21,7 +21,7 @@
 @group(1) @binding(1) var gi_low_direct: texture_2d<f32>;
 @group(1) @binding(2) var gi_low_indirect_diffuse: texture_2d<f32>;
 @group(1) @binding(3) var gi_low_indirect_specular: texture_2d<f32>;
-@group(1) @binding(4) var gbuffer_position: texture_2d<f32>;
+@group(1) @binding(4) var depth_texture: texture_2d<f32>;
 @group(1) @binding(5) var gbuffer_normal: texture_2d<f32>;
 @group(1) @binding(6) var gbuffer_smra: texture_2d<f32>;
 @group(1) @binding(7) var out_direct: texture_storage_2d<rgba16float, write>;
@@ -105,7 +105,13 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
 
     let view = view_buffer[u32(frame_info.view_index)];
     let camera_position = view.view_position.xyz;
-    let center_position = textureLoad(gbuffer_position, full_pixel_coord, 0).xyz;
+    let view_index = u32(frame_info.view_index);
+    let center_depth_sample = textureLoad(depth_texture, full_pixel_coord, 0).r;
+    let center_position = reconstruct_world_position(
+        coord_to_uv(full_pixel_coord, full_res),
+        center_depth_sample,
+        view_index
+    );
     let center_depth = length(center_position - camera_position);
     let roughness = clamp(textureLoad(gbuffer_smra, full_pixel_coord, 0).g, 0.0, 1.0);
     let should_use_eight_tap = roughness < SPECULAR_EIGHT_TAP_ROUGHNESS_THRESHOLD;
@@ -135,10 +141,10 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let c01_full = gi_pixel_to_full_res_pixel_coord(vec2<u32>(c01_i), upscale_factor, full_res);
     let c11_full = gi_pixel_to_full_res_pixel_coord(vec2<u32>(c11_i), upscale_factor, full_res);
 
-    let c00_pos = textureLoad(gbuffer_position, vec2<i32>(c00_full), 0).xyz;
-    let c10_pos = textureLoad(gbuffer_position, vec2<i32>(c10_full), 0).xyz;
-    let c01_pos = textureLoad(gbuffer_position, vec2<i32>(c01_full), 0).xyz;
-    let c11_pos = textureLoad(gbuffer_position, vec2<i32>(c11_full), 0).xyz;
+    let c00_pos = reconstruct_world_position(coord_to_uv(vec2<i32>(c00_full), full_res), textureLoad(depth_texture, vec2<i32>(c00_full), 0).r, view_index);
+    let c10_pos = reconstruct_world_position(coord_to_uv(vec2<i32>(c10_full), full_res), textureLoad(depth_texture, vec2<i32>(c10_full), 0).r, view_index);
+    let c01_pos = reconstruct_world_position(coord_to_uv(vec2<i32>(c01_full), full_res), textureLoad(depth_texture, vec2<i32>(c01_full), 0).r, view_index);
+    let c11_pos = reconstruct_world_position(coord_to_uv(vec2<i32>(c11_full), full_res), textureLoad(depth_texture, vec2<i32>(c11_full), 0).r, view_index);
 
     let c00_n = safe_normalize(textureLoad(gbuffer_normal, vec2<i32>(c00_full), 0).xyz);
     let c10_n = safe_normalize(textureLoad(gbuffer_normal, vec2<i32>(c10_full), 0).xyz);
@@ -207,7 +213,11 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
             let tap_i = clamp_i32(center_gi_i + tap_offsets[tap_index], vec2<i32>(0, 0), max_gi_i);
             let tap_full = gi_pixel_to_full_res_pixel_coord(vec2<u32>(tap_i), upscale_factor, full_res);
 
-            let tap_position = textureLoad(gbuffer_position, vec2<i32>(tap_full), 0).xyz;
+            let tap_position = reconstruct_world_position(
+                coord_to_uv(vec2<i32>(tap_full), full_res),
+                textureLoad(depth_texture, vec2<i32>(tap_full), 0).r,
+                view_index
+            );
             let tap_normal = safe_normalize(textureLoad(gbuffer_normal, vec2<i32>(tap_full), 0).xyz);
             let tap_depth = length(tap_position - camera_position);
 

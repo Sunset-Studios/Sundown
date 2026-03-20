@@ -47,8 +47,8 @@
 @group(1) @binding(2) var pixel_radiance_prev_direct: texture_2d<f32>;
 @group(1) @binding(3) var pixel_radiance_prev_indirect_diffuse: texture_2d<f32>;
 @group(1) @binding(4) var pixel_radiance_prev_indirect_specular: texture_2d<f32>;
-@group(1) @binding(5) var gbuffer_position: texture_2d<f32>;
-@group(1) @binding(6) var gbuffer_position_prev: texture_2d<f32>;
+@group(1) @binding(5) var depth_texture: texture_2d<f32>;
+@group(1) @binding(6) var prev_depth_texture: texture_2d<f32>;
 @group(1) @binding(7) var gbuffer_normal: texture_2d<f32>;
 @group(1) @binding(8) var gbuffer_normal_prev: texture_2d<f32>;
 @group(1) @binding(9) var gbuffer_motion: texture_2d<f32>;
@@ -149,18 +149,23 @@ fn test_corner_validity(
     
     // Load previous frame's geometry
     let corner_full_coord = gi_pixel_to_full_res_pixel_coord(vec2<u32>(corner_coord), upscale_factor, full_res);
-    let prev_position = textureLoad(gbuffer_position_prev, corner_full_coord, 0u).xyz;
+    let prev_depth = textureLoad(prev_depth_texture, corner_full_coord, 0u).r;
     let prev_normal_data = textureLoad(gbuffer_normal_prev, corner_full_coord, 0u);
     let prev_normal = safe_normalize(prev_normal_data.xyz);
     
     // Skip sky pixels
-    if (length(prev_normal_data.xyz) < 0.01) {
+    if (length(prev_normal_data.xyz) < 0.01 || prev_depth >= 1.0) {
         return 0.0;
     }
     
     // Depth similarity test (relative difference)
-    let prev_depth = length(prev_position - camera_position);
-    let depth_diff = abs(current_depth - prev_depth) / max(current_depth, 0.001);
+    let prev_position = reconstruct_prev_world_position(
+        coord_to_uv(vec2<i32>(corner_full_coord), full_res),
+        prev_depth,
+        u32(frame_info.view_index)
+    );
+    let prev_linear_depth = length(prev_position - camera_position);
+    let depth_diff = abs(current_depth - prev_linear_depth) / max(current_depth, 0.001);
     let depth_valid = depth_diff < DEPTH_THRESHOLD;
     
     // Normal similarity test
@@ -193,10 +198,15 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     // ─────────────────────────────────────────────────────────────────────────
     // Read G-buffer for current pixel
     // ─────────────────────────────────────────────────────────────────────────
-    let position = textureLoad(gbuffer_position, full_pixel_coord, 0u).xyz;
+    let depth = textureLoad(depth_texture, full_pixel_coord, 0u).r;
     let normal_data = textureLoad(gbuffer_normal, full_pixel_coord, 0u);
     let normal = safe_normalize(normal_data.xyz);
     let normal_length = length(normal_data.xyz);
+    let position = reconstruct_world_position(
+        coord_to_uv(vec2<i32>(full_pixel_coord), full_res),
+        depth,
+        u32(frame_info.view_index)
+    );
     let current_depth = length(position - camera_position);
     
     // Skip sky pixels (no geometry)

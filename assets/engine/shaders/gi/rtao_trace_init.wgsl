@@ -21,7 +21,7 @@
 @group(1) @binding(1) var<storage, read_write> gi_counters: GICounters;
 @group(1) @binding(2) var<storage, read_write> pixel_path_state: array<AOPixelPathState>;
 @group(1) @binding(3) var<storage, read_write> ray_work_queue: array<u32>;
-@group(1) @binding(4) var gbuffer_position: texture_2d<f32>;
+@group(1) @binding(4) var depth_texture: texture_2d<f32>;
 @group(1) @binding(5) var gbuffer_normal: texture_2d<f32>;
 @group(1) @binding(6) var blue_noise: texture_2d_array<f32>;
 
@@ -80,7 +80,9 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         return;
     }
 
-    let position = textureLoad(gbuffer_position, full_pixel_coord, 0u).xyz;
+    let full_uv = coord_to_uv(vec2<i32>(full_pixel_coord), full_resolution);
+    let depth = textureLoad(depth_texture, full_pixel_coord, 0u).r;
+    let position = reconstruct_world_position(full_uv, depth, u32(frame_info.view_index));
     let uv = rtao_blue_noise_2d(gi_pixel_coord, frame_id, ray_slot);
     let ray_dir = sample_cosine_hemisphere(uv.x, uv.y, normal);
 

@@ -10,45 +10,44 @@
 @group(1) @binding(1) var albedo_texture: texture_2d<f32>;
 @group(1) @binding(2) var smra_texture: texture_2d<f32>;
 @group(1) @binding(3) var normal_texture: texture_2d<f32>;
-@group(1) @binding(4) var position_texture: texture_2d<f32>;
-@group(1) @binding(5) var motion_emissive_texture: texture_2d<f32>;
-@group(1) @binding(6) var depth_texture: texture_depth_2d;
-@group(1) @binding(7) var<storage, read> dense_lights_buffer: DenseLightsBuffer;
+@group(1) @binding(4) var motion_emissive_texture: texture_2d<f32>;
+@group(1) @binding(5) var depth_texture: texture_2d<f32>;
+@group(1) @binding(6) var<storage, read> dense_lights_buffer: DenseLightsBuffer;
 
 #if GI_ENABLED
-  @group(1) @binding(8) var gi_direct_texture: texture_2d<f32>;
-  @group(1) @binding(9) var gi_indirect_diffuse_texture: texture_2d<f32>;
-  @group(1) @binding(10) var gi_indirect_specular_texture: texture_2d<f32>;
+  @group(1) @binding(7) var gi_direct_texture: texture_2d<f32>;
+  @group(1) @binding(8) var gi_indirect_diffuse_texture: texture_2d<f32>;
+  @group(1) @binding(9) var gi_indirect_specular_texture: texture_2d<f32>;
   #if SHADOWS_ENABLED
-    @group(1) @binding(11) var<storage, read> shadow_atlas_depth: array<u32>;
-    @group(1) @binding(12) var page_table: texture_storage_2d_array<r32uint, read>;
-    @group(1) @binding(13) var page_offset: texture_storage_2d_array<rgba32float, read>;
-    @group(1) @binding(14) var<uniform> vsm_settings: ASVSMSettings;
+    @group(1) @binding(10) var<storage, read> shadow_atlas_depth: array<u32>;
+    @group(1) @binding(11) var page_table: texture_storage_2d_array<r32uint, read>;
+    @group(1) @binding(12) var page_offset: texture_storage_2d_array<rgba32float, read>;
+    @group(1) @binding(13) var<uniform> vsm_settings: ASVSMSettings;
     #if AO_ENABLED
-      @group(1) @binding(15) var ao_texture: texture_2d<f32>;
-      @group(1) @binding(16) var bent_normal_texture: texture_2d<f32>;
+      @group(1) @binding(14) var ao_texture: texture_2d<f32>;
+      @group(1) @binding(15) var bent_normal_texture: texture_2d<f32>;
     #endif
   #else
     #if AO_ENABLED
-      @group(1) @binding(11) var ao_texture: texture_2d<f32>;
-      @group(1) @binding(12) var bent_normal_texture: texture_2d<f32>;
+      @group(1) @binding(10) var ao_texture: texture_2d<f32>;
+      @group(1) @binding(11) var bent_normal_texture: texture_2d<f32>;
     #endif
   #endif
 #else
   #if SHADOWS_ENABLED
-    @group(1) @binding(8) var<storage, read> shadow_atlas_depth: array<u32>;
-    @group(1) @binding(9) var page_table: texture_storage_2d_array<r32uint, read>;
-    @group(1) @binding(10) var page_offset: texture_storage_2d_array<rgba32float, read>;
-    @group(1) @binding(11) var<uniform> vsm_settings: ASVSMSettings;
+    @group(1) @binding(7) var<storage, read> shadow_atlas_depth: array<u32>;
+    @group(1) @binding(8) var page_table: texture_storage_2d_array<r32uint, read>;
+    @group(1) @binding(9) var page_offset: texture_storage_2d_array<rgba32float, read>;
+    @group(1) @binding(10) var<uniform> vsm_settings: ASVSMSettings;
 
     #if AO_ENABLED
-      @group(1) @binding(12) var ao_texture: texture_2d<f32>;
-      @group(1) @binding(13) var bent_normal_texture: texture_2d<f32>;
+      @group(1) @binding(11) var ao_texture: texture_2d<f32>;
+      @group(1) @binding(12) var bent_normal_texture: texture_2d<f32>;
     #endif
   #else
     #if AO_ENABLED
-      @group(1) @binding(8) var ao_texture: texture_2d<f32>;
-      @group(1) @binding(9) var bent_normal_texture: texture_2d<f32>;
+      @group(1) @binding(7) var ao_texture: texture_2d<f32>;
+      @group(1) @binding(8) var bent_normal_texture: texture_2d<f32>;
     #endif
   #endif
 #endif
@@ -120,11 +119,11 @@ struct FragmentOutput {
     //normalized_normal = normalize(bent_normal);
 #endif
 
-    var tex_position = textureSample(position_texture, non_filtering_sampler, uv);
-    var position = tex_position.xyz;
-    var position4 = vec4<f32>(position, 1.0);
-
     let view_index = u32(frame_info.view_index);
+    let full_resolution = vec2<u32>(u32(frame_info.resolution.x), u32(frame_info.resolution.y));
+    let depth = textureLoad(depth_texture, uv_to_coord(uv, full_resolution), 0).r;
+    var position = reconstruct_world_position(uv, depth, view_index);
+    var position4 = vec4<f32>(position, 1.0);
     var view_dir = normalize(view_buffer[view_index].view_position.xyz - position);
 
     let unlit = min(1u, u32(normal_length <= 0.0) + u32(1.0 - deferred_standard_lighting));

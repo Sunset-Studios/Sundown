@@ -156,8 +156,6 @@ export class VBAO {
     render_graph,
     width,
     height,
-    gbuffer_position,
-    prev_gbuffer_position,
     gbuffer_normal,
     prev_gbuffer_normal,
     gbuffer_albedo,

@@ -3,7 +3,7 @@
 @group(1) @binding(0) var raycast_hit_texture: texture_2d<f32>;
 @group(1) @binding(1) var raycast_mask_texture: texture_2d<f32>;
 @group(1) @binding(2) var gbuffer_normal: texture_2d<f32>;
-@group(1) @binding(3) var gbuffer_position: texture_2d<f32>;
+@group(1) @binding(3) var depth_texture: texture_2d<f32>;
 @group(1) @binding(4) var gbuffer_smra: texture_2d<f32>;
 @group(1) @binding(5) var lighting_history_texture: texture_2d<f32>;
 @group(1) @binding(6) var motion_emissive_texture: texture_2d<f32>;
@@ -97,10 +97,11 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let metallic = smra.b;
     let reflectance = smra.r;
     let normal = safe_normalize(normal_data);
-    let position = textureLoad(gbuffer_position, coord, 0).xyz;
 
     let uv = (vec2<f32>(f32(gid.x), f32(gid.y)) + 0.5) / vec2<f32>(f32(full_resolution.x), f32(full_resolution.y));
     let view_index = u32(frame_info.view_index);
+    let depth = textureLoad(depth_texture, coord, 0).r;
+    let position = reconstruct_world_position(uv, depth, view_index);
     let view_dir = safe_normalize(view_buffer[view_index].view_position.xyz - position);
 
     let max_mip = max(0.0, f32(textureNumLevels(lighting_history_texture) - 1u));
@@ -125,7 +126,11 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         }
 
         let hit_coord = uv_to_coord(hit.xy, full_resolution);
-        let hit_pos = textureLoad(gbuffer_position, hit_coord, 0).xyz;
+        let hit_depth = textureLoad(depth_texture, hit_coord, 0).r;
+        if (hit_depth >= 1.0) {
+            continue;
+        }
+        let hit_pos = reconstruct_world_position(hit.xy, hit_depth, view_index);
 
         let light_dir = safe_normalize(hit_pos - position);
 

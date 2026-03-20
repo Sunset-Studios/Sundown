@@ -21,21 +21,22 @@ export class SharedViewBuffer {
     prev_projection_matrix: 48,
     view_projection_matrix: 64,
     inverse_view_projection_matrix: 80,
-    view_direction: 96,
-    near: 100,
-    far: 101,
-    culling_enabled: 102,
-    occlusion_enabled: 103,
-    frustum: 104,
-    view_position: 128,
-    view_rotation: 132,
-    view_right: 136,
-    fov: 140,
-    aspect_ratio: 141,
-    distance_check_enabled: 142,
-    velocity: 143,
-    zoom: 147,
-    clipmap_count: 148,
+    prev_inverse_view_projection_matrix: 96,
+    view_direction: 112,
+    near: 116,
+    far: 117,
+    culling_enabled: 118,
+    occlusion_enabled: 119,
+    frustum: 120,
+    view_position: 144,
+    view_rotation: 148,
+    view_right: 152,
+    fov: 156,
+    aspect_ratio: 157,
+    distance_check_enabled: 158,
+    velocity: 159,
+    zoom: 163,
+    clipmap_count: 164,
   };
 
   // --- Per-view Access Wrapper ---
@@ -99,6 +100,15 @@ export class SharedViewBuffer {
     }
     set inverse_view_projection_matrix(m) {
       const f = SharedViewBuffer.offsets.inverse_view_projection_matrix;
+      SharedViewBuffer.raw_data.set(m, this.base + f);
+      SharedViewBuffer.dirty_states.set(this.idx, 1);
+    }
+    get prev_inverse_view_projection_matrix() {
+      const f = SharedViewBuffer.offsets.prev_inverse_view_projection_matrix;
+      return SharedViewBuffer.raw_data.subarray(this.base + f, this.base + f + 16);
+    }
+    set prev_inverse_view_projection_matrix(m) {
+      const f = SharedViewBuffer.offsets.prev_inverse_view_projection_matrix;
       SharedViewBuffer.raw_data.set(m, this.base + f);
       SharedViewBuffer.dirty_states.set(this.idx, 1);
     }
@@ -296,8 +306,8 @@ export class SharedViewBuffer {
   };
 
   // --- Layout Configuration ---
-  // floats per view: 6×16 matrix + 4×4 vector + 6×4 frustum + 4 floats = 140
-  static floats_per_view = 152;
+  // floats per view: 7x16 matrix + 4x4 vector + 6x4 frustum + 4 floats = 156
+  static floats_per_view = 168;
   static type_size_bytes = SharedViewBuffer.floats_per_view * 4;
 
   // --- Raw Data & Dirty Flags ---
@@ -347,6 +357,10 @@ export class SharedViewBuffer {
     SharedViewBuffer.raw_data.set(
       mat4.create(),
       base + SharedViewBuffer.offsets.inverse_view_projection_matrix
+    );
+    SharedViewBuffer.raw_data.set(
+      mat4.create(),
+      base + SharedViewBuffer.offsets.prev_inverse_view_projection_matrix
     );
     SharedViewBuffer.raw_data.set(
       vec4.fromValues(0, 0, 0, 1),
@@ -609,6 +623,23 @@ export class SharedViewBuffer {
         base + SharedViewBuffer.offsets.inverse_view_projection_matrix
       );
 
+      const prev_view_matrix = SharedViewBuffer.raw_data.subarray(
+        base + SharedViewBuffer.offsets.prev_view_matrix,
+        base + SharedViewBuffer.offsets.prev_view_matrix + 16
+      );
+      const prev_projection_matrix = SharedViewBuffer.raw_data.subarray(
+        base + SharedViewBuffer.offsets.prev_projection_matrix,
+        base + SharedViewBuffer.offsets.prev_projection_matrix + 16
+      );
+      const prev_view_projection_matrix = mat4.create();
+      mat4.mul(prev_view_projection_matrix, prev_projection_matrix, prev_view_matrix);
+      const prev_inverse_view_projection_matrix = mat4.create();
+      mat4.invert(prev_inverse_view_projection_matrix, prev_view_projection_matrix);
+      SharedViewBuffer.raw_data.set(
+        prev_inverse_view_projection_matrix,
+        base + SharedViewBuffer.offsets.prev_inverse_view_projection_matrix
+      );
+
       // Frustum planes
       const fr = Array(24).fill(0);
       const tmpv = vec3.create();
@@ -688,11 +719,6 @@ export class SharedViewBuffer {
 
       // Compute view velocity as the difference between camera positions
       // extracted from the previous and current view matrices.
-      const prev_view_matrix = SharedViewBuffer.raw_data.subarray(
-          base + SharedViewBuffer.offsets.prev_view_matrix,
-          base + SharedViewBuffer.offsets.prev_view_matrix + 16
-      );
-
       // Invert both matrices to get the camera transform (whose translation is the camera position)
       const inv_prev_view = mat4.invert(mat4.create(), prev_view_matrix);
       const inv_new_view = mat4.invert(mat4.create(), view_matrix);
