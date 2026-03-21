@@ -78,11 +78,11 @@ const pte_frame_age_shift       : u32 = 19u;
 const pte_frame_age_mask        : u32 = 0x07F80000u;
 
 const pte_dirty_linger_shift    : u32 = 27u;
-const pte_dirty_linger_mask     : u32 = 0x78000000u;
-
-const vsm_dirty_linger_frames   : u32 = 1u;
+const pte_dirty_linger_mask     : u32 = 0x08000000u;
 
 const lru_pinned_flag           : u32 = 0x80000000u;
+
+const as_vsm_dirty_clear_min_frame_age: u32 = 1u;
 
 // C is a constant that controls the log depth curve; try 1000.0 or scene far/near ratio
 const LOG_C = 2000.0;
@@ -131,18 +131,20 @@ fn vsm_pte_get_frame_age(pte: u32) -> u32 {
     return ((pte & pte_frame_age_mask) >> pte_frame_age_shift) & 0x000000FFu;
 }
 
-fn vsm_pte_get_dirty_linger(pte: u32) -> u32 {
-    return (pte & pte_dirty_linger_mask) >> pte_dirty_linger_shift;
-}
-
-fn vsm_pte_set_dirty_linger(pte: u32, linger: u32) -> u32 {
-    let clamped_linger = min(linger, 0xFu);
-    return (pte & ~pte_dirty_linger_mask) |
-        ((clamped_linger << pte_dirty_linger_shift) & pte_dirty_linger_mask);
-}
-
 fn vsm_pte_mark_dirty(pte: u32) -> u32 {
-    return vsm_pte_set_dirty_linger(pte | pte_dirty_mask, vsm_dirty_linger_frames);
+    return (pte & ~(pte_frame_age_mask | pte_dirty_linger_mask)) | pte_dirty_mask;
+}
+
+fn vsm_pte_mark_dirty_lingering(pte: u32) -> u32 {
+    return vsm_pte_mark_dirty(pte) | pte_dirty_linger_mask;
+}
+
+fn vsm_pte_should_linger_dirty(pte: u32) -> bool {
+    return (pte & pte_dirty_linger_mask) != 0u;
+}
+
+fn vsm_pte_clear_dirty(pte: u32) -> u32 {
+    return pte & ~(pte_dirty_mask | pte_dirty_linger_mask);
 }
 
 // A page is "valid" when it is resident *and* not marked dirty
