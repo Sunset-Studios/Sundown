@@ -31,7 +31,7 @@ fn mark_tile(tile_coords: vec2<u32>, clipmap_index: u32, shadow_index: u32, view
     let is_visible = (bitmask[word] & mask) != 0u;
     if (is_visible) {
         var pte = textureLoad(page_table, tile_coords, slice).r;
-        pte = vsm_pte_mark_dirty(pte);
+        pte = vsm_pte_mark_dirty_lingering(pte);
         textureStore(page_table, tile_coords, slice, vec4<u32>(pte));
         textureStore(page_offset, tile_coords, slice, vec4<f32>(view.view_matrix[3]));
     }
