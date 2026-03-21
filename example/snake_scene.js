@@ -52,64 +52,246 @@ const RIPPLE_PULSE_DURATION = 0.28;
 const RIPPLE_SEGMENT_DELAY = 0.06;
 const RIPPLE_AMPLITUDE = 0.28;
 const RIPPLE_MAX_MULTIPLIER = 1.45;
+const UI_FONT_FAMILY = '"ExoDisplay", "Poppins", sans-serif';
 
 const HUD_PANEL = {
   layout: "column",
-  gap: 6,
-  x: 40,
-  y: 40,
-  width: 240,
-  anchor_x: "right",
-  padding: 12,
-  background_color: "rgba(8, 11, 16, 0.62)",
-  border: "1px solid rgba(144, 156, 176, 0.26)",
-  corner_radius: 12,
-  box_shadow: "0 12 28 rgba(0, 0, 0, 0.18)",
+  gap: 10,
+  x: 18,
+  y: 18,
+  width: 248,
+  padding: 14,
+  background_color: "rgba(5, 10, 18, 0.68)",
+  border: "1px solid rgba(95, 164, 214, 0.22)",
+  corner_radius: 18,
+  box_shadow: "0 14 28 rgba(0,0,0,0.22)",
+};
+
+const HUD_BADGE = {
+  x: 0,
+  width: 92,
+  height: 24,
+  text_align: "center",
+  text_valign: "middle",
+  font: `700 10px ${UI_FONT_FAMILY}`,
+  text_color: "#d8f6ff",
+  background_color: "rgba(67, 184, 255, 0.18)",
+  border: "1px solid rgba(92, 196, 255, 0.34)",
+  corner_radius: 999,
 };
 
 const HUD_TITLE = {
+  x: 0,
   width: "100%",
   height: "fit-content",
-  font: "700 22px monospace",
-  text_color: "#f3f6fb",
+  font: `700 26px ${UI_FONT_FAMILY}`,
+  text_color: "#f7fbff",
+  text_align: "left",
 };
 
-const HUD_TEXT = {
+const STATUS_PANEL = {
+  x: 0,
+  width: "100%",
+  layout: "column",
+  gap: 4,
+  padding: 12,
+  background_color: "rgba(11, 18, 30, 0.92)",
+  border: "1px solid rgba(95, 164, 214, 0.18)",
+  corner_radius: 16,
+};
+
+const STATUS_BADGE = {
+  x: 0,
+  width: "fit-content",
+  height: 24,
+  text_padding: 10,
+  text_align: "center",
+  text_valign: "middle",
+  font: `700 10px ${UI_FONT_FAMILY}`,
+  corner_radius: 999,
+};
+
+const STATUS_TITLE = {
+  x: 0,
   width: "100%",
   height: "fit-content",
-  font: "14px monospace",
-  text_color: "#cbd5e3",
+  font: `700 18px ${UI_FONT_FAMILY}`,
+  text_color: "#f7fbff",
+  text_align: "left",
+};
+
+const STATUS_TEXT = {
+  x: 0,
+  width: "100%",
+  height: "fit-content",
+  wrap: true,
+  text_padding: 0,
+  font: `500 12px ${UI_FONT_FAMILY}`,
+  text_color: "#9bb0c6",
+  text_align: "left",
+  text_valign: "top",
+};
+
+const HINTS_STRIP = {
+  x: 0,
+  width: "100%",
+  layout: "row",
+  gap: 8,
+};
+
+const HINT_CHIP = {
+  x: 0,
+  width: 106,
+  height: 28,
+  text_align: "center",
+  text_valign: "middle",
+  font: `600 11px ${UI_FONT_FAMILY}`,
+  text_color: "#c7d7e8",
+  background_color: "rgba(16, 26, 40, 0.76)",
+  border: "1px solid rgba(89, 113, 139, 0.28)",
+  corner_radius: 999,
 };
 
 const CONTROLS_PANEL = {
-  width: 250,
-  height: 150,
-  x: 40,
-  y: 40,
-  anchor_x: "right",
+  layout: "column",
+  gap: 15,
+  width: 244,
+  height: 210,
+  x: 18,
+  y: 18,
   anchor_y: "bottom",
-  padding: 10,
-  background_color: "transparent",
+  anchor_x: "right",
+  padding: 15,
+  background_color: "rgba(5, 10, 18, 0.68)",
+  border: "1px solid rgba(95, 164, 214, 0.22)",
+  corner_radius: 18,
+  box_shadow: "0 14 28 rgba(0,0,0,0.22)",
+};
+
+const CONTROLS_TITLE = {
+  x: 0,
+  y: 0,
+  width: "100%",
+  height: "fit-content",
+  font: `700 18px ${UI_FONT_FAMILY}`,
+  text_color: "#f7fbff",
+  text_align: "center",
+};
+
+const D_PAD_PANEL = {
+  x: 0,
+  y: 0,
+  width: "100%",
+  layout: "column",
+  gap: 8,
+  background_color: "rgba(12, 20, 32, 0.88)",
+  border: "1px solid rgba(95, 164, 214, 0.18)",
+  corner_radius: 16,
+};
+
+const CONTROL_ROW = {
+  x: 0,
+  y: 0,
+  width: "100%",
+  height: 42,
+  layout: "row",
+  gap: 12,
 };
 
 const CONTROL_BUTTON = {
-  width: 75,
-  height: 45,
-  font: "13px monospace",
-  text_color: "#eef3fb",
-  background_color: "rgba(26, 35, 47, 0.84)",
-  border: "1px solid rgba(132, 148, 172, 0.34)",
-  corner_radius: 9,
+  x: 0,
+  y: 0,
+  width: 64,
+  height: 42,
+  font: `700 12px ${UI_FONT_FAMILY}`,
+  text_color: "#f5faff",
+  background_color: "rgba(24, 39, 58, 0.92)",
+  border: "1px solid rgba(103, 124, 153, 0.34)",
+  corner_radius: 12,
 };
 
 const ACTION_BUTTON = {
-  width: 82,
-  height: 36,
-  font: "13px monospace",
-  text_color: "#eef3fb",
-  background_color: "rgba(26, 35, 47, 0.84)",
-  border: "1px solid rgba(132, 148, 172, 0.34)",
-  corner_radius: 9,
+  x: 0,
+  y: 0,
+  width: 102,
+  height: 38,
+  font: `700 12px ${UI_FONT_FAMILY}`,
+  text_color: "#f5faff",
+  background_color: "rgba(20, 32, 47, 0.94)",
+  border: "1px solid rgba(103, 124, 153, 0.32)",
+  corner_radius: 12,
+};
+
+const ACTION_ROW = {
+  x: 0,
+  y: 0,
+  width: "100%",
+  height: 38,
+  layout: "row",
+  gap: 12,
+};
+
+const TOP_ROW_SPACER = {
+  x: 0,
+  y: 0,
+  width: 64,
+  height: 42,
+};
+
+const OVERLAY_PANEL = {
+  width: 420,
+  layout: "column",
+  gap: 10,
+  padding: 24,
+  background_color: "rgba(5, 10, 18, 0.9)",
+  border: "1px solid rgba(95, 164, 214, 0.24)",
+  corner_radius: 26,
+  box_shadow: "0 24 44 rgba(0,0,0,0.32)",
+};
+
+const OVERLAY_TAG = {
+  x: 0,
+  y: 0,
+  width: "fit-content",
+  height: 30,
+  text_padding: 14,
+  text_align: "center",
+  text_valign: "middle",
+  font: `700 11px ${UI_FONT_FAMILY}`,
+  corner_radius: 999,
+};
+
+const OVERLAY_TITLE = {
+  x: 0,
+  y: 0,
+  width: "100%",
+  height: "fit-content",
+  font: `700 34px ${UI_FONT_FAMILY}`,
+  text_color: "#f7fbff",
+  text_align: "left",
+};
+
+const OVERLAY_TEXT = {
+  x: 0,
+  y: 0,
+  width: "100%",
+  height: "fit-content",
+  wrap: true,
+  text_padding: 0,
+  font: `500 14px ${UI_FONT_FAMILY}`,
+  text_color: "#a5bad0",
+  text_align: "left",
+  text_valign: "top",
+};
+
+const OVERLAY_HINT = {
+  x: 0,
+  y: 0,
+  width: "100%",
+  height: "fit-content",
+  font: `500 12px ${UI_FONT_FAMILY}`,
+  text_color: "#7f95aa",
+  text_align: "left",
 };
 
 export class SnakeScene extends Scene {
@@ -443,6 +625,109 @@ export class SnakeScene extends Scene {
     return keys.some((key) => InputProvider.get_action(key));
   }
 
+  get_heading_label(direction) {
+    switch (direction) {
+      case DIRECTIONS.UP:
+        return "Northbound";
+      case DIRECTIONS.DOWN:
+        return "Southbound";
+      case DIRECTIONS.LEFT:
+        return "Westbound";
+      case DIRECTIONS.RIGHT:
+      default:
+        return "Eastbound";
+    }
+  }
+
+  get_status_meta() {
+    if (this.state.won) {
+      return {
+        tag: "BOARD CLEARED",
+        title: "Perfect line",
+        detail: "Every tile is covered. Restart to chase another clean sweep.",
+        badge_background: "rgba(80, 220, 159, 0.18)",
+        badge_border: "1px solid rgba(122, 242, 190, 0.34)",
+        badge_text: "#c6ffea",
+        accent_background: "rgba(25, 54, 43, 0.84)",
+        accent_border: "1px solid rgba(96, 212, 163, 0.24)",
+      };
+    }
+
+    if (this.state.gameOver) {
+      return {
+        tag: "RUN ENDED",
+        title: "Collision detected",
+        detail: "The board is still warm. Tap Restart or press R to jump right back in.",
+        badge_background: "rgba(255, 115, 115, 0.18)",
+        badge_border: "1px solid rgba(255, 148, 148, 0.34)",
+        badge_text: "#ffd9d9",
+        accent_background: "rgba(59, 27, 31, 0.88)",
+        accent_border: "1px solid rgba(255, 120, 132, 0.22)",
+      };
+    }
+
+    if (this.state.paused) {
+      return {
+        tag: "PAUSED",
+        title: "Hold the line",
+        detail: "Resume with Space, P, or the button below whenever you are ready.",
+        badge_background: "rgba(255, 196, 92, 0.18)",
+        badge_border: "1px solid rgba(255, 212, 126, 0.34)",
+        badge_text: "#ffe8b5",
+        accent_background: "rgba(57, 43, 20, 0.88)",
+        accent_border: "1px solid rgba(255, 196, 92, 0.22)",
+      };
+    }
+
+    return {
+      tag: "LIVE",
+      title: "Smooth run",
+      detail: "Keep threading the board. Eat cleanly and let the snake evolve.",
+      badge_background: "rgba(77, 206, 255, 0.18)",
+      badge_border: "1px solid rgba(109, 219, 255, 0.34)",
+      badge_text: "#d6f7ff",
+      accent_background: "rgba(18, 37, 53, 0.9)",
+      accent_border: "1px solid rgba(77, 206, 255, 0.2)",
+    };
+  }
+
+  get_direction_button_style(isActive) {
+    if (isActive) {
+      return {
+        background_color: "rgba(61, 197, 255, 0.26)",
+        border: "1px solid rgba(110, 223, 255, 0.5)",
+        text_color: "#f9fdff",
+      };
+    }
+
+    return {};
+  }
+
+  get_action_button_style(isPrimary) {
+    if (isPrimary) {
+      return {
+        background_color: "rgba(65, 195, 255, 0.22)",
+        border: "1px solid rgba(110, 223, 255, 0.4)",
+      };
+    }
+
+    return {};
+  }
+
+  render_overlay(status) {
+    panel(OVERLAY_PANEL, () => {
+      label(status.tag, {
+        ...OVERLAY_TAG,
+        background_color: status.badge_background,
+        border: status.badge_border,
+        text_color: status.badge_text,
+      });
+      label(status.title, OVERLAY_TITLE);
+      label(status.detail, OVERLAY_TEXT);
+      label("Space / P to pause   |   R / Enter to restart", OVERLAY_HINT);
+    });
+  }
+
   update(deltaTime) {
     this.update_camera_framing();
     this.handle_keyboard();
@@ -474,49 +759,108 @@ export class SnakeScene extends Scene {
   }
 
   render_ui() {
+    const heading = this.state.nextDirection ?? this.state.direction;
+    const headingLabel = this.get_heading_label(heading);
+    const status = this.get_status_meta();
+
     panel(HUD_PANEL, () => {
+      label("SUNDOWN", HUD_BADGE);
       label("Snake 3D", HUD_TITLE);
-      label(`Score: ${this.state.score}`, HUD_TEXT);
-      label("Pause: Space / P", HUD_TEXT);
-      label("Restart: R / Enter", HUD_TEXT);
+
+      panel(
+        {
+          ...STATUS_PANEL,
+          background_color: status.accent_background,
+          border: status.accent_border,
+        },
+        () => {
+          label(status.tag, {
+            ...STATUS_BADGE,
+            background_color: status.badge_background,
+            border: status.badge_border,
+            text_color: status.badge_text,
+          });
+          label(status.title, STATUS_TITLE);
+          label(status.detail, STATUS_TEXT);
+        }
+      );
+
+      panel(HINTS_STRIP, () => {
+        label(headingLabel, HINT_CHIP);
+        label("WASD / Arrows", HINT_CHIP);
+      });
     });
 
     panel(CONTROLS_PANEL, () => {
-      if (button("Up", { ...CONTROL_BUTTON, x: 70, y: 0 }).clicked) {
-        this.queue_direction(DIRECTIONS.UP);
-      }
+      label("Controls", CONTROLS_TITLE);
 
-      if (button("Left", { ...CONTROL_BUTTON, x: 0, y: 45 }).clicked) {
-        this.queue_direction(DIRECTIONS.LEFT);
-      }
+      panel(D_PAD_PANEL, () => {
+        panel(CONTROL_ROW, () => {
+          panel(TOP_ROW_SPACER, () => {});
+          if (
+            button("UP", {
+              ...CONTROL_BUTTON,
+              ...this.get_direction_button_style(heading === DIRECTIONS.UP),
+            }).clicked
+          ) {
+            this.queue_direction(DIRECTIONS.UP);
+          }
+          panel(TOP_ROW_SPACER, () => {});
+        });
 
-      if (button("Down", { ...CONTROL_BUTTON, x: 70, y: 45 }).clicked) {
-        this.queue_direction(DIRECTIONS.DOWN);
-      }
+        panel(CONTROL_ROW, () => {
+          if (
+            button("LEFT", {
+              ...CONTROL_BUTTON,
+              ...this.get_direction_button_style(heading === DIRECTIONS.LEFT),
+            }).clicked
+          ) {
+            this.queue_direction(DIRECTIONS.LEFT);
+          }
 
-      if (button("Right", { ...CONTROL_BUTTON, x: 140, y: 45 }).clicked) {
-        this.queue_direction(DIRECTIONS.RIGHT);
-      }
+          if (
+            button("DOWN", {
+              ...CONTROL_BUTTON,
+              ...this.get_direction_button_style(heading === DIRECTIONS.DOWN),
+            }).clicked
+          ) {
+            this.queue_direction(DIRECTIONS.DOWN);
+          }
 
-      if (
-        button(this.state.paused ? "Resume" : "Pause", {
-          ...ACTION_BUTTON,
-          x: 0,
-          y: 94,
-        }).clicked
-      ) {
-        this.toggle_pause();
-      }
+          if (
+            button("RIGHT", {
+              ...CONTROL_BUTTON,
+              ...this.get_direction_button_style(heading === DIRECTIONS.RIGHT),
+            }).clicked
+          ) {
+            this.queue_direction(DIRECTIONS.RIGHT);
+          }
+        });
+      });
 
-      if (
-        button("Restart", {
-          ...ACTION_BUTTON,
-          x: 140,
-          y: 94,
-        }).clicked
-      ) {
-        this.restart_game();
-      }
+      panel(ACTION_ROW, () => {
+        if (
+          button(this.state.paused ? "Resume" : "Pause", {
+            ...ACTION_BUTTON,
+            ...this.get_action_button_style(this.state.paused),
+          }).clicked
+        ) {
+          this.toggle_pause();
+        }
+
+        if (
+          button("Restart", {
+            ...ACTION_BUTTON,
+            ...this.get_action_button_style(this.state.gameOver || this.state.won),
+          }).clicked
+        ) {
+          this.restart_game();
+        }
+      });
     });
+
+    if (this.state.paused || this.state.gameOver || this.state.won) {
+      this.render_overlay(status);
+    }
   }
 }
