@@ -132,8 +132,7 @@ fn cs(
         ((physical_id_xy_pool.x << pte_phys_x_shift)  & pte_phys_x_mask)    |
         ((physical_id_xy_pool.y << pte_phys_y_shift)  & pte_phys_y_mask)    |
         ((physical_id_xy_pool.z << pte_pool_id_shift) & pte_pool_id_mask)   |
-        (1u      << pte_residency_shift) | // resident
-        (0u      << pte_frame_age_shift);
+        (1u      << pte_residency_shift);
 
       textureStore(page_table, pte_coords.xy, page_table_index, vec4<u32>(vsm_pte_mark_dirty(new_pte_value)));
       // Store the light's VP matrix translation (as a placeholder for the offset)
