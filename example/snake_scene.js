@@ -16,6 +16,7 @@ import { StandardMaterial } from "../engine/src/renderer/material.js";
 import { Mesh } from "../engine/src/renderer/mesh.js";
 import { Renderer } from "../engine/src/renderer/renderer.js";
 import { button, label, panel } from "../engine/src/ui/2d/immediate.js";
+import { is_mobile_platform } from "../engine/src/utility/platform.js";
 
 import {
   DIRECTIONS,
@@ -303,11 +304,13 @@ export class SnakeScene extends Scene {
   state = null;
   rippleBursts = [];
   lastAspectRatio = 0;
+  isMobile = is_mobile_platform();
 
   init() {
     super.init();
 
     this.configure_view();
+    this.configure_ui();
     this.create_materials();
     this.create_light();
     this.create_board();
@@ -360,6 +363,15 @@ export class SnakeScene extends Scene {
 
     view.view_position = [0, requiredDistance, 0.001];
     this.lastAspectRatio = aspectRatio;
+  }
+
+  configure_ui() {
+    if (this.isMobile) {
+      CONTROLS_PANEL.anchor_x = "center";
+      delete CONTROLS_PANEL.x;
+      HUD_PANEL.anchor_x = "center";
+      delete HUD_PANEL.x;
+    }
   }
 
   create_materials() {
@@ -859,7 +871,7 @@ export class SnakeScene extends Scene {
       });
     });
 
-    if (this.state.paused || this.state.gameOver || this.state.won) {
+    if (!this.isMobile && (this.state.paused || this.state.gameOver || this.state.won)) {
       this.render_overlay(status);
     }
   }
