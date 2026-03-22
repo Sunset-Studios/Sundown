@@ -1,13 +1,12 @@
 #include "common.wgsl"
 
 @group(1) @binding(0) var raycast_hit_texture: texture_2d<f32>;
-@group(1) @binding(1) var raycast_mask_texture: texture_2d<f32>;
-@group(1) @binding(2) var gbuffer_normal: texture_2d<f32>;
-@group(1) @binding(3) var depth_texture: texture_2d<f32>;
-@group(1) @binding(4) var gbuffer_smra: texture_2d<f32>;
-@group(1) @binding(5) var lighting_history_texture: texture_2d<f32>;
-@group(1) @binding(6) var motion_emissive_texture: texture_2d<f32>;
-@group(1) @binding(7) var out_resolve: texture_storage_2d<rgba16float, write>;
+@group(1) @binding(1) var gbuffer_normal: texture_2d<f32>;
+@group(1) @binding(2) var depth_texture: texture_2d<f32>;
+@group(1) @binding(3) var gbuffer_smra: texture_2d<f32>;
+@group(1) @binding(4) var lighting_history_texture: texture_2d<f32>;
+@group(1) @binding(5) var motion_emissive_texture: texture_2d<f32>;
+@group(1) @binding(6) var out_resolve: texture_storage_2d<rgba16float, write>;
 
 const EDGE_FACTOR = 1.25;
 const resolve_offsets = array<vec2<i32>, 4>(
@@ -119,7 +118,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         );
 
         let hit = textureLoad(raycast_hit_texture, tap_coord, 0);
-        let mask = textureLoad(raycast_mask_texture, tap_coord, 0).r;
+        let mask = hit.a;
 
         if (mask <= 1e-4 || any(hit.xy < vec2<f32>(0.0)) || any(hit.xy > vec2<f32>(1.0))) {
             continue;
@@ -135,7 +134,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         let light_dir = safe_normalize(hit_pos - position);
 
         let brdf_w = brdf_importance_weight(normal, view_dir, light_dir, roughness, metallic, reflectance);
-        let pdf = max(hit.w, 1e-4);
+        let pdf = max(hit.z, 1e-4);
         let weight = brdf_w / pdf;
 
         let cone_tangent = roughness * roughness;
@@ -145,7 +144,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         let hit_emissive = textureLoad(motion_emissive_texture, hit_coord, 0).w;
         var sample_color = textureSampleLevel(lighting_history_texture, clamped_sampler, hit.xy, source_mip).rgb;
         sample_color += sample_color * hit_emissive;
-        sample_color = sample_color / (1.0 + luminance(sample_color));
+        sample_color /= (1.0 + luminance(sample_color));
 
         let sample_alpha = ray_atten_border(hit.xy, EDGE_FACTOR) * mask;
         accum += sample_color * weight;
@@ -153,7 +152,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         confidence_sum += sample_alpha;
     }
 
-    let mask = textureLoad(raycast_mask_texture, trace_coord, 0).r;
+    let mask = textureLoad(raycast_hit_texture, trace_coord, 0).a;
     let fallback_color = textureSampleLevel(lighting_history_texture, clamped_sampler, uv, roughness * 4.0).rgb * 0.1 * mask;
     var resolved_color = accum / max(accum_weight, 1e-4);
 
