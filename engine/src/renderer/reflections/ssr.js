@@ -46,15 +46,6 @@ const ssr_raycast_image_config = {
   force: false,
 };
 
-const ssr_mask_image_config = {
-  name: "ssr_mask",
-  format: "rgba16float",
-  width: 0,
-  height: 0,
-  usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
-  force: false,
-};
-
 const ssr_resolve_image_config = {
   name: "ssr_resolve",
   format: "rgba16float",
@@ -103,10 +94,6 @@ export class SSR {
     ssr_raycast_image_config.height = trace_height;
     ssr_raycast_image_config.force = force_recreate;
 
-    ssr_mask_image_config.width = trace_width;
-    ssr_mask_image_config.height = trace_height;
-    ssr_mask_image_config.force = force_recreate;
-
     ssr_resolve_image_config.width = width;
     ssr_resolve_image_config.height = height;
     ssr_resolve_image_config.force = force_recreate;
@@ -117,7 +104,6 @@ export class SSR {
 
     this.reflection_texture = render_graph.create_image(ssr_output_image_config);
     const ssr_raycast_texture = render_graph.create_image(ssr_raycast_image_config);
-    const ssr_mask_texture = render_graph.create_image(ssr_mask_image_config);
     const ssr_resolve_texture = render_graph.create_image(ssr_resolve_image_config);
     const ssr_temporal_texture = render_graph.create_image(ssr_temporal_image_config);
 
@@ -130,9 +116,8 @@ export class SSR {
           gbuffer_smra,
           hzb_texture,
           ssr_raycast_texture,
-          ssr_mask_texture,
         ],
-        outputs: [ssr_raycast_texture, ssr_mask_texture],
+        outputs: [ssr_raycast_texture],
         shader_setup: ssr_raycast_shader_setup,
       },
       (g, fd, encoder) => {
@@ -147,7 +132,6 @@ export class SSR {
       {
         inputs: [
           ssr_raycast_texture,
-          ssr_mask_texture,
           gbuffer_normal,
           depth_texture,
           gbuffer_smra,
