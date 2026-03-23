@@ -43,6 +43,8 @@ const input_config = {
   padding_left: 8,
   padding_right: 8,
   text_color: "#fff",
+  placeholder: "= to dismiss, / to autocomplete, Enter to execute",
+  placeholder_color: "rgba(255, 255, 255, 0.45)",
   font: "14px monospace",
   cursor_color: "#fff",
 };
