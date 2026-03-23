@@ -308,8 +308,17 @@ fn calculate_blinn_phong(
 // ------------------------------------------------------------------------------------
 // BRDF (Physically Based, Energy Conserving, Clear Coat Layering, AO-correct)
 // ------------------------------------------------------------------------------------
-fn calculate_brdf(
-    light_view_index: u32,
+fn compute_indirect_diffuse_occlusion(ao: f32, indirect_diffuse: vec3<f32>) -> f32 {
+    let indirect_luma = luminance(indirect_diffuse);
+    return clamp(ao + (1.0 - exp(-indirect_luma)), 0.0, 1.0);
+}
+
+fn compute_specular_occlusion(ao: f32, n_dot_v: f32, roughness: f32) -> f32 {
+    let exponent = exp2(-16.0 * roughness - 1.0);
+    return clamp(pow(n_dot_v + ao, exponent) - 1.0 + ao, 0.0, 1.0);
+}
+
+fn calculate_direct_brdf(
     light: Light,
     normal: vec3<f32>,
     view_dir: vec3<f32>,
@@ -321,10 +330,6 @@ fn calculate_brdf(
     reflectance: f32,
     clear_coat: f32,
     clear_coat_roughness: f32,
-    ao: f32,
-    irradiance: vec3<f32>,
-    prefiltered_color: vec3<f32>,
-    env_brdf: vec2<f32>,
     shadow_factor: f32,
 ) -> vec3<f32> {
     // Compute attenuation for point/spot
@@ -376,21 +381,84 @@ fn calculate_brdf(
     // Layered composition: base * (1 - clear_coat_energy_loss) + clear_coat
     let direct_brdf = direct_light + clear_coat_brdf * light.intensity * n_dot_l * attenuation * light.color.rgb;
 
+    return direct_brdf * (1.0 - shadow_factor);
+}
+
+fn calculate_indirect_brdf(
+    normal: vec3<f32>,
+    view_dir: vec3<f32>,
+    albedo: vec3<f32>,
+    roughness: f32,
+    metallic: f32,
+    reflectance: f32,
+    ao: f32,
+    irradiance: vec3<f32>,
+    prefiltered_color: vec3<f32>,
+    env_brdf: vec2<f32>,
+) -> vec3<f32> {
+    let n_dot_v = max(dot(normal, view_dir), 0.0001);
+    let a = roughness * roughness;
+
+    // F0 (specular at normal incidence) for base layer
+    let dielectric_f0 = 0.16 * reflectance * reflectance;
+    let f0 = mix(vec3<f32>(dielectric_f0), albedo, metallic);
+
     // ---- Indirect Lighting ----
     // Indirect lighting from irradiance cache texture (screen probes / skybox)
-    var indirect_contribution = albedo * irradiance * ao;
+    let indirect_ao = compute_indirect_diffuse_occlusion(ao, irradiance);
+    var indirect_contribution = albedo * irradiance * indirect_ao;
 
-    // Specular: prefiltered env map, split-sum approximation, modulated by AO
-    let env_f = f_schlick_roughness(n_dot_v, f0, a);
-    let indirect_specular = prefiltered_color * (f0 * env_brdf.x + (vec3<f32>(1.0) - f0) * env_brdf.y) * ao;
+    // Specular: prefiltered env map, split-sum approximation, modulated by specular occlusion
+    let specular_ao = compute_specular_occlusion(ao, n_dot_v, roughness);
+    let indirect_specular = prefiltered_color * (f0 * env_brdf.x + (vec3<f32>(1.0) - f0) * env_brdf.y) * specular_ao;
 
-    // Clear coat from environment: usually just add a small reflection, not typical unless you precompute a clear coat IBL.
-    // For simplicity, we omit indirect clear coat here.
+    return indirect_contribution + indirect_specular;
+}
 
-    // ---- Combine all lighting ----
-    let color = direct_brdf * (1.0 - shadow_factor) + indirect_contribution + indirect_specular;
-
-    return color;
+fn calculate_brdf(
+    light_view_index: u32,
+    light: Light,
+    normal: vec3<f32>,
+    view_dir: vec3<f32>,
+    light_dir: vec3<f32>,
+    fragment_pos: vec3<f32>,
+    albedo: vec3<f32>,
+    roughness: f32,
+    metallic: f32,
+    reflectance: f32,
+    clear_coat: f32,
+    clear_coat_roughness: f32,
+    ao: f32,
+    irradiance: vec3<f32>,
+    prefiltered_color: vec3<f32>,
+    env_brdf: vec2<f32>,
+    shadow_factor: f32,
+) -> vec3<f32> {
+    return calculate_direct_brdf(
+        light,
+        normal,
+        view_dir,
+        light_dir,
+        fragment_pos,
+        albedo,
+        roughness,
+        metallic,
+        reflectance,
+        clear_coat,
+        clear_coat_roughness,
+        shadow_factor,
+    ) + calculate_indirect_brdf(
+        normal,
+        view_dir,
+        albedo,
+        roughness,
+        metallic,
+        reflectance,
+        ao,
+        irradiance,
+        prefiltered_color,
+        env_brdf,
+    );
 }
 
 // ------------------------------------------------------------------------------------
