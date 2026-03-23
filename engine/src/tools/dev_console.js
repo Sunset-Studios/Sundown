@@ -7,17 +7,12 @@ import { MLStats } from "./ml_stats.js";
 import { CameraInfo } from "./camera_info.js";
 import { BVHDebug } from "./bvh_debug.js";
 import { PerformanceTrace } from "./performance_trace.js";
-import { DebugDrawPicker } from "./debug_draw_picker.js";
-import { RenderStrategyPicker } from "./render_strategy_picker.js";
-import { GIStrategyPicker } from "./gi_strategy_picker.js";
-import { AOStrategyPicker } from "./ao_strategy_picker.js";
-import { ReflectionStrategyPicker } from "./reflection_strategy_picker.js";
 import { ASVSMStats } from "./as_vsm_stats.js";
 import { DDGIStats } from "./ddgi_stats.js";
-import { RenderToggle } from "./render_toggle.js";
 import { DebugMemory } from "./debug_memory.js";
 import { GPUTimerView } from "./gpu_timer_view.js";
 import { GPUMemoryView } from "./gpu_memory_view.js";
+import { CVarTool } from "./cvar_tool.js";
 import { warn } from "../utility/logging.js";
 
 // Constants for naming and key codes
@@ -84,16 +79,11 @@ export class DevConsole extends SimulationLayer {
     this.register_command("aabb_debug", new BVHDebug());
     this.register_command("performance_trace", new PerformanceTrace());
     this.register_command("as_vsm_stats", new ASVSMStats());
-    this.register_command("debug_draw", new DebugDrawPicker());
-    this.register_command("render_strategy", new RenderStrategyPicker());
-    this.register_command("gi_strategy", new GIStrategyPicker());
-    this.register_command("ao_strategy", new AOStrategyPicker());
-    this.register_command("reflection_strategy", new ReflectionStrategyPicker());
-    this.register_command("render_toggle", new RenderToggle());
     this.register_command("debug_memory", new DebugMemory());
     this.register_command("gpu_timer", new GPUTimerView());
     this.register_command("gpu_memory", new GPUMemoryView());
     this.register_command("ddgi_stats", new DDGIStats());
+    this.register_command("cvar", new CVarTool());
   }
 
   update(delta_time) {
