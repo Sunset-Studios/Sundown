@@ -14,6 +14,7 @@ import { MAX_CLIPMAP_LEVELS } from "../engine/src/renderer/shadows/shadow_utils.
 import { InputProvider } from "../engine/src/input/input_provider.js";
 import { InputKey } from "../engine/src/input/input_types.js";
 import { Renderer } from "../engine/src/renderer/renderer.js";
+import example_cvar_config from "./config/cvars.js";
 
 import * as UI from "../engine/src/ui/2d/immediate.js";
 
@@ -642,7 +643,13 @@ class SponzaScene extends Scene {
 }
 
 (async () => {
-  const simulator = await Simulator.create("gpu-canvas", "ui-canvas");
+  const simulator = await Simulator.create("gpu-canvas", "ui-canvas", {
+    project: {
+      name: "Sponza",
+      root: "example",
+      cvar_config: example_cvar_config,
+    },
+  });
   simulator.add_sim_layer(new SponzaScene("SponzaScene"));
   simulator.run();
 })();
