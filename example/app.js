@@ -9,11 +9,19 @@ import { Renderer } from "../engine/src/renderer/renderer.js";
 import { DeferredShadingStrategy } from "../engine/src/renderer/strategies/deferred_shading.js";
 import { reset_ui, flush_ui } from "../engine/src/ui/2d/immediate.js";
 import { frame_runner } from "../engine/src/utility/frame_runner.js";
+import { ProjectContext } from "../engine/src/core/project_context.js";
+import example_cvar_config from "./config/cvars.js";
 
 import { SnakeScene } from "./snake_scene.js";
 
 async function bootstrap() {
   application_state.is_running = true;
+
+  ProjectContext.configure({
+    name: "Snake",
+    root: "example",
+    cvar_config: example_cvar_config,
+  });
 
   InputProvider.setup();
   MetaSystem.setup();

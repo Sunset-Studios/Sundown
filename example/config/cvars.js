@@ -18,7 +18,6 @@ export default ({ project }) => {
         [EngineCVars.Renderer.ShadowsEnabled]: true,
         [EngineCVars.Renderer.GIEnabled]: false,
         [EngineCVars.Renderer.AOEnabled]: true,
-        [EngineCVars.Renderer.AOStrategy]: "vbao",
         [EngineCVars.Renderer.ReflectionsEnabled]: false,
       },
     };
