@@ -26,7 +26,6 @@ const include_string = "#include";
 const precision_float_string = "precision_float";
 const has_precision_float_string = "HAS_PRECISION_FLOAT";
 const has_subgroups_string = "HAS_SUBGROUPS";
-const use_radiance_cache_as_deferred_lighting_string = "USE_RADIANCE_CACHE_AS_DEFERRED_LIGHTING";
 
 const f16_type_string = "f16";
 const f32_type_string = "f32";
@@ -429,7 +428,6 @@ export class Shader {
       : f32_type_string;
     defines_map[has_precision_float_string] = Renderer.get().has_f16;
     defines_map[has_subgroups_string] = Renderer.get().has_subgroups;
-    defines_map[use_radiance_cache_as_deferred_lighting_string] = Renderer.get().use_radiance_cache_as_deferred_lighting;
     return { defines_map, stripped_code };
   }
 

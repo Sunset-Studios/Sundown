@@ -9,13 +9,16 @@ import { MetaSystem } from "../meta/meta_system.js";
 import { profile_scope } from "../utility/performance.js";
 import { frame_runner } from "../utility/frame_runner.js";
 import { reset_ui, flush_ui } from "../ui/2d/immediate.js";
+import { ProjectContext } from "./project_context.js";
 
 import { ALL_FRAGMENT_CLASSES } from "./ecs/fragment_registry.js";
 
 export class Simulator {
-  async init(gpu_canvas_name, ui_canvas_name = null) {
+  async init(gpu_canvas_name, ui_canvas_name = null, options = {}) {
     application_state.is_running = true;
 
+    // Configure project context (if provided, otherwise use default project)
+    ProjectContext.configure(options.project);
     // Initialize input provider
     InputProvider.setup();
     // Initialize meta system
@@ -27,6 +30,7 @@ export class Simulator {
     await Renderer.create(canvas, canvas_ui, DeferredShadingStrategy, {
       pointer_lock: true,
       use_precision_float: false,
+      ...(options.renderer || {}),
     });
     
     // Initialize entity manager
@@ -67,9 +71,9 @@ export class Simulator {
     frame_runner(this._simulate, 60);
   }
 
-  static async create(gpu_canvas_name, ui_canvas_name = null) {
+  static async create(gpu_canvas_name, ui_canvas_name = null, options = {}) {
     const instance = new Simulator();
-    await instance.init(gpu_canvas_name, ui_canvas_name);
+    await instance.init(gpu_canvas_name, ui_canvas_name, options);
     return instance;
   }
 }
