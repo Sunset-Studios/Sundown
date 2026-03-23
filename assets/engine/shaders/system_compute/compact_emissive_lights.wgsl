@@ -68,7 +68,7 @@ fn cs(@builtin(global_invocation_id) global_id: vec3<u32>) {
         let v1i = mesh_directory_entry.first_vertex + index_buffer[tri_base + 1u];
         let v2i = mesh_directory_entry.first_vertex + index_buffer[tri_base + 2u];
 
-        let section_index = u32(vertex_buffer[v0i].section_index);
+        let section_index = u32(vertex_section_index(vertex_buffer[v0i]));
         let mat_params_index = material_palette[entity_palette_base + section_index];
         let material = material_params[mat_params_index];
 
@@ -77,9 +77,9 @@ fn cs(@builtin(global_invocation_id) global_id: vec3<u32>) {
             continue;
         }
 
-        let p0_local = vertex_buffer[v0i].position.xyz;
-        let p1_local = vertex_buffer[v1i].position.xyz;
-        let p2_local = vertex_buffer[v2i].position.xyz;
+        let p0_local = vertex_position(vertex_buffer[v0i]);
+        let p1_local = vertex_position(vertex_buffer[v1i]);
+        let p2_local = vertex_position(vertex_buffer[v2i]);
 
         let p0_world = (entity_transform.transform * vec4<f32>(p0_local, 1.0)).xyz;
         let p1_world = (entity_transform.transform * vec4<f32>(p1_local, 1.0)).xyz;
@@ -91,9 +91,9 @@ fn cs(@builtin(global_invocation_id) global_id: vec3<u32>) {
         // Estimate emission at triangle centroid UV so emissive NEE better matches
         // textured emitters and near-field intensity.
         let tiling = material.emission_roughness_metallic_tiling.w;
-        let uv0 = vertex_buffer[v0i].uv.xy;
-        let uv1 = vertex_buffer[v1i].uv.xy;
-        let uv2 = vertex_buffer[v2i].uv.xy;
+        let uv0 = vertex_uv(vertex_buffer[v0i]);
+        let uv1 = vertex_uv(vertex_buffer[v1i]);
+        let uv2 = vertex_uv(vertex_buffer[v2i]);
         let centroid_uv = ((uv0 + uv1 + uv2) * (1.0 / 3.0)) * tiling;
         let lod = 0.0;
         let centroid_albedo = sample_texture_or_vec4_param_handle(

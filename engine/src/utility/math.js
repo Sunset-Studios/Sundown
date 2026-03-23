@@ -205,3 +205,21 @@ export function vec_near_equal(a, b) {
 export function bytes_to_mb(bytes) {
   return (bytes / (1024.0 * 1024.0)).toFixed(2);
 }
+
+export function clamp_unit(value) {
+  return Math.max(-1.0, Math.min(1.0, Number.isFinite(value) ? value : 0.0));
+}
+
+export function encode_snorm8(value) {
+  const scaled = Math.round(clamp_unit(value) * 127.0);
+  return scaled & 0xff;
+}
+
+export function pack_snorm4x8(x, y, z, w = 0.0) {
+  return (
+    encode_snorm8(x) |
+    (encode_snorm8(y) << 8) |
+    (encode_snorm8(z) << 16) |
+    (encode_snorm8(w) << 24)
+  ) >>> 0;
+}

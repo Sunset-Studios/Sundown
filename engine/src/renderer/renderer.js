@@ -266,7 +266,7 @@ export class Renderer {
       {
         buffer: MeshData.vertex_buffer,
         offset: 0,
-        size: MeshData.vertex_data ? MeshData.vertex_data.length * 4 : 0,
+        size: MeshData.vertex_data ? MeshData.vertex_data.byteLength : 0,
       },
       {
         buffer: SharedViewBuffer.buffer,

@@ -30,7 +30,7 @@ struct LineData {
 fn vs(input: VertexInput) -> VertexOutput {
     var output: VertexOutput;
 
-    let vertex = vertex_buffer[input.vertex_index];
+    let vertex = decode_vertex(vertex_buffer[input.vertex_index]);
     let line_datum = line_data[input.instance_index];
     let color_and_width = line_datum.color_and_width;
     let model_transform = line_datum.transform;

@@ -90,9 +90,9 @@ fn trace_blas(
             v0i = mesh_directory_entry.first_vertex + index_buffer[tri_base + 0u];
             v1i = mesh_directory_entry.first_vertex + index_buffer[tri_base + 1u];
             v2i = mesh_directory_entry.first_vertex + index_buffer[tri_base + 2u];
-            v0 = vertex_buffer[v0i].position.xyz;
-            v1 = vertex_buffer[v1i].position.xyz;
-            v2 = vertex_buffer[v2i].position.xyz;
+            v0 = vertex_position(vertex_buffer[v0i]);
+            v1 = vertex_position(vertex_buffer[v1i]);
+            v2 = vertex_position(vertex_buffer[v2i]);
             t_tri = intersect_triangle(&current_ray, v0, v1, v2);
             is_better_hit = t_tri >= current_ray.origin_and_tmin.w && t_tri < current_ray.direction_and_tmax.w;
             if (is_better_hit) {
