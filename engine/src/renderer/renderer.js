@@ -23,7 +23,7 @@ import ExecutionQueue from "../utility/execution_queue.js";
 import { GPUTimeQuery } from "./query.js";
 import { log, error } from "../utility/logging.js";
 import { vec2 } from "gl-matrix";
-import { RendererCVars } from "./renderer_config.js";
+import { EngineCVars } from "../../config/cvars.js";
 
 const frame_render_event_name = "frame_render";
 
@@ -358,7 +358,7 @@ export class Renderer {
    * @returns {boolean} - True if shadows are enabled, false otherwise
    */
   is_shadows_enabled() {
-    return CVarSystem.get(RendererCVars.ShadowsEnabled, true);
+    return CVarSystem.get(EngineCVars.Renderer.ShadowsEnabled, true);
   }
 
   /**
@@ -366,7 +366,7 @@ export class Renderer {
    * @param {boolean} enabled - True if shadows should be enabled, false otherwise
    */
   set_shadows_enabled(enabled) {
-    CVarSystem.set(RendererCVars.ShadowsEnabled, enabled);
+    CVarSystem.set(EngineCVars.Renderer.ShadowsEnabled, enabled);
   }
 
   /**
@@ -374,7 +374,7 @@ export class Renderer {
    * @returns {boolean} - True if global illumination is enabled, false otherwise
    */
   is_gi_enabled() {
-    return CVarSystem.get(RendererCVars.GIEnabled, true);
+    return CVarSystem.get(EngineCVars.Renderer.GIEnabled, true);
   }
 
   /**
@@ -382,7 +382,7 @@ export class Renderer {
    * @param {boolean} enabled - True if global illumination should be enabled, false otherwise
    */
   set_gi_enabled(enabled) {
-    CVarSystem.set(RendererCVars.GIEnabled, enabled);
+    CVarSystem.set(EngineCVars.Renderer.GIEnabled, enabled);
   }
 
   /**
@@ -390,7 +390,7 @@ export class Renderer {
    * @returns {GIStrategyType} - The GI strategy type
    */
   get_gi_strategy_type() {
-    return CVarSystem.get(RendererCVars.GIStrategy, GIStrategyType.DDGI);
+    return CVarSystem.get(EngineCVars.Renderer.GIStrategy, GIStrategyType.DDGI);
   }
 
   /**
@@ -398,7 +398,7 @@ export class Renderer {
    * @param {GIStrategyType} strategy_type - The GI strategy type
    */
   set_gi_strategy_type(strategy_type) {
-    CVarSystem.set(RendererCVars.GIStrategy, strategy_type);
+    CVarSystem.set(EngineCVars.Renderer.GIStrategy, strategy_type);
   }
 
   /**
@@ -406,7 +406,7 @@ export class Renderer {
    * @returns {AOStrategyType} - The AO strategy type
    */
   get_ao_strategy_type() {
-    return CVarSystem.get(RendererCVars.AOStrategy, AOStrategyType.VBAO);
+    return CVarSystem.get(EngineCVars.Renderer.AOStrategy, AOStrategyType.VBAO);
   }
 
   /**
@@ -414,7 +414,7 @@ export class Renderer {
    * @param {AOStrategyType} strategy_type - The AO strategy type
    */
   set_ao_strategy_type(strategy_type) {
-    CVarSystem.set(RendererCVars.AOStrategy, strategy_type);
+    CVarSystem.set(EngineCVars.Renderer.AOStrategy, strategy_type);
   }
 
 
@@ -423,7 +423,7 @@ export class Renderer {
    * @returns {boolean} - True if reflections are enabled, false otherwise
    */
   is_reflection_enabled() {
-    return CVarSystem.get(RendererCVars.ReflectionsEnabled, true);
+    return CVarSystem.get(EngineCVars.Renderer.ReflectionsEnabled, true);
   }
 
   /**
@@ -431,7 +431,7 @@ export class Renderer {
    * @param {boolean} enabled - True if reflections should be enabled, false otherwise
    */
   set_reflection_enabled(enabled) {
-    CVarSystem.set(RendererCVars.ReflectionsEnabled, enabled);
+    CVarSystem.set(EngineCVars.Renderer.ReflectionsEnabled, enabled);
   }
 
   /**
@@ -439,7 +439,7 @@ export class Renderer {
    * @returns {ReflectionStrategyType} - The Reflection strategy type
    */
   get_reflection_strategy_type() {
-    return CVarSystem.get(RendererCVars.ReflectionStrategy, ReflectionStrategyType.SSR);
+    return CVarSystem.get(EngineCVars.Renderer.ReflectionStrategy, ReflectionStrategyType.SSR);
   }
 
   /**
@@ -447,7 +447,7 @@ export class Renderer {
    * @param {ReflectionStrategyType} strategy_type - The Reflection strategy type
    */
   set_reflection_strategy_type(strategy_type) {
-    CVarSystem.set(RendererCVars.ReflectionStrategy, strategy_type);
+    CVarSystem.set(EngineCVars.Renderer.ReflectionStrategy, strategy_type);
   }
 
   /**
@@ -455,7 +455,7 @@ export class Renderer {
    * @returns {boolean} - True if AO is enabled, false otherwise
    */
   is_ao_enabled() {
-    return CVarSystem.get(RendererCVars.AOEnabled, true);
+    return CVarSystem.get(EngineCVars.Renderer.AOEnabled, true);
   }
 
   /**
@@ -463,7 +463,7 @@ export class Renderer {
    * @param {boolean} enabled - True if AO should be enabled, false otherwise
    */
   set_ao_enabled(enabled) {
-    CVarSystem.set(RendererCVars.AOEnabled, enabled);
+    CVarSystem.set(EngineCVars.Renderer.AOEnabled, enabled);
   }
 
   /**
@@ -471,7 +471,7 @@ export class Renderer {
    * @returns {boolean} - True if the depth prepass is enabled, false otherwise
    */
   is_depth_prepass_enabled() {
-    return CVarSystem.get(RendererCVars.DepthPrepassEnabled, true);
+    return CVarSystem.get(EngineCVars.Renderer.DepthPrepassEnabled, true);
   }
 
   /**
@@ -479,7 +479,7 @@ export class Renderer {
    * @param {boolean} enabled - True if the depth prepass should be enabled, false otherwise
    */
   set_depth_prepass_enabled(enabled) {
-    CVarSystem.set(RendererCVars.DepthPrepassEnabled, enabled);
+    CVarSystem.set(EngineCVars.Renderer.DepthPrepassEnabled, enabled);
   }
 
   /**
@@ -505,7 +505,7 @@ export class Renderer {
    * @returns {DebugDrawType} - The debug draw type
    */
   get_debug_draw_type() {
-    return CVarSystem.get(RendererCVars.DebugDraw, DebugDrawType.None);
+    return CVarSystem.get(EngineCVars.Renderer.DebugDraw, DebugDrawType.None);
   }
 
   /**
@@ -513,7 +513,7 @@ export class Renderer {
    * @param {DebugDrawType} debug_draw_type - The debug draw type
    */
   set_debug_draw_type(debug_draw_type) {
-    CVarSystem.set(RendererCVars.DebugDraw, debug_draw_type);
+    CVarSystem.set(EngineCVars.Renderer.DebugDraw, debug_draw_type);
   }
 
   /**
@@ -521,7 +521,7 @@ export class Renderer {
    * @returns {number} - The mip level to display (0 = full resolution).
    */
   get_debug_texture_level() {
-    return CVarSystem.get(RendererCVars.DebugTextureLevel, 0);
+    return CVarSystem.get(EngineCVars.Renderer.DebugTextureLevel, 0);
   }
 
   /**
@@ -529,7 +529,7 @@ export class Renderer {
    * @param {number} level - The mip level (0 = full resolution).
    */
   set_debug_texture_level(level) {
-    CVarSystem.set(RendererCVars.DebugTextureLevel, level);
+    CVarSystem.set(EngineCVars.Renderer.DebugTextureLevel, level);
   }
 
   /**
@@ -537,7 +537,7 @@ export class Renderer {
    * @returns {RenderStrategyType} - The rendering strategy type
    */
   get_render_strategy_type() {
-    return CVarSystem.get(RendererCVars.RenderStrategy, this.render_strategy_type);
+    return CVarSystem.get(EngineCVars.Renderer.RenderStrategy, this.render_strategy_type);
   }
 
   /**
@@ -551,7 +551,7 @@ export class Renderer {
       return;
     }
 
-    CVarSystem.set(RendererCVars.RenderStrategy, strategy_type);
+    CVarSystem.set(EngineCVars.Renderer.RenderStrategy, strategy_type);
   }
 
   /**
@@ -610,60 +610,60 @@ export class Renderer {
     };
 
     this.cvar_unsubscribers.push(
-      CVarSystem.subscribe(RendererCVars.RenderStrategy, (strategy_type) => {
+      CVarSystem.subscribe(EngineCVars.Renderer.RenderStrategy, (strategy_type) => {
         this._apply_render_strategy_type(strategy_type);
       })
     );
     this.cvar_unsubscribers.push(
-      CVarSystem.subscribe(RendererCVars.DepthPrepassEnabled, () => {
+      CVarSystem.subscribe(EngineCVars.Renderer.DepthPrepassEnabled, () => {
         refresh_renderer();
       })
     );
     this.cvar_unsubscribers.push(
-      CVarSystem.subscribe(RendererCVars.ShadowsEnabled, () => {
+      CVarSystem.subscribe(EngineCVars.Renderer.ShadowsEnabled, () => {
         refresh_renderer();
       })
     );
     this.cvar_unsubscribers.push(
-      CVarSystem.subscribe(RendererCVars.GIEnabled, () => {
+      CVarSystem.subscribe(EngineCVars.Renderer.GIEnabled, () => {
         refresh_renderer();
       })
     );
     this.cvar_unsubscribers.push(
-      CVarSystem.subscribe(RendererCVars.AOEnabled, () => {
+      CVarSystem.subscribe(EngineCVars.Renderer.AOEnabled, () => {
         refresh_renderer();
       })
     );
     this.cvar_unsubscribers.push(
-      CVarSystem.subscribe(RendererCVars.ReflectionsEnabled, () => {
+      CVarSystem.subscribe(EngineCVars.Renderer.ReflectionsEnabled, () => {
         refresh_renderer();
       })
     );
     this.cvar_unsubscribers.push(
-      CVarSystem.subscribe(RendererCVars.GIStrategy, () => {
+      CVarSystem.subscribe(EngineCVars.Renderer.GIStrategy, () => {
         refresh_renderer(true);
       })
     );
     this.cvar_unsubscribers.push(
-      CVarSystem.subscribe(RendererCVars.AOStrategy, () => {
+      CVarSystem.subscribe(EngineCVars.Renderer.AOStrategy, () => {
         refresh_renderer(true);
       })
     );
     this.cvar_unsubscribers.push(
-      CVarSystem.subscribe(RendererCVars.ReflectionStrategy, () => {
+      CVarSystem.subscribe(EngineCVars.Renderer.ReflectionStrategy, () => {
         refresh_renderer(true);
       })
     );
     this.cvar_unsubscribers.push(
-      CVarSystem.subscribe(RendererCVars.DebugTextureLevel, () => {
+      CVarSystem.subscribe(EngineCVars.Renderer.DebugTextureLevel, () => {
         this.mark_bind_groups_dirty(true);
       })
     );
   }
 
   _initialize_render_strategy(strategy_class) {
-    const configured_strategy = CVarSystem.get(RendererCVars.RenderStrategy, this.render_strategy_type);
-    const default_strategy = CVarSystem.get_definition(RendererCVars.RenderStrategy)?.default_value;
+    const configured_strategy = CVarSystem.get(EngineCVars.Renderer.RenderStrategy, this.render_strategy_type);
+    const default_strategy = CVarSystem.get_definition(EngineCVars.Renderer.RenderStrategy)?.default_value;
     const inferred_strategy = this._infer_render_strategy_type(strategy_class);
 
     if (
@@ -671,7 +671,7 @@ export class Renderer {
       configured_strategy === default_strategy &&
       inferred_strategy !== configured_strategy
     ) {
-      CVarSystem.set(RendererCVars.RenderStrategy, inferred_strategy);
+      CVarSystem.set(EngineCVars.Renderer.RenderStrategy, inferred_strategy);
       return;
     }
 

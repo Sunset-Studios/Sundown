@@ -37,6 +37,7 @@ import { Input } from "../engine/src/ml/layers/input.js";
 import { MasterMind } from "../engine/src/ml/mastermind.js";
 import { Tensor, TensorInitializer } from "../engine/src/ml/math/tensor.js";
 import { Adam } from "../engine/src/ml/optimizers/adam.js";
+import example_cvar_config from "./config/cvars.js";
 
 // ------------------------------------------------------------------------------------
 // =============================== Rendering Scene ===============================
@@ -3144,7 +3145,13 @@ export class SciFiCityScene extends Scene {
 // ------------------------------------------------------------------------------------
 
 (async () => {
-  const simulator = await Simulator.create("gpu-canvas", "ui-canvas");
+  const simulator = await Simulator.create("gpu-canvas", "ui-canvas", {
+    project: {
+      name: "example",
+      root: "example",
+      cvar_config: example_cvar_config,
+    },
+  });
 
   // Create scenes and register them with the simulation system
   const bvh_scene = new BVHScene("BVHScene");

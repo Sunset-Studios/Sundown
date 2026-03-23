@@ -163,6 +163,42 @@ export class CVarSystem {
     });
   }
 
+  static reset_all(options = {}) {
+    const definitions = Array.from(this.definitions.values());
+    for (let i = 0; i < definitions.length; i++) {
+      const definition = definitions[i];
+      if (options.silent) {
+        this.values.set(definition.name, definition.default_value);
+      } else {
+        this.set(definition.name, definition.default_value, {
+          ...options,
+          source: options.source || "reset_all",
+        });
+      }
+    }
+  }
+
+  static apply_config(config, options = {}) {
+    const normalized_config = this._normalize_config(config, options.context);
+    if (!normalized_config) {
+      return;
+    }
+
+    if (Array.isArray(normalized_config.definitions) && normalized_config.definitions.length > 0) {
+      this.register_many(normalized_config.definitions);
+    }
+
+    const cvars = normalized_config.cvars || normalized_config.values || {};
+    const entries = Object.entries(cvars);
+    for (let i = 0; i < entries.length; i++) {
+      const [name, value] = entries[i];
+      this.set(name, value, {
+        ...options,
+        source: options.source || "config",
+      });
+    }
+  }
+
   static subscribe(name, callback, invoke_immediately = false) {
     if (!this.listeners.has(name)) {
       this.listeners.set(name, new Set());
@@ -232,6 +268,33 @@ export class CVarSystem {
       throw new Error(`Unknown cvar '${name}'.`);
     }
     return definition;
+  }
+
+  static _normalize_config(config, context = {}) {
+    if (!config) {
+      return null;
+    }
+
+    let normalized_config = config;
+    if (typeof normalized_config === "function") {
+      normalized_config = normalized_config(context);
+    }
+
+    if (!normalized_config) {
+      return null;
+    }
+
+    if (normalized_config.default) {
+      return this._normalize_config(normalized_config.default, context);
+    }
+
+    if (Array.isArray(normalized_config.definitions) || normalized_config.cvars || normalized_config.values) {
+      return normalized_config;
+    }
+
+    return {
+      cvars: normalized_config,
+    };
   }
 
   static _normalize_definition(name, definition) {
