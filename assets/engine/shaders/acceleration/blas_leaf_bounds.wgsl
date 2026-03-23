@@ -9,7 +9,7 @@ struct MeshSelector { mesh_id: u32 };
 @group(1) @binding(3) var<storage, read> index_buffer: array<u32>;
 
 fn load_position(vertex_index: u32) -> vec3<f32> {
-    return vertex_buffer[vertex_index].position.xyz;
+    return vertex_position(vertex_buffer[vertex_index]);
 }
 
 @compute @workgroup_size(64)

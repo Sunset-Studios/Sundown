@@ -19,8 +19,7 @@
 // Fragment Shader
 // ------------------------------------------------------------------------------------ 
 fn fragment(v_out: VertexOutput, f_out: ptr<function, FragmentOutput>) -> FragmentOutput {
-    let vertex = vertex_buffer[v_out.vertex_index];
-    let section_index = u32(vertex.section_index);
+    let section_index = u32(vertex_section_index(vertex_buffer[v_out.vertex_index]));
     let entity_palette_offset = material_table_offset[v_out.instance_id];
     let material_params_index = material_palette[entity_palette_offset + section_index];
     let material_params = material_params[material_params_index];
@@ -128,7 +127,7 @@ fn fragment(v_out: VertexOutput, f_out: ptr<function, FragmentOutput>) -> Fragme
 }
 
 fn fragment_mask(v_out: VertexOutput) -> f32 {
-   let section_index = u32(vertex_buffer[v_out.vertex_index].section_index);
+    let section_index = u32(vertex_section_index(vertex_buffer[v_out.vertex_index]));
     let entity_palette_offset = material_table_offset[v_out.instance_id];
     let material_params_index = material_palette[entity_palette_offset + section_index];
     let material_params = material_params[material_params_index];
@@ -138,10 +137,10 @@ fn fragment_mask(v_out: VertexOutput) -> f32 {
 
     let tex_size = vec2<f32>(textureDimensions(texture_pool_albedo).xy);
     let lod = compute_lod_from_uv(base_uv, tex_size);
-    
+
     // Simple parallax offset
     var sample_uv = base_uv;
-    
+
     let albedo = sample_texture_or_vec4_param_handle(
         u32(material_params.albedo_handle),
         sample_uv,

@@ -165,9 +165,9 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
             let u_bc = path_state[pixel_index].hit_attr0.w;
             let v_bc = path_state[pixel_index].hit_attr1.w;
             let w_bc = 1.0 - u_bc - v_bc;
-            let uv0 = vertex_buffer[v0i].uv.xy;
-            let uv1 = vertex_buffer[v1i].uv.xy;
-            let uv2 = vertex_buffer[v2i].uv.xy;
+            let uv0 = vertex_uv(vertex_buffer[v0i]);
+            let uv1 = vertex_uv(vertex_buffer[v1i]);
+            let uv2 = vertex_uv(vertex_buffer[v2i]);
             base_uv = uv0 * w_bc + uv1 * u_bc + uv2 * v_bc;
         } else {
             base_uv = vec2<f32>(path_state[pixel_index].hit_attr0.w, path_state[pixel_index].hit_attr1.w);

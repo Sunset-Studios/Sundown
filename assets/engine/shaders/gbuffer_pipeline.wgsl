@@ -24,7 +24,7 @@ fn vertex(v_out: ptr<function, VertexOutput>) -> VertexOutput {
     @builtin(vertex_index) vi : u32,
     @builtin(instance_index) ii: u32
 ) -> VertexOutput {
-    let instance_vertex = vertex_buffer[vi];
+    let instance_vertex = decode_vertex(vertex_buffer[vi]);
     let object_instance_index = visible_object_instances[ii];
     let entity_resolved = entity_index_lookup[get_entity_row(object_instances[object_instance_index].row)];
 

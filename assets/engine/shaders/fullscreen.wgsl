@@ -30,8 +30,8 @@ struct FragmentOutput {
     @builtin(instance_index) ii: u32
 ) -> VertexOutput {
     var output : VertexOutput;
-    output.position = vec4<f32>(vertex_buffer[vi].position);
-    output.uv = vertex_buffer[vi].uv;
+    output.position = vertex_position4(vertex_buffer[vi]);
+    output.uv = vertex_uv(vertex_buffer[vi]);
     output.instance_index = ii;
     return output;
 }
