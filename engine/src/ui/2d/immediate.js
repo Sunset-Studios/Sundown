@@ -1499,6 +1499,8 @@ export function image(config = {}) {
  *
  * @param {string} name - A unique name to use for storing persistent input state.
  * @param {object} config - Configuration for appearance and initial value.
+ *   placeholder: Optional placeholder text shown while the value is empty.
+ *   placeholder_color: Optional color override for the placeholder text.
  *
  * @returns {object} The updated state { value, isFocused }.
  */
@@ -1627,13 +1629,18 @@ export function input(name, config = {}) {
 
     base_draw(ctx, x, y, width, height, config);
 
-    ctx.fillStyle = config.text_color || "#fff";
+    const display_text = field_state.value.length > 0 ? field_state.value : (config.placeholder ?? "");
+    const showing_placeholder = field_state.value.length === 0 && display_text.length > 0;
+
+    ctx.fillStyle = showing_placeholder
+      ? (config.placeholder_color ?? "rgba(255, 255, 255, 0.5)")
+      : (config.text_color || "#fff");
     ctx.font = font;
     ctx.textAlign = left;
     ctx.textBaseline = middle;
     const text_x = x + 10;
     const text_y = y + height / 2;
-    ctx.fillText(field_state.value, text_x, text_y);
+    ctx.fillText(display_text, text_x, text_y);
 
     if (field_state.is_focused) {
       const text_metrics = ctx.measureText(field_state.value);
