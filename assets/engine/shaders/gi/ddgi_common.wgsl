@@ -899,7 +899,7 @@ fn ddgi_sample_sh_irradiance_single_cascade_internal(
 
         // Perceptual weight
         {
-            let crush_threshold = 0.1;
+            let crush_threshold = 0.95;
             if (weight < crush_threshold) {
                 weight *= (weight * weight) / (crush_threshold * crush_threshold);
             }
