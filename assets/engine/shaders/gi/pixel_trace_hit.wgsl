@@ -92,9 +92,9 @@ fn trace_blas(
             v0i = mesh_directory_entry.first_vertex + index_buffer[tri_base + 0u];
             v1i = mesh_directory_entry.first_vertex + index_buffer[tri_base + 1u];
             v2i = mesh_directory_entry.first_vertex + index_buffer[tri_base + 2u];
-            v0 = vertex_buffer[v0i].position.xyz;
-            v1 = vertex_buffer[v1i].position.xyz;
-            v2 = vertex_buffer[v2i].position.xyz;
+            v0 = vertex_position(vertex_buffer[v0i]);
+            v1 = vertex_position(vertex_buffer[v1i]);
+            v2 = vertex_position(vertex_buffer[v2i]);
             t_tri = intersect_triangle(&current_ray, v0, v1, v2);
             is_better_hit = t_tri >= current_ray.origin_and_tmin.w && t_tri < current_ray.direction_and_tmax.w;
             if (is_better_hit) {
@@ -388,9 +388,9 @@ fn trace_blas_any_hit(
             let v0i = mesh_directory_entry.first_vertex + index_buffer[tri_base + 0u];
             let v1i = mesh_directory_entry.first_vertex + index_buffer[tri_base + 1u];
             let v2i = mesh_directory_entry.first_vertex + index_buffer[tri_base + 2u];
-            v0 = vertex_buffer[v0i].position.xyz;
-            v1 = vertex_buffer[v1i].position.xyz;
-            v2 = vertex_buffer[v2i].position.xyz;
+            v0 = vertex_position(vertex_buffer[v0i]);
+            v1 = vertex_position(vertex_buffer[v1i]);
+            v2 = vertex_position(vertex_buffer[v2i]);
             t_tri = intersect_triangle(ray_local, v0, v1, v2);
             if (t_tri >= ray_local.origin_and_tmin.w && t_tri < ray_local.direction_and_tmax.w) {
                 return true;
@@ -662,9 +662,12 @@ fn process_primary_ray(ray_index: u32) {
         let v2i = hit_result.tri_indices.z;
 
         // Load vertex positions for barycentric calculation
-        let v0 = vertex_buffer[v0i].position.xyz;
-        let v1 = vertex_buffer[v1i].position.xyz;
-        let v2 = vertex_buffer[v2i].position.xyz;
+        let vertex0 = decode_vertex(vertex_buffer[v0i]);
+        let vertex1 = decode_vertex(vertex_buffer[v1i]);
+        let vertex2 = decode_vertex(vertex_buffer[v2i]);
+        let v0 = vertex0.position.xyz;
+        let v1 = vertex1.position.xyz;
+        let v2 = vertex2.position.xyz;
 
         // Compute barycentric coordinates
         let e0 = v1 - v0;
@@ -681,26 +684,26 @@ fn process_primary_ray(ray_index: u32) {
         let w_bc = 1.0 - u_bc - v_bc;
 
         // Interpolate UVs
-        let uv_hit = vertex_buffer[v0i].uv.xy * w_bc +
-                     vertex_buffer[v1i].uv.xy * u_bc +
-                     vertex_buffer[v2i].uv.xy * v_bc;
+        let uv_hit = vertex0.uv * w_bc +
+                     vertex1.uv * u_bc +
+                     vertex2.uv * v_bc;
 
         // Interpolate and transform normals
-        let n_local = vertex_buffer[v0i].normal.xyz * w_bc +
-                      vertex_buffer[v1i].normal.xyz * u_bc +
-                      vertex_buffer[v2i].normal.xyz * v_bc;
+        let n_local = vertex0.normal.xyz * w_bc +
+                      vertex1.normal.xyz * u_bc +
+                      vertex2.normal.xyz * v_bc;
         var world_n = safe_normalize((entity_transform.transform * vec4<f32>(n_local, 0.0)).xyz);
 
         // Interpolate and transform tangents
-        let t_local = vertex_buffer[v0i].tangent.xyz * w_bc +
-                      vertex_buffer[v1i].tangent.xyz * u_bc +
-                      vertex_buffer[v2i].tangent.xyz * v_bc;
+        let t_local = vertex0.tangent.xyz * w_bc +
+                      vertex1.tangent.xyz * u_bc +
+                      vertex2.tangent.xyz * v_bc;
         var world_t = safe_normalize((entity_transform.transform * vec4<f32>(t_local, 0.0)).xyz);
 
         // Interpolate and transform bitangents
-        let b_local = vertex_buffer[v0i].bitangent.xyz * w_bc +
-                      vertex_buffer[v1i].bitangent.xyz * u_bc +
-                      vertex_buffer[v2i].bitangent.xyz * v_bc;
+        let b_local = vertex0.bitangent.xyz * w_bc +
+                      vertex1.bitangent.xyz * u_bc +
+                      vertex2.bitangent.xyz * v_bc;
         var world_b = safe_normalize((entity_transform.transform * vec4<f32>(b_local, 0.0)).xyz);
 
         // Handle backfacing geometry
@@ -713,7 +716,7 @@ fn process_primary_ray(ray_index: u32) {
         // Store hit information
         pixel_path_state[ray_index].origin_tmin = vec4<f32>(p_world, t_tri);
         pixel_path_state[ray_index].direction_tmax = vec4<f32>(ray_dir, f32(prim_store));
-        pixel_path_state[ray_index].normal_section_index = vec4<f32>(world_n, f32(vertex_buffer[v0i].section_index));
+        pixel_path_state[ray_index].normal_section_index = vec4<f32>(world_n, vertex0.section_index);
         pixel_path_state[ray_index].hit_attr0 = vec4<f32>(world_t, uv_hit.x);
         pixel_path_state[ray_index].hit_attr1 = vec4<f32>(world_b, uv_hit.y);
         pixel_path_state[ray_index].state_u32.w = tri_id_local;

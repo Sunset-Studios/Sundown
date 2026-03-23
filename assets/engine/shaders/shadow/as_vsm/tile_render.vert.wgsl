@@ -38,7 +38,7 @@ fn vs(@builtin(vertex_index) vi: u32,
   let shadow_idx            = light_shadow_idx_buffer[light_idx];
 
   let model_matrix          = entity_transforms[entity_row].transform;
-  let local_pos             = vertex_buffer[vi].position;
+  let local_pos             = vertex_position4(vertex_buffer[vi]);
   let world_pos             = vec4<f32>((model_matrix * local_pos).xyz, 1.0);
 
   let clipmap0_vp           = view_buffer[view_index].view_projection_matrix;

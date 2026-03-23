@@ -2,7 +2,7 @@ import { Renderer } from "./renderer.js";
 import { Buffer } from "./buffer.js";
 import { Name } from "../utility/names.js";
 import { MeshBLAS } from "../acceleration/mesh_blas.js";
-import { npot } from "../utility/math.js";
+import { npot, pack_snorm4x8 } from "../utility/math.js";
 
 const vertex_buffer_name = "vertex_buffer";
 const index_buffer_name = "index_buffer";
@@ -13,7 +13,7 @@ const meshlet_triangle_buffer_name = "meshlet_triangle_buffer";
 const meshlet_group_buffer_name = "meshlet_group_buffer";
 
 const initial_max_meshes = 256;
-const initial_vertex_buffer_size = 1024;
+const initial_vertex_capacity = 1024;
 const initial_index_buffer_size = 1024 * 3;
 const initial_meshlet_capacity = 256;
 const initial_meshlet_vertex_capacity = 1024;
@@ -21,6 +21,7 @@ const initial_meshlet_triangle_capacity = 1024;
 const initial_meshlet_group_capacity = 256;
 
 const mesh_bounds_size = 8;
+const vertex_stride = 32;
 const meshlet_stride = 80;
 const meshlet_group_stride = 64;
 const storage_usage = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST;
@@ -64,11 +65,11 @@ export class MeshData {
       force: true,
     });
 
-    this.vertex_data = new Float32Array(initial_vertex_buffer_size);
+    this.vertex_data = new Uint8Array(initial_vertex_capacity * vertex_stride);
     this.vertex_buffer = Buffer.create({
       name: vertex_buffer_name,
+      raw_data: this.vertex_data,
       usage: storage_usage,
-      size: initial_vertex_buffer_size,
       force: true,
     });
 
@@ -227,22 +228,49 @@ export class MeshData {
   }
 
   static _add_vertex_data(mesh) {
-    const packed = mesh.vertices.flatMap((v) =>
-      v.position.concat(v.normal, v.tangent, v.bitangent, v.uv, v.extra_data)
-    );
-
-    const floats_per_vertex = packed.length / mesh.vertices.length;
     const write_offset = this.vertex_buffer_head;
-    const required = write_offset + packed.length;
-    if (required > this.vertex_data.length) {
+    const required = write_offset + mesh.vertices.length * vertex_stride;
+    if (required > this.vertex_data.byteLength) {
       this._resize_vertex_data(required * 2);
     }
 
-    this.vertex_data.set(packed, write_offset);
+    const view = new DataView(this.vertex_data.buffer);
+    for (let i = 0; i < mesh.vertices.length; i++) {
+      const vertex = mesh.vertices[i];
+      const base = write_offset + i * vertex_stride;
+      const position = vertex.position ?? [0.0, 0.0, 0.0];
+      const normal = vertex.normal ?? [0.0, 0.0, 0.0, 0.0];
+      const tangent = vertex.tangent ?? [0.0, 0.0, 0.0, 0.0];
+      const uv = vertex.uv ?? [0.0, 0.0];
+      const extra_data = vertex.extra_data ?? [0, 0];
+
+      view.setFloat32(base + 0, position[0] ?? 0.0, true);
+      view.setFloat32(base + 4, position[1] ?? 0.0, true);
+      view.setFloat32(base + 8, position[2] ?? 0.0, true);
+      view.setUint32(base + 12, (extra_data[0] ?? 0) >>> 0, true);
+      view.setUint32(
+        base + 16,
+        pack_snorm4x8(normal[0] ?? 0.0, normal[1] ?? 0.0, normal[2] ?? 0.0, 0.0),
+        true
+      );
+      view.setUint32(
+        base + 20,
+        pack_snorm4x8(
+          tangent[0] ?? 0.0,
+          tangent[1] ?? 0.0,
+          tangent[2] ?? 0.0,
+          tangent[3] ?? 0.0
+        ),
+        true
+      );
+      view.setFloat32(base + 24, uv[0] ?? 0.0, true);
+      view.setFloat32(base + 28, uv[1] ?? 0.0, true);
+    }
+
     this._upload_vertex_data();
 
-    const old_vertex_offset = Math.floor(write_offset / floats_per_vertex);
-    this.vertex_buffer_head = write_offset + packed.length;
+    const old_vertex_offset = Math.floor(write_offset / vertex_stride);
+    this.vertex_buffer_head = write_offset + mesh.vertices.length * vertex_stride;
     return old_vertex_offset;
   }
 
@@ -251,16 +279,16 @@ export class MeshData {
   }
 
   static _resize_vertex_data(new_size) {
-    if (new_size <= this.vertex_data.length) return;
+    if (new_size <= this.vertex_data.byteLength) return;
 
-    const next_vertex_data = new Float32Array(new_size);
+    const next_vertex_data = new Uint8Array(new_size);
     next_vertex_data.set(this.vertex_data);
     this.vertex_data = next_vertex_data;
 
     this.vertex_buffer = Buffer.create({
       name: vertex_buffer_name,
+      raw_data: this.vertex_data,
       usage: storage_usage,
-      size: this.vertex_data.length,
       force: true,
     });
 

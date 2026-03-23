@@ -31,7 +31,7 @@ struct FragmentOutput {
     var output : VertexOutput;
     
     let view_index = u32(frame_info.view_index);
-    let local_position = vertex_buffer[vi].position;
+    let local_position = vertex_position4(vertex_buffer[vi]);
 
     if (scene_lighting_data.sky_type < 1.0) {
         // Extract the rotation part of the view matrix (3x3 upper-left part)

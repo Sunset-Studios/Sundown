@@ -210,6 +210,50 @@ fn safe_normalize(v: vec3<f32>) -> vec3<f32> {
   return select(normalize(v), vec3<f32>(0.0), len < 1e-6);
 }
 
+fn vertex_position(vertex: Vertex) -> vec3<f32> {
+    return vertex.position;
+}
+
+fn vertex_position4(vertex: Vertex) -> vec4<f32> {
+    return vec4<f32>(vertex.position, 1.0);
+}
+
+fn vertex_uv(vertex: Vertex) -> vec2<f32> {
+    return vertex.uv;
+}
+
+fn vertex_section_index(vertex: Vertex) -> f32 {
+    return f32(vertex.section_index);
+}
+
+fn vertex_normal(vertex: Vertex) -> vec4<f32> {
+    let decoded = unpack4x8snorm(vertex.normal_packed);
+    return vec4<f32>(safe_normalize(decoded.xyz), 0.0);
+}
+
+fn vertex_tangent(vertex: Vertex) -> vec4<f32> {
+    let decoded = unpack4x8snorm(vertex.tangent_packed);
+    return vec4<f32>(safe_normalize(decoded.xyz), decoded.w);
+}
+
+fn vertex_bitangent(vertex: Vertex) -> vec4<f32> {
+    let normal = vertex_normal(vertex).xyz;
+    let tangent = vertex_tangent(vertex).xyz;
+    return vec4<f32>(safe_normalize(cross(normal, tangent)), 0.0);
+}
+
+fn decode_vertex(vertex: Vertex) -> DecodedVertex {
+    return DecodedVertex(
+        vertex_position4(vertex),
+        vertex_normal(vertex),
+        vertex_tangent(vertex),
+        vertex_bitangent(vertex),
+        vertex_uv(vertex),
+        vertex_section_index(vertex),
+        0.0
+    );
+}
+
 // A billboard function that works with local position and entity transform
 // Uses model-view matrix manipulation for robust billboarding
 fn billboard_vertex_local(uv: vec2<f32>, entity_transform: mat4x4<f32>) -> vec4<f32> {
