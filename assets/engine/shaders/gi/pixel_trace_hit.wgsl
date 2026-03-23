@@ -749,16 +749,9 @@ fn cs(
     let total_pixels = gi_resolution.x * gi_resolution.y;
     let total_rays = total_pixels * rays_per_pixel;
 
-#if USE_RADIANCE_CACHE_AS_DEFERRED_LIGHTING
-    // Determine if this thread handles shadow rays or primary rays
-    // First half = shadow threads, Second half = primary threads
-    let is_shadow_thread = gid.x < total_rays;
-    let thread_id = select(gid.x - total_rays, gid.x, is_shadow_thread);
-#else
     // In this case, we only have primary rays
     let is_shadow_thread = false;
     let thread_id = gid.x;
-#endif
 
     // Early exit if thread is outside valid range
     if (thread_id >= total_rays) {

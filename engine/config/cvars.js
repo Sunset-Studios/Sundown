@@ -1,0 +1,146 @@
+import { CVarSystem, CVarType } from "../src/core/cvar_system.js";
+import {
+  DebugDrawType,
+  RenderStrategyType,
+  GIStrategyType,
+  AOStrategyType,
+  ReflectionStrategyType,
+} from "../src/renderer/renderer_types.js";
+
+export const EngineCVars = Object.freeze({
+  Renderer: Object.freeze({
+    RenderStrategy: "renderer.strategy",
+    DepthPrepassEnabled: "renderer.depth_prepass.enabled",
+    ShadowsEnabled: "renderer.shadows.enabled",
+    GIEnabled: "renderer.gi.enabled",
+    GIStrategy: "renderer.gi.strategy",
+    AOEnabled: "renderer.ao.enabled",
+    AOStrategy: "renderer.ao.strategy",
+    ReflectionsEnabled: "renderer.reflections.enabled",
+    ReflectionStrategy: "renderer.reflections.strategy",
+    DebugDraw: "renderer.debug.draw",
+    DebugTextureLevel: "renderer.debug.texture_level",
+  }),
+});
+
+export const engine_cvar_config = Object.freeze({
+  definitions: [
+    {
+      name: EngineCVars.Renderer.RenderStrategy,
+      type: CVarType.Enum,
+      default_value: RenderStrategyType.Deferred,
+      values: {
+        deferred: RenderStrategyType.Deferred,
+        pathtracing: RenderStrategyType.PathTracing,
+        path_tracing: RenderStrategyType.PathTracing,
+        pt: RenderStrategyType.PathTracing,
+      },
+      description: "Selects the active renderer strategy.",
+    },
+    {
+      name: EngineCVars.Renderer.DepthPrepassEnabled,
+      type: CVarType.Boolean,
+      default_value: true,
+      description: "Enables the renderer depth prepass.",
+    },
+    {
+      name: EngineCVars.Renderer.ShadowsEnabled,
+      type: CVarType.Boolean,
+      default_value: true,
+      description: "Enables shadow rendering.",
+    },
+    {
+      name: EngineCVars.Renderer.GIEnabled,
+      type: CVarType.Boolean,
+      default_value: true,
+      description: "Enables global illumination.",
+    },
+    {
+      name: EngineCVars.Renderer.GIStrategy,
+      type: CVarType.Enum,
+      default_value: GIStrategyType.DDGI,
+      values: {
+        ddgi: GIStrategyType.DDGI,
+        ptgi: GIStrategyType.PTGI,
+      },
+      description: "Selects the global illumination strategy.",
+    },
+    {
+      name: EngineCVars.Renderer.AOEnabled,
+      type: CVarType.Boolean,
+      default_value: true,
+      description: "Enables ambient occlusion.",
+    },
+    {
+      name: EngineCVars.Renderer.AOStrategy,
+      type: CVarType.Enum,
+      default_value: AOStrategyType.VBAO,
+      values: {
+        vbao: AOStrategyType.VBAO,
+        rtao: AOStrategyType.RTAO,
+      },
+      description: "Selects the ambient occlusion strategy.",
+    },
+    {
+      name: EngineCVars.Renderer.ReflectionsEnabled,
+      type: CVarType.Boolean,
+      default_value: true,
+      description: "Enables reflections.",
+    },
+    {
+      name: EngineCVars.Renderer.ReflectionStrategy,
+      type: CVarType.Enum,
+      default_value: ReflectionStrategyType.SSR,
+      values: {
+        ssr: ReflectionStrategyType.SSR,
+      },
+      description: "Selects the reflection strategy.",
+    },
+    {
+      name: EngineCVars.Renderer.DebugDraw,
+      type: CVarType.Enum,
+      default_value: DebugDrawType.None,
+      values: {
+        none: DebugDrawType.None,
+        wireframe: DebugDrawType.Wireframe,
+        depth: DebugDrawType.Depth,
+        normal: DebugDrawType.Normal,
+        emissive: DebugDrawType.Emissive,
+        motion: DebugDrawType.Motion,
+        entity: DebugDrawType.EntityId,
+        hzb: DebugDrawType.HZB,
+        shadow_atlas: DebugDrawType.ASVSM_ShadowAtlas,
+        shadow_page_table: DebugDrawType.ASVSM_ShadowPageTable,
+        shadow_virtual_tiles: DebugDrawType.ASVSM_TileOverlay,
+        shadow_tile_render: DebugDrawType.ASVSM_TileRenderOutput,
+        shadow_dirty_tiles: DebugDrawType.ASVSM_DirtyTiles,
+        bloom: DebugDrawType.Bloom,
+        ao: DebugDrawType.AO,
+        bent_normal: DebugDrawType.BentNormal,
+        gi_direct: DebugDrawType.GI_Direct,
+        gi_diffuse: DebugDrawType.GI_Diffuse,
+        gi_specular: DebugDrawType.GI_Specular,
+        gi_world_cache: DebugDrawType.GI_WorldCache,
+        gi_probes: DebugDrawType.GI_Probes,
+        gi_reflections: DebugDrawType.GI_Reflections,
+        entity_bounds: DebugDrawType.EntityBounds,
+        bvh: DebugDrawType.BVH,
+        blas_bounds: DebugDrawType.BLAS_Bounds,
+        prev_lighting: DebugDrawType.PrevLightingPyramid,
+      },
+      description: "Chooses the active renderer debug view.",
+    },
+    {
+      name: EngineCVars.Renderer.DebugTextureLevel,
+      type: CVarType.Integer,
+      default_value: 0,
+      validate: (value) => value >= 0,
+      description: "Selects the mip level for pyramid-style debug views.",
+    },
+  ],
+  cvars: {},
+});
+
+CVarSystem.register_many(engine_cvar_config.definitions);
+
+export default engine_cvar_config;

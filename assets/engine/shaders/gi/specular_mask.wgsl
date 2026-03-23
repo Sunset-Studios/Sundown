@@ -57,13 +57,6 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         return;
     }
 
-    // When using the radiance cache as deferred lighting, we must shade all
-    // visible pixels (not just specular-relevant ones).
-    #if USE_RADIANCE_CACHE_AS_DEFERRED_LIGHTING
-        textureStore(out_specular_mask, vec2<i32>(i32(gid.x), i32(gid.y)), vec4<u32>(1u, 0u, 0u, 0u));
-        return;
-    #endif
-
     let smra = textureLoad(gbuffer_smra, full_pixel_coord, 0u);
     let roughness = smra.g;
     let metallic = smra.b;

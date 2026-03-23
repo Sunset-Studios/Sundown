@@ -139,13 +139,6 @@ struct FragmentOutput {
     gi_indirect_specular = textureSample(gi_indirect_specular_texture, global_sampler, uv).rgb;
 #endif
 
-
-#if USE_RADIANCE_CACHE_AS_DEFERRED_LIGHTING
-    // The split GI buffers are stored in "lighting without albedo" space (irradiance-like):
-    // - direct + indirect_diffuse should be tinted by albedo in the deferred pass
-    // - indirect_specular is already in reflected radiance space (no albedo multiply)
-    color += (gi_direct + gi_indirect_diffuse + gi_indirect_specular) * albedo;
-#else
     // Only use split GI as *indirect* when doing classic deferred direct lighting.
     let num_lights = dense_lights_buffer.header.light_count * (1u - unlit);
     for (var light_index = 0u; light_index < num_lights; light_index++) {
@@ -210,7 +203,6 @@ struct FragmentOutput {
 
     // Add indirect specular term after direct lighting evaluation.
     color += gi_indirect_specular;
-#endif
 
     color += (emissive * albedo);
 

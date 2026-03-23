@@ -6,6 +6,7 @@ import {
   AOStrategyType,
   ReflectionStrategyType,
 } from "./renderer_types.js";
+import { CVarSystem } from "../core/cvar_system.js";
 import { DeferredShadingStrategy } from "./strategies/deferred_shading.js";
 import { PathTracingStrategy } from "./strategies/path_tracing.js";
 import { RenderGraph } from "./render_graph.js";
@@ -22,6 +23,7 @@ import ExecutionQueue from "../utility/execution_queue.js";
 import { GPUTimeQuery } from "./query.js";
 import { log, error } from "../utility/logging.js";
 import { vec2 } from "gl-matrix";
+import { EngineCVars } from "../../config/cvars.js";
 
 const frame_render_event_name = "frame_render";
 
@@ -43,20 +45,7 @@ export class Renderer {
   // Renderer features
   has_f16 = false;
   has_subgroups = false;
-
-  // Configurable renderer features
-  use_depth_prepass = true;
-  shadows_enabled = true;
-  gi_enabled = true;
-  ao_enabled = true;
-  reflections_enabled = true;
-  use_radiance_cache_as_deferred_lighting = false;
-  gi_strategy_type = GIStrategyType.DDGI;
-  ao_strategy_type = AOStrategyType.VBAO;
-  reflection_strategy_type = ReflectionStrategyType.SSR;
-
-  debug_draw_type = DebugDrawType.None;
-  debug_texture_level = 0;
+  cvar_unsubscribers = [];
 
   static renderers = [];
 
@@ -153,7 +142,8 @@ export class Renderer {
 
     this.render_graph = RenderGraph.create(this.max_bind_groups());
 
-    this.render_strategy = new render_strategy();
+    this._bind_cvars();
+    this._initialize_render_strategy(render_strategy);
 
     if (__DEV__) {
       GPUTimeQuery.init(this.device);
@@ -368,7 +358,7 @@ export class Renderer {
    * @returns {boolean} - True if shadows are enabled, false otherwise
    */
   is_shadows_enabled() {
-    return this.shadows_enabled;
+    return CVarSystem.get(EngineCVars.Renderer.ShadowsEnabled, true);
   }
 
   /**
@@ -376,11 +366,7 @@ export class Renderer {
    * @param {boolean} enabled - True if shadows should be enabled, false otherwise
    */
   set_shadows_enabled(enabled) {
-    this.shadows_enabled = enabled;
-    if (this.render_strategy) {
-      this.refresh_render_graph();
-      this.recreate_pipeline_states();
-    }
+    CVarSystem.set(EngineCVars.Renderer.ShadowsEnabled, enabled);
   }
 
   /**
@@ -388,7 +374,7 @@ export class Renderer {
    * @returns {boolean} - True if global illumination is enabled, false otherwise
    */
   is_gi_enabled() {
-    return this.gi_enabled;
+    return CVarSystem.get(EngineCVars.Renderer.GIEnabled, true);
   }
 
   /**
@@ -396,11 +382,7 @@ export class Renderer {
    * @param {boolean} enabled - True if global illumination should be enabled, false otherwise
    */
   set_gi_enabled(enabled) {
-    this.gi_enabled = enabled;
-    if (this.render_strategy) {
-      this.refresh_render_graph();
-      this.recreate_pipeline_states();
-    }
+    CVarSystem.set(EngineCVars.Renderer.GIEnabled, enabled);
   }
 
   /**
@@ -408,7 +390,7 @@ export class Renderer {
    * @returns {GIStrategyType} - The GI strategy type
    */
   get_gi_strategy_type() {
-    return this.gi_strategy_type;
+    return CVarSystem.get(EngineCVars.Renderer.GIStrategy, GIStrategyType.DDGI);
   }
 
   /**
@@ -416,11 +398,7 @@ export class Renderer {
    * @param {GIStrategyType} strategy_type - The GI strategy type
    */
   set_gi_strategy_type(strategy_type) {
-    this.gi_strategy_type = strategy_type;
-    if (this.render_strategy) {
-      this.refresh_render_graph(true /* reinit */);
-      this.recreate_pipeline_states();
-    }
+    CVarSystem.set(EngineCVars.Renderer.GIStrategy, strategy_type);
   }
 
   /**
@@ -428,7 +406,7 @@ export class Renderer {
    * @returns {AOStrategyType} - The AO strategy type
    */
   get_ao_strategy_type() {
-    return this.ao_strategy_type;
+    return CVarSystem.get(EngineCVars.Renderer.AOStrategy, AOStrategyType.VBAO);
   }
 
   /**
@@ -436,11 +414,7 @@ export class Renderer {
    * @param {AOStrategyType} strategy_type - The AO strategy type
    */
   set_ao_strategy_type(strategy_type) {
-    this.ao_strategy_type = strategy_type;
-    if (this.render_strategy) {
-      this.refresh_render_graph(true /* reinit */);
-      this.recreate_pipeline_states();
-    }
+    CVarSystem.set(EngineCVars.Renderer.AOStrategy, strategy_type);
   }
 
 
@@ -449,7 +423,7 @@ export class Renderer {
    * @returns {boolean} - True if reflections are enabled, false otherwise
    */
   is_reflection_enabled() {
-    return this.reflections_enabled;
+    return CVarSystem.get(EngineCVars.Renderer.ReflectionsEnabled, true);
   }
 
   /**
@@ -457,11 +431,7 @@ export class Renderer {
    * @param {boolean} enabled - True if reflections should be enabled, false otherwise
    */
   set_reflection_enabled(enabled) {
-    this.reflections_enabled = enabled;
-    if (this.render_strategy) {
-      this.refresh_render_graph();
-      this.recreate_pipeline_states();
-    }
+    CVarSystem.set(EngineCVars.Renderer.ReflectionsEnabled, enabled);
   }
 
   /**
@@ -469,7 +439,7 @@ export class Renderer {
    * @returns {ReflectionStrategyType} - The Reflection strategy type
    */
   get_reflection_strategy_type() {
-    return this.reflection_strategy_type;
+    return CVarSystem.get(EngineCVars.Renderer.ReflectionStrategy, ReflectionStrategyType.SSR);
   }
 
   /**
@@ -477,11 +447,7 @@ export class Renderer {
    * @param {ReflectionStrategyType} strategy_type - The Reflection strategy type
    */
   set_reflection_strategy_type(strategy_type) {
-    this.reflection_strategy_type = strategy_type;
-    if (this.render_strategy) {
-      this.refresh_render_graph(true /* reinit */);
-      this.recreate_pipeline_states();
-    }
+    CVarSystem.set(EngineCVars.Renderer.ReflectionStrategy, strategy_type);
   }
 
   /**
@@ -489,7 +455,7 @@ export class Renderer {
    * @returns {boolean} - True if AO is enabled, false otherwise
    */
   is_ao_enabled() {
-    return this.ao_enabled;
+    return CVarSystem.get(EngineCVars.Renderer.AOEnabled, true);
   }
 
   /**
@@ -497,11 +463,7 @@ export class Renderer {
    * @param {boolean} enabled - True if AO should be enabled, false otherwise
    */
   set_ao_enabled(enabled) {
-    this.ao_enabled = enabled;
-    if (this.render_strategy) {
-      this.refresh_render_graph();
-      this.recreate_pipeline_states();
-    }
+    CVarSystem.set(EngineCVars.Renderer.AOEnabled, enabled);
   }
 
   /**
@@ -509,7 +471,7 @@ export class Renderer {
    * @returns {boolean} - True if the depth prepass is enabled, false otherwise
    */
   is_depth_prepass_enabled() {
-    return this.use_depth_prepass;
+    return CVarSystem.get(EngineCVars.Renderer.DepthPrepassEnabled, true);
   }
 
   /**
@@ -517,23 +479,7 @@ export class Renderer {
    * @param {boolean} enabled - True if the depth prepass should be enabled, false otherwise
    */
   set_depth_prepass_enabled(enabled) {
-    this.use_depth_prepass = enabled;
-  }
-
-  /**
-   * Check if the radiance cache should be used as deferred lighting
-   * @returns {boolean} - True if the radiance cache should be used as deferred lighting, false otherwise
-   */
-  is_use_radiance_cache_as_deferred_lighting() {
-    return this.use_radiance_cache_as_deferred_lighting;
-  }
-
-  /**
-   * Set the radiance cache should be used as deferred lighting
-   * @param {boolean} enabled - True if the radiance cache should be used as deferred lighting, false otherwise
-   */
-  set_use_radiance_cache_as_deferred_lighting(enabled) {
-    this.use_radiance_cache_as_deferred_lighting = enabled;
+    CVarSystem.set(EngineCVars.Renderer.DepthPrepassEnabled, enabled);
   }
 
   /**
@@ -559,7 +505,7 @@ export class Renderer {
    * @returns {DebugDrawType} - The debug draw type
    */
   get_debug_draw_type() {
-    return this.debug_draw_type;
+    return CVarSystem.get(EngineCVars.Renderer.DebugDraw, DebugDrawType.None);
   }
 
   /**
@@ -567,7 +513,7 @@ export class Renderer {
    * @param {DebugDrawType} debug_draw_type - The debug draw type
    */
   set_debug_draw_type(debug_draw_type) {
-    this.debug_draw_type = debug_draw_type;
+    CVarSystem.set(EngineCVars.Renderer.DebugDraw, debug_draw_type);
   }
 
   /**
@@ -575,7 +521,7 @@ export class Renderer {
    * @returns {number} - The mip level to display (0 = full resolution).
    */
   get_debug_texture_level() {
-    return this.debug_texture_level;
+    return CVarSystem.get(EngineCVars.Renderer.DebugTextureLevel, 0);
   }
 
   /**
@@ -583,8 +529,7 @@ export class Renderer {
    * @param {number} level - The mip level (0 = full resolution).
    */
   set_debug_texture_level(level) {
-    this.debug_texture_level = Math.max(0, level);
-    this.mark_bind_groups_dirty(true);
+    CVarSystem.set(EngineCVars.Renderer.DebugTextureLevel, level);
   }
 
   /**
@@ -592,7 +537,7 @@ export class Renderer {
    * @returns {RenderStrategyType} - The rendering strategy type
    */
   get_render_strategy_type() {
-    return this.render_strategy_type;
+    return CVarSystem.get(EngineCVars.Renderer.RenderStrategy, this.render_strategy_type);
   }
 
   /**
@@ -601,37 +546,12 @@ export class Renderer {
    * @param {RenderStrategy} strategy_class - The rendering strategy class (optional, uses default for type if not provided)
    */
   set_render_strategy_type(strategy_type, strategy_class = null) {
-    // If switching to the same strategy type, do nothing
-    if (this.render_strategy_type === strategy_type && !strategy_class) {
-      return;
-    }
-
-    this.render_strategy_type = strategy_type;
-
-    // If a specific strategy class is provided, use it
     if (strategy_class) {
-      this.render_strategy = new strategy_class();
-      this.render_strategy.refresh(this.render_graph);
+      this._apply_render_strategy_type(strategy_type, strategy_class);
       return;
     }
 
-    // Otherwise, use the default strategy for the type
-    // Import default strategies dynamically to avoid circular dependencies
-    switch (strategy_type) {
-      case RenderStrategyType.Deferred:
-        this.render_strategy = new DeferredShadingStrategy();
-        break;
-      case RenderStrategyType.PathTracing:
-        this.render_strategy = new PathTracingStrategy();
-        this.render_strategy.refresh(this.render_graph);
-        break;
-      default:
-        log(`Unknown render strategy type: ${strategy_type}, falling back to Deferred`);
-        this.render_strategy = new DeferredShadingStrategy();
-        break;
-    }
-    
-    this.render_strategy.refresh(this.render_graph);
+    CVarSystem.set(EngineCVars.Renderer.RenderStrategy, strategy_type);
   }
 
   /**
@@ -673,6 +593,136 @@ export class Renderer {
     observer.observe(this.canvas);
 
     this._set_shared_frame_resolution();
+  }
+
+  _bind_cvars() {
+    if (this.cvar_unsubscribers.length > 0) {
+      return;
+    }
+
+    const refresh_renderer = (reinit = false) => {
+      if (!this.render_strategy) {
+        return;
+      }
+
+      this.refresh_render_graph(reinit);
+      this.recreate_pipeline_states();
+    };
+
+    this.cvar_unsubscribers.push(
+      CVarSystem.subscribe(EngineCVars.Renderer.RenderStrategy, (strategy_type) => {
+        this._apply_render_strategy_type(strategy_type);
+      })
+    );
+    this.cvar_unsubscribers.push(
+      CVarSystem.subscribe(EngineCVars.Renderer.DepthPrepassEnabled, () => {
+        refresh_renderer();
+      })
+    );
+    this.cvar_unsubscribers.push(
+      CVarSystem.subscribe(EngineCVars.Renderer.ShadowsEnabled, () => {
+        refresh_renderer();
+      })
+    );
+    this.cvar_unsubscribers.push(
+      CVarSystem.subscribe(EngineCVars.Renderer.GIEnabled, () => {
+        refresh_renderer();
+      })
+    );
+    this.cvar_unsubscribers.push(
+      CVarSystem.subscribe(EngineCVars.Renderer.AOEnabled, () => {
+        refresh_renderer();
+      })
+    );
+    this.cvar_unsubscribers.push(
+      CVarSystem.subscribe(EngineCVars.Renderer.ReflectionsEnabled, () => {
+        refresh_renderer();
+      })
+    );
+    this.cvar_unsubscribers.push(
+      CVarSystem.subscribe(EngineCVars.Renderer.GIStrategy, () => {
+        refresh_renderer(true);
+      })
+    );
+    this.cvar_unsubscribers.push(
+      CVarSystem.subscribe(EngineCVars.Renderer.AOStrategy, () => {
+        refresh_renderer(true);
+      })
+    );
+    this.cvar_unsubscribers.push(
+      CVarSystem.subscribe(EngineCVars.Renderer.ReflectionStrategy, () => {
+        refresh_renderer(true);
+      })
+    );
+    this.cvar_unsubscribers.push(
+      CVarSystem.subscribe(EngineCVars.Renderer.DebugTextureLevel, () => {
+        this.mark_bind_groups_dirty(true);
+      })
+    );
+  }
+
+  _initialize_render_strategy(strategy_class) {
+    const configured_strategy = CVarSystem.get(EngineCVars.Renderer.RenderStrategy, this.render_strategy_type);
+    const default_strategy = CVarSystem.get_definition(EngineCVars.Renderer.RenderStrategy)?.default_value;
+    const inferred_strategy = this._infer_render_strategy_type(strategy_class);
+
+    if (
+      inferred_strategy !== null &&
+      configured_strategy === default_strategy &&
+      inferred_strategy !== configured_strategy
+    ) {
+      CVarSystem.set(EngineCVars.Renderer.RenderStrategy, inferred_strategy);
+      return;
+    }
+
+    if (configured_strategy === this.render_strategy_type && strategy_class) {
+      this._apply_render_strategy_type(configured_strategy, strategy_class);
+      return;
+    }
+
+    this._apply_render_strategy_type(configured_strategy);
+  }
+
+  _infer_render_strategy_type(strategy_class) {
+    if (strategy_class === DeferredShadingStrategy) {
+      return RenderStrategyType.Deferred;
+    }
+
+    if (strategy_class === PathTracingStrategy) {
+      return RenderStrategyType.PathTracing;
+    }
+
+    return null;
+  }
+
+  _apply_render_strategy_type(strategy_type, strategy_class = null) {
+    if (this.render_strategy_type === strategy_type && !strategy_class) {
+      return;
+    }
+
+    this.render_strategy_type = strategy_type;
+
+    if (strategy_class) {
+      this.render_strategy = new strategy_class();
+      this.render_strategy.refresh(this.render_graph);
+      return;
+    }
+
+    switch (strategy_type) {
+      case RenderStrategyType.Deferred:
+        this.render_strategy = new DeferredShadingStrategy();
+        break;
+      case RenderStrategyType.PathTracing:
+        this.render_strategy = new PathTracingStrategy();
+        break;
+      default:
+        log(`Unknown render strategy type: ${strategy_type}, falling back to Deferred`);
+        this.render_strategy = new DeferredShadingStrategy();
+        this.render_strategy_type = RenderStrategyType.Deferred;
+        break;
+    }
+
+    this.render_strategy.refresh(this.render_graph);
   }
 
   /**
