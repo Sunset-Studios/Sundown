@@ -218,6 +218,12 @@ const ddgi_sh_probe_sample_shader_setup = {
   },
 };
 
+const ddgi_diffuse_resolve_shader_setup = {
+  pipeline_shaders: {
+    compute: { path: "gi/ddgi_diffuse_resolve.wgsl" },
+  },
+};
+
 const ddgi_sh_probe_debug_shader_setup = {
   pipeline_shaders: {
     compute: { path: "gi/ddgi_sh_probe_debug.wgsl" },
@@ -256,6 +262,7 @@ export class DDGI {
     cascade_spacing_multiplier: 4.0,
     probe_depth_resolutions: [8, 4, 4, 4, 4, 4, 4, 4],
     max_emissive_lights: 32768,
+    diffuse_sample_upscale_factor: 2,
     diffuse_atrous_enabled: false,
     diffuse_atrous_pass_count: 3,
     diffuse_atrous_phi_depth: 0.04,
@@ -677,8 +684,33 @@ export class DDGI {
     this.ddgi_frame_setup.frame_index = SharedFrameInfoBuffer.get_frame_index();
     this.ddgi_frame_setup.ping_pong_frame = this.ddgi_frame_setup.frame_index % 2;
 
+    const diffuse_sample_upscale_factor = Math.max(
+      1,
+      Math.floor(this.config.diffuse_sample_upscale_factor || 1)
+    );
+    const diffuse_sample_width = Math.max(
+      1,
+      Math.ceil(width / diffuse_sample_upscale_factor)
+    );
+    const diffuse_sample_height = Math.max(
+      1,
+      Math.ceil(height / diffuse_sample_upscale_factor)
+    );
+
     const blue_noise = Texture.default_blue_noise();
     const blue_noise_image = render_graph.register_image(blue_noise.config.name);
+
+    const diffuse_sample_output =
+      diffuse_sample_upscale_factor > 1
+        ? render_graph.create_image({
+            name: "ddgi_diffuse_sample_intermediate",
+            format: "rgba16float",
+            width: diffuse_sample_width,
+            height: diffuse_sample_height,
+            usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
+            force: force_recreate,
+          })
+        : this.final_gi_texture_indirect_diffuse;
 
     const diffuse_atrous_ping = render_graph.create_image({
       name: "ddgi_diffuse_atrous_ping",
@@ -1401,22 +1433,48 @@ export class DDGI {
           probe_depth_moments,
           hzb_texture,
           gbuffer_normal,
-          this.final_gi_texture_indirect_diffuse,
+          diffuse_sample_output,
           skydome_data_buffer,
           skybox_texture_buffer,
         ],
-        outputs: [this.final_gi_texture_indirect_diffuse],
+        outputs: [diffuse_sample_output],
         shader_setup: ddgi_sh_probe_sample_shader_setup,
       },
       (graph, frame_data, encoder) => {
         const pass = graph.get_physical_pass(frame_data.current_pass);
         pass.dispatch(
-          Math.ceil(this.ddgi_frame_setup.width / 16),
-          Math.ceil(this.ddgi_frame_setup.height / 16),
+          Math.ceil(diffuse_sample_width / 16),
+          Math.ceil(diffuse_sample_height / 16),
           1
         );
       }
     );
+
+    if (diffuse_sample_upscale_factor > 1) {
+      render_graph.add_pass(
+        `ddgi_diffuse_resolve_${this.ddgi_frame_setup.ping_pong_frame}`,
+        RenderPassFlags.Compute,
+        {
+          inputs: [
+            diffuse_sample_output,
+            hzb_texture,
+            gbuffer_normal,
+            this.final_gi_texture_indirect_diffuse,
+          ],
+          outputs: [this.final_gi_texture_indirect_diffuse],
+          shader_setup: ddgi_diffuse_resolve_shader_setup,
+        },
+        (graph, frame_data, encoder) => {
+          const pass = graph.get_physical_pass(frame_data.current_pass);
+          pass.dispatch(
+            Math.ceil(this.ddgi_frame_setup.width / 8),
+            Math.ceil(this.ddgi_frame_setup.height / 8),
+            1
+          );
+        }
+      );
+    }
+
     let final_diffuse_output = this.final_gi_texture_indirect_diffuse;
     let atrous_read_texture = this.final_gi_texture_indirect_diffuse;
     let atrous_write_texture = diffuse_atrous_ping;

@@ -509,7 +509,7 @@ fn ddgi_sh_evaluate_irradiance(
 ) -> vec3<f32> {
     // Calculate irradiance using the Geometrics non-linear fit
     // This provides better quality than linear evaluation for L1
-    return sh_l1_rgb_calculate_irradiance_geometrics(sh, normal);
+    return sh_l1_rgb_calculate_irradiance(sh, normal);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -816,7 +816,8 @@ fn ddgi_sample_sh_irradiance_single_cascade_internal(
     probe_depth_moments: ptr<storage, array<u32>, read>,
     position: vec3<f32>,
     normal_ws: vec3<f32>,
-    cascade_index: u32
+    cascade_index: u32,
+    mark_surface_visible: bool
 ) -> DDGISampleResult {
     let dims = vec3<u32>(
         u32((*ddgi_params).probe_grid_dims.x),
@@ -850,21 +851,6 @@ fn ddgi_sample_sh_irradiance_single_cascade_internal(
     var sh_sum = sh_l1_rgb_zero();
     var weight_sum = 0.0;
     var readiness_weighted_sum = 0.0;
-
-    // Mark probes along trilinear neighborhood of surfaces as active
-    for (var i = 0; i < 8; i = i + 1) {
-        let coord = vec3<u32>(base) + vec3<u32>(trilinear_index_offsets[i]);
-        let clamped_coord = clamp(coord, vec3<u32>(0u), dims - vec3<u32>(1u));
-        let probe_index = ddgi_probe_index_from_coord(ddgi_params, cascade_index, clamped_coord);
-
-        let state = probe_state_get_state(probe_states[probe_index].packed_state);
-        var flags = probe_state_get_flags(probe_states[probe_index].packed_state);
-
-        if (state == PROBE_STATE_SLEEPING || state == PROBE_STATE_OFF) {
-            flags = flags | PROBE_STATE_FLAG_SURFACE_VISIBLE;
-            probe_states[probe_index].packed_state = probe_state_pack(PROBE_STATE_UNINITIALIZED, 0u, 0u, flags);
-        }
-    }
 
     // Do trilinear interpolation for sampling
     for (var i = 0; i < 8; i = i + 1) {
@@ -927,8 +913,25 @@ fn ddgi_sample_sh_irradiance_single_cascade_internal(
 
         let probe_sh = ddgi_sh_probe_read(sh_probes, probe_index);
         sh_sum = sh_l1_rgb_add(sh_sum, sh_l1_rgb_multiply_scalar(probe_sh, weight));
-        weight_sum = weight_sum + weight;
-        readiness_weighted_sum = readiness_weighted_sum + weight * probe_readiness;
+        weight_sum += weight;
+        readiness_weighted_sum += weight * probe_readiness;
+    }
+
+    // Mark probes along trilinear neighborhood of surfaces as active
+    if (mark_surface_visible) {
+        for (var i = 0; i < 8; i = i + 1) {
+            let coord = vec3<u32>(base) + vec3<u32>(trilinear_index_offsets[i]);
+            let clamped_coord = clamp(coord, vec3<u32>(0u), dims - vec3<u32>(1u));
+            let probe_index = ddgi_probe_index_from_coord(ddgi_params, cascade_index, clamped_coord);
+
+            let state = probe_state_get_state(probe_states[probe_index].packed_state);
+            var flags = probe_state_get_flags(probe_states[probe_index].packed_state);
+
+            if (state == PROBE_STATE_SLEEPING || state == PROBE_STATE_OFF) {
+                flags = flags | PROBE_STATE_FLAG_SURFACE_VISIBLE;
+                probe_states[probe_index].packed_state = probe_state_pack(PROBE_STATE_UNINITIALIZED, 0u, 0u, flags);
+            }
+        }
     }
 
     var result: DDGISampleResult;
@@ -956,7 +959,8 @@ fn ddgi_sample_sh_irradiance_with_fallback(
     probe_depth_moments: ptr<storage, array<u32>, read>,
     position: vec3<f32>,
     normal_ws: vec3<f32>,
-    start_cascade: u32
+    start_cascade: u32,
+    mark_surface_visible: bool
 ) -> vec3<f32> {
     let cascade_count = ddgi_cascade_count(ddgi_params);
     
@@ -968,7 +972,8 @@ fn ddgi_sample_sh_irradiance_with_fallback(
         probe_depth_moments,
         position,
         normal_ws,
-        start_cascade
+        start_cascade,
+        mark_surface_visible
     );
     
     // If no coarser cascade, return as-is
@@ -985,7 +990,8 @@ fn ddgi_sample_sh_irradiance_with_fallback(
     var current_cascade = next_cascade;
     
     // Iterate through coarser cascades until we have full coverage
-    for (var iter = 0u; remaining_weight > 0.0001 && current_cascade < cascade_count; iter = iter + 1u) {
+    //for (var iter = 0u; remaining_weight > 0.0001 && current_cascade < cascade_count; iter = iter + 1u) {
+    if (remaining_weight > 0.0001 && current_cascade < cascade_count) {
         let coarse_result = ddgi_sample_sh_irradiance_single_cascade_internal(
             ddgi_params,
             sh_probes,
@@ -993,16 +999,14 @@ fn ddgi_sample_sh_irradiance_with_fallback(
             probe_depth_moments,
             position,
             normal_ws,
-            current_cascade
+            current_cascade,
+            false /* mark_surface_visible */
         );
         
         // Contribute proportionally to the remaining weight needed
         let contribute_weight = remaining_weight * coarse_result.readiness;
         accumulated_irradiance = accumulated_irradiance + coarse_result.irradiance * contribute_weight;
         accumulated_weight = accumulated_weight + contribute_weight;
-        remaining_weight = remaining_weight * (1.0 - coarse_result.readiness);
-        
-        current_cascade = current_cascade + 1u;
     }
     
     // Normalize by total weight (handles case where not all cascades are ready)
@@ -1038,7 +1042,8 @@ fn ddgi_sample_sh_irradiance_with_states(
         probe_depth_moments,
         position,
         normal_ws,
-        cascade_index
+        cascade_index,
+        true /* mark_surface_visible */
     );
 
     // Edge blending between cascades for smooth spatial transitions
@@ -1055,7 +1060,8 @@ fn ddgi_sample_sh_irradiance_with_states(
             probe_depth_moments,
             position,
             normal_ws,
-            coarser_index
+            coarser_index,
+            false /* mark_surface_visible */
         );
         return mix(irradiance_fine, irradiance_coarse, blend_weight);
     }
