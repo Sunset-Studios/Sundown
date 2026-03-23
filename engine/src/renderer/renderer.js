@@ -50,7 +50,6 @@ export class Renderer {
   gi_enabled = true;
   ao_enabled = true;
   reflections_enabled = true;
-  use_radiance_cache_as_deferred_lighting = false;
   gi_strategy_type = GIStrategyType.DDGI;
   ao_strategy_type = AOStrategyType.VBAO;
   reflection_strategy_type = ReflectionStrategyType.SSR;
@@ -518,22 +517,6 @@ export class Renderer {
    */
   set_depth_prepass_enabled(enabled) {
     this.use_depth_prepass = enabled;
-  }
-
-  /**
-   * Check if the radiance cache should be used as deferred lighting
-   * @returns {boolean} - True if the radiance cache should be used as deferred lighting, false otherwise
-   */
-  is_use_radiance_cache_as_deferred_lighting() {
-    return this.use_radiance_cache_as_deferred_lighting;
-  }
-
-  /**
-   * Set the radiance cache should be used as deferred lighting
-   * @param {boolean} enabled - True if the radiance cache should be used as deferred lighting, false otherwise
-   */
-  set_use_radiance_cache_as_deferred_lighting(enabled) {
-    this.use_radiance_cache_as_deferred_lighting = enabled;
   }
 
   /**
