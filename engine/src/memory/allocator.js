@@ -1,4 +1,4 @@
-import { ResizableBitArray } from './container';
+import { ResizableBitArray } from './container.js';
 
 const function_string = 'function'
 const out_of_memory_error = 'Out of memory on allocator';
