@@ -38,11 +38,10 @@ const INVALID_IDX = 0xffffffffu;
 const PI = 3.14159265359;
 
 struct Vertex {
-    position: vec3<f32>,
-    section_index: u32,
+    position: vec4<f32>,
+    uv: vec2<f32>,
     normal_packed: u32,
     tangent_packed: u32,
-    uv: vec2<f32>,
 };
 
 struct DecodedVertex {

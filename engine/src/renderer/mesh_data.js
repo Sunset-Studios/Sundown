@@ -247,14 +247,14 @@ export class MeshData {
       view.setFloat32(base + 0, position[0] ?? 0.0, true);
       view.setFloat32(base + 4, position[1] ?? 0.0, true);
       view.setFloat32(base + 8, position[2] ?? 0.0, true);
-      view.setUint32(base + 12, (extra_data[0] ?? 0) >>> 0, true);
+      view.setFloat32(base + 12, extra_data[0] ?? 0.0, true);
       view.setUint32(
-        base + 16,
+        base + 24,
         pack_snorm4x8(normal[0] ?? 0.0, normal[1] ?? 0.0, normal[2] ?? 0.0, 0.0),
         true
       );
       view.setUint32(
-        base + 20,
+        base + 28,
         pack_snorm4x8(
           tangent[0] ?? 0.0,
           tangent[1] ?? 0.0,
@@ -263,8 +263,8 @@ export class MeshData {
         ),
         true
       );
-      view.setFloat32(base + 24, uv[0] ?? 0.0, true);
-      view.setFloat32(base + 28, uv[1] ?? 0.0, true);
+      view.setFloat32(base + 16, uv[0] ?? 0.0, true);
+      view.setFloat32(base + 20, uv[1] ?? 0.0, true);
     }
 
     this._upload_vertex_data();

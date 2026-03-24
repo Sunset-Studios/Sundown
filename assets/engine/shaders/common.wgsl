@@ -211,11 +211,11 @@ fn safe_normalize(v: vec3<f32>) -> vec3<f32> {
 }
 
 fn vertex_position(vertex: Vertex) -> vec3<f32> {
-    return vertex.position;
+    return vertex.position.xyz;
 }
 
 fn vertex_position4(vertex: Vertex) -> vec4<f32> {
-    return vec4<f32>(vertex.position, 1.0);
+    return vec4<f32>(vertex.position.xyz, 1.0);
 }
 
 fn vertex_uv(vertex: Vertex) -> vec2<f32> {
@@ -223,7 +223,7 @@ fn vertex_uv(vertex: Vertex) -> vec2<f32> {
 }
 
 fn vertex_section_index(vertex: Vertex) -> f32 {
-    return f32(vertex.section_index);
+    return vertex.position.w;
 }
 
 fn vertex_normal(vertex: Vertex) -> vec4<f32> {
