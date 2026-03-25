@@ -2,10 +2,7 @@
 import { global_dispatcher } from "../../core/dispatcher.js";
 import { EntityManager } from "../../core/ecs/entity.js";
 import { FragmentGpuBuffer } from "../../core/ecs/solar/memory.js";
-import {
-  SharedEnvironmentData,
-  SharedFrameInfoBuffer,
-} from "../../core/shared_data.js";
+import { SharedFrameInfoBuffer } from "../../core/shared_data.js";
 
 // ECS fragments
 import { TransformFragment } from "../../core/ecs/fragments/transform_fragment.js";
@@ -16,11 +13,13 @@ import { StaticMeshFragment } from "../../core/ecs/fragments/static_mesh_fragmen
 import { Renderer } from "../renderer.js";
 import { Texture } from "../texture.js";
 import { MeshData } from "../mesh_data.js";
+import { EnvironmentPipeline } from "../environment_pipeline.js";
 import { MaterialAllocationTable } from "../material_allocation_table.js";
 import { PostProcessStack } from "../post_process_stack.js";
 import { MeshTaskQueue } from "../mesh_task_queue.js";
 import { ComputeTaskQueue } from "../compute_task_queue.js";
 import { CullingPipeline } from "../culling_pipeline.js";
+import { GBufferTargetsPipeline } from "../gbuffer_targets_pipeline.js";
 import { ResourceCache } from "../resource_cache.js";
 import { TextureArrayPools } from "../texture_pool.js";
 import { VisibilityBuffer } from "../visibility_buffer.js";
@@ -48,62 +47,6 @@ const bounds_name = "bounds";
 const light_fragment_name = "light_fragment";
 const mesh_asset_id_name = "mesh_asset_id";
 
-// G-Buffer configurations
-const main_albedo_image_config = {
-  name: "main_albedo",
-  format: rgba16float_format,
-  width: 0,
-  height: 0,
-  usage:
-    GPUTextureUsage.RENDER_ATTACHMENT |
-    GPUTextureUsage.TEXTURE_BINDING |
-    GPUTextureUsage.STORAGE_BINDING,
-  force: false,
-};
-const main_smra_image_config = {
-  name: "main_smra",
-  format: rgba16float_format,
-  width: 0,
-  height: 0,
-  usage:
-    GPUTextureUsage.RENDER_ATTACHMENT |
-    GPUTextureUsage.TEXTURE_BINDING |
-    GPUTextureUsage.STORAGE_BINDING,
-  force: false,
-};
-const main_normal_image_config = {
-  name: "main_normal_0",
-  format: rgba16float_format,
-  width: 0,
-  height: 0,
-  usage:
-    GPUTextureUsage.RENDER_ATTACHMENT |
-    GPUTextureUsage.TEXTURE_BINDING |
-    GPUTextureUsage.STORAGE_BINDING,
-  force: false,
-};
-const main_motion_emissive_image_config = {
-  name: "main_motion_emissive",
-  format: rgba16float_format,
-  width: 0,
-  height: 0,
-  usage:
-    GPUTextureUsage.RENDER_ATTACHMENT |
-    GPUTextureUsage.TEXTURE_BINDING |
-    GPUTextureUsage.STORAGE_BINDING,
-  force: false,
-};
-const main_depth_image_config = {
-  name: "main_depth_0",
-  format: depth32float_format,
-  width: 0,
-  height: 0,
-  usage:
-    GPUTextureUsage.RENDER_ATTACHMENT |
-    GPUTextureUsage.TEXTURE_BINDING |
-    GPUTextureUsage.COPY_SRC,
-  force: false,
-};
 const main_depth_image2_config = {
   name: "main_depth_1",
   format: depth32float_format,
@@ -158,21 +101,6 @@ const dense_lights_buffer_config = {
   usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
 };
 
-const skybox_shader_setup = {
-  pipeline_shaders: {
-    vertex: {
-      path: "skybox.wgsl",
-    },
-    fragment: {
-      path: "skybox.wgsl",
-    },
-  },
-  rasterizer_state: {
-    cull_mode: "none",
-  },
-  depth_write_enabled: false,
-};
-
 const path_trace_composite_shader_setup = {
   pipeline_shaders: {
     compute: {
@@ -194,15 +122,6 @@ const clear_dirty_flags_shader_setup = {
       path: "system_compute/clear_dirty_flags.wgsl",
     },
   },
-};
-
-const skybox_output_image_config = {
-  name: "skybox_output",
-  format: rgba16float_format,
-  width: 0,
-  height: 0,
-  usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
-  force: false,
 };
 
 const post_lighting_image_config = {
@@ -237,6 +156,8 @@ export class PathTracingStrategy {
   force_reinit = false;
   culling_pipeline = null;
   visibility_buffer = null;
+  gbuffer_targets_pipeline = null;
+  environment_pipeline = null;
   prev_depth_image = null;
   path_tracer = null;
 
@@ -248,6 +169,8 @@ export class PathTracingStrategy {
   setup(render_graph) {
     this.path_tracer = new PathTracer();
     this.culling_pipeline = new CullingPipeline();
+    this.environment_pipeline = new EnvironmentPipeline();
+    this.gbuffer_targets_pipeline = new GBufferTargetsPipeline();
     this.visibility_buffer = new VisibilityBuffer();
 
     global_dispatcher.on(
@@ -406,32 +329,18 @@ export class PathTracingStrategy {
         visibility_surface_image,
         visibility_barycentric_image,
       } = this.visibility_buffer.register_targets(render_graph);
-
-      main_albedo_image_config.width = image_extent.width;
-      main_albedo_image_config.height = image_extent.height;
-      main_albedo_image_config.force = this.force_recreate;
-      main_smra_image_config.width = image_extent.width;
-      main_smra_image_config.height = image_extent.height;
-      main_smra_image_config.force = this.force_recreate;
-      main_normal_image_config.width = image_extent.width;
-      main_normal_image_config.height = image_extent.height;
-      main_normal_image_config.force = this.force_recreate;
-      main_motion_emissive_image_config.width = image_extent.width;
-      main_motion_emissive_image_config.height = image_extent.height;
-      main_motion_emissive_image_config.force = this.force_recreate;
-      main_depth_image_config.width = image_extent.width;
-      main_depth_image_config.height = image_extent.height;
-      main_depth_image_config.force = this.force_recreate;
-      main_depth_image2_config.width = image_extent.width;
-      main_depth_image2_config.height = image_extent.height;
-      main_depth_image2_config.force = this.force_recreate;
-
-      let main_albedo_image = render_graph.create_image(main_albedo_image_config);
-      let main_smra_image = render_graph.create_image(main_smra_image_config);
-      let main_normal_image = render_graph.create_image(main_normal_image_config);
-      let main_motion_emissive_image = render_graph.create_image(main_motion_emissive_image_config);
-      let main_depth_image = render_graph.create_image(main_depth_image_config);
-      let prev_depth_image = render_graph.create_image(main_depth_image2_config);
+      let {
+        main_albedo_image,
+        main_smra_image,
+        main_normal_image,
+        main_motion_emissive_image,
+        main_depth_image,
+        prev_depth_image,
+      } = this.gbuffer_targets_pipeline.create_targets(render_graph, {
+        image_extent,
+        force_recreate: this.force_recreate,
+        include_prev_depth: true,
+      });
 
       const texture_pool_albedo = this._get_texture_pool(render_graph, "albedo");
       const texture_pool_normal = this._get_texture_pool(render_graph, "normal");
@@ -466,27 +375,21 @@ export class PathTracingStrategy {
       // ┌─────────────────────────────────────────────────────────────────────────────┐
       // │ 🧹 PASS: Clear G-Buffer Targets                                            │
       // └─────────────────────────────────────────────────────────────────────────────┘
-      {
-        render_graph.add_pass(
-          clear_g_buffer_pass_name,
-          RenderPassFlags.Graphics,
-          {
-            outputs: [
-              main_albedo_image,
-              main_smra_image,
-              main_normal_image,
-              main_motion_emissive_image,
-              visibility_entity_image,
-              visibility_surface_image,
-              visibility_barycentric_image,
-              main_depth_image,
-            ],
-            b_skip_pass_pipeline_setup: true,
-            b_skip_pass_bind_group_setup: true,
-          },
-          (graph, frame_data, encoder) => {}
-        );
-      }
+      this.gbuffer_targets_pipeline.add_clear_pass(render_graph, {
+        pass_name: clear_g_buffer_pass_name,
+        targets: {
+          main_albedo_image,
+          main_smra_image,
+          main_normal_image,
+          main_motion_emissive_image,
+          main_depth_image,
+        },
+        visibility_targets: [
+          visibility_entity_image,
+          visibility_surface_image,
+          visibility_barycentric_image,
+        ],
+      });
 
       // ┌─────────────────────────────────────────────────────────────────────────────┐
       // │ 💡 PASS: Compact Active Lights                                             │
@@ -516,58 +419,27 @@ export class PathTracingStrategy {
       // │    Render the environment skybox to provide background                     │
       // └─────────────────────────────────────────────────────────────────────────────┘
       let skybox_image = null;
-      {
-        skybox_output_image_config.width = image_extent.width;
-        skybox_output_image_config.height = image_extent.height;
-        skybox_output_image_config.force = this.force_recreate;
-        skybox_image = render_graph.create_image(skybox_output_image_config);
-
-        const skydome_data = SharedEnvironmentData.get_skydome_data();
-        const skydome_data_buffer = render_graph.register_buffer(skydome_data.config.name);
-
-        const skybox = SharedEnvironmentData.get_skybox();
-        const skybox_texture = render_graph.register_image(skybox.config.name);
-
-        render_graph.add_pass(
-          skybox_pass_name,
-          RenderPassFlags.Graphics,
-          {
-            inputs: [skybox_texture, skydome_data_buffer],
-            outputs: [skybox_image],
-            shader_setup: skybox_shader_setup,
-          },
-          (graph, frame_data, encoder) => {
-            const pass = graph.get_physical_pass(frame_data.current_pass);
-            MeshTaskQueue.draw_cube(pass);
-          }
-        );
-      }
+      skybox_image = this.environment_pipeline.add_skybox_pass(render_graph, {
+        pass_name: skybox_pass_name,
+        image_extent,
+        force_recreate: this.force_recreate,
+      });
 
       // ┌─────────────────────────────────────────────────────────────────────────────┐
       // │ 🔄 PASS: G-Buffer Load State Configuration                                 │
       // └─────────────────────────────────────────────────────────────────────────────┘
-      {
-        render_graph.add_pass(
-          reset_g_buffer_targets_pass_name,
-          RenderPassFlags.GraphLocal,
-          {},
-          (graph, frame_data, encoder) => {
-            const albedo = graph.get_physical_image(main_albedo_image);
-            const smra = graph.get_physical_image(main_smra_image);
-            const normal = graph.get_physical_image(main_normal_image);
-            const motion = graph.get_physical_image(main_motion_emissive_image);
-            const entity_id = graph.get_physical_image(visibility_entity_image);
-            const depth = graph.get_physical_image(main_depth_image);
-
-            if (albedo) albedo.config.load_op = load_op_load;
-            if (smra) smra.config.load_op = load_op_load;
-            if (normal) normal.config.load_op = load_op_load;
-            if (motion) motion.config.load_op = load_op_load;
-            if (entity_id) entity_id.config.load_op = load_op_load;
-            if (depth) depth.config.load_op = load_op_load;
-          }
-        );
-      }
+      this.gbuffer_targets_pipeline.add_set_load_op_pass(render_graph, {
+        pass_name: reset_g_buffer_targets_pass_name,
+        targets: {
+          main_albedo_image,
+          main_smra_image,
+          main_normal_image,
+          main_motion_emissive_image,
+          main_depth_image,
+        },
+        visibility_entity_image,
+        load_op: load_op_load,
+      });
 
       // ┌─────────────────────────────────────────────────────────────────────────────┐
       // │ 🎯 PASS: Frustum Culling                                                   │
@@ -806,28 +678,18 @@ export class PathTracingStrategy {
       // ┌─────────────────────────────────────────────────────────────────────────────┐
       // │ 🧽 PASS: G-Buffer Clear State Reset                                        │
       // └─────────────────────────────────────────────────────────────────────────────┘
-      {
-        render_graph.add_pass(
-          reset_g_buffer_targets_pass_name,
-          RenderPassFlags.GraphLocal,
-          {},
-          (graph, frame_data, encoder) => {
-            const albedo = graph.get_physical_image(main_albedo_image);
-            const smra = graph.get_physical_image(main_smra_image);
-            const normal = graph.get_physical_image(main_normal_image);
-            const motion = graph.get_physical_image(main_motion_emissive_image);
-            const entity_id = graph.get_physical_image(visibility_entity_image);
-            const depth = graph.get_physical_image(main_depth_image);
-
-            if (albedo) albedo.config.load_op = load_op_clear;
-            if (smra) smra.config.load_op = load_op_clear;
-            if (normal) normal.config.load_op = load_op_clear;
-            if (motion) motion.config.load_op = load_op_clear;
-            if (entity_id) entity_id.config.load_op = load_op_clear;
-            if (depth) depth.config.load_op = load_op_clear;
-          }
-        );
-      }
+      this.gbuffer_targets_pipeline.add_set_load_op_pass(render_graph, {
+        pass_name: reset_g_buffer_targets_pass_name,
+        targets: {
+          main_albedo_image,
+          main_smra_image,
+          main_normal_image,
+          main_motion_emissive_image,
+          main_depth_image,
+        },
+        visibility_entity_image,
+        load_op: load_op_clear,
+      });
 
       // ┌─────────────────────────────────────────────────────────────────────────────┐
       // │ 🚩 PASS: Clear Entity Dirty Flags                                          │

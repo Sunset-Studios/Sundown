@@ -2,10 +2,7 @@
 import { global_dispatcher } from "../../core/dispatcher.js";
 import { EntityManager } from "../../core/ecs/entity.js";
 import { FragmentGpuBuffer } from "../../core/ecs/solar/memory.js";
-import {
-  SharedEnvironmentData,
-  SharedFrameInfoBuffer,
-} from "../../core/shared_data.js";
+import { SharedFrameInfoBuffer } from "../../core/shared_data.js";
 
 // ECS fragments
 import { TransformFragment } from "../../core/ecs/fragments/transform_fragment.js";
@@ -24,6 +21,8 @@ import { ComputeTaskQueue } from "../compute_task_queue.js";
 import { ComputeRasterTaskQueue } from "../compute_raster_task_queue.js";
 import { CullingPipeline } from "../culling_pipeline.js";
 import { DeferredDebugPipeline } from "../deferred_debug_pipeline.js";
+import { EnvironmentPipeline } from "../environment_pipeline.js";
+import { GBufferTargetsPipeline } from "../gbuffer_targets_pipeline.js";
 import { VisibilityBuffer } from "../visibility_buffer.js";
 
 // Types and utilities
@@ -43,8 +42,6 @@ import { profile_scope } from "../../utility/performance.js";
 import {
   rgba8unorm_format,
   rgba16float_format,
-  depth32float_format,
-  one_one_blend_config,
   src_alpha_one_minus_src_alpha_blend_config,
   load_op_load,
   load_op_clear,
@@ -76,91 +73,6 @@ const bounds_name = "bounds";
 const light_fragment_name = "light_fragment";
 const mesh_asset_id_name = "mesh_asset_id";
 
-const main_albedo_image_config = {
-  name: "main_albedo",
-  format: rgba16float_format,
-  width: 0,
-  height: 0,
-  usage:
-    GPUTextureUsage.RENDER_ATTACHMENT |
-    GPUTextureUsage.TEXTURE_BINDING |
-    GPUTextureUsage.STORAGE_BINDING,
-  force: false,
-};
-const main_smra_image_config = {
-  name: "main_smra",
-  format: rgba16float_format,
-  width: 0,
-  height: 0,
-  usage:
-    GPUTextureUsage.RENDER_ATTACHMENT |
-    GPUTextureUsage.TEXTURE_BINDING |
-    GPUTextureUsage.STORAGE_BINDING,
-  force: false,
-};
-const main_normal_image_config = {
-  name: "main_normal_0",
-  format: rgba16float_format,
-  width: 0,
-  height: 0,
-  usage:
-    GPUTextureUsage.RENDER_ATTACHMENT |
-    GPUTextureUsage.TEXTURE_BINDING |
-    GPUTextureUsage.STORAGE_BINDING |
-    GPUTextureUsage.COPY_SRC,
-  force: false,
-};
-const main_normal_image2_config = {
-  name: "main_normal_1",
-  format: rgba16float_format,
-  width: 0,
-  height: 0,
-  usage:
-    GPUTextureUsage.RENDER_ATTACHMENT |
-    GPUTextureUsage.TEXTURE_BINDING |
-    GPUTextureUsage.STORAGE_BINDING |
-    GPUTextureUsage.COPY_DST,
-  force: false,
-};
-const main_motion_emissive_image_config = {
-  name: "main_motion_emissive",
-  format: rgba16float_format,
-  width: 0,
-  height: 0,
-  usage:
-    GPUTextureUsage.RENDER_ATTACHMENT |
-    GPUTextureUsage.TEXTURE_BINDING |
-    GPUTextureUsage.STORAGE_BINDING,
-  force: false,
-};
-const main_transparency_accum_image_config = {
-  name: "main_transparency_accum",
-  format: rgba16float_format,
-  width: 0,
-  height: 0,
-  usage:
-    GPUTextureUsage.RENDER_ATTACHMENT |
-    GPUTextureUsage.TEXTURE_BINDING |
-    GPUTextureUsage.STORAGE_BINDING,
-  blend: one_one_blend_config,
-  force: false,
-};
-const main_depth_image_config = {
-  name: "main_depth_0",
-  format: depth32float_format,
-  width: 0,
-  height: 0,
-  usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_SRC,
-  force: false,
-};
-const main_depth_image2_config = {
-  name: "main_depth_1",
-  format: depth32float_format,
-  width: 0,
-  height: 0,
-  usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
-  force: false,
-};
 const prev_lighting_image_config = {
   name: "prev_lighting",
   format: rgba16float_format,
@@ -173,29 +85,6 @@ const prev_lighting_image_config = {
     GPUTextureUsage.COPY_DST,
   mip_levels: 0,
   b_one_view_per_mip: true,
-};
-
-const skybox_shader_setup = {
-  pipeline_shaders: {
-    vertex: {
-      path: "skybox.wgsl",
-    },
-    fragment: {
-      path: "skybox.wgsl",
-    },
-  },
-  rasterizer_state: {
-    cull_mode: "none",
-  },
-  depth_write_enabled: false,
-};
-const skybox_output_image_config = {
-  name: "skybox_output",
-  format: rgba8unorm_format,
-  width: 0,
-  height: 0,
-  usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
-  force: false,
 };
 
 const g_buffer_shader_setup = {
@@ -313,10 +202,14 @@ export class DeferredShadingStrategy {
   bloom = null;
   as_vsm = null;
   debug_pipeline = null;
+  gbuffer_targets_pipeline = null;
+  environment_pipeline = null;
 
   setup(render_graph) {
     this.debug_pipeline = new DeferredDebugPipeline();
     this.culling_pipeline = new CullingPipeline();
+    this.environment_pipeline = new EnvironmentPipeline();
+    this.gbuffer_targets_pipeline = new GBufferTargetsPipeline();
     this.visibility_buffer = new VisibilityBuffer();
 
     this.gi = Renderer.get().get_gi_strategy_type() === GIStrategyType.DDGI ? new DDGI() : new PTGI();
@@ -489,46 +382,22 @@ export class DeferredShadingStrategy {
         visibility_surface_image,
         visibility_barycentric_image,
       } = this.visibility_buffer.register_targets(render_graph);
-
-      main_normal_image_config.width = image_extent.width;
-      main_normal_image_config.height = image_extent.height;
-      main_normal_image_config.force = this.force_recreate;
-
-      main_normal_image2_config.width = image_extent.width;
-      main_normal_image2_config.height = image_extent.height;
-      main_normal_image2_config.force = this.force_recreate;
-
-      main_depth_image_config.width = image_extent.width;
-      main_depth_image_config.height = image_extent.height;
-      main_depth_image_config.force = this.force_recreate;
-
-      main_depth_image2_config.width = image_extent.width;
-      main_depth_image2_config.height = image_extent.height;
-      main_depth_image2_config.force = this.force_recreate;
-
-      main_albedo_image_config.width = image_extent.width;
-      main_albedo_image_config.height = image_extent.height;
-      main_albedo_image_config.force = this.force_recreate;
-      main_smra_image_config.width = image_extent.width;
-      main_smra_image_config.height = image_extent.height;
-      main_smra_image_config.force = this.force_recreate;
-      main_motion_emissive_image_config.width = image_extent.width;
-      main_motion_emissive_image_config.height = image_extent.height;
-      main_motion_emissive_image_config.force = this.force_recreate;
-      main_transparency_accum_image_config.width = image_extent.width;
-      main_transparency_accum_image_config.height = image_extent.height;
-      main_transparency_accum_image_config.force = this.force_recreate;
-
-      let main_albedo_image = render_graph.create_image(main_albedo_image_config);
-      let main_smra_image = render_graph.create_image(main_smra_image_config);
-      let main_motion_emissive_image = render_graph.create_image(main_motion_emissive_image_config);
-      let main_transparency_accum_image = render_graph.create_image(
-        main_transparency_accum_image_config
-      );
-      let main_depth_image = render_graph.create_image(main_depth_image_config);
-      let main_normal_image = render_graph.create_image(main_normal_image_config);
-      let prev_normal_image = render_graph.create_image(main_normal_image2_config);
-      let prev_depth_image = render_graph.create_image(main_depth_image2_config);
+      let {
+        main_albedo_image,
+        main_smra_image,
+        main_normal_image,
+        main_motion_emissive_image,
+        main_depth_image,
+        prev_depth_image,
+        prev_normal_image,
+        main_transparency_accum_image,
+      } = this.gbuffer_targets_pipeline.create_targets(render_graph, {
+        image_extent,
+        force_recreate: this.force_recreate,
+        include_prev_depth: true,
+        include_prev_normal: true,
+        include_transparency_accum: true,
+      });
 
       let skybox_image = null;
       let post_lighting_image_desc = null;
@@ -564,28 +433,22 @@ export class DeferredShadingStrategy {
       // │ 🧹 PASS: Clear G-Buffer Targets                                            │
       // │    Initialize all render targets to a clean slate                          │
       // └─────────────────────────────────────────────────────────────────────────────┘
-      {
-        render_graph.add_pass(
-          clear_g_buffer_pass_name,
-          RenderPassFlags.Graphics,
-          {
-            outputs: [
-              main_albedo_image,
-              main_smra_image,
-              main_normal_image,
-              main_motion_emissive_image,
-              visibility_entity_image,
-              visibility_surface_image,
-              visibility_barycentric_image,
-              main_transparency_accum_image,
-              main_depth_image,
-            ],
-            b_skip_pass_pipeline_setup: true,
-            b_skip_pass_bind_group_setup: true,
-          },
-          (graph, frame_data, encoder) => { }
-        );
-      }
+      this.gbuffer_targets_pipeline.add_clear_pass(render_graph, {
+        pass_name: clear_g_buffer_pass_name,
+        targets: {
+          main_albedo_image,
+          main_smra_image,
+          main_normal_image,
+          main_motion_emissive_image,
+          main_depth_image,
+          main_transparency_accum_image,
+        },
+        visibility_targets: [
+          visibility_entity_image,
+          visibility_surface_image,
+          visibility_barycentric_image,
+        ],
+      });
 
       // ┌─────────────────────────────────────────────────────────────────────────────┐
       // │ 💡 PASS: Compact Active Lights                                             │
@@ -618,75 +481,29 @@ export class DeferredShadingStrategy {
       // │    Render the environment skybox (or analytic skydome) to provide           |
       // |    distant lighting context                                                 │
       // └─────────────────────────────────────────────────────────────────────────────┘
-      {
-        skybox_output_image_config.width = image_extent.width;
-        skybox_output_image_config.height = image_extent.height;
-        skybox_output_image_config.force = this.force_recreate;
-        skybox_image = render_graph.create_image(skybox_output_image_config);
-
-        const skydome_data = SharedEnvironmentData.get_skydome_data();
-        const skydome_data_buffer = render_graph.register_buffer(skydome_data.config.name);
-
-        const skybox = SharedEnvironmentData.get_skybox();
-        const skybox_texture = render_graph.register_image(skybox.config.name);
-
-        render_graph.add_pass(
-          skydome_pass_name,
-          RenderPassFlags.Graphics,
-          {
-            inputs: [skybox_texture, skydome_data_buffer],
-            outputs: [skybox_image],
-            shader_setup: skybox_shader_setup,
-          },
-          (graph, frame_data, encoder) => {
-            const pass = graph.get_physical_pass(frame_data.current_pass);
-            MeshTaskQueue.draw_cube(pass);
-          }
-        );
-      }
+      skybox_image = this.environment_pipeline.add_skybox_pass(render_graph, {
+        pass_name: skydome_pass_name,
+        image_extent,
+        force_recreate: this.force_recreate,
+      });
 
       // ┌─────────────────────────────────────────────────────────────────────────────┐
       // │ 🔄 PASS: G-Buffer Load State Configuration                                 │
       // │    Configure render targets to preserve existing content for next passes  │
       // └─────────────────────────────────────────────────────────────────────────────┘
-      {
-        render_graph.add_pass(
-          reset_g_buffer_targets_pass_name,
-          RenderPassFlags.GraphLocal,
-          {},
-          (graph, frame_data, encoder) => {
-            const albedo = graph.get_physical_image(main_albedo_image);
-            const smra = graph.get_physical_image(main_smra_image);
-            const normal = graph.get_physical_image(main_normal_image);
-            const motion_emissive = graph.get_physical_image(main_motion_emissive_image);
-            const entity_id = graph.get_physical_image(visibility_entity_image);
-            const transparency_accum = graph.get_physical_image(main_transparency_accum_image);
-            const depth = graph.get_physical_image(main_depth_image);
-
-            if (albedo) {
-              albedo.config.load_op = load_op_load;
-            }
-            if (smra) {
-              smra.config.load_op = load_op_load;
-            }
-            if (normal) {
-              normal.config.load_op = load_op_load;
-            }
-            if (motion_emissive) {
-              motion_emissive.config.load_op = load_op_load;
-            }
-            if (entity_id) {
-              entity_id.config.load_op = load_op_load;
-            }
-            if (transparency_accum) {
-              transparency_accum.config.load_op = load_op_load;
-            }
-            if (depth) {
-              depth.config.load_op = load_op_load;
-            }
-          }
-        );
-      }
+      this.gbuffer_targets_pipeline.add_set_load_op_pass(render_graph, {
+        pass_name: reset_g_buffer_targets_pass_name,
+        targets: {
+          main_albedo_image,
+          main_smra_image,
+          main_normal_image,
+          main_motion_emissive_image,
+          main_depth_image,
+          main_transparency_accum_image,
+        },
+        visibility_entity_image,
+        load_op: load_op_load,
+      });
 
       // ┌─────────────────────────────────────────────────────────────────────────────┐
       // │ 🎯 PASS: Frustum Culling (Phase 1 of 2-Pass Occlusion)                    │
@@ -1248,44 +1065,19 @@ export class DeferredShadingStrategy {
       // │ 🧽 PASS: G-Buffer Clear State Reset                                        │
       // │    Reset render targets to clear state for next frame                     │
       // └─────────────────────────────────────────────────────────────────────────────┘
-      {
-        render_graph.add_pass(
-          reset_g_buffer_targets_pass_name,
-          RenderPassFlags.GraphLocal,
-          {},
-          (graph, frame_data, encoder) => {
-            const albedo = graph.get_physical_image(main_albedo_image);
-            const smra = graph.get_physical_image(main_smra_image);
-            const normal = graph.get_physical_image(main_normal_image);
-            const motion_emissive = graph.get_physical_image(main_motion_emissive_image);
-            const entity_id = graph.get_physical_image(visibility_entity_image);
-            const transparency_accum = graph.get_physical_image(main_transparency_accum_image);
-            const depth = graph.get_physical_image(main_depth_image);
-
-            if (albedo) {
-              albedo.config.load_op = load_op_clear;
-            }
-            if (smra) {
-              smra.config.load_op = load_op_clear;
-            }
-            if (normal) {
-              normal.config.load_op = load_op_clear;
-            }
-            if (motion_emissive) {
-              motion_emissive.config.load_op = load_op_clear;
-            }
-            if (entity_id) {
-              entity_id.config.load_op = load_op_clear;
-            }
-            if (transparency_accum) {
-              transparency_accum.config.load_op = load_op_clear;
-            }
-            if (depth) {
-              depth.config.load_op = load_op_clear;
-            }
-          }
-        );
-      }
+      this.gbuffer_targets_pipeline.add_set_load_op_pass(render_graph, {
+        pass_name: reset_g_buffer_targets_pass_name,
+        targets: {
+          main_albedo_image,
+          main_smra_image,
+          main_normal_image,
+          main_motion_emissive_image,
+          main_depth_image,
+          main_transparency_accum_image,
+        },
+        visibility_entity_image,
+        load_op: load_op_clear,
+      });
 
       // ┌─────────────────────────────────────────────────────────────────────────────┐
       // │ 🚩 PASS: Clear Entity Dirty Flags                                          │
