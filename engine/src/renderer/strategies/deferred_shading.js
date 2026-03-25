@@ -753,13 +753,13 @@ export class DeferredShadingStrategy {
         ((ResourceCache.get().fetch(
           CacheTypes.BUFFER,
           Name.from(frustum_meshlet_list_name)
-        )?.config.size ?? 0) < required_meshlet_list_size);
+        )?.config.size ?? 0) < required_meshlet_list_size * 4);
       const occlusion_meshlet_list_force =
         this.force_recreate ||
         ((ResourceCache.get().fetch(
           CacheTypes.BUFFER,
           Name.from(occlusion_meshlet_list_name)
-        )?.config.size ?? 0) < required_meshlet_list_size);
+        )?.config.size ?? 0) < required_meshlet_list_size * 4);
 
       const frustum_meshlet_list = render_graph.create_buffer({
         name: frustum_meshlet_list_name,

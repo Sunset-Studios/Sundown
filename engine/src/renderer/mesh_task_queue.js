@@ -144,7 +144,7 @@ class MeshletInstanceBuffer {
     });
   }
 
-  rebuild_data(object_instances, meshlet_instance_count) {
+  rebuild_data(object_instances, meshlet_instance_count, actual_write_offset) {
     let entry_index = 0;
     for (let object_instance_index = 0; object_instance_index < object_instances.length; ++object_instance_index) {
       const object_instance = object_instances[object_instance_index];
@@ -171,11 +171,10 @@ class MeshletInstanceBuffer {
 
   update_buffers(object_instances, meshlet_instance_count, force_update = false) {
     profile_scope("update_meshlet_instance_buffer", () => {
-      const entry_count = meshlet_instance_count;
-      let needs_rebuild = force_update;
+      const entry_count = meshlet_instance_count * MeshletInstanceBuffer.entry_stride;
       if (entry_count !== this.last_meshlet_instance_count || force_update) {
         this.last_meshlet_instance_count = entry_count;
-        needs_rebuild = true;
+        this.current_meshlet_instance_write_offset = 0;
       }
 
       const required_size = entry_count * MeshletInstanceBuffer.entry_stride * 4;
@@ -186,7 +185,6 @@ class MeshletInstanceBuffer {
         new_meshlet_instance_data.fill(invalid_u32);
         new_meshlet_instance_data.set(this.meshlet_instance_data);
         this.meshlet_instance_data = new_meshlet_instance_data;
-        needs_rebuild = true;
 
         this.meshlet_instance_buffer = Buffer.create({
           name: "meshlet_instance_buffer",
@@ -194,10 +192,6 @@ class MeshletInstanceBuffer {
           usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
           force: true,
         });
-      }
-
-      if (needs_rebuild) {
-        this.rebuild_data(object_instances, meshlet_instance_count);
       }
 
       profile_scope("write_meshlet_instance_buffer", () => {
@@ -210,18 +204,24 @@ class MeshletInstanceBuffer {
             this.current_meshlet_instance_write_offset % total_entries;
           const write_entry_count = Math.min(
             total_entries - actual_write_offset,
-            max_frame_buffer_writes
+            max_frame_buffer_writes * MeshletInstanceBuffer.entry_stride
           );
           if (write_entry_count > 0) {
-            const data_offset = actual_write_offset * MeshletInstanceBuffer.entry_stride;
-            const write_word_count = write_entry_count * MeshletInstanceBuffer.entry_stride;
+            this.rebuild_data(object_instances, meshlet_instance_count, actual_write_offset);
+
             this.meshlet_instance_buffer.write_raw(
               this.meshlet_instance_data,
-              data_offset * 4,
-              write_word_count,
-              data_offset
+              actual_write_offset * 4,
+              write_entry_count,
+              actual_write_offset
             );
             this.current_meshlet_instance_write_offset += write_entry_count;
+            if (
+              this.current_meshlet_instance_write_offset >=
+              total_entries * MAX_BUFFERED_FRAMES
+            ) {
+              this.current_meshlet_instance_write_offset = 0;
+            }
           }
         }
       });
@@ -323,13 +323,6 @@ class IndirectDrawObject {
         }
       });
     });
-  }
-
-  reset_instance_counts() {
-    for (let i = 0; i < this.last_indirect_draw_count; i += 5) {
-      this.indirect_draw_data[i + 1] = 0; // Reset instance count to 0
-    }
-    this.indirect_draw_buffer.write_raw(this.indirect_draw_data);
   }
 
   destroy() {
