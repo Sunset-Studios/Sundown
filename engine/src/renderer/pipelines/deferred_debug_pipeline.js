@@ -1,8 +1,8 @@
-import { BVH } from "../acceleration/bvh.js";
-import { MeshBLAS } from "../acceleration/mesh_blas.js";
-import { DebugOverlay } from "./debug_overlay.js";
-import { MeshTaskQueue } from "./mesh_task_queue.js";
-import { DebugDrawType, RenderPassFlags } from "./renderer_types.js";
+import { BVH } from "../../acceleration/bvh.js";
+import { MeshBLAS } from "../../acceleration/mesh_blas.js";
+import { DebugOverlay } from "../debug_overlay.js";
+import { MeshTaskQueue } from "../mesh_task_queue.js";
+import { DebugDrawType, RenderPassFlags } from "../renderer_types.js";
 
 const line_draw_shader_setup = {
   pipeline_shaders: {

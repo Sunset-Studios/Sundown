@@ -13,16 +13,16 @@ import { StaticMeshFragment } from "../../core/ecs/fragments/static_mesh_fragmen
 import { Renderer } from "../renderer.js";
 import { Texture } from "../texture.js";
 import { MeshData } from "../mesh_data.js";
-import { EnvironmentPipeline } from "../environment_pipeline.js";
 import { MaterialAllocationTable } from "../material_allocation_table.js";
 import { PostProcessStack } from "../post_process_stack.js";
 import { MeshTaskQueue } from "../mesh_task_queue.js";
 import { ComputeTaskQueue } from "../compute_task_queue.js";
-import { CullingPipeline } from "../culling_pipeline.js";
-import { GBufferTargetsPipeline } from "../gbuffer_targets_pipeline.js";
 import { ResourceCache } from "../resource_cache.js";
 import { TextureArrayPools } from "../texture_pool.js";
-import { VisibilityBufferPipeline } from "../visibility_buffer_pipeline.js";
+import { EnvironmentPipeline } from "../pipelines/environment_pipeline.js";
+import { CullingPipeline } from "../pipelines/culling_pipeline.js";
+import { GBufferTargetsPipeline } from "../pipelines/gbuffer_targets_pipeline.js";
+import { VisibilityBufferPipeline } from "../pipelines/visibility_buffer_pipeline.js";
 
 // Types and utilities
 import { RenderPassFlags, CacheTypes } from "../renderer_types.js";

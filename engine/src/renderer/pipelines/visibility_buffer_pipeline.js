@@ -1,7 +1,7 @@
-import { MeshTaskQueue } from "./mesh_task_queue.js";
-import { RenderPassFlags } from "./renderer_types.js";
-import { Texture } from "./texture.js";
-import { r32uint_format } from "../utility/config_permutations.js";
+import { MeshTaskQueue } from "../mesh_task_queue.js";
+import { RenderPassFlags } from "../renderer_types.js";
+import { Texture } from "../texture.js";
+import { r32uint_format } from "../../utility/config_permutations.js";
 
 const visibility_entity_image_config = {
   name: "visibility_entity",

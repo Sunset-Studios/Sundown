@@ -2,8 +2,8 @@ import {
   rgba16float_format,
   depth32float_format,
   one_one_blend_config,
-} from "../utility/config_permutations.js";
-import { RenderPassFlags } from "./renderer_types.js";
+} from "../../utility/config_permutations.js";
+import { RenderPassFlags } from "../renderer_types.js";
 
 const main_albedo_image_config = {
   name: "main_albedo",

@@ -19,11 +19,11 @@ import { PostProcessStack } from "../post_process_stack.js";
 import { MeshTaskQueue } from "../mesh_task_queue.js";
 import { ComputeTaskQueue } from "../compute_task_queue.js";
 import { ComputeRasterTaskQueue } from "../compute_raster_task_queue.js";
-import { CullingPipeline } from "../culling_pipeline.js";
-import { DeferredDebugPipeline } from "../deferred_debug_pipeline.js";
-import { EnvironmentPipeline } from "../environment_pipeline.js";
-import { GBufferTargetsPipeline } from "../gbuffer_targets_pipeline.js";
-import { VisibilityBufferPipeline } from "../visibility_buffer_pipeline.js";
+import { CullingPipeline } from "../pipelines/culling_pipeline.js";
+import { DeferredDebugPipeline } from "../pipelines/deferred_debug_pipeline.js";
+import { EnvironmentPipeline } from "../pipelines/environment_pipeline.js";
+import { GBufferTargetsPipeline } from "../pipelines/gbuffer_targets_pipeline.js";
+import { VisibilityBufferPipeline } from "../pipelines/visibility_buffer_pipeline.js";
 
 // Types and utilities
 import {

@@ -1,9 +1,9 @@
-import { SharedEnvironmentData } from "../core/shared_data.js";
-import { MeshTaskQueue } from "./mesh_task_queue.js";
-import { RenderPassFlags } from "./renderer_types.js";
+import { SharedEnvironmentData } from "../../core/shared_data.js";
+import { MeshTaskQueue } from "../mesh_task_queue.js";
+import { RenderPassFlags } from "../renderer_types.js";
 import {
   rgba16float_format,
-} from "../utility/config_permutations.js";
+} from "../../utility/config_permutations.js";
 
 const skybox_shader_setup = {
   pipeline_shaders: {
