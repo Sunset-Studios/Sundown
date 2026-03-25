@@ -151,6 +151,8 @@ export class Texture {
       });
       this._setup_views();
     }
+
+    Renderer.get().mark_bind_groups_dirty(true /* pass_only */);
   }
 
   destroy() {
