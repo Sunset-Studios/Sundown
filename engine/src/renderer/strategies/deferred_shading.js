@@ -23,7 +23,7 @@ import { CullingPipeline } from "../culling_pipeline.js";
 import { DeferredDebugPipeline } from "../deferred_debug_pipeline.js";
 import { EnvironmentPipeline } from "../environment_pipeline.js";
 import { GBufferTargetsPipeline } from "../gbuffer_targets_pipeline.js";
-import { VisibilityBuffer } from "../visibility_buffer.js";
+import { VisibilityBufferPipeline } from "../visibility_buffer_pipeline.js";
 
 // Types and utilities
 import {
@@ -37,10 +37,8 @@ import {
 } from "../renderer_types.js";
 import { BVH } from "../../acceleration/bvh.js";
 import { MeshBLAS } from "../../acceleration/mesh_blas.js";
-import { clamp } from "../../utility/math.js";
 import { profile_scope } from "../../utility/performance.js";
 import {
-  rgba8unorm_format,
   rgba16float_format,
   src_alpha_one_minus_src_alpha_blend_config,
   load_op_load,
@@ -193,7 +191,7 @@ export class DeferredShadingStrategy {
   force_recreate = false;
   force_reinit = false;
   culling_pipeline = null;
-  visibility_buffer = null;
+  visibility_buffer_pipeline = null;
   prev_lighting_image = null;
   gi = null;
   vbao = null;
@@ -210,7 +208,7 @@ export class DeferredShadingStrategy {
     this.culling_pipeline = new CullingPipeline();
     this.environment_pipeline = new EnvironmentPipeline();
     this.gbuffer_targets_pipeline = new GBufferTargetsPipeline();
-    this.visibility_buffer = new VisibilityBuffer();
+    this.visibility_buffer_pipeline = new VisibilityBufferPipeline();
 
     this.gi = Renderer.get().get_gi_strategy_type() === GIStrategyType.DDGI ? new DDGI() : new PTGI();
     this.ao = Renderer.get().get_ao_strategy_type() === AOStrategyType.RTAO ? new RTAO() : new VBAO();
@@ -381,7 +379,7 @@ export class DeferredShadingStrategy {
         visibility_entity_image,
         visibility_surface_image,
         visibility_barycentric_image,
-      } = this.visibility_buffer.register_targets(render_graph);
+      } = this.visibility_buffer_pipeline.register_targets(render_graph);
       let {
         main_albedo_image,
         main_smra_image,
@@ -531,7 +529,7 @@ export class DeferredShadingStrategy {
       // │ 🏔️  PASS: Depth Pre-Pass                                                   │
       // │    Fill depth buffer early for better GPU efficiency and HZB generation   │
       // └─────────────────────────────────────────────────────────────────────────────┘
-      this.visibility_buffer.add_depth_prepass(render_graph, {
+      this.visibility_buffer_pipeline.add_depth_prepass(render_graph, {
         enabled: depth_prepass_enabled,
         meshlet_draw_count,
         depth_image: main_depth_image,
@@ -588,7 +586,7 @@ export class DeferredShadingStrategy {
       // │    Fill G-Buffer with geometry data (albedo, normals, material props)     │
       // └─────────────────────────────────────────────────────────────────────────────┘
       {
-        this.visibility_buffer.add_visibility_raster_pass(render_graph, {
+        this.visibility_buffer_pipeline.add_visibility_raster_pass(render_graph, {
           meshlet_draw_count,
           depth_prepass_enabled,
           current_view,
@@ -609,7 +607,7 @@ export class DeferredShadingStrategy {
           ],
         });
 
-        this.visibility_buffer.add_gbuffer_resolve_pass(render_graph, {
+        this.visibility_buffer_pipeline.add_gbuffer_resolve_pass(render_graph, {
           meshlet_draw_count,
           current_view,
           depth_image: main_depth_image,
@@ -1132,7 +1130,7 @@ export class DeferredShadingStrategy {
     this.prev_lighting_image = Texture.create(prev_lighting_image_config);
 
     this.culling_pipeline.recreate_persistent_resources(image_extent, this.force_recreate);
-    this.visibility_buffer.recreate_persistent_resources(image_extent, this.force_recreate);
+    this.visibility_buffer_pipeline.recreate_persistent_resources(image_extent, this.force_recreate);
   }
 
   _get_texture_pool(render_graph, pool_key) {

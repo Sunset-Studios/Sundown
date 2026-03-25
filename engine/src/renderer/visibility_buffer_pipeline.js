@@ -88,7 +88,7 @@ const visibility_gbuffer_resolve_shader_setup = {
 
 const depth_prepass_pass_name = "depth_prepass";
 
-export class VisibilityBuffer {
+export class VisibilityBufferPipeline {
   visibility_entity_image = null;
   visibility_surface_image = null;
   visibility_barycentric_image = null;

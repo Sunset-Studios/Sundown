@@ -22,7 +22,7 @@ import { CullingPipeline } from "../culling_pipeline.js";
 import { GBufferTargetsPipeline } from "../gbuffer_targets_pipeline.js";
 import { ResourceCache } from "../resource_cache.js";
 import { TextureArrayPools } from "../texture_pool.js";
-import { VisibilityBuffer } from "../visibility_buffer.js";
+import { VisibilityBufferPipeline } from "../visibility_buffer_pipeline.js";
 
 // Types and utilities
 import { RenderPassFlags, CacheTypes } from "../renderer_types.js";
@@ -155,7 +155,7 @@ export class PathTracingStrategy {
   force_recreate = false;
   force_reinit = false;
   culling_pipeline = null;
-  visibility_buffer = null;
+  visibility_buffer_pipeline = null;
   gbuffer_targets_pipeline = null;
   environment_pipeline = null;
   prev_depth_image = null;
@@ -171,7 +171,7 @@ export class PathTracingStrategy {
     this.culling_pipeline = new CullingPipeline();
     this.environment_pipeline = new EnvironmentPipeline();
     this.gbuffer_targets_pipeline = new GBufferTargetsPipeline();
-    this.visibility_buffer = new VisibilityBuffer();
+    this.visibility_buffer_pipeline = new VisibilityBufferPipeline();
 
     global_dispatcher.on(
       resolution_change_event_name,
@@ -328,7 +328,7 @@ export class PathTracingStrategy {
         visibility_entity_image,
         visibility_surface_image,
         visibility_barycentric_image,
-      } = this.visibility_buffer.register_targets(render_graph);
+      } = this.visibility_buffer_pipeline.register_targets(render_graph);
       let {
         main_albedo_image,
         main_smra_image,
@@ -465,7 +465,7 @@ export class PathTracingStrategy {
       // ┌─────────────────────────────────────────────────────────────────────────────┐
       // │ 🏔️  PASS: Depth Pre-Pass                                                   │
       // └─────────────────────────────────────────────────────────────────────────────┘
-      this.visibility_buffer.add_depth_prepass(render_graph, {
+      this.visibility_buffer_pipeline.add_depth_prepass(render_graph, {
         enabled: depth_prepass_enabled,
         meshlet_draw_count,
         depth_image: main_depth_image,
@@ -506,7 +506,7 @@ export class PathTracingStrategy {
       // ┌─────────────────────────────────────────────────────────────────────────────┐
       // │ 🎨 PASS: G-Buffer Base Rendering                                           │
       // └─────────────────────────────────────────────────────────────────────────────┘
-      this.visibility_buffer.add_visibility_raster_pass(render_graph, {
+      this.visibility_buffer_pipeline.add_visibility_raster_pass(render_graph, {
         meshlet_draw_count,
         depth_prepass_enabled,
         current_view,
@@ -527,7 +527,7 @@ export class PathTracingStrategy {
         ],
       });
 
-      this.visibility_buffer.add_gbuffer_resolve_pass(render_graph, {
+      this.visibility_buffer_pipeline.add_gbuffer_resolve_pass(render_graph, {
         meshlet_draw_count,
         current_view,
         depth_image: main_depth_image,
@@ -735,7 +735,7 @@ export class PathTracingStrategy {
     this.prev_depth_image = Texture.create(main_depth_image2_config);
 
     this.culling_pipeline.recreate_persistent_resources(image_extent, this.force_recreate);
-    this.visibility_buffer.recreate_persistent_resources(image_extent, this.force_recreate);
+    this.visibility_buffer_pipeline.recreate_persistent_resources(image_extent, this.force_recreate);
   }
 
   _get_texture_pool(render_graph, pool_key) {
