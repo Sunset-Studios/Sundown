@@ -150,6 +150,14 @@ export class DebugOverlay {
         return "debug/debug_overlay_motion_lines.wgsl";
       case DebugDrawType.EntityId:
         return "debug/debug_overlay_entity.wgsl";
+      case DebugDrawType.VisibilityMaterialId:
+        return "debug/debug_overlay_visibility_material.wgsl";
+      case DebugDrawType.VisibilityEntityId:
+        return "debug/debug_overlay_entity.wgsl";
+      case DebugDrawType.VisibilityMeshletId:
+        return "debug/debug_overlay_visibility_meshlet.wgsl";
+      case DebugDrawType.VisibilityTriangleId:
+        return "debug/debug_overlay_visibility_triangle.wgsl";
       case DebugDrawType.HZB:
         return "debug/debug_overlay_hzb.wgsl";
       case DebugDrawType.Bloom:

@@ -10,7 +10,6 @@ import {
 
 // ECS fragments
 import { TransformFragment } from "../../core/ecs/fragments/transform_fragment.js";
-import { VisibilityFragment } from "../../core/ecs/fragments/visibility_fragment.js";
 import { LightFragment } from "../../core/ecs/fragments/light_fragment.js";
 import { StaticMeshFragment } from "../../core/ecs/fragments/static_mesh_fragment.js";
 
@@ -19,6 +18,7 @@ import { Renderer } from "../renderer.js";
 import { Texture } from "../texture.js";
 import { Material } from "../material.js";
 import { MeshData } from "../mesh_data.js";
+import { MaterialAllocationTable } from "../material_allocation_table.js";
 import { DebugOverlay } from "../debug_overlay.js";
 import { PostProcessStack } from "../post_process_stack.js";
 import { MeshTaskQueue } from "../mesh_task_queue.js";
@@ -35,10 +35,11 @@ import {
   GIStrategyType,
   AOStrategyType,
   ReflectionStrategyType,
+  CacheTypes,
 } from "../renderer_types.js";
 import { BVH } from "../../acceleration/bvh.js";
 import { MeshBLAS } from "../../acceleration/mesh_blas.js";
-import { npot, clamp } from "../../utility/math.js";
+import { clamp } from "../../utility/math.js";
 import { profile_scope } from "../../utility/performance.js";
 import {
   rgba8unorm_format,
@@ -60,6 +61,8 @@ import { RTAO } from "../global_illumination/rtao.js";
 import { AdaptiveSparseVirtualShadowMaps } from "../shadows/as_vsm.js";
 import { SSR } from "../reflections/ssr.js";
 import { Bloom } from "../bloom.js";
+import { ResourceCache } from "../resource_cache.js";
+import { TextureArrayPools } from "../texture_pool.js";
 import {
   DEFAULT_LIGHT_CLIP_EXTENT,
   MAX_CLIPMAP_LEVELS,
@@ -67,12 +70,12 @@ import {
   ATLAS_SIZE,
   TILE_SIZE,
 } from "../shadows/shadow_utils.js";
+import { Name } from "../../utility/names.js";
 
 const resolution_change_event_name = "resolution_change";
 const deferred_shading_profile_scope_name = "DeferredShadingStrategy.draw";
 const transforms_name = "transforms";
 const bounds_name = "bounds";
-const occluder_name = "occluder";
 const light_fragment_name = "light_fragment";
 const mesh_asset_id_name = "mesh_asset_id";
 
@@ -171,13 +174,38 @@ const hzb_image_config = {
   b_one_view_per_mip: true,
   force: false,
 };
-const entity_id_image_config = {
-  name: "entity_id",
+const visibility_entity_image_config = {
+  name: "visibility_entity",
   format: r32uint_format,
   width: 0,
   height: 0,
   usage:
-    GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_SRC,
+    GPUTextureUsage.RENDER_ATTACHMENT |
+    GPUTextureUsage.TEXTURE_BINDING |
+    GPUTextureUsage.COPY_SRC,
+  clear_value: { r: 0xffffffff, g: 0, b: 0, a: 0 },
+  force: false,
+};
+const visibility_surface_image_config = {
+  name: "visibility_surface",
+  format: r32uint_format,
+  width: 0,
+  height: 0,
+  usage:
+    GPUTextureUsage.RENDER_ATTACHMENT |
+    GPUTextureUsage.TEXTURE_BINDING |
+    GPUTextureUsage.COPY_SRC,
+  force: false,
+};
+const visibility_barycentric_image_config = {
+  name: "visibility_barycentric",
+  format: r32uint_format,
+  width: 0,
+  height: 0,
+  usage:
+    GPUTextureUsage.RENDER_ATTACHMENT |
+    GPUTextureUsage.TEXTURE_BINDING |
+    GPUTextureUsage.COPY_SRC,
   force: false,
 };
 const prev_lighting_image_config = {
@@ -262,6 +290,63 @@ const hzb_reduce_shader_setup = {
     compute: {
       path: "visibility/hzb_reduce.wgsl",
     },
+  },
+};
+const meshlet_frustum_cull_shader_setup = {
+  pipeline_shaders: {
+    compute: {
+      path: "visibility/cull_meshlet_frustum.wgsl",
+    },
+  },
+};
+const meshlet_occlusion_cull_shader_setup = {
+  pipeline_shaders: {
+    compute: {
+      path: "visibility/cull_meshlet_occlusion.wgsl",
+    },
+  },
+};
+const meshlet_depth_prepass_shader_setup = {
+  pipeline_shaders: {
+    vertex: {
+      path: "visibility/meshlet_depth_prepass.wgsl",
+    },
+    fragment: {
+      path: "visibility/meshlet_depth_prepass.wgsl",
+    },
+  },
+  rasterizer_state: {
+    cull_mode: "none",
+  },
+  depth_write_enabled: true,
+  depth_stencil_compare_op: "less",
+};
+const meshlet_visibility_shader_setup = {
+  pipeline_shaders: {
+    vertex: {
+      path: "visibility/meshlet_visibility_raster.wgsl",
+    },
+    fragment: {
+      path: "visibility/meshlet_visibility_raster.wgsl",
+    },
+  },
+  rasterizer_state: {
+    cull_mode: "none",
+  },
+  depth_write_enabled: false,
+  depth_stencil_compare_op: "less-equal",
+};
+const visibility_gbuffer_resolve_shader_setup = {
+  pipeline_shaders: {
+    vertex: {
+      path: "visibility/visibility_gbuffer_resolve.wgsl",
+    },
+    fragment: {
+      path: "visibility/visibility_gbuffer_resolve.wgsl",
+    },
+  },
+  rasterizer_state: {
+    cull_mode: "none",
   },
 };
 
@@ -390,7 +475,9 @@ export class DeferredShadingStrategy {
   force_recreate = false;
   force_reinit = false;
   hzb_image = null;
-  entity_id_image = null;
+  visibility_entity_image = null;
+  visibility_surface_image = null;
+  visibility_barycentric_image = null;
   prev_lighting_image = null;
   gi = null;
   vbao = null;
@@ -426,7 +513,6 @@ export class DeferredShadingStrategy {
       /* additional_data */ {
         aabb_bounds: 0,
         object_instances: 0,
-        main_entity_id_image: 0,
       }
     );
 
@@ -436,8 +522,7 @@ export class DeferredShadingStrategy {
         aabb_bounds: 0,
         object_instances: 0,
         main_hzb_image: 0,
-        main_entity_id_image: 0,
-        entity_occluders: 0,
+        entity_index_lookup: 0,
       }
     );
 
@@ -485,6 +570,7 @@ export class DeferredShadingStrategy {
       const current_view = SharedFrameInfoBuffer.get_view_index();
       const total_views = SharedViewBuffer.get_view_data_count();
       const draw_count = MeshTaskQueue.get_total_draw_count();
+      const meshlet_draw_count = MeshTaskQueue.get_total_meshlet_count();
       const debug_view = renderer.get_debug_draw_type();
       const image_extent = renderer.get_canvas_resolution();
 
@@ -493,6 +579,7 @@ export class DeferredShadingStrategy {
       const gi_has_builtin_specular = renderer.get_gi_strategy_type() === GIStrategyType.PTGI;
       const ao_enabled = renderer.is_ao_enabled();
       const reflections_enabled = renderer.is_reflection_enabled() && !gi_has_builtin_specular;
+      const depth_prepass_enabled = renderer.is_depth_prepass_enabled();
 
       if (this.force_recreate) {
         render_graph.mark_pass_cache_bind_groups_dirty(true /* pass_only */);
@@ -520,12 +607,6 @@ export class DeferredShadingStrategy {
       const bounds_buffer = EntityManager.get_fragment_gpu_buffer(TransformFragment, bounds_name);
       const aabb_bounds = render_graph.register_buffer(bounds_buffer.buffer.config.name);
 
-      const occluder_buffer = EntityManager.get_fragment_gpu_buffer(
-        VisibilityFragment,
-        occluder_name
-      );
-      const entity_occluders = render_graph.register_buffer(occluder_buffer.buffer.config.name);
-
       const aabb_gpu_data = BVH.to_gpu_data();
       const tlas_bvh_info = render_graph.register_buffer(
         aabb_gpu_data.bvh_info_buffer.config.name
@@ -548,6 +629,9 @@ export class DeferredShadingStrategy {
       const object_instances = render_graph.register_buffer(
         MeshTaskQueue.get_object_instance_buffer().config.name
       );
+      const meshlet_instances = render_graph.register_buffer(
+        MeshTaskQueue.get_meshlet_instance_buffer().config.name
+      );
 
       const mesh_asset_ids = EntityManager.get_fragment_gpu_buffer(
         StaticMeshFragment,
@@ -555,7 +639,30 @@ export class DeferredShadingStrategy {
       );
       const mesh_asset_ids_buffer = render_graph.register_buffer(mesh_asset_ids.buffer.config.name);
 
+      const material_offsets_buffer = EntityManager.get_fragment_gpu_buffer(
+        StaticMeshFragment,
+        "material_table_offset"
+      );
+      const material_table_offset = render_graph.register_buffer(
+        material_offsets_buffer.buffer.config.name
+      );
+
+      const mesh_gpu_data = MeshData.to_gpu_data();
       const index_buffer = render_graph.register_buffer(MeshData.index_buffer.config.name);
+      const meshlet_buffer = render_graph.register_buffer(mesh_gpu_data.meshlet_buffer.config.name);
+      const meshlet_vertex_buffer = render_graph.register_buffer(
+        mesh_gpu_data.meshlet_vertex_buffer.config.name
+      );
+      const meshlet_triangle_buffer = render_graph.register_buffer(
+        mesh_gpu_data.meshlet_triangle_buffer.config.name
+      );
+
+      const material_params = render_graph.register_buffer(
+        MaterialAllocationTable.params_buffer.config.name
+      );
+      const material_palette = render_graph.register_buffer(
+        MaterialAllocationTable.palette_buffer.config.name
+      );
 
       // ┌─────────────────────────────────────────────────────────────────────────────┐
       // │ 💡 Setup Lighting System                                                   │
@@ -574,7 +681,15 @@ export class DeferredShadingStrategy {
       // └─────────────────────────────────────────────────────────────────────────────┘
 
       let main_hzb_image = render_graph.register_image(this.hzb_image.config.name);
-      let main_entity_id_image = render_graph.register_image(this.entity_id_image.config.name);
+      let visibility_entity_image = render_graph.register_image(
+        this.visibility_entity_image.config.name
+      );
+      let visibility_surface_image = render_graph.register_image(
+        this.visibility_surface_image.config.name
+      );
+      let visibility_barycentric_image = render_graph.register_image(
+        this.visibility_barycentric_image.config.name
+      );
 
       main_normal_image_config.width = image_extent.width;
       main_normal_image_config.height = image_extent.height;
@@ -619,6 +734,69 @@ export class DeferredShadingStrategy {
       let skybox_image = null;
       let post_lighting_image_desc = null;
 
+      const texture_pool_albedo = this._get_texture_pool(render_graph, "albedo");
+      const texture_pool_normal = this._get_texture_pool(render_graph, "normal");
+      const texture_pool_roughness = this._get_texture_pool(render_graph, "roughness");
+      const texture_pool_metallic = this._get_texture_pool(render_graph, "metallic");
+      const texture_pool_ao = this._get_texture_pool(render_graph, "ao");
+      const texture_pool_height = this._get_texture_pool(render_graph, "height");
+      const texture_pool_specular = this._get_texture_pool(render_graph, "specular");
+      const texture_pool_emission = this._get_texture_pool(render_graph, "emission");
+
+      const meshlet_list_capacity = Math.max(meshlet_draw_count, 1);
+      const frustum_meshlet_list_name = `frustum_meshlet_list_view_${current_view}`;
+      const occlusion_meshlet_list_name = `occlusion_meshlet_list_view_${current_view}`;
+      const required_meshlet_list_size =
+        meshlet_list_capacity * 4;
+      const frustum_meshlet_list_force =
+        this.force_recreate ||
+        ((ResourceCache.get().fetch(
+          CacheTypes.BUFFER,
+          Name.from(frustum_meshlet_list_name)
+        )?.config.size ?? 0) < required_meshlet_list_size * 4);
+      const occlusion_meshlet_list_force =
+        this.force_recreate ||
+        ((ResourceCache.get().fetch(
+          CacheTypes.BUFFER,
+          Name.from(occlusion_meshlet_list_name)
+        )?.config.size ?? 0) < required_meshlet_list_size * 4);
+
+      const frustum_meshlet_list = render_graph.create_buffer({
+        name: frustum_meshlet_list_name,
+        raw_data: new Uint32Array(meshlet_list_capacity * 4),
+        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+        force: frustum_meshlet_list_force,
+      });
+      const frustum_meshlet_draw_args = render_graph.create_buffer({
+        name: `frustum_meshlet_draw_args_view_${current_view}`,
+        raw_data: new Uint32Array([124 * 3, 0, 0, 0]),
+        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.INDIRECT,
+        force: this.force_recreate,
+      });
+      const occlusion_meshlet_list = render_graph.create_buffer({
+        name: occlusion_meshlet_list_name,
+        raw_data: new Uint32Array(meshlet_list_capacity * 4),
+        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+        force: occlusion_meshlet_list_force,
+      });
+      const occlusion_meshlet_draw_args = render_graph.create_buffer({
+        name: `occlusion_meshlet_draw_args_view_${current_view}`,
+        raw_data: new Uint32Array([124 * 3, 0, 0, 0]),
+        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.INDIRECT,
+        force: this.force_recreate,
+      });
+
+      const meshlet_frustum_params = render_graph.create_buffer({
+        name: `meshlet_frustum_params_view_${current_view}`,
+        raw_data: new Uint32Array([current_view, meshlet_draw_count, 0, 0]),
+        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+      });
+      const meshlet_occlusion_params = render_graph.create_buffer({
+        name: `meshlet_occlusion_params_view_${current_view}`,
+        raw_data: new Uint32Array([current_view, meshlet_list_capacity, 0, 0]),
+        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+      });
+
       // ┌─────────────────────────────────────────────────────────────────────────────┐
       // │ 📋 Register Per-View Visibility Data                                       │
       // └─────────────────────────────────────────────────────────────────────────────┘
@@ -648,8 +826,6 @@ export class DeferredShadingStrategy {
         this.occlusion_culler.additional_data.main_hzb_image = main_hzb_image;
         this.occlusion_culler.additional_data.aabb_bounds = aabb_bounds;
         this.occlusion_culler.additional_data.object_instances = object_instances;
-        this.occlusion_culler.additional_data.entity_occluders = entity_occluders;
-        this.occlusion_culler.additional_data.main_entity_id_image = main_entity_id_image;
         this.occlusion_culler.additional_data.entity_index_lookup = entity_index_lookup;
       }
 
@@ -680,7 +856,9 @@ export class DeferredShadingStrategy {
               main_smra_image,
               main_normal_image,
               main_motion_emissive_image,
-              main_entity_id_image,
+              visibility_entity_image,
+              visibility_surface_image,
+              visibility_barycentric_image,
               main_transparency_accum_image,
               main_depth_image,
             ],
@@ -763,7 +941,7 @@ export class DeferredShadingStrategy {
             const smra = graph.get_physical_image(main_smra_image);
             const normal = graph.get_physical_image(main_normal_image);
             const motion_emissive = graph.get_physical_image(main_motion_emissive_image);
-            const entity_id = graph.get_physical_image(main_entity_id_image);
+            const entity_id = graph.get_physical_image(visibility_entity_image);
             const transparency_accum = graph.get_physical_image(main_transparency_accum_image);
             const depth = graph.get_physical_image(main_depth_image);
 
@@ -801,6 +979,22 @@ export class DeferredShadingStrategy {
         this.occlusion_culler.init_visibility(render_graph, draw_count);
       }
 
+      if (draw_count > 0) {
+        render_graph.add_pass(
+          `init_meshlet_draw_args_view_${current_view}`,
+          RenderPassFlags.GraphLocal,
+          {},
+          (graph, frame_data, encoder) => {
+            graph
+              .get_physical_buffer(frustum_meshlet_draw_args)
+              .write(new Uint32Array([124 * 3, 0, 0, 0]));
+            graph
+              .get_physical_buffer(occlusion_meshlet_draw_args)
+              .write(new Uint32Array([124 * 3, 0, 0, 0]));
+          }
+        );
+      }
+
       // ┌─────────────────────────────────────────────────────────────────────────────┐
       // │ 🎯 PASS: Frustum Culling (Phase 1 of 2-Pass Occlusion)                    │
       // │    Eliminate objects outside the camera's view frustum                     │
@@ -809,37 +1003,77 @@ export class DeferredShadingStrategy {
         this.frustum_culler.submit_cull(render_graph, draw_count);
       }
 
+      if (draw_count > 0) {
+        render_graph.add_pass(
+          `init_meshlet_params_view_${current_view}`,
+          RenderPassFlags.GraphLocal,
+          {},
+          (graph, frame_data, encoder) => {
+            graph
+              .get_physical_buffer(meshlet_frustum_params)
+              .write(new Uint32Array([current_view, meshlet_draw_count, 0, 0]));
+            graph
+              .get_physical_buffer(meshlet_occlusion_params)
+              .write(new Uint32Array([current_view, meshlet_list_capacity, 0, 0]));
+          }
+        );
+      }
+
+      if (draw_count > 0 && meshlet_draw_count > 0) {
+        render_graph.add_pass(
+          `meshlet_frustum_cull_view_${current_view}`,
+          RenderPassFlags.Compute,
+          {
+            inputs: [
+              entity_transforms,
+              object_instances,
+              meshlet_instances,
+              entity_index_lookup,
+              meshlet_buffer,
+              meshlet_frustum_params,
+              frustum_meshlet_list,
+              frustum_meshlet_draw_args,
+            ],
+            outputs: [frustum_meshlet_list, frustum_meshlet_draw_args],
+            shader_setup: meshlet_frustum_cull_shader_setup,
+          },
+          (graph, frame_data, encoder) => {
+            const pass = graph.get_physical_pass(frame_data.current_pass);
+            pass.dispatch(Math.ceil(meshlet_draw_count / 64), 1, 1);
+          }
+        );
+      }
+
       // ┌─────────────────────────────────────────────────────────────────────────────┐
       // │ 🏔️  PASS: Depth Pre-Pass                                                   │
       // │    Fill depth buffer early for better GPU efficiency and HZB generation   │
       // └─────────────────────────────────────────────────────────────────────────────┘
-      if (renderer.is_depth_prepass_enabled()) {
-        const visible_buf_no_occlusion = this.frustum_culler.get_visibility_buffer(current_view, 0);
-
+      if (depth_prepass_enabled && meshlet_draw_count > 0) {
         render_graph.add_pass(
           depth_prepass_name,
           RenderPassFlags.Graphics,
           {
             inputs: [
               entity_transforms,
-              entity_flags,
               object_instances,
-              visible_buf_no_occlusion,
+              frustum_meshlet_list,
+              meshlet_buffer,
+              meshlet_vertex_buffer,
+              meshlet_triangle_buffer,
               entity_index_lookup,
+              material_params,
+              material_table_offset,
+              material_palette,
+              texture_pool_albedo,
             ],
-            outputs: [main_entity_id_image, main_depth_image],
-            shader_setup: depth_only_shader_setup,
-            b_skip_pass_pipeline_setup: true,
+            outputs: [main_depth_image],
+            shader_setup: meshlet_depth_prepass_shader_setup,
           },
           (graph, frame_data, encoder) => {
             const pass = graph.get_physical_pass(frame_data.current_pass);
-            MeshTaskQueue.submit_indexed_indirect_draws(
-              pass,
-              current_view,
-              0 /* clipmap_index */,
-              false /* skip_material_bind */,
-              true /* opaque_only */,
-              true /* depth_only */
+            pass.pass.drawIndirect(
+              graph.get_physical_buffer(frustum_meshlet_draw_args).buffer,
+              0
             );
           }
         );
@@ -850,7 +1084,9 @@ export class DeferredShadingStrategy {
       // │    Create multi-level depth pyramid for efficient occlusion culling      │
       // └─────────────────────────────────────────────────────────────────────────────┘
       {
+        let hzb_depth_image = depth_prepass_enabled ? main_depth_image : prev_depth_image;
         let hzb_params_chain = [];
+        
         for (let i = 0; i < this.hzb_image.config.mip_levels; i++) {
           hzb_params_chain.push(
             render_graph.create_buffer({
@@ -870,7 +1106,7 @@ export class DeferredShadingStrategy {
             RenderPassFlags.Compute,
             {
               inputs: [
-                i === 0 ? main_depth_image : main_hzb_image,
+                i === 0 ? hzb_depth_image : main_hzb_image,
                 main_hzb_image,
                 hzb_params_chain[dst_index],
               ],
@@ -881,7 +1117,7 @@ export class DeferredShadingStrategy {
             (graph, frame_data, encoder) => {
               const pass = graph.get_physical_pass(frame_data.current_pass);
 
-              const depth = graph.get_physical_image(main_depth_image);
+              const depth = graph.get_physical_image(hzb_depth_image);
               const hzb = graph.get_physical_image(main_hzb_image);
 
               const hzb_params = graph.get_physical_buffer(hzb_params_chain[dst_index]);
@@ -914,7 +1150,32 @@ export class DeferredShadingStrategy {
         this.occlusion_culler.submit_cull(render_graph, draw_count);
       }
 
-      // TODO: Meshlet cull pass
+      if (meshlet_draw_count > 0) {
+        render_graph.add_pass(
+          `meshlet_occlusion_cull_view_${current_view}`,
+          RenderPassFlags.Compute,
+          {
+            inputs: [
+              main_hzb_image,
+              frustum_meshlet_list,
+              frustum_meshlet_draw_args,
+              occlusion_meshlet_list,
+              occlusion_meshlet_draw_args,
+              object_instances,
+              entity_index_lookup,
+              entity_transforms,
+              meshlet_buffer,
+              meshlet_occlusion_params,
+            ],
+            outputs: [occlusion_meshlet_list, occlusion_meshlet_draw_args],
+            shader_setup: meshlet_occlusion_cull_shader_setup,
+          },
+          (graph, frame_data, encoder) => {
+            const pass = graph.get_physical_pass(frame_data.current_pass);
+            pass.dispatch(Math.ceil(meshlet_list_capacity / 64), 1, 1);
+          }
+        );
+      }
 
       // ┌─────────────────────────────────────────────────────────────────────────────┐
       // │ 🖥️  PASS: Compute Rasterization                                            │
@@ -934,25 +1195,96 @@ export class DeferredShadingStrategy {
       // │    Fill G-Buffer with geometry data (albedo, normals, material props)     │
       // └─────────────────────────────────────────────────────────────────────────────┘
       {
-        g_buffer_shader_setup.depth_write_enabled = !renderer.is_depth_prepass_enabled();
-        g_buffer_shader_setup.depth_stencil_compare_op = !renderer.is_depth_prepass_enabled()
-          ? "less"
-          : "less-equal";
+        if (meshlet_draw_count > 0) {
+          meshlet_visibility_shader_setup.depth_write_enabled = !depth_prepass_enabled;
+          meshlet_visibility_shader_setup.depth_stencil_compare_op = depth_prepass_enabled
+            ? "less-equal"
+            : "less";
+
+          render_graph.add_pass(
+            `visibility_buffer_raster_view_${current_view}`,
+            RenderPassFlags.Graphics,
+            {
+              inputs: [
+                entity_transforms,
+                object_instances,
+                occlusion_meshlet_list,
+                meshlet_buffer,
+                meshlet_vertex_buffer,
+                meshlet_triangle_buffer,
+                entity_index_lookup,
+                material_params,
+                material_table_offset,
+                material_palette,
+                texture_pool_albedo,
+              ],
+              outputs: [
+                visibility_entity_image,
+                visibility_surface_image,
+                visibility_barycentric_image,
+                main_depth_image,
+              ],
+              shader_setup: meshlet_visibility_shader_setup,
+            },
+            (graph, frame_data, encoder) => {
+              const pass = graph.get_physical_pass(frame_data.current_pass);
+              pass.pass.drawIndirect(
+                graph.get_physical_buffer(occlusion_meshlet_draw_args).buffer,
+                0
+              );
+            }
+          );
+
+          render_graph.add_pass(
+            `visibility_gbuffer_resolve_view_${current_view}`,
+            RenderPassFlags.Graphics,
+            {
+              inputs: [
+                visibility_entity_image,
+                visibility_surface_image,
+                visibility_barycentric_image,
+                main_depth_image,
+                entity_transforms,
+                meshlet_buffer,
+                meshlet_vertex_buffer,
+                meshlet_triangle_buffer,
+                material_params,
+                material_table_offset,
+                material_palette,
+                texture_pool_albedo,
+                texture_pool_normal,
+                texture_pool_roughness,
+                texture_pool_metallic,
+                texture_pool_ao,
+                texture_pool_height,
+                texture_pool_specular,
+                texture_pool_emission,
+              ],
+              outputs: [
+                main_albedo_image,
+                main_smra_image,
+                main_normal_image,
+                main_motion_emissive_image,
+              ],
+              shader_setup: visibility_gbuffer_resolve_shader_setup,
+            },
+            (graph, frame_data, encoder) => {
+              const pass = graph.get_physical_pass(frame_data.current_pass);
+              MeshTaskQueue.draw_quad(pass);
+            }
+          );
+        }
+
+        g_buffer_shader_setup.depth_write_enabled = false;
+        g_buffer_shader_setup.depth_stencil_compare_op = "less-equal";
 
         const material_buckets = MeshTaskQueue.get_material_buckets();
         for (let i = 0; i < material_buckets.length; i++) {
           const material_id = material_buckets[i];
           const material = Material.get(material_id);
-
-          const outputs = [
-            material.family === MaterialFamilyType.Transparent
-              ? main_transparency_accum_image
-              : main_albedo_image,
-            main_smra_image,
-            main_normal_image,
-            main_motion_emissive_image,
-            main_depth_image,
-          ];
+          if (material.family !== MaterialFamilyType.Transparent) {
+            continue;
+          }
 
           render_graph.add_pass(
             `g_buffer_${material.template.name}_${material_id}`,
@@ -965,13 +1297,18 @@ export class DeferredShadingStrategy {
                 this.occlusion_culler.get_visibility_buffer(current_view, 0),
                 entity_index_lookup,
               ],
-              outputs: outputs,
+              outputs: [
+                main_transparency_accum_image,
+                main_smra_image,
+                main_normal_image,
+                main_motion_emissive_image,
+                main_depth_image,
+              ],
               shader_setup: g_buffer_shader_setup,
               b_skip_pass_pipeline_setup: true,
             },
             (graph, frame_data, encoder) => {
               const pass = graph.get_physical_pass(frame_data.current_pass);
-
               MeshTaskQueue.submit_material_indexed_indirect_draws(pass, material_id, current_view);
             }
           );
@@ -1487,12 +1824,66 @@ export class DeferredShadingStrategy {
             break;
           case DebugDrawType.EntityId:
             this.debug_overlay.set_properties(
-              main_entity_id_image,
+              visibility_entity_image,
               0,
               0,
               image_extent.width,
               image_extent.height,
               DebugDrawType.EntityId
+            );
+            break;
+          case DebugDrawType.VisibilityMaterialId:
+            this.debug_overlay.set_properties(
+              [
+                visibility_entity_image,
+                visibility_surface_image,
+                meshlet_buffer,
+                meshlet_vertex_buffer,
+                meshlet_triangle_buffer,
+                material_table_offset,
+                material_palette,
+              ],
+              0,
+              0,
+              image_extent.width,
+              image_extent.height,
+              DebugDrawType.VisibilityMaterialId
+            );
+            break;
+          case DebugDrawType.VisibilityEntityId:
+            this.debug_overlay.set_properties(
+              visibility_entity_image,
+              0,
+              0,
+              image_extent.width,
+              image_extent.height,
+              DebugDrawType.VisibilityEntityId
+            );
+            break;
+          case DebugDrawType.VisibilityMeshletId:
+            this.debug_overlay.set_properties(
+              [
+                visibility_entity_image,
+                visibility_surface_image,
+              ],
+              0,
+              0,
+              image_extent.width,
+              image_extent.height,
+              DebugDrawType.VisibilityMeshletId
+            );
+            break;
+          case DebugDrawType.VisibilityTriangleId:
+            this.debug_overlay.set_properties(
+              [
+                visibility_entity_image,
+                visibility_surface_image,
+              ],
+              0,
+              0,
+              image_extent.width,
+              image_extent.height,
+              DebugDrawType.VisibilityTriangleId
             );
             break;
           case DebugDrawType.HZB:
@@ -1726,7 +2117,7 @@ export class DeferredShadingStrategy {
             const smra = graph.get_physical_image(main_smra_image);
             const normal = graph.get_physical_image(main_normal_image);
             const motion_emissive = graph.get_physical_image(main_motion_emissive_image);
-            const entity_id = graph.get_physical_image(main_entity_id_image);
+            const entity_id = graph.get_physical_image(visibility_entity_image);
             const transparency_accum = graph.get_physical_image(main_transparency_accum_image);
             const depth = graph.get_physical_image(main_depth_image);
 
@@ -1794,20 +2185,25 @@ export class DeferredShadingStrategy {
 
     const image_extent = Renderer.get().get_canvas_resolution();
 
-    const image_width_npot = npot(image_extent.width);
-    const image_height_npot = npot(image_extent.height);
-
     hzb_image_config.mip_levels = Math.max(
-      Math.log2(image_width_npot),
-      Math.log2(image_height_npot)
+      1,
+      Math.floor(Math.log2(Math.max(image_extent.width, image_extent.height))) + 1
     );
-    hzb_image_config.width = image_width_npot;
-    hzb_image_config.height = image_height_npot;
+    hzb_image_config.width = image_extent.width;
+    hzb_image_config.height = image_extent.height;
     hzb_image_config.force = this.force_recreate;
 
-    entity_id_image_config.width = image_extent.width;
-    entity_id_image_config.height = image_extent.height;
-    entity_id_image_config.force = this.force_recreate;
+    visibility_entity_image_config.width = image_extent.width;
+    visibility_entity_image_config.height = image_extent.height;
+    visibility_entity_image_config.force = this.force_recreate;
+
+    visibility_surface_image_config.width = image_extent.width;
+    visibility_surface_image_config.height = image_extent.height;
+    visibility_surface_image_config.force = this.force_recreate;
+
+    visibility_barycentric_image_config.width = image_extent.width;
+    visibility_barycentric_image_config.height = image_extent.height;
+    visibility_barycentric_image_config.force = this.force_recreate;
 
     prev_lighting_image_config.mip_levels = Math.max(
       1,
@@ -1821,7 +2217,17 @@ export class DeferredShadingStrategy {
     prev_lighting_image_config.force = this.force_recreate;
 
     this.hzb_image = Texture.create(hzb_image_config);
-    this.entity_id_image = Texture.create(entity_id_image_config);
+    this.visibility_entity_image = Texture.create(visibility_entity_image_config);
+    this.visibility_surface_image = Texture.create(visibility_surface_image_config);
+    this.visibility_barycentric_image = Texture.create(visibility_barycentric_image_config);
     this.prev_lighting_image = Texture.create(prev_lighting_image_config);
   }
+
+  _get_texture_pool(render_graph, pool_key) {
+    const fallback_texture = TextureArrayPools.get_fallback_view();
+    const texture =
+      ResourceCache.get().fetch(CacheTypes.IMAGE, Name.from(`texture_pool_${pool_key}`)) ||
+      fallback_texture;
+    return render_graph.register_image(texture.config.name);
+  };
 }

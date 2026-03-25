@@ -38,8 +38,6 @@ export class OcclusionCuller extends InstanceCuller {
             this.additional_data.object_instances,
             draw_cull_data,
             indirect_buf,
-            this.additional_data.main_entity_id_image,
-            this.additional_data.entity_occluders,
             this.additional_data.entity_index_lookup,
           ],
           outputs: [visible_buf, indirect_buf],

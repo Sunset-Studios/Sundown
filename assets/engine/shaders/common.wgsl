@@ -808,3 +808,12 @@ fn reconstruct_prev_world_position(uv: vec2<f32>, depth: f32, view_index: u32) -
     let world = view_buffer[view_index].prev_inverse_view_projection_matrix * clip;
     return world.xyz / world.w;
 }
+
+fn id_to_color(id: u32) -> vec3<f32> {
+    let hash_value = hash(id + 1u);
+    return vec3<f32>(
+        f32((hash_value >> 0u) & 0xffu) / 255.0,
+        f32((hash_value >> 8u) & 0xffu) / 255.0,
+        f32((hash_value >> 16u) & 0xffu) / 255.0
+    );
+}

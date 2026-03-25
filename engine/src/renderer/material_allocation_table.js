@@ -97,8 +97,28 @@ export class MaterialAllocationTable {
    * Upload the allocation and palette buffers to the GPU.
    */
   static upload_buffers() {
+    if (!this.params_buffer) {
+      this.params_buffer = Buffer.create({
+        name: "material_params",
+        raw_data: this.params_data,
+        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+        dispatch: true,
+        force: true,
+      });
+    }
+
+    if (!this.palette_buffer) {
+      this.palette_buffer = Buffer.create({
+        name: "material_palette",
+        raw_data: this.local_palette.buffer,
+        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+        dispatch: true,
+        force: true,
+      });
+    }
+
     if (this.dirty_params_pages.length > 0) {
-      if (!this.params_buffer || this.params_buffer.config.size < this.params_data.byteLength) {
+      if (this.params_buffer.config.size < this.params_data.byteLength) {
         this.params_buffer = Buffer.create({
           name: "material_params",
           raw_data: this.params_data,
@@ -123,7 +143,7 @@ export class MaterialAllocationTable {
     }
     
     if (this.dirty_palette_pages.length > 0) {
-      if (!this.palette_buffer || this.palette_buffer.config.size < this.local_palette.buffer.byteLength) {
+      if (this.palette_buffer.config.size < this.local_palette.buffer.byteLength) {
         this.palette_buffer = Buffer.create({
           name: "material_palette",
           raw_data: this.local_palette.buffer,

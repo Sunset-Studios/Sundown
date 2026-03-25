@@ -3,7 +3,6 @@ import { DEFAULT_CHUNK_CAPACITY } from "../ecs/solar/types.js";
 import { SimulationLayer } from "../simulation_layer.js";
 import { EntityManager } from "../ecs/entity.js";
 import { StaticMeshFragment } from "../ecs/fragments/static_mesh_fragment.js";
-import { VisibilityFragment } from "../ecs/fragments/visibility_fragment.js";
 import { MeshTaskQueue } from "../../renderer/mesh_task_queue.js";
 import { profile_scope } from "../../utility/performance.js";
 import { ResourceCache } from "../../renderer/resource_cache.js";
@@ -19,7 +18,7 @@ export class StaticMeshProcessor extends SimulationLayer {
   }
 
   init() {
-    this.entity_query = EntityManager.create_query([StaticMeshFragment, VisibilityFragment]);
+    this.entity_query = EntityManager.create_query([StaticMeshFragment]);
     this._update_internal = this._update_internal.bind(this);
     this._update_internal_iter_chunk = this._update_internal_iter_chunk.bind(this);
     EntityManager.on_delete(this._on_delete.bind(this));
@@ -32,7 +31,6 @@ export class StaticMeshProcessor extends SimulationLayer {
   #entity_materials = new TypedVector(256, -1, BigInt64Array);
   _update_internal_iter_chunk(chunk, flags, counts, archetype) {
     const static_meshes = chunk.get_fragment_view(StaticMeshFragment);
-    const visibilities = chunk.get_fragment_view(VisibilityFragment);
     const material_slot_stride = StaticMeshFragment.material_slot_stride;
 
     let should_dirty_chunk = false;
@@ -48,7 +46,7 @@ export class StaticMeshProcessor extends SimulationLayer {
       const mesh_id = Number(static_meshes.mesh[slot]);
       const entity = EntityManager.get_entity_for(chunk, slot);
 
-      if (mesh_id && entity.instance_count && visibilities.visible[slot]) {
+      if (mesh_id && entity.instance_count) {
         MeshTaskQueue.remove(entity);
 
         const mesh = ResourceCache.get().fetch(CacheTypes.MESH, mesh_id);

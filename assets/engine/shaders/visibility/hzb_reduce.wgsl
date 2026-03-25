@@ -22,16 +22,34 @@ fn cs(@builtin(global_invocation_id) global_id: vec3<u32>) {
         return;
     }
 
-    let input_texel_size = 1.0 / params.input_image_size;
-    let output_texel_size = 1.0 / params.output_image_size;
-    let base_f = vec2<f32>(global_id.xy) * output_texel_size;
+    let input_size = vec2<u32>(params.input_image_size);
+    let src_min = vec2<u32>(
+        u32(floor(f32(global_id.x) * params.input_image_size.x / params.output_image_size.x)),
+        u32(floor(f32(global_id.y) * params.input_image_size.y / params.output_image_size.y))
+    );
+    let src_max = vec2<u32>(
+        min(
+            input_size.x,
+            max(
+                src_min.x + 1u,
+                u32(ceil(f32(global_id.x + 1u) * params.input_image_size.x / params.output_image_size.x))
+            )
+        ),
+        min(
+            input_size.y,
+            max(
+                src_min.y + 1u,
+                u32(ceil(f32(global_id.y + 1u) * params.input_image_size.y / params.output_image_size.y))
+            )
+        )
+    );
 
-    var d00 = textureSampleLevel(input_texture, non_filtering_sampler, base_f, 0).r;
-    var d10 = textureSampleLevel(input_texture, non_filtering_sampler, base_f + vec2<f32>(-input_texel_size.x, 0.0), 0).r;
-    var d01 = textureSampleLevel(input_texture, non_filtering_sampler, base_f + vec2<f32>(0.0, -input_texel_size.y), 0).r;
-    var d11 = textureSampleLevel(input_texture, non_filtering_sampler, base_f + vec2<f32>(-input_texel_size.x, -input_texel_size.y), 0).r;
-
-    let max_depth = max(d00, max(d10, max(d01, d11)));
+    var max_depth = 0.0;
+    for (var y = src_min.y; y < src_max.y; y = y + 1u) {
+        for (var x = src_min.x; x < src_max.x; x = x + 1u) {
+            max_depth = max(max_depth, textureLoad(input_texture, vec2<i32>(i32(x), i32(y)), 0).r);
+        }
+    }
 
     textureStore(output_texture, global_id.xy, vec4<f32>(max_depth));
 }

@@ -171,6 +171,10 @@ export const DebugDrawType = Object.freeze({
     BVH: 23,
     BLAS_Bounds: 24,
     PrevLightingPyramid: 25,
+    VisibilityMaterialId: 26,
+    VisibilityEntityId: 27,
+    VisibilityMeshletId: 28,
+    VisibilityTriangleId: 29,
 });
 
 /**

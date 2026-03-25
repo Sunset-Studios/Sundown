@@ -151,6 +151,8 @@ export class Texture {
       });
       this._setup_views();
     }
+
+    Renderer.get().mark_bind_groups_dirty(true /* pass_only */);
   }
 
   destroy() {
@@ -210,7 +212,8 @@ export class Texture {
       usage:
         GPUTextureUsage.TEXTURE_BINDING |
         GPUTextureUsage.RENDER_ATTACHMENT |
-        GPUTextureUsage.SAMPLED,
+        GPUTextureUsage.SAMPLED |
+        GPUTextureUsage.COPY_DST,
     });
     // Create a default view for the texture while we wait for the images to load
     if (!this.config.pool_key) {
@@ -260,7 +263,7 @@ export class Texture {
         mipLevelCount: this.config.mip_levels,
         sampleCount: this.config.sample_count,
         format: this.config.format,
-        usage: this.config.usage,
+        usage: this.config.usage | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT,
         dimension: Texture.texture_dimension_to_image_dimension(this.config.dimension),
       });
     }
