@@ -98,7 +98,7 @@ export class MeshData {
       force: true,
     });
 
-    this.meshlet_triangle_data = new Uint8Array(initial_meshlet_triangle_capacity);
+    this.meshlet_triangle_data = new Uint32Array(initial_meshlet_triangle_capacity);
     this.meshlet_triangle_buffer = Buffer.create({
       name: meshlet_triangle_buffer_name,
       raw_data: this.meshlet_triangle_data,
@@ -475,7 +475,7 @@ export class MeshData {
     if (required_size <= this.meshlet_triangle_data.length) return;
     required_size = npot(required_size);
 
-    const next_meshlet_triangle_data = new Uint8Array(required_size);
+    const next_meshlet_triangle_data = new Uint32Array(required_size);
     next_meshlet_triangle_data.set(this.meshlet_triangle_data);
     this.meshlet_triangle_data = next_meshlet_triangle_data;
 

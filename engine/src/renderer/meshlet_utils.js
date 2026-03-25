@@ -1,4 +1,106 @@
+import { vec3 } from "gl-matrix";
 import { MeshoptClusterizer } from "meshoptimizer/clusterizer";
+
+export function transform_position(position, world_matrix) {
+  if (!world_matrix) {
+    return [position[0], position[1], position[2]];
+  }
+
+  const transformed = vec3.transformMat4(
+    vec3.create(),
+    vec3.fromValues(position[0], position[1], position[2]),
+    world_matrix
+  );
+  return [transformed[0], transformed[1], transformed[2]];
+}
+
+export function transform_direction(direction, normal_matrix) {
+  if (!normal_matrix) {
+    return [direction[0], direction[1], direction[2]];
+  }
+
+  const transformed = vec3.transformMat3(
+    vec3.create(),
+    vec3.fromValues(direction[0], direction[1], direction[2]),
+    normal_matrix
+  );
+  if (vec3.length(transformed) > 1e-6) {
+    vec3.normalize(transformed, transformed);
+  }
+  return [transformed[0], transformed[1], transformed[2]];
+}
+
+export function transform_bounds(bounds_min, bounds_max, world_matrix) {
+  if (!world_matrix) {
+    return {
+      bounds_min: [...bounds_min],
+      bounds_max: [...bounds_max],
+    };
+  }
+
+  const transformed_min = [Infinity, Infinity, Infinity];
+  const transformed_max = [-Infinity, -Infinity, -Infinity];
+
+  for (let corner = 0; corner < 8; corner++) {
+    const local_corner = [
+      (corner & 1) !== 0 ? bounds_max[0] : bounds_min[0],
+      (corner & 2) !== 0 ? bounds_max[1] : bounds_min[1],
+      (corner & 4) !== 0 ? bounds_max[2] : bounds_min[2],
+    ];
+    const transformed_corner = transform_position(local_corner, world_matrix);
+    transformed_min[0] = Math.min(transformed_min[0], transformed_corner[0]);
+    transformed_min[1] = Math.min(transformed_min[1], transformed_corner[1]);
+    transformed_min[2] = Math.min(transformed_min[2], transformed_corner[2]);
+    transformed_max[0] = Math.max(transformed_max[0], transformed_corner[0]);
+    transformed_max[1] = Math.max(transformed_max[1], transformed_corner[1]);
+    transformed_max[2] = Math.max(transformed_max[2], transformed_corner[2]);
+  }
+
+  return {
+    bounds_min: transformed_min,
+    bounds_max: transformed_max,
+  };
+}
+
+export function matrix_max_scale(world_matrix) {
+  if (!world_matrix) {
+    return 1.0;
+  }
+
+  return Math.max(
+    Math.hypot(world_matrix[0], world_matrix[1], world_matrix[2]),
+    Math.hypot(world_matrix[4], world_matrix[5], world_matrix[6]),
+    Math.hypot(world_matrix[8], world_matrix[9], world_matrix[10])
+  );
+}
+
+export function transform_meshlet_record(record, descriptor) {
+  const world_matrix = descriptor.world_matrix ?? null;
+  const normal_matrix = descriptor.normal_matrix ?? null;
+  const transformed_bounds = transform_bounds(record.bounds_min, record.bounds_max, world_matrix);
+
+  return {
+    ...record,
+    center: transform_position(record.center, world_matrix),
+    radius: record.radius * matrix_max_scale(world_matrix),
+    bounds_min: transformed_bounds.bounds_min,
+    bounds_max: transformed_bounds.bounds_max,
+    normal_cone_axis: transform_direction(record.normal_cone_axis, normal_matrix),
+  };
+}
+
+export function transform_meshlet_group_record(record, descriptor) {
+  const world_matrix = descriptor.world_matrix ?? null;
+  const transformed_bounds = transform_bounds(record.bounds_min, record.bounds_max, world_matrix);
+
+  return {
+    ...record,
+    center: transform_position(record.center, world_matrix),
+    radius: record.radius * matrix_max_scale(world_matrix),
+    bounds_min: transformed_bounds.bounds_min,
+    bounds_max: transformed_bounds.bounds_max,
+  };
+}
 
 export function build_empty_meshlet_sections(section_count) {
   return Array.from({ length: section_count }, () => ({

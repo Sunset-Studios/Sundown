@@ -1,6 +1,5 @@
 import { MAX_BUFFERED_FRAMES, EntityFlags } from "../core/minimal.js";
 import { EntityID, DEFAULT_CHUNK_CAPACITY } from "../core/ecs/solar/types.js";
-import { Renderer } from "./renderer.js";
 import { ResourceCache } from "./resource_cache.js";
 import { Mesh } from "./mesh.js";
 import { MeshData } from "./mesh_data.js";
@@ -14,6 +13,7 @@ import { MaterialAllocationTable } from "./material_allocation_table.js";
 
 const initial_buffer_size = 1024;
 const max_frame_buffer_writes = 100000;
+const invalid_u32 = 0xffffffff;
 
 class IndirectDrawBatch {
   mesh_id = 0;
@@ -126,10 +126,14 @@ class MeshletInstanceBuffer {
   meshlet_instance_data = null;
   current_meshlet_instance_write_offset = 0;
   last_meshlet_instance_count = 0;
+  static entry_stride = 2;
 
   init() {
     profile_scope("init_meshlet_instance_buffer", () => {
-      this.meshlet_instance_data = new Uint32Array(initial_buffer_size * 8);
+      this.meshlet_instance_data = new Uint32Array(
+        initial_buffer_size * MeshletInstanceBuffer.entry_stride
+      );
+      this.meshlet_instance_data.fill(invalid_u32);
       if (!this.meshlet_instance_buffer) {
         this.meshlet_instance_buffer = Buffer.create({
           name: "meshlet_instance_buffer",
@@ -140,19 +144,49 @@ class MeshletInstanceBuffer {
     });
   }
 
-  update_buffers(object_instances, force_update = false) {
+  rebuild_data(object_instances, meshlet_instance_count) {
+    let entry_index = 0;
+    for (let object_instance_index = 0; object_instance_index < object_instances.length; ++object_instance_index) {
+      const object_instance = object_instances[object_instance_index];
+      const meshlet_offset = object_instance.meshlet_offset;
+      const meshlet_count = object_instance.meshlet_count;
+
+      for (let meshlet_local = 0; meshlet_local < meshlet_count; ++meshlet_local) {
+        const data_index = entry_index * MeshletInstanceBuffer.entry_stride;
+        this.meshlet_instance_data[data_index + 0] = object_instance_index;
+        this.meshlet_instance_data[data_index + 1] = meshlet_offset + meshlet_local;
+        entry_index++;
+      }
+    }
+
+    const total_words = meshlet_instance_count * MeshletInstanceBuffer.entry_stride;
+    if (entry_index * MeshletInstanceBuffer.entry_stride < total_words) {
+      this.meshlet_instance_data.fill(
+        invalid_u32,
+        entry_index * MeshletInstanceBuffer.entry_stride,
+        total_words
+      );
+    }
+  }
+
+  update_buffers(object_instances, meshlet_instance_count, force_update = false) {
     profile_scope("update_meshlet_instance_buffer", () => {
-      const entry_count = object_instances.length * 8;
+      const entry_count = meshlet_instance_count;
+      let needs_rebuild = force_update;
       if (entry_count !== this.last_meshlet_instance_count || force_update) {
         this.last_meshlet_instance_count = entry_count;
-        this.current_meshlet_instance_write_offset = 0;
+        needs_rebuild = true;
       }
 
-      const required_size = object_instances.length * 8 * 4;
+      const required_size = entry_count * MeshletInstanceBuffer.entry_stride * 4;
       if (this.meshlet_instance_buffer.config.size < required_size) {
-        const new_meshlet_instance_data = new Uint32Array(object_instances.length * 8 * 2);
+        const new_meshlet_instance_data = new Uint32Array(
+          Math.max(entry_count, 1) * MeshletInstanceBuffer.entry_stride * 2
+        );
+        new_meshlet_instance_data.fill(invalid_u32);
         new_meshlet_instance_data.set(this.meshlet_instance_data);
         this.meshlet_instance_data = new_meshlet_instance_data;
+        needs_rebuild = true;
 
         this.meshlet_instance_buffer = Buffer.create({
           name: "meshlet_instance_buffer",
@@ -160,6 +194,10 @@ class MeshletInstanceBuffer {
           usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
           force: true,
         });
+      }
+
+      if (needs_rebuild) {
+        this.rebuild_data(object_instances, meshlet_instance_count);
       }
 
       profile_scope("write_meshlet_instance_buffer", () => {
@@ -170,30 +208,20 @@ class MeshletInstanceBuffer {
         ) {
           const actual_write_offset =
             this.current_meshlet_instance_write_offset % total_entries;
-          const write_count = Math.min(
+          const write_entry_count = Math.min(
             total_entries - actual_write_offset,
-            max_frame_buffer_writes * 8
+            max_frame_buffer_writes
           );
-          if (write_count > 0) {
-            for (let i = actual_write_offset; i < actual_write_offset + write_count; i += 8) {
-              const offset = Math.floor(i / 8);
-              const entry = object_instances[offset];
-              this.meshlet_instance_data[i + 0] = entry.meshlet_offset;
-              this.meshlet_instance_data[i + 1] = entry.meshlet_count;
-              this.meshlet_instance_data[i + 2] = entry.meshlet_group_offset;
-              this.meshlet_instance_data[i + 3] = entry.meshlet_group_count;
-              this.meshlet_instance_data[i + 4] = entry.mesh_id;
-              this.meshlet_instance_data[i + 5] = entry.section;
-              this.meshlet_instance_data[i + 6] = entry.batch_index;
-              this.meshlet_instance_data[i + 7] = 0;
-            }
+          if (write_entry_count > 0) {
+            const data_offset = actual_write_offset * MeshletInstanceBuffer.entry_stride;
+            const write_word_count = write_entry_count * MeshletInstanceBuffer.entry_stride;
             this.meshlet_instance_buffer.write_raw(
               this.meshlet_instance_data,
-              actual_write_offset * 4,
-              write_count,
-              actual_write_offset
+              data_offset * 4,
+              write_word_count,
+              data_offset
             );
-            this.current_meshlet_instance_write_offset += write_count;
+            this.current_meshlet_instance_write_offset += write_entry_count;
           }
         }
       });
@@ -340,6 +368,7 @@ export class MeshTaskQueue {
   static entity_task_map = new Map(); // new: Map<Entity, Map<"meshId:materialId", Task>>
   static static_mesh_query = null;
   static meshes_dirty = false;
+  static total_meshlet_instances = 0;
 
   static mark_needs_sort() {
     this.needs_sort = true;
@@ -405,6 +434,7 @@ export class MeshTaskQueue {
         this.batches.length = 0;
         this.object_instances.length = 0;
         this.material_buckets.length = 0;
+        this.total_meshlet_instances = 0;
         this.object_instance_allocator.reset();
 
         this.tasks.sort((a, b) => {
@@ -502,6 +532,7 @@ export class MeshTaskQueue {
                 entry.meshlet_group_offset = meshlet_section.meshlet_group_offset;
                 entry.meshlet_group_count = meshlet_section.meshlet_group_count;
                 this.object_instances.push(entry);
+                this.total_meshlet_instances += meshlet_section.meshlet_count;
               }
             }
           }
@@ -532,7 +563,11 @@ export class MeshTaskQueue {
       }
 
       this.object_instance_buffer.update_buffers(this.object_instances, this.needs_sort);
-      this.meshlet_instance_buffer.update_buffers(this.object_instances, this.needs_sort);
+      this.meshlet_instance_buffer.update_buffers(
+        this.object_instances,
+        this.total_meshlet_instances,
+        this.needs_sort
+      );
 
       for (let i = 0; i < this.indirect_draw_objects.x_capacity; i++) {
         for (let j = 0; j < this.indirect_draw_objects.y_capacity; j++) {
@@ -642,6 +677,13 @@ export class MeshTaskQueue {
    */
   static get_total_draw_count() {
     return this.object_instances.length;
+  }
+
+  /**
+   * Get the maximum number of meshlet instances addressable this frame.
+   */
+  static get_total_meshlet_count() {
+    return this.total_meshlet_instances;
   }
 
   /**

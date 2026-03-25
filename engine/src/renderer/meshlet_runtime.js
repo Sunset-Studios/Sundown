@@ -9,6 +9,8 @@ import {
   build_meshlets,
   compute_position_bounds,
   sort_meshlets_spatially,
+  transform_meshlet_record,
+  transform_meshlet_group_record,
 } from "./meshlet_utils.js";
 
 const discard_cpu_data = true;
@@ -529,9 +531,12 @@ function create_meshlet_upload_data(sidecar, primitive_descriptors, section_coun
     }
 
     for (let meshlet_offset = 0; meshlet_offset < primitive_info.meshletCount; meshlet_offset++) {
-      const meshlet_record = read_meshlet_record(
-        sidecar,
-        primitive_info.meshletOffset + meshlet_offset
+      const meshlet_record = transform_meshlet_record(
+        read_meshlet_record(
+          sidecar,
+          primitive_info.meshletOffset + meshlet_offset
+        ),
+        descriptor
       );
       const rebased_vertex_offset = meshlet_vertices.length;
       const rebased_triangle_offset = meshlet_triangles.length;
@@ -561,9 +566,12 @@ function create_meshlet_upload_data(sidecar, primitive_descriptors, section_coun
     }
 
     for (let group_offset = 0; group_offset < primitive_info.meshletGroupCount; group_offset++) {
-      const group_record = read_meshlet_group_record(
-        sidecar,
-        primitive_info.meshletGroupOffset + group_offset
+      const group_record = transform_meshlet_group_record(
+        read_meshlet_group_record(
+          sidecar,
+          primitive_info.meshletGroupOffset + group_offset
+        ),
+        descriptor
       );
       meshlet_groups.push({
         meshlet_offset:
@@ -697,6 +705,8 @@ export function build_gltf_mesh(mesh, gltf_obj, gltf_mesh, mesh_index = null, si
       vertex_offset: mesh.vertices.length,
       vertex_count: source_vertices.length,
       section_index: -1,
+      world_matrix: null,
+      normal_matrix: null,
     });
 
     append_standard_primitive(mesh, group, source_vertices, primitive_data.indices);
@@ -785,6 +795,8 @@ export function build_combined_gltf_scene(mesh, gltf_obj, scene_index = null, si
           vertex_offset: mesh.vertices.length,
           vertex_count: source_vertices.length,
           section_index: -1,
+          world_matrix,
+          normal_matrix,
         });
 
         append_standard_primitive(mesh, group, source_vertices, primitive_data.indices);
