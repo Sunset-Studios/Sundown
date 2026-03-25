@@ -22,9 +22,7 @@ struct DrawCullData {
 @group(1) @binding(4) var<storage, read> object_instances: array<ObjectInstance>;
 @group(1) @binding(5) var<uniform> draw_cull_data: DrawCullData;
 @group(1) @binding(6) var<storage, read_write> draw_indirect_buffer: array<DrawCommand>;
-@group(1) @binding(7) var entity_id_texture: texture_2d<u32>;
-@group(1) @binding(8) var<storage, read> occluder_buffer: array<u32>;
-@group(1) @binding(9) var<storage, read> entity_index_lookup: array<u32>;
+@group(1) @binding(7) var<storage, read> entity_index_lookup: array<u32>;
 
 
 // ------------------------------------------------------------------------------------
@@ -113,9 +111,6 @@ fn is_occluded(aabb_node: ptr<function, AABB>, view: ptr<function, View>) -> u32
     let center_view = view.view_matrix * center;
     let sphere_depth = -center_view.z - radius;
     let depth_bias: f32 = 1.0;
-    let far_depth: f32 = 1.0;
-    let entity_dims = vec2<f32>(textureDimensions(entity_id_texture));
-
     // subdivide the screen-space rect
     let u_min = uv_rect.x;
     let v_min = uv_rect.y;
@@ -132,11 +127,7 @@ fn is_occluded(aabb_node: ptr<function, AABB>, view: ptr<function, View>) -> u32
                 mix(v_min, v_max, f32(iy) / f32(sample_dim - 1u))
             );
             let raw_d: f32 = textureSampleLevel(input_texture, non_filtering_sampler, uv, level).r;
-            let pixel_xy = clamp(vec2<i32>(uv * entity_dims), vec2<i32>(0), vec2<i32>(entity_dims) - vec2<i32>(1));
-            let id = textureLoad(entity_id_texture, pixel_xy, 0).x;
-            let occ = select(false, occluder_buffer[id] != 0u, id < arrayLength(&occluder_buffer));
-            let d = select(far_depth, raw_d, occ);
-            let lin_d = linearize_depth(d, view.near, view.far, draw_cull_data.view_index);
+            let lin_d = linearize_depth(raw_d, view.near, view.far, draw_cull_data.view_index);
             max_depth = max(max_depth, lin_d);
         }
     }

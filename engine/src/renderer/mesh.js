@@ -6,7 +6,14 @@ import { CacheTypes, TextureChannel, MaterialFamilyType } from "./renderer_types
 import { MeshTaskQueue } from "./mesh_task_queue.js";
 import { Type2NumOfComponent } from "../utility/gltf_loader.js";
 import { StandardMaterial } from "./material.js";
-import { build_gltf_mesh, build_combined_gltf_scene, load_meshlet_sidecar_async } from "./meshlet_runtime.js";
+import {
+  build_gltf_mesh,
+  build_combined_gltf_scene,
+  create_runtime_meshlet_data_async,
+  extract_runtime_positions,
+  build_empty_runtime_meshlet_sections,
+  load_meshlet_sidecar_async,
+} from "./meshlet_runtime.js";
 
 const discard_cpu_data = true;
 
@@ -32,6 +39,7 @@ export class Mesh {
   meshlet_group_count = 0;
 
   pending_loader = null;
+  pending_runtime_meshlet_build = null;
   triangle_bvh = null;
 
   _tmp_indices = [];
@@ -64,6 +72,7 @@ export class Mesh {
     this.meshlet_group_buffer_offset = -1;
     this.meshlet_count = 0;
     this.meshlet_group_count = 0;
+    this.pending_runtime_meshlet_build = null;
   }
 
   static _get_tangents_and_bitangents(positions, uvs) {
@@ -180,7 +189,57 @@ export class Mesh {
   }
 
   static build_from_gltf_mesh(mesh, gltf_obj, gltf_mesh, mesh_index = null, sidecar = null) {
-    build_gltf_mesh(this, mesh, gltf_obj, gltf_mesh, mesh_index, sidecar);
+    build_gltf_mesh(mesh, gltf_obj, gltf_mesh, mesh_index, sidecar);
+  }
+
+  static _schedule_runtime_meshlet_build(mesh, source_vertices, source_indices, source_sections) {
+    if (!mesh || !source_vertices || !source_indices || source_indices.length < 3) {
+      return;
+    }
+
+    const positions = extract_runtime_positions(source_vertices);
+    const indices =
+      source_indices instanceof Uint32Array
+        ? source_indices.slice()
+        : Uint32Array.from(source_indices);
+    const sections =
+      source_sections && source_sections.length > 0
+        ? source_sections.map((section) => ({
+            first_index: section.first_index ?? 0,
+            index_count: section.index_count ?? 0,
+          }))
+        : [{ first_index: 0, index_count: indices.length }];
+
+    mesh.meshlet_sections = build_empty_runtime_meshlet_sections(sections.length);
+
+    const build_token = Symbol("runtime_meshlet_build");
+    mesh.pending_runtime_meshlet_build = build_token;
+
+    void create_runtime_meshlet_data_async(positions, indices, sections)
+      .then((meshlet_data) => {
+        if (mesh.pending_runtime_meshlet_build !== build_token) {
+          return;
+        }
+
+        mesh.pending_runtime_meshlet_build = null;
+        if (!meshlet_data) {
+          mesh.meshlet_sections = build_empty_runtime_meshlet_sections(sections.length);
+          return;
+        }
+
+        mesh.meshlet_data = meshlet_data;
+        mesh.meshlet_sections = meshlet_data.sections.map((section) => ({ ...section }));
+
+        MeshData.update(mesh);
+        MeshTaskQueue.invalidate_mesh(Name.from(mesh.name));
+      })
+      .catch((error) => {
+        if (mesh.pending_runtime_meshlet_build === build_token) {
+          mesh.pending_runtime_meshlet_build = null;
+          mesh.meshlet_sections = build_empty_runtime_meshlet_sections(sections.length);
+        }
+        console.error(`[meshlet_runtime] failed to build runtime meshlets for ${mesh.name}:`, error);
+      });
   }
 
   static create(name, vertices, indices) {
@@ -199,6 +258,7 @@ export class Mesh {
 
     mesh._recreate_vertex_bounds();
     mesh.sections = [{ first_index: 0, index_count: mesh.index_count }];
+    Mesh._schedule_runtime_meshlet_build(mesh, mesh.vertices, mesh.indices, mesh.sections);
 
     // Register shared mesh data (bounds)
     MeshData.register(mesh);
@@ -280,6 +340,7 @@ export class Mesh {
     mesh.index_count = mesh.indices.length;
 
     mesh.sections = [{ first_index: 0, index_count: mesh.index_count }];
+    Mesh._schedule_runtime_meshlet_build(mesh, mesh.vertices, mesh.indices, mesh.sections);
 
     // Register shared mesh data (bounds)
     MeshData.register(mesh);
@@ -554,6 +615,7 @@ export class Mesh {
     mesh.index_count = mesh.indices.length;
 
     mesh.sections = [{ first_index: 0, index_count: mesh.index_count }];
+    Mesh._schedule_runtime_meshlet_build(mesh, mesh.vertices, mesh.indices, mesh.sections);
 
     // Register shared mesh data (bounds)
     MeshData.register(mesh);
@@ -691,7 +753,7 @@ export class Mesh {
    * @param {number|null} scene_index - Which scene to use
    */
   static build_combined_gltf_scene(mesh, gltf_obj, scene_index = null, sidecar = null) {
-    build_combined_gltf_scene(this, mesh, gltf_obj, scene_index, sidecar);
+    build_combined_gltf_scene(mesh, gltf_obj, scene_index, sidecar);
   }
 
   static from_parsed_gltf_mesh(gltf_path, gltf_obj, gltf_mesh) {

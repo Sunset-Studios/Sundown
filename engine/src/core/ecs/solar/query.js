@@ -1,5 +1,5 @@
-import { Archetype } from "./archetype";
-import { DEFAULT_CHUNK_CAPACITY } from "./types";
+import { Archetype } from "./archetype.js";
+import { DEFAULT_CHUNK_CAPACITY } from "./types.js";
 import { EntityFlags } from "../../minimal.js";
 /**
  * @typedef {Object} Query
