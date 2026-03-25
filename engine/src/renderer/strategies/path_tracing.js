@@ -25,6 +25,7 @@ import { FrustumCuller } from "../cull/frustum_culler.js";
 import { OcclusionCuller } from "../cull/occlusion_culler.js";
 import { ResourceCache } from "../resource_cache.js";
 import { TextureArrayPools } from "../texture_pool.js";
+import { VisibilityBuffer } from "../visibility_buffer.js";
 
 // Types and utilities
 import { RenderPassFlags, CacheTypes } from "../renderer_types.js";
@@ -36,7 +37,6 @@ import {
   rgba16float_format,
   depth32float_format,
   r32float_format,
-  r32uint_format,
   load_op_load,
   load_op_clear,
 } from "../../utility/config_permutations.js";
@@ -168,49 +168,6 @@ const meshlet_occlusion_cull_shader_setup = {
     },
   },
 };
-const meshlet_depth_prepass_shader_setup = {
-  pipeline_shaders: {
-    vertex: {
-      path: "visibility/meshlet_depth_prepass.wgsl",
-    },
-    fragment: {
-      path: "visibility/meshlet_depth_prepass.wgsl",
-    },
-  },
-  rasterizer_state: {
-    cull_mode: "none",
-  },
-  depth_write_enabled: true,
-  depth_stencil_compare_op: "less",
-};
-const meshlet_visibility_shader_setup = {
-  pipeline_shaders: {
-    vertex: {
-      path: "visibility/meshlet_visibility_raster.wgsl",
-    },
-    fragment: {
-      path: "visibility/meshlet_visibility_raster.wgsl",
-    },
-  },
-  rasterizer_state: {
-    cull_mode: "none",
-  },
-  depth_write_enabled: false,
-  depth_stencil_compare_op: "less-equal",
-};
-const visibility_gbuffer_resolve_shader_setup = {
-  pipeline_shaders: {
-    vertex: {
-      path: "visibility/visibility_gbuffer_resolve.wgsl",
-    },
-    fragment: {
-      path: "visibility/visibility_gbuffer_resolve.wgsl",
-    },
-  },
-  rasterizer_state: {
-    cull_mode: "none",
-  },
-};
 
 const compact_lights_shader_setup = {
   pipeline_shaders: {
@@ -275,37 +232,6 @@ const hzb_image_config = {
   force: false,
 };
 
-const visibility_entity_image_config = {
-  name: "visibility_entity",
-  format: r32uint_format,
-  width: 0,
-  height: 0,
-  usage:
-    GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_SRC,
-  clear_value: { r: 0xffffffff, g: 0, b: 0, a: 0 },
-  force: false,
-};
-
-const visibility_surface_image_config = {
-  name: "visibility_surface",
-  format: r32uint_format,
-  width: 0,
-  height: 0,
-  usage:
-    GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_SRC,
-  force: false,
-};
-
-const visibility_barycentric_image_config = {
-  name: "visibility_barycentric",
-  format: r32uint_format,
-  width: 0,
-  height: 0,
-  usage:
-    GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_SRC,
-  force: false,
-};
-
 const skybox_output_image_config = {
   name: "skybox_output",
   format: rgba16float_format,
@@ -327,7 +253,6 @@ const post_lighting_image_config = {
 const swapchain_name = "swapchain";
 const clear_g_buffer_pass_name = "clear_g_buffer";
 const skybox_pass_name = "skybox_pass";
-const depth_prepass_name = "depth_prepass";
 const reset_g_buffer_targets_pass_name = "reset_g_buffer_targets";
 const fullscreen_present_pass_name = "fullscreen_present_pass";
 const compact_lights_pass_name = "compact_lights";
@@ -347,9 +272,7 @@ export class PathTracingStrategy {
   force_recreate = false;
   force_reinit = false;
   hzb_image = null;
-  visibility_entity_image = null;
-  visibility_surface_image = null;
-  visibility_barycentric_image = null;
+  visibility_buffer = null;
   prev_depth_image = null;
   path_tracer = null;
   frustum_culler = null;
@@ -362,6 +285,7 @@ export class PathTracingStrategy {
 
   setup(render_graph) {
     this.path_tracer = new PathTracer();
+    this.visibility_buffer = new VisibilityBuffer();
 
     this.frustum_culler = new FrustumCuller(
       null,
@@ -535,15 +459,11 @@ export class PathTracingStrategy {
       // │ 🖼️  Create G-Buffer & Main Render Targets                                  │
       // └─────────────────────────────────────────────────────────────────────────────┘
       let main_hzb_image = render_graph.register_image(this.hzb_image.config.name);
-      let visibility_entity_image = render_graph.register_image(
-        this.visibility_entity_image.config.name
-      );
-      let visibility_surface_image = render_graph.register_image(
-        this.visibility_surface_image.config.name
-      );
-      let visibility_barycentric_image = render_graph.register_image(
-        this.visibility_barycentric_image.config.name
-      );
+      const {
+        visibility_entity_image,
+        visibility_surface_image,
+        visibility_barycentric_image,
+      } = this.visibility_buffer.register_targets(render_graph);
 
       main_albedo_image_config.width = image_extent.width;
       main_albedo_image_config.height = image_extent.height;
@@ -858,36 +778,25 @@ export class PathTracingStrategy {
       // ┌─────────────────────────────────────────────────────────────────────────────┐
       // │ 🏔️  PASS: Depth Pre-Pass                                                   │
       // └─────────────────────────────────────────────────────────────────────────────┘
-      if (depth_prepass_enabled && meshlet_draw_count > 0) {
-        render_graph.add_pass(
-          depth_prepass_name,
-          RenderPassFlags.Graphics,
-          {
-            inputs: [
-              entity_transforms,
-              object_instances,
-              frustum_meshlet_list,
-              meshlet_buffer,
-              meshlet_vertex_buffer,
-              meshlet_triangle_buffer,
-              entity_index_lookup,
-              material_params,
-              material_table_offset,
-              material_palette,
-              texture_pool_albedo,
-            ],
-            outputs: [main_depth_image],
-            shader_setup: meshlet_depth_prepass_shader_setup,
-          },
-          (graph, frame_data, encoder) => {
-            const pass = graph.get_physical_pass(frame_data.current_pass);
-            pass.pass.drawIndirect(
-              graph.get_physical_buffer(frustum_meshlet_draw_args).buffer,
-              0
-            );
-          }
-        );
-      }
+      this.visibility_buffer.add_depth_prepass(render_graph, {
+        enabled: depth_prepass_enabled,
+        meshlet_draw_count,
+        depth_image: main_depth_image,
+        frustum_meshlet_draw_args,
+        inputs: [
+          entity_transforms,
+          object_instances,
+          frustum_meshlet_list,
+          meshlet_buffer,
+          meshlet_vertex_buffer,
+          meshlet_triangle_buffer,
+          entity_index_lookup,
+          material_params,
+          material_table_offset,
+          material_palette,
+          texture_pool_albedo,
+        ],
+      });
 
       // ┌─────────────────────────────────────────────────────────────────────────────┐
       // │ 🎯 PASS: Hierarchical Z-Buffer Generation                                  │
@@ -986,85 +895,55 @@ export class PathTracingStrategy {
         );
       }
 
-      if (meshlet_draw_count > 0) {
-        meshlet_visibility_shader_setup.depth_write_enabled = !depth_prepass_enabled;
-        meshlet_visibility_shader_setup.depth_stencil_compare_op = depth_prepass_enabled
-          ? "less-equal"
-          : "less";
+      this.visibility_buffer.add_visibility_raster_pass(render_graph, {
+        meshlet_draw_count,
+        depth_prepass_enabled,
+        current_view,
+        depth_image: main_depth_image,
+        occlusion_meshlet_draw_args,
+        inputs: [
+          entity_transforms,
+          object_instances,
+          occlusion_meshlet_list,
+          meshlet_buffer,
+          meshlet_vertex_buffer,
+          meshlet_triangle_buffer,
+          entity_index_lookup,
+          material_params,
+          material_table_offset,
+          material_palette,
+          texture_pool_albedo,
+        ],
+      });
 
-        render_graph.add_pass(
-          `visibility_buffer_raster_view_${current_view}`,
-          RenderPassFlags.Graphics,
-          {
-            inputs: [
-              entity_transforms,
-              object_instances,
-              occlusion_meshlet_list,
-              meshlet_buffer,
-              meshlet_vertex_buffer,
-              meshlet_triangle_buffer,
-              entity_index_lookup,
-              material_params,
-              material_table_offset,
-              material_palette,
-              texture_pool_albedo,
-            ],
-            outputs: [
-              visibility_entity_image,
-              visibility_surface_image,
-              visibility_barycentric_image,
-              main_depth_image,
-            ],
-            shader_setup: meshlet_visibility_shader_setup,
-          },
-          (graph, frame_data, encoder) => {
-            const pass = graph.get_physical_pass(frame_data.current_pass);
-            pass.pass.drawIndirect(
-              graph.get_physical_buffer(occlusion_meshlet_draw_args).buffer,
-              0
-            );
-          }
-        );
-
-        render_graph.add_pass(
-          `visibility_gbuffer_resolve_view_${current_view}`,
-          RenderPassFlags.Graphics,
-          {
-            inputs: [
-              visibility_entity_image,
-              visibility_surface_image,
-              visibility_barycentric_image,
-              main_depth_image,
-              entity_transforms,
-              meshlet_buffer,
-              meshlet_vertex_buffer,
-              meshlet_triangle_buffer,
-              material_params,
-              material_table_offset,
-              material_palette,
-              texture_pool_albedo,
-              texture_pool_normal,
-              texture_pool_roughness,
-              texture_pool_metallic,
-              texture_pool_ao,
-              texture_pool_height,
-              texture_pool_specular,
-              texture_pool_emission,
-            ],
-            outputs: [
-              main_albedo_image,
-              main_smra_image,
-              main_normal_image,
-              main_motion_emissive_image,
-            ],
-            shader_setup: visibility_gbuffer_resolve_shader_setup,
-          },
-          (graph, frame_data, encoder) => {
-            const pass = graph.get_physical_pass(frame_data.current_pass);
-            MeshTaskQueue.draw_quad(pass);
-          }
-        );
-      }
+      this.visibility_buffer.add_gbuffer_resolve_pass(render_graph, {
+        meshlet_draw_count,
+        current_view,
+        depth_image: main_depth_image,
+        inputs: [
+          entity_transforms,
+          meshlet_buffer,
+          meshlet_vertex_buffer,
+          meshlet_triangle_buffer,
+          material_params,
+          material_table_offset,
+          material_palette,
+          texture_pool_albedo,
+          texture_pool_normal,
+          texture_pool_roughness,
+          texture_pool_metallic,
+          texture_pool_ao,
+          texture_pool_height,
+          texture_pool_specular,
+          texture_pool_emission,
+        ],
+        outputs: [
+          main_albedo_image,
+          main_smra_image,
+          main_normal_image,
+          main_motion_emissive_image,
+        ],
+      });
 
       // ┌─────────────────────────────────────────────────────────────────────────────┐
       // │ 🔆 PASS: Hybrid Path Tracing                                               │
@@ -1256,27 +1135,14 @@ export class PathTracingStrategy {
     hzb_image_config.height = image_extent.height;
     hzb_image_config.force = this.force_recreate;
 
-    visibility_entity_image_config.width = image_extent.width;
-    visibility_entity_image_config.height = image_extent.height;
-    visibility_entity_image_config.force = this.force_recreate;
-
-    visibility_surface_image_config.width = image_extent.width;
-    visibility_surface_image_config.height = image_extent.height;
-    visibility_surface_image_config.force = this.force_recreate;
-
-    visibility_barycentric_image_config.width = image_extent.width;
-    visibility_barycentric_image_config.height = image_extent.height;
-    visibility_barycentric_image_config.force = this.force_recreate;
-
     main_depth_image2_config.width = image_extent.width;
     main_depth_image2_config.height = image_extent.height;
     main_depth_image2_config.force = this.force_recreate;
 
     this.hzb_image = Texture.create(hzb_image_config);
-    this.visibility_entity_image = Texture.create(visibility_entity_image_config);
-    this.visibility_surface_image = Texture.create(visibility_surface_image_config);
-    this.visibility_barycentric_image = Texture.create(visibility_barycentric_image_config);
     this.prev_depth_image = Texture.create(main_depth_image2_config);
+
+    this.visibility_buffer.recreate_persistent_resources(image_extent, this.force_recreate);
   }
 
   _get_texture_pool(render_graph, pool_key) {
