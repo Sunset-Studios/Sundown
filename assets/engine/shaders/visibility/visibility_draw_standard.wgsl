@@ -2,7 +2,7 @@
 #define CUSTOM_RASTER_FRAGMENT_MASK
 #define CUSTOM_RESOLVE_FRAGMENT
 
-#include "visibility/meshlet_draw_base.wgsl"
+#include "visibility/visibility_draw_base.wgsl"
 
 #if MESHLET_RESOLVE_PASS
 @group(1) @binding(8) var<storage, read> material_params: array<StandardMaterialParams>;

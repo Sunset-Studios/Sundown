@@ -1,5 +1,5 @@
 #include "common.wgsl"
-#include "visibility/meshlet_common.wgsl"
+#include "visibility/visibility_common.wgsl"
 
 struct DepthVertexOutput {
     @builtin(position) position: vec4<f32>,
@@ -56,4 +56,4 @@ struct ResolveFragmentOutput {
     @location(3) motion_emissive: vec4<f32>,
 };
 
-#include "visibility/meshlet_draw_pipeline.wgsl"
+#include "visibility/visibility_draw_pipeline.wgsl"

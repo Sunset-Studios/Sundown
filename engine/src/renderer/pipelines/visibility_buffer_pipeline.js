@@ -40,14 +40,14 @@ const visibility_barycentric_image_config = {
   force: false,
 };
 
-const meshlet_depth_prepass_shader_setup = {
+const visibility_depth_prepass_shader_setup = {
   pipeline_shaders: {
     vertex: {
-      path: "visibility/meshlet_draw_standard.wgsl",
+      path: "visibility/visibility_draw_standard.wgsl",
       defines: { MESHLET_DEPTH_PASS: true },
     },
     fragment: {
-      path: "visibility/meshlet_draw_standard.wgsl",
+      path: "visibility/visibility_draw_standard.wgsl",
       defines: { MESHLET_DEPTH_PASS: true },
     },
   },
@@ -58,14 +58,14 @@ const meshlet_depth_prepass_shader_setup = {
   depth_stencil_compare_op: "less",
 };
 
-const meshlet_visibility_shader_setup = {
+const visibility_raster_shader_setup = {
   pipeline_shaders: {
     vertex: {
-      path: "visibility/meshlet_draw_standard.wgsl",
+      path: "visibility/visibility_draw_standard.wgsl",
       defines: { MESHLET_RASTER_PASS: true },
     },
     fragment: {
-      path: "visibility/meshlet_draw_standard.wgsl",
+      path: "visibility/visibility_draw_standard.wgsl",
       defines: { MESHLET_RASTER_PASS: true },
     },
   },
@@ -79,11 +79,11 @@ const meshlet_visibility_shader_setup = {
 const visibility_gbuffer_resolve_shader_setup = {
   pipeline_shaders: {
     vertex: {
-      path: "visibility/meshlet_draw_standard.wgsl",
+      path: "visibility/visibility_draw_standard.wgsl",
       defines: { MESHLET_RESOLVE_PASS: true },
     },
     fragment: {
-      path: "visibility/meshlet_draw_standard.wgsl",
+      path: "visibility/visibility_draw_standard.wgsl",
       defines: { MESHLET_RESOLVE_PASS: true },
     },
   },
@@ -156,7 +156,7 @@ export class VisibilityBufferPipeline {
       {
         inputs,
         outputs: [depth_image],
-        shader_setup: meshlet_depth_prepass_shader_setup,
+        shader_setup: visibility_depth_prepass_shader_setup,
       },
       (graph, frame_data, encoder) => {
         const pass = graph.get_physical_pass(frame_data.current_pass);
@@ -182,8 +182,8 @@ export class VisibilityBufferPipeline {
       return this.get_registered_targets();
     }
 
-    meshlet_visibility_shader_setup.depth_write_enabled = !depth_prepass_enabled;
-    meshlet_visibility_shader_setup.depth_stencil_compare_op = depth_prepass_enabled
+    visibility_raster_shader_setup.depth_write_enabled = !depth_prepass_enabled;
+    visibility_raster_shader_setup.depth_stencil_compare_op = depth_prepass_enabled
       ? "less-equal"
       : "less";
 
@@ -198,7 +198,7 @@ export class VisibilityBufferPipeline {
           this.registered_visibility_barycentric_image,
           depth_image,
         ],
-        shader_setup: meshlet_visibility_shader_setup,
+        shader_setup: visibility_raster_shader_setup,
       },
       (graph, frame_data, encoder) => {
         const pass = graph.get_physical_pass(frame_data.current_pass);
