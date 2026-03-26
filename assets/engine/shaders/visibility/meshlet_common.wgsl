@@ -50,3 +50,11 @@ fn unpack_surface_meshlet(surface: u32) -> u32 {
 fn unpack_surface_triangle(surface: u32) -> u32 {
     return surface & MESHLET_TRIANGLE_MASK;
 }
+
+fn interpolate_vec2(a: vec2<f32>, b: vec2<f32>, c: vec2<f32>, bary: vec3<f32>) -> vec2<f32> {
+    return a * bary.x + b * bary.y + c * bary.z;
+}
+
+fn interpolate_vec3(a: vec3<f32>, b: vec3<f32>, c: vec3<f32>, bary: vec3<f32>) -> vec3<f32> {
+    return a * bary.x + b * bary.y + c * bary.z;
+}

@@ -43,10 +43,12 @@ const visibility_barycentric_image_config = {
 const meshlet_depth_prepass_shader_setup = {
   pipeline_shaders: {
     vertex: {
-      path: "visibility/meshlet_depth_prepass.wgsl",
+      path: "visibility/meshlet_draw_standard.wgsl",
+      defines: { MESHLET_DEPTH_PASS: true },
     },
     fragment: {
-      path: "visibility/meshlet_depth_prepass.wgsl",
+      path: "visibility/meshlet_draw_standard.wgsl",
+      defines: { MESHLET_DEPTH_PASS: true },
     },
   },
   rasterizer_state: {
@@ -59,10 +61,12 @@ const meshlet_depth_prepass_shader_setup = {
 const meshlet_visibility_shader_setup = {
   pipeline_shaders: {
     vertex: {
-      path: "visibility/meshlet_visibility_raster.wgsl",
+      path: "visibility/meshlet_draw_standard.wgsl",
+      defines: { MESHLET_RASTER_PASS: true },
     },
     fragment: {
-      path: "visibility/meshlet_visibility_raster.wgsl",
+      path: "visibility/meshlet_draw_standard.wgsl",
+      defines: { MESHLET_RASTER_PASS: true },
     },
   },
   rasterizer_state: {
@@ -75,10 +79,12 @@ const meshlet_visibility_shader_setup = {
 const visibility_gbuffer_resolve_shader_setup = {
   pipeline_shaders: {
     vertex: {
-      path: "visibility/visibility_gbuffer_resolve.wgsl",
+      path: "visibility/meshlet_draw_standard.wgsl",
+      defines: { MESHLET_RESOLVE_PASS: true },
     },
     fragment: {
-      path: "visibility/visibility_gbuffer_resolve.wgsl",
+      path: "visibility/meshlet_draw_standard.wgsl",
+      defines: { MESHLET_RESOLVE_PASS: true },
     },
   },
   rasterizer_state: {
