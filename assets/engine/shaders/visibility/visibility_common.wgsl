@@ -16,6 +16,13 @@ struct MeshletDrawCommand {
     first_instance: u32,
 };
 
+struct MeshletDrawCommandNoAtomics {
+    vertex_count: u32,
+    instance_count: u32,
+    first_vertex: u32,
+    first_instance: u32,
+};
+
 struct MeshletInstance {
     object_instance_index: u32,
     meshlet_index: u32,

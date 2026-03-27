@@ -104,6 +104,80 @@ export class VisibilityBufferPipeline {
     };
   }
 
+  build_bucket_meshlet_draw_lists(
+    render_graph,
+    {
+      current_view,
+      meshlet_draw_count,
+      object_instances,
+      source_meshlet_list,
+      source_meshlet_draw_args,
+      buckets,
+      stage_name,
+      force_recreate = false,
+    }
+  ) {
+    const bucket_draw_lists = new Map();
+    const meshlet_list_capacity = Math.max(meshlet_draw_count, 1);
+
+    if (meshlet_draw_count <= 0 || !buckets?.length) {
+      return bucket_draw_lists;
+    }
+
+    for (const bucket of buckets) {
+      if (!bucket?.shader) {
+        continue;
+      }
+
+      const resources = this._create_bucket_meshlet_resources(render_graph, {
+        current_view,
+        bucket,
+        stage_name,
+        meshlet_list_capacity,
+        force_recreate,
+      });
+      const bucket_info_buffer = render_graph.register_buffer(
+        this._get_bucket_info_buffer(bucket).config.name
+      );
+
+      render_graph.add_pass(
+        `init_visibility_bucket_${stage_name}_draw_args_view_${current_view}_bucket_${bucket.key}`,
+        RenderPassFlags.GraphLocal,
+        {},
+        (graph, frame_data, encoder) => {
+          graph
+            .get_physical_buffer(resources.draw_args)
+            .write(meshlet_draw_args_reset_data);
+        }
+      );
+
+      render_graph.add_pass(
+        `compact_visibility_bucket_${stage_name}_meshlets_view_${current_view}_bucket_${bucket.key}`,
+        RenderPassFlags.Compute,
+        {
+          inputs: [
+            object_instances,
+            source_meshlet_list,
+            source_meshlet_draw_args,
+            bucket_info_buffer,
+            resources.meshlet_list,
+            resources.draw_args,
+          ],
+          outputs: [resources.meshlet_list, resources.draw_args],
+          shader_setup: visibility_bucket_meshlet_compact_shader_setup,
+        },
+        (graph, frame_data, encoder) => {
+          const pass = graph.get_physical_pass(frame_data.current_pass);
+          pass.dispatch(Math.ceil(meshlet_list_capacity / 128), 1, 1);
+        }
+      );
+
+      bucket_draw_lists.set(bucket.key, resources);
+    }
+
+    return bucket_draw_lists;
+  }
+
   add_depth_prepass(
     render_graph,
     {
@@ -253,80 +327,6 @@ export class VisibilityBufferPipeline {
     );
 
     return outputs;
-  }
-
-  build_bucket_meshlet_draw_lists(
-    render_graph,
-    {
-      current_view,
-      meshlet_draw_count,
-      object_instances,
-      source_meshlet_list,
-      source_meshlet_draw_args,
-      buckets,
-      stage_name,
-      force_recreate = false,
-    }
-  ) {
-    const bucket_draw_lists = new Map();
-    const meshlet_list_capacity = Math.max(meshlet_draw_count, 1);
-
-    if (meshlet_draw_count <= 0 || !buckets?.length) {
-      return bucket_draw_lists;
-    }
-
-    for (const bucket of buckets) {
-      if (!bucket?.shader) {
-        continue;
-      }
-
-      const resources = this._create_bucket_meshlet_resources(render_graph, {
-        current_view,
-        bucket,
-        stage_name,
-        meshlet_list_capacity,
-        force_recreate,
-      });
-      const bucket_info_buffer = render_graph.register_buffer(
-        this._get_bucket_info_buffer(bucket).config.name
-      );
-
-      render_graph.add_pass(
-        `init_visibility_bucket_${stage_name}_draw_args_view_${current_view}_bucket_${bucket.key}`,
-        RenderPassFlags.GraphLocal,
-        {},
-        (graph, frame_data, encoder) => {
-          graph
-            .get_physical_buffer(resources.draw_args)
-            .write(meshlet_draw_args_reset_data);
-        }
-      );
-
-      render_graph.add_pass(
-        `compact_visibility_bucket_${stage_name}_meshlets_view_${current_view}_bucket_${bucket.key}`,
-        RenderPassFlags.Compute,
-        {
-          inputs: [
-            object_instances,
-            source_meshlet_list,
-            source_meshlet_draw_args,
-            bucket_info_buffer,
-            resources.meshlet_list,
-            resources.draw_args,
-          ],
-          outputs: [resources.meshlet_list, resources.draw_args],
-          shader_setup: visibility_bucket_meshlet_compact_shader_setup,
-        },
-        (graph, frame_data, encoder) => {
-          const pass = graph.get_physical_pass(frame_data.current_pass);
-          pass.dispatch(Math.ceil(meshlet_list_capacity / 64), 1, 1);
-        }
-      );
-
-      bucket_draw_lists.set(bucket.key, resources);
-    }
-
-    return bucket_draw_lists;
   }
 
   _get_shader_setup(bucket, pass_type = MaterialPassType.Raster, depth_compare = null, depth_write_enabled = null) {
