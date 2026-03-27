@@ -5,7 +5,6 @@ import { GLTFSceneLoader } from "../renderer/gltf_scene_loader.js";
 import { LightViewProcessor } from "./subsystems/light_view_processor.js";
 import { EntityPreprocessor } from "./subsystems/entity_preprocessor.js";
 import { TextProcessor } from "./subsystems/text_processor.js";
-import { AdapterChangeSubsystem } from "./subsystems/adapter_change_subsystem.js";
 import { StaticMeshProcessor } from "./subsystems/static_mesh_processor.js";
 import { TransformProcessor } from "./subsystems/transform_processor.js";
 import { BVHEntityAdapter } from "./subsystems/bvh_entity_adapter.js";
@@ -65,7 +64,6 @@ export class Scene extends SimulationLayer {
     view_processor.set_scene(this);
 
     this.add_layer(LightViewProcessor);
-    this.add_layer(AdapterChangeSubsystem);
     this.add_layer(UIProcessor);
     this.add_layer(TextProcessor);
     this.add_layer(StaticMeshProcessor);
@@ -93,7 +91,6 @@ export class Scene extends SimulationLayer {
       this.remove_layer(MeshBLASProcessor);
     }
     this.remove_layer(BVHDebugRenderer);
-    this.remove_layer(AdapterChangeSubsystem);
     this.remove_layer(UI3DProcessor);
     this.remove_layer(BVHEntityAdapter);
     this.remove_layer(EntityPreprocessor);

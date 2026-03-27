@@ -4,7 +4,7 @@ import { DEFAULT_CHUNK_CAPACITY } from "../../core/ecs/solar/types.js";
 import { LightFragment } from "../../core/ecs/fragments/light_fragment.js";
 import { SharedViewBuffer } from "../../core/shared_data.js";
 import { Renderer } from "../renderer.js";
-import { RenderPassFlags, DebugDrawType } from "../renderer_types.js";
+import { RenderPassFlags, MaterialPassType, DebugDrawType } from "../renderer_types.js";
 import { MeshTaskQueue } from "../mesh_task_queue.js";
 import { ShadowCuller } from "../cull/shadow_culler.js";
 import {
@@ -718,7 +718,7 @@ export class AdaptiveSparseVirtualShadowMaps {
               c /* clipmap_index */,
               true /* skip_material_bind */,
               false /* opaque_only */,
-              true /* depth_only */
+              MaterialPassType.Depth
             );
           }
         );

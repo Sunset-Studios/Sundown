@@ -121,10 +121,6 @@ export class Shader {
       );
       this.defines = defines_map;
       asset = this._parse_conditional_defines_and_types(stripped_code);
-
-      if (defines_map.DEPTH_ONLY) {
-        asset = this._strip_custom_fragment_functions(asset);
-      }
     }
     
     // Step 2: parse and expand WGSL macros
@@ -420,7 +416,9 @@ export class Shader {
   _build_defines_map_and_strip(file_path, code, defines) {
     const defines_map = Object.assign({}, defines);
     const stripped_code = code.replace(defines_regex, (match, key, value) => {
-      defines_map[key] = value || true;
+      if (!(key in defines_map)) {
+        defines_map[key] = value || true;
+      }
       return "";
     });
     defines_map[precision_float_string] = Renderer.get().has_f16
@@ -466,7 +464,13 @@ export class Shader {
     }
 
     let result = output_lines.join("\n");
-    result = result.replace(precision_float_regex, this.defines[precision_float_string]);
+
+    for (const [key, value] of Object.entries(this.defines)) {
+      if (typeof value === "string") {
+        result = result.replace(new RegExp(`\\b${key}\\b`, "g"), value);
+      }
+    }
+
     return result.trim();
   }
 
@@ -503,8 +507,8 @@ export class Shader {
   }
 
   static create(file_path, defines = null, force_recreate = false) {
-    let key = defines ? hash_data_object(defines, file_path) : file_path;
-    let shader = ResourceCache.get().fetch(CacheTypes.SHADER, key);
+    let shader_id = defines ? hash_data_object(defines, file_path) : file_path;
+    let shader = ResourceCache.get().fetch(CacheTypes.SHADER, shader_id);
 
     if (shader && force_recreate) {
       shader = null;
@@ -513,10 +517,10 @@ export class Shader {
     if (!shader) {
       shader = new Shader();
       shader.initialize(file_path, defines);
-      ResourceCache.get().store(CacheTypes.SHADER, key, shader);
+      ResourceCache.get().store(CacheTypes.SHADER, shader_id, shader);
     }
 
-    return shader;
+    return shader_id;
   }
 
   static resource_type_from_reflection_type(type) {

@@ -1,12 +1,11 @@
-#define CUSTOM_FS
-#define CUSTOM_VS
-#define MASKED
+#define CUSTOM_DEPTH_VS
+#define CUSTOM_RASTER_VS
+#define CUSTOM_DEPTH_FRAGMENT_MASK
+#define CUSTOM_RASTER_FRAGMENT_MASK
+#define CUSTOM_RESOLVE_FRAGMENT
 
-#include "gbuffer_base.wgsl"
+#include "visibility/visibility_draw_base.wgsl"
 
-//------------------------------------------------------------------------------------
-// Data Structures
-//------------------------------------------------------------------------------------
 struct StringData {
     text_color: vec4<f32>,
     page_texture_size: vec2<f32>,
@@ -14,113 +13,71 @@ struct StringData {
 };
 
 struct GlyphData {
-    width:   u32,
-    height:  u32,
+    width: u32,
+    height: u32,
     x: i32,
     y: i32,
 };
 
-//------------------------------------------------------------------------------------
-// Buffers / Textures
-//------------------------------------------------------------------------------------
-@group(2) @binding(0) var<storage, read> text:            array<u32>;
-@group(2) @binding(1) var<storage, read> string_data:     array<StringData>;
+@group(2) @binding(0) var<storage, read> text: array<u32>;
+@group(2) @binding(1) var<storage, read> string_data: array<StringData>;
 @group(2) @binding(2) var<storage, read> font_glyph_data: array<GlyphData>;
 @group(2) @binding(3) var font_page_texture: texture_2d<f32>;
 
-//------------------------------------------------------------------------------------
-// VERTEX STAGE
-// We assume each glyph is drawn with 4 vertices (2 triangles), so we derive
-// the corner from `vertex_index & 3` and place it accordingly.
-//
-//   corner_id | offset (in normalized quad space)
-//     0       | (0,0)
-//     1       | (1,0)
-//     2       | (0,1)
-//     3       | (1,1)
-//------------------------------------------------------------------------------------
-fn vertex(v_out: ptr<function, VertexOutput>) -> VertexOutput {
-    let entity_row           = v_out.instance_id;
-
-    // Find which character in the text we are drawing
+fn atlas_uv(entity_row: u32, corner_uv: vec2<f32>) -> vec2<f32> {
     let string = string_data[entity_row];
-    let ch         = text[entity_row];
-    let glyph_data = font_glyph_data[ch];
+    let glyph_data = font_glyph_data[text[entity_row]];
 
-    // Use the provided UV coordinates for corner offset
-    var corner_offset = v_out.uv.xy;
+    var corner_offset = corner_uv;
     corner_offset.y = 1.0 - corner_offset.y;
 
-    // Calculate UV coordinates for the glyph in the texture atlas
-    var uv_top_left = vec2<f32>(
-        f32(glyph_data.x),
-        f32(glyph_data.y)
-    ) / string.page_texture_size;
+    var uv_top_left = vec2<f32>(f32(glyph_data.x), f32(glyph_data.y)) / string.page_texture_size;
+    let uv_size = vec2<f32>(f32(glyph_data.width), f32(glyph_data.height)) / string.page_texture_size;
 
-    let uv_size = vec2<f32>(
-        f32(glyph_data.width),
-        f32(glyph_data.height)
-    ) / string.page_texture_size;
-
-    // Flip Y coordinate and apply the corner offset
     uv_top_left.y = 1.0 - uv_top_left.y - uv_size.y;
-    v_out.uv = uv_top_left + corner_offset * uv_size;
+    return uv_top_left + corner_offset * uv_size;
+}
 
+fn text_alpha(entity_row: u32, uv: vec2<f32>) -> f32 {
+    let sample_color = textureSample(font_page_texture, global_sampler, uv);
+
+    let dist = median3(sample_color.r, sample_color.g, sample_color.b);
+    let sd = dist - 0.5;
+    let w = fwidth(sd);
+
+    return smoothstep(-w, w, sd);
+}
+
+fn depth_vertex(v_out: ptr<function, DepthVertexOutput>) -> DepthVertexOutput {
+    v_out.uv = atlas_uv(v_out.entity_id, v_out.uv);
     return *v_out;
 }
 
-//------------------------------------------------------------------------------------
-// FRAGMENT STAGE
-// This is where we do the MSDF decoding.  We take the median of the R, G, and B channels,
-// offset it by 0.5 (the boundary), and use smoothstep/fwidth for anti-aliasing.
-//
-// We store the final color/alpha in f_out.albedo (and .a), though you can customize
-// how you blend or store this in the g-buffer pipeline.
-//------------------------------------------------------------------------------------
-fn fragment(v_out: VertexOutput, f_out: ptr<function, FragmentOutput>) -> FragmentOutput {
-    let mask = fragment_mask(v_out);
-
-    let entity_row = v_out.instance_id;
-    let string_color = string_data[entity_row].text_color;
-    let emissive = string_data[entity_row].text_emissive;
-
-    f_out.albedo = vec4<f32>(string_color.rgb, mask);
-    f_out.motion_emissive.a = emissive;
-
-    f_out.smra.r = 1.0;
-    f_out.smra.g = 0.5;
-    f_out.smra.b = 0.1;
-    f_out.smra.a = 1.0;
-
-    return *f_out;
+fn raster_vertex(v_out: ptr<function, RasterVertexOutput>) -> RasterVertexOutput {
+    v_out.uv = atlas_uv(v_out.entity_id, v_out.uv);
+    return *v_out;
 }
 
-//------------------------------------------------------------------------------------
-// MASK FUNCTION
-//------------------------------------------------------------------------------------
+fn depth_fragment_mask(input: DepthVertexOutput) -> f32 {
+    return text_alpha(input.entity_id, input.uv);
+}
 
-fn fragment_mask(v_out: VertexOutput) -> f32 {
-    // Sample the MSDF texture
-    let entity_row = v_out.instance_id;
+fn raster_fragment_mask(input: RasterVertexOutput) -> f32 {
+    return text_alpha(input.entity_id, input.uv);
+}
 
-    let sample_color = vec4<f32>(textureSample(font_page_texture, global_sampler, vec2<f32>(v_out.uv)));
-    let string_color = string_data[entity_row].text_color;
-    let emissive = string_data[entity_row].text_emissive;
+fn resolve_fragment(
+    input: ResolveFragmentInput,
+    f_out: ptr<function, ResolveFragmentOutput>
+) -> ResolveFragmentOutput {
+    let entity_row = input.entity_id;
+    let glyph_uv = atlas_uv(entity_row, input.uv);
+    let alpha = text_alpha(entity_row, glyph_uv);
+    let string = string_data[entity_row];
 
-    let r = sample_color.r;
-    let g = sample_color.g;
-    let b = sample_color.b;
+    f_out.albedo = vec4<f32>(string.text_color.rgb, alpha);
+    f_out.smra = vec4<f32>(1.0, 0.5, 0.1, 1.0);
+    f_out.motion_emissive.a = string.text_emissive;
 
-    // Compute MSDF distance
-    let dist = median3(r, g, b);
-    // Shift by 0.5 so that the isocontour for the glyph edge is at 0.5
-    let sd = f32(dist) - 0.5;
-
-    // fwidth() calculates how quickly 'sd' changes across the pixel,
-    // and we use this to create a smooth transition.
-    let w = fwidth(sd);
-
-    // Anti-aliased alpha
-    let alpha = smoothstep(-w, w, sd);
-    return alpha;
+    return *f_out;
 }
