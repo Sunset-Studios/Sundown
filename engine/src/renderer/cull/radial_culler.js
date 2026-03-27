@@ -1,4 +1,4 @@
-import { InstanceCuller } from "../instance_culler.js";
+import { InstanceCuller } from "./instance_culler.js";
 import { RenderPassFlags } from "../renderer_types.js";
 
 const compute_cull_radius_shader_setup = {

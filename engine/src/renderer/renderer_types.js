@@ -1,4 +1,4 @@
-﻿const graphics_pass_name = "Graphics";
+const graphics_pass_name = "Graphics";
 const present_pass_name = "Present";
 const compute_pass_name = "Compute";
 const graph_local_pass_name = "GraphLocal";
@@ -70,6 +70,16 @@ export const RenderPassFlags = Object.freeze({
 export const MaterialFamilyType = Object.freeze({
   Opaque: 0,
   Transparent: 1,
+});
+
+/**
+ * Types of material pass pipeline states.
+ * @enum {number}
+ */
+export const MaterialPassType = Object.freeze({
+  Depth: 0,
+  Raster: 1,
+  Resolve: 2,
 });
 
 /**

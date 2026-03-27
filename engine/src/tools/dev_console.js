@@ -13,6 +13,7 @@ import { DebugMemory } from "./debug_memory.js";
 import { GPUTimerView } from "./gpu_timer_view.js";
 import { GPUMemoryView } from "./gpu_memory_view.js";
 import { CVarTool } from "./cvar_tool.js";
+import { MeshletStats } from "./meshlet_stats.js";
 import { warn } from "../utility/logging.js";
 
 // Constants for naming and key codes
@@ -86,6 +87,7 @@ export class DevConsole extends SimulationLayer {
     this.register_command("gpu_memory", new GPUMemoryView());
     this.register_command("ddgi_stats", new DDGIStats());
     this.register_command("cvar", new CVarTool());
+    this.register_command("meshlet_stats", new MeshletStats());
   }
 
   update(delta_time) {

@@ -2,11 +2,7 @@
 import { global_dispatcher } from "../../core/dispatcher.js";
 import { EntityManager } from "../../core/ecs/entity.js";
 import { FragmentGpuBuffer } from "../../core/ecs/solar/memory.js";
-import {
-  SharedEnvironmentData,
-  SharedViewBuffer,
-  SharedFrameInfoBuffer,
-} from "../../core/shared_data.js";
+import { SharedFrameInfoBuffer } from "../../core/shared_data.js";
 
 // ECS fragments
 import { TransformFragment } from "../../core/ecs/fragments/transform_fragment.js";
@@ -21,10 +17,12 @@ import { MaterialAllocationTable } from "../material_allocation_table.js";
 import { PostProcessStack } from "../post_process_stack.js";
 import { MeshTaskQueue } from "../mesh_task_queue.js";
 import { ComputeTaskQueue } from "../compute_task_queue.js";
-import { FrustumCuller } from "../cull/frustum_culler.js";
-import { OcclusionCuller } from "../cull/occlusion_culler.js";
 import { ResourceCache } from "../resource_cache.js";
 import { TextureArrayPools } from "../texture_pool.js";
+import { EnvironmentPipeline } from "../pipelines/environment_pipeline.js";
+import { CullingPipeline } from "../pipelines/culling_pipeline.js";
+import { GBufferTargetsPipeline } from "../pipelines/gbuffer_targets_pipeline.js";
+import { VisibilityBufferPipeline } from "../pipelines/visibility_buffer_pipeline.js";
 
 // Types and utilities
 import { RenderPassFlags, CacheTypes } from "../renderer_types.js";
@@ -35,8 +33,6 @@ import { Name } from "../../utility/names.js";
 import {
   rgba16float_format,
   depth32float_format,
-  r32float_format,
-  r32uint_format,
   load_op_load,
   load_op_clear,
 } from "../../utility/config_permutations.js";
@@ -51,62 +47,6 @@ const bounds_name = "bounds";
 const light_fragment_name = "light_fragment";
 const mesh_asset_id_name = "mesh_asset_id";
 
-// G-Buffer configurations
-const main_albedo_image_config = {
-  name: "main_albedo",
-  format: rgba16float_format,
-  width: 0,
-  height: 0,
-  usage:
-    GPUTextureUsage.RENDER_ATTACHMENT |
-    GPUTextureUsage.TEXTURE_BINDING |
-    GPUTextureUsage.STORAGE_BINDING,
-  force: false,
-};
-const main_smra_image_config = {
-  name: "main_smra",
-  format: rgba16float_format,
-  width: 0,
-  height: 0,
-  usage:
-    GPUTextureUsage.RENDER_ATTACHMENT |
-    GPUTextureUsage.TEXTURE_BINDING |
-    GPUTextureUsage.STORAGE_BINDING,
-  force: false,
-};
-const main_normal_image_config = {
-  name: "main_normal_0",
-  format: rgba16float_format,
-  width: 0,
-  height: 0,
-  usage:
-    GPUTextureUsage.RENDER_ATTACHMENT |
-    GPUTextureUsage.TEXTURE_BINDING |
-    GPUTextureUsage.STORAGE_BINDING,
-  force: false,
-};
-const main_motion_emissive_image_config = {
-  name: "main_motion_emissive",
-  format: rgba16float_format,
-  width: 0,
-  height: 0,
-  usage:
-    GPUTextureUsage.RENDER_ATTACHMENT |
-    GPUTextureUsage.TEXTURE_BINDING |
-    GPUTextureUsage.STORAGE_BINDING,
-  force: false,
-};
-const main_depth_image_config = {
-  name: "main_depth_0",
-  format: depth32float_format,
-  width: 0,
-  height: 0,
-  usage:
-    GPUTextureUsage.RENDER_ATTACHMENT |
-    GPUTextureUsage.TEXTURE_BINDING |
-    GPUTextureUsage.COPY_SRC,
-  force: false,
-};
 const main_depth_image2_config = {
   name: "main_depth_1",
   format: depth32float_format,
@@ -117,99 +57,6 @@ const main_depth_image2_config = {
     GPUTextureUsage.TEXTURE_BINDING |
     GPUTextureUsage.COPY_DST,
   force: false,
-};
-
-const depth_only_shader_setup = {
-  pipeline_shaders: {
-    vertex: {
-      path: "gbuffer_base.wgsl",
-      defines: { DEPTH_ONLY: true },
-    },
-    fragment: {
-      path: "gbuffer_base.wgsl",
-      defines: { DEPTH_ONLY: true },
-    },
-  },
-  depth_write_enabled: true,
-  depth_stencil_compare_op: "less",
-};
-
-const g_buffer_shader_setup = {
-  pipeline_shaders: {
-    vertex: {
-      path: "gbuffer_base.wgsl",
-    },
-    fragment: {
-      path: "gbuffer_base.wgsl",
-    },
-  },
-  depth_write_enabled: false,
-  depth_stencil_compare_op: "less-equal",
-};
-
-const hzb_reduce_shader_setup = {
-  pipeline_shaders: {
-    compute: {
-      path: "visibility/hzb_reduce.wgsl",
-    },
-  },
-};
-const meshlet_frustum_cull_shader_setup = {
-  pipeline_shaders: {
-    compute: {
-      path: "visibility/cull_meshlet_frustum.wgsl",
-    },
-  },
-};
-const meshlet_occlusion_cull_shader_setup = {
-  pipeline_shaders: {
-    compute: {
-      path: "visibility/cull_meshlet_occlusion.wgsl",
-    },
-  },
-};
-const meshlet_depth_prepass_shader_setup = {
-  pipeline_shaders: {
-    vertex: {
-      path: "visibility/meshlet_depth_prepass.wgsl",
-    },
-    fragment: {
-      path: "visibility/meshlet_depth_prepass.wgsl",
-    },
-  },
-  rasterizer_state: {
-    cull_mode: "none",
-  },
-  depth_write_enabled: true,
-  depth_stencil_compare_op: "less",
-};
-const meshlet_visibility_shader_setup = {
-  pipeline_shaders: {
-    vertex: {
-      path: "visibility/meshlet_visibility_raster.wgsl",
-    },
-    fragment: {
-      path: "visibility/meshlet_visibility_raster.wgsl",
-    },
-  },
-  rasterizer_state: {
-    cull_mode: "none",
-  },
-  depth_write_enabled: false,
-  depth_stencil_compare_op: "less-equal",
-};
-const visibility_gbuffer_resolve_shader_setup = {
-  pipeline_shaders: {
-    vertex: {
-      path: "visibility/visibility_gbuffer_resolve.wgsl",
-    },
-    fragment: {
-      path: "visibility/visibility_gbuffer_resolve.wgsl",
-    },
-  },
-  rasterizer_state: {
-    cull_mode: "none",
-  },
 };
 
 const compact_lights_shader_setup = {
@@ -224,21 +71,6 @@ const dense_lights_buffer_config = {
   name: "dense_lights",
   size: 0,
   usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-};
-
-const skybox_shader_setup = {
-  pipeline_shaders: {
-    vertex: {
-      path: "skybox.wgsl",
-    },
-    fragment: {
-      path: "skybox.wgsl",
-    },
-  },
-  rasterizer_state: {
-    cull_mode: "none",
-  },
-  depth_write_enabled: false,
 };
 
 const path_trace_composite_shader_setup = {
@@ -264,57 +96,6 @@ const clear_dirty_flags_shader_setup = {
   },
 };
 
-const hzb_image_config = {
-  name: "hzb",
-  format: r32float_format,
-  width: 0,
-  height: 0,
-  usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
-  mip_levels: 0,
-  b_one_view_per_mip: true,
-  force: false,
-};
-
-const visibility_entity_image_config = {
-  name: "visibility_entity",
-  format: r32uint_format,
-  width: 0,
-  height: 0,
-  usage:
-    GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_SRC,
-  clear_value: { r: 0xffffffff, g: 0, b: 0, a: 0 },
-  force: false,
-};
-
-const visibility_surface_image_config = {
-  name: "visibility_surface",
-  format: r32uint_format,
-  width: 0,
-  height: 0,
-  usage:
-    GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_SRC,
-  force: false,
-};
-
-const visibility_barycentric_image_config = {
-  name: "visibility_barycentric",
-  format: r32uint_format,
-  width: 0,
-  height: 0,
-  usage:
-    GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_SRC,
-  force: false,
-};
-
-const skybox_output_image_config = {
-  name: "skybox_output",
-  format: rgba16float_format,
-  width: 0,
-  height: 0,
-  usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
-  force: false,
-};
-
 const post_lighting_image_config = {
   name: "post_lighting",
   format: rgba16float_format,
@@ -327,7 +108,6 @@ const post_lighting_image_config = {
 const swapchain_name = "swapchain";
 const clear_g_buffer_pass_name = "clear_g_buffer";
 const skybox_pass_name = "skybox_pass";
-const depth_prepass_name = "depth_prepass";
 const reset_g_buffer_targets_pass_name = "reset_g_buffer_targets";
 const fullscreen_present_pass_name = "fullscreen_present_pass";
 const compact_lights_pass_name = "compact_lights";
@@ -346,14 +126,12 @@ export class PathTracingStrategy {
   initialized = false;
   force_recreate = false;
   force_reinit = false;
-  hzb_image = null;
-  visibility_entity_image = null;
-  visibility_surface_image = null;
-  visibility_barycentric_image = null;
+  culling_pipeline = null;
+  visibility_buffer_pipeline = null;
+  gbuffer_targets_pipeline = null;
+  environment_pipeline = null;
   prev_depth_image = null;
   path_tracer = null;
-  frustum_culler = null;
-  occlusion_culler = null;
 
   // Path tracing parameters (optimized for hybrid mode)
   max_bounces = 6;
@@ -362,25 +140,10 @@ export class PathTracingStrategy {
 
   setup(render_graph) {
     this.path_tracer = new PathTracer();
-
-    this.frustum_culler = new FrustumCuller(
-      null,
-      /* additional_data */ {
-        aabb_bounds: 0,
-        object_instances: 0,
-        entity_index_lookup: 0,
-      }
-    );
-
-    this.occlusion_culler = new OcclusionCuller(
-      this.frustum_culler,
-      /* additional_data */ {
-        aabb_bounds: 0,
-        object_instances: 0,
-        main_hzb_image: 0,
-        entity_index_lookup: 0,
-      }
-    );
+    this.culling_pipeline = new CullingPipeline();
+    this.environment_pipeline = new EnvironmentPipeline();
+    this.gbuffer_targets_pipeline = new GBufferTargetsPipeline();
+    this.visibility_buffer_pipeline = new VisibilityBufferPipeline();
 
     global_dispatcher.on(
       resolution_change_event_name,
@@ -431,15 +194,14 @@ export class PathTracingStrategy {
       MeshTaskQueue.sort_and_batch();
       ComputeTaskQueue.compile_pre_rg_passes(render_graph);
 
-      this.frustum_culler.reset();
-      this.occlusion_culler.reset();
+      this.culling_pipeline.reset();
 
       const renderer = Renderer.get();
 
       const current_view = SharedFrameInfoBuffer.get_view_index();
-      const total_views = SharedViewBuffer.get_view_data_count();
       const draw_count = MeshTaskQueue.get_total_draw_count();
       const meshlet_draw_count = MeshTaskQueue.get_total_meshlet_count();
+      const visibility_shader_buckets = MeshTaskQueue.get_visibility_shader_buckets();
       const image_extent = renderer.get_canvas_resolution();
       const depth_prepass_enabled = renderer.is_depth_prepass_enabled();
 
@@ -534,42 +296,24 @@ export class PathTracingStrategy {
       // ┌─────────────────────────────────────────────────────────────────────────────┐
       // │ 🖼️  Create G-Buffer & Main Render Targets                                  │
       // └─────────────────────────────────────────────────────────────────────────────┘
-      let main_hzb_image = render_graph.register_image(this.hzb_image.config.name);
-      let visibility_entity_image = render_graph.register_image(
-        this.visibility_entity_image.config.name
-      );
-      let visibility_surface_image = render_graph.register_image(
-        this.visibility_surface_image.config.name
-      );
-      let visibility_barycentric_image = render_graph.register_image(
-        this.visibility_barycentric_image.config.name
-      );
-
-      main_albedo_image_config.width = image_extent.width;
-      main_albedo_image_config.height = image_extent.height;
-      main_albedo_image_config.force = this.force_recreate;
-      main_smra_image_config.width = image_extent.width;
-      main_smra_image_config.height = image_extent.height;
-      main_smra_image_config.force = this.force_recreate;
-      main_normal_image_config.width = image_extent.width;
-      main_normal_image_config.height = image_extent.height;
-      main_normal_image_config.force = this.force_recreate;
-      main_motion_emissive_image_config.width = image_extent.width;
-      main_motion_emissive_image_config.height = image_extent.height;
-      main_motion_emissive_image_config.force = this.force_recreate;
-      main_depth_image_config.width = image_extent.width;
-      main_depth_image_config.height = image_extent.height;
-      main_depth_image_config.force = this.force_recreate;
-      main_depth_image2_config.width = image_extent.width;
-      main_depth_image2_config.height = image_extent.height;
-      main_depth_image2_config.force = this.force_recreate;
-
-      let main_albedo_image = render_graph.create_image(main_albedo_image_config);
-      let main_smra_image = render_graph.create_image(main_smra_image_config);
-      let main_normal_image = render_graph.create_image(main_normal_image_config);
-      let main_motion_emissive_image = render_graph.create_image(main_motion_emissive_image_config);
-      let main_depth_image = render_graph.create_image(main_depth_image_config);
-      let prev_depth_image = render_graph.create_image(main_depth_image2_config);
+      const { main_hzb_image } = this.culling_pipeline.register_targets(render_graph);
+      const {
+        visibility_entity_image,
+        visibility_surface_image,
+        visibility_bucket_image,
+      } = this.visibility_buffer_pipeline.register_targets(render_graph);
+      let {
+        main_albedo_image,
+        main_smra_image,
+        main_normal_image,
+        main_motion_emissive_image,
+        main_depth_image,
+        prev_depth_image,
+      } = this.gbuffer_targets_pipeline.create_targets(render_graph, {
+        image_extent,
+        force_recreate: this.force_recreate,
+        include_prev_depth: true,
+      });
 
       const texture_pool_albedo = this._get_texture_pool(render_graph, "albedo");
       const texture_pool_normal = this._get_texture_pool(render_graph, "normal");
@@ -580,90 +324,17 @@ export class PathTracingStrategy {
       const texture_pool_specular = this._get_texture_pool(render_graph, "specular");
       const texture_pool_emission = this._get_texture_pool(render_graph, "emission");
 
-      const meshlet_list_capacity = Math.max(meshlet_draw_count, 1);
-      const frustum_meshlet_list_name = `frustum_meshlet_list_view_${current_view}`;
-      const occlusion_meshlet_list_name = `occlusion_meshlet_list_view_${current_view}`;
-      const required_meshlet_list_size = meshlet_list_capacity * 4;
-      const frustum_meshlet_list_force =
-        this.force_recreate ||
-        ((ResourceCache.get().fetch(
-          CacheTypes.BUFFER,
-          Name.from(frustum_meshlet_list_name)
-        )?.config.size ?? 0) < required_meshlet_list_size * 4);
-      const occlusion_meshlet_list_force =
-        this.force_recreate ||
-        ((ResourceCache.get().fetch(
-          CacheTypes.BUFFER,
-          Name.from(occlusion_meshlet_list_name)
-        )?.config.size ?? 0) < required_meshlet_list_size * 4);
-
-      const frustum_meshlet_list = render_graph.create_buffer({
-        name: frustum_meshlet_list_name,
-        raw_data: new Uint32Array(meshlet_list_capacity * 4),
-        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-        force: frustum_meshlet_list_force,
-      });
-      const frustum_meshlet_draw_args = render_graph.create_buffer({
-        name: `frustum_meshlet_draw_args_view_${current_view}`,
-        raw_data: new Uint32Array([124 * 3, 0, 0, 0]),
-        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.INDIRECT,
-        force: this.force_recreate,
-      });
-      const occlusion_meshlet_list = render_graph.create_buffer({
-        name: occlusion_meshlet_list_name,
-        raw_data: new Uint32Array(meshlet_list_capacity * 4),
-        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-        force: occlusion_meshlet_list_force,
-      });
-      const occlusion_meshlet_draw_args = render_graph.create_buffer({
-        name: `occlusion_meshlet_draw_args_view_${current_view}`,
-        raw_data: new Uint32Array([124 * 3, 0, 0, 0]),
-        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.INDIRECT,
-        force: this.force_recreate,
-      });
-
-      const meshlet_frustum_params = render_graph.create_buffer({
-        name: `meshlet_frustum_params_view_${current_view}`,
-        raw_data: new Uint32Array([current_view, meshlet_draw_count, 0, 0]),
-        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-      });
-      const meshlet_occlusion_params = render_graph.create_buffer({
-        name: `meshlet_occlusion_params_view_${current_view}`,
-        raw_data: new Uint32Array([current_view, meshlet_list_capacity, 0, 0]),
-        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+      this.culling_pipeline.register_views(render_graph, {
+        draw_count,
+        main_hzb_image,
+        aabb_bounds,
+        object_instances,
+        entity_index_lookup,
       });
 
       // ┌─────────────────────────────────────────────────────────────────────────────┐
       // │ 📋 Register Per-View Visibility Data                                       │
       // └─────────────────────────────────────────────────────────────────────────────┘
-      for (let view_index = 0; view_index < total_views; ++view_index) {
-        if (!SharedViewBuffer.is_render_active(view_index)) continue;
-
-        const view_data = SharedViewBuffer.get_view_data(view_index);
-        const clipmap_count = view_data.clipmap_count || 1;
-        const occlusion_enabled = view_data.occlusion_enabled;
-
-        for (let clipmap_index = 0; clipmap_index < clipmap_count; ++clipmap_index) {
-          this.frustum_culler.register_view(render_graph, draw_count, view_index, clipmap_index);
-          if (occlusion_enabled) {
-            this.occlusion_culler.register_view(
-              render_graph,
-              draw_count,
-              view_index,
-              clipmap_index
-            );
-          }
-        }
-
-        this.frustum_culler.additional_data.aabb_bounds = aabb_bounds;
-        this.frustum_culler.additional_data.object_instances = object_instances;
-        this.frustum_culler.additional_data.entity_index_lookup = entity_index_lookup;
-
-        this.occlusion_culler.additional_data.main_hzb_image = main_hzb_image;
-        this.occlusion_culler.additional_data.aabb_bounds = aabb_bounds;
-        this.occlusion_culler.additional_data.object_instances = object_instances;
-        this.occlusion_culler.additional_data.entity_index_lookup = entity_index_lookup;
-      }
 
       // ═══════════════════════════════════════════════════════════════════════════════
       // 🎨 RENDERING PIPELINE BEGINS
@@ -672,35 +343,26 @@ export class PathTracingStrategy {
       // ┌─────────────────────────────────────────────────────────────────────────────┐
       // │ 🧹 PASS: Init Views                                                         │
       // └─────────────────────────────────────────────────────────────────────────────┘
-      if (draw_count > 0) {
-        this.frustum_culler.init_views(render_graph, draw_count);
-        this.occlusion_culler.init_views(render_graph, draw_count);
-      }
+      this.culling_pipeline.add_init_view_passes(render_graph, draw_count);
 
       // ┌─────────────────────────────────────────────────────────────────────────────┐
       // │ 🧹 PASS: Clear G-Buffer Targets                                            │
       // └─────────────────────────────────────────────────────────────────────────────┘
-      {
-        render_graph.add_pass(
-          clear_g_buffer_pass_name,
-          RenderPassFlags.Graphics,
-          {
-            outputs: [
-              main_albedo_image,
-              main_smra_image,
-              main_normal_image,
-              main_motion_emissive_image,
-              visibility_entity_image,
-              visibility_surface_image,
-              visibility_barycentric_image,
-              main_depth_image,
-            ],
-            b_skip_pass_pipeline_setup: true,
-            b_skip_pass_bind_group_setup: true,
-          },
-          (graph, frame_data, encoder) => {}
-        );
-      }
+      this.gbuffer_targets_pipeline.add_clear_pass(render_graph, {
+        pass_name: clear_g_buffer_pass_name,
+        targets: {
+          main_albedo_image,
+          main_smra_image,
+          main_normal_image,
+          main_motion_emissive_image,
+          main_depth_image,
+        },
+        visibility_targets: [
+          visibility_entity_image,
+          visibility_surface_image,
+          visibility_bucket_image,
+        ],
+      });
 
       // ┌─────────────────────────────────────────────────────────────────────────────┐
       // │ 💡 PASS: Compact Active Lights                                             │
@@ -730,340 +392,158 @@ export class PathTracingStrategy {
       // │    Render the environment skybox to provide background                     │
       // └─────────────────────────────────────────────────────────────────────────────┘
       let skybox_image = null;
-      {
-        skybox_output_image_config.width = image_extent.width;
-        skybox_output_image_config.height = image_extent.height;
-        skybox_output_image_config.force = this.force_recreate;
-        skybox_image = render_graph.create_image(skybox_output_image_config);
-
-        const skydome_data = SharedEnvironmentData.get_skydome_data();
-        const skydome_data_buffer = render_graph.register_buffer(skydome_data.config.name);
-
-        const skybox = SharedEnvironmentData.get_skybox();
-        const skybox_texture = render_graph.register_image(skybox.config.name);
-
-        render_graph.add_pass(
-          skybox_pass_name,
-          RenderPassFlags.Graphics,
-          {
-            inputs: [skybox_texture, skydome_data_buffer],
-            outputs: [skybox_image],
-            shader_setup: skybox_shader_setup,
-          },
-          (graph, frame_data, encoder) => {
-            const pass = graph.get_physical_pass(frame_data.current_pass);
-            MeshTaskQueue.draw_cube(pass);
-          }
-        );
-      }
+      skybox_image = this.environment_pipeline.add_skybox_pass(render_graph, {
+        pass_name: skybox_pass_name,
+        image_extent,
+        force_recreate: this.force_recreate,
+      });
 
       // ┌─────────────────────────────────────────────────────────────────────────────┐
       // │ 🔄 PASS: G-Buffer Load State Configuration                                 │
       // └─────────────────────────────────────────────────────────────────────────────┘
-      {
-        render_graph.add_pass(
-          reset_g_buffer_targets_pass_name,
-          RenderPassFlags.GraphLocal,
-          {},
-          (graph, frame_data, encoder) => {
-            const albedo = graph.get_physical_image(main_albedo_image);
-            const smra = graph.get_physical_image(main_smra_image);
-            const normal = graph.get_physical_image(main_normal_image);
-            const motion = graph.get_physical_image(main_motion_emissive_image);
-            const entity_id = graph.get_physical_image(visibility_entity_image);
-            const depth = graph.get_physical_image(main_depth_image);
-
-            if (albedo) albedo.config.load_op = load_op_load;
-            if (smra) smra.config.load_op = load_op_load;
-            if (normal) normal.config.load_op = load_op_load;
-            if (motion) motion.config.load_op = load_op_load;
-            if (entity_id) entity_id.config.load_op = load_op_load;
-            if (depth) depth.config.load_op = load_op_load;
-          }
-        );
-      }
-
-      // ┌─────────────────────────────────────────────────────────────────────────────┐
-      // │ 🔍 PASS: Reset Visibility Buffers                                          │
-      // └─────────────────────────────────────────────────────────────────────────────┘
-      if (draw_count > 0) {
-        this.frustum_culler.init_visibility(render_graph, draw_count);
-        this.occlusion_culler.init_visibility(render_graph, draw_count);
-      }
-
-      if (draw_count > 0) {
-        render_graph.add_pass(
-          `init_meshlet_draw_args_view_${current_view}`,
-          RenderPassFlags.GraphLocal,
-          {},
-          (graph, frame_data, encoder) => {
-            graph
-              .get_physical_buffer(frustum_meshlet_draw_args)
-              .write(new Uint32Array([124 * 3, 0, 0, 0]));
-            graph
-              .get_physical_buffer(occlusion_meshlet_draw_args)
-              .write(new Uint32Array([124 * 3, 0, 0, 0]));
-          }
-        );
-      }
+      this.gbuffer_targets_pipeline.add_set_load_op_pass(render_graph, {
+        pass_name: reset_g_buffer_targets_pass_name,
+        targets: {
+          main_albedo_image,
+          main_smra_image,
+          main_normal_image,
+          main_motion_emissive_image,
+          main_depth_image,
+        },
+        visibility_entity_image,
+        visibility_surface_image,
+        visibility_bucket_image,
+        load_op: load_op_load,
+      });
 
       // ┌─────────────────────────────────────────────────────────────────────────────┐
       // │ 🎯 PASS: Frustum Culling                                                   │
       // └─────────────────────────────────────────────────────────────────────────────┘
-      if (draw_count > 0) {
-        this.frustum_culler.submit_cull(render_graph, draw_count);
-      }
-
-      if (draw_count > 0) {
-        render_graph.add_pass(
-          `init_meshlet_params_view_${current_view}`,
-          RenderPassFlags.GraphLocal,
-          {},
-          (graph, frame_data, encoder) => {
-            graph
-              .get_physical_buffer(meshlet_frustum_params)
-              .write(new Uint32Array([current_view, meshlet_draw_count, 0, 0]));
-            graph
-              .get_physical_buffer(meshlet_occlusion_params)
-              .write(new Uint32Array([current_view, meshlet_list_capacity, 0, 0]));
-          }
-        );
-      }
-
-      if (draw_count > 0 && meshlet_draw_count > 0) {
-        render_graph.add_pass(
-          `meshlet_frustum_cull_view_${current_view}`,
-          RenderPassFlags.Compute,
-          {
-            inputs: [
-              entity_transforms,
-              object_instances,
-              meshlet_instances,
-              entity_index_lookup,
-              meshlet_buffer,
-              meshlet_frustum_params,
-              frustum_meshlet_list,
-              frustum_meshlet_draw_args,
-            ],
-            outputs: [frustum_meshlet_list, frustum_meshlet_draw_args],
-            shader_setup: meshlet_frustum_cull_shader_setup,
-          },
-          (graph, frame_data, encoder) => {
-            const pass = graph.get_physical_pass(frame_data.current_pass);
-            pass.dispatch(Math.ceil(meshlet_draw_count / 64), 1, 1);
-          }
-        );
-      }
+      const culling_pass_outputs = this.culling_pipeline.add_frustum_cull_passes(render_graph, {
+        current_view,
+        draw_count,
+        meshlet_draw_count,
+        entity_transforms,
+        object_instances,
+        meshlet_instances,
+        entity_index_lookup,
+        meshlet_buffer,
+        force_recreate: this.force_recreate,
+      });
+      const {
+        frustum_meshlet_list,
+        frustum_meshlet_draw_args,
+        occlusion_meshlet_list,
+        occlusion_meshlet_draw_args,
+      } = culling_pass_outputs;
 
       // ┌─────────────────────────────────────────────────────────────────────────────┐
       // │ 🏔️  PASS: Depth Pre-Pass                                                   │
       // └─────────────────────────────────────────────────────────────────────────────┘
-      if (depth_prepass_enabled && meshlet_draw_count > 0) {
-        render_graph.add_pass(
-          depth_prepass_name,
-          RenderPassFlags.Graphics,
-          {
-            inputs: [
-              entity_transforms,
-              object_instances,
-              frustum_meshlet_list,
-              meshlet_buffer,
-              meshlet_vertex_buffer,
-              meshlet_triangle_buffer,
-              entity_index_lookup,
-              material_params,
-              material_table_offset,
-              material_palette,
-              texture_pool_albedo,
-            ],
-            outputs: [main_depth_image],
-            shader_setup: meshlet_depth_prepass_shader_setup,
-          },
-          (graph, frame_data, encoder) => {
-            const pass = graph.get_physical_pass(frame_data.current_pass);
-            pass.pass.drawIndirect(
-              graph.get_physical_buffer(frustum_meshlet_draw_args).buffer,
-              0
-            );
-          }
-        );
+      const frustum_bucket_draw_lists =
+        this.visibility_buffer_pipeline.build_bucket_meshlet_draw_lists(render_graph, {
+          current_view,
+          meshlet_draw_count,
+          object_instances,
+          source_meshlet_list: frustum_meshlet_list,
+          source_meshlet_draw_args: frustum_meshlet_draw_args,
+          buckets: visibility_shader_buckets,
+          stage_name: "frustum",
+          force_recreate: this.force_recreate,
+        });
+
+      for (const bucket of visibility_shader_buckets) {
+        const bucket_draw_resources = frustum_bucket_draw_lists.get(bucket.key);
+        this.visibility_buffer_pipeline.add_depth_prepass(render_graph, {
+          enabled: depth_prepass_enabled,
+          meshlet_draw_count,
+          current_view,
+          depth_image: main_depth_image,
+          frustum_meshlet_draw_args: bucket_draw_resources?.draw_args ?? frustum_meshlet_draw_args,
+          bucket,
+          inputs: [
+            entity_transforms,
+            object_instances,
+            bucket_draw_resources?.meshlet_list ?? frustum_meshlet_list,
+            meshlet_buffer,
+            meshlet_vertex_buffer,
+            meshlet_triangle_buffer,
+            entity_index_lookup,
+          ],
+        });
       }
-
-      // ┌─────────────────────────────────────────────────────────────────────────────┐
-      // │ 🎯 PASS: Hierarchical Z-Buffer Generation                                  │
-      // └─────────────────────────────────────────────────────────────────────────────┘
-      {
-        let hzb_depth_image = depth_prepass_enabled ? main_depth_image : prev_depth_image;
-        let hzb_params_chain = [];
-        for (let i = 0; i < this.hzb_image.config.mip_levels; i++) {
-          hzb_params_chain.push(
-            render_graph.create_buffer({
-              name: `hzb_params_${i}`,
-              data: [0.0, 0.0, 0.0, 0.0],
-              usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-            })
-          );
-        }
-
-        for (let i = 0; i < this.hzb_image.config.mip_levels; i++) {
-          const src_index = i === 0 ? 0 : i - 1;
-          const dst_index = i;
-
-          render_graph.add_pass(
-            `reduce_hzb_${i}`,
-            RenderPassFlags.Compute,
-            {
-              inputs: [
-                i === 0 ? hzb_depth_image : main_hzb_image,
-                main_hzb_image,
-                hzb_params_chain[dst_index],
-              ],
-              outputs: [main_hzb_image],
-              input_views: [i === 0 ? 0 : i, i + 1],
-              shader_setup: hzb_reduce_shader_setup,
-            },
-            (graph, frame_data, encoder) => {
-              const pass = graph.get_physical_pass(frame_data.current_pass);
-
-              const depth = graph.get_physical_image(hzb_depth_image);
-              const hzb = graph.get_physical_image(main_hzb_image);
-              const hzb_params = graph.get_physical_buffer(hzb_params_chain[dst_index]);
-
-              const src_mip_width = Math.max(
-                1,
-                i === 0 ? depth.config.width : hzb.config.width >> src_index
-              );
-              const src_mip_height = Math.max(
-                1,
-                i === 0 ? depth.config.height : hzb.config.height >> src_index
-              );
-
-              const dst_mip_width = Math.max(1, hzb.config.width >> dst_index);
-              const dst_mip_height = Math.max(1, hzb.config.height >> dst_index);
-
-              hzb_params.write([src_mip_width, src_mip_height, dst_mip_width, dst_mip_height]);
-
-              pass.dispatch((dst_mip_width + 7) / 8, (dst_mip_height + 7) / 8, 1);
-            }
-          );
-        }
-      }
-
+      
       // ┌─────────────────────────────────────────────────────────────────────────────┐
       // │ 🌫️  PASS: Occlusion Culling                                                │
       // └─────────────────────────────────────────────────────────────────────────────┘
-      if (draw_count > 0) {
-        this.occlusion_culler.submit_cull(render_graph, draw_count);
-      }
+      this.culling_pipeline.add_occlusion_cull_passes(render_graph, {
+        current_view,
+        draw_count,
+        meshlet_draw_count,
+        depth_prepass_enabled,
+        main_hzb_image,
+        main_depth_image,
+        prev_depth_image,
+        entity_transforms,
+        object_instances,
+        entity_index_lookup,
+        meshlet_buffer,
+        culling_pass_outputs,
+      });
+
+      const occlusion_bucket_draw_lists =
+        this.visibility_buffer_pipeline.build_bucket_meshlet_draw_lists(render_graph, {
+          current_view,
+          meshlet_draw_count,
+          object_instances,
+          source_meshlet_list: occlusion_meshlet_list,
+          source_meshlet_draw_args: occlusion_meshlet_draw_args,
+          buckets: visibility_shader_buckets,
+          stage_name: "occlusion",
+          force_recreate: this.force_recreate,
+        });
 
       // ┌─────────────────────────────────────────────────────────────────────────────┐
       // │ 🎨 PASS: G-Buffer Base Rendering                                           │
       // └─────────────────────────────────────────────────────────────────────────────┘
-      if (meshlet_draw_count > 0) {
-        render_graph.add_pass(
-          `meshlet_occlusion_cull_view_${current_view}`,
-          RenderPassFlags.Compute,
-          {
-            inputs: [
-              main_hzb_image,
-              frustum_meshlet_list,
-              frustum_meshlet_draw_args,
-              occlusion_meshlet_list,
-              occlusion_meshlet_draw_args,
-              object_instances,
-              entity_index_lookup,
-              entity_transforms,
-              meshlet_buffer,
-              meshlet_occlusion_params,
-            ],
-            outputs: [occlusion_meshlet_list, occlusion_meshlet_draw_args],
-            shader_setup: meshlet_occlusion_cull_shader_setup,
-          },
-          (graph, frame_data, encoder) => {
-            const pass = graph.get_physical_pass(frame_data.current_pass);
-            pass.dispatch(Math.ceil(meshlet_list_capacity / 64), 1, 1);
-          }
-        );
-      }
+      for (const bucket of visibility_shader_buckets) {
+        const bucket_draw_resources = occlusion_bucket_draw_lists.get(bucket.key);
+        this.visibility_buffer_pipeline.add_visibility_raster_pass(render_graph, {
+          meshlet_draw_count,
+          depth_prepass_enabled,
+          current_view,
+          depth_image: main_depth_image,
+          occlusion_meshlet_draw_args: bucket_draw_resources?.draw_args ?? occlusion_meshlet_draw_args,
+          bucket,
+          inputs: [
+            entity_transforms,
+            object_instances,
+            bucket_draw_resources?.meshlet_list ?? occlusion_meshlet_list,
+            meshlet_buffer,
+            meshlet_vertex_buffer,
+            meshlet_triangle_buffer,
+            entity_index_lookup,
+          ],
+        });
 
-      if (meshlet_draw_count > 0) {
-        meshlet_visibility_shader_setup.depth_write_enabled = !depth_prepass_enabled;
-        meshlet_visibility_shader_setup.depth_stencil_compare_op = depth_prepass_enabled
-          ? "less-equal"
-          : "less";
-
-        render_graph.add_pass(
-          `visibility_buffer_raster_view_${current_view}`,
-          RenderPassFlags.Graphics,
-          {
-            inputs: [
-              entity_transforms,
-              object_instances,
-              occlusion_meshlet_list,
-              meshlet_buffer,
-              meshlet_vertex_buffer,
-              meshlet_triangle_buffer,
-              entity_index_lookup,
-              material_params,
-              material_table_offset,
-              material_palette,
-              texture_pool_albedo,
-            ],
-            outputs: [
-              visibility_entity_image,
-              visibility_surface_image,
-              visibility_barycentric_image,
-              main_depth_image,
-            ],
-            shader_setup: meshlet_visibility_shader_setup,
-          },
-          (graph, frame_data, encoder) => {
-            const pass = graph.get_physical_pass(frame_data.current_pass);
-            pass.pass.drawIndirect(
-              graph.get_physical_buffer(occlusion_meshlet_draw_args).buffer,
-              0
-            );
-          }
-        );
-
-        render_graph.add_pass(
-          `visibility_gbuffer_resolve_view_${current_view}`,
-          RenderPassFlags.Graphics,
-          {
-            inputs: [
-              visibility_entity_image,
-              visibility_surface_image,
-              visibility_barycentric_image,
-              main_depth_image,
-              entity_transforms,
-              meshlet_buffer,
-              meshlet_vertex_buffer,
-              meshlet_triangle_buffer,
-              material_params,
-              material_table_offset,
-              material_palette,
-              texture_pool_albedo,
-              texture_pool_normal,
-              texture_pool_roughness,
-              texture_pool_metallic,
-              texture_pool_ao,
-              texture_pool_height,
-              texture_pool_specular,
-              texture_pool_emission,
-            ],
-            outputs: [
-              main_albedo_image,
-              main_smra_image,
-              main_normal_image,
-              main_motion_emissive_image,
-            ],
-            shader_setup: visibility_gbuffer_resolve_shader_setup,
-          },
-          (graph, frame_data, encoder) => {
-            const pass = graph.get_physical_pass(frame_data.current_pass);
-            MeshTaskQueue.draw_quad(pass);
-          }
-        );
+        this.visibility_buffer_pipeline.add_gbuffer_resolve_pass(render_graph, {
+          meshlet_draw_count,
+          current_view,
+          depth_image: main_depth_image,
+          bucket,
+          inputs: [
+            entity_transforms,
+            meshlet_buffer,
+            meshlet_vertex_buffer,
+            meshlet_triangle_buffer,
+          ],
+          outputs: [
+            main_albedo_image,
+            main_smra_image,
+            main_normal_image,
+            main_motion_emissive_image,
+          ],
+        });
       }
 
       // ┌─────────────────────────────────────────────────────────────────────────────┐
@@ -1188,28 +668,20 @@ export class PathTracingStrategy {
       // ┌─────────────────────────────────────────────────────────────────────────────┐
       // │ 🧽 PASS: G-Buffer Clear State Reset                                        │
       // └─────────────────────────────────────────────────────────────────────────────┘
-      {
-        render_graph.add_pass(
-          reset_g_buffer_targets_pass_name,
-          RenderPassFlags.GraphLocal,
-          {},
-          (graph, frame_data, encoder) => {
-            const albedo = graph.get_physical_image(main_albedo_image);
-            const smra = graph.get_physical_image(main_smra_image);
-            const normal = graph.get_physical_image(main_normal_image);
-            const motion = graph.get_physical_image(main_motion_emissive_image);
-            const entity_id = graph.get_physical_image(visibility_entity_image);
-            const depth = graph.get_physical_image(main_depth_image);
-
-            if (albedo) albedo.config.load_op = load_op_clear;
-            if (smra) smra.config.load_op = load_op_clear;
-            if (normal) normal.config.load_op = load_op_clear;
-            if (motion) motion.config.load_op = load_op_clear;
-            if (entity_id) entity_id.config.load_op = load_op_clear;
-            if (depth) depth.config.load_op = load_op_clear;
-          }
-        );
-      }
+      this.gbuffer_targets_pipeline.add_set_load_op_pass(render_graph, {
+        pass_name: reset_g_buffer_targets_pass_name,
+        targets: {
+          main_albedo_image,
+          main_smra_image,
+          main_normal_image,
+          main_motion_emissive_image,
+          main_depth_image,
+        },
+        visibility_entity_image,
+        visibility_surface_image,
+        visibility_bucket_image,
+        load_op: load_op_clear,
+      });
 
       // ┌─────────────────────────────────────────────────────────────────────────────┐
       // │ 🚩 PASS: Clear Entity Dirty Flags                                          │
@@ -1248,35 +720,14 @@ export class PathTracingStrategy {
 
     const image_extent = Renderer.get().get_canvas_resolution();
 
-    hzb_image_config.mip_levels = Math.max(
-      1,
-      Math.floor(Math.log2(Math.max(image_extent.width, image_extent.height))) + 1
-    );
-    hzb_image_config.width = image_extent.width;
-    hzb_image_config.height = image_extent.height;
-    hzb_image_config.force = this.force_recreate;
-
-    visibility_entity_image_config.width = image_extent.width;
-    visibility_entity_image_config.height = image_extent.height;
-    visibility_entity_image_config.force = this.force_recreate;
-
-    visibility_surface_image_config.width = image_extent.width;
-    visibility_surface_image_config.height = image_extent.height;
-    visibility_surface_image_config.force = this.force_recreate;
-
-    visibility_barycentric_image_config.width = image_extent.width;
-    visibility_barycentric_image_config.height = image_extent.height;
-    visibility_barycentric_image_config.force = this.force_recreate;
-
     main_depth_image2_config.width = image_extent.width;
     main_depth_image2_config.height = image_extent.height;
     main_depth_image2_config.force = this.force_recreate;
 
-    this.hzb_image = Texture.create(hzb_image_config);
-    this.visibility_entity_image = Texture.create(visibility_entity_image_config);
-    this.visibility_surface_image = Texture.create(visibility_surface_image_config);
-    this.visibility_barycentric_image = Texture.create(visibility_barycentric_image_config);
     this.prev_depth_image = Texture.create(main_depth_image2_config);
+
+    this.culling_pipeline.recreate_persistent_resources(image_extent, this.force_recreate);
+    this.visibility_buffer_pipeline.recreate_persistent_resources(image_extent, this.force_recreate);
   }
 
   _get_texture_pool(render_graph, pool_key) {

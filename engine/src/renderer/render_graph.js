@@ -1528,8 +1528,6 @@ export class RenderGraph {
       if (buffer_metadata.physical_id === 0) {
         buffer_metadata.physical_id = buffer_resource.config.encoded_name;
         const buffer = Buffer.create(buffer_resource.config);
-        // Clear the raw data to free up memory. This is already on the GPU.
-        buffer_resource.config.raw_data = null;
 
         if (!buffer_metadata.b_is_persistent) {
           this.queue_resource_deletion(
@@ -1637,25 +1635,28 @@ export class RenderGraph {
       (pass.pass_config.flags & RenderPassFlags.Compute) !== RenderPassFlags.None;
 
     if (is_compute_pass && shader_setup.pipeline_shaders.compute) {
-      pass.shaders.compute = Shader.create(
+      let compute_shader_id = Shader.create(
         shader_setup.pipeline_shaders.compute.path,
         shader_setup.pipeline_shaders.compute.defines,
         shader_setup.force_recreate
       );
+      pass.shaders.compute = ResourceCache.get().fetch(CacheTypes.SHADER, compute_shader_id);
     } else {
       if (shader_setup.pipeline_shaders.vertex) {
-        pass.shaders.vertex = Shader.create(
+        let vertex_shader_id = Shader.create(
           shader_setup.pipeline_shaders.vertex.path,
           shader_setup.pipeline_shaders.vertex.defines,
           shader_setup.force_recreate
         );
+        pass.shaders.vertex = ResourceCache.get().fetch(CacheTypes.SHADER, vertex_shader_id);
       }
       if (shader_setup.pipeline_shaders.fragment) {
-        pass.shaders.fragment = Shader.create(
+        let fragment_shader_id = Shader.create(
           shader_setup.pipeline_shaders.fragment.path,
           shader_setup.pipeline_shaders.fragment.defines,
           shader_setup.force_recreate
         );
+        pass.shaders.fragment = ResourceCache.get().fetch(CacheTypes.SHADER, fragment_shader_id);
       }
     }
   }

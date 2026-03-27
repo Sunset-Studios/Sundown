@@ -6,10 +6,11 @@ import { MeshData } from "./mesh_data.js";
 import { Buffer } from "./buffer.js";
 import { RandomAccessAllocator, Sparse2DRandomAccessAllocator } from "../memory/allocator.js";
 import { profile_scope } from "../utility/performance.js";
-import { CacheTypes, MaterialFamilyType, BindGroupType } from "./renderer_types.js";
+import { CacheTypes, MaterialFamilyType, MaterialPassType, BindGroupType } from "./renderer_types.js";
 import { EntityManager } from "../core/ecs/entity.js";
 import { StaticMeshFragment } from "../core/ecs/fragments/static_mesh_fragment.js";
 import { MaterialAllocationTable } from "./material_allocation_table.js";
+import { Name } from "../utility/names.js";
 
 const initial_buffer_size = 1024;
 const max_frame_buffer_writes = 100000;
@@ -19,6 +20,7 @@ class IndirectDrawBatch {
   mesh_id = 0;
   section = 0;
   material_id = 0;
+  visibility_bucket_id = invalid_u32;
   entities = [];
   instance_count = 0;
   first_index = 0;
@@ -27,10 +29,21 @@ class IndirectDrawBatch {
   base_instance = 0;
 }
 
+class VisibilityShaderBucket {
+  key = invalid_u32;
+  shader = null;
+  depth_shader = null;
+  resolve_shader = null;
+  template_name = "";
+  representative_material_id = 0;
+  family = MaterialFamilyType.Opaque;
+}
+
 class ObjectInstanceEntry {
   constructor(batch_index, row_field) {
     this.batch_index = batch_index;
     this.row = row_field;
+    this.visibility_bucket_id = invalid_u32;
     this.mesh_id = 0;
     this.section = 0;
     this.meshlet_offset = 0;
@@ -41,6 +54,8 @@ class ObjectInstanceEntry {
 }
 
 class ObjectInstanceBuffer {
+  static entry_stride = 4;
+
   object_instance_buffer = null;
   object_instance_data = null;
   current_object_instance_write_offset = 0;
@@ -48,7 +63,9 @@ class ObjectInstanceBuffer {
 
   init() {
     profile_scope("init_object_instance_buffer", () => {
-      this.object_instance_data = new Uint32Array(initial_buffer_size * 4);
+      this.object_instance_data = new Uint32Array(
+        initial_buffer_size * ObjectInstanceBuffer.entry_stride
+      );
       if (!this.object_instance_buffer) {
         this.object_instance_buffer = Buffer.create({
           name: "object_instance_buffer",
@@ -61,16 +78,20 @@ class ObjectInstanceBuffer {
 
   update_buffers(object_instances, force_update = false) {
     profile_scope("update_object_instance_buffer", () => {
-      const object_instance_entries_count = object_instances.length * 2;
+      const object_instance_entries_count =
+        object_instances.length * ObjectInstanceBuffer.entry_stride;
       if (object_instance_entries_count !== this.last_object_instance_count || force_update) {
         this.last_object_instance_count = object_instance_entries_count;
         this.current_object_instance_write_offset = 0;
       }
 
       // Resize object instance buffer if needed
-      const required_object_instance_size = object_instances.length * 2 * 4; // 2 uint32 per instance, 4 bytes per uint32
+      const required_object_instance_size =
+        object_instances.length * ObjectInstanceBuffer.entry_stride * 4;
       if (this.object_instance_buffer.config.size < required_object_instance_size) {
-        const new_object_instance_data = new Uint32Array(object_instances.length * 2 * 2);
+        const new_object_instance_data = new Uint32Array(
+          object_instances.length * ObjectInstanceBuffer.entry_stride * 2
+        );
         new_object_instance_data.set(this.object_instance_data);
         this.object_instance_data = new_object_instance_data;
 
@@ -93,13 +114,19 @@ class ObjectInstanceBuffer {
           // Update object instance buffer
           const write_count_obj = Math.min(
             total_obj_entries - actual_write_offset,
-            max_frame_buffer_writes * 2
+            max_frame_buffer_writes * ObjectInstanceBuffer.entry_stride
           );
           if (write_count_obj > 0) {
-            for (let i = actual_write_offset; i < actual_write_offset + write_count_obj; i += 2) {
-              const offset = Math.floor(i / 2);
+            for (
+              let i = actual_write_offset;
+              i < actual_write_offset + write_count_obj;
+              i += ObjectInstanceBuffer.entry_stride
+            ) {
+              const offset = Math.floor(i / ObjectInstanceBuffer.entry_stride);
               this.object_instance_data[i] = object_instances[offset].batch_index;
               this.object_instance_data[i + 1] = object_instances[offset].row;
+              this.object_instance_data[i + 2] = object_instances[offset].visibility_bucket_id;
+              this.object_instance_data[i + 3] = 0;
             }
             this.object_instance_buffer.write_raw(
               this.object_instance_data,
@@ -108,6 +135,12 @@ class ObjectInstanceBuffer {
               actual_write_offset
             );
             this.current_object_instance_write_offset += write_count_obj;
+            if (
+              this.current_object_instance_write_offset >=
+              total_obj_entries * MAX_BUFFERED_FRAMES
+            ) {
+              this.current_object_instance_write_offset = 0;
+            }
           }
         }
       });
@@ -122,11 +155,12 @@ class ObjectInstanceBuffer {
 }
 
 class MeshletInstanceBuffer {
+  static entry_stride = 2;
+
   meshlet_instance_buffer = null;
   meshlet_instance_data = null;
   current_meshlet_instance_write_offset = 0;
   last_meshlet_instance_count = 0;
-  static entry_stride = 2;
 
   init() {
     profile_scope("init_meshlet_instance_buffer", () => {
@@ -337,12 +371,14 @@ class MeshTask {
   entity = null;
   material_id = null;
   section = 0;
+  visibility_bucket_id = invalid_u32;
 
-  static init(task, mesh_id, entity, material_id = null, section = 0) {
+  static init(task, mesh_id, entity, material_id = null, section = 0, visibility_bucket_id = invalid_u32) {
     task.mesh_id = mesh_id;
     task.entity = entity;
     task.material_id = material_id;
     task.section = section;
+    task.visibility_bucket_id = visibility_bucket_id;
   }
 }
 
@@ -350,12 +386,13 @@ export class MeshTaskQueue {
   static tasks = [];
   static batches = [];
   static object_instances = [];
-  static material_buckets = [];
+  static visibility_shader_buckets = [];
   static object_instance_buffer = new ObjectInstanceBuffer();
   static meshlet_instance_buffer = new MeshletInstanceBuffer();
   static indirect_draw_objects = new Sparse2DRandomAccessAllocator(16, 4, IndirectDrawObject); // Per-view indirect draw objects
   static tasks_allocator = new RandomAccessAllocator(256, MeshTask); // TODO: This can potentially use a TypedVector depending on how it's structured. May need to split the fields out.
   static object_instance_allocator = new RandomAccessAllocator(256, ObjectInstanceEntry); // TODO: This can potentially use a TypedVector depending on how it's structured. May need to split the fields out.
+  static visibility_bucket_allocator = new RandomAccessAllocator(256, VisibilityShaderBucket);
   static needs_sort = false;
   static initialized = false;
   static entity_task_map = new Map(); // new: Map<Entity, Map<"meshId:materialId", Task>>
@@ -376,16 +413,35 @@ export class MeshTaskQueue {
     this.tasks_allocator.reset();
   }
 
-  static _get_task_key(mesh_id, section, material_id) {
+  static _get_task_key(mesh_id, section, material_id, visibility_bucket_id = invalid_u32) {
     const a = BigInt(mesh_id);
     const b = BigInt(section);
     const c = BigInt(material_id ?? 0);
     const ab = a >= b ? a * a + a + b : b * b + a;
-    return ab >= c ? ab * ab + ab + c : c * c + ab;
+    const abc = ab >= c ? ab * ab + ab + c : c * c + ab;
+    const d = BigInt(visibility_bucket_id === invalid_u32 ? 0 : visibility_bucket_id);
+    return abc >= d ? abc * abc + abc + d : d * d + abc;
+  }
+
+  static _get_visibility_bucket_config(material_id) {
+    const material = ResourceCache.get().fetch(CacheTypes.MATERIAL, material_id);
+    return {
+      id: Name.from(
+        `${material.template.name}|${material?.template?.shader?.file_path ?? ""}`
+      ),
+      shader: material?.template?.shader ?? null,
+      depth_shader: material?.template?.depth_shader ?? null,
+      resolve_shader: material?.template?.resolve_shader ?? null,
+      template_name: material.template.name,
+      representative_material_id: material_id,
+      family: material.family,
+    };
   }
 
   static new_task(mesh_id, entity, material_id = null, section = 0, resort = true) {
-    const key = this._get_task_key(mesh_id, section, material_id);
+    const visibility_bucket = this._get_visibility_bucket_config(material_id);
+    const visibility_bucket_id = visibility_bucket?.id ?? invalid_u32;
+    const key = this._get_task_key(mesh_id, section, material_id, visibility_bucket_id);
     let tasks_for_entity = this.entity_task_map.get(entity);
     if (tasks_for_entity?.has(key)) {
       return tasks_for_entity.get(key);
@@ -393,7 +449,7 @@ export class MeshTaskQueue {
 
     // 2) otherwise allocate & enqueue a brand-new task
     const task = this.tasks_allocator.allocate();
-    MeshTask.init(task, mesh_id, entity, material_id, section);
+    MeshTask.init(task, mesh_id, entity, material_id, section, visibility_bucket_id);
     this.tasks.push(task);
 
     // 3) record it in our per-entity map
@@ -409,9 +465,23 @@ export class MeshTaskQueue {
     return task;
   }
 
-  static add_material_bucket(material_id) {
-    if (!this.material_buckets.includes(material_id)) {
-      this.material_buckets.push(material_id);
+  static add_visibility_bucket(task, visibility_bucket_residency_set) {
+    if (task.visibility_bucket_id !== invalid_u32 && !visibility_bucket_residency_set.has(task.visibility_bucket_id)) {
+      const visibility_config = this._get_visibility_bucket_config(task.material_id);
+
+      let visibility_bucket = this.visibility_bucket_allocator.allocate();
+      visibility_bucket.key = task.visibility_bucket_id;
+      visibility_bucket.shader = visibility_config?.shader ?? null;
+      visibility_bucket.depth_shader = visibility_config?.depth_shader ?? null;
+      visibility_bucket.resolve_shader = visibility_config?.resolve_shader ?? null;
+      visibility_bucket.template_name = visibility_config?.template_name ?? "";
+      visibility_bucket.representative_material_id =
+        visibility_config?.representative_material_id ?? task.material_id;
+      visibility_bucket.family =
+        visibility_config?.family ?? MaterialFamilyType.Opaque;
+      this.visibility_shader_buckets.push(visibility_bucket);
+
+      visibility_bucket_residency_set.add(task.visibility_bucket_id);
     }
   }
 
@@ -426,12 +496,18 @@ export class MeshTaskQueue {
       if (this.needs_sort) {
         this.batches.length = 0;
         this.object_instances.length = 0;
-        this.material_buckets.length = 0;
+        this.visibility_shader_buckets.length = 0;
         this.total_meshlet_instances = 0;
         this.object_instance_allocator.reset();
-
+        this.visibility_bucket_allocator.reset();
         this.tasks.sort((a, b) => {
-          let diff = a.material_id - b.material_id;
+          const a_bucket =
+            a.visibility_bucket_id === invalid_u32 ? Number.MAX_SAFE_INTEGER : a.visibility_bucket_id;
+          const b_bucket =
+            b.visibility_bucket_id === invalid_u32 ? Number.MAX_SAFE_INTEGER : b.visibility_bucket_id;
+          let diff = a_bucket - b_bucket;
+          if (diff !== 0) return diff;
+          diff = a.material_id - b.material_id;
           if (diff !== 0) return diff;
           diff = a.mesh_id - b.mesh_id;
           if (diff !== 0) return diff;
@@ -440,11 +516,13 @@ export class MeshTaskQueue {
         });
 
         let last_batch = null;
+        const visibility_bucket_residency_set = new Set();
         for (let i = 0; i < this.tasks.length; i++) {
           const task = this.tasks[i];
 
           const last_batch_matches =
             last_batch &&
+            last_batch.visibility_bucket_id === task.visibility_bucket_id &&
             last_batch.mesh_id === task.mesh_id &&
             last_batch.section === task.section &&
             last_batch.material_id === task.material_id;
@@ -459,6 +537,7 @@ export class MeshTaskQueue {
             batch.mesh_id = task.mesh_id;
             batch.section = task.section;
             batch.material_id = task.material_id;
+            batch.visibility_bucket_id = task.visibility_bucket_id;
 
             batch.base_instance = last_batch
               ? last_batch.base_instance + last_batch.instance_count
@@ -476,7 +555,7 @@ export class MeshTaskQueue {
             batch.entities.length = batch.instance_count;
             batch.entities.fill(task.entity);
 
-            this.add_material_bucket(batch.material_id);
+            this.add_visibility_bucket(task, visibility_bucket_residency_set);
 
             last_batch = batch;
 
@@ -489,9 +568,6 @@ export class MeshTaskQueue {
             last_batch.entities.fill(task.entity, start_index, new_length);
           }
         }
-
-        // Sort batches by material id
-        this.batches.sort((a, b) => a.material_id - b.material_id);
 
         // Add object instances to the object instance buffer
         for (let i = 0; i < this.batches.length; i++) {
@@ -518,6 +594,7 @@ export class MeshTaskQueue {
                 const entry = this.object_instance_allocator.allocate();
                 entry.batch_index = i;
                 entry.row = EntityID.make_row_field(start + l, cidx);
+                entry.visibility_bucket_id = batch.visibility_bucket_id;
                 entry.mesh_id = batch.mesh_id;
                 entry.section = batch.section;
                 entry.meshlet_offset = meshlet_section.meshlet_offset;
@@ -532,10 +609,10 @@ export class MeshTaskQueue {
         }
 
         // This ensures that we render transparent materials after opaque materials
-        this.material_buckets.sort((a, b) => {
-          const a_material = ResourceCache.get().fetch(CacheTypes.MATERIAL, a);
-          const b_material = ResourceCache.get().fetch(CacheTypes.MATERIAL, b);
-          return a_material.family - b_material.family;
+        this.visibility_shader_buckets.sort((a, b) => {
+          let diff = a.family - b.family;
+          if (diff !== 0) return diff;
+          return a.key - b.key;
         });
 
         // Clear out the indirect draw buffers if there are no batches or object instances
@@ -588,7 +665,12 @@ export class MeshTaskQueue {
     // keep only those tasks whose key is NOT in tasks_for_entity
     this.tasks = this.tasks.filter((task) => {
       if (task.entity !== entity) return true;
-      const key = this._get_task_key(task.mesh_id, task.section, task.material_id);
+      const key = this._get_task_key(
+        task.mesh_id,
+        task.section,
+        task.material_id,
+        task.visibility_bucket_id
+      );
       return !tasks_for_entity.has(key);
     });
 
@@ -596,7 +678,7 @@ export class MeshTaskQueue {
     if (this.tasks.length === 0) {
       this.batches.length = 0;
       this.object_instances.length = 0;
-      this.material_buckets.length = 0;
+      this.visibility_shader_buckets.length = 0;
     }
     this.needs_sort |= resort;
   }
@@ -658,11 +740,8 @@ export class MeshTaskQueue {
     return this.get_indirect_draw_object(view_index, clipmap_index).indirect_draw_buffer;
   }
 
-  /**
-   * Get the material buckets.
-   */
-  static get_material_buckets() {
-    return this.material_buckets;
+  static get_visibility_shader_buckets() {
+    return this.visibility_shader_buckets;
   }
 
   /**
@@ -713,42 +792,13 @@ export class MeshTaskQueue {
     }
   }
 
-  static submit_draws(render_pass, rg_frame_data, should_reset = false) {
-    let last_material = null;
-    this.tasks.forEach((task) => {
-      const mesh = ResourceCache.get().fetch(CacheTypes.MESH, task.mesh_id);
-
-      const material = ResourceCache.get().fetch(CacheTypes.MATERIAL, task.material_id);
-      if (material && material !== last_material) {
-        // Material binds will rebind a pipeline state, so we need to rebind the bind groups here
-        material.bind(render_pass, render_pass.frame_bind_groups, render_pass.frame_attachments);
-        if (render_pass.frame_bind_groups[BindGroupType.Global]) {
-          render_pass.frame_bind_groups[BindGroupType.Global].bind(render_pass);
-        }
-        if (render_pass.frame_bind_groups[BindGroupType.Pass]) {
-          render_pass.frame_bind_groups[BindGroupType.Pass].bind(render_pass);
-        }
-        last_material = material;
-      }
-
-      render_pass.pass.draw(
-        mesh.vertex_count,
-        task.entity.instance_count,
-        mesh.vertex_buffer_offset
-      );
-    });
-    if (should_reset) {
-      this.reset();
-    }
-  }
-
   static submit_indexed_indirect_draws(
     render_pass,
     view_index = 0,
     clipmap_index = 0,
     skip_material_bind = true,
     opaque_only = false,
-    depth_only = false,
+    pass_type = MaterialPassType.Raster,
     should_reset = false,
     indirect_draw_buffer = null
   ) {
@@ -756,7 +806,7 @@ export class MeshTaskQueue {
     const index_buffer_multiplier = index_buffer.config.element_type === "uint16" ? 2 : 4;
 
     let last_material = null;
-    let last_depth_only = false;
+    let last_pass_type = -1;
 
     const indirect_draw_object = this.get_indirect_draw_object(view_index, clipmap_index);
     const indirect_buffer = indirect_draw_buffer ?? indirect_draw_object.indirect_draw_buffer;
@@ -774,13 +824,12 @@ export class MeshTaskQueue {
       }
 
       if (!skip_material_bind) {
-        if (material && (material !== last_material || last_depth_only !== depth_only)) {
-          // Material binds will rebind a pipeline state; choose depth or normal
+        if (material && (material !== last_material || last_pass_type !== pass_type)) {
           material.bind(
             render_pass,
             render_pass.frame_bind_groups,
             render_pass.frame_attachments,
-            depth_only
+            pass_type
           );
           if (render_pass.frame_bind_groups[BindGroupType.Global]) {
             render_pass.frame_bind_groups[BindGroupType.Global].bind(render_pass);
@@ -789,7 +838,7 @@ export class MeshTaskQueue {
             render_pass.frame_bind_groups[BindGroupType.Pass].bind(render_pass);
           }
           last_material = material;
-          last_depth_only = depth_only;
+          last_pass_type = pass_type;
         }
       }
 
@@ -809,26 +858,18 @@ export class MeshTaskQueue {
     }
   }
 
-  static submit_material_indexed_indirect_draws(
-    render_pass,
-    material_id,
-    view_index = 0,
-    clipmap_index = 0,
-    depth_only = false,
-    indirect_draw_buffer = null,
-    should_reset = false
-  ) {
-    const index_buffer = MeshData.index_buffer;
-    const index_buffer_multiplier = index_buffer.config.element_type === "uint16" ? 2 : 4;
+  static bind_visibility_bucket_material(render_pass, bucket, pass_type = MaterialPassType.Raster) {
+    if (!bucket?.representative_material_id || !bucket?.shader) {
+      return null;
+    }
 
-    const material = ResourceCache.get().fetch(CacheTypes.MATERIAL, material_id);
+    const material = ResourceCache.get().fetch(CacheTypes.MATERIAL, bucket.representative_material_id);
     if (material) {
-      // Material binds will rebind a pipeline state, so we need to rebind the bind groups here
       material.bind(
         render_pass,
         render_pass.frame_bind_groups,
         render_pass.frame_attachments,
-        depth_only
+        pass_type
       );
       if (render_pass.frame_bind_groups[BindGroupType.Global]) {
         render_pass.frame_bind_groups[BindGroupType.Global].bind(render_pass);
@@ -837,34 +878,16 @@ export class MeshTaskQueue {
         render_pass.frame_bind_groups[BindGroupType.Pass].bind(render_pass);
       }
     }
+  }
 
-    const indirect_draw_object = this.get_indirect_draw_object(view_index, clipmap_index);
-    const indirect_buffer = indirect_draw_buffer ?? indirect_draw_object.indirect_draw_buffer;
+  static submit_visibility_bucket_indirect_draw(render_pass, bucket, indirect_buffer, pass_type = MaterialPassType.Raster) {
+    this.bind_visibility_bucket_material(render_pass, bucket, pass_type);
+    render_pass.pass.drawIndirect(indirect_buffer.buffer, 0);
+  }
 
-    for (let i = 0; i < this.batches.length; ++i) {
-      if (this.batches[i].material_id !== material_id) {
-        continue;
-      }
-      const batch = this.batches[i];
-      const mesh = ResourceCache.get().fetch(CacheTypes.MESH, batch.mesh_id);
-      if (mesh.index_buffer_offset === -1) {
-        continue;
-      }
-
-      render_pass.pass.setIndexBuffer(
-        index_buffer.buffer,
-        index_buffer.config.element_type,
-        (mesh.index_buffer_offset + batch.first_index) * index_buffer_multiplier,
-        batch.index_count * index_buffer_multiplier
-      );
-      render_pass.pass.drawIndexedIndirect(
-        indirect_buffer.buffer,
-        i * 20 // 5 * 4 bytes per draw call
-      );
-    }
-    if (should_reset) {
-      this.reset();
-    }
+  static submit_visibility_bucket_resolve(render_pass, bucket, instance_count = 1) {
+    this.bind_visibility_bucket_material(render_pass, bucket, MaterialPassType.Resolve);
+    this.draw_quad(render_pass, instance_count);
   }
 
   static draw_quad(render_pass, instance_count = 1) {

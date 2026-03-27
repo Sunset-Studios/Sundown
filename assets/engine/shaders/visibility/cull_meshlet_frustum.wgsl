@@ -1,5 +1,5 @@
 #include "common.wgsl"
-#include "visibility/meshlet_common.wgsl"
+#include "visibility/visibility_common.wgsl"
 
 struct MeshletCullParams {
     view_index: u32,
