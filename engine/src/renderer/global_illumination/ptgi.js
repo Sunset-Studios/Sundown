@@ -91,7 +91,7 @@ import { Texture } from "../texture.js";
 // CONSTANTS
 // ═══════════════════════════════════════════════════════════════════════════
 
-const COMPUTE_WORKGROUP_SIZE = 128;
+const COMPUTE_WORKGROUP_SIZE = 256;
 
 // Material resource names
 const material_offsets_name = "material_table_offset";
