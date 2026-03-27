@@ -135,6 +135,12 @@ class ObjectInstanceBuffer {
               actual_write_offset
             );
             this.current_object_instance_write_offset += write_count_obj;
+            if (
+              this.current_object_instance_write_offset >=
+              total_obj_entries * MAX_BUFFERED_FRAMES
+            ) {
+              this.current_object_instance_write_offset = 0;
+            }
           }
         }
       });
