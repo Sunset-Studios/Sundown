@@ -42,6 +42,38 @@ const meshlet_occlusion_cull_shader_setup = {
   },
 };
 
+const meshlet_stats_capture_shader_setup = {
+  pipeline_shaders: {
+    compute: {
+      path: "visibility/capture_meshlet_draw_stats.wgsl",
+    },
+  },
+};
+
+function read_meshlet_draw_args(buffer_name) {
+  const buffer = ResourceCache.get().fetch(CacheTypes.BUFFER, Name.from(buffer_name));
+  const raw_data = buffer?.config?.raw_data;
+  if (!raw_data || raw_data.length < 4) {
+    return null;
+  }
+
+  return {
+    vertex_count: Number(raw_data[0] ?? 0),
+    instance_count: Number(raw_data[1] ?? 0),
+    first_vertex: Number(raw_data[2] ?? 0),
+    first_instance: Number(raw_data[3] ?? 0),
+  };
+}
+
+function get_meshlet_stats_buffer_force(buffer_name, force_recreate) {
+  const existing_buffer = ResourceCache.get().fetch(CacheTypes.BUFFER, Name.from(buffer_name));
+  return (
+    force_recreate ||
+    !existing_buffer?.config?.cpu_readback ||
+    ((existing_buffer?.config?.usage ?? 0) & GPUBufferUsage.COPY_SRC) === 0
+  );
+}
+
 export class CullingPipeline {
   hzb_image = null;
   frustum_culler = null;
@@ -157,6 +189,7 @@ export class CullingPipeline {
     const {
       frustum_meshlet_list,
       frustum_meshlet_draw_args,
+      frustum_meshlet_stats,
       meshlet_list_capacity,
     } = culling_pass_outputs;
 
@@ -183,6 +216,20 @@ export class CullingPipeline {
             .write(new Uint32Array([124 * 3, 0, 0, 0]));
         }
       );
+
+      if (__DEV__ && frustum_meshlet_stats && culling_pass_outputs.occlusion_meshlet_stats) {
+        render_graph.add_pass(
+          `init_meshlet_stats_view_${current_view}`,
+          RenderPassFlags.GraphLocal,
+          {},
+          (graph, frame_data, encoder) => {
+            graph.get_physical_buffer(frustum_meshlet_stats).write(new Uint32Array([0, 0, 0, 0]));
+            graph
+              .get_physical_buffer(culling_pass_outputs.occlusion_meshlet_stats)
+              .write(new Uint32Array([0, 0, 0, 0]));
+          }
+        );
+      }
 
       this.frustum_culler.submit_cull(render_graph, draw_count);
 
@@ -224,6 +271,22 @@ export class CullingPipeline {
           pass.dispatch(Math.ceil(meshlet_draw_count / 64), 1, 1);
         }
       );
+
+      if (__DEV__ && frustum_meshlet_stats) {
+        render_graph.add_pass(
+          `capture_meshlet_frustum_stats_view_${current_view}`,
+          RenderPassFlags.Compute,
+          {
+            inputs: [frustum_meshlet_draw_args, frustum_meshlet_stats],
+            outputs: [frustum_meshlet_stats],
+            shader_setup: meshlet_stats_capture_shader_setup,
+          },
+          (graph, frame_data, encoder) => {
+            const pass = graph.get_physical_pass(frame_data.current_pass);
+            pass.dispatch(1, 1, 1);
+          }
+        );
+      }
     }
 
     return culling_pass_outputs;
@@ -251,6 +314,7 @@ export class CullingPipeline {
       frustum_meshlet_draw_args,
       occlusion_meshlet_list,
       occlusion_meshlet_draw_args,
+      occlusion_meshlet_stats,
       meshlet_occlusion_params,
       meshlet_list_capacity,
     } = culling_pass_outputs;
@@ -291,6 +355,22 @@ export class CullingPipeline {
           pass.dispatch(Math.ceil(meshlet_list_capacity / 64), 1, 1);
         }
       );
+
+      if (__DEV__ && occlusion_meshlet_stats) {
+        render_graph.add_pass(
+          `capture_meshlet_occlusion_stats_view_${current_view}`,
+          RenderPassFlags.Compute,
+          {
+            inputs: [occlusion_meshlet_draw_args, occlusion_meshlet_stats],
+            outputs: [occlusion_meshlet_stats],
+            shader_setup: meshlet_stats_capture_shader_setup,
+          },
+          (graph, frame_data, encoder) => {
+            const pass = graph.get_physical_pass(frame_data.current_pass);
+            pass.dispatch(1, 1, 1);
+          }
+        );
+      }
     }
 
     return {
@@ -305,15 +385,25 @@ export class CullingPipeline {
     const meshlet_list_capacity = Math.max(meshlet_draw_count, 1);
     const frustum_meshlet_list_name = `frustum_meshlet_list_view_${current_view}`;
     const occlusion_meshlet_list_name = `occlusion_meshlet_list_view_${current_view}`;
-    const required_meshlet_list_size = meshlet_list_capacity * 4;
+    const frustum_meshlet_draw_args_name = `frustum_meshlet_draw_args_view_${current_view}`;
+    const occlusion_meshlet_draw_args_name = `occlusion_meshlet_draw_args_view_${current_view}`;
+    const frustum_meshlet_stats_name = `frustum_meshlet_stats_view_${current_view}`;
+    const occlusion_meshlet_stats_name = `occlusion_meshlet_stats_view_${current_view}`;
+    const required_meshlet_list_size = meshlet_list_capacity * 4 * Uint32Array.BYTES_PER_ELEMENT;
+    const existing_frustum_meshlet_list = ResourceCache.get().fetch(
+      CacheTypes.BUFFER,
+      Name.from(frustum_meshlet_list_name)
+    );
+    const existing_occlusion_meshlet_list = ResourceCache.get().fetch(
+      CacheTypes.BUFFER,
+      Name.from(occlusion_meshlet_list_name)
+    );
     const frustum_meshlet_list_force =
       force_recreate ||
-      ((ResourceCache.get().fetch(CacheTypes.BUFFER, Name.from(frustum_meshlet_list_name))?.config
-        .size ?? 0) < required_meshlet_list_size * 4);
+      ((existing_frustum_meshlet_list?.config?.size ?? 0) < required_meshlet_list_size);
     const occlusion_meshlet_list_force =
       force_recreate ||
-      ((ResourceCache.get().fetch(CacheTypes.BUFFER, Name.from(occlusion_meshlet_list_name))?.config
-        .size ?? 0) < required_meshlet_list_size * 4);
+      ((existing_occlusion_meshlet_list?.config?.size ?? 0) < required_meshlet_list_size);
 
     return {
       meshlet_list_capacity,
@@ -324,11 +414,21 @@ export class CullingPipeline {
         force: frustum_meshlet_list_force,
       }),
       frustum_meshlet_draw_args: render_graph.create_buffer({
-        name: `frustum_meshlet_draw_args_view_${current_view}`,
+        name: frustum_meshlet_draw_args_name,
         raw_data: new Uint32Array([124 * 3, 0, 0, 0]),
         usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.INDIRECT,
         force: force_recreate,
       }),
+      frustum_meshlet_stats: __DEV__
+        ? render_graph.create_buffer({
+            name: frustum_meshlet_stats_name,
+            raw_data: new Uint32Array([0, 0, 0, 0]),
+            usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC,
+            cpu_readback: true,
+            own_readback: true,
+            force: get_meshlet_stats_buffer_force(frustum_meshlet_stats_name, force_recreate),
+          })
+        : null,
       occlusion_meshlet_list: render_graph.create_buffer({
         name: occlusion_meshlet_list_name,
         raw_data: new Uint32Array(meshlet_list_capacity * 4),
@@ -336,11 +436,21 @@ export class CullingPipeline {
         force: occlusion_meshlet_list_force,
       }),
       occlusion_meshlet_draw_args: render_graph.create_buffer({
-        name: `occlusion_meshlet_draw_args_view_${current_view}`,
+        name: occlusion_meshlet_draw_args_name,
         raw_data: new Uint32Array([124 * 3, 0, 0, 0]),
         usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.INDIRECT,
         force: force_recreate,
       }),
+      occlusion_meshlet_stats: __DEV__
+        ? render_graph.create_buffer({
+            name: occlusion_meshlet_stats_name,
+            raw_data: new Uint32Array([0, 0, 0, 0]),
+            usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC,
+            cpu_readback: true,
+            own_readback: true,
+            force: get_meshlet_stats_buffer_force(occlusion_meshlet_stats_name, force_recreate),
+          })
+        : null,
       meshlet_occlusion_params: render_graph.create_buffer({
         name: `meshlet_occlusion_params_view_${current_view}`,
         raw_data: new Uint32Array([current_view, meshlet_list_capacity, 0, 0]),
@@ -424,5 +534,17 @@ export class CullingPipeline {
 
   get_hzb_mip_level_count() {
     return this.hzb_image?.config?.mip_levels ?? 0;
+  }
+
+  get_meshlet_stats(view_index) {
+    if (!__DEV__) {
+      return null;
+    }
+
+    return {
+      view_index,
+      frustum: read_meshlet_draw_args(`frustum_meshlet_stats_view_${view_index}`),
+      occlusion: read_meshlet_draw_args(`occlusion_meshlet_stats_view_${view_index}`),
+    };
   }
 }

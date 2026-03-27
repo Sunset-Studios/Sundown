@@ -51,7 +51,39 @@ const visibility_bucket_meshlet_compact_shader_setup = {
   },
 };
 
+const meshlet_stats_capture_shader_setup = {
+  pipeline_shaders: {
+    compute: {
+      path: "visibility/capture_meshlet_draw_stats.wgsl",
+    },
+  },
+};
+
 const meshlet_draw_args_reset_data = new Uint32Array([124 * 3, 0, 0, 0]);
+
+function read_meshlet_draw_args(buffer_name) {
+  const buffer = ResourceCache.get().fetch(CacheTypes.BUFFER, Name.from(buffer_name));
+  const raw_data = buffer?.config?.raw_data;
+  if (!raw_data || raw_data.length < 4) {
+    return null;
+  }
+
+  return {
+    vertex_count: Number(raw_data[0] ?? 0),
+    instance_count: Number(raw_data[1] ?? 0),
+    first_vertex: Number(raw_data[2] ?? 0),
+    first_instance: Number(raw_data[3] ?? 0),
+  };
+}
+
+function get_meshlet_stats_buffer_force(buffer_name, force_recreate) {
+  const existing_buffer = ResourceCache.get().fetch(CacheTypes.BUFFER, Name.from(buffer_name));
+  return (
+    force_recreate ||
+    !existing_buffer?.config?.cpu_readback ||
+    ((existing_buffer?.config?.usage ?? 0) & GPUBufferUsage.COPY_SRC) === 0
+  );
+}
 
 export class VisibilityBufferPipeline {
   visibility_entity_image = null;
@@ -151,6 +183,17 @@ export class VisibilityBufferPipeline {
         }
       );
 
+      if (__DEV__ && resources.stats) {
+        render_graph.add_pass(
+          `init_visibility_bucket_${stage_name}_stats_view_${current_view}_bucket_${bucket.key}`,
+          RenderPassFlags.GraphLocal,
+          {},
+          (graph, frame_data, encoder) => {
+            graph.get_physical_buffer(resources.stats).write(new Uint32Array([0, 0, 0, 0]));
+          }
+        );
+      }
+
       render_graph.add_pass(
         `compact_visibility_bucket_${stage_name}_meshlets_view_${current_view}_bucket_${bucket.key}`,
         RenderPassFlags.Compute,
@@ -171,6 +214,22 @@ export class VisibilityBufferPipeline {
           pass.dispatch(Math.ceil(meshlet_list_capacity / 128), 1, 1);
         }
       );
+
+      if (__DEV__ && resources.stats) {
+        render_graph.add_pass(
+          `capture_visibility_bucket_${stage_name}_stats_view_${current_view}_bucket_${bucket.key}`,
+          RenderPassFlags.Compute,
+          {
+            inputs: [resources.draw_args, resources.stats],
+            outputs: [resources.stats],
+            shader_setup: meshlet_stats_capture_shader_setup,
+          },
+          (graph, frame_data, encoder) => {
+            const pass = graph.get_physical_pass(frame_data.current_pass);
+            pass.dispatch(1, 1, 1);
+          }
+        );
+      }
 
       bucket_draw_lists.set(bucket.key, resources);
     }
@@ -396,6 +455,7 @@ export class VisibilityBufferPipeline {
   ) {
     const meshlet_list_name = `visibility_bucket_${stage_name}_meshlet_list_view_${current_view}_bucket_${bucket.key}`;
     const draw_args_name = `visibility_bucket_${stage_name}_draw_args_view_${current_view}_bucket_${bucket.key}`;
+    const stats_name = `visibility_bucket_${stage_name}_stats_view_${current_view}_bucket_${bucket.key}`;
     const required_meshlet_list_size = meshlet_list_capacity * 4 * Uint32Array.BYTES_PER_ELEMENT;
     const existing_meshlet_list = ResourceCache.get().fetch(
       CacheTypes.BUFFER,
@@ -417,6 +477,41 @@ export class VisibilityBufferPipeline {
         usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.INDIRECT,
         force: force_recreate,
       }),
+      stats: __DEV__
+        ? render_graph.create_buffer({
+            name: stats_name,
+            raw_data: new Uint32Array([0, 0, 0, 0]),
+            usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC,
+            cpu_readback: true,
+            own_readback: true,
+            force: get_meshlet_stats_buffer_force(stats_name, force_recreate),
+          })
+        : null,
     };
+  }
+
+  get_bucket_meshlet_stats(current_view, buckets, stage_name) {
+    if (!__DEV__) {
+      return [];
+    }
+
+    const stats = [];
+
+    for (const bucket of buckets ?? []) {
+      const draw_args = read_meshlet_draw_args(
+        `visibility_bucket_${stage_name}_stats_view_${current_view}_bucket_${bucket.key}`
+      );
+
+      stats.push({
+        key: bucket.key,
+        template_name: bucket.template_name,
+        family: bucket.family,
+        shader_name: bucket.shader?.file_path ?? "",
+        draw_args,
+        instance_count: draw_args?.instance_count ?? 0,
+      });
+    }
+
+    return stats;
   }
 }

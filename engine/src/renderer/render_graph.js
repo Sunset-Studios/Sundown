@@ -1528,8 +1528,6 @@ export class RenderGraph {
       if (buffer_metadata.physical_id === 0) {
         buffer_metadata.physical_id = buffer_resource.config.encoded_name;
         const buffer = Buffer.create(buffer_resource.config);
-        // Clear the raw data to free up memory. This is already on the GPU.
-        buffer_resource.config.raw_data = null;
 
         if (!buffer_metadata.b_is_persistent) {
           this.queue_resource_deletion(
