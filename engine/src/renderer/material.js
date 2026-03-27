@@ -15,6 +15,7 @@ import { global_dispatcher } from "../core/dispatcher.js";
 import {
   ShaderResourceType,
   MaterialFamilyType,
+  MaterialPassType,
   CacheTypes,
   BindGroupType,
   TextureChannel,
@@ -23,23 +24,47 @@ import { MaterialAllocationTable, MATERIAL_PARAMS_SIZE } from "./material_alloca
 
 const material_offsets_name = "material_table_offset";
 
+function reflect_resources(reflection) {
+  const result = [];
+  const groups = reflection ? reflection.getBindGroups() : [];
+  if (BindGroupType.Material < groups.length) {
+    const material_group = groups[BindGroupType.Material];
+    for (let i = 0; i < material_group.length; i++) {
+      const binding = material_group[i];
+      const binding_type = Shader.resource_type_from_reflection_type(binding.resourceType);
+      result.push({
+        type: binding_type,
+        name: binding.name,
+        binding: i,
+        is_array: binding.type.name.includes("array"),
+      });
+    }
+  }
+  return result;
+};
+
 export class MaterialTemplate {
   static templates = new Map();
 
   name = null;
   shader = null;
   depth_shader = null;
+  resolve_shader = null;
   pipeline_state_config = null;
   resources = [];
+  depth_resources = [];
+  resolve_resources = [];
   parent = null;
   family = null;
   pipeline_state = null;
   depth_pipeline_state = null;
+  resolve_pipeline_state = null;
 
   constructor(
     name,
     shader,
     depth_shader = null,
+    resolve_shader = null,
     family = MaterialFamilyType.Opaque,
     pipeline_state_config = {},
     parent = null
@@ -47,6 +72,7 @@ export class MaterialTemplate {
     this.name = name;
     this.shader = shader;
     this.depth_shader = depth_shader;
+    this.resolve_shader = resolve_shader;
     this.pipeline_state_config = pipeline_state_config;
     this.parent = parent;
     this.family = family;
@@ -57,11 +83,15 @@ export class MaterialTemplate {
   }
 
   get base_reflection() {
-    return this.shader.reflection;
+    return this.shader?.reflection ?? null;
   }
 
   get depth_reflection() {
-    return this.depth_shader.reflection;
+    return this.depth_shader?.reflection ?? null;
+  }
+
+  get resolve_reflection() {
+    return this.resolve_shader?.reflection ?? null;
   }
 
   static create(
@@ -80,6 +110,7 @@ export class MaterialTemplate {
     let parent = null;
     let shader = null;
     let depth_shader = null;
+    let resolve_shader = null;
 
     if (parent_name) {
       parent = this.get_template(parent_name);
@@ -87,20 +118,34 @@ export class MaterialTemplate {
         throw new Error(`Parent template '${parent_name}' not found`);
       }
       shader = parent.shader;
+      depth_shader = parent.depth_shader;
+      resolve_shader = parent.resolve_shader;
     }
 
     if (family === MaterialFamilyType.Transparent) {
       defines["TRANSPARENT"] = true;
     }
+
     if (shader_path) {
-      shader = Shader.create(shader_path, defines);
-      depth_shader = Shader.create(shader_path, { ...defines, DEPTH_ONLY: true });
+      shader = ResourceCache.get().fetch(
+        CacheTypes.SHADER,
+        Shader.create(shader_path, { ...defines, MESHLET_RASTER_PASS: true })
+      );
+      depth_shader = ResourceCache.get().fetch(
+        CacheTypes.SHADER,
+        Shader.create(shader_path, { ...defines, MESHLET_DEPTH_PASS: true })
+      );
+      resolve_shader = ResourceCache.get().fetch(
+        CacheTypes.SHADER,
+        Shader.create(shader_path, { ...defines, MESHLET_RESOLVE_PASS: true })
+      );
     }
 
     const template = new MaterialTemplate(
       key,
       shader,
       depth_shader,
+      resolve_shader,
       family,
       pipeline_state_config,
       parent
@@ -108,23 +153,13 @@ export class MaterialTemplate {
 
     if (parent) {
       template.resources = [...parent.resources];
+      template.depth_resources = [...parent.depth_resources];
+      template.resolve_resources = [...parent.resolve_resources];
     }
 
-    // Reflect on shader and add resources
-    const groups = template.base_reflection ? template.base_reflection.getBindGroups() : [];
-    if (BindGroupType.Material < groups.length) {
-      const material_group = groups[BindGroupType.Material];
-      for (let i = 0; i < material_group.length; i++) {
-        const binding = material_group[i];
-        const binding_type = Shader.resource_type_from_reflection_type(binding.resourceType);
-        template.add_resource({
-          type: binding_type,
-          name: binding.name,
-          binding: i,
-          is_array: binding.type.name.includes("array"),
-        });
-      }
-    }
+    template.resources.push(...reflect_resources(template.base_reflection));
+    template.depth_resources.push(...reflect_resources(template.depth_reflection));
+    template.resolve_resources.push(...reflect_resources(template.resolve_reflection));
 
     this.templates.set(key, template);
 
@@ -135,22 +170,35 @@ export class MaterialTemplate {
     bind_group_layouts,
     output_targets = [],
     depth_stencil_options = {},
-    is_depth_only = false
+    pass_type = MaterialPassType.Raster
   ) {
-    const pipeline_name = is_depth_only ? `${this.name}_depth` : this.name;
-    const shader_module = is_depth_only ? this.depth_shader.module : this.shader.module;
-    let all_bind_group_layouts = [bind_group_layouts[0]];
-    let ref = is_depth_only ? this.depth_reflection : this.base_reflection;
+    const pass_suffix = pass_type === MaterialPassType.Depth
+      ? "_depth"
+      : pass_type === MaterialPassType.Resolve
+        ? "_resolve"
+        : "_raster";
+    const pipeline_name = `${this.name}${pass_suffix}`;
+    const shader_module = pass_type === MaterialPassType.Depth
+      ? this.depth_shader.module
+      : pass_type === MaterialPassType.Resolve
+        ? this.resolve_shader.module
+        : this.shader.module;
+    let all_bind_group_layouts = [...bind_group_layouts];
+    let ref = pass_type === MaterialPassType.Depth
+      ? this.depth_reflection
+      : pass_type === MaterialPassType.Resolve
+        ? this.resolve_reflection
+        : this.base_reflection;
 
-    // Set material binding group inputs
+    // Set material binding group inputs for groups not already covered by provided layouts
     const groups = ref.getBindGroups();
-    if (BindGroupType.Pass < groups.length) {
-      for (let i = BindGroupType.Pass; i < groups.length; i++) {
+    if (all_bind_group_layouts.length < groups.length) {
+      for (let i = all_bind_group_layouts.length; i < groups.length; i++) {
         const bind_group = groups[i];
 
         all_bind_group_layouts.push(
           BindGroup.create_layout(
-            pipeline_name,
+            `${pipeline_name}_group_${i}`,
             bind_group.map((binding) => {
               let binding_obj = {};
               const binding_type = Shader.resource_type_from_reflection_type(binding.resourceType);
@@ -173,7 +221,7 @@ export class MaterialTemplate {
                   binding_obj = {
                     texture: {
                       viewDimension: Texture.dimension_from_type_name(binding.type.name),
-                      sampleType: binding.type.name.includes("depth") ? "depth" : "float",
+                      sampleType: Texture.filter_type_from_binding_format(binding.type.format.name),
                     },
                   };
                   break;
@@ -212,20 +260,23 @@ export class MaterialTemplate {
     }
 
     // Set material shader fragment output targets
-    const targets = output_targets
-      .filter((target) => target.config.type !== "depth")
-      .map((target) => {
-        let t = {
-          name: target.config.name,
-          format: target.config.format,
-        };
-        if (target.config.blend) {
-          t.blend = target.config.blend;
-        }
-        return t;
-      });
+    const fragment_outputs = ref.entry.fragment[0]?.outputs ?? [];
+    const non_depth_attachments = output_targets.filter((target) => target.config.type !== "depth");
+    const output_attachments = fragment_outputs.length > 0 && non_depth_attachments.length > fragment_outputs.length
+      ? non_depth_attachments.slice(-fragment_outputs.length)
+      : non_depth_attachments;
 
-    const fragment_outputs = ref.entry.fragment[0].outputs;
+    const targets = output_attachments.map((target) => {
+      let t = {
+        name: target.config.name,
+        format: target.config.format,
+      };
+      if (target.config.blend) {
+        t.blend = target.config.blend;
+      }
+      return t;
+    });
+
     fragment_outputs.forEach((output, i) => {
       if (targets[i]) {
         return;
@@ -291,7 +342,7 @@ export class MaterialTemplate {
         depthBiasSlopeScale:
           this.pipeline_state_config.depth_stencil_target.depth_slope_scale ?? 0.0,
       };
-    } else if (depth_target) {
+    } else if (depth_target && depth_stencil_options) {
       pipeline_descriptor.depthStencil = {
         format: depth_target.config.format,
         depthWriteEnabled: depth_stencil_options.depth_write_enabled ?? false,
@@ -316,6 +367,16 @@ export class MaterialTemplate {
     }
     return this.resources;
   }
+
+  get_resources_for_pass(pass_type) {
+    if (pass_type === MaterialPassType.Depth) {
+      return this.depth_resources.length > 0 ? this.depth_resources : this.resources;
+    }
+    if (pass_type === MaterialPassType.Resolve) {
+      return this.resolve_resources.length > 0 ? this.resolve_resources : this.resources;
+    }
+    return this.resources;
+  }
 }
 
 export class Material {
@@ -326,8 +387,10 @@ export class Material {
     this.template = template;
     this.pipeline_state = null;
     this.depth_pipeline_state = null;
+    this.resolve_pipeline_state = null;
     this.bind_group = null;
     this.depth_bind_group = null;
+    this.resolve_bind_group = null;
     this.parent = parent_id;
     this.uniform_data = new Map();
     this.storage_data = new Map();
@@ -347,7 +410,7 @@ export class Material {
   }
 
   set needs_bind_group_update(value) {
-    this.bind_group_update_flags = value ? 3 : 0;
+    this.bind_group_update_flags = value ? 7 : 0;
   }
 
   _update_state_hash() {
@@ -361,13 +424,9 @@ export class Material {
     });
   }
 
-  _refresh_bind_group(is_depth_only = false) {
-    if (this.bind_group_update_flags === 0) {
-      return;
-    }
-
-    const entries = this.template
-      .get_all_resources()
+  _build_bind_group_entries(pass_type) {
+    return this.template
+      .get_resources_for_pass(pass_type)
       .map((resource) => {
         switch (resource.type) {
           case ShaderResourceType.Uniform:
@@ -398,14 +457,15 @@ export class Material {
         }
       })
       .filter((entry) => entry !== null);
+  }
 
-    for (let i = 0; i < entries.length; i++) {
-      if (!entries[i].resource) {
-        throw new Error(`Binding ${this.template.name} has an invalid resource at index ${i}`);
-      }
+  _refresh_bind_group(pass_type = MaterialPassType.Raster) {
+    if (this.bind_group_update_flags === 0) {
+      return;
     }
 
-    if (is_depth_only && (this.bind_group_update_flags & 1) !== 0 && this.depth_pipeline_state) {
+    if (pass_type === MaterialPassType.Depth && (this.bind_group_update_flags & 1) !== 0 && this.depth_pipeline_state) {
+      const entries = this._build_bind_group_entries(MaterialPassType.Depth);
       this.depth_bind_group = BindGroup.create(
         `${this.name}_depth`,
         this.depth_pipeline_state,
@@ -416,7 +476,8 @@ export class Material {
       this.bind_group_update_flags = this.bind_group_update_flags & ~1;
     }
 
-    if (!is_depth_only && (this.bind_group_update_flags & 2) !== 0 && this.pipeline_state) {
+    if (pass_type === MaterialPassType.Raster && (this.bind_group_update_flags & 2) !== 0 && this.pipeline_state) {
+      const entries = this._build_bind_group_entries(MaterialPassType.Raster);
       this.bind_group = BindGroup.create(
         this.name,
         this.pipeline_state,
@@ -426,20 +487,38 @@ export class Material {
       );
       this.bind_group_update_flags = this.bind_group_update_flags & ~2;
     }
+
+    if (pass_type === MaterialPassType.Resolve && (this.bind_group_update_flags & 4) !== 0 && this.resolve_pipeline_state) {
+      const entries = this._build_bind_group_entries(MaterialPassType.Resolve);
+      this.resolve_bind_group = BindGroup.create(
+        `${this.name}_resolve`,
+        this.resolve_pipeline_state,
+        BindGroupType.Material,
+        entries,
+        true /* force */
+      );
+      this.bind_group_update_flags = this.bind_group_update_flags & ~4;
+    }
   }
 
-  update_pipeline_state(bind_groups, output_targets = [], is_depth_only = false) {
+  update_pipeline_state(bind_groups, output_targets = [], pass_type = MaterialPassType.Raster) {
     const renderer = Renderer.get();
     const depth_prepass_enabled = renderer.is_depth_prepass_enabled();
 
-    // Build the main pipeline state
     const layouts = bind_groups.filter((bg) => bg !== null).map((bg) => bg.layout);
-    if (is_depth_only) {
+    if (pass_type === MaterialPassType.Depth) {
       this.depth_pipeline_state = this.template.create_pipeline_state(
         layouts,
         output_targets,
         { depth_write_enabled: true, depth_compare: "less" },
-        true /* is_depth_only */
+        MaterialPassType.Depth
+      );
+    } else if (pass_type === MaterialPassType.Resolve) {
+      this.resolve_pipeline_state = this.template.create_pipeline_state(
+        layouts,
+        output_targets,
+        null,
+        MaterialPassType.Resolve
       );
     } else {
       this.pipeline_state = this.template.create_pipeline_state(
@@ -451,7 +530,7 @@ export class Material {
             : this.family === MaterialFamilyType.Opaque,
           depth_compare: "less-equal",
         },
-        false /* is_depth_only */
+        MaterialPassType.Raster
       );
     }
   }
@@ -536,10 +615,22 @@ export class Material {
     }
   }
 
-  bind(render_pass, bind_groups = [], output_targets = [], is_depth_only = false) {
-    let pso = is_depth_only ? this.depth_pipeline_state : this.pipeline_state;
+  _get_pipeline_state_for_pass(pass_type) {
+    if (pass_type === MaterialPassType.Depth) return this.depth_pipeline_state;
+    if (pass_type === MaterialPassType.Resolve) return this.resolve_pipeline_state;
+    return this.pipeline_state;
+  }
+
+  _get_bind_group_for_pass(pass_type) {
+    if (pass_type === MaterialPassType.Depth) return this.depth_bind_group;
+    if (pass_type === MaterialPassType.Resolve) return this.resolve_bind_group;
+    return this.bind_group;
+  }
+
+  bind(render_pass, bind_groups = [], output_targets = [], pass_type = MaterialPassType.Raster) {
+    let pso = this._get_pipeline_state_for_pass(pass_type);
     if (!pso && !this.parent && bind_groups.length > 0 && output_targets.length > 0) {
-      this.update_pipeline_state(bind_groups, output_targets, is_depth_only);
+      this.update_pipeline_state(bind_groups, output_targets, pass_type);
       for (let i = 0; i < bind_groups.length; i++) {
         if (bind_groups[i]) {
           bind_groups[i].bind(render_pass);
@@ -547,19 +638,19 @@ export class Material {
       }
     }
 
-    pso = is_depth_only ? this.depth_pipeline_state : this.pipeline_state;
+    pso = this._get_pipeline_state_for_pass(pass_type);
     const parent_material = Material.get(this.parent);
     if (parent_material) {
-      pso = is_depth_only ? parent_material.depth_pipeline_state : parent_material.pipeline_state;
+      pso = parent_material._get_pipeline_state_for_pass(pass_type);
     }
 
-    this._refresh_bind_group(is_depth_only);
+    this._refresh_bind_group(pass_type);
 
     if (pso) {
       render_pass.set_pipeline(pso);
     }
 
-    const bind_group = is_depth_only ? this.depth_bind_group : this.bind_group;
+    const bind_group = this._get_bind_group_for_pass(pass_type);
     if (bind_group) {
       bind_group.bind(render_pass);
     }
@@ -606,7 +697,7 @@ export class Material {
     if (!this.#default_material) {
       MaterialTemplate.create(
         "DefaultMaterial",
-        "standard_material.wgsl",
+        "visibility/visibility_draw_standard.wgsl",
         MaterialFamilyType.Opaque
       );
       this.#default_material = Material.create("DefaultMaterial", "DefaultMaterial", {
@@ -655,6 +746,16 @@ const float_params_offset = 0;
 const texture_flags1_offset = 16;
 const texture_flags2_offset = 20;
 const texture_handles_offset = 24;
+const standard_texture_pool_keys = [
+  "albedo",
+  "normal",
+  "roughness",
+  "metallic",
+  "ao",
+  "height",
+  "specular",
+  "emission",
+];
 
 export class StandardMaterial {
   material_id = null;
@@ -666,14 +767,14 @@ export class StandardMaterial {
 
       // TODO: Need a better way to handle these kinds of template permutations.
       if (options.raster_state?.cull_mode == "none") {
-        MaterialTemplate.create("StandardMaterial_NoCull", "standard_material.wgsl", family, {
+        MaterialTemplate.create("StandardMaterial_NoCull", "visibility/visibility_draw_standard.wgsl", family, {
           rasterizer_state: {
             cull_mode: "none",
           },
         });
         template = `StandardMaterial_NoCull`;
       } else {
-        MaterialTemplate.create("StandardMaterial", "standard_material.wgsl", family);
+        MaterialTemplate.create("StandardMaterial", "visibility/visibility_draw_standard.wgsl", family);
         template = `StandardMaterial`;
       }
     }
@@ -707,6 +808,20 @@ export class StandardMaterial {
     material.set_storage_data("material_params", params_gpu_buffer);
     material.set_storage_data("material_table_offset", material_palette_offsets_buffer.buffer);
     material.set_storage_data("material_palette", material_palette_buffer);
+
+    // Visibility resolve uses shared texture pools for all standard materials in a bucket.
+    // The representative material therefore needs every pool bound, not only the ones this
+    // specific material instance samples directly.
+    for (let i = 0; i < standard_texture_pool_keys.length; i++) {
+      const pool_key = standard_texture_pool_keys[i];
+      const pool_name = `texture_pool_${pool_key}`;
+      material.listen_for_texture_data(pool_name);
+
+      const existing_pool = ResourceCache.get().fetch(CacheTypes.IMAGE, Name.from(pool_name));
+      if (existing_pool) {
+        material.set_texture_data(pool_name, existing_pool);
+      }
+    }
 
     // Set initial values
     params_buffer.set(

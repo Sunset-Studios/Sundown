@@ -6,6 +6,7 @@
 @group(1) @binding(4) var<storage, read> meshlet_vertices: array<u32>;
 @group(1) @binding(5) var<storage, read> meshlet_triangles: array<u32>;
 @group(1) @binding(6) var<storage, read> entity_index_lookup: array<u32>;
+@group(1) @binding(7) var<uniform> visibility_bucket_info: VisibilityBucketInfo;
 #endif
 
 #if MESHLET_RASTER_PASS
@@ -16,6 +17,7 @@
 @group(1) @binding(4) var<storage, read> meshlet_vertices: array<u32>;
 @group(1) @binding(5) var<storage, read> meshlet_triangles: array<u32>;
 @group(1) @binding(6) var<storage, read> entity_index_lookup: array<u32>;
+@group(1) @binding(7) var<uniform> visibility_bucket_info: VisibilityBucketInfo;
 #endif
 
 #if MESHLET_RESOLVE_PASS
@@ -27,6 +29,7 @@
 @group(1) @binding(5) var<storage, read> meshlets: array<MeshletRecord>;
 @group(1) @binding(6) var<storage, read> meshlet_vertices: array<u32>;
 @group(1) @binding(7) var<storage, read> meshlet_triangles: array<u32>;
+@group(1) @binding(8) var<uniform> visibility_bucket_info: VisibilityBucketInfo;
 #endif
 
 #ifndef CUSTOM_DEPTH_VS
@@ -89,6 +92,10 @@ fn vs(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> Depth
     }
 
     let object_instance_index = meshlet_object_index(visible_entry);
+    if (object_instances[object_instance_index].visibility_bucket != visibility_bucket_info.current_visibility_bucket) {
+        return output;
+    }
+
     let local_triangle_index = meshlet.triangle_offset + triangle_index * 3u + corner_index;
     let local_vertex_index = meshlet_triangles[local_triangle_index];
     let global_vertex_index = meshlet_vertices[meshlet.vertex_offset + local_vertex_index];
@@ -136,6 +143,10 @@ fn vs(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> Raste
     }
 
     let object_instance_index = meshlet_object_index(visible_entry);
+    if (object_instances[object_instance_index].visibility_bucket != visibility_bucket_info.current_visibility_bucket) {
+        return output;
+    }
+
     let local_triangle_index = meshlet.triangle_offset + triangle_index * 3u + corner_index;
     let local_vertex_index = meshlet_triangles[local_triangle_index];
     let global_vertex_index = meshlet_vertices[meshlet.vertex_offset + local_vertex_index];

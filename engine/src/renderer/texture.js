@@ -785,6 +785,15 @@ export class Texture {
     return formatMap[format] || "float"; // Default to 'float' if format is not found
   }
 
+  static filter_type_from_binding_format(format) {
+    const formatMap = {
+      "f32": "float",
+      "u32": "uint",
+      "i32": "sint",
+    };
+    return formatMap[format] || "float";
+  }
+
   static stride_from_format(format) {
     const formatMap = {
       r8unorm: 1,

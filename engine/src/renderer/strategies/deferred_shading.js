@@ -85,19 +85,6 @@ const prev_lighting_image_config = {
   b_one_view_per_mip: true,
 };
 
-const g_buffer_shader_setup = {
-  pipeline_shaders: {
-    vertex: {
-      path: "gbuffer_base.wgsl",
-    },
-    fragment: {
-      path: "gbuffer_base.wgsl",
-    },
-  },
-  depth_write_enabled: false,
-  depth_stencil_compare_op: "less-equal",
-};
-
 const transparency_composite_shader_setup = {
   pipeline_shaders: {
     vertex: {
@@ -268,6 +255,7 @@ export class DeferredShadingStrategy {
       const current_view = SharedFrameInfoBuffer.get_view_index();
       const draw_count = MeshTaskQueue.get_total_draw_count();
       const meshlet_draw_count = MeshTaskQueue.get_total_meshlet_count();
+      const visibility_shader_buckets = MeshTaskQueue.get_visibility_shader_buckets();
       const debug_view = renderer.get_debug_draw_type();
       const image_extent = renderer.get_canvas_resolution();
 
@@ -499,7 +487,6 @@ export class DeferredShadingStrategy {
           main_depth_image,
           main_transparency_accum_image,
         },
-        visibility_entity_image,
         load_op: load_op_load,
       });
 
@@ -529,25 +516,38 @@ export class DeferredShadingStrategy {
       // │ 🏔️  PASS: Depth Pre-Pass                                                   │
       // │    Fill depth buffer early for better GPU efficiency and HZB generation   │
       // └─────────────────────────────────────────────────────────────────────────────┘
-      this.visibility_buffer_pipeline.add_depth_prepass(render_graph, {
-        enabled: depth_prepass_enabled,
-        meshlet_draw_count,
-        depth_image: main_depth_image,
-        frustum_meshlet_draw_args,
-        inputs: [
-          entity_transforms,
+      const frustum_bucket_draw_lists =
+        this.visibility_buffer_pipeline.build_bucket_meshlet_draw_lists(render_graph, {
+          current_view,
+          meshlet_draw_count,
           object_instances,
-          frustum_meshlet_list,
-          meshlet_buffer,
-          meshlet_vertex_buffer,
-          meshlet_triangle_buffer,
-          entity_index_lookup,
-          material_params,
-          material_table_offset,
-          material_palette,
-          texture_pool_albedo,
-        ],
-      });
+          source_meshlet_list: frustum_meshlet_list,
+          source_meshlet_draw_args: frustum_meshlet_draw_args,
+          buckets: visibility_shader_buckets,
+          stage_name: "frustum",
+          force_recreate: this.force_recreate,
+        });
+
+      for (const bucket of visibility_shader_buckets) {
+        const bucket_draw_resources = frustum_bucket_draw_lists.get(bucket.key);
+        this.visibility_buffer_pipeline.add_depth_prepass(render_graph, {
+          enabled: depth_prepass_enabled,
+          meshlet_draw_count,
+          current_view,
+          depth_image: main_depth_image,
+          frustum_meshlet_draw_args: bucket_draw_resources?.draw_args ?? frustum_meshlet_draw_args,
+          bucket,
+          inputs: [
+            entity_transforms,
+            object_instances,
+            bucket_draw_resources?.meshlet_list ?? frustum_meshlet_list,
+            meshlet_buffer,
+            meshlet_vertex_buffer,
+            meshlet_triangle_buffer,
+            entity_index_lookup,
+          ],
+        });
+      }
 
       // ┌─────────────────────────────────────────────────────────────────────────────┐
       // │ 🌫️  PASS: Occlusion Culling (Phase 2 of 2-Pass Occlusion)                 │
@@ -568,6 +568,18 @@ export class DeferredShadingStrategy {
         culling_pass_outputs,
       });
 
+      const occlusion_bucket_draw_lists =
+        this.visibility_buffer_pipeline.build_bucket_meshlet_draw_lists(render_graph, {
+          current_view,
+          meshlet_draw_count,
+          object_instances,
+          source_meshlet_list: occlusion_meshlet_list,
+          source_meshlet_draw_args: occlusion_meshlet_draw_args,
+          buckets: visibility_shader_buckets,
+          stage_name: "occlusion",
+          force_recreate: this.force_recreate,
+        });
+
       // ┌─────────────────────────────────────────────────────────────────────────────┐
       // │ 🖥️  PASS: Compute Rasterization                                            │
       // │    Software rasterization for particles and small geometry                  │
@@ -586,93 +598,44 @@ export class DeferredShadingStrategy {
       // │    Fill G-Buffer with geometry data (albedo, normals, material props)     │
       // └─────────────────────────────────────────────────────────────────────────────┘
       {
-        this.visibility_buffer_pipeline.add_visibility_raster_pass(render_graph, {
-          meshlet_draw_count,
-          depth_prepass_enabled,
-          current_view,
-          depth_image: main_depth_image,
-          occlusion_meshlet_draw_args,
-          inputs: [
-            entity_transforms,
-            object_instances,
-            occlusion_meshlet_list,
-            meshlet_buffer,
-            meshlet_vertex_buffer,
-            meshlet_triangle_buffer,
-            entity_index_lookup,
-            material_params,
-            material_table_offset,
-            material_palette,
-            texture_pool_albedo,
-          ],
-        });
+        for (const bucket of visibility_shader_buckets) {
+          const bucket_draw_resources = occlusion_bucket_draw_lists.get(bucket.key);
+          this.visibility_buffer_pipeline.add_visibility_raster_pass(render_graph, {
+            meshlet_draw_count,
+            depth_prepass_enabled,
+            current_view,
+            depth_image: main_depth_image,
+            occlusion_meshlet_draw_args: bucket_draw_resources?.draw_args ?? occlusion_meshlet_draw_args,
+            bucket,
+            inputs: [
+              entity_transforms,
+              object_instances,
+              bucket_draw_resources?.meshlet_list ?? occlusion_meshlet_list,
+              meshlet_buffer,
+              meshlet_vertex_buffer,
+              meshlet_triangle_buffer,
+              entity_index_lookup,
+            ],
+          });
 
-        this.visibility_buffer_pipeline.add_gbuffer_resolve_pass(render_graph, {
-          meshlet_draw_count,
-          current_view,
-          depth_image: main_depth_image,
-          inputs: [
-            entity_transforms,
-            meshlet_buffer,
-            meshlet_vertex_buffer,
-            meshlet_triangle_buffer,
-            material_params,
-            material_table_offset,
-            material_palette,
-            texture_pool_albedo,
-            texture_pool_normal,
-            texture_pool_roughness,
-            texture_pool_metallic,
-            texture_pool_ao,
-            texture_pool_height,
-            texture_pool_specular,
-            texture_pool_emission,
-          ],
-          outputs: [
-            main_albedo_image,
-            main_smra_image,
-            main_normal_image,
-            main_motion_emissive_image,
-          ],
-        });
-
-        g_buffer_shader_setup.depth_write_enabled = false;
-        g_buffer_shader_setup.depth_stencil_compare_op = "less-equal";
-
-        const material_buckets = MeshTaskQueue.get_material_buckets();
-        for (let i = 0; i < material_buckets.length; i++) {
-          const material_id = material_buckets[i];
-          const material = Material.get(material_id);
-          if (material.family !== MaterialFamilyType.Transparent) {
-            continue;
-          }
-
-          render_graph.add_pass(
-            `g_buffer_${material.template.name}_${material_id}`,
-            RenderPassFlags.Graphics,
-            {
-              inputs: [
-                entity_transforms,
-                entity_flags,
-                object_instances,
-                this.culling_pipeline.get_occlusion_visibility_buffer(current_view, 0),
-                entity_index_lookup,
-              ],
-              outputs: [
-                main_transparency_accum_image,
-                main_smra_image,
-                main_normal_image,
-                main_motion_emissive_image,
-                main_depth_image,
-              ],
-              shader_setup: g_buffer_shader_setup,
-              b_skip_pass_pipeline_setup: true,
-            },
-            (graph, frame_data, encoder) => {
-              const pass = graph.get_physical_pass(frame_data.current_pass);
-              MeshTaskQueue.submit_material_indexed_indirect_draws(pass, material_id, current_view);
-            }
-          );
+          this.visibility_buffer_pipeline.add_gbuffer_resolve_pass(render_graph, {
+            meshlet_draw_count,
+            current_view,
+            depth_image: main_depth_image,
+            bucket,
+            inputs: [
+              entity_transforms,
+              meshlet_buffer,
+              meshlet_vertex_buffer,
+              meshlet_triangle_buffer,
+            ],
+            outputs: [
+              main_albedo_image,
+              main_smra_image,
+              main_normal_image,
+              main_motion_emissive_image,
+            ],
+          });
         }
       }
 

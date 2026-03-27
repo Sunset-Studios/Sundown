@@ -59,34 +59,6 @@ const main_depth_image2_config = {
   force: false,
 };
 
-const depth_only_shader_setup = {
-  pipeline_shaders: {
-    vertex: {
-      path: "gbuffer_base.wgsl",
-      defines: { DEPTH_ONLY: true },
-    },
-    fragment: {
-      path: "gbuffer_base.wgsl",
-      defines: { DEPTH_ONLY: true },
-    },
-  },
-  depth_write_enabled: true,
-  depth_stencil_compare_op: "less",
-};
-
-const g_buffer_shader_setup = {
-  pipeline_shaders: {
-    vertex: {
-      path: "gbuffer_base.wgsl",
-    },
-    fragment: {
-      path: "gbuffer_base.wgsl",
-    },
-  },
-  depth_write_enabled: false,
-  depth_stencil_compare_op: "less-equal",
-};
-
 const compact_lights_shader_setup = {
   pipeline_shaders: {
     compute: {
@@ -229,6 +201,7 @@ export class PathTracingStrategy {
       const current_view = SharedFrameInfoBuffer.get_view_index();
       const draw_count = MeshTaskQueue.get_total_draw_count();
       const meshlet_draw_count = MeshTaskQueue.get_total_meshlet_count();
+      const visibility_shader_buckets = MeshTaskQueue.get_visibility_shader_buckets();
       const image_extent = renderer.get_canvas_resolution();
       const depth_prepass_enabled = renderer.is_depth_prepass_enabled();
 
@@ -437,7 +410,6 @@ export class PathTracingStrategy {
           main_motion_emissive_image,
           main_depth_image,
         },
-        visibility_entity_image,
         load_op: load_op_load,
       });
 
@@ -465,25 +437,38 @@ export class PathTracingStrategy {
       // ┌─────────────────────────────────────────────────────────────────────────────┐
       // │ 🏔️  PASS: Depth Pre-Pass                                                   │
       // └─────────────────────────────────────────────────────────────────────────────┘
-      this.visibility_buffer_pipeline.add_depth_prepass(render_graph, {
-        enabled: depth_prepass_enabled,
-        meshlet_draw_count,
-        depth_image: main_depth_image,
-        frustum_meshlet_draw_args,
-        inputs: [
-          entity_transforms,
+      const frustum_bucket_draw_lists =
+        this.visibility_buffer_pipeline.build_bucket_meshlet_draw_lists(render_graph, {
+          current_view,
+          meshlet_draw_count,
           object_instances,
-          frustum_meshlet_list,
-          meshlet_buffer,
-          meshlet_vertex_buffer,
-          meshlet_triangle_buffer,
-          entity_index_lookup,
-          material_params,
-          material_table_offset,
-          material_palette,
-          texture_pool_albedo,
-        ],
-      });
+          source_meshlet_list: frustum_meshlet_list,
+          source_meshlet_draw_args: frustum_meshlet_draw_args,
+          buckets: visibility_shader_buckets,
+          stage_name: "frustum",
+          force_recreate: this.force_recreate,
+        });
+
+      for (const bucket of visibility_shader_buckets) {
+        const bucket_draw_resources = frustum_bucket_draw_lists.get(bucket.key);
+        this.visibility_buffer_pipeline.add_depth_prepass(render_graph, {
+          enabled: depth_prepass_enabled,
+          meshlet_draw_count,
+          current_view,
+          depth_image: main_depth_image,
+          frustum_meshlet_draw_args: bucket_draw_resources?.draw_args ?? frustum_meshlet_draw_args,
+          bucket,
+          inputs: [
+            entity_transforms,
+            object_instances,
+            bucket_draw_resources?.meshlet_list ?? frustum_meshlet_list,
+            meshlet_buffer,
+            meshlet_vertex_buffer,
+            meshlet_triangle_buffer,
+            entity_index_lookup,
+          ],
+        });
+      }
       
       // ┌─────────────────────────────────────────────────────────────────────────────┐
       // │ 🌫️  PASS: Occlusion Culling                                                │
@@ -503,58 +488,60 @@ export class PathTracingStrategy {
         culling_pass_outputs,
       });
 
+      const occlusion_bucket_draw_lists =
+        this.visibility_buffer_pipeline.build_bucket_meshlet_draw_lists(render_graph, {
+          current_view,
+          meshlet_draw_count,
+          object_instances,
+          source_meshlet_list: occlusion_meshlet_list,
+          source_meshlet_draw_args: occlusion_meshlet_draw_args,
+          buckets: visibility_shader_buckets,
+          stage_name: "occlusion",
+          force_recreate: this.force_recreate,
+        });
+
       // ┌─────────────────────────────────────────────────────────────────────────────┐
       // │ 🎨 PASS: G-Buffer Base Rendering                                           │
       // └─────────────────────────────────────────────────────────────────────────────┘
-      this.visibility_buffer_pipeline.add_visibility_raster_pass(render_graph, {
-        meshlet_draw_count,
-        depth_prepass_enabled,
-        current_view,
-        depth_image: main_depth_image,
-        occlusion_meshlet_draw_args,
-        inputs: [
-          entity_transforms,
-          object_instances,
-          occlusion_meshlet_list,
-          meshlet_buffer,
-          meshlet_vertex_buffer,
-          meshlet_triangle_buffer,
-          entity_index_lookup,
-          material_params,
-          material_table_offset,
-          material_palette,
-          texture_pool_albedo,
-        ],
-      });
+      for (const bucket of visibility_shader_buckets) {
+        const bucket_draw_resources = occlusion_bucket_draw_lists.get(bucket.key);
+        this.visibility_buffer_pipeline.add_visibility_raster_pass(render_graph, {
+          meshlet_draw_count,
+          depth_prepass_enabled,
+          current_view,
+          depth_image: main_depth_image,
+          occlusion_meshlet_draw_args: bucket_draw_resources?.draw_args ?? occlusion_meshlet_draw_args,
+          bucket,
+          inputs: [
+            entity_transforms,
+            object_instances,
+            bucket_draw_resources?.meshlet_list ?? occlusion_meshlet_list,
+            meshlet_buffer,
+            meshlet_vertex_buffer,
+            meshlet_triangle_buffer,
+            entity_index_lookup,
+          ],
+        });
 
-      this.visibility_buffer_pipeline.add_gbuffer_resolve_pass(render_graph, {
-        meshlet_draw_count,
-        current_view,
-        depth_image: main_depth_image,
-        inputs: [
-          entity_transforms,
-          meshlet_buffer,
-          meshlet_vertex_buffer,
-          meshlet_triangle_buffer,
-          material_params,
-          material_table_offset,
-          material_palette,
-          texture_pool_albedo,
-          texture_pool_normal,
-          texture_pool_roughness,
-          texture_pool_metallic,
-          texture_pool_ao,
-          texture_pool_height,
-          texture_pool_specular,
-          texture_pool_emission,
-        ],
-        outputs: [
-          main_albedo_image,
-          main_smra_image,
-          main_normal_image,
-          main_motion_emissive_image,
-        ],
-      });
+        this.visibility_buffer_pipeline.add_gbuffer_resolve_pass(render_graph, {
+          meshlet_draw_count,
+          current_view,
+          depth_image: main_depth_image,
+          bucket,
+          inputs: [
+            entity_transforms,
+            meshlet_buffer,
+            meshlet_vertex_buffer,
+            meshlet_triangle_buffer,
+          ],
+          outputs: [
+            main_albedo_image,
+            main_smra_image,
+            main_normal_image,
+            main_motion_emissive_image,
+          ],
+        });
+      }
 
       // ┌─────────────────────────────────────────────────────────────────────────────┐
       // │ 🔆 PASS: Hybrid Path Tracing                                               │

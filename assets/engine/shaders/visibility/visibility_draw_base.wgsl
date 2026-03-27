@@ -2,14 +2,14 @@
 #include "visibility/visibility_common.wgsl"
 
 struct DepthVertexOutput {
-    @builtin(position) position: vec4<f32>,
+    @builtin(position) @invariant position: vec4<f32>,
     @location(0) uv: vec2<f32>,
     @location(1) @interpolate(flat) entity_id: u32,
     @location(2) @interpolate(flat) section_index: u32,
 };
 
 struct RasterVertexOutput {
-    @builtin(position) position: vec4<f32>,
+    @builtin(position) @invariant position: vec4<f32>,
     @location(0) uv: vec2<f32>,
     @location(1) @interpolate(flat) entity_id: u32,
     @location(2) @interpolate(flat) section_index: u32,
@@ -54,6 +54,13 @@ struct ResolveFragmentOutput {
     @location(1) smra: vec4<f32>,
     @location(2) normal: vec4<f32>,
     @location(3) motion_emissive: vec4<f32>,
+};
+
+struct VisibilityBucketInfo {
+    current_visibility_bucket: u32,
+    _pad0: u32,
+    _pad1: u32,
+    _pad2: u32,
 };
 
 #include "visibility/visibility_draw_pipeline.wgsl"

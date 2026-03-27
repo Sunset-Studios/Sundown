@@ -99,6 +99,8 @@ struct EntityTransform {
 struct ObjectInstance {
     batch: u32,
     row: u32,
+    visibility_bucket: u32,
+    padding: u32,
 };
 
 struct DrawCommand {
