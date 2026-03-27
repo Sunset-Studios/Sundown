@@ -366,7 +366,7 @@ export class DeferredShadingStrategy {
       const {
         visibility_entity_image,
         visibility_surface_image,
-        visibility_barycentric_image,
+        visibility_bucket_image,
       } = this.visibility_buffer_pipeline.register_targets(render_graph);
       let {
         main_albedo_image,
@@ -432,7 +432,7 @@ export class DeferredShadingStrategy {
         visibility_targets: [
           visibility_entity_image,
           visibility_surface_image,
-          visibility_barycentric_image,
+          visibility_bucket_image,
         ],
       });
 
@@ -487,6 +487,9 @@ export class DeferredShadingStrategy {
           main_depth_image,
           main_transparency_accum_image,
         },
+        visibility_entity_image,
+        visibility_surface_image,
+        visibility_bucket_image,
         load_op: load_op_load,
       });
 
@@ -1037,6 +1040,8 @@ export class DeferredShadingStrategy {
           main_transparency_accum_image,
         },
         visibility_entity_image,
+        visibility_surface_image,
+        visibility_bucket_image,
         load_op: load_op_clear,
       });
 

@@ -207,6 +207,8 @@ export class GBufferTargetsPipeline {
       pass_name,
       targets,
       visibility_entity_image = null,
+      visibility_surface_image = null,
+      visibility_bucket_image = null,
       load_op,
     }
   ) {
@@ -221,6 +223,8 @@ export class GBufferTargetsPipeline {
           graph.get_physical_image(targets.main_normal_image),
           graph.get_physical_image(targets.main_motion_emissive_image),
           visibility_entity_image ? graph.get_physical_image(visibility_entity_image) : null,
+          visibility_surface_image ? graph.get_physical_image(visibility_surface_image) : null,
+          visibility_bucket_image ? graph.get_physical_image(visibility_bucket_image) : null,
           targets.main_transparency_accum_image
             ? graph.get_physical_image(targets.main_transparency_accum_image)
             : null,

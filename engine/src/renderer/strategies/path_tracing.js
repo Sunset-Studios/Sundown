@@ -300,7 +300,7 @@ export class PathTracingStrategy {
       const {
         visibility_entity_image,
         visibility_surface_image,
-        visibility_barycentric_image,
+        visibility_bucket_image,
       } = this.visibility_buffer_pipeline.register_targets(render_graph);
       let {
         main_albedo_image,
@@ -360,7 +360,7 @@ export class PathTracingStrategy {
         visibility_targets: [
           visibility_entity_image,
           visibility_surface_image,
-          visibility_barycentric_image,
+          visibility_bucket_image,
         ],
       });
 
@@ -410,6 +410,9 @@ export class PathTracingStrategy {
           main_motion_emissive_image,
           main_depth_image,
         },
+        visibility_entity_image,
+        visibility_surface_image,
+        visibility_bucket_image,
         load_op: load_op_load,
       });
 
@@ -675,6 +678,8 @@ export class PathTracingStrategy {
           main_depth_image,
         },
         visibility_entity_image,
+        visibility_surface_image,
+        visibility_bucket_image,
         load_op: load_op_clear,
       });
 

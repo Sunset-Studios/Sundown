@@ -31,8 +31,8 @@ const visibility_surface_image_config = {
   force: false,
 };
 
-const visibility_barycentric_image_config = {
-  name: "visibility_barycentric",
+const visibility_bucket_image_config = {
+  name: "visibility_bucket",
   format: r32uint_format,
   width: 0,
   height: 0,
@@ -88,10 +88,10 @@ function get_meshlet_stats_buffer_force(buffer_name, force_recreate) {
 export class VisibilityBufferPipeline {
   visibility_entity_image = null;
   visibility_surface_image = null;
-  visibility_barycentric_image = null;
+  visibility_bucket_image = null;
   registered_visibility_entity_image = null;
   registered_visibility_surface_image = null;
-  registered_visibility_barycentric_image = null;
+  registered_visibility_bucket_image = null;
 
   shader_setup_cache = new Map();
   bucket_info_buffers = new Map();
@@ -105,13 +105,13 @@ export class VisibilityBufferPipeline {
     visibility_surface_image_config.height = image_extent.height;
     visibility_surface_image_config.force = force_recreate;
 
-    visibility_barycentric_image_config.width = image_extent.width;
-    visibility_barycentric_image_config.height = image_extent.height;
-    visibility_barycentric_image_config.force = force_recreate;
+    visibility_bucket_image_config.width = image_extent.width;
+    visibility_bucket_image_config.height = image_extent.height;
+    visibility_bucket_image_config.force = force_recreate;
 
     this.visibility_entity_image = Texture.create(visibility_entity_image_config);
     this.visibility_surface_image = Texture.create(visibility_surface_image_config);
-    this.visibility_barycentric_image = Texture.create(visibility_barycentric_image_config);
+    this.visibility_bucket_image = Texture.create(visibility_bucket_image_config);
   }
 
   register_targets(render_graph) {
@@ -121,8 +121,8 @@ export class VisibilityBufferPipeline {
     this.registered_visibility_surface_image = render_graph.register_image(
       this.visibility_surface_image.config.name
     );
-    this.registered_visibility_barycentric_image = render_graph.register_image(
-      this.visibility_barycentric_image.config.name
+    this.registered_visibility_bucket_image = render_graph.register_image(
+      this.visibility_bucket_image.config.name
     );
 
     return this.get_registered_targets();
@@ -132,7 +132,7 @@ export class VisibilityBufferPipeline {
     return {
       visibility_entity_image: this.registered_visibility_entity_image,
       visibility_surface_image: this.registered_visibility_surface_image,
-      visibility_barycentric_image: this.registered_visibility_barycentric_image,
+      visibility_bucket_image: this.registered_visibility_bucket_image,
     };
   }
 
@@ -322,7 +322,7 @@ export class VisibilityBufferPipeline {
         outputs: [
           this.registered_visibility_entity_image,
           this.registered_visibility_surface_image,
-          this.registered_visibility_barycentric_image,
+          this.registered_visibility_bucket_image,
           depth_image,
         ],
         shader_setup,
@@ -370,7 +370,7 @@ export class VisibilityBufferPipeline {
         inputs: [
           this.registered_visibility_entity_image,
           this.registered_visibility_surface_image,
-          this.registered_visibility_barycentric_image,
+          this.registered_visibility_bucket_image,
           depth_image,
           ...inputs,
           bucket_info_buffer,

@@ -23,7 +23,7 @@
 #if MESHLET_RESOLVE_PASS
 @group(1) @binding(0) var visibility_entity_texture: texture_2d<u32>;
 @group(1) @binding(1) var visibility_surface_texture: texture_2d<u32>;
-@group(1) @binding(2) var visibility_barycentric_texture: texture_2d<u32>;
+@group(1) @binding(2) var visibility_bucket_texture: texture_2d<u32>;
 @group(1) @binding(3) var depth_texture: texture_2d<f32>;
 @group(1) @binding(4) var<storage, read> entity_transforms: array<EntityTransform>;
 @group(1) @binding(5) var<storage, read> meshlets: array<MeshletRecord>;
@@ -206,7 +206,7 @@ fn fs(input: RasterVertexOutput) -> RasterFragmentOutput {
     var output = RasterFragmentOutput(
         input.entity_id,
         pack_surface_id(input.meshlet_index, input.triangle_index),
-        pack2x16unorm(clamp(input.barycentric, vec2<f32>(0.0), vec2<f32>(1.0)))
+        visibility_bucket_info.current_visibility_bucket
     );
 
     return raster_fragment(input, &output);
@@ -224,10 +224,12 @@ fn fs(input: ResolveVertexOutput) -> ResolveFragmentOutput {
         discard;
     }
 
-    let surface = textureLoad(visibility_surface_texture, pixel_coord, 0).x;
-    let bary_xy = unpack2x16unorm(textureLoad(visibility_barycentric_texture, pixel_coord, 0).x);
-    let bary = vec3<f32>(bary_xy.x, bary_xy.y, max(1.0 - bary_xy.x - bary_xy.y, 0.0));
+    let visibility_bucket = textureLoad(visibility_bucket_texture, pixel_coord, 0).x;
+    if (visibility_bucket != visibility_bucket_info.current_visibility_bucket) {
+        discard;
+    }
 
+    let surface = textureLoad(visibility_surface_texture, pixel_coord, 0).x;
     let meshlet_index_value = unpack_surface_meshlet(surface);
     let triangle_index = unpack_surface_triangle(surface);
     let meshlet = meshlets[meshlet_index_value];
@@ -247,6 +249,23 @@ fn fs(input: ResolveVertexOutput) -> ResolveFragmentOutput {
 
     let section_index = u32(max(decoded0.section_index, 0.0));
     let entity_transform = entity_transforms[entity_id];
+    let view_index = u32(frame_info.view_index);
+
+    let world_position0 = entity_transform.transform * decoded0.position;
+    let world_position1 = entity_transform.transform * decoded1.position;
+    let world_position2 = entity_transform.transform * decoded2.position;
+
+    let current_clip_pos0 = view_buffer[view_index].view_projection_matrix * world_position0;
+    let current_clip_pos1 = view_buffer[view_index].view_projection_matrix * world_position1;
+    let current_clip_pos2 = view_buffer[view_index].view_projection_matrix * world_position2;
+
+
+    let bary = calc_full_barycentric(
+        coord_to_uv(pixel_coord, resolution),
+        current_clip_pos0,
+        current_clip_pos1,
+        current_clip_pos2
+    );
 
     let local_position = interpolate_vec3(
         decoded0.position.xyz,
@@ -275,10 +294,14 @@ fn fs(input: ResolveVertexOutput) -> ResolveFragmentOutput {
         bary
     ));
 
-    let world_position = entity_transform.transform * vec4<f32>(local_position, 1.0);
+    let world_position = vec4<f32>(interpolate_vec3(
+        world_position0.xyz,
+        world_position1.xyz,
+        world_position2.xyz,
+        bary
+    ), 1.0);
     let prev_world_position = entity_transform.prev_transform * vec4<f32>(prev_local_position, 1.0);
 
-    let view_index = u32(frame_info.view_index);
     let view_proj = view_buffer[view_index].view_projection_matrix;
     let prev_view_proj = view_buffer[view_index].prev_projection_matrix * view_buffer[view_index].prev_view_matrix;
     let current_clip_pos = view_proj * world_position;
