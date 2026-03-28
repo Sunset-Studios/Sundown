@@ -28,7 +28,7 @@
 @group(1) @binding(4) var<storage, read_write> gi_counters: GICounters;
 @group(1) @binding(5) var<uniform> ddgi_params: DDGIParams;
 
-const WORKGROUP_SIZE = 256u;
+const WORKGROUP_SIZE = 128u;
 
 var<workgroup> shared_subgroup_sums_nonculled: array<u32, 32>;
 var<workgroup> shared_subgroup_sums_culled: array<u32, 32>;

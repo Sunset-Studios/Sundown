@@ -13,7 +13,7 @@ import { Name } from "../../utility/names.js";
 import { ResourceCache } from "../resource_cache.js";
 import { ispot, npot } from "../../utility/math.js";
 
-const COMPUTE_WORKGROUP_SIZE = 256;
+const COMPUTE_WORKGROUP_SIZE = 128;
 const DDGI_DEFAULT_PROBE_DEPTH_RESOLUTION = 16;
 const DDGI_MAX_CASCADES = 4;
 
