@@ -48,7 +48,6 @@ fn initialize_leaf_clusters(
     let prim_idx = gid.x;
     
     if (
-        prim_idx < counters.prim_count &&
         prim_idx < arrayLength(&parent_idx) &&
         prim_idx < arrayLength(&index_pairs) &&
         counters.prim_base + prim_idx < arrayLength(&bounds)
@@ -78,6 +77,4 @@ fn initialize_leaf_clusters(
         index_pairs[prim_idx].hi = INVALID_IDX;
         index_pairs[prim_idx].lo = INVALID_IDX;
     }
-
-    workgroupBarrier();
 }
