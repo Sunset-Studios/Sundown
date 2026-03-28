@@ -1037,7 +1037,7 @@ export class DDGI {
 
         const tlas_bvh2_bounds_buf = graph.get_physical_buffer(tlas_bvh2_bounds);
         const tlas_aabb_stride_words = 8;
-        const tlas_node_count = Math.floor(tlas_bvh2_bounds_buf.config.size / tlas_aabb_stride_words);
+        const tlas_node_count = Math.floor(tlas_bvh2_bounds_buf.config.size / (tlas_aabb_stride_words * 4));
         pass.dispatch(Math.ceil(tlas_node_count / COMPUTE_WORKGROUP_SIZE), 1, 1);
       }
     );
