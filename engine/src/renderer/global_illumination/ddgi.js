@@ -251,7 +251,7 @@ const ddgi_atrous_diffuse_shader_setup = {
 export class DDGI {
   config = {
     probe_grid_dimensions: [64, 64, 64],
-    probe_spacing: 2.0,
+    probe_spacing: 1.0,
     probe_radius: 0.1,
     min_rays_per_probe: 32,
     max_rays_per_probe: 256,

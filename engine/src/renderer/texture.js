@@ -3,7 +3,6 @@ import { Name } from "../utility/names.js";
 import { ResourceCache } from "./resource_cache.js";
 import { ImageFlags } from "./renderer_types.js";
 import { CacheTypes } from "./renderer_types.js";
-import { MAX_BUFFERED_FRAMES } from "../core/minimal.js";
 import { global_dispatcher } from "../core/dispatcher.js";
 import { TextureArrayPools } from "./texture_pool.js";
 import {
@@ -130,11 +129,16 @@ export class Texture {
       // objects show moiré.
       const max_dim = Math.max(this.config.width, this.config.height);
       this.config.mip_levels = this.config.no_mips ? 1 : Math.floor(Math.log2(max_dim)) + 1;
-      
+
       const allocation = TextureArrayPools.allocate(this.config);
       this.image = allocation.texture.image;
       this.views = allocation.texture.views;
       this.bindless_handle = allocation.index;
+
+      const pool = TextureArrayPools.get_pool(this.config.pool_key);
+      this.config.width = pool.config.width;
+      this.config.height = pool.config.height;
+      this.config.mip_levels = pool.config.mip_levels;
     } else {
       this.image = renderer.device.createTexture({
         label: config.name,
@@ -155,37 +159,9 @@ export class Texture {
     Renderer.get().mark_bind_groups_dirty(true /* pass_only */);
   }
 
-  destroy() {
-    ResourceCache.get().remove(CacheTypes.IMAGE, Name.from(this.config.name));
-    // if (this.image) {
-    //   let old_image = this.image;
-    //   Renderer.get().render_graph.queue_resource_deletion(
-    //     () => {
-    //       old_image.destroy();
-    //     },
-    //     `image_${this.physical_id}`,
-    //     MAX_BUFFERED_FRAMES + 1
-    //   );
-    // }
-    this.image = null;
-  }
-
   async load(config) {
     if (!config.paths || config.paths.length === 0) return;
 
-    async function load_image_bitmap(path) {
-      const resolved_img = await new Promise((resolve, reject) => {
-        const img = new Image();
-        img.onload = () => resolve(img);
-        img.onerror = reject;
-        img.src = path;
-      });
-
-      return await createImageBitmap(resolved_img, {
-        colorSpaceConversion: "none",
-      });
-    }
-    
     const renderer = Renderer.get();
 
     this.config = { ...this.config, ...config };
@@ -220,7 +196,9 @@ export class Texture {
       this._setup_views();
     }
 
-    const textures = await Promise.all(config.paths.map(load_image_bitmap));
+    const textures = await Promise.all(
+      config.paths.map((path) => Texture.load_image_bitmap(path))
+    );
 
     // 1) compute how many mip‐levels we want
     const base = textures[0];
@@ -239,7 +217,7 @@ export class Texture {
       const max_dim = Math.max(base.width, base.height);
       this.config.mip_levels = this.config.no_mips ? 1 : Math.floor(Math.log2(max_dim)) + 1;
 
-      const allocation = TextureArrayPools.allocate(this.config);
+      const allocation = await TextureArrayPools.allocate_loaded(this.config, this);
       this.image = allocation.texture.image;
       this.views = allocation.texture.views;
       this.bindless_handle = allocation.index;
@@ -268,43 +246,7 @@ export class Texture {
       });
     }
 
-    for (let layer = 0; layer < textures.length; layer++) {
-      const texture = textures[layer];
-      const targetLayer = this.config.pool_key ? this.bindless_handle + layer : layer;
-
-      // 3) Resize source to match pool/texture dimensions if needed
-      let mip0_source = texture;
-      if (this.config.pool_key && (texture.width !== this.config.width || texture.height !== this.config.height)) {
-        mip0_source = await createImageBitmap(texture, {
-          resizeWidth: this.config.width,
-          resizeHeight: this.config.height,
-          resizeQuality: "high",
-        });
-      }
-
-      // 4) copy the (possibly resized) image into mip 0
-      renderer.device.queue.copyExternalImageToTexture(
-        { source: mip0_source, flipY: flip_y },
-        { texture: this.image, mipLevel: 0, origin: { x: 0, y: 0, z: targetLayer } },
-        [this.config.width, this.config.height]
-      );
-
-      // 5) for each subsequent mip level, resize from the mip0 source
-      for (let lvl = 1; lvl < this.config.mip_levels; lvl++) {
-        const w = Math.max(1, this.config.width >> lvl);
-        const h = Math.max(1, this.config.height >> lvl);
-        const mip_bitmap = await createImageBitmap(mip0_source, {
-          resizeWidth: w,
-          resizeHeight: h,
-          resizeQuality: "high",
-        });
-        renderer.device.queue.copyExternalImageToTexture(
-          { source: mip_bitmap, flipY: flip_y },
-          { texture: this.image, mipLevel: lvl, origin: { x: 0, y: 0, z: targetLayer } },
-          [w, h]
-        );
-      }
-    }
+    await this._upload_bitmaps(textures, flip_y, renderer);
 
     // 6) rebuild all the texture views now that we've got new mips
     if (!this.config.pool_key) {
@@ -320,6 +262,42 @@ export class Texture {
     }
 
     Renderer.get().mark_bind_groups_dirty(true /* pass_only */);
+  }
+
+  async reload_from_source() {
+    if (!this.config.pool_key || !this.config.paths?.length || !this.image || this.bindless_handle < 0) {
+      return;
+    }
+
+    const textures = await Promise.all(
+      this.config.paths.map((path) => Texture.load_image_bitmap(path))
+    );
+    this.config.depth = textures.length;
+
+    await this._upload_bitmaps(
+      textures,
+      this.config.flip_y !== undefined ? this.config.flip_y : true,
+      Renderer.get()
+    );
+
+    if (this.config.material_notifier) {
+      global_dispatcher.dispatch(this.config.material_notifier, this);
+    }
+  }
+
+  destroy() {
+    ResourceCache.get().remove(CacheTypes.IMAGE, Name.from(this.config.name));
+    // if (this.image) {
+    //   let old_image = this.image;
+    //   Renderer.get().render_graph.queue_resource_deletion(
+    //     () => {
+    //       old_image.destroy();
+    //     },
+    //     `image_${this.physical_id}`,
+    //     MAX_BUFFERED_FRAMES + 1
+    //   );
+    // }
+    this.image = null;
   }
 
   set_image(image) {
@@ -526,8 +504,9 @@ export class Texture {
     if (this.config.b_one_view_per_mip) {
       // Full view first (index 0) so passes that sample the full pyramid bind view 0 and can sample all mips
       this.views.push(this.create_view(
-        { ... view_config,
-          base_mip_level: 0, 
+        {
+          ...view_config,
+          base_mip_level: 0,
           mip_levels: this.config.mip_levels,
           label: `${this.config.name}_full`
         }
@@ -540,6 +519,43 @@ export class Texture {
           mip_levels: 1,
         };
         this.views.push(this.create_view(config));
+      }
+    }
+  }
+
+  async _upload_bitmaps(textures, flip_y, renderer = Renderer.get()) {
+    for (let layer = 0; layer < textures.length; layer++) {
+      const texture = textures[layer];
+      const targetLayer = this.config.pool_key ? this.bindless_handle + layer : layer;
+
+      let mip0_source = texture;
+      if (texture.width !== this.config.width || texture.height !== this.config.height) {
+        mip0_source = await createImageBitmap(texture, {
+          resizeWidth: this.config.width,
+          resizeHeight: this.config.height,
+          resizeQuality: "high",
+        });
+      }
+
+      renderer.device.queue.copyExternalImageToTexture(
+        { source: mip0_source, flipY: flip_y },
+        { texture: this.image, mipLevel: 0, origin: { x: 0, y: 0, z: targetLayer } },
+        [this.config.width, this.config.height]
+      );
+
+      for (let lvl = 1; lvl < this.config.mip_levels; lvl++) {
+        const w = Math.max(1, this.config.width >> lvl);
+        const h = Math.max(1, this.config.height >> lvl);
+        const mip_bitmap = await createImageBitmap(mip0_source, {
+          resizeWidth: w,
+          resizeHeight: h,
+          resizeQuality: "high",
+        });
+        renderer.device.queue.copyExternalImageToTexture(
+          { source: mip_bitmap, flipY: flip_y },
+          { texture: this.image, mipLevel: lvl, origin: { x: 0, y: 0, z: targetLayer } },
+          [w, h]
+        );
       }
     }
   }
@@ -605,6 +621,19 @@ export class Texture {
     }
 
     return image;
+  }
+
+  static async load_image_bitmap(path) {
+    const resolved_img = await new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => resolve(img);
+      img.onerror = reject;
+      img.src = path;
+    });
+
+    return await createImageBitmap(resolved_img, {
+      colorSpaceConversion: "none",
+    });
   }
 
   static #default = null;
