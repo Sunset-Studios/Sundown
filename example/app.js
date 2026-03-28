@@ -2988,8 +2988,8 @@ export class CityScene extends Scene {
     // Camera Setup - positioned to overlook the city
     // ─────────────────────────────────────────────────────────────────────────
     const view_data = SharedViewBuffer.get_view_data(0);
-    view_data.view_position = [50.0, 30.0, 80.0];
-    view_data.view_rotation = quat.fromEuler(quat.create(), -15, 160, 0);
+    view_data.view_position = [108.015, 9.81021, 33.1744];
+    view_data.view_rotation = [-0.01606280, 0.78540349, -0.023472044, -0.613837182];
     view_data.far = 10000.0;
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -3177,13 +3177,13 @@ export class SciFiCityScene extends Scene {
   //await scene_switcher.add_scene(voxel_terrain_scene);
   //await scene_switcher.add_scene(object_painting_scene);
   //await scene_switcher.add_scene(gltf_model_scene);
-  await scene_switcher.add_scene(textures_scene);
+  //await scene_switcher.add_scene(textures_scene);
   //await scene_switcher.add_scene(gi_test_scene);
   //await scene_switcher.add_scene(shadow_test_scene);
   //await scene_switcher.add_scene(sponza_scene);
   //await scene_switcher.add_scene(living_room_scene);
   //await scene_switcher.add_scene(city_scene);
-  //await scene_switcher.add_scene(scifi_city_scene);
+  await scene_switcher.add_scene(scifi_city_scene);
 
   simulator.add_sim_layer(scene_switcher);
 
