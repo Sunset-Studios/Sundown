@@ -423,6 +423,16 @@ export class DeferredDebugPipeline {
           DebugDrawType.ASVSM_DirtyTiles
         );
         break;
+      case DebugDrawType.ASVSM_DirtyShadowMeshlets:
+        this.debug_overlay.set_properties(
+          as_vsm.debug_dirty_shadow_meshlets_image,
+          0,
+          0,
+          image_extent.width,
+          image_extent.height,
+          DebugDrawType.ASVSM_DirtyShadowMeshlets
+        );
+        break;
       case DebugDrawType.Bloom:
         this.debug_overlay.set_properties(
           bloom.debug_bloom_image,

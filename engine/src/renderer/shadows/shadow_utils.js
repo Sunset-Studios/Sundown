@@ -9,7 +9,7 @@ import { TypedStack } from "../../memory/container.js";
 import { quat, vec3, mat3, mat4, vec4 } from "gl-matrix";
 
 // Shadow map resolution
-export const SHADOW_MAP_TILES = 32;
+export const SHADOW_MAP_TILES = 16;
 // Tile size for both virtual and physical tiles.
 export const TILE_SIZE = 128;
 // Shadow atlas size.

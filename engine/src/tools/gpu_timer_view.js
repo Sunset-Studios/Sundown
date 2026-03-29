@@ -2,7 +2,6 @@ import { Renderer } from "../renderer/renderer.js";
 import { DevConsoleTool } from "./dev_console_tool.js";
 import { panel, label } from "../ui/2d/immediate.js";
 import { GPUTimeQuery } from "../renderer/query.js";
-import { RenderPass } from "../renderer/render_pass.js";
 import { ResourceCache } from "../renderer/resource_cache.js";
 import { CacheTypes } from "../renderer/renderer_types.js";
 import { RollingAverage } from "../utility/rolling_average.js";
@@ -171,6 +170,11 @@ export class GPUTimerView extends DevConsoleTool {
           pass_entries.sort((a, b) => (a.avg_ms > b.avg_ms ? -1 : a.avg_ms < b.avg_ms ? 1 : 0));
         }
 
+        panel(this.row_panel_config, () => {
+          label("Total", this.name_label_cfg);
+          label(total_ms.toFixed(4), this.time_label_cfg);
+        });
+
         for (let i = 0; i < pass_entries.length; i++) {
           const entry = pass_entries[i];
           panel(this.row_panel_config, () => {
@@ -178,11 +182,6 @@ export class GPUTimerView extends DevConsoleTool {
             label(entry.avg_ms.toFixed(4), this.time_label_cfg);
           });
         }
-
-        panel(this.row_panel_config, () => {
-          label("Total", this.name_label_cfg);
-          label(total_ms.toFixed(4), this.time_label_cfg);
-        });
       });
     });
   }
