@@ -171,35 +171,21 @@ fn intersect_triangle(ray: ptr<function, Ray>, v0: vec3<f32>, v1: vec3<f32>, v2:
     let dir  = (*ray).direction_and_tmax.xyz;
     let orig = (*ray).origin_and_tmin.xyz;
 
-    let plane_normal = normalize(cross(v1 - v0, v2 - v1));
-    let t = dot(plane_normal, (v0 - orig) / dot(plane_normal, dir));
-    let p = orig + dir * t;
+    let e1 = v1 - v0;
+    let e2 = v2 - v0;
+    let pvec = cross(dir, e2);
+    let det  = dot(e1, pvec);
 
-    let n1 = normalize(cross(v1 - v0, p - v1));
-    let n2 = normalize(cross(v2 - v1, p - v2));
-    let n3 = normalize(cross(v0 - v2, p - v0));
+    let one_over_det = 1.0 / det;
+    let tvec = orig - v0;
+    let u = dot(tvec, pvec) * one_over_det;
 
-    let d0 = dot(n1, n2);
-    let d1 = dot(n2, n3);
+    let qvec = cross(tvec, e1);
+    let v = dot(dir, qvec) * one_over_det;
 
-    let threshold = 1.0 - 0.001;
-    return select(-1.0, t, d0 > threshold && d1 > threshold);
-
-    // let e1 = v1 - v0;
-    // let e2 = v2 - v0;
-    // let pvec = cross(dir, e2);
-    // let det  = dot(e1, pvec);
-
-    // let one_over_det = 1.0 / det;
-    // let tvec = orig - v0;
-    // let u = dot(tvec, pvec) * one_over_det;
-
-    // let qvec = cross(tvec, e1);
-    // let v = dot(dir, qvec) * one_over_det;
-
-    // let t = dot(e2, qvec) * one_over_det;
-    // let valid = abs(det) > 0.00001 && t > 0.0001 && u > 0.0 && v > 0.0 && u + v < 1.0;
-    // return select(-1.0, t, valid); // Epsilon check
+    let t = dot(e2, qvec) * one_over_det;
+    let valid = abs(det) > 0.00001 && t > 0.0001 && u > 0.0 && v > 0.0 && u + v < 1.0;
+    return select(-1.0, t, valid); // Epsilon check
 }
 
 fn build_local_ray(
