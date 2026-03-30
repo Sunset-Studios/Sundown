@@ -1225,6 +1225,7 @@ export class RenderGraph {
    */
   submit() {
     profile_scope("RenderGraph.submit", () => {
+      this._reset_all_pass_cache_bind_groups();
       this._add_queued_post_commands();
       this._compile();
 
@@ -1952,9 +1953,13 @@ export class RenderGraph {
         this.pass_cache.bind_groups.delete(key);
       });
       this.pass_cache_passes_needs_reset = false;
-    } else if (this.pass_cache_full_needs_reset) {
+    }
+  }
+
+  _reset_all_pass_cache_bind_groups() {
+    if (this.pass_cache_full_needs_reset) {
       this.pass_cache.bind_groups = new Map();
-      this.pass_cache_full_needs_reset = false;
+      this.pass_cache_full_needs_reset = true;
     }
   }
 
