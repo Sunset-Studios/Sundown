@@ -14,7 +14,7 @@
 @group(1) @binding(2) var<storage, read_write> probe_depth_moments: array<u32>;
 @group(1) @binding(3) var<storage, read_write> probe_states: array<ProbeStateData>;
 
-@compute @workgroup_size(256, 1, 1)
+@compute @workgroup_size(128, 1, 1)
 fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let probe_index = gid.x;
     let probe_count = u32(ddgi_params.probe_counts.x);

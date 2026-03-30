@@ -29,7 +29,7 @@ fn ddgi_probe_ray_priority(state_data: ProbeStateData) -> f32 {
     return 1.0 + convergence_boost;
 }
 
-@compute @workgroup_size(256, 1, 1)
+@compute @workgroup_size(128, 1, 1)
 fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let active_probe_count = gi_counters.probe_update_count;
     let max_probes_per_frame = u32(ddgi_params.probe_counts.z);

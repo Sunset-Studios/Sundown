@@ -114,6 +114,7 @@ export const engine_cvar_config = Object.freeze({
         shadow_virtual_tiles: DebugDrawType.ASVSM_TileOverlay,
         shadow_tile_render: DebugDrawType.ASVSM_TileRenderOutput,
         shadow_dirty_tiles: DebugDrawType.ASVSM_DirtyTiles,
+        shadow_dirty_meshlets: DebugDrawType.ASVSM_DirtyShadowMeshlets,
         bloom: DebugDrawType.Bloom,
         ao: DebugDrawType.AO,
         bent_normal: DebugDrawType.BentNormal,

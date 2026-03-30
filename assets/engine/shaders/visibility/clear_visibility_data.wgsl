@@ -13,5 +13,7 @@
 @compute @workgroup_size(256)
 fn cs(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let g_id = global_id.x;
-    visible_object_instances[g_id] = -1;
+    if (g_id < arrayLength(&visible_object_instances)) {
+        visible_object_instances[g_id] = -1;
+    }
 }

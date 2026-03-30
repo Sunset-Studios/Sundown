@@ -82,13 +82,19 @@ fn morton_code(p: vec3<f32>) -> u32 {
 
 @compute @workgroup_size(256)
 fn compute_morton_codes(@builtin(global_invocation_id) gid: vec3<u32>) {
-    if (gid.x >= arrayLength(&bounds)) { return; }
-    // bvh_info layout compatibility: [leaf_count, bvh2_count, prim_count, prim_base]
-    let prim_base = bvh_info.prim_base;
-    let bound = bounds[prim_base + gid.x];
-    let center = (bound.min + bound.max) * 0.5;
-    let extent = bound.max - bound.min;
-    let is_invalid = all(bound.min.xyz == vec3<f32>(0.0)) && all(bound.max.xyz == vec3<f32>(0.0));
-    morton_codes[gid.x] = select(morton_code(center.xyz), INVALID_IDX, is_invalid);
-    bound_indices[gid.x] = gid.x;
+    if (gid.x >= arrayLength(&morton_codes) || gid.x >= arrayLength(&bound_indices)) {
+        return;
+    }
+
+    let source_index = bvh_info.prim_base + gid.x;
+    if (source_index >= arrayLength(&bounds)) {
+        morton_codes[gid.x] = INVALID_IDX;
+		bound_indices[gid.x] = INVALID_IDX;
+    } else {
+		let bound = bounds[source_index];
+		let center = (bound.min + bound.max) * 0.5;
+		let is_invalid = all(bound.min.xyz == vec3<f32>(0.0)) && all(bound.max.xyz == vec3<f32>(0.0));
+		morton_codes[gid.x] = select(morton_code(center.xyz), INVALID_IDX, is_invalid);
+        bound_indices[gid.x] = gid.x;
+	}
 }

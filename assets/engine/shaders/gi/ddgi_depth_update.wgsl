@@ -24,7 +24,7 @@ fn depth_moment_update_at(
     );
 }
 
-@compute @workgroup_size(256, 1, 1)
+@compute @workgroup_size(128, 1, 1)
 fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let active_ray_count = probe_ray_data.header.active_ray_count;
     if (gid.x >= active_ray_count) {

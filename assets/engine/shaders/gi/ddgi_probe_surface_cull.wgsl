@@ -27,7 +27,7 @@
 // MAIN COMPUTE SHADER
 // =============================================================================
 
-@compute @workgroup_size(256, 1, 1)
+@compute @workgroup_size(128, 1, 1)
 fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let probe_count = u32(ddgi_params.probe_counts.x);
     let frame_index_u32 = u32(ddgi_params.frame_index);

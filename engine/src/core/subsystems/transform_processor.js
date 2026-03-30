@@ -102,7 +102,7 @@ export class TransformProcessor extends SimulationLayer {
 
       const transform_dispatch_count = Math.max(
         1,
-        Math.floor((SceneGraph.scene_graph_layer_counts[i] + 255) / 256)
+        Math.ceil(SceneGraph.scene_graph_layer_counts[i] / 256)
       );
 
       ComputeTaskQueue.new_task(
