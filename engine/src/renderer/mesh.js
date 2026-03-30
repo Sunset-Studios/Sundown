@@ -14,6 +14,7 @@ import {
   build_empty_runtime_meshlet_sections,
   load_meshlet_sidecar_async,
 } from "./meshlet_runtime.js";
+import { get_cooked_sbvh_for_mesh, load_sbvh_sidecar_async } from "../acceleration/sbvh_sidecar.js";
 
 const discard_cpu_data = true;
 
@@ -40,7 +41,7 @@ export class Mesh {
 
   pending_loader = null;
   pending_runtime_meshlet_build = null;
-  triangle_bvh = null;
+  cooked_sbvh = null;
 
   _tmp_indices = [];
   _section_groups = new Map();
@@ -653,6 +654,7 @@ export class Mesh {
     MeshData.register(mesh);
 
     const sidecar_promise = load_meshlet_sidecar_async(gltf_path);
+    const sbvh_sidecar_promise = load_sbvh_sidecar_async(gltf_path);
     const loader = new glTFLoader();
     mesh.pending_loader = loader;
 
@@ -667,11 +669,12 @@ export class Mesh {
         }
 
         const resolved_mesh_index = target_mesh.meshID ?? gltf_obj.meshes.indexOf(target_mesh);
-        const sidecar = await sidecar_promise;
+        const [sidecar, sbvh_sidecar] = await Promise.all([sidecar_promise, sbvh_sidecar_promise]);
         if (mesh.pending_loader !== loader) {
           return;
         }
 
+        mesh.cooked_sbvh = get_cooked_sbvh_for_mesh(sbvh_sidecar, resolved_mesh_index);
         Mesh.build_from_gltf_mesh(mesh, gltf_obj, target_mesh, resolved_mesh_index, sidecar);
         if (mesh.pending_loader !== loader) {
           return;
@@ -772,12 +775,13 @@ export class Mesh {
     const pending_load = Symbol(key_name);
     const resolved_mesh_index = gltf_mesh.meshID ?? gltf_obj.meshes.indexOf(gltf_mesh);
     mesh.pending_loader = pending_load;
-    void load_meshlet_sidecar_async(gltf_path)
-      .then((sidecar) => {
+    void Promise.all([load_meshlet_sidecar_async(gltf_path), load_sbvh_sidecar_async(gltf_path)])
+      .then(([sidecar, sbvh_sidecar]) => {
         if (mesh.pending_loader !== pending_load) {
           return;
         }
 
+        mesh.cooked_sbvh = get_cooked_sbvh_for_mesh(sbvh_sidecar, resolved_mesh_index);
         Mesh.build_from_gltf_mesh(mesh, gltf_obj, gltf_mesh, resolved_mesh_index, sidecar);
         if (mesh.pending_loader !== pending_load) {
           return;

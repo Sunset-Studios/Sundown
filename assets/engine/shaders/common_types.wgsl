@@ -114,6 +114,7 @@ struct DrawCommand {
 struct MeshDirectoryEntry {
     bvh2_base: u32,
     leaf_count: u32,
+    primitive_count: u32,
     first_vertex: u32,
     first_index: u32,
 };

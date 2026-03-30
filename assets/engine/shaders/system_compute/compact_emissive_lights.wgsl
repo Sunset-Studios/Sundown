@@ -44,7 +44,7 @@ fn cs(@builtin(global_invocation_id) global_id: vec3<u32>) {
     }
 
     let mesh_directory_entry = blas_directory[mesh_id];
-    let tri_count = mesh_directory_entry.leaf_count;
+    let tri_count = mesh_directory_entry.primitive_count;
     if (tri_count == 0u) {
         return;
     }
