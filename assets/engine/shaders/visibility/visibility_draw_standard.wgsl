@@ -32,15 +32,14 @@ fn resolve_material(entity_id: u32, section_index: u32) -> StandardMaterialParam
 fn fragment_mask(entity_id: u32, section_index: u32, uv: vec2<f32>) -> f32 {
     let material = resolve_material(entity_id, section_index);
     let base_uv = uv * material.emission_roughness_metallic_tiling.w;
-    let tex_size = vec2<f32>(textureDimensions(texture_pool_albedo).xy);
-    let lod = compute_lod_from_uv(base_uv, tex_size);
+    let albedo_lod = compute_lod_from_uv(base_uv, vec2<f32>(textureDimensions(texture_pool_albedo).xy));
     let albedo = sample_texture_or_vec4_param_handle(
         u32(material.albedo_handle),
         base_uv,
         material.albedo,
         u32(material.texture_flags1.x),
         texture_pool_albedo,
-        lod
+        albedo_lod
     );
     return albedo.a;
 }
@@ -62,10 +61,11 @@ fn resolve_fragment(
 
     let tiling = material.emission_roughness_metallic_tiling.w;
     let base_uv = input.uv * tiling;
-    let tex_size = vec2<f32>(textureDimensions(texture_pool_albedo).xy);
-    let lod = compute_lod_from_uv(base_uv, tex_size);
 
     let view_index = u32(frame_info.view_index);
+
+    let height_lod = compute_lod_from_uv(base_uv, vec2<f32>(textureDimensions(texture_pool_height).xy));
+
     var sample_uv = base_uv;
     let height_flag = u32(material.texture_flags2.y);
     if ((height_flag & 1u) != 0u) {
@@ -83,10 +83,18 @@ fn resolve_fragment(
             0.0,
             height_flag,
             texture_pool_height,
-            lod
+            height_lod
         ) * height_scale - height_scale * 0.5;
         sample_uv = base_uv + view_tangent.xy * height_value / (view_tangent.z + 0.0001) * 0.05;
     }
+
+    let albedo_lod = compute_lod_from_uv(sample_uv, vec2<f32>(textureDimensions(texture_pool_albedo).xy));
+    let roughness_lod = compute_lod_from_uv(sample_uv, vec2<f32>(textureDimensions(texture_pool_roughness).xy));
+    let metallic_lod = compute_lod_from_uv(sample_uv, vec2<f32>(textureDimensions(texture_pool_metallic).xy));
+    let ao_lod = compute_lod_from_uv(sample_uv, vec2<f32>(textureDimensions(texture_pool_ao).xy));
+    let emission_lod = compute_lod_from_uv(sample_uv, vec2<f32>(textureDimensions(texture_pool_emission).xy));
+    let specular_lod = compute_lod_from_uv(sample_uv, vec2<f32>(textureDimensions(texture_pool_specular).xy));
+    let normal_lod = compute_lod_from_uv(sample_uv, vec2<f32>(textureDimensions(texture_pool_normal).xy));
 
     let albedo = sample_texture_or_vec4_param_handle(
         u32(material.albedo_handle),
@@ -94,7 +102,7 @@ fn resolve_fragment(
         material.albedo,
         u32(material.texture_flags1.x),
         texture_pool_albedo,
-        lod
+        albedo_lod
     );
     let roughness = sample_texture_or_float_param_handle(
         u32(material.roughness_handle),
@@ -102,7 +110,7 @@ fn resolve_fragment(
         material.emission_roughness_metallic_tiling.y,
         u32(material.texture_flags1.z),
         texture_pool_roughness,
-        lod
+        roughness_lod
     );
     let metallic = sample_texture_or_float_param_handle(
         u32(material.metallic_handle),
@@ -110,7 +118,7 @@ fn resolve_fragment(
         material.emission_roughness_metallic_tiling.z,
         u32(material.texture_flags1.w),
         texture_pool_metallic,
-        lod
+        metallic_lod
     );
     let ao = sample_texture_or_float_param_handle(
         u32(material.ao_handle),
@@ -118,7 +126,7 @@ fn resolve_fragment(
         material.ao_height_specular.x,
         u32(material.texture_flags2.x),
         texture_pool_ao,
-        lod
+        ao_lod
     );
     let emissive = sample_texture_or_float_param_handle(
         u32(material.emission_handle),
@@ -126,7 +134,7 @@ fn resolve_fragment(
         material.emission_roughness_metallic_tiling.x,
         u32(material.texture_flags2.w),
         texture_pool_emission,
-        lod
+        emission_lod
     );
     let specular = sample_texture_or_float_param_handle(
         u32(material.specular_handle),
@@ -134,7 +142,7 @@ fn resolve_fragment(
         material.ao_height_specular.z,
         u32(material.texture_flags2.z),
         texture_pool_specular,
-        lod
+        specular_lod
     );
 
     if ((u32(material.texture_flags1.y) & 1u) != 0u) {
@@ -144,7 +152,7 @@ fn resolve_fragment(
             input.normal.xyz
         );
         let normal_sample =
-            sample_handle_rgba(u32(material.normal_handle), sample_uv, texture_pool_normal, lod).xyz * 2.0 - 1.0;
+            sample_handle_rgba(u32(material.normal_handle), sample_uv, texture_pool_normal, normal_lod).xyz * 2.0 - 1.0;
         f_out.normal = vec4<f32>(safe_normalize(tbn_matrix * normal_sample), 1.0);
     }
 

@@ -13,7 +13,7 @@ import { Name } from "../../utility/names.js";
 import { ResourceCache } from "../resource_cache.js";
 import { ispot, npot } from "../../utility/math.js";
 
-const COMPUTE_WORKGROUP_SIZE = 256;
+const COMPUTE_WORKGROUP_SIZE = 128;
 const DDGI_DEFAULT_PROBE_DEPTH_RESOLUTION = 16;
 const DDGI_MAX_CASCADES = 4;
 
@@ -251,7 +251,7 @@ const ddgi_atrous_diffuse_shader_setup = {
 export class DDGI {
   config = {
     probe_grid_dimensions: [64, 64, 64],
-    probe_spacing: 2.0,
+    probe_spacing: 1.0,
     probe_radius: 0.1,
     min_rays_per_probe: 32,
     max_rays_per_probe: 256,
@@ -1037,7 +1037,7 @@ export class DDGI {
 
         const tlas_bvh2_bounds_buf = graph.get_physical_buffer(tlas_bvh2_bounds);
         const tlas_aabb_stride_words = 8;
-        const tlas_node_count = Math.floor(tlas_bvh2_bounds_buf.config.size / tlas_aabb_stride_words);
+        const tlas_node_count = Math.floor(tlas_bvh2_bounds_buf.config.size / (tlas_aabb_stride_words * 4));
         pass.dispatch(Math.ceil(tlas_node_count / COMPUTE_WORKGROUP_SIZE), 1, 1);
       }
     );

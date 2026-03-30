@@ -167,6 +167,7 @@ export class DebugOverlay {
       case DebugDrawType.ASVSM_TileRenderOutput:
         return "debug/debug_overlay_2d.wgsl";
       case DebugDrawType.ASVSM_DirtyTiles:
+      case DebugDrawType.ASVSM_DirtyShadowMeshlets:
         return "debug/debug_overlay_2d.wgsl";
       case DebugDrawType.AO:
         return "debug/debug_overlay_2d_single_comp.wgsl";

@@ -808,7 +808,8 @@ export class Mesh {
       return material_cache.get(mat_index);
     }
 
-    const mat_name = mat.name || `${mesh.name}_mat_${mat_index}`;
+    const material_scope = `${mesh.name}#mat_${mat_index}`;
+    const mat_name = mat.name ? `${material_scope}_${mat.name}` : material_scope;
     const alpha_mode = mat.alphaMode || "OPAQUE";
     const family =
       alpha_mode === "BLEND" ? MaterialFamilyType.Transparent : MaterialFamilyType.Opaque;

@@ -24,7 +24,7 @@
 @group(1) @binding(3) var<storage, read_write> block_sums_nonculled: array<u32>;
 @group(1) @binding(4) var<storage, read_write> block_sums_culled: array<u32>;
 
-const WORKGROUP_SIZE = 256u;
+const WORKGROUP_SIZE = 128u;
 
 // Workgroup shared memory for both categories
 var<workgroup> subgroup_sums_nonculled: array<u32, 4u>;

@@ -1,3 +1,5 @@
+diagnostic(off,subgroup_uniformity);
+
 #include "common.wgsl"
 #include "acceleration_common.wgsl"
 
@@ -44,31 +46,35 @@ fn initialize_leaf_clusters(
 #endif
 ) {
     let prim_idx = gid.x;
+    
+    if (
+        prim_idx < arrayLength(&parent_idx) &&
+        prim_idx < arrayLength(&index_pairs) &&
+        counters.prim_base + prim_idx < arrayLength(&bounds)
+    ) {
+    #if HAS_SUBGROUPS
+        let lane = subgroup_id;
+        let warp_ctx = make_warp_ctx(local_id.x, lane, subgroup_size);
+    #else
+        let lane = lane_id(local_id.x, LOGICAL_WARP_SIZE);
+        let warp_ctx = make_warp_ctx(local_id.x, lane, LOGICAL_WARP_SIZE);
+    #endif
 
-#if HAS_SUBGROUPS
-    let lane = subgroup_id;
-    let warp_ctx = make_warp_ctx(local_id.x, lane, subgroup_size);
-#else
-    let lane = lane_id(local_id.x, LOGICAL_WARP_SIZE);
-    let warp_ctx = make_warp_ctx(local_id.x, lane, LOGICAL_WARP_SIZE);
-#endif
+        // 1) Warp-aggregate the increment amount
+        let base = counters.prim_base;
+        let is_valid_leaf = select(0u, 1u, is_leaf(bounds[base + prim_idx]));
+        let warp_sum = warp_reduce_add_u32(warp_ctx, is_valid_leaf);
+        // 2) One atomicAdd per warp
+        if (is_warp_leader(warp_ctx)) {
+        atomicAdd(&counters.leaf_count, warp_sum);
+        }
+        if (is_valid_leaf == 1u) {
+            atomicMax(&counters.bvh2_count, prim_idx + 1u);
+        }
 
-    // 1) Warp-aggregate the increment amount
-    let base = counters.prim_base;
-    let is_valid_leaf = select(0u, 1u, is_leaf(bounds[base + prim_idx]));
-    let warp_sum = warp_reduce_add_u32(warp_ctx, is_valid_leaf);
-    // 2) One atomicAdd per warp
-    if (is_warp_leader(warp_ctx)) {
-      atomicAdd(&counters.leaf_count, warp_sum);
+        // parent_idx is set to INVALID_IDX because this leaf is not attached to a parent yet
+        parent_idx[prim_idx] = INVALID_IDX;
+        index_pairs[prim_idx].hi = INVALID_IDX;
+        index_pairs[prim_idx].lo = INVALID_IDX;
     }
-    if (is_valid_leaf == 1u) {
-        atomicMax(&counters.bvh2_count, prim_idx + 1u);
-    }
-
-    // parent_idx is set to INVALID_IDX because this leaf is not attached to a parent yet
-    parent_idx[prim_idx] = INVALID_IDX;
-    index_pairs[prim_idx].hi = INVALID_IDX;
-    index_pairs[prim_idx].lo = INVALID_IDX;
-
-    workgroupBarrier();
 }

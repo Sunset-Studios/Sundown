@@ -4,7 +4,7 @@ import { DEFAULT_CHUNK_CAPACITY } from "../../core/ecs/solar/types.js";
 import { LightFragment } from "../../core/ecs/fragments/light_fragment.js";
 import { SharedViewBuffer } from "../../core/shared_data.js";
 import { Renderer } from "../renderer.js";
-import { RenderPassFlags, MaterialPassType, DebugDrawType } from "../renderer_types.js";
+import { RenderPassFlags, DebugDrawType } from "../renderer_types.js";
 import { MeshTaskQueue } from "../mesh_task_queue.js";
 import { ShadowCuller } from "../cull/shadow_culler.js";
 import {
@@ -129,6 +129,17 @@ const debug_dirty_tiles_config = {
   usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
 };
 
+const debug_dirty_shadow_meshlets_config = {
+  name: "debug_dirty_shadow_meshlets",
+  format: rgba8unorm_format,
+  width: 0,
+  height: 0,
+  usage:
+    GPUTextureUsage.RENDER_ATTACHMENT |
+    GPUTextureUsage.TEXTURE_BINDING |
+    GPUTextureUsage.STORAGE_BINDING,
+};
+
 // Shadow atlas depth data stored in a GPUBuffer instead of a texture to access atomics
 const shadow_atlas_buf_config = {
   name: "shadow_atlas_buf",
@@ -191,12 +202,20 @@ const dirty_visible_light_tiles_shader_setup = {
 const render_shader_setup = {
   pipeline_shaders: {
     vertex: { path: "shadow/as_vsm/tile_render.vert.wgsl", defines: { SHADOWS_ENABLED: true } },
-    fragment: { path: "shadow/as_vsm/tile_render.frag.wgsl", defines: { SHADOWS_ENABLED: true } },
   },
   rasterizer_state: {
     cull_mode: "front",
   },
   depth_stencil_compare_op: "greater",
+};
+
+const resolve_depth_to_atlas_shader_setup = {
+  pipeline_shaders: {
+    compute: {
+      path: "shadow/as_vsm/resolve_depth_to_atlas.wgsl",
+      defines: { SHADOWS_ENABLED: true },
+    },
+  },
 };
 
 const debug_shadow_atlas_shader_setup = {
@@ -234,6 +253,15 @@ const debug_dirty_tiles_shader_setup = {
   },
 };
 
+const debug_dirty_shadow_meshlets_shader_setup = {
+  pipeline_shaders: {
+    compute: {
+      path: "shadow/as_vsm/debug_dirty_shadow_meshlets.wgsl",
+      defines: { SHADOWS_ENABLED: true },
+    },
+  },
+};
+
 const MAX_NUM_TEXTURE_POOLS = 1;
 
 /**
@@ -268,9 +296,16 @@ export class AdaptiveSparseVirtualShadowMaps {
       /* additional_data */ {
         aabb_bounds: 0,
         object_instances: 0,
+        entity_transforms: 0,
+        meshlet_instances: 0,
+        meshlet_buffer: 0,
+        meshlet_count: 0,
         vsm_settings: 0,
         light_view_buffer: 0,
         light_shadow_idx_buffer: 0,
+        page_offset: 0,
+        bitmask: 0,
+        entity_index_lookup: 0,
         page_table: 0,
         entity_flags: 0,
         dirty_slices: 0,
@@ -290,7 +325,14 @@ export class AdaptiveSparseVirtualShadowMaps {
       dense_lights_buffer,
       transforms_buffer,
       object_instances,
+      meshlet_instances,
+      meshlet_buffer,
+      meshlet_vertex_buffer,
+      meshlet_triangle_buffer,
       entity_index_lookup,
+      visibility_entity_image,
+      visibility_surface_image,
+      meshlet_draw_count,
       frustum_culler,
       force_recreate = false,
       debug_view = null,
@@ -455,6 +497,12 @@ export class AdaptiveSparseVirtualShadowMaps {
       this.max_lods
     );
 
+    this.debug_transforms_buffer = transforms_buffer;
+    this.debug_object_instances = object_instances;
+    this.debug_entity_index_lookup = entity_index_lookup;
+    this.debug_visibility_entity_image = visibility_entity_image;
+    this.debug_visibility_surface_image = visibility_surface_image;
+
     if (this.cached_light_count === 0) {
       return;
     }
@@ -462,16 +510,6 @@ export class AdaptiveSparseVirtualShadowMaps {
     // ────────────────────────────────────────────────────────────────
     // Clear Shadow Atlas Targets
     // ────────────────────────────────────────────────────────────────
-    render_graph.add_pass(
-      "as_vsm_clear_shadow_atlas_dummy_targets",
-      RenderPassFlags.Graphics,
-      {
-        outputs: [this.dummy_depth_image],
-        b_skip_pass_pipeline_setup: true,
-        b_skip_pass_bind_group_setup: true,
-      },
-      (graph, frame_data, encoder) => {}
-    );
 
     // ────────────────────────────────────────────────────────────────
     // VSM Setup Pass
@@ -496,9 +534,10 @@ export class AdaptiveSparseVirtualShadowMaps {
           ])
         );
 
-        // Set dummy depth image to load_op_load
+        // The dummy depth target is cleared for every clipmap raster pass and then
+        // consumed immediately by the depth-to-atlas resolve compute pass.
         const depth_dummy_image = graph.get_physical_image(this.dummy_depth_image);
-        depth_dummy_image.config.load_op = load_op_load;
+        depth_dummy_image.config.load_op = load_op_clear;
       }
     );
 
@@ -623,6 +662,20 @@ export class AdaptiveSparseVirtualShadowMaps {
     {
       this.shadow_culler.reset();
       this.shadow_culler.set_previous_culler(frustum_culler);
+      
+      this.shadow_culler.additional_data.aabb_bounds = aabb_bounds;
+      this.shadow_culler.additional_data.object_instances = object_instances;
+      this.shadow_culler.additional_data.entity_transforms = transforms_buffer;
+      this.shadow_culler.additional_data.meshlet_instances = meshlet_instances;
+      this.shadow_culler.additional_data.meshlet_buffer = meshlet_buffer;
+      this.shadow_culler.additional_data.meshlet_count = meshlet_draw_count;
+      this.shadow_culler.additional_data.vsm_settings = this.settings_buf;
+      this.shadow_culler.additional_data.page_table = this.page_table;
+      this.shadow_culler.additional_data.page_offset = this.page_offset;
+      this.shadow_culler.additional_data.entity_flags = entity_flags;
+      this.shadow_culler.additional_data.bitmask = this.bitmask_buf;
+      this.shadow_culler.additional_data.dirty_slices = this.dirty_slices;
+      this.shadow_culler.additional_data.entity_index_lookup = entity_index_lookup;
 
       for (
         let active_view_index = 0;
@@ -640,21 +693,11 @@ export class AdaptiveSparseVirtualShadowMaps {
             draw_count,
             view_index,
             clipmap_index,
+            active_view_index,
             force_recreate
           );
         }
       }
-
-      this.shadow_culler.additional_data.aabb_bounds = aabb_bounds;
-      this.shadow_culler.additional_data.object_instances = object_instances;
-      this.shadow_culler.additional_data.vsm_settings = this.settings_buf;
-      this.shadow_culler.additional_data.page_table = this.page_table;
-      this.shadow_culler.additional_data.page_offset = this.page_offset;
-      this.shadow_culler.additional_data.light_count = adjusted_light_count;
-      this.shadow_culler.additional_data.entity_flags = entity_flags;
-      this.shadow_culler.additional_data.bitmask = this.bitmask_buf;
-      this.shadow_culler.additional_data.dirty_slices = this.dirty_slices;
-      this.shadow_culler.additional_data.entity_index_lookup = entity_index_lookup;
 
       this.shadow_culler.init_views(render_graph, draw_count);
       this.shadow_culler.init_visibility(render_graph, draw_count);
@@ -688,7 +731,11 @@ export class AdaptiveSparseVirtualShadowMaps {
       const view_index = this.active_view_indices[light_idx];
 
       for (let c = 0; c < this.max_lods; c++) {
-        const visibility_buffer = this.shadow_culler.get_visibility_buffer(view_index, c);
+        const dirty_meshlet_list = this.shadow_culler.get_dirty_shadow_meshlet_list(view_index, c);
+        const dirty_meshlet_draw_args = this.shadow_culler.get_dirty_shadow_meshlet_draw_args(
+          view_index,
+          c
+        );
         const light_uniform = light_uniforms[light_idx * this.max_lods + c];
 
         render_graph.add_pass(
@@ -698,28 +745,49 @@ export class AdaptiveSparseVirtualShadowMaps {
             inputs: [
               transforms_buffer,
               object_instances,
-              visibility_buffer,
+              dirty_meshlet_list,
+              meshlet_buffer,
+              meshlet_vertex_buffer,
+              meshlet_triangle_buffer,
               this.settings_buf,
-              this.page_table,
               light_uniform,
               this.light_view_buf,
               this.light_shadow_idx_buf,
               entity_index_lookup,
-              this.shadow_atlas_buf,
+              this.page_table,
             ],
-            outputs: [this.shadow_atlas_buf, this.dummy_depth_image],
+            outputs: [this.dummy_depth_image],
             shader_setup: render_shader_setup,
           },
           (graph, frame_data, encoder) => {
             const pass = graph.get_physical_pass(frame_data.current_pass);
-            MeshTaskQueue.submit_indexed_indirect_draws(
-              pass,
-              view_index,
-              c /* clipmap_index */,
-              true /* skip_material_bind */,
-              false /* opaque_only */,
-              MaterialPassType.Depth
-            );
+            const dirty_meshlet_draw_args_phys = graph.get_physical_buffer(dirty_meshlet_draw_args);
+            if (dirty_meshlet_draw_args_phys) {
+              pass.pass.drawIndirect(dirty_meshlet_draw_args_phys.buffer, 0);
+            }
+          }
+        );
+
+        render_graph.add_pass(
+          `as_vsm_resolve_light_${light_idx}_c${c}`,
+          RenderPassFlags.Compute,
+          {
+            inputs: [
+              this.page_table,
+              this.dummy_depth_image,
+              this.shadow_atlas_buf,
+              this.settings_buf,
+              light_uniform,
+              this.light_view_buf,
+              this.light_shadow_idx_buf,
+              this.dirty_slices,
+            ],
+            outputs: [this.shadow_atlas_buf],
+            shader_setup: resolve_depth_to_atlas_shader_setup,
+          },
+          (graph, frame_data, encoder) => {
+            const pass = graph.get_physical_pass(frame_data.current_pass);
+            pass.dispatch(Math.ceil(this.atlas_size / 16), Math.ceil(this.atlas_size / 16), 1);
           }
         );
       }
@@ -798,6 +866,7 @@ export class AdaptiveSparseVirtualShadowMaps {
     return this.#light_draw_uniforms;
   }
 
+  #debug_dirty_shadow_meshlet_params = [];
   add_debug_passes(render_graph, force_recreate, debug_view, depth_texture) {
     const renderer = Renderer.get();
     const image_extent = renderer.get_canvas_resolution();
@@ -917,6 +986,116 @@ export class AdaptiveSparseVirtualShadowMaps {
           MeshTaskQueue.draw_quad(pass);
         }
       );
+    }
+    if (debug_view === DebugDrawType.ASVSM_DirtyShadowMeshlets) {
+      if (this.active_view_indices.length <= 0) {
+        return;
+      }
+
+      debug_dirty_shadow_meshlets_config.width = image_extent.width;
+      debug_dirty_shadow_meshlets_config.height = image_extent.height;
+      debug_dirty_shadow_meshlets_config.force = force_recreate;
+      this.debug_dirty_shadow_meshlets_image = render_graph.create_image(
+        debug_dirty_shadow_meshlets_config
+      );
+
+      render_graph.add_pass(
+        "debug_dirty_shadow_meshlets_clear_pass",
+        RenderPassFlags.Graphics,
+        {
+          outputs: [this.debug_dirty_shadow_meshlets_image],
+          b_skip_pass_pipeline_setup: true,
+          b_skip_pass_bind_group_setup: true,
+        },
+        (graph, frame_data, encoder) => {}
+      );
+
+      const debug_view_index = this.active_view_indices[0];
+      const clipmap_count = SharedViewBuffer.get_view_data(debug_view_index)?.clipmap_count || 1;
+
+      if (this.#debug_dirty_shadow_meshlet_params.length < clipmap_count) {
+        this.#debug_dirty_shadow_meshlet_params.length = clipmap_count;
+      }
+
+      const base_params = render_graph.create_buffer({
+        name: "debug_dirty_shadow_meshlet_params_base",
+        raw_data: new Uint32Array([0xffffffff, 0, 0, 0]),
+        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+      });
+
+      render_graph.add_pass(
+        "debug_dirty_shadow_meshlets_base_pass",
+        RenderPassFlags.Compute,
+        {
+          inputs: [
+            this.debug_dirty_shadow_meshlets_image,
+            depth_texture,
+            this.debug_visibility_entity_image,
+            this.debug_visibility_surface_image,
+            this.settings_buf,
+            this.light_view_buf,
+            this.debug_transforms_buffer,
+            this.debug_object_instances,
+            this.debug_entity_index_lookup,
+            this.shadow_culler.get_dirty_shadow_meshlet_list(debug_view_index, 0),
+            this.shadow_culler.get_dirty_shadow_meshlet_draw_args(debug_view_index, 0),
+            base_params,
+          ],
+          outputs: [this.debug_dirty_shadow_meshlets_image],
+          shader_setup: debug_dirty_shadow_meshlets_shader_setup,
+        },
+        (graph, frame_data, encoder) => {
+          const pass = graph.get_physical_pass(frame_data.current_pass);
+          pass.dispatch(Math.ceil(image_extent.width / 8), Math.ceil(image_extent.height / 8), 1);
+        }
+      );
+
+      for (let clipmap_index = 0; clipmap_index < clipmap_count; ++clipmap_index) {
+        const dirty_meshlet_list = this.shadow_culler.get_dirty_shadow_meshlet_list(
+          debug_view_index,
+          clipmap_index
+        );
+        const dirty_meshlet_draw_args = this.shadow_culler.get_dirty_shadow_meshlet_draw_args(
+          debug_view_index,
+          clipmap_index
+        );
+
+        this.#debug_dirty_shadow_meshlet_params[clipmap_index] = render_graph.create_buffer({
+          name: `debug_dirty_shadow_meshlet_params_${clipmap_index}`,
+          raw_data: new Uint32Array([clipmap_index, 0, 0, 0]),
+          usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+        });
+
+        render_graph.add_pass(
+          `debug_dirty_shadow_meshlets_pass_clipmap_${clipmap_index}`,
+          RenderPassFlags.Compute,
+          {
+            inputs: [
+              this.debug_dirty_shadow_meshlets_image,
+              depth_texture,
+              this.debug_visibility_entity_image,
+              this.debug_visibility_surface_image,
+              this.settings_buf,
+              this.light_view_buf,
+              this.debug_transforms_buffer,
+              this.debug_object_instances,
+              this.debug_entity_index_lookup,
+              dirty_meshlet_list,
+              dirty_meshlet_draw_args,
+              this.#debug_dirty_shadow_meshlet_params[clipmap_index],
+            ],
+            outputs: [this.debug_dirty_shadow_meshlets_image],
+            shader_setup: debug_dirty_shadow_meshlets_shader_setup,
+          },
+          (graph, frame_data, encoder) => {
+            graph
+              .get_physical_buffer(this.#debug_dirty_shadow_meshlet_params[clipmap_index])
+              .write(new Uint32Array([clipmap_index, 0, 0, 0]));
+            const pass = graph.get_physical_pass(frame_data.current_pass);
+            pass.dispatch(Math.ceil(image_extent.width / 8), Math.ceil(image_extent.height / 8), 1);
+          }
+        );
+      }
     }
   }
 }

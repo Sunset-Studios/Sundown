@@ -224,7 +224,7 @@ fn is_sphere_occluded(center: vec3<f32>, radius: f32, view_index: u32) -> bool {
 // Dispatch: ceil(probe_count / 32 / 256) workgroups.
 // =============================================================================
 
-@compute @workgroup_size(256, 1, 1)
+@compute @workgroup_size(128, 1, 1)
 fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let probe_count = u32(ddgi_params.probe_counts.x);
     let view_index = u32(frame_info.view_index);

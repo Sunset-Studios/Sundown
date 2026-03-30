@@ -18,15 +18,14 @@ struct DrawCullData {
 
 @group(1) @binding(0) var<storage, read> bounds: array<AABB>;
 @group(1) @binding(1) var<storage, read> visible_object_instances_no_occlusion: array<i32>;
-@group(1) @binding(2) var<storage, read_write> visible_object_instances: array<i32>;
-@group(1) @binding(3) var<storage, read> object_instances: array<ObjectInstance>;
-@group(1) @binding(4) var<uniform> draw_cull_data: DrawCullData;
-@group(1) @binding(5) var<uniform> vsm_settings: ASVSMSettings;
-@group(1) @binding(6) var<storage, read> entity_flags: array<u32>;
-@group(1) @binding(7) var<storage, read> bitmask: array<u32>;
-@group(1) @binding(8) var<storage, read> entity_index_lookup: array<u32>;
-@group(1) @binding(9) var page_table: texture_storage_2d_array<r32uint, read_write>;
-@group(1) @binding(10) var page_offset: texture_storage_2d_array<rgba32float, write>;
+@group(1) @binding(2) var<storage, read> object_instances: array<ObjectInstance>;
+@group(1) @binding(3) var<uniform> draw_cull_data: DrawCullData;
+@group(1) @binding(4) var<uniform> vsm_settings: ASVSMSettings;
+@group(1) @binding(5) var<storage, read> entity_flags: array<u32>;
+@group(1) @binding(6) var<storage, read> bitmask: array<u32>;
+@group(1) @binding(7) var<storage, read> entity_index_lookup: array<u32>;
+@group(1) @binding(8) var page_table: texture_storage_2d_array<r32uint, read_write>;
+@group(1) @binding(9) var page_offset: texture_storage_2d_array<rgba32float, write>;
 
 // ------------------------------------------------------------------------------------
 // Helper Functions
@@ -162,21 +161,15 @@ fn cs(@builtin(global_invocation_id) global_id: vec3<u32>) {
             return;
         }
 
-        // If area too large, mark all tiles
-        if (span_x * span_y > 256) {
-            for (var ty = 0; ty < tile_count; ty = ty + 1) {
-                for (var tx = 0; tx < tile_count; tx = tx + 1) {
-                    mark_tile(u32(tx), u32(ty), slice_idx, clipmap_index, light_shadow_idx, &view);
-                }
-            }
-        } else {
-            // Loop over unwrapped tile range, marking wrapped coordinates
-            for (var ty = min_tile_y; ty <= max_tile_y; ty = ty + 1) {
-                let wrapped_ty = ((ty % tile_count) + tile_count) % tile_count;
-                for (var tx = min_tile_x; tx <= max_tile_x; tx = tx + 1) {
-                    let wrapped_tx = ((tx % tile_count) + tile_count) % tile_count;
-                    mark_tile(u32(wrapped_tx), u32(wrapped_ty), slice_idx, clipmap_index, light_shadow_idx, &view);
-                }
+        let wrapped_span_x = min(span_x, tile_count);
+        let wrapped_span_y = min(span_y, tile_count);
+
+        // Loop over the unique wrapped tile range instead of broadening to the whole clipmap.
+        for (var ty = 0; ty < wrapped_span_y; ty = ty + 1) {
+            let wrapped_ty = (((min_tile_y + ty) % tile_count) + tile_count) % tile_count;
+            for (var tx = 0; tx < wrapped_span_x; tx = tx + 1) {
+                let wrapped_tx = (((min_tile_x + tx) % tile_count) + tile_count) % tile_count;
+                mark_tile(u32(wrapped_tx), u32(wrapped_ty), slice_idx, clipmap_index, light_shadow_idx, &view);
             }
         }
     }

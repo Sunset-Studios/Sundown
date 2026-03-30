@@ -1225,7 +1225,7 @@ export class RenderGraph {
    */
   submit() {
     profile_scope("RenderGraph.submit", () => {
-      this._reset_pass_cache_bind_groups();
+      this._reset_all_pass_cache_bind_groups();
       this._add_queued_post_commands();
       this._compile();
 
@@ -1254,10 +1254,9 @@ export class RenderGraph {
         GPUTimeQuery.resolve(encoder);
       }
 
-      CommandQueue.submit(encoder, this._execute_post_render_callbacks);
+      this._reset_pass_cache_bind_groups();
 
-      this.pass_cache_passes_needs_reset = false;
-      this.pass_cache_full_needs_reset = false;
+      CommandQueue.submit(encoder, this._execute_post_render_callbacks);
     });
   }
 
@@ -1953,8 +1952,14 @@ export class RenderGraph {
       this.pass_cache.bind_groups.keys().forEach((key) => {
         this.pass_cache.bind_groups.delete(key);
       });
-    } else if (this.pass_cache_full_needs_reset) {
+      this.pass_cache_passes_needs_reset = false;
+    }
+  }
+
+  _reset_all_pass_cache_bind_groups() {
+    if (this.pass_cache_full_needs_reset) {
       this.pass_cache.bind_groups = new Map();
+      this.pass_cache_full_needs_reset = true;
     }
   }
 
