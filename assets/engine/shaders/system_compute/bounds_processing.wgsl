@@ -5,7 +5,7 @@
 // Constants
 // ------------------------------------------------------------------------------------ 
 
-const bounds_padding = 1.0;
+const bounds_padding = 0.01;
 
 // ------------------------------------------------------------------------------------
 // Buffers
@@ -67,6 +67,7 @@ fn cs(
 	let lid = local_id.x;
 
 	let num_rows = arrayLength(&entity_transforms);
+	let in_bounds = idx < num_rows;
 
 	var min_point = vec3<f32>(pos_inf, pos_inf, pos_inf);
 	var max_point = vec3<f32>(neg_inf, neg_inf, neg_inf);
@@ -75,56 +76,38 @@ fn cs(
 	var max_node_bounds = vec4<f32>(0.0, 0.0, 0.0, -1.0);
 
     let entity_id_offset = idx;
-    let transform = entity_transforms[entity_id_offset].transform;
-    let position = transform[3].xyz;
-	let scale = vec3<f32>(length(transform[0].xyz), length(transform[1].xyz), length(transform[2].xyz));
+	var transform = identity_matrix;
+	var position = vec3<f32>(0.0, 0.0, 0.0);
+	var scale = vec3<f32>(1.0, 1.0, 1.0);
+	var mesh_id = INVALID_IDX;
 
-	let is_active = idx < num_rows && transform[3].w != 0.0;
+	if (in_bounds) {
+		transform = entity_transforms[entity_id_offset].transform;
+		position = transform[3].xyz;
+		scale = vec3<f32>(length(transform[0].xyz), length(transform[1].xyz), length(transform[2].xyz));
+		mesh_id = entity_mesh_ids[entity_id_offset];
+	}
+
+	let has_mesh_bounds = mesh_id != INVALID_IDX;
+	let is_active = in_bounds && transform[3].w != 0.0 && has_mesh_bounds;
 	if (is_active) {
-		// Prefer mesh-local bounds via shared mesh data if mesh id is valid; otherwise fall back to scale-based cube.
-		let mesh_id = entity_mesh_ids[entity_id_offset];
-		let has_mesh_bounds = mesh_id != INVALID_IDX;
+		let mesh_min_local = mesh_local_bounds[mesh_id].min.xyz;
+		let mesh_max_local = mesh_local_bounds[mesh_id].max.xyz;
+		let center_local = 0.5 * (mesh_min_local + mesh_max_local);
+		let half_local = 0.5 * (mesh_max_local - mesh_min_local);
 
-		if (has_mesh_bounds) {
-			let mesh_min_local = mesh_local_bounds[mesh_id].min.xyz;
-			let mesh_max_local = mesh_local_bounds[mesh_id].max.xyz;
-			let center_local = 0.5 * (mesh_min_local + mesh_max_local);
-			let half_local = 0.5 * (mesh_max_local - mesh_min_local);
-
-			let world_center = (transform * vec4<f32>(center_local, 1.0)).xyz;
-			let r0 = abs(transform[0].xyz) * 0.5;
-			let r1 = abs(transform[1].xyz) * 0.5;
-			let r2 = abs(transform[2].xyz) * 0.5;
-			let world_half = vec3<f32>(
-				dot(r0, half_local),
-				dot(r1, half_local),
-				dot(r2, half_local),
-			);
-			let padding = world_half * bounds_padding;
-			min_point = world_center - (world_half + padding);
-			max_point = world_center + (world_half + padding);
-		} else {
-			let half_size = vec3<f32>(
-			  abs(scale[0]) * 0.5,
-			  abs(scale[1]) * 0.5,
-			  abs(scale[2]) * 0.5,
-			);
-			let padding = vec3<f32>(
-			  half_size[0] * bounds_padding,
-			  half_size[1] * bounds_padding,
-			  half_size[2] * bounds_padding,
-			);
-			min_point = vec3<f32>(
-			  position[0] - half_size[0] - padding[0],
-			  position[1] - half_size[1] - padding[1],
-			  position[2] - half_size[2] - padding[2],
-			);
-			max_point = vec3<f32>(
-			  position[0] + half_size[0] + padding[0],
-			  position[1] + half_size[1] + padding[1],
-			  position[2] + half_size[2] + padding[2],
-			);
-		}
+		let world_center = (transform * vec4<f32>(center_local, 1.0)).xyz;
+		let c0 = abs(transform[0].xyz);
+		let c1 = abs(transform[1].xyz);
+		let c2 = abs(transform[2].xyz);
+		let world_half = vec3<f32>(
+			c0.x * half_local.x + c1.x * half_local.y + c2.x * half_local.z,
+			c0.y * half_local.x + c1.y * half_local.y + c2.y * half_local.z,
+			c0.z * half_local.x + c1.z * half_local.y + c2.z * half_local.z,
+		);
+		let padding = world_half * bounds_padding;
+		min_point = world_center - (world_half + padding);
+		max_point = world_center + (world_half + padding);
 
         min_node_bounds = vec4<f32>(min_point, f32(mesh_id));
         max_node_bounds = vec4<f32>(max_point, -1.0 - f32(entity_id_offset));
@@ -132,8 +115,10 @@ fn cs(
 		entity_flags[entity_id_offset] |= EF_AABB_DIRTY;
 	}
 
-	aabb_bounds[entity_id_offset].min = min_node_bounds;
-	aabb_bounds[entity_id_offset].max = max_node_bounds;
+	if (in_bounds) {
+		aabb_bounds[entity_id_offset].min = min_node_bounds;
+		aabb_bounds[entity_id_offset].max = max_node_bounds;
+	}
 
 	wg_min_points[lid] = min_point;
 	wg_max_points[lid] = max_point;

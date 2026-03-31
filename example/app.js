@@ -3014,12 +3014,6 @@ export class CityScene extends Scene {
       [0, 0, 0],
       [0, 0, 0, 1],
       [10, 10, 10],
-      null,
-      null,
-      null,
-      {
-        single_mesh: false
-      }
     );
     this.entities.push(city_root);
 
@@ -3076,7 +3070,7 @@ export class SciFiCityScene extends Scene {
     const light_fragment_view = EntityManager.get_fragment(light_entity, LightFragment);
     light_fragment_view.type = LightType.DIRECTIONAL;
     light_fragment_view.color = [1.0, 0.95, 0.85];  // Warm sunlight tint
-    light_fragment_view.intensity = 5.0;
+    light_fragment_view.intensity = 0.0;
     light_fragment_view.position = [30.0, -50.0, 20.0];
     light_fragment_view.active = true;
     light_fragment_view.is_primary_sun = 1;
@@ -3118,9 +3112,6 @@ export class SciFiCityScene extends Scene {
       [0, 0, 0],
       [0, 0, 0, 1],
       [2, 2, 2],
-      null,
-      null,
-      null,
     );
     this.entities.push(scifi_city_root);
 
@@ -3238,10 +3229,10 @@ export class BistroTestScene extends Scene {
   //await scene_switcher.add_scene(textures_scene);
   //await scene_switcher.add_scene(gi_test_scene);
   //await scene_switcher.add_scene(shadow_test_scene);
-  await scene_switcher.add_scene(sponza_scene);
+  //await scene_switcher.add_scene(sponza_scene);
   //await scene_switcher.add_scene(living_room_scene);
   //await scene_switcher.add_scene(city_scene);
-  //await scene_switcher.add_scene(scifi_city_scene);
+  await scene_switcher.add_scene(scifi_city_scene);
   //await scene_switcher.add_scene(bistro_test_scene);
 
   simulator.add_sim_layer(scene_switcher);

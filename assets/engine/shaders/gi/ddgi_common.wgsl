@@ -990,8 +990,7 @@ fn ddgi_sample_sh_irradiance_with_fallback(
     var current_cascade = next_cascade;
     
     // Iterate through coarser cascades until we have full coverage
-    //for (var iter = 0u; remaining_weight > 0.0001 && current_cascade < cascade_count; iter = iter + 1u) {
-    if (remaining_weight > 0.0001 && current_cascade < cascade_count) {
+    for (var iter = 0u; remaining_weight > 0.0001 && current_cascade < cascade_count; iter = iter + 1u) {
         let coarse_result = ddgi_sample_sh_irradiance_single_cascade_internal(
             ddgi_params,
             sh_probes,
@@ -1007,6 +1006,8 @@ fn ddgi_sample_sh_irradiance_with_fallback(
         let contribute_weight = remaining_weight * coarse_result.readiness;
         accumulated_irradiance = accumulated_irradiance + coarse_result.irradiance * contribute_weight;
         accumulated_weight = accumulated_weight + contribute_weight;
+        remaining_weight = remaining_weight * (1.0 - coarse_result.readiness);
+        current_cascade = current_cascade + 1u;
     }
     
     // Normalize by total weight (handles case where not all cascades are ready)

@@ -680,7 +680,7 @@ function finalize_gltf_build(mesh, gltf_obj, material_cache, primitive_descripto
   }
 }
 
-export function build_gltf_mesh(mesh, gltf_obj, gltf_mesh, mesh_index = null, sidecar = null) {
+export function prepare_gltf_mesh_build(mesh, gltf_obj, gltf_mesh, mesh_index = null) {
   mesh._reset_build_state();
 
   const material_cache = new Map();
@@ -712,7 +712,24 @@ export function build_gltf_mesh(mesh, gltf_obj, gltf_mesh, mesh_index = null, si
     append_standard_primitive(mesh, group, source_vertices, primitive_data.indices);
   }
 
+  return {
+    material_cache,
+    primitive_descriptors,
+  };
+}
+
+export function finalize_prepared_gltf_mesh_build(mesh, gltf_obj, build_state, sidecar = null) {
+  if (!build_state) {
+    return;
+  }
+
+  const { material_cache, primitive_descriptors } = build_state;
   finalize_gltf_build(mesh, gltf_obj, material_cache, primitive_descriptors, sidecar);
+}
+
+export function build_gltf_mesh(mesh, gltf_obj, gltf_mesh, mesh_index = null, sidecar = null) {
+  const build_state = prepare_gltf_mesh_build(mesh, gltf_obj, gltf_mesh, mesh_index);
+  finalize_prepared_gltf_mesh_build(mesh, gltf_obj, build_state, sidecar);
 }
 
 export function build_combined_gltf_scene(mesh, gltf_obj, scene_index = null, sidecar = null) {

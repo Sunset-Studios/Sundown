@@ -635,7 +635,18 @@ export class MeshBLAS {
     }
     this.#bvh2_free_pages.sort((a, b) => a - b);
 
-    // Mark all meshes dirty since buffer was recreated
+    // Rehydrate the recreated BLAS buffer immediately so traversal never sees
+    // valid directory entries pointing at zeroed node memory between frames.
+    for (const mesh_meta of this.#mesh_metadata.values()) {
+      if (!mesh_meta?.node_data || mesh_meta.bvh2_base_node_index === undefined) {
+        continue;
+      }
+
+      const byte_offset = mesh_meta.bvh2_base_node_index * BVH2_NODE_DATA_SIZE * UINT32_BYTES;
+      this.#bvh2_nodes_buffer.write(mesh_meta.node_data, byte_offset);
+    }
+
+    // Keep meshes marked dirty so any queue-driven rebuild bookkeeping still runs.
     for (const mesh_id of this.#bvh2_allocations.keys()) {
       this.#dirty_meshes.add(mesh_id);
     }
