@@ -275,8 +275,9 @@ export class Buffer {
 
   static create(config) {
     let existing_buffer = ResourceCache.get().fetch(CacheTypes.BUFFER, Name.from(config.name));
+    let should_resize = this.should_force_buffer_resize(existing_buffer, config.size || config.raw_data?.length);
 
-    if (existing_buffer && config.force) {
+    if (existing_buffer && (config.force || should_resize)) {
       existing_buffer.destroy();
       existing_buffer = null;
       config.force = false;
@@ -289,6 +290,11 @@ export class Buffer {
     }
 
     return existing_buffer;
+  }
+
+  static should_force_buffer_resize(existing_buffer, required_element_count) {
+    const required_size_bytes = required_element_count * 4;
+    return !existing_buffer || existing_buffer.config.size < required_size_bytes;
   }
 }
 

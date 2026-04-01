@@ -81,7 +81,10 @@ export function spawn_mesh_entity(
   }
 
   let existing_flags = EntityManager.get_entity_flags(entity);
-  EntityManager.set_entity_flags(entity, existing_flags | flags);
+  EntityManager.set_entity_flags(
+    entity,
+    existing_flags | flags | EntityFlags.HAS_MESH
+  );
 
   const new_static_mesh_view = EntityManager.get_fragment(entity, StaticMeshFragment);
   new_static_mesh_view.mesh = BigInt(Name.from(mesh.name));
@@ -123,6 +126,12 @@ export function spawn_plane_entity(
   if (children.length > 0) {
     EntityManager.set_entity_children(entity, children);
   }
+
+  let existing_flags = EntityManager.get_entity_flags(entity);
+  EntityManager.set_entity_flags(
+    entity,
+    existing_flags | EntityFlags.IGNORE_PARENT_SCALE | EntityFlags.HAS_STATIC_MESH
+  );
 
   const mesh = Mesh.quad();
   const new_static_mesh_view = EntityManager.get_fragment(entity, StaticMeshFragment);

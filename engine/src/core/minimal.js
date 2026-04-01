@@ -24,5 +24,6 @@ export const EntityFlags = {
   AABB_DIRTY: 1 << 5,
   BILLBOARD: 1 << 6,
   MOVED: 1 << 7,
+  HAS_MESH: 1 << 8,
 };
 

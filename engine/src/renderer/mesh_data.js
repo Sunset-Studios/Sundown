@@ -187,9 +187,6 @@ export class MeshData {
 
   static _set_bounds(index, b) {
     const base = index * mesh_bounds_size;
-    if (base >= this.bounds.length) {
-      this._resize_bounds(base * 2);
-    }
 
     this.bounds[base + 0] = b[0] || 0.0;
     this.bounds[base + 1] = b[1] || 0.0;
@@ -200,7 +197,11 @@ export class MeshData {
     this.bounds[base + 6] = b[5] || 0.0;
     this.bounds[base + 7] = 0.0;
 
-    this._upload_bounds(index);
+    if (base >= this.bounds.length) {
+      this._resize_bounds(base * 2);
+    } else {
+      this._upload_bounds(index);
+    }
   }
 
   static _upload_bounds(index) {
@@ -223,7 +224,6 @@ export class MeshData {
       name: mesh_bounds_buffer_name,
       usage: storage_usage,
       raw_data: this.bounds,
-      force: true,
     });
   }
 

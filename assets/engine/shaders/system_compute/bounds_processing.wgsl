@@ -39,14 +39,18 @@ fn cs(
 
     let entity_id_offset = idx;
 	var transform = identity_matrix;
+	var flags = 0u;
 	var mesh_id = INVALID_IDX;
 
 	if (in_bounds) {
 		transform = entity_transforms[entity_id_offset].transform;
-		mesh_id = entity_mesh_ids[entity_id_offset];
+		flags = entity_flags[entity_id_offset];
+		if ((flags & EF_HAS_MESH) != 0u) {
+			mesh_id = entity_mesh_ids[entity_id_offset];
+		}
 	}
 
-	let has_mesh_bounds = mesh_id != INVALID_IDX;
+	let has_mesh_bounds = (flags & EF_HAS_MESH) != 0u && mesh_id != INVALID_IDX;
 	let is_active = in_bounds && transform[3].w != 0.0 && has_mesh_bounds;
 	if (is_active) {
 		let mesh_min_local = mesh_local_bounds[mesh_id].min.xyz;

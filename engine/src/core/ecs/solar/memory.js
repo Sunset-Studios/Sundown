@@ -310,13 +310,13 @@ export class FragmentGpuBuffer {
       return; // Prevent partial/incorrect write
     }
 
-    const required_end_byte = (byte_offset + write_bytes) * this.capacity_multiplier;
+    const required_logical_rows = Math.ceil((byte_offset + write_bytes) / this.byte_stride);
+    const required_end_byte = required_logical_rows * this.byte_stride * this.capacity_multiplier;
     const write_elements = Math.ceil(row_count * (this.byte_stride / packed_chunk_data.BYTES_PER_ELEMENT));
 
     // Grow buffer if needed
     if (required_end_byte > this.buffer.config.size) {
-      const needed_rows = Math.ceil(required_end_byte / this.byte_stride);
-      this._resize_buffer(npot(needed_rows)); // Resize based on rows with multiplier
+      this._resize_buffer(npot(required_logical_rows)); // Resize based on logical rows; multiplier is applied in _resize_buffer
     }
 
     // Write the packed data

@@ -175,7 +175,6 @@ export class MeshBLAS {
       name: "mesh_blas_bvh2_nodes",
       usage: STORAGE_USAGE,
       size: this.#bvh2_blas_size * BVH2_NODE_DATA_SIZE,
-      force: true,
     });
 
     // Create directory for per-mesh allocation metadata
@@ -184,7 +183,6 @@ export class MeshBLAS {
       name: "mesh_blas_directory",
       usage: STORAGE_USAGE,
       size: this.#directory.length,
-      force: true,
     });
 
     // Create dummy index buffer for meshes without indices
@@ -192,7 +190,6 @@ export class MeshBLAS {
       name: "mesh_blas_dummy_indices",
       usage: STORAGE_USAGE,
       size: 1,
-      force: true,
     });
 
     // Initialize free page list
@@ -626,7 +623,6 @@ export class MeshBLAS {
       name: "mesh_blas_bvh2_nodes",
       usage: STORAGE_USAGE,
       size: this.#bvh2_blas_size * BVH2_NODE_DATA_SIZE,
-      force: true,
     });
 
     // Add new pages to free list (maintain sorted order)
@@ -678,7 +674,6 @@ export class MeshBLAS {
       name: "mesh_blas_directory",
       usage: STORAGE_USAGE,
       raw_data: this.#directory,
-      force: true,
     });
   }
 
@@ -717,63 +712,54 @@ export class MeshBLAS {
       name: "mesh_blas_morton_codes",
       usage: STORAGE_USAGE | GPUBufferUsage.COPY_SRC,
       size: primitive_capacity,
-      force: true,
     });
 
     this.#temp_morton_codes_buffer = Buffer.create({
       name: "mesh_blas_temp_morton_codes",
       usage: STORAGE_USAGE | GPUBufferUsage.COPY_SRC,
       size: primitive_capacity,
-      force: true,
     });
 
     this.#sorted_indices_buffer = Buffer.create({
       name: "mesh_blas_sorted_indices",
       usage: STORAGE_USAGE | GPUBufferUsage.COPY_SRC,
       size: primitive_capacity,
-      force: true,
     });
 
     this.#temp_sorted_indices_buffer = Buffer.create({
       name: "mesh_blas_temp_sorted_indices",
       usage: STORAGE_USAGE | GPUBufferUsage.COPY_SRC,
       size: primitive_capacity,
-      force: true,
     });
 
     this.#onesweep_global_hist_buffer = Buffer.create({
       name: "mesh_blas_global_hist",
       usage: STORAGE_USAGE | GPUBufferUsage.COPY_SRC,
       size: SCRATCH_RADIX * SCRATCH_RADIX_PASSES,
-      force: true,
     });
 
     this.#onesweep_pass_hist_buffer = Buffer.create({
       name: "mesh_blas_pass_hist",
       usage: STORAGE_USAGE | GPUBufferUsage.COPY_SRC,
       size: pass_histogram_size,
-      force: true,
     });
 
     this.#onesweep_tile_indices_buffer = Buffer.create({
       name: "mesh_blas_tile_indices",
       usage: STORAGE_USAGE | GPUBufferUsage.COPY_SRC,
       size: SCRATCH_RADIX_PASSES,
-      force: true,
     });
 
     this.#parent_indices_buffer = Buffer.create({
       name: "mesh_blas_parent_indices",
       usage: STORAGE_USAGE | GPUBufferUsage.COPY_SRC,
       size: primitive_capacity,
-      force: true,
     });
 
     this.#bvh_index_pairs_buffer = Buffer.create({
       name: "mesh_blas_index_pairs",
       usage: STORAGE_USAGE | GPUBufferUsage.COPY_SRC,
       size: primitive_capacity * 2, // u64 per primitive
-      force: true,
     });
   }
 
