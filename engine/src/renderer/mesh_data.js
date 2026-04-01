@@ -222,7 +222,7 @@ export class MeshData {
     this.mesh_bounds_buffer = Buffer.create({
       name: mesh_bounds_buffer_name,
       usage: storage_usage,
-      size: this.bounds.length,
+      raw_data: this.bounds,
       force: true,
     });
   }
