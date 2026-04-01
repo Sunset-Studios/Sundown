@@ -119,6 +119,11 @@ fn get_light_attenuation(light: Light, fragment_pos: vec3<f32>) -> f32 {
 // ------------------------------------------------------------------------------------
 // Microfacet Distribution
 // ------------------------------------------------------------------------------------
+fn alpha_from_roughness(roughness: f32) -> f32 {
+    let clamped = clamp(roughness, 0.001, 1.0);
+    return clamped * clamped;
+}
+
 fn d_ggx(n_dot_h: f32, roughness: f32) -> f32 {
     let a = n_dot_h * roughness;
     let k = roughness / max(0.001, 1.0 - n_dot_h * n_dot_h + a * a);
@@ -126,9 +131,10 @@ fn d_ggx(n_dot_h: f32, roughness: f32) -> f32 {
 }
 
 fn importance_sample_ggx(xi: vec2<f32>, n: vec3<f32>, roughness: f32) -> vec3<f32> {
-    let a = roughness * roughness;
+    let alpha = alpha_from_roughness(roughness);
+    let alpha2 = alpha * alpha;
     let phi = 2.0 * PI * xi.x;
-    let cos_theta = sqrt((1.0 - xi.y) / (1.0 + (a * a - 1.0) * xi.y));
+    let cos_theta = sqrt((1.0 - xi.y) / (1.0 + (alpha2 - 1.0) * xi.y));
     let sin_theta = sqrt(1.0 - cos_theta * cos_theta);
 
     let h = vec3<f32>(
@@ -225,20 +231,31 @@ fn uniform_hemisphere_pdf() -> f32 {
 }
 
 fn cosine_hemisphere_pdf(normal: vec3<f32>, sample_dir: vec3<f32>) -> f32 {
-    return dot(normal, sample_dir) / PI;
+    return max(dot(normal, sample_dir), 0.0) / PI;
 }
 
 fn ggx_pdf(normal: vec3<f32>, view_dir: vec3<f32>, sample_dir: vec3<f32>, roughness: f32) -> f32 {
-    let h = normalize(view_dir + sample_dir);
+    let n_dot_l = dot(normal, sample_dir);
+    if (n_dot_l <= 0.0) {
+        return 0.0;
+    }
+
+    let h = safe_normalize(view_dir + sample_dir);
+    let v_dot_h = dot(view_dir, h);
+    if (v_dot_h <= 0.0) {
+        return 0.0;
+    }
+
     let n_dot_h = max(dot(normal, h), 0.0001);
-    let d = d_ggx(n_dot_h, roughness);
-    return d * n_dot_h / max(4.0 * max(dot(view_dir, h), 0.0001), 0.0001);
+    let alpha = alpha_from_roughness(roughness);
+    let d = d_ggx(n_dot_h, alpha);
+    return d * n_dot_h / max(4.0 * v_dot_h, 0.0001);
 }
 
 fn brdf_pdf(normal: vec3<f32>, view_dir: vec3<f32>, sample_dir: vec3<f32>, roughness: f32, mis_specular_prob: f32) -> f32 {
-    let uniform_pdf = cosine_hemisphere_pdf(normal, sample_dir);
+    let cosine_pdf = cosine_hemisphere_pdf(normal, sample_dir);
     let ggx_pdf = ggx_pdf(normal, view_dir, sample_dir, roughness);
-    return mis_specular_prob * ggx_pdf + (1.0 - mis_specular_prob) * uniform_pdf;
+    return mis_specular_prob * ggx_pdf + (1.0 - mis_specular_prob) * cosine_pdf;
 }
 
 // https://www.pbr-book.org/3ed-2018/Monte_Carlo_Integration/2D_Sampling_with_Multidimensional_Transformations#UniformlySamplingaHemisphere
@@ -253,11 +270,11 @@ fn sample_uniform_hemisphere(normal: vec3<f32>, r1: f32, r2: f32) -> vec3<f32> {
 }
 
 fn sample_ggx(n: vec3<f32>, roughness: f32, r1: f32, r2: f32) -> vec3<f32> {
-    let a = roughness * roughness;
-    let a2 = a * a;
+    let alpha = alpha_from_roughness(roughness);
+    let alpha2 = alpha * alpha;
     
     let phi = 2.0 * PI * r1;
-    let cos_theta = sqrt((1.0 - r2) / (1.0 + (a2 - 1.0) * r2));
+    let cos_theta = sqrt((1.0 - r2) / (1.0 + (alpha2 - 1.0) * r2));
     let sin_theta = sqrt(1.0 - cos_theta * cos_theta);
     
     let up = select(vec3<f32>(0.0, 1.0, 0.0), vec3<f32>(1.0, 0.0, 0.0), abs(n.y) > 0.999);
@@ -336,6 +353,12 @@ fn calculate_direct_brdf(
     let attenuation = get_light_attenuation(light, fragment_pos);
 
     // Halfway vector and dot products
+    let n_dot_v_raw = dot(normal, view_dir);
+    let n_dot_l_raw = dot(normal, light_dir);
+    if (n_dot_v_raw <= 0.0 || n_dot_l_raw <= 0.0) {
+        return vec3<f32>(0.0);
+    }
+
     let halfway = safe_normalize(light_dir + view_dir);
     let n_dot_v = max(dot(normal, view_dir), 0.0001);
     let n_dot_l = max(dot(normal, light_dir), 0.0001);
@@ -356,9 +379,9 @@ fn calculate_direct_brdf(
     let f = f_schlick_vec3(f0, 1.0, v_dot_h);
 
     // D and V for GGX
-    let r = max(roughness, 0.089);
-    let d = d_ggx(n_dot_h, r);
-    let v = v_smith_ggx_height_correlated_fast(n_dot_v, n_dot_l, r);
+    let alpha = alpha_from_roughness(max(roughness, 0.089));
+    let d = d_ggx(n_dot_h, alpha);
+    let v = v_smith_ggx_height_correlated_fast(n_dot_v, n_dot_l, alpha);
 
     // Specular BRDF (Cook-Torrance)
     let specular_brdf = (d * v) * f;
@@ -478,6 +501,12 @@ fn calculate_brdf_rt(
     clear_coat_roughness: f32,
 ) -> vec3<f32> {
     // Halfway vector and dot products
+    let n_dot_v_raw = dot(normal, view_dir);
+    let n_dot_l_raw = dot(normal, light_dir);
+    if (n_dot_v_raw <= 0.0 || n_dot_l_raw <= 0.0) {
+        return vec3<f32>(0.0);
+    }
+
     let halfway = safe_normalize(light_dir + view_dir);
     let n_dot_v = max(dot(normal, view_dir), 0.0001);
     let n_dot_l = max(dot(normal, light_dir), 0.0001);
@@ -491,9 +520,9 @@ fn calculate_brdf_rt(
     let f = f_schlick_vec3(f0, 1.0, v_dot_h);
 
     // Microfacet terms (GGX)
-    let r = clamp(roughness, 0.001, 1.0);
-    let d = d_ggx(n_dot_h, r);
-    let v = v_smith_ggx_height_correlated_fast(n_dot_v, n_dot_l, r);
+    let alpha = alpha_from_roughness(roughness);
+    let d = d_ggx(n_dot_h, alpha);
+    let v = v_smith_ggx_height_correlated_fast(n_dot_v, n_dot_l, alpha);
     let specular_brdf = (d * v) * f;
 
     // Diffuse (energy conserving)
@@ -530,6 +559,12 @@ fn calculate_brdf_lighting_rt(
     clear_coat: f32,
     clear_coat_roughness: f32,
 ) -> vec3<f32> {
+    let n_dot_v_raw = dot(normal, view_dir);
+    let n_dot_l_raw = dot(normal, light_dir);
+    if (n_dot_v_raw <= 0.0 || n_dot_l_raw <= 0.0) {
+        return vec3<f32>(0.0);
+    }
+
     let halfway = safe_normalize(light_dir + view_dir);
     let n_dot_v = max(dot(normal, view_dir), 0.0001);
     let n_dot_l = max(dot(normal, light_dir), 0.0001);
@@ -541,9 +576,9 @@ fn calculate_brdf_lighting_rt(
     let f0 = mix(vec3<f32>(dielectric_f0), vec3<f32>(1.0), metallic);
 
     let f = f_schlick_vec3(f0, 1.0, v_dot_h);
-    let r = clamp(roughness, 0.001, 1.0);
-    let d = d_ggx(n_dot_h, r);
-    let v = v_smith_ggx_height_correlated_fast(n_dot_v, n_dot_l, r);
+    let alpha = alpha_from_roughness(roughness);
+    let d = d_ggx(n_dot_h, alpha);
+    let v = v_smith_ggx_height_correlated_fast(n_dot_v, n_dot_l, alpha);
 
     let specular_brdf = (d * v) * f;
     let kd = (1.0 - metallic) * (vec3<f32>(1.0) - f);
