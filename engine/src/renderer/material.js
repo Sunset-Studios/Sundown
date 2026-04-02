@@ -1033,7 +1033,9 @@ export class StandardMaterial {
     material.listen_for_texture_data(`texture_pool_${texture_config.pool_key}`);
     params_buffer[offset + texture_handles_offset + 1] = texture.bindless_handle;
 
-    params_buffer[offset + texture_flags1_offset + 1] = 1;
+    const flip_y = texture_config.flip_y !== undefined ? texture_config.flip_y : true;
+    const invert_y = texture_config.invert_y !== undefined ? texture_config.invert_y : flip_y;
+    params_buffer[offset + texture_flags1_offset + 1] = 1 | (invert_y ? 2 : 0);
 
     this.mark_params_dirty();
   }

@@ -327,7 +327,9 @@ function build_vertices_from_primitive_data(primitive_data, transform_state = nu
     }
     vec3.normalize(t_ortho, t_ortho);
 
+    const handedness = Math.abs(tangent_w) > 0.5 ? tangent_w : 1.0;
     const b = vec3.cross(vec3.create(), n, t_ortho);
+    vec3.scale(b, b, handedness);
     if (normal_matrix) {
       vec3.transformMat3(b, b, normal_matrix);
     }
