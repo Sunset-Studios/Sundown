@@ -121,7 +121,6 @@ export class GLTFSceneLoader {
    * @param {EntityHandle|null} parent_entity - Parent entity for the scene root
    * @param {Function|null} callback - Called with (root_entity, entities) when loading completes
    * @param {Object} options - Loading options
-   * @param {boolean} options.single_mesh - If true, combines all GLTF meshes into one entity (default: false)
    * @returns {EntityHandle} The root/mesh entity (returned immediately, loading happens async)
    */
   static load_scene(
@@ -134,32 +133,6 @@ export class GLTFSceneLoader {
     callback = null,
     options = {}
   ) {
-    const { single_mesh = false } = options;
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // SINGLE MESH MODE: Combine all GLTF meshes into one mesh entity
-    // All node transforms are baked into the vertex positions
-    // ─────────────────────────────────────────────────────────────────────────
-    if (single_mesh) {
-      const mesh = Mesh.from_gltf_scene(gltf_path, scene_index);
-
-      const mesh_entity = spawn_mesh_entity(
-        position,
-        rotation,
-        scale,
-        mesh,
-        0, // GLTF sets the material id via mesh internals
-        parent_entity
-      );
-
-      if (callback) {
-        // Call callback after a microtask to allow mesh loading to start
-        callback(mesh_entity, [mesh_entity]);
-      }
-
-      return mesh_entity;
-    }
-
     // ─────────────────────────────────────────────────────────────────────────
     // INSTANCED/FLAT MODE: Create root entity and load scene hierarchy
     // ─────────────────────────────────────────────────────────────────────────

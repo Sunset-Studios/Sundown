@@ -8,7 +8,6 @@ import { Type2NumOfComponent } from "../utility/gltf_loader.js";
 import { StandardMaterial } from "./material.js";
 import {
   build_gltf_mesh,
-  build_combined_gltf_scene,
   finalize_prepared_gltf_mesh_build,
   prepare_gltf_mesh_build,
   create_runtime_meshlet_data_async,
@@ -688,58 +687,6 @@ export class Mesh {
           mesh.pending_loader = null;
         }
         console.error(`[meshlet_runtime] failed to build ${gltf_path}:`, error);
-      });
-    });
-
-    ResourceCache.get().store(CacheTypes.MESH, cache_key, mesh);
-
-    return mesh;
-  }
-
-  /**
-   * Loads an entire GLTF scene as a single combined mesh.
-   * All meshes from all nodes are merged, with node transforms baked into vertices.
-   *
-   * @param {string} gltf_path - Path to the GLTF file
-   * @param {number|null} scene_index - Which scene to load (null = default scene)
-   * @returns {Mesh} The combined mesh
-   */
-  static from_gltf_scene(gltf_path, scene_index = null) {
-    const key_name = `${gltf_path}#combined_scene_${scene_index ?? "default"}`;
-    const cache_key = Name.from(key_name);
-    let mesh = ResourceCache.get().fetch(CacheTypes.MESH, cache_key);
-    if (mesh) {
-      return mesh;
-    }
-
-    mesh = new Mesh();
-    mesh.name = key_name;
-
-    MeshData.register(mesh);
-
-    const sidecar_promise = load_meshlet_sidecar_async(gltf_path);
-    const loader = new glTFLoader();
-    mesh.pending_loader = loader;
-    
-    loader.load(gltf_path, (gltf_obj) => {
-      void (async () => {
-        const sidecar = await sidecar_promise;
-        if (mesh.pending_loader !== loader) {
-          return;
-        }
-
-        build_combined_gltf_scene(mesh, gltf_obj, scene_index, sidecar);
-        if (mesh.pending_loader !== loader) {
-          return;
-        }
-
-        mesh.pending_loader = null;
-        MeshTaskQueue.invalidate_mesh(cache_key);
-      })().catch((error) => {
-        if (mesh.pending_loader === loader) {
-          mesh.pending_loader = null;
-        }
-        console.error(`[meshlet_runtime] failed to build combined scene ${gltf_path}:`, error);
       });
     });
 
