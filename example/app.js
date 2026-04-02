@@ -3225,7 +3225,7 @@ export class BistroTestScene extends Scene {
   //await scene_switcher.add_scene(bvh_scene);
   //await scene_switcher.add_scene(ml_scene);
   //await scene_switcher.add_scene(voxel_terrain_scene);
-  await scene_switcher.add_scene(object_painting_scene);
+  //await scene_switcher.add_scene(object_painting_scene);
   //await scene_switcher.add_scene(gltf_model_scene);
   //await scene_switcher.add_scene(textures_scene);
   //await scene_switcher.add_scene(gi_test_scene);
@@ -3233,7 +3233,7 @@ export class BistroTestScene extends Scene {
   //await scene_switcher.add_scene(sponza_scene);
   //await scene_switcher.add_scene(living_room_scene);
   //await scene_switcher.add_scene(city_scene);
-  //await scene_switcher.add_scene(scifi_city_scene);
+  await scene_switcher.add_scene(scifi_city_scene);
   //await scene_switcher.add_scene(bistro_test_scene);
 
   simulator.add_sim_layer(scene_switcher);

@@ -91,29 +91,28 @@ export class Buffer {
     }
     ResourceCache.get().remove(CacheTypes.BUFFER, Name.from(this.config.name));
 
-    // if (this.cpu_buffers) {
-    //   for (let i = 0; i < MAX_BUFFERED_FRAMES; ++i) {
-    //     let old_cpu_buffer = this.cpu_buffers[i];
-    //     Renderer.get().render_graph.queue_resource_deletion(
-    //       () => {
-    //         old_cpu_buffer?.destroy();
-    //       },
-    //       `buffer_cpu_${this.physical_id}_${i}`,
-    //       MAX_BUFFERED_FRAMES + 1
-    //     );
-    //   }
-    // }
-    // if (this.buffer) {
-    //   let old_buffer = this.buffer;
-    //   Renderer.get().render_graph.queue_resource_deletion(
-    //     () => {
-    //       old_buffer?.destroy();
-    //     },
-    //     `buffer_${this.physical_id}`,
-    //     MAX_BUFFERED_FRAMES + 1
-    //   );
-    // }
-    this.cpu_buffer = null;
+    if (this.cpu_buffers) {
+      for (let i = 0; i < MAX_BUFFERED_FRAMES; ++i) {
+        const old_cpu_buffer = this.cpu_buffers[i];
+        if (!old_cpu_buffer) {
+          continue;
+        }
+        Renderer.get().execution_queue.push_execution(
+          () => old_cpu_buffer.destroy(),
+          `buffer_cpu_${this.physical_id}_${i}_${performance.now()}`,
+          MAX_BUFFERED_FRAMES + 1
+        );
+      }
+    }
+    if (this.buffer) {
+      const old_buffer = this.buffer;
+      Renderer.get().execution_queue.push_execution(
+        () => old_buffer.destroy(),
+        `buffer_${this.physical_id}_${performance.now()}`,
+        MAX_BUFFERED_FRAMES + 1
+      );
+    }
+    this.cpu_buffers = null;
     this.buffer = null;
   }
 

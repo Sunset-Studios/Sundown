@@ -1,3 +1,4 @@
+import { MAX_BUFFERED_FRAMES } from "../core/minimal.js";
 import { Renderer } from "./renderer.js";
 import { Name } from "../utility/names.js";
 import { ResourceCache } from "./resource_cache.js";
@@ -5,6 +6,7 @@ import { ImageFlags } from "./renderer_types.js";
 import { CacheTypes } from "./renderer_types.js";
 import { global_dispatcher } from "../core/dispatcher.js";
 import { TextureArrayPools } from "./texture_pool.js";
+import { JobSystem } from "../utility/job_system.js";
 import {
   r8unorm_format,
 } from "../utility/config_permutations.js";
@@ -196,9 +198,7 @@ export class Texture {
       this._setup_views();
     }
 
-    const textures = await Promise.all(
-      config.paths.map((path) => Texture.load_image_bitmap(path))
-    );
+    const textures = await Texture.load_image_bitmaps(config.paths);
 
     // 1) compute how many mip‐levels we want
     const base = textures[0];
@@ -209,6 +209,7 @@ export class Texture {
     // 2) create or allocate the GPU texture with multiple mips
     // For pooled textures, allocation may trigger a GPU blit to resize existing content.
     const flip_y = config.flip_y !== undefined ? config.flip_y : true;
+    const placeholder_image = this.image;
 
     if (this.config.pool_key) {
       // Set mip_levels before allocate so the pool is created with a full mip chain (first
@@ -246,6 +247,15 @@ export class Texture {
       });
     }
 
+    if (placeholder_image && placeholder_image !== this.image) {
+      const old_image = placeholder_image;
+      renderer.execution_queue.push_execution(
+        () => old_image.destroy(),
+        Name.from(`${this.config.name}_placeholder_destroy_${performance.now()}`),
+        MAX_BUFFERED_FRAMES + 1
+      );
+    }
+
     await this._upload_bitmaps(textures, flip_y, renderer);
 
     // 6) rebuild all the texture views now that we've got new mips
@@ -269,9 +279,7 @@ export class Texture {
       return;
     }
 
-    const textures = await Promise.all(
-      this.config.paths.map((path) => Texture.load_image_bitmap(path))
-    );
+    const textures = await Texture.load_image_bitmaps(this.config.paths);
     this.config.depth = textures.length;
 
     await this._upload_bitmaps(
@@ -287,17 +295,17 @@ export class Texture {
 
   destroy() {
     ResourceCache.get().remove(CacheTypes.IMAGE, Name.from(this.config.name));
-    // if (this.image) {
-    //   let old_image = this.image;
-    //   Renderer.get().render_graph.queue_resource_deletion(
-    //     () => {
-    //       old_image.destroy();
-    //     },
-    //     `image_${this.physical_id}`,
-    //     MAX_BUFFERED_FRAMES + 1
-    //   );
-    // }
+
+    if (this.image && !this.config.pool_key) {
+      const old_image = this.image;
+      Renderer.get().execution_queue.push_execution(
+        () => old_image.destroy(),
+        `image_${this.physical_id}`,
+        MAX_BUFFERED_FRAMES + 1
+      );
+    }
     this.image = null;
+    this.views = [];
   }
 
   set_image(image) {
@@ -634,6 +642,30 @@ export class Texture {
     return await createImageBitmap(resolved_img, {
       colorSpaceConversion: "none",
     });
+  }
+
+  static async load_image_bitmaps(paths) {
+    if (!Array.isArray(paths) || paths.length === 0) {
+      return [];
+    }
+
+    if (JobSystem.is_supported()) {
+      const handle = JobSystem.submit("load_texture_bitmaps", {
+        paths,
+        base_url:
+          typeof document !== "undefined"
+            ? document.baseURI
+            : typeof window !== "undefined"
+              ? window.location.href
+              : undefined,
+      });
+      const result = await handle.promise;
+      if (Array.isArray(result?.bitmaps) && result.bitmaps.length === paths.length) {
+        return result.bitmaps;
+      }
+    }
+
+    return await Promise.all(paths.map((path) => Texture.load_image_bitmap(path)));
   }
 
   static #default = null;
