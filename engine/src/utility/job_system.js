@@ -1,5 +1,7 @@
 import JobWorker from "./job_worker.js?worker";
 import { FrameQueueAllocator, RandomAccessAllocator } from "../memory/allocator.js";
+import { SimulationLayer } from "../core/simulation_layer.js";
+import SimulationCore from "../core/simulation_core.js";
 
 const undefined_string = "undefined";
 const function_string = "function";
@@ -7,6 +9,7 @@ const could_not_deserialize_error_string = "Worker job message could not be dese
 const worker_job_system_not_supported_error_string = "Worker job system is not supported in this environment";
 const worker_job_failed_error_string = "Worker job failed";
 const job_cancelled_error_string = "Job cancelled";
+const job_system_shutdown_error_string = "Job system shutdown";
 const submit_message_kind_string = "submit";
 const progress_message_kind_string = "progress";
 const complete_message_kind_string = "complete";
@@ -83,7 +86,8 @@ class WorkerJobHandle {
   }
 }
 
-class WorkerJobSystem {
+export class JobSystem extends SimulationLayer {
+  static instance = null;
   static next_job_id = 1;
 
   worker_count = 1;
@@ -92,10 +96,24 @@ class WorkerJobSystem {
   workers = null;
   round_robin_index = 0;
 
-  constructor(worker_count = 1) {
-    this.worker_count = Math.max(1, worker_count | 0);
+  constructor() {
+    super();
+    this.name = "JobSystem";
+  }
+
+  init() {
+    super.init();
+
+    if (JobSystem.is_supported()) {
+      const hardware_concurrency =
+        typeof navigator !== undefined_string && navigator.hardwareConcurrency
+          ? navigator.hardwareConcurrency
+          : 1;
+      this.worker_count = Math.max(1, hardware_concurrency - 1);
+    }
+
     this.queue = new FrameQueueAllocator(1024, WorkerJob);
-    this.workers = new RandomAccessAllocator(worker_count, WorkerSlot);
+    this.workers = new RandomAccessAllocator(this.worker_count, WorkerSlot);
 
     for (let i = 0; i < this.worker_count; i++) {
       const worker = new JobWorker();
@@ -117,8 +135,18 @@ class WorkerJobSystem {
     }
   }
 
+  update(delta_time) {
+    super.update(delta_time);
+    this.#schedule();
+  }
+
+  cleanup() {
+    this.terminate();
+    super.cleanup();
+  }
+
   submit(type, payload = null, options = {}) {
-    const job_id = WorkerJobSystem.next_job_id++;
+    const job_id = JobSystem.next_job_id++;
     const handle = new WorkerJobHandle(this, job_id);
 
     this.handles.set(job_id, handle);
@@ -129,8 +157,6 @@ class WorkerJobSystem {
     job.payload = payload;
     job.transferables = options.transferables ?? [];
     job.status = JobStatus.PENDING;
-
-    this.#schedule();
 
     return handle;
   }
@@ -159,6 +185,27 @@ class WorkerJobSystem {
     }
   }
 
+  terminate() {
+    const shutdown_error = new Error(job_system_shutdown_error_string);
+
+    for (const handle of this.handles.values()) {
+      handle.reject(shutdown_error);
+    }
+    this.handles.clear();
+
+    for (let i = 0; i < this.workers.length; i++) {
+      const slot = this.workers.get(i);
+      slot.worker?.terminate();
+      slot.worker = null;
+      slot.busy = false;
+      slot.current_job_id = null;
+    }
+
+    this.queue.reset();
+    this.workers.reset();
+    this.round_robin_index = 0;
+  }
+
   #schedule() {
     if (this.queue.length === 0 || this.workers.length === 0) {
       return;
@@ -173,8 +220,13 @@ class WorkerJobSystem {
       }
 
       const next_job = this.queue.dequeue();
-      if (!next_job || next_job.status !== JobStatus.PENDING) {
+      if (!next_job) {
         return;
+      }
+
+      if (next_job.status !== JobStatus.PENDING) {
+        attempt--;
+        continue;
       }
 
       slot.busy = true;
@@ -233,8 +285,6 @@ class WorkerJobSystem {
       handle.resolve(payload);
       this.handles.delete(job_id);
     }
-
-    this.#schedule();
   }
 
   #handle_worker_fail(slot, error) {
@@ -249,8 +299,6 @@ class WorkerJobSystem {
         this.handles.delete(job_id);
       }
     }
-
-    this.#schedule();
   }
 
   #normalize_worker_error(event) {
@@ -273,39 +321,31 @@ class WorkerJobSystem {
 
     return new Error(parts.join(" ") || worker_job_failed_error_string);
   }
-}
-
-export class JobSystem {
-  static system = null;
 
   static is_supported() {
     return typeof Worker !== undefined_string;
   }
 
-  static init() {
-    if (!this.system && this.is_supported()) {
-      const hardware_concurrency =
-        typeof navigator !== undefined_string && navigator.hardwareConcurrency
-          ? navigator.hardwareConcurrency
-          : 1;
-      const worker_count = Math.max(1, hardware_concurrency - 1);
-      this.system = new WorkerJobSystem(worker_count);
+  static get() {
+    if (!this.instance) {
+      this.instance = new JobSystem();
     }
+    return this.instance;
+  }
+
+  static install() {
+    const instance = this.get();
+    if (!SimulationCore.simulation_layers.includes(instance)) {
+      SimulationCore.register_simulation_layer(instance);
+    }
+    return instance;
   }
 
   static submit(type, payload = null, options = {}) {
-    this.init();
-    if (!this.system) {
-      throw new Error(worker_job_system_not_supported_error_string);
-    }
-    return this.system.submit(type, payload, options);
+    return this.get().submit(type, payload, options);
   }
 
-  static cancel(handle) {
-    this.init();
-    if (!this.system) {
-      throw new Error(worker_job_system_not_supported_error_string);
-    }
-    this.system.cancel(handle);
+  static cancel(handle_or_job_id) {
+    this.get().cancel(handle_or_job_id);
   }
 }

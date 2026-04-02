@@ -1,12 +1,4 @@
-import { create_job_result } from "./job_worker_runtime.js";
-
-function resolve_href(path, base_href = self.location.href) {
-  return new URL(path, base_href).href;
-}
-
-function is_html_content_type(content_type = "") {
-  return content_type.includes("text/html") || content_type.includes("application/xhtml+xml");
-}
+import { create_job_result, resolve_href, is_html_content_type } from "./job_worker_runtime.js";
 
 export async function load_texture_bitmaps_job(payload, { signal, post_progress }) {
   const paths = payload?.paths ?? [];

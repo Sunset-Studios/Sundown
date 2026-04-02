@@ -12,6 +12,14 @@ export function create_job_result(payload, transferables = []) {
   };
 }
 
+export function resolve_href(path, base_href = self.location.href) {
+  return new URL(path, base_href).href;
+}
+
+export function is_html_content_type(content_type = "") {
+  return content_type.includes("text/html") || content_type.includes("application/xhtml+xml");
+}
+
 export function start_job_worker() {
   self.onmessage = async (event) => {
     const message = event.data;

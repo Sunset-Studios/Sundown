@@ -10,6 +10,7 @@ import { profile_scope } from "../utility/performance.js";
 import { frame_runner } from "../utility/frame_runner.js";
 import { reset_ui, flush_ui } from "../ui/2d/immediate.js";
 import { ProjectContext } from "./project_context.js";
+import { JobSystem } from "../utility/job_system.js";
 
 import { ALL_FRAGMENT_CLASSES } from "./ecs/fragment_registry.js";
 
@@ -23,6 +24,8 @@ export class Simulator {
     InputProvider.setup();
     // Initialize meta system
     MetaSystem.setup();
+    // Initialize global simulation-backed systems
+    JobSystem.install();
     
     // Initialize renderer with document canvas
     const canvas = document.getElementById(gpu_canvas_name);
