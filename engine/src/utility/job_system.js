@@ -45,6 +45,9 @@ class WorkerJobHandle {
   job_id = null;
   progress_listeners = new Set();
   promise = null;
+  status = JobStatus.PENDING;
+  result = null;
+  error = null;
 
   constructor(job_system, job_id) {
     this.job_system = job_system;
@@ -74,10 +77,19 @@ class WorkerJobHandle {
   }
 
   resolve(result) {
+    this.status = JobStatus.COMPLETED;
+    this.result = result;
+    this.error = null;
     this._resolve(result);
   }
 
   reject(error) {
+    this.error = error;
+    this.result = null;
+    this.status =
+      error?.message === job_cancelled_error_string
+        ? JobStatus.CANCELLED
+        : JobStatus.FAILED;
     this._reject(error);
   }
 
@@ -231,6 +243,10 @@ export class JobSystem extends SimulationLayer {
 
       slot.busy = true;
       slot.current_job_id = next_job.job_id;
+      const handle = this.handles.get(next_job.job_id);
+      if (handle) {
+        handle.status = JobStatus.RUNNING;
+      }
 
       try {
         slot.worker.postMessage(

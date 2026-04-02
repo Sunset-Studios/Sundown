@@ -154,7 +154,7 @@ class TextureArrayPool {
     );
   }
 
-  async resize(config) {
+  resize(config) {
     if (!this.needs_resize(config)) {
       return;
     }
@@ -193,13 +193,11 @@ class TextureArrayPool {
 
     this._sync_members_to_pool();
 
-    const reloads = [];
     for (const member of this.members) {
       if (member.config?.paths?.length) {
-        reloads.push(member.reload_from_source());
+        member.reload_from_source();
       }
     }
-    await Promise.all(reloads);
 
     global_dispatcher.dispatch(`texture_pool_${this.pool_key}`, this.texture);
     Renderer.get().mark_bind_groups_dirty(true);
@@ -265,7 +263,7 @@ export class TextureArrayPools {
     };
   }
 
-  static async allocate_loaded(config, texture) {
+  static allocate_loaded(config, texture) {
     const normalized = this.normalize_pool_config(config);
     const key = normalized.pool_key || "default";
 
@@ -275,7 +273,7 @@ export class TextureArrayPools {
       ResourceCache.get().store(CacheTypes.IMAGE_POOL, key, pool);
       Renderer.get().mark_bind_groups_dirty(true);
     } else if (pool.needs_resize(normalized)) {
-      await pool.resize(normalized);
+      pool.resize(normalized);
     }
 
     const index = pool.allocate(texture);
