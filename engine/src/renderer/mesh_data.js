@@ -21,10 +21,11 @@ const initial_meshlet_triangle_capacity = 1024;
 const initial_meshlet_group_capacity = 256;
 
 const mesh_bounds_size = 8;
-const vertex_stride = 32;
 const meshlet_stride = 80;
 const meshlet_group_stride = 64;
 const storage_usage = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST;
+
+export const vertex_stride = 32;
 
 export class MeshData {
   static is_initialized = false;
@@ -138,7 +139,10 @@ export class MeshData {
       this.initialize();
     }
 
-    if (mesh.vertices && mesh.vertex_buffer_offset === -1) {
+    if (mesh.packed_vertex_data && mesh.vertex_buffer_offset === -1) {
+      mesh.vertex_buffer_offset = this._add_packed_vertex_data(mesh);
+      mesh.index_buffer_offset = this._add_index_data(mesh);
+    } else if (mesh.vertices && mesh.vertex_buffer_offset === -1) {
       mesh.vertex_buffer_offset = this._add_vertex_data(mesh);
       mesh.index_buffer_offset = this._add_index_data(mesh);
     }
@@ -269,6 +273,25 @@ export class MeshData {
     }
 
     this._upload_vertex_data_range(write_offset, upload_size);
+
+    const old_vertex_offset = Math.floor(write_offset / vertex_stride);
+    this.vertex_buffer_head = write_offset + upload_size;
+    return old_vertex_offset;
+  }
+
+  static _add_packed_vertex_data(mesh) {
+    const packed = mesh.packed_vertex_data;
+    const write_offset = this.vertex_buffer_head;
+    const upload_size = packed?.length ?? 0;
+    const required = write_offset + upload_size;
+    if (required > this.vertex_data.byteLength) {
+      this._resize_vertex_data(required * 2);
+    }
+
+    if (upload_size > 0) {
+      this.vertex_data.set(packed, write_offset);
+      this._upload_vertex_data_range(write_offset, upload_size);
+    }
 
     const old_vertex_offset = Math.floor(write_offset / vertex_stride);
     this.vertex_buffer_head = write_offset + upload_size;

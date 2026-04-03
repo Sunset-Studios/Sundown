@@ -620,17 +620,23 @@ export function build_sbvh_from_positions_indices(positions, indices) {
 }
 
 export function build_mesh_sbvh(mesh) {
-  if (!mesh?.vertices || !mesh?.indices) {
+  if (!mesh?.indices) {
     return null;
   }
 
-  const positions = new Float32Array(mesh.vertices.length * 3);
-  for (let i = 0; i < mesh.vertices.length; i++) {
-    const position = mesh.vertices[i]?.position ?? [0.0, 0.0, 0.0];
-    const base = i * 3;
-    positions[base + 0] = position[0] ?? 0.0;
-    positions[base + 1] = position[1] ?? 0.0;
-    positions[base + 2] = position[2] ?? 0.0;
+  let positions = mesh.cpu_position_data;
+  if (!(positions instanceof Float32Array)) {
+    if (!mesh.vertices) {
+      return null;
+    }
+    positions = new Float32Array(mesh.vertices.length * 3);
+    for (let i = 0; i < mesh.vertices.length; i++) {
+      const position = mesh.vertices[i]?.position ?? [0.0, 0.0, 0.0];
+      const base = i * 3;
+      positions[base + 0] = position[0] ?? 0.0;
+      positions[base + 1] = position[1] ?? 0.0;
+      positions[base + 2] = position[2] ?? 0.0;
+    }
   }
 
   return build_sbvh_from_positions_indices(positions, mesh.indices);

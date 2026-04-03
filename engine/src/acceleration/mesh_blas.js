@@ -300,7 +300,7 @@ export class MeshBLAS {
         node_count: mesh.cooked_sbvh.node_count,
         node_data: mesh.cooked_sbvh.node_data,
       };
-    } else if (mesh.vertices && mesh.indices) {
+    } else if ((mesh.vertices || mesh.cpu_position_data) && mesh.indices) {
       sbvh_build = build_mesh_sbvh(mesh);
     } else {
       const existing_meta = this.#mesh_metadata.get(mesh_id);

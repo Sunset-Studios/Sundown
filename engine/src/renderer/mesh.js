@@ -22,6 +22,8 @@ const discard_cpu_data = true;
 export class Mesh {
   name = "";
   vertices = [];
+  packed_vertex_data = null;
+  cpu_position_data = null;
   indices = [];
   bounds_min_and_max = [0, 0, 0, 0, 0, 0];
   vertex_buffer_offset = -1;
@@ -65,12 +67,14 @@ export class Mesh {
   }
 
   _reset_build_state() {
-    this.vertices = [];
-    this.indices = [];
-    this._tmp_indices = [];
-    this._section_groups = new Map();
+    this.vertices.length = 0;
+    this.packed_vertex_data = null;
+    this.cpu_position_data = null;
+    this.indices.length = 0;
+    this._tmp_indices.length = 0;
+    this._section_groups.clear();
     this.meshlet_data = null;
-    this.meshlet_sections = [];
+    this.meshlet_sections.length = 0;
     this.meshlet_buffer_offset = -1;
     this.meshlet_vertex_buffer_offset = -1;
     this.meshlet_triangle_buffer_offset = -1;
@@ -769,11 +773,7 @@ export class Mesh {
     Mesh.quad();
   }
 
-  static make_engine_material_from_gltf(gltf, mesh, mat, mat_index, material_cache) {
-    if (material_cache && material_cache.has(mat_index)) {
-      return material_cache.get(mat_index);
-    }
-
+  static make_engine_material_from_gltf(gltf, mesh, mat, mat_index) {
     const material_scope = `${mesh.name}#mat_${mat_index}`;
     const mat_name = mat.name ? `${material_scope}_${mat.name}` : material_scope;
     const alpha_mode = mat.alphaMode || "OPAQUE";
@@ -943,10 +943,6 @@ export class Mesh {
       std.sample_emission(emissive_tex);
     } else {
       std.set_emission(emissive_scalar);
-    }
-
-    if (material_cache) {
-      material_cache.set(mat_index, std.material_id);
     }
 
     return std.material_id;
