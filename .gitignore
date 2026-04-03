@@ -13,4 +13,6 @@ tauri/gen
 **/*.meshlet.bin
 **/*.sbvh.json
 **/*.sbvh.bin
+**/*.cooked.json
+**/*.cooked.bin
 
