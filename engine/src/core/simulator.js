@@ -35,8 +35,8 @@ export class Simulator {
     const canvas = document.getElementById(gpu_canvas_name);
     const canvas_ui = ui_canvas_name ? document.getElementById(ui_canvas_name) : null;
     await Renderer.create(canvas, canvas_ui, DeferredShadingStrategy, {
-      pointer_lock: true,
-      use_precision_float: false,
+      pointer_lock: options.pointer_lock ?? true,
+      use_precision_float: options.use_precision_float ?? false,
       ...(options.renderer || {}),
     });
     
