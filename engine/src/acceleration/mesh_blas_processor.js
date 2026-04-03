@@ -519,28 +519,7 @@ export class MeshBLASProcessor extends SimulationLayer {
       if (!mesh_meta) continue; // Skip meshes without valid metadata
 
       const leaf_count = mesh_meta.leaf_count >>> 0;
-      if (!leaf_count) continue; // Skip empty meshes
-
-      // ┌─────────────────────────────────────────────────────────────────────────────────────────┐
-      // │                         📊 PER-MESH RESOURCE PREPARATION                                │
-      // └─────────────────────────────────────────────────────────────────────────────────────────┘
-
-      // Ensure scratch buffer capacity matches mesh complexity (auto-resizes if needed)
-      MeshBLAS.prepare_build(mesh_id, leaf_count);
-
-      // Create temporary per-mesh parameter buffers
-      const mesh_info_buffer = Buffer.create({
-        name: `mesh_${mesh_id}_build_info`,
-        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-        size: 6, // BVHData structure: [leaf_count, bvh2_count, prim_count, bvh2_base, unused, is_blas]
-      });
-
-      const mesh_selector_buffer = Buffer.create({
-        name: `mesh_${mesh_id}_selector`,
-        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-        size: 1, // Single u32: mesh_id for directory lookup
-      });
-      mesh_selector_buffer.write_raw(new Uint32Array([mesh_id >>> 0]));
+      if (!leaf_count || !mesh_meta.node_data) continue; // Skip empty or incomplete BLAS builds
 
       // ┌─────────────────────────────────────────────────────────────────────────────────────────┐
       // │                              📋 ADD BUILD TO QUEUE                                      │
@@ -550,8 +529,6 @@ export class MeshBLASProcessor extends SimulationLayer {
       this.build_queue.push({
         mesh_id: mesh_id,
         leaf_count: leaf_count,
-        mesh_info_buffer: mesh_info_buffer,
-        mesh_selector_buffer: mesh_selector_buffer,
         mesh_meta: mesh_meta
       });
     }
@@ -590,41 +567,9 @@ export class MeshBLASProcessor extends SimulationLayer {
 
     // Get the next build from queue (FIFO order)
     const build_item = this.build_queue.shift();
-    const { mesh_id, leaf_count, mesh_info_buffer, mesh_selector_buffer, mesh_meta } = build_item;
-
-    // ┌─────────────────────────────────────────────────────────────────────────────────────────┐
-    // │                        🔢 PHASE 0: LEAF BOUNDS GENERATION                               │
-    // └─────────────────────────────────────────────────────────────────────────────────────────┘
-
+    const { mesh_id, mesh_meta } = build_item;
     const blas_data = MeshBLAS.to_gpu_data();
-
-    // Generate triangle bounding boxes from mesh geometry
-    const leaf_workgroups = Math.max(1, Math.ceil(leaf_count / 64)); // 64 triangles per workgroup
-    ComputeTaskQueue.new_task(
-      `mesh_${mesh_id}_generate_leaf_bounds`,
-      "acceleration/blas_leaf_bounds.wgsl",
-      [
-        blas_data.bvh2_nodes_buffer, // Destination: BVH2 leaf node storage
-        blas_data.directory_buffer, // Mesh allocation directory
-        mesh_selector_buffer, // Current mesh identifier
-        mesh_meta.index_buffer, // Triangle index data
-      ],
-      [blas_data.bvh2_nodes_buffer], // Updated leaf bounds
-      leaf_workgroups,
-      1,
-      1,
-      "write_leaf_bounds"
-    );
-
-    // ┌─────────────────────────────────────────────────────────────────────────────────────────┐
-    // │                      🚀 COMPLETE 5-PHASE PIPELINE EXECUTION                             │
-    // └─────────────────────────────────────────────────────────────────────────────────────────┘
-
-    // Execute the complete compute pipeline: Morton → Sort → H-PLOC
-    this.build(
-      mesh_id,
-      leaf_count, // Triangle count
-      mesh_info_buffer // Build parameters
-    );
+    const byte_offset = mesh_meta.bvh2_base_node_index * 8 * 4;
+    blas_data.bvh2_nodes_buffer.write(mesh_meta.node_data, byte_offset);
   }
 }

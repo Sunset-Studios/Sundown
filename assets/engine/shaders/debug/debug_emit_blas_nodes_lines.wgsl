@@ -80,8 +80,8 @@ fn cs(
     
     let mesh_directory_entry = blas_directory[mesh_asset_id];
     
-    // Check if this node index is valid for this mesh
-    if (node_idx >= u32(mesh_directory_entry.leaf_count)) { return; }
+    let node_count = select(0u, 2u * mesh_directory_entry.leaf_count - 1u, mesh_directory_entry.leaf_count > 0u);
+    if (node_idx >= node_count) { return; }
     
     // ============================================================================
     // UNIQUE LINEAR INDEX CALCULATION - Create unique index per (mesh, node)

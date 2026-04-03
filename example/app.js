@@ -144,7 +144,6 @@ class SponzaScene extends Scene {
     window.addEventListener("pointerup", this.handlePointerUp, { passive: false });
     window.addEventListener("pointercancel", this.handlePointerUp, { passive: false });
 
-    this.show_dev_cursor();
     SharedViewBuffer.update_transforms([this.context.current_view]);
   }
 
@@ -561,9 +560,9 @@ class SponzaScene extends Scene {
     const viewPosition = vec4.clone(viewData.view_position);
 
     if (hasLookInput) {
-      this.cameraYaw += this.lookInput[0] * this.cameraLookSpeed * deltaTime;
+      this.cameraYaw -= this.lookInput[0] * this.cameraLookSpeed * deltaTime;
       this.cameraPitch = clamp(
-        this.cameraPitch - this.lookInput[1] * this.cameraLookSpeed * deltaTime,
+        this.cameraPitch + this.lookInput[1] * this.cameraLookSpeed * deltaTime,
         -this.maxCameraPitch,
         this.maxCameraPitch
       );
@@ -644,6 +643,7 @@ class SponzaScene extends Scene {
 
 (async () => {
   const simulator = await Simulator.create("gpu-canvas", "ui-canvas", {
+    pointer_lock: false,
     project: {
       name: "Sponza",
       root: "example",

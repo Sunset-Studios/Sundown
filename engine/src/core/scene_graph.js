@@ -1,7 +1,6 @@
 import { EntityManager } from "./ecs/entity.js";
 import { Buffer } from "../renderer/buffer.js";
 import { Tree } from "../memory/container.js";
-import { Renderer } from "../renderer/renderer.js";
 
 export class SceneGraph {
   static tree = new Tree();
@@ -53,8 +52,8 @@ export class SceneGraph {
       (out, node, size) => {
         const entity_idx = node.data.id;
         const count = node.data.instance_count;
-        const parent_entity_idx = this.tree.get_parent(node)
-          ? this.tree.get_parent(node).data.id
+        const parent_entity_idx = node.parent_idx !== -1
+          ? this.tree.nodes[node.parent_idx].data.id
           : -1;
         for (let i = 0; i < count; i++) {
           out[(size + i) * 2] = entity_idx + i;
@@ -64,7 +63,10 @@ export class SceneGraph {
       },
       (node) => EntityManager.get_entity_instance_count(node.data) * 2
     );
-    this.scene_graph_layer_counts = layer_counts;
+    // The flatten helper sizes the Int32Array in scalar elements, so each scene-graph
+    // entry contributes 2 ints. Convert layer counts back to entry counts before using
+    // them as vec2 scene-graph indices in the transform processor.
+    this.scene_graph_layer_counts = layer_counts.map((count) => count >>> 1);
 
     if (!result) {
       this.dirty = false;
@@ -83,7 +85,7 @@ export class SceneGraph {
     }
 
     let offset = 0;
-    this.scene_graph_uniforms = layer_counts.map((count, layer) => {
+    this.scene_graph_uniforms = this.scene_graph_layer_counts.map((count, layer) => {
       const uni = Buffer.create({
         name: `scene_graph_uniforms_${layer}`,
         usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,

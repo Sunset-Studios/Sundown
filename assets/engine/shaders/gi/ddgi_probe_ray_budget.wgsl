@@ -7,6 +7,7 @@
 @group(1) @binding(3) var<storage, read> gi_counters: GICountersReadOnly;
 @group(1) @binding(4) var<storage, read_write> probe_ray_allocations: array<vec2<u32>>; // x=base, y=count
 @group(1) @binding(5) var<storage, read_write> probe_ray_data: DDGIProbeRayDataBuffer;
+@group(1) @binding(6) var<storage, read_write> dispatch_params: array<u32>;
 
 fn ddgi_probe_ray_priority(state_data: ProbeStateData) -> f32 {
     let packed = state_data.packed_state;
@@ -108,4 +109,8 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
 
     atomicStore(&probe_ray_data.header.active_ray_count, ray_base);
+    dispatch_params[0] = (ray_base + 127u) / 128u;
+    dispatch_params[1] = 1u;
+    dispatch_params[2] = 1u;
+    dispatch_params[3] = ray_base;
 }

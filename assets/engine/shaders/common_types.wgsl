@@ -21,6 +21,8 @@ const ENTITY_GEN_MASK = (1 << ENTITY_GEN_BITS) - 1;
 const LOCAL_SLOT_MASK = (1 << LOCAL_SLOT_BITS) - 1;
 const CHUNK_INDEX_BITS = ENTITY_ROW_BITS - LOCAL_SLOT_BITS;
 const CHUNK_INDEX_MASK = ((1 << CHUNK_INDEX_BITS) - 1) << LOCAL_SLOT_BITS;
+const NORMAL_TEXTURE_FLAG_PRESENT = 1u;
+const NORMAL_TEXTURE_FLAG_INVERT_Y = 1u << 1u;
 
 const EF_ALIVE = 1u << 0;
 const EF_DIRTY = 1u << 1;
@@ -30,6 +32,7 @@ const EF_TRANSFORM_DIRTY = 1u << 4;
 const EF_AABB_DIRTY = 1u << 5;
 const EF_BILLBOARD = 1u << 6;
 const EF_MOVED = 1u << 7;
+const EF_HAS_MESH = 1u << 8;
 
 const LOG_DEPTH_C = 0.1; // Can adjust this value based on scene scale
 const MAX_UINT = 4294967295u;
@@ -114,6 +117,7 @@ struct DrawCommand {
 struct MeshDirectoryEntry {
     bvh2_base: u32,
     leaf_count: u32,
+    primitive_count: u32,
     first_vertex: u32,
     first_index: u32,
 };

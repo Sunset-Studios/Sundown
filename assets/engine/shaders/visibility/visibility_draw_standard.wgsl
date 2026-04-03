@@ -145,14 +145,17 @@ fn resolve_fragment(
         specular_lod
     );
 
-    if ((u32(material.texture_flags1.y) & 1u) != 0u) {
+    let normal_flags = u32(material.texture_flags1.y);
+    if ((normal_flags & NORMAL_TEXTURE_FLAG_PRESENT) != 0u) {
         let tbn_matrix = mat3x3<f32>(
             input.tangent.xyz,
             input.bitangent.xyz,
             input.normal.xyz
         );
-        let normal_sample =
-            sample_handle_rgba(u32(material.normal_handle), sample_uv, texture_pool_normal, normal_lod).xyz * 2.0 - 1.0;
+        let normal_sample = decode_normal_texture_sample(
+            sample_handle_rgba(u32(material.normal_handle), sample_uv, texture_pool_normal, normal_lod).xyz,
+            normal_flags
+        );
         f_out.normal = vec4<f32>(safe_normalize(tbn_matrix * normal_sample), 1.0);
     }
 

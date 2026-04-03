@@ -51,7 +51,7 @@ export class StaticMeshFragment extends Fragment {
     mesh_asset_id: {
       ctor: Uint32Array,
       elements: 1,
-      default: 0,
+      default: 4294967295,
       gpu_buffer: true,
       buffer_name: "mesh_asset_id",
       is_container: false,

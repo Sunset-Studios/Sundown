@@ -8,18 +8,22 @@ import { Type2NumOfComponent } from "../utility/gltf_loader.js";
 import { StandardMaterial } from "./material.js";
 import {
   build_gltf_mesh,
-  build_combined_gltf_scene,
+  finalize_prepared_gltf_mesh_build,
+  prepare_gltf_mesh_build,
   create_runtime_meshlet_data_async,
   extract_runtime_positions,
   build_empty_runtime_meshlet_sections,
   load_meshlet_sidecar_async,
 } from "./meshlet_runtime.js";
+import { get_cooked_sbvh_for_mesh, load_sbvh_sidecar_async } from "../acceleration/sbvh_sidecar.js";
 
 const discard_cpu_data = true;
 
 export class Mesh {
   name = "";
   vertices = [];
+  packed_vertex_data = null;
+  cpu_position_data = null;
   indices = [];
   bounds_min_and_max = [0, 0, 0, 0, 0, 0];
   vertex_buffer_offset = -1;
@@ -40,7 +44,10 @@ export class Mesh {
 
   pending_loader = null;
   pending_runtime_meshlet_build = null;
-  triangle_bvh = null;
+  pending_gltf_build_promise = null;
+  pending_gltf_build_state = null;
+  pending_gltf_meshlet_sidecar = null;
+  cooked_sbvh = null;
 
   _tmp_indices = [];
   _section_groups = new Map();
@@ -48,7 +55,7 @@ export class Mesh {
   _recreate_vertex_bounds() {
     this.bounds_min_and_max = [Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity];
 
-    for (let i = 0; i < this.vertices.length; i += 3) {
+    for (let i = 0; i < this.vertices.length; i++) {
       const vertex = this.vertices[i];
       this.bounds_min_and_max[0] = Math.min(this.bounds_min_and_max[0], vertex.position[0]);
       this.bounds_min_and_max[1] = Math.min(this.bounds_min_and_max[1], vertex.position[1]);
@@ -60,12 +67,14 @@ export class Mesh {
   }
 
   _reset_build_state() {
-    this.vertices = [];
-    this.indices = [];
-    this._tmp_indices = [];
-    this._section_groups = new Map();
+    this.vertices.length = 0;
+    this.packed_vertex_data = null;
+    this.cpu_position_data = null;
+    this.indices.length = 0;
+    this._tmp_indices.length = 0;
+    this._section_groups.clear();
     this.meshlet_data = null;
-    this.meshlet_sections = [];
+    this.meshlet_sections.length = 0;
     this.meshlet_buffer_offset = -1;
     this.meshlet_vertex_buffer_offset = -1;
     this.meshlet_triangle_buffer_offset = -1;
@@ -186,10 +195,6 @@ export class Mesh {
       }
     }
     return out;
-  }
-
-  static build_from_gltf_mesh(mesh, gltf_obj, gltf_mesh, mesh_index = null, sidecar = null) {
-    build_gltf_mesh(mesh, gltf_obj, gltf_mesh, mesh_index, sidecar);
   }
 
   static _schedule_runtime_meshlet_build(mesh, source_vertices, source_indices, source_sections) {
@@ -653,6 +658,7 @@ export class Mesh {
     MeshData.register(mesh);
 
     const sidecar_promise = load_meshlet_sidecar_async(gltf_path);
+    const sbvh_sidecar_promise = load_sbvh_sidecar_async(gltf_path);
     const loader = new glTFLoader();
     mesh.pending_loader = loader;
 
@@ -667,12 +673,13 @@ export class Mesh {
         }
 
         const resolved_mesh_index = target_mesh.meshID ?? gltf_obj.meshes.indexOf(target_mesh);
-        const sidecar = await sidecar_promise;
+        const [sidecar, sbvh_sidecar] = await Promise.all([sidecar_promise, sbvh_sidecar_promise]);
         if (mesh.pending_loader !== loader) {
           return;
         }
 
-        Mesh.build_from_gltf_mesh(mesh, gltf_obj, target_mesh, resolved_mesh_index, sidecar);
+        mesh.cooked_sbvh = get_cooked_sbvh_for_mesh(sbvh_sidecar, resolved_mesh_index);
+        build_gltf_mesh(mesh, gltf_obj, target_mesh, resolved_mesh_index, sidecar);
         if (mesh.pending_loader !== loader) {
           return;
         }
@@ -692,70 +699,6 @@ export class Mesh {
     return mesh;
   }
 
-  /**
-   * Loads an entire GLTF scene as a single combined mesh.
-   * All meshes from all nodes are merged, with node transforms baked into vertices.
-   *
-   * @param {string} gltf_path - Path to the GLTF file
-   * @param {number|null} scene_index - Which scene to load (null = default scene)
-   * @returns {Mesh} The combined mesh
-   */
-  static from_gltf_scene(gltf_path, scene_index = null) {
-    const key_name = `${gltf_path}#combined_scene_${scene_index ?? "default"}`;
-    const cache_key = Name.from(key_name);
-    let mesh = ResourceCache.get().fetch(CacheTypes.MESH, cache_key);
-    if (mesh) {
-      return mesh;
-    }
-
-    mesh = new Mesh();
-    mesh.name = key_name;
-
-    MeshData.register(mesh);
-
-    const sidecar_promise = load_meshlet_sidecar_async(gltf_path);
-    const loader = new glTFLoader();
-    mesh.pending_loader = loader;
-    
-    loader.load(gltf_path, (gltf_obj) => {
-      void (async () => {
-        const sidecar = await sidecar_promise;
-        if (mesh.pending_loader !== loader) {
-          return;
-        }
-
-        Mesh.build_combined_gltf_scene(mesh, gltf_obj, scene_index, sidecar);
-        if (mesh.pending_loader !== loader) {
-          return;
-        }
-
-        mesh.pending_loader = null;
-        MeshTaskQueue.invalidate_mesh(cache_key);
-      })().catch((error) => {
-        if (mesh.pending_loader === loader) {
-          mesh.pending_loader = null;
-        }
-        console.error(`[meshlet_runtime] failed to build combined scene ${gltf_path}:`, error);
-      });
-    });
-
-    ResourceCache.get().store(CacheTypes.MESH, cache_key, mesh);
-
-    return mesh;
-  }
-
-  /**
-   * Builds a combined mesh from all nodes in a GLTF scene.
-   * Node transforms are baked into vertex positions and normals.
-   *
-   * @param {Mesh} mesh - The mesh to build into
-   * @param {Object} gltf_obj - The parsed GLTF object
-   * @param {number|null} scene_index - Which scene to use
-   */
-  static build_combined_gltf_scene(mesh, gltf_obj, scene_index = null, sidecar = null) {
-    build_combined_gltf_scene(mesh, gltf_obj, scene_index, sidecar);
-  }
-
   static from_parsed_gltf_mesh(gltf_path, gltf_obj, gltf_mesh) {
     const key_name = `${gltf_path}#mesh_${gltf_mesh.meshID}`;
     const cache_key = Name.from(key_name);
@@ -772,24 +715,31 @@ export class Mesh {
     const pending_load = Symbol(key_name);
     const resolved_mesh_index = gltf_mesh.meshID ?? gltf_obj.meshes.indexOf(gltf_mesh);
     mesh.pending_loader = pending_load;
-    void load_meshlet_sidecar_async(gltf_path)
-      .then((sidecar) => {
+    mesh.pending_gltf_build_promise = Promise.all([
+      load_meshlet_sidecar_async(gltf_path),
+      load_sbvh_sidecar_async(gltf_path),
+    ])
+      .then(([sidecar, sbvh_sidecar]) => {
         if (mesh.pending_loader !== pending_load) {
           return;
         }
 
-        Mesh.build_from_gltf_mesh(mesh, gltf_obj, gltf_mesh, resolved_mesh_index, sidecar);
-        if (mesh.pending_loader !== pending_load) {
-          return;
-        }
-
-        mesh.pending_loader = null;
-        MeshTaskQueue.invalidate_mesh(cache_key);
+        mesh.cooked_sbvh = get_cooked_sbvh_for_mesh(sbvh_sidecar, resolved_mesh_index);
+        mesh.pending_gltf_meshlet_sidecar = sidecar;
+        mesh.pending_gltf_build_state = prepare_gltf_mesh_build(
+          mesh,
+          gltf_obj,
+          gltf_mesh,
+          resolved_mesh_index
+        );
       })
       .catch((error) => {
         if (mesh.pending_loader === pending_load) {
           mesh.pending_loader = null;
         }
+        mesh.pending_gltf_build_promise = null;
+        mesh.pending_gltf_build_state = null;
+        mesh.pending_gltf_meshlet_sidecar = null;
         console.error(`[meshlet_runtime] failed to build parsed mesh ${gltf_path}:`, error);
       });
 
@@ -798,16 +748,32 @@ export class Mesh {
     return mesh;
   }
 
+  static finalize_prepared_gltf_mesh(mesh, gltf_obj) {
+    if (!mesh?.pending_gltf_build_state) {
+      return;
+    }
+
+    finalize_prepared_gltf_mesh_build(
+      mesh,
+      gltf_obj,
+      mesh.pending_gltf_build_state,
+      mesh.pending_gltf_meshlet_sidecar
+    );
+
+    mesh.pending_loader = null;
+    mesh.pending_gltf_build_promise = null;
+    mesh.pending_gltf_build_state = null;
+    mesh.pending_gltf_meshlet_sidecar = null;
+
+    MeshTaskQueue.invalidate_mesh(Name.from(mesh.name));
+  }
+
   static precrete_engine_primitives() {
     Mesh.cube();
     Mesh.quad();
   }
 
-  static make_engine_material_from_gltf(gltf, mesh, mat, mat_index, material_cache) {
-    if (material_cache && material_cache.has(mat_index)) {
-      return material_cache.get(mat_index);
-    }
-
+  static make_engine_material_from_gltf(gltf, mesh, mat, mat_index) {
     const material_scope = `${mesh.name}#mat_${mat_index}`;
     const mat_name = mat.name ? `${material_scope}_${mat.name}` : material_scope;
     const alpha_mode = mat.alphaMode || "OPAQUE";
@@ -977,10 +943,6 @@ export class Mesh {
       std.sample_emission(emissive_tex);
     } else {
       std.set_emission(emissive_scalar);
-    }
-
-    if (material_cache) {
-      material_cache.set(mat_index, std.material_id);
     }
 
     return std.material_id;

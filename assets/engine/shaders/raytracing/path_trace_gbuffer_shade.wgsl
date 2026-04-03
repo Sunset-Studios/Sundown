@@ -154,7 +154,6 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     
     let f = f_schlick_vec3(f0, 1.0, n_dot_v);
     let fresnel_luminance = luminance(f);
-    //let fresnel_luminance = (f.x + f.y + f.z) / 3.0;
 
     // Probability of sampling specular vs diffuse
     let use_ggx = (roughness < 0.3) || (metallic > 0.5);

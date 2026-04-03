@@ -251,7 +251,7 @@ const ddgi_atrous_diffuse_shader_setup = {
 export class DDGI {
   config = {
     probe_grid_dimensions: [64, 64, 64],
-    probe_spacing: 1.0,
+    probe_spacing: 2.0,
     probe_radius: 0.1,
     min_rays_per_probe: 32,
     max_rays_per_probe: 256,
@@ -889,6 +889,13 @@ export class DDGI {
       force: force_recreate,
     });
 
+    const probe_ray_dispatch_params = render_graph.create_buffer({
+      name: "ddgi_probe_ray_dispatch_params",
+      size: 4,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.INDIRECT | GPUBufferUsage.COPY_DST,
+      force: force_recreate,
+    });
+
     // Per-probe alpha from SH accumulate (used by depth-update pass for hysteresis).
     const probe_alpha = render_graph.create_buffer({
       name: "ddgi_probe_alpha",
@@ -1241,8 +1248,9 @@ export class DDGI {
           gi_counters,
           probe_ray_allocations,
           probe_ray_data,
+          probe_ray_dispatch_params,
         ],
-        outputs: [probe_ray_allocations, probe_ray_data],
+        outputs: [probe_ray_allocations, probe_ray_data, probe_ray_dispatch_params],
         shader_setup: ddgi_probe_ray_budget_shader_setup,
       },
       (graph, frame_data, encoder) => {
@@ -1290,13 +1298,15 @@ export class DDGI {
           index_buffer,
           dense_lights,
           emissive_lights,
+          probe_ray_dispatch_params,
         ],
         outputs: [probe_ray_data],
         shader_setup: ddgi_probe_trace_hit_shader_setup,
       },
       (graph, frame_data, encoder) => {
         const pass = graph.get_physical_pass(frame_data.current_pass);
-        pass.dispatch(Math.ceil(probe_total_ray_count / COMPUTE_WORKGROUP_SIZE), 1, 1);
+        const dispatch_buffer = graph.get_physical_buffer(probe_ray_dispatch_params);
+        pass.dispatch_indirect(dispatch_buffer, 0);
       }
     );
 
@@ -1331,13 +1341,15 @@ export class DDGI {
           specular_pool_buffer,
           emission_pool_buffer,
           skybox_texture_buffer,
+          probe_ray_dispatch_params,
         ],
         outputs: [probe_ray_data],
         shader_setup: ddgi_probe_trace_shade_shader_setup,
       },
       (graph, frame_data, encoder) => {
         const pass = graph.get_physical_pass(frame_data.current_pass);
-        pass.dispatch(Math.ceil(probe_total_ray_count / COMPUTE_WORKGROUP_SIZE), 1, 1);
+        const dispatch_buffer = graph.get_physical_buffer(probe_ray_dispatch_params);
+        pass.dispatch_indirect(dispatch_buffer, 0);
       }
     );
 
@@ -1383,13 +1395,15 @@ export class DDGI {
           probe_ray_data,
           probe_alpha,
           probe_depth_moments,
+          probe_ray_dispatch_params,
         ],
         outputs: [probe_depth_moments],
         shader_setup: ddgi_depth_update_shader_setup,
       },
       (graph, frame_data, encoder) => {
         const pass = graph.get_physical_pass(frame_data.current_pass);
-        pass.dispatch(Math.ceil(probe_total_ray_count / COMPUTE_WORKGROUP_SIZE), 1, 1);
+        const dispatch_buffer = graph.get_physical_buffer(probe_ray_dispatch_params);
+        pass.dispatch_indirect(dispatch_buffer, 0);
       }
     );
 
