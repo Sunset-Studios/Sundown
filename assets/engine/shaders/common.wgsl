@@ -174,6 +174,14 @@ fn sample_handle_rgba(tex_handle: u32, uv: vec2<f32>, pool: texture_2d_array<f32
     return textureSampleLevel(pool, global_sampler, uv, tex_handle, clamped_lod);
 }
 
+fn decode_normal_texture_sample(sampled: vec3<f32>, flags: u32) -> vec3<f32> {
+    var normal_sample = sampled * 2.0 - 1.0;
+    if ((flags & NORMAL_TEXTURE_FLAG_INVERT_Y) != 0u) {
+        normal_sample.y = -normal_sample.y;
+    }
+    return normal_sample;
+}
+
 fn sample_texture_or_vec4_param_handle(
     tex_handle: u32,
     uv_coords: vec2<f32>,
@@ -238,8 +246,11 @@ fn vertex_tangent(vertex: Vertex) -> vec4<f32> {
 
 fn vertex_bitangent(vertex: Vertex) -> vec4<f32> {
     let normal = vertex_normal(vertex).xyz;
-    let tangent = vertex_tangent(vertex).xyz;
-    return vec4<f32>(safe_normalize(cross(normal, tangent)), 0.0);
+    let tangent_data = vertex_tangent(vertex);
+    let tangent = tangent_data.xyz;
+    // Legacy engine primitives sometimes leave tangent.w at 0, so treat that as +1 handedness.
+    let handedness = select(tangent_data.w, 1.0, abs(tangent_data.w) < 0.5);
+    return vec4<f32>(safe_normalize(cross(normal, tangent) * handedness), 0.0);
 }
 
 fn decode_vertex(vertex: Vertex) -> DecodedVertex {

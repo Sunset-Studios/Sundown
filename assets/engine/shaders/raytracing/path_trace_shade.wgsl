@@ -206,12 +206,16 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         let world_t = path_state[pixel_index].hit_attr0.xyz;
         let world_b = path_state[pixel_index].hit_attr1.xyz;
         let has_tbn = length(world_t) > 0.0001 && length(world_b) > 0.0001;
-        if ((u32(material.texture_flags1.y) & 1u) != 0u && has_tbn) {
+        let normal_flags = u32(material.texture_flags1.y);
+        if ((normal_flags & NORMAL_TEXTURE_FLAG_PRESENT) != 0u && has_tbn) {
             let tbn = mat3x3<f32>(world_t, world_b, world_n);
-            let nm = sample_handle_rgba(
-                u32(material.normal_handle), base_uv,
-                texture_pool_normal, lod
-            ).xyz * 2.0 - 1.0;
+            let nm = decode_normal_texture_sample(
+                sample_handle_rgba(
+                    u32(material.normal_handle), base_uv,
+                    texture_pool_normal, lod
+                ).xyz,
+                normal_flags
+            );
             n = normalize(tbn * nm);
         }
 
@@ -264,7 +268,6 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         // Fresnel at normal incidence for sampling probability
         let f = f_schlick_vec3(f0, 1.0, n_dot_v);
         let fresnel_luminance = luminance(f);
-        //let fresnel_luminance = (f.x + f.y + f.z) / 3.0;
         
         // Probability of sampling specular vs diffuse
         let use_ggx = (roughness < 0.3) || (metallic > 0.5);

@@ -734,19 +734,25 @@ fn cs(
             let n_local = vertex0.normal.xyz * w_bc + 
                           vertex1.normal.xyz * u_bc + 
                           vertex2.normal.xyz * v_bc;
-            var world_n = safe_normalize((entity_transform.transform * vec4<f32>(n_local, 0.0)).xyz);
+            var world_n = safe_normalize(
+                (entity_transform.transpose_inverse_model_matrix * vec4<f32>(n_local, 0.0)).xyz
+            );
 
             // Interpolate and transform tangents
             let t_local = vertex0.tangent.xyz * w_bc + 
                           vertex1.tangent.xyz * u_bc + 
                           vertex2.tangent.xyz * v_bc;
-            var world_t = safe_normalize((entity_transform.transform * vec4<f32>(t_local, 0.0)).xyz);
+            var world_t = safe_normalize(
+                (entity_transform.transpose_inverse_model_matrix * vec4<f32>(t_local, 0.0)).xyz
+            );
 
             // Interpolate and transform bitangents
             let b_local = vertex0.bitangent.xyz * w_bc + 
                           vertex1.bitangent.xyz * u_bc + 
                           vertex2.bitangent.xyz * v_bc;
-            var world_b = safe_normalize((entity_transform.transform * vec4<f32>(b_local, 0.0)).xyz);
+            var world_b = safe_normalize(
+                (entity_transform.transpose_inverse_model_matrix * vec4<f32>(b_local, 0.0)).xyz
+            );
             
             // Handle backfacing geometry
             let ray_dir = ray.direction_and_tmax.xyz;

@@ -77,7 +77,7 @@ fn corner(min_p: vec3<f32>, max_p: vec3<f32>, idx: u32) -> vec3<f32> {
 // Main
 // ========================================================================================
 
-@compute @workgroup_size(64)
+@compute @workgroup_size(128)
 fn cs(@builtin(global_invocation_id) gid: vec3u) {
     let node = gid.x;
     if (node >= arrayLength(&aabb_bounds)) { return; }
@@ -87,9 +87,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3u) {
     let max_p = b.max.xyz;
     let valid = is_leaf(b);
 
-    let has_volume = all(max_p > min_p);
-    let is_active = valid && has_volume;
-    let width = select(0.04, 0.0, !is_active);
+    let width = select(0.04, 0.0, !valid);
 
     for (var e: u32 = 0u; e < LINES_PER_BOX; e = e + 1u) {
         let base = node * LINES_PER_BOX + e;
@@ -100,10 +98,10 @@ fn cs(@builtin(global_invocation_id) gid: vec3u) {
         let p1 = corner(min_p, max_p, idx1);
 
         let transform = create_line_transform(p0, p1);
-        out_line_data[base].transform[0] = select(transform[0], identity_matrix[0], !is_active);
-        out_line_data[base].transform[1] = select(transform[1], identity_matrix[1], !is_active);
-        out_line_data[base].transform[2] = select(transform[2], identity_matrix[2], !is_active);
-        out_line_data[base].transform[3] = select(transform[3], identity_matrix[3], !is_active);
+        out_line_data[base].transform[0] = select(transform[0], identity_matrix[0], !valid);
+        out_line_data[base].transform[1] = select(transform[1], identity_matrix[1], !valid);
+        out_line_data[base].transform[2] = select(transform[2], identity_matrix[2], !valid);
+        out_line_data[base].transform[3] = select(transform[3], identity_matrix[3], !valid);
         out_line_data[base].color_and_width = vec4<f32>(BOUNDS_COLOR.rgb, width);
     }
 }

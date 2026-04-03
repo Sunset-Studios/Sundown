@@ -307,9 +307,15 @@ fn fs(input: ResolveVertexOutput) -> ResolveFragmentOutput {
     let current_clip_pos = view_proj * world_position;
     let prev_clip_pos = prev_view_proj * prev_world_position;
 
-    let normal_ws = safe_normalize((entity_transform.transform * vec4<f32>(normal_os, 0.0)).xyz);
-    let tangent_ws = safe_normalize((entity_transform.transform * vec4<f32>(tangent_os, 0.0)).xyz);
-    let bitangent_ws = safe_normalize((entity_transform.transform * vec4<f32>(bitangent_os, 0.0)).xyz);
+    let normal_ws = safe_normalize(
+        (entity_transform.transpose_inverse_model_matrix * vec4<f32>(normal_os, 0.0)).xyz
+    );
+    let tangent_ws = safe_normalize(
+        (entity_transform.transpose_inverse_model_matrix * vec4<f32>(tangent_os, 0.0)).xyz
+    );
+    let bitangent_ws = safe_normalize(
+        (entity_transform.transpose_inverse_model_matrix * vec4<f32>(bitangent_os, 0.0)).xyz
+    );
 
     var material_input: ResolveFragmentInput;
     material_input.screen_uv = input.uv;

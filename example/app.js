@@ -10,6 +10,8 @@ import { DeferredShadingStrategy } from "../engine/src/renderer/strategies/defer
 import { reset_ui, flush_ui } from "../engine/src/ui/2d/immediate.js";
 import { frame_runner } from "../engine/src/utility/frame_runner.js";
 import { ProjectContext } from "../engine/src/core/project_context.js";
+import { JobSystem } from "../engine/src/utility/job_system.js";
+import { TextureStreamingSystem } from "../engine/src/renderer/texture.js";
 import example_cvar_config from "./config/cvars.js";
 
 import { SnakeScene } from "./snake_scene.js";
@@ -25,6 +27,8 @@ async function bootstrap() {
 
   InputProvider.setup();
   MetaSystem.setup();
+  JobSystem.install();
+  TextureStreamingSystem.install();
 
   const canvas = document.getElementById("gpu-canvas");
   const uiCanvas = document.getElementById("ui-canvas");

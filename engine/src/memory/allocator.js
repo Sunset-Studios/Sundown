@@ -263,6 +263,167 @@ class FrameStackAllocator {
     }
 }
 
+class FrameQueueAllocator {
+    /**
+     * @param {number} max_objects - The maximum number of objects to allocate
+     * @param {object|Function|number|string|boolean} template - Either a template object, a constructor function, or a primitive value
+     */
+    constructor(max_objects, template) {
+        this.max_objects = max_objects;
+
+        // Preallocate array with exact size
+        this.buffer = new Array(max_objects);
+
+        // Check if template is a primitive:
+        if (
+            template === null ||
+            (typeof template !== function_string && typeof template !== 'object')
+        ) {
+            // For primitive types, simply fill the buffer with that value.
+            for (let i = 0; i < max_objects; i++) {
+                this.buffer[i] = { value: template };
+            }
+        } else if (typeof template === function_string) {
+            // For constructors, create new instances
+            for (let i = 0; i < max_objects; i++) {
+                this.buffer[i] = new template();
+            }
+        } else if (Object.keys(template).length === 0) {
+            // Fast path for empty objects
+            const proto = Object.getPrototypeOf(template);
+            const prop_descriptors = Object.getOwnPropertyDescriptors(template);
+            for (let i = 0; i < max_objects; i++) {
+                this.buffer[i] = Object.create(proto, prop_descriptors);
+            }
+        } else {
+            // For non-empty plain objects, create a prototype once and use it for all allocations
+            const proto = Object.getPrototypeOf(template);
+            const prop_descriptors = Object.getOwnPropertyDescriptors(template);
+            for (let i = 0; i < max_objects; i++) {
+                this.buffer[i] = Object.create(proto, prop_descriptors);
+            }
+        }
+        this.head = 0;
+        this.tail = 0;
+        this.size = 0;
+    }
+
+    /**
+     * Enqueues an object into the frame queue allocator.
+     * @returns {object|primitive} The enqueued object or value
+     */
+    enqueue() {
+        if (this.size >= this.max_objects) {
+            throw new Error(out_of_memory_error);
+        }
+        const index = this.tail;
+        this.tail = (this.tail + 1) % this.max_objects;
+        this.size++;
+        return this.buffer[index];
+    }
+
+    /**
+     * Dequeues the oldest object from the frame queue allocator.
+     * @returns {object|primitive} The dequeued object or value
+     */
+    dequeue() {
+        if (this.size <= 0) {
+            throw new Error(out_of_memory_error);
+        }
+        const object = this.buffer[this.head];
+        this.head = (this.head + 1) % this.max_objects;
+        this.size--;
+        return object;
+    }
+
+    /**
+     * Peeks at the front object from the frame queue allocator.
+     * @returns {object|primitive} The front object or value
+     */
+    peek() {
+        return this.size > 0 ? this.buffer[this.head] : null;
+    }
+
+    /**
+     * @param {number} index - The index to get the object or value from
+     * @returns {object|primitive} - The object or value at the index
+     */
+    get(index) {
+        if (index < 0 || index >= this.size) {
+            throw new Error(invalid_allocator_index_error);
+        }
+        return this.buffer[(this.head + index) % this.max_objects];
+    }
+
+    /**
+     * Appends another frame allocator into this one.
+     * @param {FrameAllocator} other - The other frame allocator to append
+     */
+    append(other) {
+        if (this.size + other.length > this.max_objects) {
+            throw new Error(out_of_memory_error);
+        }
+        for (const item of other) {
+            this.buffer[this.tail] = item;
+            this.tail = (this.tail + 1) % this.max_objects;
+            this.size++;
+        }
+    }
+
+    /**
+     * Resets the frame queue allocator to its initial state.
+     */
+    reset() {
+        this.head = 0;
+        this.tail = 0;
+        this.size = 0;
+    }
+
+    /**
+     * Returns the data of the frame queue allocator.
+     * @returns {Array} The data of the frame queue allocator.
+     */
+    get data() {
+        return this.buffer;
+    }
+
+    /**
+     * Gets the current length of the frame queue allocator.
+     * @returns {number} The current length of the frame queue allocator.
+     */
+    get length() {
+        return this.size;
+    }
+
+    /**
+     * Gets the capacity of the frame queue allocator.
+     * @returns {number} The capacity of the frame queue allocator.
+     */
+    get capacity() {
+        return this.max_objects;
+    }
+
+    /**
+     * Creates an iterator for the allocated objects/values in the queue.
+     * @returns {Iterator} An iterator for the allocated objects/values.
+     */
+    [Symbol.iterator]() {
+        let index = 0;
+        return {
+            next: () => {
+                if (index < this.size) {
+                    return {
+                        value: this.buffer[(this.head + index++) % this.max_objects],
+                        done: false
+                    };
+                } else {
+                    return { done: true };
+                }
+            }
+        };
+    }
+}
+
 /**
  * A ring buffer allocator that allows for continuous allocation and deallocation
  * of fixed-size objects in a circular manner.
@@ -1375,6 +1536,7 @@ class Sparse2DFrameAllocator {
 export {
     FrameAllocator,
     FrameStackAllocator,
+    FrameQueueAllocator,
     RingBufferAllocator,
     FreeListAllocator,
     RandomAccessAllocator,

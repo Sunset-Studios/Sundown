@@ -93,25 +93,10 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
             u32(material.albedo_handle), base_uv, material.albedo,
             u32(material.texture_flags1.x), texture_pool_albedo, lod
         ).xyz;
-        let roughness = sample_texture_or_float_param_handle(
-            u32(material.roughness_handle), base_uv,
-            material.emission_roughness_metallic_tiling.y,
-            u32(material.texture_flags1.z), texture_pool_roughness, lod
-        );
-        let metallic = sample_texture_or_float_param_handle(
-            u32(material.metallic_handle), base_uv,
-            material.emission_roughness_metallic_tiling.z,
-            u32(material.texture_flags1.w), texture_pool_metallic, lod
-        );
         let emissive = sample_texture_or_float_param_handle(
             u32(material.emission_handle), base_uv,
             material.emission_roughness_metallic_tiling.x,
             u32(material.texture_flags2.w), texture_pool_emission, lod
-        );
-        let reflectance = sample_texture_or_float_param_handle(
-            u32(material.specular_handle), base_uv,
-            material.ao_height_specular.z,
-            u32(material.texture_flags2.z), texture_pool_specular, lod
         );
 
         let world_n = hit.world_n_section.xyz;
@@ -119,12 +104,16 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         let world_b = hit.world_b_uvy.xyz;
 
         var n = world_n;
-        if ((u32(material.texture_flags1.y) & 1u) != 0u) {
+        let normal_flags = u32(material.texture_flags1.y);
+        if ((normal_flags & NORMAL_TEXTURE_FLAG_PRESENT) != 0u) {
             let tbn = mat3x3<f32>(world_t, world_b, world_n);
-            let nm = sample_handle_rgba(
-                u32(material.normal_handle), base_uv,
-                texture_pool_normal, lod
-            ).xyz * 2.0 - 1.0;
+            let nm = decode_normal_texture_sample(
+                sample_handle_rgba(
+                    u32(material.normal_handle), base_uv,
+                    texture_pool_normal, lod
+                ).xyz,
+                normal_flags
+            );
             n = normalize(tbn * nm);
         }
 

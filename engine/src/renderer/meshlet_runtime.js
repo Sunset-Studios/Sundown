@@ -1,8 +1,8 @@
-import { vec3, quat, mat3, mat4 } from "gl-matrix";
 import { Mesh } from "./mesh.js";
-import { MeshData } from "./mesh_data.js";
+import { MeshData, vertex_stride } from "./mesh_data.js";
 import { MeshoptClusterizer } from "meshoptimizer/clusterizer";
 import { read_file_async, read_file_bytes_async } from "../utility/file_system.js";
+import { pack_snorm4x8 } from "../utility/math.js";
 import {
   build_empty_meshlet_sections,
   build_meshlet_groups,
@@ -14,22 +14,15 @@ import {
 } from "./meshlet_utils.js";
 
 const discard_cpu_data = true;
+const tangent_epsilon = 1e-6;
 const meshlet_sidecar_promise_cache = new Map();
+
 const runtime_meshlet_defaults = {
   max_vertices: 64,
   min_triangles: 24,
   max_triangles: 124,
   fill_weight: 0.5,
   cluster_group_size: 8,
-};
-const Type2NumOfComponent = {
-  SCALAR: 1,
-  VEC2: 2,
-  VEC3: 3,
-  VEC4: 4,
-  MAT2: 4,
-  MAT3: 9,
-  MAT4: 16,
 };
 
 function read_index_accessor(accessor) {
@@ -57,13 +50,6 @@ function read_primitive_indices(gltf_obj, primitive, vertex_count) {
     return indices;
   }
   return read_index_accessor(gltf_obj.accessors[primitive.indices]);
-}
-
-function resolve_gltf_mesh_index(gltf_obj, gltf_mesh) {
-  if (gltf_mesh?.meshID !== undefined && gltf_mesh.meshID !== null) {
-    return gltf_mesh.meshID;
-  }
-  return gltf_obj.meshes.indexOf(gltf_mesh);
 }
 
 function get_gltf_material_index(gltf_obj, primitive) {
@@ -193,168 +179,366 @@ function read_meshlet_group_record(sidecar, group_index) {
   };
 }
 
-function read_primitive_source_data(gltf_obj, primitive) {
-  let positions = [];
-  if (primitive.attributes.POSITION !== undefined) {
-    positions = Mesh._read_accessor_f32(primitive.attributes.POSITION);
-  }
+function create_empty_bounds_array() {
+  return [Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity];
+}
 
-  let normals = [];
-  if (primitive.attributes.NORMAL !== undefined) {
-    normals = Mesh._read_accessor_f32(primitive.attributes.NORMAL);
-  }
-
-  let tangents = [];
-  if (primitive.attributes.TANGENT !== undefined) {
-    tangents = Mesh._read_accessor_f32(primitive.attributes.TANGENT);
-  }
-
-  let bitangents = [];
-  if (primitive.attributes.BITANGENT !== undefined) {
-    bitangents = Mesh._read_accessor_f32(primitive.attributes.BITANGENT);
-  }
-
-  let colors = [];
-  let color_components = 0;
-  if (primitive.attributes.COLOR_0 !== undefined) {
-    const color_accessor = primitive.attributes.COLOR_0;
-    color_components = Type2NumOfComponent[color_accessor.type];
-    colors = Mesh._read_accessor_f32(color_accessor);
-  }
-
-  let uvs = [];
-  if (primitive.attributes.TEXCOORD_0 !== undefined) {
-    uvs = Mesh._read_accessor_f32(primitive.attributes.TEXCOORD_0);
-  }
-
-  if (tangents.length === 0 && positions.length > 0 && uvs.length > 0) {
-    const computed = Mesh._get_tangents_and_bitangents(positions, uvs);
-    tangents = computed.t;
-    bitangents = computed.b;
-  } else if (bitangents.length === 0 && tangents.length > 0 && normals.length > 0) {
-    bitangents = new Array((tangents.length / 4) * 3);
-    for (let vi = 0; vi < tangents.length / 4; vi++) {
-      const tangent_start = vi * 4;
-      const normal_start = vi * 3;
-      const t = [tangents[tangent_start], tangents[tangent_start + 1], tangents[tangent_start + 2]];
-      const handedness = tangents[tangent_start + 3] || 1;
-      const n = [normals[normal_start], normals[normal_start + 1], normals[normal_start + 2]];
-      const b = vec3.cross(vec3.create(), n, t);
-      vec3.scale(b, b, handedness);
-      vec3.normalize(b, b);
-      const bitangent_start = vi * 3;
-      bitangents[bitangent_start] = b[0];
-      bitangents[bitangent_start + 1] = b[1];
-      bitangents[bitangent_start + 2] = b[2];
-    }
-  }
-
-  const vertex_count = positions.length / 3;
-  const indices = read_primitive_indices(gltf_obj, primitive, vertex_count);
+function read_primitive_source_data(gltf_obj, primitive, vertex_count) {
+  const positions =
+    primitive.attributes.POSITION !== undefined
+      ? Mesh._read_accessor_f32(primitive.attributes.POSITION)
+      : new Float32Array(0);
+  const normals =
+    primitive.attributes.NORMAL !== undefined
+      ? Mesh._read_accessor_f32(primitive.attributes.NORMAL)
+      : new Float32Array(0);
+  const tangents =
+    primitive.attributes.TANGENT !== undefined
+      ? Mesh._read_accessor_f32(primitive.attributes.TANGENT)
+      : new Float32Array(0);
+  const uvs =
+    primitive.attributes.TEXCOORD_0 !== undefined
+      ? Mesh._read_accessor_f32(primitive.attributes.TEXCOORD_0)
+      : new Float32Array(0);
 
   return {
     positions,
     normals,
     tangents,
-    bitangents,
-    colors,
-    color_components,
     uvs,
-    indices,
+    indices: read_primitive_indices(gltf_obj, primitive, vertex_count),
   };
 }
 
-function build_vertices_from_primitive_data(primitive_data, transform_state = null) {
-  const vertices = [];
-  const { positions, normals, tangents, colors, color_components, uvs } = primitive_data;
-  const num_verts = positions.length / 3;
-  const tangent_is_vec4 = tangents.length > 0 && tangents.length % 4 === 0;
-  const world_matrix = transform_state?.world_matrix ?? null;
-  const normal_matrix = transform_state?.normal_matrix ?? null;
+function analyze_gltf_primitives(gltf_obj, gltf_mesh, resolved_mesh_index) {
+  const primitive_descriptors = [];
+  const material_order = [];
+  const material_order_lookup = new Map();
+  const index_count_by_material_order = [];
 
-  for (let k = 0; k < num_verts; k++) {
-    const pos_index = k * 3;
-    const normal_index = k * 3;
-    const uv_index = k * 2;
-    const tangent_index = tangent_is_vec4 ? k * 4 : k * 3;
-    const color_index = k * color_components;
+  let total_vertex_count = 0;
 
-    let color = [1, 1, 1, 1];
-    if (colors.length > 0) {
-      if (color_components === 3) {
-        color = [colors[color_index], colors[color_index + 1], colors[color_index + 2], 1];
-      } else {
-        color = [
-          colors[color_index],
-          colors[color_index + 1],
-          colors[color_index + 2],
-          colors[color_index + 3],
-        ];
+  for (let primitive_index = 0; primitive_index < gltf_mesh.primitives.length; primitive_index++) {
+    const primitive = gltf_mesh.primitives[primitive_index];
+    const material_index = get_gltf_material_index(gltf_obj, primitive);
+    let material_order_index = material_order_lookup.get(material_index);
+    if (material_order_index === undefined) {
+      material_order_index = material_order.length;
+      material_order_lookup.set(material_index, material_order_index);
+      material_order.push(material_index);
+      index_count_by_material_order.push(0);
+    }
+
+    const vertex_count = primitive.attributes.POSITION?.count ?? 0;
+    const index_count =
+      primitive.indices === null || primitive.indices === undefined
+        ? vertex_count
+        : gltf_obj.accessors[primitive.indices]?.count ?? 0;
+
+    primitive_descriptors.push({
+      mesh_index: resolved_mesh_index,
+      primitive_index,
+      material_index,
+      vertex_offset: total_vertex_count,
+      vertex_count,
+      index_count,
+      section_index: -1,
+      world_matrix: null,
+      normal_matrix: null,
+      material_order_index,
+    });
+
+    total_vertex_count += vertex_count;
+    index_count_by_material_order[material_order_index] += index_count;
+  }
+
+  const section_defs = [];
+  const section_index_by_material = new Map();
+  let running_first_index = 0;
+  for (let material_order_index = 0; material_order_index < material_order.length; material_order_index++) {
+    const material_index = material_order[material_order_index];
+    const index_count = index_count_by_material_order[material_order_index] ?? 0;
+    if (index_count <= 0) {
+      continue;
+    }
+
+    section_index_by_material.set(material_index, section_defs.length);
+    section_defs.push({
+      material_index,
+      first_index: running_first_index,
+      index_count,
+    });
+    running_first_index += index_count;
+  }
+
+  for (let i = 0; i < primitive_descriptors.length; i++) {
+    const descriptor = primitive_descriptors[i];
+    descriptor.section_index = section_index_by_material.get(descriptor.material_index) ?? -1;
+    delete descriptor.material_order_index;
+  }
+
+  return {
+    primitive_descriptors,
+    section_defs,
+    total_vertex_count,
+    total_index_count: running_first_index,
+  };
+}
+
+function build_generated_tangent_data(positions, normals, uvs, indices, vertex_count) {
+  if (vertex_count <= 0 || uvs.length < vertex_count * 2 || indices.length < 3) {
+    return null;
+  }
+
+  const tan1 = new Float32Array(vertex_count * 3);
+  const tan2 = new Float32Array(vertex_count * 3);
+
+  for (let i = 0; i + 2 < indices.length; i += 3) {
+    const i0 = indices[i];
+    const i1 = indices[i + 1];
+    const i2 = indices[i + 2];
+    if (i0 >= vertex_count || i1 >= vertex_count || i2 >= vertex_count) {
+      continue;
+    }
+
+    const p0 = i0 * 3;
+    const p1 = i1 * 3;
+    const p2 = i2 * 3;
+    const uv0 = i0 * 2;
+    const uv1 = i1 * 2;
+    const uv2 = i2 * 2;
+
+    const x1 = positions[p1] - positions[p0];
+    const y1 = positions[p1 + 1] - positions[p0 + 1];
+    const z1 = positions[p1 + 2] - positions[p0 + 2];
+    const x2 = positions[p2] - positions[p0];
+    const y2 = positions[p2 + 1] - positions[p0 + 1];
+    const z2 = positions[p2 + 2] - positions[p0 + 2];
+
+    const s1 = uvs[uv1] - uvs[uv0];
+    const t1 = uvs[uv1 + 1] - uvs[uv0 + 1];
+    const s2 = uvs[uv2] - uvs[uv0];
+    const t2 = uvs[uv2 + 1] - uvs[uv0 + 1];
+
+    const det = s1 * t2 - s2 * t1;
+    if (Math.abs(det) <= tangent_epsilon) {
+      continue;
+    }
+
+    const inv_det = 1.0 / det;
+    const sdir_x = (t2 * x1 - t1 * x2) * inv_det;
+    const sdir_y = (t2 * y1 - t1 * y2) * inv_det;
+    const sdir_z = (t2 * z1 - t1 * z2) * inv_det;
+    const tdir_x = (s1 * x2 - s2 * x1) * inv_det;
+    const tdir_y = (s1 * y2 - s2 * y1) * inv_det;
+    const tdir_z = (s1 * z2 - s2 * z1) * inv_det;
+
+    const t0 = i0 * 3;
+    const t1_index = i1 * 3;
+    const t2_index = i2 * 3;
+
+    tan1[t0] += sdir_x;
+    tan1[t0 + 1] += sdir_y;
+    tan1[t0 + 2] += sdir_z;
+    tan1[t1_index] += sdir_x;
+    tan1[t1_index + 1] += sdir_y;
+    tan1[t1_index + 2] += sdir_z;
+    tan1[t2_index] += sdir_x;
+    tan1[t2_index + 1] += sdir_y;
+    tan1[t2_index + 2] += sdir_z;
+
+    tan2[t0] += tdir_x;
+    tan2[t0 + 1] += tdir_y;
+    tan2[t0 + 2] += tdir_z;
+    tan2[t1_index] += tdir_x;
+    tan2[t1_index + 1] += tdir_y;
+    tan2[t1_index + 2] += tdir_z;
+    tan2[t2_index] += tdir_x;
+    tan2[t2_index + 1] += tdir_y;
+    tan2[t2_index + 2] += tdir_z;
+  }
+
+  const generated = new Float32Array(vertex_count * 4);
+  for (let vertex_index = 0; vertex_index < vertex_count; vertex_index++) {
+    const normal_offset = vertex_index * 3;
+    let nx = normals[normal_offset] ?? 0.0;
+    let ny = normals[normal_offset + 1] ?? 0.0;
+    let nz = normals[normal_offset + 2] ?? 0.0;
+    const nlen = Math.hypot(nx, ny, nz);
+    const has_normal = nlen > tangent_epsilon;
+    if (has_normal) {
+      nx /= nlen;
+      ny /= nlen;
+      nz /= nlen;
+    } else {
+      nx = 0.0;
+      ny = 0.0;
+      nz = 0.0;
+    }
+
+    let tx = tan1[normal_offset];
+    let ty = tan1[normal_offset + 1];
+    let tz = tan1[normal_offset + 2];
+    if (has_normal) {
+      const nt_dot_t = nx * tx + ny * ty + nz * tz;
+      tx -= nx * nt_dot_t;
+      ty -= ny * nt_dot_t;
+      tz -= nz * nt_dot_t;
+    }
+
+    let tlen = Math.hypot(tx, ty, tz);
+    if (tlen <= tangent_epsilon) {
+      tx = 1.0;
+      ty = 0.0;
+      tz = 0.0;
+      tlen = 1.0;
+    }
+
+    tx /= tlen;
+    ty /= tlen;
+    tz /= tlen;
+
+    let handedness = 1.0;
+    if (has_normal) {
+      const bx = ny * tz - nz * ty;
+      const by = nz * tx - nx * tz;
+      const bz = nx * ty - ny * tx;
+      if (
+        bx * tan2[normal_offset] +
+        by * tan2[normal_offset + 1] +
+        bz * tan2[normal_offset + 2] <
+        0.0
+      ) {
+        handedness = -1.0;
       }
     }
 
-    let tangent_w = 1.0;
-    if (tangent_is_vec4) {
-      tangent_w = tangents[tangent_index + 3] ?? 1.0;
-    }
-
-    const src_pos = vec3.fromValues(
-      positions[pos_index] ?? 0.0,
-      positions[pos_index + 1] ?? 0.0,
-      positions[pos_index + 2] ?? 0.0
-    );
-    const position = world_matrix ? vec3.transformMat4(vec3.create(), src_pos, world_matrix) : src_pos;
-
-    const n = vec3.fromValues(
-      normals[normal_index] ?? 0.0,
-      normals[normal_index + 1] ?? 0.0,
-      normals[normal_index + 2] ?? 0.0
-    );
-    if (normal_matrix) {
-      vec3.transformMat3(n, n, normal_matrix);
-    }
-    vec3.normalize(n, n);
-
-    const t = vec3.fromValues(
-      tangents[tangent_index] ?? 0.0,
-      tangents[tangent_index + 1] ?? 0.0,
-      tangents[tangent_index + 2] ?? 0.0
-    );
-    const nt_dot_t = vec3.dot(n, t);
-    const t_ortho = vec3.subtract(vec3.create(), t, vec3.scale(vec3.create(), n, nt_dot_t));
-    if (normal_matrix) {
-      vec3.transformMat3(t_ortho, t_ortho, normal_matrix);
-    }
-    vec3.normalize(t_ortho, t_ortho);
-
-    const b = vec3.cross(vec3.create(), n, t_ortho);
-    if (normal_matrix) {
-      vec3.transformMat3(b, b, normal_matrix);
-    }
-    vec3.normalize(b, b);
-
-    vertices.push({
-      position: [position[0], position[1], position[2], 1],
-      normal: [n[0], n[1], n[2], 0],
-      color,
-      uv: [uvs[uv_index] ?? 0.0, uvs[uv_index + 1] ?? 0.0],
-      tangent: [t_ortho[0], t_ortho[1], t_ortho[2], tangent_w],
-      bitangent: [b[0], b[1], b[2], 0],
-      extra_data: [0, 0],
-    });
+    const tangent_offset = vertex_index * 4;
+    generated[tangent_offset] = tx;
+    generated[tangent_offset + 1] = ty;
+    generated[tangent_offset + 2] = tz;
+    generated[tangent_offset + 3] = handedness;
   }
 
-  return vertices;
+  return generated;
 }
 
-function append_standard_primitive(mesh, group, source_vertices, indices) {
-  const vertex_base = mesh.vertices.length;
-  for (let i = 0; i < source_vertices.length; i++) {
-    mesh.vertices.push(source_vertices[i]);
+function write_primitive_vertices_to_staging(
+  primitive_data,
+  descriptor,
+  vertex_view,
+  positions_xyz,
+  bounds_min_and_max
+) {
+  const { positions, normals, tangents, uvs, indices } = primitive_data;
+  const vertex_offset = descriptor.vertex_offset;
+  const vertex_count = descriptor.vertex_count;
+  const section_index = descriptor.section_index >= 0 ? descriptor.section_index : 0;
+  const tangent_components = vertex_count > 0 ? Math.floor(tangents.length / vertex_count) : 0;
+  const generated_tangents =
+    tangent_components <= 0 && uvs.length > 0
+      ? build_generated_tangent_data(positions, normals, uvs, indices, vertex_count)
+      : null;
+
+  for (let vertex_index = 0; vertex_index < vertex_count; vertex_index++) {
+    const src_position_offset = vertex_index * 3;
+    const src_normal_offset = vertex_index * 3;
+    const src_uv_offset = vertex_index * 2;
+    const dst_vertex_index = vertex_offset + vertex_index;
+    const dst_position_offset = dst_vertex_index * 3;
+    const dst_byte_offset = dst_vertex_index * vertex_stride;
+
+    const px = positions[src_position_offset] ?? 0.0;
+    const py = positions[src_position_offset + 1] ?? 0.0;
+    const pz = positions[src_position_offset + 2] ?? 0.0;
+    positions_xyz[dst_position_offset] = px;
+    positions_xyz[dst_position_offset + 1] = py;
+    positions_xyz[dst_position_offset + 2] = pz;
+
+    bounds_min_and_max[0] = Math.min(bounds_min_and_max[0], px);
+    bounds_min_and_max[1] = Math.min(bounds_min_and_max[1], py);
+    bounds_min_and_max[2] = Math.min(bounds_min_and_max[2], pz);
+    bounds_min_and_max[3] = Math.max(bounds_min_and_max[3], px);
+    bounds_min_and_max[4] = Math.max(bounds_min_and_max[4], py);
+    bounds_min_and_max[5] = Math.max(bounds_min_and_max[5], pz);
+
+    vertex_view.setFloat32(dst_byte_offset + 0, px, true);
+    vertex_view.setFloat32(dst_byte_offset + 4, py, true);
+    vertex_view.setFloat32(dst_byte_offset + 8, pz, true);
+    vertex_view.setFloat32(dst_byte_offset + 12, section_index, true);
+    vertex_view.setFloat32(dst_byte_offset + 16, uvs[src_uv_offset] ?? 0.0, true);
+    vertex_view.setFloat32(dst_byte_offset + 20, uvs[src_uv_offset + 1] ?? 0.0, true);
+
+    let nx = normals[src_normal_offset] ?? 0.0;
+    let ny = normals[src_normal_offset + 1] ?? 0.0;
+    let nz = normals[src_normal_offset + 2] ?? 0.0;
+    const normal_len = Math.hypot(nx, ny, nz);
+    const has_normal = normal_len > tangent_epsilon;
+    if (has_normal) {
+      nx /= normal_len;
+      ny /= normal_len;
+      nz /= normal_len;
+    } else {
+      nx = 0.0;
+      ny = 0.0;
+      nz = 0.0;
+    }
+
+    vertex_view.setUint32(dst_byte_offset + 24, pack_snorm4x8(nx, ny, nz, 0.0), true);
+
+    let tx = 0.0;
+    let ty = 0.0;
+    let tz = 0.0;
+    let tw = 1.0;
+    if (generated_tangents) {
+      const generated_offset = vertex_index * 4;
+      tx = generated_tangents[generated_offset];
+      ty = generated_tangents[generated_offset + 1];
+      tz = generated_tangents[generated_offset + 2];
+      tw = generated_tangents[generated_offset + 3];
+    } else if (tangent_components >= 3) {
+      const tangent_offset = vertex_index * tangent_components;
+      tx = tangents[tangent_offset] ?? 0.0;
+      ty = tangents[tangent_offset + 1] ?? 0.0;
+      tz = tangents[tangent_offset + 2] ?? 0.0;
+      tw = tangent_components >= 4 ? tangents[tangent_offset + 3] ?? 1.0 : 1.0;
+
+      if (has_normal) {
+        const nt_dot_t = nx * tx + ny * ty + nz * tz;
+        tx -= nx * nt_dot_t;
+        ty -= ny * nt_dot_t;
+        tz -= nz * nt_dot_t;
+      }
+
+      const tangent_len = Math.hypot(tx, ty, tz);
+      if (tangent_len > tangent_epsilon) {
+        tx /= tangent_len;
+        ty /= tangent_len;
+        tz /= tangent_len;
+      } else {
+        tx = 0.0;
+        ty = 0.0;
+        tz = 0.0;
+      }
+
+      tw = Math.abs(tw) > 0.5 ? tw : 1.0;
+    }
+
+    vertex_view.setUint32(dst_byte_offset + 28, pack_snorm4x8(tx, ty, tz, tw), true);
   }
-  for (let i = 0; i < indices.length; i++) {
-    group.indices.push(indices[i] + vertex_base);
+}
+
+function write_primitive_indices_to_staging(target_indices, write_offsets, descriptor, source_indices) {
+  if (descriptor.section_index < 0 || descriptor.index_count <= 0) {
+    return;
   }
+
+  let write_index = write_offsets[descriptor.section_index];
+  const vertex_offset = descriptor.vertex_offset;
+  for (let i = 0; i < source_indices.length; i++) {
+    target_indices[write_index++] = vertex_offset + source_indices[i];
+  }
+  write_offsets[descriptor.section_index] = write_index;
 }
 
 function create_runtime_meshlet_upload_data(positions, indices, sections, settings) {
@@ -602,64 +786,44 @@ function create_meshlet_upload_data(sidecar, primitive_descriptors, section_coun
   };
 }
 
-function finalize_gltf_build(mesh, gltf_obj, material_cache, primitive_descriptors, sidecar) {
-  mesh.sections = [];
-  mesh.index_count = 0;
-  mesh._tmp_indices.length = 0;
+function finalize_gltf_build(mesh, gltf_obj, build_state, sidecar) {
+  const {
+    primitive_descriptors,
+    section_defs,
+    vertex_upload_bytes,
+    positions_xyz,
+    indices,
+    bounds_min_and_max,
+    total_vertex_count,
+  } = build_state;
 
-  const vertex_section_map = new Int32Array(mesh.vertices.length).fill(-1);
-
-  let running_first_index = 0;
-  const section_index_by_material = new Map();
-  for (const [, group] of mesh._section_groups) {
-    if (group.indices.length === 0) {
-      continue;
-    }
-
-    const section_index = mesh.sections.length;
-    for (let i = 0; i < group.indices.length; i++) {
-      vertex_section_map[group.indices[i]] = section_index;
-    }
-
-    const new_section = {
-      first_index: running_first_index,
-      index_count: group.indices.length,
+  mesh.sections = new Array(section_defs.length);
+  for (let section_index = 0; section_index < section_defs.length; section_index++) {
+    const section_def = section_defs[section_index];
+    const section = {
+      first_index: section_def.first_index,
+      index_count: section_def.index_count,
       material_id: null,
     };
-    if (group.key >= 0) {
-      const gltf_mat = gltf_obj.materials[group.key];
-      new_section.material_id = Mesh.make_engine_material_from_gltf(
+    if (section_def.material_index >= 0) {
+      const gltf_mat = gltf_obj.materials[section_def.material_index];
+      section.material_id = Mesh.make_engine_material_from_gltf(
         gltf_obj,
         mesh,
         gltf_mat,
-        group.key,
-        material_cache
+        section_def.material_index
       );
     }
-    section_index_by_material.set(group.key, section_index);
-    mesh.sections.push(new_section);
-    mesh._tmp_indices = mesh._tmp_indices.concat(group.indices);
-    running_first_index += group.indices.length;
+    mesh.sections[section_index] = section;
   }
 
-  for (let vi = 0; vi < mesh.vertices.length; vi++) {
-    const section_index = vertex_section_map[vi] >= 0 ? vertex_section_map[vi] : 0;
-    mesh.vertices[vi].extra_data[0] = section_index;
-  }
-
-  if (mesh._tmp_indices.length > 0) {
-    mesh.indices = new Uint32Array(mesh._tmp_indices);
-  }
-
-  mesh.vertex_count = mesh.vertices.length;
-  mesh.index_count = mesh.indices.length;
-
-  mesh._recreate_vertex_bounds();
-
-  for (let i = 0; i < primitive_descriptors.length; i++) {
-    const descriptor = primitive_descriptors[i];
-    descriptor.section_index = section_index_by_material.get(descriptor.material_index) ?? -1;
-  }
+  mesh.vertices = null;
+  mesh.packed_vertex_data = vertex_upload_bytes;
+  mesh.cpu_position_data = positions_xyz;
+  mesh.indices = indices;
+  mesh.vertex_count = total_vertex_count;
+  mesh.index_count = indices.length;
+  mesh.bounds_min_and_max = bounds_min_and_max;
 
   mesh.meshlet_data = create_meshlet_upload_data(
     sidecar,
@@ -673,144 +837,65 @@ function finalize_gltf_build(mesh, gltf_obj, material_cache, primitive_descripto
   MeshData.update(mesh);
 
   if (discard_cpu_data) {
-    mesh.vertices = null;
+    mesh.packed_vertex_data = null;
+    mesh.cpu_position_data = null;
     mesh.indices = null;
     mesh._tmp_indices = null;
     mesh._section_groups = null;
   }
 }
 
-export function build_gltf_mesh(mesh, gltf_obj, gltf_mesh, mesh_index = null, sidecar = null) {
+export function prepare_gltf_mesh_build(mesh, gltf_obj, gltf_mesh, mesh_index) {
   mesh._reset_build_state();
 
-  const material_cache = new Map();
-  const resolved_mesh_index = mesh_index ?? resolve_gltf_mesh_index(gltf_obj, gltf_mesh);
-  const primitive_descriptors = [];
+  const {
+    primitive_descriptors,
+    section_defs,
+    total_vertex_count,
+    total_index_count,
+  } = analyze_gltf_primitives(gltf_obj, gltf_mesh, mesh_index);
 
-  for (let primitive_index = 0; primitive_index < gltf_mesh.primitives.length; primitive_index++) {
-    const primitive = gltf_mesh.primitives[primitive_index];
-    const material_index = get_gltf_material_index(gltf_obj, primitive);
-    let group = mesh._section_groups.get(material_index);
-    if (!group) {
-      group = { key: material_index, indices: [] };
-      mesh._section_groups.set(material_index, group);
-    }
+  const vertex_upload_bytes = new Uint8Array(total_vertex_count * vertex_stride);
+  const vertex_view = new DataView(vertex_upload_bytes.buffer);
+  const positions_xyz = new Float32Array(total_vertex_count * 3);
+  const indices = new Uint32Array(total_index_count);
 
-    const primitive_data = read_primitive_source_data(gltf_obj, primitive);
-    const source_vertices = build_vertices_from_primitive_data(primitive_data);
-    primitive_descriptors.push({
-      mesh_index: resolved_mesh_index,
-      primitive_index,
-      material_index,
-      vertex_offset: mesh.vertices.length,
-      vertex_count: source_vertices.length,
-      section_index: -1,
-      world_matrix: null,
-      normal_matrix: null,
-    });
+  const bounds_min_and_max = create_empty_bounds_array();
+  const section_write_offsets = section_defs.map((section) => section.first_index);
 
-    append_standard_primitive(mesh, group, source_vertices, primitive_data.indices);
+  for (let primitive_index = 0; primitive_index < primitive_descriptors.length; primitive_index++) {
+    const descriptor = primitive_descriptors[primitive_index];
+    const primitive = gltf_mesh.primitives[descriptor.primitive_index];
+    const primitive_data = read_primitive_source_data(gltf_obj, primitive, descriptor.vertex_count);
+    write_primitive_vertices_to_staging(
+      primitive_data,
+      descriptor,
+      vertex_view,
+      positions_xyz,
+      bounds_min_and_max
+    );
+    write_primitive_indices_to_staging(indices, section_write_offsets, descriptor, primitive_data.indices);
   }
 
-  finalize_gltf_build(mesh, gltf_obj, material_cache, primitive_descriptors, sidecar);
+  return {
+    primitive_descriptors,
+    section_defs,
+    vertex_upload_bytes,
+    positions_xyz,
+    indices,
+    bounds_min_and_max,
+    total_vertex_count,
+  };
 }
 
-export function build_combined_gltf_scene(mesh, gltf_obj, scene_index = null, sidecar = null) {
-  mesh._reset_build_state();
-
-  const material_cache = new Map();
-  const primitive_descriptors = [];
-
-  for (const node of gltf_obj.nodes) {
-    for (const child of node.children) {
-      child._parent = node;
-    }
+export function finalize_prepared_gltf_mesh_build(mesh, gltf_obj, build_state, sidecar = null) {
+  if (!build_state) {
+    return;
   }
+  finalize_gltf_build(mesh, gltf_obj, build_state, sidecar);
+}
 
-  const scene_to_use =
-    scene_index ?? gltf_obj.defaultScene ?? (gltf_obj.scenes.length > 0 ? 0 : null);
-  const scene = scene_to_use !== null ? gltf_obj.scenes[scene_to_use] : null;
-  const root_nodes = scene ? scene.nodes : gltf_obj.nodes;
-
-  const compute_world_matrix = (node) => {
-    const chain = [];
-    let current = node;
-    while (current) {
-      chain.unshift(current);
-      current = current._parent;
-    }
-
-    let world_matrix = mat4.create();
-    for (const chain_node of chain) {
-      const local_matrix = mat4.create();
-      const translation = chain_node.translation
-        ? vec3.fromValues(chain_node.translation[0], chain_node.translation[1], chain_node.translation[2])
-        : vec3.fromValues(0, 0, 0);
-      const rotation = chain_node.rotation
-        ? quat.fromValues(chain_node.rotation[0], chain_node.rotation[1], chain_node.rotation[2], chain_node.rotation[3])
-        : quat.create();
-      const scale = chain_node.scale
-        ? vec3.fromValues(chain_node.scale[0], chain_node.scale[1], chain_node.scale[2])
-        : vec3.fromValues(1, 1, 1);
-
-      mat4.fromRotationTranslationScale(local_matrix, rotation, translation, scale);
-      world_matrix = mat4.multiply(mat4.create(), world_matrix, local_matrix);
-    }
-    return world_matrix;
-  };
-
-  const compute_normal_matrix = (world_matrix) => {
-    const normal_matrix = mat3.create();
-    mat3.fromMat4(normal_matrix, world_matrix);
-    mat3.invert(normal_matrix, normal_matrix);
-    mat3.transpose(normal_matrix, normal_matrix);
-    return normal_matrix;
-  };
-
-  const process_node = (node) => {
-    if (node.mesh) {
-      const gltf_mesh = node.mesh;
-      const mesh_index = resolve_gltf_mesh_index(gltf_obj, gltf_mesh);
-      const world_matrix = compute_world_matrix(node);
-      const normal_matrix = compute_normal_matrix(world_matrix);
-
-      for (let primitive_index = 0; primitive_index < gltf_mesh.primitives.length; primitive_index++) {
-        const primitive = gltf_mesh.primitives[primitive_index];
-        const material_index = get_gltf_material_index(gltf_obj, primitive);
-        let group = mesh._section_groups.get(material_index);
-        if (!group) {
-          group = { key: material_index, indices: [] };
-          mesh._section_groups.set(material_index, group);
-        }
-
-        const primitive_data = read_primitive_source_data(gltf_obj, primitive);
-        const source_vertices = build_vertices_from_primitive_data(primitive_data, {
-          world_matrix,
-          normal_matrix,
-        });
-        primitive_descriptors.push({
-          mesh_index,
-          primitive_index,
-          material_index,
-          vertex_offset: mesh.vertices.length,
-          vertex_count: source_vertices.length,
-          section_index: -1,
-          world_matrix,
-          normal_matrix,
-        });
-
-        append_standard_primitive(mesh, group, source_vertices, primitive_data.indices);
-      }
-    }
-
-    for (const child of node.children) {
-      process_node(child);
-    }
-  };
-
-  for (const node of root_nodes) {
-    process_node(node);
-  }
-
-  finalize_gltf_build(mesh, gltf_obj, material_cache, primitive_descriptors, sidecar);
+export function build_gltf_mesh(mesh, gltf_obj, gltf_mesh, mesh_index, sidecar = null) {
+  const build_state = prepare_gltf_mesh_build(mesh, gltf_obj, gltf_mesh, mesh_index);
+  finalize_prepared_gltf_mesh_build(mesh, gltf_obj, build_state, sidecar);
 }

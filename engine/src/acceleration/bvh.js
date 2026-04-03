@@ -232,59 +232,34 @@ export class BVH {
     // ─── Morton Code Buffers ────────────────────────────────────────────────────────────────────
     // Morton codes provide a space-filling curve mapping 3D positions to 1D keys
     // This enables efficient spatial sorting while preserving locality
-    
-    if (
-      !this.morton_codes_buffer ||
-      this.morton_codes_buffer.config.size < required_primitive_size
-    ) {
-      this.morton_codes_buffer = Buffer.create({
-        name: MORTON_CODES_BUFFER_NAME,
-        usage: storage_usage,
-        size: required_primitive_size,     // One u32 Morton code per primitive
-        force: true,
-      });
-    }
+
+    this.morton_codes_buffer = Buffer.create({
+      name: MORTON_CODES_BUFFER_NAME,
+      usage: storage_usage,
+      size: required_primitive_size,     // One u32 Morton code per primitive
+    });
 
     // Temporary workspace for Morton code radix sort ping-pong operations
-    if (
-      !this.temp_morton_codes_buffer ||
-      this.temp_morton_codes_buffer.config.size < required_primitive_size
-    ) {
-      this.temp_morton_codes_buffer = Buffer.create({
-        name: TEMP_MORTON_CODES_BUFFER_NAME,
-        usage: storage_usage,
-        size: required_primitive_size,     // Must match primary buffer for swapping
-        force: true,
-      });
-    }
+    this.temp_morton_codes_buffer = Buffer.create({
+      name: TEMP_MORTON_CODES_BUFFER_NAME,
+      usage: storage_usage,
+      size: required_primitive_size,     // Must match primary buffer for swapping
+    });
 
     // ─── Primitive Index Buffers ───────────────────────────────────────────────────────────────
     // These buffers track the mapping between sorted Morton codes and original primitive indices
-    
-    if (
-      !this.sorted_indices_buffer ||
-      this.sorted_indices_buffer.config.size < required_primitive_size
-    ) {
-      this.sorted_indices_buffer = Buffer.create({
-        name: SORTED_INDICES_BUFFER_NAME,
-        usage: storage_usage,
-        size: required_primitive_size,     // One u32 index per primitive
-        force: true,
-      });
-    }
+    this.sorted_indices_buffer = Buffer.create({
+      name: SORTED_INDICES_BUFFER_NAME,
+      usage: storage_usage,
+      size: required_primitive_size,     // One u32 index per primitive
+    });
 
     // Temporary workspace for index sorting - pairs with Morton code sorting
-    if (
-      !this.temp_sorted_indices_buffer ||
-      this.temp_sorted_indices_buffer.config.size < required_primitive_size
-    ) {
-      this.temp_sorted_indices_buffer = Buffer.create({
-        name: TEMP_SORTED_INDICES_BUFFER_NAME,
-        usage: storage_usage,
-        size: required_primitive_size,     // Must match primary buffer for swapping
-        force: true,
-      });
-    }
+    this.temp_sorted_indices_buffer = Buffer.create({
+      name: TEMP_SORTED_INDICES_BUFFER_NAME,
+      usage: storage_usage,
+      size: required_primitive_size,     // Must match primary buffer for swapping
+    });
 
     // ─── OneSweep Radix Sort Infrastructure ────────────────────────────────────────────────────
     // OneSweep is a high-performance GPU radix sort that processes data in a single pass
@@ -296,95 +271,62 @@ export class BVH {
     // Pass histogram: Each workgroup needs RADIX buckets for each radix pass
     const pass_hist_count = max_thread_blocks * RADIX * RADIX_PASSES;
     
-    if (
-      !this.onesweep_pass_hist_buffer ||
-      this.onesweep_pass_hist_buffer.config.size < pass_hist_count * 4
-    ) {
-      this.onesweep_pass_hist_buffer = Buffer.create({
-        name: ONESWEEP_PASS_HIST_BUFFER_NAME,
-        usage: storage_usage,
-        size: pass_hist_count,
-        force: true,
-      });
-    }
+    this.onesweep_pass_hist_buffer = Buffer.create({
+      name: ONESWEEP_PASS_HIST_BUFFER_NAME,
+      usage: storage_usage,
+      size: pass_hist_count,
+    });
 
     // Global histogram: Aggregated bucket counts across all workgroups
     const global_hist_count = RADIX * RADIX_PASSES;    // 256 buckets × 4 passes = 1024 entries
-    
-    if (
-      !this.onesweep_global_hist_buffer ||
-      this.onesweep_global_hist_buffer.config.size < global_hist_count * 4
-    ) {
-      this.onesweep_global_hist_buffer = Buffer.create({
-        name: ONESWEEP_GLOBAL_HIST_BUFFER_NAME,
-        usage: storage_usage,
-        size: global_hist_count,
-        force: true,
-      });
-    }
+
+    this.onesweep_global_hist_buffer = Buffer.create({
+      name: ONESWEEP_GLOBAL_HIST_BUFFER_NAME,
+      usage: storage_usage,
+      size: global_hist_count,
+    });
 
     // Tile indices: Track which tiles are active for each radix pass
-    if (
-      !this.onesweep_tile_indices_buffer ||
-      this.onesweep_tile_indices_buffer.config.size < RADIX_PASSES * 4
-    ) {
-      this.onesweep_tile_indices_buffer = Buffer.create({
-        name: ONESWEEP_TILE_INDICES_BUFFER_NAME,
-        usage: storage_usage,
-        size: RADIX_PASSES,
-        force: true,
-      });
-    }
+    this.onesweep_tile_indices_buffer = Buffer.create({
+      name: ONESWEEP_TILE_INDICES_BUFFER_NAME,
+      usage: storage_usage,
+      size: RADIX_PASSES,
+    });
 
     // Error counting: Debug validation for sort algorithm correctness
-    if (
-      !this.onesweep_error_count_buffer ||
-      this.onesweep_error_count_buffer.config.size < 4
-    ) {
-      this.onesweep_error_count_buffer = Buffer.create({
-        name: ONESWEEP_ERROR_COUNT_BUFFER_NAME,
-        usage: storage_usage,
-        size: 1,
-        force: true,
-      });
-    }
+    this.onesweep_error_count_buffer = Buffer.create({
+      name: ONESWEEP_ERROR_COUNT_BUFFER_NAME,
+      usage: storage_usage,
+      size: 1,
+    });
 
     // ─── BVH Metadata and Statistics ───────────────────────────────────────────────────────────
     // This buffer stores build statistics and parameters needed by traversal shaders
     
     // BVH info buffer (u32 values: leaf_count, node_count, prim_count, padding)
-    if (!this.bvh_info_buffer) {
-      this.bvh_info_buffer = Buffer.create({
-        name: "bvh_info",
-        usage: storage_usage | GPUBufferUsage.UNIFORM,
-        size: 16,                         // 4 u32 values with GPU alignment
-        force: true,
-      });
-    }
+    this.bvh_info_buffer = Buffer.create({
+      name: "bvh_info",
+      usage: storage_usage | GPUBufferUsage.UNIFORM,
+      size: 16,                         // 4 u32 values with GPU alignment
+    });
 
     // Parent index mapping for hierarchical traversal and updates
-    if (!this.parent_idx_buffer || this.parent_idx_buffer.config.size < required_primitive_size) {
-      this.parent_idx_buffer = Buffer.create({
-        name: PARENT_IDX_BUFFER_NAME,
-        usage: storage_usage,
-        size: required_primitive_size,     // One u32 parent index per node
-        force: true,
-      });
-    }
+    this.parent_idx_buffer = Buffer.create({
+      name: PARENT_IDX_BUFFER_NAME,
+      usage: storage_usage,
+      size: required_primitive_size,     // One u32 parent index per node
+    });
 
     // ─── BVH Construction Workspace ─────────────────────────────────────────────────────────────
     // Index pairs: Work queue entries for parallel BVH construction
     // Each entry contains start/end indices for a work unit
     const index_pairs_size = this.bvh_size * 2;    // u64 pairs (start, end)
     
-    if (!this.bvh_index_pairs_buffer || this.bvh_index_pairs_buffer.config.size < index_pairs_size * 4) {
-      this.bvh_index_pairs_buffer = Buffer.create({
-        name: BVH_INDEX_PAIRS_BUFFER_NAME,
-        usage: storage_usage,
-        size: index_pairs_size,
-        force: true,
-      });
-    }
+    this.bvh_index_pairs_buffer = Buffer.create({
+      name: BVH_INDEX_PAIRS_BUFFER_NAME,
+      usage: storage_usage,
+      size: index_pairs_size,
+    });
 
     // Mark buffer reconstruction as complete
     this.modified = false;

@@ -11,4 +11,8 @@ tauri/gen
 **/config/**/*.json
 **/*.meshlet.json
 **/*.meshlet.bin
+**/*.sbvh.json
+**/*.sbvh.bin
+**/*.cooked.json
+**/*.cooked.bin
 

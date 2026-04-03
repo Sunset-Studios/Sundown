@@ -137,7 +137,7 @@ export class BVHProcessor {
   
   // ─── Bounds Processing Phase ──────────────────────────────────────────────────────────────────────────────────────
   bounds_processing_inputs = [null, null, null, null, null, null];   // Entity data, scene bounds input
-  bounds_processing_outputs = [null, null, null, null, null];         // Updated bounds, culling flags
+  bounds_processing_outputs = [null, null];                           // Updated bounds, culling flags
   
   // ─── Morton Code Generation Phase ─────────────────────────────────────────────────────────────────────────────────
   morton_code_inputs = [null, null, null, null, null, null, null, null];  // Bounds, scene AABB, metadata
@@ -307,7 +307,6 @@ export class BVHProcessor {
     // ─── Configure Compute Kernel Output Bindings ────────────────────────────────────────────────────────────────
     this.bounds_processing_outputs[0] = bounds_buffer.buffer;           // Updated entity bounds
     this.bounds_processing_outputs[1] = entity_flags_buffer.buffer;     // Updated culling flags
-    this.bounds_processing_outputs[2] = tlas_buffers.scene_bounds_buffer; // Accumulated scene bounds
 
     // ─── Dispatch Bounds Processing Compute Kernel ───────────────────────────────────────────────────────────────
     ComputeTaskQueue.new_task(

@@ -121,7 +121,6 @@ export class GLTFSceneLoader {
    * @param {EntityHandle|null} parent_entity - Parent entity for the scene root
    * @param {Function|null} callback - Called with (root_entity, entities) when loading completes
    * @param {Object} options - Loading options
-   * @param {boolean} options.single_mesh - If true, combines all GLTF meshes into one entity (default: false)
    * @returns {EntityHandle} The root/mesh entity (returned immediately, loading happens async)
    */
   static load_scene(
@@ -134,32 +133,6 @@ export class GLTFSceneLoader {
     callback = null,
     options = {}
   ) {
-    const { single_mesh = true } = options;
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // SINGLE MESH MODE: Combine all GLTF meshes into one mesh entity
-    // All node transforms are baked into the vertex positions
-    // ─────────────────────────────────────────────────────────────────────────
-    if (single_mesh) {
-      const mesh = Mesh.from_gltf_scene(gltf_path, scene_index);
-
-      const mesh_entity = spawn_mesh_entity(
-        position,
-        rotation,
-        scale,
-        mesh,
-        0, // GLTF sets the material id via mesh internals
-        parent_entity
-      );
-
-      if (callback) {
-        // Call callback after a microtask to allow mesh loading to start
-        callback(mesh_entity, [mesh_entity]);
-      }
-
-      return mesh_entity;
-    }
-
     // ─────────────────────────────────────────────────────────────────────────
     // INSTANCED/FLAT MODE: Create root entity and load scene hierarchy
     // ─────────────────────────────────────────────────────────────────────────
@@ -167,99 +140,68 @@ export class GLTFSceneLoader {
       position,
       rotation,
       scale,
-      parent_entity,
+      parent_entity
     );
 
     const loader = new glTFLoader();
     loader.load(gltf_path, (gltf_obj) => {
       const entities = [root_entity];
+      const scene_meshes = new Set();
 
-      // ─────────────────────────────────────────────────────────────────────
-      // Set up parent references for hierarchical traversal
-      // ─────────────────────────────────────────────────────────────────────
-      for (const node of gltf_obj.nodes) {
-        for (const child of node.children) {
-          child._parent = node;
-        }
-      }
-
-      // ─────────────────────────────────────────────────────────────────────
-      // Determine which scene to load
-      // ─────────────────────────────────────────────────────────────────────
       const scene_to_use =
         scene_index ?? gltf_obj.defaultScene ?? (gltf_obj.scenes.length > 0 ? 0 : null);
       const scene = scene_to_use !== null ? gltf_obj.scenes[scene_to_use] : null;
       const root_nodes = scene ? scene.nodes : gltf_obj.nodes;
 
-      // ─────────────────────────────────────────────────────────────────────
-      // INSTANCED MODE (default): Group meshes and use instancing
-      // ─────────────────────────────────────────────────────────────────────
-      const mesh_to_nodes = new Map();
-
-      const collect_mesh_nodes = (node) => {
-        if (node.mesh) {
-          const mesh_key = node.mesh.meshID;
-
-          if (!mesh_to_nodes.has(mesh_key)) {
-            mesh_to_nodes.set(mesh_key, []);
-          }
-
-          mesh_to_nodes.get(mesh_key).push(node);
+      const spawn_node_hierarchy = (node, parent) => {
+        const local_transform = this.get_node_local_transform(node);
+        const mesh = this.get_mesh_for_node(gltf_path, gltf_obj, node);
+        if (mesh) {
+          scene_meshes.add(mesh);
         }
 
-        for (const child of node.children) {
-          collect_mesh_nodes(child);
+        const entity = mesh
+          ? spawn_mesh_entity(
+            local_transform.position,
+            local_transform.rotation,
+            local_transform.scale,
+            mesh,
+            0,
+            parent,
+            [],
+            true,
+            0
+          )
+          : spawn_transform_entity(
+            local_transform.position,
+            local_transform.rotation,
+            local_transform.scale,
+            parent,
+            0
+          );
+
+        entities.push(entity);
+
+        for (const child of node.children ?? []) {
+          spawn_node_hierarchy(child, entity);
         }
       };
 
       for (const node of root_nodes) {
-        collect_mesh_nodes(node);
+        spawn_node_hierarchy(node, root_entity);
       }
 
-      // Create instanced mesh entities, parented to root
-      for (const [mesh_key, nodes] of mesh_to_nodes) {
-        const mesh = this.get_mesh_for_node(gltf_path, gltf_obj, nodes[0]);
-        if (!mesh) continue;
-
-        // Get first node's world transform for initial entity spawn
-        const first_transform = this.compute_node_world_transform(nodes[0]);
-
-        // Spawn mesh entity parented to root
-        const mesh_entity = spawn_mesh_entity(
-          first_transform.position,
-          first_transform.rotation,
-          first_transform.scale,
-          mesh,
-          0, // GLTF sets the material id via mesh internals
-          root_entity,
-          [],
-          true,
-          0 // flags = 0, should inherit parent scale
-        );
-
-        entities.push(mesh_entity);
-
-        // Set up instancing if multiple nodes share this mesh
-        if (nodes.length > 1) {
-          EntityManager.set_entity_instance_count(mesh_entity, nodes.length);
-
-          // Set transform for each instance (including first)
-          for (let i = 0; i < nodes.length; i++) {
-            const node = nodes[i];
-            const world_transform = this.compute_node_world_transform(node);
-
-            const transform_view = EntityManager.get_fragment(mesh_entity, TransformFragment, i);
-
-            transform_view.position = world_transform.position;
-            transform_view.rotation = world_transform.rotation;
-            transform_view.scale = world_transform.scale;
-          }
+      void Promise.all(
+        Array.from(scene_meshes, (mesh) => mesh.pending_gltf_build_promise).filter(Boolean)
+      ).then(() => {
+        for (const mesh of scene_meshes) {
+          Mesh.finalize_prepared_gltf_mesh(mesh, gltf_obj);
         }
-      }
 
-      if (callback) {
-        callback(root_entity, entities);
-      }
+        if (callback) {
+          callback(root_entity, entities);
+        }
+      });
     });
 
     return root_entity;

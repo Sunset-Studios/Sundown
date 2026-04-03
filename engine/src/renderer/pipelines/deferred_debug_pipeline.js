@@ -92,7 +92,7 @@ export class DeferredDebugPipeline {
       max_nodes_debug = MeshBLAS.bounds_size;
     }
 
-    const max_lines = Math.min(max_nodes_debug * 12 * 20, 256000 * 12 * 20);
+    const max_lines = max_nodes_debug * 12 * 20;
     const debug_line_data_buf = render_graph.create_buffer({
       name: "debug_line_data",
       size: max_lines,
@@ -110,7 +110,7 @@ export class DeferredDebugPipeline {
         },
         (graph, frame_data, encoder) => {
           const pass = graph.get_physical_pass(frame_data.current_pass);
-          pass.dispatch(Math.ceil(BVH.bvh_size / 64), 1, 1);
+          pass.dispatch(Math.ceil(BVH.bvh_size / 128), 1, 1);
         }
       );
     } else if (debug_view === DebugDrawType.BLAS_Bounds) {

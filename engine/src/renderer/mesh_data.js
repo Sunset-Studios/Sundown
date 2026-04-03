@@ -21,10 +21,11 @@ const initial_meshlet_triangle_capacity = 1024;
 const initial_meshlet_group_capacity = 256;
 
 const mesh_bounds_size = 8;
-const vertex_stride = 32;
 const meshlet_stride = 80;
 const meshlet_group_stride = 64;
 const storage_usage = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST;
+
+export const vertex_stride = 32;
 
 export class MeshData {
   static is_initialized = false;
@@ -138,7 +139,10 @@ export class MeshData {
       this.initialize();
     }
 
-    if (mesh.vertices && mesh.vertex_buffer_offset === -1) {
+    if (mesh.packed_vertex_data && mesh.vertex_buffer_offset === -1) {
+      mesh.vertex_buffer_offset = this._add_packed_vertex_data(mesh);
+      mesh.index_buffer_offset = this._add_index_data(mesh);
+    } else if (mesh.vertices && mesh.vertex_buffer_offset === -1) {
       mesh.vertex_buffer_offset = this._add_vertex_data(mesh);
       mesh.index_buffer_offset = this._add_index_data(mesh);
     }
@@ -187,9 +191,6 @@ export class MeshData {
 
   static _set_bounds(index, b) {
     const base = index * mesh_bounds_size;
-    if (base >= this.bounds.length) {
-      this._resize_bounds(base * 2);
-    }
 
     this.bounds[base + 0] = b[0] || 0.0;
     this.bounds[base + 1] = b[1] || 0.0;
@@ -200,7 +201,11 @@ export class MeshData {
     this.bounds[base + 6] = b[5] || 0.0;
     this.bounds[base + 7] = 0.0;
 
-    this._upload_bounds(index);
+    if (base >= this.bounds.length) {
+      this._resize_bounds(base * 2);
+    } else {
+      this._upload_bounds(index);
+    }
   }
 
   static _upload_bounds(index) {
@@ -222,14 +227,14 @@ export class MeshData {
     this.mesh_bounds_buffer = Buffer.create({
       name: mesh_bounds_buffer_name,
       usage: storage_usage,
-      size: this.bounds.length,
-      force: true,
+      raw_data: this.bounds,
     });
   }
 
   static _add_vertex_data(mesh) {
     const write_offset = this.vertex_buffer_head;
-    const required = write_offset + mesh.vertices.length * vertex_stride;
+    const upload_size = mesh.vertices.length * vertex_stride;
+    const required = write_offset + upload_size;
     if (required > this.vertex_data.byteLength) {
       this._resize_vertex_data(required * 2);
     }
@@ -267,15 +272,38 @@ export class MeshData {
       view.setFloat32(base + 20, uv[1] ?? 0.0, true);
     }
 
-    this._upload_vertex_data();
+    this._upload_vertex_data_range(write_offset, upload_size);
 
     const old_vertex_offset = Math.floor(write_offset / vertex_stride);
-    this.vertex_buffer_head = write_offset + mesh.vertices.length * vertex_stride;
+    this.vertex_buffer_head = write_offset + upload_size;
     return old_vertex_offset;
   }
 
-  static _upload_vertex_data() {
-    this.vertex_buffer.write_raw(this.vertex_data);
+  static _add_packed_vertex_data(mesh) {
+    const packed = mesh.packed_vertex_data;
+    const write_offset = this.vertex_buffer_head;
+    const upload_size = packed?.length ?? 0;
+    const required = write_offset + upload_size;
+    if (required > this.vertex_data.byteLength) {
+      this._resize_vertex_data(required * 2);
+    }
+
+    if (upload_size > 0) {
+      this.vertex_data.set(packed, write_offset);
+      this._upload_vertex_data_range(write_offset, upload_size);
+    }
+
+    const old_vertex_offset = Math.floor(write_offset / vertex_stride);
+    this.vertex_buffer_head = write_offset + upload_size;
+    return old_vertex_offset;
+  }
+
+  static _upload_vertex_data_range(offset, size) {
+    if (size <= 0) {
+      return;
+    }
+
+    this.vertex_buffer.write_raw(this.vertex_data.subarray(offset, offset + size), offset);
   }
 
   static _resize_vertex_data(new_size) {
@@ -304,15 +332,22 @@ export class MeshData {
     }
 
     this.index_data.set(packed, write_offset);
-    this._upload_index_data();
+    this._upload_index_data_range(write_offset, packed.length);
 
     const old_index_offset = write_offset;
     this.index_buffer_head = write_offset + packed.length;
     return old_index_offset;
   }
 
-  static _upload_index_data() {
-    this.index_buffer.write_raw(this.index_data);
+  static _upload_index_data_range(offset, count) {
+    if (count <= 0) {
+      return;
+    }
+
+    this.index_buffer.write_raw(
+      this.index_data.subarray(offset, offset + count),
+      offset * Uint32Array.BYTES_PER_ELEMENT
+    );
   }
 
   static _resize_index_data(new_size) {
@@ -325,7 +360,7 @@ export class MeshData {
     this.index_buffer = Buffer.create({
       name: index_buffer_name,
       usage: GPUBufferUsage.INDEX | storage_usage,
-      size: this.index_data.length,
+      raw_data: this.index_data,
       element_type: "uint32",
       force: true,
     });
@@ -354,10 +389,22 @@ export class MeshData {
       this.meshlet_vertex_data[meshlet_vertex_offset + i] =
         upload.meshlet_vertices[i] + mesh.vertex_buffer_offset;
     }
-    this.meshlet_vertex_buffer.write_raw(this.meshlet_vertex_data);
+    this.meshlet_vertex_buffer.write_raw(
+      this.meshlet_vertex_data.subarray(
+        meshlet_vertex_offset,
+        meshlet_vertex_offset + upload.meshlet_vertices.length
+      ),
+      meshlet_vertex_offset * Uint32Array.BYTES_PER_ELEMENT
+    );
 
     this.meshlet_triangle_data.set(upload.meshlet_triangles, meshlet_triangle_offset);
-    this.meshlet_triangle_buffer.write_raw(this.meshlet_triangle_data);
+    this.meshlet_triangle_buffer.write_raw(
+      this.meshlet_triangle_data.subarray(
+        meshlet_triangle_offset,
+        meshlet_triangle_offset + upload.meshlet_triangles.length
+      ),
+      meshlet_triangle_offset * Uint32Array.BYTES_PER_ELEMENT
+    );
 
     const meshlet_view = new DataView(this.meshlet_data.buffer);
     for (let i = 0; i < upload.meshlets.length; i++) {
@@ -389,7 +436,13 @@ export class MeshData {
       meshlet_view.setFloat32(base + 72, meshlet.normal_cone_axis[2], true);
       meshlet_view.setFloat32(base + 76, meshlet.normal_cone_cutoff, true);
     }
-    this.meshlet_buffer.write_raw(this.meshlet_data);
+
+    let meshlet_element_offset = meshlet_offset * meshlet_stride;
+    let meshlet_element_end = (meshlet_offset + upload.meshlets.length) * meshlet_stride;
+    this.meshlet_buffer.write_raw(
+      this.meshlet_data.subarray(meshlet_element_offset, meshlet_element_end),
+      meshlet_element_offset
+    );
 
     const meshlet_group_view = new DataView(this.meshlet_group_data.buffer);
     for (let i = 0; i < upload.meshlet_groups.length; i++) {
@@ -416,7 +469,13 @@ export class MeshData {
       meshlet_group_view.setFloat32(base + 56, group.bounds_max[2], true);
       meshlet_group_view.setFloat32(base + 60, 0.0, true);
     }
-    this.meshlet_group_buffer.write_raw(this.meshlet_group_data);
+
+    let meshlet_group_element_offset = meshlet_group_offset * meshlet_group_stride;
+    let meshlet_group_element_end = (meshlet_group_offset + upload.meshlet_groups.length) * meshlet_group_stride;
+    this.meshlet_group_buffer.write_raw(
+      this.meshlet_group_data.subarray(meshlet_group_element_offset, meshlet_group_element_end),
+      meshlet_group_element_offset
+    );
 
     mesh.meshlet_buffer_offset = meshlet_offset;
     mesh.meshlet_vertex_buffer_offset = meshlet_vertex_offset;

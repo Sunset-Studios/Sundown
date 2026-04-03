@@ -6,7 +6,7 @@
   "type": "module",
   "scripts": {
     "test": "node example/snake_game.test.js",
-    "cook": "node tools/fragment_preprocessor.js && node tools/meshlet_preprocessor.js && node tools/msdf_font_generator.js",
+    "cook": "node tools/fragment_preprocessor.js && node tools/shader_preprocessor.js && node tools/meshlet_preprocessor.js && node tools/sbvh_preprocessor.js && node tools/msdf_font_generator.js",
     "predev": "npm run cook",
     "dev": "node tools/dev_server.js",
     "prebuild": "npm run cook",

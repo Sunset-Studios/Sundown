@@ -4,9 +4,6 @@
 // Constants
 // ------------------------------------------------------------------------------------ 
 
-// For things like world space UI, this prevents z-fighting between parent-child elements that are positioned at the same z-depth
-const layer_z_offset_amount = 0.05;
-
 // ------------------------------------------------------------------------------------
 // Data Structures
 // ------------------------------------------------------------------------------------ 
@@ -111,42 +108,7 @@ fn cs(@builtin(global_invocation_id) global_id: vec3<u32>) {
         
         position.x,
         position.y,
-        position.z + layer_z_offset_amount * f32(scene_graph_layer_data.layer_index),
-        1.0
-    );
-
-    // Calculate inverse transform
-    let det = transform[0][0] * (transform[1][1] * transform[2][2] - transform[2][1] * transform[1][2]) -
-        transform[0][1] * (transform[1][0] * transform[2][2] - transform[1][2] * transform[2][0]) +
-        transform[0][2] * (transform[1][0] * transform[2][1] - transform[1][1] * transform[2][0]);
-
-    let inv_det = 1.0 / det;
-
-    let inverse_transform = mat4x4<f32>(
-        (transform[1][1] * transform[2][2] - transform[2][1] * transform[1][2]) * inv_det,
-        -(transform[0][1] * transform[2][2] - transform[0][2] * transform[2][1]) * inv_det,
-        (transform[0][1] * transform[1][2] - transform[0][2] * transform[1][1]) * inv_det,
-        0.0,
-
-        -(transform[1][0] * transform[2][2] - transform[1][2] * transform[2][0]) * inv_det,
-        (transform[0][0] * transform[2][2] - transform[0][2] * transform[2][0]) * inv_det,
-        -(transform[0][0] * transform[1][2] - transform[0][2] * transform[1][0]) * inv_det,
-        0.0,
-
-        (transform[1][0] * transform[2][1] - transform[2][0] * transform[1][1]) * inv_det,
-        -(transform[0][0] * transform[2][1] - transform[2][0] * transform[0][1]) * inv_det,
-        (transform[0][0] * transform[1][1] - transform[1][0] * transform[0][1]) * inv_det,
-        0.0,
-
-        -(transform[1][0] * (transform[2][1] * transform[3][2] - transform[2][2] * transform[3][1]) -
-           transform[1][1] * (transform[2][0] * transform[3][2] - transform[2][2] * transform[3][0]) +
-           transform[1][2] * (transform[2][0] * transform[3][1] - transform[2][1] * transform[3][0])) * inv_det,
-        (transform[0][0] * (transform[2][1] * transform[3][2] - transform[2][2] * transform[3][1]) -
-           transform[0][1] * (transform[2][0] * transform[3][2] - transform[2][2] * transform[3][0]) +
-           transform[0][2] * (transform[2][0] * transform[3][1] - transform[2][1] * transform[3][0])) * inv_det,
-        -(transform[0][0] * (transform[1][1] * transform[3][2] - transform[1][2] * transform[3][1]) -
-           transform[0][1] * (transform[1][0] * transform[3][2] - transform[1][2] * transform[3][0]) +
-           transform[0][2] * (transform[1][0] * transform[3][1] - transform[1][1] * transform[3][0])) * inv_det,
+        position.z,
         1.0
     );
 
@@ -159,13 +121,7 @@ fn cs(@builtin(global_invocation_id) global_id: vec3<u32>) {
     // On first frame, both will be the same (acceptable for motion vectors on spawn)
     entity_transform.prev_transform = entity_transform.transform;
     entity_transform.transform = transform;
-
-    entity_transform.transpose_inverse_model_matrix = mat4x4<f32>(
-        inverse_transform[0][0], inverse_transform[1][0], inverse_transform[2][0], inverse_transform[3][0],
-        inverse_transform[0][1], inverse_transform[1][1], inverse_transform[2][1], inverse_transform[3][1],
-        inverse_transform[0][2], inverse_transform[1][2], inverse_transform[2][2], inverse_transform[3][2],
-        inverse_transform[0][3], inverse_transform[1][3], inverse_transform[2][3], inverse_transform[3][3]
-    );
+    entity_transform.transpose_inverse_model_matrix = transpose(inverse4x4(transform));
 
     entity_transforms[entity_resolved] = entity_transform;
     entity_flags[entity_resolved] = new_flag;

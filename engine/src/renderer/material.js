@@ -397,7 +397,6 @@ export class Material {
     this.texture_data = new Map();
     this.sampler_data = new Map();
     this.data_listeners = new Set();
-    this.state_hash = 0;
     this.bind_group_update_flags = 0;
     // Depending on behaviors based on the family, it might be useful to have it exposed like this for derived materials.
     // Otherwise, TODO so we only use the family from the template.
@@ -406,22 +405,10 @@ export class Material {
     this.set_storage_data.bind(this);
     this.set_texture_data.bind(this);
     this.set_sampler_data.bind(this);
-    this._update_state_hash();
   }
 
   set needs_bind_group_update(value) {
     this.bind_group_update_flags = value ? 7 : 0;
-  }
-
-  _update_state_hash() {
-    profile_scope("Material._update_state_hash", () => {
-      let hash = hash_value(this.template.name);
-      hash = hash_data_map(this.uniform_data, hash);
-      hash = hash_data_map(this.storage_data, hash);
-      hash = hash_data_map(this.texture_data, hash);
-      hash = hash_data_map(this.sampler_data, hash);
-      this.state_hash = hash;
-    });
   }
 
   _build_bind_group_entries(pass_type) {
@@ -537,7 +524,6 @@ export class Material {
 
   set_uniform_data(name, data) {
     this.uniform_data.set(name, data);
-    this._update_state_hash();
     this.needs_bind_group_update = true;
   }
 
@@ -557,7 +543,6 @@ export class Material {
 
   set_storage_data(name, data) {
     this.storage_data.set(name, data);
-    this._update_state_hash();
     this.needs_bind_group_update = true;
   }
 
@@ -577,7 +562,6 @@ export class Material {
 
   set_texture_data(name, texture) {
     this.texture_data.set(name, texture);
-    this._update_state_hash();
     this.needs_bind_group_update = true;
   }
 
@@ -597,7 +581,6 @@ export class Material {
 
   set_sampler_data(name, sampler) {
     this.sampler_data.set(name, sampler);
-    this._update_state_hash();
     this.needs_bind_group_update = true;
   }
 
@@ -654,10 +637,6 @@ export class Material {
     if (bind_group) {
       bind_group.bind(render_pass);
     }
-  }
-
-  get_state_hash() {
-    return this.state_hash;
   }
 
   new_instance(instance_name) {
@@ -1033,7 +1012,9 @@ export class StandardMaterial {
     material.listen_for_texture_data(`texture_pool_${texture_config.pool_key}`);
     params_buffer[offset + texture_handles_offset + 1] = texture.bindless_handle;
 
-    params_buffer[offset + texture_flags1_offset + 1] = 1;
+    const flip_y = texture_config.flip_y !== undefined ? texture_config.flip_y : true;
+    const invert_y = texture_config.invert_y !== undefined ? texture_config.invert_y : flip_y;
+    params_buffer[offset + texture_flags1_offset + 1] = 1 | (invert_y ? 2 : 0);
 
     this.mark_params_dirty();
   }

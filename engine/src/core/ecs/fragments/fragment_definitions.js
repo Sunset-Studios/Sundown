@@ -126,6 +126,7 @@ const StaticMeshFragment = {
     mesh_asset_id: {
       type: DataType.UINT32,
       stride: 1,
+      default: 4294967295,
       gpu: true,
       usage: BufferType.STORAGE,
       setter: `
@@ -217,8 +218,8 @@ const TransformFragment = {
       type: DataType.FLOAT32,
       stride: 8,
       gpu: true,
+      buffer_multiplier: 2,
       usage: BufferType.STORAGE,
-      buffer_multiplier: 2.0,
     },
     transforms: {
       type: DataType.FLOAT32,

@@ -12,6 +12,7 @@ import { PathTracingStrategy } from "./strategies/path_tracing.js";
 import { RenderGraph } from "./render_graph.js";
 import { Texture, TextureSampler } from "./texture.js";
 import { Mesh } from "./mesh.js";
+import { ShaderArchive } from "./shader_archive.js";
 import {
   SharedViewBuffer,
   SharedFrameInfoBuffer,
@@ -125,6 +126,8 @@ export class Renderer {
       format: this.canvas_format,
       alphaMode: "premultiplied",
     });
+
+    await ShaderArchive.load();
 
     if (this.canvas_ui) {
       this.context_ui = this.canvas_ui.getContext("2d", {
