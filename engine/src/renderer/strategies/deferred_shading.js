@@ -28,7 +28,6 @@ import { VisibilityBufferPipeline } from "../pipelines/visibility_buffer_pipelin
 // Types and utilities
 import {
   RenderPassFlags,
-  MaterialFamilyType,
   DebugDrawType,
   GIStrategyType,
   AOStrategyType,
@@ -339,9 +338,6 @@ export class DeferredShadingStrategy {
         mesh_gpu_data.meshlet_triangle_buffer.config.name
       );
 
-      const material_params = render_graph.register_buffer(
-        MaterialAllocationTable.params_buffer.config.name
-      );
       const material_palette = render_graph.register_buffer(
         MaterialAllocationTable.palette_buffer.config.name
       );
@@ -387,15 +383,6 @@ export class DeferredShadingStrategy {
 
       let skybox_image = null;
       let post_lighting_image_desc = null;
-
-      const texture_pool_albedo = this._get_texture_pool(render_graph, "albedo");
-      const texture_pool_normal = this._get_texture_pool(render_graph, "normal");
-      const texture_pool_roughness = this._get_texture_pool(render_graph, "roughness");
-      const texture_pool_metallic = this._get_texture_pool(render_graph, "metallic");
-      const texture_pool_ao = this._get_texture_pool(render_graph, "ao");
-      const texture_pool_height = this._get_texture_pool(render_graph, "height");
-      const texture_pool_specular = this._get_texture_pool(render_graph, "specular");
-      const texture_pool_emission = this._get_texture_pool(render_graph, "emission");
 
       this.culling_pipeline.register_views(render_graph, {
         draw_count,
@@ -1079,7 +1066,6 @@ export class DeferredShadingStrategy {
       this.force_recreate = false;
 
       ComputeTaskQueue.compile_post_rg_passes(render_graph);
-
       ComputeTaskQueue.reset();
 
       render_graph.submit();

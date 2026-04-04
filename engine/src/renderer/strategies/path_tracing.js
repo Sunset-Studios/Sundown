@@ -315,15 +315,6 @@ export class PathTracingStrategy {
         include_prev_depth: true,
       });
 
-      const texture_pool_albedo = this._get_texture_pool(render_graph, "albedo");
-      const texture_pool_normal = this._get_texture_pool(render_graph, "normal");
-      const texture_pool_roughness = this._get_texture_pool(render_graph, "roughness");
-      const texture_pool_metallic = this._get_texture_pool(render_graph, "metallic");
-      const texture_pool_ao = this._get_texture_pool(render_graph, "ao");
-      const texture_pool_height = this._get_texture_pool(render_graph, "height");
-      const texture_pool_specular = this._get_texture_pool(render_graph, "specular");
-      const texture_pool_emission = this._get_texture_pool(render_graph, "emission");
-
       this.culling_pipeline.register_views(render_graph, {
         draw_count,
         main_hzb_image,
@@ -513,12 +504,12 @@ export class PathTracingStrategy {
           depth_prepass_enabled,
           current_view,
           depth_image: main_depth_image,
-          occlusion_meshlet_draw_args: bucket_draw_resources?.draw_args ?? occlusion_meshlet_draw_args,
+          occlusion_meshlet_draw_args: bucket_draw_resources.draw_args,
           bucket,
           inputs: [
             entity_transforms,
             object_instances,
-            bucket_draw_resources?.meshlet_list ?? occlusion_meshlet_list,
+            bucket_draw_resources.meshlet_list,
             meshlet_buffer,
             meshlet_vertex_buffer,
             meshlet_triangle_buffer,
@@ -566,6 +557,11 @@ export class PathTracingStrategy {
           entity_transforms,
           index_buffer,
           dense_lights,
+          visibility_entity_image,
+          visibility_surface_image,
+          meshlet_buffer,
+          meshlet_vertex_buffer,
+          meshlet_triangle_buffer,
           main_depth_image,    // G-buffer depth
           main_normal_image,   // G-buffer normal
           main_albedo_image,   // G-buffer albedo

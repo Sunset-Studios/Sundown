@@ -1220,7 +1220,7 @@ export class StandardMaterial {
       );
     }
     material.listen_for_texture_data(`texture_pool_${texture_config.pool_key}`);
-    params_buffer[offset + texture_handles_offset + 4] = texture.bindless_handle;
+    params_buffer[offset + texture_handles_offset + 5] = texture.bindless_handle;
 
     let flag = 1;
     if (channel >= 0 && channel <= 3) {
@@ -1234,7 +1234,7 @@ export class StandardMaterial {
   _update_height_bindless_handle(name, texture) {
     const params_buffer = MaterialAllocationTable.params_data;
     const offset = this.material_allocation_index * MATERIAL_PARAMS_SIZE;
-    params_buffer[offset + texture_handles_offset + 4] = texture.bindless_handle;
+    params_buffer[offset + texture_handles_offset + 5] = texture.bindless_handle;
     params_buffer[offset + texture_flags2_offset + 1] |= 1;
     this.mark_params_dirty();
   }
