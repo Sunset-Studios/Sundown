@@ -7,13 +7,11 @@ import { SharedFrameInfoBuffer } from "../../core/shared_data.js";
 // ECS fragments
 import { TransformFragment } from "../../core/ecs/fragments/transform_fragment.js";
 import { LightFragment } from "../../core/ecs/fragments/light_fragment.js";
-import { StaticMeshFragment } from "../../core/ecs/fragments/static_mesh_fragment.js";
 
 // Renderer components
 import { Renderer } from "../renderer.js";
 import { Texture } from "../texture.js";
 import { MeshData } from "../mesh_data.js";
-import { MaterialAllocationTable } from "../material_allocation_table.js";
 import { PostProcessStack } from "../post_process_stack.js";
 import { MeshTaskQueue } from "../mesh_task_queue.js";
 import { ComputeTaskQueue } from "../compute_task_queue.js";
@@ -249,20 +247,6 @@ export class PathTracingStrategy {
         MeshTaskQueue.get_meshlet_instance_buffer().config.name
       );
 
-      const mesh_asset_ids = EntityManager.get_fragment_gpu_buffer(
-        StaticMeshFragment,
-        mesh_asset_id_name
-      );
-      const mesh_asset_ids_buffer = render_graph.register_buffer(mesh_asset_ids.buffer.config.name);
-
-      const material_offsets_buffer = EntityManager.get_fragment_gpu_buffer(
-        StaticMeshFragment,
-        "material_table_offset"
-      );
-      const material_table_offset = render_graph.register_buffer(
-        material_offsets_buffer.buffer.config.name
-      );
-
       const mesh_gpu_data = MeshData.to_gpu_data();
       const index_buffer = render_graph.register_buffer(MeshData.index_buffer.config.name);
       const meshlet_buffer = render_graph.register_buffer(mesh_gpu_data.meshlet_buffer.config.name);
@@ -271,13 +255,6 @@ export class PathTracingStrategy {
       );
       const meshlet_triangle_buffer = render_graph.register_buffer(
         mesh_gpu_data.meshlet_triangle_buffer.config.name
-      );
-
-      const material_params = render_graph.register_buffer(
-        MaterialAllocationTable.params_buffer.config.name
-      );
-      const material_palette = render_graph.register_buffer(
-        MaterialAllocationTable.palette_buffer.config.name
       );
 
       // ┌─────────────────────────────────────────────────────────────────────────────┐
@@ -322,10 +299,6 @@ export class PathTracingStrategy {
         object_instances,
         entity_index_lookup,
       });
-
-      // ┌─────────────────────────────────────────────────────────────────────────────┐
-      // │ 📋 Register Per-View Visibility Data                                       │
-      // └─────────────────────────────────────────────────────────────────────────────┘
 
       // ═══════════════════════════════════════════════════════════════════════════════
       // 🎨 RENDERING PIPELINE BEGINS
