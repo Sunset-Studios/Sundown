@@ -292,6 +292,7 @@ export class BVHProcessor {
       mesh_asset_id_name                        // Mesh asset identifiers for bounds lookup
     );
     const entity_flags_buffer = FragmentGpuBuffer.entity_flags_buffer; // Visibility/culling flags
+    const entity_index_map_buffer = FragmentGpuBuffer.entity_index_map_buffer;
 
     // Mesh resource data for bounds transformation
     const mesh_data = MeshData.to_gpu_data();
@@ -299,10 +300,11 @@ export class BVHProcessor {
     // ─── Configure Compute Kernel Input Bindings ─────────────────────────────────────────────────────────────────
     this.bounds_processing_inputs[0] = transforms_buffer.buffer;        // Entity transform matrices
     this.bounds_processing_inputs[1] = entity_flags_buffer.buffer;      // Visibility and culling flags
-    this.bounds_processing_inputs[2] = bounds_buffer.buffer;            // Current entity bounds (input)
-    this.bounds_processing_inputs[3] = tlas_buffers.scene_bounds_buffer; // Global scene AABB (accumulator)
-    this.bounds_processing_inputs[4] = static_mesh_ids_buffer.buffer;   // Mesh asset ID mappings
-    this.bounds_processing_inputs[5] = mesh_data.mesh_bounds_buffer;    // Mesh-space bounding boxes
+    this.bounds_processing_inputs[2] = entity_index_map_buffer.buffer;  // Entity index lookup
+    this.bounds_processing_inputs[3] = bounds_buffer.buffer;            // Current entity bounds (input)
+    this.bounds_processing_inputs[4] = tlas_buffers.scene_bounds_buffer; // Global scene AABB (accumulator)
+    this.bounds_processing_inputs[5] = static_mesh_ids_buffer.buffer;   // Mesh asset ID mappings
+    this.bounds_processing_inputs[6] = mesh_data.mesh_bounds_buffer;    // Mesh-space bounding boxes
 
     // ─── Configure Compute Kernel Output Bindings ────────────────────────────────────────────────────────────────
     this.bounds_processing_outputs[0] = bounds_buffer.buffer;           // Updated entity bounds

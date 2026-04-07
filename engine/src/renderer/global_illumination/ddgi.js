@@ -12,6 +12,7 @@ import { StaticMeshFragment } from "../../core/ecs/fragments/static_mesh_fragmen
 import { Name } from "../../utility/names.js";
 import { ResourceCache } from "../resource_cache.js";
 import { ispot, npot } from "../../utility/math.js";
+import { FragmentGpuBuffer } from "../../core/ecs/solar/memory.js";
 
 const COMPUTE_WORKGROUP_SIZE = 128;
 const DDGI_DEFAULT_PROBE_DEPTH_RESOLUTION = 16;
@@ -792,6 +793,9 @@ export class DDGI {
     const skybox = SharedEnvironmentData.get_skybox();
     const skybox_texture_buffer = render_graph.register_image(skybox.config.name);
 
+    const entity_index_map_buffer = FragmentGpuBuffer.entity_index_map_buffer;
+    const entity_index_lookup = render_graph.register_buffer(entity_index_map_buffer.buffer.config.name);
+
     this.ddgi_params = render_graph.create_buffer({
       name: "ddgi_params",
       size: this.ddgi_params_data.length,
@@ -953,7 +957,7 @@ export class DDGI {
     });
 
     const emissive_light_header_words = 4;
-    const emissive_light_stride_words = 16;
+    const emissive_light_stride_words = 12;
     const max_emissive_lights = Math.max(1, Math.floor(this.config.max_emissive_lights));
     const emissive_lights = render_graph.create_buffer({
       name: "ddgi_emissive_lights",
@@ -1030,9 +1034,10 @@ export class DDGI {
           params_gpu_buffer,
           material_palette_offsets_buffer,
           material_palette_buffer,
+          entity_index_lookup,
+          emissive_lights,
           albedo_pool_buffer,
           emission_pool_buffer,
-          emissive_lights,
         ],
         outputs: [emissive_lights],
         shader_setup: compact_emissive_lights_shader_setup,
@@ -1298,7 +1303,7 @@ export class DDGI {
           index_buffer,
           dense_lights,
           emissive_lights,
-          probe_ray_dispatch_params,
+          entity_index_lookup,
         ],
         outputs: [probe_ray_data],
         shader_setup: ddgi_probe_trace_hit_shader_setup,
@@ -1332,6 +1337,7 @@ export class DDGI {
           material_palette_buffer,
           sh_probes,
           probe_depth_moments,
+          entity_index_lookup,
           albedo_pool_buffer,
           normal_pool_buffer,
           roughness_pool_buffer,

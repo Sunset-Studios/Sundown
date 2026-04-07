@@ -540,6 +540,7 @@ export class PathTracingStrategy {
           main_albedo_image,   // G-buffer albedo
           main_smra_image,     // G-buffer SMRA
           main_motion_emissive_image,   // G-buffer motion and emissive
+          entity_index_lookup,
           this.force_recreate
         );
       }

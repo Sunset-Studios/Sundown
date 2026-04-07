@@ -77,7 +77,6 @@
  */
 
 import { DebugDrawType, RenderPassFlags } from "../renderer_types.js";
-import { Renderer } from "../renderer.js";
 import { SharedEnvironmentData, SharedFrameInfoBuffer } from "../../core/shared_data.js";
 import { MaterialAllocationTable } from "../material_allocation_table.js";
 import { EntityManager } from "../../core/ecs/entity.js";
@@ -86,6 +85,7 @@ import { ResourceCache } from "../resource_cache.js";
 import { CacheTypes } from "../renderer_types.js";
 import { Name } from "../../utility/names.js";
 import { Texture } from "../texture.js";
+import { FragmentGpuBuffer } from "../../core/ecs/solar/memory.js";
 
 // ═══════════════════════════════════════════════════════════════════════════
 // CONSTANTS
@@ -513,7 +513,7 @@ export class PTGI {
     });
 
     const emissive_light_header_words = 4;
-    const emissive_light_stride_words = 16;
+    const emissive_light_stride_words = 12;
     const max_emissive_lights = Math.max(1, Math.floor(this.config.max_emissive_lights));
     const emissive_lights = render_graph.create_buffer({
       name: "gi_emissive_lights",
@@ -762,6 +762,9 @@ export class PTGI {
     const skybox = SharedEnvironmentData.get_skybox();
     const skybox_texture_buffer = render_graph.register_image(skybox.config.name);
 
+    const entity_index_map_buffer = FragmentGpuBuffer.entity_index_map_buffer;
+    const entity_index_lookup = render_graph.register_buffer(entity_index_map_buffer.buffer.config.name);
+
     // ─────────────────────────────────────────────────────────────────────
     // Pass 0: Upload GI Parameters
     // ─────────────────────────────────────────────────────────────────────
@@ -804,9 +807,10 @@ export class PTGI {
           params_gpu_buffer,
           material_palette_offsets_buffer,
           material_palette_buffer,
+          entity_index_lookup,
+          emissive_lights,
           albedo_pool_buffer,
           emission_pool_buffer,
-          emissive_lights,
         ],
         outputs: [emissive_lights],
         shader_setup: compact_emissive_lights_shader_setup,
@@ -982,6 +986,7 @@ export class PTGI {
           entity_transforms,
           index_buffer,
           gi_counters,
+          entity_index_lookup,
         ],
         outputs: [world_cache_path_state],
         shader_setup: world_cache_trace_hit_shader_setup,
@@ -1010,6 +1015,7 @@ export class PTGI {
           material_palette_offsets_buffer,
           material_palette_buffer,
           gi_counters,
+          entity_index_lookup,
           albedo_pool_buffer,
           normal_pool_buffer,
           roughness_pool_buffer,
@@ -1084,6 +1090,7 @@ export class PTGI {
           blas_directory,
           entity_transforms,
           index_buffer,
+          entity_index_lookup,
         ],
         outputs: [pixel_path_state],
         shader_setup: pixel_trace_hit_shader_setup,
@@ -1108,6 +1115,8 @@ export class PTGI {
           params_gpu_buffer,
           material_palette_offsets_buffer,
           material_palette_buffer,
+          world_cache,
+          entity_index_lookup,
           albedo_pool_buffer,
           normal_pool_buffer,
           roughness_pool_buffer,
@@ -1117,7 +1126,6 @@ export class PTGI {
           specular_pool_buffer,
           emission_pool_buffer,
           skybox_texture_buffer,
-          world_cache,
         ],
         outputs: [pixel_path_state],
         shader_setup: pixel_trace_shade_shader_setup,

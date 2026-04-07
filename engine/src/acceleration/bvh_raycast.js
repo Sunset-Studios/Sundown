@@ -4,9 +4,13 @@ import { TransformFragment } from "../core/ecs/fragments/transform_fragment.js";
 import { ComputeTaskQueue } from "../renderer/compute_task_queue.js";
 import { Buffer } from "../renderer/buffer.js";
 import { RandomAccessAllocator, RingBufferAllocator } from "../memory/allocator.js";
+import { MeshBLAS } from "./mesh_blas.js";
+import { MeshData } from "../renderer/mesh_data.js";
+import { FragmentGpuBuffer } from "../core/ecs/solar/memory.js";
 
 const EPSILON = 0.0001;
 const bounds_name = "bounds";
+const transforms_name = "transforms";
 
 export class Ray {
   constructor(origin, direction, t_min = 0.0, t_max = Infinity, user_data = 0) {
@@ -14,9 +18,9 @@ export class Ray {
     this.t_max = t_max;
     this.user_data = user_data;
     this.index = 0;
-    this.setup(origin, direction);  
+    this.setup(origin, direction);
   }
-  
+
   setup(origin, direction) {
     this.origin = origin ? [...origin] : [0, 0, 0];
     if (direction) {
@@ -167,6 +171,15 @@ export class BVHRaycast {
       bounds_name
     );
 
+    const entity_transforms_gpu = EntityManager.get_fragment_gpu_buffer(
+      TransformFragment,
+      transforms_name
+    );
+
+    const blas_gpu_data = MeshBLAS.to_gpu_data();
+    const index_buffer = MeshData.index_buffer;
+    const entity_index_map_buffer = FragmentGpuBuffer.entity_index_map_buffer;
+
     ComputeTaskQueue.new_task(
       "bvh_raycast",
       "acceleration/bvh_traversal.wgsl",
@@ -175,9 +188,14 @@ export class BVHRaycast {
         this.rays_buffer,
         this.hits_buffer,
         bounds_gpu.buffer,
+        entity_transforms_gpu.buffer,
+        blas_gpu_data.bvh2_nodes_buffer,
+        blas_gpu_data.directory_buffer,
+        index_buffer,
+        entity_index_map_buffer.buffer,
       ],
       [this.hits_buffer],
-      Math.ceil(this.pending_rays.length / 256), 1, 1,
+      Math.ceil(this.pending_rays.length / 128), 1, 1,
       "traverse_tlas_bvh"
     );
 

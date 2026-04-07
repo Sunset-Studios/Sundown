@@ -3,7 +3,7 @@ import { Chunk } from "./solar/chunk.js";
 import { FragmentGpuBuffer } from "./solar/memory.js";
 import { SceneGraph } from "../scene_graph.js";
 import { EntityFlags } from "../minimal.js";
-import { warn, error } from "../../utility/logging.js";
+import { error } from "../../utility/logging.js";
 
 const entity_image_buffer_name = "entity_image_buffer";
 
@@ -60,15 +60,12 @@ export class EntityManager {
 
   /**
    * Deletes an entity.
-   * @param {number} entity - The entity to delete.
+   * @param {EntityHandle} entity - The entity to delete.
    */
   static delete_entity(entity) {
     if (!this.entity_fragments.has(entity)) {
       return;
     }
-
-    let fragments = Array.from(this.entity_fragments.get(entity));
-    const instances = this.get_entity_instance_count(entity);
 
     this.pending_entity_deletes.push(entity);
 
@@ -81,7 +78,7 @@ export class EntityManager {
 
   /**
    * Checks if an entity exists.
-   * @param {number} entity - The entity to check.
+   * @param {EntityHandle} entity - The entity to check.
    * @returns {boolean} True if the entity exists, false otherwise.
    */
   static entity_exists(entity) {
@@ -92,7 +89,7 @@ export class EntityManager {
    * Retrieves the entity ID for a given chunk and slot.
    * @param {Chunk} chunk - The chunk containing the entity.
    * @param {number} slot - The slot index in the chunk.
-   * @returns {number} The entity ID.
+   * @returns {EntityHandle} The entity handle.
    */
   static get_entity_for(chunk, slot) {
     return this.sector.get_entity_for(chunk, slot);
@@ -118,7 +115,7 @@ export class EntityManager {
 
   /**
    * Adds a fragment to an entity.
-   * @param {number} entity - The entity to add the fragment to.
+   * @param {EntityHandle} entity - The entity to add the fragment to.
    * @param {typeof import('./fragment.js').Fragment} FragmentType - The fragment class to add.
    * @returns {import('./solar/view.js').SolarFragmentView | null} The fragment view, or null if not found.
    */
@@ -146,7 +143,7 @@ export class EntityManager {
 
   /**
    * Removes a fragment from an entity.
-   * @param {number} entity - The entity to remove the fragment from.
+   * @param {EntityHandle} entity - The entity to remove the fragment from.
    * @param {typeof import('./fragment.js').Fragment} FragmentType - The fragment class to remove.
    */
   static remove_fragment(entity, FragmentType) {
@@ -172,7 +169,7 @@ export class EntityManager {
 
   /**
    * Adds a tag to an entity.
-   * @param {number} entity - The entity to add the tag to.
+   * @param {EntityHandle} entity - The entity to add the tag to.
    * @param {typeof import('./fragment.js').Fragment} Tag - The tag class to add.
    */
   static add_tag(entity, Tag) {
@@ -184,7 +181,7 @@ export class EntityManager {
 
   /**
    * Removes a tag from an entity.
-   * @param {number} entity - The entity to remove the tag from.
+   * @param {EntityHandle} entity - The entity to remove the tag from.
    * @param {typeof import('./fragment.js').Fragment} Tag - The tag class to remove.
    */
   static remove_tag(entity, Tag) {
@@ -196,7 +193,7 @@ export class EntityManager {
 
   /**
    * Retrieves a fragment for an entity.
-   * @param {number} entity - The entity to get the fragment for.
+   * @param {EntityHandle} entity - The entity to get the fragment for.
    * @param {typeof import('./fragment.js').Fragment} FragmentType - The fragment class to get.
    * @param {number} instance - The instance index of the fragment to get.
    * @returns {import('./solar/view.js').SolarFragmentView | null} The fragment view, or null if not found.
@@ -213,7 +210,7 @@ export class EntityManager {
 
   /**
    * Checks if an entity has a specific fragment.
-   * @param {number} entity - The entity to check.
+   * @param {EntityHandle} entity - The entity to check.
    * @param {typeof import('./fragment.js').Fragment} FragmentType - The fragment class to check for.
    * @returns {boolean} True if the entity has the fragment, false otherwise.
    */
@@ -223,7 +220,7 @@ export class EntityManager {
 
   /**
    * Checks if an entity has a specific tag.
-   * @param {number} entity - The entity to check.
+   * @param {EntityHandle} entity - The entity to check.
    * @param {typeof import('./fragment.js').Fragment} Tag - The tag class to check for.
    * @returns {boolean} True if the entity has the tag, false otherwise.
    */
@@ -249,7 +246,7 @@ export class EntityManager {
 
   /**
    * Retrieves the total instance count for an entity.
-   * @param {number} entity - The entity handle to get the instance count for.
+   * @param {EntityHandle} entity - The entity to get the instance count for.
    * @returns {number}
    */
   static get_entity_instance_count(entity) {
@@ -258,7 +255,7 @@ export class EntityManager {
 
   /**
    * Sets the instance count for an entity.
-   * @param {number} entity - The entity to set the instance count for.
+   * @param {EntityHandle} entity - The entity to set the instance count for.
    * @param {number} instance_count - The new instance count for the entity.
    * @returns {number} The entity handle.
    */
@@ -303,7 +300,7 @@ export class EntityManager {
 
   /**
    * Retrieves the flags for an entity.
-   * @param {number} entity - The ID of the entity to get the flags for.
+   * @param {EntityHandle} entity - The entity to get the flags for.
    * @returns {number} The flags for the entity.
    */
   static get_entity_flags(entity) {
@@ -313,7 +310,7 @@ export class EntityManager {
 
   /**
    * Sets the flags for an entity.
-   * @param {number} entity - The ID of the entity to set the flags for.
+   * @param {EntityHandle} entity - The entity to set the flags for.
    * @param {number} flags - The flags to set for the entity.
    */
   static set_entity_flags(entity, flags) {

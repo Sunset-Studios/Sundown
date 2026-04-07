@@ -68,16 +68,17 @@ struct PathState {
 @group(1) @binding(4) var<storage, read> material_table_offset: array<u32>;
 @group(1) @binding(5) var<storage, read> material_palette: array<u32>;
 @group(1) @binding(6) var<storage, read> dense_lights_buffer: DenseLightsBuffer;
-@group(1) @binding(7) var texture_pool_albedo: texture_2d_array<f32>;
-@group(1) @binding(8) var texture_pool_normal: texture_2d_array<f32>;
-@group(1) @binding(9) var texture_pool_roughness: texture_2d_array<f32>;
-@group(1) @binding(10) var texture_pool_metallic: texture_2d_array<f32>;
-@group(1) @binding(11) var texture_pool_ao: texture_2d_array<f32>;
-@group(1) @binding(12) var texture_pool_height: texture_2d_array<f32>;
-@group(1) @binding(13) var texture_pool_specular: texture_2d_array<f32>;
-@group(1) @binding(14) var texture_pool_emission: texture_2d_array<f32>;
-@group(1) @binding(15) var skybox_texture: texture_cube<f32>;
-@group(1) @binding(16) var output_tex: texture_storage_2d<rgba16float, write>;
+@group(1) @binding(7) var<storage, read> entity_index_lookup: array<u32>;
+@group(1) @binding(8) var texture_pool_albedo: texture_2d_array<f32>;
+@group(1) @binding(9) var texture_pool_normal: texture_2d_array<f32>;
+@group(1) @binding(10) var texture_pool_roughness: texture_2d_array<f32>;
+@group(1) @binding(11) var texture_pool_metallic: texture_2d_array<f32>;
+@group(1) @binding(12) var texture_pool_ao: texture_2d_array<f32>;
+@group(1) @binding(13) var texture_pool_height: texture_2d_array<f32>;
+@group(1) @binding(14) var texture_pool_specular: texture_2d_array<f32>;
+@group(1) @binding(15) var texture_pool_emission: texture_2d_array<f32>;
+@group(1) @binding(16) var skybox_texture: texture_cube<f32>;
+@group(1) @binding(17) var output_tex: texture_storage_2d<rgba16float, write>;
 
 // =============================================================================
 // Main Compute Shader
@@ -148,7 +149,9 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         
         // Get material from texture sampling
         let prim_store = u32(path_state[pixel_index].direction_tmax.w);
-        let entity_palette_base = material_table_offset[prim_store];
+        let entity_resolved = entity_index_lookup[prim_store];
+
+        let entity_palette_base = material_table_offset[entity_resolved];
         let section_index = u32(path_state[pixel_index].normal_section_index.w);
         let mat_params_index = material_palette[entity_palette_base + section_index];
         let material = material_params[mat_params_index];

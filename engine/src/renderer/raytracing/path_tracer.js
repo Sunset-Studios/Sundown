@@ -124,6 +124,7 @@ export class PathTracer extends RayTracer {
     gbuffer_albedo = null,
     gbuffer_smra = null,
     gbuffer_emissive = null,
+    entity_index_lookup = null,
     force_recreate = false
   ) {
     super.setup(render_graph, width, height, force_recreate);
@@ -321,6 +322,7 @@ export class PathTracer extends RayTracer {
               blas_directory,
               entity_transforms,
               index_buffer,
+              entity_index_lookup,
               this.output_texture,
             ],
             outputs: [path_state],
@@ -344,6 +346,7 @@ export class PathTracer extends RayTracer {
           material_palette_offsets_buffer,
           material_palette_buffer,
           dense_lights,
+          entity_index_lookup,
           albedo_pool_buffer,
           normal_pool_buffer,
           roughness_pool_buffer,

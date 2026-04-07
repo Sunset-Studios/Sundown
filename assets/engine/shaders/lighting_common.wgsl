@@ -47,7 +47,6 @@ struct EmissiveLight {
     position_radius: vec4<f32>,      // xyz = world centroid, w = equivalent radius
     normal_area: vec4<f32>,          // xyz = world normal, w = triangle area
     radiance_weight: vec4<f32>,      // rgb = emissive radiance estimate, w = sampling weight (luminance * area)
-    instance_tri_section: vec4<u32>, // x = prim_store, y = mesh_id, z = tri_id_local, w = section_index
 };
 
 struct EmissiveLightsHeader {

@@ -245,7 +245,7 @@ export class Sector {
    *
    * @param {Chunk} chunk - The chunk containing the entity
    * @param {number} slot - The slot index in the chunk
-   * @returns {number} The entity handle
+   * @returns {EntityHandle} The entity handle
    */
   get_entity_for(chunk, slot) {
     return EntityHandle.get_or_create(this.alloc.get_entity_id_for(chunk, slot));
@@ -257,7 +257,7 @@ export class Sector {
    * @returns {EntityHandle} The entity handle
    */
   get_entity_from_id(id) {
-    return EntityHandle.get_or_create(id);
+    return EntityHandle.get(id) || null;
   }
 
   /**

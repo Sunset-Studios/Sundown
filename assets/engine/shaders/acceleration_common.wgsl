@@ -39,9 +39,6 @@ struct Ray {
 struct RayHit {
     position_and_t: vec4<f32>,
     normal_and_user_data: vec4<f32>,
-    prim_meshid_padding: vec4<f32>,
-    ray_local: Ray,
-    hit_triangle_data: vec4<u32>,
 };
 
 // Ray hit compact structure for intersection tests

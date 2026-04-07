@@ -19,15 +19,16 @@
 @group(1) @binding(6) var<storage, read> material_palette: array<u32>;
 @group(1) @binding(7) var<storage, read_write> sh_probes: array<u32>;
 @group(1) @binding(8) var<storage, read> probe_depth_moments: array<u32>;
-@group(1) @binding(9) var texture_pool_albedo: texture_2d_array<f32>;
-@group(1) @binding(10) var texture_pool_normal: texture_2d_array<f32>;
-@group(1) @binding(11) var texture_pool_roughness: texture_2d_array<f32>;
-@group(1) @binding(12) var texture_pool_metallic: texture_2d_array<f32>;
-@group(1) @binding(13) var texture_pool_ao: texture_2d_array<f32>;
-@group(1) @binding(14) var texture_pool_height: texture_2d_array<f32>;
-@group(1) @binding(15) var texture_pool_specular: texture_2d_array<f32>;
-@group(1) @binding(16) var texture_pool_emission: texture_2d_array<f32>;
-@group(1) @binding(17) var skybox_texture: texture_cube<f32>;
+@group(1) @binding(9) var<storage, read> entity_index_lookup: array<u32>;
+@group(1) @binding(10) var texture_pool_albedo: texture_2d_array<f32>;
+@group(1) @binding(11) var texture_pool_normal: texture_2d_array<f32>;
+@group(1) @binding(12) var texture_pool_roughness: texture_2d_array<f32>;
+@group(1) @binding(13) var texture_pool_metallic: texture_2d_array<f32>;
+@group(1) @binding(14) var texture_pool_ao: texture_2d_array<f32>;
+@group(1) @binding(15) var texture_pool_height: texture_2d_array<f32>;
+@group(1) @binding(16) var texture_pool_specular: texture_2d_array<f32>;
+@group(1) @binding(17) var texture_pool_emission: texture_2d_array<f32>;
+@group(1) @binding(18) var skybox_texture: texture_cube<f32>;
 
 const EMISSIVE_HIT_LUMA_SOFT_CAP: f32 = 2.0;
 const EMISSIVE_HIT_OVERFLOW_SCALE: f32 = 0.1;
@@ -79,9 +80,10 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     if (!is_miss) {
         // Ray hit: shade the hit.
         let prim_store = hit.state_u32.x;
+        let entity_resolved = entity_index_lookup[prim_store];
         let section_index = u32(hit.world_n_section.w);
 
-        let entity_palette_base = material_table_offset[prim_store];
+        let entity_palette_base = material_table_offset[entity_resolved];
         let mat_params_index = material_palette[entity_palette_base + section_index];
         let material = material_params[mat_params_index];
 

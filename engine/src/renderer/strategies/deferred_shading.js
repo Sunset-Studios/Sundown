@@ -12,7 +12,6 @@ import { StaticMeshFragment } from "../../core/ecs/fragments/static_mesh_fragmen
 // Renderer components
 import { Renderer } from "../renderer.js";
 import { Texture } from "../texture.js";
-import { Material } from "../material.js";
 import { MeshData } from "../mesh_data.js";
 import { MaterialAllocationTable } from "../material_allocation_table.js";
 import { PostProcessStack } from "../post_process_stack.js";

@@ -10,9 +10,10 @@
 @group(1) @binding(5) var<storage, read> material_params: array<StandardMaterialParams>;
 @group(1) @binding(6) var<storage, read> material_table_offset: array<u32>;
 @group(1) @binding(7) var<storage, read> material_palette: array<u32>;
-@group(1) @binding(8) var texture_pool_albedo: texture_2d_array<f32>;
-@group(1) @binding(9) var texture_pool_emission: texture_2d_array<f32>;
-@group(1) @binding(10) var<storage, read_write> emissive_lights_buffer: EmissiveLightsBufferA;
+@group(1) @binding(8) var<storage, read> entity_index_lookup: array<u32>;
+@group(1) @binding(9) var<storage, read_write> emissive_lights_buffer: EmissiveLightsBufferA;
+@group(1) @binding(10) var texture_pool_albedo: texture_2d_array<f32>;
+@group(1) @binding(11) var texture_pool_emission: texture_2d_array<f32>;
 
 const MAX_TRIANGLES_PER_LEAF: u32 = 32u;
 fn triangle_area_and_normal(p0: vec3<f32>, p1: vec3<f32>, p2: vec3<f32>) -> vec4<f32> {
@@ -43,6 +44,8 @@ fn cs(@builtin(global_invocation_id) global_id: vec3<u32>) {
         return;
     }
 
+    let entity_resolved = entity_index_lookup[prim_store];
+
     let mesh_directory_entry = blas_directory[mesh_id];
     let tri_count = mesh_directory_entry.primitive_count;
     if (tri_count == 0u) {
@@ -57,8 +60,8 @@ fn cs(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let leaf_hash = hash(node_index ^ (prim_store * 0x9E3779B9u) ^ (mesh_id * 0x85EBCA6Bu));
     let start_tri = (leaf_hash + frame_index_u32 * sample_count) % tri_count;
 
-    let entity_transform = entity_transforms[prim_store];
-    let entity_palette_base = material_table_offset[prim_store];
+    let entity_transform = entity_transforms[entity_resolved];
+    let entity_palette_base = material_table_offset[entity_resolved];
 
     for (var sample_idx = 0u; sample_idx < sample_count; sample_idx = sample_idx + 1u) {
         let tri_id_local = (start_tri + sample_idx) % tri_count;
@@ -132,12 +135,6 @@ fn cs(@builtin(global_invocation_id) global_id: vec3<u32>) {
             let sampling_weight_q = u32(min(sampling_weight * EMISSIVE_WEIGHT_QUANTIZATION, 4294967295.0));
             _ = atomicAdd(&emissive_lights_buffer.header._pad0, sampling_weight_q);
             _ = atomicMax(&emissive_lights_buffer.header._pad1, sampling_weight_q);
-            emissive_lights_buffer.lights[dst].instance_tri_section = vec4<u32>(
-                prim_store,
-                mesh_id,
-                tri_id_local,
-                section_index
-            );
         }
     }
 }

@@ -55,7 +55,8 @@ struct PathState {
 @group(1) @binding(5) var<storage, read> blas_directory: array<MeshDirectoryEntry>;
 @group(1) @binding(6) var<storage, read> entity_transforms: array<EntityTransform>;
 @group(1) @binding(7) var<storage, read> index_buffer: array<u32>;
-@group(1) @binding(8) var output_tex: texture_storage_2d<rgba16float, write>;
+@group(1) @binding(8) var<storage, read> entity_index_lookup: array<u32>;
+@group(1) @binding(9) var output_tex: texture_storage_2d<rgba16float, write>;
 
 // =============================================================================
 // BLAS TRAVERSAL
@@ -243,6 +244,7 @@ fn trace_hit(ray: ptr<function, Ray>) -> RayHitCompact {
     var t_leaf = vec2<f32>(0.0, 0.0);
     var t_aabb_child = vec2<f32>(0.0, 0.0);
     var prim_store = 0u;
+    var entity_resolved = 0u;
     var mesh_id = 0u;
     var node: AABB;
 
@@ -257,13 +259,15 @@ fn trace_hit(ray: ptr<function, Ray>) -> RayHitCompact {
             t_leaf = intersect_aabb(&current_ray, node.min.xyz, node.max.xyz);
             if (t_leaf.x <= t_leaf.y && max(t_leaf.x, current_ray.origin_and_tmin.w) < result.t_hit) {
                 mesh_id = u32(node.min.w);
-                prim_store = u32(-node.max.w - 1.0);
                 if (mesh_id == INVALID_IDX) { continue; }
+
+                prim_store = u32(-node.max.w - 1.0);
+                entity_resolved = entity_index_lookup[prim_store];
 
                 var ray_local = build_local_ray(
                     &current_ray,
-                    entity_transforms[prim_store].transform,
-                    entity_transforms[prim_store].transpose_inverse_model_matrix
+                    entity_transforms[entity_resolved].transform,
+                    entity_transforms[entity_resolved].transpose_inverse_model_matrix
                 );
                 let blas_hit = trace_blas(&ray_local, mesh_id);
 
@@ -521,6 +525,7 @@ fn trace_hit_any(ray: ptr<function, Ray>) -> bool {
     var t_aabb_child = vec2<f32>(0.0, 0.0);
     var leaf_bounds: AABB;
     var prim_store = 0u;
+    var entity_resolved = 0u;
     var mesh_id = 0u;
     var entity_transform: EntityTransform;
     var ray_local: Ray;
@@ -540,9 +545,11 @@ fn trace_hit_any(ray: ptr<function, Ray>) -> bool {
 
             if (t_leaf.x <= t_leaf.y && max(t_leaf.x, current_ray.origin_and_tmin.w) < current_ray.direction_and_tmax.w) {
                 mesh_id = u32(leaf_bounds.min.w);
-                prim_store = u32(-leaf_bounds.max.w - 1.0);
                 if (mesh_id == INVALID_IDX) { continue; }
-                entity_transform = entity_transforms[prim_store];
+
+                prim_store = u32(-leaf_bounds.max.w - 1.0);
+                entity_resolved = entity_index_lookup[prim_store];
+                entity_transform = entity_transforms[entity_resolved];
 
                 ray_local = build_local_ray(
                     &current_ray,
@@ -686,8 +693,9 @@ fn cs(
             // ─────────────────────────────────────────────────────────────────
             let tri_id_local = hit_result.tri_id_local;
             let prim_store = hit_result.prim_store;
+            let entity_resolved = entity_index_lookup[prim_store];
 
-            let entity_transform = entity_transforms[prim_store];
+            let entity_transform = entity_transforms[entity_resolved];
 
             var ray_local = build_local_ray(
                 &ray,

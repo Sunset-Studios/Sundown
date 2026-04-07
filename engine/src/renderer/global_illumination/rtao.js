@@ -1,6 +1,7 @@
 import { SharedFrameInfoBuffer } from "../../core/shared_data.js";
 import { RenderPassFlags } from "../renderer_types.js";
 import { Texture } from "../texture.js";
+import { FragmentGpuBuffer } from "../../core/ecs/solar/memory.js";
 
 const COMPUTE_WORKGROUP_SIZE = 128;
 
@@ -78,6 +79,7 @@ export class RTAO {
     gbuffer_smra,
     gbuffer_motion_emissive,
     depth_image,
+    prev_depth_image,
     hzb_texture,
     tlas_bvh2_bounds,
     tlas_bvh_info,
@@ -192,6 +194,9 @@ export class RTAO {
     const blue_noise = Texture.default_blue_noise();
     const blue_noise_image = render_graph.register_image(blue_noise.config.name);
 
+    const entity_index_lookup = FragmentGpuBuffer.entity_index_map_buffer;
+    const entity_index_lookup_buffer = render_graph.register_buffer(entity_index_lookup.buffer.config.name);
+
     render_graph.add_pass(
       "rtao_prepare",
       RenderPassFlags.GraphLocal,
@@ -268,6 +273,7 @@ export class RTAO {
           blas_directory,
           entity_transforms,
           index_buffer,
+          entity_index_lookup_buffer,
         ],
         outputs: [pixel_path_state],
         shader_setup: rtao_trace_hit_shader_setup,
