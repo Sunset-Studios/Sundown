@@ -103,6 +103,7 @@ export class InputProcessor {
     this.handle_touch_move = this.handle_touch_move.bind(this);
     this.handle_touch_end = this.handle_touch_end.bind(this);
     this.handle_touch_cancel = this.handle_touch_cancel.bind(this);
+    this.handle_context_menu = this.handle_context_menu.bind(this);
   }
 
   init() {
@@ -125,6 +126,7 @@ export class InputProcessor {
     }
 
     window.addEventListener("wheel", this.handle_mouse_wheel);
+    window.addEventListener("contextmenu", this.handle_context_menu);
   }
 
   shutdown() {
@@ -147,6 +149,7 @@ export class InputProcessor {
     }
 
     window.removeEventListener("wheel", this.handle_mouse_wheel);
+    window.removeEventListener("contextmenu", this.handle_context_menu);
   }
 
   shouldPreventDefaultKeyCombo(event) {
@@ -214,6 +217,10 @@ export class InputProcessor {
 
   handle_mouse_wheel(event) {
     this.mouse_wheel = event.deltaY;
+  }
+
+  handle_context_menu(event) {
+    this.prevent_default_if_possible(event);
   }
 
   handle_pointer_down(event) {
