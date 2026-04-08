@@ -8,7 +8,6 @@ tauri/gen
 
 **/fonts/**/*.json
 **/fonts/**/*.png
-**/config/**/*.json
 **/*.meshlet.json
 **/*.meshlet.bin
 **/*.sbvh.json

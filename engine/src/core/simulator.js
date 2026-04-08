@@ -25,7 +25,6 @@ export class Simulator {
     InputProvider.setup();
     // Initialize meta system
     MetaSystem.setup();
-
     // Initialize job system
     JobSystem.install();
     // Initialize texture streaming system

@@ -51,13 +51,13 @@
   "dependencies": {
     "gl-matrix": "^3.4.3",
     "vite": "^6.3.5",
-    "wgsl_reflect": "^1.0.8"
+    "wgsl_reflect": "^1.0.8",
+    "meshoptimizer": "^1.0.1"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2",
     "express": "^4.21.2",
     "msdf-bmfont-xml": "^2.5.4",
-    "prettier": "^3.3.3",
-    "meshoptimizer": "^1.0.1"
+    "prettier": "^3.3.3"
   }
 }

@@ -57,12 +57,6 @@ export class Shader {
   reflection = null;
   precision_profile = ShaderPrecisionProfile.F32;
 
-  static register_shader_path() {
-    throw new Error(
-      "Cooked shader archives are the only supported shader source. Dynamic shader path registration is not available."
-    );
-  }
-
   initialize(file_path, defines = {}) {
     const renderer = Renderer.get();
     const canonical_defines = canonicalize_shader_defines(defines);
@@ -73,11 +67,11 @@ export class Shader {
 
     if (!ShaderArchive.is_loaded()) {
       throw new Error(
-        `Shader archive was not loaded before creating '${variant_key}'. Renderer setup must await the cooked shader archive before shader creation begins.`
+        `Shader archives were not loaded before creating '${variant_key}'. Renderer setup must await the cooked shader archives before shader creation begins.`
       );
     }
 
-    const variant = ShaderArchive.requireVariant(variant_key);
+    const variant = ShaderArchive.require_variant(variant_key);
 
     try {
       this.code = variant.code;
@@ -116,6 +110,22 @@ export class Shader {
     }
 
     return shader_id;
+  }
+
+  static register_shader_path(shader_path) {
+    if (Array.isArray(shader_path)) {
+      return shader_path.map((path) => this.register_shader_path(path));
+    }
+
+    return ShaderArchive.register_manifest_path(shader_path);
+  }
+
+  static register_optional_shader_path(shader_path) {
+    if (Array.isArray(shader_path)) {
+      return shader_path.map((path) => this.register_optional_shader_path(path));
+    }
+
+    return ShaderArchive.register_manifest_path(shader_path, { optional: true });
   }
 
   static resource_type_from_reflection_type(type) {

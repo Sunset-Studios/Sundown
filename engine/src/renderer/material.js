@@ -26,7 +26,7 @@ const material_offsets_name = "material_table_offset";
 
 function reflect_resources(reflection) {
   const result = [];
-  const groups = reflection ? reflection.getBindGroups() : [];
+  const groups = reflection ? reflection.get_bind_groups() : [];
   if (BindGroupType.Material < groups.length) {
     const material_group = groups[BindGroupType.Material];
     for (let i = 0; i < material_group.length; i++) {
@@ -191,7 +191,7 @@ export class MaterialTemplate {
         : this.base_reflection;
 
     // Set material binding group inputs for groups not already covered by provided layouts
-    const groups = ref.getBindGroups();
+    const groups = ref.get_bind_groups();
     if (all_bind_group_layouts.length < groups.length) {
       for (let i = all_bind_group_layouts.length; i < groups.length; i++) {
         const bind_group = groups[i];

@@ -11,28 +11,26 @@ import {
   create_shader_variant_key,
 } from "../engine/src/renderer/shader_archive_common.js";
 import {
-  shader_archive_binary_asset_path,
+  build_shader_archive_asset_path,
+  shader_archive_asset_dir,
   shader_archive_binary_name,
-  shader_archive_manifest_asset_path,
+  shader_archive_manifest_name,
+  get_project_shader_root_asset_path,
+  get_project_source_root,
 } from "../engine/src/renderer/cooked_asset_config.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const PROJECT_ROOT = path.resolve(__dirname, "..");
-const SHADER_ROOT = path.resolve(PROJECT_ROOT, "assets/engine/shaders");
-const MANIFEST_OUTPUT_PATH = path.resolve(
-  PROJECT_ROOT,
-  "assets",
-  ...shader_archive_manifest_asset_path.split("/")
-);
-const BINARY_OUTPUT_PATH = path.resolve(
-  PROJECT_ROOT,
-  "assets",
-  ...shader_archive_binary_asset_path.split("/")
-);
+const ENGINE_SOURCE_ROOT = "engine/src";
 const GENERATOR_VERSION = 1;
 const compression_mode = "deflate";
+const source_file_extensions = new Set([".js", ".mjs", ".cjs", ".ts", ".tsx", ".jsx"]);
+const project_root_patterns = [
+  /\bproject\s*:\s*\{[\s\S]*?\broot\s*:\s*["'`]([^"'`]+)["'`]/g,
+  /\bProjectContext\.configure\s*\(\s*\{[\s\S]*?\broot\s*:\s*["'`]([^"'`]+)["'`]/g,
+];
 
 const include_string = "#include";
 const include_regex = /^#include\s+"(\S+)".*$/m;
@@ -71,6 +69,122 @@ const shadow_enabled_shader_paths = [
   "shadow/as_vsm/cull_shadow_meshlets.wgsl",
   "shadow/as_vsm/compact_shadow_dirty_meshlets.wgsl",
 ];
+
+function normalize_relative_path(value, fallback = "") {
+  const normalized = String(value ?? fallback)
+    .trim()
+    .replace(/\\/g, "/")
+    .replace(/^\.\//, "")
+    .replace(/^\/+|\/+$/g, "");
+  return normalized.length > 0 ? normalized : fallback;
+}
+
+function resolve_asset_path(asset_path) {
+  return path.resolve(PROJECT_ROOT, "assets", ...asset_path.split("/"));
+}
+
+function resolve_repo_path(repo_path) {
+  return path.resolve(PROJECT_ROOT, ...repo_path.split("/"));
+}
+
+function list_source_files(current_dir, source_files = []) {
+  const skipped_dirs = new Set([".git", "node_modules", "dist", "assets", "target", "coverage"]);
+  const entries = fs.readdirSync(current_dir, { withFileTypes: true });
+  for (const entry of entries) {
+    const full_path = path.join(current_dir, entry.name);
+    if (entry.isDirectory()) {
+      if (skipped_dirs.has(entry.name)) {
+        continue;
+      }
+
+      list_source_files(full_path, source_files);
+      continue;
+    }
+
+    if (entry.isFile() && source_file_extensions.has(path.extname(entry.name).toLowerCase())) {
+      source_files.push(full_path);
+    }
+  }
+
+  return source_files;
+}
+
+function create_shader_root_definition(asset_path, source_roots, include_engine_variants = false) {
+  return {
+    asset_path,
+    manifest_asset_path: build_shader_archive_asset_path(shader_archive_manifest_name, asset_path),
+    binary_asset_path: build_shader_archive_asset_path(shader_archive_binary_name, asset_path),
+    shader_root_path: resolve_asset_path(asset_path),
+    source_roots,
+    include_engine_variants,
+  };
+}
+
+function discover_project_roots_from_source() {
+  const project_roots = new Set();
+  const source_files = list_source_files(PROJECT_ROOT);
+
+  for (const source_file_path of source_files) {
+    const source = fs.readFileSync(source_file_path, "utf8");
+    for (const project_root_pattern of project_root_patterns) {
+      const regex = new RegExp(project_root_pattern);
+      let match = regex.exec(source);
+      while (match) {
+        const project_root = normalize_relative_path(match[1]);
+        if (project_root) {
+          project_roots.add(project_root);
+        }
+        match = regex.exec(source);
+      }
+    }
+  }
+
+  return [...project_roots].sort((a, b) => a.localeCompare(b));
+}
+
+function load_shader_roots() {
+  const project_roots = discover_project_roots_from_source();
+  const source_roots = [ENGINE_SOURCE_ROOT];
+  const shader_roots = [
+    create_shader_root_definition(shader_archive_asset_dir, [ENGINE_SOURCE_ROOT], true),
+  ];
+
+  for (const project_root of project_roots) {
+    const project_source_root = get_project_source_root(project_root);
+    if (project_source_root && !source_roots.includes(project_source_root)) {
+      source_roots.push(project_source_root);
+    }
+
+    const project_shader_root_asset_path = get_project_shader_root_asset_path(project_root);
+    if (!project_shader_root_asset_path) {
+      continue;
+    }
+
+    const project_shader_root_path = resolve_asset_path(project_shader_root_asset_path);
+    if (!fs.existsSync(project_shader_root_path)) {
+      continue;
+    }
+
+    shader_roots.push(
+      create_shader_root_definition(
+        project_shader_root_asset_path,
+        project_source_root ? [project_source_root] : []
+      )
+    );
+  }
+
+  const source_root_entries = source_roots
+    .map((source_root) => ({
+      source_root,
+      source_root_path: resolve_repo_path(source_root),
+    }))
+    .filter((source_root) => fs.existsSync(source_root.source_root_path));
+
+  return {
+    shader_roots,
+    source_roots: source_root_entries,
+  };
+}
 
 function sort_shader_paths(shader_paths) {
   return [...shader_paths].sort((a, b) => a.localeCompare(b));
@@ -118,7 +232,7 @@ function add_deferred_lighting_variants(variants) {
   }
 }
 
-function find_shader_files(shader_root) {
+function find_shader_files(shader_root_path) {
   const shader_files = [];
 
   function walk(current_dir) {
@@ -131,21 +245,26 @@ function find_shader_files(shader_root) {
       }
 
       if (entry.isFile() && entry.name.toLowerCase().endsWith(".wgsl")) {
-        shader_files.push(path.relative(shader_root, full_path).replace(/\\/g, "/"));
+        shader_files.push(path.relative(shader_root_path, full_path).replace(/\\/g, "/"));
       }
     }
   }
 
-  walk(shader_root);
+  walk(shader_root_path);
   return sort_shader_paths(shader_files);
 }
 
-function discover_referenced_shader_paths(project_root, available_shader_paths) {
+function discover_referenced_shader_paths(source_roots, available_shader_paths) {
   const available = new Set(available_shader_paths);
   const referenced = new Set();
-  const engine_src_root = path.join(project_root, "engine", "src");
+  const visited = new Set();
 
   function walk(current_dir) {
+    if (visited.has(current_dir)) {
+      return;
+    }
+    visited.add(current_dir);
+
     const entries = fs.readdirSync(current_dir, { withFileTypes: true });
     for (const entry of entries) {
       const full_path = path.join(current_dir, entry.name);
@@ -154,7 +273,7 @@ function discover_referenced_shader_paths(project_root, available_shader_paths) 
         continue;
       }
 
-      if (!entry.isFile() || !entry.name.toLowerCase().endsWith(".js")) {
+      if (!entry.isFile() || !source_file_extensions.has(path.extname(entry.name).toLowerCase())) {
         continue;
       }
 
@@ -171,29 +290,34 @@ function discover_referenced_shader_paths(project_root, available_shader_paths) 
     }
   }
 
-  walk(engine_src_root);
+  for (const source_root of source_roots) {
+    walk(source_root.source_root_path);
+  }
+
   return sort_shader_paths(referenced);
 }
 
-function build_shader_variant_registry(shader_paths) {
+function build_shader_variant_registry(shader_root, shader_paths) {
   const variants = new Map();
 
   for (const shader_path of shader_paths) {
     add_variant(variants, shader_path, {});
   }
 
-  add_material_variants(variants, "visibility/visibility_draw_standard.wgsl");
-  add_material_variants(variants, "ui_standard_material.wgsl");
-  add_material_variants(variants, "text_material.wgsl");
+  if (shader_root.include_engine_variants) {
+    add_material_variants(variants, "visibility/visibility_draw_standard.wgsl");
+    add_material_variants(variants, "ui_standard_material.wgsl");
+    add_material_variants(variants, "text_material.wgsl");
 
-  add_variant(variants, "effects/bloom_downsample.wgsl", {
-    HIGH_QUALITY_DOWNSAMPLE: true,
-  });
+    add_variant(variants, "effects/bloom_downsample.wgsl", {
+      HIGH_QUALITY_DOWNSAMPLE: true,
+    });
 
-  add_deferred_lighting_variants(variants);
+    add_deferred_lighting_variants(variants);
 
-  for (const shader_path of shadow_enabled_shader_paths) {
-    add_variant(variants, shader_path, { SHADOWS_ENABLED: true });
+    for (const shader_path of shadow_enabled_shader_paths) {
+      add_variant(variants, shader_path, { SHADOWS_ENABLED: true });
+    }
   }
 
   return [...variants.values()].sort((a, b) => {
@@ -205,22 +329,24 @@ function build_shader_variant_registry(shader_paths) {
   });
 }
 
-function validate_shader_registry(shader_paths, referenced_shader_paths, variants) {
+function validate_shader_registry(shader_root, shader_paths, referenced_shader_paths, variants) {
   const shader_path_set = new Set(shader_paths);
   const variant_path_set = new Set(variants.map((variant) => variant.path));
 
-  for (const shader_path of shadow_enabled_shader_paths) {
-    if (!shader_path_set.has(shader_path)) {
-      throw new Error(
-        `Cooked shader registry references missing shader '${shader_path}'.`
-      );
+  if (shader_root.include_engine_variants) {
+    for (const shader_path of shadow_enabled_shader_paths) {
+      if (!shader_path_set.has(shader_path)) {
+        throw new Error(
+          `Cooked shader registry for '${shader_root.asset_path}' references missing shader '${shader_path}'.`
+        );
+      }
     }
   }
 
   for (const referenced_path of referenced_shader_paths) {
     if (!shader_path_set.has(referenced_path)) {
       throw new Error(
-        `Referenced shader '${referenced_path}' does not exist under assets/engine/shaders.`
+        `Referenced shader '${referenced_path}' does not exist under assets/${shader_root.asset_path}.`
       );
     }
 
@@ -232,24 +358,26 @@ function validate_shader_registry(shader_paths, referenced_shader_paths, variant
   }
 }
 
-function create_cook_settings() {
+function create_cook_settings(shader_root, source_roots) {
   return {
     version: GENERATOR_VERSION,
-    manifest_asset_path: shader_archive_manifest_asset_path,
-    binary_asset_path: shader_archive_binary_asset_path,
+    shader_root_asset_path: shader_root.asset_path,
+    manifest_asset_path: shader_root.manifest_asset_path,
+    binary_asset_path: shader_root.binary_asset_path,
     binary_asset_name: shader_archive_binary_name,
     compression: compression_mode,
     precision_profiles: [ShaderPrecisionProfile.F16, ShaderPrecisionProfile.F32],
+    source_roots: source_roots.map((source_root) => source_root.source_root),
   };
 }
 
-function create_source_hash(settings, shader_files, variants) {
+function create_source_hash(settings, shader_root, shader_files, variants) {
   const hash = crypto.createHash("sha1");
   hash.update(JSON.stringify(settings));
 
   for (const shader_path of shader_files) {
     hash.update(shader_path);
-    hash.update(fs.readFileSync(path.join(SHADER_ROOT, shader_path), "utf8"));
+    hash.update(fs.readFileSync(path.join(shader_root.shader_root_path, shader_path), "utf8"));
   }
 
   for (const variant of variants) {
@@ -273,8 +401,8 @@ function should_skip_generation(manifest_path, binary_path, source_hash) {
   }
 }
 
-function read_shader_source(file_path) {
-  const absolute_path = path.join(SHADER_ROOT, file_path);
+function read_shader_source(shader_root, file_path) {
+  const absolute_path = path.join(shader_root.shader_root_path, file_path);
   if (!fs.existsSync(absolute_path)) {
     return null;
   }
@@ -283,6 +411,7 @@ function read_shader_source(file_path) {
 }
 
 function parse_shader_includes(
+  shader_root,
   file_path,
   code,
   defines = {},
@@ -305,6 +434,7 @@ function parse_shader_includes(
     const match = include_line.match(include_regex);
     if (match) {
       const include_contents = load_shader_text(
+        shader_root,
         match[1],
         defines,
         load_recursion_step + 1,
@@ -641,13 +771,22 @@ function expand_macros(code, macros, max_depth = 16) {
   return current;
 }
 
-function load_shader_text(file_path, defines = {}, load_recursion_step = 0, precision_profile) {
-  let asset = read_shader_source(file_path);
+function load_shader_text(
+  shader_root,
+  file_path,
+  defines = {},
+  load_recursion_step = 0,
+  precision_profile
+) {
+  let asset = read_shader_source(shader_root, file_path);
   if (!asset) {
-    throw new Error(`Could not find shader '${file_path}' while cooking.`);
+    throw new Error(
+      `Could not find shader '${file_path}' while cooking shader root '${shader_root.asset_path}'.`
+    );
   }
 
   asset = parse_shader_includes(
+    shader_root,
     file_path,
     asset,
     defines,
@@ -740,7 +879,7 @@ function normalize_entry_stage(entries = []) {
 function reflect_shader(code) {
   const reflection = new WgslReflect(code);
   return {
-    bindGroups: normalize_bind_groups(reflection),
+    bind_groups: normalize_bind_groups(reflection),
     entry: {
       vertex: normalize_entry_stage(reflection.entry?.vertex ?? []),
       fragment: normalize_entry_stage(reflection.entry?.fragment ?? []),
@@ -749,7 +888,7 @@ function reflect_shader(code) {
   };
 }
 
-function build_output(settings, shader_files, variants) {
+function build_output(settings, shader_root, shader_files, variants) {
   const encoder = new TextEncoder();
   const chunks = [];
   const manifest_variants = {};
@@ -768,7 +907,13 @@ function build_output(settings, shader_files, variants) {
         throw new Error(`Duplicate cooked shader variant key '${shader_key}'.`);
       }
 
-      const code = load_shader_text(variant.path, canonical_defines, 0, precision_profile);
+      const code = load_shader_text(
+        shader_root,
+        variant.path,
+        canonical_defines,
+        0,
+        precision_profile
+      );
       const code_bytes = encoder.encode(code);
       const compressed_bytes = deflateSync(code_bytes);
       const reflection = reflect_shader(code);
@@ -813,12 +958,13 @@ function build_output(settings, shader_files, variants) {
     version: GENERATOR_VERSION,
     generator: "tools/shader_preprocessor.js",
     generatedAt: new Date().toISOString(),
-    manifestAssetPath: shader_archive_manifest_asset_path,
-    binaryAssetPath: shader_archive_binary_asset_path,
+    shaderRootAssetPath: shader_root.asset_path,
+    manifestAssetPath: shader_root.manifest_asset_path,
+    binaryAssetPath: shader_root.binary_asset_path,
     binaryAssetName: shader_archive_binary_name,
     settings,
     source: {
-      hash: create_source_hash(settings, shader_files, variants),
+      hash: create_source_hash(settings, shader_root, shader_files, variants),
       shaderCount: shader_files.length,
       variantCount: Object.keys(manifest_variants).length,
       payloadCount: payload_offsets.size,
@@ -839,34 +985,40 @@ function build_output(settings, shader_files, variants) {
 }
 
 function main() {
-  const settings = create_cook_settings();
-  const shader_files = find_shader_files(SHADER_ROOT);
-  const referenced_shader_paths = discover_referenced_shader_paths(PROJECT_ROOT, shader_files);
-  const variants = build_shader_variant_registry(referenced_shader_paths);
-  const source_hash = create_source_hash(settings, shader_files, variants);
+  const { shader_roots, source_roots } = load_shader_roots();
 
-  validate_shader_registry(shader_files, referenced_shader_paths, variants);
+  for (const shader_root of shader_roots) {
+    const settings = create_cook_settings(shader_root, source_roots);
+    const shader_files = find_shader_files(shader_root.shader_root_path);
+    const referenced_shader_paths = discover_referenced_shader_paths(source_roots, shader_files);
+    const variants = build_shader_variant_registry(shader_root, referenced_shader_paths);
+    const source_hash = create_source_hash(settings, shader_root, shader_files, variants);
+    const manifest_output_path = resolve_asset_path(shader_root.manifest_asset_path);
+    const binary_output_path = resolve_asset_path(shader_root.binary_asset_path);
 
-  if (should_skip_generation(MANIFEST_OUTPUT_PATH, BINARY_OUTPUT_PATH, source_hash)) {
+    validate_shader_registry(shader_root, shader_files, referenced_shader_paths, variants);
+
+    if (should_skip_generation(manifest_output_path, binary_output_path, source_hash)) {
+      console.log(
+        `[shader_preprocessor] up to date: ${path.relative(PROJECT_ROOT, manifest_output_path).replace(/\\/g, "/")}`
+      );
+      continue;
+    }
+
+    const output = build_output(settings, shader_root, shader_files, variants);
+
+    fs.mkdirSync(path.dirname(manifest_output_path), { recursive: true });
+    fs.writeFileSync(manifest_output_path, JSON.stringify(output.manifest, null, 2));
+    fs.mkdirSync(path.dirname(binary_output_path), { recursive: true });
+    fs.writeFileSync(binary_output_path, output.binary);
+
     console.log(
-      `[shader_preprocessor] up to date: ${path.relative(PROJECT_ROOT, MANIFEST_OUTPUT_PATH).replace(/\\/g, "/")}`
+      `[shader_preprocessor] generated ${path.relative(PROJECT_ROOT, manifest_output_path).replace(/\\/g, "/")} (${output.manifest.source.variantCount} variants)`
     );
-    return;
+    console.log(
+      `[shader_preprocessor] generated ${path.relative(PROJECT_ROOT, binary_output_path).replace(/\\/g, "/")} (${output.binary.byteLength} bytes)`
+    );
   }
-
-  const output = build_output(settings, shader_files, variants);
-
-  fs.mkdirSync(path.dirname(MANIFEST_OUTPUT_PATH), { recursive: true });
-  fs.writeFileSync(MANIFEST_OUTPUT_PATH, JSON.stringify(output.manifest, null, 2));
-  fs.mkdirSync(path.dirname(BINARY_OUTPUT_PATH), { recursive: true });
-  fs.writeFileSync(BINARY_OUTPUT_PATH, output.binary);
-
-  console.log(
-    `[shader_preprocessor] generated ${path.relative(PROJECT_ROOT, MANIFEST_OUTPUT_PATH).replace(/\\/g, "/")} (${output.manifest.source.variantCount} variants)`
-  );
-  console.log(
-    `[shader_preprocessor] generated ${path.relative(PROJECT_ROOT, BINARY_OUTPUT_PATH).replace(/\\/g, "/")} (${output.binary.byteLength} bytes)`
-  );
 }
 
 main();

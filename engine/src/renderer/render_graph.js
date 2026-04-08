@@ -1682,13 +1682,13 @@ export class RenderGraph {
     let binding_stage_masks = new Map();
 
     let compute_reflection_groups = is_compute_pass
-      ? pass.shaders.compute.reflection.getBindGroups()
+      ? pass.shaders.compute.reflection.get_bind_groups()
       : [];
     let fragment_reflection_groups = pass.shaders.fragment
-      ? pass.shaders.fragment.reflection.getBindGroups()
+      ? pass.shaders.fragment.reflection.get_bind_groups()
       : [];
     let vertex_reflection_groups = pass.shaders.vertex
-      ? pass.shaders.vertex.reflection.getBindGroups()
+      ? pass.shaders.vertex.reflection.get_bind_groups()
       : [];
     let reflection_groups = is_compute_pass
       ? compute_reflection_groups

@@ -1,5 +1,7 @@
 import engine_cvar_config from "../../config/cvars.js";
 import { CVarSystem } from "./cvar_system.js";
+import { Shader } from "../renderer/shader.js";
+import { get_project_shader_root_asset_path } from "../renderer/cooked_asset_config.js";
 
 const default_project = Object.freeze({
   cvar_config: null,
@@ -33,6 +35,11 @@ export class ProjectContext {
         context: { project: normalized_project },
         source: `project:${normalized_project.name}`,
       });
+    }
+
+    const project_shader_root_asset_path = get_project_shader_root_asset_path(this.active_project.root);
+    if (project_shader_root_asset_path) {
+      Shader.register_optional_shader_path(project_shader_root_asset_path);
     }
 
     return this.active_project;

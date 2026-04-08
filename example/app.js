@@ -751,7 +751,6 @@ export class BVHScene extends Scene {
   show_ui = false;
   entities = [];
   selected_entity = null;
-  ray_hits = [];
   last_ray_origin = null;
   last_ray_direction = null;
   last_ray = null;
@@ -3222,7 +3221,7 @@ export class BistroTestScene extends Scene {
   const scene_switcher = new SceneSwitcher("SceneSwitcher");
   //await scene_switcher.add_scene(solar_ecs_scene);
   //await scene_switcher.add_scene(rendering_scene);
-  await scene_switcher.add_scene(bvh_scene);
+  //await scene_switcher.add_scene(bvh_scene);
   //await scene_switcher.add_scene(ml_scene);
   //await scene_switcher.add_scene(voxel_terrain_scene);
   //await scene_switcher.add_scene(object_painting_scene);
@@ -3233,7 +3232,7 @@ export class BistroTestScene extends Scene {
   //await scene_switcher.add_scene(sponza_scene);
   //await scene_switcher.add_scene(living_room_scene);
   //await scene_switcher.add_scene(city_scene);
-  //await scene_switcher.add_scene(scifi_city_scene);
+  await scene_switcher.add_scene(scifi_city_scene);
   //await scene_switcher.add_scene(bistro_test_scene);
 
   simulator.add_sim_layer(scene_switcher);
