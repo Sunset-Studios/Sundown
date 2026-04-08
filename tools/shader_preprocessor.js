@@ -109,7 +109,12 @@ function list_source_files(current_dir, source_files = []) {
   return source_files;
 }
 
-function create_shader_root_definition(asset_path, source_roots, include_engine_variants = false) {
+function create_shader_root_definition(
+  asset_path,
+  source_roots,
+  include_engine_variants = false,
+  is_engine_default = false
+) {
   return {
     asset_path,
     manifest_asset_path: build_shader_archive_asset_path(shader_archive_manifest_name, asset_path),
@@ -117,7 +122,33 @@ function create_shader_root_definition(asset_path, source_roots, include_engine_
     shader_root_path: resolve_asset_path(asset_path),
     source_roots,
     include_engine_variants,
+    is_engine_default,
   };
+}
+
+function build_include_resolution_roots(primary_shader_root, shader_roots) {
+  const ordered_roots = [primary_shader_root];
+  const seen_asset_paths = new Set([primary_shader_root.asset_path]);
+
+  for (const shader_root of shader_roots) {
+    if (shader_root.is_engine_default || seen_asset_paths.has(shader_root.asset_path)) {
+      continue;
+    }
+
+    ordered_roots.push(shader_root);
+    seen_asset_paths.add(shader_root.asset_path);
+  }
+
+  for (const shader_root of shader_roots) {
+    if (!shader_root.is_engine_default || seen_asset_paths.has(shader_root.asset_path)) {
+      continue;
+    }
+
+    ordered_roots.push(shader_root);
+    seen_asset_paths.add(shader_root.asset_path);
+  }
+
+  return ordered_roots;
 }
 
 function discover_project_roots_from_source() {
@@ -146,7 +177,7 @@ function load_shader_roots() {
   const project_roots = discover_project_roots_from_source();
   const source_roots = [ENGINE_SOURCE_ROOT];
   const shader_roots = [
-    create_shader_root_definition(shader_archive_asset_dir, [ENGINE_SOURCE_ROOT], true),
+    create_shader_root_definition(shader_archive_asset_dir, [ENGINE_SOURCE_ROOT], true, true),
   ];
 
   for (const project_root of project_roots) {
@@ -371,13 +402,23 @@ function create_cook_settings(shader_root, source_roots) {
   };
 }
 
-function create_source_hash(settings, shader_root, shader_files, variants) {
+function create_source_hash(settings, shader_root, shader_files, variants, include_resolution_roots) {
   const hash = crypto.createHash("sha1");
   hash.update(JSON.stringify(settings));
 
-  for (const shader_path of shader_files) {
-    hash.update(shader_path);
-    hash.update(fs.readFileSync(path.join(shader_root.shader_root_path, shader_path), "utf8"));
+  const hashed_shader_roots = new Set();
+  for (const include_root of include_resolution_roots) {
+    if (hashed_shader_roots.has(include_root.asset_path)) {
+      continue;
+    }
+
+    hashed_shader_roots.add(include_root.asset_path);
+    const include_root_shader_files = find_shader_files(include_root.shader_root_path);
+    hash.update(include_root.asset_path);
+    for (const shader_path of include_root_shader_files) {
+      hash.update(shader_path);
+      hash.update(fs.readFileSync(path.join(include_root.shader_root_path, shader_path), "utf8"));
+    }
   }
 
   for (const variant of variants) {
@@ -401,17 +442,25 @@ function should_skip_generation(manifest_path, binary_path, source_hash) {
   }
 }
 
-function read_shader_source(shader_root, file_path) {
-  const absolute_path = path.join(shader_root.shader_root_path, file_path);
-  if (!fs.existsSync(absolute_path)) {
-    return null;
+function read_shader_source(shader_root, include_resolution_roots, file_path) {
+  for (const include_root of include_resolution_roots) {
+    const absolute_path = path.join(include_root.shader_root_path, file_path);
+    if (!fs.existsSync(absolute_path)) {
+      continue;
+    }
+
+    return {
+      source: fs.readFileSync(absolute_path, "utf8"),
+      resolved_root: include_root,
+    };
   }
 
-  return fs.readFileSync(absolute_path, "utf8");
+  return null;
 }
 
 function parse_shader_includes(
   shader_root,
+  include_resolution_roots,
   file_path,
   code,
   defines = {},
@@ -435,6 +484,7 @@ function parse_shader_includes(
     if (match) {
       const include_contents = load_shader_text(
         shader_root,
+        include_resolution_roots,
         match[1],
         defines,
         load_recursion_step + 1,
@@ -773,20 +823,26 @@ function expand_macros(code, macros, max_depth = 16) {
 
 function load_shader_text(
   shader_root,
+  include_resolution_roots,
   file_path,
   defines = {},
   load_recursion_step = 0,
   precision_profile
 ) {
-  let asset = read_shader_source(shader_root, file_path);
-  if (!asset) {
+  const shader_source = read_shader_source(shader_root, include_resolution_roots, file_path);
+  if (!shader_source) {
+    const searched_roots = include_resolution_roots
+      .map((include_root) => `assets/${include_root.asset_path}`)
+      .join(", ");
     throw new Error(
-      `Could not find shader '${file_path}' while cooking shader root '${shader_root.asset_path}'.`
+      `Could not find shader '${file_path}' while cooking shader root '${shader_root.asset_path}'. Searched: ${searched_roots}.`
     );
   }
+  let asset = shader_source.source;
 
   asset = parse_shader_includes(
     shader_root,
+    include_resolution_roots,
     file_path,
     asset,
     defines,
@@ -888,7 +944,7 @@ function reflect_shader(code) {
   };
 }
 
-function build_output(settings, shader_root, shader_files, variants) {
+function build_output(settings, shader_root, shader_files, variants, include_resolution_roots) {
   const encoder = new TextEncoder();
   const chunks = [];
   const manifest_variants = {};
@@ -909,6 +965,7 @@ function build_output(settings, shader_root, shader_files, variants) {
 
       const code = load_shader_text(
         shader_root,
+        include_resolution_roots,
         variant.path,
         canonical_defines,
         0,
@@ -964,7 +1021,13 @@ function build_output(settings, shader_root, shader_files, variants) {
     binaryAssetName: shader_archive_binary_name,
     settings,
     source: {
-      hash: create_source_hash(settings, shader_root, shader_files, variants),
+      hash: create_source_hash(
+        settings,
+        shader_root,
+        shader_files,
+        variants,
+        include_resolution_roots
+      ),
       shaderCount: shader_files.length,
       variantCount: Object.keys(manifest_variants).length,
       payloadCount: payload_offsets.size,
@@ -992,7 +1055,14 @@ function main() {
     const shader_files = find_shader_files(shader_root.shader_root_path);
     const referenced_shader_paths = discover_referenced_shader_paths(source_roots, shader_files);
     const variants = build_shader_variant_registry(shader_root, referenced_shader_paths);
-    const source_hash = create_source_hash(settings, shader_root, shader_files, variants);
+    const include_resolution_roots = build_include_resolution_roots(shader_root, shader_roots);
+    const source_hash = create_source_hash(
+      settings,
+      shader_root,
+      shader_files,
+      variants,
+      include_resolution_roots
+    );
     const manifest_output_path = resolve_asset_path(shader_root.manifest_asset_path);
     const binary_output_path = resolve_asset_path(shader_root.binary_asset_path);
 
@@ -1005,7 +1075,13 @@ function main() {
       continue;
     }
 
-    const output = build_output(settings, shader_root, shader_files, variants);
+    const output = build_output(
+      settings,
+      shader_root,
+      shader_files,
+      variants,
+      include_resolution_roots
+    );
 
     fs.mkdirSync(path.dirname(manifest_output_path), { recursive: true });
     fs.writeFileSync(manifest_output_path, JSON.stringify(output.manifest, null, 2));
