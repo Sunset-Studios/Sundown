@@ -1,6 +1,6 @@
-#define CUSTOM_FS
+#define CUSTOM_RESOLVE_FRAGMENT
 
-#include "gbuffer_base.wgsl"
+#include "visibility/visibility_draw_base.wgsl"
 
 //------------------------------------------------------------------------------------
 // Data Structures
@@ -19,13 +19,16 @@ struct ElementData {
 //------------------------------------------------------------------------------------
 // Fragment Shader
 //------------------------------------------------------------------------------------
-fn fragment(v_out: VertexOutput, f_out: ptr<function, FragmentOutput>) -> FragmentOutput {
-    let element_rounding = element_data[f_out.entity_id].element_rounding;
-    let element_emissive = element_data[f_out.entity_id].element_emissive;
-    var element_color = element_data[f_out.entity_id].element_color;
+fn resolve_fragment(
+    input: ResolveFragmentInput,
+    f_out: ptr<function, ResolveFragmentOutput>
+) -> ResolveFragmentOutput {
+    let element_rounding = element_data[input.entity_id].element_rounding;
+    let element_emissive = element_data[input.entity_id].element_emissive;
+    var element_color = element_data[input.entity_id].element_color;
     
     // Calculate distance from edges
-    let uv = v_out.uv;
+    let uv = input.uv;
     let dx = min(uv.x, 1.0 - uv.x);
     let dy = min(uv.y, 1.0 - uv.y);
     
