@@ -700,7 +700,9 @@ export class Material {
           },
         }
       );
-      this.#default_ui_material = Material.create("DefaultUIMaterial", "DefaultUIMaterial");
+      this.#default_ui_material = Material.create("DefaultUIMaterial", "DefaultUIMaterial", {
+        family: MaterialFamilyType.Transparent,
+      }); 
 
       const default_ui_material_object = Material.get(this.#default_ui_material);
       const element_data_buffer = FragmentGpuBuffer.get_buffer_name(
