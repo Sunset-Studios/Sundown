@@ -48,6 +48,7 @@ const built_in_shader_define_keys = new Set([
 const f16_type_string = "f16";
 const f32_type_string = "f32";
 const shader_conditional_regex = /#if(?:ndef)?\s+([A-Za-z_][A-Za-z0-9_]*)/g;
+const shader_define_declaration_regex = /^\s*#define\s+([A-Za-z_][A-Za-z0-9_]*)/gm;
 const const_shader_path_regex =
   /const\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*["'`]([^"'`\r\n]+\.wgsl)["'`]/g;
 const setup_object_regex = /const\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*\{/g;
@@ -307,7 +308,12 @@ function expand_define_family(family) {
   return variants;
 }
 
-function add_variant_family_to_paths(variants_by_path, shader_paths, family) {
+function add_variant_family_to_paths(
+  variants_by_path,
+  shader_paths,
+  family,
+  preserve_requested_defines = false
+) {
   const expanded_variants = expand_define_family(family);
   for (const shader_path of shader_paths) {
     if (!variants_by_path.has(shader_path)) {
@@ -318,9 +324,17 @@ function add_variant_family_to_paths(variants_by_path, shader_paths, family) {
     for (const defines of expanded_variants) {
       const canonical_defines = canonicalize_shader_defines(defines);
       const variant_key = JSON.stringify(Object.entries(canonical_defines));
-      if (!path_variants.has(variant_key)) {
-        path_variants.set(variant_key, canonical_defines);
+      const existing_variant = path_variants.get(variant_key);
+      if (!existing_variant) {
+        path_variants.set(variant_key, {
+          defines: canonical_defines,
+          preserve_requested_defines,
+        });
+        continue;
       }
+
+      existing_variant.preserve_requested_defines =
+        existing_variant.preserve_requested_defines || preserve_requested_defines;
     }
   }
 }
@@ -916,7 +930,7 @@ function discover_requested_shader_variants(source_roots, referenced_shader_path
         referenced_shader_path_set.has(shader_path)
       );
       if (shader_paths.length > 0) {
-        add_variant_family_to_paths(variants_by_path, shader_paths, context.family);
+        add_variant_family_to_paths(variants_by_path, shader_paths, context.family, false);
       }
     }
 
@@ -926,7 +940,7 @@ function discover_requested_shader_variants(source_roots, referenced_shader_path
       }
 
       material_shader_paths.add(usage.shader_path);
-      add_variant_family_to_paths(variants_by_path, [usage.shader_path], usage.family);
+      add_variant_family_to_paths(variants_by_path, [usage.shader_path], usage.family, true);
     }
 
     const optional_domains_by_variable = discover_optional_define_map_domains(source);
@@ -942,7 +956,7 @@ function discover_requested_shader_variants(source_roots, referenced_shader_path
       }
 
       for (const family of families) {
-        add_variant_family_to_paths(variants_by_path, [shader_path], family);
+        add_variant_family_to_paths(variants_by_path, [shader_path], family, true);
       }
     }
 
@@ -951,7 +965,7 @@ function discover_requested_shader_variants(source_roots, referenced_shader_path
 
   for (const shader_path of material_shader_paths) {
     for (const family of generic_material_families) {
-      add_variant_family_to_paths(variants_by_path, [shader_path], family);
+      add_variant_family_to_paths(variants_by_path, [shader_path], family, true);
     }
   }
 
@@ -988,6 +1002,15 @@ function analyze_shader_define_usage(
       define_keys.add(match[1]);
     }
     match = conditional_regex.exec(shader_source.source);
+  }
+
+  const declaration_regex = new RegExp(shader_define_declaration_regex);
+  match = declaration_regex.exec(shader_source.source);
+  while (match) {
+    if (!built_in_shader_define_keys.has(match[1])) {
+      define_keys.add(match[1]);
+    }
+    match = declaration_regex.exec(shader_source.source);
   }
 
   const include_matches = shader_source.source.matchAll(/^#include\s+"(\S+)".*$/gm);
@@ -1114,8 +1137,10 @@ function build_shader_variant_registry(
       continue;
     }
 
-    for (const requested_defines of path_variants.values()) {
-      const filtered_defines = filter_variant_defines(requested_defines, active_define_keys);
+    for (const requested_variant of path_variants.values()) {
+      const filtered_defines = requested_variant.preserve_requested_defines
+        ? requested_variant.defines
+        : filter_variant_defines(requested_variant.defines, active_define_keys);
       if (Object.keys(filtered_defines).length === 0) {
         continue;
       }
