@@ -112,14 +112,6 @@ export class Shader {
     return shader_id;
   }
 
-  static register_shader_path(shader_path) {
-    if (Array.isArray(shader_path)) {
-      return shader_path.map((path) => this.register_shader_path(path));
-    }
-
-    return ShaderArchive.register_manifest_path(shader_path);
-  }
-
   static register_optional_shader_path(shader_path) {
     if (Array.isArray(shader_path)) {
       return shader_path.map((path) => this.register_optional_shader_path(path));
