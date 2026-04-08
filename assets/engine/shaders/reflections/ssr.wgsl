@@ -14,11 +14,11 @@ const SSR_RAY_DIR_RETRIES = 4u;
 const SSR_MAX_STEPS = 32u;
 
 fn clip_to_projected_sample(clip: vec4<f32>) -> vec3<f32> {
-    let ndc = clip.xyz / max(clip.w, epsilon);
+    let ndc = clip.xyz / clip.w;
     return vec3<f32>(
         ndc.x * 0.5 + 0.5,
         -ndc.y * 0.5 + 0.5,
-        clamp(ndc.z, 0.0, 1.0)
+        ndc.z
     );
 }
 

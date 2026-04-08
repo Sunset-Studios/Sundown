@@ -67,7 +67,7 @@ fn sh_debug_world_ray_direction(pixel_uv: vec2<f32>, view_index: u32) -> vec3<f3
     let inv_vp = view_buffer[view_index].inverse_view_projection_matrix;
     
     let far_h = inv_vp * vec4<f32>(ndc, 1.0, 1.0);
-    let far_ws = far_h.xyz / max(far_h.w, 1e-8);
+    let far_ws = far_h.xyz / far_h.w;
     
     let ro = view_buffer[view_index].view_position.xyz;
     return safe_normalize(far_ws - ro);
@@ -115,7 +115,7 @@ fn sh_debug_world_position_from_depth(pixel_uv: vec2<f32>, depth: f32, view_inde
     let ndc = vec2<f32>(pixel_uv.x * 2.0 - 1.0, (1.0 - pixel_uv.y) * 2.0 - 1.0);
     let inv_vp = view_buffer[view_index].inverse_view_projection_matrix;
     let p_h = inv_vp * vec4<f32>(ndc, depth, 1.0);
-    return p_h.xyz / max(p_h.w, 1e-8);
+    return p_h.xyz / p_h.w;
 }
 
 // =============================================================================

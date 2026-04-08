@@ -39,36 +39,28 @@ const defines_regex = /#define\s+(\S+)(?:\s+(\S*))?$/gm;
 const precision_float_string = "precision_float";
 const has_precision_float_string = "HAS_PRECISION_FLOAT";
 const has_subgroups_string = "HAS_SUBGROUPS";
+const built_in_shader_define_keys = new Set([
+  precision_float_string,
+  has_precision_float_string,
+  has_subgroups_string,
+]);
 
 const f16_type_string = "f16";
 const f32_type_string = "f32";
-
-const material_pass_variants = [
-  { MESHLET_RASTER_PASS: true },
-  { MESHLET_DEPTH_PASS: true },
-  { MESHLET_RESOLVE_PASS: true },
-];
-
-const shadow_enabled_shader_paths = [
-  "shadow/as_vsm/feedback.wgsl",
-  "shadow/as_vsm/evict_unused_pages.wgsl",
-  "shadow/as_vsm/page_table_update.wgsl",
-  "shadow/as_vsm/tile_clear.wgsl",
-  "shadow/as_vsm/clear_tile_flags.wgsl",
-  "shadow/as_vsm/dirty_visible_light_tiles.wgsl",
-  "shadow/as_vsm/tile_render.vert.wgsl",
-  "shadow/as_vsm/resolve_depth_to_atlas.wgsl",
-  "shadow/as_vsm/debug_shadow_atlas.wgsl",
-  "shadow/as_vsm/debug_page_table.wgsl",
-  "shadow/as_vsm/debug_tile_overlay.wgsl",
-  "shadow/as_vsm/debug_tile_render.wgsl",
-  "shadow/as_vsm/debug_dirty_tiles.wgsl",
-  "shadow/as_vsm/debug_dirty_shadow_meshlets.wgsl",
-  "shadow/as_vsm/dirty_movable_entities.wgsl",
-  "shadow/as_vsm/dirty_slice_reducer.wgsl",
-  "shadow/as_vsm/cull_shadow_meshlets.wgsl",
-  "shadow/as_vsm/compact_shadow_dirty_meshlets.wgsl",
-];
+const shader_conditional_regex = /#if(?:ndef)?\s+([A-Za-z_][A-Za-z0-9_]*)/g;
+const const_shader_path_regex =
+  /const\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*["'`]([^"'`\r\n]+\.wgsl)["'`]/g;
+const setup_object_regex = /const\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*\{/g;
+const setup_define_assignment_regex =
+  /([A-Za-z_][A-Za-z0-9_]*)(?:\.[A-Za-z_][A-Za-z0-9_]*)*\.defines\.([A-Za-z_][A-Za-z0-9_]*)\s*=\s*([^;]+);/g;
+const generic_define_assignment_regex =
+  /([A-Za-z_][A-Za-z0-9_]*)\s*\[\s*["'`]([A-Za-z_][A-Za-z0-9_]*)["'`]\s*\]\s*=\s*([^;]+);/g;
+const object_shader_path_regex =
+  /path\s*:\s*(["'`][^"'`\r\n]+\.wgsl["'`]|[A-Za-z_][A-Za-z0-9_]*)/g;
+const defines_object_regex = /defines\s*:\s*\{/g;
+const spread_identifier_regex = /\.\.\.\s*([A-Za-z_][A-Za-z0-9_]*)/g;
+const material_template_create_call_regex = /MaterialTemplate\.create\s*\(/g;
+const shader_create_call_regex = /Shader\.create\s*\(/g;
 
 function normalize_relative_path(value, fallback = "") {
   const normalized = String(value ?? fallback)
@@ -237,30 +229,801 @@ function add_variant(variants, file_path, defines = {}) {
   }
 }
 
-function add_material_variants(variants, file_path, transparent_values = [false, true]) {
-  for (const pass_defines of material_pass_variants) {
-    for (const transparent of transparent_values) {
-      const defines = { ...pass_defines };
-      if (transparent) {
-        defines.TRANSPARENT = true;
-      }
-      add_variant(variants, file_path, defines);
+function create_define_family() {
+  return {
+    required_domains: new Map(),
+    optional_domains: new Map(),
+  };
+}
+
+function add_define_domain_value(domains, key, value) {
+  if (!key) {
+    return;
+  }
+
+  if (!domains.has(key)) {
+    domains.set(key, new Set());
+  }
+
+  domains.get(key).add(value);
+}
+
+function merge_define_domains(target_domains, source_domains) {
+  for (const [key, values] of source_domains) {
+    for (const value of values) {
+      add_define_domain_value(target_domains, key, value);
     }
   }
 }
 
-function add_deferred_lighting_variants(variants) {
-  for (const gi_enabled of [false, true]) {
-    for (const shadows_enabled of [false, true]) {
-      for (const ao_enabled of [false, true]) {
-        add_variant(variants, "deferred_lighting.wgsl", {
-          GI_ENABLED: gi_enabled,
-          SHADOWS_ENABLED: shadows_enabled,
-          AO_ENABLED: ao_enabled,
+function sort_values(values) {
+  return [...values].sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)));
+}
+
+function expand_define_domains(defines, include_absent = false) {
+  let variants = [{}];
+
+  for (const key of [...defines.keys()].sort((a, b) => a.localeCompare(b))) {
+    const next_variants = [];
+    const values = sort_values(defines.get(key));
+
+    for (const variant of variants) {
+      if (include_absent) {
+        next_variants.push({ ...variant });
+      }
+
+      for (const value of values) {
+        next_variants.push({
+          ...variant,
+          [key]: value,
         });
       }
     }
+
+    variants = next_variants;
   }
+
+  return variants;
+}
+
+function expand_define_family(family) {
+  const required_variants = expand_define_domains(family.required_domains, false);
+  if (family.optional_domains.size === 0) {
+    return required_variants;
+  }
+
+  const optional_variants = expand_define_domains(family.optional_domains, true);
+  const variants = [];
+
+  for (const required_variant of required_variants) {
+    for (const optional_variant of optional_variants) {
+      variants.push({
+        ...required_variant,
+        ...optional_variant,
+      });
+    }
+  }
+
+  return variants;
+}
+
+function add_variant_family_to_paths(variants_by_path, shader_paths, family) {
+  const expanded_variants = expand_define_family(family);
+  for (const shader_path of shader_paths) {
+    if (!variants_by_path.has(shader_path)) {
+      variants_by_path.set(shader_path, new Map());
+    }
+
+    const path_variants = variants_by_path.get(shader_path);
+    for (const defines of expanded_variants) {
+      const canonical_defines = canonicalize_shader_defines(defines);
+      const variant_key = JSON.stringify(Object.entries(canonical_defines));
+      if (!path_variants.has(variant_key)) {
+        path_variants.set(variant_key, canonical_defines);
+      }
+    }
+  }
+}
+
+function build_const_shader_path_map(source) {
+  const shader_paths = new Map();
+  const regex = new RegExp(const_shader_path_regex);
+  let match = regex.exec(source);
+  while (match) {
+    shader_paths.set(match[1], normalize_relative_path(match[2]));
+    match = regex.exec(source);
+  }
+  return shader_paths;
+}
+
+function strip_wrapping_quotes(value) {
+  const trimmed = value.trim();
+  if (trimmed.length < 2) {
+    return trimmed;
+  }
+
+  const first = trimmed[0];
+  const last = trimmed[trimmed.length - 1];
+  if ((first === '"' || first === "'" || first === "`") && last === first) {
+    return trimmed.slice(1, -1);
+  }
+
+  return trimmed;
+}
+
+function resolve_shader_path_token(token, const_shader_paths) {
+  const trimmed = token.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  if (/^["'`][^"'`\r\n]+\.wgsl["'`]$/.test(trimmed)) {
+    return normalize_relative_path(strip_wrapping_quotes(trimmed));
+  }
+
+  return const_shader_paths.get(trimmed) ?? null;
+}
+
+function parse_define_literal(value) {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+
+  if (trimmed === "true") {
+    return true;
+  }
+
+  if (trimmed === "false") {
+    return false;
+  }
+
+  if (trimmed === "null") {
+    return null;
+  }
+
+  if (/^["'`][\s\S]*["'`]$/.test(trimmed)) {
+    return strip_wrapping_quotes(trimmed);
+  }
+
+  if (/^-?\d+(?:\.\d+)?(?:e[+-]?\d+)?$/i.test(trimmed)) {
+    return Number(trimmed);
+  }
+
+  return undefined;
+}
+
+function infer_define_values(value_expression) {
+  const literal_value = parse_define_literal(value_expression);
+  if (literal_value !== undefined) {
+    return [literal_value];
+  }
+
+  return [false, true];
+}
+
+function find_matching_character(source, open_index, open_character, close_character) {
+  let depth = 0;
+  let in_single_quote = false;
+  let in_double_quote = false;
+  let in_template_string = false;
+  let in_line_comment = false;
+  let in_block_comment = false;
+
+  for (let i = open_index; i < source.length; i++) {
+    const character = source[i];
+    const next_character = source[i + 1];
+    const previous_character = source[i - 1];
+
+    if (in_line_comment) {
+      if (character === "\n") {
+        in_line_comment = false;
+      }
+      continue;
+    }
+
+    if (in_block_comment) {
+      if (character === "*" && next_character === "/") {
+        in_block_comment = false;
+        i++;
+      }
+      continue;
+    }
+
+    if (in_single_quote) {
+      if (character === "'" && previous_character !== "\\") {
+        in_single_quote = false;
+      }
+      continue;
+    }
+
+    if (in_double_quote) {
+      if (character === '"' && previous_character !== "\\") {
+        in_double_quote = false;
+      }
+      continue;
+    }
+
+    if (in_template_string) {
+      if (character === "`" && previous_character !== "\\") {
+        in_template_string = false;
+      }
+      continue;
+    }
+
+    if (character === "/" && next_character === "/") {
+      in_line_comment = true;
+      i++;
+      continue;
+    }
+
+    if (character === "/" && next_character === "*") {
+      in_block_comment = true;
+      i++;
+      continue;
+    }
+
+    if (character === "'") {
+      in_single_quote = true;
+      continue;
+    }
+
+    if (character === '"') {
+      in_double_quote = true;
+      continue;
+    }
+
+    if (character === "`") {
+      in_template_string = true;
+      continue;
+    }
+
+    if (character === open_character) {
+      depth++;
+      continue;
+    }
+
+    if (character === close_character) {
+      depth--;
+      if (depth === 0) {
+        return i;
+      }
+    }
+  }
+
+  return -1;
+}
+
+function extract_object_literal(source, open_index) {
+  const close_index = find_matching_character(source, open_index, "{", "}");
+  if (close_index === -1) {
+    return null;
+  }
+
+  return {
+    text: source.slice(open_index, close_index + 1),
+    end_index: close_index,
+  };
+}
+
+function split_top_level_values(source) {
+  const values = [];
+  let start = 0;
+  let paren_depth = 0;
+  let brace_depth = 0;
+  let bracket_depth = 0;
+  let in_single_quote = false;
+  let in_double_quote = false;
+  let in_template_string = false;
+  let in_line_comment = false;
+  let in_block_comment = false;
+
+  for (let i = 0; i < source.length; i++) {
+    const character = source[i];
+    const next_character = source[i + 1];
+    const previous_character = source[i - 1];
+
+    if (in_line_comment) {
+      if (character === "\n") {
+        in_line_comment = false;
+      }
+      continue;
+    }
+
+    if (in_block_comment) {
+      if (character === "*" && next_character === "/") {
+        in_block_comment = false;
+        i++;
+      }
+      continue;
+    }
+
+    if (in_single_quote) {
+      if (character === "'" && previous_character !== "\\") {
+        in_single_quote = false;
+      }
+      continue;
+    }
+
+    if (in_double_quote) {
+      if (character === '"' && previous_character !== "\\") {
+        in_double_quote = false;
+      }
+      continue;
+    }
+
+    if (in_template_string) {
+      if (character === "`" && previous_character !== "\\") {
+        in_template_string = false;
+      }
+      continue;
+    }
+
+    if (character === "/" && next_character === "/") {
+      in_line_comment = true;
+      i++;
+      continue;
+    }
+
+    if (character === "/" && next_character === "*") {
+      in_block_comment = true;
+      i++;
+      continue;
+    }
+
+    if (character === "'") {
+      in_single_quote = true;
+      continue;
+    }
+
+    if (character === '"') {
+      in_double_quote = true;
+      continue;
+    }
+
+    if (character === "`") {
+      in_template_string = true;
+      continue;
+    }
+
+    if (character === "(") {
+      paren_depth++;
+      continue;
+    }
+
+    if (character === ")") {
+      paren_depth--;
+      continue;
+    }
+
+    if (character === "{") {
+      brace_depth++;
+      continue;
+    }
+
+    if (character === "}") {
+      brace_depth--;
+      continue;
+    }
+
+    if (character === "[") {
+      bracket_depth++;
+      continue;
+    }
+
+    if (character === "]") {
+      bracket_depth--;
+      continue;
+    }
+
+    if (
+      character === "," &&
+      paren_depth === 0 &&
+      brace_depth === 0 &&
+      bracket_depth === 0
+    ) {
+      values.push(source.slice(start, i).trim());
+      start = i + 1;
+    }
+  }
+
+  const last_value = source.slice(start).trim();
+  if (last_value.length > 0) {
+    values.push(last_value);
+  }
+
+  return values;
+}
+
+function extract_call_arguments(source, call_regex) {
+  const calls = [];
+  const regex = new RegExp(call_regex);
+  let match = regex.exec(source);
+  while (match) {
+    const open_index = source.indexOf("(", match.index);
+    const close_index = find_matching_character(source, open_index, "(", ")");
+    if (close_index === -1) {
+      break;
+    }
+
+    calls.push({
+      arguments: split_top_level_values(source.slice(open_index + 1, close_index)),
+    });
+
+    regex.lastIndex = close_index + 1;
+    match = regex.exec(source);
+  }
+  return calls;
+}
+
+function parse_define_object_literal(object_literal) {
+  const trimmed = object_literal.trim();
+  if (!trimmed.startsWith("{") || !trimmed.endsWith("}")) {
+    return {};
+  }
+
+  const defines = {};
+  const entries = split_top_level_values(trimmed.slice(1, -1));
+  for (const entry of entries) {
+    if (!entry || entry.startsWith("...")) {
+      continue;
+    }
+
+    const separator_index = entry.indexOf(":");
+    if (separator_index === -1) {
+      continue;
+    }
+
+    const key = strip_wrapping_quotes(entry.slice(0, separator_index).trim());
+    const value = parse_define_literal(entry.slice(separator_index + 1));
+    if (!key || value === undefined) {
+      continue;
+    }
+
+    defines[key] = value;
+  }
+
+  return defines;
+}
+
+function extract_shader_paths_from_text(source, const_shader_paths) {
+  const shader_paths = new Set();
+  const regex = new RegExp(object_shader_path_regex);
+  let match = regex.exec(source);
+  while (match) {
+    const shader_path = resolve_shader_path_token(match[1], const_shader_paths);
+    if (shader_path) {
+      shader_paths.add(shader_path);
+    }
+    match = regex.exec(source);
+  }
+  return shader_paths;
+}
+
+function extract_define_families_from_setup_object(source) {
+  const family = create_define_family();
+  const regex = new RegExp(defines_object_regex);
+  let match = regex.exec(source);
+  while (match) {
+    const open_index = match.index + match[0].length - 1;
+    const object_literal = extract_object_literal(source, open_index);
+    if (!object_literal) {
+      break;
+    }
+
+    const defines = parse_define_object_literal(object_literal.text);
+    for (const [key, value] of Object.entries(defines)) {
+      add_define_domain_value(family.required_domains, key, value);
+    }
+
+    regex.lastIndex = object_literal.end_index + 1;
+    match = regex.exec(source);
+  }
+  return family;
+}
+
+function discover_named_shader_contexts(source, const_shader_paths) {
+  const contexts = new Map();
+  const regex = new RegExp(setup_object_regex);
+  let match = regex.exec(source);
+  while (match) {
+    const open_index = match.index + match[0].length - 1;
+    const object_literal = extract_object_literal(source, open_index);
+    if (!object_literal) {
+      break;
+    }
+
+    const shader_paths = extract_shader_paths_from_text(object_literal.text, const_shader_paths);
+    if (shader_paths.size > 0) {
+      contexts.set(match[1], {
+        shader_paths,
+        family: extract_define_families_from_setup_object(object_literal.text),
+      });
+    }
+
+    regex.lastIndex = object_literal.end_index + 1;
+    match = regex.exec(source);
+  }
+
+  return contexts;
+}
+
+function apply_dynamic_setup_assignments(source, contexts) {
+  const regex = new RegExp(setup_define_assignment_regex);
+  let match = regex.exec(source);
+  while (match) {
+    const context = contexts.get(match[1]);
+    if (!context) {
+      match = regex.exec(source);
+      continue;
+    }
+
+    for (const value of infer_define_values(match[3])) {
+      add_define_domain_value(context.family.required_domains, match[2], value);
+    }
+
+    match = regex.exec(source);
+  }
+}
+
+function discover_optional_define_map_domains(source) {
+  const domains_by_variable = new Map();
+  const regex = new RegExp(generic_define_assignment_regex);
+  let match = regex.exec(source);
+  while (match) {
+    if (!domains_by_variable.has(match[1])) {
+      domains_by_variable.set(match[1], new Map());
+    }
+
+    for (const value of infer_define_values(match[3])) {
+      add_define_domain_value(domains_by_variable.get(match[1]), match[2], value);
+    }
+
+    match = regex.exec(source);
+  }
+
+  return domains_by_variable;
+}
+
+function parse_define_family_from_object_literal(object_literal, optional_domains_by_variable) {
+  const family = create_define_family();
+  const explicit_defines = parse_define_object_literal(object_literal);
+  for (const [key, value] of Object.entries(explicit_defines)) {
+    add_define_domain_value(family.required_domains, key, value);
+  }
+
+  const spread_regex = new RegExp(spread_identifier_regex);
+  let match = spread_regex.exec(object_literal);
+  while (match) {
+    const optional_domains = optional_domains_by_variable.get(match[1]);
+    if (optional_domains) {
+      merge_define_domains(family.optional_domains, optional_domains);
+    }
+    match = spread_regex.exec(object_literal);
+  }
+
+  return family;
+}
+
+function discover_material_template_usages(source, const_shader_paths) {
+  const usages = [];
+  const calls = extract_call_arguments(source, material_template_create_call_regex);
+  for (const call of calls) {
+    if (call.arguments.length < 2) {
+      continue;
+    }
+
+    const shader_path = resolve_shader_path_token(call.arguments[1], const_shader_paths);
+    if (!shader_path) {
+      continue;
+    }
+
+    const family = create_define_family();
+    if (call.arguments.length >= 6 && call.arguments[5].trim().startsWith("{")) {
+      const explicit_defines = parse_define_object_literal(call.arguments[5]);
+      for (const [key, value] of Object.entries(explicit_defines)) {
+        add_define_domain_value(family.required_domains, key, value);
+      }
+    }
+
+    usages.push({
+      shader_path,
+      family,
+    });
+  }
+
+  return usages;
+}
+
+function discover_shader_create_variants(
+  source,
+  const_shader_paths,
+  optional_domains_by_variable
+) {
+  const direct_variants = new Map();
+  const generic_variants = [];
+  const calls = extract_call_arguments(source, shader_create_call_regex);
+  const has_material_template_usage = source.includes("MaterialTemplate.create");
+
+  for (const call of calls) {
+    if (call.arguments.length < 2) {
+      continue;
+    }
+
+    const defines_argument = call.arguments[1].trim();
+    if (!defines_argument.startsWith("{")) {
+      continue;
+    }
+
+    const family = parse_define_family_from_object_literal(
+      defines_argument,
+      optional_domains_by_variable
+    );
+    const shader_path = resolve_shader_path_token(call.arguments[0], const_shader_paths);
+    if (shader_path) {
+      if (!direct_variants.has(shader_path)) {
+        direct_variants.set(shader_path, []);
+      }
+      direct_variants.get(shader_path).push(family);
+      continue;
+    }
+
+    if (has_material_template_usage) {
+      generic_variants.push(family);
+    }
+  }
+
+  return {
+    direct_variants,
+    generic_variants,
+  };
+}
+
+function list_all_source_files(source_roots) {
+  const files = [];
+  const seen_files = new Set();
+
+  for (const source_root of source_roots) {
+    const source_root_files = list_source_files(source_root.source_root_path);
+    for (const source_file of source_root_files) {
+      if (seen_files.has(source_file)) {
+        continue;
+      }
+
+      seen_files.add(source_file);
+      files.push(source_file);
+    }
+  }
+
+  return files.sort((a, b) => a.localeCompare(b));
+}
+
+function discover_requested_shader_variants(source_roots, referenced_shader_paths) {
+  const variants_by_path = new Map();
+  const referenced_shader_path_set = new Set(referenced_shader_paths);
+  const material_shader_paths = new Set();
+  const generic_material_families = [];
+  const source_files = list_all_source_files(source_roots);
+
+  for (const source_file of source_files) {
+    const source = fs.readFileSync(source_file, "utf8");
+    const const_shader_paths = build_const_shader_path_map(source);
+    const shader_contexts = discover_named_shader_contexts(source, const_shader_paths);
+    apply_dynamic_setup_assignments(source, shader_contexts);
+
+    for (const context of shader_contexts.values()) {
+      const shader_paths = [...context.shader_paths].filter((shader_path) =>
+        referenced_shader_path_set.has(shader_path)
+      );
+      if (shader_paths.length > 0) {
+        add_variant_family_to_paths(variants_by_path, shader_paths, context.family);
+      }
+    }
+
+    for (const usage of discover_material_template_usages(source, const_shader_paths)) {
+      if (!referenced_shader_path_set.has(usage.shader_path)) {
+        continue;
+      }
+
+      material_shader_paths.add(usage.shader_path);
+      add_variant_family_to_paths(variants_by_path, [usage.shader_path], usage.family);
+    }
+
+    const optional_domains_by_variable = discover_optional_define_map_domains(source);
+    const { direct_variants, generic_variants } = discover_shader_create_variants(
+      source,
+      const_shader_paths,
+      optional_domains_by_variable
+    );
+
+    for (const [shader_path, families] of direct_variants) {
+      if (!referenced_shader_path_set.has(shader_path)) {
+        continue;
+      }
+
+      for (const family of families) {
+        add_variant_family_to_paths(variants_by_path, [shader_path], family);
+      }
+    }
+
+    generic_material_families.push(...generic_variants);
+  }
+
+  for (const shader_path of material_shader_paths) {
+    for (const family of generic_material_families) {
+      add_variant_family_to_paths(variants_by_path, [shader_path], family);
+    }
+  }
+
+  return variants_by_path;
+}
+
+function analyze_shader_define_usage(
+  shader_root,
+  include_resolution_roots,
+  shader_path,
+  cache = new Map(),
+  active_paths = new Set()
+) {
+  if (cache.has(shader_path)) {
+    return cache.get(shader_path);
+  }
+
+  if (active_paths.has(shader_path)) {
+    return new Set();
+  }
+
+  active_paths.add(shader_path);
+  const shader_source = read_shader_source(shader_root, include_resolution_roots, shader_path);
+  if (!shader_source) {
+    active_paths.delete(shader_path);
+    return new Set();
+  }
+
+  const define_keys = new Set();
+  const conditional_regex = new RegExp(shader_conditional_regex);
+  let match = conditional_regex.exec(shader_source.source);
+  while (match) {
+    if (!built_in_shader_define_keys.has(match[1])) {
+      define_keys.add(match[1]);
+    }
+    match = conditional_regex.exec(shader_source.source);
+  }
+
+  const include_matches = shader_source.source.matchAll(/^#include\s+"(\S+)".*$/gm);
+  for (const include_match of include_matches) {
+    const include_define_keys = analyze_shader_define_usage(
+      shader_root,
+      include_resolution_roots,
+      include_match[1],
+      cache,
+      active_paths
+    );
+    for (const define_key of include_define_keys) {
+      if (!built_in_shader_define_keys.has(define_key)) {
+        define_keys.add(define_key);
+      }
+    }
+  }
+
+  active_paths.delete(shader_path);
+  cache.set(shader_path, define_keys);
+  return define_keys;
+}
+
+function filter_variant_defines(defines, active_define_keys) {
+  if (!active_define_keys || active_define_keys.size === 0) {
+    return {};
+  }
+
+  const filtered_defines = {};
+  for (const [key, value] of Object.entries(defines)) {
+    if (active_define_keys.has(key)) {
+      filtered_defines[key] = value;
+    }
+  }
+
+  return filtered_defines;
 }
 
 function find_shader_files(shader_root_path) {
@@ -328,26 +1091,36 @@ function discover_referenced_shader_paths(source_roots, available_shader_paths) 
   return sort_shader_paths(referenced);
 }
 
-function build_shader_variant_registry(shader_root, shader_paths) {
+function build_shader_variant_registry(
+  shader_root,
+  source_roots,
+  shader_paths,
+  include_resolution_roots
+) {
   const variants = new Map();
+  const requested_variants = discover_requested_shader_variants(source_roots, shader_paths);
+  const shader_define_usage_cache = new Map();
 
   for (const shader_path of shader_paths) {
     add_variant(variants, shader_path, {});
-  }
+    const active_define_keys = analyze_shader_define_usage(
+      shader_root,
+      include_resolution_roots,
+      shader_path,
+      shader_define_usage_cache
+    );
+    const path_variants = requested_variants.get(shader_path);
+    if (!path_variants) {
+      continue;
+    }
 
-  if (shader_root.include_engine_variants) {
-    add_material_variants(variants, "visibility/visibility_draw_standard.wgsl");
-    add_material_variants(variants, "ui_standard_material.wgsl");
-    add_material_variants(variants, "text_material.wgsl");
+    for (const requested_defines of path_variants.values()) {
+      const filtered_defines = filter_variant_defines(requested_defines, active_define_keys);
+      if (Object.keys(filtered_defines).length === 0) {
+        continue;
+      }
 
-    add_variant(variants, "effects/bloom_downsample.wgsl", {
-      HIGH_QUALITY_DOWNSAMPLE: true,
-    });
-
-    add_deferred_lighting_variants(variants);
-
-    for (const shader_path of shadow_enabled_shader_paths) {
-      add_variant(variants, shader_path, { SHADOWS_ENABLED: true });
+      add_variant(variants, shader_path, filtered_defines);
     }
   }
 
@@ -363,16 +1136,6 @@ function build_shader_variant_registry(shader_root, shader_paths) {
 function validate_shader_registry(shader_root, shader_paths, referenced_shader_paths, variants) {
   const shader_path_set = new Set(shader_paths);
   const variant_path_set = new Set(variants.map((variant) => variant.path));
-
-  if (shader_root.include_engine_variants) {
-    for (const shader_path of shadow_enabled_shader_paths) {
-      if (!shader_path_set.has(shader_path)) {
-        throw new Error(
-          `Cooked shader registry for '${shader_root.asset_path}' references missing shader '${shader_path}'.`
-        );
-      }
-    }
-  }
 
   for (const referenced_path of referenced_shader_paths) {
     if (!shader_path_set.has(referenced_path)) {
@@ -1054,8 +1817,13 @@ function main() {
     const settings = create_cook_settings(shader_root, source_roots);
     const shader_files = find_shader_files(shader_root.shader_root_path);
     const referenced_shader_paths = discover_referenced_shader_paths(source_roots, shader_files);
-    const variants = build_shader_variant_registry(shader_root, referenced_shader_paths);
     const include_resolution_roots = build_include_resolution_roots(shader_root, shader_roots);
+    const variants = build_shader_variant_registry(
+      shader_root,
+      source_roots,
+      referenced_shader_paths,
+      include_resolution_roots
+    );
     const source_hash = create_source_hash(
       settings,
       shader_root,

@@ -133,7 +133,7 @@ fn quantize_position(position: vec3<f32>, lod_level: u32, base_cell_size: f32) -
 fn quantize_direction(direction: vec3<f32>) -> vec3<i32> {
     // Octahedral projection (maps sphere to square)
     let l1norm = abs(direction.x) + abs(direction.y) + abs(direction.z);
-    let oct = direction.xyz / max(l1norm, 0.0001);
+    let oct = direction.xyz / l1norm;
     
     // Quantize to 32x32 grid for reasonable angular resolution
     let quantized = vec3<i32>(
