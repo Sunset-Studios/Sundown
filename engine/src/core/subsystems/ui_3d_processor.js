@@ -1,3 +1,4 @@
+import { EntityFlags } from "../minimal.js";
 import { SimulationLayer } from "../simulation_layer.js";
 import { EntityManager } from "../ecs/entity.js";
 import { UserInterfaceFragment } from "../ecs/fragments/user_interface_fragment.js";
