@@ -5,8 +5,6 @@ import { FragmentGpuBuffer } from "../core/ecs/solar/memory.js";
 import { BindGroup } from "./bind_group.js";
 import { PipelineState } from "./pipeline_state.js";
 import { ResourceCache } from "./resource_cache.js";
-import { profile_scope } from "../utility/performance.js";
-import { hash_data_map, hash_value } from "../utility/hashing.js";
 import { Name } from "../utility/names.js";
 import { Texture } from "./texture.js";
 import { UserInterfaceFragment } from "../core/ecs/fragments/user_interface_fragment.js";
@@ -703,13 +701,15 @@ export class Material {
       this.#default_ui_material = Material.create("DefaultUIMaterial", "DefaultUIMaterial", {
         family: MaterialFamilyType.Transparent,
       }); 
-
       const default_ui_material_object = Material.get(this.#default_ui_material);
-      const element_data_buffer = FragmentGpuBuffer.get_buffer_name(
+
+      const element_data_buffer = FragmentGpuBuffer.get_buffer(
         UserInterfaceFragment,
         "element_data"
       );
-      default_ui_material_object.listen_for_storage_data(element_data_buffer);
+
+      default_ui_material_object.set_storage_data("element_data", element_data_buffer.buffer);
+      default_ui_material_object.listen_for_storage_data("element_data");
     }
     return this.#default_ui_material;
   }

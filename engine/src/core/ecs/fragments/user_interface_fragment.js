@@ -141,7 +141,7 @@ export class UserInterfaceFragment extends Fragment {
       ctor: Float32Array,
       elements: 4,
       default: 0,
-      gpu_buffer: true,
+      gpu_buffer: false,
       buffer_name: "element_color",
       is_container: false,
       usage:
@@ -155,7 +155,7 @@ export class UserInterfaceFragment extends Fragment {
       ctor: Float32Array,
       elements: 1,
       default: 0,
-      gpu_buffer: true,
+      gpu_buffer: false,
       buffer_name: "element_emissive",
       is_container: false,
       usage:
@@ -169,7 +169,7 @@ export class UserInterfaceFragment extends Fragment {
       ctor: Float32Array,
       elements: 1,
       default: 0,
-      gpu_buffer: true,
+      gpu_buffer: false,
       buffer_name: "element_rounding",
       is_container: false,
       usage:
@@ -181,6 +181,16 @@ export class UserInterfaceFragment extends Fragment {
     },
   };
   static buffer_data = new Map(); // key → { buffer: FragmentGpuBuffer, stride: number }
+
+  static gpu_buffers = {
+    element_data: {
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+      stride: 24,
+      buffer_name: "element_data",
+      cpu_readback: false,
+      fields: ["element_color", "element_emissive", "element_rounding"],
+    },
+  };
 
   static get view_allocator() {
     if (!this._view_allocator) {

@@ -335,65 +335,53 @@ const UserInterfaceFragment = {
     allows_cursor_events: {
       type: DataType.UINT8,
       stride: 1,
-      gpu: false,
     },
     auto_size: {
       type: DataType.UINT8,
       stride: 1,
-      gpu: false,
     },
     was_cursor_inside: {
       type: DataType.UINT8,
       stride: 1,
-      gpu: false,
     },
     is_cursor_inside: {
       type: DataType.UINT8,
       stride: 1,
-      gpu: false,
     },
     was_clicked: {
       type: DataType.UINT8,
       stride: 1,
-      gpu: false,
     },
     is_clicked: {
       type: DataType.UINT8,
       stride: 1,
-      gpu: false,
     },
     is_pressed: {
       type: DataType.UINT8,
       stride: 1,
-      gpu: false,
     },
     was_pressed: {
       type: DataType.UINT8,
       stride: 1,
-      gpu: false,
     },
     consume_events: {
       type: DataType.UINT8,
       stride: 1,
-      gpu: false,
     },
     element_color: {
       type: DataType.FLOAT32,
       stride: 4,
-      gpu: true,
     },
     element_emissive: {
       type: DataType.FLOAT32,
       stride: 1,
-      gpu: true,
     },
     element_rounding: {
       type: DataType.FLOAT32,
       stride: 1,
-      gpu: true,
     },
   },
-  buffers: {
+  gpu_buffers: {
     element_data: {
       fields: ["element_color", "element_emissive", "element_rounding"],
       usage: BufferType.STORAGE,
