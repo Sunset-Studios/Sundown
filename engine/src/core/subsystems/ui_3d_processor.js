@@ -27,10 +27,11 @@ export class UI3DProcessor extends SimulationLayer {
         return;
       }
       
+      const user_interfaces = chunk.get_fragment_view(UserInterfaceFragment);
+
       const entity = EntityManager.get_entity_for(chunk, slot);
       
       for (let i = 0; i < instance_count; ++i) {
-        const user_interfaces = chunk.get_fragment_view(UserInterfaceFragment);
         const index = slot + i;
 
         if (user_interfaces.allows_cursor_events[index]) {
