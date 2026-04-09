@@ -289,7 +289,7 @@ export class Chunk {
         if (field_spec.is_container) {
           this.variable_stores.set(
             Name.from(`${fragment.id}.${field_name}`),
-            new EntityLinearDataContainer(field_spec.type.array)
+            new EntityLinearDataContainer(field_spec.ctor)
           );
         }
       }
