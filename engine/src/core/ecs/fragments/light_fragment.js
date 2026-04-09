@@ -182,7 +182,7 @@ export class LightFragment extends Fragment {
     shadow_clipmaps: {
       ctor: Float32Array,
       elements: 1,
-      default: 1,
+      default: 8,
       gpu_buffer: false,
       buffer_name: "shadow_clipmaps",
       is_container: false,

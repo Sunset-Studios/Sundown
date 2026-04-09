@@ -736,6 +736,11 @@ export class AdaptiveSparseVirtualShadowMaps {
           view_index,
           c
         );
+
+        if (!dirty_meshlet_list || !dirty_meshlet_draw_args) {
+          continue;
+        }
+
         const light_uniform = light_uniforms[light_idx * this.max_lods + c];
 
         render_graph.add_pass(

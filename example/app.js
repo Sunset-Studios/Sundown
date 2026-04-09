@@ -20,7 +20,6 @@ import { LightType } from "../engine/src/core/minimal.js";
 import { StandardMaterial } from "../engine/src/renderer/material.js";
 import { Mesh } from "../engine/src/renderer/mesh.js";
 import { SharedEnvironmentData, SharedViewBuffer } from "../engine/src/core/shared_data.js";
-import { MAX_CLIPMAP_LEVELS } from "../engine/src/renderer/shadows/shadow_utils.js";
 import { spawn_mesh_entity, delete_entity } from "../engine/src/core/ecs/entity_utils.js";
 import { FontCache } from "../engine/src/ui/text/font_cache.js";
 import { Name } from "../engine/src/utility/names.js";
@@ -233,7 +232,6 @@ export class MLScene extends Scene {
     light_fragment_view.intensity = 3;
     light_fragment_view.position = [50, 0, 0];
     light_fragment_view.active = true;
-    light_fragment_view.shadow_clipmaps = MAX_CLIPMAP_LEVELS;
 
     // Get Exo-Medium font
     const font_id = Name.from("Exo-Medium");
@@ -472,7 +470,6 @@ export class TexturesScene extends Scene {
     light_fragment_view.position = [50, 20, 30];
     light_fragment_view.active = true;
     light_fragment_view.is_primary_sun = 1;
-    light_fragment_view.shadow_clipmaps = MAX_CLIPMAP_LEVELS;
 
     // Get Exo-Medium font
     const font_id = Name.from("Exo-Medium");
@@ -780,7 +777,6 @@ export class BVHScene extends Scene {
     light_fragment_view.intensity = 10;
     light_fragment_view.position = [50, 20, 50];
     light_fragment_view.active = true;
-    light_fragment_view.shadow_clipmaps = MAX_CLIPMAP_LEVELS;
     light_fragment_view.is_primary_sun = true;
     this.entities.push(light_entity);
 
@@ -1197,7 +1193,6 @@ export class SolarECSTestScene extends Scene {
     light_fragment_view.intensity = 2.5;
     light_fragment_view.position = [10, 30, 10];
     light_fragment_view.active = true;
-    light_fragment_view.shadow_clipmaps = MAX_CLIPMAP_LEVELS;
 
     // Get Exo-Medium font for potential text elements
     const font_id = Name.from("Exo-Medium");
@@ -1338,7 +1333,6 @@ export class VoxelTerrainScene extends Scene {
     light_fragment_view.position = [-15, 20, 5];
     light_fragment_view.active = true;
     light_fragment_view.is_primary_sun = 1;
-    light_fragment_view.shadow_clipmaps = MAX_CLIPMAP_LEVELS;
 
     // Create terrain material
     const terrain_material = StandardMaterial.create("TerrainMaterial");
@@ -1615,7 +1609,6 @@ export class ObjectPaintingScene extends Scene {
     light_fragment_view.position = [10, 30, 20];
     light_fragment_view.active = true;
     light_fragment_view.is_primary_sun = 1;
-    light_fragment_view.shadow_clipmaps = MAX_CLIPMAP_LEVELS;
 
     // Load sphere mesh & create transparent/emissive brush material
     this.sphere_mesh = Mesh.sphere();
@@ -1773,7 +1766,6 @@ export class GITestScene extends Scene {
     light_fragment_view.position = [5, 5 + scene_y_offset, 5];
     light_fragment_view.active = true;
     light_fragment_view.is_primary_sun = 1;
-    light_fragment_view.shadow_clipmaps = MAX_CLIPMAP_LEVELS;
 
     // Load worn panel textures for metallic floor
     let floor_albedo = {
@@ -2260,7 +2252,6 @@ export class ShadowTestScene extends Scene {
     light_fragment_view.position = [30, 55, 40];
     light_fragment_view.active = true;
     light_fragment_view.is_primary_sun = 1;
-    light_fragment_view.shadow_clipmaps = MAX_CLIPMAP_LEVELS;
 
     // // Create a point light
     const point_light_entity = EntityManager.create_entity([LightFragment]);
@@ -2618,7 +2609,6 @@ export class GLTFModelScene extends Scene {
     light_fragment_view.position = [10, 20, 10];
     light_fragment_view.active = true;
     light_fragment_view.is_primary_sun = 1;
-    light_fragment_view.shadow_clipmaps = MAX_CLIPMAP_LEVELS;
 
     // Add a title text entity
     const font_id = Name.from("Exo-Medium");
@@ -2727,7 +2717,6 @@ export class SponzaScene extends Scene {
     light_fragment_view.position = [5.0, 20, 2.0];
     light_fragment_view.active = true;
     light_fragment_view.is_primary_sun = 1;
-    light_fragment_view.shadow_clipmaps = MAX_CLIPMAP_LEVELS;
 
     this.sun_light_entity = light_entity;
     this.sun_light_base_dir = [
@@ -2891,7 +2880,6 @@ export class LivingRoomScene extends Scene {
     light_fragment_view.position = [0.0, 5.0, -10.0];
     light_fragment_view.active = true;
     light_fragment_view.is_primary_sun = 1;
-    light_fragment_view.shadow_clipmaps = MAX_CLIPMAP_LEVELS;
 
     const ground_material = StandardMaterial.create("sponza_ground_material");
     const ground_material_id = ground_material.material_id;
@@ -3005,7 +2993,6 @@ export class CityScene extends Scene {
     light_fragment_view.position = [30.0, 50.0, 20.0];
     light_fragment_view.active = true;
     light_fragment_view.is_primary_sun = 1;
-    light_fragment_view.shadow_clipmaps = MAX_CLIPMAP_LEVELS;
 
     // ─────────────────────────────────────────────────────────────────────────
     // Load City GLTF Model
@@ -3074,7 +3061,6 @@ export class SciFiCityScene extends Scene {
     light_fragment_view.position = [30.0, -50.0, 20.0];
     light_fragment_view.active = true;
     light_fragment_view.is_primary_sun = 1;
-    light_fragment_view.shadow_clipmaps = MAX_CLIPMAP_LEVELS;
 
     // ─────────────────────────────────────────────────────────────────────────
     // Emissive Area Light Plane
@@ -3162,7 +3148,6 @@ export class BistroTestScene extends Scene {
     light_fragment_view.position = [40.0, 70.0, 30.0];
     light_fragment_view.active = true;
     light_fragment_view.is_primary_sun = 1;
-    light_fragment_view.shadow_clipmaps = MAX_CLIPMAP_LEVELS;
 
     const bistro_root = this.load_gltf_scene(
       "engine/models/bistro/bistro_exterior.gltf",
@@ -3229,10 +3214,10 @@ export class BistroTestScene extends Scene {
   //await scene_switcher.add_scene(textures_scene);
   //await scene_switcher.add_scene(gi_test_scene);
   //await scene_switcher.add_scene(shadow_test_scene);
-  //await scene_switcher.add_scene(sponza_scene);
+  await scene_switcher.add_scene(sponza_scene);
   //await scene_switcher.add_scene(living_room_scene);
   //await scene_switcher.add_scene(city_scene);
-  await scene_switcher.add_scene(scifi_city_scene);
+  //await scene_switcher.add_scene(scifi_city_scene);
   //await scene_switcher.add_scene(bistro_test_scene);
 
   simulator.add_sim_layer(scene_switcher);

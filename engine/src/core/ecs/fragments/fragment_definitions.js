@@ -59,7 +59,7 @@ const LightFragment = {
     shadow_clipmaps: {
       type: DataType.FLOAT32,
       stride: 1,
-      default: 1,
+      default: 8,
     },
     is_primary_sun: {
       type: DataType.FLOAT32,
