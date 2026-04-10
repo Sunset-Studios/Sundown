@@ -111,7 +111,7 @@ const StaticMeshFragment = {
       gpu: false,
       setter: `
       typed_array[element_offset] = BigInt(value);
-      MeshTaskQueue.mark_meshes_dirty(true);
+        MeshTaskQueue.mark_meshes_dirty(true, this.entity);
       `,
     },
     material_slots: {
@@ -120,7 +120,7 @@ const StaticMeshFragment = {
       gpu: false,
       setter: `
       typed_array[element_offset] = BigInt(value);
-      MeshTaskQueue.mark_meshes_dirty(true);
+        MeshTaskQueue.mark_meshes_dirty(true, this.entity);
       `,
     },
     mesh_asset_id: {
@@ -131,7 +131,7 @@ const StaticMeshFragment = {
       usage: BufferType.STORAGE,
       setter: `
       typed_array[element_offset] = value;
-      MeshTaskQueue.mark_meshes_dirty(true);
+        MeshTaskQueue.mark_meshes_dirty(true, this.entity);
       `,
     },
     material_table_offset: {
@@ -141,7 +141,7 @@ const StaticMeshFragment = {
       usage: BufferType.STORAGE,
       setter: `
       typed_array[element_offset] = value;
-      MeshTaskQueue.mark_meshes_dirty(true);
+        MeshTaskQueue.mark_meshes_dirty(true, this.entity);
       `,
     },
   },

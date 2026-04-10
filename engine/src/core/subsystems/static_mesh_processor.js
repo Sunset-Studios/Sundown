@@ -1,5 +1,3 @@
-import { EntityFlags } from "../minimal.js";
-import { DEFAULT_CHUNK_CAPACITY } from "../ecs/solar/types.js";
 import { SimulationLayer } from "../simulation_layer.js";
 import { EntityManager } from "../ecs/entity.js";
 import { StaticMeshFragment } from "../ecs/fragments/static_mesh_fragment.js";
@@ -11,6 +9,9 @@ import { MaterialAllocationTable } from "../../renderer/material_allocation_tabl
 import { TypedVector } from "../../memory/container.js";
 
 export class StaticMeshProcessor extends SimulationLayer {
+  #entity_materials = new TypedVector(256, -1, BigInt64Array);
+  #fallback_entities = new Set();
+
   entity_query = null;
 
   constructor() {
@@ -20,7 +21,7 @@ export class StaticMeshProcessor extends SimulationLayer {
   init() {
     this.entity_query = EntityManager.create_query([StaticMeshFragment]);
     this._update_internal = this._update_internal.bind(this);
-    this._update_internal_iter_chunk = this._update_internal_iter_chunk.bind(this);
+    this._update_internal_iter_dirty_entity = this._update_internal_iter_dirty_entity.bind(this);
     EntityManager.on_delete(this._on_delete.bind(this));
   }
 
@@ -28,70 +29,14 @@ export class StaticMeshProcessor extends SimulationLayer {
     profile_scope("static_mesh_processor_update", this._update_internal);
   }
 
-  #entity_materials = new TypedVector(256, -1, BigInt64Array);
-  _update_internal_iter_chunk(chunk, flags, counts, archetype) {
-    const static_meshes = chunk.get_fragment_view(StaticMeshFragment);
-    const material_slot_stride = StaticMeshFragment.material_slot_stride;
-
-    let should_dirty_chunk = false;
-    let slot = 0;
-    while (slot < DEFAULT_CHUNK_CAPACITY) {
-      const entity_flags = flags[slot];
-
-      if ((entity_flags & EntityFlags.ALIVE) === 0) {
-        slot += counts[slot] || 1;
-        continue;
-      }
-
-      const mesh_id = Number(static_meshes.mesh[slot]);
-      const entity = EntityManager.get_entity_for(chunk, slot);
-
-      if (mesh_id && entity.instance_count) {
-        MeshTaskQueue.remove(entity);
-
-        const mesh = ResourceCache.get().fetch(CacheTypes.MESH, mesh_id);
-        const section_count = mesh?.sections?.length || 1;
-        const first_mat = static_meshes.material_slots[slot * material_slot_stride];
-
-        this.#entity_materials.clear();
-        for (let si = 0; si < section_count; si++) {
-          const section = mesh?.sections[si] ?? null;
-
-          let material_id = static_meshes.material_slots[slot * material_slot_stride + si];
-
-          if (!material_id && section?.material_id) {
-            static_meshes.material_slots[slot * material_slot_stride + si] = BigInt(
-              section.material_id
-            );
-            material_id = BigInt(section.material_id);
-          } else if (!material_id && first_mat) {
-            static_meshes.material_slots[slot * material_slot_stride + si] = first_mat;
-            material_id = first_mat;
-          }
-
-          this.#entity_materials.push(material_id);
-
-          if (material_id) {
-            MeshTaskQueue.new_task(mesh_id, entity, Number(material_id), si);
-          }
-        }
-
-        const palette_offset = MaterialAllocationTable.register(entity, this.#entity_materials);
-        for (let c = 0; c < counts[slot]; c++) {
-          if (slot + c < DEFAULT_CHUNK_CAPACITY) {
-            static_meshes.material_table_offset[slot + c] = palette_offset;
-          }
-        }
-
-        should_dirty_chunk = true;
-      }
-
-      slot += counts[slot] || 1;
+  _update_internal_iter_dirty_entity(chunk, slot) {
+    const entity = EntityManager.get_entity_for(chunk, slot);
+    if (this.#fallback_entities.has(entity)) {
+      return;
     }
 
-    if (should_dirty_chunk) {
-      chunk.mark_dirty();
-    }
+    this.#fallback_entities.add(entity);
+    this._process_entity(entity);
   }
 
   _update_internal() {
@@ -99,22 +44,103 @@ export class StaticMeshProcessor extends SimulationLayer {
       return;
     }
 
-    MaterialAllocationTable.reset();
-
-    this.entity_query.for_each_chunk(this._update_internal_iter_chunk);
+    const dirty_entities = MeshTaskQueue.get_dirty_static_mesh_entities();
+    if (dirty_entities.size > 0) {
+      for (const entity of dirty_entities) {
+        this._process_entity(entity);
+      }
+    } else {
+      this.#fallback_entities.clear();
+      this.entity_query.for_each(this._update_internal_iter_dirty_entity);
+      this.#fallback_entities.clear();
+    }
 
     MeshTaskQueue.mark_meshes_dirty(false);
   }
 
   _on_delete(entity) {
     MeshTaskQueue.remove(entity);
+    MeshTaskQueue.untrack_entity_mesh(entity);
+    MaterialAllocationTable.unregister(entity);
+  }
 
-    const entity_instance_count = EntityManager.get_entity_instance_count(entity);
-    for (let i = 0; i < entity_instance_count; i++) {
-      const static_mesh_fragment = EntityManager.get_fragment(entity, StaticMeshFragment, i);
-      const material_slots = static_mesh_fragment.material_slots;
-      const material_offset = static_mesh_fragment.material_table_offset;
-      MaterialAllocationTable.unregister(material_offset, material_slots.length);
+  _process_entity(entity) {
+    if (
+      !entity ||
+      !EntityManager.entity_exists(entity) ||
+      !EntityManager.has_fragment(entity, StaticMeshFragment)
+    ) {
+      return;
+    }
+
+    MeshTaskQueue.remove(entity);
+
+    const primary_segment = entity.segments?.[0];
+    if (!primary_segment) {
+      MeshTaskQueue.untrack_entity_mesh(entity);
+      MaterialAllocationTable.unregister(entity);
+      return;
+    }
+
+    const static_meshes = primary_segment.chunk.get_fragment_view(StaticMeshFragment);
+    const material_slot_stride = StaticMeshFragment.material_slot_stride;
+    const slot = primary_segment.slot;
+    const mesh_id = Number(static_meshes.mesh[slot]);
+
+    if (!mesh_id || !entity.instance_count) {
+      MeshTaskQueue.untrack_entity_mesh(entity);
+      MaterialAllocationTable.unregister(entity);
+      this._set_entity_material_table_offset(entity, 0);
+      return;
+    }
+
+    const mesh = ResourceCache.get().fetch(CacheTypes.MESH, mesh_id);
+    const section_count = mesh?.sections?.length || 1;
+    const first_mat = static_meshes.material_slots[slot * material_slot_stride];
+
+    this.#entity_materials.clear();
+    for (let si = 0; si < section_count; si++) {
+      const section = mesh?.sections?.[si] ?? null;
+      let material_id = static_meshes.material_slots[slot * material_slot_stride + si];
+
+      if (!material_id && section?.material_id) {
+        static_meshes.material_slots[slot * material_slot_stride + si] = BigInt(section.material_id);
+        material_id = BigInt(section.material_id);
+      } else if (!material_id && first_mat) {
+        static_meshes.material_slots[slot * material_slot_stride + si] = first_mat;
+        material_id = first_mat;
+      }
+
+      this.#entity_materials.push(material_id);
+
+      if (material_id) {
+        MeshTaskQueue.new_task(mesh_id, entity, Number(material_id), si);
+      }
+    }
+
+    const palette_offset = MaterialAllocationTable.register(entity, this.#entity_materials);
+    this._set_entity_material_table_offset(entity, palette_offset);
+
+    MeshTaskQueue.track_entity_mesh(entity, mesh_id);
+  }
+
+  _set_entity_material_table_offset(entity, palette_offset) {
+    for (let i = 0; i < entity.segments.length; i++) {
+      const segment = entity.segments[i];
+      const static_meshes = segment.chunk.get_fragment_view(StaticMeshFragment);
+      let changed = false;
+
+      for (let j = 0; j < segment.count; j++) {
+        const row = segment.slot + j;
+        if (static_meshes.material_table_offset[row] !== palette_offset) {
+          static_meshes.material_table_offset[row] = palette_offset;
+          changed = true;
+        }
+      }
+
+      if (changed) {
+        segment.chunk.mark_dirty("material_table_offset");
+      }
     }
   }
 }

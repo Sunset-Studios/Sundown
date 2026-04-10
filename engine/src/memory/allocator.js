@@ -270,42 +270,80 @@ class FrameQueueAllocator {
      */
     constructor(max_objects, template) {
         this.max_objects = max_objects;
-
-        // Preallocate array with exact size
+        this.template = template;
         this.buffer = new Array(max_objects);
-
-        // Check if template is a primitive:
-        if (
-            template === null ||
-            (typeof template !== function_string && typeof template !== 'object')
-        ) {
-            // For primitive types, simply fill the buffer with that value.
-            for (let i = 0; i < max_objects; i++) {
-                this.buffer[i] = { value: template };
-            }
-        } else if (typeof template === function_string) {
-            // For constructors, create new instances
-            for (let i = 0; i < max_objects; i++) {
-                this.buffer[i] = new template();
-            }
-        } else if (Object.keys(template).length === 0) {
-            // Fast path for empty objects
-            const proto = Object.getPrototypeOf(template);
-            const prop_descriptors = Object.getOwnPropertyDescriptors(template);
-            for (let i = 0; i < max_objects; i++) {
-                this.buffer[i] = Object.create(proto, prop_descriptors);
-            }
-        } else {
-            // For non-empty plain objects, create a prototype once and use it for all allocations
-            const proto = Object.getPrototypeOf(template);
-            const prop_descriptors = Object.getOwnPropertyDescriptors(template);
-            for (let i = 0; i < max_objects; i++) {
-                this.buffer[i] = Object.create(proto, prop_descriptors);
-            }
-        }
+        this._initialize_buffer(this.buffer, 0, max_objects);
         this.head = 0;
         this.tail = 0;
         this.size = 0;
+    }
+
+    /**
+     * Initializes a range of slots in the provided buffer from the allocator template.
+     * @param {Array} buffer - The target buffer to initialize
+     * @param {number} start - The inclusive start index
+     * @param {number} end - The exclusive end index
+     */
+    _initialize_buffer(buffer, start, end) {
+        if (
+            this.template === null ||
+            (typeof this.template !== function_string && typeof this.template !== 'object')
+        ) {
+            for (let i = start; i < end; i++) {
+                buffer[i] = { value: this.template };
+            }
+        } else if (typeof this.template === function_string) {
+            for (let i = start; i < end; i++) {
+                buffer[i] = new this.template();
+            }
+        } else if (Object.keys(this.template).length === 0) {
+            const proto = Object.getPrototypeOf(this.template);
+            const prop_descriptors = Object.getOwnPropertyDescriptors(this.template);
+            for (let i = start; i < end; i++) {
+                buffer[i] = Object.create(proto, prop_descriptors);
+            }
+        } else {
+            const proto = Object.getPrototypeOf(this.template);
+            const prop_descriptors = Object.getOwnPropertyDescriptors(this.template);
+            for (let i = start; i < end; i++) {
+                buffer[i] = Object.create(proto, prop_descriptors);
+            }
+        }
+    }
+
+    /**
+     * Ensures the queue has at least the requested capacity.
+     * @param {number} required_capacity - The minimum required capacity
+     */
+    _ensure_capacity(required_capacity) {
+        if (required_capacity <= this.max_objects) {
+            return;
+        }
+
+        let new_capacity = Math.max(1, this.max_objects);
+        while (new_capacity < required_capacity) {
+            new_capacity *= 2;
+        }
+
+        this._resize(new_capacity);
+    }
+
+    /**
+     * Resizes the queue while preserving the logical order of active entries.
+     * @param {number} new_capacity - The new queue capacity
+     */
+    _resize(new_capacity) {
+        const new_buffer = new Array(new_capacity);
+
+        for (let i = 0; i < this.size; i++) {
+            new_buffer[i] = this.buffer[(this.head + i) % this.max_objects];
+        }
+
+        this._initialize_buffer(new_buffer, this.size, new_capacity);
+        this.buffer = new_buffer;
+        this.max_objects = new_capacity;
+        this.head = 0;
+        this.tail = this.size;
     }
 
     /**
@@ -314,7 +352,7 @@ class FrameQueueAllocator {
      */
     enqueue() {
         if (this.size >= this.max_objects) {
-            throw new Error(out_of_memory_error);
+            this._ensure_capacity(this.size + 1);
         }
         const index = this.tail;
         this.tail = (this.tail + 1) % this.max_objects;
@@ -360,9 +398,7 @@ class FrameQueueAllocator {
      * @param {FrameAllocator} other - The other frame allocator to append
      */
     append(other) {
-        if (this.size + other.length > this.max_objects) {
-            throw new Error(out_of_memory_error);
-        }
+        this._ensure_capacity(this.size + other.length);
         for (const item of other) {
             this.buffer[this.tail] = item;
             this.tail = (this.tail + 1) % this.max_objects;

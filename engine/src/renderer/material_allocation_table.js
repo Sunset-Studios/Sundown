@@ -1,9 +1,15 @@
-import { Renderer } from "./renderer.js";
 import { Buffer } from "./buffer.js";
 import { TypedVector } from "../memory/container.js";
+import { RandomAccessAllocator } from "../memory/allocator.js";
+import { clamp } from "../utility/math.js";
 
 const PAGE_SIZE = 64;
 export const MATERIAL_PARAMS_SIZE = 32;
+
+class FreePaletteRange {
+  base = 0;
+  count = 0;
+}
 
 /**
  * Manages a global material allocation table and per-instance local palettes.
@@ -17,12 +23,16 @@ export class MaterialAllocationTable {
   static local_palette = new TypedVector(256, 0, Uint32Array);
   static dirty_params_pages = new TypedVector(256, 0, Uint32Array);
   static dirty_palette_pages = new TypedVector(256, 0, Uint32Array);
+  static free_palette_ranges = new RandomAccessAllocator(16, FreePaletteRange);
   static params_buffer = null;
   static palette_buffer = null;
+  static palette_allocations = new Map();
 
   static reset() {
     this.local_palette.clear();
     this.dirty_palette_pages.clear();
+    this.palette_allocations.clear();
+    this.free_palette_ranges.reset();
   }
 
   /**
@@ -59,31 +69,43 @@ export class MaterialAllocationTable {
   }
 
   /**
-   * Register a set of material ids for an entity instance.
-   * Returns the base offset into the local palette for this instance.
+   * Register or update the material palette for an entity.
+   * Returns the base offset into the local palette for this entity.
    */
   static register(entity, material_ids) {
-    const base = this.local_palette.length;
-    for (let i = 0; i < material_ids.length; i++) {
-      const mat = material_ids.get(i);
-      const slot = this.find_or_allocate(mat);
-      this.local_palette.push(slot);
-      this.dirty_palette_pages.push(Math.floor((this.local_palette.length - 1) / PAGE_SIZE));
+    const required_count = material_ids.length;
+    if (required_count <= 0) {
+      this.unregister(entity);
+      return 0;
     }
-    return base;
+
+    let allocation = this.palette_allocations.get(entity);
+    if (!allocation || allocation.capacity < required_count) {
+      if (allocation) {
+        this._free_palette_region(allocation.base, allocation.capacity);
+      }
+
+      const capacity = required_count;
+      const base = this._allocate_palette_region(capacity);
+      allocation = { base, count: required_count, capacity };
+      this.palette_allocations.set(entity, allocation);
+    }
+
+    allocation.count = required_count;
+    this._write_palette_region(allocation.base, allocation.capacity, material_ids);
+
+    return allocation.base;
   }
 
   /**
-   * Unregister a set of material ids for an entity instance.
+   * Unregister the material palette for an entity.
    */
-  static unregister(base, material_count) {
-    for (let i = 0; i < material_count; i++) {
-      const slot = base + i;
-      this.local_palette.remove(slot);
-      // Remove performs a last element swap, so we need to dirty the removed and new last index
-      this.dirty_palette_pages.push(Math.floor(slot / PAGE_SIZE));
-      this.dirty_palette_pages.push(Math.floor(this.local_palette.length / PAGE_SIZE));
-    }
+  static unregister(entity) {
+    const allocation = this.palette_allocations.get(entity);
+    if (!allocation) return;
+
+    this.palette_allocations.delete(entity);
+    this._free_palette_region(allocation.base, allocation.capacity);
   }
 
   /**
@@ -138,10 +160,10 @@ export class MaterialAllocationTable {
           this.params_buffer.write_raw(this.params_data, page_offset * 4, page_size, page_offset);
         }
       }
-      
+
       this.dirty_params_pages.clear();
     }
-    
+
     if (this.dirty_palette_pages.length > 0) {
       if (this.palette_buffer.config.size < this.local_palette.buffer.byteLength) {
         this.palette_buffer = Buffer.create({
@@ -156,7 +178,7 @@ export class MaterialAllocationTable {
         for (let i = 0; i < dirty_pages.length; i++) {
           const page = dirty_pages[i];
           const page_offset = page * PAGE_SIZE;
-          const page_size = Math.min(PAGE_SIZE, this.local_palette.length - page_offset);
+          const page_size = clamp(this.local_palette.length - page_offset, 0, PAGE_SIZE);
           this.palette_buffer.write_raw(this.local_palette.buffer, page_offset * 4, page_size, page_offset);
         }
       }
@@ -173,6 +195,84 @@ export class MaterialAllocationTable {
       const new_buffer = new Float32Array(new_size);
       new_buffer.set(this.params_data);
       this.params_data = new_buffer;
+    }
+  }
+
+  static _allocate_palette_region(required_count) {
+    for (let i = 0; i < this.free_palette_ranges.length; i++) {
+      const range = this.free_palette_ranges.get(i);
+      if (range.count < required_count) {
+        continue;
+      }
+
+      const base = range.base;
+      range.base += required_count;
+      range.count -= required_count;
+      if (range.count === 0) {
+        this.free_palette_ranges.deallocate_at(i);
+      }
+      return base;
+    }
+
+    const base = this.local_palette.length;
+    this.local_palette.set_num_elements(base + required_count);
+    return base;
+  }
+
+  static _free_palette_region(base, count) {
+    if (count <= 0) return;
+
+    for (let i = 0; i < count; i++) {
+      this.local_palette.set(base + i, 0);
+    }
+    this._mark_palette_range_dirty(base, count);
+
+    const range = this.free_palette_ranges.allocate();
+    range.base = base;
+    range.count = count;
+    this._merge_free_palette_ranges();
+  }
+
+  static _merge_free_palette_ranges() {
+    for (let i = 0; i < this.free_palette_ranges.length; i++) {
+      const target = this.free_palette_ranges.get(i);
+      let target_base = target.base;
+      let target_end = target.base + target.count;
+
+      for (let j = i + 1; j < this.free_palette_ranges.length;) {
+        const candidate = this.free_palette_ranges.get(j);
+        const candidate_end = candidate.base + candidate.count;
+
+        if (candidate_end < target_base || candidate.base > target_end) {
+          j++;
+          continue;
+        }
+
+        target_base = Math.min(target_base, candidate.base);
+        target_end = Math.max(target_end, candidate_end);
+        target.base = target_base;
+        target.count = target_end - target_base;
+        this.free_palette_ranges.deallocate_at(j);
+      }
+    }
+  }
+
+  static _write_palette_region(base, capacity, material_ids) {
+    for (let i = 0; i < capacity; i++) {
+      const material_id = i < material_ids.length ? material_ids.get(i) : 0;
+      const slot = this.find_or_allocate(material_id);
+      this.local_palette.set(base + i, slot);
+    }
+    this._mark_palette_range_dirty(base, capacity);
+  }
+
+  static _mark_palette_range_dirty(base, count) {
+    if (count <= 0) return;
+
+    const first_page = Math.floor(base / PAGE_SIZE);
+    const last_page = Math.floor((base + count - 1) / PAGE_SIZE);
+    for (let page = first_page; page <= last_page; page++) {
+      this.dirty_palette_pages.push(page);
     }
   }
 }

@@ -25,7 +25,7 @@ export class StaticMeshFragment extends Fragment {
         GPUBufferUsage.COPY_SRC,
       setter(value, typed_array, element_offset) {
         typed_array[element_offset] = BigInt(value);
-        MeshTaskQueue.mark_meshes_dirty(true);
+        MeshTaskQueue.mark_meshes_dirty(true, this.entity);
       },
       cpu_readback: false,
       buffer_multiplier: 1,
@@ -43,7 +43,7 @@ export class StaticMeshFragment extends Fragment {
         GPUBufferUsage.COPY_SRC,
       setter(value, typed_array, element_offset) {
         typed_array[element_offset] = BigInt(value);
-        MeshTaskQueue.mark_meshes_dirty(true);
+        MeshTaskQueue.mark_meshes_dirty(true, this.entity);
       },
       cpu_readback: false,
       buffer_multiplier: 1,
@@ -58,7 +58,7 @@ export class StaticMeshFragment extends Fragment {
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
       setter(value, typed_array, element_offset) {
         typed_array[element_offset] = value;
-        MeshTaskQueue.mark_meshes_dirty(true);
+        MeshTaskQueue.mark_meshes_dirty(true, this.entity);
       },
       cpu_readback: false,
       buffer_multiplier: 1,
@@ -73,7 +73,7 @@ export class StaticMeshFragment extends Fragment {
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
       setter(value, typed_array, element_offset) {
         typed_array[element_offset] = value;
-        MeshTaskQueue.mark_meshes_dirty(true);
+        MeshTaskQueue.mark_meshes_dirty(true, this.entity);
       },
       cpu_readback: false,
       buffer_multiplier: 1,

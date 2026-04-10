@@ -396,6 +396,9 @@ export class MeshTaskQueue {
   static needs_sort = false;
   static initialized = false;
   static entity_task_map = new Map(); // new: Map<Entity, Map<"meshId:materialId", Task>>
+  static dirty_static_mesh_entities = new Set();
+  static entity_mesh_map = new Map();
+  static mesh_entity_map = new Map();
   static static_mesh_query = null;
   static meshes_dirty = false;
   static total_meshlet_instances = 0;
@@ -686,8 +689,16 @@ export class MeshTaskQueue {
   /**
    * Mark .
    */
-  static mark_meshes_dirty(dirty = true) {
+  static mark_meshes_dirty(dirty = true, entity = null) {
     this.meshes_dirty = dirty;
+    if (!dirty) {
+      this.dirty_static_mesh_entities.clear();
+      return;
+    }
+
+    if (entity) {
+      this.dirty_static_mesh_entities.add(entity);
+    }
   }
 
   /**
@@ -697,10 +708,54 @@ export class MeshTaskQueue {
     return this.meshes_dirty;
   }
 
+  static get_dirty_static_mesh_entities() {
+    return this.dirty_static_mesh_entities;
+  }
+
+  static track_entity_mesh(entity, mesh_id) {
+    const previous_mesh_id = this.entity_mesh_map.get(entity);
+    if (previous_mesh_id === mesh_id) {
+      return;
+    }
+
+    if (previous_mesh_id) {
+      const previous_entities = this.mesh_entity_map.get(previous_mesh_id);
+      previous_entities?.delete(entity);
+      if (previous_entities?.size === 0) {
+        this.mesh_entity_map.delete(previous_mesh_id);
+      }
+    }
+
+    if (mesh_id) {
+      let entities = this.mesh_entity_map.get(mesh_id);
+      if (!entities) {
+        entities = new Set();
+        this.mesh_entity_map.set(mesh_id, entities);
+      }
+      entities.add(entity);
+      this.entity_mesh_map.set(entity, mesh_id);
+    } else {
+      this.entity_mesh_map.delete(entity);
+    }
+  }
+
+  static untrack_entity_mesh(entity) {
+    this.track_entity_mesh(entity, 0);
+  }
+
   /**
    * Invalidate a mesh by removing all tasks associated with it and letting them requeue in the static mesh processor
    */
   static invalidate_mesh(mesh_id) {
+    const registered_entities = this.mesh_entity_map.get(mesh_id);
+    if (registered_entities?.size > 0) {
+      for (const entity of registered_entities) {
+        this.mark_meshes_dirty(true, entity);
+      }
+      this.needs_sort = true;
+      return;
+    }
+
     if (!this.static_mesh_query) {
       this.static_mesh_query = EntityManager.create_query([StaticMeshFragment]);
     }
@@ -714,7 +769,7 @@ export class MeshTaskQueue {
           continue;
         }
         if (Number(static_meshes.mesh[slot]) === mesh_id) {
-          MeshTaskQueue.mark_meshes_dirty();
+          MeshTaskQueue.mark_meshes_dirty(true, EntityManager.get_entity_for(chunk, slot));
         }
         slot += counts[slot] || 1;
       }

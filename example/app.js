@@ -2993,6 +2993,7 @@ export class CityScene extends Scene {
     light_fragment_view.position = [30.0, 50.0, 20.0];
     light_fragment_view.active = true;
     light_fragment_view.is_primary_sun = 1;
+    light_fragment_view.shadow_clipmaps = 12;
 
     // ─────────────────────────────────────────────────────────────────────────
     // Load City GLTF Model
@@ -3061,6 +3062,7 @@ export class SciFiCityScene extends Scene {
     light_fragment_view.position = [30.0, -50.0, 20.0];
     light_fragment_view.active = true;
     light_fragment_view.is_primary_sun = 1;
+    light_fragment_view.shadow_clipmaps = 12;
 
     // ─────────────────────────────────────────────────────────────────────────
     // Emissive Area Light Plane
@@ -3209,7 +3211,7 @@ export class BistroTestScene extends Scene {
   //await scene_switcher.add_scene(bvh_scene);
   //await scene_switcher.add_scene(ml_scene);
   //await scene_switcher.add_scene(voxel_terrain_scene);
-  await scene_switcher.add_scene(object_painting_scene);
+  //await scene_switcher.add_scene(object_painting_scene);
   //await scene_switcher.add_scene(gltf_model_scene);
   //await scene_switcher.add_scene(textures_scene);
   //await scene_switcher.add_scene(gi_test_scene);
@@ -3217,7 +3219,7 @@ export class BistroTestScene extends Scene {
   //await scene_switcher.add_scene(sponza_scene);
   //await scene_switcher.add_scene(living_room_scene);
   //await scene_switcher.add_scene(city_scene);
-  //await scene_switcher.add_scene(scifi_city_scene);
+  await scene_switcher.add_scene(scifi_city_scene);
   //await scene_switcher.add_scene(bistro_test_scene);
 
   simulator.add_sim_layer(scene_switcher);
