@@ -657,7 +657,9 @@ function extract_call_arguments(source, call_regex) {
     const open_index = source.indexOf("(", match.index);
     const close_index = find_matching_character(source, open_index, "(", ")");
     if (close_index === -1) {
-      break;
+      regex.lastIndex = match.index + match[0].length;
+      match = regex.exec(source);
+      continue;
     }
 
     calls.push({
