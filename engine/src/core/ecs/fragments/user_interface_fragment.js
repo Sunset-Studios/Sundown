@@ -17,7 +17,6 @@ export class UserInterfaceFragment extends Fragment {
       default: 0,
       gpu_buffer: false,
       buffer_name: "allows_cursor_events",
-      is_container: false,
       usage:
         GPUBufferUsage.STORAGE |
         GPUBufferUsage.COPY_DST |
@@ -31,7 +30,6 @@ export class UserInterfaceFragment extends Fragment {
       default: 0,
       gpu_buffer: false,
       buffer_name: "auto_size",
-      is_container: false,
       usage:
         GPUBufferUsage.STORAGE |
         GPUBufferUsage.COPY_DST |
@@ -45,7 +43,6 @@ export class UserInterfaceFragment extends Fragment {
       default: 0,
       gpu_buffer: false,
       buffer_name: "was_cursor_inside",
-      is_container: false,
       usage:
         GPUBufferUsage.STORAGE |
         GPUBufferUsage.COPY_DST |
@@ -59,7 +56,6 @@ export class UserInterfaceFragment extends Fragment {
       default: 0,
       gpu_buffer: false,
       buffer_name: "is_cursor_inside",
-      is_container: false,
       usage:
         GPUBufferUsage.STORAGE |
         GPUBufferUsage.COPY_DST |
@@ -73,7 +69,6 @@ export class UserInterfaceFragment extends Fragment {
       default: 0,
       gpu_buffer: false,
       buffer_name: "was_clicked",
-      is_container: false,
       usage:
         GPUBufferUsage.STORAGE |
         GPUBufferUsage.COPY_DST |
@@ -87,7 +82,6 @@ export class UserInterfaceFragment extends Fragment {
       default: 0,
       gpu_buffer: false,
       buffer_name: "is_clicked",
-      is_container: false,
       usage:
         GPUBufferUsage.STORAGE |
         GPUBufferUsage.COPY_DST |
@@ -101,7 +95,6 @@ export class UserInterfaceFragment extends Fragment {
       default: 0,
       gpu_buffer: false,
       buffer_name: "is_pressed",
-      is_container: false,
       usage:
         GPUBufferUsage.STORAGE |
         GPUBufferUsage.COPY_DST |
@@ -115,7 +108,6 @@ export class UserInterfaceFragment extends Fragment {
       default: 0,
       gpu_buffer: false,
       buffer_name: "was_pressed",
-      is_container: false,
       usage:
         GPUBufferUsage.STORAGE |
         GPUBufferUsage.COPY_DST |
@@ -129,7 +121,6 @@ export class UserInterfaceFragment extends Fragment {
       default: 0,
       gpu_buffer: false,
       buffer_name: "consume_events",
-      is_container: false,
       usage:
         GPUBufferUsage.STORAGE |
         GPUBufferUsage.COPY_DST |
@@ -143,7 +134,6 @@ export class UserInterfaceFragment extends Fragment {
       default: 0,
       gpu_buffer: false,
       buffer_name: "element_color",
-      is_container: false,
       usage:
         GPUBufferUsage.STORAGE |
         GPUBufferUsage.COPY_DST |
@@ -157,7 +147,6 @@ export class UserInterfaceFragment extends Fragment {
       default: 0,
       gpu_buffer: false,
       buffer_name: "element_emissive",
-      is_container: false,
       usage:
         GPUBufferUsage.STORAGE |
         GPUBufferUsage.COPY_DST |
@@ -171,7 +160,6 @@ export class UserInterfaceFragment extends Fragment {
       default: 0,
       gpu_buffer: false,
       buffer_name: "element_rounding",
-      is_container: false,
       usage:
         GPUBufferUsage.STORAGE |
         GPUBufferUsage.COPY_DST |

@@ -82,6 +82,14 @@ export class Sector {
 
     const { segments } = handle;
 
+    const fragment_list = handle.archetype?.fragments ?? [];
+    for (let i = 0; i < fragment_list.length; i++) {
+      const fragment = fragment_list[i];
+      if (typeof fragment?.cleanup_entity === "function") {
+        fragment.cleanup_entity(handle);
+      }
+    }
+
     // Destroy tells the allocator to release the ID and associated resources (like the slot).
     // Allocator's destroy method handles freeing the row in the chunk.
     if (segments.length > 0) {
@@ -163,6 +171,10 @@ export class Sector {
 
     if (fragment_index === -1) {
       return; // Fragment not present, no-op
+    }
+
+    if (typeof fragment_class?.cleanup_entity === "function") {
+      fragment_class.cleanup_entity(handle);
     }
 
     // Create the list of remaining fragments
@@ -338,7 +350,6 @@ export class Sector {
           continue;
         }
         for (const [field_name, field_spec] of Object.entries(fragment.fields)) {
-          if (field_spec.is_container) continue;
           const el_count = field_spec.elements;
           const src_typed = src_views[field_name];
           const dst_typed = dst_views[field_name];
@@ -427,9 +438,6 @@ export class Sector {
 
         for (let k = 0; k < fragment_field_entries.length; k++) {
           const [field_name, field_spec] = fragment_field_entries[k];
-          // skip variable-sized/container fields here
-          if (field_spec.is_container) continue;
-
           const element_count = field_spec.elements;
           const source_offset = old_seg.slot * element_count;
           const copy_elements = old_seg.count * element_count;

@@ -62,7 +62,6 @@ export class FragmentGenerator {
             const dv = field.default !== undefined ? field.default : field.type?.default;
             const def_lit = typeof dv === "bigint" ? `${dv}n` : JSON.stringify(dv);
             const gpu_buffer_flag = !!field.gpu;
-            const is_container_flag = !!field.is_container;
             const usage = field.usage || BufferType.STORAGE_SRC;
             const cpu_readback_flag = !!field.cpu_readback;
             const buffer_multiplier_lit = JSON.stringify(
@@ -82,7 +81,6 @@ export class FragmentGenerator {
               default: ${def_lit},
               gpu_buffer: ${gpu_buffer_flag},
               buffer_name: "${key}",
-              is_container: ${is_container_flag},
               usage: ${usage}${getter}${setter},
               cpu_readback: ${cpu_readback_flag},
               buffer_multiplier: ${buffer_multiplier_lit}
@@ -137,11 +135,13 @@ export class FragmentGenerator {
           } else if (buffer_config.gpu_data) {
             // Capture gpu_data if user provided a function/string
             gpu_data_snippet = `, ${buffer_config.gpu_data.toString()}`;
+          } else if (buffer_config.global_data) {
+            gpu_data_snippet = `, ${buffer_config.global_data.toString()}`;
           }
 
           if (!fields_array_snippet && !gpu_data_snippet) {
             console.warn(
-              `FragmentGenerator: No valid fields or gpu_data found for gpu_buffer '${buffer_key}' in fragment '${name}'. Skipping.`
+              `FragmentGenerator: No valid fields, gpu_data, or global_data found for gpu_buffer '${buffer_key}' in fragment '${name}'. Skipping.`
             );
             return null;
           }

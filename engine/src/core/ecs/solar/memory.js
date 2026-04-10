@@ -496,7 +496,8 @@ export class FragmentGpuBuffer {
           const has_valid_gpu_data =
             typeof buffer_config.gpu_data === "function" ||
             typeof buffer_config.gpu_data === "string";
-          if (!buffer_config || (!has_valid_fields && !has_valid_gpu_data)) {
+          const has_valid_global_data = typeof buffer_config.global_data === "function";
+          if (!buffer_config || (!has_valid_fields && !has_valid_gpu_data && !has_valid_global_data)) {
             error(
               `Invalid config for custom GPU buffer '${buffer_key}' in fragment '${Name.string(frag_id)}'`
             );
@@ -522,7 +523,11 @@ export class FragmentGpuBuffer {
 
           const valid_buffer =
             buffer_config.stride > 0 &&
-            ((fields_in_buffer.length > 0 && !has_valid_gpu_data) || has_valid_gpu_data);
+            (
+              (fields_in_buffer.length > 0 && !has_valid_gpu_data && !has_valid_global_data) ||
+              has_valid_gpu_data ||
+              has_valid_global_data
+            );
 
           // use offline-computed stride
           if (valid_buffer) {
@@ -652,6 +657,7 @@ export class FragmentGpuBuffer {
     }
     // Upload the lookup SSBO
     this.entity_index_map_buffer.update_chunk(0, dense_map, total_rows);
+    this._flush_global_gpu_buffers(FragmentGpuBuffer.need_full_flush);
 
     // Instead of full repack, only update those chunks that were dirtied
     for (const chunk of Chunk.dirty) {
@@ -676,6 +682,9 @@ export class FragmentGpuBuffer {
 
         if (fragment.gpu_buffers) {
           for (const [buffer_key, cfg] of Object.entries(fragment.gpu_buffers)) {
+            if (typeof cfg.global_data === "function") {
+              continue;
+            }
             // Skip if this buffer isn't dirty
             if (!chunk.dirty_buffers.has(buffer_key)) {
               continue;
@@ -734,6 +743,9 @@ export class FragmentGpuBuffer {
 
           if (fragment.gpu_buffers) {
             for (const [buffer_key, cfg] of Object.entries(fragment.gpu_buffers)) {
+              if (typeof cfg.global_data === "function") {
+                continue;
+              }
               const buf_data = fragment.buffer_data.get(cfg.buffer_name);
               const packed =
                 typeof cfg.gpu_data === "function"
@@ -763,6 +775,65 @@ export class FragmentGpuBuffer {
       }
       // clear our full-flush set
       FragmentGpuBuffer.need_full_flush = false;
+    }
+  }
+
+  static _flush_global_gpu_buffers(force = false) {
+    const dirty_global_buffers = new Set();
+
+    if (!force) {
+      for (const chunk of Chunk.dirty) {
+        for (let i = 0; i < chunk.fragments.length; i++) {
+          const fragment = chunk.fragments[i];
+          if (!fragment?.gpu_buffers) {
+            continue;
+          }
+
+          for (const [buffer_key, cfg] of Object.entries(fragment.gpu_buffers)) {
+            if (typeof cfg.global_data !== "function") {
+              continue;
+            }
+
+            if (chunk.dirty_buffers.has(buffer_key)) {
+              dirty_global_buffers.add(`${fragment.id}:${buffer_key}`);
+            }
+          }
+        }
+      }
+    }
+
+    const processed = new Set();
+
+    for (let i = 0; i < FragmentGpuBuffer.all_buffers.length; i++) {
+      const gpu_buffer = FragmentGpuBuffer.all_buffers[i];
+      const fragment = gpu_buffer.fragment_class_ref;
+      const buffer_key = gpu_buffer.config_key_within_fragment;
+      const cfg = fragment?.gpu_buffers?.[buffer_key];
+
+      if (!cfg || typeof cfg.global_data !== "function") {
+        continue;
+      }
+
+      const global_buffer_id = `${fragment.id}:${buffer_key}`;
+      if (processed.has(global_buffer_id)) {
+        continue;
+      }
+
+      if (!force && !dirty_global_buffers.has(global_buffer_id)) {
+        continue;
+      }
+
+      const buf_data = fragment.buffer_data.get(cfg.buffer_name);
+      if (!buf_data) {
+        continue;
+      }
+
+      const packed = cfg.global_data.call(this, fragment);
+      if (packed?.packed_data && packed.row_count > 0) {
+        buf_data.buffer.update_chunk(0, packed.packed_data, packed.row_count);
+      }
+
+      processed.add(global_buffer_id);
     }
   }
 

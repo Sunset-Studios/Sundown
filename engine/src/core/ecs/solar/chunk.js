@@ -1,5 +1,3 @@
-import { EntityLinearDataContainer } from "./memory.js";
-import { Name } from "../../../utility/names.js";
 import { DEFAULT_CHUNK_CAPACITY, USE_SHARED_ARRAY_BUFFER } from "./types.js";
 import { clamp } from "../../../utility/math.js";
 import { EntityFlags } from "../../minimal.js";
@@ -60,7 +58,6 @@ export class Chunk {
     this.fragments = fragments;
     this.free_ranges = [0, DEFAULT_CHUNK_CAPACITY];
     this.fragment_views = Object.create(null);
-    this.variable_stores = new Map();
     this.available_rows = DEFAULT_CHUNK_CAPACITY;
     this.dirty_buffers = new Set(); // Track which specific buffers are dirty
 
@@ -72,7 +69,6 @@ export class Chunk {
     Chunk.all_chunks[this.chunk_index] = this;
 
     this._build_SAB(fragments, DEFAULT_CHUNK_CAPACITY);
-    this._initialize_variable_stores(fragments);
   }
 
   destroy() {
@@ -82,7 +78,6 @@ export class Chunk {
     this.fragments = null;
     this.free_ranges = null;
     this.fragment_views = null;
-    this.variable_stores = null;
     this.dirty_buffers = null;
     this.chunk_index = null;
     this.available_rows = null;
@@ -139,9 +134,9 @@ export class Chunk {
     const old_gen_meta = this.gen_meta.slice();
     const old_flags_meta = this.flags_meta.slice();
 
-    // precompute non-container fields for each fragment
+    // precompute fields for each fragment
     const fragment_field_entries = this.fragments.map((fragment) => {
-      const entries = Object.entries(fragment.fields).filter(([, spec]) => !spec.is_container);
+      const entries = Object.entries(fragment.fields);
       return { id: fragment.id, entries };
     });
 
@@ -273,46 +268,18 @@ export class Chunk {
   }
 
   /**
-   * Initializes the variable stores based on fragment definitions.
-   * @param {Fragments[]} fragments
-   */
-  _initialize_variable_stores(fragments) {
-    this.variable_stores.clear();
-
-    for (let i = 0; i < fragments.length; i++) {
-      const fragment = fragments[i];
-
-      const fields = Object.entries(fragment.fields);
-      for (let j = 0; j < fields.length; j++) {
-        const [field_name, field_spec] = fields[j];
-
-        if (field_spec.is_container) {
-          this.variable_stores.set(
-            Name.from(`${fragment.id}.${field_name}`),
-            new EntityLinearDataContainer(field_spec.ctor)
-          );
-        }
-      }
-    }
-  }
-
-  /**
    * Build SAB + TypedArray views for fixed-size data.
    * @param {Fragments[]} fragments
    * @param {number} buffer_capacity
    */
   _build_SAB(fragments, buffer_capacity) {
-    // 1. calculate total byte count for fixed-size data ONLY
+    // 1. calculate total byte count for all fragment field data
     let total_byte_count = 0;
     for (let i = 0; i < fragments.length; i++) {
       const fragment = fragments[i];
       const fields = Object.values(fragment.fields);
       for (let j = 0; j < fields.length; j++) {
         const field_spec = fields[j];
-        // Skip fields that use a separate variable store
-        if (field_spec.is_container) {
-          continue;
-        }
         total_byte_count +=
           field_spec.elements * field_spec.ctor.BYTES_PER_ELEMENT * buffer_capacity;
       }
@@ -327,7 +294,7 @@ export class Chunk {
         ? new SharedArrayBuffer(total_byte_count)
         : new ArrayBuffer(total_byte_count);
 
-    // 3. build TypedArray views for fixed-size data ONLY
+    // 3. build TypedArray views for fragment field data
     let byte_offset = 0;
     for (let i = 0; i < fragments.length; i++) {
       const fragment = fragments[i];
@@ -336,11 +303,6 @@ export class Chunk {
 
       for (let j = 0; j < fields.length; j++) {
         const [field_name, field_spec] = fields[j];
-
-        // Skip fields that use a separate variable store
-        if (field_spec.is_container) {
-          continue;
-        }
 
         const field_view = new field_spec.ctor(
           this.buffer,

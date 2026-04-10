@@ -21,7 +21,6 @@ export class TextFragment extends Fragment {
       default: 0,
       gpu_buffer: true,
       buffer_name: "text",
-      is_container: false,
       usage:
         GPUBufferUsage.STORAGE |
         GPUBufferUsage.COPY_DST |
@@ -133,7 +132,6 @@ export class TextFragment extends Fragment {
       default: 0,
       gpu_buffer: false,
       buffer_name: "font",
-      is_container: false,
       usage:
         GPUBufferUsage.STORAGE |
         GPUBufferUsage.COPY_DST |
@@ -147,7 +145,6 @@ export class TextFragment extends Fragment {
       default: 0,
       gpu_buffer: false,
       buffer_name: "font_size",
-      is_container: false,
       usage:
         GPUBufferUsage.STORAGE |
         GPUBufferUsage.COPY_DST |
@@ -161,7 +158,6 @@ export class TextFragment extends Fragment {
       default: 0,
       gpu_buffer: true,
       buffer_name: "text_color",
-      is_container: false,
       usage:
         GPUBufferUsage.STORAGE |
         GPUBufferUsage.COPY_DST |
@@ -175,7 +171,6 @@ export class TextFragment extends Fragment {
       default: 0,
       gpu_buffer: true,
       buffer_name: "text_emissive",
-      is_container: false,
       usage:
         GPUBufferUsage.STORAGE |
         GPUBufferUsage.COPY_DST |

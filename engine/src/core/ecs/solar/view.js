@@ -1,5 +1,4 @@
 import { EntityFlags } from "../../minimal.js";
-import { Name } from "../../../utility/names.js";
 import { warn, error } from "../../../utility/logging.js";
 
 /**
@@ -13,7 +12,6 @@ export class SolarFragmentView {
   instance = -1;
   fragment_id = null;
   field_specs = null; // { field_name: { ctor, elements, default } }
-  store_hashes = null; // snake_case per-chunk store keys
 
   /**
    * Creates a view for a specific fragment.
@@ -23,16 +21,11 @@ export class SolarFragmentView {
   constructor(fragment) {
     this.fragment_id = fragment.id;
     this.field_specs = fragment.fields;
-    this.store_hashes = Object.create(null);
 
     // Dynamically create getters/setters for each field
     const field_entries = Object.entries(this.field_specs);
     for (let i = 0; i < field_entries.length; i++) {
       const [field_name, spec] = field_entries[i];
-
-      if (spec.is_container) {
-        this.store_hashes[field_name] = Name.from(`${fragment.id}.${field_name}`);
-      }
 
       const custom_get =
         typeof spec.getter === "string"
@@ -85,15 +78,6 @@ export class SolarFragmentView {
       return null;
     }
 
-    if (spec.is_container) {
-      const container = this.chunk.variable_stores.get(this.store_hashes[field_name]);
-      if (!container) {
-        warn(`SolarFragmentView: No variable store for '${field_name}'.`);
-        return null;
-      }
-      return container.get_data_for_entity(this.entity);
-    }
-
     const typed_array = this.chunk.fragment_views[this.fragment_id]?.[field_name];
     if (!typed_array) {
       warn(
@@ -124,35 +108,6 @@ export class SolarFragmentView {
    */
   _set_field(field_name, spec, custom_set, value) {
     if (!this.chunk) {
-      return;
-    }
-
-    if (spec.is_container) {
-      const container = this.chunk.variable_stores.get(this.store_hashes[field_name]);
-      if (!container) {
-        error(`SolarFragmentView: No variable store for '${field_name}'.`);
-        return;
-      }
-
-      let data_array;
-      if (value instanceof spec.ctor) {
-        data_array = value;
-      } else if (Array.isArray(value) || ArrayBuffer.isView(value)) {
-        data_array = new spec.ctor(value);
-      } else {
-        warn(`SolarFragmentView: Invalid value for '${field_name}'.`);
-        return;
-      }
-
-      // TODO: Check if this new value is the same as the existing value.
-      // If so, skip the update.
-
-      container.update(this.entity, data_array);
-
-      this.chunk.flags_meta[this.slot + this.instance] |= EntityFlags.DIRTY;
-
-      this.chunk.mark_dirty(field_name);
-
       return;
     }
 

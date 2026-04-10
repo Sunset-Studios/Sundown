@@ -17,7 +17,6 @@ export class LightFragment extends Fragment {
       default: 0,
       gpu_buffer: false,
       buffer_name: "position",
-      is_container: false,
       usage:
         GPUBufferUsage.STORAGE |
         GPUBufferUsage.COPY_DST |
@@ -31,7 +30,6 @@ export class LightFragment extends Fragment {
       default: 0,
       gpu_buffer: false,
       buffer_name: "direction",
-      is_container: false,
       usage:
         GPUBufferUsage.STORAGE |
         GPUBufferUsage.COPY_DST |
@@ -45,7 +43,6 @@ export class LightFragment extends Fragment {
       default: 0,
       gpu_buffer: false,
       buffer_name: "color",
-      is_container: false,
       usage:
         GPUBufferUsage.STORAGE |
         GPUBufferUsage.COPY_DST |
@@ -59,7 +56,6 @@ export class LightFragment extends Fragment {
       default: 0,
       gpu_buffer: false,
       buffer_name: "type",
-      is_container: false,
       usage:
         GPUBufferUsage.STORAGE |
         GPUBufferUsage.COPY_DST |
@@ -73,7 +69,6 @@ export class LightFragment extends Fragment {
       default: 0,
       gpu_buffer: false,
       buffer_name: "intensity",
-      is_container: false,
       usage:
         GPUBufferUsage.STORAGE |
         GPUBufferUsage.COPY_DST |
@@ -87,7 +82,6 @@ export class LightFragment extends Fragment {
       default: 0,
       gpu_buffer: false,
       buffer_name: "radius",
-      is_container: false,
       usage:
         GPUBufferUsage.STORAGE |
         GPUBufferUsage.COPY_DST |
@@ -101,7 +95,6 @@ export class LightFragment extends Fragment {
       default: 0,
       gpu_buffer: false,
       buffer_name: "attenuation",
-      is_container: false,
       usage:
         GPUBufferUsage.STORAGE |
         GPUBufferUsage.COPY_DST |
@@ -115,7 +108,6 @@ export class LightFragment extends Fragment {
       default: 0,
       gpu_buffer: false,
       buffer_name: "outer_angle",
-      is_container: false,
       usage:
         GPUBufferUsage.STORAGE |
         GPUBufferUsage.COPY_DST |
@@ -129,7 +121,6 @@ export class LightFragment extends Fragment {
       default: 1,
       gpu_buffer: false,
       buffer_name: "shadow_casting",
-      is_container: false,
       usage:
         GPUBufferUsage.STORAGE |
         GPUBufferUsage.COPY_DST |
@@ -143,7 +134,6 @@ export class LightFragment extends Fragment {
       default: 0,
       gpu_buffer: false,
       buffer_name: "active",
-      is_container: false,
       usage:
         GPUBufferUsage.STORAGE |
         GPUBufferUsage.COPY_DST |
@@ -157,7 +147,6 @@ export class LightFragment extends Fragment {
       default: 0,
       gpu_buffer: false,
       buffer_name: "view_index",
-      is_container: false,
       usage:
         GPUBufferUsage.STORAGE |
         GPUBufferUsage.COPY_DST |
@@ -171,7 +160,6 @@ export class LightFragment extends Fragment {
       default: -1,
       gpu_buffer: false,
       buffer_name: "shadow_index",
-      is_container: false,
       usage:
         GPUBufferUsage.STORAGE |
         GPUBufferUsage.COPY_DST |
@@ -185,7 +173,6 @@ export class LightFragment extends Fragment {
       default: 8,
       gpu_buffer: false,
       buffer_name: "shadow_clipmaps",
-      is_container: false,
       usage:
         GPUBufferUsage.STORAGE |
         GPUBufferUsage.COPY_DST |
@@ -199,7 +186,6 @@ export class LightFragment extends Fragment {
       default: 0,
       gpu_buffer: false,
       buffer_name: "is_primary_sun",
-      is_container: false,
       usage:
         GPUBufferUsage.STORAGE |
         GPUBufferUsage.COPY_DST |
@@ -213,7 +199,6 @@ export class LightFragment extends Fragment {
       default: 0,
       gpu_buffer: false,
       buffer_name: "shadows_dirty",
-      is_container: false,
       usage:
         GPUBufferUsage.STORAGE |
         GPUBufferUsage.COPY_DST |

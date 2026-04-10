@@ -18,7 +18,6 @@ export class StaticMeshFragment extends Fragment {
       default: 0n,
       gpu_buffer: false,
       buffer_name: "mesh",
-      is_container: false,
       usage:
         GPUBufferUsage.STORAGE |
         GPUBufferUsage.COPY_DST |
@@ -36,7 +35,6 @@ export class StaticMeshFragment extends Fragment {
       default: 0n,
       gpu_buffer: false,
       buffer_name: "material_slots",
-      is_container: false,
       usage:
         GPUBufferUsage.STORAGE |
         GPUBufferUsage.COPY_DST |
@@ -54,7 +52,6 @@ export class StaticMeshFragment extends Fragment {
       default: 4294967295,
       gpu_buffer: true,
       buffer_name: "mesh_asset_id",
-      is_container: false,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
       setter(value, typed_array, element_offset) {
         typed_array[element_offset] = value;
@@ -69,7 +66,6 @@ export class StaticMeshFragment extends Fragment {
       default: 0,
       gpu_buffer: true,
       buffer_name: "material_table_offset",
-      is_container: false,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
       setter(value, typed_array, element_offset) {
         typed_array[element_offset] = value;

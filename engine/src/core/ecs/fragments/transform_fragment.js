@@ -21,7 +21,6 @@ export class TransformFragment extends Fragment {
       default: 0,
       gpu_buffer: true,
       buffer_name: "position",
-      is_container: false,
       usage:
         GPUBufferUsage.STORAGE |
         GPUBufferUsage.COPY_DST |
@@ -48,7 +47,6 @@ export class TransformFragment extends Fragment {
       default: 0,
       gpu_buffer: true,
       buffer_name: "rotation",
-      is_container: false,
       usage:
         GPUBufferUsage.STORAGE |
         GPUBufferUsage.COPY_DST |
@@ -75,7 +73,6 @@ export class TransformFragment extends Fragment {
       default: 1,
       gpu_buffer: true,
       buffer_name: "scale",
-      is_container: false,
       usage:
         GPUBufferUsage.STORAGE |
         GPUBufferUsage.COPY_DST |
@@ -102,7 +99,6 @@ export class TransformFragment extends Fragment {
       default: 0,
       gpu_buffer: true,
       buffer_name: "bounds",
-      is_container: false,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
       cpu_readback: false,
       buffer_multiplier: 2,
@@ -113,7 +109,6 @@ export class TransformFragment extends Fragment {
       default: 0,
       gpu_buffer: true,
       buffer_name: "transforms",
-      is_container: false,
       usage:
         GPUBufferUsage.STORAGE |
         GPUBufferUsage.COPY_DST |
@@ -127,7 +122,6 @@ export class TransformFragment extends Fragment {
       default: 0,
       gpu_buffer: true,
       buffer_name: "world_position",
-      is_container: false,
       usage:
         GPUBufferUsage.STORAGE |
         GPUBufferUsage.COPY_DST |
@@ -141,7 +135,6 @@ export class TransformFragment extends Fragment {
       default: 0,
       gpu_buffer: true,
       buffer_name: "world_rotation",
-      is_container: false,
       usage:
         GPUBufferUsage.STORAGE |
         GPUBufferUsage.COPY_DST |
@@ -155,7 +148,6 @@ export class TransformFragment extends Fragment {
       default: 1,
       gpu_buffer: true,
       buffer_name: "world_scale",
-      is_container: false,
       usage:
         GPUBufferUsage.STORAGE |
         GPUBufferUsage.COPY_DST |
