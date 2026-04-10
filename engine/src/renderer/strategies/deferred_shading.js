@@ -27,6 +27,7 @@ import { VisibilityBufferPipeline } from "../pipelines/visibility_buffer_pipelin
 // Types and utilities
 import {
   RenderPassFlags,
+  MaterialFamilyType,
   DebugDrawType,
   GIStrategyType,
   AOStrategyType,
@@ -520,7 +521,7 @@ export class DeferredShadingStrategy {
       for (const bucket of visibility_shader_buckets) {
         const bucket_draw_resources = frustum_bucket_draw_lists.get(bucket.key);
         this.visibility_buffer_pipeline.add_depth_prepass(render_graph, {
-          enabled: depth_prepass_enabled,
+          enabled: depth_prepass_enabled && bucket.family !== MaterialFamilyType.Transparent,
           meshlet_draw_count,
           current_view,
           depth_image: main_depth_image,
@@ -619,7 +620,9 @@ export class DeferredShadingStrategy {
               meshlet_triangle_buffer,
             ],
             outputs: [
-              main_albedo_image,
+              bucket.family === MaterialFamilyType.Transparent
+                ? main_transparency_accum_image
+                : main_albedo_image,
               main_smra_image,
               main_normal_image,
               main_motion_emissive_image,

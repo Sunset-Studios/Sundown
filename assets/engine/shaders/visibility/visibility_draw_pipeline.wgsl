@@ -259,7 +259,6 @@ fn fs(input: ResolveVertexOutput) -> ResolveFragmentOutput {
     let current_clip_pos1 = view_buffer[view_index].view_projection_matrix * world_position1;
     let current_clip_pos2 = view_buffer[view_index].view_projection_matrix * world_position2;
 
-
     let bary = calc_full_barycentric(
         coord_to_uv(pixel_coord, resolution),
         current_clip_pos0,
@@ -346,6 +345,14 @@ fn fs(input: ResolveVertexOutput) -> ResolveFragmentOutput {
     output.normal = vec4<f32>(material_input.normal.xyz, 1.0);
     output.motion_emissive = vec4<f32>(motion, 0.0, 0.0);
 
-    return resolve_fragment(material_input, &output);
+    output = resolve_fragment(material_input, &output);
+
+#if TRANSPARENT
+    let alpha = clamp(output.albedo.a, 0.0, 1.0);
+    let weight = clamp(pow(min(1.0, alpha * 10.0) + 0.01, 3.0) * 1e8 * pow(1.0 - material_input.current_clip_pos.z * 0.9, 3.0), 1e-2, 3e3); 
+    output.albedo = vec4<f32>(output.albedo.rgb * alpha, alpha) * weight;
+#endif
+
+    return output;
 }
 #endif
