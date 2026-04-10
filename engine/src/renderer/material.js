@@ -672,14 +672,8 @@ export class Material {
   static #default_material = null;
   static default_material() {
     if (!this.#default_material) {
-      MaterialTemplate.create(
-        "DefaultMaterial",
-        "visibility/visibility_draw_standard.wgsl",
-        MaterialFamilyType.Opaque
-      );
-      this.#default_material = Material.create("DefaultMaterial", "DefaultMaterial", {
-        family: MaterialFamilyType.Opaque,
-      });
+      const std_material = StandardMaterial.create("DefaultMaterial");
+      this.#default_material = std_material.material_id;
     }
 
     return this.#default_material;
