@@ -6,7 +6,8 @@
 @group(1) @binding(4) var<storage, read> meshlet_vertices: array<u32>;
 @group(1) @binding(5) var<storage, read> meshlet_triangles: array<u32>;
 @group(1) @binding(6) var<storage, read> entity_index_lookup: array<u32>;
-@group(1) @binding(7) var<uniform> visibility_bucket_info: VisibilityBucketInfo;
+@group(1) @binding(7) var<storage, read> entity_flags: array<u32>;
+@group(1) @binding(8) var<uniform> visibility_bucket_info: VisibilityBucketInfo;
 #endif
 
 #if MESHLET_RASTER_PASS
@@ -17,7 +18,8 @@
 @group(1) @binding(4) var<storage, read> meshlet_vertices: array<u32>;
 @group(1) @binding(5) var<storage, read> meshlet_triangles: array<u32>;
 @group(1) @binding(6) var<storage, read> entity_index_lookup: array<u32>;
-@group(1) @binding(7) var<uniform> visibility_bucket_info: VisibilityBucketInfo;
+@group(1) @binding(7) var<storage, read> entity_flags: array<u32>;
+@group(1) @binding(8) var<uniform> visibility_bucket_info: VisibilityBucketInfo;
 #endif
 
 #if MESHLET_RESOLVE_PASS
@@ -103,9 +105,17 @@ fn vs(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> Depth
     let entity_row = get_entity_row(object_instances[object_instance_index].row);
     let entity_resolved = entity_index_lookup[entity_row];
     let transform = entity_transforms[entity_resolved].transform;
-    let world_position = transform * vertex_position4(vertex_buffer[global_vertex_index]);
 
     let section_index = u32(max(vertex_section_index(vertex_buffer[global_vertex_index]), 0.0));
+
+    let world_position = vec4<f32>(select(
+        transform * vertex_position4(vertex_buffer[global_vertex_index]),
+        billboard_vertex_local(
+            vertex_uv(vertex_buffer[global_vertex_index]),
+            transform
+        ),
+        (entity_flags[entity_resolved] & EF_BILLBOARD) != 0
+    ).xyz, 1.0);
 
     output.position = view_buffer[u32(frame_info.view_index)].view_projection_matrix * world_position;
     output.uv = vertex_uv(vertex_buffer[global_vertex_index]);
@@ -154,9 +164,17 @@ fn vs(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> Raste
     let entity_row = get_entity_row(object_instances[object_instance_index].row);
     let entity_resolved = entity_index_lookup[entity_row];
     let transform = entity_transforms[entity_resolved].transform;
-    let world_position = transform * vertex_position4(vertex_buffer[global_vertex_index]);
 
     let section_index = u32(max(vertex_section_index(vertex_buffer[global_vertex_index]), 0.0));
+
+    let world_position = vec4<f32>(select(
+        transform * vertex_position4(vertex_buffer[global_vertex_index]),
+        billboard_vertex_local(
+            vertex_uv(vertex_buffer[global_vertex_index]),
+            transform
+        ),
+        (entity_flags[entity_resolved] & EF_BILLBOARD) != 0
+    ).xyz, 1.0);
 
     output.position = view_buffer[u32(frame_info.view_index)].view_projection_matrix * world_position;
     output.uv = vertex_uv(vertex_buffer[global_vertex_index]);

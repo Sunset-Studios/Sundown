@@ -535,6 +535,7 @@ export class DeferredShadingStrategy {
             meshlet_vertex_buffer,
             meshlet_triangle_buffer,
             entity_index_lookup,
+            entity_flags,
           ],
         });
       }
@@ -605,6 +606,7 @@ export class DeferredShadingStrategy {
               meshlet_vertex_buffer,
               meshlet_triangle_buffer,
               entity_index_lookup,
+              entity_flags,
             ],
           });
 
