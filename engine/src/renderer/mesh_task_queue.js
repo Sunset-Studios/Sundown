@@ -880,12 +880,14 @@ export class MeshTaskQueue {
 
       if (!skip_material_bind) {
         if (material && (material !== last_material || last_pass_type !== pass_type)) {
-          material.bind(
+          if(!material.bind(
             render_pass,
             render_pass.frame_bind_groups,
             render_pass.frame_attachments,
             pass_type
-          );
+          )) {
+            continue;
+          };
           if (render_pass.frame_bind_groups[BindGroupType.Global]) {
             render_pass.frame_bind_groups[BindGroupType.Global].bind(render_pass);
           }
@@ -919,29 +921,39 @@ export class MeshTaskQueue {
     }
 
     const material = ResourceCache.get().fetch(CacheTypes.MATERIAL, bucket.representative_material_id);
-    if (material) {
-      material.bind(
-        render_pass,
-        render_pass.frame_bind_groups,
-        render_pass.frame_attachments,
-        pass_type
-      );
-      if (render_pass.frame_bind_groups[BindGroupType.Global]) {
-        render_pass.frame_bind_groups[BindGroupType.Global].bind(render_pass);
-      }
-      if (render_pass.frame_bind_groups[BindGroupType.Pass]) {
-        render_pass.frame_bind_groups[BindGroupType.Pass].bind(render_pass);
-      }
+    if (!material) {
+      return false;
     }
+
+    if(!material.bind(
+      render_pass,
+      render_pass.frame_bind_groups,
+      render_pass.frame_attachments,
+      pass_type
+    )) {
+      return false;
+    };
+
+    if (render_pass.frame_bind_groups[BindGroupType.Global]) {
+      render_pass.frame_bind_groups[BindGroupType.Global].bind(render_pass);
+    }
+    if (render_pass.frame_bind_groups[BindGroupType.Pass]) {
+      render_pass.frame_bind_groups[BindGroupType.Pass].bind(render_pass);
+    }
+    return true;
   }
 
   static submit_visibility_bucket_indirect_draw(render_pass, bucket, indirect_buffer, pass_type = MaterialPassType.Raster) {
-    this.bind_visibility_bucket_material(render_pass, bucket, pass_type);
+    if (!this.bind_visibility_bucket_material(render_pass, bucket, pass_type)) {
+      return;
+    }
     render_pass.pass.drawIndirect(indirect_buffer.buffer, 0);
   }
 
   static submit_visibility_bucket_resolve(render_pass, bucket, instance_count = 1) {
-    this.bind_visibility_bucket_material(render_pass, bucket, MaterialPassType.Resolve);
+    if (!this.bind_visibility_bucket_material(render_pass, bucket, MaterialPassType.Resolve)) {
+      return;
+    }
     this.draw_quad(render_pass, instance_count);
   }
 

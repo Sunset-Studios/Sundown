@@ -18,6 +18,8 @@ export class RenderPass {
   }
 
   begin(encoder, pipeline) {
+    this.pass = null;
+
     if (this.config.flags & RenderPassFlags.Graphics) {
       const attachments = this.config.attachments.map((attachment) => {
         const image = ResourceCache.get().fetch(CacheTypes.IMAGE, attachment.image);
@@ -101,7 +103,7 @@ export class RenderPass {
       this.pass.setIndexBuffer(this.config.index_buffer, this.config.index_buffer.element_type);
     }
 
-    if (pipeline) {
+    if (pipeline && pipeline.is_ready()) {
       this.set_pipeline(pipeline);
     }
   }
@@ -141,6 +143,7 @@ export class RenderPass {
   end() {
     if (this.pass) {
       this.pass.end();
+      this.pass = null;
     }
   }
 

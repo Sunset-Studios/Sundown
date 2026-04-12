@@ -625,16 +625,20 @@ export class Material {
       pso = parent_material._get_pipeline_state_for_pass(pass_type);
     }
 
+    if (!pso || !pso.is_ready()) {
+      return false;
+    }
+
     this._refresh_bind_group(pass_type);
 
-    if (pso) {
-      render_pass.set_pipeline(pso);
-    }
+    render_pass.set_pipeline(pso);
 
     const bind_group = this._get_bind_group_for_pass(pass_type);
     if (bind_group) {
       bind_group.bind(render_pass);
     }
+
+    return true;
   }
 
   new_instance(instance_name) {

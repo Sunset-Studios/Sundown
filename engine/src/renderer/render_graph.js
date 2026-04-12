@@ -1233,16 +1233,16 @@ export class RenderGraph {
         return;
       }
 
-      const encoder = CommandQueue.create_encoder("render_graph_encoder");
-
-      const frame_data = deep_clone(RGFrameData);
-      frame_data.resource_deletion_queue = this.registry.resource_deletion_queue;
-
       // Setup passes and pass resources
       for (let i = 0; i < this.non_culled_passes.length; i++) {
         const pass_handle = this.non_culled_passes[i];
         this._setup_physical_pass_and_resources(this.registry.render_passes[pass_handle]);
       }
+
+      const encoder = CommandQueue.create_encoder("render_graph_encoder");
+
+      const frame_data = deep_clone(RGFrameData);
+      frame_data.resource_deletion_queue = this.registry.resource_deletion_queue;
 
       // Execute passes
       for (let i = 0; i < this.non_culled_passes.length; i++) {
@@ -1461,6 +1461,10 @@ export class RenderGraph {
       }
 
       const pipeline = ResourceCache.get().fetch(CacheTypes.PIPELINE_STATE, pass.pipeline_state_id);
+      if (pass.pipeline_state_id && (!pipeline || !pipeline.is_ready())) {
+        frame_data.current_pass = 0;
+        return;
+      }
 
       frame_data.current_pass = pass.physical_id;
 
@@ -1469,6 +1473,7 @@ export class RenderGraph {
       this._bind_pass_bind_groups(pass);
       pass.executor(this, frame_data, encoder);
       physical_pass.end();
+      frame_data.current_pass = 0;
       encoder.popDebugGroup();
 
       this._update_transient_resources(pass);
@@ -1870,6 +1875,7 @@ export class RenderGraph {
             module: pass.shaders.compute.module,
             entryPoint: shader_setup.pipeline_shaders.compute.entry_point || "cs",
           },
+          defer_creation: false,
           force: this.pass_cache_full_needs_reset,
         };
 
@@ -1924,6 +1930,7 @@ export class RenderGraph {
             topology: shader_setup.primitive_topology_type || "triangle-list",
             cullMode: shader_setup.rasterizer_state?.cull_mode || "back",
           },
+          defer_creation: false,
           force: this.pass_cache_full_needs_reset,
         };
 
@@ -1959,7 +1966,7 @@ export class RenderGraph {
   _reset_all_pass_cache_bind_groups() {
     if (this.pass_cache_full_needs_reset) {
       this.pass_cache.bind_groups = new Map();
-      this.pass_cache_full_needs_reset = true;
+      this.pass_cache_full_needs_reset = false;
     }
   }
 

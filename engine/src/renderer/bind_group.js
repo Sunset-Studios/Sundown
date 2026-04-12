@@ -80,7 +80,11 @@ export class BindGroup {
 
         this.name = name;
         this.index = index;
-        this.layout = pipeline.pipeline.getBindGroupLayout(index);
+        this.layout = pipeline.get_bind_group_layout(index);
+        if (!this.layout) {
+            throw new Error(`Bind group layout ${index} is not ready for pipeline '${name}'`);
+        }
+
         this.bind_group = renderer.device.createBindGroup({
             label: name,
             layout: this.layout,
