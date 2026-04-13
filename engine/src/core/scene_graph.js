@@ -1,6 +1,7 @@
 import { EntityManager } from "./ecs/entity.js";
 import { Buffer } from "../renderer/buffer.js";
 import { Tree } from "../memory/container.js";
+import { EntityID } from "./ecs/solar/types.js";
 
 export class SceneGraph {
   static tree = new Tree();
@@ -50,16 +51,11 @@ export class SceneGraph {
     const { result, layer_counts } = this.tree.flatten(
       Int32Array,
       (out, node, size) => {
-        const entity_idx = node.data.id;
-        const count = node.data.instance_count;
-        const parent_entity_idx = node.parent_idx !== -1
-          ? this.tree.nodes[node.parent_idx].data.id
-          : -1;
-        for (let i = 0; i < count; i++) {
-          out[(size + i) * 2] = entity_idx + i;
-          out[(size + i) * 2 + 1] = parent_entity_idx;
-        }
-        return count;
+        const parent_entity = node.parent_idx !== -1
+          ? this.tree.nodes[node.parent_idx].data
+          : null;
+
+        return this.#write_entity_rows(out, size, node.data, parent_entity);
       },
       (node) => EntityManager.get_entity_instance_count(node.data) * 2
     );
@@ -97,5 +93,25 @@ export class SceneGraph {
     });
 
     this.dirty = false;
+  }
+
+  static #write_entity_rows(out, size, entity, parent_entity) {
+    let write_offset = size;
+    const parent_row_id = parent_entity ? parent_entity.id : -1;
+
+    for (let segment_index = 0; segment_index < entity.segments.length; segment_index++) {
+      const segment = entity.segments[segment_index];
+
+      for (let row = 0; row < segment.count; row++) {
+        const slot = segment.slot + row;
+        const generation = segment.chunk.gen_meta[slot];
+        const entity_row_id = EntityID.make(slot, segment.chunk.chunk_index, generation);
+
+        out[write_offset++] = entity_row_id;
+        out[write_offset++] = parent_row_id;
+      }
+    }
+
+    return write_offset - size;
   }
 }
