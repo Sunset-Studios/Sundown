@@ -21,6 +21,10 @@
 
 import { Renderer } from "../renderer/renderer.js";
 import { Buffer } from "../renderer/buffer.js";
+import { Chunk } from "../core/ecs/solar/chunk.js";
+import { DEFAULT_CHUNK_CAPACITY } from "../core/ecs/solar/types.js";
+import { npot } from "../utility/math.js";
+import { Name } from "../utility/names.js";
 
 // ╔═══════════════════════════════════════════════════════════════════════════════════════════════╗
 // ║                                    BUFFER IDENTIFIERS                                        ║
@@ -47,6 +51,8 @@ const ONESWEEP_ERROR_COUNT_BUFFER_NAME = "onesweep_error_count";      // Error t
 
 // ─── BVH Construction Workspace ────────────────────────────────────────────────────────────────
 const BVH_INDEX_PAIRS_BUFFER_NAME = "bvh_index_pairs";               // Work queue index pairs
+const ACTIVE_TRANSFORM_CHUNK_INDICES_BUFFER_NAME = "tlas_active_transform_chunk_indices";
+const TRANSFORM_FRAGMENT_ID = Name.from("transform");
 
 // ╔═══════════════════════════════════════════════════════════════════════════════════════════════╗
 // ║                                 ALGORITHM CONFIGURATION                                       ║
@@ -139,6 +145,10 @@ export class BVH {
   
   // ─── BVH Construction Workspace ────────────────────────────────────────────────────────────────
   static bvh_index_pairs_buffer = null;                 // Work queue for parallel construction
+  static active_transform_chunk_indices_buffer = null;  // Dense list of transform chunk indices for TLAS work
+  static active_transform_chunk_count = 0;              // Number of active transform chunks
+  static active_transform_slot_count = 0;               // Active transform chunk count * chunk capacity
+  static active_transform_chunk_indices = new Uint32Array(1);
 
   // ═══════════════════════════════════════════════════════════════════════════════════════════════
   //                                   INITIALIZATION METHODS
@@ -166,6 +176,14 @@ export class BVH {
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
       size: SCENE_BVH_DATA_SIZE,        // float4 min + float4 max = 32 bytes
       force: true,                      // Force creation even if buffer exists
+    });
+
+    this.active_transform_chunk_indices_buffer = Buffer.create({
+      name: ACTIVE_TRANSFORM_CHUNK_INDICES_BUFFER_NAME,
+      size: 1,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+      force: true,
+      dispatch: false,
     });
 
     // Initialize all other buffers with default sizing
@@ -366,6 +384,113 @@ export class BVH {
     this.scene_bounds_buffer.write_raw(this.scene_bounds);
   }
 
+  static refresh_active_transform_chunks() {
+    const active_chunks = [];
+    for (let i = 0; i < Chunk.all_chunks.length; i++) {
+      const chunk = Chunk.all_chunks[i];
+      if (!chunk || chunk.is_empty() || !this._chunk_has_transform_fragment(chunk)) {
+        continue;
+      }
+      active_chunks.push(chunk.chunk_index);
+    }
+
+    const next_count = active_chunks.length;
+    const next_capacity = Math.max(1, npot(next_count || 1));
+    let should_upload = next_count !== this.active_transform_chunk_count;
+
+    if (
+      !this.active_transform_chunk_indices_buffer ||
+      this.active_transform_chunk_indices_buffer.config.size < next_capacity * 4
+    ) {
+      this.active_transform_chunk_indices_buffer = Buffer.create({
+        name: ACTIVE_TRANSFORM_CHUNK_INDICES_BUFFER_NAME,
+        size: next_capacity,
+        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+        force: true,
+        dispatch: false,
+      });
+      should_upload = true;
+    }
+
+    if (this.active_transform_chunk_indices.length !== next_capacity) {
+      this.active_transform_chunk_indices = new Uint32Array(next_capacity);
+      should_upload = true;
+    }
+
+    for (let i = 0; i < next_count && !should_upload; i++) {
+      if (this.active_transform_chunk_indices[i] !== active_chunks[i]) {
+        should_upload = true;
+      }
+    }
+
+    this.active_transform_chunk_count = next_count;
+    this.active_transform_slot_count = next_count * DEFAULT_CHUNK_CAPACITY;
+
+    if (!should_upload) {
+      return;
+    }
+
+    this.active_transform_chunk_indices.fill(0);
+    if (next_count > 0) {
+      this.active_transform_chunk_indices.set(active_chunks, 0);
+      this.active_transform_chunk_indices_buffer.write_raw(
+        this.active_transform_chunk_indices,
+        0,
+        next_count
+      );
+    }
+  }
+
+  static get_active_transform_chunk_count() {
+    return this.active_transform_chunk_count;
+  }
+
+  static get_active_transform_slot_count() {
+    return this.active_transform_slot_count;
+  }
+
+  static _chunk_has_transform_fragment(chunk) {
+    for (let i = 0; i < chunk.fragments.length; i++) {
+      if (chunk.fragments[i]?.id === TRANSFORM_FRAGMENT_ID) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  static destroy() {
+    const buffers = [
+      "scene_bounds_buffer",
+      "bvh_info_buffer",
+      "parent_idx_buffer",
+      "morton_codes_buffer",
+      "temp_morton_codes_buffer",
+      "sorted_indices_buffer",
+      "temp_sorted_indices_buffer",
+      "onesweep_global_hist_buffer",
+      "onesweep_pass_hist_buffer",
+      "onesweep_tile_indices_buffer",
+      "onesweep_error_count_buffer",
+      "bvh_index_pairs_buffer",
+      "active_transform_chunk_indices_buffer",
+    ];
+
+    for (let i = 0; i < buffers.length; i++) {
+      const key = buffers[i];
+      if (this[key]) {
+        this[key].destroy();
+        this[key] = null;
+      }
+    }
+
+    this.active_transform_chunk_count = 0;
+    this.active_transform_slot_count = 0;
+    this.active_transform_chunk_indices = new Uint32Array(1);
+    this.modified = true;
+    this.is_initialized = false;
+  }
+
   // ═══════════════════════════════════════════════════════════════════════════════════════════════
   //                                  GPU INTERFACE METHODS
   // ═══════════════════════════════════════════════════════════════════════════════════════════════
@@ -378,6 +503,7 @@ export class BVH {
     bvh_info_buffer: null,                  // Build statistics and metadata
     parent_idx_buffer: null,                // Parent node indices
     bvh_index_pairs_buffer: null,           // Work queue index pairs
+    active_transform_chunk_indices_buffer: null, // Dense transform chunk list for TLAS bounds work
     
     // Morton code and sorting infrastructure
     morton_codes_buffer: null,              // 3D Morton codes for primitives
@@ -420,6 +546,7 @@ export class BVH {
     this.#data_buffers.bvh_info_buffer = this.bvh_info_buffer;
     this.#data_buffers.parent_idx_buffer = this.parent_idx_buffer;
     this.#data_buffers.bvh_index_pairs_buffer = this.bvh_index_pairs_buffer;
+    this.#data_buffers.active_transform_chunk_indices_buffer = this.active_transform_chunk_indices_buffer;
     
     // ─── Populate Morton Code and Sorting Infrastructure ───────────────────────────────────────
     this.#data_buffers.morton_codes_buffer = this.morton_codes_buffer;

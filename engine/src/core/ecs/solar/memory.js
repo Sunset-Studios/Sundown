@@ -1,5 +1,4 @@
-import { EntityID, DEFAULT_CHUNK_CAPACITY } from "./types.js";
-import { MAX_BUFFERED_FRAMES } from "../../minimal.js";
+import { EntityID, DEFAULT_CHUNK_CAPACITY, ROW_MASK } from "./types.js";
 import { Chunk } from "./chunk.js";
 import { Renderer } from "../../../renderer/renderer.js";
 import { Buffer, BufferSync } from "../../../renderer/buffer.js";
@@ -62,7 +61,7 @@ export class EntityAllocator {
    * @param {number} instance_count - The number of instances (remains the same during migration, might change during instance update).
    */
   update_allocation(entity_id, old_chunk, old_slot, new_chunk, new_slot, instance_count) {
-    const { row: old_row } = EntityID.unpack(entity_id);
+    const { row_index: old_row } = EntityID.unpack(entity_id);
 
     // 1. Release the old slot in the old chunk.
     // We need the instance count associated *with the old slot*.
@@ -164,6 +163,9 @@ export class EntityAllocator {
     // set per-slot metadata
     chunk.gen_meta[slot] = generation;
     chunk.icnt_meta[slot] = count;
+
+    chunk.mark_dirty();
+
   }
 
   /**
@@ -177,10 +179,12 @@ export class EntityAllocator {
     if (count > 0) {
       chunk.free_rows(slot, count);
       for (let i = 0; i < count; i++) {
+        const row = EntityID.make_row_field(slot + i, chunk.chunk_index);
+        this.row_to_entity_id.delete(row);
         chunk.flags_meta[slot + i] = 0;
+        chunk.icnt_meta[slot + i] = 0;
+        chunk.gen_meta[slot + i] = 0;
       }
-      chunk.icnt_meta[slot] = 0;
-      chunk.gen_meta[slot] = 0;
       chunk.mark_dirty();
     }
   }
@@ -233,6 +237,7 @@ export class FragmentGpuBuffer {
   static entity_flags_buffer = null;
   static initial_max_rows = 1024;
   static need_full_flush = true;
+  static invalid_row = 0xffffffff;
 
   /**
    * @param {string} name - base name for GPU and CPU buffers
@@ -350,56 +355,29 @@ export class FragmentGpuBuffer {
     if (this.pending_sync_segments.length === 0) return;
 
     if (this.sync_target_accessor) {
-      // Flags-buffer sync
-      for (const { chunk, count } of this.pending_sync_segments) {
-        const chunk_base = FragmentGpuBuffer._get_dense_chunk_base(chunk);
-        if (chunk_base === 0xffffffff) continue; // truly empty chunk
-
+      for (const { chunk, base_row, row_count } of this.pending_sync_segments) {
         const target_view = this.sync_target_accessor(chunk);
         if (!target_view) continue;
 
-        const offset_bytes = chunk_base * this.byte_stride;
-        const slice = new Uint32Array(mapped_range, offset_bytes, count);
-
-        let packed_idx = 0;
-        const global_base = chunk.chunk_index * DEFAULT_CHUNK_CAPACITY;
-        const dense_map = FragmentGpuBuffer.cpu_dense_map;
-        for (let local = 0; local < DEFAULT_CHUNK_CAPACITY; local++) {
-          const global_row = global_base + local;
-          if (dense_map[global_row] === 0xffffffff) continue;
-          target_view[local] = slice[packed_idx++];
-        }
+        const offset_bytes = base_row * this.byte_stride;
+        const slice = new Uint32Array(mapped_range, offset_bytes, row_count);
+        target_view.set(slice.subarray(0, Math.min(row_count, target_view.length)), 0);
       }
     } else {
-      // Individual-field buffer sync
       const frag_id = this.fragment_class_ref.id;
       const field_key = this.config_key_within_fragment;
       const spec = this.fragment_class_ref.fields[field_key];
-      const elems_per_row = spec.elements;
-      const dense_map = FragmentGpuBuffer.cpu_dense_map;
 
-      for (const { chunk, count } of this.pending_sync_segments) {
+      for (const { chunk, base_row, row_count } of this.pending_sync_segments) {
         const frag_views = chunk.fragment_views[frag_id];
         if (!frag_views) continue;
         const target_view = frag_views[field_key];
         if (!target_view) continue;
 
-        const chunk_base = FragmentGpuBuffer._get_dense_chunk_base(chunk);
-        if (chunk_base === 0xffffffff) continue; // truly empty chunk
-
-        const offset_bytes = chunk_base * this.byte_stride;
-        const element_count = (count * this.byte_stride) / spec.ctor.BYTES_PER_ELEMENT;
+        const offset_bytes = base_row * this.byte_stride;
+        const element_count = (row_count * this.byte_stride) / spec.ctor.BYTES_PER_ELEMENT;
         const slice = new spec.ctor(mapped_range, offset_bytes, element_count);
-
-        let packed_idx = 0;
-        for (let local = 0; local < DEFAULT_CHUNK_CAPACITY; local++) {
-          const global_row = chunk.chunk_index * DEFAULT_CHUNK_CAPACITY + local;
-          if (dense_map[global_row] === 0xffffffff) continue;
-          for (let e = 0; e < elems_per_row; e++) {
-            target_view[local * elems_per_row + e] = slice[packed_idx * elems_per_row + e];
-          }
-          packed_idx++;
-        }
+        target_view.set(slice.subarray(0, Math.min(element_count, target_view.length)), 0);
       }
     }
 
@@ -640,142 +618,30 @@ export class FragmentGpuBuffer {
 
   /**
    * Flush all fragment SSBOs.
-   * - Build a global row→dense_index table and repack *every* buffer tightly by that index.
+   * - Upload dirty chunks into stable chunk-sized regions keyed by row field.
+   * - Only fall back to a full flush when buffers are recreated/resized.
    */
   static flush_gpu_buffers(allocator) {
     // if nothing dirty and no buffer requested a full-chunk repack, bail
     if (Chunk.dirty.size === 0 && !FragmentGpuBuffer.need_full_flush) return;
 
-    // Build row→dense_index map
     const total_rows = Chunk.max_allocated_row();
-    const dense_map = (FragmentGpuBuffer.cpu_dense_map = new Uint32Array(total_rows));
-    const row_map = allocator.row_to_entity_id;
-    let next_dense = 0;
-    for (let r = 0; r < total_rows; r++) {
-      dense_map[r] =
-        row_map.get(r) !== undefined && row_map.get(r) !== null ? next_dense++ : 0xffffffff;
-    }
-    // Upload the lookup SSBO
-    this.entity_index_map_buffer.update_chunk(0, dense_map, total_rows);
-    this._flush_global_gpu_buffers(FragmentGpuBuffer.need_full_flush);
+    const resized = this._ensure_all_buffer_capacity(total_rows);
+    const force_full_flush = FragmentGpuBuffer.need_full_flush || resized;
 
-    // Instead of full repack, only update those chunks that were dirtied
-    for (const chunk of Chunk.dirty) {
-      const chunk_base = this._get_dense_chunk_base(chunk);
-      if (chunk_base === 0xffffffff) continue; // truly empty chunk
+    const chunks_to_upload = force_full_flush
+      ? Chunk.all_chunks.filter(Boolean)
+      : Array.from(Chunk.dirty);
 
-      // Pack & upload entity flags (always uploaded since it's small and frequently changes)
-      const flags_packed = new Uint32Array(DEFAULT_CHUNK_CAPACITY);
-      let packed_size = 0;
-      for (let local_index = 0; local_index < DEFAULT_CHUNK_CAPACITY; local_index++) {
-        const row = chunk.chunk_index * DEFAULT_CHUNK_CAPACITY + local_index;
-        const di = dense_map[row];
-        if (di === 0xffffffff) continue;
-        flags_packed[packed_size++] = chunk.flags_meta[local_index];
-      }
-      this.entity_flags_buffer.update_chunk(chunk_base, flags_packed, packed_size, chunk);
+    this._flush_global_gpu_buffers(force_full_flush);
 
-      // 1) Combined buffers on this chunk
-      for (let i = 0; i < chunk.fragments.length; i++) {
-        const fragment = chunk.fragments[i];
-        if (!fragment) continue;
-
-        if (fragment.gpu_buffers) {
-          for (const [buffer_key, cfg] of Object.entries(fragment.gpu_buffers)) {
-            if (typeof cfg.global_data === "function") {
-              continue;
-            }
-            // Skip if this buffer isn't dirty
-            if (!chunk.dirty_buffers.has(buffer_key)) {
-              continue;
-            }
-            const buf_data = fragment.buffer_data.get(cfg.buffer_name);
-            const packed =
-              typeof cfg.gpu_data === "function"
-                ? cfg.gpu_data.call(this, chunk, fragment)
-                : this._pack_combined_chunk_data(chunk, fragment, buffer_key);
-            if (packed?.packed_data.byteLength) {
-              buf_data.buffer.update_chunk(chunk_base, packed.packed_data, packed.row_count, chunk);
-            }
-          }
-        }
-
-        // 2) Individual field buffers
-        for (const [field_name, spec] of Object.entries(fragment.fields)) {
-          if (!spec.gpu_buffer) continue;
-          // Skip if this buffer isn't dirty
-          if (!chunk.dirty_buffers.has(field_name)) {
-            continue;
-          }
-          const buf_data = fragment.buffer_data.get(spec.buffer_name);
-          const packed = this._pack_chunk_field_data(chunk, fragment.id, field_name);
-          if (packed?.packed_data.byteLength) {
-            buf_data.buffer.update_chunk(chunk_base, packed.packed_data, packed.row_count, chunk);
-          }
-        }
-      }
+    for (let i = 0; i < chunks_to_upload.length; i++) {
+      const chunk = chunks_to_upload[i];
+      this._upload_chunk_index_map(allocator, chunk);
+      this._upload_chunk_buffers(chunk, force_full_flush);
     }
 
-    // If we need a full flush, repack all chunks (ignoring dirty buffer tracking)
-    if (FragmentGpuBuffer.need_full_flush) {
-      for (let i = 0; i < Chunk.all_chunks.length; i++) {
-        const chunk = Chunk.all_chunks[i];
-        if (!chunk || Chunk.dirty.has(chunk)) continue;
-
-        const chunk_base = this._get_dense_chunk_base(chunk);
-        if (chunk_base === 0xffffffff) continue; // truly empty chunk
-
-        // Pack & upload entity flags
-        const flags_packed = new Uint32Array(DEFAULT_CHUNK_CAPACITY);
-        let packed_size = 0;
-        for (let local_index = 0; local_index < DEFAULT_CHUNK_CAPACITY; local_index++) {
-          const row = chunk.chunk_index * DEFAULT_CHUNK_CAPACITY + local_index;
-          const di = dense_map[row];
-          if (di === 0xffffffff) continue;
-          flags_packed[packed_size++] = chunk.flags_meta[local_index];
-        }
-        this.entity_flags_buffer.update_chunk(chunk_base, flags_packed, packed_size, chunk);
-
-        // 1) Combined buffers on this chunk (upload all regardless of dirty state)
-        for (let i = 0; i < chunk.fragments.length; i++) {
-          const fragment = chunk.fragments[i];
-          if (!fragment) continue;
-
-          if (fragment.gpu_buffers) {
-            for (const [buffer_key, cfg] of Object.entries(fragment.gpu_buffers)) {
-              if (typeof cfg.global_data === "function") {
-                continue;
-              }
-              const buf_data = fragment.buffer_data.get(cfg.buffer_name);
-              const packed =
-                typeof cfg.gpu_data === "function"
-                  ? cfg.gpu_data.call(this, chunk, fragment)
-                  : this._pack_combined_chunk_data(chunk, fragment, buffer_key);
-              if (packed?.packed_data.byteLength) {
-                buf_data.buffer.update_chunk(
-                  chunk_base,
-                  packed.packed_data,
-                  packed.row_count,
-                  chunk
-                );
-              }
-            }
-          }
-
-          // 2) Individual field buffers (upload all regardless of dirty state)
-          for (const [field_name, spec] of Object.entries(fragment.fields)) {
-            if (!spec.gpu_buffer) continue;
-            const buf_data = fragment.buffer_data.get(spec.buffer_name);
-            const packed = this._pack_chunk_field_data(chunk, fragment.id, field_name);
-            if (packed?.packed_data.byteLength) {
-              buf_data.buffer.update_chunk(chunk_base, packed.packed_data, packed.row_count, chunk);
-            }
-          }
-        }
-      }
-      // clear our full-flush set
-      FragmentGpuBuffer.need_full_flush = false;
-    }
+    FragmentGpuBuffer.need_full_flush = false;
   }
 
   static _flush_global_gpu_buffers(force = false) {
@@ -891,24 +757,9 @@ export class FragmentGpuBuffer {
     if (!field_view) {
       return null;
     }
-    // Pack the field data based on dense mapping to avoid stale holes
-    const row_capacity = DEFAULT_CHUNK_CAPACITY;
-    const total_elements = field_view.length;
-    const elements_per_row = total_elements / row_capacity;
-    const packed_buffer = new field_view.constructor(total_elements);
-    const dense_map = FragmentGpuBuffer.cpu_dense_map;
-    let packed_index = 0;
-    for (let local_index = 0; local_index < row_capacity; local_index++) {
-      const row = chunk.chunk_index * row_capacity + local_index;
-      if (dense_map[row] === 0xffffffff) continue;
-      const src_start = local_index * elements_per_row;
-      const src_end = src_start + elements_per_row;
-      const dest_offset = packed_index * elements_per_row;
-      packed_buffer.set(field_view.subarray(src_start, src_end), dest_offset);
-      packed_index++;
-    }
-    return { packed_data: packed_buffer, row_count: packed_index };
+    return { packed_data: field_view, row_count: DEFAULT_CHUNK_CAPACITY };
   }
+
 
   /**
    * Packs data for a specific combined buffer definition of a fragment type.
@@ -972,13 +823,8 @@ export class FragmentGpuBuffer {
     const total_elements = row_count * num_buffer_elements;
     const packed_buffer = new first_field.ctor(total_elements);
 
-    // Iterate rows and pack based on dense mapping to avoid stale holes
-    const dense_map = FragmentGpuBuffer.cpu_dense_map;
-    let packed_index = 0;
     for (let local_index = 0; local_index < row_count; local_index++) {
-      const row = chunk.chunk_index * row_count + local_index;
-      if (dense_map[row] === 0xffffffff) continue;
-      const dest_row_base_offset = packed_index * num_buffer_elements;
+      const dest_row_base_offset = local_index * num_buffer_elements;
       for (let j = 0; j < field_details.length; j++) {
         const field_detail = field_details[j];
         const src_start = local_index * field_detail.element_size;
@@ -986,24 +832,107 @@ export class FragmentGpuBuffer {
         const dest_offset = dest_row_base_offset + field_detail.offset_in_stride;
         packed_buffer.set(field_detail.view.subarray(src_start, src_end), dest_offset);
       }
-      packed_index++;
     }
 
-    return { packed_data: packed_buffer, row_count: packed_index };
+    return { packed_data: packed_buffer, row_count: row_count };
   }
 
-  static _get_dense_chunk_base(chunk) {
-    const dense_map = FragmentGpuBuffer.cpu_dense_map;
-    const chunk_global_start = chunk.chunk_index * DEFAULT_CHUNK_CAPACITY;
-    let chunk_base = 0xffffffff;
-    for (let local = 0; local < DEFAULT_CHUNK_CAPACITY; local++) {
-      const g = chunk_global_start + local;
-      if (dense_map[g] !== 0xffffffff) {
-        chunk_base = dense_map[g];
-        break;
+  static _ensure_all_buffer_capacity(total_rows) {
+    let resized = false;
+    for (let i = 0; i < FragmentGpuBuffer.all_buffers.length; i++) {
+      const gpu_buffer = FragmentGpuBuffer.all_buffers[i];
+      const cfg =
+        gpu_buffer.fragment_class_ref?.gpu_buffers?.[gpu_buffer.config_key_within_fragment] ?? null;
+      if (cfg && typeof cfg.global_data === "function") {
+        continue;
+      }
+      if (gpu_buffer.max_rows < total_rows) {
+        gpu_buffer._resize_buffer(npot(total_rows));
+        resized = true;
       }
     }
-    return chunk_base;
+    return resized;
+  }
+
+  static _get_chunk_base(chunk) {
+    return chunk.chunk_index * DEFAULT_CHUNK_CAPACITY;
+  }
+
+  static _build_chunk_index_map_data(allocator, chunk) {
+    const row_map = allocator.row_to_entity_id;
+    const chunk_base = this._get_chunk_base(chunk);
+    const index_map = new Uint32Array(DEFAULT_CHUNK_CAPACITY);
+    index_map.fill(FragmentGpuBuffer.invalid_row);
+
+    for (let local_index = 0; local_index < DEFAULT_CHUNK_CAPACITY; local_index++) {
+      const row = chunk_base + local_index;
+      if (row_map.get(row) !== undefined && row_map.get(row) !== null) {
+        index_map[local_index] = row;
+      }
+    }
+
+    return index_map;
+  }
+
+  static _upload_chunk_index_map(allocator, chunk) {
+    const chunk_base = this._get_chunk_base(chunk);
+    const index_map = this._build_chunk_index_map_data(allocator, chunk);
+    this.entity_index_map_buffer.update_chunk(
+      chunk_base,
+      index_map,
+      DEFAULT_CHUNK_CAPACITY,
+      chunk
+    );
+  }
+
+  static _upload_chunk_buffers(chunk, force_full_flush = false) {
+    const chunk_base = this._get_chunk_base(chunk);
+
+    this.entity_flags_buffer.update_chunk(
+      chunk_base,
+      chunk.flags_meta,
+      DEFAULT_CHUNK_CAPACITY,
+      chunk
+    );
+
+    for (let i = 0; i < chunk.fragments.length; i++) {
+      const fragment = chunk.fragments[i];
+      if (!fragment) continue;
+
+      if (fragment.gpu_buffers) {
+        for (const [buffer_key, cfg] of Object.entries(fragment.gpu_buffers)) {
+          if (typeof cfg.global_data === "function") {
+            continue;
+          }
+
+          if (!force_full_flush && !chunk.dirty_buffers.has(buffer_key)) {
+            continue;
+          }
+
+          const buf_data = fragment.buffer_data.get(cfg.buffer_name);
+          const packed =
+            typeof cfg.gpu_data === "function"
+              ? cfg.gpu_data.call(this, chunk, fragment)
+              : this._pack_combined_chunk_data(chunk, fragment, buffer_key);
+          if (packed?.packed_data.byteLength) {
+            buf_data.buffer.update_chunk(chunk_base, packed.packed_data, packed.row_count, chunk);
+          }
+        }
+      }
+
+      for (const [field_name, spec] of Object.entries(fragment.fields)) {
+        if (!spec.gpu_buffer) continue;
+        if (!force_full_flush && !chunk.dirty_buffers.has(field_name)) {
+          continue;
+        }
+
+        const buf_data = fragment.buffer_data.get(spec.buffer_name);
+        const packed = this._pack_chunk_field_data(chunk, fragment.id, field_name);
+        if (packed?.packed_data.byteLength) {
+          buf_data.buffer.update_chunk(chunk_base, packed.packed_data, packed.row_count, chunk);
+        }
+      }
+    }
   }
 }
 

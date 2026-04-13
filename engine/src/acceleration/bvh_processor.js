@@ -55,7 +55,7 @@ const hploc_build_bvh2_task_name = "hploc_build_bvh2";                        //
 // ╚══════════════════════════════════════════════════════════════════════════════════════════════════════════════════╝
 
 // ─── Core Algorithm Shaders ───────────────────────────────────────────────────────────────────────────────────────
-const bounds_processing_wgsl_path = "system_compute/bounds_processing.wgsl";   // Entity bounds & scene AABB
+const bounds_processing_wgsl_path = "acceleration/tlas_bounds_processing.wgsl"; // Entity bounds & scene AABB
 const bvh_morton_wgsl_path = "acceleration/bvh_morton.wgsl";                  // Morton code generation
 const bvh_sorting_wgsl_path = "acceleration/bvh_sorting.wgsl";                // OneSweep radix sort
 const bvh_as_init_wgsl_path = "acceleration/bvh_as_init.wgsl";                // BVH2 initialization
@@ -136,7 +136,7 @@ export class BVHProcessor {
   //
   
   // ─── Bounds Processing Phase ──────────────────────────────────────────────────────────────────────────────────────
-  bounds_processing_inputs = [null, null, null, null, null, null];   // Entity data, scene bounds input
+  bounds_processing_inputs = [null, null, null, null, null, null, null, null]; // Entity data, scene bounds input
   bounds_processing_outputs = [null, null];                           // Updated bounds, culling flags
   
   // ─── Morton Code Generation Phase ─────────────────────────────────────────────────────────────────────────────────
@@ -223,9 +223,11 @@ export class BVHProcessor {
    * @returns {void} - Computation is entirely GPU-side
    */
   build() {
-    // Early exit if no primitives to process - avoid unnecessary GPU work
-    const primitive_count = EntityManager.get_max_rows();
-    if (primitive_count === 0) return;
+    BVH.refresh_active_transform_chunks();
+
+    const primitive_count = this._get_primitive_slot_count();
+    const live_primitive_count = EntityManager.get_total_subscribed(TransformFragment);
+    if (primitive_count === 0 || live_primitive_count === 0) return;
 
     // Dynamic capacity management - grow when needed with 2x expansion
     // This amortizes reallocation cost while handling dynamic scenes
@@ -275,7 +277,10 @@ export class BVHProcessor {
     BVH.clear_scene_bounds();
 
     // Gather entity count and GPU resource handles
-    const total_rows = EntityManager.get_max_rows();
+    const total_rows = this._get_primitive_slot_count();
+    if (total_rows === 0) {
+      return;
+    }
     const tlas_buffers = BVH.to_gpu_data();
     
     // ─── ECS Fragment Buffer Access ───────────────────────────────────────────────────────────────────────────────
@@ -293,6 +298,7 @@ export class BVHProcessor {
     );
     const entity_flags_buffer = FragmentGpuBuffer.entity_flags_buffer; // Visibility/culling flags
     const entity_index_map_buffer = FragmentGpuBuffer.entity_index_map_buffer;
+    const active_transform_chunks_buffer = tlas_buffers.active_transform_chunk_indices_buffer;
 
     // Mesh resource data for bounds transformation
     const mesh_data = MeshData.to_gpu_data();
@@ -305,6 +311,7 @@ export class BVHProcessor {
     this.bounds_processing_inputs[4] = tlas_buffers.scene_bounds_buffer; // Global scene AABB (accumulator)
     this.bounds_processing_inputs[5] = static_mesh_ids_buffer.buffer;   // Mesh asset ID mappings
     this.bounds_processing_inputs[6] = mesh_data.mesh_bounds_buffer;    // Mesh-space bounding boxes
+    this.bounds_processing_inputs[7] = active_transform_chunks_buffer;  // Dense transform chunk list
 
     // ─── Configure Compute Kernel Output Bindings ────────────────────────────────────────────────────────────────
     this.bounds_processing_outputs[0] = bounds_buffer.buffer;           // Updated entity bounds
@@ -316,7 +323,7 @@ export class BVHProcessor {
       bounds_processing_wgsl_path,
       this.bounds_processing_inputs,
       this.bounds_processing_outputs,
-      Math.max(1, Math.floor((total_rows + 255) / 256)) // 256 threads per workgroup
+      Math.max(1, BVH.get_active_transform_chunk_count()) // One workgroup per active chunk
     );
   }
 
@@ -348,7 +355,10 @@ export class BVHProcessor {
   compute_morton_codes() {
     // Get accurate primitive count for algorithm initialization
     const true_primitive_count = EntityManager.get_total_subscribed(TransformFragment);
-    const conservative_primitive_count = EntityManager.get_max_rows();
+    const conservative_primitive_count = this._get_primitive_slot_count();
+    if (conservative_primitive_count === 0 || true_primitive_count === 0) {
+      return;
+    }
     const bvh = BVH.to_gpu_data();
     const workgroups = Math.ceil(conservative_primitive_count / WORKGROUP_SIZE);
 
@@ -417,7 +427,10 @@ export class BVHProcessor {
    * @returns {void}
    */
   clear_onesweep() {
-    const element_count = EntityManager.get_max_rows();
+    const element_count = this._get_primitive_slot_count();
+    if (element_count === 0) {
+      return;
+    }
     const bvh = BVH.to_gpu_data();
     const thread_blocks = Math.max(1, Math.ceil(element_count / TILE_SIZE));
 
@@ -490,7 +503,10 @@ export class BVHProcessor {
    * @returns {void}
    */
   radix_sort() {
-    const element_count = EntityManager.get_max_rows();
+    const element_count = this._get_primitive_slot_count();
+    if (element_count === 0) {
+      return;
+    }
     const bvh = BVH.to_gpu_data();
     const thread_blocks = Math.max(1, Math.ceil(element_count / TILE_SIZE));
 
@@ -619,6 +635,9 @@ export class BVHProcessor {
    */
   build_bvh2() {
     const primitive_count = EntityManager.get_total_subscribed(TransformFragment);
+    if (primitive_count === 0) {
+      return;
+    }
     const bvh = BVH.to_gpu_data();
     const bvh2_workgroups = Math.max(1, Math.ceil(primitive_count / 128));
 
@@ -697,6 +716,10 @@ export class BVHProcessor {
   resize(new_max_primitives) {
     this.max_primitives = new_max_primitives;
     BVH.resize(new_max_primitives);           // Trigger BVH buffer resize
+  }
+
+  _get_primitive_slot_count() {
+    return BVH.get_active_transform_slot_count();
   }
 
   /**

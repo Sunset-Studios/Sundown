@@ -433,6 +433,7 @@ export class PathTracingStrategy {
             meshlet_vertex_buffer,
             meshlet_triangle_buffer,
             entity_index_lookup,
+            entity_flags,
           ],
         });
       }
@@ -487,6 +488,7 @@ export class PathTracingStrategy {
             meshlet_vertex_buffer,
             meshlet_triangle_buffer,
             entity_index_lookup,
+            entity_flags,
           ],
         });
 
