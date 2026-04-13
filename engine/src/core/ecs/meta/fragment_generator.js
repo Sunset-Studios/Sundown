@@ -146,8 +146,10 @@ export class FragmentGenerator {
             return null;
           }
 
-          if (buffer_stride === 0) {
-            buffer_stride = buffer_config.stride || 1;
+          if (buffer_config.stride) {
+            buffer_stride = buffer_config.stride;
+          } else if (buffer_stride === 0) {
+            buffer_stride = 1;
           }
 
           const escaped_buffer_key = JSON.stringify(buffer_key);
