@@ -353,14 +353,16 @@ export class BVHProcessor {
    * @returns {void}
    */
   compute_morton_codes() {
-    // Get accurate primitive count for algorithm initialization
-    const true_primitive_count = EntityManager.get_total_subscribed(TransformFragment);
-    const conservative_primitive_count = this._get_primitive_slot_count();
-    if (conservative_primitive_count === 0 || true_primitive_count === 0) {
+    // Bounds are written into a dense active-chunk slot domain, which can still
+    // contain holes. Keep downstream TLAS stages on that same domain so valid
+    // bounds in later slots are not skipped when live entities are sparse.
+    const live_primitive_count = EntityManager.get_total_subscribed(TransformFragment);
+    const primitive_slot_count = this._get_primitive_slot_count();
+    if (primitive_slot_count === 0 || live_primitive_count === 0) {
       return;
     }
     const bvh = BVH.to_gpu_data();
-    const workgroups = Math.ceil(conservative_primitive_count / WORKGROUP_SIZE);
+    const workgroups = Math.ceil(primitive_slot_count / WORKGROUP_SIZE);
 
     // Access entity bounds computed in previous phase
     const bounds_buffer = EntityManager.get_fragment_gpu_buffer(
@@ -372,7 +374,7 @@ export class BVHProcessor {
     // Reset algorithm counters and parameters for this frame's BVH construction
     this.bvh2_data[0] = 0;                      // leaf_count - Will be filled during BVH2 construction
     this.bvh2_data[1] = 0;                      // node_count - Internal node counter
-    this.bvh2_data[2] = true_primitive_count;   // prim_count - Actual number of primitives to process
+    this.bvh2_data[2] = primitive_slot_count;   // prim_count - Dense active slot domain used by TLAS builds
     this.bvh2_data[3] = 0;                      // prim_base - Base index for primitive storage
     this.bvh2_data[4] = 0;                      // node_base - Base index for node storage
     this.bvh2_data[5] = 0;                      // is_blas - 0 for TLAS (store AABB indices)
@@ -634,7 +636,7 @@ export class BVHProcessor {
    * @returns {void}
    */
   build_bvh2() {
-    const primitive_count = EntityManager.get_total_subscribed(TransformFragment);
+    const primitive_count = this._get_primitive_slot_count();
     if (primitive_count === 0) {
       return;
     }
