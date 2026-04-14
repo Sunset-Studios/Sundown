@@ -42,7 +42,7 @@ export class Sector {
    *
    * @param {Fragments[]} fragments - Array of fragments
    * @param {number} [instance_count=1] - Physical rows (≤ 2^LOCAL_SLOT_BITS - 1)
-   * @return {number} The stable entity_id for the created entity.
+   * @return {EntityHandle} The handle for the created entity.
    */
   create_entity(fragments, instance_count = 1) {
     if (instance_count <= 0) {

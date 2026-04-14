@@ -29,10 +29,9 @@ const EF_DIRTY = 1u << 1;
 const EF_IGNORE_PARENT_SCALE = 1u << 2;
 const EF_IGNORE_PARENT_ROTATION = 1u << 3;
 const EF_TRANSFORM_DIRTY = 1u << 4;
-const EF_AABB_DIRTY = 1u << 5;
-const EF_BILLBOARD = 1u << 6;
-const EF_MOVED = 1u << 7;
-const EF_HAS_MESH = 1u << 8;
+const EF_BILLBOARD = 1u << 5;
+const EF_MOVED = 1u << 6;
+const EF_HAS_MESH = 1u << 7;
 
 const LOG_DEPTH_C = 0.1; // Can adjust this value based on scene scale
 const MAX_UINT = 4294967295u;

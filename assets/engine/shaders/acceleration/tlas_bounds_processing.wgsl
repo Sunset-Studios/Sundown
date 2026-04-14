@@ -62,8 +62,6 @@ fn cs(
 
                 min_node_bounds = vec4<f32>(min_point, f32(mesh_id));
                 max_node_bounds = vec4<f32>(max_point, -1.0 - f32(entity_row));
-
-                entity_flags[entity_resolved] |= EF_AABB_DIRTY;
             }
         }
     }
