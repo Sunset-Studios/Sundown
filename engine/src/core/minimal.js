@@ -24,5 +24,6 @@ export const EntityFlags = {
   BILLBOARD: 1 << 5,
   MOVED: 1 << 6,
   HAS_MESH: 1 << 7,
+  INTERACTIVE: 1 << 8,
 };
 

@@ -17,6 +17,7 @@ export class EntityManager {
   static fragment_types = new Set();
   static pending_entity_deletes = [];
   static on_delete_listeners = [];
+  static on_flags_changed_listeners = [];
 
   /**
    * Initializes the entity compaction index map.
@@ -289,12 +290,19 @@ export class EntityManager {
    * @param {number} flags - The flags to set for the entity.
    */
   static set_entity_flags(entity, flags) {
+    const previous_flags = this.get_entity_flags(entity);
     for (let i = 0; i < entity.segments.length; i++) {
       const segment = entity.segments[i];
       for (let j = 0; j < segment.count; j++) {
         segment.chunk.flags_meta[segment.slot + j] = flags;
       }
       segment.chunk.mark_dirty();
+    }
+
+    if (previous_flags !== flags) {
+      for (let i = 0; i < this.on_flags_changed_listeners.length; i++) {
+        this.on_flags_changed_listeners[i](entity, previous_flags, flags);
+      }
     }
   }
 
@@ -333,6 +341,19 @@ export class EntityManager {
   static on_delete(listener) {
     if (!this.on_delete_listeners.includes(listener)) {
       this.on_delete_listeners.push(listener);
+    }
+  }
+
+  static on_flags_changed(listener) {
+    if (!this.on_flags_changed_listeners.includes(listener)) {
+      this.on_flags_changed_listeners.push(listener);
+    }
+  }
+
+  static off_flags_changed(listener) {
+    const index = this.on_flags_changed_listeners.indexOf(listener);
+    if (index !== -1) {
+      this.on_flags_changed_listeners.splice(index, 1);
     }
   }
 

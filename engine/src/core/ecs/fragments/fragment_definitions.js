@@ -155,6 +155,9 @@ const TransformFragment = {
     DEFAULT_CHUNK_CAPACITY: "../solar/types.js",
     BVH: "../../../acceleration/bvh.js",
   },
+  members: {
+    dirty_entities: "new Set()",
+  },
   fields: {
     position: {
       type: DataType.FLOAT32,
@@ -170,9 +173,11 @@ const TransformFragment = {
         return;
       }
 
-      this.chunk.flags_meta[this.slot + this.instance] |= EntityFlags.MOVED;
+      this.chunk.flags_meta[this.slot + this.instance] |=
+        EntityFlags.MOVED | EntityFlags.TRANSFORM_DIRTY;
 
       typed_array.set(value, element_offset);
+      TransformFragment.mark_entity_dirty(this.entity);
       `,
     },
     rotation: {
@@ -189,9 +194,11 @@ const TransformFragment = {
         return;
       }
 
-      this.chunk.flags_meta[this.slot + this.instance] |= EntityFlags.MOVED;
+      this.chunk.flags_meta[this.slot + this.instance] |=
+        EntityFlags.MOVED | EntityFlags.TRANSFORM_DIRTY;
 
       typed_array.set(value, element_offset);
+      TransformFragment.mark_entity_dirty(this.entity);
       `,
     },
     scale: {
@@ -209,9 +216,11 @@ const TransformFragment = {
         return;
       }
 
-      this.chunk.flags_meta[this.slot + this.instance] |= EntityFlags.MOVED;
+      this.chunk.flags_meta[this.slot + this.instance] |=
+        EntityFlags.MOVED | EntityFlags.TRANSFORM_DIRTY;
 
       typed_array.set(value, element_offset);
+      TransformFragment.mark_entity_dirty(this.entity);
       `,
     },
     bounds: {
@@ -232,14 +241,12 @@ const TransformFragment = {
       stride: 4,
       gpu: true,
       usage: BufferType.STORAGE_SRC,
-      cpu_readback: true,
     },
     world_rotation: {
       type: DataType.FLOAT32,
       stride: 4,
       gpu: true,
       usage: BufferType.STORAGE_SRC,
-      cpu_readback: true,
     },
     world_scale: {
       type: DataType.FLOAT32,
@@ -247,10 +254,25 @@ const TransformFragment = {
       gpu: true,
       default: 1,
       usage: BufferType.STORAGE_SRC,
-      cpu_readback: true,
     },
   },
   custom_methods: {
+    mark_entity_dirty: {
+      params: `entity`,
+      body: `
+      if (entity) {
+        this.dirty_entities.add(entity);
+      }
+      `,
+    },
+    consume_dirty_entities: {
+      params: ``,
+      body: `
+      const dirty_entities = Array.from(this.dirty_entities);
+      this.dirty_entities.clear();
+      return dirty_entities;
+      `,
+    },
     get_world_position: {
       params: `entity, instance = 0`,
       body: `
@@ -259,7 +281,7 @@ const TransformFragment = {
       TransformFragment,
       instance,
     );
-    return transform_fragment.world_position.slice(0, 3);
+    return transform_fragment ? transform_fragment.world_position.slice(0, 3) : null;
       `,
     },
     get_world_rotation: {
@@ -270,7 +292,7 @@ const TransformFragment = {
       TransformFragment,
       instance,
     );
-    return transform_fragment.world_rotation.slice();
+    return transform_fragment ? transform_fragment.world_rotation.slice() : null;
       `,
     },
     get_world_scale: {
@@ -281,7 +303,7 @@ const TransformFragment = {
       TransformFragment,
       instance,
     );
-    return transform_fragment.world_scale.slice(0, 3);
+    return transform_fragment ? transform_fragment.world_scale.slice(0, 3) : null;
       `,
     },
     add_world_offset: {

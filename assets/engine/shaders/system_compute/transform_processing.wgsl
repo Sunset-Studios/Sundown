@@ -59,6 +59,10 @@ fn cs(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let scale = entity_scales[entity_resolved];
     let flag = entity_flags[entity_resolved];
 
+    if ((flag & EF_INTERACTIVE) != 0u) {
+        return;
+    }
+
     var parent_transform = identity_matrix;
 
     if (parent_resolved < MAX_UINT) {
@@ -113,7 +117,7 @@ fn cs(@builtin(global_invocation_id) global_id: vec3<u32>) {
     );
 
     let parent_dirty = select(0u, entity_flags[parent_resolved] & EF_DIRTY, parent_resolved < MAX_UINT);
-    let new_flag = entity_flags[entity_resolved] | parent_dirty;
+    let new_flag = (entity_flags[entity_resolved] | parent_dirty) & ~EF_TRANSFORM_DIRTY;
 
     var entity_transform = entity_transforms[entity_resolved];
 

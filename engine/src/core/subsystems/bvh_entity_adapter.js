@@ -26,13 +26,14 @@ export class BVHEntityAdapter extends SimulationLayer {
   }
 
   update(delta_time) {
-    profile_scope(ENTITY_ADAPTER_UPDATE_NAME, () => {
-        this.tlas_processor.build();
-    });
+    super.update(delta_time);
   }
 
   post_update(delta_time) {
     super.post_update(delta_time);
+    profile_scope(ENTITY_ADAPTER_UPDATE_NAME, () => {
+      this.tlas_processor.build();
+    });
     BVHRaycast.flush();
   }
 

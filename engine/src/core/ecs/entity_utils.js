@@ -130,7 +130,7 @@ export function spawn_plane_entity(
   let existing_flags = EntityManager.get_entity_flags(entity);
   EntityManager.set_entity_flags(
     entity,
-    existing_flags | EntityFlags.IGNORE_PARENT_SCALE | EntityFlags.HAS_STATIC_MESH
+    existing_flags | EntityFlags.IGNORE_PARENT_SCALE | EntityFlags.HAS_MESH
   );
 
   const mesh = Mesh.quad();

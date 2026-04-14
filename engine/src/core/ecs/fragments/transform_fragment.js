@@ -34,9 +34,11 @@ export class TransformFragment extends Fragment {
           return;
         }
 
-        this.chunk.flags_meta[this.slot + this.instance] |= EntityFlags.MOVED;
+        this.chunk.flags_meta[this.slot + this.instance] |=
+          EntityFlags.MOVED | EntityFlags.TRANSFORM_DIRTY;
 
         typed_array.set(value, element_offset);
+        TransformFragment.mark_entity_dirty(this.entity);
       },
       cpu_readback: false,
       buffer_multiplier: 1,
@@ -60,9 +62,11 @@ export class TransformFragment extends Fragment {
           return;
         }
 
-        this.chunk.flags_meta[this.slot + this.instance] |= EntityFlags.MOVED;
+        this.chunk.flags_meta[this.slot + this.instance] |=
+          EntityFlags.MOVED | EntityFlags.TRANSFORM_DIRTY;
 
         typed_array.set(value, element_offset);
+        TransformFragment.mark_entity_dirty(this.entity);
       },
       cpu_readback: false,
       buffer_multiplier: 1,
@@ -86,9 +90,11 @@ export class TransformFragment extends Fragment {
           return;
         }
 
-        this.chunk.flags_meta[this.slot + this.instance] |= EntityFlags.MOVED;
+        this.chunk.flags_meta[this.slot + this.instance] |=
+          EntityFlags.MOVED | EntityFlags.TRANSFORM_DIRTY;
 
         typed_array.set(value, element_offset);
+        TransformFragment.mark_entity_dirty(this.entity);
       },
       cpu_readback: false,
       buffer_multiplier: 1,
@@ -126,7 +132,7 @@ export class TransformFragment extends Fragment {
         GPUBufferUsage.STORAGE |
         GPUBufferUsage.COPY_DST |
         GPUBufferUsage.COPY_SRC,
-      cpu_readback: true,
+      cpu_readback: false,
       buffer_multiplier: 1,
     },
     world_rotation: {
@@ -139,7 +145,7 @@ export class TransformFragment extends Fragment {
         GPUBufferUsage.STORAGE |
         GPUBufferUsage.COPY_DST |
         GPUBufferUsage.COPY_SRC,
-      cpu_readback: true,
+      cpu_readback: false,
       buffer_multiplier: 1,
     },
     world_scale: {
@@ -152,11 +158,13 @@ export class TransformFragment extends Fragment {
         GPUBufferUsage.STORAGE |
         GPUBufferUsage.COPY_DST |
         GPUBufferUsage.COPY_SRC,
-      cpu_readback: true,
+      cpu_readback: false,
       buffer_multiplier: 1,
     },
   };
   static buffer_data = new Map(); // key → { buffer: FragmentGpuBuffer, stride: number }
+
+  static dirty_entities = new Set();
 
   static get view_allocator() {
     if (!this._view_allocator) {
@@ -176,13 +184,27 @@ export class TransformFragment extends Fragment {
     return this.field_key_map.get(field_name);
   }
 
+  static mark_entity_dirty(entity) {
+    if (entity) {
+      this.dirty_entities.add(entity);
+    }
+  }
+
+  static consume_dirty_entities() {
+    const dirty_entities = Array.from(this.dirty_entities);
+    this.dirty_entities.clear();
+    return dirty_entities;
+  }
+
   static get_world_position(entity, instance = 0) {
     const transform_fragment = EntityManager.get_fragment(
       entity,
       TransformFragment,
       instance,
     );
-    return transform_fragment.world_position.slice(0, 3);
+    return transform_fragment
+      ? transform_fragment.world_position.slice(0, 3)
+      : null;
   }
 
   static get_world_rotation(entity, instance = 0) {
@@ -191,7 +213,9 @@ export class TransformFragment extends Fragment {
       TransformFragment,
       instance,
     );
-    return transform_fragment.world_rotation.slice();
+    return transform_fragment
+      ? transform_fragment.world_rotation.slice()
+      : null;
   }
 
   static get_world_scale(entity, instance = 0) {
@@ -200,7 +224,9 @@ export class TransformFragment extends Fragment {
       TransformFragment,
       instance,
     );
-    return transform_fragment.world_scale.slice(0, 3);
+    return transform_fragment
+      ? transform_fragment.world_scale.slice(0, 3)
+      : null;
   }
 
   static add_world_offset(entity, offset, instance = 0) {

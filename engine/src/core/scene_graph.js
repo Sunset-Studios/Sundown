@@ -9,11 +9,14 @@ export class SceneGraph {
   static scene_graph_layer_counts = [];
   static scene_graph_uniforms = [];
   static dirty = false;
+  static hierarchy_dirty_entities = new Set();
+  static hierarchy_moved_entities = new Set();
 
   static set_parent(entity, parent) {
     this.tree.remove(entity);
     this.tree.add(parent, entity);
     this.dirty = true;
+    this.mark_hierarchy_moved(entity);
   }
 
   static get_parent(entity) {
@@ -24,8 +27,15 @@ export class SceneGraph {
 
   static set_children(entity, children) {
     if (Array.isArray(children)) {
+      const previous_children = this.get_children(entity);
       this.tree.add_multiple(entity, children, true /* replace_children */, true /* unique */);
       this.dirty = true;
+      for (let i = 0; i < previous_children.length; i++) {
+        this.mark_hierarchy_moved(previous_children[i]);
+      }
+      for (let i = 0; i < children.length; i++) {
+        this.mark_hierarchy_moved(children[i]);
+      }
     }
   }
 
@@ -41,6 +51,32 @@ export class SceneGraph {
 
   static mark_dirty() {
     this.dirty = true;
+  }
+
+  static mark_hierarchy_dirty(entity) {
+    if (entity) {
+      this.hierarchy_dirty_entities.add(entity);
+    }
+  }
+
+  static mark_hierarchy_moved(entity) {
+    if (entity) {
+      this.hierarchy_moved_entities.add(entity);
+      this.mark_hierarchy_dirty(entity);
+    }
+  }
+
+  static is_hierarchy_dirty(entity) {
+    return this.hierarchy_dirty_entities.has(entity);
+  }
+
+  static is_hierarchy_moved(entity) {
+    return this.hierarchy_moved_entities.has(entity);
+  }
+
+  static clear_hierarchy_dirty() {
+    this.hierarchy_dirty_entities.clear();
+    this.hierarchy_moved_entities.clear();
   }
 
   static flush_gpu_buffers() {
