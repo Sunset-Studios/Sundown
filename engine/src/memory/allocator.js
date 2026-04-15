@@ -1002,11 +1002,6 @@ class RandomAccessAllocator {
         
         this.#size--;
         
-        // Shrink the buffer if it's too large
-        if (this.#size < this.#capacity / 4 && this.#capacity > 16) {
-            this._resize(Math.max(16, Math.floor(this.#capacity / 2)));
-        }
-        
         return removed_value;
     }
 

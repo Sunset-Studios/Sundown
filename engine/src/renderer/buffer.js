@@ -33,6 +33,9 @@ export class Buffer {
       } catch (error) {
         throw new Error(`Failed to create buffer: ${this.config.name} with size: ${this.config.size}. Typed array may be too large in this environment.`);
       }
+    } else if (this.config.own_readback) {
+      buffer_data = new Float32Array(this.config.size);
+      config.raw_data = buffer_data;
     }
 
     this.config.size = buffer_data ? buffer_data.byteLength : (this.config.size !== undefined ? this.config.size * 4 : 0);
