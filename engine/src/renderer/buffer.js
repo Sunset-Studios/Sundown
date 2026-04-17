@@ -268,7 +268,8 @@ export class Buffer {
   }
 
   async readback_buffers() {
-    await this.read(this.config.raw_data, this.config.size, 0, 0, Uint32Array);
+    const data_type = this.config.raw_data?.constructor || Uint32Array;
+    await this.read(this.config.raw_data, this.config.size, 0, 0, data_type);
   }
 
   get physical_id() {
