@@ -2744,7 +2744,7 @@ export class SponzaScene extends Scene {
     const ground_entity = spawn_mesh_entity(
       [0, 0, 0],
       quat.fromEuler(quat.create(), 0, 0, 0),
-      [2000, 1.0, 2000],
+      [500, 1.0, 500],
       cube_mesh,
       ground_material_id
     );
@@ -2767,7 +2767,7 @@ export class SponzaScene extends Scene {
       "engine/models/sponza/Sponza.gltf",
       [0, 2.5, 0],
       [0, 0, 0, 1],
-      [1.0, 1.0, 1.0]
+      [2.0, 2.0, 2.0]
     );
     this.entities.push(root_entity);
   }
@@ -3001,7 +3001,7 @@ export class CityScene extends Scene {
     let city_root = this.load_gltf_scene("engine/models/city/City.gltf",
       [0, 0, 0],
       [0, 0, 0, 1],
-      [10, 10, 10],
+      [2, 2, 2],
     );
     this.entities.push(city_root);
 
@@ -3216,10 +3216,10 @@ export class BistroTestScene extends Scene {
   //await scene_switcher.add_scene(textures_scene);
   //await scene_switcher.add_scene(gi_test_scene);
   //await scene_switcher.add_scene(shadow_test_scene);
-  //await scene_switcher.add_scene(sponza_scene);
+  await scene_switcher.add_scene(sponza_scene);
   //await scene_switcher.add_scene(living_room_scene);
   //await scene_switcher.add_scene(city_scene);
-  await scene_switcher.add_scene(scifi_city_scene);
+  //await scene_switcher.add_scene(scifi_city_scene);
   //await scene_switcher.add_scene(bistro_test_scene);
 
   simulator.add_sim_layer(scene_switcher);

@@ -186,6 +186,8 @@ export const DebugDrawType = Object.freeze({
     VisibilityEntityId: 28,
     VisibilityMeshletId: 29,
     VisibilityTriangleId: 30,
+    SVLM_Bricks: 31,
+    SVLM_Probes: 32,
 });
 
 /**

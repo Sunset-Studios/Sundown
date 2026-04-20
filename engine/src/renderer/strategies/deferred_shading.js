@@ -47,6 +47,7 @@ import {
 // Specialized renderer components
 import { PTGI } from "../global_illumination/ptgi.js";
 import { DDGI } from "../global_illumination/ddgi.js";
+import { SparseVolumetricLightmapper } from "../global_illumination/svlm.js";
 import { VBAO } from "../global_illumination/vbao.js";
 import { RTAO } from "../global_illumination/rtao.js";
 import { AdaptiveSparseVirtualShadowMaps } from "../shadows/as_vsm.js";
@@ -180,6 +181,7 @@ export class DeferredShadingStrategy {
   visibility_buffer_pipeline = null;
   prev_lighting_image = null;
   gi = null;
+  svlm = null;
   vbao = null;
   rtao = null;
   reflections = null;
@@ -197,6 +199,7 @@ export class DeferredShadingStrategy {
     this.visibility_buffer_pipeline = new VisibilityBufferPipeline();
 
     this.gi = Renderer.get().get_gi_strategy_type() === GIStrategyType.DDGI ? new DDGI() : new PTGI();
+    this.svlm = new SparseVolumetricLightmapper();
     this.ao = Renderer.get().get_ao_strategy_type() === AOStrategyType.RTAO ? new RTAO() : new VBAO();
     this.reflections =
       Renderer.get().get_reflection_strategy_type() === ReflectionStrategyType.SSR ? new SSR() : null;
@@ -214,7 +217,7 @@ export class DeferredShadingStrategy {
       resolution_change_event_name,
       this._recreate_persistent_resources.bind(this)
     );
-    
+
     this._recreate_persistent_resources(render_graph);
   }
 
@@ -652,29 +655,45 @@ export class DeferredShadingStrategy {
         }
       );
 
-      // ┌─────────────────────────────────────────────────────────────────────────────┐
-      // │ 📏 PASS: Debug Entity Bounds and BVH                                        │
-      // │    Render entity bounds and BVH for visualization                           │
-      // └─────────────────────────────────────────────────────────────────────────────┘
-      this.debug_pipeline.add_geometry_passes(render_graph, {
-        debug_view,
-        draw_count,
-        current_view,
-        aabb_bounds,
-        blas_gpu_data,
-        blas_directory,
-        blas_bvh2_nodes,
-        object_instances,
-        entity_transforms,
-        mesh_asset_ids_buffer,
-        entity_index_lookup,
-        culling_pipeline: this.culling_pipeline,
-        main_albedo_image,
-        main_smra_image,
-        main_normal_image,
-        main_motion_emissive_image,
-        main_depth_image,
-      });
+      if (__DEV__) {
+        // ┌─────────────────────────────────────────────────────────────────────────────┐
+        // │ 📏 PASS: Debug Entity Bounds and BVH                                        │
+        // │    Render entity bounds and BVH for visualization                           │
+        // └─────────────────────────────────────────────────────────────────────────────┘
+        // SVLM is currently a dev-only bake/debug pipeline. It reuses the same
+        // TLAS/BLAS buffers produced for rendering so brick allocation stays
+        // GPU-driven and matches the scene the renderer actually sees.
+        this.svlm.add_bake_passes(render_graph, {
+          tlas_bvh_info,
+          tlas_bvh2_nodes: aabb_bounds,
+          entity_transforms,
+          entity_index_lookup,
+          blas_directory,
+          blas_bvh2_nodes,
+          force_recreate: this.force_recreate,
+        });
+
+        this.debug_pipeline.add_geometry_passes(render_graph, {
+          debug_view,
+          draw_count,
+          current_view,
+          aabb_bounds,
+          blas_gpu_data,
+          blas_directory,
+          blas_bvh2_nodes,
+          object_instances,
+          entity_transforms,
+          mesh_asset_ids_buffer,
+          entity_index_lookup,
+          culling_pipeline: this.culling_pipeline,
+          main_albedo_image,
+          main_smra_image,
+          main_normal_image,
+          main_motion_emissive_image,
+          main_depth_image,
+          svlm: this.svlm,
+        });
+      }
 
       // ┌─────────────────────────────────────────────────────────────────────────────┐
       // │ 🌚 PASS: Adaptive Sparse Virtual Shadow Maps                               │
@@ -872,6 +891,19 @@ export class DeferredShadingStrategy {
         );
       }
 
+      if (__DEV__ && debug_view === DebugDrawType.SVLM_Probes) {
+        // Probe debug is generated after lighting so it can composite analytic
+        // probe spheres over the final scene color without touching GI shading.
+        this.svlm.add_probe_debug_passes(
+          render_graph,
+          image_extent.width,
+          image_extent.height,
+          main_depth_image,
+          post_lighting_image_desc,
+          this.force_recreate
+        );
+      }
+
       // ┌─────────────────────────────────────────────────────────────────────────────┐
       // │ ✨ PASS: Bloom Post-Processing                                             │
       // │    Multi-pass gaussian blur to create beautiful light bleeding effects    │
@@ -992,6 +1024,7 @@ export class DeferredShadingStrategy {
         bloom: this.bloom,
         ao: this.ao,
         gi: this.gi,
+        svlm: this.svlm,
         reflections: this.reflections,
         reflections_enabled,
       });

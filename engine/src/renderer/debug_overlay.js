@@ -185,6 +185,10 @@ export class DebugOverlay {
         return "debug/debug_overlay_2d.wgsl";
       case DebugDrawType.PrevLightingPyramid:
         return "debug/debug_overlay_2d.wgsl";
+      case DebugDrawType.SVLM_Probes:
+        return "debug/debug_overlay_2d.wgsl";
+      case DebugDrawType.SVLM_Bricks:
+        return null;
       default:
         return "debug/debug_overlay_2d.wgsl";
     }

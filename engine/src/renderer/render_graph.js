@@ -453,6 +453,9 @@ export class RenderGraph {
     this.queued_post_commands = [];
     this.pre_render_callbacks = [];
     this.post_render_callbacks = [];
+    this.pass_cache_full_needs_reset = false;
+    this.pass_cache_passes_needs_reset = false;
+    this.pass_cache_pipeline_states_need_recreate = false;
 
     this.image_resource_allocator = new FrameAllocator(max_image_resources, deep_clone(RGResource));
     this.buffer_resource_allocator = new FrameAllocator(
@@ -1189,6 +1192,7 @@ export class RenderGraph {
   recreate_pipeline_states() {
     this.pass_cache.pipeline_states.clear();
     this.pass_cache_full_needs_reset = true;
+    this.pass_cache_pipeline_states_need_recreate = true;
   }
 
   /**
@@ -1238,6 +1242,7 @@ export class RenderGraph {
         const pass_handle = this.non_culled_passes[i];
         this._setup_physical_pass_and_resources(this.registry.render_passes[pass_handle]);
       }
+      this.pass_cache_pipeline_states_need_recreate = false;
 
       const encoder = CommandQueue.create_encoder("render_graph_encoder");
 
@@ -1876,7 +1881,7 @@ export class RenderGraph {
             entryPoint: shader_setup.pipeline_shaders.compute.entry_point || "cs",
           },
           defer_creation: false,
-          force: this.pass_cache_full_needs_reset,
+          force: this.pass_cache_pipeline_states_need_recreate,
         };
 
         pass.pipeline_state_id = pass.pass_config.encoded_name;
@@ -1931,7 +1936,7 @@ export class RenderGraph {
             cullMode: shader_setup.rasterizer_state?.cull_mode || "back",
           },
           defer_creation: false,
-          force: this.pass_cache_full_needs_reset,
+          force: this.pass_cache_pipeline_states_need_recreate,
         };
 
         if (pass.shaders.fragment) {

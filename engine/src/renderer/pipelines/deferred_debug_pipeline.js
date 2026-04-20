@@ -77,8 +77,23 @@ export class DeferredDebugPipeline {
       main_normal_image,
       main_motion_emissive_image,
       main_depth_image,
+      svlm,
     }
   ) {
+    // SVLM brick boxes are real debug geometry, not a fullscreen overlay.
+    // Route them through the geometry debug path so they can share depth and the
+    // existing line renderer with entity/BVH bounds.
+    if (debug_view === DebugDrawType.SVLM_Bricks) {
+      svlm?.add_debug_geometry_passes(render_graph, {
+        main_albedo_image,
+        main_smra_image,
+        main_normal_image,
+        main_motion_emissive_image,
+        main_depth_image,
+      });
+      return;
+    }
+
     if (
       debug_view !== DebugDrawType.EntityBounds &&
       debug_view !== DebugDrawType.BVH &&
@@ -247,6 +262,7 @@ export class DeferredDebugPipeline {
       bloom,
       ao,
       gi,
+      svlm,
       reflections,
       reflections_enabled,
     }
@@ -541,6 +557,21 @@ export class DeferredDebugPipeline {
         );
         break;
       }
+      case DebugDrawType.SVLM_Bricks:
+        this.debug_overlay.set_properties(null, 0, 0, 0, 0, DebugDrawType.None);
+        break;
+      case DebugDrawType.SVLM_Probes:
+        // Probe spheres are generated into a debug texture, then displayed by
+        // the same overlay path as the other post-lighting debug views.
+        this.debug_overlay.set_properties(
+          svlm?.debug_texture ?? null,
+          0,
+          0,
+          image_extent.width,
+          image_extent.height,
+          svlm?.debug_texture ? DebugDrawType.SVLM_Probes : DebugDrawType.None
+        );
+        break;
       default:
         break;
     }

@@ -223,3 +223,11 @@ export function pack_snorm4x8(x, y, z, w = 0.0) {
     (encode_snorm8(w) << 24)
   ) >>> 0;
 }
+
+export function ceil_div(a, b) {
+  return Math.ceil(a / b);
+}
+
+export function floor_div(a, b) {
+  return Math.floor(a / b);
+}
