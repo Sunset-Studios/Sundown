@@ -212,9 +212,6 @@ export class SVLMTool extends DevConsoleTool {
         const stats = svlm.bake(parse_bake_options(args.slice(1)));
         this.show();
         log("SVLM GPU bake queued. Stats will update after the next rendered frame.");
-        if (stats.message) {
-          warn(stats.message);
-        }
         break;
       case "debug":
         const parsed = parse_debug_options(args.slice(1));
@@ -273,8 +270,6 @@ export class SVLMTool extends DevConsoleTool {
       }
 
       stat_row("Bake serial", format_number(stats.bake_serial));
-      stat_row("TLAS tests", format_number(stats.geometry_count));
-      stat_row("BLAS tests", format_number(stats.blas_geometry_tests));
       stat_row("Nodes", format_number(stats.node_count));
       stat_row("Leaf bricks", format_number(stats.leaf_count));
       stat_row(

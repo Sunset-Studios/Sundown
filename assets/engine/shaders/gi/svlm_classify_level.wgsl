@@ -191,8 +191,6 @@ fn svlm_query_brick_stats(brick: AABB, level: u32) -> SVLMBrickStats {
         }
 
         if (is_leaf(node)) {
-            atomicAdd(&svlm_counters.geometry_tests, 1u);
-
             let mesh_id = u32(node.min.w);
             if (mesh_id == INVALID_IDX) {
                 continue;
@@ -218,7 +216,6 @@ fn svlm_query_brick_stats(brick: AABB, level: u32) -> SVLMBrickStats {
                 // distance thresholds are transformed before the finer query.
                 let blas_stats = svlm_blas_stats(local_brick, mesh_id, local_keep_distance, local_face_eps);
                 if (blas_stats.near_count != 0u || blas_stats.overlap_count != 0u) {
-                    atomicAdd(&svlm_counters.blas_tests, blas_stats.near_count);
                     result.near_count = result.near_count + min(blas_stats.near_count, 16u);
                     result.overlap_count = result.overlap_count + min(blas_stats.overlap_count, 16u);
                     result.stack_overflow = max(result.stack_overflow, blas_stats.stack_overflow);

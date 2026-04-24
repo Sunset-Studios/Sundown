@@ -59,10 +59,8 @@ const COUNTER_PROBE_COUNT = 4;
 const COUNTER_DEBUG_LINE_COUNT = 5;
 const COUNTER_STATUS = 6;
 const COUNTER_MAX_LEVEL_REACHED = 7;
-const COUNTER_GEOMETRY_TESTS = 8;
-const COUNTER_BLAS_TESTS = 9;
-const COUNTER_SPLIT_BASE = 16;
-const COUNTER_LEVEL_BASE = 32;
+const COUNTER_SPLIT_BASE = 12;
+const COUNTER_LEVEL_BASE = 28;
 
 const STATUS_NO_TLAS = 1 << 0;
 const STATUS_NODE_OVERFLOW = 1 << 1;
@@ -125,15 +123,6 @@ const svlm_probe_debug_resolve_shader_setup = {
     compute: { path: "gi/svlm_probe_debug_resolve.wgsl" },
   },
 };
-
-function format_status(status) {
-  const messages = [];
-  if ((status & STATUS_NO_TLAS) !== 0) messages.push("No TLAS data was available.");
-  if ((status & STATUS_ROOT_OVERFLOW) !== 0) messages.push("Root grid exceeded SVLM node capacity.");
-  if ((status & STATUS_NODE_OVERFLOW) !== 0) messages.push("Node allocation limit was reached.");
-  if ((status & STATUS_LEAF_OVERFLOW) !== 0) messages.push("Leaf brick allocation limit was reached.");
-  return messages.join(" ");
-}
 
 /**
  * GPU-driven sparse volumetric lightmapper structure builder.
@@ -213,7 +202,7 @@ export class SparseVolumetricLightmapper {
     this.counters_data.fill(0);
     this._write_param_data();
     this._write_param_buffer();
-    this._reset_stats("SVLM GPU bake queued. Stats update after the next rendered frame.");
+    this._reset_stats();
     this.stats.bake_pending = true;
     return this.stats;
   }
@@ -423,7 +412,6 @@ export class SparseVolumetricLightmapper {
     this.debug_lines_dirty = true;
     this.stats.bake_pending = false;
     this.stats.baked = true;
-    this.stats.message = "SVLM GPU bake submitted. Readback stats may lag by a frame.";
   }
 
   add_debug_geometry_passes(
@@ -801,14 +789,11 @@ export class SparseVolumetricLightmapper {
     const node_bytes = node_count * NODE_U32_STRIDE * Uint32Array.BYTES_PER_ELEMENT;
     const leaf_bytes = leaf_count * LEAF_U32_STRIDE * Uint32Array.BYTES_PER_ELEMENT;
     const debug_line_bytes = debug_line_count * LINE_FLOAT_STRIDE * Float32Array.BYTES_PER_ELEMENT;
-    const message = format_status(status) || this.stats?.message || "";
 
     this.stats = {
       baked: this.bake_in_flight || leaf_count > 0,
       bake_pending: this.bake_requested,
       bake_serial: this.bake_serial,
-      geometry_count: this.counters_data[COUNTER_GEOMETRY_TESTS] || 0,
-      blas_geometry_tests: this.counters_data[COUNTER_BLAS_TESTS] || 0,
       root_dims,
       root_brick_size,
       min_level: this.config.min_level,
@@ -835,7 +820,6 @@ export class SparseVolumetricLightmapper {
       truncated_by_node_limit: (status & (STATUS_NODE_OVERFLOW | STATUS_ROOT_OVERFLOW)) !== 0,
       truncated_by_leaf_limit: (status & STATUS_LEAF_OVERFLOW) !== 0,
       config: { ...this.config },
-      message,
     };
 
     this._maybe_queue_auto_resize_rebake({
@@ -884,7 +868,6 @@ export class SparseVolumetricLightmapper {
       next_debug_leaf_bricks > this.config.max_debug_leaf_bricks;
 
     if (!can_grow) {
-      this.stats.message = `${this.stats.message} SVLM reached the GPU buffer budget limit.`;
       return false;
     }
 
@@ -895,7 +878,6 @@ export class SparseVolumetricLightmapper {
       max_debug_leaf_bricks: next_debug_leaf_bricks,
       _auto_resize: true,
     });
-    this.stats.message = `SVLM allocation grew to ${next_nodes.toLocaleString()} nodes and ${next_leaf_bricks.toLocaleString()} leaf bricks. Re-bake queued.`;
     return true;
   }
 
@@ -908,13 +890,11 @@ export class SparseVolumetricLightmapper {
     this.debug_line_buffer = null;
   }
 
-  _reset_stats(message = "") {
+  _reset_stats() {
     this.stats = {
       baked: false,
       bake_pending: this.bake_requested,
       bake_serial: this.bake_serial,
-      geometry_count: 0,
-      blas_geometry_tests: 0,
       root_dims: [0, 0, 0],
       root_brick_size: 0,
       min_level: this.config.min_level,
@@ -941,7 +921,6 @@ export class SparseVolumetricLightmapper {
       truncated_by_node_limit: false,
       truncated_by_leaf_limit: false,
       config: { ...this.config },
-      message,
     };
   }
 }

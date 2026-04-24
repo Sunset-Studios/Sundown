@@ -32,8 +32,6 @@ fn svlm_clear_counters() {
     atomicStore(&svlm_counters.debug_line_count, 0u);
     atomicStore(&svlm_counters.status, 0u);
     atomicStore(&svlm_counters.max_level_reached, 0u);
-    atomicStore(&svlm_counters.geometry_tests, 0u);
-    atomicStore(&svlm_counters.blas_tests, 0u);
     atomicStore(&svlm_counters.current_level, 0u);
 
     for (var i = 0u; i < 16u; i = i + 1u) {
