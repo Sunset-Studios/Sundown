@@ -49,7 +49,6 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     svlm_clear_counters();
 
     if (tlas_bvh_info.bvh2_count == 0u) {
-        atomicStore(&svlm_counters.status, SVLM_STATUS_NO_TLAS);
         return;
     }
 

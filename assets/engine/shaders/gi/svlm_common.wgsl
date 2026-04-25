@@ -21,10 +21,9 @@ const SVLM_PROBES_PER_BRICK = 64u;
 
 // Status bits are sticky for a bake. The JS owner reads them back and can queue
 // a larger GPU allocation without forcing fallback CPU construction.
-const SVLM_STATUS_NO_TLAS = 1u << 0u;
-const SVLM_STATUS_NODE_OVERFLOW = 1u << 1u;
-const SVLM_STATUS_LEAF_OVERFLOW = 1u << 2u;
-const SVLM_STATUS_ROOT_OVERFLOW = 1u << 3u;
+const SVLM_STATUS_NODE_OVERFLOW = 1u << 0u;
+const SVLM_STATUS_LEAF_OVERFLOW = 1u << 1u;
+const SVLM_STATUS_ROOT_OVERFLOW = 1u << 2u;
 
 // Counter layout mirrors the JS readback indices exactly:
 // slots 0..10 are named counters, slots 11..15 are reserved, slots 16..31 are

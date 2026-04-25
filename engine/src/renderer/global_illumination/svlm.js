@@ -62,10 +62,9 @@ const COUNTER_MAX_LEVEL_REACHED = 7;
 const COUNTER_SPLIT_BASE = 12;
 const COUNTER_LEVEL_BASE = 28;
 
-const STATUS_NO_TLAS = 1 << 0;
-const STATUS_NODE_OVERFLOW = 1 << 1;
-const STATUS_LEAF_OVERFLOW = 1 << 2;
-const STATUS_ROOT_OVERFLOW = 1 << 3;
+const STATUS_NODE_OVERFLOW = 1 << 0;
+const STATUS_LEAF_OVERFLOW = 1 << 1;
+const STATUS_ROOT_OVERFLOW = 1 << 2;
 
 // The SVLM pipeline is split into small compute passes so each stage has one
 // clear ownership boundary: derive volume, seed roots, classify one frontier,
@@ -258,9 +257,7 @@ export class SparseVolumetricLightmapper {
       force_recreate = false,
     }
   ) {
-    if (!this.bake_requested) {
-      return;
-    }
+    if (!this.bake_requested) return;
 
     const node_words = Math.max(1, this.config.max_nodes * NODE_U32_STRIDE);
     const queue_words = Math.max(1, this.config.max_nodes);
@@ -511,7 +508,7 @@ export class SparseVolumetricLightmapper {
       return;
     }
 
-    const max_compute_workgroups = Renderer.get()?.device?.limits?.maxComputeWorkgroupsPerDimension || 65535;
+    const max_compute_workgroups = 65535;
     const max_dispatch_leaf_count = max_compute_workgroups * max_compute_workgroups * PROBE_DEBUG_WORKGROUP_Y;
     const source_leaf_count = Math.min(this.config.max_leaf_bricks, max_dispatch_leaf_count);
     if (source_leaf_count <= 0) {
@@ -673,12 +670,9 @@ export class SparseVolumetricLightmapper {
   }
 
   _get_budget_limits() {
-    const renderer = Renderer.get?.();
-    const device_limits = renderer?.device?.limits;
-    const max_storage_binding_size = device_limits?.maxStorageBufferBindingSize || 128 * 1024 * 1024;
-    const max_buffer_size = device_limits?.maxBufferSize || max_storage_binding_size;
-    const max_buffer_bytes = Math.max(4, Math.min(max_storage_binding_size, max_buffer_size));
-    const max_workgroups_x = device_limits?.maxComputeWorkgroupsPerDimension || 65535;
+    const max_storage_binding_size = 128 * 1024 * 1024;
+    const max_buffer_bytes = Math.max(4, max_storage_binding_size);
+    const max_workgroups_x = 65535;
 
     const max_nodes_by_storage = Math.floor(max_buffer_bytes / (NODE_U32_STRIDE * Uint32Array.BYTES_PER_ELEMENT));
     const max_nodes_by_dispatch = max_workgroups_x * THREADS_PER_GROUP;
