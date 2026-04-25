@@ -171,7 +171,7 @@ fn svlm_query_brick_stats(brick: AABB, level: u32) -> SVLMBrickStats {
     }
 
     let brick_size = svlm_brick_size(&svlm_params, level);
-    let keep_distance = brick_size * svlm_params.keep_factor;
+    let keep_distance = brick_size;
     let keep_distance_sq = keep_distance * keep_distance;
     var occupied_fraction = 0.0;
 
@@ -378,9 +378,8 @@ fn svlm_emit_leaf(node_index: u32, level: u32, coord: vec3<u32>, flags: u32, sco
 }
 
 fn svlm_emit_children(node_index: u32, level: u32, coord: vec3<u32>, flags: u32, score: f32) {
-    let max_nodes = svlm_params.max_nodes;
     let child_base = atomicAdd(&svlm_counters.node_count, 8u);
-    if (child_base + 7u >= max_nodes) {
+    if (child_base + 7u >= svlm_params.max_nodes) {
         atomicOr(&svlm_counters.status, SVLM_STATUS_NODE_OVERFLOW);
         // Preserve coverage when the pool is exhausted. The stats readback will
         // request a larger allocation and rebake, but this frame still has a

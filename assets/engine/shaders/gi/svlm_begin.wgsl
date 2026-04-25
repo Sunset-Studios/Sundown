@@ -52,19 +52,12 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         return;
     }
 
-    let max_nodes = svlm_params.max_nodes;
     let root_node = tlas_nodes[tlas_bvh_info.bvh2_count - 1u];
     let scene_min = root_node.min.xyz;
     let scene_max = root_node.max.xyz;
     let requested_root_size = svlm_params.requested_root_size;
-    let target_root_cells = max(svlm_params.target_root_cells, 1.0);
     let bake_padding = max(svlm_params.bake_padding, 0.0);
-    let scene_extent = max(vec3<f32>(0.001), scene_max - scene_min);
-    var root_size = select(
-        max(max(scene_extent.x, scene_extent.y), scene_extent.z) / target_root_cells,
-        requested_root_size,
-        requested_root_size > 0.0
-    );
+    var root_size = max(1.0, requested_root_size);
 
     var world_min = scene_min - vec3<f32>(max(bake_padding, root_size * 0.25));
     var world_max = scene_max + vec3<f32>(max(bake_padding, root_size * 0.25));
@@ -76,7 +69,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     // brick size instead of truncating immediately. The JS side may still grow
     // buffers later, but this keeps the initial root coverage complete.
     for (var i = 0u; i < 16u; i = i + 1u) {
-        if (root_count <= max_nodes) {
+        if (root_count <= svlm_params.max_nodes) {
             break;
         }
         root_size *= 1.25;
@@ -87,8 +80,8 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         status |= SVLM_STATUS_ROOT_OVERFLOW;
     }
 
-    if (root_count > max_nodes) {
-        root_count = max_nodes;
+    if (root_count > svlm_params.max_nodes) {
+        root_count = svlm_params.max_nodes;
         status |= SVLM_STATUS_ROOT_OVERFLOW;
     }
 

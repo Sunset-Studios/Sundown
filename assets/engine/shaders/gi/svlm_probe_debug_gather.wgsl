@@ -34,7 +34,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let camera_position = view_buffer[view_index].view_position.xyz;
     let leaf_center = vec3<f32>(leaf.origin_x, leaf.origin_y, leaf.origin_z) + vec3<f32>(leaf.size * 0.5);
     let leaf_radius = leaf.size * 0.8660254;
-    let debug_radius = svlm_params.debug_probe_radius;
+    let debug_radius = SVLM_DEBUG_PROBE_RADIUS;
     if (debug_radius > 0.0) {
         let max_distance = debug_radius + leaf_radius;
         if (dot(leaf_center - camera_position, leaf_center - camera_position) > max_distance * max_distance) {

@@ -25,6 +25,8 @@ const SVLM_STATUS_NODE_OVERFLOW = 1u << 0u;
 const SVLM_STATUS_LEAF_OVERFLOW = 1u << 1u;
 const SVLM_STATUS_ROOT_OVERFLOW = 1u << 2u;
 
+const SVLM_DEBUG_PROBE_RADIUS = 18.0;
+
 // Counter layout mirrors the JS readback indices exactly:
 // slots 0..10 are named counters, slots 11..15 are reserved, slots 16..31 are
 // split_counts, slots 32..47 are level_counts, and slots 48..63 are reserved.
@@ -124,31 +126,26 @@ struct SVLMParams {
 
     max_nodes: u32,
     max_leaf_bricks: u32,
-    max_debug_leaf_bricks: u32,
     min_level: u32,
-
     near_factor: f32,
-    keep_factor: f32,
+
     occupancy_split_min: f32,
     occupancy_split_max: f32,
-
     requested_root_size: f32,
-    target_root_cells: f32,
     bake_padding: f32,
-    bake_serial: u32,
 
+    bake_serial: u32,
     root_count: u32,
     scene_min_x: f32,
     scene_min_y: f32,
-    scene_min_z: f32,
 
+    scene_min_z: f32,
     scene_max_x: f32,
     scene_max_y: f32,
     scene_max_z: f32,
-    debug_level: i32,
 
+    debug_level: i32,
     debug_leaf_page_groups_y: u32,
-    debug_probe_radius: f32,
     debug_gather_page_groups_x: u32,
     debug_gather_page_groups_y: u32,
 };
