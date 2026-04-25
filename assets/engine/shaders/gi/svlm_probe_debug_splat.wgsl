@@ -18,7 +18,7 @@ const SVLM_DEBUG_MAX_RADIUS_PX = 18.0;
 const SVLM_PROBE_DEBUG_WORKGROUP_Y = 8u;
 
 fn svlm_probe_visible_for_debug_level(leaf_level: u32) -> bool {
-    let debug_level = svlm_params.debug_level;
+    let debug_level = i32(svlm_params.debug_level);
     return debug_level < 0 || leaf_level == u32(debug_level);
 }
 
@@ -36,7 +36,7 @@ fn svlm_probe_debug_pack_distance(distance: f32, view_index: u32, shade: f32, le
 @compute @workgroup_size(8, 8, 1)
 fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let local_probe = gid.x;
-    let page_groups_y = max(svlm_params.debug_leaf_page_groups_y, 1u);
+    let page_groups_y = max(u32(max(svlm_params.debug_leaf_page_groups_y, 0.0)), 1u);
     // Dispatch dimensions are paged so we can cover large leaf buffers without
     // exceeding maxComputeWorkgroupsPerDimension in Y.
     let selected_leaf_slot = gid.y + gid.z * page_groups_y * SVLM_PROBE_DEBUG_WORKGROUP_Y;

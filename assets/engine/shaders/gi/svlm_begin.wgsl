@@ -29,7 +29,6 @@ fn svlm_clear_counters() {
     atomicStore(&svlm_counters.next_count, 0u);
     atomicStore(&svlm_counters.leaf_count, 0u);
     atomicStore(&svlm_counters.probe_count, 0u);
-    atomicStore(&svlm_counters.debug_line_count, 0u);
     atomicStore(&svlm_counters.status, 0u);
     atomicStore(&svlm_counters.max_level_reached, 0u);
     atomicStore(&svlm_counters.current_level, 0u);
@@ -64,12 +63,13 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     var dims = svlm_ceil_div_extent(world_max - world_min, root_size);
     var root_count = svlm_root_count(dims);
     var status = 0u;
+    let max_nodes = u32(max(svlm_params.max_nodes, 0.0));
 
     // If the requested root grid cannot fit in the node pool, grow the root
     // brick size instead of truncating immediately. The JS side may still grow
     // buffers later, but this keeps the initial root coverage complete.
     for (var i = 0u; i < 16u; i = i + 1u) {
-        if (root_count <= svlm_params.max_nodes) {
+        if (root_count <= max_nodes) {
             break;
         }
         root_size *= 1.25;
@@ -80,8 +80,8 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         status |= SVLM_STATUS_ROOT_OVERFLOW;
     }
 
-    if (root_count > svlm_params.max_nodes) {
-        root_count = svlm_params.max_nodes;
+    if (root_count > max_nodes) {
+        root_count = max_nodes;
         status |= SVLM_STATUS_ROOT_OVERFLOW;
     }
 
@@ -91,10 +91,10 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     svlm_params.world_min_y = world_min.y;
     svlm_params.world_min_z = world_min.z;
     svlm_params.root_size = root_size;
-    svlm_params.root_dim_x = dims.x;
-    svlm_params.root_dim_y = dims.y;
-    svlm_params.root_dim_z = dims.z;
-    svlm_params.root_count = root_count;
+    svlm_params.root_dim_x = f32(dims.x);
+    svlm_params.root_dim_y = f32(dims.y);
+    svlm_params.root_dim_z = f32(dims.z);
+    svlm_params.root_count = f32(root_count);
     svlm_params.scene_min_x = scene_min.x;
     svlm_params.scene_min_y = scene_min.y;
     svlm_params.scene_min_z = scene_min.z;

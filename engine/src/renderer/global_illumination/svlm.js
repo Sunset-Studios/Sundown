@@ -9,14 +9,14 @@ const LEAF_U32_STRIDE = 16;
 const LINE_FLOAT_STRIDE = 20;
 const LINES_PER_BOX = 12;
 const PARAM_WORD_COUNT = 28;
-const COUNTER_U32_COUNT = 64;
+const COUNTER_U32_COUNT = 56;
 const THREADS_PER_GROUP = 128;
 const PROBE_DEBUG_WORKGROUP_X = 8;
 const PROBE_DEBUG_WORKGROUP_Y = 8;
 
 // These offsets mirror the field order of SVLMParams in svlm_common.wgsl.
-// Keep every entry one 32-bit word wide so the Uint32/Float32/Int32 overlays
-// below can write a single storage buffer without packing glue code.
+// SVLMParams is stored as f32 slots; shaders cast fields back to integer types
+// at their use sites when a field represents a count, index, or enum.
 const PARAM_WORLD_MIN_X = 0;
 const PARAM_WORLD_MIN_Y = 1;
 const PARAM_WORLD_MIN_Z = 2;
@@ -51,19 +51,20 @@ const COUNTER_CURR_COUNT = 1;
 const COUNTER_NEXT_COUNT = 2;
 const COUNTER_LEAF_COUNT = 3;
 const COUNTER_PROBE_COUNT = 4;
-const COUNTER_DEBUG_LINE_COUNT = 5;
-const COUNTER_STATUS = 6;
-const COUNTER_MAX_LEVEL_REACHED = 7;
-const COUNTER_SPLIT_BASE = 12;
-const COUNTER_LEVEL_BASE = 28;
+const COUNTER_STATUS = 5;
+const COUNTER_MAX_LEVEL_REACHED = 6;
+const COUNTER_SPLIT_BASE = 8;
+const COUNTER_LEVEL_BASE = 24;
 
 const STATUS_NODE_OVERFLOW = 1 << 0;
 const STATUS_LEAF_OVERFLOW = 1 << 1;
 const STATUS_ROOT_OVERFLOW = 1 << 2;
 
-// The SVLM pipeline is split into small compute passes so each stage has one
-// clear ownership boundary: derive volume, seed roots, classify one frontier,
-// then publish the next frontier.
+const MAX_COMPUTE_WORKGROUPS = 65535;
+const MAX_STORAGE_BINDING_SIZE = 128 * 1024 * 1024;
+
+// The SVLM pipeline is split into small compute passes.
+// The general pipeline is: derive volume, seed roots, classify one frontier, then publish the next frontier.
 const svlm_begin_shader_setup = {
   pipeline_shaders: {
     compute: { path: "gi/svlm_begin.wgsl" },
@@ -143,17 +144,38 @@ export class SparseVolumetricLightmapper {
     debug_level: -1,
   };
 
+  stats = {
+    baked: false,
+    bake_serial: 0,
+    root_dims: [0, 0, 0],
+    root_brick_size: 0,
+    min_level: 0,
+    max_level: 0,
+    max_level_reached: 0,
+    node_count: 0,
+    leaf_count: 0,
+    probe_count: 0,
+    probes_per_leaf: PROBES_PER_BRICK,
+    per_level_counts: [],
+    split_counts: [],
+    world_min: [0, 0, 0],
+    world_max: [0, 0, 0],
+    scene_min: [0, 0, 0],
+    scene_max: [0, 0, 0],
+    node_bytes: 0,
+    leaf_bytes: 0,
+    total_bytes: 0,
+    debug_leaf_count: 0,
+    debug_level: -1,
+    truncated_by_node_limit: false,
+    truncated_by_leaf_limit: false,
+  };
+
   bake_serial = 0;
   bake_requested = false;
   bake_in_flight = false;
-  stats = null;
 
-  // WGSL reads the params buffer as SVLMParams, while JS needs to write mixed
-  // numeric types into the same 32-bit slots. Typed overlays keep that explicit.
-  params_buffer_data = new ArrayBuffer(PARAM_WORD_COUNT * Uint32Array.BYTES_PER_ELEMENT);
-  params_data = new Uint32Array(this.params_buffer_data);
-  params_f32_data = new Float32Array(this.params_buffer_data);
-  params_i32_data = new Int32Array(this.params_buffer_data);
+  params_data = new Float32Array(PARAM_WORD_COUNT);
   params_buffer = null;
 
   counters_data = new Uint32Array(COUNTER_U32_COUNT);
@@ -166,37 +188,25 @@ export class SparseVolumetricLightmapper {
   debug_line_buffer = null;
   debug_texture = null;
 
-  debug_line_count = 0;
   debug_lines_dirty = false;
-  auto_resize_passes = 0;
 
-  constructor(params = {}) {
-    this.config = { ...this.config, ...params };
-    this.config = this._clamp_budget_config(this.config);
-    this._write_param_data();
-    this._reset_stats();
+  get_stats() {
+    return this.stats;
   }
 
   bake(options = {}) {
-    if (!options._auto_resize) {
-      this.auto_resize_passes = 0;
-    }
     this.config = this._clamp_budget_config({ ...this.config, ...this._sanitize_options(options) });
     this.bake_serial += 1;
     this.bake_requested = true;
     this.bake_in_flight = false;
-    this.debug_line_count = 0;
-    this.debug_lines_dirty = true;
 
-    // Brick debug lines are a view artifact. Dropping them on rebake avoids
-    // carrying stale line records while the GPU rebuilds the hierarchy.
     this.counters_data.fill(0);
+
     this._write_param_data();
     this._write_param_buffer();
+
     this._reset_stats();
     this._release_debug_line_buffer();
-
-    this.stats.bake_pending = true;
 
     return this.stats;
   }
@@ -204,41 +214,17 @@ export class SparseVolumetricLightmapper {
   clear() {
     this.bake_requested = false;
     this.bake_in_flight = false;
-    this.debug_line_count = 0;
-    this.debug_lines_dirty = false;
     this.debug_texture = null;
 
-    this.counters_data.fill(0);
     this.params_data.fill(0);
     this._write_param_data();
     this._write_param_buffer();
+
+    this.counters_data.fill(0);
     this._write_counter_buffer();
+
     this._reset_stats();
     this._release_debug_line_buffer();
-  }
-
-  get_stats() {
-    this._refresh_stats_from_readback();
-    return this.stats;
-  }
-
-  is_baked() {
-    this._refresh_stats_from_readback();
-    return !!this.stats?.baked && this.stats.leaf_count > 0;
-  }
-
-  set_debug_options(options = {}) {
-    const sanitized = this._sanitize_debug_options(options);
-    if (Object.keys(sanitized).length === 0) {
-      return this.get_stats();
-    }
-
-    this.config = { ...this.config, ...sanitized };
-    this.debug_lines_dirty = true;
-    this._write_param_data();
-    this._write_param_buffer();
-    this._refresh_stats_from_readback();
-    return this.stats;
   }
 
   add_bake_passes(
@@ -253,11 +239,14 @@ export class SparseVolumetricLightmapper {
       force_recreate = false,
     }
   ) {
+    this._refresh_stats_from_readback();
+
     if (!this.bake_requested) return;
 
     const node_words = Math.max(1, this.config.max_nodes * NODE_U32_STRIDE);
     const queue_words = Math.max(1, this.config.max_nodes);
     const leaf_words = Math.max(1, this.config.max_leaf_bricks * LEAF_U32_STRIDE);
+    const max_dispatch_groups = ceil_div(this.config.max_nodes, THREADS_PER_GROUP);
 
     // Persistent build buffers. Sizes are budget-driven and may grow after a
     // readback reports overflow, but the bake itself remains fully GPU-driven.
@@ -307,8 +296,6 @@ export class SparseVolumetricLightmapper {
       force: force_recreate,
     });
 
-    this._write_param_buffer();
-
     const params = render_graph.register_buffer(this.params_buffer.config.name);
     const counters = render_graph.register_buffer(this.counter_buffer.config.name);
     const nodes = render_graph.register_buffer(this.node_buffer.config.name);
@@ -316,7 +303,7 @@ export class SparseVolumetricLightmapper {
     const curr_nodes_b = render_graph.register_buffer(this.next_node_buffer.config.name);
     const leaves = render_graph.register_buffer(this.leaf_brick_buffer.config.name);
 
-    const max_dispatch_groups = ceil_div(this.config.max_nodes, THREADS_PER_GROUP);
+    this._write_param_buffer();
 
     // Pass 0: reset counters and derive the actual root grid from the TLAS root.
     render_graph.add_pass(
@@ -401,9 +388,7 @@ export class SparseVolumetricLightmapper {
 
     this.bake_requested = false;
     this.bake_in_flight = true;
-    this.debug_line_count = 0;
     this.debug_lines_dirty = true;
-    this.stats.bake_pending = false;
     this.stats.baked = true;
   }
 
@@ -421,13 +406,22 @@ export class SparseVolumetricLightmapper {
       return;
     }
 
-    this._write_param_buffer();
 
     const debug_floats = Math.max(20, this.config.max_leaf_bricks * LINES_PER_BOX * LINE_FLOAT_STRIDE);
+    const debug_line_count = this.config.max_leaf_bricks * LINES_PER_BOX;
+    const max_debug_groups = ceil_div(this.config.max_leaf_bricks, THREADS_PER_GROUP);
     const needs_debug_line_update =
       this.debug_lines_dirty ||
       !this.debug_line_buffer ||
       this.debug_line_buffer.config.size < debug_floats * Float32Array.BYTES_PER_ELEMENT;
+
+    const line_data = render_graph.register_buffer(this.debug_line_buffer.config.name);
+    const params = render_graph.register_buffer(this.params_buffer.config.name);
+    const counters = render_graph.register_buffer(this.counter_buffer.config.name);
+    const leaves = render_graph.register_buffer(this.leaf_brick_buffer.config.name);
+
+    this._write_param_buffer();
+
     // Line data is only allocated when the brick debug view is drawn. The bake
     // data itself is independent of this transient visualization buffer.
     this.debug_line_buffer = Buffer.create({
@@ -435,13 +429,6 @@ export class SparseVolumetricLightmapper {
       size: debug_floats,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
     });
-    this.debug_line_count = this.config.max_leaf_bricks * LINES_PER_BOX;
-
-    const line_data = render_graph.register_buffer(this.debug_line_buffer.config.name);
-    const params = render_graph.register_buffer(this.params_buffer.config.name);
-    const counters = render_graph.register_buffer(this.counter_buffer.config.name);
-    const leaves = render_graph.register_buffer(this.leaf_brick_buffer.config.name);
-    const max_debug_groups = ceil_div(this.config.max_leaf_bricks, THREADS_PER_GROUP);
 
     if (needs_debug_line_update) {
       // Rebuild line records only when the hierarchy or debug level changes.
@@ -485,7 +472,7 @@ export class SparseVolumetricLightmapper {
       },
       (graph, frame_data) => {
         const pass = graph.get_physical_pass(frame_data.current_pass);
-        MeshTaskQueue.draw_quad(pass, this.debug_line_count);
+        MeshTaskQueue.draw_quad(pass, debug_line_count);
       }
     );
   }
@@ -504,21 +491,21 @@ export class SparseVolumetricLightmapper {
       return;
     }
 
-    const max_compute_workgroups = 65535;
-    const max_dispatch_leaf_count = max_compute_workgroups * max_compute_workgroups * PROBE_DEBUG_WORKGROUP_Y;
+    const max_dispatch_leaf_count = MAX_COMPUTE_WORKGROUPS * MAX_COMPUTE_WORKGROUPS * PROBE_DEBUG_WORKGROUP_Y;
     const source_leaf_count = Math.min(this.config.max_leaf_bricks, max_dispatch_leaf_count);
     if (source_leaf_count <= 0) {
       return;
     }
 
     const leaf_group_count = Math.ceil(source_leaf_count / PROBE_DEBUG_WORKGROUP_Y);
-    const leaf_page_groups_y = Math.max(1, Math.min(leaf_group_count, max_compute_workgroups));
+    const leaf_page_groups_y = Math.max(1, Math.min(leaf_group_count, MAX_COMPUTE_WORKGROUPS));
     const leaf_page_count_z = Math.ceil(leaf_group_count / leaf_page_groups_y);
     const gather_group_count = ceil_div(source_leaf_count, THREADS_PER_GROUP);
-    const gather_page_groups_x = Math.max(1, Math.min(gather_group_count, max_compute_workgroups));
+    const gather_page_groups_x = Math.max(1, Math.min(gather_group_count, MAX_COMPUTE_WORKGROUPS));
     const gather_remaining_groups = Math.ceil(gather_group_count / gather_page_groups_x);
-    const gather_page_groups_y = Math.max(1, Math.min(gather_remaining_groups, max_compute_workgroups));
+    const gather_page_groups_y = Math.max(1, Math.min(gather_remaining_groups, MAX_COMPUTE_WORKGROUPS));
     const gather_page_count_z = Math.ceil(gather_remaining_groups / gather_page_groups_y);
+
     // Probe debug scans and splats in paged 3D dispatches so large leaf budgets
     // never exceed maxComputeWorkgroupsPerDimension on a single axis.
     this.params_data[PARAM_DEBUG_LEAF_PAGE_GROUPS_Y] = leaf_page_groups_y;
@@ -526,14 +513,9 @@ export class SparseVolumetricLightmapper {
     this.params_data[PARAM_DEBUG_GATHER_PAGE_GROUPS_Y] = gather_page_groups_y;
     this._write_param_buffer();
 
-    this.debug_texture = render_graph.create_image({
-      name: "svlm_probe_debug",
-      format: "rgba16float",
-      width,
-      height,
-      usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
-      force: force_recreate,
-    });
+    const params = render_graph.register_buffer(this.params_buffer.config.name);
+    const counters = render_graph.register_buffer(this.counter_buffer.config.name);
+    const leaves = render_graph.register_buffer(this.leaf_brick_buffer.config.name);
 
     // One packed u32 per pixel stores closest probe depth plus compact shade and
     // level-color data before resolve composites probe spheres over scene color.
@@ -549,9 +531,14 @@ export class SparseVolumetricLightmapper {
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
     });
 
-    const params = render_graph.register_buffer(this.params_buffer.config.name);
-    const counters = render_graph.register_buffer(this.counter_buffer.config.name);
-    const leaves = render_graph.register_buffer(this.leaf_brick_buffer.config.name);
+    this.debug_texture = render_graph.create_image({
+      name: "svlm_probe_debug",
+      format: "rgba16float",
+      width,
+      height,
+      usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
+      force: force_recreate,
+    });
 
     render_graph.add_pass(
       "svlm_probe_debug_clear",
@@ -642,24 +629,22 @@ export class SparseVolumetricLightmapper {
       1,
       limits.max_leaf_bricks
     );
+    const max_nodes = clamp(
+      Math.floor(Number(config.max_nodes) || this.config.max_nodes),
+      9,
+      limits.max_nodes
+    );
     return {
       ...config,
-      max_nodes: clamp(
-        Math.floor(Number(config.max_nodes) || this.config.max_nodes),
-        9,
-        limits.max_nodes
-      ),
+      max_nodes,
       max_leaf_bricks,
     };
   }
 
   _get_budget_limits() {
-    const max_storage_binding_size = 128 * 1024 * 1024;
-    const max_buffer_bytes = Math.max(4, max_storage_binding_size);
-    const max_workgroups_x = 65535;
-
+    const max_buffer_bytes = Math.max(4, MAX_STORAGE_BINDING_SIZE);
     const max_nodes_by_storage = Math.floor(max_buffer_bytes / (NODE_U32_STRIDE * Uint32Array.BYTES_PER_ELEMENT));
-    const max_nodes_by_dispatch = max_workgroups_x * THREADS_PER_GROUP;
+    const max_nodes_by_dispatch = MAX_COMPUTE_WORKGROUPS * THREADS_PER_GROUP;
     const max_leaf_by_leaf_buffer = Math.floor(max_buffer_bytes / (LEAF_U32_STRIDE * Uint32Array.BYTES_PER_ELEMENT));
 
     return {
@@ -685,13 +670,13 @@ export class SparseVolumetricLightmapper {
     this.params_data[PARAM_MAX_NODES] = this.config.max_nodes;
     this.params_data[PARAM_MAX_LEAF_BRICKS] = this.config.max_leaf_bricks;
     this.params_data[PARAM_MIN_LEVEL] = this.config.min_level;
-    this.params_f32_data[PARAM_NEAR_FACTOR] = this.config.near_geometry_factor;
-    this.params_f32_data[PARAM_OCC_MIN] = this.config.occupancy_split_min;
-    this.params_f32_data[PARAM_OCC_MAX] = this.config.occupancy_split_max;
-    this.params_f32_data[PARAM_REQUESTED_ROOT_SIZE] = this.config.root_brick_size;
-    this.params_f32_data[PARAM_BAKE_PADDING] = this.config.bake_padding;
+    this.params_data[PARAM_NEAR_FACTOR] = this.config.near_geometry_factor;
+    this.params_data[PARAM_OCC_MIN] = this.config.occupancy_split_min;
+    this.params_data[PARAM_OCC_MAX] = this.config.occupancy_split_max;
+    this.params_data[PARAM_REQUESTED_ROOT_SIZE] = this.config.root_brick_size;
+    this.params_data[PARAM_BAKE_PADDING] = this.config.bake_padding;
     this.params_data[PARAM_BAKE_SERIAL] = this.bake_serial;
-    this.params_i32_data[PARAM_DEBUG_LEVEL] = this.config.debug_level;
+    this.params_data[PARAM_DEBUG_LEVEL] = this.config.debug_level;
     this.params_data[PARAM_DEBUG_LEAF_PAGE_GROUPS_Y] = 0;
     this.params_data[PARAM_DEBUG_GATHER_PAGE_GROUPS_X] = 0;
     this.params_data[PARAM_DEBUG_GATHER_PAGE_GROUPS_Y] = 0;
@@ -712,21 +697,21 @@ export class SparseVolumetricLightmapper {
   _refresh_stats_from_readback() {
     const node_count_raw = this.counters_data[COUNTER_NODE_COUNT] || 0;
     const leaf_count_raw = this.counters_data[COUNTER_LEAF_COUNT] || 0;
-    const debug_line_count = this.counters_data[COUNTER_DEBUG_LINE_COUNT] || 0;
+    const debug_line_count = (this.counters_data[COUNTER_LEAF_COUNT] || 0) * LINES_PER_BOX;
     const node_count = Math.min(node_count_raw, this.config.max_nodes);
     const leaf_count = Math.min(leaf_count_raw, this.config.max_leaf_bricks);
     const probe_count = Math.min(this.counters_data[COUNTER_PROBE_COUNT] || 0, this.config.max_leaf_bricks * PROBES_PER_BRICK);
     const status = this.counters_data[COUNTER_STATUS] || 0;
     const root_dims = [
-      this.params_data[PARAM_ROOT_DIM_X] || 0,
-      this.params_data[PARAM_ROOT_DIM_Y] || 0,
-      this.params_data[PARAM_ROOT_DIM_Z] || 0,
+      Math.floor(this.params_data[PARAM_ROOT_DIM_X] || 0),
+      Math.floor(this.params_data[PARAM_ROOT_DIM_Y] || 0),
+      Math.floor(this.params_data[PARAM_ROOT_DIM_Z] || 0),
     ];
-    const root_brick_size = this.params_f32_data[PARAM_ROOT_SIZE] || 0;
+    const root_brick_size = this.params_data[PARAM_ROOT_SIZE] || 0;
     const world_min = [
-      this.params_f32_data[PARAM_WORLD_MIN_X] || 0,
-      this.params_f32_data[PARAM_WORLD_MIN_Y] || 0,
-      this.params_f32_data[PARAM_WORLD_MIN_Z] || 0,
+      this.params_data[PARAM_WORLD_MIN_X] || 0,
+      this.params_data[PARAM_WORLD_MIN_Y] || 0,
+      this.params_data[PARAM_WORLD_MIN_Z] || 0,
     ];
     const world_max = [
       world_min[0] + root_dims[0] * root_brick_size,
@@ -734,14 +719,14 @@ export class SparseVolumetricLightmapper {
       world_min[2] + root_dims[2] * root_brick_size,
     ];
     const scene_min = [
-      this.params_f32_data[PARAM_SCENE_MIN_X] || 0,
-      this.params_f32_data[PARAM_SCENE_MIN_Y] || 0,
-      this.params_f32_data[PARAM_SCENE_MIN_Z] || 0,
+      this.params_data[PARAM_SCENE_MIN_X] || 0,
+      this.params_data[PARAM_SCENE_MIN_Y] || 0,
+      this.params_data[PARAM_SCENE_MIN_Z] || 0,
     ];
     const scene_max = [
-      this.params_f32_data[PARAM_SCENE_MAX_X] || 0,
-      this.params_f32_data[PARAM_SCENE_MAX_Y] || 0,
-      this.params_f32_data[PARAM_SCENE_MAX_Z] || 0,
+      this.params_data[PARAM_SCENE_MAX_X] || 0,
+      this.params_data[PARAM_SCENE_MAX_Y] || 0,
+      this.params_data[PARAM_SCENE_MAX_Z] || 0,
     ];
     const per_level_counts = [];
     const split_counts = [];
@@ -754,39 +739,32 @@ export class SparseVolumetricLightmapper {
 
     const node_bytes = node_count * NODE_U32_STRIDE * Uint32Array.BYTES_PER_ELEMENT;
     const leaf_bytes = leaf_count * LEAF_U32_STRIDE * Uint32Array.BYTES_PER_ELEMENT;
-    const debug_line_bytes = debug_line_count * LINE_FLOAT_STRIDE * Float32Array.BYTES_PER_ELEMENT;
 
-    this.stats = {
-      baked: this.bake_in_flight || leaf_count > 0,
-      bake_pending: this.bake_requested,
-      bake_serial: this.bake_serial,
-      root_dims,
-      root_brick_size,
-      min_level: this.config.min_level,
-      max_level: this.config.max_level,
-      max_level_reached: this.counters_data[COUNTER_MAX_LEVEL_REACHED] || 0,
-      node_count,
-      leaf_count,
-      probe_count,
-      probes_per_leaf: PROBES_PER_BRICK,
-      per_level_counts,
-      split_counts,
-      world_min,
-      world_max,
-      scene_min,
-      scene_max,
-      node_bytes,
-      leaf_bytes,
-      probe_position_bytes: 0,
-      debug_line_bytes,
-      total_bytes: node_bytes + leaf_bytes + debug_line_bytes,
-      debug_leaf_count: Math.min(leaf_count, this.config.max_leaf_bricks),
-      debug_level: this.config.debug_level,
-      debug_line_count,
-      truncated_by_node_limit: (status & (STATUS_NODE_OVERFLOW | STATUS_ROOT_OVERFLOW)) !== 0,
-      truncated_by_leaf_limit: (status & STATUS_LEAF_OVERFLOW) !== 0,
-      config: { ...this.config },
-    };
+    this.stats.baked = this.bake_in_flight || leaf_count > 0;
+    this.stats.bake_serial = this.bake_serial;
+    this.stats.root_dims = root_dims;
+    this.stats.root_brick_size = root_brick_size;
+    this.stats.min_level = this.config.min_level;
+    this.stats.max_level = this.config.max_level;
+    this.stats.max_level_reached = this.counters_data[COUNTER_MAX_LEVEL_REACHED] || 0;
+    this.stats.node_count = node_count;
+    this.stats.leaf_count = leaf_count;
+    this.stats.probe_count = probe_count;
+    this.stats.probes_per_leaf = PROBES_PER_BRICK;
+    this.stats.per_level_counts = per_level_counts;
+    this.stats.split_counts = split_counts;
+    this.stats.world_min = world_min;
+    this.stats.world_max = world_max;
+    this.stats.scene_min = scene_min;
+    this.stats.scene_max = scene_max;
+    this.stats.node_bytes = node_bytes;
+    this.stats.leaf_bytes = leaf_bytes;
+    this.stats.total_bytes = node_bytes + leaf_bytes;
+    this.stats.debug_leaf_count = Math.min(leaf_count, this.config.max_leaf_bricks);
+    this.stats.debug_level = this.config.debug_level;
+    this.stats.truncated_by_node_limit = (status & (STATUS_NODE_OVERFLOW | STATUS_ROOT_OVERFLOW)) !== 0;
+    this.stats.truncated_by_leaf_limit = (status & STATUS_LEAF_OVERFLOW) !== 0;
+    this.stats.config = { ...this.config };
 
     this._maybe_queue_auto_resize_rebake({
       node_count_raw,
@@ -832,7 +810,6 @@ export class SparseVolumetricLightmapper {
       return false;
     }
 
-    this.auto_resize_passes += 1;
     this.bake({
       max_nodes: next_nodes,
       max_leaf_bricks: next_leaf_bricks,
@@ -845,42 +822,35 @@ export class SparseVolumetricLightmapper {
     if (!this.debug_line_buffer) {
       return;
     }
-
     this.debug_line_buffer.destroy();
     this.debug_line_buffer = null;
   }
 
   _reset_stats() {
-    this.stats = {
-      baked: false,
-      bake_pending: this.bake_requested,
-      bake_serial: this.bake_serial,
-      root_dims: [0, 0, 0],
-      root_brick_size: 0,
-      min_level: this.config.min_level,
-      max_level: this.config.max_level,
-      max_level_reached: 0,
-      node_count: 0,
-      leaf_count: 0,
-      probe_count: 0,
-      probes_per_leaf: PROBES_PER_BRICK,
-      per_level_counts: [],
-      split_counts: [],
-      world_min: [0, 0, 0],
-      world_max: [0, 0, 0],
-      scene_min: [0, 0, 0],
-      scene_max: [0, 0, 0],
-      node_bytes: 0,
-      leaf_bytes: 0,
-      probe_position_bytes: 0,
-      debug_line_bytes: 0,
-      total_bytes: 0,
-      debug_leaf_count: 0,
-      debug_level: this.config.debug_level,
-      debug_line_count: 0,
-      truncated_by_node_limit: false,
-      truncated_by_leaf_limit: false,
-      config: { ...this.config },
-    };
+    this.stats.baked = false;
+    this.stats.bake_serial = this.bake_serial;
+    this.stats.root_dims = [0, 0, 0];
+    this.stats.root_brick_size = 0;
+    this.stats.min_level = this.config.min_level;
+    this.stats.max_level = this.config.max_level;
+    this.stats.max_level_reached = 0;
+    this.stats.node_count = 0;
+    this.stats.leaf_count = 0;
+    this.stats.probe_count = 0;
+    this.stats.probes_per_leaf = PROBES_PER_BRICK;
+    this.stats.per_level_counts = [];
+    this.stats.split_counts = [];
+    this.stats.world_min = [0, 0, 0];
+    this.stats.world_max = [0, 0, 0];
+    this.stats.scene_min = [0, 0, 0];
+    this.stats.scene_max = [0, 0, 0];
+    this.stats.node_bytes = 0;
+    this.stats.leaf_bytes = 0;
+    this.stats.total_bytes = 0;
+    this.stats.debug_leaf_count = 0;
+    this.stats.debug_level = this.config.debug_level;
+    this.stats.truncated_by_node_limit = false;
+    this.stats.truncated_by_leaf_limit = false;
+    this.stats.config = { ...this.config };
   }
 }

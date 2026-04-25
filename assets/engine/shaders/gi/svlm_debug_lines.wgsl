@@ -82,17 +82,13 @@ fn svlm_write_line(line_index: u32, start: vec3<f32>, end: vec3<f32>, color: vec
 @compute @workgroup_size(128, 1, 1)
 fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let leaf_slot = gid.x;
-    if (leaf_slot >= svlm_params.max_leaf_bricks) {
+    let max_leaf_bricks = u32(max(svlm_params.max_leaf_bricks, 0.0));
+    if (leaf_slot >= max_leaf_bricks) {
         return;
     }
 
     let leaf_count = min(atomicLoad(&svlm_counters.leaf_count), arrayLength(&leaf_bricks));
-    let debug_leaf_count = min(leaf_count, svlm_params.max_leaf_bricks);
-    if (leaf_slot == 0u) {
-        // The graphics pass draws a fixed line count from this counter. Filtered
-        // or unused leaf slots are explicitly cleared below so stale lines vanish.
-        atomicStore(&svlm_counters.debug_line_count, debug_leaf_count * 12u);
-    }
+    let debug_leaf_count = min(leaf_count, max_leaf_bricks);
 
     let line_base = leaf_slot * 12u;
     if (leaf_slot >= debug_leaf_count) {
@@ -105,7 +101,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let leaf_index = svlm_debug_source_leaf_index(leaf_slot, leaf_count, debug_leaf_count);
     let leaf = leaf_bricks[leaf_index];
     let level = leaf.level;
-    let debug_level = svlm_params.debug_level;
+    let debug_level = i32(svlm_params.debug_level);
     let filter_enabled = debug_level >= 0;
     let selected_level = u32(debug_level);
     if (filter_enabled && level != selected_level) {

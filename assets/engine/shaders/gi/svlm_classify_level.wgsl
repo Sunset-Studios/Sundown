@@ -305,8 +305,8 @@ fn svlm_query_brick_stats(brick: AABB, level: u32) -> SVLMBrickStats {
 }
 
 fn svlm_should_split(level: u32, stats: SVLMBrickStats) -> bool {
-    let min_level = svlm_params.min_level;
-    let max_level = svlm_params.max_level;
+    let min_level = u32(max(svlm_params.min_level, 0.0));
+    let max_level = u32(max(svlm_params.max_level, 0.0));
     if (level >= max_level) {
         return false;
     }
@@ -340,7 +340,7 @@ fn svlm_should_split(level: u32, stats: SVLMBrickStats) -> bool {
 }
 
 fn svlm_emit_leaf(node_index: u32, level: u32, coord: vec3<u32>, flags: u32, score: f32) {
-    let max_leaf_bricks = svlm_params.max_leaf_bricks;
+    let max_leaf_bricks = u32(max(svlm_params.max_leaf_bricks, 0.0));
     let leaf_index = atomicAdd(&svlm_counters.leaf_count, 1u);
     if (leaf_index >= max_leaf_bricks) {
         atomicOr(&svlm_counters.status, SVLM_STATUS_LEAF_OVERFLOW);
@@ -379,7 +379,7 @@ fn svlm_emit_leaf(node_index: u32, level: u32, coord: vec3<u32>, flags: u32, sco
 
 fn svlm_emit_children(node_index: u32, level: u32, coord: vec3<u32>, flags: u32, score: f32) {
     let child_base = atomicAdd(&svlm_counters.node_count, 8u);
-    if (child_base + 7u >= svlm_params.max_nodes) {
+    if (child_base + 7u >= u32(max(svlm_params.max_nodes, 0.0))) {
         atomicOr(&svlm_counters.status, SVLM_STATUS_NODE_OVERFLOW);
         // Preserve coverage when the pool is exhausted. The stats readback will
         // request a larger allocation and rebake, but this frame still has a

@@ -38,13 +38,9 @@ struct SVLMCounters {
     next_count: atomic<u32>,
     leaf_count: atomic<u32>,
     probe_count: atomic<u32>,
-    debug_line_count: atomic<u32>,
     status: atomic<u32>,
     max_level_reached: atomic<u32>,
     current_level: atomic<u32>,
-    reserved_11: atomic<u32>,
-    reserved_12: atomic<u32>,
-    reserved_13: atomic<u32>,
     split_counts: array<atomic<u32>, 16>,
     level_counts: array<atomic<u32>, 16>,
     reserved_tail: array<atomic<u32>, 16>,
@@ -111,22 +107,22 @@ struct SVLMBrickStats {
 };
 
 // Keep this field order in lockstep with the JS parameter word offsets in
-// SparseVolumetricLightmapper. The buffer is written as 32-bit words and read
-// here as a WGSL struct, so each field is exactly one 32-bit slot.
+// SparseVolumetricLightmapper. The buffer is written as f32 slots; fields that
+// represent integer values are cast at runtime where they are used.
 struct SVLMParams {
     world_min_x: f32,
     world_min_y: f32,
     world_min_z: f32,
     root_size: f32,
 
-    root_dim_x: u32,
-    root_dim_y: u32,
-    root_dim_z: u32,
-    max_level: u32,
+    root_dim_x: f32,
+    root_dim_y: f32,
+    root_dim_z: f32,
+    max_level: f32,
 
-    max_nodes: u32,
-    max_leaf_bricks: u32,
-    min_level: u32,
+    max_nodes: f32,
+    max_leaf_bricks: f32,
+    min_level: f32,
     near_factor: f32,
 
     occupancy_split_min: f32,
@@ -134,8 +130,8 @@ struct SVLMParams {
     requested_root_size: f32,
     bake_padding: f32,
 
-    bake_serial: u32,
-    root_count: u32,
+    bake_serial: f32,
+    root_count: f32,
     scene_min_x: f32,
     scene_min_y: f32,
 
@@ -144,10 +140,10 @@ struct SVLMParams {
     scene_max_y: f32,
     scene_max_z: f32,
 
-    debug_level: i32,
-    debug_leaf_page_groups_y: u32,
-    debug_gather_page_groups_x: u32,
-    debug_gather_page_groups_y: u32,
+    debug_level: f32,
+    debug_leaf_page_groups_y: f32,
+    debug_gather_page_groups_x: f32,
+    debug_gather_page_groups_y: f32,
 };
 
 struct SVLMBlasStats {
@@ -160,7 +156,11 @@ struct SVLMBlasStats {
 };
 
 fn svlm_root_dims(params: ptr<storage, SVLMParams, read_write>) -> vec3<u32> {
-    return vec3<u32>((*params).root_dim_x, (*params).root_dim_y, (*params).root_dim_z);
+    return vec3<u32>(
+        u32(max((*params).root_dim_x, 0.0)),
+        u32(max((*params).root_dim_y, 0.0)),
+        u32(max((*params).root_dim_z, 0.0))
+    );
 }
 
 // Morton keys give us a stable spatial identity for each brick without needing
