@@ -1,9 +1,20 @@
 import { TrainingQueue } from "./layers/input.js";
 import { Layer } from "./layer.js";
 import { MLOps } from "./ops/ops.js";
+import { MLHopType } from "./ops/op_types.js";
 import { NeuralArchitectureHelpers } from "./neural_architecture.js";
+import { RandomAccessAllocator } from "../memory/allocator.js";
 
 const function_name = "function";
+
+class Subnet {
+  id = null;
+  subnet_id = null;
+  train_step = null;
+  infer = null;
+  training_queue = null;
+  cached_output = null;
+}
 
 /**
  * The MasterMind is an orchestrator that runs a continuous training loop in real time,
@@ -31,7 +42,6 @@ const function_name = "function";
  *    - Snapshotting of model states or real-time logging.
  */
 export class MasterMind {
-  static next_subnet_id = 0;
   static all_masterminds = [];
 
   /**
@@ -45,10 +55,11 @@ export class MasterMind {
     this.weight_sharing_interval = options.weight_sharing_interval || 1000; // in milliseconds
     this.weight_sharing_time_elapsed = 0.0;
     this.mini_batch_size = options.mini_batch_size || 1;
-    this.subnets = {}; // subnet registry keyed by subnet ID.
+    this.subnets = new RandomAccessAllocator(256, Subnet); // subnet registry keyed by subnet ID.
     this.active_subnet = null; // ID of the subnet to receive training frames.
     this.paused = false;
     this.store = MLOps.new_op_store();
+    this.store.register_observer(this);
 
     MasterMind.all_masterminds.push(this);
   }
@@ -57,7 +68,98 @@ export class MasterMind {
    * Destroys the MasterMind instance.
    */
   destroy() {
+    this.store.unregister_observer(this);
     MasterMind.all_masterminds = MasterMind.all_masterminds.filter((m) => m !== this);
+  }
+
+  on_ops_changed(store, op) {
+    if (store !== this.store) return;
+
+    switch (op.type) {
+      case MLHopType.ADD_INPUT:
+      case MLHopType.ADD_LAYER:
+      case MLHopType.ADD_ACTIVATION:
+      case MLHopType.ADD_LOSS:
+      case MLHopType.CONNECT_LAYER:
+      case MLHopType.DISCONNECT_LAYER:
+      case MLHopType.DISCONNECT_LAYER_FROM_ALL:
+      case MLHopType.RESET_MODEL:
+        this.sync_registered_subnets();
+        break;
+    }
+  }
+
+  sync_registered_subnets() {
+    const store_layer_ids = this.get_store_layer_ids();
+    const root_ids = new Set(Layer.get_all_roots().filter((root_id) => store_layer_ids.has(root_id)));
+    const active_subnet_entry = this.get_subnet(this.active_subnet);
+    const active_subnet_root = active_subnet_entry?.subnet_id ?? null;
+
+    for (const root_id of root_ids) {
+      if (this.get_registered_subnet_id(root_id) === null) {
+        this.register_subnet(root_id);
+      }
+    }
+
+    for (let i = this.subnets.length - 1; i >= 0; i--) {
+      const subnet = this.subnets.get(i);
+      if (!root_ids.has(subnet.subnet_id) || !Layer.get(subnet.subnet_id)) {
+        this.subnets.deallocate_at(i);
+
+        if (this.active_subnet === subnet.id) {
+          this.active_subnet = null;
+        }
+      }
+    }
+
+    this.refresh_subnet_ids();
+
+    if (active_subnet_root !== null) {
+      this.active_subnet = this.get_registered_subnet_id(active_subnet_root);
+    }
+
+    if (this.active_subnet === null) {
+      if (this.subnets.length > 0) {
+        this.active_subnet = 0;
+      }
+    }
+  }
+
+  get_store_layer_ids() {
+    const layer_ids = new Set();
+
+    for (let i = 0; i < this.store.hops.length; i++) {
+      const hop = this.store.hops.get(i);
+      switch (hop.type) {
+        case MLHopType.ADD_INPUT:
+        case MLHopType.ADD_LAYER:
+        case MLHopType.ADD_ACTIVATION:
+        case MLHopType.ADD_LOSS:
+          if (Layer.get(hop.result)) {
+            layer_ids.add(hop.result);
+          }
+          break;
+      }
+    }
+
+    return layer_ids;
+  }
+
+  get_registered_subnet_id(subnet_id) {
+    for (let i = 0; i < this.subnets.length; i++) {
+      const subnet = this.subnets.get(i);
+      if (subnet.subnet_id === subnet_id) {
+        return subnet.id;
+      }
+    }
+
+    return null;
+  }
+
+  refresh_subnet_ids() {
+    for (let i = 0; i < this.subnets.length; i++) {
+      this.subnets.get(i).id = i;
+    }
   }
 
   /**
@@ -71,6 +173,11 @@ export class MasterMind {
    * @returns {string} The registered model ID.
    */
   register_subnet(subnet_id, train_step_callback, infer_callback) {
+    const existing_subnet_id = this.get_registered_subnet_id(subnet_id);
+    if (existing_subnet_id !== null) {
+      return existing_subnet_id;
+    }
+
     // If no training callback is provided but the model object supports .train(),
     // wrap it so that it can be called with a batch.
     if (!train_step_callback) {
@@ -87,19 +194,17 @@ export class MasterMind {
       };
     }
 
-    const registered_subnet_id = MasterMind.next_subnet_id++;
-
-    this.subnets[registered_subnet_id] = {
-      id: registered_subnet_id,
-      subnet_id: subnet_id,
-      train_step: train_step_callback,
-      infer: infer_callback,
-      training_queue: new TrainingQueue(8),
-      // Additional properties (e.g., for performance metrics) may be added here.
-    };
+    const subnet = this.subnets.allocate();
+    const registered_subnet_id = this.subnets.length - 1;
+    subnet.id = registered_subnet_id;
+    subnet.subnet_id = subnet_id;
+    subnet.train_step = train_step_callback;
+    subnet.infer = infer_callback;
+    subnet.training_queue = new TrainingQueue(8);
+    subnet.cached_output = null;
 
     // If this is the first model registered, set it as the active training model.
-    if (!this.active_subnet) {
+    if (this.active_subnet === null) {
       this.active_subnet = registered_subnet_id;
     }
 
@@ -112,7 +217,7 @@ export class MasterMind {
    * @returns {boolean} True if successfully activated, false otherwise.
    */
   set_active_subnet(subnet_id) {
-    if (this.subnets[subnet_id]) {
+    if (this.get_subnet(subnet_id)) {
       this.active_subnet = subnet_id;
       return true;
     }
@@ -125,7 +230,11 @@ export class MasterMind {
    * @returns {Object} The model object.
    */
   get_subnet(subnet_id) {
-    return this.subnets[subnet_id];
+    if (subnet_id === null || subnet_id < 0 || subnet_id >= this.subnets.length) {
+      return null;
+    }
+
+    return this.subnets.get(subnet_id);
   }
 
   /**
@@ -144,13 +253,11 @@ export class MasterMind {
     }
 
     // Update all models with their current batch in a round-robin manner.
-    const subnet_ids = Object.keys(this.subnets);
-    for (let i = 0; i < subnet_ids.length; i++) {
-      const subnet_id = subnet_ids[i];
-      let subnet_entry = this.subnets[subnet_id];
+    for (let i = 0; i < this.subnets.length; i++) {
+      let subnet_entry = this.subnets.get(i);
 
       if (
-        typeof subnet_entry.train_step === function_name
+        subnet_entry && typeof subnet_entry.train_step === function_name
       ) {
         const { input, target } = subnet_entry.training_queue.next(this.mini_batch_size);
         subnet_entry.train_step(delta_time, input, target);
@@ -165,7 +272,13 @@ export class MasterMind {
       this.weight_sharing_time_elapsed >= this.weight_sharing_interval
     ) {
       // For weight sharing, we consider only models that have a non-null cached_output.
-      const candidate_subnets = Object.values(this.subnets).filter((s) => s.subnet.cached_output);
+      const candidate_subnets = [];
+      for (let i = 0; i < this.subnets.length; i++) {
+        const subnet = this.subnets.get(i);
+        if (subnet.cached_output) {
+          candidate_subnets.push(subnet);
+        }
+      }
 
       if (candidate_subnets.length >= 2) {
         // Select donor and receiver randomly (ensuring they are distinct).
@@ -180,8 +293,8 @@ export class MasterMind {
         // Leak donor's cached output into receiver as new training data.
         // Here we assume that the donor's output can serve as both input and target.
         receiver.training_queue.push({
-          input: donor.model.cached_output,
-          target: donor.model.cached_output,
+          input: donor.cached_output,
+          target: donor.cached_output,
         });
       }
 
@@ -200,7 +313,7 @@ export class MasterMind {
    * @returns {void}
    */
   add_training_batch(subnet_id, input_tensor, target_tensor) {
-    const subnet_entry = this.subnets[subnet_id];
+    const subnet_entry = this.get_subnet(subnet_id);
     if (!subnet_entry) {
       throw new Error(`Subnet "${subnet_id}" is not registered.`);
     }
@@ -217,10 +330,10 @@ export class MasterMind {
    */
   infer(input_data, subnet_id = null) {
     // Use the active model if none is explicitly provided.
-    if (!subnet_id) {
+    if (subnet_id === null) {
       subnet_id = this.active_subnet;
     }
-    const subnet_entry = this.subnets[subnet_id];
+    const subnet_entry = this.get_subnet(subnet_id);
     if (!subnet_entry || typeof subnet_entry.infer !== function_name) {
       throw new Error(`Subnet "${subnet_id}" is not registered or does not support inference.`);
     }
@@ -235,7 +348,7 @@ export class MasterMind {
    * @returns {void}
    */
   train_subnet_step(subnet_id, delta_time) {
-    const subnet_entry = this.subnets[subnet_id];
+    const subnet_entry = this.get_subnet(subnet_id);
     if (!subnet_entry) {
       throw new Error(`Subnet "${subnet_id}" is not registered.`);
     }
@@ -266,7 +379,10 @@ export class MasterMind {
    * @returns {Object[]} An array of model stats.
    */
   get_subnet_stats() {
-    return Object.values(this.subnets).map((s) => {
+    const subnet_stats = [];
+
+    for (let subnet_index = 0; subnet_index < this.subnets.length; subnet_index++) {
+      const s = this.subnets.get(subnet_index);
       const context = Layer.get_effective_context(s.subnet_id);
       const name = context.name;
       const last_layer_ids = Layer.get_last_layer(s.subnet_id);
@@ -280,11 +396,13 @@ export class MasterMind {
         });
       }
 
-      return {
+      subnet_stats.push({
         name: name,
         stats: stats,
-      };
-    });
+      });
+    }
+
+    return subnet_stats;
   }
 
   /**
