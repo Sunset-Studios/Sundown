@@ -170,7 +170,7 @@ export class MasterMind {
    * @param {number} [mini_batch_size=1] - The size of the mini-batch to use for training.
    * @param {function} [train_step_callback] - A training function. Depending on the model,
    * @param {function} [infer_callback] - A function(inputData) that returns inference results.
-   * @returns {string} The registered model ID.
+   * @returns {number} The registered model ID.
    */
   register_subnet(subnet_id, train_step_callback, infer_callback) {
     const existing_subnet_id = this.get_registered_subnet_id(subnet_id);
