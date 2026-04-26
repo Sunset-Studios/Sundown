@@ -141,6 +141,9 @@ export class SparseVolumetricLightmapper {
     max_nodes: 131072,
     max_leaf_bricks: 32768,
     auto_resize_growth: 2.0,
+  };
+
+  debug_config = {
     debug_level: -1,
   };
 
@@ -196,6 +199,7 @@ export class SparseVolumetricLightmapper {
 
   bake(options = {}) {
     this.config = this._clamp_budget_config({ ...this.config, ...this._sanitize_options(options) });
+    this.debug_config = this._sanitize_debug_options(options);
     this.bake_serial += 1;
     this.bake_requested = true;
     this.bake_in_flight = false;
@@ -618,7 +622,6 @@ export class SparseVolumetricLightmapper {
     if (options.max_nodes !== undefined) {
       out.max_nodes = Math.max(9, Math.floor(Number(options.max_nodes)));
     }
-    Object.assign(out, this._sanitize_debug_options(options));
     return out;
   }
 
@@ -676,7 +679,7 @@ export class SparseVolumetricLightmapper {
     this.params_data[PARAM_REQUESTED_ROOT_SIZE] = this.config.root_brick_size;
     this.params_data[PARAM_BAKE_PADDING] = this.config.bake_padding;
     this.params_data[PARAM_BAKE_SERIAL] = this.bake_serial;
-    this.params_data[PARAM_DEBUG_LEVEL] = this.config.debug_level;
+    this.params_data[PARAM_DEBUG_LEVEL] = this.debug_config.debug_level;
     this.params_data[PARAM_DEBUG_LEAF_PAGE_GROUPS_Y] = 0;
     this.params_data[PARAM_DEBUG_GATHER_PAGE_GROUPS_X] = 0;
     this.params_data[PARAM_DEBUG_GATHER_PAGE_GROUPS_Y] = 0;
@@ -695,11 +698,8 @@ export class SparseVolumetricLightmapper {
   }
 
   _refresh_stats_from_readback() {
-    const node_count_raw = this.counters_data[COUNTER_NODE_COUNT] || 0;
-    const leaf_count_raw = this.counters_data[COUNTER_LEAF_COUNT] || 0;
-    const debug_line_count = (this.counters_data[COUNTER_LEAF_COUNT] || 0) * LINES_PER_BOX;
-    const node_count = Math.min(node_count_raw, this.config.max_nodes);
-    const leaf_count = Math.min(leaf_count_raw, this.config.max_leaf_bricks);
+    const node_count = this.counters_data[COUNTER_NODE_COUNT] || 0;
+    const leaf_count = this.counters_data[COUNTER_LEAF_COUNT] || 0;
     const probe_count = Math.min(this.counters_data[COUNTER_PROBE_COUNT] || 0, this.config.max_leaf_bricks * PROBES_PER_BRICK);
     const status = this.counters_data[COUNTER_STATUS] || 0;
     const root_dims = [
@@ -761,19 +761,19 @@ export class SparseVolumetricLightmapper {
     this.stats.leaf_bytes = leaf_bytes;
     this.stats.total_bytes = node_bytes + leaf_bytes;
     this.stats.debug_leaf_count = Math.min(leaf_count, this.config.max_leaf_bricks);
-    this.stats.debug_level = this.config.debug_level;
+    this.stats.debug_level = this.debug_config.debug_level;
     this.stats.truncated_by_node_limit = (status & (STATUS_NODE_OVERFLOW | STATUS_ROOT_OVERFLOW)) !== 0;
     this.stats.truncated_by_leaf_limit = (status & STATUS_LEAF_OVERFLOW) !== 0;
     this.stats.config = { ...this.config };
 
     this._maybe_queue_auto_resize_rebake({
-      node_count_raw,
-      leaf_count_raw,
+      node_count,
+      leaf_count,
       status,
     });
   }
 
-  _maybe_queue_auto_resize_rebake({ node_count_raw, leaf_count_raw, status }) {
+  _maybe_queue_auto_resize_rebake({ node_count, leaf_count, status }) {
     if (this.bake_requested || !this.bake_in_flight) {
       return false;
     }
@@ -793,12 +793,12 @@ export class SparseVolumetricLightmapper {
     let next_leaf_bricks = this.config.max_leaf_bricks;
 
     if (node_overflow) {
-      const required_nodes = Math.max(node_count_raw + 8, Math.ceil(this.config.max_nodes * growth));
+      const required_nodes = Math.max(node_count + 8, Math.ceil(this.config.max_nodes * growth));
       next_nodes = Math.min(limits.max_nodes, npot(required_nodes));
     }
 
     if (leaf_overflow) {
-      const required_leaves = Math.max(leaf_count_raw + 1, Math.ceil(this.config.max_leaf_bricks * growth));
+      const required_leaves = Math.max(leaf_count + 1, Math.ceil(this.config.max_leaf_bricks * growth));
       next_leaf_bricks = Math.min(limits.max_leaf_bricks, npot(required_leaves));
     }
 
@@ -848,7 +848,7 @@ export class SparseVolumetricLightmapper {
     this.stats.leaf_bytes = 0;
     this.stats.total_bytes = 0;
     this.stats.debug_leaf_count = 0;
-    this.stats.debug_level = this.config.debug_level;
+    this.stats.debug_level = this.debug_config.debug_level;
     this.stats.truncated_by_node_limit = false;
     this.stats.truncated_by_leaf_limit = false;
     this.stats.config = { ...this.config };
