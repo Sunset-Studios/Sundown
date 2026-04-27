@@ -273,6 +273,17 @@ export class Sector {
   }
 
   /**
+   * Retrieves the entity handle for a row index, such as one returned by GPU
+   * picking buffers.
+   * @param {number} row - The ECS row index
+   * @returns {EntityHandle} The entity handle
+   */
+  get_entity_from_row(row) {
+    const entity_id = this.alloc.get_base_entity_id(row);
+    return entity_id !== undefined ? this.get_entity_from_id(entity_id) : null;
+  }
+
+  /**
    * Retrieves the chunk and slot for a given entity ID.
    * @param {number} id - The entity ID
    * @returns {Object} The chunk and slot

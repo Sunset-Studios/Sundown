@@ -12,11 +12,17 @@ const EPSILON = 0.0001;
 const bounds_name = "bounds";
 const transforms_name = "transforms";
 
+export const RayHitMode = {
+  BLAS: 0,
+  TLAS: 1,
+};
+
 export class Ray {
   constructor(origin, direction, t_min = 0.0, t_max = Infinity, user_data = 0) {
     this.t_min = t_min;
     this.t_max = t_max;
     this.user_data = user_data;
+    this.hit_mode = RayHitMode.BLAS;
     this.index = 0;
     this.setup(origin, direction);
   }
@@ -110,10 +116,11 @@ export class BVHRaycast {
    * @param {Ray} ray - The ray instance to test against the scene BVH.
    * @returns {number} Index into the results array for this ray.
    */
-  static request_ray() {
+  static request_ray(hit_mode = RayHitMode.BLAS) {
     const ray_index = this.pending_rays.length;
     const ray = this.pending_rays.allocate();
     ray.index = ray_index;
+    ray.hit_mode = hit_mode;
     return ray;
   }
 
@@ -153,11 +160,11 @@ export class BVHRaycast {
       this.ray_data[off + 6] = r.direction[2];
       this.ray_data[off + 7] = r.t_max ?? Infinity;
 
-      // inv_direction.xyz | unused/padding
+      // inv_direction.xyz | hit mode
       this.ray_data[off + 8] = r.inv_direction[0];
       this.ray_data[off + 9] = r.inv_direction[1];
       this.ray_data[off + 10] = r.inv_direction[2];
-      this.ray_data[off + 11] = 0.0;
+      this.ray_data[off + 11] = r.hit_mode ?? RayHitMode.BLAS;
     }
     this.rays_buffer.write_raw(this.ray_data);
 

@@ -103,6 +103,15 @@ export class EntityManager {
   }
 
   /**
+   * Retrieves the entity handle for a row index, such as one returned by GPU picking buffers.
+   * @param {number} row - The ECS row index
+   * @returns {EntityHandle} The entity handle
+   */
+  static get_entity_from_row(row) {
+    return this.sector.get_entity_from_row(row);
+  }
+
+  /**
    * Retrieves the chunk and slot for a given entity ID.
    * @param {number} id - The entity ID
    * @returns {Object} The chunk and slot
@@ -256,7 +265,7 @@ export class EntityManager {
     // Update removed instances before the instance count has been updated
     if (delta < 0) {
       for (const fragment_class of this.entity_fragments.get(entity)) {
-        fragment_class.total_subscribed_instances += delta;
+        this.#adjust_total_subscribed_instances(fragment_class, delta);
       }
     }
 
@@ -265,7 +274,7 @@ export class EntityManager {
     // Update added instances after the instance count has been updated
     if (delta > 0) {
       for (const fragment_class of this.entity_fragments.get(entity)) {
-        fragment_class.total_subscribed_instances += delta;
+        this.#adjust_total_subscribed_instances(fragment_class, delta);
       }
     }
 
@@ -367,7 +376,7 @@ export class EntityManager {
       // subtract this entity's instances from each fragment's counter
       const instances = this.get_entity_instance_count(entity);
       for (const FragmentType of this.entity_fragments.get(entity)) {
-        FragmentType.total_subscribed_instances -= instances;
+        this.#adjust_total_subscribed_instances(FragmentType, -instances);
       }
 
       SceneGraph.remove(entity);
@@ -456,5 +465,14 @@ export class EntityManager {
   /** Read back the cached total for a fragment class */
   static get_total_subscribed(fragment_class) {
     return fragment_class.total_subscribed_instances || 0;
+  }
+
+  /**
+   * Adjust the total subscribed instances for a fragment or tag.
+   * @param {typeof import('./fragment.js').Fragment | typeof import('./fragment.js').Tag} fragment_or_tag - The fragment or tag to adjust the total subscribed instances for.
+   * @param {number} delta - The amount to adjust the total subscribed instances by.
+   */
+  static #adjust_total_subscribed_instances(fragment_or_tag, delta) {
+    fragment_or_tag.total_subscribed_instances += delta;
   }
 }
