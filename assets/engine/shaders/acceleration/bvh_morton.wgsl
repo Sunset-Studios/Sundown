@@ -23,6 +23,8 @@ struct BVHData {
 @group(1) @binding(2) var<storage, read_write>  bound_indices     : array<u32>;
 @group(1) @binding(3) var<storage, read>        scene_aabb        : AABB;
 @group(1) @binding(4) var<storage, read>        bvh_info          : BVHData;
+@group(1) @binding(5) var<storage, read>        entity_flags      : array<u32>;
+@group(1) @binding(6) var<storage, read>        entity_index_lookup: array<u32>;
 
 // ==================================
 // Helpers Functions
@@ -76,6 +78,28 @@ fn morton_code(p: vec3<f32>) -> u32 {
     return interleave_bits_32(x) | (interleave_bits_32(y) << 1) | (interleave_bits_32(z) << 2);
 }
 
+fn is_tlas_ignored_leaf(bound: AABB) -> bool {
+    if (bvh_info.is_blas != 0u) {
+        return false;
+    }
+
+    if (!is_leaf(bound)) {
+        return true;
+    }
+
+    let entity_row = u32(-bound.max.w - 1.0);
+    if (entity_row >= arrayLength(&entity_index_lookup)) {
+        return true;
+    }
+
+    let entity_resolved = entity_index_lookup[entity_row];
+    if (entity_resolved == INVALID_IDX || entity_resolved >= arrayLength(&entity_flags)) {
+        return true;
+    }
+
+    return (entity_flags[entity_resolved] & EF_IGNORE_TLAS) != 0u;
+}
+
 // ==================================
 // Kernels
 // ==================================
@@ -94,7 +118,8 @@ fn compute_morton_codes(@builtin(global_invocation_id) gid: vec3<u32>) {
 		let bound = bounds[source_index];
 		let center = (bound.min + bound.max) * 0.5;
 		let is_invalid = all(bound.min.xyz == vec3<f32>(0.0)) && all(bound.max.xyz == vec3<f32>(0.0));
-		morton_codes[gid.x] = select(morton_code(center.xyz), INVALID_IDX, is_invalid);
-        bound_indices[gid.x] = gid.x;
+        let is_tlas_ignored = is_tlas_ignored_leaf(bound);
+		morton_codes[gid.x] = select(morton_code(center.xyz), INVALID_IDX, is_invalid || is_tlas_ignored);
+        bound_indices[gid.x] = select(gid.x, INVALID_IDX, is_invalid || is_tlas_ignored);
 	}
 }

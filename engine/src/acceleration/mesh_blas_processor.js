@@ -3,6 +3,7 @@ import { ComputeTaskQueue } from "../renderer/compute_task_queue.js";
 import { Buffer } from "../renderer/buffer.js";
 import { BVH } from "./bvh.js";
 import { MeshBLAS } from "./mesh_blas.js";
+import { FragmentGpuBuffer } from "../core/ecs/solar/memory.js";
 
 // ═══════════════════════════════════════════════════════════════════════════════════════════════
 // ███╗   ███╗███████╗███████╗██╗  ██╗██████╗ ██╗      █████╗ ███████╗    ██████╗ ██████╗  ██████╗
@@ -159,7 +160,7 @@ export class MeshBLASProcessor extends SimulationLayer {
     // └─────────────────────────────────────────────────────────────────────────────────────────┘
 
     // Morton Code Generation Phase Bindings
-    this.morton_code_inputs = new Array(5); // [bounds, codes, indices, scene_aabb, build_info]
+    this.morton_code_inputs = new Array(7); // [bounds, codes, indices, scene_aabb, build_info, entity_flags, entity_index_lookup]
     this.morton_code_outputs = new Array(2); // [codes, indices]
 
     // OneSweep Radix Sort Phase Bindings
@@ -167,7 +168,7 @@ export class MeshBLASProcessor extends SimulationLayer {
     this.radix_sort_outputs = new Array(3); // [global_hist, pass_hist, tile_indices]
 
     // H-PLOC BVH2 Construction Phase Bindings
-    this.bvh2_inputs = new Array(6); // [bounds, indices, build_info, codes, parent_idx, index_pairs]
+    this.bvh2_inputs = new Array(8); // [bounds, indices, build_info, codes, parent_idx, index_pairs, entity_flags, entity_index_lookup]
     this.bvh2_outputs = new Array(2); // [bounds, bounds] (reused for efficiency)
 
     // ┌─────────────────────────────────────────────────────────────────────────────────────────┐
@@ -257,6 +258,8 @@ export class MeshBLASProcessor extends SimulationLayer {
     // Setup Morton code generation compute dispatch
     const tlas_gpu_data = BVH.to_gpu_data();
     const blas_gpu_data = MeshBLAS.to_gpu_data();
+    const entity_flags_buffer = FragmentGpuBuffer.entity_flags_buffer;
+    const entity_index_map_buffer = FragmentGpuBuffer.entity_index_map_buffer;
 
     // Acquire shared scratch buffers from the MeshBLAS system
     const morton_codes_buffer = blas_gpu_data.morton_codes_buffer;
@@ -269,6 +272,8 @@ export class MeshBLASProcessor extends SimulationLayer {
     this.morton_code_inputs[2] = sorted_indices_buffer; // Triangle indices output buffer
     this.morton_code_inputs[3] = tlas_gpu_data.scene_bounds_buffer; // Global scene AABB for normalization
     this.morton_code_inputs[4] = mesh_info_buffer; // Per-mesh build parameters
+    this.morton_code_inputs[5] = entity_flags_buffer.buffer; // Unused for BLAS, required by shared shader layout
+    this.morton_code_inputs[6] = entity_index_map_buffer.buffer; // Unused for BLAS, required by shared shader layout
 
     // Output Bindings: [morton_codes, sorted_indices]
     this.morton_code_outputs[0] = morton_codes_buffer;
@@ -443,6 +448,8 @@ export class MeshBLASProcessor extends SimulationLayer {
     this.bvh2_inputs[3] = morton_codes_buffer; // Sorted Morton codes for clustering
     this.bvh2_inputs[4] = parent_idx_buffer; // Parent index tracking buffer
     this.bvh2_inputs[5] = bvh_index_pairs_buffer; // Index pairs for H-PLOC construction
+    this.bvh2_inputs[6] = entity_flags_buffer.buffer; // Unused for BLAS, required by shared shader layout
+    this.bvh2_inputs[7] = entity_index_map_buffer.buffer; // Unused for BLAS, required by shared shader layout
 
     // Configure BVH2 construction output bindings
     this.bvh2_outputs[0] = bvh2_nodes_buffer; // Updated BVH2 nodes with computed bounds

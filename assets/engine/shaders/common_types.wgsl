@@ -33,6 +33,7 @@ const EF_BILLBOARD = 1u << 5;
 const EF_MOVED = 1u << 6;
 const EF_HAS_MESH = 1u << 7;
 const EF_INTERACTIVE = 1u << 8;
+const EF_IGNORE_TLAS = 1u << 9;
 
 const LOG_DEPTH_C = 0.1; // Can adjust this value based on scene scale
 const MAX_UINT = 4294967295u;

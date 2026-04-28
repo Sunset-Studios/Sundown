@@ -25,5 +25,6 @@ export const EntityFlags = {
   MOVED: 1 << 6,
   HAS_MESH: 1 << 7,
   INTERACTIVE: 1 << 8,
+  IGNORE_TLAS: 1 << 9,
 };
 

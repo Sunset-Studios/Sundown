@@ -340,6 +340,30 @@ export class EntityManager {
   }
 
   /**
+   * Controls whether an entity participates in the top-level acceleration structure.
+   * Bounds are still computed, but TLAS construction and traversal ignore the entity.
+   * @param {EntityHandle} entity - The entity to update.
+   * @param {boolean} ignored - True to exclude from TLAS, false to include.
+   */
+  static set_entity_tlas_ignored(entity, ignored = true) {
+    const flags = this.get_entity_flags(entity);
+    const next_flags = ignored
+      ? flags | EntityFlags.IGNORE_TLAS
+      : flags & ~EntityFlags.IGNORE_TLAS;
+
+    this.set_entity_flags(entity, next_flags);
+  }
+
+  /**
+   * Checks whether an entity is excluded from TLAS construction and traversal.
+   * @param {EntityHandle} entity - The entity to check.
+   * @returns {boolean}
+   */
+  static get_entity_tlas_ignored(entity) {
+    return (this.get_entity_flags(entity) & EntityFlags.IGNORE_TLAS) !== 0;
+  }
+
+  /**
    * Retrieves the maximum allocated row for the entity manager.
    * @returns {number} The maximum allocated row.
    */

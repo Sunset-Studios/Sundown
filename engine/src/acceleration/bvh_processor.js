@@ -140,7 +140,7 @@ export class BVHProcessor {
   bounds_processing_outputs = [null, null];                           // Updated bounds, culling flags
   
   // ─── Morton Code Generation Phase ─────────────────────────────────────────────────────────────────────────────────
-  morton_code_inputs = [null, null, null, null, null, null, null, null];  // Bounds, scene AABB, metadata
+  morton_code_inputs = [null, null, null, null, null, null, null];        // Bounds, scene AABB, metadata
   morton_code_outputs = [null, null];                                     // Morton codes, initial indices
   
   // ─── OneSweep Radix Sort Phase ────────────────────────────────────────────────────────────────────────────────────
@@ -148,7 +148,7 @@ export class BVHProcessor {
   radix_sort_outputs = [null, null];                                      // Sorted keys, sorted indices
   
   // ─── BVH2 Construction Phase ──────────────────────────────────────────────────────────────────────────────────────
-  bvh2_inputs = [null, null, null, null, null, null]; // Sorted data, workspace
+  bvh2_inputs = [null, null, null, null, null, null, null, null]; // Sorted data, workspace
   bvh2_outputs = [null, null, null];                  // Binary BVH nodes, metadata
   
   // ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════
@@ -369,6 +369,8 @@ export class BVHProcessor {
       TransformFragment,
       bounds_name                               // Updated entity AABBs from bounds processing
     );
+    const entity_flags_buffer = FragmentGpuBuffer.entity_flags_buffer;
+    const entity_index_map_buffer = FragmentGpuBuffer.entity_index_map_buffer;
 
     // ─── Initialize BVH Construction Metadata ─────────────────────────────────────────────────────────────────────
     // Reset algorithm counters and parameters for this frame's BVH construction
@@ -386,6 +388,8 @@ export class BVHProcessor {
     this.morton_code_inputs[2] = bvh.sorted_indices_buffer;    // Output: Initial primitive indices [0,1,2...]
     this.morton_code_inputs[3] = bvh.scene_bounds_buffer;      // Scene AABB for coordinate normalization
     this.morton_code_inputs[4] = bvh.bvh_info_buffer;         // Algorithm metadata and counters
+    this.morton_code_inputs[5] = entity_flags_buffer.buffer;   // Entity flags for TLAS exclusion
+    this.morton_code_inputs[6] = entity_index_map_buffer.buffer; // Entity row lookup
 
     // ─── Configure Morton Code Generation Outputs ────────────────────────────────────────────────────────────────
     this.morton_code_outputs[0] = bvh.morton_codes_buffer;     // 30-bit Morton Z-order codes
@@ -648,6 +652,8 @@ export class BVHProcessor {
       TransformFragment,
       bounds_name                               // World-space entity bounding boxes
     );
+    const entity_flags_buffer = FragmentGpuBuffer.entity_flags_buffer;
+    const entity_index_map_buffer = FragmentGpuBuffer.entity_index_map_buffer;
 
     // ─── Configure BVH2 Construction Input Bindings ──────────────────────────────────────────────────────────────
     this.bvh2_inputs[0] = bounds_buffer.buffer;         // Entity bounding boxes for leaf nodes
@@ -656,6 +662,8 @@ export class BVHProcessor {
     this.bvh2_inputs[3] = bvh.morton_codes_buffer;      // Sorted Morton codes for clustering
     this.bvh2_inputs[4] = bvh.parent_idx_buffer;        // Parent node indices (will be filled)
     this.bvh2_inputs[5] = bvh.bvh_index_pairs_buffer;  // Work queue for parallel construction
+    this.bvh2_inputs[6] = entity_flags_buffer.buffer;   // Entity flags for TLAS exclusion
+    this.bvh2_inputs[7] = entity_index_map_buffer.buffer; // Entity row lookup
 
     // ─── Configure BVH2 Construction Output Bindings ─────────────────────────────────────────────────────────────
     this.bvh2_outputs[0] = bounds_buffer.buffer;        // Updated with internal node bounds

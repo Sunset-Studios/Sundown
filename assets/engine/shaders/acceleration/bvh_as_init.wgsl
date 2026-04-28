@@ -31,6 +31,30 @@ struct IndexPair {
 @group(1) @binding(3) var<storage, read> morton_codes: array<u32>;
 @group(1) @binding(4) var<storage, read_write> parent_idx: array<u32>;
 @group(1) @binding(5) var<storage, read_write> index_pairs: array<IndexPair>;
+@group(1) @binding(6) var<storage, read> entity_flags: array<u32>;
+@group(1) @binding(7) var<storage, read> entity_index_lookup: array<u32>;
+
+fn is_tlas_build_leaf(bound: AABB) -> bool {
+    if (counters.is_blas != 0u) {
+        return is_leaf(bound);
+    }
+
+    if (!is_leaf(bound)) {
+        return false;
+    }
+
+    let entity_row = u32(-bound.max.w - 1.0);
+    if (entity_row >= arrayLength(&entity_index_lookup)) {
+        return false;
+    }
+
+    let entity_resolved = entity_index_lookup[entity_row];
+    if (entity_resolved == INVALID_IDX || entity_resolved >= arrayLength(&entity_flags)) {
+        return false;
+    }
+
+    return (entity_flags[entity_resolved] & EF_IGNORE_TLAS) == 0u;
+}
 
 //------------------------------------------------------------------------------
 // HPLOC Kernels 
@@ -62,7 +86,7 @@ fn initialize_leaf_clusters(
 
         // 1) Warp-aggregate the increment amount
         let base = counters.prim_base;
-        let is_valid_leaf = select(0u, 1u, is_leaf(bounds[base + prim_idx]));
+        let is_valid_leaf = select(0u, 1u, is_tlas_build_leaf(bounds[base + prim_idx]));
         let warp_sum = warp_reduce_add_u32(warp_ctx, is_valid_leaf);
         // 2) One atomicAdd per warp
         if (is_warp_leader(warp_ctx)) {
