@@ -81,6 +81,20 @@ export class TrainingQueue {
       return this.#next_return_value;
     }
 
+    const has_complete_batch = samples.every(
+      (sample) => sample.input !== null && sample.target !== null
+    );
+
+    if (!has_complete_batch) {
+      if (dispose_original) {
+        for (let i = 0; i < samples.length; i++) {
+          samples[i].input?.dispose();
+          samples[i].target?.dispose();
+        }
+      }
+      return this.#next_return_value;
+    }
+
     // Stack samples into batches
     // Note: Tensors are marked persistent=true when added, so they are safe here.
     // We make the *new* stacked tensors immediate=true as they are transient for this step.
@@ -96,10 +110,14 @@ export class TrainingQueue {
     );
 
     if (dispose_original) {
-      // Dispose the original sample tensors now that they're batched
+      // Dispose consumed sample tensors now that they're batched or discarded.
       for (let i = 0; i < samples.length; i++) {
-        samples[i].input.dispose();
-        samples[i].target.dispose();
+        if (samples[i].input !== null) {
+          samples[i].input.dispose();
+        }
+        if (samples[i].target !== null) {
+          samples[i].target.dispose();
+        }
       }
     }
 
@@ -203,6 +221,8 @@ export class Input {
 
     if (input === null) {
       input = input_tensor;
+    }
+    if (target === null) {
       target = target_tensor;
     }
 

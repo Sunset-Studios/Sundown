@@ -737,6 +737,10 @@ export class Layer {
       }
 
       let layer_output = Layer.process_forward(current_id, combined_input, target);
+      if (layer_output === null) {
+        return null;
+      }
+
       // Store the output
       outputs.set(current_id, layer_output);
 

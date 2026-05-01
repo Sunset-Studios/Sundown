@@ -25,6 +25,7 @@ export class NeuralArchitectureHelpers {
   static train(root_id, input_tensor, target_tensor, output_layer = null) {
     // Forward pass.
     let output = Layer.forward(root_id, input_tensor, target_tensor);
+    if (output === null) return null;
     // Backward pass: propagate gradients from the last layer back.
     Layer.backward(root_id, output, target_tensor);
     // Return the predicted output tensor for this training step.
