@@ -140,7 +140,7 @@ export class MaterialTemplate {
     }
 
     const template = new MaterialTemplate(
-      key,
+      name, 
       shader,
       depth_shader,
       resolve_shader,

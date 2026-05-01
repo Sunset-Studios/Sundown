@@ -7,12 +7,17 @@ export class BinaryCrossEntropyLoss {
   static initialize(layer) { }
 
   static forward(layer, input_tensor, target_tensor = null) {
+    if (!target_tensor) return input_tensor;
+
     const props = layer.properties;
     layer.loss = MLOps.binary_cross_entropy_loss(target_tensor, input_tensor, props.enabled_logging, Name.from(props.name || binary_cross_entropy_loss_name));
     return input_tensor;
   }
 
   static backward(layer, grad_output_tensor, target_tensor = null) {
+    if (!target_tensor) return grad_output_tensor;
+
     return MLOps.binary_cross_entropy_loss_prime(target_tensor, grad_output_tensor);
   }
 } 
+ 

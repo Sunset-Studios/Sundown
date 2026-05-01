@@ -34,8 +34,8 @@ export class HopAPIAdapter {
     return Layer.create(type, {}, parent);
   }
 
-  static add_loss(type, enabled_logging = false, name = null, parent = null) {
-    return Layer.create(type, { enabled_logging, name }, parent);
+  static add_loss(type, enabled_logging = false, name = null, parent = null, options = {}) {
+    return Layer.create(type, { enabled_logging, name, ...options }, parent);
   }
 
   static push_samples(source_layer_id, data, shape, batch_size, input_type = InputType.NUMERIC) {
@@ -67,6 +67,11 @@ export class HopAPIAdapter {
 
   static clear_model(root) {
     Layer.destroy(root);
+  }
+
+  static remove_layer(layer_id) {
+    Layer.destroy(layer_id);
+    return true;
   }
 
   /**

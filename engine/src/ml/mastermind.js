@@ -83,6 +83,7 @@ export class MasterMind {
       case MLHopType.CONNECT_LAYER:
       case MLHopType.DISCONNECT_LAYER:
       case MLHopType.DISCONNECT_LAYER_FROM_ALL:
+      case MLHopType.REMOVE_LAYER:
       case MLHopType.RESET_MODEL:
         this.sync_registered_subnets();
         break;
@@ -291,7 +292,8 @@ export class MasterMind {
         const receiver = candidate_subnets[receiver_index];
 
         // Leak donor's cached output into receiver as new training data.
-        // Here we assume that the donor's output can serve as both input and target.
+        // Here we assume that the donor's output can serve as both input and target,
+        // which creates a sort of autoencoder on the receiver for the donor's output features.
         receiver.training_queue.push({
           input: donor.cached_output,
           target: donor.cached_output,
@@ -389,11 +391,13 @@ export class MasterMind {
 
       let stats = [];
       for (let i = 0; i < last_layer_ids.length; i++) {
-        const layer = Layer.get(last_layer_ids[i]);
-        stats.push({
-          name: `loss_${i}`,
-          loss: layer.loss,
-        });
+        if (Layer.is_loss(last_layer_ids[i])) {
+          const layer = Layer.get(last_layer_ids[i]);
+          stats.push({
+            name: `loss_${i}`,
+            loss: layer.loss,
+          });
+        }
       }
 
       subnet_stats.push({

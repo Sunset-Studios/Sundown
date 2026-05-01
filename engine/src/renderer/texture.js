@@ -586,7 +586,7 @@ export class Texture {
     }
 
     renderer.device.queue.writeTexture(
-      { texture: this.image, origin: dest_origin },
+      { texture: this.image, origin: origin },
       upload_array,
       {
         offset: data_offset,
@@ -742,7 +742,6 @@ export class Texture {
 
     return image;
   }
-
 
   static #default = null;
   static default() {

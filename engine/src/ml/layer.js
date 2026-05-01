@@ -40,6 +40,7 @@ export class TrainingContext {
   constructor(options = {}) {
     this.learning_rate = options.learning_rate || 0.01;
     this.optimizer = options.optimizer || null;
+    this.loss_type = options.loss_type ?? LayerType.MSE;
     this.batch_size = options.batch_size || 1;
     this.momentum = options.momentum || 0;
     this.weight_decay = options.weight_decay || 0;
@@ -224,13 +225,13 @@ export class Layer {
     if (!layer) return;
 
     // Disconnect from parents
-    for (let i = 0; i < layer.parent_ids.length; ++i) {
-      Layer.disconnect(layer.parent_ids.get(i), id);
+    while (layer.parent_ids.length > 0) {
+      Layer.disconnect(layer.parent_ids.get(0), id);
     }
 
     // Disconnect from children
-    for (let i = 0; i < layer.child_ids.length; ++i) {
-      Layer.disconnect(id, layer.child_ids.get(i));
+    while (layer.child_ids.length > 0) {
+      Layer.disconnect(id, layer.child_ids.get(0));
     }
 
     // Remove from storage
@@ -302,12 +303,12 @@ export class Layer {
     const layer = Layer.get(id);
     if (!layer) return false;
 
-    for (let i = 0; i < layer.parent_ids.length; ++i) {
-      Layer.disconnect(layer.parent_ids.get(i), id);
+    while (layer.parent_ids.length > 0) {
+      Layer.disconnect(layer.parent_ids.get(0), id);
     }
 
-    for (let i = 0; i < layer.child_ids.length; ++i) {
-      Layer.disconnect(id, layer.child_ids.get(i));
+    while (layer.child_ids.length > 0) {
+      Layer.disconnect(id, layer.child_ids.get(0));
     }
 
     Layer.roots.add(id);
@@ -658,6 +659,22 @@ export class Layer {
         layer.type === LayerType.TANH ||
         layer.type === LayerType.SIGMOID ||
         layer.type === LayerType.SOFTMAX)
+    );
+  }
+
+  /**
+   * Checks if a layer is a loss layer
+   *
+   * @param {number} id - The ID of the layer
+   * @returns {boolean} True if the layer is a loss layer
+   */
+  static is_loss(id) {
+    const layer = Layer.get(id);
+    return (
+      layer &&
+      (layer.type === LayerType.MSE ||
+      layer.type === LayerType.CROSS_ENTROPY ||
+      layer.type === LayerType.BINARY_CROSS_ENTROPY)
     );
   }
 

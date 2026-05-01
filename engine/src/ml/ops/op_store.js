@@ -44,6 +44,7 @@ export class MLOpStore {
     this.register_hop_handler(MLHopType.DISCONNECT_LAYER, HopAPIAdapter.disconnect_layer);
     this.register_hop_handler(MLHopType.DISCONNECT_LAYER_FROM_ALL, HopAPIAdapter.disconnect_layer_from_all);
     this.register_hop_handler(MLHopType.REORDER_LAYER, HopAPIAdapter.reorder_layer);
+    this.register_hop_handler(MLHopType.REMOVE_LAYER, HopAPIAdapter.remove_layer);
   }
 
   register_observer(observer) {
@@ -750,7 +751,7 @@ export class MLOpStore {
     return result;
   }
 
-  add_loss(type, enabled_logging = false, name = null, parent = null) {
+  add_loss(type, enabled_logging = false, name = null, parent = null, options = {}) {
     const hop = this.hops.allocate();
     hop.type = MLHopType.ADD_LOSS;
     hop.param_start = this.hops_params.length;
@@ -758,7 +759,7 @@ export class MLOpStore {
     
     let result = null;
     if (this.hop_handlers.has(MLHopType.ADD_LOSS)) {
-      result = this.hop_handlers.get(MLHopType.ADD_LOSS)(type, enabled_logging, name, parent);
+      result = this.hop_handlers.get(MLHopType.ADD_LOSS)(type, enabled_logging, name, parent, options);
     }
 
     hop.result = result;
@@ -821,6 +822,26 @@ export class MLOpStore {
     }
 
     hop.result = result;
+
+    this.notify_observers(hop);
+
+    return result;
+  }
+
+  remove_layer(layer_id) {
+    const hop = this.hops.allocate();
+    hop.type = MLHopType.REMOVE_LAYER;
+    hop.param_start = this.hops_params.length;
+    hop.param_count = 1;
+
+    let result = null;
+    if (this.hop_handlers.has(MLHopType.REMOVE_LAYER)) {
+      result = this.hop_handlers.get(MLHopType.REMOVE_LAYER)(layer_id);
+    }
+
+    hop.result = result;
+
+    this.hops_params.add(layer_id, 1);
 
     this.notify_observers(hop);
 
