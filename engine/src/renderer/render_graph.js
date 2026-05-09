@@ -1237,6 +1237,8 @@ export class RenderGraph {
         return;
       }
 
+      this._reset_pass_cache_bind_groups();
+
       // Setup passes and pass resources
       for (let i = 0; i < this.non_culled_passes.length; i++) {
         const pass_handle = this.non_culled_passes[i];
