@@ -15,11 +15,6 @@ const fully_connected_shape_rule = Object.freeze({
       throw new Error(`FullyConnected layer ${layer.id} requires output dimensions.`);
     }
 
-    if (!Tensor.is_shape_valid(input_shape)) {
-      mark_shape_pending(layer);
-      return null;
-    }
-
     const output_shape = Tensor.normalize_shape(props.output_size);
 
     configure_fully_connected(layer, input_shape, output_shape);
@@ -114,6 +109,16 @@ function mark_shape_pending(layer) {
  */
 function configure_fully_connected(layer, input_shape, output_shape) {
   layer.properties ??= {};
+
+  if (!Tensor.is_shape_valid(input_shape)) {
+    mark_shape_pending(layer);
+
+    const output_size = Tensor.last_dim(output_shape);
+    layer.properties.output_size = output_size;
+    layer.properties.output_shape = output_shape;
+
+    return;
+  }
 
   const input_leading_shape = Tensor.leading_shape(input_shape);
   let normalized_output_shape = output_shape;
