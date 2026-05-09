@@ -1,4 +1,4 @@
-import { TrainingQueue } from "./layers/input.js";
+import { Input } from "./layers/input.js";
 import { Layer } from "./layer.js";
 import { MLOps } from "./ops/ops.js";
 import { MLHopType } from "./ops/op_types.js";
@@ -12,7 +12,6 @@ class Subnet {
   subnet_id = null;
   train_step = null;
   infer = null;
-  training_queue = null;
   cached_output = null;
 }
 
@@ -48,13 +47,11 @@ export class MasterMind {
    * @param {Object} options - Configuration options.
    * @param {boolean} [options.enable_weight_sharing=false] - Whether to enable weight sharing.
    * @param {number} [options.weight_sharing_interval=1000] - The interval between weight sharing updates in milliseconds.
-   * @param {number} [options.mini_batch_size=1] - The size of the mini-batch to use for training.
    */
   constructor(options = {}) {
     this.enable_weight_sharing = options.enable_weight_sharing || false;
     this.weight_sharing_interval = options.weight_sharing_interval || 1000; // in milliseconds
     this.weight_sharing_time_elapsed = 0.0;
-    this.mini_batch_size = options.mini_batch_size || 1;
     this.subnets = new RandomAccessAllocator(256, Subnet); // subnet registry keyed by subnet ID.
     this.active_subnet = null; // ID of the subnet to receive training frames.
     this.paused = false;
@@ -119,10 +116,8 @@ export class MasterMind {
       this.active_subnet = this.get_registered_subnet_id(active_subnet_root);
     }
 
-    if (this.active_subnet === null) {
-      if (this.subnets.length > 0) {
-        this.active_subnet = 0;
-      }
+    if (this.active_subnet === null && this.subnets.length > 0) {
+      this.active_subnet = 0;
     }
   }
 
@@ -168,7 +163,6 @@ export class MasterMind {
    *
    * @param {string} subnet_id - Unique identifier for the subnet.
    * @param {Object} subnet_obj - The subnet object.
-   * @param {number} [mini_batch_size=1] - The size of the mini-batch to use for training.
    * @param {function} [train_step_callback] - A training function. Depending on the model,
    * @param {function} [infer_callback] - A function(inputData) that returns inference results.
    * @returns {number} The registered model ID.
@@ -182,16 +176,16 @@ export class MasterMind {
     // If no training callback is provided but the model object supports .train(),
     // wrap it so that it can be called with a batch.
     if (!train_step_callback) {
-      train_step_callback = function (delta_time, input_tensor, target_tensor) {
-        return NeuralArchitectureHelpers.train(subnet_id, input_tensor, target_tensor);
+      train_step_callback = function (delta_time) {
+        return NeuralArchitectureHelpers.train(subnet_id);
       };
     }
 
     // For inference, if no callback is supplied but the model has a .predict() method,
     // use it.
     if (!infer_callback) {
-      infer_callback = function (input_data) {
-        return NeuralArchitectureHelpers.predict(subnet_id, input_data);
+      infer_callback = function () {
+        return NeuralArchitectureHelpers.predict(subnet_id);
       };
     }
 
@@ -201,7 +195,6 @@ export class MasterMind {
     subnet.subnet_id = subnet_id;
     subnet.train_step = train_step_callback;
     subnet.infer = infer_callback;
-    subnet.training_queue = new TrainingQueue(8);
     subnet.cached_output = null;
 
     // If this is the first model registered, set it as the active training model.
@@ -238,6 +231,17 @@ export class MasterMind {
     return this.subnets.get(subnet_id);
   }
 
+  get_subnet_input_layer(subnet_entry) {
+    return Layer.is_input(subnet_entry?.subnet_id) ? Layer.get(subnet_entry?.subnet_id) : null;
+  }
+
+  enqueue_training_batch(subnet_entry, input_tensor, target_tensor) {
+    const input_layer = this.get_subnet_input_layer(subnet_entry);
+    if (input_layer) {
+      Input.add_sample_batch(input_layer, input_tensor, target_tensor);
+    }
+  }
+
   /**
    * Should be called on each frame.
    * @param {number} delta_time - Time elapsed since the last frame (in seconds).
@@ -260,8 +264,7 @@ export class MasterMind {
       if (
         subnet_entry && typeof subnet_entry.train_step === function_name
       ) {
-        const { input, target } = subnet_entry.training_queue.next(this.mini_batch_size);
-        subnet_entry.train_step(delta_time, input, target);
+        subnet_entry.train_step(delta_time);
       }
     }
 
@@ -294,10 +297,7 @@ export class MasterMind {
         // Leak donor's cached output into receiver as new training data.
         // Here we assume that the donor's output can serve as both input and target,
         // which creates a sort of autoencoder on the receiver for the donor's output features.
-        receiver.training_queue.push({
-          input: donor.cached_output,
-          target: donor.cached_output,
-        });
+        this.enqueue_training_batch(receiver, donor.cached_output, donor.cached_output);
       }
 
       this.weight_sharing_time_elapsed = 0.0;
@@ -319,9 +319,7 @@ export class MasterMind {
     if (!subnet_entry) {
       throw new Error(`Subnet "${subnet_id}" is not registered.`);
     }
-    input_tensor.persistent = true;
-    target_tensor.persistent = true;
-    subnet_entry.training_queue.push({ input: input_tensor, target: target_tensor });
+    this.enqueue_training_batch(subnet_entry, input_tensor, target_tensor);
   }
 
   /**
@@ -332,13 +330,21 @@ export class MasterMind {
    */
   infer(input_data, subnet_id = null) {
     // Use the active model if none is explicitly provided.
+    if (subnet_id === null && this.active_subnet === null) return null;
+
     if (subnet_id === null) {
       subnet_id = this.active_subnet;
     }
+
     const subnet_entry = this.get_subnet(subnet_id);
     if (!subnet_entry || typeof subnet_entry.infer !== function_name) {
       throw new Error(`Subnet "${subnet_id}" is not registered or does not support inference.`);
     }
+
+    if (!this.get_subnet_input_layer(subnet_entry)) {
+      return null;
+    }
+
     return subnet_entry.infer(input_data);
   }
 
@@ -357,8 +363,7 @@ export class MasterMind {
     if (
       typeof subnet_entry.train_step === function_name
     ) {
-      const { input, target } = subnet_entry.training_queue.next(this.mini_batch_size);
-      subnet_entry.train_step(delta_time, input, target);
+      subnet_entry.train_step(delta_time);
     }
   }
 

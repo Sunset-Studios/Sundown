@@ -1,7 +1,6 @@
 import { Tensor } from "../math/tensor.js";
 import { Layer } from "../layer.js";
 import { InputType } from "../ml_types.js";
-import { log, warn, error } from "../../utility/logging.js";
 
 const number_name = "number";
 const input_layer_error = "InputLayer not initialized correctly.";
@@ -54,6 +53,16 @@ export class TrainingQueue {
     this.head = (this.head + 1) % this.capacity;
     this.count--;
     return batch;
+  }
+
+  /**
+   * Returns the oldest training batch without removing it.
+   *
+   * @returns {Object|null} The batch object or null if empty.
+   */
+  peek() {
+    if (this.count === 0) return null;
+    return this.buffer[this.head];
   }
 
   /**
@@ -164,7 +173,15 @@ export class Input {
    * Properties expected: { capacity: number, batch_size: number }
    */
   static initialize(layer) {
-    const props = layer.properties;
+    Input.ensure_training_queue(layer);
+  }
+
+  /**
+   * Create the training queue that we use to push inputs + targets
+   * through the network during training. 
+   */
+  static ensure_training_queue(layer) {
+    const props = layer?.properties;
     if (
       !props ||
       typeof props.capacity !== number_name ||
@@ -172,12 +189,16 @@ export class Input {
     ) {
       throw new Error(input_layer_error);
     }
-    // Store the queue and batch size directly on the layer instance
-    layer.training_queue = new TrainingQueue(props.capacity);
+
+    if (!layer.training_queue || layer.training_queue.capacity !== props.capacity) {
+      layer.training_queue = new TrainingQueue(props.capacity);
+      layer.current_input_batch = null;
+      layer.current_target_batch = null;
+    }
+
     layer.batch_size = props.batch_size;
-    layer.current_input_batch = null; // To hold the latest batch for children
-    layer.current_target_batch = null; // To hold the latest batch for loss functions
-    layer.input_type = InputType.NUMERIC;
+
+    return layer.training_queue;
   }
 
   /**
@@ -188,24 +209,11 @@ export class Input {
    * @param {Tensor} target_batch - The target tensor for the batch.
    */
   static add_sample_batch(layer, input_batch, target_batch, mark_persistent = true) {
-    if (!layer.training_queue) {
-      error(input_layer_error);
-      return;
-    }
+    const training_queue = Input.ensure_training_queue(layer);
     // Ensure tensors passed in won't be disposed prematurely
     input_batch.persistent = mark_persistent;
     target_batch.persistent = mark_persistent;
-    layer.training_queue.push({ input: input_batch, target: target_batch });
-  }
-
-  /**
-   * Sets the input type for the input layer.
-   *
-   * @param {Layer} layer - The input layer instance.
-   * @param {number} input_type - The input type to set.
-   */
-  static set_input_type(layer, input_type) {
-    layer.input_type = input_type;
+    training_queue.push({ input: input_batch, target: target_batch });
   }
 
   /**
@@ -213,18 +221,9 @@ export class Input {
    * Dequeues samples, creates a batch, stores target batch in context, returns input batch.
    */
   static forward(layer, input_tensor, target_tensor = null /* unused */) {
-    if (!layer.training_queue) {
-      return input_tensor;
-    }
+    const training_queue = Input.ensure_training_queue(layer);
 
-    let { input, target } = layer.training_queue.next(layer.batch_size);
-
-    if (input === null) {
-      input = input_tensor;
-    }
-    if (target === null) {
-      target = target_tensor;
-    }
+    let { input, target } = training_queue.next(layer.batch_size);
 
     // Store batches for access by other layers/context
     layer.current_input_batch = input;

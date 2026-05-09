@@ -1,5 +1,5 @@
 import { MLOps } from "../ops/ops.js";
-import { log, warn, error } from "../../utility/logging.js";
+import { log } from "../../utility/logging.js";
 /**
  * A tensor is a multi-dimensional array of floating-point numbers.
  * Tensors are used to store the weights, biases, and input/output data of a neural network.
@@ -551,4 +551,70 @@ export class Tensor {
       );
     }
   }
+
+  /**
+   * Checks whether a shape-like value was explicitly provided.
+   *
+   * @param {number|number[]|null|undefined} shape
+   * @returns {boolean}
+   */
+  static is_shape_valid(shape) {
+    return shape !== null && shape !== undefined;
+  }
+
+  /**
+   * Returns a copy of a shape in array form.
+   *
+   * Layer APIs allow scalar dimensions as a convenience, but the inference pass
+   * stores and compares all shapes as arrays.
+   *
+   * @param {number|number[]} shape
+   * @returns {number[]|null}
+   */
+  static normalize_shape(shape) {
+    if (!Tensor.is_shape_valid(shape)) return null;
+    return !Array.isArray(shape) ? [shape] : shape;
+  }
+
+  /**
+   * Returns all axes before the final feature axis.
+   *
+   * For FullyConnected layers these axes are preserved and treated as independent rows,
+   *
+   * @param {number[]} shape
+   * @returns {number[]}
+   */
+  static leading_shape(shape) {
+    return shape ? shape.slice(0, shape.length - 1) : [];
+  }
+
+  /**
+   * Returns the feature dimension of a shape.
+   *
+   * @param {number[]} shape
+   * @returns {number}
+   */
+  static last_dim(shape) {
+    return shape ? shape[shape.length - 1] : 0;
+  }
+
+  /**
+   * Compares two shapes by value after normalizing scalar dimensions.
+   *
+   * @param {number|number[]} a
+   * @param {number|number[]} b
+   * @returns {boolean}
+   */
+  static shapes_equal(a, b) {
+    const shape_a = Tensor.normalize_shape(a);
+    const shape_b = Tensor.normalize_shape(b);
+    if (shape_a === shape_b) return true;
+    if (shape_a === null || shape_b === null) return false;
+    if (shape_a.length !== shape_b.length) return false;
+    for (let i = 0; i < shape_a.length; i++) {
+      if (shape_a[i] !== shape_b[i]) return false;
+    }
+    return true;
+  }
+
 }

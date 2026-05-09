@@ -315,13 +315,15 @@ export class MLScene extends Scene {
     //               FullyConnectedLayer (10 -> 1) -> MSELoss
     // ---------------------------------------------------------------------------
     {
-      const root = this.mastermind.store.add_layer(LayerType.FULLY_CONNECTED, 1, 10, null, {
+      const root = this.mastermind.store.add_input(1000, 16);
+
+      const hidden1 = this.mastermind.store.add_layer(LayerType.FULLY_CONNECTED, 10, root, {
         initializer: TensorInitializer.GLOROT,
       });
 
-      const tanh = this.mastermind.store.add_activation(LayerType.TANH, root);
+      const sig = this.mastermind.store.add_activation(LayerType.SIGMOID, hidden1);
 
-      const hidden1 = this.mastermind.store.add_layer(LayerType.FULLY_CONNECTED, 10, 1, tanh, {
+      const hidden2 = this.mastermind.store.add_layer(LayerType.FULLY_CONNECTED, 1, sig, {
         initializer: TensorInitializer.GLOROT,
       });
 
@@ -329,7 +331,7 @@ export class MLScene extends Scene {
         LayerType.MSE,
         false /* enabled_logging */,
         "sine_approximator",
-        hidden1
+        hidden2
       );
 
       const context = this.mastermind.store.set_subnet_context(root, {
@@ -358,7 +360,6 @@ export class MLScene extends Scene {
       const hidden1 = Layer.create(
         LayerType.FULLY_CONNECTED,
         {
-          input_size: 2,
           output_size: 8,
           initializer: TensorInitializer.GLOROT,
         },
@@ -369,7 +370,7 @@ export class MLScene extends Scene {
 
       const hidden2 = Layer.create(
         LayerType.FULLY_CONNECTED,
-        { input_size: 8, output_size: 4, initializer: TensorInitializer.GLOROT },
+        { output_size: 4, initializer: TensorInitializer.GLOROT },
         relu1
       );
 
@@ -377,7 +378,7 @@ export class MLScene extends Scene {
 
       const hidden3 = Layer.create(
         LayerType.FULLY_CONNECTED,
-        { input_size: 4, output_size: 1, initializer: TensorInitializer.GLOROT },
+        { output_size: 1, initializer: TensorInitializer.GLOROT },
         relu2
       );
 

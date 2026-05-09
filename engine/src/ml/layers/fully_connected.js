@@ -2,16 +2,32 @@ import { Tensor, TensorInitializer } from "../math/tensor.js";
 
 export class FullyConnected {
   static initialize(layer) {
-    const props = layer.properties;
+    const props = layer.properties ?? {};
     const input_size = props.input_size;
     const output_size = props.output_size;
+
+    if (
+      props.shape_pending ||
+      !Number.isFinite(input_size) ||
+      !Number.isFinite(output_size) ||
+      input_size <= 0 ||
+      output_size <= 0
+    ) {
+      return false;
+    }
+
+    const expected_param_shape = [input_size + 1, output_size];
+    if (layer.params && !Tensor.shapes_equal(layer.params.shape, expected_param_shape)) {
+      layer.params.dispose();
+      layer.params = null;
+    }
 
     // Unified parameter array to hold both weights and bias.
     // It has a shape of [(inputSize + 1), outputSize], where the last row holds the bias.
     // Initialize weight values using He initialization.
     if (layer.params === null) {
       const initializer = props.initializer || TensorInitializer.HE;
-      layer.params = Tensor.init_tensor([(input_size + 1), output_size], initializer, output_size);
+      layer.params = Tensor.init_tensor(expected_param_shape, initializer, output_size);
       // Initialize bias values (last row) to zero (or use provided options if any).
       layer.params.fill(0, input_size * output_size);
     }
@@ -21,6 +37,10 @@ export class FullyConnected {
   }
 
   static forward(layer, input_tensor, target_tensor = null) {
+    if (!input_tensor || !layer.params || layer.properties?.shape_pending) {
+      return null;
+    }
+
     // Build an extended input by appending 1 to each row for the bias.
     // Extended input has shape [batch_size, input_size + 1].
     // Cache input for the backward pass.

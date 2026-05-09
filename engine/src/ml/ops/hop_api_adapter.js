@@ -20,11 +20,11 @@ export class HopAPIAdapter {
     return Layer.create(LayerType.INPUT, { capacity, batch_size }, parent);
   }
 
-  static add_layer(type, input_size, output_size, parent = null, options = {}, params = null) {
+  static add_layer(type, output_size, parent = null, options = {}, params = null) {
     let layer = null;
 
     if (type === LayerType.FULLY_CONNECTED) {
-      layer = Layer.create(type, { input_size, output_size, ...options }, parent, params);
+      layer = Layer.create(type, { output_size, ...options }, parent, params);
     }
 
     return layer;
@@ -45,7 +45,6 @@ export class HopAPIAdapter {
     }
 
     const tensor = Tensor.create(data, shape, batch_size, data.constructor);
-    Input.set_input_type(input_layer, input_type);
     Input.add_sample_batch(input_layer, tensor, tensor);
 
     return tensor;

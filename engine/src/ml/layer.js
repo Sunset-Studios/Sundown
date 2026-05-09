@@ -2,6 +2,10 @@ import { FreeListAllocator } from "../memory/allocator.js";
 import { TypedVector } from "../memory/container.js";
 import { Tensor } from "./math/tensor.js";
 import { LayerType } from "./ml_types.js";
+import {
+  prepare_subnet_shapes,
+  reshape_tensor
+} from "./shape_inference.js";
 
 import { Input } from "./layers/input.js";
 import { FullyConnected } from "./layers/fully_connected.js";
@@ -194,14 +198,6 @@ export class Layer {
       Layer.roots.add(layer.id);
     }
 
-    // Validate that we have a handler for this type
-    if (type && (!Layer.type_handlers.has(type) || !Layer.type_handlers.get(type).initialize)) {
-      warn(`No initializer handler registered for layer type: ${type}`);
-    } else {
-      const type_handler = Layer.type_handlers.get(type);
-      type_handler.initialize(layer);
-    }
-
     return layer.id;
   }
 
@@ -213,6 +209,27 @@ export class Layer {
    */
   static get(id) {
     return Layer.all_layers.get(id) || null;
+  }
+
+  /**
+   * Lazily initializes a layer after shape inference has prepared its properties.
+   *
+   * @param {number} id - The layer ID
+   * @returns {boolean} True if initialization ran or was unnecessary
+   */
+  static initialize_layer(id) {
+    const layer = Layer.get(id);
+    if (!layer) return false;
+
+    const handler = Layer.type_handlers.get(layer.type);
+    if (!handler || !handler.initialize) {
+      warn(`No initializer handler registered for layer type: ${layer.type}`);
+      return false;
+    }
+
+    handler.initialize(layer);
+
+    return true;
   }
 
   /**
@@ -646,6 +663,33 @@ export class Layer {
   }
 
   /**
+   * Lazily initializes all layers in a subnet after shape inference.
+   *
+   * Shape-independent layers initialize even while input shapes are pending.
+   * Shape-dependent layers wait until the prepare pass has populated the
+   * dimensions they need.
+   *
+   * @param {number} root_id - The subnet root ID
+   */
+  static initialize_subnet_layers(root_id) {
+    const subnet_layers = Layer.get_subnet_and_shared_layers(root_id);
+    for (let i = 0; i < subnet_layers.length; i++) {
+      Layer.initialize_layer(subnet_layers[i]);
+    }
+  }
+
+  static prepare_subnet(root_id) {
+    Layer.initialize();
+
+    prepare_subnet_shapes(root_id, {
+      get_layer: Layer.get,
+      get_subnet_and_shared_layers: Layer.get_subnet_and_shared_layers,
+    });
+
+    Layer.initialize_subnet_layers(root_id);
+  }
+
+  /**
    * Checks if a layer is an activation layer
    *
    * @param {number} id - The ID of the layer
@@ -679,35 +723,43 @@ export class Layer {
   }
 
   /**
+   * Checks if a layer is an input layer
+   *
+   * @param {number} id - The ID of the layer
+   * @returns {boolean} True if the layer is an input layer
+   */
+  static is_input(id) {
+    const layer = Layer.get(id);
+    return (
+      layer &&
+      layer.type === LayerType.INPUT
+    );
+  }
+
+  /**
    * Forward pass through the network starting from a root
    *
    * @param {number} root_id - The ID of the root layer
-   * @param {Object} input - The input to the network
-   * @param {Object} target - Optional target for loss layers
    * @returns {Object} The output of the network
    */
-  static forward(root_id, input, target = null) {
-    Layer.initialize();
+  static forward(root_id) {
+    Layer.prepare_subnet(root_id);
 
     const outputs = new Map(); // Map of layer ID to output
     const in_degree = new Map(); // Count of unprocessed parents for each layer
     const queue = []; // Queue for BFS
+    let target = null;
 
     // Calculate in-degree for all layers in the subnet
-    const subnet_layers = Layer.get_subnet_layers(root_id);
+    const subnet_layers = Layer.get_subnet_and_shared_layers(root_id);
     for (let i = 0; i < subnet_layers.length; ++i) {
       const id = subnet_layers[i];
       const layer = Layer.get(id);
       in_degree.set(id, layer.parent_ids.length);
+      if (layer.parent_ids.length === 0) {
+        queue.push(id);
+      }
     }
-
-    // If root_id is not in the queue, add it (ensure we start from the specified root)
-    if (!queue.includes(root_id)) {
-      queue.push(root_id);
-    }
-
-    // Record input for the root layer
-    outputs.set(root_id, input);
 
     // Process in BFS order
     while (queue.length > 0) {
@@ -716,16 +768,10 @@ export class Layer {
 
       // Get inputs from all parents
       const layer_inputs = [];
-
-      // If this is the root, use the provided input
-      if (current_id === root_id) {
-        layer_inputs.push(input);
-      } else {
-        for (let i = 0; i < current_layer.parent_ids.length; ++i) {
-          const parent_id = current_layer.parent_ids.get(i);
-          if (outputs.has(parent_id)) {
-            layer_inputs.push(outputs.get(parent_id));
-          }
+      for (let i = 0; i < current_layer.parent_ids.length; ++i) {
+        const parent_id = current_layer.parent_ids.get(i);
+        if (outputs.has(parent_id)) {
+          layer_inputs.push(outputs.get(parent_id));
         }
       }
 
@@ -786,17 +832,15 @@ export class Layer {
    *
    * @param {number} root_id - The ID of the root layer
    * @param {Object} grad_output - The gradient of the output
-   * @param {Object} target - Optional target for loss layers
    */
-  static backward(root_id, grad_output, target = null) {
-    Layer.initialize();
-
+  static backward(root_id, grad_output) {
     const gradients = new Map(); // Map of layer ID to incoming gradient
     const out_degree = new Map(); // Count of unprocessed children for each layer
     const queue = []; // Queue for BFS (in reverse)
+    let target = null;
 
     // Calculate out-degree for all layers in the subnet
-    const subnet_layers = Layer.get_subnet_layers(root_id);
+    const subnet_layers = Layer.get_subnet_and_shared_layers(root_id);
     for (let i = 0; i < subnet_layers.length; ++i) {
       const id = subnet_layers[i];
       const layer = Layer.get(id);
@@ -879,7 +923,9 @@ export class Layer {
       return input;
     }
 
-    return handler.forward(layer, input, target);
+    const prepared_input = reshape_tensor(input, layer?.properties?.execution_input_shape);
+    const output = handler.forward(layer, prepared_input, target);
+    return reshape_tensor(output, layer?.properties?.output_shape);
   }
 
   /**
@@ -900,7 +946,9 @@ export class Layer {
       return grad_output;
     }
 
-    return handler.backward(layer, grad_output, target);
+    const prepared_grad = reshape_tensor(grad_output, layer?.properties?.execution_output_shape);
+    const input_grad = handler.backward(layer, prepared_grad, target);
+    return reshape_tensor(input_grad, layer?.properties?.inferred_input_shape);
   }
 
   /**

@@ -711,7 +711,7 @@ export class MLOpStore {
     return result;
   }
 
-  add_layer(type, input_size, output_size, parent = null, options = {}, params = null) {
+  add_layer(type, output_size, parent = null, options = {}, params = null) {
     const hop = this.hops.allocate();
     hop.type = MLHopType.ADD_LAYER;
     hop.param_start = this.hops_params.length;
@@ -719,7 +719,7 @@ export class MLOpStore {
 
     let result = null;
     if (this.hop_handlers.has(MLHopType.ADD_LAYER)) {
-      result = this.hop_handlers.get(MLHopType.ADD_LAYER)(type, input_size, output_size, parent, options, params);
+      result = this.hop_handlers.get(MLHopType.ADD_LAYER)(type, output_size, parent, options, params);
     }
 
     hop.result = result;
