@@ -183,9 +183,10 @@ export class MLOpStore {
     const result = Tensor.zeros(new_shape, a.batch_size);
     op.type = MLOpType.EXTEND;
     op.param_start = this.params.length;
-    op.param_count = 2 + add_dims.length;
+    op.param_count = 3 + add_dims.length;
     op.result = result.id;
     this.params.add(a.id, 1);
+    this.params.add(add_dims.length, 1);
     this.params.add(add_dims, add_dims.length);
     this.params.add(fill_value, 1);
 

@@ -4,6 +4,8 @@ import { FrameAllocator, FrameStackAllocator } from "../../memory/allocator.js";
 import { profile_scope } from "../../utility/performance.js";
 import { clamp } from "../../utility/math.js";
 
+export const UI_Z_ORDER_CURSOR = 10000;
+
 const corner_radius_top_left = "corner_radius_top_left";
 const corner_radius_top_right = "corner_radius_top_right";
 const corner_radius_bottom_right = "corner_radius_bottom_right";
@@ -63,6 +65,7 @@ class LayoutStackContainer {
   auto_height = false;
   content_max_x = 0;
   content_max_y = 0;
+  z_order = 0;
 }
 
 const KeyboardKey = {
@@ -102,6 +105,10 @@ export const UIContext = {
    * Global draw commands array.
    */
   draw_commands: [],
+  /**
+   * Stable insertion order for draw commands. Used as a tie-breaker when z-order matches.
+   */
+  draw_command_order: 0,
   /**
    * Global layout allocator.
    */
@@ -209,6 +216,41 @@ function parse_dimension(value, base = 0) {
     return parseFloat(value);
   }
   return Number(value) || 0;
+}
+
+function resolve_z_order(config = {}, inherited_z_order = 0) {
+  const configured_z_order = config.z_order ?? config.z_index ?? inherited_z_order;
+  const z_order = Number(configured_z_order);
+  return Number.isFinite(z_order) ? z_order : inherited_z_order;
+}
+
+function get_current_z_order() {
+  const container_index = UIContext.layout_stack.peek();
+  if (container_index === null) {
+    return 0;
+  }
+
+  const container = UIContext.layout_allocator.get(container_index.value);
+  return container?.z_order ?? 0;
+}
+
+function push_draw_command(draw, config = {}, inherited_z_order = get_current_z_order()) {
+  const command = {
+    draw,
+    z_order: resolve_z_order(config, inherited_z_order),
+    order: UIContext.draw_command_order++,
+  };
+  UIContext.draw_commands.push(command);
+  return UIContext.draw_commands.length - 1;
+}
+
+function set_draw_command(index, draw, config = {}, inherited_z_order = get_current_z_order()) {
+  const existing_command = UIContext.draw_commands[index];
+  UIContext.draw_commands[index] = {
+    draw,
+    z_order: existing_command?.z_order ?? resolve_z_order(config, inherited_z_order),
+    order: existing_command?.order ?? UIContext.draw_command_order++,
+  };
 }
 
 function rounded_rect_path_corners(
@@ -640,6 +682,7 @@ function wrap_text(text, font, max_width) {
  */
 export function reset_ui(canvas_width = 0, canvas_height = 0) {
   UIContext.draw_commands = [];
+  UIContext.draw_command_order = 0;
   UIContext.layout_allocator.reset();
   UIContext.layout_stack.reset();
   UIContext.keyboard_events.reset();
@@ -654,8 +697,18 @@ export function reset_ui(canvas_width = 0, canvas_height = 0) {
  */
 export function flush_ui(ctx) {
   profile_scope("flush_ui", () => {
+    UIContext.draw_commands.sort((a, b) => {
+      const z_delta = (a?.z_order ?? 0) - (b?.z_order ?? 0);
+      return z_delta !== 0 ? z_delta : (a?.order ?? 0) - (b?.order ?? 0);
+    });
+
     for (let i = 0; i < UIContext.draw_commands.length; i++) {
-      UIContext.draw_commands[i](ctx);
+      const command = UIContext.draw_commands[i];
+      if (typeof command === "function") {
+        command(ctx);
+      } else if (typeof command?.draw === "function") {
+        command.draw(ctx);
+      }
     }
     UIContext.draw_commands.length = 0;
   });
@@ -686,12 +739,13 @@ export function begin_container(config = {}) {
     parent_index !== null
       ? UIContext.layout_allocator.get(parent_index.value)
       : {
-          x: 0,
-          y: 0,
-          cursor: { x: 0, y: 0 },
-          width: UIContext.canvas_size.width,
-          height: UIContext.canvas_size.height,
-        };
+        x: 0,
+        y: 0,
+        cursor: { x: 0, y: 0 },
+        width: UIContext.canvas_size.width,
+        height: UIContext.canvas_size.height,
+        z_order: 0,
+      };
 
   // Determine auto-sizing flags for each dimension.
   const auto_width = !(width_name in config);
@@ -779,6 +833,7 @@ export function begin_container(config = {}) {
   }
 
   container.config = config;
+  container.z_order = resolve_z_order(config, parent.z_order ?? 0);
 
   container._has_clip = false;
   // Set auto-sizing flags and prepare to track children extents.
@@ -797,7 +852,7 @@ export function begin_container(config = {}) {
   // Note that we reference container properties so that if they later change due to auto-sizing,
   // the final drawn background will use the updated dimensions.
   container._base_command_index = UIContext.draw_commands.length;
-  UIContext.draw_commands.push(null);
+  push_draw_command(null, config, container.z_order);
 
   // --- Begin Clipping (for "clip") ---
   // If requested, add a clip region so that children drawn afterward will be clipped
@@ -822,10 +877,10 @@ export function begin_container(config = {}) {
     }
 
     // Push a translation draw command so that children are drawn shifted.
-    UIContext.draw_commands.push((ctx) => {
+    push_draw_command((ctx) => {
       ctx.save();
       ctx.translate(0, container.scroll_offset);
-    });
+    }, config, container.z_order);
   }
   // --- End Scroll Translation ---
 }
@@ -867,7 +922,7 @@ export function end_container() {
   }
 
   // --- Push base draw command for container ---
-  UIContext.draw_commands[container._base_command_index] = (ctx) => {
+  set_draw_command(container._base_command_index, (ctx) => {
     ctx.save();
     let total_width = container.width + container.padding_left + container.padding_right;
     let total_height = container.height + container.padding_top + container.padding_bottom;
@@ -876,7 +931,7 @@ export function end_container() {
     if (!container._has_clip) {
       ctx.restore();
     }
-  };
+  }, container.config, container.z_order);
 
   // Remove the current container from the layout stack.
   UIContext.layout_stack.pop();
@@ -937,16 +992,16 @@ export function end_container() {
 
   // --- End Scroll Translation for scrollable containers ---
   if (container.config.scrollable) {
-    UIContext.draw_commands.push((ctx) => {
+    push_draw_command((ctx) => {
       ctx.restore();
-    });
+    }, container.config, container.z_order);
   }
   // --- End Clipping for "clip" ---
   // If this container activated a clip, push draw command to restore the context.
   if (container._has_clip) {
-    UIContext.draw_commands.push((ctx) => {
+    push_draw_command((ctx) => {
       ctx.restore();
-    });
+    }, container.config, container.z_order);
   }
 
   return element_handle_input(
@@ -1004,12 +1059,13 @@ export function button(label, config = {}) {
     container_index !== null
       ? UIContext.layout_allocator.get(container_index.value)
       : {
-          x: 0,
-          y: 0,
-          cursor: { x: 0, y: 0 },
-          width: UIContext.canvas_size.width,
-          height: UIContext.canvas_size.height,
-        };
+        x: 0,
+        y: 0,
+        cursor: { x: 0, y: 0 },
+        width: UIContext.canvas_size.width,
+        height: UIContext.canvas_size.height,
+        z_order: 0,
+      };
 
   const font = config.font || "16px sans-serif";
   const text_padding = config.text_padding || 0;
@@ -1078,7 +1134,7 @@ export function button(label, config = {}) {
   // ----------------------
   // Assemble the Draw Command
   // ----------------------
-  UIContext.draw_commands.push((ctx) => {
+  push_draw_command((ctx) => {
     ctx.save();
     base_draw(ctx, x, y, width, height, config);
 
@@ -1195,7 +1251,7 @@ export function button(label, config = {}) {
       }
     }
     ctx.restore();
-  });
+  }, config, container.z_order);
 
   return element_handle_input(x, y, width, height, config, container);
 }
@@ -1216,12 +1272,13 @@ export function label(text, config = {}) {
     container_index !== null
       ? UIContext.layout_allocator.get(container_index.value)
       : {
-          x: 0,
-          y: 0,
-          cursor: { x: 0, y: 0 },
-          width: UIContext.canvas_size.width,
-          height: UIContext.canvas_size.height,
-        };
+        x: 0,
+        y: 0,
+        cursor: { x: 0, y: 0 },
+        width: UIContext.canvas_size.width,
+        height: UIContext.canvas_size.height,
+        z_order: 0,
+      };
 
   // Determine the effective font, padding, etc.
   const font = config.font || "16px sans-serif";
@@ -1294,7 +1351,7 @@ export function label(text, config = {}) {
   // ------------------------------
   // Add the Draw Command
   // ------------------------------
-  UIContext.draw_commands.push((ctx) => {
+  push_draw_command((ctx) => {
     ctx.save();
     ctx.font = font;
 
@@ -1368,7 +1425,7 @@ export function label(text, config = {}) {
     }
 
     ctx.restore();
-  });
+  }, config, container.z_order);
 
   // Return the input handling results.
   return element_handle_input(x, y, width, height, config, container);
@@ -1392,12 +1449,13 @@ export function image(config = {}) {
     container_index !== null
       ? UIContext.layout_allocator.get(container_index.value)
       : {
-          x: 0,
-          y: 0,
-          cursor: { x: 0, y: 0 },
-          width: UIContext.canvas_size.width,
-          height: UIContext.canvas_size.height,
-        };
+        x: 0,
+        y: 0,
+        cursor: { x: 0, y: 0 },
+        width: UIContext.canvas_size.width,
+        height: UIContext.canvas_size.height,
+        z_order: 0,
+      };
 
   let width = parse_dimension(config.width, container.width);
   let height = parse_dimension(config.height, container.height);
@@ -1454,7 +1512,7 @@ export function image(config = {}) {
   // Update the parent's layout (for auto–layout on containers).
   child_container_layout_update(container, x, y, width, height);
 
-  UIContext.draw_commands.push((ctx) => {
+  push_draw_command((ctx) => {
     ctx.save();
 
     base_draw(ctx, x, y, width, height, config);
@@ -1484,7 +1542,7 @@ export function image(config = {}) {
       }
     }
     ctx.restore();
-  });
+  }, config, container.z_order);
 
   return element_handle_input(x, y, width, height, config, container);
 }
@@ -1521,12 +1579,13 @@ export function input(name, config = {}) {
     container_index !== null
       ? UIContext.layout_allocator.get(container_index.value)
       : {
-          x: 0,
-          y: 0,
-          cursor: { x: 0, y: 0 },
-          width: UIContext.canvas_size.width,
-          height: UIContext.canvas_size.height,
-        };
+        x: 0,
+        y: 0,
+        cursor: { x: 0, y: 0 },
+        width: UIContext.canvas_size.width,
+        height: UIContext.canvas_size.height,
+        z_order: 0,
+      };
 
   const input_state = UIContext.input_state;
   let width = parse_dimension(config.width, container.width);
@@ -1624,7 +1683,7 @@ export function input(name, config = {}) {
     }
   }
 
-  UIContext.draw_commands.push((ctx) => {
+  push_draw_command((ctx) => {
     ctx.save();
 
     base_draw(ctx, x, y, width, height, config);
@@ -1654,7 +1713,7 @@ export function input(name, config = {}) {
     }
 
     ctx.restore();
-  });
+  }, config, container.z_order);
 
   return field_state;
 }
@@ -1672,11 +1731,12 @@ export function input(name, config = {}) {
  */
 export function cursor(config = {}) {
   config.widget_id = UIContext.get_unique_id();
+  config.z_order ??= UI_Z_ORDER_CURSOR;
 
   const input_state = UIContext.input_state;
   input_state.depth += input_state.wheel;
 
-  UIContext.draw_commands.push((ctx) => {
+  push_draw_command((ctx) => {
     ctx.save();
 
     base_draw(ctx, input_state.x, input_state.y, config.width || 20, config.height || 20, config);
@@ -1716,7 +1776,7 @@ export function cursor(config = {}) {
     }
 
     ctx.restore();
-  });
+  }, config);
 }
 
 /**

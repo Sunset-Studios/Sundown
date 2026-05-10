@@ -21,6 +21,8 @@ export class Tensor {
   static free_list = [];
   // Persistent flags stored per tensor, where index == tensor.id.
   static persistent_flags = [];
+  // Allocation flags prevent the same tensor ID from being returned to the free list twice.
+  static allocated_flags = [];
   // Used to assign new IDs when necessary.
   static next_tensor_id = 0;
 
@@ -63,6 +65,7 @@ export class Tensor {
 
     // Mark this tensor as non-persistent by default.
     Tensor.persistent_flags[this.id] = false;
+    Tensor.allocated_flags[this.id] = true;
 
     Tensor.debug_log_tensor(this.id, "initialize");
   }
@@ -316,7 +319,13 @@ export class Tensor {
    * adds the tensor's ID to the free list.
    */
   dispose() {
+    if (!Tensor.allocated_flags[this.id]) {
+      return;
+    }
+
     // (If there are GPU buffers or other resources, free them here.)
+    Tensor.allocated_flags[this.id] = false;
+    Tensor.persistent_flags[this.id] = false;
     Tensor.free_list.push(this.id);
     // Optionally, clear properties to help GC:
     this.data = null;
@@ -517,7 +526,7 @@ export class Tensor {
    */
   static cleanup() {
     for (let i = 0; i < Tensor.pool.length; i++) {
-      if (Tensor.pool[i] && !Tensor.persistent_flags[i]) {
+      if (Tensor.pool[i] && Tensor.allocated_flags[i] && !Tensor.persistent_flags[i]) {
         Tensor.pool[i].dispose();
       }
     }

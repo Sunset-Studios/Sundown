@@ -135,3 +135,6 @@ export class MLHop {
   type = MLHopType.NONE;
   result = null;
 }
+
+
+export const op_type_names = new Map(Object.entries(MLOpType).map(([name, value]) => [value, name]));

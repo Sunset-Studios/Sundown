@@ -13,6 +13,7 @@ import { SVLMTool } from "./svlm_tool.js";
 import { DebugMemory } from "./debug_memory.js";
 import { GPUTimerView } from "./gpu_timer_view.js";
 import { GPUMemoryView } from "./gpu_memory_view.js";
+import { MLTraceTool } from "./ml_trace.js";
 import { CVarTool } from "./cvar_tool.js";
 import { MeshletStats } from "./meshlet_stats.js";
 import { warn } from "../utility/logging.js";
@@ -86,6 +87,7 @@ export class DevConsole extends SimulationLayer {
     this.register_command("debug_memory", new DebugMemory());
     this.register_command("gpu_timer", new GPUTimerView());
     this.register_command("gpu_memory", new GPUMemoryView());
+    this.register_command("ml_trace", new MLTraceTool());
     this.register_command("ddgi_stats", new DDGIStats());
     this.register_command("svlm", new SVLMTool());
     this.register_command("cvar", new CVarTool());

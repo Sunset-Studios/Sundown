@@ -41,10 +41,21 @@ export class FullyConnected {
       return null;
     }
 
+    const props = layer.properties ?? {};
+    const execution_input_shape = props.execution_input_shape;
+    if (
+      Tensor.is_shape_valid(execution_input_shape) &&
+      !Tensor.shapes_equal(input_tensor.shape, execution_input_shape)
+    ) {
+      input_tensor = input_tensor.reshape(execution_input_shape);
+    }
+
     // Build an extended input by appending 1 to each row for the bias.
-    // Extended input has shape [batch_size, input_size + 1].
+    // Extended input appends the bias column along the last/feature axis.
     // Cache input for the backward pass.
-    layer.cached_input = input_tensor.extend([0, 1], 1);
+    const bias_extension = new Array(input_tensor.shape.length).fill(0);
+    bias_extension[bias_extension.length - 1] = 1;
+    layer.cached_input = input_tensor.extend(bias_extension, 1);
 
     // Compute output = extended_input dot params.
     // This multiplication handles both the linear transform and bias addition.

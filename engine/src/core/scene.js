@@ -1,3 +1,4 @@
+import { EntityManager } from "./ecs/entity.js";
 import { SimulationLayer } from "./simulation_layer.js";
 import { DevConsole } from "../tools/dev_console.js";
 import { GLTFSceneLoader } from "../renderer/gltf_scene_loader.js";
@@ -110,6 +111,7 @@ export class Scene extends SimulationLayer {
       width: 25,
       height: 25,
       background_color: "transparent",
+      z_order: 1,
     });
   }
 

@@ -6,6 +6,7 @@ import {
   prepare_subnet_shapes,
   reshape_tensor
 } from "./shape_inference.js";
+import { MLTrace } from "./tick_trace.js";
 
 import { Input } from "./layers/input.js";
 import { FullyConnected } from "./layers/fully_connected.js";
@@ -679,6 +680,8 @@ export class Layer {
   }
 
   static prepare_subnet(root_id) {
+    MLTrace.log("layer.forward.prepare", { root: root_id });
+
     Layer.initialize();
 
     prepare_subnet_shapes(root_id, {
@@ -743,6 +746,8 @@ export class Layer {
    * @returns {Object} The output of the network
    */
   static forward(root_id) {
+    MLTrace.log("layer.forward.subnet", { root: root_id, layers: subnet_layers.length });
+
     Layer.prepare_subnet(root_id);
 
     const outputs = new Map(); // Map of layer ID to output
@@ -834,6 +839,8 @@ export class Layer {
    * @param {Object} grad_output - The gradient of the output
    */
   static backward(root_id, grad_output) {
+    MLTrace.log("layer.backward", { root: root_id, grad: grad_output?.shape ?? null });
+
     const gradients = new Map(); // Map of layer ID to incoming gradient
     const out_degree = new Map(); // Count of unprocessed children for each layer
     const queue = []; // Queue for BFS (in reverse)
@@ -914,6 +921,8 @@ export class Layer {
    * @returns {Object} The layer's output
    */
   static process_forward(id, input, target = null) {
+    MLTrace.log("layer.forward.layer", { id });
+
     const layer = Layer.get(id);
     if (!layer) return input;
 
@@ -937,6 +946,8 @@ export class Layer {
    * @returns {Object} The gradient with respect to input
    */
   static process_backward(id, grad_output, target = null) {
+    MLTrace.log("layer.backward.layer", { id });
+
     const layer = Layer.get(id);
     if (!layer) return grad_output;
 
@@ -960,6 +971,8 @@ export class Layer {
    * @param {number} weight_decay - The weight decay
    */
   static update_parameters(id, learning_rate, optimizer = null, weight_decay = 0) {
+    MLTrace.log("layer.update_parameters", { id });
+
     const layer = Layer.get(id);
     if (!layer || !layer.params || !layer.grad_params) return;
 

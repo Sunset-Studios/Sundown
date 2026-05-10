@@ -4,6 +4,7 @@ import { MLOps } from "./ops/ops.js";
 import { MLHopType } from "./ops/op_types.js";
 import { NeuralArchitectureHelpers } from "./neural_architecture.js";
 import { RandomAccessAllocator } from "../memory/allocator.js";
+import { MLTrace } from "./tick_trace.js";
 
 const function_name = "function";
 
@@ -250,6 +251,8 @@ export class MasterMind {
   tick(delta_time) {
     if (this.paused) return;
 
+    MLTrace.begin_tick(delta_time, this.subnets.length);
+
     MLOps.reset();
 
     // If there are no models, do nothing.
@@ -264,6 +267,7 @@ export class MasterMind {
       if (
         subnet_entry && typeof subnet_entry.train_step === function_name
       ) {
+        MLTrace.log("train.step", { index: i, root: subnet_entry.subnet_id });
         subnet_entry.train_step(delta_time);
       }
     }

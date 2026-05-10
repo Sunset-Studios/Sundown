@@ -1,9 +1,10 @@
 import { Tensor } from "../math/tensor.js";
-import { MLOpType } from "./op_types.js";
+import { MLOpType, op_type_names } from "./op_types.js";
 import { MLOpStore } from "./op_store.js";
 import { Name } from "../names.js";
 import { FreeListAllocator } from "../../memory/allocator.js";
 import { logger } from "../logger.js";
+import { MLTrace } from "../tick_trace.js";
 
 // MLOps acts as a virtual machine for all ML operations.
 // It is responsible for executing the operations on the appropriate backend.
@@ -215,11 +216,14 @@ export class MLOps {
   }
 
   static reset() {
+    MLTrace.log("ops.reset");
     this.runtime_store.reset();
     Tensor.cleanup();
   }
 
   static compile() {
+    MLTrace.log("ops.compile");
+
     for (let i = 0; i < this.op_stores.length; i++) {
       const other = this.op_stores.get(i);
       this.runtime_store.append(other);
@@ -228,6 +232,7 @@ export class MLOps {
   }
 
   static run() {
+    MLTrace.log("ops.run");
     return this.backend.run();
   }
 }
@@ -926,6 +931,9 @@ export class MLOpsCPU {
     for (let i = 0; i < this.store.ops.length; i++) {
       const op = this.store.ops.get(i);
       const params_start = op.param_start;
+      const op_name = op_type_names.get(op.type) ?? op.type;
+
+      MLTrace.log("ops.cpu.op.begin", { index: i, type: op_name, result: op.result });
 
       switch (op.type) {
         case MLOpType.INIT_RANDOM:
@@ -953,7 +961,8 @@ export class MLOpsCPU {
           );
           break;
         case MLOpType.EXTEND:
-          const add_dims = this.store.params.get(params_start + 1, op.param_count - 1);
+          const add_dim_count = this.store.params.get_element(params_start + 1);
+          const add_dims = this.store.params.get(params_start + 2, add_dim_count);
           this.extend(
             tensors[op.result],
             tensors[this.store.params.get_element(params_start)],
