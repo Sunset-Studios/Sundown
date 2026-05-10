@@ -66,7 +66,7 @@ export class MLTraceTool extends DevConsoleTool {
     y: 0,
     width: "100%",
     height: 3,
-    background_color: "rgba(255, 63, 172, 0.95)",
+    background_color: "rgba(250, 113, 8, 0.95)",
   };
 
   header_row_config = {

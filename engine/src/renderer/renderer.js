@@ -25,8 +25,38 @@ import { GPUTimeQuery } from "./query.js";
 import { log, error } from "../utility/logging.js";
 import { vec2 } from "gl-matrix";
 import { EngineCVars } from "../../config/cvars.js";
+import { reset_ui, flush_ui, panel, label, image, UIContext } from "../ui/2d/immediate.js";
 
 const frame_render_event_name = "frame_render";
+
+const REQUIRED_WEBGPU_FEATURES = ["indirect-first-instance", "subgroups"];
+const WEBGPU_DIALOG_LOGO_SRC = "engine/sprites/sundown_logo.png";
+
+function webgpu_feature_display_name(feature) {
+  switch (feature) {
+    case "indirect-first-instance":
+      return "Indirect first instance";
+    case "shader-f16":
+      return "16-bit shader floats";
+    case "subgroups":
+      return "Shader subgroups";
+    case "timestamp-query":
+      return "GPU timestamp queries";
+    default:
+      return feature;
+  }
+}
+
+function sync_canvas_size(canvas) {
+  if (!canvas) {
+    return;
+  }
+
+  const width = Math.max(1, canvas.clientWidth || canvas.width || window.innerWidth || 1280);
+  const height = Math.max(1, canvas.clientHeight || canvas.height || window.innerHeight || 720);
+  canvas.width = width;
+  canvas.height = height;
+}
 
 export class Renderer {
   canvas = null;
@@ -58,42 +88,56 @@ export class Renderer {
    * @param {Object} options - The options for the renderer
    */
   async setup(canvas, canvas_ui, render_strategy, options = {}) {
+    this.canvas = canvas;
+    this.canvas_ui = canvas_ui;
+
+    sync_canvas_size(this.canvas);
+    sync_canvas_size(this.canvas_ui);
+
     if (!navigator.gpu) {
+      this._show_webgpu_support_dialog(
+        "WebGPU is not available in this browser.",
+        "Sundown needs WebGPU to render the scene. Try a current Chrome, Edge, or Firefox Nightly build with hardware acceleration enabled."
+      );
       throw Error("WebGPU is not supported");
     }
-
-    this.canvas = canvas;
-    this.canvas.width = this.canvas.clientWidth;
-    this.canvas.height = this.canvas.clientHeight;
-
-    this.canvas_ui = canvas_ui;
-    this.canvas_ui.width = this.canvas_ui.clientWidth;
-    this.canvas_ui.height = this.canvas_ui.clientHeight;
 
     this.adapter = await navigator.gpu.requestAdapter({
       powerPreference: "high-performance",
     });
 
     if (!this.adapter) {
+      this._show_webgpu_support_dialog(
+        "No compatible WebGPU adapter was found.",
+        "Your browser supports WebGPU, but it could not find a GPU adapter for Sundown. Check hardware acceleration and GPU blocklist settings."
+      );
       throw Error("Unable to request WebGPU adapter");
     }
 
     this.has_f16 = this.adapter.features.has("shader-f16") && !options.use_precision_float;
     this.has_subgroups = this.adapter.features.has("subgroups");
 
-    if (!this.has_subgroups) {
-      throw Error("Sundown requires WebGPU subgroups to be supported");
-    }
-
-    let required_features = ["indirect-first-instance"];
+    let required_features = [...REQUIRED_WEBGPU_FEATURES];
     if (this.has_f16) {
       required_features.push("shader-f16");
     }
-    if (this.has_subgroups) {
-      required_features.push("subgroups");
-    }
     if (__DEV__) {
       required_features.push("timestamp-query");
+    }
+
+    const missing_features = required_features.filter((feature) => !this.adapter.features.has(feature));
+    if (missing_features.length > 0) {
+      const missing_feature_names = missing_features.map(webgpu_feature_display_name).join(", ");
+      this._show_webgpu_support_dialog(
+        "This GPU is missing a required WebGPU feature.",
+        `Missing: ${missing_feature_names}. Sundown cannot start until these features are available in the browser and GPU driver.`
+      );
+
+      if (missing_features.includes("subgroups")) {
+        throw Error("Sundown requires WebGPU subgroups to be supported");
+      }
+
+      throw Error(`Sundown requires WebGPU feature(s): ${missing_features.join(", ")}`);
     }
 
     try {
@@ -111,7 +155,17 @@ export class Renderer {
     } catch (e) {
       log(e);
       log("Falling back to default limits");
-      this.device = await this.adapter.requestDevice();
+      try {
+        this.device = await this.adapter.requestDevice({
+          requiredFeatures: required_features,
+        });
+      } catch (fallback_error) {
+        this._show_webgpu_support_dialog(
+          "Unable to create a WebGPU device.",
+          "Sundown found a compatible adapter, but the browser could not create the required GPU device."
+        );
+        throw fallback_error;
+      }
     }
 
     // Use lost to handle lost devices
@@ -577,10 +631,8 @@ export class Renderer {
    * Handle the canvas being resized
    */
   on_resize() {
-    this.canvas.width = this.canvas.clientWidth;
-    this.canvas.height = this.canvas.clientHeight;
-    this.canvas_ui.width = this.canvas_ui.clientWidth;
-    this.canvas_ui.height = this.canvas_ui.clientHeight;
+    sync_canvas_size(this.canvas);
+    sync_canvas_size(this.canvas_ui);
     this.aspect_ratio = this.canvas.width / this.canvas.height;
   }
 
@@ -596,6 +648,161 @@ export class Renderer {
     observer.observe(this.canvas);
 
     this._set_shared_frame_resolution();
+  }
+
+  /**
+   * Display a support dialog in case of missing support for WebGPU or features 
+   */
+  _show_webgpu_support_dialog(title, body) {
+    const dialog_canvas = this.canvas_ui ?? this.canvas;
+    if (!dialog_canvas) {
+      return;
+    }
+
+    sync_canvas_size(dialog_canvas);
+    const context = dialog_canvas.getContext("2d", { alpha: true });
+    if (!context) {
+      return;
+    }
+
+    const cached_logo = UIContext.image_cache[WEBGPU_DIALOG_LOGO_SRC];
+    if (!cached_logo) {
+      const logo = new Image();
+      logo.onload = () => this._show_webgpu_support_dialog(title, body);
+      logo.src = WEBGPU_DIALOG_LOGO_SRC;
+      UIContext.image_cache[WEBGPU_DIALOG_LOGO_SRC] = logo;
+    }
+
+    context.clearRect(0, 0, dialog_canvas.width, dialog_canvas.height);
+    reset_ui(dialog_canvas.width, dialog_canvas.height);
+
+    const canvas_width = dialog_canvas.width;
+    const canvas_height = dialog_canvas.height;
+    const compact = canvas_width < 720 || canvas_height < 520;
+    const dialog_width = Math.min(canvas_width - 32, compact ? 440 : 560);
+    const content_width = Math.max(0, dialog_width - 56);
+    const logo_width = Math.min(content_width, compact ? 180 : 240);
+    const logo_height = Math.round(logo_width * 377 / 661);
+    const dialog_padding = 28;
+    const dialog_gap = compact ? 12 : 14;
+    const title_font = compact ? "700 27px sans-serif" : "700 32px sans-serif";
+    const body_font = compact ? "16px sans-serif" : "17px sans-serif";
+    const title_line_height = compact ? 29 : 34;
+    const body_line_height = compact ? 20 : 22;
+    const status_height = 36;
+    const measure_wrapped_height = (text, font, max_width, line_height) => {
+      context.font = font;
+      const words = text.split(/\s+/);
+      let line_count = 1;
+      let line = "";
+
+      for (let i = 0; i < words.length; i++) {
+        const test_line = line.length > 0 ? `${line} ${words[i]}` : words[i];
+        if (context.measureText(test_line).width > max_width && line.length > 0) {
+          line_count++;
+          line = words[i];
+        } else {
+          line = test_line;
+        }
+      }
+
+      return line_count * line_height;
+    };
+    const title_height = measure_wrapped_height(title, title_font, content_width, title_line_height);
+    const body_height = measure_wrapped_height(body, body_font, content_width, body_line_height);
+    const dialog_height =
+      dialog_padding * 2 +
+      logo_height +
+      title_height +
+      body_height +
+      status_height +
+      dialog_gap * 3;
+    const dialog_x = Math.max(16, (canvas_width - dialog_width) / 2);
+    const dialog_y = Math.max(20, (canvas_height - dialog_height) / 2);
+
+    panel(
+      {
+        x: 0,
+        y: 0,
+        width: "100%",
+        height: "100%",
+        background_color: "#071117",
+        z_order: 0,
+      },
+      () => {
+        panel(
+          {
+            x: dialog_x,
+            y: dialog_y,
+            width: dialog_width,
+            height: dialog_height,
+            layout: "column",
+            gap: dialog_gap,
+            padding: dialog_padding,
+            background_color: "rgba(13, 24, 31, 0.96)",
+            border: "1px solid rgba(128, 226, 214, 0.38)",
+            corner_radius: 8,
+            box_shadow: "0 18 44 rgba(0,0,0,0.45)",
+            z_order: 1,
+          },
+          () => {
+            if (UIContext.image_cache[WEBGPU_DIALOG_LOGO_SRC]?.complete) {
+              image({
+                y: 0,
+                src: WEBGPU_DIALOG_LOGO_SRC,
+                width: logo_width,
+                height: logo_height,
+              });
+            } else {
+              label("Sundown", {
+                y: 0,
+                width: content_width,
+                height: logo_height,
+                font: compact ? "600 16px sans-serif" : "600 17px sans-serif",
+                text_color: "#7ee6d7",
+                text_align: "center",
+                text_valign: "middle",
+              });
+            }
+            label(title, {
+              y: 0,
+              width: content_width,
+              height: title_height,
+              font: title_font,
+              text_color: "#f4fbfa",
+              text_align: "left",
+              text_valign: "top",
+              wrap: true,
+            });
+            label(body, {
+              y: 0,
+              width: content_width,
+              height: body_height,
+              font: body_font,
+              text_color: "rgba(227, 241, 239, 0.82)",
+              text_align: "left",
+              text_valign: "top",
+              wrap: true,
+            });
+            label("The renderer stopped before the scene could start.", {
+              y: 0,
+              width: content_width,
+              height: status_height,
+              font: compact ? "600 13px monospace" : "600 14px monospace",
+              text_color: "#ffd36e",
+              text_align: "left",
+              text_valign: "middle",
+              background_color: "rgba(255, 211, 110, 0.1)",
+              border: "1px solid rgba(255, 211, 110, 0.25)",
+              corner_radius: 6,
+              text_padding: 10,
+            });
+          }
+        );
+      }
+    );
+
+    flush_ui(context);
   }
 
   _bind_cvars() {
