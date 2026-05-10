@@ -746,6 +746,8 @@ export class Layer {
    * @returns {Object} The output of the network
    */
   static forward(root_id) {
+    const subnet_layers = Layer.get_subnet_and_shared_layers(root_id);
+
     MLTrace.log("layer.forward.subnet", { root: root_id, layers: subnet_layers.length });
 
     Layer.prepare_subnet(root_id);
@@ -756,7 +758,6 @@ export class Layer {
     let target = null;
 
     // Calculate in-degree for all layers in the subnet
-    const subnet_layers = Layer.get_subnet_and_shared_layers(root_id);
     for (let i = 0; i < subnet_layers.length; ++i) {
       const id = subnet_layers[i];
       const layer = Layer.get(id);
