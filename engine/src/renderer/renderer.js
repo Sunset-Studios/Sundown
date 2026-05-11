@@ -508,6 +508,30 @@ export class Renderer {
   }
 
   /**
+   * Check if temporal anti-aliasing is enabled
+   * @returns {boolean} - True if TAA is enabled, false otherwise
+   */
+  is_taa_enabled() {
+    return CVarSystem.get(EngineCVars.Renderer.TAAEnabled, true);
+  }
+
+  /**
+   * Set the TAA enabled state
+   * @param {boolean} enabled - True if TAA should be enabled, false otherwise
+   */
+  set_taa_enabled(enabled) {
+    CVarSystem.set(EngineCVars.Renderer.TAAEnabled, enabled);
+  }
+
+  /**
+   * Get the current TAA feedback amount.
+   * @returns {number} - Current-frame blend amount.
+   */
+  get_taa_feedback() {
+    return CVarSystem.get(EngineCVars.Renderer.TAAFeedback, 0.08);
+  }
+
+  /**
    * Check if AO is enabled
    * @returns {boolean} - True if AO is enabled, false otherwise
    */
@@ -862,6 +886,17 @@ export class Renderer {
     this.cvar_unsubscribers.push(
       CVarSystem.subscribe(EngineCVars.Renderer.ReflectionStrategy, () => {
         refresh_renderer(true);
+      })
+    );
+    this.cvar_unsubscribers.push(
+      CVarSystem.subscribe(EngineCVars.Renderer.TAAEnabled, (enabled) => {
+        SharedViewBuffer.set_temporal_jitter_enabled(enabled);
+        this.mark_bind_groups_dirty(true);
+      })
+    );
+    this.cvar_unsubscribers.push(
+      CVarSystem.subscribe(EngineCVars.Renderer.TAAFeedback, () => {
+        this.mark_bind_groups_dirty(true);
       })
     );
     this.cvar_unsubscribers.push(

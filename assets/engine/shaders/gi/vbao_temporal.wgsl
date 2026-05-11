@@ -43,11 +43,12 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     var neigh_max = current_ao;
     for (var dy = -1; dy <= 1; dy = dy + 1) {
         for (var dx = -1; dx <= 1; dx = dx + 1) {
+            if (dx == 0 && dy == 0) { continue; }
             let tap = vec2<i32>(
                 clamp(coord.x + dx, 0, i32(dims.x) - 1),
                 clamp(coord.y + dy, 0, i32(dims.y) - 1)
             );
-            let tap_ao = textureLoad(history_ao_tex, tap, 0).r;
+            let tap_ao = textureLoad(current_ao_tex, tap, 0).r;
             neigh_min = min(neigh_min, tap_ao);
             neigh_max = max(neigh_max, tap_ao);
         }

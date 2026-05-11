@@ -134,7 +134,7 @@ export class VBAO {
     sample_count: 16,
     max_radius_px: 96,
     thickness: 0.25,
-    temporal_response: 0.1,
+    temporal_response: 0.01,
     denoise_radius: 8,
     denoise_position_sigma: 0.2,
     denoise_normal_power: 64,

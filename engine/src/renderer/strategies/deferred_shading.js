@@ -2,7 +2,7 @@
 import { global_dispatcher } from "../../core/dispatcher.js";
 import { EntityManager } from "../../core/ecs/entity.js";
 import { FragmentGpuBuffer } from "../../core/ecs/solar/memory.js";
-import { SharedFrameInfoBuffer } from "../../core/shared_data.js";
+import { SharedFrameInfoBuffer, SharedViewBuffer } from "../../core/shared_data.js";
 
 // ECS fragments
 import { TransformFragment } from "../../core/ecs/fragments/transform_fragment.js";
@@ -53,6 +53,7 @@ import { RTAO } from "../global_illumination/rtao.js";
 import { AdaptiveSparseVirtualShadowMaps } from "../shadows/as_vsm.js";
 import { SSR } from "../reflections/ssr.js";
 import { Bloom } from "../bloom.js";
+import { TemporalAntiAliasing } from "../taa.js";
 import { ResourceCache } from "../resource_cache.js";
 import { TextureArrayPools } from "../texture_pool.js";
 import {
@@ -145,7 +146,7 @@ const post_lighting_image_config = {
   format: rgba16float_format,
   width: 0,
   height: 0,
-  usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+  usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_SRC,
   force: false,
 };
 
@@ -186,6 +187,7 @@ export class DeferredShadingStrategy {
   rtao = null;
   reflections = null;
   bloom = null;
+  taa = null;
   as_vsm = null;
   debug_pipeline = null;
   gbuffer_targets_pipeline = null;
@@ -205,6 +207,7 @@ export class DeferredShadingStrategy {
       Renderer.get().get_reflection_strategy_type() === ReflectionStrategyType.SSR ? new SSR() : null;
 
     this.bloom = new Bloom();
+    this.taa = new TemporalAntiAliasing();
     this.as_vsm = new AdaptiveSparseVirtualShadowMaps({
       atlas_size: ATLAS_SIZE,
       tile_size: TILE_SIZE,
@@ -267,6 +270,9 @@ export class DeferredShadingStrategy {
       const ao_enabled = renderer.is_ao_enabled();
       const reflections_enabled = renderer.is_reflection_enabled() && !gi_has_builtin_specular;
       const depth_prepass_enabled = renderer.is_depth_prepass_enabled();
+      const taa_enabled = renderer.is_taa_enabled();
+
+      SharedViewBuffer.set_temporal_jitter_enabled(taa_enabled);
 
       if (this.force_recreate) {
         render_graph.mark_pass_cache_bind_groups_dirty(true /* pass_only */);
@@ -909,14 +915,25 @@ export class DeferredShadingStrategy {
       // │    Multi-pass gaussian blur to create beautiful light bleeding effects    │
       // └─────────────────────────────────────────────────────────────────────────────┘
 
-      this.bloom.add_passes(
-        render_graph,
-        image_extent.width,
-        image_extent.height,
-        post_lighting_image_desc,
-        this.force_recreate
-      );
-      const curr_post_bloom = this.bloom.output_image;
+      let antialiased_scene_color_desc = post_lighting_image_desc;
+
+      if (taa_enabled) {
+        this.taa.add_passes(
+          render_graph,
+          image_extent.width,
+          image_extent.height,
+          post_lighting_image_desc,
+          prev_lighting,
+          main_motion_emissive_image,
+          main_depth_image,
+          prev_depth_image,
+          main_normal_image,
+          this.force_recreate
+        );
+        antialiased_scene_color_desc = this.taa.output_image;
+      } else if (this.taa) {
+        this.taa.reset_history();
+      }
 
       // ┌─────────────────────────────────────────────────────────────────────────────┐
       // │ 📋 PASS: Copy History                                                    │
@@ -925,9 +942,20 @@ export class DeferredShadingStrategy {
       render_graph.add_pass(
         "copy_history",
         RenderPassFlags.GraphLocal,
-        {},
+        {
+          inputs: [
+            antialiased_scene_color_desc,
+            main_normal_image,
+            main_depth_image,
+          ],
+          outputs: [
+            prev_lighting,
+            prev_normal_image,
+            prev_depth_image,
+          ],
+        },
         (graph, frame_data, encoder) => {
-          const curr_final_lighting = graph.get_physical_image(curr_post_bloom);
+          const curr_final_lighting = graph.get_physical_image(antialiased_scene_color_desc);
           const prev_final_lighting = graph.get_physical_image(prev_lighting);
           prev_final_lighting.copy_texture(encoder, curr_final_lighting);
 
@@ -980,8 +1008,14 @@ export class DeferredShadingStrategy {
         );
       }
 
-      // Use post-bloom color for antialiased_scene_color_desc
-      const antialiased_scene_color_desc = curr_post_bloom;
+      this.bloom.add_passes(
+        render_graph,
+        image_extent.width,
+        image_extent.height,
+        antialiased_scene_color_desc,
+        this.force_recreate
+      );
+      const curr_post_bloom = this.bloom.output_image;
 
       // ┌─────────────────────────────────────────────────────────────────────────────┐
       // │ 🎭 PASS: Post-Processing Stack                                              │
@@ -991,7 +1025,7 @@ export class DeferredShadingStrategy {
         0,
         render_graph,
         post_lighting_image_config,
-        antialiased_scene_color_desc,
+        curr_post_bloom,
         main_depth_image,
         main_normal_image
       );

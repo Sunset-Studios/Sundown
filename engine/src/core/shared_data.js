@@ -11,6 +11,29 @@ import { radians } from "../utility/math.js";
 
 const view_buffer_name = "view_buffer";
 const frame_info_buffer_name = "frame_info_buffer";
+const temporal_jitter_sample_count = 16;
+
+function halton(index, base) {
+  let result = 0.0;
+  let fraction = 1.0 / base;
+  let i = index;
+
+  while (i > 0) {
+    result += fraction * (i % base);
+    i = Math.floor(i / base);
+    fraction /= base;
+  }
+
+  return result;
+}
+
+function apply_projection_jitter(projection_matrix, jitter_ndc) {
+  for (let col = 0; col < 4; col++) {
+    const row_base = col * 4;
+    projection_matrix[row_base + 0] += jitter_ndc[0] * projection_matrix[row_base + 3];
+    projection_matrix[row_base + 1] += jitter_ndc[1] * projection_matrix[row_base + 3];
+  }
+}
 
 export class SharedViewBuffer {
   // --- Field Offsets (in floats) ---
@@ -318,6 +341,7 @@ export class SharedViewBuffer {
   static custom_projection_matrix_enabled = new ResizableBitArray(256);
   static custom_view_matrix_enabled = new ResizableBitArray(256);
   static free_list = new TypedStack(16, Uint32Array);
+  static temporal_jitter_enabled = false;
 
   // --- View Pool & GPU Resources ---
   static buffer = null;
@@ -477,6 +501,30 @@ export class SharedViewBuffer {
     return !!SharedViewBuffer.moved_states.get(view_index);
   }
 
+  static set_temporal_jitter_enabled(enabled) {
+    const new_enabled = !!enabled;
+    if (SharedViewBuffer.temporal_jitter_enabled === new_enabled) {
+      return;
+    }
+
+    SharedViewBuffer.temporal_jitter_enabled = new_enabled;
+    const count = SharedViewBuffer.get_view_data_count();
+    for (let i = 0; i < count; i++) {
+      SharedViewBuffer.dirty_states.set(i, 1);
+    }
+  }
+
+  static get_temporal_jitter(frame_index, resolution) {
+    if (!SharedViewBuffer.temporal_jitter_enabled) {
+      return vec2.fromValues(0.0, 0.0);
+    }
+
+    const sample_index = (Math.floor(frame_index) % temporal_jitter_sample_count) + 1;
+    const jitter_x = (halton(sample_index, 2) - 0.5) * 2.0 / Math.max(1.0, resolution[0]);
+    const jitter_y = (halton(sample_index, 3) - 0.5) * 2.0 / Math.max(1.0, resolution[1]);
+    return vec2.fromValues(jitter_x, jitter_y);
+  }
+
   /** Request cull update for a specific view index. */
   static set_render_active(view_index, active = true) {
     const old_state = SharedViewBuffer.renderable_states.get(view_index);
@@ -502,12 +550,23 @@ export class SharedViewBuffer {
   static update_transforms(indices = null) {
     const count = SharedViewBuffer.raw_data.length / SharedViewBuffer.floats_per_view;
     const list = indices ?? Array.from({ length: count }, (_, i) => i);
+    const active_view_index = SharedFrameInfoBuffer.get_view_index();
+    const frame_index = SharedFrameInfoBuffer.get_frame_index();
+    const resolution = SharedFrameInfoBuffer.frame_info.resolution;
 
     for (let i = 0; i < list.length; ++i) {
       const idx = list[i];
       const base = idx * SharedViewBuffer.floats_per_view;
+      const temporal_jitter_update =
+        SharedViewBuffer.temporal_jitter_enabled &&
+        idx === active_view_index &&
+        !SharedViewBuffer.custom_projection_matrix_enabled.get(idx);
 
-      if (!SharedViewBuffer.dirty_states.get(idx) && !SharedViewBuffer.moved_states.get(idx)) {
+      if (
+        !SharedViewBuffer.dirty_states.get(idx) &&
+        !SharedViewBuffer.moved_states.get(idx) &&
+        !temporal_jitter_update
+      ) {
         continue;
       }
       
@@ -565,6 +624,17 @@ export class SharedViewBuffer {
         }
 
         // Store computed projection back to raw_data
+        SharedViewBuffer.raw_data.set(
+          projection_matrix,
+          base + SharedViewBuffer.offsets.projection_matrix
+        );
+      }
+
+      if (temporal_jitter_update) {
+        apply_projection_jitter(
+          projection_matrix,
+          SharedViewBuffer.get_temporal_jitter(frame_index, resolution)
+        );
         SharedViewBuffer.raw_data.set(
           projection_matrix,
           base + SharedViewBuffer.offsets.projection_matrix

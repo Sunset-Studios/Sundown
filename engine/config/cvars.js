@@ -18,6 +18,8 @@ export const EngineCVars = Object.freeze({
     AOStrategy: "renderer.ao.strategy",
     ReflectionsEnabled: "renderer.reflections.enabled",
     ReflectionStrategy: "renderer.reflections.strategy",
+    TAAEnabled: "renderer.taa.enabled",
+    TAAFeedback: "renderer.taa.feedback",
     DebugDraw: "renderer.debug.draw",
     DebugTextureLevel: "renderer.debug.texture_level",
   }),
@@ -95,6 +97,19 @@ export const engine_cvar_config = Object.freeze({
         ssr: ReflectionStrategyType.SSR,
       },
       description: "Selects the reflection strategy.",
+    },
+    {
+      name: EngineCVars.Renderer.TAAEnabled,
+      type: CVarType.Boolean,
+      default_value: false,
+      description: "Enables temporal anti-aliasing.",
+    },
+    {
+      name: EngineCVars.Renderer.TAAFeedback,
+      type: CVarType.Number,
+      default_value: 0.06,
+      validate: (value) => value > 0.0 && value <= 1.0,
+      description: "Controls how much current-frame color is blended into TAA history.",
     },
     {
       name: EngineCVars.Renderer.DebugDraw,

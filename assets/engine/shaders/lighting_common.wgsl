@@ -326,7 +326,7 @@ fn calculate_blinn_phong(
 // ------------------------------------------------------------------------------------
 fn compute_indirect_diffuse_occlusion(ao: f32, indirect_diffuse: vec3<f32>) -> f32 {
     let indirect_luma = luminance(indirect_diffuse);
-    return clamp(ao + (1.0 - exp(-indirect_luma)), 0.0, 1.0);
+    return clamp(ao + (1.0 - exp(-(indirect_luma * indirect_luma))), 0.0, 1.0);
 }
 
 fn compute_specular_occlusion(ao: f32, n_dot_v: f32, roughness: f32) -> f32 {
