@@ -5,15 +5,8 @@ struct VBAOSettings {
     bias: f32,
     slice_count: f32,
     sample_count: f32,
-    max_radius_px: f32,
     thickness: f32,
-    temporal_response: f32,
-    denoise_radius: f32,
-    denoise_position_sigma: f32,
-    denoise_normal_power: f32,
-    denoise_ao_sigma: f32,
-    denoise_direction: vec2<f32>,
-    denoise_radius_px: f32,
+    temporal_response: f32
 };
 
 @group(1) @binding(0) var normal_tex: texture_2d<f32>;
@@ -192,7 +185,8 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         abs(view.projection_matrix[1][1]) * full_resolution_f.y
     );
     let view_depth = select(max(-position_vs.z, 1e-3), 1.0, orthographic);
-    let radius_px = clamp(settings.radius * projection_scale / view_depth, 1.0, settings.max_radius_px);
+    let ao_radius = max(settings.radius, 1e-4);
+    let radius_px = ao_radius * projection_scale / view_depth;
     let step_scale = pow(max(radius_px, 1.0), 1.0 / f32(sample_count));
 
     var ao_accum = 0.0;
@@ -267,6 +261,19 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
                     continue;
                 }
 
+                let sample_distance = sqrt(delta_front_len_sq);
+                let distance_fade = clamp(1.0 - sample_distance / ao_radius, 0.0, 1.0);
+                let sample_dir_from_surface = delta_front / sample_distance;
+                let normal_direction_weight = mix(
+                    0.35,
+                    1.0,
+                    smoothstep(0.0, 0.45, dot(normal_vs, sample_dir_from_surface))
+                );
+                let occlusion_weight = distance_fade * distance_fade * normal_direction_weight;
+                if (occlusion_weight <= 1e-4) {
+                    continue;
+                }
+
                 let sample_view_ray = select(safe_normalize(sample_position_vs), -view_vec_vs, orthographic);
                 let sample_back_position_vs = sample_position_vs + sample_view_ray * settings.thickness;
                 let delta_back = sample_back_position_vs - position_vs;
@@ -293,6 +300,9 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
                     slice_rel_cdf_cos(horizon01.x, normal_angle, normal_cos, side_sign > 0.0),
                     slice_rel_cdf_cos(horizon01.y, normal_angle, normal_cos, side_sign > 0.0)
                 );
+                let horizon_mid = (horizon01.x + horizon01.y) * 0.5;
+                let horizon_half_width = abs(horizon01.y - horizon01.x) * 0.5 * occlusion_weight;
+                horizon01 = vec2<f32>(horizon_mid - horizon_half_width, horizon_mid + horizon_half_width);
                 horizon01 = clamp(horizon01 + vec2<f32>(point_jitter), vec2<f32>(0.0), vec2<f32>(1.0));
 
                 occ_bits |= horizon_interval_mask(horizon01);

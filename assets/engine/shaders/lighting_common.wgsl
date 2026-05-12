@@ -324,11 +324,6 @@ fn calculate_blinn_phong(
 // ------------------------------------------------------------------------------------
 // BRDF (Physically Based, Energy Conserving, Clear Coat Layering, AO-correct)
 // ------------------------------------------------------------------------------------
-fn compute_indirect_diffuse_occlusion(ao: f32, indirect_diffuse: vec3<f32>) -> f32 {
-    let indirect_luma = luminance(indirect_diffuse);
-    return clamp(ao + (1.0 - exp(-(indirect_luma * indirect_luma))), 0.0, 1.0);
-}
-
 fn compute_specular_occlusion(ao: f32, n_dot_v: f32, roughness: f32) -> f32 {
     let exponent = exp2(-16.0 * roughness - 1.0);
     return clamp(pow(n_dot_v + ao, exponent) - 1.0 + ao, 0.0, 1.0);
@@ -427,8 +422,7 @@ fn calculate_indirect_brdf(
 
     // ---- Indirect Lighting ----
     // Indirect lighting from irradiance cache texture (screen probes / skybox)
-    let indirect_ao = compute_indirect_diffuse_occlusion(ao, irradiance);
-    var indirect_contribution = albedo * irradiance * indirect_ao;
+    var indirect_contribution = albedo * irradiance * ao;
 
     // Specular: prefiltered env map, split-sum approximation, modulated by specular occlusion
     let specular_ao = compute_specular_occlusion(ao, n_dot_v, roughness);
