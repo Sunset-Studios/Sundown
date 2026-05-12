@@ -11,21 +11,11 @@ import { radians } from "../utility/math.js";
 
 const view_buffer_name = "view_buffer";
 const frame_info_buffer_name = "frame_info_buffer";
-const temporal_jitter_sample_count = 16;
-
-function halton(index, base) {
-  let result = 0.0;
-  let fraction = 1.0 / base;
-  let i = index;
-
-  while (i > 0) {
-    result += fraction * (i % base);
-    i = Math.floor(i / base);
-    fraction /= base;
-  }
-
-  return result;
-}
+const temporal_jitter_sample_count = 2;
+const temporal_jitter_sample_offsets = [
+  [-0.25, 0.25],
+  [0.25, -0.25],
+];
 
 function apply_projection_jitter(projection_matrix, jitter_ndc) {
   for (let col = 0; col < 4; col++) {
@@ -519,9 +509,13 @@ export class SharedViewBuffer {
       return vec2.fromValues(0.0, 0.0);
     }
 
-    const sample_index = (Math.floor(frame_index) % temporal_jitter_sample_count) + 1;
-    const jitter_x = (halton(sample_index, 2) - 0.5) * 2.0 / Math.max(1.0, resolution[0]);
-    const jitter_y = (halton(sample_index, 3) - 0.5) * 2.0 / Math.max(1.0, resolution[1]);
+    const sample_index =
+      ((Math.floor(frame_index) % temporal_jitter_sample_count) +
+        temporal_jitter_sample_count) %
+      temporal_jitter_sample_count;
+    const sample_offset = temporal_jitter_sample_offsets[sample_index];
+    const jitter_x = sample_offset[0] * 2.0 / Math.max(1.0, resolution[0]);
+    const jitter_y = sample_offset[1] * 2.0 / Math.max(1.0, resolution[1]);
     return vec2.fromValues(jitter_x, jitter_y);
   }
 

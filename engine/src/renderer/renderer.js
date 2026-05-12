@@ -528,7 +528,7 @@ export class Renderer {
    * @returns {number} - Current-frame blend amount.
    */
   get_taa_feedback() {
-    return CVarSystem.get(EngineCVars.Renderer.TAAFeedback, 0.08);
+    return CVarSystem.get(EngineCVars.Renderer.TAAFeedback, 0.5);
   }
 
   /**

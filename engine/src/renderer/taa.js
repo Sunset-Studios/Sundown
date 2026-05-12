@@ -25,7 +25,7 @@ const taa_output_image_config = {
 
 const taa_params_config = {
   name: "taa_params",
-  data: [0.06, 0.0, 0.0, 0.0, 0.0, 0.0],
+  data: [0.0, 0.0, 0.0, 0.0, 0.5, 0.0],
   usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
 };
 

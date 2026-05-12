@@ -101,15 +101,15 @@ export const engine_cvar_config = Object.freeze({
     {
       name: EngineCVars.Renderer.TAAEnabled,
       type: CVarType.Boolean,
-      default_value: false,
+      default_value: true,
       description: "Enables temporal anti-aliasing.",
     },
     {
       name: EngineCVars.Renderer.TAAFeedback,
       type: CVarType.Number,
-      default_value: 0.06,
-      validate: (value) => value > 0.0 && value <= 1.0,
-      description: "Controls how much current-frame color is blended into TAA history.",
+      default_value: 0.5,
+      validate: (value) => value >= 0.5 && value <= 1.0,
+      description: "Controls the current-frame blend for the two-frame TAA resolve.",
     },
     {
       name: EngineCVars.Renderer.DebugDraw,

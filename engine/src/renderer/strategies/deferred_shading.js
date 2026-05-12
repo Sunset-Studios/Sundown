@@ -944,7 +944,7 @@ export class DeferredShadingStrategy {
         RenderPassFlags.GraphLocal,
         {
           inputs: [
-            antialiased_scene_color_desc,
+            post_lighting_image_desc,
             main_normal_image,
             main_depth_image,
           ],
@@ -955,7 +955,7 @@ export class DeferredShadingStrategy {
           ],
         },
         (graph, frame_data, encoder) => {
-          const curr_final_lighting = graph.get_physical_image(antialiased_scene_color_desc);
+          const curr_final_lighting = graph.get_physical_image(post_lighting_image_desc);
           const prev_final_lighting = graph.get_physical_image(prev_lighting);
           prev_final_lighting.copy_texture(encoder, curr_final_lighting);
 
