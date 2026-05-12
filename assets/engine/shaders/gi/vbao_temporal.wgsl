@@ -15,8 +15,8 @@ struct VBAOSettings {
     denoise_position_sigma: f32,
     denoise_normal_power: f32,
     denoise_ao_sigma: f32,
-    denoise_direction: vec2<f32>,
     denoise_radius_px: f32,
+    denoise_direction: vec2<f32>,
 };
 
 @group(1) @binding(0) var current_ao_tex: texture_2d<f32>;

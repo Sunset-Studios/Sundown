@@ -148,8 +148,7 @@ export class VBAO {
     this.ao_blur_texture = null;
     this.bent_normal_texture = null;
 
-    this.settings_data = new Float32Array(16);
-    this.denoise_direction_y_data = new Float32Array([0.0, 1.0]);
+    this.settings_data = new Float32Array(14);
   }
 
   add_passes(
@@ -250,11 +249,9 @@ export class VBAO {
         this.settings_data[8] = this.config.denoise_position_sigma;
         this.settings_data[9] = this.config.denoise_normal_power;
         this.settings_data[10] = this.config.denoise_ao_sigma;
-        this.settings_data[11] = 1.0;
-        this.settings_data[12] = 0.0;
-        this.settings_data[13] = Math.max(1.0, this.config.denoise_radius);
-        this.settings_data[14] = 0.0;
-        this.settings_data[15] = 0.0;
+        this.settings_data[11] = Math.max(1.0, this.config.denoise_radius);
+        this.settings_data[12] = 1.0;
+        this.settings_data[13] = 0.0;
         settings_buffer.write_raw(this.settings_data);
       }
     );
@@ -328,6 +325,10 @@ export class VBAO {
       },
       (graph, frame_data) => {
         const pass = graph.get_physical_pass(frame_data.current_pass);
+        const settings_buffer = graph.get_physical_buffer(vbao_settings);
+        this.settings_data[12] = 0.0;
+        this.settings_data[13] = 1.0;
+        settings_buffer.write_raw(this.settings_data);
         pass.dispatch(Math.ceil(width / 8), Math.ceil(height / 8), 1);
       }
     );
@@ -347,8 +348,6 @@ export class VBAO {
         shader_setup: vbao_denoise_shader_setup,
       },
       (graph, frame_data) => {
-        const settings_buffer = graph.get_physical_buffer(vbao_settings);
-        settings_buffer.write_raw(this.denoise_direction_y_data, 44, 2);
         const pass = graph.get_physical_pass(frame_data.current_pass);
         pass.dispatch(Math.ceil(width / 8), Math.ceil(height / 8), 1);
       }
