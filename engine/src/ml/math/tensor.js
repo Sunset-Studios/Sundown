@@ -604,7 +604,8 @@ export class Tensor {
    * @returns {number}
    */
   static last_dim(shape) {
-    return shape ? shape[shape.length - 1] : 0;
+    const normalized_shape = Tensor.normalize_shape(shape);
+    return normalized_shape ? normalized_shape[normalized_shape.length - 1] : 0;
   }
 
   /**
@@ -626,4 +627,14 @@ export class Tensor {
     return true;
   }
 
+  /**
+   * Formats a shape into a string for display. 
+   *
+   * @param {number|number[]} shape 
+   * @returns {string}
+   */
+  static format_shape(shape) {
+    const normalized_shape = Tensor.normalize_shape(shape);
+    return normalized_shape ? `[${normalized_shape.join(", ")}]` : "unknown";
+  }
 }

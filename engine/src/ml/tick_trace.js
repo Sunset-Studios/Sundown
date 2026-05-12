@@ -1,17 +1,9 @@
+import { Tensor } from './math/tensor.js'
+
 const MAX_TRACE_LINES = 1000;
 
 function now_ms() {
   return typeof performance !== "undefined" ? performance.now() : Date.now();
-}
-
-function format_shape(value) {
-  if (value === null || value === undefined) {
-    return "null";
-  }
-  if (Array.isArray(value)) {
-    return `[${value.join(",")}]`;
-  }
-  return String(value);
 }
 
 function format_details(details) {
@@ -25,7 +17,7 @@ function format_details(details) {
 
   const parts = [];
   for (const [key, value] of Object.entries(details)) {
-    parts.push(`${key}=${format_shape(value)}`);
+    parts.push(`${key}=${Tensor.format_shape(value)}`);
   }
 
   return parts.join(" ");
