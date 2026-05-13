@@ -619,6 +619,7 @@ export class PathTracingStrategy {
           renderer.context.getCurrentTexture(),
           swapchain_name
         );
+        swapchain_image.config.load_op = load_op_load;
 
         const rg_output_image = render_graph.register_image(swapchain_image.config.name);
 
@@ -635,6 +636,7 @@ export class PathTracingStrategy {
             MeshTaskQueue.draw_quad(pass);
           }
         );
+
       }
 
       // ┌─────────────────────────────────────────────────────────────────────────────┐

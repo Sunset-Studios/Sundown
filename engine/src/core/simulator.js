@@ -9,6 +9,7 @@ import { MetaSystem } from "../meta/meta_system.js";
 import { profile_scope } from "../utility/performance.js";
 import { frame_runner } from "../utility/frame_runner.js";
 import { reset_ui, flush_ui } from "../ui/2d/immediate.js";
+import { reset_ui_3d } from "../ui/3d/immediate.js";
 import { ProjectContext } from "./project_context.js";
 import { JobSystem } from "../utility/job_system.js";
 import { TextureStreamingSystem } from "../renderer/texture.js";
@@ -61,6 +62,7 @@ export class Simulator {
       profile_scope("frame_loop", () => {
         const renderer = Renderer.get();
         reset_ui(renderer.canvas_ui?.width ?? 0, renderer.canvas_ui?.height ?? 0);
+        reset_ui_3d();
         
         InputProvider.update(delta_time);
         

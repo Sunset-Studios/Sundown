@@ -74,8 +74,8 @@ fn resolve_fragment(
 #endif
 
 #if MESHLET_DEPTH_PASS
-@vertex
-fn vs(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> DepthVertexOutput {
+#ifndef CUSTOM_DEPTH_VERTEX_OUTPUT
+fn build_depth_vertex_output(vi: u32, ii: u32) -> DepthVertexOutput {
     let visible_entry = visible_meshlets[ii];
     let global_meshlet_index = meshlet_index(visible_entry);
     let meshlet = meshlets[global_meshlet_index];
@@ -122,6 +122,13 @@ fn vs(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> Depth
     output.entity_id = entity_resolved;
     output.section_index = section_index;
 
+    return output;
+}
+#endif
+
+@vertex
+fn vs(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> DepthVertexOutput {
+    var output = build_depth_vertex_output(vi, ii);
     output = depth_vertex(&output);
 
     return output;
@@ -129,8 +136,8 @@ fn vs(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> Depth
 #endif
 
 #if MESHLET_RASTER_PASS
-@vertex
-fn vs(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> RasterVertexOutput {
+#ifndef CUSTOM_RASTER_VERTEX_OUTPUT
+fn build_raster_vertex_output(vi: u32, ii: u32) -> RasterVertexOutput {
     let visible_entry = visible_meshlets[ii];
     let global_meshlet_index = meshlet_index(visible_entry);
     let meshlet = meshlets[global_meshlet_index];
@@ -187,6 +194,13 @@ fn vs(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> Raste
         corner_index == 0u
     );
 
+    return output;
+}
+#endif
+
+@vertex
+fn vs(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> RasterVertexOutput {
+    var output = build_raster_vertex_output(vi, ii);
     output = raster_vertex(&output);
 
     return output;
@@ -234,6 +248,11 @@ fn fs(input: RasterVertexOutput) -> RasterFragmentOutput {
 #if MESHLET_RESOLVE_PASS
 @fragment
 fn fs(input: ResolveVertexOutput) -> ResolveFragmentOutput {
+    return resolve_visibility_fragment(input);
+}
+
+#ifndef CUSTOM_RESOLVE_VISIBILITY_FRAGMENT
+fn resolve_visibility_fragment(input: ResolveVertexOutput) -> ResolveFragmentOutput {
     let resolution = vec2<u32>(u32(frame_info.resolution.x), u32(frame_info.resolution.y));
     let pixel_coord = uv_to_coord(input.uv, resolution);
 
@@ -373,4 +392,5 @@ fn fs(input: ResolveVertexOutput) -> ResolveFragmentOutput {
 
     return output;
 }
+#endif
 #endif

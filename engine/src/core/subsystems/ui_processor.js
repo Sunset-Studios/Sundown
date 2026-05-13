@@ -6,6 +6,7 @@ import {
 } from "../../input/input_types.js";
 import { SimulationLayer } from "../simulation_layer.js";
 import { UIContext, ImmediateUIUpdater } from "../../ui/2d/immediate.js";
+import { Immediate3DUIUpdater } from "../../ui/3d/immediate.js";
 import { screen_pos_to_world_pos } from "../../utility/camera.js";
 import { SharedViewBuffer, SharedFrameInfoBuffer } from "../shared_data.js";
 import { profile_scope } from "../../utility/performance.js";
@@ -90,5 +91,6 @@ export class UIProcessor extends SimulationLayer {
     this.context.clearRect(0, 0, renderer.canvas.width, renderer.canvas.height);
 
     ImmediateUIUpdater.update_all(this.current_delta_time);
+    Immediate3DUIUpdater.update_all(this.current_delta_time);
   }
 }

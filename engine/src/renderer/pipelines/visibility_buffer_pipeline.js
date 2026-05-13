@@ -161,6 +161,19 @@ export class VisibilityBufferPipeline {
         continue;
       }
 
+      if (bucket.queue?.build_bucket_draw_resources) {
+        bucket_draw_lists.set(
+          bucket.key,
+          bucket.queue.build_bucket_draw_resources(render_graph, {
+            current_view,
+            bucket,
+            stage_name,
+            force_recreate,
+          })
+        );
+        continue;
+      }
+
       const resources = this._create_bucket_meshlet_resources(render_graph, {
         current_view,
         bucket,
@@ -275,10 +288,11 @@ export class VisibilityBufferPipeline {
       },
       (graph, frame_data, encoder) => {
         const pass = graph.get_physical_pass(frame_data.current_pass);
-        MeshTaskQueue.submit_visibility_bucket_indirect_draw(
+        const queue = bucket.queue ?? MeshTaskQueue;
+        queue.submit_visibility_bucket_indirect_draw(
           pass,
           bucket,
-          graph.get_physical_buffer(frustum_meshlet_draw_args),
+          frustum_meshlet_draw_args ? graph.get_physical_buffer(frustum_meshlet_draw_args) : null,
           MaterialPassType.Depth
         );
       }
@@ -330,10 +344,11 @@ export class VisibilityBufferPipeline {
       },
       (graph, frame_data, encoder) => {
         const pass = graph.get_physical_pass(frame_data.current_pass);
-        MeshTaskQueue.submit_visibility_bucket_indirect_draw(
+        const queue = bucket.queue ?? MeshTaskQueue;
+        queue.submit_visibility_bucket_indirect_draw(
           pass,
           bucket,
-          graph.get_physical_buffer(occlusion_meshlet_draw_args),
+          occlusion_meshlet_draw_args ? graph.get_physical_buffer(occlusion_meshlet_draw_args) : null,
           MaterialPassType.Raster
         );
       }
@@ -381,7 +396,8 @@ export class VisibilityBufferPipeline {
       },
       (graph, frame_data, encoder) => {
         const pass = graph.get_physical_pass(frame_data.current_pass);
-        MeshTaskQueue.submit_visibility_bucket_resolve(pass, bucket);
+        const queue = bucket.queue ?? MeshTaskQueue;
+        queue.submit_visibility_bucket_resolve(pass, bucket);
       }
     );
 

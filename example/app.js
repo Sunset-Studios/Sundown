@@ -29,6 +29,7 @@ import { log } from "../engine/src/utility/logging.js";
 import { vec3, vec4, quat, mat4 } from "gl-matrix";
 
 import * as UI from "../engine/src/ui/2d/immediate.js";
+import * as UI3D from "../engine/src/ui/3d/immediate.js";
 
 import { Layer, TrainingContext } from "../engine/src/ml/layer.js";
 import { LayerType } from "../engine/src/ml/ml_types.js";
@@ -3175,6 +3176,221 @@ export class BistroTestScene extends Scene {
   }
 }
 
+// ------------------------------------------------------------------------------------
+// =============================== Immediate 3D UI Test Scene ==========================
+// ------------------------------------------------------------------------------------
+
+export class Immediate3DUITestScene extends Scene {
+  name = "Immediate3DUITestScene";
+  entities = [];
+  pulse = 0;
+  counter = 0;
+  selected_mode = "Layout";
+
+  init(parent_context) {
+    super.init(parent_context);
+
+    const freeform_arcball_control_processor = this.add_layer(FreeformArcballControlProcessor);
+    freeform_arcball_control_processor.move_speed = 10.0;
+    freeform_arcball_control_processor.set_scene(this);
+
+    SharedEnvironmentData.set_skydome("default_scene_skydome");
+    this.show_dev_cursor();
+
+    const view_data = SharedViewBuffer.get_view_data(0);
+    view_data.view_position = [0.0, 2.4, -8.0];
+    view_data.view_rotation = [0.0, 0.0, 0.0, 1.0];
+    view_data.far = 1000.0;
+
+    const light_entity = EntityManager.create_entity([LightFragment]);
+    this.entities.push(light_entity);
+
+    const light_fragment_view = EntityManager.get_fragment(light_entity, LightFragment);
+    light_fragment_view.type = LightType.DIRECTIONAL;
+    light_fragment_view.color = [1.0, 0.96, 0.9, 1.0];
+    light_fragment_view.intensity = 5.0;
+    light_fragment_view.position = [4.0, 6.0, -3.0, 1.0];
+    light_fragment_view.active = true;
+    light_fragment_view.is_primary_sun = 1;
+
+    const marker_material = StandardMaterial.create("Immediate3DUI_Marker");
+    marker_material.set_albedo([0.08, 0.16, 0.2, 1.0]);
+    marker_material.set_emission(0.15);
+
+    const marker = spawn_mesh_entity(
+      [0.0, 0.0, 1.5],
+      quat.fromEuler(quat.create(), 0, 45, 0),
+      [1.0, 1.0, 1.0],
+      Mesh.cube(),
+      marker_material.material_id
+    );
+    this.entities.push(marker);
+  }
+
+  cleanup() {
+    for (const entity of this.entities) {
+      delete_entity(entity);
+    }
+    this.entities.length = 0;
+
+    this.remove_layer(FreeformArcballControlProcessor);
+
+    super.cleanup();
+  }
+
+  update(delta_time) {
+    super.update(delta_time);
+
+    this.pulse += delta_time;
+    const accent = 0.5 + Math.sin(this.pulse * 2.5) * 0.5;
+    const progress = 0.2 + accent * 0.65;
+
+    const panel_config = {
+      position: [0.0, 2.6, 0.0],
+      billboard: true,
+      width: 360,
+      height: 245,
+      unit_scale: 0.013,
+      layout: "column",
+      gap: 10,
+      padding: 16,
+      background_color: [0.015, 0.022, 0.03, 0.88],
+      border: { width: 1.5, color: [0.3, 0.75, 0.85, 0.45] },
+      corner_radius: 10,
+      z_order: 2,
+    };
+
+    UI3D.panel(panel_config, () => {
+      UI3D.label("Immediate 3D UI", {
+        width: "100%",
+        height: 30,
+        font_size: 24,
+        text_color: [0.88, 0.98, 1.0, 1.0],
+        text_align: "left",
+        text_valign: "middle",
+      });
+
+      UI3D.label("GPU instanced panels, labels, buttons, and local layout.", {
+        width: "100%",
+        height: 22,
+        font_size: 13,
+        text_color: [0.62, 0.76, 0.78, 1.0],
+        text_align: "left",
+        text_valign: "middle",
+      });
+
+      UI3D.begin_container({
+        width: "100%",
+        height: 44,
+        layout: "row",
+        gap: 8,
+      });
+
+      const button_base = {
+        width: 104,
+        height: 38,
+        font_size: 14,
+        text_color: [0.94, 0.98, 1.0, 1.0],
+        background_color: [0.08, 0.15, 0.18, 0.94],
+        hover_color: [0.1, 0.33, 0.38, 0.96],
+        active_color: [0.18, 0.48, 0.55, 1.0],
+        border: { width: 1, color: [0.33, 0.75, 0.82, 0.55] },
+        corner_radius: 6,
+      };
+
+      if (UI3D.button("Layout", button_base).clicked) {
+        this.selected_mode = "Layout";
+      }
+      if (UI3D.button("Stress", button_base).clicked) {
+        this.selected_mode = "Stress";
+      }
+      if (UI3D.button("+1", { ...button_base, width: 62 }).clicked) {
+        this.counter++;
+      }
+
+      UI3D.end_container();
+
+      UI3D.panel({
+        width: "100%",
+        height: 38,
+        layout: "row",
+        gap: 8,
+        padding: 8,
+        background_color: [0.02, 0.05, 0.06, 0.8],
+        corner_radius: 6,
+      }, () => {
+        UI3D.label(`Mode: ${this.selected_mode}`, {
+          width: 140,
+          height: 22,
+          font_size: 14,
+          text_color: [0.82, 0.93, 0.92, 1.0],
+          text_valign: "middle",
+        });
+        UI3D.label(`Clicks: ${this.counter}`, {
+          width: 120,
+          height: 22,
+          font_size: 14,
+          text_color: [1.0, 0.86, 0.42, 1.0],
+          text_valign: "middle",
+        });
+      });
+
+      UI3D.panel({
+        width: "100%",
+        height: 18,
+        background_color: [0.06, 0.075, 0.08, 0.95],
+        border: { width: 1, color: [0.2, 0.28, 0.32, 0.8] },
+        corner_radius: 9,
+      }, () => {
+        UI3D.rect({
+          x: 0,
+          y: 0,
+          width: `${Math.round(progress * 100)}%`,
+          height: "100%",
+          background_color: [0.15 + accent * 0.25, 0.72, 0.78, 0.95],
+          corner_radius: 9,
+        });
+      });
+
+      UI3D.label("Move the camera and the panel billboards; the cursor still hits projected bounds.", {
+        width: "100%",
+        height: 34,
+        font_size: 12,
+        text_color: [0.58, 0.7, 0.72, 1.0],
+        text_align: "left",
+        text_valign: "middle",
+      });
+    });
+
+    this.render_tag("coalesced quads", [-2.45, 3.75, 0.75], [0.32, 0.78, 0.72, 1.0]);
+    this.render_tag("text atlas batch", [2.35, 2.0, 0.5], [1.0, 0.74, 0.34, 1.0]);
+  }
+
+  render_tag(text, position, color) {
+    UI3D.panel({
+      position,
+      billboard: true,
+      width: 150,
+      height: 34,
+      unit_scale: 0.01,
+      padding: 7,
+      background_color: [0.015, 0.02, 0.025, 0.82],
+      border: { width: 1, color: [color[0], color[1], color[2], 0.55] },
+      corner_radius: 6,
+      z_order: 1,
+    }, () => {
+      UI3D.label(text, {
+        width: "100%",
+        height: "100%",
+        font_size: 12,
+        text_color: color,
+        text_align: "center",
+        text_valign: "middle",
+      });
+    });
+  }
+}
+
 
 // ------------------------------------------------------------------------------------
 // =============================== Main ==============================================
@@ -3205,6 +3421,7 @@ export class BistroTestScene extends Scene {
   const city_scene = new CityScene("CityScene");
   const scifi_city_scene = new SciFiCityScene("SciFiCityScene");
   const bistro_test_scene = new BistroTestScene("BistroTestScene");
+  const immediate_3d_ui_scene = new Immediate3DUITestScene("Immediate3DUITestScene");
 
   const scene_switcher = new SceneSwitcher("SceneSwitcher");
   //await scene_switcher.add_scene(solar_ecs_scene);
@@ -3217,7 +3434,8 @@ export class BistroTestScene extends Scene {
   //await scene_switcher.add_scene(textures_scene);
   //await scene_switcher.add_scene(gi_test_scene);
   //await scene_switcher.add_scene(shadow_test_scene);
-  await scene_switcher.add_scene(sponza_scene);
+  await scene_switcher.add_scene(immediate_3d_ui_scene);
+  //await scene_switcher.add_scene(sponza_scene);
   //await scene_switcher.add_scene(living_room_scene);
   //await scene_switcher.add_scene(city_scene);
   //await scene_switcher.add_scene(scifi_city_scene);

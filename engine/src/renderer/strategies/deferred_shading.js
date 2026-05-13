@@ -18,6 +18,7 @@ import { PostProcessStack } from "../post_process_stack.js";
 import { MeshTaskQueue } from "../mesh_task_queue.js";
 import { ComputeTaskQueue } from "../compute_task_queue.js";
 import { ComputeRasterTaskQueue } from "../compute_raster_task_queue.js";
+import { Immediate3DUIPipeline } from "../immediate_3d_ui_pipeline.js";
 import { CullingPipeline } from "../pipelines/culling_pipeline.js";
 import { DeferredDebugPipeline } from "../pipelines/deferred_debug_pipeline.js";
 import { EnvironmentPipeline } from "../pipelines/environment_pipeline.js";
@@ -28,6 +29,7 @@ import { VisibilityBufferPipeline } from "../pipelines/visibility_buffer_pipelin
 import {
   RenderPassFlags,
   MaterialFamilyType,
+  MaterialPassType,
   DebugDrawType,
   GIStrategyType,
   AOStrategyType,
@@ -192,6 +194,7 @@ export class DeferredShadingStrategy {
   debug_pipeline = null;
   gbuffer_targets_pipeline = null;
   environment_pipeline = null;
+  immediate_3d_ui_pipeline = null;
 
   setup(render_graph) {
     this.debug_pipeline = new DeferredDebugPipeline();
@@ -199,6 +202,7 @@ export class DeferredShadingStrategy {
     this.environment_pipeline = new EnvironmentPipeline();
     this.gbuffer_targets_pipeline = new GBufferTargetsPipeline();
     this.visibility_buffer_pipeline = new VisibilityBufferPipeline();
+    this.immediate_3d_ui_pipeline = new Immediate3DUIPipeline();
 
     this.gi = Renderer.get().get_gi_strategy_type() === GIStrategyType.DDGI ? new DDGI() : new PTGI();
     this.svlm = new SparseVolumetricLightmapper();
@@ -251,6 +255,7 @@ export class DeferredShadingStrategy {
       // flush and render; flush again here so culling sees a current dense row map.
       EntityManager.flush_gpu_buffers();
       MeshTaskQueue.sort_and_batch();
+      this.immediate_3d_ui_pipeline.sort_and_batch();
       ComputeTaskQueue.compile_pre_rg_passes(render_graph);
 
       this.culling_pipeline.reset();
@@ -261,6 +266,8 @@ export class DeferredShadingStrategy {
       const draw_count = MeshTaskQueue.get_total_draw_count();
       const meshlet_draw_count = MeshTaskQueue.get_total_meshlet_count();
       const visibility_shader_buckets = MeshTaskQueue.get_visibility_shader_buckets();
+      const immediate_3d_ui_draw_count = this.immediate_3d_ui_pipeline.get_total_draw_count();
+      const immediate_3d_ui_buckets = this.immediate_3d_ui_pipeline.get_visibility_shader_buckets();
       const debug_view = renderer.get_debug_draw_type();
       const image_extent = renderer.get_canvas_resolution();
 
@@ -549,6 +556,21 @@ export class DeferredShadingStrategy {
         });
       }
 
+      for (const bucket of immediate_3d_ui_buckets) {
+        this.visibility_buffer_pipeline.add_depth_prepass(render_graph, {
+          enabled: depth_prepass_enabled,
+          meshlet_draw_count: immediate_3d_ui_draw_count,
+          current_view,
+          depth_image: main_depth_image,
+          frustum_meshlet_draw_args: null,
+          bucket,
+          inputs: this.immediate_3d_ui_pipeline.get_pass_inputs(
+            render_graph,
+            MaterialPassType.Depth
+          ),
+        });
+      }
+
       // ┌─────────────────────────────────────────────────────────────────────────────┐
       // │ 🌫️  PASS: Occlusion Culling (Phase 2 of 2-Pass Occlusion)                 │
       // │    Use HZB to eliminate objects hidden behind other geometry               │
@@ -634,6 +656,38 @@ export class DeferredShadingStrategy {
               bucket.family === MaterialFamilyType.Transparent
                 ? main_transparency_accum_image
                 : main_albedo_image,
+              main_smra_image,
+              main_normal_image,
+              main_motion_emissive_image,
+            ],
+          });
+        }
+
+        for (const bucket of immediate_3d_ui_buckets) {
+          this.visibility_buffer_pipeline.add_visibility_raster_pass(render_graph, {
+            meshlet_draw_count: immediate_3d_ui_draw_count,
+            depth_prepass_enabled,
+            current_view,
+            depth_image: main_depth_image,
+            occlusion_meshlet_draw_args: null,
+            bucket,
+            inputs: this.immediate_3d_ui_pipeline.get_pass_inputs(
+              render_graph,
+              MaterialPassType.Raster
+            ),
+          });
+
+          this.visibility_buffer_pipeline.add_gbuffer_resolve_pass(render_graph, {
+            meshlet_draw_count: immediate_3d_ui_draw_count,
+            current_view,
+            depth_image: main_depth_image,
+            bucket,
+            inputs: this.immediate_3d_ui_pipeline.get_pass_inputs(
+              render_graph,
+              MaterialPassType.Resolve
+            ),
+            outputs: [
+              main_transparency_accum_image,
               main_smra_image,
               main_normal_image,
               main_motion_emissive_image,
@@ -1062,6 +1116,7 @@ export class DeferredShadingStrategy {
         reflections: this.reflections,
         reflections_enabled,
       });
+
 
       // ┌─────────────────────────────────────────────────────────────────────────────┐
       // │ 🖼️  PASS: Final Presentation                                               │
