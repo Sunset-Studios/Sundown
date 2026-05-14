@@ -1,7 +1,7 @@
 import { SimulationLayer } from "../simulation_layer.js";
 import { EntityManager } from "../ecs/entity.js";
 import { StaticMeshFragment } from "../ecs/fragments/static_mesh_fragment.js";
-import { MeshTaskQueue } from "../../renderer/mesh_task_queue.js";
+import { RenderTaskQueue } from "../../renderer/render_task_queue.js";
 import { profile_scope } from "../../utility/performance.js";
 import { ResourceCache } from "../../renderer/resource_cache.js";
 import { CacheTypes } from "../../renderer/renderer_types.js";
@@ -40,11 +40,11 @@ export class StaticMeshProcessor extends SimulationLayer {
   }
 
   _update_internal() {
-    if (!MeshTaskQueue.has_dirty_meshes()) {
+    if (!RenderTaskQueue.has_dirty_meshes()) {
       return;
     }
 
-    const dirty_entities = MeshTaskQueue.get_dirty_static_mesh_entities();
+    const dirty_entities = RenderTaskQueue.get_dirty_mesh_entities();
     if (dirty_entities.size > 0) {
       for (const entity of dirty_entities) {
         this._process_entity(entity);
@@ -55,12 +55,12 @@ export class StaticMeshProcessor extends SimulationLayer {
       this.#fallback_entities.clear();
     }
 
-    MeshTaskQueue.mark_meshes_dirty(false);
+    RenderTaskQueue.mark_meshes_dirty(false);
   }
 
   _on_delete(entity) {
-    MeshTaskQueue.remove(entity);
-    MeshTaskQueue.untrack_entity_mesh(entity);
+    RenderTaskQueue.remove(entity);
+    RenderTaskQueue.untrack_entity_mesh(entity);
     MaterialAllocationTable.unregister(entity);
   }
 
@@ -73,11 +73,11 @@ export class StaticMeshProcessor extends SimulationLayer {
       return;
     }
 
-    MeshTaskQueue.remove(entity);
+    RenderTaskQueue.remove(entity);
 
     const primary_segment = entity.segments?.[0];
     if (!primary_segment) {
-      MeshTaskQueue.untrack_entity_mesh(entity);
+      RenderTaskQueue.untrack_entity_mesh(entity);
       MaterialAllocationTable.unregister(entity);
       return;
     }
@@ -88,7 +88,7 @@ export class StaticMeshProcessor extends SimulationLayer {
     const mesh_id = Number(static_meshes.mesh[slot]);
 
     if (!mesh_id || !entity.instance_count) {
-      MeshTaskQueue.untrack_entity_mesh(entity);
+      RenderTaskQueue.untrack_entity_mesh(entity);
       MaterialAllocationTable.unregister(entity);
       this._set_entity_material_table_offset(entity, 0);
       return;
@@ -114,14 +114,14 @@ export class StaticMeshProcessor extends SimulationLayer {
       this.#entity_materials.push(material_id);
 
       if (material_id) {
-        MeshTaskQueue.new_task(mesh_id, entity, Number(material_id), si);
+        RenderTaskQueue.new_task(mesh_id, entity, Number(material_id), si);
       }
     }
 
     const palette_offset = MaterialAllocationTable.register(entity, this.#entity_materials);
     this._set_entity_material_table_offset(entity, palette_offset);
 
-    MeshTaskQueue.track_entity_mesh(entity, mesh_id);
+    RenderTaskQueue.track_entity_mesh(entity, mesh_id);
   }
 
   _set_entity_material_table_offset(entity, palette_offset) {

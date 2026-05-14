@@ -1,6 +1,6 @@
 import { Renderer } from "./renderer.js";
-import { MeshTaskQueue } from "./mesh_task_queue.js";
 import { DebugDrawType, RenderPassFlags } from "./renderer_types.js";
+import { draw_quad } from "./draw_helpers.js";
 
 const overlay_shader_setup = {
   pipeline_shaders: {
@@ -121,7 +121,7 @@ export class DebugOverlay {
       (graph, frame_data, encoder) => {
         const pass = graph.get_physical_pass(frame_data.current_pass);
         pass.set_viewport(this.viewport);
-        MeshTaskQueue.draw_quad(pass);
+        draw_quad(pass);
       }
     );
 

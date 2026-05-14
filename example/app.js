@@ -3434,8 +3434,8 @@ export class Immediate3DUITestScene extends Scene {
   //await scene_switcher.add_scene(textures_scene);
   //await scene_switcher.add_scene(gi_test_scene);
   //await scene_switcher.add_scene(shadow_test_scene);
-  await scene_switcher.add_scene(immediate_3d_ui_scene);
-  //await scene_switcher.add_scene(sponza_scene);
+  //await scene_switcher.add_scene(immediate_3d_ui_scene);
+  await scene_switcher.add_scene(sponza_scene);
   //await scene_switcher.add_scene(living_room_scene);
   //await scene_switcher.add_scene(city_scene);
   //await scene_switcher.add_scene(scifi_city_scene);

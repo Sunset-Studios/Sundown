@@ -3,7 +3,7 @@ import { ResourceCache } from "./resource_cache.js";
 import { MeshData } from "./mesh_data.js";
 import { Name } from "../utility/names.js";
 import { CacheTypes, TextureChannel, MaterialFamilyType } from "./renderer_types.js";
-import { MeshTaskQueue } from "./mesh_task_queue.js";
+import { RenderTaskQueue } from "./render_task_queue.js";
 import { Type2NumOfComponent } from "../utility/gltf_loader.js";
 import { StandardMaterial } from "./material.js";
 import {
@@ -236,7 +236,7 @@ export class Mesh {
         mesh.meshlet_sections = meshlet_data.sections.map((section) => ({ ...section }));
 
         MeshData.update(mesh);
-        MeshTaskQueue.invalidate_mesh(Name.from(mesh.name));
+        RenderTaskQueue.invalidate_mesh(Name.from(mesh.name));
       })
       .catch((error) => {
         if (mesh.pending_runtime_meshlet_build === build_token) {
@@ -278,7 +278,7 @@ export class Mesh {
 
     ResourceCache.get().store(CacheTypes.MESH, Name.from(name), mesh);
 
-    MeshTaskQueue.invalidate_mesh(Name.from(name));
+    RenderTaskQueue.invalidate_mesh(Name.from(name));
 
     return mesh;
   }
@@ -360,7 +360,7 @@ export class Mesh {
 
     ResourceCache.get().store(CacheTypes.MESH, Name.from("engine_quad"), mesh);
 
-    MeshTaskQueue.invalidate_mesh(Name.from("engine_quad"));
+    RenderTaskQueue.invalidate_mesh(Name.from("engine_quad"));
 
     return mesh;
   }
@@ -635,7 +635,7 @@ export class Mesh {
 
     ResourceCache.get().store(CacheTypes.MESH, Name.from("engine_cube"), mesh);
 
-    MeshTaskQueue.invalidate_mesh(Name.from("engine_cube"));
+    RenderTaskQueue.invalidate_mesh(Name.from("engine_cube"));
 
     return mesh;
   }
@@ -685,7 +685,7 @@ export class Mesh {
         }
 
         mesh.pending_loader = null;
-        MeshTaskQueue.invalidate_mesh(cache_key);
+        RenderTaskQueue.invalidate_mesh(cache_key);
       })().catch((error) => {
         if (mesh.pending_loader === loader) {
           mesh.pending_loader = null;
@@ -765,7 +765,7 @@ export class Mesh {
     mesh.pending_gltf_build_state = null;
     mesh.pending_gltf_meshlet_sidecar = null;
 
-    MeshTaskQueue.invalidate_mesh(Name.from(mesh.name));
+    RenderTaskQueue.invalidate_mesh(Name.from(mesh.name));
   }
 
   static precrete_engine_primitives() {

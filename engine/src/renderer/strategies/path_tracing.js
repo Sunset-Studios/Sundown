@@ -13,7 +13,7 @@ import { Renderer } from "../renderer.js";
 import { Texture } from "../texture.js";
 import { MeshData } from "../mesh_data.js";
 import { PostProcessStack } from "../post_process_stack.js";
-import { MeshTaskQueue } from "../mesh_task_queue.js";
+import { RenderTaskQueue } from "../render_task_queue.js";
 import { ComputeTaskQueue } from "../compute_task_queue.js";
 import { ResourceCache } from "../resource_cache.js";
 import { TextureArrayPools } from "../texture_pool.js";
@@ -34,6 +34,7 @@ import {
   load_op_load,
   load_op_clear,
 } from "../../utility/config_permutations.js";
+import { draw_quad } from "../draw_helpers.js";
 
 // Specialized renderer components
 import { PathTracer } from "../raytracing/path_tracer.js";
@@ -189,7 +190,7 @@ export class PathTracingStrategy {
       // Async content (like glTF callbacks) can create entities between simulation
       // flush and render; flush again here so culling sees a current dense row map.
       EntityManager.flush_gpu_buffers();
-      MeshTaskQueue.sort_and_batch();
+      RenderTaskQueue.sort_and_batch();
       ComputeTaskQueue.compile_pre_rg_passes(render_graph);
 
       this.culling_pipeline.reset();
@@ -197,9 +198,9 @@ export class PathTracingStrategy {
       const renderer = Renderer.get();
 
       const current_view = SharedFrameInfoBuffer.get_view_index();
-      const draw_count = MeshTaskQueue.get_total_draw_count();
-      const meshlet_draw_count = MeshTaskQueue.get_total_meshlet_count();
-      const visibility_shader_buckets = MeshTaskQueue.get_visibility_shader_buckets();
+      const draw_count = RenderTaskQueue.get_total_draw_count();
+      const meshlet_draw_count = RenderTaskQueue.get_total_meshlet_count();
+      const visibility_shader_buckets = RenderTaskQueue.get_visibility_shader_buckets();
       const image_extent = renderer.get_canvas_resolution();
       const depth_prepass_enabled = renderer.is_depth_prepass_enabled();
 
@@ -241,10 +242,10 @@ export class PathTracingStrategy {
       // │ 🎯 Register Mesh & Instance Buffers                                        │
       // └─────────────────────────────────────────────────────────────────────────────┘
       const object_instances = render_graph.register_buffer(
-        MeshTaskQueue.get_object_instance_buffer().config.name
+        RenderTaskQueue.get_object_instance_buffer().config.name
       );
       const meshlet_instances = render_graph.register_buffer(
-        MeshTaskQueue.get_meshlet_instance_buffer().config.name
+        RenderTaskQueue.get_meshlet_instance_buffer().config.name
       );
 
       const mesh_gpu_data = MeshData.to_gpu_data();
@@ -633,7 +634,7 @@ export class PathTracingStrategy {
           },
           (graph, frame_data, encoder) => {
             const pass = graph.get_physical_pass(frame_data.current_pass);
-            MeshTaskQueue.draw_quad(pass);
+            draw_quad(pass);
           }
         );
 

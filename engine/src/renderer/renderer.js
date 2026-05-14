@@ -26,6 +26,7 @@ import { log, error } from "../utility/logging.js";
 import { vec2 } from "gl-matrix";
 import { EngineCVars } from "../../config/cvars.js";
 import { reset_ui, flush_ui, panel, label, image, UIContext } from "../ui/2d/immediate.js";
+import { reset_ui_3d } from "../ui/3d/immediate.js";
 
 const frame_render_event_name = "frame_render";
 
@@ -222,6 +223,10 @@ export class Renderer {
       this.render_graph.begin();
 
       this.render_strategy.draw(this.render_graph);
+
+      flush_ui(this.context_ui);
+
+      reset_ui_3d();
     });
   }
 

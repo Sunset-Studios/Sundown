@@ -1,6 +1,6 @@
 import { Typed2DFrameArray, TypedVector } from "../../memory/container.js";
 import { RenderPassFlags } from "../renderer_types.js";
-import { MeshTaskQueue } from "../mesh_task_queue.js";
+import { RenderTaskQueue } from "../render_task_queue.js";
 
 const clear_visibility_data_shader_setup = {
   pipeline_shaders: {
@@ -59,7 +59,7 @@ export class InstanceCuller {
     const visible_buf = render_graph.create_buffer(visible_buf_config);
 
     const indirect_draw_buf = render_graph.register_buffer(
-      MeshTaskQueue.get_indirect_draw_buffer(view_index, clipmap_index).config.name
+      RenderTaskQueue.get_indirect_draw_buffer(view_index, clipmap_index).config.name
     );
 
     draw_cull_data_config.name = `draw_cull_data_view_${view_index}_clipmap_${clipmap_index}`;

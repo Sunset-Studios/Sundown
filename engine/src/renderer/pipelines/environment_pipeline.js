@@ -1,9 +1,9 @@
 import { SharedEnvironmentData } from "../../core/shared_data.js";
-import { MeshTaskQueue } from "../mesh_task_queue.js";
 import { RenderPassFlags } from "../renderer_types.js";
 import {
   rgba16float_format,
 } from "../../utility/config_permutations.js";
+import { draw_cube } from "../draw_helpers.js";
 
 const skybox_shader_setup = {
   pipeline_shaders: {
@@ -55,7 +55,7 @@ export class EnvironmentPipeline {
       },
       (graph, frame_data, encoder) => {
         const pass = graph.get_physical_pass(frame_data.current_pass);
-        MeshTaskQueue.draw_cube(pass);
+        draw_cube(pass);
       }
     );
 

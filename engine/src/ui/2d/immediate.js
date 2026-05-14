@@ -1,3 +1,4 @@
+import { Renderer } from "../../renderer/renderer.js";
 import { InputProvider } from "../../input/input_provider.js";
 import { InputKey, InputRange, InputKeyToPrintableString } from "../../input/input_types.js";
 import { FrameAllocator, FrameStackAllocator } from "../../memory/allocator.js";
@@ -711,6 +712,9 @@ export function flush_ui(ctx) {
       }
     }
     UIContext.draw_commands.length = 0;
+
+    const renderer = Renderer.get();
+    reset_ui(renderer.canvas_ui?.width ?? 0, renderer.canvas_ui?.height ?? 0);
   });
 }
 

@@ -5,7 +5,7 @@ import { LightFragment } from "../../core/ecs/fragments/light_fragment.js";
 import { SharedViewBuffer } from "../../core/shared_data.js";
 import { Renderer } from "../renderer.js";
 import { RenderPassFlags, DebugDrawType } from "../renderer_types.js";
-import { MeshTaskQueue } from "../mesh_task_queue.js";
+import { draw_quad } from "../draw_helpers.js";
 import { ShadowCuller } from "../cull/shadow_culler.js";
 import {
   rgba8unorm_format,
@@ -662,7 +662,7 @@ export class AdaptiveSparseVirtualShadowMaps {
     {
       this.shadow_culler.reset();
       this.shadow_culler.set_previous_culler(frustum_culler);
-      
+
       this.shadow_culler.additional_data.aabb_bounds = aabb_bounds;
       this.shadow_culler.additional_data.object_instances = object_instances;
       this.shadow_culler.additional_data.entity_transforms = transforms_buffer;
@@ -891,7 +891,7 @@ export class AdaptiveSparseVirtualShadowMaps {
         },
         (graph, frame_data, encoder) => {
           const pass = graph.get_physical_pass(frame_data.current_pass);
-          MeshTaskQueue.draw_quad(pass);
+          draw_quad(pass);
         }
       );
     }
@@ -912,7 +912,7 @@ export class AdaptiveSparseVirtualShadowMaps {
           const pass = graph.get_physical_pass(frame_data.current_pass);
           // make sure we cover the full image before drawing the quad
           pass.pass.setViewport(0, 0, page_table_config.width, page_table_config.height, 0, 1);
-          MeshTaskQueue.draw_quad(pass);
+          draw_quad(pass);
         }
       );
     }
@@ -939,7 +939,7 @@ export class AdaptiveSparseVirtualShadowMaps {
         },
         (graph, frame_data, encoder) => {
           const pass = graph.get_physical_pass(frame_data.current_pass);
-          MeshTaskQueue.draw_quad(pass);
+          draw_quad(pass);
         }
       );
     }
@@ -961,7 +961,7 @@ export class AdaptiveSparseVirtualShadowMaps {
         },
         (graph, frame_data, encoder) => {
           const pass = graph.get_physical_pass(frame_data.current_pass);
-          MeshTaskQueue.draw_quad(pass);
+          draw_quad(pass);
         }
       );
     }
@@ -988,7 +988,7 @@ export class AdaptiveSparseVirtualShadowMaps {
         },
         (graph, frame_data, encoder) => {
           const pass = graph.get_physical_pass(frame_data.current_pass);
-          MeshTaskQueue.draw_quad(pass);
+          draw_quad(pass);
         }
       );
     }
@@ -1012,7 +1012,7 @@ export class AdaptiveSparseVirtualShadowMaps {
           b_skip_pass_pipeline_setup: true,
           b_skip_pass_bind_group_setup: true,
         },
-        (graph, frame_data, encoder) => {}
+        (graph, frame_data, encoder) => { }
       );
 
       const debug_view_index = this.active_view_indices[0];

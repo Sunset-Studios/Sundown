@@ -1,7 +1,7 @@
 import { BVH } from "../../acceleration/bvh.js";
 import { MeshBLAS } from "../../acceleration/mesh_blas.js";
 import { DebugOverlay } from "../debug_overlay.js";
-import { MeshTaskQueue } from "../mesh_task_queue.js";
+import { draw_quad } from "../draw_helpers.js";
 import { DebugDrawType, RenderPassFlags } from "../renderer_types.js";
 
 const line_draw_shader_setup = {
@@ -231,7 +231,7 @@ export class DeferredDebugPipeline {
       },
       (graph, frame_data, encoder) => {
         const pass = graph.get_physical_pass(frame_data.current_pass);
-        MeshTaskQueue.draw_quad(pass, max_lines / 12);
+        draw_quad(pass, max_lines / 12);
       }
     );
   }

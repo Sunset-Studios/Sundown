@@ -15,10 +15,9 @@ import { Texture } from "../texture.js";
 import { MeshData } from "../mesh_data.js";
 import { MaterialAllocationTable } from "../material_allocation_table.js";
 import { PostProcessStack } from "../post_process_stack.js";
-import { MeshTaskQueue } from "../mesh_task_queue.js";
+import { RenderTaskQueue } from "../render_task_queue.js";
 import { ComputeTaskQueue } from "../compute_task_queue.js";
 import { ComputeRasterTaskQueue } from "../compute_raster_task_queue.js";
-import { Immediate3DUIPipeline } from "../immediate_3d_ui_pipeline.js";
 import { CullingPipeline } from "../pipelines/culling_pipeline.js";
 import { DeferredDebugPipeline } from "../pipelines/deferred_debug_pipeline.js";
 import { EnvironmentPipeline } from "../pipelines/environment_pipeline.js";
@@ -45,6 +44,7 @@ import {
   load_op_load,
   load_op_clear,
 } from "../../utility/config_permutations.js";
+import { draw_quad } from "../draw_helpers.js";
 
 // Specialized renderer components
 import { PTGI } from "../global_illumination/ptgi.js";
@@ -148,7 +148,8 @@ const post_lighting_image_config = {
   format: rgba16float_format,
   width: 0,
   height: 0,
-  usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_SRC,
+  usage:
+    GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_SRC,
   force: false,
 };
 
@@ -194,7 +195,6 @@ export class DeferredShadingStrategy {
   debug_pipeline = null;
   gbuffer_targets_pipeline = null;
   environment_pipeline = null;
-  immediate_3d_ui_pipeline = null;
 
   setup(render_graph) {
     this.debug_pipeline = new DeferredDebugPipeline();
@@ -202,13 +202,16 @@ export class DeferredShadingStrategy {
     this.environment_pipeline = new EnvironmentPipeline();
     this.gbuffer_targets_pipeline = new GBufferTargetsPipeline();
     this.visibility_buffer_pipeline = new VisibilityBufferPipeline();
-    this.immediate_3d_ui_pipeline = new Immediate3DUIPipeline();
 
-    this.gi = Renderer.get().get_gi_strategy_type() === GIStrategyType.DDGI ? new DDGI() : new PTGI();
+    this.gi =
+      Renderer.get().get_gi_strategy_type() === GIStrategyType.DDGI ? new DDGI() : new PTGI();
     this.svlm = new SparseVolumetricLightmapper();
-    this.ao = Renderer.get().get_ao_strategy_type() === AOStrategyType.RTAO ? new RTAO() : new VBAO();
+    this.ao =
+      Renderer.get().get_ao_strategy_type() === AOStrategyType.RTAO ? new RTAO() : new VBAO();
     this.reflections =
-      Renderer.get().get_reflection_strategy_type() === ReflectionStrategyType.SSR ? new SSR() : null;
+      Renderer.get().get_reflection_strategy_type() === ReflectionStrategyType.SSR
+        ? new SSR()
+        : null;
 
     this.bloom = new Bloom();
     this.taa = new TemporalAntiAliasing();
@@ -254,8 +257,7 @@ export class DeferredShadingStrategy {
       // Async content (like glTF callbacks) can create entities between simulation
       // flush and render; flush again here so culling sees a current dense row map.
       EntityManager.flush_gpu_buffers();
-      MeshTaskQueue.sort_and_batch();
-      this.immediate_3d_ui_pipeline.sort_and_batch();
+      RenderTaskQueue.sort_and_batch();
       ComputeTaskQueue.compile_pre_rg_passes(render_graph);
 
       this.culling_pipeline.reset();
@@ -263,11 +265,9 @@ export class DeferredShadingStrategy {
       const renderer = Renderer.get();
 
       const current_view = SharedFrameInfoBuffer.get_view_index();
-      const draw_count = MeshTaskQueue.get_total_draw_count();
-      const meshlet_draw_count = MeshTaskQueue.get_total_meshlet_count();
-      const visibility_shader_buckets = MeshTaskQueue.get_visibility_shader_buckets();
-      const immediate_3d_ui_draw_count = this.immediate_3d_ui_pipeline.get_total_draw_count();
-      const immediate_3d_ui_buckets = this.immediate_3d_ui_pipeline.get_visibility_shader_buckets();
+      const draw_count = RenderTaskQueue.get_total_draw_count();
+      const meshlet_draw_count = RenderTaskQueue.get_total_meshlet_count();
+      const visibility_shader_buckets = RenderTaskQueue.get_visibility_shader_buckets();
       const debug_view = renderer.get_debug_draw_type();
       const image_extent = renderer.get_canvas_resolution();
 
@@ -308,9 +308,7 @@ export class DeferredShadingStrategy {
       const aabb_bounds = render_graph.register_buffer(bounds_buffer.buffer.config.name);
 
       const aabb_gpu_data = BVH.to_gpu_data();
-      const tlas_bvh_info = render_graph.register_buffer(
-        aabb_gpu_data.bvh_info_buffer.config.name
-      );
+      const tlas_bvh_info = render_graph.register_buffer(aabb_gpu_data.bvh_info_buffer.config.name);
 
       const blas_gpu_data = MeshBLAS.to_gpu_data();
       const blas_directory = render_graph.register_buffer(
@@ -324,10 +322,10 @@ export class DeferredShadingStrategy {
       // │ 🎯 Register Mesh & Instance Buffers                                        │
       // └─────────────────────────────────────────────────────────────────────────────┘
       const object_instances = render_graph.register_buffer(
-        MeshTaskQueue.get_object_instance_buffer().config.name
+        RenderTaskQueue.get_object_instance_buffer().config.name
       );
       const meshlet_instances = render_graph.register_buffer(
-        MeshTaskQueue.get_meshlet_instance_buffer().config.name
+        RenderTaskQueue.get_meshlet_instance_buffer().config.name
       );
 
       const mesh_asset_ids = EntityManager.get_fragment_gpu_buffer(
@@ -367,7 +365,7 @@ export class DeferredShadingStrategy {
       );
       const lights = render_graph.register_buffer(light_fragment_buffer.buffer.config.name);
 
-      dense_lights_buffer_config.size = (light_fragment_buffer.buffer.config.size / 4) + 4;
+      dense_lights_buffer_config.size = light_fragment_buffer.buffer.config.size / 4 + 4;
       const dense_lights = render_graph.create_buffer(dense_lights_buffer_config);
 
       // ┌─────────────────────────────────────────────────────────────────────────────┐
@@ -375,11 +373,8 @@ export class DeferredShadingStrategy {
       // └─────────────────────────────────────────────────────────────────────────────┘
 
       const { main_hzb_image } = this.culling_pipeline.register_targets(render_graph);
-      const {
-        visibility_entity_image,
-        visibility_surface_image,
-        visibility_bucket_image,
-      } = this.visibility_buffer_pipeline.register_targets(render_graph);
+      const { visibility_entity_image, visibility_surface_image, visibility_bucket_image } =
+        this.visibility_buffer_pipeline.register_targets(render_graph);
       let {
         main_albedo_image,
         main_smra_image,
@@ -556,21 +551,6 @@ export class DeferredShadingStrategy {
         });
       }
 
-      for (const bucket of immediate_3d_ui_buckets) {
-        this.visibility_buffer_pipeline.add_depth_prepass(render_graph, {
-          enabled: depth_prepass_enabled,
-          meshlet_draw_count: immediate_3d_ui_draw_count,
-          current_view,
-          depth_image: main_depth_image,
-          frustum_meshlet_draw_args: null,
-          bucket,
-          inputs: this.immediate_3d_ui_pipeline.get_pass_inputs(
-            render_graph,
-            MaterialPassType.Depth
-          ),
-        });
-      }
-
       // ┌─────────────────────────────────────────────────────────────────────────────┐
       // │ 🌫️  PASS: Occlusion Culling (Phase 2 of 2-Pass Occlusion)                 │
       // │    Use HZB to eliminate objects hidden behind other geometry               │
@@ -662,38 +642,6 @@ export class DeferredShadingStrategy {
             ],
           });
         }
-
-        for (const bucket of immediate_3d_ui_buckets) {
-          this.visibility_buffer_pipeline.add_visibility_raster_pass(render_graph, {
-            meshlet_draw_count: immediate_3d_ui_draw_count,
-            depth_prepass_enabled,
-            current_view,
-            depth_image: main_depth_image,
-            occlusion_meshlet_draw_args: null,
-            bucket,
-            inputs: this.immediate_3d_ui_pipeline.get_pass_inputs(
-              render_graph,
-              MaterialPassType.Raster
-            ),
-          });
-
-          this.visibility_buffer_pipeline.add_gbuffer_resolve_pass(render_graph, {
-            meshlet_draw_count: immediate_3d_ui_draw_count,
-            current_view,
-            depth_image: main_depth_image,
-            bucket,
-            inputs: this.immediate_3d_ui_pipeline.get_pass_inputs(
-              render_graph,
-              MaterialPassType.Resolve
-            ),
-            outputs: [
-              main_transparency_accum_image,
-              main_smra_image,
-              main_normal_image,
-              main_motion_emissive_image,
-            ],
-          });
-        }
       }
 
       // ┌─────────────────────────────────────────────────────────────────────────────┐
@@ -711,7 +659,7 @@ export class DeferredShadingStrategy {
         (graph, frame_data, encoder) => {
           const pass = graph.get_physical_pass(frame_data.current_pass);
 
-          MeshTaskQueue.draw_quad(pass);
+          draw_quad(pass);
         }
       );
 
@@ -839,7 +787,6 @@ export class DeferredShadingStrategy {
         );
       }
 
-
       if (reflections_enabled) {
         this.reflections.add_passes(
           render_graph,
@@ -907,8 +854,7 @@ export class DeferredShadingStrategy {
         }
 
         deferred_lighting_shader_setup.pipeline_shaders.vertex.defines.AO_ENABLED = ao_enabled;
-        deferred_lighting_shader_setup.pipeline_shaders.fragment.defines.AO_ENABLED =
-          ao_enabled;
+        deferred_lighting_shader_setup.pipeline_shaders.fragment.defines.AO_ENABLED = ao_enabled;
 
         if (ao_enabled) {
           lighting_inputs.push(this.ao.ao_texture, this.ao.bent_normal_texture);
@@ -924,7 +870,7 @@ export class DeferredShadingStrategy {
           },
           (graph, frame_data, encoder) => {
             const pass = graph.get_physical_pass(frame_data.current_pass);
-            MeshTaskQueue.draw_quad(pass);
+            draw_quad(pass);
           }
         );
       }
@@ -936,8 +882,7 @@ export class DeferredShadingStrategy {
       // └─────────────────────────────────────────────────────────────────────────────┘
       if (
         gi_enabled &&
-        (debug_view === DebugDrawType.GI_WorldCache ||
-          debug_view === DebugDrawType.GI_Probes)
+        (debug_view === DebugDrawType.GI_WorldCache || debug_view === DebugDrawType.GI_Probes)
       ) {
         this.gi.add_debug_passes(
           render_graph,
@@ -997,16 +942,8 @@ export class DeferredShadingStrategy {
         "copy_history",
         RenderPassFlags.GraphLocal,
         {
-          inputs: [
-            post_lighting_image_desc,
-            main_normal_image,
-            main_depth_image,
-          ],
-          outputs: [
-            prev_lighting,
-            prev_normal_image,
-            prev_depth_image,
-          ],
+          inputs: [post_lighting_image_desc, main_normal_image, main_depth_image],
+          outputs: [prev_lighting, prev_normal_image, prev_depth_image],
         },
         (graph, frame_data, encoder) => {
           const curr_final_lighting = graph.get_physical_image(post_lighting_image_desc);
@@ -1140,7 +1077,7 @@ export class DeferredShadingStrategy {
           },
           (graph, frame_data, encoder) => {
             const pass = graph.get_physical_pass(frame_data.current_pass);
-            MeshTaskQueue.draw_quad(pass);
+            draw_quad(pass);
           }
         );
       }
@@ -1226,5 +1163,5 @@ export class DeferredShadingStrategy {
       ResourceCache.get().fetch(CacheTypes.IMAGE, Name.from(`texture_pool_${pool_key}`)) ||
       fallback_texture;
     return render_graph.register_image(texture.config.name);
-  };
+  }
 }

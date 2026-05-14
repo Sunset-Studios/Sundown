@@ -1,5 +1,5 @@
 import { Buffer } from "../buffer.js";
-import { MeshTaskQueue } from "../mesh_task_queue.js";
+import { RenderTaskQueue } from "../render_task_queue.js";
 import { ResourceCache } from "../resource_cache.js";
 import { RenderPassFlags, MaterialPassType, CacheTypes } from "../renderer_types.js";
 import { Texture } from "../texture.js";
@@ -161,19 +161,6 @@ export class VisibilityBufferPipeline {
         continue;
       }
 
-      if (bucket.queue?.build_bucket_draw_resources) {
-        bucket_draw_lists.set(
-          bucket.key,
-          bucket.queue.build_bucket_draw_resources(render_graph, {
-            current_view,
-            bucket,
-            stage_name,
-            force_recreate,
-          })
-        );
-        continue;
-      }
-
       const resources = this._create_bucket_meshlet_resources(render_graph, {
         current_view,
         bucket,
@@ -288,8 +275,7 @@ export class VisibilityBufferPipeline {
       },
       (graph, frame_data, encoder) => {
         const pass = graph.get_physical_pass(frame_data.current_pass);
-        const queue = bucket.queue ?? MeshTaskQueue;
-        queue.submit_visibility_bucket_indirect_draw(
+        RenderTaskQueue.submit_visibility_bucket_indirect_draw(
           pass,
           bucket,
           frustum_meshlet_draw_args ? graph.get_physical_buffer(frustum_meshlet_draw_args) : null,
@@ -344,8 +330,7 @@ export class VisibilityBufferPipeline {
       },
       (graph, frame_data, encoder) => {
         const pass = graph.get_physical_pass(frame_data.current_pass);
-        const queue = bucket.queue ?? MeshTaskQueue;
-        queue.submit_visibility_bucket_indirect_draw(
+        RenderTaskQueue.submit_visibility_bucket_indirect_draw(
           pass,
           bucket,
           occlusion_meshlet_draw_args ? graph.get_physical_buffer(occlusion_meshlet_draw_args) : null,
@@ -396,8 +381,7 @@ export class VisibilityBufferPipeline {
       },
       (graph, frame_data, encoder) => {
         const pass = graph.get_physical_pass(frame_data.current_pass);
-        const queue = bucket.queue ?? MeshTaskQueue;
-        queue.submit_visibility_bucket_resolve(pass, bucket);
+        RenderTaskQueue.submit_visibility_bucket_resolve(pass, bucket);
       }
     );
 

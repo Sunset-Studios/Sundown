@@ -1,7 +1,7 @@
 import { SharedFrameInfoBuffer, SharedViewBuffer } from "../core/shared_data.js";
 import { InputProvider } from "../input/input_provider.js";
 import { InputKey } from "../input/input_types.js";
-import { MeshTaskQueue } from "../renderer/mesh_task_queue.js";
+import { RenderTaskQueue } from "../renderer/render_task_queue.js";
 import { Renderer } from "../renderer/renderer.js";
 import { panel, label } from "../ui/2d/immediate.js";
 import { DevConsoleTool } from "./dev_console_tool.js";
@@ -94,8 +94,8 @@ function get_meshlet_stats() {
   const visibility_buffer_pipeline = render_strategy?.visibility_buffer_pipeline;
   const current_view = SharedFrameInfoBuffer.get_view_index();
   const view_data = SharedViewBuffer.get_view_data(current_view);
-  const visibility_buckets = MeshTaskQueue.get_visibility_shader_buckets();
-  const total_meshlet_count = MeshTaskQueue.get_total_meshlet_count();
+  const visibility_buckets = RenderTaskQueue.get_visibility_shader_buckets();
+  const total_meshlet_count = RenderTaskQueue.get_total_meshlet_count();
   const culling_stats = culling_pipeline?.get_meshlet_stats?.(current_view) ?? null;
   const frustum_bucket_stats =
     visibility_buffer_pipeline?.get_bucket_meshlet_stats?.(

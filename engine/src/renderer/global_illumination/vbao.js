@@ -76,7 +76,7 @@ const vbao_settings_buffer_config = {
 
 export class VBAO {
   config = {
-    trace_downsample: 1,
+    trace_downsample: 2,
     radius: 1.0,
     bias: 0.001,
     slice_count: 1,

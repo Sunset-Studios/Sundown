@@ -4,7 +4,7 @@ import { BufferFlags } from "../renderer/renderer_types.js";
 import { Texture } from "../renderer/texture.js";
 import { RingBufferAllocator } from "../memory/allocator.js";
 import { ResizableBitArray, TypedStack } from "../memory/container.js";
-import { MeshTaskQueue } from "../renderer/mesh_task_queue.js";
+import { RenderTaskQueue } from "../renderer/render_task_queue.js";
 import { mat4, vec4, vec3, vec2 } from "gl-matrix";
 import { WORLD_FORWARD, WORLD_UP } from "./minimal.js";
 import { radians } from "../utility/math.js";
@@ -456,7 +456,7 @@ export class SharedViewBuffer {
           idx * SharedViewBuffer.floats_per_view + SharedViewBuffer.offsets.clipmap_count
         ];
         for (let i = 0; i < clipmap_count; i++) {
-          MeshTaskQueue.deallocate_view_data(idx, i);
+          RenderTaskQueue.deallocate_view_data(idx, i);
         }
       }
       SharedViewBuffer.set_render_active(idx, false);
@@ -531,9 +531,9 @@ export class SharedViewBuffer {
 
     for (let i = 0; i < clipmap_count; i++) {
       if (active) {
-        MeshTaskQueue.allocate_view_data(view_index, i);
-    } else {
-        MeshTaskQueue.deallocate_view_data(view_index, i);
+        RenderTaskQueue.allocate_view_data(view_index, i);
+      } else {
+        RenderTaskQueue.deallocate_view_data(view_index, i);
       }
     }
 

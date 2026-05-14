@@ -1,6 +1,6 @@
-﻿import { MeshTaskQueue } from "./mesh_task_queue.js";
-import { RenderPassFlags } from "./renderer_types.js";
+﻿import { RenderPassFlags } from "./renderer_types.js";
 import { rgba16float_format } from "../utility/config_permutations.js";
+import { draw_quad } from "./draw_helpers.js";
 
 const bloom_downsample_shader_setup = {
   pipeline_shaders: {
@@ -338,7 +338,7 @@ export class Bloom {
           0.0,
         ]);
 
-        MeshTaskQueue.draw_quad(pass);
+        draw_quad(pass);
       }
     );
   }

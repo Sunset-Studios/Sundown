@@ -1,6 +1,6 @@
 import { Buffer } from "../buffer.js";
 import { RenderPassFlags } from "../renderer_types.js";
-import { MeshTaskQueue } from "../mesh_task_queue.js";
+import { draw_quad } from "../draw_helpers.js";
 import { npot, clamp, ceil_div } from "../../utility/math.js";
 
 const PROBES_PER_BRICK = 64;
@@ -476,7 +476,7 @@ export class SparseVolumetricLightmapper {
       },
       (graph, frame_data) => {
         const pass = graph.get_physical_pass(frame_data.current_pass);
-        MeshTaskQueue.draw_quad(pass, debug_line_count);
+        draw_quad(pass, debug_line_count);
       }
     );
   }

@@ -99,7 +99,7 @@ const LightFragment = {
 const StaticMeshFragment = {
   name: "StaticMesh",
   imports: {
-    MeshTaskQueue: "../../../renderer/mesh_task_queue.js",
+    RenderTaskQueue: "../../../renderer/render_task_queue.js",
   },
   constants: {
     material_slot_stride: 16,
@@ -111,7 +111,7 @@ const StaticMeshFragment = {
       gpu: false,
       setter: `
       typed_array[element_offset] = BigInt(value);
-        MeshTaskQueue.mark_meshes_dirty(true, this.entity);
+        RenderTaskQueue.mark_meshes_dirty(true, this.entity);
       `,
     },
     material_slots: {
@@ -120,7 +120,7 @@ const StaticMeshFragment = {
       gpu: false,
       setter: `
       typed_array[element_offset] = BigInt(value);
-        MeshTaskQueue.mark_meshes_dirty(true, this.entity);
+        RenderTaskQueue.mark_meshes_dirty(true, this.entity);
       `,
     },
     mesh_asset_id: {
@@ -131,7 +131,7 @@ const StaticMeshFragment = {
       usage: BufferType.STORAGE,
       setter: `
       typed_array[element_offset] = value;
-        MeshTaskQueue.mark_meshes_dirty(true, this.entity);
+        RenderTaskQueue.mark_meshes_dirty(true, this.entity);
       `,
     },
     material_table_offset: {
@@ -141,7 +141,7 @@ const StaticMeshFragment = {
       usage: BufferType.STORAGE,
       setter: `
       typed_array[element_offset] = value;
-        MeshTaskQueue.mark_meshes_dirty(true, this.entity);
+        RenderTaskQueue.mark_meshes_dirty(true, this.entity);
       `,
     },
   },
