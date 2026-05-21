@@ -1048,7 +1048,7 @@ export class UI3DRenderProcessor extends SimulationLayer {
       command_corner_rounding(command),
       Number(command.border_width ?? 0),
       emissive,
-      1,
+      Math.max(0.0001, Number(command.width ?? 1) / Math.max(0.0001, Number(command.height ?? 1))),
     ];
     ui.ui_text_glyph = Number(command.glyph_index ?? 0);
 

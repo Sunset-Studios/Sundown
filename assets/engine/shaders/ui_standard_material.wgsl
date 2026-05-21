@@ -29,14 +29,22 @@ struct UIData {
 fn element_alpha(entity_id: u32, uv: vec2<f32>) -> f32 {
     let data = ui_data[entity_id];
     let element_rounding = data.params.x;
-    let dx = min(uv.x, 1.0 - uv.x);
-    let dy = min(uv.y, 1.0 - uv.y);
-    let corner_distance = length(vec2<f32>(
-        max(0.0, element_rounding - dx),
-        max(0.0, element_rounding - dy)
-    ));
-    return data.color.a *
-        (1.0 - smoothstep(0.0, element_rounding, corner_distance));
+    let aspect = max(data.params.w, 0.0001);
+    let element_size = select(
+        vec2<f32>(aspect, 1.0),
+        vec2<f32>(1.0, 1.0 / aspect),
+        aspect < 1.0
+    );
+    let half_size = element_size * 0.5;
+    let radius = min(element_rounding, min(half_size.x, half_size.y));
+    let local_position = (uv - vec2<f32>(0.5)) * element_size;
+    let corner_offset = abs(local_position) - (half_size - vec2<f32>(radius));
+    let signed_distance =
+        length(max(corner_offset, vec2<f32>(0.0))) +
+        min(max(corner_offset.x, corner_offset.y), 0.0) -
+        radius;
+    let antialias_width = max(fwidth(signed_distance), 0.001);
+    return data.color.a * (1.0 - smoothstep(-antialias_width, antialias_width, signed_distance));
 }
 
 fn element_coverage_mask(position: vec4<f32>, entity_id: u32, uv: vec2<f32>) -> f32 {
