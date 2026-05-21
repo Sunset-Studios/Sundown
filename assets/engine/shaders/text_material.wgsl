@@ -64,7 +64,7 @@ fn text_coverage_mask(position: vec4<f32>, entity_row: u32, uv: vec2<f32>) -> f3
 #endif
 }
 
-fn ui_3d_world_position(uv: vec2<f32>, entity_id: u32) -> vec4<f32> {
+fn ui_3d_local_position(uv: vec2<f32>, entity_id: u32) -> vec4<f32> {
     let instance = ui_data[entity_id];
     return vec4<f32>(
         instance.origin.xyz +
@@ -72,6 +72,10 @@ fn ui_3d_world_position(uv: vec2<f32>, entity_id: u32) -> vec4<f32> {
         instance.y_axis.xyz * uv.y,
         1.0
     );
+}
+
+fn ui_3d_world_position(uv: vec2<f32>, entity_id: u32, entity_transform: EntityTransform) -> vec4<f32> {
+    return entity_transform.transform * ui_3d_local_position(uv, entity_id);
 }
 
 #if MESHLET_DEPTH_PASS
@@ -82,7 +86,7 @@ fn depth_vertex(v_out: ptr<function, DepthVertexOutput>) -> DepthVertexOutput {
     }
     let view_index = u32(frame_info.view_index);
     output.position = view_buffer[view_index].view_projection_matrix *
-        ui_3d_world_position(output.uv, output.entity_id);
+        ui_3d_world_position(output.uv, output.entity_id, entity_transforms[output.entity_id]);
     return output;
 }
 
@@ -100,7 +104,7 @@ fn raster_vertex(v_out: ptr<function, RasterVertexOutput>) -> RasterVertexOutput
     }
     let view_index = u32(frame_info.view_index);
     output.position = view_buffer[view_index].view_projection_matrix *
-        ui_3d_world_position(output.uv, output.entity_id);
+        ui_3d_world_position(output.uv, output.entity_id, entity_transforms[output.entity_id]);
     return output;
 }
 
@@ -126,7 +130,7 @@ fn resolve_world_position(
     entity_id: u32,
     entity_transform: EntityTransform
 ) -> vec4<f32> {
-    return ui_3d_world_position(decoded.uv, entity_id);
+    return ui_3d_world_position(decoded.uv, entity_id, entity_transform);
 }
 
 fn resolve_fragment(

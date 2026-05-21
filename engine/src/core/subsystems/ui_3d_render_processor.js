@@ -10,7 +10,6 @@ import { InputProvider } from "../../input/input_provider.js";
 import { InputKey } from "../../input/input_types.js";
 import { RenderTaskQueue, RenderWorkKind } from "../../renderer/render_task_queue.js";
 import { Mesh } from "../../renderer/mesh.js";
-import { MeshData } from "../../renderer/mesh_data.js";
 import { Material, MaterialTemplate } from "../../renderer/material.js";
 import { ResourceCache } from "../../renderer/resource_cache.js";
 import { CacheTypes, MaterialFamilyType } from "../../renderer/renderer_types.js";
@@ -102,6 +101,10 @@ function vec3_as_vec4(value, w = 0, fallback = [0, 0, 0]) {
  */
 function command_uses_custom_material(command) {
   return Boolean(command.material_id || command.material_template);
+}
+
+function command_parent_key(command) {
+  return command.parent_entity?.id ?? "root";
 }
 
 /**
@@ -725,7 +728,7 @@ export class UI3DRenderProcessor extends SimulationLayer {
     let entity_index = 0;
     for (let i = 0; i < batches.length; i++) {
       const batch = batches[i];
-      const entity = this._get_entity(entity_index++, batch.commands.length);
+      const entity = this._get_entity(entity_index++, batch.commands.length, batch.parent_entity);
       this._write_command_batch(batch.commands, entity);
       RenderTaskQueue.submit({
         lane_id: RenderWorkKind.UI3DMesh,
@@ -866,7 +869,7 @@ export class UI3DRenderProcessor extends SimulationLayer {
       const batch_key = this._command_batch_key(command, material_id);
       let batch = batch_by_key.get(batch_key);
       if (!batch) {
-        batch = { material_id, commands: [] };
+        batch = { material_id, parent_entity: command.parent_entity ?? null, commands: [] };
         batch_by_key.set(batch_key, batch);
         batches.push(batch);
       }
@@ -887,7 +890,7 @@ export class UI3DRenderProcessor extends SimulationLayer {
     const local_key =
       command.batch_key ??
       (command_uses_custom_material(command) ? `command_${command.order}` : "shared");
-    return `${material_id}|${local_key}`;
+    return `${material_id}|${command_parent_key(command)}|${local_key}`;
   }
 
   /**
@@ -900,23 +903,27 @@ export class UI3DRenderProcessor extends SimulationLayer {
    * @param {number} instance_count Number of command instances to store.
    * @returns {object} ECS entity handle.
    */
-  _get_entity(index, instance_count) {
+  _get_entity(index, instance_count, parent_entity = null) {
     while (this.entities.length <= index) {
       const entity = EntityManager.create_entity(
         [TransformFragment, StaticMeshFragment, UserInterfaceFragment],
         instance_count
       );
-      EntityManager.set_entity_parent(entity, null);
+      EntityManager.set_entity_parent(entity, parent_entity);
       EntityManager.set_entity_flags(
         entity,
         EntityFlags.ALIVE |
         EntityFlags.HAS_MESH |
+        EntityFlags.IGNORE_PARENT_SCALE |
         EntityFlags.IGNORE_TLAS
       );
       this.entities.push(entity);
     }
 
     const entity = this.entities[index];
+    if (EntityManager.get_entity_parent(entity) !== parent_entity) {
+      EntityManager.set_entity_parent(entity, parent_entity);
+    }
     if (entity.instance_count !== instance_count) {
       EntityManager.set_entity_instance_count(entity, instance_count);
     }
@@ -974,11 +981,17 @@ export class UI3DRenderProcessor extends SimulationLayer {
       Number(y_axis[1] ?? 0),
       Number(y_axis[2] ?? 0)
     );
-    const radius_scale = Math.max(0.001, x_len * 0.5, y_len * 0.5);
+    command._ui_center = center;
+    command._ui_radius_scale = Math.max(0.001, x_len * 0.5, y_len * 0.5);
 
     transform.position = center;
     transform.rotation = [0, 0, 0, 1];
-    transform.scale = [radius_scale, radius_scale, radius_scale, 1];
+    transform.scale = [
+      command._ui_radius_scale,
+      command._ui_radius_scale,
+      command._ui_radius_scale,
+      1,
+    ];
   }
 
   /**
@@ -1000,9 +1013,29 @@ export class UI3DRenderProcessor extends SimulationLayer {
 
     const color = vec4(command.fill_color ?? command.color, [1, 1, 1, 1]);
     const emissive = Number(command.emissive ?? 0);
-    ui.ui_origin = vec3_as_vec4(command.origin, 1);
-    ui.ui_x_axis = vec3_as_vec4(command.x_axis, 0, [1, 0, 0]);
-    ui.ui_y_axis = vec3_as_vec4(command.y_axis, 0, [0, 1, 0]);
+    const center = command._ui_center ?? [0, 0, 0];
+    const radius_scale = command._ui_radius_scale ?? 1;
+    const origin = command.origin ?? [0, 0, 0];
+    const x_axis = command.x_axis ?? [1, 0, 0];
+    const y_axis = command.y_axis ?? [0, 1, 0];
+    ui.ui_origin = [
+      (Number(origin[0] ?? 0) - Number(center[0] ?? 0)) / radius_scale,
+      (Number(origin[1] ?? 0) - Number(center[1] ?? 0)) / radius_scale,
+      (Number(origin[2] ?? 0) - Number(center[2] ?? 0)) / radius_scale,
+      1,
+    ];
+    ui.ui_x_axis = [
+      Number(x_axis[0] ?? 0) / radius_scale,
+      Number(x_axis[1] ?? 0) / radius_scale,
+      Number(x_axis[2] ?? 0) / radius_scale,
+      0,
+    ];
+    ui.ui_y_axis = [
+      Number(y_axis[0] ?? 0) / radius_scale,
+      Number(y_axis[1] ?? 0) / radius_scale,
+      Number(y_axis[2] ?? 0) / radius_scale,
+      0,
+    ];
     ui.ui_uv_rect = [
       0,
       0,

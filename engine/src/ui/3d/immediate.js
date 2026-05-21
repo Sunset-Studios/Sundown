@@ -60,6 +60,7 @@ class UI3DRoot {
   normal = vec3.fromValues(0, 0, 1);
   unit_scale = 1;
   layer_depth = 0.002;
+  parent_entity = null;
 }
 
 const default_root = new UI3DRoot();
@@ -216,6 +217,7 @@ function push_command(command, config = {}, inherited_z_order = get_current_z_or
   command.z_order = resolve_z_order(config, inherited_z_order);
   command.order = UI3DContext.command_order++;
   command.batch_key ??= config.batch_key ?? config.ui_batch_key;
+  command.parent_entity ??= config.parent_entity ?? config.parent ?? get_current_container()?.root?.parent_entity ?? null;
   UI3DContext.commands.push(command);
   return UI3DContext.commands.length - 1;
 }
@@ -224,6 +226,8 @@ function set_command(index, command, config = {}, inherited_z_order = get_curren
   const existing = UI3DContext.commands[index];
   command.z_order = existing?.z_order ?? resolve_z_order(config, inherited_z_order);
   command.order = existing?.order ?? UI3DContext.command_order++;
+  command.batch_key ??= existing?.batch_key ?? config.batch_key ?? config.ui_batch_key;
+  command.parent_entity ??= existing?.parent_entity ?? config.parent_entity ?? config.parent ?? get_current_container()?.root?.parent_entity ?? null;
   UI3DContext.commands[index] = command;
 }
 
@@ -244,6 +248,7 @@ function material_command_config(config = {}) {
 function basis_from_config(config = {}) {
   const root = new UI3DRoot();
   vec3.copy(root.position, config.position ?? default_root.position);
+  root.parent_entity = config.parent_entity ?? config.parent ?? null;
 
   if (config.right) {
     vec3.normalize(root.right, config.right);
