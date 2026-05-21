@@ -13,7 +13,6 @@ import { ComputeTaskQueue } from "../engine/src/renderer/compute_task_queue.js";
 import { TransformFragment } from "../engine/src/core/ecs/fragments/transform_fragment.js";
 import { FreeformArcballControlProcessor } from "../engine/src/core/subsystems/freeform_arcball_control_processor.js";
 import { LightFragment } from "../engine/src/core/ecs/fragments/light_fragment.js";
-import { TextFragment } from "../engine/src/core/ecs/fragments/text_fragment.js";
 import { StaticMeshFragment } from "../engine/src/core/ecs/fragments/static_mesh_fragment.js";
 import { VisibilityFragment } from "../engine/src/core/ecs/fragments/visibility_fragment.js";
 import { LightType } from "../engine/src/core/minimal.js";
@@ -21,8 +20,6 @@ import { StandardMaterial } from "../engine/src/renderer/material.js";
 import { Mesh } from "../engine/src/renderer/mesh.js";
 import { SharedEnvironmentData, SharedViewBuffer } from "../engine/src/core/shared_data.js";
 import { spawn_mesh_entity, delete_entity } from "../engine/src/core/ecs/entity_utils.js";
-import { FontCache } from "../engine/src/ui/text/font_cache.js";
-import { Name } from "../engine/src/utility/names.js";
 import { TextureChannel } from "../engine/src/renderer/renderer_types.js";
 import { profile_scope } from "../engine/src/utility/performance.js";
 import { log } from "../engine/src/utility/logging.js";
@@ -38,6 +35,34 @@ import { MasterMind } from "../engine/src/ml/mastermind.js";
 import { Tensor, TensorInitializer } from "../engine/src/ml/math/tensor.js";
 import { Adam } from "../engine/src/ml/optimizers/adam.js";
 import example_cvar_config from "./config/cvars.js";
+
+function world_label(text, position, config = {}) {
+
+  UI3D.panel(
+    {
+      position,
+      billboard: config.billboard ?? true,
+      width: config.width ?? 1.0,
+      height: config.height ?? 1.0,
+      unit_scale: Number(config.unit_scale ?? 1.0),
+      pivot: config.pivot ?? [0.5, 0.5],
+      padding: 0,
+      background_color: config.background_color ?? [0, 0, 0, 0],
+      z_order: config.z_order ?? 1,
+    },
+    () => {
+      UI3D.label(text, {
+        width: "100%",
+        height: "100%",
+        font: config.font ?? "Exo-Medium",
+        text_color: config.text_color ?? [1, 1, 1, 1],
+        text_align: config.text_align ?? "center",
+        text_valign: config.text_valign ?? "middle",
+        text_emissive: Number(config.text_emissive ?? 1.0),
+      });
+    }
+  );
+}
 
 // ------------------------------------------------------------------------------------
 // =============================== Rendering Scene ===============================
@@ -113,10 +138,6 @@ export class RenderingScene extends Scene {
       default_material.sample_roughness(dirt_roughness);
       default_material.set_tiling(2.0, 2.0);
     }
-
-    // Get Exo-Medium font
-    const font_id = Name.from("Exo-Medium");
-    const font_object = FontCache.get_font_object(font_id);
 
     // Create a 3D grid of sphere entities
     const grid_size = 105; // 100x100x10 grid
@@ -234,26 +255,7 @@ export class MLScene extends Scene {
     light_fragment_view.position = [50, 0, 0];
     light_fragment_view.active = true;
 
-    // Get Exo-Medium font
-    const font_id = Name.from("Exo-Medium");
-    const font_object = FontCache.get_font_object(font_id);
-
-    const text_entity = spawn_mesh_entity(
-      [0, 25, -50],
-      [0, 0, 0, 1],
-      [0.5, 0.5, 0.5],
-      Mesh.quad(),
-      font_object.material
-    );
-    const text_fragment_view = EntityManager.add_fragment(text_entity, TextFragment);
-    text_fragment_view.font = font_id;
-    text_fragment_view.font_size = 32;
-    text_fragment_view.text_color = [1, 1, 1, 1];
-    text_fragment_view.text_emissive = 1;
-    text_fragment_view.text = "ML Test";
-
     this.scene_entities.push(light_entity);
-    this.scene_entities.push(text_entity);
 
     this.setup_ml_test();
   }
@@ -275,6 +277,11 @@ export class MLScene extends Scene {
 
   update(delta_time) {
     super.update(delta_time);
+
+    world_label("ML Test", [0, 25, -50], {
+      width: 40.0,
+      height: 10.0,
+    });
 
     profile_scope("ml_training_test.update", () => {
       for (let i = 0; i < 4; i++) {
@@ -473,26 +480,6 @@ export class TexturesScene extends Scene {
     light_fragment_view.active = true;
     light_fragment_view.is_primary_sun = 1;
 
-    // Get Exo-Medium font
-    const font_id = Name.from("Exo-Medium");
-    const font_object = FontCache.get_font_object(font_id);
-
-    // Add a title text entity
-    const text_entity = spawn_mesh_entity(
-      [0, 20, 0],
-      [0, 0, 0, 1],
-      [0.5, 0.5, 0.5],
-      Mesh.quad(),
-      font_object.material
-    );
-    const text_fragment_view = EntityManager.add_fragment(text_entity, TextFragment);
-    text_fragment_view.font = font_id;
-    text_fragment_view.font_size = 32;
-    text_fragment_view.text_color = [1, 1, 1, 1];
-    text_fragment_view.text_emissive = 1;
-    text_fragment_view.text = "Textures Test Scene";
-    this.entities.push(text_entity);
-
     // Load metal plane material
     {
       let floor_albedo = {
@@ -508,7 +495,7 @@ export class TexturesScene extends Scene {
       };
       let floor_normal = {
         name: "floor_normal",
-          paths: ["engine/textures/rubber_floor/Normal.jpg"],
+        paths: ["engine/textures/rubber_floor/Normal.jpg"],
         format: "rgba8unorm",
         dimension: "2d",
         usage:
@@ -629,6 +616,12 @@ export class TexturesScene extends Scene {
 
   update(delta_time) {
     super.update(delta_time);
+
+    world_label("Textures Test Scene", [0, 20, 0], {
+      width: 40.0,
+      height: 10.0,
+      billboard: false
+    });
 
     // Animate the swaying cube
     if (this.swaying_cube_entity) {
@@ -782,26 +775,6 @@ export class BVHScene extends Scene {
     light_fragment_view.is_primary_sun = true;
     this.entities.push(light_entity);
 
-    // Get Exo-Medium font
-    const font_id = Name.from("Exo-Medium");
-    const font_object = FontCache.get_font_object(font_id);
-
-    // Add a title text entity
-    const text_entity = spawn_mesh_entity(
-      [10, 65, 25],
-      [0, 0, 0, 1],
-      [0.5, 0.5, 0.5],
-      Mesh.quad(),
-      font_object.material
-    );
-    const text_fragment_view = EntityManager.add_fragment(text_entity, TextFragment);
-    text_fragment_view.font = font_id;
-    text_fragment_view.font_size = 32;
-    text_fragment_view.text_color = [1, 1, 1, 1];
-    text_fragment_view.text_emissive = 1;
-    text_fragment_view.text = "BVH Test Scene";
-    this.entities.push(text_entity);
-
     // Create a default material
     const default_material = StandardMaterial.create("BVHDefaultMaterial");
     this.default_material_id = default_material.material_id;
@@ -840,6 +813,12 @@ export class BVHScene extends Scene {
 
   update(delta_time) {
     super.update(delta_time);
+
+    world_label("BVH Test Scene", [10, 65, 25], {
+      width: 40.0,
+      height: 10.0,
+      billboard: false,
+    });
 
     this.handle_input();
 
@@ -955,8 +934,8 @@ export class BVHScene extends Scene {
     // Normalize the direction vector
     const length = Math.sqrt(
       this.last_ray_direction[0] * this.last_ray_direction[0] +
-        this.last_ray_direction[1] * this.last_ray_direction[1] +
-        this.last_ray_direction[2] * this.last_ray_direction[2]
+      this.last_ray_direction[1] * this.last_ray_direction[1] +
+      this.last_ray_direction[2] * this.last_ray_direction[2]
     );
 
     this.last_ray_direction[0] /= length;
@@ -1127,37 +1106,18 @@ export class BVHScene extends Scene {
 export class SolarECSTestScene extends Scene {
   name = "SolarECSTestScene";
   entities = []; // Stores all entities in the scene
-  text_update_timer = 0; // Timer for text updates
-  text_update_interval = 0.2; // Time in seconds between text updates
+  instance_count_timer = 0; // Timer for instance count updates
+  instance_count_update_interval = 0.5; // Time in seconds between instance count changes
 
   grid_entity_counts = { x: 20, y: 20, z: 20 }; // Number of entities per dimension
   grid_spacing = { x: 4.0, y: 4.0, z: 4.0 }; // Explicit spacing between entities
 
-  grid_text_entities = []; // Stores entities that are part of the text grid
-  num_entities_to_update_per_cycle = 250; // Number of entities to update each cycle
-
-  combined_text_presets = [
-    // Morse code
-    "...",
-    ".-",
-    "..",
-    "---",
-    ".-.",
-    ".-..",
-    "--",
-    "-.",
-    "..-",
-    ".-.-",
-    "---.",
-    "....-",
-    ".--",
-    "-",
-    "..-",
-    ".-.-",
-    "---.- .-",
-    "....",
-  ];
-  random_texts = []; // Will be assigned in init
+  grid_mesh_entities = [];
+  cloud_max_instance_count = 8;
+  cloud_radius = 0.9;
+  cloud_entities_to_update_per_frame = 250;
+  cloud_update_pass_active = false;
+  cloud_updates_remaining = 0;
 
   init(parent_context) {
     super.init(parent_context);
@@ -1196,17 +1156,44 @@ export class SolarECSTestScene extends Scene {
     light_fragment_view.position = [10, 30, 10];
     light_fragment_view.active = true;
 
-    // Get Exo-Medium font for potential text elements
-    const font_id = Name.from("Exo-Medium");
-    const font_object = FontCache.get_font_object(font_id);
-
-    // Assign the combined presets to random_texts so the title can use them too
-    this.random_texts = this.combined_text_presets;
-
-    // Create the grid of text entities
+    // Create a uniform grid of mesh entities. Each entity owns a small instance cloud.
     const counts_x = this.grid_entity_counts.x;
     const counts_y = this.grid_entity_counts.y;
     const counts_z = this.grid_entity_counts.z;
+
+    const mesh = Mesh.from_gltf("engine/models/cube/cube.gltf");
+    const materials = [
+      StandardMaterial.create("SolarECSGridMaterial_Mint", {
+        albedo: [0.55, 1.0, 0.72, 1.0],
+        emission: 0.05,
+        roughness: 0.7,
+        metallic: 0.0,
+      }),
+      StandardMaterial.create("SolarECSGridMaterial_Coral", {
+        albedo: [1.0, 0.48, 0.36, 1.0],
+        emission: 0.03,
+        roughness: 0.5,
+        metallic: 0.0,
+      }),
+      StandardMaterial.create("SolarECSGridMaterial_Ice", {
+        albedo: [0.45, 0.74, 1.0, 1.0],
+        emission: 0.08,
+        roughness: 0.28,
+        metallic: 0.05,
+      }),
+      StandardMaterial.create("SolarECSGridMaterial_Gold", {
+        albedo: [1.0, 0.82, 0.32, 1.0],
+        emission: 0.02,
+        roughness: 0.36,
+        metallic: 0.45,
+      }),
+      StandardMaterial.create("SolarECSGridMaterial_GlassGreen", {
+        albedo: [0.28, 0.9, 0.64, 1.0],
+        emission: 0.12,
+        roughness: 0.18,
+        metallic: 0.12,
+      }),
+    ];
 
     const center_offset_x = (counts_x - 1) * 0.5;
     const center_offset_y = (counts_y - 1) * 0.5;
@@ -1215,39 +1202,34 @@ export class SolarECSTestScene extends Scene {
     for (let ix = 0; ix < counts_x; ix++) {
       for (let iy = 0; iy < counts_y; iy++) {
         for (let iz = 0; iz < counts_z; iz++) {
-          const pos = [
+          const center = [
             (ix - center_offset_x) * this.grid_spacing.x,
             (iy - center_offset_y) * this.grid_spacing.y,
             (iz - center_offset_z) * this.grid_spacing.z,
           ];
 
-          const grid_entity = spawn_mesh_entity(
-            pos,
+          const entity = spawn_mesh_entity(
+            center,
             [0, 0, 0],
-            [1.0, 1.0, 1.0],
-            Mesh.quad(),
-            font_object.material
+            [0.18, 0.18, 0.18],
+            mesh,
+            materials[Math.floor(Math.random() * materials.length)].material_id
           );
+          this.entities.push(entity);
+          this.grid_mesh_entities.push({
+            entity,
+            center,
+          });
 
-          const text_frag = EntityManager.add_fragment(grid_entity, TextFragment);
-          text_frag.font = font_id;
-          text_frag.font_size = 10; // Smaller font size for grid
-          text_frag.text_color = [
-            Math.random() * 0.5 + 0.5,
-            Math.random() * 0.5 + 0.5,
-            Math.random() * 0.5 + 0.5,
-            1.0,
-          ]; // Brighter random colors
-          text_frag.text_emissive = 0.7;
-          text_frag.text = this.random_texts[Math.floor(Math.random() * this.random_texts.length)]; // Initial random text
-
-          this.entities.push(grid_entity);
-          this.grid_text_entities.push(grid_entity);
+          EntityManager.set_entity_instance_count(entity, this.cloud_max_instance_count);
+          this.#randomize_cloud_instances(entity, center, this.cloud_max_instance_count);
         }
       }
     }
 
-    log(`[${this.name}] Initialized with ${this.entities.length} entities.`);
+    log(
+      `[${this.name}] Initialized with ${this.grid_mesh_entities.length} mesh entities and ${this.cloud_max_instance_count} max instances per entity.`
+    );
   }
 
   cleanup() {
@@ -1256,7 +1238,10 @@ export class SolarECSTestScene extends Scene {
       delete_entity(this.entities[i]);
     }
     this.entities.length = 0;
-    this.grid_text_entities = []; // Clear the specific list too
+    this.grid_mesh_entities.length = 0;
+    this.instance_count_timer = 0;
+    this.cloud_update_pass_active = false;
+    this.cloud_updates_remaining = 0;
 
     this.remove_layer(FreeformArcballControlProcessor);
 
@@ -1267,39 +1252,81 @@ export class SolarECSTestScene extends Scene {
   pre_update(delta_time) {
     super.pre_update(delta_time);
 
-    // Timer-based update for the grid entities
-    this.text_update_timer += delta_time;
-    if (this.text_update_timer >= this.text_update_interval) {
-      this.text_update_timer -= this.text_update_interval; // Carry over excess time
-
-      if (this.grid_text_entities && this.grid_text_entities.length > 0) {
-        const num_to_update = Math.min(
-          this.num_entities_to_update_per_cycle,
-          this.grid_text_entities.length
-        );
-
-        // Create a Set of indices to update to ensure we update unique entities if num_to_update < total
-        const indices_to_update = new Set();
-        while (
-          indices_to_update.size < num_to_update &&
-          indices_to_update.size < this.grid_text_entities.length
-        ) {
-          indices_to_update.add(Math.floor(Math.random() * this.grid_text_entities.length));
-        }
-
-        for (const entity_index of indices_to_update) {
-          const entity_to_update = this.grid_text_entities[entity_index];
-
-          const random_text_index = Math.floor(Math.random() * this.random_texts.length);
-          const new_text = this.random_texts[random_text_index];
-
-          const tfv = EntityManager.get_fragment(entity_to_update, TextFragment);
-          if (tfv && new_text.length > 0) {
-            tfv.text = new_text;
-          }
-        }
-      }
+    this.instance_count_timer += delta_time;
+    if (
+      !this.cloud_update_pass_active &&
+      this.instance_count_timer >= this.instance_count_update_interval
+    ) {
+      this.instance_count_timer -= this.instance_count_update_interval;
+      this.cloud_updates_remaining = this.grid_mesh_entities.length;
+      this.cloud_update_pass_active = true;
     }
+
+    this.#update_cloud_entity_batch();
+  }
+
+  #randomize_cloud_instances(entity, center, instance_count) {
+    for (let i = 0; i < instance_count; i++) {
+      const transform = EntityManager.get_fragment(entity, TransformFragment, i);
+
+      if (i === 0) {
+        transform.position = center;
+        transform.scale = [0.24, 0.24, 0.24];
+        continue;
+      }
+
+      const offset = this.#random_cloud_offset();
+      const scale = 0.08 + Math.random() * 0.18;
+      transform.position = [
+        center[0] + offset[0],
+        center[1] + offset[1],
+        center[2] + offset[2],
+      ];
+      transform.scale = [scale, scale, scale];
+    }
+  }
+
+  #random_cloud_offset() {
+    const theta = Math.random() * Math.PI * 2;
+    const z = Math.random() * 2 - 1;
+    const radial = Math.sqrt(Math.max(0, 1 - z * z));
+    const radius = this.cloud_radius * Math.cbrt(Math.random());
+
+    return [
+      Math.cos(theta) * radial * radius,
+      z * radius,
+      Math.sin(theta) * radial * radius,
+    ];
+  }
+
+  #update_cloud_entity_batch() {
+    if (!this.cloud_update_pass_active || this.grid_mesh_entities.length === 0) {
+      return;
+    }
+
+    const update_count = Math.min(
+      this.cloud_entities_to_update_per_frame,
+      this.cloud_updates_remaining
+    );
+
+    for (let i = 0; i < update_count; i++) {
+      const item =
+        this.grid_mesh_entities[Math.floor(Math.random() * this.grid_mesh_entities.length)];
+      const instance_count = this.#random_cloud_instance_count();
+      EntityManager.set_entity_instance_count(item.entity, instance_count);
+      this.#randomize_cloud_instances(item.entity, item.center, instance_count);
+    }
+
+    this.cloud_updates_remaining -= update_count;
+    if (this.cloud_updates_remaining <= 0) {
+      this.cloud_update_pass_active = false;
+      this.cloud_updates_remaining = 0;
+    }
+  }
+
+  #random_cloud_instance_count() {
+    const max_count = Math.max(1, this.cloud_max_instance_count);
+    return 1 + Math.floor(Math.random() * max_count);
   }
 }
 
@@ -1478,26 +1505,6 @@ export class VoxelTerrainScene extends Scene {
       }
     }
 
-    // Get Exo-Medium font
-    const font_id = Name.from("Exo-Medium");
-    const font_object = FontCache.get_font_object(font_id);
-
-    // // Add a title text entity
-    const text_entity = spawn_mesh_entity(
-      [-10, 55, 0],
-      [0, 0, 0, 1],
-      [0.5, 0.5, 0.5],
-      Mesh.quad(),
-      font_object.material
-    );
-    const text_fragment_view = EntityManager.add_fragment(text_entity, TextFragment);
-    text_fragment_view.font = font_id;
-    text_fragment_view.font_size = 32;
-    text_fragment_view.text_color = [1, 1, 1, 1];
-    text_fragment_view.text_emissive = 1;
-    text_fragment_view.text = "Voxel Terrain Scene";
-    this.entities.push(text_entity);
-
     // Create sandy ground plane material
     const sandy_material = StandardMaterial.create("SandyGroundMaterial");
     sandy_material.set_albedo([0.94, 0.87, 0.69, 1.0]); // Sandy beige color
@@ -1665,7 +1672,7 @@ export class ObjectPaintingScene extends Scene {
             [0.3 + Math.random() * 0.3, 0.3 + Math.random() * 0.3, 0.3 + Math.random() * 0.3],
             this.sphere_mesh,
             [this.object_material1_id, this.object_material2_id, this.object_material3_id][
-              Math.floor(Math.random() * 3)
+            Math.floor(Math.random() * 3)
             ]
           );
           this.entities.push(entity);
@@ -1704,7 +1711,7 @@ export class ObjectPaintingScene extends Scene {
         background_color: "#FFFFFF",
         dont_consume_cursor_events: true,
       },
-      () => {}
+      () => { }
     );
 
     // horizontal line
@@ -1717,7 +1724,7 @@ export class ObjectPaintingScene extends Scene {
         background_color: "#FFFFFF",
         dont_consume_cursor_events: true,
       },
-      () => {}
+      () => { }
     );
 
     // help text overlay
@@ -1854,7 +1861,7 @@ export class GITestScene extends Scene {
     blue_material.set_albedo([0.2, 0.2, 1, 1]);
     blue_material.set_metallic(0.01);
     blue_material.set_roughness(0.8);
-    
+
     const gray_material = StandardMaterial.create("testgym_gray_material");
     const gray_material_id = gray_material.material_id;
     gray_material.set_albedo([0.5, 0.5, 0.5, 1]);
@@ -2612,24 +2619,6 @@ export class GLTFModelScene extends Scene {
     light_fragment_view.active = true;
     light_fragment_view.is_primary_sun = 1;
 
-    // Add a title text entity
-    const font_id = Name.from("Exo-Medium");
-    const font_object = FontCache.get_font_object(font_id);
-    const text_entity = spawn_mesh_entity(
-      [0, 10, 0],
-      [0, 0, 0, 1],
-      [0.5, 0.5, 0.5],
-      Mesh.quad(),
-      font_object.material
-    );
-    const text_fragment_view = EntityManager.add_fragment(text_entity, TextFragment);
-    text_fragment_view.font = font_id;
-    text_fragment_view.font_size = 32;
-    text_fragment_view.text_color = [1, 1, 1, 1];
-    text_fragment_view.text_emissive = 1;
-    text_fragment_view.text = "GLTF Model Scene";
-    this.entities.push(text_entity);
-
     // Load a GLTF model (e.g., barrel)
     const model_mesh = Mesh.from_gltf("engine/models/barrel/Barrel.gltf");
 
@@ -2666,6 +2655,12 @@ export class GLTFModelScene extends Scene {
 
   update(delta_time) {
     super.update(delta_time);
+
+    world_label("GLTF Model Scene", [0, 10, 0], {
+      width: 40.0,
+      height: 10.0,
+    });
+
     const t = performance.now() * 0.01;
     for (let i = 0; i < this.barrel_entities.length; i++) {
       const entity = this.barrel_entities[i];
@@ -3177,15 +3172,18 @@ export class BistroTestScene extends Scene {
 }
 
 // ------------------------------------------------------------------------------------
-// =============================== Immediate 3D UI Test Scene ==========================
+// =============================== 3D UI Test Scene ====================================
 // ------------------------------------------------------------------------------------
 
-export class Immediate3DUITestScene extends Scene {
-  name = "Immediate3DUITestScene";
+export class UI3DTestScene extends Scene {
+  name = "UI3DTestScene";
   entities = [];
   pulse = 0;
   counter = 0;
   selected_mode = "Layout";
+  marker_position = [0.0, 0.0, 1.5];
+  marker_rotation = quat.create();
+  marker_half_extent = 1.03;
 
   init(parent_context) {
     super.init(parent_context);
@@ -3213,13 +3211,14 @@ export class Immediate3DUITestScene extends Scene {
     light_fragment_view.active = true;
     light_fragment_view.is_primary_sun = 1;
 
-    const marker_material = StandardMaterial.create("Immediate3DUI_Marker");
+    const marker_material = StandardMaterial.create("UI3D_Marker");
     marker_material.set_albedo([0.08, 0.16, 0.2, 1.0]);
     marker_material.set_emission(0.15);
 
+    this.marker_rotation = quat.fromEuler(quat.create(), 0, 45, 0);
     const marker = spawn_mesh_entity(
-      [0.0, 0.0, 1.5],
-      quat.fromEuler(quat.create(), 0, 45, 0),
+      this.marker_position,
+      this.marker_rotation,
       [1.0, 1.0, 1.0],
       Mesh.cube(),
       marker_material.material_id
@@ -3242,149 +3241,300 @@ export class Immediate3DUITestScene extends Scene {
     super.update(delta_time);
 
     this.pulse += delta_time;
-    const accent = 0.5 + Math.sin(this.pulse * 2.5) * 0.5;
-    const progress = 0.2 + accent * 0.65;
+    const pulse = 0.5 + Math.sin(this.pulse * 2.25) * 0.5;
+    const scan_progress = 0.18 + pulse * 0.72;
+    const load_progress = 0.54 + Math.sin(this.pulse * 1.15 + 0.8) * 0.18;
+    const accent = [0.16 + pulse * 0.18, 0.72, 0.86, 1.0];
 
-    const panel_config = {
-      position: [0.0, 2.6, 0.0],
+    this.render_hud_panel({
+      position: [0.0, 3.7, 5.0],
       billboard: true,
-      width: 360,
-      height: 245,
-      unit_scale: 0.013,
+      width: 4.8,
+      height: 3.1,
+      title: "HUD TEST",
+      subtitle: "WORLD-SPACE UI",
+      badge: "LIVE",
+      pulse,
+      scan_progress,
+      load_progress,
+      accent,
+      interactive: true,
+    });
+
+    this.render_cube_hud_faces(pulse, scan_progress, load_progress, accent);
+  }
+
+  render_cube_hud_faces(pulse, scan_progress, load_progress, accent) {
+    const face_panels = [
+      { title: "FRONT", normal: [0, 0, -1], right: [-1, 0, 0], up: [0, 1, 0] },
+      { title: "BACK", normal: [0, 0, 1], right: [1, 0, 0], up: [0, 1, 0] },
+      { title: "LEFT", normal: [-1, 0, 0], right: [0, 0, 1], up: [0, 1, 0] },
+      { title: "RIGHT", normal: [1, 0, 0], right: [0, 0, -1], up: [0, 1, 0] },
+      { title: "TOP", normal: [0, 1, 0], right: [1, 0, 0], up: [0, 0, -1] },
+      { title: "BOTTOM", normal: [0, -1, 0], right: [1, 0, 0], up: [0, 0, 1] },
+    ];
+
+    for (let i = 0; i < face_panels.length; i++) {
+      const face = face_panels[i];
+      const normal = vec3.transformQuat(vec3.create(), face.normal, this.marker_rotation);
+      const right = vec3.transformQuat(vec3.create(), face.right, this.marker_rotation);
+      const up = vec3.transformQuat(vec3.create(), face.up, this.marker_rotation);
+      const position = vec3.scaleAndAdd(
+        vec3.create(),
+        this.marker_position,
+        normal,
+        this.marker_half_extent
+      );
+
+      this.render_hud_panel({
+        position,
+        right,
+        up,
+        width: 1.72,
+        height: 1.18,
+        title: face.title,
+        subtitle: "FACE HUD",
+        badge: `${i + 1}/6`,
+        pulse,
+        scan_progress: Math.max(0.08, Math.min(0.96, scan_progress - i * 0.04)),
+        load_progress: Math.max(0.08, Math.min(0.96, load_progress + i * 0.035)),
+        accent,
+        compact: true,
+        interactive: false,
+      });
+    }
+  }
+
+  render_hud_panel({
+    position,
+    billboard = false,
+    right,
+    up,
+    width,
+    height,
+    title,
+    subtitle,
+    badge,
+    pulse,
+    scan_progress,
+    load_progress,
+    accent,
+    compact = false,
+    interactive = false,
+  }) {
+    const scale = compact ? 0.36 : 1.0;
+
+    UI3D.panel({
+      position,
+      billboard,
+      right,
+      up,
+      width,
+      height,
       layout: "column",
-      gap: 10,
-      padding: 16,
-      background_color: [0.015, 0.022, 0.03, 0.88],
-      border: { width: 1.5, color: [0.3, 0.75, 0.85, 0.45] },
-      corner_radius: 10,
+      gap: 0.12 * scale,
+      padding: 0.18 * scale,
+      background_color: [0.018, 0.024, 0.032, 0.9],
+      border: { width: 0.025 * scale, color: [0.32, 0.78, 0.86, 0.45] },
+      corner_radius: 0.12 * scale,
       z_order: 2,
-    };
-
-    UI3D.panel(panel_config, () => {
-      UI3D.label("Immediate 3D UI", {
-        width: "100%",
-        height: 30,
-        font_size: 24,
-        text_color: [0.88, 0.98, 1.0, 1.0],
-        text_align: "left",
-        text_valign: "middle",
-      });
-
-      UI3D.label("GPU instanced panels, labels, buttons, and local layout.", {
-        width: "100%",
-        height: 22,
-        font_size: 13,
-        text_color: [0.62, 0.76, 0.78, 1.0],
-        text_align: "left",
-        text_valign: "middle",
-      });
-
+    }, () => {
       UI3D.begin_container({
+        x: 0,
+        y: 0,
         width: "100%",
-        height: 44,
+        height: 0.46 * scale,
         layout: "row",
-        gap: 8,
+        gap: 0.12 * scale,
       });
 
-      const button_base = {
-        width: 104,
-        height: 38,
-        font_size: 14,
-        text_color: [0.94, 0.98, 1.0, 1.0],
-        background_color: [0.08, 0.15, 0.18, 0.94],
-        hover_color: [0.1, 0.33, 0.38, 0.96],
-        active_color: [0.18, 0.48, 0.55, 1.0],
-        border: { width: 1, color: [0.33, 0.75, 0.82, 0.55] },
-        corner_radius: 6,
-      };
-
-      if (UI3D.button("Layout", button_base).clicked) {
-        this.selected_mode = "Layout";
-      }
-      if (UI3D.button("Stress", button_base).clicked) {
-        this.selected_mode = "Stress";
-      }
-      if (UI3D.button("+1", { ...button_base, width: 62 }).clicked) {
-        this.counter++;
-      }
+      UI3D.label(title, {
+        x: 0,
+        y: 0,
+        width: 2.25 * scale,
+        height: "100%",
+        text_color: [0.9, 0.98, 1.0, 1.0],
+        text_align: "left",
+        text_valign: "middle",
+      });
+      UI3D.label(subtitle, {
+        x: 0,
+        y: 0,
+        width: 1.25 * scale,
+        height: "100%",
+        text_color: [0.48, 0.82, 0.88, 0.95],
+        text_align: "center",
+        text_valign: "middle",
+        background_color: [0.05, 0.13, 0.16, 0.74],
+        border: { width: 0.012 * scale, color: [0.3, 0.75, 0.82, 0.35] },
+        corner_radius: 0.08 * scale,
+      });
+      UI3D.label(badge, {
+        x: 0,
+        y: 0,
+        width: 0.68 * scale,
+        height: "100%",
+        text_color: [0.96, 0.68, 0.28, 1.0],
+        text_align: "center",
+        text_valign: "middle",
+        background_color: [0.15, 0.08, 0.025, 0.82],
+        corner_radius: 0.08 * scale,
+      });
 
       UI3D.end_container();
 
       UI3D.panel({
+        x: 0,
+        y: 0,
         width: "100%",
-        height: 38,
+        height: 0.74 * scale,
         layout: "row",
-        gap: 8,
-        padding: 8,
-        background_color: [0.02, 0.05, 0.06, 0.8],
-        corner_radius: 6,
+        gap: 0.12 * scale,
+        padding: 0.12 * scale,
+        background_color: [0.035, 0.048, 0.06, 0.82],
+        border: { width: 0.01 * scale, color: [0.4, 0.72, 0.78, 0.22] },
+        corner_radius: 0.1 * scale,
       }, () => {
-        UI3D.label(`Mode: ${this.selected_mode}`, {
-          width: 140,
-          height: 22,
-          font_size: 14,
-          text_color: [0.82, 0.93, 0.92, 1.0],
-          text_valign: "middle",
-        });
-        UI3D.label(`Clicks: ${this.counter}`, {
-          width: 120,
-          height: 22,
-          font_size: 14,
-          text_color: [1.0, 0.86, 0.42, 1.0],
-          text_valign: "middle",
-        });
+        this.stat_tile("Signal", `${Math.round(82 + pulse * 12)}%`, [0.5, 0.9, 0.76, 1.0], scale);
+        this.stat_tile("Latency", `${(1.8 + (1 - pulse) * 0.8).toFixed(1)}ms`, [0.98, 0.76, 0.38, 1.0], scale);
+        this.stat_tile("Events", String(this.counter), [0.65, 0.78, 1.0, 1.0], scale);
       });
 
-      UI3D.panel({
+      this.progress_row("Scene Sync", scan_progress, accent, scale);
+      this.progress_row("Batch Load", load_progress, [0.66, 0.55, 1.0, 1.0], scale);
+
+      if (!interactive) {
+        return;
+      }
+
+      UI3D.begin_container({
+        x: 0,
+        y: 0,
         width: "100%",
-        height: 18,
-        background_color: [0.06, 0.075, 0.08, 0.95],
-        border: { width: 1, color: [0.2, 0.28, 0.32, 0.8] },
-        corner_radius: 9,
-      }, () => {
-        UI3D.rect({
-          x: 0,
-          y: 0,
-          width: `${Math.round(progress * 100)}%`,
-          height: "100%",
-          background_color: [0.15 + accent * 0.25, 0.72, 0.78, 0.95],
-          corner_radius: 9,
-        });
+        height: 0.46 * scale,
+        layout: "row",
+        gap: 0.1 * scale,
       });
 
-      UI3D.label("Move the camera and the panel billboards; the cursor still hits projected bounds.", {
+      const button_base = {
+        x: 0,
+        y: 0,
+        width: 0.96 * scale,
+        height: "100%",
+        text_color: [0.92, 0.98, 1.0, 1.0],
+        background_color: [0.055, 0.095, 0.12, 0.94],
+        hover_color: [0.09, 0.26, 0.31, 0.98],
+        active_color: [0.12, 0.44, 0.52, 1.0],
+        border: { width: 0.012 * scale, color: [0.36, 0.78, 0.86, 0.42] },
+        corner_radius: 0.08 * scale,
+      };
+
+      if (UI3D.button("Orbit", button_base).clicked) {
+        this.selected_mode = "Orbit";
+      }
+      if (UI3D.button("Inspect", button_base).clicked) {
+        this.selected_mode = "Inspect";
+      }
+      if (UI3D.button("Pulse +", { ...button_base, width: 1.08 * scale }).clicked) {
+        this.counter++;
+      }
+      UI3D.label(this.selected_mode.toUpperCase(), {
+        x: 0,
+        y: 0,
+        width: 1.0 * scale,
+        height: "100%",
+        text_color: [0.94, 0.72, 0.34, 1.0],
+        text_align: "center",
+        text_valign: "middle",
+        background_color: [0.13, 0.08, 0.025, 0.7],
+        corner_radius: 0.08 * scale,
+      });
+
+      UI3D.end_container();
+    });
+  }
+
+  stat_tile(label_text, value_text, color, scale = 1.0) {
+    UI3D.panel({
+      x: 0,
+      y: 0,
+      width: 1.31 * scale,
+      height: "100%",
+      layout: "column",
+      gap: 0.035 * scale,
+      padding: 0.075 * scale,
+      background_color: [0.018, 0.026, 0.034, 0.9],
+      border: { width: 0.008 * scale, color: [color[0], color[1], color[2], 0.26] },
+      corner_radius: 0.08 * scale,
+    }, () => {
+      UI3D.label(label_text, {
+        x: 0,
+        y: 0,
         width: "100%",
-        height: 34,
-        font_size: 12,
-        text_color: [0.58, 0.7, 0.72, 1.0],
+        height: 0.2 * scale,
+        text_color: [0.48, 0.6, 0.64, 1.0],
+        text_align: "left",
+        text_valign: "middle",
+      });
+      UI3D.label(value_text, {
+        x: 0,
+        y: 0,
+        width: "100%",
+        height: 0.32 * scale,
+        text_color: color,
         text_align: "left",
         text_valign: "middle",
       });
     });
-
-    this.render_tag("coalesced quads", [-2.45, 3.75, 0.75], [0.32, 0.78, 0.72, 1.0]);
-    this.render_tag("text atlas batch", [2.35, 2.0, 0.5], [1.0, 0.74, 0.34, 1.0]);
   }
 
-  render_tag(text, position, color) {
+  progress_row(label_text, value, color, scale = 1.0) {
+    const clamped_value = Math.max(0, Math.min(1, value));
     UI3D.panel({
-      position,
-      billboard: true,
-      width: 150,
-      height: 34,
-      unit_scale: 0.01,
-      padding: 7,
-      background_color: [0.015, 0.02, 0.025, 0.82],
-      border: { width: 1, color: [color[0], color[1], color[2], 0.55] },
-      corner_radius: 6,
-      z_order: 1,
+      x: 0,
+      y: 0,
+      width: "100%",
+      height: 0.38 * scale,
+      layout: "row",
+      gap: 0.12 * scale,
+      padding: 0.07 * scale,
+      background_color: [0.025, 0.036, 0.046, 0.72],
+      corner_radius: 0.08 * scale,
     }, () => {
-      UI3D.label(text, {
-        width: "100%",
+      UI3D.label(label_text, {
+        x: 0,
+        y: 0,
+        width: 1.15 * scale,
         height: "100%",
-        font_size: 12,
+        text_color: [0.62, 0.76, 0.78, 1.0],
+        text_align: "left",
+        text_valign: "middle",
+      });
+      UI3D.panel({
+        x: 0,
+        y: 0,
+        width: 2.33 * scale,
+        height: "100%",
+        background_color: [0.07, 0.08, 0.09, 0.92],
+        border: { width: 0.008 * scale, color: [0.25, 0.32, 0.35, 0.55] },
+        corner_radius: 0.06 * scale,
+      }, () => {
+        UI3D.rect({
+          x: 0,
+          y: 0,
+          width: `${Math.round(clamped_value * 100)}%`,
+          height: "100%",
+          background_color: [color[0], color[1], color[2], 0.86],
+          corner_radius: 0.06 * scale,
+        });
+      });
+      UI3D.label(`${Math.round(clamped_value * 100)}%`, {
+        x: 0,
+        y: 0,
+        width: 0.55 * scale,
+        height: "100%",
         text_color: color,
-        text_align: "center",
+        text_align: "right",
         text_valign: "middle",
       });
     });
@@ -3421,7 +3571,7 @@ export class Immediate3DUITestScene extends Scene {
   const city_scene = new CityScene("CityScene");
   const scifi_city_scene = new SciFiCityScene("SciFiCityScene");
   const bistro_test_scene = new BistroTestScene("BistroTestScene");
-  const immediate_3d_ui_scene = new Immediate3DUITestScene("Immediate3DUITestScene");
+  const ui_3d_scene = new UI3DTestScene("UI3DTestScene");
 
   const scene_switcher = new SceneSwitcher("SceneSwitcher");
   //await scene_switcher.add_scene(solar_ecs_scene);
@@ -3432,10 +3582,10 @@ export class Immediate3DUITestScene extends Scene {
   //await scene_switcher.add_scene(object_painting_scene);
   //await scene_switcher.add_scene(gltf_model_scene);
   //await scene_switcher.add_scene(textures_scene);
-  //await scene_switcher.add_scene(gi_test_scene);
+  await scene_switcher.add_scene(gi_test_scene);
   //await scene_switcher.add_scene(shadow_test_scene);
-  //await scene_switcher.add_scene(immediate_3d_ui_scene);
-  await scene_switcher.add_scene(sponza_scene);
+  //await scene_switcher.add_scene(ui_3d_scene);
+  //await scene_switcher.add_scene(sponza_scene);
   //await scene_switcher.add_scene(living_room_scene);
   //await scene_switcher.add_scene(city_scene);
   //await scene_switcher.add_scene(scifi_city_scene);

@@ -80,6 +80,7 @@ export const MaterialPassType = Object.freeze({
   Depth: 0,
   Raster: 1,
   Resolve: 2,
+  Forward: 3,
 });
 
 /**

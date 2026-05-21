@@ -64,12 +64,28 @@ fn raster_fragment(v_out: RasterVertexOutput, f_out: ptr<function, RasterFragmen
 }
 #endif
 
+#ifndef CUSTOM_FORWARD_FRAGMENT
+fn forward_fragment(v_out: RasterVertexOutput, f_out: ptr<function, ForwardFragmentOutput>) -> ForwardFragmentOutput {
+    return *f_out;
+}
+#endif
+
 #ifndef CUSTOM_RESOLVE_FRAGMENT
 fn resolve_fragment(
     v_out: ResolveFragmentInput,
     f_out: ptr<function, ResolveFragmentOutput>
 ) -> ResolveFragmentOutput {
     return *f_out;
+}
+#endif
+
+#ifndef CUSTOM_RESOLVE_WORLD_POSITION
+fn resolve_world_position(
+    decoded: DecodedVertex,
+    entity_id: u32,
+    entity_transform: EntityTransform
+) -> vec4<f32> {
+    return entity_transform.transform * decoded.position;
 }
 #endif
 
@@ -228,6 +244,27 @@ fn fs(input: DepthVertexOutput) {
 #endif
 
 #if MESHLET_RASTER_PASS
+#if MESHLET_FORWARD_PASS
+@fragment
+fn fs(input: RasterVertexOutput) -> ForwardFragmentOutput {
+    let mask = raster_fragment_mask(input);
+    if (mask <= 0.0) {
+        discard;
+    }
+
+    var output = ForwardFragmentOutput(vec4<f32>(1.0));
+    output = forward_fragment(input, &output);
+
+#if TRANSPARENT
+    let alpha = clamp(output.color.a, 0.0, 1.0);
+    let ndc_depth = clamp(input.position.z / input.position.w, 0.0, 1.0);
+    let weight = clamp(pow(min(1.0, alpha * 10.0) + 0.01, 3.0) * 1e8 * pow(1.0 - ndc_depth * 0.9, 3.0), 1e-2, 3e3);
+    output.color = vec4<f32>(output.color.rgb * alpha, alpha) * weight;
+#endif
+
+    return output;
+}
+#else
 @fragment
 fn fs(input: RasterVertexOutput) -> RasterFragmentOutput {
     let mask = raster_fragment_mask(input);
@@ -243,6 +280,7 @@ fn fs(input: RasterVertexOutput) -> RasterFragmentOutput {
 
     return raster_fragment(input, &output);
 }
+#endif
 #endif
 
 #if MESHLET_RESOLVE_PASS
@@ -288,9 +326,9 @@ fn resolve_visibility_fragment(input: ResolveVertexOutput) -> ResolveFragmentOut
     let entity_transform = entity_transforms[entity_id];
     let view_index = u32(frame_info.view_index);
 
-    let world_position0 = entity_transform.transform * decoded0.position;
-    let world_position1 = entity_transform.transform * decoded1.position;
-    let world_position2 = entity_transform.transform * decoded2.position;
+    let world_position0 = resolve_world_position(decoded0, entity_id, entity_transform);
+    let world_position1 = resolve_world_position(decoded1, entity_id, entity_transform);
+    let world_position2 = resolve_world_position(decoded2, entity_id, entity_transform);
 
     let current_clip_pos0 = view_buffer[view_index].view_projection_matrix * world_position0;
     let current_clip_pos1 = view_buffer[view_index].view_projection_matrix * world_position1;
@@ -386,7 +424,8 @@ fn resolve_visibility_fragment(input: ResolveVertexOutput) -> ResolveFragmentOut
 
 #if TRANSPARENT
     let alpha = clamp(output.albedo.a, 0.0, 1.0);
-    let weight = clamp(pow(min(1.0, alpha * 10.0) + 0.01, 3.0) * 1e8 * pow(1.0 - material_input.current_clip_pos.z * 0.9, 3.0), 1e-2, 3e3); 
+    let ndc_depth = clamp(material_input.current_clip_pos.z / material_input.current_clip_pos.w, 0.0, 1.0);
+    let weight = clamp(pow(min(1.0, alpha * 10.0) + 0.01, 3.0) * 1e8 * pow(1.0 - ndc_depth * 0.9, 3.0), 1e-2, 3e3); 
     output.albedo = vec4<f32>(output.albedo.rgb * alpha, alpha) * weight;
 #endif
 

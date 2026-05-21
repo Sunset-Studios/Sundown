@@ -59,7 +59,7 @@ const LightFragment = {
     shadow_clipmaps: {
       type: DataType.FLOAT32,
       stride: 1,
-      default: 8,
+      default: 12,
     },
     is_primary_sun: {
       type: DataType.FLOAT32,
@@ -390,22 +390,59 @@ const UserInterfaceFragment = {
       type: DataType.UINT8,
       stride: 1,
     },
-    element_color: {
+    ui_emissive: {
+      type: DataType.FLOAT32,
+      stride: 1,
+    },
+    ui_rounding: {
+      type: DataType.FLOAT32,
+      stride: 1,
+    },
+    ui_origin: {
       type: DataType.FLOAT32,
       stride: 4,
     },
-    element_emissive: {
+    ui_x_axis: {
       type: DataType.FLOAT32,
-      stride: 1,
+      stride: 4,
     },
-    element_rounding: {
+    ui_y_axis: {
       type: DataType.FLOAT32,
+      stride: 4,
+    },
+    ui_uv_rect: {
+      type: DataType.FLOAT32,
+      stride: 4,
+    },
+    ui_color: {
+      type: DataType.FLOAT32,
+      stride: 4,
+    },
+    ui_border_color: {
+      type: DataType.FLOAT32,
+      stride: 4,
+    },
+    ui_params: {
+      type: DataType.FLOAT32,
+      stride: 4,
+    },
+    ui_text_glyph: {
+      type: DataType.UINT32,
       stride: 1,
+      gpu: true,
     },
   },
   gpu_buffers: {
-    element_data: {
-      fields: ["element_color", "element_emissive", "element_rounding"],
+    ui_data: {
+      fields: [
+        "ui_origin",
+        "ui_x_axis",
+        "ui_y_axis",
+        "ui_uv_rect",
+        "ui_color",
+        "ui_border_color",
+        "ui_params",
+      ],
       usage: BufferType.STORAGE,
     },
   },

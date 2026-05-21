@@ -23,6 +23,7 @@ const row_reversed = "row_reversed";
 const column_reversed = "column_reversed";
 const width_name = "width";
 const height_name = "height";
+const fit_content = "fit-content";
 
 export const UI3DCommandType = Object.freeze({
   Quad: "quad",
@@ -47,6 +48,8 @@ class Layout3DContainer {
   content_max_x = 0;
   content_max_y = 0;
   z_order = 0;
+  depth = 0;
+  background_depth = 0;
   root = null;
 }
 
@@ -54,7 +57,9 @@ class UI3DRoot {
   position = vec3.create();
   right = vec3.fromValues(1, 0, 0);
   up = vec3.fromValues(0, 1, 0);
-  unit_scale = 0.01;
+  normal = vec3.fromValues(0, 0, 1);
+  unit_scale = 1;
+  layer_depth = 0.002;
 }
 
 const default_root = new UI3DRoot();
@@ -97,6 +102,10 @@ function parse_dimension(value, base = 0) {
     return parseFloat(value);
   }
   return Number(value) || 0;
+}
+
+function text_size_from_rect(height, text_padding = 0) {
+  return Math.max(0, height - text_padding * 2);
 }
 
 function color_to_vec4(color, fallback = [1, 1, 1, 1]) {
@@ -190,6 +199,7 @@ function get_current_container() {
       width: 0,
       height: 0,
       z_order: 0,
+      depth: 0,
       root: default_root,
     };
   }
@@ -205,6 +215,7 @@ function get_current_z_order() {
 function push_command(command, config = {}, inherited_z_order = get_current_z_order()) {
   command.z_order = resolve_z_order(config, inherited_z_order);
   command.order = UI3DContext.command_order++;
+  command.batch_key ??= config.batch_key ?? config.ui_batch_key;
   UI3DContext.commands.push(command);
   return UI3DContext.commands.length - 1;
 }
@@ -214,6 +225,20 @@ function set_command(index, command, config = {}, inherited_z_order = get_curren
   command.z_order = existing?.z_order ?? resolve_z_order(config, inherited_z_order);
   command.order = existing?.order ?? UI3DContext.command_order++;
   UI3DContext.commands[index] = command;
+}
+
+function material_command_config(config = {}) {
+  return {
+    material_id: config.material_id,
+    material_template: config.material_template,
+    material_shader: config.material_shader,
+    material_family: config.material_family,
+    material_key: config.material_key,
+    material_name: config.material_name,
+    storage_bindings: config.storage_bindings ?? config.buffers,
+    texture_bindings: config.texture_bindings ?? config.textures,
+    uniform_bindings: config.uniform_bindings ?? config.uniforms,
+  };
 }
 
 function basis_from_config(config = {}) {
@@ -243,6 +268,9 @@ function basis_from_config(config = {}) {
   }
 
   root.unit_scale = Number(config.unit_scale ?? config.world_units_per_px ?? default_root.unit_scale);
+  root.layer_depth = Number(config.layer_depth ?? config.depth_step ?? default_root.layer_depth);
+  vec3.cross(root.normal, root.right, root.up);
+  vec3.normalize(root.normal, root.normal);
   return root;
 }
 
@@ -259,15 +287,16 @@ function clone_root_with_origin(config, width, height) {
   return root;
 }
 
-function local_to_world(root, x, y, out = vec3.create()) {
+function local_to_world(root, x, y, out = vec3.create(), depth = 0) {
   vec3.copy(out, root.position);
   vec3.scaleAndAdd(out, out, root.right, x * root.unit_scale);
   vec3.scaleAndAdd(out, out, root.up, -y * root.unit_scale);
+  vec3.scaleAndAdd(out, out, root.normal, depth);
   return out;
 }
 
-function local_rect_to_world(root, x, y, width, height) {
-  const origin = local_to_world(root, x, y, vec3.create());
+function local_rect_to_world(root, x, y, width, height, depth = 0) {
+  const origin = local_to_world(root, x, y, vec3.create(), depth);
   const x_axis = vec3.scale(vec3.create(), root.right, width * root.unit_scale);
   const y_axis = vec3.scale(vec3.create(), root.up, -height * root.unit_scale);
   return { origin, x_axis, y_axis };
@@ -433,21 +462,25 @@ function child_container_layout_update(container, x, y, width, height) {
 }
 
 function resolve_widget_rect(config, container, label_text = "") {
-  const font_size = Number(config.font_size ?? 16);
   const text_padding = Number(config.text_padding ?? config.padding ?? 0);
   let width;
   let height;
 
-  if (config.width === "fit-content") {
-    width = measure_text_width(label_text, config) + text_padding * 2;
-  } else {
-    width = parse_dimension(config.width, container.width);
-  }
-
-  if (config.height === "fit-content") {
-    height = font_size * 1.2 + text_padding * 2;
+  if (config.height === fit_content) {
+    height = container.height > 0 ? container.height : 1 + text_padding * 2;
   } else {
     height = parse_dimension(config.height, container.height);
+  }
+
+  if (config.width === fit_content) {
+    width =
+      measure_text_width(label_text, {
+        ...config,
+        _resolved_font_size: text_size_from_rect(height, text_padding),
+      }) +
+      text_padding * 2;
+  } else {
+    width = parse_dimension(config.width, container.width);
   }
 
   let offset_x;
@@ -481,7 +514,16 @@ function resolve_widget_rect(config, container, label_text = "") {
   return { x, y, width, height };
 }
 
-function push_quad(root, x, y, width, height, config = {}, inherited_z_order = get_current_z_order()) {
+function push_quad(
+  root,
+  x,
+  y,
+  width,
+  height,
+  config = {},
+  inherited_z_order = get_current_z_order(),
+  depth = 0
+) {
   if (width <= 0 || height <= 0) {
     return -1;
   }
@@ -493,11 +535,7 @@ function push_quad(root, x, y, width, height, config = {}, inherited_z_order = g
   );
   const border_color = color_to_vec4(config.border_color, border.color);
 
-  if (fill_color[3] <= 0 && border.width <= 0) {
-    return -1;
-  }
-
-  const world = local_rect_to_world(root, x, y, width, height);
+  const world = local_rect_to_world(root, x, y, width, height, depth);
   return push_command(
     {
       type: UI3DCommandType.Quad,
@@ -511,6 +549,7 @@ function push_quad(root, x, y, width, height, config = {}, inherited_z_order = g
       corner_radius: Number(config.corner_radius ?? config.radius ?? 0),
       border_width: border.width,
       emissive: Number(config.emissive ?? 0),
+      ...material_command_config(config),
     },
     config,
     inherited_z_order
@@ -518,11 +557,15 @@ function push_quad(root, x, y, width, height, config = {}, inherited_z_order = g
 }
 
 function font_from_config(config = {}) {
-  const font_id =
+  let font_id =
     typeof config.font === "number"
       ? config.font
       : Name.from(config.font_name ?? config.font ?? "Exo-Medium");
-  const font = FontCache.get_font_object(font_id) ?? FontCache.get_font_object(UI3DContext.get_default_font_id());
+  let font = FontCache.get_font_object(font_id);
+  if (!font) {
+    font_id = UI3DContext.get_default_font_id();
+    font = FontCache.get_font_object(font_id);
+  }
   return { font_id, font };
 }
 
@@ -530,12 +573,23 @@ function measure_text_width(text, config = {}) {
   const { font } = font_from_config(config);
   if (!font || !text) return 0;
 
-  const font_size = Number(config.font_size ?? 16);
-  const scale = font_size / Math.max(1, font.line_height || font.texture_height || font_size);
+  const layout = layout_text_glyphs(text, font, config);
+  return layout.width;
+}
+
+export function layout_text_glyphs(text, font, config = {}) {
+  const string_value = String(text ?? "");
+  const font_size = Number(config._resolved_font_size ?? 1);
+  const scale = font_size / Math.max(1, font?.line_height || font?.texture_height || font_size);
+  const glyphs = [];
   let width = 0;
   let previous_code_point = null;
 
-  for (const char of String(text)) {
+  if (!font || !string_value.length) {
+    return { glyphs, width, height: font_size, scale };
+  }
+
+  for (const char of string_value) {
     const code_point = char.codePointAt(0);
     const glyph_index =
       font.code_point_index_map.get(code_point) ??
@@ -547,14 +601,34 @@ function measure_text_width(text, config = {}) {
       width += kern * scale;
     }
 
+    glyphs.push({
+      glyph_index,
+      code_point,
+      x: width + (font.x_offset[glyph_index] ?? 0) * scale,
+      y: (font.y_offset[glyph_index] ?? 0) * scale,
+      width: (font.width[glyph_index] ?? 0) * scale,
+      height: (font.height[glyph_index] ?? 0) * scale,
+      page: font.page[glyph_index] ?? 0,
+    });
+
     width += (font.x_advance[glyph_index] || font.width[glyph_index] || font_size) * scale;
     previous_code_point = code_point;
   }
 
-  return width;
+  return { glyphs, width, height: font_size, scale };
 }
 
-function push_text(text, root, x, y, width, height, config = {}, inherited_z_order = get_current_z_order()) {
+function push_text(
+  text,
+  root,
+  x,
+  y,
+  width,
+  height,
+  config = {},
+  inherited_z_order = get_current_z_order(),
+  depth = 0
+) {
   const string_value = String(text ?? "");
   if (!string_value.length) {
     return;
@@ -565,11 +639,30 @@ function push_text(text, root, x, y, width, height, config = {}, inherited_z_ord
     return;
   }
 
-  const font_size = Number(config.font_size ?? 16);
-  const scale = font_size / Math.max(1, font.line_height || font.texture_height || font_size);
   const text_padding = Number(config.text_padding ?? 0);
-  const text_width = measure_text_width(string_value, config);
-  const text_height = font_size;
+  const content_width = Math.max(0, width - text_padding * 2);
+  const content_height = Math.max(0, height - text_padding * 2);
+  let font_size = content_height;
+  let layout = layout_text_glyphs(string_value, font, {
+    ...config,
+    _resolved_font_size: font_size,
+  });
+
+  if (layout.width > 0 && layout.height > 0) {
+    const width_scale = content_width > 0 ? content_width / layout.width : 1;
+    const height_scale = content_height > 0 ? content_height / layout.height : 1;
+    const fit_scale = Math.min(width_scale, height_scale);
+    if (Number.isFinite(fit_scale) && fit_scale > 0 && fit_scale !== 1) {
+      font_size *= fit_scale;
+      layout = layout_text_glyphs(string_value, font, {
+        ...config,
+        _resolved_font_size: font_size,
+      });
+    }
+  }
+
+  const text_width = layout.width;
+  const text_height = layout.height;
   const text_align = config.text_align ?? left;
   const text_valign = config.text_valign ?? top;
 
@@ -589,27 +682,15 @@ function push_text(text, root, x, y, width, height, config = {}, inherited_z_ord
 
   const color = color_to_vec4(config.text_color ?? config.color, [1, 1, 1, 1]);
   const emissive = Number(config.text_emissive ?? config.emissive ?? 1);
-  let previous_code_point = null;
+  const batch_key = config.batch_key ?? config.ui_batch_key ?? `text_${UI3DContext.command_order}`;
 
-  for (const char of string_value) {
-    const code_point = char.codePointAt(0);
-    const glyph_index =
-      font.code_point_index_map.get(code_point) ??
-      font.code_point_index_map.get(" ".codePointAt(0)) ??
-      0;
+  for (let i = 0; i < layout.glyphs.length; i++) {
+    const glyph = layout.glyphs[i];
+    const glyph_x = cursor_x + glyph.x;
+    const glyph_y = baseline_y + glyph.y;
 
-    if (previous_code_point !== null) {
-      const kern = font.kerning_matrix?.get_adjacent_value(previous_code_point, code_point) ?? 0;
-      cursor_x += kern * scale;
-    }
-
-    const glyph_width = font.width[glyph_index] * scale;
-    const glyph_height = font.height[glyph_index] * scale;
-    const glyph_x = cursor_x + font.x_offset[glyph_index] * scale;
-    const glyph_y = baseline_y + font.y_offset[glyph_index] * scale;
-
-    if (glyph_width > 0 && glyph_height > 0) {
-      const world = local_rect_to_world(root, glyph_x, glyph_y, glyph_width, glyph_height);
+    if (glyph.width > 0 && glyph.height > 0) {
+      const world = local_rect_to_world(root, glyph_x, glyph_y, glyph.width, glyph.height, depth);
 
       push_command(
         {
@@ -619,22 +700,21 @@ function push_text(text, root, x, y, width, height, config = {}, inherited_z_ord
           y_axis: world.y_axis,
           color,
           font_id,
-          glyph_index,
-          glyph_width: font.width[glyph_index],
-          glyph_height: font.height[glyph_index],
-          glyph_x: font.x[glyph_index],
-          glyph_y: font.y[glyph_index],
+          glyph_index: glyph.glyph_index,
+          glyph_width: font.width[glyph.glyph_index],
+          glyph_height: font.height[glyph.glyph_index],
+          glyph_x: font.x[glyph.glyph_index],
+          glyph_y: font.y[glyph.glyph_index],
           page_texture_size: [font.texture_width, font.texture_height],
-          font_texture: Name.string(Number(font.page_textures?.[font.page[glyph_index] ?? 0] ?? 0)),
+          font_texture: Name.string(Number(font.page_textures?.[glyph.page] ?? 0)),
           emissive,
+          batch_key,
+          ...material_command_config(config),
         },
         config,
         inherited_z_order + 0.001
       );
     }
-
-    cursor_x += (font.x_advance[glyph_index] || font.width[glyph_index] || font_size) * scale;
-    previous_code_point = code_point;
   }
 }
 
@@ -667,6 +747,7 @@ export function begin_container(config = {}) {
           width: parse_dimension(config.width, 0),
           height: parse_dimension(config.height, 0),
           z_order: 0,
+          depth: 0,
           root: null,
         };
 
@@ -704,6 +785,8 @@ export function begin_container(config = {}) {
   }
 
   const root = parent.root ?? clone_root_with_origin(config, width, height);
+  const background_depth = parent.root ? parent.depth + root.layer_depth : 0;
+  const content_depth = background_depth + root.layer_depth;
   const gap = parse_dimension(config.gap || 0, parent.width);
   const layout = config.layout || absolute;
   const padding_left = config.padding_left || config.padding || 0;
@@ -728,6 +811,8 @@ export function begin_container(config = {}) {
   container.root = root;
   container.config = config;
   container.z_order = resolve_z_order(config, parent.z_order ?? 0);
+  container.background_depth = background_depth;
+  container.depth = content_depth;
   container.auto_width = auto_width;
   container.auto_height = auto_height;
   container.content_max_x = 0;
@@ -769,7 +854,8 @@ export function end_container() {
       container.x,
       container.y,
       total_width,
-      total_height
+      total_height,
+      container.background_depth
     );
     set_command(
       container._base_command_index,
@@ -834,12 +920,21 @@ export function button(label, config = {}) {
           : config.background_color,
   };
 
-  push_quad(container.root, rect.x, rect.y, rect.width, rect.height, draw_config, container.z_order);
+  push_quad(
+    container.root,
+    rect.x,
+    rect.y,
+    rect.width,
+    rect.height,
+    draw_config,
+    container.z_order,
+    container.depth
+  );
   push_text(config.text ?? label, container.root, rect.x, rect.y, rect.width, rect.height, {
     text_align: center,
     text_valign: middle,
     ...config,
-  }, container.z_order);
+  }, container.z_order, container.depth + container.root.layer_depth);
 
   child_container_layout_update(container, rect.x, rect.y, rect.width, rect.height);
 
@@ -852,8 +947,27 @@ export function label(text, config = {}) {
   const container = get_current_container();
   const rect = resolve_widget_rect(config, container, text);
 
-  push_quad(container.root, rect.x, rect.y, rect.width, rect.height, config, container.z_order);
-  push_text(text, container.root, rect.x, rect.y, rect.width, rect.height, config, container.z_order);
+  push_quad(
+    container.root,
+    rect.x,
+    rect.y,
+    rect.width,
+    rect.height,
+    config,
+    container.z_order,
+    container.depth
+  );
+  push_text(
+    text,
+    container.root,
+    rect.x,
+    rect.y,
+    rect.width,
+    rect.height,
+    config,
+    container.z_order,
+    container.depth + container.root.layer_depth
+  );
 
   child_container_layout_update(container, rect.x, rect.y, rect.width, rect.height);
 
@@ -866,7 +980,16 @@ export function rect(config = {}) {
   const container = get_current_container();
   const rect_data = resolve_widget_rect(config, container);
 
-  push_quad(container.root, rect_data.x, rect_data.y, rect_data.width, rect_data.height, config, container.z_order);
+  push_quad(
+    container.root,
+    rect_data.x,
+    rect_data.y,
+    rect_data.width,
+    rect_data.height,
+    config,
+    container.z_order,
+    container.depth
+  );
   child_container_layout_update(container, rect_data.x, rect_data.y, rect_data.width, rect_data.height);
 
   return element_handle_input(

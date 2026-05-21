@@ -51,6 +51,8 @@ const shader_conditional_regex = /#if(?:ndef)?\s+([A-Za-z_][A-Za-z0-9_]*)/g;
 const shader_define_declaration_regex = /^\s*#define\s+([A-Za-z_][A-Za-z0-9_]*)/gm;
 const const_shader_path_regex =
   /const\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*["'`]([^"'`\r\n]+\.wgsl)["'`]/g;
+const static_const_object_regex =
+  /const\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(?:Object\.freeze\s*\(\s*)?\{/g;
 const setup_object_regex = /const\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*\{/g;
 const setup_define_assignment_regex =
   /([A-Za-z_][A-Za-z0-9_]*)(?:\.[A-Za-z_][A-Za-z0-9_]*)*\.defines\.([A-Za-z_][A-Za-z0-9_]*)\s*=\s*([^;]+);/g;
@@ -347,7 +349,54 @@ function build_const_shader_path_map(source) {
     shader_paths.set(match[1], normalize_relative_path(match[2]));
     match = regex.exec(source);
   }
+
+  const object_properties = extract_static_const_object_properties(source);
+  for (const [property_name, property_value] of object_properties) {
+    const shader_path = resolve_shader_path_token(property_value, shader_paths);
+    if (shader_path) {
+      shader_paths.set(property_name, shader_path);
+    }
+  }
+
   return shader_paths;
+}
+
+function extract_static_const_object_properties(source) {
+  const properties = new Map();
+  const regex = new RegExp(static_const_object_regex);
+  let match = regex.exec(source);
+  while (match) {
+    const open_index = source.indexOf("{", match.index);
+    const object_literal = extract_object_literal(source, open_index);
+    if (!object_literal) {
+      regex.lastIndex = match.index + match[0].length;
+      match = regex.exec(source);
+      continue;
+    }
+
+    for (const entry of split_top_level_values(object_literal.text.slice(1, -1))) {
+      if (!entry || entry.startsWith("...")) {
+        continue;
+      }
+
+      const separator_index = entry.indexOf(":");
+      if (separator_index === -1) {
+        continue;
+      }
+
+      const key = strip_wrapping_quotes(entry.slice(0, separator_index).trim());
+      if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) {
+        continue;
+      }
+
+      properties.set(`${match[1]}.${key}`, entry.slice(separator_index + 1).trim());
+    }
+
+    regex.lastIndex = object_literal.end_index + 1;
+    match = regex.exec(source);
+  }
+
+  return properties;
 }
 
 function strip_wrapping_quotes(value) {
@@ -823,6 +872,7 @@ function parse_define_family_from_object_literal(object_literal, optional_domain
 
 function discover_material_template_usages(source, const_shader_paths) {
   const usages = [];
+  const used_shader_paths = new Set();
   const calls = extract_call_arguments(source, material_template_create_call_regex);
   for (const call of calls) {
     if (call.arguments.length < 2) {
@@ -846,6 +896,27 @@ function discover_material_template_usages(source, const_shader_paths) {
       shader_path,
       family,
     });
+    used_shader_paths.add(shader_path);
+  }
+
+  if (calls.length > 0) {
+    const object_properties = extract_static_const_object_properties(source);
+    for (const [property_name, property_value] of object_properties) {
+      if (!/(?:^|\.)[A-Za-z0-9_]*shader$/i.test(property_name)) {
+        continue;
+      }
+
+      const shader_path = resolve_shader_path_token(property_value, const_shader_paths);
+      if (!shader_path || used_shader_paths.has(shader_path)) {
+        continue;
+      }
+
+      usages.push({
+        shader_path,
+        family: create_define_family(),
+      });
+      used_shader_paths.add(shader_path);
+    }
   }
 
   return usages;

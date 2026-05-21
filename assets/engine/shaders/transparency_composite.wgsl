@@ -36,6 +36,7 @@ struct FragmentOutput {
 @fragment fn fs(v_out: VertexOutput) -> FragmentOutput {
     let accum = vec4<f32>(textureSample(accumulation_texture, global_sampler, vec2<f32>(v_out.uv)));
     var average_color = accum.rgb / max(accum.a, epsilon);
-    return FragmentOutput(vec4<f32>(average_color, accum.a));
+    let composite_alpha = clamp(accum.a, 0.0, 1.0);
+    return FragmentOutput(vec4<f32>(average_color, composite_alpha));
 
 }

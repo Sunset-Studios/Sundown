@@ -1,14 +1,8 @@
 import { Texture } from "../../renderer/texture.js";
 import { Buffer } from "../../renderer/buffer.js";
-import { FragmentGpuBuffer } from "../../core/ecs/solar/memory.js";
-import { Material, MaterialTemplate } from "../../renderer/material.js";
-import { ResourceCache } from "../../renderer/resource_cache.js";
 import { Name } from "../../utility/names.js";
 import { read_file } from "../../utility/file_system.js";
-import { no_cull_rasterizer_config } from "../../utility/config_permutations.js";
-import { CacheTypes, MaterialFamilyType } from "../../renderer/renderer_types.js";
 import { SquareAdjacencyMatrix } from "../../memory/container.js";
-import { TextFragment } from "../../core/ecs/fragments/text_fragment.js";
 
 const chars_key = "chars";
 const common_key = "common";
@@ -28,14 +22,8 @@ const first_key = "first";
 const second_key = "second";
 const amount_key = "amount";
 
-const text_data_key = "text";
-const string_data_key = "string_data";
 const font_glyph_data_key = "font_glyph_data";
 const font_page_texture_key = "font_page_texture";
-
-const material_key = "material";
-const default_text_material_template_key = "DefaultTextMaterial";
-const default_text_shader_key = "text_material.wgsl";
 
 const page_format = "rgba8unorm";
 const page_dimension = "2d";
@@ -57,7 +45,6 @@ export class Font {
   texture_width = 0;
   texture_height = 0;
   page_textures = null;
-  material = null;
 
   constructor(num_chars) {
     this.code_point_index_map = new Map();
@@ -75,16 +62,6 @@ export class Font {
   }
 
   static create(font_data_file) {
-    const template = MaterialTemplate.get_template(default_text_material_template_key);
-    if (!template) {
-      MaterialTemplate.create(
-        default_text_material_template_key,
-        default_text_shader_key,
-        MaterialFamilyType.Opaque,
-        no_cull_rasterizer_config,
-      );
-    }
-
     const font_data = JSON.parse(read_file(font_data_file));
     if (!font_data) return null;
 
@@ -156,30 +133,6 @@ export class Font {
       });
       font.page_textures[i] = Name.from(page_name);
     }
-
-    font.material = Material.create(
-      font_name_suffix + material_key,
-      default_text_material_template_key,
-      {
-        family: MaterialFamilyType.Opaque,
-      }
-    );
-
-    const material_obj = Material.get(font.material);
-    const page_texture_obj = ResourceCache.get().fetch(
-      CacheTypes.IMAGE,
-      Number(font.page_textures[0])
-    );
-
-    material_obj.set_texture_data(font_page_texture_key, page_texture_obj);
-    material_obj.set_storage_data(font_glyph_data_key, font.font_glyph_data_buffer);
-    
-    material_obj.listen_for_texture_data(font_page_texture_key);
-
-    const text_buffer = FragmentGpuBuffer.get_buffer_name(TextFragment, text_data_key);
-    material_obj.listen_for_storage_data(text_buffer);
-    const string_buffer = FragmentGpuBuffer.get_buffer_name(TextFragment, string_data_key);
-    material_obj.listen_for_storage_data(string_buffer);
 
     return font;
   }

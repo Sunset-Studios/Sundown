@@ -5,7 +5,6 @@ import { GLTFSceneLoader } from "../renderer/gltf_scene_loader.js";
 
 import { LightViewProcessor } from "./subsystems/light_view_processor.js";
 import { EntityPreprocessor } from "./subsystems/entity_preprocessor.js";
-import { TextProcessor } from "./subsystems/text_processor.js";
 import { StaticMeshProcessor } from "./subsystems/static_mesh_processor.js";
 import { TransformProcessor } from "./subsystems/transform_processor.js";
 import { BVHEntityAdapter } from "./subsystems/bvh_entity_adapter.js";
@@ -15,7 +14,7 @@ import { MeshBLASProcessor } from "../acceleration/mesh_blas_processor.js";
 import { cursor } from "../ui/2d/immediate.js";
 import { FontCache } from "../ui/text/font_cache.js";
 import { ViewProcessor } from "./subsystems/view_processor.js";
-import { UI3DProcessor } from "./subsystems/ui_3d_processor.js";
+import { UI3DRenderProcessor } from "./subsystems/ui_3d_render_processor.js";
 import { UIProcessor } from "./subsystems/ui_processor.js";
 import { SharedViewBuffer, SharedFrameInfoBuffer } from "./shared_data.js";
 import { Renderer } from "../renderer/renderer.js";
@@ -66,7 +65,6 @@ export class Scene extends SimulationLayer {
 
     this.add_layer(LightViewProcessor);
     this.add_layer(UIProcessor);
-    this.add_layer(TextProcessor);
     this.add_layer(StaticMeshProcessor);
     this.add_layer(TransformProcessor);
     this.add_layer(BVHEntityAdapter);
@@ -75,8 +73,8 @@ export class Scene extends SimulationLayer {
       this.add_layer(BVHDebugRenderer);
     }
 
-    const ui_3d_processor = this.add_layer(UI3DProcessor);
-    ui_3d_processor.set_scene(this);
+    const ui_3d_render_processor = this.add_layer(UI3DRenderProcessor);
+    ui_3d_render_processor.set_scene(this);
 
     if (__DEV__) {
       const dev_console = this.add_layer(DevConsole);
@@ -92,11 +90,10 @@ export class Scene extends SimulationLayer {
       this.remove_layer(MeshBLASProcessor);
     }
     this.remove_layer(BVHDebugRenderer);
-    this.remove_layer(UI3DProcessor);
     this.remove_layer(BVHEntityAdapter);
     this.remove_layer(EntityPreprocessor);
+    this.remove_layer(UI3DRenderProcessor);
     this.remove_layer(UIProcessor);
-    this.remove_layer(TextProcessor);
     this.remove_layer(StaticMeshProcessor);
     this.remove_layer(TransformProcessor);
     this.remove_layer(LightViewProcessor);

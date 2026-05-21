@@ -1,5 +1,6 @@
 #define CUSTOM_DEPTH_FRAGMENT_MASK
 #define CUSTOM_RASTER_FRAGMENT_MASK
+#define CUSTOM_FORWARD_FRAGMENT
 #define CUSTOM_RESOLVE_FRAGMENT
 
 #include "visibility/visibility_draw_base.wgsl"
@@ -50,6 +51,24 @@ fn depth_fragment_mask(input: DepthVertexOutput) -> f32 {
 
 fn raster_fragment_mask(input: RasterVertexOutput) -> f32 {
     return fragment_mask(input.entity_id, input.section_index, input.uv);
+}
+
+fn forward_fragment(
+    input: RasterVertexOutput,
+    f_out: ptr<function, ForwardFragmentOutput>
+) -> ForwardFragmentOutput {
+    let material = resolve_material(input.entity_id, input.section_index);
+    let base_uv = input.uv * material.emission_roughness_metallic_tiling.w;
+    let albedo_lod = compute_lod_from_uv(base_uv, vec2<f32>(textureDimensions(texture_pool_albedo).xy));
+    f_out.color = sample_texture_or_vec4_param_handle(
+        u32(material.albedo_handle),
+        base_uv,
+        material.albedo,
+        u32(material.texture_flags1.x),
+        texture_pool_albedo,
+        albedo_lod
+    );
+    return *f_out;
 }
 
 fn resolve_fragment(

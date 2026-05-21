@@ -15,40 +15,83 @@ class FrameAllocator {
      */
     constructor(max_objects, template) {
         this.max_objects = max_objects;
+        this.template = template;
         
         // Preallocate array with exact size
         this.buffer = new Array(max_objects);
-        
-        // Check if template is a primitive:
+
+        this._initialize_buffer(this.buffer, 0, max_objects);
+        this.offset = 0;
+    }
+
+    /**
+     * Initializes a range of slots in the provided buffer from the allocator template.
+     * @param {Array} buffer - The target buffer to initialize
+     * @param {number} start - The inclusive start index
+     * @param {number} end - The exclusive end index
+     */
+    _initialize_buffer(buffer, start, end) {
         if (
-            template === null ||
-            (typeof template !== function_string && typeof template !== 'object')
+            this.template === null ||
+            (typeof this.template !== function_string && typeof this.template !== 'object')
         ) {
             // For primitive types, simply fill the buffer with an object wrapping the value.
-            for (let i = 0; i < max_objects; i++) {
-                this.buffer[i] = { value: template };
+            for (let i = start; i < end; i++) {
+                buffer[i] = { value: this.template };
             }
-        } else if (typeof template === function_string) {
+        } else if (typeof this.template === function_string) {
             // For constructors, create new instances
-            for (let i = 0; i < max_objects; i++) {
-                this.buffer[i] = new template();
+            for (let i = start; i < end; i++) {
+                buffer[i] = new this.template();
             }
-        } else if (Object.keys(template).length === 0) {
+        } else if (Object.keys(this.template).length === 0) {
             // Fast path for empty objects
-            const proto = Object.getPrototypeOf(template);
-            const prop_descriptors = Object.getOwnPropertyDescriptors(template);
-            for (let i = 0; i < max_objects; i++) {
-                this.buffer[i] = Object.create(proto, prop_descriptors);
+            const proto = Object.getPrototypeOf(this.template);
+            const prop_descriptors = Object.getOwnPropertyDescriptors(this.template);
+            for (let i = start; i < end; i++) {
+                buffer[i] = Object.create(proto, prop_descriptors);
             }
         } else {
             // For non-empty plain objects, create a prototype once and use it for all allocations
-            const proto = Object.getPrototypeOf(template);
-            const prop_descriptors = Object.getOwnPropertyDescriptors(template);
-            for (let i = 0; i < max_objects; i++) {
-                this.buffer[i] = Object.create(proto, prop_descriptors);
+            const proto = Object.getPrototypeOf(this.template);
+            const prop_descriptors = Object.getOwnPropertyDescriptors(this.template);
+            for (let i = start; i < end; i++) {
+                buffer[i] = Object.create(proto, prop_descriptors);
             }
         }
-        this.offset = 0;
+    }
+
+    /**
+     * Ensures the allocator has at least the requested capacity.
+     * @param {number} required_capacity - The minimum required capacity
+     */
+    _ensure_capacity(required_capacity) {
+        if (required_capacity <= this.max_objects) {
+            return;
+        }
+
+        let new_capacity = Math.max(1, this.max_objects);
+        while (new_capacity < required_capacity) {
+            new_capacity *= 2;
+        }
+
+        this._resize(new_capacity);
+    }
+
+    /**
+     * Resizes the allocator while preserving allocated entries.
+     * @param {number} new_capacity - The new allocator capacity
+     */
+    _resize(new_capacity) {
+        const new_buffer = new Array(new_capacity);
+
+        for (let i = 0; i < this.offset; i++) {
+            new_buffer[i] = this.buffer[i];
+        }
+
+        this._initialize_buffer(new_buffer, this.offset, new_capacity);
+        this.buffer = new_buffer;
+        this.max_objects = new_capacity;
     }
 
     /**
@@ -56,7 +99,7 @@ class FrameAllocator {
      */
     allocate() {
         if (this.offset >= this.max_objects) {
-            throw new Error(out_of_memory_error);
+            this._ensure_capacity(this.offset + 1);
         }
         const index = this.offset;
         this.offset++;
@@ -79,6 +122,7 @@ class FrameAllocator {
      * @param {FrameAllocator} other - The other frame allocator to append
      */
     append(other) {
+        this._ensure_capacity(this.offset + other.length);
         for (let i = 0; i < other.length; i++) {
             this.buffer[this.offset + i] = other.data[i];
         }
@@ -106,6 +150,14 @@ class FrameAllocator {
      */
     get length() {
         return this.offset;
+    }
+
+    /**
+     * Gets the capacity of the frame allocator.
+     * @returns {number} The capacity of the frame allocator.
+     */
+    get capacity() {
+        return this.max_objects;
     }
 
     /**

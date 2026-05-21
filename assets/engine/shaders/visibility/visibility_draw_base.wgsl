@@ -24,6 +24,10 @@ struct RasterFragmentOutput {
     @location(2) barycentric: u32,
 }
 
+struct ForwardFragmentOutput {
+    @location(0) color: vec4<f32>,
+}
+
 struct ResolveVertexOutput {
     @builtin(position) position: vec4<f32>,
     @location(0) uv: vec2<f32>,

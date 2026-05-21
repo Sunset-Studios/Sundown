@@ -1,7 +1,11 @@
-import { MAX_BUFFERED_FRAMES } from "../core/minimal.js";
+import { MAX_BUFFERED_FRAMES, INVALID_U32 } from "../core/minimal.js";
 import { EntityID } from "../core/ecs/solar/types.js";
 import { Buffer } from "./buffer.js";
-import { RandomAccessAllocator, Sparse2DRandomAccessAllocator } from "../memory/allocator.js";
+import {
+  FreeListAllocator,
+  RandomAccessAllocator,
+  Sparse2DRandomAccessAllocator,
+} from "../memory/allocator.js";
 import { ResourceCache } from "./resource_cache.js";
 import { MeshData } from "./mesh_data.js";
 import { MaterialAllocationTable } from "./material_allocation_table.js";
@@ -10,7 +14,14 @@ import { BindGroupType, CacheTypes, MaterialFamilyType, MaterialPassType } from 
 import { Name } from "../utility/names.js";
 import { draw_quad } from "./draw_helpers.js";
 
-export const invalid_u32 = 0xffffffff;
+export const RenderWorkKind = {
+  Mesh: "mesh",
+  UI3DMesh: "ui_3d_mesh",
+  SkinnedMesh: "skinned_mesh",
+  ProceduralMesh: "procedural_mesh",
+  DebugMesh: "debug_mesh",
+  Default: "mesh",
+};
 
 const initial_buffer_size = 1024;
 const max_frame_buffer_writes = 100000;
@@ -19,7 +30,7 @@ class IndirectDrawBatch {
   mesh_id = 0;
   section = 0;
   material_id = 0;
-  visibility_bucket_id = invalid_u32;
+  visibility_bucket_id = INVALID_U32;
   entities = [];
   instance_count = 0;
   first_index = 0;
@@ -29,10 +40,11 @@ class IndirectDrawBatch {
 }
 
 class VisibilityShaderBucket {
-  key = invalid_u32;
+  key = INVALID_U32;
   shader = null;
   depth_shader = null;
   resolve_shader = null;
+  forward_shader = null;
   template_name = "";
   representative_material_id = 0;
   family = MaterialFamilyType.Opaque;
@@ -41,10 +53,10 @@ class VisibilityShaderBucket {
 }
 
 class ObjectInstanceEntry {
-  constructor(batch_index = 0, row_field = invalid_u32) {
+  constructor(batch_index = 0, row_field = INVALID_U32) {
     this.batch_index = batch_index;
     this.row = row_field;
-    this.visibility_bucket_id = invalid_u32;
+    this.visibility_bucket_id = INVALID_U32;
     this.mesh_id = 0;
     this.section = 0;
     this.meshlet_offset = 0;
@@ -62,11 +74,14 @@ class ObjectInstanceEntry {
  * tasks into GPU-friendly batches.
  */
 export class MeshTask {
+  lane_id = RenderWorkKind.Mesh;
   mesh_id = null;
   entity = null;
   material_id = null;
   section = 0;
-  visibility_bucket_id = invalid_u32;
+  visibility_bucket_id = INVALID_U32;
+  key = "";
+  queue_index = -1;
 
   /**
    * Reinitializes an allocator-owned task without allocating a new object.
@@ -80,13 +95,28 @@ export class MeshTask {
    * @param {?number} material_id Material resource identifier for the section.
    * @param {number} section Mesh section to draw.
    * @param {number} visibility_bucket_id Bucket key used by visibility passes.
+   * @param {string} key Per-entity dedupe key for this task.
+   * @param {number} queue_index Current index inside the queue task array.
    */
-  static init(task, mesh_id, entity, material_id = null, section = 0, visibility_bucket_id = invalid_u32) {
+  static init(
+    task,
+    mesh_id,
+    entity,
+    material_id = null,
+    section = 0,
+    visibility_bucket_id = INVALID_U32,
+    key = "",
+    queue_index = -1,
+    lane_id = RenderWorkKind.Mesh
+  ) {
+    task.lane_id = lane_id;
     task.mesh_id = mesh_id;
     task.entity = entity;
     task.material_id = material_id;
     task.section = section;
     task.visibility_bucket_id = visibility_bucket_id;
+    task.key = key;
+    task.queue_index = queue_index;
   }
 }
 
@@ -269,7 +299,7 @@ export class MeshletInstanceBuffer {
       this.meshlet_instance_data = new Uint32Array(
         initial_buffer_size * MeshletInstanceBuffer.entry_stride
       );
-      this.meshlet_instance_data.fill(invalid_u32);
+      this.meshlet_instance_data.fill(INVALID_U32);
       if (!this.meshlet_instance_buffer) {
         this.meshlet_instance_buffer = Buffer.create({
           name: this.name,
@@ -323,7 +353,7 @@ export class MeshletInstanceBuffer {
     const total_words = meshlet_instance_count * MeshletInstanceBuffer.entry_stride;
     if (entry_index * MeshletInstanceBuffer.entry_stride < total_words) {
       this.meshlet_instance_data.fill(
-        invalid_u32,
+        INVALID_U32,
         entry_index * MeshletInstanceBuffer.entry_stride,
         total_words
       );
@@ -350,7 +380,7 @@ export class MeshletInstanceBuffer {
         const new_meshlet_instance_data = new Uint32Array(
           Math.max(entry_count, 1) * MeshletInstanceBuffer.entry_stride * 2
         );
-        new_meshlet_instance_data.fill(invalid_u32);
+        new_meshlet_instance_data.fill(INVALID_U32);
         new_meshlet_instance_data.set(this.meshlet_instance_data);
         this.meshlet_instance_data = new_meshlet_instance_data;
 
@@ -525,168 +555,592 @@ export class IndirectDrawObject {
   }
 }
 
+
+
 /**
- * Base class for renderer work queues that submit mesh-like tasks into visibility.
+ * Owns submitted work records, dedupe maps, and task allocation.
  *
- * A RenderTaskQueue is the shared contract between scene systems and renderer
- * strategies: systems submit tasks, queues sort/batch/upload their own GPU buffers,
- * and strategies iterate registered queues generically for culling, visibility,
- * resolve, shadows, and debug passes. Subclasses can override batching or draw
- * submission while still presenting the same queue-shaped interface.
+ * The store is intentionally not mesh-specific: lanes decide how descriptors become
+ * keys and visibility data, while the store provides a single centralized place for
+ * lane refreshes, and stable queue indices.
  */
-export class RenderTaskQueue {
-  static queue_name = "render_task_queue";
-  static tasks = [];
-  static batches = [];
-  static object_instances = [];
-  static visibility_shader_buckets = [];
-  static dirty_mesh_entities = new Set();
-  static entity_mesh_map = new Map();
-  static mesh_entity_map = new Map();
-  static entity_task_map = new Map();
-
-  static object_instance_buffer = new ObjectInstanceBuffer();
-  static meshlet_instance_buffer = new MeshletInstanceBuffer();
-
-  static indirect_draw_objects = new Sparse2DRandomAccessAllocator(16, 4, IndirectDrawObject);
-  static tasks_allocator = new RandomAccessAllocator(256, MeshTask);
-  static object_instance_allocator = new RandomAccessAllocator(256, ObjectInstanceEntry);
-  static visibility_bucket_allocator = new RandomAccessAllocator(256, VisibilityShaderBucket);
-
-  static task_type = MeshTask;
-  static batch_type = IndirectDrawBatch;
-
-  static needs_sort = false;
-  static initialized = false;
-  static meshes_dirty = false;
-  static total_meshlet_instances = 0;
-
-  /**
-   * Marks CPU-side task state as needing a batch rebuild.
-   *
-   * Call this whenever task ordering, materials, mesh sections, or instance layout
-   * changed in a way that invalidates the queue's current GPU buffers.
-   */
-  static mark_needs_sort() {
-    this.needs_sort = true;
+export class RenderTaskStore {
+  constructor(task_type = MeshTask) {
+    this.task_type = task_type;
+    this.tasks_allocator = new FreeListAllocator(256, task_type);
+    this.tasks = [];
+    this.entity_task_map = new Map();
   }
 
-  /**
-   * Reserves task array capacity for callers that know their submission count.
-   *
-   * This is a small optimization hook for bulk loaders or procedural generators
-   * that want to avoid repeated array growth during task submission.
-   *
-   * @param {number} num_tasks Expected number of submitted tasks.
-   */
-  static reserve(num_tasks) {
-    this.tasks.length = num_tasks;
-  }
-
-  /**
-   * Clears transient task submissions while keeping queue-owned buffers alive.
-   *
-   * This is useful for queues whose tasks are rebuilt every frame, while still
-   * preserving allocator and GPU resource ownership.
-   */
-  static reset() {
+  reset() {
     this.tasks.length = 0;
-    this.tasks_allocator?.reset();
+    this.tasks_allocator.reset();
+    this.entity_task_map.clear();
   }
 
-  /**
-   * Submits a renderable mesh section to this queue.
-   *
-   * Duplicate submissions for the same entity/mesh/material/section collapse to the
-   * existing task, keeping processors idempotent across repeated component updates.
-   *
-   * @param {number} mesh_id Mesh resource identifier.
-   * @param {object} entity Entity/chunk view that owns the submitted instances.
-   * @param {?number} material_id Material resource identifier for this section.
-   * @param {number} section Mesh section to draw.
-   * @param {boolean} resort Whether this submission should invalidate batching.
-   * @returns {MeshTask} Existing or newly allocated task.
-   */
-  static new_task(mesh_id, entity, material_id = null, section = 0, resort = true) {
-    const visibility_bucket = this._get_visibility_bucket_config(material_id);
-    const visibility_bucket_id = visibility_bucket?.id ?? invalid_u32;
-    const key = this._get_task_key(mesh_id, section, material_id, visibility_bucket_id);
-    let tasks_for_entity = this.entity_task_map.get(entity);
+  add(lane, descriptor) {
+    const key = lane.get_task_key(descriptor);
+
+    let tasks_for_entity = this.entity_task_map.get(descriptor.entity);
     if (tasks_for_entity?.has(key)) {
-      return tasks_for_entity.get(key);
+      const existing_task = tasks_for_entity.get(key);
+      existing_task.lane_id = lane.id;
+      return existing_task;
     }
 
-    const task = this.tasks_allocator.allocate();
-    this.task_type.init(task, mesh_id, entity, material_id, section, visibility_bucket_id);
+    const task = this._allocate_task();
+    const queue_index = this.tasks.length;
+    this.task_type.init(
+      task,
+      descriptor.mesh_id,
+      descriptor.entity,
+      descriptor.material_id,
+      descriptor.section,
+      descriptor.visibility_bucket_id,
+      key,
+      queue_index,
+      lane.id
+    );
     this.tasks.push(task);
 
     if (!tasks_for_entity) {
       tasks_for_entity = new Map();
-      this.entity_task_map.set(entity, tasks_for_entity);
+      this.entity_task_map.set(descriptor.entity, tasks_for_entity);
     }
     tasks_for_entity.set(key, task);
+    return task;
+  }
 
+  contains(entity) {
+    return this.entity_task_map.has(entity) && this.entity_task_map.get(entity).size > 0;
+  }
+
+  remove(entity) {
+    const tasks_for_entity = this.entity_task_map.get(entity);
+    if (!tasks_for_entity) {
+      return false;
+    }
+
+    const tasks = Array.from(tasks_for_entity.values());
+    for (const task of tasks) {
+      this.remove_at(task.queue_index);
+    }
+    return tasks.length > 0;
+  }
+
+  remove_matching(lane_id = null, predicate = null) {
+    let removed = false;
+    for (let i = this.tasks.length - 1; i >= 0; i--) {
+      const task = this.tasks[i];
+      const matches_lane = lane_id === null || task.lane_id === lane_id;
+      const matches_predicate = predicate ? predicate(task) : true;
+      if (matches_lane && matches_predicate) {
+        this.remove_at(i);
+        removed = true;
+      }
+    }
+    return removed;
+  }
+
+  sort(compare) {
+    this.tasks.sort(compare);
+    for (let i = 0; i < this.tasks.length; i++) {
+      this.tasks[i].queue_index = i;
+    }
+  }
+
+  tasks_for_lane(lane_id) {
+    const tasks = [];
+    for (let i = 0; i < this.tasks.length; i++) {
+      const task = this.tasks[i];
+      if (task.lane_id === lane_id) {
+        tasks.push(task);
+      }
+    }
+    return tasks;
+  }
+
+  remove_at(index) {
+    if (index < 0 || index >= this.tasks.length) {
+      return;
+    }
+
+    const last_index = this.tasks.length - 1;
+    const removed_task = this.tasks[index];
+    const swapped_task = this.tasks[last_index];
+    this._untrack_task(removed_task);
+    this.tasks.pop();
+
+    removed_task.queue_index = -1;
+    this.tasks_allocator.deallocate(removed_task);
+
+    if (index === last_index) {
+      return;
+    }
+
+    this.tasks[index] = swapped_task;
+    swapped_task.queue_index = index;
+  }
+
+  _allocate_task() {
+    return this.tasks_allocator.allocate();
+  }
+
+  _untrack_task(task) {
+    const tasks_for_entity = this.entity_task_map.get(task.entity);
+    if (!tasks_for_entity) {
+      return;
+    }
+    if (tasks_for_entity.get(task.key) === task) {
+      tasks_for_entity.delete(task.key);
+    }
+    if (tasks_for_entity.size === 0) {
+      this.entity_task_map.delete(task.entity);
+    }
+  }
+}
+
+/**
+ * Centralized GPU resource owner for all mesh-like render work.
+ *
+ * Lanes feed packed batches and instances into this object, and renderer
+ * strategies continue to consume one object buffer, one meshlet buffer, and one
+ * indirect draw stream per view/clipmap.
+ */
+export class RenderQueueGpuResources {
+  constructor({
+    object_instance_buffer = new ObjectInstanceBuffer(),
+    meshlet_instance_buffer = new MeshletInstanceBuffer(),
+    indirect_draw_objects = new Sparse2DRandomAccessAllocator(16, 4, IndirectDrawObject),
+    indirect_draw_name_prefix = "indirect_draw_buffer",
+  } = {}) {
+    this.object_instance_buffer = object_instance_buffer;
+    this.meshlet_instance_buffer = meshlet_instance_buffer;
+    this.indirect_draw_objects = indirect_draw_objects;
+    this.indirect_draw_name_prefix = indirect_draw_name_prefix;
+    this.initialized = false;
+  }
+
+  init() {
+    if (this.initialized) {
+      return;
+    }
+    this.initialized = true;
+    this.object_instance_buffer.init();
+    this.meshlet_instance_buffer.init();
+  }
+
+  get_indirect_draw_object(view_index = 0, clipmap_index = 0) {
+    let obj = this.indirect_draw_objects.get(view_index, clipmap_index);
+    if (!obj) {
+      obj = this.allocate_view_data(view_index, clipmap_index);
+    }
+    return obj;
+  }
+
+  allocate_view_data(view_index = 0, clipmap_index = 0) {
+    const obj = this.indirect_draw_objects.allocate_at(view_index, clipmap_index);
+    obj.view_index = view_index;
+    obj.clipmap_index = clipmap_index;
+    obj.init(this.indirect_draw_name_prefix);
+    return obj;
+  }
+
+  deallocate_view_data(view_index, clipmap_index = 0) {
+    const obj = this.indirect_draw_objects.get(view_index, clipmap_index);
+    if (obj) {
+      obj.destroy();
+      this.indirect_draw_objects.deallocate_at(view_index, clipmap_index);
+    }
+  }
+
+  upload({ batches, object_instances, total_meshlet_instances, force_update = false }) {
+    this.object_instance_buffer.update_buffers(object_instances, force_update);
+    this.meshlet_instance_buffer.update_buffers(
+      object_instances,
+      total_meshlet_instances,
+      force_update
+    );
+
+    for (let i = 0; i < this.indirect_draw_objects.x_capacity; i++) {
+      for (let j = 0; j < this.indirect_draw_objects.y_capacity; j++) {
+        const obj = this.indirect_draw_objects.get(i, j);
+        if (obj && obj.indirect_draw_data) {
+          obj.update_buffers(batches, force_update);
+        }
+      }
+    }
+  }
+
+  clear_if_empty(object_instances) {
+    if (object_instances.length > 0) {
+      return;
+    }
+
+    if (this.object_instance_buffer.object_instance_data) {
+      this.object_instance_buffer.object_instance_data.fill(0);
+    }
+    if (this.meshlet_instance_buffer.meshlet_instance_data) {
+      this.meshlet_instance_buffer.meshlet_instance_data.fill(0);
+    }
+    for (let i = 0; i < this.indirect_draw_objects.x_capacity; i++) {
+      for (let j = 0; j < this.indirect_draw_objects.y_capacity; j++) {
+        const obj = this.indirect_draw_objects.get(i, j);
+        if (obj && obj.indirect_draw_data) {
+          obj.indirect_draw_data.fill(0);
+        }
+      }
+    }
+  }
+}
+
+/**
+ * Lane policy for conventional indexed, meshlet-backed mesh sections.
+ *
+ * Other mesh work can be siphoned through the same RenderWorkQueue by registering
+ * lanes with different descriptor normalization, batch keys, packing, or draw
+ * backends while preserving the renderer-facing central queue contract.
+ */
+export class IndexedMeshQueueLane {
+  constructor({
+    id = RenderWorkKind.Mesh,
+    name = id,
+    task_type = MeshTask,
+    batch_type = IndirectDrawBatch,
+  } = {}) {
+    this.id = id;
+    this.task_type = task_type;
+    this.batch_type = batch_type;
+  }
+
+  normalize_task_descriptor(descriptor) {
+    const material_id = descriptor.material_id ?? null;
+    const visibility_bucket = this.get_visibility_bucket_config(material_id);
+    return {
+      mesh_id: descriptor.mesh_id,
+      entity: descriptor.entity,
+      material_id,
+      section: descriptor.section ?? 0,
+      visibility_bucket_id: visibility_bucket?.id ?? INVALID_U32,
+    };
+  }
+
+  get_task_key(descriptor) {
+    return `${this.id}|${descriptor.mesh_id}|${descriptor.section}|${descriptor.material_id ?? 0}|${descriptor.visibility_bucket_id}`;
+  }
+
+  compare_tasks(a, b) {
+    const a_bucket =
+      a.visibility_bucket_id === INVALID_U32 ? Number.MAX_SAFE_INTEGER : a.visibility_bucket_id;
+    const b_bucket =
+      b.visibility_bucket_id === INVALID_U32 ? Number.MAX_SAFE_INTEGER : b.visibility_bucket_id;
+    let diff = a_bucket - b_bucket;
+    if (diff !== 0) return diff;
+    diff = (a.material_id ?? 0) - (b.material_id ?? 0);
+    if (diff !== 0) return diff;
+    diff = (a.mesh_id ?? 0) - (b.mesh_id ?? 0);
+    if (diff !== 0) return diff;
+    return (a.section ?? 0) - (b.section ?? 0);
+  }
+
+  prepare(tasks, context) {
+    const first_batch_index = context.batches.length;
+    this.build_batches(tasks, context);
+    this.pack_object_instances(first_batch_index, context);
+  }
+
+  build_batches(tasks, context) {
+    let last_lane_batch = null;
+    for (let i = 0; i < tasks.length; i++) {
+      const task = tasks[i];
+      if (!this.task_matches_batch(task, last_lane_batch)) {
+        const batch = this.create_batch_for_task(task, context.last_batch());
+        if (batch) {
+          this.add_visibility_bucket(task, context);
+          context.batches.push(batch);
+          last_lane_batch = batch;
+        }
+      } else {
+        this.append_task_to_batch(task, last_lane_batch);
+      }
+    }
+  }
+
+  task_matches_batch(task, batch) {
+    return Boolean(
+      batch &&
+      batch.lane_id === this.id &&
+      batch.visibility_bucket_id === task.visibility_bucket_id &&
+      batch.mesh_id === task.mesh_id &&
+      batch.section === task.section &&
+      batch.material_id === task.material_id
+    );
+  }
+
+  create_batch_for_task(task, previous_global_batch) {
+    const mesh = ResourceCache.get().fetch(CacheTypes.MESH, task.mesh_id);
+    if (!mesh) {
+      return null;
+    }
+
+    const batch = new this.batch_type();
+    batch.lane_id = this.id;
+    batch.mesh_id = task.mesh_id;
+    batch.section = task.section;
+    batch.material_id = task.material_id;
+    batch.visibility_bucket_id = task.visibility_bucket_id;
+    batch.base_instance = previous_global_batch
+      ? previous_global_batch.base_instance + previous_global_batch.instance_count
+      : 0;
+    batch.instance_count = task.entity.instance_count;
+
+    const section = mesh.sections?.[task.section] || {
+      first_index: 0,
+      index_count: mesh.index_count,
+    };
+    batch.first_index = section.first_index;
+    batch.index_count = section.index_count;
+    batch.base_vertex = mesh.vertex_buffer_offset;
+
+    batch.entities.length = 1;
+    batch.entities[0] = task.entity;
+    return batch;
+  }
+
+  append_task_to_batch(task, batch) {
+    batch.instance_count += task.entity.instance_count;
+    batch.entities.push(task.entity);
+  }
+
+  submit_visibility_bucket_indirect_draw(queue, render_pass, bucket, indirect_buffer, pass_type = MaterialPassType.Raster) {
+    if (!queue.bind_visibility_bucket_material(render_pass, bucket, pass_type)) {
+      return;
+    }
+    render_pass.pass.drawIndirect(indirect_buffer.buffer, 0);
+  }
+
+  submit_visibility_bucket_resolve(queue, render_pass, bucket, instance_count = 1) {
+    if (!queue.bind_visibility_bucket_material(render_pass, bucket, MaterialPassType.Resolve)) {
+      return;
+    }
+    draw_quad(render_pass, instance_count);
+  }
+
+  add_visibility_bucket(task, context) {
+    if (
+      task.visibility_bucket_id === INVALID_U32 ||
+      context.visibility_bucket_residency_set.has(task.visibility_bucket_id)
+    ) {
+      return;
+    }
+
+    const visibility_config = this.get_visibility_bucket_config(task.material_id);
+    const visibility_bucket = context.visibility_bucket_allocator.allocate();
+    visibility_bucket.key = task.visibility_bucket_id;
+    visibility_bucket.shader = visibility_config?.shader ?? null;
+    visibility_bucket.depth_shader = visibility_config?.depth_shader ?? null;
+    visibility_bucket.resolve_shader = visibility_config?.resolve_shader ?? null;
+    visibility_bucket.forward_shader = visibility_config?.forward_shader ?? null;
+    visibility_bucket.template_name = visibility_config?.template_name ?? "";
+    visibility_bucket.representative_material_id =
+      visibility_config?.representative_material_id ?? task.material_id;
+    visibility_bucket.family =
+      visibility_config?.family ?? MaterialFamilyType.Opaque;
+    visibility_bucket.queue = context.queue;
+    visibility_bucket.queue_name = context.queue.queue_name;
+    visibility_bucket.lane = this;
+    visibility_bucket.lane_id = this.id;
+    const target_buckets = visibility_bucket.family === MaterialFamilyType.Transparent
+      ? context.visibility_forward_buckets
+      : context.visibility_shader_buckets;
+    context.visibility_all_buckets.push(visibility_bucket);
+    target_buckets.push(visibility_bucket);
+    context.visibility_bucket_residency_set.add(task.visibility_bucket_id);
+  }
+
+  pack_object_instances(first_batch_index, context) {
+    for (let i = first_batch_index; i < context.batches.length; i++) {
+      const batch = context.batches[i];
+      if (batch.lane_id !== this.id) {
+        continue;
+      }
+
+      const mesh = ResourceCache.get().fetch(CacheTypes.MESH, batch.mesh_id);
+      const meshlet_section = mesh?.meshlet_sections?.[batch.section] ?? {
+        meshlet_offset: 0,
+        meshlet_count: 0,
+        meshlet_group_offset: 0,
+        meshlet_group_count: 0,
+      };
+
+      for (let j = 0; j < batch.entities.length; j++) {
+        const entity = batch.entities[j];
+
+        for (let k = 0, segs = entity.segments, n = segs.length; k < n; k++) {
+          const seg = segs[k];
+          const cidx = seg.chunk.chunk_index;
+          const start = seg.slot;
+          for (let l = 0, cnt = seg.count; l < cnt; l++) {
+            const entry = context.object_instance_allocator.allocate();
+            entry.batch_index = i;
+            entry.row = EntityID.make_row_field(start + l, cidx);
+            entry.visibility_bucket_id = batch.visibility_bucket_id;
+            entry.mesh_id = batch.mesh_id;
+            entry.section = batch.section;
+            entry.meshlet_offset = meshlet_section.meshlet_offset;
+            entry.meshlet_count = meshlet_section.meshlet_count;
+            entry.meshlet_group_offset = meshlet_section.meshlet_group_offset;
+            entry.meshlet_group_count = meshlet_section.meshlet_group_count;
+            context.object_instances.push(entry);
+            context.add_meshlet_instances(meshlet_section.meshlet_count);
+          }
+        }
+      }
+    }
+  }
+
+  get_visibility_bucket_config(material_id) {
+    const material = ResourceCache.get().fetch(CacheTypes.MATERIAL, material_id);
+    if (!material?.template) {
+      return null;
+    }
+
+    return {
+      id: Name.from(
+        `${material.template.name}|${material.family}|${material.template.shader?.file_path ?? ""}`
+      ),
+      shader: material.template.shader ?? null,
+      depth_shader: material.template.depth_shader ?? null,
+      resolve_shader: material.template.resolve_shader ?? null,
+      forward_shader: material.template.forward_shader ?? null,
+      template_name: material.template.name,
+      representative_material_id: material_id,
+      family: material.family,
+    };
+  }
+}
+
+/**
+ * Single renderer work intake for mesh-like submissions.
+ *
+ * Producers submit descriptors into this central queue. Internally, registered
+ * lanes decide how each work kind is sorted, batched, packed, and eventually drawn.
+ * The compatibility export `RenderTaskQueue` points at this class so existing
+ * systems can migrate gradually.
+ */
+export class RenderWorkQueue {
+  static queue_name = "render_work_queue";
+  static task_store = new RenderTaskStore();
+  static resources = new RenderQueueGpuResources();
+  static lanes = new Map();
+  static lane_order = [];
+
+  static batches = [];
+  static object_instances = [];
+  static visibility_all_buckets = [];
+  static visibility_shader_buckets = [];
+  static visibility_forward_buckets = [];
+
+  static dirty_mesh_entities = new Set();
+  static entity_mesh_map = new Map();
+  static mesh_entity_map = new Map();
+
+  static object_instance_allocator = new RandomAccessAllocator(256, ObjectInstanceEntry);
+  static visibility_bucket_allocator = new RandomAccessAllocator(256, VisibilityShaderBucket);
+
+  static needs_sort = false;
+  static meshes_dirty = false;
+  static total_meshlet_instances = 0;
+
+  static get tasks() {
+    return this.task_store.tasks;
+  }
+
+  static get entity_task_map() {
+    return this.task_store.entity_task_map;
+  }
+
+  static get tasks_allocator() {
+    return this.task_store.tasks_allocator;
+  }
+
+  static get object_instance_buffer() {
+    return this.resources.object_instance_buffer;
+  }
+
+  static get meshlet_instance_buffer() {
+    return this.resources.meshlet_instance_buffer;
+  }
+
+  static get indirect_draw_objects() {
+    return this.resources.indirect_draw_objects;
+  }
+
+  static register_lane(lane) {
+    this.lanes.set(lane.id, lane);
+    if (!this.lane_order.includes(lane.id)) {
+      this.lane_order.push(lane.id);
+    }
+    this.needs_sort = true;
+    return lane;
+  }
+
+  static resolve_lane(lane_id = RenderWorkKind.Default) {
+    return this.lanes.get(lane_id) ?? this.lanes.get(RenderWorkKind.Default);
+  }
+
+  static submit(descriptor, resort = true) {
+    const lane = this.resolve_lane(descriptor.lane_id);
+    const normalized = lane.normalize_task_descriptor(descriptor);
+    const task = this.task_store.add(lane, normalized);
     if (resort) {
       this.needs_sort = true;
     }
     return task;
   }
 
-  /**
-   * Checks whether an entity currently contributes work to this queue.
-   *
-   * Processors use this to decide whether component changes need queue mutation.
-   *
-   * @param {object} entity Entity/chunk view to query.
-   * @returns {boolean} True when the entity has one or more queued tasks.
-   */
+  static new_task(mesh_id, entity, material_id = null, section = 0, resort = true) {
+    return this.submit(
+      {
+        mesh_id,
+        entity,
+        material_id,
+        section,
+      },
+      resort
+    );
+  }
+
+  static mark_needs_sort() {
+    this.needs_sort = true;
+  }
+
+  static reset() {
+    this.task_store.reset();
+    this.needs_sort = true;
+  }
+
   static contains(entity) {
-    return this.entity_task_map.has(entity) && this.entity_task_map.get(entity).size > 0;
+    return this.task_store.contains(entity);
   }
 
-  /**
-   * Removes all queued tasks owned by an entity.
-   *
-   * This keeps queue state aligned with ECS destruction or component removal and
-   * optionally triggers a batch rebuild so stale instances disappear from GPU draws.
-   *
-   * @param {object} entity Entity/chunk view to remove.
-   * @param {boolean} resort Whether removal should invalidate batching.
-   */
   static remove(entity, resort = true) {
-    const tasks_for_entity = this.entity_task_map.get(entity);
-    if (!tasks_for_entity) return;
-
-    // keep only those tasks whose key is NOT in tasks_for_entity
-    this.tasks = this.tasks.filter((task) => {
-      if (task.entity !== entity) return true;
-      const key = this._get_task_key(
-        task.mesh_id,
-        task.section,
-        task.material_id,
-        task.visibility_bucket_id
-      );
-      return !tasks_for_entity.has(key);
-    });
-
-    this.entity_task_map.delete(entity);
-    if (this.tasks.length === 0) {
-      this.batches.length = 0;
-      this.object_instances.length = 0;
-      this.visibility_shader_buckets.length = 0;
+    const removed = this.task_store.remove(entity);
+    if (removed && this.tasks.length === 0) {
+      this._clear_rebuilt_cpu_state();
     }
-    this.needs_sort |= resort;
+    this.needs_sort ||= removed && resort;
   }
 
-  /**
-   * Records that mesh-dependent queue data needs to be refreshed.
-   *
-   * Asset systems call this when mesh data changes so processors can resubmit or
-   * rebuild only affected entities instead of flushing every queue blindly.
-   *
-   * @param {boolean} dirty Whether to mark or clear dirty state.
-   * @param {?object} entity Optional entity to mark when known.
-   */
+  static remove_tasks(lane_id = null, predicate = null, resort = true) {
+    const removed = this.task_store.remove_matching(lane_id, predicate);
+    if (removed && this.tasks.length === 0) {
+      this._clear_rebuilt_cpu_state();
+    }
+    this.needs_sort ||= removed && resort;
+    return removed;
+  }
+
   static mark_meshes_dirty(dirty = true, entity = null) {
     if (!dirty) {
       this.dirty_mesh_entities.clear();
@@ -702,33 +1156,14 @@ export class RenderTaskQueue {
     }
   }
 
-  /**
-   * Reports whether any tracked mesh/entity relationship is dirty.
-   *
-   * @returns {boolean} True when queue processors should inspect dirty mesh users.
-   */
   static has_dirty_meshes() {
     return this.meshes_dirty;
   }
 
-  /**
-   * Returns the entities affected by dirty mesh resources.
-   *
-   * @returns {Set<object>} Entity set awaiting mesh-driven refresh.
-   */
   static get_dirty_mesh_entities() {
     return this.dirty_mesh_entities;
   }
 
-  /**
-   * Tracks which mesh resource an entity depends on.
-   *
-   * This reverse lookup lets asset invalidation find exactly which queued entities
-   * need refresh when a mesh is reprocessed or reloaded.
-   *
-   * @param {object} entity Entity/chunk view to track.
-   * @param {number} mesh_id Mesh resource identifier.
-   */
   static track_entity_mesh(entity, mesh_id) {
     const previous_mesh_id = this.entity_mesh_map.get(entity);
     if (previous_mesh_id === mesh_id) {
@@ -756,23 +1191,10 @@ export class RenderTaskQueue {
     }
   }
 
-  /**
-   * Removes mesh dependency tracking for an entity.
-   *
-   * @param {object} entity Entity/chunk view to untrack.
-   */
   static untrack_entity_mesh(entity) {
     this.track_entity_mesh(entity, 0);
   }
 
-  /**
-   * Marks every queued entity using a mesh as dirty.
-   *
-   * This is the queue-local half of mesh hot-reload support: the registry fans the
-   * invalidation out to all queues, and each queue maps the mesh to its users.
-   *
-   * @param {number} mesh_id Mesh resource identifier that changed.
-   */
   static invalidate_mesh(mesh_id) {
     const registered_entities = this.mesh_entity_map.get(mesh_id);
     if (registered_entities?.size > 0) {
@@ -783,243 +1205,87 @@ export class RenderTaskQueue {
     }
   }
 
-  /**
-   * Ensures the queue has one visibility bucket for a task's material pipeline.
-   *
-   * Visibility passes are submitted per bucket so materials can bind their own
-   * shaders and resources while sharing the queue's culling and compaction outputs.
-   *
-   * @param {MeshTask} task Task whose material determines the bucket.
-   * @param {Set<number>} visibility_bucket_residency_set Deduplication set.
-   */
-  static add_visibility_bucket(task, visibility_bucket_residency_set) {
-    if (task.visibility_bucket_id === invalid_u32 || visibility_bucket_residency_set.has(task.visibility_bucket_id)) {
-      return;
-    }
-
-    const visibility_config = this._get_visibility_bucket_config(task.material_id);
-    const visibility_bucket = this.visibility_bucket_allocator.allocate();
-    visibility_bucket.key = task.visibility_bucket_id;
-    visibility_bucket.shader = visibility_config?.shader ?? null;
-    visibility_bucket.depth_shader = visibility_config?.depth_shader ?? null;
-    visibility_bucket.resolve_shader = visibility_config?.resolve_shader ?? null;
-    visibility_bucket.template_name = visibility_config?.template_name ?? "";
-    visibility_bucket.representative_material_id =
-      visibility_config?.representative_material_id ?? task.material_id;
-    visibility_bucket.family =
-      visibility_config?.family ?? MaterialFamilyType.Opaque;
-    this.visibility_shader_buckets.push(visibility_bucket);
-
-    visibility_bucket_residency_set.add(task.visibility_bucket_id);
+  static sort_and_batch() {
+    this.prepare();
   }
 
-  /**
-   * Converts submitted tasks into GPU-ready queue buffers.
-   *
-   * Renderer strategies call this once per frame for every registered queue before
-   * render graph construction, guaranteeing culling and visibility see coherent
-   * object, meshlet, material bucket, and indirect draw data.
-   */
-  static sort_and_batch() {
-    this._initialize_queue_buffers();
+  static prepare() {
+    this.resources.init();
 
-    profile_scope(`RenderTaskQueue.sort_and_batch`, () => {
+    profile_scope("RenderWorkQueue.prepare", () => {
       if (this.needs_sort) {
         this._reset_rebuild_state();
         this._sort_tasks();
-        this._rebuild_batches();
-        this._rebuild_object_instances();
+        this._prepare_lanes();
         this._sort_visibility_buckets();
         this.clear_queue_buffers();
       }
 
       this.upload_queue_buffers();
-
       MaterialAllocationTable.upload_buffers();
-
       this.needs_sort = false;
     });
   }
 
-  /**
-   * Returns the queue's object instance GPU buffer.
-   *
-   * Strategies require every queue to provide this buffer so culling can remain
-   * generic and avoid any special "main mesh queue" path.
-   *
-   * @returns {import("./buffer.js").Buffer} Object instance storage buffer.
-   */
   static get_object_instance_buffer() {
-    return this.object_instance_buffer.object_instance_buffer;
+    return this.resources.object_instance_buffer.object_instance_buffer;
   }
 
-  /**
-   * Returns the queue's meshlet instance GPU buffer.
-   *
-   * @returns {import("./buffer.js").Buffer} Meshlet instance storage buffer.
-   */
   static get_meshlet_instance_buffer() {
-    return this.meshlet_instance_buffer.meshlet_instance_buffer;
+    return this.resources.meshlet_instance_buffer.meshlet_instance_buffer;
   }
 
-  /**
-   * Returns the indirect draw buffer for a view/clipmap.
-   *
-   * Visibility and shadow passes use separate view slots, so this accessor keeps
-   * those draw argument streams isolated while exposing a simple queue API.
-   *
-   * @param {number} view_index View slot index.
-   * @param {number} clipmap_index Optional clipmap slot for shadow cascades.
-   * @returns {import("./buffer.js").Buffer} Indirect draw argument buffer.
-   */
   static get_indirect_draw_buffer(view_index = 0, clipmap_index = 0) {
     return this.get_indirect_draw_object(view_index, clipmap_index).indirect_draw_buffer;
   }
 
-  /**
-   * Returns material buckets that need visibility/depth/resolve submissions.
-   *
-   * Strategies iterate these buckets to submit one material-compatible pass per
-   * queue bucket rather than branching on concrete queue types.
-   *
-   * @returns {Array<object>} Visibility shader buckets.
-   */
   static get_visibility_shader_buckets() {
     return this.visibility_shader_buckets;
   }
 
-  /**
-   * Returns the number of object instances currently addressable by culling.
-   *
-   * @returns {number} Object instance count.
-   */
+  static get_visibility_forward_buckets() {
+    return this.visibility_forward_buckets;
+  }
+
+  static get_visibility_all_buckets() {
+    return this.visibility_all_buckets;
+  }
+
   static get_total_draw_count() {
     return this.object_instances?.length ?? 0;
   }
 
-  /**
-   * Returns the number of meshlet instances currently addressable by culling.
-   *
-   * @returns {number} Meshlet instance count.
-   */
   static get_total_meshlet_count() {
     return this.total_meshlet_instances ?? 0;
   }
 
-  /**
-   * Returns or creates the view-local indirect draw object.
-   *
-   * This lazy path makes new views cheap: renderers can ask queues for view data
-   * during graph setup without having to preallocate every possible slot.
-   *
-   * @param {number} view_index View slot index.
-   * @param {number} clipmap_index Optional clipmap slot for shadow cascades.
-   * @returns {IndirectDrawObject} View-local indirect draw state.
-   */
   static get_indirect_draw_object(view_index = 0, clipmap_index = 0) {
-    let obj = this.indirect_draw_objects.get(view_index, clipmap_index);
-    if (!obj) {
-      obj = this.allocate_view_data(view_index, clipmap_index);
-    }
-    return obj;
+    return this.resources.get_indirect_draw_object(view_index, clipmap_index);
   }
 
-  /**
-   * Allocates per-view queue resources.
-   *
-   * Registries call this when a renderer creates a new view so every queue can
-   * participate in culling, shadows, and visibility without renderer-specific hooks.
-   *
-   * @param {number} view_index View slot index.
-   * @param {number} clipmap_index Optional clipmap slot for shadow cascades.
-   * @returns {IndirectDrawObject} Allocated view-local indirect draw state.
-   */
   static allocate_view_data(view_index = 0, clipmap_index = 0) {
-    const obj = this.indirect_draw_objects.allocate_at(view_index, clipmap_index);
-    obj.view_index = view_index;
-    obj.clipmap_index = clipmap_index;
-    obj.init();
+    const obj = this.resources.allocate_view_data(view_index, clipmap_index);
     this.needs_sort = true;
     return obj;
   }
 
-  /**
-   * Releases per-view queue resources.
-   *
-   * @param {number} view_index View slot index.
-   * @param {number} clipmap_index Optional clipmap slot for shadow cascades.
-   */
   static deallocate_view_data(view_index, clipmap_index = 0) {
-    const obj = this.indirect_draw_objects.get(view_index, clipmap_index);
-    if (obj) {
-      obj.destroy();
-      this.indirect_draw_objects.deallocate_at(view_index, clipmap_index);
-    }
+    this.resources.deallocate_view_data(view_index, clipmap_index);
   }
 
-  /**
-   * Uploads all queue-owned GPU buffers for the current batch state.
-   *
-   * Subclasses can override this when they produce procedural instance data or
-   * need a different packing strategy while preserving the renderer-facing API.
-   */
   static upload_queue_buffers() {
-    this.object_instance_buffer.update_buffers(this.object_instances, this.needs_sort);
-    this.meshlet_instance_buffer.update_buffers(
-      this.object_instances,
-      this.total_meshlet_instances,
-      this.needs_sort
-    );
-
-    for (let i = 0; i < this.indirect_draw_objects.x_capacity; i++) {
-      for (let j = 0; j < this.indirect_draw_objects.y_capacity; j++) {
-        const obj = this.indirect_draw_objects.get(i, j);
-        if (obj && obj.indirect_draw_data) {
-          obj.update_buffers(this.batches, this.needs_sort);
-        }
-      }
-    }
+    this.resources.upload({
+      batches: this.batches,
+      object_instances: this.object_instances,
+      total_meshlet_instances: this.total_meshlet_instances,
+      force_update: this.needs_sort,
+    });
   }
 
-  /**
-   * Clears stale CPU backing data when a queue becomes empty.
-   *
-   * This prevents previous frame data from lingering in reused buffers after all
-   * tasks are removed, which keeps zero-work queues harmless to later passes.
-   */
   static clear_queue_buffers() {
-    if (this.object_instances.length <= 0 && this.object_instance_buffer.object_instance_data) {
-      this.object_instance_buffer.object_instance_data.fill(0);
-    }
-    if (this.object_instances.length <= 0 && this.meshlet_instance_buffer.meshlet_instance_data) {
-      this.meshlet_instance_buffer.meshlet_instance_data.fill(0);
-    }
-    for (let i = 0; i < this.indirect_draw_objects.x_capacity; i++) {
-      for (let j = 0; j < this.indirect_draw_objects.y_capacity; j++) {
-        const obj = this.indirect_draw_objects.get(i, j);
-        if (obj && obj.indirect_draw_data) {
-          obj.indirect_draw_data.fill(0);
-        }
-      }
-    }
+    this.resources.clear_if_empty(this.object_instances);
   }
 
-  /**
-   * Submits the default indexed indirect draw path for mesh-backed queues.
-   *
-   * This is the compatibility path for passes that draw conventional mesh sections.
-   * More specialized queues can override bucket submission methods instead, while
-   * still sharing sorting, culling, and buffer ownership.
-   *
-   * @param {object} render_pass Active render pass wrapper.
-   * @param {number} view_index View slot index.
-   * @param {number} clipmap_index Optional clipmap slot for shadow cascades.
-   * @param {boolean} skip_material_bind Whether materials are already bound.
-   * @param {boolean} opaque_only Whether to skip non-opaque material batches.
-   * @param {number} pass_type Material pass type being submitted.
-   * @param {boolean} should_reset Whether to clear transient tasks after drawing.
-   * @param {?object} indirect_draw_buffer Optional culling-produced indirect buffer.
-   */
   static submit_indexed_indirect_draws(
     render_pass,
     view_index = 0,
@@ -1042,12 +1308,12 @@ export class RenderTaskQueue {
     for (let i = 0; i < this.batches.length; ++i) {
       const batch = this.batches[i];
       const mesh = ResourceCache.get().fetch(CacheTypes.MESH, batch.mesh_id);
-      if (mesh.index_buffer_offset === -1) {
+      if (!mesh || mesh.index_buffer_offset === -1) {
         continue;
       }
 
       const material = ResourceCache.get().fetch(CacheTypes.MATERIAL, batch.material_id);
-      if (opaque_only && material.family !== MaterialFamilyType.Opaque) {
+      if (opaque_only && material?.family !== MaterialFamilyType.Opaque) {
         continue;
       }
 
@@ -1060,7 +1326,7 @@ export class RenderTaskQueue {
             pass_type
           )) {
             continue;
-          };
+          }
           if (render_pass.frame_bind_groups[BindGroupType.Global]) {
             render_pass.frame_bind_groups[BindGroupType.Global].bind(render_pass);
           }
@@ -1088,20 +1354,11 @@ export class RenderTaskQueue {
     }
   }
 
-  /**
-   * Binds the representative material for a visibility bucket.
-   *
-   * Bucket rendering intentionally binds by material family/template instead of by
-   * individual task, so a queue can draw many coalesced instances with one material
-   * setup per depth, raster, or resolve submission.
-   *
-   * @param {object} render_pass Active render pass wrapper.
-   * @param {object} bucket Visibility shader bucket to bind.
-   * @param {number} pass_type Material pass type being submitted.
-   * @returns {?boolean} True when bound, false when unavailable, null for empty buckets.
-   */
   static bind_visibility_bucket_material(render_pass, bucket, pass_type = MaterialPassType.Raster) {
-    if (!bucket?.representative_material_id || !bucket?.shader) {
+    const shader = pass_type === MaterialPassType.Forward
+      ? bucket?.forward_shader
+      : bucket?.shader;
+    if (!bucket?.representative_material_id || !shader) {
       return null;
     }
 
@@ -1117,7 +1374,7 @@ export class RenderTaskQueue {
       pass_type
     )) {
       return false;
-    };
+    }
 
     if (render_pass.frame_bind_groups[BindGroupType.Global]) {
       render_pass.frame_bind_groups[BindGroupType.Global].bind(render_pass);
@@ -1128,210 +1385,119 @@ export class RenderTaskQueue {
     return true;
   }
 
-  /**
-   * Submits one visibility bucket using a culling-produced indirect draw.
-   *
-   * Renderer strategies call this through the bucket's owning queue, giving custom
-   * queues a single override point for procedural, instanced, or non-indexed draws.
-   *
-   * @param {object} render_pass Active render pass wrapper.
-   * @param {object} bucket Visibility shader bucket to draw.
-   * @param {object} indirect_buffer GPU indirect draw arguments for this bucket.
-   * @param {number} pass_type Material pass type being submitted.
-   */
   static submit_visibility_bucket_indirect_draw(render_pass, bucket, indirect_buffer, pass_type = MaterialPassType.Raster) {
+    if (bucket?.lane?.submit_visibility_bucket_indirect_draw) {
+      bucket.lane.submit_visibility_bucket_indirect_draw(
+        this,
+        render_pass,
+        bucket,
+        indirect_buffer,
+        pass_type
+      );
+      return;
+    }
+
     if (!this.bind_visibility_bucket_material(render_pass, bucket, pass_type)) {
       return;
     }
     render_pass.pass.drawIndirect(indirect_buffer.buffer, 0);
   }
 
-  /**
-   * Submits a fullscreen resolve for a visibility bucket.
-   *
-   * Resolve runs after visibility rasterization and lets each material decode the
-   * visibility buffer into G-buffer targets with its own material bindings.
-   *
-   * @param {object} render_pass Active render pass wrapper.
-   * @param {object} bucket Visibility shader bucket to resolve.
-   * @param {number} instance_count Number of resolve instances to draw.
-   */
   static submit_visibility_bucket_resolve(render_pass, bucket, instance_count = 1) {
+    if (bucket?.lane?.submit_visibility_bucket_resolve) {
+      bucket.lane.submit_visibility_bucket_resolve(
+        this,
+        render_pass,
+        bucket,
+        instance_count
+      );
+      return;
+    }
+
     if (!this.bind_visibility_bucket_material(render_pass, bucket, MaterialPassType.Resolve)) {
       return;
     }
     draw_quad(render_pass, instance_count);
   }
 
-  static _get_task_key(mesh_id, section, material_id, visibility_bucket_id = invalid_u32) {
-    const a = BigInt(mesh_id);
-    const b = BigInt(section);
-    const c = BigInt(material_id ?? 0);
-    const ab = a >= b ? a * a + a + b : b * b + a;
-    const abc = ab >= c ? ab * ab + ab + c : c * c + ab;
-    const d = BigInt(visibility_bucket_id === invalid_u32 ? 0 : visibility_bucket_id);
-    return abc >= d ? abc * abc + abc + d : d * d + abc;
-  }
-
-  static _get_visibility_bucket_config(material_id) {
-    const material = ResourceCache.get().fetch(CacheTypes.MATERIAL, material_id);
-    return {
-      id: Name.from(
-        `${material.template.name}|${material?.template?.shader?.file_path ?? ""}`
-      ),
-      shader: material?.template?.shader ?? null,
-      depth_shader: material?.template?.depth_shader ?? null,
-      resolve_shader: material?.template?.resolve_shader ?? null,
-      template_name: material.template.name,
-      representative_material_id: material_id,
-      family: material.family,
-    };
-  }
-
   static _sort_tasks() {
-    this.tasks.sort((a, b) => {
-      const a_bucket =
-        a.visibility_bucket_id === invalid_u32 ? Number.MAX_SAFE_INTEGER : a.visibility_bucket_id;
-      const b_bucket =
-        b.visibility_bucket_id === invalid_u32 ? Number.MAX_SAFE_INTEGER : b.visibility_bucket_id;
-      let diff = a_bucket - b_bucket;
-      if (diff !== 0) return diff;
-      diff = a.material_id - b.material_id;
-      if (diff !== 0) return diff;
-      diff = a.mesh_id - b.mesh_id;
-      if (diff !== 0) return diff;
-      diff = a.section - b.section;
-      return diff;
+    const lane_indices = new Map();
+    for (let i = 0; i < this.lane_order.length; i++) {
+      lane_indices.set(this.lane_order[i], i);
+    }
+
+    this.task_store.sort((a, b) => {
+      const lane_diff =
+        (lane_indices.get(a.lane_id) ?? Number.MAX_SAFE_INTEGER) -
+        (lane_indices.get(b.lane_id) ?? Number.MAX_SAFE_INTEGER);
+      if (lane_diff !== 0) {
+        return lane_diff;
+      }
+
+      const lane = this.lanes.get(a.lane_id) ?? this.resolve_lane();
+      return lane.compare_tasks(a, b);
     });
   }
 
-  static _task_matches_batch(task, batch) {
-    return Boolean(
-      batch &&
-      batch.visibility_bucket_id === task.visibility_bucket_id &&
-      batch.mesh_id === task.mesh_id &&
-      batch.section === task.section &&
-      batch.material_id === task.material_id
-    );
-  }
-
-  static _create_batch_for_task(task, last_batch) {
-    const mesh = ResourceCache.get().fetch(CacheTypes.MESH, task.mesh_id);
-    if (!mesh) {
-      return null;
-    }
-
-    const batch = new this.batch_type();
-    batch.mesh_id = task.mesh_id;
-    batch.section = task.section;
-    batch.material_id = task.material_id;
-    batch.visibility_bucket_id = task.visibility_bucket_id;
-    batch.base_instance = last_batch
-      ? last_batch.base_instance + last_batch.instance_count
-      : 0;
-    batch.instance_count = task.entity.instance_count;
-
-    const section = mesh.sections?.[task.section] || {
-      first_index: 0,
-      index_count: mesh.index_count,
+  static _prepare_lanes() {
+    const context = {
+      queue: this,
+      batches: this.batches,
+      object_instances: this.object_instances,
+      visibility_all_buckets: this.visibility_all_buckets,
+      visibility_shader_buckets: this.visibility_shader_buckets,
+      visibility_forward_buckets: this.visibility_forward_buckets,
+      object_instance_allocator: this.object_instance_allocator,
+      visibility_bucket_allocator: this.visibility_bucket_allocator,
+      visibility_bucket_residency_set: new Set(),
+      last_batch: () => this.batches[this.batches.length - 1] ?? null,
+      add_meshlet_instances: (count) => {
+        this.total_meshlet_instances += count;
+      },
     };
-    batch.first_index = section.first_index;
-    batch.index_count = section.index_count;
-    batch.base_vertex = mesh.vertex_buffer_offset;
 
-    batch.entities.length = batch.instance_count;
-    batch.entities.fill(task.entity);
-    return batch;
-  }
-
-  static _append_task_to_batch(task, batch) {
-    batch.instance_count += task.entity.instance_count;
-    const start_index = batch.entities.length;
-    const new_length = batch.entities.length + task.entity.instance_count;
-    batch.entities.length = new_length;
-    batch.entities.fill(task.entity, start_index, new_length);
-  }
-
-  static _rebuild_batches() {
-    let last_batch = null;
-    const visibility_bucket_residency_set = new Set();
-    for (let i = 0; i < this.tasks.length; i++) {
-      const task = this.tasks[i];
-
-      if (!this._task_matches_batch(task, last_batch)) {
-        const batch = this._create_batch_for_task(task, last_batch);
-        if (batch) {
-          this.add_visibility_bucket(task, visibility_bucket_residency_set);
-          this.batches.push(batch);
-          last_batch = batch;
-        }
-      } else {
-        this._append_task_to_batch(task, last_batch);
+    for (let i = 0; i < this.lane_order.length; i++) {
+      const lane_id = this.lane_order[i];
+      const lane = this.lanes.get(lane_id);
+      if (!lane) {
+        continue;
       }
-    }
-  }
-
-  static _rebuild_object_instances() {
-    for (let i = 0; i < this.batches.length; i++) {
-      const batch = this.batches[i];
-      const visited_entities = new Set();
-      for (let j = 0; j < batch.entities.length; j++) {
-        const entity = batch.entities[j];
-        if (visited_entities.has(entity)) continue;
-        visited_entities.add(entity);
-
-        for (let k = 0, segs = entity.segments, n = segs.length; k < n; k++) {
-          const seg = segs[k];
-          const cidx = seg.chunk.chunk_index;
-          const start = seg.slot;
-          const mesh = ResourceCache.get().fetch(CacheTypes.MESH, batch.mesh_id);
-          const meshlet_section = mesh?.meshlet_sections?.[batch.section] ?? {
-            meshlet_offset: 0,
-            meshlet_count: 0,
-            meshlet_group_offset: 0,
-            meshlet_group_count: 0,
-          };
-          for (let l = 0, cnt = seg.count; l < cnt; l++) {
-            const entry = this.object_instance_allocator.allocate();
-            entry.batch_index = i;
-            entry.row = EntityID.make_row_field(start + l, cidx);
-            entry.visibility_bucket_id = batch.visibility_bucket_id;
-            entry.mesh_id = batch.mesh_id;
-            entry.section = batch.section;
-            entry.meshlet_offset = meshlet_section.meshlet_offset;
-            entry.meshlet_count = meshlet_section.meshlet_count;
-            entry.meshlet_group_offset = meshlet_section.meshlet_group_offset;
-            entry.meshlet_group_count = meshlet_section.meshlet_group_count;
-            this.object_instances.push(entry);
-            this.total_meshlet_instances += meshlet_section.meshlet_count;
-          }
-        }
-      }
+      lane.prepare(this.task_store.tasks_for_lane(lane_id), context);
     }
   }
 
   static _sort_visibility_buckets() {
-    this.visibility_shader_buckets.sort((a, b) => {
+    const compare_buckets = (a, b) => {
       let diff = a.family - b.family;
       if (diff !== 0) return diff;
       return a.key - b.key;
-    });
+    };
+    this.visibility_all_buckets.sort(compare_buckets);
+    this.visibility_shader_buckets.sort(compare_buckets);
+    this.visibility_forward_buckets.sort(compare_buckets);
   }
 
   static _reset_rebuild_state() {
-    this.batches.length = 0;
-    this.object_instances.length = 0;
-    this.visibility_shader_buckets.length = 0;
-    this.total_meshlet_instances = 0;
+    this._clear_rebuilt_cpu_state();
     this.object_instance_allocator.reset();
     this.visibility_bucket_allocator.reset();
   }
 
-  static _initialize_queue_buffers() {
-    if (!this.initialized) {
-      this.initialized = true;
-      this.object_instance_buffer.init();
-      this.meshlet_instance_buffer.init();
-    }
+  static _clear_rebuilt_cpu_state() {
+    this.batches.length = 0;
+    this.object_instances.length = 0;
+    this.visibility_all_buckets.length = 0;
+    this.visibility_shader_buckets.length = 0;
+    this.visibility_forward_buckets.length = 0;
+    this.total_meshlet_instances = 0;
   }
 }
+
+RenderWorkQueue.register_lane(new IndexedMeshQueueLane({
+  id: RenderWorkKind.Mesh,
+}));
+RenderWorkQueue.register_lane(new IndexedMeshQueueLane({
+  id: RenderWorkKind.UI3DMesh,
+}));
+
+export { RenderWorkQueue as RenderTaskQueue };

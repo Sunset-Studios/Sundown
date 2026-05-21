@@ -1,6 +1,7 @@
 import { vec4 } from "gl-matrix";
 
 export const MAX_BUFFERED_FRAMES = 2;
+export const INVALID_U32 = 0xffffffff;
 
 export const WORLD_UP = vec4.fromValues(0, 1, 0, 0);
 export const WORLD_FORWARD = vec4.fromValues(0, 0, 1, 0);

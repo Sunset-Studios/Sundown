@@ -128,12 +128,38 @@ export class UserInterfaceFragment extends Fragment {
       cpu_readback: false,
       buffer_multiplier: 1,
     },
-    element_color: {
+    ui_emissive: {
+      ctor: Float32Array,
+      elements: 1,
+      default: 0,
+      gpu_buffer: false,
+      buffer_name: "ui_emissive",
+      usage:
+        GPUBufferUsage.STORAGE |
+        GPUBufferUsage.COPY_DST |
+        GPUBufferUsage.COPY_SRC,
+      cpu_readback: false,
+      buffer_multiplier: 1,
+    },
+    ui_rounding: {
+      ctor: Float32Array,
+      elements: 1,
+      default: 0,
+      gpu_buffer: false,
+      buffer_name: "ui_rounding",
+      usage:
+        GPUBufferUsage.STORAGE |
+        GPUBufferUsage.COPY_DST |
+        GPUBufferUsage.COPY_SRC,
+      cpu_readback: false,
+      buffer_multiplier: 1,
+    },
+    ui_origin: {
       ctor: Float32Array,
       elements: 4,
       default: 0,
       gpu_buffer: false,
-      buffer_name: "element_color",
+      buffer_name: "ui_origin",
       usage:
         GPUBufferUsage.STORAGE |
         GPUBufferUsage.COPY_DST |
@@ -141,12 +167,12 @@ export class UserInterfaceFragment extends Fragment {
       cpu_readback: false,
       buffer_multiplier: 1,
     },
-    element_emissive: {
+    ui_x_axis: {
       ctor: Float32Array,
-      elements: 1,
+      elements: 4,
       default: 0,
       gpu_buffer: false,
-      buffer_name: "element_emissive",
+      buffer_name: "ui_x_axis",
       usage:
         GPUBufferUsage.STORAGE |
         GPUBufferUsage.COPY_DST |
@@ -154,12 +180,77 @@ export class UserInterfaceFragment extends Fragment {
       cpu_readback: false,
       buffer_multiplier: 1,
     },
-    element_rounding: {
+    ui_y_axis: {
       ctor: Float32Array,
-      elements: 1,
+      elements: 4,
       default: 0,
       gpu_buffer: false,
-      buffer_name: "element_rounding",
+      buffer_name: "ui_y_axis",
+      usage:
+        GPUBufferUsage.STORAGE |
+        GPUBufferUsage.COPY_DST |
+        GPUBufferUsage.COPY_SRC,
+      cpu_readback: false,
+      buffer_multiplier: 1,
+    },
+    ui_uv_rect: {
+      ctor: Float32Array,
+      elements: 4,
+      default: 0,
+      gpu_buffer: false,
+      buffer_name: "ui_uv_rect",
+      usage:
+        GPUBufferUsage.STORAGE |
+        GPUBufferUsage.COPY_DST |
+        GPUBufferUsage.COPY_SRC,
+      cpu_readback: false,
+      buffer_multiplier: 1,
+    },
+    ui_color: {
+      ctor: Float32Array,
+      elements: 4,
+      default: 0,
+      gpu_buffer: false,
+      buffer_name: "ui_color",
+      usage:
+        GPUBufferUsage.STORAGE |
+        GPUBufferUsage.COPY_DST |
+        GPUBufferUsage.COPY_SRC,
+      cpu_readback: false,
+      buffer_multiplier: 1,
+    },
+    ui_border_color: {
+      ctor: Float32Array,
+      elements: 4,
+      default: 0,
+      gpu_buffer: false,
+      buffer_name: "ui_border_color",
+      usage:
+        GPUBufferUsage.STORAGE |
+        GPUBufferUsage.COPY_DST |
+        GPUBufferUsage.COPY_SRC,
+      cpu_readback: false,
+      buffer_multiplier: 1,
+    },
+    ui_params: {
+      ctor: Float32Array,
+      elements: 4,
+      default: 0,
+      gpu_buffer: false,
+      buffer_name: "ui_params",
+      usage:
+        GPUBufferUsage.STORAGE |
+        GPUBufferUsage.COPY_DST |
+        GPUBufferUsage.COPY_SRC,
+      cpu_readback: false,
+      buffer_multiplier: 1,
+    },
+    ui_text_glyph: {
+      ctor: Uint32Array,
+      elements: 1,
+      default: 0,
+      gpu_buffer: true,
+      buffer_name: "ui_text_glyph",
       usage:
         GPUBufferUsage.STORAGE |
         GPUBufferUsage.COPY_DST |
@@ -171,12 +262,20 @@ export class UserInterfaceFragment extends Fragment {
   static buffer_data = new Map(); // key → { buffer: FragmentGpuBuffer, stride: number }
 
   static gpu_buffers = {
-    element_data: {
+    ui_data: {
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-      stride: 24,
-      buffer_name: "element_data",
+      stride: 112,
+      buffer_name: "ui_data",
       cpu_readback: false,
-      fields: ["element_color", "element_emissive", "element_rounding"],
+      fields: [
+        "ui_origin",
+        "ui_x_axis",
+        "ui_y_axis",
+        "ui_uv_rect",
+        "ui_color",
+        "ui_border_color",
+        "ui_params",
+      ],
     },
   };
 

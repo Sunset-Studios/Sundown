@@ -200,7 +200,7 @@ export class PathTracingStrategy {
       const current_view = SharedFrameInfoBuffer.get_view_index();
       const draw_count = RenderTaskQueue.get_total_draw_count();
       const meshlet_draw_count = RenderTaskQueue.get_total_meshlet_count();
-      const visibility_shader_buckets = RenderTaskQueue.get_visibility_shader_buckets();
+      const visibility_shader_buckets = RenderTaskQueue.get_visibility_all_buckets();
       const image_extent = renderer.get_canvas_resolution();
       const depth_prepass_enabled = renderer.is_depth_prepass_enabled();
 
@@ -424,12 +424,12 @@ export class PathTracingStrategy {
           meshlet_draw_count,
           current_view,
           depth_image: main_depth_image,
-          frustum_meshlet_draw_args: bucket_draw_resources?.draw_args ?? frustum_meshlet_draw_args,
+          frustum_meshlet_draw_args: bucket_draw_resources.draw_args,
           bucket,
           inputs: [
             entity_transforms,
             object_instances,
-            bucket_draw_resources?.meshlet_list ?? frustum_meshlet_list,
+            bucket_draw_resources.meshlet_list,
             meshlet_buffer,
             meshlet_vertex_buffer,
             meshlet_triangle_buffer,
@@ -438,7 +438,7 @@ export class PathTracingStrategy {
           ],
         });
       }
-      
+
       // ┌─────────────────────────────────────────────────────────────────────────────┐
       // │ 🌫️  PASS: Occlusion Culling                                                │
       // └─────────────────────────────────────────────────────────────────────────────┘

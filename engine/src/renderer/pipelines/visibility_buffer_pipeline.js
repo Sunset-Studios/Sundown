@@ -388,6 +388,59 @@ export class VisibilityBufferPipeline {
     return outputs;
   }
 
+  add_forward_raster_pass(
+    render_graph,
+    {
+      meshlet_draw_count,
+      current_view,
+      depth_image,
+      occlusion_meshlet_draw_args,
+      inputs,
+      outputs,
+      bucket,
+    }
+  ) {
+    if (meshlet_draw_count <= 0 || !bucket?.forward_shader) {
+      return outputs;
+    }
+
+    const shader_setup = this._get_shader_setup(
+      bucket,
+      MaterialPassType.Forward,
+      "less-equal",
+      false
+    );
+    const bucket_info_buffer = render_graph.register_buffer(this._get_bucket_info_buffer(bucket).config.name);
+
+    render_graph.add_pass(
+      `visibility_forward_raster_view_${current_view}_bucket_${bucket.key}`,
+      RenderPassFlags.Graphics,
+      {
+        inputs: [
+          ...inputs,
+          bucket_info_buffer,
+        ],
+        outputs: [
+          ...outputs,
+          depth_image,
+        ],
+        shader_setup,
+        b_skip_pass_pipeline_setup: true,
+      },
+      (graph, frame_data, encoder) => {
+        const pass = graph.get_physical_pass(frame_data.current_pass);
+        RenderTaskQueue.submit_visibility_bucket_indirect_draw(
+          pass,
+          bucket,
+          occlusion_meshlet_draw_args ? graph.get_physical_buffer(occlusion_meshlet_draw_args) : null,
+          MaterialPassType.Forward
+        );
+      }
+    );
+
+    return outputs;
+  }
+
   _get_shader_setup(bucket, pass_type = MaterialPassType.Raster, depth_compare = null, depth_write_enabled = null) {
     const cache_key = `${bucket.key}|${pass_type}|${depth_compare ?? "none"}|${depth_write_enabled ?? "null"}`;
     let cached_setup = this.shader_setup_cache.get(cache_key);
@@ -400,6 +453,8 @@ export class VisibilityBufferPipeline {
       shader = bucket.depth_shader;
     } else if (pass_type === MaterialPassType.Resolve) {
       shader = bucket.resolve_shader;
+    } else if (pass_type === MaterialPassType.Forward) {
+      shader = bucket.forward_shader;
     }
 
     const defines = {

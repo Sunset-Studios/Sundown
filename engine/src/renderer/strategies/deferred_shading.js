@@ -267,7 +267,9 @@ export class DeferredShadingStrategy {
       const current_view = SharedFrameInfoBuffer.get_view_index();
       const draw_count = RenderTaskQueue.get_total_draw_count();
       const meshlet_draw_count = RenderTaskQueue.get_total_meshlet_count();
+      const visibility_all_buckets = RenderTaskQueue.get_visibility_all_buckets();
       const visibility_shader_buckets = RenderTaskQueue.get_visibility_shader_buckets();
+      const visibility_forward_buckets = RenderTaskQueue.get_visibility_forward_buckets();
       const debug_view = renderer.get_debug_draw_type();
       const image_extent = renderer.get_canvas_resolution();
 
@@ -524,7 +526,7 @@ export class DeferredShadingStrategy {
           object_instances,
           source_meshlet_list: frustum_meshlet_list,
           source_meshlet_draw_args: frustum_meshlet_draw_args,
-          buckets: visibility_shader_buckets,
+          buckets: visibility_all_buckets,
           stage_name: "frustum",
           force_recreate: this.force_recreate,
         });
@@ -577,7 +579,7 @@ export class DeferredShadingStrategy {
           object_instances,
           source_meshlet_list: occlusion_meshlet_list,
           source_meshlet_draw_args: occlusion_meshlet_draw_args,
-          buckets: visibility_shader_buckets,
+          buckets: visibility_all_buckets,
           stage_name: "occlusion",
           force_recreate: this.force_recreate,
         });
@@ -644,6 +646,52 @@ export class DeferredShadingStrategy {
         }
       }
 
+      for (const bucket of visibility_forward_buckets) {
+        const bucket_draw_resources = occlusion_bucket_draw_lists.get(bucket.key);
+        this.visibility_buffer_pipeline.add_forward_raster_pass(render_graph, {
+          meshlet_draw_count,
+          current_view,
+          depth_image: main_depth_image,
+          occlusion_meshlet_draw_args: bucket_draw_resources.draw_args,
+          bucket,
+          inputs: [
+            entity_transforms,
+            object_instances,
+            bucket_draw_resources.meshlet_list,
+            meshlet_buffer,
+            meshlet_vertex_buffer,
+            meshlet_triangle_buffer,
+            entity_index_lookup,
+            entity_flags,
+          ],
+          outputs: [
+            main_transparency_accum_image,
+          ],
+        });
+      }
+
+      for (const bucket of visibility_forward_buckets) {
+        const bucket_draw_resources = occlusion_bucket_draw_lists.get(bucket.key);
+        this.visibility_buffer_pipeline.add_depth_prepass(render_graph, {
+          enabled: true,
+          meshlet_draw_count,
+          current_view,
+          depth_image: main_depth_image,
+          frustum_meshlet_draw_args: bucket_draw_resources.draw_args,
+          bucket,
+          inputs: [
+            entity_transforms,
+            object_instances,
+            bucket_draw_resources.meshlet_list,
+            meshlet_buffer,
+            meshlet_vertex_buffer,
+            meshlet_triangle_buffer,
+            entity_index_lookup,
+            entity_flags,
+          ],
+        });
+      }
+      
       // ┌─────────────────────────────────────────────────────────────────────────────┐
       // │ 🌊 PASS: Transparency Composite                                            │
       // │    Blend transparent objects using weighted-blended order-independent     │
