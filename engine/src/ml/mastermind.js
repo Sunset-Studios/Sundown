@@ -89,8 +89,7 @@ export class MasterMind {
   }
 
   sync_registered_subnets() {
-    const store_layer_ids = this.get_store_layer_ids();
-    const root_ids = new Set(Layer.get_all_roots().filter((root_id) => store_layer_ids.has(root_id)));
+    const root_ids = this.get_registered_subnet_root_ids();
     const active_subnet_entry = this.get_subnet(this.active_subnet);
     const active_subnet_root = active_subnet_entry?.subnet_id ?? null;
 
@@ -120,6 +119,16 @@ export class MasterMind {
     if (this.active_subnet === null && this.subnets.length > 0) {
       this.active_subnet = 0;
     }
+  }
+
+  get_registered_subnet_root_ids() {
+    const store_layer_ids = this.get_store_layer_ids();
+
+    return new Set(
+      Layer.get_all_roots().filter(
+        (root_id) => store_layer_ids.has(root_id) && Layer.is_input(root_id)
+      )
+    );
   }
 
   get_store_layer_ids() {

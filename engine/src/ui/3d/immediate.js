@@ -1,5 +1,6 @@
 import { InputKey, InputRange } from "../../input/input_types.js";
 import { InputProvider } from "../../input/input_provider.js";
+import { EntityFlags } from "../../core/minimal.js";
 import { FrameAllocator, FrameStackAllocator } from "../../memory/allocator.js";
 import { SharedViewBuffer } from "../../core/shared_data.js";
 import { Renderer } from "../../renderer/renderer.js";
@@ -7,7 +8,11 @@ import { FontCache } from "../text/font_cache.js";
 import { Name } from "../../utility/names.js";
 import { world_pos_to_screen_pos } from "../../utility/camera.js";
 import { profile_scope } from "../../utility/performance.js";
-import { quat, vec3 } from "gl-matrix";
+import {
+  get_current_world_transform,
+  resolve_parent_transform,
+} from "../../utility/transform_utils.js";
+import { mat4, quat, vec3 } from "gl-matrix";
 import { UIContext } from "../2d/immediate.js";
 
 const left = "left";
@@ -68,6 +73,8 @@ const temp_vec3_a = vec3.create();
 const temp_vec3_b = vec3.create();
 const temp_vec3_c = vec3.create();
 const temp_vec3_d = vec3.create();
+const temp_parent_world_transform = mat4.create();
+const temp_resolved_parent_world_transform = mat4.create();
 
 export const UI3DContext = {
   commands: [],
@@ -319,6 +326,23 @@ function project_rect_to_screen(root, x, y, width, height) {
   const p1 = local_to_world(root, x + width, y, temp_vec3_b);
   const p2 = local_to_world(root, x + width, y + height, temp_vec3_c);
   const p3 = local_to_world(root, x, y + height, temp_vec3_d);
+
+  if (root.parent_entity) {
+    const parent_transform = resolve_parent_transform(
+      get_current_world_transform(
+        root.parent_entity,
+        0,
+        temp_parent_world_transform
+      ),
+      EntityFlags.IGNORE_PARENT_SCALE,
+      temp_resolved_parent_world_transform
+    );
+    vec3.transformMat4(p0, p0, parent_transform);
+    vec3.transformMat4(p1, p1, parent_transform);
+    vec3.transformMat4(p2, p2, parent_transform);
+    vec3.transformMat4(p3, p3, parent_transform);
+  }
+
   const projected = [
     world_pos_to_screen_pos(view, p0, canvas_width, canvas_height),
     world_pos_to_screen_pos(view, p1, canvas_width, canvas_height),

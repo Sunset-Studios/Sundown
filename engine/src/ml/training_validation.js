@@ -177,7 +177,7 @@ function get_training_validation_failure(subnet_entry) {
       output_shape,
       target_shape: Tensor.normalize_shape(first_sample.target.shape),
       message:
-        `Training paused: output dimension ${output_dim} does not match ` +
+        `PAUSED: output dimension ${output_dim} does not match ` +
         `target dimension ${target_dim}.`,
       details:
         `Output shape ${Tensor.format_shape(output_shape)}, target shape ${Tensor.format_shape(first_sample.target.shape)}.`,
