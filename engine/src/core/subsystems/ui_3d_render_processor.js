@@ -24,12 +24,15 @@ const ui_3d_material_config = Object.freeze({
   quad_shader: "ui_standard_material.wgsl",
   text_template: "UI3DTextMaterial",
   text_shader: "text_material.wgsl",
+  image_template: "UI3DImageMaterial",
+  image_shader: "ui_image_material.wgsl",
   bindings: {
     ui_data: "ui_data",
     text_glyphs: "ui_text_glyphs",
     text_glyph_indices: "ui_text_glyph",
     font_glyph_data: "font_glyph_data",
     font_page_texture: "font_page_texture",
+    image_texture: "ui_image_texture",
   },
 });
 
@@ -424,6 +427,56 @@ class UI3DTextMaterialProvider extends UI3DMaterialProvider {
   }
 }
 
+class UI3DImageMaterialProvider extends UI3DMaterialProvider {
+  prepare_frame(frame_resources) {
+    this._ensure_template(
+      ui_3d_material_config.image_template,
+      ui_3d_material_config.image_shader,
+      MaterialFamilyType.Opaque
+    );
+    this._ensure_template(
+      ui_3d_material_config.image_template,
+      ui_3d_material_config.image_shader,
+      MaterialFamilyType.Transparent
+    );
+
+    for (const material_id of this.material_ids.values()) {
+      this._bind_shared_ui_data(material_id, frame_resources);
+    }
+  }
+
+  supports(command) {
+    return command.type === UI3DCommandType.Image;
+  }
+
+  material_for_command(command, frame_resources) {
+    if (!command.image_texture) {
+      return null;
+    }
+
+    const family = built_in_command_family(command);
+    const texture_key = command.image_texture.physical_id ?? command.image_texture.config?.name ?? "missing";
+    const material_key = `${texture_key}|${family}`;
+    let material_id = this.material_ids.get(material_key);
+    if (!material_id) {
+      material_id = Material.create(
+        `UI3DImageMaterial_${texture_key}_${family}`,
+        ui_3d_material_config.image_template,
+        { family }
+      );
+      this.material_ids.set(material_key, material_id);
+    }
+
+    this._bind_shared_ui_data(material_id, frame_resources);
+    Material.get(material_id)?.set_texture_data(
+      ui_3d_material_config.bindings.image_texture,
+      command.image_texture
+    );
+
+    return material_id;
+  }
+}
+
 /**
  * Provider for caller-supplied UI materials.
  *
@@ -599,6 +652,7 @@ class UI3DMaterialRegistry {
   frame_resources = new UI3DFrameResources();
   providers = [
     new UI3DCustomMaterialProvider(),
+    new UI3DImageMaterialProvider(),
     new UI3DTextMaterialProvider(),
     new UI3DStandardMaterialProvider(),
   ];

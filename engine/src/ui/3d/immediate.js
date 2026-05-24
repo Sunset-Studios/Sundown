@@ -4,6 +4,7 @@ import { EntityFlags } from "../../core/minimal.js";
 import { FrameAllocator, FrameStackAllocator } from "../../memory/allocator.js";
 import { SharedViewBuffer } from "../../core/shared_data.js";
 import { Renderer } from "../../renderer/renderer.js";
+import { Texture } from "../../renderer/texture.js";
 import { FontCache } from "../text/font_cache.js";
 import { Name } from "../../utility/names.js";
 import { world_pos_to_screen_pos } from "../../utility/camera.js";
@@ -33,6 +34,7 @@ const fit_content = "fit-content";
 export const UI3DCommandType = Object.freeze({
   Quad: "quad",
   Text: "text",
+  Image: "image",
 });
 
 class Layout3DContainer {
@@ -85,6 +87,7 @@ export const UI3DContext = {
   scroll_state: {},
   input_state: {},
   font_cache: new Map(),
+  image_cache: new Map(),
 
   get_unique_id() {
     return this.id_counter++;
@@ -585,6 +588,72 @@ function push_quad(
   );
 }
 
+function texture_from_image_config(config = {}) {
+  const src = config.src ?? config.icon ?? config.path;
+  if (!src) {
+    return null;
+  }
+
+  const texture_key = config.texture_name ?? config.image_name ?? src;
+  let texture = UI3DContext.image_cache.get(texture_key);
+  if (!texture) {
+    texture = Texture.load({
+      name: texture_key,
+      paths: [src],
+      format: config.format ?? "rgba8unorm",
+      usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
+      flip_y: config.flip_y,
+    });
+    UI3DContext.image_cache.set(texture_key, texture);
+  }
+
+  return texture;
+}
+
+function push_image(
+  root,
+  x,
+  y,
+  width,
+  height,
+  config = {},
+  inherited_z_order = get_current_z_order(),
+  depth = 0
+) {
+  if (width <= 0 || height <= 0) {
+    return -1;
+  }
+
+  const texture = texture_from_image_config(config);
+  if (!texture) {
+    return -1;
+  }
+
+  const world = local_rect_to_world(root, x, y, width, height, depth);
+  return push_command(
+    {
+      type: UI3DCommandType.Image,
+      origin: world.origin,
+      x_axis: world.x_axis,
+      y_axis: world.y_axis,
+      fill_color: color_to_vec4(config.color ?? config.tint ?? config.tint_color, [1, 1, 1, 1]),
+      border_color: [
+        config.alpha_mask || config.mask || config.tint_alpha ? 1 : 0,
+        0,
+        0,
+        0,
+      ],
+      width,
+      height,
+      image_texture: texture,
+      emissive: Number(config.image_emissive ?? config.emissive ?? 1),
+      ...material_command_config(config),
+    },
+    config,
+    inherited_z_order
+  );
+}
+
 function font_from_config(config = {}) {
   let font_id =
     typeof config.font === "number"
@@ -1020,6 +1089,40 @@ export function rect(config = {}) {
     container.depth
   );
   child_container_layout_update(container, rect_data.x, rect_data.y, rect_data.width, rect_data.height);
+
+  return element_handle_input(
+    container.root,
+    rect_data.x,
+    rect_data.y,
+    rect_data.width,
+    rect_data.height,
+    config
+  );
+}
+
+export function image(config = {}) {
+  config.widget_id = UI3DContext.get_unique_id();
+
+  const container = get_current_container();
+  const rect_data = resolve_widget_rect(config, container);
+
+  push_image(
+    container.root,
+    rect_data.x,
+    rect_data.y,
+    rect_data.width,
+    rect_data.height,
+    config,
+    container.z_order,
+    container.depth
+  );
+  child_container_layout_update(
+    container,
+    rect_data.x,
+    rect_data.y,
+    rect_data.width,
+    rect_data.height
+  );
 
   return element_handle_input(
     container.root,
