@@ -11,6 +11,7 @@ import { InputKey } from "../../input/input_types.js";
 import { RenderTaskQueue, RenderWorkKind } from "../../renderer/render_task_queue.js";
 import { Mesh } from "../../renderer/mesh.js";
 import { Material, MaterialTemplate } from "../../renderer/material.js";
+import { TextureArrayPools } from "../../renderer/texture_pool.js";
 import { ResourceCache } from "../../renderer/resource_cache.js";
 import { CacheTypes, MaterialFamilyType } from "../../renderer/renderer_types.js";
 import { FontCache } from "../../ui/text/font_cache.js";
@@ -24,7 +25,7 @@ const ui_3d_material_config = Object.freeze({
   quad_shader: "ui_standard_material.wgsl",
   text_template: "UI3DTextMaterial",
   text_shader: "text_material.wgsl",
-  image_template: "UI3DImageMaterial",
+  image_template: "UI3DImagePoolMaterial",
   image_shader: "ui_image_material.wgsl",
   bindings: {
     ui_data: "ui_data",
@@ -32,7 +33,7 @@ const ui_3d_material_config = Object.freeze({
     text_glyph_indices: "ui_text_glyph",
     font_glyph_data: "font_glyph_data",
     font_page_texture: "font_page_texture",
-    image_texture: "ui_image_texture",
+    image_texture_pool: "ui_image_texture_pool",
   },
 });
 
@@ -428,6 +429,8 @@ class UI3DTextMaterialProvider extends UI3DMaterialProvider {
 }
 
 class UI3DImageMaterialProvider extends UI3DMaterialProvider {
+  pool_key = "ui";
+
   prepare_frame(frame_resources) {
     this._ensure_template(
       ui_3d_material_config.image_template,
@@ -441,7 +444,7 @@ class UI3DImageMaterialProvider extends UI3DMaterialProvider {
     );
 
     for (const material_id of this.material_ids.values()) {
-      this._bind_shared_ui_data(material_id, frame_resources);
+      this._bind_image_material_buffers(material_id, frame_resources);
     }
   }
 
@@ -455,25 +458,41 @@ class UI3DImageMaterialProvider extends UI3DMaterialProvider {
     }
 
     const family = built_in_command_family(command);
-    const texture_key = command.image_texture.physical_id ?? command.image_texture.config?.name ?? "missing";
-    const material_key = `${texture_key}|${family}`;
+    const material_key = `${ui_3d_material_config.image_template}_${family}`;
     let material_id = this.material_ids.get(material_key);
     if (!material_id) {
       material_id = Material.create(
-        `UI3DImageMaterial_${texture_key}_${family}`,
+        `${ui_3d_material_config.image_template}_${family}`,
         ui_3d_material_config.image_template,
         { family }
       );
       this.material_ids.set(material_key, material_id);
     }
 
-    this._bind_shared_ui_data(material_id, frame_resources);
-    Material.get(material_id)?.set_texture_data(
-      ui_3d_material_config.bindings.image_texture,
-      command.image_texture
-    );
-
+    this._bind_image_material_buffers(material_id, frame_resources);
     return material_id;
+  }
+
+  _bind_image_material_buffers(material_id, frame_resources) {
+    const material = Material.get(material_id);
+    this._bind_shared_ui_data(material_id, frame_resources);
+    material?.set_texture_data(
+      ui_3d_material_config.bindings.image_texture_pool,
+      this._get_texture_pool()
+    );
+    material?.listen_for_texture_data(`texture_pool_${this.pool_key}`, () => {
+      material.set_texture_data(
+        ui_3d_material_config.bindings.image_texture_pool,
+        this._get_texture_pool()
+      );
+    });
+  }
+
+  _get_texture_pool() {
+    return (
+      ResourceCache.get().fetch(CacheTypes.IMAGE, Name.from(`texture_pool_${this.pool_key}`)) ??
+      TextureArrayPools.get_fallback_view()
+    );
   }
 }
 
@@ -1102,7 +1121,12 @@ export class UI3DRenderProcessor extends SimulationLayer {
       command_corner_rounding(command),
       Number(command.border_width ?? 0),
       emissive,
-      Math.max(0.0001, Number(command.width ?? 1) / Math.max(0.0001, Number(command.height ?? 1))),
+      command.type === UI3DCommandType.Image
+        ? Math.max(0, Number(command.image_texture?.bindless_handle ?? 0))
+        : Math.max(
+          0.0001,
+          Number(command.width ?? 1) / Math.max(0.0001, Number(command.height ?? 1))
+        ),
     ];
     ui.ui_text_glyph = Number(command.glyph_index ?? 0);
 

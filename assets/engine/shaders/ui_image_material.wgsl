@@ -19,15 +19,17 @@ struct UIData {
 };
 
 @group(2) @binding(0) var<storage, read> ui_data: array<UIData>;
-@group(2) @binding(1) var ui_image_texture: texture_2d<f32>;
+@group(2) @binding(1) var ui_image_texture_pool: texture_2d_array<f32>;
 
-fn image_sample(uv: vec2<f32>) -> vec4<f32> {
-    return textureSample(ui_image_texture, global_sampler, uv);
+fn image_sample(entity_id: u32, uv: vec2<f32>) -> vec4<f32> {
+    let data = ui_data[entity_id];
+    let texture_index = i32(max(data.params.w, 0.0) + 0.5);
+    return textureSample(ui_image_texture_pool, global_sampler, uv, texture_index);
 }
 
 fn image_color(entity_id: u32, uv: vec2<f32>) -> vec4<f32> {
     let data = ui_data[entity_id];
-    let image = image_sample(uv);
+    let image = image_sample(entity_id, uv);
     let alpha_mask_mode = data.border_color.r > 0.5;
     let rgb = select(image.rgb * data.color.rgb, data.color.rgb, alpha_mask_mode);
     return vec4<f32>(rgb, image.a * data.color.a);

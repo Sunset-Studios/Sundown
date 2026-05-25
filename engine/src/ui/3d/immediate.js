@@ -588,19 +588,33 @@ function push_quad(
   );
 }
 
-function texture_from_image_config(config = {}) {
+function image_key_from_config(config = {}) {
   const src = config.src ?? config.icon ?? config.path;
   if (!src) {
     return null;
   }
 
-  const texture_key = config.texture_name ?? config.image_name ?? src;
+  return config.texture_name ?? config.image_name ?? src;
+}
+
+function texture_from_image_config(config = {}) {
+  const image_key = image_key_from_config(config);
+  if (!image_key) {
+    return null;
+  }
+
+  const pool_key = config.pool_key ?? config.texture_pool ?? "ui";
+  const texture_key = `${pool_key}:${image_key}`;
+  const src = config.src ?? config.icon ?? config.path;
   let texture = UI3DContext.image_cache.get(texture_key);
   if (!texture) {
     texture = Texture.load({
       name: texture_key,
       paths: [src],
       format: config.format ?? "rgba8unorm",
+      pool_key,
+      material_notifier: texture_key,
+      no_mips: config.no_mips ?? true,
       usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
       flip_y: config.flip_y,
     });
@@ -628,6 +642,7 @@ function push_image(
   if (!texture) {
     return -1;
   }
+  const image_key = texture.config?.name ?? image_key_from_config(config);
 
   const world = local_rect_to_world(root, x, y, width, height, depth);
   return push_command(
@@ -645,6 +660,7 @@ function push_image(
       ],
       width,
       height,
+      image_key,
       image_texture: texture,
       emissive: Number(config.image_emissive ?? config.emissive ?? 1),
       ...material_command_config(config),
