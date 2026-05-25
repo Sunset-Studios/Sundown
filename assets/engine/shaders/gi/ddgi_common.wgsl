@@ -50,6 +50,8 @@ const PROBE_STATE_CONVERGENCE_FRAMES: u32  = 2u;   // Frames for "Newly" states 
 const PROBE_STATE_CONVERGENCE_READINESS_MULTIPLIER_START: f32 = 8.0;
 const PROBE_STATE_CONVERGENCE_READINESS_MULTIPLIER_END: f32 = 1.0;
 const PROBE_STATE_CONVERGENCE_READINESS_MULTIPLIER_RAMP_FRAMES: u32 = 16u;
+const PROBE_STATE_GATHER_STABLE_SAMPLE_COUNT_START: f32 = 8.0;
+const PROBE_STATE_GATHER_STABLE_SAMPLE_COUNT_END: f32 = 24.0;
 const PROBE_STATE_BACKFACE_THRESHOLD: f32  = 0.5;  // Fraction of backface hits = inside geometry
 const PROBE_STATE_NEAR_GEOMETRY_DIST: f32  = 1.0;  // Multiplier of probe_spacing for "near"
 const PROBE_STATE_FLAG_SURFACE_VISIBLE: u32 = 1u;  // Bit 0 of flags byte (bit 24 of packed_state)
@@ -706,8 +708,17 @@ fn ddgi_probe_readiness_weight(state_data: ProbeStateData) -> f32 {
     );
     let readiness_frames_target = f32(PROBE_STATE_CONVERGENCE_FRAMES) * readiness_multiplier;
 
-    // VIGILANT and AWAKE are fully ready
-    return min(1.0, f32(convergence_frames) / readiness_frames_target);
+    // The state machine can promote probes before their local irradiance/depth
+    // history has settled, especially after clipmap scroll. Require both state
+    // convergence and stable accumulated history before the fine cascade takes over.
+    let state_readiness = min(1.0, f32(convergence_frames) / readiness_frames_target);
+    let stability_readiness = smoothstep(
+        PROBE_STATE_GATHER_STABLE_SAMPLE_COUNT_START,
+        PROBE_STATE_GATHER_STABLE_SAMPLE_COUNT_END,
+        f32(state_data.sample_count)
+    );
+
+    return min(state_readiness, stability_readiness);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -850,7 +861,7 @@ fn ddgi_sample_sh_irradiance_single_cascade_internal(
 
     var sh_sum = sh_l1_rgb_zero();
     var weight_sum = 0.0;
-    var readiness_weighted_sum = 0.0;
+    var ready_weight_sum = 0.0;
 
     // Do trilinear interpolation for sampling
     for (var i = 0; i < 8; i = i + 1) {
@@ -911,10 +922,11 @@ fn ddgi_sample_sh_irradiance_single_cascade_internal(
             weight *= trilinear_weight.x * trilinear_weight.y * trilinear_weight.z;
         }
 
+        let ready_weight = weight * probe_readiness;
         let probe_sh = ddgi_sh_probe_read(sh_probes, probe_index);
-        sh_sum = sh_l1_rgb_add(sh_sum, sh_l1_rgb_multiply_scalar(probe_sh, weight));
+        sh_sum = sh_l1_rgb_add(sh_sum, sh_l1_rgb_multiply_scalar(probe_sh, ready_weight));
         weight_sum += weight;
-        readiness_weighted_sum += weight * probe_readiness;
+        ready_weight_sum += ready_weight;
     }
 
     // Mark probes along trilinear neighborhood of surfaces as active
@@ -936,10 +948,10 @@ fn ddgi_sample_sh_irradiance_single_cascade_internal(
 
     var result: DDGISampleResult;
     
-    if (weight_sum > 1e-6) {
-        let sh_interpolated = sh_l1_rgb_multiply_scalar(sh_sum, 1.0 / weight_sum);
+    if (ready_weight_sum > 1e-6) {
+        let sh_interpolated = sh_l1_rgb_multiply_scalar(sh_sum, 1.0 / ready_weight_sum);
         result.irradiance = max(ddgi_sh_evaluate_irradiance(sh_interpolated, normal_ws) * (*ddgi_params).indirect_boost, vec3<f32>(0.0));
-        result.readiness = saturate(readiness_weighted_sum / weight_sum);
+        result.readiness = saturate(ready_weight_sum / max(weight_sum, 1e-6));
     } else {
         result.irradiance = vec3<f32>(0.0);
         result.readiness = 0.0;
