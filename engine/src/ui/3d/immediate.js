@@ -86,6 +86,7 @@ export const UI3DContext = {
   id_counter: 0,
   scroll_state: {},
   input_state: {},
+  events: {},
   font_cache: new Map(),
   image_cache: new Map(),
 
@@ -104,6 +105,35 @@ export const UI3DContext = {
     return font_id;
   },
 };
+
+function entity_event_key(entity) {
+  return entity?.id ?? entity;
+}
+
+export function on_ui_3d_event(entity, event, callback) {
+  const entity_key = entity_event_key(entity);
+  if (!UI3DContext.events[entity_key]) {
+    UI3DContext.events[entity_key] = {};
+  }
+  if (!UI3DContext.events[entity_key][event]) {
+    UI3DContext.events[entity_key][event] = [];
+  }
+  if (!UI3DContext.events[entity_key][event].includes(callback)) {
+    UI3DContext.events[entity_key][event].push(callback);
+  }
+}
+
+export function trigger_ui_3d_event(entity, event, ...args) {
+  const entity_key = entity_event_key(entity);
+  const listeners = UI3DContext.events[entity_key]?.[event];
+  if (!listeners) {
+    return;
+  }
+
+  for (let i = 0; i < listeners.length; i++) {
+    listeners[i](entity, ...args);
+  }
+}
 
 function parse_dimension(value, base = 0) {
   if (typeof value === "string") {
