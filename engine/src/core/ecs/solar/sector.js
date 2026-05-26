@@ -446,9 +446,15 @@ export class Sector {
 
         const source_views = old_seg.chunk.fragment_views[fragment_id];
         const dest_views = new_seg.chunk.fragment_views[fragment_id];
+        if (!dest_views) {
+          continue;
+        }
 
         for (let k = 0; k < fragment_field_entries.length; k++) {
           const [field_name, field_spec] = fragment_field_entries[k];
+          if (!source_views?.[field_name] || !dest_views[field_name]) {
+            continue;
+          }
           const element_count = field_spec.elements;
           const source_offset = old_seg.slot * element_count;
           const copy_elements = old_seg.count * element_count;

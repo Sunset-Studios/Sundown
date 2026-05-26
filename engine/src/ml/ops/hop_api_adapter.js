@@ -38,16 +38,46 @@ export class HopAPIAdapter {
     return Layer.create(type, { enabled_logging, name, ...options }, parent);
   }
 
-  static push_samples(source_layer_id, data, shape, batch_size, input_type = InputType.NUMERIC) {
+  static push_samples(
+    source_layer_id,
+    data,
+    shape,
+    batch_size,
+    input_type = InputType.NUMERIC,
+    target_data = null,
+    target_shape = null,
+    target_batch_size = null,
+    target_input_type = input_type,
+    combine_input_and_target = target_data === null
+  ) {
     const input_layer = Layer.get(source_layer_id);
     if (input_layer.type !== LayerType.INPUT) {
       throw new Error("Source layer is not an input layer");
     }
 
-    const tensor = Tensor.create(data, shape, batch_size, data.constructor);
-    Input.add_sample_batch(input_layer, tensor, tensor);
+    const input_tensor = data
+      ? Tensor.create(data, shape, batch_size, data.constructor)
+      : null;
+    const target_tensor = target_data
+      ? Tensor.create(
+          target_data,
+          target_shape ?? shape,
+          target_batch_size ?? batch_size,
+          target_data.constructor
+        )
+      : combine_input_and_target
+        ? input_tensor
+        : null;
 
-    return tensor;
+    if (input_tensor && target_tensor) {
+      Input.add_sample_batch(input_layer, input_tensor, target_tensor);
+    } else if (input_tensor) {
+      Input.add_input_batch(input_layer, input_tensor);
+    } else if (target_tensor) {
+      Input.add_target_batch(input_layer, target_tensor);
+    }
+
+    return input_tensor ?? target_tensor;
   }
 
   static set_optimizer(type, root = null, beta1 = 0.9, beta2 = 0.999, epsilon = 1e-8) {

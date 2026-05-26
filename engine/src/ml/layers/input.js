@@ -194,6 +194,8 @@ export class Input {
       layer.training_queue = new TrainingQueue(props.capacity);
       layer.current_input_batch = null;
       layer.current_target_batch = null;
+      layer.pending_input_batch = null;
+      layer.pending_target_batch = null;
     }
 
     layer.batch_size = props.batch_size;
@@ -214,6 +216,42 @@ export class Input {
     input_batch.persistent = mark_persistent;
     target_batch.persistent = mark_persistent;
     training_queue.push({ input: input_batch, target: target_batch });
+  }
+
+  static add_input_batch(layer, input_batch, mark_persistent = true) {
+    Input.ensure_training_queue(layer);
+    input_batch.persistent = mark_persistent;
+
+    if (layer.pending_target_batch) {
+      const target_batch = layer.pending_target_batch;
+      layer.pending_target_batch = null;
+      Input.add_sample_batch(layer, input_batch, target_batch);
+      return;
+    }
+
+    if (layer.pending_input_batch) {
+      layer.pending_input_batch.dispose();
+    }
+
+    layer.pending_input_batch = input_batch;
+  }
+
+  static add_target_batch(layer, target_batch, mark_persistent = true) {
+    Input.ensure_training_queue(layer);
+    target_batch.persistent = mark_persistent;
+
+    if (layer.pending_input_batch) {
+      const input_batch = layer.pending_input_batch;
+      layer.pending_input_batch = null;
+      Input.add_sample_batch(layer, input_batch, target_batch);
+      return;
+    }
+
+    if (layer.pending_target_batch) {
+      layer.pending_target_batch.dispose();
+    }
+
+    layer.pending_target_batch = target_batch;
   }
 
   /**

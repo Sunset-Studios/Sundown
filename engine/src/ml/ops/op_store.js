@@ -3,6 +3,7 @@ import { MLOp, MLHop, MLOpParams, MLOpType, MLHopType } from "./op_types.js";
 import { FrameAllocator, RandomAccessAllocator } from "../../memory/allocator.js";
 import { HopAPIAdapter } from "./hop_api_adapter.js";
 import { Layer } from "../layer.js";
+import { InputType } from "../ml_types.js";
 
 const default_reset_op = { type: MLHopType.RESET_MODEL };
 
@@ -772,21 +773,44 @@ export class MLOpStore {
     return result;
   }
 
-  push_samples(source_layer_id, data, shape, batch_size, input_type = InputType.NUMERIC) {
+  push_samples(
+    source_layer_id,
+    data,
+    shape,
+    batch_size,
+    input_type = InputType.NUMERIC,
+    target_data = null,
+    target_shape = null,
+    target_batch_size = null,
+    target_input_type = input_type,
+    combine_input_and_target = target_data === null
+  ) {
     const hop = this.hops.allocate();
     hop.type = MLHopType.PUSH_SAMPLES;
     hop.param_start = this.hops_params.length;
-    hop.param_count = 2;
+    hop.param_count = 3;
     
     let result = null;
     if (this.hop_handlers.has(MLHopType.PUSH_SAMPLES)) {
-      result = this.hop_handlers.get(MLHopType.PUSH_SAMPLES)(source_layer_id, data, shape, batch_size, input_type);
+      result = this.hop_handlers.get(MLHopType.PUSH_SAMPLES)(
+        source_layer_id,
+        data,
+        shape,
+        batch_size,
+        input_type,
+        target_data,
+        target_shape,
+        target_batch_size,
+        target_input_type,
+        combine_input_and_target
+      );
     }
 
     hop.result = result.id;
 
     this.hops_params.add(source_layer_id, 1);  
     this.hops_params.add(input_type, 1);  
+    this.hops_params.add(target_input_type, 1);
 
     this.notify_observers(hop);
 
