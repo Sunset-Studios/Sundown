@@ -4,6 +4,7 @@ import { FrameAllocator, RandomAccessAllocator } from "../../memory/allocator.js
 import { HopAPIAdapter } from "./hop_api_adapter.js";
 import { Layer } from "../layer.js";
 import { InputType } from "../ml_types.js";
+import { DataChannel } from "../data/data_provider.js";
 
 const default_reset_op = { type: MLHopType.RESET_MODEL };
 
@@ -33,6 +34,7 @@ export class MLOpStore {
     this.register_hop_handler(MLHopType.SET_SUBNET_CONTEXT, HopAPIAdapter.set_subnet_context);
     this.register_hop_handler(MLHopType.SET_SUBNET_CONTEXT_PROPERTY, HopAPIAdapter.set_subnet_context_property);
     this.register_hop_handler(MLHopType.ADD_INPUT, HopAPIAdapter.add_input);
+    this.register_hop_handler(MLHopType.SET_INPUT_CHANNEL_PROVIDER, HopAPIAdapter.set_input_channel_provider);
     this.register_hop_handler(MLHopType.ADD_LAYER, HopAPIAdapter.add_layer);
     this.register_hop_handler(MLHopType.ADD_ACTIVATION, HopAPIAdapter.add_activation);
     this.register_hop_handler(MLHopType.ADD_LOSS, HopAPIAdapter.add_loss);
@@ -707,6 +709,32 @@ export class MLOpStore {
 
     this.hops_params.add(capacity, 1);
     this.hops_params.add(batch_size, 1);
+
+    this.notify_observers(hop);
+
+    return result;
+  }
+
+  set_input_channel_provider(source_layer_id, channel = DataChannel.INPUT, provider_or_kind = null, options = {}) {
+    const hop = this.hops.allocate();
+    hop.type = MLHopType.SET_INPUT_CHANNEL_PROVIDER;
+    hop.param_start = this.hops_params.length;
+    hop.param_count = 1;
+    hop.payload = { channel, provider: provider_or_kind, options };
+
+    let result = null;
+    if (this.hop_handlers.has(MLHopType.SET_INPUT_CHANNEL_PROVIDER)) {
+      result = this.hop_handlers.get(MLHopType.SET_INPUT_CHANNEL_PROVIDER)(
+        source_layer_id,
+        channel,
+        provider_or_kind,
+        options
+      );
+    }
+
+    hop.result = result;
+
+    this.hops_params.add(source_layer_id, 1);
 
     this.notify_observers(hop);
 

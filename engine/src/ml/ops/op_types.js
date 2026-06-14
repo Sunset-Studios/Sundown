@@ -57,6 +57,7 @@ export const MLHopType = Object.freeze({
   REORDER_LAYER: 13,
   MERGE_MODELS: 14,
   REMOVE_LAYER: 15,
+  SET_INPUT_CHANNEL_PROVIDER: 16,
 });
 
 // A class that represents a low-level operation and all associated parameters.

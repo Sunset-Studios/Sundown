@@ -1,6 +1,13 @@
 import { Tensor } from "../math/tensor.js";
 import { Layer } from "../layer.js";
-import { InputType } from "../ml_types.js";
+import {
+  DataChannel,
+  DataProviderRegistry,
+  get_provider_shape,
+  normalize_provider_batch,
+  require_positive_integer,
+} from "../data/data_provider.js";
+import "../data/providers/index.js";
 
 const number_name = "number";
 const input_layer_error = "InputLayer not initialized correctly.";
@@ -199,8 +206,120 @@ export class Input {
     }
 
     layer.batch_size = props.batch_size;
+    layer.data_providers ??= new Map();
 
     return layer.training_queue;
+  }
+
+  static resolve_provider(provider_or_kind, options = {}) {
+    if (typeof provider_or_kind === "string") {
+      return DataProviderRegistry.create(provider_or_kind, options);
+    }
+
+    if (provider_or_kind.next && provider_or_kind.describe) {
+      return provider_or_kind;
+    }
+
+    throw new Error("Invalid input data provider.");
+  }
+
+  static set_data_provider(layer, channel, provider_or_kind, options = {}) {
+    Input.ensure_training_queue(layer);
+
+    if (!Object.values(DataChannel).includes(channel)) {
+      throw new Error(`Invalid input data channel: ${channel}`);
+    }
+
+    if (provider_or_kind === null) {
+      layer.data_providers.delete(channel);
+      return null;
+    }
+
+    const provider = Input.resolve_provider(provider_or_kind, options);
+    layer.data_providers.set(channel, provider);
+
+    return provider;
+  }
+
+  static get_data_provider(layer, channel) {
+    Input.ensure_training_queue(layer);
+    return layer.data_providers.get(channel);
+  }
+
+  static get_input_shape(layer) {
+    const input_provider = Input.get_data_provider(layer, DataChannel.INPUT);
+    return get_provider_shape(input_provider);
+  }
+
+  static provider_batch_to_tensor(batch) {
+    const normalized_batch = normalize_provider_batch(batch);
+    if (!normalized_batch) {
+      return null;
+    }
+
+    if (normalized_batch.tensor) {
+      return normalized_batch.tensor;
+    }
+
+    return Tensor.create(
+      normalized_batch.data,
+      normalized_batch.shape,
+      normalized_batch.batch_size,
+      normalized_batch.ArrayType
+    );
+  }
+
+  static pump_data_providers(layer) {
+    Input.ensure_training_queue(layer);
+
+    if (layer.training_queue.length > 0) {
+      return false;
+    }
+
+    const input_provider = layer.data_providers.get(DataChannel.INPUT);
+    if (!input_provider || input_provider.is_paused()) {
+      return false;
+    }
+
+    const target_provider = layer.data_providers.get(DataChannel.TARGET);
+    if (target_provider?.is_paused()) {
+      return false;
+    }
+
+    const count = require_positive_integer(layer.properties.batch_size, "samples_per_step");
+    const input_batch = input_provider.next(count, {
+      channel: DataChannel.INPUT,
+      input_layer: layer,
+    });
+    const input_tensor = Input.provider_batch_to_tensor(input_batch);
+
+    if (!input_tensor) {
+      return false;
+    }
+
+    let target_tensor = null;
+    if (target_provider) {
+      const target_batch = target_provider.next(count, {
+        channel: DataChannel.TARGET,
+        input_layer: layer,
+        input_batch,
+        input_tensor,
+      });
+      target_tensor = Input.provider_batch_to_tensor(target_batch);
+    }
+
+    // Treat as combined input/target when there is no target tensor batch
+    if (!target_tensor) {
+      target_tensor = input_tensor;
+    }
+
+    if (target_tensor) {
+      Input.add_sample_batch(layer, input_tensor, target_tensor);
+    } else {
+      Input.add_input_batch(layer, input_tensor);
+    }
+
+    return true;
   }
 
   /**
@@ -260,6 +379,7 @@ export class Input {
    */
   static forward(layer, input_tensor, target_tensor = null /* unused */) {
     const training_queue = Input.ensure_training_queue(layer);
+    Input.pump_data_providers(layer);
 
     let { input, target } = training_queue.next(layer.batch_size);
 

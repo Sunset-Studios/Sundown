@@ -44,7 +44,7 @@ export class Tensor {
   initialize(data, shape, batch_size = 1, ArrayType = Float32Array) {
     this.batch_size = batch_size;
     this.shape = shape;
-    this.size = shape.reduce((a, b) => a * b, 1);
+    this.size = Tensor.sample_size(shape);
     this.array_type = ArrayType;
 
     if (data instanceof ArrayType) {
@@ -636,5 +636,16 @@ export class Tensor {
   static format_shape(shape) {
     const normalized_shape = Tensor.normalize_shape(shape);
     return normalized_shape ? `[${normalized_shape.join(", ")}]` : "unknown";
+  }
+
+  /**
+   * Returns the total number of samples described by dimensionally reducing this shape
+   * 
+   * @param {number|number[]} shape 
+   * @returns 
+   */
+  static sample_size(shape) {
+    const normalized_shape = Tensor.normalize_shape(shape);
+    return normalized_shape.reduce((total, dim) => total * dim, 1);
   }
 }

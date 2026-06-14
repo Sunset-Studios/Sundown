@@ -1,5 +1,6 @@
 import { LayerType } from "./ml_types.js";
 import { Tensor } from "./math/tensor.js";
+import { DataChannel, get_provider_shape } from "./data/data_provider.js";
 
 /**
  * Shape rule for FullyConnected layers.
@@ -65,6 +66,13 @@ function get_external_source_shape(root_layer) {
   if (root_layer?.training_queue?.length > 0 && first_sample?.input?.shape) {
     return Tensor.normalize_shape(first_sample.input.shape);
   }
+
+  const input_provider = root_layer?.data_providers?.get?.(DataChannel.INPUT);
+  const provider_shape = get_provider_shape(input_provider);
+  if (Tensor.is_shape_valid(provider_shape)) {
+    return provider_shape;
+  }
+
   return null;
 }
 
@@ -141,7 +149,7 @@ function configure_fully_connected(layer, input_shape, output_shape) {
   const input_size = Tensor.last_dim(input_shape);
   const output_size = Tensor.last_dim(normalized_output_shape);
   const row_count =
-    input_leading_shape.length === 0 ? 1 : input_leading_shape.reduce((acc, dim) => acc * dim, 1);
+    input_leading_shape.length === 0 ? 1 : Tensor.sample_size(input_leading_shape);
   const execution_input_shape = [row_count, input_size];
   const execution_output_shape = [row_count, output_size];
 
@@ -223,13 +231,11 @@ function infer_input_shape(layer, shapes) {
     input_shape = reference_shape;
   }
 
-  const normalized_input_shape = Tensor.normalize_shape(input_shape);
-
-  if (!Tensor.shapes_equal(layer.properties.inferred_input_shape, normalized_input_shape)) {
-    layer.properties.inferred_input_shape = normalized_input_shape;
+  if (!Tensor.shapes_equal(layer.properties.inferred_input_shape, input_shape)) {
+    layer.properties.inferred_input_shape = input_shape;
   }
 
-  return normalized_input_shape;
+  return input_shape;
 }
 
 /**

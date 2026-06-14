@@ -2,6 +2,8 @@ import { LayerType, OptimizerType, InputType } from "../ml_types.js";
 import { Layer, TrainingContext } from "../layer.js";
 import { Input } from "../layers/input.js";
 import { Tensor } from "../math/tensor.js";
+import { DataChannel } from "../data/data_provider.js";
+import "../data/providers/index.js";
 
 import { Adam } from "../optimizers/adam.js";
 
@@ -18,6 +20,15 @@ export class HopAPIAdapter {
 
   static add_input(capacity, batch_size, parent = null) {
     return Layer.create(LayerType.INPUT, { capacity, batch_size }, parent);
+  }
+
+  static set_input_channel_provider(source_layer_id, channel = DataChannel.INPUT, provider_or_kind = null, options = {}) {
+    const input_layer = Layer.get(source_layer_id);
+    if (!input_layer || input_layer.type !== LayerType.INPUT) {
+      throw new Error("Source layer is not an input layer");
+    }
+
+    return Input.set_data_provider(input_layer, channel, provider_or_kind, options);
   }
 
   static add_layer(type, output_size, parent = null, options = {}, params = null) {
