@@ -25,12 +25,11 @@
 
 @group(1) @binding(0) var<uniform> ddgi_params: DDGIParams;
 @group(1) @binding(1) var<storage, read> probe_update_indices: array<u32>;
-@group(1) @binding(2) var<storage, read> probe_ray_allocations: array<vec2<u32>>;
-@group(1) @binding(3) var<storage, read_write> probe_ray_data: DDGIProbeRayDataBuffer;
-@group(1) @binding(4) var<storage, read_write> probe_alpha: array<f32>;
-@group(1) @binding(5) var<storage, read_write> sh_probes: array<u32>;
-@group(1) @binding(6) var<storage, read_write> probe_states: array<ProbeStateData>;
-@group(1) @binding(7) var<storage, read> gi_counters: GICountersReadOnly;
+@group(1) @binding(2) var<storage, read_write> probe_ray_data: DDGIProbeRayDataBuffer;
+@group(1) @binding(3) var<storage, read_write> probe_alpha: array<f32>;
+@group(1) @binding(4) var<storage, read_write> sh_probes: array<u32>;
+@group(1) @binding(5) var<storage, read_write> probe_states: array<ProbeStateData>;
+@group(1) @binding(6) var<storage, read> gi_counters: GICountersReadOnly;
 
 // =============================================================================
 // CONSTANTS
@@ -49,18 +48,23 @@ const SPHERE_AREA = 12.566370614359172; // 4 * PI
 // - If probe luminance changes a lot: aggressively discard history -> fast adapt.
 // - If probe luminance changes a little: keep a long effective history -> stable.
 // -----------------------------------------------------------------------------
-const DDGI_HISTORY_CAP_FRAMES_MIN = 1.0;    // big change -> behave like "replace"
-const DDGI_HISTORY_CAP_FRAMES_MAX = 128.0;  // small change -> stable long history
+const DDGI_HISTORY_CAP_FRAMES_MAX = 48.0;  // small change -> stable long history
 const DDGI_LUMA_FAST_START = 0.60;          // relative delta where we start speeding up
 const DDGI_LUMA_FAST_END = 0.90;            // relative delta where we fully speed up
 const DDGI_LUMA_EPS = 1e-6;
+const DDGI_FAST_ADAPT_ALPHA_MAX = 0.20;
+const DDGI_SCROLLED_FAST_ADAPT_ALPHA_MAX = 0.12;
 
 // Variance gate for the fast-adapt path:
 // High-variance probes can flicker frame-to-frame; we suppress "fast change" when
 // the detected change is not statistically significant relative to ray noise.
-const DDGI_NOISE_RATIO_START = 0.10; // standard_error / mean where we start suppressing fast adapt
-const DDGI_NOISE_RATIO_END = 0.35;   // standard_error / mean where fast adapt is mostly suppressed
+const DDGI_NOISE_RATIO_START = 0.18; // standard_error / mean where we start suppressing fast adapt
+const DDGI_NOISE_RATIO_END = 0.45;   // standard_error / mean where fast adapt is mostly suppressed
 const DDGI_NOISE_SIGMA_MULTIPLIER = 2.0; // require delta > k * standard_error to be considered "real"
+const DDGI_YOUNG_PROBE_FAST_ADAPT_END = 8.0;
+const DDGI_SCROLLED_PROBE_FAST_ADAPT_END = 20.0;
+const DDGI_YOUNG_PROBE_MAX_CHANGE_FACTOR = 0.35;
+const DDGI_SCROLLED_PROBE_MAX_CHANGE_FACTOR = 0.20;
 
 fn ddgi_sh_average_radiance_luma(sh: SH_L1_RGB) -> f32 {
     // For L1 SH, coefficient c0 is the projection onto Y00 (constant basis).
@@ -100,9 +104,8 @@ fn cs(
     }
 
     let probe_index = probe_update_indices[wg_id.x];
-    let allocation = probe_ray_allocations[wg_id.x];
-    let ray_base = allocation.x;
-    let rays_per_probe = max(1u, allocation.y);
+    let rays_per_probe = ddgi_max_rays_per_probe(&ddgi_params);
+    let ray_base = wg_id.x * rays_per_probe;
     let n = f32(rays_per_probe);
     let sample_weight = SPHERE_AREA / n;
 
@@ -183,8 +186,8 @@ fn cs(
     let sh_prev = ddgi_sh_probe_read(&sh_probes, probe_index);
     let prev_sample_count = ddgi_probe_state_get_sample_count(&probe_states[probe_index]);
 
-    let probe_state = probe_state_get_state(probe_states[probe_index].packed_state);
-    let is_newly_state = probe_state_is_newly(probe_state);
+    let probe_flags = probe_state_get_flags(probe_states[probe_index].packed_state);
+    let is_scrolled_probe = (probe_flags & PROBE_STATE_FLAG_SCROLL_RESET) != 0u;
 
     let luma_prev = ddgi_sh_average_radiance_luma(sh_prev);
     let luma_new = ddgi_sh_average_radiance_luma(sh_new);
@@ -203,13 +206,41 @@ fn cs(
     let significant_delta = max(relative_luma_delta - sigma_threshold, 0.0);
 
     var change_factor = smoothstep(DDGI_LUMA_FAST_START, DDGI_LUMA_FAST_END, significant_delta) * noise_suppression;
-    change_factor = select(change_factor, 1.0, is_newly_state);
+
+    let prev_sample_count_f = f32(prev_sample_count);
+    let young_probe_fast_adapt_end = select(
+        DDGI_YOUNG_PROBE_FAST_ADAPT_END,
+        DDGI_SCROLLED_PROBE_FAST_ADAPT_END,
+        is_scrolled_probe
+    );
+    let young_probe_max_change_factor = select(
+        DDGI_YOUNG_PROBE_MAX_CHANGE_FACTOR,
+        DDGI_SCROLLED_PROBE_MAX_CHANGE_FACTOR,
+        is_scrolled_probe
+    );
+    let young_probe_t = saturate(prev_sample_count_f / max(young_probe_fast_adapt_end, 1.0));
+    let young_probe_change_limit = mix(young_probe_max_change_factor, 1.0, young_probe_t);
+
+    // Only the first local sample should replace the warm start. After that,
+    // newly/scrolled probes must accumulate enough history to suppress MC noise
+    // instead of repeatedly resetting their sample_count back to 1.
+    change_factor = select(
+        min(change_factor, young_probe_change_limit),
+        1.0,
+        prev_sample_count == 0u
+    );
 
     let prev_frames = min(f32(prev_sample_count), DDGI_HISTORY_CAP_FRAMES_MAX);
-    let history_cap_frames = mix(DDGI_HISTORY_CAP_FRAMES_MAX, DDGI_HISTORY_CAP_FRAMES_MIN, change_factor);
-    let retained_frames = min(prev_frames * (1.0 - change_factor), history_cap_frames - 1.0);
-    let accumulated_frames = retained_frames + 1.0;
-    let alpha = 1.0 / accumulated_frames;
+    let stable_frames = min(prev_frames + 1.0, DDGI_HISTORY_CAP_FRAMES_MAX);
+    let stable_alpha = 1.0 / max(stable_frames, 1.0);
+    let fast_alpha_cap = select(
+        DDGI_FAST_ADAPT_ALPHA_MAX,
+        DDGI_SCROLLED_FAST_ADAPT_ALPHA_MAX,
+        is_scrolled_probe
+    );
+    let adaptive_alpha = mix(stable_alpha, max(stable_alpha, fast_alpha_cap), change_factor);
+    let alpha = select(adaptive_alpha, 1.0, prev_sample_count == 0u);
+    let accumulated_frames = select(stable_frames, 1.0, prev_sample_count == 0u);
 
     let sh_result = sh_l1_rgb_lerp(sh_prev, sh_new, alpha);
 

@@ -45,19 +45,19 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     if (delta.x > 0) {
         reset = reset || world_coord.x > dims.x - u32(delta.x) - 1u;
     } else if (delta.x < 0) {
-        reset = reset || world_coord.x <= u32(-delta.x);
+        reset = reset || world_coord.x < u32(-delta.x);
     }
 
     if (delta.y > 0) {
         reset = reset || world_coord.y > dims.y - u32(delta.y) - 1u;
     } else if (delta.y < 0) {
-        reset = reset || world_coord.y <= u32(-delta.y);
+        reset = reset || world_coord.y < u32(-delta.y);
     }
 
     if (delta.z > 0) {
         reset = reset || world_coord.z > dims.z - u32(delta.z) - 1u;
     } else if (delta.z < 0) {
-        reset = reset || world_coord.z <= u32(-delta.z);
+        reset = reset || world_coord.z < u32(-delta.z);
     }
 
     if (!reset) {
@@ -96,12 +96,27 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         ddgi_probe_state_set_sample_count(&probe_states[probe_index], 0u);
     }
 
-    // Initialize depth moments to "not visible" (0).
+    let spacing = ddgi_cascade_spacing(&ddgi_params, cascade_index);
+    let max_dim = max(
+        ddgi_params.probe_grid_dims.x,
+        max(ddgi_params.probe_grid_dims.y, ddgi_params.probe_grid_dims.z)
+    );
+    let miss_distance = max(1.0, spacing * max_dim * 2.0);
+    let miss_moment = ddgi_depth_moments_pack(miss_distance, miss_distance * miss_distance);
+
+    // Start freshly revealed probes as conservatively visible. Real traced
+    // depth moments then converge them toward local occlusion without random
+    // zero-depth texels flickering in and out while the atlas fills.
     let depth_base = ddgi_depth_base_for_probe(&ddgi_params, probe_index);
     let depth_texel_count = ddgi_depth_texel_count_for_probe(&ddgi_params, probe_index);
     for (var texel = 0u; texel < depth_texel_count; texel = texel + 1u) {
-        probe_depth_moments[depth_base + texel] = 0u;
+        probe_depth_moments[depth_base + texel] = miss_moment;
     }
 
-    probe_states[probe_index].packed_state = probe_state_pack(PROBE_STATE_UNINITIALIZED, 0u, 0u, 0u);
+    probe_states[probe_index].packed_state = probe_state_pack(
+        PROBE_STATE_UNINITIALIZED,
+        0u,
+        0u,
+        PROBE_STATE_FLAG_SCROLL_RESET
+    );
 }

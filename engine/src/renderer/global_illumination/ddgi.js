@@ -183,12 +183,6 @@ const ddgi_probe_trace_init_shader_setup = {
   },
 };
 
-const ddgi_probe_ray_budget_shader_setup = {
-  pipeline_shaders: {
-    compute: { path: "gi/ddgi_probe_ray_budget.wgsl" },
-  },
-};
-
 const ddgi_probe_trace_hit_shader_setup = {
   pipeline_shaders: {
     compute: { path: "gi/ddgi_probe_trace_hit.wgsl" },
@@ -251,12 +245,11 @@ const ddgi_atrous_diffuse_shader_setup = {
 
 export class DDGI {
   config = {
-    probe_grid_dimensions: [64, 64, 64],
-    probe_spacing: 1.0,
+    probe_grid_dimensions: [32, 32, 32],
+    probe_spacing: 2.0,
     probe_radius: 0.1,
-    min_rays_per_probe: 32,
-    max_rays_per_probe: 256,
-    probes_per_frame: 512,
+    max_rays_per_probe: 32,
+    probes_per_frame: 1024,
     probe_update_culled_ratio: 0.1,
     indirect_boost: 1.0,
     cascade_count: DDGI_MAX_CASCADES,
@@ -283,6 +276,7 @@ export class DDGI {
   shared_bindings = {
     sh_probes_buffer: null,
     probe_states_buffer: null,
+    probe_depth_moments_buffer: null,
   };
 
   // DDGIParams layout:
@@ -299,7 +293,7 @@ export class DDGI {
   // [28]    permutation_stride       (precomputed coprime stride for probe cycling)
   // [29]    permutation_base_offset  (precomputed base offset for permutation)
   // [30]    permutation_frame_stride (precomputed frame stride for temporal offset)
-  // [31]    min_rays_per_probe
+  // [31]    unused
   // [32+]   cascade[0..N]:
   //         origin_spacing(4), scroll_offset(4), snap_delta(4), depth_atlas_info(4)
   // ... (16 floats per cascade)
@@ -486,14 +480,7 @@ export class DDGI {
         : Math.min(total_probe_count, probes_per_frame_cfg);
     const probes_per_frame = Math.min(total_probe_count, probes_per_frame_requested);
 
-    const min_rays_per_probe = Math.max(
-      1,
-      Math.floor(this.config.min_rays_per_probe)
-    );
-    const max_rays_per_probe = Math.max(
-      min_rays_per_probe,
-      Math.floor(this.config.max_rays_per_probe)
-    );
+    const max_rays_per_probe = Math.max(1, Math.floor(this.config.max_rays_per_probe));
 
     const gi_counters_data = this.ddgi_gi_counters_data;
     const active_probe_count_nonculled =
@@ -502,8 +489,7 @@ export class DDGI {
       gi_counters_data[DDGI_GI_COUNTER_CULLED_ACTIVE_PROBE_INDEX] || 0;
     const active_probe_count = active_probe_count_nonculled + active_probe_count_culled;
     const probe_update_count = gi_counters_data[DDGI_GI_COUNTER_PROBE_UPDATE_COUNT_INDEX] || 0;
-    const min_total_rays_fired = probe_update_count * min_rays_per_probe;
-    const max_total_rays_fired = probe_update_count * max_rays_per_probe;
+    const total_rays_fired = probe_update_count * max_rays_per_probe;
 
     return {
       probe_grid_dims,
@@ -511,10 +497,8 @@ export class DDGI {
       probes_per_cascade,
       total_probe_count,
       probes_per_frame,
-      min_rays_per_probe,
       max_rays_per_probe,
-      min_total_rays_fired,
-      max_total_rays_fired,
+      total_rays_fired,
       active_probe_count,
       active_probe_count_nonculled,
       active_probe_count_culled,
@@ -565,14 +549,7 @@ export class DDGI {
         ? probe_count
         : Math.min(probe_count, probes_per_frame_cfg);
     const probes_per_frame = Math.min(probe_count, probes_per_frame_requested);
-    const min_rays_per_probe = Math.max(
-      1,
-      Math.floor(this.config.min_rays_per_probe)
-    );
-    const max_rays_per_probe = Math.max(
-      min_rays_per_probe,
-      Math.floor(this.config.max_rays_per_probe)
-    );
+    const max_rays_per_probe = Math.max(1, Math.floor(this.config.max_rays_per_probe));
     const probe_primary_ray_count = probes_per_frame * max_rays_per_probe;
     const probe_total_ray_count = probe_primary_ray_count;
 
@@ -813,13 +790,6 @@ export class DDGI {
       force: force_recreate,
     });
 
-    const probe_ray_allocations = render_graph.create_buffer({
-      name: "ddgi_probe_ray_allocations",
-      size: probes_per_frame * 2,
-      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-      force: force_recreate,
-    });
-
     // ─────────────────────────────────────────────────────────────────────────
     // Active-only probe scheduling with frustum culling priority
     // (cull → mark → prefix sum → scatter)
@@ -890,13 +860,6 @@ export class DDGI {
         4 +                         // header = 1 atomic<u32> + padding = 4 x u32 words
         probe_total_ray_count * 40, // 10 vec4s = 40 x u32 words
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-      force: force_recreate,
-    });
-
-    const probe_ray_dispatch_params = render_graph.create_buffer({
-      name: "ddgi_probe_ray_dispatch_params",
-      size: 4,
-      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.INDIRECT | GPUBufferUsage.COPY_DST,
       force: force_recreate,
     });
 
@@ -1008,7 +971,7 @@ export class DDGI {
         this.ddgi_params_data[28] = permutation_params.stride;
         this.ddgi_params_data[29] = permutation_params.base_offset;
         this.ddgi_params_data[30] = permutation_params.frame_stride;
-        this.ddgi_params_data[31] = min_rays_per_probe;
+        this.ddgi_params_data[31] = 0;
 
         // Copy cascade data into params buffer (starts at offset 32)
         // Each cascade has 16 floats:
@@ -1243,35 +1206,12 @@ export class DDGI {
     );
 
     render_graph.add_pass(
-      "ddgi_probe_ray_budget",
-      RenderPassFlags.Compute,
-      {
-        inputs: [
-          this.ddgi_params,
-          probe_update_indices,
-          probe_states,
-          gi_counters,
-          probe_ray_allocations,
-          probe_ray_data,
-          probe_ray_dispatch_params,
-        ],
-        outputs: [probe_ray_allocations, probe_ray_data, probe_ray_dispatch_params],
-        shader_setup: ddgi_probe_ray_budget_shader_setup,
-      },
-      (graph, frame_data, encoder) => {
-        const pass = graph.get_physical_pass(frame_data.current_pass);
-        pass.dispatch(Math.ceil(probes_per_frame / COMPUTE_WORKGROUP_SIZE), 1, 1);
-      }
-    );
-
-    render_graph.add_pass(
       "ddgi_probe_trace_init",
       RenderPassFlags.Compute,
       {
         inputs: [
           this.ddgi_params,
           probe_update_indices,
-          probe_ray_allocations,
           probe_ray_data,
           gi_counters,
         ],
@@ -1310,8 +1250,7 @@ export class DDGI {
       },
       (graph, frame_data, encoder) => {
         const pass = graph.get_physical_pass(frame_data.current_pass);
-        const dispatch_buffer = graph.get_physical_buffer(probe_ray_dispatch_params);
-        pass.dispatch_indirect(dispatch_buffer, 0);
+        pass.dispatch(Math.ceil(probe_total_ray_count / COMPUTE_WORKGROUP_SIZE), 1, 1);
       }
     );
 
@@ -1347,15 +1286,13 @@ export class DDGI {
           specular_pool_buffer,
           emission_pool_buffer,
           skybox_texture_buffer,
-          probe_ray_dispatch_params,
         ],
         outputs: [probe_ray_data],
         shader_setup: ddgi_probe_trace_shade_shader_setup,
       },
       (graph, frame_data, encoder) => {
         const pass = graph.get_physical_pass(frame_data.current_pass);
-        const dispatch_buffer = graph.get_physical_buffer(probe_ray_dispatch_params);
-        pass.dispatch_indirect(dispatch_buffer, 0);
+        pass.dispatch(Math.ceil(probe_total_ray_count / COMPUTE_WORKGROUP_SIZE), 1, 1);
       }
     );
 
@@ -1372,7 +1309,6 @@ export class DDGI {
         inputs: [
           this.ddgi_params,
           probe_update_indices,
-          probe_ray_allocations,
           probe_ray_data,
           probe_alpha,
           sh_probes,
@@ -1401,15 +1337,13 @@ export class DDGI {
           probe_ray_data,
           probe_alpha,
           probe_depth_moments,
-          probe_ray_dispatch_params,
         ],
         outputs: [probe_depth_moments],
         shader_setup: ddgi_depth_update_shader_setup,
       },
       (graph, frame_data, encoder) => {
         const pass = graph.get_physical_pass(frame_data.current_pass);
-        const dispatch_buffer = graph.get_physical_buffer(probe_ray_dispatch_params);
-        pass.dispatch_indirect(dispatch_buffer, 0);
+        pass.dispatch(Math.ceil(probe_total_ray_count / COMPUTE_WORKGROUP_SIZE), 1, 1);
       }
     );
 
@@ -1425,7 +1359,6 @@ export class DDGI {
         inputs: [
           this.ddgi_params,
           probe_update_indices,
-          probe_ray_allocations,
           probe_ray_data,
           probe_states,
           gi_counters,
@@ -1573,6 +1506,7 @@ export class DDGI {
     this.ddgi_probe_count = probe_count;
     this.shared_bindings.sh_probes_buffer = sh_probes;
     this.shared_bindings.probe_states_buffer = probe_states;
+    this.shared_bindings.probe_depth_moments_buffer = probe_depth_moments;
   }
 
   set_config(new_config) {

@@ -47,14 +47,17 @@ const PROBE_STATE_AWAKE: u32         = 6u;   // Near dynamic geometry - trace wh
 // Classification parameters
 const PROBE_STATE_INIT_FRAMES: u32         = 1u;   // Frames of tracing for classification
 const PROBE_STATE_CONVERGENCE_FRAMES: u32  = 2u;   // Frames for "Newly" states to converge
-const PROBE_STATE_CONVERGENCE_READINESS_MULTIPLIER_START: f32 = 8.0;
+const PROBE_STATE_CONVERGENCE_READINESS_MULTIPLIER_START: f32 = 2.0;
 const PROBE_STATE_CONVERGENCE_READINESS_MULTIPLIER_END: f32 = 1.0;
-const PROBE_STATE_CONVERGENCE_READINESS_MULTIPLIER_RAMP_FRAMES: u32 = 16u;
-const PROBE_STATE_GATHER_STABLE_SAMPLE_COUNT_START: f32 = 8.0;
-const PROBE_STATE_GATHER_STABLE_SAMPLE_COUNT_END: f32 = 24.0;
+const PROBE_STATE_CONVERGENCE_READINESS_MULTIPLIER_RAMP_FRAMES: u32 = 8u;
+const PROBE_STATE_GATHER_STABLE_SAMPLE_COUNT_START: f32 = 2.0;
+const PROBE_STATE_GATHER_STABLE_SAMPLE_COUNT_END: f32 = 8.0;
+const PROBE_STATE_SCROLLED_STABLE_SAMPLE_COUNT_START: f32 = 8.0;
+const PROBE_STATE_SCROLLED_STABLE_SAMPLE_COUNT_END: f32 = 20.0;
 const PROBE_STATE_BACKFACE_THRESHOLD: f32  = 0.5;  // Fraction of backface hits = inside geometry
 const PROBE_STATE_NEAR_GEOMETRY_DIST: f32  = 1.0;  // Multiplier of probe_spacing for "near"
 const PROBE_STATE_FLAG_SURFACE_VISIBLE: u32 = 1u;  // Bit 0 of flags byte (bit 24 of packed_state)
+const PROBE_STATE_FLAG_SCROLL_RESET: u32 = 2u;      // Bit 1 of flags byte: newly revealed by clipmap scroll
 
 // Maximum number of DDGI cascades supported
 const DDGI_MAX_CASCADES: u32 = 4u;
@@ -80,7 +83,7 @@ struct DDGIParams {
     permutation_stride: f32,       // Precomputed coprime stride for probe cycling (CPU-computed)
     permutation_base_offset: f32,  // Precomputed base offset for permutation (CPU-computed)
     permutation_frame_stride: f32, // Precomputed frame stride for temporal offset (CPU-computed)
-    min_rays_per_probe: f32,       // min_rays_per_probe
+    _unused0: f32,
     cascades: array<DDGICascadeData, DDGI_MAX_CASCADES>, // Per-cascade data (origin, scroll, snap)
 };
 
@@ -146,10 +149,6 @@ fn ddgi_probe_state_set_sample_count(probe_state: ptr<storage, ProbeStateData, r
 
 fn ddgi_max_rays_per_probe(ddgi_params: ptr<uniform, DDGIParams>) -> u32 {
     return max(1u, u32((*ddgi_params).probe_counts.y));
-}
-
-fn ddgi_min_rays_per_probe(ddgi_params: ptr<uniform, DDGIParams>) -> u32 {
-    return min(ddgi_max_rays_per_probe(ddgi_params), max(1u, u32((*ddgi_params).min_rays_per_probe)));
 }
 
 fn ddgi_probe_count_per_cascade(ddgi_params: ptr<uniform, DDGIParams>) -> u32 {
@@ -539,7 +538,7 @@ fn ddgi_sh_evaluate_radiance(
 // retaining sufficient precision for Chebyshev visibility testing.
 // ─────────────────────────────────────────────────────────────────────────────
 fn ddgi_depth_moments_pack(mean_t: f32, mean_t2: f32) -> u32 {
-    return pack2x16float(vec2<f32>(mean_t, mean_t2));
+    return pack2x16float(min(vec2<f32>(mean_t, mean_t2), vec2<f32>(65504.0)));
 }
 
 fn ddgi_depth_moments_unpack(packed: u32) -> vec2<f32> {
@@ -691,6 +690,7 @@ fn probe_state_is_newly(state: u32) -> bool {
 fn ddgi_probe_readiness_weight(state_data: ProbeStateData) -> f32 {
     let state = probe_state_get_state(state_data.packed_state);
     let convergence_frames = probe_state_get_convergence_frames(state_data.packed_state);
+    let flags = probe_state_get_flags(state_data.packed_state);
     
     // UNINITIALIZED and OFF probes have no valid data
     if (state == PROBE_STATE_OFF || state == PROBE_STATE_SLEEPING) {
@@ -712,11 +712,18 @@ fn ddgi_probe_readiness_weight(state_data: ProbeStateData) -> f32 {
     // history has settled, especially after clipmap scroll. Require both state
     // convergence and stable accumulated history before the fine cascade takes over.
     let state_readiness = min(1.0, f32(convergence_frames) / readiness_frames_target);
-    let stability_readiness = smoothstep(
+    let is_scrolled_probe = (flags & PROBE_STATE_FLAG_SCROLL_RESET) != 0u;
+    let stable_sample_count_start = select(
         PROBE_STATE_GATHER_STABLE_SAMPLE_COUNT_START,
-        PROBE_STATE_GATHER_STABLE_SAMPLE_COUNT_END,
-        f32(state_data.sample_count)
+        PROBE_STATE_SCROLLED_STABLE_SAMPLE_COUNT_START,
+        is_scrolled_probe
     );
+    let stable_sample_count_end = select(
+        PROBE_STATE_GATHER_STABLE_SAMPLE_COUNT_END,
+        PROBE_STATE_SCROLLED_STABLE_SAMPLE_COUNT_END,
+        is_scrolled_probe
+    );
+    let stability_readiness = smoothstep(stable_sample_count_start, stable_sample_count_end, f32(state_data.sample_count));
 
     return min(state_readiness, stability_readiness);
 }

@@ -9,9 +9,8 @@
 
 @group(1) @binding(0) var<uniform> ddgi_params: DDGIParams;
 @group(1) @binding(1) var<storage, read> probe_update_indices: array<u32>;
-@group(1) @binding(2) var<storage, read> probe_ray_allocations: array<vec2<u32>>; // x=ray_base, y=ray_count
-@group(1) @binding(3) var<storage, read_write> probe_ray_data: DDGIProbeRayDataBuffer;
-@group(1) @binding(4) var<storage, read> gi_counters: GICountersReadOnly;
+@group(1) @binding(2) var<storage, read_write> probe_ray_data: DDGIProbeRayDataBuffer;
+@group(1) @binding(3) var<storage, read> gi_counters: GICountersReadOnly;
 
 // =============================================================================
 // Ray direction sampling
@@ -63,8 +62,13 @@ fn ddgi_probe_ray_direction_spherical_fibonacci(
 fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let probe_slot = gid.y;
     let ray_index_in_probe = gid.x;
-    let active_probe_count = gi_counters.probe_update_count;
     let max_probes_per_frame = u32(ddgi_params.probe_counts.z);
+    let active_probe_count = min(gi_counters.probe_update_count, max_probes_per_frame);
+    let rays_per_probe = ddgi_max_rays_per_probe(&ddgi_params);
+
+    if (gid.x == 0u && gid.y == 0u) {
+        atomicStore(&probe_ray_data.header.active_ray_count, active_probe_count * rays_per_probe);
+    }
 
     if (probe_slot >= max_probes_per_frame) {
         return;
@@ -74,15 +78,12 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         return;
     }
 
-    let allocation = probe_ray_allocations[probe_slot];
-    let ray_base = allocation.x;
-    let rays_per_probe = allocation.y;
-
     if (ray_index_in_probe >= rays_per_probe) {
         return;
     }
 
     let probe_index = probe_update_indices[probe_slot];
+    let ray_base = probe_slot * rays_per_probe;
     let ray_index = ray_base + ray_index_in_probe;
 
     probe_ray_data.rays[ray_index].state_u32 = vec4<u32>(INVALID_IDX, 1u, 0u, INVALID_IDX);

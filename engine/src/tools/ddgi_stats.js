@@ -84,10 +84,8 @@ export class DDGIStats extends DevConsoleTool {
       stat_row("Probe update count", format_number(stats.probe_update_count));
       stat_row("Total probes", format_number(stats.total_probe_count));
       stat_row("Probes per frame", format_number(stats.probes_per_frame));
-      stat_row("Rays per probe (min)", format_number(stats.min_rays_per_probe));
-      stat_row("Rays per probe (max)", format_number(stats.max_rays_per_probe));
-      stat_row("Total rays fired (min est)", format_number(stats.min_total_rays_fired));
-      stat_row("Total rays fired (max est)", format_number(stats.max_total_rays_fired));
+      stat_row("Rays per probe", format_number(stats.max_rays_per_probe));
+      stat_row("Total rays fired", format_number(stats.total_rays_fired));
       stat_row(
         "Probe grid dims",
         `${format_number(stats.probe_grid_dims[0])} x ${format_number(stats.probe_grid_dims[1])} x ${format_number(stats.probe_grid_dims[2])}`
