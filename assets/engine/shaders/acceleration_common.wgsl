@@ -224,3 +224,62 @@ fn build_local_ray(
     );
     return ray_local;
 }
+
+fn build_local_ray_from_instance(
+    ray_world: ptr<function, Ray>,
+    instance_transform: RayInstanceTransform
+) -> Ray {
+    let ro_world = (*ray_world).origin_and_tmin.xyz;
+    let rd_world = (*ray_world).direction_and_tmax.xyz;
+
+    let t_col0 = instance_transform.world_to_local0.xyz;
+    let t_col1 = instance_transform.world_to_local1.xyz;
+    let t_col2 = instance_transform.world_to_local2.xyz;
+    let trans = instance_transform.local_to_world3.xyz;
+    let ro_rel = ro_world - trans;
+
+    let rd_local = vec3<f32>(
+        dot(rd_world, t_col0),
+        dot(rd_world, t_col1),
+        dot(rd_world, t_col2)
+    );
+    let ro_local = vec3<f32>(
+        dot(ro_rel, t_col0),
+        dot(ro_rel, t_col1),
+        dot(ro_rel, t_col2)
+    );
+
+    var ray_local: Ray;
+    ray_local.origin_and_tmin = vec4<f32>(ro_local, (*ray_world).origin_and_tmin.w);
+    ray_local.direction_and_tmax = vec4<f32>(rd_local, (*ray_world).direction_and_tmax.w);
+
+    let d = rd_local;
+    ray_local.inv_direction = vec4<f32>(
+        1.0 / max(abs(d.x), 1e-8) * select(1.0, -1.0, d.x < 0.0),
+        1.0 / max(abs(d.y), 1e-8) * select(1.0, -1.0, d.y < 0.0),
+        1.0 / max(abs(d.z), 1e-8) * select(1.0, -1.0, d.z < 0.0),
+        0.0
+    );
+    return ray_local;
+}
+
+fn transform_local_point_from_instance(
+    instance_transform: RayInstanceTransform,
+    point_local: vec3<f32>
+) -> vec3<f32> {
+    return
+        instance_transform.local_to_world0.xyz * point_local.x +
+        instance_transform.local_to_world1.xyz * point_local.y +
+        instance_transform.local_to_world2.xyz * point_local.z +
+        instance_transform.local_to_world3.xyz;
+}
+
+fn transform_local_direction_from_instance(
+    instance_transform: RayInstanceTransform,
+    direction_local: vec3<f32>
+) -> vec3<f32> {
+    return
+        instance_transform.world_to_local0.xyz * direction_local.x +
+        instance_transform.world_to_local1.xyz * direction_local.y +
+        instance_transform.world_to_local2.xyz * direction_local.z;
+}

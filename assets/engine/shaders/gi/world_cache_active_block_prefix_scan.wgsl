@@ -125,10 +125,8 @@ fn cs(
 
         atomicStore(&gi_counters.active_cache_cell_count, total_count);
 
-        // Write dispatch parameters:
-        // - X is number of workgroups for later ray passes (2x: shadow + primary)
-        // - YZ are 1
-        dispatch_params[0] = (2u * total_count + (WORKGROUP_SIZE - 1u)) / WORKGROUP_SIZE; // ceil_div
+        // Write dispatch parameters for single active-cell passes.
+        dispatch_params[0] = (total_count + (WORKGROUP_SIZE - 1u)) / WORKGROUP_SIZE; // ceil_div
         dispatch_params[1] = 1u;
         dispatch_params[2] = 1u;
         dispatch_params[3] = total_count;

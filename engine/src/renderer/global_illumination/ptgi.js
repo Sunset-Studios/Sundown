@@ -124,6 +124,12 @@ const compact_emissive_lights_shader_setup = {
   },
 };
 
+const ray_instance_transform_prepare_shader_setup = {
+  pipeline_shaders: {
+    compute: { path: "gi/ray_instance_transform_prepare.wgsl" },
+  },
+};
+
 // ─────────────────────────────────────────────────────────────────────────────
 // World Cache Shaders
 // ─────────────────────────────────────────────────────────────────────────────
@@ -167,6 +173,12 @@ const world_cache_trace_init_shader_setup = {
 const world_cache_trace_hit_shader_setup = {
   pipeline_shaders: {
     compute: { path: "gi/world_cache_trace_hit.wgsl" },
+  },
+};
+
+const world_cache_trace_shadow_hit_shader_setup = {
+  pipeline_shaders: {
+    compute: { path: "gi/world_cache_trace_shadow_hit.wgsl" },
   },
 };
 
@@ -261,11 +273,11 @@ export class PTGI {
   config = {
     screen_ray_count: 1, // Rays per pixel per frame (1 recommended for real-time)
     upscale_factor: 2, // A final full-resolution pass upsamples the GI outputs for lighting.
-    world_cache_size: 32768, // Number of world cache cells per LOD level
+    world_cache_size: 16384, // Number of world cache cells per LOD level
     world_cache_cell_size: 1.0, // Base cell size in world units
     world_cache_lod_count: 4, // Number of LOD levels
     indirect_boost: 1.0, // Multiplier for indirect lighting contribution
-    max_ray_length: 1e30, // Maximum ray travel distance for GI path segments
+    max_ray_length: 128.0, // Maximum ray travel distance for GI path segments
     max_emissive_lights: 32768, // Max emissive light candidates stored in the GPU list
     diffuse_atrous_enabled: true,
     diffuse_atrous_pass_count: 3,
@@ -414,6 +426,13 @@ export class PTGI {
 
     const total_pixels = gi_width * gi_height;
     const total_cells = this.config.world_cache_size * this.config.world_cache_lod_count;
+    const entity_transform_config = render_graph.get_resource_config(entity_transforms);
+    const entity_transform_stride_words = 48;
+    const ray_instance_transform_stride_words = 32;
+    const entity_transform_count = Math.max(
+      1,
+      Math.floor((entity_transform_config?.size ?? 0) / (entity_transform_stride_words * 4))
+    );
 
     // ─────────────────────────────────────────────────────────────────────
     // Get current frame index for validation frame detection
@@ -508,6 +527,13 @@ export class PTGI {
     const world_cache_path_state = render_graph.create_buffer({
       name: "gi_world_cache_path_state",
       size: total_cells * 11 * 4,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+      force: force_recreate,
+    });
+
+    const ray_instance_transforms = render_graph.create_buffer({
+      name: "gi_ray_instance_transforms",
+      size: entity_transform_count * ray_instance_transform_stride_words,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
       force: force_recreate,
     });
@@ -831,6 +857,20 @@ export class PTGI {
     // Pass 1: Reset Counters
     // ─────────────────────────────────────────────────────────────────────
     render_graph.add_pass(
+      "gi_prepare_ray_instance_transforms",
+      RenderPassFlags.Compute,
+      {
+        inputs: [entity_transforms, ray_instance_transforms],
+        outputs: [ray_instance_transforms],
+        shader_setup: ray_instance_transform_prepare_shader_setup,
+      },
+      (graph, frame_data, encoder) => {
+        const pass = graph.get_physical_pass(frame_data.current_pass);
+        pass.dispatch(Math.ceil(entity_transform_count / COMPUTE_WORKGROUP_SIZE), 1, 1);
+      }
+    );
+
+    render_graph.add_pass(
       "gi_reset",
       RenderPassFlags.Compute,
       {
@@ -967,11 +1007,35 @@ export class PTGI {
     );
 
     // ─────────────────────────────────────────────────────────────────────
-    // Pass 7: World Cache Trace Hit
-    // Dispatches 2x rays_per_frame to run shadow and primary rays in parallel:
-    //   - First half of threads: shadow ray traces (NEE visibility)
-    //   - Second half of threads: primary ray traces (indirect bounce)
+    // Pass 7a: World Cache Shadow Hit
     // ─────────────────────────────────────────────────────────────────────
+    render_graph.add_pass(
+      "gi_world_cache_trace_shadow_hit",
+      RenderPassFlags.Compute,
+      {
+        inputs: [
+          gi_params,
+          world_cache_path_state,
+          tlas_bvh2_bounds,
+          tlas_bvh_info,
+          blas_bvh2_nodes,
+          blas_directory,
+          ray_instance_transforms,
+          index_buffer,
+          gi_counters,
+          entity_index_lookup,
+        ],
+        outputs: [world_cache_path_state],
+        shader_setup: world_cache_trace_shadow_hit_shader_setup,
+      },
+      (graph, frame_data, encoder) => {
+        const pass = graph.get_physical_pass(frame_data.current_pass);
+        const dispatch_buffer = graph.get_physical_buffer(world_cache_dispatch_params);
+        pass.dispatch_indirect(dispatch_buffer, 0);
+      }
+    );
+
+    // Pass 7b: World Cache Primary Hit
     render_graph.add_pass(
       "gi_world_cache_trace_hit",
       RenderPassFlags.Compute,
@@ -983,7 +1047,7 @@ export class PTGI {
           tlas_bvh_info,
           blas_bvh2_nodes,
           blas_directory,
-          entity_transforms,
+          ray_instance_transforms,
           index_buffer,
           gi_counters,
           entity_index_lookup,
@@ -1070,10 +1134,7 @@ export class PTGI {
     );
 
     // ─────────────────────────────────────────────────────────────────────
-    // Pass 10: Per-Pixel Trace Hit (BVH traversal)
-    // Dispatches 2x rays_per_frame to run shadow and primary rays in parallel:
-    //   - First half of threads: shadow ray traces (NEE visibility)
-    //   - Second half of threads: primary ray traces (indirect bounce)
+    // Pass 10: Per-Pixel Primary Trace Hit (BVH traversal)
     // ─────────────────────────────────────────────────────────────────────
     render_graph.add_pass(
       "gi_pixel_trace_hit",
@@ -1088,7 +1149,7 @@ export class PTGI {
           tlas_bvh_info,
           blas_bvh2_nodes,
           blas_directory,
-          entity_transforms,
+          ray_instance_transforms,
           index_buffer,
           entity_index_lookup,
         ],

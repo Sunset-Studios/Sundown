@@ -100,6 +100,17 @@ struct EntityTransform {
     prev_transform: mat4x4<f32>,
 };
 
+struct RayInstanceTransform {
+    local_to_world0: vec4<f32>,
+    local_to_world1: vec4<f32>,
+    local_to_world2: vec4<f32>,
+    local_to_world3: vec4<f32>,
+    world_to_local0: vec4<f32>,
+    world_to_local1: vec4<f32>,
+    world_to_local2: vec4<f32>,
+    world_to_local3: vec4<f32>,
+};
+
 struct ObjectInstance {
     batch: u32,
     row: u32,
