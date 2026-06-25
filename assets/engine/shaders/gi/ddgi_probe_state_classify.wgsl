@@ -95,8 +95,6 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let probe_index = probe_update_indices[gid.x];
     let rays_per_probe = ddgi_max_rays_per_probe(&ddgi_params);
     let ray_base = gid.x * rays_per_probe;
-    let spacing = ddgi_probe_spacing_from_index(&ddgi_params, probe_index);
-    let probe_radius = ddgi_params.probe_grid_dims.w;
     let ray_analysis = analyze_probe_rays(ray_base, rays_per_probe);
     
     // ─────────────────────────────────────────────────────────────────────────

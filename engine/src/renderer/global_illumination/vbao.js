@@ -69,7 +69,7 @@ const bent_history_image_config = {
 
 const vbao_settings_buffer_config = {
   name: "vbao_settings",
-  size: 16,
+  size: 32,
   usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
   force: false,
 };
@@ -77,9 +77,10 @@ const vbao_settings_buffer_config = {
 export class VBAO {
   config = {
     trace_downsample: 2,
-    radius: 1.0,
+    radius: 16.0,
+    strength: 1.5,
     bias: 0.001,
-    slice_count: 1,
+    slice_count: 2,
     sample_count: 16,
     thickness: 0.12,
     temporal_response: 0.06,
@@ -92,7 +93,7 @@ export class VBAO {
     this.ao_blur_texture = null;
     this.bent_normal_texture = null;
 
-    this.settings_data = new Float32Array(6);
+    this.settings_data = new Float32Array(8);
   }
 
   add_passes(
@@ -162,11 +163,12 @@ export class VBAO {
         const settings_buffer = graph.get_physical_buffer(vbao_settings);
 
         this.settings_data[0] = this.config.radius;
-        this.settings_data[1] = this.config.bias;
-        this.settings_data[2] = this.config.slice_count;
-        this.settings_data[3] = this.config.sample_count;
-        this.settings_data[4] = this.config.thickness;
-        this.settings_data[5] = this.config.temporal_response;
+        this.settings_data[1] = this.config.strength;
+        this.settings_data[2] = this.config.bias;
+        this.settings_data[3] = this.config.slice_count;
+        this.settings_data[4] = this.config.sample_count;
+        this.settings_data[5] = this.config.thickness;
+        this.settings_data[6] = this.config.temporal_response;
         settings_buffer.write_raw(this.settings_data);
       }
     );

@@ -245,19 +245,19 @@ const ddgi_atrous_diffuse_shader_setup = {
 
 export class DDGI {
   config = {
-    probe_grid_dimensions: [32, 32, 32],
-    probe_spacing: 2.0,
+    probe_grid_dimensions: [64, 64, 64],
+    probe_spacing: 1.0,
     probe_radius: 0.1,
     max_rays_per_probe: 32,
     probes_per_frame: 1024,
-    probe_update_culled_ratio: 0.1,
+    probe_update_culled_ratio: 0.0,
     indirect_boost: 1.0,
     cascade_count: DDGI_MAX_CASCADES,
-    cascade_spacing_multiplier: 4.0,
+    cascade_spacing_multiplier: 2.0,
     probe_depth_resolutions: [8, 4, 4, 4, 4, 4, 4, 4],
     max_emissive_lights: 32768,
     diffuse_sample_upscale_factor: 2,
-    diffuse_atrous_enabled: false,
+    diffuse_atrous_enabled: true,
     diffuse_atrous_pass_count: 3,
     diffuse_atrous_phi_depth: 0.04,
     diffuse_atrous_phi_normal: 64.0,
@@ -863,9 +863,10 @@ export class DDGI {
       force: force_recreate,
     });
 
-    // Per-probe alpha from SH accumulate (used by depth-update pass for hysteresis).
-    const probe_alpha = render_graph.create_buffer({
-      name: "ddgi_probe_alpha",
+    // Whether a probe had local history before this update. The depth pass uses
+    // it only to initialize visibility independently from irradiance changes.
+    const probe_history_valid = render_graph.create_buffer({
+      name: "ddgi_probe_history_valid",
       size: probe_count,
       usage: GPUBufferUsage.STORAGE,
       force: force_recreate,
@@ -1310,12 +1311,12 @@ export class DDGI {
           this.ddgi_params,
           probe_update_indices,
           probe_ray_data,
-          probe_alpha,
+          probe_history_valid,
           sh_probes,
           probe_states,
           gi_counters,
         ],
-        outputs: [probe_alpha, sh_probes, probe_states],
+        outputs: [probe_history_valid, sh_probes, probe_states],
         shader_setup: ddgi_sh_probe_accumulate_shader_setup,
       },
       (graph, frame_data, encoder) => {
@@ -1326,7 +1327,8 @@ export class DDGI {
 
     // ─────────────────────────────────────────────────────────────────────────
     // Depth Moment Update Pass (1 thread per ray for better occupancy)
-    // Reads alpha per probe from accumulate; updates octahedral depth moments.
+    // Uses per-probe history validity from accumulate. Visibility applies its
+    // own conservative, local geometry-change hysteresis in the shader.
     // ─────────────────────────────────────────────────────────────────────────
     render_graph.add_pass(
       "ddgi_depth_update",
@@ -1335,7 +1337,7 @@ export class DDGI {
         inputs: [
           this.ddgi_params,
           probe_ray_data,
-          probe_alpha,
+          probe_history_valid,
           probe_depth_moments,
         ],
         outputs: [probe_depth_moments],

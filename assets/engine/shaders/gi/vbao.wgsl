@@ -2,6 +2,7 @@
 
 struct VBAOSettings {
     radius: f32,
+    strength: f32,
     bias: f32,
     slice_count: f32,
     sample_count: f32,
@@ -319,8 +320,10 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         0.0,
         1.0
     );
+    let ao_strength = max(settings.strength, 0.001);
+    let strengthened_ao_visibility = pow(ao_visibility, ao_strength);
 
-    textureStore(ao_output, coord, vec4<f32>(ao_visibility, 0.0, 0.0, 1.0));
+    textureStore(ao_output, coord, vec4<f32>(strengthened_ao_visibility, 0.0, 0.0, 1.0));
 }
 
 

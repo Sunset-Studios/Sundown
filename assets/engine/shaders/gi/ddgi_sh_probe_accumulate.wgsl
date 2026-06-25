@@ -26,7 +26,7 @@
 @group(1) @binding(0) var<uniform> ddgi_params: DDGIParams;
 @group(1) @binding(1) var<storage, read> probe_update_indices: array<u32>;
 @group(1) @binding(2) var<storage, read_write> probe_ray_data: DDGIProbeRayDataBuffer;
-@group(1) @binding(3) var<storage, read_write> probe_alpha: array<f32>;
+@group(1) @binding(3) var<storage, read_write> probe_history_valid: array<f32>;
 @group(1) @binding(4) var<storage, read_write> sh_probes: array<u32>;
 @group(1) @binding(5) var<storage, read_write> probe_states: array<ProbeStateData>;
 @group(1) @binding(6) var<storage, read> gi_counters: GICountersReadOnly;
@@ -40,27 +40,22 @@
 const SPHERE_AREA = 12.566370614359172; // 4 * PI
 
 // -----------------------------------------------------------------------------
-// Adaptive temporal hysteresis (no fixed MAX_ACCUMULATED_SAMPLES)
-//
-// We treat each probe update as ONE temporal sample (the probe already integrates
-// many rays into a single Monte Carlo estimate each frame).
-//
-// - If probe luminance changes a lot: aggressively discard history -> fast adapt.
-// - If probe luminance changes a little: keep a long effective history -> stable.
+// Adaptive temporal irradiance accumulation. Visibility uses a separate,
+// more conservative policy in ddgi_depth_update.
 // -----------------------------------------------------------------------------
-const DDGI_HISTORY_CAP_FRAMES_MAX = 48.0;  // small change -> stable long history
-const DDGI_LUMA_FAST_START = 0.60;          // relative delta where we start speeding up
-const DDGI_LUMA_FAST_END = 0.90;            // relative delta where we fully speed up
+const DDGI_HISTORY_CAP_FRAMES_MAX = 64.0;  // small change -> stable long history
+const DDGI_LUMA_FAST_START = 0.60;
+const DDGI_LUMA_FAST_END = 0.90;
 const DDGI_LUMA_EPS = 1e-6;
 const DDGI_FAST_ADAPT_ALPHA_MAX = 0.20;
 const DDGI_SCROLLED_FAST_ADAPT_ALPHA_MAX = 0.12;
 
-// Variance gate for the fast-adapt path:
-// High-variance probes can flicker frame-to-frame; we suppress "fast change" when
-// the detected change is not statistically significant relative to ray noise.
-const DDGI_NOISE_RATIO_START = 0.18; // standard_error / mean where we start suppressing fast adapt
-const DDGI_NOISE_RATIO_END = 0.45;   // standard_error / mean where fast adapt is mostly suppressed
-const DDGI_NOISE_SIGMA_MULTIPLIER = 2.0; // require delta > k * standard_error to be considered "real"
+// Reject apparent changes that are still within the probe's ray-sampling
+// noise. This is the stability gate that keeps a noisy SH coefficient from
+// repeatedly discarding history.
+const DDGI_NOISE_RATIO_START = 0.18;
+const DDGI_NOISE_RATIO_END = 0.45;
+const DDGI_NOISE_SIGMA_MULTIPLIER = 2.0;
 const DDGI_YOUNG_PROBE_FAST_ADAPT_END = 8.0;
 const DDGI_SCROLLED_PROBE_FAST_ADAPT_END = 20.0;
 const DDGI_YOUNG_PROBE_MAX_CHANGE_FACTOR = 0.35;
@@ -113,7 +108,6 @@ fn cs(
     var sample_sh: SH_L1_RGB;
     var sample_luma = 0.0;
     var sample_luma_sq = 0.0;
-
     if (i < rays_per_probe) {
         let ray_index = ray_base + i;
         let radiance = probe_ray_data.rays[ray_index].radiance.xyz;
@@ -152,7 +146,6 @@ fn cs(
         warp_reduce_add_f32(warp_ctx, sample_luma),
         warp_reduce_add_f32(warp_ctx, sample_luma_sq)
     );
-
     if (is_warp_leader(warp_ctx)) {
         sh_c0[warp_id] = reduced_c0;
         sh_c1[warp_id] = reduced_c1;
@@ -196,15 +189,11 @@ fn cs(
 
     let luma_mean = luma_sum / n;
     let luma_var = max(luma_sum_sq / n - luma_mean * luma_mean, 0.0);
-    let inv_sqrt_n = inverseSqrt(n);
-    let luma_std_err = sqrt(luma_var) * inv_sqrt_n;
-    let luma_mean_ref = max(luma_mean, DDGI_LUMA_EPS);
-    let noise_ratio = luma_std_err / luma_mean_ref;
-
+    let luma_std_err = sqrt(luma_var) * inverseSqrt(n);
+    let noise_ratio = luma_std_err / max(luma_mean, DDGI_LUMA_EPS);
     let noise_suppression = 1.0 - smoothstep(DDGI_NOISE_RATIO_START, DDGI_NOISE_RATIO_END, noise_ratio);
     let sigma_threshold = (DDGI_NOISE_SIGMA_MULTIPLIER * luma_std_err) / luma_ref;
     let significant_delta = max(relative_luma_delta - sigma_threshold, 0.0);
-
     var change_factor = smoothstep(DDGI_LUMA_FAST_START, DDGI_LUMA_FAST_END, significant_delta) * noise_suppression;
 
     let prev_sample_count_f = f32(prev_sample_count);
@@ -220,17 +209,9 @@ fn cs(
     );
     let young_probe_t = saturate(prev_sample_count_f / max(young_probe_fast_adapt_end, 1.0));
     let young_probe_change_limit = mix(young_probe_max_change_factor, 1.0, young_probe_t);
+    change_factor = select(min(change_factor, young_probe_change_limit), 1.0, prev_sample_count == 0u);
 
-    // Only the first local sample should replace the warm start. After that,
-    // newly/scrolled probes must accumulate enough history to suppress MC noise
-    // instead of repeatedly resetting their sample_count back to 1.
-    change_factor = select(
-        min(change_factor, young_probe_change_limit),
-        1.0,
-        prev_sample_count == 0u
-    );
-
-    let prev_frames = min(f32(prev_sample_count), DDGI_HISTORY_CAP_FRAMES_MAX);
+    let prev_frames = min(prev_sample_count_f, DDGI_HISTORY_CAP_FRAMES_MAX);
     let stable_frames = min(prev_frames + 1.0, DDGI_HISTORY_CAP_FRAMES_MAX);
     let stable_alpha = 1.0 / max(stable_frames, 1.0);
     let fast_alpha_cap = select(
@@ -239,12 +220,14 @@ fn cs(
         is_scrolled_probe
     );
     let adaptive_alpha = mix(stable_alpha, max(stable_alpha, fast_alpha_cap), change_factor);
-    let alpha = select(adaptive_alpha, 1.0, prev_sample_count == 0u);
+    let irradiance_alpha = select(adaptive_alpha, 1.0, prev_sample_count == 0u);
     let accumulated_frames = select(stable_frames, 1.0, prev_sample_count == 0u);
 
-    let sh_result = sh_l1_rgb_lerp(sh_prev, sh_new, alpha);
+    // The only accelerated path is a noise-gated lighting change. Visibility
+    // does not consume this alpha and keeps its own conservative history.
+    let sh_result = sh_l1_rgb_lerp(sh_prev, sh_new, irradiance_alpha);
 
-    probe_alpha[probe_index] = alpha;
+    probe_history_valid[probe_index] = select(1.0, 0.0, prev_sample_count == 0u);
     ddgi_sh_probe_write(&sh_probes, probe_index, sh_result);
     ddgi_probe_state_set_sample_count(&probe_states[probe_index], u32(clamp(accumulated_frames, 1.0, DDGI_HISTORY_CAP_FRAMES_MAX)));
 }

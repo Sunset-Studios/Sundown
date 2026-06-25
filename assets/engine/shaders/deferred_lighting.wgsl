@@ -115,7 +115,7 @@ struct FragmentOutput {
 
 #if AO_ENABLED
     ao = textureSample(ao_texture, non_filtering_sampler, uv).r;
-    let bent_normal = textureSample(bent_normal_texture, non_filtering_sampler, uv).xyz;
+    //let bent_normal = textureSample(bent_normal_texture, non_filtering_sampler, uv).xyz;
     //normalized_normal = normalize(bent_normal);
 #endif
 

@@ -5,6 +5,7 @@
 
 struct VBAOSettings {
     radius: f32,
+    strength: f32,
     bias: f32,
     slice_count: f32,
     sample_count: f32,
