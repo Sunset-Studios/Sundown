@@ -78,7 +78,7 @@ export class VBAO {
   config = {
     trace_downsample: 2,
     radius: 16.0,
-    strength: 1.5,
+    strength: 1.1,
     bias: 0.001,
     slice_count: 2,
     sample_count: 16,

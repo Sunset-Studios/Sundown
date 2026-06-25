@@ -29,7 +29,8 @@
 @group(1) @binding(3) var<storage, read_write> probe_history_valid: array<f32>;
 @group(1) @binding(4) var<storage, read_write> sh_probes: array<u32>;
 @group(1) @binding(5) var<storage, read_write> probe_states: array<ProbeStateData>;
-@group(1) @binding(6) var<storage, read> gi_counters: GICountersReadOnly;
+@group(1) @binding(6) var<storage, read_write> probe_msme_stats: array<DDGIMSMEProbeStats>;
+@group(1) @binding(7) var<storage, read> gi_counters: GICountersReadOnly;
 
 // =============================================================================
 // CONSTANTS
@@ -40,33 +41,94 @@
 const SPHERE_AREA = 12.566370614359172; // 4 * PI
 
 // -----------------------------------------------------------------------------
-// Adaptive temporal irradiance accumulation. Visibility uses a separate,
+// MSME-style temporal irradiance accumulation. Visibility uses a separate,
 // more conservative policy in ddgi_depth_update.
 // -----------------------------------------------------------------------------
-const DDGI_HISTORY_CAP_FRAMES_MAX = 64.0;  // small change -> stable long history
-const DDGI_LUMA_FAST_START = 0.60;
-const DDGI_LUMA_FAST_END = 0.90;
-const DDGI_LUMA_EPS = 1e-6;
-const DDGI_FAST_ADAPT_ALPHA_MAX = 0.20;
-const DDGI_SCROLLED_FAST_ADAPT_ALPHA_MAX = 0.12;
+const DDGI_HISTORY_CAP_FRAMES_MAX = 64.0;
+const DDGI_MSME_SHORT_WINDOW_FRAMES = 16.0;
+const DDGI_MSME_MIN_SIGNAL_ENERGY = 1e-5;
+const DDGI_MSME_VARIANCE_FORGIVENESS = 2.0;
+const DDGI_MSME_VARIANCE_BLEND_REDUCTION = 12.0;
+const DDGI_MSME_MIN_STABLE_BLEND_SCALE = 0.25;
+const DDGI_MSME_INCONSISTENCY_LOW = 0.025;
+const DDGI_MSME_INCONSISTENCY_HIGH = 0.18;
+const DDGI_MSME_INCONSISTENCY_RISE_ALPHA = 0.45;
+const DDGI_MSME_INCONSISTENCY_FALL_ALPHA = 0.08;
+const DDGI_MSME_CATCHUP_ALPHA_MIN = 0.04;
+const DDGI_MSME_CATCHUP_ALPHA_MAX = 0.40;
+const DDGI_MSME_INSTANT_CATCHUP_BOOST_MAX = 0.34;
+const DDGI_MSME_INSTANT_SHORT_ALPHA_MAX = 0.34;
+const DDGI_MSME_INSTANT_INCONSISTENCY_LOW = 0.10;
+const DDGI_MSME_INSTANT_INCONSISTENCY_HIGH = 0.40;
+const DDGI_MSME_NOISY_CATCHUP_SCALE_MIN = 0.35;
 
-// Reject apparent changes that are still within the probe's ray-sampling
-// noise. This is the stability gate that keeps a noisy SH coefficient from
-// repeatedly discarding history.
-const DDGI_NOISE_RATIO_START = 0.18;
-const DDGI_NOISE_RATIO_END = 0.45;
-const DDGI_NOISE_SIGMA_MULTIPLIER = 2.0;
-const DDGI_YOUNG_PROBE_FAST_ADAPT_END = 8.0;
-const DDGI_SCROLLED_PROBE_FAST_ADAPT_END = 20.0;
-const DDGI_YOUNG_PROBE_MAX_CHANGE_FACTOR = 0.35;
-const DDGI_SCROLLED_PROBE_MAX_CHANGE_FACTOR = 0.20;
+fn ddgi_sh_l1_rgb_mean_square(sh: SH_L1_RGB) -> f32 {
+    var sum = 0.0;
+    for (var c = 0u; c < 4u; c = c + 1u) {
+        sum += dot(sh.c[c], sh.c[c]);
+    }
+    return max(sum / 12.0, 0.0);
+}
 
-fn ddgi_sh_average_radiance_luma(sh: SH_L1_RGB) -> f32 {
-    // For L1 SH, coefficient c0 is the projection onto Y00 (constant basis).
-    // For a constant radiance field k: c0 = k * ∫Y00 dω = k * (4π * SH_BASIS_L0).
-    // So average radiance ≈ c0 / (4π * SH_BASIS_L0).
-    let avg_radiance = max(sh.c[0], vec3<f32>(0.0)) / (SPHERE_AREA * SH_BASIS_L0);
-    return luminance(avg_radiance);
+fn ddgi_sh_l1_rgb_distance_square(a: SH_L1_RGB, b: SH_L1_RGB) -> f32 {
+    var sum = 0.0;
+    for (var c = 0u; c < 4u; c = c + 1u) {
+        let d = a.c[c] - b.c[c];
+        sum += dot(d, d);
+    }
+    return max(sum / 12.0, 0.0);
+}
+
+fn ddgi_sh_l1_rgb_component_mean(sh: SH_L1_RGB) -> f32 {
+    var sum = 0.0;
+    for (var c = 0u; c < 4u; c = c + 1u) {
+        sum += sh.c[c].x + sh.c[c].y + sh.c[c].z;
+    }
+    return max(sum / 12.0, 0.0);
+}
+
+fn ddgi_sh_l1_rgb_square_delta(a: SH_L1_RGB, b: SH_L1_RGB) -> SH_L1_RGB {
+    var result: SH_L1_RGB;
+    for (var c = 0u; c < 4u; c = c + 1u) {
+        let d = a.c[c] - b.c[c];
+        result.c[c] = d * d;
+    }
+    return result;
+}
+
+fn ddgi_msme_stats_short_mean(stats: DDGIMSMEProbeStats) -> SH_L1_RGB {
+    var sh: SH_L1_RGB;
+    sh.c[0] = stats.short_mean_c0.xyz;
+    sh.c[1] = stats.short_mean_c1.xyz;
+    sh.c[2] = stats.short_mean_c2.xyz;
+    sh.c[3] = stats.short_mean_c3.xyz;
+    return sh;
+}
+
+fn ddgi_msme_stats_variance(stats: DDGIMSMEProbeStats) -> SH_L1_RGB {
+    var sh: SH_L1_RGB;
+    sh.c[0] = max(stats.variance_c0.xyz, vec3<f32>(0.0));
+    sh.c[1] = max(stats.variance_c1.xyz, vec3<f32>(0.0));
+    sh.c[2] = max(stats.variance_c2.xyz, vec3<f32>(0.0));
+    sh.c[3] = max(stats.variance_c3.xyz, vec3<f32>(0.0));
+    return sh;
+}
+
+fn ddgi_msme_stats_write(
+    probe_index: u32,
+    short_mean: SH_L1_RGB,
+    variance: SH_L1_RGB,
+    scalars: vec4<f32>
+) {
+    probe_msme_stats[probe_index].short_mean_c0 = vec4<f32>(short_mean.c[0], 0.0);
+    probe_msme_stats[probe_index].short_mean_c1 = vec4<f32>(short_mean.c[1], 0.0);
+    probe_msme_stats[probe_index].short_mean_c2 = vec4<f32>(short_mean.c[2], 0.0);
+    probe_msme_stats[probe_index].short_mean_c3 = vec4<f32>(short_mean.c[3], 0.0);
+    probe_msme_stats[probe_index].variance_c0 = vec4<f32>(variance.c[0], 0.0);
+    probe_msme_stats[probe_index].variance_c1 = vec4<f32>(variance.c[1], 0.0);
+    probe_msme_stats[probe_index].variance_c2 = vec4<f32>(variance.c[2], 0.0);
+    probe_msme_stats[probe_index].variance_c3 = vec4<f32>(variance.c[3], 0.0);
+    probe_msme_stats[probe_index].scalars = scalars;
 }
 
 // =============================================================================
@@ -83,7 +145,6 @@ var<workgroup> sh_c0: array<vec3<f32>, NUM_WARPS>;
 var<workgroup> sh_c1: array<vec3<f32>, NUM_WARPS>;
 var<workgroup> sh_c2: array<vec3<f32>, NUM_WARPS>;
 var<workgroup> sh_c3: array<vec3<f32>, NUM_WARPS>;
-var<workgroup> luma_vals: array<vec2<f32>, NUM_WARPS>;
 
 @compute @workgroup_size(256, 1, 1)
 fn cs(
@@ -106,15 +167,11 @@ fn cs(
 
     let i = local_id.x;
     var sample_sh: SH_L1_RGB;
-    var sample_luma = 0.0;
-    var sample_luma_sq = 0.0;
     if (i < rays_per_probe) {
         let ray_index = ray_base + i;
         let radiance = probe_ray_data.rays[ray_index].radiance.xyz;
         let ray_dir = probe_ray_data.rays[ray_index].ray_dir_prim.xyz;
         sample_sh = ddgi_sh_project_sample(ray_dir, radiance, sample_weight);
-        sample_luma = luminance(radiance);
-        sample_luma_sq = sample_luma * sample_luma;
     } else {
         sample_sh = sh_l1_rgb_zero();
     }
@@ -142,16 +199,11 @@ fn cs(
         warp_reduce_add_f32(warp_ctx, sample_sh.c[3].y),
         warp_reduce_add_f32(warp_ctx, sample_sh.c[3].z)
     );
-    let reduced_luma = vec2<f32>(
-        warp_reduce_add_f32(warp_ctx, sample_luma),
-        warp_reduce_add_f32(warp_ctx, sample_luma_sq)
-    );
     if (is_warp_leader(warp_ctx)) {
         sh_c0[warp_id] = reduced_c0;
         sh_c1[warp_id] = reduced_c1;
         sh_c2[warp_id] = reduced_c2;
         sh_c3[warp_id] = reduced_c3;
-        luma_vals[warp_id] = reduced_luma;
     }
 
     workgroupBarrier();
@@ -165,69 +217,131 @@ fn cs(
     sh_new.c[1] = vec3<f32>(0.0);
     sh_new.c[2] = vec3<f32>(0.0);
     sh_new.c[3] = vec3<f32>(0.0);
-    var luma_sum = 0.0;
-    var luma_sum_sq = 0.0;
     for (var w = 0u; w < NUM_WARPS; w = w + 1u) {
         sh_new.c[0] += sh_c0[w];
         sh_new.c[1] += sh_c1[w];
         sh_new.c[2] += sh_c2[w];
         sh_new.c[3] += sh_c3[w];
-        luma_sum += luma_vals[w].x;
-        luma_sum_sq += luma_vals[w].y;
     }
 
     let sh_prev = ddgi_sh_probe_read(&sh_probes, probe_index);
     let prev_sample_count = ddgi_probe_state_get_sample_count(&probe_states[probe_index]);
 
-    let probe_flags = probe_state_get_flags(probe_states[probe_index].packed_state);
-    let is_scrolled_probe = (probe_flags & PROBE_STATE_FLAG_SCROLL_RESET) != 0u;
+    if (prev_sample_count == 0u) {
+        let zero_variance = sh_l1_rgb_zero();
+        ddgi_msme_stats_write(
+            probe_index,
+            sh_new,
+            zero_variance,
+            vec4<f32>(1.0, 0.0, 0.0, 1.0)
+        );
+        probe_history_valid[probe_index] = 0.0;
+        ddgi_sh_probe_write(&sh_probes, probe_index, sh_new);
+        ddgi_probe_state_set_sample_count(&probe_states[probe_index], 1u);
+        return;
+    }
 
-    let luma_prev = ddgi_sh_average_radiance_luma(sh_prev);
-    let luma_new = ddgi_sh_average_radiance_luma(sh_new);
-    let luma_ref = max(max(luma_prev, luma_new), DDGI_LUMA_EPS);
-    let relative_luma_delta = abs(luma_new - luma_prev) / luma_ref;
+    let stats_prev = probe_msme_stats[probe_index];
+    let has_msme_history = stats_prev.scalars.x > 0.0;
+    var short_prev = ddgi_msme_stats_short_mean(stats_prev);
+    if (!has_msme_history) {
+        short_prev = sh_prev;
+    }
 
-    let luma_mean = luma_sum / n;
-    let luma_var = max(luma_sum_sq / n - luma_mean * luma_mean, 0.0);
-    let luma_std_err = sqrt(luma_var) * inverseSqrt(n);
-    let noise_ratio = luma_std_err / max(luma_mean, DDGI_LUMA_EPS);
-    let noise_suppression = 1.0 - smoothstep(DDGI_NOISE_RATIO_START, DDGI_NOISE_RATIO_END, noise_ratio);
-    let sigma_threshold = (DDGI_NOISE_SIGMA_MULTIPLIER * luma_std_err) / luma_ref;
-    let significant_delta = max(relative_luma_delta - sigma_threshold, 0.0);
-    var change_factor = smoothstep(DDGI_LUMA_FAST_START, DDGI_LUMA_FAST_END, significant_delta) * noise_suppression;
-
-    let prev_sample_count_f = f32(prev_sample_count);
-    let young_probe_fast_adapt_end = select(
-        DDGI_YOUNG_PROBE_FAST_ADAPT_END,
-        DDGI_SCROLLED_PROBE_FAST_ADAPT_END,
-        is_scrolled_probe
+    let prev_short_frames = select(
+        1.0,
+        min(stats_prev.scalars.x, DDGI_MSME_SHORT_WINDOW_FRAMES),
+        has_msme_history
     );
-    let young_probe_max_change_factor = select(
-        DDGI_YOUNG_PROBE_MAX_CHANGE_FACTOR,
-        DDGI_SCROLLED_PROBE_MAX_CHANGE_FACTOR,
-        is_scrolled_probe
-    );
-    let young_probe_t = saturate(prev_sample_count_f / max(young_probe_fast_adapt_end, 1.0));
-    let young_probe_change_limit = mix(young_probe_max_change_factor, 1.0, young_probe_t);
-    change_factor = select(min(change_factor, young_probe_change_limit), 1.0, prev_sample_count == 0u);
+    let short_frames = min(prev_short_frames + 1.0, DDGI_MSME_SHORT_WINDOW_FRAMES);
+    let short_alpha = 1.0 / max(short_frames, 1.0);
+    let variance_alpha = min(short_alpha * 1.5, 1.0);
 
-    let prev_frames = min(prev_sample_count_f, DDGI_HISTORY_CAP_FRAMES_MAX);
+    let prev_variance = ddgi_msme_stats_variance(stats_prev);
+    let pre_signal_energy = max(
+        max(ddgi_sh_l1_rgb_mean_square(sh_prev), ddgi_sh_l1_rgb_mean_square(short_prev)),
+        max(ddgi_sh_l1_rgb_mean_square(sh_new), DDGI_MSME_MIN_SIGNAL_ENERGY)
+    );
+    let prev_normalized_variance = ddgi_sh_l1_rgb_component_mean(prev_variance) / pre_signal_energy;
+    let normalized_sample_long_delta = ddgi_sh_l1_rgb_distance_square(sh_new, sh_prev) / pre_signal_energy;
+    let instant_inconsistency = max(
+        normalized_sample_long_delta - prev_normalized_variance * DDGI_MSME_VARIANCE_FORGIVENESS,
+        0.0
+    );
+    let instant_change_weight = smoothstep(
+        DDGI_MSME_INSTANT_INCONSISTENCY_LOW,
+        DDGI_MSME_INSTANT_INCONSISTENCY_HIGH,
+        instant_inconsistency
+    );
+    let adaptive_short_alpha = mix(
+        short_alpha,
+        max(short_alpha, DDGI_MSME_INSTANT_SHORT_ALPHA_MAX),
+        instant_change_weight
+    );
+
+    let short_mean = sh_l1_rgb_lerp(short_prev, sh_new, adaptive_short_alpha);
+    let sample_variance = ddgi_sh_l1_rgb_square_delta(sh_new, short_prev);
+    let variance = sh_l1_rgb_lerp(prev_variance, sample_variance, variance_alpha);
+
+    let signal_energy = max(
+        max(ddgi_sh_l1_rgb_mean_square(sh_prev), ddgi_sh_l1_rgb_mean_square(short_mean)),
+        max(ddgi_sh_l1_rgb_mean_square(sh_new), DDGI_MSME_MIN_SIGNAL_ENERGY)
+    );
+    let normalized_variance = ddgi_sh_l1_rgb_component_mean(variance) / signal_energy;
+    let normalized_short_long_delta = ddgi_sh_l1_rgb_distance_square(short_mean, sh_prev) / signal_energy;
+    let raw_inconsistency = max(
+        normalized_short_long_delta - normalized_variance * DDGI_MSME_VARIANCE_FORGIVENESS,
+        0.0
+    );
+    let inconsistency_alpha = select(
+        DDGI_MSME_INCONSISTENCY_FALL_ALPHA,
+        DDGI_MSME_INCONSISTENCY_RISE_ALPHA,
+        raw_inconsistency > stats_prev.scalars.z
+    );
+    let inconsistency = mix(stats_prev.scalars.z, raw_inconsistency, inconsistency_alpha);
+    let change_weight = smoothstep(
+        DDGI_MSME_INCONSISTENCY_LOW,
+        DDGI_MSME_INCONSISTENCY_HIGH,
+        inconsistency
+    );
+    let vbbr = 1.0 / (1.0 + normalized_variance * DDGI_MSME_VARIANCE_BLEND_REDUCTION);
+    let instant_catchup_boost = instant_change_weight * (1.0 - change_weight);
+    let resolved_change_weight = clamp(
+        change_weight + instant_catchup_boost * DDGI_MSME_INSTANT_CATCHUP_BOOST_MAX,
+        0.0,
+        1.0
+    );
+    let noise_guard = mix(DDGI_MSME_NOISY_CATCHUP_SCALE_MIN, 1.0, clamp(vbbr, 0.0, 1.0));
+
+    let prev_frames = min(f32(prev_sample_count), DDGI_HISTORY_CAP_FRAMES_MAX);
     let stable_frames = min(prev_frames + 1.0, DDGI_HISTORY_CAP_FRAMES_MAX);
     let stable_alpha = 1.0 / max(stable_frames, 1.0);
-    let fast_alpha_cap = select(
-        DDGI_FAST_ADAPT_ALPHA_MAX,
-        DDGI_SCROLLED_FAST_ADAPT_ALPHA_MAX,
-        is_scrolled_probe
+    let variance_reduced_alpha = stable_alpha * mix(
+        DDGI_MSME_MIN_STABLE_BLEND_SCALE,
+        1.0,
+        clamp(vbbr, 0.0, 1.0)
     );
-    let adaptive_alpha = mix(stable_alpha, max(stable_alpha, fast_alpha_cap), change_factor);
-    let irradiance_alpha = select(adaptive_alpha, 1.0, prev_sample_count == 0u);
-    let accumulated_frames = select(stable_frames, 1.0, prev_sample_count == 0u);
+    let catchup_alpha = mix(
+        DDGI_MSME_CATCHUP_ALPHA_MIN,
+        DDGI_MSME_CATCHUP_ALPHA_MAX,
+        resolved_change_weight
+    ) * noise_guard;
+    let irradiance_alpha = clamp(
+        mix(variance_reduced_alpha, catchup_alpha, resolved_change_weight),
+        0.0,
+        1.0
+    );
 
-    // The only accelerated path is a noise-gated lighting change. Visibility
-    // does not consume this alpha and keeps its own conservative history.
-    let sh_result = sh_l1_rgb_lerp(sh_prev, sh_new, irradiance_alpha);
+    let sh_result = sh_l1_rgb_lerp(sh_prev, short_mean, irradiance_alpha);
 
-    probe_history_valid[probe_index] = select(1.0, 0.0, prev_sample_count == 0u);
+    ddgi_msme_stats_write(
+        probe_index,
+        short_mean,
+        variance,
+        vec4<f32>(short_frames, normalized_variance, inconsistency, vbbr)
+    );
+    probe_history_valid[probe_index] = 1.0;
+
     ddgi_sh_probe_write(&sh_probes, probe_index, sh_result);
-    ddgi_probe_state_set_sample_count(&probe_states[probe_index], u32(clamp(accumulated_frames, 1.0, DDGI_HISTORY_CAP_FRAMES_MAX)));
+    ddgi_probe_state_set_sample_count(&probe_states[probe_index], u32(clamp(stable_frames, 1.0, DDGI_HISTORY_CAP_FRAMES_MAX)));
 }

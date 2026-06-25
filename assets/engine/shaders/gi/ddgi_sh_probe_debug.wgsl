@@ -27,9 +27,10 @@
 @group(1) @binding(0) var<uniform> ddgi_params: DDGIParams;
 @group(1) @binding(1) var<storage, read_write> sh_probes: array<u32>;
 @group(1) @binding(2) var<storage, read_write> probe_states: array<ProbeStateData>;
-@group(1) @binding(3) var scene_color: texture_2d<f32>;
-@group(1) @binding(4) var depth_texture: texture_2d<f32>;
-@group(1) @binding(5) var output_debug: texture_storage_2d<rgba16float, write>;
+@group(1) @binding(3) var<storage, read> probe_surface_flags: array<u32>;
+@group(1) @binding(4) var scene_color: texture_2d<f32>;
+@group(1) @binding(5) var depth_texture: texture_2d<f32>;
+@group(1) @binding(6) var output_debug: texture_storage_2d<rgba16float, write>;
 
 const STATE_DEBUG_SHOW_ALL: bool = false;
 const STATE_DEBUG_COLOR_OVERLAY_STRENGTH: f32 = 0.0; // Tweak this to show debug colors for probe states (0.0 = no overlay, 1.0 = full overlay)
@@ -145,8 +146,10 @@ fn traverse_cascade_probes(
         f32(max(dims.y, 1u) - 1u),
         f32(max(dims.z, 1u) - 1u)
     );
-    let bmin_ws = origin;
-    let bmax_ws = origin + max_vertex * spacing;
+    let debug_probe_radius = probe_radius * f32(cascade_index + 1u);
+    let radius_vs = debug_probe_radius / max(spacing, 1e-8);
+    let bmin_ws = origin - vec3<f32>(debug_probe_radius);
+    let bmax_ws = origin + max_vertex * spacing + vec3<f32>(debug_probe_radius);
     
     // Expand AABB by probe radius
     let t_range = sh_debug_ray_aabb_intersect(
@@ -173,8 +176,8 @@ fn traverse_cascade_probes(
     let vs_range = sh_debug_ray_aabb_intersect(
         ro_vs,
         rd_vs,
-        vec3<f32>(0.0),
-        vec3<f32>(f32(cell_dims.x), f32(cell_dims.y), f32(cell_dims.z))
+        vec3<f32>(-radius_vs),
+        vec3<f32>(f32(cell_dims.x), f32(cell_dims.y), f32(cell_dims.z)) + vec3<f32>(radius_vs)
     );
     
     var t_enter = max(vs_range.x, 0.0);
@@ -221,7 +224,7 @@ fn traverse_cascade_probes(
     var hit_probe_index = 0u;
     var hit = false;
     
-    let max_steps = 32u;
+    let max_steps = cell_dims.x + cell_dims.y + cell_dims.z + 3u;
     for (var iter = 0u; iter < max_steps; iter = iter + 1u) {
         // Test 8 vertices of current cell
         let base = vec3<u32>(u32(cell.x), u32(cell.y), u32(cell.z));
@@ -233,8 +236,10 @@ fn traverse_cascade_probes(
                     let probe_idx = ddgi_probe_index_from_coord(&ddgi_params, cascade_index, v);
                     let state = probe_state_get_state(probe_states[probe_idx].packed_state);
 
-                    if (!STATE_DEBUG_SHOW_ALL && !probe_state_is_active(state)) {
-                        continue;
+                    if (!STATE_DEBUG_SHOW_ALL) {
+                        if (probe_surface_flags[probe_idx] == 0u || !probe_state_is_active(state)) {
+                            continue;
+                        }
                     }
 
                     // Clipmap selection: only show probes in this cascade's "shell"
@@ -248,7 +253,7 @@ fn traverse_cascade_probes(
                         v
                     );
                     
-                    let t = sh_debug_ray_sphere_intersect(ray_origin, ray_direction, center, probe_radius * f32(cascade_index + 1u));
+                    let t = sh_debug_ray_sphere_intersect(ray_origin, ray_direction, center, debug_probe_radius);
                     let valid = t > 0.0 && t >= t_range.x && t <= t_range.y && t < hit_t;
                     hit_t = select(hit_t, t, valid);
                     hit_probe_index = select(hit_probe_index, probe_idx, valid);

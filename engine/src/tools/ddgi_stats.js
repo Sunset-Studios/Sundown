@@ -79,8 +79,6 @@ export class DDGIStats extends DevConsoleTool {
       }
 
       stat_row("Active probes (total)", format_number(stats.active_probe_count));
-      stat_row("Active probes (nonculled)", format_number(stats.active_probe_count_nonculled));
-      stat_row("Active probes (culled)", format_number(stats.active_probe_count_culled));
       stat_row("Probe update count", format_number(stats.probe_update_count));
       stat_row("Total probes", format_number(stats.total_probe_count));
       stat_row("Probes per frame", format_number(stats.probes_per_frame));

@@ -34,6 +34,7 @@ const DDGI_CASCADE_BLEND_WINDOW_PROBES = 4.0;
 // packed into 6 u32 values using f16 packing for efficient storage.
 const DDGI_SH_PROBE_SIZE_U32 = 6u;    // Size of packed SH L1 RGB in u32 units
 const DDGI_SH_PROBE_SIZE_F32 = 12u;   // Size of unpacked SH L1 RGB in f32 units
+const DDGI_MSME_STATS_SIZE_U32 = 36u; // 9 vec4<f32> records per probe
 
 // Probe states - stored as u32 per probe
 const PROBE_STATE_UNINITIALIZED: u32 = 0u;   // Default - needs classification
@@ -52,15 +53,10 @@ const PROBE_STATE_CONVERGENCE_READINESS_MULTIPLIER_END: f32 = 1.0;
 const PROBE_STATE_CONVERGENCE_READINESS_MULTIPLIER_RAMP_FRAMES: u32 = 8u;
 const PROBE_STATE_GATHER_STABLE_SAMPLE_COUNT_START: f32 = 2.0;
 const PROBE_STATE_GATHER_STABLE_SAMPLE_COUNT_END: f32 = 8.0;
-const PROBE_STATE_SCROLLED_STABLE_SAMPLE_COUNT_START: f32 = 8.0;
-const PROBE_STATE_SCROLLED_STABLE_SAMPLE_COUNT_END: f32 = 20.0;
 const PROBE_STATE_BACKFACE_THRESHOLD: f32  = 0.5;  // Fraction of backface hits = inside geometry
 const PROBE_STATE_NEAR_GEOMETRY_DIST: f32  = 1.0;  // Multiplier of probe_spacing for "near"
-const PROBE_STATE_FLAG_SURFACE_VISIBLE: u32 = 1u;  // Bit 0 of flags byte (bit 24 of packed_state)
-const PROBE_STATE_FLAG_SCROLL_RESET: u32 = 2u;      // Bit 1 of flags byte: newly revealed by clipmap scroll
-
 // Maximum number of DDGI cascades supported
-const DDGI_MAX_CASCADES: u32 = 4u;
+const DDGI_MAX_CASCADES: u32 = 8u;
 
 struct DDGICascadeData {
     origin_spacing: vec4<f32>, // xyz = cascade origin, w = probe spacing
@@ -79,11 +75,11 @@ struct DDGIParams {
     frame_index: f32,
     indirect_boost: f32,
     cascade_count: f32,
-    probe_update_culled_ratio: f32,
+    _unused0: f32,
     permutation_stride: f32,       // Precomputed coprime stride for probe cycling (CPU-computed)
     permutation_base_offset: f32,  // Precomputed base offset for permutation (CPU-computed)
     permutation_frame_stride: f32, // Precomputed frame stride for temporal offset (CPU-computed)
-    _unused0: f32,
+    _unused1: f32,
     cascades: array<DDGICascadeData, DDGI_MAX_CASCADES>, // Per-cascade data (origin, scroll, snap)
 };
 
@@ -101,8 +97,20 @@ struct DDGIProbeRayData {
 };
 
 struct ProbeStateData {
-    packed_state: u32,        // state | init_frame_count | convergence_frame_count | flags (bit 0 = cull_visible)
+    packed_state: u32,        // state | init_frame_count | convergence_frame_count | flags
     sample_count: u32,        // sample count
+}
+
+struct DDGIMSMEProbeStats {
+    short_mean_c0: vec4<f32>,
+    short_mean_c1: vec4<f32>,
+    short_mean_c2: vec4<f32>,
+    short_mean_c3: vec4<f32>,
+    variance_c0: vec4<f32>,
+    variance_c1: vec4<f32>,
+    variance_c2: vec4<f32>,
+    variance_c3: vec4<f32>,
+    scalars: vec4<f32>, // x=short frames, y=variance, z=inconsistency, w=vbbr
 }
 
 struct DDGIProbeRayDataHeader {
@@ -144,6 +152,22 @@ fn ddgi_probe_state_get_sample_count(probe_state: ptr<storage, ProbeStateData, r
 
 fn ddgi_probe_state_set_sample_count(probe_state: ptr<storage, ProbeStateData, read_write>, count: u32) {
     (*probe_state).sample_count = count;
+}
+
+fn ddgi_msme_stats_reset(
+    stats_buffer: ptr<storage, array<DDGIMSMEProbeStats>, read_write>,
+    probe_index: u32
+) {
+    let zero = vec4<f32>(0.0);
+    stats_buffer[probe_index].short_mean_c0 = zero;
+    stats_buffer[probe_index].short_mean_c1 = zero;
+    stats_buffer[probe_index].short_mean_c2 = zero;
+    stats_buffer[probe_index].short_mean_c3 = zero;
+    stats_buffer[probe_index].variance_c0 = zero;
+    stats_buffer[probe_index].variance_c1 = zero;
+    stats_buffer[probe_index].variance_c2 = zero;
+    stats_buffer[probe_index].variance_c3 = zero;
+    stats_buffer[probe_index].scalars = vec4<f32>(0.0, 0.0, 0.0, 1.0);
 }
 
 
@@ -227,25 +251,45 @@ fn ddgi_cascade_scroll_offset(ddgi_params: ptr<uniform, DDGIParams>, cascade_ind
 // =============================================================================
 // STOCHASTIC (BUT DETERMINISTIC) PROBE CYCLING
 // =============================================================================
-// We want a selection pattern that:
-// - Looks "random" to avoid structured artifacts (better temporal distribution)
-// - Is deterministic (given probe_count and frame_index)
-// - Does not miss probes: every probe index must be visited eventually
-//
-// Approach:
-// - Treat the per-frame probe picks as a walk over Z_n (n = probe_count).
-// - Use an affine map:   idx(k) = (offset + k * stride) mod n
-// - If gcd(stride, n) = 1, this is a permutation: k=0..n-1 visits every probe once.
-// - We set k = frame_index * probes_per_frame + local_id so the walk advances by
-//   probes_per_frame each frame without gaps.
-//
-// OPTIMIZATION: The stride, base_offset, and frame_stride values are UNIFORM
-// across all shader invocations (they only depend on probe_count). These are
-// precomputed on the CPU and passed via DDGIParams, eliminating expensive
-// GCD computation loops that previously ran per-thread.
-//
-// The permutation formula is:
-//   probe_index = (base_offset + (frame_stride * frame_index + slot) * stride) % probe_count
+// Probe update compaction keeps the first `probes_per_frame` active slots, so
+// the slot-to-probe mapping acts as the per-frame priority order. Use a
+// frame-seeded bijective permutation instead of an affine walk to avoid visible
+// update waves while still ensuring one slot maps to one probe.
+
+fn ddgi_probe_permutation_hash(x: u32) -> u32 {
+    var y = x;
+    y = y ^ (y >> 16u);
+    y = y * 0x85ebca6bu;
+    y = y ^ (y >> 13u);
+    y = y * 0xc2b2ae35u;
+    y = y ^ (y >> 16u);
+    return y;
+}
+
+fn ddgi_probe_permutation_domain_mask(probe_count: u32) -> u32 {
+    var mask = max(probe_count - 1u, 1u);
+    mask = mask | (mask >> 1u);
+    mask = mask | (mask >> 2u);
+    mask = mask | (mask >> 4u);
+    mask = mask | (mask >> 8u);
+    mask = mask | (mask >> 16u);
+    return mask;
+}
+
+fn ddgi_probe_permute_power_of_two_domain(value: u32, mask: u32, seed: u32) -> u32 {
+    let multiplier_a = (ddgi_probe_permutation_hash(seed ^ 0x27d4eb2du) | 1u) & mask;
+    let multiplier_b = (ddgi_probe_permutation_hash(seed ^ 0x165667b1u) | 1u) & mask;
+
+    var x = (value + (ddgi_probe_permutation_hash(seed ^ 0x9e3779b9u) & mask)) & mask;
+    x = (x ^ (x >> 16u)) & mask;
+    x = (x * multiplier_a) & mask;
+    x = (x ^ (x >> 15u)) & mask;
+    x = (x * multiplier_b) & mask;
+    x = (x ^ (x >> 16u)) & mask;
+    x = (x + (ddgi_probe_permutation_hash(seed ^ 0x85ebca6bu) & mask)) & mask;
+    return x;
+}
+
 fn ddgi_probe_index_from_permuted_slot(
     slot: u32,
     probe_count: u32,
@@ -255,9 +299,25 @@ fn ddgi_probe_index_from_permuted_slot(
     frame_stride: u32
 ) -> u32 {
     let safe_probe_count = max(probe_count, 1u);
-    let frame_shift = frame_index_u32 * frame_stride;
-    let k = frame_shift + slot;
-    return (base_offset + k * stride) % safe_probe_count;
+    if (safe_probe_count <= 1u) {
+        return 0u;
+    }
+
+    let domain_mask = ddgi_probe_permutation_domain_mask(safe_probe_count);
+    let seed = ddgi_probe_permutation_hash(
+        base_offset ^
+        (stride * 0x9e3779b9u) ^
+        (frame_stride * 0x85ebca6bu) ^
+        (frame_index_u32 * 0xc2b2ae35u)
+    );
+
+    var candidate = slot & domain_mask;
+    loop {
+        candidate = ddgi_probe_permute_power_of_two_domain(candidate, domain_mask, seed);
+        if (candidate < safe_probe_count) {
+            return candidate;
+        }
+    }
 }
 
 
@@ -690,7 +750,6 @@ fn probe_state_is_newly(state: u32) -> bool {
 fn ddgi_probe_readiness_weight(state_data: ProbeStateData) -> f32 {
     let state = probe_state_get_state(state_data.packed_state);
     let convergence_frames = probe_state_get_convergence_frames(state_data.packed_state);
-    let flags = probe_state_get_flags(state_data.packed_state);
     
     // UNINITIALIZED and OFF probes have no valid data
     if (state == PROBE_STATE_OFF || state == PROBE_STATE_SLEEPING) {
@@ -708,22 +767,8 @@ fn ddgi_probe_readiness_weight(state_data: ProbeStateData) -> f32 {
     );
     let readiness_frames_target = f32(PROBE_STATE_CONVERGENCE_FRAMES) * readiness_multiplier;
 
-    // The state machine can promote probes before their local irradiance/depth
-    // history has settled, especially after clipmap scroll. Require both state
-    // convergence and stable accumulated history before the fine cascade takes over.
     let state_readiness = min(1.0, f32(convergence_frames) / readiness_frames_target);
-    let is_scrolled_probe = (flags & PROBE_STATE_FLAG_SCROLL_RESET) != 0u;
-    let stable_sample_count_start = select(
-        PROBE_STATE_GATHER_STABLE_SAMPLE_COUNT_START,
-        PROBE_STATE_SCROLLED_STABLE_SAMPLE_COUNT_START,
-        is_scrolled_probe
-    );
-    let stable_sample_count_end = select(
-        PROBE_STATE_GATHER_STABLE_SAMPLE_COUNT_END,
-        PROBE_STATE_SCROLLED_STABLE_SAMPLE_COUNT_END,
-        is_scrolled_probe
-    );
-    let stability_readiness = smoothstep(stable_sample_count_start, stable_sample_count_end, f32(state_data.sample_count));
+    let stability_readiness = smoothstep(PROBE_STATE_GATHER_STABLE_SAMPLE_COUNT_START, PROBE_STATE_GATHER_STABLE_SAMPLE_COUNT_END, f32(state_data.sample_count));
 
     return min(state_readiness, stability_readiness);
 }
@@ -834,8 +879,7 @@ fn ddgi_sample_sh_irradiance_single_cascade_internal(
     probe_depth_moments: ptr<storage, array<u32>, read>,
     position: vec3<f32>,
     normal_ws: vec3<f32>,
-    cascade_index: u32,
-    mark_surface_visible: bool
+    cascade_index: u32
 ) -> DDGISampleResult {
     let dims = vec3<u32>(
         u32((*ddgi_params).probe_grid_dims.x),
@@ -917,7 +961,7 @@ fn ddgi_sample_sh_irradiance_single_cascade_internal(
 
         // Perceptual weight
         {
-            let crush_threshold = 0.95;
+            let crush_threshold = 0.9;
             if (weight < crush_threshold) {
                 weight *= (weight * weight) / (crush_threshold * crush_threshold);
             }
@@ -934,23 +978,6 @@ fn ddgi_sample_sh_irradiance_single_cascade_internal(
         sh_sum = sh_l1_rgb_add(sh_sum, sh_l1_rgb_multiply_scalar(probe_sh, ready_weight));
         weight_sum += weight;
         ready_weight_sum += ready_weight;
-    }
-
-    // Mark probes along trilinear neighborhood of surfaces as active
-    if (mark_surface_visible) {
-        for (var i = 0; i < 8; i = i + 1) {
-            let coord = vec3<u32>(base) + vec3<u32>(trilinear_index_offsets[i]);
-            let clamped_coord = clamp(coord, vec3<u32>(0u), dims - vec3<u32>(1u));
-            let probe_index = ddgi_probe_index_from_coord(ddgi_params, cascade_index, clamped_coord);
-
-            let state = probe_state_get_state(probe_states[probe_index].packed_state);
-            var flags = probe_state_get_flags(probe_states[probe_index].packed_state);
-
-            if (state == PROBE_STATE_SLEEPING || state == PROBE_STATE_OFF) {
-                flags = flags | PROBE_STATE_FLAG_SURFACE_VISIBLE;
-                probe_states[probe_index].packed_state = probe_state_pack(PROBE_STATE_UNINITIALIZED, 0u, 0u, flags);
-            }
-        }
     }
 
     var result: DDGISampleResult;
@@ -978,8 +1005,7 @@ fn ddgi_sample_sh_irradiance_with_fallback(
     probe_depth_moments: ptr<storage, array<u32>, read>,
     position: vec3<f32>,
     normal_ws: vec3<f32>,
-    start_cascade: u32,
-    mark_surface_visible: bool
+    start_cascade: u32
 ) -> vec3<f32> {
     let cascade_count = ddgi_cascade_count(ddgi_params);
     
@@ -991,8 +1017,7 @@ fn ddgi_sample_sh_irradiance_with_fallback(
         probe_depth_moments,
         position,
         normal_ws,
-        start_cascade,
-        mark_surface_visible
+        start_cascade
     );
     
     // If no coarser cascade, return as-is
@@ -1017,8 +1042,7 @@ fn ddgi_sample_sh_irradiance_with_fallback(
             probe_depth_moments,
             position,
             normal_ws,
-            current_cascade,
-            false /* mark_surface_visible */
+            current_cascade
         );
         
         // Contribute proportionally to the remaining weight needed
@@ -1062,8 +1086,7 @@ fn ddgi_sample_sh_irradiance_with_states(
         probe_depth_moments,
         position,
         normal_ws,
-        cascade_index,
-        true /* mark_surface_visible */
+        cascade_index
     );
 
     // Edge blending between cascades for smooth spatial transitions
@@ -1080,8 +1103,7 @@ fn ddgi_sample_sh_irradiance_with_states(
             probe_depth_moments,
             position,
             normal_ws,
-            coarser_index,
-            false /* mark_surface_visible */
+            coarser_index
         );
         return mix(irradiance_fine, irradiance_coarse, blend_weight);
     }

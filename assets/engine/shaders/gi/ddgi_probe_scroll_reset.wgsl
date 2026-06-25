@@ -13,6 +13,7 @@
 @group(1) @binding(1) var<storage, read_write> sh_probes: array<u32>;
 @group(1) @binding(2) var<storage, read_write> probe_depth_moments: array<u32>;
 @group(1) @binding(3) var<storage, read_write> probe_states: array<ProbeStateData>;
+@group(1) @binding(4) var<storage, read_write> probe_msme_stats: array<DDGIMSMEProbeStats>;
 
 @compute @workgroup_size(128, 1, 1)
 fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
@@ -117,6 +118,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         PROBE_STATE_UNINITIALIZED,
         0u,
         0u,
-        PROBE_STATE_FLAG_SCROLL_RESET
+        0u
     );
+    ddgi_msme_stats_reset(&probe_msme_stats, probe_index);
 }
