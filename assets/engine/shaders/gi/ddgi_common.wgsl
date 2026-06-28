@@ -1,33 +1,9 @@
 #include "gi/gi_common.wgsl"
 #include "sh_common.wgsl"
 
-// =============================================================================
-// ╔═══════════════════════════════════════════════════════════════════════════╗
-// ║                    DDGI PROBE COMMON DEFINITIONS                          ║
-// ╠═══════════════════════════════════════════════════════════════════════════╣
-// ║                                                                           ║
-// ║  This file contains shared structures and utilities for DDGI probes:      ║
-// ║  • Octahedral atlas layout for radiance/depth storage                     ║
-// ║  • Spherical harmonics (SH) probe representation                          ║
-// ║  • Probe grid indexing and coordinate conversion                          ║
-// ║  • Sampling helpers for both octahedral and SH representations            ║
-// ║  • Dead probe detection                                                   ║
-// ║                                                                           ║
-// ║  To minimize calculations, we reuse ray-tracing information.              ║
-// ║  Backface hits are encoded with negative distances in the ray data        ║
-// ║  (hit_pos_t.w < 0). A probe is considered "dead" (inside geometry) when   ║
-// ║  the fraction of backface hits exceeds PROBE_STATE_BACKFACE_THRESHOLD.    ║
-// ║  This approach handles non-manifold and intersecting geometry robustly by ║
-// ║  counting multiple rays rather than relying on a single ray test.         ║
-// ║                                                                           ║
-// ║  Based on "Improving Probes in Dynamic Diffuse Global Illumination" by D  ║
-// ║  Rohacek et al.                                                           ║
-// ║                                                                           ║
-// ╚═══════════════════════════════════════════════════════════════════════════╝
-// =============================================================================
-
 const GOLDEN_RATIO_CONJUGATE = 0.6180339887498948;
 const DDGI_VISIBILITY_MIN_VARIANCE = 1e-4;
+const DDGI_CASCADE_ACTIVE_OVERLAP_ROWS = 8.0;
 const DDGI_CASCADE_BLEND_WINDOW_PROBES = 4.0;
 
 // SH probes store L1 RGB coefficients (4 coefficients × 3 channels = 12 floats)
@@ -55,8 +31,18 @@ const PROBE_STATE_GATHER_STABLE_SAMPLE_COUNT_START: f32 = 2.0;
 const PROBE_STATE_GATHER_STABLE_SAMPLE_COUNT_END: f32 = 8.0;
 const PROBE_STATE_BACKFACE_THRESHOLD: f32  = 0.5;  // Fraction of backface hits = inside geometry
 const PROBE_STATE_NEAR_GEOMETRY_DIST: f32  = 1.0;  // Multiplier of probe_spacing for "near"
+
+// Probe scheduler priorities. IDs are intentionally spaced so new priorities
+// can be inserted or reordered without renumbering every existing bucket.
+const DDGI_PROBE_SCHEDULE_PRIORITY_NONE: u32 = 0u;
+const DDGI_PROBE_SCHEDULE_PRIORITY_NORMAL: u32 = 100u;
+const DDGI_PROBE_SCHEDULE_PRIORITY_FRESH: u32 = 200u;
+const DDGI_PROBE_SCHEDULE_PRIORITY_BUCKET_NORMAL: u32 = 0u;
+const DDGI_PROBE_SCHEDULE_PRIORITY_BUCKET_FRESH: u32 = 1u;
+const DDGI_PROBE_SCHEDULE_PRIORITY_COUNT: u32 = 2u;
+
 // Maximum number of DDGI cascades supported
-const DDGI_MAX_CASCADES: u32 = 8u;
+const DDGI_MAX_CASCADES: u32 = 6u;
 
 struct DDGICascadeData {
     origin_spacing: vec4<f32>, // xyz = cascade origin, w = probe spacing
@@ -403,7 +389,9 @@ fn ddgi_probe_world_position_from_coord(
 // Clipmap-style cascade shell selection
 // Returns true if a probe belongs to its cascade's "shell" (toroidal region).
 // For cascade 0: always true (innermost cascade covers entire bounds)
-// For cascade N > 0: true only if probe is outside cascade N-1's bounds
+// For cascade N > 0: true if the probe is outside cascade N-1's core. The
+// core is contracted by at least one row of cascade N probes, so active probes
+// for coarser cascades overlap inward over the next finer cascade edge.
 // ─────────────────────────────────────────────────────────────────────────────
 fn ddgi_probe_in_cascade_shell(
     ddgi_params: ptr<uniform, DDGIParams>,
@@ -430,12 +418,18 @@ fn ddgi_probe_in_cascade_shell(
         (*ddgi_params).probe_grid_dims.z
     );
     
-    // Compute inner cascade's AABB
+    // Compute inner cascade's contracted core AABB.
     let inner_min = inner_origin;
     let inner_max = inner_origin + (dims - vec3<f32>(1.0)) * inner_spacing;
+    let overlap_distance = ddgi_cascade_spacing(ddgi_params, cascade_index) * DDGI_CASCADE_ACTIVE_OVERLAP_ROWS;
+    let inner_core_min = inner_min + vec3<f32>(overlap_distance);
+    let inner_core_max = inner_max - vec3<f32>(overlap_distance);
+    let has_inner_core = all(inner_core_min <= inner_core_max);
     
-    // Probe is in the shell if it's outside the inner cascade's bounds
-    let inside_inner = all(probe_pos >= inner_min) && all(probe_pos <= inner_max);
+    // Probe is in the shell if it is outside the contracted inner core.
+    let inside_inner = has_inner_core
+        && all(probe_pos >= inner_core_min)
+        && all(probe_pos <= inner_core_max);
     
     return !inside_inner;
 }
@@ -473,6 +467,37 @@ fn ddgi_position_inside_cascade_bounds(
     return
         position.x >= origin.x && position.y >= origin.y && position.z >= origin.z &&
         position.x <= max_bound.x && position.y <= max_bound.y && position.z <= max_bound.z;
+}
+
+fn ddgi_cascade_edge_distance_world(
+    ddgi_params: ptr<uniform, DDGIParams>,
+    cascade_index: u32,
+    position: vec3<f32>
+) -> f32 {
+    let dims_f = vec3<f32>(
+        (*ddgi_params).probe_grid_dims.x,
+        (*ddgi_params).probe_grid_dims.y,
+        (*ddgi_params).probe_grid_dims.z
+    );
+    let spacing = ddgi_cascade_spacing(ddgi_params, cascade_index);
+    let origin = ddgi_cascade_origin(ddgi_params, cascade_index);
+    let max_bound = origin + (dims_f - vec3<f32>(1.0)) * spacing;
+
+    let dist_to_min = position - origin;
+    let dist_to_max = max_bound - position;
+    let dist_to_edge = min(dist_to_min, dist_to_max);
+    return min(dist_to_edge.x, min(dist_to_edge.y, dist_to_edge.z));
+}
+
+fn ddgi_position_in_coarser_active_overlap(
+    ddgi_params: ptr<uniform, DDGIParams>,
+    inner_cascade_index: u32,
+    coarser_cascade_index: u32,
+    position: vec3<f32>
+) -> bool {
+    let edge_distance = ddgi_cascade_edge_distance_world(ddgi_params, inner_cascade_index, position);
+    let overlap_distance = ddgi_cascade_spacing(ddgi_params, coarser_cascade_index) * DDGI_CASCADE_ACTIVE_OVERLAP_ROWS;
+    return edge_distance >= 0.0 && edge_distance <= overlap_distance;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -743,6 +768,26 @@ fn probe_state_is_newly(state: u32) -> bool {
     return state == PROBE_STATE_NEWLY_AWAKE || state == PROBE_STATE_NEWLY_VIGILANT;
 }
 
+fn ddgi_probe_schedule_priority_for_state(state: u32, convergence_frames: u32) -> u32 {
+    if (
+        state == PROBE_STATE_UNINITIALIZED ||
+        probe_state_is_newly(state) ||
+        (convergence_frames > 0u && convergence_frames <= PROBE_STATE_CONVERGENCE_FRAMES)
+    ) {
+        return DDGI_PROBE_SCHEDULE_PRIORITY_FRESH;
+    }
+
+    return DDGI_PROBE_SCHEDULE_PRIORITY_NORMAL;
+}
+
+fn ddgi_probe_schedule_priority_bucket(priority: u32) -> u32 {
+    if (priority == DDGI_PROBE_SCHEDULE_PRIORITY_FRESH) {
+        return DDGI_PROBE_SCHEDULE_PRIORITY_BUCKET_FRESH;
+    }
+
+    return DDGI_PROBE_SCHEDULE_PRIORITY_BUCKET_NORMAL;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Compute probe readiness weight (0.0 to 1.0) based on state and convergence
 // Used for cascade fallback blending during probe initialization
@@ -995,73 +1040,6 @@ fn ddgi_sample_sh_irradiance_single_cascade_internal(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Sample SH irradiance with cascade fallback for initializing probes
-// When fine cascade probes aren't fully ready, blends with coarser cascade data
-// ─────────────────────────────────────────────────────────────────────────────
-fn ddgi_sample_sh_irradiance_with_fallback(
-    ddgi_params: ptr<uniform, DDGIParams>,
-    sh_probes: ptr<storage, array<u32>, read_write>,
-    probe_states: ptr<storage, array<ProbeStateData>, read_write>,
-    probe_depth_moments: ptr<storage, array<u32>, read>,
-    position: vec3<f32>,
-    normal_ws: vec3<f32>,
-    start_cascade: u32
-) -> vec3<f32> {
-    let cascade_count = ddgi_cascade_count(ddgi_params);
-    
-    // Sample the starting cascade
-    let fine_result = ddgi_sample_sh_irradiance_single_cascade_internal(
-        ddgi_params,
-        sh_probes,
-        probe_states,
-        probe_depth_moments,
-        position,
-        normal_ws,
-        start_cascade
-    );
-    
-    // If no coarser cascade, return as-is
-    let next_cascade = start_cascade + 1u;
-    if (next_cascade >= cascade_count) {
-        return fine_result.irradiance;
-    }
-    
-    // Sample coarser cascade for fallback
-    // Use iteration instead of recursion (WGSL limitation)
-    var accumulated_irradiance = fine_result.irradiance * fine_result.readiness;
-    var accumulated_weight = fine_result.readiness;
-    var remaining_weight = 1.0 - fine_result.readiness;
-    var current_cascade = next_cascade;
-    
-    // Iterate through coarser cascades until we have full coverage
-    for (var iter = 0u; remaining_weight > 0.0001 && current_cascade < cascade_count; iter = iter + 1u) {
-        let coarse_result = ddgi_sample_sh_irradiance_single_cascade_internal(
-            ddgi_params,
-            sh_probes,
-            probe_states,
-            probe_depth_moments,
-            position,
-            normal_ws,
-            current_cascade
-        );
-        
-        // Contribute proportionally to the remaining weight needed
-        let contribute_weight = remaining_weight * coarse_result.readiness;
-        accumulated_irradiance = accumulated_irradiance + coarse_result.irradiance * contribute_weight;
-        accumulated_weight = accumulated_weight + contribute_weight;
-        remaining_weight = remaining_weight * (1.0 - coarse_result.readiness);
-        current_cascade = current_cascade + 1u;
-    }
-    
-    // Normalize by total weight (handles case where not all cascades are ready)
-    return select(
-        fine_result.irradiance,
-        accumulated_irradiance / accumulated_weight,
-        accumulated_weight > 0.0001
-    );
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
 // Main sampling entry point with state awareness and cascade fallback
 // Handles both:
 // - Readiness-based fallback to coarser cascades for initializing probes
@@ -1078,8 +1056,7 @@ fn ddgi_sample_sh_irradiance_with_states(
     let cascade_count = ddgi_cascade_count(ddgi_params);
     let cascade_index = ddgi_cascade_index_for_position(ddgi_params, position);
     
-    // Use fallback-aware sampling to handle initializing probes
-    let irradiance_fine = ddgi_sample_sh_irradiance_with_fallback(
+    let irradiance_fine = ddgi_sample_sh_irradiance_single_cascade_internal(
         ddgi_params,
         sh_probes,
         probe_states,
@@ -1095,8 +1072,7 @@ fn ddgi_sample_sh_irradiance_with_states(
     let blend_weight = select(0.0, ddgi_cascade_blend_weight(ddgi_params, cascade_index, position), has_coarser);
 
     if (blend_weight > 0.0) {
-        // Also use fallback-aware sampling for the coarser cascade
-        let irradiance_coarse = ddgi_sample_sh_irradiance_with_fallback(
+        let irradiance_coarse = ddgi_sample_sh_irradiance_single_cascade_internal(
             ddgi_params,
             sh_probes,
             probe_states,
@@ -1105,8 +1081,8 @@ fn ddgi_sample_sh_irradiance_with_states(
             normal_ws,
             coarser_index
         );
-        return mix(irradiance_fine, irradiance_coarse, blend_weight);
+        return mix(irradiance_fine.irradiance, irradiance_coarse.irradiance, blend_weight);
     }
 
-    return irradiance_fine;
+    return irradiance_fine.irradiance;
 }

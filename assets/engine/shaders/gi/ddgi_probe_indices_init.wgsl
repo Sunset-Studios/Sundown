@@ -1,6 +1,6 @@
 // =============================================================================
 // DDGI Probe Indices Initialization
-// Scatters active probes into the per-frame update list.
+// Scatters depth-visible candidates into the per-frame update list by priority.
 // =============================================================================
 
 #include "common.wgsl"
@@ -8,7 +8,7 @@
 
 @group(1) @binding(0) var<uniform> ddgi_params: DDGIParams;
 @group(1) @binding(1) var<storage, read_write> probe_update_indices: array<u32>;
-@group(1) @binding(2) var<storage, read> active_flags: array<u32>;
+@group(1) @binding(2) var<storage, read> candidate_priorities: array<u32>;
 @group(1) @binding(3) var<storage, read> prefix_sum: array<u32>;
 @group(1) @binding(4) var<storage, read> block_prefixes: array<u32>;
 @group(1) @binding(5) var<storage, read> gi_counters: GICountersReadOnly;
@@ -24,11 +24,28 @@ fn cs(
         return;
     }
 
-    if ((active_flags[slot] & 1u) == 0u) {
+    let active_priority = candidate_priorities[slot];
+    if (active_priority == DDGI_PROBE_SCHEDULE_PRIORITY_NONE) {
         return;
     }
 
-    let output_slot = prefix_sum[slot] + block_prefixes[wid.x];
+    let priority_bucket = ddgi_probe_schedule_priority_bucket(active_priority);
+    let num_blocks = (arrayLength(&block_prefixes) - DDGI_PROBE_SCHEDULE_PRIORITY_COUNT) /
+        DDGI_PROBE_SCHEDULE_PRIORITY_COUNT;
+    let priority_prefix =
+        prefix_sum[priority_bucket * probe_count + slot] +
+        block_prefixes[priority_bucket * num_blocks + wid.x];
+    let total_fresh =
+        block_prefixes[
+            num_blocks * DDGI_PROBE_SCHEDULE_PRIORITY_COUNT +
+            DDGI_PROBE_SCHEDULE_PRIORITY_BUCKET_FRESH
+        ];
+    let output_slot = select(
+        total_fresh + priority_prefix,
+        priority_prefix,
+        priority_bucket == DDGI_PROBE_SCHEDULE_PRIORITY_BUCKET_FRESH
+    );
+
     if (output_slot >= gi_counters.probe_update_count) {
         return;
     }

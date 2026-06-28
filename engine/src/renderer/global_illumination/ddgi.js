@@ -16,8 +16,9 @@ import { FragmentGpuBuffer } from "../../core/ecs/solar/memory.js";
 
 const COMPUTE_WORKGROUP_SIZE = 128;
 const DDGI_DEFAULT_PROBE_DEPTH_RESOLUTION = 16;
-const DDGI_MAX_CASCADES = 8;
+const DDGI_MAX_CASCADES = 6;
 const DDGI_MSME_STATS_SIZE_U32 = 36;
+const DDGI_PROBE_SCHEDULER_PRIORITY_COUNT = 2;
 
 const DDGI_GI_COUNTERS_NAME = "ddgi_gi_counters";
 const DDGI_GI_COUNTER_LIGHT_COUNT_INDEX = 0;
@@ -245,10 +246,10 @@ const ddgi_atrous_diffuse_shader_setup = {
 
 export class DDGI {
   config = {
-    probe_grid_dimensions: [64, 64, 64],
+    probe_grid_dimensions: [32, 32, 32],
     probe_spacing: 2.0,
     probe_radius: 0.1,
-    max_rays_per_probe: 32,
+    max_rays_per_probe: 256,
     probes_per_frame: 1024,
     indirect_boost: 1.0,
     cascade_count: DDGI_MAX_CASCADES,
@@ -556,6 +557,7 @@ export class DDGI {
     const base_spacing = this.config.probe_spacing;
     const cascade_spacing_multiplier = Math.max(1.0, this.config.cascade_spacing_multiplier);
     const probe_depth_resolutions = this._sanitize_probe_depth_resolutions(cascade_count);
+    let max_depth_texel_count_per_probe = 1;
 
     if (
       !this.ddgi_probe_grid_snapped_origin ||
@@ -621,6 +623,10 @@ export class DDGI {
 
       const depth_resolution = probe_depth_resolutions[cascade_index];
       const depth_texel_count_per_probe = depth_resolution * depth_resolution;
+      max_depth_texel_count_per_probe = Math.max(
+        max_depth_texel_count_per_probe,
+        depth_texel_count_per_probe
+      );
       const cascade_depth_base_offset = total_depth_texel_count;
       total_depth_texel_count += probes_per_cascade * depth_texel_count_per_probe;
 
@@ -787,9 +793,9 @@ export class DDGI {
     });
 
     // ─────────────────────────────────────────────────────────────────────────
-    // Active-only probe scheduling.
+    // Priority-based probe scheduling.
     // A current-frame depth-buffer pass marks probes near visible surfaces,
-    // then the scheduler compacts only those probes through a permuted stream.
+    // then the scheduler selects visible candidates by priority through a permuted stream.
     // ─────────────────────────────────────────────────────────────────────────
     const probe_surface_flags = render_graph.create_buffer({
       name: "ddgi_probe_surface_flags",
@@ -807,7 +813,7 @@ export class DDGI {
 
     const probe_active_prefix_sum = render_graph.create_buffer({
       name: "ddgi_probe_active_prefix_sum",
-      size: probe_count,
+      size: probe_count * DDGI_PROBE_SCHEDULER_PRIORITY_COUNT,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
       force: force_recreate,
     });
@@ -816,14 +822,16 @@ export class DDGI {
 
     const probe_active_block_sums = render_graph.create_buffer({
       name: "ddgi_probe_active_block_sums",
-      size: probe_active_block_count,
+      size: probe_active_block_count * DDGI_PROBE_SCHEDULER_PRIORITY_COUNT,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
       force: force_recreate,
     });
 
     const probe_active_block_prefixes = render_graph.create_buffer({
       name: "ddgi_probe_active_block_prefixes",
-      size: probe_active_block_count,
+      size:
+        probe_active_block_count * DDGI_PROBE_SCHEDULER_PRIORITY_COUNT +
+        DDGI_PROBE_SCHEDULER_PRIORITY_COUNT,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
       force: force_recreate,
     });
@@ -1076,7 +1084,7 @@ export class DDGI {
 
     // ─────────────────────────────────────────────────────────────────────────
     // Probe Active Mark Pass
-    // Outputs one flag per permuted slot when the probe should be traced.
+    // Outputs one scheduler priority per depth-visible candidate slot.
     // ─────────────────────────────────────────────────────────────────────────
     render_graph.add_pass(
       "ddgi_probe_active_mark",
@@ -1149,7 +1157,7 @@ export class DDGI {
 
     // ─────────────────────────────────────────────────────────────────────────
     // Probe Indices Init Pass
-    // Scatters active probes into the per-frame update list.
+    // Scatters visible candidates into the per-frame update list in priority order.
     // ─────────────────────────────────────────────────────────────────────────
     render_graph.add_pass(
       "ddgi_probe_indices_init",
@@ -1223,10 +1231,8 @@ export class DDGI {
 
     // ─────────────────────────────────────────────────────────────────────────
     // Probe Depth Moments (visibility / occlusion weighting)
-    // Updated inside `ddgi_sh_probe_accumulate.wgsl`:
-    // - per-probe scratch clear
-    // - per-ray binning (no splatting)
-    // - resolve into the persistent octahedral atlas
+    // Updated in `ddgi_depth_update.wgsl` by gathering traced rays into the
+    // persistent octahedral atlas.
     // ─────────────────────────────────────────────────────────────────────────
 
     render_graph.add_pass(
@@ -1293,9 +1299,9 @@ export class DDGI {
     );
 
     // ─────────────────────────────────────────────────────────────────────────
-    // Depth Moment Update Pass (1 thread per ray for better occupancy)
-    // Uses per-probe history validity from accumulate. Visibility applies its
-    // own conservative, local geometry-change hysteresis in the shader.
+    // Depth Moment Update Pass
+    // Uses one invocation per active probe/visibility texel, gathering all rays
+    // mapped to that texel so packed moment writes are deterministic.
     // ─────────────────────────────────────────────────────────────────────────
     render_graph.add_pass(
       "ddgi_depth_update",
@@ -1312,7 +1318,11 @@ export class DDGI {
       },
       (graph, frame_data, encoder) => {
         const pass = graph.get_physical_pass(frame_data.current_pass);
-        pass.dispatch(Math.ceil(probe_total_ray_count / COMPUTE_WORKGROUP_SIZE), 1, 1);
+        pass.dispatch(
+          Math.ceil(probes_per_frame / 8),
+          Math.ceil(max_depth_texel_count_per_probe / 8),
+          1
+        );
       }
     );
 

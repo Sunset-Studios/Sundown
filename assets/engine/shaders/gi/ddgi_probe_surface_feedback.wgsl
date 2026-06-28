@@ -75,4 +75,12 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let cascade_index = ddgi_cascade_index_for_position(&ddgi_params, position);
 
     ddgi_mark_surface_probe_neighborhood(position, normal_ws, cascade_index);
+
+    let coarser_cascade_index = cascade_index + 1u;
+    if (
+        coarser_cascade_index < ddgi_cascade_count(&ddgi_params) &&
+        ddgi_position_in_coarser_active_overlap(&ddgi_params, cascade_index, coarser_cascade_index, position)
+    ) {
+        ddgi_mark_surface_probe_neighborhood(position, normal_ws, coarser_cascade_index);
+    }
 }

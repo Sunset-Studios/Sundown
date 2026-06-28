@@ -1,7 +1,7 @@
 // =============================================================================
 // DDGI Active Probe Mark
-// Builds one active flag per permuted probe slot.
-// The active set is the current-frame depth-derived surface flag buffer.
+// Assigns scheduler priority to the current-frame depth-visible candidate set.
+// Non-visible probes are not candidates, regardless of their priority.
 // =============================================================================
 
 #include "common.wgsl"
@@ -10,7 +10,7 @@
 @group(1) @binding(0) var<uniform> ddgi_params: DDGIParams;
 @group(1) @binding(1) var<storage, read_write> probe_states: array<ProbeStateData>;
 @group(1) @binding(2) var<storage, read_write> probe_surface_flags: array<u32>;
-@group(1) @binding(3) var<storage, read_write> active_flags: array<u32>;
+@group(1) @binding(3) var<storage, read_write> candidate_priorities: array<u32>;
 
 @compute @workgroup_size(128, 1, 1)
 fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
@@ -31,15 +31,23 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
 
     let packed = probe_states[probe_index].packed_state;
     let state = probe_state_get_state(packed);
+    let convergence_frames = probe_state_get_convergence_frames(packed);
     let flags = probe_state_get_flags(packed);
     let is_surface_active = probe_surface_flags[probe_index] != 0u;
-    if (!is_surface_active || !ddgi_probe_in_cascade(&ddgi_params, probe_index)) {
-        active_flags[slot] = 0u;
+    if (!is_surface_active || !ddgi_probe_in_cascade_shell(&ddgi_params, probe_index)) {
+        candidate_priorities[slot] = DDGI_PROBE_SCHEDULE_PRIORITY_NONE;
     } else {
-        active_flags[slot] = 1u;
+        var schedule_state = state;
+        var schedule_convergence_frames = convergence_frames;
         if (state == PROBE_STATE_SLEEPING || state == PROBE_STATE_OFF) {
-            probe_states[probe_index].packed_state = probe_state_pack(PROBE_STATE_UNINITIALIZED, 0u, 0u, flags);
+            schedule_state = PROBE_STATE_UNINITIALIZED;
+            schedule_convergence_frames = 0u;
+            probe_states[probe_index].packed_state = probe_state_pack(schedule_state, 0u, 0u, flags);
             probe_states[probe_index].sample_count = 0u;
         }
+        candidate_priorities[slot] = ddgi_probe_schedule_priority_for_state(
+            schedule_state,
+            schedule_convergence_frames
+        );
     }
 }
