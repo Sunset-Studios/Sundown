@@ -179,6 +179,8 @@ export class DebugOverlay {
         return "debug/debug_overlay_2d.wgsl";
       case DebugDrawType.GI_Diffuse:
         return "debug/debug_overlay_2d.wgsl";
+      case DebugDrawType.GI_SurfaceCache:
+        return "debug/debug_overlay_2d.wgsl";
       case DebugDrawType.GI_Probes:
         return "debug/debug_overlay_2d.wgsl";
       case DebugDrawType.GI_Reflections:

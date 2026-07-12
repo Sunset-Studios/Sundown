@@ -49,6 +49,7 @@ import { draw_quad } from "../draw_helpers.js";
 // Specialized renderer components
 import { PTGI } from "../global_illumination/ptgi.js";
 import { DDGI } from "../global_illumination/ddgi.js";
+import { SCGI } from "../global_illumination/scgi.js";
 import { SparseVolumetricLightmapper } from "../global_illumination/svlm.js";
 import { VBAO } from "../global_illumination/vbao.js";
 import { RTAO } from "../global_illumination/rtao.js";
@@ -203,8 +204,19 @@ export class DeferredShadingStrategy {
     this.gbuffer_targets_pipeline = new GBufferTargetsPipeline();
     this.visibility_buffer_pipeline = new VisibilityBufferPipeline();
 
-    this.gi =
-      Renderer.get().get_gi_strategy_type() === GIStrategyType.DDGI ? new DDGI() : new PTGI();
+    const gi_strategy_type = Renderer.get().get_gi_strategy_type();
+    switch (gi_strategy_type) {
+      case GIStrategyType.DDGI:
+        this.gi = new DDGI();
+        break;
+      case GIStrategyType.SCGI:
+        this.gi = new SCGI();
+        break;
+      case GIStrategyType.PTGI:
+      default:
+        this.gi = new PTGI();
+        break;
+    }
     this.svlm = new SparseVolumetricLightmapper();
     this.ao =
       Renderer.get().get_ao_strategy_type() === AOStrategyType.RTAO ? new RTAO() : new VBAO();
@@ -275,7 +287,8 @@ export class DeferredShadingStrategy {
 
       const shadows_enabled = renderer.is_shadows_enabled();
       const gi_enabled = renderer.is_gi_enabled();
-      const gi_has_builtin_specular = renderer.get_gi_strategy_type() === GIStrategyType.PTGI;
+      const gi_strategy_type = renderer.get_gi_strategy_type();
+      const gi_has_builtin_specular = gi_strategy_type === GIStrategyType.PTGI;
       const ao_enabled = renderer.is_ao_enabled();
       const reflections_enabled = renderer.is_reflection_enabled() && !gi_has_builtin_specular;
       const depth_prepass_enabled = renderer.is_depth_prepass_enabled();
@@ -930,7 +943,9 @@ export class DeferredShadingStrategy {
       // └─────────────────────────────────────────────────────────────────────────────┘
       if (
         gi_enabled &&
-        (debug_view === DebugDrawType.GI_WorldCache || debug_view === DebugDrawType.GI_Probes)
+        (debug_view === DebugDrawType.GI_WorldCache ||
+          debug_view === DebugDrawType.GI_SurfaceCache ||
+          debug_view === DebugDrawType.GI_Probes)
       ) {
         this.gi.add_debug_passes(
           render_graph,

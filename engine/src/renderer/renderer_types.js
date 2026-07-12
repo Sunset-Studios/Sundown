@@ -132,6 +132,7 @@ export const RenderStrategyType = Object.freeze({
 export const GIStrategyType = Object.freeze({
     PTGI: 0,
     DDGI: 1,
+    SCGI: 2,
 });
 
 /**
@@ -189,6 +190,7 @@ export const DebugDrawType = Object.freeze({
     VisibilityTriangleId: 30,
     SVLM_Bricks: 31,
     SVLM_Probes: 32,
+    GI_SurfaceCache: 33,
 });
 
 /**
