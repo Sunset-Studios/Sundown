@@ -2,15 +2,15 @@
 #include "acceleration_common.wgsl"
 #include "postprocess_common.wgsl"
 #include "sky_common.wgsl"
-#include "gi/scgi_common.wgsl"
+#include "gi/surface_cache_common.wgsl"
 
-@group(1) @binding(0) var<uniform> scgi_params: SCGIParams;
+@group(1) @binding(0) var<uniform> surface_cache_params: SurfaceCacheParams;
 @group(1) @binding(1) var<uniform> scene_lighting_data: SceneLightingData;
 @group(1) @binding(2) var<storage, read_write> surface_cache: array<SurfacePatchReadOnly>;
 @group(1) @binding(3) var<storage, read_write> surface_cache_sh: array<u32>;
 @group(1) @binding(4) var<storage, read> active_indices: array<u32>;
-@group(1) @binding(5) var<storage, read> counters: SCGICountersReadOnly;
-@group(1) @binding(6) var<storage, read_write> hit_info: array<SCGIHitInfo>;
+@group(1) @binding(5) var<storage, read> counters: SurfaceCacheCountersReadOnly;
+@group(1) @binding(6) var<storage, read_write> hit_info: array<SurfaceCacheHitInfo>;
 @group(1) @binding(7) var<storage, read> material_params: array<StandardMaterialParams>;
 @group(1) @binding(8) var<storage, read> material_table_offset: array<u32>;
 @group(1) @binding(9) var<storage, read> material_palette: array<u32>;
@@ -25,9 +25,9 @@
 @group(1) @binding(18) var texture_pool_specular: texture_2d_array<f32>;
 @group(1) @binding(19) var texture_pool_emission: texture_2d_array<f32>;
 @group(1) @binding(20) var skybox_texture: texture_cube<f32>;
-@group(1) @binding(21) var<storage, read_write> radiance_info: array<SCGIRadianceInfo>;
+@group(1) @binding(21) var<storage, read_write> radiance_info: array<SurfaceCacheRadianceInfo>;
 
-#include "gi/scgi_cache_lookup.wgsl"
+#include "gi/surface_cache_lookup.wgsl"
 
 @compute @workgroup_size(128, 1, 1)
 fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
@@ -54,7 +54,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
             skybox_texture
         );
         radiance_info[active_index].sample_radiance = vec4<f32>(
-            safe_clamp_vec3_max(environment_radiance, SCGI_MAX_RADIANCE),
+            safe_clamp_vec3_max(environment_radiance, SURFACE_CACHE_MAX_RADIANCE),
             1.0
         );
         return;
@@ -103,7 +103,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
 
     let hit_position = path.hit_position_sampling_weight.xyz;
     let view_direction = normalize(-path.ray_direction_primitive.xyz);
-    let recurrent_irradiance = scgi_sample_surface_cache(
+    let recurrent_irradiance = surface_cache_sample(
         hit_position,
         shading_normal,
         camera_position
@@ -112,7 +112,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     radiance_info[active_index].sample_radiance = vec4<f32>(
         safe_clamp_vec3_max(
             emissive * albedo + recurrent_irradiance * diffuse_albedo * (1.0 / (2.0 * PI)),
-            SCGI_MAX_RADIANCE
+            SURFACE_CACHE_MAX_RADIANCE
         ),
         1.0
     );
@@ -123,7 +123,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
 
     let patch_index = active_indices[active_index];
-    var rng = random_seed(scgi_patch_rng(
+    var rng = random_seed(surface_cache_patch_rng(
         patch_index,
         surface_cache[patch_index].fingerprint
     ));
@@ -138,7 +138,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let direct_radiance = brdf * light.color.rgb * light.intensity * attenuation
         * f32(light_count);
     let light_distance = select(
-        scgi_params.max_ray_length,
+        surface_cache_params.max_ray_length,
         length(light.position.xyz - hit_position),
         light.light_type != 0.0
     );
@@ -148,12 +148,12 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     );
     hit_info[active_index].shadow_direction = vec4<f32>(
         light_direction,
-        min(light_distance * 0.999, scgi_params.max_ray_length)
+        min(light_distance * 0.999, surface_cache_params.max_ray_length)
     );
     // w = 1 means pending visibility; the shadow pass changes it to 2 only
     // when the light is visible.
     radiance_info[active_index].shadow_radiance = vec4<f32>(
-        safe_clamp_vec3_max(direct_radiance, SCGI_MAX_RADIANCE),
+        safe_clamp_vec3_max(direct_radiance, SURFACE_CACHE_MAX_RADIANCE),
         1.0
     );
 }

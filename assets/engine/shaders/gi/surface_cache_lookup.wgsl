@@ -1,21 +1,21 @@
-fn scgi_find_patch(
+fn surface_cache_find_patch(
     quantized_position: vec3<i32>,
     quantized_normal: vec2<i32>,
     lod: u32
 ) -> i32 {
-    let bucket_start = scgi_bucket_start(quantized_position, quantized_normal, lod, scgi_params);
-    let fingerprint = scgi_hash_fingerprint(quantized_position, quantized_normal, lod);
-    for (var probe = 0u; probe < SCGI_BUCKET_SIZE; probe = probe + 1u) {
+    let bucket_start = surface_cache_bucket_start(quantized_position, quantized_normal, lod, surface_cache_params);
+    let fingerprint = surface_cache_hash_fingerprint(quantized_position, quantized_normal, lod);
+    for (var probe = 0u; probe < SURFACE_CACHE_BUCKET_SIZE; probe = probe + 1u) {
         let patch_index = bucket_start + probe;
         if (
             surface_cache[patch_index].fingerprint == fingerprint &&
-            scgi_patch_descriptor_matches(
+            surface_cache_patch_descriptor_matches(
                 surface_cache[patch_index].position_frame.xyz,
                 surface_cache[patch_index].normal_unused.xyz,
                 quantized_position,
                 quantized_normal,
                 lod,
-                scgi_params
+                surface_cache_params
             )
         ) {
             return i32(patch_index);
@@ -24,7 +24,7 @@ fn scgi_find_patch(
     return -1;
 }
 
-fn scgi_surface_corner_descriptor(
+fn surface_cache_corner_descriptor(
     position: vec3<f32>,
     normal: vec3<f32>,
     tangent_cell: vec2<i32>,
@@ -66,14 +66,14 @@ fn scgi_surface_corner_descriptor(
     );
 }
 
-fn scgi_sample_surface_cache(
+fn surface_cache_sample(
     position: vec3<f32>,
     normal: vec3<f32>,
     camera_position: vec3<f32>
 ) -> vec4<f32> {
-    let lod = scgi_select_lod(position, camera_position, scgi_params);
-    let cell_size = scgi_lod_cell_size(lod, scgi_params);
-    let quantized_normal = scgi_quantize_normal(normal);
+    let lod = surface_cache_select_lod(position, camera_position, surface_cache_params);
+    let cell_size = surface_cache_lod_cell_size(lod, surface_cache_params);
+    let quantized_normal = surface_cache_quantize_normal(normal);
 
     // A surface cache is sparse in 3D but dense along the local surface. Pick
     // the dominant normal axis, bilinearly sample the other two axes, and use
@@ -127,14 +127,14 @@ fn scgi_sample_surface_cache(
     for (var corner = 0u; corner < 3u; corner = corner + 1u) {
         let offset = corner_offsets[corner];
         let tangent_cell = base_tangent_cell + offset;
-        let descriptor_position = scgi_surface_corner_descriptor(
+        let descriptor_position = surface_cache_corner_descriptor(
             position,
             normal,
             tangent_cell,
             dominant_axis,
             cell_size
         );
-        let patch_index = scgi_find_patch(descriptor_position, quantized_normal, lod);
+        let patch_index = surface_cache_find_patch(descriptor_position, quantized_normal, lod);
         if (patch_index < 0) {
             continue;
         }
@@ -143,8 +143,8 @@ fn scgi_sample_surface_cache(
         let surface_patch = surface_cache[u32(patch_index)];
         let patch_normal = safe_normalize(surface_patch.normal_unused.xyz);
         let sample_count = surface_patch.history.x;
-        let patch_sh = scgi_sh_patch_read(&surface_cache_sh, u32(patch_index));
-        let receiver_direction = safe_normalize(scgi_world_to_hemisphere(normal, patch_normal));
+        let patch_sh = surface_cache_sh_patch_read(&surface_cache_sh, u32(patch_index));
+        let receiver_direction = safe_normalize(surface_cache_world_to_hemisphere(normal, patch_normal));
         let patch_irradiance = max(
             sh_l1_rgb_calculate_irradiance(patch_sh, receiver_direction),
             vec3<f32>(0.0)
@@ -155,23 +155,23 @@ fn scgi_sample_surface_cache(
     }
 
     if (weight_sum > 1e-6) {
-        let irradiance = irradiance_sum * (scgi_params.indirect_boost / weight_sum);
+        let irradiance = irradiance_sum * (surface_cache_params.indirect_boost / weight_sum);
         return vec4<f32>(irradiance, sample_sum / weight_sum);
     }
 
-    let nearest_position = scgi_quantize_position(position, lod, scgi_params);
-    let nearest_index = scgi_find_patch(nearest_position, quantized_normal, lod);
+    let nearest_position = surface_cache_quantize_position(position, lod, surface_cache_params);
+    let nearest_index = surface_cache_find_patch(nearest_position, quantized_normal, lod);
     if (nearest_index >= 0) {
         let nearest_patch = u32(nearest_index);
-        let nearest_sh = scgi_sh_patch_read(&surface_cache_sh, nearest_patch);
+        let nearest_sh = surface_cache_sh_patch_read(&surface_cache_sh, nearest_patch);
         let patch_normal = safe_normalize(surface_cache[nearest_patch].normal_unused.xyz);
-        let receiver_direction = safe_normalize(scgi_world_to_hemisphere(normal, patch_normal));
+        let receiver_direction = safe_normalize(surface_cache_world_to_hemisphere(normal, patch_normal));
         let irradiance = max(
             sh_l1_rgb_calculate_irradiance(nearest_sh, receiver_direction),
             vec3<f32>(0.0)
         );
         return vec4<f32>(
-            irradiance * scgi_params.indirect_boost,
+            irradiance * surface_cache_params.indirect_boost,
             surface_cache[nearest_patch].history.x
         );
     }

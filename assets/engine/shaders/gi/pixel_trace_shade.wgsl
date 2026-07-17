@@ -6,7 +6,7 @@
 // ║  Evaluates material properties at ray hit points:                         ║
 // ║  • Samples material textures (albedo, normal, roughness, etc.)            ║
 // ║  • Handles emissive surfaces                                              ║
-// ║  • Queries world cache for multi-bounce irradiance                        ║
+// ║  • Queries surface cache for multi-bounce irradiance                        ║
 // ║  • Evaluates sky/environment for ray misses                               ║
 // ║                                                                           ║
 // ╚═══════════════════════════════════════════════════════════════════════════╝
@@ -16,8 +16,7 @@
 #include "acceleration_common.wgsl"
 #include "postprocess_common.wgsl"
 #include "sky_common.wgsl"
-#include "gi/gi_common.wgsl"
-#include "gi/world_cache_common.wgsl"
+#include "gi/surface_cache_common.wgsl"
 #include "raytracing/restir_common.wgsl"
 
 // =============================================================================
@@ -30,7 +29,7 @@
 @group(1) @binding(3) var<storage, read> material_params: array<StandardMaterialParams>;
 @group(1) @binding(4) var<storage, read> material_table_offset: array<u32>;
 @group(1) @binding(5) var<storage, read> material_palette: array<u32>;
-@group(1) @binding(6) var<storage, read_write> world_cache: array<WorldCacheCell>;
+@group(1) @binding(6) var<storage, read_write> surface_cache: array<SurfacePatchReadOnly>;
 @group(1) @binding(7) var<storage, read> entity_index_lookup: array<u32>;
 @group(1) @binding(8) var texture_pool_albedo: texture_2d_array<f32>;
 @group(1) @binding(9) var texture_pool_normal: texture_2d_array<f32>;
@@ -41,6 +40,10 @@
 @group(1) @binding(14) var texture_pool_specular: texture_2d_array<f32>;
 @group(1) @binding(15) var texture_pool_emission: texture_2d_array<f32>;
 @group(1) @binding(16) var skybox_texture: texture_cube<f32>;
+@group(1) @binding(17) var<uniform> surface_cache_params: SurfaceCacheParams;
+@group(1) @binding(18) var<storage, read_write> surface_cache_sh: array<u32>;
+
+#include "gi/surface_cache_lookup.wgsl"
 
 const EMISSIVE_HIT_LUMA_SOFT_CAP: f32 = 2.0;
 const EMISSIVE_HIT_OVERFLOW_SCALE: f32 = 0.1;
@@ -174,26 +177,16 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         }
 
         // ─────────────────────────────────────────────────────────────────────
-        // World Cache Query (Multi-Bounce Irradiance)
+        // Surface Cache Query (Multi-Bounce Irradiance)
         // ─────────────────────────────────────────────────────────────────────
         let hit_distance_for_cache = pixel_path_state[gid.x].origin_tmin.w;
         var cached_radiance = vec3<f32>(0.0);
-        if (hit_distance_for_cache >= gi_params.world_cache_cell_size * 0.5) {
-            cached_radiance = query_world_cache_cell(
+        if (hit_distance_for_cache >= surface_cache_params.surface_cache_cell_size * 0.5) {
+            cached_radiance = surface_cache_sample(
                 hit_pos,
                 n,
-                albedo,
-                roughness,
-                metallic,
-                reflectance,
-                emissive,
-                camera_position,
-                u32(gi_params.world_cache_size),
-                gi_params.world_cache_cell_size,
-                u32(gi_params.world_cache_lod_count),
-                hit_distance_for_cache,
-                0u // Screen space traces rank at 0 (first hit)
-            );
+                camera_position
+            ).xyz;
         }
         
         // Apply cached radiance if valid, with firefly clamping

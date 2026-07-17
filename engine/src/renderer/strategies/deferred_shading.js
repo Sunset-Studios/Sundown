@@ -677,9 +677,7 @@ export class DeferredShadingStrategy {
             entity_index_lookup,
             entity_flags,
           ],
-          outputs: [
-            main_transparency_accum_image,
-          ],
+          outputs: [main_transparency_accum_image],
         });
       }
 
@@ -704,7 +702,7 @@ export class DeferredShadingStrategy {
           ],
         });
       }
-      
+
       // ┌─────────────────────────────────────────────────────────────────────────────┐
       // │ 🌊 PASS: Transparency Composite                                            │
       // │    Blend transparent objects using weighted-blended order-independent     │
@@ -938,14 +936,12 @@ export class DeferredShadingStrategy {
 
       // ┌─────────────────────────────────────────────────────────────────────────────┐
       // │ 🔍 PASS: GI Debug Visualizations                                          │
-      // │    - World Cache: Shows spatial hash cached radiance                      │
+      // │    - Surface Cache: Shows spatial hash cached radiance                      │
       // │    (displayed via debug overlay, doesn't affect main rendering pipeline)  │
       // └─────────────────────────────────────────────────────────────────────────────┘
       if (
         gi_enabled &&
-        (debug_view === DebugDrawType.GI_WorldCache ||
-          debug_view === DebugDrawType.GI_SurfaceCache ||
-          debug_view === DebugDrawType.GI_Probes)
+        (debug_view === DebugDrawType.GI_SurfaceCache || debug_view === DebugDrawType.GI_Probes)
       ) {
         this.gi.add_debug_passes(
           render_graph,
@@ -1117,7 +1113,6 @@ export class DeferredShadingStrategy {
         reflections_enabled,
       });
 
-
       // ┌─────────────────────────────────────────────────────────────────────────────┐
       // │ 🖼️  PASS: Final Presentation                                               │
       // │    Present the final rendered image to the screen swapchain               │
@@ -1217,7 +1212,10 @@ export class DeferredShadingStrategy {
     this.prev_lighting_image = Texture.create(prev_lighting_image_config);
 
     this.culling_pipeline.recreate_persistent_resources(image_extent, this.force_recreate);
-    this.visibility_buffer_pipeline.recreate_persistent_resources(image_extent, this.force_recreate);
+    this.visibility_buffer_pipeline.recreate_persistent_resources(
+      image_extent,
+      this.force_recreate
+    );
   }
 
   _get_texture_pool(render_graph, pool_key) {

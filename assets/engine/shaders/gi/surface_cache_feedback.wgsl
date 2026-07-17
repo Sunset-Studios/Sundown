@@ -1,14 +1,14 @@
 #include "common.wgsl"
-#include "gi/scgi_common.wgsl"
+#include "gi/surface_cache_common.wgsl"
 
 // Full-resolution depth feedback is both cache admission and active-stream
 // generation. Every visible descriptor either claims an empty bucket slot or
 // refreshes its existing world-space patch. Exactly one invocation per patch
 // appends that patch to active_indices for the current frame.
-@group(1) @binding(0) var<uniform> scgi_params: SCGIParams;
+@group(1) @binding(0) var<uniform> surface_cache_params: SurfaceCacheParams;
 @group(1) @binding(1) var<storage, read_write> surface_cache: array<SurfacePatch>;
 @group(1) @binding(2) var<storage, read_write> surface_cache_sh: array<u32>;
-@group(1) @binding(3) var<storage, read_write> counters: SCGICounters;
+@group(1) @binding(3) var<storage, read_write> counters: SurfaceCacheCounters;
 @group(1) @binding(4) var<storage, read_write> active_indices: array<u32>;
 @group(1) @binding(5) var depth_texture: texture_2d<f32>;
 @group(1) @binding(6) var gbuffer_normal: texture_2d<f32>;
@@ -18,7 +18,7 @@
 
 fn append_active_patch(patch_index: u32) {
     let active_index = atomicAdd(&counters.active_patch_count, 1u);
-    if (active_index < u32(scgi_params.total_patch_count)) {
+    if (active_index < u32(surface_cache_params.total_patch_count)) {
         active_indices[active_index] = patch_index;
     }
 }
@@ -34,20 +34,20 @@ fn initialize_patch(
     let albedo = textureLoad(gbuffer_albedo, pixel_coord.xy, 0).rgb;
     let smra = textureLoad(gbuffer_smra, pixel_coord.xy, 0);
     let motion_emissive = textureLoad(gbuffer_motion_emissive, pixel_coord.xy, 0);
-    surface_cache[patch_index].position_frame = vec4<f32>(position, scgi_params.frame_index);
+    surface_cache[patch_index].position_frame = vec4<f32>(position, surface_cache_params.frame_index);
     surface_cache[patch_index].normal_unused = vec4<f32>(normal, 0.0);
     surface_cache[patch_index].albedo_roughness = vec4<f32>(albedo, smra.g);
     surface_cache[patch_index].material_props = vec4<f32>(smra.b, smra.r, motion_emissive.w, f32(lod));
     if (reset) {
         surface_cache[patch_index].history = vec4<f32>(0.0);
-        scgi_sh_patch_write(&surface_cache_sh, patch_index, sh_l1_rgb_zero());
+        surface_cache_sh_patch_write(&surface_cache_sh, patch_index, sh_l1_rgb_zero());
     }
 }
 
 @compute @workgroup_size(8, 8, 1)
 fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let pixel_coord = gid.xy;
-    let full_resolution = scgi_full_resolution(scgi_params);
+    let full_resolution = surface_cache_full_resolution(surface_cache_params);
     if (pixel_coord.x >= full_resolution.x || pixel_coord.y >= full_resolution.y) {
         return;
     }
@@ -57,7 +57,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         return;
     }
 
-    let frame = u32(scgi_params.frame_index);
+    let frame = u32(surface_cache_params.frame_index);
 
     let camera_position = view_buffer[u32(frame_info.view_index)].view_position.xyz;
     let normal = safe_normalize(normal_data.xyz);
@@ -67,18 +67,18 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         u32(frame_info.view_index)
     );
 
-    let lod = scgi_select_lod(position, camera_position, scgi_params);
-    let quantized_position = scgi_quantize_position(position, lod, scgi_params);
-    let quantized_normal = scgi_quantize_normal(normal);
+    let lod = surface_cache_select_lod(position, camera_position, surface_cache_params);
+    let quantized_position = surface_cache_quantize_position(position, lod, surface_cache_params);
+    let quantized_normal = surface_cache_quantize_normal(normal);
 
-    let bucket_start = scgi_bucket_start(quantized_position, quantized_normal, lod, scgi_params);
-    let fingerprint = scgi_hash_fingerprint(quantized_position, quantized_normal, lod);
+    let bucket_start = surface_cache_bucket_start(quantized_position, quantized_normal, lod, surface_cache_params);
+    let fingerprint = surface_cache_hash_fingerprint(quantized_position, quantized_normal, lod);
 
-    for (var probe = 0u; probe < SCGI_BUCKET_SIZE; probe = probe + 1u) {
+    for (var probe = 0u; probe < SURFACE_CACHE_BUCKET_SIZE; probe = probe + 1u) {
         let patch_index = bucket_start + probe;
         let claim = atomicCompareExchangeWeak(
             &surface_cache[patch_index].fingerprint,
-            SCGI_PATCH_EMPTY,
+            SURFACE_CACHE_PATCH_EMPTY,
             fingerprint
         );
 
@@ -97,13 +97,13 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         }
 
         if (claim.old_value == fingerprint) {
-            if (scgi_patch_descriptor_matches(
+            if (surface_cache_patch_descriptor_matches(
                 surface_cache[patch_index].position_frame.xyz,
                 surface_cache[patch_index].normal_unused.xyz,
                 quantized_position,
                 quantized_normal,
                 lod,
-                scgi_params
+                surface_cache_params
             )) {
                 let previous_frame = atomicExchange(&surface_cache[patch_index].update_frame, frame);
                 if (previous_frame != frame) {

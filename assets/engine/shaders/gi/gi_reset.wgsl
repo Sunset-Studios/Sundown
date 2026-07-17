@@ -5,7 +5,7 @@
 // ║                                                                           ║
 // ║  Resets per-frame counters for the GI system:                             ║
 // ║  • Active pixel count (for per-pixel tracing)                             ║
-// ║  • Active cache cell count (for world cache updates)                      ║
+// ║  • Active cache cell count (for surface cache updates)                      ║
 // ║  • Light count (copied from lighting system)                              ║
 // ║                                                                           ║
 // ║  All GPU-side, no CPU readbacks needed.                                   ║

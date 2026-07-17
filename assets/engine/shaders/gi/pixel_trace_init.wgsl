@@ -21,7 +21,6 @@
 
 #include "common.wgsl"
 #include "gi/gi_common.wgsl"
-#include "gi/world_cache_common.wgsl"
 #include "raytracing/restir_common.wgsl"
 
 // =============================================================================
@@ -34,15 +33,14 @@
 @group(1) @binding(3) var<storage, read_write> ray_work_queue: array<u32>;
 @group(1) @binding(4) var<storage, read> dense_lights_buffer: DenseLightsBuffer;
 @group(1) @binding(5) var<storage, read> emissive_lights_buffer: EmissiveLightsBuffer;
-@group(1) @binding(6) var<storage, read_write> world_cache: array<WorldCacheCell>;
-@group(1) @binding(7) var depth_texture: texture_2d<f32>;
-@group(1) @binding(8) var gbuffer_normal: texture_2d<f32>;
-@group(1) @binding(9) var gbuffer_albedo: texture_2d<f32>;
-@group(1) @binding(10) var gbuffer_smra: texture_2d<f32>;
-@group(1) @binding(11) var gbuffer_motion: texture_2d<f32>;
-@group(1) @binding(12) var blue_noise: texture_2d_array<f32>;
+@group(1) @binding(6) var depth_texture: texture_2d<f32>;
+@group(1) @binding(7) var gbuffer_normal: texture_2d<f32>;
+@group(1) @binding(8) var gbuffer_albedo: texture_2d<f32>;
+@group(1) @binding(9) var gbuffer_smra: texture_2d<f32>;
+@group(1) @binding(10) var gbuffer_motion: texture_2d<f32>;
+@group(1) @binding(11) var blue_noise: texture_2d_array<f32>;
 #if SPECULAR_MASK_ENABLED
-@group(1) @binding(13) var specular_mask: texture_2d<u32>;
+@group(1) @binding(12) var specular_mask: texture_2d<u32>;
 #endif
 
 // =============================================================================

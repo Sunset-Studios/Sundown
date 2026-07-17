@@ -2,12 +2,12 @@
 
 #include "common.wgsl"
 #include "acceleration_common.wgsl"
-#include "gi/scgi_common.wgsl"
+#include "gi/surface_cache_common.wgsl"
 #include "acceleration/bvh_ray_traversal.wgsl"
 
-@group(1) @binding(0) var<uniform> scgi_params: SCGIParams;
-@group(1) @binding(1) var<storage, read> counters: SCGICountersReadOnly;
-@group(1) @binding(2) var<storage, read_write> hit_info: array<SCGIHitInfo>;
+@group(1) @binding(0) var<uniform> surface_cache_params: SurfaceCacheParams;
+@group(1) @binding(1) var<storage, read> counters: SurfaceCacheCountersReadOnly;
+@group(1) @binding(2) var<storage, read_write> hit_info: array<SurfaceCacheHitInfo>;
 @group(1) @binding(3) var<storage, read> tlas_bvh2_bounds: array<AABB>;
 @group(1) @binding(4) var<uniform> tlas_bvh_info: BVHInfo;
 @group(1) @binding(5) var<storage, read> blas_bvh2_nodes: array<AABB>;
@@ -15,7 +15,7 @@
 @group(1) @binding(7) var<storage, read> ray_instance_transforms: array<RayInstanceTransform>;
 @group(1) @binding(8) var<storage, read> index_buffer: array<u32>;
 @group(1) @binding(9) var<storage, read> entity_index_lookup: array<u32>;
-@group(1) @binding(10) var<storage, read_write> radiance_info: array<SCGIRadianceInfo>;
+@group(1) @binding(10) var<storage, read_write> radiance_info: array<SurfaceCacheRadianceInfo>;
 
 @compute @workgroup_size(128, 1, 1)
 fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {

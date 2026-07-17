@@ -33,17 +33,17 @@ export const ShaderResourceType = Object.freeze({
  * @enum {number}
  */
 export const CacheTypes = Object.freeze({
-    SHADER: 0,
-    PIPELINE_STATE: 1,
-    RENDER_PASS: 2,
-    BIND_GROUP: 3,
-    BIND_GROUP_LAYOUT: 4,
-    BUFFER: 5,
-    IMAGE: 6,
-    IMAGE_POOL: 7,
-    SAMPLER: 8,
-    MESH: 9,
-    MATERIAL: 10,
+  SHADER: 0,
+  PIPELINE_STATE: 1,
+  RENDER_PASS: 2,
+  BIND_GROUP: 3,
+  BIND_GROUP_LAYOUT: 4,
+  BUFFER: 5,
+  IMAGE: 6,
+  IMAGE_POOL: 7,
+  SAMPLER: 8,
+  MESH: 9,
+  MATERIAL: 10,
 });
 
 /**
@@ -101,19 +101,19 @@ export const BufferFlags = Object.freeze({
  * @enum {number}
  */
 export const BindlessGroupIndex = Object.freeze({
-    Image: 0,
-    StorageImage: 1
-}); 
+  Image: 0,
+  StorageImage: 1,
+});
 
 /**
  * Types of bind groups in the render graph.
  * @enum {number}
  */
 export const BindGroupType = Object.freeze({
-    Global: 0,
-    Pass: 1,
-    Material: 2,
-    Num: 3
+  Global: 0,
+  Pass: 1,
+  Material: 2,
+  Num: 3,
 });
 
 /**
@@ -121,8 +121,8 @@ export const BindGroupType = Object.freeze({
  * @enum {number}
  */
 export const RenderStrategyType = Object.freeze({
-    Deferred: 0,
-    PathTracing: 1,
+  Deferred: 0,
+  PathTracing: 1,
 });
 
 /**
@@ -130,9 +130,9 @@ export const RenderStrategyType = Object.freeze({
  * @enum {number}
  */
 export const GIStrategyType = Object.freeze({
-    PTGI: 0,
-    DDGI: 1,
-    SCGI: 2,
+  PTGI: 0,
+  DDGI: 1,
+  SCGI: 2,
 });
 
 /**
@@ -140,8 +140,8 @@ export const GIStrategyType = Object.freeze({
  * @enum {number}
  */
 export const AOStrategyType = Object.freeze({
-    VBAO: 0,
-    RTAO: 1,
+  VBAO: 0,
+  RTAO: 1,
 });
 
 /**
@@ -149,7 +149,7 @@ export const AOStrategyType = Object.freeze({
  * @enum {number}
  */
 export const ReflectionStrategyType = Object.freeze({
-    SSR: 0,
+  SSR: 0,
 });
 
 /**
@@ -157,40 +157,39 @@ export const ReflectionStrategyType = Object.freeze({
  * @enum {number}
  */
 export const DebugDrawType = Object.freeze({
-    None: 0,
-    Wireframe: 1,
-    Depth: 2,
-    Normal: 3,
-    Emissive: 4,
-    Motion: 5,
-    EntityId: 6,
-    HZB: 7,
-    ASVSM_ShadowAtlas: 8,
-    ASVSM_ShadowPageTable: 9,
-    ASVSM_TileOverlay: 10,
-    ASVSM_TileRenderOutput: 11,
-    ASVSM_DirtyTiles: 12,
-    ASVSM_DirtyShadowMeshlets: 13,
-    Bloom: 14,
-    AO: 15,
-    BentNormal: 16,
-    GI_Direct: 17,
-    GI_Diffuse: 18,
-    GI_Specular: 19,
-    GI_WorldCache: 20,
-    GI_Probes: 21,
-    GI_Reflections: 22,
-    EntityBounds: 23,
-    BVH: 24,
-    BLAS_Bounds: 25,
-    PrevLightingPyramid: 26,
-    VisibilityMaterialId: 27,
-    VisibilityEntityId: 28,
-    VisibilityMeshletId: 29,
-    VisibilityTriangleId: 30,
-    SVLM_Bricks: 31,
-    SVLM_Probes: 32,
-    GI_SurfaceCache: 33,
+  None: 0,
+  Wireframe: 1,
+  Depth: 2,
+  Normal: 3,
+  Emissive: 4,
+  Motion: 5,
+  EntityId: 6,
+  HZB: 7,
+  ASVSM_ShadowAtlas: 8,
+  ASVSM_ShadowPageTable: 9,
+  ASVSM_TileOverlay: 10,
+  ASVSM_TileRenderOutput: 11,
+  ASVSM_DirtyTiles: 12,
+  ASVSM_DirtyShadowMeshlets: 13,
+  Bloom: 14,
+  AO: 15,
+  BentNormal: 16,
+  GI_Direct: 17,
+  GI_Diffuse: 18,
+  GI_Specular: 19,
+  GI_Probes: 20,
+  GI_Reflections: 21,
+  EntityBounds: 22,
+  BVH: 23,
+  BLAS_Bounds: 24,
+  PrevLightingPyramid: 25,
+  VisibilityMaterialId: 26,
+  VisibilityEntityId: 27,
+  VisibilityMeshletId: 28,
+  VisibilityTriangleId: 29,
+  SVLM_Bricks: 30,
+  SVLM_Probes: 31,
+  GI_SurfaceCache: 32,
 });
 
 /**
@@ -212,7 +211,7 @@ export const TextureChannel = {
 export function render_pass_flags_to_string(flags) {
   const flag_names = [];
   if (flags & RenderPassFlags.Graphics) flag_names.push(graphics_pass_name);
-  if (flags & RenderPassFlags.Present) flag_names.push(present_pass_name); 
+  if (flags & RenderPassFlags.Present) flag_names.push(present_pass_name);
   if (flags & RenderPassFlags.Compute) flag_names.push(compute_pass_name);
   if (flags & RenderPassFlags.GraphLocal) flag_names.push(graph_local_pass_name);
   return flag_names.join(", ");

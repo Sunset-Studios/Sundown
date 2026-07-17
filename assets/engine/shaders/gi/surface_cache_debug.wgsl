@@ -1,7 +1,7 @@
 #include "common.wgsl"
-#include "gi/scgi_common.wgsl"
+#include "gi/surface_cache_common.wgsl"
 
-@group(1) @binding(0) var<uniform> scgi_params: SCGIParams;
+@group(1) @binding(0) var<uniform> surface_cache_params: SurfaceCacheParams;
 @group(1) @binding(1) var<storage, read_write> surface_cache: array<SurfacePatchReadOnly>;
 @group(1) @binding(2) var<storage, read_write> surface_cache_sh: array<u32>;
 @group(1) @binding(3) var depth_texture: texture_2d<f32>;
@@ -9,10 +9,10 @@
 @group(1) @binding(5) var scene_color: texture_2d<f32>;
 @group(1) @binding(6) var output_debug: texture_storage_2d<rgba16float, write>;
 
-#include "gi/scgi_cache_lookup.wgsl"
+#include "gi/surface_cache_lookup.wgsl"
 
 // Displays the single cache patch addressed by the current surface. Unlike
-// scgi_resolve, this deliberately performs no neighboring-cell lookup or
+// surface_cache_resolve, this deliberately performs no neighboring-cell lookup or
 // geometry/confidence weighting, exposing the raw spatial cache population.
 @compute @workgroup_size(8, 8, 1)
 fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
@@ -36,21 +36,21 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         view_index
     );
     let camera_position = view_buffer[view_index].view_position.xyz;
-    let lod = scgi_select_lod(position, camera_position, scgi_params);
-    let descriptor_position = scgi_quantize_position(position, lod, scgi_params);
-    let descriptor_normal = scgi_quantize_normal(normal);
-    let patch_index = scgi_find_patch(descriptor_position, descriptor_normal, lod);
+    let lod = surface_cache_select_lod(position, camera_position, surface_cache_params);
+    let descriptor_position = surface_cache_quantize_position(position, lod, surface_cache_params);
+    let descriptor_normal = surface_cache_quantize_normal(normal);
+    let patch_index = surface_cache_find_patch(descriptor_position, descriptor_normal, lod);
 
     var cached_radiance = vec3<f32>(0.0);
     if (patch_index >= 0) {
-        cached_radiance = scgi_evaluate_local_sh_irradiance(
-            scgi_sh_patch_read(&surface_cache_sh, u32(patch_index))
-        ) * scgi_params.indirect_boost;
+        cached_radiance = surface_cache_evaluate_local_sh_irradiance(
+            surface_cache_sh_patch_read(&surface_cache_sh, u32(patch_index))
+        ) * surface_cache_params.indirect_boost;
     }
 
     textureStore(
         output_debug,
         pixel_coord,
-        vec4<f32>(safe_clamp_vec3_max(cached_radiance, SCGI_MAX_RADIANCE), 1.0)
+        vec4<f32>(safe_clamp_vec3_max(cached_radiance, SURFACE_CACHE_MAX_RADIANCE), 1.0)
     );
 }

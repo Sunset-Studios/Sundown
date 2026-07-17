@@ -1,14 +1,14 @@
 #include "common.wgsl"
-#include "gi/scgi_common.wgsl"
+#include "gi/surface_cache_common.wgsl"
 
-@group(1) @binding(0) var<uniform> scgi_params: SCGIParams;
+@group(1) @binding(0) var<uniform> surface_cache_params: SurfaceCacheParams;
 @group(1) @binding(1) var<storage, read_write> surface_cache: array<SurfacePatchReadOnly>;
 @group(1) @binding(2) var<storage, read_write> surface_cache_sh: array<u32>;
 @group(1) @binding(3) var<storage, read_write> surface_cache_sh_filtered: array<u32>;
 @group(1) @binding(4) var<storage, read> active_indices: array<u32>;
-@group(1) @binding(5) var<storage, read> counters: SCGICountersReadOnly;
+@group(1) @binding(5) var<storage, read> counters: SurfaceCacheCountersReadOnly;
 
-#include "gi/scgi_cache_lookup.wgsl"
+#include "gi/surface_cache_lookup.wgsl"
 
 // Denoise the persistent cache rather than the final image. Each active patch
 // gathers a 5x5 neighborhood in its tangent plane. Spatial, surface-depth,
@@ -26,9 +26,9 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
 
     let patch_index = active_indices[active_index];
     let center_patch = surface_cache[patch_index];
-    let center_sh = scgi_sh_patch_read(&surface_cache_sh, patch_index);
+    let center_sh = surface_cache_sh_patch_read(&surface_cache_sh, patch_index);
     if (center_patch.history.x <= 0.0) {
-        scgi_sh_patch_write(&surface_cache_sh_filtered, patch_index, center_sh);
+        surface_cache_sh_patch_write(&surface_cache_sh_filtered, patch_index, center_sh);
         return;
     }
 
@@ -36,11 +36,11 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let center_normal = safe_normalize(center_patch.normal_unused.xyz);
     let lod = min(
         u32(max(center_patch.material_props.w, 0.0)),
-        u32(scgi_params.surface_cache_lod_count) - 1u
+        u32(surface_cache_params.surface_cache_lod_count) - 1u
     );
-    let cell_size = scgi_lod_cell_size(lod, scgi_params);
-    let center_descriptor = scgi_quantize_position(center_position, lod, scgi_params);
-    let quantized_normal = scgi_quantize_normal(center_normal);
+    let cell_size = surface_cache_lod_cell_size(lod, surface_cache_params);
+    let center_descriptor = surface_cache_quantize_position(center_position, lod, surface_cache_params);
+    let quantized_normal = surface_cache_quantize_normal(center_normal);
 
     let absolute_normal = abs(center_normal);
     let dominant_axis = select(
@@ -64,14 +64,14 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     for (var tap_y: i32 = -2; tap_y <= 2; tap_y = tap_y + 1) {
         for (var tap_x: i32 = -2; tap_x <= 2; tap_x = tap_x + 1) {
             let tap_offset = vec2<i32>(tap_x, tap_y);
-            let descriptor = scgi_surface_corner_descriptor(
+            let descriptor = surface_cache_corner_descriptor(
                 center_position,
                 center_normal,
                 center_tangent_cell + tap_offset,
                 dominant_axis,
                 cell_size
             );
-            let neighbor_index_i = scgi_find_patch(descriptor, quantized_normal, lod);
+            let neighbor_index_i = surface_cache_find_patch(descriptor, quantized_normal, lod);
             if (neighbor_index_i < 0) {
                 continue;
             }
@@ -110,8 +110,8 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
                 continue;
             }
 
-            let neighbor_sh = scgi_rotate_sh_between_hemispheres(
-                scgi_sh_patch_read(&surface_cache_sh, neighbor_index),
+            let neighbor_sh = surface_cache_rotate_sh_between_hemispheres(
+                surface_cache_sh_patch_read(&surface_cache_sh, neighbor_index),
                 neighbor_normal,
                 center_normal
             );
@@ -129,7 +129,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     if (weight_sum > 1e-5) {
         result = sh_l1_rgb_multiply_scalar(filtered_sh, 1.0 / weight_sum);
     }
-    scgi_sh_patch_write(
+    surface_cache_sh_patch_write(
         &surface_cache_sh_filtered,
         patch_index,
         result

@@ -50,13 +50,13 @@ struct GICountersReadOnly {
 
 struct GIParams {
     screen_ray_count: f32,          // Rays per tile per frame
-    world_cache_size: f32,          // Number of world cache entries per LOD
-    world_cache_cell_size: f32,     // Base cell size in world units
+    surface_cache_size: f32,          // Number of surface cache entries per LOD
+    surface_cache_cell_size: f32,     // Base cell size in world units
     total_pixels: f32,              // Total pixels (width * height)
     frame_index: f32,               // Current frame index
     indirect_boost: f32,            // Indirect lighting multiplier
     upscale_factor: f32,            // GI internal resolution scale factor (1, 2, 4, ...)
-    world_cache_lod_count: f32,     // Number of LOD levels for world cache
+    surface_cache_lod_count: f32,     // Number of LOD levels for surface cache
     full_resolution_x: f32,         // Full-resolution X (GBuffer / lighting target)
     full_resolution_y: f32,         // Full-resolution Y (GBuffer / lighting target)
     gi_resolution_x: f32,           // GI internal resolution X (full_resolution / upscale_factor)
@@ -100,24 +100,6 @@ struct AOPixelPathState {
     direction_tmax: vec4<f32>,           // xyz = ray direction, w = t_max / prim_store
     state_u32: vec4<u32>,                // x = lobe_type (0 = diffuse, 1 = specular), y = alive, z = shadow_visible, w = tri_id
 }
-
-// =============================================================================
-// WORLD CACHE PATH STATE
-// =============================================================================
-
-struct WorldCachePathState {
-    origin_tmin: vec4<f32>,
-    direction_tmax: vec4<f32>,
-    normal_section_index: vec4<f32>,
-    state_u32: vec4<u32>,
-    hit_attr0: vec4<f32>,
-    hit_attr1: vec4<f32>,
-    shadow_origin: vec4<f32>,
-    shadow_direction: vec4<f32>,
-    shadow_radiance: vec4<f32>,
-    path_weight: vec4<f32>,
-    rng_rank_frame_stamp: vec4<f32>,
-};
 
 // =============================================================================
 // HELPER FUNCTIONS

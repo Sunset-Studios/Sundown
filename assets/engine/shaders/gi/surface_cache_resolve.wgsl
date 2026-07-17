@@ -1,7 +1,7 @@
 #include "common.wgsl"
-#include "gi/scgi_common.wgsl"
+#include "gi/surface_cache_common.wgsl"
 
-@group(1) @binding(0) var<uniform> scgi_params: SCGIParams;
+@group(1) @binding(0) var<uniform> surface_cache_params: SurfaceCacheParams;
 @group(1) @binding(1) var<storage, read_write> surface_cache: array<SurfacePatchReadOnly>;
 @group(1) @binding(2) var<storage, read_write> surface_cache_sh: array<u32>;
 @group(1) @binding(3) var depth_texture: texture_2d<f32>;
@@ -10,7 +10,7 @@
 @group(1) @binding(6) var out_indirect_diffuse: texture_storage_2d<rgba16float, write>;
 @group(1) @binding(7) var out_indirect_specular: texture_storage_2d<rgba16float, write>;
 
-#include "gi/scgi_cache_lookup.wgsl"
+#include "gi/surface_cache_lookup.wgsl"
 
 fn store_zero(pixel_coord: vec2<i32>) {
     textureStore(out_direct, pixel_coord, vec4<f32>(0.0));
@@ -23,7 +23,7 @@ fn store_zero(pixel_coord: vec2<i32>) {
 // patch samples into the full-resolution indirect-lighting texture.
 @compute @workgroup_size(8, 8, 1)
 fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
-    let full_resolution = scgi_full_resolution(scgi_params);
+    let full_resolution = surface_cache_full_resolution(surface_cache_params);
     if (gid.x >= full_resolution.x || gid.y >= full_resolution.y) {
         return;
     }
@@ -43,13 +43,13 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         textureLoad(depth_texture, pixel_coord, 0).r,
         view_index
     );
-    let cached_radiance = scgi_sample_surface_cache(position, normal, camera_position);
+    let cached_radiance = surface_cache_sample(position, normal, camera_position);
 
     textureStore(out_direct, pixel_coord, vec4<f32>(0.0));
     textureStore(
         out_indirect_diffuse,
         pixel_coord,
-        vec4<f32>(safe_clamp_vec3_max(cached_radiance.xyz, SCGI_MAX_RADIANCE), cached_radiance.w)
+        vec4<f32>(safe_clamp_vec3_max(cached_radiance.xyz, SURFACE_CACHE_MAX_RADIANCE), cached_radiance.w)
     );
     textureStore(out_indirect_specular, pixel_coord, vec4<f32>(0.0));
 }

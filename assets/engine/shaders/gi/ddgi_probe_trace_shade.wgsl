@@ -2,7 +2,7 @@
 // DDGI Probe Ray Trace - Shade Pass
 // - Shades the hit attributes written by ddgi_probe_trace_hit
 // - Evaluates sky/environment for ray misses
-// - Queries the world cache for cached indirect radiance
+// - Queries the surface cache for cached indirect radiance
 // - Intentionally avoids ALL BVH bindings to reduce binding count
 // =============================================================================
 #include "common.wgsl"

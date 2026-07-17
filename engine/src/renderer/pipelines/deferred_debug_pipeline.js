@@ -511,16 +511,6 @@ export class DeferredDebugPipeline {
           DebugDrawType.GI_Diffuse
         );
         break;
-      case DebugDrawType.GI_WorldCache:
-        this.debug_overlay.set_properties(
-          gi.debug_texture,
-          0,
-          0,
-          image_extent.width,
-          image_extent.height,
-          DebugDrawType.GI_WorldCache
-        );
-        break;
       case DebugDrawType.GI_SurfaceCache:
         this.debug_overlay.set_properties(
           gi.debug_texture,
