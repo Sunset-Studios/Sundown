@@ -89,6 +89,18 @@ const dirty_slices_buf_config = {
   usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
 };
 
+const dirty_tile_list_buf_config = {
+  name: "shadow_dirty_tile_list_buf",
+  size: 0, // filled at runtime
+  usage: GPUBufferUsage.STORAGE,
+};
+
+const dirty_tile_dispatch_args_buf_config = {
+  name: "shadow_dirty_tile_dispatch_args_buf",
+  size: 0, // filled at runtime
+  usage: GPUBufferUsage.STORAGE | GPUBufferUsage.INDIRECT,
+};
+
 const debug_shadow_atlas_config = {
   name: "debug_shadow_atlas",
   format: rgba16float_format,
@@ -178,9 +190,20 @@ const page_table_update_shader_setup = {
   },
 };
 
-const tile_clear_shader_setup = {
+const reset_dirty_tile_dispatch_shader_setup = {
   pipeline_shaders: {
-    compute: { path: "shadow/as_vsm/tile_clear.wgsl", defines: { SHADOWS_ENABLED: true } },
+    compute: {
+      path: "shadow/as_vsm/reset_dirty_tile_dispatch.wgsl",
+    },
+  },
+};
+
+const compact_dirty_tiles_shader_setup = {
+  pipeline_shaders: {
+    compute: {
+      path: "shadow/as_vsm/compact_dirty_tiles.wgsl",
+      defines: { SHADOWS_ENABLED: true },
+    },
   },
 };
 
@@ -477,6 +500,21 @@ export class AdaptiveSparseVirtualShadowMaps {
     dirty_slices_buf_config.force = force_recreate;
     this.dirty_slices = render_graph.create_buffer(dirty_slices_buf_config);
 
+    const slice_count = adjusted_light_count * this.max_lods;
+    const tiles_per_slice = this.virtual_tiles_per_row * this.virtual_tiles_per_row;
+
+    // Each slice owns a fixed segment containing vec2(tile_index, pte) entries.
+    dirty_tile_list_buf_config.size = slice_count * tiles_per_slice * 2;
+    dirty_tile_list_buf_config.force = force_recreate;
+    this.dirty_tile_list = render_graph.create_buffer(dirty_tile_list_buf_config);
+
+    // Three u32 values per slice, matching DispatchWorkgroupsIndirect arguments.
+    dirty_tile_dispatch_args_buf_config.size = slice_count * 3;
+    dirty_tile_dispatch_args_buf_config.force = force_recreate;
+    this.dirty_tile_dispatch_args = render_graph.create_buffer(
+      dirty_tile_dispatch_args_buf_config
+    );
+
     // Create LRU ring buffer
     lru_buf_config.raw_data = null;
     if (force_recreate) {
@@ -566,6 +604,20 @@ export class AdaptiveSparseVirtualShadowMaps {
         const w = depth_img.config.width;
         const h = depth_img.config.height;
         pass.dispatch(Math.ceil(w / 8), Math.ceil(h / 8), adjusted_light_count);
+      }
+    );
+
+    render_graph.add_pass(
+      "as_vsm_reset_dirty_tile_dispatch",
+      RenderPassFlags.Compute,
+      {
+        inputs: [this.dirty_tile_dispatch_args],
+        outputs: [this.dirty_tile_dispatch_args],
+        shader_setup: reset_dirty_tile_dispatch_shader_setup,
+      },
+      (graph, frame_data, encoder) => {
+        const pass = graph.get_physical_pass(frame_data.current_pass);
+        pass.dispatch(Math.ceil(slice_count / 256), 1, 1);
       }
     );
 
@@ -704,22 +756,27 @@ export class AdaptiveSparseVirtualShadowMaps {
       this.shadow_culler.submit_cull(render_graph, draw_count, lights_dirtied);
     }
 
-    // ────────────────────────────────────────────────────────────────
-    // Clear newly allocated physical tiles
-    // ────────────────────────────────────────────────────────────────
     render_graph.add_pass(
-      "as_vsm_clear_dirty_tiles",
+      "as_vsm_compact_dirty_tiles",
       RenderPassFlags.Compute,
       {
-        inputs: [this.page_table, this.shadow_atlas_buf, this.settings_buf],
-        outputs: [this.page_table, this.shadow_atlas_buf],
-        shader_setup: tile_clear_shader_setup,
+        inputs: [
+          this.page_table,
+          this.settings_buf,
+          this.dirty_tile_list,
+          this.dirty_tile_dispatch_args,
+        ],
+        outputs: [this.dirty_tile_list, this.dirty_tile_dispatch_args],
+        shader_setup: compact_dirty_tiles_shader_setup,
       },
       (graph, frame_data, encoder) => {
         const pass = graph.get_physical_pass(frame_data.current_pass);
         const pt_image = graph.get_physical_image(this.page_table);
-        // Dispatch one workgroup per virtual tile in the page table.
-        pass.dispatch(pt_image.config.width, pt_image.config.height, pt_image.config.depth);
+        pass.dispatch(
+          Math.ceil(pt_image.config.width / 8),
+          Math.ceil(pt_image.config.height / 8),
+          pt_image.config.depth
+        );
       }
     );
 
@@ -778,21 +835,24 @@ export class AdaptiveSparseVirtualShadowMaps {
           RenderPassFlags.Compute,
           {
             inputs: [
-              this.page_table,
               this.dummy_depth_image,
               this.shadow_atlas_buf,
               this.settings_buf,
               light_uniform,
               this.light_view_buf,
               this.light_shadow_idx_buf,
-              this.dirty_slices,
+              this.dirty_tile_list,
+              this.dirty_tile_dispatch_args,
             ],
             outputs: [this.shadow_atlas_buf],
             shader_setup: resolve_depth_to_atlas_shader_setup,
           },
           (graph, frame_data, encoder) => {
             const pass = graph.get_physical_pass(frame_data.current_pass);
-            pass.dispatch(Math.ceil(this.atlas_size / 16), Math.ceil(this.atlas_size / 16), 1);
+            const dispatch_args = graph.get_physical_buffer(this.dirty_tile_dispatch_args);
+            const shadow_idx = this.active_shadow_indices[light_idx];
+            const slice_index = shadow_idx * this.max_lods + c;
+            pass.dispatch_indirect(dispatch_args, slice_index * 3 * Uint32Array.BYTES_PER_ELEMENT);
           }
         );
       }

@@ -267,23 +267,13 @@ fn onesweep_global_histogram(
 fn onesweep_scan(
   @builtin(local_invocation_id)  lid: vec3<u32>,
   @builtin(workgroup_id)         wid: vec3<u32>,
-#if HAS_SUBGROUPS
   @builtin(subgroup_invocation_id)  sid: u32,
   @builtin(subgroup_size)       ss: u32
-#endif
 ) {
   let l  = lid.x;
-#if HAS_SUBGROUPS
   let li = sid;
-#else
-  let li = lane_id(l, LOGICAL_WARP_SIZE);
-#endif
 
-#if HAS_SUBGROUPS
   let warp_ctx = make_warp_ctx(l, li, ss);
-#else
-  let warp_ctx = make_warp_ctx(l, li, LOGICAL_WARP_SIZE);
-#endif
 
   // 1) Load per-digit counts for this pass plane and compute warp-exclusive scan
   scan[l] = atomicLoad(&global_historgram.data[l + wid.x * RADIX]);
@@ -320,20 +310,13 @@ fn onesweep_scan(
 @compute @workgroup_size(PASS_DIM)
 fn onesweep_digit_binning(
   @builtin(local_invocation_id)  lid: vec3<u32>,
-#if HAS_SUBGROUPS
   @builtin(subgroup_invocation_id)  sid: u32,
   @builtin(subgroup_size)       ss: u32
-#endif
 ) {
   let l = lid.x;
 
-#if HAS_SUBGROUPS
   let li = sid;
   let warp_ctx = make_warp_ctx(l, li, ss);
-#else
-  let li = lane_id(l, LOGICAL_WARP_SIZE);
-  let warp_ctx = make_warp_ctx(l, li, LOGICAL_WARP_SIZE);
-#endif
  
   // We assume warp sizes that are generally 16 or larger.
   // Very rare to get warp sizes that are smaller than that.

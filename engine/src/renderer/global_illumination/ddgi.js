@@ -77,7 +77,11 @@ export class DDGI {
     hzb_texture,
     force_recreate = false
   ) {
-    if (draw_count <= 0) return;
+    if (draw_count <= 0) {
+      this.reset();
+      return;
+    }
+
     this.pipeline.add_passes(render_graph, {
       config: this.config,
       width,

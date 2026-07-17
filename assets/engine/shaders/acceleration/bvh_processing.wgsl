@@ -377,20 +377,13 @@ fn build_bvh2_hploc(
     @builtin(global_invocation_id) gid: vec3<u32>,
     @builtin(local_invocation_id) local_id: vec3<u32>,
     @builtin(workgroup_id) group_id: vec3<u32>,
-#if HAS_SUBGROUPS
     @builtin(subgroup_invocation_id)  subgroup_id: u32,
     @builtin(subgroup_size) subgroup_size: u32
-#endif
 ) {
     let total = bvh_data.leaf_count;
 
-#if HAS_SUBGROUPS
     let lane = subgroup_id;
     let warp_ctx = make_warp_ctx(local_id.x, lane, subgroup_size);
-#else
-    let lane = lane_id(local_id.x, LOGICAL_WARP_SIZE);
-    let warp_ctx = make_warp_ctx(local_id.x, lane, LOGICAL_WARP_SIZE);
-#endif
 
     let merging_threshold = warp_ctx.warp_size / 2u;
     let idx = gid.x;

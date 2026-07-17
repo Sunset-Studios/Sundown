@@ -81,7 +81,11 @@ export class PTGI {
     _hzb_texture,
     force_recreate = false
   ) {
-    if (draw_count <= 0) return;
+    if (draw_count <= 0) {
+      this.reset();
+      return;
+    }
+
     const safe_upscale_factor = Math.max(1, Math.floor(this.config.upscale_factor));
     const gi_width = Math.max(1, Math.ceil(width / safe_upscale_factor));
     const gi_height = Math.max(1, Math.ceil(height / safe_upscale_factor));
@@ -180,5 +184,9 @@ export class PTGI {
     this.config = { ...this.config, ...new_config };
   }
 
-  reset() {}
+  reset() {
+    this.final_gi_texture_direct = null;
+    this.final_gi_texture_indirect_diffuse = null;
+    this.final_gi_texture_indirect_specular = null;
+  }
 }

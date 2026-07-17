@@ -2,11 +2,7 @@
 enable f16;
 #endif
 
-#if HAS_SUBGROUPS
 #include "subgroup_warp.wgsl"
-#else
-#include "logical_warp.wgsl"
-#endif
 
 // ------------------------------------------------------------------------------------
 // Data Structures

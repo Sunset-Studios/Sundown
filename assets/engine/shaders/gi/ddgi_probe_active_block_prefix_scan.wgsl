@@ -21,10 +21,8 @@ var<workgroup> shared_total_active: u32;
 @compute @workgroup_size(WORKGROUP_SIZE, 1, 1)
 fn cs(
     @builtin(local_invocation_id) lid: vec3<u32>,
-#if HAS_SUBGROUPS
     @builtin(subgroup_invocation_id) sg_lane: u32,
     @builtin(subgroup_size) sg_size: u32
-#endif
 ) {
     let local_idx = lid.x;
     let num_blocks = arrayLength(&block_sums_in) / DDGI_PROBE_SCHEDULE_PRIORITY_COUNT;
@@ -52,7 +50,6 @@ fn cs(
                 value = block_sums_in[priority_bucket * num_blocks + chunk_idx];
             }
 
-#if HAS_SUBGROUPS
             let warp_ctx = make_warp_ctx(local_idx, sg_lane, sg_size);
             let subgroup_exclusive = warp_scan_exclusive_add_u32(warp_ctx, value);
             let subgroup_total = warp_reduce_add_u32(warp_ctx, value);
@@ -78,35 +75,6 @@ fn cs(
                 shared_chunk_total = chunk_total;
             }
             workgroupBarrier();
-#else
-            let lane = lane_id(local_idx, LOGICAL_WARP_SIZE);
-            let warp_id_local = warp_id(local_idx, LOGICAL_WARP_SIZE);
-            let warp_ctx = make_warp_ctx(local_idx, lane, LOGICAL_WARP_SIZE);
-            let warp_exclusive = warp_scan_exclusive_add_u32(warp_ctx, value);
-            let warp_total = warp_reduce_add_u32(warp_ctx, value);
-
-            if (is_warp_leader(warp_ctx)) {
-                shared_subgroup_sums[warp_id_local] = warp_total;
-            }
-            workgroupBarrier();
-
-            var prefix_from_prev_warps = 0u;
-            for (var w = 0u; w < warp_id_local; w = w + 1u) {
-                prefix_from_prev_warps = prefix_from_prev_warps + shared_subgroup_sums[w];
-            }
-
-            let chunk_exclusive = warp_exclusive + prefix_from_prev_warps;
-
-            if (local_idx == 0u) {
-                var chunk_total = 0u;
-                let warp_count = (WORKGROUP_SIZE + LOGICAL_WARP_SIZE - 1u) / LOGICAL_WARP_SIZE;
-                for (var ww = 0u; ww < warp_count; ww = ww + 1u) {
-                    chunk_total = chunk_total + shared_subgroup_sums[ww];
-                }
-                shared_chunk_total = chunk_total;
-            }
-            workgroupBarrier();
-#endif
 
             let running_offset = shared_running_offset;
             if (chunk_idx < num_blocks) {

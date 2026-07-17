@@ -38,11 +38,9 @@ const defines_regex = /#define\s+(\S+)(?:\s+(\S*))?$/gm;
 
 const precision_float_string = "precision_float";
 const has_precision_float_string = "HAS_PRECISION_FLOAT";
-const has_subgroups_string = "HAS_SUBGROUPS";
 const built_in_shader_define_keys = new Set([
   precision_float_string,
   has_precision_float_string,
-  has_subgroups_string,
 ]);
 
 const f16_type_string = "f16";
@@ -1370,7 +1368,6 @@ function build_defines_map_and_strip(code, defines, precision_profile) {
   defines_map[precision_float_string] =
     precision_profile === ShaderPrecisionProfile.F16 ? f16_type_string : f32_type_string;
   defines_map[has_precision_float_string] = precision_profile === ShaderPrecisionProfile.F16;
-  defines_map[has_subgroups_string] = true;
   return { defines_map, stripped_code };
 }
 

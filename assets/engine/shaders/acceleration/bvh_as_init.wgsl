@@ -64,10 +64,8 @@ fn is_tlas_build_leaf(bound: AABB) -> bool {
 fn initialize_leaf_clusters(
     @builtin(global_invocation_id) gid: vec3<u32>,
     @builtin(local_invocation_id) local_id: vec3<u32>,
-#if HAS_SUBGROUPS
     @builtin(subgroup_invocation_id)  subgroup_id: u32,
     @builtin(subgroup_size) subgroup_size: u32
-#endif
 ) {
     let prim_idx = gid.x;
     
@@ -76,13 +74,8 @@ fn initialize_leaf_clusters(
         prim_idx < arrayLength(&index_pairs) &&
         counters.prim_base + prim_idx < arrayLength(&bounds)
     ) {
-    #if HAS_SUBGROUPS
         let lane = subgroup_id;
         let warp_ctx = make_warp_ctx(local_id.x, lane, subgroup_size);
-    #else
-        let lane = lane_id(local_id.x, LOGICAL_WARP_SIZE);
-        let warp_ctx = make_warp_ctx(local_id.x, lane, LOGICAL_WARP_SIZE);
-    #endif
 
         // 1) Warp-aggregate the increment amount
         let base = counters.prim_base;
@@ -90,7 +83,7 @@ fn initialize_leaf_clusters(
         let warp_sum = warp_reduce_add_u32(warp_ctx, is_valid_leaf);
         // 2) One atomicAdd per warp
         if (is_warp_leader(warp_ctx)) {
-        atomicAdd(&counters.leaf_count, warp_sum);
+            atomicAdd(&counters.leaf_count, warp_sum);
         }
         if (is_valid_leaf == 1u) {
             atomicMax(&counters.bvh2_count, prim_idx + 1u);

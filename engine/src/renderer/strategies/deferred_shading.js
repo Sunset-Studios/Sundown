@@ -196,6 +196,7 @@ export class DeferredShadingStrategy {
   debug_pipeline = null;
   gbuffer_targets_pipeline = null;
   environment_pipeline = null;
+  previous_gi_lighting_enabled = null;
 
   setup(render_graph) {
     this.debug_pipeline = new DeferredDebugPipeline();
@@ -863,6 +864,23 @@ export class DeferredShadingStrategy {
         );
       }
 
+      const gi_specular_texture = reflections_enabled
+        ? this.reflections.reflection_texture
+        : this.gi.final_gi_texture_indirect_specular;
+      const gi_lighting_enabled =
+        gi_enabled &&
+        this.gi.final_gi_texture_direct != null &&
+        this.gi.final_gi_texture_indirect_diffuse != null &&
+        gi_specular_texture != null;
+
+      if (
+        this.previous_gi_lighting_enabled != null &&
+        this.previous_gi_lighting_enabled !== gi_lighting_enabled
+      ) {
+        render_graph.recreate_pipeline_states();
+      }
+      this.previous_gi_lighting_enabled = gi_lighting_enabled;
+
       // ┌─────────────────────────────────────────────────────────────────────────────┐
       // │ 💡 PASS: Deferred Lighting                                                 │
       // │    Combine G-Buffer data with lights to produce final shaded results      │
@@ -885,16 +903,16 @@ export class DeferredShadingStrategy {
           dense_lights,
         ];
 
-        deferred_lighting_shader_setup.pipeline_shaders.vertex.defines.GI_ENABLED = gi_enabled;
-        deferred_lighting_shader_setup.pipeline_shaders.fragment.defines.GI_ENABLED = gi_enabled;
+        deferred_lighting_shader_setup.pipeline_shaders.vertex.defines.GI_ENABLED =
+          gi_lighting_enabled;
+        deferred_lighting_shader_setup.pipeline_shaders.fragment.defines.GI_ENABLED =
+          gi_lighting_enabled;
 
-        if (gi_enabled) {
+        if (gi_lighting_enabled) {
           lighting_inputs.push(
             this.gi.final_gi_texture_direct,
             this.gi.final_gi_texture_indirect_diffuse,
-            reflections_enabled
-              ? this.reflections.reflection_texture
-              : this.gi.final_gi_texture_indirect_specular
+            gi_specular_texture
           );
         }
 
@@ -940,7 +958,7 @@ export class DeferredShadingStrategy {
       // │    (displayed via debug overlay, doesn't affect main rendering pipeline)  │
       // └─────────────────────────────────────────────────────────────────────────────┘
       if (
-        gi_enabled &&
+        gi_lighting_enabled &&
         (debug_view === DebugDrawType.GI_SurfaceCache || debug_view === DebugDrawType.GI_Probes)
       ) {
         this.gi.add_debug_passes(
