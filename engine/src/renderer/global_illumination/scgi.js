@@ -46,12 +46,14 @@ export class SCGI {
   config = {
     surface_cache_size: 32768,
     surface_cache_cell_size: 0.25,
-    surface_cache_lod_count: 4,
+    surface_cache_lod_count: 6,
     cache_entry_lifetime: 1,
     max_ray_length: 1024.0,
-    history_hysteresis: 0.995,
+    history_hysteresis: 0.95,
     max_history_samples: 128,
     indirect_boost: 1.0,
+    importance_sample_count: 8,
+    importance_exploration: 0.01,
   };
 
   params_data = new Float32Array(16);
@@ -202,9 +204,15 @@ export class SCGI {
       this.params_data[8] = this.config.history_hysteresis;
       this.params_data[9] = this.config.max_history_samples;
       this.params_data[10] = this.config.indirect_boost;
-      this.params_data[11] = 0;
+      this.params_data[11] = Math.max(
+        2,
+        Math.min(16, Math.floor(this.config.importance_sample_count))
+      );
       this.params_data[12] = this.config.cache_entry_lifetime;
-      this.params_data[13] = 0;
+      this.params_data[13] = Math.max(
+        0.01,
+        Math.min(1.0, this.config.importance_exploration)
+      );
       this.params_data[14] = 0;
       this.params_data[15] = 0;
       graph.get_physical_buffer(scgi_params).write_raw(this.params_data);
@@ -264,6 +272,7 @@ export class SCGI {
         inputs: [
           scgi_params,
           surface_cache,
+          surface_cache_sh,
           active_indices,
           counters,
           hit_info,

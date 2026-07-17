@@ -20,9 +20,9 @@ struct SCGIParams {
     history_hysteresis: f32,
     max_history_samples: f32,
     indirect_boost: f32,
-    padding0: f32,
+    importance_sample_count: f32,
     cache_entry_lifetime: f32,
-    padding1: f32,
+    importance_exploration: f32,
     padding3: f32,
     padding2: f32,
 };
@@ -65,11 +65,11 @@ struct SCGICountersReadOnly {
     padding2: u32,
 };
 
-// Compact geometric result for one active surface-cache ray. Ray generation,
-// traversal setup, deterministic RNG, and radiance all live outside this
-// structure so geometry-only consumers do not pull radiance cache lines.
+// Compact geometric result for one active surface-cache ray. The hit-position
+// w lane carries the RIS correction into the SH update; radiance remains in a
+// separate buffer so geometry-only consumers do not pull radiance cache lines.
 struct SCGIHitInfo {
-    hit_position_t: vec4<f32>,
+    hit_position_sampling_weight: vec4<f32>,
     ray_direction_primitive: vec4<f32>,
     normal_section_index: vec4<f32>,
     hit_attr0: vec4<f32>,

@@ -34,18 +34,25 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         hit_info[active_index].ray_direction_primitive.xyz,
         patch_normal
     ));
-    let sample_sh = sh_project_onto_l1_rgb(local_direction, sample_radiance * (2.0 * PI));
+    let sampling_weight = max(
+        hit_info[active_index].hit_position_sampling_weight.w,
+        0.0
+    );
+    let sample_sh = sh_project_onto_l1_rgb(
+        local_direction,
+        sample_radiance * sampling_weight
+    );
 
     let history = surface_cache[patch_index].history;
     let previous_sample_count = history.x;
+    let maximum_history = max(scgi_params.max_history_samples, 1.0);
     let next_sample_count = min(
         previous_sample_count + 1.0,
-        max(scgi_params.max_history_samples, 1.0)
+        maximum_history
     );
     let next_sequence = f32((u32(history.y) + 1u) & 4095u);
     let running_alpha = 1.0 / max(next_sample_count, 1.0);
-    let ema_alpha = clamp(1.0 - scgi_params.history_hysteresis, 0.0, 1.0);
-    let blend_alpha = max(running_alpha, ema_alpha);
+    let blend_alpha = running_alpha;
 
     var result = sample_sh;
     if (previous_sample_count > 0.0) {

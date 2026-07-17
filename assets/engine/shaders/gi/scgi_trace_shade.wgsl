@@ -101,7 +101,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         shading_normal = normalize(tangent_frame * normal_sample);
     }
 
-    let hit_position = path.hit_position_t.xyz;
+    let hit_position = path.hit_position_sampling_weight.xyz;
     let view_direction = normalize(-path.ray_direction_primitive.xyz);
     let recurrent_irradiance = scgi_sample_surface_cache(
         hit_position,

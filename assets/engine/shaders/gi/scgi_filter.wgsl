@@ -11,10 +11,10 @@
 #include "gi/scgi_cache_lookup.wgsl"
 
 // Denoise the persistent cache rather than the final image. Each active patch
-// gathers the complete 3x3 neighborhood in its tangent plane: the center, four
-// cardinal cells, and four diagonal cells. Spatial, surface-depth, normal, and
-// convergence weights reject unrelated geometry while still using every valid
-// patch in the footprint. Neighbor SH is rotated into the center patch's
+// gathers a 5x5 neighborhood in its tangent plane. Spatial, surface-depth,
+// normal, and convergence weights reject unrelated geometry while giving the
+// progressive one-ray-per-cell estimator enough support to suppress persistent
+// high-frequency noise. Neighbor SH is rotated into the center patch's
 // hemisphere before accumulation. Raw and filtered buffers remain separate,
 // so results never depend on GPU invocation order.
 @compute @workgroup_size(128, 1, 1)
@@ -58,9 +58,11 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     var filtered_sh = sh_l1_rgb_zero();
     var weight_sum = 0.0;
     let plane_sigma = max(cell_size * 0.35, 0.001);
+    let spatial_sigma = 1.25;
+    let inverse_spatial_variance = 1.0 / (spatial_sigma * spatial_sigma);
 
-    for (var tap_y: i32 = -1; tap_y <= 1; tap_y = tap_y + 1) {
-        for (var tap_x: i32 = -1; tap_x <= 1; tap_x = tap_x + 1) {
+    for (var tap_y: i32 = -2; tap_y <= 2; tap_y = tap_y + 1) {
+        for (var tap_x: i32 = -2; tap_x <= 2; tap_x = tap_x + 1) {
             let tap_offset = vec2<i32>(tap_x, tap_y);
             let descriptor = scgi_surface_corner_descriptor(
                 center_position,
@@ -96,7 +98,9 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
                 -0.5 * normalized_plane_distance * normalized_plane_distance
             );
             let spatial_distance_squared = f32(tap_x * tap_x + tap_y * tap_y);
-            let spatial_weight = exp(-0.5 * spatial_distance_squared);
+            let spatial_weight = exp(
+                -0.5 * spatial_distance_squared * inverse_spatial_variance
+            );
             let confidence_weight = clamp(sample_count / 8.0, 0.25, 1.0);
             let weight = spatial_weight
                 * plane_weight
