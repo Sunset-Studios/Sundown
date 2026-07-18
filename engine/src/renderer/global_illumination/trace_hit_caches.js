@@ -7,11 +7,12 @@ import { Texture } from "../texture.js";
 import { Buffer } from "../buffer.js";
 import { ispot, npot } from "../../utility/math.js";
 
-const shader = (path) => ({ pipeline_shaders: { compute: { path } } });
 const COMPUTE_WORKGROUP_SIZE = 128;
 const PROBE_SCHEDULER_PRIORITY_COUNT = 2;
 const MAX_PROBE_CASCADES = 6;
 const PROBE_COUNTERS_NAME = "probe_volume_gi_counters";
+
+const shader = (path) => ({ pipeline_shaders: { compute: { path } } });
 
 function hash_u32(value) {
   let x = value >>> 0;

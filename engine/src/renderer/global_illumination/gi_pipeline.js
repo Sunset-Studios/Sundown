@@ -35,6 +35,10 @@ export class GIComponent {
 
   record_resolve(_render_graph, _frame_context, _branch) {}
 
+  record_debug(_render_graph, _debug_context, _branch) {
+    return null;
+  }
+
   create_buffer(render_graph, semantic, config) {
     const handle = render_graph.create_buffer(config);
     this.resources.set(semantic, handle);
@@ -247,6 +251,26 @@ export class GIPipelineComposition {
     }
 
     return frame_context;
+  }
+
+  add_debug_passes(render_graph, debug_context = {}) {
+    debug_context.render_graph = render_graph;
+    const recorded_components = new Set();
+
+    for (const branch of this.branches) {
+      for (const component of [
+        branch.trace_hit_cache,
+        branch.shading_strategy,
+        branch.accumulator,
+      ]) {
+        if (recorded_components.has(component)) continue;
+        recorded_components.add(component);
+        const output = component.record_debug(render_graph, debug_context, branch);
+        if (output) return output;
+      }
+    }
+
+    return null;
   }
 
   get_branch(name) {

@@ -1,5 +1,6 @@
 import { GIAccumulator } from "./gi_pipeline.js";
 import { GIRadianceRepresentation } from "./shading_strategies.js";
+import { DebugDrawType } from "../renderer_types.js";
 
 const shader = (path) => ({ pipeline_shaders: { compute: { path } } });
 
@@ -15,6 +16,7 @@ export class ProbeSHAccumulator extends GIAccumulator {
         sample: shader("gi/ddgi_sh_probe_sample.wgsl"),
         resolve: shader("gi/ddgi_diffuse_resolve.wgsl"),
         atrous: shader("gi/ddgi_atrous_diffuse.wgsl"),
+        debug: shader("gi/ddgi_sh_probe_debug.wgsl"),
         ...options.shader_setups,
       },
     });
@@ -220,6 +222,42 @@ export class ProbeSHAccumulator extends GIAccumulator {
     }
     this.import_resource("diffuse_output", final_diffuse);
   }
+
+  record_debug(render_graph, context, branch) {
+    if (context.debug_view !== DebugDrawType.GI_Probes) return null;
+
+    const trace = branch.trace_hit_cache;
+    const output = this.create_image(render_graph, "debug_output", {
+      name: "probe_sh_debug_output",
+      format: "rgba16float",
+      width: context.width,
+      height: context.height,
+      usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
+      force: context.force_recreate,
+    });
+    this.add_compute_pass(
+      render_graph,
+      "debug",
+      "probe_sh_debug",
+      {
+        inputs: [
+          trace.get_resource("params"),
+          this.get_resource("sh_probes"),
+          trace.get_resource("probe_states"),
+          trace.get_resource("surface_flags"),
+          context.inputs.scene_color,
+          context.inputs.depth_texture,
+          output,
+        ],
+        outputs: [output],
+      },
+      (graph, frame_data) =>
+        graph
+          .get_physical_pass(frame_data.current_pass)
+          .dispatch(Math.ceil(context.width / 8), Math.ceil(context.height / 8), 1)
+    );
+    return output;
+  }
 }
 
 export class SurfaceCacheSHAccumulator extends GIAccumulator {
@@ -232,6 +270,7 @@ export class SurfaceCacheSHAccumulator extends GIAccumulator {
         accumulate: shader("gi/surface_cache_accumulate.wgsl"),
         filter: shader("gi/surface_cache_filter.wgsl"),
         resolve: shader("gi/surface_cache_resolve.wgsl"),
+        debug: shader("gi/surface_cache_debug.wgsl"),
         ...shader_setups,
       },
     });
@@ -334,6 +373,42 @@ export class SurfaceCacheSHAccumulator extends GIAccumulator {
           .get_physical_pass(frame_data.current_pass)
           .dispatch(Math.ceil(width / 8), Math.ceil(height / 8), 1)
     );
+  }
+
+  record_debug(render_graph, context, branch) {
+    if (context.debug_view !== DebugDrawType.GI_SurfaceCache) return null;
+
+    const trace = branch.trace_hit_cache;
+    const output = this.create_image(render_graph, "debug_output", {
+      name: "surface_cache_debug_output",
+      format: "rgba16float",
+      width: context.width,
+      height: context.height,
+      usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
+      force: context.force_recreate,
+    });
+    this.add_compute_pass(
+      render_graph,
+      "debug",
+      "surface_cache_debug",
+      {
+        inputs: [
+          trace.get_resource("params"),
+          trace.get_resource("surface_cache"),
+          this.get_resource("surface_cache_sh"),
+          context.inputs.depth_texture,
+          context.inputs.gbuffer_normal,
+          context.inputs.scene_color,
+          output,
+        ],
+        outputs: [output],
+      },
+      (graph, frame_data) =>
+        graph
+          .get_physical_pass(frame_data.current_pass)
+          .dispatch(Math.ceil(context.width / 8), Math.ceil(context.height / 8), 1)
+    );
+    return output;
   }
 }
 

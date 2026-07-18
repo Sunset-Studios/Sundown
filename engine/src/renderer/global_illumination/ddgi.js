@@ -1,12 +1,7 @@
-import { DebugDrawType, RenderPassFlags } from "../renderer_types.js";
 import { GIPipelineComposition } from "./gi_pipeline.js";
 import { ScrollingProbeVolumeTraceHitCache } from "./trace_hit_caches.js";
 import { ProbeSHShadingStrategy } from "./shading_strategies.js";
 import { ProbeSHAccumulator } from "./accumulators.js";
-
-const probe_debug_shader_setup = {
-  pipeline_shaders: { compute: { path: "gi/ddgi_sh_probe_debug.wgsl" } },
-};
 
 /** Scrolling cascaded probe-volume GI composition. */
 export class DDGI {
@@ -33,24 +28,14 @@ export class DDGI {
   final_gi_texture_indirect_diffuse = null;
   final_gi_texture_indirect_specular = null;
   debug_texture = null;
-  shared_bindings = {
-    sh_probes_buffer: null,
-    probe_states_buffer: null,
-    probe_depth_moments_buffer: null,
-    probe_surface_flags_buffer: null,
-    probe_msme_stats_buffer: null,
-  };
 
   constructor(params = {}, components = {}) {
-    const { pipeline_components = {}, ...config } = params;
-    const resolved = { ...pipeline_components, ...components };
-    this.config = { ...this.config, ...config };
     this.pipeline = new GIPipelineComposition([
       {
         name: "probes",
-        trace_hit_cache: resolved.trace_hit_cache ?? new ScrollingProbeVolumeTraceHitCache(),
-        shading_strategy: resolved.shading_strategy ?? new ProbeSHShadingStrategy(),
-        accumulator: resolved.accumulator ?? new ProbeSHAccumulator(),
+        trace_hit_cache: new ScrollingProbeVolumeTraceHitCache(),
+        shading_strategy: new ProbeSHShadingStrategy(),
+        accumulator: new ProbeSHAccumulator(),
       },
     ]);
   }
@@ -106,16 +91,10 @@ export class DDGI {
       },
     });
 
-    const { trace_hit_cache, accumulator } = this.pipeline.get_components("probes");
-    this.ddgi_params = trace_hit_cache.get_resource("params");
+    const { accumulator } = this.pipeline.get_components("probes");
     this.final_gi_texture_direct = accumulator.get_resource("direct_output");
     this.final_gi_texture_indirect_diffuse = accumulator.get_resource("diffuse_output");
     this.final_gi_texture_indirect_specular = accumulator.get_resource("specular_output");
-    this.shared_bindings.sh_probes_buffer = accumulator.get_resource("sh_probes");
-    this.shared_bindings.probe_states_buffer = trace_hit_cache.get_resource("probe_states");
-    this.shared_bindings.probe_depth_moments_buffer = accumulator.get_resource("depth_moments");
-    this.shared_bindings.probe_surface_flags_buffer = trace_hit_cache.get_resource("surface_flags");
-    this.shared_bindings.probe_msme_stats_buffer = accumulator.get_resource("msme_stats");
   }
 
   add_debug_passes(
@@ -128,37 +107,14 @@ export class DDGI {
     debug_view,
     force_recreate = false
   ) {
-    this.debug_texture = render_graph.create_image({
-      name: "ddgi_debug",
-      format: "rgba16float",
+    this.debug_texture = this.pipeline.add_debug_passes(render_graph, {
       width,
       height,
-      usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
-      force: force_recreate,
+      debug_view,
+      force_recreate,
+      inputs: { depth_texture, scene_color },
     });
-    if (debug_view === DebugDrawType.GI_Probes) {
-      render_graph.add_pass(
-        "probe_sh_debug",
-        RenderPassFlags.Compute,
-        {
-          inputs: [
-            this.ddgi_params,
-            this.shared_bindings.sh_probes_buffer,
-            this.shared_bindings.probe_states_buffer,
-            this.shared_bindings.probe_surface_flags_buffer,
-            scene_color,
-            depth_texture,
-            this.debug_texture,
-          ],
-          outputs: [this.debug_texture],
-          shader_setup: probe_debug_shader_setup,
-        },
-        (graph, frame_data) =>
-          graph
-            .get_physical_pass(frame_data.current_pass)
-            .dispatch(Math.ceil(width / 8), Math.ceil(height / 8), 1)
-      );
-    }
+    return this.debug_texture;
   }
 
   get_stats() {

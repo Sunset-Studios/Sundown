@@ -1,12 +1,7 @@
-import { DebugDrawType, RenderPassFlags } from "../renderer_types.js";
 import { GIPipelineComposition } from "./gi_pipeline.js";
 import { HashedSurfaceTraceHitCache } from "./trace_hit_caches.js";
 import { SurfaceCacheSHShadingStrategy } from "./shading_strategies.js";
 import { SurfaceCacheSHAccumulator } from "./accumulators.js";
-
-const surface_cache_debug_shader_setup = {
-  pipeline_shaders: { compute: { path: "gi/surface_cache_debug.wgsl" } },
-};
 
 /** Composed surface-cache GI pipeline. */
 export class SCGI {
@@ -29,15 +24,12 @@ export class SCGI {
   };
 
   constructor(params = {}, components = {}) {
-    const { pipeline_components = {}, ...config } = params;
-    const resolved = { ...pipeline_components, ...components };
-    this.config = { ...this.config, ...config };
     this.pipeline = new GIPipelineComposition([
       {
         name: "surface",
-        trace_hit_cache: resolved.trace_hit_cache ?? new HashedSurfaceTraceHitCache(),
-        shading_strategy: resolved.shading_strategy ?? new SurfaceCacheSHShadingStrategy(),
-        accumulator: resolved.accumulator ?? new SurfaceCacheSHAccumulator(),
+        trace_hit_cache: new HashedSurfaceTraceHitCache(),
+        shading_strategy: new SurfaceCacheSHShadingStrategy(),
+        accumulator: new SurfaceCacheSHAccumulator(),
       },
     ]);
   }
@@ -90,13 +82,10 @@ export class SCGI {
       },
     });
 
-    const { trace_hit_cache, accumulator } = this.pipeline.get_components("surface");
+    const { accumulator } = this.pipeline.get_components("surface");
     this.final_gi_texture_direct = accumulator.get_resource("direct_output");
     this.final_gi_texture_indirect_diffuse = accumulator.get_resource("diffuse_output");
     this.final_gi_texture_indirect_specular = accumulator.get_resource("specular_output");
-    this.surface_cache_params = trace_hit_cache.get_resource("params");
-    this.surface_cache = trace_hit_cache.get_resource("surface_cache");
-    this.surface_cache_sh = accumulator.get_resource("surface_cache_sh");
   }
 
   add_debug_passes(
@@ -109,37 +98,13 @@ export class SCGI {
     debug_view,
     force_recreate = false
   ) {
-    if (debug_view !== DebugDrawType.GI_SurfaceCache) return null;
-
-    this.debug_texture = render_graph.create_image({
-      name: "surface_cache_debug",
-      format: "rgba16float",
+    this.debug_texture = this.pipeline.add_debug_passes(render_graph, {
       width,
       height,
-      usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
-      force: force_recreate,
+      debug_view,
+      force_recreate,
+      inputs: { gbuffer_normal, depth_texture, scene_color },
     });
-    render_graph.add_pass(
-      "surface_cache_debug",
-      RenderPassFlags.Compute,
-      {
-        inputs: [
-          this.surface_cache_params,
-          this.surface_cache,
-          this.surface_cache_sh,
-          depth_texture,
-          gbuffer_normal,
-          scene_color,
-          this.debug_texture,
-        ],
-        outputs: [this.debug_texture],
-        shader_setup: surface_cache_debug_shader_setup,
-      },
-      (graph, frame_data) =>
-        graph
-          .get_physical_pass(frame_data.current_pass)
-          .dispatch(Math.ceil(width / 8), Math.ceil(height / 8), 1)
-    );
     return this.debug_texture;
   }
 
