@@ -22,7 +22,10 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     if (patch_index >= u32(surface_cache_params.total_patch_count)) {
         return;
     }
-    if (surface_cache[patch_index].fingerprint == SURFACE_CACHE_PATCH_EMPTY) {
+    if (
+        surface_cache[patch_index].fingerprint == SURFACE_CACHE_PATCH_EMPTY ||
+        surface_cache[patch_index].update_frame == SURFACE_CACHE_UPDATE_LOCKED
+    ) {
         return;
     }
 
@@ -32,9 +35,9 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
 
     surface_cache[patch_index].position_frame = vec4<f32>(0.0);
-    surface_cache[patch_index].normal_unused = vec4<f32>(0.0);
-    surface_cache[patch_index].albedo_roughness = vec4<f32>(0.0);
-    surface_cache[patch_index].material_props = vec4<f32>(0.0);
+    surface_cache[patch_index].normal_lod = vec4<f32>(0.0);
+    surface_cache[patch_index].grid_key = vec4<i32>(0);
+    surface_cache[patch_index].metadata = vec4<f32>(0.0);
     surface_cache[patch_index].history = vec4<f32>(0.0);
 
     surface_cache_sh_patch_write(&surface_cache_sh, patch_index, sh_l1_rgb_zero());

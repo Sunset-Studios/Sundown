@@ -45,7 +45,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     if (patch_index >= 0) {
         cached_radiance = surface_cache_evaluate_local_sh_irradiance(
             surface_cache_sh_patch_read(&surface_cache_sh, u32(patch_index))
-        ) * surface_cache_params.indirect_boost;
+        ) * (surface_cache_params.indirect_boost / PI);
     }
 
     textureStore(

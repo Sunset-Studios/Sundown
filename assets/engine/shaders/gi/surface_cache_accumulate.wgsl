@@ -29,7 +29,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
     sample_radiance = safe_clamp_vec3_max(sample_radiance, SURFACE_CACHE_MAX_RADIANCE);
 
-    let patch_normal = safe_normalize(surface_cache[patch_index].normal_unused.xyz);
+    let patch_normal = safe_normalize(surface_cache[patch_index].normal_lod.xyz);
     let local_direction = safe_normalize(surface_cache_world_to_hemisphere(
         hit_info[active_index].ray_direction_primitive.xyz,
         patch_normal
@@ -52,7 +52,12 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     );
     let next_sequence = f32((u32(history.y) + 1u) & 4095u);
     let running_alpha = 1.0 / max(next_sample_count, 1.0);
-    let blend_alpha = running_alpha;
+    // Once the running-mean history is mature, keep a bounded EMA response so
+    // lighting changes do not remain trapped for hundreds of frames.
+    let blend_alpha = max(
+        running_alpha,
+        1.0 - clamp(surface_cache_params.history_hysteresis, 0.0, 0.999)
+    );
 
     var result = sample_sh;
     if (previous_sample_count > 0.0) {
@@ -64,5 +69,14 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
 
     surface_cache_sh_patch_write(&surface_cache_sh, patch_index, result);
-    surface_cache[patch_index].history = vec4<f32>(next_sample_count, next_sequence, 0.0, 0.0);
+    let sample_luminance = luminance(sample_radiance);
+    let moment_alpha = max(running_alpha, blend_alpha);
+    let first_moment = mix(history.z, sample_luminance, moment_alpha);
+    let second_moment = mix(history.w, sample_luminance * sample_luminance, moment_alpha);
+    surface_cache[patch_index].history = vec4<f32>(
+        next_sample_count,
+        next_sequence,
+        first_moment,
+        second_moment
+    );
 }

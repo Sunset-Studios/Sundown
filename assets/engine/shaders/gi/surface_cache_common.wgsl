@@ -1,10 +1,13 @@
 #include "gi/gi_common.wgsl"
 #include "sh_common.wgsl"
 
-const SURFACE_CACHE_BUCKET_SIZE: u32 = 8u;
+// One unified hash table stores every LOD. A wider set-associative bucket
+// keeps local hash pressure from turning into visible allocation holes.
+const SURFACE_CACHE_BUCKET_SIZE: u32 = 16u;
 const SURFACE_CACHE_LOD_EXTENT_CELLS: f32 = 128.0;
-const SURFACE_CACHE_NORMAL_QUANTIZATION: f32 = 1.0;
 const SURFACE_CACHE_PATCH_EMPTY: u32 = 0u;
+const SURFACE_CACHE_UPDATE_LOCKED: u32 = 0xffffffffu;
+const SURFACE_CACHE_MIN_QUERY_SAMPLES: f32 = 2.0;
 const SURFACE_CACHE_MAX_RADIANCE: f32 = 10.0;
 const SURFACE_CACHE_SH_PATCH_SIZE_U32: u32 = 6u;
 
@@ -29,9 +32,9 @@ struct SurfaceCacheParams {
 
 struct SurfacePatch {
     position_frame: vec4<f32>,
-    normal_unused: vec4<f32>,
-    albedo_roughness: vec4<f32>,
-    material_props: vec4<f32>,
+    normal_lod: vec4<f32>,
+    grid_key: vec4<i32>,
+    metadata: vec4<f32>,
     history: vec4<f32>,
     fingerprint: atomic<u32>,
     update_frame: atomic<u32>,
@@ -41,9 +44,9 @@ struct SurfacePatch {
 
 struct SurfacePatchReadOnly {
     position_frame: vec4<f32>,
-    normal_unused: vec4<f32>,
-    albedo_roughness: vec4<f32>,
-    material_props: vec4<f32>,
+    normal_lod: vec4<f32>,
+    grid_key: vec4<i32>,
+    metadata: vec4<f32>,
     history: vec4<f32>,
     fingerprint: u32,
     update_frame: u32,
@@ -130,7 +133,9 @@ fn surface_cache_rotate_sh_between_hemispheres(
 
 fn surface_cache_evaluate_local_sh_irradiance(sh: SH_L1_RGB) -> vec3<f32> {
     return max(
-        sh_l1_rgb_calculate_irradiance(sh, vec3<f32>(0.0, 1.0, 0.0)),
+        // orthonormalize() constructs a frame whose Z axis is the supplied
+        // normal. All traced directions and stored SH use that convention.
+        sh_l1_rgb_calculate_irradiance(sh, vec3<f32>(0.0, 0.0, 1.0)),
         vec3<f32>(0.0)
     );
 }
@@ -139,15 +144,20 @@ fn surface_cache_full_resolution(params: SurfaceCacheParams) -> vec2<u32> {
     return vec2<u32>(u32(params.full_resolution_x), u32(params.full_resolution_y));
 }
 
-fn surface_cache_select_lod(position: vec3<f32>, camera_position: vec3<f32>, params: SurfaceCacheParams) -> u32 {
-    let delta = abs(position - camera_position);
-    let square_distance = max(delta.x, max(delta.y, delta.z));
+fn surface_cache_lod_value(position: vec3<f32>, camera_position: vec3<f32>, params: SurfaceCacheParams) -> f32 {
+    let distance = length(position - camera_position);
     let base_extent = max(
         params.surface_cache_cell_size * SURFACE_CACHE_LOD_EXTENT_CELLS,
         params.surface_cache_cell_size
     );
-    let raw_lod = ceil(log2(max(square_distance / base_extent, 0.001)));
-    return u32(clamp(i32(raw_lod), 0, i32(params.surface_cache_lod_count) - 1));
+    let maximum_lod = max(params.surface_cache_lod_count - 1.0, 0.0);
+    return clamp(log2(max(distance / base_extent, 1.0)), 0.0, maximum_lod);
+}
+
+fn surface_cache_select_lod(position: vec3<f32>, camera_position: vec3<f32>, params: SurfaceCacheParams) -> u32 {
+    // Admission chooses the nearest logarithmic level. Lookup blends adjacent
+    // levels, so camera motion cannot create a hard level switch.
+    return u32(floor(surface_cache_lod_value(position, camera_position, params) + 0.5));
 }
 
 fn surface_cache_lod_cell_size(lod: u32, params: SurfaceCacheParams) -> f32 {
@@ -204,21 +214,20 @@ fn surface_cache_world_cell_center(
 
 fn surface_cache_quantize_normal(normal: vec3<f32>) -> vec2<i32> {
     let n = safe_normalize(normal);
-    let inv_l1 = 1.0 / max(abs(n.x) + abs(n.y) + abs(n.z), 1e-6);
-    var oct = n.xy * inv_l1;
-    let sign_oct = vec2<f32>(select(-1.0, 1.0, oct.x >= 0.0), select(-1.0, 1.0, oct.y >= 0.0));
-    oct = select(oct, (vec2<f32>(1.0) - abs(oct.yx)) * sign_oct, n.z < 0.0);
-    return vec2<i32>(floor(oct * SURFACE_CACHE_NORMAL_QUANTIZATION + vec2<f32>(0.5)));
+    let normal_octant =
+        select(0, 1, n.x >= 0.0) |
+        select(0, 2, n.y >= 0.0) |
+        select(0, 4, n.z >= 0.0);
+    return vec2<i32>(normal_octant, 0);
 }
 
 fn surface_cache_bucket_start(position: vec3<i32>, normal: vec2<i32>, lod: u32, params: SurfaceCacheParams) -> u32 {
     let position_hash = (position.x * 73856093) ^ (position.y * 19349663) ^ (position.z * 83492791);
-    let normal_hash = (normal.x * 50331653) ^ (normal.y * 25165843);
-    let combined = bitcast<u32>(position_hash ^ normal_hash);
-    let patches_per_lod = max(u32(params.surface_cache_size), SURFACE_CACHE_BUCKET_SIZE);
-    let bucket_count = max(patches_per_lod / SURFACE_CACHE_BUCKET_SIZE, 1u);
-    let lod_start = lod * patches_per_lod;
-    return lod_start + (combined % bucket_count) * SURFACE_CACHE_BUCKET_SIZE;
+    let descriptor_hash = (normal.x * 50331653) ^ (i32(lod) * 25165843);
+    let combined = bitcast<u32>(position_hash ^ descriptor_hash);
+    let capacity = max(u32(params.total_patch_count), SURFACE_CACHE_BUCKET_SIZE);
+    let bucket_count = max(capacity / SURFACE_CACHE_BUCKET_SIZE, 1u);
+    return (combined % bucket_count) * SURFACE_CACHE_BUCKET_SIZE;
 }
 
 fn surface_cache_hash_fingerprint(position: vec3<i32>, normal: vec2<i32>, lod: u32) -> u32 {
@@ -228,17 +237,29 @@ fn surface_cache_hash_fingerprint(position: vec3<i32>, normal: vec2<i32>, lod: u
     return select(value, 1u, value == 0u);
 }
 
-fn surface_cache_patch_descriptor_matches(
-    patch_position: vec3<f32>,
-    patch_normal: vec3<f32>,
+fn surface_cache_make_grid_key(
     quantized_position: vec3<i32>,
     quantized_normal: vec2<i32>,
-    lod: u32,
-    params: SurfaceCacheParams
+    lod: u32
+) -> vec4<i32> {
+    return vec4<i32>(quantized_position, i32(lod * 8u) + quantized_normal.x);
+}
+
+fn surface_cache_grid_key_lod(grid_key: vec4<i32>) -> u32 {
+    return u32(max(grid_key.w, 0)) / 8u;
+}
+
+fn surface_cache_patch_descriptor_matches(
+    patch_grid_key: vec4<i32>,
+    quantized_position: vec3<i32>,
+    quantized_normal: vec2<i32>,
+    lod: u32
 ) -> bool {
-    return
-        all(surface_cache_quantize_position(patch_position, lod, params) == quantized_position) &&
-        all(surface_cache_quantize_normal(patch_normal) == quantized_normal);
+    return all(patch_grid_key == surface_cache_make_grid_key(
+        quantized_position,
+        quantized_normal,
+        lod
+    ));
 }
 
 fn surface_cache_patch_rng(patch_index: u32, patch_fingerprint: u32) -> u32 {

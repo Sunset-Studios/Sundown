@@ -481,7 +481,7 @@ export class HashedSurfaceTraceHitCache extends GITraceHitCache {
     const { config, width, height, force_recreate } = context;
     const cache_size = Math.max(16, Math.floor(config.surface_cache_size / 16) * 16);
     const lod_count = Math.max(1, Math.floor(config.surface_cache_lod_count));
-    const total_patches = cache_size * lod_count;
+    const total_patches = cache_size;
     const entity_transform_buffer = EntityManager.get_fragment_gpu_buffer(
       TransformFragment,
       "transforms"
@@ -599,15 +599,13 @@ export class HashedSurfaceTraceHitCache extends GITraceHitCache {
           params,
           surface_cache,
           sh,
+          sh_filtered,
           counters,
           active_indices,
           inputs.depth_texture,
           inputs.gbuffer_normal,
-          inputs.gbuffer_albedo,
-          inputs.gbuffer_smra,
-          inputs.gbuffer_motion_emissive,
         ],
-        outputs: [surface_cache, sh, counters, active_indices],
+        outputs: [surface_cache, sh, sh_filtered, counters, active_indices],
       },
       (graph, frame_data) =>
         graph

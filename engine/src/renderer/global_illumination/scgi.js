@@ -11,9 +11,9 @@ export class SCGI {
   debug_texture = null;
 
   config = {
-    surface_cache_size: 32768,
+    surface_cache_size: 131072,
     surface_cache_cell_size: 0.25,
-    surface_cache_lod_count: 6,
+    surface_cache_lod_count: 4,
     cache_entry_lifetime: 1,
     max_ray_length: 1024.0,
     history_hysteresis: 0.95,

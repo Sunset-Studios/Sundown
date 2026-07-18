@@ -1,20 +1,18 @@
 #include "common.wgsl"
 #include "gi/surface_cache_common.wgsl"
 
-// Full-resolution depth feedback is both cache admission and active-stream
-// generation. Every visible descriptor either claims an empty bucket slot or
-// refreshes its existing world-space patch. Exactly one invocation per patch
-// appends that patch to active_indices for the current frame.
+// Full-resolution visibility feedback admits world-space surface descriptors
+// and produces a unique stream of patches to update this frame. Patch geometry
+// is fixed for the lifetime of an entry; only last-seen metadata changes. That
+// prevents sub-pixel camera motion from moving every ray origin in the cache.
 @group(1) @binding(0) var<uniform> surface_cache_params: SurfaceCacheParams;
 @group(1) @binding(1) var<storage, read_write> surface_cache: array<SurfacePatch>;
 @group(1) @binding(2) var<storage, read_write> surface_cache_sh: array<u32>;
-@group(1) @binding(3) var<storage, read_write> counters: SurfaceCacheCounters;
-@group(1) @binding(4) var<storage, read_write> active_indices: array<u32>;
-@group(1) @binding(5) var depth_texture: texture_2d<f32>;
-@group(1) @binding(6) var gbuffer_normal: texture_2d<f32>;
-@group(1) @binding(7) var gbuffer_albedo: texture_2d<f32>;
-@group(1) @binding(8) var gbuffer_smra: texture_2d<f32>;
-@group(1) @binding(9) var gbuffer_motion_emissive: texture_2d<f32>;
+@group(1) @binding(3) var<storage, read_write> surface_cache_sh_filtered: array<u32>;
+@group(1) @binding(4) var<storage, read_write> counters: SurfaceCacheCounters;
+@group(1) @binding(5) var<storage, read_write> active_indices: array<u32>;
+@group(1) @binding(6) var depth_texture: texture_2d<f32>;
+@group(1) @binding(7) var gbuffer_normal: texture_2d<f32>;
 
 fn append_active_patch(patch_index: u32) {
     let active_index = atomicAdd(&counters.active_patch_count, 1u);
@@ -25,23 +23,46 @@ fn append_active_patch(patch_index: u32) {
 
 fn initialize_patch(
     patch_index: u32,
-    pixel_coord: vec2<u32>,
     position: vec3<f32>,
     normal: vec3<f32>,
-    lod: u32,
-    reset: bool
+    quantized_position: vec3<i32>,
+    quantized_normal: vec2<i32>,
+    lod: u32
 ) {
-    let albedo = textureLoad(gbuffer_albedo, pixel_coord.xy, 0).rgb;
-    let smra = textureLoad(gbuffer_smra, pixel_coord.xy, 0);
-    let motion_emissive = textureLoad(gbuffer_motion_emissive, pixel_coord.xy, 0);
-    surface_cache[patch_index].position_frame = vec4<f32>(position, surface_cache_params.frame_index);
-    surface_cache[patch_index].normal_unused = vec4<f32>(normal, 0.0);
-    surface_cache[patch_index].albedo_roughness = vec4<f32>(albedo, smra.g);
-    surface_cache[patch_index].material_props = vec4<f32>(smra.b, smra.r, motion_emissive.w, f32(lod));
-    if (reset) {
-        surface_cache[patch_index].history = vec4<f32>(0.0);
-        surface_cache_sh_patch_write(&surface_cache_sh, patch_index, sh_l1_rgb_zero());
+    surface_cache[patch_index].position_frame = vec4<f32>(
+        position,
+        surface_cache_params.frame_index
+    );
+    surface_cache[patch_index].normal_lod = vec4<f32>(normal, f32(lod));
+    surface_cache[patch_index].grid_key = surface_cache_make_grid_key(
+        quantized_position,
+        quantized_normal,
+        lod
+    );
+    surface_cache[patch_index].metadata = vec4<f32>(0.0);
+    surface_cache[patch_index].history = vec4<f32>(0.0);
+    surface_cache_sh_patch_write(&surface_cache_sh, patch_index, sh_l1_rgb_zero());
+    surface_cache_sh_patch_write(&surface_cache_sh_filtered, patch_index, sh_l1_rgb_zero());
+}
+
+fn try_touch_patch(patch_index: u32, frame: u32) -> bool {
+    let previous_frame = atomicLoad(&surface_cache[patch_index].update_frame);
+    if (previous_frame == SURFACE_CACHE_UPDATE_LOCKED) {
+        return false;
     }
+    let touch = atomicCompareExchangeWeak(
+        &surface_cache[patch_index].update_frame,
+        previous_frame,
+        frame
+    );
+    if (!touch.exchanged) {
+        return false;
+    }
+    if (previous_frame != frame) {
+        surface_cache[patch_index].position_frame.w = surface_cache_params.frame_index;
+        append_active_patch(patch_index);
+    }
+    return true;
 }
 
 @compute @workgroup_size(8, 8, 1)
@@ -58,7 +79,6 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
 
     let frame = u32(surface_cache_params.frame_index);
-
     let camera_position = view_buffer[u32(frame_info.view_index)].view_position.xyz;
     let normal = safe_normalize(normal_data.xyz);
     let position = reconstruct_world_position(
@@ -70,56 +90,89 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let lod = surface_cache_select_lod(position, camera_position, surface_cache_params);
     let quantized_position = surface_cache_quantize_position(position, lod, surface_cache_params);
     let quantized_normal = surface_cache_quantize_normal(normal);
+    let bucket_start = surface_cache_bucket_start(
+        quantized_position,
+        quantized_normal,
+        lod,
+        surface_cache_params
+    );
+    let fingerprint = surface_cache_hash_fingerprint(
+        quantized_position,
+        quantized_normal,
+        lod
+    );
 
-    let bucket_start = surface_cache_bucket_start(quantized_position, quantized_normal, lod, surface_cache_params);
-    let fingerprint = surface_cache_hash_fingerprint(quantized_position, quantized_normal, lod);
+    var empty_index = -1;
+    var oldest_index = -1;
+    var oldest_frame = frame;
 
+    // Find an exact key first. Fingerprints accelerate rejection but never
+    // define identity by themselves.
     for (var probe = 0u; probe < SURFACE_CACHE_BUCKET_SIZE; probe = probe + 1u) {
         let patch_index = bucket_start + probe;
-        let claim = atomicCompareExchangeWeak(
-            &surface_cache[patch_index].fingerprint,
-            SURFACE_CACHE_PATCH_EMPTY,
-            fingerprint
-        );
-
-        if (claim.exchanged) {
-            atomicStore(&surface_cache[patch_index].update_frame, frame);
-            initialize_patch(
-                patch_index,
-                pixel_coord,
-                position,
-                normal,
-                lod,
-                true
-            );
-            append_active_patch(patch_index);
+        let patch_fingerprint = atomicLoad(&surface_cache[patch_index].fingerprint);
+        if (patch_fingerprint == fingerprint && surface_cache_patch_descriptor_matches(
+            surface_cache[patch_index].grid_key,
+            quantized_position,
+            quantized_normal,
+            lod
+        )) {
+            try_touch_patch(patch_index, frame);
             return;
         }
 
-        if (claim.old_value == fingerprint) {
-            if (surface_cache_patch_descriptor_matches(
-                surface_cache[patch_index].position_frame.xyz,
-                surface_cache[patch_index].normal_unused.xyz,
-                quantized_position,
-                quantized_normal,
-                lod,
-                surface_cache_params
-            )) {
-                let previous_frame = atomicExchange(&surface_cache[patch_index].update_frame, frame);
-                if (previous_frame != frame) {
-                    atomicStore(&surface_cache[patch_index].update_frame, frame);
-                    initialize_patch(
-                        patch_index,
-                        pixel_coord,
-                        position,
-                        normal,
-                        lod,
-                        false
-                    );
-                    append_active_patch(patch_index);
-                }
-                return;
+        let patch_frame = atomicLoad(&surface_cache[patch_index].update_frame);
+        // A descriptor is being published in this bucket. Deferring this
+        // invocation avoids racing the non-atomic exact key and allocating a
+        // duplicate. The next frame retries the bucket.
+        if (patch_frame == SURFACE_CACHE_UPDATE_LOCKED) {
+            return;
+        }
+        if (patch_fingerprint == SURFACE_CACHE_PATCH_EMPTY && patch_frame == 0u) {
+            if (empty_index < 0) {
+                empty_index = i32(patch_index);
             }
+        } else if (patch_frame < oldest_frame) {
+            oldest_frame = patch_frame;
+            oldest_index = i32(patch_index);
         }
     }
+
+    var claim_index = empty_index;
+    var expected_frame = 0u;
+    if (claim_index < 0) {
+        // Bucket-local replacement gives a busy region a way to recover from
+        // hash pressure without globally flushing useful radiance. Recently
+        // visible entries are never eligible.
+        let replacement_age = max(8u, u32(surface_cache_params.cache_entry_lifetime * 0.5));
+        if (oldest_index < 0 || frame - oldest_frame <= replacement_age) {
+            return;
+        }
+        claim_index = oldest_index;
+        expected_frame = oldest_frame;
+    }
+
+    let patch_index = u32(claim_index);
+    let claim = atomicCompareExchangeWeak(
+        &surface_cache[patch_index].update_frame,
+        expected_frame,
+        SURFACE_CACHE_UPDATE_LOCKED
+    );
+    if (!claim.exchanged) {
+        return;
+    }
+
+    // The update-frame lock remains held while descriptor and radiance data
+    // are reset. Publish the fingerprint last, then release the slot.
+    initialize_patch(
+        patch_index,
+        position,
+        normal,
+        quantized_position,
+        quantized_normal,
+        lod
+    );
+    atomicStore(&surface_cache[patch_index].fingerprint, fingerprint);
+    atomicStore(&surface_cache[patch_index].update_frame, frame);
+    append_active_patch(patch_index);
 }

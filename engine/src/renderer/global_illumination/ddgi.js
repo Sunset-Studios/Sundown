@@ -7,7 +7,7 @@ import { ProbeSHAccumulator } from "./accumulators.js";
 export class DDGI {
   config = {
     probe_grid_dimensions: [32, 32, 32],
-    probe_spacing: 2.0,
+    probe_spacing: 1.0,
     probe_radius: 0.1,
     max_rays_per_probe: 256,
     probes_per_frame: 1024,

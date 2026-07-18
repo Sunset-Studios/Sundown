@@ -108,10 +108,9 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         shading_normal,
         camera_position
     ).xyz;
-    let diffuse_albedo = albedo * (1.0 - metallic);
     radiance_info[active_index].sample_radiance = vec4<f32>(
         safe_clamp_vec3_max(
-            emissive * albedo + recurrent_irradiance * diffuse_albedo * (1.0 / (2.0 * PI)),
+            emissive * albedo + recurrent_irradiance,
             SURFACE_CACHE_MAX_RADIANCE
         ),
         1.0
@@ -126,6 +125,9 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     var rng = random_seed(surface_cache_patch_rng(
         patch_index,
         surface_cache[patch_index].fingerprint
+    ) ^ hash(
+        (u32(surface_cache[patch_index].history.y) ^
+        u32(surface_cache_params.frame_index)) * 0x9e3779b9u
     ));
     let selected_light_index = u32(rand_float(rng) * f32(light_count)) % light_count;
     let light = dense_lights_buffer.lights[selected_light_index];

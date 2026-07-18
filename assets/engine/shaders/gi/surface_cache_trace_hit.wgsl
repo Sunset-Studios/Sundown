@@ -38,97 +38,46 @@ fn sample_uniform_hemisphere_scgi(normal: vec3<f32>, r1: f32, r2: f32) -> vec3<f
 fn generate_ray_sample(
     seed: u32,
     normal: vec3<f32>,
-    sample_index: u32,
-    patch_history: f32,
-    previous_sh: SH_L1_RGB
+    sample_index: u32
 ) -> SurfaceCacheRaySample {
-    // Resampled importance sampling (RIS) picks one ray from a stable,
-    // Cranley-Patterson rotated R2 candidate set. The target combines the
-    // diffuse cosine term with the patch's previous directional radiance.
-    // The exploration floor prevents stale history from hiding new lights.
-    let candidate_count = u32(clamp(
-        i32(surface_cache_params.importance_sample_count),
-        2,
-        16
-    ));
+    // A Cranley-Patterson rotated R2 sequence uniformly covers the hemisphere.
+    // Unlike history-guided RIS it remains unbiased when lighting changes and
+    // cannot reinforce a noisy lobe already present in this cache entry.
     var rng = random_seed(seed);
     let rotation_u = rand_float(rng);
     rng = random_seed(rng);
     let rotation_v = rand_float(rng);
-
-    var history_scale = 1.0;
-    if (patch_history > 0.0) {
-        history_scale = max(luminance(surface_cache_evaluate_local_sh_irradiance(previous_sh)) / PI, 1e-3);
-    }
-
-    var selected_direction = normal;
-    var selected_importance = 1.0;
-    var importance_sum = 0.0;
-    let sequence_base = sample_index * candidate_count;
-    let exploration = clamp(surface_cache_params.importance_exploration, 0.01, 1.0);
-
-    for (var candidate_index = 0u; candidate_index < candidate_count; candidate_index = candidate_index + 1u) {
-        let sequence_index = sequence_base + candidate_index;
-        let sequence_value = f32(sequence_index);
-        let r1 = fract(rotation_u + sequence_value * 0.7548776662466927);
-        let r2 = fract(rotation_v + sequence_value * 0.5698402909980532);
-        let candidate_direction = sample_uniform_hemisphere_scgi(normal, r1, r2);
-        let local_direction = safe_normalize(surface_cache_world_to_hemisphere(candidate_direction, normal));
-        let cosine = max(local_direction.z, 0.0);
-
-        var radiance_importance = 1.0;
-        if (patch_history > 0.0) {
-            let predicted_radiance = max(
-                sh_l1_rgb_evaluate(previous_sh, local_direction),
-                vec3<f32>(0.0)
-            );
-            radiance_importance = clamp(
-                luminance(predicted_radiance) / history_scale,
-                exploration,
-                16.0
-            );
-        }
-
-        let candidate_importance = exploration + cosine * radiance_importance;
-        importance_sum += candidate_importance;
-        let selection_rng = random_seed(seed ^ hash(sequence_index ^ 0x68bc21ebu));
-        if (rand_float(selection_rng) * importance_sum <= candidate_importance) {
-            selected_direction = candidate_direction;
-            selected_importance = candidate_importance;
-        }
-    }
-
-    // Candidates come from a uniform hemisphere proposal (pdf = 1 / 2 PI).
-    // Bound the RIS correction to four times the uniform estimator. A nearly
-    // zero selected target can otherwise produce half-float fireflies large
-    // enough to keep the cache boiling for hundreds of history frames.
+    let sequence_value = f32(sample_index);
+    let r1 = fract(rotation_u + sequence_value * 0.7548776662466927);
+    let r2 = fract(rotation_v + sequence_value * 0.5698402909980532);
     var result: SurfaceCacheRaySample;
-    result.direction = selected_direction;
-    result.sampling_weight = min(
-        (2.0 * PI * importance_sum) /
-            max(f32(candidate_count) * selected_importance, 1e-5),
-        8.0 * PI
-    );
+    result.direction = sample_uniform_hemisphere_scgi(normal, r1, r2);
+    result.sampling_weight = 2.0 * PI;
     return result;
 }
 
 fn trace_surface_cache_ray(active_index: u32) {
     let patch_index = active_indices[active_index];
     let surface_patch = surface_cache[patch_index];
-    let normal = safe_normalize(surface_patch.normal_unused.xyz);
+    let normal = safe_normalize(surface_patch.normal_lod.xyz);
     let seed = surface_cache_patch_rng(patch_index, surface_patch.fingerprint);
-    let previous_sh = surface_cache_sh_patch_read(&surface_cache_sh, patch_index);
     let ray_sample = generate_ray_sample(
         seed,
         normal,
-        u32(surface_patch.history.y),
-        surface_patch.history.x,
-        previous_sh
+        u32(surface_patch.history.y)
     );
     let direction = ray_sample.direction;
 
     var ray: Ray;
-    ray.origin_and_tmin = vec4<f32>(surface_patch.position_frame.xyz + normal * 0.001, 0.0001);
+    let lod = surface_cache_grid_key_lod(surface_patch.grid_key);
+    let origin_offset = max(
+        0.001,
+        surface_cache_lod_cell_size(lod, surface_cache_params) * 0.002
+    );
+    ray.origin_and_tmin = vec4<f32>(
+        surface_patch.position_frame.xyz + normal * origin_offset,
+        origin_offset * 0.25
+    );
     ray.direction_and_tmax = vec4<f32>(direction, surface_cache_params.max_ray_length);
     ray.inv_direction = vec4<f32>(
         1.0 / max(abs(direction.x), 1e-8) * select(1.0, -1.0, direction.x < 0.0),

@@ -14,7 +14,7 @@ export class PTGI {
   config = {
     screen_ray_count: 1,
     upscale_factor: 4,
-    surface_cache_size: 32768,
+    surface_cache_size: 131072,
     surface_cache_cell_size: 0.25,
     surface_cache_lod_count: 4,
     cache_entry_lifetime: 1,
