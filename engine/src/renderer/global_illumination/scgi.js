@@ -1,7 +1,5 @@
 import { GIPipelineComposition } from "./gi_pipeline.js";
-import { HashedSurfaceTraceHitCache } from "./trace_hit_caches.js";
-import { SurfaceCacheSHShadingStrategy } from "./shading_strategies.js";
-import { SurfaceCacheSHAccumulator } from "./accumulators.js";
+import { SurfaceRadianceCache } from "./radiance_caches.js";
 
 /** Composed surface-cache GI pipeline. */
 export class SCGI {
@@ -24,12 +22,11 @@ export class SCGI {
   };
 
   constructor(params = {}, components = {}) {
+    this.radiance_cache = new SurfaceRadianceCache(params.radiance_cache);
     this.pipeline = new GIPipelineComposition([
       {
         name: "surface",
-        trace_hit_cache: new HashedSurfaceTraceHitCache(),
-        shading_strategy: new SurfaceCacheSHShadingStrategy(),
-        accumulator: new SurfaceCacheSHAccumulator(),
+        module: this.radiance_cache,
       },
     ]);
   }
@@ -82,10 +79,10 @@ export class SCGI {
       },
     });
 
-    const { accumulator } = this.pipeline.get_components("surface");
-    this.final_gi_texture_direct = accumulator.get_resource("direct_output");
-    this.final_gi_texture_indirect_diffuse = accumulator.get_resource("diffuse_output");
-    this.final_gi_texture_indirect_specular = accumulator.get_resource("specular_output");
+    const radiance_cache = this.pipeline.get_module("surface");
+    this.final_gi_texture_direct = radiance_cache.get_resource("direct_output");
+    this.final_gi_texture_indirect_diffuse = radiance_cache.get_resource("diffuse_output");
+    this.final_gi_texture_indirect_specular = radiance_cache.get_resource("specular_output");
   }
 
   add_debug_passes(

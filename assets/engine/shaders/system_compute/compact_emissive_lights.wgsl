@@ -39,12 +39,9 @@ fn cs(@builtin(global_invocation_id) global_id: vec3<u32>) {
     }
 
     let mesh_id = u32(node.min.w);
-    let prim_store = u32(-node.max.w - 1.0);
     if (mesh_id == INVALID_IDX) {
         return;
     }
-
-    let entity_resolved = entity_index_lookup[prim_store];
 
     let mesh_directory_entry = blas_directory[mesh_id];
     let tri_count = mesh_directory_entry.primitive_count;
@@ -52,13 +49,16 @@ fn cs(@builtin(global_invocation_id) global_id: vec3<u32>) {
         return;
     }
 
+    let prim_store = u32(-node.max.w - 1.0);
+    let entity_resolved = entity_index_lookup[prim_store];
+
     let sample_count = min(MAX_TRIANGLES_PER_LEAF, tri_count);
 
     // Deterministic temporal sweep:
     // each frame shifts by sample_count, so bounded per-frame work still covers all triangles over time.
     let frame_index_u32 = u32(frame_info.frame_index);
     let leaf_hash = hash(node_index ^ (prim_store * 0x9E3779B9u) ^ (mesh_id * 0x85EBCA6Bu));
-    let start_tri = (leaf_hash + frame_index_u32 * sample_count) % tri_count;
+    let start_tri = (frame_index_u32 * sample_count + leaf_hash) % tri_count;
 
     let entity_transform = entity_transforms[entity_resolved];
     let entity_palette_base = material_table_offset[entity_resolved];

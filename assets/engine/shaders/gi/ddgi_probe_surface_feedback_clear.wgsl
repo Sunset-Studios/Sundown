@@ -7,7 +7,7 @@
 #include "gi/ddgi_common.wgsl"
 
 @group(1) @binding(0) var<uniform> ddgi_params: DDGIParams;
-@group(1) @binding(1) var<storage, read_write> probe_surface_flags: array<atomic<u32>>;
+@group(1) @binding(1) var<storage, read_write> probe_surface_flags: array<u32>;
 
 @compute @workgroup_size(128, 1, 1)
 fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
@@ -17,5 +17,5 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         return;
     }
 
-    atomicStore(&probe_surface_flags[probe_index], 0u);
+    probe_surface_flags[probe_index] = 0u;
 }

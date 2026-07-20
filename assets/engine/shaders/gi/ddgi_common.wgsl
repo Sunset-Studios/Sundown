@@ -3,7 +3,7 @@
 
 const GOLDEN_RATIO_CONJUGATE = 0.6180339887498948;
 const DDGI_VISIBILITY_MIN_VARIANCE = 1e-4;
-const DDGI_CASCADE_ACTIVE_OVERLAP_ROWS = 8.0;
+const DDGI_CASCADE_ACTIVE_OVERLAP_ROWS = 4.0;
 const DDGI_CASCADE_BLEND_WINDOW_PROBES = 4.0;
 
 // SH probes store L1 RGB coefficients (4 coefficients × 3 channels = 12 floats)
@@ -306,7 +306,6 @@ fn ddgi_probe_index_from_permuted_slot(
     }
 }
 
-
 fn ddgi_probe_storage_coord_from_index(
     ddgi_params: ptr<uniform, DDGIParams>,
     probe_index: u32
@@ -367,6 +366,25 @@ fn ddgi_probe_index_from_coord(
 // ─────────────────────────────────────────────────────────────────────────────
 // 3D depth atlas cell coordinates: XZ within layer, Y as layer index
 // ─────────────────────────────────────────────────────────────────────────────
+fn ddgi_probe_index_from_world_position(
+    ddgi_params: ptr<uniform, DDGIParams>,
+    cascade_index: u32,
+    position: vec3<f32>
+) -> u32 {
+    let spacing = ddgi_cascade_spacing(ddgi_params, cascade_index);
+    let origin = ddgi_cascade_origin(ddgi_params, cascade_index);
+    let max_coord = vec3<i32>(
+        i32((*ddgi_params).probe_grid_mask.x),
+        i32((*ddgi_params).probe_grid_mask.y),
+        i32((*ddgi_params).probe_grid_mask.z)
+    );
+    let relative_position = (position - origin) / spacing;
+    let nearest_coord = vec3<u32>(
+        clamp(vec3<i32>(round(relative_position)), vec3<i32>(0), max_coord)
+    );
+    return ddgi_probe_index_from_coord(ddgi_params, cascade_index, nearest_coord);
+}
+
 fn ddgi_probe_world_position_from_index(ddgi_params: ptr<uniform, DDGIParams>, probe_index: u32) -> vec3<f32> {
     let cascade_index = ddgi_probe_cascade_index(ddgi_params, probe_index);
     let spacing = ddgi_cascade_spacing(ddgi_params, cascade_index);
@@ -503,24 +521,21 @@ fn ddgi_position_in_coarser_active_overlap(
 // ─────────────────────────────────────────────────────────────────────────────
 // Get the cascade index that contains a given world position.
 // Returns the finest (lowest index) cascade whose bounds contain the position.
-// Falls back to cascade 0 if the position is outside all cascades.
+// Falls back to largest cascade if the position is outside all cascades.
 // ─────────────────────────────────────────────────────────────────────────────
 fn ddgi_cascade_index_for_position(
     ddgi_params: ptr<uniform, DDGIParams>,
     position: vec3<f32>
 ) -> u32 {
-    let cascade_count = ddgi_cascade_count(ddgi_params);
+    let cascade_count = i32(ddgi_cascade_count(ddgi_params));
     
-    var cascade_index = 0u;
-    for (var c = 0u; c < cascade_count; c = c + 1u) {
-        let inside = ddgi_position_inside_cascade_bounds(ddgi_params, c, position);
+    var cascade_index = cascade_count - 1;
+    for (var c = cascade_count - 1; c >= 0; c = c - 1) {
+        let inside = ddgi_position_inside_cascade_bounds(ddgi_params, u32(c), position);
         cascade_index = select(cascade_index, c, inside);
-        if (inside) {
-            break;
-        }
     }
     
-    return cascade_index;
+    return u32(cascade_index);
 }
 
 // =============================================================================

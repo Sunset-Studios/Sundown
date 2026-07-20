@@ -44,12 +44,13 @@ const SPHERE_AREA = 12.566370614359172; // 4 * PI
 // MSME-style temporal irradiance accumulation. Visibility uses a separate,
 // more conservative policy in ddgi_depth_update.
 // -----------------------------------------------------------------------------
-const DDGI_HISTORY_CAP_FRAMES_MAX = 16.0;
+// Keep the long and short estimators far enough apart for the short mean to
+// detect changes without imposing its noise floor on the stable result.
+const DDGI_HISTORY_CAP_FRAMES_MAX = 64.0;
 const DDGI_MSME_SHORT_WINDOW_FRAMES = 8.0;
 const DDGI_MSME_MIN_SIGNAL_ENERGY = 1e-5;
 const DDGI_MSME_VARIANCE_FORGIVENESS = 2.0;
 const DDGI_MSME_VARIANCE_BLEND_REDUCTION = 12.0;
-const DDGI_MSME_MIN_STABLE_BLEND_SCALE = 0.25;
 const DDGI_MSME_INCONSISTENCY_LOW = 0.025;
 const DDGI_MSME_INCONSISTENCY_HIGH = 0.18;
 const DDGI_MSME_INCONSISTENCY_RISE_ALPHA = 0.45;
@@ -316,23 +317,21 @@ fn cs(
     let prev_frames = min(f32(prev_sample_count), DDGI_HISTORY_CAP_FRAMES_MAX);
     let stable_frames = min(prev_frames + 1.0, DDGI_HISTORY_CAP_FRAMES_MAX);
     let stable_alpha = 1.0 / max(stable_frames, 1.0);
-    let variance_reduced_alpha = stable_alpha * mix(
-        DDGI_MSME_MIN_STABLE_BLEND_SCALE,
-        1.0,
-        clamp(vbbr, 0.0, 1.0)
-    );
     let catchup_alpha = mix(
         DDGI_MSME_CATCHUP_ALPHA_MIN,
         DDGI_MSME_CATCHUP_ALPHA_MAX,
         resolved_change_weight
     ) * noise_guard;
-    let irradiance_alpha = clamp(
-        mix(variance_reduced_alpha, catchup_alpha, resolved_change_weight),
-        0.0,
-        1.0
-    );
 
-    let sh_result = sh_l1_rgb_lerp(sh_prev, short_mean, irradiance_alpha);
+    // Preserve an unbiased, sample-count-weighted mean while lighting is
+    // stable. Reducing this alpha based on variance makes the first noisy
+    // estimate dominate even though sample_count continues to advance. MSME's
+    // variance estimate instead belongs on the change-response path: when the
+    // short and long means disagree beyond expected noise, converge rapidly
+    // toward the short mean; otherwise keep integrating the new observation.
+    let stable_result = sh_l1_rgb_lerp(sh_prev, sh_new, stable_alpha);
+    let catchup_result = sh_l1_rgb_lerp(sh_prev, short_mean, catchup_alpha);
+    let sh_result = sh_l1_rgb_lerp(stable_result, catchup_result, resolved_change_weight);
 
     ddgi_msme_stats_write(
         probe_index,

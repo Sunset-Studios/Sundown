@@ -1,43 +1,42 @@
 import { RenderPassFlags } from "../renderer_types.js";
 
 /**
- * Base class for one replaceable part of a GI pipeline.
+ * Base class for one complete GI module.
  *
- * Components own the resources and render-graph passes for their stage.  The
- * semantic names deliberately stay independent from physical buffer names so
- * a component can replace layouts and shaders without changing its consumer.
+ * Modules own their resources and render-graph passes. Semantic names stay
+ * independent from physical buffer names so a module can change layouts and
+ * shaders without changing its consumers.
  */
-export class GIComponent {
-  constructor({ name, representation, shader_setups = {} }) {
+export class GIModule {
+  constructor({ name, representation, shader_setups = {}, stages = {} }) {
     if (!name || !representation) {
-      throw new Error("GI components require a name and representation");
+      throw new Error("GI modules require a name and representation");
     }
 
     this.name = name;
     this.representation = representation;
     this.shader_setups = { ...shader_setups };
     this.resources = new Map();
-    this.pass_count = 0;
     this.frame_context = null;
+    this.stages = {
+      trace: true,
+      shading: true,
+      accumulation: true,
+      ...stages,
+    };
+    this._validate_stages();
   }
 
   begin_frame(frame_context) {
     this.resources.clear();
-    this.pass_count = 0;
     this.frame_context = frame_context;
   }
 
-  setup(_render_graph, _frame_context, _branch) {}
+  setup(_render_graph, _frame_context, _branch) { }
 
-  record(_render_graph, _frame_context, _branch) {}
+  record(_render_graph, _frame_context, _branch) { }
 
-  record_post_accumulation(_render_graph, _frame_context, _branch) {}
-
-  record_resolve(_render_graph, _frame_context, _branch) {}
-
-  record_debug(_render_graph, _debug_context, _branch) {
-    return null;
-  }
+  record_debug(_render_graph, _debug_context, _branch) { return null; }
 
   create_buffer(render_graph, semantic, config) {
     const handle = render_graph.create_buffer(config);
@@ -70,7 +69,6 @@ export class GIComponent {
       throw new Error(`${this.name} does not provide a shader for '${semantic}'`);
     }
 
-    this.pass_count++;
     return render_graph.add_pass(
       name,
       RenderPassFlags.Compute,
@@ -80,53 +78,63 @@ export class GIComponent {
   }
 
   add_graph_local_pass(render_graph, name, callback) {
-    this.pass_count++;
     return render_graph.add_pass(name, RenderPassFlags.GraphLocal, {}, callback);
   }
-}
 
-export class GITraceHitCache extends GIComponent {
-  constructor(config) {
-    super(config);
-    this.hit_representation = config.hit_representation;
+  _validate_stages() {
+    const known_stages = new Set(Object.values(GIPipelineStage));
+    for (const stage of Object.keys(this.stages)) {
+      if (!known_stages.has(stage)) {
+        throw new Error(`Unknown GI pipeline stage '${stage}'`);
+      }
+    }
+    for (const stage of known_stages) {
+      if (typeof this.stages[stage] !== "boolean") {
+        throw new Error(`${this.name} stage '${stage}' must be enabled or disabled`);
+      }
+    }
+  }
+
+  is_stage_enabled(stage) {
+    if (!Object.values(GIPipelineStage).includes(stage)) {
+      throw new Error(`Unknown GI pipeline stage '${stage}'`);
+    }
+    return this.stages[stage];
+  }
+
+  set_stage_enabled(stage, enabled) {
+    if (!Object.values(GIPipelineStage).includes(stage)) {
+      throw new Error(`Unknown GI pipeline stage '${stage}'`);
+    }
+    if (typeof enabled !== "boolean") {
+      throw new Error(`${this.name} stage '${stage}' must be enabled or disabled`);
+    }
+    this.stages[stage] = enabled;
+    return this;
+  }
+
+  set_stages(stages) {
+    for (const [stage, enabled] of Object.entries(stages)) {
+      this.set_stage_enabled(stage, enabled);
+    }
+    return this;
   }
 }
 
-export class GIShadingStrategy extends GIComponent {
-  constructor(config) {
-    super(config);
-    this.accepted_hit_representations = new Set(config.accepted_hit_representations ?? []);
-    this.radiance_representation = config.radiance_representation;
-  }
-
-  accepts(trace_hit_cache) {
-    return this.accepted_hit_representations.has(trace_hit_cache.hit_representation);
-  }
-}
-
-export class GIAccumulator extends GIComponent {
-  constructor(config) {
-    super(config);
-    this.accepted_radiance_representations = new Set(
-      config.accepted_radiance_representations ?? []
-    );
-  }
-
-  accepts(shading_strategy) {
-    return this.accepted_radiance_representations.has(shading_strategy.radiance_representation);
-  }
-}
+export const GIPipelineStage = Object.freeze({
+  Trace: "trace",
+  Shading: "shading",
+  Accumulation: "accumulation",
+});
 
 /**
- * A branch is trace-hit storage -> shading -> accumulation.  A pipeline may
- * contain multiple branches (PTGI uses a surface-cache and a per-pixel branch).
+ * A branch contains one complete GI module. A pipeline may contain multiple
+ * branches (PTGI uses a surface-cache and a per-pixel radiance-cache module).
  */
 export class GIPipelineBranch {
-  constructor({ name, trace_hit_cache, shading_strategy, accumulator, dependencies = {} }) {
+  constructor({ name, module, dependencies = {} }) {
     this.name = name;
-    this.trace_hit_cache = trace_hit_cache;
-    this.shading_strategy = shading_strategy;
-    this.accumulator = accumulator;
+    this.module = module;
     this.dependency_names = { ...dependencies };
     this.dependencies = new Map();
     this.validate();
@@ -152,102 +160,75 @@ export class GIPipelineBranch {
   }
 
   validate() {
-    if (!(this.trace_hit_cache instanceof GITraceHitCache)) {
-      throw new Error(`GI branch '${this.name}' requires a trace-hit cache`);
-    }
-    if (!(this.shading_strategy instanceof GIShadingStrategy)) {
-      throw new Error(`GI branch '${this.name}' requires a shading strategy`);
-    }
-    if (!(this.accumulator instanceof GIAccumulator)) {
-      throw new Error(`GI branch '${this.name}' requires an accumulator`);
-    }
-    if (!this.shading_strategy.accepts(this.trace_hit_cache)) {
-      throw new Error(
-        `${this.shading_strategy.name} cannot shade ${this.trace_hit_cache.hit_representation}`
-      );
-    }
-    if (!this.accumulator.accepts(this.shading_strategy)) {
-      throw new Error(
-        `${this.accumulator.name} cannot accumulate ${this.shading_strategy.radiance_representation}`
-      );
+    if (!(this.module instanceof GIModule)) {
+      throw new Error(`GI branch '${this.name}' requires a GI module`);
     }
   }
 
   begin_frame(frame_context) {
-    this.trace_hit_cache.begin_frame(frame_context);
-    this.shading_strategy.begin_frame(frame_context);
-    this.accumulator.begin_frame(frame_context);
+    this.module.begin_frame(frame_context, this);
   }
 }
 
 export class GIPipelineComposition {
+  branches = null;
+  branch_map = null;
+  
   constructor(branches) {
     this.branches = branches.map((branch) =>
       branch instanceof GIPipelineBranch ? branch : new GIPipelineBranch(branch)
     );
-    this.branch_map = new Map(this.branches.map((branch) => [branch.name, branch]));
-    for (const branch of this.branches) branch.resolve_dependencies(this.branch_map);
+
+    this.branch_map = new Map();
+    for (let i = 0; i < this.branches.length; ++i) {
+      this.branch_map.set(this.branches[i].name, this.branches[i]);
+    }
+
+    for (let i = 0; i < this.branches.length; ++i) {
+      this.branches[i].resolve_dependencies(this.branch_map);
+    }
   }
 
   begin_frame(frame_context) {
-    // A cache may fan out into multiple shading/accumulation branches. Begin a
-    // shared component only once so its semantic resource registry is shared.
-    const begun = new Set();
-    for (const branch of this.branches) {
-      for (const component of [
-        branch.trace_hit_cache,
-        branch.shading_strategy,
-        branch.accumulator,
-      ]) {
-        if (begun.has(component)) continue;
-        component.begin_frame(frame_context);
-        begun.add(component);
+    // A module may be shared by multiple named branches. Begin it only once so
+    // its semantic resource registry remains stable for the frame.
+    const branches_started = new Set();
+    for (let i = 0; i < this.branches.length; ++i) {
+      const branch = this.branches[i];
+      if (branches_started.has(branch.module)) {
+        continue;
       }
+
+      branch.begin_frame(frame_context);
+      branches_started.add(branch.module);
     }
   }
 
   add_passes(render_graph, frame_context = {}) {
     frame_context.render_graph = render_graph;
+
     this.begin_frame(frame_context);
 
-    // Allocate every branch first. This lets a trace cache consume accumulator
-    // storage (and vice versa) without either component knowing who created it.
-    const setup_components = new Set();
-    for (const branch of this.branches) {
-      for (const component of [
-        branch.trace_hit_cache,
-        branch.shading_strategy,
-        branch.accumulator,
-      ]) {
-        if (setup_components.has(component)) continue;
-        component.setup(render_graph, frame_context, branch);
-        setup_components.add(component);
+    // Allocate every module first so dependent branches can consume one
+    // another's stable semantic resources when passes are recorded.
+    const setup_modules = new Set();
+    for (let i = 0; i < this.branches.length; ++i) {
+      const branch = this.branches[i];
+      if (!setup_modules.has(branch.module)) {
+        setup_modules.add(branch.module);
+        branch.module.setup(render_graph, frame_context, branch);
       }
     }
 
     // Branch order is significant and explicit. PTGI records its surface-cache
     // branch before the per-pixel branch that samples it.
-    const recorded_components = new Set();
-    const post_accumulation_components = new Set();
-    const resolved_components = new Set();
-    for (const branch of this.branches) {
-      for (const component of [
-        branch.trace_hit_cache,
-        branch.shading_strategy,
-        branch.accumulator,
-      ]) {
-        if (recorded_components.has(component)) continue;
-        component.record(render_graph, frame_context, branch);
-        recorded_components.add(component);
-      }
-      if (!post_accumulation_components.has(branch.trace_hit_cache)) {
-        branch.trace_hit_cache.record_post_accumulation(render_graph, frame_context, branch);
-        post_accumulation_components.add(branch.trace_hit_cache);
-      }
-      if (!resolved_components.has(branch.accumulator)) {
-        branch.accumulator.record_resolve(render_graph, frame_context, branch);
-        resolved_components.add(branch.accumulator);
-      }
+    const recorded_modules = new Set();
+    for (let i = 0; i < this.branches.length; ++i) {
+      const branch = this.branches[i];
+      if (!recorded_modules.has(branch.module)) {
+        branch.module.record(render_graph, frame_context, branch);
+        recorded_modules.add(branch.module);
+      } 
     }
 
     return frame_context;
@@ -255,19 +236,15 @@ export class GIPipelineComposition {
 
   add_debug_passes(render_graph, debug_context = {}) {
     debug_context.render_graph = render_graph;
-    const recorded_components = new Set();
+    const recorded_modules = new Set();
 
-    for (const branch of this.branches) {
-      for (const component of [
-        branch.trace_hit_cache,
-        branch.shading_strategy,
-        branch.accumulator,
-      ]) {
-        if (recorded_components.has(component)) continue;
-        recorded_components.add(component);
-        const output = component.record_debug(render_graph, debug_context, branch);
+    for (let i = 0; i < this.branches.length; ++i) {
+      const branch = this.branches[i];
+      if (!recorded_modules.has(branch.module)) {
+        recorded_modules.add(branch.module);
+        const output = branch.module.record_debug(render_graph, debug_context, branch);
         if (output) return output;
-      }
+      } 
     }
 
     return null;
@@ -275,16 +252,11 @@ export class GIPipelineComposition {
 
   get_branch(name) {
     const branch = this.branch_map.get(name);
-    if (!branch) throw new Error(`Unknown GI pipeline branch '${name}'`);
-    return branch;
+    return !!branch ? branch : null;
   }
 
-  get_components(name) {
+  get_module(name) {
     const branch = this.get_branch(name);
-    return {
-      trace_hit_cache: branch.trace_hit_cache,
-      shading_strategy: branch.shading_strategy,
-      accumulator: branch.accumulator,
-    };
+    return branch?.module ?? null;
   }
 }

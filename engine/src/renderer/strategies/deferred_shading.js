@@ -718,7 +718,6 @@ export class DeferredShadingStrategy {
         },
         (graph, frame_data, encoder) => {
           const pass = graph.get_physical_pass(frame_data.current_pass);
-
           draw_quad(pass);
         }
       );
@@ -764,34 +763,6 @@ export class DeferredShadingStrategy {
       }
 
       // ┌─────────────────────────────────────────────────────────────────────────────┐
-      // │ 🌚 PASS: Adaptive Sparse Virtual Shadow Maps                               │
-      // │    High-quality, efficient shadow mapping with virtual memory management  │
-      // └─────────────────────────────────────────────────────────────────────────────┘
-      if (shadows_enabled) {
-        this.as_vsm.add_passes(render_graph, {
-          depth_texture: main_depth_image,
-          entity_flags: entity_flags,
-          aabb_bounds: aabb_bounds,
-          lights: lights,
-          dense_lights_buffer: dense_lights,
-          transforms_buffer: entity_transforms,
-          object_instances: object_instances,
-          meshlet_instances: meshlet_instances,
-          meshlet_buffer,
-          meshlet_vertex_buffer,
-          meshlet_triangle_buffer,
-          entity_index_lookup: entity_index_lookup,
-          visibility_entity_image,
-          visibility_surface_image,
-          meshlet_draw_count,
-          frustum_culler: this.culling_pipeline.get_frustum_culler(),
-          force_recreate: this.force_recreate,
-          debug_view: debug_view,
-          draw_count: draw_count,
-        });
-      }
-
-      // ┌─────────────────────────────────────────────────────────────────────────────┐
       // │ 🌟 PASS: Real-Time Global Illumination                                     │
       // └─────────────────────────────────────────────────────────────────────────────┘
       if (gi_enabled) {
@@ -817,6 +788,34 @@ export class DeferredShadingStrategy {
           main_hzb_image,
           this.force_recreate
         );
+      }
+
+      // ┌─────────────────────────────────────────────────────────────────────────────┐
+      // │ 🌚 PASS: Adaptive Sparse Virtual Shadow Maps                               │
+      // │    High-quality, efficient shadow mapping with virtual memory management  │
+      // └─────────────────────────────────────────────────────────────────────────────┘
+      if (shadows_enabled) {
+        this.as_vsm.add_passes(render_graph, {
+          depth_texture: main_depth_image,
+          entity_flags: entity_flags,
+          aabb_bounds: aabb_bounds,
+          lights: lights,
+          dense_lights_buffer: dense_lights,
+          transforms_buffer: entity_transforms,
+          object_instances: object_instances,
+          meshlet_instances: meshlet_instances,
+          meshlet_buffer,
+          meshlet_vertex_buffer,
+          meshlet_triangle_buffer,
+          entity_index_lookup: entity_index_lookup,
+          visibility_entity_image,
+          visibility_surface_image,
+          meshlet_draw_count,
+          frustum_culler: this.culling_pipeline.get_frustum_culler(),
+          force_recreate: this.force_recreate,
+          debug_view: debug_view,
+          draw_count: draw_count,
+        });
       }
 
       // ┌─────────────────────────────────────────────────────────────────────────────┐

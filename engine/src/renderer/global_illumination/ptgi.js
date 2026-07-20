@@ -1,8 +1,6 @@
 import { SharedFrameInfoBuffer } from "../../core/shared_data.js";
 import { GIPipelineComposition } from "./gi_pipeline.js";
-import { HashedSurfaceTraceHitCache, PerPixelTraceHitCache } from "./trace_hit_caches.js";
-import { PerPixelRGBShadingStrategy, SurfaceCacheSHShadingStrategy } from "./shading_strategies.js";
-import { PerPixelRGBAccumulator, SurfaceCacheSHAccumulator } from "./accumulators.js";
+import { PerPixelRadianceCache, SurfaceRadianceCache } from "./radiance_caches.js";
 
 /** Surface-cache plus per-pixel path-traced GI composition. */
 export class PTGI {
@@ -33,19 +31,17 @@ export class PTGI {
   };
 
   constructor(params = {}, components = {}) {
+    this.surface_radiance_cache = new SurfaceRadianceCache(params.surface_radiance_cache);
+    this.pixel_radiance_cache = new PerPixelRadianceCache(params.pixel_radiance_cache);
     this.pipeline = new GIPipelineComposition([
       {
         name: "surface",
-        trace_hit_cache: new HashedSurfaceTraceHitCache(),
-        shading_strategy: new SurfaceCacheSHShadingStrategy(),
-        accumulator: new SurfaceCacheSHAccumulator(),
+        module: this.surface_radiance_cache,
       },
       {
         name: "pixel",
         dependencies: { radiance_cache: "surface" },
-        trace_hit_cache: new PerPixelTraceHitCache(),
-        shading_strategy: new PerPixelRGBShadingStrategy(),
-        accumulator: new PerPixelRGBAccumulator(),
+        module: this.pixel_radiance_cache,
       },
     ]);
   }
@@ -113,7 +109,7 @@ export class PTGI {
       },
     });
 
-    const output = this.pipeline.get_components("pixel").accumulator;
+    const output = this.pipeline.get_module("pixel");
     this.final_gi_texture_direct = output.get_resource("direct_output");
     this.final_gi_texture_indirect_diffuse = output.get_resource("diffuse_output");
     this.final_gi_texture_indirect_specular = output.get_resource("specular_output");

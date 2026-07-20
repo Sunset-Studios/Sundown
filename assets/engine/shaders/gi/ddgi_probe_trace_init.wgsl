@@ -36,9 +36,17 @@ fn ddgi_probe_ray_direction_spherical_fibonacci(
     ray_index_in_probe: u32,
     rays_per_probe: u32
 ) -> vec3<f32> {
-    // One stable rotation per probe. Depth moments use these rays for persistent
-    // visibility, so frame-randomized probe rotations look like geometry churn.
-    var probe_rng = hash(probe_index ^ 0xA511E9B3u);
+    // Rotate the low-discrepancy set every frame. A probe-stable rotation traces
+    // the same directions on every update, so temporal accumulation repeatedly
+    // averages an identical quadrature estimate and can never reduce its bias.
+    // Hashing both probe and frame keeps updates deterministic while providing
+    // independent orientations across probes and time.
+    let frame_index = u32(ddgi_params.frame_index);
+    var probe_rng = hash(
+        probe_index
+            ^ (frame_index * 0x9E3779B9u)
+            ^ 0xA511E9B3u
+    );
     let rotation_01 = rand_float(probe_rng);
 
     // Randomly rotate the entire point set in 3D (avoid locking the pattern to world axes).

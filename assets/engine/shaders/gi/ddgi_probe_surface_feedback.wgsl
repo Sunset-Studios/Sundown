@@ -26,11 +26,7 @@ fn ddgi_mark_surface_probe_neighborhood(
     );
     let spacing = ddgi_cascade_spacing(&ddgi_params, cascade_index);
     let origin = ddgi_cascade_origin(&ddgi_params, cascade_index);
-    let view_index = u32(frame_info.view_index);
-    let camera_position = view_buffer[view_index].view_position.xyz;
-    let bias_offset = (normal_ws * 0.2 + safe_normalize(camera_position - position) * 0.8) * (0.75 * spacing);
-    let offset_pos = position + bias_offset;
-    let rel = (offset_pos - origin) / spacing;
+    let rel = (position - origin) / spacing;
     let base = floor(rel);
 
     let trilinear_index_offsets: array<vec3<i32>, 8> = array<vec3<i32>, 8>(
