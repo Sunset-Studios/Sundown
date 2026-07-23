@@ -64,7 +64,6 @@ export const engine_cvar_config = Object.freeze({
       values: {
         ddgi: GIStrategyType.DDGI,
         ptgi: GIStrategyType.PTGI,
-        scgi: GIStrategyType.SCGI,
       },
       description: "Selects the global illumination strategy.",
     },
@@ -137,7 +136,6 @@ export const engine_cvar_config = Object.freeze({
         gi_direct: DebugDrawType.GI_Direct,
         gi_diffuse: DebugDrawType.GI_Diffuse,
         gi_specular: DebugDrawType.GI_Specular,
-        gi_world_cache: DebugDrawType.GI_WorldCache,
         gi_surface_cache: DebugDrawType.GI_SurfaceCache,
         gi_probes: DebugDrawType.GI_Probes,
         gi_reflections: DebugDrawType.GI_Reflections,

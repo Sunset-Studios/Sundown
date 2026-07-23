@@ -94,7 +94,7 @@ fn resolve_fragment(
             input.bitangent.xyz,
             input.normal.xyz
         );
-        let view_tangent = normalize(tbn_matrix * view_dir);
+        let view_tangent = normalize(transpose(tbn_matrix) * view_dir);
         let height_scale = material.ao_height_specular.y;
         let height_value = sample_texture_or_float_param_handle(
             u32(material.height_handle),

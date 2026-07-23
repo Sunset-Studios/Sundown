@@ -132,7 +132,6 @@ export const RenderStrategyType = Object.freeze({
 export const GIStrategyType = Object.freeze({
   PTGI: 0,
   DDGI: 1,
-  SCGI: 2,
 });
 
 /**

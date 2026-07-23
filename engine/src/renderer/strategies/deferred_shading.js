@@ -49,7 +49,6 @@ import { draw_quad } from "../draw_helpers.js";
 // Specialized renderer components
 import { PTGI } from "../global_illumination/ptgi.js";
 import { DDGI } from "../global_illumination/ddgi.js";
-import { SCGI } from "../global_illumination/scgi.js";
 import { SparseVolumetricLightmapper } from "../global_illumination/svlm.js";
 import { VBAO } from "../global_illumination/vbao.js";
 import { RTAO } from "../global_illumination/rtao.js";
@@ -209,9 +208,6 @@ export class DeferredShadingStrategy {
     switch (gi_strategy_type) {
       case GIStrategyType.DDGI:
         this.gi = new DDGI();
-        break;
-      case GIStrategyType.SCGI:
-        this.gi = new SCGI();
         break;
       case GIStrategyType.PTGI:
       default:

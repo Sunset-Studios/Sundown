@@ -24,7 +24,7 @@ struct SurfaceCacheRaySample {
     sampling_weight: f32,
 };
 
-fn sample_uniform_hemisphere_scgi(normal: vec3<f32>, r1: f32, r2: f32) -> vec3<f32> {
+fn sample_uniform_hemisphere_surface_cache(normal: vec3<f32>, r1: f32, r2: f32) -> vec3<f32> {
     let phi = 2.0 * PI * r1;
     let cos_theta = r2;
     let sin_theta = sqrt(max(1.0 - cos_theta * cos_theta, 0.0));
@@ -51,7 +51,7 @@ fn generate_ray_sample(
     let r1 = fract(rotation_u + sequence_value * 0.7548776662466927);
     let r2 = fract(rotation_v + sequence_value * 0.5698402909980532);
     var result: SurfaceCacheRaySample;
-    result.direction = sample_uniform_hemisphere_scgi(normal, r1, r2);
+    result.direction = sample_uniform_hemisphere_surface_cache(normal, r1, r2);
     result.sampling_weight = 2.0 * PI;
     return result;
 }

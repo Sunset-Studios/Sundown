@@ -381,15 +381,27 @@ fn resolve_visibility_fragment(input: ResolveVertexOutput) -> ResolveFragmentOut
     let current_clip_pos = view_proj * world_position;
     let prev_clip_pos = prev_view_proj * prev_world_position;
 
-    let normal_ws = safe_normalize(
+    var normal_ws = safe_normalize(
         (entity_transform.transpose_inverse_model_matrix * vec4<f32>(normal_os, 0.0)).xyz
     );
-    let tangent_ws = safe_normalize(
+    var tangent_ws = safe_normalize(
         (entity_transform.transpose_inverse_model_matrix * vec4<f32>(tangent_os, 0.0)).xyz
     );
-    let bitangent_ws = safe_normalize(
+    var bitangent_ws = safe_normalize(
         (entity_transform.transpose_inverse_model_matrix * vec4<f32>(bitangent_os, 0.0)).xyz
     );
+
+    // Visibility rasterization is deliberately two-sided. Orient the full
+    // shading frame toward the visible side so deferred lighting and
+    // screen-space probes do not trace the backface hemisphere into geometry.
+    // BVH hit shaders already apply the equivalent ray-facing correction.
+    let view_direction_ws = safe_normalize(
+        view_buffer[view_index].view_position.xyz - world_position.xyz
+    );
+    let visible_backface = dot(normal_ws, view_direction_ws) < 0.0;
+    normal_ws = select(normal_ws, -normal_ws, visible_backface);
+    tangent_ws = select(tangent_ws, -tangent_ws, visible_backface);
+    bitangent_ws = select(bitangent_ws, -bitangent_ws, visible_backface);
 
     var material_input: ResolveFragmentInput;
     material_input.screen_uv = input.uv;
