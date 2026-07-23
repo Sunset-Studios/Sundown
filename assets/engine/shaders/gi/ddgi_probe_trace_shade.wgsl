@@ -29,6 +29,7 @@
 @group(1) @binding(16) var texture_pool_specular: texture_2d_array<f32>;
 @group(1) @binding(17) var texture_pool_emission: texture_2d_array<f32>;
 @group(1) @binding(18) var skybox_texture: texture_cube<f32>;
+@group(1) @binding(19) var<storage, read> probe_depth_slots: array<u32>;
 
 const EMISSIVE_HIT_LUMA_SOFT_CAP: f32 = 2.0;
 const EMISSIVE_HIT_OVERFLOW_SCALE: f32 = 0.1;
@@ -137,6 +138,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
             &sh_probes,
             &probe_states,
             &probe_depth_moments,
+            &probe_depth_slots,
             hit.hit_pos_t.xyz,
             n
         );

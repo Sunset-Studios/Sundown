@@ -11,6 +11,8 @@
 @group(1) @binding(1) var<storage, read_write> probe_states: array<ProbeStateData>;
 @group(1) @binding(2) var<storage, read_write> probe_surface_flags: array<u32>;
 @group(1) @binding(3) var<storage, read_write> candidate_priorities: array<u32>;
+@group(1) @binding(4) var<storage, read> probe_depth_slots: array<u32>;
+@group(1) @binding(5) var<storage, read_write> depth_slot_last_used: array<u32>;
 
 @compute @workgroup_size(128, 1, 1)
 fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
@@ -37,6 +39,11 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     if (!is_surface_active || !ddgi_probe_in_cascade_shell(&ddgi_params, probe_index)) {
         candidate_priorities[slot] = DDGI_PROBE_SCHEDULE_PRIORITY_NONE;
     } else {
+        let encoded_depth_slot = probe_depth_slots[probe_index];
+        if (encoded_depth_slot != 0u) {
+            depth_slot_last_used[encoded_depth_slot - 1u] = u32(ddgi_params.frame_index);
+        }
+
         var schedule_state = state;
         var schedule_convergence_frames = convergence_frames;
         if (state == PROBE_STATE_SLEEPING || state == PROBE_STATE_OFF) {
@@ -45,9 +52,10 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
             probe_states[probe_index].packed_state = probe_state_pack(schedule_state, 0u, 0u, flags);
             probe_states[probe_index].sample_count = 0u;
         }
-        candidate_priorities[slot] = ddgi_probe_schedule_priority_for_state(
-            schedule_state,
-            schedule_convergence_frames
+        candidate_priorities[slot] = select(
+            DDGI_PROBE_SCHEDULE_PRIORITY_FRESH,
+            ddgi_probe_schedule_priority_for_state(schedule_state, schedule_convergence_frames),
+            encoded_depth_slot != 0u
         );
     }
 }

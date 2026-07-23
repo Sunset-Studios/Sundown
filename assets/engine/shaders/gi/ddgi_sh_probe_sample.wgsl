@@ -49,6 +49,7 @@ fn ddgi_sample_output_to_full_res_coord(
 @group(1) @binding(6) var output_diffuse: texture_storage_2d<rgba16float, write>;
 @group(1) @binding(7) var<uniform> scene_lighting_data: SceneLightingData;
 @group(1) @binding(8) var skybox_texture: texture_cube<f32>;
+@group(1) @binding(9) var<storage, read> probe_depth_slots: array<u32>;
 
 // =============================================================================
 // MAIN COMPUTE SHADER
@@ -114,6 +115,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
             &sh_probes,
             &probe_states,
             &probe_depth_moments,
+            &probe_depth_slots,
             position,
             normal
         );

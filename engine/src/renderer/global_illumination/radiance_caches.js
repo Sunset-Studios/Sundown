@@ -67,6 +67,9 @@ export class ProbeVolumeRadianceCache extends GIModule {
         feedback_clear: compute_shader("gi/ddgi_probe_surface_feedback_clear.wgsl"),
         feedback: compute_shader("gi/ddgi_probe_surface_feedback.wgsl"),
         active_mark: compute_shader("gi/ddgi_probe_active_mark.wgsl"),
+        depth_slots_init: compute_shader("gi/ddgi_depth_slots_init.wgsl"),
+        depth_slots_reclaim: compute_shader("gi/ddgi_depth_slots_reclaim.wgsl"),
+        depth_slots_allocate: compute_shader("gi/ddgi_depth_slots_allocate.wgsl"),
         active_prefix_sum: compute_shader("gi/ddgi_probe_active_prefix_sum.wgsl"),
         active_block_scan: compute_shader("gi/ddgi_probe_active_block_prefix_scan.wgsl"),
         compact: compute_shader("gi/ddgi_probe_indices_init.wgsl"),
@@ -89,6 +92,7 @@ export class ProbeVolumeRadianceCache extends GIModule {
     this.initialized = null;
     this.counters_buffer = null;
     this.counters_data = null;
+    this.depth_slot_signature = null;
   }
 
   _setup_trace_resources(render_graph, context) {
@@ -152,6 +156,22 @@ export class ProbeVolumeRadianceCache extends GIModule {
       total_depth_texel_count += probes_per_cascade * texels;
     }
 
+    const depth_words_per_slot = Math.ceil(max_depth_texel_count_per_probe / 2);
+    const depth_slot_count = Math.min(
+      probe_count,
+      Math.max(1, Math.floor(config.probe_depth_slot_count ?? 65536))
+    );
+    const depth_slot_signature = [
+      probe_count,
+      depth_slot_count,
+      depth_words_per_slot,
+      config.probe_spacing,
+      depth_resolutions.join(","),
+    ].join(":");
+    const depth_slots_need_reset =
+      context.force_recreate || this.depth_slot_signature !== depth_slot_signature;
+    this.depth_slot_signature = depth_slot_signature;
+
     Object.assign(context, {
       grid_dims,
       cascade_count,
@@ -162,6 +182,10 @@ export class ProbeVolumeRadianceCache extends GIModule {
       probe_total_ray_count,
       total_depth_texel_count,
       max_depth_texel_count_per_probe,
+      max_depth_word_count_per_probe: depth_words_per_slot,
+      depth_words_per_slot,
+      depth_slot_count,
+      depth_slots_need_reset,
       cascade_data,
       cascade_has_scroll,
       grid_log2: grid_dims.map((value) => Math.round(Math.log2(value))),
@@ -212,6 +236,37 @@ export class ProbeVolumeRadianceCache extends GIModule {
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
       force: context.force_recreate,
     });
+    const sparse_depth_force = context.force_recreate || depth_slots_need_reset;
+    this.create_buffer(render_graph, "depth_slot_indices", {
+      name: "probe_volume_depth_slot_indices",
+      size: probe_count,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+      force: sparse_depth_force,
+    });
+    this.create_buffer(render_graph, "depth_slot_owners", {
+      name: "probe_volume_depth_slot_owners",
+      size: depth_slot_count,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+      force: sparse_depth_force,
+    });
+    this.create_buffer(render_graph, "depth_slot_last_used", {
+      name: "probe_volume_depth_slot_last_used",
+      size: depth_slot_count,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+      force: sparse_depth_force,
+    });
+    this.create_buffer(render_graph, "depth_slot_free_list", {
+      name: "probe_volume_depth_slot_free_list",
+      size: depth_slot_count,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+      force: sparse_depth_force,
+    });
+    this.create_buffer(render_graph, "depth_slot_allocator_state", {
+      name: "probe_volume_depth_slot_allocator_state",
+      size: 4,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+      force: sparse_depth_force,
+    });
     this.create_buffer(render_graph, "ray_hits", {
       name: "probe_volume_ray_hits",
       size: 4 + probe_total_ray_count * 40,
@@ -248,7 +303,15 @@ export class ProbeVolumeRadianceCache extends GIModule {
   }
 
   _setup_accumulation_resources(render_graph, context) {
-    const { width, height, probe_count, total_depth_texel_count, force_recreate } = context;
+    const {
+      width,
+      height,
+      probe_count,
+      depth_slot_count,
+      depth_words_per_slot,
+      depth_slots_need_reset,
+      force_recreate,
+    } = context;
     this.create_buffer(render_graph, "history_valid", {
       name: "probe_sh_history_valid",
       size: probe_count,
@@ -257,9 +320,9 @@ export class ProbeVolumeRadianceCache extends GIModule {
     });
     this.create_buffer(render_graph, "depth_moments", {
       name: "probe_sh_depth_moments",
-      size: total_depth_texel_count,
+      size: depth_slot_count * depth_words_per_slot,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-      force: force_recreate,
+      force: force_recreate || depth_slots_need_reset,
     });
     this.create_buffer(render_graph, "sh_probes", {
       name: "probe_sh_coefficients",
@@ -383,6 +446,11 @@ export class ProbeVolumeRadianceCache extends GIModule {
     const active_prefix_sum = this.get_resource("active_prefix_sum");
     const active_block_sums = this.get_resource("active_block_sums");
     const active_block_prefixes = this.get_resource("active_block_prefixes");
+    const depth_slot_indices = this.get_resource("depth_slot_indices");
+    const depth_slot_owners = this.get_resource("depth_slot_owners");
+    const depth_slot_last_used = this.get_resource("depth_slot_last_used");
+    const depth_slot_free_list = this.get_resource("depth_slot_free_list");
+    const depth_slot_allocator_state = this.get_resource("depth_slot_allocator_state");
     const emissive_lights = this.get_resource("emissive_lights");
     const entity_index_lookup = this.get_resource("entity_index_lookup");
     const sh_probes = accumulator.get_resource("sh_probes");
@@ -416,10 +484,13 @@ export class ProbeVolumeRadianceCache extends GIModule {
       this.params_data[17] = context.grid_mask[1];
       this.params_data[18] = context.grid_mask[2];
       this.params_data[19] = 0;
-      this.params_data[20] = 0;
-      this.params_data[21] = 0;
-      this.params_data[22] = 0;
-      this.params_data[23] = 0;
+      this.params_data[20] = context.depth_slot_count;
+      this.params_data[21] = context.depth_words_per_slot;
+      this.params_data[22] = context.max_depth_texel_count_per_probe;
+      this.params_data[23] = Math.max(
+        1,
+        Math.floor(config.probe_depth_slot_retention_frames ?? 120)
+      );
       this.params_data[24] = context.frame_index;
       this.params_data[25] = config.indirect_boost;
       this.params_data[26] = context.cascade_count;
@@ -476,14 +547,65 @@ export class ProbeVolumeRadianceCache extends GIModule {
       },
       (graph, frame_data) => graph.get_physical_pass(frame_data.current_pass).dispatch(1, 1, 1)
     );
+    if (context.depth_slots_need_reset) {
+      this.add_compute_pass(
+        render_graph,
+        "depth_slots_init",
+        "probe_volume_depth_slots_init",
+        {
+          inputs: [
+            depth_slot_indices,
+            depth_slot_owners,
+            depth_slot_last_used,
+            depth_slot_free_list,
+            depth_slot_allocator_state,
+          ],
+          outputs: [
+            depth_slot_indices,
+            depth_slot_owners,
+            depth_slot_last_used,
+            depth_slot_free_list,
+            depth_slot_allocator_state,
+          ],
+        },
+        (graph, frame_data) =>
+          graph
+            .get_physical_pass(frame_data.current_pass)
+            .dispatch(
+              Math.ceil(
+                Math.max(context.probe_count, context.depth_slot_count) /
+                  COMPUTE_WORKGROUP_SIZE
+              ),
+              1,
+              1
+            )
+      );
+    }
     if (context.cascade_has_scroll) {
       this.add_compute_pass(
         render_graph,
         "scroll_reset",
         "probe_volume_scroll_reset",
         {
-          inputs: [params, sh_probes, depth_moments, states, msme_stats],
-          outputs: [sh_probes, depth_moments, states, msme_stats],
+          inputs: [
+            params,
+            sh_probes,
+            states,
+            msme_stats,
+            depth_slot_indices,
+            depth_slot_owners,
+            depth_slot_free_list,
+            depth_slot_allocator_state,
+          ],
+          outputs: [
+            sh_probes,
+            states,
+            msme_stats,
+            depth_slot_indices,
+            depth_slot_owners,
+            depth_slot_free_list,
+            depth_slot_allocator_state,
+          ],
         },
         (graph, frame_data) =>
           graph
@@ -522,13 +644,45 @@ export class ProbeVolumeRadianceCache extends GIModule {
       "active_mark",
       "probe_volume_active_mark",
       {
-        inputs: [params, states, surface_flags, active_flags],
-        outputs: [active_flags, states],
+        inputs: [
+          params,
+          states,
+          surface_flags,
+          active_flags,
+          depth_slot_indices,
+          depth_slot_last_used,
+        ],
+        outputs: [active_flags, states, depth_slot_last_used],
       },
       (graph, frame_data) =>
         graph
           .get_physical_pass(frame_data.current_pass)
           .dispatch(Math.ceil(context.probe_count / COMPUTE_WORKGROUP_SIZE), 1, 1)
+    );
+    this.add_compute_pass(
+      render_graph,
+      "depth_slots_reclaim",
+      "probe_volume_depth_slots_reclaim",
+      {
+        inputs: [
+          params,
+          depth_slot_indices,
+          depth_slot_owners,
+          depth_slot_last_used,
+          depth_slot_free_list,
+          depth_slot_allocator_state,
+        ],
+        outputs: [
+          depth_slot_indices,
+          depth_slot_owners,
+          depth_slot_free_list,
+          depth_slot_allocator_state,
+        ],
+      },
+      (graph, frame_data) =>
+        graph
+          .get_physical_pass(frame_data.current_pass)
+          .dispatch(Math.ceil(context.depth_slot_count / COMPUTE_WORKGROUP_SIZE), 1, 1)
     );
     this.add_compute_pass(
       render_graph,
@@ -572,6 +726,35 @@ export class ProbeVolumeRadianceCache extends GIModule {
         graph
           .get_physical_pass(frame_data.current_pass)
           .dispatch(Math.ceil(context.probe_count / COMPUTE_WORKGROUP_SIZE), 1, 1)
+    );
+    this.add_compute_pass(
+      render_graph,
+      "depth_slots_allocate",
+      "probe_volume_depth_slots_allocate",
+      {
+        inputs: [
+          params,
+          update_indices,
+          counters,
+          depth_slot_indices,
+          depth_slot_owners,
+          depth_slot_last_used,
+          depth_slot_free_list,
+          depth_slot_allocator_state,
+          depth_moments,
+        ],
+        outputs: [
+          depth_slot_indices,
+          depth_slot_owners,
+          depth_slot_last_used,
+          depth_slot_allocator_state,
+          depth_moments,
+        ],
+      },
+      (graph, frame_data) =>
+        graph
+          .get_physical_pass(frame_data.current_pass)
+          .dispatch(Math.ceil(context.probes_per_frame / COMPUTE_WORKGROUP_SIZE), 1, 1)
     );
     this.add_compute_pass(
       render_graph,
@@ -649,6 +832,7 @@ export class ProbeVolumeRadianceCache extends GIModule {
           textures.specular,
           textures.emission,
           lighting.skybox_image,
+          trace.get_resource("depth_slot_indices"),
         ],
         outputs: [ray_hits],
       },
@@ -692,7 +876,13 @@ export class ProbeVolumeRadianceCache extends GIModule {
       "depth_update",
       "probe_sh_depth_moments_update",
       {
-        inputs: [params, ray_hits, history_valid, this.get_resource("depth_moments")],
+        inputs: [
+          params,
+          ray_hits,
+          history_valid,
+          this.get_resource("depth_moments"),
+          trace.get_resource("depth_slot_indices"),
+        ],
         outputs: [this.get_resource("depth_moments")],
       },
       (graph, frame_data) =>
@@ -700,7 +890,7 @@ export class ProbeVolumeRadianceCache extends GIModule {
           .get_physical_pass(frame_data.current_pass)
           .dispatch(
             Math.ceil(context.probes_per_frame / 8),
-            Math.ceil(context.max_depth_texel_count_per_probe / 8),
+            Math.ceil(context.max_depth_word_count_per_probe / 8),
             1
           )
     );
@@ -750,6 +940,7 @@ export class ProbeVolumeRadianceCache extends GIModule {
           sample_output,
           lighting.scene_lighting_buffer,
           lighting.skybox_image,
+          trace.get_resource("depth_slot_indices"),
         ],
         outputs: [sample_output],
       },
@@ -905,6 +1096,14 @@ export class ProbeVolumeRadianceCache extends GIModule {
       light_count: this.counters_data[0] || 0,
       probe_spacing: context.config.probe_spacing,
       probe_radius: context.config.probe_radius,
+      depth_slot_count: context.depth_slot_count,
+      depth_slot_retention_frames:
+        context.config.probe_depth_slot_retention_frames ?? 120,
+      depth_sparse_bytes: context.depth_slot_count * context.depth_words_per_slot * 4,
+      depth_sparse_metadata_bytes:
+        context.probe_count * 4 + context.depth_slot_count * 12 + 16,
+      depth_dense_packed_bytes: context.total_depth_texel_count * 2,
+      depth_dense_previous_bytes: context.total_depth_texel_count * 4,
     };
   }
 }

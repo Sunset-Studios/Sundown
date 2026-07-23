@@ -5,14 +5,16 @@ import { ProbeVolumeRadianceCache } from "./radiance_caches.js";
 export class DDGI {
   config = {
     probe_grid_dimensions: [64, 64, 64],
-    probe_spacing: 2.0,
+    probe_spacing: 1.0,
     probe_radius: 0.1,
     max_rays_per_probe: 64,
     probes_per_frame: 1024,
     indirect_boost: 1.0,
     cascade_count: 6,
     cascade_spacing_multiplier: 2.0,
-    probe_depth_resolutions: [8, 4, 4, 4, 4, 4, 4, 4],
+    probe_depth_resolutions: [16, 16, 16, 16, 16, 16],
+    probe_depth_slot_count: 65536,
+    probe_depth_slot_retention_frames: 120,
     max_emissive_lights: 32768,
     diffuse_sample_upscale_factor: 1,
     diffuse_atrous_enabled: false,

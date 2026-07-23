@@ -46,6 +46,11 @@ function format_number(value) {
   return Number(value).toLocaleString();
 }
 
+function format_bytes(value) {
+  const mib = Number(value) / (1024 * 1024);
+  return `${mib.toFixed(mib < 10 ? 2 : 1)} MiB`;
+}
+
 function stat_row(label_text, value_text, value_config = value_label_config) {
   panel({ layout: "row", gap: 4, width: "100%", height: 25, anchor_x: "left", x: 0 }, () => {
     label(`${label_text}:`, stats_label_config_small);
@@ -92,6 +97,12 @@ export class DDGIStats extends DevConsoleTool {
       stat_row("Probe spacing", stats.probe_spacing.toFixed(2));
       stat_row("Probe radius", stats.probe_radius.toFixed(2));
       stat_row("Light count", format_number(stats.light_count));
+      stat_row("Depth slots", format_number(stats.depth_slot_count));
+      stat_row("Depth slot retention", `${format_number(stats.depth_slot_retention_frames)} frames`);
+      stat_row("Depth moments (sparse)", format_bytes(stats.depth_sparse_bytes));
+      stat_row("Depth slot metadata", format_bytes(stats.depth_sparse_metadata_bytes));
+      stat_row("Depth storage (dense packed)", format_bytes(stats.depth_dense_packed_bytes));
+      stat_row("Depth storage (previous)", format_bytes(stats.depth_dense_previous_bytes));
 
       label("--------------------------------", stats_label_config);
     });

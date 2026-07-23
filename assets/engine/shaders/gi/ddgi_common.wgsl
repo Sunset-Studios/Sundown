@@ -57,7 +57,7 @@ struct DDGIParams {
     probe_grid_origin: vec4<f32>, // xyz = grid origin, w = unused
     probe_grid_log2: vec4<f32>,   // xyz = log2(dim_*), w = unused
     probe_grid_mask: vec4<f32>,   // xyz = (dim_*-1), w = unused
-    probe_grid_snap_delta: vec4<f32>, // xyz = delta in probe cells, w = active (1/0)
+    depth_slot_params: vec4<f32>, // x=slot_count, y=words_per_slot, z=max_texels_per_probe, w=retention_frames
     frame_index: f32,
     indirect_boost: f32,
     cascade_count: f32,
@@ -121,6 +121,13 @@ struct DDGIProbeRayDataBuffer {
 struct DDGIProbeRayDataBufferReadOnlyHeader {
     header: DDGIProbeRayDataHeaderReadOnly,
     rays: array<DDGIProbeRayData>,
+};
+
+struct DDGIDepthSlotAllocatorState {
+    free_count: atomic<u32>,
+    allocation_failures: atomic<u32>,
+    _pad0: atomic<u32>,
+    _pad1: atomic<u32>,
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -218,12 +225,36 @@ fn ddgi_depth_texel_count_for_probe(ddgi_params: ptr<uniform, DDGIParams>, probe
     return ddgi_depth_texel_count_for_cascade(ddgi_params, cascade_index);
 }
 
-fn ddgi_depth_base_for_probe(ddgi_params: ptr<uniform, DDGIParams>, probe_index: u32) -> u32 {
-    let cascade_index = ddgi_probe_cascade_index(ddgi_params, probe_index);
-    let local_probe_index = ddgi_probe_index_in_cascade(ddgi_params, probe_index);
-    let cascade_base_offset = ddgi_depth_base_offset_for_cascade(ddgi_params, cascade_index);
-    let depth_texel_count = ddgi_depth_texel_count_for_cascade(ddgi_params, cascade_index);
-    return cascade_base_offset + local_probe_index * depth_texel_count;
+fn ddgi_depth_slot_count(ddgi_params: ptr<uniform, DDGIParams>) -> u32 {
+    return u32((*ddgi_params).depth_slot_params.x);
+}
+
+fn ddgi_depth_words_per_slot(ddgi_params: ptr<uniform, DDGIParams>) -> u32 {
+    return u32((*ddgi_params).depth_slot_params.y);
+}
+
+fn ddgi_depth_base_for_slot(ddgi_params: ptr<uniform, DDGIParams>, slot_index: u32) -> u32 {
+    return slot_index * ddgi_depth_words_per_slot(ddgi_params);
+}
+
+fn ddgi_depth_slot_for_probe(
+    probe_depth_slots: ptr<storage, array<u32>, read>,
+    probe_index: u32
+) -> u32 {
+    let encoded_slot = (*probe_depth_slots)[probe_index];
+    return select(INVALID_IDX, encoded_slot - 1u, encoded_slot != 0u);
+}
+
+fn ddgi_probe_miss_distance(
+    ddgi_params: ptr<uniform, DDGIParams>,
+    probe_index: u32
+) -> f32 {
+    let spacing = ddgi_probe_spacing_from_index(ddgi_params, probe_index);
+    let max_dim = max(
+        (*ddgi_params).probe_grid_dims.x,
+        max((*ddgi_params).probe_grid_dims.y, (*ddgi_params).probe_grid_dims.z)
+    );
+    return max(1.0, spacing * max_dim * 2.0);
 }
 
 fn ddgi_cascade_scroll_offset(ddgi_params: ptr<uniform, DDGIParams>, cascade_index: u32) -> vec3<u32> {
@@ -631,18 +662,68 @@ fn ddgi_sh_evaluate_radiance(
 // =============================================================================
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Depth moments are packed into a single u32 per texel using f16 packing:
-//   bits [0..15]  = mean distance     (f16)
-//   bits [16..31] = mean distance²    (f16)
-// This halves storage compared to the previous vec4<f32> layout while
-// retaining sufficient precision for Chebyshev visibility testing.
+// Depth moments use one 16-bit mean/spread code per directional texel.
+// Two texels share a u32; logarithmic quantization preserves precision near
+// the probe while still covering the full miss-distance range.
 // ─────────────────────────────────────────────────────────────────────────────
-fn ddgi_depth_moments_pack(mean_t: f32, mean_t2: f32) -> u32 {
-    return pack2x16float(min(vec2<f32>(mean_t, mean_t2), vec2<f32>(65504.0)));
+fn ddgi_depth_log_encode(value: f32, spacing: f32, miss_distance: f32) -> f32 {
+    let safe_spacing = max(spacing, 1e-4);
+    let log_range = max(log2(1.0 + miss_distance / safe_spacing), 1e-4);
+    return saturate(log2(1.0 + clamp(value, 0.0, miss_distance) / safe_spacing) / log_range);
 }
 
-fn ddgi_depth_moments_unpack(packed: u32) -> vec2<f32> {
-    return unpack2x16float(packed);
+fn ddgi_depth_log_decode(value: f32, spacing: f32, miss_distance: f32) -> f32 {
+    let safe_spacing = max(spacing, 1e-4);
+    let log_range = max(log2(1.0 + miss_distance / safe_spacing), 1e-4);
+    return safe_spacing * (exp2(saturate(value) * log_range) - 1.0);
+}
+
+// One 16-bit texel stores an 11-bit log mean and a 5-bit log standard
+// deviation. The second moment is reconstructed as mean^2 + spread^2.
+fn ddgi_depth_moments_pack(mean_t: f32, mean_t2: f32, spacing: f32, miss_distance: f32) -> u32 {
+    let variance = max(mean_t2 - mean_t * mean_t, 0.0);
+    let spread = sqrt(variance);
+    let mean_q = u32(round(ddgi_depth_log_encode(mean_t, spacing, miss_distance) * 2047.0));
+    let spread_q = u32(round(ddgi_depth_log_encode(spread, spacing, miss_distance) * 31.0));
+    return mean_q | (spread_q << 11u);
+}
+
+fn ddgi_depth_moments_unpack(
+    packed_texel: u32,
+    spacing: f32,
+    miss_distance: f32
+) -> vec2<f32> {
+    let mean_n = f32(packed_texel & 0x7ffu) / 2047.0;
+    let spread_n = f32((packed_texel >> 11u) & 0x1fu) / 31.0;
+    let mean_t = ddgi_depth_log_decode(mean_n, spacing, miss_distance);
+    let spread = ddgi_depth_log_decode(spread_n, spacing, miss_distance);
+    return vec2<f32>(mean_t, mean_t * mean_t + spread * spread);
+}
+
+fn ddgi_depth_word_texel(word: u32, texel_index: u32) -> u32 {
+    let shift = (texel_index & 1u) * 16u;
+    return (word >> shift) & 0xffffu;
+}
+
+fn ddgi_depth_word_replace_texel(word: u32, texel_index: u32, packed_texel: u32) -> u32 {
+    let shift = (texel_index & 1u) * 16u;
+    let mask = 0xffffu << shift;
+    return (word & ~mask) | ((packed_texel & 0xffffu) << shift);
+}
+
+fn ddgi_depth_moments_load(
+    probe_depth_moments: ptr<storage, array<u32>, read>,
+    slot_base: u32,
+    texel_index: u32,
+    spacing: f32,
+    miss_distance: f32
+) -> vec2<f32> {
+    let word = (*probe_depth_moments)[slot_base + texel_index / 2u];
+    return ddgi_depth_moments_unpack(
+        ddgi_depth_word_texel(word, texel_index),
+        spacing,
+        miss_distance
+    );
 }
 
 fn ddgi_depth_texel_id(texel_coord: vec2<u32>, depth_res: u32) -> u32 {
@@ -652,10 +733,16 @@ fn ddgi_depth_texel_id(texel_coord: vec2<u32>, depth_res: u32) -> u32 {
 fn ddgi_visibility_weight_from_moments(
     ddgi_params: ptr<uniform, DDGIParams>,
     probe_depth_moments: ptr<storage, array<u32>, read>,
+    probe_depth_slots: ptr<storage, array<u32>, read>,
     probe_index: u32,
     direction_from_probe: vec3<f32>,
     dist: f32
 ) -> f32 {
+    let depth_slot = ddgi_depth_slot_for_probe(probe_depth_slots, probe_index);
+    if (depth_slot == INVALID_IDX) {
+        return 0.0;
+    }
+
     let depth_res = ddgi_depth_resolution_for_probe(ddgi_params, probe_index);
 
     // Map direction to octahedral UV in texel space with half-texel offset
@@ -665,8 +752,10 @@ fn ddgi_visibility_weight_from_moments(
     let frac = uv - base_f;
     let base_i = vec2<i32>(base_f);
 
-    let base_idx = ddgi_depth_base_for_probe(ddgi_params, probe_index);
+    let base_idx = ddgi_depth_base_for_slot(ddgi_params, depth_slot);
     let max_coord = i32(depth_res) - 1;
+    let spacing = ddgi_probe_spacing_from_index(ddgi_params, probe_index);
+    let miss_distance = ddgi_probe_miss_distance(ddgi_params, probe_index);
 
     // Bilinear sample with clamped coordinates to prevent out-of-bounds reads
     let c00 = vec2<u32>(clamp(base_i, vec2<i32>(0), vec2<i32>(max_coord)));
@@ -674,10 +763,10 @@ fn ddgi_visibility_weight_from_moments(
     let c01 = vec2<u32>(clamp(base_i + vec2<i32>(0, 1), vec2<i32>(0), vec2<i32>(max_coord)));
     let c11 = vec2<u32>(clamp(base_i + vec2<i32>(1, 1), vec2<i32>(0), vec2<i32>(max_coord)));
 
-    let m00 = ddgi_depth_moments_unpack((*probe_depth_moments)[base_idx + ddgi_depth_texel_id(c00, depth_res)]);
-    let m10 = ddgi_depth_moments_unpack((*probe_depth_moments)[base_idx + ddgi_depth_texel_id(c10, depth_res)]);
-    let m01 = ddgi_depth_moments_unpack((*probe_depth_moments)[base_idx + ddgi_depth_texel_id(c01, depth_res)]);
-    let m11 = ddgi_depth_moments_unpack((*probe_depth_moments)[base_idx + ddgi_depth_texel_id(c11, depth_res)]);
+    let m00 = ddgi_depth_moments_load(probe_depth_moments, base_idx, ddgi_depth_texel_id(c00, depth_res), spacing, miss_distance);
+    let m10 = ddgi_depth_moments_load(probe_depth_moments, base_idx, ddgi_depth_texel_id(c10, depth_res), spacing, miss_distance);
+    let m01 = ddgi_depth_moments_load(probe_depth_moments, base_idx, ddgi_depth_texel_id(c01, depth_res), spacing, miss_distance);
+    let m11 = ddgi_depth_moments_load(probe_depth_moments, base_idx, ddgi_depth_texel_id(c11, depth_res), spacing, miss_distance);
 
     let moments = mix(mix(m00, m10, frac.x), mix(m01, m11, frac.x), frac.y);
 
@@ -937,6 +1026,7 @@ fn ddgi_sample_sh_irradiance_single_cascade_internal(
     sh_probes: ptr<storage, array<u32>, read_write>,
     probe_states: ptr<storage, array<ProbeStateData>, read_write>,
     probe_depth_moments: ptr<storage, array<u32>, read>,
+    probe_depth_slots: ptr<storage, array<u32>, read>,
     position: vec3<f32>,
     normal_ws: vec3<f32>,
     cascade_index: u32
@@ -1013,6 +1103,7 @@ fn ddgi_sample_sh_irradiance_single_cascade_internal(
             weight *= ddgi_visibility_weight_from_moments(
                 ddgi_params,
                 probe_depth_moments,
+                probe_depth_slots,
                 probe_index,
                 dir_from_probe,
                 dist
@@ -1065,6 +1156,7 @@ fn ddgi_sample_sh_irradiance_with_states(
     sh_probes: ptr<storage, array<u32>, read_write>,
     probe_states: ptr<storage, array<ProbeStateData>, read_write>,
     probe_depth_moments: ptr<storage, array<u32>, read>,
+    probe_depth_slots: ptr<storage, array<u32>, read>,
     position: vec3<f32>,
     normal_ws: vec3<f32>
 ) -> vec3<f32> {
@@ -1076,6 +1168,7 @@ fn ddgi_sample_sh_irradiance_with_states(
         sh_probes,
         probe_states,
         probe_depth_moments,
+        probe_depth_slots,
         position,
         normal_ws,
         cascade_index
@@ -1092,6 +1185,7 @@ fn ddgi_sample_sh_irradiance_with_states(
             sh_probes,
             probe_states,
             probe_depth_moments,
+            probe_depth_slots,
             position,
             normal_ws,
             coarser_index

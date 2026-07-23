@@ -11,9 +11,12 @@
 
 @group(1) @binding(0) var<uniform> ddgi_params: DDGIParams;
 @group(1) @binding(1) var<storage, read_write> sh_probes: array<u32>;
-@group(1) @binding(2) var<storage, read_write> probe_depth_moments: array<u32>;
-@group(1) @binding(3) var<storage, read_write> probe_states: array<ProbeStateData>;
-@group(1) @binding(4) var<storage, read_write> probe_msme_stats: array<DDGIMSMEProbeStats>;
+@group(1) @binding(2) var<storage, read_write> probe_states: array<ProbeStateData>;
+@group(1) @binding(3) var<storage, read_write> probe_msme_stats: array<DDGIMSMEProbeStats>;
+@group(1) @binding(4) var<storage, read_write> probe_depth_slots: array<atomic<u32>>;
+@group(1) @binding(5) var<storage, read_write> depth_slot_owners: array<atomic<u32>>;
+@group(1) @binding(6) var<storage, read_write> depth_slot_free_list: array<u32>;
+@group(1) @binding(7) var<storage, read_write> depth_slot_allocator: DDGIDepthSlotAllocatorState;
 
 @compute @workgroup_size(128, 1, 1)
 fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
@@ -97,21 +100,21 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         ddgi_probe_state_set_sample_count(&probe_states[probe_index], 0u);
     }
 
-    let spacing = ddgi_cascade_spacing(&ddgi_params, cascade_index);
-    let max_dim = max(
-        ddgi_params.probe_grid_dims.x,
-        max(ddgi_params.probe_grid_dims.y, ddgi_params.probe_grid_dims.z)
-    );
-    let miss_distance = max(1.0, spacing * max_dim * 2.0);
-    let miss_moment = ddgi_depth_moments_pack(miss_distance, miss_distance * miss_distance);
-
-    // Start freshly revealed probes as conservatively visible. Real traced
-    // depth moments then converge them toward local occlusion without random
-    // zero-depth texels flickering in and out while the atlas fills.
-    let depth_base = ddgi_depth_base_for_probe(&ddgi_params, probe_index);
-    let depth_texel_count = ddgi_depth_texel_count_for_probe(&ddgi_params, probe_index);
-    for (var texel = 0u; texel < depth_texel_count; texel = texel + 1u) {
-        probe_depth_moments[depth_base + texel] = miss_moment;
+    // Ring-buffer reuse invalidates the previous world-space depth field.
+    // Return its sparse slot immediately; allocation will seed a fresh slot
+    // if this probe is selected for an update.
+    let encoded_slot = atomicExchange(&probe_depth_slots[probe_index], 0u);
+    if (encoded_slot != 0u) {
+        let slot_index = encoded_slot - 1u;
+        let release = atomicCompareExchangeWeak(
+            &depth_slot_owners[slot_index],
+            probe_index + 1u,
+            0u
+        );
+        if (release.exchanged) {
+            let free_index = atomicAdd(&depth_slot_allocator.free_count, 1u);
+            depth_slot_free_list[free_index] = slot_index;
+        }
     }
 
     probe_states[probe_index].packed_state = probe_state_pack(
