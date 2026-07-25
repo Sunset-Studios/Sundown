@@ -56,18 +56,6 @@ fn svlm_clear_line(line_index: u32) {
     );
 }
 
-fn svlm_debug_source_leaf_index(debug_slot: u32, leaf_count: u32, debug_leaf_count: u32) -> u32 {
-    if (leaf_count <= debug_leaf_count) {
-        return debug_slot;
-    }
-
-    // Debug line storage can be smaller than the baked leaf table. Sample the
-    // whole table instead of drawing only the first N leaves, because later
-    // breadth-first levels often contain the important near-geometry bricks.
-    let t = (f32(debug_slot) + 0.5) / max(f32(debug_leaf_count), 1.0);
-    return min(leaf_count - 1u, u32(floor(t * f32(leaf_count))));
-}
-
 fn svlm_write_line(line_index: u32, start: vec3<f32>, end: vec3<f32>, color: vec3<f32>, width: f32) {
     let dir = end - start;
     line_data[line_index].color_and_width = vec4<f32>(color, width);
@@ -82,24 +70,13 @@ fn svlm_write_line(line_index: u32, start: vec3<f32>, end: vec3<f32>, color: vec
 @compute @workgroup_size(128, 1, 1)
 fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let leaf_slot = gid.x;
-    let max_leaf_bricks = u32(max(svlm_params.max_leaf_bricks, 0.0));
-    if (leaf_slot >= max_leaf_bricks) {
+    let leaf_count = min(atomicLoad(&svlm_counters.leaf_count), arrayLength(&leaf_bricks));
+    if (leaf_slot >= leaf_count) {
         return;
     }
-
-    let leaf_count = min(atomicLoad(&svlm_counters.leaf_count), arrayLength(&leaf_bricks));
-    let debug_leaf_count = min(leaf_count, max_leaf_bricks);
 
     let line_base = leaf_slot * 12u;
-    if (leaf_slot >= debug_leaf_count) {
-        for (var edge = 0u; edge < 12u; edge = edge + 1u) {
-            svlm_clear_line(line_base + edge);
-        }
-        return;
-    }
-
-    let leaf_index = svlm_debug_source_leaf_index(leaf_slot, leaf_count, debug_leaf_count);
-    let leaf = leaf_bricks[leaf_index];
+    let leaf = leaf_bricks[leaf_slot];
     let level = leaf.level;
     let debug_level = i32(svlm_params.debug_level);
     let filter_enabled = debug_level >= 0;

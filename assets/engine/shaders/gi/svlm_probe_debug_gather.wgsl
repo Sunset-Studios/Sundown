@@ -1,8 +1,6 @@
 #include "gi/svlm_common.wgsl"
 
-// Compacts the probe debug source from the full leaf table into a camera-local
-// list. The list is sized to hold every source leaf, so every brick inside the
-// debug radius survives selection; distance is the limiter, not a sample budget.
+// Compacts all visible-level leaves into the probe debug source list.
 
 @group(1) @binding(0) var<storage, read_write> svlm_params: SVLMParams;
 @group(1) @binding(1) var<storage, read_write> svlm_counters: SVLMCounters;
@@ -28,18 +26,6 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let leaf = leaf_bricks[leaf_index];
     if (!svlm_leaf_visible_for_debug_level(leaf.level)) {
         return;
-    }
-
-    let view_index = u32(frame_info.view_index);
-    let camera_position = view_buffer[view_index].view_position.xyz;
-    let leaf_center = vec3<f32>(leaf.origin_x, leaf.origin_y, leaf.origin_z) + vec3<f32>(leaf.size * 0.5);
-    let leaf_radius = leaf.size * 0.8660254;
-    let debug_radius = SVLM_DEBUG_PROBE_RADIUS;
-    if (debug_radius > 0.0) {
-        let max_distance = debug_radius + leaf_radius;
-        if (dot(leaf_center - camera_position, leaf_center - camera_position) > max_distance * max_distance) {
-            return;
-        }
     }
 
     if (arrayLength(&debug_leaf_indices) <= 1u) {

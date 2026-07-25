@@ -2,28 +2,17 @@
 @group(1) @binding(1) var<storage, read> debug_depth: array<u32>;
 @group(1) @binding(2) var output_debug: texture_storage_2d<rgba16float, write>;
 
-fn svlm_probe_debug_level_color(color_index: u32) -> vec3<f32> {
-    if (color_index == 0u) {
-        return vec3<f32>(0.20, 0.95, 0.72);
-    }
-    if (color_index == 1u) {
-        return vec3<f32>(0.38, 0.68, 1.00);
-    }
-    if (color_index == 2u) {
-        return vec3<f32>(1.00, 0.77, 0.25);
-    }
-    if (color_index == 3u) {
-        return vec3<f32>(1.00, 0.38, 0.46);
-    }
-    if (color_index == 4u) {
-        return vec3<f32>(0.72, 0.54, 1.00);
-    }
-    return vec3<f32>(0.65, 1.00, 0.32);
+fn svlm_probe_debug_unpack_rgb565(packed: u32) -> vec3<f32> {
+    return vec3<f32>(
+        f32((packed >> 11u) & 0x1fu) / 31.0,
+        f32((packed >> 5u) & 0x3fu) / 63.0,
+        f32(packed & 0x1fu) / 31.0
+    );
 }
 
 // Composites the packed probe debug result over the lit scene. The splat pass
-// stores closest-depth plus compact shade/color data, keeping the transient
-// debug buffer compact and atomic-friendly.
+// stores closest-depth plus compact irradiance color data, keeping the
+// transient debug buffer compact and atomic-friendly.
 @compute @workgroup_size(8, 8, 1)
 fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let res = textureDimensions(output_debug);
@@ -40,8 +29,6 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         return;
     }
 
-    let shade = f32((packed_depth >> 3u) & 0x1fu) / 31.0;
-    let color_index = packed_depth & 0x7u;
-    let color = svlm_probe_debug_level_color(color_index) * shade;
+    let color = svlm_probe_debug_unpack_rgb565(packed_depth & 0xffffu);
     textureStore(output_debug, coord, vec4<f32>(color, 1.0));
 }

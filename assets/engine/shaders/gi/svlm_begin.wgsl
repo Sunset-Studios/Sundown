@@ -37,6 +37,11 @@ fn svlm_clear_counters() {
         atomicStore(&svlm_counters.split_counts[i], 0u);
         atomicStore(&svlm_counters.level_counts[i], 0u);
     }
+
+    atomicStore(&svlm_counters.irradiance_cursor, 0u);
+    atomicStore(&svlm_counters.irradiance_sample_index, 0u);
+    atomicStore(&svlm_counters.irradiance_completed_probe_samples, 0u);
+    atomicStore(&svlm_counters.irradiance_status, 0u);
 }
 
 @compute @workgroup_size(1, 1, 1)

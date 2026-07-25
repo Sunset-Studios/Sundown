@@ -6,18 +6,12 @@
 // The SVLM build is intentionally GPU-owned: the CPU writes a small parameter
 // block, then compute passes seed a root grid, classify a breadth-first frontier
 // against the TLAS/BLAS, append child nodes, and finally emit only leaf bricks.
-// The node and leaf records are kept as flat u32 arrays so every pass can use
-// stable byte layouts without WGSL struct padding surprises.
-
-// Node flags describe the current build state. Runtime lighting is not stored
-// here yet; these bits are only about allocation/refinement/debug visibility.
-const SVLM_FLAG_ACTIVE = 1u << 0u;
-const SVLM_FLAG_OCCUPIED_OR_NEAR_GEOMETRY = 1u << 1u;
-const SVLM_FLAG_SHOULD_SPLIT = 1u << 2u;
+// The node and leaf records contain only fields consumed by build, preview, or
+// debug passes. Their exact word strides are part of the bake artifact format.
 const SVLM_FLAG_LEAF = 1u << 3u;
-const SVLM_FLAG_INVALID = 1u << 4u;
 
 const SVLM_PROBES_PER_BRICK = 64u;
+const SVLM_SH_WORDS_PER_PROBE = 6u;
 
 // Status bits are sticky for a bake. The JS owner reads them back and can queue
 // a larger GPU allocation without forcing fallback CPU construction.
@@ -25,13 +19,9 @@ const SVLM_STATUS_NODE_OVERFLOW = 1u << 0u;
 const SVLM_STATUS_LEAF_OVERFLOW = 1u << 1u;
 const SVLM_STATUS_ROOT_OVERFLOW = 1u << 2u;
 
-const SVLM_DEBUG_PROBE_RADIUS = 18.0;
-
-// Counter layout mirrors the JS readback indices exactly:
-// slots 0..10 are named counters, slots 11..15 are reserved, slots 16..31 are
-// split_counts, slots 32..47 are level_counts, and slots 48..63 are reserved.
-// Keeping this as a struct makes shader code readable without changing the
-// 64-u32 buffer contract used by stats readback.
+// Counter layout mirrors the JS readback indices exactly: slots 0..7 are build
+// counters, 8..23 are split counts, 24..39 are level counts, 40..43 track the
+// progressive irradiance bake and hierarchy-readback handoff.
 struct SVLMCounters {
     node_count: atomic<u32>,
     curr_count: atomic<u32>,
@@ -43,66 +33,76 @@ struct SVLMCounters {
     current_level: atomic<u32>,
     split_counts: array<atomic<u32>, 16>,
     level_counts: array<atomic<u32>, 16>,
-    reserved_tail: array<atomic<u32>, 16>,
+    irradiance_cursor: atomic<u32>,
+    irradiance_sample_index: atomic<u32>,
+    irradiance_completed_probe_samples: atomic<u32>,
+    irradiance_status: atomic<u32>,
 };
 
-// Node layout mirrors the old 16-u32 node record stride:
-// slots 0..8 hold identity/hierarchy/grid data, slot 9 is a float score, and
-// slots 10..15 are reserved. JS still allocates max_nodes * 16 words.
+// Compact seven-word runtime octree node.
 struct SVLMNode {
-    morton: u32,
     level: u32,
     flags: u32,
     child_base: u32,
     leaf_index: u32,
-    parent_index: u32,
     coord_x: u32,
     coord_y: u32,
     coord_z: u32,
-    score: f32,
-    reserved_10: u32,
-    reserved_11: u32,
-    reserved_12: u32,
-    reserved_13: u32,
-    reserved_14: u32,
-    reserved_15: u32,
 };
 
-// Leaf brick layout mirrors the old 16-u32 leaf record stride:
-// slots 0..7 are integer identity/coord data, slots 8..11 are float placement,
-// slots 12..13 are flags/score, and slots 14..15 are reserved. Keeping the
-// stride fixed lets JS keep allocating max_leaf_bricks * 16 words.
+// Compact six-word leaf record. Probe positions remain implicit.
 struct SVLMLeafBrick {
-    morton: u32,
     level: u32,
     probe_base: u32,
-    neighbor_info: u32,
-    node_index: u32,
-    coord_x: u32,
-    coord_y: u32,
-    coord_z: u32,
     origin_x: f32,
     origin_y: f32,
     origin_z: f32,
     size: f32,
-    flags: u32,
-    score: f32,
-    reserved_14: u32,
-    reserved_15: u32,
+};
+
+// Compact transient ray record. hit_payload_t stores the probe origin during
+// tracing; after a hit, xyz become UV/section and w becomes signed hit distance.
+struct SVLMProbeRayData {
+    hit_payload_t: vec4<f32>,
+    ray_direction: vec4<f32>,
+    nee_light_radiance: vec4<f32>,
+    state_u32: vec4<u32>,
+    radiance: vec4<f32>,
+    meta_u32: vec4<u32>,
+};
+
+struct SVLMProbeRayDataHeader {
+    active_ray_count: atomic<u32>,
+    _pad0: u32,
+    _pad1: u32,
+    _pad2: u32,
+};
+
+struct SVLMProbeRayDataHeaderReadOnly {
+    active_ray_count: u32,
+    _pad0: u32,
+    _pad1: u32,
+    _pad2: u32,
+};
+
+struct SVLMProbeRayDataBuffer {
+    header: SVLMProbeRayDataHeader,
+    rays: array<SVLMProbeRayData>,
+};
+
+struct SVLMProbeRayDataBufferReadOnlyHeader {
+    header: SVLMProbeRayDataHeaderReadOnly,
+    rays: array<SVLMProbeRayData>,
 };
 
 // Classification distills the TLAS/BLAS overlap search into the handful of
 // signals needed by the split heuristic. It is deliberately coarse for this V1:
 // enough to allocate bricks around real geometry before irradiance is added.
 struct SVLMBrickStats {
-    keep: u32,
     overlap_count: u32,
-    near_count: u32,
-    stack_overflow: u32,
     face_mask: u32,
     min_distance: f32,
     occupied_fraction: f32,
-    score: f32,
     thin_occluder: u32,
 };
 
@@ -121,7 +121,7 @@ struct SVLMParams {
     max_level: f32,
 
     max_nodes: f32,
-    max_leaf_bricks: f32,
+    leaf_capacity: f32,
     min_level: f32,
     near_factor: f32,
 
@@ -144,12 +144,19 @@ struct SVLMParams {
     debug_leaf_page_groups_y: f32,
     debug_gather_page_groups_x: f32,
     debug_gather_page_groups_y: f32,
+
+    irradiance_rays_per_probe: f32,
+    irradiance_probes_per_batch: f32,
+    irradiance_sample_count: f32,
+    irradiance_max_ray_distance: f32,
+
+    irradiance_format_version: f32,
+    irradiance_sh_words_per_probe: f32,
 };
 
 struct SVLMBlasStats {
     overlap_count: u32,
     near_count: u32,
-    stack_overflow: u32,
     face_mask: u32,
     min_distance: f32,
     occupied_volume: f32,
@@ -163,24 +170,6 @@ fn svlm_root_dims(params: ptr<storage, SVLMParams, read_write>) -> vec3<u32> {
     );
 }
 
-// Morton keys give us a stable spatial identity for each brick without needing
-// pointer-heavy tree links. The explicit coord slots are still kept for cheap
-// child generation and debug reconstruction.
-fn svlm_expand_bits_10(v_in: u32) -> u32 {
-    var v = v_in & 0x000003ffu;
-    v = (v | (v << 16u)) & 0x030000ffu;
-    v = (v | (v << 8u)) & 0x0300f00fu;
-    v = (v | (v << 4u)) & 0x030c30c3u;
-    v = (v | (v << 2u)) & 0x09249249u;
-    return v;
-}
-
-fn svlm_morton3(coord: vec3<u32>) -> u32 {
-    return svlm_expand_bits_10(coord.x) |
-        (svlm_expand_bits_10(coord.y) << 1u) |
-        (svlm_expand_bits_10(coord.z) << 2u);
-}
-
 fn svlm_brick_size(params: ptr<storage, SVLMParams, read_write>, level: u32) -> f32 {
     return (*params).root_size / f32(1u << level);
 }
@@ -191,6 +180,20 @@ fn svlm_world_min(params: ptr<storage, SVLMParams, read_write>) -> vec3<f32> {
         (*params).world_min_y,
         (*params).world_min_z
     );
+}
+
+fn svlm_probe_position(leaf: SVLMLeafBrick, local_probe_index: u32) -> vec3<f32> {
+    let local_coord = vec3<u32>(
+        local_probe_index & 3u,
+        (local_probe_index >> 2u) & 3u,
+        (local_probe_index >> 4u) & 3u
+    );
+    let origin = vec3<f32>(leaf.origin_x, leaf.origin_y, leaf.origin_z);
+    let spacing = max(leaf.size / 4.0, 0.0001);
+    // Keep probes inside their owning adaptive leaf. The old endpoint lattice
+    // placed entire probe planes on shared brick boundaries and directly on
+    // thin geometry such as Sponza's floor.
+    return origin + (vec3<f32>(local_coord) + vec3<f32>(0.5)) * spacing;
 }
 
 fn svlm_node_aabb(params: ptr<storage, SVLMParams, read_write>, level: u32, coord: vec3<u32>) -> AABB {

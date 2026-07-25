@@ -1,4 +1,5 @@
 #include "gi/svlm_common.wgsl"
+#include "sh_common.wgsl"
 
 // Probe debug splat pass.
 //
@@ -13,6 +14,7 @@
 @group(1) @binding(3) var depth_texture: texture_2d<f32>;
 @group(1) @binding(4) var<storage, read_write> debug_depth: array<atomic<u32>>;
 @group(1) @binding(5) var<storage, read> debug_leaf_indices: array<u32>;
+@group(1) @binding(6) var<storage, read> irradiance_probes: array<u32>;
 
 const SVLM_DEBUG_MAX_RADIUS_PX = 18.0;
 const SVLM_PROBE_DEBUG_WORKGROUP_Y = 8u;
@@ -22,15 +24,29 @@ fn svlm_probe_visible_for_debug_level(leaf_level: u32) -> bool {
     return debug_level < 0 || leaf_level == u32(debug_level);
 }
 
+fn svlm_probe_debug_read_sh(probe_index: u32) -> SH_L1_RGB {
+    let base = probe_index * SVLM_SH_WORDS_PER_PROBE;
+    var packed: SH_L1_RGB_Packed;
+    for (var i = 0u; i < SVLM_SH_WORDS_PER_PROBE; i = i + 1u) {
+        packed.data[i] = irradiance_probes[base + i];
+    }
+    return sh_l1_rgb_unpack(packed);
+}
+
+fn svlm_probe_debug_pack_rgb565(color: vec3<f32>) -> u32 {
+    let saturated = clamp(color, vec3<f32>(0.0), vec3<f32>(1.0));
+    let r = u32(round(saturated.r * 31.0));
+    let g = u32(round(saturated.g * 63.0));
+    let b = u32(round(saturated.b * 31.0));
+    return (r << 11u) | (g << 5u) | b;
+}
+
 // Depth must dominate the packed value so atomicMin keeps the nearest splat.
-// The low byte is free for resolve-only appearance data: 5 bits of sphere
-// shading and 3 bits for the same level palette index used by brick debug.
-fn svlm_probe_debug_pack_distance(distance: f32, view_index: u32, shade: f32, level: u32) -> u32 {
+// The low 16 bits carry a display-mapped copy of the baked irradiance.
+fn svlm_probe_debug_pack_distance(distance: f32, view_index: u32, color: vec3<f32>) -> u32 {
     let far_plane = max(view_buffer[view_index].far, 1.0);
-    let depth24 = u32(clamp(distance / far_plane, 0.0, 1.0) * 16777215.0);
-    let shade5 = u32(clamp(shade, 0.0, 1.0) * 31.0);
-    let level_color = level % 6u;
-    return (depth24 << 8u) | (shade5 << 3u) | level_color;
+    let depth16 = u32(clamp(distance / far_plane, 0.0, 1.0) * 65534.0);
+    return (depth16 << 16u) | svlm_probe_debug_pack_rgb565(color);
 }
 
 @compute @workgroup_size(8, 8, 1)
@@ -75,11 +91,44 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         (local_probe >> 2u) & 3u,
         (local_probe >> 4u) & 3u
     );
-    // Four probes span three intervals across the brick. Keeping this derived
-    // from leaf_size guarantees debug positions match later payload sampling.
-    let probe_spacing = max(leaf_size / 3.0, 0.0001);
-    let probe_position = leaf_origin + vec3<f32>(local_coord) * probe_spacing;
+    // Cell-centered probes avoid placing entire probe planes on leaf boundaries
+    // and thin geometry. This must exactly match bake and runtime sampling.
+    let probe_spacing = max(leaf_size / 4.0, 0.0001);
+    let probe_position =
+        leaf_origin + (vec3<f32>(local_coord) + vec3<f32>(0.5)) * probe_spacing;
     let radius = max(probe_spacing * 0.075, 0.025);
+    let probe_index = leaf.probe_base + local_probe;
+    let last_probe_word =
+        probe_index * SVLM_SH_WORDS_PER_PROBE + (SVLM_SH_WORDS_PER_PROBE - 1u);
+    if (last_probe_word >= arrayLength(&irradiance_probes)) {
+        return;
+    }
+    let completed_probe_samples = atomicLoad(
+        &svlm_counters.irradiance_completed_probe_samples
+    );
+    let probe_has_sample = completed_probe_samples > probe_index;
+    var display_color = vec3<f32>(1.0, 0.0, 1.0);
+    if (probe_has_sample) {
+        let probe_sh = svlm_probe_debug_read_sh(probe_index);
+        let baked_irradiance = max(
+            probe_sh.c[0] * (PI * SH_BASIS_L0),
+            vec3<f32>(0.0)
+        );
+        // A gentle photographic mapping preserves dim bounce light. Keep a
+        // small visible marker for valid-but-zero SH so black probes cannot be
+        // mistaken for missing splats; unwritten probes remain bright magenta.
+        let exposed = baked_irradiance * 2.0;
+        display_color = pow(
+            exposed / (vec3<f32>(1.0) + exposed),
+            vec3<f32>(1.0 / 2.2)
+        );
+        let peak = max(max(display_color.r, display_color.g), display_color.b);
+        if (peak <= 1e-5) {
+            display_color = vec3<f32>(0.10, 0.025, 0.10);
+        } else if (peak < 0.15) {
+            display_color *= 0.15 / peak;
+        }
+    }
     let view_index = u32(frame_info.view_index);
     let view_position = view_buffer[view_index].view_matrix * vec4<f32>(probe_position, 1.0);
     let center_clip = view_buffer[view_index].projection_matrix * view_position;
@@ -131,9 +180,13 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
             let sphere_normal = safe_normalize(vec3<f32>(screen_delta.x, -screen_delta.y, sqrt(max(0.0, 1.0 - sdf_sq))));
             let shade = 0.72 + 0.28 * max(dot(sphere_normal, light_dir), 0.0);
             let surface_distance = max(0.0, view_distance - sphere_normal.z * radius);
-            let packed = svlm_probe_debug_pack_distance(surface_distance, view_index, shade, leaf_level);
+            let packed = svlm_probe_debug_pack_distance(
+                surface_distance,
+                view_index,
+                display_color * shade
+            );
             let pixel_index = u32(py) * res.x + u32(px);
-            // Lower packed depth wins; the low appearance byte survives for resolve.
+            // Lower packed depth wins; the low appearance bits survive for resolve.
             atomicMin(&debug_depth[pixel_index], packed);
         }
     }

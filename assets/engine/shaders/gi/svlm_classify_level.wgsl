@@ -26,23 +26,14 @@ const SVLM_MAX_REFINEMENT_HITS = 96u;
 const SVLM_MAX_OVERLAP_HITS = 32u;
 const SVLM_MAX_BLAS_NODE_VISITS = 256u;
 
-fn svlm_write_node(index: u32, level: u32, coord: vec3<u32>, parent: u32, flags: u32) {
-    node_pool[index].morton = svlm_morton3(coord);
+fn svlm_write_node(index: u32, level: u32, coord: vec3<u32>) {
     node_pool[index].level = level;
-    node_pool[index].flags = flags;
+    node_pool[index].flags = 0u;
     node_pool[index].child_base = INVALID_IDX;
     node_pool[index].leaf_index = INVALID_IDX;
-    node_pool[index].parent_index = parent;
     node_pool[index].coord_x = coord.x;
     node_pool[index].coord_y = coord.y;
     node_pool[index].coord_z = coord.z;
-    node_pool[index].score = 0.0;
-    node_pool[index].reserved_10 = 0u;
-    node_pool[index].reserved_11 = 0u;
-    node_pool[index].reserved_12 = 0u;
-    node_pool[index].reserved_13 = 0u;
-    node_pool[index].reserved_14 = 0u;
-    node_pool[index].reserved_15 = 0u;
 }
 
 fn svlm_mesh_has_blas(mesh_id: u32) -> bool {
@@ -59,7 +50,6 @@ fn svlm_blas_stats(local_brick: AABB, mesh_id: u32, local_keep_distance: f32, fa
     var result: SVLMBlasStats;
     result.overlap_count = 0u;
     result.near_count = 0u;
-    result.stack_overflow = 0u;
     result.face_mask = 0u;
     result.min_distance = pos_inf;
     result.occupied_volume = 0.0;
@@ -93,7 +83,6 @@ fn svlm_blas_stats(local_brick: AABB, mesh_id: u32, local_keep_distance: f32, fa
 
     while (stack_size > 0u) {
         if (node_visits >= SVLM_MAX_BLAS_NODE_VISITS) {
-            result.stack_overflow = 1u;
             return result;
         }
         node_visits = node_visits + 1u;
@@ -128,7 +117,6 @@ fn svlm_blas_stats(local_brick: AABB, mesh_id: u32, local_keep_distance: f32, fa
                     stack[stack_size] = child_b;
                     stack_size = stack_size + 1u;
                 } else {
-                    result.stack_overflow = 1u;
                     return result;
                 }
             } else if (visit_a) {
@@ -136,7 +124,6 @@ fn svlm_blas_stats(local_brick: AABB, mesh_id: u32, local_keep_distance: f32, fa
                     stack[stack_size] = child_a;
                     stack_size = stack_size + 1u;
                 } else {
-                    result.stack_overflow = 1u;
                     return result;
                 }
             } else if (visit_b) {
@@ -144,7 +131,6 @@ fn svlm_blas_stats(local_brick: AABB, mesh_id: u32, local_keep_distance: f32, fa
                     stack[stack_size] = child_b;
                     stack_size = stack_size + 1u;
                 } else {
-                    result.stack_overflow = 1u;
                     return result;
                 }
             }
@@ -156,14 +142,10 @@ fn svlm_blas_stats(local_brick: AABB, mesh_id: u32, local_keep_distance: f32, fa
 
 fn svlm_query_brick_stats(brick: AABB, level: u32) -> SVLMBrickStats {
     var result: SVLMBrickStats;
-    result.keep = 0u;
     result.overlap_count = 0u;
-    result.near_count = 0u;
-    result.stack_overflow = 0u;
     result.face_mask = 0u;
     result.min_distance = 3.402823e+38;
     result.occupied_fraction = 0.0;
-    result.score = 0.0;
     result.thin_occluder = 0u;
 
     if (tlas_bvh_info.bvh2_count == 0u) {
@@ -216,9 +198,7 @@ fn svlm_query_brick_stats(brick: AABB, level: u32) -> SVLMBrickStats {
                 // distance thresholds are transformed before the finer query.
                 let blas_stats = svlm_blas_stats(local_brick, mesh_id, local_keep_distance, local_face_eps);
                 if (blas_stats.near_count != 0u || blas_stats.overlap_count != 0u) {
-                    result.near_count = result.near_count + min(blas_stats.near_count, 16u);
                     result.overlap_count = result.overlap_count + min(blas_stats.overlap_count, 16u);
-                    result.stack_overflow = max(result.stack_overflow, blas_stats.stack_overflow);
                     result.min_distance = min(result.min_distance, blas_stats.min_distance / local_distance_scale);
                     occupied_fraction = occupied_fraction + blas_stats.occupied_volume / max(svlm_aabb_volume(local_brick), 0.000001);
                     result.face_mask |= blas_stats.face_mask;
@@ -238,7 +218,6 @@ fn svlm_query_brick_stats(brick: AABB, level: u32) -> SVLMBrickStats {
                 continue;
             }
 
-            result.near_count = result.near_count + 1u;
             result.min_distance = min(result.min_distance, sqrt(distance_sq));
             if (intersects_leaf) {
                 occupied_fraction = occupied_fraction + svlm_aabb_intersection_volume(brick, node) / max(svlm_aabb_volume(brick), 0.000001);
@@ -264,8 +243,6 @@ fn svlm_query_brick_stats(brick: AABB, level: u32) -> SVLMBrickStats {
                     // TLAS stack pressure is only a coarse coverage hint. It
                     // should not become a split reason because that refines
                     // toward entity bounds instead of BLAS triangle bounds.
-                    result.stack_overflow = 1u;
-                    result.near_count = max(result.near_count, 1u);
                     result.min_distance = 0.0;
                     stack[stack_size] = near_child;
                     stack_size = stack_size + 1u;
@@ -275,14 +252,12 @@ fn svlm_query_brick_stats(brick: AABB, level: u32) -> SVLMBrickStats {
                     stack[stack_size] = child_a;
                     stack_size = stack_size + 1u;
                 } else {
-                    result.stack_overflow = 1u;
                 }
             } else if (visit_b) {
                 if (stack_size < SVLM_QUERY_STACK_SIZE) {
                     stack[stack_size] = child_b;
                     stack_size = stack_size + 1u;
                 } else {
-                    result.stack_overflow = 1u;
                 }
             }
         }
@@ -290,17 +265,6 @@ fn svlm_query_brick_stats(brick: AABB, level: u32) -> SVLMBrickStats {
 
     result.occupied_fraction = clamp(occupied_fraction, 0.0, 1.0);
     result.thin_occluder = select(0u, 1u, svlm_is_thin_occluder(result.face_mask));
-    result.keep = select(0u, 1u, result.overlap_count > 0u || result.near_count > 0u);
-
-    // Score is primarily for debug/stats today. The actual split decision below
-    // stays rule-based so each reason remains obvious while tuning the V1.
-    let complexity = clamp(f32(result.overlap_count) / 8.0, 0.0, 1.0);
-    result.score =
-        result.occupied_fraction * 0.55 +
-        select(0.0, 0.25, result.min_distance <= keep_distance) +
-        complexity * 0.20 +
-        select(0.0, 0.25, result.thin_occluder != 0u);
-
     return result;
 }
 
@@ -339,10 +303,13 @@ fn svlm_should_split(level: u32, stats: SVLMBrickStats) -> bool {
     return true;
 }
 
-fn svlm_emit_leaf(node_index: u32, level: u32, coord: vec3<u32>, flags: u32, score: f32) {
-    let max_leaf_bricks = u32(max(svlm_params.max_leaf_bricks, 0.0));
+fn svlm_emit_leaf(node_index: u32, level: u32, coord: vec3<u32>) {
+    let leaf_capacity = min(
+        u32(max(svlm_params.leaf_capacity, 0.0)),
+        arrayLength(&leaf_bricks)
+    );
     let leaf_index = atomicAdd(&svlm_counters.leaf_count, 1u);
-    if (leaf_index >= max_leaf_bricks) {
+    if (leaf_index >= leaf_capacity) {
         atomicOr(&svlm_counters.status, SVLM_STATUS_LEAF_OVERFLOW);
         return;
     }
@@ -350,48 +317,33 @@ fn svlm_emit_leaf(node_index: u32, level: u32, coord: vec3<u32>, flags: u32, sco
     let probe_base = leaf_index * SVLM_PROBES_PER_BRICK;
     let size = svlm_brick_size(&svlm_params, level);
     let origin = svlm_world_min(&svlm_params) + vec3<f32>(coord) * size;
-    let leaf_flags = flags | SVLM_FLAG_LEAF;
-
     // Leaf bricks are the durable bake output. Probe positions are not stored:
     // debug/runtime code derives the 4x4x4 lattice from origin + size.
-    node_pool[node_index].flags = leaf_flags;
+    node_pool[node_index].flags = SVLM_FLAG_LEAF;
     node_pool[node_index].leaf_index = leaf_index;
 
-    leaf_bricks[leaf_index].morton = svlm_morton3(coord);
     leaf_bricks[leaf_index].level = level;
     leaf_bricks[leaf_index].probe_base = probe_base;
-    leaf_bricks[leaf_index].neighbor_info = 0u;
-    leaf_bricks[leaf_index].node_index = node_index;
-    leaf_bricks[leaf_index].coord_x = coord.x;
-    leaf_bricks[leaf_index].coord_y = coord.y;
-    leaf_bricks[leaf_index].coord_z = coord.z;
     leaf_bricks[leaf_index].origin_x = origin.x;
     leaf_bricks[leaf_index].origin_y = origin.y;
     leaf_bricks[leaf_index].origin_z = origin.z;
     leaf_bricks[leaf_index].size = size;
-    leaf_bricks[leaf_index].flags = leaf_flags;
-    leaf_bricks[leaf_index].score = score;
-    leaf_bricks[leaf_index].reserved_14 = 0u;
-    leaf_bricks[leaf_index].reserved_15 = 0u;
-
     atomicAdd(&svlm_counters.probe_count, SVLM_PROBES_PER_BRICK);
 }
 
-fn svlm_emit_children(node_index: u32, level: u32, coord: vec3<u32>, flags: u32, score: f32) {
+fn svlm_emit_children(node_index: u32, level: u32, coord: vec3<u32>) {
     let child_base = atomicAdd(&svlm_counters.node_count, 8u);
     if (child_base + 7u >= u32(max(svlm_params.max_nodes, 0.0))) {
         atomicOr(&svlm_counters.status, SVLM_STATUS_NODE_OVERFLOW);
         // Preserve coverage when the pool is exhausted. The stats readback will
         // request a larger allocation and rebake, but this frame still has a
         // conservative leaf rather than a hole in the structure.
-        svlm_emit_leaf(node_index, level, coord, flags, score);
+        svlm_emit_leaf(node_index, level, coord);
         return;
     }
 
     let next_base = atomicAdd(&svlm_counters.next_count, 8u);
-    node_pool[node_index].flags = flags | SVLM_FLAG_SHOULD_SPLIT;
     node_pool[node_index].child_base = child_base;
-    node_pool[node_index].score = score;
 
     // Child coordinates are expressed in the next level's integer grid. Since
     // every level doubles resolution, appending one octant bit per axis is all
@@ -403,7 +355,7 @@ fn svlm_emit_children(node_index: u32, level: u32, coord: vec3<u32>, flags: u32,
             (child >> 2u) & 1u
         );
         let child_index = child_base + child;
-        svlm_write_node(child_index, level + 1u, child_coord, node_index, SVLM_FLAG_ACTIVE);
+        svlm_write_node(child_index, level + 1u, child_coord);
         next_nodes[next_base + child] = child_index;
     }
 }
@@ -428,18 +380,11 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     atomicAdd(&svlm_counters.level_counts[level], 1u);
     atomicMax(&svlm_counters.max_level_reached, level);
 
-    node_pool[node_index].score = stats.score;
-
-    var flags = SVLM_FLAG_ACTIVE;
-    if (stats.keep != 0u) {
-        flags |= SVLM_FLAG_OCCUPIED_OR_NEAR_GEOMETRY;
-    }
-
     if (svlm_should_split(level, stats)) {
         atomicAdd(&svlm_counters.split_counts[level], 1u);
-        svlm_emit_children(node_index, level, coord, flags, stats.score);
+        svlm_emit_children(node_index, level, coord);
         return;
     }
 
-    svlm_emit_leaf(node_index, level, coord, flags, stats.score);
+    svlm_emit_leaf(node_index, level, coord);
 }

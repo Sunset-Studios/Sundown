@@ -49,6 +49,7 @@ import { draw_quad } from "../draw_helpers.js";
 // Specialized renderer components
 import { PTGI } from "../global_illumination/ptgi.js";
 import { DDGI } from "../global_illumination/ddgi.js";
+import { SVLMBakedGI } from "../global_illumination/svlm_baked_gi.js";
 import { SparseVolumetricLightmapper } from "../global_illumination/svlm.js";
 import { VBAO } from "../global_illumination/vbao.js";
 import { RTAO } from "../global_illumination/rtao.js";
@@ -204,8 +205,15 @@ export class DeferredShadingStrategy {
     this.gbuffer_targets_pipeline = new GBufferTargetsPipeline();
     this.visibility_buffer_pipeline = new VisibilityBufferPipeline();
 
+    // Preserve the in-memory bake when changing renderer/GI strategy. This is
+    // also the ownership seam a future disk loader can populate.
+    this.svlm ??= new SparseVolumetricLightmapper();
+
     const gi_strategy_type = Renderer.get().get_gi_strategy_type();
     switch (gi_strategy_type) {
+      case GIStrategyType.SVLM:
+        this.gi = new SVLMBakedGI(this.svlm);
+        break;
       case GIStrategyType.DDGI:
         this.gi = new DDGI();
         break;
@@ -214,7 +222,6 @@ export class DeferredShadingStrategy {
         this.gi = new PTGI();
         break;
     }
-    this.svlm = new SparseVolumetricLightmapper();
     this.ao =
       Renderer.get().get_ao_strategy_type() === AOStrategyType.RTAO ? new RTAO() : new VBAO();
     this.reflections =
@@ -733,6 +740,8 @@ export class DeferredShadingStrategy {
           entity_index_lookup,
           blas_directory,
           blas_bvh2_nodes,
+          index_buffer,
+          dense_lights,
           force_recreate: this.force_recreate,
         });
 

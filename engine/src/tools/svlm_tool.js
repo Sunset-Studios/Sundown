@@ -1,6 +1,6 @@
 import { CVarSystem } from "../core/cvar_system.js";
 import { Renderer } from "../renderer/renderer.js";
-import { DebugDrawType } from "../renderer/renderer_types.js";
+import { DebugDrawType, GIStrategyType } from "../renderer/renderer_types.js";
 import { EngineCVars } from "../../config/cvars.js";
 import { InputProvider } from "../input/input_provider.js";
 import { InputKey } from "../input/input_types.js";
@@ -70,10 +70,14 @@ function parse_bake_options(args) {
       options.max_level = Number(value);
     } else if (key === "min_level") {
       options.min_level = Number(value);
-    } else if (key === "max_leaf_bricks") {
-      options.max_leaf_bricks = Number(value);
     } else if (key === "max_nodes") {
       options.max_nodes = Number(value);
+    } else if (key === "rays" || key === "irradiance_rays_per_probe") {
+      options.irradiance_rays_per_probe = Number(value);
+    } else if (key === "batch" || key === "irradiance_probes_per_batch") {
+      options.irradiance_probes_per_batch = Number(value);
+    } else if (key === "samples" || key === "irradiance_sample_count") {
+      options.irradiance_sample_count = Number(value);
     }
   }
 
@@ -93,9 +97,9 @@ function parse_debug_options(args) {
     const lower = raw.toLowerCase();
     if (lower === "on" || lower === "off") {
       mode = lower;
-    } else if (lower === "brick") {
+    } else if (lower === "brick" || lower === "bricks") {
       debug_view = DebugDrawType.SVLM_Bricks;
-    } else if (lower === "probe") {
+    } else if (lower === "probe" || lower === "probes") {
       debug_view = DebugDrawType.SVLM_Probes;
     } else if (lower === "all") {
       options.debug_level = -1;
@@ -110,9 +114,7 @@ function parse_debug_options(args) {
   return { mode, options, debug_view };
 }
 
-// Dev-console control plane for the GPU SVLM builder. This intentionally keeps
-// bake/debug/stats in one tool so iteration on brick allocation is quick while
-// irradiance accumulation is still future work.
+// Dev-console control plane for the GPU SVLM hierarchy and irradiance bake.
 export class SVLMTool extends DevConsoleTool {
   is_open = false;
   scene = null;
@@ -136,13 +138,22 @@ export class SVLMTool extends DevConsoleTool {
         break;
       case "debug":
         const debug_options = parse_debug_options(args.slice(1));
-        const current_debug_view = CVarSystem.get(EngineCVars.Renderer.DebugDraw, DebugDrawType.None);
-        const enable = debug_options.mode === "on" || current_debug_view !== debug_options.debug_view;
+        const current_debug_view = CVarSystem.get(
+          EngineCVars.Renderer.DebugDraw,
+          DebugDrawType.None
+        );
+        const enable =
+          debug_options.mode === "on" || current_debug_view !== debug_options.debug_view;
         CVarSystem.set(
           EngineCVars.Renderer.DebugDraw,
           enable ? debug_options.debug_view : DebugDrawType.None,
           { source: "svlm" }
         );
+        break;
+      case "preview":
+        CVarSystem.set(EngineCVars.Renderer.GIStrategy, GIStrategyType.SVLM, {
+          source: "svlm",
+        });
         break;
       case "clear":
         svlm.clear();
@@ -154,7 +165,9 @@ export class SVLMTool extends DevConsoleTool {
         this.hide();
         break;
       default:
-        log("svlm [stats | bake [root=<size>] [max=<level>] [min=<level>] | debug [bricks|probes] [on|off] [level=<n>|all|next|prev] [radius=<world>] | clear | hide]");
+        log(
+          "svlm [stats | bake [root=<size>] [max=<level>] [min=<level>] [rays=<count>] [batch=<count>] [samples=<count>] | preview | debug [bricks|probes] [on|off] [level=<n>|all] | clear | hide]"
+        );
         break;
     }
   }
@@ -177,17 +190,40 @@ export class SVLMTool extends DevConsoleTool {
       stat_row("Leaf bricks", format_number(stats.leaf_count));
       stat_row(
         "Budget",
-        `${format_number(stats.config.max_nodes)} nodes, ${format_number(stats.config.max_leaf_bricks)} leaves`
+        `${format_number(stats.config.max_nodes)} node/leaf records`
       );
       stat_row("Allocated probes", format_number(stats.probe_count));
-      stat_row("Root dims", `${stats.root_dims[0]} x ${stats.root_dims[1]} x ${stats.root_dims[2]}`);
+      stat_row(
+        "Irradiance",
+        stats.irradiance_ready
+          ? `ready (${format_number(stats.irradiance_sample_count)} sample sets)`
+          : stats.irradiance_allocation_pending
+            ? "allocating exact probe storage"
+            : `${(stats.irradiance_progress * 100).toFixed(1)}%`
+      );
+      stat_row(
+        "Probe writes",
+        `${format_number(stats.irradiance_completed_probe_samples)} / ${format_number(stats.irradiance_required_probe_samples)}`
+      );
+      stat_row("Bake rays", `${format_number(stats.irradiance_rays_per_probe)} / probe`);
+      stat_row(
+        "Root dims",
+        `${stats.root_dims[0]} x ${stats.root_dims[1]} x ${stats.root_dims[2]}`
+      );
       stat_row("Root brick size", Number(stats.root_brick_size).toFixed(2));
-      stat_row("Levels", `${stats.min_level} forced, ${stats.max_level_reached}/${stats.max_level} reached`);
+      stat_row(
+        "Levels",
+        `${stats.min_level} forced, ${stats.max_level_reached}/${stats.max_level} reached`
+      );
       stat_row("World min", format_vec3(stats.world_min));
       stat_row("World max", format_vec3(stats.world_max));
       stat_row("GPU data", `${bytes_to_mb(stats.total_bytes)} MB`);
+      stat_row("Irradiance data", `${bytes_to_mb(stats.irradiance_allocated_bytes)} MB packed`);
       stat_row("Debug level", stats.debug_level < 0 ? "all" : `L${stats.debug_level}`);
-      stat_row("Debug bricks", `${format_number(stats.debug_leaf_count)} / ${format_number(stats.leaf_count)}`);
+      stat_row(
+        "Debug bricks",
+        `${format_number(stats.debug_leaf_count)} / ${format_number(stats.leaf_count)}`
+      );
 
       const level_parts = [];
       for (let i = 0; i < stats.per_level_counts.length; i += 1) {
@@ -198,7 +234,16 @@ export class SVLMTool extends DevConsoleTool {
       stat_row("Level leaves", level_parts.join("  ") || "none");
 
       if (stats.truncated_by_node_limit || stats.truncated_by_leaf_limit) {
-        label("Bake hit an SVLM allocation limit.", { ...stats_label_config, text_color: "#ffb15c" });
+        label("Bake hit an SVLM allocation limit.", {
+          ...stats_label_config,
+          text_color: "#ffb15c",
+        });
+      }
+      if (stats.irradiance_capacity_exceeded) {
+        label("Baked irradiance exceeds the storage-buffer limit.", {
+          ...stats_label_config,
+          text_color: "#ff6b6b",
+        });
       }
 
       label("--------------------------------", stats_label_config);
