@@ -22,7 +22,7 @@ struct PathTracerParams {
     frame_phase: u32,
     samples_per_pixel: u32,
     sample_index: u32,
-    padding: u32,
+    sampling_tile_width: u32,
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -66,9 +66,13 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     // ─────────────────────────────────────────────────────────────────────────
     // Determine if this pixel should be traced this frame (for trace_rate > 1)
     // ─────────────────────────────────────────────────────────────────────────
-    let first_x_in_row = (pt_params.frame_phase + pt_params.trace_rate - (gid.y * 2u) % pt_params.trace_rate) % pt_params.trace_rate;
-    let was_traced_this_frame = (pt_params.trace_rate <= 1u) || 
-        ((gid.x >= first_x_in_row) && ((gid.x - first_x_in_row) % pt_params.trace_rate == 0u));
+    let was_traced_this_frame = is_phased_pixel(
+        gid.xy,
+        res,
+        pt_params.trace_rate,
+        pt_params.frame_phase,
+        pt_params.sampling_tile_width
+    );
 
     if (was_traced_this_frame) {
         // ─────────────────────────────────────────────────────────────────────────

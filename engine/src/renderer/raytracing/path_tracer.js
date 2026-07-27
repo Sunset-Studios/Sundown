@@ -39,6 +39,20 @@ const texture_pool_emission_name = Name.from("texture_pool_emission");
 
 const COMPUTE_WORKGROUP_SIZE = 128;
 
+function get_sampling_grid(trace_rate) {
+  const rate = Math.max(1, Math.floor(trace_rate));
+  let tile_height = Math.floor(Math.sqrt(rate));
+  while (rate % tile_height !== 0) {
+    tile_height--;
+  }
+
+  return {
+    rate,
+    tile_width: rate / tile_height,
+    tile_height,
+  };
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Shader Configurations
 // ─────────────────────────────────────────────────────────────────────────────
@@ -78,17 +92,17 @@ const path_tracer_output_shader_setup = {
 export class PathTracer extends RayTracer {
   // ─────────────────────────────────────────────────────────────────────────
   // Parameters buffer layout:
-  // [max_bounces, reset_accum, use_gbuffer, trace_rate, frame_phase, samples_per_pixel, sample_index, padding]
+  // [max_bounces, reset_accum, use_gbuffer, trace_rate, sampling_frame, samples_per_pixel, sample_index, sampling_tile_width]
   // ─────────────────────────────────────────────────────────────────────────
   params = new Uint32Array([
     0, // max_bounces
     0, // reset_accum_flag
     0, // use_gbuffer
     0, // trace_rate
-    0, // frame_phase
+    0, // sampling_frame
     1, // samples_per_pixel
     0, // sample_index
-    0, // padding
+    1, // sampling_tile_width
   ]);
   frame_phase = 0;
 
@@ -131,6 +145,12 @@ export class PathTracer extends RayTracer {
 
     const num_bounce_passes = max_bounces;
     const num_rays = width * height;
+    const sampling_grid = get_sampling_grid(trace_rate);
+    const normalized_trace_rate = sampling_grid.rate;
+    const active_pixel_count =
+      Math.ceil(width / sampling_grid.tile_width) *
+      Math.ceil(height / sampling_grid.tile_height);
+    const sampling_frame = this.frame_phase;
 
     const view_index = SharedFrameInfoBuffer.get_view_index();
     const view_moved = SharedViewBuffer.was_moved(view_index);
@@ -233,11 +253,11 @@ export class PathTracer extends RayTracer {
           this.params[0] = num_bounce_passes;
           this.params[1] = view_moved ? 1 : 0;
           this.params[2] = use_gbuffer ? 1 : 0;
-          this.params[3] = trace_rate;
-          this.params[4] = this.frame_phase;
+          this.params[3] = normalized_trace_rate;
+          this.params[4] = sampling_frame;
           this.params[5] = samples_per_pixel;
           this.params[6] = sample_idx;
-          this.params[7] = 0;
+          this.params[7] = sampling_grid.tile_width;
           params_buffer.write_raw(this.params);
         }
       );
@@ -270,7 +290,7 @@ export class PathTracer extends RayTracer {
         },
         (graph, frame_data, encoder) => {
           const pass = graph.get_physical_pass(frame_data.current_pass);
-          const pixel_count = view_moved ? num_rays : Math.ceil(num_rays / Math.max(1, trace_rate));
+          const pixel_count = view_moved ? num_rays : active_pixel_count;
           pass.dispatch(Math.ceil(pixel_count / COMPUTE_WORKGROUP_SIZE), 1, 1);
         }
       );
@@ -296,7 +316,6 @@ export class PathTracer extends RayTracer {
           },
           (graph, frame_data, encoder) => {
             const pass = graph.get_physical_pass(frame_data.current_pass);
-            const active_pixel_count = Math.ceil(num_rays / Math.max(1, trace_rate));
             pass.dispatch(Math.ceil(active_pixel_count / COMPUTE_WORKGROUP_SIZE), 1, 1);
           }
         );
@@ -330,7 +349,6 @@ export class PathTracer extends RayTracer {
           },
           (graph, frame_data, encoder) => {
             const pass = graph.get_physical_pass(frame_data.current_pass);
-            const active_pixel_count = Math.ceil(num_rays / Math.max(1, trace_rate));
             pass.dispatch(Math.ceil(active_pixel_count / COMPUTE_WORKGROUP_SIZE), 1, 1);
           }
         );
@@ -369,15 +387,14 @@ export class PathTracer extends RayTracer {
           },
           (graph, frame_data, encoder) => {
             const pass = graph.get_physical_pass(frame_data.current_pass);
-            const active_pixel_count = Math.ceil(num_rays / Math.max(1, trace_rate));
             pass.dispatch(Math.ceil(active_pixel_count / COMPUTE_WORKGROUP_SIZE), 1, 1);
           }
         );
       }
     }
 
-    // Cycle frame phase for next frame (after all samples)
-    this.frame_phase = (this.frame_phase + 1) % Math.max(1, trace_rate);
+    // Keep a monotonic frame so each completed coverage cycle gets a new scramble.
+    this.frame_phase = (this.frame_phase + 1) >>> 0;
 
     // ═══════════════════════════════════════════════════════════════════════
     // PASS: Output Final Result

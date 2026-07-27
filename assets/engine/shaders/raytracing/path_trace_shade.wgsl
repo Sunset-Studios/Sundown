@@ -36,7 +36,7 @@ struct PathTracerParams {
     frame_phase: u32,
     samples_per_pixel: u32,
     sample_index: u32,
-    padding: u32,
+    sampling_tile_width: u32,
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -86,7 +86,13 @@ struct PathState {
 @compute @workgroup_size(128, 1, 1)
 fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let res = textureDimensions(output_tex);
-    let pixel_coords = compute_phased_pixel_coords(gid.x, res, pt_params.trace_rate, pt_params.frame_phase);
+    let pixel_coords = compute_phased_pixel_coords(
+        gid.x,
+        res,
+        pt_params.trace_rate,
+        pt_params.frame_phase,
+        pt_params.sampling_tile_width
+    );
     
     if (pixel_coords.x >= res.x || pixel_coords.y >= res.y) { return; }
 

@@ -728,43 +728,116 @@ fn rand_sobol_3d(rng: u32, sample_idx: u32) -> vec3<f32> {
 }
 
 // ============================================================================
-// O(1) Helper function to compute pixel coordinates from linear index
+// O(1) helpers for structured, temporally jittered pixel sampling
 // ============================================================================
-// This computes the 2D pixel coordinate for checkerboard/interlaced rendering
-// patterns where pixels are sampled at intervals of trace_rate.
-// The pattern shifts by 2 pixels per row to maintain temporal stability.
+// The image is divided into strata containing trace_rate pixels. Each stratum
+// contributes exactly one pixel per frame. A per-stratum permutation visits
+// every pixel exactly once per cycle without walking them in raster order.
+// This keeps coverage regular without exposing horizontal or diagonal scans.
 // ============================================================================
-fn compute_phased_pixel_coords(linear_index: u32, res: vec2<u32>, trace_rate: u32, frame_phase: u32) -> vec2<u32> {
-    // Fast path: full resolution (no checkerboarding)
+fn greatest_common_divisor(a: u32, b: u32) -> u32 {
+    var x = a;
+    var y = b;
+    loop {
+        if (y == 0u) { break; }
+        let remainder = x % y;
+        x = y;
+        y = remainder;
+    }
+    return x;
+}
+
+fn permute_stratified_sample(index: u32, count: u32, seed: u32) -> u32 {
+    if (count <= 1u) {
+        return 0u;
+    }
+
+    // A masked integer permutation is fast and bijective for the power-of-two
+    // strata used by the common trace rates.
+    if ((count & (count - 1u)) == 0u) {
+        let mask = count - 1u;
+        var value = (index + seed) & mask;
+        value = (value ^ (value >> 1u)) & mask;
+        value = (value * ((seed >> 16u) | 1u)) & mask;
+        value = (value ^ (value >> 2u)) & mask;
+        value = (value * ((seed >> 1u) | 1u)) & mask;
+        value = (value ^ (value >> 4u)) & mask;
+        return value;
+    }
+
+    // Preserve complete coverage for arbitrary rates and partial edge strata
+    // with a seeded affine permutation whose stride is coprime to the count.
+    var stride = 1u + ((seed >> 16u) % (count - 1u));
+    loop {
+        if (greatest_common_divisor(stride, count) == 1u) { break; }
+        stride = stride + 1u;
+        if (stride >= count) {
+            stride = 1u;
+        }
+    }
+    return (index * stride + seed) % count;
+}
+
+fn compute_phased_pixel_coords(
+    linear_index: u32,
+    res: vec2<u32>,
+    trace_rate: u32,
+    frame_phase: u32,
+    sampling_tile_width: u32
+) -> vec2<u32> {
     if (trace_rate <= 1u) {
         return vec2<u32>(linear_index % res.x, linear_index / res.x);
     }
-    
-    // Compute average pixels per row
-    let pixels_per_row = res.x / trace_rate;
-    
-    // Direct mathematical computation of row and offset
-    let estimated_y = linear_index / max(pixels_per_row, 1u);
-    let offset_in_row = linear_index % max(pixels_per_row, 1u);
-    
-    // Compute the first x position for the estimated row
-    // Pattern: shifts by 2 mod trace_rate each row for temporal coherence
-    let first_x = (frame_phase + trace_rate - (estimated_y * 2u) % trace_rate) % trace_rate;
-    
-    // Compute actual pixels available in this row given the first_x position
-    let actual_pixels_in_row = (res.x + trace_rate - 1u - first_x) / trace_rate;
-    
-    // Check if our offset fits in this row or if we need to adjust
-    var pixel_coords = vec2u(first_x + offset_in_row * trace_rate, estimated_y);
-    if (offset_in_row >= actual_pixels_in_row) {
-        // Rare case: offset spills into next row due to alignment mismatch
-        // This happens when first_x causes the row to have fewer pixels
-        pixel_coords.y = estimated_y + 1u;
-        let next_first_x = (frame_phase + trace_rate - (pixel_coords.y * 2u) % trace_rate) % trace_rate;
-        pixel_coords.x = next_first_x + (offset_in_row - actual_pixels_in_row) * trace_rate;
+
+    let tile_width = max(sampling_tile_width, 1u);
+    let tile_height = max(trace_rate / tile_width, 1u);
+    let tiles_per_row = (res.x + tile_width - 1u) / tile_width;
+    let tile_coord = vec2<u32>(
+        linear_index % tiles_per_row,
+        linear_index / tiles_per_row
+    );
+    let tile_origin = tile_coord * vec2<u32>(tile_width, tile_height);
+
+    // Edge strata can be smaller than the nominal tile.
+    let actual_size = min(
+        vec2<u32>(tile_width, tile_height),
+        res - min(tile_origin, res)
+    );
+    let actual_count = max(actual_size.x * actual_size.y, 1u);
+    let cycle = frame_phase / actual_count;
+    let phase = frame_phase % actual_count;
+    let permutation_seed = hash(linear_index ^ hash(cycle ^ 0x9e3779b9u));
+    let sample = permute_stratified_sample(phase, actual_count, permutation_seed);
+
+    return tile_origin + vec2<u32>(sample % actual_size.x, sample / actual_size.x);
+}
+
+fn is_phased_pixel(
+    pixel_coords: vec2<u32>,
+    res: vec2<u32>,
+    trace_rate: u32,
+    frame_phase: u32,
+    sampling_tile_width: u32
+) -> bool {
+    if (trace_rate <= 1u) {
+        return true;
     }
 
-    return pixel_coords;
+    let tile_width = max(sampling_tile_width, 1u);
+    let tile_height = max(trace_rate / tile_width, 1u);
+    let tiles_per_row = (res.x + tile_width - 1u) / tile_width;
+    let tile_index =
+        (pixel_coords.y / tile_height) * tiles_per_row +
+        pixel_coords.x / tile_width;
+    return all(
+        compute_phased_pixel_coords(
+            tile_index,
+            res,
+            trace_rate,
+            frame_phase,
+            tile_width
+        ) == pixel_coords
+    );
 }
 
 // Copy the sign bit from B onto A.

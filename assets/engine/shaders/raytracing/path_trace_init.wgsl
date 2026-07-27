@@ -20,7 +20,7 @@ struct PathTracerParams {
     frame_phase: u32,          // Cycles 0 to trace_rate-1
     samples_per_pixel: u32,    // Number of samples per pixel per frame
     sample_index: u32,         // Current sample index (0 to samples_per_pixel-1)
-    padding: u32,
+    sampling_tile_width: u32,
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -134,7 +134,13 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     
     // Compute pixel coordinates based on trace pattern
     let pixel_coords = select(
-        compute_phased_pixel_coords(gid.x, res, pt_params.trace_rate, pt_params.frame_phase),
+        compute_phased_pixel_coords(
+            gid.x,
+            res,
+            pt_params.trace_rate,
+            pt_params.frame_phase,
+            pt_params.sampling_tile_width
+        ),
         vec2<u32>(gid.x % res.x, gid.x / res.x),
         pt_params.reset_accum_flag != 0u
     );
@@ -148,9 +154,13 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     // ─────────────────────────────────────────────────────────────────────────
     // Determine if this pixel should be traced this frame (for trace_rate > 1)
     // ─────────────────────────────────────────────────────────────────────────
-    let first_x_in_row = (pt_params.frame_phase + pt_params.trace_rate - (pixel_coords.y * 2u) % pt_params.trace_rate) % pt_params.trace_rate;
-    let should_trace_this_pixel = (pt_params.trace_rate <= 1u) || 
-        ((pixel_coords.x >= first_x_in_row) && ((pixel_coords.x - first_x_in_row) % pt_params.trace_rate == 0u));
+    let should_trace_this_pixel = is_phased_pixel(
+        pixel_coords,
+        res,
+        pt_params.trace_rate,
+        pt_params.frame_phase,
+        pt_params.sampling_tile_width
+    );
     
     // ─────────────────────────────────────────────────────────────────────────
     // Reset accumulation when camera moves (only on first sample)
