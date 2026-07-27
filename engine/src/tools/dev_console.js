@@ -9,6 +9,7 @@ import { BVHDebug } from "./bvh_debug.js";
 import { PerformanceTrace } from "./performance_trace.js";
 import { ASVSMStats } from "./as_vsm_stats.js";
 import { DDGIStats } from "./ddgi_stats.js";
+import { DDGIConfigTool } from "./ddgi_config_tool.js";
 import { SVLMTool } from "./svlm_tool.js";
 import { DebugMemory } from "./debug_memory.js";
 import { GPUTimerView } from "./gpu_timer_view.js";
@@ -89,6 +90,7 @@ export class DevConsole extends SimulationLayer {
     this.register_command("gpu_memory", new GPUMemoryView());
     this.register_command("ml_trace", new MLTraceTool());
     this.register_command("ddgi_stats", new DDGIStats());
+    this.register_command("ddgi", new DDGIConfigTool());
     this.register_command("svlm", new SVLMTool());
     this.register_command("cvar", new CVarTool());
     this.register_command("meshlet_stats", new MeshletStats());

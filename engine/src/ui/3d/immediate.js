@@ -15,6 +15,15 @@ import {
 } from "../../utility/transform_utils.js";
 import { mat4, quat, vec3 } from "gl-matrix";
 import { UIContext } from "../2d/immediate.js";
+import {
+  SliderMode,
+  format_slider_value,
+  resolve_slider_value,
+  slider_ratio,
+  update_slider_interaction,
+} from "../slider.js";
+
+export { SliderMode } from "../slider.js";
 
 const left = "left";
 const right = "right";
@@ -257,7 +266,8 @@ function push_command(command, config = {}, inherited_z_order = get_current_z_or
   command.z_order = resolve_z_order(config, inherited_z_order);
   command.order = UI3DContext.command_order++;
   command.batch_key ??= config.batch_key ?? config.ui_batch_key;
-  command.parent_entity ??= config.parent_entity ?? config.parent ?? get_current_container()?.root?.parent_entity ?? null;
+  command.parent_entity ??=
+    config.parent_entity ?? config.parent ?? get_current_container()?.root?.parent_entity ?? null;
   UI3DContext.commands.push(command);
   return UI3DContext.commands.length - 1;
 }
@@ -267,7 +277,12 @@ function set_command(index, command, config = {}, inherited_z_order = get_curren
   command.z_order = existing?.z_order ?? resolve_z_order(config, inherited_z_order);
   command.order = existing?.order ?? UI3DContext.command_order++;
   command.batch_key ??= existing?.batch_key ?? config.batch_key ?? config.ui_batch_key;
-  command.parent_entity ??= existing?.parent_entity ?? config.parent_entity ?? config.parent ?? get_current_container()?.root?.parent_entity ?? null;
+  command.parent_entity ??=
+    existing?.parent_entity ??
+    config.parent_entity ??
+    config.parent ??
+    get_current_container()?.root?.parent_entity ??
+    null;
   UI3DContext.commands[index] = command;
 }
 
@@ -312,7 +327,9 @@ function basis_from_config(config = {}) {
     vec3.normalize(root.up, root.up);
   }
 
-  root.unit_scale = Number(config.unit_scale ?? config.world_units_per_px ?? default_root.unit_scale);
+  root.unit_scale = Number(
+    config.unit_scale ?? config.world_units_per_px ?? default_root.unit_scale
+  );
   root.layer_depth = Number(config.layer_depth ?? config.depth_step ?? default_root.layer_depth);
   vec3.cross(root.normal, root.right, root.up);
   vec3.normalize(root.normal, root.normal);
@@ -362,11 +379,7 @@ function project_rect_to_screen(root, x, y, width, height) {
 
   if (root.parent_entity) {
     const parent_transform = resolve_parent_transform(
-      get_current_world_transform(
-        root.parent_entity,
-        0,
-        temp_parent_world_transform
-      ),
+      get_current_world_transform(root.parent_entity, 0, temp_parent_world_transform),
       EntityFlags.IGNORE_PARENT_SCALE,
       temp_resolved_parent_world_transform
     );
@@ -404,6 +417,8 @@ function project_rect_to_screen(root, x, y, width, height) {
     y: min_y,
     width: max_x - min_x,
     height: max_y - min_y,
+    axis_start: { x: projected[0].x, y: projected[0].y },
+    axis_end: { x: projected[1].x, y: projected[1].y },
   };
 }
 
@@ -425,12 +440,21 @@ function element_handle_input(root, x, y, width, height, config) {
   const pressed = hovered && UIContext.input_state.pressed;
   let dragged = false;
 
-  if (!UIContext.drag_state.active && (clicked || pressed)) {
+  if (
+    !UIContext.drag_state.active &&
+    UIContext.slider_state.active_widget_id === null &&
+    (clicked || pressed)
+  ) {
     InputProvider.consume_action(InputKey.B_mouse_left);
   }
 
   if (config.draggable) {
-    if (!UIContext.drag_state.active && hovered && UIContext.input_state.pressed) {
+    if (
+      !UIContext.drag_state.active &&
+      UIContext.slider_state.active_widget_id === null &&
+      hovered &&
+      UIContext.input_state.pressed
+    ) {
       UIContext.drag_state.active = true;
       UIContext.drag_state.widget_id = config.widget_id;
     }
@@ -682,12 +706,7 @@ function push_image(
       x_axis: world.x_axis,
       y_axis: world.y_axis,
       fill_color: color_to_vec4(config.color ?? config.tint ?? config.tint_color, [1, 1, 1, 1]),
-      border_color: [
-        config.alpha_mask || config.mask || config.tint_alpha ? 1 : 0,
-        0,
-        0,
-        0,
-      ],
+      border_color: [config.alpha_mask || config.mask || config.tint_alpha ? 1 : 0, 0, 0, 0],
       width,
       height,
       image_key,
@@ -1052,7 +1071,14 @@ export function button(label, config = {}) {
 
   const container = get_current_container();
   const rect = resolve_widget_rect(config, container, label);
-  const state = element_handle_input(container.root, rect.x, rect.y, rect.width, rect.height, config);
+  const state = element_handle_input(
+    container.root,
+    rect.x,
+    rect.y,
+    rect.width,
+    rect.height,
+    config
+  );
 
   const draw_config = {
     ...config,
@@ -1074,15 +1100,201 @@ export function button(label, config = {}) {
     container.z_order,
     container.depth
   );
-  push_text(config.text ?? label, container.root, rect.x, rect.y, rect.width, rect.height, {
-    text_align: center,
-    text_valign: middle,
-    ...config,
-  }, container.z_order, container.depth + container.root.layer_depth);
+  push_text(
+    config.text ?? label,
+    container.root,
+    rect.x,
+    rect.y,
+    rect.width,
+    rect.height,
+    {
+      text_align: center,
+      text_valign: middle,
+      ...config,
+    },
+    container.z_order,
+    container.depth + container.root.layer_depth
+  );
 
   child_container_layout_update(container, rect.x, rect.y, rect.width, rect.height);
 
   return state;
+}
+
+/**
+ * A clamped world-space horizontal slider.
+ *
+ * `mode: "bar"` maps the pointer onto the projected local x axis. `mode:
+ * "numeric"` presents the formatted number as the primary visual and scrubs from
+ * the drag-start value using horizontal screen-space motion.
+ *
+ * @param {number} value Current controlled value.
+ * @param {object} config Widget, range and style configuration.
+ * @returns {object} Interaction state including the current `value` and `changed`.
+ */
+export function slider(value, config = {}) {
+  config.widget_id = UI3DContext.get_unique_id();
+
+  const container = get_current_container();
+  const mode =
+    (config.mode ?? config.slider_type) === SliderMode.Numeric
+      ? SliderMode.Numeric
+      : SliderMode.Bar;
+  const rect_config = {
+    ...config,
+    width: config.width ?? container.width,
+    height: config.height ?? container.height,
+  };
+  const rect = resolve_widget_rect(rect_config, container);
+  const input = element_handle_input(container.root, rect.x, rect.y, rect.width, rect.height, {
+    ...config,
+    draggable: false,
+  });
+  const resolved = resolve_slider_value(value, config);
+  const interaction_id = `3d:${String(config.id ?? config.widget_id)}`;
+  const axis_start = input.bounds?.axis_start ?? {
+    x: input.bounds?.x ?? UIContext.input_state.x,
+    y: input.bounds?.y ?? UIContext.input_state.y,
+  };
+  const axis_end = input.bounds?.axis_end ?? {
+    x: (input.bounds?.x ?? UIContext.input_state.x) + (input.bounds?.width ?? 0),
+    y: input.bounds?.y ?? UIContext.input_state.y,
+  };
+  const interaction = update_slider_interaction({
+    state: UIContext.slider_state,
+    widget_id: interaction_id,
+    mode,
+    value: resolved.value,
+    resolved,
+    config,
+    pointer: UIContext.input_state,
+    hovered: input.hovered && !UIContext.drag_state.active,
+    axis_start,
+    axis_end,
+  });
+  if (interaction.active && UIContext.input_state.pressed) {
+    InputProvider.consume_action(InputKey.B_mouse_left);
+  }
+  const ratio = slider_ratio(interaction.value, resolved);
+  const display_text = format_slider_value(interaction.value, resolved, config);
+
+  const background_color =
+    interaction.active && config.active_color
+      ? config.active_color
+      : input.hovered && config.hover_color
+        ? config.hover_color
+        : (config.background_color ?? [0.145, 0.165, 0.19, 1]);
+  const draw_config = {
+    corner_radius: config.corner_radius ?? Math.min(rect.height * 0.25, 0.08),
+    ...config,
+    background_color,
+  };
+  push_quad(
+    container.root,
+    rect.x,
+    rect.y,
+    rect.width,
+    rect.height,
+    draw_config,
+    container.z_order,
+    container.depth
+  );
+
+  const track_padding = Math.max(
+    0,
+    Number(config.track_padding ?? (mode === SliderMode.Bar ? rect.height * 0.12 : 0))
+  );
+  const track_x = rect.x + track_padding;
+  const track_y = rect.y + track_padding;
+  const track_width = Math.max(0, rect.width - track_padding * 2);
+  const track_height = Math.max(0, rect.height - track_padding * 2);
+  const show_fill = mode === SliderMode.Bar || config.show_fill === true;
+  const content_depth = container.depth + container.root.layer_depth;
+
+  if (show_fill && track_width > 0 && track_height > 0 && ratio > 0) {
+    push_quad(
+      container.root,
+      track_x,
+      track_y,
+      track_width * ratio,
+      track_height,
+      {
+        ...config,
+        border: undefined,
+        border_color: undefined,
+        background_color: config.fill_color ?? [0.306, 0.667, 1, 1],
+        corner_radius: config.fill_corner_radius ?? draw_config.corner_radius,
+      },
+      container.z_order,
+      content_depth
+    );
+  }
+
+  if (mode === SliderMode.Bar && config.show_handle !== false && track_width > 0) {
+    const handle_width = Math.min(
+      track_width,
+      Math.max(0.001, Number(config.handle_width ?? rect.height * 0.28))
+    );
+    const handle_height = Math.max(
+      0.001,
+      Number(config.handle_height ?? Math.max(track_height, rect.height * 0.7))
+    );
+    const handle_x = Math.min(
+      track_x + track_width - handle_width,
+      Math.max(track_x, track_x + track_width * ratio - handle_width * 0.5)
+    );
+    const handle_y = rect.y + (rect.height - handle_height) * 0.5;
+    push_quad(
+      container.root,
+      handle_x,
+      handle_y,
+      handle_width,
+      handle_height,
+      {
+        ...config,
+        border: undefined,
+        border_color: undefined,
+        background_color: config.handle_color ?? [0.957, 0.969, 0.984, 1],
+        corner_radius: config.handle_corner_radius ?? handle_width * 0.5,
+      },
+      container.z_order,
+      content_depth + container.root.layer_depth
+    );
+  }
+
+  if (mode === SliderMode.Numeric || config.show_value === true) {
+    push_text(
+      display_text,
+      container.root,
+      rect.x,
+      rect.y,
+      rect.width,
+      rect.height,
+      {
+        text_align: center,
+        text_valign: middle,
+        text_color: [0.957, 0.969, 0.984, 1],
+        ...config,
+      },
+      container.z_order,
+      content_depth + container.root.layer_depth * 2
+    );
+  }
+
+  child_container_layout_update(container, rect.x, rect.y, rect.width, rect.height);
+
+  const result = {
+    ...input,
+    ...interaction,
+    ratio,
+    mode,
+    formatted_value: display_text,
+    dragged: interaction.active && UIContext.input_state.pressed,
+  };
+  if (result.changed) {
+    config.on_change?.(result.value, result);
+  }
+  return result;
 }
 
 export function label(text, config = {}) {
@@ -1134,7 +1346,13 @@ export function rect(config = {}) {
     container.z_order,
     container.depth
   );
-  child_container_layout_update(container, rect_data.x, rect_data.y, rect_data.width, rect_data.height);
+  child_container_layout_update(
+    container,
+    rect_data.x,
+    rect_data.y,
+    rect_data.width,
+    rect_data.height
+  );
 
   return element_handle_input(
     container.root,

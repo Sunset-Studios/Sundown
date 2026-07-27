@@ -1,28 +1,18 @@
 import { GIPipelineComposition } from "./gi_pipeline.js";
 import { ProbeVolumeRadianceCache } from "./radiance_caches.js";
+import {
+  clone_ddgi_config_value,
+  create_ddgi_config,
+  ddgi_config_change_requires_rebuild,
+  ddgi_config_values_equal,
+} from "./ddgi_config.js";
+
+export { DDGI_DEFAULT_CONFIG, create_ddgi_config } from "./ddgi_config.js";
 
 /** Scrolling cascaded probe-volume GI composition. */
 export class DDGI {
-  config = {
-    probe_grid_dimensions: [64, 64, 64],
-    probe_spacing: 1.0,
-    probe_radius: 0.1,
-    max_rays_per_probe: 64,
-    probes_per_frame: 1024,
-    indirect_boost: 1.0,
-    cascade_count: 6,
-    cascade_spacing_multiplier: 2.0,
-    probe_depth_resolutions: [16, 16, 16, 16, 16, 16],
-    probe_depth_slot_count: 65536,
-    probe_depth_slot_retention_frames: 120,
-    max_emissive_lights: 32768,
-    diffuse_sample_upscale_factor: 1,
-    diffuse_atrous_enabled: false,
-    diffuse_atrous_pass_count: 3,
-    diffuse_atrous_phi_depth: 0.04,
-    diffuse_atrous_phi_normal: 64.0,
-    diffuse_atrous_luma_sigma: 1.0,
-  };
+  config = create_ddgi_config();
+  config_resource_rebuild_pending = false;
 
   final_gi_texture_direct = null;
   final_gi_texture_indirect_diffuse = null;
@@ -66,11 +56,16 @@ export class DDGI {
       return;
     }
 
+    const config_rebuild_pending = this.config_resource_rebuild_pending;
+    const rebuild_resources = force_recreate || config_rebuild_pending;
+    if (config_rebuild_pending) {
+      this.radiance_cache.reset_runtime_state();
+    }
     this.pipeline.add_passes(render_graph, {
       config: this.config,
       width,
       height,
-      force_recreate,
+      force_recreate: rebuild_resources,
       inputs: {
         depth_texture,
         prev_depth_texture,
@@ -89,6 +84,7 @@ export class DDGI {
         hzb_texture,
       },
     });
+    this.config_resource_rebuild_pending = false;
 
     const radiance_cache = this.pipeline.get_module("probes");
     this.final_gi_texture_direct = radiance_cache.get_resource("direct_output");
@@ -121,7 +117,20 @@ export class DDGI {
   }
 
   set_config(new_config) {
-    this.config = { ...this.config, ...new_config };
+    let changed = false;
+    for (const [key, value] of Object.entries(new_config || {})) {
+      if (ddgi_config_values_equal(this.config[key], value)) {
+        continue;
+      }
+      this.config[key] = clone_ddgi_config_value(value);
+      this.config_resource_rebuild_pending ||= ddgi_config_change_requires_rebuild(key);
+      changed = true;
+    }
+    return changed;
+  }
+
+  reset_config() {
+    return this.set_config(create_ddgi_config());
   }
 
   reset() {

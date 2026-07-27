@@ -95,6 +95,13 @@ export class ProbeVolumeRadianceCache extends GIModule {
     this.depth_slot_signature = null;
   }
 
+  reset_runtime_state() {
+    this.snapped_origins = null;
+    this.scroll_offsets = null;
+    this.initialized = null;
+    this.depth_slot_signature = null;
+  }
+
   _setup_trace_resources(render_graph, context) {
     const config = context.config;
 

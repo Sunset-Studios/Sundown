@@ -1,9 +1,6 @@
 import { Renderer } from "../../renderer/renderer.js";
 import { InputProvider } from "../../input/input_provider.js";
-import {
-  InputRange,
-  InputKey,
-} from "../../input/input_types.js";
+import { InputRange, InputKey } from "../../input/input_types.js";
 import { SimulationLayer } from "../simulation_layer.js";
 import { UIContext, ImmediateUIUpdater } from "../../ui/2d/immediate.js";
 import { Immediate3DUIUpdater as UI3DUpdater } from "../../ui/3d/immediate.js";
@@ -41,6 +38,7 @@ export class UIProcessor extends SimulationLayer {
       UIContext.drag_state.started = false;
       UIContext.drag_state.widget_id = null;
       UIContext.drag_state.timer = 0;
+      UIContext.slider_state.active_widget_id = null;
     }
 
     UIContext.input_state.prev_x = UIContext.input_state.x;
@@ -59,21 +57,21 @@ export class UIProcessor extends SimulationLayer {
     this.processed_keys.clear();
 
     const keyboard_events = InputProvider.current_dirty_states;
-    
+
     for (let i = 0; i < keyboard_events.length; i++) {
       const key = keyboard_events[i].raw_input;
-      
+
       if (!this.processed_keys.has(key)) {
         const has_state = InputProvider.get_state(key);
         const has_action = InputProvider.get_action(key);
-        
+
         const new_key = UIContext.keyboard_events.allocate();
         new_key.key = key;
         new_key.first = has_action;
         new_key.held = has_state && !has_action;
         new_key.consumed = false;
         new_key.last_change_time = keyboard_events[i].last_change_time;
-        
+
         this.processed_keys.add(key);
       }
     }
@@ -84,7 +82,7 @@ export class UIProcessor extends SimulationLayer {
       UIContext.input_state.y,
       renderer.canvas.width,
       renderer.canvas.height,
-      1.0 
+      1.0
     );
     SharedFrameInfoBuffer.set_cursor_world_position(UIContext.input_state.world_position);
 
