@@ -9,7 +9,8 @@ import { profile_scope } from "../utility/performance.js";
 import { frame_runner } from "../utility/frame_runner.js";
 import { ProjectContext } from "./project_context.js";
 import { JobSystem } from "../utility/job_system.js";
-import { TextureStreamingSystem } from "../renderer/texture.js";
+import { StreamingSystem } from "../streaming/streaming_system.js";
+import { TextureStreamingProvider } from "../streaming/providers/texture_streaming_provider.js";
 
 import { ALL_FRAGMENT_CLASSES } from "./ecs/fragment_registry.js";
 
@@ -23,8 +24,14 @@ export class Simulator {
     InputProvider.setup();
     // Initialize job system
     JobSystem.install();
-    // Initialize texture streaming system
-    TextureStreamingSystem.install();
+    // Initialize shared streaming and its built-in graphics provider.
+    const streaming_system = StreamingSystem.install(SimulationCore);
+    TextureStreamingProvider.install(streaming_system);
+    for (const provider_definition of options.streaming?.providers ?? []) {
+      const provider = provider_definition.provider ?? provider_definition;
+      const provider_options = provider_definition.options ?? {};
+      streaming_system.register_provider(provider, provider_options);
+    }
     
     // Initialize renderer with document canvas
     const canvas = document.getElementById(gpu_canvas_name);

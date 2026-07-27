@@ -1,7 +1,10 @@
 import { Texture } from "../../renderer/texture.js";
 import { Buffer } from "../../renderer/buffer.js";
 import { Name } from "../../utility/names.js";
-import { read_file } from "../../utility/file_system.js";
+import {
+  deserialize_json,
+  read_file,
+} from "../../streaming/streaming_io.js";
 import { SquareAdjacencyMatrix } from "../../memory/container.js";
 
 const chars_key = "chars";
@@ -62,8 +65,12 @@ export class Font {
   }
 
   static create(font_data_file) {
-    const font_data = JSON.parse(read_file(font_data_file));
-    if (!font_data) return null;
+    const font_data_text = read_file(font_data_file);
+    if (!font_data_text) return null;
+    const font_data = deserialize_json(
+      font_data_text,
+      `Font data '${font_data_file}'`
+    );
 
     const last_sep_index = font_data_file.lastIndexOf(path_sep);
     const extension_index = font_data_file.lastIndexOf(extension_sep);

@@ -1,7 +1,10 @@
 import { Mesh } from "./mesh.js";
 import { MeshData, vertex_stride } from "./mesh_data.js";
 import { MeshoptClusterizer } from "meshoptimizer/clusterizer";
-import { read_file_async, read_file_bytes_async } from "../utility/file_system.js";
+import {
+  read_binary_manifest_async,
+  resolve_manifest_asset_path,
+} from "../streaming/streaming_io.js";
 import { pack_snorm4x8 } from "../utility/math.js";
 import {
   build_empty_meshlet_sections,
@@ -69,37 +72,39 @@ export function load_meshlet_sidecar_async(gltf_path) {
 
   const sidecar_promise = (async () => {
     const manifest_path = gltf_path.replace(/\.gltf$/i, ".meshlet.json");
-    const manifest_text = await read_file_async(manifest_path);
-    if (!manifest_text) {
-      return null;
-    }
-
     try {
-      const manifest = JSON.parse(manifest_text);
-      const base_path_index = manifest_path.lastIndexOf("/");
-      const base_path = base_path_index >= 0 ? manifest_path.slice(0, base_path_index + 1) : "";
-      const binary_path = manifest.binary
-        ? `${base_path}${manifest.binary}`
-        : gltf_path.replace(/\.gltf$/i, ".meshlet.bin");
-      const binary = await read_file_bytes_async(binary_path);
-      if (!(binary instanceof ArrayBuffer)) {
+      const bundle = await read_binary_manifest_async(manifest_path, {
+        label: "Meshlet sidecar",
+        optional: true,
+        resolve_binary_path: (manifest) =>
+          manifest.binary
+            ? resolve_manifest_asset_path(manifest_path, manifest.binary)
+            : gltf_path.replace(/\.gltf$/i, ".meshlet.bin"),
+      });
+      if (!bundle) {
         return null;
       }
 
       return {
-        manifest,
-        meshlet_view: new DataView(binary, manifest.sections.meshlets.offset),
+        manifest: bundle.manifest,
+        meshlet_view: new DataView(
+          bundle.binary,
+          bundle.manifest.sections.meshlets.offset
+        ),
         meshlet_vertices: new Uint32Array(
-          binary,
-          manifest.sections.meshletVertices.offset,
-          manifest.sections.meshletVertices.count
+          bundle.binary,
+          bundle.manifest.sections.meshletVertices.offset,
+          bundle.manifest.sections.meshletVertices.count
         ),
         meshlet_triangles: new Uint8Array(
-          binary,
-          manifest.sections.meshletTriangles.offset,
-          manifest.sections.meshletTriangles.count
+          bundle.binary,
+          bundle.manifest.sections.meshletTriangles.offset,
+          bundle.manifest.sections.meshletTriangles.count
         ),
-        meshlet_group_view: new DataView(binary, manifest.sections.meshletGroups.offset),
+        meshlet_group_view: new DataView(
+          bundle.binary,
+          bundle.manifest.sections.meshletGroups.offset
+        ),
       };
     } catch {
       return null;

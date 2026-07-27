@@ -1,4 +1,7 @@
-import { read_file_async, read_file_bytes_async } from "../utility/file_system.js";
+import {
+  read_binary_manifest_async,
+  resolve_manifest_asset_path,
+} from "../streaming/streaming_io.js";
 
 const sbvh_sidecar_promise_cache = new Map();
 
@@ -13,27 +16,15 @@ export function load_sbvh_sidecar_async(gltf_path) {
 
   const sidecar_promise = (async () => {
     const manifest_path = gltf_path.replace(/\.gltf$/i, ".sbvh.json");
-    const manifest_text = await read_file_async(manifest_path);
-    if (!manifest_text) {
-      return null;
-    }
-
     try {
-      const manifest = JSON.parse(manifest_text);
-      const base_path_index = manifest_path.lastIndexOf("/");
-      const base_path = base_path_index >= 0 ? manifest_path.slice(0, base_path_index + 1) : "";
-      const binary_path = manifest.binary
-        ? `${base_path}${manifest.binary}`
-        : gltf_path.replace(/\.gltf$/i, ".sbvh.bin");
-      const binary = await read_file_bytes_async(binary_path);
-      if (!(binary instanceof ArrayBuffer)) {
-        return null;
-      }
-
-      return {
-        manifest,
-        binary,
-      };
+      return await read_binary_manifest_async(manifest_path, {
+        label: "SBVH sidecar",
+        optional: true,
+        resolve_binary_path: (manifest) =>
+          manifest.binary
+            ? resolve_manifest_asset_path(manifest_path, manifest.binary)
+            : gltf_path.replace(/\.gltf$/i, ".sbvh.bin"),
+      });
     } catch {
       return null;
     }

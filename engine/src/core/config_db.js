@@ -1,4 +1,5 @@
 import { error } from "../utility/logging.js";
+import { serialize_json } from "../streaming/streaming_io.js";
 
 export class ConfigDB {
     static db_name = 'ConfigDatabase';
@@ -192,7 +193,7 @@ export class ConfigSync {
                 const response = await fetch('/sundown/dev/save-config', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ file_name, config }),
+                    body: serialize_json({ file_name, config }),
                 });
 
                 const result = await response.json();

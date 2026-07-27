@@ -1,4 +1,4 @@
-import { read_file_async, read_file_bytes_async } from "../utility/file_system.js";
+import { read_binary_manifest_async } from "../streaming/streaming_io.js";
 import { inflate } from "pako";
 import { error } from "../utility/logging.js";
 import {
@@ -143,51 +143,22 @@ export class ShaderArchive {
   }
 
   static async #load_archive(manifest_path, optional = false) {
-    const manifest_text = await read_file_async(manifest_path);
-    if (!manifest_text) {
-      if (optional) {
-        return null;
-      }
-
-      throw new Error(
-        `Cooked shader manifest '${manifest_path}' could not be loaded. Run the shader cook step before starting the renderer.`
-      );
+    const archive = await read_binary_manifest_async(manifest_path, {
+      label: "Cooked shader archive",
+      optional,
+      resolve_binary_path: (manifest) => manifest?.binaryAssetPath,
+    });
+    if (!archive) {
+      return null;
     }
 
-    let manifest = null;
-    try {
-      manifest = JSON.parse(manifest_text);
-    } catch (err) {
-      throw new Error(
-        `Cooked shader manifest '${manifest_path}' is not valid JSON: ${err?.message ?? err}`
-      );
-    }
-
-    const binary_path = manifest?.binaryAssetPath;
-    if (!binary_path) {
-      throw new Error(
-        `Cooked shader manifest '${manifest_path}' is missing its binary asset path.`
-      );
-    }
-
-    const binary = await read_file_bytes_async(binary_path);
-    if (!(binary instanceof ArrayBuffer)) {
-      throw new Error(
-        `Cooked shader binary '${binary_path}' could not be loaded. Run the shader cook step before starting the renderer.`
-      );
-    }
-
-    if (!manifest?.variants || typeof manifest.variants !== "object") {
+    if (!archive.manifest?.variants || typeof archive.manifest.variants !== "object") {
       throw new Error(
         `Cooked shader manifest '${manifest_path}' is missing its variant table.`
       );
     }
 
-    return {
-      manifest,
-      binary,
-      manifest_path,
-    };
+    return archive;
   }
 
   static #normalize_manifest_path(path) {

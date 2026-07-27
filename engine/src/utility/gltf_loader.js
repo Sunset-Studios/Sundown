@@ -1,5 +1,6 @@
 import { vec3, vec4, quat, mat4 } from "gl-matrix";
 import { log, error } from "./logging.js";
+import { deserialize_json } from "../streaming/streaming_io.js";
 
 var MinimalGLTFLoader = MinimalGLTFLoader || {};
 
@@ -970,7 +971,7 @@ glTFLoader.prototype.load = function (uri, callback) {
 
   _loadJSON(uri, function (response) {
     // Parse JSON string into object
-    var json = JSON.parse(response);
+    var json = deserialize_json(response, `glTF document '${uri}'`);
 
     loader.glTF = new glTFModel(json);
 

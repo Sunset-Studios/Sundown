@@ -86,7 +86,7 @@ import { Name } from "../utility/names.js";
 import { StaticIntArray } from "../memory/container.js";
 import { profile_scope } from "../utility/performance.js";
 import { GPUTimeQuery } from "./query.js";
-import { read_file } from "../utility/file_system.js";
+import { deserialize_json, read_file } from "../streaming/streaming_io.js";
 import { deep_clone } from "../utility/object.js";
 
 const max_image_resources = 1024;
@@ -943,7 +943,10 @@ export class RenderGraph {
   _init_pass_order_info() {
     const config_file = read_file("config/renderer.config.json");
     if (config_file) {
-      const config = JSON.parse(config_file);
+      const config = deserialize_json(
+        config_file,
+        "Renderer configuration"
+      );
       if (config.rg?.pass_order?.default) {
         ConfigDB.set_config_property(
           "renderer.config",

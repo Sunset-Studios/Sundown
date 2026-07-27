@@ -1,5 +1,8 @@
 import { Font } from "./font.js";
-import { read_file } from "../../utility/file_system.js";
+import {
+  deserialize_json,
+  read_file,
+} from "../../streaming/streaming_io.js";
 import { Name } from "../../utility/names.js";
 
 const json_extension = ".json";
@@ -60,9 +63,13 @@ export class FontCache {
    * @param {string} path - The path to the directory to scan
    */
   static scan_directory(path) {
-    const manifest = JSON.parse(read_file(`${path}/font_manifest.json`));
-
-    if (!manifest) return;
+    const manifest_path = `${path}/font_manifest.json`;
+    const manifest_text = read_file(manifest_path);
+    if (!manifest_text) return;
+    const manifest = deserialize_json(
+      manifest_text,
+      `Font manifest '${manifest_path}'`
+    );
 
     for (const entry of manifest.fonts) {
       if (this.is_valid_font_data_file(entry.path)) {
