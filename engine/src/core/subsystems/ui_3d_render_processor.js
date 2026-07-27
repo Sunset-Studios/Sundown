@@ -80,25 +80,6 @@ function vec4(value, fallback = [0, 0, 0, 0]) {
 }
 
 /**
- * Packs a vec3-style command vector into the vec4 fields used by the GPU-side UI
- * data buffer. The fourth channel acts as semantic padding: origins use `w = 1`,
- * axes use `w = 0`, mirroring common transform conventions.
- *
- * @param {ArrayLike<number>|undefined|null} value Vector-like input.
- * @param {number} w Fourth component to append.
- * @param {number[]} fallback Fallback xyz values.
- * @returns {number[]} Four numeric components for fragment assignment.
- */
-function vec3_as_vec4(value, w = 0, fallback = [0, 0, 0]) {
-  return [
-    Number(value?.[0] ?? fallback[0]),
-    Number(value?.[1] ?? fallback[1]),
-    Number(value?.[2] ?? fallback[2]),
-    w,
-  ];
-}
-
-/**
  * Detects commands that have opted into the extensible material path. Custom
  * materials are batched conservatively by default because two commands can share a
  * shader while still requiring different textures, buffers, or uniforms.

@@ -28,7 +28,6 @@ import { VisibilityBufferPipeline } from "../pipelines/visibility_buffer_pipelin
 import {
   RenderPassFlags,
   MaterialFamilyType,
-  MaterialPassType,
   DebugDrawType,
   GIStrategyType,
   AOStrategyType,

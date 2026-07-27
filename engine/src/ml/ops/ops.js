@@ -1152,15 +1152,3 @@ export class MLOpsCPU {
     return tensors;
   }
 }
-
-export class MLOpsGPU {
-  static gpu_impl = null;
-
-  static compile(store) {
-    this.gpu_impl.compile(store);
-  }
-
-  static run() {
-    return this.gpu_impl.run();
-  }
-}

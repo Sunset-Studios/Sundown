@@ -138,15 +138,6 @@ function get_graph_resource_type(handle) {
 }
 
 /**
- * Retrieves the version from a graph resource handle.
- * @param {number} handle - The handle of the graph resource.
- * @returns {number} The version of the graph resource.
- */
-function get_graph_resource_version(handle) {
-  return handle & RG_VERSION_MASK;
-}
-
-/**
  * Enumeration of resource types in the render graph.
  * @enum {number}
  */

@@ -23,7 +23,7 @@ import { spawn_mesh_entity, delete_entity } from "../engine/src/core/ecs/entity_
 import { TextureChannel } from "../engine/src/renderer/renderer_types.js";
 import { profile_scope } from "../engine/src/utility/performance.js";
 import { log } from "../engine/src/utility/logging.js";
-import { vec3, vec4, quat, mat4 } from "gl-matrix";
+import { vec3, vec4, quat } from "gl-matrix";
 
 import * as UI from "../engine/src/ui/2d/immediate.js";
 import * as UI3D from "../engine/src/ui/3d/immediate.js";
@@ -335,14 +335,14 @@ export class MLScene extends Scene {
         initializer: TensorInitializer.GLOROT,
       });
 
-      const output = this.mastermind.store.add_loss(
+      this.mastermind.store.add_loss(
         LayerType.MSE,
         false /* enabled_logging */,
         "sine_approximator",
         hidden2
       );
 
-      const context = this.mastermind.store.set_subnet_context(root, {
+      this.mastermind.store.set_subnet_context(root, {
         name: "sine_approximator",
         learning_rate: 0.01,
         weight_decay: 0.001,
@@ -392,7 +392,7 @@ export class MLScene extends Scene {
 
       const sigmoid = Layer.create(LayerType.SIGMOID, {}, hidden3);
 
-      const loss = Layer.create(
+      Layer.create(
         LayerType.MSE,
         { enable_logging: false, name: "xor_classifier" },
         sigmoid
@@ -2686,11 +2686,6 @@ export class SponzaScene extends Scene {
   sun_light_base_dir = [0, 0, 0];
   sun_light_intensity_on = 30.0;
   time_elapsed_sec = 0;
-  emissive_cube_entity = null;
-  emissive_cube_base_pos = [0, 0, 0];
-  emissive_cube_sway_enabled = false;
-  emissive_cube_sway_max_distance = 5.0;
-  emissive_cube_sway_period_sec = 15.0;
 
   init(parent_context) {
     super.init(parent_context);
@@ -2728,15 +2723,6 @@ export class SponzaScene extends Scene {
     ground_material.set_roughness(0.9);
     ground_material.set_metallic(0.8);
 
-    // White emissive material for cube
-    const emissive_white_material = StandardMaterial.create("sponza_emissive_white_material");
-    const emissive_white_material_id = emissive_white_material.material_id;
-    emissive_white_material.set_albedo([1, 1, 1, 1]);
-    emissive_white_material.set_emission(500.0);
-    emissive_white_material.set_metallic(0.2);
-    emissive_white_material.set_roughness(0.9);
-    emissive_white_material.set_specular(0.5);
-
     const cube_mesh = Mesh.cube();
     const ground_entity = spawn_mesh_entity(
       [0, 0, 0],
@@ -2747,20 +2733,7 @@ export class SponzaScene extends Scene {
     );
     this.entities.push(ground_entity);
 
-    // Emissive white cube in center of Sponza atrium
-    // const emissive_cube_spawn_pos = [0.0, 10.0, -0.25];
-    // const emissive_cube = spawn_mesh_entity(
-    //   emissive_cube_spawn_pos,
-    //   quat.fromEuler(quat.create(), 0, 0, 0),
-    //   [0.25, 0.25, 0.25],
-    //   cube_mesh,
-    //   emissive_white_material_id
-    // );
-    // this.entities.push(emissive_cube);
-    // this.emissive_cube_entity = emissive_cube;
-    // this.emissive_cube_base_pos = [...emissive_cube_spawn_pos];
-
-    let root_entity = this.load_gltf_scene(
+    const root_entity = this.load_gltf_scene(
       "engine/models/sponza/Sponza.gltf",
       [0, 2.5, 0],
       [0, 0, 0, 1],
@@ -2809,24 +2782,6 @@ export class SponzaScene extends Scene {
       }
     }
 
-    if (
-      this.emissive_cube_sway_enabled &&
-      this.emissive_cube_entity &&
-      this.emissive_cube_sway_period_sec > 0.0
-    ) {
-      const two_pi = Math.PI * 2.0;
-      const phase = (this.time_elapsed_sec / this.emissive_cube_sway_period_sec) * two_pi;
-      const x_offset = Math.sin(phase) * this.emissive_cube_sway_max_distance;
-
-      const cube_x = this.emissive_cube_base_pos[0] + x_offset;
-      const cube_y = this.emissive_cube_base_pos[1];
-      const cube_z = this.emissive_cube_base_pos[2];
-
-      const cube_tf = EntityManager.get_fragment(this.emissive_cube_entity, TransformFragment);
-      if (cube_tf) {
-        cube_tf.position = [cube_x, cube_y, cube_z];
-      }
-    }
   }
 
   cleanup() {

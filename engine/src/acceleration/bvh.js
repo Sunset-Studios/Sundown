@@ -19,7 +19,6 @@
 //
 // ═══════════════════════════════════════════════════════════════════════════════════════════════
 
-import { Renderer } from "../renderer/renderer.js";
 import { Buffer } from "../renderer/buffer.js";
 import { Chunk } from "../core/ecs/solar/chunk.js";
 import { DEFAULT_CHUNK_CAPACITY } from "../core/ecs/solar/types.js";

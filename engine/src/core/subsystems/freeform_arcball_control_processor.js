@@ -1,4 +1,3 @@
-import { Renderer } from '../../renderer/renderer.js'; 
 import { SimulationLayer } from '../simulation_layer.js';
 import { SharedViewBuffer } from '../shared_data.js';
 import { InputProvider } from '../../input/input_provider.js';
@@ -18,12 +17,8 @@ export class FreeformArcballControlProcessor extends SimulationLayer {
     orbit_distance = 10; // Fixed distance from pivot point
     scene = null;
 
-    init() {
-        super.init();
-    }
-
     cleanup() {
-        scene = null;
+        this.scene = null;
         super.cleanup();
     }
 

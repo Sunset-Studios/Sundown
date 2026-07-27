@@ -6,7 +6,6 @@ import SimulationCore from "../core/simulation_core.js";
 const undefined_string = "undefined";
 const function_string = "function";
 const could_not_deserialize_error_string = "Worker job message could not be deserialized";
-const worker_job_system_not_supported_error_string = "Worker job system is not supported in this environment";
 const worker_job_failed_error_string = "Worker job failed";
 const job_cancelled_error_string = "Job cancelled";
 const job_system_shutdown_error_string = "Job system shutdown";

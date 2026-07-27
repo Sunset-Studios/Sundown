@@ -1,7 +1,3 @@
-export const ModelType = Object.freeze({
-  NEURAL: 0,
-});
-
 export const OptimizerType = Object.freeze({
   ADAM: 0,
   SGD: 1,

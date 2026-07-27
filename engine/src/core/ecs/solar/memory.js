@@ -4,7 +4,7 @@ import { Renderer } from "../../../renderer/renderer.js";
 import { Buffer, BufferSync } from "../../../renderer/buffer.js";
 import { npot } from "../../../utility/math.js";
 import { Name } from "../../../utility/names.js";
-import { log, warn, error } from "../../../utility/logging.js";
+import { warn, error } from "../../../utility/logging.js";
 
 const unmapped_state = "unmapped";
 const index_map_buffer_name = "entity_index_map";

@@ -1026,31 +1026,4 @@ export class MLOpStore {
   is_empty() {
     return this.ops.length === 0 && this.hops.length === 0;
   }
-  
-  export_to_json() {
-    if (this.transient) return;
-    // TODO: Implement
-  }
-
-  export_to_onnx() {
-    if (this.transient) return;
-    // TODO: Implement
-  }
-  
-  static import_from_json(json_string) {
-    // TODO: Implement
-    return new MLOpStore();
-  }
-
-  static import_from_onnx(onnx_model) {
-    // TODO: Implement
-    return new MLOpStore();
-  }
-}
-
-// Base class for observers that want to be notified of model changes
-export class OpsObserver {
-  on_ops_changed(store, op) {
-    // To be implemented by concrete observers
-  }
 }

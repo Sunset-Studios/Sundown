@@ -19,7 +19,7 @@ import { Sigmoid } from "./layers/sigmoid.js";
 import { Softmax } from "./layers/softmax.js";
 
 import { deep_clone } from "../utility/object.js";
-import { log, warn, error } from "../utility/logging.js";
+import { log, warn } from "../utility/logging.js";
 
 /**
  * Data structure for layer properties

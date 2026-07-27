@@ -1,10 +1,3 @@
-export function write_file(file_path, content) {
-    const url = new URL(`${file_path}`, window.location.href);
-    const xhr = new XMLHttpRequest();
-    xhr.open('PUT', url.href, false);
-    xhr.send(content);
-}
-
 export function read_file(file_path) {
     let asset = null;
     try {
@@ -27,24 +20,6 @@ export function read_file(file_path) {
         }
     } catch (error) {
         // Network error or other issues, continue silently. Let caller handle null asset return. 
-    }
-    return asset;
-}
-
-export function read_file_bytes(file_path) {
-    let asset = null;
-    try {
-        const url = new URL(`${file_path}`, window.location.href);
-        const xhr = new XMLHttpRequest();
-        xhr.open('GET', url.href, false);
-        xhr.responseType = 'arraybuffer';
-        xhr.send(null);
-
-        if (xhr.status === 200 && xhr.response instanceof ArrayBuffer) {
-            asset = xhr.response;
-        }
-    } catch (error) {
-        // Network error or other issues, continue silently. Let caller handle null asset return.
     }
     return asset;
 }

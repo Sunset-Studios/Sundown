@@ -1,4 +1,3 @@
-import { Renderer } from "../../renderer/renderer.js";
 import { Font } from "./font.js";
 import { read_file } from "../../utility/file_system.js";
 import { Name } from "../../utility/names.js";

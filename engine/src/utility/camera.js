@@ -1,5 +1,5 @@
 import { vec3, vec4 } from 'gl-matrix';
-import { log, warn, error } from "./logging.js";
+import { warn } from "./logging.js";
 
 export function screen_pos_to_world_pos(view_data, screen_x, screen_y, width, height, depth = 0) {
     // Convert screen coordinates to clip space

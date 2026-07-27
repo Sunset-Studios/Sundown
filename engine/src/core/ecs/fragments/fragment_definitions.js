@@ -152,8 +152,6 @@ const TransformFragment = {
   imports: {
     EntityFlags: "../../minimal.js",
     EntityManager: "../entity.js",
-    DEFAULT_CHUNK_CAPACITY: "../solar/types.js",
-    BVH: "../../../acceleration/bvh.js",
   },
   members: {
     dirty_entities: "new Set()",

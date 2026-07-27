@@ -2,10 +2,8 @@
   "name": "sundown",
   "version": "1.0.0",
   "description": "A WebGPU game engine for fun and games.",
-  "main": "dist/electron/main/index.js",
   "type": "module",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
     "cook": "node tools/fragment_preprocessor.js && node tools/shader_preprocessor.js && node tools/meshlet_preprocessor.js && node tools/sbvh_preprocessor.js && node tools/msdf_font_generator.js",
     "predev": "npm run cook",
     "dev": "node tools/dev_server.js",
@@ -17,25 +15,6 @@
     "buildtop": "vite build && tauri build",
     "premake": "npm run cook",
     "make": "vite build && tauri build && tauri package"
-  },
-  "build": {
-    "appId": "com.sunsetstudios.sundown",
-    "mac": {
-      "category": "simulation"
-    },
-    "win": {
-      "target": [
-        "nsis",
-        "msi"
-      ]
-    },
-    "linux": {
-      "target": [
-        "deb",
-        "rpm",
-        "AppImage"
-      ]
-    }
   },
   "keywords": [
     "WebGPU",
@@ -49,15 +28,15 @@
   "author": "Adrian Sanchez",
   "license": "MIT",
   "dependencies": {
-    "gl-matrix": "^3.4.3",
-    "vite": "^6.3.5",
-    "wgsl_reflect": "^1.0.8",
-    "meshoptimizer": "^1.0.1"
+    "gl-matrix": "^3.4.3"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2",
     "express": "^4.21.2",
+    "meshoptimizer": "^1.0.1",
     "msdf-bmfont-xml": "^2.5.4",
-    "prettier": "^3.3.3"
+    "prettier": "^3.3.3",
+    "vite": "^6.3.5",
+    "wgsl_reflect": "^1.0.8"
   }
 }

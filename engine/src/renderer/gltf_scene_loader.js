@@ -2,8 +2,6 @@ import { glTFLoader } from "../utility/gltf_loader.js";
 import { Mesh } from "./mesh.js";
 import { vec3, quat, mat4 } from "gl-matrix";
 import { spawn_mesh_entity, spawn_transform_entity } from "../core/ecs/entity_utils.js";
-import { EntityManager } from "../core/ecs/entity.js";
-import { TransformFragment } from "../core/ecs/fragments/transform_fragment.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // GLTF Scene Loader

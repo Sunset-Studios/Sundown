@@ -4,8 +4,6 @@ import { RingBufferAllocator } from "../../../memory/allocator.js";
 import { Name } from "../../../utility/names.js";
 import { EntityFlags } from "../../minimal.js";
 import { EntityManager } from "../entity.js";
-import { DEFAULT_CHUNK_CAPACITY } from "../solar/types.js";
-import { BVH } from "../../../acceleration/bvh.js";
 
 /**
  * The Transform fragment class.

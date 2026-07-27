@@ -1,6 +1,5 @@
 import { Renderer } from "../renderer/renderer.js";
 import { Buffer } from "../renderer/buffer.js";
-import { BufferFlags } from "../renderer/renderer_types.js";
 import { Texture } from "../renderer/texture.js";
 import { RingBufferAllocator } from "../memory/allocator.js";
 import { ResizableBitArray, TypedStack } from "../memory/container.js";

@@ -4,8 +4,6 @@ import { TransformFragment } from "./fragments/transform_fragment.js";
 import { StaticMeshFragment } from "./fragments/static_mesh_fragment.js";
 import { VisibilityFragment } from "./fragments/visibility_fragment.js";
 import { Name } from "../../utility/names.js";
-import { EntityID } from "./solar/types.js";
-import { TypedVector } from "../../memory/container.js";
 import { MeshData } from "../../renderer/mesh_data.js";
 import { WORLD_FORWARD, EntityFlags } from "../../core/minimal.js";
 import { quat } from "gl-matrix";
@@ -146,16 +144,6 @@ export function spawn_plane_entity(
 }
 
 /**
- * Returns the parent entity of the specified entity.
- *
- * @param {EntityID} entity - The entity to get the parent of.
- * @returns {EntityID} The parent entity of the specified entity.
- */
-export function get_entity_parent(entity) {
-  return EntityManager.get_entity_parent(entity);
-}
-
-/**
  * Returns the children entities of the specified entity.
  *
  * @param {EntityID} entity - The entity to get the children of.
@@ -179,38 +167,4 @@ export function delete_entity(entity, delete_children = false) {
       delete_entity(children[i], delete_children);
     }
   }
-}
-
-/**
- * Deletes all children entities of the specified entity that have the specified tag.
- *
- * @param {EntityID} entity - The entity to delete the children of.
- * @param {Tag} tag - The tag of the children entities to delete.
- */
-export function delete_entity_children_with_tag(entity, tag) {
-  const children = EntityManager.get_entity_children(entity);
-  for (let i = 0; i < children.length; i++) {
-    const child = children[i];
-    if (EntityManager.has_tag(child, tag)) {
-      delete_entity(child);
-    }
-  }
-}
-
-/**
- * Returns all entity rows of the specified entity.
- *
- * @param {EntityID} entity - The entity handle to get the rows of.
- * @returns {EntityID[]} The rows of the specified entity, taken from all segments.
- */
-const entity_rows = new TypedVector(1024, 0, Uint32Array);
-export function get_all_entity_rows(entity) {
-  entity_rows.clear();
-  for (let i = 0; i < entity.segments.length; i++) {
-    const segment = entity.segments[i];
-    for (let j = 0; j < segment.count; j++) {
-      rows.push(EntityID.make_row_field(segment.slot + j, segment.chunk.chunk_index));
-    }
-  }
-  return rows;
 }

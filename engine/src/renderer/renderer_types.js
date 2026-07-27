@@ -97,15 +97,6 @@ export const BufferFlags = Object.freeze({
 });
 
 /**
- * Index of bindless group for image resources.
- * @enum {number}
- */
-export const BindlessGroupIndex = Object.freeze({
-  Image: 0,
-  StorageImage: 1,
-});
-
-/**
  * Types of bind groups in the render graph.
  * @enum {number}
  */

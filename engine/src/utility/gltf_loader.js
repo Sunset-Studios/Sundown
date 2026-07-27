@@ -1,5 +1,5 @@
 import { vec3, vec4, quat, mat4 } from "gl-matrix";
-import { log, warn, error } from "./logging.js";
+import { log, error } from "./logging.js";
 
 var MinimalGLTFLoader = MinimalGLTFLoader || {};
 
@@ -1203,15 +1203,6 @@ glTFLoader.prototype._postprocess = function () {
       }
     }
   }
-};
-
-// TODO: get from gl context
-var ComponentType2ByteSize = {
-  5120: 1, // BYTE
-  5121: 1, // UNSIGNED_BYTE
-  5122: 2, // SHORT
-  5123: 2, // UNSIGNED_SHORT
-  5126: 4, // FLOAT
 };
 
 export var Type2NumOfComponent = {

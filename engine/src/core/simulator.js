@@ -5,7 +5,6 @@ import { Renderer } from "../renderer/renderer.js";
 import { BufferSync } from "../renderer/buffer.js";
 import { DeferredShadingStrategy } from "../renderer/strategies/deferred_shading.js";
 import { InputProvider } from "../input/input_provider.js";
-import { MetaSystem } from "../meta/meta_system.js";
 import { profile_scope } from "../utility/performance.js";
 import { frame_runner } from "../utility/frame_runner.js";
 import { ProjectContext } from "./project_context.js";
@@ -22,8 +21,6 @@ export class Simulator {
     ProjectContext.configure(options.project);
     // Initialize input provider
     InputProvider.setup();
-    // Initialize meta system
-    MetaSystem.setup();
     // Initialize job system
     JobSystem.install();
     // Initialize texture streaming system

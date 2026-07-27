@@ -47,18 +47,10 @@ export function get_project_shader_root_asset_path(project_root) {
   return `${normalized_project_root}/shaders`;
 }
 
-export function get_project_shader_manifest_asset_path(project_root) {
-  return build_shader_archive_asset_path(shader_archive_manifest_name, get_project_shader_root_asset_path(project_root));
-}
-
 export function get_project_source_root(project_root) {
   return normalize_path_segment(project_root);
 }
 
 export const shader_archive_manifest_asset_path = build_shader_archive_asset_path(
   shader_archive_manifest_name
-);
-
-export const shader_archive_binary_asset_path = build_shader_archive_asset_path(
-  shader_archive_binary_name
 );

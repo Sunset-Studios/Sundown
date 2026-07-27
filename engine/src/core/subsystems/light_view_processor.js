@@ -145,12 +145,6 @@ export class LightViewProcessor extends SimulationLayer {
           lights.position[slot * 4 + 2],
           1.0,
         ];
-        const light_direction = [
-          lights.direction[slot * 4 + 0],
-          lights.direction[slot * 4 + 1],
-          lights.direction[slot * 4 + 2],
-          lights.direction[slot * 4 + 3],
-        ];
 
         const light_view = SharedViewBuffer.get_view_data(view_index);
 

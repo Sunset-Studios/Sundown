@@ -1,4 +1,3 @@
-import { EntityManager } from "./ecs/entity.js";
 import { SimulationLayer } from "./simulation_layer.js";
 import { DevConsole } from "../tools/dev_console.js";
 import { GLTFSceneLoader } from "../renderer/gltf_scene_loader.js";

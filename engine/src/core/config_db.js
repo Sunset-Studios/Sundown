@@ -1,4 +1,4 @@
-import { log, warn, error } from "../utility/logging.js";
+import { error } from "../utility/logging.js";
 
 export class ConfigDB {
     static db_name = 'ConfigDatabase';
