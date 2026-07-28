@@ -1495,6 +1495,172 @@ export function slider(value, config = {}) {
 }
 
 /**
+ * A compact row of numeric sliders for vector-like values.
+ *
+ * The helper owns the common label/component/slider layout while allowing each
+ * layer to be styled independently through config objects. Component changes are
+ * only committed by the actively scrubbed slider, avoiding idle quantization from
+ * overwriting neighboring values.
+ *
+ * @param {ArrayLike<number>} value Current vector value.
+ * @param {object} config Vector field configuration. Supports id, label,
+ *   components, on_change, group_config, label_config, row_config,
+ *   component_config(s), component_label_config/styles, slider_config and
+ *   component_slider_configs.
+ * @returns {object} Interaction state with { value, changed, changed_index, active, components }.
+ *
+ * @example
+ * const result = vector_field(direction, {
+ *   id: "light.direction",
+ *   label: "Direction",
+ *   components: ["X", "Y", "Z"],
+ *   slider_config: { min: -1, max: 1, step: 0.01, precision: 2 },
+ * });
+ * if (result.changed) direction = result.value;
+ */
+export function vector_field(value, config = {}) {
+  const source_value = Array.from(value ?? [], Number);
+  const default_components = ["X", "Y", "Z", "W"];
+  const component_labels = config.components ?? default_components.slice(0, source_value.length);
+  const component_count = Math.min(source_value.length, component_labels.length);
+  const next_value = source_value.slice();
+  const component_states = [];
+  const vector_id = String(config.id ?? `vector_field.${UIContext.id_counter}`);
+  const has_label = config.label !== undefined && config.label !== null && config.label !== "";
+  let changed = false;
+  let changed_index = -1;
+
+  const group_config = {
+    layout: "column",
+    gap: 4,
+    width: "100%",
+    height: has_label ? 52 : 30,
+    x: 0,
+    y: 0,
+    ...(config.group_config ?? {}),
+  };
+  const label_config = {
+    width: "100%",
+    height: 18,
+    x: 0,
+    y: 0,
+    font: "600 10px monospace",
+    text_color: "#8d9aa5",
+    text_align: "left",
+    text_valign: "middle",
+    text_padding: 2,
+    ...(config.label_config ?? {}),
+  };
+  const row_config = {
+    layout: "row",
+    gap: 6,
+    width: "100%",
+    height: 30,
+    x: 0,
+    y: 0,
+    ...(config.row_config ?? {}),
+  };
+
+  panel(group_config, () => {
+    if (has_label) {
+      label(String(config.label), label_config);
+    }
+
+    panel(row_config, () => {
+      const row_index = UIContext.layout_stack.peek();
+      const row_container = UIContext.layout_allocator.get(row_index.value);
+      const available_width = Math.max(0, row_container.width);
+      const component_gap = row_container.gap;
+      const default_component_width =
+        component_count > 0
+          ? Math.max(0, (available_width - component_gap * (component_count - 1)) / component_count)
+          : 0;
+
+      for (let index = 0; index < component_count; index++) {
+        const component_override = config.component_configs?.[index] ?? {};
+        const configured_component_width =
+          component_override.width ?? config.component_config?.width;
+        const component_width =
+          configured_component_width !== undefined
+            ? parse_dimension(configured_component_width, available_width)
+            : default_component_width;
+        const component_config = {
+          layout: "row",
+          gap: 0,
+          width: component_width,
+          height: row_container.height,
+          x: 0,
+          y: 0,
+          background_color: "rgba(255, 255, 255, 0.04)",
+          border: "1px solid rgba(255, 255, 255, 0.08)",
+          corner_radius: 5,
+          ...(config.component_config ?? {}),
+          ...component_override,
+          width: component_width,
+        };
+        const component_label_config = {
+          width: 24,
+          height: row_container.height,
+          x: 0,
+          y: 0,
+          font: "700 11px monospace",
+          text_color: "#aebbc5",
+          text_align: "center",
+          text_valign: "middle",
+          ...(config.component_label_config ?? {}),
+          ...(config.component_label_styles?.[index] ?? {}),
+        };
+        const component_label_width = parse_dimension(
+          component_label_config.width,
+          component_width
+        );
+        const component_slider_override = config.component_slider_configs?.[index] ?? {};
+        const component_slider_config = {
+          width: Math.max(0, component_width - component_label_width),
+          height: row_container.height,
+          x: 0,
+          y: 0,
+          mode: SliderMode.Numeric,
+          background_color: "rgba(255, 255, 255, 0.05)",
+          hover_color: "rgba(78, 170, 255, 0.14)",
+          active_color: "rgba(78, 170, 255, 0.22)",
+          text_color: "#f4f7fb",
+          font: "11px monospace",
+          corner_radius: 4,
+          ...(config.slider_config ?? {}),
+          ...component_slider_override,
+          id: `${vector_id}.${String(component_labels[index]).toLowerCase()}`,
+        };
+
+        panel(component_config, () => {
+          label(String(component_labels[index]), component_label_config);
+          const state = slider(source_value[index], component_slider_config);
+          component_states.push(state);
+
+          if (state.active && state.changed) {
+            next_value[index] = state.value;
+            changed = true;
+            changed_index = index;
+          }
+        });
+      }
+    });
+  });
+
+  const result = {
+    value: next_value,
+    changed,
+    changed_index,
+    active: component_states.some((state) => state.active),
+    components: component_states,
+  };
+  if (changed) {
+    config.on_change?.(next_value, changed_index, result);
+  }
+  return result;
+}
+
+/**
  * Label widget.
  * Simply draws text using the provided config.
  *
