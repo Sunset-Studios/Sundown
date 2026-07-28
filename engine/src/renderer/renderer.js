@@ -649,6 +649,13 @@ export class Renderer {
   }
 
   /**
+   * Returns namespaced scene-data handlers owned by the active strategy.
+   */
+  get_scene_data_handlers() {
+    return this.render_strategy?.get_scene_data_handlers?.() ?? [];
+  }
+
+  /**
    * Get the maximum number of bind groups
    * @returns {number} - The maximum number of bind groups
    */

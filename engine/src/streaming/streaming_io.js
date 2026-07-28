@@ -111,6 +111,41 @@ export async function read_file_bytes_async(file_path, options = {}) {
   return await response.arrayBuffer();
 }
 
+export async function read_file_range_async(file_path, start, end, options = {}) {
+  const range_start = Math.max(0, Math.floor(Number(start)));
+  const range_end = Math.max(range_start, Math.floor(Number(end)));
+  const fetch_options = options.fetch_options ?? {};
+  const headers = new Headers(fetch_options.headers ?? {});
+  headers.set("Range", `bytes=${range_start}-${range_end}`);
+
+  const response = await fetch_resource(file_path, {
+    ...options,
+    fetch_options: {
+      ...fetch_options,
+      headers,
+    },
+  });
+  if (!response || is_html_content_type(response.headers.get("content-type"))) {
+    return null;
+  }
+
+  const payload = new Uint8Array(await response.arrayBuffer());
+  const expected_byte_length = range_end - range_start + 1;
+  if (response.status === 206) {
+    if (payload.byteLength !== expected_byte_length) {
+      throw new Error(
+        `Range '${range_start}-${range_end}' from '${file_path}' returned ${payload.byteLength} bytes; ${expected_byte_length} were expected.`
+      );
+    }
+    return payload;
+  }
+
+  if (payload.byteLength < range_end + 1) {
+    throw new Error(`Asset '${file_path}' does not contain range '${range_start}-${range_end}'.`);
+  }
+  return payload.slice(range_start, range_end + 1);
+}
+
 export async function read_json_async(file_path, options = {}) {
   const text = await read_file_async(file_path, options);
   if (text === null) {

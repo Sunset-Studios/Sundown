@@ -17,21 +17,36 @@ import { UI3DRenderProcessor } from "./subsystems/ui_3d_render_processor.js";
 import { UIProcessor } from "./subsystems/ui_processor.js";
 import { SharedViewBuffer, SharedFrameInfoBuffer } from "./shared_data.js";
 import { Renderer } from "../renderer/renderer.js";
+import { ProjectContext } from "./project_context.js";
+import { SceneDataLoader } from "../streaming/scene_data_loader.js";
+import { error } from "../utility/logging.js";
 
 export class Scene extends SimulationLayer {
   name = "";
+  scene_data_loader = null;
+  scene_data_ready = Promise.resolve(null);
   dev_cursor_enabled = true;
   dev_cursor_visible = false;
 
   constructor(name) {
     super();
-    this.name = name;
+    this.name = String(name || this.constructor.name);
   }
 
   init() {
     super.init();
 
     Renderer.get().set_scene_id(this.name);
+    this.scene_data_loader = new SceneDataLoader(this.name, {
+      project: ProjectContext.get_active(),
+    });
+    this.scene_data_loader.connect_handlers(Renderer.get().get_scene_data_handlers());
+    this.scene_data_ready = this.scene_data_loader.load({
+      optional: true,
+    });
+    void this.scene_data_ready.catch((scene_data_error) => {
+      error(`Failed to load scene data for '${this.name}':`, scene_data_error);
+    });
 
     const view = SharedViewBuffer.add_view_data();
     view.renderable_state = 1;
@@ -45,12 +60,41 @@ export class Scene extends SimulationLayer {
   }
 
   cleanup() {
+    this.scene_data_loader?.dispose();
+    this.scene_data_loader = null;
+    this.scene_data_ready = Promise.resolve(null);
+
     SharedViewBuffer.remove_view_data(this.context.current_view);
     this.context.current_view = null;
 
     this.teardown_default_subsystems();
 
     super.cleanup();
+  }
+
+  when_scene_data_ready() {
+    return this.scene_data_ready;
+  }
+
+  register_scene_data_handler(handler) {
+    if (!this.scene_data_loader) {
+      throw new Error(
+        `Scene data handlers for '${this.name}' can only be registered while the scene is active.`
+      );
+    }
+    return this.scene_data_loader.register_handler(handler);
+  }
+
+  async save_scene_data(options = {}) {
+    const scene_data_loader = this.scene_data_loader;
+    if (!scene_data_loader) {
+      throw new Error(`Scene data for '${this.name}' is unavailable before init or after cleanup.`);
+    }
+    await this.scene_data_ready;
+    if (scene_data_loader !== this.scene_data_loader) {
+      throw new Error(`Scene '${this.name}' was unloaded before its data could be saved.`);
+    }
+    return await scene_data_loader.save_to_disk(options);
   }
 
   update(delta_time) {
@@ -98,7 +142,7 @@ export class Scene extends SimulationLayer {
     this.remove_layer(LightViewProcessor);
     this.remove_layer(ViewProcessor);
   }
-  
+
   _update_dev_cursor() {
     if (!this.dev_cursor_enabled || !this.dev_cursor_visible) return;
 

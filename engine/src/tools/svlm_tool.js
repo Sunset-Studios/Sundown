@@ -6,52 +6,173 @@ import { InputProvider } from "../input/input_provider.js";
 import { InputKey } from "../input/input_types.js";
 import { panel, label } from "../ui/2d/immediate.js";
 import { bytes_to_mb } from "../utility/math.js";
-import { log, format_number, format_vec3 } from "../utility/logging.js";
+import { error, log, format_number } from "../utility/logging.js";
 import { DevConsoleTool } from "./dev_console_tool.js";
+
+const accent = "#72e3c2";
+const accent_soft = "rgba(114, 227, 194, 0.16)";
+const secondary_accent = "#8ea7ff";
+const panel_surface = "rgba(8, 13, 18, 0.94)";
+const row_surface = "rgba(255, 255, 255, 0.035)";
+const track_surface = "rgba(2, 7, 11, 0.82)";
+const body_text = "#d8e5e8";
+const subdued_text = "#81959b";
+const warning = "#ffca72";
+const danger = "#ff7d8c";
 
 const stats_panel_config = {
   layout: "column",
-  gap: 4,
-  y: 25,
-  x: 25,
+  gap: 6,
+  y: 24,
+  x: 24,
   anchor_x: "right",
   dont_consume_cursor_events: true,
-  background_color: "rgba(0, 0, 0, 0.72)",
-  width: 560,
-  padding: 10,
-  border: "1px solid rgb(68, 68, 68)",
-  corner_radius: 5,
+  background_color: panel_surface,
+  width: 640,
+  padding: 14,
+  border: "1px solid rgba(114, 227, 194, 0.24)",
+  corner_radius: 9,
+  box_shadow: "0 14px 36px rgba(0, 0, 0, 0.48)",
 };
 
 const stats_label_config = {
-  text_color: "#fff",
+  text_color: body_text,
   wrap: true,
-  font: "15px monospace",
+  font: "13px monospace",
   width: "100%",
   height: "fit-content",
   text_valign: "middle",
   text_align: "left",
-  text_padding: 5,
+  text_padding: 4,
 };
 
-const stats_label_config_small = {
-  ...stats_label_config,
-  width: "fit-content",
-  x: 0,
-};
+function metric_card(label_text, value_text) {
+  panel(
+    {
+      layout: "row",
+      gap: 6,
+      width: 302,
+      height: 31,
+      x: 0,
+      padding_left: 8,
+      padding_right: 8,
+      background_color: row_surface,
+      corner_radius: 4,
+    },
+    () => {
+      label(label_text, {
+        width: 120,
+        height: "100%",
+        x: 0,
+        font: "11px monospace",
+        text_color: subdued_text,
+        text_align: "left",
+        text_valign: "middle",
+      });
+      label(value_text, {
+        width: 160,
+        height: "100%",
+        x: 0,
+        font: "11px monospace",
+        text_color: accent,
+        text_align: "right",
+        text_valign: "middle",
+      });
+    }
+  );
+}
 
-const value_label_config = {
-  ...stats_label_config,
-  text_color: "#75e0b8",
-  width: "fit-content",
-  x: 0,
-};
+function metric_pair(left_label, left_value, right_label, right_value) {
+  panel(
+    {
+      layout: "row",
+      gap: 8,
+      width: "100%",
+      height: 31,
+      x: 0,
+    },
+    () => {
+      metric_card(left_label, left_value);
+      metric_card(right_label, right_value);
+    }
+  );
+}
 
-function stat_row(label_text, value_text, value_config = value_label_config) {
-  panel({ layout: "row", gap: 4, width: "100%", height: 25, anchor_x: "left", x: 0 }, () => {
-    label(`${label_text}:`, stats_label_config_small);
-    label(value_text, value_config);
+function section_header(title) {
+  label(title.toUpperCase(), {
+    width: "100%",
+    height: 21,
+    x: 0,
+    font: "11px monospace",
+    text_color: accent,
+    text_align: "left",
+    text_valign: "middle",
+    text_padding: 3,
   });
+}
+
+function progress_row(label_text, progress, detail_text, color = accent) {
+  const determinate = Number.isFinite(progress);
+  const clamped_progress = determinate ? Math.max(0, Math.min(1, progress)) : 0;
+  const pulse = ((Date.now() % 1800) / 1800) * 0.72;
+  const fill_width = determinate ? `${clamped_progress * 100}%` : "28%";
+  const fill_x = determinate ? 0 : `${pulse * 100}%`;
+
+  panel(
+    {
+      layout: "row",
+      gap: 8,
+      width: "100%",
+      height: 31,
+      x: 0,
+      padding_left: 8,
+      padding_right: 8,
+      background_color: row_surface,
+      corner_radius: 5,
+    },
+    () => {
+      label(label_text, {
+        width: 108,
+        height: "100%",
+        x: 0,
+        font: "12px monospace",
+        text_color: body_text,
+        text_align: "left",
+        text_valign: "middle",
+      });
+      panel(
+        {
+          width: 260,
+          height: 11,
+          x: 0,
+          background_color: track_surface,
+          border: "1px solid rgba(255, 255, 255, 0.08)",
+          corner_radius: 5,
+          clip: true,
+        },
+        () => {
+          panel({
+            width: fill_width,
+            height: "100%",
+            x: fill_x,
+            y: 0,
+            background_color: color,
+            corner_radius: 5,
+            box_shadow: `0 0 10px ${color}`,
+          });
+        }
+      );
+      label(detail_text, {
+        width: 204,
+        height: "100%",
+        x: 0,
+        font: "11px monospace",
+        text_color: color,
+        text_align: "right",
+        text_valign: "middle",
+      });
+    }
+  );
 }
 
 function parse_bake_options(args) {
@@ -64,11 +185,11 @@ function parse_bake_options(args) {
 
     const key = raw.slice(0, eq).trim().toLowerCase();
     const value = raw.slice(eq + 1).trim();
-    if (key === "root_brick_size") {
+    if (key === "root" || key === "root_brick_size") {
       options.root_brick_size = Number(value);
-    } else if (key === "max_level") {
+    } else if (key === "max" || key === "max_level") {
       options.max_level = Number(value);
-    } else if (key === "min_level") {
+    } else if (key === "min" || key === "min_level") {
       options.min_level = Number(value);
     } else if (key === "max_nodes") {
       options.max_nodes = Number(value);
@@ -78,6 +199,10 @@ function parse_bake_options(args) {
       options.irradiance_probes_per_batch = Number(value);
     } else if (key === "samples" || key === "irradiance_sample_count") {
       options.irradiance_sample_count = Number(value);
+    } else if (key === "tile" || key === "tile_size" || key === "world_tile_size") {
+      options.world_tile_size = Number(value);
+    } else if (key === "radius" || key === "streaming_radius") {
+      options.streaming_radius = Number(value);
     }
   }
 
@@ -118,6 +243,9 @@ function parse_debug_options(args) {
 export class SVLMTool extends DevConsoleTool {
   is_open = false;
   scene = null;
+  bake_save_serial = 0;
+  bake_status = "idle";
+  save_progress = 0;
 
   update(delta_time) {
     if (!this.is_open) return;
@@ -133,8 +261,15 @@ export class SVLMTool extends DevConsoleTool {
     switch (command) {
       case "bake":
         const bake_options = parse_bake_options(args.slice(1));
-        svlm.bake(bake_options);
+        const bake_save_serial = ++this.bake_save_serial;
+        if (!this.scene) {
+          error("SVLM cannot bake and save without an active scene.");
+          break;
+        }
+        this.bake_status = "loading";
+        this.save_progress = 0;
         this.show();
+        void this._bake_and_save(svlm, bake_options, this.scene, bake_save_serial);
         break;
       case "debug":
         const debug_options = parse_debug_options(args.slice(1));
@@ -156,6 +291,9 @@ export class SVLMTool extends DevConsoleTool {
         });
         break;
       case "clear":
+        this.bake_save_serial++;
+        this.bake_status = "idle";
+        this.save_progress = 0;
         svlm.clear();
         break;
       case "stats":
@@ -166,9 +304,46 @@ export class SVLMTool extends DevConsoleTool {
         break;
       default:
         log(
-          "svlm [stats | bake [root=<size>] [max=<level>] [min=<level>] [rays=<count>] [batch=<count>] [samples=<count>] | preview | debug [bricks|probes] [on|off] [level=<n>|all] | clear | hide]"
+          "svlm [stats | bake [root=<size>] [max=<level>] [min=<level>] [rays=<count>] [batch=<count>] [samples=<count>] [tile=<meters>] [radius=<tiles>] | preview | debug [bricks|probes] [on|off] [level=<n>|all] | clear | hide]"
         );
         break;
+    }
+  }
+
+  async _bake_and_save(svlm, bake_options, scene, bake_save_serial) {
+    try {
+      await scene.when_scene_data_ready();
+      if (bake_save_serial !== this.bake_save_serial || scene !== this.scene) {
+        return;
+      }
+
+      svlm.bake(bake_options);
+      this.bake_status = "baking";
+      await svlm.serialize_bake_tiles();
+      if (bake_save_serial !== this.bake_save_serial) return;
+
+      this.bake_status = "saving";
+      this.save_progress = 0;
+      const result = await scene.save_scene_data({
+        on_progress: (progress) => {
+          if (bake_save_serial === this.bake_save_serial) {
+            this.save_progress = progress;
+          }
+        },
+      });
+      if (bake_save_serial !== this.bake_save_serial) return;
+
+      this.bake_status = "ready";
+      this.save_progress = 1;
+      log(
+        `SVLM bake completed and saved to '${result.asset_path}' (${format_number(
+          result.byte_length
+        )} bytes).`
+      );
+    } catch (save_error) {
+      if (bake_save_serial !== this.bake_save_serial) return;
+      this.bake_status = "error";
+      error("SVLM bake or scene-data save failed:", save_error);
     }
   }
 
@@ -178,75 +353,233 @@ export class SVLMTool extends DevConsoleTool {
     if (!svlm) return;
 
     const stats = svlm.get_stats();
+    const has_bake_data = stats.baked || stats.tile_streaming_enabled;
+    const bake_active =
+      this.bake_status === "loading" ||
+      this.bake_status === "baking" ||
+      this.bake_status === "saving";
+    const has_error = this.bake_status === "error" || !!stats.tile_serialization_error;
+    const status_text = has_error
+      ? "FAILED"
+      : bake_active
+        ? this.bake_status.toUpperCase()
+        : has_bake_data || this.bake_status === "ready"
+          ? "READY"
+          : "IDLE";
+    const status_color = has_error
+      ? danger
+      : bake_active
+        ? warning
+        : has_bake_data || this.bake_status === "ready"
+          ? accent
+          : subdued_text;
+    const status_background = has_error
+      ? "rgba(255, 125, 140, 0.12)"
+      : bake_active
+        ? "rgba(255, 202, 114, 0.12)"
+        : has_bake_data || this.bake_status === "ready"
+          ? accent_soft
+          : "rgba(129, 149, 155, 0.1)";
 
     const panel_state = panel(stats_panel_config, () => {
-      label("SVLM", { ...stats_label_config, font: "18px monospace", text_color: "#75e0b8" });
-      label("--------------------------------", stats_label_config);
+      panel(
+        {
+          layout: "row",
+          gap: 8,
+          width: "100%",
+          height: 40,
+          x: 0,
+        },
+        () => {
+          label("SVLM  //  BAKED GI", {
+            width: 420,
+            height: "100%",
+            x: 0,
+            font: "18px monospace",
+            text_color: "#ecfbf7",
+            text_align: "left",
+            text_valign: "middle",
+            text_padding: 4,
+          });
+          label(status_text, {
+            width: 156,
+            height: 28,
+            x: 0,
+            font: "11px monospace",
+            text_color: status_color,
+            text_align: "center",
+            text_valign: "middle",
+            background_color: status_background,
+            border: `1px solid ${status_color}`,
+            corner_radius: 14,
+          });
+        }
+      );
+      label("Sparse volumetric lightmap bake and runtime tile residency", {
+        width: "100%",
+        height: 20,
+        x: 0,
+        font: "11px monospace",
+        text_color: subdued_text,
+        text_align: "left",
+        text_valign: "middle",
+        text_padding: 4,
+      });
 
-      if (!stats.baked) return;
+      if (bake_active) {
+        section_header("Bake progress");
+        if (this.bake_status === "loading") {
+          progress_row("Scene data", null, "Loading existing package", secondary_accent);
+        } else if (this.bake_status === "saving") {
+          progress_row(
+            "Scene package",
+            this.save_progress,
+            `${(this.save_progress * 100).toFixed(1)}% uploaded`,
+            accent
+          );
+        } else if (stats.bake_tile_count <= 0) {
+          progress_row("Hierarchy", null, "Preparing world tiles", secondary_accent);
+        } else {
+          const completed_tiles = Math.min(stats.bake_tile_index, stats.bake_tile_count);
+          progress_row(
+            "World tiles",
+            completed_tiles / stats.bake_tile_count,
+            `${format_number(completed_tiles)} / ${format_number(stats.bake_tile_count)} tiles`,
+            secondary_accent
+          );
 
-      stat_row("Bake serial", format_number(stats.bake_serial));
-      stat_row("Nodes", format_number(stats.node_count));
-      stat_row("Leaf bricks", format_number(stats.leaf_count));
-      stat_row(
-        "Budget",
-        `${format_number(stats.config.max_nodes)} node/leaf records`
-      );
-      stat_row("Allocated probes", format_number(stats.probe_count));
-      stat_row(
-        "Irradiance",
-        stats.irradiance_ready
-          ? `ready (${format_number(stats.irradiance_sample_count)} sample sets)`
-          : stats.irradiance_allocation_pending
-            ? "allocating exact probe storage"
-            : `${(stats.irradiance_progress * 100).toFixed(1)}%`
-      );
-      stat_row(
-        "Probe writes",
-        `${format_number(stats.irradiance_completed_probe_samples)} / ${format_number(stats.irradiance_required_probe_samples)}`
-      );
-      stat_row("Bake rays", `${format_number(stats.irradiance_rays_per_probe)} / probe`);
-      stat_row(
-        "Root dims",
-        `${stats.root_dims[0]} x ${stats.root_dims[1]} x ${stats.root_dims[2]}`
-      );
-      stat_row("Root brick size", Number(stats.root_brick_size).toFixed(2));
-      stat_row(
-        "Levels",
-        `${stats.min_level} forced, ${stats.max_level_reached}/${stats.max_level} reached`
-      );
-      stat_row("World min", format_vec3(stats.world_min));
-      stat_row("World max", format_vec3(stats.world_max));
-      stat_row("GPU data", `${bytes_to_mb(stats.total_bytes)} MB`);
-      stat_row("Irradiance data", `${bytes_to_mb(stats.irradiance_allocated_bytes)} MB packed`);
-      stat_row("Debug level", stats.debug_level < 0 ? "all" : `L${stats.debug_level}`);
-      stat_row(
-        "Debug bricks",
-        `${format_number(stats.debug_leaf_count)} / ${format_number(stats.leaf_count)}`
-      );
-
-      const level_parts = [];
-      for (let i = 0; i < stats.per_level_counts.length; i += 1) {
-        if (stats.per_level_counts[i] > 0) {
-          level_parts.push(`L${i}:${format_number(stats.per_level_counts[i])}`);
+          const completed_probe_samples = stats.irradiance_completed_probe_samples || 0;
+          const required_probe_samples = stats.irradiance_required_probe_samples || 0;
+          const irradiance_detail =
+            stats.irradiance_allocation_pending && required_probe_samples <= 0
+              ? "Allocating probe storage"
+              : required_probe_samples > 0
+                ? `${format_number(
+                    completed_probe_samples
+                  )} / ${format_number(required_probe_samples)} samples`
+                : `${(stats.irradiance_progress * 100).toFixed(1)}%`;
+          progress_row("Irradiance", stats.irradiance_progress, irradiance_detail, accent);
         }
       }
-      stat_row("Level leaves", level_parts.join("  ") || "none");
+
+      if (!has_bake_data) {
+        if (!bake_active) {
+          panel(
+            {
+              width: "100%",
+              height: 52,
+              x: 0,
+              background_color: row_surface,
+              border: "1px solid rgba(255, 255, 255, 0.06)",
+              corner_radius: 5,
+            },
+            () => {
+              label("No SVLM bake is loaded. Run `svlm bake` to create one.", {
+                width: "100%",
+                height: "100%",
+                x: 0,
+                y: 0,
+                font: "12px monospace",
+                text_color: subdued_text,
+                text_align: "center",
+                text_valign: "middle",
+              });
+            }
+          );
+          if (stats.tile_serialization_error) {
+            label(`Bake error: ${stats.tile_serialization_error}`, {
+              ...stats_label_config,
+              text_color: danger,
+            });
+          }
+        }
+        return;
+      }
+
+      section_header("Streaming");
+      metric_pair(
+        "World tile size",
+        `${Number(stats.config.world_tile_size).toFixed(1)} m`,
+        "Streaming radius",
+        `${format_number(stats.config.streaming_radius)} tiles / ${(
+          stats.config.streaming_radius * stats.config.world_tile_size
+        ).toFixed(1)} m`
+      );
+      metric_pair(
+        "Tile residency",
+        `${format_number(
+          stats.resident_tile_count
+        )} / ${format_number(stats.serialized_tile_count)}`,
+        "Pending requests",
+        format_number(stats.requested_tile_count)
+      );
+
+      section_header("Bake output");
+      metric_pair(
+        "Bake serial",
+        format_number(stats.bake_serial),
+        "Nodes",
+        format_number(stats.node_count)
+      );
+      metric_pair(
+        "Leaf bricks",
+        format_number(stats.leaf_count),
+        "Allocated probes",
+        format_number(stats.probe_count)
+      );
+      metric_pair(
+        "Allocation budget",
+        `${format_number(stats.config.max_nodes)} records`,
+        "Rays / probe",
+        format_number(stats.irradiance_rays_per_probe)
+      );
+
+      section_header("Volume");
+      metric_pair(
+        "Root dimensions",
+        `${stats.root_dims[0]} x ${stats.root_dims[1]} x ${stats.root_dims[2]}`,
+        "Root brick size",
+        Number(stats.root_brick_size).toFixed(2)
+      );
+      metric_pair(
+        "Forced min level",
+        `L${stats.min_level}`,
+        "Reached / maximum",
+        `L${stats.max_level_reached} / L${stats.max_level}`
+      );
+
+      section_header("Memory");
+      metric_pair(
+        "Peak bake GPU",
+        `${bytes_to_mb(stats.total_bytes)} MB`,
+        "Tiled irradiance",
+        `${bytes_to_mb(stats.irradiance_bytes)} MB serialized`
+      );
+      metric_pair(
+        "Peak tile alloc.",
+        `${bytes_to_mb(stats.irradiance_allocated_bytes)} MB`,
+        "Irradiance sets",
+        format_number(stats.irradiance_sample_count)
+      );
 
       if (stats.truncated_by_node_limit || stats.truncated_by_leaf_limit) {
         label("Bake hit an SVLM allocation limit.", {
           ...stats_label_config,
-          text_color: "#ffb15c",
+          text_color: warning,
         });
       }
       if (stats.irradiance_capacity_exceeded) {
         label("Baked irradiance exceeds the storage-buffer limit.", {
           ...stats_label_config,
-          text_color: "#ff6b6b",
+          text_color: danger,
         });
       }
-
-      label("--------------------------------", stats_label_config);
+      if (stats.tile_serialization_error) {
+        label(`Bake error: ${stats.tile_serialization_error}`, {
+          ...stats_label_config,
+          text_color: danger,
+        });
+      }
     });
 
     if (this.is_open && InputProvider.get_action(InputKey.B_mouse_left)) {
@@ -269,6 +602,11 @@ export class SVLMTool extends DevConsoleTool {
   }
 
   set_scene(scene) {
+    if (scene !== this.scene) {
+      this.bake_save_serial++;
+      this.bake_status = "idle";
+      this.save_progress = 0;
+    }
     this.scene = scene;
   }
 }

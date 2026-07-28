@@ -1,4 +1,5 @@
 import { RenderPassFlags } from "../renderer_types.js";
+import { SharedFrameInfoBuffer, SharedViewBuffer } from "../../core/shared_data.js";
 
 const svlm_baked_resolve_shader_setup = {
   pipeline_shaders: {
@@ -63,6 +64,11 @@ export class SVLMBakedGI {
     _hzb_texture,
     force_recreate = false
   ) {
+    const view_index = SharedFrameInfoBuffer.get_view_index();
+    if (view_index >= 0 && view_index < SharedViewBuffer.get_view_data_count()) {
+      this.svlm?.update_tile_streaming(SharedViewBuffer.get_view_data(view_index).view_position);
+    }
+
     const artifact = this.svlm?.get_bake_artifact();
     if (
       draw_count <= 0 ||

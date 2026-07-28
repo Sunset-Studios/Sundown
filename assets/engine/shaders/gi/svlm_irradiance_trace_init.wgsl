@@ -31,13 +31,17 @@ fn svlm_fibonacci_sphere_direction(
 }
 
 fn svlm_probe_ray_direction(
-    probe_index: u32,
+    probe_position: vec3<f32>,
     ray_index: u32,
     ray_count: u32,
     sample_index: u32
 ) -> vec3<f32> {
+    let position_seed =
+        bitcast<u32>(probe_position.x) ^
+        (bitcast<u32>(probe_position.y) * 0x9e3779b9u) ^
+        (bitcast<u32>(probe_position.z) * 0x85ebca6bu);
     var rng = hash(
-        probe_index ^
+        position_seed ^
         (sample_index * 0x9e3779b9u) ^
         (u32(svlm_params.bake_serial) * 0xa511e9b3u)
     );
@@ -119,7 +123,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         local_probe_index
     );
     let direction = svlm_probe_ray_direction(
-        probe_index,
+        probe_position,
         ray_index_in_probe,
         rays_per_probe,
         sample_index

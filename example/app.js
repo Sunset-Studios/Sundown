@@ -3510,7 +3510,8 @@ export class UI3DTestScene extends Scene {
     },
   });
 
-  // Create scenes and register them with the simulation system
+  // Scene names are durable IDs. For example, SponzaScene automatically reads
+  // and writes assets/example/scenes/SponzaScene.scene.bin.
   const bvh_scene = new BVHScene("BVHScene");
   const rendering_scene = new RenderingScene("RenderingScene");
   const ml_scene = new MLScene("MLScene");
@@ -3540,10 +3541,10 @@ export class UI3DTestScene extends Scene {
   //await scene_switcher.add_scene(gi_test_scene);
   //await scene_switcher.add_scene(shadow_test_scene);
   //await scene_switcher.add_scene(ui_3d_scene);
-  await scene_switcher.add_scene(sponza_scene);
+  //await scene_switcher.add_scene(sponza_scene);
   //await scene_switcher.add_scene(living_room_scene);
   //await scene_switcher.add_scene(city_scene);
-  //await scene_switcher.add_scene(scifi_city_scene);
+  await scene_switcher.add_scene(scifi_city_scene);
   //await scene_switcher.add_scene(bistro_test_scene);
 
   simulator.add_sim_layer(scene_switcher);

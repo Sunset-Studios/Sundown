@@ -197,6 +197,11 @@ export class DeferredShadingStrategy {
   environment_pipeline = null;
   previous_gi_lighting_enabled = null;
 
+  get_scene_data_handlers() {
+    this.svlm ??= new SparseVolumetricLightmapper();
+    return [this.svlm.get_scene_data_handler()];
+  }
+
   setup(render_graph) {
     this.debug_pipeline = new DeferredDebugPipeline();
     this.culling_pipeline = new CullingPipeline();
@@ -204,8 +209,8 @@ export class DeferredShadingStrategy {
     this.gbuffer_targets_pipeline = new GBufferTargetsPipeline();
     this.visibility_buffer_pipeline = new VisibilityBufferPipeline();
 
-    // Preserve the in-memory bake when changing renderer/GI strategy. This is
-    // also the ownership seam a future disk loader can populate.
+    // Preserve the in-memory bake when changing renderer/GI strategy. The
+    // scene-data loader may already have populated this instance.
     this.svlm ??= new SparseVolumetricLightmapper();
 
     const gi_strategy_type = Renderer.get().get_gi_strategy_type();

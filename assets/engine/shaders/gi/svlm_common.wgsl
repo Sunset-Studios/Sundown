@@ -152,6 +152,8 @@ struct SVLMParams {
 
     irradiance_format_version: f32,
     irradiance_sh_words_per_probe: f32,
+    world_tile_size: f32,
+    resident_tile_count: f32,
 };
 
 struct SVLMBlasStats {

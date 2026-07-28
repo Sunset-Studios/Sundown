@@ -9,13 +9,29 @@
 @group(1) @binding(0) var depth_texture: texture_2d<f32>;
 @group(1) @binding(1) var gbuffer_normal: texture_2d<f32>;
 @group(1) @binding(2) var<storage, read_write> svlm_params: SVLMParams;
-@group(1) @binding(3) var<storage, read> node_pool: array<SVLMNode>;
+@group(1) @binding(3) var<storage, read> svlm_lookup_data: array<u32>;
 @group(1) @binding(4) var<storage, read> leaf_bricks: array<SVLMLeafBrick>;
 @group(1) @binding(5) var<storage, read> irradiance_probes: array<u32>;
 @group(1) @binding(6) var output_diffuse: texture_storage_2d<rgba16float, write>;
 @group(1) @binding(7) var output_black: texture_storage_2d<rgba16float, write>;
 
-fn svlm_find_leaf(position: vec3<f32>) -> u32 {
+const SVLM_NODE_WORD_STRIDE = 7u;
+const SVLM_TILE_DIRECTORY_WORD_STRIDE = 8u;
+
+fn svlm_read_node(node_index: u32) -> SVLMNode {
+    let base = node_index * SVLM_NODE_WORD_STRIDE;
+    return SVLMNode(
+        svlm_lookup_data[base],
+        svlm_lookup_data[base + 1u],
+        svlm_lookup_data[base + 2u],
+        svlm_lookup_data[base + 3u],
+        svlm_lookup_data[base + 4u],
+        svlm_lookup_data[base + 5u],
+        svlm_lookup_data[base + 6u]
+    );
+}
+
+fn svlm_find_monolithic_leaf(position: vec3<f32>) -> u32 {
     let world_min = svlm_world_min(&svlm_params);
     let root_size = max(svlm_params.root_size, 0.0001);
     let root_dims = svlm_root_dims(&svlm_params);
@@ -42,11 +58,14 @@ fn svlm_find_leaf(position: vec3<f32>) -> u32 {
         root_coord.z * root_dims.x * root_dims.y;
 
     for (var step = 0u; step < 10u; step = step + 1u) {
-        if (node_index >= arrayLength(&node_pool)) {
+        if (
+            node_index >=
+                arrayLength(&svlm_lookup_data) / SVLM_NODE_WORD_STRIDE
+        ) {
             return INVALID_IDX;
         }
 
-        let node = node_pool[node_index];
+        let node = svlm_read_node(node_index);
         if (
             (node.flags & SVLM_FLAG_LEAF) != 0u &&
             node.leaf_index != INVALID_IDX
@@ -75,6 +94,78 @@ fn svlm_find_leaf(position: vec3<f32>) -> u32 {
     }
 
     return INVALID_IDX;
+}
+
+fn svlm_find_tiled_leaf(position: vec3<f32>) -> u32 {
+    let tile_size = max(svlm_params.world_tile_size, 0.0001);
+    let tile_coord = vec3<i32>(floor(position / tile_size));
+    let available_tile_count =
+        arrayLength(&svlm_lookup_data) /
+        SVLM_TILE_DIRECTORY_WORD_STRIDE;
+    let tile_count = min(
+        u32(max(svlm_params.resident_tile_count, 0.0)),
+        available_tile_count
+    );
+
+    for (
+        var tile_index = 0u;
+        tile_index < tile_count;
+        tile_index = tile_index + 1u
+    ) {
+        let base = tile_index * SVLM_TILE_DIRECTORY_WORD_STRIDE;
+        let entry_coord = vec3<i32>(
+            bitcast<i32>(svlm_lookup_data[base]),
+            bitcast<i32>(svlm_lookup_data[base + 1u]),
+            bitcast<i32>(svlm_lookup_data[base + 2u])
+        );
+        if (any(entry_coord != tile_coord)) {
+            continue;
+        }
+
+        let leaf_offset = svlm_lookup_data[base + 3u];
+        let leaf_count = svlm_lookup_data[base + 4u];
+        var best_leaf = INVALID_IDX;
+        var best_size = 1e30;
+
+        for (
+            var local_leaf = 0u;
+            local_leaf < leaf_count;
+            local_leaf = local_leaf + 1u
+        ) {
+            let leaf_index = leaf_offset + local_leaf;
+            if (leaf_index >= arrayLength(&leaf_bricks)) {
+                break;
+            }
+
+            let leaf = leaf_bricks[leaf_index];
+            let leaf_min = vec3<f32>(
+                leaf.origin_x,
+                leaf.origin_y,
+                leaf.origin_z
+            );
+            let leaf_size = max(leaf.size, 0.0001);
+            let leaf_max = leaf_min + vec3<f32>(leaf_size);
+            let epsilon = max(leaf_size * 1e-5, 1e-5);
+            if (
+                all(position >= leaf_min - vec3<f32>(epsilon)) &&
+                all(position <= leaf_max + vec3<f32>(epsilon)) &&
+                leaf_size < best_size
+            ) {
+                best_leaf = leaf_index;
+                best_size = leaf_size;
+            }
+        }
+        return best_leaf;
+    }
+
+    return INVALID_IDX;
+}
+
+fn svlm_find_leaf(position: vec3<f32>) -> u32 {
+    if (svlm_params.resident_tile_count > 0.0) {
+        return svlm_find_tiled_leaf(position);
+    }
+    return svlm_find_monolithic_leaf(position);
 }
 
 fn svlm_read_probe_sh(probe_index: u32) -> SH_L1_RGB {

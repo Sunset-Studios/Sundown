@@ -2,7 +2,7 @@
 
 // Publishes that the hierarchy and leaf allocation passes have finished.
 // The CPU waits for this bit through the existing counter readback before it
-// creates the persistent irradiance buffer at the realized probe count.
+// partitions leaves and starts the tile-at-a-time irradiance bake.
 
 @group(1) @binding(0) var<storage, read_write> svlm_counters: SVLMCounters;
 
