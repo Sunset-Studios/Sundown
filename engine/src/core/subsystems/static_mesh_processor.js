@@ -1,7 +1,7 @@
 import { SimulationLayer } from "../simulation_layer.js";
 import { EntityManager } from "../ecs/entity.js";
 import { StaticMeshFragment } from "../ecs/fragments/static_mesh_fragment.js";
-import { RenderTaskQueue } from "../../renderer/render_task_queue.js";
+import { RenderTaskQueue } from "../../renderer/task_queues/render_task_queue.js";
 import { profile_scope } from "../../utility/performance.js";
 import { ResourceCache } from "../../renderer/resource_cache.js";
 import { CacheTypes } from "../../renderer/renderer_types.js";

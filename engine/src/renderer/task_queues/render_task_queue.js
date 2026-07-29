@@ -1,18 +1,18 @@
-import { MAX_BUFFERED_FRAMES, INVALID_U32 } from "../core/minimal.js";
-import { EntityID } from "../core/ecs/solar/types.js";
-import { Buffer } from "./buffer.js";
+import { MAX_BUFFERED_FRAMES, INVALID_U32 } from "../../core/minimal.js";
+import { EntityID } from "../../core/ecs/solar/types.js";
+import { Buffer } from "../buffer.js";
 import {
   FreeListAllocator,
   RandomAccessAllocator,
   Sparse2DRandomAccessAllocator,
-} from "../memory/allocator.js";
-import { ResourceCache } from "./resource_cache.js";
-import { MeshData } from "./mesh_data.js";
-import { MaterialAllocationTable } from "./material_allocation_table.js";
-import { profile_scope } from "../utility/performance.js";
-import { BindGroupType, CacheTypes, MaterialFamilyType, MaterialPassType } from "./renderer_types.js";
-import { Name } from "../utility/names.js";
-import { draw_quad } from "./draw_helpers.js";
+} from "../../memory/allocator.js";
+import { ResourceCache } from "../resource_cache.js";
+import { MeshData } from "../mesh_data.js";
+import { MaterialAllocationTable } from "../material_allocation_table.js";
+import { profile_scope } from "../../utility/performance.js";
+import { BindGroupType, CacheTypes, MaterialFamilyType, MaterialPassType } from "../renderer_types.js";
+import { Name } from "../../utility/names.js";
+import { draw_quad } from "../draw_helpers.js";
 
 export const RenderWorkKind = {
   Mesh: "mesh",

@@ -25,7 +25,7 @@
 //
 // ══════════════════════════════════════════════════════════════════════════════════════════════════════════════════
 
-import { ComputeTaskQueue } from "../renderer/compute_task_queue.js";
+import { ComputeTaskQueue } from "../renderer/task_queues/compute_task_queue.js";
 import { BVH, WORKGROUP_SIZE, TILE_SIZE, RADIX_PASSES } from "./bvh.js";
 import { EntityManager } from "../core/ecs/entity.js";
 import { TransformFragment } from "../core/ecs/fragments/transform_fragment.js";

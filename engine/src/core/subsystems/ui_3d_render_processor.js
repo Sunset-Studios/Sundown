@@ -11,7 +11,7 @@ import {
 } from "../../ui/3d/immediate.js";
 import { InputProvider } from "../../input/input_provider.js";
 import { InputKey } from "../../input/input_types.js";
-import { RenderTaskQueue, RenderWorkKind } from "../../renderer/render_task_queue.js";
+import { RenderTaskQueue, RenderWorkKind } from "../../renderer/task_queues/render_task_queue.js";
 import { Mesh } from "../../renderer/mesh.js";
 import { Material, MaterialTemplate } from "../../renderer/material.js";
 import { TextureArrayPools } from "../../renderer/texture_pool.js";

@@ -1,7 +1,7 @@
 import { BVH } from "./bvh.js";
 import { EntityManager } from "../core/ecs/entity.js";
 import { TransformFragment } from "../core/ecs/fragments/transform_fragment.js";
-import { ComputeTaskQueue } from "../renderer/compute_task_queue.js";
+import { ComputeTaskQueue } from "../renderer/task_queues/compute_task_queue.js";
 import { Buffer } from "../renderer/buffer.js";
 import { RandomAccessAllocator, RingBufferAllocator } from "../memory/allocator.js";
 import { MeshBLAS } from "./mesh_blas.js";

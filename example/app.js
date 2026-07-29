@@ -9,7 +9,7 @@ import { InputKey } from "../engine/src/input/input_types.js";
 import { PostProcessStack } from "../engine/src/renderer/post_process_stack.js";
 import { BVHDebugRenderer } from "../engine/src/core/subsystems/bvh_debug_renderer.js";
 import { BVHRaycast } from "../engine/src/acceleration/bvh_raycast.js";
-import { ComputeTaskQueue } from "../engine/src/renderer/compute_task_queue.js";
+import { ComputeTaskQueue } from "../engine/src/renderer/task_queues/compute_task_queue.js";
 import { TransformFragment } from "../engine/src/core/ecs/fragments/transform_fragment.js";
 import { FreeformArcballControlProcessor } from "../engine/src/core/subsystems/freeform_arcball_control_processor.js";
 import { LightFragment } from "../engine/src/core/ecs/fragments/light_fragment.js";

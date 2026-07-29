@@ -1,7 +1,7 @@
 import { SharedFrameInfoBuffer, SharedViewBuffer } from "../core/shared_data.js";
 import { InputProvider } from "../input/input_provider.js";
 import { InputKey } from "../input/input_types.js";
-import { RenderTaskQueue } from "../renderer/render_task_queue.js";
+import { RenderTaskQueue } from "../renderer/task_queues/render_task_queue.js";
 import { Renderer } from "../renderer/renderer.js";
 import { panel, label } from "../ui/2d/immediate.js";
 import { DevConsoleTool } from "./dev_console_tool.js";

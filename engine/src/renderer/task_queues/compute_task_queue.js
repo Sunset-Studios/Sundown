@@ -1,8 +1,8 @@
-import { Buffer } from "./buffer.js";
-import { Texture } from "./texture.js";
-import { RandomAccessAllocator } from "../memory/allocator.js";
-import { profile_scope } from "../utility/performance.js";
-import { RenderPassFlags } from "./renderer_types.js";
+import { Buffer } from "../buffer.js";
+import { Texture } from "../texture.js";
+import { RandomAccessAllocator } from "../../memory/allocator.js";
+import { profile_scope } from "../../utility/performance.js";
+import { RenderPassFlags } from "../renderer_types.js";
 
 class ComputeTask {
   static init(

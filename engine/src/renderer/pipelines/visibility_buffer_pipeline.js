@@ -1,5 +1,5 @@
 import { Buffer } from "../buffer.js";
-import { RenderTaskQueue } from "../render_task_queue.js";
+import { RenderTaskQueue } from "../task_queues/render_task_queue.js";
 import { ResourceCache } from "../resource_cache.js";
 import { RenderPassFlags, MaterialPassType, CacheTypes } from "../renderer_types.js";
 import { Texture } from "../texture.js";

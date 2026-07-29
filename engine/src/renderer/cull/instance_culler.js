@@ -1,6 +1,6 @@
 import { Typed2DFrameArray, TypedVector } from "../../memory/container.js";
 import { RenderPassFlags } from "../renderer_types.js";
-import { RenderTaskQueue } from "../render_task_queue.js";
+import { RenderTaskQueue } from "../task_queues/render_task_queue.js";
 
 const clear_visibility_data_shader_setup = {
   pipeline_shaders: {

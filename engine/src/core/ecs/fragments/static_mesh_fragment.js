@@ -2,7 +2,7 @@ import { Fragment } from "../fragment.js";
 import { SolarFragmentView } from "../solar/view.js";
 import { RingBufferAllocator } from "../../../memory/allocator.js";
 import { Name } from "../../../utility/names.js";
-import { RenderTaskQueue } from "../../../renderer/render_task_queue.js";
+import { RenderTaskQueue } from "../../../renderer/task_queues/render_task_queue.js";
 
 /**
  * The StaticMesh fragment class.

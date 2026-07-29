@@ -2,7 +2,7 @@ import { mat4, quat, vec3 } from "gl-matrix";
 import { SimulationLayer } from "../simulation_layer.js";
 import { EntityManager } from "../ecs/entity.js";
 import { FragmentGpuBuffer } from "../ecs/solar/memory.js";
-import { ComputeTaskQueue } from "../../renderer/compute_task_queue.js";
+import { ComputeTaskQueue } from "../../renderer/task_queues/compute_task_queue.js";
 import { TransformFragment } from "../ecs/fragments/transform_fragment.js";
 import { SceneGraph } from "../scene_graph.js";
 import { EntityFlags } from "../minimal.js";

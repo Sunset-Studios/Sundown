@@ -1,5 +1,5 @@
 import { SimulationLayer } from "../core/simulation_layer.js";
-import { ComputeTaskQueue } from "../renderer/compute_task_queue.js";
+import { ComputeTaskQueue } from "../renderer/task_queues/compute_task_queue.js";
 import { Buffer } from "../renderer/buffer.js";
 import { BVH } from "./bvh.js";
 import { MeshBLAS } from "./mesh_blas.js";

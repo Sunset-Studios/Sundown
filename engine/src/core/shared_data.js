@@ -3,7 +3,7 @@ import { Buffer } from "../renderer/buffer.js";
 import { Texture } from "../renderer/texture.js";
 import { RingBufferAllocator } from "../memory/allocator.js";
 import { ResizableBitArray, TypedStack } from "../memory/container.js";
-import { RenderTaskQueue } from "../renderer/render_task_queue.js";
+import { RenderTaskQueue } from "../renderer/task_queues/render_task_queue.js";
 import { mat4, vec4, vec3, vec2 } from "gl-matrix";
 import { WORLD_FORWARD, WORLD_UP } from "./minimal.js";
 import { radians } from "../utility/math.js";

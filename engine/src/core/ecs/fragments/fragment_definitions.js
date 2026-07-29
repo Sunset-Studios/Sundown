@@ -99,7 +99,7 @@ const LightFragment = {
 const StaticMeshFragment = {
   name: "StaticMesh",
   imports: {
-    RenderTaskQueue: "../../../renderer/render_task_queue.js",
+    RenderTaskQueue: "../../../renderer/task_queues/render_task_queue.js",
   },
   constants: {
     material_slot_stride: 16,
