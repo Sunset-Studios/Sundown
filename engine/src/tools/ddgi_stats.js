@@ -88,6 +88,7 @@ export class DDGIStats extends DevConsoleTool {
       stat_row("Total probes", format_number(stats.total_probe_count));
       stat_row("Probes per frame", format_number(stats.probes_per_frame));
       stat_row("Rays per probe", format_number(stats.max_rays_per_probe));
+      stat_row("Ray length", `${stats.max_ray_length.toFixed(2)} m`);
       stat_row("Total rays fired", format_number(stats.total_rays_fired));
       stat_row(
         "Probe grid dims",

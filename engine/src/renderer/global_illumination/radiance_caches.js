@@ -114,6 +114,7 @@ export class ProbeVolumeRadianceCache extends GIModule {
     const probes_per_frame =
       config.probes_per_frame === 0 ? probe_count : Math.min(probe_count, config.probes_per_frame);
     const max_rays_per_probe = Math.max(1, Math.floor(config.max_rays_per_probe));
+    const max_ray_length = Math.max(0.001, Number(config.max_ray_length) || 128.0);
     const probe_total_ray_count = probes_per_frame * max_rays_per_probe;
     const block_count = Math.ceil(probe_count / COMPUTE_WORKGROUP_SIZE);
 
@@ -173,6 +174,7 @@ export class ProbeVolumeRadianceCache extends GIModule {
       depth_slot_count,
       depth_words_per_slot,
       config.probe_spacing,
+      max_ray_length,
       depth_resolutions.join(","),
     ].join(":");
     const depth_slots_need_reset =
@@ -186,6 +188,7 @@ export class ProbeVolumeRadianceCache extends GIModule {
       probe_count,
       probes_per_frame,
       max_rays_per_probe,
+      max_ray_length,
       probe_total_ray_count,
       total_depth_texel_count,
       max_depth_texel_count_per_probe,
@@ -501,7 +504,7 @@ export class ProbeVolumeRadianceCache extends GIModule {
       this.params_data[24] = context.frame_index;
       this.params_data[25] = config.indirect_boost;
       this.params_data[26] = context.cascade_count;
-      this.params_data[27] = 0;
+      this.params_data[27] = context.max_ray_length;
       this.params_data[28] = permutation.stride;
       this.params_data[29] = permutation.base_offset;
       this.params_data[30] = permutation.frame_stride;
@@ -1097,6 +1100,7 @@ export class ProbeVolumeRadianceCache extends GIModule {
       total_probe_count: context.probe_count,
       probes_per_frame: context.probes_per_frame,
       max_rays_per_probe: context.max_rays_per_probe,
+      max_ray_length: context.max_ray_length,
       total_rays_fired: update_count * context.max_rays_per_probe,
       active_probe_count: this.counters_data[2] || 0,
       probe_update_count: update_count,

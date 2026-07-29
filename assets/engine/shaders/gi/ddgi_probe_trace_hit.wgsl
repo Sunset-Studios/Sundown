@@ -104,7 +104,7 @@ fn process_primary_ray(
 ) {
     var ray: Ray;
     ray.origin_and_tmin = vec4<f32>(probe_position + ray_dir * 0.001, 0.0);
-    ray.direction_and_tmax = vec4<f32>(ray_dir, 1e30);
+    ray.direction_and_tmax = vec4<f32>(ray_dir, ddgi_params.max_ray_length);
     ray.inv_direction = vec4<f32>(
         1.0 / max(abs(ray_dir.x), 1e-8) * select(1.0, -1.0, ray_dir.x < 0.0),
         1.0 / max(abs(ray_dir.y), 1e-8) * select(1.0, -1.0, ray_dir.y < 0.0),

@@ -61,7 +61,7 @@ struct DDGIParams {
     frame_index: f32,
     indirect_boost: f32,
     cascade_count: f32,
-    _unused0: f32,
+    max_ray_length: f32,
     permutation_stride: f32,       // Precomputed coprime stride for probe cycling (CPU-computed)
     permutation_base_offset: f32,  // Precomputed base offset for permutation (CPU-computed)
     permutation_frame_stride: f32, // Precomputed frame stride for temporal offset (CPU-computed)
@@ -247,14 +247,9 @@ fn ddgi_depth_slot_for_probe(
 
 fn ddgi_probe_miss_distance(
     ddgi_params: ptr<uniform, DDGIParams>,
-    probe_index: u32
+    _probe_index: u32
 ) -> f32 {
-    let spacing = ddgi_probe_spacing_from_index(ddgi_params, probe_index);
-    let max_dim = max(
-        (*ddgi_params).probe_grid_dims.x,
-        max((*ddgi_params).probe_grid_dims.y, (*ddgi_params).probe_grid_dims.z)
-    );
-    return max(1.0, spacing * max_dim * 2.0);
+    return max((*ddgi_params).max_ray_length, 0.001);
 }
 
 fn ddgi_cascade_scroll_offset(ddgi_params: ptr<uniform, DDGIParams>, cascade_index: u32) -> vec3<u32> {

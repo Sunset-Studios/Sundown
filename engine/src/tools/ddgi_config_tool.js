@@ -25,6 +25,7 @@ const depth_resolutions = Object.freeze([4, 8, 16, 32]);
 export const DDGI_CONFIG_RANGES = Object.freeze({
   probe_spacing: Object.freeze({ min: 0.25, max: 8, step: 0.05, precision: 2 }),
   probe_radius: Object.freeze({ min: 0.01, max: 1, step: 0.01, precision: 2 }),
+  max_ray_length: Object.freeze({ min: 0.25, max: 512, step: 0.25, precision: 2 }),
   max_rays_per_probe: Object.freeze({ min: 16, max: 256, step: 16, precision: 0 }),
   probes_per_frame: Object.freeze({ min: 0, max: 8192, step: 128, precision: 0 }),
   indirect_boost: Object.freeze({ min: 0, max: 4, step: 0.05, precision: 2 }),
@@ -453,6 +454,7 @@ export class DDGIConfigTool extends DevConsoleTool {
             grid_axis_field(ddgi, 2, "Grid Z");
             numeric_field(ddgi, "probe_spacing", "Probe spacing", { suffix: " m" });
             numeric_field(ddgi, "probe_radius", "Probe radius", { suffix: " m" });
+            numeric_field(ddgi, "max_ray_length", "Ray length", { suffix: " m" });
 
             section_header("Update budget", "trace workload");
             numeric_field(ddgi, "max_rays_per_probe", "Rays / probe", {

@@ -47,7 +47,7 @@ const SPHERE_AREA = 12.566370614359172; // 4 * PI
 // Keep the long and short estimators far enough apart for the short mean to
 // detect changes without imposing its noise floor on the stable result.
 const DDGI_HISTORY_CAP_FRAMES_MAX = 64.0;
-const DDGI_MSME_SHORT_WINDOW_FRAMES = 8.0;
+const DDGI_MSME_SHORT_WINDOW_FRAMES = 4.0;
 const DDGI_MSME_MIN_SIGNAL_ENERGY = 1e-5;
 const DDGI_MSME_VARIANCE_FORGIVENESS = 2.0;
 const DDGI_MSME_VARIANCE_BLEND_REDUCTION = 12.0;
