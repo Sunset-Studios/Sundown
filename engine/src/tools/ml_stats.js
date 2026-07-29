@@ -13,7 +13,7 @@ const stats_panel_config = {
   gap: 4,
   y: 25,
   x: 25,
-  anchor_x: "right",
+  anchor_x: "left",
   dont_consume_cursor_events: true,
   background_color: "rgba(0, 0, 0, 0.7)",
   width: 600,

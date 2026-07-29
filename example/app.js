@@ -2535,6 +2535,7 @@ export class SceneSettingsPanel extends SimulationLayer {
 
     scene_settings_intensity_field(light.intensity, (value) => {
       light.intensity = value;
+      light.shadows_dirty = 1;
     });
   }
 }
@@ -3850,14 +3851,14 @@ export class UI3DTestScene extends Scene {
   //await scene_switcher.add_scene(rendering_scene);
   //await scene_switcher.add_scene(bvh_scene);
   //await scene_switcher.add_scene(ml_scene);
-  await scene_switcher.add_scene(voxel_terrain_scene);
+  //await scene_switcher.add_scene(voxel_terrain_scene);
   //await scene_switcher.add_scene(object_painting_scene);
   //await scene_switcher.add_scene(gltf_model_scene);
   //await scene_switcher.add_scene(textures_scene);
   //await scene_switcher.add_scene(gi_test_scene);
   //await scene_switcher.add_scene(shadow_test_scene);
   //await scene_switcher.add_scene(ui_3d_scene);
-  //await scene_switcher.add_scene(sponza_scene);
+  await scene_switcher.add_scene(sponza_scene);
   //await scene_switcher.add_scene(living_room_scene);
   //await scene_switcher.add_scene(city_scene);
   //await scene_switcher.add_scene(scifi_city_scene);
