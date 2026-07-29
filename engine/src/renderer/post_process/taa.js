@@ -1,7 +1,7 @@
-import { Renderer } from "./renderer.js";
-import { RenderPassFlags } from "./renderer_types.js";
-import { rgba16float_format } from "../utility/config_permutations.js";
-import { SharedFrameInfoBuffer, SharedViewBuffer } from "../core/shared_data.js";
+import { Renderer } from "../renderer.js";
+import { RenderPassFlags } from "../renderer_types.js";
+import { rgba16float_format } from "../../utility/config_permutations.js";
+import { SharedFrameInfoBuffer, SharedViewBuffer } from "../../core/shared_data.js";
 
 const taa_resolve_shader_setup = {
   pipeline_shaders: {

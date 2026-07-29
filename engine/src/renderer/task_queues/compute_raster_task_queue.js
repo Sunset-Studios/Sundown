@@ -1,7 +1,7 @@
-import { Buffer } from "./buffer.js";
-import { RandomAccessAllocator } from "../memory/allocator.js";
-import { profile_scope } from "../utility/performance.js";
-import { RenderPassFlags } from "./renderer_types.js";
+import { Buffer } from "../buffer.js";
+import { RandomAccessAllocator } from "../../memory/allocator.js";
+import { profile_scope } from "../../utility/performance.js";
+import { RenderPassFlags } from "../renderer_types.js";
 
 const compile_rg_pass_scope_name = "ComputeRasterTaskQueue.compile_rg_passes";
 const workgroup_size = 256;

@@ -1,6 +1,6 @@
-import { RenderPassFlags } from "./renderer_types.js";
-import { RingBufferAllocator } from "../memory/allocator.js";
-import { draw_quad } from "./draw_helpers.js";
+import { RenderPassFlags } from "../renderer_types.js";
+import { RingBufferAllocator } from "../../memory/allocator.js";
+import { draw_quad } from "../draw_helpers.js";
 
 const fullscreen_shader_path = "fullscreen.wgsl";
 

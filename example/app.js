@@ -6,7 +6,7 @@ import { EntityManager } from "../engine/src/core/ecs/entity.js";
 import { Scene } from "../engine/src/core/scene.js";
 import { InputProvider } from "../engine/src/input/input_provider.js";
 import { InputKey } from "../engine/src/input/input_types.js";
-import { PostProcessStack } from "../engine/src/renderer/post_process_stack.js";
+import { PostProcessStack } from "../engine/src/renderer/post_process/post_process_stack.js";
 import { BVHDebugRenderer } from "../engine/src/core/subsystems/bvh_debug_renderer.js";
 import { BVHRaycast } from "../engine/src/acceleration/bvh_raycast.js";
 import { ComputeTaskQueue } from "../engine/src/renderer/task_queues/compute_task_queue.js";

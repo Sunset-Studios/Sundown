@@ -1,6 +1,6 @@
-﻿import { RenderPassFlags } from "./renderer_types.js";
-import { rgba16float_format } from "../utility/config_permutations.js";
-import { draw_quad } from "./draw_helpers.js";
+﻿import { RenderPassFlags } from "../renderer_types.js";
+import { rgba16float_format } from "../../utility/config_permutations.js";
+import { draw_quad } from "../draw_helpers.js";
 
 const bloom_downsample_shader_setup = {
   pipeline_shaders: {

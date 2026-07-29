@@ -12,7 +12,7 @@ import { LightFragment } from "../../core/ecs/fragments/light_fragment.js";
 import { Renderer } from "../renderer.js";
 import { Texture } from "../texture.js";
 import { MeshData } from "../mesh_data.js";
-import { PostProcessStack } from "../post_process_stack.js";
+import { PostProcessStack } from "../post_process/post_process_stack.js";
 import { RenderTaskQueue } from "../task_queues/render_task_queue.js";
 import { ComputeTaskQueue } from "../task_queues/compute_task_queue.js";
 import { ResourceCache } from "../resource_cache.js";
