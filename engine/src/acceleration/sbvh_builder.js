@@ -1,9 +1,57 @@
-export const SBVH_BIN_COUNT = 16;
-export const SBVH_MAX_REFERENCE_MULTIPLIER = 2;
-export const SBVH_MAX_SPATIAL_DEPTH = 8;
-const COST_EPSILON = 1e-5;
-const BOUNDS_EPSILON = 1e-6;
+// ═════════════════════════════════════════════════════════════════════════════════════════════════
+//  SUNDOWN — CPU SPATIAL SPLIT BVH BUILDER
+// ═════════════════════════════════════════════════════════════════════════════════════════════════
+//
+//  Builds a binary bottom-level acceleration structure from indexed triangle geometry. The builder
+//  evaluates both centroid-based object splits and spatial splits using a binned surface-area
+//  heuristic (SAH). Spatial splits may duplicate a triangle reference across both children, clipping
+//  each duplicate's conservative AABB at the split plane to reduce node overlap.
+//
+//  BUILD PIPELINE
+//
+//    Indexed geometry
+//         │
+//         ▼
+//    Triangle AABB references ──► recursive object / spatial SAH partitioning
+//                                             │
+//                                             ▼
+//                                   leaf-first flat BVH2 storage
+//
+//  NODE STORAGE — 8 × f32
+//
+//    ┌───────────────────────────────┬───────────────────────────────┐
+//    │ min.xyz                       │ max.xyz                       │
+//    ├───────────────────────────────┼───────────────────────────────┤
+//    │ min.w                         │ max.w                         │
+//    │ leaf: triangle id             │ leaf: -1                     │
+//    │ branch: left child index      │ branch: right child index    │
+//    └───────────────────────────────┴───────────────────────────────┘
+//
+//  Leaves occupy [0, reference_count); branches follow in post-order, which guarantees that the
+//  root is the final node. A spatially split triangle can therefore appear in more than one leaf.
+//
+// ═════════════════════════════════════════════════════════════════════════════════════════════════
 
+export const SBVH_BIN_COUNT = 16; // SAH resolution per axis.
+export const SBVH_MAX_REFERENCE_MULTIPLIER = 2; // Maximum leaf growth from spatial duplication.
+export const SBVH_MAX_SPATIAL_DEPTH = 8; // Restricts expensive spatial evaluation near the root.
+const COST_EPSILON = 1e-5; // Requires a meaningful spatial-SAH win over an object split.
+const BOUNDS_EPSILON = 1e-6; // Treats near-zero extents and plane contacts as degenerate.
+
+// ┌───────────────────────────────────────────────────────────────────────────────────────────────┐
+// │                                      BOUNDS PRIMITIVES                                        │
+// └───────────────────────────────────────────────────────────────────────────────────────────────┘
+//
+// Bounds and triangle references intentionally share the same min/max field names. This keeps the
+// bounds helpers polymorphic without creating temporary vector objects.
+
+/**
+ * Creates the identity value for AABB expansion.
+ *
+ * Inverted infinities let the first finite reference replace all six components naturally.
+ *
+ * @returns {object}
+ */
 function make_empty_bounds() {
   return {
     min_x: Infinity,
@@ -15,6 +63,12 @@ function make_empty_bounds() {
   };
 }
 
+/**
+ * Tests whether every minimum lies on or below its matching maximum.
+ *
+ * @param {object} bounds
+ * @returns {boolean}
+ */
 function is_valid_bounds(bounds) {
   return (
     bounds.min_x <= bounds.max_x &&
@@ -23,6 +77,12 @@ function is_valid_bounds(bounds) {
   );
 }
 
+/**
+ * Copies a triangle reference before one side is clipped by a spatial split.
+ *
+ * @param {object} ref
+ * @returns {object}
+ */
 function clone_ref(ref) {
   return {
     tri_id: ref.tri_id,
@@ -35,6 +95,13 @@ function clone_ref(ref) {
   };
 }
 
+/**
+ * Returns the midpoint of a reference AABB along an axis.
+ *
+ * @param {object} ref
+ * @param {number} axis - 0 = x, 1 = y, 2 = z.
+ * @returns {number}
+ */
 function ref_centroid(ref, axis) {
   switch (axis) {
     case 0:
@@ -46,6 +113,13 @@ function ref_centroid(ref, axis) {
   }
 }
 
+/**
+ * Returns an AABB extent along an axis.
+ *
+ * @param {object} bounds
+ * @param {number} axis - 0 = x, 1 = y, 2 = z.
+ * @returns {number}
+ */
 function bounds_extent(bounds, axis) {
   switch (axis) {
     case 0:
@@ -57,6 +131,14 @@ function bounds_extent(bounds, axis) {
   }
 }
 
+/**
+ * Computes AABB surface area for SAH scoring.
+ *
+ * Negative extents are clamped so an empty accumulator contributes zero area.
+ *
+ * @param {object} bounds
+ * @returns {number}
+ */
 function surface_area(bounds) {
   const ex = Math.max(0.0, bounds.max_x - bounds.min_x);
   const ey = Math.max(0.0, bounds.max_y - bounds.min_y);
@@ -64,6 +146,12 @@ function surface_area(bounds) {
   return 2.0 * (ex * ey + ex * ez + ey * ez);
 }
 
+/**
+ * Expands an AABB in place to include another bounds-like object.
+ *
+ * @param {object} bounds
+ * @param {object} ref
+ */
 function expand_bounds(bounds, ref) {
   bounds.min_x = Math.min(bounds.min_x, ref.min_x);
   bounds.min_y = Math.min(bounds.min_y, ref.min_y);
@@ -73,6 +161,13 @@ function expand_bounds(bounds, ref) {
   bounds.max_z = Math.max(bounds.max_z, ref.max_z);
 }
 
+/**
+ * Returns the union of two AABBs while preserving the non-empty operand.
+ *
+ * @param {object} a
+ * @param {object} b
+ * @returns {object}
+ */
 function merge_bounds(a, b) {
   if (!is_valid_bounds(a)) return { ...b };
   if (!is_valid_bounds(b)) return { ...a };
@@ -86,6 +181,12 @@ function merge_bounds(a, b) {
   };
 }
 
+/**
+ * Computes the conservative bounds of a reference set.
+ *
+ * @param {object[]} refs
+ * @returns {object}
+ */
 function compute_bounds(refs) {
   const bounds = make_empty_bounds();
   for (let i = 0; i < refs.length; i++) {
@@ -94,6 +195,12 @@ function compute_bounds(refs) {
   return bounds;
 }
 
+/**
+ * Computes bounds around reference centroids for object-split binning.
+ *
+ * @param {object[]} refs
+ * @returns {object}
+ */
 function compute_centroid_bounds(refs) {
   const bounds = make_empty_bounds();
   for (let i = 0; i < refs.length; i++) {
@@ -111,6 +218,16 @@ function compute_centroid_bounds(refs) {
   return bounds;
 }
 
+/**
+ * Intersects a reference AABB with the current node bounds.
+ *
+ * Spatial references are conservative boxes rather than clipped triangle polygons. Re-clipping them
+ * at each node prevents inherited bounds from leaking outside the node's spatial domain.
+ *
+ * @param {object} ref
+ * @param {object} bounds
+ * @returns {object|null}
+ */
 function clip_ref_to_bounds(ref, bounds) {
   const clipped = {
     tri_id: ref.tri_id,
@@ -124,6 +241,15 @@ function clip_ref_to_bounds(ref, bounds) {
   return is_valid_bounds(clipped) ? clipped : null;
 }
 
+/**
+ * Intersects a reference with one bin slab along the selected axis.
+ *
+ * @param {object} ref
+ * @param {number} axis
+ * @param {number} plane_min
+ * @param {number} plane_max
+ * @returns {object|null}
+ */
 function clip_ref_to_bin(ref, axis, plane_min, plane_max) {
   const clipped = clone_ref(ref);
   if (axis === 0) {
@@ -139,6 +265,18 @@ function clip_ref_to_bin(ref, axis, plane_min, plane_max) {
   return is_valid_bounds(clipped) ? clipped : null;
 }
 
+// ┌───────────────────────────────────────────────────────────────────────────────────────────────┐
+// │                                     BINNED SAH SEARCH                                         │
+// └───────────────────────────────────────────────────────────────────────────────────────────────┘
+
+/**
+ * Creates one bin accumulator.
+ *
+ * Object splits use `count`; spatial splits use `enter` and `exit` events. Both paths accumulate
+ * clipped reference bounds in the shared `bounds` field.
+ *
+ * @returns {{enter: number, exit: number, count: number, bounds: object}}
+ */
 function make_bin() {
   return {
     enter: 0,
@@ -148,6 +286,14 @@ function make_bin() {
   };
 }
 
+/**
+ * Maps a scalar coordinate into a clamped bin index.
+ *
+ * @param {number} value
+ * @param {number} min_value
+ * @param {number} extent
+ * @returns {number}
+ */
 function bin_index(value, min_value, extent) {
   if (extent <= BOUNDS_EPSILON) {
     return 0;
@@ -157,6 +303,19 @@ function bin_index(value, min_value, extent) {
   return Math.max(0, Math.min(SBVH_BIN_COUNT - 1, idx));
 }
 
+/**
+ * Finds the lowest-cost object split across all axes.
+ *
+ * Each reference belongs to exactly one centroid bin. Prefix and suffix scans then evaluate every
+ * boundary in O(bin_count), using the unnormalized SAH cost:
+ *
+ *   cost = left_surface_area × left_count + right_surface_area × right_count
+ *
+ * The common parent-area and traversal terms are omitted because only relative split cost matters.
+ *
+ * @param {object[]} refs
+ * @returns {{type: string, axis: number, split_index: number, plane: number, cost: number}|null}
+ */
 function find_best_object_split(refs) {
   const centroid_bounds = compute_centroid_bounds(refs);
   let best = null;
@@ -183,6 +342,7 @@ function find_best_object_split(refs) {
     const left_bounds = Array.from({ length: SBVH_BIN_COUNT }, make_empty_bounds);
     const right_bounds = Array.from({ length: SBVH_BIN_COUNT }, make_empty_bounds);
 
+    // Prefix scan: all references on or before each candidate boundary.
     let running_count = 0;
     let running_bounds = make_empty_bounds();
     for (let i = 0; i < SBVH_BIN_COUNT; i++) {
@@ -192,6 +352,7 @@ function find_best_object_split(refs) {
       left_bounds[i] = running_bounds;
     }
 
+    // Suffix scan: all references after each candidate boundary.
     running_count = 0;
     running_bounds = make_empty_bounds();
     for (let i = SBVH_BIN_COUNT - 1; i >= 0; i--) {
@@ -201,6 +362,7 @@ function find_best_object_split(refs) {
       right_bounds[i] = running_bounds;
     }
 
+    // A split plane lies between bin i and bin i + 1; empty children are never valid.
     for (let i = 0; i < SBVH_BIN_COUNT - 1; i++) {
       const left_count = left_counts[i];
       const right_count = right_counts[i + 1];
@@ -226,6 +388,18 @@ function find_best_object_split(refs) {
   return best;
 }
 
+/**
+ * Finds the lowest-cost spatial split across all axes.
+ *
+ * A reference contributes an enter event to its first overlapping bin and an exit event to its
+ * last. Prefix/suffix event scans count the reference once on each side of any plane it crosses,
+ * modeling the duplicated leaves that partition_spatial() may emit. Per-bin bounds are clipped to
+ * the bin slab so SAH evaluates the overlap reduction produced by the candidate plane.
+ *
+ * @param {object[]} refs
+ * @param {object} node_bounds
+ * @returns {{type: string, axis: number, split_index: number, plane: number, cost: number}|null}
+ */
 function find_best_spatial_split(refs, node_bounds) {
   let best = null;
 
@@ -256,6 +430,7 @@ function find_best_spatial_split(refs, node_bounds) {
       bins[first_bin].enter++;
       bins[last_bin].exit++;
 
+      // Accumulate only the portion of the conservative reference inside each overlapped slab.
       for (let bin = first_bin; bin <= last_bin; bin++) {
         const plane_min = axis_min + (extent * bin) / SBVH_BIN_COUNT;
         const plane_max = axis_min + (extent * (bin + 1)) / SBVH_BIN_COUNT;
@@ -271,6 +446,7 @@ function find_best_spatial_split(refs, node_bounds) {
     const left_bounds = Array.from({ length: SBVH_BIN_COUNT }, make_empty_bounds);
     const right_bounds = Array.from({ length: SBVH_BIN_COUNT }, make_empty_bounds);
 
+    // References enter the left prefix once and remain active for all following boundaries.
     let running_count = 0;
     let running_bounds = make_empty_bounds();
     for (let i = 0; i < SBVH_BIN_COUNT; i++) {
@@ -280,6 +456,7 @@ function find_best_spatial_split(refs, node_bounds) {
       left_bounds[i] = running_bounds;
     }
 
+    // References enter the right suffix from their last occupied bin and remain active backward.
     running_count = 0;
     running_bounds = make_empty_bounds();
     for (let i = SBVH_BIN_COUNT - 1; i >= 0; i--) {
@@ -289,6 +466,7 @@ function find_best_spatial_split(refs, node_bounds) {
       right_bounds[i] = running_bounds;
     }
 
+    // Crossing references are intentionally counted in both children for spatial SAH.
     for (let i = 0; i < SBVH_BIN_COUNT - 1; i++) {
       const left_count = left_counts[i];
       const right_count = right_counts[i + 1];
@@ -314,6 +492,16 @@ function find_best_spatial_split(refs, node_bounds) {
   return best;
 }
 
+// ┌───────────────────────────────────────────────────────────────────────────────────────────────┐
+// │                                      PARTITION POLICY                                         │
+// └───────────────────────────────────────────────────────────────────────────────────────────────┘
+
+/**
+ * Selects the widest node axis for deterministic fallback partitioning.
+ *
+ * @param {object} bounds
+ * @returns {number}
+ */
 function longest_axis(bounds) {
   const ex = bounds.max_x - bounds.min_x;
   const ey = bounds.max_y - bounds.min_y;
@@ -323,6 +511,16 @@ function longest_axis(bounds) {
   return 2;
 }
 
+/**
+ * Guarantees progress when binned SAH cannot produce two non-empty children.
+ *
+ * Sorting by centroid and cutting at the median handles coincident centroids, zero-area geometry,
+ * and other degenerate input without creating an empty recursive branch.
+ *
+ * @param {object[]} refs
+ * @param {object} node_bounds
+ * @returns {{left: object[], right: object[]}}
+ */
 function fallback_partition(refs, node_bounds) {
   const axis = longest_axis(node_bounds);
   const sorted = refs.slice().sort((a, b) => ref_centroid(a, axis) - ref_centroid(b, axis));
@@ -333,6 +531,13 @@ function fallback_partition(refs, node_bounds) {
   };
 }
 
+/**
+ * Applies a centroid object split without duplicating references.
+ *
+ * @param {object[]} refs
+ * @param {object} split
+ * @returns {{left: object[], right: object[]}|null}
+ */
 function partition_object(refs, split) {
   const left = [];
   const right = [];
@@ -353,10 +558,30 @@ function partition_object(refs, split) {
   return { left, right };
 }
 
+/**
+ * Chooses a single child for a crossing reference when duplication is unavailable.
+ *
+ * @param {object} ref
+ * @param {object} split
+ * @returns {"left"|"right"}
+ */
 function choose_single_side(ref, split) {
   return ref_centroid(ref, split.axis) <= split.plane ? "left" : "right";
 }
 
+/**
+ * Applies a spatial split, clipping crossing references at the split plane.
+ *
+ * A crossing reference is duplicated only while the global reference budget has capacity. Once
+ * exhausted, its centroid picks one child and the valid clipped half is retained there. The shared
+ * state counts emitted leaf references, so every accepted duplication increments it exactly once.
+ *
+ * @param {object[]} refs
+ * @param {object} node_bounds
+ * @param {object} split
+ * @param {{reference_count: number, max_reference_count: number}} state
+ * @returns {{left: object[], right: object[]}|null}
+ */
 function partition_spatial(refs, node_bounds, split, state) {
   const left = [];
   const right = [];
@@ -382,6 +607,7 @@ function partition_spatial(refs, node_bounds, split, state) {
       continue;
     }
 
+    // The reference straddles the plane. Produce conservative bounds for both spatial fragments.
     const left_ref = clone_ref(clipped);
     const right_ref = clone_ref(clipped);
     if (split.axis === 0) {
@@ -405,6 +631,7 @@ function partition_spatial(refs, node_bounds, split, state) {
       continue;
     }
 
+    // Preserve the reference count when the duplication budget has been consumed.
     const preferred_side = choose_single_side(clipped, split);
     if (preferred_side === "left" && left_valid) {
       left.push(left_ref);
@@ -422,6 +649,22 @@ function partition_spatial(refs, node_bounds, split, state) {
   return { left, right };
 }
 
+// ┌───────────────────────────────────────────────────────────────────────────────────────────────┐
+// │                                    RECURSIVE CONSTRUCTION                                     │
+// └───────────────────────────────────────────────────────────────────────────────────────────────┘
+
+/**
+ * Recursively builds the pointer-based intermediate BVH.
+ *
+ * Spatial SAH is considered only while depth, reference-count, and node-size guards allow it. A
+ * spatial candidate must beat the object candidate by COST_EPSILON; otherwise the cheaper and
+ * topology-preserving object path wins. Median partitioning is the final progress guarantee.
+ *
+ * @param {object[]} refs
+ * @param {number} depth
+ * @param {{reference_count: number, max_reference_count: number}} state
+ * @returns {object}
+ */
 function build_node(refs, depth, state) {
   if (refs.length === 1) {
     return {
@@ -449,6 +692,7 @@ function build_node(refs, depth, state) {
     partition = partition_spatial(refs, node_bounds, spatial_split, state);
   }
 
+  // A rejected or degenerate spatial partition falls back to the best object split.
   if (!partition && object_split) {
     partition = partition_object(refs, object_split);
   }
@@ -457,6 +701,7 @@ function build_node(refs, depth, state) {
     partition = fallback_partition(refs, node_bounds);
   }
 
+  // Build children before emitting this branch so flattening can preserve post-order layout.
   const left_node = build_node(partition.left, depth + 1, state);
   const right_node = build_node(partition.right, depth + 1, state);
 
@@ -473,6 +718,26 @@ function build_node(refs, depth, state) {
   };
 }
 
+// ┌───────────────────────────────────────────────────────────────────────────────────────────────┐
+// │                                      GPU NODE ENCODING                                        │
+// └───────────────────────────────────────────────────────────────────────────────────────────────┘
+
+/**
+ * Writes one tightly packed 8-float node record.
+ *
+ * Metadata occupies the two w lanes so bounds and topology can be fetched together as two vec4s.
+ *
+ * @param {Float32Array} nodes
+ * @param {number} index
+ * @param {number} min_x
+ * @param {number} min_y
+ * @param {number} min_z
+ * @param {number} min_w - Triangle id for leaves; left child index for branches.
+ * @param {number} max_x
+ * @param {number} max_y
+ * @param {number} max_z
+ * @param {number} max_w - -1 for leaves; right child index for branches.
+ */
 function write_node(nodes, index, min_x, min_y, min_z, min_w, max_x, max_y, max_z, max_w) {
   const base = index * 8;
   nodes[base + 0] = min_x;
@@ -485,12 +750,29 @@ function write_node(nodes, index, min_x, min_y, min_z, min_w, max_x, max_y, max_
   nodes[base + 7] = max_w;
 }
 
+/**
+ * Flattens the intermediate tree into leaf-first, post-order BVH2 storage.
+ *
+ * There are R leaves and R - 1 branches for R final references. Separate cursors reserve the first
+ * R slots for leaves while recursive post-order traversal places every parent after its children.
+ * The resulting root index is therefore always node_count - 1.
+ *
+ * @param {object} root
+ * @param {number} reference_count
+ * @returns {Float32Array}
+ */
 function flatten_tree(root, reference_count) {
   const node_count = Math.max(1, reference_count * 2 - 1);
   const nodes = new Float32Array(node_count * 8);
   let next_leaf = 0;
   let next_internal = reference_count;
 
+  /**
+   * Emits a subtree and returns its flat node index.
+   *
+   * @param {object} node
+   * @returns {number}
+   */
   function visit(node) {
     if (node.leaf) {
       const index = next_leaf++;
@@ -535,6 +817,21 @@ function flatten_tree(root, reference_count) {
   return nodes;
 }
 
+// ┌───────────────────────────────────────────────────────────────────────────────────────────────┐
+// │                                         PUBLIC API                                            │
+// └───────────────────────────────────────────────────────────────────────────────────────────────┘
+
+/**
+ * Rebases branch child indices for insertion into a larger shared node buffer.
+ *
+ * The source array is copied so cached mesh-local SBVH data remains reusable. Leaves are identified
+ * by their negative max.w sentinel and retain their triangle id in min.w.
+ *
+ * @param {Float32Array} node_data
+ * @param {number} base_node_index
+ * @param {number} node_data_size - Float components per node; expected to provide w lanes at 3/7.
+ * @returns {Float32Array}
+ */
 export function patch_sbvh_child_indices(node_data, base_node_index, node_data_size) {
   const patched = node_data.slice();
   const node_count = Math.floor(patched.length / node_data_size);
@@ -553,6 +850,21 @@ export function patch_sbvh_child_indices(node_data, base_node_index, node_data_s
   return patched;
 }
 
+/**
+ * Builds an SBVH directly from tightly packed positions and triangle indices.
+ *
+ * Each indexed triangle becomes one conservative AABB reference. The spatial split budget may grow
+ * the final reference count up to SBVH_MAX_REFERENCE_MULTIPLIER times the primitive count.
+ *
+ * @param {Float32Array} positions - XYZ triples indexed by `indices`.
+ * @param {Uint32Array} indices - Triangle-list vertex indices.
+ * @returns {{
+ *   primitive_count: number,
+ *   reference_count: number,
+ *   node_count: number,
+ *   node_data: Float32Array
+ * }|null}
+ */
 export function build_sbvh_from_positions_indices(positions, indices) {
   if (!(positions instanceof Float32Array) || !(indices instanceof Uint32Array) || indices.length < 3) {
     return null;
@@ -565,6 +877,7 @@ export function build_sbvh_from_positions_indices(positions, indices) {
 
   const refs = new Array(primitive_count);
   for (let tri_id = 0; tri_id < primitive_count; tri_id++) {
+    // Missing components resolve to zero so malformed-but-addressable input remains finite.
     const i0 = indices[tri_id * 3 + 0] ?? 0;
     const i1 = indices[tri_id * 3 + 1] ?? 0;
     const i2 = indices[tri_id * 3 + 2] ?? 0;
@@ -600,6 +913,7 @@ export function build_sbvh_from_positions_indices(positions, indices) {
     };
   }
 
+  // reference_count begins at one leaf per primitive and grows once per accepted duplication.
   const state = {
     reference_count: primitive_count,
     max_reference_count: Math.max(
@@ -619,6 +933,20 @@ export function build_sbvh_from_positions_indices(positions, indices) {
   };
 }
 
+/**
+ * Builds an SBVH from the engine mesh representation.
+ *
+ * CPU position data is used directly when retained by the mesh. Otherwise a temporary packed array
+ * is assembled from vertex objects before dispatching to the typed-array builder.
+ *
+ * @param {object} mesh
+ * @returns {{
+ *   primitive_count: number,
+ *   reference_count: number,
+ *   node_count: number,
+ *   node_data: Float32Array
+ * }|null}
+ */
 export function build_mesh_sbvh(mesh) {
   if (!mesh?.indices) {
     return null;
