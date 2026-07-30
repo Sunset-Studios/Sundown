@@ -14,11 +14,12 @@ import { RenderPassFlags } from "../renderer/renderer_types.js";
 // This system turns scene geometry into a world-space voxel representation while leaving resource
 // lifetime, pass ordering, and synchronization to a caller-owned render graph.
 //
-// 🧱  CURRENT MILESTONE:
+// 🧱  CURRENT REPRESENTATION:
 //     • One fixed 256 × 256 × 256 root grid
 //     • One uniform world-space voxel size
 //     • One occupancy bit per voxel, packed 32 voxels per u32 storage word
-//     • A GPU clear pass that produces a valid, empty grid
+//     • Meshlet-driven conservative compute voxelization
+//     • A full GPU rebuild from current instance transforms for dynamic-scene correctness
 //
 // 🌳  PLANNED EVOLUTION:
 //     • Treat each root voxel as a brick when finer detail is requested
@@ -36,12 +37,59 @@ import { RenderPassFlags } from "../renderer/renderer_types.js";
 // setup() and record() remain public on purpose. A strategy may allocate all shared resources first,
 // then record several dependent systems in an explicit order, just like the GI pipeline modules.
 //
-// IMPORTANT: The bit-wise occupancy layout is part of the contract. Geometry coverage and any
-// non-occupancy surface attributes are intentionally not chosen yet, so this boilerplate does not
-// commit us to conservative rasterization, triangle-driven compute, meshlet-driven compute, or a
-// particular material layout.
+// IMPORTANT: The bit-wise occupancy layout is part of the contract. Non-occupancy surface
+// attributes remain intentionally unspecified so the compact grid stays usable by lighting,
+// tracing, and debug consumers without coupling them to a material representation.
 //
 // ════════════════════════════════════════════════════════════════════════════════════════════════
+
+const scene_voxelize_shader_setup = {
+  pipeline_shaders: {
+    compute: {
+      path: "acceleration/scene_voxelizer.wgsl",
+    },
+  },
+};
+
+const scene_voxel_mark_dirty_shader_setup = {
+  pipeline_shaders: {
+    compute: {
+      path: "acceleration/scene_voxelizer_mark_dirty.wgsl",
+    },
+  },
+};
+
+const scene_voxel_clear_dirty_shader_setup = {
+  pipeline_shaders: {
+    compute: {
+      path: "acceleration/scene_voxelizer_clear_dirty.wgsl",
+    },
+  },
+};
+
+const scene_voxel_compact_shader_setup = {
+  pipeline_shaders: {
+    compute: {
+      path: "acceleration/scene_voxelizer_compact.wgsl",
+    },
+  },
+};
+
+const scene_voxel_finalize_dispatch_shader_setup = {
+  pipeline_shaders: {
+    compute: {
+      path: "acceleration/scene_voxelizer_finalize_dispatch.wgsl",
+    },
+  },
+};
+
+const scene_voxel_debug_shader_setup = {
+  pipeline_shaders: {
+    compute: {
+      path: "debug/debug_scene_voxelizer.wgsl",
+    },
+  },
+};
 
 // ┌──────────────────────────────────────────────────────────────────────────────────────────────┐
 // │                                  ROOT GRID CONFIGURATION                                     │
@@ -83,9 +131,38 @@ export const SCENE_VOXEL_BRICK_OCCUPANCY_WORD_COUNT =
  */
 export const SceneVoxelizerResource = Object.freeze({
   VoxelGrid: "voxel_grid",
+  VoxelizationParams: "voxelization_params",
+  DirtyBrickWords: "dirty_brick_words",
+  DirtyBrickList: "dirty_brick_list",
+  DirtyDispatchArgs: "dirty_dispatch_args",
+  CompactedMeshlets: "compacted_meshlets",
+  VoxelDispatchArgs: "voxel_dispatch_args",
+  VoxelDispatchCount: "voxel_dispatch_count",
+  DebugOutput: "debug_output",
 });
 
 const DEFAULT_RESOURCE_PREFIX = "scene_voxelizer";
+const VOXELIZATION_PARAMS_WORD_COUNT = 8;
+const MAX_COMPUTE_WORKGROUPS_PER_DIMENSION = 65535;
+const DIRTY_BRICK_SIZE = 8;
+const DIRTY_BRICK_DIMENSION = SCENE_VOXEL_GRID_RESOLUTION / DIRTY_BRICK_SIZE;
+const DIRTY_BRICK_COUNT = DIRTY_BRICK_DIMENSION ** 3;
+const DIRTY_BRICK_WORD_COUNT = DIRTY_BRICK_COUNT / SCENE_VOXEL_OCCUPANCY_BITS_PER_WORD;
+const DIRTY_MARK_WORKGROUP_SIZE = 64;
+const MESHLET_COMPACT_WORKGROUP_SIZE = 128;
+const DEBUG_OUTPUT_SCALE = 0.5;
+const DEBUG_WORKGROUP_SIZE = 8;
+
+const required_voxelization_inputs = Object.freeze([
+  "entity_transforms",
+  "entity_flags",
+  "object_instances",
+  "meshlet_instances",
+  "entity_index_lookup",
+  "meshlet_buffer",
+  "meshlet_vertex_buffer",
+  "meshlet_triangle_buffer",
+]);
 
 /**
  * Creates a normalized scene-voxelizer configuration.
@@ -105,7 +182,7 @@ const DEFAULT_RESOURCE_PREFIX = "scene_voxelizer";
  */
 export function create_scene_voxelizer_config(overrides = {}) {
   const config = {
-    voxel_size: overrides.voxel_size ?? 1.0,
+    voxel_size: overrides.voxel_size ?? 0.25,
     grid_origin: [...(overrides.grid_origin ?? [0.0, 0.0, 0.0])],
     resource_prefix: overrides.resource_prefix ?? DEFAULT_RESOURCE_PREFIX,
   };
@@ -171,8 +248,8 @@ function validate_config(config) {
  * │  2. Voxelize     Project scene primitives into conservative root-grid coverage               │
  * │  3. Finalize     Build hierarchy metadata and prepare the consumer-facing representation      │
  * │                                                                                              │
- * │  Only Reset is implemented in this first boilerplate. Voxelize and Finalize are explicit      │
- * │  extension points below, which keeps the eventual implementation split into reviewable parts. │
+ * │  Reset and Voxelize are implemented. Finalize remains an extension point for future sparse     │
+ * │  hierarchy metadata; dense occupancy is consumer-readable immediately after Voxelize.          │
  * │                                                                                              │
  * └──────────────────────────────────────────────────────────────────────────────────────────────┘
  */
@@ -184,6 +261,17 @@ export class SceneVoxelizer {
     this.config = create_scene_voxelizer_config(config);
     this.resources = new Map();
     this.frame_context = null;
+
+    // Reused for every upload. Keeping this storage on the voxelizer avoids allocating parameter
+    // arrays in the render loop while still allowing the volume to move or resize every frame.
+    this.voxelization_params_data = new Uint32Array(VOXELIZATION_PARAMS_WORD_COUNT);
+    this.voxelization_params_view = new DataView(this.voxelization_params_data.buffer);
+    this.indirect_args_reset_data = new Uint32Array([0, 1, 1, 0]);
+    this.dirty_dispatch_reset_data = new Uint32Array([0, 1, 1, 0, 0, 1, 1]);
+    this.dispatch_count_reset_data = new Uint32Array(1);
+    this.previous_grid_origin = new Float64Array([NaN, NaN, NaN]);
+    this.previous_voxel_size = NaN;
+    this.previous_meshlet_count = -1;
   }
 
   /**
@@ -193,23 +281,55 @@ export class SceneVoxelizer {
    * reconstructing the strategy object. GPU resource handles are graph-local, so they are discarded
    * here and recreated by setup().
    *
+   * Geometry inputs are existing render-graph handles. `meshlet_count` may also be supplied as
+   * `meshlet_draw_count` to match RenderTaskQueue terminology.
+   *
    * @param {Object} [frame_context]
+   * @param {number} [frame_context.meshlet_count=0]
+   * @param {number} [frame_context.entity_transforms]
+   * @param {number} [frame_context.object_instances]
+   * @param {number} [frame_context.meshlet_instances]
+   * @param {number} [frame_context.entity_index_lookup]
+   * @param {number} [frame_context.meshlet_buffer]
+   * @param {number} [frame_context.meshlet_vertex_buffer]
+   * @param {number} [frame_context.meshlet_triangle_buffer]
    * @returns {Object} The normalized context used by setup() and record().
    */
   begin_frame(frame_context = {}) {
     const voxel_size = frame_context.voxel_size ?? this.config.voxel_size;
     const grid_origin = [...(frame_context.grid_origin ?? this.config.grid_origin)];
+    const meshlet_count = frame_context.meshlet_count ?? frame_context.meshlet_draw_count ?? 0;
     validate_config({
       voxel_size,
       grid_origin,
       resource_prefix: this.config.resource_prefix,
     });
+    if (!Number.isSafeInteger(meshlet_count) || meshlet_count < 0) {
+      throw new Error("SceneVoxelizer meshlet_count must be a non-negative safe integer");
+    }
+
+    const volume_changed =
+      voxel_size !== this.previous_voxel_size ||
+      grid_origin[0] !== this.previous_grid_origin[0] ||
+      grid_origin[1] !== this.previous_grid_origin[1] ||
+      grid_origin[2] !== this.previous_grid_origin[2];
+    const full_rebuild =
+      (frame_context.full_rebuild ?? false) ||
+      (frame_context.force_recreate ?? false) ||
+      volume_changed ||
+      meshlet_count !== this.previous_meshlet_count;
+
+    this.previous_voxel_size = voxel_size;
+    this.previous_grid_origin.set(grid_origin);
+    this.previous_meshlet_count = meshlet_count;
 
     this.resources.clear();
     this.frame_context = {
       ...frame_context,
       voxel_size,
       grid_origin,
+      meshlet_count,
+      full_rebuild,
       force_recreate: frame_context.force_recreate ?? false,
       resolution: SCENE_VOXEL_GRID_RESOLUTION,
       voxel_count: SCENE_VOXEL_COUNT,
@@ -254,7 +374,7 @@ export class SceneVoxelizer {
   record(render_graph, frame_context = this.frame_context) {
     this._assert_render_graph(render_graph);
     const context = frame_context ?? this.frame_context;
-    if (!context || !this.get_resource(SceneVoxelizerResource.VoxelGrid)) {
+    if (!context || this.get_resource(SceneVoxelizerResource.VoxelGrid) === null) {
       throw new Error("SceneVoxelizer.record() requires begin_frame() and setup() first");
     }
 
@@ -279,6 +399,83 @@ export class SceneVoxelizer {
   }
 
   /**
+   * Builds a camera-facing debug image by tracing the packed occupancy grid.
+   *
+   * The debug image is intentionally half resolution. Voxel traversal is substantially more
+   * expensive than a texture overlay, and the existing debug overlay upscales it to the viewport.
+   *
+   * @param {Object} render_graph Caller-owned render graph.
+   * @param {Object} debug_context
+   * @param {number} debug_context.width Full viewport width.
+   * @param {number} debug_context.height Full viewport height.
+   * @param {number} debug_context.scene_color Lit scene-color graph handle.
+   * @param {boolean} [debug_context.force_recreate=false]
+   * @returns {number} Graph-local debug image handle.
+   */
+  add_debug_passes(render_graph, debug_context) {
+    this._assert_render_graph(render_graph);
+    if (typeof render_graph.create_image !== "function") {
+      throw new Error("SceneVoxelizer debug output requires a render graph with create_image()");
+    }
+    if (
+      !this.frame_context ||
+      this.get_resource(SceneVoxelizerResource.VoxelGrid) === null ||
+      this.get_resource(SceneVoxelizerResource.VoxelizationParams) === null
+    ) {
+      throw new Error("SceneVoxelizer.add_debug_passes() requires add_passes() first");
+    }
+
+    const width = debug_context?.width;
+    const height = debug_context?.height;
+    const scene_color = debug_context?.scene_color;
+    if (
+      !Number.isSafeInteger(width) ||
+      width <= 0 ||
+      !Number.isSafeInteger(height) ||
+      height <= 0
+    ) {
+      throw new Error("SceneVoxelizer debug dimensions must be positive integers");
+    }
+    if (scene_color === null || scene_color === undefined) {
+      throw new Error("SceneVoxelizer debug output requires a scene_color graph handle");
+    }
+
+    const debug_width = Math.max(1, Math.ceil(width * DEBUG_OUTPUT_SCALE));
+    const debug_height = Math.max(1, Math.ceil(height * DEBUG_OUTPUT_SCALE));
+    const debug_output = render_graph.create_image({
+      name: `${this.config.resource_prefix}_debug_output`,
+      format: "rgba16float",
+      width: debug_width,
+      height: debug_height,
+      usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
+      force: debug_context.force_recreate ?? false,
+    });
+    this.resources.set(SceneVoxelizerResource.DebugOutput, debug_output);
+
+    const voxelization_params = this.get_resource(SceneVoxelizerResource.VoxelizationParams);
+    const voxel_grid = this.get_resource(SceneVoxelizerResource.VoxelGrid);
+    render_graph.add_pass(
+      `${this.config.resource_prefix}_debug_trace`,
+      RenderPassFlags.Compute,
+      {
+        inputs: [voxelization_params, voxel_grid, scene_color, debug_output],
+        outputs: [debug_output],
+        shader_setup: scene_voxel_debug_shader_setup,
+      },
+      (graph, frame_data, _encoder) => {
+        const pass = graph.get_physical_pass(frame_data.current_pass);
+        pass.dispatch(
+          Math.ceil(debug_width / DEBUG_WORKGROUP_SIZE),
+          Math.ceil(debug_height / DEBUG_WORKGROUP_SIZE),
+          1
+        );
+      }
+    );
+
+    return debug_output;
+  }
+
+  /**
    * Returns a resource by stable semantic name.
    *
    * @param {string} semantic A value from {@link SceneVoxelizerResource}.
@@ -300,6 +497,7 @@ export class SceneVoxelizer {
     const context = this.frame_context;
     return {
       voxel_grid: this.get_resource(SceneVoxelizerResource.VoxelGrid),
+      debug_output: this.get_resource(SceneVoxelizerResource.DebugOutput),
       resolution: SCENE_VOXEL_GRID_RESOLUTION,
       voxel_count: SCENE_VOXEL_COUNT,
       occupancy_bits_per_word: SCENE_VOXEL_OCCUPANCY_BITS_PER_WORD,
@@ -324,9 +522,59 @@ export class SceneVoxelizer {
     this.resources.set(SceneVoxelizerResource.VoxelGrid, voxel_grid);
   }
 
-  _setup_voxelization_resources(_render_graph, _context) {
-    // Reserved for primitive lists, indirect dispatch arguments, and scratch space once the
-    // triangle/meshlet coverage algorithm is selected.
+  _setup_voxelization_resources(render_graph, context) {
+    const voxelization_params = render_graph.create_buffer({
+      name: `${this.config.resource_prefix}_voxelization_params`,
+      raw_data: this.voxelization_params_data,
+      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+      force: context.force_recreate,
+    });
+
+    this.resources.set(SceneVoxelizerResource.VoxelizationParams, voxelization_params);
+
+    const dirty_brick_words = render_graph.create_buffer({
+      name: `${this.config.resource_prefix}_dirty_brick_words`,
+      size: DIRTY_BRICK_WORD_COUNT,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+      force: context.force_recreate,
+    });
+    const dirty_brick_list = render_graph.create_buffer({
+      name: `${this.config.resource_prefix}_dirty_brick_list`,
+      size: DIRTY_BRICK_COUNT,
+      usage: GPUBufferUsage.STORAGE,
+      force: context.force_recreate,
+    });
+    const dirty_dispatch_args = render_graph.create_buffer({
+      name: `${this.config.resource_prefix}_dirty_dispatch_args`,
+      raw_data: this.dirty_dispatch_reset_data,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.INDIRECT,
+      force: context.force_recreate,
+    });
+    const compacted_meshlets = render_graph.create_buffer({
+      name: `${this.config.resource_prefix}_compacted_meshlets`,
+      size: Math.max(2, context.meshlet_count * 2),
+      usage: GPUBufferUsage.STORAGE,
+      force: context.force_recreate,
+    });
+    const voxel_dispatch_args = render_graph.create_buffer({
+      name: `${this.config.resource_prefix}_voxel_dispatch_args`,
+      raw_data: this.indirect_args_reset_data,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.INDIRECT,
+      force: context.force_recreate,
+    });
+    const voxel_dispatch_count = render_graph.create_buffer({
+      name: `${this.config.resource_prefix}_voxel_dispatch_count`,
+      raw_data: this.dispatch_count_reset_data,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+      force: context.force_recreate,
+    });
+
+    this.resources.set(SceneVoxelizerResource.DirtyBrickWords, dirty_brick_words);
+    this.resources.set(SceneVoxelizerResource.DirtyBrickList, dirty_brick_list);
+    this.resources.set(SceneVoxelizerResource.DirtyDispatchArgs, dirty_dispatch_args);
+    this.resources.set(SceneVoxelizerResource.CompactedMeshlets, compacted_meshlets);
+    this.resources.set(SceneVoxelizerResource.VoxelDispatchArgs, voxel_dispatch_args);
+    this.resources.set(SceneVoxelizerResource.VoxelDispatchCount, voxel_dispatch_count);
   }
 
   _setup_hierarchy_resources(_render_graph, _context) {
@@ -337,33 +585,219 @@ export class SceneVoxelizer {
   // ────────────────────────────────── PASS RECORDING ─────────────────────────────────────────────
 
   _record_reset_passes(render_graph, _context) {
-    const voxel_grid = this.get_resource(SceneVoxelizerResource.VoxelGrid);
+    const dirty_brick_words = this.get_resource(SceneVoxelizerResource.DirtyBrickWords);
+    const dirty_dispatch_args = this.get_resource(SceneVoxelizerResource.DirtyDispatchArgs);
+    const voxel_dispatch_args = this.get_resource(SceneVoxelizerResource.VoxelDispatchArgs);
+    const voxel_dispatch_count = this.get_resource(SceneVoxelizerResource.VoxelDispatchCount);
 
     render_graph.add_pass(
       `${this.config.resource_prefix}_reset`,
       RenderPassFlags.GraphLocal,
       {
         inputs: [],
-        outputs: [voxel_grid],
+        outputs: [
+          dirty_brick_words,
+          dirty_dispatch_args,
+          voxel_dispatch_args,
+          voxel_dispatch_count,
+        ],
       },
       (graph, _frame_data, encoder) => {
-        const physical_grid = graph.get_physical_buffer(voxel_grid);
-        encoder.clearBuffer(physical_grid.buffer, 0, physical_grid.config.size);
+        const physical_dirty_words = graph.get_physical_buffer(dirty_brick_words);
+        encoder.clearBuffer(
+          physical_dirty_words.buffer,
+          0,
+          physical_dirty_words.config.size
+        );
+        graph
+          .get_physical_buffer(dirty_dispatch_args)
+          .write_raw(this.dirty_dispatch_reset_data);
+        graph
+          .get_physical_buffer(voxel_dispatch_args)
+          .write_raw(this.indirect_args_reset_data);
+        graph
+          .get_physical_buffer(voxel_dispatch_count)
+          .write_raw(this.dispatch_count_reset_data);
       }
     );
   }
 
-  _record_voxelization_passes(_render_graph, _context) {
-    // TODO: Record GPU scene coverage passes here.
-    //
-    // Expected inputs will likely include scene instances, transforms, meshlet/triangle data, and
-    // acceleration-structure metadata. Keeping those inputs on frame_context avoids coupling this
-    // acceleration utility to one renderer strategy while the algorithm is still being designed.
+  _record_voxelization_passes(render_graph, context) {
+    const mark_item_count = context.full_rebuild ? DIRTY_BRICK_COUNT : context.meshlet_count;
+    const mark_workgroup_count = Math.ceil(mark_item_count / DIRTY_MARK_WORKGROUP_SIZE);
+    const compact_workgroup_count = Math.ceil(
+      context.meshlet_count / MESHLET_COMPACT_WORKGROUP_SIZE
+    );
+    const max_workgroups =
+      context.max_compute_workgroups_per_dimension ?? MAX_COMPUTE_WORKGROUPS_PER_DIMENSION;
+    if (mark_workgroup_count > max_workgroups || compact_workgroup_count > max_workgroups) {
+      throw new Error(
+        `SceneVoxelizer cannot process ${context.meshlet_count} meshlets within WebGPU workgroup limits`
+      );
+    }
+
+    this._write_voxelization_params(context, compact_workgroup_count);
+    this._validate_voxelization_inputs(context);
+
+    const voxelization_params = this.get_resource(SceneVoxelizerResource.VoxelizationParams);
+    const voxel_grid = this.get_resource(SceneVoxelizerResource.VoxelGrid);
+    const dirty_brick_words = this.get_resource(SceneVoxelizerResource.DirtyBrickWords);
+    const dirty_brick_list = this.get_resource(SceneVoxelizerResource.DirtyBrickList);
+    const dirty_dispatch_args = this.get_resource(SceneVoxelizerResource.DirtyDispatchArgs);
+    const compacted_meshlets = this.get_resource(SceneVoxelizerResource.CompactedMeshlets);
+    const voxel_dispatch_args = this.get_resource(SceneVoxelizerResource.VoxelDispatchArgs);
+    const voxel_dispatch_count = this.get_resource(SceneVoxelizerResource.VoxelDispatchCount);
+
+    render_graph.add_pass(
+      `${this.config.resource_prefix}_upload_params`,
+      RenderPassFlags.GraphLocal,
+      {
+        outputs: [voxelization_params],
+      },
+      (graph, _frame_data, _encoder) => {
+        graph
+          .get_physical_buffer(voxelization_params)
+          .write_raw(this.voxelization_params_data);
+      }
+    );
+
+    render_graph.add_pass(
+      `${this.config.resource_prefix}_mark_dirty_bricks`,
+      RenderPassFlags.Compute,
+      {
+        inputs: [
+          context.entity_transforms,
+          context.entity_flags,
+          context.object_instances,
+          context.meshlet_instances,
+          context.entity_index_lookup,
+          context.meshlet_buffer,
+          voxelization_params,
+          dirty_brick_words,
+          dirty_brick_list,
+          dirty_dispatch_args,
+        ],
+        outputs: [dirty_brick_words, dirty_brick_list, dirty_dispatch_args],
+        shader_setup: scene_voxel_mark_dirty_shader_setup,
+      },
+      (graph, frame_data, _encoder) => {
+        if (mark_workgroup_count !== 0) {
+          graph
+            .get_physical_pass(frame_data.current_pass)
+            .dispatch(mark_workgroup_count, 1, 1);
+        }
+      }
+    );
+
+    render_graph.add_pass(
+      `${this.config.resource_prefix}_clear_dirty_bricks`,
+      RenderPassFlags.Compute,
+      {
+        inputs: [dirty_brick_list, voxel_grid],
+        outputs: [voxel_grid],
+        shader_setup: scene_voxel_clear_dirty_shader_setup,
+      },
+      (graph, frame_data, _encoder) => {
+        const pass = graph.get_physical_pass(frame_data.current_pass);
+        pass.dispatch_indirect(graph.get_physical_buffer(dirty_dispatch_args));
+      }
+    );
+
+    render_graph.add_pass(
+      `${this.config.resource_prefix}_compact_dirty_meshlets`,
+      RenderPassFlags.Compute,
+      {
+        inputs: [
+          context.entity_transforms,
+          context.object_instances,
+          context.meshlet_instances,
+          context.entity_index_lookup,
+          context.meshlet_buffer,
+          voxelization_params,
+          dirty_brick_words,
+          compacted_meshlets,
+          voxel_dispatch_count,
+        ],
+        outputs: [compacted_meshlets, voxel_dispatch_count],
+        shader_setup: scene_voxel_compact_shader_setup,
+      },
+      (graph, frame_data, _encoder) => {
+        const pass = graph.get_physical_pass(frame_data.current_pass);
+        pass.dispatch_indirect(
+          graph.get_physical_buffer(dirty_dispatch_args),
+          4 * Uint32Array.BYTES_PER_ELEMENT
+        );
+      }
+    );
+
+    render_graph.add_pass(
+      `${this.config.resource_prefix}_finalize_dispatch`,
+      RenderPassFlags.Compute,
+      {
+        inputs: [voxel_dispatch_count, voxel_dispatch_args],
+        outputs: [voxel_dispatch_count, voxel_dispatch_args],
+        shader_setup: scene_voxel_finalize_dispatch_shader_setup,
+      },
+      (graph, frame_data, _encoder) => {
+        graph.get_physical_pass(frame_data.current_pass).dispatch(1, 1, 1);
+      }
+    );
+
+    render_graph.add_pass(
+      `${this.config.resource_prefix}_voxelize_compacted_meshlets`,
+      RenderPassFlags.Compute,
+      {
+        inputs: [
+          context.entity_transforms,
+          context.object_instances,
+          compacted_meshlets,
+          context.entity_index_lookup,
+          context.meshlet_buffer,
+          context.meshlet_vertex_buffer,
+          context.meshlet_triangle_buffer,
+          voxelization_params,
+          voxel_grid,
+          voxel_dispatch_count,
+        ],
+        outputs: [voxel_grid],
+        shader_setup: scene_voxelize_shader_setup,
+        b_force_keep_pass: true,
+      },
+      (graph, frame_data, _encoder) => {
+        const pass = graph.get_physical_pass(frame_data.current_pass);
+        pass.dispatch_indirect(graph.get_physical_buffer(voxel_dispatch_args));
+      }
+    );
   }
 
   _record_finalize_passes(_render_graph, _context) {
     // TODO: Publish any counters or hierarchy metadata required by downstream consumers. The
     // packed root occupancy grid is already consumer-readable after voxelization.
+  }
+
+  _validate_voxelization_inputs(context) {
+    let missing_inputs = "";
+    for (const input_name of required_voxelization_inputs) {
+      if (context[input_name] === null || context[input_name] === undefined) {
+        missing_inputs += `${missing_inputs.length > 0 ? ", " : ""}${input_name}`;
+      }
+    }
+
+    if (missing_inputs.length !== 0) {
+      throw new Error(`SceneVoxelizer requires frame_context inputs: ${missing_inputs}`);
+    }
+  }
+
+  _write_voxelization_params(context, compact_workgroup_count) {
+    const view = this.voxelization_params_view;
+    view.setFloat32(0, context.grid_origin[0], true);
+    view.setFloat32(4, context.grid_origin[1], true);
+    view.setFloat32(8, context.grid_origin[2], true);
+    view.setFloat32(12, context.voxel_size, true);
+    view.setUint32(16, context.meshlet_count, true);
+    view.setUint32(20, compact_workgroup_count, true);
+    view.setUint32(24, SCENE_VOXEL_GRID_RESOLUTION, true);
+    view.setUint32(28, context.full_rebuild ? 1 : 0, true);
   }
 
   _assert_render_graph(render_graph) {

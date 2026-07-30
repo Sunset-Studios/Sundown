@@ -263,6 +263,7 @@ export class DeferredDebugPipeline {
       ao,
       gi,
       svlm,
+      scene_voxelizer_debug_image,
       reflections,
       reflections_enabled,
     }
@@ -570,6 +571,18 @@ export class DeferredDebugPipeline {
           image_extent.width,
           image_extent.height,
           svlm?.debug_texture ? DebugDrawType.SVLM_Probes : DebugDrawType.None
+        );
+        break;
+      case DebugDrawType.SceneVoxelization:
+        this.debug_overlay.set_properties(
+          scene_voxelizer_debug_image,
+          0,
+          0,
+          image_extent.width,
+          image_extent.height,
+          scene_voxelizer_debug_image
+            ? DebugDrawType.SceneVoxelization
+            : DebugDrawType.None
         );
         break;
       default:

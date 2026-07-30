@@ -36,7 +36,10 @@ import {
 } from "../renderer_types.js";
 import { BVH } from "../../acceleration/bvh.js";
 import { MeshBLAS } from "../../acceleration/mesh_blas.js";
-import { SceneVoxelizer } from "../../acceleration/scene_voxelizer.js"
+import {
+  SceneVoxelizer,
+  SCENE_VOXEL_GRID_RESOLUTION,
+} from "../../acceleration/scene_voxelizer.js";
 import { profile_scope } from "../../utility/performance.js";
 import {
   rgba16float_format,
@@ -196,6 +199,9 @@ export class DeferredShadingStrategy {
   debug_pipeline = null;
   gbuffer_targets_pipeline = null;
   environment_pipeline = null;
+  scene_voxelizer = null;
+  scene_voxelizer_outputs = null;
+  scene_voxel_grid_origin = new Float32Array(3);
   previous_gi_lighting_enabled = null;
 
   get_scene_data_handlers() {
@@ -204,14 +210,12 @@ export class DeferredShadingStrategy {
   }
 
   setup(render_graph) {
-    this.debug_pipeline = new DeferredDebugPipeline();
-    this.culling_pipeline = new CullingPipeline();
-    this.environment_pipeline = new EnvironmentPipeline();
-    this.gbuffer_targets_pipeline = new GBufferTargetsPipeline();
-    this.visibility_buffer_pipeline = new VisibilityBufferPipeline();
-
-    // Preserve the in-memory bake when changing renderer/GI strategy. The
-    // scene-data loader may already have populated this instance.
+    this.debug_pipeline ??= new DeferredDebugPipeline();
+    this.culling_pipeline ??= new CullingPipeline();
+    this.environment_pipeline ??= new EnvironmentPipeline();
+    this.gbuffer_targets_pipeline ??= new GBufferTargetsPipeline();
+    this.visibility_buffer_pipeline ??= new VisibilityBufferPipeline();
+    this.scene_voxelizer ??= new SceneVoxelizer();
     this.svlm ??= new SparseVolumetricLightmapper();
 
     const gi_strategy_type = Renderer.get().get_gi_strategy_type();
@@ -243,6 +247,8 @@ export class DeferredShadingStrategy {
       max_lods: MAX_CLIPMAP_LEVELS,
       clip0_extent: DEFAULT_LIGHT_CLIP_EXTENT,
     });
+
+    this.scene_voxel_grid_origin.set(this.scene_voxelizer.config.grid_origin);
 
     global_dispatcher.on(
       resolution_change_event_name,
@@ -375,7 +381,6 @@ export class DeferredShadingStrategy {
       const meshlet_triangle_buffer = render_graph.register_buffer(
         mesh_gpu_data.meshlet_triangle_buffer.config.name
       );
-
       const material_palette = render_graph.register_buffer(
         MaterialAllocationTable.palette_buffer.config.name
       );
@@ -418,6 +423,7 @@ export class DeferredShadingStrategy {
 
       let skybox_image = null;
       let post_lighting_image_desc = null;
+      let scene_voxelizer_debug_image = null;
 
       this.culling_pipeline.register_views(render_graph, {
         draw_count,
@@ -430,6 +436,22 @@ export class DeferredShadingStrategy {
       // ═══════════════════════════════════════════════════════════════════════════════
       // 🎨 RENDERING PIPELINE BEGINS
       // ═══════════════════════════════════════════════════════════════════════════════
+
+      // Snap the camera-centered volume to voxel boundaries so small camera motion does not churn
+      // occupancy, while meshlet bounds reject geometry outside the active volume on the GPU.
+      this.scene_voxelizer_outputs = this.scene_voxelizer.add_passes(render_graph, {
+        grid_origin: this._update_scene_voxel_grid_origin(current_view),
+        meshlet_count: meshlet_draw_count,
+        entity_transforms,
+        entity_flags,
+        object_instances,
+        meshlet_instances,
+        entity_index_lookup,
+        meshlet_buffer,
+        meshlet_vertex_buffer,
+        meshlet_triangle_buffer,
+        force_recreate: this.force_recreate,
+      });
 
       // ┌─────────────────────────────────────────────────────────────────────────────┐
       // │ 🧹 PASS: Init Views                                                         │
@@ -995,6 +1017,15 @@ export class DeferredShadingStrategy {
         );
       }
 
+      if (debug_view === DebugDrawType.SceneVoxelization) {
+        scene_voxelizer_debug_image = this.scene_voxelizer.add_debug_passes(render_graph, {
+          width: image_extent.width,
+          height: image_extent.height,
+          scene_color: post_lighting_image_desc,
+          force_recreate: this.force_recreate,
+        });
+      }
+
       // ┌─────────────────────────────────────────────────────────────────────────────┐
       // │ ✨ PASS: Bloom Post-Processing                                             │
       // │    Multi-pass gaussian blur to create beautiful light bleeding effects    │
@@ -1136,6 +1167,7 @@ export class DeferredShadingStrategy {
         ao: this.ao,
         gi: this.gi,
         svlm: this.svlm,
+        scene_voxelizer_debug_image,
         reflections: this.reflections,
         reflections_enabled,
       });
@@ -1218,6 +1250,22 @@ export class DeferredShadingStrategy {
 
       render_graph.submit();
     });
+  }
+
+  _update_scene_voxel_grid_origin(view_index) {
+    const view = SharedViewBuffer.get_view_data(view_index);
+    const view_position = view?.view_position;
+    if (!view_position) {
+      return this.scene_voxel_grid_origin;
+    }
+
+    const voxel_size = this.scene_voxelizer.config.voxel_size;
+    const half_extent = SCENE_VOXEL_GRID_RESOLUTION * voxel_size * 0.5;
+    for (let axis = 0; axis < 3; axis++) {
+      this.scene_voxel_grid_origin[axis] =
+        Math.floor((view_position[axis] - half_extent) / voxel_size) * voxel_size;
+    }
+    return this.scene_voxel_grid_origin;
   }
 
   _recreate_persistent_resources(render_graph) {

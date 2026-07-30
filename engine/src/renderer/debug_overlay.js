@@ -191,6 +191,8 @@ export class DebugOverlay {
         return "debug/debug_overlay_2d.wgsl";
       case DebugDrawType.SVLM_Bricks:
         return null;
+      case DebugDrawType.SceneVoxelization:
+        return "debug/debug_overlay_2d.wgsl";
       default:
         return "debug/debug_overlay_2d.wgsl";
     }
