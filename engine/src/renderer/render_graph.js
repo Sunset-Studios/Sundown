@@ -1,68 +1,35 @@
-/**
- * The RenderGraph class represents a high-level abstraction for managing rendering operations in a graphics application.
- * It provides a flexible and efficient way to organize resources, render passes, and dependencies between them.
- * This graph-based approach allows for automatic resource management, optimization of render order, and efficient GPU utilization.
- * The render graph handles creation and management of images, buffers, and render passes, as well as their lifecycle and dependencies.
- * It also supports features like transient resources, persistent resources, and bindless resources to cater to various rendering needs,
- * though these features are still under active development.
- *
- * ## Usage Example
- *
- * ```javascript
- * // Create and initialize the render graph
- * const renderGraph = new RenderGraph();
- *
- * // Begin a new frame
- * renderGraph.begin();
- *
- * // Create an image resource
- * const imageConfig = {
- *   width: 800,
- *   height: 600,
- *   format: "rgba8unorm",
- *   usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.SAMPLED,
- *   b_is_bindless: false,
- * };
- * const imageHandle = renderGraph.create_image(imageConfig);
- *
- * // Register an existing image resource
- * const existingImage = ...; // Assume this is an existing image resource
- * const registeredImageHandle = renderGraph.register_image(existingImage);
- *
- * // Create a buffer resource
- * const bufferConfig = {
- *   size: 1024,
- *   usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
- *   b_is_bindless: false,
- * };
- * const bufferHandle = renderGraph.create_buffer(bufferConfig);
- *
- * // Register an existing buffer resource
- * const existingBuffer = ...; // Assume this is an existing buffer resource
- * const registeredBufferHandle = renderGraph.register_buffer(existingBuffer);
- *
- * // Add a render pass
- * const passParams = {
- *   shader_setup: {
- *     pipeline_shaders: [],
- *   },
- *   inputs: [imageHandle],
- *   outputs: [registeredImageHandle],
- * };
- * const passIndex = renderGraph.add_pass("MyRenderPass", RenderPassFlags.Present, passParams, (graph, frameData, encoder) => {
- *   // Execute the render pass
- * });
- *
- * // Compile and submit the render graph
- * renderGraph.submit();
- *
- * // Reset the render graph at the end of the frame
- * renderGraph.reset();
- *
- * // Destroy the render graph when done
- * renderGraph.destroy();
- * ```
- */
+// ═══════════════════════════════════════════════════════════════════════════════════════════════
+// ██████╗ ███████╗███╗   ██╗██████╗ ███████╗██████╗      ██████╗ ██████╗  █████╗ ██████╗ ██╗  ██╗
+// ██╔══██╗██╔════╝████╗  ██║██╔══██╗██╔════╝██╔══██╗    ██╔════╝ ██╔══██╗██╔══██╗██╔══██╗██║  ██║
+// ██████╔╝█████╗  ██╔██╗ ██║██║  ██║█████╗  ██████╔╝    ██║  ███╗██████╔╝███████║██████╔╝███████║
+// ██╔══██╗██╔══╝  ██║╚██╗██║██║  ██║██╔══╝  ██╔══██╗    ██║   ██║██╔══██╗██╔══██║██╔═══╝ ██╔══██║
+// ██║  ██║███████╗██║ ╚████║██████╔╝███████╗██║  ██║    ╚██████╔╝██║  ██║██║  ██║██║     ██║  ██║
+// ╚═╝  ╚═╝╚══════╝╚═╝  ╚═══╝╚═════╝ ╚══════╝╚═╝  ╚═╝     ╚═════╝ ╚═╝  ╚═╝╚═╝  ╚═╝╚═╝     ╚═╝  ╚═╝
+// ═══════════════════════════════════════════════════════════════════════════════════════════════
+//
+// RenderGraph - Frame-Local Rendering Orchestrator
+//
+// The graph separates declaration from execution. Callers describe logical resources and passes;
+// compilation removes dead work, resolves resource lifetimes, and realizes the surviving graph as
+// cached WebGPU resources, bind groups, pipelines, and commands.
+//
+// 🧭 FRAME FLOW:
+//    • begin()   : run pre-render callbacks, retire deferred resources, reset frame-local state
+//    • declare   : create/register resources and add passes with explicit inputs and outputs
+//    • submit()  : cull, order, realize, encode, and submit the surviving passes
+//
+// 🧠 OWNERSHIP MODEL:
+//    • Graph-created resources are logical declarations; physical objects are created lazily
+//    • Registered resources are externally owned and always treated as persistent
+//    • Transient physical resources are retired through a frame-delayed deletion queue
+//    • Pass bind groups and pipelines are cached across frames until explicitly invalidated
+//
+// ⚡ HOT-PATH DESIGN:
+//    • FrameAllocator and StaticIntArray keep frame-local graph bookkeeping reusable
+//    • Physical resources are created only for non-culled passes
+//    • Reflection-driven bind layouts are cached per pass name
+//
+// ═══════════════════════════════════════════════════════════════════════════════════════════════
 import { ConfigDB, ConfigSync } from "../core/config_db.js";
 import ExecutionQueue from "../utility/execution_queue.js";
 import { FrameAllocator } from "../memory/allocator.js";
@@ -89,10 +56,17 @@ import { GPUTimeQuery } from "./query.js";
 import { deserialize_json, read_file } from "../streaming/streaming_io.js";
 import { deep_clone } from "../utility/object.js";
 
+// ┌─────────────────────────────────────────────────────────────────────────────────────────────┐
+// │                              📊 GRAPH CAPACITY LIMITS                                      │
+// └─────────────────────────────────────────────────────────────────────────────────────────────┘
 const max_image_resources = 1024;
 const max_buffer_resources = 1024;
 const max_render_passes = 1024;
 
+// ┌─────────────────────────────────────────────────────────────────────────────────────────────┐
+// │                           🪪  LOGICAL RESOURCE HANDLE LAYOUT                                │
+// │                 [ index: 20 bits | type: 8 bits | version: 4 bits ]                        │
+// └─────────────────────────────────────────────────────────────────────────────────────────────┘
 const RG_VERSION_BITS = 4;
 const RG_VERSION_MASK = (1 << RG_VERSION_BITS) - 1;
 const RG_TYPE_BITS = 8;
@@ -100,18 +74,18 @@ const RG_TYPE_MASK = (1 << RG_TYPE_BITS) - 1;
 const RG_INDEX_BITS = 20;
 const RG_INDEX_MASK = (1 << RG_INDEX_BITS) - 1;
 
-// [Experimental] feature to allow custom pass ordering based on user-configurable pass order config.
+// Experimental scene-specific pass ordering. Declaration order remains authoritative while disabled.
 const custom_graph_sort = false;
 
 /**
- * Creates a unique handle for a graph resource.
- * @param {number} index - The index of the resource.
- * @param {number} type - The type of the resource.
- * @param {number} version - The version of the resource.
- * @returns {number} A unique handle for the graph resource.
+ * Packs an allocator index, resource type, and generation into one 32-bit logical handle.
+ *
+ * @param {number} index - Index in the type-specific frame allocator.
+ * @param {number} type - ResourceType discriminator.
+ * @param {number} version - Handle generation, reserved for stale-handle detection.
+ * @returns {number} Packed graph resource handle.
  */
 function create_graph_resource_handle(index, type, version) {
-  // Lower 4 bits for version, middle 8 bits for type, high 20 bits for index
   return (
     ((index & RG_INDEX_MASK) << (RG_VERSION_BITS + RG_TYPE_BITS)) |
     ((type & RG_TYPE_MASK) << RG_VERSION_BITS) |
@@ -120,41 +94,43 @@ function create_graph_resource_handle(index, type, version) {
 }
 
 /**
- * Retrieves the index from a graph resource handle.
- * @param {number} handle - The handle of the graph resource.
- * @returns {number} The index of the graph resource.
+ * Extracts the type-local allocator index from a packed resource handle.
+ *
+ * @param {number} handle - Packed graph resource handle.
+ * @returns {number} Resource allocator index.
  */
 function get_graph_resource_index(handle) {
   return (handle >> (RG_VERSION_BITS + RG_TYPE_BITS)) & RG_INDEX_MASK;
 }
 
 /**
- * Retrieves the type from a graph resource handle.
- * @param {number} handle - The handle of the graph resource.
- * @returns {number} The type of the graph resource.
+ * Extracts the ResourceType discriminator from a packed resource handle.
+ *
+ * @param {number} handle - Packed graph resource handle.
+ * @returns {number} ResourceType value.
  */
 function get_graph_resource_type(handle) {
   return (handle >> RG_VERSION_BITS) & RG_TYPE_MASK;
 }
 
-/**
- * Enumeration of resource types in the render graph.
- * @enum {number}
- */
+// ┌─────────────────────────────────────────────────────────────────────────────────────────────┐
+// │                         🧱 FRAME-LOCAL GRAPH DATA TEMPLATES                                 │
+// │       Frozen templates are deep-cloned into allocators and registries before mutation.     │
+// └─────────────────────────────────────────────────────────────────────────────────────────────┘
+
+/** Type tag encoded into every logical graph resource handle. @enum {number} */
 const ResourceType = Object.freeze({
-  /** Unknown resource type */
   Unknown: 0,
-  /** Image resource type */
   Image: 1,
-  /** Buffer resource type */
   Buffer: 2,
 });
 
 /**
- * Represents a resource in the render graph.
+ * Lightweight logical resource allocated while declaring a frame.
+ *
  * @typedef {Object} RGResource
- * @property {number} handle - The resource handle.
- * @property {Object|null} config - The resource configuration.
+ * @property {number} handle - Packed logical handle.
+ * @property {Object|null} config - Image or buffer creation configuration.
  */
 const RGResource = Object.freeze({
   handle: 0,
@@ -162,17 +138,18 @@ const RGResource = Object.freeze({
 });
 
 /**
- * Metadata for a resource in the render graph.
+ * Dependency, lifetime, and physical-allocation state for one logical resource.
+ *
  * @typedef {Object} RGResourceMetadata
- * @property {number} reference_count - Number of references to the resource.
- * @property {number} physical_id - Physical identifier of the resource.
- * @property {number} first_user - Index of the first pass using the resource.
- * @property {number} last_user - Index of the last pass using the resource.
- * @property {Array} producers - Array of passes producing the resource.
- * @property {Array} consumers - Array of passes consuming the resource.
- * @property {boolean} b_is_persistent - Whether the resource is persistent.
- * @property {boolean} b_is_bindless - Whether the resource is bindless.
- * @property {number} max_frame_lifetime - Maximum frame lifetime of the resource.
+ * @property {number} reference_count - Live graph references used by dead-pass elimination.
+ * @property {number} physical_id - ResourceCache identifier; zero until realization.
+ * @property {number} first_user - First pass handle touching the resource.
+ * @property {number} last_user - Last pass handle touching the resource.
+ * @property {Array<number>} producers - Passes that write the resource.
+ * @property {Array<number>} consumers - Passes that read the resource.
+ * @property {boolean} b_is_persistent - Whether physical storage survives graph retirement.
+ * @property {boolean} b_is_bindless - Whether the resource bypasses the pass bind group.
+ * @property {number} max_frame_lifetime - Deferred-destruction delay for transient storage.
  */
 const RGResourceMetadata = Object.freeze({
   reference_count: 0,
@@ -187,12 +164,15 @@ const RGResourceMetadata = Object.freeze({
 });
 
 /**
- * Represents the G-Buffer output data for deferred rendering pipelines in the render graph.
+ * Conventional G-buffer bundle shared by deferred-rendering strategies.
+ *
  * @typedef {Object} RGGBufferData
- * @property {Object|null} position - The position texture.
- * @property {Object|null} normal - The normal texture.
- * @property {Object|null} entity_id - The entity ID texture.
- * @property {Object|null} depth - The depth texture.
+ * @property {Object|null} albedo - Base-color target.
+ * @property {Object|null} smra - Smoothness/metalness/reflectance/ambient-occlusion target.
+ * @property {Object|null} position - World-position target.
+ * @property {Object|null} normal - World-normal target.
+ * @property {Object|null} entity_id - Entity-picking target.
+ * @property {Object|null} depth - Depth target.
  */
 const RGGBufferData = Object.freeze({
   albedo: null,
@@ -204,11 +184,12 @@ const RGGBufferData = Object.freeze({
 });
 
 /**
- * Frame-specific data for the render graph.
+ * Mutable context passed to every pass executor.
+ *
  * @typedef {Object} RGFrameData
- * @property {number} current_pass - Index of the current pass being processed.
- * @property {Object|null} resource_deletion_queue - Queue for resources to be deleted.
- * @property {Array} pass_bindless_resources - Array of bindless resources for the current pass.
+ * @property {number} current_pass - Physical pass identifier, or zero outside a physical pass.
+ * @property {ExecutionQueue|null} resource_deletion_queue - Frame-delayed cleanup queue.
+ * @property {Array} pass_bindless_resources - Bindless resources exposed to the current executor.
  */
 const RGFrameData = Object.freeze({
   current_pass: 0,
@@ -217,14 +198,15 @@ const RGFrameData = Object.freeze({
 });
 
 /**
- * Metadata for a render graph pass.
+ * Reserved pass dependency metadata template.
+ *
  * @typedef {Object} RGPassMetadata
- * @property {number} handle - Unique identifier for the pass.
- * @property {number} physical_id - Physical identifier of the pass.
- * @property {number} reference_count - Number of references to the pass.
- * @property {Array} inputs - Array of input resources for the pass.
- * @property {Array} outputs - Array of output resources for the pass.
- * @property {boolean} b_is_culled - Whether the pass is culled from execution.
+ * @property {number} handle - Frame-local pass handle.
+ * @property {number} physical_id - ResourceCache pass identifier.
+ * @property {number} reference_count - Number of live outputs.
+ * @property {Array<number>} inputs - Read dependencies.
+ * @property {Array<number>} outputs - Write dependencies.
+ * @property {boolean} b_is_culled - Whether compilation removed the pass.
  */
 const RGPassMetadata = Object.freeze({
   handle: 0,
@@ -236,12 +218,13 @@ const RGPassMetadata = Object.freeze({
 });
 
 /**
- * Configuration for a render graph pass.
+ * Reserved execution configuration for a graph pass.
+ *
  * @typedef {Object} RGPassConfig
  * @property {string} name - Name of the pass.
- * @property {boolean} b_is_compute - Whether the pass is a compute pass.
- * @property {boolean} b_is_async - Whether the pass can be executed asynchronously.
- * @property {number} execution_queue - Queue on which the pass should be executed.
+ * @property {boolean} b_is_compute - Whether execution uses a compute pipeline.
+ * @property {boolean} b_is_async - Whether execution may move to an asynchronous queue.
+ * @property {number} execution_queue - Target command queue.
  */
 const RGPassConfig = Object.freeze({
   name: "",
@@ -251,22 +234,22 @@ const RGPassConfig = Object.freeze({
 });
 
 /**
- * Data for shader setup in a render graph pass.
+ * Optional shader and fixed-function state used for automatic pipeline creation.
+ *
  * @typedef {Object} RGShaderDataSetup
- * @property {Array} pipeline_shaders - Array of pipeline shaders for the pass.
- * @property {Object|null} push_constant_data - Push constant data for the pass.
- * @property {Object|null} rasterizer_state - Rasterizer state for the pass.
- * @property {Object|null} attachment_blend - Attachment blend state for the pass.
- * @property {string|null} primitive_topology_type - Primitive topology type for the pass.
- * @property {Object|null} viewport - Viewport configuration for the pass.
- * @property {boolean|null} depth_write_enabled - Whether depth writing is enabled for the pass.
- * @property {string|null} depth_stencil_compare_op - Depth/stencil comparison operation for the pass.
+ * @property {Object|null} pipeline_shaders - Compute or vertex/fragment shader declarations.
+ * @property {Object|null} push_constant_data - Optional push-constant payload.
+ * @property {Object|null} rasterizer_state - Rasterizer overrides.
+ * @property {Object|null} attachment_blend - Color attachment blend state.
+ * @property {string|null} primitive_topology_type - WebGPU primitive topology.
+ * @property {Object|null} viewport - Optional viewport override.
+ * @property {boolean|null} depth_write_enabled - Depth-write override.
+ * @property {string|null} depth_stencil_compare_op - WebGPU depth comparison function.
  */
 const RGShaderDataSetup = Object.freeze({
-  // This is auxiliary and only used for passes that only need to bind a single pipeline state to run. Graph passes that don't specify
-  // pipeline shaders will have to handle pipeline state creation and/or binding internally within the pass callback.
+  // Automatic setup is optional. Passes without shader declarations own pipeline creation and binding.
   pipeline_shaders: null,
-  // Same note as above, this is entirely optional data within a graph pass definition
+  // All remaining fields are optional pipeline-state overrides.
   push_constant_data: null,
   rasterizer_state: null,
   attachment_blend: null,
@@ -278,19 +261,20 @@ const RGShaderDataSetup = Object.freeze({
 });
 
 /**
- * Configuration for a render graph image resource.
+ * Logical image declaration. Physical textures are created only if a surviving pass uses them.
+ *
  * @typedef {Object} RGImageConfig
- * @property {string} name - Name of the image.
- * @property {number} width - Width of the image.
- * @property {number} height - Height of the image.
- * @property {number} depth - Depth of the image (for 3D textures) or number of layers (for array textures).
- * @property {number} mip_levels - Number of mip levels in the image.
- * @property {string} format - Format of the image (e.g., "rgba8unorm").
- * @property {number} usage - Usage flags for the image (e.g., GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.SAMPLED).
- * @property {number} sample_count - Number of samples for multisampling.
- * @property {boolean} b_is_bindless - Whether the image is bindless.
- * @property {number} flags - Additional flags for the image (see ImageFlags enum).
- * @property {number} max_frame_lifetime - Maximum frame lifetime of the image if the image is transient.
+ * @property {string} name - Stable ResourceCache name.
+ * @property {number} width - Texture width.
+ * @property {number} height - Texture height.
+ * @property {number} depth - Depth or array-layer count.
+ * @property {number} mip_levels - Mip count.
+ * @property {string} format - WebGPU texture format.
+ * @property {number} usage - GPUTextureUsage mask.
+ * @property {number} sample_count - Multisample count.
+ * @property {boolean} b_is_bindless - Whether to omit the texture from the pass bind group.
+ * @property {number} flags - ImageFlags lifetime and attachment behavior.
+ * @property {number} max_frame_lifetime - Deferred-destruction delay when transient.
  */
 const RGImageConfig = Object.freeze({
   name: "",
@@ -307,13 +291,14 @@ const RGImageConfig = Object.freeze({
 });
 
 /**
- * Configuration for a render graph buffer resource.
+ * Logical buffer declaration. Sizes use the Buffer abstraction's element-count convention.
+ *
  * @typedef {Object} RGBufferConfig
- * @property {number} size - Size of the buffer in bytes.
- * @property {number} usage - Usage flags for the buffer (e.g., GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST).
- * @property {boolean} b_is_bindless - Whether the buffer is bindless.
- * @property {number} flags - Additional flags for the buffer (see BufferFlags enum).
- * @property {number} max_frame_lifetime - Maximum frame lifetime of the buffer if the buffer is transient.
+ * @property {number} size - Buffer element count.
+ * @property {number} usage - GPUBufferUsage mask.
+ * @property {boolean} b_is_bindless - Whether to omit the buffer from the pass bind group.
+ * @property {number} flags - BufferFlags lifetime behavior.
+ * @property {number} max_frame_lifetime - Deferred-destruction delay when transient.
  */
 const RGBufferConfig = Object.freeze({
   size: 0,
@@ -324,18 +309,19 @@ const RGBufferConfig = Object.freeze({
 });
 
 /**
- * Configuration for a render graph pass.
+ * Declarative dependencies and optional automatic setup for one pass.
+ *
  * @typedef {Object} RGPassParameters
- * @property {RGShaderDataSetup} shader_setup - Shader and pipeline setup for the pass.
- * @property {Array} inputs - Input resources/attachments for the pass.
- * @property {Array} outputs - Output resources that this pass writes to or produces.
- * @property {Array} input_views - Array layers of corresponding input entries in the inputs vector (only for image inputs, default is 0 for each input).
- * @property {Array} output_views - Array layers of corresponding output entries in the outputs vector (only for image outputs, default is 0 for each output).
- * @property {Array} pass_inputs - Input resources that should be bound normally (auto-computed).
- * @property {Array} bindless_inputs - Input resources that are bindless and need special handling (auto-computed).
- * @property {boolean} b_skip_pass_bind_group_setup - Whether to skip automatic pass descriptor setup for this pass (global descriptor setup will still run).
- * @property {boolean} b_skip_pass_pipeline_setup - Whether to skip automatic pass pipeline setup for this pass (global pipeline setup will still run).
- * @property {boolean} b_force_keep_pass - Whether to prevent this pass from being culled during render graph compilation.
+ * @property {RGShaderDataSetup} shader_setup - Shader and fixed-function pipeline declaration.
+ * @property {Array<number>} inputs - Logical resources read by the pass.
+ * @property {Array<number>} outputs - Logical resources written by the pass.
+ * @property {Array<number>} input_views - Per-input texture view indices.
+ * @property {Array<number>} output_views - Per-output attachment view indices.
+ * @property {Array<number>} pass_inputs - Non-bindless inputs classified during realization.
+ * @property {Array<number>} bindless_inputs - Bindless inputs classified during realization.
+ * @property {boolean} b_skip_pass_bind_group_setup - Let the executor own its pass bind group.
+ * @property {boolean} b_skip_pass_pipeline_setup - Let the executor own its pipeline.
+ * @property {boolean} b_force_keep_pass - Preserve the pass even when its outputs are unused.
  */
 const RGPassParameters = Object.freeze({
   shader_setup: deep_clone(RGShaderDataSetup),
@@ -351,16 +337,17 @@ const RGPassParameters = Object.freeze({
 });
 
 /**
- * Representation of a render graph pass.
+ * Frame-local pass record connecting declaration, compiled state, and execution.
+ *
  * @typedef {Object} RGPass
- * @property {number} handle - Unique identifier for the pass.
- * @property {Object} pass_config - Configuration for the pass.
- * @property {RGPassParameters} parameters - Parameters for the pass.
- * @property {Function} executor - Function to execute the pass.
- * @property {Object} shaders - Shaders for the pass.
- * @property {number} physical_id - Physical identifier for the pass.
- * @property {number} pipeline_state_id - Identifier for the pipeline state.
- * @property {number} reference_count - Number of references to this pass.
+ * @property {number} handle - Frame-local pass index.
+ * @property {Object} pass_config - Physical pass and attachment configuration.
+ * @property {RGPassParameters} parameters - Declared graph dependencies.
+ * @property {Function} executor - Command-recording callback.
+ * @property {Object} shaders - Realized shader objects by stage.
+ * @property {number} physical_id - ResourceCache render-pass identifier.
+ * @property {number} pipeline_state_id - ResourceCache pipeline identifier.
+ * @property {number} reference_count - Live output count used during culling.
  */
 const RGPass = Object.freeze({
   handle: 0,
@@ -374,17 +361,20 @@ const RGPass = Object.freeze({
 });
 
 /**
- * Registry for render graph resources. All render graph registry resources (aside from render passes) should be transient and therefore do not need serious caching.
- * For this reason the pass cache is the only thing we don't clear out per-frame. Any resource that need to survive multiple frames
- * should be allocated externally and registered to the render graph as external resources.
+ * Per-frame graph registry.
+ *
+ * Logical resources, pass records, and dependency metadata are cleared at the next begin(). The
+ * separate PassCache intentionally survives frame resets. Long-lived images and buffers must be
+ * created externally and registered so the graph never assumes ownership of their destruction.
+ *
  * @typedef {Object} RGRegistry
- * @property {Array} render_passes - Array of render passes.
- * @property {Map} pass_order_map - Map of pass order.
- * @property {Array} all_resource_handles - Array of all resource handles.
- * @property {Map} resource_metadata - Map of resource metadata.
- * @property {Array} all_bindless_resource_handles - Array of all bindless resource handles.
- * @property {ExecutionQueue} resource_deletion_queue - Queue for resource deletion.
- * @property {boolean} b_global_bind_group_bound - Whether the global bind group is bound.
+ * @property {Array<RGPass>} render_passes - Pass records in declaration order.
+ * @property {Map<string, number>} pass_order_map - Configured pass name to sort rank.
+ * @property {StaticIntArray} all_resource_handles - Dense list of logical resources.
+ * @property {Map<number, RGResourceMetadata>} resource_metadata - Metadata by logical handle.
+ * @property {Array<number>} all_bindless_resource_handles - Bindless allocations awaiting release.
+ * @property {ExecutionQueue} resource_deletion_queue - Deferred physical-resource destruction.
+ * @property {boolean} b_global_bind_group_bound - Per-frame global binding state.
  */
 const RGRegistry = Object.freeze({
   current_scene_id: "",
@@ -398,11 +388,12 @@ const RGRegistry = Object.freeze({
 });
 
 /**
- * Cache for render pass-related objects.
+ * Cross-frame cache for descriptor and pipeline objects keyed by pass name.
+ *
  * @typedef {Object} PassCache
- * @property {Object} global_bind_group - Global bind group object.
- * @property {Map} bind_groups - Map of bind groups.
- * @property {Map} pipeline_states - Map of pipeline states.
+ * @property {BindGroup|null} global_bind_group - Shared global descriptor set.
+ * @property {Map<string, Object>} bind_groups - Global/pass bind groups per pass.
+ * @property {Map<string, number>} pipeline_states - Pipeline identifiers per pass.
  */
 const PassCache = Object.freeze({
   global_bind_group: null,
@@ -414,11 +405,12 @@ const CustomPassOrderReadyFlag = 1 << 0;
 const DefaultPassOrderReadyFlag = 1 << 1;
 
 /**
- * Represents the stored pass order.
+ * Default and user-edited pass orders loaded asynchronously per scene.
+ *
  * @typedef {Object} StoredPassOrder
- * @property {Array} default - The default pass order.
- * @property {Array} custom - The custom pass order.
- * @property {number} ready_flags - The ready flags for the pass order.
+ * @property {Object<string, Array<string>>} default - Recorded declaration order per scene.
+ * @property {Object<string, Array<string>>} custom - User-selected execution order per scene.
+ * @property {number} ready_flags - Bitmask indicating which stores have finished loading.
  */
 const StoredPassOrder = Object.freeze({
   default: [],
@@ -427,13 +419,30 @@ const StoredPassOrder = Object.freeze({
 });
 
 /**
- * A render graph is used to organize rendering operations in a graphics application.
- * This API provides a comprehensive set of functions to manage resources, pipeline states, and bind groups for a render graph.
- * The RenderGraph class is the core component that manages the entire render graph, including resource creation and registration,
- * render pass management, graph compilation, and rendering/compute command submission.
+ * ╔══════════════════════════════════════════════════════════════════════════════════════════════╗
+ * ║                                🎬 RenderGraph CLASS                                         ║
+ * ║               Logical dependency compiler and WebGPU submission coordinator                ║
+ * ╚══════════════════════════════════════════════════════════════════════════════════════════════╝
+ *
+ * A RenderGraph is rebuilt every frame from logical image, buffer, and pass declarations. It
+ * compiles those declarations into the smallest executable pass set, realizes only the required
+ * physical resources, and records the result into one command encoder.
+ *
+ * ┌────────────────────────────── 🔄 DATA FLOW ──────────────────────────────────┐
+ * │  logical declarations → dependency compilation → physical realization       │
+ * │       → bind/pipeline setup → command encoding → deferred retirement         │
+ * └───────────────────────────────────────────────────────────────────────────────┘
+ *
+ * @example
+ * const graph = RenderGraph.create(max_bind_groups);
+ * graph.begin();
+ * const color = graph.create_image(color_config);
+ * graph.add_pass("shade", RenderPassFlags.Present, { outputs: [color] }, execute);
+ * graph.submit();
  */
 export class RenderGraph {
   constructor(max_bind_groups) {
+    // Cross-frame cache and frame-local declaration state.
     this.max_bind_groups = max_bind_groups;
     this.pass_cache = deep_clone(PassCache);
     this.registry = deep_clone(RGRegistry);
@@ -448,6 +457,7 @@ export class RenderGraph {
     this.pass_cache_passes_needs_reset = false;
     this.pass_cache_pipeline_states_need_recreate = false;
 
+    // Fixed-capacity allocators recycle graph records without per-frame object churn.
     this.image_resource_allocator = new FrameAllocator(max_image_resources, deep_clone(RGResource));
     this.buffer_resource_allocator = new FrameAllocator(
       max_buffer_resources,
@@ -468,16 +478,13 @@ export class RenderGraph {
     }
   }
 
+  // ╔════════════════════════════════════════════════════════════════════════════════════════════╗
+  // ║                              🔄 FRAME LIFECYCLE                                           ║
+  // ╚════════════════════════════════════════════════════════════════════════════════════════════╝
+
   /**
-   * Resets the render graph, clearing all resources and render passes.
-   * This method should be called at the end of each frame to prepare for the next frame.
-   *
-   * @example
-   * // At the end of each frame
-   * const renderGraph = new RenderGraph();
-   * // ... (rendering operations)
-   * renderGraph.reset();
-   * // The render graph is now ready for the next frame
+   * Clears frame-local declarations and immediately flushes all deferred cleanup work.
+   * Call only when the graph will no longer submit frames.
    */
   destroy() {
     this.reset();
@@ -485,16 +492,10 @@ export class RenderGraph {
   }
 
   /**
-   * Begins a new frame in the render graph.
-   * This method resets the render graph state and prepares it for a new frame of rendering.
+   * Opens a declaration frame.
    *
-   * @returns {void}
-   *
-   * @example
-   * const renderGraph = new RenderGraph();
-   * renderGraph.begin();
-   * // Add passes and resources...
-   * renderGraph.submit();
+   * Pre-render callbacks are dispatched before the previous frame's logical state is reset.
+   * Queued pre-commands are then materialized as graph-local passes.
    */
   begin() {
     this._execute_pre_render_callbacks();
@@ -502,6 +503,13 @@ export class RenderGraph {
     this._add_queued_pre_commands();
   }
 
+  /**
+   * Replaces any cleanup entry with the same ID and schedules it after a frame delay.
+   *
+   * @param {Function} execution - Cleanup callback.
+   * @param {string|number} execution_id - Stable deduplication key.
+   * @param {number} execution_frame_delay - Frames to wait before invoking the callback.
+   */
   queue_resource_deletion(execution, execution_id, execution_frame_delay = 0) {
     this.registry.resource_deletion_queue.remove_execution_by_id(execution_id);
     this.registry.resource_deletion_queue.push_execution(
@@ -511,26 +519,17 @@ export class RenderGraph {
     );
   }
 
+  // ╔════════════════════════════════════════════════════════════════════════════════════════════╗
+  // ║                         🧱 RESOURCE DECLARATION & IMPORT                                  ║
+  // ╚════════════════════════════════════════════════════════════════════════════════════════════╝
+
   /**
-   * Creates a new image resource in the render graph.
+   * Declares an image owned by the graph.
    *
-   * @param {Object} config - The configuration object for the image resource.
-   * @param {number} config.width - The width of the image.
-   * @param {number} config.height - The height of the image.
-   * @param {string} config.format - The format of the image (e.g., "rgba8unorm").
-   * @param {number} config.usage - The usage flags for the image.
-   * @param {boolean} config.b_is_bindless - Whether the image is bindless.
-   * @returns {number} The handle of the newly created image resource.
+   * Physical texture creation is deferred until a surviving pass consumes or produces the image.
    *
-   * @example
-   * const imageConfig = {
-   *   width: 1920,
-   *   height: 1080,
-   *   format: "rgba8unorm",
-   *   usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.SAMPLED,
-   *   b_is_bindless: false
-   * };
-   * const imageHandle = renderGraph.create_image(imageConfig);
+   * @param {RGImageConfig} config - Logical image configuration.
+   * @returns {number} Frame-local image handle.
    */
   create_image(config) {
     let new_resource;
@@ -565,16 +564,12 @@ export class RenderGraph {
   }
 
   /**
-   * Registers an existing image resource in the render graph.
-   * This method creates a new resource handle for an existing image and sets up its metadata.
+   * Imports an existing ResourceCache image as a persistent logical resource.
    *
-   * @param {string|number} image - The identifier or hash of the image to register.
-   * @returns {number} The handle of the newly registered image resource.
+   * Ownership remains external; reset and transient retirement never destroy the image.
    *
-   * @throws {Error} If the image is not found in the ResourceCache.
-   *
-   * @example
-   * const imageHandle = renderGraph.register_image("myImage");
+   * @param {string|number} image - Image name or encoded ResourceCache identifier.
+   * @returns {number} Frame-local image handle.
    */
   register_image(image) {
     let new_resource;
@@ -614,22 +609,12 @@ export class RenderGraph {
   }
 
   /**
-   * Creates a new buffer resource in the render graph.
-   * This method allocates a new buffer resource, sets up its configuration, and registers it in the graph.
+   * Declares a buffer owned by the graph.
    *
-   * @param {Object} config - The configuration object for the buffer.
-   * @param {number} config.size - The size of the buffer in elements.
-   * @param {number} config.usage - The usage flags for the buffer (e.g., GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST).
-   * @param {boolean} [config.b_is_bindless=false] - Whether the buffer should be bindless.
-   * @returns {number} The handle of the newly created buffer resource.
+   * Physical buffer creation is deferred until a surviving pass uses the declaration.
    *
-   * @example
-   * const bufferConfig = {
-   *   size: 1024,
-   *   usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-   *   b_is_bindless: false
-   * };
-   * const bufferHandle = renderGraph.create_buffer(bufferConfig);
+   * @param {RGBufferConfig} config - Logical buffer configuration.
+   * @returns {number} Frame-local buffer handle.
    */
   create_buffer(config) {
     let new_resource;
@@ -664,16 +649,10 @@ export class RenderGraph {
   }
 
   /**
-   * Registers an existing buffer in the render graph.
-   * This method creates a new resource handle for an existing buffer, sets up its configuration,
-   * and registers it in the graph as a persistent resource.
+   * Imports an existing ResourceCache buffer as a persistent logical resource.
    *
-   * @param {Object} buffer - The existing buffer object to register.
-   * @returns {number} The handle of the newly registered buffer resource.
-   *
-   * @example
-   * const existingBuffer = ...; // Assume this is an existing buffer object
-   * const bufferHandle = renderGraph.register_buffer(existingBuffer);
+   * @param {string|number} buffer - Buffer name or encoded ResourceCache identifier.
+   * @returns {number} Frame-local buffer handle.
    */
   register_buffer(buffer) {
     let new_resource;
@@ -712,24 +691,21 @@ export class RenderGraph {
     return new_resource.handle;
   }
 
+  // ╔════════════════════════════════════════════════════════════════════════════════════════════╗
+  // ║                              🎬 PASS DECLARATION                                          ║
+  // ╚════════════════════════════════════════════════════════════════════════════════════════════╝
+
   /**
-   * Adds a new render pass to the render graph.
+   * Declares a pass and records its producer/consumer edges.
    *
-   * @param {string} name - The name of the render pass.
-   * @param {number} pass_type - The type of the render pass, using flags from RenderPassFlags.
-   * @param {Object|null} params - The parameters for the render pass, including inputs and outputs.
-   * @param {Function} execution_callback - The callback function to execute the render pass.
-   * @returns {number} The index of the newly added render pass.
+   * Present passes and explicitly forced passes form graph roots. Graph-local passes invoke their
+   * executor directly and therefore skip RenderPass, bind-group, and pipeline realization.
    *
-   * @example
-   * const passIndex = renderGraph.add_pass(
-   *   "MyRenderPass",
-   *   RenderPassFlags.Present,
-   *   { inputs: [inputHandle], outputs: [outputHandle] },
-   *   (graph, frameData, encoder) => {
-   *     // Render pass execution logic
-   *   }
-   * );
+   * @param {string} name - Stable pass and cache key.
+   * @param {number} pass_type - RenderPassFlags mask.
+   * @param {RGPassParameters|null} params - Inputs, outputs, and automatic setup options.
+   * @param {Function} execution_callback - Command-recording callback.
+   * @returns {number} Frame-local pass handle.
    */
   add_pass(name, pass_type, params, execution_callback) {
     let index;
@@ -782,20 +758,20 @@ export class RenderGraph {
   }
 
   /**
-   * Retrieves a physical render pass from the resource cache using its handle.
+   * Resolves a logical pass handle to its realized RenderPass.
    *
-   * @param {number} handle - The handle of the render pass to retrieve.
-   * @returns {Object|null} The physical render pass object if found, or null if not found.
+   * @param {number} handle - Frame-local pass handle.
+   * @returns {RenderPass|null} Cached physical pass.
    */
   get_physical_pass(handle) {
     return ResourceCache.get().fetch(CacheTypes.PASS, handle);
   }
 
   /**
-   * Retrieves a physical image from the resource cache using its handle.
+   * Resolves a logical image handle to its realized Texture.
    *
-   * @param {number} handle - The handle of the image to retrieve.
-   * @returns {Object|null} The physical image object if found, or null if not found.
+   * @param {number} handle - Frame-local image handle.
+   * @returns {Texture|null} Cached physical image.
    */
   get_physical_image(handle) {
     return ResourceCache.get().fetch(
@@ -805,10 +781,10 @@ export class RenderGraph {
   }
 
   /**
-   * Retrieves a physical buffer from the resource cache using its handle.
+   * Resolves a logical buffer handle to its realized Buffer.
    *
-   * @param {number} handle - The handle of the buffer to retrieve.
-   * @returns {Object|null} The physical buffer object if found, or null if not found.
+   * @param {number} handle - Frame-local buffer handle.
+   * @returns {Buffer|null} Cached physical buffer.
    */
   get_physical_buffer(handle) {
     return ResourceCache.get().fetch(
@@ -818,37 +794,31 @@ export class RenderGraph {
   }
 
   /**
-   * Retrieves the configuration of an image resource from the render graph.
+   * Returns the merged creation configuration for any logical resource.
    *
-   * @param {number} handle - The handle of the resource to retrieve.
-   * @returns {Object|null} The configuration object if found, or null if not found.
+   * @param {number} handle - Frame-local image or buffer handle.
+   * @returns {Object} Logical resource configuration.
    */
   get_resource_config(handle) {
     return this.registry.resource_metadata.get(handle).config;
   }
 
   /**
-   * Sets the scene ID for the render graph, used to set and get the current pass order.
+   * Selects the scene namespace used by configurable pass ordering.
    *
-   * @param {string} scene_id - The ID of the scene to set.
-   * @returns {void}
+   * @param {string|number} scene_id - Scene identifier.
    */
   set_scene_id(scene_id) {
     this.registry.current_scene_id = scene_id;
   }
 
   /**
-   * Queues global bind group writes to be processed later in the render graph.
+   * Queues ordered global-bind-group entries for the next physical pass setup.
    *
-   * @param {Array} writes - An array of write operations to be queued.
-   * @returns {void}
+   * Entry order is binding order. Supplying overwrite replaces any writes already queued.
    *
-   * @example
-   * const writes = [
-   *   { buffer: someBuffer, data: new Float32Array([1, 2, 3, 4]), offset: 0 },
-   *   { buffer: anotherBuffer, data: new Uint8Array([255, 128, 0]), offset: 16 }
-   * ];
-   * renderGraph.queue_global_bind_group_write(writes);
+   * @param {Array<Object>} writes - Buffer, sampler, or texture-view binding descriptors.
+   * @param {boolean} overwrite - Replace rather than append to the pending descriptors.
    */
   queue_global_bind_group_write(writes, overwrite = false) {
     if (overwrite) {
@@ -858,28 +828,25 @@ export class RenderGraph {
     }
   }
 
+  // ╔════════════════════════════════════════════════════════════════════════════════════════════╗
+  // ║                         ⏩ GRAPH-LOCAL COMMAND QUEUES                                      ║
+  // ╚════════════════════════════════════════════════════════════════════════════════════════════╝
+
   /**
-   * Queues a set of commands to be executed before all other passes in the render graph.
+   * Queues a graph-local executor to be inserted by the next begin().
    *
-   * @param {string} name - A descriptive name for the set of commands.
-   * @param {Function} commands_callback - A callback function that will be executed to perform the commands.
-   * @returns {void}
-   *
-   * @example
-   * renderGraph.queue_commands('Draw UI', (encoder) => {
-   *   // Draw UI elements
-   *   encoder.drawUI();
-   * });
+   * @param {string} name - Pass name.
+   * @param {Function} commands_callback - Direct command-encoding callback.
+   * @param {boolean} persistent - Reinsert the command every frame until removed.
    */
   queue_pre_commands(name, commands_callback, persistent = false) {
     this.queued_pre_commands.push({ name, commands_callback, persistent });
   }
 
   /**
-   * Removes a pre-command from the queue.
+   * Removes every queued pre-command with the supplied name.
    *
-   * @param {string} name - The name of the pre-command to remove.
-   * @returns {void}
+   * @param {string} name - Pass name to remove.
    */
   unqueue_pre_commands(name) {
     for (let i = this.queued_pre_commands.length - 1; i >= 0; i--) {
@@ -900,27 +867,20 @@ export class RenderGraph {
   }
 
   /**
-   * Queues a set of commands to be executed after all other passes in the render graph.
+   * Queues a graph-local executor to be appended during the next submit().
    *
-   * @param {string} name - A descriptive name for the set of commands.
-   * @param {Function} commands_callback - A callback function that will be executed to perform the commands.
-   * @returns {void}
-   *
-   * @example
-   * renderGraph.queue_post_commands('Draw UI', (encoder) => {
-   *   // Draw UI elements
-   *   encoder.drawUI();
-   * });
+   * @param {string} name - Pass name.
+   * @param {Function} commands_callback - Direct command-encoding callback.
+   * @param {boolean} persistent - Reinsert the command every frame until removed.
    */
   queue_post_commands(name, commands_callback, persistent = false) {
     this.queued_post_commands.push({ name, commands_callback, persistent });
   }
 
   /**
-   * Removes a post-command from the queue.
+   * Removes every queued post-command with the supplied name.
    *
-   * @param {string} name - The name of the post-command to remove.
-   * @returns {void}
+   * @param {string} name - Pass name to remove.
    */
   unqueue_post_commands(name) {
     for (let i = this.queued_post_commands.length - 1; i >= 0; i--) {
@@ -939,6 +899,10 @@ export class RenderGraph {
       }
     }
   }
+
+  // ╔════════════════════════════════════════════════════════════════════════════════════════════╗
+  // ║                      🧭 EXPERIMENTAL PASS-ORDER BOOTSTRAP                                 ║
+  // ╚════════════════════════════════════════════════════════════════════════════════════════════╝
 
   _init_pass_order_info() {
     const config_file = read_file("config/renderer.config.json");
@@ -1017,6 +981,15 @@ export class RenderGraph {
       pass.parameters.b_force_keep_pass || pass.pass_config.b_is_present_pass;
   }
 
+  // ╔════════════════════════════════════════════════════════════════════════════════════════════╗
+  // ║                           🧠 DEPENDENCY COMPILATION                                       ║
+  // ╚════════════════════════════════════════════════════════════════════════════════════════════╝
+
+  /**
+   * Converts declaration state into an ordered set of live passes with resolved lifetimes.
+   *
+   * Compilation mutates reference counts and must run once after declarations are complete.
+   */
   _compile() {
     this._cull_graph_passes();
     this._sort_graph_passes();
@@ -1027,7 +1000,8 @@ export class RenderGraph {
     const passes_to_cull = new Set();
     const unused_stack = [];
 
-    // Lambda to cull a producer pass when it is no longer referenced and pop its inputs onto the unused stack
+    // Removing a dead producer can make its own inputs dead; feed those resources back into the
+    // worklist so liveness propagates toward the roots of the dependency graph.
     const decrement_producer_and_subresource_ref_counts = (producers) => {
       for (let i = 0; i < producers.size; i++) {
         const pass_handle = producers[i];
@@ -1058,7 +1032,7 @@ export class RenderGraph {
       }
     };
 
-    // Go through all resources and push any resources that are not referenced onto the unused stack
+    // Seed the worklist with logical resources that have no surviving consumers.
     for (let i = 0; i < this.registry.all_resource_handles.length; i++) {
       const resource = this.registry.all_resource_handles.get(i);
       if (this.registry.resource_metadata.has(resource)) {
@@ -1068,7 +1042,7 @@ export class RenderGraph {
       }
     }
 
-    // Keep processing unused resources and updating their producer pass ref counts
+    // Walk backward through producer edges until the dead subgraph reaches a fixed point.
     while (unused_stack.length > 0) {
       const unused_resource = unused_stack.pop();
       if (this.registry.resource_metadata.has(unused_resource)) {
@@ -1078,9 +1052,7 @@ export class RenderGraph {
       }
     }
 
-    // Take all the culled passes and remove them from our primary nonculled_passes array.
-    // This may constantly shuffle array items if a lot of passes are culled so maybe think about
-    // using a flag instead to indicate if a pass is active or not.
+    // Compact in reverse so each splice preserves the remaining pass handles.
     for (let i = this.non_culled_passes.length - 1; i >= 0; --i) {
       const pass = this.non_culled_passes[i];
       if (passes_to_cull.has(pass)) {
@@ -1090,22 +1062,20 @@ export class RenderGraph {
   }
 
   _sort_graph_passes() {
-    // Skip if current_pass_order is empty
+    // Custom ordering is opt-in and scene-local; otherwise declaration order is preserved.
     const current_pass_order = this.stored_pass_order.custom[this.registry.current_scene_id] || [];
     if (!custom_graph_sort || !current_pass_order || current_pass_order.length === 0) {
       return;
     }
 
-    // Sort non_culled_passes based on the order in current_pass_order
+    // Unlisted passes sort after configured passes and retain declaration order as a tiebreaker.
     this.non_culled_passes.sort((a, b) => {
       const pass_a = this.registry.render_passes[a];
       const pass_b = this.registry.render_passes[b];
 
-      // Get the encoded IDs for the pass names
       const id_a = pass_a.pass_config.name;
       const id_b = pass_b.pass_config.name;
 
-      // Get their positions from the order map
       const order_a = this.registry.pass_order_map.has(id_a)
         ? this.registry.pass_order_map.get(id_a)
         : Number.MAX_SAFE_INTEGER;
@@ -1113,12 +1083,12 @@ export class RenderGraph {
         ? this.registry.pass_order_map.get(id_b)
         : Number.MAX_SAFE_INTEGER;
 
-      // Sort based on position
       return order_a === order_b ? a - b : order_a - order_b;
     });
   }
 
   _compute_resource_first_and_last_users() {
+    // Bounds are stored as declaration-order pass handles; custom sorting does not remap them.
     for (let i = 0; i < this.registry.all_resource_handles.length; i++) {
       const resource = this.registry.all_resource_handles.get(i);
       if (this.registry.resource_metadata.has(resource)) {
@@ -1153,21 +1123,14 @@ export class RenderGraph {
     }
   }
 
+  // ╔════════════════════════════════════════════════════════════════════════════════════════════╗
+  // ║                         ♻️  CACHE INVALIDATION & SUBMISSION                               ║
+  // ╚════════════════════════════════════════════════════════════════════════════════════════════╝
+
   /**
-   * Marks the pass cache bind groups as dirty, indicating that they need to be reset.
-   * This function is used to manage the state of bind groups in the render graph,
-   * ensuring that they are properly updated when necessary. (i.e. when the bind group resources are re-created)
+   * Invalidates cached bind groups after one of their physical resources is replaced.
    *
-   * @param {boolean} [pass_only=true] - If true, only the pass-specific bind groups
-   * will be marked for reset. If false, all bind groups including the global ones
-   * will be marked for reset.
-   *
-   * @example
-   * // Mark only pass-specific bind groups as dirty
-   * renderGraph.mark_pass_cache_bind_groups_dirty(true);
-   *
-   * // Mark all bind groups (including global) as dirty
-   * renderGraph.mark_pass_cache_bind_groups_dirty();
+   * @param {boolean} pass_only - Preserve the global group and rebuild only pass groups.
    */
   mark_pass_cache_bind_groups_dirty(pass_only = false) {
     if (pass_only) {
@@ -1178,10 +1141,7 @@ export class RenderGraph {
   }
 
   /**
-   * Recreates the pipeline states for all passes in the render graph.
-   * This function is used to recreate the pipeline states for all passes in the render graph.
-   *
-   * @returns {void}
+   * Clears pipeline identifiers and forces pipeline plus bind-group recreation on next submit().
    */
   recreate_pipeline_states() {
     this.pass_cache.pipeline_states.clear();
@@ -1190,20 +1150,18 @@ export class RenderGraph {
   }
 
   /**
-   * Adds a callback to be executed before the render graph is submitted.
+   * Registers a callback dispatched by begin() before frame-local state is reset.
    *
-   * @param {Function} callback - The callback function to be executed.
-   * @returns {void}
+   * @param {Function} callback - Synchronous or asynchronous callback.
    */
   on_pre_render(callback) {
     this.pre_render_callbacks.push(callback);
   }
 
   /**
-   * Removes a callback from the pre-render callbacks list.
+   * Removes a previously registered pre-render callback.
    *
-   * @param {Function} callback - The callback function to be removed.
-   * @returns {void}
+   * @param {Function} callback - Exact function reference to remove.
    */
   remove_pre_render(callback) {
     const index = this.pre_render_callbacks.indexOf(callback);
@@ -1213,13 +1171,10 @@ export class RenderGraph {
   }
 
   /**
-   * Submits the compiled render graph for execution.
-   * This method compiles the render graph, creates a command encoder, and executes all non-culled passes.
-   * It then submits the encoded commands to the GPU for rendering.
+   * Compiles, realizes, encodes, and submits the current declaration frame.
    *
-   * @async
-   * @returns {Promise<void>} A promise that resolves when all passes have been executed and submitted.
-   * @throws {Error} If there's an error during pass execution or command submission.
+   * All surviving passes share one command encoder. Physical setup completes before encoding so
+   * callbacks can resolve any declared resource through the graph's physical accessors.
    */
   submit() {
     profile_scope("RenderGraph.submit", () => {
@@ -1233,7 +1188,7 @@ export class RenderGraph {
 
       this._reset_pass_cache_bind_groups();
 
-      // Setup passes and pass resources
+      // Realize resources and pass state only after dead-pass elimination.
       for (let i = 0; i < this.non_culled_passes.length; i++) {
         const pass_handle = this.non_culled_passes[i];
         this._setup_physical_pass_and_resources(this.registry.render_passes[pass_handle]);
@@ -1245,7 +1200,7 @@ export class RenderGraph {
       const frame_data = deep_clone(RGFrameData);
       frame_data.resource_deletion_queue = this.registry.resource_deletion_queue;
 
-      // Execute passes
+      // Encode surviving passes in compiled order into a single submission.
       for (let i = 0; i < this.non_culled_passes.length; i++) {
         const pass_handle = this.non_culled_passes[i];
         this._execute_pass(this.registry.render_passes[pass_handle], frame_data, encoder);
@@ -1262,20 +1217,18 @@ export class RenderGraph {
   }
 
   /**
-   * Adds a callback to be executed after the render graph is submitted.
+   * Registers a callback run after the command queue completes the submission callback.
    *
-   * @param {Function} callback - The callback function to be executed.
-   * @returns {void}
+   * @param {Function} callback - Synchronous or asynchronous callback.
    */
   on_post_render(callback) {
     this.post_render_callbacks.push(callback);
   }
 
   /**
-   * Removes a callback from the post-render callbacks list.
+   * Removes a previously registered post-render callback.
    *
-   * @param {Function} callback - The callback function to be removed.
-   * @returns {void}
+   * @param {Function} callback - Exact function reference to remove.
    */
   remove_post_render(callback) {
     const index = this.post_render_callbacks.indexOf(callback);
@@ -1285,10 +1238,9 @@ export class RenderGraph {
   }
 
   /**
-   * Resets the render graph, clearing all resources and render passes.
-   * This method should be called at the end of each frame to prepare for the next frame.
+   * Retires due physical resources and recycles every frame-local graph record.
    *
-   * @returns {void}
+   * Cross-frame bind-group and pipeline caches intentionally remain intact.
    */
   reset() {
     this._free_physical_resources();
@@ -1310,19 +1262,23 @@ export class RenderGraph {
   }
 
   /**
-   * Returns the resolved non-culled passes from the most recent frame
+   * Returns physical IDs for the compiled pass set in execution order.
    *
-   * @returns {Array} The resolved non-culled passes.
+   * @returns {Array<number>} Physical pass identifiers.
    */
   get_resolved_non_culled_passes() {
     return this.non_culled_passes.map((pass) => this.registry.render_passes[pass].physical_id);
   }
 
+  // ╔════════════════════════════════════════════════════════════════════════════════════════════╗
+  // ║                        🧭 SCENE-SPECIFIC PASS ORDERING                                    ║
+  // ║                 Experimental: active only while custom_graph_sort is true                 ║
+  // ╚════════════════════════════════════════════════════════════════════════════════════════════╝
+
   /**
-   * Records the default pass order in the configuration database.
-   * This method is used to save the default pass order for future reference.
+   * Persists the recorded declaration order for all scenes.
    *
-   * @returns {void}
+   * @returns {Promise<void>} Resolves after the renderer configuration is saved.
    */
   async record_default_pass_order() {
     await ConfigDB.set_config_property(
@@ -1334,10 +1290,9 @@ export class RenderGraph {
   }
 
   /**
-   * Records the current pass order in the configuration database for the specified scene.
-   * This method is used to save the pass order for future reference.
+   * Persists custom scene orders and rebuilds the active scene's lookup map.
    *
-   * @returns {void}
+   * @returns {Promise<void>} Resolves after the renderer configuration is saved.
    */
   async record_custom_pass_order() {
     await ConfigDB.set_config_property(
@@ -1350,37 +1305,31 @@ export class RenderGraph {
   }
 
   /**
-   * Checks if the custom graph sort is enabled.
-   *
-   * @returns {boolean} True if the custom graph sort is enabled, false otherwise.
+   * @returns {boolean} Whether scene-specific pass sorting is compiled in.
    */
   is_custom_graph_sort_enabled() {
     return custom_graph_sort;
   }
 
   /**
-   * Checks if the default pass order is ready.
-   *
-   * @returns {boolean} True if the default pass order is ready, false otherwise.
+   * @returns {boolean} Whether default pass-order data has finished loading.
    */
   is_default_pass_order_ready() {
     return (this.stored_pass_order.ready_flags & DefaultPassOrderReadyFlag) !== 0;
   }
 
   /**
-   * Checks if the custom pass order is ready.
-   *
-   * @returns {boolean} True if the custom pass order is ready, false otherwise.
+   * @returns {boolean} Whether custom pass-order data has finished loading.
    */
   is_custom_pass_order_ready() {
     return (this.stored_pass_order.ready_flags & CustomPassOrderReadyFlag) !== 0;
   }
 
   /**
-   * Sets the default pass order for the render graph.
+   * Stores a scene's baseline declaration order in memory.
    *
-   * @param {Array} value - The pass order to set for the default scene
-   * @returns {void}
+   * @param {Array<string>} value - Pass names in declaration order.
+   * @param {string|number|null} scene_id - Scene override; current scene when omitted.
    */
   set_default_pass_order(value, scene_id = null) {
     const scene = scene_id ?? this.registry.current_scene_id;
@@ -1388,10 +1337,10 @@ export class RenderGraph {
   }
 
   /**
-   * Returns the default pass order for the render graph.
+   * Reads a scene's baseline declaration order.
    *
-   * @param {string|number} scene_id - The ID of the scene to get the default pass order for
-   * @returns {Array} The default pass order for the specified scene
+   * @param {string|number|null} scene_id - Scene override; current scene when omitted.
+   * @returns {Array<string>} Stored pass names, or an empty array.
    */
   get_default_pass_order(scene_id = null) {
     const scene = scene_id ?? this.registry.current_scene_id;
@@ -1399,11 +1348,10 @@ export class RenderGraph {
   }
 
   /**
-   * Sets the pass order for a specific scene.
+   * Stores a custom scene order and refreshes the active lookup map when applicable.
    *
-   * @param {Array} value - The pass order to set for the specified scene
-   * @param {string|number} scene_id - The ID of the scene to set the pass order for
-   * @returns {void}
+   * @param {Array<string>} value - Pass names in desired execution order.
+   * @param {string|number|null} scene_id - Scene override; current scene when omitted.
    */
   set_scene_pass_order(value, scene_id = null) {
     const scene = scene_id ?? this.registry.current_scene_id;
@@ -1414,10 +1362,10 @@ export class RenderGraph {
   }
 
   /**
-   * Returns the pass order for a specific scene.
+   * Reads a scene's custom execution order.
    *
-   * @param {string|number} scene_id - The ID of the scene to get the pass order for
-   * @returns {Array} The pass order for the specified scene
+   * @param {string|number|null} scene_id - Scene override; current scene when omitted.
+   * @returns {Array<string>} Stored pass names, or an empty array.
    */
   get_scene_pass_order(scene_id = null) {
     const scene = scene_id ?? this.registry.current_scene_id;
@@ -1431,6 +1379,10 @@ export class RenderGraph {
       this.registry.pass_order_map.set(current_pass_order[i], i);
     }
   }
+
+  // ╔════════════════════════════════════════════════════════════════════════════════════════════╗
+  // ║                           ⚙️  CALLBACK & PASS EXECUTION                                   ║
+  // ╚════════════════════════════════════════════════════════════════════════════════════════════╝
 
   async _execute_post_render_callbacks() {
     for (let i = 0; i < this.post_render_callbacks.length; i++) {
@@ -1453,6 +1405,7 @@ export class RenderGraph {
     }
 
     if ((pass.pass_config.flags & RenderPassFlags.GraphLocal) !== RenderPassFlags.None) {
+      // Graph-local passes record directly against the shared encoder.
       pass.executor(this, frame_data, encoder);
     } else {
       const physical_pass = ResourceCache.get().fetch(CacheTypes.PASS, pass.physical_id);
@@ -1463,6 +1416,7 @@ export class RenderGraph {
 
       const pipeline = ResourceCache.get().fetch(CacheTypes.PIPELINE_STATE, pass.pipeline_state_id);
       if (pass.pipeline_state_id && (!pipeline || !pipeline.is_ready())) {
+        // Pipeline creation may be asynchronous; defer this pass rather than binding partial state.
         frame_data.current_pass = 0;
         return;
       }
@@ -1481,6 +1435,16 @@ export class RenderGraph {
     }
   }
 
+  // ╔════════════════════════════════════════════════════════════════════════════════════════════╗
+  // ║                         🏗️  PHYSICAL RESOURCE REALIZATION                                ║
+  // ╚════════════════════════════════════════════════════════════════════════════════════════════╝
+
+  /**
+   * Realizes a surviving pass, all resources it touches, and its cached GPU state.
+   *
+   * Resource setup precedes pass creation so attachment descriptors and reflected bindings always
+   * point at valid ResourceCache objects.
+   */
   _setup_physical_pass_and_resources(pass) {
     const is_compute_pass =
       (pass.pass_config.flags & RenderPassFlags.Compute) !== RenderPassFlags.None;
@@ -1489,6 +1453,8 @@ export class RenderGraph {
 
     let pass_attachments = [];
 
+    // Inputs and outputs share physical allocation, but only graphics attachments and pass inputs
+    // require additional classification.
     const setup_resource = (resource, resource_params_index, is_input_resource) => {
       if (this.registry.resource_metadata.has(resource)) {
         this._setup_physical_resource(resource, !is_compute_pass, is_input_resource);
@@ -1523,6 +1489,12 @@ export class RenderGraph {
     }
   }
 
+  /**
+   * Lazily creates physical storage and transfers transient ownership to the deletion queue.
+   *
+   * Graphics outputs and LocalLoad inputs must survive attachment use, so image persistence can be
+   * promoted during realization. Registered resources already carry a nonzero physical ID.
+   */
   _setup_physical_resource(resource, is_graphics_pass, is_input_resource) {
     const resource_type = get_graph_resource_type(resource);
     const resource_index = get_graph_resource_index(resource);
@@ -1570,6 +1542,15 @@ export class RenderGraph {
     }
   }
 
+  /**
+   * Converts a logical image dependency into color/depth attachment state for a graphics pass.
+   *
+   * @param {number} resource - Logical image handle.
+   * @param {RGPass} pass - Pass being realized.
+   * @param {number} resource_params_index - Index in the pass input/output declaration.
+   * @param {boolean} is_input_resource - Whether the image is declared as an input.
+   * @param {Array<Texture>} pass_attachments - Strong frame references for the physical pass.
+   */
   _tie_resource_to_pass_config_attachments(
     resource,
     pass,
@@ -1609,6 +1590,9 @@ export class RenderGraph {
     }
   }
 
+  /**
+   * Partitions pass inputs between reflected bindings and the bindless path.
+   */
   _setup_pass_input_resource_bindless_type(resource, pass) {
     const resource_type = get_graph_resource_type(resource);
     const resource_index = get_graph_resource_index(resource);
@@ -1630,6 +1614,13 @@ export class RenderGraph {
     }
   }
 
+  // ╔════════════════════════════════════════════════════════════════════════════════════════════╗
+  // ║                          🎨 SHADERS, BINDINGS & PIPELINES                                 ║
+  // ╚════════════════════════════════════════════════════════════════════════════════════════════╝
+
+  /**
+   * Resolves the shader stages declared for a compute or graphics pass.
+   */
   _setup_pass_shaders(pass) {
     const shader_setup = pass.parameters.shader_setup;
     if (!shader_setup.pipeline_shaders) {
@@ -1666,6 +1657,12 @@ export class RenderGraph {
     }
   }
 
+  /**
+   * Builds the pass bind group from shader reflection and realized logical inputs.
+   *
+   * Stage visibility is merged by reflected binding name across all active shader stages. Binding
+   * order follows pass_inputs, which is populated from the pass's declared non-bindless inputs.
+   */
   _setup_pass_bind_groups(pass) {
     const is_compute_pass =
       (pass.pass_config.flags & RenderPassFlags.Compute) !== RenderPassFlags.None;
@@ -1684,7 +1681,7 @@ export class RenderGraph {
       return;
     }
 
-    // Setup pass-specific bind group
+    // Merge reflection from every active stage before emitting one WebGPU bind group layout.
     let binding_stage_masks = new Map();
 
     let compute_reflection_groups = is_compute_pass
@@ -1842,13 +1839,19 @@ export class RenderGraph {
         layouts,
         BindGroupType.Pass,
         entries,
-        true /* force */
+        true /* Rebuild the named group after dependency or reflection changes. */
       );
 
       pass_binds.bind_groups[BindGroupType.Pass] = pass_bind_group;
     }
   }
 
+  /**
+   * Creates or reuses the compute/render pipeline associated with a pass name.
+   *
+   * Attachment formats and reflected bind-group layouts are captured only when the cache entry is
+   * created; callers must invalidate caches after replacing those dependencies.
+   */
   _setup_pass_pipeline_state(pass) {
     if (this.pass_cache.pipeline_states.get(pass.pass_config.name)) {
       pass.pipeline_state_id = this.pass_cache.pipeline_states.get(pass.pass_config.name);
@@ -1925,7 +1928,7 @@ export class RenderGraph {
           vertex: {
             module: pass.shaders.vertex.module,
             entryPoint: shader_setup.pipeline_shaders.vertex.entry_point || "vs",
-            buffers: [], // Add vertex buffer layouts if needed
+            buffers: [], // Vertex pulling is the default; explicit layouts belong here if introduced.
           },
           primitive: {
             topology: shader_setup.primitive_topology_type || "triangle-list",
@@ -1971,6 +1974,9 @@ export class RenderGraph {
     }
   }
 
+  /**
+   * Rebuilds the shared global bind group only when no cached group exists or writes are pending.
+   */
   _setup_global_bind_group(pass) {
     const pass_binds = this.pass_cache.bind_groups.get(pass.pass_config.name);
 
@@ -2056,7 +2062,7 @@ export class RenderGraph {
         layouts,
         BindGroupType.Global,
         entries,
-        true /* force */
+        true /* Pending writes replace the previous global binding set. */
       );
 
       this.pass_cache.global_bind_group = global_bind_group;
@@ -2064,6 +2070,9 @@ export class RenderGraph {
     }
   }
 
+  /**
+   * Binds cached global/pass groups and pins them on the physical pass for the frame.
+   */
   _bind_pass_bind_groups(pass) {
     const physical_pass = ResourceCache.get().fetch(CacheTypes.PASS, pass.physical_id);
     const pass_bind_groups = this.pass_cache.bind_groups.get(pass.pass_config.name);
@@ -2083,6 +2092,10 @@ export class RenderGraph {
     }
   }
 
+  // ╔════════════════════════════════════════════════════════════════════════════════════════════╗
+  // ║                       🧹 TRANSIENT LIFETIME & RETIREMENT                                  ║
+  // ╚════════════════════════════════════════════════════════════════════════════════════════════╝
+
   _update_transient_resources(pass) {
     pass.parameters.inputs.forEach((input_resource) => {
       const resource_meta = this.registry.resource_metadata.get(input_resource);
@@ -2091,7 +2104,7 @@ export class RenderGraph {
         resource_meta.last_user === pass.handle &&
         !resource_meta.b_is_persistent
       ) {
-        // TODO: Transient resource memory aliasing
+        // TODO: Return the completed lifetime range to a transient aliasing allocator.
       }
     });
 
@@ -2102,16 +2115,20 @@ export class RenderGraph {
         resource_meta.last_user === pass.handle &&
         !resource_meta.b_is_persistent
       ) {
-        // TODO: Transient resource memory aliasing
+        // TODO: Return the completed lifetime range to a transient aliasing allocator.
       }
     });
   }
 
   _free_physical_resources() {
     this.registry.resource_deletion_queue.update();
-    // TODO: Free all bindless resources handles stored in this.registry.all_bindless_resource_handles
+    // TODO: Release handles tracked in all_bindless_resource_handles when bindless ownership lands.
   }
 
+  /**
+   * @param {number} max_bind_groups - Bind-group slots reserved per physical pass.
+   * @returns {RenderGraph} New render graph instance.
+   */
   static create(max_bind_groups) {
     return new RenderGraph(max_bind_groups);
   }

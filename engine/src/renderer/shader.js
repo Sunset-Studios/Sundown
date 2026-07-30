@@ -24,7 +24,7 @@ import {
   r16uint_format,
   r16sint_format,
 } from "../utility/config_permutations.js";
-import { error } from "../utility/logging.js";
+import { error, warn } from "../utility/logging.js";
 
 const f16_type_string = "f16";
 const f32_type_string = "f32";
@@ -84,7 +84,7 @@ export class Shader {
       this.precision_profile = precision_profile;
       this.reflection = variant.reflection;
     } catch (err) {
-      console.log(this.code);
+      warn(this.code);
       error(`WebGPU shader error: could not create shader module at ${variant_key}`, err);
       throw err;
     }

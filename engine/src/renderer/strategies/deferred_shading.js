@@ -36,6 +36,7 @@ import {
 } from "../renderer_types.js";
 import { BVH } from "../../acceleration/bvh.js";
 import { MeshBLAS } from "../../acceleration/mesh_blas.js";
+import { SceneVoxelizer } from "../../acceleration/scene_voxelizer.js"
 import { profile_scope } from "../../utility/performance.js";
 import {
   rgba16float_format,
