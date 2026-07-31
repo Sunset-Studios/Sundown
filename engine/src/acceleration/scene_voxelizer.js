@@ -15,18 +15,12 @@ import { RenderPassFlags } from "../renderer/renderer_types.js";
 // lifetime, pass ordering, and synchronization to a caller-owned render graph.
 //
 // 🧱  CURRENT REPRESENTATION:
-//     • One fixed 256 × 256 × 256 root grid
-//     • One uniform world-space voxel size
+//     • A configurable set of nested camera-centered 256 × 256 × 256 clip levels
+//     • A 2× world-space voxel-size increase between adjacent clip levels
 //     • One occupancy bit per voxel, packed 32 voxels per u32 storage word
 //     • Meshlet-driven conservative compute voxelization
-//     • A full GPU rebuild from current instance transforms for dynamic-scene correctness
-//
-// 🌳  PLANNED EVOLUTION:
-//     • Treat each root voxel as a brick when finer detail is requested
-//     • Subdivide a brick into an 8 × 8 × 8 child-brick lattice
-//     • Store each 512-child occupancy mask in 16 packed u32 words
-//     • Repeat subdivision to a fixed hierarchy depth
-//     • Preserve the same one-bit occupancy contract at every hierarchy level
+//     • A 256³ → 32³ → 4³ → 1³ HDDA skip hierarchy within every clip level
+//     • Brick-snapped scrolling with independent rebuild decisions per level
 //
 // 🔌  RENDER GRAPH CONTRACT:
 //     • begin_frame() resolves frame-local configuration and clears semantic handles
@@ -43,42 +37,57 @@ import { RenderPassFlags } from "../renderer/renderer_types.js";
 //
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 
-const scene_voxelize_shader_setup = {
-  pipeline_shaders: {
-    compute: {
-      path: "acceleration/scene_voxelizer.wgsl",
-    },
+// Shader cooking discovers every clip-level variant from this static registry. Runtime pass setup
+// objects are created by create_scene_voxel_level_shader_setup() so each graph pass retains its
+// own immutable level selection.
+const scene_voxel_clipmap_shader_variants = {
+  shaders: {
+    voxelize: { path: "acceleration/scene_voxelizer.wgsl" },
+    mark_dirty: { path: "acceleration/scene_voxelizer_mark_dirty.wgsl" },
+    clear_dirty: { path: "acceleration/scene_voxelizer_clear_dirty.wgsl" },
+    compact: { path: "acceleration/scene_voxelizer_compact.wgsl" },
   },
+  level_0: { defines: { SCENE_VOXEL_CLIP_LEVEL: "0u" } },
+  level_1: { defines: { SCENE_VOXEL_CLIP_LEVEL: "1u" } },
+  level_2: { defines: { SCENE_VOXEL_CLIP_LEVEL: "2u" } },
+  level_3: { defines: { SCENE_VOXEL_CLIP_LEVEL: "3u" } },
+  level_4: { defines: { SCENE_VOXEL_CLIP_LEVEL: "4u" } },
+  level_5: { defines: { SCENE_VOXEL_CLIP_LEVEL: "5u" } },
+  level_6: { defines: { SCENE_VOXEL_CLIP_LEVEL: "6u" } },
+  level_7: { defines: { SCENE_VOXEL_CLIP_LEVEL: "7u" } },
 };
 
-const scene_voxel_mark_dirty_shader_setup = {
-  pipeline_shaders: {
-    compute: {
-      path: "acceleration/scene_voxelizer_mark_dirty.wgsl",
+function create_scene_voxel_level_shader_setup(path, clip_level) {
+  return {
+    pipeline_shaders: {
+      compute: {
+        path,
+        defines: { SCENE_VOXEL_CLIP_LEVEL: `${clip_level}u` },
+      },
     },
-  },
-};
-
-const scene_voxel_clear_dirty_shader_setup = {
-  pipeline_shaders: {
-    compute: {
-      path: "acceleration/scene_voxelizer_clear_dirty.wgsl",
-    },
-  },
-};
-
-const scene_voxel_compact_shader_setup = {
-  pipeline_shaders: {
-    compute: {
-      path: "acceleration/scene_voxelizer_compact.wgsl",
-    },
-  },
-};
+  };
+}
 
 const scene_voxel_finalize_dispatch_shader_setup = {
   pipeline_shaders: {
     compute: {
       path: "acceleration/scene_voxelizer_finalize_dispatch.wgsl",
+    },
+  },
+};
+
+const scene_voxel_build_brick_occupancy_shader_setup = {
+  pipeline_shaders: {
+    compute: {
+      path: "acceleration/scene_voxelizer_build_brick_occupancy.wgsl",
+    },
+  },
+};
+
+const scene_voxel_build_upper_hierarchy_shader_setup = {
+  pipeline_shaders: {
+    compute: {
+      path: "acceleration/scene_voxelizer_build_upper_hierarchy.wgsl",
     },
   },
 };
@@ -123,6 +132,35 @@ export const SCENE_VOXEL_OCCUPANCY_BYTE_SIZE =
 export const SCENE_VOXEL_BRICK_OCCUPANCY_WORD_COUNT =
   SCENE_VOXEL_BRICK_CHILD_COUNT / SCENE_VOXEL_OCCUPANCY_BITS_PER_WORD;
 
+/** Number of HDDA levels including the original fine voxel grid. */
+export const SCENE_VOXEL_HDDA_LEVEL_COUNT = 4;
+
+/** Coarsest HDDA level index. Level zero is the original 256³ leaf grid. */
+export const SCENE_VOXEL_HDDA_MAX_LEVEL = SCENE_VOXEL_HDDA_LEVEL_COUNT - 1;
+
+/** Number of packed words used by the 32³, 4³, and 1³ coarse occupancy levels. */
+export const SCENE_VOXEL_HIERARCHY_WORD_COUNT =
+  Math.ceil(32 ** 3 / SCENE_VOXEL_OCCUPANCY_BITS_PER_WORD) +
+  Math.ceil(4 ** 3 / SCENE_VOXEL_OCCUPANCY_BITS_PER_WORD) +
+  1;
+
+/** Default number of nested camera-centered voxel clip levels. */
+export const SCENE_VOXEL_CLIPMAP_LEVEL_COUNT = 6;
+
+/** Maximum number of clip levels represented by the shared shader parameter block. */
+export const SCENE_VOXEL_CLIPMAP_MAX_LEVEL_COUNT = 8;
+
+/** Voxel-size multiplier between adjacent clip levels. */
+export const SCENE_VOXEL_CLIPMAP_SCALE = 2;
+
+/** Total packed leaf occupancy for the default four-level configuration (8 MiB). */
+export const SCENE_VOXEL_CLIPMAP_OCCUPANCY_WORD_COUNT =
+  SCENE_VOXEL_OCCUPANCY_WORD_COUNT * SCENE_VOXEL_CLIPMAP_LEVEL_COUNT;
+
+/** Total packed skip hierarchy for the default four-level configuration. */
+export const SCENE_VOXEL_CLIPMAP_HIERARCHY_WORD_COUNT =
+  SCENE_VOXEL_HIERARCHY_WORD_COUNT * SCENE_VOXEL_CLIPMAP_LEVEL_COUNT;
+
 /**
  * Semantic names exposed to render-graph consumers.
  *
@@ -132,17 +170,23 @@ export const SCENE_VOXEL_BRICK_OCCUPANCY_WORD_COUNT =
 export const SceneVoxelizerResource = Object.freeze({
   VoxelGrid: "voxel_grid",
   VoxelizationParams: "voxelization_params",
+  OccupancyHierarchy: "occupancy_hierarchy",
   DirtyBrickWords: "dirty_brick_words",
   DirtyBrickList: "dirty_brick_list",
   DirtyDispatchArgs: "dirty_dispatch_args",
   CompactedMeshlets: "compacted_meshlets",
   VoxelDispatchArgs: "voxel_dispatch_args",
   VoxelDispatchCount: "voxel_dispatch_count",
+  ScratchResetTemplate: "scratch_reset_template",
   DebugOutput: "debug_output",
 });
 
 const DEFAULT_RESOURCE_PREFIX = "scene_voxelizer";
-const VOXELIZATION_PARAMS_WORD_COUNT = 8;
+const VOXELIZATION_PARAMS_HEADER_WORD_COUNT = 4;
+const VOXELIZATION_LEVEL_PARAMS_WORD_COUNT = 8;
+const VOXELIZATION_PARAMS_WORD_COUNT =
+  VOXELIZATION_PARAMS_HEADER_WORD_COUNT +
+  VOXELIZATION_LEVEL_PARAMS_WORD_COUNT * SCENE_VOXEL_CLIPMAP_MAX_LEVEL_COUNT;
 const MAX_COMPUTE_WORKGROUPS_PER_DIMENSION = 65535;
 const DIRTY_BRICK_SIZE = 8;
 const DIRTY_BRICK_DIMENSION = SCENE_VOXEL_GRID_RESOLUTION / DIRTY_BRICK_SIZE;
@@ -152,6 +196,13 @@ const DIRTY_MARK_WORKGROUP_SIZE = 64;
 const MESHLET_COMPACT_WORKGROUP_SIZE = 128;
 const DEBUG_OUTPUT_SCALE = 0.5;
 const DEBUG_WORKGROUP_SIZE = 8;
+const HIERARCHY_BUILD_WORKGROUP_SIZE = 128;
+const DIRTY_DISPATCH_RESET_WORD_COUNT = 7;
+const VOXEL_DISPATCH_RESET_WORD_COUNT = 4;
+const SCRATCH_RESET_TEMPLATE_DATA = new Uint32Array([
+  0, 1, 1, 0, 0, 1, 1,
+  0, 1, 1, 0,
+]);
 
 const required_voxelization_inputs = Object.freeze([
   "entity_transforms",
@@ -167,23 +218,29 @@ const required_voxelization_inputs = Object.freeze([
 /**
  * Creates a normalized scene-voxelizer configuration.
  *
- * `grid_origin` is the minimum world-space corner of the grid. For a world-space position `p`,
- * the root coordinate is:
+ * `grid_origin` is the requested minimum corner of clip level zero. The voxelizer derives a shared
+ * center from it, then brick-snaps every active clip level independently. For a world-space position
+ * `p` and one resolved clip level, the coordinate is:
  *
  *   floor((p - grid_origin) / voxel_size)
  *
- * Coordinates outside [0, 256) are outside the current volume.
+ * Coordinates outside [0, 256) are outside that clip volume.
  *
  * @param {Object} [overrides]
  * @param {number} [overrides.voxel_size=1.0] Uniform world-space edge length of one root voxel.
  * @param {number[]} [overrides.grid_origin=[0,0,0]] Minimum world-space corner of the root grid.
+ * @param {number} [overrides.clipmap_level_count=4] Active nested clip levels, up to eight.
+ * @param {number} [overrides.clipmap_scale=2] Voxel-size multiplier between adjacent levels.
  * @param {string} [overrides.resource_prefix="scene_voxelizer"] Physical GPU resource name prefix.
- * @returns {{voxel_size: number, grid_origin: number[], resource_prefix: string}}
+ * @returns {{voxel_size: number, grid_origin: number[], clipmap_level_count: number, clipmap_scale: number, resource_prefix: string}}
  */
 export function create_scene_voxelizer_config(overrides = {}) {
   const config = {
     voxel_size: overrides.voxel_size ?? 0.25,
     grid_origin: [...(overrides.grid_origin ?? [0.0, 0.0, 0.0])],
+    clipmap_level_count:
+      overrides.clipmap_level_count ?? SCENE_VOXEL_CLIPMAP_LEVEL_COUNT,
+    clipmap_scale: overrides.clipmap_scale ?? SCENE_VOXEL_CLIPMAP_SCALE,
     resource_prefix: overrides.resource_prefix ?? DEFAULT_RESOURCE_PREFIX,
   };
 
@@ -207,6 +264,20 @@ function validate_config(config) {
   if (typeof config.resource_prefix !== "string" || config.resource_prefix.length === 0) {
     throw new Error("SceneVoxelizer resource_prefix must be a non-empty string");
   }
+
+  if (
+    !Number.isSafeInteger(config.clipmap_level_count) ||
+    config.clipmap_level_count < 1 ||
+    config.clipmap_level_count > SCENE_VOXEL_CLIPMAP_MAX_LEVEL_COUNT
+  ) {
+    throw new Error(
+      `SceneVoxelizer clipmap_level_count must be between 1 and ${SCENE_VOXEL_CLIPMAP_MAX_LEVEL_COUNT}`
+    );
+  }
+
+  if (!Number.isFinite(config.clipmap_scale) || config.clipmap_scale <= 1.0) {
+    throw new Error("SceneVoxelizer clipmap_scale must be a finite number greater than one");
+  }
 }
 
 /**
@@ -215,15 +286,15 @@ function validate_config(config) {
  * ║                     Render-Graph-Driven GPU Voxel Grid Builder                               ║
  * ╚══════════════════════════════════════════════════════════════════════════════════════════════╝
  *
- * Owns the orchestration state for one scene voxel volume. The render graph owns the physical
+ * Owns the orchestration state for one scene voxel clipmap. The render graph owns the physical
  * resources and commands; this class owns their semantic meaning and the order in which passes are
  * declared.
  *
  * ┌─────────────────────────────── 📐 CURRENT SPATIAL MODEL ─────────────────────────────────────┐
  * │                                                                                              │
- * │  Grid dimensions:       256 × 256 × 256                                                      │
- * │  World-space bounds:    [grid_origin, grid_origin + 256 × voxel_size)                         │
- * │  Subdivision levels:    0 (level 0 is currently both the root and the leaf)                   │
+ * │  Clip dimensions:       configurable count × (256 × 256 × 256), up to eight                   │
+ * │  Default extents:       64 m, 128 m, 256 m, 512 m at the 0.25 m base voxel size               │
+ * │  HDDA levels per clip:  256³ leaves plus 32³, 4³, and 1³ skip levels                          │
  * │  Linear address:        x + 256 × (y + 256 × z)                                              │
  * │  Occupancy word:        linear_address >> 5                                                  │
  * │  Occupancy bit:         linear_address & 31                                                  │
@@ -232,13 +303,12 @@ function validate_config(config) {
  *
  * ┌─────────────────────────────── 🧮 CURRENT STORAGE MODEL ─────────────────────────────────────┐
  * │                                                                                              │
- * │  voxel_grid is a dense occupancy bitset containing one bit per root voxel. Each u32 word      │
+ * │  voxel_grid packs one dense occupancy bitset per clip containing one bit per leaf voxel.      │
  * │  covers 32 consecutive linear voxels: bit 0 covers the first and bit 31 covers the last.      │
  * │  A clear bit means empty; a set bit means occupied. The initial allocation is exactly 2 MiB.  │
  * │                                                                                              │
  * │  Writers claim occupancy with atomicOr(word, 1u << bit), allowing overlapping primitives to   │
- * │  safely touch the same word. Future brick masks use the identical convention: an 8³ child    │
- * │  lattice has 512 occupancy bits and therefore occupies exactly 16 consecutive u32 words.      │
+ * │  safely touch the same word. Each active clip consumes 2 MiB of persistent leaf data.         │
  * │                                                                                              │
  * └──────────────────────────────────────────────────────────────────────────────────────────────┘
  *
@@ -269,8 +339,13 @@ export class SceneVoxelizer {
     this.indirect_args_reset_data = new Uint32Array([0, 1, 1, 0]);
     this.dirty_dispatch_reset_data = new Uint32Array([0, 1, 1, 0, 0, 1, 1]);
     this.dispatch_count_reset_data = new Uint32Array(1);
-    this.previous_grid_origin = new Float64Array([NaN, NaN, NaN]);
-    this.previous_voxel_size = NaN;
+    this.previous_clip_origins = Array.from(
+      { length: SCENE_VOXEL_CLIPMAP_MAX_LEVEL_COUNT },
+      () => new Float64Array([NaN, NaN, NaN])
+    );
+    this.previous_clip_voxel_sizes = new Float64Array(SCENE_VOXEL_CLIPMAP_MAX_LEVEL_COUNT);
+    this.previous_clip_voxel_sizes.fill(NaN);
+    this.previous_clipmap_level_count = 0;
     this.previous_meshlet_count = -1;
   }
 
@@ -297,44 +372,81 @@ export class SceneVoxelizer {
    */
   begin_frame(frame_context = {}) {
     const voxel_size = frame_context.voxel_size ?? this.config.voxel_size;
-    const grid_origin = [...(frame_context.grid_origin ?? this.config.grid_origin)];
+    const clipmap_level_count =
+      frame_context.clipmap_level_count ?? this.config.clipmap_level_count;
+    const clipmap_scale = frame_context.clipmap_scale ?? this.config.clipmap_scale;
+    const requested_grid_origin = [...(frame_context.grid_origin ?? this.config.grid_origin)];
     const meshlet_count = frame_context.meshlet_count ?? frame_context.meshlet_draw_count ?? 0;
     validate_config({
       voxel_size,
-      grid_origin,
+      grid_origin: requested_grid_origin,
+      clipmap_level_count,
+      clipmap_scale,
       resource_prefix: this.config.resource_prefix,
     });
     if (!Number.isSafeInteger(meshlet_count) || meshlet_count < 0) {
       throw new Error("SceneVoxelizer meshlet_count must be a non-negative safe integer");
     }
 
-    const volume_changed =
-      voxel_size !== this.previous_voxel_size ||
-      grid_origin[0] !== this.previous_grid_origin[0] ||
-      grid_origin[1] !== this.previous_grid_origin[1] ||
-      grid_origin[2] !== this.previous_grid_origin[2];
-    const full_rebuild =
-      (frame_context.full_rebuild ?? false) ||
+    const base_world_extent = SCENE_VOXEL_GRID_RESOLUTION * voxel_size;
+    const clip_center = [
+      requested_grid_origin[0] + base_world_extent * 0.5,
+      requested_grid_origin[1] + base_world_extent * 0.5,
+      requested_grid_origin[2] + base_world_extent * 0.5,
+    ];
+    const force_recreate =
       (frame_context.force_recreate ?? false) ||
-      volume_changed ||
-      meshlet_count !== this.previous_meshlet_count;
+      clipmap_level_count !== this.previous_clipmap_level_count;
+    const clip_levels = new Array(clipmap_level_count);
+    for (let clip_level = 0; clip_level < clipmap_level_count; clip_level++) {
+      const level_voxel_size = voxel_size * clipmap_scale ** clip_level;
+      const world_extent = SCENE_VOXEL_GRID_RESOLUTION * level_voxel_size;
+      const scroll_quantum = SCENE_VOXEL_BRICK_RESOLUTION * level_voxel_size;
+      const grid_origin = [
+        Math.floor((clip_center[0] - world_extent * 0.5) / scroll_quantum) * scroll_quantum,
+        Math.floor((clip_center[1] - world_extent * 0.5) / scroll_quantum) * scroll_quantum,
+        Math.floor((clip_center[2] - world_extent * 0.5) / scroll_quantum) * scroll_quantum,
+      ];
+      const previous_origin = this.previous_clip_origins[clip_level];
+      const volume_changed =
+        level_voxel_size !== this.previous_clip_voxel_sizes[clip_level] ||
+        grid_origin[0] !== previous_origin[0] ||
+        grid_origin[1] !== previous_origin[1] ||
+        grid_origin[2] !== previous_origin[2];
+      const full_rebuild =
+        force_recreate || volume_changed || meshlet_count !== this.previous_meshlet_count;
 
-    this.previous_voxel_size = voxel_size;
-    this.previous_grid_origin.set(grid_origin);
+      clip_levels[clip_level] = {
+        clip_level,
+        voxel_size: level_voxel_size,
+        grid_origin,
+        world_extent,
+        scroll_quantum,
+        full_rebuild,
+      };
+      this.previous_clip_voxel_sizes[clip_level] = level_voxel_size;
+      previous_origin.set(grid_origin);
+    }
+
+    this.previous_clipmap_level_count = clipmap_level_count;
     this.previous_meshlet_count = meshlet_count;
 
     this.resources.clear();
     this.frame_context = {
       ...frame_context,
       voxel_size,
-      grid_origin,
+      clipmap_level_count,
+      clipmap_scale,
+      grid_origin: clip_levels[0].grid_origin,
+      clip_center,
+      clip_levels,
       meshlet_count,
-      full_rebuild,
-      force_recreate: frame_context.force_recreate ?? false,
+      full_rebuild: clip_levels.some((level) => level.full_rebuild),
+      force_recreate,
       resolution: SCENE_VOXEL_GRID_RESOLUTION,
-      voxel_count: SCENE_VOXEL_COUNT,
-      occupancy_word_count: SCENE_VOXEL_OCCUPANCY_WORD_COUNT,
-      world_extent: SCENE_VOXEL_GRID_RESOLUTION * voxel_size,
+      voxel_count: SCENE_VOXEL_COUNT * clipmap_level_count,
+      occupancy_word_count: SCENE_VOXEL_OCCUPANCY_WORD_COUNT * clipmap_level_count,
+      world_extent: clip_levels[0].world_extent,
     };
 
     return this.frame_context;
@@ -378,7 +490,6 @@ export class SceneVoxelizer {
       throw new Error("SceneVoxelizer.record() requires begin_frame() and setup() first");
     }
 
-    this._record_reset_passes(render_graph, context);
     this._record_voxelization_passes(render_graph, context);
     this._record_finalize_passes(render_graph, context);
 
@@ -420,7 +531,8 @@ export class SceneVoxelizer {
     if (
       !this.frame_context ||
       this.get_resource(SceneVoxelizerResource.VoxelGrid) === null ||
-      this.get_resource(SceneVoxelizerResource.VoxelizationParams) === null
+      this.get_resource(SceneVoxelizerResource.VoxelizationParams) === null ||
+      this.get_resource(SceneVoxelizerResource.OccupancyHierarchy) === null
     ) {
       throw new Error("SceneVoxelizer.add_debug_passes() requires add_passes() first");
     }
@@ -454,11 +566,18 @@ export class SceneVoxelizer {
 
     const voxelization_params = this.get_resource(SceneVoxelizerResource.VoxelizationParams);
     const voxel_grid = this.get_resource(SceneVoxelizerResource.VoxelGrid);
+    const occupancy_hierarchy = this.get_resource(SceneVoxelizerResource.OccupancyHierarchy);
     render_graph.add_pass(
       `${this.config.resource_prefix}_debug_trace`,
       RenderPassFlags.Compute,
       {
-        inputs: [voxelization_params, voxel_grid, scene_color, debug_output],
+        inputs: [
+          voxelization_params,
+          voxel_grid,
+          occupancy_hierarchy,
+          scene_color,
+          debug_output,
+        ],
         outputs: [debug_output],
         shader_setup: scene_voxel_debug_shader_setup,
       },
@@ -497,15 +616,33 @@ export class SceneVoxelizer {
     const context = this.frame_context;
     return {
       voxel_grid: this.get_resource(SceneVoxelizerResource.VoxelGrid),
+      voxelization_params: this.get_resource(SceneVoxelizerResource.VoxelizationParams),
+      occupancy_hierarchy: this.get_resource(SceneVoxelizerResource.OccupancyHierarchy),
       debug_output: this.get_resource(SceneVoxelizerResource.DebugOutput),
       resolution: SCENE_VOXEL_GRID_RESOLUTION,
-      voxel_count: SCENE_VOXEL_COUNT,
+      voxel_count:
+        SCENE_VOXEL_COUNT *
+        (context?.clipmap_level_count ?? this.config.clipmap_level_count),
       occupancy_bits_per_word: SCENE_VOXEL_OCCUPANCY_BITS_PER_WORD,
-      occupancy_word_count: SCENE_VOXEL_OCCUPANCY_WORD_COUNT,
+      occupancy_word_count:
+        SCENE_VOXEL_OCCUPANCY_WORD_COUNT *
+        (context?.clipmap_level_count ?? this.config.clipmap_level_count),
       voxel_size: context?.voxel_size ?? this.config.voxel_size,
       grid_origin: [...(context?.grid_origin ?? this.config.grid_origin)],
       world_extent: context?.world_extent ?? SCENE_VOXEL_GRID_RESOLUTION * this.config.voxel_size,
       subdivision_levels: 0,
+      clipmap_level_count:
+        context?.clipmap_level_count ?? this.config.clipmap_level_count,
+      clipmap_scale: context?.clipmap_scale ?? this.config.clipmap_scale,
+      clip_levels: context?.clip_levels?.map((level) => ({
+        clip_level: level.clip_level,
+        voxel_size: level.voxel_size,
+        grid_origin: [...level.grid_origin],
+        world_extent: level.world_extent,
+        scroll_quantum: level.scroll_quantum,
+      })) ?? [],
+      hdda_level_count: SCENE_VOXEL_HDDA_LEVEL_COUNT,
+      hdda_max_level: SCENE_VOXEL_HDDA_MAX_LEVEL,
     };
   }
 
@@ -514,7 +651,7 @@ export class SceneVoxelizer {
   _setup_root_grid_resources(render_graph, context) {
     const voxel_grid = render_graph.create_buffer({
       name: `${this.config.resource_prefix}_root_grid`,
-      size: SCENE_VOXEL_OCCUPANCY_WORD_COUNT,
+      size: SCENE_VOXEL_OCCUPANCY_WORD_COUNT * context.clipmap_level_count,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC,
       force: context.force_recreate,
     });
@@ -568,6 +705,12 @@ export class SceneVoxelizer {
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
       force: context.force_recreate,
     });
+    const scratch_reset_template = render_graph.create_buffer({
+      name: `${this.config.resource_prefix}_scratch_reset_template`,
+      raw_data: SCRATCH_RESET_TEMPLATE_DATA,
+      usage: GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST,
+      force: context.force_recreate,
+    });
 
     this.resources.set(SceneVoxelizerResource.DirtyBrickWords, dirty_brick_words);
     this.resources.set(SceneVoxelizerResource.DirtyBrickList, dirty_brick_list);
@@ -575,26 +718,36 @@ export class SceneVoxelizer {
     this.resources.set(SceneVoxelizerResource.CompactedMeshlets, compacted_meshlets);
     this.resources.set(SceneVoxelizerResource.VoxelDispatchArgs, voxel_dispatch_args);
     this.resources.set(SceneVoxelizerResource.VoxelDispatchCount, voxel_dispatch_count);
+    this.resources.set(SceneVoxelizerResource.ScratchResetTemplate, scratch_reset_template);
   }
 
-  _setup_hierarchy_resources(_render_graph, _context) {
-    // Reserved for brick allocators, indirection tables, and packed child/leaf occupancy bitsets.
-    // The root grid remains the stable entry point when these resources are introduced.
+  _setup_hierarchy_resources(render_graph, context) {
+    const occupancy_hierarchy = render_graph.create_buffer({
+      name: `${this.config.resource_prefix}_occupancy_hierarchy`,
+      size: SCENE_VOXEL_HIERARCHY_WORD_COUNT * context.clipmap_level_count,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC,
+      force: context.force_recreate,
+    });
+
+    this.resources.set(SceneVoxelizerResource.OccupancyHierarchy, occupancy_hierarchy);
   }
 
   // ────────────────────────────────── PASS RECORDING ─────────────────────────────────────────────
 
-  _record_reset_passes(render_graph, _context) {
+  _record_reset_passes(render_graph, clip_level) {
+    const scratch_reset_template = this.get_resource(
+      SceneVoxelizerResource.ScratchResetTemplate
+    );
     const dirty_brick_words = this.get_resource(SceneVoxelizerResource.DirtyBrickWords);
     const dirty_dispatch_args = this.get_resource(SceneVoxelizerResource.DirtyDispatchArgs);
     const voxel_dispatch_args = this.get_resource(SceneVoxelizerResource.VoxelDispatchArgs);
     const voxel_dispatch_count = this.get_resource(SceneVoxelizerResource.VoxelDispatchCount);
 
     render_graph.add_pass(
-      `${this.config.resource_prefix}_reset`,
+      `${this.config.resource_prefix}_clip_${clip_level}_reset`,
       RenderPassFlags.GraphLocal,
       {
-        inputs: [],
+        inputs: [scratch_reset_template],
         outputs: [
           dirty_brick_words,
           dirty_dispatch_args,
@@ -603,34 +756,47 @@ export class SceneVoxelizer {
         ],
       },
       (graph, _frame_data, encoder) => {
+        // These resets must be encoded between clip-level dispatches. queue.writeBuffer() calls
+        // made while recording would all execute before command-buffer submission, allowing one
+        // level's indirect counters to leak into the next level and intermittently erase clips.
+        const physical_reset_template = graph.get_physical_buffer(scratch_reset_template);
         const physical_dirty_words = graph.get_physical_buffer(dirty_brick_words);
         encoder.clearBuffer(
           physical_dirty_words.buffer,
           0,
           physical_dirty_words.config.size
         );
-        graph
-          .get_physical_buffer(dirty_dispatch_args)
-          .write_raw(this.dirty_dispatch_reset_data);
-        graph
-          .get_physical_buffer(voxel_dispatch_args)
-          .write_raw(this.indirect_args_reset_data);
-        graph
-          .get_physical_buffer(voxel_dispatch_count)
-          .write_raw(this.dispatch_count_reset_data);
+        encoder.copyBufferToBuffer(
+          physical_reset_template.buffer,
+          0,
+          graph.get_physical_buffer(dirty_dispatch_args).buffer,
+          0,
+          DIRTY_DISPATCH_RESET_WORD_COUNT * Uint32Array.BYTES_PER_ELEMENT
+        );
+        encoder.copyBufferToBuffer(
+          physical_reset_template.buffer,
+          DIRTY_DISPATCH_RESET_WORD_COUNT * Uint32Array.BYTES_PER_ELEMENT,
+          graph.get_physical_buffer(voxel_dispatch_args).buffer,
+          0,
+          VOXEL_DISPATCH_RESET_WORD_COUNT * Uint32Array.BYTES_PER_ELEMENT
+        );
+        const physical_dispatch_count = graph.get_physical_buffer(voxel_dispatch_count);
+        encoder.clearBuffer(
+          physical_dispatch_count.buffer,
+          0,
+          physical_dispatch_count.config.size
+        );
       }
     );
   }
 
   _record_voxelization_passes(render_graph, context) {
-    const mark_item_count = context.full_rebuild ? DIRTY_BRICK_COUNT : context.meshlet_count;
-    const mark_workgroup_count = Math.ceil(mark_item_count / DIRTY_MARK_WORKGROUP_SIZE);
     const compact_workgroup_count = Math.ceil(
       context.meshlet_count / MESHLET_COMPACT_WORKGROUP_SIZE
     );
     const max_workgroups =
       context.max_compute_workgroups_per_dimension ?? MAX_COMPUTE_WORKGROUPS_PER_DIMENSION;
-    if (mark_workgroup_count > max_workgroups || compact_workgroup_count > max_workgroups) {
+    if (compact_workgroup_count > max_workgroups) {
       throw new Error(
         `SceneVoxelizer cannot process ${context.meshlet_count} meshlets within WebGPU workgroup limits`
       );
@@ -640,14 +806,6 @@ export class SceneVoxelizer {
     this._validate_voxelization_inputs(context);
 
     const voxelization_params = this.get_resource(SceneVoxelizerResource.VoxelizationParams);
-    const voxel_grid = this.get_resource(SceneVoxelizerResource.VoxelGrid);
-    const dirty_brick_words = this.get_resource(SceneVoxelizerResource.DirtyBrickWords);
-    const dirty_brick_list = this.get_resource(SceneVoxelizerResource.DirtyBrickList);
-    const dirty_dispatch_args = this.get_resource(SceneVoxelizerResource.DirtyDispatchArgs);
-    const compacted_meshlets = this.get_resource(SceneVoxelizerResource.CompactedMeshlets);
-    const voxel_dispatch_args = this.get_resource(SceneVoxelizerResource.VoxelDispatchArgs);
-    const voxel_dispatch_count = this.get_resource(SceneVoxelizerResource.VoxelDispatchCount);
-
     render_graph.add_pass(
       `${this.config.resource_prefix}_upload_params`,
       RenderPassFlags.GraphLocal,
@@ -661,8 +819,45 @@ export class SceneVoxelizer {
       }
     );
 
+    for (const clip_context of context.clip_levels) {
+      const mark_item_count = clip_context.full_rebuild
+        ? DIRTY_BRICK_COUNT
+        : context.meshlet_count;
+      const mark_workgroup_count = Math.ceil(mark_item_count / DIRTY_MARK_WORKGROUP_SIZE);
+      if (mark_workgroup_count > max_workgroups) {
+        throw new Error(
+          `SceneVoxelizer clip level ${clip_context.clip_level} exceeds WebGPU workgroup limits`
+        );
+      }
+
+      this._record_reset_passes(render_graph, clip_context.clip_level);
+      this._record_clip_level_voxelization_passes(
+        render_graph,
+        context,
+        clip_context,
+        mark_workgroup_count
+      );
+    }
+  }
+
+  _record_clip_level_voxelization_passes(
+    render_graph,
+    context,
+    clip_context,
+    mark_workgroup_count
+  ) {
+    const clip_level = clip_context.clip_level;
+    const voxelization_params = this.get_resource(SceneVoxelizerResource.VoxelizationParams);
+    const voxel_grid = this.get_resource(SceneVoxelizerResource.VoxelGrid);
+    const dirty_brick_words = this.get_resource(SceneVoxelizerResource.DirtyBrickWords);
+    const dirty_brick_list = this.get_resource(SceneVoxelizerResource.DirtyBrickList);
+    const dirty_dispatch_args = this.get_resource(SceneVoxelizerResource.DirtyDispatchArgs);
+    const compacted_meshlets = this.get_resource(SceneVoxelizerResource.CompactedMeshlets);
+    const voxel_dispatch_args = this.get_resource(SceneVoxelizerResource.VoxelDispatchArgs);
+    const voxel_dispatch_count = this.get_resource(SceneVoxelizerResource.VoxelDispatchCount);
+
     render_graph.add_pass(
-      `${this.config.resource_prefix}_mark_dirty_bricks`,
+      `${this.config.resource_prefix}_clip_${clip_level}_mark_dirty_bricks`,
       RenderPassFlags.Compute,
       {
         inputs: [
@@ -678,7 +873,10 @@ export class SceneVoxelizer {
           dirty_dispatch_args,
         ],
         outputs: [dirty_brick_words, dirty_brick_list, dirty_dispatch_args],
-        shader_setup: scene_voxel_mark_dirty_shader_setup,
+        shader_setup: create_scene_voxel_level_shader_setup(
+          "acceleration/scene_voxelizer_mark_dirty.wgsl",
+          clip_level
+        ),
       },
       (graph, frame_data, _encoder) => {
         if (mark_workgroup_count !== 0) {
@@ -690,12 +888,15 @@ export class SceneVoxelizer {
     );
 
     render_graph.add_pass(
-      `${this.config.resource_prefix}_clear_dirty_bricks`,
+      `${this.config.resource_prefix}_clip_${clip_level}_clear_dirty_bricks`,
       RenderPassFlags.Compute,
       {
-        inputs: [dirty_brick_list, voxel_grid],
+        inputs: [dirty_brick_list, voxel_grid, dirty_dispatch_args],
         outputs: [voxel_grid],
-        shader_setup: scene_voxel_clear_dirty_shader_setup,
+        shader_setup: create_scene_voxel_level_shader_setup(
+          "acceleration/scene_voxelizer_clear_dirty.wgsl",
+          clip_level
+        ),
       },
       (graph, frame_data, _encoder) => {
         const pass = graph.get_physical_pass(frame_data.current_pass);
@@ -704,7 +905,7 @@ export class SceneVoxelizer {
     );
 
     render_graph.add_pass(
-      `${this.config.resource_prefix}_compact_dirty_meshlets`,
+      `${this.config.resource_prefix}_clip_${clip_level}_compact_dirty_meshlets`,
       RenderPassFlags.Compute,
       {
         inputs: [
@@ -717,9 +918,13 @@ export class SceneVoxelizer {
           dirty_brick_words,
           compacted_meshlets,
           voxel_dispatch_count,
+          dirty_dispatch_args,
         ],
         outputs: [compacted_meshlets, voxel_dispatch_count],
-        shader_setup: scene_voxel_compact_shader_setup,
+        shader_setup: create_scene_voxel_level_shader_setup(
+          "acceleration/scene_voxelizer_compact.wgsl",
+          clip_level
+        ),
       },
       (graph, frame_data, _encoder) => {
         const pass = graph.get_physical_pass(frame_data.current_pass);
@@ -731,7 +936,7 @@ export class SceneVoxelizer {
     );
 
     render_graph.add_pass(
-      `${this.config.resource_prefix}_finalize_dispatch`,
+      `${this.config.resource_prefix}_clip_${clip_level}_finalize_dispatch`,
       RenderPassFlags.Compute,
       {
         inputs: [voxel_dispatch_count, voxel_dispatch_args],
@@ -744,7 +949,7 @@ export class SceneVoxelizer {
     );
 
     render_graph.add_pass(
-      `${this.config.resource_prefix}_voxelize_compacted_meshlets`,
+      `${this.config.resource_prefix}_clip_${clip_level}_voxelize_compacted_meshlets`,
       RenderPassFlags.Compute,
       {
         inputs: [
@@ -758,9 +963,13 @@ export class SceneVoxelizer {
           voxelization_params,
           voxel_grid,
           voxel_dispatch_count,
+          voxel_dispatch_args,
         ],
         outputs: [voxel_grid],
-        shader_setup: scene_voxelize_shader_setup,
+        shader_setup: create_scene_voxel_level_shader_setup(
+          "acceleration/scene_voxelizer.wgsl",
+          clip_level
+        ),
         b_force_keep_pass: true,
       },
       (graph, frame_data, _encoder) => {
@@ -770,9 +979,61 @@ export class SceneVoxelizer {
     );
   }
 
-  _record_finalize_passes(_render_graph, _context) {
-    // TODO: Publish any counters or hierarchy metadata required by downstream consumers. The
-    // packed root occupancy grid is already consumer-readable after voxelization.
+  _record_finalize_passes(render_graph, context) {
+    const voxel_grid = this.get_resource(SceneVoxelizerResource.VoxelGrid);
+    const occupancy_hierarchy = this.get_resource(SceneVoxelizerResource.OccupancyHierarchy);
+
+    render_graph.add_pass(
+      `${this.config.resource_prefix}_clear_occupancy_hierarchy`,
+      RenderPassFlags.GraphLocal,
+      {
+        outputs: [occupancy_hierarchy],
+      },
+      (graph, _frame_data, encoder) => {
+        const physical_hierarchy = graph.get_physical_buffer(occupancy_hierarchy);
+        encoder.clearBuffer(
+          physical_hierarchy.buffer,
+          0,
+          physical_hierarchy.config.size
+        );
+      }
+    );
+
+    render_graph.add_pass(
+      `${this.config.resource_prefix}_build_brick_occupancy`,
+      RenderPassFlags.Compute,
+      {
+        inputs: [voxel_grid, occupancy_hierarchy],
+        outputs: [occupancy_hierarchy],
+        shader_setup: scene_voxel_build_brick_occupancy_shader_setup,
+        b_force_keep_pass: true,
+      },
+      (graph, frame_data) => {
+        graph
+          .get_physical_pass(frame_data.current_pass)
+          .dispatch(
+            Math.ceil(DIRTY_BRICK_COUNT / HIERARCHY_BUILD_WORKGROUP_SIZE),
+            1,
+            context.clipmap_level_count
+          );
+      }
+    );
+
+    render_graph.add_pass(
+      `${this.config.resource_prefix}_build_upper_occupancy_hierarchy`,
+      RenderPassFlags.Compute,
+      {
+        inputs: [occupancy_hierarchy],
+        outputs: [occupancy_hierarchy],
+        shader_setup: scene_voxel_build_upper_hierarchy_shader_setup,
+        b_force_keep_pass: true,
+      },
+      (graph, frame_data) => {
+        graph
+          .get_physical_pass(frame_data.current_pass)
+          .dispatch(1, 1, context.clipmap_level_count);
+      }
+    );
   }
 
   _validate_voxelization_inputs(context) {
@@ -790,14 +1051,24 @@ export class SceneVoxelizer {
 
   _write_voxelization_params(context, compact_workgroup_count) {
     const view = this.voxelization_params_view;
-    view.setFloat32(0, context.grid_origin[0], true);
-    view.setFloat32(4, context.grid_origin[1], true);
-    view.setFloat32(8, context.grid_origin[2], true);
-    view.setFloat32(12, context.voxel_size, true);
-    view.setUint32(16, context.meshlet_count, true);
-    view.setUint32(20, compact_workgroup_count, true);
-    view.setUint32(24, SCENE_VOXEL_GRID_RESOLUTION, true);
-    view.setUint32(28, context.full_rebuild ? 1 : 0, true);
+    view.setUint32(0, context.clipmap_level_count, true);
+    view.setUint32(4, 0, true);
+    view.setUint32(8, 0, true);
+    view.setUint32(12, 0, true);
+    for (const clip_context of context.clip_levels) {
+      const word_offset =
+        VOXELIZATION_PARAMS_HEADER_WORD_COUNT +
+        clip_context.clip_level * VOXELIZATION_LEVEL_PARAMS_WORD_COUNT;
+      const byte_offset = word_offset * Uint32Array.BYTES_PER_ELEMENT;
+      view.setFloat32(byte_offset, clip_context.grid_origin[0], true);
+      view.setFloat32(byte_offset + 4, clip_context.grid_origin[1], true);
+      view.setFloat32(byte_offset + 8, clip_context.grid_origin[2], true);
+      view.setFloat32(byte_offset + 12, clip_context.voxel_size, true);
+      view.setUint32(byte_offset + 16, context.meshlet_count, true);
+      view.setUint32(byte_offset + 20, compact_workgroup_count, true);
+      view.setUint32(byte_offset + 24, SCENE_VOXEL_GRID_RESOLUTION, true);
+      view.setUint32(byte_offset + 28, clip_context.full_rebuild ? 1 : 0, true);
+    }
   }
 
   _assert_render_graph(render_graph) {

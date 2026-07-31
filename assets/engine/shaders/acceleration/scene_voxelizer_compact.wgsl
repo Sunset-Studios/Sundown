@@ -2,15 +2,21 @@
 #include "visibility/visibility_common.wgsl"
 #include "acceleration/scene_voxelizer_common.wgsl"
 
+#define SCENE_VOXEL_CLIP_LEVEL 0u
+
 @group(1) @binding(0) var<storage, read> entity_transforms: array<EntityTransform>;
 @group(1) @binding(1) var<storage, read> object_instances: array<ObjectInstance>;
 @group(1) @binding(2) var<storage, read> meshlet_instances: array<MeshletInstance>;
 @group(1) @binding(3) var<storage, read> entity_index_lookup: array<u32>;
 @group(1) @binding(4) var<storage, read> meshlets: array<MeshletRecord>;
-@group(1) @binding(5) var<uniform> params: SceneVoxelizationParams;
+@group(1) @binding(5) var<uniform> clipmap_params: SceneVoxelClipmapParams;
 @group(1) @binding(6) var<storage, read_write> dirty_brick_words: array<atomic<u32>>;
 @group(1) @binding(7) var<storage, read_write> compacted_meshlets: array<MeshletInstance>;
 @group(1) @binding(8) var<storage, read_write> voxel_dispatch_count: atomic<u32>;
+
+fn scene_voxelizer_active_params() -> SceneVoxelizationParams {
+    return clipmap_params.levels[SCENE_VOXEL_CLIP_LEVEL];
+}
 
 fn range_contains_dirty_brick(range: SceneVoxelBrickRange) -> bool {
     let width = range.max.x - range.min.x + 1u;
@@ -36,7 +42,11 @@ fn select_dirty_meshlet(
     item_index: u32,
     selected_instance: ptr<function, MeshletInstance>
 ) -> bool {
-    if (item_index >= params.meshlet_count || item_index >= arrayLength(&meshlet_instances)) {
+    let voxelization_params = scene_voxelizer_active_params();
+    if (
+        item_index >= voxelization_params.meshlet_count ||
+        item_index >= arrayLength(&meshlet_instances)
+    ) {
         return false;
     }
 
@@ -65,8 +75,10 @@ fn select_dirty_meshlet(
         entity_transforms[entity_index].transform
     );
     if (
-        !scene_voxelizer_bounds_intersect_volume(bounds, params) ||
-        !range_contains_dirty_brick(scene_voxelizer_brick_range(bounds, params))
+        !scene_voxelizer_bounds_intersect_volume(bounds, voxelization_params) ||
+        !range_contains_dirty_brick(
+            scene_voxelizer_brick_range(bounds, voxelization_params)
+        )
     ) {
         return false;
     }

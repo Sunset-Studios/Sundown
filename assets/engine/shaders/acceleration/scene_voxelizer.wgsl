@@ -1,5 +1,10 @@
 #include "common.wgsl"
 #include "visibility/visibility_common.wgsl"
+#include "acceleration/scene_voxel_hierarchy_common.wgsl"
+
+#define SCENE_VOXEL_CLIP_LEVEL 0u
+
+#define SCENE_VOXEL_CLIP_LEVEL 0u
 
 // ============================================================================
 // Meshlet-Driven Scene Voxelization
@@ -20,15 +25,6 @@
 // restored so moving objects cannot erase overlapping static geometry.
 // ============================================================================
 
-struct SceneVoxelizationParams {
-    grid_origin: vec3<f32>,
-    voxel_size: f32,
-    meshlet_count: u32,
-    dispatch_width: u32,
-    resolution: u32,
-    flags: u32,
-};
-
 struct RasterTriangle {
     axis_interval0: vec4<f32>,
     axis_interval1: vec4<f32>,
@@ -45,9 +41,13 @@ struct RasterTriangle {
 @group(1) @binding(4) var<storage, read> meshlets: array<MeshletRecord>;
 @group(1) @binding(5) var<storage, read> meshlet_vertices: array<u32>;
 @group(1) @binding(6) var<storage, read> meshlet_triangles: array<u32>;
-@group(1) @binding(7) var<uniform> params: SceneVoxelizationParams;
+@group(1) @binding(7) var<uniform> clipmap_params: SceneVoxelClipmapParams;
 @group(1) @binding(8) var<storage, read_write> voxel_grid: array<atomic<u32>>;
 @group(1) @binding(9) var<storage, read_write> voxel_dispatch_count: atomic<u32>;
+
+fn scene_voxelizer_active_params() -> SceneVoxelizationParams {
+    return clipmap_params.levels[SCENE_VOXEL_CLIP_LEVEL];
+}
 
 var<workgroup> active_meshlet: MeshletRecord;
 var<workgroup> active_transform: mat4x4<f32>;
@@ -144,17 +144,23 @@ fn meshlet_intersects_volume(meshlet: MeshletRecord, transform: mat4x4<f32>) -> 
     let world_min = world_center - world_extent;
     let world_max = world_center + world_extent;
 
-    let volume_min = params.grid_origin;
+    let voxelization_params = scene_voxelizer_active_params();
+    let volume_min = voxelization_params.grid_origin;
     let volume_max =
-        params.grid_origin + vec3<f32>(f32(params.resolution) * params.voxel_size);
+        voxelization_params.grid_origin +
+        vec3<f32>(f32(voxelization_params.resolution) * voxelization_params.voxel_size);
     return all(world_max >= volume_min) && all(world_min <= volume_max);
 }
 
 fn mark_voxel(voxel_coord: vec3<i32>) {
+    let voxelization_params = scene_voxelizer_active_params();
     let coord = vec3<u32>(voxel_coord);
     let linear_index =
-        coord.x + params.resolution * (coord.y + params.resolution * coord.z);
-    let word_index = linear_index >> 5u;
+        coord.x + voxelization_params.resolution *
+        (coord.y + voxelization_params.resolution * coord.z);
+    let word_index =
+        scene_voxel_clipmap_leaf_word_offset(SCENE_VOXEL_CLIP_LEVEL) +
+        (linear_index >> 5u);
     let bit_mask = 1u << (linear_index & 31u);
     atomicOr(&voxel_grid[word_index], bit_mask);
 }
@@ -178,7 +184,8 @@ fn prepare_raster_triangle(
     var raster_triangle = empty_raster_triangle();
     let triangle_min = min(grid_triangle0, min(grid_triangle1, grid_triangle2));
     let triangle_max = max(grid_triangle0, max(grid_triangle1, grid_triangle2));
-    let resolution_f = f32(params.resolution);
+    let voxelization_params = scene_voxelizer_active_params();
+    let resolution_f = f32(voxelization_params.resolution);
 
     if (any(triangle_max < vec3<f32>(0.0)) || any(triangle_min > vec3<f32>(resolution_f))) {
         return raster_triangle;
@@ -198,7 +205,7 @@ fn prepare_raster_triangle(
     let projected_min = min(projected0, min(projected1, projected2));
     let projected_max = max(projected0, max(projected1, projected2));
 
-    let max_coord = vec3<i32>(i32(params.resolution) - 1);
+    let max_coord = vec3<i32>(i32(voxelization_params.resolution) - 1);
     let max_coord_f = f32(max_coord.x);
     let projected_coord_min = vec2<i32>(
         floor(
@@ -303,7 +310,7 @@ fn rasterize_triangle_cell(triangle: RasterTriangle, cell_index: u32) {
         floor(depth_center - depth_radius - VOXELIZER_RASTER_EPSILON);
     let unclamped_depth_max =
         floor(depth_center + depth_radius + VOXELIZER_RASTER_EPSILON);
-    let max_coord_f = f32(params.resolution - 1u);
+    let max_coord_f = f32(scene_voxelizer_active_params().resolution - 1u);
     if (unclamped_depth_max < 0.0 || unclamped_depth_min > max_coord_f) {
         return;
     }
@@ -386,7 +393,8 @@ fn cs(
                 let world_position =
                     (active_transform * vertex_position4(vertex_buffer[vertex_index])).xyz;
                 let grid_position =
-                    (world_position - params.grid_origin) / params.voxel_size;
+                    (world_position - scene_voxelizer_active_params().grid_origin) /
+                    scene_voxelizer_active_params().voxel_size;
                 active_grid_vertices[lane_index] = vec4<f32>(grid_position, 1.0);
             }
         }

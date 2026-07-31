@@ -1,13 +1,5 @@
 #include "acceleration_common.wgsl"
-
-struct SceneVoxelizationParams {
-    grid_origin: vec3<f32>,
-    voxel_size: f32,
-    meshlet_count: u32,
-    dispatch_width: u32,
-    resolution: u32,
-    flags: u32,
-};
+#include "acceleration/scene_voxel_hierarchy_common.wgsl"
 
 struct SceneVoxelDispatchArgs {
     workgroup_count_x: atomic<u32>,

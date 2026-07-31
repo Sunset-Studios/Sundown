@@ -2,16 +2,24 @@
 #include "visibility/visibility_common.wgsl"
 #include "acceleration/scene_voxelizer_common.wgsl"
 
+#define SCENE_VOXEL_CLIP_LEVEL 0u
+
+#define SCENE_VOXEL_CLIP_LEVEL 0u
+
 @group(1) @binding(0) var<storage, read> entity_transforms: array<EntityTransform>;
 @group(1) @binding(1) var<storage, read> entity_flags: array<u32>;
 @group(1) @binding(2) var<storage, read> object_instances: array<ObjectInstance>;
 @group(1) @binding(3) var<storage, read> meshlet_instances: array<MeshletInstance>;
 @group(1) @binding(4) var<storage, read> entity_index_lookup: array<u32>;
 @group(1) @binding(5) var<storage, read> meshlets: array<MeshletRecord>;
-@group(1) @binding(6) var<uniform> params: SceneVoxelizationParams;
+@group(1) @binding(6) var<uniform> clipmap_params: SceneVoxelClipmapParams;
 @group(1) @binding(7) var<storage, read_write> dirty_brick_words: array<atomic<u32>>;
 @group(1) @binding(8) var<storage, read_write> dirty_brick_list: array<u32>;
 @group(1) @binding(9) var<storage, read_write> dirty_dispatch: SceneVoxelDispatchArgs;
+
+fn scene_voxelizer_active_params() -> SceneVoxelizationParams {
+    return clipmap_params.levels[SCENE_VOXEL_CLIP_LEVEL];
+}
 
 fn mark_dirty_brick(brick_index: u32) {
     let word = brick_index >> 5u;
@@ -22,7 +30,10 @@ fn mark_dirty_brick(brick_index: u32) {
         if (slot < arrayLength(&dirty_brick_list)) {
             dirty_brick_list[slot] = brick_index;
             atomicAdd(&dirty_dispatch.workgroup_count_x, 1u);
-            atomicMax(&dirty_dispatch.compact_workgroup_count_x, params.dispatch_width);
+            atomicMax(
+                &dirty_dispatch.compact_workgroup_count_x,
+                scene_voxelizer_active_params().dispatch_width
+            );
         }
     }
 }
@@ -40,14 +51,18 @@ fn mark_dirty_range(range: SceneVoxelBrickRange) {
 @compute @workgroup_size(64)
 fn cs(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let item_index = global_id.x;
-    if ((params.flags & SCENE_VOXELIZER_FLAG_FULL_REBUILD) != 0u) {
+    let voxelization_params = scene_voxelizer_active_params();
+    if ((voxelization_params.flags & SCENE_VOXELIZER_FLAG_FULL_REBUILD) != 0u) {
         if (item_index < SCENE_VOXEL_BRICK_COUNT) {
             mark_dirty_brick(item_index);
         }
         return;
     }
 
-    if (item_index >= params.meshlet_count || item_index >= arrayLength(&meshlet_instances)) {
+    if (
+        item_index >= voxelization_params.meshlet_count ||
+        item_index >= arrayLength(&meshlet_instances)
+    ) {
         return;
     }
 
@@ -76,12 +91,12 @@ fn cs(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let meshlet = meshlets[instance.meshlet_index];
     let transforms = entity_transforms[entity_index];
     let current_bounds = scene_voxelizer_transform_bounds(meshlet, transforms.transform);
-    if (scene_voxelizer_bounds_intersect_volume(current_bounds, params)) {
-        mark_dirty_range(scene_voxelizer_brick_range(current_bounds, params));
+    if (scene_voxelizer_bounds_intersect_volume(current_bounds, voxelization_params)) {
+        mark_dirty_range(scene_voxelizer_brick_range(current_bounds, voxelization_params));
     }
 
     let previous_bounds = scene_voxelizer_transform_bounds(meshlet, transforms.prev_transform);
-    if (scene_voxelizer_bounds_intersect_volume(previous_bounds, params)) {
-        mark_dirty_range(scene_voxelizer_brick_range(previous_bounds, params));
+    if (scene_voxelizer_bounds_intersect_volume(previous_bounds, voxelization_params)) {
+        mark_dirty_range(scene_voxelizer_brick_range(previous_bounds, voxelization_params));
     }
 }

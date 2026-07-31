@@ -2,6 +2,10 @@
 #include "visibility/visibility_common.wgsl"
 #include "acceleration/scene_voxelizer_common.wgsl"
 
+#define SCENE_VOXEL_CLIP_LEVEL 0u
+
+#define SCENE_VOXEL_CLIP_LEVEL 0u
+
 @group(1) @binding(0) var<storage, read> dirty_brick_list: array<u32>;
 @group(1) @binding(1) var<storage, read_write> voxel_grid: array<atomic<u32>>;
 
@@ -29,7 +33,9 @@ fn cs(
     let y = brick_y * SCENE_VOXEL_BRICK_SIZE + local_y;
     let z = brick_z * SCENE_VOXEL_BRICK_SIZE + local_z;
     let linear_index = x + 256u * (y + 256u * z);
-    let word_index = linear_index >> 5u;
+    let word_index =
+        scene_voxel_clipmap_leaf_word_offset(SCENE_VOXEL_CLIP_LEVEL) +
+        (linear_index >> 5u);
     let bit_offset = linear_index & 31u;
     atomicAnd(&voxel_grid[word_index], ~(0xffu << bit_offset));
 }
