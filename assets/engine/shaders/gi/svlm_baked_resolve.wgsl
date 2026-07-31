@@ -16,7 +16,23 @@
 @group(1) @binding(7) var output_black: texture_storage_2d<rgba16float, write>;
 
 const SVLM_NODE_WORD_STRIDE = 7u;
-const SVLM_TILE_DIRECTORY_WORD_STRIDE = 8u;
+const SVLM_TILED_LOOKUP_WORD_STRIDE = 8u;
+const SVLM_TILED_LOOKUP_MAX_PROBES = 16u;
+
+fn svlm_sample_output_to_full_res_coord(
+    sample_coord: vec2<u32>,
+    sample_size: vec2<u32>,
+    full_size: vec2<u32>
+) -> vec2<i32> {
+    let uv =
+        (vec2<f32>(sample_coord) + vec2<f32>(0.5)) /
+        vec2<f32>(sample_size);
+    let full_coord = min(
+        vec2<u32>(uv * vec2<f32>(full_size)),
+        full_size - vec2<u32>(1u)
+    );
+    return vec2<i32>(full_coord);
+}
 
 fn svlm_read_node(node_index: u32) -> SVLMNode {
     let base = node_index * SVLM_NODE_WORD_STRIDE;
@@ -96,68 +112,104 @@ fn svlm_find_monolithic_leaf(position: vec3<f32>) -> u32 {
     return INVALID_IDX;
 }
 
-fn svlm_find_tiled_leaf(position: vec3<f32>) -> u32 {
-    let tile_size = max(svlm_params.world_tile_size, 0.0001);
-    let tile_coord = vec3<i32>(floor(position / tile_size));
-    let available_tile_count =
+fn svlm_hash_tiled_lookup_key(
+    tile_coord: vec3<i32>,
+    level: u32,
+    leaf_coord: vec3<u32>
+) -> u32 {
+    var hash = 0x811c9dc5u;
+    hash = (hash ^ bitcast<u32>(tile_coord.x)) * 0x01000193u;
+    hash = (hash ^ bitcast<u32>(tile_coord.y)) * 0x01000193u;
+    hash = (hash ^ bitcast<u32>(tile_coord.z)) * 0x01000193u;
+    hash = (hash ^ level) * 0x01000193u;
+    hash = (hash ^ leaf_coord.x) * 0x01000193u;
+    hash = (hash ^ leaf_coord.y) * 0x01000193u;
+    hash = (hash ^ leaf_coord.z) * 0x01000193u;
+    hash ^= hash >> 16u;
+    hash *= 0x7feb352du;
+    hash ^= hash >> 15u;
+    hash *= 0x846ca68bu;
+    return hash ^ (hash >> 16u);
+}
+
+fn svlm_lookup_tiled_leaf(
+    tile_coord: vec3<i32>,
+    level: u32,
+    leaf_coord: vec3<u32>
+) -> u32 {
+    // CPU packing guarantees that every resident leaf is reachable within this
+    // fixed probe budget. This bound is the critical difference from the old
+    // per-pixel linear scan over all leaves intersecting a world tile.
+    let entry_count =
         arrayLength(&svlm_lookup_data) /
-        SVLM_TILE_DIRECTORY_WORD_STRIDE;
-    let tile_count = min(
-        u32(max(svlm_params.resident_tile_count, 0.0)),
-        available_tile_count
-    );
-
-    for (
-        var tile_index = 0u;
-        tile_index < tile_count;
-        tile_index = tile_index + 1u
-    ) {
-        let base = tile_index * SVLM_TILE_DIRECTORY_WORD_STRIDE;
-        let entry_coord = vec3<i32>(
-            bitcast<i32>(svlm_lookup_data[base]),
-            bitcast<i32>(svlm_lookup_data[base + 1u]),
-            bitcast<i32>(svlm_lookup_data[base + 2u])
-        );
-        if (any(entry_coord != tile_coord)) {
-            continue;
-        }
-
-        let leaf_offset = svlm_lookup_data[base + 3u];
-        let leaf_count = svlm_lookup_data[base + 4u];
-        var best_leaf = INVALID_IDX;
-        var best_size = 1e30;
-
-        for (
-            var local_leaf = 0u;
-            local_leaf < leaf_count;
-            local_leaf = local_leaf + 1u
-        ) {
-            let leaf_index = leaf_offset + local_leaf;
-            if (leaf_index >= arrayLength(&leaf_bricks)) {
-                break;
-            }
-
-            let leaf = leaf_bricks[leaf_index];
-            let leaf_min = vec3<f32>(
-                leaf.origin_x,
-                leaf.origin_y,
-                leaf.origin_z
-            );
-            let leaf_size = max(leaf.size, 0.0001);
-            let leaf_max = leaf_min + vec3<f32>(leaf_size);
-            let epsilon = max(leaf_size * 1e-5, 1e-5);
-            if (
-                all(position >= leaf_min - vec3<f32>(epsilon)) &&
-                all(position <= leaf_max + vec3<f32>(epsilon)) &&
-                leaf_size < best_size
-            ) {
-                best_leaf = leaf_index;
-                best_size = leaf_size;
-            }
-        }
-        return best_leaf;
+        SVLM_TILED_LOOKUP_WORD_STRIDE;
+    if (entry_count == 0u) {
+        return INVALID_IDX;
     }
 
+    let entry_mask = entry_count - 1u;
+    var entry_index =
+        svlm_hash_tiled_lookup_key(tile_coord, level, leaf_coord) &
+        entry_mask;
+    for (
+        var probe = 0u;
+        probe < SVLM_TILED_LOOKUP_MAX_PROBES;
+        probe = probe + 1u
+    ) {
+        let base = entry_index * SVLM_TILED_LOOKUP_WORD_STRIDE;
+        let leaf_index = svlm_lookup_data[base + 7u];
+        if (leaf_index == INVALID_IDX) {
+            return INVALID_IDX;
+        }
+        if (
+            bitcast<i32>(svlm_lookup_data[base]) == tile_coord.x &&
+            bitcast<i32>(svlm_lookup_data[base + 1u]) == tile_coord.y &&
+            bitcast<i32>(svlm_lookup_data[base + 2u]) == tile_coord.z &&
+            svlm_lookup_data[base + 3u] == level &&
+            all(
+                vec3<u32>(
+                    svlm_lookup_data[base + 4u],
+                    svlm_lookup_data[base + 5u],
+                    svlm_lookup_data[base + 6u]
+                ) == leaf_coord
+            )
+        ) {
+            return leaf_index;
+        }
+        entry_index = (entry_index + 1u) & entry_mask;
+    }
+    return INVALID_IDX;
+}
+
+fn svlm_find_tiled_leaf(position: vec3<f32>) -> u32 {
+    let world_min = svlm_world_min(&svlm_params);
+    let root_size = max(svlm_params.root_size, 0.0001);
+    let root_dims = svlm_root_dims(&svlm_params);
+    let local_position = position - world_min;
+    if (
+        any(root_dims == vec3<u32>(0u)) ||
+        any(local_position < vec3<f32>(0.0)) ||
+        any(local_position >= vec3<f32>(root_dims) * root_size)
+    ) {
+        return INVALID_IDX;
+    }
+
+    let tile_size = max(svlm_params.world_tile_size, 0.0001);
+    let tile_coord = vec3<i32>(floor(position / tile_size));
+    var level = u32(max(svlm_params.max_level, 0.0));
+    loop {
+        let leaf_size = svlm_brick_size(&svlm_params, level);
+        let leaf_coord = vec3<u32>(floor(local_position / leaf_size));
+        let leaf_index =
+            svlm_lookup_tiled_leaf(tile_coord, level, leaf_coord);
+        if (leaf_index != INVALID_IDX) {
+            return leaf_index;
+        }
+        if (level == 0u) {
+            break;
+        }
+        level -= 1u;
+    }
     return INVALID_IDX;
 }
 
@@ -171,16 +223,61 @@ fn svlm_find_leaf(position: vec3<f32>) -> u32 {
 fn svlm_read_probe_sh(probe_index: u32) -> SH_L1_RGB {
     let base = probe_index * SVLM_SH_WORDS_PER_PROBE;
     var packed: SH_L1_RGB_Packed;
-    for (var i = 0u; i < SVLM_SH_WORDS_PER_PROBE; i = i + 1u) {
-        packed.data[i] = irradiance_probes[base + i];
-    }
+    packed.data[0] = irradiance_probes[base];
+    packed.data[1] = irradiance_probes[base + 1u];
+    packed.data[2] = irradiance_probes[base + 2u];
+    packed.data[3] = irradiance_probes[base + 3u];
+    packed.data[4] = irradiance_probes[base + 4u];
+    packed.data[5] = irradiance_probes[base + 5u];
     return sh_l1_rgb_unpack(packed);
+}
+
+fn svlm_sh_multiply_add(
+    accumulator: SH_L1_RGB,
+    value: SH_L1_RGB,
+    weight: f32
+) -> SH_L1_RGB {
+    var result: SH_L1_RGB;
+    result.c[0] = accumulator.c[0] + value.c[0] * weight;
+    result.c[1] = accumulator.c[1] + value.c[1] * weight;
+    result.c[2] = accumulator.c[2] + value.c[2] * weight;
+    result.c[3] = accumulator.c[3] + value.c[3] * weight;
+    return result;
+}
+
+fn svlm_leaf_contains(
+    leaf: SVLMLeafBrick,
+    position: vec3<f32>
+) -> bool {
+    let leaf_min = vec3<f32>(
+        leaf.origin_x,
+        leaf.origin_y,
+        leaf.origin_z
+    );
+    let leaf_size = max(leaf.size, 0.0001);
+    let epsilon = max(leaf_size * 1e-5, 1e-5);
+    return
+        all(position >= leaf_min - vec3<f32>(epsilon)) &&
+        all(position <= leaf_min + vec3<f32>(leaf_size + epsilon));
 }
 
 fn svlm_sample_leaf_sh(
     leaf: SVLMLeafBrick,
     position: vec3<f32>
 ) -> SH_L1_RGB {
+    let available_probe_count =
+        arrayLength(&irradiance_probes) /
+        SVLM_SH_WORDS_PER_PROBE;
+    if (leaf.probe_base >= available_probe_count) {
+        return sh_l1_rgb_zero();
+    }
+    if (
+        available_probe_count - leaf.probe_base <
+        SVLM_PROBES_PER_BRICK
+    ) {
+        return sh_l1_rgb_zero();
+    }
+
     let origin = vec3<f32>(leaf.origin_x, leaf.origin_y, leaf.origin_z);
     let size = max(leaf.size, 0.0001);
     let probe_grid_position = clamp(
@@ -195,7 +292,11 @@ fn svlm_sample_leaf_sh(
     let probe_fraction = probe_grid_position - vec3<f32>(probe_base_coord);
     var result = sh_l1_rgb_zero();
 
-    for (var corner = 0u; corner < 8u; corner = corner + 1u) {
+    for (
+        var corner = 0u;
+        corner < 8u;
+        corner = corner + 1u
+    ) {
         let offset = vec3<u32>(
             corner & 1u,
             (corner >> 1u) & 1u,
@@ -212,21 +313,15 @@ fn svlm_sample_leaf_sh(
             probe_fraction,
             offset == vec3<u32>(1u)
         );
-        let weight = weight_axis.x * weight_axis.y * weight_axis.z;
-
-        if (
-            probe_index * SVLM_SH_WORDS_PER_PROBE +
-                (SVLM_SH_WORDS_PER_PROBE - 1u) <
-                arrayLength(&irradiance_probes)
-        ) {
-            result = sh_l1_rgb_add(
-                result,
-                sh_l1_rgb_multiply_scalar(
-                    svlm_read_probe_sh(probe_index),
-                    weight
-                )
-            );
-        }
+        let weight =
+            weight_axis.x *
+            weight_axis.y *
+            weight_axis.z;
+        result = svlm_sh_multiply_add(
+            result,
+            svlm_read_probe_sh(probe_index),
+            weight
+        );
     }
 
     return result;
@@ -299,6 +394,9 @@ fn svlm_sample_blended_sh(
         epsilon
     );
     let neighbor_weight = vec3<f32>(blend_x.y, blend_y.y, blend_z.y);
+    if (all(neighbor_weight <= vec3<f32>(1e-6))) {
+        return svlm_sample_leaf_sh(base_leaf, position);
+    }
     let neighbor_position = vec3<f32>(blend_x.x, blend_y.x, blend_z.x);
     var result = sh_l1_rgb_zero();
     var weight_sum = 0.0;
@@ -330,12 +428,10 @@ fn svlm_sample_blended_sh(
                 leaf_index = adjacent_leaf_index;
             }
         }
-        result = sh_l1_rgb_add(
+        result = svlm_sh_multiply_add(
             result,
-            sh_l1_rgb_multiply_scalar(
-                svlm_sample_leaf_sh(leaf_bricks[leaf_index], position),
-                weight
-            )
+            svlm_sample_leaf_sh(leaf_bricks[leaf_index], position),
+            weight
         );
         weight_sum += weight;
     }
@@ -346,28 +442,34 @@ fn svlm_sample_blended_sh(
     );
 }
 
-@compute @workgroup_size(8, 8, 1)
+@compute @workgroup_size(16, 16, 1)
 fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     if (gid.x == 0u && gid.y == 0u) {
         textureStore(output_black, vec2<i32>(0), vec4<f32>(0.0));
     }
 
-    let output_size = textureDimensions(output_diffuse);
-    if (gid.x >= output_size.x || gid.y >= output_size.y) {
+    let sample_size = textureDimensions(output_diffuse);
+    if (gid.x >= sample_size.x || gid.y >= sample_size.y) {
         return;
     }
 
-    let pixel = vec2<i32>(gid.xy);
-    let normal_data = textureLoad(gbuffer_normal, pixel, 0);
+    let sample_pixel = vec2<i32>(gid.xy);
+    let full_size = textureDimensions(gbuffer_normal);
+    let full_pixel = svlm_sample_output_to_full_res_coord(
+        gid.xy,
+        sample_size,
+        full_size
+    );
+    let normal_data = textureLoad(gbuffer_normal, full_pixel, 0);
     if (dot(normal_data.xyz, normal_data.xyz) <= 1e-10) {
-        textureStore(output_diffuse, pixel, vec4<f32>(0.0));
+        textureStore(output_diffuse, sample_pixel, vec4<f32>(0.0));
         return;
     }
 
     let uv =
-        (vec2<f32>(gid.xy) + vec2<f32>(0.5)) /
-        vec2<f32>(output_size);
-    let depth = textureLoad(depth_texture, pixel, 0).r;
+        (vec2<f32>(full_pixel) + vec2<f32>(0.5)) /
+        vec2<f32>(full_size);
+    let depth = textureLoad(depth_texture, full_pixel, 0).r;
     let position = reconstruct_world_position(
         uv,
         depth,
@@ -376,12 +478,12 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let normal = safe_normalize(normal_data.xyz);
     let leaf_index = svlm_find_leaf(position);
     if (leaf_index == INVALID_IDX || leaf_index >= arrayLength(&leaf_bricks)) {
-        textureStore(output_diffuse, pixel, vec4<f32>(0.0));
+        textureStore(output_diffuse, sample_pixel, vec4<f32>(0.0));
         return;
     }
 
     var sample_leaf_index = leaf_index;
-    var leaf = leaf_bricks[sample_leaf_index];
+    let leaf = leaf_bricks[sample_leaf_index];
     // Resolve from the air side of the surface. Adaptive refinement places the
     // visible surface in a geometry-overlapping leaf, while the useful probes
     // are commonly in its neighboring empty-space leaf. The previous 1% bias
@@ -389,13 +491,14 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let probe_spacing = max(leaf.size / 4.0, 0.0001);
     let sample_position =
         position + normal * max(probe_spacing * 0.5, 0.001);
-    let biased_leaf_index = svlm_find_leaf(sample_position);
-    if (
-        biased_leaf_index != INVALID_IDX &&
-        biased_leaf_index < arrayLength(&leaf_bricks)
-    ) {
-        sample_leaf_index = biased_leaf_index;
-        leaf = leaf_bricks[sample_leaf_index];
+    if (!svlm_leaf_contains(leaf, sample_position)) {
+        let biased_leaf_index = svlm_find_leaf(sample_position);
+        if (
+            biased_leaf_index != INVALID_IDX &&
+            biased_leaf_index < arrayLength(&leaf_bricks)
+        ) {
+            sample_leaf_index = biased_leaf_index;
+        }
     }
     let interpolated_sh = svlm_sample_blended_sh(
         sample_leaf_index,
@@ -413,5 +516,9 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         vec3<f32>(0.0)
     );
     let irradiance = max(directional_irradiance, l0_irradiance * 0.15);
-    textureStore(output_diffuse, pixel, vec4<f32>(irradiance, 1.0));
+    textureStore(
+        output_diffuse,
+        sample_pixel,
+        vec4<f32>(irradiance, 1.0)
+    );
 }

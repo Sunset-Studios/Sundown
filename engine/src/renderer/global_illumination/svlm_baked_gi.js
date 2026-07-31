@@ -7,6 +7,23 @@ const svlm_baked_resolve_shader_setup = {
   },
 };
 
+const svlm_baked_upsample_shader_setup = {
+  pipeline_shaders: {
+    compute: { path: "gi/ddgi_diffuse_resolve.wgsl" },
+  },
+};
+
+const SVLM_BAKED_RESOLVE_UPSCALE_FACTOR = 2;
+
+const diffuse_sample_image_config = {
+  name: "svlm_baked_indirect_diffuse_sample",
+  format: "rgba16float",
+  width: 0,
+  height: 0,
+  usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
+  force: false,
+};
+
 const diffuse_image_config = {
   name: "svlm_baked_indirect_diffuse",
   format: "rgba16float",
@@ -29,8 +46,9 @@ const black_image_config = {
  * Runtime GI strategy for the GPU-resident SVLM bake artifact.
  *
  * Unlike DDGI/PTGI, this performs no tracing, temporal accumulation, or cache
- * maintenance. One full-resolution compute pass traverses the baked hierarchy,
- * interpolates eight packed SH probes, and writes diffuse irradiance.
+ * maintenance. A reduced-resolution compute pass traverses the baked hierarchy
+ * and uses DDGI-compatible trilinear SH interpolation, followed by DDGI's
+ * depth/normal-aware full-resolution resolve.
  */
 export class SVLMBakedGI {
   final_gi_texture_direct = null;
@@ -82,11 +100,17 @@ export class SVLMBakedGI {
       return;
     }
 
+    const sample_width = Math.max(1, Math.ceil(width / SVLM_BAKED_RESOLVE_UPSCALE_FACTOR));
+    const sample_height = Math.max(1, Math.ceil(height / SVLM_BAKED_RESOLVE_UPSCALE_FACTOR));
+    diffuse_sample_image_config.width = sample_width;
+    diffuse_sample_image_config.height = sample_height;
+    diffuse_sample_image_config.force = force_recreate;
     diffuse_image_config.width = width;
     diffuse_image_config.height = height;
     diffuse_image_config.force = force_recreate;
     black_image_config.force = force_recreate;
 
+    const diffuse_sample_output = render_graph.create_image(diffuse_sample_image_config);
     const diffuse_output = render_graph.create_image(diffuse_image_config);
     const black_output = render_graph.create_image(black_image_config);
     const params = render_graph.register_buffer(artifact.buffers.params.config.name);
@@ -105,11 +129,26 @@ export class SVLMBakedGI {
           nodes,
           leaves,
           irradiance,
-          diffuse_output,
+          diffuse_sample_output,
           black_output,
         ],
-        outputs: [diffuse_output, black_output],
+        outputs: [diffuse_sample_output, black_output],
         shader_setup: svlm_baked_resolve_shader_setup,
+      },
+      (graph, frame_data) => {
+        graph
+          .get_physical_pass(frame_data.current_pass)
+          .dispatch(Math.ceil(sample_width / 16), Math.ceil(sample_height / 16), 1);
+      }
+    );
+
+    render_graph.add_pass(
+      "svlm_baked_resolve_upsample",
+      RenderPassFlags.Compute,
+      {
+        inputs: [diffuse_sample_output, depth_texture, gbuffer_normal, diffuse_output],
+        outputs: [diffuse_output],
+        shader_setup: svlm_baked_upsample_shader_setup,
       },
       (graph, frame_data) => {
         graph
