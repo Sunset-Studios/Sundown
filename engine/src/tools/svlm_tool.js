@@ -203,6 +203,22 @@ function parse_bake_options(args) {
       options.world_tile_size = Number(value);
     } else if (key === "radius" || key === "streaming_radius") {
       options.streaming_radius = Number(value);
+    } else if (key === "hysteresis" || key === "streaming_hysteresis") {
+      options.streaming_hysteresis = Number(value);
+    } else if (key === "prefetch" || key === "streaming_prefetch_tiles") {
+      options.streaming_prefetch_tiles = Number(value);
+    } else if (key === "requests" || key === "streaming_max_requests") {
+      options.streaming_max_requests = Number(value);
+    } else if (key === "budget" || key === "streaming_memory_budget_mb") {
+      options.streaming_memory_budget_mb = Number(value);
+    } else if (key === "transition" || key === "streaming_transition_tiles") {
+      options.streaming_transition_tiles = Number(value);
+    } else if (key === "coarse_min" || key === "coarse_min_lod") {
+      options.coarse_min_lod = Number(value);
+    } else if (key === "coarse_max" || key === "coarse_max_lod") {
+      options.coarse_max_lod = Number(value);
+    } else if (key === "coarse_budget" || key === "coarse_memory_budget_mb") {
+      options.coarse_memory_budget_mb = Number(value);
     }
   }
 
@@ -304,7 +320,7 @@ export class SVLMTool extends DevConsoleTool {
         break;
       default:
         log(
-          "svlm [stats | bake [root=<size>] [max=<level>] [min=<level>] [rays=<count>] [batch=<count>] [samples=<count>] [tile=<meters>] [radius=<tiles>] | preview | debug [bricks|probes] [on|off] [level=<n>|all] | clear | hide]"
+          "svlm [stats | bake [root=<size>] [max=<level>] [min=<level>] [rays=<count>] [batch=<count>] [samples=<count>] [tile=<meters>] [radius=<tiles>] [hysteresis=<tiles>] [prefetch=<tiles>] [requests=<count>] [budget=<mb>] [transition=<tiles>] [coarse_min=<lod>] [coarse_max=<lod>] [coarse_budget=<mb>] | preview | debug [bricks|probes] [on|off] [level=<n>|all] | clear | hide]"
         );
         break;
     }
@@ -512,6 +528,22 @@ export class SVLMTool extends DevConsoleTool {
         )} / ${format_number(stats.serialized_tile_count)}`,
         "Pending requests",
         format_number(stats.requested_tile_count)
+      );
+      metric_pair(
+        "Fine GPU pool",
+        `${bytes_to_mb(stats.streamed_gpu_bytes)} / ${bytes_to_mb(
+          stats.streaming_memory_budget_bytes
+        )} MB`,
+        "Coarse hierarchy",
+        `${format_number(stats.coarse_record_count)} records / ${bytes_to_mb(
+          stats.coarse_bytes
+        )} MB`
+      );
+      metric_pair(
+        "Retention ring",
+        `${format_number(stats.config.streaming_hysteresis)} tiles`,
+        "Motion prefetch",
+        `${format_number(stats.config.streaming_prefetch_tiles)} tiles`
       );
 
       section_header("Bake output");

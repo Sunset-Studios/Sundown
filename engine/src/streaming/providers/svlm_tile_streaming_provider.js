@@ -5,14 +5,19 @@ import { read_file_bytes_async } from "../streaming_io.js";
 export const svlm_tile_stream_provider_type = "svlm_tile";
 export const svlm_tile_format = "sundown-svlm-tile";
 export const svlm_tile_format_version = 1;
+export const svlm_coarse_format = "sundown-svlm-coarse-hierarchy";
+export const svlm_coarse_format_version = 1;
 
 export const svlm_tile_leaf_words = 6;
 export const svlm_tile_probes_per_leaf = 64;
 export const svlm_tile_irradiance_words_per_probe = 6;
 export const svlm_tile_directory_words = 8;
+export const svlm_coarse_record_words = 10;
 
 const svlm_tile_magic = 0x534c5449;
 const svlm_tile_header_words = 16;
+const svlm_coarse_magic = 0x534c4349;
+const svlm_coarse_header_words = 12;
 const default_tiles_per_frame = 1;
 const default_bytes_per_frame = 32 * 1024 * 1024;
 
@@ -43,6 +48,293 @@ function copy_array_buffer(payload) {
     return payload.buffer.slice(payload.byteOffset, payload.byteOffset + payload.byteLength);
   }
   throw new Error("SVLM tile payload must be an ArrayBuffer or typed array.");
+}
+
+const half_conversion_buffer = new ArrayBuffer(4);
+const half_conversion_float = new Float32Array(half_conversion_buffer);
+const half_conversion_uint = new Uint32Array(half_conversion_buffer);
+
+function float_to_half(value) {
+  half_conversion_float[0] = Number(value);
+  const bits = half_conversion_uint[0];
+  const sign = (bits >>> 16) & 0x8000;
+  let exponent = ((bits >>> 23) & 0xff) - 127 + 15;
+  let mantissa = bits & 0x7fffff;
+
+  if (exponent <= 0) {
+    if (exponent < -10) return sign;
+    mantissa = (mantissa | 0x800000) >>> (1 - exponent);
+    return sign | ((mantissa + 0x1000) >>> 13);
+  }
+  if (exponent >= 31) {
+    return sign | (mantissa === 0 ? 0x7c00 : 0x7e00);
+  }
+
+  mantissa += 0x1000;
+  if ((mantissa & 0x800000) !== 0) {
+    mantissa = 0;
+    exponent++;
+    if (exponent >= 31) return sign | 0x7c00;
+  }
+  return sign | (exponent << 10) | (mantissa >>> 13);
+}
+
+function half_to_float(value) {
+  const sign = (value & 0x8000) !== 0 ? -1 : 1;
+  const exponent = (value >>> 10) & 0x1f;
+  const mantissa = value & 0x03ff;
+  if (exponent === 0) {
+    return mantissa === 0 ? sign * 0 : sign * 2 ** -14 * (mantissa / 1024);
+  }
+  if (exponent === 0x1f) {
+    return mantissa === 0 ? sign * Infinity : NaN;
+  }
+  return sign * 2 ** (exponent - 15) * (1 + mantissa / 1024);
+}
+
+function unpack_svlm_probe(words, word_offset, output) {
+  for (let word = 0; word < svlm_tile_irradiance_words_per_probe; word++) {
+    const packed = words[word_offset + word];
+    output[word * 2] = half_to_float(packed & 0xffff);
+    output[word * 2 + 1] = half_to_float(packed >>> 16);
+  }
+  return output;
+}
+
+function pack_svlm_probe(coefficients) {
+  const packed = new Uint32Array(svlm_tile_irradiance_words_per_probe);
+  for (let word = 0; word < svlm_tile_irradiance_words_per_probe; word++) {
+    const low = float_to_half(coefficients[word * 2]);
+    const high = float_to_half(coefficients[word * 2 + 1]);
+    packed[word] = (low | (high << 16)) >>> 0;
+  }
+  return packed;
+}
+
+function average_svlm_coarse_samples(samples) {
+  const coefficients = new Float64Array(12);
+  const unpacked = new Float64Array(12);
+  let total_weight = 0;
+
+  for (const sample of samples) {
+    const weight = Math.max(1, Math.floor(Number(sample.weight) || 1));
+    unpack_svlm_probe(sample.irradiance, 0, unpacked);
+    for (let coefficient = 0; coefficient < coefficients.length; coefficient++) {
+      const value = unpacked[coefficient];
+      if (Number.isFinite(value)) coefficients[coefficient] += value * weight;
+    }
+    total_weight += weight;
+  }
+
+  const inverse_weight = 1 / Math.max(1, total_weight);
+  for (let coefficient = 0; coefficient < coefficients.length; coefficient++) {
+    coefficients[coefficient] *= inverse_weight;
+  }
+  return {
+    irradiance: pack_svlm_probe(coefficients),
+    weight: total_weight,
+  };
+}
+
+export function create_svlm_coarse_tile_sample(tile) {
+  const irradiance =
+    tile?.irradiance instanceof Uint32Array
+      ? tile.irradiance
+      : new Uint32Array(tile?.irradiance ?? 0);
+  if (irradiance.length % svlm_tile_irradiance_words_per_probe !== 0) {
+    throw new Error(`SVLM tile '${tile?.key ?? "unknown"}' has invalid irradiance data.`);
+  }
+
+  const probe_count = irradiance.length / svlm_tile_irradiance_words_per_probe;
+  const coefficients = new Float64Array(12);
+  const unpacked = new Float64Array(12);
+  for (let probe = 0; probe < probe_count; probe++) {
+    unpack_svlm_probe(
+      irradiance,
+      probe * svlm_tile_irradiance_words_per_probe,
+      unpacked
+    );
+    for (let coefficient = 0; coefficient < coefficients.length; coefficient++) {
+      const value = unpacked[coefficient];
+      if (Number.isFinite(value)) coefficients[coefficient] += value;
+    }
+  }
+
+  const inverse_probe_count = 1 / Math.max(1, probe_count);
+  for (let coefficient = 0; coefficient < coefficients.length; coefficient++) {
+    coefficients[coefficient] *= inverse_probe_count;
+  }
+  return {
+    coord: [...require_tile_coord(tile.coord)],
+    lod: 0,
+    weight: Math.max(1, probe_count),
+    irradiance: pack_svlm_probe(coefficients),
+  };
+}
+
+export function create_svlm_coarse_hierarchy(tile_samples, options = {}) {
+  if (!Array.isArray(tile_samples)) {
+    throw new Error("SVLM coarse hierarchy creation requires tile samples.");
+  }
+  const tile_size = Math.max(
+    0.0001,
+    require_finite_number(options.tile_size, "SVLM coarse hierarchy tile size")
+  );
+  const min_lod = Math.max(1, Math.floor(Number(options.min_lod) || 1));
+  const max_lod = Math.max(min_lod, Math.floor(Number(options.max_lod) || min_lod));
+  const max_records = Math.max(1, Math.floor(Number(options.max_records) || Number.MAX_SAFE_INTEGER));
+  let current = tile_samples.map((sample) => ({
+    coord: [...require_tile_coord(sample.coord)],
+    weight: Math.max(1, Math.floor(Number(sample.weight) || 1)),
+    irradiance:
+      sample.irradiance instanceof Uint32Array
+        ? sample.irradiance
+        : new Uint32Array(sample.irradiance ?? 0),
+  }));
+  const records_by_lod = [];
+
+  for (let lod = 1; lod <= max_lod && current.length > 0; lod++) {
+    const parent_groups = new Map();
+    for (const sample of current) {
+      const coord = sample.coord.map((component) => Math.floor(component / 2));
+      const key = svlm_tile_key(coord);
+      let group = parent_groups.get(key);
+      if (!group) {
+        group = { coord, samples: [] };
+        parent_groups.set(key, group);
+      }
+      group.samples.push(sample);
+    }
+
+    current = Array.from(parent_groups.values(), (group) => ({
+      coord: group.coord,
+      ...average_svlm_coarse_samples(group.samples),
+    })).sort((a, b) => svlm_tile_key(a.coord).localeCompare(svlm_tile_key(b.coord)));
+    if (lod >= min_lod) {
+      const lod_records = [];
+      for (const sample of current) {
+        lod_records.push({
+          coord: sample.coord,
+          lod,
+          irradiance: sample.irradiance,
+        });
+      }
+      records_by_lod.push(lod_records);
+    }
+  }
+
+  let selected_lod_index = 0;
+  let record_count = records_by_lod.reduce((sum, lod_records) => sum + lod_records.length, 0);
+  while (record_count > max_records && selected_lod_index < records_by_lod.length - 1) {
+    record_count -= records_by_lod[selected_lod_index].length;
+    selected_lod_index++;
+  }
+  if (record_count > max_records) {
+    throw new Error(
+      `SVLM coarse hierarchy requires ${record_count} records at LOD ${max_lod}; ` +
+        `the configured limit is ${max_records}. Increase coarse_max_lod or the coarse budget.`
+    );
+  }
+  const selected_levels = records_by_lod.slice(selected_lod_index);
+  const records = selected_levels.flat();
+  const effective_min_lod = records[0]?.lod ?? min_lod;
+
+  return {
+    format: svlm_coarse_format,
+    version: svlm_coarse_format_version,
+    tile_size,
+    min_lod: effective_min_lod,
+    max_lod: records.reduce((maximum, record) => Math.max(maximum, record.lod), min_lod),
+    records,
+  };
+}
+
+export function serialize_svlm_coarse_hierarchy(hierarchy) {
+  if (!hierarchy || hierarchy.format !== svlm_coarse_format) {
+    throw new Error("SVLM coarse hierarchy serialization requires a valid hierarchy.");
+  }
+  const records = hierarchy.records ?? [];
+  const payload = new ArrayBuffer(
+    (svlm_coarse_header_words + records.length * svlm_coarse_record_words) * 4
+  );
+  const view = new DataView(payload);
+  view.setUint32(0, svlm_coarse_magic, true);
+  view.setUint32(4, svlm_coarse_format_version, true);
+  view.setUint32(8, svlm_coarse_header_words, true);
+  view.setUint32(12, svlm_coarse_record_words, true);
+  view.setUint32(16, records.length, true);
+  view.setUint32(20, hierarchy.min_lod, true);
+  view.setUint32(24, hierarchy.max_lod, true);
+  view.setFloat32(28, hierarchy.tile_size, true);
+
+  const words = new Uint32Array(payload);
+  for (let record_index = 0; record_index < records.length; record_index++) {
+    const record = records[record_index];
+    const coord = require_tile_coord(record.coord);
+    const base = svlm_coarse_header_words + record_index * svlm_coarse_record_words;
+    words[base] = coord[0] >>> 0;
+    words[base + 1] = coord[1] >>> 0;
+    words[base + 2] = coord[2] >>> 0;
+    words[base + 3] = record.lod >>> 0;
+    if (
+      !(record.irradiance instanceof Uint32Array) ||
+      record.irradiance.length !== svlm_tile_irradiance_words_per_probe
+    ) {
+      throw new Error(`SVLM coarse record ${record_index} has invalid irradiance data.`);
+    }
+    words.set(record.irradiance, base + 4);
+  }
+  return payload;
+}
+
+export function deserialize_svlm_coarse_hierarchy(payload) {
+  const buffer = copy_array_buffer(payload);
+  if (buffer.byteLength < svlm_coarse_header_words * 4) {
+    throw new Error("SVLM coarse hierarchy payload is smaller than its header.");
+  }
+  const view = new DataView(buffer);
+  if (view.getUint32(0, true) !== svlm_coarse_magic) {
+    throw new Error("SVLM coarse hierarchy payload has an invalid magic value.");
+  }
+  const version = view.getUint32(4, true);
+  const header_words = view.getUint32(8, true);
+  const record_words = view.getUint32(12, true);
+  const record_count = view.getUint32(16, true);
+  if (
+    version !== svlm_coarse_format_version ||
+    header_words !== svlm_coarse_header_words ||
+    record_words !== svlm_coarse_record_words ||
+    (header_words + record_count * record_words) * 4 !== buffer.byteLength
+  ) {
+    throw new Error("SVLM coarse hierarchy payload has an incompatible layout.");
+  }
+  const tile_size = view.getFloat32(28, true);
+  if (!Number.isFinite(tile_size) || tile_size <= 0) {
+    throw new Error("SVLM coarse hierarchy payload has an invalid tile size.");
+  }
+  const min_lod = view.getUint32(20, true);
+  const max_lod = view.getUint32(24, true);
+  if (min_lod < 1 || max_lod < min_lod || max_lod > 16) {
+    throw new Error("SVLM coarse hierarchy payload has an invalid LOD range.");
+  }
+  const record_data = new Uint32Array(buffer).slice(header_words);
+  for (let record = 0; record < record_count; record++) {
+    const lod = record_data[record * svlm_coarse_record_words + 3];
+    if (lod < min_lod || lod > max_lod) {
+      throw new Error(`SVLM coarse hierarchy record ${record} has invalid LOD ${lod}.`);
+    }
+  }
+
+  return {
+    format: svlm_coarse_format,
+    version,
+    tile_size,
+    min_lod,
+    max_lod,
+    record_count,
+    records: record_data,
+    serialized_byte_length: buffer.byteLength,
+  };
 }
 
 export function svlm_tile_key(coord) {
@@ -334,6 +626,18 @@ export function create_svlm_tile_manifest(tiles, metadata = {}) {
       probes_per_leaf: svlm_tile_probes_per_leaf,
       irradiance_words_per_probe: svlm_tile_irradiance_words_per_probe,
     },
+    coarse: metadata.coarse
+      ? {
+          format: svlm_coarse_format,
+          version: svlm_coarse_format_version,
+          entry: metadata.coarse.entry ?? "coarse",
+          byte_length: metadata.coarse.byte_length ?? 0,
+          min_lod: metadata.coarse.min_lod,
+          max_lod: metadata.coarse.max_lod,
+          record_count: metadata.coarse.record_count,
+        }
+      : null,
+    streaming: metadata.streaming ? { ...metadata.streaming } : null,
     tiles: tiles.map((tile) => ({
       key: tile.key ?? svlm_tile_key(tile.coord),
       coord: [...tile.coord],

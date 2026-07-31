@@ -84,7 +84,8 @@ export class SVLMBakedGI {
   ) {
     const view_index = SharedFrameInfoBuffer.get_view_index();
     if (view_index >= 0 && view_index < SharedViewBuffer.get_view_data_count()) {
-      this.svlm?.update_tile_streaming(SharedViewBuffer.get_view_data(view_index).view_position);
+      const view_data = SharedViewBuffer.get_view_data(view_index);
+      this.svlm?.update_tile_streaming(view_data.view_position, view_data);
     }
 
     const artifact = this.svlm?.get_bake_artifact();
@@ -94,7 +95,8 @@ export class SVLMBakedGI {
       !artifact.buffers.params ||
       !artifact.buffers.nodes ||
       !artifact.buffers.leaf_bricks ||
-      !artifact.buffers.irradiance
+      !artifact.buffers.irradiance ||
+      !artifact.buffers.coarse
     ) {
       this.reset();
       return;
@@ -117,6 +119,7 @@ export class SVLMBakedGI {
     const nodes = render_graph.register_buffer(artifact.buffers.nodes.config.name);
     const leaves = render_graph.register_buffer(artifact.buffers.leaf_bricks.config.name);
     const irradiance = render_graph.register_buffer(artifact.buffers.irradiance.config.name);
+    const coarse = render_graph.register_buffer(artifact.buffers.coarse.config.name);
 
     render_graph.add_pass(
       "svlm_baked_resolve",
@@ -129,6 +132,7 @@ export class SVLMBakedGI {
           nodes,
           leaves,
           irradiance,
+          coarse,
           diffuse_sample_output,
           black_output,
         ],

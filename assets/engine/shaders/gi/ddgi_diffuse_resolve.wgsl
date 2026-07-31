@@ -125,27 +125,45 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         dot(c11_normal_data.xyz, c11_normal_data.xyz) > DDGI_RESOLVE_SKY_NORMAL_LENGTH_SQ_EPS
     );
 
-    let ww00 = w00 * e00;
-    let ww10 = w10 * e10;
-    let ww01 = w01 * e01;
-    let ww11 = w11 * e11;
-    let weight_sum = ww00 + ww10 + ww01 + ww11;
-    let inv_weight_sum = 1.0 / max(weight_sum, 1e-6);
-    let use_edge_weights = weight_sum > 1e-6;
-
-    let fw00 = select(w00, ww00 * inv_weight_sum, use_edge_weights);
-    let fw10 = select(w10, ww10 * inv_weight_sum, use_edge_weights);
-    let fw01 = select(w01, ww01 * inv_weight_sum, use_edge_weights);
-    let fw11 = select(w11, ww11 * inv_weight_sum, use_edge_weights);
-
     let s00 = textureLoad(input_diffuse_low, c00_i, 0);
     let s10 = textureLoad(input_diffuse_low, c10_i, 0);
     let s01 = textureLoad(input_diffuse_low, c01_i, 0);
     let s11 = textureLoad(input_diffuse_low, c11_i, 0);
 
+    // Alpha is sample validity. Invalid SVLM pages must not contribute black
+    // to neighboring valid pixels during the edge-aware upscale.
+    let ww00 = w00 * e00 * s00.a;
+    let ww10 = w10 * e10 * s10.a;
+    let ww01 = w01 * e01 * s01.a;
+    let ww11 = w11 * e11 * s11.a;
+    let weight_sum = ww00 + ww10 + ww01 + ww11;
+    let inv_weight_sum = 1.0 / max(weight_sum, 1e-6);
+    let use_edge_weights = weight_sum > 1e-6;
+    let vw00 = w00 * s00.a;
+    let vw10 = w10 * s10.a;
+    let vw01 = w01 * s01.a;
+    let vw11 = w11 * s11.a;
+    let validity_sum = vw00 + vw10 + vw01 + vw11;
+    let inv_validity_sum = 1.0 / max(validity_sum, 1e-6);
+
+    let fw00 = select(vw00 * inv_validity_sum, ww00 * inv_weight_sum, use_edge_weights);
+    let fw10 = select(vw10 * inv_validity_sum, ww10 * inv_weight_sum, use_edge_weights);
+    let fw01 = select(vw01 * inv_validity_sum, ww01 * inv_weight_sum, use_edge_weights);
+    let fw11 = select(vw11 * inv_validity_sum, ww11 * inv_weight_sum, use_edge_weights);
+
     textureStore(
         output_diffuse,
         full_pixel_coord,
-        s00 * fw00 + s10 * fw10 + s01 * fw01 + s11 * fw11
+        select(
+            vec4<f32>(0.0),
+            vec4<f32>(
+                s00.rgb * fw00 +
+                s10.rgb * fw10 +
+                s01.rgb * fw01 +
+                s11.rgb * fw11,
+                1.0
+            ),
+            validity_sum > 1e-6
+        )
     );
 }

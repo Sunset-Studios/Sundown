@@ -154,6 +154,16 @@ struct SVLMParams {
     irradiance_sh_words_per_probe: f32,
     world_tile_size: f32,
     resident_tile_count: f32,
+
+    tile_streaming_enabled: f32,
+    coarse_min_lod: f32,
+    coarse_max_lod: f32,
+    streaming_radius: f32,
+
+    streaming_transition_tiles: f32,
+    reserved_41: f32,
+    reserved_42: f32,
+    reserved_43: f32,
 };
 
 struct SVLMBlasStats {

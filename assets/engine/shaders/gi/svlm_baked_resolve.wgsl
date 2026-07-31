@@ -12,12 +12,16 @@
 @group(1) @binding(3) var<storage, read> svlm_lookup_data: array<u32>;
 @group(1) @binding(4) var<storage, read> leaf_bricks: array<SVLMLeafBrick>;
 @group(1) @binding(5) var<storage, read> irradiance_probes: array<u32>;
-@group(1) @binding(6) var output_diffuse: texture_storage_2d<rgba16float, write>;
-@group(1) @binding(7) var output_black: texture_storage_2d<rgba16float, write>;
+@group(1) @binding(6) var<storage, read> coarse_lookup_data: array<u32>;
+@group(1) @binding(7) var output_diffuse: texture_storage_2d<rgba16float, write>;
+@group(1) @binding(8) var output_black: texture_storage_2d<rgba16float, write>;
 
 const SVLM_NODE_WORD_STRIDE = 7u;
 const SVLM_TILED_LOOKUP_WORD_STRIDE = 8u;
 const SVLM_TILED_LOOKUP_MAX_PROBES = 16u;
+const SVLM_COARSE_LOOKUP_WORD_STRIDE = 10u;
+const SVLM_COARSE_LOOKUP_MAX_PROBES = 16u;
+const SVLM_LOOKUP_TOMBSTONE = 0xfffffffeu;
 
 fn svlm_sample_output_to_full_res_coord(
     sample_coord: vec2<u32>,
@@ -162,6 +166,7 @@ fn svlm_lookup_tiled_leaf(
             return INVALID_IDX;
         }
         if (
+            leaf_index != SVLM_LOOKUP_TOMBSTONE &&
             bitcast<i32>(svlm_lookup_data[base]) == tile_coord.x &&
             bitcast<i32>(svlm_lookup_data[base + 1u]) == tile_coord.y &&
             bitcast<i32>(svlm_lookup_data[base + 2u]) == tile_coord.z &&
@@ -182,6 +187,9 @@ fn svlm_lookup_tiled_leaf(
 }
 
 fn svlm_find_tiled_leaf(position: vec3<f32>) -> u32 {
+    if (svlm_params.resident_tile_count <= 0.0) {
+        return INVALID_IDX;
+    }
     let world_min = svlm_world_min(&svlm_params);
     let root_size = max(svlm_params.root_size, 0.0001);
     let root_dims = svlm_root_dims(&svlm_params);
@@ -214,7 +222,7 @@ fn svlm_find_tiled_leaf(position: vec3<f32>) -> u32 {
 }
 
 fn svlm_find_leaf(position: vec3<f32>) -> u32 {
-    if (svlm_params.resident_tile_count > 0.0) {
+    if (svlm_params.tile_streaming_enabled > 0.5) {
         return svlm_find_tiled_leaf(position);
     }
     return svlm_find_monolithic_leaf(position);
@@ -230,6 +238,138 @@ fn svlm_read_probe_sh(probe_index: u32) -> SH_L1_RGB {
     packed.data[4] = irradiance_probes[base + 4u];
     packed.data[5] = irradiance_probes[base + 5u];
     return sh_l1_rgb_unpack(packed);
+}
+
+struct SVLMCoarseSample {
+    irradiance: SH_L1_RGB,
+    validity: f32,
+    lod: u32,
+};
+
+fn svlm_hash_coarse_lookup_key(tile_coord: vec3<i32>, lod: u32) -> u32 {
+    var hash = 0x811c9dc5u;
+    hash = (hash ^ bitcast<u32>(tile_coord.x)) * 0x01000193u;
+    hash = (hash ^ bitcast<u32>(tile_coord.y)) * 0x01000193u;
+    hash = (hash ^ bitcast<u32>(tile_coord.z)) * 0x01000193u;
+    hash = (hash ^ lod) * 0x01000193u;
+    hash ^= hash >> 16u;
+    hash *= 0x7feb352du;
+    hash ^= hash >> 15u;
+    hash *= 0x846ca68bu;
+    return hash ^ (hash >> 16u);
+}
+
+fn svlm_lookup_coarse_entry(tile_coord: vec3<i32>, lod: u32) -> u32 {
+    let entry_count =
+        arrayLength(&coarse_lookup_data) /
+        SVLM_COARSE_LOOKUP_WORD_STRIDE;
+    if (entry_count == 0u) {
+        return INVALID_IDX;
+    }
+
+    let entry_mask = entry_count - 1u;
+    var entry_index =
+        svlm_hash_coarse_lookup_key(tile_coord, lod) & entry_mask;
+    for (
+        var probe = 0u;
+        probe < SVLM_COARSE_LOOKUP_MAX_PROBES;
+        probe = probe + 1u
+    ) {
+        let base = entry_index * SVLM_COARSE_LOOKUP_WORD_STRIDE;
+        let entry_lod = coarse_lookup_data[base + 3u];
+        if (entry_lod == INVALID_IDX) {
+            return INVALID_IDX;
+        }
+        if (
+            bitcast<i32>(coarse_lookup_data[base]) == tile_coord.x &&
+            bitcast<i32>(coarse_lookup_data[base + 1u]) == tile_coord.y &&
+            bitcast<i32>(coarse_lookup_data[base + 2u]) == tile_coord.z &&
+            entry_lod == lod
+        ) {
+            return base;
+        }
+        entry_index = (entry_index + 1u) & entry_mask;
+    }
+    return INVALID_IDX;
+}
+
+fn svlm_read_coarse_sh(entry_base: u32) -> SH_L1_RGB {
+    var packed: SH_L1_RGB_Packed;
+    packed.data[0] = coarse_lookup_data[entry_base + 4u];
+    packed.data[1] = coarse_lookup_data[entry_base + 5u];
+    packed.data[2] = coarse_lookup_data[entry_base + 6u];
+    packed.data[3] = coarse_lookup_data[entry_base + 7u];
+    packed.data[4] = coarse_lookup_data[entry_base + 8u];
+    packed.data[5] = coarse_lookup_data[entry_base + 9u];
+    return sh_l1_rgb_unpack(packed);
+}
+
+fn svlm_sample_coarse_lod(position: vec3<f32>, lod: u32) -> SVLMCoarseSample {
+    let tile_size =
+        max(svlm_params.world_tile_size, 0.0001) *
+        exp2(f32(lod));
+    let grid_position = position / tile_size - vec3<f32>(0.5);
+    let base_coord = vec3<i32>(floor(grid_position));
+    let fraction = fract(grid_position);
+    var result = sh_l1_rgb_zero();
+    var weight_sum = 0.0;
+
+    for (var corner = 0u; corner < 8u; corner = corner + 1u) {
+        let offset = vec3<i32>(
+            i32(corner & 1u),
+            i32((corner >> 1u) & 1u),
+            i32((corner >> 2u) & 1u)
+        );
+        let entry_base = svlm_lookup_coarse_entry(base_coord + offset, lod);
+        if (entry_base == INVALID_IDX) {
+            continue;
+        }
+        let weight_axis = select(
+            vec3<f32>(1.0) - fraction,
+            fraction,
+            offset == vec3<i32>(1)
+        );
+        let weight = weight_axis.x * weight_axis.y * weight_axis.z;
+        result = svlm_sh_multiply_add(
+            result,
+            svlm_read_coarse_sh(entry_base),
+            weight
+        );
+        weight_sum += weight;
+    }
+
+    if (weight_sum <= 1e-6) {
+        return SVLMCoarseSample(sh_l1_rgb_zero(), 0.0, lod);
+    }
+    return SVLMCoarseSample(
+        sh_l1_rgb_multiply_scalar(result, 1.0 / weight_sum),
+        1.0,
+        lod
+    );
+}
+
+fn svlm_sample_coarse(position: vec3<f32>) -> SVLMCoarseSample {
+    let min_lod = u32(max(svlm_params.coarse_min_lod, 1.0));
+    let max_lod = u32(max(svlm_params.coarse_max_lod, f32(min_lod)));
+    let camera_position =
+        view_buffer[u32(frame_info.view_index)].view_position.xyz;
+    let fine_extent = max(
+        svlm_params.world_tile_size * svlm_params.streaming_radius,
+        svlm_params.world_tile_size
+    );
+    let distance_lod = u32(max(
+        floor(log2(max(distance(position, camera_position) / fine_extent, 1.0))),
+        0.0
+    ));
+    let desired_lod = min(min_lod + distance_lod, max_lod);
+
+    for (var lod = desired_lod; lod <= max_lod; lod = lod + 1u) {
+        let sample = svlm_sample_coarse_lod(position, lod);
+        if (sample.validity > 0.5 || lod == max_lod) {
+            return sample;
+        }
+    }
+    return SVLMCoarseSample(sh_l1_rgb_zero(), 0.0, max_lod);
 }
 
 fn svlm_sh_multiply_add(
@@ -442,6 +582,23 @@ fn svlm_sample_blended_sh(
     );
 }
 
+fn svlm_evaluate_irradiance(
+    irradiance_sh: SH_L1_RGB,
+    normal: vec3<f32>
+) -> vec3<f32> {
+    let directional_irradiance = max(
+        sh_l1_rgb_calculate_irradiance(irradiance_sh, normal),
+        vec3<f32>(0.0)
+    );
+    // L1 can undershoot opposite a strong dominant direction. Retaining a
+    // small L0 floor avoids turning valid low-frequency light into black.
+    let l0_irradiance = max(
+        irradiance_sh.c[0] * (PI * SH_BASIS_L0),
+        vec3<f32>(0.0)
+    );
+    return max(directional_irradiance, l0_irradiance * 0.15);
+}
+
 @compute @workgroup_size(16, 16, 1)
 fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     if (gid.x == 0u && gid.y == 0u) {
@@ -477,45 +634,68 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     );
     let normal = safe_normalize(normal_data.xyz);
     let leaf_index = svlm_find_leaf(position);
-    if (leaf_index == INVALID_IDX || leaf_index >= arrayLength(&leaf_bricks)) {
+    let fine_valid =
+        leaf_index != INVALID_IDX &&
+        leaf_index < arrayLength(&leaf_bricks);
+    var coarse_sample = SVLMCoarseSample(sh_l1_rgb_zero(), 0.0, 0u);
+    if (svlm_params.tile_streaming_enabled > 0.5) {
+        coarse_sample = svlm_sample_coarse(position);
+    }
+    if (!fine_valid && coarse_sample.validity <= 0.5) {
         textureStore(output_diffuse, sample_pixel, vec4<f32>(0.0));
         return;
     }
 
-    var sample_leaf_index = leaf_index;
-    let leaf = leaf_bricks[sample_leaf_index];
-    // Resolve from the air side of the surface. Adaptive refinement places the
-    // visible surface in a geometry-overlapping leaf, while the useful probes
-    // are commonly in its neighboring empty-space leaf. The previous 1% bias
-    // was clamped back into the original leaf and produced isolated patches.
-    let probe_spacing = max(leaf.size / 4.0, 0.0001);
-    let sample_position =
-        position + normal * max(probe_spacing * 0.5, 0.001);
-    if (!svlm_leaf_contains(leaf, sample_position)) {
-        let biased_leaf_index = svlm_find_leaf(sample_position);
-        if (
-            biased_leaf_index != INVALID_IDX &&
-            biased_leaf_index < arrayLength(&leaf_bricks)
-        ) {
-            sample_leaf_index = biased_leaf_index;
+    var fine_irradiance = vec3<f32>(0.0);
+    if (fine_valid) {
+        var sample_leaf_index = leaf_index;
+        let leaf = leaf_bricks[sample_leaf_index];
+        // Resolve from the air side of the surface. Adaptive refinement places
+        // the visible surface in a geometry-overlapping leaf, while the useful
+        // probes are commonly in its neighboring empty-space leaf.
+        let probe_spacing = max(leaf.size / 4.0, 0.0001);
+        let sample_position =
+            position + normal * max(probe_spacing * 0.5, 0.001);
+        if (!svlm_leaf_contains(leaf, sample_position)) {
+            let biased_leaf_index = svlm_find_leaf(sample_position);
+            if (
+                biased_leaf_index != INVALID_IDX &&
+                biased_leaf_index < arrayLength(&leaf_bricks)
+            ) {
+                sample_leaf_index = biased_leaf_index;
+            }
         }
+        fine_irradiance = svlm_evaluate_irradiance(
+            svlm_sample_blended_sh(sample_leaf_index, sample_position),
+            normal
+        );
     }
-    let interpolated_sh = svlm_sample_blended_sh(
-        sample_leaf_index,
-        sample_position
-    );
-    let directional_irradiance = max(
-        sh_l1_rgb_calculate_irradiance(interpolated_sh, normal),
-        vec3<f32>(0.0)
-    );
-    // L1 can undershoot below zero opposite a strong dominant direction. Keep
-    // a small fraction of the non-directional band so ringing does not turn
-    // valid low-frequency bounce light into completely black shadow pixels.
-    let l0_irradiance = max(
-        interpolated_sh.c[0] * (PI * SH_BASIS_L0),
-        vec3<f32>(0.0)
-    );
-    let irradiance = max(directional_irradiance, l0_irradiance * 0.15);
+
+    var irradiance = fine_irradiance;
+    if (coarse_sample.validity > 0.5) {
+        let coarse_irradiance = svlm_evaluate_irradiance(
+            coarse_sample.irradiance,
+            normal
+        );
+        let camera_position =
+            view_buffer[u32(frame_info.view_index)].view_position.xyz;
+        let outer_distance =
+            svlm_params.streaming_radius * svlm_params.world_tile_size;
+        let transition_distance =
+            svlm_params.streaming_transition_tiles *
+            svlm_params.world_tile_size;
+        let inner_distance = max(outer_distance - transition_distance, 0.0);
+        let fine_weight = select(
+            0.0,
+            1.0 - smoothstep(
+                inner_distance,
+                max(outer_distance, inner_distance + 0.0001),
+                distance(position, camera_position)
+            ),
+            fine_valid
+        );
+        irradiance = mix(coarse_irradiance, fine_irradiance, fine_weight);
+    }
     textureStore(
         output_diffuse,
         sample_pixel,
