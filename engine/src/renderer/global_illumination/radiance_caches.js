@@ -15,6 +15,8 @@ import {
 const COMPUTE_WORKGROUP_SIZE = 128;
 const PROBE_SCHEDULER_PRIORITY_COUNT = 2;
 const MAX_PROBE_CASCADES = 6;
+// Must match the scalar-aligned DDGIProbeRayData layout in ddgi_common.wgsl.
+const PROBE_RAY_DATA_WORD_COUNT = 13;
 const PROBE_COUNTERS_NAME = "probe_volume_gi_counters";
 
 const compute_shader = (path) => ({ pipeline_shaders: { compute: { path } } });
@@ -279,7 +281,7 @@ export class ProbeVolumeRadianceCache extends GIModule {
     });
     this.create_buffer(render_graph, "ray_hits", {
       name: "probe_volume_ray_hits",
-      size: 4 + probe_total_ray_count * 40,
+      size: 4 + probe_total_ray_count * PROBE_RAY_DATA_WORD_COUNT,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
       force: context.force_recreate,
     });
@@ -771,17 +773,11 @@ export class ProbeVolumeRadianceCache extends GIModule {
       "trace_init",
       "probe_volume_trace_init",
       {
-        inputs: [params, update_indices, ray_hits, counters],
+        inputs: [params, ray_hits, counters],
         outputs: [ray_hits],
       },
       (graph, frame_data) =>
-        graph
-          .get_physical_pass(frame_data.current_pass)
-          .dispatch(
-            Math.ceil(context.max_rays_per_probe / 16),
-            Math.ceil(context.probes_per_frame / 16),
-            1
-          )
+        graph.get_physical_pass(frame_data.current_pass).dispatch(1, 1, 1)
     );
     this.add_compute_pass(
       render_graph,
@@ -791,6 +787,7 @@ export class ProbeVolumeRadianceCache extends GIModule {
         inputs: [
           params,
           ray_hits,
+          update_indices,
           inputs.tlas_bvh2_bounds,
           inputs.tlas_bvh_info,
           inputs.blas_bvh2_nodes,
@@ -826,6 +823,7 @@ export class ProbeVolumeRadianceCache extends GIModule {
           trace.get_resource("params"),
           lighting.scene_lighting_buffer,
           ray_hits,
+          trace.get_resource("update_indices"),
           trace.get_resource("probe_states"),
           materials.params_gpu_buffer,
           materials.material_offsets_buffer,
@@ -833,6 +831,7 @@ export class ProbeVolumeRadianceCache extends GIModule {
           accumulator.get_resource("sh_probes"),
           accumulator.get_resource("depth_moments"),
           trace.get_resource("entity_index_lookup"),
+          context.inputs.entity_transforms,
           textures.albedo,
           textures.normal,
           textures.roughness,
@@ -889,6 +888,7 @@ export class ProbeVolumeRadianceCache extends GIModule {
         inputs: [
           params,
           ray_hits,
+          trace.get_resource("update_indices"),
           history_valid,
           this.get_resource("depth_moments"),
           trace.get_resource("depth_slot_indices"),

@@ -70,16 +70,23 @@ struct DDGIParams {
 };
 
 struct DDGIProbeRayData {
-    hit_pos_t: vec4<f32>,
-    ray_dir_prim: vec4<f32>,      // xyz = ray direction, w = ray PDF (set by init; preserved by hit)
-    nee_light_dir_type: vec4<f32>, // xyz = selected NEE light dir, w = 0 analytic / 1 emissive
-    nee_light_radiance: vec4<f32>, // xyz = selected NEE radiance scale (without n_dot_l), w = unused
-    world_n_section: vec4<f32>,   // xyz = world geometric normal, w = section_index as f32
-    world_t_uvx: vec4<f32>,       // xyz = world tangent, w = uv.x
-    world_b_uvy: vec4<f32>,       // xyz = world bitangent, w = uv.y
-    state_u32: vec4<u32>,         // x = prim_store, y = alive, z = shadow_visible, w = tri_id_local
-    radiance: vec4<f32>,          // xyz = shaded ray radiance, w = 1.0 (or unused)
-    meta_u32: vec4<u32>,          // x = probe_index, yzw = reserved
+    // Keep this record scalar-aligned. These 13 words are the values that are
+    // either expensive to regenerate in downstream passes or identify mutable
+    // scene data. Probe/ray indices, hit position, and surface attributes are
+    // reconstructed from the flat ray index and the data below.
+    ray_dir_x: f32,
+    ray_dir_y: f32,
+    ray_dir_z: f32,
+    hit_distance: f32,            // Negative for backfaces, zero for misses
+    prim_store: u32,              // INVALID_IDX for misses
+    vertex_index_0: u32,
+    vertex_index_1: u32,
+    vertex_index_2: u32,
+    barycentric_u: f32,
+    barycentric_v: f32,
+    radiance_r: f32,              // Visible NEE before shade; final radiance after shade
+    radiance_g: f32,
+    radiance_b: f32,
 };
 
 struct ProbeStateData {
@@ -166,6 +173,54 @@ fn ddgi_msme_stats_reset(
 
 fn ddgi_max_rays_per_probe(ddgi_params: ptr<uniform, DDGIParams>) -> u32 {
     return max(1u, u32((*ddgi_params).probe_counts.y));
+}
+
+fn ddgi_probe_ray_direction(
+    ddgi_params: ptr<uniform, DDGIParams>,
+    probe_index: u32,
+    ray_index_in_probe: u32,
+    rays_per_probe: u32
+) -> vec3<f32> {
+    let ray_count = max(rays_per_probe, 1u);
+    let ray_index = min(ray_index_in_probe, ray_count - 1u);
+    let frame_index = u32((*ddgi_params).frame_index);
+    var probe_rng = hash(
+        probe_index
+            ^ (frame_index * 0x9E3779B9u)
+            ^ 0xA511E9B3u
+    );
+    let rotation_01 = rand_float(probe_rng);
+
+    probe_rng = random_seed(probe_rng);
+    let r1 = rand_float(probe_rng);
+    probe_rng = random_seed(probe_rng);
+    let r2 = rand_float(probe_rng);
+
+    let z = 1.0 - 2.0 * r1;
+    let rot_phi = 2.0 * PI * r2;
+    let r_xy = sqrt(max(1.0 - z * z, 0.0));
+    let z_axis = vec3<f32>(cos(rot_phi) * r_xy, sin(rot_phi) * r_xy, z);
+
+    let u = (f32(ray_index) + 0.5) / f32(ray_count);
+    let cos_theta = 1.0 - 2.0 * u;
+    let sin_theta = sqrt(max(1.0 - cos_theta * cos_theta, 0.0));
+    let phi = 2.0 * PI * fract(f32(ray_index) * GOLDEN_RATIO_CONJUGATE + rotation_01);
+    let dir_local = vec3<f32>(cos(phi) * sin_theta, sin(phi) * sin_theta, cos_theta);
+    return orthonormalize(z_axis) * dir_local;
+}
+
+fn ddgi_probe_ray_stored_direction(ray: DDGIProbeRayData) -> vec3<f32> {
+    return vec3<f32>(ray.ray_dir_x, ray.ray_dir_y, ray.ray_dir_z);
+}
+
+fn ddgi_probe_ray_radiance(ray: DDGIProbeRayData) -> vec3<f32> {
+    return vec3<f32>(ray.radiance_r, ray.radiance_g, ray.radiance_b);
+}
+
+fn ddgi_probe_ray_set_radiance(ray: ptr<storage, DDGIProbeRayData, read_write>, radiance: vec3<f32>) {
+    (*ray).radiance_r = radiance.x;
+    (*ray).radiance_g = radiance.y;
+    (*ray).radiance_b = radiance.z;
 }
 
 fn ddgi_probe_count_per_cascade(ddgi_params: ptr<uniform, DDGIParams>) -> u32 {

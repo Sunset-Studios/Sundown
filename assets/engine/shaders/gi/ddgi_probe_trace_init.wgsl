@@ -1,112 +1,26 @@
 // =============================================================================
 // DDGI Probe Ray Trace - Init Pass
-// - Generates per-ray directions (guided by last frame's probe SH)
-// - Writes per-ray direction-space PDF for unbiased accumulation
-// - Initializes the per-ray hit buffer to a known default state
+// - Publishes the active ray count after probe scheduling
+// - Per-ray initialization and direction generation happen in the hit pass so
+//   the transient buffer only stores data that survives that pass
 // =============================================================================
 #include "common.wgsl"
 #include "gi/ddgi_common.wgsl"
 
 @group(1) @binding(0) var<uniform> ddgi_params: DDGIParams;
-@group(1) @binding(1) var<storage, read> probe_update_indices: array<u32>;
-@group(1) @binding(2) var<storage, read_write> probe_ray_data: DDGIProbeRayDataBuffer;
-@group(1) @binding(3) var<storage, read> gi_counters: GICountersReadOnly;
-
-// =============================================================================
-// Ray direction sampling
-// =============================================================================
-const ddgi_uniform_sphere_pdf: f32 = 0.07957747154594767; // 1 / (4 * PI)
-
-fn ddgi_fibonacci_sphere_direction(ray_index: u32, ray_count: u32, rotation_01: f32) -> vec3<f32> {
-    let n = max(ray_count, 1u);
-    let i = min(ray_index, n - 1u);
-
-    // Stratified latitude, uniform in cos(theta) for uniform area on the sphere.
-    let u = (f32(i) + 0.5) / f32(n);           // (0,1)
-    let cos_theta = 1.0 - 2.0 * u;             // [-1,1]
-    let sin_theta = sqrt(max(1.0 - cos_theta * cos_theta, 0.0));
-
-    // Fibonacci spiral azimuth with a per-probe Cranley-Patterson rotation.
-    let phi = 2.0 * PI * fract(f32(i) * GOLDEN_RATIO_CONJUGATE + rotation_01);
-    return vec3<f32>(cos(phi) * sin_theta, sin(phi) * sin_theta, cos_theta);
-}
-
-fn ddgi_probe_ray_direction_spherical_fibonacci(
-    probe_index: u32,
-    ray_index_in_probe: u32,
-    rays_per_probe: u32
-) -> vec3<f32> {
-    // Rotate the low-discrepancy set every frame. A probe-stable rotation traces
-    // the same directions on every update, so temporal accumulation repeatedly
-    // averages an identical quadrature estimate and can never reduce its bias.
-    // Hashing both probe and frame keeps updates deterministic while providing
-    // independent orientations across probes and time.
-    let frame_index = u32(ddgi_params.frame_index);
-    var probe_rng = hash(
-        probe_index
-            ^ (frame_index * 0x9E3779B9u)
-            ^ 0xA511E9B3u
-    );
-    let rotation_01 = rand_float(probe_rng);
-
-    // Randomly rotate the entire point set in 3D (avoid locking the pattern to world axes).
-    probe_rng = random_seed(probe_rng);
-    let r1 = rand_float(probe_rng);
-    probe_rng = random_seed(probe_rng);
-    let r2 = rand_float(probe_rng);
-
-    let z = 1.0 - 2.0 * r1;
-    let rot_phi = 2.0 * PI * r2;
-    let r_xy = sqrt(max(1.0 - z * z, 0.0));
-    let z_axis = vec3<f32>(cos(rot_phi) * r_xy, sin(rot_phi) * r_xy, z);
-
-    let dir_local = ddgi_fibonacci_sphere_direction(ray_index_in_probe, rays_per_probe, rotation_01);
-    return orthonormalize(z_axis) * dir_local;
-}
+@group(1) @binding(1) var<storage, read_write> probe_ray_data: DDGIProbeRayDataBuffer;
+@group(1) @binding(2) var<storage, read> gi_counters: GICountersReadOnly;
 
 // =============================================================================
 // Main
 // =============================================================================
-@compute @workgroup_size(16, 16, 1)
+@compute @workgroup_size(1, 1, 1)
 fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
-    let probe_slot = gid.y;
-    let ray_index_in_probe = gid.x;
     let max_probes_per_frame = u32(ddgi_params.probe_counts.z);
     let active_probe_count = min(gi_counters.probe_update_count, max_probes_per_frame);
     let rays_per_probe = ddgi_max_rays_per_probe(&ddgi_params);
 
-    if (gid.x == 0u && gid.y == 0u) {
+    if (gid.x == 0u) {
         atomicStore(&probe_ray_data.header.active_ray_count, active_probe_count * rays_per_probe);
     }
-
-    if (probe_slot >= max_probes_per_frame) {
-        return;
-    }
-
-    if (probe_slot >= active_probe_count) {
-        return;
-    }
-
-    if (ray_index_in_probe >= rays_per_probe) {
-        return;
-    }
-
-    let probe_index = probe_update_indices[probe_slot];
-    let ray_base = probe_slot * rays_per_probe;
-    let ray_index = ray_base + ray_index_in_probe;
-
-    probe_ray_data.rays[ray_index].state_u32 = vec4<u32>(INVALID_IDX, 1u, 0u, INVALID_IDX);
-    probe_ray_data.rays[ray_index].hit_pos_t = vec4<f32>(0.0, 0.0, 0.0, 0.0);
-    probe_ray_data.rays[ray_index].nee_light_dir_type = vec4<f32>(0.0, 0.0, 0.0, 0.0);
-    probe_ray_data.rays[ray_index].nee_light_radiance = vec4<f32>(0.0, 0.0, 0.0, 0.0);
-    probe_ray_data.rays[ray_index].radiance = vec4<f32>(0.0, 0.0, 0.0, 1.0);
-    probe_ray_data.rays[ray_index].meta_u32 = vec4<u32>(probe_index, ray_index_in_probe, probe_slot, 0u);
-
-    let uniform_ray_dir = ddgi_probe_ray_direction_spherical_fibonacci(
-        probe_index,
-        ray_index_in_probe,
-        rays_per_probe
-    );
-
-    probe_ray_data.rays[ray_index].ray_dir_prim = vec4<f32>(uniform_ray_dir, ddgi_uniform_sphere_pdf);
 }

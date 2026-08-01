@@ -34,13 +34,11 @@
 // =============================================================================
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Analyze ray hit data to determine backface ratio and nearest hit
+// Analyze ray hit data to determine the backface ratio.
 // Backface hits are encoded as negative t values in the ray data.
 // ─────────────────────────────────────────────────────────────────────────────
 struct ProbeRayAnalysis {
     backface_ratio: f32,
-    nearest_hit_pos: vec3<f32>,
-    nearest_hit_normal: vec3<f32>,
 };
 
 fn analyze_probe_rays(
@@ -48,27 +46,20 @@ fn analyze_probe_rays(
     rays_per_probe: u32
 ) -> ProbeRayAnalysis {
     var result: ProbeRayAnalysis;
-    result.nearest_hit_pos = vec3<f32>(0.0, 0.0, 0.0);
-    result.nearest_hit_normal = vec3<f32>(0.0, 0.0, 0.0);
     var backface_count = 0u;
-    var nearest_hit_dist = 1e30;
 
     for (var i = 0u; i < rays_per_probe; i = i + 1u) {
         let ray_index = ray_base + i;
-        let t_raw = probe_ray_data.rays[ray_index].hit_pos_t.w;
+        let ray = probe_ray_data.rays[ray_index];
+        let t_raw = ray.hit_distance;
         
         // Backface hits are encoded as negative t values.
         // t_raw < 0 = backface hit
         // t_raw > 0 = frontface hit
-        let is_hit = probe_ray_data.rays[ray_index].state_u32.w != INVALID_IDX;
+        let is_hit = ray.prim_store != INVALID_IDX;
         
         if (is_hit) {
             backface_count = select(backface_count, backface_count + 1u, t_raw < 0.0);
-            if (t_raw > 0.0 && t_raw < nearest_hit_dist) {
-                nearest_hit_dist = t_raw;
-                result.nearest_hit_pos = probe_ray_data.rays[ray_index].hit_pos_t.xyz;
-                result.nearest_hit_normal = probe_ray_data.rays[ray_index].world_n_section.xyz;
-            }
         }
     }
     

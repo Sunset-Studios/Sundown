@@ -170,8 +170,9 @@ fn cs(
     var sample_sh: SH_L1_RGB;
     if (i < rays_per_probe) {
         let ray_index = ray_base + i;
-        let radiance = probe_ray_data.rays[ray_index].radiance.xyz;
-        let ray_dir = probe_ray_data.rays[ray_index].ray_dir_prim.xyz;
+        let ray = probe_ray_data.rays[ray_index];
+        let radiance = ddgi_probe_ray_radiance(ray);
+        let ray_dir = ddgi_probe_ray_stored_direction(ray);
         sample_sh = ddgi_sh_project_sample(ray_dir, radiance, sample_weight);
     } else {
         sample_sh = sh_l1_rgb_zero();

@@ -11,20 +11,21 @@
 
 @group(1) @binding(0) var<uniform> ddgi_params: DDGIParams;
 @group(1) @binding(1) var<storage, read_write> probe_ray_data: DDGIProbeRayDataBufferReadOnlyHeader;
-@group(1) @binding(2) var<storage, read> tlas_bvh2_bounds: array<AABB>;
-@group(1) @binding(3) var<uniform> tlas_bvh_info: BVHInfo;
-@group(1) @binding(4) var<storage, read> blas_bvh2_nodes: array<AABB>;
-@group(1) @binding(5) var<storage, read> blas_directory: array<MeshDirectoryEntry>;
-@group(1) @binding(6) var<storage, read> entity_transforms: array<EntityTransform>;
-@group(1) @binding(7) var<storage, read> index_buffer: array<u32>;
-@group(1) @binding(8) var<storage, read> dense_lights_buffer: DenseLightsBuffer;
-@group(1) @binding(9) var<storage, read> emissive_lights_buffer: EmissiveLightsBuffer;
-@group(1) @binding(10) var<storage, read> entity_index_lookup: array<u32>;
+@group(1) @binding(2) var<storage, read> probe_update_indices: array<u32>;
+@group(1) @binding(3) var<storage, read> tlas_bvh2_bounds: array<AABB>;
+@group(1) @binding(4) var<uniform> tlas_bvh_info: BVHInfo;
+@group(1) @binding(5) var<storage, read> blas_bvh2_nodes: array<AABB>;
+@group(1) @binding(6) var<storage, read> blas_directory: array<MeshDirectoryEntry>;
+@group(1) @binding(7) var<storage, read> entity_transforms: array<EntityTransform>;
+@group(1) @binding(8) var<storage, read> index_buffer: array<u32>;
+@group(1) @binding(9) var<storage, read> dense_lights_buffer: DenseLightsBuffer;
+@group(1) @binding(10) var<storage, read> emissive_lights_buffer: EmissiveLightsBuffer;
+@group(1) @binding(11) var<storage, read> entity_index_lookup: array<u32>;
 
 // =============================================================================
 // HELPER: Process a shadow ray and write result
 // =============================================================================
-fn process_shadow_visibility(index: u32, ray_origin: vec3<f32>, ray_dir: vec3<f32>, t_max: f32) {
+fn trace_shadow_visibility(ray_origin: vec3<f32>, ray_dir: vec3<f32>, t_max: f32) -> bool {
     var ray: Ray;
     ray.origin_and_tmin = vec4<f32>(ray_origin + ray_dir * 0.001, 0.0);
     ray.direction_and_tmax = vec4<f32>(ray_dir, t_max);
@@ -35,10 +36,7 @@ fn process_shadow_visibility(index: u32, ray_origin: vec3<f32>, ray_dir: vec3<f3
         0.0
     );
 
-    if (!trace_ray_any(&ray)) {
-        // No shadow hit - light is visible
-        probe_ray_data.rays[index].state_u32.z = 1u;
-    }
+    return !trace_ray_any(&ray);
 }
 
 fn sample_weighted_emissive_light(
@@ -102,6 +100,18 @@ fn process_primary_ray(
     probe_index: u32,
     ray_index_in_probe: u32,
 ) {
+    probe_ray_data.rays[index].ray_dir_x = ray_dir.x;
+    probe_ray_data.rays[index].ray_dir_y = ray_dir.y;
+    probe_ray_data.rays[index].ray_dir_z = ray_dir.z;
+    probe_ray_data.rays[index].hit_distance = 0.0;
+    probe_ray_data.rays[index].prim_store = INVALID_IDX;
+    probe_ray_data.rays[index].vertex_index_0 = 0u;
+    probe_ray_data.rays[index].vertex_index_1 = 0u;
+    probe_ray_data.rays[index].vertex_index_2 = 0u;
+    probe_ray_data.rays[index].barycentric_u = 0.0;
+    probe_ray_data.rays[index].barycentric_v = 0.0;
+    ddgi_probe_ray_set_radiance(&probe_ray_data.rays[index], vec3<f32>(0.0));
+
     var ray: Ray;
     ray.origin_and_tmin = vec4<f32>(probe_position + ray_dir * 0.001, 0.0);
     ray.direction_and_tmax = vec4<f32>(ray_dir, ddgi_params.max_ray_length);
@@ -112,19 +122,9 @@ fn process_primary_ray(
         0.0
     );
 
-    // Always write per-ray direction so the shade pass can handle ray misses.
-    // Preserve ray_dir_prim.w which stores the per-ray PDF written by the init pass.
-    probe_ray_data.rays[index].meta_u32.x = probe_index;
-    let ray_pdf = probe_ray_data.rays[index].ray_dir_prim.w;
-    probe_ray_data.rays[index].ray_dir_prim = vec4<f32>(ray_dir, ray_pdf);
-    probe_ray_data.rays[index].nee_light_dir_type = vec4<f32>(0.0, 0.0, 0.0, 0.0);
-    probe_ray_data.rays[index].nee_light_radiance = vec4<f32>(0.0, 0.0, 0.0, 0.0);
-    probe_ray_data.rays[index].hit_pos_t = vec4<f32>(0.0, 0.0, 0.0, 0.0);
-
     let hit_result = trace_ray_closest(&ray);
 
     if (hit_result.has_hit != 0u) {
-        let tri_id_local = hit_result.tri_id_local;
         let prim_store = hit_result.prim_store;
         let entity_resolved = entity_index_lookup[prim_store];
         let entity_transform = entity_transforms[entity_resolved];
@@ -163,37 +163,14 @@ fn process_primary_ray(
         let u_bc = (d11 * d20 - d01 * d21) / denom;
         let w_bc = 1.0 - u_bc - v_bc;
 
-        let uv_hit = vertex0.uv * w_bc +
-            vertex1.uv * u_bc +
-            vertex2.uv * v_bc;
-
         let n_local = vertex0.normal.xyz * w_bc +
             vertex1.normal.xyz * u_bc +
             vertex2.normal.xyz * v_bc;
-        var world_n = safe_normalize(
+        let world_n = safe_normalize(
             (entity_transform.transpose_inverse_model_matrix * vec4<f32>(n_local, 0.0)).xyz
         );
 
-        let t_local = vertex0.tangent.xyz * w_bc +
-            vertex1.tangent.xyz * u_bc +
-            vertex2.tangent.xyz * v_bc;
-        var world_t = safe_normalize(
-            (entity_transform.transpose_inverse_model_matrix * vec4<f32>(t_local, 0.0)).xyz
-        );
-
-        let b_local = vertex0.bitangent.xyz * w_bc +
-            vertex1.bitangent.xyz * u_bc +
-            vertex2.bitangent.xyz * v_bc;
-        var world_b = safe_normalize(
-            (entity_transform.transpose_inverse_model_matrix * vec4<f32>(b_local, 0.0)).xyz
-        );
-
         let ray_is_backfacing = dot(world_n, ray_dir) > 0.0;
-        world_n = select(world_n, -world_n, ray_is_backfacing);
-        world_t = select(world_t, -world_t, ray_is_backfacing);
-        world_b = select(world_b, -world_b, ray_is_backfacing);
-
-        let section_index = u32(vertex0.section_index);
 
         // Backface rays:
         // - Mark with NEGATIVE distance so the shade pass can zero irradiance (leak reduction).
@@ -202,18 +179,17 @@ fn process_primary_ray(
         // - Using negative distance allows efficient backface counting without extra flags,
         //   enabling robust dead probe detection even with non-manifold geometry.
         let stored_t = select(t_tri, -t_tri, ray_is_backfacing);
-        probe_ray_data.rays[index].hit_pos_t = vec4<f32>(p_world, stored_t);
-        probe_ray_data.rays[index].ray_dir_prim = vec4<f32>(ray_dir, ray_pdf);
-        probe_ray_data.rays[index].world_n_section = vec4<f32>(world_n, f32(section_index));
-        probe_ray_data.rays[index].world_t_uvx = vec4<f32>(world_t, uv_hit.x);
-        probe_ray_data.rays[index].world_b_uvy = vec4<f32>(world_b, uv_hit.y);
-        probe_ray_data.rays[index].state_u32.w = tri_id_local;
-        probe_ray_data.rays[index].state_u32.x = prim_store;
+        probe_ray_data.rays[index].hit_distance = stored_t;
+        probe_ray_data.rays[index].prim_store = prim_store;
+        probe_ray_data.rays[index].vertex_index_0 = v0i;
+        probe_ray_data.rays[index].vertex_index_1 = v1i;
+        probe_ray_data.rays[index].vertex_index_2 = v2i;
+        probe_ray_data.rays[index].barycentric_u = u_bc;
+        probe_ray_data.rays[index].barycentric_v = v_bc;
 
         // One-sample NEE visibility test at the primary hit point.
         // We do the expensive shadow trace here (hit pass has BVH bindings),
-        // and the shade pass replays the same light selection to compute the
-        // direct lighting contribution.
+        // and retain only its visible radiance contribution for the shade pass.
         let num_lights = dense_lights_buffer.header.light_count;
         let num_emissive_lights = emissive_lights_buffer.header.light_count;
         let total_light_count = num_lights + num_emissive_lights;
@@ -242,12 +218,11 @@ fn process_primary_ray(
                 let analytic_light_pdf = analytic_bucket_pdf * (1.0 / max(f32(num_lights), 1.0));
                 let analytic_light_scale = 1.0 / max(analytic_light_pdf, 1e-6);
 
-                probe_ray_data.rays[index].nee_light_dir_type = vec4<f32>(shadow_dir, 0.0);
-                probe_ray_data.rays[index].nee_light_radiance = vec4<f32>(
-                    light.color.rgb * light.intensity * attenuation * analytic_light_scale,
-                    0.0
-                );
-                process_shadow_visibility(index, p_world, shadow_dir, shadow_t_max);
+                let nee_radiance =
+                    light.color.rgb * light.intensity * attenuation * analytic_light_scale;
+                if (trace_shadow_visibility(p_world, shadow_dir, shadow_t_max)) {
+                    ddgi_probe_ray_set_radiance(&probe_ray_data.rays[index], nee_radiance);
+                }
             } else {
                 var emissive_pdf = 0.0;
                 let emissive_idx = sample_weighted_emissive_light(
@@ -266,12 +241,11 @@ fn process_primary_ray(
                 let emissive_light_pdf = emissive_bucket_pdf * emissive_pdf;
                 let emissive_light_scale = 1.0 / max(emissive_light_pdf, 1e-6);
 
-                probe_ray_data.rays[index].nee_light_dir_type = vec4<f32>(shadow_dir, 1.0);
-                probe_ray_data.rays[index].nee_light_radiance = vec4<f32>(
-                    emissive_light.radiance_weight.xyz * light_facing * solid_angle_scale * emissive_light_scale,
-                    0.0
-                );
-                process_shadow_visibility(index, p_world, shadow_dir, shadow_t_max);
+                let nee_radiance =
+                    emissive_light.radiance_weight.xyz * light_facing * solid_angle_scale * emissive_light_scale;
+                if (trace_shadow_visibility(p_world, shadow_dir, shadow_t_max)) {
+                    ddgi_probe_ray_set_radiance(&probe_ray_data.rays[index], nee_radiance);
+                }
             }
         }
     }
@@ -284,15 +258,22 @@ fn process_primary_ray(
 fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let active_ray_count = probe_ray_data.header.active_ray_count;
 
-    if (gid.x >= active_ray_count || probe_ray_data.rays[gid.x].state_u32.y == 0u) {
+    if (gid.x >= active_ray_count) {
         return;
     }
 
-    let probe_index = probe_ray_data.rays[gid.x].meta_u32.x;
-    let ray_index_in_probe = probe_ray_data.rays[gid.x].meta_u32.y;
+    let rays_per_probe = ddgi_max_rays_per_probe(&ddgi_params);
+    let probe_slot = gid.x / rays_per_probe;
+    let ray_index_in_probe = gid.x - probe_slot * rays_per_probe;
+    let probe_index = probe_update_indices[probe_slot];
     let probe_position = ddgi_probe_world_position_from_index(&ddgi_params, probe_index);
 
-    let ray_dir = probe_ray_data.rays[gid.x].ray_dir_prim.xyz;
+    let ray_dir = ddgi_probe_ray_direction(
+        &ddgi_params,
+        probe_index,
+        ray_index_in_probe,
+        rays_per_probe
+    );
     process_primary_ray(gid.x, probe_position, ray_dir, probe_index, ray_index_in_probe);
 }
 

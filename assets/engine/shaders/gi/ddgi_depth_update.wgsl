@@ -9,9 +9,10 @@
 
 @group(1) @binding(0) var<uniform> ddgi_params: DDGIParams;
 @group(1) @binding(1) var<storage, read> probe_ray_data: DDGIProbeRayDataBufferReadOnlyHeader;
-@group(1) @binding(2) var<storage, read> probe_history_valid: array<f32>;
-@group(1) @binding(3) var<storage, read_write> probe_depth_moments: array<u32>;
-@group(1) @binding(4) var<storage, read> probe_depth_slots: array<u32>;
+@group(1) @binding(2) var<storage, read> probe_update_indices: array<u32>;
+@group(1) @binding(3) var<storage, read> probe_history_valid: array<f32>;
+@group(1) @binding(4) var<storage, read_write> probe_depth_moments: array<u32>;
+@group(1) @binding(5) var<storage, read> probe_depth_slots: array<u32>;
 
 const DDGI_VISIBILITY_HYSTERESIS = 0.985;
 const DDGI_LARGE_GEOMETRY_CHANGE_SPACING_FRACTION = 0.5;
@@ -38,7 +39,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
 
     let ray_base = probe_slot * rays_per_probe;
-    let probe_index = probe_ray_data.rays[ray_base].meta_u32.x;
+    let probe_index = probe_update_indices[probe_slot];
 
     let depth_slot = ddgi_depth_slot_for_probe(&probe_depth_slots, probe_index);
     if (depth_slot == INVALID_IDX) {
@@ -70,12 +71,12 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         for (var ray_i = 0u; ray_i < rays_per_probe; ray_i = ray_i + 1u) {
             let ray_index = ray_base + ray_i;
             let hit = probe_ray_data.rays[ray_index];
-            if (ddgi_depth_texel_for_direction(hit.ray_dir_prim.xyz, depth_res) != texel_idx) {
+            if (ddgi_depth_texel_for_direction(ddgi_probe_ray_stored_direction(hit), depth_res) != texel_idx) {
                 continue;
             }
 
-            let t_raw = hit.hit_pos_t.w;
-            let is_valid_hit = hit.state_u32.w != INVALID_IDX;
+            let t_raw = hit.hit_distance;
+            let is_valid_hit = hit.prim_store != INVALID_IDX;
             let t_sample = min(select(miss_distance, abs(t_raw), is_valid_hit), miss_distance);
             t_sum += t_sample;
             t2_sum += t_sample * t_sample;
