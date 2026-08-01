@@ -147,7 +147,7 @@ export const UIContext = {
   /**
    * Global input state must be updated externally by event handlers.
    * x, y are current mouse coordinates; pressed is true while the mouse button is down.
-   * wasClicked is toggled true for one frame after mouse–up.
+   * clicked is true for the frame in which the primary pointer action occurs.
    */
   input_state: {
     x: 0,
@@ -156,7 +156,7 @@ export const UIContext = {
     prev_y: 0,
     depth: 200,
     pressed: false,
-    was_clicked: false,
+    clicked: false,
     world_position: null, // assume this is a vec3 from a math library
     wheel: 0,
   },
@@ -1971,6 +1971,7 @@ export function image(config = {}) {
  * @param {object} config - Configuration for appearance and initial value.
  *   placeholder: Optional placeholder text shown while the value is empty.
  *   placeholder_color: Optional color override for the placeholder text.
+ *   blur_on_click_away: Remove focus when a click lands outside the field.
  *
  * @returns {object} The updated state { value, isFocused }.
  */
@@ -2036,14 +2037,18 @@ export function input(name, config = {}) {
 
   const font = config.font || "14px sans-serif";
 
-  // Hit testing: if clicked, mark this widget as focused.
+  // Hit testing: clicks can focus the field or optionally blur it when they land elsewhere.
   const hovered =
     input_state.x >= x &&
     input_state.x <= x + width &&
     input_state.y >= y &&
     input_state.y <= y + height;
-  if (hovered && input_state.was_clicked) {
-    field_state.is_focused = true;
+  if (input_state.clicked) {
+    if (hovered) {
+      field_state.is_focused = true;
+    } else if (config.blur_on_click_away) {
+      field_state.is_focused = false;
+    }
   }
 
   if (field_state.is_focused) {
