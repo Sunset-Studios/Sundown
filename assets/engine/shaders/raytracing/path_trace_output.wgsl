@@ -23,6 +23,7 @@ struct PathTracerParams {
     samples_per_pixel: u32,
     sample_index: u32,
     sampling_tile_width: u32,
+    max_accumulation_frames: u32,
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -79,6 +80,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         // Increment sample count ONLY for traced pixels, by samples_per_pixel
         // ─────────────────────────────────────────────────────────────────────────
         path_state[pixel_index].rng_sample_count.y += f32(pt_params.samples_per_pixel);
+        path_state[pixel_index].rng_sample_count.z += 1.0;
 
         // ─────────────────────────────────────────────────────────────────────────
         // Compute progressive average and remodulate with primary albedo

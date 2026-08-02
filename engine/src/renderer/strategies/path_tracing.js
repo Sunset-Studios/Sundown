@@ -136,6 +136,7 @@ export class PathTracingStrategy {
   max_bounces = 4;
   trace_rate = 64; // 1=full res, 2=half, 4=quarter, etc.
   samples_per_pixel = 1; // Number of samples per pixel per frame
+  max_accumulation_frames = 1; // Infinite keeps progressive accumulation enabled
 
   setup(render_graph) {
     this.path_tracer = new PathTracer();
@@ -169,11 +170,26 @@ export class PathTracingStrategy {
    * @param {number} params.max_bounces - Maximum number of bounces
    * @param {number} params.trace_rate - Trace rate (1=full res, 2=half, 4=quarter)
    * @param {number} params.samples_per_pixel - Samples per pixel per frame
+   * @param {number} params.max_accumulation_frames - Maximum temporal frames to retain, or Infinity
    */
   set_parameters(params) {
     if (params.max_bounces !== undefined) this.max_bounces = params.max_bounces;
     if (params.trace_rate !== undefined) this.trace_rate = params.trace_rate;
     if (params.samples_per_pixel !== undefined) this.samples_per_pixel = params.samples_per_pixel;
+    if (params.max_accumulation_frames !== undefined) {
+      const max_accumulation_frames = params.max_accumulation_frames;
+      if (
+        max_accumulation_frames !== Infinity &&
+        (!Number.isInteger(max_accumulation_frames) ||
+          max_accumulation_frames < 1 ||
+          max_accumulation_frames > 0xffffffff)
+      ) {
+        throw new RangeError(
+          "max_accumulation_frames must be a positive uint32 integer or Infinity"
+        );
+      }
+      this.max_accumulation_frames = max_accumulation_frames;
+    }
   }
 
   _draw_internal(render_graph) {
@@ -544,7 +560,8 @@ export class PathTracingStrategy {
           main_smra_image,     // G-buffer SMRA
           main_motion_emissive_image,   // G-buffer motion and emissive
           entity_index_lookup,
-          this.force_recreate
+          this.force_recreate,
+          this.max_accumulation_frames
         );
       }
 

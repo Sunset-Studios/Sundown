@@ -92,7 +92,7 @@ const path_tracer_output_shader_setup = {
 export class PathTracer extends RayTracer {
   // ─────────────────────────────────────────────────────────────────────────
   // Parameters buffer layout:
-  // [max_bounces, reset_accum, use_gbuffer, trace_rate, sampling_frame, samples_per_pixel, sample_index, sampling_tile_width]
+  // [max_bounces, reset_accum, use_gbuffer, trace_rate, sampling_frame, samples_per_pixel, sample_index, sampling_tile_width, max_accumulation_frames]
   // ─────────────────────────────────────────────────────────────────────────
   params = new Uint32Array([
     0, // max_bounces
@@ -103,6 +103,7 @@ export class PathTracer extends RayTracer {
     1, // samples_per_pixel
     0, // sample_index
     1, // sampling_tile_width
+    0, // max_accumulation_frames (0 = infinite)
   ]);
   frame_phase = 0;
 
@@ -139,8 +140,20 @@ export class PathTracer extends RayTracer {
     gbuffer_smra = null,
     gbuffer_emissive = null,
     entity_index_lookup = null,
-    force_recreate = false
+    force_recreate = false,
+    max_accumulation_frames = Infinity
   ) {
+    if (
+      max_accumulation_frames !== Infinity &&
+      (!Number.isInteger(max_accumulation_frames) ||
+        max_accumulation_frames < 1 ||
+        max_accumulation_frames > 0xffffffff)
+    ) {
+      throw new RangeError(
+        "max_accumulation_frames must be a positive uint32 integer or Infinity"
+      );
+    }
+
     super.setup(render_graph, width, height, force_recreate);
 
     const num_bounce_passes = max_bounces;
@@ -258,6 +271,8 @@ export class PathTracer extends RayTracer {
           this.params[5] = samples_per_pixel;
           this.params[6] = sample_idx;
           this.params[7] = sampling_grid.tile_width;
+          this.params[8] =
+            max_accumulation_frames === Infinity ? 0 : max_accumulation_frames;
           params_buffer.write_raw(this.params);
         }
       );

@@ -3044,7 +3044,7 @@ export class SponzaScene extends Scene {
     const ground_entity = spawn_mesh_entity(
       [0, 0, 0],
       quat.fromEuler(quat.create(), 0, 0, 0),
-      [500, 1.0, 500],
+      [50, 1.0, 50],
       cube_mesh,
       ground_material_id
     );

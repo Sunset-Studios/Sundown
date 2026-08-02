@@ -37,6 +37,7 @@ struct PathTracerParams {
     samples_per_pixel: u32,
     sample_index: u32,
     sampling_tile_width: u32,
+    max_accumulation_frames: u32,
 };
 
 struct PathState {

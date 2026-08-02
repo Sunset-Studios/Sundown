@@ -21,6 +21,7 @@ struct PathTracerParams {
     samples_per_pixel: u32,    // Number of samples per pixel per frame
     sample_index: u32,         // Current sample index (0 to samples_per_pixel-1)
     sampling_tile_width: u32,
+    max_accumulation_frames: u32, // 0 = infinite progressive accumulation
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -37,7 +38,7 @@ struct PathState {
     shadow_direction: vec4<f32>,       // xyz = shadow ray direction, w = t_max
     shadow_radiance: vec4<f32>,        // rgb = potential light contribution, a = needs_trace
     path_weight: vec4<f32>,            // xyz = current path throughput, w = unused
-    rng_sample_count: vec4<f32>,       // x = rng state, y = sample count, zw = unused
+    rng_sample_count: vec4<f32>,       // x = rng state, y = sample count, z = accumulated frame count
     accumulated_radiance: vec4<f32>,   // xyz = total accumulated radiance (demodulated), w = unused
     primary_albedo: vec4<f32>,         // xyz = primary hit albedo for demodulation, w = unused
 };
@@ -171,6 +172,25 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         
         path_state[pixel_index].rng_sample_count = vec4<f32>(f32(rng_seed), 0.0, 0.0, 0.0);
         path_state[pixel_index].accumulated_radiance = vec4<f32>(0.0);
+    }
+
+    // Bound the temporal history before adding this frame. Scaling the stored
+    // sum and its sample count together preserves the current average while
+    // giving the new frame exactly one frame of weight in the bounded history.
+    if (
+        should_trace_this_pixel &&
+        pt_params.sample_index == 0u &&
+        pt_params.max_accumulation_frames != 0u
+    ) {
+        let accumulated_frame_count = path_state[pixel_index].rng_sample_count.z;
+        let max_frame_count = f32(pt_params.max_accumulation_frames);
+        if (accumulated_frame_count >= max_frame_count) {
+            let retained_frame_count = max_frame_count - 1.0;
+            let history_scale = retained_frame_count / max(accumulated_frame_count, 1.0);
+            path_state[pixel_index].rng_sample_count.y *= history_scale;
+            path_state[pixel_index].rng_sample_count.z = retained_frame_count;
+            path_state[pixel_index].accumulated_radiance *= history_scale;
+        }
     }
     
     // ─────────────────────────────────────────────────────────────────────────

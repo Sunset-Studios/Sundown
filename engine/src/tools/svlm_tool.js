@@ -25,7 +25,7 @@ const stats_panel_config = {
   gap: 6,
   y: 24,
   x: 24,
-  anchor_x: "right",
+  anchor_x: "left",
   dont_consume_cursor_events: true,
   background_color: panel_surface,
   width: 640,
