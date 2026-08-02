@@ -553,6 +553,7 @@ export class DeferredShadingStrategy {
         object_instances,
         meshlet_instances,
         entity_index_lookup,
+        entity_flags,
         meshlet_buffer,
         force_recreate: this.force_recreate,
       });
@@ -574,7 +575,7 @@ export class DeferredShadingStrategy {
           object_instances,
           source_meshlet_list: frustum_meshlet_list,
           source_meshlet_draw_args: frustum_meshlet_draw_args,
-          buckets: visibility_all_buckets,
+          buckets: visibility_shader_buckets,
           stage_name: "frustum",
           force_recreate: this.force_recreate,
         });

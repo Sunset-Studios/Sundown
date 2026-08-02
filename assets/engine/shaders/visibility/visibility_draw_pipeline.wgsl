@@ -101,9 +101,11 @@ fn build_depth_vertex_output(vi: u32, ii: u32) -> DepthVertexOutput {
 
     var output: DepthVertexOutput;
     output.position = vec4<f32>(-2.0, -2.0, 1.0, 1.0);
+#ifndef OPAQUE_DEPTH_ONLY
     output.uv = vec2<f32>(0.0);
     output.entity_id = INVALID_IDX;
     output.section_index = 0u;
+#endif
 
     if (triangle_index >= meshlet.triangle_count) {
         return output;
@@ -122,8 +124,6 @@ fn build_depth_vertex_output(vi: u32, ii: u32) -> DepthVertexOutput {
     let entity_resolved = entity_index_lookup[entity_row];
     let transform = entity_transforms[entity_resolved].transform;
 
-    let section_index = u32(max(vertex_section_index(vertex_buffer[global_vertex_index]), 0.0));
-
     let world_position = vec4<f32>(select(
         transform * vertex_position4(vertex_buffer[global_vertex_index]),
         billboard_vertex_local(
@@ -134,9 +134,11 @@ fn build_depth_vertex_output(vi: u32, ii: u32) -> DepthVertexOutput {
     ).xyz, 1.0);
 
     output.position = view_buffer[u32(frame_info.view_index)].view_projection_matrix * world_position;
+#ifndef OPAQUE_DEPTH_ONLY
     output.uv = vertex_uv(vertex_buffer[global_vertex_index]);
     output.entity_id = entity_resolved;
-    output.section_index = section_index;
+    output.section_index = u32(max(vertex_section_index(vertex_buffer[global_vertex_index]), 0.0));
+#endif
 
     return output;
 }

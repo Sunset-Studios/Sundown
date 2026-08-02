@@ -257,6 +257,20 @@ function merge_define_domains(target_domains, source_domains) {
   }
 }
 
+function merge_define_families(base_family, additional_family) {
+  const merged_family = create_define_family();
+  merge_define_domains(merged_family.required_domains, base_family.required_domains);
+  merge_define_domains(merged_family.required_domains, additional_family.required_domains);
+  merge_define_domains(merged_family.optional_domains, base_family.optional_domains);
+  merge_define_domains(merged_family.optional_domains, additional_family.optional_domains);
+
+  for (const key of merged_family.required_domains.keys()) {
+    merged_family.optional_domains.delete(key);
+  }
+
+  return merged_family;
+}
+
 function sort_values(values) {
   return [...values].sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)));
 }
@@ -987,6 +1001,7 @@ function discover_requested_shader_variants(source_roots, referenced_shader_path
   const variants_by_path = new Map();
   const referenced_shader_path_set = new Set(referenced_shader_paths);
   const material_shader_paths = new Set();
+  const material_families_by_path = new Map();
   const generic_material_families = [];
   const source_files = list_all_source_files(source_roots);
 
@@ -1011,6 +1026,10 @@ function discover_requested_shader_variants(source_roots, referenced_shader_path
       }
 
       material_shader_paths.add(usage.shader_path);
+      if (!material_families_by_path.has(usage.shader_path)) {
+        material_families_by_path.set(usage.shader_path, []);
+      }
+      material_families_by_path.get(usage.shader_path).push(usage.family);
       add_variant_family_to_paths(variants_by_path, [usage.shader_path], usage.family, true);
     }
 
@@ -1037,6 +1056,17 @@ function discover_requested_shader_variants(source_roots, referenced_shader_path
   for (const shader_path of material_shader_paths) {
     for (const family of generic_material_families) {
       add_variant_family_to_paths(variants_by_path, [shader_path], family, true);
+
+      // MaterialTemplate defines and its generic Shader.create pass defines coexist
+      // at runtime, so the archive must cook their cross-product as the same variant.
+      for (const material_family of material_families_by_path.get(shader_path) ?? []) {
+        add_variant_family_to_paths(
+          variants_by_path,
+          [shader_path],
+          merge_define_families(material_family, family),
+          true
+        );
+      }
     }
   }
 

@@ -111,8 +111,10 @@ struct ObjectInstance {
     batch: u32,
     row: u32,
     visibility_bucket: u32,
-    padding: u32,
+    flags: u32,
 };
+
+const OIF_DOUBLE_SIDED: u32 = 1u;
 
 struct DrawCommand {
     index_count: u32,

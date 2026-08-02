@@ -784,7 +784,13 @@ export class Mesh {
     const std = StandardMaterial.create(
       mat_name,
       {},
-      { family, raster_state: { cull_mode: "none" } }
+      {
+        family,
+        alpha_masked: alpha_mode === "MASK",
+        raster_state: {
+          cull_mode: mat.doubleSided ? "none" : "back",
+        },
+      }
     );
     std.set_alpha_cutoff(alpha_cutoff);
 

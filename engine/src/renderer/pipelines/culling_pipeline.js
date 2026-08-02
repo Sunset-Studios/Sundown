@@ -177,6 +177,7 @@ export class CullingPipeline {
       object_instances,
       meshlet_instances,
       entity_index_lookup,
+      entity_flags,
       meshlet_buffer,
       force_recreate,
     }
@@ -258,6 +259,7 @@ export class CullingPipeline {
             object_instances,
             meshlet_instances,
             entity_index_lookup,
+            entity_flags,
             meshlet_buffer,
             meshlet_frustum_params,
             frustum_meshlet_list,

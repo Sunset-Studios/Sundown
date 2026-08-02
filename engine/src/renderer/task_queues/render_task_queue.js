@@ -25,6 +25,9 @@ export const RenderWorkKind = {
 
 const initial_buffer_size = 1024;
 const max_frame_buffer_writes = 100000;
+// Mirrored by OIF_DOUBLE_SIDED in common_types.wgsl. Packing this into the existing
+// fourth word keeps meshlet cone culling allocation- and bandwidth-neutral.
+const object_instance_flag_double_sided = 1 << 0;
 
 class IndirectDrawBatch {
   mesh_id = 0;
@@ -37,6 +40,7 @@ class IndirectDrawBatch {
   index_count = 0;
   base_vertex = 0;
   base_instance = 0;
+  object_instance_flags = 0;
 }
 
 class VisibilityShaderBucket {
@@ -63,6 +67,7 @@ class ObjectInstanceEntry {
     this.meshlet_count = 0;
     this.meshlet_group_offset = 0;
     this.meshlet_group_count = 0;
+    this.flags = 0;
   }
 }
 
@@ -238,7 +243,7 @@ export class ObjectInstanceBuffer {
               this.object_instance_data[i] = object_instances[offset].batch_index;
               this.object_instance_data[i + 1] = object_instances[offset].row;
               this.object_instance_data[i + 2] = object_instances[offset].visibility_bucket_id;
-              this.object_instance_data[i + 3] = 0;
+              this.object_instance_data[i + 3] = object_instances[offset].flags;
             }
             this.object_instance_buffer.write_raw(
               this.object_instance_data,
@@ -901,6 +906,11 @@ export class IndexedMeshQueueLane {
     batch.first_index = section.first_index;
     batch.index_count = section.index_count;
     batch.base_vertex = mesh.vertex_buffer_offset;
+    const material = ResourceCache.get().fetch(CacheTypes.MATERIAL, task.material_id);
+    batch.object_instance_flags =
+      material?.template?.pipeline_state_config?.rasterizer_state?.cull_mode === "none"
+        ? object_instance_flag_double_sided
+        : 0;
 
     batch.entities.length = 1;
     batch.entities[0] = task.entity;
@@ -991,6 +1001,7 @@ export class IndexedMeshQueueLane {
             entry.meshlet_count = meshlet_section.meshlet_count;
             entry.meshlet_group_offset = meshlet_section.meshlet_group_offset;
             entry.meshlet_group_count = meshlet_section.meshlet_group_count;
+            entry.flags = batch.object_instance_flags;
             context.object_instances.push(entry);
             context.add_meshlet_instances(meshlet_section.meshlet_count);
           }

@@ -1,12 +1,18 @@
 #include "common.wgsl"
 #include "visibility/visibility_common.wgsl"
 
+#if OPAQUE_DEPTH_ONLY
+struct DepthVertexOutput {
+    @builtin(position) @invariant position: vec4<f32>,
+};
+#else
 struct DepthVertexOutput {
     @builtin(position) @invariant position: vec4<f32>,
     @location(0) uv: vec2<f32>,
     @location(1) @interpolate(flat) entity_id: u32,
     @location(2) @interpolate(flat) section_index: u32,
 };
+#endif
 
 struct RasterVertexOutput {
     @builtin(position) @invariant position: vec4<f32>,

@@ -5,6 +5,8 @@
 
 #include "visibility/visibility_draw_base.wgsl"
 
+// Opaque visibility/depth variants intentionally expose no material bind group.
+// Only masked and transparent geometry needs albedo coverage before resolve.
 #if MESHLET_RESOLVE_PASS
 @group(2) @binding(0) var<storage, read> material_params: array<StandardMaterialParams>;
 @group(2) @binding(1) var<storage, read> material_table_offset: array<u32>;
@@ -18,18 +20,61 @@
 @group(2) @binding(9) var texture_pool_specular: texture_2d_array<f32>;
 @group(2) @binding(10) var texture_pool_emission: texture_2d_array<f32>;
 #else
+#if ALPHA_MASKED
 @group(2) @binding(0) var<storage, read> material_params: array<StandardMaterialParams>;
 @group(2) @binding(1) var<storage, read> material_table_offset: array<u32>;
 @group(2) @binding(2) var<storage, read> material_palette: array<u32>;
 @group(2) @binding(3) var texture_pool_albedo: texture_2d_array<f32>;
 #endif
+#if TRANSPARENT
+@group(2) @binding(0) var<storage, read> material_params: array<StandardMaterialParams>;
+@group(2) @binding(1) var<storage, read> material_table_offset: array<u32>;
+@group(2) @binding(2) var<storage, read> material_palette: array<u32>;
+@group(2) @binding(3) var texture_pool_albedo: texture_2d_array<f32>;
+#endif
+#endif
 
+#if MESHLET_RESOLVE_PASS
 fn resolve_material(entity_id: u32, section_index: u32) -> StandardMaterialParams {
     let entity_palette_offset = material_table_offset[entity_id];
     let material_id = material_palette[entity_palette_offset + section_index];
     return material_params[material_id];
 }
+#else
+#if ALPHA_MASKED
+fn resolve_material(entity_id: u32, section_index: u32) -> StandardMaterialParams {
+    let entity_palette_offset = material_table_offset[entity_id];
+    let material_id = material_palette[entity_palette_offset + section_index];
+    return material_params[material_id];
+}
+#endif
+#if TRANSPARENT
+fn resolve_material(entity_id: u32, section_index: u32) -> StandardMaterialParams {
+    let entity_palette_offset = material_table_offset[entity_id];
+    let material_id = material_palette[entity_palette_offset + section_index];
+    return material_params[material_id];
+}
+#endif
+#endif
 
+#if ALPHA_MASKED
+fn fragment_mask(entity_id: u32, section_index: u32, uv: vec2<f32>) -> f32 {
+    let material = resolve_material(entity_id, section_index);
+    let base_uv = uv * material.emission_roughness_metallic_tiling.w;
+    let albedo_lod = compute_lod_from_uv(base_uv, vec2<f32>(textureDimensions(texture_pool_albedo).xy));
+    let albedo = sample_texture_or_vec4_param_handle(
+        u32(material.albedo_handle),
+        base_uv,
+        material.albedo,
+        u32(material.texture_flags1.x),
+        texture_pool_albedo,
+        albedo_lod
+    );
+    return albedo.a - material.ao_height_specular.w;
+}
+#endif
+
+#if TRANSPARENT
 fn fragment_mask(entity_id: u32, section_index: u32, uv: vec2<f32>) -> f32 {
     let material = resolve_material(entity_id, section_index);
     let base_uv = uv * material.emission_roughness_metallic_tiling.w;
@@ -44,15 +89,33 @@ fn fragment_mask(entity_id: u32, section_index: u32, uv: vec2<f32>) -> f32 {
     );
     return albedo.a;
 }
+#endif
 
 fn depth_fragment_mask(input: DepthVertexOutput) -> f32 {
+#if ALPHA_MASKED
     return fragment_mask(input.entity_id, input.section_index, input.uv);
+#else
+#if TRANSPARENT
+    return fragment_mask(input.entity_id, input.section_index, input.uv);
+#else
+    return 1.0;
+#endif
+#endif
 }
 
 fn raster_fragment_mask(input: RasterVertexOutput) -> f32 {
+#if ALPHA_MASKED
     return fragment_mask(input.entity_id, input.section_index, input.uv);
+#else
+#if TRANSPARENT
+    return fragment_mask(input.entity_id, input.section_index, input.uv);
+#else
+    return 1.0;
+#endif
+#endif
 }
 
+#if TRANSPARENT
 fn forward_fragment(
     input: RasterVertexOutput,
     f_out: ptr<function, ForwardFragmentOutput>
@@ -70,6 +133,7 @@ fn forward_fragment(
     );
     return *f_out;
 }
+#endif
 
 fn resolve_fragment(
     input: ResolveFragmentInput,

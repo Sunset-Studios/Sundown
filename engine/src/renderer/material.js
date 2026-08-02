@@ -801,18 +801,79 @@ export class StandardMaterial {
   static create(name, params = {}, options = {}, template = null) {
     if (!template) {
       const family = options.family !== undefined ? options.family : MaterialFamilyType.Opaque;
+      const alpha_masked = options.alpha_masked === true;
+      const no_cull = options.raster_state?.cull_mode === "none";
+      const transparent = family === MaterialFamilyType.Transparent;
 
-      // TODO: Need a better way to handle these kinds of template permutations.
-      if (options.raster_state?.cull_mode == "none") {
-        MaterialTemplate.create("StandardMaterial_NoCull", "visibility/visibility_draw_standard.wgsl", family, {
-          rasterizer_state: {
-            cull_mode: "none",
+      // Keep opaque depth variants free of material bindings and interpolants. Masked
+      // materials pay for alpha coverage only when their glTF/material semantics require it.
+      if (alpha_masked && no_cull) {
+        MaterialTemplate.create(
+          "StandardMaterial_Masked_NoCull",
+          "visibility/visibility_draw_standard.wgsl",
+          family,
+          {
+            rasterizer_state: {
+              cull_mode: "none",
+            },
           },
-        });
-        template = `StandardMaterial_NoCull`;
+          null,
+          { ALPHA_MASKED: true }
+        );
+        template = "StandardMaterial_Masked_NoCull";
+      } else if (alpha_masked) {
+        MaterialTemplate.create(
+          "StandardMaterial_Masked",
+          "visibility/visibility_draw_standard.wgsl",
+          family,
+          {},
+          null,
+          { ALPHA_MASKED: true }
+        );
+        template = "StandardMaterial_Masked";
+      } else if (transparent && no_cull) {
+        MaterialTemplate.create(
+          "StandardMaterial_NoCull",
+          "visibility/visibility_draw_standard.wgsl",
+          family,
+          {
+            rasterizer_state: {
+              cull_mode: "none",
+            },
+          }
+        );
+        template = "StandardMaterial_NoCull";
+      } else if (transparent) {
+        MaterialTemplate.create(
+          "StandardMaterial",
+          "visibility/visibility_draw_standard.wgsl",
+          family
+        );
+        template = "StandardMaterial";
+      } else if (no_cull) {
+        MaterialTemplate.create(
+          "StandardMaterial_NoCull",
+          "visibility/visibility_draw_standard.wgsl",
+          family,
+          {
+            rasterizer_state: {
+              cull_mode: "none",
+            },
+          },
+          null,
+          { OPAQUE_DEPTH_ONLY: true }
+        );
+        template = "StandardMaterial_NoCull";
       } else {
-        MaterialTemplate.create("StandardMaterial", "visibility/visibility_draw_standard.wgsl", family);
-        template = `StandardMaterial`;
+        MaterialTemplate.create(
+          "StandardMaterial",
+          "visibility/visibility_draw_standard.wgsl",
+          family,
+          {},
+          null,
+          { OPAQUE_DEPTH_ONLY: true }
+        );
+        template = "StandardMaterial";
       }
     }
 

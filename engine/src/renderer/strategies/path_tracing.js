@@ -408,6 +408,7 @@ export class PathTracingStrategy {
         object_instances,
         meshlet_instances,
         entity_index_lookup,
+        entity_flags,
         meshlet_buffer,
         force_recreate: this.force_recreate,
       });
