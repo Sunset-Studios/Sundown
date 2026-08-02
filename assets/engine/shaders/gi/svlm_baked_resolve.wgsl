@@ -240,6 +240,16 @@ fn svlm_read_probe_sh(probe_index: u32) -> SH_L1_RGB {
     return sh_l1_rgb_unpack(packed);
 }
 
+fn svlm_probe_is_valid(probe_index: u32) -> bool {
+    let base = probe_index * SVLM_SH_WORDS_PER_PROBE;
+    return !(
+        irradiance_probes[base] == SVLM_INVALID_PROBE_WORD_0 &&
+        (irradiance_probes[base + 1u] &
+            SVLM_INVALID_PROBE_WORD_1_MASK) ==
+            SVLM_INVALID_PROBE_WORD_1_VALUE
+    );
+}
+
 struct SVLMCoarseSample {
     irradiance: SH_L1_RGB,
     validity: f32,
@@ -348,6 +358,20 @@ fn svlm_sample_coarse_lod(position: vec3<f32>, lod: u32) -> SVLMCoarseSample {
     );
 }
 
+fn svlm_sample_coarse_from_lod(
+    position: vec3<f32>,
+    first_lod: u32,
+    max_lod: u32
+) -> SVLMCoarseSample {
+    for (var lod = first_lod; lod <= max_lod; lod = lod + 1u) {
+        let sample = svlm_sample_coarse_lod(position, lod);
+        if (sample.validity > 0.5 || lod == max_lod) {
+            return sample;
+        }
+    }
+    return SVLMCoarseSample(sh_l1_rgb_zero(), 0.0, max_lod);
+}
+
 fn svlm_sample_coarse(position: vec3<f32>) -> SVLMCoarseSample {
     let min_lod = u32(max(svlm_params.coarse_min_lod, 1.0));
     let max_lod = u32(max(svlm_params.coarse_max_lod, f32(min_lod)));
@@ -357,19 +381,58 @@ fn svlm_sample_coarse(position: vec3<f32>) -> SVLMCoarseSample {
         svlm_params.world_tile_size * svlm_params.streaming_radius,
         svlm_params.world_tile_size
     );
+    let camera_distance = distance(position, camera_position);
     let distance_lod = u32(max(
-        floor(log2(max(distance(position, camera_position) / fine_extent, 1.0))),
+        floor(log2(max(camera_distance / fine_extent, 1.0))),
         0.0
     ));
     let desired_lod = min(min_lod + distance_lod, max_lod);
-
-    for (var lod = desired_lod; lod <= max_lod; lod = lod + 1u) {
-        let sample = svlm_sample_coarse_lod(position, lod);
-        if (sample.validity > 0.5 || lod == max_lod) {
-            return sample;
-        }
+    let fine_sample = svlm_sample_coarse_from_lod(
+        position,
+        desired_lod,
+        max_lod
+    );
+    if (
+        fine_sample.validity <= 0.5 ||
+        fine_sample.lod != desired_lod ||
+        desired_lod >= max_lod
+    ) {
+        return fine_sample;
     }
-    return SVLMCoarseSample(sh_l1_rgb_zero(), 0.0, max_lod);
+
+    let coarse_sample = svlm_sample_coarse_from_lod(
+        position,
+        desired_lod + 1u,
+        max_lod
+    );
+    if (coarse_sample.validity <= 0.5) {
+        return fine_sample;
+    }
+
+    // Every coarse shell doubles both its reach and its transition width. This
+    // extends the fine-to-coarse crossfade across the full hierarchy instead
+    // of snapping at the logarithmic distance boundaries after the first LOD.
+    let cascade_scale = exp2(f32(distance_lod + 1u));
+    let outer_distance = fine_extent * cascade_scale;
+    let transition_distance =
+        svlm_params.streaming_transition_tiles *
+        svlm_params.world_tile_size *
+        cascade_scale;
+    let inner_distance = max(outer_distance - transition_distance, 0.0);
+    let coarse_weight = smoothstep(
+        inner_distance,
+        max(outer_distance, inner_distance + 0.0001),
+        camera_distance
+    );
+    return SVLMCoarseSample(
+        sh_l1_rgb_lerp(
+            fine_sample.irradiance,
+            coarse_sample.irradiance,
+            coarse_weight
+        ),
+        1.0,
+        fine_sample.lod
+    );
 }
 
 fn svlm_sh_multiply_add(
@@ -431,6 +494,7 @@ fn svlm_sample_leaf_sh(
     );
     let probe_fraction = probe_grid_position - vec3<f32>(probe_base_coord);
     var result = sh_l1_rgb_zero();
+    var weight_sum = 0.0;
 
     for (
         var corner = 0u;
@@ -448,6 +512,9 @@ fn svlm_sample_leaf_sh(
             coord.x +
             coord.y * 4u +
             coord.z * 16u;
+        if (!svlm_probe_is_valid(probe_index)) {
+            continue;
+        }
         let weight_axis = select(
             vec3<f32>(1.0) - probe_fraction,
             probe_fraction,
@@ -462,9 +529,13 @@ fn svlm_sample_leaf_sh(
             svlm_read_probe_sh(probe_index),
             weight
         );
+        weight_sum += weight;
     }
 
-    return result;
+    if (weight_sum <= 1e-6) {
+        return sh_l1_rgb_zero();
+    }
+    return sh_l1_rgb_multiply_scalar(result, 1.0 / weight_sum);
 }
 
 // Returns (coordinate just across the nearest boundary, neighbor weight).

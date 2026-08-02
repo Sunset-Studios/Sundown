@@ -105,7 +105,7 @@ fn svlm_trace_primary_ray(ray_index: u32) {
     let record = ray_data.rays[ray_index];
     let probe_position = record.hit_payload_t.xyz;
     let direction = record.ray_direction.xyz;
-    let max_ray_distance = max(bitcast<f32>(record.meta_u32.w), 1.0);
+    let max_ray_distance = max(bitcast<f32>(record.state_u32.y), 1.0);
 
     var ray: Ray;
     ray.origin_and_tmin = vec4<f32>(probe_position + direction * 0.001, 0.0);
@@ -194,9 +194,10 @@ fn svlm_trace_primary_ray(ray_index: u32) {
     }
 
     var rng = hash(
-        record.meta_u32.x ^
-        (record.meta_u32.y * 0xa24baeddu) ^
-        (record.meta_u32.z * 0x9e3779b9u)
+        (ray_data.header.probe_cursor +
+            ray_index / max(ray_data.header.rays_per_probe, 1u)) ^
+        ((ray_index % max(ray_data.header.rays_per_probe, 1u)) * 0xa24baeddu) ^
+        (ray_data.header.sample_index * 0x9e3779b9u)
     );
     rng = random_seed(rng);
     let emissive_bucket_pdf =
@@ -225,12 +226,11 @@ fn svlm_trace_primary_ray(ray_index: u32) {
         let light_pdf =
             analytic_bucket_pdf / max(f32(analytic_count), 1.0);
 
-        ray_data.rays[ray_index].nee_light_radiance = vec4<f32>(
+        ray_data.rays[ray_index].nee_light_radiance = svlm_pack_ray_radiance(
             light.color.rgb *
             light.intensity *
             attenuation /
-            max(light_pdf, 1e-6),
-            0.0
+            max(light_pdf, 1e-6)
         );
         svlm_process_shadow_visibility(
             ray_index,
@@ -259,12 +259,11 @@ fn svlm_trace_primary_ray(ray_index: u32) {
     let solid_angle_scale = light.normal_area.w / distance_squared;
     let light_pdf = emissive_bucket_pdf * emissive_pdf;
 
-    ray_data.rays[ray_index].nee_light_radiance = vec4<f32>(
+    ray_data.rays[ray_index].nee_light_radiance = svlm_pack_ray_radiance(
         light.radiance_weight.xyz *
         light_facing *
         solid_angle_scale /
-        max(light_pdf, 1e-6),
-        0.0
+        max(light_pdf, 1e-6)
     );
     svlm_process_shadow_visibility(
         ray_index,
@@ -281,8 +280,7 @@ fn svlm_trace_primary_ray(ray_index: u32) {
 fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     if (
         gid.x >= ray_data.header.active_ray_count ||
-        gid.x >= arrayLength(&ray_data.rays) ||
-        ray_data.rays[gid.x].state_u32.y == 0u
+        gid.x >= arrayLength(&ray_data.rays)
     ) {
         return;
     }

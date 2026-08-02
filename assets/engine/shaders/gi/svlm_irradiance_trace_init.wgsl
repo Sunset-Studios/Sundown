@@ -9,6 +9,11 @@
 @group(1) @binding(3) var<storage, read_write> ray_data: SVLMProbeRayDataBuffer;
 
 const SVLM_GOLDEN_RATIO_CONJUGATE = 0.6180339887498948;
+const SVLM_TRACE_INIT_WORKGROUP_SIZE = 128u;
+
+var<workgroup> probe_position_shared: vec3<f32>;
+var<workgroup> probe_rotation_shared: mat3x3<f32>;
+var<workgroup> probe_valid_shared: u32;
 
 fn svlm_fibonacci_sphere_direction(
     ray_index: u32,
@@ -31,11 +36,22 @@ fn svlm_fibonacci_sphere_direction(
 }
 
 fn svlm_probe_ray_direction(
-    probe_position: vec3<f32>,
     ray_index: u32,
     ray_count: u32,
-    sample_index: u32
+    rotation: mat3x3<f32>
 ) -> vec3<f32> {
+    let local_direction = svlm_fibonacci_sphere_direction(
+        ray_index,
+        ray_count,
+        0.0
+    );
+    return rotation * local_direction;
+}
+
+fn svlm_probe_ray_rotation(
+    probe_position: vec3<f32>,
+    sample_index: u32
+) -> mat3x3<f32> {
     let position_seed =
         bitcast<u32>(probe_position.x) ^
         (bitcast<u32>(probe_position.y) * 0x9e3779b9u) ^
@@ -59,16 +75,21 @@ fn svlm_probe_ray_direction(
         sin(phi) * radius_xy,
         z
     );
-    let local_direction = svlm_fibonacci_sphere_direction(
-        ray_index,
-        ray_count,
-        rotation_01
+    let basis = orthonormalize(rotation_axis);
+    let phase = 2.0 * PI * rotation_01;
+    let phase_rotation = mat3x3<f32>(
+        vec3<f32>(cos(phase), sin(phase), 0.0),
+        vec3<f32>(-sin(phase), cos(phase), 0.0),
+        vec3<f32>(0.0, 0.0, 1.0)
     );
-    return orthonormalize(rotation_axis) * local_direction;
+    return basis * phase_rotation;
 }
 
 @compute @workgroup_size(128, 1, 1)
-fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn cs(
+    @builtin(workgroup_id) workgroup_id: vec3<u32>,
+    @builtin(local_invocation_index) local_index: u32
+) {
     let rays_per_probe = max(1u, u32(svlm_params.irradiance_rays_per_probe));
     let probes_per_batch = max(
         1u,
@@ -93,56 +114,73 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         sample_index >= target_sample_count
     );
 
-    if (gid.x == 0u) {
+    if (workgroup_id.x == 0u && local_index == 0u) {
         atomicStore(
             &ray_data.header.active_ray_count,
             active_probe_count * rays_per_probe
         );
+        ray_data.header.rays_per_probe = rays_per_probe;
+        ray_data.header.probe_cursor = cursor;
+        ray_data.header.sample_index = sample_index;
     }
 
-    let ray_index = gid.x;
-    if (ray_index >= active_probe_count * rays_per_probe) {
-        return;
-    }
-
-    let probe_slot = ray_index / rays_per_probe;
-    let ray_index_in_probe = ray_index % rays_per_probe;
+    let probe_slot = workgroup_id.x;
     let probe_index = cursor + probe_slot;
     let leaf_index = probe_index / SVLM_PROBES_PER_BRICK;
     let local_probe_index = probe_index % SVLM_PROBES_PER_BRICK;
-    if (leaf_index >= arrayLength(&leaf_bricks)) {
+
+    if (local_index == 0u) {
+        probe_valid_shared = 0u;
+        if (
+            probe_slot < active_probe_count &&
+            leaf_index < arrayLength(&leaf_bricks)
+        ) {
+            probe_position_shared = svlm_probe_position(
+                leaf_bricks[leaf_index],
+                local_probe_index
+            );
+            probe_rotation_shared = svlm_probe_ray_rotation(
+                probe_position_shared,
+                sample_index
+            );
+            probe_valid_shared = 1u;
+        }
+    }
+    // Storage-buffer counts are conservatively non-uniform in WGSL. Keep the
+    // barrier outside that control flow, then let invalid workgroups retire.
+    workgroupBarrier();
+    if (probe_valid_shared == 0u) {
         return;
     }
 
-    if (ray_index >= arrayLength(&ray_data.rays)) {
-        return;
+    var ray_index_in_probe = local_index;
+    loop {
+        if (ray_index_in_probe >= rays_per_probe) {
+            break;
+        }
+        let ray_index = probe_slot * rays_per_probe + ray_index_in_probe;
+        if (ray_index >= arrayLength(&ray_data.rays)) {
+            break;
+        }
+        let direction = svlm_probe_ray_direction(
+            ray_index_in_probe,
+            rays_per_probe,
+            probe_rotation_shared
+        );
+
+        ray_data.rays[ray_index].hit_payload_t = vec4<f32>(
+            probe_position_shared,
+            0.0
+        );
+        ray_data.rays[ray_index].ray_direction = vec4<f32>(direction, 0.0);
+        ray_data.rays[ray_index].nee_light_radiance = vec2<u32>(0u);
+        ray_data.rays[ray_index].radiance = vec2<u32>(0u);
+        ray_data.rays[ray_index].state_u32 = vec4<u32>(
+            INVALID_IDX,
+            bitcast<u32>(max(svlm_params.irradiance_max_ray_distance, 1.0)),
+            0u,
+            INVALID_IDX
+        );
+        ray_index_in_probe += SVLM_TRACE_INIT_WORKGROUP_SIZE;
     }
-
-    let probe_position = svlm_probe_position(
-        leaf_bricks[leaf_index],
-        local_probe_index
-    );
-    let direction = svlm_probe_ray_direction(
-        probe_position,
-        ray_index_in_probe,
-        rays_per_probe,
-        sample_index
-    );
-
-    ray_data.rays[ray_index].hit_payload_t = vec4<f32>(probe_position, 0.0);
-    ray_data.rays[ray_index].ray_direction = vec4<f32>(direction, 0.0);
-    ray_data.rays[ray_index].nee_light_radiance = vec4<f32>(0.0);
-    ray_data.rays[ray_index].state_u32 = vec4<u32>(
-        INVALID_IDX,
-        1u,
-        0u,
-        INVALID_IDX
-    );
-    ray_data.rays[ray_index].radiance = vec4<f32>(0.0, 0.0, 0.0, 1.0);
-    ray_data.rays[ray_index].meta_u32 = vec4<u32>(
-        probe_index,
-        ray_index_in_probe,
-        sample_index,
-        bitcast<u32>(max(svlm_params.irradiance_max_ray_distance, 1.0))
-    );
 }

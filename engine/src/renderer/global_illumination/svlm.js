@@ -30,7 +30,7 @@ import {
 
 const PROBES_PER_BRICK = 64;
 const SH_WORDS_PER_PROBE = 6;
-const PROBE_RAY_U32_STRIDE = 24;
+const PROBE_RAY_U32_STRIDE = 16;
 const NODE_U32_STRIDE = 7;
 const LEAF_U32_STRIDE = 6;
 const TILED_LOOKUP_U32_STRIDE = 8;
@@ -462,7 +462,7 @@ export class SparseVolumetricLightmapper {
     irradiance_max_ray_distance: 100000.0,
     max_emissive_lights: 32768,
     world_tile_size: 25.0,
-    streaming_radius: 2,
+    streaming_radius: 4,
     streaming_hysteresis: 1,
     streaming_prefetch_tiles: 1,
     streaming_max_requests: 32,
@@ -2596,7 +2596,9 @@ export class SparseVolumetricLightmapper {
         (graph, frame_data) => {
           graph
             .get_physical_pass(frame_data.current_pass)
-            .dispatch(ceil_div(probes_per_batch * rays_per_probe, THREADS_PER_GROUP), 1, 1);
+            // One workgroup owns a probe and amortizes its position and random
+            // rotation setup across every ray in the spherical sample set.
+            .dispatch(probes_per_batch, 1, 1);
         }
       );
 

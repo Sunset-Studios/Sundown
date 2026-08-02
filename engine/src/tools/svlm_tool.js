@@ -175,6 +175,23 @@ function progress_row(label_text, progress, detail_text, color = accent) {
   );
 }
 
+function format_eta(seconds) {
+  if (!Number.isFinite(seconds) || seconds < 0) return "Estimating ETA";
+
+  const remaining_seconds = Math.max(0, Math.ceil(seconds));
+  if (remaining_seconds < 60) return `ETA ${remaining_seconds}s`;
+
+  const remaining_minutes = Math.floor(remaining_seconds / 60);
+  const seconds_part = remaining_seconds % 60;
+  if (remaining_minutes < 60) {
+    return `ETA ${remaining_minutes}m ${seconds_part}s`;
+  }
+
+  const remaining_hours = Math.floor(remaining_minutes / 60);
+  const minutes_part = remaining_minutes % 60;
+  return `ETA ${remaining_hours}h ${minutes_part}m`;
+}
+
 function parse_bake_options(args) {
   const options = {};
 
@@ -261,7 +278,12 @@ export class SVLMTool extends DevConsoleTool {
   scene = null;
   bake_save_serial = 0;
   bake_status = "idle";
-  save_progress = 0;
+  bake_eta_started_at = 0;
+  bake_eta_completed_at_start = 0;
+  bake_eta_required_probe_samples = 0;
+  bake_eta_last_completed_probe_samples = 0;
+  bake_eta_seconds = Number.NaN;
+  bake_eta_updated_at = 0;
 
   update(delta_time) {
     if (!this.is_open) return;
@@ -283,7 +305,7 @@ export class SVLMTool extends DevConsoleTool {
           break;
         }
         this.bake_status = "loading";
-        this.save_progress = 0;
+        this._reset_bake_eta();
         this.show();
         void this._bake_and_save(svlm, bake_options, this.scene, bake_save_serial);
         break;
@@ -309,7 +331,7 @@ export class SVLMTool extends DevConsoleTool {
       case "clear":
         this.bake_save_serial++;
         this.bake_status = "idle";
-        this.save_progress = 0;
+        this._reset_bake_eta();
         svlm.clear();
         break;
       case "stats":
@@ -335,22 +357,15 @@ export class SVLMTool extends DevConsoleTool {
 
       svlm.bake(bake_options);
       this.bake_status = "baking";
+      this._reset_bake_eta();
       await svlm.serialize_bake_tiles();
       if (bake_save_serial !== this.bake_save_serial) return;
 
       this.bake_status = "saving";
-      this.save_progress = 0;
-      const result = await scene.save_scene_data({
-        on_progress: (progress) => {
-          if (bake_save_serial === this.bake_save_serial) {
-            this.save_progress = progress;
-          }
-        },
-      });
+      const result = await scene.save_scene_data();
       if (bake_save_serial !== this.bake_save_serial) return;
 
       this.bake_status = "ready";
-      this.save_progress = 1;
       log(
         `SVLM bake completed and saved to '${result.asset_path}' (${format_number(
           result.byte_length
@@ -361,6 +376,73 @@ export class SVLMTool extends DevConsoleTool {
       this.bake_status = "error";
       error("SVLM bake or scene-data save failed:", save_error);
     }
+  }
+
+  _reset_bake_eta() {
+    this.bake_eta_started_at = 0;
+    this.bake_eta_completed_at_start = 0;
+    this.bake_eta_required_probe_samples = 0;
+    this.bake_eta_last_completed_probe_samples = 0;
+    this.bake_eta_seconds = Number.NaN;
+    this.bake_eta_updated_at = 0;
+  }
+
+  _estimate_bake_eta(stats) {
+    const required_probe_samples = Math.max(
+      0,
+      Number(stats.irradiance_required_probe_samples) || 0
+    );
+    const completed_probe_samples = Math.max(
+      0,
+      Math.min(
+        required_probe_samples,
+        Number(stats.irradiance_completed_probe_samples) || 0
+      )
+    );
+
+    if (required_probe_samples <= 0 || completed_probe_samples >= required_probe_samples) {
+      return completed_probe_samples >= required_probe_samples && required_probe_samples > 0
+        ? 0
+        : Number.NaN;
+    }
+
+    const now = performance.now();
+    const workload_changed =
+      this.bake_eta_required_probe_samples !== required_probe_samples ||
+      completed_probe_samples < this.bake_eta_completed_at_start;
+    if (this.bake_eta_started_at <= 0 || workload_changed) {
+      this.bake_eta_started_at = now;
+      this.bake_eta_completed_at_start = completed_probe_samples;
+      this.bake_eta_required_probe_samples = required_probe_samples;
+      this.bake_eta_last_completed_probe_samples = completed_probe_samples;
+      this.bake_eta_seconds = Number.NaN;
+      this.bake_eta_updated_at = 0;
+      return Number.NaN;
+    }
+
+    const elapsed_seconds = (now - this.bake_eta_started_at) / 1000;
+    const completed_since_start =
+      completed_probe_samples - this.bake_eta_completed_at_start;
+    if (elapsed_seconds < 1 || completed_since_start <= 0) {
+      return Number.NaN;
+    }
+
+    if (completed_probe_samples > this.bake_eta_last_completed_probe_samples) {
+      const probe_samples_per_second = completed_since_start / elapsed_seconds;
+      const measured_eta_seconds =
+        (required_probe_samples - completed_probe_samples) / probe_samples_per_second;
+      const previous_eta_seconds = Number.isFinite(this.bake_eta_seconds)
+        ? Math.max(0, this.bake_eta_seconds - (now - this.bake_eta_updated_at) / 1000)
+        : Number.NaN;
+      this.bake_eta_seconds = Number.isFinite(previous_eta_seconds)
+        ? previous_eta_seconds * 0.75 + measured_eta_seconds * 0.25
+        : measured_eta_seconds;
+      this.bake_eta_last_completed_probe_samples = completed_probe_samples;
+      this.bake_eta_updated_at = now;
+    }
+
+    if (!Number.isFinite(this.bake_eta_seconds)) return Number.NaN;
+    return Math.max(0, this.bake_eta_seconds - (now - this.bake_eta_updated_at) / 1000);
   }
 
   render() {
@@ -445,36 +527,20 @@ export class SVLMTool extends DevConsoleTool {
       if (bake_active) {
         section_header("Bake progress");
         if (this.bake_status === "loading") {
-          progress_row("Scene data", null, "Loading existing package", secondary_accent);
+          progress_row("Bake", null, "Preparing scene data", secondary_accent);
         } else if (this.bake_status === "saving") {
+          progress_row("Bake", 1, "Complete · Saving package", accent);
+        } else if ((stats.irradiance_required_probe_samples || 0) <= 0) {
+          progress_row("Bake", null, "Preparing bake workload", secondary_accent);
+        } else {
+          const bake_progress = Math.max(0, Math.min(1, stats.irradiance_progress || 0));
+          const eta_text = format_eta(this._estimate_bake_eta(stats));
           progress_row(
-            "Scene package",
-            this.save_progress,
-            `${(this.save_progress * 100).toFixed(1)}% uploaded`,
+            "Bake",
+            bake_progress,
+            `${(bake_progress * 100).toFixed(1)}% · ${eta_text}`,
             accent
           );
-        } else if (stats.bake_tile_count <= 0) {
-          progress_row("Hierarchy", null, "Preparing world tiles", secondary_accent);
-        } else {
-          const completed_tiles = Math.min(stats.bake_tile_index, stats.bake_tile_count);
-          progress_row(
-            "World tiles",
-            completed_tiles / stats.bake_tile_count,
-            `${format_number(completed_tiles)} / ${format_number(stats.bake_tile_count)} tiles`,
-            secondary_accent
-          );
-
-          const completed_probe_samples = stats.irradiance_completed_probe_samples || 0;
-          const required_probe_samples = stats.irradiance_required_probe_samples || 0;
-          const irradiance_detail =
-            stats.irradiance_allocation_pending && required_probe_samples <= 0
-              ? "Allocating probe storage"
-              : required_probe_samples > 0
-                ? `${format_number(
-                    completed_probe_samples
-                  )} / ${format_number(required_probe_samples)} samples`
-                : `${(stats.irradiance_progress * 100).toFixed(1)}%`;
-          progress_row("Irradiance", stats.irradiance_progress, irradiance_detail, accent);
         }
       }
 
@@ -637,7 +703,7 @@ export class SVLMTool extends DevConsoleTool {
     if (scene !== this.scene) {
       this.bake_save_serial++;
       this.bake_status = "idle";
-      this.save_progress = 0;
+      this._reset_bake_eta();
     }
     this.scene = scene;
   }

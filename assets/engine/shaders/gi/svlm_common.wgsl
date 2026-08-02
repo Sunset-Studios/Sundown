@@ -12,12 +12,20 @@ const SVLM_FLAG_LEAF = 1u << 3u;
 
 const SVLM_PROBES_PER_BRICK = 64u;
 const SVLM_SH_WORDS_PER_PROBE = 6u;
+// Inside-geometry probes use signed-zero L0 coefficients as a backward-safe
+// validity marker. Numerically this remains black for older consumers, while
+// current resolve code can exclude it from spatial interpolation.
+const SVLM_INVALID_PROBE_WORD_0 = 0x80008000u;
+const SVLM_INVALID_PROBE_WORD_1_MASK = 0x0000ffffu;
+const SVLM_INVALID_PROBE_WORD_1_VALUE = 0x00008000u;
 
 // Status bits are sticky for a bake. The JS owner reads them back and can queue
 // a larger GPU allocation without forcing fallback CPU construction.
 const SVLM_STATUS_NODE_OVERFLOW = 1u << 0u;
 const SVLM_STATUS_LEAF_OVERFLOW = 1u << 1u;
 const SVLM_STATUS_ROOT_OVERFLOW = 1u << 2u;
+
+const SVLM_MAX_RADIANCE_LUMINANCE = 10.0;
 
 // Counter layout mirrors the JS readback indices exactly: slots 0..7 are build
 // counters, 8..23 are split counts, 24..39 are level counts, 40..43 track the
@@ -62,27 +70,28 @@ struct SVLMLeafBrick {
 
 // Compact transient ray record. hit_payload_t stores the probe origin during
 // tracing; after a hit, xyz become UV/section and w becomes signed hit distance.
+// Radiance is kept at the same f16 precision as the final packed SH artifact,
+// cutting scratch bandwidth and allowing 50% more rays in the fixed bake pool.
 struct SVLMProbeRayData {
     hit_payload_t: vec4<f32>,
     ray_direction: vec4<f32>,
-    nee_light_radiance: vec4<f32>,
+    nee_light_radiance: vec2<u32>,
+    radiance: vec2<u32>,
     state_u32: vec4<u32>,
-    radiance: vec4<f32>,
-    meta_u32: vec4<u32>,
 };
 
 struct SVLMProbeRayDataHeader {
     active_ray_count: atomic<u32>,
-    _pad0: u32,
-    _pad1: u32,
-    _pad2: u32,
+    rays_per_probe: u32,
+    probe_cursor: u32,
+    sample_index: u32,
 };
 
 struct SVLMProbeRayDataHeaderReadOnly {
     active_ray_count: u32,
-    _pad0: u32,
-    _pad1: u32,
-    _pad2: u32,
+    rays_per_probe: u32,
+    probe_cursor: u32,
+    sample_index: u32,
 };
 
 struct SVLMProbeRayDataBuffer {
@@ -173,6 +182,24 @@ struct SVLMBlasStats {
     min_distance: f32,
     occupied_volume: f32,
 };
+
+fn svlm_pack_ray_radiance(value: vec3<f32>) -> vec2<u32> {
+    let clamped = safe_clamp_vec3_max(
+        value,
+        SVLM_MAX_RADIANCE_LUMINANCE
+    );
+    return vec2<u32>(
+        pack2x16float(clamped.xy),
+        pack2x16float(vec2<f32>(clamped.z, 0.0))
+    );
+}
+
+fn svlm_unpack_ray_radiance(value: vec2<u32>) -> vec3<f32> {
+    return vec3<f32>(
+        unpack2x16float(value.x),
+        unpack2x16float(value.y).x
+    );
+}
 
 fn svlm_root_dims(params: ptr<storage, SVLMParams, read_write>) -> vec3<u32> {
     return vec3<u32>(

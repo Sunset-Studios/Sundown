@@ -18,8 +18,6 @@
 
 const SVLM_EMISSIVE_HIT_LUMA_SOFT_CAP = 2.0;
 const SVLM_EMISSIVE_HIT_OVERFLOW_SCALE = 0.1;
-const SVLM_MAX_RADIANCE_LUMINANCE = 10.0;
-
 fn svlm_stabilize_emissive_radiance(value: vec3<f32>) -> vec3<f32> {
     let clamped = safe_clamp_vec3_max(
         value,
@@ -40,8 +38,7 @@ fn svlm_stabilize_emissive_radiance(value: vec3<f32>) -> vec3<f32> {
 fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     if (
         gid.x >= ray_data.header.active_ray_count ||
-        gid.x >= arrayLength(&ray_data.rays) ||
-        ray_data.rays[gid.x].state_u32.y == 0u
+        gid.x >= arrayLength(&ray_data.rays)
     ) {
         return;
     }
@@ -49,7 +46,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
     let hit = ray_data.rays[gid.x];
     let direction = hit.ray_direction.xyz;
     if (hit.hit_payload_t.w < 0.0) {
-        ray_data.rays[gid.x].radiance = vec4<f32>(0.0, 0.0, 0.0, 1.0);
+        ray_data.rays[gid.x].radiance = vec2<u32>(0u);
         return;
     }
 
@@ -65,16 +62,15 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
             scene_lighting_data,
             skybox_texture
         );
-        ray_data.rays[gid.x].radiance = vec4<f32>(
-            safe_clamp_vec3_max(environment, SVLM_MAX_RADIANCE_LUMINANCE),
-            1.0
+        ray_data.rays[gid.x].radiance = svlm_pack_ray_radiance(
+            environment
         );
         return;
     }
 
     let prim_store = hit.state_u32.x;
     if (prim_store >= arrayLength(&entity_index_lookup)) {
-        ray_data.rays[gid.x].radiance = vec4<f32>(0.0, 0.0, 0.0, 1.0);
+        ray_data.rays[gid.x].radiance = vec2<u32>(0u);
         return;
     }
     let entity_index = entity_index_lookup[prim_store];
@@ -82,19 +78,19 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         entity_index == INVALID_IDX ||
         entity_index >= arrayLength(&material_table_offset)
     ) {
-        ray_data.rays[gid.x].radiance = vec4<f32>(0.0, 0.0, 0.0, 1.0);
+        ray_data.rays[gid.x].radiance = vec2<u32>(0u);
         return;
     }
 
     let section_index = u32(hit.hit_payload_t.z);
     let palette_base = material_table_offset[entity_index];
     if (palette_base + section_index >= arrayLength(&material_palette)) {
-        ray_data.rays[gid.x].radiance = vec4<f32>(0.0, 0.0, 0.0, 1.0);
+        ray_data.rays[gid.x].radiance = vec2<u32>(0u);
         return;
     }
     let material_index = material_palette[palette_base + section_index];
     if (material_index >= arrayLength(&material_params)) {
-        ray_data.rays[gid.x].radiance = vec4<f32>(0.0, 0.0, 0.0, 1.0);
+        ray_data.rays[gid.x].radiance = vec2<u32>(0u);
         return;
     }
     let material = material_params[material_index];
@@ -120,7 +116,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
 
     let visibility = select(0.0, 1.0, hit.state_u32.z == 1u);
     var radiance = safe_clamp_vec3_max(
-        hit.nee_light_radiance.xyz * visibility,
+        svlm_unpack_ray_radiance(hit.nee_light_radiance) * visibility,
         SVLM_MAX_RADIANCE_LUMINANCE
     );
     // Match DDGI's NEE seed convention. The hit pass has already selected and
@@ -134,8 +130,5 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
             emission * max(albedo, vec3<f32>(0.0))
         );
     }
-    ray_data.rays[gid.x].radiance = vec4<f32>(
-        safe_clamp_vec3_max(radiance, SVLM_MAX_RADIANCE_LUMINANCE),
-        1.0
-    );
+    ray_data.rays[gid.x].radiance = svlm_pack_ray_radiance(radiance);
 }

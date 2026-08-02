@@ -53,6 +53,17 @@ function copy_array_buffer(payload) {
 const half_conversion_buffer = new ArrayBuffer(4);
 const half_conversion_float = new Float32Array(half_conversion_buffer);
 const half_conversion_uint = new Uint32Array(half_conversion_buffer);
+const svlm_invalid_probe_word_0 = 0x80008000;
+const svlm_invalid_probe_word_1_mask = 0x0000ffff;
+const svlm_invalid_probe_word_1_value = 0x00008000;
+
+function is_invalid_svlm_probe(words, word_offset) {
+  return (
+    words[word_offset] === svlm_invalid_probe_word_0 &&
+    (words[word_offset + 1] & svlm_invalid_probe_word_1_mask) ===
+      svlm_invalid_probe_word_1_value
+  );
+}
 
 function float_to_half(value) {
   half_conversion_float[0] = Number(value);
@@ -148,26 +159,30 @@ export function create_svlm_coarse_tile_sample(tile) {
   const probe_count = irradiance.length / svlm_tile_irradiance_words_per_probe;
   const coefficients = new Float64Array(12);
   const unpacked = new Float64Array(12);
+  let valid_probe_count = 0;
   for (let probe = 0; probe < probe_count; probe++) {
+    const word_offset = probe * svlm_tile_irradiance_words_per_probe;
+    if (is_invalid_svlm_probe(irradiance, word_offset)) continue;
     unpack_svlm_probe(
       irradiance,
-      probe * svlm_tile_irradiance_words_per_probe,
+      word_offset,
       unpacked
     );
     for (let coefficient = 0; coefficient < coefficients.length; coefficient++) {
       const value = unpacked[coefficient];
       if (Number.isFinite(value)) coefficients[coefficient] += value;
     }
+    valid_probe_count++;
   }
 
-  const inverse_probe_count = 1 / Math.max(1, probe_count);
+  const inverse_probe_count = 1 / Math.max(1, valid_probe_count);
   for (let coefficient = 0; coefficient < coefficients.length; coefficient++) {
     coefficients[coefficient] *= inverse_probe_count;
   }
   return {
     coord: [...require_tile_coord(tile.coord)],
     lod: 0,
-    weight: Math.max(1, probe_count),
+    weight: Math.max(1, valid_probe_count),
     irradiance: pack_svlm_probe(coefficients),
   };
 }
