@@ -18,7 +18,11 @@
 @group(1) @binding(10) var<storage, read_write> radiance_info: array<SurfaceCacheRadianceInfo>;
 
 @compute @workgroup_size(128, 1, 1)
-fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn cs(
+    @builtin(global_invocation_id) gid: vec3<u32>,
+    @builtin(local_invocation_index) local_idx: u32,
+) {
+    bvh_stack_lane = local_idx;
     let cell_index = gid.x;
     if (
         cell_index >= counters.active_patch_count ||

@@ -70,6 +70,7 @@ fn cs(
     @builtin(subgroup_invocation_id) lane_id: u32,
     @builtin(subgroup_size) warp_size: u32
 ) {
+    bvh_stack_lane = local_idx;
     let res = textureDimensions(output_tex);
     let pixel_coords = compute_phased_pixel_coords(
         gid.x,

@@ -3001,7 +3001,7 @@ export class SponzaScene extends Scene {
   sway_angle_deg = 120.0;
   sun_light_entity = null;
   sun_light_base_dir = [0, 0, 0];
-  sun_light_intensity_on = 30.0;
+  sun_light_intensity_on = 10.0;
   time_elapsed_sec = 0;
 
   init(parent_context) {
@@ -3023,7 +3023,7 @@ export class SponzaScene extends Scene {
     light_fragment_view.type = LightType.DIRECTIONAL;
     light_fragment_view.color = [0.9, 0.9, 1.0];
     light_fragment_view.intensity = this.sun_light_intensity_on;
-    light_fragment_view.position = [5.0, 20, 2.0];
+    light_fragment_view.position = [0.24, 0.24, 0.1];
     light_fragment_view.active = true;
     light_fragment_view.is_primary_sun = 1;
 

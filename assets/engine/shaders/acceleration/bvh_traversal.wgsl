@@ -14,7 +14,11 @@
 @group(1) @binding(8) var<storage, read> entity_index_lookup: array<u32>;
 
 @compute @workgroup_size(128)
-fn traverse_tlas_bvh(@builtin(global_invocation_id) global_id: vec3<u32>) {
+fn traverse_tlas_bvh(
+    @builtin(global_invocation_id) global_id: vec3<u32>,
+    @builtin(local_invocation_index) local_idx: u32,
+) {
+    bvh_stack_lane = local_idx;
     let ray_count = arrayLength(&rays);
     if (global_id.x >= ray_count) { return; }
 

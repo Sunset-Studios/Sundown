@@ -177,7 +177,11 @@ fn trace_surface_cache_ray(active_index: u32) {
 }
 
 @compute @workgroup_size(128, 1, 1)
-fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn cs(
+    @builtin(global_invocation_id) gid: vec3<u32>,
+    @builtin(local_invocation_index) local_idx: u32,
+) {
+    bvh_stack_lane = local_idx;
     if (gid.x >= counters.active_patch_count) {
         return;
     }

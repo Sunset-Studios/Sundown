@@ -277,7 +277,11 @@ fn svlm_trace_primary_ray(ray_index: u32) {
 }
 
 @compute @workgroup_size(128, 1, 1)
-fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn cs(
+    @builtin(global_invocation_id) gid: vec3<u32>,
+    @builtin(local_invocation_index) local_idx: u32,
+) {
+    bvh_stack_lane = local_idx;
     if (
         gid.x >= ray_data.header.active_ray_count ||
         gid.x >= arrayLength(&ray_data.rays)

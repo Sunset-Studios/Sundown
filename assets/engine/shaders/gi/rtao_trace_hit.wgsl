@@ -58,7 +58,11 @@ fn process_rtao_ray(ray_index: u32) {
 // =============================================================================
 
 @compute @workgroup_size(128, 1, 1)
-fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn cs(
+    @builtin(global_invocation_id) gid: vec3<u32>,
+    @builtin(local_invocation_index) local_idx: u32,
+) {
+    bvh_stack_lane = local_idx;
     let rays_per_pixel = u32(gi_params.screen_ray_count);
     let gi_resolution = vec2<u32>(u32(gi_params.gi_resolution_x), u32(gi_params.gi_resolution_y));
     let total_pixels = gi_resolution.x * gi_resolution.y;

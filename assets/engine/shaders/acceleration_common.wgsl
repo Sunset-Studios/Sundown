@@ -1,9 +1,4 @@
 // ------------------------------------------------------------------------------------
-// Defines
-// ------------------------------------------------------------------------------------
-#define BVH_TRAVERSAL_ORDER_CHILDREN
-
-// ------------------------------------------------------------------------------------
 // Constants
 // ------------------------------------------------------------------------------------
 
@@ -172,17 +167,27 @@ fn intersect_triangle(ray: ptr<function, Ray>, v0: vec3<f32>, v1: vec3<f32>, v2:
     let e2 = v2 - v0;
     let pvec = cross(dir, e2);
     let det  = dot(e1, pvec);
-
-    let one_over_det = 1.0 / det;
     let tvec = orig - v0;
-    let u = dot(tvec, pvec) * one_over_det;
-
     let qvec = cross(tvec, e1);
-    let v = dot(dir, qvec) * one_over_det;
 
-    let t = dot(e2, qvec) * one_over_det;
-    let valid = abs(det) > 0.00001 && t > 0.0001 && u > 0.0 && v > 0.0 && u + v < 1.0;
-    return select(-1.0, t, valid); // Epsilon check
+    // Keep the determinant out of the denominator until the triangle is known to be a hit.
+    // Most BVH leaf candidates miss, so numerator-space rejection avoids their divide and the
+    // three reciprocal-dependent multiplies while preserving double-sided winding behavior.
+    let det_abs = abs(det);
+    let det_sign = select(-1.0, 1.0, det > 0.0);
+    let u_scaled = dot(tvec, pvec) * det_sign;
+    let v_scaled = dot(dir, qvec) * det_sign;
+    let t_scaled = dot(e2, qvec) * det_sign;
+    let valid = det_abs > 0.00001
+        && t_scaled > 0.0001 * det_abs
+        && u_scaled > 0.0
+        && v_scaled > 0.0
+        && u_scaled + v_scaled < det_abs;
+
+    if (!valid) {
+        return -1.0;
+    }
+    return t_scaled / det_abs;
 }
 
 fn build_local_ray(
