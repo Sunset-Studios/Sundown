@@ -4,7 +4,7 @@ export const DDGI_DEFAULT_CONFIG = Object.freeze({
   probe_radius: 0.1,
   max_ray_length: 128.0,
   max_rays_per_probe: 128,
-  probes_per_frame: 32768,
+  probes_per_frame: 4096,
   indirect_boost: 1.0,
   cascade_count: 6,
   cascade_spacing_multiplier: 2.0,

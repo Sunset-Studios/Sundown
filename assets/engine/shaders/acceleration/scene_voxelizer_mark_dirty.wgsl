@@ -59,14 +59,27 @@ fn cs(@builtin(global_invocation_id) global_id: vec3<u32>) {
         return;
     }
 
+    var meshlet_item_index = item_index;
+    if (voxelization_params.scroll_dirty_brick_count != 0u) {
+        if (item_index < voxelization_params.scroll_dirty_brick_count) {
+            let brick_coord = scene_voxelizer_scroll_dirty_brick(
+                item_index,
+                voxelization_params
+            );
+            mark_dirty_brick(scene_voxelizer_brick_index(brick_coord));
+            return;
+        }
+        meshlet_item_index = item_index - voxelization_params.scroll_dirty_brick_count;
+    }
+
     if (
-        item_index >= voxelization_params.meshlet_count ||
-        item_index >= arrayLength(&meshlet_instances)
+        meshlet_item_index >= voxelization_params.meshlet_count ||
+        meshlet_item_index >= arrayLength(&meshlet_instances)
     ) {
         return;
     }
 
-    let instance = meshlet_instances[item_index];
+    let instance = meshlet_instances[meshlet_item_index];
     if (
         instance.object_instance_index >= arrayLength(&object_instances) ||
         instance.meshlet_index >= arrayLength(&meshlets)

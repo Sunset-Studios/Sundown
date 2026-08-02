@@ -8,6 +8,7 @@
 
 @group(1) @binding(0) var<storage, read> dirty_brick_list: array<u32>;
 @group(1) @binding(1) var<storage, read_write> voxel_grid: array<atomic<u32>>;
+@group(1) @binding(2) var<uniform> clipmap_params: SceneVoxelClipmapParams;
 
 // One lane clears one x-aligned eight-voxel row. A brick therefore costs one
 // 64-lane workgroup and never touches neighboring bricks sharing the same word.
@@ -29,9 +30,14 @@ fn cs(
         brick_index / (SCENE_VOXEL_BRICK_DIMENSION * SCENE_VOXEL_BRICK_DIMENSION);
     let local_y = lane_index & 7u;
     let local_z = lane_index >> 3u;
-    let x = brick_x * SCENE_VOXEL_BRICK_SIZE;
-    let y = brick_y * SCENE_VOXEL_BRICK_SIZE + local_y;
-    let z = brick_z * SCENE_VOXEL_BRICK_SIZE + local_z;
+    let voxelization_params = clipmap_params.levels[SCENE_VOXEL_CLIP_LEVEL];
+    let storage_min = scene_voxel_storage_coord(
+        vec3<u32>(brick_x, brick_y, brick_z) * SCENE_VOXEL_BRICK_SIZE,
+        voxelization_params
+    );
+    let x = storage_min.x;
+    let y = storage_min.y + local_y;
+    let z = storage_min.z + local_z;
     let linear_index = x + 256u * (y + 256u * z);
     let word_index =
         scene_voxel_clipmap_leaf_word_offset(SCENE_VOXEL_CLIP_LEVEL) +

@@ -77,3 +77,51 @@ fn scene_voxelizer_brick_index(coord: vec3<u32>) -> u32 {
         SCENE_VOXEL_BRICK_DIMENSION *
         (coord.y + SCENE_VOXEL_BRICK_DIMENSION * coord.z);
 }
+
+// Maps a dense index onto the non-overlapping union of newly exposed x, y, and z
+// slabs. Excluding earlier-axis slabs keeps diagonal scrolling duplicate-free.
+fn scene_voxelizer_scroll_dirty_brick(
+    item_index: u32,
+    voxelization_params: SceneVoxelizationParams
+) -> vec3<u32> {
+    let delta = voxelization_params.scroll_delta_bricks;
+    let delta_abs = vec3<u32>(abs(delta));
+    let retained_extent = vec3<u32>(SCENE_VOXEL_BRICK_DIMENSION) - delta_abs;
+    let retained_min = select(vec3<u32>(0u), delta_abs, delta < vec3<i32>(0));
+    let exposed_min = select(
+        vec3<u32>(0u),
+        vec3<u32>(SCENE_VOXEL_BRICK_DIMENSION) - delta_abs,
+        delta > vec3<i32>(0)
+    );
+
+    let x_slab_count =
+        delta_abs.x * SCENE_VOXEL_BRICK_DIMENSION * SCENE_VOXEL_BRICK_DIMENSION;
+    if (item_index < x_slab_count) {
+        let yz_index = item_index / delta_abs.x;
+        return vec3<u32>(
+            exposed_min.x + item_index % delta_abs.x,
+            yz_index % SCENE_VOXEL_BRICK_DIMENSION,
+            yz_index / SCENE_VOXEL_BRICK_DIMENSION
+        );
+    }
+
+    var slab_index = item_index - x_slab_count;
+    let y_slab_count =
+        retained_extent.x * delta_abs.y * SCENE_VOXEL_BRICK_DIMENSION;
+    if (slab_index < y_slab_count) {
+        let yz_index = slab_index / retained_extent.x;
+        return vec3<u32>(
+            retained_min.x + slab_index % retained_extent.x,
+            exposed_min.y + yz_index % delta_abs.y,
+            yz_index / delta_abs.y
+        );
+    }
+
+    slab_index = slab_index - y_slab_count;
+    let xy_extent = retained_extent.x * retained_extent.y;
+    return vec3<u32>(
+        retained_min.x + slab_index % retained_extent.x,
+        retained_min.y + (slab_index / retained_extent.x) % retained_extent.y,
+        exposed_min.z + slab_index / xy_extent
+    );
+}

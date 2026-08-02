@@ -432,6 +432,22 @@ export class Renderer {
   }
 
   /**
+   * Check if scene voxelization is enabled.
+   * @returns {boolean} - True if scene voxelization is enabled, false otherwise.
+   */
+  is_scene_voxelizer_enabled() {
+    return CVarSystem.get(EngineCVars.Renderer.SceneVoxelizerEnabled, false);
+  }
+
+  /**
+   * Set the scene voxelizer enabled state.
+   * @param {boolean} enabled - True if scene voxelization should be enabled, false otherwise.
+   */
+  set_scene_voxelizer_enabled(enabled) {
+    CVarSystem.set(EngineCVars.Renderer.SceneVoxelizerEnabled, enabled);
+  }
+
+  /**
    * Check if global illumination is enabled
    * @returns {boolean} - True if global illumination is enabled, false otherwise
    */
@@ -867,6 +883,11 @@ export class Renderer {
     );
     this.cvar_unsubscribers.push(
       CVarSystem.subscribe(EngineCVars.Renderer.ShadowsEnabled, () => {
+        refresh_renderer();
+      })
+    );
+    this.cvar_unsubscribers.push(
+      CVarSystem.subscribe(EngineCVars.Renderer.SceneVoxelizerEnabled, () => {
         refresh_renderer();
       })
     );

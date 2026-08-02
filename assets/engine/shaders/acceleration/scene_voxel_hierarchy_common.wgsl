@@ -15,6 +15,10 @@ struct SceneVoxelizationParams {
     dispatch_width: u32,
     resolution: u32,
     flags: u32,
+    storage_offset: vec3<u32>,
+    scroll_dirty_brick_count: u32,
+    scroll_delta_bricks: vec3<i32>,
+    _padding: u32,
 };
 
 struct SceneVoxelClipmapParams {
@@ -78,4 +82,14 @@ fn scene_voxel_hdda_level_word_offset(level: u32) -> u32 {
 
 fn scene_voxel_hdda_linear_index(coord: vec3<u32>, resolution: u32) -> u32 {
     return coord.x + resolution * (coord.y + resolution * coord.z);
+}
+
+// Clip levels are stored as toroidal grids. Advancing this offset preserves every
+// overlapping world-space voxel when the logical camera-centered volume scrolls.
+fn scene_voxel_storage_coord(
+    logical_coord: vec3<u32>,
+    voxelization_params: SceneVoxelizationParams
+) -> vec3<u32> {
+    return (logical_coord + voxelization_params.storage_offset) %
+        vec3<u32>(voxelization_params.resolution);
 }

@@ -308,6 +308,7 @@ export class DeferredShadingStrategy {
       const reflections_enabled = renderer.is_reflection_enabled() && !gi_has_builtin_specular;
       const depth_prepass_enabled = renderer.is_depth_prepass_enabled();
       const taa_enabled = renderer.is_taa_enabled();
+      const scene_voxelizer_enabled = renderer.is_scene_voxelizer_enabled();
 
       SharedViewBuffer.set_temporal_jitter_enabled(taa_enabled);
 
@@ -437,21 +438,24 @@ export class DeferredShadingStrategy {
       // 🎨 RENDERING PIPELINE BEGINS
       // ═══════════════════════════════════════════════════════════════════════════════
 
-      // Snap the camera-centered volume to voxel boundaries so small camera motion does not churn
-      // occupancy, while meshlet bounds reject geometry outside the active volume on the GPU.
-      this.scene_voxelizer_outputs = this.scene_voxelizer.add_passes(render_graph, {
-        grid_origin: this._update_scene_voxel_grid_origin(current_view),
-        meshlet_count: meshlet_draw_count,
-        entity_transforms,
-        entity_flags,
-        object_instances,
-        meshlet_instances,
-        entity_index_lookup,
-        meshlet_buffer,
-        meshlet_vertex_buffer,
-        meshlet_triangle_buffer,
-        force_recreate: this.force_recreate,
-      });
+      this.scene_voxelizer_outputs = null;
+      if (scene_voxelizer_enabled) {
+        // Snap the camera-centered volume to voxel boundaries so small camera motion does not churn
+        // occupancy, while meshlet bounds reject geometry outside the active volume on the GPU.
+        this.scene_voxelizer_outputs = this.scene_voxelizer.add_passes(render_graph, {
+          grid_origin: this._update_scene_voxel_grid_origin(current_view),
+          meshlet_count: meshlet_draw_count,
+          entity_transforms,
+          entity_flags,
+          object_instances,
+          meshlet_instances,
+          entity_index_lookup,
+          meshlet_buffer,
+          meshlet_vertex_buffer,
+          meshlet_triangle_buffer,
+          force_recreate: this.force_recreate,
+        });
+      }
 
       // ┌─────────────────────────────────────────────────────────────────────────────┐
       // │ 🧹 PASS: Init Views                                                         │
@@ -1017,7 +1021,7 @@ export class DeferredShadingStrategy {
         );
       }
 
-      if (debug_view === DebugDrawType.SceneVoxelization) {
+      if (scene_voxelizer_enabled && debug_view === DebugDrawType.SceneVoxelization) {
         scene_voxelizer_debug_image = this.scene_voxelizer.add_debug_passes(render_graph, {
           width: image_extent.width,
           height: image_extent.height,

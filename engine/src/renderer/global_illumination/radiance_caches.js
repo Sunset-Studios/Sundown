@@ -17,6 +17,8 @@ const PROBE_SCHEDULER_PRIORITY_COUNT = 2;
 const MAX_PROBE_CASCADES = 6;
 // Must match the scalar-aligned DDGIProbeRayData layout in ddgi_common.wgsl.
 const PROBE_RAY_DATA_WORD_COUNT = 13;
+// Must match DDGIMSMEProbeStats in ddgi_common.wgsl.
+const PROBE_MSME_STATS_WORD_COUNT = 8;
 const PROBE_COUNTERS_NAME = "probe_volume_gi_counters";
 
 const compute_shader = (path) => ({ pipeline_shaders: { compute: { path } } });
@@ -344,7 +346,7 @@ export class ProbeVolumeRadianceCache extends GIModule {
     });
     this.create_buffer(render_graph, "msme_stats", {
       name: "probe_sh_msme_stats",
-      size: probe_count * 36,
+      size: probe_count * PROBE_MSME_STATS_WORD_COUNT,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
       force: force_recreate,
     });

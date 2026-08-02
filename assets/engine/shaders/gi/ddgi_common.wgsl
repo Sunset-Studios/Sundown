@@ -10,7 +10,7 @@ const DDGI_CASCADE_BLEND_WINDOW_PROBES = 4.0;
 // packed into 6 u32 values using f16 packing for efficient storage.
 const DDGI_SH_PROBE_SIZE_U32 = 6u;    // Size of packed SH L1 RGB in u32 units
 const DDGI_SH_PROBE_SIZE_F32 = 12u;   // Size of unpacked SH L1 RGB in f32 units
-const DDGI_MSME_STATS_SIZE_U32 = 36u; // 9 vec4<f32> records per probe
+const DDGI_MSME_STATS_SIZE_U32 = 8u;  // Packed short SH mean + scalar variance/inconsistency
 
 // Probe states - stored as u32 per probe
 const PROBE_STATE_UNINITIALIZED: u32 = 0u;   // Default - needs classification
@@ -95,15 +95,9 @@ struct ProbeStateData {
 }
 
 struct DDGIMSMEProbeStats {
-    short_mean_c0: vec4<f32>,
-    short_mean_c1: vec4<f32>,
-    short_mean_c2: vec4<f32>,
-    short_mean_c3: vec4<f32>,
-    variance_c0: vec4<f32>,
-    variance_c1: vec4<f32>,
-    variance_c2: vec4<f32>,
-    variance_c3: vec4<f32>,
-    scalars: vec4<f32>, // x=short frames, y=variance, z=inconsistency, w=vbbr
+    short_mean: SH_L1_RGB_Packed,
+    variance: f32,
+    inconsistency: f32,
 }
 
 struct DDGIProbeRayDataHeader {
@@ -158,16 +152,9 @@ fn ddgi_msme_stats_reset(
     stats_buffer: ptr<storage, array<DDGIMSMEProbeStats>, read_write>,
     probe_index: u32
 ) {
-    let zero = vec4<f32>(0.0);
-    stats_buffer[probe_index].short_mean_c0 = zero;
-    stats_buffer[probe_index].short_mean_c1 = zero;
-    stats_buffer[probe_index].short_mean_c2 = zero;
-    stats_buffer[probe_index].short_mean_c3 = zero;
-    stats_buffer[probe_index].variance_c0 = zero;
-    stats_buffer[probe_index].variance_c1 = zero;
-    stats_buffer[probe_index].variance_c2 = zero;
-    stats_buffer[probe_index].variance_c3 = zero;
-    stats_buffer[probe_index].scalars = vec4<f32>(0.0, 0.0, 0.0, 1.0);
+    stats_buffer[probe_index].short_mean = sh_l1_rgb_pack(sh_l1_rgb_zero());
+    stats_buffer[probe_index].variance = 0.0;
+    stats_buffer[probe_index].inconsistency = 0.0;
 }
 
 

@@ -20,7 +20,7 @@ import { RenderPassFlags } from "../renderer/renderer_types.js";
 //     • One occupancy bit per voxel, packed 32 voxels per u32 storage word
 //     • Meshlet-driven conservative compute voxelization
 //     • A 256³ → 32³ → 4³ → 1³ HDDA skip hierarchy within every clip level
-//     • Brick-snapped scrolling with independent rebuild decisions per level
+//     • Brick-snapped toroidal scrolling with exposed-slab updates per level
 //
 // 🔌  RENDER GRAPH CONTRACT:
 //     • begin_frame() resolves frame-local configuration and clears semantic handles
@@ -183,7 +183,7 @@ export const SceneVoxelizerResource = Object.freeze({
 
 const DEFAULT_RESOURCE_PREFIX = "scene_voxelizer";
 const VOXELIZATION_PARAMS_HEADER_WORD_COUNT = 4;
-const VOXELIZATION_LEVEL_PARAMS_WORD_COUNT = 8;
+const VOXELIZATION_LEVEL_PARAMS_WORD_COUNT = 16;
 const VOXELIZATION_PARAMS_WORD_COUNT =
   VOXELIZATION_PARAMS_HEADER_WORD_COUNT +
   VOXELIZATION_LEVEL_PARAMS_WORD_COUNT * SCENE_VOXEL_CLIPMAP_MAX_LEVEL_COUNT;
@@ -345,6 +345,10 @@ export class SceneVoxelizer {
     );
     this.previous_clip_voxel_sizes = new Float64Array(SCENE_VOXEL_CLIPMAP_MAX_LEVEL_COUNT);
     this.previous_clip_voxel_sizes.fill(NaN);
+    this.previous_clip_storage_offsets = Array.from(
+      { length: SCENE_VOXEL_CLIPMAP_MAX_LEVEL_COUNT },
+      () => new Uint32Array(3)
+    );
     this.previous_clipmap_level_count = 0;
     this.previous_meshlet_count = -1;
   }
@@ -408,13 +412,60 @@ export class SceneVoxelizer {
         Math.floor((clip_center[2] - world_extent * 0.5) / scroll_quantum) * scroll_quantum,
       ];
       const previous_origin = this.previous_clip_origins[clip_level];
-      const volume_changed =
-        level_voxel_size !== this.previous_clip_voxel_sizes[clip_level] ||
+      const previous_voxel_size = this.previous_clip_voxel_sizes[clip_level];
+      const voxel_size_changed = level_voxel_size !== previous_voxel_size;
+      const origin_changed =
         grid_origin[0] !== previous_origin[0] ||
         grid_origin[1] !== previous_origin[1] ||
         grid_origin[2] !== previous_origin[2];
+      const scroll_delta_bricks = [0, 0, 0];
+      let scroll_exceeds_volume = false;
+      if (!voxel_size_changed && origin_changed) {
+        for (let axis = 0; axis < 3; axis++) {
+          scroll_delta_bricks[axis] = Math.round(
+            (grid_origin[axis] - previous_origin[axis]) / scroll_quantum
+          );
+          scroll_exceeds_volume ||=
+            Math.abs(scroll_delta_bricks[axis]) >= DIRTY_BRICK_DIMENSION;
+        }
+      }
       const full_rebuild =
-        force_recreate || volume_changed || meshlet_count !== this.previous_meshlet_count;
+        force_recreate ||
+        voxel_size_changed ||
+        scroll_exceeds_volume ||
+        meshlet_count !== this.previous_meshlet_count;
+
+      // A toroidal offset keeps the overlap at the same physical addresses. Camera scrolling then
+      // clears and repopulates only exposed brick slabs instead of revoxelizing the entire level.
+      const previous_storage_offset = this.previous_clip_storage_offsets[clip_level];
+      let storage_offset_x = 0;
+      let storage_offset_y = 0;
+      let storage_offset_z = 0;
+      if (full_rebuild) {
+        previous_storage_offset.fill(0);
+        scroll_delta_bricks.fill(0);
+      } else {
+        storage_offset_x =
+          (previous_storage_offset[0] +
+            scroll_delta_bricks[0] * SCENE_VOXEL_BRICK_RESOLUTION) &
+          (SCENE_VOXEL_GRID_RESOLUTION - 1);
+        storage_offset_y =
+          (previous_storage_offset[1] +
+            scroll_delta_bricks[1] * SCENE_VOXEL_BRICK_RESOLUTION) &
+          (SCENE_VOXEL_GRID_RESOLUTION - 1);
+        storage_offset_z =
+          (previous_storage_offset[2] +
+            scroll_delta_bricks[2] * SCENE_VOXEL_BRICK_RESOLUTION) &
+          (SCENE_VOXEL_GRID_RESOLUTION - 1);
+        previous_storage_offset[0] = storage_offset_x;
+        previous_storage_offset[1] = storage_offset_y;
+        previous_storage_offset[2] = storage_offset_z;
+      }
+      const retained_brick_count =
+        (DIRTY_BRICK_DIMENSION - Math.abs(scroll_delta_bricks[0])) *
+        (DIRTY_BRICK_DIMENSION - Math.abs(scroll_delta_bricks[1])) *
+        (DIRTY_BRICK_DIMENSION - Math.abs(scroll_delta_bricks[2]));
+      const scroll_dirty_brick_count = DIRTY_BRICK_COUNT - retained_brick_count;
 
       clip_levels[clip_level] = {
         clip_level,
@@ -423,6 +474,11 @@ export class SceneVoxelizer {
         world_extent,
         scroll_quantum,
         full_rebuild,
+        storage_offset_x,
+        storage_offset_y,
+        storage_offset_z,
+        scroll_delta_bricks,
+        scroll_dirty_brick_count,
       };
       this.previous_clip_voxel_sizes[clip_level] = level_voxel_size;
       previous_origin.set(grid_origin);
@@ -640,6 +696,11 @@ export class SceneVoxelizer {
         grid_origin: [...level.grid_origin],
         world_extent: level.world_extent,
         scroll_quantum: level.scroll_quantum,
+        storage_offset: [
+          level.storage_offset_x,
+          level.storage_offset_y,
+          level.storage_offset_z,
+        ],
       })) ?? [],
       hdda_level_count: SCENE_VOXEL_HDDA_LEVEL_COUNT,
       hdda_max_level: SCENE_VOXEL_HDDA_MAX_LEVEL,
@@ -822,7 +883,7 @@ export class SceneVoxelizer {
     for (const clip_context of context.clip_levels) {
       const mark_item_count = clip_context.full_rebuild
         ? DIRTY_BRICK_COUNT
-        : context.meshlet_count;
+        : clip_context.scroll_dirty_brick_count + context.meshlet_count;
       const mark_workgroup_count = Math.ceil(mark_item_count / DIRTY_MARK_WORKGROUP_SIZE);
       if (mark_workgroup_count > max_workgroups) {
         throw new Error(
@@ -891,7 +952,7 @@ export class SceneVoxelizer {
       `${this.config.resource_prefix}_clip_${clip_level}_clear_dirty_bricks`,
       RenderPassFlags.Compute,
       {
-        inputs: [dirty_brick_list, voxel_grid, dirty_dispatch_args],
+        inputs: [dirty_brick_list, voxel_grid, voxelization_params, dirty_dispatch_args],
         outputs: [voxel_grid],
         shader_setup: create_scene_voxel_level_shader_setup(
           "acceleration/scene_voxelizer_clear_dirty.wgsl",
@@ -981,6 +1042,7 @@ export class SceneVoxelizer {
 
   _record_finalize_passes(render_graph, context) {
     const voxel_grid = this.get_resource(SceneVoxelizerResource.VoxelGrid);
+    const voxelization_params = this.get_resource(SceneVoxelizerResource.VoxelizationParams);
     const occupancy_hierarchy = this.get_resource(SceneVoxelizerResource.OccupancyHierarchy);
 
     render_graph.add_pass(
@@ -1003,7 +1065,7 @@ export class SceneVoxelizer {
       `${this.config.resource_prefix}_build_brick_occupancy`,
       RenderPassFlags.Compute,
       {
-        inputs: [voxel_grid, occupancy_hierarchy],
+        inputs: [voxel_grid, occupancy_hierarchy, voxelization_params],
         outputs: [occupancy_hierarchy],
         shader_setup: scene_voxel_build_brick_occupancy_shader_setup,
         b_force_keep_pass: true,
@@ -1068,6 +1130,14 @@ export class SceneVoxelizer {
       view.setUint32(byte_offset + 20, compact_workgroup_count, true);
       view.setUint32(byte_offset + 24, SCENE_VOXEL_GRID_RESOLUTION, true);
       view.setUint32(byte_offset + 28, clip_context.full_rebuild ? 1 : 0, true);
+      view.setUint32(byte_offset + 32, clip_context.storage_offset_x, true);
+      view.setUint32(byte_offset + 36, clip_context.storage_offset_y, true);
+      view.setUint32(byte_offset + 40, clip_context.storage_offset_z, true);
+      view.setUint32(byte_offset + 44, clip_context.scroll_dirty_brick_count, true);
+      view.setInt32(byte_offset + 48, clip_context.scroll_delta_bricks[0], true);
+      view.setInt32(byte_offset + 52, clip_context.scroll_delta_bricks[1], true);
+      view.setInt32(byte_offset + 56, clip_context.scroll_delta_bricks[2], true);
+      view.setUint32(byte_offset + 60, 0, true);
     }
   }
 

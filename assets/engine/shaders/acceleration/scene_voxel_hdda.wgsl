@@ -59,11 +59,15 @@ fn scene_voxel_hdda_occupancy(
         return false;
     }
 
-    let linear_index = scene_voxel_hdda_linear_index(
-        vec3<u32>(coord),
-        level_resolution
-    );
     if (hdda_level == 0u) {
+        let storage_coord = scene_voxel_storage_coord(
+            vec3<u32>(coord),
+            params.levels[clip_level]
+        );
+        let linear_index = scene_voxel_hdda_linear_index(
+            storage_coord,
+            level_resolution
+        );
         let word_index =
             scene_voxel_clipmap_leaf_word_offset(clip_level) +
             (linear_index >> 5u);
@@ -71,6 +75,10 @@ fn scene_voxel_hdda_occupancy(
         return (word & (1u << (linear_index & 31u))) != 0u;
     }
 
+    let linear_index = scene_voxel_hdda_linear_index(
+        vec3<u32>(coord),
+        level_resolution
+    );
     let word_index =
         scene_voxel_clipmap_hierarchy_word_offset(clip_level) +
         scene_voxel_hdda_level_word_offset(hdda_level) +

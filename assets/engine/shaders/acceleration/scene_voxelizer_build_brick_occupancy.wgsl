@@ -6,6 +6,7 @@
 
 @group(1) @binding(0) var<storage, read> scene_voxel_grid: array<u32>;
 @group(1) @binding(1) var<storage, read_write> scene_voxel_hierarchy: array<atomic<u32>>;
+@group(1) @binding(2) var<uniform> clipmap_params: SceneVoxelClipmapParams;
 
 const SCENE_VOXEL_BUILD_BRICK_WORKGROUP_SIZE: u32 = 128u;
 
@@ -17,7 +18,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         SCENE_VOXEL_HDDA_LEVEL_1_RESOLUTION *
         SCENE_VOXEL_HDDA_LEVEL_1_RESOLUTION *
         SCENE_VOXEL_HDDA_LEVEL_1_RESOLUTION;
-    if (brick_index >= brick_count || clip_level >= SCENE_VOXEL_CLIPMAP_MAX_LEVEL_COUNT) {
+    if (brick_index >= brick_count || clip_level >= clipmap_params.clip_level_count) {
         return;
     }
 
@@ -27,7 +28,10 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         (brick_index / brick_resolution) % brick_resolution,
         brick_index / (brick_resolution * brick_resolution)
     );
-    let leaf_min = brick_coord * 8u;
+    let leaf_min = scene_voxel_storage_coord(
+        brick_coord * 8u,
+        clipmap_params.levels[clip_level]
+    );
     let x_mask = 0xffu << (leaf_min.x & 31u);
 
     var occupied = false;

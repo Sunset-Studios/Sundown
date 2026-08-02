@@ -7,6 +7,7 @@ export default ({ project }) => {
   const base = {
     [EngineCVars.Renderer.DebugDraw]: "none",
     [EngineCVars.Renderer.DebugTextureLevel]: 0,
+    [EngineCVars.Renderer.SceneVoxelizerEnabled]: false,
   };
 
   if (profile === "mobile") {

@@ -12,6 +12,7 @@ export const EngineCVars = Object.freeze({
     RenderStrategy: "renderer.strategy",
     DepthPrepassEnabled: "renderer.depth_prepass.enabled",
     ShadowsEnabled: "renderer.shadows.enabled",
+    SceneVoxelizerEnabled: "renderer.scene_voxelizer.enabled",
     GIEnabled: "renderer.gi.enabled",
     GIStrategy: "renderer.gi.strategy",
     AOEnabled: "renderer.ao.enabled",
@@ -52,6 +53,12 @@ export const engine_cvar_config = Object.freeze({
       description: "Enables shadow rendering.",
     },
     {
+      name: EngineCVars.Renderer.SceneVoxelizerEnabled,
+      type: CVarType.Boolean,
+      default_value: false,
+      description: "Enables camera-centered scene voxelization.",
+    },
+    {
       name: EngineCVars.Renderer.GIEnabled,
       type: CVarType.Boolean,
       default_value: true,
@@ -65,7 +72,6 @@ export const engine_cvar_config = Object.freeze({
         ddgi: GIStrategyType.DDGI,
         ptgi: GIStrategyType.PTGI,
         svlm: GIStrategyType.SVLM,
-        baked: GIStrategyType.SVLM,
       },
       description: "Selects the global illumination strategy.",
     },

@@ -80,56 +80,19 @@ fn ddgi_sh_l1_rgb_distance_square(a: SH_L1_RGB, b: SH_L1_RGB) -> f32 {
     return max(sum / 12.0, 0.0);
 }
 
-fn ddgi_sh_l1_rgb_component_mean(sh: SH_L1_RGB) -> f32 {
-    var sum = 0.0;
-    for (var c = 0u; c < 4u; c = c + 1u) {
-        sum += sh.c[c].x + sh.c[c].y + sh.c[c].z;
-    }
-    return max(sum / 12.0, 0.0);
-}
-
-fn ddgi_sh_l1_rgb_square_delta(a: SH_L1_RGB, b: SH_L1_RGB) -> SH_L1_RGB {
-    var result: SH_L1_RGB;
-    for (var c = 0u; c < 4u; c = c + 1u) {
-        let d = a.c[c] - b.c[c];
-        result.c[c] = d * d;
-    }
-    return result;
-}
-
 fn ddgi_msme_stats_short_mean(stats: DDGIMSMEProbeStats) -> SH_L1_RGB {
-    var sh: SH_L1_RGB;
-    sh.c[0] = stats.short_mean_c0.xyz;
-    sh.c[1] = stats.short_mean_c1.xyz;
-    sh.c[2] = stats.short_mean_c2.xyz;
-    sh.c[3] = stats.short_mean_c3.xyz;
-    return sh;
-}
-
-fn ddgi_msme_stats_variance(stats: DDGIMSMEProbeStats) -> SH_L1_RGB {
-    var sh: SH_L1_RGB;
-    sh.c[0] = max(stats.variance_c0.xyz, vec3<f32>(0.0));
-    sh.c[1] = max(stats.variance_c1.xyz, vec3<f32>(0.0));
-    sh.c[2] = max(stats.variance_c2.xyz, vec3<f32>(0.0));
-    sh.c[3] = max(stats.variance_c3.xyz, vec3<f32>(0.0));
-    return sh;
+    return sh_l1_rgb_unpack(stats.short_mean);
 }
 
 fn ddgi_msme_stats_write(
     probe_index: u32,
     short_mean: SH_L1_RGB,
-    variance: SH_L1_RGB,
-    scalars: vec4<f32>
+    variance: f32,
+    inconsistency: f32
 ) {
-    probe_msme_stats[probe_index].short_mean_c0 = vec4<f32>(short_mean.c[0], 0.0);
-    probe_msme_stats[probe_index].short_mean_c1 = vec4<f32>(short_mean.c[1], 0.0);
-    probe_msme_stats[probe_index].short_mean_c2 = vec4<f32>(short_mean.c[2], 0.0);
-    probe_msme_stats[probe_index].short_mean_c3 = vec4<f32>(short_mean.c[3], 0.0);
-    probe_msme_stats[probe_index].variance_c0 = vec4<f32>(variance.c[0], 0.0);
-    probe_msme_stats[probe_index].variance_c1 = vec4<f32>(variance.c[1], 0.0);
-    probe_msme_stats[probe_index].variance_c2 = vec4<f32>(variance.c[2], 0.0);
-    probe_msme_stats[probe_index].variance_c3 = vec4<f32>(variance.c[3], 0.0);
-    probe_msme_stats[probe_index].scalars = scalars;
+    probe_msme_stats[probe_index].short_mean = sh_l1_rgb_pack(short_mean);
+    probe_msme_stats[probe_index].variance = max(variance, 0.0);
+    probe_msme_stats[probe_index].inconsistency = max(inconsistency, 0.0);
 }
 
 // =============================================================================
@@ -230,12 +193,11 @@ fn cs(
     let prev_sample_count = ddgi_probe_state_get_sample_count(&probe_states[probe_index]);
 
     if (prev_sample_count == 0u) {
-        let zero_variance = sh_l1_rgb_zero();
         ddgi_msme_stats_write(
             probe_index,
             sh_new,
-            zero_variance,
-            vec4<f32>(1.0, 0.0, 0.0, 1.0)
+            0.0,
+            0.0
         );
         probe_history_valid[probe_index] = 0.0;
         ddgi_sh_probe_write(&sh_probes, probe_index, sh_new);
@@ -244,27 +206,18 @@ fn cs(
     }
 
     let stats_prev = probe_msme_stats[probe_index];
-    let has_msme_history = stats_prev.scalars.x > 0.0;
-    var short_prev = ddgi_msme_stats_short_mean(stats_prev);
-    if (!has_msme_history) {
-        short_prev = sh_prev;
-    }
-
-    let prev_short_frames = select(
-        1.0,
-        min(stats_prev.scalars.x, DDGI_MSME_SHORT_WINDOW_FRAMES),
-        has_msme_history
-    );
+    let short_prev = ddgi_msme_stats_short_mean(stats_prev);
+    let prev_short_frames = min(f32(prev_sample_count), DDGI_MSME_SHORT_WINDOW_FRAMES);
     let short_frames = min(prev_short_frames + 1.0, DDGI_MSME_SHORT_WINDOW_FRAMES);
     let short_alpha = 1.0 / max(short_frames, 1.0);
     let variance_alpha = min(short_alpha * 1.5, 1.0);
 
-    let prev_variance = ddgi_msme_stats_variance(stats_prev);
+    let prev_variance = max(stats_prev.variance, 0.0);
     let pre_signal_energy = max(
         max(ddgi_sh_l1_rgb_mean_square(sh_prev), ddgi_sh_l1_rgb_mean_square(short_prev)),
         max(ddgi_sh_l1_rgb_mean_square(sh_new), DDGI_MSME_MIN_SIGNAL_ENERGY)
     );
-    let prev_normalized_variance = ddgi_sh_l1_rgb_component_mean(prev_variance) / pre_signal_energy;
+    let prev_normalized_variance = prev_variance / pre_signal_energy;
     let normalized_sample_long_delta = ddgi_sh_l1_rgb_distance_square(sh_new, sh_prev) / pre_signal_energy;
     let instant_inconsistency = max(
         normalized_sample_long_delta - prev_normalized_variance * DDGI_MSME_VARIANCE_FORGIVENESS,
@@ -282,14 +235,17 @@ fn cs(
     );
 
     let short_mean = sh_l1_rgb_lerp(short_prev, sh_new, adaptive_short_alpha);
-    let sample_variance = ddgi_sh_l1_rgb_square_delta(sh_new, short_prev);
-    let variance = sh_l1_rgb_lerp(prev_variance, sample_variance, variance_alpha);
+    // Only the component mean of the variance is consumed by MSME. Because
+    // averaging and lerp are linear, tracking it directly preserves the
+    // estimator while removing twelve persistent floats per probe.
+    let sample_variance = ddgi_sh_l1_rgb_distance_square(sh_new, short_prev);
+    let variance = mix(prev_variance, sample_variance, variance_alpha);
 
     let signal_energy = max(
         max(ddgi_sh_l1_rgb_mean_square(sh_prev), ddgi_sh_l1_rgb_mean_square(short_mean)),
         max(ddgi_sh_l1_rgb_mean_square(sh_new), DDGI_MSME_MIN_SIGNAL_ENERGY)
     );
-    let normalized_variance = ddgi_sh_l1_rgb_component_mean(variance) / signal_energy;
+    let normalized_variance = variance / signal_energy;
     let normalized_short_long_delta = ddgi_sh_l1_rgb_distance_square(short_mean, sh_prev) / signal_energy;
     let raw_inconsistency = max(
         normalized_short_long_delta - normalized_variance * DDGI_MSME_VARIANCE_FORGIVENESS,
@@ -298,9 +254,9 @@ fn cs(
     let inconsistency_alpha = select(
         DDGI_MSME_INCONSISTENCY_FALL_ALPHA,
         DDGI_MSME_INCONSISTENCY_RISE_ALPHA,
-        raw_inconsistency > stats_prev.scalars.z
+        raw_inconsistency > stats_prev.inconsistency
     );
-    let inconsistency = mix(stats_prev.scalars.z, raw_inconsistency, inconsistency_alpha);
+    let inconsistency = mix(stats_prev.inconsistency, raw_inconsistency, inconsistency_alpha);
     let change_weight = smoothstep(
         DDGI_MSME_INCONSISTENCY_LOW,
         DDGI_MSME_INCONSISTENCY_HIGH,
@@ -338,7 +294,7 @@ fn cs(
         probe_index,
         short_mean,
         variance,
-        vec4<f32>(short_frames, normalized_variance, inconsistency, vbbr)
+        inconsistency
     );
     probe_history_valid[probe_index] = 1.0;
 

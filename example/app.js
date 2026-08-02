@@ -3388,62 +3388,6 @@ export class SciFiCityScene extends Scene {
 }
 
 // ------------------------------------------------------------------------------------
-// =============================== Bistro Test Scene ==================================
-// ------------------------------------------------------------------------------------
-
-export class BistroTestScene extends Scene {
-  name = "BistroTestScene";
-  entities = [];
-
-  init(parent_context) {
-    super.init(parent_context);
-
-    const freeform_arcball_control_processor = this.add_layer(FreeformArcballControlProcessor);
-    freeform_arcball_control_processor.move_speed = 30.0;
-    freeform_arcball_control_processor.set_scene(this);
-
-    SharedEnvironmentData.set_skydome("default_scene_skydome");
-
-    const view_data = SharedViewBuffer.get_view_data(0);
-    view_data.view_position = [35.0, 15.0, 40.0];
-    view_data.view_rotation = quat.fromEuler(quat.create(), -10.0, 135.0, 0.0);
-    view_data.far = 10000.0;
-
-    const light_entity = EntityManager.create_entity([LightFragment]);
-    this.entities.push(light_entity);
-
-    const light_fragment_view = EntityManager.get_fragment(light_entity, LightFragment);
-    light_fragment_view.type = LightType.DIRECTIONAL;
-    light_fragment_view.color = [1.0, 0.98, 0.95];
-    light_fragment_view.intensity = 10.0;
-    light_fragment_view.position = [40.0, 70.0, 30.0];
-    light_fragment_view.active = true;
-    light_fragment_view.is_primary_sun = 1;
-
-    const bistro_root = this.load_gltf_scene(
-      "engine/models/bistro/bistro_exterior.gltf",
-      [0, 0, 0],
-      [0, 0, 0, 1],
-      [1.0, 1.0, 1.0]
-    );
-    this.entities.push(bistro_root);
-
-    log(`[${this.name}] Bistro scene initialized.`);
-  }
-
-  cleanup() {
-    for (const entity of this.entities) {
-      delete_entity(entity);
-    }
-    this.entities.length = 0;
-
-    this.remove_layer(FreeformArcballControlProcessor);
-
-    super.cleanup();
-  }
-}
-
-// ------------------------------------------------------------------------------------
 // =============================== 3D UI Test Scene ====================================
 // ------------------------------------------------------------------------------------
 
@@ -3843,7 +3787,6 @@ export class UI3DTestScene extends Scene {
   const living_room_scene = new LivingRoomScene("LivingRoomScene");
   const city_scene = new CityScene("CityScene");
   const scifi_city_scene = new SciFiCityScene("SciFiCityScene");
-  const bistro_test_scene = new BistroTestScene("BistroTestScene");
   const ui_3d_scene = new UI3DTestScene("UI3DTestScene");
 
   const scene_switcher = new SceneSwitcher("SceneSwitcher");
@@ -3862,7 +3805,6 @@ export class UI3DTestScene extends Scene {
   //await scene_switcher.add_scene(living_room_scene);
   //await scene_switcher.add_scene(city_scene);
   //await scene_switcher.add_scene(scifi_city_scene);
-  //await scene_switcher.add_scene(bistro_test_scene);
 
   simulator.add_sim_layer(scene_switcher);
   simulator.add_sim_layer(new SceneSettingsPanel(scene_switcher));

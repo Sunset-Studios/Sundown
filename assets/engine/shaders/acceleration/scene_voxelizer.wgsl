@@ -154,7 +154,10 @@ fn meshlet_intersects_volume(meshlet: MeshletRecord, transform: mat4x4<f32>) -> 
 
 fn mark_voxel(voxel_coord: vec3<i32>) {
     let voxelization_params = scene_voxelizer_active_params();
-    let coord = vec3<u32>(voxel_coord);
+    let coord = scene_voxel_storage_coord(
+        vec3<u32>(voxel_coord),
+        voxelization_params
+    );
     let linear_index =
         coord.x + voxelization_params.resolution *
         (coord.y + voxelization_params.resolution * coord.z);
