@@ -4,7 +4,7 @@ import { read_file_bytes_async } from "../streaming_io.js";
 
 export const svlm_tile_stream_provider_type = "svlm_tile";
 export const svlm_tile_format = "sundown-svlm-tile";
-export const svlm_tile_format_version = 1;
+export const svlm_tile_format_version = 2;
 export const svlm_coarse_format = "sundown-svlm-coarse-hierarchy";
 export const svlm_coarse_format_version = 1;
 
@@ -15,11 +15,23 @@ export const svlm_tile_directory_words = 8;
 export const svlm_coarse_record_words = 10;
 
 const svlm_tile_magic = 0x534c5449;
-const svlm_tile_header_words = 16;
+const svlm_tile_legacy_format_version = 1;
+const svlm_tile_legacy_header_words = 16;
+const svlm_tile_header_words = 20;
+const svlm_tile_encoding_sparse_probes = 1 << 0;
+const svlm_tile_validity_words_per_leaf = 2;
 const svlm_coarse_magic = 0x534c4349;
 const svlm_coarse_header_words = 12;
+// Compression stays entry-local so the scene package can continue serving one
+// tile with a single byte-range request. The envelope is deliberately separate
+// from the tile format: old dense tiles and the coarse hierarchy use it too.
+const svlm_storage_magic = 0x534c5a50;
+const svlm_storage_format_version = 1;
+const svlm_storage_header_words = 5;
+const svlm_storage_codec_gzip = 1;
 const default_tiles_per_frame = 1;
 const default_bytes_per_frame = 32 * 1024 * 1024;
+const max_source_resolver_depth = 8;
 
 function require_finite_number(value, label) {
   const normalized = Number(value);
@@ -48,6 +60,137 @@ function copy_array_buffer(payload) {
     return payload.buffer.slice(payload.byteOffset, payload.byteOffset + payload.byteLength);
   }
   throw new Error("SVLM tile payload must be an ArrayBuffer or typed array.");
+}
+
+export async function resolve_svlm_payload_source(source, entry, key) {
+  for (let resolver_depth = 0; ; resolver_depth++) {
+    source = await source;
+    if (typeof source !== "function") {
+      return source;
+    }
+    if (resolver_depth >= max_source_resolver_depth) {
+      throw new Error(`SVLM tile '${key}' payload source exceeded the resolver depth limit.`);
+    }
+    source = source(entry, key);
+  }
+}
+
+function inspect_svlm_storage_payload(buffer) {
+  const header_byte_length = svlm_storage_header_words * Uint32Array.BYTES_PER_ELEMENT;
+  if (buffer.byteLength < header_byte_length) {
+    return null;
+  }
+  const view = new DataView(buffer);
+  if (view.getUint32(0, true) !== svlm_storage_magic) {
+    return null;
+  }
+
+  const version = view.getUint32(4, true);
+  const codec = view.getUint32(8, true);
+  const decoded_byte_length = view.getUint32(12, true);
+  const compressed_byte_length = view.getUint32(16, true);
+  if (
+    version !== svlm_storage_format_version ||
+    codec !== svlm_storage_codec_gzip ||
+    header_byte_length + compressed_byte_length !== buffer.byteLength
+  ) {
+    throw new Error("SVLM compressed payload has an incompatible layout.");
+  }
+  return {
+    codec: "gzip",
+    decoded_byte_length,
+    compressed_byte_length,
+    header_byte_length,
+  };
+}
+
+export async function encode_svlm_storage_payload(payload) {
+  const buffer = copy_array_buffer(payload);
+  const existing = inspect_svlm_storage_payload(buffer);
+  if (existing) {
+    return {
+      payload: buffer,
+      stored_byte_length: buffer.byteLength,
+      decoded_byte_length: existing.decoded_byte_length,
+      codec: existing.codec,
+    };
+  }
+
+  if (
+    typeof CompressionStream === "undefined" ||
+    typeof DecompressionStream === "undefined" ||
+    typeof Blob === "undefined" ||
+    typeof Response === "undefined" ||
+    buffer.byteLength > 0xffffffff
+  ) {
+    return {
+      payload: buffer,
+      stored_byte_length: buffer.byteLength,
+      decoded_byte_length: buffer.byteLength,
+      codec: null,
+    };
+  }
+
+  const stream = new Blob([buffer]).stream().pipeThrough(new CompressionStream("gzip"));
+  const compressed = await new Response(stream).arrayBuffer();
+  const header_byte_length = svlm_storage_header_words * Uint32Array.BYTES_PER_ELEMENT;
+  if (header_byte_length + compressed.byteLength >= buffer.byteLength) {
+    return {
+      payload: buffer,
+      stored_byte_length: buffer.byteLength,
+      decoded_byte_length: buffer.byteLength,
+      codec: null,
+    };
+  }
+
+  const encoded = new ArrayBuffer(header_byte_length + compressed.byteLength);
+  const view = new DataView(encoded);
+  view.setUint32(0, svlm_storage_magic, true);
+  view.setUint32(4, svlm_storage_format_version, true);
+  view.setUint32(8, svlm_storage_codec_gzip, true);
+  view.setUint32(12, buffer.byteLength, true);
+  view.setUint32(16, compressed.byteLength, true);
+  new Uint8Array(encoded, header_byte_length).set(new Uint8Array(compressed));
+  return {
+    payload: encoded,
+    stored_byte_length: encoded.byteLength,
+    decoded_byte_length: buffer.byteLength,
+    codec: "gzip",
+  };
+}
+
+export async function decode_svlm_storage_payload(payload) {
+  const buffer = copy_array_buffer(payload);
+  const storage = inspect_svlm_storage_payload(buffer);
+  if (!storage) {
+    return buffer;
+  }
+  if (
+    typeof DecompressionStream === "undefined" ||
+    typeof Blob === "undefined" ||
+    typeof Response === "undefined"
+  ) {
+    throw new Error("SVLM gzip payloads require DecompressionStream support.");
+  }
+
+  const compressed = new Uint8Array(
+    buffer,
+    storage.header_byte_length,
+    storage.compressed_byte_length
+  );
+  const stream = new Blob([compressed]).stream().pipeThrough(new DecompressionStream("gzip"));
+  const decoded = await new Response(stream).arrayBuffer();
+  if (decoded.byteLength !== storage.decoded_byte_length) {
+    throw new Error(
+      `SVLM gzip payload decoded to ${decoded.byteLength} bytes; ` +
+        `${storage.decoded_byte_length} were expected.`
+    );
+  }
+  return decoded;
+}
+
+export function is_svlm_tile_format_version_supported(version) {
+  return version === svlm_tile_legacy_format_version || version === svlm_tile_format_version;
 }
 
 const half_conversion_buffer = new ArrayBuffer(4);
@@ -122,6 +265,28 @@ function pack_svlm_probe(coefficients) {
   return packed;
 }
 
+function accumulate_svlm_probe_coefficients(
+  irradiance,
+  probe_offset,
+  probe_count,
+  coefficients,
+  unpacked
+) {
+  let valid_probe_count = 0;
+  for (let local_probe_index = 0; local_probe_index < probe_count; local_probe_index++) {
+    const word_offset =
+      (probe_offset + local_probe_index) * svlm_tile_irradiance_words_per_probe;
+    if (is_invalid_svlm_probe(irradiance, word_offset)) continue;
+    unpack_svlm_probe(irradiance, word_offset, unpacked);
+    for (let coefficient = 0; coefficient < coefficients.length; coefficient++) {
+      const value = unpacked[coefficient];
+      if (Number.isFinite(value)) coefficients[coefficient] += value;
+    }
+    valid_probe_count++;
+  }
+  return valid_probe_count;
+}
+
 function average_svlm_coarse_samples(samples) {
   const coefficients = new Float64Array(12);
   const unpacked = new Float64Array(12);
@@ -159,21 +324,16 @@ export function create_svlm_coarse_tile_sample(tile) {
   const probe_count = irradiance.length / svlm_tile_irradiance_words_per_probe;
   const coefficients = new Float64Array(12);
   const unpacked = new Float64Array(12);
-  let valid_probe_count = 0;
-  for (let probe = 0; probe < probe_count; probe++) {
-    const word_offset = probe * svlm_tile_irradiance_words_per_probe;
-    if (is_invalid_svlm_probe(irradiance, word_offset)) continue;
-    unpack_svlm_probe(
-      irradiance,
-      word_offset,
-      unpacked
-    );
-    for (let coefficient = 0; coefficient < coefficients.length; coefficient++) {
-      const value = unpacked[coefficient];
-      if (Number.isFinite(value)) coefficients[coefficient] += value;
-    }
-    valid_probe_count++;
-  }
+  // V2 keeps the shader-visible 4x4x4 probe lattice unchanged but removes
+  // invalid SH records on disk. A two-word mask per leaf reconstructs their
+  // signed-zero validity marker before the tile reaches GPU residency.
+  const valid_probe_count = accumulate_svlm_probe_coefficients(
+    irradiance,
+    0,
+    probe_count,
+    coefficients,
+    unpacked
+  );
 
   const inverse_probe_count = 1 / Math.max(1, valid_probe_count);
   for (let coefficient = 0; coefficient < coefficients.length; coefficient++) {
@@ -185,6 +345,112 @@ export function create_svlm_coarse_tile_sample(tile) {
     weight: Math.max(1, valid_probe_count),
     irradiance: pack_svlm_probe(coefficients),
   };
+}
+
+/**
+ * Builds the same per-world-tile coarse inputs produced by the old duplicated
+ * layout without copying leaf irradiance into every overlapping tile payload.
+ * Owner tiles may contain leaves with different coverage, so averaging the
+ * entire owner and broadcasting it would contaminate unrelated coarse cells.
+ */
+export function create_svlm_coarse_coverage_samples(tile) {
+  const tile_size = Math.max(
+    0.0001,
+    require_finite_number(tile?.tile_size, "SVLM world tile size")
+  );
+  const leaves =
+    tile?.leaves instanceof Uint32Array ? tile.leaves : new Uint32Array(tile?.leaves ?? 0);
+  const irradiance =
+    tile?.irradiance instanceof Uint32Array
+      ? tile.irradiance
+      : new Uint32Array(tile?.irradiance ?? 0);
+  if (leaves.length % svlm_tile_leaf_words !== 0) {
+    throw new Error(`SVLM tile '${tile?.key ?? "unknown"}' has invalid leaf data.`);
+  }
+
+  const leaf_count = leaves.length / svlm_tile_leaf_words;
+  const expected_irradiance_words =
+    leaf_count * svlm_tile_probes_per_leaf * svlm_tile_irradiance_words_per_probe;
+  if (irradiance.length !== expected_irradiance_words) {
+    throw new Error(`SVLM tile '${tile?.key ?? "unknown"}' has invalid irradiance data.`);
+  }
+
+  const float_words = new Float32Array(leaves.buffer, leaves.byteOffset, leaves.length);
+  const coverage_samples = new Map();
+  const leaf_coefficients = new Float64Array(12);
+  const unpacked = new Float64Array(12);
+  const epsilon = tile_size * 1e-6;
+
+  for (let leaf_index = 0; leaf_index < leaf_count; leaf_index++) {
+    const leaf_base = leaf_index * svlm_tile_leaf_words;
+    const origin = [
+      float_words[leaf_base + 2],
+      float_words[leaf_base + 3],
+      float_words[leaf_base + 4],
+    ];
+    const size = Math.max(0, float_words[leaf_base + 5]);
+    if (origin.some((component) => !Number.isFinite(component)) || !Number.isFinite(size)) {
+      throw new Error(`SVLM tile '${tile?.key ?? "unknown"}' has invalid leaf bounds.`);
+    }
+
+    leaf_coefficients.fill(0);
+    const probe_base = leaves[leaf_base + 1];
+    if (
+      probe_base + svlm_tile_probes_per_leaf >
+      irradiance.length / svlm_tile_irradiance_words_per_probe
+    ) {
+      throw new Error(
+        `SVLM tile '${tile?.key ?? "unknown"}' leaf ${leaf_index} references irradiance outside its payload.`
+      );
+    }
+    const valid_probe_count = accumulate_svlm_probe_coefficients(
+      irradiance,
+      probe_base,
+      svlm_tile_probes_per_leaf,
+      leaf_coefficients,
+      unpacked
+    );
+    const min_coord = svlm_world_to_tile_coord(origin, tile_size);
+    const max_coord = svlm_world_to_tile_coord(
+      origin.map((component) => component + Math.max(0, size - epsilon)),
+      tile_size
+    );
+
+    for (let z = min_coord[2]; z <= max_coord[2]; z++) {
+      for (let y = min_coord[1]; y <= max_coord[1]; y++) {
+        for (let x = min_coord[0]; x <= max_coord[0]; x++) {
+          const coord = [x, y, z];
+          const key = svlm_tile_key(coord);
+          let sample = coverage_samples.get(key);
+          if (!sample) {
+            sample = {
+              coord,
+              coefficients: new Float64Array(12),
+              valid_probe_count: 0,
+            };
+            coverage_samples.set(key, sample);
+          }
+          for (let coefficient = 0; coefficient < leaf_coefficients.length; coefficient++) {
+            sample.coefficients[coefficient] += leaf_coefficients[coefficient];
+          }
+          sample.valid_probe_count += valid_probe_count;
+        }
+      }
+    }
+  }
+
+  return Array.from(coverage_samples.values(), (sample) => {
+    const inverse_probe_count = 1 / Math.max(1, sample.valid_probe_count);
+    for (let coefficient = 0; coefficient < sample.coefficients.length; coefficient++) {
+      sample.coefficients[coefficient] *= inverse_probe_count;
+    }
+    return {
+      coord: sample.coord,
+      lod: 0,
+      weight: Math.max(1, sample.valid_probe_count),
+      irradiance: pack_svlm_probe(sample.coefficients),
+    };
+  }).sort((a, b) => svlm_tile_key(a.coord).localeCompare(svlm_tile_key(b.coord)));
 }
 
 export function create_svlm_coarse_hierarchy(tile_samples, options = {}) {
@@ -412,7 +678,25 @@ export function serialize_svlm_tile(tile) {
     );
   }
 
-  const total_words = svlm_tile_header_words + leaves.length + irradiance.length;
+  let valid_probe_count = 0;
+  const probe_count = leaf_count * svlm_tile_probes_per_leaf;
+  for (let probe_index = 0; probe_index < probe_count; probe_index++) {
+    if (!is_invalid_svlm_probe(irradiance, probe_index * svlm_tile_irradiance_words_per_probe)) {
+      valid_probe_count++;
+    }
+  }
+
+  const sparse_validity_word_count = leaf_count * svlm_tile_validity_words_per_leaf;
+  const sparse_irradiance_word_count = valid_probe_count * svlm_tile_irradiance_words_per_probe;
+  const use_sparse_probes =
+    sparse_validity_word_count + sparse_irradiance_word_count < irradiance.length;
+  const encoding_flags = use_sparse_probes ? svlm_tile_encoding_sparse_probes : 0;
+  const validity_word_count = use_sparse_probes ? sparse_validity_word_count : 0;
+  const stored_irradiance_word_count = use_sparse_probes
+    ? sparse_irradiance_word_count
+    : irradiance.length;
+  const total_words =
+    svlm_tile_header_words + leaves.length + validity_word_count + stored_irradiance_word_count;
   const payload = new ArrayBuffer(total_words * Uint32Array.BYTES_PER_ELEMENT);
   const view = new DataView(payload);
   const bounds_min = coord.map((component) => component * tile_size);
@@ -434,16 +718,49 @@ export function serialize_svlm_tile(tile) {
   view.setFloat32(52, bounds_max[0], true);
   view.setFloat32(56, bounds_max[1], true);
   view.setFloat32(60, bounds_max[2], true);
+  view.setUint32(64, encoding_flags, true);
+  view.setUint32(68, validity_word_count, true);
+  view.setUint32(72, stored_irradiance_word_count, true);
+  view.setUint32(76, 0, true);
 
   const words = new Uint32Array(payload);
   words.set(leaves, svlm_tile_header_words);
-  words.set(irradiance, svlm_tile_header_words + leaves.length);
+  const validity_base = svlm_tile_header_words + leaves.length;
+  const stored_irradiance_base = validity_base + validity_word_count;
+  if (!use_sparse_probes) {
+    words.set(irradiance, stored_irradiance_base);
+    return payload;
+  }
+
+  let stored_word_offset = stored_irradiance_base;
+  for (let leaf_index = 0; leaf_index < leaf_count; leaf_index++) {
+    const leaf_probe_base = leaf_index * svlm_tile_probes_per_leaf;
+    const leaf_validity_base =
+      validity_base + leaf_index * svlm_tile_validity_words_per_leaf;
+    for (
+      let local_probe_index = 0;
+      local_probe_index < svlm_tile_probes_per_leaf;
+      local_probe_index++
+    ) {
+      const source_word_offset =
+        (leaf_probe_base + local_probe_index) * svlm_tile_irradiance_words_per_probe;
+      if (is_invalid_svlm_probe(irradiance, source_word_offset)) {
+        continue;
+      }
+      words[leaf_validity_base + (local_probe_index >>> 5)] |=
+        1 << (local_probe_index & 31);
+      for (let word = 0; word < svlm_tile_irradiance_words_per_probe; word++) {
+        words[stored_word_offset + word] = irradiance[source_word_offset + word];
+      }
+      stored_word_offset += svlm_tile_irradiance_words_per_probe;
+    }
+  }
   return payload;
 }
 
 export function deserialize_svlm_tile(payload) {
   const buffer = copy_array_buffer(payload);
-  if (buffer.byteLength < svlm_tile_header_words * 4) {
+  if (buffer.byteLength < svlm_tile_legacy_header_words * 4) {
     throw new Error("SVLM tile payload is smaller than its header.");
   }
 
@@ -453,7 +770,7 @@ export function deserialize_svlm_tile(payload) {
   }
 
   const version = view.getUint32(4, true);
-  if (version !== svlm_tile_format_version) {
+  if (!is_svlm_tile_format_version_supported(version)) {
     throw new Error(`Unsupported SVLM tile version '${version}'.`);
   }
 
@@ -464,19 +781,50 @@ export function deserialize_svlm_tile(payload) {
   const leaf_word_count = leaf_count * svlm_tile_leaf_words;
   const expected_irradiance_words =
     leaf_count * svlm_tile_probes_per_leaf * svlm_tile_irradiance_words_per_probe;
-  const total_words = header_words + leaf_word_count + irradiance_word_count;
-
-  if (
-    header_words < svlm_tile_header_words ||
-    total_words * Uint32Array.BYTES_PER_ELEMENT !== buffer.byteLength
-  ) {
-    throw new Error("SVLM tile payload length does not match its header.");
-  }
   if (irradiance_word_count !== expected_irradiance_words) {
     throw new Error(
       `SVLM tile irradiance contains ${irradiance_word_count} words; ` +
         `${expected_irradiance_words} were expected.`
     );
+  }
+
+  const is_sparse_format = version === svlm_tile_format_version;
+  const minimum_header_words = is_sparse_format
+    ? svlm_tile_header_words
+    : svlm_tile_legacy_header_words;
+  if (
+    header_words < minimum_header_words ||
+    buffer.byteLength < minimum_header_words * Uint32Array.BYTES_PER_ELEMENT
+  ) {
+    throw new Error("SVLM tile payload has an invalid header length.");
+  }
+
+  let encoding_flags = 0;
+  let validity_word_count = 0;
+  let stored_irradiance_word_count = irradiance_word_count;
+  if (is_sparse_format) {
+    encoding_flags = view.getUint32(64, true);
+    validity_word_count = view.getUint32(68, true);
+    stored_irradiance_word_count = view.getUint32(72, true);
+    if ((encoding_flags & ~svlm_tile_encoding_sparse_probes) !== 0) {
+      throw new Error("SVLM tile payload uses unsupported encoding flags.");
+    }
+    const uses_sparse_probes = (encoding_flags & svlm_tile_encoding_sparse_probes) !== 0;
+    if (
+      (uses_sparse_probes &&
+        validity_word_count !== leaf_count * svlm_tile_validity_words_per_leaf) ||
+      (!uses_sparse_probes &&
+        (validity_word_count !== 0 || stored_irradiance_word_count !== irradiance_word_count)) ||
+      stored_irradiance_word_count % svlm_tile_irradiance_words_per_probe !== 0
+    ) {
+      throw new Error("SVLM tile payload has invalid sparse-probe metadata.");
+    }
+  }
+
+  const total_words =
+    header_words + leaf_word_count + validity_word_count + stored_irradiance_word_count;
+  if (total_words * Uint32Array.BYTES_PER_ELEMENT !== buffer.byteLength) {
+    throw new Error("SVLM tile payload length does not match its header.");
   }
 
   const tile_size = view.getFloat32(36, true);
@@ -485,6 +833,47 @@ export function deserialize_svlm_tile(payload) {
   }
 
   const words = new Uint32Array(buffer);
+  const leaves = words.slice(header_words, header_words + leaf_word_count);
+  const validity_base = header_words + leaf_word_count;
+  const stored_irradiance_base = validity_base + validity_word_count;
+  let irradiance;
+  if ((encoding_flags & svlm_tile_encoding_sparse_probes) === 0) {
+    irradiance = words.slice(stored_irradiance_base, total_words);
+  } else {
+    irradiance = new Uint32Array(expected_irradiance_words);
+    let stored_word_offset = stored_irradiance_base;
+    for (let leaf_index = 0; leaf_index < leaf_count; leaf_index++) {
+      const leaf_probe_base = leaf_index * svlm_tile_probes_per_leaf;
+      const leaf_validity_base =
+        validity_base + leaf_index * svlm_tile_validity_words_per_leaf;
+      for (
+        let local_probe_index = 0;
+        local_probe_index < svlm_tile_probes_per_leaf;
+        local_probe_index++
+      ) {
+        const validity_word = words[leaf_validity_base + (local_probe_index >>> 5)];
+        const target_word_offset =
+          (leaf_probe_base + local_probe_index) * svlm_tile_irradiance_words_per_probe;
+        if ((validity_word & (1 << (local_probe_index & 31))) === 0) {
+          irradiance[target_word_offset] = svlm_invalid_probe_word_0;
+          irradiance[target_word_offset + 1] = svlm_invalid_probe_word_1_value;
+          continue;
+        }
+        const stored_word_end = stored_word_offset + svlm_tile_irradiance_words_per_probe;
+        if (stored_word_end > total_words) {
+          throw new Error("SVLM tile sparse irradiance ends before its payload.");
+        }
+        for (let word = 0; word < svlm_tile_irradiance_words_per_probe; word++) {
+          irradiance[target_word_offset + word] = words[stored_word_offset + word];
+        }
+        stored_word_offset = stored_word_end;
+      }
+    }
+    if (stored_word_offset !== total_words) {
+      throw new Error("SVLM tile sparse irradiance contains unused probe records.");
+    }
+  }
+
   return {
     format: svlm_tile_format,
     version,
@@ -495,8 +884,9 @@ export function deserialize_svlm_tile(payload) {
     bounds_min: [view.getFloat32(40, true), view.getFloat32(44, true), view.getFloat32(48, true)],
     bounds_max: [view.getFloat32(52, true), view.getFloat32(56, true), view.getFloat32(60, true)],
     leaf_count,
-    leaves: words.slice(header_words, header_words + leaf_word_count),
-    irradiance: words.slice(header_words + leaf_word_count, total_words),
+    leaves,
+    irradiance,
+    gpu_byte_length: leaves.byteLength + irradiance.byteLength,
     serialized_byte_length: buffer.byteLength,
   };
 }
@@ -519,7 +909,10 @@ export function partition_svlm_leaf_tiles({ bake_version, tile_size, leaves }) {
   }
 
   const float_words = new Float32Array(leaves.buffer, leaves.byteOffset, leaves.length);
-  const tile_leaf_indices = new Map();
+  // A leaf is serialized exactly once in the tile containing its center. The
+  // coverage set records every world tile touched by that leaf so streaming can
+  // request the owner without copying the 64-probe block into each overlap.
+  const owner_tiles = new Map();
   const leaf_count = leaves.length / svlm_tile_leaf_words;
   const epsilon = normalized_tile_size * 1e-6;
 
@@ -532,28 +925,45 @@ export function partition_svlm_leaf_tiles({ bake_version, tile_size, leaves }) {
       origin.map((component) => component + Math.max(0, size - epsilon)),
       normalized_tile_size
     );
+    const owner_coord = svlm_world_to_tile_coord(
+      origin.map((component) => component + size * 0.5),
+      normalized_tile_size
+    );
+    const owner_key = svlm_tile_key(owner_coord);
+    let owner_tile = owner_tiles.get(owner_key);
+    if (!owner_tile) {
+      owner_tile = {
+        coord: owner_coord,
+        leaf_indices: [],
+        coverage_coords: new Map(),
+        coverage_leaf_reference_count: 0,
+      };
+      owner_tiles.set(owner_key, owner_tile);
+    }
+    owner_tile.leaf_indices.push(leaf_index);
+    owner_tile.coverage_leaf_reference_count +=
+      (max_coord[0] - min_coord[0] + 1) *
+      (max_coord[1] - min_coord[1] + 1) *
+      (max_coord[2] - min_coord[2] + 1);
 
     for (let z = min_coord[2]; z <= max_coord[2]; z++) {
       for (let y = min_coord[1]; y <= max_coord[1]; y++) {
         for (let x = min_coord[0]; x <= max_coord[0]; x++) {
           const coord = [x, y, z];
           const key = svlm_tile_key(coord);
-          let indices = tile_leaf_indices.get(key);
-          if (!indices) {
-            indices = {
-              coord,
-              leaf_indices: [],
-            };
-            tile_leaf_indices.set(key, indices);
-          }
-          indices.leaf_indices.push(leaf_index);
+          owner_tile.coverage_coords.set(key, coord);
         }
       }
     }
   }
 
   const tiles = [];
-  for (const { coord, leaf_indices } of tile_leaf_indices.values()) {
+  for (const {
+    coord,
+    leaf_indices,
+    coverage_coords,
+    coverage_leaf_reference_count,
+  } of owner_tiles.values()) {
     const tile_leaves = new Uint32Array(leaf_indices.length * svlm_tile_leaf_words);
 
     for (let local_index = 0; local_index < leaf_indices.length; local_index++) {
@@ -576,6 +986,8 @@ export function partition_svlm_leaf_tiles({ bake_version, tile_size, leaves }) {
       tile_size: normalized_tile_size,
       leaves: tile_leaves,
       source_leaf_indices: leaf_indices,
+      coverage: Array.from(coverage_coords.values(), (coverage_coord) => [...coverage_coord]),
+      coverage_leaf_reference_count,
     });
   }
 
@@ -628,6 +1040,40 @@ export function create_svlm_tile_manifest(tiles, metadata = {}) {
     throw new Error("SVLM tile manifest creation requires an array of tiles.");
   }
   const tile_size = tiles[0]?.tile_size ?? metadata.tile_size;
+  const uses_owner_tiles = tiles.length > 0 && tiles.every((tile) => Array.isArray(tile.coverage));
+  const unique_leaf_count = tiles.reduce(
+    (sum, tile) => sum + (tile.leaf_count ?? tile.leaves.length / svlm_tile_leaf_words),
+    0
+  );
+  const previous_leaf_reference_count = tiles.reduce(
+    (sum, tile) =>
+      sum +
+      (tile.coverage_leaf_reference_count ??
+        (tile.leaf_count ?? tile.leaves.length / svlm_tile_leaf_words)),
+    0
+  );
+  const coverage_entries = new Map();
+  if (uses_owner_tiles) {
+    for (const tile of tiles) {
+      const owner_key = tile.key ?? svlm_tile_key(tile.coord);
+      for (const coord of tile.coverage) {
+        const key = svlm_tile_key(coord);
+        let coverage = coverage_entries.get(key);
+        if (!coverage) {
+          coverage = {
+            key,
+            coord: [...coord],
+            owners: [],
+          };
+          coverage_entries.set(key, coverage);
+        }
+        coverage.owners.push(owner_key);
+      }
+    }
+    for (const coverage of coverage_entries.values()) {
+      coverage.owners.sort();
+    }
+  }
   return {
     format: "sundown-svlm-tile-set",
     version: svlm_tile_format_version,
@@ -640,6 +1086,12 @@ export function create_svlm_tile_manifest(tiles, metadata = {}) {
       leaf_words_per_record: svlm_tile_leaf_words,
       probes_per_leaf: svlm_tile_probes_per_leaf,
       irradiance_words_per_probe: svlm_tile_irradiance_words_per_probe,
+      leaf_ownership: uses_owner_tiles ? "owner-tile" : "duplicated",
+    },
+    ownership: {
+      unique_leaf_count,
+      previous_leaf_reference_count,
+      duplication_factor: previous_leaf_reference_count / Math.max(1, unique_leaf_count),
     },
     coarse: metadata.coarse
       ? {
@@ -653,11 +1105,26 @@ export function create_svlm_tile_manifest(tiles, metadata = {}) {
         }
       : null,
     streaming: metadata.streaming ? { ...metadata.streaming } : null,
-    tiles: tiles.map((tile) => ({
-      key: tile.key ?? svlm_tile_key(tile.coord),
-      coord: [...tile.coord],
-      byte_length: tile.serialized_byte_length ?? serialize_svlm_tile(tile).byteLength,
-    })),
+    coverage: uses_owner_tiles
+      ? Array.from(coverage_entries.values()).sort((a, b) => a.key.localeCompare(b.key))
+      : null,
+    tiles: tiles.map((tile) => {
+      const leaf_count = tile.leaf_count ?? tile.leaves.length / svlm_tile_leaf_words;
+      const decoded_byte_length =
+        tile.serialized_byte_length ?? serialize_svlm_tile(tile).byteLength;
+      return {
+        key: tile.key ?? svlm_tile_key(tile.coord),
+        coord: [...tile.coord],
+        leaf_count,
+        byte_length: decoded_byte_length,
+        decoded_byte_length,
+        gpu_byte_length:
+          leaf_count *
+          (svlm_tile_leaf_words +
+            svlm_tile_probes_per_leaf * svlm_tile_irradiance_words_per_probe) *
+          Uint32Array.BYTES_PER_ELEMENT,
+      };
+    }),
   };
 }
 
@@ -674,11 +1141,7 @@ export class SVLMTileStreamingProvider extends StreamProvider {
     let source =
       request.options.source ??
       request.target?.resolve_svlm_tile_source?.(request.options.entry, request.options.key);
-    if (typeof source === "function") {
-      source = await source(request.options.entry, request.options.key);
-    } else {
-      source = await source;
-    }
+    source = await resolve_svlm_payload_source(source, request.options.entry, request.options.key);
 
     if (typeof source === "string") {
       source = await read_file_bytes_async(source);
@@ -689,7 +1152,10 @@ export class SVLMTileStreamingProvider extends StreamProvider {
       throw new Error(`SVLM tile '${request.options.key}' could not be loaded.`);
     }
 
+    const stored_byte_length = Number(source.byteLength) || 0;
+    source = await decode_svlm_storage_payload(source);
     const tile = this.deserialize(source);
+    tile.stored_byte_length = stored_byte_length;
     if (request.options.key && tile.key !== request.options.key) {
       throw new Error(`SVLM tile '${request.options.key}' resolved payload '${tile.key}'.`);
     }
@@ -707,19 +1173,20 @@ export class SVLMTileStreamingProvider extends StreamProvider {
   update_stream(request, context) {
     const tile = request.state.tile;
     const budget = context.frame;
+    const upload_byte_length = tile.gpu_byte_length ?? tile.serialized_byte_length;
     if (budget.tiles_remaining <= 0) {
       return StreamUpdateStatus.CONTINUE;
     }
     if (
       budget.tiles_remaining < budget.initial_tiles &&
-      tile.serialized_byte_length > budget.bytes_remaining
+      upload_byte_length > budget.bytes_remaining
     ) {
       return StreamUpdateStatus.CONTINUE;
     }
 
     request.target.install_streamed_svlm_tile(tile);
     budget.tiles_remaining--;
-    budget.bytes_remaining = Math.max(0, budget.bytes_remaining - tile.serialized_byte_length);
+    budget.bytes_remaining = Math.max(0, budget.bytes_remaining - upload_byte_length);
     return {
       status: StreamUpdateStatus.COMPLETE,
       result: tile,

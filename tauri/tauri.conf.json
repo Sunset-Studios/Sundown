@@ -4,6 +4,12 @@
   "version": "1.0.0",
   "identifier": "com.ajadr.sundown",
   "build": {
+    "beforeDevCommand": {
+      "script": "node tools/dev_server.js",
+      "cwd": "..",
+      "wait": false
+    },
+    "devUrl": "http://localhost:3000",
     "frontendDist": "../dist"
   },
   "app": {

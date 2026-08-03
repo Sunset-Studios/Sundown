@@ -67,7 +67,7 @@ export const engine_cvar_config = Object.freeze({
     {
       name: EngineCVars.Renderer.GIStrategy,
       type: CVarType.Enum,
-      default_value: GIStrategyType.DDGI,
+      default_value: GIStrategyType.SVLM,
       values: {
         ddgi: GIStrategyType.DDGI,
         ptgi: GIStrategyType.PTGI,

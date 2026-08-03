@@ -122,9 +122,11 @@ fn svlm_hash_tiled_lookup_key(
     leaf_coord: vec3<u32>
 ) -> u32 {
     var hash = 0x811c9dc5u;
-    hash = (hash ^ bitcast<u32>(tile_coord.x)) * 0x01000193u;
-    hash = (hash ^ bitcast<u32>(tile_coord.y)) * 0x01000193u;
-    hash = (hash ^ bitcast<u32>(tile_coord.z)) * 0x01000193u;
+    if (svlm_params.tile_leaf_ownership < 0.5) {
+        hash = (hash ^ bitcast<u32>(tile_coord.x)) * 0x01000193u;
+        hash = (hash ^ bitcast<u32>(tile_coord.y)) * 0x01000193u;
+        hash = (hash ^ bitcast<u32>(tile_coord.z)) * 0x01000193u;
+    }
     hash = (hash ^ level) * 0x01000193u;
     hash = (hash ^ leaf_coord.x) * 0x01000193u;
     hash = (hash ^ leaf_coord.y) * 0x01000193u;
@@ -165,11 +167,16 @@ fn svlm_lookup_tiled_leaf(
         if (leaf_index == INVALID_IDX) {
             return INVALID_IDX;
         }
+        let tile_matches =
+            svlm_params.tile_leaf_ownership > 0.5 ||
+            (
+                bitcast<i32>(svlm_lookup_data[base]) == tile_coord.x &&
+                bitcast<i32>(svlm_lookup_data[base + 1u]) == tile_coord.y &&
+                bitcast<i32>(svlm_lookup_data[base + 2u]) == tile_coord.z
+            );
         if (
             leaf_index != SVLM_LOOKUP_TOMBSTONE &&
-            bitcast<i32>(svlm_lookup_data[base]) == tile_coord.x &&
-            bitcast<i32>(svlm_lookup_data[base + 1u]) == tile_coord.y &&
-            bitcast<i32>(svlm_lookup_data[base + 2u]) == tile_coord.z &&
+            tile_matches &&
             svlm_lookup_data[base + 3u] == level &&
             all(
                 vec3<u32>(

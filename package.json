@@ -10,7 +10,7 @@
     "prebuild": "npm run cook",
     "build": "vite build",
     "predevtop": "npm run cook",
-    "devtop": "vite build && tauri dev",
+    "devtop": "tauri dev",
     "prebuildtop": "npm run cook",
     "buildtop": "vite build && tauri build",
     "premake": "npm run cook",
