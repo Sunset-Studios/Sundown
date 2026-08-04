@@ -17,11 +17,16 @@
 @group(1) @binding(8) var output_black: texture_storage_2d<rgba16float, write>;
 
 const SVLM_NODE_WORD_STRIDE = 7u;
-const SVLM_TILED_LOOKUP_WORD_STRIDE = 8u;
+const SVLM_TILED_LOOKUP_WORD_STRIDE = 9u;
 const SVLM_TILED_LOOKUP_MAX_PROBES = 16u;
 const SVLM_COARSE_LOOKUP_WORD_STRIDE = 10u;
 const SVLM_COARSE_LOOKUP_MAX_PROBES = 16u;
 const SVLM_LOOKUP_TOMBSTONE = 0xfffffffeu;
+
+struct SVLMTiledLeafLookup {
+    leaf_index: u32,
+    fade_start_time: f32,
+};
 
 fn svlm_sample_output_to_full_res_coord(
     sample_coord: vec2<u32>,
@@ -142,7 +147,7 @@ fn svlm_lookup_tiled_leaf(
     tile_coord: vec3<i32>,
     level: u32,
     leaf_coord: vec3<u32>
-) -> u32 {
+) -> SVLMTiledLeafLookup {
     // CPU packing guarantees that every resident leaf is reachable within this
     // fixed probe budget. This bound is the critical difference from the old
     // per-pixel linear scan over all leaves intersecting a world tile.
@@ -150,7 +155,7 @@ fn svlm_lookup_tiled_leaf(
         arrayLength(&svlm_lookup_data) /
         SVLM_TILED_LOOKUP_WORD_STRIDE;
     if (entry_count == 0u) {
-        return INVALID_IDX;
+        return SVLMTiledLeafLookup(INVALID_IDX, 0.0);
     }
 
     let entry_mask = entry_count - 1u;
@@ -165,7 +170,7 @@ fn svlm_lookup_tiled_leaf(
         let base = entry_index * SVLM_TILED_LOOKUP_WORD_STRIDE;
         let leaf_index = svlm_lookup_data[base + 7u];
         if (leaf_index == INVALID_IDX) {
-            return INVALID_IDX;
+            return SVLMTiledLeafLookup(INVALID_IDX, 0.0);
         }
         let tile_matches =
             svlm_params.tile_leaf_ownership > 0.5 ||
@@ -186,16 +191,19 @@ fn svlm_lookup_tiled_leaf(
                 ) == leaf_coord
             )
         ) {
-            return leaf_index;
+            return SVLMTiledLeafLookup(
+                leaf_index,
+                bitcast<f32>(svlm_lookup_data[base + 8u])
+            );
         }
         entry_index = (entry_index + 1u) & entry_mask;
     }
-    return INVALID_IDX;
+    return SVLMTiledLeafLookup(INVALID_IDX, 0.0);
 }
 
-fn svlm_find_tiled_leaf(position: vec3<f32>) -> u32 {
+fn svlm_find_tiled_leaf(position: vec3<f32>) -> SVLMTiledLeafLookup {
     if (svlm_params.resident_tile_count <= 0.0) {
-        return INVALID_IDX;
+        return SVLMTiledLeafLookup(INVALID_IDX, 0.0);
     }
     let world_min = svlm_world_min(&svlm_params);
     let root_size = max(svlm_params.root_size, 0.0001);
@@ -206,7 +214,7 @@ fn svlm_find_tiled_leaf(position: vec3<f32>) -> u32 {
         any(local_position < vec3<f32>(0.0)) ||
         any(local_position >= vec3<f32>(root_dims) * root_size)
     ) {
-        return INVALID_IDX;
+        return SVLMTiledLeafLookup(INVALID_IDX, 0.0);
     }
 
     let tile_size = max(svlm_params.world_tile_size, 0.0001);
@@ -215,24 +223,43 @@ fn svlm_find_tiled_leaf(position: vec3<f32>) -> u32 {
     loop {
         let leaf_size = svlm_brick_size(&svlm_params, level);
         let leaf_coord = vec3<u32>(floor(local_position / leaf_size));
-        let leaf_index =
+        let lookup =
             svlm_lookup_tiled_leaf(tile_coord, level, leaf_coord);
-        if (leaf_index != INVALID_IDX) {
-            return leaf_index;
+        if (lookup.leaf_index != INVALID_IDX) {
+            return lookup;
         }
         if (level == 0u) {
             break;
         }
         level -= 1u;
     }
-    return INVALID_IDX;
+    return SVLMTiledLeafLookup(INVALID_IDX, 0.0);
 }
 
-fn svlm_find_leaf(position: vec3<f32>) -> u32 {
+fn svlm_find_leaf_sample(position: vec3<f32>) -> SVLMTiledLeafLookup {
     if (svlm_params.tile_streaming_enabled > 0.5) {
         return svlm_find_tiled_leaf(position);
     }
-    return svlm_find_monolithic_leaf(position);
+    return SVLMTiledLeafLookup(svlm_find_monolithic_leaf(position), 0.0);
+}
+
+fn svlm_find_leaf(position: vec3<f32>) -> u32 {
+    return svlm_find_leaf_sample(position).leaf_index;
+}
+
+fn svlm_tiled_leaf_fade(lookup: SVLMTiledLeafLookup) -> f32 {
+    if (
+        svlm_params.tile_streaming_enabled <= 0.5 ||
+        svlm_params.streaming_fade_seconds <= 1e-4
+    ) {
+        return 1.0;
+    }
+    let fade_elapsed = max(frame_info.time - lookup.fade_start_time, 0.0);
+    return smoothstep(
+        0.0,
+        svlm_params.streaming_fade_seconds,
+        fade_elapsed
+    );
 }
 
 fn svlm_read_probe_sh(probe_index: u32) -> SH_L1_RGB {
@@ -261,6 +288,11 @@ struct SVLMCoarseSample {
     irradiance: SH_L1_RGB,
     validity: f32,
     lod: u32,
+};
+
+struct SVLMFineSample {
+    irradiance: SH_L1_RGB,
+    validity: f32,
 };
 
 fn svlm_hash_coarse_lookup_key(tile_coord: vec3<i32>, lod: u32) -> u32 {
@@ -471,27 +503,45 @@ fn svlm_leaf_contains(
         all(position <= leaf_min + vec3<f32>(leaf_size + epsilon));
 }
 
+fn svlm_probe_surface_weight(
+    probe_position: vec3<f32>,
+    surface_position: vec3<f32>,
+    surface_normal: vec3<f32>,
+    probe_spacing: f32
+) -> f32 {
+    let signed_plane_distance =
+        dot(surface_normal, probe_position - surface_position) /
+        max(probe_spacing, 0.0001);
+    // Unlike DDGI, SVLM has no per-direction depth moments. Reject probes on
+    // the back side of the local surface plane so thin walls and concave seams
+    // cannot borrow bright irradiance from the opposite side.
+    return smoothstep(-0.2, 0.2, signed_plane_distance);
+}
+
 fn svlm_sample_leaf_sh(
     leaf: SVLMLeafBrick,
-    position: vec3<f32>
-) -> SH_L1_RGB {
+    sample_position: vec3<f32>,
+    surface_position: vec3<f32>,
+    surface_normal: vec3<f32>
+) -> SVLMFineSample {
     let available_probe_count =
         arrayLength(&irradiance_probes) /
         SVLM_SH_WORDS_PER_PROBE;
     if (leaf.probe_base >= available_probe_count) {
-        return sh_l1_rgb_zero();
+        return SVLMFineSample(sh_l1_rgb_zero(), 0.0);
     }
     if (
         available_probe_count - leaf.probe_base <
         SVLM_PROBES_PER_BRICK
     ) {
-        return sh_l1_rgb_zero();
+        return SVLMFineSample(sh_l1_rgb_zero(), 0.0);
     }
 
     let origin = vec3<f32>(leaf.origin_x, leaf.origin_y, leaf.origin_z);
     let size = max(leaf.size, 0.0001);
+    let probe_spacing = size / 4.0;
     let probe_grid_position = clamp(
-        (position - origin) * (4.0 / size) - vec3<f32>(0.5),
+        (sample_position - origin) * (4.0 / size) - vec3<f32>(0.5),
         vec3<f32>(0.0),
         vec3<f32>(3.0)
     );
@@ -502,6 +552,7 @@ fn svlm_sample_leaf_sh(
     let probe_fraction = probe_grid_position - vec3<f32>(probe_base_coord);
     var result = sh_l1_rgb_zero();
     var weight_sum = 0.0;
+    var validity_sum = 0.0;
 
     for (
         var corner = 0u;
@@ -527,22 +578,93 @@ fn svlm_sample_leaf_sh(
             probe_fraction,
             offset == vec3<u32>(1u)
         );
-        let weight =
+        let trilinear_weight =
             weight_axis.x *
             weight_axis.y *
             weight_axis.z;
+        let probe_position = svlm_probe_position(
+            leaf,
+            coord.x + coord.y * 4u + coord.z * 16u
+        );
+        let surface_weight = svlm_probe_surface_weight(
+            probe_position,
+            surface_position,
+            surface_normal,
+            probe_spacing
+        );
+        let weight = trilinear_weight * surface_weight;
         result = svlm_sh_multiply_add(
             result,
             svlm_read_probe_sh(probe_index),
             weight
         );
         weight_sum += weight;
+        validity_sum += weight;
+    }
+
+    // Invalid in-geometry probes can leave a local 2x2x2 cell with only a tiny
+    // surviving weight, which amplifies one noisy probe into a dark splotch.
+    // Recover from nearby probes in the same brick only in that exceptional
+    // case. The compact Gaussian radius keeps the normal path at eight reads
+    // and avoids crossing an adaptive brick boundary or a surface plane.
+    if (validity_sum < 0.5) {
+        var recovery = sh_l1_rgb_zero();
+        var recovery_weight_sum = 0.0;
+        for (
+            var local_probe_index = 0u;
+            local_probe_index < SVLM_PROBES_PER_BRICK;
+            local_probe_index = local_probe_index + 1u
+        ) {
+            let probe_index = leaf.probe_base + local_probe_index;
+            if (!svlm_probe_is_valid(probe_index)) {
+                continue;
+            }
+            let probe_position = svlm_probe_position(
+                leaf,
+                local_probe_index
+            );
+            let probe_delta =
+                (probe_position - sample_position) /
+                max(probe_spacing, 0.0001);
+            let distance_squared = dot(probe_delta, probe_delta);
+            if (distance_squared > 6.25) {
+                continue;
+            }
+            let surface_weight = svlm_probe_surface_weight(
+                probe_position,
+                surface_position,
+                surface_normal,
+                probe_spacing
+            );
+            let weight = exp2(-distance_squared) * surface_weight;
+            if (weight <= 1e-6) {
+                continue;
+            }
+            recovery = svlm_sh_multiply_add(
+                recovery,
+                svlm_read_probe_sh(probe_index),
+                weight
+            );
+            recovery_weight_sum += weight;
+        }
+        if (recovery_weight_sum > 1e-6) {
+            return SVLMFineSample(
+                sh_l1_rgb_multiply_scalar(
+                    recovery,
+                    1.0 / recovery_weight_sum
+                ),
+                1.0
+            );
+        }
     }
 
     if (weight_sum <= 1e-6) {
-        return sh_l1_rgb_zero();
+        return SVLMFineSample(sh_l1_rgb_zero(), 0.0);
     }
-    return sh_l1_rgb_multiply_scalar(result, 1.0 / weight_sum);
+    return SVLMFineSample(
+        sh_l1_rgb_multiply_scalar(result, 1.0 / weight_sum),
+        saturate(validity_sum)
+    );
 }
 
 // Returns (coordinate just across the nearest boundary, neighbor weight).
@@ -578,8 +700,10 @@ fn svlm_leaf_boundary_blend_axis(
 
 fn svlm_sample_blended_sh(
     base_leaf_index: u32,
-    position: vec3<f32>
-) -> SH_L1_RGB {
+    sample_position: vec3<f32>,
+    surface_position: vec3<f32>,
+    surface_normal: vec3<f32>
+) -> SVLMFineSample {
     let base_leaf = leaf_bricks[base_leaf_index];
     let leaf_min = vec3<f32>(
         base_leaf.origin_x,
@@ -591,21 +715,21 @@ fn svlm_sample_blended_sh(
     let blend_width = max(leaf_size / 4.0, 0.0001);
     let epsilon = max(leaf_size * 0.0001, 0.0001);
     let blend_x = svlm_leaf_boundary_blend_axis(
-        position.x,
+        sample_position.x,
         leaf_min.x,
         leaf_max.x,
         blend_width,
         epsilon
     );
     let blend_y = svlm_leaf_boundary_blend_axis(
-        position.y,
+        sample_position.y,
         leaf_min.y,
         leaf_max.y,
         blend_width,
         epsilon
     );
     let blend_z = svlm_leaf_boundary_blend_axis(
-        position.z,
+        sample_position.z,
         leaf_min.z,
         leaf_max.z,
         blend_width,
@@ -613,11 +737,17 @@ fn svlm_sample_blended_sh(
     );
     let neighbor_weight = vec3<f32>(blend_x.y, blend_y.y, blend_z.y);
     if (all(neighbor_weight <= vec3<f32>(1e-6))) {
-        return svlm_sample_leaf_sh(base_leaf, position);
+        return svlm_sample_leaf_sh(
+            base_leaf,
+            sample_position,
+            surface_position,
+            surface_normal
+        );
     }
     let neighbor_position = vec3<f32>(blend_x.x, blend_y.x, blend_z.x);
     var result = sh_l1_rgb_zero();
     var weight_sum = 0.0;
+    var validity_sum = 0.0;
 
     for (var corner = 0u; corner < 8u; corner = corner + 1u) {
         let use_neighbor = vec3<bool>(
@@ -630,33 +760,56 @@ fn svlm_sample_blended_sh(
             neighbor_weight,
             use_neighbor
         );
-        let weight = weight_axis.x * weight_axis.y * weight_axis.z;
+        var weight = weight_axis.x * weight_axis.y * weight_axis.z;
         if (weight <= 1e-6) {
             continue;
         }
 
-        let lookup_position = select(position, neighbor_position, use_neighbor);
+        let lookup_position = select(
+            sample_position,
+            neighbor_position,
+            use_neighbor
+        );
         var leaf_index = base_leaf_index;
         if (corner != 0u) {
-            let adjacent_leaf_index = svlm_find_leaf(lookup_position);
+            let adjacent_lookup = svlm_find_leaf_sample(lookup_position);
+            let adjacent_leaf_index = adjacent_lookup.leaf_index;
             if (
                 adjacent_leaf_index != INVALID_IDX &&
                 adjacent_leaf_index < arrayLength(&leaf_bricks)
             ) {
                 leaf_index = adjacent_leaf_index;
+                weight *= svlm_tiled_leaf_fade(adjacent_lookup);
             }
+        }
+        if (weight <= 1e-6) {
+            continue;
+        }
+        let leaf_sample = svlm_sample_leaf_sh(
+            leaf_bricks[leaf_index],
+            sample_position,
+            surface_position,
+            surface_normal
+        );
+        let sample_weight = weight * leaf_sample.validity;
+        if (sample_weight <= 1e-6) {
+            continue;
         }
         result = svlm_sh_multiply_add(
             result,
-            svlm_sample_leaf_sh(leaf_bricks[leaf_index], position),
-            weight
+            leaf_sample.irradiance,
+            sample_weight
         );
-        weight_sum += weight;
+        weight_sum += sample_weight;
+        validity_sum += sample_weight;
     }
 
-    return sh_l1_rgb_multiply_scalar(
-        result,
-        1.0 / max(weight_sum, 1e-6)
+    return SVLMFineSample(
+        sh_l1_rgb_multiply_scalar(
+            result,
+            1.0 / max(weight_sum, 1e-6)
+        ),
+        saturate(validity_sum)
     );
 }
 
@@ -711,42 +864,62 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         u32(frame_info.view_index)
     );
     let normal = safe_normalize(normal_data.xyz);
-    let leaf_index = svlm_find_leaf(position);
-    let fine_valid =
-        leaf_index != INVALID_IDX &&
-        leaf_index < arrayLength(&leaf_bricks);
+    let surface_lookup = svlm_find_leaf_sample(position);
+    let surface_leaf_index = surface_lookup.leaf_index;
+    let surface_leaf_valid =
+        surface_leaf_index != INVALID_IDX &&
+        surface_leaf_index < arrayLength(&leaf_bricks);
     var coarse_sample = SVLMCoarseSample(sh_l1_rgb_zero(), 0.0, 0u);
     if (svlm_params.tile_streaming_enabled > 0.5) {
         coarse_sample = svlm_sample_coarse(position);
     }
-    if (!fine_valid && coarse_sample.validity <= 0.5) {
+    if (!surface_leaf_valid && coarse_sample.validity <= 0.5) {
         textureStore(output_diffuse, sample_pixel, vec4<f32>(0.0));
         return;
     }
 
     var fine_irradiance = vec3<f32>(0.0);
-    if (fine_valid) {
-        var sample_leaf_index = leaf_index;
+    var fine_validity = 0.0;
+    var tile_fade = 1.0;
+    if (surface_leaf_valid) {
+        var sample_lookup = surface_lookup;
+        var sample_leaf_index = surface_leaf_index;
         let leaf = leaf_bricks[sample_leaf_index];
-        // Resolve from the air side of the surface. Adaptive refinement places
-        // the visible surface in a geometry-overlapping leaf, while the useful
-        // probes are commonly in its neighboring empty-space leaf.
+        // Keep the lookup bias small and on the known air side. The surface
+        // plane filter above does the heavy lifting without moving a crease or
+        // thin frame halfway across a probe cell.
         let probe_spacing = max(leaf.size / 4.0, 0.0001);
         let sample_position =
-            position + normal * max(probe_spacing * 0.5, 0.001);
+            position + normal * max(probe_spacing * 0.25, 0.001);
         if (!svlm_leaf_contains(leaf, sample_position)) {
-            let biased_leaf_index = svlm_find_leaf(sample_position);
+            let biased_lookup = svlm_find_leaf_sample(sample_position);
+            let biased_leaf_index = biased_lookup.leaf_index;
             if (
                 biased_leaf_index != INVALID_IDX &&
                 biased_leaf_index < arrayLength(&leaf_bricks)
             ) {
+                sample_lookup = biased_lookup;
                 sample_leaf_index = biased_leaf_index;
             }
         }
-        fine_irradiance = svlm_evaluate_irradiance(
-            svlm_sample_blended_sh(sample_leaf_index, sample_position),
+        let fine_sample = svlm_sample_blended_sh(
+            sample_leaf_index,
+            sample_position,
+            position,
             normal
         );
+        fine_validity = fine_sample.validity;
+        tile_fade = svlm_tiled_leaf_fade(sample_lookup);
+        if (fine_validity > 1e-6) {
+            fine_irradiance = svlm_evaluate_irradiance(
+                fine_sample.irradiance,
+                normal
+            );
+        }
+    }
+    if (fine_validity <= 1e-6 && coarse_sample.validity <= 0.5) {
+        textureStore(output_diffuse, sample_pixel, vec4<f32>(0.0));
+        return;
     }
 
     var irradiance = fine_irradiance;
@@ -763,15 +936,19 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
             svlm_params.streaming_transition_tiles *
             svlm_params.world_tile_size;
         let inner_distance = max(outer_distance - transition_distance, 0.0);
-        let fine_weight = select(
+        var fine_weight = select(
             0.0,
             1.0 - smoothstep(
                 inner_distance,
                 max(outer_distance, inner_distance + 0.0001),
                 distance(position, camera_position)
             ),
-            fine_valid
+            fine_validity > 1e-6
         );
+        // Valid fine probes remain authoritative near geometry. Blending by
+        // partial validity here admits the broad coarse field precisely where
+        // walls invalidate probes, which appears as light leaking at corners.
+        fine_weight *= tile_fade;
         irradiance = mix(coarse_irradiance, fine_irradiance, fine_weight);
     }
     textureStore(

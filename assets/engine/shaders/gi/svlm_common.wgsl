@@ -171,7 +171,7 @@ struct SVLMParams {
 
     streaming_transition_tiles: f32,
     tile_leaf_ownership: f32,
-    reserved_42: f32,
+    streaming_fade_seconds: f32,
     reserved_43: f32,
 };
 

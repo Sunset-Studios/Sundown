@@ -410,6 +410,11 @@ export function create_svlm_coarse_coverage_samples(tile) {
       leaf_coefficients,
       unpacked
     );
+    // An all-invalid leaf has no lighting estimate. Emitting a packed zero for
+    // it makes the runtime treat the corresponding coarse cell as valid black,
+    // preventing fallback to a usable parent LOD and producing hard dark bands.
+    if (valid_probe_count === 0) continue;
+
     const min_coord = svlm_world_to_tile_coord(origin, tile_size);
     const max_coord = svlm_world_to_tile_coord(
       origin.map((component) => component + Math.max(0, size - epsilon)),

@@ -224,12 +224,18 @@ function parse_bake_options(args) {
       options.streaming_hysteresis = Number(value);
     } else if (key === "prefetch" || key === "streaming_prefetch_tiles") {
       options.streaming_prefetch_tiles = Number(value);
+    } else if (key === "prediction" || key === "streaming_prediction_seconds") {
+      options.streaming_prediction_seconds = Number(value);
+    } else if (key === "prediction_max" || key === "streaming_prediction_max_tiles") {
+      options.streaming_prediction_max_tiles = Number(value);
     } else if (key === "requests" || key === "streaming_max_requests") {
       options.streaming_max_requests = Number(value);
     } else if (key === "budget" || key === "streaming_memory_budget_mb") {
       options.streaming_memory_budget_mb = Number(value);
     } else if (key === "transition" || key === "streaming_transition_tiles") {
       options.streaming_transition_tiles = Number(value);
+    } else if (key === "fade" || key === "streaming_fade_seconds") {
+      options.streaming_fade_seconds = Number(value);
     } else if (key === "coarse_min" || key === "coarse_min_lod") {
       options.coarse_min_lod = Number(value);
     } else if (key === "coarse_max" || key === "coarse_max_lod") {
@@ -259,6 +265,13 @@ function parse_debug_options(args) {
       debug_view = DebugDrawType.SVLM_Bricks;
     } else if (lower === "probe" || lower === "probes") {
       debug_view = DebugDrawType.SVLM_Probes;
+    } else if (
+      lower === "baked_probe" ||
+      lower === "baked_probes" ||
+      lower === "gi_probe" ||
+      lower === "gi_probes"
+    ) {
+      debug_view = DebugDrawType.GI_Probes;
     } else if (lower === "all") {
       options.debug_level = -1;
     } else {
@@ -342,7 +355,7 @@ export class SVLMTool extends DevConsoleTool {
         break;
       default:
         log(
-          "svlm [stats | bake [root=<size>] [max=<level>] [min=<level>] [rays=<count>] [batch=<count>] [samples=<count>] [tile=<meters>] [radius=<tiles>] [hysteresis=<tiles>] [prefetch=<tiles>] [requests=<count>] [budget=<mb>] [transition=<tiles>] [coarse_min=<lod>] [coarse_max=<lod>] [coarse_budget=<mb>] | preview | debug [bricks|probes] [on|off] [level=<n>|all] | clear | hide]"
+          "svlm [stats | bake [root=<size>] [max=<level>] [min=<level>] [rays=<count>] [batch=<count>] [samples=<count>] [tile=<meters>] [radius=<tiles>] [hysteresis=<tiles>] [prefetch=<tiles>] [requests=<count>] [budget=<mb>] [transition=<tiles>] [coarse_min=<lod>] [coarse_max=<lod>] [coarse_budget=<mb>] | preview | debug [bricks|probes|baked_probes] [on|off] [level=<n>|all] | clear | hide]"
         );
         break;
     }
@@ -394,10 +407,7 @@ export class SVLMTool extends DevConsoleTool {
     );
     const completed_probe_samples = Math.max(
       0,
-      Math.min(
-        required_probe_samples,
-        Number(stats.irradiance_completed_probe_samples) || 0
-      )
+      Math.min(required_probe_samples, Number(stats.irradiance_completed_probe_samples) || 0)
     );
 
     if (required_probe_samples <= 0 || completed_probe_samples >= required_probe_samples) {
@@ -421,8 +431,7 @@ export class SVLMTool extends DevConsoleTool {
     }
 
     const elapsed_seconds = (now - this.bake_eta_started_at) / 1000;
-    const completed_since_start =
-      completed_probe_samples - this.bake_eta_completed_at_start;
+    const completed_since_start = completed_probe_samples - this.bake_eta_completed_at_start;
     if (elapsed_seconds < 1 || completed_since_start <= 0) {
       return Number.NaN;
     }

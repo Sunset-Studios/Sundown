@@ -37,7 +37,7 @@ const SH_WORDS_PER_PROBE = 6;
 const PROBE_RAY_U32_STRIDE = 16;
 const NODE_U32_STRIDE = 7;
 const LEAF_U32_STRIDE = 6;
-const TILED_LOOKUP_U32_STRIDE = 8;
+const TILED_LOOKUP_U32_STRIDE = 9;
 const TILED_LOOKUP_MAX_PROBES = 16;
 const COARSE_LOOKUP_U32_STRIDE = svlm_coarse_record_words;
 const COARSE_LOOKUP_MAX_PROBES = 16;
@@ -95,6 +95,7 @@ const PARAM_COARSE_MAX_LOD = 38;
 const PARAM_STREAMING_RADIUS = 39;
 const PARAM_STREAMING_TRANSITION_TILES = 40;
 const PARAM_TILE_LEAF_OWNERSHIP = 41;
+const PARAM_STREAMING_FADE_SECONDS = 42;
 
 const INVALID_IDX = 0xffffffff;
 const TOMBSTONE_IDX = 0xfffffffe;
@@ -125,6 +126,15 @@ const MAX_IRRADIANCE_LEAVES_PER_CHUNK = Math.max(
   1,
   Math.floor(MAX_IRRADIANCE_PROBES_PER_CHUNK / PROBES_PER_BRICK)
 );
+
+const svlm_float_word_buffer = new ArrayBuffer(Uint32Array.BYTES_PER_ELEMENT);
+const svlm_float_word_view = new Float32Array(svlm_float_word_buffer);
+const svlm_uint_word_view = new Uint32Array(svlm_float_word_buffer);
+
+function svlm_float_to_word(value) {
+  svlm_float_word_view[0] = value;
+  return svlm_uint_word_view[0];
+}
 
 // Streamed tiles intentionally omit the monolithic octree. Rebuild a compact
 // spatial hash only when residency changes so runtime lookup stays bounded
@@ -194,14 +204,10 @@ function build_svlm_tiled_lookup_hash(
       for (let probe = 0; probe < TILED_LOOKUP_MAX_PROBES; probe++) {
         const entry_base = entry_index * TILED_LOOKUP_U32_STRIDE;
         if (table[entry_base + 7] === INVALID_IDX) {
-          table[entry_base] = records[record_base];
-          table[entry_base + 1] = records[record_base + 1];
-          table[entry_base + 2] = records[record_base + 2];
-          table[entry_base + 3] = records[record_base + 3];
-          table[entry_base + 4] = records[record_base + 4];
-          table[entry_base + 5] = records[record_base + 5];
-          table[entry_base + 6] = records[record_base + 6];
-          table[entry_base + 7] = records[record_base + 7];
+          table.set(
+            records.subarray(record_base, record_base + TILED_LOOKUP_U32_STRIDE),
+            entry_base
+          );
           inserted = true;
           break;
         }
@@ -445,6 +451,12 @@ const svlm_probe_debug_clear_shader_setup = {
   },
 };
 
+const svlm_probe_debug_depth_clear_shader_setup = {
+  pipeline_shaders: {
+    compute: { path: "gi/svlm_probe_debug_depth_clear.wgsl" },
+  },
+};
+
 const svlm_probe_debug_gather_shader_setup = {
   pipeline_shaders: {
     compute: { path: "gi/svlm_probe_debug_gather.wgsl" },
@@ -489,13 +501,16 @@ export class SparseVolumetricLightmapper {
     irradiance_sample_count: 1,
     irradiance_max_ray_distance: 128.0,
     max_emissive_lights: 32768,
-    world_tile_size: 25.0,
+    world_tile_size: 50.0,
     streaming_radius: 6,
     streaming_hysteresis: 1,
     streaming_prefetch_tiles: 1,
+    streaming_prediction_seconds: 2.0,
+    streaming_prediction_max_tiles: 16,
     streaming_max_requests: 32,
     streaming_memory_budget_mb: 128,
     streaming_transition_tiles: 1,
+    streaming_fade_seconds: 0.35,
     coarse_min_lod: 1,
     coarse_max_lod: 8,
     coarse_memory_budget_mb: 16,
@@ -604,6 +619,10 @@ export class SparseVolumetricLightmapper {
   serialized_bake_serial = -1;
   last_tile_streaming_signature = null;
   last_streaming_center_coord = null;
+  last_streaming_camera_position = null;
+  last_streaming_time = null;
+  streaming_time = 0;
+  streaming_velocity = [0, 0, 0];
   streaming_prefetch_direction = [0, 0, 0];
   streaming_update_serial = 0;
   desired_tile_keys = new Set();
@@ -645,6 +664,7 @@ export class SparseVolumetricLightmapper {
   streamed_lookup_record_count = 0;
   streamed_lookup_tombstone_count = 0;
   streamed_complete_coverage_keys = new Set();
+  streamed_coverage_fade_start_times = new Map();
   streamed_leaf_brick_buffer = null;
   streamed_irradiance_buffer = null;
   streamed_leaf_count = 0;
@@ -655,6 +675,8 @@ export class SparseVolumetricLightmapper {
   streamed_irradiance_free_ranges = [];
   streamed_leaf_high_water_mark = 0;
   streamed_irradiance_high_water_mark = 0;
+  baked_probe_debug_counter_buffer = null;
+  baked_probe_debug_leaf_indices_buffer = null;
 
   constructor() {
     SVLMTileStreamingProvider.install();
@@ -1019,6 +1041,23 @@ export class SparseVolumetricLightmapper {
       0,
       8
     );
+    this.config.streaming_prediction_seconds = clamp(
+      Number(
+        streaming_config.streaming_prediction_seconds ?? this.config.streaming_prediction_seconds
+      ) || 0,
+      0,
+      5
+    );
+    this.config.streaming_prediction_max_tiles = clamp(
+      Math.floor(
+        Number(
+          streaming_config.streaming_prediction_max_tiles ??
+            this.config.streaming_prediction_max_tiles
+        ) || 0
+      ),
+      0,
+      32
+    );
     this.config.streaming_max_requests = clamp(
       Math.floor(
         Number(streaming_config.streaming_max_requests ?? this.config.streaming_max_requests) || 1
@@ -1037,6 +1076,11 @@ export class SparseVolumetricLightmapper {
       Number(
         streaming_config.streaming_transition_tiles ?? this.config.streaming_transition_tiles
       ) || 0,
+      0,
+      4
+    );
+    this.config.streaming_fade_seconds = clamp(
+      Number(streaming_config.streaming_fade_seconds ?? this.config.streaming_fade_seconds) || 0,
       0,
       4
     );
@@ -1134,27 +1178,85 @@ export class SparseVolumetricLightmapper {
     return entry?.payload ?? entry?.path ?? entry?.url ?? null;
   }
 
-  update_tile_streaming(camera_position, view_data = null) {
+  update_tile_streaming(camera_position, view_data = null, frame_time = null) {
     if (!this.tile_streaming_enabled || !this.tile_manifest) {
       return;
     }
 
-    const center_coord = svlm_world_to_tile_coord(camera_position, this.tile_manifest.tile_size);
+    const tile_size = this.tile_manifest.tile_size;
+    const center_coord = svlm_world_to_tile_coord(camera_position, tile_size);
     const radius = Math.max(0, Math.floor(Number(this.config.streaming_radius) || 0));
     const hysteresis = Math.max(0, Math.floor(Number(this.config.streaming_hysteresis) || 0));
-    const prefetch_tiles = Math.max(
+    const base_prefetch_tiles = Math.max(
       0,
       Math.floor(Number(this.config.streaming_prefetch_tiles) || 0)
     );
-    const movement = this.last_streaming_center_coord
-      ? center_coord.map((component, axis) => component - this.last_streaming_center_coord[axis])
-      : [0, 0, 0];
-    if (movement.some((component) => component !== 0)) {
-      this.streaming_prefetch_direction = movement.map((component) => clamp(component, -1, 1));
-    }
-    const prefetch_coord = center_coord.map(
-      (component, axis) => component + this.streaming_prefetch_direction[axis] * prefetch_tiles
+    const prediction_seconds = Math.max(0, Number(this.config.streaming_prediction_seconds) || 0);
+    const prediction_max_tiles = Math.max(
+      base_prefetch_tiles,
+      Math.floor(Number(this.config.streaming_prediction_max_tiles) || 0)
     );
+    // Predict in world space so async reads and decompression overlap camera
+    // travel. The tile cap bounds both request churn and candidate enumeration.
+    const has_frame_time = Number.isFinite(frame_time);
+    const current_time = has_frame_time ? Number(frame_time) : this.streaming_time;
+    const previous_position = this.last_streaming_camera_position;
+    if (previous_position) {
+      const delta_x = Number(camera_position[0]) - previous_position[0];
+      const delta_y = Number(camera_position[1]) - previous_position[1];
+      const delta_z = Number(camera_position[2]) - previous_position[2];
+      const elapsed = has_frame_time ? current_time - this.last_streaming_time : 1 / 60;
+      if (elapsed > 1e-4 && elapsed <= 0.25) {
+        const inverse_elapsed = 1 / elapsed;
+        this.streaming_velocity[0] = delta_x * inverse_elapsed;
+        this.streaming_velocity[1] = delta_y * inverse_elapsed;
+        this.streaming_velocity[2] = delta_z * inverse_elapsed;
+      } else {
+        this.streaming_velocity[0] = 0;
+        this.streaming_velocity[1] = 0;
+        this.streaming_velocity[2] = 0;
+      }
+    } else if (view_data?.velocity?.length >= 3) {
+      // SharedViewBuffer velocity is a per-frame displacement. It gives the
+      // predictor a useful first-frame heading before local history exists.
+      this.streaming_velocity[0] = Number(view_data.velocity[0]) * 60 || 0;
+      this.streaming_velocity[1] = Number(view_data.velocity[1]) * 60 || 0;
+      this.streaming_velocity[2] = Number(view_data.velocity[2]) * 60 || 0;
+    }
+    if (!this.last_streaming_camera_position) {
+      this.last_streaming_camera_position = [0, 0, 0];
+    }
+    this.last_streaming_camera_position[0] = Number(camera_position[0]);
+    this.last_streaming_camera_position[1] = Number(camera_position[1]);
+    this.last_streaming_camera_position[2] = Number(camera_position[2]);
+    this.last_streaming_time = current_time;
+    this.streaming_time = current_time;
+
+    const velocity_x = this.streaming_velocity[0];
+    const velocity_y = this.streaming_velocity[1];
+    const velocity_z = this.streaming_velocity[2];
+    const streaming_speed = Math.hypot(velocity_x, velocity_y, velocity_z);
+    if (streaming_speed > 1e-4) {
+      const inverse_speed = 1 / streaming_speed;
+      this.streaming_prefetch_direction[0] = velocity_x * inverse_speed;
+      this.streaming_prefetch_direction[1] = velocity_y * inverse_speed;
+      this.streaming_prefetch_direction[2] = velocity_z * inverse_speed;
+    }
+    const velocity_prefetch_tiles = Math.ceil((streaming_speed * prediction_seconds) / tile_size);
+    const prefetch_tiles = clamp(
+      Math.max(base_prefetch_tiles, velocity_prefetch_tiles),
+      0,
+      prediction_max_tiles
+    );
+    const prefetch_position = [
+      Number(camera_position[0]) +
+        this.streaming_prefetch_direction[0] * prefetch_tiles * tile_size,
+      Number(camera_position[1]) +
+        this.streaming_prefetch_direction[1] * prefetch_tiles * tile_size,
+      Number(camera_position[2]) +
+        this.streaming_prefetch_direction[2] * prefetch_tiles * tile_size,
+    ];
+    const prefetch_coord = svlm_world_to_tile_coord(prefetch_position, tile_size);
     const view_direction = view_data?.forward;
     const direction_signature = view_direction
       ? `${Math.round(view_direction[0] * 8)}:${Math.round(view_direction[1] * 8)}:${Math.round(
@@ -1163,7 +1265,8 @@ export class SparseVolumetricLightmapper {
       : "none";
     const signature =
       `${svlm_tile_key(center_coord)}|${svlm_tile_key(prefetch_coord)}|` +
-      `${radius}|${hysteresis}|${this.config.streaming_memory_budget_mb}|${direction_signature}`;
+      `${radius}|${hysteresis}|${this.config.streaming_memory_budget_mb}|` +
+      `${prediction_seconds}|${prediction_max_tiles}|${direction_signature}`;
     if (signature === this.last_tile_streaming_signature) {
       return;
     }
@@ -1172,7 +1275,7 @@ export class SparseVolumetricLightmapper {
     this.streaming_update_serial++;
 
     const coverage_candidates = new Map();
-    const add_candidates = (streaming_center, is_core) => {
+    const add_candidates = (streaming_center, is_core, prediction_distance = Infinity) => {
       for (const coord of enumerate_svlm_tile_radius(streaming_center, radius)) {
         const key = svlm_tile_key(coord);
         const coverage = this.tile_coverage_entries.get(key);
@@ -1190,27 +1293,63 @@ export class SparseVolumetricLightmapper {
             coord,
             coverage,
             is_core,
+            prediction_distance,
             distance_squared,
             visible,
           });
           continue;
         }
         existing.is_core ||= is_core;
+        existing.prediction_distance = Math.min(existing.prediction_distance, prediction_distance);
         existing.visible ||= visible;
         existing.distance_squared = Math.min(existing.distance_squared, distance_squared);
       }
     };
     add_candidates(center_coord, true);
     if (prefetch_tiles > 0 && svlm_tile_key(prefetch_coord) !== svlm_tile_key(center_coord)) {
-      add_candidates(prefetch_coord, false);
+      const prediction_delta_x = prefetch_coord[0] - center_coord[0];
+      const prediction_delta_y = prefetch_coord[1] - center_coord[1];
+      const prediction_delta_z = prefetch_coord[2] - center_coord[2];
+      const prediction_steps = Math.max(
+        Math.abs(prediction_delta_x),
+        Math.abs(prediction_delta_y),
+        Math.abs(prediction_delta_z)
+      );
+      const prediction_stride = Math.max(1, radius);
+      for (
+        let prediction_distance = prediction_stride;
+        prediction_distance < prediction_steps;
+        prediction_distance += prediction_stride
+      ) {
+        const prediction_fraction = prediction_distance / prediction_steps;
+        add_candidates(
+          [
+            Math.round(center_coord[0] + prediction_delta_x * prediction_fraction),
+            Math.round(center_coord[1] + prediction_delta_y * prediction_fraction),
+            Math.round(center_coord[2] + prediction_delta_z * prediction_fraction),
+          ],
+          false,
+          prediction_distance
+        );
+      }
+      add_candidates(prefetch_coord, false, prediction_steps);
     }
 
-    const prioritized_coverage = Array.from(coverage_candidates.values()).sort(
-      (a, b) =>
-        Number(b.is_core) - Number(a.is_core) ||
+    const immediate_radius_squared = Math.min(radius, 2) ** 2;
+    const compare_streaming_candidates = (a, b) => {
+      const a_immediate = a.is_core && a.distance_squared <= immediate_radius_squared;
+      const b_immediate = b.is_core && b.distance_squared <= immediate_radius_squared;
+      return (
+        Number(b_immediate) - Number(a_immediate) ||
+        a.prediction_distance - b.prediction_distance ||
         Number(b.visible) - Number(a.visible) ||
+        Number(b.is_core) - Number(a.is_core) ||
         a.distance_squared - b.distance_squared ||
         a.key.localeCompare(b.key)
+      );
+    };
+    const prioritized_coverage = Array.from(coverage_candidates.values()).sort(
+      compare_streaming_candidates
     );
     const memory_budget = this._get_streaming_memory_budget_bytes();
     let selected_bytes = 0;
@@ -1261,12 +1400,17 @@ export class SparseVolumetricLightmapper {
             coord: entry.coord,
             entry,
             is_core: coverage_candidate.is_core,
+            prediction_distance: coverage_candidate.prediction_distance,
             distance_squared: coverage_candidate.distance_squared,
             visible: coverage_candidate.visible,
           });
           continue;
         }
         existing.is_core ||= coverage_candidate.is_core;
+        existing.prediction_distance = Math.min(
+          existing.prediction_distance,
+          coverage_candidate.prediction_distance
+        );
         existing.visible ||= coverage_candidate.visible;
         existing.distance_squared = Math.min(
           existing.distance_squared,
@@ -1275,11 +1419,7 @@ export class SparseVolumetricLightmapper {
       }
     }
     const prioritized_candidates = Array.from(candidates.values()).sort(
-      (a, b) =>
-        Number(b.is_core) - Number(a.is_core) ||
-        Number(b.visible) - Number(a.visible) ||
-        a.distance_squared - b.distance_squared ||
-        a.key.localeCompare(b.key)
+      compare_streaming_candidates
     );
 
     const retained_keys = new Set(desired_keys);
@@ -1462,6 +1602,7 @@ export class SparseVolumetricLightmapper {
       this.remove_streamed_svlm_tile(tile.key);
     }
     this._make_room_for_streamed_tile(tile);
+    tile.streaming_fade_start_time = this.streaming_time;
     this.resident_tiles.set(tile.key, tile);
     this.resident_tile_usage.set(tile.key, this.streaming_update_serial);
     this.streamed_pending_uploads.add(tile.key);
@@ -1567,6 +1708,11 @@ export class SparseVolumetricLightmapper {
         }
       }
       for (const coverage_key of changed_coverage_keys) {
+        if (complete_coverage_keys.has(coverage_key)) {
+          this.streamed_coverage_fade_start_times.set(coverage_key, this.streaming_time);
+        } else {
+          this.streamed_coverage_fade_start_times.delete(coverage_key);
+        }
         const coverage = this.tile_coverage_entries.get(coverage_key);
         for (const owner_key of coverage?.owners ?? []) {
           if (!this.resident_tiles.has(owner_key)) continue;
@@ -1693,6 +1839,9 @@ export class SparseVolumetricLightmapper {
     const coverage_epsilon = tile_size * 1e-6;
     for (const tile of tiles) {
       const allocation = this.streamed_allocations.get(tile.key);
+      // Activation time rides with the lookup record, avoiding per-frame CPU
+      // uploads while the shader crossfades newly resident fine irradiance.
+      const tile_fade_start_word = svlm_float_to_word(Number(tile.streaming_fade_start_time) || 0);
       const cached_lookup_records = this.streamed_lookup_tile_records.get(tile.key);
       if (cached_lookup_records) {
         const tile_root_size = allocation.root_size;
@@ -1784,9 +1933,12 @@ export class SparseVolumetricLightmapper {
           for (let z = min_coverage_coord[2]; z <= max_coverage_coord[2]; z++) {
             for (let y = min_coverage_coord[1]; y <= max_coverage_coord[1]; y++) {
               for (let x = min_coverage_coord[0]; x <= max_coverage_coord[0]; x++) {
-                if (!this.streamed_complete_coverage_keys.has(svlm_tile_key([x, y, z]))) {
+                const coverage_key = svlm_tile_key([x, y, z]);
+                if (!this.streamed_complete_coverage_keys.has(coverage_key)) {
                   continue;
                 }
+                const fade_start_time =
+                  this.streamed_coverage_fade_start_times.get(coverage_key) ?? this.streaming_time;
                 tile_lookup_record_words.push(
                   x >>> 0,
                   y >>> 0,
@@ -1795,7 +1947,8 @@ export class SparseVolumetricLightmapper {
                   leaf_coord_x,
                   leaf_coord_y,
                   leaf_coord_z,
-                  target_leaf_index
+                  target_leaf_index,
+                  svlm_float_to_word(fade_start_time)
                 );
               }
             }
@@ -1809,7 +1962,8 @@ export class SparseVolumetricLightmapper {
             leaf_coord_x,
             leaf_coord_y,
             leaf_coord_z,
-            target_leaf_index
+            target_leaf_index,
+            tile_fade_start_word
           );
         }
       }
@@ -1878,6 +2032,7 @@ export class SparseVolumetricLightmapper {
     // Owner tiles deduplicate payloads only. GPU lookup remains coverage-local
     // so incomplete dependency groups fall back to coarse irradiance atomically.
     this.streamed_params_data[PARAM_TILE_LEAF_OWNERSHIP] = 0;
+    this.streamed_params_data[PARAM_STREAMING_FADE_SECONDS] = this.config.streaming_fade_seconds;
     this.streamed_params_buffer.write_raw(this.streamed_params_data);
 
     this.streamed_leaf_count = total_leaf_count;
@@ -2411,9 +2566,12 @@ export class SparseVolumetricLightmapper {
         streaming_radius: this.config.streaming_radius,
         streaming_hysteresis: this.config.streaming_hysteresis,
         streaming_prefetch_tiles: this.config.streaming_prefetch_tiles,
+        streaming_prediction_seconds: this.config.streaming_prediction_seconds,
+        streaming_prediction_max_tiles: this.config.streaming_prediction_max_tiles,
         streaming_max_requests: this.config.streaming_max_requests,
         streaming_memory_budget_mb: this.config.streaming_memory_budget_mb,
         streaming_transition_tiles: this.config.streaming_transition_tiles,
+        streaming_fade_seconds: this.config.streaming_fade_seconds,
         coarse_memory_budget_mb: this.config.coarse_memory_budget_mb,
       },
     });
@@ -2515,6 +2673,10 @@ export class SparseVolumetricLightmapper {
     this.retained_tile_keys.clear();
     this.last_tile_streaming_signature = null;
     this.last_streaming_center_coord = null;
+    this.last_streaming_camera_position = null;
+    this.last_streaming_time = null;
+    this.streaming_time = 0;
+    this.streaming_velocity = [0, 0, 0];
     this.streaming_prefetch_direction = [0, 0, 0];
     this.streaming_update_serial = 0;
     this.tile_buffers_dirty = false;
@@ -2529,6 +2691,7 @@ export class SparseVolumetricLightmapper {
     this.streamed_lookup_record_count = 0;
     this.streamed_lookup_tombstone_count = 0;
     this.streamed_complete_coverage_keys.clear();
+    this.streamed_coverage_fade_start_times.clear();
     this.streamed_leaf_free_ranges.length = 0;
     this.streamed_irradiance_free_ranges.length = 0;
     this.streamed_leaf_high_water_mark = 0;
@@ -2570,10 +2733,14 @@ export class SparseVolumetricLightmapper {
     this.streamed_lookup_buffer?.destroy();
     this.streamed_leaf_brick_buffer?.destroy();
     this.streamed_irradiance_buffer?.destroy();
+    this.baked_probe_debug_counter_buffer?.destroy();
+    this.baked_probe_debug_leaf_indices_buffer?.destroy();
     this.streamed_params_buffer = null;
     this.streamed_lookup_buffer = null;
     this.streamed_leaf_brick_buffer = null;
     this.streamed_irradiance_buffer = null;
+    this.baked_probe_debug_counter_buffer = null;
+    this.baked_probe_debug_leaf_indices_buffer = null;
   }
 
   bake(options = {}) {
@@ -3256,6 +3423,185 @@ export class SparseVolumetricLightmapper {
     );
   }
 
+  add_baked_probe_debug_passes(
+    render_graph,
+    width,
+    height,
+    depth_texture,
+    scene_color,
+    force_recreate = false
+  ) {
+    if (!this.tile_streaming_enabled) {
+      this.add_probe_debug_passes(
+        render_graph,
+        width,
+        height,
+        depth_texture,
+        scene_color,
+        force_recreate
+      );
+      return;
+    }
+
+    this.debug_texture = null;
+    this._flush_streamed_tiles();
+    if (
+      !this.streamed_params_buffer?.buffer ||
+      !this.streamed_leaf_brick_buffer?.buffer ||
+      !this.streamed_irradiance_buffer?.buffer
+    ) {
+      return;
+    }
+
+    // Streamed pools may contain holes and stale payload after tile eviction.
+    // Build the compact debug list from active lookup records so incomplete
+    // coverage and unaddressable resident payload are not visualized as probes.
+    const addressable_leaf_indices = new Set();
+    for (const lookup_records of this.streamed_lookup_tile_records.values()) {
+      for (
+        let record_base = 0;
+        record_base < lookup_records.length;
+        record_base += TILED_LOOKUP_U32_STRIDE
+      ) {
+        const leaf_index = lookup_records[record_base + 7];
+        if (leaf_index !== INVALID_IDX && leaf_index !== TOMBSTONE_IDX) {
+          addressable_leaf_indices.add(leaf_index);
+        }
+      }
+    }
+
+    const selected_leaf_indices = [];
+    const debug_level = this.debug_config.debug_level ?? -1;
+    for (const tile of this.resident_tiles.values()) {
+      const allocation = this.streamed_allocations.get(tile.key);
+      if (!allocation) continue;
+
+      for (let local_leaf_index = 0; local_leaf_index < tile.leaf_count; local_leaf_index++) {
+        const leaf_index = allocation.leaf_offset + local_leaf_index;
+        if (!addressable_leaf_indices.has(leaf_index)) continue;
+        const leaf_level = tile.leaves[local_leaf_index * LEAF_U32_STRIDE];
+        if (debug_level >= 0 && leaf_level !== debug_level) continue;
+        selected_leaf_indices.push(leaf_index);
+      }
+    }
+    if (selected_leaf_indices.length <= 0) {
+      return;
+    }
+
+    const debug_leaf_data = new Uint32Array(selected_leaf_indices.length + 1);
+    debug_leaf_data[0] = selected_leaf_indices.length;
+    debug_leaf_data.set(selected_leaf_indices, 1);
+    const debug_counter_data = new Uint32Array(COUNTER_U32_COUNT);
+    debug_counter_data[COUNTER_LEAF_COUNT] = selected_leaf_indices.length;
+    // Streamed tiles contain finalized irradiance. A saturated completion count
+    // lets the shared splat shader distinguish these from unwritten bake probes.
+    debug_counter_data[COUNTER_IRRADIANCE_COMPLETED_PROBE_SAMPLES] = INVALID_IDX;
+
+    const usage = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST;
+    this._ensure_streamed_buffer(
+      "baked_probe_debug_counter_buffer",
+      "svlm_baked_probe_debug_counters",
+      COUNTER_U32_COUNT,
+      usage
+    );
+    this._ensure_streamed_buffer(
+      "baked_probe_debug_leaf_indices_buffer",
+      "svlm_baked_probe_debug_leaf_indices",
+      debug_leaf_data.length,
+      usage
+    );
+    this.baked_probe_debug_counter_buffer.write_raw(debug_counter_data);
+    this.baked_probe_debug_leaf_indices_buffer.write_raw(debug_leaf_data);
+
+    const leaf_group_count = Math.ceil(selected_leaf_indices.length / PROBE_DEBUG_WORKGROUP_Y);
+    const leaf_page_groups_y = Math.max(1, Math.min(leaf_group_count, MAX_COMPUTE_WORKGROUPS));
+    const leaf_page_count_z = Math.ceil(leaf_group_count / leaf_page_groups_y);
+    this.streamed_params_data[PARAM_DEBUG_LEVEL] = debug_level;
+    this.streamed_params_data[PARAM_DEBUG_LEAF_PAGE_GROUPS_Y] = leaf_page_groups_y;
+    this.streamed_params_buffer.write_raw(this.streamed_params_data);
+
+    const params = render_graph.register_buffer(this.streamed_params_buffer.config.name);
+    const counters = render_graph.register_buffer(
+      this.baked_probe_debug_counter_buffer.config.name
+    );
+    const leaves = render_graph.register_buffer(this.streamed_leaf_brick_buffer.config.name);
+    const irradiance = render_graph.register_buffer(this.streamed_irradiance_buffer.config.name);
+    const debug_leaf_indices = render_graph.register_buffer(
+      this.baked_probe_debug_leaf_indices_buffer.config.name
+    );
+    const debug_depth = render_graph.create_buffer({
+      name: "svlm_baked_probe_debug_depth",
+      size: Math.max(1, width * height),
+      usage,
+    });
+
+    this.debug_texture = render_graph.create_image({
+      name: "svlm_baked_probe_debug",
+      format: "rgba16float",
+      width,
+      height,
+      usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
+      force: force_recreate,
+    });
+
+    render_graph.add_pass(
+      "svlm_baked_probe_debug_clear",
+      RenderPassFlags.Compute,
+      {
+        inputs: [debug_depth, depth_texture],
+        outputs: [debug_depth],
+        shader_setup: svlm_probe_debug_depth_clear_shader_setup,
+      },
+      (graph, frame_data) => {
+        graph
+          .get_physical_pass(frame_data.current_pass)
+          .dispatch(Math.ceil(width / 8), Math.ceil(height / 8), 1);
+      }
+    );
+
+    render_graph.add_pass(
+      "svlm_baked_probe_debug_splat",
+      RenderPassFlags.Compute,
+      {
+        inputs: [
+          params,
+          counters,
+          leaves,
+          depth_texture,
+          debug_depth,
+          debug_leaf_indices,
+          irradiance,
+        ],
+        outputs: [debug_depth],
+        shader_setup: svlm_probe_debug_splat_shader_setup,
+      },
+      (graph, frame_data) => {
+        graph
+          .get_physical_pass(frame_data.current_pass)
+          .dispatch(
+            Math.ceil(PROBES_PER_BRICK / PROBE_DEBUG_WORKGROUP_X),
+            leaf_page_groups_y,
+            leaf_page_count_z
+          );
+      }
+    );
+
+    render_graph.add_pass(
+      "svlm_baked_probe_debug_resolve",
+      RenderPassFlags.Compute,
+      {
+        inputs: [scene_color, debug_depth, this.debug_texture],
+        outputs: [this.debug_texture],
+        shader_setup: svlm_probe_debug_resolve_shader_setup,
+      },
+      (graph, frame_data) => {
+        graph
+          .get_physical_pass(frame_data.current_pass)
+          .dispatch(Math.ceil(width / 8), Math.ceil(height / 8), 1);
+      }
+    );
+  }
+
   _sanitize_options(options) {
     const out = {};
     if (options.root_brick_size !== undefined) {
@@ -3317,6 +3663,20 @@ export class SparseVolumetricLightmapper {
         8
       );
     }
+    if (options.streaming_prediction_seconds !== undefined) {
+      out.streaming_prediction_seconds = clamp(
+        Number(options.streaming_prediction_seconds) || 0,
+        0,
+        5
+      );
+    }
+    if (options.streaming_prediction_max_tiles !== undefined) {
+      out.streaming_prediction_max_tiles = clamp(
+        Math.floor(Number(options.streaming_prediction_max_tiles) || 0),
+        0,
+        32
+      );
+    }
     if (options.streaming_max_requests !== undefined) {
       out.streaming_max_requests = clamp(
         Math.floor(Number(options.streaming_max_requests) || 1),
@@ -3333,6 +3693,9 @@ export class SparseVolumetricLightmapper {
     }
     if (options.streaming_transition_tiles !== undefined) {
       out.streaming_transition_tiles = clamp(Number(options.streaming_transition_tiles) || 0, 0, 4);
+    }
+    if (options.streaming_fade_seconds !== undefined) {
+      out.streaming_fade_seconds = clamp(Number(options.streaming_fade_seconds) || 0, 0, 4);
     }
     if (options.coarse_min_lod !== undefined) {
       out.coarse_min_lod = clamp(Math.floor(Number(options.coarse_min_lod) || 1), 1, 16);
@@ -3414,6 +3777,12 @@ export class SparseVolumetricLightmapper {
         0,
         8
       ),
+      streaming_prediction_seconds: clamp(Number(config.streaming_prediction_seconds) || 0, 0, 5),
+      streaming_prediction_max_tiles: clamp(
+        Math.floor(Number(config.streaming_prediction_max_tiles) || 0),
+        0,
+        32
+      ),
       streaming_max_requests: clamp(
         Math.floor(Number(config.streaming_max_requests) || this.config.streaming_max_requests),
         1,
@@ -3425,6 +3794,7 @@ export class SparseVolumetricLightmapper {
         1024
       ),
       streaming_transition_tiles: clamp(Number(config.streaming_transition_tiles) || 0, 0, 4),
+      streaming_fade_seconds: clamp(Number(config.streaming_fade_seconds) || 0, 0, 4),
       coarse_min_lod: clamp(Math.floor(Number(config.coarse_min_lod) || 1), 1, 16),
       coarse_max_lod: clamp(
         Math.floor(Number(config.coarse_max_lod) || 1),
@@ -3501,6 +3871,7 @@ export class SparseVolumetricLightmapper {
     this.params_data[PARAM_COARSE_MAX_LOD] = this.config.coarse_max_lod;
     this.params_data[PARAM_STREAMING_RADIUS] = this.config.streaming_radius;
     this.params_data[PARAM_STREAMING_TRANSITION_TILES] = this.config.streaming_transition_tiles;
+    this.params_data[PARAM_STREAMING_FADE_SECONDS] = this.config.streaming_fade_seconds;
   }
 
   _write_param_buffer() {

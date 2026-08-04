@@ -85,7 +85,11 @@ export class SVLMBakedGI {
     const view_index = SharedFrameInfoBuffer.get_view_index();
     if (view_index >= 0 && view_index < SharedViewBuffer.get_view_data_count()) {
       const view_data = SharedViewBuffer.get_view_data(view_index);
-      this.svlm?.update_tile_streaming(view_data.view_position, view_data);
+      this.svlm?.update_tile_streaming(
+        view_data.view_position,
+        view_data,
+        SharedFrameInfoBuffer.get_time()
+      );
     }
 
     const artifact = this.svlm?.get_bake_artifact();
@@ -112,8 +116,11 @@ export class SVLMBakedGI {
     diffuse_image_config.force = force_recreate;
     black_image_config.force = force_recreate;
 
-    const diffuse_sample_output = render_graph.create_image(diffuse_sample_image_config);
     const diffuse_output = render_graph.create_image(diffuse_image_config);
+    const diffuse_sample_output =
+      SVLM_BAKED_RESOLVE_UPSCALE_FACTOR > 1
+        ? render_graph.create_image(diffuse_sample_image_config)
+        : diffuse_output;
     const black_output = render_graph.create_image(black_image_config);
     const params = render_graph.register_buffer(artifact.buffers.params.config.name);
     const nodes = render_graph.register_buffer(artifact.buffers.nodes.config.name);
@@ -146,20 +153,22 @@ export class SVLMBakedGI {
       }
     );
 
-    render_graph.add_pass(
-      "svlm_baked_resolve_upsample",
-      RenderPassFlags.Compute,
-      {
-        inputs: [diffuse_sample_output, depth_texture, gbuffer_normal, diffuse_output],
-        outputs: [diffuse_output],
-        shader_setup: svlm_baked_upsample_shader_setup,
-      },
-      (graph, frame_data) => {
-        graph
-          .get_physical_pass(frame_data.current_pass)
-          .dispatch(Math.ceil(width / 8), Math.ceil(height / 8), 1);
-      }
-    );
+    if (SVLM_BAKED_RESOLVE_UPSCALE_FACTOR > 1) {
+      render_graph.add_pass(
+        "svlm_baked_resolve_upsample",
+        RenderPassFlags.Compute,
+        {
+          inputs: [diffuse_sample_output, depth_texture, gbuffer_normal, diffuse_output],
+          outputs: [diffuse_output],
+          shader_setup: svlm_baked_upsample_shader_setup,
+        },
+        (graph, frame_data) => {
+          graph
+            .get_physical_pass(frame_data.current_pass)
+            .dispatch(Math.ceil(width / 8), Math.ceil(height / 8), 1);
+        }
+      );
+    }
 
     // Deferred lighting requires all three GI bindings. Direct lighting stays
     // in the deferred light loop and baked SVLM currently contains no glossy
@@ -179,7 +188,7 @@ export class SVLMBakedGI {
     _debug_view,
     force_recreate = false
   ) {
-    this.svlm?.add_probe_debug_passes(
+    this.svlm?.add_baked_probe_debug_passes(
       render_graph,
       width,
       height,
