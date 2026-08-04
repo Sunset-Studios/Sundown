@@ -66,8 +66,8 @@ const PARAM_MAX_NODES = 8;
 const PARAM_LEAF_CAPACITY = 9;
 const PARAM_MIN_LEVEL = 10;
 const PARAM_NEAR_FACTOR = 11;
-const PARAM_OCC_MIN = 12;
-const PARAM_OCC_MAX = 13;
+const PARAM_NORMAL_VARIATION_THRESHOLD = 12;
+const PARAM_LAYER_SEPARATION_FACTOR = 13;
 const PARAM_REQUESTED_ROOT_SIZE = 14;
 const PARAM_BAKE_PADDING = 15;
 const PARAM_BAKE_SERIAL = 16;
@@ -96,6 +96,7 @@ const PARAM_STREAMING_RADIUS = 39;
 const PARAM_STREAMING_TRANSITION_TILES = 40;
 const PARAM_TILE_LEAF_OWNERSHIP = 41;
 const PARAM_STREAMING_FADE_SECONDS = 42;
+const PARAM_TRIANGLE_DENSITY_THRESHOLD = 43;
 
 const INVALID_IDX = 0xffffffff;
 const TOMBSTONE_IDX = 0xfffffffe;
@@ -491,9 +492,10 @@ export class SparseVolumetricLightmapper {
     max_level: 5,
     min_level: 1,
     bake_padding: 2.0,
-    near_geometry_factor: 0.75,
-    occupancy_split_min: 0.01,
-    occupancy_split_max: 0.65,
+    near_geometry_factor: 0.125,
+    normal_variation_threshold: 0.05,
+    layer_separation_factor: 0.05,
+    triangle_density_threshold: 8,
     max_nodes: 131072,
     auto_resize_growth: 2.0,
     irradiance_rays_per_probe: 2048,
@@ -3005,6 +3007,7 @@ export class SparseVolumetricLightmapper {
               curr_nodes,
               next_nodes,
               leaves,
+              index_buffer,
             ],
             outputs: [counters, nodes, next_nodes, leaves],
             shader_setup: svlm_classify_shader_setup,
@@ -3620,6 +3623,36 @@ export class SparseVolumetricLightmapper {
     if (options.max_nodes !== undefined) {
       out.max_nodes = Math.max(9, Math.floor(Number(options.max_nodes)));
     }
+    if (options.near_geometry_factor !== undefined) {
+      out.near_geometry_factor = clamp(
+        Number(options.near_geometry_factor) || this.config.near_geometry_factor,
+        0.01,
+        0.5
+      );
+    }
+    if (options.normal_variation_threshold !== undefined) {
+      out.normal_variation_threshold = clamp(
+        Number(options.normal_variation_threshold) || this.config.normal_variation_threshold,
+        0.001,
+        1.0
+      );
+    }
+    if (options.layer_separation_factor !== undefined) {
+      out.layer_separation_factor = clamp(
+        Number(options.layer_separation_factor) || this.config.layer_separation_factor,
+        0.001,
+        0.5
+      );
+    }
+    if (options.triangle_density_threshold !== undefined) {
+      out.triangle_density_threshold = clamp(
+        Math.floor(
+          Number(options.triangle_density_threshold) || this.config.triangle_density_threshold
+        ),
+        2,
+        32
+      );
+    }
     if (options.irradiance_rays_per_probe !== undefined) {
       out.irradiance_rays_per_probe = Math.max(
         1,
@@ -3849,8 +3882,8 @@ export class SparseVolumetricLightmapper {
     this.params_data[PARAM_LEAF_CAPACITY] = this.config.max_nodes;
     this.params_data[PARAM_MIN_LEVEL] = this.config.min_level;
     this.params_data[PARAM_NEAR_FACTOR] = this.config.near_geometry_factor;
-    this.params_data[PARAM_OCC_MIN] = this.config.occupancy_split_min;
-    this.params_data[PARAM_OCC_MAX] = this.config.occupancy_split_max;
+    this.params_data[PARAM_NORMAL_VARIATION_THRESHOLD] = this.config.normal_variation_threshold;
+    this.params_data[PARAM_LAYER_SEPARATION_FACTOR] = this.config.layer_separation_factor;
     this.params_data[PARAM_REQUESTED_ROOT_SIZE] = this.config.root_brick_size;
     this.params_data[PARAM_BAKE_PADDING] = this.config.bake_padding;
     this.params_data[PARAM_BAKE_SERIAL] = this.bake_serial;
@@ -3872,6 +3905,7 @@ export class SparseVolumetricLightmapper {
     this.params_data[PARAM_STREAMING_RADIUS] = this.config.streaming_radius;
     this.params_data[PARAM_STREAMING_TRANSITION_TILES] = this.config.streaming_transition_tiles;
     this.params_data[PARAM_STREAMING_FADE_SECONDS] = this.config.streaming_fade_seconds;
+    this.params_data[PARAM_TRIANGLE_DENSITY_THRESHOLD] = this.config.triangle_density_threshold;
   }
 
   _write_param_buffer() {

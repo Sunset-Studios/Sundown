@@ -104,15 +104,20 @@ struct SVLMProbeRayDataBufferReadOnlyHeader {
     rays: array<SVLMProbeRayData>,
 };
 
-// Classification distills the TLAS/BLAS overlap search into the handful of
-// signals needed by the split heuristic. It is deliberately coarse for this V1:
-// enough to allocate bricks around real geometry before irradiance is added.
+// Classification distills overlapped BLAS triangles into sign-invariant normal
+// and centroid moments. The split heuristic can then distinguish one coherent
+// plane from corners, curvature, and parallel layers, using triangle density to
+// increase sensitivity without treating tessellation alone as complexity.
 struct SVLMBrickStats {
+    triangle_count: u32,
+    normal_count: u32,
     overlap_count: u32,
-    face_mask: u32,
-    min_distance: f32,
-    occupied_fraction: f32,
-    thin_occluder: u32,
+    padding: u32,
+    normal_diagonal: vec3<f32>,
+    normal_cross: vec3<f32>,
+    centroid_sum: vec3<f32>,
+    centroid_square_sum: vec3<f32>,
+    centroid_cross_sum: vec3<f32>,
 };
 
 // Keep this field order in lockstep with the JS parameter word offsets in
@@ -134,8 +139,8 @@ struct SVLMParams {
     min_level: f32,
     near_factor: f32,
 
-    occupancy_split_min: f32,
-    occupancy_split_max: f32,
+    normal_variation_threshold: f32,
+    layer_separation_factor: f32,
     requested_root_size: f32,
     bake_padding: f32,
 
@@ -172,15 +177,19 @@ struct SVLMParams {
     streaming_transition_tiles: f32,
     tile_leaf_ownership: f32,
     streaming_fade_seconds: f32,
-    reserved_43: f32,
+    triangle_density_threshold: f32,
 };
 
 struct SVLMBlasStats {
+    triangle_count: u32,
+    normal_count: u32,
     overlap_count: u32,
-    near_count: u32,
-    face_mask: u32,
-    min_distance: f32,
-    occupied_volume: f32,
+    padding: u32,
+    normal_diagonal: vec3<f32>,
+    normal_cross: vec3<f32>,
+    centroid_sum: vec3<f32>,
+    centroid_square_sum: vec3<f32>,
+    centroid_cross_sum: vec3<f32>,
 };
 
 fn svlm_pack_ray_radiance(value: vec3<f32>) -> vec2<u32> {
@@ -241,51 +250,8 @@ fn svlm_node_aabb(params: ptr<storage, SVLMParams, read_write>, level: u32, coor
     return AABB(vec4<f32>(origin, 0.0), vec4<f32>(origin + vec3<f32>(size), 0.0));
 }
 
-// The split heuristic uses AABB distance/overlap rather than triangle tests.
-// That keeps classification cheap enough to run for every candidate brick while
-// still using the scene's GPU acceleration data as the source of truth.
-fn svlm_aabb_volume(bounds: AABB) -> f32 {
-    let e = max(vec3<f32>(0.0), bounds.max.xyz - bounds.min.xyz);
-    return e.x * e.y * e.z;
-}
-
-fn svlm_aabb_distance_sq(a: AABB, b: AABB) -> f32 {
-    var d = vec3<f32>(0.0);
-    d.x = max(max(b.min.x - a.max.x, a.min.x - b.max.x), 0.0);
-    d.y = max(max(b.min.y - a.max.y, a.min.y - b.max.y), 0.0);
-    d.z = max(max(b.min.z - a.max.z, a.min.z - b.max.z), 0.0);
-    return dot(d, d);
-}
-
-fn svlm_aabb_intersection_volume(a: AABB, b: AABB) -> f32 {
-    let mn = max(a.min.xyz, b.min.xyz);
-    let mx = min(a.max.xyz, b.max.xyz);
-    let e = max(vec3<f32>(0.0), mx - mn);
-    return e.x * e.y * e.z;
-}
-
 fn svlm_aabb_intersects(a: AABB, b: AABB) -> bool {
     return all(a.min.xyz <= b.max.xyz) && all(a.max.xyz >= b.min.xyz);
-}
-
-// Tracks which brick faces are touched by nearby geometry. Opposite touched
-// faces are a cheap "thin occluder" proxy: one brick likely spans both sides of
-// a wall/slab and should refine.
-fn svlm_face_mask(brick: AABB, geom: AABB, eps: f32) -> u32 {
-    var mask = 0u;
-    if (geom.min.x <= brick.min.x + eps) { mask |= 1u << 0u; }
-    if (geom.max.x >= brick.max.x - eps) { mask |= 1u << 1u; }
-    if (geom.min.y <= brick.min.y + eps) { mask |= 1u << 2u; }
-    if (geom.max.y >= brick.max.y - eps) { mask |= 1u << 3u; }
-    if (geom.min.z <= brick.min.z + eps) { mask |= 1u << 4u; }
-    if (geom.max.z >= brick.max.z - eps) { mask |= 1u << 5u; }
-    return mask;
-}
-
-fn svlm_is_thin_occluder(face_mask: u32) -> bool {
-    return ((face_mask & 0x03u) == 0x03u) ||
-        ((face_mask & 0x0cu) == 0x0cu) ||
-        ((face_mask & 0x30u) == 0x30u);
 }
 
 // Convert the world-space brick into mesh-local BLAS space. The TLAS gives us
@@ -300,13 +266,6 @@ fn svlm_to_local_point(p_world: vec3<f32>, entity_transform: EntityTransform) ->
         dot(ro_rel, t_col1),
         dot(ro_rel, t_col2)
     );
-}
-
-fn svlm_world_to_local_distance_scale(entity_transform: EntityTransform) -> f32 {
-    let t_col0 = entity_transform.transpose_inverse_model_matrix[0].xyz;
-    let t_col1 = entity_transform.transpose_inverse_model_matrix[1].xyz;
-    let t_col2 = entity_transform.transpose_inverse_model_matrix[2].xyz;
-    return max(max(length(t_col0), length(t_col1)), length(t_col2));
 }
 
 fn svlm_world_aabb_to_local(bounds: AABB, entity_transform: EntityTransform) -> AABB {

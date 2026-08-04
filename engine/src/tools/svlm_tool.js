@@ -210,6 +210,14 @@ function parse_bake_options(args) {
       options.min_level = Number(value);
     } else if (key === "max_nodes") {
       options.max_nodes = Number(value);
+    } else if (key === "near" || key === "near_geometry_factor") {
+      options.near_geometry_factor = Number(value);
+    } else if (key === "normal" || key === "normal_variation_threshold") {
+      options.normal_variation_threshold = Number(value);
+    } else if (key === "layer" || key === "layer_separation_factor") {
+      options.layer_separation_factor = Number(value);
+    } else if (key === "density" || key === "triangle_density_threshold") {
+      options.triangle_density_threshold = Number(value);
     } else if (key === "rays" || key === "irradiance_rays_per_probe") {
       options.irradiance_rays_per_probe = Number(value);
     } else if (key === "batch" || key === "irradiance_probes_per_batch") {
@@ -355,7 +363,7 @@ export class SVLMTool extends DevConsoleTool {
         break;
       default:
         log(
-          "svlm [stats | bake [root=<size>] [max=<level>] [min=<level>] [rays=<count>] [batch=<count>] [samples=<count>] [tile=<meters>] [radius=<tiles>] [hysteresis=<tiles>] [prefetch=<tiles>] [requests=<count>] [budget=<mb>] [transition=<tiles>] [coarse_min=<lod>] [coarse_max=<lod>] [coarse_budget=<mb>] | preview | debug [bricks|probes|baked_probes] [on|off] [level=<n>|all] | clear | hide]"
+          "svlm [stats | bake [root=<size>] [max=<level>] [min=<level>] [near=<factor>] [normal=<variation>] [layer=<factor>] [density=<triangles>] [rays=<count>] [batch=<count>] [samples=<count>] [tile=<meters>] [radius=<tiles>] [hysteresis=<tiles>] [prefetch=<tiles>] [requests=<count>] [budget=<mb>] [transition=<tiles>] [coarse_min=<lod>] [coarse_max=<lod>] [coarse_budget=<mb>] | preview | debug [bricks|probes|baked_probes] [on|off] [level=<n>|all] | clear | hide]"
         );
         break;
     }
