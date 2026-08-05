@@ -110,7 +110,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
         // Sample SH irradiance using shared helper (includes visibility weighting,
         // robust fallbacks, and indirect_boost).
         // ─────────────────────────────────────────────────────────────────────────
-        irradiance = ddgi_sample_sh_irradiance_with_states(
+        let ddgi_sample = ddgi_sample_sh_irradiance_with_states_result(
             &ddgi_params,
             &sh_probes,
             &probe_states,
@@ -119,6 +119,22 @@ fn cs(@builtin(global_invocation_id) gid: vec3<u32>) {
             position,
             normal
         );
+        irradiance = ddgi_sample.irradiance;
+
+        // The coarsest cascade has no probe fallback of its own. Fill only the
+        // still-unready portion from the environment so newly exposed surface
+        // samples remain lit while their local probe history is established.
+        if (ddgi_sample.readiness < 1.0) {
+            let light_view_index = u32(scene_lighting_data.view_index);
+            let sun_dir = normalize(-view_buffer[light_view_index].view_direction.xyz);
+            let environment_irradiance = evaluate_environment(
+                normal,
+                sun_dir,
+                scene_lighting_data,
+                skybox_texture
+            );
+            irradiance = mix(environment_irradiance, irradiance, ddgi_sample.readiness);
+        }
     }
 
     textureStore(output_diffuse, sample_coord, vec4<f32>(irradiance, 1.0));

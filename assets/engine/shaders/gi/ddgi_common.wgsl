@@ -1188,6 +1188,71 @@ fn ddgi_sample_sh_irradiance_single_cascade_internal(
 // - Readiness-based fallback to coarser cascades for initializing probes
 // - Edge blending between cascades for smooth transitions
 // ─────────────────────────────────────────────────────────────────────────────
+fn ddgi_sample_sh_irradiance_with_states_result(
+    ddgi_params: ptr<uniform, DDGIParams>,
+    sh_probes: ptr<storage, array<u32>, read_write>,
+    probe_states: ptr<storage, array<ProbeStateData>, read_write>,
+    probe_depth_moments: ptr<storage, array<u32>, read>,
+    probe_depth_slots: ptr<storage, array<u32>, read>,
+    position: vec3<f32>,
+    normal_ws: vec3<f32>
+) -> DDGISampleResult {
+    let cascade_count = ddgi_cascade_count(ddgi_params);
+    let cascade_index = ddgi_cascade_index_for_position(ddgi_params, position);
+
+    let has_coarser = cascade_index + 1u < cascade_count;
+    let edge_blend_weight = select(
+        0.0,
+        ddgi_cascade_blend_weight(ddgi_params, cascade_index, position),
+        has_coarser
+    );
+
+    var irradiance_sum = vec3<f32>(0.0);
+    var readiness_sum = 0.0;
+    var remaining_weight = 1.0;
+    var current_cascade = cascade_index;
+
+    // A cascade only consumes the portion of the sample for which its probes
+    // are ready. Any missing portion falls through to progressively coarser
+    // cascades instead of becoming black while newly exposed probes catch up.
+    loop {
+        let cascade_sample = ddgi_sample_sh_irradiance_single_cascade_internal(
+            ddgi_params,
+            sh_probes,
+            probe_states,
+            probe_depth_moments,
+            probe_depth_slots,
+            position,
+            normal_ws,
+            current_cascade
+        );
+
+        var cascade_weight = remaining_weight;
+        if (current_cascade == cascade_index && has_coarser) {
+            cascade_weight *= 1.0 - edge_blend_weight;
+        }
+
+        let ready_weight = cascade_weight * cascade_sample.readiness;
+        irradiance_sum += cascade_sample.irradiance * ready_weight;
+        readiness_sum += ready_weight;
+        remaining_weight = max(0.0, remaining_weight - ready_weight);
+
+        current_cascade += 1u;
+        if (remaining_weight <= 1e-6 || current_cascade >= cascade_count) {
+            break;
+        }
+    }
+
+    var result: DDGISampleResult;
+    result.readiness = saturate(readiness_sum);
+    result.irradiance = select(
+        vec3<f32>(0.0),
+        irradiance_sum / max(readiness_sum, 1e-6),
+        readiness_sum > 1e-6
+    );
+    return result;
+}
+
 fn ddgi_sample_sh_irradiance_with_states(
     ddgi_params: ptr<uniform, DDGIParams>,
     sh_probes: ptr<storage, array<u32>, read_write>,
@@ -1197,38 +1262,13 @@ fn ddgi_sample_sh_irradiance_with_states(
     position: vec3<f32>,
     normal_ws: vec3<f32>
 ) -> vec3<f32> {
-    let cascade_count = ddgi_cascade_count(ddgi_params);
-    let cascade_index = ddgi_cascade_index_for_position(ddgi_params, position);
-    
-    let irradiance_fine = ddgi_sample_sh_irradiance_single_cascade_internal(
+    return ddgi_sample_sh_irradiance_with_states_result(
         ddgi_params,
         sh_probes,
         probe_states,
         probe_depth_moments,
         probe_depth_slots,
         position,
-        normal_ws,
-        cascade_index
-    );
-
-    // Edge blending between cascades for smooth spatial transitions
-    let coarser_index = cascade_index + 1u;
-    let has_coarser = coarser_index < cascade_count;
-    let blend_weight = select(0.0, ddgi_cascade_blend_weight(ddgi_params, cascade_index, position), has_coarser);
-
-    if (blend_weight > 0.0) {
-        let irradiance_coarse = ddgi_sample_sh_irradiance_single_cascade_internal(
-            ddgi_params,
-            sh_probes,
-            probe_states,
-            probe_depth_moments,
-            probe_depth_slots,
-            position,
-            normal_ws,
-            coarser_index
-        );
-        return mix(irradiance_fine.irradiance, irradiance_coarse.irradiance, blend_weight);
-    }
-
-    return irradiance_fine.irradiance;
+        normal_ws
+    ).irradiance;
 }
